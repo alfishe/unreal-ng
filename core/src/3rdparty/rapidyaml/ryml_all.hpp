@@ -8207,8 +8207,9 @@ full_multiplication(uint64_t a, uint64_t b) {
   answer.high = __umulh(a, b);
   answer.low = a * b;
 #elif defined(FASTFLOAT_32BIT) ||                                              \
-    (defined(_WIN64) && !defined(__clang__) && !defined(_M_ARM64))
-  answer.low = _umul128(a, b, &answer.high); // _umul128 not available on ARM64
+    (defined(FASTFLOAT_VISUAL_STUDIO) && defined(_WIN64) && !defined(_M_ARM64))
+  // _umul128 is only available in MSVC, not MinGW
+  answer.low = _umul128(a, b, &answer.high);
 #elif defined(FASTFLOAT_64BIT) && defined(__SIZEOF_INT128__)
   __uint128_t r = ((__uint128_t)a) * b;
   answer.low = uint64_t(r);

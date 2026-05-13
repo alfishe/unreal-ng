@@ -4,6 +4,8 @@ Extends output capture as needed by pybind11: ignore constructors, optional unor
 Adds docstring and exceptions message sanitizers.
 """
 
+from __future__ import annotations
+
 import contextlib
 import difflib
 import gc
@@ -134,7 +136,7 @@ class Capture:
         return Output(self.err)
 
 
-@pytest.fixture()
+@pytest.fixture
 def capture(capsys):
     """Extended `capsys` with context manager and custom equality operators"""
     return Capture(capsys)
@@ -170,7 +172,7 @@ def _sanitize_docstring(thing):
     return _sanitize_general(s)
 
 
-@pytest.fixture()
+@pytest.fixture
 def doc():
     """Sanitize docstrings and add custom failure explanation"""
     return SanitizedString(_sanitize_docstring)
@@ -182,7 +184,7 @@ def _sanitize_message(thing):
     return _hexadecimal.sub("0", s)
 
 
-@pytest.fixture()
+@pytest.fixture
 def msg():
     """Sanitize messages and add custom failure explanation"""
     return SanitizedString(_sanitize_message)
@@ -218,4 +220,5 @@ def pytest_report_header(config):
         f" {pybind11_tests.cpp_std}"
         f" {pybind11_tests.PYBIND11_INTERNALS_ID}"
         f" PYBIND11_SIMPLE_GIL_MANAGEMENT={pybind11_tests.PYBIND11_SIMPLE_GIL_MANAGEMENT}"
+        f" PYBIND11_NUMPY_1_ONLY={pybind11_tests.PYBIND11_NUMPY_1_ONLY}"
     )

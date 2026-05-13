@@ -9,6 +9,7 @@
 void Disassembler_Opcode_Test::SetUp()
 {
     _context = new EmulatorContext();
+    _debugManager = new DebugManager(_context);
     // Instantiate emulator with all peripherals, but no configuration loaded
     _disasm = new Z80DisassemblerCUT(_context);
 }
@@ -19,6 +20,12 @@ void Disassembler_Opcode_Test::TearDown()
     {
         delete _disasm;
         _disasm = nullptr;
+    }
+
+    if (_debugManager != nullptr)
+    {
+        delete _debugManager;
+        _debugManager = nullptr;
     }
 }
 

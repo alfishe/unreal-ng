@@ -2,19 +2,20 @@ cmake_minimum_required(VERSION 3.16.0)
 
 message(">> unreal-qt CMakeLists.txt")
 
-# Project named 'core' on C++
+# Project named 'unreal-qt' on C++
 project(unreal-qt LANGUAGES CXX)
 
 # Define global options with CACHE and FORCE to ensure they propagate to /core/automation projects
 set(ENABLE_AUTOMATION ON CACHE BOOL "Enable automation features (Lua, Python, WebAPI)" FORCE)
 set(ENABLE_LUA_AUTOMATION ON CACHE BOOL "Enable Lua automation" FORCE)
-set(ENABLE_PYTHON_AUTOMATION OFF CACHE BOOL "Enable Python automation" FORCE)
+set(ENABLE_PYTHON_AUTOMATION ON CACHE BOOL "Enable Python automation" FORCE)
 set(ENABLE_WEBAPI_AUTOMATION ON CACHE BOOL "Enable WebAPI automation" FORCE)
 set(ENABLE_CLI_AUTOMATION ON CACHE BOOL "Enable CLI automation" FORCE)
 
-# Specify the C++ standard
-set(CMAKE_CXX_STANDARD 17)
+# Set C++ standard (C++20 required)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 if (CMAKE_VERSION VERSION_LESS "3.7.0")
     set(CMAKE_INCLUDE_CURRENT_DIR ON)
@@ -27,10 +28,11 @@ set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # Include CMake helper functions file
 include(${ROOT_DIR}/cmake/func.cmake)
 
-# Add automation if enabled
+# Add automation if enabled (skip if target already exists from parent build)
 if (ENABLE_AUTOMATION)
-    add_subdirectory("${ROOT_DIR}/core/automation" automation)
-
+    if (NOT TARGET unrealng::automation)
+        add_subdirectory("${ROOT_DIR}/core/automation" automation)
+    endif()
     set(INCLUDE_AUTOMATION True)
 endif ()
 
@@ -39,39 +41,136 @@ endif ()
 # ========================================
 
 # Default Qt paths (can be overridden via command line)
+set(QT_FOUND_PATH "")
+
+# Check if QT_INSTALL_PATH is defined and not empty
 if (NOT DEFINED QT_INSTALL_PATH)
-    if (APPLE)  # macOS
-        list(APPEND QT_INSTALL_PATH
-            "$ENV{HOME}/Qt/6.5.0/macos"
-            "$ENV{HOME}/Qt/6.5.3/macos"
-            "$ENV{HOME}/Qt/6.9.0/macos"
-            "$ENV{QTDIR}"
-        )
-    elseif (UNIX AND NOT APPLE)  # Linux
-        list(APPEND QT_INSTALL_PATH
-            "$ENV{HOME}/Qt/6.5.0/gcc_64"
-            "$ENV{HOME}/Qt/6.5.3/gcc_64"
-            "$ENV{HOME}/Qt/6.9.0/gcc_64"
-            "$ENV{QTDIR}"
-        )
-    elseif (WIN32)  # Windows
-        set(QT_INSTALL_PATH "C:/Qt/6.5.0/msvc2019_64")
-    endif ()
+    set(QT_INSTALL_PATH "")
+endif()
+
+if (QT_INSTALL_PATH STREQUAL "")
+    # First, check if CMAKE_PREFIX_PATH environment variable points to Qt
+    # This is commonly set in Docker containers and CI environments
+    if (DEFINED ENV{CMAKE_PREFIX_PATH} AND NOT "$ENV{CMAKE_PREFIX_PATH}" STREQUAL "")
+        string(REPLACE ":" ";" PREFIX_PATHS "$ENV{CMAKE_PREFIX_PATH}")
+        foreach(PREFIX_PATH ${PREFIX_PATHS})
+            if(EXISTS "${PREFIX_PATH}/lib/cmake/Qt6/Qt6Config.cmake")
+                set(QT_FOUND_PATH "${PREFIX_PATH}")
+                message(STATUS "Found Qt6 via CMAKE_PREFIX_PATH: ${QT_FOUND_PATH}")
+                break()
+            endif()
+        endforeach()
+    endif()
+    
+    # If not found via CMAKE_PREFIX_PATH, check standard platform paths
+    if(NOT QT_FOUND_PATH)
+        if (APPLE)  # macOS
+            # Check common Qt6 versions in ~/Qt (most recent first)
+            set(QT_POSSIBLE_PATHS
+                "$ENV{HOME}/Qt/6.9.3/macos"
+                "$ENV{HOME}/Qt/6.5.3/macos"
+                "$ENV{HOME}/Qt/6.5.0/macos"
+                "$ENV{QTDIR}"
+            )
+        elseif (UNIX AND NOT APPLE)  # Linux
+            set(QT_POSSIBLE_PATHS
+                "$ENV{HOME}/Qt/6.9.3/gcc_64"
+                "$ENV{HOME}/Qt/6.5.3/gcc_64"
+                "$ENV{HOME}/Qt/6.5.0/gcc_64"
+                "$ENV{QTDIR}"
+            )
+        elseif (WIN32)  # Windows
+            # Auto-detect Qt path based on compiler
+            if(MINGW)
+                message(STATUS "Detected MinGW compiler - searching for MinGW Qt builds")
+                set(QT_POSSIBLE_PATHS
+                    "C:/Qt/6.9.3/mingw_64"
+                    "C:/Qt/6.5.3/mingw_64"
+                    "C:/Qt/6.5.0/mingw_64"
+                    "$ENV{QTDIR}"
+                )
+            elseif(MSVC)
+                message(STATUS "Detected MSVC compiler - searching for MSVC Qt builds")
+                set(QT_POSSIBLE_PATHS
+                    "C:/Qt/6.9.3/msvc2022_64"
+                    "C:/Qt/6.9.3/msvc2019_64"
+                    "C:/Qt/6.5.3/msvc2019_64"
+                    "C:/Qt/6.5.0/msvc2019_64"
+                    "$ENV{QTDIR}"
+                )
+            else()
+                message(STATUS "Unknown Windows compiler - searching for any Qt build")
+                set(QT_POSSIBLE_PATHS
+                    "C:/Qt/6.9.3/msvc2022_64"
+                    "C:/Qt/6.9.3/mingw_64"
+                    "C:/Qt/6.5.3/msvc2019_64"
+                    "C:/Qt/6.5.3/mingw_64"
+                    "$ENV{QTDIR}"
+                )
+            endif()
+        endif ()
+    endif()
+    
+    # Try to find Qt6Config.cmake in possible paths (only if not already found via CMAKE_PREFIX_PATH)
+    if (NOT QT_FOUND_PATH AND DEFINED QT_POSSIBLE_PATHS)
+        foreach(POSSIBLE_PATH ${QT_POSSIBLE_PATHS})
+            if(EXISTS "${POSSIBLE_PATH}/lib/cmake/Qt6/Qt6Config.cmake")
+                set(QT_FOUND_PATH "${POSSIBLE_PATH}")
+                message(STATUS "Found Qt6 at: ${QT_FOUND_PATH}")
+                break()
+            endif()
+        endforeach()
+    endif()
 else ()
-    message(STATUS "Using user-specified Qt path: ${QT_INSTALL_PATH}")
+    # User specified a path (could be a list or single path)
+    # In CMake, lists are semicolon-separated, so we can iterate directly
+    # Check each path in the list (works for both single path and list)
+    foreach(POSSIBLE_PATH ${QT_INSTALL_PATH})
+        # Remove any whitespace
+        string(STRIP "${POSSIBLE_PATH}" POSSIBLE_PATH)
+        if(EXISTS "${POSSIBLE_PATH}/lib/cmake/Qt6/Qt6Config.cmake")
+            set(QT_FOUND_PATH "${POSSIBLE_PATH}")
+            message(STATUS "Found Qt6 at user-specified path: ${QT_FOUND_PATH}")
+            break()
+        else()
+            message(STATUS "Checking Qt path: ${POSSIBLE_PATH} (Qt6Config.cmake not found)")
+        endif()
+    endforeach()
 endif ()
 
-# Allow overriding via -DQT_INSTALL_PATH=...
-set(QT_INSTALL_PATH "${QT_INSTALL_PATH}" CACHE PATH "Path to Qt installation")
+# If still not found, provide helpful error message
+if(NOT QT_FOUND_PATH)
+    message(WARNING "Qt6 not found. Please install Qt6 or set QT_INSTALL_PATH manually.")
+    if(DEFINED QT_INSTALL_PATH AND NOT QT_INSTALL_PATH STREQUAL "")
+        message(WARNING "Checked user-specified paths:")
+        foreach(POSSIBLE_PATH ${QT_INSTALL_PATH})
+            message(WARNING "  - ${POSSIBLE_PATH}")
+        endforeach()
+    else()
+        message(WARNING "Checked standard paths:")
+        foreach(POSSIBLE_PATH ${QT_POSSIBLE_PATHS})
+            message(WARNING "  - ${POSSIBLE_PATH}")
+        endforeach()
+    endif()
+endif()
 
-# Append Qt path to CMAKE_PREFIX_PATH
-list(APPEND CMAKE_PREFIX_PATH "${QT_INSTALL_PATH}")
+# Allow overriding via -DQT_INSTALL_PATH=...
+set(QT_INSTALL_PATH "${QT_FOUND_PATH}" CACHE PATH "Path to Qt installation")
+
+# Append Qt path to CMAKE_PREFIX_PATH if found
+if(QT_FOUND_PATH)
+    list(APPEND CMAKE_PREFIX_PATH "${QT_FOUND_PATH}")
+    message(STATUS "Added Qt path to CMAKE_PREFIX_PATH: ${QT_FOUND_PATH}")
+endif()
 
 # Qt specific settings
 find_package(Qt6 REQUIRED)
 find_package(Qt6 COMPONENTS Gui REQUIRED)
 find_package(Qt6 COMPONENTS Multimedia REQUIRED)
 find_package(Qt6 COMPONENTS Widgets REQUIRED)
+
+# Enable CTest for test discovery (inherited from core/tests)
+enable_testing()
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC OFF)
 set(CMAKE_AUTOUIC OFF)
@@ -104,8 +203,14 @@ include_directories(
 
 # Build all dependency libraries
 add_subdirectory("3rdparty/QHexView-5.0")
-add_subdirectory("${ROOT_DIR}/core/src" core)
-add_subdirectory("${ROOT_DIR}/core/tests" tests)
+
+# Add core/tests only if not already defined by parent build
+if (NOT TARGET unrealng::core)
+    add_subdirectory("${ROOT_DIR}/core/src" core)
+endif()
+if (TESTS AND NOT TARGET core-tests)
+    add_subdirectory("${ROOT_DIR}/core/tests" tests)
+endif()
 
 # All sources in /src and subfolders will be compiled
 file (GLOB_RECURSE CPP_FILES ${SOURCE_DIR}/*.cpp)
@@ -131,6 +236,7 @@ add_executable(${PROJECT_NAME} ${CPP_FILES} ${UI_HEADERS})
 target_include_directories(${PROJECT_NAME} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty"
+    "${CMAKE_CURRENT_BINARY_DIR}"  # For Qt-generated ui_*.h headers
     "${ROOT_DIR}/core/src"
     "${ROOT_DIR}/core"  # Added parent directory for proper automation includes
     "${ROOT_DIR}/core/automation"  # For automation headers
@@ -192,16 +298,15 @@ if (INCLUDE_AUTOMATION)
         Qt6::Multimedia
         QHexView
 
-        unrealng::core
-        unrealng::automation
+        unrealng::automation # This brings in core as PUBLIC dependency
         ${CMAKE_DL_LIBS}
         Threads::Threads
     )
     
-    # Link Winsock on Windows for automation
-    if(WIN32)
-        target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
-    endif()
+    # Link Winsock and crash handler deps on Windows
+    if (WIN32)
+        target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32 dbghelp)
+    endif ()
 else ()
     # Link without automation
     target_link_libraries(${PROJECT_NAME} PRIVATE 
@@ -210,7 +315,7 @@ else ()
         Qt6::Multimedia
         QHexView
 
-        unrealng::core
+        unrealng::core  # Keep this when automation is disabled
         Threads::Threads
     )
 endif ()
@@ -233,22 +338,148 @@ add_custom_command(
     COMMENT "Copying runtime resource files to output directory"
 )
 
-# Install rules for packaging
-install(DIRECTORY ${DATA_PATH}/fonts
-    DESTINATION ${CMAKE_INSTALL_PREFIX}/fonts
-)
-
-install(FILES ${CONFIG_FILE}
-    DESTINATION ${CMAKE_INSTALL_PREFIX}
-)
-
-install(DIRECTORY ${DATA_PATH}/rom
-    DESTINATION ${CMAKE_INSTALL_PREFIX}/rom
-)
+# These install rules are already covered by the common install rules above
 
 # Debug output
 message(STATUS "CONFIG_FILE: ${CONFIG_FILE}")
 message(STATUS "Binary: ${CMAKE_BINARY_DIR}/${PROJECT_NAME}")
+
+# ======================================================
+# Installer Configuration
+# ======================================================
+
+# Include CPack for packaging
+# No CPack needed for direct packaging
+include(InstallRequiredSystemLibraries)
+
+# Set package output directory
+set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/packages")
+
+# Package version information
+set(PACKAGE_VERSION "1.0.0")
+set(PACKAGE_VERSION_MAJOR "1")
+set(PACKAGE_VERSION_MINOR "0")
+set(PACKAGE_VERSION_PATCH "0")
+
+# ======================================================
+# Platform-specific installer configurations
+# ======================================================
+
+# macOS specific packaging
+if(APPLE)
+    # Find macdeployqt from Qt installation
+    find_program(MACDEPLOYQT_EXECUTABLE macdeployqt
+        HINTS "${QT_FOUND_PATH}/bin" "$ENV{HOME}/Qt/6.9.3/macos/bin"
+    )
+    
+    # Create a custom target for macOS packaging
+    set(UNREAL_QT_STAGING_DIR "${CMAKE_BINARY_DIR}/packages/UnrealNG-Staging")
+    add_custom_target(package_macos
+        # 1. Staging Setup
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "${UNREAL_QT_STAGING_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${UNREAL_QT_STAGING_DIR}"
+        
+        # 2. Copy App Bundle (preserving symlinks)
+        COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-qt.app" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app"
+        
+        # 3. Inject Resources before signing
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/fonts" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/fonts"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/rom" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/testrom" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/data/configs/pentagon512k/unreal.ini" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.ini"
+        
+        # 4. Deploy Qt frameworks
+        COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app" -always-overwrite
+        
+        # 5. Sign with hardened runtime and entitlements
+        COMMAND codesign --force --deep --options runtime --entitlements "${ROOT_DIR}/install/macos/entitlements.plist" --sign - "${UNREAL_QT_STAGING_DIR}/UnrealNG.app"
+        
+        # 6. Create DMG from staging
+        COMMAND hdiutil create -volname "UnrealNG" -srcfolder "${UNREAL_QT_STAGING_DIR}" -ov -format UDZO "${CMAKE_BINARY_DIR}/packages/UnrealNG.dmg"
+        
+        DEPENDS ${PROJECT_NAME}
+        COMMENT "Creating individual macOS DMG package for UnrealNG (signed with entitlements)"
+    )
+    
+    # Create a macOS application bundle
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/Info.plist"
+        MACOSX_BUNDLE_BUNDLE_NAME "UnrealNG"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PACKAGE_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PACKAGE_VERSION}"
+        MACOSX_BUNDLE_ICON_FILE "unreal.icns"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.unrealng.emulator"
+        MACOSX_BUNDLE_COPYRIGHT "Copyright © 2025 UnrealNG Team"
+    )
+    
+    # Copy the icon file and required resources to the bundle
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/unreal.icns" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/fonts" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/fonts"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/rom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/testrom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy "${ROOT_DIR}/data/configs/pentagon512k/unreal.ini" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/unreal.ini"
+    )
+endif()
+
+# Windows specific packaging
+if(WIN32)
+    # Include the shared Windows Qt deployment module
+    include(${ROOT_DIR}/cmake/WinDeployQt.cmake)
+    setup_windows_qt_deployment(${PROJECT_NAME})
+    
+    # Create a custom target for Windows packaging that builds without tests
+    add_custom_target(package_windows
+        COMMAND ${CMAKE_COMMAND} -E echo "Building Windows package..."
+        # First configure and build without tests
+        COMMAND ${CMAKE_COMMAND} -DBUILD_TESTS=OFF ${CMAKE_SOURCE_DIR}
+        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${PROJECT_NAME}
+        # Create package directory
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages/UnrealNG"
+        # Only copy the main executable
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/${PROJECT_NAME}.exe" "${CMAKE_BINARY_DIR}/packages/UnrealNG/"
+        # Copy only necessary resources
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/fonts" "${CMAKE_BINARY_DIR}/packages/UnrealNG/fonts"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/rom" "${CMAKE_BINARY_DIR}/packages/UnrealNG/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/unreal.ini" "${CMAKE_BINARY_DIR}/packages/UnrealNG/unreal.ini"
+        # Create the final zip package
+        COMMAND ${CMAKE_COMMAND} -E tar "cf" "${CMAKE_BINARY_DIR}/packages/UnrealNG-Windows.zip" "--format=zip" "--" "${CMAKE_BINARY_DIR}/packages/UnrealNG"
+        COMMENT "Creating Windows package in ${CMAKE_BINARY_DIR}/packages"
+    )
+    
+    # Add Windows RC file for icon and version information
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/src/install/windows/app.rc.in"
+                   "${CMAKE_CURRENT_BINARY_DIR}/app.rc" @ONLY)
+    target_sources(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/app.rc")
+endif()
+
+# Linux specific packaging
+if(UNIX AND NOT APPLE)
+    # Create a custom target for Linux packaging
+    add_custom_target(package_linux
+        COMMAND ${CMAKE_COMMAND} -E echo "Building Linux package..."
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/unreal-qt" "${CMAKE_BINARY_DIR}/packages/unreal-qt"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/fonts" "${CMAKE_BINARY_DIR}/packages/fonts"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/rom" "${CMAKE_BINARY_DIR}/packages/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/unreal.ini" "${CMAKE_BINARY_DIR}/packages/unreal.ini"
+        COMMAND ${CMAKE_COMMAND} -E tar "cfz" "${CMAKE_BINARY_DIR}/packages/UnrealNG-Linux.tar.gz" "--" "${CMAKE_BINARY_DIR}/packages/unreal-qt" "${CMAKE_BINARY_DIR}/packages/fonts" "${CMAKE_BINARY_DIR}/packages/rom" "${CMAKE_BINARY_DIR}/packages/unreal.ini"
+        DEPENDS ${PROJECT_NAME}
+        COMMENT "Creating Linux package in ${CMAKE_BINARY_DIR}/packages"
+    )
+    # No desktop integration for simple packaging
+endif()
+
+# Add a general packaging target that builds the appropriate package for the current platform
+add_custom_target(package_all
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
+    COMMAND ${CMAKE_CPACK_COMMAND} -C $<CONFIG> --config "${CMAKE_BINARY_DIR}/CPackConfig.cmake" -B "${CMAKE_BINARY_DIR}/packages"
+    DEPENDS ${PROJECT_NAME}
+    COMMENT "Creating package for current platform in ${CMAKE_BINARY_DIR}/packages"
+)
 
 # <Diagnostics>
 message(STATUS "<unreal-qt diagnostics>")

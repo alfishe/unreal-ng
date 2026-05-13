@@ -3,6 +3,7 @@
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
+#include "_helpers/test_path_helper.h"
 
 /// region <SetUp / TearDown>
 
@@ -43,7 +44,7 @@ void LoaderTZX_Test::TearDown()
 
 TEST_F(LoaderTZX_Test, parseHardware)
 {
-    static std::string testTapePath = "../../../tests/loaders/tap/action.tap";
+    static std::string testTapePath = TestPathHelper::GetTestDataPath("loaders/tap/action.tap");
     std::string absoluteSnapshotPath = FileHelper::AbsolutePath(testTapePath);
 
     LoaderTZXCUT loader(_context, testTapePath);

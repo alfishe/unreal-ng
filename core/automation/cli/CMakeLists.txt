@@ -1,19 +1,36 @@
 # CLI Automation Module
 project(automation-cli LANGUAGES CXX)
 
-get_filename_component(CORE_LIBRARY_PATH
-    "${CMAKE_CURRENT_LIST_DIR}/../../../core"
-    ABSOLUTE
-)
-
+# Get root directory
+get_filename_component(ROOT_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../" ABSOLUTE)
 
 # Add source files
 set(SOURCES
     src/automation-cli.cpp
     src/cli-processor.cpp
+    src/commands/cli-processor-instance.cpp
+    src/commands/cli-processor-debug.cpp
+    src/commands/cli-processor-breakpoint.cpp
+    src/commands/cli-processor-memory.cpp
+    src/commands/cli-processor-analyzer.cpp
+    src/commands/cli-processor-analyzer-mgr.cpp
+    src/commands/cli-processor-settings.cpp
+    src/commands/cli-processor-tape.cpp
+    src/commands/cli-processor-disk.cpp
+    src/commands/cli-processor-snapshot.cpp
+    src/commands/cli-processor-state.cpp
+    src/handlers/python-handler.cpp
+    src/handlers/lua-handler.cpp
+    src/commands/cli-processor-capture.cpp
+    src/commands/cli-processor-profiler.cpp
+    src/commands/cli-processor-keyboard.cpp
 )
 
 # Create the library
+# Find Python3 for pybind11 headers
+if (ENABLE_PYTHON_AUTOMATION)
+    find_package(Python3 COMPONENTS Development)
+endif()
 add_library(${PROJECT_NAME} STATIC ${SOURCES})
 
 
@@ -21,8 +38,32 @@ add_library(${PROJECT_NAME} STATIC ${SOURCES})
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/lib
-    ${CORE_LIBRARY_PATH}/src  # For emulator headers
+    ${ROOT_DIR}/core/src  # For core headers
+    ${ROOT_DIR}/core/automation  # For automation/automation.h
+    $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${ROOT_DIR}/core/automation/lua/src>
+    $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${ROOT_DIR}/core/automation/lua/lib/sol2/sol2-3.5.0/include>
+    $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${ROOT_DIR}/core/automation/lua/lib/lua/lua-5.4.7/src>
+    $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${ROOT_DIR}/core/automation/python/src>
+    $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${ROOT_DIR}/core/automation/python/3rdparty/pybind11/include>
+    $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${Python3_INCLUDE_DIRS}>
+    $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:${ROOT_DIR}/core/automation/webapi/src>
 )
+
+# Add conditional compiler definitions for automation modules
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:ENABLE_LUA_AUTOMATION>
+    $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:ENABLE_PYTHON_AUTOMATION>
+    $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:ENABLE_WEBAPI_AUTOMATION>
+    $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:ENABLE_CLI_AUTOMATION>
+)
+
+# Suppress deprecated-declarations warning for pybind11 (uses deprecated _Py_fopen_obj in Python 3.14)
+if (ENABLE_PYTHON_AUTOMATION)
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(${PROJECT_NAME} PRIVATE -Wno-deprecated-declarations)
+    endif()
+endif()
+
 
 # Install the library
 install(TARGETS ${PROJECT_NAME}
@@ -38,8 +79,8 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
 )
 
 # Make sure the library is built with the same C++ standard
+# C++ standard is inherited from root CMakeLists.txt (C++20)
 set_target_properties(${PROJECT_NAME} PROPERTIES
-    CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
 )
 
@@ -49,6 +90,9 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
+
+# Note: core library is linked by the parent project (unreal-qt)
+# Static libraries should only use headers, not link dependencies
 
 # Link against Winsock on Windows
 if (WIN32)
@@ -72,7 +116,7 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
 # <Diagnostics>
 message(STATUS "<${PROJECT_NAME} diagnostics>")
 message(STATUS "  PROJECT_NAME: ${PROJECT_NAME}")
-message(STATUS "  CORE_LIBRARY_PATH: ${CORE_LIBRARY_PATH}")
+message(STATUS "  ROOT_DIR: ${ROOT_DIR}")
 message(STATUS "  INCLUDE_DIRECTORIES:")
 get_property(include_dirs DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
 foreach (dir ${include_dirs})

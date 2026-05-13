@@ -5,6 +5,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/labels/labelmanager.h"
+#include "debugger/analyzers/analyzermanager.h"
 #include "emulator/emulatorcontext.h"
 #include <map>
 
@@ -23,6 +24,10 @@ protected:
     BreakpointManager* _breakpoints = nullptr;
     LabelManager* _labels = nullptr;
     std::unique_ptr<Z80Disassembler> _disassembler = nullptr;
+    std::unique_ptr<AnalyzerManager> _analyzerManager = nullptr;
+    
+    // Keyboard injection manager for automation/debugging
+    class DebugKeyboardManager* _keyboardManager = nullptr;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -38,6 +43,8 @@ public:
     BreakpointManager* GetBreakpointsManager();
     LabelManager* GetLabelManager();
     std::unique_ptr<Z80Disassembler>& GetDisassembler();
+    AnalyzerManager* GetAnalyzerManager();
+    DebugKeyboardManager* GetKeyboardManager();
 
     /// endregion </Properties>
 

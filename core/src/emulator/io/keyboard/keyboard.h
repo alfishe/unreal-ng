@@ -126,11 +126,26 @@ typedef std::map<ZXKeysEnum, KeyMapper> ZXExtendedKeyMap;
 class KeyboardEvent : public MessagePayload
 {
 public:
+    std::string targetEmulatorId;  // Specific emulator target (empty = broadcast to all)
     uint8_t zxKeyCode = 0x00;
     KeyEventEnum eventType;
 
 public:
-    KeyboardEvent(uint8_t zxKey, KeyEventEnum type) : MessagePayload() { this->zxKeyCode = zxKey; this->eventType = type; };
+    // Existing constructor (backward compatible - broadcasts to all instances)
+    KeyboardEvent(uint8_t zxKey, KeyEventEnum type) : MessagePayload() 
+    { 
+        this->zxKeyCode = zxKey; 
+        this->eventType = type; 
+    }
+    
+    // New constructor with target emulator ID for selective routing
+    KeyboardEvent(uint8_t zxKey, KeyEventEnum type, const std::string& targetId) : MessagePayload() 
+    { 
+        this->zxKeyCode = zxKey; 
+        this->eventType = type; 
+        this->targetEmulatorId = targetId;
+    }
+    
     virtual ~KeyboardEvent() {};
 };
 

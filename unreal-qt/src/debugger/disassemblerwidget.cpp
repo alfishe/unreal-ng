@@ -12,9 +12,10 @@ constexpr int MNEMONIC_COL_WIDTH = 24;   // Instruction mnemonic
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QPointer>
 #include <QTextBlock>
-#include <QVBoxLayout>
 #include <QThread>
+#include <QVBoxLayout>
 
 #include "common/dumphelper.h"
 #include "common/stringhelper.h"
@@ -24,6 +25,7 @@ constexpr int MNEMONIC_COL_WIDTH = 24;   // Instruction mnemonic
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/rom.h"
 #include "ui_disassemblerwidget.h"
 
 DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(new Ui::DisassemblerWidget)
@@ -143,31 +145,53 @@ Emulator* DisassemblerWidget::getEmulator()
 
 EmulatorContext* DisassemblerWidget::getEmulatorContext()
 {
-    return m_debuggerWindow->getEmulator()->GetContext();
+    Emulator* emu = m_debuggerWindow->getEmulator();
+    return emu ? emu->GetContext() : nullptr;
 }
 
 Memory* DisassemblerWidget::getMemory()
 {
-    return m_debuggerWindow->getEmulator()->GetContext()->pMemory;
+    Emulator* emu = m_debuggerWindow->getEmulator();
+    if (!emu) return nullptr;
+    EmulatorContext* ctx = emu->GetContext();
+    return ctx ? ctx->pMemory : nullptr;
 }
 
 Z80Registers* DisassemblerWidget::getZ80Registers()
 {
-    return m_debuggerWindow->getEmulator()->GetContext()->pCore->GetZ80();
+    Emulator* emu = m_debuggerWindow->getEmulator();
+    if (!emu) return nullptr;
+    EmulatorContext* ctx = emu->GetContext();
+    if (!ctx || !ctx->pCore) return nullptr;
+    return ctx->pCore->GetZ80();
 }
 
 std::unique_ptr<Z80Disassembler>& DisassemblerWidget::getDisassembler()
 {
-    return m_debuggerWindow->getEmulator()->GetContext()->pDebugManager->GetDisassembler();
+    // Static empty unique_ptr for null case
+    static std::unique_ptr<Z80Disassembler> nullDisassembler;
+    
+    Emulator* emu = m_debuggerWindow->getEmulator();
+    if (!emu) return nullDisassembler;
+    EmulatorContext* ctx = emu->GetContext();
+    if (!ctx || !ctx->pDebugManager) return nullDisassembler;
+    return ctx->pDebugManager->GetDisassembler();
 }
 
 BreakpointManager* DisassemblerWidget::getBreakpointManager() const
 {
-    return m_debuggerWindow->getEmulator()->GetBreakpointManager();
+    Emulator* emu = m_debuggerWindow->getEmulator();
+    return emu ? emu->GetBreakpointManager() : nullptr;
 }
 
 void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
 {
+    // Block all operations during shutdown
+    if (m_isShuttingDown)
+    {
+        return;
+    }
+
     // Number of instructions to disassemble
     static constexpr size_t INSTRUCTIONS_TO_DISASSEMBLE = 20;
 
@@ -290,7 +314,7 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
 
         // Store the instruction address before updating currentAddress
         uint16_t instructionAddress = currentAddress;
-        
+
         // Update current address for next iteration
         currentAddress += commandLen;
         pcPhysicalAddress += commandLen;
@@ -349,12 +373,12 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
     std::string value = ss.str();
 
     // Check if we're in the main thread and the widget is still valid
-    if (QThread::currentThread() != QCoreApplication::instance()->thread()) {
+    if (QThread::currentThread() != QCoreApplication::instance()->thread())
+    {
         qWarning() << "setDisassemblerAddress called from non-main thread";
         // Schedule the update to happen in the main thread
-        QMetaObject::invokeMethod(this, [this, value]() {
-            setDisassemblerAddress(m_displayAddress);
-        }, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(
+            this, [this, value]() { setDisassemblerAddress(m_displayAddress); }, Qt::QueuedConnection);
         return;
     }
 
@@ -483,7 +507,7 @@ void DisassemblerWidget::updateDebuggerStateIndicator()
     Emulator* emulator = getEmulator();
     if (!emulator)
     {
-        qDebug() << "DisassemblerWidget::updateDebuggerStateIndicator - No emulator available";
+
         m_stateIndicator->setText("DETACHED");
         m_stateIndicator->setStyleSheet(
             "QLabel { background-color: #333; color: #777; font-weight: bold; border: 1px solid #555; }");
@@ -497,7 +521,7 @@ void DisassemblerWidget::updateDebuggerStateIndicator()
     // Update the state indicator
     if (isPaused)
     {
-        qDebug() << "DisassemblerWidget::updateDebuggerStateIndicator - Setting ACTIVE state";
+
         m_stateIndicator->setText("ACTIVE");
         m_stateIndicator->setStyleSheet(
             "QLabel { background-color: #333; color: #0f0; font-weight: bold; border: 1px solid #555; }");
@@ -505,7 +529,7 @@ void DisassemblerWidget::updateDebuggerStateIndicator()
     }
     else
     {
-        qDebug() << "DisassemblerWidget::updateDebuggerStateIndicator - Setting DETACHED state";
+
         m_stateIndicator->setText("DETACHED");
         m_stateIndicator->setStyleSheet(
             "QLabel { background-color: #333; color: #777; font-weight: bold; border: 1px solid #555; }");
@@ -542,9 +566,22 @@ uint16_t DisassemblerWidget::getNextCommandAddress(uint16_t currentAddress)
         buffer[i] = memory.DirectReadFromZ80Memory(currentAddress + i);
 
     // Disassemble the current instruction to get its length
+    // Wrap in try-catch to handle invalid memory states during reset
     uint8_t commandLen = 0;
     DecodedInstruction decoded;
-    disassembler.disassembleSingleCommand(buffer, currentAddress, &commandLen, &decoded);
+    try
+    {
+        disassembler.disassembleSingleCommand(buffer, currentAddress, &commandLen, &decoded);
+    }
+    catch (const std::exception& e)
+    {
+        // During reset or inconsistent memory states, disassembly may fail
+        // Fall back to single byte advance
+        qDebug() << "DisassemblerWidget::getNextCommandAddress: disassembly failed at"
+                 << QString("0x%1").arg(currentAddress, 4, 16, QChar('0'))
+                 << "-" << e.what();
+        return (currentAddress + 1) & 0xFFFF;
+    }
 
     // Calculate the next address by adding the command length
     return (currentAddress + decoded.fullCommandLen) & 0xFFFF;
@@ -603,6 +640,31 @@ uint16_t DisassemblerWidget::findInstructionBoundaryBefore(uint16_t targetAddres
 
     // If we can't find a perfect match, just go back 1 byte as fallback
     return (targetAddress - 1) & 0xFFFF;
+}
+
+uint16_t DisassemblerWidget::getCenteredStartAddress(uint16_t targetPC, size_t instructionsBeforePC)
+{
+    if (!getEmulator() || !getMemory())
+        return targetPC;
+
+    // Walk backwards from targetPC to find the starting address
+    // This will position targetPC roughly in the middle of the display
+    uint16_t startAddress = targetPC;
+    
+    for (size_t i = 0; i < instructionsBeforePC; i++)
+    {
+        uint16_t prevAddress = getPreviousCommandAddress(startAddress);
+        
+        // Safety check: avoid infinite loop if we hit address 0 or wrap around
+        if (prevAddress >= startAddress && startAddress != 0)
+        {
+            break;
+        }
+        
+        startAddress = prevAddress;
+    }
+    
+    return startAddress;
 }
 
 void DisassemblerWidget::navigateUp()
@@ -672,9 +734,11 @@ void DisassemblerWidget::returnToCurrentPC()
 
 void DisassemblerWidget::reset()
 {
+
     m_disassemblyTextEdit->setPlainText("<Disassembly goes here>");
     m_currentPC = 0;
     m_displayAddress = 0;
+    m_addressMap.clear();
 
     // Reset to default scroll mode (Command)
     m_scrollMode = ScrollMode::Command;
@@ -685,6 +749,9 @@ void DisassemblerWidget::reset()
 
     // Clear any highlights
     m_disassemblyTextEdit->setExtraSelections(QList<QTextEdit::ExtraSelection>());
+
+    // Force visual update
+    m_disassemblyTextEdit->update();
 }
 
 void DisassemblerWidget::updateBankIndicator(uint16_t address)
@@ -693,45 +760,46 @@ void DisassemblerWidget::updateBankIndicator(uint16_t address)
         return;
 
     Memory& memory = *getMemory();
+    EmulatorContext* ctx = getEmulator()->GetContext();
 
     // Get the physical address for the current address
     uint8_t* physicalAddress = memory.MapZ80AddressToPhysicalAddress(address);
     std::string bankName = "Unknown";
+    std::string romTitle;
 
     // Determine bank based on address range
     if (address < 0x4000)
     {
-        // ROM 0 (0-16K)
-        bankName = "ROM 0";
+        // ROM at 0x0000-0x3FFF - get human-readable ROM title
+        uint8_t romPage = memory.GetROMPage();
+        if (ctx && ctx->pCore && ctx->pCore->GetROM())
+        {
+            romTitle = ctx->pCore->GetROM()->GetROMTitleByAddress(physicalAddress);
+        }
+        if (romTitle.empty())
+        {
+            bankName = "ROM " + std::to_string(romPage);
+        }
+        else
+        {
+            bankName = "ROM " + std::to_string(romPage) + " - " + romTitle;
+        }
     }
     else if (address < 0x8000)
     {
-        // ROM 1-N (16K-32K)
-        uint8_t romPage = memory.GetROMPage();
-        bankName = "ROM " + std::to_string(romPage);
+        // RAM 5 (fixed) or ROM for some models at 0x4000-0x7FFF
+        bankName = "RAM 5";
     }
     else if (address < 0xC000)
     {
-        // RAM banks (32K-48K)
-        // Try to get the RAM page if the method is available
-        uint8_t ramPage = 0;
-
-        // Use different methods based on address range
-        if (address >= 0x8000 && address < 0xA000)
-        {
-            ramPage = 2;  // Common convention for this range
-        }
-        else if (address >= 0xA000 && address < 0xC000)
-        {
-            ramPage = 3;  // Common convention for this range
-        }
-
-        bankName = "RAM " + std::to_string(ramPage);
+        // RAM 2 (fixed) at 0x8000-0xBFFF
+        bankName = "RAM 2";
     }
     else
     {
-        // System RAM (48K-64K)
-        bankName = "System RAM";
+        // Paged RAM at 0xC000-0xFFFF
+        uint8_t ramPage = memory.GetRAMPageForBank(3);  // Bank 3 is 0xC000-0xFFFF
+        bankName = "RAM " + std::to_string(ramPage);
     }
 
     // Add the address range for clarity
@@ -751,13 +819,56 @@ void DisassemblerWidget::updateBankIndicator(uint16_t address)
 
 void DisassemblerWidget::refresh()
 {
-    qDebug() << "DisassemblerWidget::refresh() called";
+    // Block all operations during shutdown
+    if (m_isShuttingDown)
+    {
+        return;
+    }
+
+
 
     // Update the disassembly view with current PC
     if (getEmulator() && getZ80Registers())
     {
+        static constexpr size_t INSTRUCTIONS_TO_DISASSEMBLE = 20;
+        static constexpr size_t INSTRUCTIONS_BEFORE_PC = 10;  // Show ~10 instructions before PC
+        static constexpr size_t MARGIN_TOP = 3;               // Scroll when PC reaches top 3 lines
+        static constexpr size_t MARGIN_BOTTOM = 3;            // Scroll when PC reaches bottom 3 lines
+        
         uint16_t currentPC = getZ80Registers()->pc;
-        setDisassemblerAddress(currentPC);
+        
+        // Check if the current PC is within the currently displayed address range
+        bool pcInView = false;
+        int pcLineNumber = -1;
+        
+        for (const auto& [lineNum, addr] : m_addressMap)
+        {
+            if (addr == currentPC)
+            {
+                pcInView = true;
+                pcLineNumber = lineNum;
+                break;
+            }
+        }
+        
+        // Determine how to position the view
+        uint16_t displayStart;
+        
+        if (pcInView && pcLineNumber >= (int)MARGIN_TOP && 
+            pcLineNumber < (int)(INSTRUCTIONS_TO_DISASSEMBLE - MARGIN_BOTTOM))
+        {
+            // PC is visible and not at the edge margins - keep current display start
+            // Just refresh at the current display address to update highlights
+            displayStart = m_displayAddress;
+        }
+        else
+        {
+            // PC is not visible or at the edge - recenter the display
+            // Position PC roughly in the middle by walking backwards
+            displayStart = getCenteredStartAddress(currentPC, INSTRUCTIONS_BEFORE_PC);
+        }
+        
+        setDisassemblerAddress(displayStart);
 
         // Also directly update the bank indicator to ensure it's current
         updateBankIndicator(currentPC);
@@ -1001,4 +1112,10 @@ bool DisassemblerWidget::eventFilter(QObject* obj, QEvent* event)
 
     // Pass the event to the parent class
     return QWidget::eventFilter(obj, event);
+}
+
+void DisassemblerWidget::prepareForShutdown()
+{
+    qDebug() << "DisassemblerWidget::prepareForShutdown()";
+    m_isShuttingDown = true;
 }

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=UnrealNG
+GenericName=ZX Spectrum Emulator
+Comment=ZX Spectrum emulator with advanced debugging capabilities
+Icon=unrealng
+Exec=unreal-qt %f
+Terminal=false
+Categories=Game;Emulator;
+Keywords=spectrum;zx;emulator;z80;
+MimeType=application/x-spectrum-snapshot;application/x-spectrum-tape;
+StartupNotify=true

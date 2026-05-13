@@ -2,7 +2,9 @@
 
 ## Overview
 
-Command Code: **`100m SPCE a0`** (e.g., `0x88` for single sector, side 0, 15ms delay, normal DAM)
+Command Code: **`100m S E C 0`** (Bit 4=m, Bit 3=S, Bit 2=E, Bit 1=C, Bit 0=0)
+
+Example: `0x88` = single sector, side 0, 15ms delay, no side compare
 
 The Read Sector command locates a specific sector on the disk based on its ID field and transfers the corresponding data field byte-by-byte to the host CPU via the Data Register, using the DRQ signal for handshaking.
 
@@ -43,7 +45,7 @@ The Read Sector command locates a specific sector on the disk based on its ID fi
     *   **Mismatch/Error:** If any comparison fails or ID CRC is bad:
         *   If CRC error, sets **CRC ERROR** (S3) temporarily.
         *   Continues searching for the next IDAM.
-    *   **Timeout:** If a matching, valid ID field is not found within 5 index pulses (revolutions), sets **RECORD NOT FOUND** (S4) and terminates with an interrupt.
+    *   **Timeout:** If a matching, valid ID field is not found within up to 5 index pulses (~1 second @ 300 RPM), sets **RECORD NOT FOUND** (S4) and terminates with an interrupt.
 
 3.  **Data Field Search:**
     *   Once a matching, valid ID field is found, the controller looks for the subsequent Data Address Mark (DAM - `FB` for normal, `F8` for deleted).
@@ -84,7 +86,7 @@ The Read Sector command locates a specific sector on the disk based on its ID fi
 | :-: | :-------------- | :-------------------------------------------------------------------- |
 | 7   | NOT READY       | Drive not ready (/READY input high or MR active).                     |
 | 6   | WRITE PROTECT   | (Not typically relevant for read, reflects /WPRT input).              |
-| 5   | RECORD TYPE     | Type of Data Address Mark found: 1 = Deleted (F8), 0 = Normal (FB). |
+| 5   | RECORD TYPE     | Reflects the Data Address Mark found: 1 = Deleted Data Mark (F8), 0 = Normal Data Mark (FB). |
 | 4   | RECORD NOT FOUND| Matching ID field or subsequent DAM not found within timeout.         |
 | 3   | CRC ERROR       | CRC error in the *last processed* ID field OR the data field.         |
 | 2   | LOST DATA       | Host failed to read Data Register before next byte arrived.           |

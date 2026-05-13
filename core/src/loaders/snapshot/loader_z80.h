@@ -1,11 +1,11 @@
 #pragma once
 
-#include "stdafx.h"
-
-#include <emulator/memory/memory.h>
 #include <emulator/cpu/z80.h>
+#include <emulator/memory/memory.h>
+
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
+#include "stdafx.h"
 
 /// region <Info>
 
@@ -13,8 +13,9 @@
 /// See: https://k1.spdns.de/Develop/Projects/zasm/Info/z80format.htm
 /// See: http://rk.nvg.ntnu.no/sinclair/formats/z80-format.html
 /// Glossary:
-///     M.G.T. - Miles Gordon Technology. British company specializing in high-quality add-ons for ZX-Spectrum. More: https://en.wikipedia.org/wiki/Miles_Gordon_Technology
-///     IF1 = Interface 1 - More: https://en.wikipedia.org/wiki/ZX_Interface_1
+///     M.G.T. - Miles Gordon Technology. British company specializing in high-quality add-ons for ZX-Spectrum. More:
+///     https://en.wikipedia.org/wiki/Miles_Gordon_Technology IF1 = Interface 1 - More:
+///     https://en.wikipedia.org/wiki/ZX_Interface_1
 
 /// endregion </Info>
 
@@ -64,74 +65,74 @@ struct Z80Header_v1
 
 enum Z80_Models_v2 : uint8_t
 {
-    Z80_MODEL2_48K      = 0,    // Genuine ZX-Spectrum 48k
-    Z80_MODEL2_48K_IF1  = 1,    // ZX-Spectrum 48k + Interface 1
-    Z80_MODEL2_SAMRAM   = 2,    // SamRam
-    Z80_MODEL2_128K     = 3,    // Genuine ZX-Spectrum 128k
-    Z80_MODEL2_128K_IF1 = 4,    // ZX-Spectrum 128k + Interface 1
-    Z80_MODEL2_UNUSED1  = 5,
-    Z80_MODEL2_UNUSED2  = 6,
+    Z80_MODEL2_48K = 0,       // Genuine ZX-Spectrum 48k
+    Z80_MODEL2_48K_IF1 = 1,   // ZX-Spectrum 48k + Interface 1
+    Z80_MODEL2_SAMRAM = 2,    // SamRam
+    Z80_MODEL2_128K = 3,      // Genuine ZX-Spectrum 128k
+    Z80_MODEL2_128K_IF1 = 4,  // ZX-Spectrum 128k + Interface 1
+    Z80_MODEL2_UNUSED1 = 5,
+    Z80_MODEL2_UNUSED2 = 6,
 
-    Z80_MODEL2_128K_3   = 7,    // Spectrum +3
-    Z80_MODEL2_128k_3_1 = 8,    // Same Spectrum +3
-    Z80_MODEL2_P128K    = 9,    // Pentagon 128K
-    Z80_MODEL2_ZS256K   = 10,   // Scorpion ZS 256K
-    Z80_MODEL2_DIDAKTIK = 11,   // Didaktik-Kompakt
-    Z80_MODEL2_128K_2   = 12,   // Spectrum +2
-    Z80_MODEL2_128K_2A  = 13,   // Spectrum +2A
+    Z80_MODEL2_128K_3 = 7,     // Spectrum +3
+    Z80_MODEL2_128k_3_1 = 8,   // Same Spectrum +3
+    Z80_MODEL2_P128K = 9,      // Pentagon 128K
+    Z80_MODEL2_ZS256K = 10,    // Scorpion ZS 256K
+    Z80_MODEL2_DIDAKTIK = 11,  // Didaktik-Kompakt
+    Z80_MODEL2_128K_2 = 12,    // Spectrum +2
+    Z80_MODEL2_128K_2A = 13,   // Spectrum +2A
 };
 
 enum Z80_Models_v3 : uint8_t
 {
-    Z80_MODEL3_48K      = 0,    // Genuine ZX-Spectrum 48k
-    Z80_MODEL3_48K_IF1  = 1,    // ZX-Spectrum 48k + Interface 1
-    Z80_MODEL3_SAMRAM   = 2,    // SamRam
-    Z80_MODEL3_48K_MGT  = 3,    // ZX-Spectrum 48k + M.G.T magic button
-    Z80_MODEL3_128K     = 4,    // Genuine ZX-Spectrum 128k
-    Z80_MODEL3_128K_IF1 = 5,    // ZX-Spectrum 128k + Interface 1
-    Z80_MODEL3_128K_MGT = 6,    // ZX-Spectrum 128k + M.G.T magic button
+    Z80_MODEL3_48K = 0,       // Genuine ZX-Spectrum 48k
+    Z80_MODEL3_48K_IF1 = 1,   // ZX-Spectrum 48k + Interface 1
+    Z80_MODEL3_SAMRAM = 2,    // SamRam
+    Z80_MODEL3_48K_MGT = 3,   // ZX-Spectrum 48k + M.G.T magic button
+    Z80_MODEL3_128K = 4,      // Genuine ZX-Spectrum 128k
+    Z80_MODEL3_128K_IF1 = 5,  // ZX-Spectrum 128k + Interface 1
+    Z80_MODEL3_128K_MGT = 6,  // ZX-Spectrum 128k + M.G.T magic button
 
     // Extended model list
-    Z80_MODEL3_128K_3   = 7,    // Spectrum +3
-    Z80_MODEL3_128k_3_1 = 8,    // Same Spectrum +3
-    Z80_MODEL3_P128K    = 9,    // Pentagon 128K
-    Z80_MODEL3_ZS256K   = 10,   // Scorpion ZS 256K
-    Z80_MODEL3_DIDAKTIK = 11,   // Didaktik-Kompakt
-    Z80_MODEL3_128K_2   = 12,   // Spectrum +2
-    Z80_MODEL3_128K_2A  = 13,   // Spectrum +2A
-    Z80_MODEL3_TC2048   = 14,   // Timex TC2048
-    Z80_MODEL3_TC2068   = 15,   // Timex TC2068
+    Z80_MODEL3_128K_3 = 7,     // Spectrum +3
+    Z80_MODEL3_128k_3_1 = 8,   // Same Spectrum +3
+    Z80_MODEL3_P128K = 9,      // Pentagon 128K
+    Z80_MODEL3_ZS256K = 10,    // Scorpion ZS 256K
+    Z80_MODEL3_DIDAKTIK = 11,  // Didaktik-Kompakt
+    Z80_MODEL3_128K_2 = 12,    // Spectrum +2
+    Z80_MODEL3_128K_2A = 13,   // Spectrum +2A
+    Z80_MODEL3_TC2048 = 14,    // Timex TC2048
+    Z80_MODEL3_TC2068 = 15,    // Timex TC2068
 
-    Z80_MODEL3_TS2068   = 128,  // Timex TS2068
+    Z80_MODEL3_TS2068 = 128,  // Timex TS2068
 };
 
 struct Z80Header_v2 : public Z80Header_v1
 {
     uint16_t extendedHeaderLen;
-    uint16_t newPC;             // Z80Header_v1.PC = 0 for v2 and v3. PC value stored here
-    Z80_Models_v2 model;        // Hardware platform
+    uint16_t newPC;       // Z80Header_v1.PC = 0 for v2 and v3. PC value stored here
+    Z80_Models_v2 model;  // Hardware platform
     uint8_t p7FFD;
     uint8_t r1;
     uint8_t r2;
-    uint8_t pFFFD;              // Last selected AY/YM register (OUT 0xFFFD)
-    uint8_t ay[16];             // AY/YM PSG registers snapshot
+    uint8_t pFFFD;   // Last selected AY/YM register (OUT 0xFFFD)
+    uint8_t ay[16];  // AY/YM PSG registers snapshot
 };
 
 struct Z80Header_v3 : public Z80Header_v2
 {
-    uint16_t lowTCounter;           // [55]
-    uint8_t highTCounter;           // [57]
-    uint8_t qlFlag;                 // [58]
-    uint8_t mgtROM;                 // [59]
-    uint8_t multifaceROM;           // [60]
-    uint8_t isROM1;                 // [61]
-    uint8_t isROM2;                 // [62]
-    uint8_t joystickMapping[10];    // [63]
-    uint8_t keyMappings[10];        // [73]
-    uint8_t mgtType;                // [83]
-    uint8_t inhibitButtonStatus;    // [84]
-    uint8_t inhibitFlag;            // [85]
-    uint8_t p1FFD;                  // [86]
+    uint16_t lowTCounter;         // [55]
+    uint8_t highTCounter;         // [57]
+    uint8_t qlFlag;               // [58]
+    uint8_t mgtROM;               // [59]
+    uint8_t multifaceROM;         // [60]
+    uint8_t isROM1;               // [61]
+    uint8_t isROM2;               // [62]
+    uint8_t joystickMapping[10];  // [63]
+    uint8_t keyMappings[10];      // [73]
+    uint8_t mgtType;              // [83]
+    uint8_t inhibitButtonStatus;  // [84]
+    uint8_t inhibitFlag;          // [85]
+    uint8_t p1FFD;                // [86]
 };
 
 struct MemoryBlockDescriptor
@@ -182,11 +183,18 @@ public:
 
 public:
     bool load();
+    bool save();
 
 protected:
     bool validate();
     bool stageLoad();
     void commitFromStage();
+
+    // Save helpers
+    Z80MemoryMode determineOutputFormat();
+    bool captureStateToStaging();
+    bool saveV3FromStaging();
+    uint8_t getModelCodeV3();
 
     /// region <Helper methods>
 protected:
@@ -196,8 +204,10 @@ protected:
     bool loadZ80v3();
 
     Z80Registers getZ80Registers(const Z80Header_v1& header, uint16_t pc);
-    Z80MemoryMode getMemoryMode(const Z80Header_v2& header);
+    Z80MemoryMode getMemoryModeV2(uint8_t model);
+    Z80MemoryMode getMemoryModeV3(uint8_t model);
     void applyPeripheralState(const Z80Header_v2& header);
+    bool validateHeaderSanity(Z80SnapshotVersion version);
 
     // Compression is used when Z80Header_v1.flags1:Bit 5 is set
     // The compression method is very simple:
@@ -212,9 +222,27 @@ protected:
     // The block is terminated by an end marker, 00 ED ED 00.
     // @see https://sinclair.wiki.zxnet.co.uk/wiki/Z80_format
     // @see https://worldofspectrum.org/faq/reference/z80format.htm
-    void compressPage(uint8_t* src, size_t srcLen, uint8_t* dst, size_t dstLen);
+    size_t compressPage(uint8_t* src, size_t srcLen, uint8_t* dst, size_t dstLen);
+
+public:
+    // Exposed for benchmarking comparison
     void decompressPage(uint8_t* src, size_t srcLen, uint8_t* dst, size_t dstLen);
 
+    /// @brief Optimized decompression using memset for RLE sequences
+    void decompressPage_Optimized(uint8_t* src, size_t srcLen, uint8_t* dst, size_t dstLen);
+
+    /// @brief Original decompression (for benchmarking comparison)
+    void decompressPage_Original(uint8_t* src, size_t srcLen, uint8_t* dst, size_t dstLen);
+
+    /// @brief Decompress Z80 v1 format data which uses end marker (00 ED ED 00)
+    /// @param src Source compressed data
+    /// @param srcLen Maximum source length (file size minus header)
+    /// @param dst Destination buffer for decompressed data
+    /// @param dstLen Expected decompressed length (48K = 3 * PAGE_SIZE)
+    /// @return Number of source bytes consumed (useful for validation)
+    size_t decompressV1Data(uint8_t* src, size_t srcLen, uint8_t* dst, size_t dstLen);
+
+protected:
     MemoryPageDescriptor resolveSnapshotPage(uint8_t page, Z80MemoryMode mode);
 
     void freeStagingMemory();
@@ -229,7 +257,8 @@ public:
 };
 
 //
-// Code Under Test (CUT) wrapper to allow access to protected and private properties and methods for unit testing / benchmark purposes
+// Code Under Test (CUT) wrapper to allow access to protected and private properties and methods for unit testing /
+// benchmark purposes
 //
 #ifdef _CODE_UNDER_TEST
 
@@ -240,15 +269,30 @@ public:
 
 public:
     using LoaderZ80::_context;
+    using LoaderZ80::_file;
+    using LoaderZ80::_fileSize;
+    using LoaderZ80::_fileValidated;
     using LoaderZ80::_logger;
     using LoaderZ80::_path;
-    using LoaderZ80::_file;
-    using LoaderZ80::_fileValidated;
-    using LoaderZ80::_fileSize;
     using LoaderZ80::_stagingLoaded;
 
-    using LoaderZ80::validate;
-    using LoaderZ80::stageLoad;
+    // Staging fields
+    using LoaderZ80::_stagingRAMPages;
+    using LoaderZ80::_stagingROMPages;
+    using LoaderZ80::_z80Registers;
+    using LoaderZ80::_port7FFD;
+    using LoaderZ80::_portFFFD;
+    using LoaderZ80::_borderColor;
+    using LoaderZ80::_memoryMode;
+
+    // Load methods
     using LoaderZ80::commitFromStage;
+    using LoaderZ80::stageLoad;
+    using LoaderZ80::validate;
+
+    // Compression methods
+    using LoaderZ80::compressPage;
+    using LoaderZ80::decompressPage;
+    using LoaderZ80::decompressPage_Optimized;
 };
-#endif // _CODE_UNDER_TEST
+#endif  // _CODE_UNDER_TEST

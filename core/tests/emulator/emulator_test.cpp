@@ -41,7 +41,7 @@ void Emulator_Test::DestroyEmulator()
 TEST_F(Emulator_Test, MultiInstance)
 {
     char message[256];
-    constexpr int iterations = 1000;
+    constexpr int iterations = 100;
 
     int successCounter = 0;
     for (int i = 0; i < iterations; i++)

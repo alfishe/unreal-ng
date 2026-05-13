@@ -1,15 +1,15 @@
-#include "stdafx.h"
+#include "loaders/disk/loader_scl.h"
 
-#include "gtest/gtest.h"
-
+#include "3rdparty/digestpp/digestpp.hpp"
+#include "_helpers/test_path_helper.h"
 #include "common/dumphelper.h"
 #include "common/filehelper.h"
-#include "emulator/emulatorcontext.h"
 #include "emulator/cpu/core.h"
+#include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/diskimage.h"
 #include "emulator/io/fdc/trdos.h"
-#include "loaders/disk/loader_scl.h"
-#include "3rdparty/digestpp/digestpp.hpp"
+#include "gtest/gtest.h"
+#include "stdafx.h"
 
 /// region <Types>
 
@@ -27,7 +27,8 @@ protected:
 
         // Set-up module logger only for FDC messages
         _context->pModuleLogger->TurnOffLoggingForAll();
-        _context->pModuleLogger->TurnOnLoggingForModule(PlatformModulesEnum::MODULE_DISK, PlatformDiskSubmodulesEnum::SUBMODULE_DISK_FDC);
+        _context->pModuleLogger->TurnOnLoggingForModule(PlatformModulesEnum::MODULE_DISK,
+                                                        PlatformDiskSubmodulesEnum::SUBMODULE_DISK_FDC);
 
         // Mock Core and Z80 to make timings work
         _core = new CoreCUT(_context);
@@ -66,31 +67,24 @@ protected:
 TEST_F(LoaderSCL_Test, load)
 {
     /// region <Reference data>
-    const TRDFile referenceFiles[] =
-    {
-        { { 'E', 'Y', 'E', 'A', 'C', 'H', 'E', '2' }, 0x42, 0x0045,   69, 255,  0,  1 },
-        { { 'e', 'y', 'e', 'a', 'c', 'h', 'e', '2' }, 0x31, 0x0000,    0, 255, 15, 16 },
-        { { 'e', 'y', 'e', 'a', 'c', 'h', 'e', '2' }, 0x32, 0x0000,    0, 255, 14, 32 },
-        { { 'e', 'y', 'e', 'a', 'c', 'h', 'e', '2' }, 0x33, 0x0000,    0, 255, 13, 48 },
-        { { 'e', 'y', 'e', 'a', 'c', 'h', 'e', '2' }, 0x34, 0x0000,    0, 138, 12, 64 },
-        { { 'b', 'o', 'o', 't', ' ', ' ', ' ', ' ' }, 0x42, 0x0a08, 2568,  11,  6, 73 }
-    };
+    const TRDFile referenceFiles[] = {{{'E', 'Y', 'E', 'A', 'C', 'H', 'E', '2'}, 0x42, 0x0045, 69, 255, 0, 1},
+                                      {{'e', 'y', 'e', 'a', 'c', 'h', 'e', '2'}, 0x31, 0x0000, 0, 255, 15, 16},
+                                      {{'e', 'y', 'e', 'a', 'c', 'h', 'e', '2'}, 0x32, 0x0000, 0, 255, 14, 32},
+                                      {{'e', 'y', 'e', 'a', 'c', 'h', 'e', '2'}, 0x33, 0x0000, 0, 255, 13, 48},
+                                      {{'e', 'y', 'e', 'a', 'c', 'h', 'e', '2'}, 0x34, 0x0000, 0, 138, 12, 64},
+                                      {{'b', 'o', 'o', 't', ' ', ' ', ' ', ' '}, 0x42, 0x0a08, 2568, 11, 6, 73}};
 
-    const std::vector<string> referenceFileChecksums =
-    {
+    const std::vector<string> referenceFileChecksums = {
         "bf0df0228d47e0713a3d30b3b1b6202ef42bfd8d2818d0fe4693cfd5926b17c6",
         "81da3d3e3387944cde415eb88fc25c6d2aaced39963bae2a0df77e756e983612",
         "abbc74a320f6a9a9d394e960acbc6a603abc06bfc95d6978f4a0022976121d74",
         "d0a16eb507c14876725a12e8134136a0bd0b1d06c9c01084b0a3cd6cd4f45e38",
         "f32f7b2c3e6cab2e4f3bc37fa3610646834d7e2f3964a75c0030986d199a866a",
-        "738a4f7811553a23fd28f012750816280ec36c3f7e92b2d415f92732d4ed5aae"
-    };
+        "738a4f7811553a23fd28f012750816280ec36c3f7e92b2d415f92732d4ed5aae"};
 
     /// endregion </Reference data>
 
-    // Loading test image from /bin/testdata folder copied by CMake
-    std::string filepath = "testdata/loaders/scl/eyeache2.scl";
-    filepath = FileHelper::AbsolutePath(filepath, true);
+    std::string filepath = TestPathHelper::GetTestDataPath("loaders/scl/eyeache2.scl");
     EXPECT_EQ(FileHelper::FileExists(filepath), true) << "File " << filepath << " does not exist";
 
     LoaderSCLCUT loaderSCL(_context, filepath);
@@ -126,12 +120,18 @@ TEST_F(LoaderSCL_Test, load)
         if (std::equal(refFile.name, refFile.name + 8, file.name))
         {
             // Verify all properties match reference
-            EXPECT_EQ(file.type, refFile.type) << "File " << std::string(file.name, file.name + 8) << " has incorrect type";
-            EXPECT_EQ(file.params, refFile.params) << "File " << std::string(file.name, file.name + 8) << " has incorrect params";
-            EXPECT_EQ(file.lengthInBytes, refFile.lengthInBytes) << "File " << std::string(file.name, file.name + 8) << " has incorrect length";
-            EXPECT_EQ(file.sizeInSectors, refFile.sizeInSectors) << "File " << std::string(file.name, file.name + 8) << " has incorrect sector count";
-            EXPECT_EQ(file.startTrack, refFile.startTrack) << "File " << std::string(file.name, file.name + 8) << " has incorrect start track";
-            EXPECT_EQ(file.startSector, refFile.startSector) << "File " << std::string(file.name, file.name + 8) << " has incorrect start sector";
+            EXPECT_EQ(file.type, refFile.type)
+                << "File " << std::string(file.name, file.name + 8) << " has incorrect type";
+            EXPECT_EQ(file.params, refFile.params)
+                << "File " << std::string(file.name, file.name + 8) << " has incorrect params";
+            EXPECT_EQ(file.lengthInBytes, refFile.lengthInBytes)
+                << "File " << std::string(file.name, file.name + 8) << " has incorrect length";
+            EXPECT_EQ(file.sizeInSectors, refFile.sizeInSectors)
+                << "File " << std::string(file.name, file.name + 8) << " has incorrect sector count";
+            EXPECT_EQ(file.startTrack, refFile.startTrack)
+                << "File " << std::string(file.name, file.name + 8) << " has incorrect start track";
+            EXPECT_EQ(file.startSector, refFile.startSector)
+                << "File " << std::string(file.name, file.name + 8) << " has incorrect start sector";
         }
     }
 
@@ -156,7 +156,8 @@ TEST_F(LoaderSCL_Test, load)
             ASSERT_NE(fileTrack, nullptr) << "File track not found for track " << currentTrack;
 
             uint8_t* sectorData = fileTrack->getRawSector(currentSector)->data;
-            ASSERT_NE(sectorData, nullptr) << "File sector data not found for track " << currentTrack << ", sector " << currentSector;
+            ASSERT_NE(sectorData, nullptr)
+                << "File sector data not found for track " << currentTrack << ", sector " << currentSector;
 
             // Add sector data to hash
             sha256.absorb(sectorData, TRD_SECTORS_SIZE_BYTES);
@@ -213,20 +214,20 @@ TEST_F(LoaderSCL_Test, addFile)
     memset(testData, 0xAA, sizeof(testData));
 
     // Create a test file descriptor (SCL stripped header, without start track and sector)
-    TRDOSDirectoryEntryBase fileDescriptor
-    {
-        {'T', 'E', 'S', 'T', 'F', 'I', 'L', 'E'},   // Name
-        0x00,                                       // Type
-        0x0000,                                     // Start (will be set by addFile)
-        0x0100,                                     // Length (256 bytes)
-        1                                           // SizeInSectors
+    TRDOSDirectoryEntryBase fileDescriptor{
+        {'T', 'E', 'S', 'T', 'F', 'I', 'L', 'E'},  // Name
+        0x00,                                      // Type
+        0x0000,                                    // Start (will be set by addFile)
+        0x0100,                                    // Length (256 bytes)
+        1                                          // SizeInSectors
     };
 
     // Add file to disk
     EXPECT_TRUE(loader.addFile(&fileDescriptor, testData)) << "Unable to add file to disk image";
 
     // Check that sector 0 and 8 were modified
-    std::string message = DumpHelper::DumpBufferDifferences(sector0Data, sector0Snapshot.data(), TRD_SECTORS_SIZE_BYTES);
+    std::string message =
+        DumpHelper::DumpBufferDifferences(sector0Data, sector0Snapshot.data(), TRD_SECTORS_SIZE_BYTES);
     EXPECT_NE(sector0Snapshot, std::vector<uint8_t>(sector0Data, sector0Data + TRD_SECTORS_SIZE_BYTES)) << message;
 
     // Verify catalog was updated
@@ -250,7 +251,8 @@ TEST_F(LoaderSCL_Test, addFile)
     DiskImage::RawSectorBytes* fileDataSector = fileDataTrack->getSector(catalogEntry->StartSector);
     for (int i = 0; i < 256; i++)
     {
-        EXPECT_EQ(0xAA, fileDataSector->data[i]) << "Track: " << catalogEntry->StartTrack << " Sector: " << catalogEntry->StartSector << "Offset: " << i;
+        EXPECT_EQ(0xAA, fileDataSector->data[i])
+            << "Track: " << catalogEntry->StartTrack << " Sector: " << catalogEntry->StartSector << "Offset: " << i;
     }
 
     loaderTrd.setImage(&diskImage);

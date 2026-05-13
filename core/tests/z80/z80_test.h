@@ -20,4 +20,5 @@ protected:
 	void TearDown() override;
 
     void DumpFirst256ROMBytes();
+    void ResetCPUAndMemory();
 };

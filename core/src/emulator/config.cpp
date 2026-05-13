@@ -9,6 +9,8 @@
 #include "emulator/platform.h"
 #include "emulator/memory/memory.h"
 #include <cassert>
+#include <array>
+#include <algorithm>
 
 #ifdef __linux__
 	// Use ICU library for path conversion in SimpleINI parser
@@ -266,7 +268,17 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	config.intstart = (unsigned)inimanager.GetLongValue(ula, "instart", 0);
 	config.intlen = (unsigned)inimanager.GetLongValue(ula, "intlen", 32);
 	config.t_line = (unsigned)inimanager.GetLongValue(ula, "line", 224);		// CPU cycles per video line
-	config.frame = (unsigned)inimanager.GetLongValue(ula, "frame", 71680);		// ZX48/128: 69888; Pentagon: 71680; ScorpionZS256: 69888; 
+	config.frame = (unsigned)inimanager.GetLongValue(ula, "frame", 71680);		// ZX48/128: 69888; Pentagon: 71680; ScorpionZS256: 69888;
+	
+	// Speed multiplier: 1x (default), 2x, 4x, 8x, 16x
+		config.speed_multiplier = (uint8_t)inimanager.GetLongValue(ula, "speedmultiplier", 1);
+		{
+			static const std::array<uint8_t, 5> allowedMultipliers = { 1, 2, 4, 8, 16 };
+			if (std::find(allowedMultipliers.begin(), allowedMultipliers.end(), config.speed_multiplier) == allowedMultipliers.end())
+			{
+				config.speed_multiplier = 1;  // Default to 1x if invalid value
+			}
+		}
 
 	config.border_4T = (unsigned)inimanager.GetLongValue(ula, "4TBorder", 0);
 	config.even_M1 = (unsigned)inimanager.GetLongValue(ula, "EvenM1", 0);
@@ -277,7 +289,7 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	// Beta128 section
 	config.trdos_present = inimanager.GetLongValue(beta128, "beta128", 1) ? true : false;
 	config.trdos_traps = inimanager.GetLongValue(beta128, "Traps", 1) ? true : false;
-	config.wd93_nodelay = inimanager.GetLongValue(beta128, "Fast", 1) ? true : false;
+	config.wd93_nodelay = inimanager.GetLongValue(beta128, "Fast", 0) ? true : false;  // Default: off (realistic WD1793 timing)
 	config.trdos_interleave = (uint8_t)inimanager.GetLongValue(beta128, "IL", 1) - 1;
 	if (config.trdos_interleave > 2)
 		config.trdos_interleave = 0;
@@ -314,17 +326,27 @@ bool Config::DetermineModel(const char* model, uint32_t ramsize)
 
 	CONFIG& config = _context->config;
 
+	// Null check for input parameter
+	if (model == nullptr)
+	{
+		return false;
+	}
+
 	// Search for model in lookup dictionary
 	for (uint8_t i = 0; i < N_MM_MODELS; i++)
 	{
-		if (StringHelper::CompareCaseInsensitive(model, mem_model[i].ShortName, strlen(mem_model[i].ShortName)) == 0)
+		// Null check before calling strlen to prevent crash
+		if (mem_model[i].ShortName != nullptr)
 		{
-			config.mem_model = mem_model[i].Model;
-			maxMemory = mem_model[i].AvailRAMs;
-			fullModelName = mem_model[i].FullName;
+			if (StringHelper::CompareCaseInsensitive(model, mem_model[i].ShortName, strlen(mem_model[i].ShortName)) == 0)
+			{
+				config.mem_model = mem_model[i].Model;
+				maxMemory = mem_model[i].AvailRAMs;
+				fullModelName = mem_model[i].FullName;
 
-			result = true;
-			break;
+				result = true;
+				break;
+			}
 		}
 	}
 
@@ -350,6 +372,38 @@ bool Config::DetermineModel(const char* model, uint32_t ramsize)
 	}
 
 	return result;
+}
+
+std::vector<TMemModel> Config::GetAvailableModels() const
+{
+	std::vector<TMemModel> models;
+	for (uint8_t i = 0; i < N_MM_MODELS; i++)
+	{
+		models.push_back(mem_model[i]);
+	}
+	return models;
+}
+
+const TMemModel* Config::FindModelByShortName(const std::string& shortName) const
+{
+	// Handle empty or invalid input
+	if (shortName.empty())
+	{
+		return nullptr;
+	}
+
+	for (uint8_t i = 0; i < N_MM_MODELS; i++)
+	{
+		// Null check before calling strlen to prevent crash
+		if (mem_model[i].ShortName != nullptr)
+		{
+			if (StringHelper::CompareCaseInsensitive(shortName.c_str(), mem_model[i].ShortName, strlen(mem_model[i].ShortName)) == 0)
+			{
+				return &mem_model[i];
+			}
+		}
+	}
+	return nullptr;
 }
 
 void Config::CopyStringValue(const char* src, char* dst, size_t dst_len)

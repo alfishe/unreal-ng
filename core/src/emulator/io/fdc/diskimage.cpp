@@ -39,3 +39,30 @@ void DiskImage::releaseMemory()
 }
 
 /// endregion </Helper methods>
+
+/// region <Track Change Tracking>
+
+void DiskImage::Track::markDirty()
+{
+    _dirty = true;
+    
+    // Auto-propagate to DiskImage
+    if (_diskImage)
+    {
+        _diskImage->markDirty();
+    }
+}
+
+void DiskImage::Track::markRawTrackDirty()
+{
+    _rawTrackDirty = true;
+    _dirty = true;
+    
+    // Auto-propagate to DiskImage
+    if (_diskImage)
+    {
+        _diskImage->markDirty();
+    }
+}
+
+/// endregion </Track Change Tracking>

@@ -5,15 +5,12 @@ message(">> core/src CMakeLists.txt")
 # Project named 'core' on C++
 project(core LANGUAGES CXX)
 
-# Emulated system memory mapping options
-option(ENABLE_MEMORY_MAPPING "Enable memory-mapped file support fpr emulated system RAM" ON)
-option(USE_SHAREDMEM_MAPPING "Use shared memory (shm_open) for memory mapping" ON)
-option(USE_FILE_MAPPING "Use file-based memory mapping" OFF)
+# Note: Shared memory mapping is now controlled at runtime via the 'sharedmemory' feature flag
+# (see FeatureManager). The old compile-time options ENABLE_MEMORY_MAPPING, USE_SHAREDMEM_MAPPING,
+# and USE_FILE_MAPPING have been removed.
 
-
-# Specify the C++ standard
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
+# C++ standard is set by the root CMakeLists.txt (C++20 for MSVC, C++17 for others)
+# Do not override here to maintain cross-platform compatibility
 
 # Default to Release mode
 if (NOT CMAKE_BUILD_TYPE)
@@ -41,13 +38,6 @@ set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 # Include CMake helper functions file
 include(${ROOT_DIR}/cmake/func.cmake)
 
-# Set include paths for compiler
-include_directories(
-    ${SOURCE_DIR}/
-    ${SOURCE_DIR}/common
-    ${SOURCE_DIR}/emulator
-)
-
 # liblzma
 add_subdirectory(3rdparty/liblzma)
 
@@ -71,19 +61,12 @@ if (CMAKE_BUILD_TYPE MATCHES Debug)
     target_compile_definitions(${PROJECT_NAME} PRIVATE _DEBUG)
 endif (CMAKE_BUILD_TYPE MATCHES Debug)
 
-# Pass option to the compiler
-if (ENABLE_MEMORY_MAPPING)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_MEMORY_MAPPING)
-
-    if (USE_SHAREDMEM_MAPPING)
-        target_compile_definitions(${PROJECT_NAME} PRIVATE USE_SHAREDMEM_MAPPING)
-    endif ()
-
-    if (USE_FILE_MAPPING)
-        target_compile_definitions(${PROJECT_NAME} PRIVATE USE_FILE_MAPPING)
-    endif ()
-
-endif ()
+# Set include paths for compiler
+target_include_directories(${PROJECT_NAME} PUBLIC
+    ${SOURCE_DIR}/
+    ${SOURCE_DIR}/common
+    ${SOURCE_DIR}/emulator
+)
 
 
 # 'stdafx.h' is our precompiled header
@@ -103,8 +86,12 @@ if (UNIX AND NOT APPLE)
     set(common_libraries -static-libstdc++)
 endif (UNIX AND NOT APPLE)
 
-if (WIN32)
+if (WIN32 AND MINGW)
     set(common_libraries -static-libstdc++ Shlwapi ws2_32)
+endif()
+
+if (WIN32 AND MSVC)
+    set(common_libraries Shlwapi ws2_32)
 endif()
 
 # Link all components into target binary

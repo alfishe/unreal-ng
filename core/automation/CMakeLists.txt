@@ -1,9 +1,10 @@
 cmake_minimum_required(VERSION 3.12)
 project(automation LANGUAGES CXX)
 
-# Specify the C++ standard
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
+# Explicitly set C++20 standard
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 message(">> <${PROJECT_NAME}>")
 
@@ -18,36 +19,41 @@ option(ENABLE_PYTHON_AUTOMATION "Enable automation for Python" OFF)
 option(ENABLE_WEBAPI_AUTOMATION "Enable automation for WebAPI" ON)
 option(ENABLE_CLI_AUTOMATION "Enable automation for CLI" ON)
 
+# NOTE: Python dependency checks are handled by root CMakeLists.txt via DependencyCheck.cmake
+
 # Respect parent's ENABLE_AUTOMATION option
 if (NOT ENABLE_AUTOMATION)
     set(ENABLE_LUA_AUTOMATION OFF)
     set(ENABLE_PYTHON_AUTOMATION OFF)
     set(ENABLE_WEBAPI_AUTOMATION OFF)
     set(ENABLE_CLI_AUTOMATION OFF)
-endif()
+endif ()
 
 # Add subdirectories based on automation options
 if (ENABLE_LUA_AUTOMATION)
     add_subdirectory(lua)
     set(AUTOMATION_LUA_TARGET automation_lua)
-endif()
+endif ()
 
 if (ENABLE_PYTHON_AUTOMATION)
     add_subdirectory(python)
     set(AUTOMATION_PYTHON_TARGET automation_python)
-endif()
+endif ()
 
 if (ENABLE_WEBAPI_AUTOMATION)
     add_subdirectory(webapi)
-    set(AUTOMATION_WEBAPI_TARGET automation_webapi)
-endif()
+    # webapi/CMakeLists.txt may set ENABLE_WEBAPI_AUTOMATION=OFF (e.g. missing OpenSSL)
+    if (ENABLE_WEBAPI_AUTOMATION)
+        set(AUTOMATION_WEBAPI_TARGET automation_webapi)
+    endif ()
+endif ()
 
 if (ENABLE_CLI_AUTOMATION)
     add_subdirectory(cli)
     set(AUTOMATION_CLI_TARGET automation-cli)
-endif()
+endif ()
 
-set(SOURCES
+set (SOURCES
     automation.cpp
     automation.h
 )
@@ -69,8 +75,6 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     target_include_directories(${PROJECT_NAME} PRIVATE
         $<TARGET_PROPERTY:unrealng::core,INCLUDE_DIRECTORIES>
     )
-    
-
 
     if (APPLE)
         target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)
@@ -86,15 +90,17 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         list(APPEND common_libraries Threads::Threads)
     endif()
 
+    # Link all automation libraries conditionally (based on their settings)
+    target_link_libraries(${PROJECT_NAME}
+        PRIVATE
+            $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:automation_lua>          # Conditional linking
+            $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:automation_python>    # Conditional linking
+            $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:automation_webapi>    # Conditional linking
+            $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:automation-cli>          # Conditional linking
 
-    target_link_libraries(${PROJECT_NAME} PRIVATE
-        $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:automation_lua>          # Conditional linking
-        $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:automation_python>    # Conditional linking
-        $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:automation_webapi>    # Conditional linking
-        $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:automation-cli>          # Conditional linking for CLI
-
-        unrealng::core
-        ${common_libraries}
+        PUBLIC
+            unrealng::core
+            ${common_libraries}
     )
 
     # Copy default config file to binary folder after successful compilation
@@ -120,8 +126,8 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         COMMAND ${CMAKE_COMMAND} -E
         copy_directory ${DATA_PATH}/testrom ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom
     )
-else()
-    # Produce static library;  Create unrealng::automation_lua alias for the target
+else ()
+    # Produce static library;  Create unrealng::automation alias for the target
     add_library(${PROJECT_NAME} STATIC ${SOURCES})
     add_library(unrealng::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
@@ -129,29 +135,28 @@ else()
         $<TARGET_PROPERTY:unrealng::core,INCLUDE_DIRECTORIES>
     )
 
-    # Link all automation libraries
-    if(ENABLE_CLI_AUTOMATION)
-        target_link_libraries(${PROJECT_NAME} PRIVATE
-            ${AUTOMATION_CLI_TARGET}
-            ${AUTOMATION_LUA_TARGET}
-            ${AUTOMATION_PYTHON_TARGET}
-            ${AUTOMATION_WEBAPI_TARGET}
-        )
-    else()
-        target_link_libraries(${PROJECT_NAME} PRIVATE
+    # Link all automation libraries conditionally (based on their settings)
+    # NOTE: Automation sublibraries are linked PUBLIC, not PRIVATE, because they contain
+    # template instantiations (e.g., sol2 bindings in automation_lua) that need to be
+    # visible to the final executable. With PRIVATE linkage, the linker may not pull in
+    # these symbols when linking static libraries transitively.
+    target_link_libraries(${PROJECT_NAME}
+        PUBLIC
+            $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:${AUTOMATION_CLI_TARGET}>
             $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${AUTOMATION_LUA_TARGET}>
             $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${AUTOMATION_PYTHON_TARGET}>
             $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:${AUTOMATION_WEBAPI_TARGET}>
-        )
-    endif()
-endif()
+            unrealng::core
+    )
+endif ()
 
 target_include_directories(${PROJECT_NAME} PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/
     ${ROOT_DIR}/core/automation
-    $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:$<TARGET_PROPERTY:unrealng::automation_lua,INCLUDE_DIRECTORIES>>
-    $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:$<TARGET_PROPERTY:unrealng::automation_python,INCLUDE_DIRECTORIES>>
-    $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:$<TARGET_PROPERTY:unrealng::automation_webapi,INCLUDE_DIRECTORIES>>
+    $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/lua/src>
+    $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/lua/lib/sol2/sol2-3.5.0/include>
+    $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/python/src>
+    $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/webapi/src>
     $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/cli/include>
 )
 

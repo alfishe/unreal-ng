@@ -1,0 +1,19 @@
+# Default whitelist for videowall snapshot testing
+# This file contains allowed snapshots loaded when no --whitelist parameter is specified
+# Each line contains one exact snapshot filename with extension
+# Lines starting with # are comments and ignored
+# All .sna files from testdata/loaders/sna/ are included - remove unwanted ones manually
+
+7threality.sna
+action.sna
+aleste1.sna
+atarin.sna
+atebit.sna
+Dizzy X.sna
+Dizzy Y.sna
+eyeache1.sna
+insult-2.sna
+insult-3.sna
+s4b-1.sna
+s4b-2.sna
+vibrations.sna

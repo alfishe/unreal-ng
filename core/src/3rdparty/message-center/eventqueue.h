@@ -94,7 +94,7 @@ public:
     std::string _payloadText;
 
 public:
-    SimpleTextPayload(std::string& text) : MessagePayload() { _payloadText = std::string(text); };
+    SimpleTextPayload(const std::string& text) : MessagePayload() { _payloadText = text; };
     SimpleTextPayload(const char* text) : MessagePayload() { _payloadText = std::string(text); };
     virtual ~SimpleTextPayload() = default;
 };
@@ -110,6 +110,7 @@ public:
     SimpleNumberPayload(uint32_t value) : MessagePayload() { _payloadNumber = value; };
     virtual ~SimpleNumberPayload() = default;
 };
+
 
 /// Allows to transfer uint8_t data blocks (as std::vector<uint8_t> in MessageCenter message
 /// std::move for parameter is mandatory since we don't want double copy for all content

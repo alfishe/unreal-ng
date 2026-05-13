@@ -5,15 +5,73 @@ project(automation_webapi
     LANGUAGES CXX
 )
 
-# Specify the C++ standard
-set(CMAKE_CXX_STANDARD 17)
+# Explicitly set C++20 standard (required by Drogon and project)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Set paths
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 # Set CMake policy to allow linking to targets in other directories
 cmake_policy(SET CMP0079 NEW)
+
+# Find OpenSSL (required by Drogon/Trantor)
+# Try to find OpenSSL, and if it fails, set the root directory explicitly
+find_package(OpenSSL QUIET)
+if (NOT OpenSSL_FOUND)
+    # Fallback: set OpenSSL root directory for Homebrew on ARM64 macOS
+    if (APPLE AND EXISTS "/opt/homebrew/opt/openssl")
+        set(OPENSSL_ROOT_DIR "/opt/homebrew/opt/openssl")
+        set(OPENSSL_LIBRARIES "/opt/homebrew/opt/openssl/lib/libssl.dylib;/opt/homebrew/opt/openssl/lib/libcrypto.dylib")
+        set(OPENSSL_INCLUDE_DIR "/opt/homebrew/opt/openssl/include")
+        message(STATUS "[automation_webapi] Using OpenSSL from Homebrew: ${OPENSSL_ROOT_DIR}")
+    # Fallback: Windows OpenSSL installations
+    elseif (WIN32)
+        # Check common Windows OpenSSL installation paths
+        set(OPENSSL_SEARCH_PATHS
+            "C:/Program Files/OpenSSL-Win64"
+            "C:/OpenSSL-Win64"
+            "$ENV{OPENSSL_ROOT_DIR}"
+        )
+
+        # For MSVC, also check vcpkg paths
+        if(MSVC AND DEFINED ENV{VCPKG_ROOT})
+            list(APPEND OPENSSL_SEARCH_PATHS "$ENV{VCPKG_ROOT}/installed/x64-windows")
+        endif()
+
+        foreach(OPENSSL_PATH ${OPENSSL_SEARCH_PATHS})
+            if(EXISTS "${OPENSSL_PATH}/include/openssl/ssl.h")
+                set(OPENSSL_ROOT_DIR "${OPENSSL_PATH}")
+                message(STATUS "[automation_webapi] Using OpenSSL from: ${OPENSSL_ROOT_DIR}")
+                break()
+            endif()
+        endforeach()
+    endif ()
+    find_package(OpenSSL QUIET)
+endif ()
+
+if (NOT OpenSSL_FOUND)
+    if(WIN32 AND MSVC)
+        message(WARNING
+            "[automation_webapi] OpenSSL not found for MSVC — WebAPI automation disabled.\n"
+            "  To enable, install vcpkg and OpenSSL:\n"
+            "    git clone https://github.com/microsoft/vcpkg C:/vcpkg\n"
+            "    C:\\vcpkg\\bootstrap-vcpkg.bat\n"
+            "    vcpkg install openssl:x64-windows-static\n"
+            "    vcpkg integrate install\n"
+            "  Then reconfigure with:\n"
+            "    -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake\n"
+            "    -DVCPKG_TARGET_TRIPLET=x64-windows-static"
+        )
+    else()
+        message(WARNING "[automation_webapi] OpenSSL not found — WebAPI automation disabled.")
+    endif()
+    # Propagate the disabled state so the parent doesn't try to link against
+    # a target that was never created.
+    set(ENABLE_WEBAPI_AUTOMATION OFF PARENT_SCOPE)
+    return()
+endif ()
 
 # Find or build zlib for Drogon
 option(BUILD_ZLIB "Build zlib from source" ON)
@@ -36,11 +94,10 @@ if (BUILD_ZLIB)
     set(zlib_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/zlib" CACHE PATH "zlib source directory" FORCE)
     set(zlib_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/zlib CACHE PATH "zlib binary directory" FORCE)
 
-    # Add zlib as a subproject
+    # Add zlib as a subproject (must be included in build to generate libz.a)
     add_subdirectory(
         ${zlib_SOURCE_DIR}
         ${zlib_BINARY_DIR}
-        EXCLUDE_FROM_ALL
     )
 
     # Set the actual library target name
@@ -54,31 +111,43 @@ if (BUILD_ZLIB)
     )
     
     # Set variables for find_package compatibility
+    # Use the target name for linking - CMake will resolve the actual library path
     set(ZLIB_FOUND TRUE CACHE BOOL "ZLIB found (bundled)" FORCE)
-    set(ZLIB_INCLUDE_DIRS ${zlib_BINARY_DIR} ${ZLIB_SOURCE_DIR} CACHE PATH "ZLIB include directories" FORCE)
+    set(ZLIB_INCLUDE_DIRS ${zlib_BINARY_DIR} ${zlib_SOURCE_DIR} CACHE PATH "ZLIB include directories" FORCE)
     set(ZLIB_LIBRARIES ${ZLIB_TARGET_NAME} CACHE STRING "ZLIB libraries" FORCE)
-    set(ZLIB_LIBRARY_PATH "${CMAKE_CURRENT_BINARY_DIR}/zlib/libz.a" CACHE INTERNAL "Path to zlib library" FORCE)
     set(ZLIB_VERSION_STRING "1.3.1" CACHE STRING "ZLIB version" FORCE)
 
-    # Make sure the library is built before anything that depends on it
-    add_dependencies(${ZLIB_TARGET_NAME} ${ZLIB_TARGET_NAME})
+    # Set include directories for find_package compatibility
     set(ZLIB_INCLUDE_DIRS 
-        ${ZLIB_SOURCE_DIR}
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib
+        ${zlib_SOURCE_DIR}
+        ${zlib_BINARY_DIR}
         CACHE INTERNAL "ZLIB include directories (bundled)" FORCE
     )
     set(ZLIB_INCLUDE_DIR 
-        ${ZLIB_SOURCE_DIR}
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib
+        ${zlib_SOURCE_DIR}
+        ${zlib_BINARY_DIR}
         CACHE INTERNAL "ZLIB include directory (bundled)" FORCE
     )
-    set(ZLIB_LIBRARY ${ZLIB_LIBRARY_PATH} CACHE INTERNAL "ZLIB library (bundled)" FORCE)
+    # Use target name instead of file path - CMake will resolve the actual file at link time
+    set(ZLIB_LIBRARY ${ZLIB_TARGET_NAME} CACHE INTERNAL "ZLIB library (bundled)" FORCE)
 
-    # Set output name to just 'z' for compatibility
+    # Set output directory and name for predictable library location
     set_target_properties(${ZLIB_TARGET_NAME} PROPERTIES
         OUTPUT_NAME z
         POSITION_INDEPENDENT_CODE ON
+        ARCHIVE_OUTPUT_DIRECTORY "${zlib_BINARY_DIR}"
     )
+    
+    # Create ZLIB::ZLIB IMPORTED target that Drogon expects from find_package(ZLIB)
+    # Using INTERFACE IMPORTED that links to zlibstatic creates proper build dependency
+    # while also being compatible with Drogon's export (INTERFACE targets don't need to be exported)
+    if(NOT TARGET ZLIB::ZLIB)
+        add_library(ZLIB::ZLIB INTERFACE IMPORTED GLOBAL)
+        set_target_properties(ZLIB::ZLIB PROPERTIES
+            INTERFACE_LINK_LIBRARIES "${ZLIB_TARGET_NAME}"
+            INTERFACE_INCLUDE_DIRECTORIES "${zlib_SOURCE_DIR};${CMAKE_CURRENT_BINARY_DIR}/zlib"
+        )
+    endif()
     
     # Export the target for other subdirectories
     set(ZLIB_TARGET ${ZLIB_TARGET_NAME} CACHE INTERNAL "ZLIB target" FORCE)
@@ -113,158 +182,9 @@ set(BUILD_OBJECT_LIBS OFF CACHE BOOL "" FORCE)
 # Add jsoncpp subdirectory
 add_subdirectory("lib/jsoncpp")
 
-# Set include directories for jsoncpp
-target_include_directories(jsoncpp_static INTERFACE
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/lib/jsoncpp/include>
-    $<INSTALL_INTERFACE:include>
-)
+install(TARGETS jsoncpp_static EXPORT DrogonTargets)
 
-# Create an alias for easier linking
-add_library(Jsoncpp::Jsoncpp ALIAS jsoncpp_static)
 
-# Export jsoncpp_static target
-install(TARGETS jsoncpp_static
-    EXPORT DrogonTargets
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib
-    RUNTIME DESTINATION bin
-    INCLUDES DESTINATION include
-)
-
-# Also export to JsoncppTargets for backward compatibility
-install(TARGETS jsoncpp_static
-    EXPORT JsoncppTargets
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib
-    RUNTIME DESTINATION bin
-    INCLUDES DESTINATION include
-)
-
-# Create a simple interface library for Drogon to find
-add_library(Jsoncpp_lib INTERFACE)
-target_link_libraries(Jsoncpp_lib INTERFACE jsoncpp_static)
-target_include_directories(Jsoncpp_lib INTERFACE
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/lib/jsoncpp/include>
-    $<INSTALL_INTERFACE:include>
-)
-
-# Export Jsoncpp_lib target for Drogon to find
-# Using DrogonTargets to match Drogon's export set
-install(TARGETS Jsoncpp_lib
-    EXPORT DrogonTargets
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib
-    RUNTIME DESTINATION bin
-    INCLUDES DESTINATION include
-)
-
-# Also export to JsoncppTargets for backward compatibility
-install(TARGETS Jsoncpp_lib
-    EXPORT JsoncppTargets
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib
-    RUNTIME DESTINATION bin
-    INCLUDES DESTINATION include
-)
-
-# Set up JSONCPP package configuration
-set(JSONCPP_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lib/jsoncpp/include CACHE PATH "JSONCPP include directory" FORCE)
-set(JSONCPP_INCLUDE_DIRS ${JSONCPP_INCLUDE_DIR} CACHE PATH "JSONCPP include directories" FORCE)
-set(JSONCPP_LIBRARY jsoncpp_static CACHE STRING "JSONCPP library" FORCE)
-set(JSONCPP_LIBRARIES jsoncpp_static CACHE STRING "JSONCPP libraries" FORCE)
-set(JSONCPP_FOUND TRUE CACHE BOOL "JSONCPP found" FORCE)
-
-# Export variables to parent scope
-set(JSONCPP_INCLUDE_DIR ${JSONCPP_INCLUDE_DIR} PARENT_SCOPE)
-set(JSONCPP_INCLUDE_DIRS ${JSONCPP_INCLUDE_DIRS} PARENT_SCOPE)
-set(JSONCPP_LIBRARY ${JSONCPP_LIBRARY} PARENT_SCOPE)
-set(JSONCPP_LIBRARIES ${JSONCPP_LIBRARIES} PARENT_SCOPE)
-set(JSONCPP_FOUND ${JSONCPP_FOUND} PARENT_SCOPE)
-
-# Create a simple config file for the build tree
-file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/cmake/Jsoncpp)
-
-# Create a simple JsoncppConfig.cmake file
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/cmake/Jsoncpp/JsoncppConfig.cmake"
-"# JSONCPP CMake configuration file
-include(CMakeFindDependencyMacro)
-
-# Get the current directory
-get_filename_component(JSONCPP_CMAKE_DIR \"\${CMAKE_CURRENT_LIST_DIR}\" ABSOLUTE)
-get_filename_component(JSONCPP_INSTALL_PREFIX \"\${JSONCPP_CMAKE_DIR}/../../..\" ABSOLUTE)
-
-# Import the jsoncpp_static target
-if(NOT TARGET jsoncpp_static)
-    add_library(jsoncpp_static STATIC IMPORTED)
-    
-    # Set the import location
-    if(WIN32)
-        set(JSONCPP_LIBRARY_PATH \"\${JSONCPP_INSTALL_PREFIX}/lib/jsoncpp_static.lib\")
-    else()
-        set(JSONCPP_LIBRARY_PATH \"\${JSONCPP_INSTALL_PREFIX}/lib/libjsoncpp_static.a\")
-    endif()
-    
-    set_target_properties(jsoncpp_static PROPERTIES
-        IMPORTED_LOCATION \"\${JSONCPP_LIBRARY_PATH}\"
-        INTERFACE_INCLUDE_DIRECTORIES \"\${JSONCPP_INSTALL_PREFIX}/include\"
-    )
-    add_library(Jsoncpp::Jsoncpp ALIAS jsoncpp_static)
-endif()
-
-set(JSONCPP_FOUND TRUE)
-set(JSONCPP_INCLUDE_DIRS \"\${JSONCPP_INSTALL_PREFIX}/include\")
-set(JSONCPP_LIBRARIES jsoncpp_static)
-")
-
-# Create a simple version file
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/cmake/Jsoncpp/JsoncppConfigVersion.cmake"
-"set(PACKAGE_VERSION \"1.9.5\")
-
-# Check whether the requested version is compatible
-if(\"\${PACKAGE_FIND_VERSION}\" VERSION_GREATER \"\${PACKAGE_VERSION}\")
-    set(PACKAGE_VERSION_COMPATIBLE FALSE)
-else()
-    set(PACKAGE_VERSION_COMPATIBLE TRUE)
-    if(\"\${PACKAGE_FIND_VERSION}\" VERSION_EQUAL \"\${PACKAGE_VERSION}\")
-        set(PACKAGE_VERSION_EXACT TRUE)
-    endif()
-endif()
-")
-
-# Create a simple JsoncppTargets.cmake
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/cmake/Jsoncpp/JsoncppTargets.cmake"
-"# JSONCPP CMake targets file
-
-# Create imported target jsoncpp_static
-add_library(jsoncpp_static STATIC IMPORTED)
-
-set_target_properties(jsoncpp_static PROPERTIES
-  INTERFACE_INCLUDE_DIRECTORIES \"${CMAKE_CURRENT_SOURCE_DIR}/lib/jsoncpp/include\"
-)
-
-# Import target \"jsoncpp_static\" for configuration \"\"
-set_property(TARGET jsoncpp_static APPEND PROPERTY IMPORTED_CONFIGURATIONS NOCONFIG)
-set_target_properties(jsoncpp_static PROPERTIES
-  IMPORTED_LINK_INTERFACE_LANGUAGES_NOCONFIG \"CXX\"
-  IMPORTED_LOCATION_NOCONFIG \"${CMAKE_CURRENT_BINARY_DIR}/libjsoncpp_static.a\"
-  )
-
-# Create alias target Jsoncpp::Jsoncpp
-add_library(Jsoncpp::Jsoncpp ALIAS jsoncpp_static)
-")
-
-# Help Drogon find jsoncpp
-set(Jsoncpp_DIR ${CMAKE_CURRENT_BINARY_DIR}/cmake/Jsoncpp CACHE PATH "Path to JsoncppConfig.cmake" FORCE)
-
-# Install the config files
-install(
-    FILES
-        "${CMAKE_CURRENT_BINARY_DIR}/cmake/Jsoncpp/JsoncppConfig.cmake"
-        "${CMAKE_CURRENT_BINARY_DIR}/cmake/Jsoncpp/JsoncppConfigVersion.cmake"
-        "${CMAKE_CURRENT_BINARY_DIR}/cmake/Jsoncpp/JsoncppTargets.cmake"
-    DESTINATION
-        lib/cmake/Jsoncpp
-)
 
 # Set specific build options for Drogon framework (located in lib/drogon)
 set(BUILD_CTL OFF CACHE BOOL "Build drogon_ctl" FORCE)
@@ -291,6 +211,23 @@ set(COMMON_SOURCES
     src/hello_world_api.h
     src/emulator_api.cpp
     src/emulator_api.h
+    src/openapi_spec.cpp
+    src/api/lifecycle_api.cpp
+    src/api/settings_api.cpp
+    src/api/features_api.cpp
+    src/api/state_memory_api.cpp
+    src/api/state_screen_api.cpp
+    src/api/state_audio_api.cpp
+    src/api/tape_disk_api.cpp
+    src/api/snapshot_api.cpp
+    src/api/interpreter_api.cpp
+    src/api/interpreter_api.h
+    src/api/basic_api.cpp
+    src/api/analyzers_api.cpp
+    src/api/debug_api.cpp
+    src/api/capture_api.cpp
+    src/api/profiler_api.cpp
+    src/api/keyboard_api.cpp
     src/emulator_websocket.cpp
     src/emulator_websocket.h
     src/automation-webapi.cpp
@@ -322,23 +259,33 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         jsoncpp_static
     )
     
-    # Link with zlib if it's being built
+    # Note: zlib is linked transitively through Drogon, so we don't need to link it explicitly here
+    # This avoids duplicate library warnings. Drogon will use the zlib we configured via ZLIB_LIBRARIES
     if (BUILD_ZLIB)
-        message(STATUS "[${PROJECT_NAME}] Linking with zlib: ${ZLIB_TARGET_NAME}")
-        
-        # Add dependency on zlib
+        # Ensure zlib is built before automation_webapi (Drogon depends on it)
         add_dependencies(${PROJECT_NAME} ${ZLIB_TARGET_NAME})
         
-        # Link with zlib
-        target_link_libraries(${PROJECT_NAME} PRIVATE ${ZLIB_TARGET_NAME})
-        
-        # Add zlib include directories
+        # Include directories are still needed for compilation
         target_include_directories(${PROJECT_NAME} PRIVATE ${ZLIB_INCLUDE_DIRS})
     endif()
 
-
+    # Copy HTML resources to build directory (multiple locations for flexibility)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/html
+        ${CMAKE_BINARY_DIR}/resources/html
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/html
+        ${CMAKE_BINARY_DIR}/bin/resources/html
+        COMMENT "Copying HTML resources to build directory"
+    )
 
 else () # Called from upper level CMake => build static library
+    # Find Python3 for pybind11 headers
+    if (ENABLE_PYTHON_AUTOMATION)
+        find_package(Python3 COMPONENTS Development)
+    endif()
+
     # Create the webapi library
     add_library(${PROJECT_NAME} STATIC
         ${COMMON_SOURCES}
@@ -350,6 +297,14 @@ else () # Called from upper level CMake => build static library
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${JSONCPP_INCLUDE_DIRS}
         ${ROOT_DIR}/core/src
+        ${ROOT_DIR}/core/automation  # For automation/automation.h
+        $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${ROOT_DIR}/core/automation/lua/src>
+        $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${ROOT_DIR}/core/automation/lua/lib/sol2/sol2-3.5.0/include>
+        $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${ROOT_DIR}/core/automation/lua/lib/lua/lua-5.4.7/src>
+        $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${ROOT_DIR}/core/automation/python/src>
+        $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${ROOT_DIR}/core/automation/python/3rdparty/pybind11/include>
+        $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${Python3_INCLUDE_DIRS}>
+        $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:${ROOT_DIR}/core/automation/cli/include>
     )
 
     target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -357,21 +312,28 @@ else () # Called from upper level CMake => build static library
         jsoncpp_static
     )
 
+    # Add conditional compiler definitions for automation modules
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+        $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:ENABLE_LUA_AUTOMATION>
+        $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:ENABLE_PYTHON_AUTOMATION>
+        $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:ENABLE_WEBAPI_AUTOMATION>
+        $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:ENABLE_CLI_AUTOMATION>
+    )
+
     # Ensure dependencies are built first
     add_dependencies(${PROJECT_NAME}
         jsoncpp_static
     )
 
+    # Note: zlib is linked transitively through Drogon, so we don't need to link it explicitly here
+    # This avoids duplicate library warnings. Drogon will use the zlib we configured via ZLIB_LIBRARIES
     if (BUILD_ZLIB)
-        message(STATUS "[${PROJECT_NAME}] Linking with zlib: ${ZLIB_TARGET_NAME}")
+        # Ensure zlib is built before automation_webapi (Drogon depends on it)
         add_dependencies(${PROJECT_NAME}
             ${ZLIB_TARGET_NAME}
         )
-
-        target_link_libraries(${PROJECT_NAME} PRIVATE
-            ${ZLIB_TARGET_NAME}
-        )
-
+        
+        # Include directories are still needed for compilation
         target_include_directories(${PROJECT_NAME} PRIVATE
             ${ZLIB_INCLUDE_DIRS}
         )
@@ -379,6 +341,35 @@ else () # Called from upper level CMake => build static library
 
     # Create alias for the library
     add_library(unrealng::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
+    
+    # Copy HTML resources to build directory (multiple locations for flexibility)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/html
+        ${CMAKE_BINARY_DIR}/resources/html
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/html
+        ${CMAKE_BINARY_DIR}/bin/resources/html
+        COMMENT "Copying HTML resources to build directory"
+    )
+    
+    # Install HTML resources for deployment
+    # For macOS .app bundles
+    if(APPLE)
+        install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/resources/html/
+                DESTINATION "${CMAKE_INSTALL_PREFIX}/unreal-qt.app/Contents/Resources/html"
+                OPTIONAL)
+    endif()
+    
+    # For standard installations (Linux, Windows, macOS non-bundle)
+    install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/resources/html/
+            DESTINATION "share/unreal-speccy/resources/html"
+            OPTIONAL)
+    
+    # Also install alongside executable for portable deployments
+    install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/resources/html/
+            DESTINATION "bin/resources/html"
+            OPTIONAL)
 endif ()
 
 

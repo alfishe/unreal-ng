@@ -29,9 +29,9 @@
 #ifndef gif_h
 #define gif_h
 
+#include <stdint.h>  // for integer typedefs
 #include <stdio.h>   // for FILE*
 #include <string.h>  // for memcpy and bzero
-#include <stdint.h>  // for integer typedefs
 
 // Define these macros to hook into a custom memory allocator.
 // TEMP_MALLOC and TEMP_FREE will only be called in stack fashion - frees in the reverse order of mallocs
@@ -76,6 +76,29 @@ struct GifPalette
     uint8_t treeSplit[256];
 };
 
+// Hash table for O(1) exact color lookup
+// Uses open addressing with linear probing for simplicity
+// Size is 512 entries to keep load factor < 0.5 for 256 colors
+struct GifColorLookup
+{
+    static constexpr int TABLE_SIZE = 512;  // Power of 2 for fast modulo
+    uint32_t keys[TABLE_SIZE];              // ABGR color value
+    uint8_t values[TABLE_SIZE];             // Palette index
+    bool occupied[TABLE_SIZE];              // Whether slot is occupied
+    uint16_t numColors;                     // Number of colors in lookup (up to 256)
+    bool valid;                             // Whether lookup has been built
+};
+
+// Build hash lookup table from palette
+void GifBuildColorLookup(GifColorLookup* lookup, const GifPalette* pPal);
+
+// Get exact palette index for ABGR color (returns 0 if not found)
+uint8_t GifGetColorIndex(const GifColorLookup* lookup, uint32_t abgrColor);
+
+// Threshold image using hash lookup for exact color matching
+void GifThresholdImageExact(const uint8_t* lastFrame, const uint8_t* nextFrame, uint8_t* outFrame, uint32_t width,
+                            uint32_t height, const GifColorLookup* lookup, GifPalette* pPal);
+
 // max, min, and abs functions
 int GifIMax(int l, int r);
 int GifIMin(int l, int r);
@@ -96,24 +119,27 @@ int GifPartition(uint8_t* image, const int left, const int right, const int elt,
 void GifPartitionByMedian(uint8_t* image, int left, int right, int com, int neededCenter);
 
 // Builds a palette by creating a balanced k-d tree of all pixels in the image
-void GifSplitPalette(uint8_t* image, int numPixels, int firstElt, int lastElt, int splitElt, int splitDist, int treeNode, bool buildForDither, GifPalette* pal);
+void GifSplitPalette(uint8_t* image, int numPixels, int firstElt, int lastElt, int splitElt, int splitDist,
+                     int treeNode, bool buildForDither, GifPalette* pal);
 
 // Finds all pixels that have changed from the previous image and
 // moves them to the fromt of th buffer.
 // This allows us to build a palette optimized for the colors of the
 // changed pixels only.
-int GifPickChangedPixels( const uint8_t* lastFrame, uint8_t* frame, int numPixels );
+int GifPickChangedPixels(const uint8_t* lastFrame, uint8_t* frame, int numPixels);
 
 // Creates a palette by placing all the image pixels in a k-d tree and then averaging the blocks at the bottom.
 // This is known as the "modified median split" technique
-void GifMakePalette( const uint8_t* lastFrame, const uint8_t* nextFrame, uint32_t width, uint32_t height, int bitDepth, bool buildForDither, GifPalette* pPal );
+void GifMakePalette(const uint8_t* lastFrame, const uint8_t* nextFrame, uint32_t width, uint32_t height, int bitDepth,
+                    bool buildForDither, GifPalette* pPal);
 
 // Implements Floyd-Steinberg dithering, writes palette value to alpha
-void GifDitherImage( const uint8_t* lastFrame, const uint8_t* nextFrame, uint8_t* outFrame, uint32_t width, uint32_t height, GifPalette* pPal );
+void GifDitherImage(const uint8_t* lastFrame, const uint8_t* nextFrame, uint8_t* outFrame, uint32_t width,
+                    uint32_t height, GifPalette* pPal);
 
 // Picks palette colors for the image using simple thresholding, no dithering
-void GifThresholdImage( const uint8_t* lastFrame, const uint8_t* nextFrame, uint8_t* outFrame, uint32_t width, uint32_t height, GifPalette* pPal );
-
+void GifThresholdImage(const uint8_t* lastFrame, const uint8_t* nextFrame, uint8_t* outFrame, uint32_t width,
+                       uint32_t height, GifPalette* pPal);
 
 // Simple structure to write out the LZW-compressed portion of the image
 // one bit at a time
@@ -123,16 +149,16 @@ struct GifBitStatus
     uint8_t byte;      // current partial byte
 
     uint32_t chunkIndex;
-    uint8_t chunk[256];   // bytes are written in here until we have 256 of them, then written to the file
+    uint8_t chunk[256];  // bytes are written in here until we have 256 of them, then written to the file
 };
 
 // insert a single bit
-void GifWriteBit( GifBitStatus& stat, uint32_t bit );
+void GifWriteBit(GifBitStatus& stat, uint32_t bit);
 
 // write all bytes so far to the file
-void GifWriteChunk( FILE* f, GifBitStatus& stat );
+void GifWriteChunk(FILE* f, GifBitStatus& stat);
 
-void GifWriteCode( FILE* f, GifBitStatus& stat, uint32_t code, uint32_t length );
+void GifWriteCode(FILE* f, GifBitStatus& stat, uint32_t code, uint32_t length);
 
 // The LZW dictionary is a 256-ary tree constructed as the file is encoded,
 // this is one node
@@ -142,11 +168,11 @@ struct GifLzwNode
 };
 
 // write a 256-color (8-bit) image palette to the file
-void GifWritePalette( const GifPalette* pPal, FILE* f );
+void GifWritePalette(const GifPalette* pPal, FILE* f);
 
 // write the image header, LZW-compress and write out the image
-void GifWriteLzwImage(FILE* f, uint8_t* image, uint32_t left, uint32_t top,  uint32_t width, uint32_t height, uint32_t delay, GifPalette* pPal);
-
+void GifWriteLzwImage(FILE* f, uint8_t* image, uint32_t left, uint32_t top, uint32_t width, uint32_t height,
+                      uint32_t delay, GifPalette* pPal);
 
 struct GifWriter
 {
@@ -158,21 +184,48 @@ struct GifWriter
 
 // Creates a gif file.
 // The input GIFWriter is assumed to be uninitialized.
-// The delay value is the time between frames in hundredths of a second - note that not all viewers pay much attention to this value.
-bool GifBegin( GifWriter* writer, const char* filename, uint32_t width, uint32_t height, uint32_t delay, int32_t bitDepth = 8, bool dither = false );
-
+// The delay value is the time between frames in hundredths of a second - note that not all viewers pay much attention
+// to this value.
+bool GifBegin(GifWriter* writer, const char* filename, uint32_t width, uint32_t height, uint32_t delay,
+              int32_t bitDepth = 8, bool dither = false);
 
 // Writes out a new frame to a GIF in progress.
 // The GIFWriter should have been created by GIFBegin.
 // AFAIK, it is legal to use different bit depths for different frames of an image -
 // this may be handy to save bits in animations that don't change much.
-bool GifWriteFrame( GifWriter* writer, const uint8_t* image, uint32_t width, uint32_t height, uint32_t delay, int bitDepth = 8, bool dither = false );
+bool GifWriteFrame(GifWriter* writer, const uint8_t* image, uint32_t width, uint32_t height, uint32_t delay,
+                   int bitDepth = 8, bool dither = false);
 
+// Writes out a new frame using a pre-built palette (fast path - skips palette calculation).
+// Use this when the color palette is known and fixed (e.g., ZX Spectrum 16 colors).
+bool GifWriteFrameFast(GifWriter* writer, const uint8_t* image, uint32_t width, uint32_t height, uint32_t delay,
+                       GifPalette* palette, bool dither = false);
+
+// Builds a k-d tree for the palette (required for fast color lookup)
+void GifBuildPaletteTree(GifPalette* pPal);
+
+// Direct ZX Spectrum palette index lookup (O(1) - bypasses k-d tree)
+// Only valid for exact ZX Spectrum palette colors
+// Returns palette index 0-15 for standard ZX colors
+uint8_t GifGetZXPaletteIndexDirect(uint8_t r, uint8_t g, uint8_t b);
+
+// Optimized threshold for ZX Spectrum palette (uses direct lookup)
+void GifThresholdImageZX(const uint8_t* lastFrame, const uint8_t* nextFrame, uint8_t* outFrame, uint32_t width,
+                         uint32_t height, GifPalette* pPal);
+
+// Writes a frame using ZX-optimized direct palette lookup (fastest path for ZX content)
+// Combines fixed palette + direct index lookup for maximum performance
+bool GifWriteFrameZX(GifWriter* writer, const uint8_t* image, uint32_t width, uint32_t height, uint32_t delay,
+                     GifPalette* palette);
+
+// Writes a frame using hash lookup for exact color matching (works with any palette)
+// Faster than k-d tree for fixed palettes, ensures exact color matching
+bool GifWriteFrameExact(GifWriter* writer, const uint8_t* image, uint32_t width, uint32_t height, uint32_t delay,
+                        GifPalette* palette, const GifColorLookup* lookup);
 
 // Writes the EOF code, closes the file handle, and frees temp memory used by a GIF.
 // Many if not most viewers will still display a GIF properly if the EOF code is missing,
 // but it's still a good idea to write it out.
-bool GifEnd( GifWriter* writer );
-
+bool GifEnd(GifWriter* writer);
 
 #endif

@@ -23,8 +23,35 @@ PortDecoder_Scorpion256::~PortDecoder_Scorpion256()
 
 void PortDecoder_Scorpion256::reset()
 {
+    // Scorpion 256 ROM setup
+    // Similar to Spectrum 128K
+    // Bit 4 of port 0x7FFD: 0 = SOS ROM, 1 = 128K ROM
+
+    // Explicitly reset port states to ensure consistent reset behavior
+    EmulatorState& state = _context->emulatorState;
+    state.p7FFD = 0x00;     // Reset port 0x7FFD to default (Screen 0, RAM bank 0, SOS ROM, paging enabled)
+    state.pBFFD = 0x00;     // Reset AY register select port
+    state.pFFFD = 0x00;     // Reset AY data port
+    state.pFE = 0xFF;       // Reset ULA port (border white, no sound)
+
+    // Set default 128K memory pages
+    Memory& memory = *_context->pMemory;
+    memory.SetROMMode(RM_SOS);      // SOS ROM at reset
+    memory.SetRAMPageToBank1(5);
+    memory.SetRAMPageToBank2(2);
+    memory.SetRAMPageToBank3(0);
+
+    // Set default border color to white
+    _screen->SetBorderColor(COLOR_WHITE);
+
     // Reset memory paging lock latch
     _7FFD_Locked = false;
+
+    // Explicitly force screen to SCREEN_NORMAL
+    _screen->SetActiveScreen(SCREEN_NORMAL);
+
+    // Set default memory paging state
+    Port_7FFD(0x00, 0x0000);
 }
 
 uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
@@ -34,9 +61,6 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
     /// endregion </Override submodule>
 
     uint8_t result = 0xFF;
-
-    // Handle common part (like breakpoints)
-    PortDecoder::DecodePortIn(port, pc);
 
     if (IsPort_FE(port))
     {
@@ -55,6 +79,9 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
     }
     /// endregion </Debug logging>
 
+    // Universal handler for breakpoints, tracking, analyzers
+    OnPortInComplete(port, result, pc);
+
     return result;
 }
 
@@ -67,9 +94,6 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
     //    ZX Spectrum 128 +2A/+2B/+3
     //    port: #7FFD
     //    port: #1FFD
-
-    // Handle common part (like breakpoints)
-    PortDecoder::DecodePortOut(port, value, pc);
 
     bool isPort_7FFD = IsPort_7FFD(port);
     if (isPort_7FFD)
@@ -93,6 +117,9 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
         MLOGINFO("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
     }
     /// endregion </Debug logging>
+
+    // Universal handler for breakpoints, tracking, analyzers
+    OnPortOutComplete(port, value, pc);
 }
 
 void PortDecoder_Scorpion256::SetRAMPage(uint8_t page)
