@@ -142,9 +142,13 @@ static void writeRegisters(ucontext_t* uc, char* buf, size_t bufSize)
     writeErr(buf);
 }
 
-static pid_t gettid()
+static pid_t getThreadId()
 {
+#if defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 30))
+    return gettid();
+#else
     return static_cast<pid_t>(syscall(SYS_gettid));
+#endif
 }
 
 static void posixSignalHandler(int sig, siginfo_t* info, void* context)
@@ -172,7 +176,7 @@ static void posixSignalHandler(int sig, siginfo_t* info, void* context)
         writeErr(line);
     }
 
-    snprintf(line, sizeof(line), "  PID/TID : %d / %d\n", getpid(), gettid());
+    snprintf(line, sizeof(line), "  PID/TID : %d / %d\n", getpid(), getThreadId());
     writeErr(line);
 
     writeRegisters(uc, regBuf, sizeof(regBuf));
