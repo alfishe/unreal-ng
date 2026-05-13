@@ -95,11 +95,27 @@ public:
     };
 
     int8_t getTrack() { return _track; };
-    void setTrack(int8_t track) { _track = track > MAX_CYLINDERS ? MAX_CYLINDERS : track; };
+    void setTrack(int8_t track)
+    { 
+        // Clamp track value to valid range [0, MAX_CYLINDERS]
+        if (track < 0)
+        {
+            _track = 0;
+        }
+        else if (track > MAX_CYLINDERS)
+        {
+            _track = MAX_CYLINDERS;
+        }
+        else
+        {
+            _track = static_cast<uint8_t>(track);
+        }
+    };
 
     bool isTrack00() { return _track == 0; }
     bool isIndex() { return _index; }
     bool isWriteProtect() { return _writeProtect; }
+    void setWriteProtect(bool protect) { _writeProtect = protect; }
     bool isReady() { return _ready; }
 
     bool isDiskInserted() { return _diskInserted; }
@@ -109,7 +125,7 @@ public:
     /// region <Constructors / destructors>
 public:
     FDD(EmulatorContext* context);
-    virtual ~FDD() = default;
+    virtual ~FDD();
     /// endregion </Constructors / destructors>
 
     /// region <Methods>

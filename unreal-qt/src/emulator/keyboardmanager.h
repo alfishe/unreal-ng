@@ -17,6 +17,7 @@ public:
 
 public:
     static quint8 mapQtKeyToEmulatorKey(int qtKey);
+    static quint8 mapQtKeyToEmulatorKeyWithModifiers(int qtKey, Qt::KeyboardModifiers modifiers);
 
 protected:
     static std::map<quint32, ZXKeysEnum> _keyMap;

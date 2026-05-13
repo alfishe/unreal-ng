@@ -20,7 +20,21 @@ Type I commands are responsible for moving the Read/Write head across the disk s
 
 | Bit | Name     | Value | Description                                                                                                                                |
 | :-: | :------- | :---- | :----------------------------------------------------------------------------------------------------------------------------------------- |
-| 0-1 | `r1 r0`  | 00-11 | **Stepping Rate:** Selects the time interval between step pulses (e.g., at 1MHz clock: 00=6ms, 01=12ms, 10=20ms, 11=30ms). See Table 1 in datasheet/Timing doc. |
+| 0-1 | `r1 r0`  | 00-11 | **Stepping Rate:** Selects the time interval between step pulses. See table below. |
+
+**Stepping Rate Table:**
+
+| r1 r0 | 2 MHz Clock, DDEN=0 (MFM) | 2 MHz Clock, DDEN=1 (FM) | 1 MHz Clock |
+|-------|---------------------------|--------------------------|-------------|
+| 0 0 | 3 ms | 6 ms | 6 ms |
+| 0 1 | 6 ms | 12 ms | 12 ms |
+| 1 0 | 10 ms | 20 ms | 20 ms |
+| 1 1 | 15 ms | 30 ms | 30 ms |
+
+*Note: At 2 MHz with FM mode (DDEN=1), step rates are doubled compared to MFM mode.*
+
+| Bit | Name     | Value | Description                                                                                                                                |
+| :-: | :------- | :---- | :----------------------------------------------------------------------------------------------------------------------------------------- |
 | 2   | `V`      | 0     | **Verify:** No verification after positioning. Command completes after optional settling time.                                               |
 |     |          | 1     | **Verify:** After positioning and settling, perform a verification operation on the destination track.                                      |
 | 3   | `h`      | 0     | **Head Load:** Do *not* load the head at the start (HLD inactive). If `V=1`, head loads *only* for verification.                             |
@@ -49,7 +63,7 @@ Type I commands are responsible for moving the Read/Write head across the disk s
 
 3.  **Settling Time:**
     *   After the *last* step pulse, if `V=1` (Verify) or if the `E` flag is enabled in Type II/III commands (persists), a fixed head settling delay occurs (e.g., 15ms at 2MHz, 30ms at 1MHz).
-    *   *Note:* If the `TEST` pin is grounded, settling time is zero.
+    *   *Note:* If the `TEST` pin is grounded (TEST=0), the internal 15ms/30ms delay is bypassed (zero), but the FDC still waits for the external `HLT` input to go HIGH before proceeding.
 
 4.  **Verification Phase (if `V=1`)**
     *   If `h=0`, the controller asserts `HLD` now.

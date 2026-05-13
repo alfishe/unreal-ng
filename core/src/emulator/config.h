@@ -84,6 +84,21 @@ public:
 
 	[[nodiscard]] bool DetermineModel(const char* model, uint32_t ramsize);
 
+	// Model enumeration methods
+public:
+	/**
+	 * @brief Get a list of all available emulator models
+	 * @return Vector of model information structures
+	 */
+	std::vector<TMemModel> GetAvailableModels() const;
+
+	/**
+	 * @brief Find a model by its short name (case-insensitive)
+	 * @param shortName The short name to search for (e.g., "PENTAGON", "48K")
+	 * @return Pointer to the model info, or nullptr if not found
+	 */
+	const TMemModel* FindModelByShortName(const std::string& shortName) const;
+
 	// Helper methods
 protected:
 	void CopyStringValue(const char* src, char* dst, size_t dst_len);

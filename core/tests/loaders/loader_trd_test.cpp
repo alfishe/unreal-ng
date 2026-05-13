@@ -1,9 +1,11 @@
-#include <gtest/gtest.h>
+#include "loaders/disk/loader_trd.h"
 
 #include <common/filehelper.h>
 #include <common/stringhelper.h>
+#include <gtest/gtest.h>
+
+#include "_helpers/test_path_helper.h"
 #include "emulator/cpu/core.h"
-#include "loaders/disk/loader_trd.h"
 
 /// region <Types>
 
@@ -21,7 +23,8 @@ protected:
 
         // Set-up module logger only for FDC messages
         _context->pModuleLogger->TurnOffLoggingForAll();
-        _context->pModuleLogger->TurnOnLoggingForModule(PlatformModulesEnum::MODULE_DISK, PlatformDiskSubmodulesEnum::SUBMODULE_DISK_FDC);
+        _context->pModuleLogger->TurnOnLoggingForModule(PlatformModulesEnum::MODULE_DISK,
+                                                        PlatformDiskSubmodulesEnum::SUBMODULE_DISK_FDC);
 
         // Mock Core and Z80 to make timings work
         _core = new CoreCUT(_context);
@@ -85,7 +88,6 @@ TEST_F(LoaderTRD_Test, DiskImage_getTrackForCylinderAndSide)
             }
         }
 
-
         delete diskImage;
     }
     else
@@ -97,13 +99,13 @@ TEST_F(LoaderTRD_Test, DiskImage_getTrackForCylinderAndSide)
 /// Test that image load basically works
 TEST_F(LoaderTRD_Test, Load)
 {
-    // Loading test image from /bin/testdata folder copied by CMake
-    std::string filepath = "testdata/loaders/trd/EyeAche.trd";
-    filepath = FileHelper::AbsolutePath(filepath);
+    // Loading test image using TestPathHelper to find project root
+    std::string filepath = TestPathHelper::GetTestDataPath("loaders/trd/EyeAche.trd");
     LoaderTRDCUT loaderTrd(_context, filepath);
     bool result = loaderTrd.loadImage();
 
-    EXPECT_EQ(result, true) << StringHelper::Format("File '%s' was not loaded", filepath.c_str()) << std::endl;
+    ASSERT_EQ(result, true) << StringHelper::Format("File '%s' was not loaded", filepath.c_str()) << std::endl;
+    ASSERT_NE(loaderTrd._diskImage, nullptr) << "Disk image not created";
     EXPECT_EQ(loaderTrd._diskImage->getLoaded(), true);
 }
 
@@ -112,13 +114,12 @@ TEST_F(LoaderTRD_Test, Sector9)
 {
     /// region <Load test image>
 
-    // Loading test image from /bin/testdata folder copied by CMake
-    std::string filepath = "testdata/loaders/trd/EyeAche.trd";
-    filepath = FileHelper::AbsolutePath(filepath);
+    std::string filepath = TestPathHelper::GetTestDataPath("loaders/trd/EyeAche.trd");
     LoaderTRDCUT loaderTrd(_context, filepath);
     bool result = loaderTrd.loadImage();
 
-    EXPECT_EQ(result, true) << StringHelper::Format("File '%s' was not loaded", filepath.c_str()) << std::endl;
+    ASSERT_EQ(result, true) << StringHelper::Format("File '%s' was not loaded", filepath.c_str()) << std::endl;
+    ASSERT_NE(loaderTrd._diskImage, nullptr) << "Disk image not created";
     EXPECT_EQ(loaderTrd._diskImage->getLoaded(), true);
     /// endregion </Load test image>
 
@@ -135,41 +136,36 @@ TEST_F(LoaderTRD_Test, Sector9)
     EXPECT_EQ(volumeInfo->deletedFileCount, 0);
 }
 
-
-
 // Test validateTRDOSImage method
 TEST_F(LoaderTRD_Test, validateTRDOSImage)
 {
-    // Loading test image from /bin/testdata folder copied by CMake
-    std::string filepath = "testdata/loaders/trd/EyeAche.trd";
-    filepath = FileHelper::AbsolutePath(filepath);
+    std::string filepath = TestPathHelper::GetTestDataPath("loaders/trd/EyeAche.trd");
 
     /// region <Prepare test>
 
     // Create loader
     LoaderTRDCUT loaderTrd(_context, filepath);
-    
+
     // Load the image
     bool loadResult = loaderTrd.loadImage();
     ASSERT_TRUE(loadResult) << "Failed to load test TRD image";
-    
+
     // Get the disk image
     DiskImage* diskImage = loaderTrd.getImage();
     ASSERT_NE(diskImage, nullptr) << "No disk image loaded";
-    
+
     // Validate the TRDOS image
     bool validationResult = loaderTrd.validateTRDOSImage(diskImage);
     EXPECT_TRUE(validationResult) << "Valid TRDOS image failed validation";
-    
+
     // Additional checks on the image structure
     DiskImage::Track* track0 = diskImage->getTrackForCylinderAndSide(0, 0);
     ASSERT_NE(track0, nullptr) << "Track 0 not found";
-    
-    uint8_t* volumeSector = track0->getDataForSector(8); // Volume sector is sector 9 (index 8)
-    ASSERT_NE(volumeSector, nullptr) << "Volume sector not found";
-    
-    /// endregion </Prepare test>
 
+    uint8_t* volumeSector = track0->getDataForSector(8);  // Volume sector is sector 9 (index 8)
+    ASSERT_NE(volumeSector, nullptr) << "Volume sector not found";
+
+    /// endregion </Prepare test>
 }
 
 // Test validateEmptyTRDOSImage method
@@ -185,12 +181,11 @@ TEST_F(LoaderTRD_Test, validateEmptyTRDOSImage)
     };
 
     // Define all supported disk formats and their expected free sectors
-    const std::vector<DiskFormat> formats =
-    {
-        { 80, 2, DS_80, TRD_FREE_SECTORS_ON_DS_80_EMPTY_DISK},          // 80 tracks, double-sided (DS)
-        { 40, 2, DS_40, TRD_FREE_SECTORS_ON_DS_40_EMPTY_DISK },         // 40 tracks, double-sided (DS)
-        { 80, 1, SS_80, TRD_FREE_SECTORS_ON_SS_80_EMPTY_DISK },         // 80 tracks, single-sided (SS)
-        { 40, 1, SS_40, TRD_FREE_SECTORS_ON_SS_40_EMPTY_DISK }          // 40 tracks, single-sided (SS)
+    const std::vector<DiskFormat> formats = {
+        {80, 2, DS_80, TRD_FREE_SECTORS_ON_DS_80_EMPTY_DISK},  // 80 tracks, double-sided (DS)
+        {40, 2, DS_40, TRD_FREE_SECTORS_ON_DS_40_EMPTY_DISK},  // 40 tracks, double-sided (DS)
+        {80, 1, SS_80, TRD_FREE_SECTORS_ON_SS_80_EMPTY_DISK},  // 80 tracks, single-sided (SS)
+        {40, 1, SS_40, TRD_FREE_SECTORS_ON_SS_40_EMPTY_DISK}   // 40 tracks, single-sided (SS)
     };
 
     for (const auto& format : formats)
@@ -199,31 +194,36 @@ TEST_F(LoaderTRD_Test, validateEmptyTRDOSImage)
 
         // Create disk image with specified format
         DiskImage diskImage(format.tracks, format.sides);
-        
+
         // Create a loader and format the disk
         LoaderTRDCUT loaderTrd(_context, "test.trd");
         bool formatResult = loaderTrd.format(&diskImage);
         ASSERT_TRUE(formatResult) << "Failed to format empty disk image";
-        
+
         // Validate the empty TRDOS image
         bool validationResult = loaderTrd.validateTRDOSImage(&diskImage);
         EXPECT_TRUE(validationResult) << "Empty TRDOS image failed validation";
-        
+
         // Additional checks on the image structure
         DiskImage::Track* track0 = diskImage.getTrackForCylinderAndSide(0, 0);
         ASSERT_NE(track0, nullptr) << "Track 0 not found";
-        
-        uint8_t* volumeSectorData = track0->getDataForSector(8); // Volume sector is sector 9 (index 8)
+
+        uint8_t* volumeSectorData = track0->getDataForSector(8);  // Volume sector is sector 9 (index 8)
         ASSERT_NE(volumeSectorData, nullptr) << "Volume sector not found";
         TRDVolumeInfo* volumeSector = (TRDVolumeInfo*)volumeSectorData;
-        
+
         // Check disk type in volume sector
         uint8_t diskType = volumeSector->diskType;
-        EXPECT_EQ(diskType, format.diskType) << "Incorrect disk type 0x" << std::hex << (int)diskType << " (" << getTRDDiskTypeName(diskType) << "). Expected: 0x" << std::hex << (int)format.diskType << " (" << getTRDDiskTypeName(format.diskType) << ")";;
+        EXPECT_EQ(diskType, format.diskType)
+            << "Incorrect disk type 0x" << std::hex << (int)diskType << " (" << getTRDDiskTypeName(diskType)
+            << "). Expected: 0x" << std::hex << (int)format.diskType << " (" << getTRDDiskTypeName(format.diskType)
+            << ")";
+        ;
 
         // Check free sectors count in volume sector
         uint16_t freeSectors = volumeSector->freeSectorCount;
-        EXPECT_EQ(freeSectors, format.expectedFreeSectors) << "Incorrect free sectors count in empty disk for " << getTRDDiskTypeName(format.diskType) << " disk type";
+        EXPECT_EQ(freeSectors, format.expectedFreeSectors)
+            << "Incorrect free sectors count in empty disk for " << getTRDDiskTypeName(format.diskType) << " disk type";
 
         // Check file count should be 0
         uint8_t fileCount = volumeSector->fileCount;
@@ -232,7 +232,7 @@ TEST_F(LoaderTRD_Test, validateEmptyTRDOSImage)
         // Check the deleted file count
         uint8_t deletedFileCount = volumeSector->deletedFileCount;
         EXPECT_EQ(deletedFileCount, 0) << "Empty disk should have 0 deleted files";
-        
+
         // Check the first free track and sector
         uint8_t firstFreeTrack = volumeSector->firstFreeTrack;
         uint8_t firstFreeSector = volumeSector->firstFreeSector;
@@ -254,12 +254,11 @@ TEST_F(LoaderTRD_Test, Format)
     };
 
     // Define all supported disk formats and their expected free sectors
-    const std::vector<DiskFormat> formats =
-    {
-        { 80, 2, DS_80, TRD_FREE_SECTORS_ON_DS_80_EMPTY_DISK },  // 80 tracks, double-sided (DS)
-        { 40, 2, DS_40, TRD_FREE_SECTORS_ON_DS_40_EMPTY_DISK },  // 40 tracks, double-sided (DS)
-        { 80, 1, SS_80, TRD_FREE_SECTORS_ON_SS_80_EMPTY_DISK },  // 80 tracks, single-sided (SS)
-        { 40, 1, SS_40, TRD_FREE_SECTORS_ON_SS_40_EMPTY_DISK }   // 40 tracks, single-sided (SS)
+    const std::vector<DiskFormat> formats = {
+        {80, 2, DS_80, TRD_FREE_SECTORS_ON_DS_80_EMPTY_DISK},  // 80 tracks, double-sided (DS)
+        {40, 2, DS_40, TRD_FREE_SECTORS_ON_DS_40_EMPTY_DISK},  // 40 tracks, double-sided (DS)
+        {80, 1, SS_80, TRD_FREE_SECTORS_ON_SS_80_EMPTY_DISK},  // 80 tracks, single-sided (SS)
+        {40, 1, SS_40, TRD_FREE_SECTORS_ON_SS_40_EMPTY_DISK}   // 40 tracks, single-sided (SS)
     };
 
     for (const auto& format : formats)
@@ -281,7 +280,7 @@ TEST_F(LoaderTRD_Test, Format)
         DiskImage::Track* track0 = diskImage->getTrackForCylinderAndSide(0, 0);
         ASSERT_NE(track0, nullptr) << "Track 0 not found";
 
-        uint8_t* volumeSector = track0->getDataForSector(8); // Volume sector is sector 9 (index 8)
+        uint8_t* volumeSector = track0->getDataForSector(8);  // Volume sector is sector 9 (index 8)
         ASSERT_NE(volumeSector, nullptr) << "Volume sector not found";
 
         TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)volumeSector;

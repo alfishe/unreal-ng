@@ -1,20 +1,19 @@
 #include "labelmanager_test.h"
-#include "pch.h"
 
 #include <filesystem>
 #include <fstream>
 
-#include "common/stringhelper.h"
 #include "common/modulelogger.h"
+#include "common/stringhelper.h"
 #include "debugger/labels/labelmanager.h"
 #include "emulator/emulatorcontext.h"
-
+#include "pch.h"
 
 void LabelManager_test::SetUp()
 {
     _context = new EmulatorContext(LoggerLevel::LogError);
     _labelManager = new LabelManager(_context);
-    
+
     // Create test files in memory
     CreateTestMapFile();
     CreateTestSymFile();
@@ -118,7 +117,7 @@ TEST_F(LabelManager_test, AddAndGetLabel)
 {
     // Test adding a single label
     _labelManager->AddLabel("TEST_LABEL", 0x1234, 0x00, 0x5678, "code", "module1", "Test label");
-    
+
     // Test getting the label by name
     auto label = _labelManager->GetLabelByName("TEST_LABEL");
     ASSERT_NE(label, nullptr);
@@ -127,12 +126,12 @@ TEST_F(LabelManager_test, AddAndGetLabel)
     EXPECT_EQ(label->type, "code");
     EXPECT_EQ(label->module, "module1");
     EXPECT_EQ(label->comment, "Test label");
-    
+
     // Test getting the label by Z80 address
     auto labelByAddr = _labelManager->GetLabelByZ80Address(0x1234);
     ASSERT_NE(labelByAddr, nullptr);
     EXPECT_EQ(labelByAddr->name, "TEST_LABEL");
-    
+
     // Test getting the label by bank and bank offset
     // Note: We can't directly look up by physical address, so we test the bank and offset
     // that were stored in the label
@@ -144,18 +143,18 @@ TEST_F(LabelManager_test, RemoveLabel)
 {
     // Add a test label
     _labelManager->AddLabel("TEST_LABEL", 0x1234, 0x00, 0x1234);
-    
+
     // Verify it exists
     ASSERT_NE(_labelManager->GetLabelByName("TEST_LABEL"), nullptr);
-    
+
     // Remove the label
     bool result = _labelManager->RemoveLabel("TEST_LABEL");
     EXPECT_TRUE(result);
-    
+
     // Verify it's gone
     EXPECT_EQ(_labelManager->GetLabelByName("TEST_LABEL"), nullptr);
     EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x1234), nullptr);
-    
+
     // Test removing non-existent label
     result = _labelManager->RemoveLabel("NON_EXISTENT");
     EXPECT_FALSE(result);
@@ -167,13 +166,13 @@ TEST_F(LabelManager_test, ClearAllLabels)
     _labelManager->AddLabel("LABEL1", 0x1000, 0x00, 0x1000);
     _labelManager->AddLabel("LABEL2", 0x2000, 0x00, 0x2000);
     _labelManager->AddLabel("LABEL3", 0x3000, 0x00, 0x3000);
-    
+
     // Verify they exist
     EXPECT_EQ(_labelManager->GetLabelCount(), 3);
-    
+
     // Clear all labels
     _labelManager->ClearAllLabels();
-    
+
     // Verify all labels are gone
     EXPECT_EQ(_labelManager->GetLabelCount(), 0);
     EXPECT_EQ(_labelManager->GetLabelByName("LABEL1"), nullptr);
@@ -183,29 +182,29 @@ TEST_F(LabelManager_test, ClearAllLabels)
 TEST_F(LabelManager_test, ParseMapFile)
 {
     // Save test map file to disk
-    std::string tempFilePath = std::filesystem::temp_directory_path() / "test_map_file.map";
+    std::string tempFilePath = (std::filesystem::temp_directory_path() / "test_map_file.map").string();
     {
         std::ofstream outFile(tempFilePath);
         outFile << _testMapFile.str();
     }
-    
+
     // Load the map file
     bool result = _labelManager->LoadMapFile(tempFilePath);
     EXPECT_TRUE(result);
-    
+
     // Test some known labels
     auto label = _labelManager->GetLabelByName("NODSK");
     ASSERT_NE(label, nullptr);
     EXPECT_EQ(label->address, 0x0031);
-    
+
     label = _labelManager->GetLabelByName("RD_SEC");
     ASSERT_NE(label, nullptr);
     EXPECT_EQ(label->address, 0xA250);
-    
+
     label = _labelManager->GetLabelByName("WR_SEC");
     ASSERT_NE(label, nullptr);
     EXPECT_EQ(label->address, 0xA2EE);
-    
+
     // Clean up
     std::filesystem::remove(tempFilePath);
 }
@@ -213,29 +212,29 @@ TEST_F(LabelManager_test, ParseMapFile)
 TEST_F(LabelManager_test, ParseSymFile)
 {
     // Save test sym file to disk
-    std::string tempFilePath = std::filesystem::temp_directory_path() / "test_sym_file.sym";
+    std::string tempFilePath = (std::filesystem::temp_directory_path() / "test_sym_file.sym").string();
     {
         std::ofstream outFile(tempFilePath);
         outFile << _testSymFile.str();
     }
-    
+
     // Load the sym file
     bool result = _labelManager->LoadSymFile(tempFilePath);
     EXPECT_TRUE(result);
-    
+
     // Test some known labels
     auto label = _labelManager->GetLabelByName("START");
     ASSERT_NE(label, nullptr);
     EXPECT_EQ(label->address, 0x1000);
-    
+
     label = _labelManager->GetLabelByName("MAIN_LOOP");
     ASSERT_NE(label, nullptr);
     EXPECT_EQ(label->address, 0x1003);
-    
+
     label = _labelManager->GetLabelByName("INIT_ROUTINE");
     ASSERT_NE(label, nullptr);
     EXPECT_EQ(label->address, 0x2000);
-    
+
     // Clean up
     std::filesystem::remove(tempFilePath);
 }
@@ -243,31 +242,31 @@ TEST_F(LabelManager_test, ParseSymFile)
 TEST_F(LabelManager_test, AutoDetectFileFormat)
 {
     // Test with .map extension
-    std::string mapFilePath = std::filesystem::temp_directory_path() / "test_file.map";
+    std::string mapFilePath = (std::filesystem::temp_directory_path() / "test_file.map").string();
     {
         std::ofstream outFile(mapFilePath);
         outFile << _testMapFile.str();
     }
-    
+
     bool result = _labelManager->LoadLabels(mapFilePath);
     EXPECT_TRUE(result);
     EXPECT_NE(_labelManager->GetLabelByName("NODSK"), nullptr);
-    
+
     // Clean up
     std::filesystem::remove(mapFilePath);
     _labelManager->ClearAllLabels();
-    
+
     // Test with .sym extension
-    std::string symFilePath = std::filesystem::temp_directory_path() / "test_file.sym";
+    std::string symFilePath = (std::filesystem::temp_directory_path() / "test_file.sym").string();
     {
         std::ofstream outFile(symFilePath);
         outFile << _testSymFile.str();
     }
-    
+
     result = _labelManager->LoadLabels(symFilePath);
     EXPECT_TRUE(result);
     EXPECT_NE(_labelManager->GetLabelByName("START"), nullptr);
-    
+
     // Clean up
     std::filesystem::remove(symFilePath);
 }
@@ -278,33 +277,33 @@ TEST_F(LabelManager_test, SaveLabels)
     _labelManager->AddLabel("LABEL1", 0x1000, 0x00, 0x1000, "code", "module1", "Test label 1");
     _labelManager->AddLabel("LABEL2", 0x2000, 0x00, 0x2000, "data", "module1", "Test label 2");
     _labelManager->AddLabel("LABEL3", 0x3000, 0x00, 0x3000, "bss", "module2", "Test label 3");
-    
+
     // Save to a file
-    std::string tempFilePath = std::filesystem::temp_directory_path() / "saved_labels.sym";
+    std::string tempFilePath = (std::filesystem::temp_directory_path() / "saved_labels.sym").string();
     bool result = _labelManager->SaveLabels(tempFilePath);
     EXPECT_TRUE(result);
-    
+
     // Clear current labels
     _labelManager->ClearAllLabels();
     EXPECT_EQ(_labelManager->GetLabelCount(), 0);
-    
+
     // Load them back
     result = _labelManager->LoadLabels(tempFilePath);
     EXPECT_TRUE(result);
-    
+
     // Verify the labels were loaded correctly
     EXPECT_EQ(_labelManager->GetLabelCount(), 3);
-    
+
     auto label = _labelManager->GetLabelByName("LABEL1");
     ASSERT_NE(label, nullptr);
     EXPECT_EQ(label->address, 0x1000);
     EXPECT_EQ(label->type, "code");
-    
+
     label = _labelManager->GetLabelByName("LABEL2");
     ASSERT_NE(label, nullptr);
     EXPECT_EQ(label->address, 0x2000);
     EXPECT_EQ(label->type, "data");
-    
+
     // Clean up
     std::filesystem::remove(tempFilePath);
 }

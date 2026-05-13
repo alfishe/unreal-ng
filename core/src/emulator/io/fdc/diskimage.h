@@ -4,8 +4,10 @@
 
 #include "common/dumphelper.h"
 #include "emulator/io/fdc/fdc.h"
+#include "emulator/io/fdc/mfm_parser.h"
 #include "trdos.h"
 #include <algorithm>
+#include <cstring>
 
 // @see http://www.bitsavers.org/components/westernDigital/FD179X-01_Data_Sheet_Oct1979.pdf
 // | Data in DR (Hex) | FD179X Interpretation in FM (DDEN = 1) | FD179X Interpretation in MFM (DDEN = 0) | Notes                                  |
@@ -254,6 +256,92 @@ public:
             return _diskImage;
         }
         /// endregion </Properties>
+
+        /// region <Change Tracking>
+    protected:
+        bool _dirty = false;
+        bool _rawTrackDirty = false;  // For WRITE_TRACK operations (MFM layout changes)
+        uint16_t _sectorDirtyBitmap = 0;  // Bit N = sector N is dirty (16 sectors = 16 bits)
+        
+        /// Marks track as dirty - protected, called by sector write accessors
+        void markDirty();
+        
+        /// Marks track as dirty due to raw MFM write - called by WD1793 WRITE_TRACK
+        void markRawTrackDirty();
+        
+        // Grant WD1793 friend access for WRITE_TRACK
+        friend class WD1793;
+        
+    public:
+        /// Check if track has been modified (sector or raw level)
+        bool isDirty() const { return _dirty; }
+        
+        /// Check if raw MFM data was written (WRITE_TRACK operation)
+        bool isRawTrackDirty() const { return _rawTrackDirty; }
+        
+        /// Check if specific sector is dirty
+        /// @param sectorNo Sector number (0-15)
+        bool isSectorDirty(uint8_t sectorNo) const
+        {
+            sectorNo &= 0x0F;
+            return (_sectorDirtyBitmap & (1 << sectorNo)) != 0;
+        }
+        
+        /// Check if any sector in track is marked dirty
+        bool hasAnySectorDirty() const
+        {
+            return _sectorDirtyBitmap != 0;
+        }
+        
+        /// Mark specific sector as dirty (with content-change detection)
+        /// @param sectorNo Sector number (0-15)
+        /// @param newData New data to compare against current sector data
+        /// @param len Length of data to compare
+        void markSectorDirtyIfChanged(uint8_t sectorNo, const uint8_t* newData, size_t len)
+        {
+            sectorNo &= 0x0F;
+            RawSectorBytes* sector = getSector(sectorNo);
+            if (sector && len <= sizeof(sector->data))
+            {
+                // Only mark dirty if content actually changed
+                if (std::memcmp(sector->data, newData, len) != 0)
+                {
+                    _sectorDirtyBitmap |= (1 << sectorNo);
+                    markDirty();  // Propagate to track and disk image
+                }
+            }
+        }
+        
+        /// Write sector data with content-change detection
+        /// @param sectorNo Sector number (0-15)
+        /// @param src Source data buffer
+        /// @param len Length of data to copy (max 256)
+        void writeSectorData(uint8_t sectorNo, const uint8_t* src, size_t len)
+        {
+            sectorNo &= 0x0F;
+            RawSectorBytes* sector = getSector(sectorNo);
+            if (sector)
+            {
+                if (len > sizeof(sector->data)) len = sizeof(sector->data);
+                
+                // Only mark dirty if content actually changed
+                if (std::memcmp(sector->data, src, len) != 0)
+                {
+                    std::memcpy(sector->data, src, len);
+                    _sectorDirtyBitmap |= (1 << sectorNo);
+                    markDirty();  // Propagate to track and disk image
+                }
+            }
+        }
+        
+        /// Clear dirty flags for track and all sectors (called after save)
+        void markClean()
+        {
+            _dirty = false;
+            _rawTrackDirty = false;
+            _sectorDirtyBitmap = 0;
+        }
+        /// endregion </Change Tracking>
         /// endregion </Fields>
 
         /// region <Properties>
@@ -317,6 +405,12 @@ public:
             // Ensure sector number is in range [0..15]
             sectorNo &= 0x0F;
 
+            // Check if sector reference exists (may be null after reindexFromMFM fails)
+            if (!sectorsOrderedRef[sectorNo])
+            {
+                return nullptr;
+            }
+            
             uint8_t* result = sectorsOrderedRef[sectorNo]->data;
 
             return result;
@@ -458,6 +552,77 @@ public:
                 sectorIDsOrderedRef[i] = &sectorRef->address_record;    // Store ID record reference
             }
         }
+        
+        /// Reindex sector access by reading IDAM sector numbers from each physical sector
+        /// Called after Write Track to rebuild sector mapping based on what was actually written
+        /// This handles TR-DOS's 1:2 interleave pattern correctly
+        void reindexFromIDAM()
+        {
+            // Clear existing references
+            for (uint8_t i = 0; i < SECTORS_PER_TRACK; i++)
+            {
+                sectorsOrderedRef[i] = nullptr;
+                sectorIDsOrderedRef[i] = nullptr;
+            }
+            
+            // Scan all 16 physical sectors and map by their IDAM sector number
+            for (uint8_t physIdx = 0; physIdx < SECTORS_PER_TRACK; physIdx++)
+            {
+                RawSectorBytes* sectorRef = &sectors[physIdx];
+                uint8_t sectorNo = sectorRef->address_record.sector;
+                
+                // TR-DOS uses sector numbers 1-16
+                if (sectorNo >= 1 && sectorNo <= 16)
+                {
+                    uint8_t logicalIdx = sectorNo - 1;  // Convert to 0-based index
+                    sectorsOrderedRef[logicalIdx] = sectorRef;
+                    sectorIDsOrderedRef[logicalIdx] = &sectorRef->address_record;
+                }
+            }
+        }
+        
+        /// Reindex sector access by parsing raw MFM data
+        /// Called after Write Track to rebuild sector metadata from MFM stream
+        /// @return Validation result with detailed diagnostics
+        MFMValidator::ValidationResult reindexFromMFM()
+        {
+            // Get raw track data pointer
+            const uint8_t* rawData = reinterpret_cast<const uint8_t*>(static_cast<RawTrack*>(this));
+            
+            // Validate the track using MFM parser
+            auto result = MFMValidator::validate(rawData, RAW_TRACK_SIZE);
+            
+            // Clear existing references
+            for (uint8_t i = 0; i < SECTORS_PER_TRACK; i++)
+            {
+                sectorsOrderedRef[i] = nullptr;
+                sectorIDsOrderedRef[i] = nullptr;
+            }
+            
+            // Rebuild references from parsed sectors
+            for (size_t i = 0; i < 16; i++)
+            {
+                const auto& parsed = result.parseResult.sectors[i];
+                if (parsed.found && parsed.sectorNo >= 1 && parsed.sectorNo <= 16)
+                {
+                    uint8_t idx = parsed.sectorNo - 1;
+                    
+                    // Calculate the raw sector position from IDAM offset
+                    // IDAM is at offset + 3 (after A1 A1 A1), and RawSectorBytes starts 22 bytes before sync
+                    if (parsed.idamOffset >= 25)
+                    {
+                        size_t sectorStart = parsed.idamOffset - 25;  // Back to sector start (gap0 + sync0 + f5_token0)
+                        RawSectorBytes* sectorRef = reinterpret_cast<RawSectorBytes*>(
+                            const_cast<uint8_t*>(rawData + sectorStart));
+                        
+                        sectorsOrderedRef[idx] = sectorRef;
+                        sectorIDsOrderedRef[idx] = &sectorRef->address_record;
+                    }
+                }
+            }
+            
+            return result;
+        }
         /// endregion </Methods>
     };
 
@@ -467,14 +632,50 @@ public:
     /// region <Fields>
 protected:
     bool _loaded = false;
+    bool _dirty = false;  // Change tracking - set when any track is modified
     std::vector<Track> _tracks;
+    std::string _filePath;  // Source file path (set during load, used for tracking)
 
     uint8_t _cylinders;
     uint8_t _sides;
+    
+    /// Marks disk image as dirty - protected, called by Track
+    void markDirty() { _dirty = true; }
+    
+    // Grant Track friend access for dirty propagation
+    friend struct Track;
     /// endregion </Fields>
+
+    /// region <Change Tracking>
+public:
+    /// Check if disk image has been modified
+    bool isDirty() const { return _dirty; }
+    
+    /// Recompute dirty state from all tracks
+    bool computeDirtyState() const
+    {
+        for (const Track& track : _tracks)
+        {
+            if (track.isDirty()) return true;
+        }
+        return false;
+    }
+    
+    /// Clear dirty flags for disk and all tracks (called after save)
+    void markClean()
+    {
+        _dirty = false;
+        for (Track& track : _tracks)
+        {
+            track.markClean();
+        }
+    }
+    /// endregion </Change Tracking>
 
     /// region <Properties>
 public:
+    const std::string& getFilePath() const { return _filePath; }
+    void setFilePath(const std::string& path) { _filePath = path; }
     uint8_t getCylinders() { return _cylinders; }
     uint8_t getSides() { return _sides; }
 

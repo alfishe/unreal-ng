@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """
-Memory Map Monitor for ZX-Spectrum Emulator
+Memory Map Monitor for ZX-Spectrum Emulator (File-based Mapping)
 
-This script monitors the memory map file (/tmp/zxspectrum_memory<pid>) for changes
+This script monitors the memory map file (/tmp/zxspectrum_memory<id>) for changes
 and displays which memory pages are being modified in real-time.
+
+NOTE: There are two memory mapping methods available:
+  1. File-based mapping (USE_FILE_MAPPING compile option) - monitored by this script
+  2. Shared memory (runtime 'sharedmemory' feature) - monitored by monitor_mmap_shm.py
+
+Use the appropriate script based on your emulator's configuration.
 """
 
 import os

@@ -433,7 +433,14 @@ void MysqlConnection::execSqlInLoop(
     assert(rcb);
     assert(!isWorking_);
     assert(!sql.empty());
-
+    if (status_ != ConnectStatus::Ok)
+    {
+        LOG_ERROR << "Connection is not ready";
+        auto exceptPtr =
+            std::make_exception_ptr(drogon::orm::BrokenConnection());
+        exceptCallback(exceptPtr);
+        return;
+    }
     callback_ = std::move(rcb);
     isWorking_ = true;
     exceptionCallback_ = std::move(exceptCallback);
@@ -472,6 +479,22 @@ void MysqlConnection::execSqlInLoop(
                     case internal::MySqlLongLong:
                         sql_.append(
                             std::to_string(*((int64_t *)parameters[i])));
+                        break;
+                    case internal::MySqlUTiny:
+                        sql_.append(
+                            std::to_string(*((unsigned char *)parameters[i])));
+                        break;
+                    case internal::MySqlUShort:
+                        sql_.append(
+                            std::to_string(*((unsigned short *)parameters[i])));
+                        break;
+                    case internal::MySqlULong:
+                        sql_.append(
+                            std::to_string(*((uint32_t *)parameters[i])));
+                        break;
+                    case internal::MySqlULongLong:
+                        sql_.append(
+                            std::to_string(*((uint64_t *)parameters[i])));
                         break;
                     case internal::MySqlNull:
                         sql_.append("NULL");
@@ -525,7 +548,7 @@ void MysqlConnection::outputError()
     {
         // TODO: exception type
         auto exceptPtr = std::make_exception_ptr(
-            SqlError(mysql_error(mysqlPtr_.get()), sql_));
+            SqlError(mysql_error(mysqlPtr_.get()), sql_, errorNo, 0));
         exceptionCallback_(exceptPtr);
         exceptionCallback_ = nullptr;
 

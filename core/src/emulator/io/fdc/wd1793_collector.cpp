@@ -25,7 +25,7 @@ namespace PortNames
     static constexpr const char* DATA_REGISTER = "Data Register";              // PORT_7F read/write
     static constexpr const char* SYSTEM_REGISTER = "Beta128 Status Register";  // PORT_FF read
     static constexpr const char* BETA128_CTRL = "Beta128 Control Register";    // PORT_FF write
-    static constexpr const char* UNKNOWN = "Unknown port";                          // Unknown port
+    static constexpr const char* UNKNOWN = "Unknown port";                     // Unknown port
 }
 
 std::string WD1793Collector::getPortName(uint8_t port, bool isWrite)

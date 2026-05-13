@@ -3,14 +3,20 @@
 // Platform-specific socket implementation
 #ifdef _WIN32
 // Windows socket headers
+// CRITICAL: winsock2.h MUST be included BEFORE windows.h to avoid conflicts
 #ifndef WIN32_LEAN_AND_MEAN
-    #define WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
 #endif
-#include <windows.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <iphlpapi.h>
+#ifndef NOMINMAX
+#define NOMINMAX  // Prevent min/max macros from windows.h
+#endif
 #include <io.h>
+#include <iphlpapi.h>
+#include <windows.h>
+#include <winsock2.h>  // Must come first!
+#include <ws2tcpip.h>
+
+
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "iphlpapi.lib")
 
@@ -25,7 +31,7 @@
 
 // Ensure FIONBIO is defined
 #ifndef FIONBIO
-    #define FIONBIO 0x8004667E  // Standard FIONBIO value for Windows
+#define FIONBIO 0x8004667E  // Standard FIONBIO value for Windows
 #endif
 
 // Define UNIX-like constants and types for Windows
@@ -35,6 +41,35 @@
 // Windows doesn't have socklen_t, it uses int instead
 #ifndef socklen_t
 typedef int socklen_t;
+#endif
+
+// Windows doesn't have ssize_t
+#ifndef ssize_t
+#ifdef _WIN64
+typedef __int64 ssize_t;
+#else
+typedef long ssize_t;
+#endif
+#endif
+
+// Map POSIX error codes to Windows socket error codes
+#ifndef EWOULDBLOCK
+#define EWOULDBLOCK WSAEWOULDBLOCK
+#endif
+#ifndef EAGAIN
+#define EAGAIN WSAEWOULDBLOCK
+#endif
+#ifndef EINTR
+#define EINTR WSAEINTR
+#endif
+#ifndef EBADF
+#define EBADF WSAEBADF
+#endif
+
+// Windows uses WSAGetLastError() instead of errno for socket operations
+// We'll define a macro for convenience (used alongside getLastSocketError())
+#ifndef errno
+#define errno WSAGetLastError()
 #endif
 
 namespace win_sockets
@@ -78,7 +113,8 @@ inline int getLastSocketError()
 // Set socket to non-blocking mode (Windows implementation)
 inline bool setSocketNonBlocking(SOCKET sock)
 {
-    if (sock == INVALID_SOCKET) {
+    if (sock == INVALID_SOCKET)
+    {
         return false;
     }
     u_long mode = 1;  // 1 to enable non-blocking mode

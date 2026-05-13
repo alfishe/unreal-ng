@@ -31,6 +31,13 @@ void PortDecoder_Spectrum128::reset()
     // 0 - SOS128 <-- Set after reset
     // 1 - SOS48
 
+    // Explicitly reset port states to ensure consistent reset behavior
+    EmulatorState& state = _context->emulatorState;
+    state.p7FFD = 0x00;     // Reset port 0x7FFD to default (Screen 0, RAM bank 0, ROM 0, paging enabled)
+    state.pBFFD = 0x00;     // Reset AY register select port
+    state.pFFFD = 0x00;     // Reset AY data port
+    state.pFE = 0xFF;       // Reset ULA port (border white, no sound)
+
     // Set default 120K memory pages
     Memory& memory = *_context->pMemory;
     memory.SetROMPage(0);
@@ -44,6 +51,12 @@ void PortDecoder_Spectrum128::reset()
     // Reset memory paging lock latch
     _7FFD_Locked = false;
 
+    // Explicitly force screen to SCREEN_NORMAL before port update
+    // This is necessary because Port_7FFD_Out has an optimization that skips screen switching
+    // if the screen number hasn't changed (0x00 -> 0x00), but during reset we need to ensure
+    // the hardware screen state matches the port state regardless
+    _screen->SetActiveScreen(SCREEN_NORMAL);
+
     // Set default memory paging state: RAM bank: 0; Screen: Normal (bank 5); ROM bank: 0; Disable paging: No
     Port_7FFD_Out(0x7FFD, 0x00, 0x0000);
 }
@@ -55,9 +68,6 @@ uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t port, uint16_t pc)
     /// endregion </Override submodule>
 
     uint8_t result = 0xFF;
-
-    // Handle common part (like breakpoints)
-    PortDecoder::DecodePortIn(port, pc);
 
     if (IsPort_FE(port))
     {
@@ -76,6 +86,9 @@ uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t port, uint16_t pc)
     }
     /// endregion </Debug logging>
 
+    // Universal handler for breakpoints, tracking, analyzers
+    OnPortInComplete(port, result, pc);
+
     return result;
 }
 
@@ -84,9 +97,6 @@ void PortDecoder_Spectrum128::DecodePortOut(uint16_t port, uint8_t value, uint16
     /// region <Override submodule>
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
     /// endregion </Override submodule>
-
-    // Handle common part (like breakpoints)
-    PortDecoder::DecodePortOut(port, value, pc);
 
     //    ZX Spectrum 128 / +2
     //    port: #7FFD
@@ -124,6 +134,9 @@ void PortDecoder_Spectrum128::DecodePortOut(uint16_t port, uint8_t value, uint16
         MLOGINFO("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
     }
     /// endregion </Debug logging>
+
+    // Universal handler for breakpoints, tracking, analyzers
+    OnPortOutComplete(port, value, pc);
 }
 
 void PortDecoder_Spectrum128::SetRAMPage(uint8_t page)

@@ -4,26 +4,26 @@
 #define _INCLUDED_EMULATOR_H_
 
 #include "stdafx.h"
-#include "common/logger.h"
 
-#include "emulatorcontext.h"
-#include "corestate.h"
-#include "emulator/config.h"
-#include "emulator/mainloop.h"
-#include "emulator/cpu/core.h"
-#include "cpu/z80.h"
-#include "debugger/disassembler/z80disasm.h"
-#include "base/featuremanager.h"
-
-#include <string>
-#include <mutex>
-#include <memory>
 #include <atomic>
 #include <chrono>
+#include <functional>
+#include <mutex>
 #include <random>
-#include <sstream>
-#include <iomanip>
-#include <ctime>
+#include <string>
+
+#include "base/featuremanager.h"
+#include "common/autoresetevent.h"
+#include "common/uuid.h"
+using unreal::UUID;  // Explicitly bring into scope to avoid Windows GUID typedef collision
+#include "corestate.h"
+#include "cpu/z80.h"
+#include "debugger/disassembler/z80disasm.h"
+#include "emulator/config.h"
+#include "emulator/cpu/core.h"
+#include "emulator/mainloop.h"
+#include "emulatorcontext.h"
+
 
 class BreakpointManager;
 
@@ -36,20 +36,14 @@ enum EmulatorStateEnum : uint8_t
     StateRun,
     StatePaused,
     StateResumed,
-    StateStopped
+    StateStopped,
+    StateDestroying  // Prevents new operations during destruction
 };
 
 inline const char* getEmulatorStateName(EmulatorStateEnum value)
 {
-    static const char* names[] =
-    {
-        "StateUnknown",
-        "StateInitialized",
-        "StateRun",
-        "StatePaused",
-        "StateResumed",
-        "StateStopped"
-    };
+    static const char* names[] = {"StateUnknown", "StateInitialized", "StateRun",       "StatePaused",
+                                  "StateResumed", "StateStopped",     "StateDestroying"};
 
     return names[value];
 };
@@ -69,13 +63,14 @@ protected:
     /// region <Fields>
 protected:
     // Emulator identity
-    std::string _emulatorId;              // Auto-generated UUID
-    std::string _symbolicId;              // Optional user-provided symbolic ID
-    std::chrono::system_clock::time_point _createdAt; // When instance was created
-    std::chrono::system_clock::time_point _lastActivity; // When last operation was performed
+    UUID _uuid;                                           // Auto-generated UUID
+    std::string _emulatorId;                              // Symbolic representation  of the UUID
+    std::string _symbolicId;                              // Optional user-provided symbolic ID
+    std::chrono::system_clock::time_point _createdAt;     // When instance was created
+    std::chrono::system_clock::time_point _lastActivity;  // When last operation was performed
     EmulatorStateEnum _state = StateUnknown;
     mutable std::mutex _stateMutex;
-    
+
     std::atomic<bool> _initialized{false};
     mutable std::mutex _mutexInitialization;
 
@@ -91,15 +86,29 @@ protected:
     MainLoop* _mainloop = nullptr;
     DebugManager* _debugManager = nullptr;
     BreakpointManager* _breakpointManager = nullptr;
-    FeatureManager* _featureManager = nullptr; // Feature toggle manager
+    FeatureManager* _featureManager = nullptr;  // Feature toggle manager
 
     // Control flow
     volatile bool _stopRequested = false;
 
     // Emulator state
     volatile bool _isPaused = false;
-    volatile bool _isRunning = false;
+    std::atomic<bool> _isRunning{false};  // Atomic to support idempotent Stop()
     volatile bool _isDebug = false;
+    volatile bool _isReleased = false;
+
+    // Step-over synchronization
+    AutoResetEvent _stepOverSyncEvent;
+    uint16_t _pendingStepOverBpId = 0;                  // Track active step-over breakpoint for cleanup
+    std::vector<uint16_t> _stepOverDeactivatedBps;      // Breakpoints deactivated during step-over
+
+    // Frame step target (persistent to prevent cumulative drift)
+    unsigned _frameStepTargetPos = 0;                   // Target t-state position within frame
+    bool _hasFrameStepTarget = false;                   // Whether target has been set
+
+    // Line-step anchor (prevents horizontal drift when stepping by scanlines)
+    // Stores the initial offset within a scanline; subsequent steps target the same offset.
+    int _lineStepAnchorOffset = -1;                     // -1 = not set (first line-step will capture it)
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -117,9 +126,6 @@ public:
     [[nodiscard]] bool Init();
     void Release();
 
-    // Helper to generate UUID
-    static std::string GenerateUUID();
-
     // Timestamp helpers
     void UpdateLastActivity();
     std::chrono::system_clock::time_point GetCreationTime() const;
@@ -127,7 +133,7 @@ public:
     std::string GetUptimeString() const;
 
     // ID management
-    std::string GetUUID() const;
+    UUID GetUUID() const;
     std::string GetSymbolicId() const;
     void SetSymbolicId(const std::string& symbolicId);
 
@@ -137,6 +143,10 @@ public:
     // Performance management
     BaseFrequency_t GetSpeed();
     void SetSpeed(BaseFrequency_t speed);
+    void SetSpeedMultiplier(uint8_t multiplier);
+    void EnableTurboMode(bool withAudio = false);
+    void DisableTurboMode();
+    bool IsTurboMode() const;
 
     // Integration interfaces
     EmulatorContext* GetContext();
@@ -147,29 +157,44 @@ public:
     BreakpointManager* GetBreakpointManager();
     FramebufferDescriptor GetFramebuffer();
     void SetAudioCallback(void* obj, AudioCallback callback);
+    void ClearAudioCallback();
 
     // Emulator control cycle
     void Reset();
     void Start();
     void StartAsync();
-    void Pause();
-    void Resume();
+    void Pause(bool broadcast = true);   // broadcast=false for internal operations (won't trigger UI updates)
+    void Resume(bool broadcast = true);  // broadcast=false for internal operations (won't trigger UI updates)
+    void WaitWhilePaused();              // Block until resumed (used by breakpoint handlers)
     void Stop();
 
     // File format operations
     bool LoadSnapshot(const std::string& path);
+    bool SaveSnapshot(const std::string& path);
     bool LoadTape(const std::string& path);
     bool LoadDisk(const std::string& path);
 
     // Controlled emulator behavior
     void RunSingleCPUCycle(bool skipBreakpoints = true);
     void RunNCPUCycles(unsigned cycles, bool skipBreakpoints = false);
-    void RunUntilInterrupt();
-    void RunUntilCondition(/* some condition descriptor */);    // TODO: revise design
+    void RunFrame(bool skipBreakpoints = true);                   // Run until next frame boundary
+    void RunNFrames(unsigned frames, bool skipBreakpoints = true); // Run N complete frames
+    void StepOver();                                              // Execute instruction, skip calls and subroutines
+
+    // Cancel any pending step-over breakpoint (cleanup before starting a new step command)
+    void CancelPendingStepOver();
+
+    // Atomic debug stepping — zero overhead in non-debug mode (never called from hot path)
+    void RunTStates(unsigned tStates, bool skipBreakpoints = true);           // Run exact N t-states (1 = ULA step / 2 pixels)
+    void RunUntilScanline(unsigned targetLine, bool skipBreakpoints = true);  // Run until scanline N boundary
+    void RunNScanlines(unsigned count, bool skipBreakpoints = true);          // Run N complete scanlines from current position (drift-free)
+    void ResetLineStepAnchor();                                               // Clear scanline-step anchor (call when switching away from line stepping)
+    void RunUntilNextScreenPixel(bool skipBreakpoints = true);                // Skip vblank/borders to first paper pixel
+    void RunUntilInterrupt(bool skipBreakpoints = true);                      // Run until Z80 accepts maskable interrupt (iff1 1→0)
+    void RunUntilCondition(std::function<bool(const Z80State&)> predicate, unsigned maxTStates = 0);
 
     // Actions
     bool LoadROM(std::string path);
-
 
     // Debug methods
     void DebugOn();
@@ -177,15 +202,15 @@ public:
 
     Z80State* GetZ80State();
 
-
     // Identity and state methods
     const std::string& GetId() const;
     EmulatorStateEnum GetState();
     void SetState(EmulatorStateEnum state);
-    
+
     // Status methods
     bool IsRunning();
     bool IsPaused();
+    bool IsDestroying();  // Thread-safe check for destruction state
     bool IsDebug();
     std::string GetStatistics();
     std::string GetInstanceInfo();
@@ -194,8 +219,10 @@ public:
     void ResetCountersAll();
     void ResetCounter();
 
-    FeatureManager* GetFeatureManager() const { return _featureManager; }
+    FeatureManager* GetFeatureManager() const
+    {
+        return _featureManager;
+    }
 };
 
 #endif
-

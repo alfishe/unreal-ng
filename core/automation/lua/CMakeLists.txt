@@ -12,8 +12,8 @@ option(AUTOMATION_LUA_SHARED "Build automation_lua as shared library instead of 
 option(LUA_BUILD_STATIC "Build static library for Lua" ON)
 option(LUA_BUILD_SHARED "Build shared library for Lua" OFF)
 
-# Set C++17 standard
-set(CMAKE_CXX_STANDARD 17)
+# Explicitly set C++20 standard (required by sol2 and project)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -37,7 +37,8 @@ set(SOL2_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/sol2/sol2-3.5.0/single/inc
 #------------------------------------------------------------------------------
 set(AUTOMATION_LUA_SOURCES
     src/automation-lua.cpp
-    src/automation-main.cpp
+    # NOTE: automation-main.cpp is excluded because it contains a main() function
+    # which conflicts when linking with other executables like unreal-qt
 )
 
 set(AUTOMATION_LUA_HEADERS
@@ -85,6 +86,12 @@ else()
     else ()
         target_link_libraries(${PROJECT_NAME} PUBLIC lua::shared)
     endif ()
+endif()
+
+# MinGW: sol2's heavy template usage can exceed the COFF section limit (65535 sections).
+# The -Wa,-mbig-obj flag allows the assembler to create larger object files.
+if (MINGW)
+    target_compile_options(${PROJECT_NAME} PRIVATE -Wa,-mbig-obj)
 endif()
 
 # Add include directories (same for both static and shared)
@@ -137,10 +144,8 @@ target_include_directories(${PROJECT_NAME} PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 
-# Link with unrealng::core if available as PUBLIC so it's available to dependents
-if(TARGET unrealng::core)
-    target_link_libraries(${PROJECT_NAME} PUBLIC unrealng::core)
-endif()
+# Note: core library is linked by the parent project (unreal-qt)
+# Static libraries should only use headers, not link dependencies
 
 #------------------------------------------------------------------------------
 # Export targets (disabled for now due to core dependency issues)

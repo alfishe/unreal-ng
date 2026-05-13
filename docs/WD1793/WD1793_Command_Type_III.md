@@ -63,7 +63,7 @@ Type III commands deal with reading raw track data, reading sector identificatio
 | :-: | :-------------- | :----------------------------------------------------------- |
 | 7   | NOT READY       | Drive not ready.                                             |
 | 6   | WRITE PROTECT   | Reflects /WPRT input.                                        |
-| 5   | 0               | Not Used.                                                    |
+| 5   | -               | Not defined (implementation-dependent; typically 0).         |
 | 4   | RECORD NOT FOUND| Not Used by Read Address (always 0, ID field assumed found). |
 | 3   | CRC ERROR       | CRC of the read ID field was incorrect.                      |
 | 2   | LOST DATA       | Host missed reading one or more ID field bytes via DRQ.      |
@@ -104,8 +104,8 @@ Type III commands deal with reading raw track data, reading sector identificatio
 | :-: | :-------------- | :------------------------------------------------------ |
 | 7   | NOT READY       | Drive not ready.                                        |
 | 6   | WRITE PROTECT   | Reflects /WPRT input.                                   |
-| 5   | 0               | Not Used.                                               |
-| 4   | 0               | Not Used.                                               |
+| 5   | -               | Not defined (implementation-dependent; typically 0).    |
+| 4   | -               | Not Used.                                               |
 | 3   | 0               | Not Used (No CRC checks performed).                     |
 | 2   | LOST DATA       | Host missed reading one or more raw track bytes via DRQ. |
 | 1   | DRQ             | 0 (Last byte read or command ended).                    |

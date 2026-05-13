@@ -2,6 +2,7 @@
 
 #include "stdafx.h"
 
+#include <atomic>
 #include "common/modulelogger.h"
 #include "emulator/platform.h"
 #include "corestate.h"
@@ -16,6 +17,7 @@ class WD1793;
 class PortDecoder;
 class Screen;
 class SoundManager;
+class RecordingManager;
 class DebugManager;
 class Z80Disassembler;
 class FeatureManager;
@@ -30,7 +32,7 @@ class EmulatorContext
     /// region <Child object references>
 public:
     // Advanced logger instance
-    ModuleLogger* pModuleLogger;
+    ModuleLogger* pModuleLogger = nullptr;
 
 	// Global emulator configuration (MemoryRead from ini file)
 	CONFIG config;
@@ -49,38 +51,42 @@ public:
 	HOST host;
 
     // Main emulation loop
-    MainLoop* pMainLoop;
+    MainLoop* pMainLoop = nullptr;
 
 	// Computer system instance
-	Core* pCore;
+	Core* pCore = nullptr;
 
 	// Keyboard controller instance
-	Keyboard* pKeyboard;
+	Keyboard* pKeyboard = nullptr;
 
 	// Memory controller instance
-	Memory* pMemory;
+	Memory* pMemory = nullptr;
 
 	// Model-specific port decoder
-	PortDecoder* pPortDecoder;
+	PortDecoder* pPortDecoder = nullptr;
 
     // Tape input instance
-    Tape* pTape;
+    Tape* pTape = nullptr;
 
     // BDI - Beta Disk Interface controller instance
-    WD1793* pBetaDisk;
+    WD1793* pBetaDisk = nullptr;
 
 	// Video controller parameters and logic
-	Screen* pScreen;
+	Screen* pScreen = nullptr;
 
     // Audio callback (will be triggered after each video frame render and provide audio samples for host system)
-    void * pAudioManagerObj;
-    AudioCallback pAudioCallback;
+    // Using std::atomic to ensure proper memory ordering between UI thread (setting) and emulator thread (reading)
+    std::atomic<void*> pAudioManagerObj;
+    std::atomic<AudioCallback> pAudioCallback;
 
     // Sound manager
-    SoundManager* pSoundManager;
+    SoundManager* pSoundManager = nullptr;
+
+    // Recording manager (video/audio capture for recordings)
+    RecordingManager* pRecordingManager = nullptr;
 
 	// Debug manager (includes Breakpoints, Labels and Disassembler)
-	DebugManager* pDebugManager;
+	DebugManager* pDebugManager = nullptr;
 
     // Feature toggle manager
     FeatureManager* pFeatureManager = nullptr;

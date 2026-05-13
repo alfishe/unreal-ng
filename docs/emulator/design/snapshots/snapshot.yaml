@@ -1,0 +1,293 @@
+# ZX Spectrum Emulator Snapshot Manifest
+# Version: 1.8
+---
+metadata:
+  manifest_version: "1.8"
+  emulator_id: "UnrealSpeccy-NG"
+  emulator_version: "0.40.0"
+  host_platform: "macOS (Darwin) 15.5 (Sequoia)"
+  emulated_platform: "ZX Spectrum 128K (Pentagon)"
+  save_time: !!timestamp 2023-10-28T18:45:10Z
+  description: |
+    Snapshot for 'Dizzy Prince of the Yolkfolk'.
+    Player is in the castle, just after solving the moat puzzle.
+
+# Core machine state and configuration at time of save.
+machine:
+  model: PENTAGON
+  ram_size_kb: 512
+  timing: 
+    preset: PENTAGON
+    frame: 71680
+    line: 224
+    int: 50
+    intstart: 13
+    intlen: 32
+    total_t_states: 4555555555  # Total t-states counter since emulator start
+  config:
+    even_m1: 0
+    border_4t: 0
+    floatbus: 0
+    floatdos: 0
+    portff: 0
+  ula:
+    border_color: 7
+    frame_counter: 54321
+    flash_state: false
+    screen_mode: SCREEN_NORMAL  # SCREEN_NORMAL or SCREEN_SHADOW
+    frame_t_states: 1234567     # Current T-state count within frame
+
+# Memory layout and contents - individual pages stored as separate files.
+memory:
+  pages:
+    # ROM pages (16KB each) - up to 64 ROM pages (0-63)
+    rom_0: { file: "memory/rom_0.bin", checksum: { algorithm: "crc32", value: "0x12345678" } }
+    rom_1: { file: "memory/rom_1.bin", checksum: { algorithm: "crc32", value: "0x23456789" } }
+    rom_2: { file: "memory/rom_2.bin", checksum: { algorithm: "crc32", value: "0x3456789A" } }
+    rom_3: { file: "memory/rom_3.bin", checksum: { algorithm: "crc32", value: "0x456789AB" } }
+    # All other ROM pages skipped as empty / non-used
+
+    # RAM pages (16KB each) - up to 256 RAM pages (0-255), only include pages that contain data
+    ram_0: { file: "memory/ram_0.bin", checksum: { algorithm: "crc32", value: "0x56789ABC" } }
+    ram_2: { file: "memory/ram_2.bin", checksum: { algorithm: "crc32", value: "0x6789ABCD" } }
+    ram_5: { file: "memory/ram_5.bin", checksum: { algorithm: "crc32", value: "0x789ABCDE" } }
+    # All other RAM pages skipped as empty / non-used
+       
+    # MISC pages (special memory areas)
+    misc_0: { file: "memory/misc_0.bin", checksum: { algorithm: "crc32", value: "0xABCDEF01" } }
+    
+    # CACHE pages (if cache is enabled)
+    cache_0: { file: "memory/cache_0.bin", checksum: { algorithm: "crc32", value: "0xBCDEF012" } }
+  
+  memory_map:
+    '0x0000': { type: ROM, bank: 0 }  # Slot 0: 0x0000 - 0x3FFF
+    '0x4000': { type: RAM, bank: 5 }  # Slot 1: 0x4000 - 0x7FFF
+    '0x8000': { type: RAM, bank: 2 }  # Slot 2: 0x8000 - 0xBFFF
+    '0xC000': { type: RAM, bank: 0 }  # Slot 3: 0xC000 - 0xFFFF
+  
+  ports:
+    0x7FFD: 0x00  # Memory paging control (128K/+2A/+3) - RAM bank select, screen mode, ROM select
+    0x1FFD: 0x00  # Memory paging control (+2A/+3) - RAM bank select, ROM select, special modes
+    0xDFFD: 0x00  # Memory paging control (Pentagon) - RAM bank select for extended memory
+    0x7EFD: 0x00  # Memory paging control (Pentagon) - RAM bank select for extended memory
+    0xFE: 0x7F    # ULA port - border color, speaker, cassette motor, keyboard input
+    0x1F: 0xFF    # Kempston joystick port - joystick state (up, down, left, right, fire)
+    0x37: 0xFF    # Sinclair joystick port 1 - joystick state
+    0x57: 0xFF    # Sinclair joystick port 2 - joystick state
+    0xFB: 0xFF    # AY-3-8910 data port - sound chip data register
+    0xFD: 0x0E    # AY-3-8910 address port - sound chip register select
+    0x3F: 0x3F    # Z80 I register - interrupt page address
+    0xBF: 0xFF    # Kempston mouse port - mouse position and buttons
+    0xFF: 0xFF    # AY mouse port - mouse position and buttons (AY-3-8910 port B)
+
+# CPU state.
+z80:
+  registers:
+    a: 0x1A            # Accumulator
+    f: 0b01000111      # Flags (S Z H P/V N C)
+    b: 0x24
+    c: 0x7A
+    d: 0x33
+    e: 0x33
+    h: 0x5B
+    l: 0x67
+    af_: 0xFFFF        # Alternate/shadow registers
+    bc_: 0xFFFF
+    de_: 0xFFFF
+    hl_: 0xFFFF
+    ix: 0x8000         # Index Register X
+    iy: 0x5C3A         # Index Register Y
+    pc: 0x5B68         # Program Counter
+    sp: 0xFC00         # Stack Pointer
+    i: 0x3F            # Interrupt Page Address Register
+    r: 0x7F            # Memory Refresh Register
+  interrupts:
+    im: 1              # Interrupt Mode (0, 1, or 2)
+    iff1: true         # Main interrupt enable flip-flop
+    iff2: true         # Temp storage for NMI, copy of IFF1
+    halted: false
+
+
+# State of peripheral chips.
+peripherals:
+  psg0: # Programmable Sound Generator (AY0)
+    chip_type: YM2149F # Possible options: AY8910, AY8912, YM2149F
+    registers:
+      R0:  0xFD   # Chan A Tone, Fine
+      R1:  0x0C   # Chan A Tone, Coarse
+      R2:  0x00   # Chan B Tone, Fine
+      R3:  0x00   # Chan B Tone, Coarse
+      R4:  0x00   # Chan C Tone, Fine
+      R5:  0x00   # Chan C Tone, Coarse
+      R6:  0x10   # Noise Period
+      R7:  0xB8   # Mixer (I/O, Noise, Tone)
+      R8:  0x0F   # Chan A Amplitude
+      R9:  0x0F   # Chan B Amplitude
+      R10: 0x0F   # Chan C Amplitude
+      R11: 0x61   # Envelope Duration, Fine
+      R12: 0x00   # Envelope Duration, Coarse
+      R13: 0x04   # Envelope Shape/Cycle
+      R14: 0x00   # I/O Port A Data
+      R15: 0x00   # I/O Port B Data
+    selected_register: R14  # Currently selected register
+    envelope:
+      phase: 3
+      step_counter: 7
+      current_volume: 12
+      direction: up
+    tone:
+      counter_a: 12345
+      counter_b: 23456
+      counter_c: 34567
+      output_a: 1
+      output_b: 0
+      output_c: 1
+    noise:
+      shift_register: 0x1F35
+      counter: 42
+  psg1: # Programmable Sound Generator (AY1) - TurboSound configuration
+    chip_type: YM2149F # Possible options: AY8910, AY8912, YM2149F
+    registers:
+      R0:  0xFD   # Chan A Tone, Fine
+      R1:  0x0C   # Chan A Tone, Coarse
+      R2:  0x00   # Chan B Tone, Fine
+      R3:  0x00   # Chan B Tone, Coarse
+      R4:  0x00   # Chan C Tone, Fine
+      R5:  0x00   # Chan C Tone, Coarse
+      R6:  0x10   # Noise Period
+      R7:  0xB8   # Mixer (I/O, Noise, Tone)
+      R8:  0x0F   # Chan A Amplitude
+      R9:  0x0F   # Chan B Amplitude
+      R10: 0x0F   # Chan C Amplitude
+      R11: 0x61   # Envelope Duration, Fine
+      R12: 0x00   # Envelope Duration, Coarse
+      R13: 0x04   # Envelope Shape/Cycle
+      R14: 0x00   # I/O Port A Data
+      R15: 0x00   # I/O Port B Data
+    selected_register: R2  # Currently selected register
+    envelope:
+      phase: 2
+      step_counter: 5
+      current_volume: 8
+      direction: down
+    tone:
+      counter_a: 54321
+      counter_b: 65432
+      counter_c: 76543
+      output_a: 0
+      output_b: 1
+      output_c: 0
+    noise:
+      shift_register: 0x2A7B
+      counter: 99
+  wd1793: # Floppy Disk Controller (Beta-Disk/TR-DOS)
+    command: 0xD8       # Last command issued (Type III: SEEK)
+    track:   0x1A         # Current/target track register (Track 26)
+    sector:  0x03         # Current/target sector register
+    data:    0xE5         # Data register value
+    status:  0b10010000   # Status register (Busy=1, CRC Error=1)
+    motor_on: true
+    head_loaded: true
+    write_protect: false
+    motor_timeout: 10240000 # T-states till motor off
+    index_counter: 1024     # Counter for rotation phase / index punch
+    # Internal state for perfect restoration
+    state_machine:
+      phase: 2
+      timer: 12345
+      busy_counter: 8
+  keyboard:
+    matrix: [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]  # Current keyboard matrix state
+  joystick:
+    kempston: { up: false, down: false, left: false, right: false, fire: false }
+    sinclair1: { up: false, down: false, left: false, right: false, fire: false }
+    sinclair2: { up: false, down: false, left: false, right: false, fire: false }
+  mouse:
+    kempston: { x: 128, y: 128, buttons: 0 }
+    ay: { x: 128, y: 128, buttons: 0 }
+
+# Attached media devices and their state.
+media:
+  floppy_drives:
+    - { drive_id: A, file: "media/disks/drive_a.trd", type: TRD, checksum: { algorithm: "crc32", value: "0xA1B2C3D4" }, write_protected: false, motor_on: true, track_head_position: 12 }
+    - { drive_id: B, file: "media/disks/drive_b.trd", type: TRD, checksum: { algorithm: "crc32", value: "0xB2C3D4E5" }, write_protected: true, motor_on: false, track_head_position: 0 }
+  tape_player:
+    file: "media/tapes/tape.tap"
+    checksum: { algorithm: "crc32", value: "0xC3D4E5F6" }
+    position: 48912
+    playing: false
+    auto_start: true
+    traps_enabled: true
+  hard_disk:
+    - { drive_id: 0, file: "media/hdd/harddisk.img", type: IDE, checksum: { algorithm: "crc32", value: "0xD4E5F607" }, size_mb: 40, read_only: false }
+
+# Optional screenshots associated with the snapshot.
+screenshots:
+  thumbnail:
+    format: PNG
+    encoding: base64
+    data: !!binary |
+      iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAA...
+  screen_only:
+    format: PNG
+    file: "screenshots/screen.png"
+  fullscreen:
+    format: PNG
+    width: 352
+    height: 288
+    file: "screenshots/fullscreen.png"
+
+# Optional debug information for developers.
+debug:
+  # Both embedded and file-based entries are supported. If both are present, the emulator MUST merge them, with embedded entries taking precedence in case of conflict.
+  label_files:
+    - "debug/labels.sym"
+  breakpoint_files:
+    - "debug/breakpoints.txt"
+  embedded_labels:
+    - { type: address, value: 0x4000, name: "GameLoopStart" }
+    - { type: address, value: 0x402A, name: "PlayerUpdate" }
+    - { type: address, value: 0x5B68, name: "CurrentPCPosition" }
+    - { type: physical, mem_type: RAM, page: 2, offset: 0x100, name: "Ram2Routine" }
+    - { type: physical, mem_type: ROM, page: 1, offset: 0x200, name: "Rom1Init" }
+  breakpoints:
+    - { type: address, value: 0x5B6A, enabled: true, condition: "A == 0x1A" }
+    - { type: address, value: 0x4010, enabled: false }
+    - { type: physical, mem_type: RAM, page: 5, offset: 0x123, enabled: true }
+    - { type: physical, mem_type: ROM, page: 0, offset: 0x456, enabled: false }
+  watchpoints:
+    - { type: address, value: 0xC000, size: 2, read: true, write: true }
+    - { type: physical, mem_type: RAM, page: 2, offset: 0x200, size: 4, read: true, write: false }
+    - { type: physical, mem_type: ROM, page: 3, offset: 0x300, size: 1, read: false, write: true }
+  call_stack:
+    - 0x5B68
+    - 0x402A
+    - 0x4000
+
+# Emulator-specific configuration that was active during save.
+emulator_config:
+  features:
+    turbo_mode: true
+    magic_button_enabled: false
+  debug_features:
+    debug_mode: false
+    memory_counters: true
+    call_trace: false
+  video:
+    filter: "2xSAI"
+    scanlines: 0
+    border_size: 32
+  sound:
+    enabled: true
+    sample_rate: 44100
+    buffer_size: 1024
+  input:
+    mouse_type: KEMPSTON
+    joystick_type: KEMPSTON
+    keyboard_layout: default
+
+# Versioning and Compatibility Policy
+# - Unknown top-level keys MUST be ignored for forward compatibility.
+# - Breaking changes MUST increment the manifest_version. A changelog MUST be maintained.
+# - Older emulators encountering a newer version MAY warn or refuse to load, but MUST NOT crash.
+# - If a loader encounters an unknown field, it MUST ignore it unless it is required for correct operation in the current version.

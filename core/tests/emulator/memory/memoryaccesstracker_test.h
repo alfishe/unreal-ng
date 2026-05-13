@@ -1,17 +1,20 @@
 #pragma once
 
-#include <string>
-#include <cstdint>
 #include <gtest/gtest.h>
-#include "emulator/cpu/core.h"
-#include "debugger/debugmanager.h"
+
+#include <cstdint>
+#include <string>
+
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/debugmanager.h"
+#include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
-#include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/memoryaccesstracker.h"
 
 // Forward declarations
 class EmulatorContext;
+class FeatureManager;
 
 class MemoryAccessTracker_Test : public ::testing::Test
 {
@@ -30,8 +33,9 @@ protected:
     Z80* _z80 = nullptr;
     DebugManager* _debugManager = nullptr;
     BreakpointManager* _breakpointManager = nullptr;
+    FeatureManager* _featureManager = nullptr;
     MemoryCUT* _memory = nullptr;
-    MemoryAccessTracker* _tracker = nullptr;
+    MemoryAccessTrackerCUT* _tracker = nullptr;  // CUT for direct _isAllocated access
 
     // Setup and teardown
     void SetUp() override;

@@ -17,7 +17,7 @@
 enum PortFlagsEnum : uint8_t
 {
 	DOSPorts	= 0x01,
-	TRDOS		= 0x02,
+	TRDOSROM	= 0x02,
 	SetDOSROM	= 0x04,
 	LeaveDOSRAM	= 0x08,
 	LeaveDOSAdr	= 0x10,

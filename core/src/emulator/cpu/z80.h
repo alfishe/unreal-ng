@@ -7,6 +7,9 @@
 // Defined in /emulator/cpu/op_ddcb.cpp - pointers to registers in Z80 state
 extern uint8_t* direct_registers[8];
 
+// Forward declaration
+class OpcodeProfiler;
+
 /// region <Structures>
 
 // Disable compiler alignment for packed structures
@@ -185,9 +188,34 @@ struct Z80Registers
         };
     } alt;
 
+    /// region <Undocumented Internal Registers>
+    ///
+    /// The Z80 contains internal registers not exposed in official documentation but discovered
+    /// through reverse engineering and behavioral analysis. These registers affect observable
+    /// behavior of certain instructions, particularly undocumented flag bits 3 (XF) and 5 (YF).
+    ///
+    /// Reference: "The Undocumented Z80 Documented" by Sean Young
+    ///            "MEMPTR" research by Boo-boo, Vladimir Kladov (zx.pk.ru, 2006)
+    ///            "Z80 XCF Flavor" by Manuel Sainz de Baranda y Goñi (zxe.io, 2022-2024)
+
+    /// MEMPTR (also known as WZ) - 16-bit internal address buffer register
+    ///
+    /// Used by the Z80 for 16-bit address calculations and temporary storage during
+    /// multi-byte memory operations. Its value affects the undocumented YF/XF flags
+    /// in the BIT n,(HL) instruction, where bits 11 and 13 of MEMPTR are copied to
+    /// flags bits 3 and 5 respectively.
+    ///
+    /// Various instructions set MEMPTR:
+    /// - LD A,(addr) / LD (addr),A: MEMPTR = addr + 1 (low byte), high byte varies
+    /// - LD A,(rp) / LD (rp),A: MEMPTR = rp + 1
+    /// - ADD/ADC/SBC rp1,rp2: MEMPTR = rp1_before + 1
+    /// - JP/CALL/JR/RET/RST: MEMPTR = target address
+    /// - IN/OUT instructions: MEMPTR derived from port address
+    /// - Block instructions (LDIR, CPIR, etc.): Various behaviors
+    /// - Any instruction with (IX+d)/(IY+d): MEMPTR = INDEX + d
     union
     {
-        uint16_t memptr;  // undocumented register
+        uint16_t memptr;
         struct
         {
             uint8_t meml;
@@ -195,8 +223,27 @@ struct Z80Registers
         };
     };
 
-    uint32_t cycle_count;      // Counter to track cycle accuracy
-    uint32_t tStatesPerFrame;  // How many t-states already spent during current frame
+    /// Q Register - 8-bit internal flag capture register (only bits 3 and 5 are significant)
+    ///
+    /// Discovered in 2018-2024, Q captures the YF/XF bits (bits 5/3) from the Flags register
+    /// after each instruction that modifies flags. It affects the undocumented behavior of
+    /// CCF and SCF instructions.
+    ///
+    /// On genuine Zilog Z80, CCF and SCF compute undocumented flags as:
+    ///     YF = A.5 | (F.5 & Q.5)
+    ///     XF = A.3 | (F.3 & Q.3)
+    /// Or simplified: undoc_flags = (A | (F & Q)) & 0x28
+    ///
+    /// Different Z80 clones exhibit different behavior:
+    /// - Zilog (original): Uses Q register as described above
+    /// - NEC NMOS clones: Ignore Q, use only A register: undoc_flags = A & 0x28
+    /// - ST CMOS clones: Asymmetric YF/XF behavior (different formulas for each bit)
+    ///
+    /// The XCF Flavor test (https://zxe.io) can distinguish these variants.
+    /// This emulator implements genuine Zilog Z80 behavior.
+    uint8_t q;
+
+    /// endregion </Undocumented Internal Registers>
 
     uint16_t eipos;
     uint16_t haltpos;
@@ -236,8 +283,6 @@ struct Z80DecodedOperation
 struct Z80State : public Z80Registers, public Z80DecodedOperation
 {
     uint32_t z80_index;  // CPU Enumeration index (for multiple Z80 in system, like Spectrum with GS/NGS)
-
-    uint64_t clock_count;  // Monotonically increasing clock edge counter. Doesn't depend on any rates recalculation
 
     uint16_t prev_pc;  // PC on previous cycle
     uint16_t m1_pc;    // PC when M1 cycle started
@@ -291,16 +336,13 @@ protected:
     uint8_t _trashRegister;  // Redirect DDCB operation writes with no destination registers here (related to
                              // op_ddcb.cpp and direct_registers[6] unused pointer)
 
-    bool _pauseRequested = false;
-
 protected:
     int _nmi_pending_count = 0;
+    
+    // Opcode profiling
+    OpcodeProfiler* _opcodeProfiler = nullptr;
+    bool _feature_opcodeprofiler_enabled = false;
     /// endregion </Fields>
-
-    /// region <Properties>
-public:
-    bool IsPaused();
-    /// endregion </Properties>
 
     /// region <Constructors / Destructors>
 public:
@@ -327,9 +369,6 @@ public:
 
     // Z80 CPU control methods
     void Reset();  // Z80 chip reset
-    void Pause();
-    void Resume();
-
     void Z80Step(bool skipBreakpoints = false);  // Single opcode execution
 
 public:
@@ -339,8 +378,8 @@ public:
 public:
     void RequestMaskedInterrupt();
     void RequestNonMaskedInterrupt();
-    inline void ProcessInterrupts(bool int_occured,  // Take care about incoming interrupts
-                                  unsigned int_start, unsigned int_end);
+    void ProcessInterrupts(bool int_occured,  // Take care about incoming interrupts
+                           unsigned int_start, unsigned int_end);
 
     // Event handlers
 public:
@@ -351,7 +390,6 @@ public:
     // Debugger interfacing
 public:
     void ProcessDebuggerEvents();
-    void WaitUntilResumed();
     void (*callbackM1_Prefetch)();   // Corrected function pointer declaration
     void (*callbackM1_Postfetch)();  // Corrected function pointer declaration
 
@@ -378,4 +416,9 @@ public:
     static std::string DumpFlags(uint8_t flags);
 
     /// endregion </Debug methods>
+    
+    /// region <Feature Cache>
+    void UpdateFeatureCache();
+    OpcodeProfiler* GetOpcodeProfiler() { return _opcodeProfiler; }
+    /// endregion </Feature Cache>
 };

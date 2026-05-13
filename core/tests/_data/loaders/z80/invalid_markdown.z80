@@ -1,0 +1,11 @@
+# Z80 Snapshot Test File
+
+This is a plain text markdown file disguised as a Z80 snapshot.
+It contains normal ASCII text that should be rejected by the validator.
+
+## Section 1
+Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+
+## Section 2
+Here's some more text to make this file approximately the right size for a Z80 v1 snapshot.
+Adding more content here: 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ.

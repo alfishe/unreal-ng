@@ -218,3 +218,197 @@ TEST_F(Memory_Test, GetPhysicalOffsetForZ80Bank)
 {
 
 }
+
+/// region <ROM Switching Tests>
+
+// Test SetROMDOS correctly updates all internal state
+TEST_F(Memory_Test, SetROMDOS_UpdatesAllState)
+{
+    // First, set up with a different ROM (48k) to ensure we're actually switching
+    _memory->SetROM48k(false);
+    ASSERT_TRUE(_memory->_isPage0ROM48k) << "Pre-condition: should start with 48k ROM";
+    ASSERT_FALSE(_memory->_isPage0ROMDOS) << "Pre-condition: DOS flag should be false";
+    
+    // Write a marker byte to DOS ROM so we can verify it's actually mapped
+    // The first byte of DOS ROM (TR-DOS) is typically different from SOS ROM
+    uint8_t expectedDOSByte = _memory->base_dos_rom[0];
+    uint8_t expectedSOSByte = _memory->base_sos_rom[0];
+    
+    // Act: Switch to DOS ROM
+    _memory->SetROMDOS(false);  // updatePorts=false for unit test
+    
+    // Assert: Bank 0 read pointer points to DOS ROM
+    EXPECT_EQ(_memory->_bank_read[0], _memory->base_dos_rom) 
+        << "_bank_read[0] should point to base_dos_rom";
+    
+    // Assert: Bank mode is ROM
+    EXPECT_EQ(_memory->_bank_mode[0], BANK_ROM) 
+        << "_bank_mode[0] should be BANK_ROM";
+    
+    // Assert: isCurrentROMDOS() returns true
+    EXPECT_TRUE(_memory->isCurrentROMDOS()) 
+        << "isCurrentROMDOS() should return true";
+    
+    // Assert: Other ROM flags are false
+    EXPECT_FALSE(_memory->_isPage0ROM48k) 
+        << "_isPage0ROM48k should be false after SetROMDOS";
+    EXPECT_FALSE(_memory->_isPage0ROM128k) 
+        << "_isPage0ROM128k should be false after SetROMDOS";
+    EXPECT_FALSE(_memory->_isPge0ROMService) 
+        << "_isPge0ROMService should be false after SetROMDOS";
+    
+    // Assert: DirectReadFromZ80Memory(0x0000) returns DOS ROM byte
+    uint8_t readByte = _memory->DirectReadFromZ80Memory(0x0000);
+    EXPECT_EQ(readByte, expectedDOSByte) 
+        << "DirectReadFromZ80Memory(0x0000) should return DOS ROM first byte";
+    
+    // Verify it's actually different from SOS ROM (if they differ)
+    if (expectedDOSByte != expectedSOSByte)
+    {
+        EXPECT_NE(readByte, expectedSOSByte) 
+            << "Should NOT be reading SOS ROM byte";
+    }
+}
+
+// Test SetROM48k correctly updates all internal state
+TEST_F(Memory_Test, SetROM48k_UpdatesAllState)
+{
+    // First, set up with a different ROM (DOS) to ensure we're actually switching
+    _memory->SetROMDOS(false);
+    ASSERT_TRUE(_memory->_isPage0ROMDOS) << "Pre-condition: should start with DOS ROM";
+    ASSERT_FALSE(_memory->_isPage0ROM48k) << "Pre-condition: 48k flag should be false";
+    
+    // Get expected byte from 48k (SOS) ROM
+    uint8_t expectedSOSByte = _memory->base_sos_rom[0];
+    
+    // Act: Switch to 48k ROM
+    _memory->SetROM48k(false);  // updatePorts=false for unit test
+    
+    // Assert: Bank 0 read pointer points to SOS ROM
+    EXPECT_EQ(_memory->_bank_read[0], _memory->base_sos_rom) 
+        << "_bank_read[0] should point to base_sos_rom";
+    
+    // Assert: Bank mode is ROM
+    EXPECT_EQ(_memory->_bank_mode[0], BANK_ROM) 
+        << "_bank_mode[0] should be BANK_ROM";
+    
+    // Assert: IsCurrentROM48k() returns true
+    EXPECT_TRUE(_memory->IsCurrentROM48k()) 
+        << "IsCurrentROM48k() should return true";
+    
+    // Assert: Other ROM flags are false
+    EXPECT_FALSE(_memory->_isPage0ROMDOS) 
+        << "_isPage0ROMDOS should be false after SetROM48k";
+    EXPECT_FALSE(_memory->_isPage0ROM128k) 
+        << "_isPage0ROM128k should be false after SetROM48k";
+    EXPECT_FALSE(_memory->_isPge0ROMService) 
+        << "_isPge0ROMService should be false after SetROM48k";
+    
+    // Assert: DirectReadFromZ80Memory(0x0000) returns SOS ROM byte
+    uint8_t readByte = _memory->DirectReadFromZ80Memory(0x0000);
+    EXPECT_EQ(readByte, expectedSOSByte) 
+        << "DirectReadFromZ80Memory(0x0000) should return 48k ROM first byte";
+}
+
+// Test SetROM128k correctly updates all internal state
+TEST_F(Memory_Test, SetROM128k_UpdatesAllState)
+{
+    // First, set up with a different ROM (48k) to ensure we're actually switching
+    _memory->SetROM48k(false);
+    
+    // Get expected byte from 128k ROM
+    uint8_t expected128kByte = _memory->base_128_rom[0];
+    
+    // Act: Switch to 128k ROM
+    _memory->SetROM128k(false);  // updatePorts=false for unit test
+    
+    // Assert: Bank 0 read pointer points to 128k ROM
+    EXPECT_EQ(_memory->_bank_read[0], _memory->base_128_rom) 
+        << "_bank_read[0] should point to base_128_rom";
+    
+    // Assert: Bank mode is ROM
+    EXPECT_EQ(_memory->_bank_mode[0], BANK_ROM) 
+        << "_bank_mode[0] should be BANK_ROM";
+    
+    // Assert: isCurrentROM128k() returns true
+    EXPECT_TRUE(_memory->isCurrentROM128k()) 
+        << "isCurrentROM128k() should return true";
+    
+    // Assert: Other ROM flags are false
+    EXPECT_FALSE(_memory->_isPage0ROM48k) 
+        << "_isPage0ROM48k should be false after SetROM128k";
+    EXPECT_FALSE(_memory->_isPage0ROMDOS) 
+        << "_isPage0ROMDOS should be false after SetROM128k";
+    EXPECT_FALSE(_memory->_isPge0ROMService) 
+        << "_isPge0ROMService should be false after SetROM128k";
+    
+    // Assert: DirectReadFromZ80Memory(0x0000) returns 128k ROM byte
+    uint8_t readByte = _memory->DirectReadFromZ80Memory(0x0000);
+    EXPECT_EQ(readByte, expected128kByte) 
+        << "DirectReadFromZ80Memory(0x0000) should return 128k ROM first byte";
+}
+
+// Test SetROMSystem correctly updates all internal state
+TEST_F(Memory_Test, SetROMSystem_UpdatesAllState)
+{
+    // First, set up with a different ROM (48k) to ensure we're actually switching
+    _memory->SetROM48k(false);
+    
+    // Get expected byte from System ROM
+    uint8_t expectedSysByte = _memory->base_sys_rom[0];
+    
+    // Act: Switch to System ROM
+    _memory->SetROMSystem(false);  // updatePorts=false for unit test
+    
+    // Assert: Bank 0 read pointer points to System ROM
+    EXPECT_EQ(_memory->_bank_read[0], _memory->base_sys_rom) 
+        << "_bank_read[0] should point to base_sys_rom";
+    
+    // Assert: Bank mode is ROM
+    EXPECT_EQ(_memory->_bank_mode[0], BANK_ROM) 
+        << "_bank_mode[0] should be BANK_ROM";
+    
+    // Assert: Other ROM flags are false  
+    EXPECT_FALSE(_memory->_isPage0ROM48k) 
+        << "_isPage0ROM48k should be false after SetROMSystem";
+    EXPECT_FALSE(_memory->_isPage0ROMDOS) 
+        << "_isPage0ROMDOS should be false after SetROMSystem";
+    EXPECT_FALSE(_memory->_isPage0ROM128k) 
+        << "_isPage0ROM128k should be false after SetROMSystem";
+    
+    // Assert: DirectReadFromZ80Memory(0x0000) returns System ROM byte
+    uint8_t readByte = _memory->DirectReadFromZ80Memory(0x0000);
+    EXPECT_EQ(readByte, expectedSysByte) 
+        << "DirectReadFromZ80Memory(0x0000) should return System ROM first byte";
+}
+
+// Test ROM switching round-trip: switch through all ROMs and back
+TEST_F(Memory_Test, ROMSwitching_RoundTrip)
+{
+    // Start with 48k
+    _memory->SetROM48k(false);
+    EXPECT_TRUE(_memory->IsCurrentROM48k());
+    
+    // Switch to DOS
+    _memory->SetROMDOS(false);
+    EXPECT_TRUE(_memory->isCurrentROMDOS());
+    EXPECT_FALSE(_memory->IsCurrentROM48k());
+    
+    // Switch to 128k
+    _memory->SetROM128k(false);
+    EXPECT_TRUE(_memory->isCurrentROM128k());
+    EXPECT_FALSE(_memory->isCurrentROMDOS());
+    
+    // Switch to System
+    _memory->SetROMSystem(false);
+    EXPECT_FALSE(_memory->isCurrentROM128k());
+    // Note: isCurrentROMService() may not exist, check via flag
+    EXPECT_TRUE(_memory->_isPge0ROMService);
+    
+    // Switch back to 48k
+    _memory->SetROM48k(false);
+    EXPECT_TRUE(_memory->IsCurrentROM48k());
+    EXPECT_FALSE(_memory->_isPge0ROMService);
+}
+
+/// endregion </ROM Switching Tests>
