@@ -44,6 +44,8 @@ permissions:
 env:
   BUILD_TYPE: Release
   QT_VERSION: '6.9.3'
+  # Enable symbol packaging for rolling snapshots only
+  PACKAGE_SYMBOLS: ${{ github.event_name == 'workflow_dispatch' && 'ON' || 'OFF' }}
 
 jobs:
   # ========================================
@@ -73,10 +75,15 @@ jobs:
             -DBUILD_QT_APPS=ON \
             -DTESTS=OFF \
             -DBENCHMARKS=OFF \
+            -DPACKAGE_SYMBOLS=${{ env.PACKAGE_SYMBOLS }} \
             -DQT_INSTALL_PATH=/opt/qt/current
 
       - name: Build
         run: cmake --build build --parallel
+
+      - name: Package Symbols
+        if: env.PACKAGE_SYMBOLS == 'ON'
+        run: cmake --build build --target package_symbols_linux
 
       - name: Package
         run: cmake --build build --target package_suite_linux
@@ -88,6 +95,15 @@ jobs:
           path: build/packages/UnrealNG-Suite-Linux.tar.gz
           retention-days: 7
           compression-level: 0  # Already compressed, skip double-compression
+
+      - name: Upload Linux symbols
+        if: env.PACKAGE_SYMBOLS == 'ON'
+        uses: actions/upload-artifact@v4
+        with:
+          name: UnrealNG-Symbols-Linux
+          path: build/packages/UnrealNG-Symbols-Linux.tar.gz
+          retention-days: 7
+          compression-level: 0
 
   # ========================================
   # Windows MSVC Build
@@ -129,10 +145,15 @@ jobs:
             -DTESTS=OFF `
             -DBENCHMARKS=OFF `
             -DENABLE_PYTHON_AUTOMATION=OFF `
+            -DPACKAGE_SYMBOLS=${{ env.PACKAGE_SYMBOLS }} `
             -DQT_INSTALL_PATH="${{ env.QT_ROOT_DIR }}"
 
       - name: Build
         run: cmake --build build --parallel
+
+      - name: Package Symbols
+        if: env.PACKAGE_SYMBOLS == 'ON'
+        run: cmake --build build --target package_symbols_windows
 
       - name: Package
         run: cmake --build build --target package_suite_windows
@@ -144,6 +165,15 @@ jobs:
           path: build/packages/UnrealNG-Suite-Windows.zip
           retention-days: 7
           compression-level: 0  # Already compressed, skip double-compression
+
+      - name: Upload Windows MSVC symbols
+        if: env.PACKAGE_SYMBOLS == 'ON'
+        uses: actions/upload-artifact@v4
+        with:
+          name: UnrealNG-Symbols-Windows-MSVC
+          path: build/packages/UnrealNG-Symbols-Windows-MSVC.zip
+          retention-days: 7
+          compression-level: 0
 
   # ========================================
   # Windows MinGW Build
@@ -198,11 +228,17 @@ jobs:
             -DTESTS=OFF \
             -DBENCHMARKS=OFF \
             -DENABLE_PYTHON_AUTOMATION=OFF \
+            -DPACKAGE_SYMBOLS=${{ env.PACKAGE_SYMBOLS }} \
             -DQT_INSTALL_PATH="$QT_PATH"
 
       - name: Build
         shell: msys2 {0}
         run: cmake --build build --parallel
+
+      - name: Package Symbols
+        if: env.PACKAGE_SYMBOLS == 'ON'
+        shell: msys2 {0}
+        run: cmake --build build --target package_symbols_mingw
 
       - name: Package
         shell: msys2 {0}
@@ -222,6 +258,15 @@ jobs:
           path: build/packages/UnrealNG-Suite-Windows-MinGW.zip
           retention-days: 7
           compression-level: 0  # Already compressed, skip double-compression
+
+      - name: Upload Windows MinGW symbols
+        if: env.PACKAGE_SYMBOLS == 'ON'
+        uses: actions/upload-artifact@v4
+        with:
+          name: UnrealNG-Symbols-Windows-MinGW
+          path: build/packages/UnrealNG-Symbols-Windows-MinGW.zip
+          retention-days: 7
+          compression-level: 0
 
   # ========================================
   # macOS Build (Intel x64) - DISABLED
@@ -301,10 +346,15 @@ jobs:
             -DBUILD_QT_APPS=ON \
             -DTESTS=OFF \
             -DBENCHMARKS=OFF \
+            -DPACKAGE_SYMBOLS=${{ env.PACKAGE_SYMBOLS }} \
             -DQT_INSTALL_PATH="${{ env.QT_ROOT_DIR }}"
 
       - name: Build
         run: cmake --build build --parallel
+
+      - name: Package Symbols
+        if: env.PACKAGE_SYMBOLS == 'ON'
+        run: cmake --build build --target package_symbols_macos
 
       - name: Package
         run: cmake --build build --target package_suite_macos
@@ -319,6 +369,15 @@ jobs:
           path: build/packages/UnrealNG-Suite-macOS-ARM64.dmg
           retention-days: 7
           compression-level: 0  # DMG is already compressed
+
+      - name: Upload macOS ARM64 symbols
+        if: env.PACKAGE_SYMBOLS == 'ON'
+        uses: actions/upload-artifact@v4
+        with:
+          name: UnrealNG-Symbols-macOS-ARM64
+          path: build/packages/UnrealNG-Symbols-macOS.tar.gz
+          retention-days: 7
+          compression-level: 0
 
   # ========================================
   # Create GitHub Release
@@ -355,6 +414,16 @@ jobs:
           cp artifacts/UnrealNG-Suite-Windows-MSVC/UnrealNG-Suite-Windows.zip release/UnrealNG-Suite-Windows-MSVC.zip
           cp artifacts/UnrealNG-Suite-Windows-MinGW/UnrealNG-Suite-Windows-MinGW.zip release/
           cp artifacts/UnrealNG-Suite-macOS-ARM64/UnrealNG-Suite-macOS-ARM64.dmg release/
+          ls -la release/
+
+      - name: Prepare symbol files (rolling snapshots only)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          # Copy symbol archives if they exist (only for rolling snapshots)
+          cp artifacts/UnrealNG-Symbols-Linux/UnrealNG-Symbols-Linux.tar.gz release/ 2>/dev/null || true
+          cp artifacts/UnrealNG-Symbols-Windows-MSVC/UnrealNG-Symbols-Windows-MSVC.zip release/ 2>/dev/null || true
+          cp artifacts/UnrealNG-Symbols-Windows-MinGW/UnrealNG-Symbols-Windows-MinGW.zip release/ 2>/dev/null || true
+          cp artifacts/UnrealNG-Symbols-macOS-ARM64/UnrealNG-Symbols-macOS.tar.gz release/UnrealNG-Symbols-macOS-ARM64.tar.gz 2>/dev/null || true
           ls -la release/
 
       - name: Generate checksums
@@ -412,6 +481,15 @@ jobs:
           | Windows MSVC (x64) | \`UnrealNG-Suite-Windows-MSVC.zip\` |
           | Windows MinGW (x64) | \`UnrealNG-Suite-Windows-MinGW.zip\` |
           | macOS Apple Silicon (ARM64) | \`UnrealNG-Suite-macOS-ARM64.dmg\` |
+
+          ### Debug Symbols (for crash analysis)
+
+          | Platform | File |
+          |----------|------|
+          | Linux | \`UnrealNG-Symbols-Linux.tar.gz\` |
+          | Windows MSVC | \`UnrealNG-Symbols-Windows-MSVC.zip\` |
+          | Windows MinGW | \`UnrealNG-Symbols-Windows-MinGW.zip\` |
+          | macOS ARM64 | \`UnrealNG-Symbols-macOS-ARM64.tar.gz\` |
 
           ### Verify Downloads
           \`\`\`bash
