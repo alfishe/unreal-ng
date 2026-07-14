@@ -56,8 +56,12 @@ public:
         Room_15dB,      // Subtle, safe for all material
         Room_14dB,      // Recommended for most music
         Room_13dB,      // Light, good for slower tracks
-        Room_12dB,      // Moderate, may color transients
-        Room_9dB,       // Strong, for ambient/pad-heavy music
+        Room_12dB,      // Moderate
+        Room_9dB,       // Strong
+        Room_6dB,       // Very strong
+        Room_3dB,       // Extreme
+        Room_2dB,       // Near mono
+        Room_1dB,       // Almost mono
         COUNT
     };
 
@@ -68,6 +72,13 @@ public:
         AY,             // Gentler for square waves: edgeBlend=0.03, transBoost=0.1
         Beeper,         // For 1-bit/digidrums: same as Paula
         Custom          // Use manual parameters
+    };
+
+    /// Chip type affects room simulation parameters
+    enum class ChipType
+    {
+        Paula,          // 3ms delay, 10kHz LP (8-bit samples tolerate filtering)
+        AY              // 2ms delay, no LP (preserve square wave harmonics)
     };
 
     /// region <Constructors / Destructors>
@@ -104,6 +115,10 @@ public:
 
     /// region <Room Configuration>
 public:
+    /// Set chip type - affects room simulation parameters
+    /// Must be called before setRoomMode() to take effect
+    void setChipType(ChipType type) { _chipType = type; }
+
     void setRoomMode(RoomMode mode);
     RoomMode getRoomMode() const { return _roomMode; }
     static const char* roomModeName(RoomMode mode);
@@ -157,5 +172,7 @@ private:
     std::array<float, MAX_DELAY> _delayR{};  // Right channel delay line
     int _delayIdx = 0;                       // Current position in delay line
     float _roomLpL = 0, _roomLpR = 0;        // LP filter state for crossfeed
+
+    ChipType _chipType = ChipType::AY;       // Default to AY for unreal-ng
     /// endregion </Room simulation state>
 };

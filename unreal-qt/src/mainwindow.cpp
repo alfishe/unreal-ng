@@ -1997,6 +1997,13 @@ void MainWindow::handleIntParametersRequested()
 
 void MainWindow::handleAudioSettingsRequested()
 {
+    // Toggle: if already open, close it
+    if (_audioSettingsWidget)
+    {
+        _audioSettingsWidget->close();
+        return;
+    }
+
     if (!m_binding || !m_binding->emulator())
     {
         qDebug() << "Cannot open Audio Settings: No active emulator instance";
@@ -2011,12 +2018,12 @@ void MainWindow::handleAudioSettingsRequested()
     }
 
     // Create audio settings widget as a dialog
-    AudioSettingsWidget* widget = new AudioSettingsWidget(context, this);
-    widget->setAttribute(Qt::WA_DeleteOnClose);
-    widget->setWindowFlags(Qt::Dialog);
-    widget->show();
-    widget->raise();
-    widget->activateWindow();
+    _audioSettingsWidget = new AudioSettingsWidget(context, this);
+    _audioSettingsWidget->setAttribute(Qt::WA_DeleteOnClose);
+    _audioSettingsWidget->setWindowFlags(Qt::Dialog);
+    _audioSettingsWidget->show();
+    _audioSettingsWidget->raise();
+    _audioSettingsWidget->activateWindow();
 }
 
 void MainWindow::updateMenuStates()

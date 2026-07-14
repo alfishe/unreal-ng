@@ -17,14 +17,24 @@ public:
     explicit AudioSettingsWidget(EmulatorContext* context, QWidget* parent = nullptr);
 
 private slots:
-    void onPunchChanged(Qt::CheckState state);
+    // AY controls
+    void onAYPunchChanged(Qt::CheckState state);
+    void onAYRoomModeChanged(int index);
     void onFirChanged(Qt::CheckState state);
-    void onRoomModeChanged(int index);
+
+    // Beeper controls
+    void onBeeperFilterChanged(Qt::CheckState state);
+    void onBeeperPunchChanged(Qt::CheckState state);
 
 private:
     EmulatorContext* _context;
 
-    QCheckBox* _punchCheckbox;
+    // AY controls
     QCheckBox* _firCheckbox;
-    QComboBox* _roomCombo;
+    QCheckBox* _ayPunchCheckbox;
+    QComboBox* _ayRoomCombo;
+
+    // Beeper controls
+    QCheckBox* _beeperFilterCheckbox;
+    QCheckBox* _beeperPunchCheckbox;
 };

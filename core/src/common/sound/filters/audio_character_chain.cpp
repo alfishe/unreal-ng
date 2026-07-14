@@ -81,6 +81,10 @@ const char* AudioCharacterChain::roomModeName(RoomMode mode)
         case RoomMode::Room_13dB: return "Room -13dB";
         case RoomMode::Room_12dB: return "Room -12dB";
         case RoomMode::Room_9dB:  return "Room -9dB";
+        case RoomMode::Room_6dB:  return "Room -6dB";
+        case RoomMode::Room_3dB:  return "Room -3dB";
+        case RoomMode::Room_2dB:  return "Room -2dB";
+        case RoomMode::Room_1dB:  return "Room -1dB";
         default: return "?";
     }
 }
@@ -89,10 +93,11 @@ void AudioCharacterChain::setRoomMode(RoomMode mode)
 {
     _roomMode = mode;
 
-    // Room parameters: 3ms delay, ~10kHz LP (air absorption, not head shadow)
-    // This preserves HF clarity unlike traditional crossfeed
-    // Delay scaled for sample rate: 3ms = 0.003 * sampleRate
+    // Room parameters vary by chip type:
+    // - Paula: 3ms delay, 10kHz LP (rich 8-bit samples tolerate filtering)
+    // - AY: 2ms delay, no LP (square wave harmonics are essential)
     int baseDelay = static_cast<int>(0.003 * _sampleRate);
+    int ayDelay = static_cast<int>(0.002 * _sampleRate);
 
     switch (mode)
     {
@@ -103,36 +108,64 @@ void AudioCharacterChain::setRoomMode(RoomMode mode)
         case RoomMode::Room_15dB:
             _roomEnabled = true;
             _roomLevel = 0.178f;   // -15dB
-            _roomDelay = baseDelay;
-            _roomLpCoef = 0.7f;    // ~10kHz @ 44.1kHz
+            _roomDelay = _chipType == ChipType::AY ? ayDelay : baseDelay;
+            _roomLpCoef = _chipType == ChipType::AY ? 1.0f : 0.7f;
             break;
 
         case RoomMode::Room_14dB:
             _roomEnabled = true;
             _roomLevel = 0.20f;    // -14dB (recommended)
-            _roomDelay = baseDelay;
-            _roomLpCoef = 0.7f;
+            _roomDelay = _chipType == ChipType::AY ? ayDelay : baseDelay;
+            _roomLpCoef = _chipType == ChipType::AY ? 1.0f : 0.7f;
             break;
 
         case RoomMode::Room_13dB:
             _roomEnabled = true;
             _roomLevel = 0.224f;   // -13dB
-            _roomDelay = baseDelay;
-            _roomLpCoef = 0.7f;
+            _roomDelay = _chipType == ChipType::AY ? ayDelay : baseDelay;
+            _roomLpCoef = _chipType == ChipType::AY ? 1.0f : 0.7f;
             break;
 
         case RoomMode::Room_12dB:
             _roomEnabled = true;
             _roomLevel = 0.25f;    // -12dB
-            _roomDelay = baseDelay;
-            _roomLpCoef = 0.7f;
+            _roomDelay = _chipType == ChipType::AY ? ayDelay : baseDelay;
+            _roomLpCoef = _chipType == ChipType::AY ? 1.0f : 0.7f;
             break;
 
         case RoomMode::Room_9dB:
             _roomEnabled = true;
             _roomLevel = 0.35f;    // -9dB
-            _roomDelay = baseDelay;
-            _roomLpCoef = 0.7f;
+            _roomDelay = _chipType == ChipType::AY ? ayDelay : baseDelay;
+            _roomLpCoef = _chipType == ChipType::AY ? 1.0f : 0.7f;
+            break;
+
+        case RoomMode::Room_6dB:
+            _roomEnabled = true;
+            _roomLevel = 0.50f;    // -6dB
+            _roomDelay = _chipType == ChipType::AY ? ayDelay : baseDelay;
+            _roomLpCoef = _chipType == ChipType::AY ? 1.0f : 0.7f;
+            break;
+
+        case RoomMode::Room_3dB:
+            _roomEnabled = true;
+            _roomLevel = 0.71f;    // -3dB
+            _roomDelay = _chipType == ChipType::AY ? ayDelay : baseDelay;
+            _roomLpCoef = _chipType == ChipType::AY ? 1.0f : 0.7f;
+            break;
+
+        case RoomMode::Room_2dB:
+            _roomEnabled = true;
+            _roomLevel = 0.79f;    // -2dB
+            _roomDelay = _chipType == ChipType::AY ? ayDelay : baseDelay;
+            _roomLpCoef = _chipType == ChipType::AY ? 1.0f : 0.7f;
+            break;
+
+        case RoomMode::Room_1dB:
+            _roomEnabled = true;
+            _roomLevel = 0.89f;    // -1dB
+            _roomDelay = _chipType == ChipType::AY ? ayDelay : baseDelay;
+            _roomLpCoef = _chipType == ChipType::AY ? 1.0f : 0.7f;
             break;
 
         default:

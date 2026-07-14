@@ -19,13 +19,23 @@ SoundManager::SoundManager(EmulatorContext* context)
     _beeper = new Beeper(_context, CPU_CLOCK_RATE, AUDIO_SAMPLING_RATE);
     _turboSound = new SoundChip_TurboSound(_context);
 
-    // Initialize audio character chain (punch + room simulation)
-    // - Punch: AY preset (gentler than Paula - edgeBlend=0.03, transBoost=0.1)
-    // - Room: -14dB recommended for headphone listening
-    _characterChain.setup(AUDIO_SAMPLING_RATE);
-    _characterChain.setPunchPreset(AudioCharacterChain::PunchPreset::AY);
-    _characterChain.setPunchEnabled(true);
-    _characterChain.setRoomMode(AudioCharacterChain::RoomMode::Off);
+    // Initialize AY character chain
+    // - ChipType::AY uses shorter delay and no LP (preserves square wave harmonics)
+    // - Punch: AY preset (gentler - square waves already have rich harmonics)
+    _ayChain.setup(AUDIO_SAMPLING_RATE);
+    _ayChain.setChipType(AudioCharacterChain::ChipType::AY);
+    _ayChain.setPunchPreset(AudioCharacterChain::PunchPreset::AY);
+    _ayChain.setPunchEnabled(true);
+    _ayChain.setRoomMode(AudioCharacterChain::RoomMode::Off);
+
+    // Initialize beeper character chain
+    // - ChipType::AY (no LP) - beeper is also square waves, LP kills brightness
+    // - Punch: Beeper preset (stronger - 1-bit audio needs attack definition)
+    _beeperChain.setup(AUDIO_SAMPLING_RATE);
+    _beeperChain.setChipType(AudioCharacterChain::ChipType::AY);
+    _beeperChain.setPunchPreset(AudioCharacterChain::PunchPreset::Beeper);
+    _beeperChain.setPunchEnabled(true);
+    _beeperChain.setRoomMode(AudioCharacterChain::RoomMode::Off);
 }
 
 SoundManager::~SoundManager()
@@ -190,19 +200,45 @@ void SoundManager::handleStep()
 
 void SoundManager::handleFrameEnd()
 {
-    uint16_t* _ayBuffer = _turboSound->getAudioBuffer();
+    int16_t* ayBuffer = (int16_t*)_turboSound->getAudioBuffer();
+
+    /// region <Process AY through its character chain>
+    // AY chain: gentler punch (square waves already have harmonics)
+    // Room uses no LP to preserve brightness
+    _ayChain.processInt16(ayBuffer, SAMPLES_PER_FRAME);
+    /// endregion </Process AY>
+
+    /// region <Process beeper>
+    // Optional 2-pole lowpass @ 16kHz - removes ultrasonic harshness, preserves music
+    if (_beeperFilterEnabled)
+    {
+        constexpr float toFloat = 1.0f / 32768.0f;
+        constexpr float toInt16 = 32767.0f;
+
+        for (int i = 0; i < SAMPLES_PER_FRAME; i++)
+        {
+            float left = _beeperBuffer[i * 2] * toFloat;
+            float right = _beeperBuffer[i * 2 + 1] * toFloat;
+
+            // Two cascaded 1-pole = 2-pole with -12dB/octave rolloff
+            _beeperLp1L += BEEPER_LP_COEF * (left - _beeperLp1L);
+            _beeperLp2L += BEEPER_LP_COEF * (_beeperLp1L - _beeperLp2L);
+
+            _beeperLp1R += BEEPER_LP_COEF * (right - _beeperLp1R);
+            _beeperLp2R += BEEPER_LP_COEF * (_beeperLp1R - _beeperLp2R);
+
+            _beeperBuffer[i * 2] = static_cast<int16_t>(std::clamp(_beeperLp2L * toInt16, -32768.0f, 32767.0f));
+            _beeperBuffer[i * 2 + 1] = static_cast<int16_t>(std::clamp(_beeperLp2R * toInt16, -32768.0f, 32767.0f));
+        }
+    }
+
+    // Beeper chain: stronger punch for 1-bit synths (digidrums, PWM synths)
+    _beeperChain.processInt16(_beeperBuffer, SAMPLES_PER_FRAME);
+    /// endregion </Process beeper>
 
     /// region <Mix all channels to output buffer>
-    AudioUtils::MixAudio((const int16_t*)_ayBuffer, _beeperBuffer, _outBuffer, AUDIO_BUFFER_SAMPLES_PER_FRAME);
+    AudioUtils::MixAudio((const int16_t*)ayBuffer, _beeperBuffer, _outBuffer, AUDIO_BUFFER_SAMPLES_PER_FRAME);
     /// endregion </Mix all channels to output buffer>
-
-    /// region <Audio character chain (punch + room simulation)>
-    // Apply punch enhancement and room simulation for headphone listening.
-    // This runs on the final mixed output, after AY+beeper are combined.
-    // - Punch adds transient definition (useful for beeper digidrums)
-    // - Room reduces stereo fatigue from AY's hard ABC/ACB panning
-    _characterChain.processInt16(_outBuffer, SAMPLES_PER_FRAME);
-    /// endregion </Audio character chain>
 
     // Capture audio for recording BEFORE muting
     // This ensures recordings get the actual audio, not silence

@@ -44,8 +44,17 @@ protected:
     // SoundChip_SAA1099;
     // SoundChip_GeneralSound;
 
-    // Audio character chain (punch enhancement + room simulation for headphones)
-    AudioCharacterChain _characterChain;
+    // Audio character chains (punch enhancement + room simulation)
+    // Separate chains for AY and beeper allow independent tuning
+    AudioCharacterChain _ayChain;      // For AY/TurboSound
+    AudioCharacterChain _beeperChain;  // For beeper (digidrums, PWM synths)
+
+    // Beeper lowpass filter (removes ultrasonic harshness, preserves music)
+    // 2-pole Butterworth @ 16kHz - steeper rolloff than 1-pole
+    bool _beeperFilterEnabled = false;
+    float _beeperLp1L = 0.0f, _beeperLp2L = 0.0f;  // Two cascaded 1-pole stages
+    float _beeperLp1R = 0.0f, _beeperLp2R = 0.0f;
+    static constexpr float BEEPER_LP_COEF = 0.85f;  // ~16kHz with 2 poles @ 44.1kHz
 
     // Save to Wave file
     TinyWav _tinyWav;
@@ -89,9 +98,16 @@ public:
 
     void updateDAC(uint32_t frameTState, int16_t left, int16_t right);
 
-    // Audio character chain (punch + room simulation)
-    // Configured at startup, no runtime controls needed
-    AudioCharacterChain& getCharacterChain() { return _characterChain; }
+    // Audio character chains (punch + room simulation)
+    AudioCharacterChain& getAYChain() { return _ayChain; }
+    AudioCharacterChain& getBeeperChain() { return _beeperChain; }
+
+    // Beeper filter control
+    void setBeeperFilterEnabled(bool enabled) { _beeperFilterEnabled = enabled; }
+    bool isBeeperFilterEnabled() const { return _beeperFilterEnabled; }
+
+    // Legacy accessor for compatibility
+    AudioCharacterChain& getCharacterChain() { return _ayChain; }
 
     // Feature cache update (called by FeatureManager::onFeatureChanged)
     void UpdateFeatureCache();

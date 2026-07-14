@@ -215,4 +215,7 @@ private:
 
     DockingManager* _dockingManager = nullptr;
     MenuManager* _menuManager = nullptr;
+
+    // Audio settings dialog (singleton, toggled via menu)
+    QPointer<QWidget> _audioSettingsWidget;
 };
