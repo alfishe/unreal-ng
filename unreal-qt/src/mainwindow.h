@@ -91,6 +91,7 @@ private slots:
     void handleDebuggerToggled(bool visible);
     void handleLogWindowToggled(bool visible);
     void handleIntParametersRequested();
+    void handleAudioSettingsRequested();
     void updateMenuStates();
 
     // Binding state handler

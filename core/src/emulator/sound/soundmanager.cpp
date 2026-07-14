@@ -18,6 +18,14 @@ SoundManager::SoundManager(EmulatorContext* context)
 
     _beeper = new Beeper(_context, CPU_CLOCK_RATE, AUDIO_SAMPLING_RATE);
     _turboSound = new SoundChip_TurboSound(_context);
+
+    // Initialize audio character chain (punch + room simulation)
+    // - Punch: AY preset (gentler than Paula - edgeBlend=0.03, transBoost=0.1)
+    // - Room: -14dB recommended for headphone listening
+    _characterChain.setup(AUDIO_SAMPLING_RATE);
+    _characterChain.setPunchPreset(AudioCharacterChain::PunchPreset::AY);
+    _characterChain.setPunchEnabled(true);
+    _characterChain.setRoomMode(AudioCharacterChain::RoomMode::Off);
 }
 
 SoundManager::~SoundManager()
@@ -188,6 +196,14 @@ void SoundManager::handleFrameEnd()
     AudioUtils::MixAudio((const int16_t*)_ayBuffer, _beeperBuffer, _outBuffer, AUDIO_BUFFER_SAMPLES_PER_FRAME);
     /// endregion </Mix all channels to output buffer>
 
+    /// region <Audio character chain (punch + room simulation)>
+    // Apply punch enhancement and room simulation for headphone listening.
+    // This runs on the final mixed output, after AY+beeper are combined.
+    // - Punch adds transient definition (useful for beeper digidrums)
+    // - Room reduces stereo fatigue from AY's hard ABC/ACB panning
+    _characterChain.processInt16(_outBuffer, SAMPLES_PER_FRAME);
+    /// endregion </Audio character chain>
+
     // Capture audio for recording BEFORE muting
     // This ensures recordings get the actual audio, not silence
     if (_context->pRecordingManager && _context->pRecordingManager->IsRecording())
@@ -271,12 +287,6 @@ void SoundManager::UpdateFeatureCache()
         bool newSoundEnabled = _context->pFeatureManager->isEnabled(Features::kSoundGeneration);
         _feature_soundhq_enabled = _context->pFeatureManager->isEnabled(Features::kSoundHQ);
 
-        // Debug: ALWAYS log sound feature state
-        LOGINFO("SoundManager::UpdateFeatureCache - sound: %s (was %s), muted: %s",
-                newSoundEnabled ? "ON" : "OFF",
-                _feature_sound_enabled ? "ON" : "OFF",
-                _mute ? "YES" : "NO");
-        
         _feature_sound_enabled = newSoundEnabled;
 
         // Propagate HQ flag to TurboSound

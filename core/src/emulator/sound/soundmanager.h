@@ -4,6 +4,7 @@
 #include "common/modulelogger.h"
 #include "common/sound/audiofilehelper.h"
 #include "common/sound/filters/filter_interpolate.h"
+#include "common/sound/filters/audio_character_chain.h"
 #include "emulator/sound/audio.h"
 #include "emulator/sound/beeper.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
@@ -42,6 +43,9 @@ protected:
     // SoundChip_MoonSound;
     // SoundChip_SAA1099;
     // SoundChip_GeneralSound;
+
+    // Audio character chain (punch enhancement + room simulation for headphones)
+    AudioCharacterChain _characterChain;
 
     // Save to Wave file
     TinyWav _tinyWav;
@@ -84,6 +88,10 @@ public:
     }
 
     void updateDAC(uint32_t frameTState, int16_t left, int16_t right);
+
+    // Audio character chain (punch + room simulation)
+    // Configured at startup, no runtime controls needed
+    AudioCharacterChain& getCharacterChain() { return _characterChain; }
 
     // Feature cache update (called by FeatureManager::onFeatureChanged)
     void UpdateFeatureCache();

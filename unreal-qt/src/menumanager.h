@@ -73,6 +73,7 @@ signals:
 
     // Tools signals
     void intParametersRequested();
+    void audioSettingsRequested();
 
 private:
     void createFileMenu();
@@ -156,6 +157,7 @@ private:
     // Tools Menu Actions
     QAction* _settingsAction;
     QAction* _intParametersAction;
+    QAction* _audioSettingsAction;
     QAction* _screenshotAction;
     QAction* _recordVideoAction;
 

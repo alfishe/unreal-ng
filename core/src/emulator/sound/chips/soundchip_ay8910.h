@@ -4,6 +4,7 @@
 #include <string>
 #include <cmath>
 #include "common/sound/filters/filter_dc.h"
+#include "common/sound/filters/filter_decimator.h"
 #include "common/sound/filters/filter_interpolate.h"
 #include "emulator/ports/portdecoder.h"
 
@@ -344,6 +345,10 @@ protected:
     FilterInterpolate _leftFIR;
     FilterInterpolate _rightFIR;
 
+    // Native clock decimation filters (218.75 kHz → 44.1 kHz)
+    FilterDecimator _leftDecimator;
+    FilterDecimator _rightDecimator;
+
     // Remove DC offset (work as analog capacitors per channel)
     FilterDC<double> _filterDCLeft;
     FilterDC<double> _filterDCRight;
@@ -366,6 +371,8 @@ public:
 public:
     FilterInterpolate& firLeft() { return _leftFIR; }
     FilterInterpolate& firRight() { return _rightFIR; }
+    FilterDecimator& decimatorLeft() { return _leftDecimator; }
+    FilterDecimator& decimatorRight() { return _rightDecimator; }
 
     double mixedLeft() { return _mixedLeft; }
     double mixedRight() { return _mixedRight; }

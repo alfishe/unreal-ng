@@ -27,6 +27,7 @@
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/soundmanager.h"
+#include "debugger/widgets/audiosettingswidget.h"
 // Avoid Qt 'signals' macro conflict with WD1793State::signals member
 #undef signals
 #include "emulator/io/fdc/fdd.h"
@@ -157,6 +158,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::logWindowToggled, this, &MainWindow::handleLogWindowToggled);
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
     connect(_menuManager, &MenuManager::intParametersRequested, this, &MainWindow::handleIntParametersRequested);
+    connect(_menuManager, &MenuManager::audioSettingsRequested, this, &MainWindow::handleAudioSettingsRequested);
 
     // Bring application windows to foreground
     debuggerWindow->raise();
@@ -1991,6 +1993,30 @@ void MainWindow::handleIntParametersRequested()
     dialog->show();
     dialog->raise();
     dialog->activateWindow();
+}
+
+void MainWindow::handleAudioSettingsRequested()
+{
+    if (!m_binding || !m_binding->emulator())
+    {
+        qDebug() << "Cannot open Audio Settings: No active emulator instance";
+        return;
+    }
+
+    EmulatorContext* context = m_binding->emulator()->GetContext();
+    if (!context)
+    {
+        qDebug() << "Cannot open Audio Settings: No emulator context";
+        return;
+    }
+
+    // Create audio settings widget as a dialog
+    AudioSettingsWidget* widget = new AudioSettingsWidget(context, this);
+    widget->setAttribute(Qt::WA_DeleteOnClose);
+    widget->setWindowFlags(Qt::Dialog);
+    widget->show();
+    widget->raise();
+    widget->activateWindow();
 }
 
 void MainWindow::updateMenuStates()

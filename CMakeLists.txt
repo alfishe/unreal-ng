@@ -19,7 +19,7 @@ option(BUILD_QT_APPS "Build Qt-based applications (unreal-qt, unreal-screen-view
 # Automation options (enabled by default for full builds)
 option(ENABLE_AUTOMATION "Enable automation features (Lua, Python, WebAPI, CLI)" ON)
 option(ENABLE_LUA_AUTOMATION "Enable Lua automation" ON)
-option(ENABLE_PYTHON_AUTOMATION "Enable Python automation" ON)
+option(ENABLE_PYTHON_AUTOMATION "Enable Python automation" OFF)
 option(ENABLE_WEBAPI_AUTOMATION "Enable WebAPI automation" ON)
 option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
 
