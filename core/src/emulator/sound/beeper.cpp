@@ -6,7 +6,8 @@
 /// region <Methods>
 void Beeper::reset()
 {
-
+    _portFEState = 0;
+    _prevFrameTState = 0;
 }
 
 void Beeper::handlePortOut(uint8_t value, uint32_t frameTState)

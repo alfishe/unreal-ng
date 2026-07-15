@@ -85,42 +85,77 @@ void WD1793::internalReset()
     // In-place re-initialization
     _wd93State = WD93State();
 
-    // Clear FDC state
+    // Clear FDC state machine
     _state = S_IDLE;
     _state2 = S_IDLE;
-    _statusRegister = 0;
+
+    // Clear WD1793 registers
+    _commandRegister = 0x00;
+    _statusRegister = 0x00;
     _trackRegister = 0;
     _sectorRegister = 1;  // As per datasheet. Sector is set to 1 after the RESTORE command
-    _dataRegister = 0;
+    _dataRegister = 0x00;
 
-    _indexPulseCounter = 0;
-    _index = false;
-    _prevIndex = false;
-    _lastIndexPulseStartTime = 0;
-    _motorTimeoutTStates = 0;
-    _lastTime = 0;
-    _diffTime = 0;
+    // Clear Beta128 state
+    _beta128Register = 0x00;
+    _beta128status = 0x00;
+    _extStatus = 0x00;
+    _drive = 0;
+    _sideUp = false;
 
-    _lastCmdValue = 0;
-    _delayTStates = 0;
+    // Clear command state
+    _lastDecodedCmd = WD_CMD_RESTORE;
+    _lastCmdValue = 0x00;
+
+    // Clear Type 1 command state
+    _loadHead = false;
+    _verifySeek = false;
+    _steppingMotorRate = 6;
+    _stepDirectionIn = false;
+    _stepCounter = 0;
     _headLoaded = false;
 
+    // Clear Type 2/3 command state
+    _sectorSize = 256;
+    _idamData = nullptr;
+    _sectorData = nullptr;
+    _rawDataBuffer = nullptr;
+    _bytesToRead = 0;
+    _bytesToWrite = 0;
+    _useDeletedDataMark = false;
+    _rawDataBufferIndex = 0;
+    _crcAccumulator = 0xFFFF;
+    _writeTrackTarget = nullptr;
+    _crcStartPosition = 0;
+
+    // Clear timing state
     _time = 0;
     _lastTime = 0;
     _diffTime = 0;
+    _delayTStates = 0;
+
+    // Clear FDD/index state
+    _index = false;
+    _prevIndex = false;
+    _lastIndexPulseStartTime = 0;
+    _indexPulseCounter = 0;
+    _waitIndexPulseCount = SIZE_MAX;
+    _motorTimeoutTStates = 0;
 
     // Clear Force Interrupt condition monitoring
     _interruptConditions = 0;
     _prevReady = false;
 
-    // Clear Type 2 command state
-    _useDeletedDataMark = false;
-
+    // Clear error flags
     clearAllErrors();
 
     // Deassert output signals
+    _drq_served = false;
     clearIntrq();
     clearDrq();
+
+    // Clear debug state
+    _lastDebugLogTime = 0;
 
     // Start in sleep mode - will wake on first port access
     _sleeping = true;

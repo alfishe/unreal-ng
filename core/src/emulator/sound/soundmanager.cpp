@@ -59,6 +59,7 @@ void SoundManager::reset()
 {
     // Reset all chips state
     _turboSound->reset();
+    _beeper->reset();
 
     std::fill(_beeperBuffer, _beeperBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
     std::fill(_outBuffer, _outBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
@@ -68,6 +69,13 @@ void SoundManager::reset()
     _prevFrameTState = 0;
     _prevLeftValue = 0;
     _prevRightValue = 0;
+
+    // Reset beeper lowpass filter state
+    _beeperLp1L = _beeperLp2L = 0.0f;
+    _beeperLp1R = _beeperLp2R = 0.0f;
+
+    // Reset audio buffer write counter
+    _audioBufferWrites = 0;
 
     // New wave file
     // closeWaveFile();
