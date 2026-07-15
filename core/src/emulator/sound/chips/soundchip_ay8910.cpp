@@ -185,11 +185,16 @@ SoundChip_AY8910::EnvelopeGenerator::EnvelopeGenerator()
 void SoundChip_AY8910::EnvelopeGenerator::reset()
 {
     _period = 0x0000'0001;
-    _shape = 0;
+
+    // Default to shape 0x08 (continuous sawtooth \\\\) instead of 0x00 (one-shot decay \___)
+    // Many demos/games never write R13 and rely on envelope cycling for bass synthesis.
+    // Shape 0 would decay once and hold at 0 forever, producing silence.
+    _shape = 0x08;
 
     _counter = 0;
     _segment = 0;
-    _out = 0;
+
+    resetSegment();
 }
 
 /// Set envelope generator period (Registers R13 - fine and R14 - coarse bits)
@@ -232,13 +237,23 @@ uint8_t SoundChip_AY8910::EnvelopeGenerator::updateState()
 void SoundChip_AY8910::EnvelopeGenerator::resetSegment()
 {
     EnvelopeHandler handler = _handlers[_shape][_segment];
-    if (handler == &slideDown || handler == &holdTop)
+
+    // Set initial value based on direction of current segment
+    if (handler == &slideDown)
     {
-        _out = 0x1F;    // Set max value
+        _out = 0x1F;    // slideDown starts at max (31)
     }
-    else
+    else if (handler == &slideUp)
     {
-        _out = 0x00;
+        _out = 0x00;    // slideUp starts at min (0)
+    }
+    else if (handler == &holdBottom)
+    {
+        _out = 0x00;    // holdBottom holds at 0
+    }
+    else if (handler == &holdTop)
+    {
+        _out = 0x1F;    // holdTop holds at 31
     }
 }
 
@@ -576,17 +591,6 @@ void SoundChip_AY8910::writeRegister(uint8_t regAddr, uint8_t value)
         default:
             // Do nothing
             break;
-    }
-
-    // TODO: Here we can log all register writes to get YM/MYM files
-    if (false)
-    {
-        const char* registerName = SoundChip_AY8910::AYRegisterNames[regAddr];
-        std::cout << StringHelper::Format("Register: %-30s Value: 0x%02X", registerName, value) << std::endl;
-        if (regAddr == 0x07)
-        {
-            std::cout << dumpAY8910MixerState() << std::endl;
-        }
     }
 }
 
