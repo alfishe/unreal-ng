@@ -27,6 +27,7 @@
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/soundmanager.h"
+#include "debugger/widgets/audiosettingswidget.h"
 // Avoid Qt 'signals' macro conflict with WD1793State::signals member
 #undef signals
 #include "emulator/io/fdc/fdd.h"
@@ -157,6 +158,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::logWindowToggled, this, &MainWindow::handleLogWindowToggled);
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
     connect(_menuManager, &MenuManager::intParametersRequested, this, &MainWindow::handleIntParametersRequested);
+    connect(_menuManager, &MenuManager::audioSettingsRequested, this, &MainWindow::handleAudioSettingsRequested);
 
     // Bring application windows to foreground
     debuggerWindow->raise();
@@ -1993,6 +1995,37 @@ void MainWindow::handleIntParametersRequested()
     dialog->activateWindow();
 }
 
+void MainWindow::handleAudioSettingsRequested()
+{
+    // Toggle: if already open, close it
+    if (_audioSettingsWidget)
+    {
+        _audioSettingsWidget->close();
+        return;
+    }
+
+    if (!m_binding || !m_binding->emulator())
+    {
+        qDebug() << "Cannot open Audio Settings: No active emulator instance";
+        return;
+    }
+
+    EmulatorContext* context = m_binding->emulator()->GetContext();
+    if (!context)
+    {
+        qDebug() << "Cannot open Audio Settings: No emulator context";
+        return;
+    }
+
+    // Create audio settings widget as a dialog
+    _audioSettingsWidget = new AudioSettingsWidget(context, this);
+    _audioSettingsWidget->setAttribute(Qt::WA_DeleteOnClose);
+    _audioSettingsWidget->setWindowFlags(Qt::Dialog);
+    _audioSettingsWidget->show();
+    _audioSettingsWidget->raise();
+    _audioSettingsWidget->activateWindow();
+}
+
 void MainWindow::updateMenuStates()
 {
     if (_menuManager)
@@ -2441,6 +2474,12 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
     startButton->setEnabled(true);
     updateMenuStates();
 
+    // 8. Update audio settings widget if open
+    if (_audioSettingsWidget)
+    {
+        _audioSettingsWidget->setContext(_emulator->GetContext());
+    }
+
     qDebug() << "MainWindow::adoptEmulator() - Successfully adopted emulator"
              << QString::fromStdString(_emulator->GetId());
 }
@@ -2479,13 +2518,19 @@ void MainWindow::unbindFromEmulator()
     // 4. Device screen
     deviceScreen->detach();
 
-    // 5. Per-emulator event subscriptions
+    // 5. Audio settings widget
+    if (_audioSettingsWidget)
+    {
+        _audioSettingsWidget->setContext(nullptr);
+    }
+
+    // 6. Per-emulator event subscriptions
     unsubscribeFromPerEmulatorEvents();
 
-    // 6. Audio cleanup
+    // 7. Audio cleanup
     _emulator->ClearAudioCallback();
 
-    // 7. Clear reference (does NOT destroy emulator)
+    // 8. Clear reference (does NOT destroy emulator)
     _emulator = nullptr;
 
     qDebug() << "MainWindow::unbindFromEmulator() - Emulator unbound (still running headless)";

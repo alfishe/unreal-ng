@@ -4,6 +4,7 @@
 #include <string>
 #include <cmath>
 #include "common/sound/filters/filter_dc.h"
+#include "common/sound/filters/filter_decimator.h"
 #include "common/sound/filters/filter_interpolate.h"
 #include "emulator/ports/portdecoder.h"
 
@@ -53,6 +54,21 @@ enum AYChannelsEnum : uint8_t
     AY_CHANNEL_A = 0,
     AY_CHANNEL_B = 1,
     AY_CHANNEL_C = 2
+};
+
+/// Stereo panning layout
+enum class AYStereoMode : uint8_t
+{
+    ABC = 0,    // A=Left, B=Center, C=Right (default)
+    ACB = 1,    // A=Left, C=Center, B=Right
+    Mono = 2    // All channels center
+};
+
+/// Chip model (affects DAC curve)
+enum class AYChipModel : uint8_t
+{
+    AY8910 = 0, // Original GI chip - stepped DAC
+    YM2149 = 1  // Yamaha clone - smoother DAC curve
 };
 
 /// endregion </Types>
@@ -189,8 +205,17 @@ protected:
 
         bool out() { return _out; };
 
+        // User-controlled mute and volume
+        void setMuted(bool muted) { _muted = muted; }
+        void setUserVolume(double volume) { _userVolume = std::clamp(volume, 0.0, 1.0); }
+        bool isMuted() const { return _muted; }
+        double userVolume() const { return _userVolume; }
 
         bool updateState();
+
+    protected:
+        bool _muted = false;        // User mute control
+        double _userVolume = 1.0;   // User volume control (0.0 - 1.0)
         /// endregion </Methods>
     };
 
@@ -344,9 +369,17 @@ protected:
     FilterInterpolate _leftFIR;
     FilterInterpolate _rightFIR;
 
+    // Native clock decimation filters (218.75 kHz → 44.1 kHz)
+    FilterDecimator _leftDecimator;
+    FilterDecimator _rightDecimator;
+
     // Remove DC offset (work as analog capacitors per channel)
     FilterDC<double> _filterDCLeft;
     FilterDC<double> _filterDCRight;
+
+    // User-configurable settings
+    AYStereoMode _stereoMode = AYStereoMode::ABC;
+    AYChipModel _chipModel = AYChipModel::AY8910;
 
     /// endregion </Fields>
 
@@ -366,6 +399,8 @@ public:
 public:
     FilterInterpolate& firLeft() { return _leftFIR; }
     FilterInterpolate& firRight() { return _rightFIR; }
+    FilterDecimator& decimatorLeft() { return _leftDecimator; }
+    FilterDecimator& decimatorRight() { return _rightDecimator; }
 
     double mixedLeft() { return _mixedLeft; }
     double mixedRight() { return _mixedRight; }
@@ -394,6 +429,17 @@ public:
     // Logic-level interface
     uint8_t readRegister(uint8_t regAddr);
     void writeRegister(uint8_t regAddr, uint8_t value);
+
+    // User-configurable audio settings
+    void setStereoMode(AYStereoMode mode);
+    void setChipModel(AYChipModel model);
+    void setChannelMuted(uint8_t channel, bool muted);
+    void setChannelVolume(uint8_t channel, double volume);
+
+    AYStereoMode getStereoMode() const { return _stereoMode; }
+    AYChipModel getChipModel() const { return _chipModel; }
+    bool isChannelMuted(uint8_t channel) const;
+    double getChannelVolume(uint8_t channel) const;
 
     /// endregion </Methods>
 
