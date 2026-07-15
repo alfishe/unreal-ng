@@ -24,10 +24,12 @@ protected:
     size_t _ayBufferIndex;
     uint32_t _lastTStates;
 
-    double _clockStep;
-    double _x;
+    // Native clock decimation (like amiga-paula PWM renderer)
+    // Generators tick at PSG_CLOCK_RATE, we decimate to AUDIO_SAMPLING_RATE
+    double _decimationPhase;
+    double _decimationStep;
 
-    // HQ DSP flag (FIR filters + oversampling)
+    // HQ DSP flag (FIR filters vs simple averaging)
     bool _hqEnabled = true;
 
     // TurboSound chip1 selection tracking (monitoring only)
@@ -124,17 +126,20 @@ public:
         _ayPLL = 0.0;
         _ayBufferIndex = 0;
 
-        _x = 0.0;
-        double oversample_stream_rate =
-            AUDIO_SAMPLING_RATE * 8 *
-            FilterInterpolate::DECIMATE_FACTOR;  // 2822400 bits per second for 44100Hz sample rate
-        _clockStep = PSG_CLOCK_RATE / oversample_stream_rate;
+        // Native clock decimation setup
+        // AY generators run at PSG_CLOCK_RATE / 8 (~218.75 kHz for 1.75 MHz clock)
+        // The /8 prescaler is handled here, not inside updateState()
+        // For HQ mode, we feed DECIMATE_FACTOR sub-samples per output sample to the FIR
+        _decimationPhase = 0.0;
+        // Effective generator rate = PSG_CLOCK_RATE / 8
+        // _decimationStep = how many generator ticks per FIR sub-sample
+        _decimationStep = (double)(PSG_CLOCK_RATE / 8) / (double)(AUDIO_SAMPLING_RATE * FilterInterpolate::DECIMATE_FACTOR);
 
-        // Set FIR parameters
-        _chip0->firLeft().setRates(PSG_CLOCK_RATE, AUDIO_SAMPLING_RATE);
-        _chip0->firRight().setRates(PSG_CLOCK_RATE, AUDIO_SAMPLING_RATE);
-        _chip1->firLeft().setRates(PSG_CLOCK_RATE, AUDIO_SAMPLING_RATE);
-        _chip1->firRight().setRates(PSG_CLOCK_RATE, AUDIO_SAMPLING_RATE);
+        // Reset decimators for native clock mode
+        _chip0->decimatorLeft().reset();
+        _chip0->decimatorRight().reset();
+        _chip1->decimatorLeft().reset();
+        _chip1->decimatorRight().reset();
     }
 
     void updateState(bool bypassPrescaler = false)

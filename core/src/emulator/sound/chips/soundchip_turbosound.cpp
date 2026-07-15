@@ -17,6 +17,28 @@ void SoundChip_TurboSound::handleFrameStart()
     memset(_ayBuffer, 0x00, _ayAudioDescriptor.memoryBufferSizeInBytes);
 }
 
+/// @brief Generate audio samples synchronized to CPU t-states
+///
+/// ## Native Clock Architecture
+///
+/// AY-3-8910 runs at PSG_CLOCK_RATE (1.75 MHz for Pentagon, 1.7734 MHz for Spectrum 128).
+/// Internally, the chip divides this by 16 for tone/noise generators (~109.375 kHz effective rate).
+///
+/// Previous implementation used 64x oversampling at 44100*64 = 2.8224 MHz, which is
+/// asynchronous to the chip clock. This caused:
+/// - Timing jitter (±0.18 µs per event)
+/// - FM sidebands from beating between the two frequencies
+/// - Subtle "impurity" on high notes
+///
+/// New implementation:
+/// - Generators tick at true PSG_CLOCK_RATE (with internal /16 prescaler)
+/// - Fractional decimation (PSG_CLOCK_RATE → 44100 Hz) using phase accumulator
+/// - Same approach as amiga-paula PWM renderer
+///
+/// Benefits:
+/// - Zero jitter on generator events
+/// - ~37% less CPU (1.77 MHz < 2.82 MHz)
+/// - Correct relationship between chip clock and generator periods
 void SoundChip_TurboSound::handleStep()
 {
     size_t currentTStates = _context->pCore->GetZ80()->t;
@@ -40,67 +62,72 @@ void SoundChip_TurboSound::handleStep()
 
             if (_hqEnabled)
             {
-                // ========== HIGH QUALITY MODE (default) ==========
-                // 192-tap FIR filter + 8x oversampling + DC filtering
+                // ========== HIGH QUALITY MODE ==========
+                // Native clock rendering + FIR decimation
+                //
+                // Generators tick at PSG_CLOCK_RATE/8 = 218.75 kHz
+                // FIR decimates to 44.1 kHz (~4.96:1 ratio)
 
-                // Start oversampling block for both chip FIR filters
-                _chip0->firLeft().startOversamplingBlock();
-                _chip0->firRight().startOversamplingBlock();
-                _chip1->firLeft().startOversamplingBlock();
-                _chip1->firRight().startOversamplingBlock();
-
-                // Oversample and apply LPF FIR
-                for (int j = FilterInterpolate::DECIMATE_FACTOR - 1; j >= 0; j--)
+                // Feed generator samples to decimator until we have an output
+                while (!_chip0->decimatorLeft().hasOutput())
                 {
-                    _x += _clockStep;
+                    // Tick generators (bypass internal prescaler)
+                    updateState(true);
 
-                    if (_x >= 1.0)
-                    {
-                        _x -= 1.0;
-
-                        // Update both chips state synchronously
-                        updateState(true);
-                    }
-
-                    _chip0->firLeft().recalculateInterpolationCoefficients(j, _chip0->mixedLeft());
-                    _chip0->firRight().recalculateInterpolationCoefficients(j, _chip0->mixedRight());
-                    _chip1->firLeft().recalculateInterpolationCoefficients(j, _chip1->mixedLeft());
-                    _chip1->firRight().recalculateInterpolationCoefficients(j, _chip1->mixedRight());
+                    // Feed mixed output to decimators
+                    _chip0->decimatorLeft().feedSample(_chip0->mixedLeft());
+                    _chip0->decimatorRight().feedSample(_chip0->mixedRight());
+                    _chip1->decimatorLeft().feedSample(_chip1->mixedLeft());
+                    _chip1->decimatorRight().feedSample(_chip1->mixedRight());
                 }
 
-                leftSample =
-                    (_chip0->firLeft().endOversamplingBlock() + _chip1->firLeft().endOversamplingBlock()) * INT16_MAX;
-                rightSample =
-                    (_chip0->firRight().endOversamplingBlock() + _chip1->firRight().endOversamplingBlock()) * INT16_MAX;
+                // Get decimated output
+                leftSample = (_chip0->decimatorLeft().getOutput() +
+                              _chip1->decimatorLeft().getOutput()) * INT16_MAX;
+                rightSample = (_chip0->decimatorRight().getOutput() +
+                               _chip1->decimatorRight().getOutput()) * INT16_MAX;
             }
             else
             {
-                // ========== LOW QUALITY MODE (saves ~15% CPU vs HQ) ==========
-                // Same chip update rate as HQ (8x oversampling) for correct frequencies
-                // BUT: skip expensive FIR filtering, use simple averaging instead
+                // ========== LOW QUALITY MODE ==========
+                // Native clock rendering + simple averaging (no FIR)
+                // Faster but may have aliasing on high frequencies
 
                 double leftSum = 0.0;
                 double rightSum = 0.0;
+                int sampleCount = 0;
 
-                // Run same oversampling loop as HQ mode for proper chip timing
-                for (int j = FilterInterpolate::DECIMATE_FACTOR - 1; j >= 0; j--)
+                // Run generator ticks for this output sample period
+                // Generator rate = PSG_CLOCK_RATE / 8 (~218.75 kHz)
+                // Ticks per output sample = (PSG_CLOCK_RATE / 8) / AUDIO_SAMPLING_RATE ≈ 4.96
+                double ticksPerSample = (double)(PSG_CLOCK_RATE / 8) / (double)AUDIO_SAMPLING_RATE;
+                _decimationPhase += ticksPerSample;
+
+                while (_decimationPhase >= 1.0)
                 {
-                    _x += _clockStep;
+                    _decimationPhase -= 1.0;
 
-                    if (_x >= 1.0)
-                    {
-                        _x -= 1.0;
-                        updateState(true);  // Same chip update as HQ
-                    }
+                    // Tick generators directly (bypass internal prescaler)
+                    updateState(true);
 
-                    // Accumulate samples (simple averaging instead of FIR)
+                    // Accumulate samples
                     leftSum += _chip0->mixedLeft() + _chip1->mixedLeft();
                     rightSum += _chip0->mixedRight() + _chip1->mixedRight();
+                    sampleCount++;
                 }
 
-                // Simple averaging (no FIR filtering) - faster but lower quality
-                leftSample = (leftSum / FilterInterpolate::DECIMATE_FACTOR) * INT16_MAX;
-                rightSample = (rightSum / FilterInterpolate::DECIMATE_FACTOR) * INT16_MAX;
+                // Average (simple boxcar decimation)
+                if (sampleCount > 0)
+                {
+                    leftSample = (leftSum / sampleCount) * INT16_MAX;
+                    rightSample = (rightSum / sampleCount) * INT16_MAX;
+                }
+                else
+                {
+                    // No ticks this sample - use previous value
+                    leftSample = (_chip0->mixedLeft() + _chip1->mixedLeft()) * INT16_MAX;
+                    rightSample = (_chip0->mixedRight() + _chip1->mixedRight()) * INT16_MAX;
+                }
             }
 
             // Store samples in output buffer

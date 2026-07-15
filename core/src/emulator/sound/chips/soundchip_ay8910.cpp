@@ -185,11 +185,16 @@ SoundChip_AY8910::EnvelopeGenerator::EnvelopeGenerator()
 void SoundChip_AY8910::EnvelopeGenerator::reset()
 {
     _period = 0x0000'0001;
-    _shape = 0;
+
+    // Default to shape 0x08 (continuous sawtooth \\\\) instead of 0x00 (one-shot decay \___)
+    // Many demos/games never write R13 and rely on envelope cycling for bass synthesis.
+    // Shape 0 would decay once and hold at 0 forever, producing silence.
+    _shape = 0x08;
 
     _counter = 0;
     _segment = 0;
-    _out = 0;
+
+    resetSegment();
 }
 
 /// Set envelope generator period (Registers R13 - fine and R14 - coarse bits)
@@ -232,13 +237,23 @@ uint8_t SoundChip_AY8910::EnvelopeGenerator::updateState()
 void SoundChip_AY8910::EnvelopeGenerator::resetSegment()
 {
     EnvelopeHandler handler = _handlers[_shape][_segment];
-    if (handler == &slideDown || handler == &holdTop)
+
+    // Set initial value based on direction of current segment
+    if (handler == &slideDown)
     {
-        _out = 0x1F;    // Set max value
+        _out = 0x1F;    // slideDown starts at max (31)
     }
-    else
+    else if (handler == &slideUp)
     {
-        _out = 0x00;
+        _out = 0x00;    // slideUp starts at min (0)
+    }
+    else if (handler == &holdBottom)
+    {
+        _out = 0x00;    // holdBottom holds at 0
+    }
+    else if (handler == &holdTop)
+    {
+        _out = 0x1F;    // holdTop holds at 31
     }
 }
 
@@ -326,49 +341,11 @@ void SoundChip_AY8910::reset()
     _noiseGenerator.reset();
     _envelopeGenerator.reset();
 
-    // Reset panning coefficients
-    /// region <ABC>
-    if (true)
-    {
-        _toneGenerators[AY_CHANNEL_A].setPanLeft(0.9);
-        _toneGenerators[AY_CHANNEL_A].setPanRight(0.1);
-        _toneGenerators[AY_CHANNEL_B].setPanLeft(0.5);
-        _toneGenerators[AY_CHANNEL_B].setPanRight(0.5);
-        _toneGenerators[AY_CHANNEL_C].setPanLeft(0.1);
-        _toneGenerators[AY_CHANNEL_C].setPanRight(0.9);
-    }
-    else
-    {
-        _toneGenerators[AY_CHANNEL_A].setPanLeft(0.65);
-        _toneGenerators[AY_CHANNEL_A].setPanRight(0.35);
-        _toneGenerators[AY_CHANNEL_B].setPanLeft(0.5);
-        _toneGenerators[AY_CHANNEL_B].setPanRight(0.5);
-        _toneGenerators[AY_CHANNEL_C].setPanLeft(0.35);
-        _toneGenerators[AY_CHANNEL_C].setPanRight(0.65);
-    }
-    /// endregion </ABC>
-    /// region <ACB>
-    if (false)
-    {
-        _toneGenerators[AY_CHANNEL_A].setPanLeft(0.9);
-        _toneGenerators[AY_CHANNEL_A].setPanRight(0.1);
-        _toneGenerators[AY_CHANNEL_B].setPanLeft(0.1);
-        _toneGenerators[AY_CHANNEL_B].setPanRight(0.9);
-        _toneGenerators[AY_CHANNEL_C].setPanLeft(0.5);
-        _toneGenerators[AY_CHANNEL_C].setPanRight(0.5);
-    }
-    /// endregion </ACB>
-    /// region <Debug A-left>
-    if (false)
-    {
-        _toneGenerators[AY_CHANNEL_A].setPanLeft(1.0);
-        _toneGenerators[AY_CHANNEL_A].setPanRight(0.0);
-        _toneGenerators[AY_CHANNEL_B].setPanLeft(0.0);
-        _toneGenerators[AY_CHANNEL_B].setPanRight(1.0);
-        _toneGenerators[AY_CHANNEL_C].setPanLeft(0.0);
-        _toneGenerators[AY_CHANNEL_C].setPanRight(1.0);
-    }
-    /// endregion </Debug A-left>
+    // Apply stereo mode (sets panning coefficients)
+    setStereoMode(_stereoMode);
+
+    // Apply chip model (sets DAC table)
+    setChipModel(_chipModel);
 
     // Reset internal tick counter
     _tick = 0;
@@ -418,8 +395,19 @@ void SoundChip_AY8910::updateMixer()
         channelOut *= volume;
         channelOut &= 0x1F; // Ensure that amplitude not exceed 5 bit value
 
-        _left[i] = _volumeDACTablePtr[channelOut];
-        _right[i] = _volumeDACTablePtr[channelOut];
+        // Get DAC value and apply user volume control
+        double dacValue = _volumeDACTablePtr[channelOut];
+        if (!toneGenerator.isMuted())
+        {
+            dacValue *= toneGenerator.userVolume();
+        }
+        else
+        {
+            dacValue = 0.0;
+        }
+
+        _left[i] = dacValue;
+        _right[i] = dacValue;
 
         _mixedLeft += _left[i] * toneGenerator.panLeft();
         _mixedRight += _right[i] * toneGenerator.panRight();
@@ -582,17 +570,94 @@ void SoundChip_AY8910::writeRegister(uint8_t regAddr, uint8_t value)
             // Do nothing
             break;
     }
+}
 
-    // TODO: Here we can log all register writes to get YM/MYM files
-    if (false)
+void SoundChip_AY8910::setStereoMode(AYStereoMode mode)
+{
+    _stereoMode = mode;
+
+    switch (mode)
     {
-        const char* registerName = SoundChip_AY8910::AYRegisterNames[regAddr];
-        std::cout << StringHelper::Format("Register: %-30s Value: 0x%02X", registerName, value) << std::endl;
-        if (regAddr == 0x07)
-        {
-            std::cout << dumpAY8910MixerState() << std::endl;
-        }
+        case AYStereoMode::ABC:
+            // A=Left, B=Center, C=Right
+            _toneGenerators[AY_CHANNEL_A].setPanLeft(0.9);
+            _toneGenerators[AY_CHANNEL_A].setPanRight(0.1);
+            _toneGenerators[AY_CHANNEL_B].setPanLeft(0.5);
+            _toneGenerators[AY_CHANNEL_B].setPanRight(0.5);
+            _toneGenerators[AY_CHANNEL_C].setPanLeft(0.1);
+            _toneGenerators[AY_CHANNEL_C].setPanRight(0.9);
+            break;
+
+        case AYStereoMode::ACB:
+            // A=Left, C=Center, B=Right
+            _toneGenerators[AY_CHANNEL_A].setPanLeft(0.9);
+            _toneGenerators[AY_CHANNEL_A].setPanRight(0.1);
+            _toneGenerators[AY_CHANNEL_B].setPanLeft(0.1);
+            _toneGenerators[AY_CHANNEL_B].setPanRight(0.9);
+            _toneGenerators[AY_CHANNEL_C].setPanLeft(0.5);
+            _toneGenerators[AY_CHANNEL_C].setPanRight(0.5);
+            break;
+
+        case AYStereoMode::Mono:
+            // All center
+            _toneGenerators[AY_CHANNEL_A].setPanLeft(0.5);
+            _toneGenerators[AY_CHANNEL_A].setPanRight(0.5);
+            _toneGenerators[AY_CHANNEL_B].setPanLeft(0.5);
+            _toneGenerators[AY_CHANNEL_B].setPanRight(0.5);
+            _toneGenerators[AY_CHANNEL_C].setPanLeft(0.5);
+            _toneGenerators[AY_CHANNEL_C].setPanRight(0.5);
+            break;
     }
+}
+
+void SoundChip_AY8910::setChipModel(AYChipModel model)
+{
+    _chipModel = model;
+
+    switch (model)
+    {
+        case AYChipModel::AY8910:
+            _volumeDACTablePtr = (double*)&AY_DAC_TABLE;
+            break;
+
+        case AYChipModel::YM2149:
+            _volumeDACTablePtr = (double*)&YM_DAC_TABLE;
+            break;
+    }
+}
+
+void SoundChip_AY8910::setChannelMuted(uint8_t channel, bool muted)
+{
+    if (channel < TONE_CHANNELS)
+    {
+        _toneGenerators[channel].setMuted(muted);
+    }
+}
+
+void SoundChip_AY8910::setChannelVolume(uint8_t channel, double volume)
+{
+    if (channel < TONE_CHANNELS)
+    {
+        _toneGenerators[channel].setUserVolume(volume);
+    }
+}
+
+bool SoundChip_AY8910::isChannelMuted(uint8_t channel) const
+{
+    if (channel < TONE_CHANNELS)
+    {
+        return _toneGenerators[channel].isMuted();
+    }
+    return false;
+}
+
+double SoundChip_AY8910::getChannelVolume(uint8_t channel) const
+{
+    if (channel < TONE_CHANNELS)
+    {
+        return _toneGenerators[channel].userVolume();
+    }
+    return 1.0;
 }
 
 /// endregion </Methods>
