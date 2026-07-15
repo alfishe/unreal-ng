@@ -56,6 +56,37 @@ if (MSVC)
 	add_definitions(-DNOMINMAX)
 endif (MSVC)
 
+# ========================================
+# Debug Symbols for Release Builds
+# ========================================
+# Generate debug symbols even in Release mode for crash analysis.
+# Symbols are packaged separately and don't bloat release archives.
+option(RELEASE_WITH_DEBUG_SYMBOLS "Generate debug symbols in Release builds" ON)
+
+if (RELEASE_WITH_DEBUG_SYMBOLS AND CMAKE_BUILD_TYPE STREQUAL "Release")
+    if (MSVC)
+        # MSVC: Generate PDB files for Release builds
+        # /Zi: Generate complete debug info in PDB
+        # /DEBUG:FULL: Include all debug info in PDB (not /DEBUG:FASTLINK)
+        # /OPT:REF,ICF: Still optimize (remove unused functions, fold identical code)
+        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /Zi")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Zi")
+        set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /DEBUG:FULL /OPT:REF /OPT:ICF")
+        set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /DEBUG:FULL /OPT:REF /OPT:ICF")
+        message(STATUS "MSVC Release with PDB symbols: ENABLED")
+    elseif (MINGW)
+        # MinGW: Generate DWARF debug info, will be separated later
+        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -g")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -g")
+        message(STATUS "MinGW Release with DWARF symbols: ENABLED")
+    elseif (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        # GCC/Clang on Linux/macOS: Generate debug info
+        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -g")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -g")
+        message(STATUS "GCC/Clang Release with debug symbols: ENABLED")
+    endif()
+endif()
+
 # Set the output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
@@ -503,6 +534,160 @@ if (BUILD_QT_APPS)
             
             DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
             COMMENT "Creating combined Linux tarball with all applications"
+        )
+    endif()
+
+    # ========================================
+    # Debug Symbol Packaging (separate from release archives)
+    # ========================================
+    # These targets create symbol archives for crash analysis.
+    # Symbols are NOT included in release archives to keep them small.
+    # Enable with -DPACKAGE_SYMBOLS=ON (used for rolling snapshot builds).
+
+    option(PACKAGE_SYMBOLS "Extract and package debug symbols separately" OFF)
+
+    set(SYMBOLS_STAGING_DIR "${CMAKE_BINARY_DIR}/packages/symbols")
+
+    if(PACKAGE_SYMBOLS AND WIN32 AND MSVC)
+        # MSVC: Package PDB files
+        add_custom_target(package_symbols_windows
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E remove_directory "${SYMBOLS_STAGING_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
+
+            # Copy PDB files for all executables
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${CMAKE_BINARY_DIR}/bin/unreal-qt.pdb"
+                "${SYMBOLS_STAGING_DIR}/"
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.pdb"
+                "${SYMBOLS_STAGING_DIR}/"
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${CMAKE_BINARY_DIR}/bin/unreal-videowall.pdb"
+                "${SYMBOLS_STAGING_DIR}/"
+
+            # Create symbols ZIP
+            COMMAND ${CMAKE_COMMAND} -E chdir "${CMAKE_BINARY_DIR}/packages"
+                ${CMAKE_COMMAND} -E tar "cf"
+                "UnrealNG-Symbols-Windows-MSVC.zip"
+                "--format=zip" "--" "symbols"
+
+            DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
+            COMMENT "Packaging MSVC debug symbols (PDB files)"
+        )
+    endif()
+
+    if(PACKAGE_SYMBOLS AND WIN32 AND MINGW)
+        # MinGW: Extract DWARF debug info and strip executables
+        # The symbols are extracted BEFORE the main package target runs
+        add_custom_target(package_symbols_mingw
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E remove_directory "${SYMBOLS_STAGING_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
+
+            # Extract debug symbols from executables
+            COMMAND objcopy --only-keep-debug
+                "${CMAKE_BINARY_DIR}/bin/unreal-qt.exe"
+                "${SYMBOLS_STAGING_DIR}/unreal-qt.debug"
+            COMMAND objcopy --only-keep-debug
+                "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.exe"
+                "${SYMBOLS_STAGING_DIR}/unreal-screen-viewer.debug"
+            COMMAND objcopy --only-keep-debug
+                "${CMAKE_BINARY_DIR}/bin/unreal-videowall.exe"
+                "${SYMBOLS_STAGING_DIR}/unreal-videowall.debug"
+
+            # Strip debug info from executables (in-place)
+            COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-qt.exe"
+            COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.exe"
+            COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-videowall.exe"
+
+            # Add debug link back to executable (for addr2line to find symbols)
+            COMMAND objcopy --add-gnu-debuglink="${SYMBOLS_STAGING_DIR}/unreal-qt.debug"
+                "${CMAKE_BINARY_DIR}/bin/unreal-qt.exe"
+            COMMAND objcopy --add-gnu-debuglink="${SYMBOLS_STAGING_DIR}/unreal-screen-viewer.debug"
+                "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.exe"
+            COMMAND objcopy --add-gnu-debuglink="${SYMBOLS_STAGING_DIR}/unreal-videowall.debug"
+                "${CMAKE_BINARY_DIR}/bin/unreal-videowall.exe"
+
+            # Create symbols ZIP
+            COMMAND ${CMAKE_COMMAND} -E chdir "${CMAKE_BINARY_DIR}/packages"
+                ${CMAKE_COMMAND} -E tar "cf"
+                "UnrealNG-Symbols-Windows-MinGW.zip"
+                "--format=zip" "--" "symbols"
+
+            DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
+            COMMENT "Extracting MinGW debug symbols (DWARF) and stripping executables"
+        )
+    endif()
+
+    if(PACKAGE_SYMBOLS AND UNIX AND NOT APPLE)
+        # Linux: Extract debug info and strip executables
+        add_custom_target(package_symbols_linux
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E remove_directory "${SYMBOLS_STAGING_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
+
+            # Extract debug symbols
+            COMMAND objcopy --only-keep-debug
+                "${CMAKE_BINARY_DIR}/bin/unreal-qt"
+                "${SYMBOLS_STAGING_DIR}/unreal-qt.debug"
+            COMMAND objcopy --only-keep-debug
+                "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer"
+                "${SYMBOLS_STAGING_DIR}/unreal-screen-viewer.debug"
+            COMMAND objcopy --only-keep-debug
+                "${CMAKE_BINARY_DIR}/bin/unreal-videowall"
+                "${SYMBOLS_STAGING_DIR}/unreal-videowall.debug"
+
+            # Strip executables
+            COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-qt"
+            COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer"
+            COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-videowall"
+
+            # Add debug link
+            COMMAND objcopy --add-gnu-debuglink="${SYMBOLS_STAGING_DIR}/unreal-qt.debug"
+                "${CMAKE_BINARY_DIR}/bin/unreal-qt"
+            COMMAND objcopy --add-gnu-debuglink="${SYMBOLS_STAGING_DIR}/unreal-screen-viewer.debug"
+                "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer"
+            COMMAND objcopy --add-gnu-debuglink="${SYMBOLS_STAGING_DIR}/unreal-videowall.debug"
+                "${CMAKE_BINARY_DIR}/bin/unreal-videowall"
+
+            # Create symbols tarball
+            COMMAND ${CMAKE_COMMAND} -E tar "cfz"
+                "${CMAKE_BINARY_DIR}/packages/UnrealNG-Symbols-Linux.tar.gz"
+                "--" "${SYMBOLS_STAGING_DIR}"
+
+            DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
+            COMMENT "Extracting Linux debug symbols and stripping executables"
+        )
+    endif()
+
+    if(PACKAGE_SYMBOLS AND APPLE)
+        # macOS: Generate dSYM bundles
+        add_custom_target(package_symbols_macos
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E remove_directory "${SYMBOLS_STAGING_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
+
+            # Generate dSYM bundles for each app
+            COMMAND dsymutil "${CMAKE_BINARY_DIR}/bin/unreal-qt.app/Contents/MacOS/unreal-qt"
+                -o "${SYMBOLS_STAGING_DIR}/unreal-qt.dSYM"
+            COMMAND dsymutil "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.app/Contents/MacOS/unreal-screen-viewer"
+                -o "${SYMBOLS_STAGING_DIR}/unreal-screen-viewer.dSYM"
+            COMMAND dsymutil "${CMAKE_BINARY_DIR}/bin/unreal-videowall.app/Contents/MacOS/unreal-videowall"
+                -o "${SYMBOLS_STAGING_DIR}/unreal-videowall.dSYM"
+
+            # Strip executables in app bundles
+            COMMAND strip -S "${CMAKE_BINARY_DIR}/bin/unreal-qt.app/Contents/MacOS/unreal-qt"
+            COMMAND strip -S "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.app/Contents/MacOS/unreal-screen-viewer"
+            COMMAND strip -S "${CMAKE_BINARY_DIR}/bin/unreal-videowall.app/Contents/MacOS/unreal-videowall"
+
+            # Create symbols tarball (tar preserves dSYM bundle structure better than zip)
+            COMMAND ${CMAKE_COMMAND} -E tar "cfz"
+                "${CMAKE_BINARY_DIR}/packages/UnrealNG-Symbols-macOS.tar.gz"
+                "--" "${SYMBOLS_STAGING_DIR}"
+
+            DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
+            COMMENT "Generating macOS dSYM bundles and stripping executables"
         )
     endif()
 endif()
