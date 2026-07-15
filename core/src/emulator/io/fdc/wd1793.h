@@ -63,8 +63,12 @@ public:
             "Read Address",    // [ 7] Read Address
             "Read Track",      // [ 8] Read Track
             "Write Track",     // [ 9] Write Track
-            "Force Interrupt"  // [10] Force Interrupt
+            "Force Interrupt", // [10] Force Interrupt
+            "Invalid"          // [11] Invalid command
         };
+
+        if (command > WD_CMD_INVALID)
+            return "Unknown";
 
         return names[command];
     }
