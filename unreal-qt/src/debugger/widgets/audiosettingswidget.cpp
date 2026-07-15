@@ -54,7 +54,7 @@ void AudioSettingsWidget::createUI()
     // FIR Filter
     _firCheckbox = new QCheckBox("FIR Filter (HQ mode)", this);
     _firCheckbox->setChecked(true);
-    _firCheckbox->setToolTip("192-tap FIR decimation at native clock rate.\n"
+    _firCheckbox->setToolTip("96-tap FIR decimation filter (Fc=20kHz, Kaiser window).\n"
                              "Gives bright 'ayumi' character.\n"
                              "Disable for simple averaging (faster, duller).");
     ayLayout->addWidget(_firCheckbox);
