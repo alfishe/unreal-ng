@@ -2082,8 +2082,8 @@ void WD1793::processReadSector()
         _operationFIFO.push(readSector);
     }
 
-    // Start reading sector bytes
-    transitionFSM(WD1793::S_READ_BYTE);
+    // Start reading sector bytes - use delay to give CPU time to respond to first DRQ
+    transitionFSMWithDelay(WD1793::S_READ_BYTE, WD93_TSTATES_PER_FDC_BYTE);
 }
 
 /// Handles read single byte for sector or track operations
