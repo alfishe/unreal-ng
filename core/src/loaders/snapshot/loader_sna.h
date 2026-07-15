@@ -116,11 +116,12 @@ protected:
     bool _stagingLoaded = false;
 
     // Staging memory buffers
-    snaHeader _header;
-    sna128Header _ext128Header;
+    // Default-initialized to zero to prevent uninitialized memory issues
+    snaHeader _header{};
+    sna128Header _ext128Header{};
     uint8_t _memoryPages[8][PAGE_SIZE];
     bool _memoryPagesUsed[8];
-    uint8_t _borderColor;
+    uint8_t _borderColor = 0;
 
     /// endregion </Fields>
 

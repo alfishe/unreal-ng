@@ -21,6 +21,12 @@ LoaderSNA::LoaderSNA(EmulatorContext* context, const std::string& path)
 
     _path = FileHelper::AbsolutePath(path, false);  // Expand tilde, don't resolve symlinks for non-existent files
 
+    // Initialize all staging buffers to zero for deterministic state
+    // Prevents uninitialized POD members from causing inconsistent snapshot loading
+    memset(&_header, 0, sizeof(_header));
+    memset(&_ext128Header, 0, sizeof(_ext128Header));
+    _borderColor = 0;
+
     // Initialize memory pages with proper size
     for (int i = 0; i < 8; i++)
     {
@@ -250,8 +256,6 @@ bool LoaderSNA::load48kToStaging()
             return false;
         }
 
-        _borderColor = _header.border & 0b0000'0111;
-
         // Read 48K RAM (3 x 16KB pages)
         // Bank 5 [4000:7FFF]
         if (fread(&_memoryPages[5], PAGE_SIZE, 1, _file) != 1)
@@ -274,6 +278,8 @@ bool LoaderSNA::load48kToStaging()
         }
         _memoryPagesUsed[0] = true;
 
+        // Only set border color and staging flag after all reads succeed
+        _borderColor = _header.border & 0b0000'0111;
         _stagingLoaded = true;
         result = true;
     }
@@ -353,13 +359,25 @@ bool LoaderSNA::load128kToStaging()
             uint8_t currentTopPage = _ext128Header.port_7FFD & 0x07u;
 
             // Move Page 0 content loaded previously to mapped RAM page
-            if (currentTopPage != 0)
+            // The third bank in the SNA file was loaded into _memoryPages[0],
+            // but it actually belongs to the page selected by port_7FFD bits 0-2
+            if (currentTopPage != 0 && currentTopPage != 5 && currentTopPage != 2)
             {
+                // Normal case: move page 0 data to the actual target page
                 _memoryPagesUsed[0] = false;
                 memcpy(&_memoryPages[currentTopPage], &_memoryPages[0], PAGE_SIZE);
                 memset(&_memoryPages[0], 0x00, PAGE_SIZE);
                 _memoryPagesUsed[currentTopPage] = true;
             }
+            else if (currentTopPage == 5 || currentTopPage == 2)
+            {
+                // Edge case: currentTopPage is the same as a fixed bank page (5 or 2)
+                // The third bank's data duplicates page 5 or 2 (already loaded)
+                // Discard the duplicate and mark page 0 as unused
+                _memoryPagesUsed[0] = false;
+                memset(&_memoryPages[0], 0x00, PAGE_SIZE);
+            }
+            // If currentTopPage == 0, data is already in the right place
 
             // Load all the rest RAM pages from 128k extended section
             if (memoryPagesToLoad > 0)
@@ -386,9 +404,13 @@ bool LoaderSNA::load128kToStaging()
             }
         }
 
-        _borderColor = _header.border & 0b0000'0111;
-
-        _stagingLoaded = true;
+        // Only set border color and staging flag after all reads succeed
+        // Prevents applySnapshotFromStaging() from using partial/garbage data
+        if (result)
+        {
+            _borderColor = _header.border & 0b0000'0111;
+            _stagingLoaded = true;
+        }
     }
 
     return result;

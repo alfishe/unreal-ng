@@ -254,6 +254,22 @@ void AudioSettingsWidget::refreshFromContext()
             updateChannelVolumeLabel(AY_CHANNEL_C, _channelCVolumeSlider->value());
         }
 
+        // AY chain settings (punch, room)
+        _ayPunchCheckbox->setChecked(_context->pSoundManager->getAYChain().isPunchEnabled());
+        _ayRoomCombo->setCurrentIndex(static_cast<int>(_context->pSoundManager->getAYChain().getRoomMode()));
+
+        // Beeper settings
+        _beeperFilterCheckbox->setChecked(_context->pSoundManager->isBeeperFilterEnabled());
+        _beeperPunchCheckbox->setChecked(_context->pSoundManager->getBeeperChain().isPunchEnabled());
+
+        // Master volumes
+        int ayVol = static_cast<int>(_context->pSoundManager->getAYVolume() * 100);
+        int beeperVol = static_cast<int>(_context->pSoundManager->getBeeperVolume() * 100);
+        _ayVolumeSlider->setValue(ayVol);
+        _beeperVolumeSlider->setValue(beeperVol);
+        _ayVolumeLabel->setText(QString("%1%").arg(ayVol));
+        _beeperVolumeLabel->setText(QString("%1%").arg(beeperVol));
+
         if (_context->pFeatureManager)
         {
             _firCheckbox->setChecked(_context->pFeatureManager->isEnabled(Features::kSoundHQ));

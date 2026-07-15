@@ -135,6 +135,12 @@ protected:
     SoundManager* _soundManager = nullptr;
     ModuleLogger* _logger = nullptr;
 
+    // Paging lock latch (hardware emulation of port 7FFD bit 5)
+    // When true, subsequent writes to port 7FFD are ignored by the hardware
+    // This is the actual hardware latch, separate from the emulatorState.p7FFD bit 5
+    // which is just a cached copy of the last written value
+    bool _7FFD_Locked = false;
+
     // Registered port handlers from external peripheral devices
     std::map<uint16_t, PortDevice*> _portDevices;
 
@@ -191,7 +197,8 @@ public:
     void PeripheralPortOut(uint16_t port, uint8_t value);
     
     /// Unlock port 7FFD paging for snapshot loading or debug sessions
-    /// This bypasses the lock bit check, allowing subsequent port writes to succeed
+    /// Clears both the emulatorState.p7FFD lock bit AND the hardware latch (_7FFD_Locked)
+    /// This ensures subsequent port writes via DecodePortOut() will be accepted
     void UnlockPaging();
     
     /// Lock port 7FFD paging (for debug sessions only, not used in normal operation)

@@ -66,10 +66,7 @@ WD1793::WD1793(EmulatorContext* context) : PortDecoder(context)
 
 WD1793::~WD1793()
 {
-    // Dump collected events file to disk
-    std::string filename = FileHelper::GetExecutablePath() + "/wd1793_events.csv";
-    _collector->dumpCollectedCommandInfo(filename);
-
+    // Collector handles its own file cleanup in destructor
     delete _collector;
     _collector = nullptr;
 
@@ -260,6 +257,12 @@ void WD1793::processBeta128(uint8_t value)
 /// Handle motor start/stop events as well as timeouts
 void WD1793::processFDDMotorState()
 {
+    // Only process timeout if motor is actually running
+    if (_motorTimeoutTStates <= 0)
+    {
+        return;  // Motor already stopped or timeout not set
+    }
+
     // Apply time difference from the previous call
     _motorTimeoutTStates -= _diffTime;
 
@@ -601,6 +604,16 @@ uint8_t WD1793::getStatusRegister()
             _index = _index ? _index : false;
         else
             _index = _index ? _index : false;
+
+        // NOT READY (bit 7) - same logic for Type I commands
+        if (isReady())
+        {
+            _statusRegister &= ~WDS_NOTRDY;
+        }
+        else
+        {
+            _statusRegister |= WDS_NOTRDY;
+        }
     }
     else
     {
@@ -755,9 +768,10 @@ uint8_t WD1793::getStatusRegister()
 
 bool WD1793::isReady()
 {
-    // NOT READY status register bit
-    // MR (Master Reset) signal OR inverted drive readiness signal
-    bool result = _selectedDrive->isDiskInserted() | ((_beta128Register & BETA128_COMMAND_BITS::BETA_CMD_RESET) == 0);
+    // FDC is ready when disk is inserted and motor is running
+    bool diskInserted = _selectedDrive->isDiskInserted();
+    bool motorOn = _selectedDrive->getMotor();
+    bool result = diskInserted && motorOn;
 
     return result;
 }
@@ -1599,13 +1613,16 @@ void WD1793::cmdForceInterrupt(uint8_t value)
         }
     }
 
+    // Accessing FDC should prolong motor rotation (keeps drive ready)
+    prolongFDDMotorRotation();
+
     // Update status register based on whether a command was executing
     if (noCommandExecuted)
     {
-        // Per datasheet: "If the Force Interrupt command is received when there is not a current 
-        // command under execution, the Busy Status bit is reset and the rest of the status bits 
+        // Per datasheet: "If the Force Interrupt command is received when there is not a current
+        // command under execution, the Busy Status bit is reset and the rest of the status bits
         // are updated or cleared. In this case, Status reflects the Type I commands."
-        _statusRegister &= ~(WDS_CRCERR | WDS_SEEKERR | WDS_HEADLOADED);
+        _statusRegister &= ~(WDS_CRCERR | WDS_SEEKERR | WDS_HEADLOADED | WDS_NOTRDY);
         _statusRegister |= !_selectedDrive->isDiskInserted() ? WDS_NOTRDY : 0x00;
         _statusRegister |= _selectedDrive->isWriteProtect() ? WDS_WRITEPROTECTED : 0x00;
 
@@ -2821,7 +2838,6 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
         case PORT_FF:  // Write to Beta128 system register
             processBeta128(value);
             MLOGINFO(StringHelper::Format("  #FF - Set beta128: 0x%02X", value).c_str());
-            ;
             break;
         default:
             break;
