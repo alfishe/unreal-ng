@@ -2474,6 +2474,12 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
     startButton->setEnabled(true);
     updateMenuStates();
 
+    // 8. Update audio settings widget if open
+    if (_audioSettingsWidget)
+    {
+        _audioSettingsWidget->setContext(_emulator->GetContext());
+    }
+
     qDebug() << "MainWindow::adoptEmulator() - Successfully adopted emulator"
              << QString::fromStdString(_emulator->GetId());
 }
@@ -2512,13 +2518,19 @@ void MainWindow::unbindFromEmulator()
     // 4. Device screen
     deviceScreen->detach();
 
-    // 5. Per-emulator event subscriptions
+    // 5. Audio settings widget
+    if (_audioSettingsWidget)
+    {
+        _audioSettingsWidget->setContext(nullptr);
+    }
+
+    // 6. Per-emulator event subscriptions
     unsubscribeFromPerEmulatorEvents();
 
-    // 6. Audio cleanup
+    // 7. Audio cleanup
     _emulator->ClearAudioCallback();
 
-    // 7. Clear reference (does NOT destroy emulator)
+    // 8. Clear reference (does NOT destroy emulator)
     _emulator = nullptr;
 
     qDebug() << "MainWindow::unbindFromEmulator() - Emulator unbound (still running headless)";

@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <vector>
 
 #include "common/modulelogger.h"
@@ -56,6 +57,10 @@ protected:
     float _beeperLp1R = 0.0f, _beeperLp2R = 0.0f;
     static constexpr float BEEPER_LP_COEF = 0.85f;  // ~16kHz with 2 poles @ 44.1kHz
 
+    // Master volume controls
+    double _ayVolume = 1.0;
+    double _beeperVolume = 1.0;
+
     // Save to Wave file
     TinyWav _tinyWav;
 
@@ -105,6 +110,12 @@ public:
     // Beeper filter control
     void setBeeperFilterEnabled(bool enabled) { _beeperFilterEnabled = enabled; }
     bool isBeeperFilterEnabled() const { return _beeperFilterEnabled; }
+
+    // Master volume controls
+    void setAYVolume(double volume) { _ayVolume = std::clamp(volume, 0.0, 1.0); }
+    void setBeeperVolume(double volume) { _beeperVolume = std::clamp(volume, 0.0, 1.0); }
+    double getAYVolume() const { return _ayVolume; }
+    double getBeeperVolume() const { return _beeperVolume; }
 
     // Legacy accessor for compatibility
     AudioCharacterChain& getCharacterChain() { return _ayChain; }

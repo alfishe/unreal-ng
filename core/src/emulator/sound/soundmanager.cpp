@@ -236,6 +236,24 @@ void SoundManager::handleFrameEnd()
     _beeperChain.processInt16(_beeperBuffer, SAMPLES_PER_FRAME);
     /// endregion </Process beeper>
 
+    /// region <Apply master volumes>
+    if (_ayVolume < 1.0)
+    {
+        for (size_t i = 0; i < SAMPLES_PER_FRAME * AUDIO_CHANNELS; i++)
+        {
+            ayBuffer[i] = static_cast<int16_t>(ayBuffer[i] * _ayVolume);
+        }
+    }
+
+    if (_beeperVolume < 1.0)
+    {
+        for (size_t i = 0; i < SAMPLES_PER_FRAME * AUDIO_CHANNELS; i++)
+        {
+            _beeperBuffer[i] = static_cast<int16_t>(_beeperBuffer[i] * _beeperVolume);
+        }
+    }
+    /// endregion </Apply master volumes>
+
     /// region <Mix all channels to output buffer>
     AudioUtils::MixAudio((const int16_t*)ayBuffer, _beeperBuffer, _outBuffer, AUDIO_BUFFER_SAMPLES_PER_FRAME);
     /// endregion </Mix all channels to output buffer>

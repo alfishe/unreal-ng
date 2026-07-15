@@ -56,6 +56,21 @@ enum AYChannelsEnum : uint8_t
     AY_CHANNEL_C = 2
 };
 
+/// Stereo panning layout
+enum class AYStereoMode : uint8_t
+{
+    ABC = 0,    // A=Left, B=Center, C=Right (default)
+    ACB = 1,    // A=Left, C=Center, B=Right
+    Mono = 2    // All channels center
+};
+
+/// Chip model (affects DAC curve)
+enum class AYChipModel : uint8_t
+{
+    AY8910 = 0, // Original GI chip - stepped DAC
+    YM2149 = 1  // Yamaha clone - smoother DAC curve
+};
+
 /// endregion </Types>
 
 class SoundChip_AY8910 : public PortDecoder, public PortDevice
@@ -190,8 +205,17 @@ protected:
 
         bool out() { return _out; };
 
+        // User-controlled mute and volume
+        void setMuted(bool muted) { _muted = muted; }
+        void setUserVolume(double volume) { _userVolume = std::clamp(volume, 0.0, 1.0); }
+        bool isMuted() const { return _muted; }
+        double userVolume() const { return _userVolume; }
 
         bool updateState();
+
+    protected:
+        bool _muted = false;        // User mute control
+        double _userVolume = 1.0;   // User volume control (0.0 - 1.0)
         /// endregion </Methods>
     };
 
@@ -353,6 +377,10 @@ protected:
     FilterDC<double> _filterDCLeft;
     FilterDC<double> _filterDCRight;
 
+    // User-configurable settings
+    AYStereoMode _stereoMode = AYStereoMode::ABC;
+    AYChipModel _chipModel = AYChipModel::AY8910;
+
     /// endregion </Fields>
 
     /// region <Interfacing fields>
@@ -401,6 +429,17 @@ public:
     // Logic-level interface
     uint8_t readRegister(uint8_t regAddr);
     void writeRegister(uint8_t regAddr, uint8_t value);
+
+    // User-configurable audio settings
+    void setStereoMode(AYStereoMode mode);
+    void setChipModel(AYChipModel model);
+    void setChannelMuted(uint8_t channel, bool muted);
+    void setChannelVolume(uint8_t channel, double volume);
+
+    AYStereoMode getStereoMode() const { return _stereoMode; }
+    AYChipModel getChipModel() const { return _chipModel; }
+    bool isChannelMuted(uint8_t channel) const;
+    double getChannelVolume(uint8_t channel) const;
 
     /// endregion </Methods>
 
