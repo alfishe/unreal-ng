@@ -391,6 +391,11 @@ void MenuManager::createToolsMenu()
     _intParametersAction->setStatusTip(tr("Configure interrupt timing parameters"));
     connect(_intParametersAction, &QAction::triggered, this, &MenuManager::intParametersRequested);
 
+    // Audio Settings
+    _audioSettingsAction = _toolsMenu->addAction(tr("&Audio Settings..."));
+    _audioSettingsAction->setStatusTip(tr("Configure audio DSP: punch, FIR filter, room simulation"));
+    connect(_audioSettingsAction, &QAction::triggered, this, &MenuManager::audioSettingsRequested);
+
     _toolsMenu->addSeparator();
 
     // Screenshot

@@ -36,6 +36,7 @@
 #define slots Q_SLOTS
 #endif  // ENABLE_AUTOMATION
 
+class AudioSettingsWidget;
 class DockingManager;
 
 QT_BEGIN_NAMESPACE
@@ -91,6 +92,7 @@ private slots:
     void handleDebuggerToggled(bool visible);
     void handleLogWindowToggled(bool visible);
     void handleIntParametersRequested();
+    void handleAudioSettingsRequested();
     void updateMenuStates();
 
     // Binding state handler
@@ -214,4 +216,7 @@ private:
 
     DockingManager* _dockingManager = nullptr;
     MenuManager* _menuManager = nullptr;
+
+    // Audio settings dialog (singleton, toggled via menu)
+    QPointer<AudioSettingsWidget> _audioSettingsWidget;
 };
