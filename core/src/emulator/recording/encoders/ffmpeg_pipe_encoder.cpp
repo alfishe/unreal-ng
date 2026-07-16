@@ -777,19 +777,31 @@ std::vector<std::string> FFmpegPipeEncoder::buildFFmpegArgs(const std::string& f
         args.push_back(preset);
     }
 
-    // Constant-quality mode for libvpx when no explicit bitrate is set
-    // (libvpx defaults to 256 kbps otherwise, which looks terrible)
-    if ((videoEncoder == "libvpx-vp9" || videoEncoder == "libvpx") && config.videoBitrate == 0)
+    // VP9/VP8 realtime encoding settings — libvpx is CPU-intensive; without
+    // these flags it cannot sustain 50fps on most machines
+    if (videoEncoder == "libvpx-vp9" || videoEncoder == "libvpx")
     {
-        int crf = 30;
-        if (config.qualityPreset >= 8) crf = 24;
-        else if (config.qualityPreset >= 6) crf = 28;
-        else if (config.qualityPreset < 4) crf = 34;
+        args.push_back("-deadline");
+        args.push_back("realtime");
+        args.push_back("-cpu-used");
+        args.push_back("8");       // Max speed (0-8, higher = faster)
+        args.push_back("-row-mt");
+        args.push_back("1");       // Row-based multithreading
 
-        args.push_back("-crf");
-        args.push_back(std::to_string(crf));
-        args.push_back("-b:v");
-        args.push_back("0");
+        // Constant-quality mode when no explicit bitrate is set
+        // (libvpx defaults to 256 kbps otherwise, which looks terrible)
+        if (config.videoBitrate == 0)
+        {
+            int crf = 30;
+            if (config.qualityPreset >= 8) crf = 24;
+            else if (config.qualityPreset >= 6) crf = 28;
+            else if (config.qualityPreset < 4) crf = 34;
+
+            args.push_back("-crf");
+            args.push_back(std::to_string(crf));
+            args.push_back("-b:v");
+            args.push_back("0");
+        }
     }
 
     // Hardware encoder bitrate (required for some HW encoders)

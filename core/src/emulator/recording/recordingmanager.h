@@ -4,6 +4,7 @@
 #include <mutex>
 #include <vector>
 
+#include "3rdparty/message-center/eventqueue.h"
 #include "emulator/platform.h"
 #include "encoder_base.h"
 #include "encoder_config.h"
@@ -102,7 +103,7 @@ enum class EncoderBackend
 /// 4. StopRecording() - Finalize and write output file
 ///
 /// Future codec implementations will fill in the encoder stubs.
-class RecordingManager
+class RecordingManager : public Observer
 {
     /// region <ModuleLogger definitions for Module/Submodule>
 protected:
@@ -209,7 +210,11 @@ public:
         double emulatedDuration = 0.0;      // Duration in seconds (emulated time — may differ in turbo mode)
         uint64_t outputFileSize = 0;        // Output file size in bytes
         double averageFrameTime = 0.0;      // Average time per frame encode (ms)
+        double recentFps = 0.0;             // FPS over the last N seconds (rolling window)
     };
+
+    /// Set the rolling FPS window duration in seconds (default: 5.0)
+    void SetFpsWindowSeconds(double seconds) { _fpsWindowSeconds = seconds; }
 
     RecordingStats GetStats() const
     {
@@ -357,6 +362,11 @@ protected:
     // Statistics
     RecordingStats _stats;
 
+    // Rolling FPS: ring buffer of frame timestamps
+    double _fpsWindowSeconds = 5.0;
+    std::vector<Clock::time_point> _frameTimestamps;
+    size_t _frameTimestampIndex = 0;
+
     // Active encoders registry
     std::vector<EncoderPtr> _activeEncoders;
 
@@ -370,6 +380,18 @@ protected:
 
     // Detailed error message from the last failed start attempt
     std::string _lastRecordingError;
+
+    // Message center subscription tracking
+    bool _isSubscribed = false;
+
+    // Emulator instance ID we are currently recording on.
+    // NC_EMULATOR_STATE_CHANGE is a global broadcast with no instance ID in the
+    // payload, so we store our own ID and verify the emulator's actual state
+    // before reacting to a stop notification.
+    std::string _recordingEmulatorId;
+
+    // MessageCenter callback (Observer interface)
+    void onEmulatorStateChange(int id, Message* message);
     /// endregion </Internal state>
 
     /// region <Encoder interface (to be implemented)>

@@ -2646,6 +2646,15 @@ void MainWindow::unbindFromEmulator()
         _audioSettingsWidget->setContext(nullptr);
     }
 
+    // 5b. Video recording widget — clear the active context so it doesn't
+    // dereference a dangling pointer after the emulator is destroyed.
+    // Recording itself is NOT stopped here: it continues on the original
+    // emulator instance until explicit stop or that instance is destroyed.
+    if (_videoRecordingWidget)
+    {
+        _videoRecordingWidget->setContext(nullptr);
+    }
+
     // 6. Per-emulator event subscriptions
     unsubscribeFromPerEmulatorEvents();
 
@@ -2706,6 +2715,18 @@ void MainWindow::onBindingStateChanged(EmulatorStateEnum state)
             break;
     }
     updateMenuStates();
+
+    // Single mechanism: rebind recording widget on any state change
+    if (_videoRecordingWidget)
+    {
+        EmulatorContext* context = nullptr;
+        if (state != StateStopped && state != StateUnknown &&
+            m_binding && m_binding->emulator())
+        {
+            context = m_binding->emulator()->GetContext();
+        }
+        _videoRecordingWidget->setContext(context);
+    }
 }
 
 void MainWindow::tryAdoptRemainingEmulator()

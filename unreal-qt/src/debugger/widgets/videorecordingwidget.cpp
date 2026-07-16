@@ -28,6 +28,7 @@
 
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/emulatormanager.h"
 #include "emulator/video/screen.h"
 #include "emulator/recording/recordingmanager.h"
 #include "emulator/recording/platform_encoder.h"
@@ -58,14 +59,18 @@ VideoRecordingWidget::VideoRecordingWidget(EmulatorContext* context, QWidget* pa
     setWindowTitle("Video Recording");
     setMinimumWidth(500);
 
+    // Track the emulator ID for staleness detection
+    if (_context && _context->pEmulator)
+        _contextEmulatorId = _context->pEmulator->GetId();
+
     createUI();
     connectSignals();
     loadBenchmarkResults();
     refreshFromContext();
 
-    // Stats update timer
+    // Stats update timer - display refresh only (auto-stop is via MessageCenter)
     _statsTimer = new QTimer(this);
-    _statsTimer->setInterval(500); // 500ms update interval
+    _statsTimer->setInterval(250);
     connect(_statsTimer, &QTimer::timeout, this, &VideoRecordingWidget::onUpdateStats);
 }
 
@@ -74,11 +79,87 @@ VideoRecordingWidget::~VideoRecordingWidget()
     if (_statsTimer)
         _statsTimer->stop();
 
-    // Ensure recording feature is disabled when widget is destroyed
+    // Stop any active recording before destroying the widget
+    EmulatorContext* recCtx = recordingContext();
+    if (recCtx && recCtx->pRecordingManager && recCtx->pRecordingManager->IsRecording())
+    {
+        recCtx->pRecordingManager->StopRecording();
+    }
+    _wasRecording = false;
+    _recordingEmulatorId.clear();
+
+    // Ensure recording feature is disabled on the active context
+    validateContext();
     if (_context && _context->pFeatureManager)
     {
         _context->pFeatureManager->setFeature(Features::kRecording, false);
     }
+}
+
+void VideoRecordingWidget::validateContext()
+{
+    // The raw _context pointer can dangle after Emulator::Release() destroys
+    // the context object. We verify via EmulatorManager that the emulator
+    // still exists before trusting the pointer.
+    if (!_contextEmulatorId.empty())
+    {
+        EmulatorManager* mgr = EmulatorManager::GetInstance();
+        if (!mgr->HasEmulator(_contextEmulatorId))
+        {
+            _context = nullptr;
+            _contextEmulatorId.clear();
+        }
+    }
+}
+
+EmulatorContext* VideoRecordingWidget::recordingContext() const
+{
+    // When recording, operate on the emulator we started recording with,
+    // not the currently-active one. The user may have switched active
+    // emulator while recording continues on the original instance.
+    if (!_recordingEmulatorId.empty())
+    {
+        EmulatorManager* mgr = EmulatorManager::GetInstance();
+        auto emu = mgr->GetEmulator(_recordingEmulatorId);
+        if (emu)
+            return emu->GetContext();
+        return nullptr;  // Recording emulator was destroyed
+    }
+    return _context;
+}
+
+void VideoRecordingWidget::setContext(EmulatorContext* context)
+{
+    // Extract the emulator ID of the new context (for staleness checks)
+    std::string newEmulatorId;
+    if (context && context->pEmulator)
+        newEmulatorId = context->pEmulator->GetId();
+
+    // IMPORTANT: Do NOT stop recording on the old context when switching.
+    // Recording tracks the emulator instance it started with and continues
+    // until explicit stop or that emulator instance is destroyed.
+
+    // Disable feature on old context (only if we're NOT recording on it)
+    bool recordingOnOld = _wasRecording && !_recordingEmulatorId.empty() &&
+                          _recordingEmulatorId == _contextEmulatorId;
+    if (_context && _contextEmulatorId != newEmulatorId && !recordingOnOld &&
+        _context->pFeatureManager)
+    {
+        _context->pFeatureManager->setFeature(Features::kRecording, false);
+    }
+
+    _context = context;
+    _contextEmulatorId = newEmulatorId;
+
+    // Enable feature on new context if widget is visible
+    if (_context && _context->pFeatureManager && isVisible())
+    {
+        _context->pFeatureManager->setFeature(Features::kRecording, true);
+    }
+
+    // Refresh UI state for new context
+    refreshFromContext();
+    updateRecordingControls();
 }
 
 void VideoRecordingWidget::showEvent(QShowEvent* event)
@@ -86,6 +167,7 @@ void VideoRecordingWidget::showEvent(QShowEvent* event)
     QWidget::showEvent(event);
 
     // Enable recording feature when dialog is shown
+    validateContext();
     if (_context && _context->pFeatureManager)
     {
         if (!_context->pFeatureManager->isEnabled(Features::kRecording))
@@ -102,12 +184,16 @@ void VideoRecordingWidget::hideEvent(QHideEvent* event)
     // Stop any active recording before disabling the feature.
     // Synchronous here — the window is going away. StopRecording is
     // idempotent and mutex-guarded, so overlapping with an async stop is safe.
-    if (_context && _context->pRecordingManager && _context->pRecordingManager->IsRecording())
+    EmulatorContext* recCtx = recordingContext();
+    if (recCtx && recCtx->pRecordingManager && recCtx->pRecordingManager->IsRecording())
     {
-        _context->pRecordingManager->StopRecording();
+        recCtx->pRecordingManager->StopRecording();
+        _wasRecording = false;
+        _recordingEmulatorId.clear();
     }
 
     // Disable recording feature when dialog is hidden
+    validateContext();
     if (_context && _context->pFeatureManager)
     {
         _context->pFeatureManager->setFeature(Features::kRecording, false);
@@ -597,6 +683,7 @@ void VideoRecordingWidget::saveBenchmarkResults()
 
 void VideoRecordingWidget::updateRealtimeEstimate()
 {
+    validateContext();
     if (!_context || !_context->pRecordingManager)
     {
         _estimateLabel->setText("No active emulator");
@@ -667,6 +754,7 @@ void VideoRecordingWidget::updateRealtimeEstimate()
 
 void VideoRecordingWidget::onStartRecording()
 {
+    validateContext();
     if (!_context || !_context->pRecordingManager)
         return;
 
@@ -739,6 +827,13 @@ void VideoRecordingWidget::onStartRecording()
 
     if (success)
     {
+        _wasRecording = true;
+        // Track which emulator instance we started recording on.
+        // Recording continues on this instance even if the user switches
+        // the active emulator, until explicit stop or instance destruction.
+        if (_context && _context->pEmulator)
+            _recordingEmulatorId = _context->pEmulator->GetId();
+
         // Measured benchmark data beats the manager's heuristic estimate.
         // Without this, encoders the heuristic misjudges as non-realtime
         // (e.g. VP9 at ZX sizes) make the mainloop skip its 50Hz pacing and
@@ -770,26 +865,43 @@ void VideoRecordingWidget::onStartRecording()
 
 void VideoRecordingWidget::onPauseRecording()
 {
-    if (_context && _context->pRecordingManager)
+    EmulatorContext* recCtx = recordingContext();
+    if (recCtx && recCtx->pRecordingManager)
     {
-        _context->pRecordingManager->PauseRecording();
+        recCtx->pRecordingManager->PauseRecording();
         updateRecordingControls();
     }
 }
 
 void VideoRecordingWidget::onResumeRecording()
 {
-    if (_context && _context->pRecordingManager)
+    EmulatorContext* recCtx = recordingContext();
+    if (recCtx && recCtx->pRecordingManager)
     {
-        _context->pRecordingManager->ResumeRecording();
+        recCtx->pRecordingManager->ResumeRecording();
         updateRecordingControls();
     }
 }
 
 void VideoRecordingWidget::onStopRecording()
 {
-    if (!_context || !_context->pRecordingManager || _isStopping)
+    if (_isStopping)
         return;
+
+    EmulatorContext* recCtx = recordingContext();
+
+    // Recording emulator gone (destroyed) - just reset UI
+    if (!recCtx || !recCtx->pRecordingManager)
+    {
+        _wasRecording = false;
+        _isStopping = false;
+        _recordingEmulatorId.clear();
+        _statsTimer->stop();
+        _recordingIndicator->setText("IDLE");
+        _recordingIndicator->setStyleSheet("font-weight: bold; color: gray;");
+        updateRecordingControls();
+        return;
+    }
 
     // StopRecording drains queues and waits for the encoder to finalize the
     // container — seconds for slow encoders. Run it off the UI thread so the
@@ -799,7 +911,7 @@ void VideoRecordingWidget::onStopRecording()
     _recordingIndicator->setStyleSheet("font-weight: bold; color: orange;");
     updateRecordingControls();
 
-    RecordingManager* rm = _context->pRecordingManager;
+    RecordingManager* rm = recCtx->pRecordingManager;
     QPointer<VideoRecordingWidget> self(this);
 
     std::thread([self, rm]() {
@@ -809,7 +921,9 @@ void VideoRecordingWidget::onStopRecording()
         QMetaObject::invokeMethod(qApp, [self]() {
             if (!self)
                 return;
+            self->_wasRecording = false;
             self->_isStopping = false;
+            self->_recordingEmulatorId.clear();
             self->_statsTimer->stop();
             self->updateRecordingControls();
             self->onUpdateStats();
@@ -819,10 +933,52 @@ void VideoRecordingWidget::onStopRecording()
 
 void VideoRecordingWidget::onUpdateStats()
 {
-    if (!_context || !_context->pRecordingManager)
-        return;
+    // Always validate the active context pointer — the emulator may have been
+    // destroyed while this timer was running
+    validateContext();
 
-    RecordingManager* rm = _context->pRecordingManager;
+    // Use the RECORDING context (the emulator we started recording with),
+    // not the currently-active one — the user may have switched emulators
+    EmulatorContext* recCtx = recordingContext();
+
+    // Recording emulator gone while recording? Auto-stop UI state
+    if (_wasRecording && (!recCtx || !recCtx->pRecordingManager))
+    {
+        _wasRecording = false;
+        _isStopping = false;
+        _recordingEmulatorId.clear();
+        _statsTimer->stop();
+        _recordingIndicator->setText("STOPPED (emulator closed)");
+        _recordingIndicator->setStyleSheet("font-weight: bold; color: orange;");
+        updateRecordingControls();
+        return;
+    }
+
+    if (!_wasRecording || !recCtx || !recCtx->pRecordingManager)
+    {
+        // Not recording or no recording context — update idle display
+        if (_recordingIndicator->text() != "IDLE" && !_isStopping)
+        {
+            _recordingIndicator->setText("IDLE");
+            _recordingIndicator->setStyleSheet("font-weight: bold; color: gray;");
+        }
+        return;
+    }
+
+    RecordingManager* rm = recCtx->pRecordingManager;
+
+    // Detect auto-stop: RecordingManager was stopped externally (e.g. via
+    // MessageCenter state change) but the widget still thinks it's recording
+    if (!rm->IsRecording() && !rm->IsPaused() && !_isStopping)
+    {
+        _wasRecording = false;
+        _recordingEmulatorId.clear();
+        _statsTimer->stop();
+        _recordingIndicator->setText("IDLE");
+        _recordingIndicator->setStyleSheet("font-weight: bold; color: gray;");
+        updateRecordingControls();
+        return;
+    }
 
     if (_isStopping)
     {
@@ -837,11 +993,6 @@ void VideoRecordingWidget::onUpdateStats()
     {
         _recordingIndicator->setText("⏸ PAUSED");
         _recordingIndicator->setStyleSheet("font-weight: bold; color: orange;");
-    }
-    else
-    {
-        _recordingIndicator->setText("IDLE");
-        _recordingIndicator->setStyleSheet("font-weight: bold; color: gray;");
     }
 
     auto stats = rm->GetStats();
@@ -860,8 +1011,10 @@ void VideoRecordingWidget::onUpdateStats()
     else
         _sizeLabel->setText(QString::asprintf("%.1f MB", sizeMB));
 
-    // FPS
-    if (stats.recordedDuration > 0)
+    // FPS (rolling window, not session average)
+    if (stats.recentFps > 0)
+        _fpsLabel->setText(QString::asprintf("%.1f fps", stats.recentFps));
+    else if (stats.recordedDuration > 0)
         _fpsLabel->setText(QString::asprintf("%.1f fps", static_cast<double>(stats.framesRecorded) / stats.recordedDuration));
     else
         _fpsLabel->setText("0.0 fps");
@@ -869,17 +1022,25 @@ void VideoRecordingWidget::onUpdateStats()
 
 void VideoRecordingWidget::updateRecordingControls()
 {
-    if (!_context || !_context->pRecordingManager)
-        return;
+    // Recording state is tracked on the RECORDING emulator, which may differ
+    // from the currently active one (user may have switched emulators)
+    EmulatorContext* recCtx = recordingContext();
+    bool hasRecContext = recCtx && recCtx->pRecordingManager;
+    bool recording = hasRecContext && recCtx->pRecordingManager->IsRecording();
+    bool paused = hasRecContext && recCtx->pRecordingManager->IsPaused();
 
-    bool recording = _context->pRecordingManager->IsRecording();
-    bool paused = _context->pRecordingManager->IsPaused();
-    bool idle = !recording && !paused && !_isStopping;
+    // Idle = active context available AND not currently in any recording session
+    validateContext();
+    bool hasActiveContext = _context && _context->pRecordingManager;
+    bool idle = hasActiveContext && !recording && !paused && !_isStopping && !_wasRecording;
+
+    // Stop must work even if context is gone (orphaned recording state)
+    bool canStop = (recording || paused || _wasRecording) && !_isStopping;
 
     _startButton->setEnabled(idle);
     _pauseButton->setEnabled(recording && !paused && !_isStopping);
     _resumeButton->setEnabled(paused && !_isStopping);
-    _stopButton->setEnabled((recording || paused) && !_isStopping);
+    _stopButton->setEnabled(canStop);
 
     // Disable config controls while recording; honor the capability matrix when idle
     bool audioSupported = _audioCodecCombo->count() > 0;
@@ -906,6 +1067,7 @@ void VideoRecordingWidget::onIncludeAudioChanged(int state)
 
 void VideoRecordingWidget::onMultiTrackConfigure()
 {
+    validateContext();
     if (!_context || !_context->pRecordingManager)
         return;
 
@@ -951,18 +1113,32 @@ void VideoRecordingWidget::onMultiTrackConfigure()
 
 void VideoRecordingWidget::onBenchmark()
 {
+    validateContext();
     runBenchmark();
 }
 
 void VideoRecordingWidget::runBenchmark()
 {
-    // Get framebuffer dimensions
-    if (!_context || !_context->pScreen)
+    // Validate the context pointer before dereferencing — the emulator may
+    // have been destroyed, leaving _context as a dangling pointer
+    validateContext();
+    if (!_context)
+    {
+        QMessageBox::warning(this, "Benchmark", "No active emulator instance.\nStart an emulator first.");
         return;
+    }
 
-    FramebufferDescriptor fb = _context->pScreen->GetFramebufferDescriptor();
-    int fbWidth = fb.width > 0 ? fb.width : 352;
-    int fbHeight = fb.height > 0 ? fb.height : 288;
+    int fbWidth = 352;
+    int fbHeight = 288;
+
+    if (_context->pScreen)
+    {
+        FramebufferDescriptor fb = _context->pScreen->GetFramebufferDescriptor();
+        if (fb.width > 0)
+            fbWidth = fb.width;
+        if (fb.height > 0)
+            fbHeight = fb.height;
+    }
 
     // Determine available encoders
     std::string ffmpegPath = FFmpegProbe::findFFmpeg();

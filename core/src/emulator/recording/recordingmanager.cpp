@@ -1,5 +1,6 @@
 #include "recordingmanager.h"
 
+#include "3rdparty/message-center/messagecenter.h"
 #include "base/featuremanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -122,6 +123,16 @@ RecordingManager::RecordingManager(EmulatorContext* context) : _context(context)
 
 RecordingManager::~RecordingManager()
 {
+    // Unsubscribe from message center
+    if (_isSubscribed)
+    {
+        MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+        Observer* obs = static_cast<Observer*>(this);
+        ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&RecordingManager::onEmulatorStateChange);
+        mc.RemoveObserver(NC_EMULATOR_STATE_CHANGE, obs, callback);
+        _isSubscribed = false;
+    }
+
     // Stop recording if still active
     if (_isRecording)
     {
@@ -137,11 +148,48 @@ void RecordingManager::Init()
 {
     MLOGINFO("RecordingManager::Init - Initializing recording manager");
 
+    // Subscribe to emulator state changes to auto-stop on shutdown
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    Observer* obs = static_cast<Observer*>(this);
+    ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&RecordingManager::onEmulatorStateChange);
+    mc.AddObserver(NC_EMULATOR_STATE_CHANGE, obs, callback);
+    _isSubscribed = true;
+
     // Reset state
     Reset();
+}
 
-    // TODO: Initialize encoder libraries (FFmpeg, libav, etc.)
-    // TODO: Query available codecs and formats
+void RecordingManager::onEmulatorStateChange(int /*id*/, Message* message)
+{
+    if (auto* payload = dynamic_cast<SimpleNumberPayload*>(message->obj))
+    {
+        if (payload->_payloadNumber == StateStopped && _isRecording)
+        {
+            // NC_EMULATOR_STATE_CHANGE is a global broadcast — every emulator
+            // instance posts it and every RecordingManager receives it.
+            // The payload carries only the state number, NOT the emulator ID.
+            // We must verify this stop is from OUR emulator before reacting,
+            // otherwise stopping one instance kills recording on all others.
+            bool ourStop = false;
+            if (_context && _context->pEmulator)
+            {
+                auto state = _context->pEmulator->GetState();
+                ourStop = (state == StateStopped || state == StateDestroying ||
+                           _context->pEmulator->IsDestroying());
+            }
+            else
+            {
+                // Context already gone — stop defensively
+                ourStop = true;
+            }
+
+            if (ourStop)
+            {
+                MLOGINFO("RecordingManager: Own emulator stopped/destroyed, auto-stopping recording");
+                StopRecording();
+            }
+        }
+    }
 }
 
 void RecordingManager::Reset()
@@ -280,12 +328,19 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
     _emulatedFrameCount = 0;
     _emulatedAudioSampleCount = 0;
     _stats = RecordingStats();
+    _frameTimestamps.clear();
+    _frameTimestampIndex = 0;
     _wallClockStart = Clock::now();
     _wallClockPausedTotal = Clock::duration::zero();
 
     // Start recording
     _isRecording = true;
     _isPaused = false;
+
+    // Track which emulator instance we're recording on, so the global
+    // NC_EMULATOR_STATE_CHANGE handler can ignore stops from other instances
+    if (_context && _context->pEmulator)
+        _recordingEmulatorId = _context->pEmulator->GetId();
 
     MLOGINFO("RecordingManager::StartRecording - Recording started successfully");
     return true;
@@ -354,6 +409,10 @@ bool RecordingManager::StartRecordingEx(const std::string& filename)
     _isRecording = true;
     _isPaused = false;
 
+    // Track which emulator instance we're recording on
+    if (_context && _context->pEmulator)
+        _recordingEmulatorId = _context->pEmulator->GetId();
+
     MLOGINFO("RecordingManager::StartRecordingEx - Recording started successfully");
     return true;
 }
@@ -374,6 +433,7 @@ void RecordingManager::StopRecording()
 
     _isRecording = false;
     _isPaused = false;
+    _recordingEmulatorId.clear();
 
     // Compute final wall clock duration
     auto wallNow = Clock::now();
@@ -493,6 +553,42 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
         wallNow - _wallClockStart - _wallClockPausedTotal).count();
     _stats.recordedDuration = static_cast<double>(wallElapsed) / 1000.0;
     _stats.emulatedDuration = timestamp;
+
+    // Rolling FPS: track frame timestamps in a ring buffer
+    size_t maxFrames = static_cast<size_t>(_fpsWindowSeconds * 60.0); // ~60fps max
+    if (_frameTimestamps.size() < maxFrames)
+    {
+        _frameTimestamps.push_back(wallNow);
+    }
+    else
+    {
+        _frameTimestamps[_frameTimestampIndex] = wallNow;
+        _frameTimestampIndex = (_frameTimestampIndex + 1) % maxFrames;
+    }
+
+    // Calculate FPS over the window
+    if (_frameTimestamps.size() >= 2)
+    {
+        auto windowStart = wallNow - std::chrono::duration_cast<Clock::duration>(
+            std::chrono::duration<double>(_fpsWindowSeconds));
+        size_t framesInWindow = 0;
+        Clock::time_point oldest = wallNow;
+        for (const auto& ts : _frameTimestamps)
+        {
+            if (ts >= windowStart)
+            {
+                framesInWindow++;
+                if (ts < oldest)
+                    oldest = ts;
+            }
+        }
+        if (framesInWindow > 1)
+        {
+            double windowDuration = std::chrono::duration<double>(wallNow - oldest).count();
+            if (windowDuration > 0.01)
+                _stats.recentFps = static_cast<double>(framesInWindow - 1) / windowDuration;
+        }
+    }
 
     // Update file size from encoder (throttled — every 25 frames / 0.5s to avoid stat() overhead)
     if (_stats.framesRecorded % 25 == 0)
@@ -848,12 +944,13 @@ bool RecordingManager::InitializeEncoder()
 
         _realtimeCapable = (capability == RealtimeEstimator::RealtimeCapability::Realtime);
 
-        // Always block on a full queue instead of dropping frames. ZX multicolor
-        // effects alternate content across consecutive 50Hz frames — a single
-        // dropped frame inverts their phase for the rest of the recording.
-        // In realtime mode the 60-frame queue never fills for a capable encoder;
-        // in non-realtime mode this throttles emulation to the encoder's pace.
-        ffmpegEncoder->setBlocking(true);
+        // Blocking mode: emulation thread waits when the queue is full.
+        // - Non-realtime encoders: MUST block, otherwise we'd drop most frames
+        // - Realtime encoders: do NOT block — the 60-frame buffer absorbs
+        //   frame-to-frame timing variance; blocking would cause micro-stalls
+        //   on every slow frame and make playback choppy even though the
+        //   encoder keeps up on average
+        ffmpegEncoder->setBlocking(!_realtimeCapable);
 
         _activeEncoders.push_back(std::move(ffmpegEncoder));
 

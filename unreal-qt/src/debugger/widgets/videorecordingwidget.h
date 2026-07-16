@@ -15,6 +15,7 @@
 #include <QTimer>
 
 #include <atomic>
+#include <string>
 
 class EmulatorContext;
 
@@ -25,6 +26,9 @@ class VideoRecordingWidget : public QWidget
 public:
     explicit VideoRecordingWidget(EmulatorContext* context, QWidget* parent = nullptr);
     ~VideoRecordingWidget();
+
+    /// Update the emulator context (call when emulator instance changes)
+    void setContext(EmulatorContext* context);
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -57,6 +61,15 @@ private:
     void detectPlatformInfo();
     void runBenchmark();
 
+    /// Verify _context still points to a live emulator; clear it if the
+    /// emulator was destroyed (raw pointer can dangle after Release()).
+    void validateContext();
+
+    /// Look up the RecordingManager for the emulator we started recording
+    /// with. Returns nullptr if that emulator was destroyed.
+    /// When not recording, falls back to the active _context.
+    EmulatorContext* recordingContext() const;
+
     // Encoder capability matrix (what the selected backend can actually produce)
     QStringList containersForBackend() const;
     QStringList videoCodecsFor(const QString& container) const;
@@ -76,6 +89,8 @@ private:
     void saveBenchmarkResults();
 
     EmulatorContext* _context = nullptr;
+    std::string _contextEmulatorId;     // Emulator ID for _context (for staleness check)
+    std::string _recordingEmulatorId;   // Emulator ID we started recording with
     QTimer* _statsTimer = nullptr;
 
     // Backend
@@ -128,4 +143,7 @@ private:
     // Stop runs on a worker thread (encoder finalize can take seconds);
     // UI shows FINALIZING and re-enables when done
     std::atomic<bool> _isStopping{false};
+
+    // Track recording state independently - context may become invalid mid-recording
+    bool _wasRecording = false;
 };
