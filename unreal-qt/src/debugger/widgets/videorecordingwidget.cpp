@@ -1033,7 +1033,8 @@ void VideoRecordingWidget::updateRecordingControls()
     // Idle = active context available AND not currently in any recording session
     validateContext();
     bool hasActiveContext = _context && _context->pRecordingManager;
-    bool idle = hasActiveContext && !recording && !paused && !_isStopping && !_wasRecording;
+    bool notRecording = !recording && !paused && !_isStopping && !_wasRecording;
+    bool idle = hasActiveContext && notRecording;
 
     // Stop must work even if context is gone (orphaned recording state)
     bool canStop = (recording || paused || _wasRecording) && !_isStopping;
@@ -1043,20 +1044,30 @@ void VideoRecordingWidget::updateRecordingControls()
     _resumeButton->setEnabled(paused && !_isStopping);
     _stopButton->setEnabled(canStop);
 
-    // Disable config controls while recording; honor the capability matrix when idle
+    // Config controls are enabled whenever we're not actively recording —
+    // they don't need a running emulator (benchmark, preset selection, etc).
+    // Individual sub-controls may be further disabled by the capability matrix
+    // in populateCodecCombos() / populateAudioCodecs().
     bool audioSupported = _audioCodecCombo->count() > 0;
-    _containerCombo->setEnabled(idle);
-    _videoCodecCombo->setEnabled(idle && _videoCodecCombo->count() > 1);
-    _audioCodecCombo->setEnabled(idle && audioSupported && _includeAudioCheck->isChecked());
-    _includeAudioCheck->setEnabled(idle && audioSupported);
-    _qualityCombo->setEnabled(idle);
-    _captureCombo->setEnabled(idle);
-    _sizeCombo->setEnabled(idle);
-    _filePathEdit->setEnabled(idle);
-    _browseButton->setEnabled(idle);
+    _containerCombo->setEnabled(notRecording);
+    _videoCodecCombo->setEnabled(notRecording && _videoCodecCombo->count() > 1);
+    _audioCodecCombo->setEnabled(notRecording && audioSupported && _includeAudioCheck->isChecked());
+    _includeAudioCheck->setEnabled(notRecording && audioSupported);
+    _qualityCombo->setEnabled(notRecording);
+    _captureCombo->setEnabled(notRecording);
+    _sizeCombo->setEnabled(notRecording);
+    _filePathEdit->setEnabled(notRecording);
+    _browseButton->setEnabled(notRecording);
     _backendGroup->setExclusive(false);
     for (auto* btn : _backendGroup->buttons())
-        btn->setEnabled(idle);
+    {
+        // Backend selection (Auto/Native/FFmpeg) is always available — it's
+        // a config choice, not an emulator-dependent action. Benchmark needs
+        // it even without a running emulator.
+        // Individual radios are still greyed by onDetectFFmpeg() /
+        // detectPlatformInfo() when a backend is unavailable.
+        btn->setEnabled(true);
+    }
     _backendGroup->setExclusive(true);
 }
 

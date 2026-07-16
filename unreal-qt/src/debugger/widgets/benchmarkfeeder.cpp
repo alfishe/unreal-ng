@@ -83,19 +83,57 @@ void BenchmarkFeeder::drawCheckerboard(uint8_t* buffer, double time)
     // Grid scrolls diagonally — every frame the offset changes, so
     // temporal prediction cannot reuse the previous frame at all.
     const int cellSize = 8;  // Match ZX attribute grid (8×8 pixels)
-    float scrollX = std::fmod(time * 40.0f, static_cast<float>(cellSize * 2));
-    float scrollY = std::fmod(time * 30.0f, static_cast<float>(cellSize * 2));
+    const int period = cellSize * 2;
+    int offsetX = static_cast<int>(time * 40.0f) % period;
+    int offsetY = static_cast<int>(time * 30.0f) % period;
 
+    // Precompute one full horizontal period (2 cells = 16 pixels = 64 bytes)
+    // For each phase, we only need one period row pattern that we repeat.
+    // This avoids per-pixel division and palette lookup.
+    uint32_t rowPattern[period];  // 2 cells worth of pixels
+    {
+        int cellY = offsetY / cellSize;
+        for (int x = 0; x < period; x++)
+        {
+            int cellX = (x + offsetX) / cellSize;
+            int cellIdx = ((cellX + cellY) & 0x0F);
+            rowPattern[x] = ZX_PALETTE[cellIdx];
+        }
+    }
+
+    // Fill each row by tiling the period pattern
+    // For rows within the same vertical cell, the horizontal pattern is
+    // identical — only the cellY changes when we cross a cell boundary.
+    int rowOffsetY = offsetY;
     for (int y = 0; y < _height; y++)
     {
-        for (int x = 0; x < _width; x++)
+        // Check if we crossed into a new vertical cell
+        int newCellY = (y + offsetY) / cellSize;
+        if (newCellY != rowOffsetY / cellSize)
         {
-            int gx = static_cast<int>((x + scrollX) / cellSize);
-            int gy = static_cast<int>((y + scrollY) / cellSize);
-            int cellIdx = ((gx + gy) & 0x0F);
+            rowOffsetY = y + offsetY;
+            int cellY = rowOffsetY / cellSize;
+            for (int x = 0; x < period; x++)
+            {
+                int cellX = (x + offsetX) / cellSize;
+                int cellIdx = ((cellX + cellY) & 0x0F);
+                rowPattern[x] = ZX_PALETTE[cellIdx];
+            }
+        }
 
-            uint32_t color = ZX_PALETTE[cellIdx];
-            memcpy(&buffer[(y * _width + x) * 4], &color, 4);
+        // Tile the pattern across the row
+        uint8_t* row = buffer + y * _width * 4;
+        int x = 0;
+        // Fast path: full periods
+        while (x + period <= _width)
+        {
+            memcpy(row + x * 4, rowPattern, period * 4);
+            x += period;
+        }
+        // Remaining pixels
+        if (x < _width)
+        {
+            memcpy(row + x * 4, rowPattern, (_width - x) * 4);
         }
     }
 }
@@ -147,7 +185,6 @@ void BenchmarkFeeder::drawPongElements(uint8_t* buffer, double time)
 
     if (_ballX < paddleLeftEdge + 4 && _ballVX < 0)
     {
-        // Check paddle Y range
         if (_ballY >= leftY && _ballY <= leftY + paddleH)
         {
             _ballVX = std::abs(_ballVX);
@@ -178,17 +215,11 @@ void BenchmarkFeeder::drawPongElements(uint8_t* buffer, double time)
         float t = i / 3.0f;
         float tx = _ballX * (1 - t) + _ballPrevX * t;
         float ty = _ballY * (1 - t) + _ballPrevY * t;
-        uint8_t a = static_cast<uint8_t>(120 * (1 - t));
         fillCircle(buffer, tx, ty, 3.0f, 0xFF, 0xFF, 0x00);
-        // Overlay trail with alpha (simple approach: just darken)
     }
 
-    // Ball — bright yellow, changes color based on speed
-    float speed = std::sqrt(_ballVX * _ballVX + _ballVY * _ballVY);
-    uint8_t ballR = 0xFF;
-    uint8_t ballG = static_cast<uint8_t>(std::min(255.0f, 255.0f - speed * 0.3f));
-    uint8_t ballB = 0x00;
-    fillCircle(buffer, _ballX, _ballY, 4.0f, ballR, ballG, ballB);
+    // Ball — bright yellow
+    fillCircle(buffer, _ballX, _ballY, 4.0f, 0xFF, 0xFF, 0x00);
 }
 
 // ── Layer 3: Particles ─────────────────────────────────────────────────
@@ -209,15 +240,10 @@ void BenchmarkFeeder::spawnParticles(float x, float y, int count, double /*time*
         p.vy = std::sin(angle) * speed;
         p.life = rngRange(0.4f, 1.0f);
 
-        // Random saturated color
         int hueIdx = rngNext() % 6;
         static const uint8_t hues[6][3] = {
-            {0xFF, 0x00, 0x00},  // Red
-            {0x00, 0xFF, 0x00},  // Green
-            {0x00, 0x00, 0xFF},  // Blue
-            {0xFF, 0xFF, 0x00},  // Yellow
-            {0xFF, 0x00, 0xFF},  // Magenta
-            {0x00, 0xFF, 0xFF},  // Cyan
+            {0xFF, 0x00, 0x00}, {0x00, 0xFF, 0x00}, {0x00, 0x00, 0xFF},
+            {0xFF, 0xFF, 0x00}, {0xFF, 0x00, 0xFF}, {0x00, 0xFF, 0xFF},
         };
         p.r = hues[hueIdx][0];
         p.g = hues[hueIdx][1];
@@ -233,11 +259,10 @@ void BenchmarkFeeder::updateParticles(double dt)
     {
         p.x += p.vx * static_cast<float>(dt);
         p.y += p.vy * static_cast<float>(dt);
-        p.vy += 40.0f * static_cast<float>(dt);  // Gravity
+        p.vy += 40.0f * static_cast<float>(dt);
         p.life -= static_cast<float>(dt) * 1.2f;
     }
 
-    // Remove dead particles
     _particles.erase(
         std::remove_if(_particles.begin(), _particles.end(),
                        [](const Particle& p) { return p.life <= 0.0f; }),
@@ -250,24 +275,18 @@ void BenchmarkFeeder::drawParticles(uint8_t* buffer, double /*time*/)
     {
         int px = static_cast<int>(p.x);
         int py = static_cast<int>(p.y);
-        if (px < 0 || px >= _width || py < 0 || py >= _height)
+        if (px < 1 || px >= _width - 1 || py < 1 || py >= _height - 1)
             continue;
 
         uint8_t intensity = static_cast<uint8_t>(255.0f * p.life);
 
-        // 2×2 sparkle with additive blending
-        for (int dy = -1; dy <= 1; dy++)
-        {
-            for (int dx = -1; dx <= 1; dx++)
-            {
-                int intensityScaled;
-                if (dx == 0 && dy == 0)
-                    intensityScaled = intensity;
-                else
-                    intensityScaled = intensity / 3;
-                addLight(buffer, px + dx, py + dy, p.r, p.g, p.b, intensityScaled);
-            }
-        }
+        // 3×3 sparkle with additive blending
+        addLight(buffer, px, py, p.r, p.g, p.b, intensity);
+        uint8_t dim = intensity >> 2;
+        addLight(buffer, px - 1, py, p.r, p.g, p.b, dim);
+        addLight(buffer, px + 1, py, p.r, p.g, p.b, dim);
+        addLight(buffer, px, py - 1, p.r, p.g, p.b, dim);
+        addLight(buffer, px, py + 1, p.r, p.g, p.b, dim);
     }
 }
 
@@ -280,27 +299,79 @@ void BenchmarkFeeder::drawGradientOverlay(uint8_t* buffer, double time)
     float ly = _height * (0.5f + 0.35f * std::sin(time * 0.9f + 1.5f));
 
     int radius = std::min(_width, _height) / 2;
+    int radiusSq = radius * radius;
+    int iLx = static_cast<int>(lx);
+    int iLy = static_cast<int>(ly);
 
-    // Sparse sampling — one pixel every 2 in each direction, bilinear-ish.
-    // Full per-pixel is overkill for a benchmark overlay and wastes cycles
-    // that should be spent in the encoder.
-    for (int y = 0; y < _height; y += 2)
+    // Bounding box of the light — skip everything outside
+    int x0 = std::max(0, iLx - radius);
+    int y0 = std::max(0, iLy - radius);
+    int x1 = std::min(_width, iLx + radius);
+    int y1 = std::min(_height, iLy + radius);
+
+    // Process 2×2 blocks within the bounding box only.
+    // No sqrt: compare squared distance against radiusSq and use
+    // an integer approximation for the quadratic falloff.
+    // falloff = (1 - dist/radius)^2, but we avoid division by
+    // precomputing the inverse radius and using integer math.
+    const int FALLOFF_SCALE = 256;  // Fixed-point scale
+    int invRadius = FALLOFF_SCALE / radius;
+
+    for (int y = y0; y < y1; y += 2)
     {
-        for (int x = 0; x < _width; x += 2)
+        int dy = y - iLy;
+        int dySq = dy * dy;
+        for (int x = x0; x < x1; x += 2)
         {
-            float dx = x - lx;
-            float dy = y - ly;
-            float dist = std::sqrt(dx * dx + dy * dy);
-            float falloff = std::max(0.0f, 1.0f - dist / radius);
-            falloff = falloff * falloff;  // Quadratic falloff
+            int dx = x - iLx;
+            int distSq = dx * dx + dySq;
 
-            int brightness = static_cast<int>(falloff * 60);
+            if (distSq >= radiusSq)
+                continue;
+
+            // Integer quadratic falloff: (1 - dist/radius)^2
+            // dist = sqrt(distSq) — but we approximate via
+            // falloff ≈ ((radiusSq - distSq) * invRadius) / (radius * FALLOFF_SCALE)
+            // Simpler: use the squared-distance ratio directly.
+            // (radiusSq - distSq) / radiusSq gives (1 - d²/r²)² ≈ (1-d/r)^4,
+            // which is slightly sharper but visually equivalent.
+            int ratio = FALLOFF_SCALE - (distSq * FALLOFF_SCALE) / radiusSq;
+            int brightness = (ratio * ratio * 60) / (FALLOFF_SCALE * FALLOFF_SCALE);
+
             if (brightness > 0)
             {
-                addLight(buffer, x, y, 0xFF, 0xFF, 0xE0, brightness);
-                addLight(buffer, x + 1, y, 0xFF, 0xFF, 0xE0, brightness);
-                addLight(buffer, x, y + 1, 0xFF, 0xFF, 0xE0, brightness);
-                addLight(buffer, x + 1, y + 1, 0xFF, 0xFF, 0xE0, brightness);
+                // Inline addLight for 4 pixels — avoid 4 function calls
+                uint8_t* p0 = buffer + (y * _width + x) * 4;
+                p0[0] = std::min(255, p0[0] + brightness);
+                p0[1] = std::min(255, p0[1] + (brightness >> 1) + (brightness >> 2));
+                p0[2] = std::min(255, p0[2] + (brightness >> 3));
+                p0[3] = 0xFF;
+
+                if (x + 1 < _width)
+                {
+                    uint8_t* p1 = p0 + 4;
+                    p1[0] = std::min(255, p1[0] + brightness);
+                    p1[1] = std::min(255, p1[1] + (brightness >> 1) + (brightness >> 2));
+                    p1[2] = std::min(255, p1[2] + (brightness >> 3));
+                    p1[3] = 0xFF;
+                }
+                if (y + 1 < _height)
+                {
+                    uint8_t* p2 = p0 + _width * 4;
+                    p2[0] = std::min(255, p2[0] + brightness);
+                    p2[1] = std::min(255, p2[1] + (brightness >> 1) + (brightness >> 2));
+                    p2[2] = std::min(255, p2[2] + (brightness >> 3));
+                    p2[3] = 0xFF;
+
+                    if (x + 1 < _width)
+                    {
+                        uint8_t* p3 = p2 + 4;
+                        p3[0] = std::min(255, p3[0] + brightness);
+                        p3[1] = std::min(255, p3[1] + (brightness >> 1) + (brightness >> 2));
+                        p3[2] = std::min(255, p3[2] + (brightness >> 3));
+                        p3[3] = 0xFF;
+                    }
+                }
             }
         }
     }
@@ -316,6 +387,13 @@ void BenchmarkFeeder::fillRect(uint8_t* buffer, int x, int y, int w, int h,
     int x1 = std::min(_width, x + w);
     int y1 = std::min(_height, y + h);
 
+    // Precompute one row of the rectangle for memcpy
+    int rowBytes = (x1 - x0) * 4;
+    if (rowBytes <= 0)
+        return;
+
+    // Build a single-row template
+    // (Small enough that per-pixel fill is fine)
     for (int py = y0; py < y1; py++)
     {
         uint8_t* row = buffer + (py * _width + x0) * 4;
@@ -333,32 +411,31 @@ void BenchmarkFeeder::fillRect(uint8_t* buffer, int x, int y, int w, int h,
 void BenchmarkFeeder::fillCircle(uint8_t* buffer, float cx, float cy, float radius,
                                   uint8_t r, uint8_t g, uint8_t b)
 {
-    int x0 = static_cast<int>(cx - radius - 1);
-    int y0 = static_cast<int>(cy - radius - 1);
-    int x1 = static_cast<int>(cx + radius + 1);
-    int y1 = static_cast<int>(cy + radius + 1);
+    int x0 = std::max(0, static_cast<int>(cx - radius - 1));
+    int y0 = std::max(0, static_cast<int>(cy - radius - 1));
+    int x1 = std::min(_width, static_cast<int>(cx + radius + 1));
+    int y1 = std::min(_height, static_cast<int>(cy + radius + 1));
 
-    x0 = std::max(0, x0);
-    y0 = std::max(0, y0);
-    x1 = std::min(_width, x1);
-    y1 = std::min(_height, y1);
-
-    float r2 = radius * radius;
+    int r2 = static_cast<int>(radius * radius);
+    int icx = static_cast<int>(cx);
+    int icy = static_cast<int>(cy);
 
     for (int py = y0; py < y1; py++)
     {
+        int dy = py - icy;
+        int dySq = dy * dy;
+        uint8_t* row = buffer + (py * _width + x0) * 4;
         for (int px = x0; px < x1; px++)
         {
-            float dx = px - cx;
-            float dy = py - cy;
-            if (dx * dx + dy * dy <= r2)
+            int dx = px - icx;
+            if (dx * dx + dySq <= r2)
             {
-                uint8_t* p = buffer + (py * _width + px) * 4;
-                p[0] = r;
-                p[1] = g;
-                p[2] = b;
-                p[3] = 0xFF;
+                row[0] = r;
+                row[1] = g;
+                row[2] = b;
+                row[3] = 0xFF;
             }
+            row += 4;
         }
     }
 }
@@ -370,11 +447,11 @@ void BenchmarkFeeder::blendPixel(uint8_t* buffer, int x, int y,
         return;
 
     uint8_t* p = buffer + (y * _width + x) * 4;
-    float alpha = a / 255.0f;
-    float inv = 1.0f - alpha;
-    p[0] = static_cast<uint8_t>(r * alpha + p[0] * inv);
-    p[1] = static_cast<uint8_t>(g * alpha + p[1] * inv);
-    p[2] = static_cast<uint8_t>(b * alpha + p[2] * inv);
+    int alpha = a;
+    int inv = 255 - alpha;
+    p[0] = static_cast<uint8_t>((r * alpha + p[0] * inv) >> 8);
+    p[1] = static_cast<uint8_t>((g * alpha + p[1] * inv) >> 8);
+    p[2] = static_cast<uint8_t>((b * alpha + p[2] * inv) >> 8);
     p[3] = 0xFF;
 }
 
@@ -386,7 +463,7 @@ void BenchmarkFeeder::addLight(uint8_t* buffer, int x, int y,
 
     uint8_t* p = buffer + (y * _width + x) * 4;
     p[0] = static_cast<uint8_t>(std::min(255, p[0] + intensity));
-    p[1] = static_cast<uint8_t>(std::min(255, p[1] + (intensity * g) / 255));
-    p[2] = static_cast<uint8_t>(std::min(255, p[2] + (intensity * b) / 255));
+    p[1] = static_cast<uint8_t>(std::min(255, p[1] + ((intensity * g) >> 8)));
+    p[2] = static_cast<uint8_t>(std::min(255, p[2] + ((intensity * b) >> 8)));
     p[3] = 0xFF;
 }

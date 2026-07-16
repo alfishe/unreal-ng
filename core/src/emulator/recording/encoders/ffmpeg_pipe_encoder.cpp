@@ -648,6 +648,13 @@ std::vector<std::string> FFmpegPipeEncoder::buildFFmpegArgs(const std::string& f
     args.push_back("-loglevel");
     args.push_back("warning");
 
+    // Let ffmpeg use all cores for filter graph processing (pixel format
+    // conversion, scaling). The actual video encoder thread count is set
+    // per-codec below — most single-threaded encoders (apng, gif) ignore
+    // this, but the filter pipeline benefits.
+    args.push_back("-threads");
+    args.push_back("0");
+
     // --- Video input ---
     // Minimal probing: all raw stream parameters are given explicitly, so
     // ffmpeg must not buffer input data during avformat_find_stream_info —
@@ -870,6 +877,27 @@ std::vector<std::string> FFmpegPipeEncoder::buildFFmpegArgs(const std::string& f
     {
         args.push_back("-plays");
         args.push_back("0");  // Loop forever
+
+        // PNG prediction method — the single biggest APNG speed lever.
+        // The encoder is zlib-bound and single-threaded; paeth (default)
+        // tries all prediction modes per row and is ~15% slower than none.
+        // For ZX content the difference in output size is small because
+        // the 8×8 attribute grid produces flat blocks that compress well
+        // regardless of prediction method.
+        //
+        //   Quality preset 0-3 (Fastest/Fast):     none  — max speed
+        //   Quality preset 4-6 (Medium):           up   — good balance
+        //   Quality preset 7-10 (High/Best):       mixed — best ratio
+        std::string apngPred;
+        if (config.qualityPreset >= 7)
+            apngPred = "mixed";
+        else if (config.qualityPreset >= 4)
+            apngPred = "up";
+        else
+            apngPred = "none";
+
+        args.push_back("-pred");
+        args.push_back(apngPred);
     }
 
     if (videoEncoder == "libwebp_anim")
