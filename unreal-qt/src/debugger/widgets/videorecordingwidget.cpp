@@ -912,11 +912,21 @@ void VideoRecordingWidget::onStopRecording()
     _recordingIndicator->setStyleSheet("font-weight: bold; color: orange;");
     updateRecordingControls();
 
+    // Capture a shared_ptr to the Emulator — prevents destruction while
+    // the stop thread is running. Without this, the raw rm pointer could
+    // dangle if the user closes the emulator during finalization.
+    std::string emulatorId = _recordingEmulatorId;
+    std::shared_ptr<Emulator> emulatorHolder;
+    if (EmulatorManager* mgr = EmulatorManager::GetInstance())
+        emulatorHolder = mgr->GetEmulator(emulatorId);
+
     RecordingManager* rm = recCtx->pRecordingManager;
     QPointer<VideoRecordingWidget> self(this);
 
-    std::thread([self, rm]() {
-        rm->StopRecording();
+    std::thread([self, rm, emulatorHolder]() {
+        // emulatorHolder keeps the Emulator alive during StopRecording
+        if (emulatorHolder)
+            rm->StopRecording();
 
         // Hop back to the UI thread; widget may have been closed meanwhile
         QMetaObject::invokeMethod(qApp, [self]() {
