@@ -137,13 +137,11 @@ void MainLoop::Run(volatile bool& stopRequested)
         /// endregion </Info logging>
 
         // Synchronization strategy depends on turbo mode setting
-        // Also skip sync when recording in non-realtime mode (encoder backpressure handles throttling)
+        // Recording should NEVER interfere with normal frame pacing - encoder
+        // backpressure (blocking mode) handles non-realtime encoders separately
         const CONFIG& config = _context->config;
-        bool skipRealtimeSync = (_context->pRecordingManager &&
-                                 _context->pRecordingManager->IsRecording() &&
-                                 !_context->pRecordingManager->IsRealtimeCapable());
 
-        if (!config.turbo_mode && !skipRealtimeSync)
+        if (!config.turbo_mode)
         {
             // Normal mode: Wait until audio callback requests more data and buffer is about half-full
             // That means we're in sync between audio and video frames
@@ -155,13 +153,12 @@ void MainLoop::Run(volatile bool& stopRequested)
             _moreAudioDataRequested.store(false);
             lock.unlock();
         }
-        else if (!skipRealtimeSync)
+        else
         {
             // Turbo mode: Run as fast as possible without audio synchronization
             // Optional: Yield CPU to prevent 100% core usage if desired
             // std::this_thread::yield();
         }
-        // If skipRealtimeSync: no wait — encoder backpressure controls frame timing
 
         lastRun = startTime;
     }
