@@ -14,6 +14,8 @@
 #include <QHash>
 #include <QTimer>
 
+#include <atomic>
+
 class EmulatorContext;
 
 class VideoRecordingWidget : public QWidget
@@ -122,4 +124,8 @@ private:
 
     // Measured encoder performance, keyed by benchmarkKey()
     QHash<QString, BenchmarkEntry> _benchmarkResults;
+
+    // Stop runs on a worker thread (encoder finalize can take seconds);
+    // UI shows FINALIZING and re-enables when done
+    std::atomic<bool> _isStopping{false};
 };

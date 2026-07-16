@@ -15,8 +15,11 @@
 #include <QVBoxLayout>
 #include <QDir>
 
+#include <QPointer>
+
 #include <algorithm>
 #include <chrono>
+#include <thread>
 #include <vector>
 
 #include "emulator/recording/encoders/gif_encoder.h"
@@ -96,7 +99,9 @@ void VideoRecordingWidget::hideEvent(QHideEvent* event)
 {
     QWidget::hideEvent(event);
 
-    // Stop any active recording before disabling the feature
+    // Stop any active recording before disabling the feature.
+    // Synchronous here — the window is going away. StopRecording is
+    // idempotent and mutex-guarded, so overlapping with an async stop is safe.
     if (_context && _context->pRecordingManager && _context->pRecordingManager->IsRecording())
     {
         _context->pRecordingManager->StopRecording();
@@ -734,6 +739,14 @@ void VideoRecordingWidget::onStartRecording()
 
     if (success)
     {
+        // Measured benchmark data beats the manager's heuristic estimate.
+        // Without this, encoders the heuristic misjudges as non-realtime
+        // (e.g. VP9 at ZX sizes) make the mainloop skip its 50Hz pacing and
+        // run emulation at encoder speed (150+ fps capture, turbo gameplay).
+        auto measured = _benchmarkResults.constFind(currentSelectionBenchmarkKey());
+        if (measured != _benchmarkResults.constEnd())
+            rm->SetRealtimeCapable(measured.value().msPerFrame < 20.0);
+
         _statsTimer->start();
         updateRecordingControls();
         updateRealtimeEstimate();
@@ -775,13 +788,33 @@ void VideoRecordingWidget::onResumeRecording()
 
 void VideoRecordingWidget::onStopRecording()
 {
-    if (_context && _context->pRecordingManager)
-    {
-        _context->pRecordingManager->StopRecording();
-        _statsTimer->stop();
-        updateRecordingControls();
-        onUpdateStats();
-    }
+    if (!_context || !_context->pRecordingManager || _isStopping)
+        return;
+
+    // StopRecording drains queues and waits for the encoder to finalize the
+    // container — seconds for slow encoders. Run it off the UI thread so the
+    // window stays responsive, and show a FINALIZING state meanwhile.
+    _isStopping = true;
+    _recordingIndicator->setText("⏳ FINALIZING…");
+    _recordingIndicator->setStyleSheet("font-weight: bold; color: orange;");
+    updateRecordingControls();
+
+    RecordingManager* rm = _context->pRecordingManager;
+    QPointer<VideoRecordingWidget> self(this);
+
+    std::thread([self, rm]() {
+        rm->StopRecording();
+
+        // Hop back to the UI thread; widget may have been closed meanwhile
+        QMetaObject::invokeMethod(qApp, [self]() {
+            if (!self)
+                return;
+            self->_isStopping = false;
+            self->_statsTimer->stop();
+            self->updateRecordingControls();
+            self->onUpdateStats();
+        }, Qt::QueuedConnection);
+    }).detach();
 }
 
 void VideoRecordingWidget::onUpdateStats()
@@ -791,7 +824,11 @@ void VideoRecordingWidget::onUpdateStats()
 
     RecordingManager* rm = _context->pRecordingManager;
 
-    if (rm->IsRecording())
+    if (_isStopping)
+    {
+        // Keep the FINALIZING indicator until the stop thread reports back
+    }
+    else if (rm->IsRecording())
     {
         _recordingIndicator->setText("● RECORDING");
         _recordingIndicator->setStyleSheet("font-weight: bold; color: red;");
@@ -837,12 +874,12 @@ void VideoRecordingWidget::updateRecordingControls()
 
     bool recording = _context->pRecordingManager->IsRecording();
     bool paused = _context->pRecordingManager->IsPaused();
-    bool idle = !recording && !paused;
+    bool idle = !recording && !paused && !_isStopping;
 
     _startButton->setEnabled(idle);
-    _pauseButton->setEnabled(recording && !paused);
-    _resumeButton->setEnabled(paused);
-    _stopButton->setEnabled(recording || paused);
+    _pauseButton->setEnabled(recording && !paused && !_isStopping);
+    _resumeButton->setEnabled(paused && !_isStopping);
+    _stopButton->setEnabled((recording || paused) && !_isStopping);
 
     // Disable config controls while recording; honor the capability matrix when idle
     bool audioSupported = _audioCodecCombo->count() > 0;

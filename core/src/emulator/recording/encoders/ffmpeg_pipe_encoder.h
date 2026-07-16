@@ -160,6 +160,10 @@ private:
     void failWorker(const std::string& error);
     std::thread _videoThread;
     std::thread _audioThread;
+
+    // Continuously drains ffmpeg's stderr into _diagnostics. Without a reader
+    // the stderr pipe fills on long recordings and ffmpeg blocks mid-encode.
+    std::thread _stderrThread;
     std::mutex _queueMutex;
     std::condition_variable _queueCond;
 

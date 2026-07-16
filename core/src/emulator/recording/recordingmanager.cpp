@@ -494,8 +494,8 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
     _stats.recordedDuration = static_cast<double>(wallElapsed) / 1000.0;
     _stats.emulatedDuration = timestamp;
 
-    // Update file size from encoder (throttled — every 50 frames to avoid stat() overhead)
-    if (_stats.framesRecorded % 50 == 0)
+    // Update file size from encoder (throttled — every 25 frames / 0.5s to avoid stat() overhead)
+    if (_stats.framesRecorded % 25 == 0)
     {
         for (auto& encoder : _activeEncoders)
         {

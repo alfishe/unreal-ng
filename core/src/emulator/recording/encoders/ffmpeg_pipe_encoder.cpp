@@ -3,6 +3,7 @@
 #include "../../video/screen.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -179,6 +180,12 @@ bool FFmpegPipeEncoder::Start(const std::string& filename, const EncoderConfig& 
     _drainRequested = false;
     _workerFailed = false;
 
+    // Drain stderr for the lifetime of the process (returns at EOF)
+    _diagnostics.clear();
+    _stderrThread = std::thread([this]() {
+        _diagnostics = _ffmpegProcess.readAllStderr();
+    });
+
     // Spawn one writer thread per pipe (see header note — required to avoid
     // deadlocking against ffmpeg's stream interleaving)
     _videoThread = std::thread(&FFmpegPipeEncoder::videoWriterMain, this);
@@ -188,7 +195,6 @@ bool FFmpegPipeEncoder::Start(const std::string& filename, const EncoderConfig& 
     _isRecording = true;
     _framesEncoded = 0;
     _audioSamplesEncoded = 0;
-    _diagnostics.clear();
 
     return true;
 }
@@ -202,17 +208,32 @@ void FFmpegPipeEncoder::Stop()
     if (!_isRecording)
         return;
 
-    // Graceful drain: the worker writes everything still queued, then exits.
+    // Graceful drain: the writers flush everything still queued, then exit.
     // (A hard cancel would truncate the recording by up to MAX_QUEUE_FRAMES.)
-    // If ffmpeg died mid-recording, pipe writes fail fast (EPIPE) and the
-    // worker exits through its failure path, so this join cannot hang forever.
+    // A watchdog escalates to hard-cancel if ffmpeg stops consuming — a stuck
+    // process must never hang the UI stop path forever.
     _drainRequested = true;
     _queueCond.notify_all();
+
+    std::atomic<bool> drainDone{false};
+    std::thread watchdog([this, &drainDone]() {
+        for (int i = 0; i < 600 && !drainDone.load(); i++)  // up to 60s
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (!drainDone.load())
+        {
+            _cancelRequested = true;  // Aborts in-flight pipe writes
+            _queueCond.notify_all();
+            _ffmpegProcess.terminate();
+        }
+    });
 
     if (_videoThread.joinable())
         _videoThread.join();
     if (_audioThread.joinable())
         _audioThread.join();
+
+    drainDone = true;
+    watchdog.join();
 
     _isRecording = false;
 
@@ -242,8 +263,9 @@ void FFmpegPipeEncoder::Stop()
         exitCode = _ffmpegProcess.waitForFinished(1000); // 1s wait for force kill
     }
 
-    // Capture diagnostics from stderr
-    _diagnostics = _ffmpegProcess.readAllStderr();
+    // Diagnostics were collected by the stderr drain thread (EOF on exit)
+    if (_stderrThread.joinable())
+        _stderrThread.join();
 
     if (exitCode != 0 && exitCode != -1)
     {
@@ -621,6 +643,14 @@ std::vector<std::string> FFmpegPipeEncoder::buildFFmpegArgs(const std::string& f
     // Overwrite output
     args.push_back("-y");
 
+    // No periodic status line, warnings+errors only. The status spam fills
+    // the 64KB stderr pipe on long recordings; once full, ffmpeg blocks
+    // mid-encode and the whole pipeline stalls (stderr is also drained by a
+    // reader thread — this keeps what remains meaningful for diagnostics).
+    args.push_back("-nostats");
+    args.push_back("-loglevel");
+    args.push_back("warning");
+
     // --- Video input ---
     // Minimal probing: all raw stream parameters are given explicitly, so
     // ffmpeg must not buffer input data during avformat_find_stream_info —
@@ -812,6 +842,12 @@ std::vector<std::string> FFmpegPipeEncoder::buildFFmpegArgs(const std::string& f
             args.push_back("-2");
         }
     }
+
+    // Flush the muxer's output buffer after every packet. Without this the
+    // 32KB avio buffer holds minutes of low-bitrate ZX output and the file
+    // size appears frozen at 0 during recording.
+    args.push_back("-flush_packets");
+    args.push_back("1");
 
     // --- Container-specific flags ---
     if (ext == "mp4" || ext == "mov")
