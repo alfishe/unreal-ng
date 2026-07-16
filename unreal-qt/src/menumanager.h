@@ -74,6 +74,8 @@ signals:
     // Tools signals
     void intParametersRequested();
     void audioSettingsRequested();
+    void videoRecordingRequested();
+    void quickRecordRequested(const QString& presetName);
 
 private:
     void createFileMenu();
@@ -160,6 +162,10 @@ private:
     QAction* _audioSettingsAction;
     QAction* _screenshotAction;
     QAction* _recordVideoAction;
+    QAction* _videoRecordingAction;
+
+    // Quick Record submenu
+    QMenu* _quickRecordMenu = nullptr;
 
     // Help Menu Actions
     QAction* _aboutAction;

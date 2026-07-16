@@ -37,6 +37,7 @@
 #endif  // ENABLE_AUTOMATION
 
 class AudioSettingsWidget;
+class VideoRecordingWidget;
 class DockingManager;
 
 QT_BEGIN_NAMESPACE
@@ -93,6 +94,8 @@ private slots:
     void handleLogWindowToggled(bool visible);
     void handleIntParametersRequested();
     void handleAudioSettingsRequested();
+    void handleVideoRecordingRequested();
+    void handleQuickRecord(const QString& presetName);
     void updateMenuStates();
 
     // Binding state handler
@@ -219,4 +222,5 @@ private:
 
     // Audio settings dialog (singleton, toggled via menu)
     QPointer<AudioSettingsWidget> _audioSettingsWidget;
+    QPointer<VideoRecordingWidget> _videoRecordingWidget;
 };

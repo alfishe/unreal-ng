@@ -408,7 +408,32 @@ void MenuManager::createToolsMenu()
     _recordVideoAction = _toolsMenu->addAction(tr("Record &Video..."));
     _recordVideoAction->setStatusTip(tr("Start/stop video recording"));
     _recordVideoAction->setCheckable(true);
-    _recordVideoAction->setEnabled(false);  // TODO: Implement video recording
+    _recordVideoAction->setEnabled(false);  // Legacy action - use _videoRecordingAction
+
+    // Video Recording (dialog toggle)
+    _videoRecordingAction = _toolsMenu->addAction(tr("&Video Recording"));
+    _videoRecordingAction->setStatusTip(tr("Open video recording panel"));
+    connect(_videoRecordingAction, &QAction::triggered, this, &MenuManager::videoRecordingRequested);
+
+    _toolsMenu->addSeparator();
+
+    // Quick Record submenu with preset shortcuts
+    _quickRecordMenu = _toolsMenu->addMenu(tr("&Quick Record"));
+    _quickRecordMenu->setStatusTip(tr("Quickly start recording with a preset"));
+
+    // Populate with preset names (will be connected via lambda to emit quickRecordRequested)
+    auto addPresetAction = [this](const QString& name) {
+        QAction* action = _quickRecordMenu->addAction(name);
+        connect(action, &QAction::triggered, this, [this, name]() {
+            emit quickRecordRequested(name);
+        });
+    };
+
+    addPresetAction(tr("Gameplay (MP4)"));
+    addPresetAction(tr("GIF Animation"));
+    addPresetAction(tr("High Quality (MKV)"));
+    // TODO: Re-add "Music (FLAC)" / "Audio Only (WAV)" when audio-only
+    // recording lands, and "Multi-Track (MKV)" when multi-track encoding lands.
 }
 
 void MenuManager::createHelpMenu()

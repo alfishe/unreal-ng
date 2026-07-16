@@ -1,5 +1,7 @@
 #pragma once
+#include <chrono>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "emulator/platform.h"
@@ -72,6 +74,14 @@ struct AudioTrackConfig
 };
 
 /// endregion </Recording types>
+
+/// Encoder backend selection
+enum class EncoderBackend
+{
+    Auto,    ///< Try native first, fall back to FFmpeg
+    Native,  ///< Force native encoder (VideoToolbox on macOS). Fail if unavailable.
+    FFmpeg   ///< Force FFmpeg pipe encoder. Fail if unavailable.
+};
 
 /// @brief Video/Audio Recording Manager - Captures emulated output for video encoding
 ///
@@ -152,6 +162,25 @@ public:
     {
         return _isPaused;
     }
+
+    /// Check if encoder can keep up with realtime
+    bool IsRealtimeCapable() const
+    {
+        return _realtimeCapable;
+    }
+
+    /// Set realtime capability flag (called after encoder init)
+    void SetRealtimeCapable(bool capable)
+    {
+        _realtimeCapable = capable;
+    }
+
+    /// Get the detailed error message from the last failed recording attempt
+    /// @return Error string with specifics (encoder name, failure reason, path, codec)
+    std::string GetLastRecordingError() const
+    {
+        return _lastRecordingError;
+    }
     /// endregion </Recording control>
 
     /// region <Frame/Audio capture>
@@ -167,12 +196,6 @@ public:
     /// @param sampleCount Number of samples (total, not per channel)
     void CaptureAudio(const int16_t* samples, size_t sampleCount);
 
-    /// @brief Called at each frame end with both video and audio data
-    /// Dispatches to all active encoders
-    /// @param framebuffer Video frame data
-    /// @param audioSamples Audio sample buffer
-    /// @param audioSampleCount Number of audio samples
-    void OnFrameEnd(const FramebufferDescriptor& framebuffer, const int16_t* audioSamples, size_t audioSampleCount);
     /// endregion </Frame/Audio capture>
 
     /// region <Statistics>
@@ -182,7 +205,8 @@ public:
     {
         uint64_t framesRecorded = 0;        // Total video frames captured
         uint64_t audioSamplesRecorded = 0;  // Total audio samples captured
-        double recordedDuration = 0.0;      // Duration in seconds (emulated time)
+        double recordedDuration = 0.0;      // Duration in seconds (wall clock — real elapsed time)
+        double emulatedDuration = 0.0;      // Duration in seconds (emulated time — may differ in turbo mode)
         uint64_t outputFileSize = 0;        // Output file size in bytes
         double averageFrameTime = 0.0;      // Average time per frame encode (ms)
     };
@@ -195,6 +219,10 @@ public:
 
     /// region <Configuration>
 public:
+    // Encoder backend selection
+    void SetEncoderBackend(EncoderBackend backend) { _encoderBackend = backend; }
+    EncoderBackend GetEncoderBackend() const { return _encoderBackend; }
+
     // Recording mode
     void SetRecordingMode(RecordingMode mode);
     RecordingMode GetRecordingMode() const
@@ -212,6 +240,37 @@ public:
     void SetVideoFrameRate(float fps);
     void SetVideoCodec(const std::string& codec);
     void SetVideoBitrate(uint32_t kbps);
+
+    /// Quality preset (0-10, 0 = fastest/lowest quality, 10 = slowest/best)
+    void SetQualityPreset(int preset)
+    {
+        _qualityPreset = preset < 0 ? 0 : (preset > 10 ? 10 : preset);
+    }
+
+    /// Capture region: full frame with border, or main screen only (256×192)
+    void SetCaptureRegion(VideoCaptureRegion region)
+    {
+        if (!_isRecording)
+            _captureRegion = region;
+    }
+    VideoCaptureRegion GetCaptureRegion() const
+    {
+        return _captureRegion;
+    }
+
+    /// Integer nearest-neighbor output upscale (1-4). 2x+ preserves per-pixel
+    /// color detail through YUV 4:2:0 chroma subsampling.
+    void SetScaleFactor(uint32_t factor)
+    {
+        if (!_isRecording)
+            _scaleFactor = factor < 1 ? 1 : (factor > 4 ? 4 : factor);
+    }
+
+    /// Explicit ffmpeg binary path (empty = auto-detect)
+    void SetFFmpegPath(const std::string& path)
+    {
+        _ffmpegPath = path;
+    }
 
     // Audio configuration (global)
     void SetAudioSampleRate(uint32_t sampleRate);
@@ -248,6 +307,9 @@ protected:
     // Recording mode
     RecordingMode _recordingMode = RecordingMode::SingleTrack;
 
+    // Encoder backend (Auto / Native / FFmpeg)
+    EncoderBackend _encoderBackend = EncoderBackend::Auto;
+
     // Configuration
     std::string _outputFilename;
 
@@ -265,6 +327,17 @@ protected:
     uint32_t _audioSampleRate = 44100;
     uint32_t _audioChannels = 2;  // Stereo
 
+    // Quality preset (0-10) applied to encoder config
+    int _qualityPreset = 5;
+
+    // Capture region and output scaling
+    VideoCaptureRegion _captureRegion = VideoCaptureRegion::FullFrame;
+    uint32_t _scaleFactor = 1;
+    std::vector<uint8_t> _cropBuffer;  // Reused per-frame when cropping to main screen
+
+    // Explicit ffmpeg binary path (empty = auto-detect)
+    std::string _ffmpegPath;
+
     // Audio tracks (for multi-track mode)
     std::vector<AudioTrackConfig> _audioTracks;
 
@@ -275,11 +348,28 @@ protected:
     uint64_t _emulatedFrameCount = 0;
     uint64_t _emulatedAudioSampleCount = 0;
 
+    // Wall clock tracking for real elapsed recording time
+    using Clock = std::chrono::steady_clock;
+    Clock::time_point _wallClockStart;
+    Clock::time_point _wallClockPauseStart;
+    Clock::duration _wallClockPausedTotal = Clock::duration::zero();
+
     // Statistics
     RecordingStats _stats;
 
     // Active encoders registry
     std::vector<EncoderPtr> _activeEncoders;
+
+    // Serializes encoder dispatch (emulation thread: CaptureFrame/CaptureAudio)
+    // against start/stop/finalize (UI thread). Without it, StopRecording can
+    // close an encoder's output file while a frame is still being written.
+    std::mutex _captureMutex;
+
+    // Realtime capability (false = non-realtime mode, emulation slows)
+    bool _realtimeCapable = true;
+
+    // Detailed error message from the last failed start attempt
+    std::string _lastRecordingError;
     /// endregion </Internal state>
 
     /// region <Encoder interface (to be implemented)>

@@ -8,6 +8,9 @@
 #include <QDebug>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QStandardPaths>
+#include <QDir>
+#include <QDateTime>
 #include <QMessageBox>
 #include <QMimeData>
 #include <QScopedValueRollback>
@@ -28,6 +31,9 @@
 #include "emulator/sound/soundmanager.h"
 #include "emulator/soundmanager.h"
 #include "debugger/widgets/audiosettingswidget.h"
+#include "debugger/widgets/videorecordingwidget.h"
+#include "debugger/widgets/recordingpresets.h"
+#include "base/featuremanager.h"
 // Avoid Qt 'signals' macro conflict with WD1793State::signals member
 #undef signals
 #include "emulator/io/fdc/fdd.h"
@@ -159,6 +165,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
     connect(_menuManager, &MenuManager::intParametersRequested, this, &MainWindow::handleIntParametersRequested);
     connect(_menuManager, &MenuManager::audioSettingsRequested, this, &MainWindow::handleAudioSettingsRequested);
+    connect(_menuManager, &MenuManager::videoRecordingRequested, this, &MainWindow::handleVideoRecordingRequested);
+        connect(_menuManager, &MenuManager::quickRecordRequested, this, &MainWindow::handleQuickRecord);
 
     // Bring application windows to foreground
     debuggerWindow->raise();
@@ -2024,6 +2032,120 @@ void MainWindow::handleAudioSettingsRequested()
     _audioSettingsWidget->show();
     _audioSettingsWidget->raise();
     _audioSettingsWidget->activateWindow();
+}
+
+void MainWindow::handleVideoRecordingRequested()
+{
+    if (_videoRecordingWidget)
+    {
+        _videoRecordingWidget->close();
+        return;
+    }
+
+    if (!m_binding || !m_binding->emulator())
+    {
+        qDebug() << "Cannot open Video Recording: No active emulator instance";
+        return;
+    }
+
+    EmulatorContext* context = m_binding->emulator()->GetContext();
+    if (!context)
+    {
+        qDebug() << "Cannot open Video Recording: No emulator context";
+        return;
+    }
+
+    _videoRecordingWidget = new VideoRecordingWidget(context, nullptr);
+    _videoRecordingWidget->setAttribute(Qt::WA_DeleteOnClose);
+    // Non-modal tool window: stays on top, does NOT block the main window
+    _videoRecordingWidget->setWindowFlags(Qt::Tool | Qt::Window);
+    _videoRecordingWidget->show();
+    _videoRecordingWidget->raise();
+    _videoRecordingWidget->activateWindow();
+}
+
+void MainWindow::handleQuickRecord(const QString& presetName)
+{
+    if (!m_binding || !m_binding->emulator())
+    {
+        qDebug() << "Cannot start Quick Record: No active emulator instance";
+        return;
+    }
+
+    EmulatorContext* context = m_binding->emulator()->GetContext();
+    if (!context || !context->pRecordingManager)
+    {
+        qDebug() << "Cannot start Quick Record: No recording manager";
+        return;
+    }
+
+    auto* rm = context->pRecordingManager;
+
+    // Recording subsystem is behind a master feature switch — Quick Record
+    // must enable it (the recording dialog does the same on show)
+    if (context->pFeatureManager && !context->pFeatureManager->isEnabled(Features::kRecording))
+    {
+        context->pFeatureManager->setFeature(Features::kRecording, true);
+    }
+
+    // If already recording, stop first
+    if (rm->IsRecording())
+    {
+        rm->StopRecording();
+    }
+
+    // Find the preset
+    static RecordingPresetManager presetManager;
+    const RecordingPreset* preset = presetManager.findPreset(presetName);
+    if (!preset)
+    {
+        qDebug() << "Quick Record: Preset not found:" << presetName;
+        return;
+    }
+
+    // Apply preset to recording manager
+    rm->SetRecordingMode(preset->mode);
+    rm->SetVideoEnabled(!preset->videoCodec.isEmpty());
+
+    // Set audio source
+    rm->SelectAudioSource(AudioSourceType::MasterMix);
+
+    // Set video params via individual setters
+    if (!preset->videoCodec.isEmpty())
+    {
+        rm->SetVideoCodec(preset->videoCodec.toStdString());
+        rm->SetVideoBitrate(preset->videoBitrate);
+        rm->SetVideoFrameRate(preset->frameRate);
+    }
+
+    // Same defaults as the recording dialog: full frame, 2x nearest-neighbor
+    // (preserves multicolor detail through chroma subsampling; GIF ignores it)
+    rm->SetCaptureRegion(VideoCaptureRegion::FullFrame);
+    rm->SetScaleFactor(2);
+    rm->SetVideoResolution(0, 0);  // Derive from screen + capture region
+
+    // Generate output filename
+    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_HH-mm-ss");
+    QString defaultDir = preset->outputDir.isEmpty()
+        ? QStandardPaths::writableLocation(QStandardPaths::MoviesLocation)
+        : preset->outputDir;
+    QDir().mkpath(defaultDir);
+    QString filename = QString("%1/unreal_%2_%3.%4")
+        .arg(defaultDir)
+        .arg(timestamp)
+        .arg(preset->name.split(' ').first())
+        .arg(preset->container);
+
+    qDebug() << "Quick Record: Starting recording with preset" << presetName << "to" << filename;
+
+    // Start recording (StartRecording takes codec/bitrate directly)
+    std::string vidCodec = preset->videoCodec.toStdString();
+    std::string audCodec = preset->includeAudio ? preset->audioCodec.toStdString() : "";
+    if (!rm->StartRecording(filename.toStdString(), vidCodec, audCodec,
+                            preset->videoBitrate, preset->audioBitrate))
+    {
+        qDebug() << "Quick Record: Failed to start recording";
+    }
 }
 
 void MainWindow::updateMenuStates()

@@ -93,13 +93,16 @@ public:
         return _framesEncoded;
     }
 
+    /// @brief Current output file size on disk (flushes pending writes first)
+    uint64_t GetOutputFileSize() const override;
+
     /// endregion </Statistics>
 
     /// region <Error handling>
 
     /// @brief Get last error message
     /// @return Error string from last failed operation, empty if no error
-    std::string GetLastError() const;
+    std::string GetLastError() const override;
 
     /// @brief Get output filename
     /// @return Filename passed to Start(), empty if not recording

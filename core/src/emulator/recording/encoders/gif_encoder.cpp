@@ -160,6 +160,22 @@ void GIFEncoder::OnVideoFrame(const FramebufferDescriptor& framebuffer, [[maybe_
     _framesEncoded++;
 }
 
+uint64_t GIFEncoder::GetOutputFileSize() const
+{
+    if (_filename.empty())
+        return 0;
+
+    // gif.h writes through a buffered FILE* — flush so the on-disk size
+    // reflects the frames encoded so far. Only touch the handle while it
+    // is guaranteed open (callers are serialized by RecordingManager).
+    if (_isRecording && _gifWriter.f != nullptr)
+        fflush(_gifWriter.f);
+
+    std::error_code ec;
+    auto size = std::filesystem::file_size(_filename, ec);
+    return ec ? 0 : static_cast<uint64_t>(size);
+}
+
 std::string GIFEncoder::GetLastError() const
 {
     return _lastError;
