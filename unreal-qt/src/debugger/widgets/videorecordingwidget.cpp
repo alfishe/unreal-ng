@@ -24,6 +24,7 @@
 
 #include "emulator/recording/encoders/gif_encoder.h"
 #include "emulator/recording/encoders/ffmpeg_pipe_encoder.h"
+#include "benchmarkfeeder.h"
 #include "multitrackdialog.h"
 
 #include "emulator/emulator.h"
@@ -1113,32 +1114,17 @@ void VideoRecordingWidget::onMultiTrackConfigure()
 
 void VideoRecordingWidget::onBenchmark()
 {
-    validateContext();
     runBenchmark();
 }
 
 void VideoRecordingWidget::runBenchmark()
 {
-    // Validate the context pointer before dereferencing — the emulator may
-    // have been destroyed, leaving _context as a dangling pointer
-    validateContext();
-    if (!_context)
-    {
-        QMessageBox::warning(this, "Benchmark", "No active emulator instance.\nStart an emulator first.");
-        return;
-    }
-
-    int fbWidth = 352;
-    int fbHeight = 288;
-
-    if (_context->pScreen)
-    {
-        FramebufferDescriptor fb = _context->pScreen->GetFramebufferDescriptor();
-        if (fb.width > 0)
-            fbWidth = fb.width;
-        if (fb.height > 0)
-            fbHeight = fb.height;
-    }
+    // Standard ZX Spectrum full-frame size — no emulator needed.
+    // The BenchmarkFeeder generates complex synthetic content (sliding
+    // checkerboard, bouncing pong elements, particles, light gradients)
+    // that stresses every part of the encoder pipeline.
+    const int fbWidth = 352;
+    const int fbHeight = 288;
 
     // Determine available encoders
     std::string ffmpegPath = FFmpegProbe::findFFmpeg();
@@ -1188,26 +1174,11 @@ void VideoRecordingWidget::runBenchmark()
     progress.setWindowTitle("Benchmark");
     progress.show();
 
-    // Synthetic framebuffer with ZX-like color pattern
+    // Framebuffer + autonomous feeder — no emulator needed.
+    // Each encoder test gets fresh content from frame 0 so results aren't
+    // polluted by a warm encoder cache from the previous run.
     size_t fbSize = static_cast<size_t>(fbWidth) * fbHeight * 4;
     std::vector<uint8_t> fbData(fbSize);
-
-    const uint32_t zxColors[] = {
-        0xFF000000, 0xFFC00000, 0xFF0000C0, 0xFFC000C0,
-        0xFF00C000, 0xFF00C0C0, 0xFFC0C000, 0xFFC0C0C0,
-        0xFF000000, 0xFF0000FF, 0xFFFF0000, 0xFFFF00FF,
-        0xFF00FF00, 0xFF00FFFF, 0xFFFFFF00, 0xFFFFFFFF,
-    };
-
-    for (int y = 0; y < fbHeight; y++)
-    {
-        for (int x = 0; x < fbWidth; x++)
-        {
-            int cellIdx = ((x / 8) + (y / 8)) & 0x0F;
-            uint32_t c = zxColors[cellIdx];
-            memcpy(&fbData[(y * fbWidth + x) * 4], &c, 4);
-        }
-    }
 
     FramebufferDescriptor benchFb = {};
     benchFb.width = static_cast<uint16_t>(fbWidth);
@@ -1309,17 +1280,12 @@ void VideoRecordingWidget::runBenchmark()
         bool canceled = false;
         auto startTime = std::chrono::steady_clock::now();
 
+        // Fresh feeder per encoder — deterministic content, same difficulty
+        BenchmarkFeeder feeder(fbWidth, fbHeight, fps);
+
         for (int f = 0; f < actualFrames; f++)
         {
-            uint8_t shift = static_cast<uint8_t>(f & 0x0F);
-            if (shift > 0)
-            {
-                for (size_t p = 0; p < fbSize; p += 4)
-                {
-                    fbData[p]     ^= shift;
-                    fbData[p + 2] ^= shift;
-                }
-            }
+            feeder.renderFrame(fbData.data(), f);
 
             encoder->OnVideoFrame(benchFb, f * frameInterval);
             framesFed++;
@@ -1444,6 +1410,7 @@ void VideoRecordingWidget::runBenchmark()
     layout->addWidget(table);
 
     auto* footer = new QLabel(QString("Realtime budget: 20 ms/frame at 50 fps. Resolution %1×%2. "
+                                      "Synthetic content: checkerboard + pong + particles + light. "
                                       "Results are saved and used for the realtime estimate.")
                                   .arg(fbWidth).arg(fbHeight));
     footer->setWordWrap(true);

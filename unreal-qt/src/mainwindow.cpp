@@ -2042,17 +2042,13 @@ void MainWindow::handleVideoRecordingRequested()
         return;
     }
 
-    if (!m_binding || !m_binding->emulator())
+    // Widget can be opened without an emulator — the benchmark is fully
+    // synthetic, and recording-specific controls are disabled via
+    // updateRecordingControls() when no context is available.
+    EmulatorContext* context = nullptr;
+    if (m_binding && m_binding->emulator())
     {
-        qDebug() << "Cannot open Video Recording: No active emulator instance";
-        return;
-    }
-
-    EmulatorContext* context = m_binding->emulator()->GetContext();
-    if (!context)
-    {
-        qDebug() << "Cannot open Video Recording: No emulator context";
-        return;
+        context = m_binding->emulator()->GetContext();
     }
 
     _videoRecordingWidget = new VideoRecordingWidget(context, nullptr);
