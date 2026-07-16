@@ -208,71 +208,68 @@ void FFmpegPipeEncoder::Stop()
     if (!_isRecording)
         return;
 
-    // Graceful drain: the writers flush everything still queued, then exit.
-    // (A hard cancel would truncate the recording by up to MAX_QUEUE_FRAMES.)
-    // A watchdog escalates to hard-cancel if ffmpeg stops consuming — a stuck
-    // process must never hang the UI stop path forever.
+    // Hard deadline: entire stop must complete in ~1 second. A slower graceful
+    // drain is not worth hanging the UI — the file is already on disk and
+    // playable; at worst we lose the last fraction of a second.
+    constexpr int STOP_TIMEOUT_MS = 1000;
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(STOP_TIMEOUT_MS);
+
+    auto msRemaining = [&]() {
+        auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now()).count();
+        return left > 0 ? static_cast<int>(left) : 0;
+    };
+
+    // 1. Signal writers to drain. If they don't finish promptly, hard-cancel.
     _drainRequested = true;
     _queueCond.notify_all();
 
-    std::atomic<bool> drainDone{false};
-    std::thread watchdog([this, &drainDone]() {
-        for (int i = 0; i < 600 && !drainDone.load(); i++)  // up to 60s
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        if (!drainDone.load())
-        {
-            _cancelRequested = true;  // Aborts in-flight pipe writes
-            _queueCond.notify_all();
-            _ffmpegProcess.terminate();
+    auto joinWithTimeout = [&](std::thread& t, const char* name) {
+        if (!t.joinable())
+            return true;
+        std::atomic<bool> done{false};
+        std::thread waiter([&]() { t.join(); done = true; });
+        while (!done && msRemaining() > 0)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        if (done) {
+            waiter.join();
+            return true;
         }
-    });
+        // Timed out — escalate
+        _cancelRequested = true;
+        _queueCond.notify_all();
+        waiter.detach();
+        (void)name;
+        return false;
+    };
 
-    if (_videoThread.joinable())
-        _videoThread.join();
-    if (_audioThread.joinable())
-        _audioThread.join();
-
-    drainDone = true;
-    watchdog.join();
+    joinWithTimeout(_videoThread, "video");
+    joinWithTimeout(_audioThread, "audio");
 
     _isRecording = false;
 
-    // Closing the write ends signals EOF to ffmpeg, which then finalizes the file
-    if (_videoPipe)
-        _videoPipe->close();
-    if (_audioPipe)
-        _audioPipe->close();
-
+    // 2. Close write ends → EOF to ffmpeg
+    if (_videoPipe) _videoPipe->close();
+    if (_audioPipe) _audioPipe->close();
+    for (auto& p : _multiTrackAudioPipes) if (p) p->close();
+    _multiTrackAudioPipes.clear();
     _ffmpegProcess.closeStdin();
 
-    // Wait for ffmpeg to finalize the container. Slow software encoders
-    // (libx265, libaom) can take a while to flush their lookahead.
-    int exitCode = _ffmpegProcess.waitForFinished(15000);
-
-    // Close multi-track pipes
-    for (auto& pipe : _multiTrackAudioPipes)
+    // 3. Wait for ffmpeg to finalize (remaining time budget)
+    int exitCode = _ffmpegProcess.waitForFinished(msRemaining());
+    if (exitCode == -1)
     {
-        if (pipe)
-            pipe->close();
-    }
-    _multiTrackAudioPipes.clear();
-
-    if (exitCode == -1) // Timed out, ffmpeg is rogue
-    {
-        _ffmpegProcess.terminate();
-        exitCode = _ffmpegProcess.waitForFinished(1000); // 1s wait for force kill
+        _ffmpegProcess.kill();
+        _ffmpegProcess.waitForFinished(100);
     }
 
-    // Diagnostics were collected by the stderr drain thread (EOF on exit)
-    if (_stderrThread.joinable())
-        _stderrThread.join();
+    // 4. Close stderr to unblock the drain thread, then join briefly
+    _ffmpegProcess.closeStderr();
+    joinWithTimeout(_stderrThread, "stderr");
 
     if (exitCode != 0 && exitCode != -1)
-    {
         _lastError = "FFmpeg exited with code " + std::to_string(exitCode);
-    }
 
-    // Clean up temp files
     cleanup();
 }
 

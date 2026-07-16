@@ -63,8 +63,14 @@ public:
     /// @return Process exit code, or -1 if timed out
     int waitForFinished(int timeoutMs = -1);
 
-    /// @brief Terminate the child process
+    /// @brief Terminate the child process (SIGTERM / TerminateProcess)
     void terminate();
+
+    /// @brief Force-kill the child process (SIGKILL / TerminateProcess)
+    void kill();
+
+    /// @brief Close stderr pipe (unblocks readAllStderr)
+    void closeStderr();
 
     /// @brief Get last exit code (valid after waitForFinished returns >= 0)
     int exitCode() const { return _exitCode; }

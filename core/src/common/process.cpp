@@ -381,7 +381,24 @@ void Process::terminate()
     if (!_spawned || _pid <= 0)
         return;
 
-    kill(_pid, SIGTERM);
+    ::kill(_pid, SIGTERM);
+}
+
+void Process::kill()
+{
+    if (!_spawned || _pid <= 0)
+        return;
+
+    ::kill(_pid, SIGKILL);
+}
+
+void Process::closeStderr()
+{
+    if (_stderrFd >= 0)
+    {
+        close(_stderrFd);
+        _stderrFd = -1;
+    }
 }
 
 void Process::cleanup()
@@ -646,6 +663,21 @@ void Process::terminate()
         return;
 
     TerminateProcess(_hProcess, 1);
+}
+
+void Process::kill()
+{
+    // On Windows, TerminateProcess is already unconditional (no SIGTERM equivalent)
+    terminate();
+}
+
+void Process::closeStderr()
+{
+    if (_hStderrRead)
+    {
+        CloseHandle(_hStderrRead);
+        _hStderrRead = nullptr;
+    }
 }
 
 void Process::cleanup()
