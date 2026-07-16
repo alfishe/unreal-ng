@@ -107,11 +107,20 @@ bool FFmpegPipeEncoder::Start(const std::string& filename, const EncoderConfig& 
     _width = config.videoWidth;
     _height = config.videoHeight;
     _fps = config.frameRate;
+    _hasVideo = !config.videoCodec.empty() && config.videoWidth > 0 && config.videoHeight > 0;
     _hasAudio = (config.audioChannels > 0);
+
+    // Must have at least one stream
+    if (!_hasVideo && !_hasAudio)
+    {
+        _lastError = "No video or audio streams configured";
+        return false;
+    }
 
     // Verify this ffmpeg build can encode the requested codec before
     // creating pipes/spawning — fail with a clear message instead of an
     // "Unknown encoder" process exit
+    if (_hasVideo)
     {
         std::string ext;
         size_t dotPos = filename.rfind('.');
@@ -144,12 +153,15 @@ bool FFmpegPipeEncoder::Start(const std::string& filename, const EncoderConfig& 
     _audioPipePath = "audio_pipe";
 #endif
 
-    // Create named pipes
-    if (!NamedPipe::create(_videoPipePath))
+    // Create named pipes (only for streams we have)
+    if (_hasVideo)
     {
-        _lastError = "Failed to create video pipe";
-        cleanup();
-        return false;
+        if (!NamedPipe::create(_videoPipePath))
+        {
+            _lastError = "Failed to create video pipe";
+            cleanup();
+            return false;
+        }
     }
 
     if (_hasAudio)
@@ -188,7 +200,8 @@ bool FFmpegPipeEncoder::Start(const std::string& filename, const EncoderConfig& 
 
     // Spawn one writer thread per pipe (see header note — required to avoid
     // deadlocking against ffmpeg's stream interleaving)
-    _videoThread = std::thread(&FFmpegPipeEncoder::videoWriterMain, this);
+    if (_hasVideo)
+        _videoThread = std::thread(&FFmpegPipeEncoder::videoWriterMain, this);
     if (_hasAudio)
         _audioThread = std::thread(&FFmpegPipeEncoder::audioWriterMain, this);
 
@@ -280,7 +293,7 @@ void FFmpegPipeEncoder::Stop()
 void FFmpegPipeEncoder::OnVideoFrame(const FramebufferDescriptor& framebuffer, double timestampSec)
 {
     (void)timestampSec;
-    if (!_isRecording || _workerFailed)
+    if (!_isRecording || !_hasVideo || _workerFailed)
         return;
 
     uint32_t expectedWidth = _width > 0 ? _width : framebuffer.width;
@@ -655,25 +668,33 @@ std::vector<std::string> FFmpegPipeEncoder::buildFFmpegArgs(const std::string& f
     args.push_back("-threads");
     args.push_back("0");
 
-    // --- Video input ---
-    // Minimal probing: all raw stream parameters are given explicitly, so
-    // ffmpeg must not buffer input data during avformat_find_stream_info —
-    // that would delay opening the audio pipe.
-    args.push_back("-probesize");
-    args.push_back("32");
-    args.push_back("-analyzeduration");
-    args.push_back("0");
-    args.push_back("-f");
-    args.push_back("rawvideo");
-    args.push_back("-pix_fmt");
-    args.push_back("rgba");  // Emulator framebuffer byte order is R,G,B,A
-    args.push_back("-s");
-    args.push_back(std::to_string(_width) + "x" + std::to_string(_height));
-    args.push_back("-r");
-    // Use integer fps to avoid floating point PTS issues
-    args.push_back(std::to_string(static_cast<int>(std::round(_fps))));
-    args.push_back("-i");
-    args.push_back(_videoPipePath);
+    int inputIndex = 0;
+    int videoInputIndex = -1;
+    int audioInputIndex = -1;
+
+    // --- Video input (skip for audio-only) ---
+    if (_hasVideo)
+    {
+        // Minimal probing: all raw stream parameters are given explicitly, so
+        // ffmpeg must not buffer input data during avformat_find_stream_info —
+        // that would delay opening the audio pipe.
+        args.push_back("-probesize");
+        args.push_back("32");
+        args.push_back("-analyzeduration");
+        args.push_back("0");
+        args.push_back("-f");
+        args.push_back("rawvideo");
+        args.push_back("-pix_fmt");
+        args.push_back("rgba");  // Emulator framebuffer byte order is R,G,B,A
+        args.push_back("-s");
+        args.push_back(std::to_string(_width) + "x" + std::to_string(_height));
+        args.push_back("-r");
+        // Use integer fps to avoid floating point PTS issues
+        args.push_back(std::to_string(static_cast<int>(std::round(_fps))));
+        args.push_back("-i");
+        args.push_back(_videoPipePath);
+        videoInputIndex = inputIndex++;
+    }
 
     // --- Audio input ---
     if (_hasAudio)
@@ -690,142 +711,176 @@ std::vector<std::string> FFmpegPipeEncoder::buildFFmpegArgs(const std::string& f
         args.push_back(std::to_string(config.audioChannels));
         args.push_back("-i");
         args.push_back(_audioPipePath);
+        audioInputIndex = inputIndex++;
     }
 
     // --- Stream mapping ---
-    args.push_back("-map");
-    args.push_back("0:v");
+    if (_hasVideo)
+    {
+        args.push_back("-map");
+        args.push_back(std::to_string(videoInputIndex) + ":v");
+    }
     if (_hasAudio)
     {
         args.push_back("-map");
-        args.push_back("1:a");
+        args.push_back(std::to_string(audioInputIndex) + ":a");
     }
 
-    // --- Video encoder ---
-    std::string videoEncoder = resolveVideoEncoder(config, ext);
-    args.push_back("-c:v");
-    args.push_back(videoEncoder);
-
-    // --- Video filters + color handling ---
-    // RGB-native animation formats (gif/apng/webp) keep exact colors; YUV
-    // codecs need an explicit full→limited BT.709 conversion AND tagging —
-    // untagged output makes players guess and render pale/shifted colors.
-    bool rgbFormat = (videoEncoder == "gif" || videoEncoder == "apng" ||
-                      videoEncoder.rfind("libwebp", 0) == 0);
-
-    std::string vf;
-    if (config.scaleFactor > 1)
+    // --- Video encoder (skip for audio-only) ---
+    if (_hasVideo)
     {
-        // Nearest-neighbor upscale: keeps ZX pixels crisp and preserves
-        // per-pixel color detail through 4:2:0 chroma subsampling
-        std::string n = std::to_string(config.scaleFactor);
-        vf = "scale=iw*" + n + ":ih*" + n + ":flags=neighbor";
-    }
+        std::string videoEncoder = resolveVideoEncoder(config, ext);
+        args.push_back("-c:v");
+        args.push_back(videoEncoder);
 
-    if (!rgbFormat)
-    {
-        if (!vf.empty())
-            vf += ",";
-        vf += "scale=in_range=full:out_range=limited:out_color_matrix=bt709,format=yuv420p";
-    }
+        // --- Video filters + color handling ---
+        // RGB-native animation formats (gif/apng/webp) keep exact colors; YUV
+        // codecs need an explicit full→limited BT.709 conversion AND tagging —
+        // untagged output makes players guess and render pale/shifted colors.
+        bool rgbFormat = (videoEncoder == "gif" || videoEncoder == "apng" ||
+                          videoEncoder.rfind("libwebp", 0) == 0);
 
-    if (!vf.empty())
-    {
-        args.push_back("-vf");
-        args.push_back(vf);
-    }
-
-    if (!rgbFormat)
-    {
-        args.push_back("-colorspace");
-        args.push_back("bt709");
-        args.push_back("-color_primaries");
-        args.push_back("bt709");
-        args.push_back("-color_trc");
-        args.push_back("bt709");
-        args.push_back("-color_range");
-        args.push_back("tv");
-    }
-
-    // HEVC in MP4/MOV needs the hvc1 tag for QuickTime/Safari playback
-    bool isHEVC = (videoEncoder.find("265") != std::string::npos ||
-                   videoEncoder.find("hevc") != std::string::npos);
-    if (isHEVC && (ext == "mp4" || ext == "mov"))
-    {
-        args.push_back("-tag:v");
-        args.push_back("hvc1");
-    }
-
-    // Video bitrate
-    if (config.videoBitrate > 0)
-    {
-        args.push_back("-b:v");
-        args.push_back(std::to_string(config.videoBitrate) + "k");
-    }
-
-    // Quality settings for libx264/libx265
-    if (videoEncoder == "libx264" || videoEncoder == "libx265")
-    {
-        // CRF quality (0-51, lower = better)
-        int crf = 23;
-        if (config.qualityPreset >= 8) crf = 18;
-        else if (config.qualityPreset >= 6) crf = 20;
-        else if (config.qualityPreset >= 4) crf = 23;
-        else crf = 28;
-
-        args.push_back("-crf");
-        args.push_back(std::to_string(crf));
-
-        // Preset
-        std::string preset = "ultrafast"; // Fast encoding for realtime
-        if (config.qualityPreset >= 8) preset = "medium";
-        else if (config.qualityPreset >= 6) preset = "fast";
-        args.push_back("-preset");
-        args.push_back(preset);
-    }
-
-    // VP9/VP8 realtime encoding settings — libvpx is CPU-intensive; without
-    // these flags it cannot sustain 50fps on most machines
-    if (videoEncoder == "libvpx-vp9" || videoEncoder == "libvpx")
-    {
-        args.push_back("-deadline");
-        args.push_back("realtime");
-        args.push_back("-cpu-used");
-        args.push_back("8");       // Max speed (0-8, higher = faster)
-        args.push_back("-row-mt");
-        args.push_back("1");       // Row-based multithreading
-
-        // Constant-quality mode when no explicit bitrate is set
-        // (libvpx defaults to 256 kbps otherwise, which looks terrible)
-        if (config.videoBitrate == 0)
+        std::string vf;
+        if (config.scaleFactor > 1)
         {
-            int crf = 30;
-            if (config.qualityPreset >= 8) crf = 24;
-            else if (config.qualityPreset >= 6) crf = 28;
-            else if (config.qualityPreset < 4) crf = 34;
+            // Nearest-neighbor upscale: keeps ZX pixels crisp and preserves
+            // per-pixel color detail through 4:2:0 chroma subsampling
+            std::string n = std::to_string(config.scaleFactor);
+            vf = "scale=iw*" + n + ":ih*" + n + ":flags=neighbor";
+        }
+
+        if (!rgbFormat)
+        {
+            if (!vf.empty())
+                vf += ",";
+            vf += "scale=in_range=full:out_range=limited:out_color_matrix=bt709,format=yuv420p";
+        }
+
+        if (!vf.empty())
+        {
+            args.push_back("-vf");
+            args.push_back(vf);
+        }
+
+        if (!rgbFormat)
+        {
+            args.push_back("-colorspace");
+            args.push_back("bt709");
+            args.push_back("-color_primaries");
+            args.push_back("bt709");
+            args.push_back("-color_trc");
+            args.push_back("bt709");
+            args.push_back("-color_range");
+            args.push_back("tv");
+        }
+
+        // HEVC in MP4/MOV needs the hvc1 tag for QuickTime/Safari playback
+        bool isHEVC = (videoEncoder.find("265") != std::string::npos ||
+                       videoEncoder.find("hevc") != std::string::npos);
+        if (isHEVC && (ext == "mp4" || ext == "mov"))
+        {
+            args.push_back("-tag:v");
+            args.push_back("hvc1");
+        }
+
+        // Video bitrate
+        if (config.videoBitrate > 0)
+        {
+            args.push_back("-b:v");
+            args.push_back(std::to_string(config.videoBitrate) + "k");
+        }
+
+        // Quality settings for libx264/libx265
+        if (videoEncoder == "libx264" || videoEncoder == "libx265")
+        {
+            // CRF quality (0-51, lower = better)
+            int crf = 23;
+            if (config.qualityPreset >= 8) crf = 18;
+            else if (config.qualityPreset >= 6) crf = 20;
+            else if (config.qualityPreset >= 4) crf = 23;
+            else crf = 28;
 
             args.push_back("-crf");
             args.push_back(std::to_string(crf));
-            args.push_back("-b:v");
-            args.push_back("0");
-        }
-    }
 
-    // Hardware encoder bitrate (required for some HW encoders)
-    if (videoEncoder.find("videotoolbox") != std::string::npos ||
-        videoEncoder.find("nvenc") != std::string::npos ||
-        videoEncoder.find("qsv") != std::string::npos ||
-        videoEncoder.find("vaapi") != std::string::npos)
-    {
-        if (config.videoBitrate > 0)
-        {
-            // Already added -b:v above
+            // Preset
+            std::string preset = "ultrafast"; // Fast encoding for realtime
+            if (config.qualityPreset >= 8) preset = "medium";
+            else if (config.qualityPreset >= 6) preset = "fast";
+            args.push_back("-preset");
+            args.push_back(preset);
         }
-        else
+
+        // VP9/VP8 realtime encoding settings — libvpx is CPU-intensive; without
+        // these flags it cannot sustain 50fps on most machines
+        if (videoEncoder == "libvpx-vp9" || videoEncoder == "libvpx")
         {
-            // Default bitrate for HW encoders
-            args.push_back("-b:v");
-            args.push_back("5000k");
+            args.push_back("-deadline");
+            args.push_back("realtime");
+            args.push_back("-cpu-used");
+            args.push_back("8");       // Max speed (0-8, higher = faster)
+            args.push_back("-row-mt");
+            args.push_back("1");       // Row-based multithreading
+
+            // Constant-quality mode when no explicit bitrate is set
+            // (libvpx defaults to 256 kbps otherwise, which looks terrible)
+            if (config.videoBitrate == 0)
+            {
+                int crf = 30;
+                if (config.qualityPreset >= 8) crf = 24;
+                else if (config.qualityPreset >= 6) crf = 28;
+                else if (config.qualityPreset < 4) crf = 34;
+
+                args.push_back("-crf");
+                args.push_back(std::to_string(crf));
+                args.push_back("-b:v");
+                args.push_back("0");
+            }
+        }
+
+        // Hardware encoder bitrate (required for some HW encoders)
+        if (videoEncoder.find("videotoolbox") != std::string::npos ||
+            videoEncoder.find("nvenc") != std::string::npos ||
+            videoEncoder.find("qsv") != std::string::npos ||
+            videoEncoder.find("vaapi") != std::string::npos)
+        {
+            if (config.videoBitrate > 0)
+            {
+                // Already added -b:v above
+            }
+            else
+            {
+                // Default bitrate for HW encoders
+                args.push_back("-b:v");
+                args.push_back("5000k");
+            }
+        }
+
+        // APNG-specific options
+        if (videoEncoder == "apng")
+        {
+            args.push_back("-plays");
+            args.push_back("0");  // Loop forever
+
+            std::string apngPred;
+            if (config.qualityPreset >= 7)
+                apngPred = "mixed";
+            else if (config.qualityPreset >= 4)
+                apngPred = "up";
+            else
+                apngPred = "none";
+
+            args.push_back("-pred");
+            args.push_back(apngPred);
+        }
+
+        // WebP-specific options
+        if (videoEncoder == "libwebp_anim")
+        {
+            args.push_back("-loop");
+            args.push_back("0");      // Loop forever
+            args.push_back("-lossless");
+            args.push_back("1");      // Pixel-perfect for ZX content
         }
     }
 
@@ -871,41 +926,6 @@ std::vector<std::string> FFmpegPipeEncoder::buildFFmpegArgs(const std::string& f
         // Enable faststart for web playback
         args.push_back("-movflags");
         args.push_back("+faststart");
-    }
-
-    if (videoEncoder == "apng")
-    {
-        args.push_back("-plays");
-        args.push_back("0");  // Loop forever
-
-        // PNG prediction method — the single biggest APNG speed lever.
-        // The encoder is zlib-bound and single-threaded; paeth (default)
-        // tries all prediction modes per row and is ~15% slower than none.
-        // For ZX content the difference in output size is small because
-        // the 8×8 attribute grid produces flat blocks that compress well
-        // regardless of prediction method.
-        //
-        //   Quality preset 0-3 (Fastest/Fast):     none  — max speed
-        //   Quality preset 4-6 (Medium):           up   — good balance
-        //   Quality preset 7-10 (High/Best):       mixed — best ratio
-        std::string apngPred;
-        if (config.qualityPreset >= 7)
-            apngPred = "mixed";
-        else if (config.qualityPreset >= 4)
-            apngPred = "up";
-        else
-            apngPred = "none";
-
-        args.push_back("-pred");
-        args.push_back(apngPred);
-    }
-
-    if (videoEncoder == "libwebp_anim")
-    {
-        args.push_back("-loop");
-        args.push_back("0");      // Loop forever
-        args.push_back("-lossless");
-        args.push_back("1");      // Pixel-perfect for ZX content
     }
 
     // --- Output file ---

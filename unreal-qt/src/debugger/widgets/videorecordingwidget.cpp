@@ -205,6 +205,66 @@ void VideoRecordingWidget::createUI()
 {
     auto* mainLayout = new QVBoxLayout(this);
 
+    // Tab widget for Video+Audio vs Audio-only modes
+    _tabWidget = new QTabWidget();
+    mainLayout->addWidget(_tabWidget);
+
+    createVideoTab();
+    createAudioTab();
+
+    // === Realtime Estimation (shared) ===
+    auto* estimateGroup = new QGroupBox("Realtime Estimation");
+    auto* estimateLayout = new QVBoxLayout(estimateGroup);
+    _estimateLabel = new QLabel();
+    _estimateLabel->setWordWrap(true);
+    _estimateLabel->setStyleSheet("padding: 8px; border-radius: 4px;");
+    estimateLayout->addWidget(_estimateLabel);
+    mainLayout->addWidget(estimateGroup);
+
+    // === Benchmark (only for video tab) ===
+    _benchmarkButton = new QPushButton("Benchmark All Encoders");
+    _benchmarkButton->setToolTip("Measure actual encoding performance for all available codec/backend combinations (5 seconds each)");
+    mainLayout->addWidget(_benchmarkButton);
+
+    // === Recording Controls (shared) ===
+    auto* controlsLayout = new QHBoxLayout();
+    _startButton = new QPushButton("Start");
+    _pauseButton = new QPushButton("Pause");
+    _resumeButton = new QPushButton("Resume");
+    _stopButton = new QPushButton("Stop");
+    controlsLayout->addWidget(_startButton);
+    controlsLayout->addWidget(_pauseButton);
+    controlsLayout->addWidget(_resumeButton);
+    controlsLayout->addWidget(_stopButton);
+    mainLayout->addLayout(controlsLayout);
+
+    // === Stats (shared, shown during recording) ===
+    auto* statsGroup = new QGroupBox("Recording Status");
+    auto* statsLayout = new QHBoxLayout(statsGroup);
+    _recordingIndicator = new QLabel("IDLE");
+    _recordingIndicator->setStyleSheet("font-weight: bold; color: gray;");
+    _durationLabel = new QLabel("00:00:00");
+    _sizeLabel = new QLabel("0 MB");
+    _fpsStaticLabel = new QLabel("FPS:");
+    _fpsLabel = new QLabel("0.0 fps");
+    statsLayout->addWidget(_recordingIndicator);
+    statsLayout->addWidget(new QLabel("Duration:"));
+    statsLayout->addWidget(_durationLabel);
+    statsLayout->addWidget(new QLabel("Size:"));
+    statsLayout->addWidget(_sizeLabel);
+    statsLayout->addWidget(_fpsStaticLabel);
+    statsLayout->addWidget(_fpsLabel);
+    mainLayout->addWidget(statsGroup);
+
+    // Initial state
+    updateRecordingControls();
+}
+
+void VideoRecordingWidget::createVideoTab()
+{
+    auto* videoTab = new QWidget();
+    auto* videoLayout = new QVBoxLayout(videoTab);
+
     // === Backend Selection ===
     auto* backendGroup = new QGroupBox("Encoder Backend");
     auto* backendLayout = new QVBoxLayout(backendGroup);
@@ -235,7 +295,7 @@ void VideoRecordingWidget::createUI()
     ffmpegLayout->addWidget(_detectButton);
     backendLayout->addLayout(ffmpegLayout);
 
-    mainLayout->addWidget(backendGroup);
+    videoLayout->addWidget(backendGroup);
 
     // === Output Settings ===
     auto* outputGroup = new QGroupBox("Output");
@@ -302,57 +362,70 @@ void VideoRecordingWidget::createUI()
     audioLayout->addWidget(_multiTrackButton);
     outputLayout->addLayout(audioLayout);
 
-    mainLayout->addWidget(outputGroup);
+    videoLayout->addWidget(outputGroup);
 
-    // === Realtime Estimation ===
-    auto* estimateGroup = new QGroupBox("Realtime Estimation");
-    auto* estimateLayout = new QVBoxLayout(estimateGroup);
-    _estimateLabel = new QLabel();
-    _estimateLabel->setWordWrap(true);
-    _estimateLabel->setStyleSheet("padding: 8px; border-radius: 4px;");
-    estimateLayout->addWidget(_estimateLabel);
-    mainLayout->addWidget(estimateGroup);
+    _tabWidget->addTab(videoTab, "Video + Audio");
+}
 
-    // === Benchmark ===
-    _benchmarkButton = new QPushButton("Benchmark All Encoders");
-    _benchmarkButton->setToolTip("Measure actual encoding performance for all available codec/backend combinations (5 seconds each)");
-    mainLayout->addWidget(_benchmarkButton);
+void VideoRecordingWidget::createAudioTab()
+{
+    auto* audioTab = new QWidget();
+    auto* audioLayout = new QVBoxLayout(audioTab);
 
-    // === Recording Controls ===
-    auto* controlsLayout = new QHBoxLayout();
-    _startButton = new QPushButton("Start");
-    _pauseButton = new QPushButton("Pause");
-    _resumeButton = new QPushButton("Resume");
-    _stopButton = new QPushButton("Stop");
-    controlsLayout->addWidget(_startButton);
-    controlsLayout->addWidget(_pauseButton);
-    controlsLayout->addWidget(_resumeButton);
-    controlsLayout->addWidget(_stopButton);
-    mainLayout->addLayout(controlsLayout);
+    // === Audio Format ===
+    auto* formatGroup = new QGroupBox("Audio Format");
+    auto* formatLayout = new QVBoxLayout(formatGroup);
 
-    // === Stats (shown during recording) ===
-    auto* statsGroup = new QGroupBox("Recording Status");
-    auto* statsLayout = new QHBoxLayout(statsGroup);
-    _recordingIndicator = new QLabel("IDLE");
-    _recordingIndicator->setStyleSheet("font-weight: bold; color: gray;");
-    _durationLabel = new QLabel("00:00:00");
-    _sizeLabel = new QLabel("0 MB");
-    _fpsLabel = new QLabel("0.0 fps");
-    statsLayout->addWidget(_recordingIndicator);
-    statsLayout->addWidget(new QLabel("Duration:"));
-    statsLayout->addWidget(_durationLabel);
-    statsLayout->addWidget(new QLabel("Size:"));
-    statsLayout->addWidget(_sizeLabel);
-    statsLayout->addWidget(new QLabel("FPS:"));
-    statsLayout->addWidget(_fpsLabel);
-    mainLayout->addWidget(statsGroup);
+    auto* formatRow = new QHBoxLayout();
+    formatRow->addWidget(new QLabel("Format:"));
+    _audioFormatCombo = new QComboBox();
+    _audioFormatCombo->addItems({"WAV (PCM)", "MP3", "FLAC", "OGG Vorbis"});
+    formatRow->addWidget(_audioFormatCombo);
+    formatLayout->addLayout(formatRow);
 
-    // Initial state
-    updateRecordingControls();
+    auto* qualityRow = new QHBoxLayout();
+    _audioQualityLabel = new QLabel("Quality:");
+    qualityRow->addWidget(_audioQualityLabel);
+    _audioQualityCombo = new QComboBox();
+    _audioQualityCombo->addItems({"128 kbps", "192 kbps", "256 kbps", "320 kbps"});
+    _audioQualityCombo->setCurrentIndex(1);
+    qualityRow->addWidget(_audioQualityCombo);
+    formatLayout->addLayout(qualityRow);
+
+    audioLayout->addWidget(formatGroup);
+
+    // === Output File ===
+    auto* outputGroup = new QGroupBox("Output");
+    auto* outputLayout = new QVBoxLayout(outputGroup);
+
+    auto* fileLayout = new QHBoxLayout();
+    fileLayout->addWidget(new QLabel("File:"));
+    _audioFilePathEdit = new QLineEdit();
+    QString defaultDir = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
+    if (defaultDir.isEmpty())
+        defaultDir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+    _audioFilePathEdit->setText(defaultDir + "/recording.wav");
+    fileLayout->addWidget(_audioFilePathEdit);
+    _audioBrowseButton = new QPushButton("Browse...");
+    fileLayout->addWidget(_audioBrowseButton);
+    outputLayout->addLayout(fileLayout);
+
+    audioLayout->addWidget(outputGroup);
+
+    // Stretch to push content to top
+    audioLayout->addStretch();
+
+    _tabWidget->addTab(audioTab, "Audio Only");
+}
+
+bool VideoRecordingWidget::isAudioOnlyMode() const
+{
+    return _tabWidget && _tabWidget->currentIndex() == 1;
 }
 
 void VideoRecordingWidget::connectSignals()
 {
+    // Video tab signals
     connect(_detectButton, &QPushButton::clicked, this, &VideoRecordingWidget::onDetectFFmpeg);
     connect(_backendGroup, &QButtonGroup::buttonClicked, this, &VideoRecordingWidget::onBackendChanged);
     connect(_containerCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -362,13 +435,49 @@ void VideoRecordingWidget::connectSignals()
     connect(_audioCodecCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int) { updateRealtimeEstimate(); });
     connect(_browseButton, &QPushButton::clicked, this, &VideoRecordingWidget::onBrowseFile);
+    connect(_includeAudioCheck, &QCheckBox::checkStateChanged, this, &VideoRecordingWidget::onIncludeAudioChanged);
+    connect(_multiTrackButton, &QPushButton::clicked, this, &VideoRecordingWidget::onMultiTrackConfigure);
+    connect(_benchmarkButton, &QPushButton::clicked, this, &VideoRecordingWidget::onBenchmark);
+
+    // Audio tab signals
+    connect(_audioBrowseButton, &QPushButton::clicked, this, [this]() {
+        QString filter = "Audio Files (*.wav *.mp3 *.flac *.ogg);;All Files (*)";
+        QString filename = QFileDialog::getSaveFileName(this, "Save Audio Recording",
+                                                        _audioFilePathEdit->text(), filter);
+        if (!filename.isEmpty())
+            _audioFilePathEdit->setText(filename);
+    });
+    connect(_audioFormatCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int idx) {
+        // Update file extension based on format
+        QString path = _audioFilePathEdit->text();
+        int dotPos = path.lastIndexOf('.');
+        if (dotPos > 0)
+        {
+            QString base = path.left(dotPos);
+            QString ext = (idx == 0) ? ".wav" : (idx == 1) ? ".mp3" : (idx == 2) ? ".flac" : ".ogg";
+            _audioFilePathEdit->setText(base + ext);
+        }
+        // Quality is only relevant for lossy formats (MP3, OGG)
+        bool lossy = (idx == 1 || idx == 3);
+        _audioQualityLabel->setEnabled(lossy);
+        _audioQualityCombo->setEnabled(lossy);
+    });
+
+    // Tab change - update UI state
+    connect(_tabWidget, &QTabWidget::currentChanged, this, [this](int idx) {
+        // Hide FPS and benchmark for audio-only mode
+        bool audioOnly = (idx == 1);
+        _fpsStaticLabel->setVisible(!audioOnly);
+        _fpsLabel->setVisible(!audioOnly);
+        _benchmarkButton->setVisible(!audioOnly);
+        updateRealtimeEstimate();
+    });
+
+    // Shared controls
     connect(_startButton, &QPushButton::clicked, this, &VideoRecordingWidget::onStartRecording);
     connect(_pauseButton, &QPushButton::clicked, this, &VideoRecordingWidget::onPauseRecording);
     connect(_resumeButton, &QPushButton::clicked, this, &VideoRecordingWidget::onResumeRecording);
     connect(_stopButton, &QPushButton::clicked, this, &VideoRecordingWidget::onStopRecording);
-    connect(_includeAudioCheck, &QCheckBox::checkStateChanged, this, &VideoRecordingWidget::onIncludeAudioChanged);
-    connect(_multiTrackButton, &QPushButton::clicked, this, &VideoRecordingWidget::onMultiTrackConfigure);
-    connect(_benchmarkButton, &QPushButton::clicked, this, &VideoRecordingWidget::onBenchmark);
 
     _signalsConnected = true;
 }
@@ -684,6 +793,15 @@ void VideoRecordingWidget::saveBenchmarkResults()
 
 void VideoRecordingWidget::updateRealtimeEstimate()
 {
+    // Audio-only mode: always realtime, no video encoder involved
+    if (isAudioOnlyMode())
+    {
+        QString format = _audioFormatCombo->currentText();
+        _estimateLabel->setText(QString("⚡ REALTIME — %1 audio encoding is trivial").arg(format));
+        _estimateLabel->setStyleSheet("padding: 8px; background-color: #d4edda; color: #155724; border-radius: 4px; font-weight: bold;");
+        return;
+    }
+
     validateContext();
     if (!_context || !_context->pRecordingManager)
     {
@@ -759,6 +877,64 @@ void VideoRecordingWidget::onStartRecording()
     if (!_context || !_context->pRecordingManager)
         return;
 
+    // Handle audio-only mode separately
+    if (isAudioOnlyMode())
+    {
+        QString filename = _audioFilePathEdit->text();
+        if (filename.isEmpty())
+        {
+            QMessageBox::warning(this, "Error", "Please specify an output file path.");
+            return;
+        }
+
+        RecordingManager* rm = _context->pRecordingManager;
+
+        // Audio-only: no video codec, pick audio codec from format combo
+        int formatIdx = _audioFormatCombo->currentIndex();
+        QString audioCodec;
+        switch (formatIdx)
+        {
+            case 0: audioCodec = "pcm_s16le"; break;  // WAV
+            case 1: audioCodec = "mp3"; break;
+            case 2: audioCodec = "flac"; break;
+            case 3: audioCodec = "vorbis"; break;
+            default: audioCodec = "pcm_s16le"; break;
+        }
+
+        // Audio bitrate from quality combo (for lossy formats)
+        int bitrateIdx = _audioQualityCombo->currentIndex();
+        uint32_t audioBitrate = (bitrateIdx == 0) ? 128 : (bitrateIdx == 1) ? 192 :
+                                (bitrateIdx == 2) ? 256 : 320;
+
+        rm->SetEncoderBackend(EncoderBackend::FFmpeg);  // Audio-only requires FFmpeg
+        rm->SetFFmpegPath(_ffmpegPathEdit->text().toStdString());
+        rm->SetVideoEnabled(false);
+
+        bool success = rm->StartRecording(filename.toStdString(),
+                                          "",  // No video codec
+                                          audioCodec.toStdString(),
+                                          0, audioBitrate);
+
+        if (success)
+        {
+            _wasRecording = true;
+            if (_context && _context->pEmulator)
+                _recordingEmulatorId = _context->pEmulator->GetId();
+            _statsTimer->start();
+            updateRecordingControls();
+        }
+        else
+        {
+            std::string err = rm->GetLastRecordingError();
+            if (err.empty())
+                err = "Unknown recording failure.";
+            QMessageBox::critical(this, "Recording Failed",
+                                  QString::fromStdString(err));
+        }
+        return;
+    }
+
+    // Video+Audio mode
     QString filename = _filePathEdit->text();
     if (filename.isEmpty())
     {
@@ -792,6 +968,7 @@ void VideoRecordingWidget::onStartRecording()
 
     // Configure recording manager
     RecordingManager* rm = _context->pRecordingManager;
+    rm->SetVideoEnabled(true);
 
     // Capture region + output size; resolution derives from the region
     rm->SetCaptureRegion(_captureCombo->currentIndex() == 1 ? VideoCaptureRegion::MainScreen

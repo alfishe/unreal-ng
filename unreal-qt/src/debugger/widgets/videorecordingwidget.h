@@ -11,6 +11,7 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QButtonGroup>
+#include <QTabWidget>
 #include <QHash>
 #include <QTimer>
 
@@ -50,6 +51,8 @@ private slots:
 
 private:
     void createUI();
+    void createVideoTab();
+    void createAudioTab();
     void connectSignals();
     void refreshFromContext();
     void updateRealtimeEstimate();
@@ -60,6 +63,9 @@ private:
     void updateFileExtension();
     void detectPlatformInfo();
     void runBenchmark();
+
+    /// Check if audio-only mode is selected (Audio tab active)
+    bool isAudioOnlyMode() const;
 
     /// Verify _context still points to a live emulator; clear it if the
     /// emulator was destroyed (raw pointer can dangle after Release()).
@@ -92,6 +98,9 @@ private:
     std::string _contextEmulatorId;     // Emulator ID for _context (for staleness check)
     std::string _recordingEmulatorId;   // Emulator ID we started recording with
     QTimer* _statsTimer = nullptr;
+
+    // Tab widget for Video vs Audio-only modes
+    QTabWidget* _tabWidget = nullptr;
 
     // Backend
     QButtonGroup* _backendGroup = nullptr;
@@ -128,7 +137,15 @@ private:
     QLabel* _recordingIndicator = nullptr;
     QLabel* _durationLabel = nullptr;
     QLabel* _sizeLabel = nullptr;
+    QLabel* _fpsStaticLabel = nullptr;
     QLabel* _fpsLabel = nullptr;
+
+    // Audio-only tab controls
+    QComboBox* _audioFormatCombo = nullptr;
+    QComboBox* _audioQualityCombo = nullptr;
+    QLabel* _audioQualityLabel = nullptr;
+    QLineEdit* _audioFilePathEdit = nullptr;
+    QPushButton* _audioBrowseButton = nullptr;
 
     bool _signalsConnected = false;
 

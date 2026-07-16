@@ -143,6 +143,7 @@ private:
     uint32_t _width = 0;
     uint32_t _height = 0;
     float _fps = 50.0f;
+    bool _hasVideo = true;
     bool _hasAudio = true;
     bool _isRecording = false;
 
