@@ -58,8 +58,13 @@ struct NvencEncoder::Impl
     int pendingFrames = 0;  // Frames submitted but not yet output
 
     // Encoding state
+    // srcWidth/srcHeight = source framebuffer (before integer upscale)
+    // width/height       = dimensions fed to NVENC (after upscale)
+    uint32_t srcWidth = 0;
+    uint32_t srcHeight = 0;
     uint32_t width = 0;
     uint32_t height = 0;
+    uint32_t scaleFactor = 1;
     uint32_t pitch = 0;
     uint32_t frameIdx = 0;
     uint32_t fps = 50;
@@ -171,6 +176,8 @@ bool NvencEncoder::Impl::initializeEncoder(const EncoderConfig& config)
     fps = static_cast<uint32_t>(config.frameRate);
 
     // Map qualityPreset (0-10) to NVENC presets (P1-P7)
+    // P1=fastest/lowest, P7=slowest/best.  Performance degrades and quality
+    // improves as we move from P1 to P7.
     GUID presetGuid;
     int q = std::clamp(config.qualityPreset, 0, 10);
     if (q <= 2)
@@ -184,7 +191,9 @@ bool NvencEncoder::Impl::initializeEncoder(const EncoderConfig& config)
     else
         presetGuid = NV_ENC_PRESET_P7_GUID;
 
-    // Get preset config with HIGH_QUALITY tuning
+    // Get preset config with HIGH_QUALITY tuning as a starting point.
+    // We then override the problematic defaults (temporal filter, rate
+    // control) that are designed for natural video, not pixel art.
     auto presetConfig = nvencStruct<NV_ENC_PRESET_CONFIG>(NV_ENC_PRESET_CONFIG_VER);
     presetConfig.presetCfg.version = NV_ENC_CONFIG_VER;
 
@@ -192,26 +201,105 @@ bool NvencEncoder::Impl::initializeEncoder(const EncoderConfig& config)
                                             NV_ENC_TUNING_INFO_HIGH_QUALITY, &presetConfig) != NV_ENC_SUCCESS)
         return false;
 
-    // Use constant QP for consistent quality
-    auto& rcParams = presetConfig.presetCfg.rcParams;
-    rcParams.rateControlMode = NV_ENC_PARAMS_RC_CONSTQP;
-    int qp = 28 - q * 2;  // q=0 -> QP 28, q=10 -> QP 8
-    rcParams.constQP.qpInterP = qp;
-    rcParams.constQP.qpInterB = qp;
-    rcParams.constQP.qpIntra = std::max(qp - 2, 1);
+    auto& encCfg = presetConfig.presetCfg;
+    auto& rcParams = encCfg.rcParams;
 
-    // Initialize
+    // --- Rate Control ---
+    // VBR with target quality when explicit bitrate is provided; ConstQP
+    // otherwise.  Both modes enable spatial AQ to preserve sharp pixel-art
+    // edges in flat regions.
+    rcParams.enableAQ = 1;
+    rcParams.aqStrength = 8;  // Moderate AQ: protects text/edges without over-smoothing
+
+    if (config.videoBitrate > 0)
+    {
+        // VBR mode respects the user-configured bitrate.
+        rcParams.rateControlMode = NV_ENC_PARAMS_RC_VBR;
+        rcParams.averageBitRate = config.videoBitrate * 1000;   // kbps -> bps
+        rcParams.maxBitRate = config.videoBitrate * 1500;       // 1.5x headroom for peaks
+        rcParams.vbvBufferSize = config.videoBitrate * 2000;   // 2x bitrate buffer
+        rcParams.vbvInitialDelay = config.videoBitrate * 1000;
+        // targetQuality is a VBR CQ hint (0-51, lower = better).
+        rcParams.targetQuality = static_cast<uint8_t>(std::clamp(30 - q * 2, 8, 30));
+        // Two-pass quarter-resolution analysis improves quality at cost of speed.
+        if (q >= 6)
+            rcParams.multiPass = NV_ENC_TWO_PASS_QUARTER_RESOLUTION;
+    }
+    else
+    {
+        // ConstQP mode: map quality 0-10 to QP 28-10.
+        // Lower QP = better quality.  For pixel art we keep values conservative
+        // to avoid smearing fine detail.
+        rcParams.rateControlMode = NV_ENC_PARAMS_RC_CONSTQP;
+        int qp = std::clamp(30 - q * 2, 8, 28);  // q=0 -> 28, q=10 -> 10
+        rcParams.constQP.qpInterP = qp;
+        rcParams.constQP.qpInterB = qp;
+        rcParams.constQP.qpIntra = std::max(qp - 2, 1);
+    }
+
+    // Lookahead improves scene-cut detection and B-frame placement.
+    // Enable for mid-to-high quality; disable for speed at low quality.
+    if (q >= 5)
+    {
+        rcParams.enableLookahead = 1;
+        rcParams.lookaheadDepth = static_cast<uint16_t>(std::min(fps, 8u));
+    }
+
+    // --- GOP Structure ---
+    // For offline recording (not streaming) a 2-second GOP is a good
+    // balance between compression efficiency and seekability.
+    encCfg.gopLength = fps * 2;
+    // frameIntervalP: 1=IP-only, 2=IBP, 3=IBBP.
+    // B-frames improve compression but add latency (acceptable for recording).
+    encCfg.frameIntervalP = (q >= 4) ? 3 : 1;
+
+    // --- Profile & Codec-Specific Config ---
+    if (useHevc)
+    {
+        encCfg.profileGUID = NV_ENC_HEVC_PROFILE_MAIN_GUID;
+
+        auto& hevc = encCfg.encodeCodecConfig.hevcConfig;
+
+        // CRITICAL: Disable temporal filtering.
+        // The HIGH_QUALITY preset sets tfLevel=4 which blurs sharp pixel
+        // edges across frames — the API docs say it's "recommended for
+        // natural contents", i.e. the opposite of pixel art.
+        hevc.tfLevel = NV_ENC_TEMPORAL_FILTER_LEVEL_0;
+
+        // Main tier (0) is sufficient for our small resolution.
+        // Level 0 = auto-select.
+        hevc.tier = 0;
+        hevc.level = 0;
+
+        // Smallest CU size preserves fine pixel-art detail.
+        hevc.minCUSize = NV_ENC_HEVC_CUSIZE_8x8;
+        // maxCUSize 32x32 is the only supported value per NVENC SDK.
+        hevc.maxCUSize = NV_ENC_HEVC_CUSIZE_32x32;
+
+        // 4:2:0 chroma (matches NV12 input).
+        hevc.chromaFormatIDC = 1;
+    }
+    else
+    {
+        encCfg.profileGUID = NV_ENC_H264_PROFILE_HIGH_GUID;
+
+        auto& h264 = encCfg.encodeCodecConfig.h264Config;
+        h264.chromaFormatIDC = 1;
+    }
+
+    // --- Initialize ---
+    // width/height already include scaleFactor upscaling (set in init()).
     auto initParams = nvencStruct<NV_ENC_INITIALIZE_PARAMS>(NV_ENC_INITIALIZE_PARAMS_VER);
     initParams.encodeGUID = codecGuid;
     initParams.presetGUID = presetGuid;
-    initParams.encodeWidth = config.videoWidth;
-    initParams.encodeHeight = config.videoHeight;
-    initParams.darWidth = config.videoWidth;
-    initParams.darHeight = config.videoHeight;
+    initParams.encodeWidth = width;
+    initParams.encodeHeight = height;
+    initParams.darWidth = width;
+    initParams.darHeight = height;
     initParams.frameRateNum = static_cast<uint32_t>(config.frameRate);
     initParams.frameRateDen = 1;
     initParams.enablePTD = 1;
-    initParams.encodeConfig = &presetConfig.presetCfg;
+    initParams.encodeConfig = &encCfg;
     initParams.tuningInfo = NV_ENC_TUNING_INFO_HIGH_QUALITY;
 
     return nvenc.nvEncInitializeEncoder(encoder, &initParams) == NV_ENC_SUCCESS;
@@ -242,8 +330,14 @@ bool NvencEncoder::Impl::createBuffers()
 
 bool NvencEncoder::Impl::init(const std::string& filename, const EncoderConfig& config, std::string& error)
 {
-    width = config.videoWidth;
-    height = config.videoHeight;
+    // Source dimensions come from the framebuffer; the encoder dimensions
+    // are scaled up by scaleFactor (nearest-neighbor) to preserve per-pixel
+    // ZX color detail through 4:2:0 chroma subsampling.
+    srcWidth = config.videoWidth;
+    srcHeight = config.videoHeight;
+    scaleFactor = config.scaleFactor > 0 ? config.scaleFactor : 1;
+    width = srcWidth * scaleFactor;
+    height = srcHeight * scaleFactor;
     nv12Buffer.resize(width * height * 3 / 2);
 
     if (!loadNvencDll())         { error = "Failed to load NVENC"; return false; }
@@ -324,21 +418,33 @@ void NvencEncoder::Impl::cleanup()
 
 void NvencEncoder::Impl::convertRgbaToNv12(const uint8_t* rgba)
 {
+    // rgba is srcWidth x srcHeight; nv12Buffer is width x height (scaled).
+    // Nearest-neighbor upscaling is applied during conversion so that
+    // each source pixel maps to scaleFactor x scaleFactor output pixels,
+    // preserving sharp edges through the subsequent 4:2:0 chroma subsampling.
     uint8_t* yPlane = nv12Buffer.data();
     uint8_t* uvPlane = yPlane + width * height;
 
-    // Y plane (BT.601)
+    // Y plane (BT.601) with nearest-neighbor upscaling
     for (uint32_t y = 0; y < height; y++)
     {
+        uint32_t sy = y / scaleFactor;
+        if (sy >= srcHeight) sy = srcHeight - 1;
         for (uint32_t x = 0; x < width; x++)
         {
-            const uint8_t* px = rgba + (y * width + x) * 4;
+            uint32_t sx = x / scaleFactor;
+            if (sx >= srcWidth) sx = srcWidth - 1;
+            const uint8_t* px = rgba + (sy * srcWidth + sx) * 4;
             int yVal = ((66 * px[0] + 129 * px[1] + 25 * px[2] + 128) >> 8) + 16;
             yPlane[y * width + x] = static_cast<uint8_t>(std::clamp(yVal, 0, 255));
         }
     }
 
-    // UV plane (2x2 subsampled)
+    // UV plane (2x2 subsampled) with nearest-neighbor upscaling.
+    // At scaleFactor >= 2, each 2x2 block in the scaled domain maps to a
+    // single source pixel, so the chroma value exactly matches the source —
+    // this is what eliminates the color smearing that 4:2:0 would otherwise
+    // introduce at native resolution.
     for (uint32_t y = 0; y < height; y += 2)
     {
         for (uint32_t x = 0; x < width; x += 2)
@@ -347,7 +453,11 @@ void NvencEncoder::Impl::convertRgbaToNv12(const uint8_t* rgba)
             for (int dy = 0; dy < 2; dy++)
                 for (int dx = 0; dx < 2; dx++)
                 {
-                    const uint8_t* px = rgba + ((y + dy) * width + (x + dx)) * 4;
+                    uint32_t sx = (x + dx) / scaleFactor;
+                    uint32_t sy = (y + dy) / scaleFactor;
+                    if (sx >= srcWidth) sx = srcWidth - 1;
+                    if (sy >= srcHeight) sy = srcHeight - 1;
+                    const uint8_t* px = rgba + (sy * srcWidth + sx) * 4;
                     rSum += px[0]; gSum += px[1]; bSum += px[2];
                 }
             int r = rSum / 4, g = gSum / 4, b = bSum / 4;
