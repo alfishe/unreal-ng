@@ -94,6 +94,10 @@ public:
     {
         return _turboSound != nullptr;
     }
+    SoundChip_TurboSound* getTurboSound() const
+    {
+        return _turboSound;
+    }
     SoundChip_AY8910* getAYChip(int index) const;
     int getAYChipCount() const;
     bool isMuted() const

@@ -147,6 +147,12 @@ private:
     QLineEdit* _audioFilePathEdit = nullptr;
     QPushButton* _audioBrowseButton = nullptr;
 
+    // DSD-specific options (visible only when DSD format selected)
+    QGroupBox* _dsdOptionsGroup = nullptr;
+    QCheckBox* _dsdNativeCheck = nullptr;
+    QCheckBox* _dsdPunchCheck = nullptr;
+    QComboBox* _dsdPunchAmountCombo = nullptr;
+
     bool _signalsConnected = false;
 
     // Cached encoder availability (detected in refreshFromContext / onDetectFFmpeg)

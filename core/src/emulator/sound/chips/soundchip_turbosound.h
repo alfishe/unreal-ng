@@ -2,10 +2,13 @@
 
 #include <stdafx.h>
 
+#include <memory>
+
 #include "common/sound/filters/filter_interpolate.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/audio.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
+#include "emulator/sound/native_audio_tap.h"
 
 class SoundChip_TurboSound : public PortDecoder, public PortDevice
 {
@@ -31,6 +34,10 @@ protected:
 
     // HQ DSP flag (FIR filters vs simple averaging)
     bool _hqEnabled = true;
+
+    // Native-rate recording tap (218.75 kHz, pre-decimation).
+    // shared_ptr so a DSD encoder worker can outlive this chip safely.
+    std::shared_ptr<NativeAudioTap> _nativeTap = std::make_shared<NativeAudioTap>();
     /// endregion </AY emulation>
 
     /// endregion </Fields>
@@ -139,6 +146,12 @@ public:
     void setHQEnabled(bool enabled)
     {
         _hqEnabled = enabled;
+    }
+
+    /// Native-rate recording tap (for DSD capture bypassing 44.1 kHz decimation)
+    std::shared_ptr<NativeAudioTap> getNativeTap() const
+    {
+        return _nativeTap;
     }
     /// endregion </Methods>
 

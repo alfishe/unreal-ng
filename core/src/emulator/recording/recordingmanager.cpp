@@ -417,6 +417,76 @@ bool RecordingManager::StartRecordingEx(const std::string& filename)
     return true;
 }
 
+bool RecordingManager::StartRecordingWithEncoder(const std::string& filename, std::unique_ptr<EncoderBase> encoder)
+{
+    if (_isRecording)
+    {
+        MLOGWARNING("RecordingManager::StartRecordingWithEncoder - Already recording, stop current recording first");
+        return false;
+    }
+
+    if (!encoder)
+    {
+        _lastRecordingError = "No encoder provided";
+        MLOGERROR("RecordingManager::StartRecordingWithEncoder - %s", _lastRecordingError.c_str());
+        return false;
+    }
+
+    MLOGINFO("RecordingManager::StartRecordingWithEncoder - Starting recording to '%s' with %s",
+             filename.c_str(), encoder->GetDisplayName().c_str());
+
+    // Prepare output path
+    _outputFilename = PrepareOutputPath(filename, _lastRecordingError);
+    if (_outputFilename.empty())
+    {
+        MLOGERROR("RecordingManager::StartRecordingWithEncoder - %s", _lastRecordingError.c_str());
+        return false;
+    }
+
+    // Serialize encoder (re)creation against the capture path
+    std::lock_guard<std::mutex> lock(_captureMutex);
+
+    // Build encoder config
+    EncoderConfig config;
+    config.videoWidth = _videoWidth;
+    config.videoHeight = _videoHeight;
+    config.frameRate = _videoFrameRate;
+    config.audioSampleRate = _audioSampleRate;
+    config.audioChannels = _audioChannels;
+
+    // Start the custom encoder
+    if (!encoder->Start(_outputFilename, config))
+    {
+        _lastRecordingError = encoder->GetLastError();
+        if (_lastRecordingError.empty())
+            _lastRecordingError = "Encoder failed to start";
+        MLOGERROR("RecordingManager::StartRecordingWithEncoder - %s", _lastRecordingError.c_str());
+        return false;
+    }
+
+    // Add to active encoders
+    _activeEncoders.clear();
+    _activeEncoders.push_back(std::move(encoder));
+
+    // Reset counters
+    _emulatedFrameCount = 0;
+    _emulatedAudioSampleCount = 0;
+    _stats = RecordingStats();
+    _wallClockStart = Clock::now();
+    _wallClockPausedTotal = Clock::duration::zero();
+
+    // Start recording
+    _isRecording = true;
+    _isPaused = false;
+
+    // Track which emulator instance we're recording on
+    if (_context && _context->pEmulator)
+        _recordingEmulatorId = _context->pEmulator->GetId();
+
+    MLOGINFO("RecordingManager::StartRecordingWithEncoder - Recording started successfully");
+    return true;
+}
+
 void RecordingManager::StopRecording()
 {
     if (!_isRecording)

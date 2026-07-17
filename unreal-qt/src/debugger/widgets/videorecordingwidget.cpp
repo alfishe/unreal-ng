@@ -24,12 +24,14 @@
 
 #include "emulator/recording/encoders/gif_encoder.h"
 #include "emulator/recording/encoders/ffmpeg_pipe_encoder.h"
+#include "emulator/recording/encoders/dsd/dsd_encoder.h"
 #include "benchmarkfeeder.h"
 #include "multitrackdialog.h"
 
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
 #include "emulator/recording/recordingmanager.h"
 #include "emulator/recording/platform_encoder.h"
@@ -379,7 +381,7 @@ void VideoRecordingWidget::createAudioTab()
     auto* formatRow = new QHBoxLayout();
     formatRow->addWidget(new QLabel("Format:"));
     _audioFormatCombo = new QComboBox();
-    _audioFormatCombo->addItems({"WAV (PCM)", "MP3", "FLAC", "OGG Vorbis"});
+    _audioFormatCombo->addItems({"WAV (PCM)", "MP3", "FLAC", "OGG Vorbis", "DSD (DSF)"});
     formatRow->addWidget(_audioFormatCombo);
     formatLayout->addLayout(formatRow);
 
@@ -393,6 +395,33 @@ void VideoRecordingWidget::createAudioTab()
     formatLayout->addLayout(qualityRow);
 
     audioLayout->addWidget(formatGroup);
+
+    // === DSD Options (visible only when DSD format selected) ===
+    _dsdOptionsGroup = new QGroupBox("DSD Options");
+    auto* dsdLayout = new QVBoxLayout(_dsdOptionsGroup);
+
+    _dsdNativeCheck = new QCheckBox("Native AY capture (218.75 kHz, TurboSound only)");
+    _dsdNativeCheck->setChecked(true);
+    _dsdNativeCheck->setToolTip(
+        "Capture the AY chip's native generator-rate output directly,\n"
+        "bypassing decimation to 44.1 kHz. Preserves ultrasonic content\n"
+        "up to ~109 kHz. TurboSound only — beeper/COVOX are not included.");
+    dsdLayout->addWidget(_dsdNativeCheck);
+
+    auto* punchRow = new QHBoxLayout();
+    _dsdPunchCheck = new QCheckBox("Punch (soft saturation)");
+    _dsdPunchCheck->setToolTip("Adds harmonic richness via soft saturation,\n"
+                               "applied in the native-rate domain (alias-free)");
+    punchRow->addWidget(_dsdPunchCheck);
+    _dsdPunchAmountCombo = new QComboBox();
+    _dsdPunchAmountCombo->addItems({"Subtle (0.2)", "Moderate (0.4)", "Strong (0.7)"});
+    _dsdPunchAmountCombo->setEnabled(false);
+    punchRow->addWidget(_dsdPunchAmountCombo);
+    punchRow->addStretch();
+    dsdLayout->addLayout(punchRow);
+
+    _dsdOptionsGroup->setVisible(false);
+    audioLayout->addWidget(_dsdOptionsGroup);
 
     // === Output File ===
     auto* outputGroup = new QGroupBox("Output");
@@ -441,7 +470,7 @@ void VideoRecordingWidget::connectSignals()
 
     // Audio tab signals
     connect(_audioBrowseButton, &QPushButton::clicked, this, [this]() {
-        QString filter = "Audio Files (*.wav *.mp3 *.flac *.ogg);;All Files (*)";
+        QString filter = "Audio Files (*.wav *.mp3 *.flac *.ogg *.dsf);;All Files (*)";
         QString filename = QFileDialog::getSaveFileName(this, "Save Audio Recording",
                                                         _audioFilePathEdit->text(), filter);
         if (!filename.isEmpty())
@@ -454,13 +483,47 @@ void VideoRecordingWidget::connectSignals()
         if (dotPos > 0)
         {
             QString base = path.left(dotPos);
-            QString ext = (idx == 0) ? ".wav" : (idx == 1) ? ".mp3" : (idx == 2) ? ".flac" : ".ogg";
+            QString ext;
+            switch (idx)
+            {
+                case 0: ext = ".wav"; break;
+                case 1: ext = ".mp3"; break;
+                case 2: ext = ".flac"; break;
+                case 3: ext = ".ogg"; break;
+                case 4: ext = ".dsf"; break;
+                default: ext = ".wav"; break;
+            }
             _audioFilePathEdit->setText(base + ext);
         }
-        // Quality is only relevant for lossy formats (MP3, OGG)
+        // Quality is relevant for lossy formats (MP3, OGG) and DSD rate selection
+        bool isDSD = (idx == 4);
         bool lossy = (idx == 1 || idx == 3);
-        _audioQualityLabel->setEnabled(lossy);
-        _audioQualityCombo->setEnabled(lossy);
+
+        // Update quality combo labels based on format
+        _audioQualityCombo->blockSignals(true);
+        _audioQualityCombo->clear();
+        if (isDSD)
+        {
+            _audioQualityCombo->addItems({"DSD64 (2.8 MHz)", "DSD128 (5.6 MHz)", "DSD256 (11.2 MHz)"});
+            _audioQualityCombo->setCurrentIndex(1);  // DSD128: sweet spot for native capture
+            _audioQualityLabel->setText("DSD Rate:");
+        }
+        else
+        {
+            _audioQualityCombo->addItems({"128 kbps", "192 kbps", "256 kbps", "320 kbps"});
+            _audioQualityCombo->setCurrentIndex(1);
+            _audioQualityLabel->setText("Quality:");
+        }
+        _audioQualityCombo->blockSignals(false);
+
+        _audioQualityLabel->setEnabled(lossy || isDSD);
+        _audioQualityCombo->setEnabled(lossy || isDSD);
+
+        // DSD-specific options (native tap, punch)
+        _dsdOptionsGroup->setVisible(isDSD);
+    });
+    connect(_dsdPunchCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        _dsdPunchAmountCombo->setEnabled(checked);
     });
 
     // Tab change - update UI state
@@ -891,29 +954,78 @@ void VideoRecordingWidget::onStartRecording()
 
         // Audio-only: no video codec, pick audio codec from format combo
         int formatIdx = _audioFormatCombo->currentIndex();
-        QString audioCodec;
-        switch (formatIdx)
+        bool isDSD = (formatIdx == 4);  // DSD (DSF)
+
+        bool success = false;
+        if (isDSD)
         {
-            case 0: audioCodec = "pcm_s16le"; break;  // WAV
-            case 1: audioCodec = "mp3"; break;
-            case 2: audioCodec = "flac"; break;
-            case 3: audioCodec = "vorbis"; break;
-            default: audioCodec = "pcm_s16le"; break;
+            // DSD uses dedicated encoder, not FFmpeg
+            // Quality combo maps to DSD rate: 0=DSD64, 1=DSD128, 2=DSD256
+            int qualityIdx = _audioQualityCombo->currentIndex();
+            DSDRate dsdRate = (qualityIdx == 0) ? DSDRate::DSD64 :
+                              (qualityIdx == 1) ? DSDRate::DSD128 : DSDRate::DSD256;
+
+            rm->SetEncoderBackend(EncoderBackend::Custom);
+            rm->SetVideoEnabled(false);
+
+            auto dsdEncoder = std::make_unique<DSDEncoder>();
+            dsdEncoder->SetDSDRate(dsdRate);
+
+            // Punch (soft saturation), optional
+            if (_dsdPunchCheck->isChecked())
+            {
+                int punchIdx = _dsdPunchAmountCombo->currentIndex();
+                double punchAmount = (punchIdx == 0) ? 0.2 : (punchIdx == 1) ? 0.4 : 0.7;
+                dsdEncoder->SetPunchEnabled(true);
+                dsdEncoder->SetPunchAmount(punchAmount);
+            }
+
+            // Native AY capture: feed the encoder from the TurboSound
+            // pre-decimation tap (218.75 kHz) instead of the 44.1 kHz mix
+            if (_dsdNativeCheck->isChecked())
+            {
+                SoundManager* sm = _context->pSoundManager;
+                if (sm && sm->hasTurboSound())
+                {
+                    dsdEncoder->SetNativeTap(sm->getTurboSound()->getNativeTap(),
+                                             static_cast<uint32_t>(PSG_CLOCK_RATE / 8));
+                }
+                else
+                {
+                    QMessageBox::warning(this, "Native capture unavailable",
+                                         "TurboSound is not available on this emulator instance.\n"
+                                         "Falling back to 44.1 kHz mix capture.");
+                }
+            }
+
+            success = rm->StartRecordingWithEncoder(filename.toStdString(), std::move(dsdEncoder));
         }
+        else
+        {
+            QString audioCodec;
+            switch (formatIdx)
+            {
+                case 0: audioCodec = "pcm_s16le"; break;  // WAV
+                case 1: audioCodec = "mp3"; break;
+                case 2: audioCodec = "flac"; break;
+                case 3: audioCodec = "vorbis"; break;
+                default: audioCodec = "pcm_s16le"; break;
+            }
 
-        // Audio bitrate from quality combo (for lossy formats)
-        int bitrateIdx = _audioQualityCombo->currentIndex();
-        uint32_t audioBitrate = (bitrateIdx == 0) ? 128 : (bitrateIdx == 1) ? 192 :
-                                (bitrateIdx == 2) ? 256 : 320;
+            // Audio bitrate from quality combo (for lossy formats)
+            int bitrateIdx = _audioQualityCombo->currentIndex();
+            uint32_t audioBitrate = (bitrateIdx == 0) ? 128 : (bitrateIdx == 1) ? 192 :
+                                    (bitrateIdx == 2) ? 256 : 320;
 
-        rm->SetEncoderBackend(EncoderBackend::FFmpeg);  // Audio-only requires FFmpeg
-        rm->SetFFmpegPath(_ffmpegPathEdit->text().toStdString());
-        rm->SetVideoEnabled(false);
+            rm->SetEncoderBackend(EncoderBackend::FFmpeg);  // Audio-only requires FFmpeg
+            rm->SetFFmpegPath(_ffmpegPathEdit->text().toStdString());
+            rm->SetVideoEnabled(false);
 
-        bool success = rm->StartRecording(filename.toStdString(),
-                                          "",  // No video codec
-                                          audioCodec.toStdString(),
-                                          0, audioBitrate);
+            success = rm->StartRecording(filename.toStdString(),
+                                              "",  // No video codec
+                                              audioCodec.toStdString(),
+                                              0, audioBitrate);
+        }
 
         if (success)
         {

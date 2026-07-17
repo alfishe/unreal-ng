@@ -47,6 +47,10 @@ void SoundChip_TurboSound::handleStep()
 
     if (diff > 0)
     {
+        // Native-rate recording tap: active only during DSD capture.
+        // Checked once per handleStep batch; per-tick cost is a plain bool.
+        const bool tapActive = _nativeTap->isActive();
+
         _ayPLL += diff * AUDIO_SAMPLE_TSTATE_INCREMENT;
 
         while (_ayPLL > 1.0 && _ayBufferIndex < AUDIO_SAMPLES_PER_VIDEO_FRAME * AUDIO_CHANNELS)
@@ -69,6 +73,13 @@ void SoundChip_TurboSound::handleStep()
                 {
                     // Tick generators (bypass internal prescaler)
                     updateState(true);
+
+                    // Native-rate tap for DSD capture (pre-decimation, both chips summed)
+                    if (tapActive)
+                    {
+                        _nativeTap->push(static_cast<float>(_chip0->mixedLeft() + _chip1->mixedLeft()),
+                                         static_cast<float>(_chip0->mixedRight() + _chip1->mixedRight()));
+                    }
 
                     // Feed mixed output to decimators
                     _chip0->decimatorLeft().feedSample(_chip0->mixedLeft());
@@ -106,9 +117,18 @@ void SoundChip_TurboSound::handleStep()
                     // Tick generators directly (bypass internal prescaler)
                     updateState(true);
 
+                    double l = _chip0->mixedLeft() + _chip1->mixedLeft();
+                    double r = _chip0->mixedRight() + _chip1->mixedRight();
+
+                    // Native-rate tap for DSD capture (pre-decimation)
+                    if (tapActive)
+                    {
+                        _nativeTap->push(static_cast<float>(l), static_cast<float>(r));
+                    }
+
                     // Accumulate samples
-                    leftSum += _chip0->mixedLeft() + _chip1->mixedLeft();
-                    rightSum += _chip0->mixedRight() + _chip1->mixedRight();
+                    leftSum += l;
+                    rightSum += r;
                     sampleCount++;
                 }
 

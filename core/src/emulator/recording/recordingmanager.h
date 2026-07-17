@@ -81,7 +81,8 @@ enum class EncoderBackend
 {
     Auto,    ///< Try native first, fall back to FFmpeg
     Native,  ///< Force native encoder (VideoToolbox on macOS). Fail if unavailable.
-    FFmpeg   ///< Force FFmpeg pipe encoder. Fail if unavailable.
+    FFmpeg,  ///< Force FFmpeg pipe encoder. Fail if unavailable.
+    Custom   ///< Use externally provided encoder (via StartRecordingWithEncoder)
 };
 
 /// @brief Video/Audio Recording Manager - Captures emulated output for video encoding
@@ -142,6 +143,12 @@ public:
     /// @param filename Output filename
     /// @return true if recording started successfully
     bool StartRecordingEx(const std::string& filename);
+
+    /// Start recording with a custom encoder instance
+    /// @param filename Output filename
+    /// @param encoder Pre-configured encoder (ownership transferred)
+    /// @return true if recording started successfully
+    bool StartRecordingWithEncoder(const std::string& filename, std::unique_ptr<EncoderBase> encoder);
 
     /// Stop current recording and finalize output file
     void StopRecording();
