@@ -161,7 +161,6 @@ private:
     QAction* _intParametersAction;
     QAction* _audioSettingsAction;
     QAction* _screenshotAction;
-    QAction* _recordVideoAction;
     QAction* _videoRecordingAction;
 
     // Quick Record submenu

@@ -59,7 +59,7 @@ void repopulateCombo(QComboBox* combo, const QStringList& items)
 VideoRecordingWidget::VideoRecordingWidget(EmulatorContext* context, QWidget* parent)
     : QWidget(parent), _context(context)
 {
-    setWindowTitle("Video Recording");
+    setWindowTitle("Recording");
     setMinimumWidth(500);
 
     // Track the emulator ID for staleness detection
@@ -521,10 +521,17 @@ void VideoRecordingWidget::connectSignals()
 
         // DSD-specific options (native tap, punch)
         _dsdOptionsGroup->setVisible(isDSD);
+
+        // The estimate text embeds the current format name — refresh it
+        // immediately so it doesn't go stale until some other event fires.
+        updateRealtimeEstimate();
     });
     connect(_dsdPunchCheck, &QCheckBox::toggled, this, [this](bool checked) {
         _dsdPunchAmountCombo->setEnabled(checked);
     });
+    // Audio quality (kbps / DSD rate) — keep estimate in sync on change
+    connect(_audioQualityCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) { updateRealtimeEstimate(); });
 
     // Tab change - update UI state
     connect(_tabWidget, &QTabWidget::currentChanged, this, [this](int idx) {

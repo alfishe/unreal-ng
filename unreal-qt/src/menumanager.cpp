@@ -404,15 +404,9 @@ void MenuManager::createToolsMenu()
     _screenshotAction->setStatusTip(tr("Save screenshot to file"));
     _screenshotAction->setEnabled(false);  // TODO: Implement screenshot
 
-    // Record Video
-    _recordVideoAction = _toolsMenu->addAction(tr("Record &Video..."));
-    _recordVideoAction->setStatusTip(tr("Start/stop video recording"));
-    _recordVideoAction->setCheckable(true);
-    _recordVideoAction->setEnabled(false);  // Legacy action - use _videoRecordingAction
-
-    // Video Recording (dialog toggle)
-    _videoRecordingAction = _toolsMenu->addAction(tr("&Video Recording"));
-    _videoRecordingAction->setStatusTip(tr("Open video recording panel"));
+    // Recording (dialog toggle)
+    _videoRecordingAction = _toolsMenu->addAction(tr("&Recording"));
+    _videoRecordingAction->setStatusTip(tr("Open recording panel"));
     connect(_videoRecordingAction, &QAction::triggered, this, &MenuManager::videoRecordingRequested);
 
     _toolsMenu->addSeparator();
