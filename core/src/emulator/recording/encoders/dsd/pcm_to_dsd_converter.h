@@ -57,8 +57,9 @@ public:
     uint8_t GetChannels() const { return _channels; }
 
 private:
-    // Upsampling filter (polyphase FIR for 2x stages)
-    void Upsample2x(const float* input, float* output, size_t sampleCount, size_t channel);
+    // Upsampling filter (polyphase FIR for 2x stages); each stage keeps
+    // its own delay line per channel
+    void Upsample2x(const float* input, float* output, size_t sampleCount, size_t stage, size_t channel);
 
     // Apply punch/saturation
     float ApplyPunch(float sample) const;

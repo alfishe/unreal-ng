@@ -67,15 +67,18 @@ float NativeDSDConverter::ApplyPunch(float sample) const
 
 void NativeDSDConverter::EmitBits(const double* channelSamples, std::vector<uint8_t>& dsdOutput)
 {
-    // One DSD bit per channel, packed MSB-first into per-channel bytes.
+    // One DSD bit per channel, packed LSB-first into per-channel bytes:
+    // DSF's bitsPerSample=1 mandates oldest-sample-in-LSB. MSB-first packing
+    // makes players time-reverse each byte, folding the ultrasonic shaped
+    // noise into the audio band (~30 dB of broadband hiss, measured).
     // All channels share the same bit clock, so byte columns complete together.
     for (uint8_t ch = 0; ch < _channels; ch++)
     {
         uint8_t bit = 0;
         _modulators[ch]->Process(channelSamples[ch], &bit, 1);
 
-        if (bit & 0x80)
-            _currentByte[ch] |= (1 << (7 - _bitIndex));
+        if (bit)
+            _currentByte[ch] |= (1 << _bitIndex);
     }
 
     _bitIndex++;

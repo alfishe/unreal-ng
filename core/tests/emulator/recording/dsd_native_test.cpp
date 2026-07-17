@@ -205,12 +205,13 @@ TEST(NativeDSDConverterTest, SineReconstructsFromBitstream)
     std::vector<uint8_t> dsd;
     converter.Process(frames.data(), frameCount, dsd);
 
-    // Unpack channel 0 bits to +/-1
+    // Unpack channel 0 bits to +/-1 (LSB-first: oldest sample in bit 0,
+    // per DSF bitsPerSample=1)
     std::vector<double> bits;
     bits.reserve(dsd.size() / 2 * 8);
     for (size_t i = 0; i < dsd.size(); i += 2)
     {
-        for (int b = 7; b >= 0; b--)
+        for (int b = 0; b < 8; b++)
             bits.push_back((dsd[i] >> b) & 1 ? 1.0 : -1.0);
     }
 
@@ -265,6 +266,42 @@ TEST(NativeDSDConverterTest, SineReconstructsFromBitstream)
     double signalPower = recovered * recovered / 2.0;
     double totalPower = sumSq / n;
     EXPECT_GT(signalPower / totalPower, 0.9);
+}
+
+TEST(NativeDSDConverterTest, BitsArePackedLSBFirst)
+{
+    // DSF with bitsPerSample=1 stores the OLDEST sample in the LSB.
+    // Packing MSB-first makes every player time-reverse each byte,
+    // folding shaped ultrasonic noise into the audio band (~30 dB of
+    // broadband hiss on playback — the "gramophone" bug).
+    //
+    // Strategy: two identical modulators get identical input. One is
+    // stepped bit-by-bit (recording the true temporal order), the other
+    // packs 8 bits into a byte via ProcessBlock's inner Process call.
+    DeltaSigmaModulator reference(ModulatorOrder::Fifth, 8);
+    DeltaSigmaModulator packed(ModulatorOrder::Fifth, 8);
+
+    // A varying input keeps the bit pattern non-uniform
+    const double input = 0.3;
+
+    // Reference: temporal bit order via 8 single-bit calls
+    uint8_t refBits[8];
+    for (int i = 0; i < 8; i++)
+    {
+        uint8_t b = 0;
+        reference.Process(input, &b, 1);
+        refBits[i] = b ? 1 : 0;
+    }
+
+    // Packed: one call producing a full byte
+    uint8_t byte = 0;
+    packed.Process(input, &byte, 8);
+
+    // Bit i in time must be bit i of the byte (LSB first)
+    for (int i = 0; i < 8; i++)
+    {
+        EXPECT_EQ((byte >> i) & 1, refBits[i]) << "temporal bit " << i << " misplaced";
+    }
 }
 
 TEST(NativeDSDConverterTest, PunchDoesNotBreakModulator)

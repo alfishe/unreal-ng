@@ -135,9 +135,10 @@ void DeltaSigmaModulator::Process(double pcmSample, uint8_t* dsdBits, size_t num
         // 1-bit quantizer: output +1 or -1
         _lastOutput = (sum >= 0.0) ? 1.0 : -1.0;
 
-        // Store bit (MSB first within each byte)
+        // Store bit LSB-first within each byte (DSF bitsPerSample=1 order:
+        // oldest sample in the least significant bit)
         size_t byteIdx = i / 8;
-        size_t bitIdx = 7 - (i % 8);
+        size_t bitIdx = i % 8;
         if (_lastOutput > 0)
             dsdBits[byteIdx] |= (1 << bitIdx);
         else

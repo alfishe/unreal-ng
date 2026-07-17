@@ -122,12 +122,14 @@ float PCMToDSDConverter::ApplyPunch(float sample) const
 }
 
 void PCMToDSDConverter::Upsample2x(const float* input, float* output,
-                                   size_t sampleCount, size_t channel)
+                                   size_t sampleCount, size_t stage, size_t channel)
 {
     // Polyphase implementation of 2x upsampling
     // Insert zeros between samples, then filter
 
-    auto& state = _filterStates[0][channel];  // Using stage 0 state for simplicity
+    // Each cascaded stage needs its OWN delay line — sharing stage 0's
+    // state across stages corrupts the filter history between them
+    auto& state = _filterStates[stage][channel];
     constexpr size_t filterLen = UPSAMPLE_FILTER_TAPS;
 
     for (size_t i = 0; i < sampleCount; i++)
@@ -220,7 +222,7 @@ size_t PCMToDSDConverter::ProcessFloat(const float* pcmInput, size_t sampleCount
             std::vector<float>& outputBuffer = (stage % 2 == 0) ? tempBuffer1 : tempBuffer2;
             outputBuffer.resize(outputSampleCount);
 
-            Upsample2x(currentBuffer->data(), outputBuffer.data(), currentSampleCount, ch);
+            Upsample2x(currentBuffer->data(), outputBuffer.data(), currentSampleCount, stage, ch);
 
             currentBuffer = &outputBuffer;
             currentSampleCount = outputSampleCount;
@@ -244,10 +246,10 @@ size_t PCMToDSDConverter::ProcessFloat(const float* pcmInput, size_t sampleCount
             uint8_t bit;
             _modulators[ch]->Process(sample, &bit, 1);
 
-            // Pack bit into output
+            // Pack bit LSB-first (DSF bitsPerSample=1: oldest sample in LSB)
             size_t byteIdx = i / 8;
-            size_t bitIdx = 7 - (i % 8);  // MSB first
-            if (bit & 0x80)
+            size_t bitIdx = i % 8;
+            if (bit)
                 channelDSD[byteIdx] |= (1 << bitIdx);
         }
 
