@@ -117,6 +117,9 @@ private:
     /// Resolve the audio encoder name based on config and target container
     std::string resolveAudioEncoder(const EncoderConfig& config, const std::string& container);
 
+    /// Get the ffmpeg-compatible pipe path (adds \\.\pipe\ prefix on Windows)
+    std::string getFFmpegPipePath(const std::string& pipeName) const;
+
     /// Create temp directory for named pipes
     bool createTempDir();
 

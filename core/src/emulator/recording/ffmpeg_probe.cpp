@@ -18,6 +18,64 @@
 // Private helpers
 // ============================================================================
 
+#ifdef _WIN32
+/// Search for a binary in winget package directories (they have version numbers in path)
+/// @param binaryName e.g. "ffmpeg.exe" or "ffprobe.exe"
+static std::string searchWingetPackages(const std::string& binaryName)
+{
+    char localAppData[MAX_PATH];
+    if (GetEnvironmentVariableA("LOCALAPPDATA", localAppData, MAX_PATH) == 0)
+        return {};
+
+    // Winget installs packages under %LOCALAPPDATA%/Microsoft/WinGet/Packages
+    // FFmpeg packages have names like "Gyan.FFmpeg_*" with version subdirs
+    std::string packagesDir = std::string(localAppData) + "\\Microsoft\\WinGet\\Packages";
+
+    WIN32_FIND_DATAA findData;
+    HANDLE hFind = FindFirstFileA((packagesDir + "\\*FFmpeg*").c_str(), &findData);
+    if (hFind == INVALID_HANDLE_VALUE)
+        return {};
+
+    std::string result;
+    do
+    {
+        if (!(findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+            continue;
+
+        std::string packageDir = packagesDir + "\\" + findData.cFileName;
+
+        // Search for bin subdirectories containing the binary
+        WIN32_FIND_DATAA subFind;
+        HANDLE hSubFind = FindFirstFileA((packageDir + "\\*").c_str(), &subFind);
+        if (hSubFind != INVALID_HANDLE_VALUE)
+        {
+            do
+            {
+                if (!(subFind.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+                    continue;
+                if (subFind.cFileName[0] == '.')
+                    continue;
+
+                std::string binPath = packageDir + "\\" + subFind.cFileName + "\\bin\\" + binaryName;
+                DWORD attr = GetFileAttributesA(binPath.c_str());
+                if (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY))
+                {
+                    result = binPath;
+                    break;
+                }
+            } while (FindNextFileA(hSubFind, &subFind));
+            FindClose(hSubFind);
+        }
+
+        if (!result.empty())
+            break;
+    } while (FindNextFileA(hFind, &findData));
+
+    FindClose(hFind);
+    return result;
+}
+#endif
+
 std::vector<std::string> FFmpegProbe::getDefaultSearchPaths()
 {
     std::vector<std::string> paths;
@@ -37,14 +95,53 @@ std::vector<std::string> FFmpegProbe::getDefaultSearchPaths()
     };
 #elif defined(_WIN32)
     // Windows: check common install locations
-    char progFiles[MAX_PATH];
-    GetEnvironmentVariableA("PROGRAMFILES", progFiles, MAX_PATH);
+    char envBuf[MAX_PATH];
 
-    paths = {
-        std::string(progFiles) + "\\ffmpeg\\bin",
-        std::string(progFiles) + "\\ffmpeg",
-        "."
-    };
+    // Program Files locations
+    if (GetEnvironmentVariableA("PROGRAMFILES", envBuf, MAX_PATH) > 0)
+    {
+        paths.push_back(std::string(envBuf) + "\\ffmpeg\\bin");
+        paths.push_back(std::string(envBuf) + "\\ffmpeg");
+    }
+
+    // Program Files (x86) for 32-bit ffmpeg on 64-bit Windows
+    if (GetEnvironmentVariableA("PROGRAMFILES(X86)", envBuf, MAX_PATH) > 0)
+    {
+        paths.push_back(std::string(envBuf) + "\\ffmpeg\\bin");
+        paths.push_back(std::string(envBuf) + "\\ffmpeg");
+    }
+
+    // MSYS2/MinGW paths (installed via pacman -S mingw-w64-x86_64-ffmpeg)
+    paths.push_back("C:\\msys64\\mingw64\\bin");
+    paths.push_back("C:\\msys64\\mingw32\\bin");
+    paths.push_back("C:\\msys64\\usr\\bin");
+    paths.push_back("C:\\msys64\\clang64\\bin");
+    paths.push_back("C:\\msys64\\ucrt64\\bin");
+
+    // Alternative MSYS2 install locations
+    paths.push_back("C:\\msys2\\mingw64\\bin");
+    paths.push_back("C:\\msys2\\mingw32\\bin");
+
+    // Chocolatey default install path
+    if (GetEnvironmentVariableA("ChocolateyInstall", envBuf, MAX_PATH) > 0)
+    {
+        paths.push_back(std::string(envBuf) + "\\bin");
+    }
+    paths.push_back("C:\\ProgramData\\chocolatey\\bin");
+
+    // Scoop default install path
+    if (GetEnvironmentVariableA("USERPROFILE", envBuf, MAX_PATH) > 0)
+    {
+        paths.push_back(std::string(envBuf) + "\\scoop\\shims");
+        paths.push_back(std::string(envBuf) + "\\scoop\\apps\\ffmpeg\\current\\bin");
+    }
+
+    // Common standalone downloads
+    paths.push_back("C:\\ffmpeg\\bin");
+    paths.push_back("C:\\ffmpeg");
+
+    // Current directory as last resort
+    paths.push_back(".");
 #endif
 
     return paths;
@@ -145,13 +242,20 @@ std::string FFmpegProbe::findFFmpeg()
     for (const auto& dir : paths)
     {
         std::string fullPath = dir;
-        if (fullPath.back() != '/' && fullPath.back() != '\\')
+        if (!fullPath.empty() && fullPath.back() != '/' && fullPath.back() != '\\')
             fullPath += '/';
         fullPath += binaryName;
 
         if (isExecutable(fullPath))
             return fullPath;
     }
+
+#ifdef _WIN32
+    // 3. Windows: search winget package directories (version numbers in path)
+    found = searchWingetPackages(binaryName);
+    if (!found.empty())
+        return found;
+#endif
 
     return {};
 }
@@ -174,13 +278,20 @@ std::string FFmpegProbe::findFFprobe()
     for (const auto& dir : paths)
     {
         std::string fullPath = dir;
-        if (fullPath.back() != '/' && fullPath.back() != '\\')
+        if (!fullPath.empty() && fullPath.back() != '/' && fullPath.back() != '\\')
             fullPath += '/';
         fullPath += binaryName;
 
         if (isExecutable(fullPath))
             return fullPath;
     }
+
+#ifdef _WIN32
+    // 3. Windows: search winget package directories (version numbers in path)
+    found = searchWingetPackages(binaryName);
+    if (!found.empty())
+        return found;
+#endif
 
     return {};
 }
@@ -343,9 +454,12 @@ std::string FFmpegProbe::getCapabilityReport(const std::string& ffmpegPath)
     {
         report << "FFmpeg: NOT FOUND\n";
         report << "Install ffmpeg or set path manually.\n";
-        report << "  macOS:  brew install ffmpeg\n";
-        report << "  Ubuntu: sudo apt install ffmpeg\n";
-        report << "  Windows: Download from https://ffmpeg.org/download.html\n";
+        report << "  macOS:   brew install ffmpeg\n";
+        report << "  Ubuntu:  sudo apt install ffmpeg\n";
+        report << "  Windows: winget install ffmpeg\n";
+        report << "           or: choco install ffmpeg\n";
+        report << "           or: pacman -S mingw-w64-x86_64-ffmpeg (MSYS2)\n";
+        report << "           or: https://ffmpeg.org/download.html\n";
         return report.str();
     }
 

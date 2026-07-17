@@ -2,6 +2,7 @@
 
 #include "dsd_types.h"
 #include "delta_sigma_modulator.h"
+#include <algorithm>
 #include <vector>
 #include <memory>
 

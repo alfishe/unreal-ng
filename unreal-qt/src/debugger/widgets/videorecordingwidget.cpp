@@ -548,7 +548,32 @@ void VideoRecordingWidget::connectSignals()
 void VideoRecordingWidget::refreshFromContext()
 {
     detectPlatformInfo();
-    onDetectFFmpeg();  // Also populates containers/codecs and the estimate
+
+    // Load cached FFmpeg path from settings (avoids slow filesystem scan on every open)
+    QSettings settings("unreal-ng", "recording");
+    QString cachedPath = settings.value("ffmpegPath").toString();
+
+    if (!cachedPath.isEmpty())
+    {
+        // Verify cached path still exists (quick file check, not full scan)
+        if (QFile::exists(cachedPath))
+        {
+            _ffmpegPathEdit->setText(cachedPath);
+            _ffmpegPathEdit->setStyleSheet("color: green;");
+            _ffmpegAvailable = true;
+            _ffmpegHasWebP = FFmpegProbe::isEncoderAvailable("libwebp_anim", cachedPath.toStdString()) ||
+                             FFmpegProbe::isEncoderAvailable("libwebp", cachedPath.toStdString());
+            _ffmpegBackendRadio->setEnabled(true);
+            populateContainers();
+            updateRealtimeEstimate();
+            return;
+        }
+        // Cached path invalid — clear it and re-detect
+        settings.remove("ffmpegPath");
+    }
+
+    // No valid cached path — start async detection
+    startAsyncFFmpegDetection();
 }
 
 void VideoRecordingWidget::detectPlatformInfo()
@@ -572,31 +597,71 @@ void VideoRecordingWidget::detectPlatformInfo()
     }
 }
 
-void VideoRecordingWidget::onDetectFFmpeg()
+void VideoRecordingWidget::startAsyncFFmpegDetection()
 {
-    std::string path = FFmpegProbe::findFFmpeg();
-    _ffmpegAvailable = !path.empty();
+    // Show detecting status
+    _ffmpegPathEdit->setText("Detecting FFmpeg...");
+    _ffmpegPathEdit->setStyleSheet("color: gray; font-style: italic;");
+    _ffmpegAvailable = false;
+    _ffmpegBackendRadio->setEnabled(false);
 
-    if (_ffmpegAvailable)
-    {
-        _ffmpegPathEdit->setText(QString::fromStdString(path));
-        _ffmpegPathEdit->setStyleSheet("color: green;");
-        _ffmpegHasWebP = FFmpegProbe::isEncoderAvailable("libwebp_anim", path) ||
-                         FFmpegProbe::isEncoderAvailable("libwebp", path);
-    }
-    else
-    {
-        _ffmpegPathEdit->setStyleSheet("color: red;");
-        _ffmpegHasWebP = false;
-    }
-
-    _ffmpegBackendRadio->setEnabled(_ffmpegAvailable);
-    if (!_ffmpegAvailable && _ffmpegBackendRadio->isChecked())
-        _autoBackendRadio->setChecked(true);
-
-    // Availability affects the whole capability matrix
+    // Populate with what we have now (no FFmpeg)
     populateContainers();
     updateRealtimeEstimate();
+
+    // Run detection in background thread
+    QPointer<VideoRecordingWidget> self(this);
+    std::thread([self]() {
+        std::string path = FFmpegProbe::findFFmpeg();
+        bool hasWebP = false;
+        if (!path.empty())
+        {
+            hasWebP = FFmpegProbe::isEncoderAvailable("libwebp_anim", path) ||
+                      FFmpegProbe::isEncoderAvailable("libwebp", path);
+        }
+
+        // Update UI on main thread
+        QMetaObject::invokeMethod(qApp, [self, path, hasWebP]() {
+            if (!self)
+                return;
+
+            self->_ffmpegAvailable = !path.empty();
+            self->_ffmpegHasWebP = hasWebP;
+
+            if (self->_ffmpegAvailable)
+            {
+                self->_ffmpegPathEdit->setText(QString::fromStdString(path));
+                self->_ffmpegPathEdit->setStyleSheet("color: green;");
+
+                // Cache the path for next time
+                QSettings settings("unreal-ng", "recording");
+                settings.setValue("ffmpegPath", QString::fromStdString(path));
+            }
+            else
+            {
+                self->_ffmpegPathEdit->setText("");
+                self->_ffmpegPathEdit->setPlaceholderText("FFmpeg not found");
+                self->_ffmpegPathEdit->setStyleSheet("color: red;");
+            }
+
+            self->_ffmpegBackendRadio->setEnabled(self->_ffmpegAvailable);
+            if (!self->_ffmpegAvailable && self->_ffmpegBackendRadio->isChecked())
+                self->_autoBackendRadio->setChecked(true);
+
+            // Refresh UI now that FFmpeg status is known
+            self->populateContainers();
+            self->updateRealtimeEstimate();
+        }, Qt::QueuedConnection);
+    }).detach();
+}
+
+void VideoRecordingWidget::onDetectFFmpeg()
+{
+    // Manual detect button: always re-scan (user may have installed ffmpeg)
+    QSettings settings("unreal-ng", "recording");
+    settings.remove("ffmpegPath");  // Clear cache to force fresh detection
+
+    startAsyncFFmpegDetection();
 }
 
 void VideoRecordingWidget::onBackendChanged()

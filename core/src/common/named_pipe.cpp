@@ -14,6 +14,7 @@
 // Windows includes
 #include <windows.h>
 #include <cstring>
+#include <limits>
 #endif
 
 // ============================================================================
@@ -198,6 +199,7 @@ bool NamedPipe::openForWrite(const std::string& path, int timeoutMs)
 
 bool NamedPipe::openForWriteTimeout(const std::string& path, int timeoutMs, const std::atomic<bool>* abortFlag)
 {
+    (void)abortFlag;  // TODO: implement abort check during ConnectNamedPipe
     _path = path;
 
     std::string pipeName = "\\\\.\\pipe\\" + path;
@@ -214,14 +216,14 @@ bool NamedPipe::openForWriteTimeout(const std::string& path, int timeoutMs, cons
 
     if (_handle == INVALID_HANDLE_VALUE)
     {
-        _lastError = "CreateNamedPipe failed, error: " + std::to_string(GetLastError());
+        _lastError = "CreateNamedPipe failed, error: " + std::to_string(::GetLastError());
         _handle = nullptr;
         return false;
     }
 
     if (!ConnectNamedPipe(_handle, nullptr))
     {
-        DWORD err = GetLastError();
+        DWORD err = ::GetLastError();
         if (err != ERROR_PIPE_CONNECTED)
         {
             _lastError = "ConnectNamedPipe failed, error: " + std::to_string(err);
@@ -254,11 +256,11 @@ bool NamedPipe::write(const void* data, size_t size, const std::atomic<bool>* ab
         }
 
         DWORD bytesWritten = 0;
-        DWORD toWrite = static_cast<DWORD>(min(size - totalWritten, static_cast<size_t>(DWORD_MAX)));
+        DWORD toWrite = static_cast<DWORD>(min(size - totalWritten, static_cast<size_t>((std::numeric_limits<DWORD>::max)())));
 
         if (!WriteFile(_handle, buf + totalWritten, toWrite, &bytesWritten, nullptr))
         {
-            _lastError = "WriteFile failed, error: " + std::to_string(GetLastError());
+            _lastError = "WriteFile failed, error: " + std::to_string(::GetLastError());
             return false;
         }
 

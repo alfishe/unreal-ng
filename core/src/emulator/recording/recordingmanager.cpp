@@ -88,9 +88,15 @@ static std::string PrepareOutputPath(const std::string& path, std::string& error
     std::string result = path;
 
     // Expand "~/..." (fopen/AVFoundation do not expand tilde)
-    if (!result.empty() && result[0] == '~' && (result.size() == 1 || result[1] == '/'))
+    // On Windows, also check for backslash after tilde
+    if (!result.empty() && result[0] == '~' && (result.size() == 1 || result[1] == '/' || result[1] == '\\'))
     {
         const char* home = std::getenv("HOME");
+#ifdef _WIN32
+        // Windows uses USERPROFILE or HOMEPATH instead of HOME
+        if (!home)
+            home = std::getenv("USERPROFILE");
+#endif
         if (home)
             result = std::string(home) + result.substr(1);
     }

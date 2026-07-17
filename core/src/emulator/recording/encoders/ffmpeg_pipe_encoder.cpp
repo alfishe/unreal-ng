@@ -65,7 +65,7 @@ bool FFmpegPipeEncoder::createTempDir()
 
     if (!CreateDirectoryA(_tempDir.c_str(), nullptr))
     {
-        DWORD err = GetLastError();
+        DWORD err = ::GetLastError();
         if (err != ERROR_ALREADY_EXISTS)
         {
             _lastError = "Failed to create temp directory, error: " + std::to_string(err);
@@ -149,8 +149,12 @@ bool FFmpegPipeEncoder::Start(const std::string& filename, const EncoderConfig& 
     _videoPipePath = _tempDir + "/video.fifo";
     _audioPipePath = _tempDir + "/audio.fifo";
 #else
-    _videoPipePath = "video_pipe";
-    _audioPipePath = "audio_pipe";
+    // Windows named pipes use \\.\pipe\name format
+    // Use unique names based on pointer to allow multiple instances
+    char uniqueSuffix[32];
+    snprintf(uniqueSuffix, sizeof(uniqueSuffix), "_%p", this);
+    _videoPipePath = std::string("unreal_video") + uniqueSuffix;
+    _audioPipePath = std::string("unreal_audio") + uniqueSuffix;
 #endif
 
     // Create named pipes (only for streams we have)
@@ -637,6 +641,17 @@ std::string FFmpegPipeEncoder::resolveAudioEncoder(const EncoderConfig& config, 
     return "aac";
 }
 
+std::string FFmpegPipeEncoder::getFFmpegPipePath(const std::string& pipeName) const
+{
+#ifdef _WIN32
+    // Windows: ffmpeg needs full \\.\pipe\name path
+    return "\\\\.\\pipe\\" + pipeName;
+#else
+    // Unix: pipe path is already the full filesystem path
+    return pipeName;
+#endif
+}
+
 std::vector<std::string> FFmpegPipeEncoder::buildFFmpegArgs(const std::string& filename, const EncoderConfig& config)
 {
     std::vector<std::string> args;
@@ -692,7 +707,7 @@ std::vector<std::string> FFmpegPipeEncoder::buildFFmpegArgs(const std::string& f
         // Use integer fps to avoid floating point PTS issues
         args.push_back(std::to_string(static_cast<int>(std::round(_fps))));
         args.push_back("-i");
-        args.push_back(_videoPipePath);
+        args.push_back(getFFmpegPipePath(_videoPipePath));
         videoInputIndex = inputIndex++;
     }
 
@@ -710,7 +725,7 @@ std::vector<std::string> FFmpegPipeEncoder::buildFFmpegArgs(const std::string& f
         args.push_back("-ac");
         args.push_back(std::to_string(config.audioChannels));
         args.push_back("-i");
-        args.push_back(_audioPipePath);
+        args.push_back(getFFmpegPipePath(_audioPipePath));
         audioInputIndex = inputIndex++;
     }
 

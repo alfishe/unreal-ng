@@ -11,6 +11,7 @@
 #else
 // Windows includes
 #include <windows.h>
+#include <limits>
 #endif
 
 #include <cstring>
@@ -542,7 +543,7 @@ bool Process::writeToStdin(const void* data, size_t size)
 
     while (totalWritten < size)
     {
-        DWORD toWrite = static_cast<DWORD>(min(size - totalWritten, static_cast<size_t>(DWORD_MAX)));
+        DWORD toWrite = static_cast<DWORD>(min(size - totalWritten, static_cast<size_t>((std::numeric_limits<DWORD>::max)())));
         if (!WriteFile(_hStdinWrite, buf + totalWritten, toWrite, &bytesWritten, nullptr))
         {
             DWORD err = GetLastError();
