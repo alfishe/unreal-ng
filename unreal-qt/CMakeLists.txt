@@ -10,7 +10,7 @@ set(ENABLE_AUTOMATION ON CACHE BOOL "Enable automation features (Lua, Python, We
 set(ENABLE_LUA_AUTOMATION ON CACHE BOOL "Enable Lua automation" FORCE)
 # Python automation: always follow the root CMakeLists.txt setting (OFF by default)
 # Never override with ON here — root CMakeLists.txt is the single source of truth.
-set(ENABLE_WEBAPI_AUTOMATION ON CACHE BOOL "Enable WebAPI automation" FORCE)
+set(ENABLE_WEBAPI_AUTOMATION OFF CACHE BOOL "Enable WebAPI automation" FORCE)
 set(ENABLE_CLI_AUTOMATION ON CACHE BOOL "Enable CLI automation" FORCE)
 
 # Set C++ standard (C++20 required)

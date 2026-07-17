@@ -169,29 +169,29 @@ void RecordingManager::onEmulatorStateChange(int /*id*/, Message* message)
 {
     if (auto* payload = dynamic_cast<SimpleNumberPayload*>(message->obj))
     {
+        // Only auto-stop recording when the emulator is being DESTROYED, not on regular stop/reset
         if (payload->_payloadNumber == StateStopped && _isRecording)
         {
             // NC_EMULATOR_STATE_CHANGE is a global broadcast — every emulator
             // instance posts it and every RecordingManager receives it.
             // The payload carries only the state number, NOT the emulator ID.
-            // We must verify this stop is from OUR emulator before reacting,
-            // otherwise stopping one instance kills recording on all others.
-            bool ourStop = false;
+            // We must verify this is OUR emulator being destroyed before stopping.
+            bool ourDestroying = false;
             if (_context && _context->pEmulator)
             {
-                auto state = _context->pEmulator->GetState();
-                ourStop = (state == StateStopped || state == StateDestroying ||
-                           _context->pEmulator->IsDestroying());
+                // Only stop if emulator is being destroyed, not on regular stop/reset
+                ourDestroying = (_context->pEmulator->GetState() == StateDestroying ||
+                                 _context->pEmulator->IsDestroying());
             }
             else
             {
-                // Context already gone — stop defensively
-                ourStop = true;
+                // Context already gone — emulator was destroyed
+                ourDestroying = true;
             }
 
-            if (ourStop)
+            if (ourDestroying)
             {
-                MLOGINFO("RecordingManager: Own emulator stopped/destroyed, auto-stopping recording");
+                MLOGINFO("RecordingManager: Emulator destroyed, auto-stopping recording");
                 StopRecording();
             }
         }
@@ -202,13 +202,11 @@ void RecordingManager::Reset()
 {
     MLOGDEBUG("RecordingManager::Reset - Resetting recording manager");
 
-    // Stop recording if active
-    if (_isRecording)
-    {
-        StopRecording();
-    }
+    // Do NOT stop recording on reset - user may want to record across resets
+    // Recording only auto-stops when the emulator is destroyed
 
-    // Reset counters
+    // Reset counters (these track total frames/samples recorded, not per-reset)
+    // Note: We could optionally preserve these across resets if needed
     _emulatedFrameCount = 0;
     _emulatedAudioSampleCount = 0;
 

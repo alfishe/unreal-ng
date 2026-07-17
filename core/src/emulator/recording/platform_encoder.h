@@ -29,6 +29,7 @@ public:
         std::string displayName;   ///< Human-readable name
         bool supportsH264 = false; ///< H.264 support
         bool supportsHEVC = false; ///< HEVC/H.265 support
+        bool supportsAV1 = false;  ///< AV1 support (Ada Lovelace+)
         bool supportsAudio = false; ///< Audio muxing support (AAC via AVAssetWriter)
     };
 

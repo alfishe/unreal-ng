@@ -547,95 +547,111 @@ void VideoRecordingWidget::connectSignals()
 
 void VideoRecordingWidget::refreshFromContext()
 {
-    detectPlatformInfo();
-
-    // Load cached FFmpeg path from settings (avoids slow filesystem scan on every open)
+    // Load cached settings first - instant, no blocking
     QSettings settings("unreal-ng", "recording");
-    QString cachedPath = settings.value("ffmpegPath").toString();
+    QString cachedFFmpegPath = settings.value("ffmpegPath").toString();
+    bool cachedNativeAvailable = settings.value("nativeAvailable", false).toBool();
+    QString cachedNativeName = settings.value("nativeDisplayName").toString();
+    bool cachedFFmpegHasWebP = settings.value("ffmpegHasWebP", false).toBool();
 
-    if (!cachedPath.isEmpty())
+    // Apply cached native encoder state immediately
+    if (cachedNativeAvailable && !cachedNativeName.isEmpty())
     {
-        // Verify cached path still exists (quick file check, not full scan)
-        if (QFile::exists(cachedPath))
-        {
-            _ffmpegPathEdit->setText(cachedPath);
-            _ffmpegPathEdit->setStyleSheet("color: green;");
-            _ffmpegAvailable = true;
-            _ffmpegHasWebP = FFmpegProbe::isEncoderAvailable("libwebp_anim", cachedPath.toStdString()) ||
-                             FFmpegProbe::isEncoderAvailable("libwebp", cachedPath.toStdString());
-            _ffmpegBackendRadio->setEnabled(true);
-            populateContainers();
-            updateRealtimeEstimate();
-            return;
-        }
-        // Cached path invalid — clear it and re-detect
-        settings.remove("ffmpegPath");
+        _nativeAvailable = true;
+        _platformInfoLabel->setText("✓ " + cachedNativeName);
+        _platformInfoLabel->setStyleSheet("color: green; font-weight: bold;");
+        _nativeBackendRadio->setEnabled(true);
+        _nativeBackendRadio->setText("Native (" + cachedNativeName + ")");
+    }
+    else
+    {
+        _nativeAvailable = false;
+        _platformInfoLabel->setText("Detecting native encoder...");
+        _platformInfoLabel->setStyleSheet("color: gray; font-style: italic;");
+        _nativeBackendRadio->setEnabled(false);
+        _nativeBackendRadio->setText("Native (detecting...)");
     }
 
-    // No valid cached path — start async detection
-    startAsyncFFmpegDetection();
+    // Apply cached FFmpeg state immediately
+    if (!cachedFFmpegPath.isEmpty() && QFile::exists(cachedFFmpegPath))
+    {
+        _ffmpegPathEdit->setText(cachedFFmpegPath);
+        _ffmpegPathEdit->setStyleSheet("color: green;");
+        _ffmpegAvailable = true;
+        _ffmpegHasWebP = cachedFFmpegHasWebP;
+        _ffmpegBackendRadio->setEnabled(true);
+    }
+    else
+    {
+        _ffmpegPathEdit->setText("");
+        _ffmpegPathEdit->setPlaceholderText("Detecting FFmpeg...");
+        _ffmpegPathEdit->setStyleSheet("color: gray; font-style: italic;");
+        _ffmpegAvailable = false;
+        _ffmpegBackendRadio->setEnabled(false);
+    }
+
+    populateContainers();
+    updateRealtimeEstimate();
+
+    // Start async detection for both - will update UI when done
+    startAsyncDetection();
 }
 
 void VideoRecordingWidget::detectPlatformInfo()
 {
-    _nativeAvailable = PlatformEncoderFactory::isNativeAvailable();
-
-    if (_nativeAvailable)
-    {
-        QString name = QString::fromStdString(PlatformEncoderFactory::getNativeDisplayName());
-        _platformInfoLabel->setText("✓ " + name);
-        _platformInfoLabel->setStyleSheet("color: green; font-weight: bold;");
-        _nativeBackendRadio->setEnabled(true);
-        _nativeBackendRadio->setText("Native (" + name + ")");
-    }
-    else
-    {
-        _platformInfoLabel->setText("✗ No native encoder available on this platform");
-        _platformInfoLabel->setStyleSheet("color: gray;");
-        _nativeBackendRadio->setEnabled(false);
-        _nativeBackendRadio->setText("Native (unavailable)");
-    }
+    // Called only from async thread results now
 }
 
-void VideoRecordingWidget::startAsyncFFmpegDetection()
+void VideoRecordingWidget::startAsyncDetection()
 {
-    // Show detecting status
-    _ffmpegPathEdit->setText("Detecting FFmpeg...");
-    _ffmpegPathEdit->setStyleSheet("color: gray; font-style: italic;");
-    _ffmpegAvailable = false;
-    _ffmpegBackendRadio->setEnabled(false);
-
-    // Populate with what we have now (no FFmpeg)
-    populateContainers();
-    updateRealtimeEstimate();
-
-    // Run detection in background thread
+    // Run all detection in background thread - dialog is already open
     QPointer<VideoRecordingWidget> self(this);
     std::thread([self]() {
-        std::string path = FFmpegProbe::findFFmpeg();
+        // Detect native encoder (NVENC, VideoToolbox)
+        bool nativeAvailable = PlatformEncoderFactory::isNativeAvailable();
+        std::string nativeName;
+        if (nativeAvailable)
+            nativeName = PlatformEncoderFactory::getNativeDisplayName();
+
+        // Detect FFmpeg
+        std::string ffmpegPath = FFmpegProbe::findFFmpeg();
         bool hasWebP = false;
-        if (!path.empty())
+        if (!ffmpegPath.empty())
         {
-            hasWebP = FFmpegProbe::isEncoderAvailable("libwebp_anim", path) ||
-                      FFmpegProbe::isEncoderAvailable("libwebp", path);
+            hasWebP = FFmpegProbe::isEncoderAvailable("libwebp_anim", ffmpegPath) ||
+                      FFmpegProbe::isEncoderAvailable("libwebp", ffmpegPath);
         }
 
         // Update UI on main thread
-        QMetaObject::invokeMethod(qApp, [self, path, hasWebP]() {
+        QMetaObject::invokeMethod(qApp, [self, nativeAvailable, nativeName, ffmpegPath, hasWebP]() {
             if (!self)
                 return;
 
-            self->_ffmpegAvailable = !path.empty();
-            self->_ffmpegHasWebP = hasWebP;
+            // Update native encoder state
+            self->_nativeAvailable = nativeAvailable;
+            if (nativeAvailable)
+            {
+                QString name = QString::fromStdString(nativeName);
+                self->_platformInfoLabel->setText("✓ " + name);
+                self->_platformInfoLabel->setStyleSheet("color: green; font-weight: bold;");
+                self->_nativeBackendRadio->setEnabled(true);
+                self->_nativeBackendRadio->setText("Native (" + name + ")");
+            }
+            else
+            {
+                self->_platformInfoLabel->setText("✗ No native encoder available");
+                self->_platformInfoLabel->setStyleSheet("color: gray;");
+                self->_nativeBackendRadio->setEnabled(false);
+                self->_nativeBackendRadio->setText("Native (unavailable)");
+            }
 
+            // Update FFmpeg state
+            self->_ffmpegAvailable = !ffmpegPath.empty();
+            self->_ffmpegHasWebP = hasWebP;
             if (self->_ffmpegAvailable)
             {
-                self->_ffmpegPathEdit->setText(QString::fromStdString(path));
+                self->_ffmpegPathEdit->setText(QString::fromStdString(ffmpegPath));
                 self->_ffmpegPathEdit->setStyleSheet("color: green;");
-
-                // Cache the path for next time
-                QSettings settings("unreal-ng", "recording");
-                settings.setValue("ffmpegPath", QString::fromStdString(path));
             }
             else
             {
@@ -643,16 +659,36 @@ void VideoRecordingWidget::startAsyncFFmpegDetection()
                 self->_ffmpegPathEdit->setPlaceholderText("FFmpeg not found");
                 self->_ffmpegPathEdit->setStyleSheet("color: red;");
             }
-
             self->_ffmpegBackendRadio->setEnabled(self->_ffmpegAvailable);
             if (!self->_ffmpegAvailable && self->_ffmpegBackendRadio->isChecked())
                 self->_autoBackendRadio->setChecked(true);
 
-            // Refresh UI now that FFmpeg status is known
+            // Cache results for next dialog open
+            QSettings settings("unreal-ng", "recording");
+            settings.setValue("nativeAvailable", nativeAvailable);
+            settings.setValue("nativeDisplayName", QString::fromStdString(nativeName));
+            if (!ffmpegPath.empty())
+            {
+                settings.setValue("ffmpegPath", QString::fromStdString(ffmpegPath));
+                settings.setValue("ffmpegHasWebP", hasWebP);
+            }
+            else
+            {
+                settings.remove("ffmpegPath");
+                settings.remove("ffmpegHasWebP");
+            }
+
+            // Refresh UI
             self->populateContainers();
             self->updateRealtimeEstimate();
         }, Qt::QueuedConnection);
     }).detach();
+}
+
+void VideoRecordingWidget::startAsyncFFmpegDetection()
+{
+    // For manual re-detect button - just call the combined detection
+    startAsyncDetection();
 }
 
 void VideoRecordingWidget::onDetectFFmpeg()
@@ -777,8 +813,20 @@ QStringList VideoRecordingWidget::videoCodecsFor(const QString& container) const
     const bool nativeOnly = _nativeBackendRadio->isChecked();
     const bool ffmpegUsable = !nativeOnly && _ffmpegAvailable;
 
+    // Native encoder: query actual capabilities
     if (nativeOnly)
-        return {"H.264", "H.265 (HEVC)"};  // VideoToolbox: H.264/HEVC in MP4/MOV
+    {
+        QStringList codecs;
+        auto encoders = PlatformEncoderFactory::getAvailableNativeEncoders();
+        if (!encoders.empty())
+        {
+            const auto& enc = encoders[0];
+            if (enc.supportsH264) codecs << "H.264";
+            if (enc.supportsHEVC) codecs << "H.265 (HEVC)";
+            if (enc.supportsAV1)  codecs << "AV1";
+        }
+        return codecs.isEmpty() ? QStringList{"H.264"} : codecs;
+    }
 
     QStringList codecs;
     if (c == "MP4")
@@ -1509,23 +1557,32 @@ void VideoRecordingWidget::runBenchmark()
     struct TestEntry { QString codec; QString backend; QString label; };
     std::vector<TestEntry> tests;
 
-    // GIF always available
-    tests.push_back({"gif", "Palette", "GIF (FixedZX16)"});
+    // 1. Embedded encoders (no dependencies)
+    tests.push_back({"gif", "Palette", "GIF"});
 
-    // H.264 / H.265 via native hardware encoder
+    // 2. Native hardware encoders (NVENC, VideoToolbox)
     if (nativeAvailable)
     {
-        QString nativeName = QString::fromStdString(PlatformEncoderFactory::getNativeDisplayName());
-        tests.push_back({"h264", "Native", QString("H.264 (%1)").arg(nativeName)});
-        tests.push_back({"h265", "Native", QString("H.265 (%1)").arg(nativeName)});
+        auto encoders = PlatformEncoderFactory::getAvailableNativeEncoders();
+        if (!encoders.empty())
+        {
+            const auto& enc = encoders[0];
+            QString name = QString::fromStdString(enc.displayName);
+            if (enc.supportsH264)
+                tests.push_back({"h264", "Native", QString("H.264 (%1)").arg(name)});
+            if (enc.supportsHEVC)
+                tests.push_back({"hevc", "Native", QString("HEVC (%1)").arg(name)});
+            if (enc.supportsAV1)
+                tests.push_back({"av1", "Native", QString("AV1 (%1)").arg(name)});
+        }
     }
 
-    // FFmpeg codecs — the combinations the recording UI actually offers
+    // 3. FFmpeg encoders (ordered by common usage)
     if (ffmpegAvailable)
     {
         tests.push_back({"h264", "FFmpeg", "H.264 (FFmpeg)"});
-        tests.push_back({"h265", "FFmpeg", "H.265 (FFmpeg)"});
-        tests.push_back({"vp9", "FFmpeg", "VP9/WebM (FFmpeg)"});
+        tests.push_back({"hevc", "FFmpeg", "HEVC (FFmpeg)"});
+        tests.push_back({"vp9", "FFmpeg", "VP9 (FFmpeg)"});
         tests.push_back({"apng", "FFmpeg", "APNG (FFmpeg)"});
         if (_ffmpegHasWebP)
             tests.push_back({"webp", "FFmpeg", "WebP (FFmpeg)"});

@@ -63,6 +63,7 @@ private:
     void updateFileExtension();
     void detectPlatformInfo();
     void runBenchmark();
+    void startAsyncDetection();
     void startAsyncFFmpegDetection();
 
     /// Check if audio-only mode is selected (Audio tab active)
