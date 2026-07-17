@@ -52,6 +52,10 @@ private:
 
     EmulatorContext* _context = nullptr;
 
+    // Shown when no emulator is active; controls container greys out
+    QLabel* _statusLabel = nullptr;
+    QWidget* _controlsContainer = nullptr;
+
     // AY controls
     QCheckBox* _firCheckbox = nullptr;
     QCheckBox* _ayPunchCheckbox = nullptr;

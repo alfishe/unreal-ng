@@ -2012,17 +2012,13 @@ void MainWindow::handleAudioSettingsRequested()
         return;
     }
 
-    if (!m_binding || !m_binding->emulator())
+    // Open even without an active emulator: the widget shows a status
+    // banner and greys out its controls when context is null, which is
+    // less confusing than the menu item silently doing nothing
+    EmulatorContext* context = nullptr;
+    if (m_binding && m_binding->emulator())
     {
-        qDebug() << "Cannot open Audio Settings: No active emulator instance";
-        return;
-    }
-
-    EmulatorContext* context = m_binding->emulator()->GetContext();
-    if (!context)
-    {
-        qDebug() << "Cannot open Audio Settings: No emulator context";
-        return;
+        context = m_binding->emulator()->GetContext();
     }
 
     // Create audio settings widget as a dialog

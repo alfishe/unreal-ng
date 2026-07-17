@@ -24,7 +24,25 @@ void AudioSettingsWidget::setContext(EmulatorContext* context)
 
 void AudioSettingsWidget::createUI()
 {
-    auto* layout = new QVBoxLayout(this);
+    auto* outerLayout = new QVBoxLayout(this);
+
+    // Status banner: visible only when no emulator is active. Lives outside
+    // the controls container so it stays readable while controls grey out.
+    _statusLabel = new QLabel(
+        "No active emulator instance.\n"
+        "Controls are disabled — start an emulator to adjust audio settings.", this);
+    _statusLabel->setWordWrap(true);
+    _statusLabel->setStyleSheet(
+        "padding: 8px; background-color: #fff3cd; color: #856404; "
+        "border: 1px solid #ffeeba; border-radius: 4px; font-weight: bold;");
+    _statusLabel->setVisible(false);
+    outerLayout->addWidget(_statusLabel);
+
+    _controlsContainer = new QWidget(this);
+    outerLayout->addWidget(_controlsContainer);
+
+    auto* layout = new QVBoxLayout(_controlsContainer);
+    layout->setContentsMargins(0, 0, 0, 0);
 
     // ============ AY/TurboSound group ============
     auto* ayGroup = new QGroupBox("AY / TurboSound", this);
@@ -231,7 +249,10 @@ void AudioSettingsWidget::refreshFromContext()
     disconnectSignals();
 
     bool hasContext = _context && _context->pSoundManager;
-    setEnabled(hasContext);
+
+    // Grey out controls but keep the window (and the explanation) readable
+    _controlsContainer->setEnabled(hasContext);
+    _statusLabel->setVisible(!hasContext);
 
     if (hasContext)
     {
