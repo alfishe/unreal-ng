@@ -24,7 +24,6 @@ NvencEncoder (encoder_base.h interface)
 - `core/src/emulator/recording/platform/windows/mp4_muxer.cpp` - Native MP4 muxer
 - `core/src/emulator/recording/platform/windows/mp4_muxer.h` - Muxer interface
 - `core/src/emulator/recording/platform/windows/nvEncodeAPI.h` - Official FFmpeg nv-codec-headers v12.2
-- `tools/nvenc_poc/test_quality_presets.py` - Automated quality preset validation harness
 
 ## Issues Encountered & Solutions
 
@@ -159,7 +158,7 @@ if (_hasCtts) {
 }
 ```
 
-**Current Status:** IN PROGRESS - frames output but playback shows only keyframes (slideshow effect)
+**Current Status:** RESOLVED — B-frame playback works correctly with proper buffer pipeline and ctts handling
 
 **Key NVIDIA Documentation Points:**
 - "The client can call NvEncLockBitstream() API on the output buffers in the same order in which it has called NvEncEncodePicture()"
@@ -214,6 +213,48 @@ moov (movie metadata)
 ```
 
 ## Quality Settings
+
+### NVENC Profile GUIDs
+
+Available profile GUIDs from `nvEncodeAPI.h` (v12.2):
+
+**HEVC (H.265):**
+
+| GUID Constant | Profile | Bit Depth | Chroma | Used by Unreal-NG |
+|---------------|---------|-----------|--------|-------------------|
+| `NV_ENC_HEVC_PROFILE_MAIN_GUID` | Main | 8-bit | 4:2:0 | **Yes** ✓ |
+| `NV_ENC_HEVC_PROFILE_MAIN10_GUID` | Main 10 | 10-bit | 4:2:0 | No |
+| `NV_ENC_HEVC_PROFILE_FREXT_GUID` | Main 4:4:4 | 8/10-bit | 4:4:4 | No |
+
+**H.264 (AVC):**
+
+| GUID Constant | Profile | B-Frames | Used by Unreal-NG |
+|---------------|---------|----------|-------------------|
+| `NV_ENC_H264_PROFILE_BASELINE_GUID` | Baseline | No | No |
+| `NV_ENC_H264_PROFILE_MAIN_GUID` | Main | Yes | No |
+| `NV_ENC_H264_PROFILE_HIGH_GUID` | High | Yes | **Yes** ✓ |
+| `NV_ENC_H264_PROFILE_HIGH_444_GUID` | High 4:4:4 | Yes | No |
+| `NV_ENC_H264_PROFILE_PROGRESSIVE_HIGH_GUID` | Progressive High | Yes | No |
+| `NV_ENC_H264_PROFILE_CONSTRAINED_HIGH_GUID` | Constrained High | No | No |
+| `NV_ENC_H264_PROFILE_STEREO_GUID` | Stereo High | Yes | No |
+| `NV_ENC_CODEC_PROFILE_AUTOSELECT_GUID` | Auto | Depends | No (explicit selection preferred) |
+
+### NVENC Tuning Info
+
+The encoder uses `NV_ENC_TUNING_INFO_HIGH_QUALITY` for all presets. Available tuning modes:
+
+| Tuning | Value | Description | Temporal Filter | B-Frames | Used |
+|--------|-------|-------------|-----------------|----------|------|
+| `UNDEFINED` | 0 | Invalid | — | — | No |
+| `HIGH_QUALITY` | 1 | Latency-tolerant, best quality | **On by default** ⚠️ | Yes | **Yes** ✓ |
+| `LOW_LATENCY` | 2 | Low-latency streaming | Off | No | No |
+| `ULTRA_LOW_LATENCY` | 3 | Ultra-low-latency streaming | Off | No | No |
+| `LOSSLESS` | 4 | Mathematically lossless | Off | Yes | No |
+| `ULTRA_HIGH_QUALITY` | 5 | Highest quality (HEVC only, Turing+) | **On by default** ⚠️ | Yes | No |
+
+> **Note:** `HIGH_QUALITY` and `ULTRA_HIGH_QUALITY` both enable temporal filtering (`tfLevel=4`) by default, which blurs pixel-art content. The encoder explicitly overrides this to `tfLevel=0` (see [Pixel-Art Quality Overrides](#pixel-art-quality-overrides) below).
+
+### Quality Preset Mapping
 
 The UI exposes 5 quality levels mapped to NVENC presets and QP values:
 
