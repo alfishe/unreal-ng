@@ -24,6 +24,7 @@ NvencEncoder (encoder_base.h interface)
 - `core/src/emulator/recording/platform/windows/mp4_muxer.cpp` - Native MP4 muxer
 - `core/src/emulator/recording/platform/windows/mp4_muxer.h` - Muxer interface
 - `core/src/emulator/recording/platform/windows/nvEncodeAPI.h` - Official FFmpeg nv-codec-headers v12.2
+- `tools/nvenc_poc/test_quality_presets.py` - Automated quality preset validation harness
 
 ## Issues Encountered & Solutions
 
@@ -214,17 +215,50 @@ moov (movie metadata)
 
 ## Quality Settings
 
-| qualityPreset | NVENC Preset | QP Value | Description |
-|---------------|--------------|----------|-------------|
-| 0-2 | P1 | 28-24 | Fastest, lowest quality |
-| 3-4 | P3 | 22-20 | Fast |
-| 5-6 | P5 | 18-16 | Balanced |
-| 7-8 | P6 | 14-12 | High quality |
-| 9-10 | P7 | 10-8 | Best quality, slowest |
+The UI exposes 5 quality levels mapped to NVENC presets and QP values:
 
-QP formula: `qp = 28 - qualityPreset * 2`
+| UI Level | qualityPreset | NVENC Preset | QP Value | Rate Control | Description |
+|----------|---------------|--------------|----------|-------------|-------------|
+| Fastest  | 1 | P1 | 28 | ConstQP | Fastest, lowest quality |
+| Fast     | 3 | P3 | 24 | ConstQP | Good speed/quality |
+| Medium   | 5 | P5 | 20 | ConstQP | Balanced (default) |
+| High     | 7 | P6 | 16 | ConstQP | High quality |
+| Best     | 9 | P7 | 12 | ConstQP | Best quality, slowest |
 
-All use `NV_ENC_TUNING_INFO_HIGH_QUALITY` tuning and `NV_ENC_PARAMS_RC_CONSTQP` rate control.
+Preset mapping: `q <= 2 → P1`, `q <= 4 → P3`, `q <= 6 → P5`, `q <= 8 → P6`, `else P7`
+
+QP formula (ConstQP mode): `qp = clamp(30 - qualityPreset * 2, 8, 28)`
+
+### Rate Control
+
+- **When `videoBitrate > 0`**: VBR mode with `targetQuality` hint, VBV buffer at 2x bitrate, and two-pass quarter-resolution analysis at quality ≥ 6
+- **When `videoBitrate == 0`**: ConstQP mode (shown above)
+
+Both modes enable spatial AQ (`enableAQ=1`, `aqStrength=8`) to preserve sharp pixel-art edges.
+
+### Pixel-Art Quality Overrides
+
+The `NV_ENC_TUNING_INFO_HIGH_QUALITY` preset enables several defaults designed for natural video that are harmful to pixel-art content. The following overrides are applied after loading the preset config:
+
+| Setting | Preset Default | Override | Reason |
+|---------|---------------|----------|--------|
+| `hevcConfig.tfLevel` | `LEVEL_4` (temporal filter on) | `LEVEL_0` (disabled) | Temporal filter blurs sharp pixel-art edges across frames; NVENC docs say "recommended for natural contents" |
+| `hevcConfig.minCUSize` | Auto | `8x8` | Smallest coding unit preserves fine pixel detail |
+| `profileGUID` | Auto-select | HEVC Main / H.264 High | Explicit profile for consistency |
+| `enableAQ` | Off | On (strength 8) | Spatial AQ protects text/edge regions in flat color areas |
+| `enableLookahead` | Off | On (q ≥ 5, depth min(fps,8)) | Better scene-cut detection and B-frame placement |
+| `gopLength` | Auto | `fps * 2` | Fixed 2-second GOP for seekability |
+| `frameIntervalP` | Auto | 3 (IBBP) at q ≥ 4, else 1 (IP-only) | B-frames improve compression for recording |
+
+### Scale Factor (Nearest-Neighbor Upscaling)
+
+The `scaleFactor` config field (default 1, UI default 2) applies integer upscaling before encoding. This is **critical** for ZX pixel art with YUV codecs:
+
+- At 1x (native 352×288), 4:2:0 chroma subsampling halves color resolution and smears per-pixel multicolor effects
+- At 2x+, each 2×2 chroma block maps to exactly one source pixel, so colors are preserved exactly
+- Upscaling is nearest-neighbor (no interpolation) to keep edges crisp
+
+The NVENC encoder applies this during RGBA→NV12 conversion, matching the behavior of the FFmpeg pipe encoder path.
 
 ## Current Status
 
@@ -232,20 +266,78 @@ All use `NV_ENC_TUNING_INFO_HIGH_QUALITY` tuning and `NV_ENC_PARAMS_RC_CONSTQP` 
 - NVENC detection and capability probing with caching
 - H.264 and HEVC codec selection based on config
 - Quality presets (P1-P7 mapping from 0-10 scale)
-- Constant QP rate control for consistent quality
+- ConstQP and VBR rate control modes
 - MP4 container with proper atom structure
 - Parameter set extraction (VPS/SPS/PPS) from Annex-B
 - Annex-B to AVCC/HVCC conversion (start codes → length prefix)
 - Buffer queue for B-frame pipeline
 - PTS tracking via inputTimeStamp/outputTimeStamp
+- Nearest-neighbor scaleFactor upscaling (RGBA→NV12 conversion)
+- Pixel-art quality overrides (temporal filter disabled, spatial AQ, lookahead)
+- Explicit profile setting (HEVC Main / H.264 High)
 
-### In Progress
-- B-frame playback (slideshow instead of smooth video)
-- Proper ctts handling and frame ordering
+### Known Issues Resolved
+- **Heavy blur on H.265 output**: Fixed by disabling temporal filtering (`tfLevel=0`) which the HIGH_QUALITY preset enables by default — it is designed for natural video content, not pixel art
+- **Suspiciously small output files**: Fixed by proper rate control (VBR when bitrate configured, better QP range) and by no longer ignoring the `videoBitrate` config field
+- **Color smearing**: Fixed by respecting `scaleFactor` for nearest-neighbor upscaling before encoding
+- **B-frame playback (slideshow)**: Fixed via proper buffer pipeline and ctts handling
 
 ### Not Implemented
 - AV1 encoding (requires Ada Lovelace+ GPU, separate codec config)
 - Audio muxing (NVENC is video-only; would need separate AAC encoder)
+
+## Quality Preset Test Results
+
+Automated testing validates that all 5 UI quality levels produce correct output characteristics. Test harness: `tools/nvenc_poc/test_quality_presets.py`
+
+### Test Methodology
+
+1. Generate animated pixel-art source content (mandelbrot zoom with per-frame motion, sharp edges)
+2. Encode at all 5 quality levels using ffmpeg NVENC with parameters matching the C++ code
+3. Validate: monotonic file size increase, detail preservation (luma σ), bitrate progression
+
+### H.265 (HEVC) Results
+
+| UI Level | Preset | QP | File Size | Bitrate | Profile |
+|----------|--------|----|-----------|---------|---------|
+| Fastest  | P1     | 28 | 921 KB    | 1,886 kbps | Main   |
+| Fast     | P3     | 24 | 1,361 KB  | 2,788 kbps | Main   |
+| Medium   | P5     | 20 | 1,428 KB  | 2,924 kbps | Main   |
+| High     | P6     | 16 | 2,104 KB  | 4,308 kbps | Main   |
+| Best     | P7     | 12 | 3,012 KB  | 6,169 kbps | Main   |
+
+**Size ratio**: 3.3× (Fastest → Best)
+
+### H.264 Results
+
+| UI Level | Preset | QP | File Size | Bitrate | Profile |
+|----------|--------|----|-----------|---------|---------|
+| Fastest  | P1     | 28 | 671 KB    | 1,375 kbps | High   |
+| Fast     | P3     | 24 | 1,073 KB  | 2,197 kbps | High   |
+| Medium   | P5     | 20 | 1,486 KB  | 3,043 kbps | High   |
+| High     | P6     | 16 | 2,234 KB  | 4,575 kbps | High   |
+| Best     | P7     | 12 | 3,169 KB  | 6,490 kbps | High   |
+
+**Size ratio**: 4.7× (Fastest → Best)
+
+### Validation Results
+
+- **Monotonic file size increase**: PASS (both codecs)
+- **Detail preservation (luma σ)**: PASS — temporal filtering disabled, so sharpness is maintained at all quality levels
+- **Profile correctness**: PASS — HEVC Main, H.264 High at all levels
+- **Bitrate progression**: 3.3–4.7× from Fastest to Best, confirming clear quality differentiation
+
+### Running the Tests
+
+```bash
+# HEVC test (default)
+python tools/nvenc_poc/test_quality_presets.py
+
+# H.264 test
+python tools/nvenc_poc/test_quality_presets.py --h264
+```
+
+Output files (comparison frames and encoded MP4s) are written to `%TEMP%\nvenc_quality_test\`.
 
 ## References
 
