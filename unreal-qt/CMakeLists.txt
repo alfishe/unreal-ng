@@ -205,6 +205,12 @@ include_directories(
 # Build all dependency libraries
 add_subdirectory("3rdparty/QHexView-5.0")
 
+# QHexView sets CXX_STANDARD 11 internally (bumped to 17 by Qt6). On MSVC 14.29 (VS2019),
+# Qt 6.9's qtmochelpers.h fails to compile in C++17 mode (lambda-captured variable not
+# resolved after decltype(...)::template expression — MSVC conformance bug in C++17 mode).
+# C++20 mode has the correct behavior, so override QHexView to match the project standard.
+set_target_properties(QHexView PROPERTIES CXX_STANDARD 20)
+
 # Add core/tests only if not already defined by parent build
 if (NOT TARGET unrealng::core)
     add_subdirectory("${ROOT_DIR}/core/src" core)

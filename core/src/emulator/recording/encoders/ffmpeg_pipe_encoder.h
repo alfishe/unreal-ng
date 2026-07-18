@@ -12,7 +12,7 @@
 
 #include "../encoder_base.h"
 #include "../encoder_config.h"
-#include "../../../common/process.h"
+#include "../../../common/subprocess.h"
 #include "../../../common/named_pipe.h"
 
 /// @brief FFmpeg Pipe Encoder — Universal fallback encoder using external ffmpeg binary
@@ -127,7 +127,7 @@ private:
     void cleanup();
 
     // FFmpeg process
-    Process _ffmpegProcess;
+    Subprocess _ffmpegProcess;
 
     // Named pipes for feeding data to ffmpeg
     std::unique_ptr<NamedPipe> _videoPipe;
