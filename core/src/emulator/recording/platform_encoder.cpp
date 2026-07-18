@@ -7,6 +7,8 @@
 #elif defined(_WIN32)
 #include "platform/windows/nvenc_probe.h"
 #include "platform/windows/nvenc_encoder.h"
+#include "platform/windows/qsv_probe.h"
+#include "platform/windows/qsv_encoder.h"
 #endif
 
 // ============================================================================
@@ -19,8 +21,8 @@ bool PlatformEncoderFactory::isNativeAvailable()
     // VideoToolbox is always available on macOS 10.8+
     return true;
 #elif defined(_WIN32)
-    // Check for NVENC support (NVIDIA GPU with driver installed)
-    return NvencProbe::isAvailable();
+    // Check for NVENC or QSV support
+    return NvencProbe::isAvailable() || QsvProbe::isAvailable();
 #elif defined(__linux__)
     // Future: check for VA-API support
     return false;
@@ -57,7 +59,20 @@ std::vector<PlatformEncoderFactory::NativeEncoderInfo> PlatformEncoderFactory::g
             info.displayName = "NVIDIA NVENC";
             info.supportsH264 = nvencInfo.supportsH264;
             info.supportsHEVC = nvencInfo.supportsHEVC;
-            // AV1 encoding not yet implemented in NvencEncoder
+            info.supportsAV1 = false;
+            info.supportsAudio = false;
+            encoders.push_back(info);
+        }
+    }
+    {
+        auto qsvInfo = QsvProbe::getInfo();
+        if (qsvInfo.available)
+        {
+            NativeEncoderInfo info;
+            info.id = "qsv";
+            info.displayName = "Intel QuickSync";
+            info.supportsH264 = qsvInfo.supportsH264;
+            info.supportsHEVC = qsvInfo.supportsHEVC;
             info.supportsAV1 = false;
             info.supportsAudio = false;
             encoders.push_back(info);
@@ -88,17 +103,20 @@ EncoderPtr PlatformEncoderFactory::createNativeEncoder(const EncoderConfig& conf
 
     return std::make_unique<VideoToolboxEncoder>();
 #elif defined(_WIN32)
-    // Windows: NVENC for H.264/HEVC if NVIDIA GPU available
-    if (!NvencProbe::isAvailable())
-        return nullptr;
-
     std::string codec = config.videoCodec;
     for (auto& ch : codec) ch = static_cast<char>(::tolower(ch));
     if (codec != "h264" && codec != "h.264" && codec != "avc" &&
         codec != "h265" && codec != "h.265" && codec != "hevc")
         return nullptr;
 
-    return std::make_unique<NvencEncoder>();
+    // Prefer NVENC if available, otherwise try QSV
+    if (NvencProbe::isAvailable())
+        return std::make_unique<NvencEncoder>();
+
+    if (QsvProbe::isAvailable())
+        return std::make_unique<QsvEncoder>();
+
+    return nullptr;
 #elif defined(__linux__)
     // Future: create VA-API encoder
     (void)config;

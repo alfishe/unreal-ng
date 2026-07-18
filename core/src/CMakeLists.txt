@@ -51,6 +51,15 @@ file (GLOB_RECURSE CPP_FILES ${SOURCE_DIR}/*.cpp)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/build/" FALSE OUTVAR CPP_FILES)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/CMakeFiles/" FALSE OUTVAR CPP_FILES)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "liblzma/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
+
+# Exclude platform-specific encoder files on wrong platforms
+if (NOT WIN32)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "platform/windows/" FALSE OUTVAR CPP_FILES)
+endif()
+if (NOT APPLE)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "platform/macos/" FALSE OUTVAR CPP_FILES)
+endif()
+
 message("CPP_FILES:${CPP_FILES}")
 
 set (SOURCES ${CPP_FILES})
