@@ -6,6 +6,7 @@
 
 #include "3rdparty/message-center/eventqueue.h"
 #include "emulator/platform.h"
+#include "emulator/sound/soundmanager.h"  // AudioSourceType lives here now
 #include "encoder_base.h"
 #include "encoder_config.h"
 #include "stdafx.h"
@@ -27,39 +28,7 @@ enum class RecordingMode
     AudioOnly      // Record audio without video
 };
 
-/// Audio source types for individual device/channel selection
-enum class AudioSourceType
-{
-    // Master output
-    MasterMix,  // Final mixed output (all devices)
-
-    // Individual devices
-    Beeper,        // Beeper output
-    AY1_All,       // AY chip #1 (all channels mixed)
-    AY2_All,       // AY chip #2 (all channels mixed)
-    AY3_All,       // AY chip #3 (all channels mixed)
-    COVOX,         // COVOX/DAC output
-    GeneralSound,  // General Sound output
-    Moonsound,     // Moonsound/OPL4 output
-
-    // Individual AY channels (chip 1)
-    AY1_ChannelA,  // AY chip #1, channel A
-    AY1_ChannelB,  // AY chip #1, channel B
-    AY1_ChannelC,  // AY chip #1, channel C
-
-    // Individual AY channels (chip 2)
-    AY2_ChannelA,  // AY chip #2, channel A
-    AY2_ChannelB,  // AY chip #2, channel B
-    AY2_ChannelC,  // AY chip #2, channel C
-
-    // Individual AY channels (chip 3)
-    AY3_ChannelA,  // AY chip #3, channel A
-    AY3_ChannelB,  // AY chip #3, channel B
-    AY3_ChannelC,  // AY chip #3, channel C
-
-    // Custom source (for future extensions)
-    Custom
-};
+// AudioSourceType is now defined in soundmanager.h (shared with device registry)
 
 /// Audio track configuration for multi-track recordings
 struct AudioTrackConfig

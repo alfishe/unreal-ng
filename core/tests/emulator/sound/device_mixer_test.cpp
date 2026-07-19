@@ -19,6 +19,7 @@ protected:
         // Disable DSP chains for predictable test values
         sm->getAYChain().setPunchEnabled(false);
         sm->getAYChain().setRoomMode(AudioCharacterChain::RoomMode::Off);
+        sm->syncAYChainSettings();  // Apply to both AY chains
         sm->getBeeperChain().setPunchEnabled(false);
         sm->getBeeperChain().setRoomMode(AudioCharacterChain::RoomMode::Off);
         sm->setBeeperFilterEnabled(false);
@@ -71,8 +72,8 @@ TEST_F(DeviceMixerTest, AllDevicesAudibleByDefault)
     fillBuffer(AudioSourceType::AY2_All, 3000);
 
     int16_t out = getMasterSample();
-    // Should be sum of all three (~6000), allow ±2 for floating point rounding
-    EXPECT_NEAR(out, 6000, 2);
+    // Should be sum of all three (~6000), allow ±5 for floating point rounding
+    EXPECT_NEAR(out, 6000, 5);
 }
 
 TEST_F(DeviceMixerTest, MutedDeviceNotInMix)

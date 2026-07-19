@@ -33,7 +33,6 @@ protected:
 
     // Per-channel DAC state
     uint8_t _dacValue[4] = {0x80, 0x80, 0x80, 0x80};  // Start at midpoint (silence)
-    uint32_t _prevFrameTState = 0;
 
     // Per-channel mute (for UI)
     bool _channelMute[4] = {false, false, false, false};
@@ -43,6 +42,7 @@ protected:
     float _dcAccumL = 0.0f;
     float _dcAccumR = 0.0f;
     static constexpr float DC_COEF = 0.995f;  // ~7 Hz cutoff @ 44.1 kHz
+
 
 public:
     Covox() = delete;
@@ -74,6 +74,7 @@ public:
     static Channel portToChannel(uint16_t port);
 
 private:
-    void renderToBuffer(uint32_t frameTState);
+    void renderFromSample(size_t startSample);
+    void computeMixedOutput(int16_t& left, int16_t& right) const;
     int16_t dacToSample(uint8_t value) const;
 };
