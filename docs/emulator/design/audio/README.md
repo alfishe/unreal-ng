@@ -4,6 +4,17 @@
 
 The Unreal-NG audio subsystem uses [miniaudio](https://miniaud.io/) as a cross-platform audio library. On macOS, miniaudio utilizes Core Audio for audio output.
 
+## Design Documents
+
+- **[Sound Device Registry & Source Architecture](sound-device-registry.md)** 🎛️
+  — uniform per-device model (registry, buffers, mute/solo/volume, meters)
+  powering the Audio Settings Sources mixer and recording capture; device
+  stub plan (COVOX, SounDrive, SAA1099, GS, MoonSound) and COVOX
+  implementation sketch. Companion to
+  [Audio Sources UX](../recording/audio-sources-ux.md).
+- **[Audio Sync Relay Thread](audio-sync-relay-thread.md)** — audio/video
+  synchronization architecture.
+
 ## macOS Debug Build: Core Audio HAL Overload Warnings
 
 ### Problem
