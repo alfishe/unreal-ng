@@ -1,7 +1,7 @@
 #ifdef __APPLE__
 
 #include "videotoolbox_encoder.h"
-#include "../../video/screen.h"
+#include "emulator/video/screen.h"
 
 // macOS framework imports (Objective-C++)
 #import <Foundation/Foundation.h>

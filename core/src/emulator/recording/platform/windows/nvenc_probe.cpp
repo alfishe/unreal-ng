@@ -7,8 +7,10 @@
 
 #include <sstream>
 
+#ifdef _WIN32
 // Function pointer type
 typedef NVENCSTATUS (NVENCAPI *PFN_NvEncodeAPIGetMaxSupportedVersion)(uint32_t*);
+#endif
 
 // ============================================================================
 // Implementation
@@ -108,6 +110,7 @@ std::string NvencProbe::getCapabilityReport()
 {
     std::stringstream report;
 
+#ifdef _WIN32
     NvencInfo info = getInfo();
 
     if (!info.available)
@@ -128,6 +131,9 @@ std::string NvencProbe::getCapabilityReport()
 
     if (!info.gpuName.empty())
         report << "  GPU: " << info.gpuName << "\n";
+#else
+    report << "NVENC: NOT AVAILABLE (Windows only)\n";
+#endif
 
     return report.str();
 }
