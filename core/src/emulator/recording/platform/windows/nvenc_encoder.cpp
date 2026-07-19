@@ -1,5 +1,6 @@
 #include "nvenc_encoder.h"
 #include "mp4_muxer.h"
+#include "mf_aac_encoder.h"
 #include "emulator/video/screen.h"
 
 #ifdef _WIN32
@@ -9,6 +10,7 @@
 #include <dxgi.h>
 #include <cstring>
 #include <algorithm>
+#include <mutex>
 
 // Official FFmpeg nv-codec-headers
 #include "nvEncodeAPI.h"
@@ -48,6 +50,11 @@ struct NvencEncoder::Impl
     NV_ENCODE_API_FUNCTION_LIST nvenc = {};
     Mp4Muxer muxer;
 
+    // Audio encoder
+    MfAacEncoder aacEncoder;
+    bool hasAudio = false;
+    std::mutex muxerMutex;
+
     // Buffer queue for B-frame encoding
     // Need at least (1 + numBFrames) buffer pairs for proper B-frame pipeline
     static constexpr int NUM_BUFFERS = 8;
@@ -79,6 +86,9 @@ struct NvencEncoder::Impl
     // Frame encoding
     bool encodeFrame(const uint8_t* rgba);
     void writeOutput();
+
+    // Audio encoding
+    void encodeAudio(const int16_t* samples, size_t sampleCount, int64_t pts);
 
 private:
     bool loadNvencDll();
@@ -346,12 +356,25 @@ bool NvencEncoder::Impl::init(const std::string& filename, const EncoderConfig& 
     if (!initializeEncoder(config)) { error = "Failed to initialize encoder"; return false; }
     if (!createBuffers())        { error = "Failed to create buffers"; return false; }
 
+    // Initialize AAC encoder
+    uint32_t audioSampleRate = config.audioSampleRate > 0 ? config.audioSampleRate : 44100;
+    uint32_t audioChannels = config.audioChannels > 0 ? config.audioChannels : 2;
+    uint32_t audioBitrate = config.audioBitrate > 0 ? config.audioBitrate * 1000 : 128000;
+
+    hasAudio = aacEncoder.init(audioSampleRate, audioChannels, audioBitrate);
+
     // Open MP4 muxer
     auto codecType = useHevc ? Mp4Muxer::Codec::HEVC : Mp4Muxer::Codec::H264;
     if (!muxer.open(filename, codecType, width, height, fps))
     {
         error = "Failed to open output file";
         return false;
+    }
+
+    // Enable audio track if AAC encoder initialized
+    if (hasAudio)
+    {
+        muxer.enableAudio(audioSampleRate, audioChannels, aacEncoder.getAudioSpecificConfig());
     }
 
     return true;
@@ -367,13 +390,26 @@ void NvencEncoder::Impl::writeOutput()
         bool keyframe = (lockOut.pictureType == NV_ENC_PIC_TYPE_IDR ||
                          lockOut.pictureType == NV_ENC_PIC_TYPE_I);
         int64_t pts = static_cast<int64_t>(lockOut.outputTimeStamp);
-        muxer.writeFrame(static_cast<const uint8_t*>(lockOut.bitstreamBufferPtr),
-                         lockOut.bitstreamSizeInBytes, keyframe, pts);
+
+        std::lock_guard<std::mutex> lock(muxerMutex);
+        muxer.writeVideoFrame(static_cast<const uint8_t*>(lockOut.bitstreamBufferPtr),
+                              lockOut.bitstreamSizeInBytes, keyframe, pts);
         nvenc.nvEncUnlockBitstream(encoder, outputBuffers[outputIdx]);
     }
 
     outputIdx = (outputIdx + 1) % NUM_BUFFERS;
     pendingFrames--;
+}
+
+void NvencEncoder::Impl::encodeAudio(const int16_t* samples, size_t sampleCount, int64_t pts)
+{
+    if (!hasAudio) return;
+
+    aacEncoder.encode(samples, sampleCount, pts,
+        [this](const uint8_t* data, size_t size, int64_t audioPts) {
+            std::lock_guard<std::mutex> lock(muxerMutex);
+            muxer.writeAudioFrame(data, size, audioPts);
+        });
 }
 
 void NvencEncoder::Impl::finalize()
@@ -385,9 +421,18 @@ void NvencEncoder::Impl::finalize()
     eos.encodePicFlags = NV_ENC_PIC_FLAG_EOS;
     nvenc.nvEncEncodePicture(encoder, &eos);
 
-    // Drain remaining frames (outputs come in order submitted)
+    // Drain remaining video frames (outputs come in order submitted)
     while (pendingFrames > 0)
         writeOutput();
+
+    // Flush remaining audio frames
+    if (hasAudio)
+    {
+        aacEncoder.flush([this](const uint8_t* data, size_t size, int64_t audioPts) {
+            std::lock_guard<std::mutex> lock(muxerMutex);
+            muxer.writeAudioFrame(data, size, audioPts);
+        });
+    }
 
     muxer.close();
 }
@@ -577,7 +622,14 @@ void NvencEncoder::OnVideoFrame(const FramebufferDescriptor& framebuffer, double
         _framesEncoded++;
 }
 
-void NvencEncoder::OnAudioSamples(const int16_t*, size_t, double) {}
+void NvencEncoder::OnAudioSamples(const int16_t* samples, size_t sampleCount, double timestampSec)
+{
+    if (!_isRecording || !_impl) return;
+
+    // Convert timestamp to audio samples (assuming 44100 Hz default)
+    int64_t pts = static_cast<int64_t>(timestampSec * _impl->aacEncoder.getSampleRate());
+    _impl->encodeAudio(samples, sampleCount, pts);
+}
 
 uint64_t NvencEncoder::GetOutputFileSize() const
 {

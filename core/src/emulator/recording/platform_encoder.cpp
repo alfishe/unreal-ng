@@ -59,7 +59,7 @@ std::vector<PlatformEncoderFactory::NativeEncoderInfo> PlatformEncoderFactory::g
             info.supportsHEVC = nvencInfo.supportsHEVC;
             // AV1 encoding not yet implemented in NvencEncoder
             info.supportsAV1 = false;
-            info.supportsAudio = false;
+            info.supportsAudio = true;  // MF AAC encoder
             encoders.push_back(info);
         }
     }
