@@ -40,7 +40,14 @@ Comprehensive documentation for the video and audio recording subsystem:
    - Envisioned encoders catalog
    - **Read this for encoder plugin design**
 
-5. **[Encoder Development Guideline](encoders/encoder-development-guideline.md)** 📖
+5. **[Audio Sources UX](audio-sources-ux.md)** 🎚️
+   - Per-device source rows (mute/solo/volume/meters) in Audio Settings
+   - TurboSound chip selector, channel-level solo
+   - Monitoring vs capture domains ("what you hear" vs "full mix")
+   - Core API requirements driving Phase 2 implementation
+   - **Read this before implementing Phase 2**
+
+6. **[Encoder Development Guideline](encoders/encoder-development-guideline.md)** 📖
    - Required interface implementation
    - Error handling and validation patterns
    - RAII resource management
@@ -131,10 +138,12 @@ recordingManager->StartRecording("clip.gif", "gif", "");  // Or "clip.webp", "li
 - [x] Documentation
 
 #### Phase 2: Audio Device API 🚧 In Progress
+- [x] UX design for source selection/monitoring — see [Audio Sources UX](audio-sources-ux.md)
 - [ ] TurboSound multi-chip buffer access
 - [ ] AY-3-8910 channel buffer access
 - [ ] COVOX/GS/Moonsound buffer access
 - [ ] SoundManager device buffer exposure
+- [ ] Per-device mute/solo/volume in mix (monitoring domain)
 
 #### Phase 3: Recording Integration ⏳ Planned
 - [ ] Multi-track capture in MainLoop

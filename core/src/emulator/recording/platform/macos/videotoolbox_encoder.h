@@ -5,8 +5,8 @@
 #include <cstdint>
 #include <string>
 
-#include "../encoder_base.h"
-#include "../encoder_config.h"
+#include "emulator/recording/encoder_base.h"
+#include "emulator/recording/encoder_config.h"
 
 /// @brief macOS VideoToolbox Encoder — Native hardware-accelerated encoding
 ///
