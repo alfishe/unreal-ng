@@ -33,6 +33,8 @@ void AudioCharacterChain::reset()
 
 void AudioCharacterChain::setPunchPreset(PunchPreset preset)
 {
+    _punchPreset = preset;
+
     switch (preset)
     {
         case PunchPreset::Paula:
