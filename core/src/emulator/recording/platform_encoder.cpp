@@ -74,7 +74,7 @@ std::vector<PlatformEncoderFactory::NativeEncoderInfo> PlatformEncoderFactory::g
             info.supportsH264 = qsvInfo.supportsH264;
             info.supportsHEVC = qsvInfo.supportsHEVC;
             info.supportsAV1 = false;
-            info.supportsAudio = false;
+            info.supportsAudio = true;  // MF AAC encoder
             encoders.push_back(info);
         }
     }

@@ -33,7 +33,7 @@ public:
     std::string GetType() const override { return "nvenc"; }
     std::string GetDisplayName() const override { return "NVIDIA NVENC"; }
     bool SupportsVideo() const override { return true; }
-    bool SupportsAudio() const override { return false; }
+    bool SupportsAudio() const override { return true; }
 
     uint64_t GetFramesEncoded() const override { return _framesEncoded; }
     uint64_t GetAudioSamplesEncoded() const override { return 0; }
