@@ -10,6 +10,7 @@
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
+#include "debugger/ttd/ttd_manager.h"
 #include "emulator.h"
 #include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
@@ -385,7 +386,25 @@ void MainLoop::OnFrameEnd()
     {
         _context->pDebugManager->GetAnalyzerManager()->dispatchFrameEnd();
     }
-    
+
+    // TTD per-frame checkpoint capture (parent TDD §7.1).
+    // OnFrameBoundary is a no-op when the TTD manager is null, when the
+    // session state is not Recording, or when the timetravel feature flag
+    // is off (the cached bool in Memory gates the dirty hook). Cost when
+    // idle: one predictable branch. Cost when recording: dirty pages get
+    // a 16 KB Intern each, clean pages get a cheap AddRef.
+    if (_context->pTTDManager)
+    {
+        try
+        {
+            _context->pTTDManager->OnFrameBoundary();
+        }
+        catch (const std::exception& e)
+        {
+            MLOGERROR("TTDManager::OnFrameBoundary failed: %s", e.what());
+        }
+    }
+
     // Process keyboard injection sequences (for automation)
     // This is called each frame to advance any queued key sequences (tap/release timing)
     if (_context->pDebugManager && _context->pDebugManager->GetKeyboardManager())

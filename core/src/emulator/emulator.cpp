@@ -18,6 +18,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
+#include "debugger/ttd/ttd_manager.h"
 #include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "loaders/snapshot/loader_sna.h"
@@ -222,6 +223,25 @@ bool Emulator::Init()
         }
     }
 
+    // Create TTD manager (per parent TDD §10.2). Always constructed; the
+    // per-frame capture cost is gated by the cached _feature_ttd_enabled
+    // bool in Memory (no work when timetravel feature is off). The manager
+    // also exposes GetState() == Idle until StartRecording() is called.
+    if (result)
+    {
+        ttd::TTDManager* ttdManager = new ttd::TTDManager(_context);
+        if (ttdManager != nullptr)
+        {
+            _context->pTTDManager = ttdManager;
+            MLOGDEBUG("Emulator::Init - TTD manager created");
+        }
+        else
+        {
+            MLOGWARNING("Emulator::Init - TTD manager creation failed (non-fatal)");
+        }
+        // TTD manager creation is non-fatal — emulator works without it.
+    }
+
     /// region <Sanity checks>
 
     if (!_context)
@@ -385,6 +405,14 @@ void Emulator::ReleaseNoGuard()
     {
         delete _context->pDebugManager;
         _context->pDebugManager = nullptr;
+    }
+
+    // Release TTD manager. The manager's destructor releases all page-store
+    // refs held by the timeline before the page store itself goes away.
+    if (_context->pTTDManager)
+    {
+        delete _context->pTTDManager;
+        _context->pTTDManager = nullptr;
     }
 
     // Stop and release main loop

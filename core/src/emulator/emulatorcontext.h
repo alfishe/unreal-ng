@@ -27,6 +27,10 @@ class DebugManager;
 class Z80Disassembler;
 class FeatureManager;
 
+// TTD manager lives in the ttd namespace — forward-declare so the context
+// can hold a pointer without pulling the full TTD headers into every consumer.
+namespace ttd { class TTDManager; }
+
 // Create callback type for audio
 // User in emulator/sound/soundmanager and client/GUI
 // void audioCallback(int16_t* samples, size_t numSamples);
@@ -92,6 +96,11 @@ public:
 
 	// Debug manager (includes Breakpoints, Labels and Disassembler)
 	DebugManager* pDebugManager = nullptr;
+
+    // Time-travel debugging manager (owned by Emulator, lives across the
+    // lifetime of the context). May be null on minimal builds without TTD.
+    // Per TDD §10.2.
+    ttd::TTDManager* pTTDManager = nullptr;
 
     // Feature toggle manager
     FeatureManager* pFeatureManager = nullptr;
