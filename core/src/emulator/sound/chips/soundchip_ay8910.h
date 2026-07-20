@@ -6,6 +6,7 @@
 #include "common/sound/filters/filter_dc.h"
 #include "common/sound/filters/filter_decimator.h"
 #include "common/sound/filters/filter_interpolate.h"
+#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 #include "emulator/ports/portdecoder.h"
 
 /// Information:
@@ -73,7 +74,7 @@ enum class AYChipModel : uint8_t
 
 /// endregion </Types>
 
-class SoundChip_AY8910 : public PortDecoder, public PortDevice
+class SoundChip_AY8910 : public PortDecoder, public PortDevice, public ttd::TTDSerializable
 {
     /// region <Constants>
 protected:
@@ -164,6 +165,8 @@ protected:
     /// Lowest frequency = 26.7Hz (1.75MHz / 65536)
     class ToneGenerator
     {
+        friend class SoundChip_AY8910;  ///< TTD serialization access (P1.5)
+
         /// region <Fields>
     protected:
         uint16_t _period;       // Tone Generator channel period (in AY clock cycles)
@@ -231,6 +234,8 @@ protected:
     /// The input to the shift register is bit0 XOR bit3, (bit0 is the output)
     class NoiseGenerator
     {
+        friend class SoundChip_AY8910;  ///< TTD serialization access (P1.5)
+
         /// region <Fields>
     protected:
         uint8_t _period;
@@ -273,6 +278,8 @@ protected:
     /// Lowest frequency = 0.1045 (1.75MHz / 16777216)
     class EnvelopeGenerator
     {
+        friend class SoundChip_AY8910;  ///< TTD serialization access (P1.5)
+
         /// region <Types>
         enum EnvelopeSegmentTypeEnum : uint8_t
         {
@@ -414,7 +421,7 @@ public:
 
     /// region <Methods>
 public:
-    void reset();
+    void reset() override;
     void updateState(bool bypassPrescaler = false);
     void updateMixer();
 
@@ -453,9 +460,32 @@ public:
     uint8_t getCurrentRegister() const { return _currentRegister; }
     /// endregion </Debug access methods>
 
+    /// region <TTDSerializable interface (P1.5 — parent TDD §6.4)>
+    ///
+    /// Serializes the complete runtime state of one AY-3-8910 chip:
+    ///   - Register file R0..R15 (CPU-visible; the only part that affects
+    ///     determinism — pFFFD readback exposes these)
+    ///   - _currentRegister (CPU-visible)
+    ///   - 3x ToneGenerator phase (period/counter/volume/flags/out) — audio
+    ///     continuity only, never CPU divergence (parent TDD §5.5)
+    ///   - NoiseGenerator phase (period/counter/out/LFSR)
+    ///   - EnvelopeGenerator phase (shape/period/counter/segment/out)
+    ///
+    /// Excluded (host-side / user-config / transient): audio FIR/decimator/DC
+    /// filters (rebuilt by handleFrameStart), _tick (monotonic), _stereoMode,
+    /// _chipModel, _mixedLeft/Right, _left[]/_right[], per-channel panning /
+    /// mute / user volume.
+    ///
+    /// Layout is cursor-packed (memcpy per field) to stay alignment-safe on
+    /// all targets. See soundchip_ay8910.cpp for the byte-by-byte map.
+    size_t TTDStateSize() const override;
+    void   TTDSaveState(uint8_t* dst) const override;
+    void   TTDLoadState(const uint8_t* src) override;
+    /// endregion </TTDSerializable interface>
+
     /// region <PortDevice interface methods>
-    uint8_t portDeviceInMethod(uint16_t port);
-    void portDeviceOutMethod(uint16_t port, uint8_t value);
+    uint8_t portDeviceInMethod(uint16_t port) override;
+    void portDeviceOutMethod(uint16_t port, uint8_t value) override;
     /// endregion </PortDevice interface methods>
 
     /// region <Ports interaction>

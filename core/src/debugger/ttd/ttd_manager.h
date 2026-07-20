@@ -11,7 +11,10 @@
 /// It does NOT own:
 ///   - The dirty tracker (owned by Memory, hooked in MemoryWriteDebug per §6.2)
 ///   - The CPU/chipset structs (captured from the live EmulatorState/Z80State)
-///   - Peripheral serializers (P1.5 — for now peripheral blobs stay empty)
+///   - Peripheral devices themselves (owned by SoundManager / EmulatorContext);
+///     their serialized state is written into checkpoint blobs via the
+///     TTDSerializable interface (P1.5 — AY/TurboSound wired; tape/FDC/Covox
+///     land one at a time)
 ///
 /// Recording lifecycle (full state machine per TDD §4.2):
 ///   - StartRecording() — Idle → Recording. Captures an initial baseline

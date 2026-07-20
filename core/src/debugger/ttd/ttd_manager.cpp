@@ -21,7 +21,38 @@
 #include "emulator/emulatorcontext.h"    // EmulatorContext
 #include "emulator/memory/memory.h"      // Memory
 #include "emulator/platform.h"           // EmulatorState, CONFIG, PAGE_SIZE, MAX_RAM_PAGES
+#include "emulator/sound/chips/soundchip_turbosound.h"  // SoundChip_TurboSound (AY peripheral, P1.5)
+#include "emulator/sound/soundmanager.h"                 // SoundManager
 #include "stdafx.h"
+
+namespace
+{
+/// @brief Serialize a TTDSerializable peripheral into its checkpoint blob.
+///
+/// Helper used by CaptureNow for every peripheral slot (AY → tape → FDC →
+/// Covox, per implementation-plan §3.A1 item 5). When the device is absent
+/// the blob is cleared — restore then reads nothing, which is the correct
+/// no-op for an unimplemented/unused device on the active model.
+///
+/// Runs on the emulator thread at frame boundaries. The resize() after the
+/// first capture is effectively free (capacity stabilizes immediately); the
+/// TDD's "no allocation in TTDSaveState" constraint applies to the device's
+/// serializer itself, not to this caller-side buffer management.
+inline void CapturePeripheral(ttd::TTDSerializable* dev, std::vector<uint8_t>& outBlob)
+{
+    if (dev != nullptr)
+    {
+        const size_t sz = dev->TTDStateSize();
+        outBlob.resize(sz);
+        if (sz != 0)
+            dev->TTDSaveState(outBlob.data());
+    }
+    else
+    {
+        outBlob.clear();
+    }
+}
+} // anonymous namespace
 
 namespace ttd {
 
@@ -212,6 +243,24 @@ void TTDManager::CaptureNow(TTDCheckpoint& out)
         _dirtyTracker->CollectAndClear(_dirtyScratch);
 
         UpdateRamPages(_dirtyScratch, prev.ramPages, out.ramPages);
+    }
+
+    // --- Peripherals (P1.5 — parent TDD §6.1, §6.4) ---
+    // Each device implements TTDSerializable and serializes itself into the
+    // corresponding checkpoint blob. Devices land one at a time (AY first);
+    // unimplemented slots stay empty vectors (valid no-op on restore).
+    //
+    // AY / TurboSound: the SoundManager exposes a TurboSound (two AY chips) on
+    // all v1-supported models (Pentagon 128/512). The TurboSound is itself a
+    // TTDSerializable that serializes both chips + the active-chip selector.
+    if (_context->pSoundManager)
+    {
+        SoundChip_TurboSound* turboSound = _context->pSoundManager->getTurboSound();
+        CapturePeripheral(turboSound, out.ayState);
+    }
+    else
+    {
+        out.ayState.clear();
     }
 }
 

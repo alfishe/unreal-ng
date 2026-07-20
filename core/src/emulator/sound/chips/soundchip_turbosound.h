@@ -5,12 +5,13 @@
 #include <memory>
 
 #include "common/sound/filters/filter_interpolate.h"
+#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/audio.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/native_audio_tap.h"
 
-class SoundChip_TurboSound : public PortDecoder, public PortDevice
+class SoundChip_TurboSound : public PortDecoder, public PortDevice, public ttd::TTDSerializable
 {
     /// region <Fields>
 protected:
@@ -131,7 +132,7 @@ public:
 
     /// region <Methods>
 public:
-    void reset()
+    void reset() override
     {
         _chip0->reset();
         _chip1->reset();
@@ -188,8 +189,8 @@ public:
 
     /// region <PortDevice interface methods>
 public:
-    uint8_t portDeviceInMethod(uint16_t port);
-    void portDeviceOutMethod(uint16_t port, uint8_t value);
+    uint8_t portDeviceInMethod(uint16_t port) override;
+    void portDeviceOutMethod(uint16_t port, uint8_t value) override;
     /// endregion </PortDevice interface methods>
 
     /// region <Ports interaction>
@@ -197,4 +198,20 @@ public:
     bool attachToPorts(PortDecoder* decoder);
     void detachFromPorts();
     /// endregion </Ports interaction>
+
+    /// region <TTDSerializable interface (P1.5 — parent TDD §6.4)>
+    ///
+    /// TurboSound serializes both AY chips plus the current-chip selector.
+    /// Each child SoundChip_AY8910 serializes itself via its own TTDSerializable
+    /// implementation; TurboSound prepends a 1-byte current-chip index.
+    ///
+    /// Layout (1 + 2×57 = 115 bytes):
+    ///   Offset  Size  Field
+    ///   0        1    current chip index (0 or 1)
+    ///   1       57    chip0 full state
+    ///   58      57    chip1 full state
+    size_t TTDStateSize() const override;
+    void   TTDSaveState(uint8_t* dst) const override;
+    void   TTDLoadState(const uint8_t* src) override;
+    /// endregion </TTDSerializable interface>
 };
