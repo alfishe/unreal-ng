@@ -37,13 +37,23 @@ the merge.
    in `timetravelmanager.{h,cpp}`. Tests: 9 cases in `ttd_restore_test.cpp`,
    all green. Full TTD suite: 84/84 green.
 
-2. **Silent-replay mode** (parent TDD §8.2 + Appendix C). Adds
-   `_context->ttdReplayActive` and the suppression matrix:
-   breakpoints skipped, MessageCenter notifications muted, audio host-buffer
-   submission muted (but device ticks still run!), analyzer dispatch
-   suppressed, recording subsystem off, live keyboard input blocked
-   (journal injection replaces it in Item 3), checkpoint capture off.
-   Build the flag, wire one suppression site per subsystem, ship.
+2. **Silent-replay mode** ✅ DONE 2026-07-19 (parent TDD §8.2 + Appendix C).
+   Adds `_context->ttdReplayActive` plus `TimeTravelManager::EnterReplayMode()` /
+   `ExitReplayMode()` / `IsReplayActive()`. Wired suppression sites:
+     - BreakpointManager::Handle{PCChange,MemoryRead,MemoryWrite,PortIn,PortOut}
+       → early-return BRK_INVALID
+     - AnalyzerManager::dispatch{FrameStart,FrameEnd} → early return
+     - DebugKeyboardManager::{PressKey,ReleaseKey} → early return (live input
+       blocked; journal injection lands in Item 3)
+     - RecordingManager::CaptureFrame → early return
+     - MainLoop::OnFrameEnd NC_VIDEO_FRAME_REFRESH post → skipped
+     - SoundManager mute forced true on EnterReplayMode, restored on exit
+       (device ticks handleStep/handleFrameStart keep running — critical for
+       AY determinism per TDD §8.2 last paragraph)
+   Checkpoint-capture suppression is automatic: replay is driven from Detached
+   state, and OnFrameBoundary already early-returns when state != Recording.
+   Tests: 12 cases in `ttd_replay_mode_test.cpp`, all green. Full TTD suite:
+   96/96 green.
 
 3. **Input journal** (parent TDD §5.1). Capture keyboard matrix mutations
    with their TTDTimePoint; inject them at the recorded timestamps during
@@ -132,26 +142,70 @@ sees them. Tests must call `tracker->MarkDirty(page)` explicitly when
 mutating RAM outside the CPU's write path. This is documented in
 `ttd_restore_test.cpp` and `ttd_manager_test.cpp`'s existing dirty-page tests.
 
-### Item 2 — Silent replay mode
+### Item 2 — Silent replay mode ✅ DONE
+
+**Status:** Implemented + tested 2026-07-19.
 
 **Files touched:**
-- `core/src/emulator/emulatorcontext.h` — add `bool ttdReplayActive = false;`
+- `core/src/emulator/emulatorcontext.h` — added `bool ttdReplayActive = false;`
+  with a documentation comment referencing TDD §8.2 + Appendix C.
+- `core/src/debugger/ttd/timetravelmanager.{h,cpp}` — added
+  `EnterReplayMode()` / `ExitReplayMode()` / `IsReplayActive()` public API.
+  EnterReplayMode saves + forces SoundManager mute; ExitReplayMode restores.
+  Idempotent + nest-safe (`_inReplayMode` flag prevents overwriting saved
+  mute state on a second EnterReplayMode call).
 - One suppression site per row of TDD §8.2's table:
-  - `BreakpointManager` — check flag, skip
-  - `MessageCenter::Post` — drop notifications when flag set (or post to
-    a sink that observers can filter)
-  - `SoundManager` — host buffer submission muted; device ticks unchanged
-  - `Screen` — batch-render path (reuse existing optimization)
-  - `AnalyzerManager::dispatchFrameStart` — early return
-  - `RecordingManager` — already feature-gated; add replay gate
-  - `DebugKeyboardManager` — block matrix mutation; journal injects instead
-  - `TimeTravelManager::OnFrameBoundary` — already early-returns when not Recording;
-    replay sets state to Detached so this is automatic
+  - `BreakpointManager::Handle{PCChange,MemoryRead,MemoryWrite,PortIn,PortOut}`
+    → early-return BRK_INVALID when `_context->ttdReplayActive`.
+  - `AnalyzerManager::dispatch{FrameStart,FrameEnd}` → early return.
+  - `DebugKeyboardManager::{PressKey,ReleaseKey}` → early return (live input
+    blocked; journal injection is Item 3).
+  - `RecordingManager::CaptureFrame` → early return.
+  - `MainLoop::OnFrameEnd` NC_VIDEO_FRAME_REFRESH post → guarded with
+    `if (!_context->ttdReplayActive)`.
+  - `SoundManager` mute forced true by EnterReplayMode, restored on exit.
+    Device ticks (handleStep / handleFrameStart) keep running — critical
+    for AY/envelope determinism per TDD §8.2 last paragraph.
+  - `TimeTravelManager::OnFrameBoundary` — already early-returns when state
+    != Recording; replay is driven from Detached, so checkpoint capture is
+    automatically suppressed without an explicit flag check.
 
-**Tests** (`ttd_replay_mode_test.cpp`):
-- Set the flag, run frames, assert no notifications posted, no checkpoints
-  captured, breakpoint predicate never invoked, audio device ticks advanced
-  but host buffer not submitted.
+**Design notes:**
+- Flag is plain bool, not atomic. Replay runs under the existing pause
+  discipline: EnterReplayMode → RunTStates → ExitReplayMode all happen on
+  the control thread with the emulator paused. No cross-thread visibility
+  concern; matches the existing pattern for emulatorState flags.
+- Audio muting uses the existing `SoundManager::mute()` facility — it only
+  zeroes the host output buffer at the boundary in `handleFrameEnd`, exactly
+  matching the TDD's "host-buffer submission muted, device state advances"
+  contract.
+- MessageCenter notifications other than NC_VIDEO_FRAME_REFRESH (e.g.
+  NC_EXECUTION_CPU_STEP posted once per RunTStates call) are intentionally
+  NOT suppressed — they're cheap (one post per call, not per t-state) and
+  observers filter them already.
+
+**Tests** (`ttd_replay_mode_test.cpp`, 12 cases, all green):
+- `EnterReplayMode_SetsFlag` / `ExitReplayMode_ClearsFlag` — flag mechanics
+- `EnterReplayMode_Idempotent_NestSafe` — double-enter doesn't overwrite
+  saved mute state
+- `ExitReplayMode_Idempotent_WhenNotInReplay` — extra exit is a no-op
+- `EnterReplayMode_ForcesMute` / `ExitReplayMode_RestoresUnmutedState` /
+  `ExitReplayMode_PreservesPreExistingMute` — sound save/restore matrix
+- `Breakpoint_HandlePCChange_SkippedDuringReplay` — full before/during/after
+- `Breakpoint_HandleMemoryWrite_SkippedDuringReplay`
+- `Analyzer_dispatchFrameStart_NoOpDuringReplay` — counting analyzer
+- `Keyboard_PressKey_BlockedDuringReplay`
+- `OnFrameBoundary_NoNewCheckpoint_InReplayContext` — documents the
+  automatic checkpoint-capture suppression
+
+**Deferred:**
+- Per-t-state Screen rendering skip (TDD "final segment only"). Reuses the
+  ScreenHQ=off batch-render path; not needed for Item 2 correctness, only
+  for seek-latency optimization. Will be revisited when Item 4 (SeekTo) is
+  wired and `ttd_seek_benchmark` becomes the gate.
+- Sequence-based keyboard input (TapKey, QueueSequence). The OnFrame
+  processor still runs during replay — Item 3 will address this when the
+  input journal injects recorded events instead.
 
 ### Item 3 — Input journal
 

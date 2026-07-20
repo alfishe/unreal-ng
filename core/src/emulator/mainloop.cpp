@@ -368,19 +368,28 @@ void MainLoop::OnFrameEnd()
 
     // Notify that video frame is composed and ready for rendering
     // Send per-instance frame refresh event with emulator ID for filtering
-    try
+    //
+    // TTD silent-replay suppression (parent TDD §8.2 + Appendix C):
+    // during replay the UI must not redraw per-frame — replay may run
+    // dozens of frames per seek and a redraw storm would dominate seek
+    // latency. The replay engine restores the final frame visually via
+    // Screen::InitFrame after ExitReplayMode.
+    if (!_context->ttdReplayActive)
     {
-        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        std::string emulatorId = _context->pEmulator ? _context->pEmulator->GetId() : "";
-        messageCenter.Post(NC_VIDEO_FRAME_REFRESH,
-                           new EmulatorFramePayload(emulatorId, _context->emulatorState.frame_counter));
+        try
+        {
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            std::string emulatorId = _context->pEmulator ? _context->pEmulator->GetId() : "";
+            messageCenter.Post(NC_VIDEO_FRAME_REFRESH,
+                               new EmulatorFramePayload(emulatorId, _context->emulatorState.frame_counter));
+        }
+        catch (const std::exception& e)
+        {
+            // Log error but don't crash - message center failure shouldn't stop emulation
+            MLOGERROR("MessageCenter post failed: %s", e.what());
+        }
     }
-    catch (const std::exception& e)
-    {
-        // Log error but don't crash - message center failure shouldn't stop emulation
-        MLOGERROR("MessageCenter post failed: %s", e.what());
-    }
-    
+
     // Dispatch frame end event to AnalyzerManager
     if (_context->pDebugManager && _context->pDebugManager->GetAnalyzerManager())
     {

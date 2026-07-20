@@ -572,6 +572,14 @@ void RecordingManager::ResumeRecording()
 
 void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
 {
+    // TTD silent-replay suppression (parent TDD §8.2 + Appendix C).
+    // Recording must not capture frames traversed during replay — those
+    // frames are historical, not user-visible output. The replay engine
+    // may run many frames per seek; capturing them would corrupt the
+    // recording's timeline and burn encoder resources.
+    if (_context && _context->ttdReplayActive)
+        return;
+
     // Cheap unlocked pre-check (the mainloop calls this every frame)
     if (!IsRecording())
     {

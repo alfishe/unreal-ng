@@ -160,6 +160,47 @@ public:
     bool RestoreCheckpointForTesting(size_t idx);
 
     // -----------------------------------------------------------------------
+    // Silent replay mode (control thread; emulator must be paused)
+    // -----------------------------------------------------------------------
+    //
+    // Phase 2 Item 2 (parent TDD §8.2 + Appendix C). Wraps the emulator's
+    // existing RunTStates call so that replay from a restored checkpoint to
+    // an intra-frame target is *observationally silent*: breakpoints skip,
+    // analyzers dispatch no-op, keyboard matrix mutation blocked, recording
+    // capture skipped, video frame refresh notifications dropped, audio host
+    // buffer muted (device state still advances — critical for AY
+    // determinism).
+    //
+    // The flag itself (`_context->ttdReplayActive`) is read by every
+    // suppression site — see emulatorcontext.h. EnterReplayMode / ExitReplayMode
+    // also save/restore the SoundManager mute state so the host audio output
+    // can be muted independently of feature flags.
+    //
+    // Threading: same discipline as Restore — called on the control thread
+    // with the emulator paused. Replay is driven by a follow-up RunTStates
+    // call on the same thread, so the flag is set/cleared around it without
+    // any cross-thread visibility concern.
+
+    /// @brief Enter silent-replay mode.
+    ///
+    /// Sets `_context->ttdReplayActive = true`, saves and forces the
+    /// SoundManager mute state. Idempotent: a second call while already in
+    /// replay is a no-op (and does NOT overwrite the saved mute state, so
+    /// nesting is safe).
+    void EnterReplayMode();
+
+    /// @brief Exit silent-replay mode.
+    ///
+    /// Clears `_context->ttdReplayActive`, restores the SoundManager mute
+    /// state captured by EnterReplayMode. Idempotent: a call while not in
+    /// replay is a no-op.
+    void ExitReplayMode();
+
+    /// @brief Query the replay-mode flag. Reads `_context->ttdReplayActive`.
+    /// Defined out-of-line (EmulatorContext is only forward-declared here).
+    bool IsReplayActive() const;
+
+    // -----------------------------------------------------------------------
     // Test/diagnostic accessors
     // -----------------------------------------------------------------------
 
@@ -258,6 +299,18 @@ private:
 
     /// Reusable scratch buffer for CollectAndClear (avoids per-frame alloc).
     std::vector<uint16_t> _dirtyScratch;
+
+    // -----------------------------------------------------------------------
+    // Replay-mode state (Phase 2 Item 2; parent TDD §8.2)
+    // -----------------------------------------------------------------------
+
+    /// True while inside EnterReplayMode / ExitReplayMode — gates the
+    /// save/restore of `_soundMuteBeforeReplay` so nested calls are safe.
+    bool _inReplayMode = false;
+
+    /// SoundManager mute state as it was before EnterReplayMode forced it
+    /// true. Restored by ExitReplayMode. Only meaningful while `_inReplayMode`.
+    bool _soundMuteBeforeReplay = false;
 };
 
 } // namespace ttd

@@ -102,6 +102,23 @@ public:
     // Per TDD §10.2.
     ttd::TimeTravelManager* pTimeTravelManager = nullptr;
 
+    // TTD silent-replay mode flag (parent TDD §8.2 + Appendix C).
+    //
+    // Set by TimeTravelManager::EnterReplayMode() before any intra-frame
+    // replay (SeekTo with tInFrame > 0, StepBackInstruction, reverse-search
+    // probes). Cleared by ExitReplayMode(). Read by every suppression site
+    // listed in Appendix C — breakpoints skip, analyzers dispatch no-op,
+    // keyboard matrix mutation blocked, recording capture skipped, video
+    // frame refresh notifications dropped, audio host buffer muted (device
+    // state still advances).
+    //
+    // Plain bool (not atomic) — replay runs under the existing pause
+    // discipline: EnterReplayMode / RunTStates / ExitReplayMode happen on
+    // the control thread with the emulator paused, and the suppression
+    // checks are read from the same thread. No cross-thread visibility
+    // concern; matching the existing pattern for emulatorState flags.
+    bool ttdReplayActive = false;
+
     // Feature toggle manager
     FeatureManager* pFeatureManager = nullptr;
     /// endregion </Child object references>

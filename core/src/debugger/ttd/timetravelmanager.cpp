@@ -577,4 +577,74 @@ void TimeTravelManager::RestoreRamPages(const std::vector<TTDPageRef>& ramPages)
     }
 }
 
+// ---------------------------------------------------------------------------
+// Silent replay mode (Phase 2 Item 2; parent TDD §8.2 + Appendix C)
+// ---------------------------------------------------------------------------
+
+void TimeTravelManager::EnterReplayMode()
+{
+    if (_inReplayMode)
+        return;  // Idempotent + nest-safe: do NOT overwrite saved mute state
+
+    if (!_context)
+    {
+        MLOGWARNING("TimeTravelManager::EnterReplayMode — null _context, cannot engage replay mode");
+        return;
+    }
+
+    // Capture current SoundManager mute state so ExitReplayMode can restore
+    // it exactly. The TDD is explicit that host-buffer submission is muted
+    // but device ticks (handleStep / handleFrameStart) keep running — using
+    // the existing mute() facility is precisely this contract, since mute
+    // only zeroes the output buffer at the host boundary in handleFrameEnd.
+    if (_context->pSoundManager)
+    {
+        _soundMuteBeforeReplay = _context->pSoundManager->isMuted();
+        _context->pSoundManager->mute();
+    }
+    else
+    {
+        _soundMuteBeforeReplay = false;
+    }
+
+    _context->ttdReplayActive = true;
+    _inReplayMode = true;
+
+    MLOGINFO("TimeTravelManager::EnterReplayMode — replay mode engaged (sound mute saved=%d)",
+             static_cast<int>(_soundMuteBeforeReplay));
+}
+
+void TimeTravelManager::ExitReplayMode()
+{
+    if (!_inReplayMode)
+        return;  // Idempotent
+
+    if (!_context)
+    {
+        MLOGWARNING("TimeTravelManager::ExitReplayMode — null _context, cannot disengage replay mode");
+        return;
+    }
+
+    _context->ttdReplayActive = false;
+    _inReplayMode = false;
+
+    // Restore the saved mute state. If the user had muted audio before the
+    // seek, they want it muted after; if not, the existing unmute() path is
+    // the right call.
+    if (_context->pSoundManager)
+    {
+        if (_soundMuteBeforeReplay)
+            _context->pSoundManager->mute();
+        else
+            _context->pSoundManager->unmute();
+    }
+
+    MLOGINFO("TimeTravelManager::ExitReplayMode — replay mode disengaged (sound mute restored)");
+}
+
+bool TimeTravelManager::IsReplayActive() const
+{
+    return _context && _context->ttdReplayActive;
+}
+
 } // namespace ttd

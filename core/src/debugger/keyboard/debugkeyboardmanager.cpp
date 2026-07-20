@@ -53,10 +53,18 @@ void DebugKeyboardManager::PressKey(ZXKeysEnum key)
 {
     if (key == ZXKEY_NONE)
         return;
-    
+
+    // TTD silent-replay suppression (parent TDD §8.2 + Appendix C).
+    // Live keyboard input must not mutate the matrix during replay — the
+    // input journal injects recorded events at their timestamps instead
+    // (Phase 2 Item 3). Without this guard, any user input during a seek
+    // would diverge the replay from the captured history.
+    if (_context && _context->ttdReplayActive)
+        return;
+
     // Track in our direct press set
     _directPressedKeys.insert(key);
-    
+
     if (_keyboard)
     {
         _keyboard->PressKey(key);
@@ -72,10 +80,14 @@ void DebugKeyboardManager::ReleaseKey(ZXKeysEnum key)
 {
     if (key == ZXKEY_NONE)
         return;
-    
+
+    // TTD silent-replay suppression (parent TDD §8.2 + Appendix C).
+    if (_context && _context->ttdReplayActive)
+        return;
+
     // Remove from our direct press set
     _directPressedKeys.erase(key);
-    
+
     if (_keyboard)
     {
         _keyboard->ReleaseKey(key);

@@ -545,6 +545,11 @@ void AnalyzerManager::dispatchFrameStart()
     if (!_enabled)
         return;
 
+    // TTD silent-replay suppression (parent TDD §8.2 + Appendix C).
+    // Analyzers are observational — they must not run during replay.
+    if (_context && _context->ttdReplayActive)
+        return;
+
     for (const auto& id : _activeAnalyzers)
     {
         _analyzers.at(id)->onFrameStart();
@@ -554,6 +559,10 @@ void AnalyzerManager::dispatchFrameStart()
 void AnalyzerManager::dispatchFrameEnd()
 {
     if (!_enabled)
+        return;
+
+    // TTD silent-replay suppression (parent TDD §8.2 + Appendix C).
+    if (_context && _context->ttdReplayActive)
         return;
 
     for (const auto& id : _activeAnalyzers)
