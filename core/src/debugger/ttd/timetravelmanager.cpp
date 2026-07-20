@@ -967,4 +967,133 @@ bool TimeTravelManager::StepForwardFrame()
     return SeekTo(target);
 }
 
+// ---------------------------------------------------------------------------
+// Resume-from-past (Phase 2 Item 5; parent TDD §8.3)
+// ---------------------------------------------------------------------------
+
+bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
+{
+    // ------------------------------------------------------------------
+    // Validate preconditions. Same shape as SeekTo — the truncation rule
+    // is meaningless without a recorded timeline to truncate.
+    // ------------------------------------------------------------------
+    if (!_context)
+    {
+        MLOGWARNING("TimeTravelManager::ResumeRecordingFrom — null _context");
+        return false;
+    }
+
+    if (_state == TTDSessionState::Idle)
+    {
+        MLOGWARNING("TimeTravelManager::ResumeRecordingFrom — session is Idle "
+                    "(no history to resume from)");
+        return false;
+    }
+
+    if (_timeline.empty())
+    {
+        MLOGWARNING("TimeTravelManager::ResumeRecordingFrom — timeline is empty");
+        return false;
+    }
+
+    const TTDTimePoint sessionEnd = _timeline.back().time;
+    if (sessionEnd < from)
+    {
+        MLOGWARNING("TimeTravelManager::ResumeRecordingFrom — target "
+                    "(frame=%llu, tInFrame=%u) is beyond session end "
+                    "(frame=%llu, tInFrame=%u)",
+                    static_cast<unsigned long long>(from.frame),
+                    static_cast<unsigned>(from.tInFrame),
+                    static_cast<unsigned long long>(sessionEnd.frame),
+                    static_cast<unsigned>(sessionEnd.tInFrame));
+        return false;
+    }
+
+    const size_t preTimelineSize  = _timeline.size();
+    const size_t preJournalSize   = _inputJournal.Size();
+
+    // ------------------------------------------------------------------
+    // Step 1: ensure the emulator is positioned at `from`. SeekTo handles
+    // binary search, RestoreCheckpoint, intra-frame silent replay, and the
+    // Detached transition. If the caller already SeekTo'd to `from` this
+    // is a re-restore (deterministic — same machine state results).
+    //
+    // Doing the seek inside Resume (rather than requiring the caller to
+    // SeekTo first) makes the API self-contained and matches the TDD's
+    // "atomic under pause" requirement.
+    // ------------------------------------------------------------------
+    if (!SeekTo(from))
+    {
+        // SeekTo already logged the specific failure.
+        return false;
+    }
+
+    // ------------------------------------------------------------------
+    // Step 2: truncate timeline + page refs after `from`. Page refs held
+    // by dropped checkpoints are released back to the page store; the
+    // slots become eligible for reuse by future Intern calls (TDD §6.3).
+    // ------------------------------------------------------------------
+    TruncateTimelineAfter(from);
+
+    // ------------------------------------------------------------------
+    // Step 3: truncate input journal after `from`. Events exactly at `from`
+    // are kept (they happened at the resume point, not after it).
+    // ------------------------------------------------------------------
+    _inputJournal.DropAfter(from);
+
+    // ------------------------------------------------------------------
+    // Step 4: return to Recording. Next OnFrameBoundary will append a fresh
+    // checkpoint at frame `from.frame + 1` (the live emulator's frame
+    // counter is set by SeekTo).
+    // ------------------------------------------------------------------
+    _state = TTDSessionState::Recording;
+
+    MLOGINFO("TimeTravelManager::ResumeRecordingFrom — resumed at "
+             "(frame=%llu, tInFrame=%u); timeline %zu→%zu checkpoints, "
+             "journal %zu→%zu events, state=Recording",
+             static_cast<unsigned long long>(from.frame),
+             static_cast<unsigned>(from.tInFrame),
+             preTimelineSize, _timeline.size(),
+             preJournalSize, _inputJournal.Size());
+
+    return true;
+}
+
+void TimeTravelManager::TruncateTimelineAfter(const TTDTimePoint& from)
+{
+    // ------------------------------------------------------------------
+    // Find the first checkpoint strictly greater than `from`. Same
+    // upper_bound comparator shape as SeekTo so the two methods agree
+    // on "strictly after" (i.e. cp.time > from, NOT cp.time >= from).
+    // ------------------------------------------------------------------
+    auto upperIt = std::upper_bound(_timeline.begin(), _timeline.end(), from,
+        [](const TTDTimePoint& t, const TTDCheckpoint& cp) {
+            return t < cp.time;
+        });
+
+    if (upperIt == _timeline.end())
+    {
+        // Nothing to drop — every checkpoint is <= `from`. Common case
+        // when `from` is exactly at the last captured frame boundary.
+        return;
+    }
+
+    const size_t dropCount = static_cast<size_t>(_timeline.end() - upperIt);
+
+    // Release page refs for each dropped checkpoint before erasing. The
+    // refs are how the page store knows which slots are still in use by
+    // some checkpoint; failing to release would leak slots.
+    for (auto it = upperIt; it != _timeline.end(); ++it)
+        ReleaseCheckpointRefs(*it);
+
+    _timeline.erase(upperIt, _timeline.end());
+
+    MLOGINFO("TimeTravelManager::TruncateTimelineAfter — dropped %zu checkpoints "
+             "after (frame=%llu, tInFrame=%u); timeline now has %zu entries",
+             dropCount,
+             static_cast<unsigned long long>(from.frame),
+             static_cast<unsigned>(from.tInFrame),
+             _timeline.size());
+}
+
 } // namespace ttd

@@ -301,6 +301,37 @@ public:
     TTDTimePoint SessionEndPosition() const;
 
     // -----------------------------------------------------------------------
+    // Resume-from-past (Phase 2 Item 5; parent TDD §8.3)
+    // -----------------------------------------------------------------------
+    //
+    // When the user, having seeked to a point T < session end, wants to
+    // continue execution from T: drop everything > T from the timeline and
+    // the input journal, release page refs held by dropped checkpoints,
+    // transition back to Recording. The next OnFrameBoundary will capture
+    // a fresh checkpoint at frame T.frame + 1.
+    //
+    // Atomic with respect to the UI: the caller is expected to have paused
+    // the emulator (existing pause discipline — same as RestoreCheckpoint-
+    // ForTesting / SeekTo).
+
+    /// @brief Resume recording from a historical position, truncating future.
+    ///
+    /// Algorithm (parent TDD §8.3):
+    ///   1. Validate preconditions (state, bounds).
+    ///   2. SeekTo(from) — ensures the emulator is positioned at `from`.
+    ///      No-op-equivalent if already there (re-restore is deterministic).
+    ///   3. Release page refs for every checkpoint cp where cp.time > from.
+    ///   4. Erase those checkpoints from _timeline.
+    ///   5. _inputJournal.DropAfter(from).
+    ///   6. _state = Recording.
+    ///
+    /// @param from  Position to resume from. Must be within the current
+    ///              recorded timeline bounds (<= SessionEndPosition()).
+    /// @return true on success. False (with a logged warning) if state is
+    ///         Idle, the timeline is empty, or `from` is out of bounds.
+    bool ResumeRecordingFrom(const TTDTimePoint& from);
+
+    // -----------------------------------------------------------------------
     // Test/diagnostic accessors
     // -----------------------------------------------------------------------
 
@@ -394,6 +425,20 @@ private:
     /// @param targetFrame  Frame index (must match the restored checkpoint).
     /// @param targetTInFrame T-state offset within the frame to stop at.
     void ReplayWithinFrame(uint64_t targetFrame, uint32_t targetTInFrame);
+
+    // -----------------------------------------------------------------------
+    // Internal resume helpers (Phase 2 Item 5; parent TDD §8.3)
+    // -----------------------------------------------------------------------
+
+    /// @brief Drop every checkpoint with `cp.time > from` and release the
+    /// page refs they hold. Used by ResumeRecordingFrom.
+    ///
+    /// No-op if every checkpoint has time <= `from` (the common case when
+    /// `from` is exactly at the last captured frame boundary).
+    ///
+    /// Uses the same upper_bound comparator shape as SeekTo so the two
+    /// methods agree on the meaning of "strictly after".
+    void TruncateTimelineAfter(const TTDTimePoint& from);
 
     // -----------------------------------------------------------------------
     // Dependencies (non-owning)

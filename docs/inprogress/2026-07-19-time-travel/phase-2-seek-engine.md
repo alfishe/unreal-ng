@@ -71,15 +71,18 @@ the merge.
    capture+lifecycle), all green. Full TTD suite: 123/123 green.
 
 4. **`SeekTo` / `StepBackInstruction` / `StepBackFrame` / `StepForward*`**
-   (parent TDD §8.1 step 3 + §8.1 last paragraph). Binary-search the
-   timeline, restore, optional intra-frame silent replay. StepBackInstruction
-   replays from the previous checkpoint remembering the last instruction
-   boundary. State transitions Idle → Recording → Detached per §4.2.
+   ✅ DONE 2026-07-20 (parent TDD §8.1 step 3 + §8.1 last paragraph;
+   StepBackInstruction deferred). Binary-search the timeline via
+   `std::upper_bound`, restore, optional intra-frame silent replay via
+   `ReplayWithinFrame`. Step helpers compose SeekTo with frame-counter
+   arithmetic. State transitions Idle → Recording → Detached per §4.2.
+   Tests: 24 cases in `ttd_seek_test.cpp`. Full TTD suite: 141/141 green.
 
-5. **Resume-from-past truncation** (parent TDD §8.3). When the user
-   resumes from a Detached position T, drop everything > T from the
-   timeline and journals, release page refs, return to Recording. Atomic
-   under pause.
+5. **Resume-from-past truncation** ✅ DONE 2026-07-20 (parent TDD §8.3).
+   When the user resumes from a Detached position T, drop everything > T
+   from the timeline and journals, release page refs, return to Recording.
+   Atomic under pause. Tests: 19 cases in `ttd_resume_test.cpp`. Full
+   TTD suite: 183/183 green.
 
 6. **External-event markers as replay barriers** (parent TDD §5.1). For
    sources of nondeterminism that aren't journaled in v1 (tape control,
@@ -443,19 +446,99 @@ StepForwardFrame). Shipped three (SeekTo, StepBackFrame, StepForwardFrame)
 plus the two helpers (CurrentPosition, SessionEndPosition). The two
 instruction-level ops need the per-instruction PC probe — deferred.
 
-### Item 5 — Resume-from-past truncation
+### Item 5 — Resume-from-past truncation ✅ DONE
 
-```cpp
-// On Resume() while Detached at T:
-//   1. Drop _timeline entries with time > T (release page refs)
-//   2. inputJournal.truncate(after = T)
-//   3. writeJournal.truncate(after = T)  // P4 item — placeholder for now
-//   4. _state = Recording
-//   5. OnFrameBoundary() picks up from T
-```
+**Parent TDD refs:** §8.3 (Resume-from-Past / History Truncation).
 
-Atomic with respect to UI: caller pauses emulator, calls Resume, we do all
-this synchronously, return.
+**What landed:**
+
+- Public API on `TimeTravelManager`:
+  - `bool ResumeRecordingFrom(const TTDTimePoint& from)` — atomic resume
+    from a historical position. Internally composes:
+    1. Precondition checks (state non-Idle, non-empty timeline, target
+       within session bounds).
+    2. `SeekTo(from)` — ensures the emulator is positioned at `from`
+       (idempotent if the caller already seeked). This is what makes the
+       API self-contained and matches the TDD's "atomic under pause"
+       contract.
+    3. `TruncateTimelineAfter(from)` — release page refs for every
+       checkpoint with `cp.time > from`, then erase them.
+    4. `_inputJournal.DropAfter(from)` — keeps events with `time <= from`
+       (i.e. drops strictly-after events; events exactly at `from` are
+       preserved).
+    5. `_state = Recording`.
+
+- Private helper `TruncateTimelineAfter(from)`:
+  - Same `std::upper_bound` comparator shape as `SeekTo`, so the two
+    methods agree on "strictly after" semantics.
+  - Calls `ReleaseCheckpointRefs(cp)` for each dropped checkpoint before
+    erasing — page store slots become eligible for reuse by future
+    `Intern` calls (TDD §6.3).
+  - No-op if every checkpoint has `time <= from` (common case when `from`
+    is exactly at the last captured frame boundary).
+
+- `writeJournal.truncate(after = T)` (line 5 of the original sketch) is
+  deferred to Phase 4 (write journal, TDD §9.3) — there's no write
+  journal in v1.
+
+**Behavior highlights:**
+
+- After resume, the next `OnFrameBoundary` appends a fresh checkpoint at
+  frame `from.frame + 1`, so recording continues normally.
+- The dirty tracker is NOT reset — its `_everDirty` set still tracks
+  changes from the original session baseline, which is correct (we want
+  to keep paying the cheap `AddRef` cost for pages untouched since the
+  baseline).
+- Released page store slots are reused by subsequent captures: capacity
+  does not grow when recording resumes (verified by
+  `PageStore_SlotsReusedAfterResume`).
+- Dropped checkpoints are no longer seekable: `SeekTo` to a frame in the
+  dropped range fails with the standard "target beyond session end"
+  warning.
+
+**Design decisions:**
+
+- **SeekTo happens inside Resume, not before it.** The original sketch
+  ("On Resume() while Detached at T") assumed the caller had already
+  seeked. Making the seek internal means the API is one call, not two,
+  which matches the GDB TDD's `c` (continue) semantics: "past the end of
+  history transitions to live execution with the truncation rule of
+  parent TDD §8.3".
+- **Strict-greater-than truncation rule.** Checkpoints and journal
+  events exactly at `from` are KEPT. This matters for the edge case
+  where the user steps back to the very last captured frame and then
+  resumes — no data is lost, the timeline is unchanged.
+- **No `_dirtyTracker->ResetSession()` on resume.** Unlike
+  `InvalidateSession`, resume preserves the session's baseline capture
+  semantics. The dirty tracker's accumulated state is still valid for
+  the surviving prefix of the timeline.
+
+**Tests:** 19 cases in `ttd_resume_test.cpp`:
+- Preconditions: Idle state, target beyond session end.
+- Basic truncation: midpoint drops the right checkpoints; state is
+  Recording after; emulator position matches target; mid-frame resume
+  keeps the checkpoint at the same frame.
+- Boundary cases: resume at last checkpoint (no-op for truncation but
+  still transitions state), resume at first checkpoint (drops everything
+  except baseline).
+- Input journal: events at frames before the resume frame are kept;
+  events at the resume frame and later are dropped; events captured at
+  EXACTLY the resume TTDTimePoint are kept (via `RecordInputEvent` after
+  a frame-aligned `SeekTo`); events captured mid-frame at the resume
+  frame are dropped (correct — they're "in the future" from the resume
+  perspective).
+- Page store: slots are released on truncation; slots are reused by
+  captures after resume (capacity does not grow).
+- Recording continuation: appends one checkpoint per frame after
+  resume; state stays Recording; dropped checkpoints can no longer be
+  seek targets.
+- Composability: `ResumeRecordingFrom` from Detached state (after
+  `StepBackFrame`) seeks + truncates in one call.
+- Stop + Resume interaction: after `StopRecording` (state Idle),
+  `ResumeRecordingFrom` refuses — history is retained but cannot be
+  resumed without re-starting recording.
+
+Full TTD suite: 183/183 green (was 164 + 19 new resume tests).
 
 ### Item 6 — External-event markers
 
