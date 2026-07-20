@@ -275,3 +275,36 @@
     schemas["TraceEntry"]["properties"]["frame"]["type"] = "integer";
     schemas["TraceEntry"]["properties"]["tstate"]["type"] = "integer";
 
+    // TTD (Time-Travel Debug) schemas — parent TDD §10.4.
+    // P1 ships only the status endpoint (test observability); the rest of
+    // the TTD surface (start/stop/seek/step/find_last/timeline) lands with
+    // Phase 4 and will add corresponding request/response schemas here.
+    schemas["TTDStatusResponse"]["type"] = "object";
+    schemas["TTDStatusResponse"]["description"] =
+        "Snapshot of the TTD recorder session for the requested emulator instance";
+    schemas["TTDStatusResponse"]["properties"]["state"]["type"] = "string";
+    schemas["TTDStatusResponse"]["properties"]["state"]["enum"].append("idle");
+    schemas["TTDStatusResponse"]["properties"]["state"]["enum"].append("recording");
+    schemas["TTDStatusResponse"]["properties"]["state"]["enum"].append("detached");
+    schemas["TTDStatusResponse"]["properties"]["state"]["description"] =
+        "Session lifecycle state (parent TDD §4.2)";
+    schemas["TTDStatusResponse"]["properties"]["session_start_frame"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["session_start_frame"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["current_end_frame"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["current_end_frame"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["checkpoint_count"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["checkpoint_count"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["page_store_bytes"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["page_store_bytes"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["page_store_bytes"]["description"] =
+        "Capacity (allocated) of the COW page store — for budget checks";
+    schemas["TTDStatusResponse"]["properties"]["page_store_used_bytes"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["page_store_used_bytes"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["page_store_used_bytes"]["description"] =
+        "Live slot bytes currently held by the COW page store";
+    schemas["TTDStatusResponse"]["properties"]["baseline_frames_captured"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["baseline_frames_captured"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["ttd_available"]["type"] = "boolean";
+    schemas["TTDStatusResponse"]["properties"]["ttd_available"]["description"] =
+        "False when the manager is missing (minimal build); state will be \"idle\"";
+

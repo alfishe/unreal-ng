@@ -130,6 +130,10 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     tagInterpreter["name"] = "Interpreter Control";
     tagInterpreter["description"] = "Python and Lua interpreter management";
     tags.append(tagInterpreter);
+    Json::Value tagTTD;
+    tagTTD["name"] = "Time-Travel Debug";
+    tagTTD["description"] = "TTD recorder state (P1 ships status only; remaining surface lands with Phase 4)";
+    tags.append(tagTTD);
 
     spec["tags"] = tags;
 
@@ -149,6 +153,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
 #include "openapi/openapi_analyzers.inc"
 #include "openapi/openapi_debug.inc"
 #include "openapi/openapi_profiler.inc"
+#include "openapi/openapi_ttd.inc"
 
     spec["paths"] = paths;
 

@@ -59,6 +59,21 @@ inline void CapturePeripheral(ttd::TTDSerializable* dev, std::vector<uint8_t>& o
 namespace ttd {
 
 // ---------------------------------------------------------------------------
+// Public helpers
+// ---------------------------------------------------------------------------
+
+const char* TTDSessionStateToString(TTDSessionState state)
+{
+    switch (state)
+    {
+        case TTDSessionState::Idle:      return "idle";
+        case TTDSessionState::Recording: return "recording";
+        case TTDSessionState::Detached:  return "detached";
+    }
+    return "unknown";
+}
+
+// ---------------------------------------------------------------------------
 // Construction / destruction
 // ---------------------------------------------------------------------------
 

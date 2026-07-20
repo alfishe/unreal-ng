@@ -69,6 +69,17 @@ enum class TTDSessionState : uint8_t
     Detached   = 2,  ///< Emulator paused at a historical point (future seek state).
 };
 
+/// @brief Stable string identifier for a TTDSessionState.
+///
+/// The values ("idle" / "recording" / "detached") are part of the public
+/// automation contract per parent TDD §10.4: WebAPI JSON, Lua tables, Python
+/// attributes, and CLI tokens all use these exact spellings. Defined here
+/// (rather than in each surface's own adapter) so the contract lives in one
+/// place and is unit-testable from core-tests.
+///
+/// Keep in sync with the enum order above.
+const char* TTDSessionStateToString(TTDSessionState state);
+
 /// @brief Lightweight session summary returned by GetSessionInfo().
 /// Matches the shape automation clients (WebAPI/Lua/CLI) consume per TDD §10.4.
 struct TTDSessionInfo

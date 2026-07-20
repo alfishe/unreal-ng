@@ -287,6 +287,13 @@ public:
     ADD_METHOD_TO(EmulatorAPI::keyStatus, "/api/v1/emulator/{id}/keyboard/status", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::keyList, "/api/v1/emulator/{id}/keyboard/keys", drogon::Get);
     // endregion Keyboard Injection
+
+    // region TTD (Time-Travel Debug) (implementation: api/ttd_api.cpp)
+    // P1 (implementation-plan §3.A1 item 7) ships only the status endpoint
+    // for test observability. The rest of the TTD surface (start/stop/clear/
+    // seek/step/find_last/timeline) lands with Phase 4 (parent TDD §10.4).
+    ADD_METHOD_TO(EmulatorAPI::getTTDStatus, "/api/v1/emulator/{id}/ttd/status", drogon::Get);
+    // endregion TTD
     METHOD_LIST_END
 
     // region Root and OpenAPI Methods (implementation: emulator_api.cpp)
@@ -780,6 +787,13 @@ public:
     void keyList(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                  const std::string& id) const;
     // endregion Keyboard Injection Methods
+
+    // region TTD Methods (implementation: api/ttd_api.cpp)
+    // Per parent TDD §10.4. P1 ships only the status endpoint (test
+    // observability); the rest of the surface arrives with Phase 4.
+    void getTTDStatus(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    // endregion TTD Methods
 
     // region Helper Methods (implementation: emulator_api.cpp)
 private:
