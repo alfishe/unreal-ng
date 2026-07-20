@@ -21,10 +21,12 @@ choices that apply forward to every sprint and phase.
 | Sprint / Phase | Status | Notes |
 |---|---|---|
 | [Sprint 0 — Foundations](sprint-0-foundations.md) | ✅ Complete (2026-07-19) | 50 new tests, build green, baseline benchmarks recorded |
-| Phase 1 — TTD recorder | ⏳ Not started | Per-frame capture + ring buffer + restore/replay |
-| Phase 2 — TTD seek + UI | ⏳ Not started | Run-control claim enforcement, Qt timeline, seek API |
+| [Phase 1 — TTD recorder](phase-1-recorder.md) | ✅ Complete (2026-07-19) | Per-frame capture, peripheral serializers, lifecycle hooks, status endpoint. 131 TTD tests green |
+| [Phase 2 — TTD seek engine](phase-2-seek-engine.md) | 🚧 In progress | RestoreCheckpoint, silent replay, SeekTo/StepBack, resume-from-past |
+| Phase 3 — TTD timeline UI (Qt) | ⏳ Not started | Blocked on Phase 2 |
+| Phase 4 — Reverse search + automation | ⏳ Not started | Blocked on Phase 2 |
 | Phase G1 — GDB RSP server (live debug) | ⏳ Not started | `ENABLE_GDB_AUTOMATION` builds the actual server |
-| Phase G2 — Reverse execution | ⏳ Not started | `bc`/`bs`/`bt`, last-access queries |
+| Phase G2 — Reverse execution | ⏳ Not started | Blocked on Phase 4 |
 
 ## Per-sprint file convention
 
