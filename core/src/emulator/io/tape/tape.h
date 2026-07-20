@@ -2,6 +2,7 @@
 
 #include "stdafx.h"
 
+#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 #include "emulator/platform.h"
 #include "common/sound/filters/filter_dc.h"
 #include "common/sound/filters/filter_lpf.h"
@@ -111,7 +112,7 @@ struct TapeBlock
 ///
 /// The cassette loading routines have a great tolerance, and will allow variations in the speed of up to +/-15%
 /// @see https://retrocomputing.stackexchange.com/questions/15810/zx-spectrum-red-stripes-during-loading
-class Tape
+class Tape : public ttd::TTDSerializable
 {
     /// region <ModuleLogger definitions for Module/Submodule>
 public:
@@ -187,6 +188,29 @@ protected:
     bool getPilotSample(size_t clockCount);
 
     /// endregion </Helper methods>
+
+    /// region <TTDSerializable interface (P1.5 — parent TDD §6.4, §4 row 3)>
+public:
+    ///
+    /// Per parent TDD §4 row 3: checkpoint the playback POSITION, never the
+    /// content. Tape content (_tapeBlocks) is invariant within a session —
+    /// tape-control commands (load/stop/rewind) invalidate the session (§4.2).
+    ///
+    /// Serialized fields (41 bytes, cursor-packed):
+    ///   _tapeStarted, _tapePosition, _currentTapeBlockIndex,
+    ///   _currentPulseIdxInBlock, _currentOffsetWithinPulse, _currentClockCount.
+    ///
+    /// Excluded:
+    ///   - _tapeBlocks (content; invariant within session, not checkpointed)
+    ///   - _currentTapeBlock (derived pointer; recomputed from index on load)
+    ///   - _lpfFilter / _dcFilter (audio filters; host-side, rebuilt by
+    ///     handleFrameStart)
+    ///   - _muteEAR (host-side UI setting)
+    ///   - _context (pointer)
+    size_t TTDStateSize() const override;
+    void   TTDSaveState(uint8_t* dst) const override;
+    void   TTDLoadState(const uint8_t* src) override;
+    /// endregion </TTDSerializable interface>
 };
 
 //

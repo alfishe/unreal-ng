@@ -19,6 +19,7 @@
 #include "common/modulelogger.h"
 #include "emulator/cpu/z80.h"            // Z80, Z80State
 #include "emulator/emulatorcontext.h"    // EmulatorContext
+#include "emulator/io/tape/tape.h"        // Tape (peripheral, P1.5)
 #include "emulator/memory/memory.h"      // Memory
 #include "emulator/platform.h"           // EmulatorState, CONFIG, PAGE_SIZE, MAX_RAM_PAGES
 #include "emulator/sound/chips/soundchip_turbosound.h"  // SoundChip_TurboSound (AY peripheral, P1.5)
@@ -262,6 +263,11 @@ void TTDManager::CaptureNow(TTDCheckpoint& out)
     {
         out.ayState.clear();
     }
+
+    // Tape: per parent TDD §4 row 3 we checkpoint playback position only
+    // (content is invariant within a session; tape-control commands
+    // invalidate the session via P1.6 hooks).
+    CapturePeripheral(_context->pTape, out.tapeState);
 }
 
 void TTDManager::CaptureBaselineRamPages(std::vector<TTDPageRef>& outRamPages)
