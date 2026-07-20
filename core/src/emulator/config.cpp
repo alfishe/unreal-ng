@@ -300,6 +300,10 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 
 	// HDD section
 
+	// SOUND section
+	config.sound.covoxFB = (int)inimanager.GetLongValue(sound, "CovoxFB", 0);
+	config.sound.covoxDD = (int)inimanager.GetLongValue(sound, "CovoxDD", 0);
+
 	// Emulated model
 	CopyStringValue(inimanager.GetValue(misc, "HIMEM", "PENTAGON", nullptr), line, sizeof line);
 	config.ramsize = inimanager.GetLongValue(misc, "RamSize", 128, nullptr);

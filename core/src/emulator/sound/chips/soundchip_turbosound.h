@@ -2,10 +2,13 @@
 
 #include <stdafx.h>
 
+#include <memory>
+
 #include "common/sound/filters/filter_interpolate.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/audio.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
+#include "emulator/sound/native_audio_tap.h"
 
 class SoundChip_TurboSound : public PortDecoder, public PortDevice
 {
@@ -16,8 +19,14 @@ protected:
 
     SoundChip_AY8910* _currentChip = nullptr;
 
-    AudioFrameDescriptor _ayAudioDescriptor;                               // Audio descriptor for AY
+    AudioFrameDescriptor _ayAudioDescriptor;                               // Audio descriptor for combined AY output
     int16_t* const _ayBuffer = (int16_t*)_ayAudioDescriptor.memoryBuffer;  // Shortcut to it's sample buffer
+
+    // Per-chip buffers for registry-driven mixing (AY 1 / AY 2 capture)
+    AudioFrameDescriptor _chip0AudioDescriptor;
+    AudioFrameDescriptor _chip1AudioDescriptor;
+    int16_t* const _chip0Buffer = (int16_t*)_chip0AudioDescriptor.memoryBuffer;
+    int16_t* const _chip1Buffer = (int16_t*)_chip1AudioDescriptor.memoryBuffer;
 
     /// region <AY emulation>
     double _ayPLL;
@@ -31,6 +40,10 @@ protected:
 
     // HQ DSP flag (FIR filters vs simple averaging)
     bool _hqEnabled = true;
+
+    // Native-rate recording tap (218.75 kHz, pre-decimation).
+    // shared_ptr so a DSD encoder worker can outlive this chip safely.
+    std::shared_ptr<NativeAudioTap> _nativeTap = std::make_shared<NativeAudioTap>();
     /// endregion </AY emulation>
 
     /// endregion </Fields>
@@ -46,6 +59,24 @@ public:
     uint16_t* getAudioBuffer()
     {
         return (uint16_t*)_ayBuffer;
+    }
+
+    // Per-chip buffer access for registry-driven mixing / capture
+    int16_t* getChipBuffer(int index)
+    {
+        if (index == 0)
+            return _chip0Buffer;
+        if (index == 1)
+            return _chip1Buffer;
+        return nullptr;
+    }
+    const int16_t* getChipBuffer(int index) const
+    {
+        if (index == 0)
+            return _chip0Buffer;
+        if (index == 1)
+            return _chip1Buffer;
+        return nullptr;
     }
 
     // Chip access for monitoring purposes
@@ -139,6 +170,12 @@ public:
     void setHQEnabled(bool enabled)
     {
         _hqEnabled = enabled;
+    }
+
+    /// Native-rate recording tap (for DSD capture bypassing 44.1 kHz decimation)
+    std::shared_ptr<NativeAudioTap> getNativeTap() const
+    {
+        return _nativeTap;
     }
     /// endregion </Methods>
 

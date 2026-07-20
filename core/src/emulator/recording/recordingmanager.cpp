@@ -1,9 +1,19 @@
 #include "recordingmanager.h"
 
+#include "3rdparty/message-center/messagecenter.h"
 #include "base/featuremanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/video/screen.h"
+#include "encoders/gif_encoder.h"
+#include "encoders/ffmpeg_pipe_encoder.h"
+#include "platform_encoder.h"
+#include "ffmpeg_probe.h"
+#include "realtime_estimator.h"
+#include <algorithm>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
 
 /// region <Helper functions>
 
@@ -69,6 +79,44 @@ static const char* GetAudioSourceName(AudioSourceType source)
     }
 }
 
+/// @brief Expand a leading '~' and make sure the parent directory exists.
+/// Recording always creates a NEW file — a missing directory must not fail
+/// the recording with a confusing "no such file" error.
+/// @return Normalized path, or empty string (with errorOut set) on failure
+static std::string PrepareOutputPath(const std::string& path, std::string& errorOut)
+{
+    std::string result = path;
+
+    // Expand "~/..." (fopen/AVFoundation do not expand tilde)
+    // On Windows, also check for backslash after tilde
+    if (!result.empty() && result[0] == '~' && (result.size() == 1 || result[1] == '/' || result[1] == '\\'))
+    {
+        const char* home = std::getenv("HOME");
+#ifdef _WIN32
+        // Windows uses USERPROFILE or HOMEPATH instead of HOME
+        if (!home)
+            home = std::getenv("USERPROFILE");
+#endif
+        if (home)
+            result = std::string(home) + result.substr(1);
+    }
+
+    // Create parent directories recursively
+    std::error_code ec;
+    std::filesystem::path parent = std::filesystem::path(result).parent_path();
+    if (!parent.empty())
+    {
+        std::filesystem::create_directories(parent, ec);
+        if (ec)
+        {
+            errorOut = "Cannot create output directory '" + parent.string() + "': " + ec.message();
+            return {};
+        }
+    }
+
+    return result;
+}
+
 /// endregion </Helper functions>
 
 RecordingManager::RecordingManager(EmulatorContext* context) : _context(context)
@@ -81,6 +129,16 @@ RecordingManager::RecordingManager(EmulatorContext* context) : _context(context)
 
 RecordingManager::~RecordingManager()
 {
+    // Unsubscribe from message center
+    if (_isSubscribed)
+    {
+        MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+        Observer* obs = static_cast<Observer*>(this);
+        ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&RecordingManager::onEmulatorStateChange);
+        mc.RemoveObserver(NC_EMULATOR_STATE_CHANGE, obs, callback);
+        _isSubscribed = false;
+    }
+
     // Stop recording if still active
     if (_isRecording)
     {
@@ -96,11 +154,48 @@ void RecordingManager::Init()
 {
     MLOGINFO("RecordingManager::Init - Initializing recording manager");
 
+    // Subscribe to emulator state changes to auto-stop on shutdown
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    Observer* obs = static_cast<Observer*>(this);
+    ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&RecordingManager::onEmulatorStateChange);
+    mc.AddObserver(NC_EMULATOR_STATE_CHANGE, obs, callback);
+    _isSubscribed = true;
+
     // Reset state
     Reset();
+}
 
-    // TODO: Initialize encoder libraries (FFmpeg, libav, etc.)
-    // TODO: Query available codecs and formats
+void RecordingManager::onEmulatorStateChange(int /*id*/, Message* message)
+{
+    if (auto* payload = dynamic_cast<SimpleNumberPayload*>(message->obj))
+    {
+        if (payload->_payloadNumber == StateStopped && _isRecording)
+        {
+            // NC_EMULATOR_STATE_CHANGE is a global broadcast — every emulator
+            // instance posts it and every RecordingManager receives it.
+            // The payload carries only the state number, NOT the emulator ID.
+            // We must verify this stop is from OUR emulator before reacting,
+            // otherwise stopping one instance kills recording on all others.
+            bool ourStop = false;
+            if (_context && _context->pEmulator)
+            {
+                auto state = _context->pEmulator->GetState();
+                ourStop = (state == StateStopped || state == StateDestroying ||
+                           _context->pEmulator->IsDestroying());
+            }
+            else
+            {
+                // Context already gone — stop defensively
+                ourStop = true;
+            }
+
+            if (ourStop)
+            {
+                MLOGINFO("RecordingManager: Own emulator stopped/destroyed, auto-stopping recording");
+                StopRecording();
+            }
+        }
+    }
 }
 
 void RecordingManager::Reset()
@@ -141,12 +236,14 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
     if (!_featureEnabled)
     {
         MLOGWARNING("RecordingManager::StartRecording - Recording disabled (feature 'recording' = off)");
+        _lastRecordingError = "Recording feature is disabled. Enable the 'recording' feature first.";
         return false;
     }
 
     if (_isRecording)
     {
         MLOGWARNING("RecordingManager::StartRecording - Already recording, stop current recording first");
+        _lastRecordingError = "Already recording. Stop the current recording first.";
         return false;
     }
 
@@ -159,6 +256,17 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
     _videoBitrate = videoBitrate;
     _audioBitrate = audioBitrate;
 
+    // Disable audio channels when no audio codec is specified
+    if (audioCodec.empty())
+    {
+        _audioChannels = 0;
+        _audioTracks.clear();
+    }
+    else if (_audioChannels == 0)
+    {
+        _audioChannels = 2; // Restore default if it was cleared from a previous run
+    }
+
     MLOGINFO("  Mode: %s", _videoEnabled ? "Video+Audio" : "Audio-Only");
     if (_videoEnabled)
     {
@@ -166,25 +274,41 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
     }
     MLOGINFO("  Audio: codec=%s, bitrate=%u kbps", audioCodec.c_str(), audioBitrate);
 
-    // Store configuration
-    _outputFilename = filename;
+    // Store configuration (normalized; ensures the destination directory exists)
+    _outputFilename = PrepareOutputPath(filename, _lastRecordingError);
+    if (_outputFilename.empty())
+    {
+        MLOGERROR("RecordingManager::StartRecording - %s", _lastRecordingError.c_str());
+        return false;
+    }
 
-    // Use native framebuffer dimensions if not explicitly set
+    // Use capture-region dimensions if not explicitly set
     if (_videoEnabled && (_videoWidth == 0 || _videoHeight == 0))
     {
         FramebufferDescriptor fb = _context->pScreen->GetFramebufferDescriptor();
         _videoWidth = fb.width;
         _videoHeight = fb.height;
+
+        if (_captureRegion == VideoCaptureRegion::MainScreen)
+        {
+            const RasterDescriptor& rd = _context->pScreen->rasterDescriptors[fb.videoMode];
+            if (rd.screenWidth > 0 && rd.screenHeight > 0)
+            {
+                _videoWidth = rd.screenWidth;
+                _videoHeight = rd.screenHeight;
+            }
+        }
     }
 
     if (_videoEnabled)
     {
-        MLOGINFO("  Resolution: %ux%u @ %.2f fps", _videoWidth, _videoHeight, _videoFrameRate);
+        MLOGINFO("  Resolution: %ux%u @ %.2f fps (%s, scale %ux)", _videoWidth, _videoHeight, _videoFrameRate,
+                 _captureRegion == VideoCaptureRegion::MainScreen ? "screen only" : "full frame", _scaleFactor);
     }
     MLOGINFO("  Audio: %u Hz, %u channels", _audioSampleRate, _audioChannels);
 
-    // Setup default single-track configuration if no tracks configured
-    if (_audioTracks.empty())
+    // Setup default single-track configuration if audio is enabled and no tracks configured
+    if (!audioCodec.empty() && _audioTracks.empty())
     {
         AudioTrackConfig defaultTrack;
         defaultTrack.name = "Master Audio";
@@ -196,10 +320,13 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
 
     MLOGINFO("  Audio tracks: %zu", _audioTracks.size());
 
+    // Serialize encoder (re)creation against the capture path
+    std::lock_guard<std::mutex> lock(_captureMutex);
+
     // Initialize encoder
     if (!InitializeEncoder())
     {
-        MLOGERROR("RecordingManager::StartRecording - Failed to initialize encoder");
+        MLOGERROR("RecordingManager::StartRecording - Failed to initialize encoder: %s", _lastRecordingError.c_str());
         return false;
     }
 
@@ -207,10 +334,19 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
     _emulatedFrameCount = 0;
     _emulatedAudioSampleCount = 0;
     _stats = RecordingStats();
+    _frameTimestamps.clear();
+    _frameTimestampIndex = 0;
+    _wallClockStart = Clock::now();
+    _wallClockPausedTotal = Clock::duration::zero();
 
     // Start recording
     _isRecording = true;
     _isPaused = false;
+
+    // Track which emulator instance we're recording on, so the global
+    // NC_EMULATOR_STATE_CHANGE handler can ignore stops from other instances
+    if (_context && _context->pEmulator)
+        _recordingEmulatorId = _context->pEmulator->GetId();
 
     MLOGINFO("RecordingManager::StartRecording - Recording started successfully");
     return true;
@@ -229,8 +365,13 @@ bool RecordingManager::StartRecordingEx(const std::string& filename)
     MLOGINFO("  Video: %s", _videoEnabled ? "ENABLED" : "DISABLED");
     MLOGINFO("  Audio tracks: %zu", _audioTracks.size());
 
-    // Store configuration
-    _outputFilename = filename;
+    // Store configuration (normalized; ensures the destination directory exists)
+    _outputFilename = PrepareOutputPath(filename, _lastRecordingError);
+    if (_outputFilename.empty())
+    {
+        MLOGERROR("RecordingManager::StartRecordingEx - %s", _lastRecordingError.c_str());
+        return false;
+    }
 
     // Use native framebuffer dimensions if not explicitly set
     if (_videoEnabled && (_videoWidth == 0 || _videoHeight == 0))
@@ -253,6 +394,9 @@ bool RecordingManager::StartRecordingEx(const std::string& filename)
         MLOGINFO("  Track %zu: %s [%s, %u kbps]", i, track.name.c_str(), track.codec.c_str(), track.bitrate);
     }
 
+    // Serialize encoder (re)creation against the capture path
+    std::lock_guard<std::mutex> lock(_captureMutex);
+
     // Initialize encoder
     if (!InitializeEncoder())
     {
@@ -264,12 +408,88 @@ bool RecordingManager::StartRecordingEx(const std::string& filename)
     _emulatedFrameCount = 0;
     _emulatedAudioSampleCount = 0;
     _stats = RecordingStats();
+    _wallClockStart = Clock::now();
+    _wallClockPausedTotal = Clock::duration::zero();
 
     // Start recording
     _isRecording = true;
     _isPaused = false;
 
+    // Track which emulator instance we're recording on
+    if (_context && _context->pEmulator)
+        _recordingEmulatorId = _context->pEmulator->GetId();
+
     MLOGINFO("RecordingManager::StartRecordingEx - Recording started successfully");
+    return true;
+}
+
+bool RecordingManager::StartRecordingWithEncoder(const std::string& filename, std::unique_ptr<EncoderBase> encoder)
+{
+    if (_isRecording)
+    {
+        MLOGWARNING("RecordingManager::StartRecordingWithEncoder - Already recording, stop current recording first");
+        return false;
+    }
+
+    if (!encoder)
+    {
+        _lastRecordingError = "No encoder provided";
+        MLOGERROR("RecordingManager::StartRecordingWithEncoder - %s", _lastRecordingError.c_str());
+        return false;
+    }
+
+    MLOGINFO("RecordingManager::StartRecordingWithEncoder - Starting recording to '%s' with %s",
+             filename.c_str(), encoder->GetDisplayName().c_str());
+
+    // Prepare output path
+    _outputFilename = PrepareOutputPath(filename, _lastRecordingError);
+    if (_outputFilename.empty())
+    {
+        MLOGERROR("RecordingManager::StartRecordingWithEncoder - %s", _lastRecordingError.c_str());
+        return false;
+    }
+
+    // Serialize encoder (re)creation against the capture path
+    std::lock_guard<std::mutex> lock(_captureMutex);
+
+    // Build encoder config
+    EncoderConfig config;
+    config.videoWidth = _videoWidth;
+    config.videoHeight = _videoHeight;
+    config.frameRate = _videoFrameRate;
+    config.audioSampleRate = _audioSampleRate;
+    config.audioChannels = _audioChannels;
+
+    // Start the custom encoder
+    if (!encoder->Start(_outputFilename, config))
+    {
+        _lastRecordingError = encoder->GetLastError();
+        if (_lastRecordingError.empty())
+            _lastRecordingError = "Encoder failed to start";
+        MLOGERROR("RecordingManager::StartRecordingWithEncoder - %s", _lastRecordingError.c_str());
+        return false;
+    }
+
+    // Add to active encoders
+    _activeEncoders.clear();
+    _activeEncoders.push_back(std::move(encoder));
+
+    // Reset counters
+    _emulatedFrameCount = 0;
+    _emulatedAudioSampleCount = 0;
+    _stats = RecordingStats();
+    _wallClockStart = Clock::now();
+    _wallClockPausedTotal = Clock::duration::zero();
+
+    // Start recording
+    _isRecording = true;
+    _isPaused = false;
+
+    // Track which emulator instance we're recording on
+    if (_context && _context->pEmulator)
+        _recordingEmulatorId = _context->pEmulator->GetId();
+
+    MLOGINFO("RecordingManager::StartRecordingWithEncoder - Recording started successfully");
     return true;
 }
 
@@ -282,16 +502,27 @@ void RecordingManager::StopRecording()
     }
 
     MLOGINFO("RecordingManager::StopRecording - Stopping recording");
+
+    // Wait for any in-flight CaptureFrame/CaptureAudio to finish, then stop
+    // accepting new frames BEFORE finalizing (closing) the encoders
+    std::lock_guard<std::mutex> lock(_captureMutex);
+
+    _isRecording = false;
+    _isPaused = false;
+    _recordingEmulatorId.clear();
+
+    // Compute final wall clock duration
+    auto wallNow = Clock::now();
+    auto wallElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        wallNow - _wallClockStart - _wallClockPausedTotal).count();
+    _stats.recordedDuration = static_cast<double>(wallElapsed) / 1000.0;
+
     MLOGINFO("  Frames recorded: %llu", _stats.framesRecorded);
     MLOGINFO("  Audio samples: %llu", _stats.audioSamplesRecorded);
-    MLOGINFO("  Duration: %.2f seconds (emulated time)", _stats.recordedDuration);
+    MLOGINFO("  Duration: %.2f seconds (wall clock)", _stats.recordedDuration);
 
     // Finalize encoder and close output file
     FinalizeEncoder();
-
-    // Stop recording
-    _isRecording = false;
-    _isPaused = false;
 
     MLOGINFO("RecordingManager::StopRecording - Recording stopped, output saved to '%s'", _outputFilename.c_str());
 }
@@ -312,6 +543,7 @@ void RecordingManager::PauseRecording()
 
     MLOGINFO("RecordingManager::PauseRecording - Pausing recording");
     _isPaused = true;
+    _wallClockPauseStart = Clock::now();
 }
 
 void RecordingManager::ResumeRecording()
@@ -330,6 +562,7 @@ void RecordingManager::ResumeRecording()
 
     MLOGINFO("RecordingManager::ResumeRecording - Resuming recording");
     _isPaused = false;
+    _wallClockPausedTotal += Clock::now() - _wallClockPauseStart;
 }
 
 /// endregion </Recording control>
@@ -338,7 +571,14 @@ void RecordingManager::ResumeRecording()
 
 void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
 {
-    // Skip if not recording or paused
+    // Cheap unlocked pre-check (the mainloop calls this every frame)
+    if (!IsRecording())
+    {
+        return;
+    }
+
+    // Serialize against StopRecording closing the encoders mid-frame
+    std::lock_guard<std::mutex> lock(_captureMutex);
     if (!IsRecording())
     {
         return;
@@ -347,18 +587,111 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
     // Calculate presentation timestamp based on emulated frame count
     double timestamp = static_cast<double>(_emulatedFrameCount) / _videoFrameRate;
 
+    // Crop to the main screen area (no border) when requested
+    const FramebufferDescriptor* toEncode = &framebuffer;
+    FramebufferDescriptor cropped;
+    if (_captureRegion == VideoCaptureRegion::MainScreen && _context->pScreen && framebuffer.memoryBuffer)
+    {
+        const RasterDescriptor& rd = _context->pScreen->rasterDescriptors[framebuffer.videoMode];
+        if (rd.screenWidth > 0 && rd.screenHeight > 0 &&
+            rd.screenOffsetLeft + rd.screenWidth <= framebuffer.width &&
+            rd.screenOffsetTop + rd.screenHeight <= framebuffer.height)
+        {
+            size_t rowBytes = static_cast<size_t>(rd.screenWidth) * 4;
+            _cropBuffer.resize(rowBytes * rd.screenHeight);
+
+            const uint8_t* src = framebuffer.memoryBuffer +
+                (static_cast<size_t>(rd.screenOffsetTop) * framebuffer.width + rd.screenOffsetLeft) * 4;
+            for (uint16_t y = 0; y < rd.screenHeight; y++)
+            {
+                memcpy(_cropBuffer.data() + y * rowBytes, src, rowBytes);
+                src += static_cast<size_t>(framebuffer.width) * 4;
+            }
+
+            cropped.videoMode = framebuffer.videoMode;
+            cropped.width = rd.screenWidth;
+            cropped.height = rd.screenHeight;
+            cropped.memoryBuffer = _cropBuffer.data();
+            cropped.memoryBufferSize = _cropBuffer.size();
+            toEncode = &cropped;
+        }
+    }
+
     // Encode video frame
-    EncodeVideoFrame(framebuffer, timestamp);
+    EncodeVideoFrame(*toEncode, timestamp);
 
     // Update statistics
     _stats.framesRecorded++;
-    _stats.recordedDuration = timestamp;
+
+    // Wall clock duration (real elapsed time, excluding pauses)
+    auto wallNow = Clock::now();
+    auto wallElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        wallNow - _wallClockStart - _wallClockPausedTotal).count();
+    _stats.recordedDuration = static_cast<double>(wallElapsed) / 1000.0;
+    _stats.emulatedDuration = timestamp;
+
+    // Rolling FPS: track frame timestamps in a ring buffer
+    size_t maxFrames = static_cast<size_t>(_fpsWindowSeconds * 60.0); // ~60fps max
+    if (_frameTimestamps.size() < maxFrames)
+    {
+        _frameTimestamps.push_back(wallNow);
+    }
+    else
+    {
+        _frameTimestamps[_frameTimestampIndex] = wallNow;
+        _frameTimestampIndex = (_frameTimestampIndex + 1) % maxFrames;
+    }
+
+    // Calculate FPS over the window
+    if (_frameTimestamps.size() >= 2)
+    {
+        auto windowStart = wallNow - std::chrono::duration_cast<Clock::duration>(
+            std::chrono::duration<double>(_fpsWindowSeconds));
+        size_t framesInWindow = 0;
+        Clock::time_point oldest = wallNow;
+        for (const auto& ts : _frameTimestamps)
+        {
+            if (ts >= windowStart)
+            {
+                framesInWindow++;
+                if (ts < oldest)
+                    oldest = ts;
+            }
+        }
+        if (framesInWindow > 1)
+        {
+            double windowDuration = std::chrono::duration<double>(wallNow - oldest).count();
+            if (windowDuration > 0.01)
+                _stats.recentFps = static_cast<double>(framesInWindow - 1) / windowDuration;
+        }
+    }
+
+    // Update file size from encoder (throttled — every 25 frames / 0.5s to avoid stat() overhead)
+    if (_stats.framesRecorded % 25 == 0)
+    {
+        for (auto& encoder : _activeEncoders)
+        {
+            if (encoder)
+            {
+                _stats.outputFileSize = encoder->GetOutputFileSize();
+                break; // Single encoder for now
+            }
+        }
+    }
+
     _emulatedFrameCount++;
 }
 
 void RecordingManager::CaptureAudio(const int16_t* samples, size_t sampleCount)
 {
-    // Skip if not recording, paused, or no audio tracks configured
+    // Cheap unlocked pre-check
+    if (!IsRecording() || _audioTracks.empty())
+    {
+        return;
+    }
+
+    // Serialize against StopRecording closing the encoders mid-write
+    std::lock_guard<std::mutex> lock(_captureMutex);
     if (!IsRecording() || _audioTracks.empty())
     {
         return;
@@ -373,38 +706,6 @@ void RecordingManager::CaptureAudio(const int16_t* samples, size_t sampleCount)
     // Update statistics
     _stats.audioSamplesRecorded += sampleCount;
     _emulatedAudioSampleCount += sampleCount;
-}
-
-void RecordingManager::OnFrameEnd(const FramebufferDescriptor& framebuffer, const int16_t* audioSamples,
-                                  size_t audioSampleCount)
-{
-    // Feature guard - early exit if recording disabled
-    if (!_featureEnabled)
-    {
-        return;
-    }
-
-    // Skip if no active encoders
-    if (_activeEncoders.empty())
-    {
-        return;
-    }
-
-    // Calculate timestamp based on emulated frame count
-    double timestamp = static_cast<double>(_emulatedFrameCount) / _videoFrameRate;
-
-    // Dispatch to all active encoders
-    for (auto& encoder : _activeEncoders)
-    {
-        if (encoder->IsRecording())
-        {
-            encoder->OnVideoFrame(framebuffer, timestamp);
-            encoder->OnAudioSamples(audioSamples, audioSampleCount, timestamp);
-        }
-    }
-
-    // Update frame count for timestamp calculation
-    _emulatedFrameCount++;
 }
 
 /// endregion </Frame/Audio capture>
@@ -556,97 +857,255 @@ void RecordingManager::SelectAudioSource(AudioSourceType source)
 
 /// endregion </Configuration>
 
-/// region <Encoder interface (STUBS - to be implemented)>
+/// region <Encoder interface>
 
 bool RecordingManager::InitializeEncoder()
 {
-    MLOGINFO("RecordingManager::InitializeEncoder - TODO: Initialize encoder (FFmpeg, libav, etc.)");
+    _lastRecordingError.clear();
+    MLOGINFO("RecordingManager::InitializeEncoder - Selecting encoder for codec '%s'", _videoCodec.c_str());
 
-    // TODO: Initialize video encoder
-    //   - Open output file
-    //   - Initialize video codec context
-    //   - Set video parameters (resolution, frame rate, bitrate, codec)
-    //   - Allocate video frame buffers
+    // Build EncoderConfig from current RecordingManager state
+    EncoderConfig config;
+    config.videoWidth = _videoWidth;
+    config.videoHeight = _videoHeight;
+    config.frameRate = _videoFrameRate;
+    config.videoBitrate = _videoBitrate;
+    config.videoCodec = _videoCodec;
+    config.audioSampleRate = _audioSampleRate;
+    config.audioChannels = _audioChannels;
+    config.audioBitrate = _audioBitrate > 0 ? _audioBitrate : 192;
+    config.audioCodec = _audioCodec;
+    config.qualityPreset = _qualityPreset;
+    config.ffmpegPath = _ffmpegPath;
+    config.captureRegion = _captureRegion;
+    config.scaleFactor = _scaleFactor;
 
-    // TODO: Initialize audio encoder (if audio enabled)
-    //   - Initialize audio codec context
-    //   - Set audio parameters (sample rate, channels, bitrate, codec)
-    //   - Allocate audio frame buffers
+    // Determine container from filename extension
+    size_t dotPos = _outputFilename.rfind('.');
+    if (dotPos != std::string::npos)
+    {
+        config.container = _outputFilename.substr(dotPos + 1);
+        std::transform(config.container.begin(), config.container.end(), config.container.begin(), ::tolower);
+    }
 
-    // TODO: Write container header
-    //   - Initialize muxer (MP4, AVI, MKV, etc.)
-    //   - Add video/audio streams
-    //   - Write header
+    // Clear any existing encoders
+    _activeEncoders.clear();
 
-    // STUB: Return false to prevent actual recording attempts
-    MLOGWARNING("RecordingManager::InitializeEncoder - Encoder not implemented, recording disabled");
+    // Normalize codec for GIF check
+    std::string codecLower = _videoCodec;
+    std::transform(codecLower.begin(), codecLower.end(), codecLower.begin(), ::tolower);
+
+    // ====================================================================
+    // Dispatch based on selected backend
+    // ====================================================================
+    // GIF is always handled natively regardless of backend choice
+    if (codecLower == "gif" || config.container == "gif")
+    {
+        MLOGINFO("  Trying GIFEncoder (native)");
+        auto gifEncoder = std::make_unique<GIFEncoder>();
+        if (gifEncoder->Start(_outputFilename, config))
+        {
+            _activeEncoders.push_back(std::move(gifEncoder));
+            _realtimeCapable = true;
+            MLOGINFO("  GIFEncoder started successfully");
+            return true;
+        }
+        std::string gifErr = gifEncoder->GetLastError();
+        MLOGERROR("  GIFEncoder failed: %s", gifErr.c_str());
+        _lastRecordingError = "GIF encoder failed: " + (gifErr.empty() ? "unknown error" : gifErr)
+            + " | Output: " + _outputFilename
+            + " | Resolution: " + std::to_string(config.videoWidth) + "x" + std::to_string(config.videoHeight);
+        return false;
+    }
+
+    // Determine which single backend to use (NO fallback allowed)
+    EncoderBackend backend = _encoderBackend;
+
+    // Auto: pick one based on availability — native first if available and compatible
+    if (backend == EncoderBackend::Auto)
+    {
+        if (PlatformEncoderFactory::isNativeAvailable())
+        {
+            // Check if native supports this codec/container/audio combination
+            std::string audioLower = config.audioCodec;
+            std::transform(audioLower.begin(), audioLower.end(), audioLower.begin(), ::tolower);
+
+            bool nativeCompatible = (config.container == "mp4" || config.container == "mov")
+                && (codecLower == "h264" || codecLower == "h265" || codecLower == "hevc")
+                && (config.audioChannels == 0 || audioLower.empty() || audioLower == "aac");
+            backend = nativeCompatible ? EncoderBackend::Native : EncoderBackend::FFmpeg;
+        }
+        else
+        {
+            backend = EncoderBackend::FFmpeg;
+        }
+    }
+
+    MLOGINFO("  Selected backend: %s",
+             backend == EncoderBackend::Native ? "Native" : "FFmpeg");
+
+    // ====================================================================
+    // Native encoder — try once, fail hard
+    // ====================================================================
+    if (backend == EncoderBackend::Native)
+    {
+        if (!PlatformEncoderFactory::isNativeAvailable())
+        {
+            _lastRecordingError = "Native encoder not available on this platform.";
+            return false;
+        }
+
+        MLOGINFO("  Trying native encoder");
+        auto nativeEncoder = PlatformEncoderFactory::createNativeEncoder(config);
+        if (!nativeEncoder)
+        {
+            std::string nativeName = PlatformEncoderFactory::getNativeDisplayName();
+            _lastRecordingError = nativeName + " does not support codec '" + _videoCodec
+                + "' in container '" + config.container + "'. "
+                + nativeName + " supports H.264 and H.265 in MP4/MOV containers.";
+            MLOGERROR("  %s", _lastRecordingError.c_str());
+            return false;
+        }
+
+        if (!nativeEncoder->Start(_outputFilename, config))
+        {
+            std::string err = nativeEncoder->GetLastError();
+            std::string nativeName = PlatformEncoderFactory::getNativeDisplayName();
+            _lastRecordingError = nativeName + " encoder failed: "
+                + (err.empty() ? "unknown error" : err)
+                + " | Codec: " + _videoCodec
+                + " | Container: " + config.container
+                + " | Resolution: " + std::to_string(config.videoWidth) + "x" + std::to_string(config.videoHeight);
+            MLOGERROR("  %s", _lastRecordingError.c_str());
+            return false;
+        }
+
+        _activeEncoders.push_back(std::move(nativeEncoder));
+        _realtimeCapable = true;
+        MLOGINFO("  Native encoder started");
+        return true;
+    }
+
+    // ====================================================================
+    // FFmpeg encoder — try once, fail hard
+    // ====================================================================
+    MLOGINFO("  Trying FFmpegPipeEncoder");
+
+    // Check if ffmpeg is available
+    std::string ffmpegPath = FFmpegProbe::findFFmpeg();
+    if (ffmpegPath.empty())
+    {
+        MLOGERROR("  FFmpeg binary not found. Recording cannot proceed.");
+        MLOGERROR("  Install ffmpeg: macOS: brew install ffmpeg, Linux: sudo apt install ffmpeg");
+        _lastRecordingError = "FFmpeg binary not found on system PATH. "
+            + std::string("Install it: macOS 'brew install ffmpeg', Linux 'sudo apt install ffmpeg'. ")
+            + "Codec: " + _videoCodec + ", Container: " + config.container;
+        return false;
+    }
+
+    MLOGINFO("  FFmpeg found at: %s", ffmpegPath.c_str());
+
+    auto ffmpegEncoder = std::make_unique<FFmpegPipeEncoder>();
+    ffmpegEncoder->setFFmpegPath(ffmpegPath);
+
+    if (ffmpegEncoder->Start(_outputFilename, config))
+    {
+        // Estimate realtime capability
+        FFmpegProbe::HWAccelInfo hwInfo = FFmpegProbe::detectHWAccel(ffmpegPath);
+        auto capability = RealtimeEstimator::estimate(config, false,
+                                                       hwInfo.videoToolbox,
+                                                       hwInfo.nvenc,
+                                                       hwInfo.qsv,
+                                                       hwInfo.vaapi);
+
+        _realtimeCapable = (capability == RealtimeEstimator::RealtimeCapability::Realtime);
+
+        // Blocking mode: emulation thread waits when the queue is full.
+        // - Non-realtime encoders: MUST block, otherwise we'd drop most frames
+        // - Realtime encoders: do NOT block — the 60-frame buffer absorbs
+        //   frame-to-frame timing variance; blocking would cause micro-stalls
+        //   on every slow frame and make playback choppy even though the
+        //   encoder keeps up on average
+        ffmpegEncoder->setBlocking(!_realtimeCapable);
+
+        _activeEncoders.push_back(std::move(ffmpegEncoder));
+
+        std::string reason = RealtimeEstimator::getReason(config, false);
+        if (_realtimeCapable)
+        {
+            MLOGINFO("  FFmpeg encoder started. Realtime: YES. %s", reason.c_str());
+        }
+        else
+        {
+            MLOGWARNING("  FFmpeg encoder started. NON-REALTIME. Emulation will slow to guarantee 50Hz. %s", reason.c_str());
+        }
+
+        return true;
+    }
+
+    std::string ffmpegErr = ffmpegEncoder->GetLastError();
+    MLOGERROR("  FFmpeg encoder failed: %s", ffmpegErr.c_str());
+    _lastRecordingError = "FFmpeg encoder failed: " + (ffmpegErr.empty() ? "unknown error" : ffmpegErr)
+        + " | FFmpeg path: " + ffmpegPath
+        + " | Codec: " + _videoCodec + " (" + config.container + ")"
+        + " | Resolution: " + std::to_string(config.videoWidth) + "x" + std::to_string(config.videoHeight)
+        + " | Bitrate: " + std::to_string(config.videoBitrate) + "kbps";
     return false;
 }
 
 void RecordingManager::FinalizeEncoder()
 {
-    MLOGINFO("RecordingManager::FinalizeEncoder - TODO: Finalize encoder and close output file");
+    MLOGINFO("RecordingManager::FinalizeEncoder - Finalizing %zu encoder(s)", _activeEncoders.size());
 
-    // TODO: Flush encoder buffers
-    //   - Flush remaining video frames
-    //   - Flush remaining audio frames
+    for (auto& encoder : _activeEncoders)
+    {
+        if (encoder)
+        {
+            encoder->Stop();
 
-    // TODO: Write container trailer
-    //   - Write muxer trailer
-    //   - Update file header with final statistics
+            // Update final statistics
+            _stats.framesRecorded = encoder->GetFramesEncoded();
+            _stats.audioSamplesRecorded = encoder->GetAudioSamplesEncoded();
+            _stats.outputFileSize = encoder->GetOutputFileSize();
 
-    // TODO: Close output file
-    //   - Close codec contexts
-    //   - Free buffers
-    //   - Close file handle
+            // For FFmpeg encoder, log diagnostics
+            auto* ffmpegEncoder = dynamic_cast<FFmpegPipeEncoder*>(encoder.get());
+            if (ffmpegEncoder)
+            {
+                std::string diag = ffmpegEncoder->getDiagnostics();
+                if (!diag.empty())
+                {
+                    MLOGDEBUG("  FFmpeg diagnostics:\n%s", diag.c_str());
+                }
+            }
+        }
+    }
 
-    // TODO: Update final statistics
-    //   - File size
-    //   - Final duration
-    //   - Average encoding time
+    _activeEncoders.clear();
 }
 
-void RecordingManager::EncodeVideoFrame([[maybe_unused]] const FramebufferDescriptor& framebuffer,
-                                        [[maybe_unused]] double timestamp)
+void RecordingManager::EncodeVideoFrame(const FramebufferDescriptor& framebuffer, double timestamp)
 {
-    // TODO: Convert framebuffer to encoder format
-    //   - RGB/RGBA → YUV420 (for most codecs)
-    //   - Scale if resolution differs from native
-    //   - Apply color space conversion
-
-    // TODO: Encode frame
-    //   - Pass frame to video encoder
-    //   - Set presentation timestamp
-    //   - Encode and get compressed packets
-
-    // TODO: Write encoded packets to output
-    //   - Mux video packets
-    //   - Interleave with audio packets
-    //   - Write to file
-
-    // STUB: Log frame capture (disabled to avoid spam)
-    // MLOGDEBUG("RecordingManager::EncodeVideoFrame - Frame %llu @ %.3f sec", _emulatedFrameCount, timestamp);
+    // Dispatch to all active encoders
+    for (auto& encoder : _activeEncoders)
+    {
+        if (encoder && encoder->IsRecording())
+        {
+            encoder->OnVideoFrame(framebuffer, timestamp);
+        }
+    }
 }
 
-void RecordingManager::EncodeAudioSamples([[maybe_unused]] const int16_t* samples, [[maybe_unused]] size_t sampleCount,
-                                          [[maybe_unused]] double timestamp)
+void RecordingManager::EncodeAudioSamples(const int16_t* samples, size_t sampleCount, double timestamp)
 {
-    // TODO: Resample if needed
-    //   - Convert sample rate if encoder rate differs
-    //   - Convert from stereo to mono or vice versa if needed
-
-    // TODO: Encode audio
-    //   - Pass samples to audio encoder
-    //   - Set presentation timestamp
-    //   - Encode and get compressed packets
-
-    // TODO: Write encoded packets to output
-    //   - Mux audio packets
-    //   - Interleave with video packets
-    //   - Write to file
-
-    // STUB: Log audio capture (disabled to avoid spam)
-    // MLOGDEBUG("RecordingManager::EncodeAudioSamples - %zu samples @ %.3f sec", sampleCount, timestamp);
+    // Dispatch to all active encoders
+    for (auto& encoder : _activeEncoders)
+    {
+        if (encoder && encoder->IsRecording())
+        {
+            encoder->OnAudioSamples(samples, sampleCount, timestamp);
+        }
+    }
 }
 
-/// endregion </Encoder interface (STUBS - to be implemented)>
+/// endregion </Encoder interface>

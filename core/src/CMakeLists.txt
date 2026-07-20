@@ -5,6 +5,11 @@ message(">> core/src CMakeLists.txt")
 # Project named 'core' on C++
 project(core LANGUAGES CXX)
 
+# Enable Objective-C++ on Apple platforms (for VideoToolbox encoder)
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
+
 # Note: Shared memory mapping is now controlled at runtime via the 'sharedmemory' feature flag
 # (see FeatureManager). The old compile-time options ENABLE_MEMORY_MAPPING, USE_SHAREDMEM_MAPPING,
 # and USE_FILE_MAPPING have been removed.
@@ -49,6 +54,16 @@ EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "liblzma/" FALSE OUTVAR CPP_FILES)
 message("CPP_FILES:${CPP_FILES}")
 
 set (SOURCES ${CPP_FILES})
+
+# Include Objective-C++ files on macOS natively
+if (APPLE)
+    file (GLOB_RECURSE MM_FILES ${SOURCE_DIR}/*.mm)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${MM_FILES}" "/build/" FALSE OUTVAR MM_FILES)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${MM_FILES}" "/CMakeFiles/" FALSE OUTVAR MM_FILES)
+    set_source_files_properties(${MM_FILES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    list(APPEND SOURCES ${MM_FILES})
+endif()
+
 message("SOURCES:${SOURCES}")
 
 # Produce static library;  Create unrealng::core alias for the target
@@ -76,27 +91,37 @@ target_precompile_headers(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/stdafx.h)
 # Link lzma library
 target_link_libraries(${PROJECT_NAME} PRIVATE lzma)
 
-# Link all dependencies into static lib
+# Platform-specific framework and library linkage
+# For static libraries consumed externally, framework deps MUST be PUBLIC
+# so that external linkers inherit them transitively.
 if (APPLE)
-    target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)
-    set(common_libraries)
-endif (APPLE)
+    find_library(FOUNDATION_LIB Foundation REQUIRED)
+    find_library(COREFOUNDATION_LIB CoreFoundation REQUIRED)
+    find_library(AVFOUNDATION_LIB AVFoundation REQUIRED)
+    find_library(COREMEDIA_LIB CoreMedia REQUIRED)
+    find_library(COREVIDEO_LIB CoreVideo REQUIRED)
+    find_library(VIDEOTOOLBOX_LIB VideoToolbox REQUIRED)
+    find_library(AUDIOTOOLBOX_LIB AudioToolbox REQUIRED)
+
+    target_link_libraries(${PROJECT_NAME} PUBLIC
+        ${FOUNDATION_LIB}
+        ${COREFOUNDATION_LIB}
+        ${AVFOUNDATION_LIB}
+        ${COREMEDIA_LIB}
+        ${COREVIDEO_LIB}
+        ${VIDEOTOOLBOX_LIB}
+        ${AUDIOTOOLBOX_LIB}
+    )
+endif ()
 
 if (UNIX AND NOT APPLE)
-    set(common_libraries -static-libstdc++)
-endif (UNIX AND NOT APPLE)
+    target_link_libraries(${PROJECT_NAME} PRIVATE -static-libstdc++)
+endif ()
 
 if (WIN32 AND MINGW)
-    set(common_libraries -static-libstdc++ Shlwapi ws2_32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE -static-libstdc++ Shlwapi ws2_32)
 endif()
 
 if (WIN32 AND MSVC)
-    set(common_libraries Shlwapi ws2_32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE Shlwapi ws2_32)
 endif()
-
-# Link all components into target binary
-target_link_libraries(
-    ${PROJECT_NAME} PRIVATE
-
-    ${common_libraries}
-)

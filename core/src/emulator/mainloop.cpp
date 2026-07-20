@@ -137,7 +137,10 @@ void MainLoop::Run(volatile bool& stopRequested)
         /// endregion </Info logging>
 
         // Synchronization strategy depends on turbo mode setting
+        // Recording should NEVER interfere with normal frame pacing - encoder
+        // backpressure (blocking mode) handles non-realtime encoders separately
         const CONFIG& config = _context->config;
+
         if (!config.turbo_mode)
         {
             // Normal mode: Wait until audio callback requests more data and buffer is about half-full

@@ -440,7 +440,8 @@ void Core::Reset()
     _betaDisk->reset();          // BetaDisk floppy controller
     _hdd->Reset();               // Reset IDE controller
     _portDecoder->reset();       // Reset peripheral port decoder (sets model-specific port defaults)
-    _recordingManager->Reset();  // Reset recording manager (stops active recording, clears counters)
+    if (_recordingManager)
+        _recordingManager->Reset();  // Reset recording manager (stops active recording, clears counters)
 
     messageCenter.Post(topicID, new SimpleTextPayload("Core reset finished"));
 }
