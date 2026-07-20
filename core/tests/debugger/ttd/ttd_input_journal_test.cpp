@@ -23,6 +23,7 @@
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/ttd/ttd_input_journal.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/keyboard/keyboard.h"
@@ -441,13 +442,15 @@ TEST_F(TTD_InputJournal_Capture_Test, InjectDueInputEvents_ManagerHelper_Returns
     ASSERT_EQ(_ttd->GetInputJournal().Size(), 2u);
 
     // Move into replay mode and inject — both events fire at the captured
-    // frame/time. The exact time matches because we haven't advanced the
-    // emulator, so frame_counter and t_states are still 0.
+    // TTDTimePoint. RecordInputEvent reads the intra-frame position from
+    // z80.t (the per-frame t-state counter), so we must compute `now` the
+    // same way for the injection to match.
     _ttd->EnterReplayMode();
     ttd::TTDTimePoint now;
     now.frame    = _context->emulatorState.frame_counter;
-    now.tInFrame = static_cast<uint32_t>(_context->emulatorState.t_states
-                                        % _context->config.frame);
+    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    ASSERT_NE(z80, nullptr);
+    now.tInFrame = z80->t;
     const size_t injected = _ttd->InjectDueInputEvents(now);
     EXPECT_EQ(injected, 2u);
     _ttd->ExitReplayMode();

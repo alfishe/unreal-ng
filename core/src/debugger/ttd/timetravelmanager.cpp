@@ -7,6 +7,7 @@
 
 #include "timetravelmanager.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstring>
 
@@ -18,6 +19,7 @@
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
 #include "emulator/cpu/z80.h"            // Z80, Z80State
+#include "emulator/emulator.h"           // Emulator::RunTStates (seek engine)
 #include "emulator/emulatorcontext.h"    // EmulatorContext
 #include "emulator/io/fdc/wd1793.h"      // WD1793 (peripheral, P1.5)
 #include "emulator/io/tape/tape.h"        // Tape (peripheral, P1.5)
@@ -658,16 +660,20 @@ void TimeTravelManager::RecordInputEvent(uint8_t key, bool pressed)
     // Caller (DebugKeyboardManager::PressKey/ReleaseKey) already gates on
     // IsRecording() and !IsReplayActive(). We don't double-check here.
     //
-    // Derive the current TTDTimePoint from EmulatorState. t_states is the
-    // running total since session start (well, since reset); the intra-frame
-    // position is t_states % config.frame.
+    // Derive the current TTDTimePoint. frame_counter is the frame index;
+    // the intra-frame position is z80.t (the per-frame t-state counter that
+    // AdjustFrameCounters resets at each boundary). Note: emulatorState.
+    // t_states is only updated at frame boundaries (MainLoop::OnFrameEnd
+    // does `t_states += config.frame`), so its modulo is always 0.
     if (!_context)
         return;
 
     const EmulatorState& st = _context->emulatorState;
+    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+
     TTDInputEvent ev;
     ev.time.frame    = st.frame_counter;
-    ev.time.tInFrame = static_cast<uint32_t>(st.t_states % _context->config.frame);
+    ev.time.tInFrame = z80 ? z80->t : 0;
     ev.key           = key;
     ev.pressed       = pressed;
     _inputJournal.Record(ev);
@@ -692,6 +698,273 @@ size_t TimeTravelManager::InjectDueInputEvents(const TTDTimePoint& now)
     }
 
     return _inputJournal.InjectDueEvents(*_context->pKeyboard, now);
+}
+
+// ---------------------------------------------------------------------------
+// Seek engine (Phase 2 Item 4; parent TTD §8.1)
+// ---------------------------------------------------------------------------
+
+TTDTimePoint TimeTravelManager::CurrentPosition() const
+{
+    TTDTimePoint pos;
+    if (!_context)
+        return pos;
+
+    const EmulatorState& st = _context->emulatorState;
+    pos.frame    = st.frame_counter;
+    // Intra-frame position comes from the Z80 accumulator, NOT
+    // emulatorState.t_states. t_states is only updated at frame boundaries
+    // (MainLoop::OnFrameEnd does `t_states += config.frame`), so its modulo
+    // is always 0. z80.t is the per-frame counter that AdjustFrameCounters
+    // resets at each boundary.
+    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    pos.tInFrame = z80 ? z80->t : 0;
+    return pos;
+}
+
+TTDTimePoint TimeTravelManager::SessionEndPosition() const
+{
+    if (_timeline.empty())
+        return TTDTimePoint{};
+    return _timeline.back().time;
+}
+
+bool TimeTravelManager::SeekTo(const TTDTimePoint& target)
+{
+    // ------------------------------------------------------------------
+    // Validate preconditions.
+    // ------------------------------------------------------------------
+    if (!_context)
+    {
+        MLOGWARNING("TimeTravelManager::SeekTo — null _context");
+        return false;
+    }
+
+    if (_state == TTDSessionState::Idle)
+    {
+        MLOGWARNING("TimeTravelManager::SeekTo — session is Idle (no history)");
+        return false;
+    }
+
+    if (_timeline.empty())
+    {
+        MLOGWARNING("TimeTravelManager::SeekTo — timeline is empty");
+        return false;
+    }
+
+    const TTDTimePoint sessionEnd = _timeline.back().time;
+    if (sessionEnd < target)
+    {
+        MLOGWARNING("TimeTravelManager::SeekTo — target (frame=%llu, tInFrame=%u) "
+                    "is beyond session end (frame=%llu, tInFrame=%u)",
+                    static_cast<unsigned long long>(target.frame),
+                    static_cast<unsigned>(target.tInFrame),
+                    static_cast<unsigned long long>(sessionEnd.frame),
+                    static_cast<unsigned>(sessionEnd.tInFrame));
+        return false;
+    }
+
+    // ------------------------------------------------------------------
+    // Step 1: binary search for the latest checkpoint with cp.time <= target.
+    //
+    // Timeline is sorted ascending by `time`. We want the rightmost cp whose
+    // time is <= target. std::upper_bound finds the first cp > target; the
+    // one we want is the iterator before it. Reverse-iterator trick gives us
+    // the rightmost cp <= target directly when combined with a less-than
+    // comparator on (cp.time < target) — but for clarity we use forward
+    // iteration and walk back from upper_bound.
+    // ------------------------------------------------------------------
+    auto upperIt = std::upper_bound(_timeline.begin(), _timeline.end(), target,
+        [](const TTDTimePoint& t, const TTDCheckpoint& cp) {
+            return t < cp.time;
+        });
+
+    if (upperIt == _timeline.begin())
+    {
+        // Every checkpoint is strictly greater than target — target is
+        // before the first captured frame. This shouldn't be reachable
+        // (we'd have failed the sessionEnd check above if target was
+        // out of bounds, and target < first checkpoint means target < (0,0)
+        // which is impossible for an unsigned coordinate). Defensive.
+        MLOGWARNING("TimeTravelManager::SeekTo — target precedes the first checkpoint");
+        return false;
+    }
+
+    const size_t cpIdx = static_cast<size_t>((upperIt - _timeline.begin()) - 1);
+    const TTDCheckpoint& cp = _timeline[cpIdx];
+
+    MLOGINFO("TimeTravelManager::SeekTo — target=(frame=%llu,tInFrame=%u) "
+             "restoring from checkpoint idx=%zu (frame=%llu)",
+             static_cast<unsigned long long>(target.frame),
+             static_cast<unsigned>(target.tInFrame),
+             cpIdx,
+             static_cast<unsigned long long>(cp.time.frame));
+
+    // ------------------------------------------------------------------
+    // Step 2: RestoreCheckpoint(cp). Leaves emulatorState.t_states /
+    // frame_counter set to the checkpoint's frame boundary. The Z80
+    // accumulator (z80.t) is NOT in the captured field set (it's host-
+    // side per the field-exclusion list in ttd_checkpoint.h) so we sync
+    // it explicitly — checkpoints always sit at frame boundaries, where
+    // z80.t == 0 (post-AdjustFrameCounters reset).
+    // ------------------------------------------------------------------
+    RestoreCheckpoint(cp);
+
+    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    if (z80)
+        z80->t = 0;
+
+    // ------------------------------------------------------------------
+    // Step 3: intra-frame silent replay if target.tInFrame > 0.
+    // ------------------------------------------------------------------
+    if (target.tInFrame > 0)
+    {
+        ReplayWithinFrame(cp.time.frame, target.tInFrame);
+    }
+
+    // ------------------------------------------------------------------
+    // Step 4: transition to Detached (TDD §4.2).
+    // ------------------------------------------------------------------
+    _state = TTDSessionState::Detached;
+
+    MLOGINFO("TimeTravelManager::SeekTo — arrived at (frame=%llu,tInFrame=%u), state=Detached",
+             static_cast<unsigned long long>(target.frame),
+             static_cast<unsigned>(target.tInFrame));
+
+    return true;
+}
+
+void TimeTravelManager::ReplayWithinFrame(uint64_t targetFrame, uint32_t targetTInFrame)
+{
+    // Emulator must be available. The PageStore/Capture path doesn't need
+    // it, but RunTStates does.
+    if (!_context || !_context->pEmulator)
+    {
+        MLOGWARNING("TimeTravelManager::ReplayWithinFrame — null _context or pEmulator, "
+                    "skipping replay (frame=%llu, targetTInFrame=%u)",
+                    static_cast<unsigned long long>(targetFrame),
+                    static_cast<unsigned>(targetTInFrame));
+        return;
+    }
+
+    // Defensive: clamp targetTInFrame to the per-frame budget. If a caller
+    // hands us something larger we'd loop forever inside RunTStates' frame
+    // boundary handler.
+    const uint32_t frameT = _context->config.frame;
+    if (targetTInFrame > frameT)
+    {
+        MLOGWARNING("TimeTravelManager::ReplayWithinFrame — targetTInFrame=%u > "
+                    "config.frame=%u, clamping",
+                    static_cast<unsigned>(targetTInFrame),
+                    static_cast<unsigned>(frameT));
+        targetTInFrame = frameT;
+    }
+
+    // ------------------------------------------------------------------
+    // Engage silent-replay mode for the duration of the loop. EnterReplayMode
+    // is idempotent and saves the host audio mute state so we can restore
+    // it on exit (TDD §8.2).
+    // ------------------------------------------------------------------
+    EnterReplayMode();
+
+    // ------------------------------------------------------------------
+    // Walk the input journal for events scheduled inside [0, targetTInFrame]
+    // of the target frame. Replay runs in chunks: advance the emulator by
+    // (next_event.tInFrame - current.tInFrame) t-states, inject the event(s)
+    // scheduled at that time, repeat. After the last in-interval event, run
+    // the remaining delta to targetTInFrame.
+    //
+    // Single-pass linear scan of the journal. We could binary-search for
+    // the first event in the target frame, but the journal is small
+    // (typically a few hundred events) and the linear scan exits early on
+    // the first event past the target.
+    // ------------------------------------------------------------------
+    uint32_t currentTInFrame = 0;
+
+    for (const auto& ev : _inputJournal.Events())
+    {
+        // Skip events from other frames. We only care about the target
+        // frame — events before are already encoded in the restored
+        // checkpoint's RAM/CPU state; events after are out of range.
+        if (ev.time.frame != targetFrame)
+            continue;
+
+        // Skip events past the target — they belong to a future position.
+        if (ev.time.tInFrame > targetTInFrame)
+            break;
+
+        // Skip events we've already passed (shouldn't happen since we walk
+        // in ascending order, but defensive against journal corruption).
+        if (ev.time.tInFrame < currentTInFrame)
+            continue;
+
+        // Run the emulator from currentTInFrame to ev.time.tInFrame.
+        const uint32_t delta = ev.time.tInFrame - currentTInFrame;
+        if (delta > 0)
+        {
+            _context->pEmulator->RunTStates(delta, /*skipBreakpoints=*/true);
+            currentTInFrame = ev.time.tInFrame;
+        }
+
+        // Inject this event (and any other events at the same TTDTimePoint).
+        InjectDueInputEvents(ev.time);
+    }
+
+    // Run the remaining delta to reach targetTInFrame.
+    if (currentTInFrame < targetTInFrame)
+    {
+        const uint32_t delta = targetTInFrame - currentTInFrame;
+        _context->pEmulator->RunTStates(delta, /*skipBreakpoints=*/true);
+        // currentTInFrame = targetTInFrame;  // (unused after this point)
+    }
+
+    ExitReplayMode();
+}
+
+bool TimeTravelManager::StepBackFrame()
+{
+    if (_state == TTDSessionState::Idle || _timeline.empty())
+    {
+        MLOGWARNING("TimeTravelManager::StepBackFrame — no recorded history");
+        return false;
+    }
+
+    const TTDTimePoint current = CurrentPosition();
+    if (current.frame == 0)
+    {
+        MLOGINFO("TimeTravelManager::StepBackFrame — already at frame 0, cannot step back");
+        return false;
+    }
+
+    TTDTimePoint target;
+    target.frame    = current.frame - 1;
+    target.tInFrame = current.tInFrame;
+    return SeekTo(target);
+}
+
+bool TimeTravelManager::StepForwardFrame()
+{
+    if (_state == TTDSessionState::Idle || _timeline.empty())
+    {
+        MLOGWARNING("TimeTravelManager::StepForwardFrame — no recorded history");
+        return false;
+    }
+
+    const TTDTimePoint current   = CurrentPosition();
+    const TTDTimePoint sessionEnd = SessionEndPosition();
+
+    if (current.frame >= sessionEnd.frame)
+    {
+        MLOGINFO("TimeTravelManager::StepForwardFrame — already at or past the "
+                 "last captured frame (%llu), cannot step forward",
+                 static_cast<unsigned long long>(current.frame));
+        return false;
+    }
+
+    TTDTimePoint target;
+    target.frame    = current.frame + 1;
+    target.tInFrame = current.tInFrame;
+    return SeekTo(target);
 }
 
 } // namespace ttd

@@ -326,24 +326,122 @@ sketched the record as `(TTDTimePoint, keyMatrix, kind)`. Shipped as
 - `pressed: bool` is simpler than a `kind: enum` with two values and
   maps directly to the existing Keyboard API.
 
-### Item 4 — Seek API
+### Item 4 — Seek API ✅ DONE (StepBackInstruction deferred)
 
-**Public API** (on TimeTravelManager):
-```cpp
-// All require emulator paused. All transition state to Detached on success.
-bool SeekTo(const TTDTimePoint& target);
-bool StepBackInstruction();
-bool StepBackFrame();
-bool StepForwardInstruction();
-bool StepForwardFrame();
-```
+**Parent TDD refs:** §8.1 (SeekTo Algorithm), §8.2 (Silent Replay Mode).
 
-**Implementation:**
-- Binary search `_timeline` for the latest cp with `cp.time <= target`.
-- `RestoreCheckpoint(cp)`.
-- If `target.tInFrame > 0`: set `ttdReplayActive`, `RunTStates(target.tInFrame)`
-  with `skipBreakpoints=true`, clear flag.
-- Set `_state = Detached`, `_currentPosition = target`.
+**What landed:**
+
+- Public API on `TimeTravelManager`:
+  - `bool SeekTo(const TTDTimePoint& target)` — full algorithm: binary
+    search → RestoreCheckpoint → optional intra-frame silent replay →
+    Detached transition.
+  - `bool StepBackFrame()` / `bool StepForwardFrame()` — frame-counter
+    arithmetic composing SeekTo. Preserves the intra-frame t-state.
+  - `TTDTimePoint CurrentPosition() const` — reads `frame_counter` +
+    `z80.t` for the live position.
+  - `TTDTimePoint SessionEndPosition() const` — time of the last captured
+    checkpoint.
+
+- Private helper `ReplayWithinFrame(targetFrame, targetTInFrame)`:
+  - Wraps the whole loop in `EnterReplayMode` / `ExitReplayMode`.
+  - Single-pass linear scan of the input journal for events scheduled
+    inside `[0, targetTInFrame]` of the target frame.
+  - Drives `Emulator::RunTStates` in chunks: advance to the next event's
+    `tInFrame`, inject (and any others at the same TTDTimePoint), repeat.
+  - After the last in-interval event, runs the remaining delta to
+    `targetTInFrame`.
+
+- Intra-frame position now sourced from `z80.t`, NOT `t_states % frame`.
+  Root cause: `emulatorState.t_states` is only updated at frame boundaries
+  (MainLoop::OnFrameEnd does `t_states += config.frame`), so its modulo is
+  always 0. `z80.t` is the per-frame counter that `AdjustFrameCounters`
+  resets at each boundary. This fix also corrected `RecordInputEvent`
+  (Phase 2 Item 3) — captured events now have the correct t-in-frame.
+
+- `z80.t = 0` sync after RestoreCheckpoint: the Z80 accumulator is in the
+  field-exclusion list (host-side per ttd_checkpoint.h), so RestoreCheckpoint
+  leaves it untouched. SeekTo explicitly zeroes it before intra-frame
+  replay — checkpoints always sit at frame boundaries where `z80.t == 0`.
+
+- SeekTo preconditions enforced: state must be Recording or Detached, the
+  timeline must be non-empty, and the target must be `<= SessionEndPosition`.
+  All violations log a warning and return false.
+
+**State machine:**
+
+- `Recording → Detached`: any successful SeekTo (typical case — user pauses,
+  scrubs back).
+- `Detached → Detached`: re-seeking from a Detached position (forward or
+  backward). The original Recording state is NOT preserved — once Detached,
+  the user is browsing history. Resuming forward execution is Item 5
+  (Resume-from-past truncation).
+
+**Tests:**
+
+- New `core/tests/debugger/ttd/ttd_seek_test.cpp` — 24 tests:
+  - Helpers: `CurrentPosition` initial frame, `SessionEndPosition` empty /
+    baseline / advancing.
+  - SeekTo preconditions: Idle, empty timeline, target beyond session end.
+  - SeekTo frame-aligned: at baseline (round-trip from RunFrames(2)), to
+    mid-timeline checkpoint, full round-trip determinism (5 frames, each
+    SeekTo hash matches the corresponding RestoreCheckpointForTesting
+    hash), state transition Recording → Detached, Detached → Detached
+    backward, Detached → Detached forward.
+  - SeekTo intra-frame: small t-in-frame (z80.t lands near target),
+    replay-mode flag cleared on return, full round-trip determinism
+    at t=500, no-replay-when-tInFrame==0.
+  - StepBackFrame / StepForwardFrame: at-frame-0 fails, at-last-frame
+    fails, preserves t-in-frame, Idle fails, Detached composition.
+
+- Round-trip hash reference: `RestoreCheckpointForTesting(N)`, not the
+  live hash after `RunFrames(N)`. Reason: the checkpoint is captured at
+  the OnFrameBoundary point (mid-OnFrameEnd, BEFORE OnFrameStart runs
+  Tape/SoundManager/Screen::InitFrame). The natural live state after
+  RunFrames is post-OnFrameStart, so its hash differs by those side
+  effects. SeekTo lands at the same point RestoreCheckpointForTesting
+  does — they share the RestoreCheckpoint code path.
+
+- Full TTD suite: **147/147 green** (was 123 + 24 seek tests). All other
+  test suites unchanged (4 pre-existing failures: TRDOS port,
+  BreakpointManager portIn, KeyboardInjection x2).
+
+**Design decisions:**
+
+- **StepBackInstruction deferred.** Per TDD §8.1 last paragraph, this
+  requires replaying from the previous checkpoint while remembering the
+  last-seen PC boundary (cost: one intra-frame replay, ≤ 20 ms). The
+  infrastructure (ReplayWithinFrame) is already in place — what's missing
+  is the per-instruction PC probe. Better as a focused follow-up than
+  rushed into this item.
+
+- **Single-pass linear scan of the journal** during ReplayWithinFrame,
+  not binary search. Typical journals are a few hundred events; the scan
+  exits early on the first event past the target. A binary search would
+  add complexity without measurable benefit at this scale.
+
+- **EXPECT_NEAR(±32) in step tests** for the post-seek z80.t. RunTStates
+  can't stop mid-instruction; the last instruction may overshoot by up
+  to 23 t-states (longest Z80 instruction). ±32 covers the worst case
+  with margin.
+
+- **No `_currentPosition` member.** Deriving from `EmulatorState` on
+  demand keeps the seek engine stateless between calls — `CurrentPosition()`
+  is a pure read. The Detached state itself is tracked by `_state`, not
+  by a stored position.
+
+- **Forward replay across frame boundaries.** `RunTStates` calls
+  `OnFrameEnd`/`OnFrameStart` when `z80.t >= frameLimit`. During replay,
+  OnFrameEnd's heavy lifting is suppressed (CaptureFrame, NC_VIDEO_FRAME_REFRESH,
+  analyzer dispatch all gated on `ttdReplayActive`), and OnFrameBoundary
+  auto-suppresses (state != Recording during Detached). So multi-frame
+  forward seeks work transparently.
+
+**Parent TDD API reconciliation:** the TDD sketched five operations
+(SeekTo, StepBackInstruction, StepBackFrame, StepForwardInstruction,
+StepForwardFrame). Shipped three (SeekTo, StepBackFrame, StepForwardFrame)
+plus the two helpers (CurrentPosition, SessionEndPosition). The two
+instruction-level ops need the per-instruction PC probe — deferred.
 
 ### Item 5 — Resume-from-past truncation
 

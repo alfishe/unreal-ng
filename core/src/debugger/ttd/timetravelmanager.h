@@ -243,6 +243,64 @@ public:
     size_t InjectDueInputEvents(const TTDTimePoint& now);
 
     // -----------------------------------------------------------------------
+    // Seek engine (Phase 2 Item 4; parent TDD §8.1)
+    // -----------------------------------------------------------------------
+    //
+    // SeekTo applies the closest-on-or-before checkpoint, then silently
+    // replays forward to the requested intra-frame position. Step helpers
+    // compose SeekTo with frame-counter arithmetic. On success the session
+    // transitions to Detached.
+    //
+    // Preconditions (enforced):
+    //   - Manager state is Recording or Detached (not Idle).
+    //   - Target is within session bounds: (0,0) <= target <= last checkpoint.
+    //   - Emulator is paused (caller's responsibility — these are control-
+    //     thread entry points, matching RestoreCheckpointForTesting).
+
+    /// @brief Seek to an arbitrary TTDTimePoint within the recorded timeline.
+    ///
+    /// Algorithm (TDD §8.1):
+    ///   1. Binary-search the timeline for the latest checkpoint with
+    ///      `cp.time <= target`.
+    ///   2. RestoreCheckpoint(cp).
+    ///   3. If `target.tInFrame > 0`, silent-replay forward to that t-state:
+    ///      enter replay mode, drive RunTStates in chunks (one chunk per
+    ///      journaled input event scheduled inside the interval, plus a
+    ///      final chunk for the remainder), exit replay mode.
+    ///   4. Transition to Detached.
+    ///
+    /// @return true on success. False (with a logged warning) if state is
+    ///         Idle, the timeline is empty, or target is out of bounds.
+    bool SeekTo(const TTDTimePoint& target);
+
+    /// @brief Step back exactly one frame, preserving the intra-frame position.
+    ///
+    /// Composition of SeekTo: reads the current position from EmulatorState
+    /// and seeks to (frame-1, tInFrame). No-op (returns false) if the
+    /// current position is at or before the first captured frame.
+    bool StepBackFrame();
+
+    /// @brief Step forward exactly one frame, preserving the intra-frame position.
+    ///
+    /// Composition of SeekTo: seeks to (frame+1, tInFrame). Fails if the
+    /// target frame is beyond the last captured checkpoint — the seek
+    /// engine cannot replay beyond recorded history.
+    bool StepForwardFrame();
+
+    /// @brief Read the current position as a TTDTimePoint.
+    ///
+    /// Convenience for callers (UI, step helpers, tests). Derived from
+    /// EmulatorState: `frame = frame_counter`,
+    /// `tInFrame = t_states % config.frame`.
+    TTDTimePoint CurrentPosition() const;
+
+    /// @brief Upper bound of the recorded timeline.
+    ///
+    /// Returns the time of the last checkpoint. Seeks to any point > this
+    /// will fail. Returns {0,0} when the timeline is empty.
+    TTDTimePoint SessionEndPosition() const;
+
+    // -----------------------------------------------------------------------
     // Test/diagnostic accessors
     // -----------------------------------------------------------------------
 
@@ -315,6 +373,27 @@ private:
     /// (their live RAM content IS the historical content). Pages beyond
     /// _modelRamPages are skipped (they're NEVER_TOUCHED by construction).
     void RestoreRamPages(const std::vector<TTDPageRef>& ramPages);
+
+    // -----------------------------------------------------------------------
+    // Internal seek helpers (Phase 2 Item 4; parent TTD §8.1 step 3)
+    // -----------------------------------------------------------------------
+
+    /// @brief Silent intra-frame replay from a restored frame boundary to a
+    /// target t-state within the same frame.
+    ///
+    /// Precondition: RestoreCheckpoint(cp) was just called with
+    /// `cp.time.frame == targetFrame`. The live emulator's z80.t is at the
+    /// frame boundary (caller syncs to 0 before calling).
+    ///
+    /// Drives `Emulator::RunTStates` in chunks, breaking at each journaled
+    /// input event scheduled within the interval so the event can be
+    /// injected at its recorded TTDTimePoint. Wraps the whole loop in
+    /// EnterReplayMode / ExitReplayMode so the Item 2 suppression matrix
+    /// keeps replay observationally silent.
+    ///
+    /// @param targetFrame  Frame index (must match the restored checkpoint).
+    /// @param targetTInFrame T-state offset within the frame to stop at.
+    void ReplayWithinFrame(uint64_t targetFrame, uint32_t targetTInFrame);
 
     // -----------------------------------------------------------------------
     // Dependencies (non-owning)
