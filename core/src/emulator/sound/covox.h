@@ -3,13 +3,14 @@
 #include "emulator/sound/audio.h"
 #include "emulator/ports/portdecoder.h"
 #include "common/modulelogger.h"
+#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 
 class EmulatorContext;
 
 /// SOUNDRIVE 1.05 / COVOX - 4-channel 8-bit DAC
 /// Ports: #F1 (Left A), #F3 (Left B), #F9 (Right A), #FB (Right B)
 /// Decoding: bits[7:4]=1111, bit2=0, bit0=1
-class Covox : public PortDevice
+class Covox : public PortDevice, public ttd::TTDSerializable
 {
 public:
     // Port addresses for 4 channels
@@ -72,6 +73,19 @@ public:
 
     // Determine which channel a port address maps to
     static Channel portToChannel(uint16_t port);
+
+    /// region <TTDSerializable interface (P1.5 — parent TDD §6.4)>
+    ///
+    /// The Covox/Soundrive is a 4-channel 8-bit DAC. The only machine state is
+    /// the four DAC latches (_dacValue[4]) — everything else is host-side
+    /// audio pipeline (rebuilt by handleFrameStart) or user config (mute,
+    /// DC-removal toggle).
+    ///
+    /// Layout: 4 bytes — _dacValue[0..3] (LeftA, LeftB, RightA, RightB).
+    size_t TTDStateSize() const override;
+    void   TTDSaveState(uint8_t* dst) const override;
+    void   TTDLoadState(const uint8_t* src) override;
+    /// endregion </TTDSerializable interface>
 
 private:
     void renderFromSample(size_t startSample);

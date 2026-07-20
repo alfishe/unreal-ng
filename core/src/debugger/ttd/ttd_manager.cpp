@@ -268,6 +268,17 @@ void TTDManager::CaptureNow(TTDCheckpoint& out)
     // (content is invariant within a session; tape-control commands
     // invalidate the session via P1.6 hooks).
     CapturePeripheral(_context->pTape, out.tapeState);
+
+    // Covox: 4-channel 8-bit DAC. Only the four DAC latches are machine
+    // state (4 bytes); everything else is host-side audio pipeline.
+    if (_context->pSoundManager)
+    {
+        CapturePeripheral(_context->pSoundManager->getCovox(), out.covoxState);
+    }
+    else
+    {
+        out.covoxState.clear();
+    }
 }
 
 void TTDManager::CaptureBaselineRamPages(std::vector<TTDPageRef>& outRamPages)
