@@ -2140,6 +2140,113 @@ Commands to configure emulator instance behavior and performance characteristics
 
 ---
 
+### 8. Time-Travel Debugging (TTD)
+
+Record a per-frame checkpoint timeline of the running emulator, then seek backwards to any captured point and replay forward with full determinism. The same surface is also exposed to GDB/LLDB clients via reverse-execution packets (`bc`/`bs`) once the GDB transport lands (see [gdb-protocol.md](./gdb-protocol.md)).
+
+**Reference design:** [time-travel-debugging-tdd.md](../../debugger/time-travel-debug/time-travel-debugging-tdd.md) §10.4 — that TDD is the canonical source for command names, argument shapes, and result envelopes. This section mirrors it; if the two disagree, the TDD wins.
+
+**Feature flag:** `timetravel` (alias `ttd`) registered in `FeatureManager`. Recording, seek, and replay require this flag ON, which auto-enables the master `debugmode` flag (TTD uses the debug memory write path for the dirty-page hook). Status queries are always available, regardless of the flag — they return `{recording: false}` when TTD is off.
+
+**Implementation status:**
+- Sprint 0 (✅ merged): runtime feature flag, run-control claim token, machine-state hash, capture/seek primitives
+- Phase 1 (in progress): checkpoint subsystem + per-frame capture + peripheral serializers
+- Phase 2: seek engine + silent replay
+- Phase 4: full automation surface (most verbs below ship here, except `status`)
+
+#### Command Reference
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `ttd start` | `ttd rec` | — | Begin recording from the next frame boundary. Sets a pending flag if invoked mid-frame; the first checkpoint anchors the session at the next `OnFrameEnd`. | 🔮 Phase 1 |
+| `ttd stop` | — | — | Stop capturing new frames. Recorded history is retained until `ttd clear` or session invalidation. | 🔮 Phase 1 |
+| `ttd clear` | — | — | Drop all captured checkpoints, journals, and page-store data. The live emulator state is untouched. | 🔮 Phase 1 |
+| `ttd status` | `ttd` | — | Report current session state: `{recording, frame_range, memory_used, budget, position}`. Always available regardless of the `timetravel` feature flag. | 🔮 Phase 1 |
+| `ttd timeline` | — | `[--from N] [--to N] [--limit N]` | Return per-frame summary entries (dirty-page counts, event ticks, bookmark presence) for UI rendering. Pagination via `--from`/`--to` frame indices. | 🔮 Phase 3 (UI) |
+| `ttd seek` | — | `--frame N` *or* `--tstate T` | Seek to an absolute target point. Emulator must be paused (run-control claim enforced). Result envelope: `{ok, reached_frame, reached_tstate, halt_reason}`. | 🔮 Phase 2 |
+| `ttd step-back` | `ttd sb` | `[--unit instruction\|frame] [--count N]` | Relative backward navigation. Default unit is one instruction. | 🔮 Phase 2 |
+| `ttd step-forward` | `ttd sf` | `[--unit instruction\|frame] [--count N]` | Relative forward navigation within recorded history (does not extend the timeline). | 🔮 Phase 2 |
+| `ttd find-last` | `ttd fl` | `--addr <A> --access <write\|read\|execute\|out> [--value V] [--pc-from <A>] [--pc-to <A>] [--before <T>]` | Reverse search: most recent access matching the query, scanning backward from current position. Returns `{frame, tstate, pc, value, physpage}` or null if no match. | 🔮 Phase 4 |
+| `ttd bookmark` | `ttd bm` | `<add\|remove\|list> [--at <T>] [--label <text>]` | Manage named bookmarks in the timeline. Bookmarks act as replay barriers (no silent coalescing across them). | 🔮 Phase 3 (UI) |
+| `ttd resume-from-here` | — | — | Truncate future history at the current (detached) position and resume live recording from there. Confirmation required if truncation would drop > N frames. | 🔮 Phase 2 |
+
+**Halt reasons** (returned in `seek` / `step` / `find-last` result envelopes):
+
+| Value | Meaning |
+| :--- | :--- |
+| `target` | Reached the requested target point exactly. |
+| `external_event` | Stopped at an external-event marker (e.g. user input journal entry) that blocks the interval — surfaced rather than silently skipped. |
+| `out_of_range` | Target is outside the recorded session bounds. |
+
+#### Session Lifecycle
+
+A TTD session is **invalidated** (all captured data dropped) by:
+
+| Trigger | Reason |
+| :--- | :--- |
+| `reset` | CPU + peripherals reinitialized; historical state no longer matches live state. |
+| `load snapshot` | RAM and register contents replaced wholesale. |
+| `load tape` / `load disk` | External media mount changes observable behavior going forward. (Disk *reads* are fine; only mounts invalidate.) |
+| CPU speed multiplier change | Changes the meaning of `tInFrame`; v1 invalidates rather than re-normalizing. |
+| Debugger memory write | Live state edit breaks historical determinism. |
+| Disk sector write (TR-DOS) | Phase 1 behavior: invalidate rather than journal. Phase 2 will journal and roll back. |
+| NVRAM write | Same as disk sector write — Phase 1 invalidates; later phases journal. |
+
+The `ttd status` response includes an `invalidation_reason` field if the most recent invalidation was not user-initiated.
+
+#### Threading & Run-Control
+
+All run-affecting TTD commands (`seek`, `step-back`, `step-forward`, `resume-from-here`, `find-last` during replay) require the calling surface to hold the **run-control claim** on the target emulator instance (Sprint 0 mechanism; see [time-travel decisions](../../../inprogress/2026-07-19-time-travel/decisions.md)). `status`, `timeline`, and `bookmark list` are read-only and never require the claim.
+
+If another surface (e.g. GDB paused at a breakpoint) holds the claim, TTD commands return `E_RUN_CONTROL_BUSY` with the holder's surface label.
+
+#### Worked Examples
+
+**Diagnose a sprite corruption bug:**
+```
+# Pause and arm the recorder
+pause
+ttd start
+resume
+
+# ... reproduce the bug for ~10 seconds, then pause ...
+pause
+
+# Find the most recent write to the sprite attribute table
+ttd find-last --addr 0x5B00 --access write
+# => frame=4823, tstate=14982, pc=0x4A21, value=0x07, physpage=5
+
+# Jump to that exact moment
+ttd seek --frame 4823 --tstate 14982
+
+# Step back one instruction and inspect registers
+ttd step-back --unit instruction
+disasm
+registers
+```
+
+**Frame-compare (raster-effect debugging):**
+```
+# At a glitched frame, jump to the same beam position one frame earlier
+ttd step-back --unit frame
+# Now memory and registers show last frame's state at the same instant
+# Use memory viewer to diff against this frame's state
+```
+
+**Automated regression check (Python):**
+```python
+emu.ttd_start()
+emu.resume()
+time.sleep(30)  # let demo run
+emu.pause()
+result = emu.ttd_find_last(addr=0x5800, access="write")
+assert result is not None, "No write to attribute table detected"
+emu.ttd_seek(frame=result.frame, tstate=result.tstate)
+assert emu.z80.pc == result.pc
+```
+
+---
+
 ## Future Capabilities
 
 The following commands and interfaces are planned for future implementation. This section documents the roadmap for expanding the ECI to support more advanced debugging, analysis, and automation workflows.

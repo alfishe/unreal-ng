@@ -456,6 +456,112 @@ status = emu.profilers_status_all()
 # }
 ```
 
+### Time-Travel Debugging
+
+Mirrors the `emu.*` binding style. Full command semantics (arguments, result envelopes, halt reasons, session invalidation rules) live in [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd). All methods require the `timetravel` feature flag to be ON, except `ttd_status` which always works.
+
+**Session lifecycle:**
+
+```python
+emu.ttd_start()             # Begin recording at next frame boundary
+emu.ttd_stop()              # Stop capturing; retain history
+emu.ttd_clear()             # Drop all captured data; live state untouched
+```
+
+**Status (always available):**
+
+```python
+status = emu.ttd_status()
+# {
+#   'recording': True,
+#   'feature_enabled': True,
+#   'position': {'frame': 12345, 'tstate': 0},
+#   'bounds': {'first_frame': 0, 'last_frame': 12345},
+#   'memory': {'used_bytes': 222298112, 'budget_bytes': 67108864},
+#   'budget_exceeded': False,
+#   'detached': False,
+#   'invalidation_reason': None
+# }
+```
+
+**Navigation (require run-control claim; emulator must be paused):**
+
+```python
+emu.ttd_seek(frame=4823)                    # Absolute seek to frame
+emu.ttd_seek(frame=4823, tstate=14982)      # Intra-frame target
+emu.ttd_seek_tstate(t=14982)                # Or seek by absolute t-state
+
+emu.ttd_step_back()                         # One instruction back
+emu.ttd_step_back(unit='frame', count=2)    # Two frames back
+emu.ttd_step_forward()                      # Forward within recorded history
+emu.ttd_step_forward(unit='frame')
+
+emu.ttd_resume_from_here(confirm=True)      # Truncate future, resume live
+```
+
+Return value for `ttd_seek` / `ttd_step_back` / `ttd_step_forward`:
+
+```python
+{
+    'ok': True,
+    'reached_frame': 4823,
+    'reached_tstate': 14982,
+    'halt_reason': 'target'   # 'target' | 'external_event' | 'out_of_range'
+}
+```
+
+**Reverse search:**
+
+```python
+result = emu.ttd_find_last(addr=0x5800, access='write')
+# result is None if no match, otherwise:
+# {
+#   'frame': 4823,
+#   'tstate': 14982,
+#   'pc': 0x4A21,
+#   'value': 0x07,
+#   'physpage': 5
+# }
+
+# Full filter set:
+result = emu.ttd_find_last(
+    addr=0x5800,
+    access='write',            # 'write' | 'read' | 'execute' | 'out'
+    value=0x07,                # optional exact value match
+    pc_from=0x4000,            # optional PC range filter
+    pc_to=0x8000,
+    before=14982               # optional: don't search past this absolute tstate
+)
+```
+
+**Timeline (for UI rendering / batch analysis):**
+
+```python
+entries = emu.ttd_timeline(from_frame=0, to_frame=1000, limit=500)
+# List of {'frame': N, 'dirty_pages': K, 'events': [...], 'bookmarks': [...]}
+```
+
+**Bookmarks:**
+
+```python
+emu.ttd_bookmark_add(at=14982, label='before crash')
+emu.ttd_bookmark_remove(id='bm-3')
+for bm in emu.ttd_bookmark_list():
+    print(bm['frame'], bm['label'])
+```
+
+**Errors** (raise Python exceptions):
+
+| Exception | Meaning |
+| :--- | :--- |
+| `RunControlBusyError` | Another surface holds the run-control claim. |
+| `TTDNotRecordingError` | Operation requires an active session. |
+| `TTDOutOfRangeError` | Target is outside recorded bounds. |
+| `TTDFeatureDisabledError` | `timetravel` feature flag is off. |
+| `TTDSessionInvalidatedError` | Session invalidated by load/reset/etc. |
+
+**Implementation status:** Sprint 0 foundations ✅ merged; Phase 1 will land `ttd_status` only; the rest ship in Phase 2 (navigation) and Phase 4 (reverse search).
+
 ### Enumerations
 
 ```python

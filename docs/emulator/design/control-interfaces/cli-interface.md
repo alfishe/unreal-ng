@@ -132,6 +132,47 @@ The CLI implements the same command semantics as other interfaces (WebAPI, Pytho
 > [!NOTE]
 > The `create` command in CLI creates an emulator in initialized state. Use `resume` to start it. WebAPI provides separate `create` and `start` endpoints for finer-grained control in orchestration scenarios.
 
+### Time-Travel Debugging (TTD) Commands
+
+The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. Aliases exist for the most common verbs to keep interactive sessions terse. Full command semantics (arguments, result envelopes, halt reasons, session invalidation rules) live in [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
+
+| CLI Verb | Alias | Description | Status |
+| :--- | :--- | :--- | :--- |
+| `ttd status` | `ttd` | Show recording state, frame range, memory used, current position. Always available. | 🔮 Phase 1 |
+| `ttd start` | `ttd rec` | Begin recording at the next frame boundary. | 🔮 Phase 1 |
+| `ttd stop` | — | Stop capturing; retain history. | 🔮 Phase 1 |
+| `ttd clear` | — | Drop all captured data. | 🔮 Phase 1 |
+| `ttd seek --frame N` | — | Seek to frame N (optionally `--tstate T` for intra-frame). | 🔮 Phase 2 |
+| `ttd step-back` | `ttd sb` | One instruction back. Add `--unit frame` for full-frame step. | 🔮 Phase 2 |
+| `ttd step-forward` | `ttd sf` | One instruction forward within recorded history. | 🔮 Phase 2 |
+| `ttd find-last --addr A --access W` | `ttd fl` | Reverse watchpoint. Full filter set in the command reference. | 🔮 Phase 4 |
+| `ttd timeline` | — | Paginated per-frame summary (`--from`/`--to`/`--limit`). | 🔮 Phase 3 |
+| `ttd bookmark <add\|remove\|list>` | `ttd bm` | Named markers in the timeline. | 🔮 Phase 3 |
+| `ttd resume-from-here` | — | Truncate future and resume live recording from current position. | 🔮 Phase 2 |
+
+**Interactive session example** (post-mortem crash forensics):
+
+```
+> pause
+> ttd start
+[armed: capture begins at next frame boundary]
+> resume
+[wait ~10s while reproducing the bug]
+> pause
+> ttd find-last --addr 0x5B00 --access write
+frame=4823  tstate=14982  pc=0x4A21  value=0x07  physpage=5
+> ttd seek --frame 4823 --tstate 14982
+[ok target]
+> ttd step-back
+> disasm
+> registers
+```
+
+**Notes**:
+- All run-affecting `ttd` verbs require the emulator to be paused and the CLI session to hold the run-control claim. Read-only verbs (`status`, `timeline`, `bookmark list`) work regardless.
+- The `timetravel` feature flag must be ON for recording/seek/replay. `status` works regardless and returns `{recording: false}` when TTD is off.
+- Seek latency depends on tier density — typically 1–20 ms in the dense (recent) tier; see the [implementation plan](../debugger/time-travel-debug/implementation-plan.md) for targets.
+
 ## Connection Examples
 
 ### Using Telnet
