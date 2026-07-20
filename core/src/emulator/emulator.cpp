@@ -535,6 +535,12 @@ void Emulator::SetSpeed(BaseFrequency_t speed)
 
 void Emulator::SetSpeedMultiplier(uint8_t multiplier)
 {
+    // TTD v1 (P1.6): speed change invalidates the recording because frame
+    // timing is part of the determinism contract (parent TDD §4.2 + §5 row 13).
+    // Simpler to invalidate than to model; revisit if it proves annoying.
+    if (_context && _context->pTTDManager)
+        _context->pTTDManager->InvalidateSession("speed-multiplier-change");
+
     _core->SetSpeedMultiplier(multiplier);
 }
 
@@ -627,6 +633,12 @@ void Emulator::Reset()
         // (it needs to finish the current frame and enter pause loop)
         sleep_ms(20);
     }
+
+    // TTD v1 (P1.6): Reset teleports CPU/RAM/peripheral state, which breaks
+    // the determinism contract on every captured checkpoint. Drop the session
+    // before _core->Reset() actually mutates anything (parent TDD §4.2).
+    if (_context && _context->pTTDManager)
+        _context->pTTDManager->InvalidateSession("reset");
 
     // Now perform reset while paused (safe, no race condition)
     _core->Reset();
@@ -900,6 +912,11 @@ bool Emulator::LoadSnapshot(const std::string& path)
         return false;
     }
 
+    // TTD v1 (P1.6): snapshot load teleports full machine state (parent TDD §4.2).
+    // Drop the session before the loader runs.
+    if (_context && _context->pTTDManager)
+        _context->pTTDManager->InvalidateSession("snapshot-load");
+
     // Pause execution
     bool wasRunning = false;
     if (!IsPaused())
@@ -1079,6 +1096,12 @@ bool Emulator::LoadTape(const std::string& path)
         return false;
     }
 
+    // TTD v1 (P1.6): tape insertion is a session-invalidating event in v1
+    // (parent TDD §4.2 + §5 row 3 — tape *insertion/start/stop* commands
+    // invalidate; only playback position is checkpointed).
+    if (_context && _context->pTTDManager)
+        _context->pTTDManager->InvalidateSession("tape-load");
+
     // Store validated path
     _context->coreState.tapeFilePath = resolvedPath;
 
@@ -1114,6 +1137,11 @@ bool Emulator::LoadDisk(const std::string& path)
 
     // Validate extension
     std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(resolvedPath));
+
+    // TTD v1 (P1.6): disk image swap teleports FDC + media state
+    // (parent TDD §4.2 + §12.2). Drop the session before the loader runs.
+    if (_context && _context->pTTDManager)
+        _context->pTTDManager->InvalidateSession("disk-load");
 
     // Pause emulator while swapping disk image to prevent data race with emulator thread
     bool wasRunning = false;
@@ -2079,6 +2107,12 @@ void Emulator::StepOver()
 bool Emulator::LoadROM(std::string path)
 {
     Pause();
+
+    // TTD v1 (P1.6): ROM reload changes immutable code/data backing every
+    // checkpoint relies on (parent TDD §4.2 — "ROM reload" is listed
+    // explicitly as a session invalidator).
+    if (_context && _context->pTTDManager)
+        _context->pTTDManager->InvalidateSession("rom-reload");
 
     ROM& rom = *_core->GetROM();
 
