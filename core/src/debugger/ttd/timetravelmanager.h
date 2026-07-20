@@ -141,6 +141,25 @@ public:
     void OnFrameBoundary();
 
     // -----------------------------------------------------------------------
+    // Restore path (control thread; emulator must be paused)
+    // -----------------------------------------------------------------------
+    //
+    // Phase 2 Item 1 (parent TDD §8.1 step 2). RestoreCheckpoint applies a
+    // previously-captured checkpoint back to the live emulator: CPU + chipset
+    // field copies, port-latch re-apply via Memory::UpdateZ80Banks (rebuilds
+    // memory banking), RAM page content memcpy from the COW page store,
+    // peripheral TTDLoadState dispatch, and Screen::InitFrame.
+    //
+    // Does NOT advance the emulator. After this returns, the live machine
+    // state matches the checkpoint's frame boundary. Phase 2 Item 3 (SeekTo)
+    // adds optional intra-frame silent replay on top.
+    ///
+    /// @param idx Timeline index to restore. Bounds-checked.
+    /// @return true on success, false if idx is out of range or the manager
+    ///         is not in a restorable state (Recording / Detached).
+    bool RestoreCheckpointForTesting(size_t idx);
+
+    // -----------------------------------------------------------------------
     // Test/diagnostic accessors
     // -----------------------------------------------------------------------
 
@@ -192,6 +211,27 @@ private:
     /// @brief Read the active model's RAM page count from the Memory / config.
     /// Called once at StartRecording.
     uint16_t ResolveModelRamPages() const;
+
+    // -----------------------------------------------------------------------
+    // Internal restore helpers (Phase 2 Item 1; parent TDD §8.1 step 2)
+    // -----------------------------------------------------------------------
+
+    /// @brief Apply a captured checkpoint back to the live emulator.
+    ///
+    /// Field copies for CPU + chipset, rebuild memory banking from port
+    /// latches, memcpy RAM pages from the page store, dispatch TTDLoadState
+    /// on every peripheral, then Screen::InitFrame(). Does not advance the
+    /// emulator. Caller (currently RestoreCheckpointForTesting; later
+    /// SeekTo) is responsible for state transitions and bookkeeping.
+    ///
+    /// @param cp Checkpoint to apply. Read-only; no refs are taken or released.
+    void RestoreCheckpoint(const TTDCheckpoint& cp);
+
+    /// @brief Memcpy every referenced RAM page from the page store into the
+    /// live Memory backing store. Pages marked NEVER_TOUCHED are skipped
+    /// (their live RAM content IS the historical content). Pages beyond
+    /// _modelRamPages are skipped (they're NEVER_TOUCHED by construction).
+    void RestoreRamPages(const std::vector<TTDPageRef>& ramPages);
 
     // -----------------------------------------------------------------------
     // Dependencies (non-owning)

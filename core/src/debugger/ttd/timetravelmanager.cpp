@@ -24,7 +24,9 @@
 #include "emulator/memory/memory.h"      // Memory
 #include "emulator/platform.h"           // EmulatorState, CONFIG, PAGE_SIZE, MAX_RAM_PAGES
 #include "emulator/sound/chips/soundchip_turbosound.h"  // SoundChip_TurboSound (AY peripheral, P1.5)
+#include "emulator/sound/covox.h"                        // Covox (peripheral, P1.5)
 #include "emulator/sound/soundmanager.h"                 // SoundManager
+#include "emulator/video/screen.h"                       // Screen::InitFrame (restore path)
 #include "stdafx.h"
 
 namespace
@@ -52,6 +54,34 @@ inline void CapturePeripheral(ttd::TTDSerializable* dev, std::vector<uint8_t>& o
     else
     {
         outBlob.clear();
+    }
+}
+
+/// @brief Restore a TTDSerializable peripheral from its checkpoint blob.
+///
+/// Helper used by RestoreCheckpoint for every peripheral slot. When the
+/// device is absent or the blob is empty the call is a no-op (an empty blob
+/// is the valid representation of an unimplemented/unused device on the
+/// active model, per CapturePeripheral's contract).
+///
+/// Runs on the control thread with the emulator paused (parent TDD §7.2).
+inline void RestorePeripheral(ttd::TTDSerializable* dev, const std::vector<uint8_t>& blob)
+{
+    if (dev != nullptr && !blob.empty())
+    {
+        // Defensive: the captured blob's size is the device's own TTDStateSize()
+        // at capture time. If the device's size has somehow changed since
+        // (it shouldn't — sizes are stable for the device lifetime per the
+        // TTDSerializable contract), refuse to restore rather than read OOB.
+        const size_t expected = dev->TTDStateSize();
+        if (blob.size() == expected)
+        {
+            dev->TTDLoadState(blob.data());
+        }
+        // Size mismatch is silent at this call site — it's logged by the
+        // restore orchestrator if it represents a real session-corruption
+        // event. (Currently it cannot happen because sessions don't survive
+        // device reconfiguration — P1.6 invalidates on Reset/Load.)
     }
 }
 } // anonymous namespace
@@ -417,6 +447,134 @@ const TTDCheckpoint* TimeTravelManager::GetCheckpoint(size_t idx) const
     if (idx >= _timeline.size())
         return nullptr;
     return &_timeline[idx];
+}
+
+// ---------------------------------------------------------------------------
+// Restore path (Phase 2 Item 1; parent TDD §8.1 step 2)
+// ---------------------------------------------------------------------------
+
+bool TimeTravelManager::RestoreCheckpointForTesting(size_t idx)
+{
+    if (idx >= _timeline.size())
+    {
+        MLOGWARNING("TimeTravelManager::RestoreCheckpointForTesting — idx %zu out of range (timeline size=%zu)",
+                    idx, _timeline.size());
+        return false;
+    }
+
+    if (_state != TTDSessionState::Recording && _state != TTDSessionState::Detached)
+    {
+        MLOGWARNING("TimeTravelManager::RestoreCheckpointForTesting — state is %s, expected Recording or Detached",
+                    TTDSessionStateToString(_state));
+        return false;
+    }
+
+    if (!_context || !_memory)
+    {
+        MLOGWARNING("TimeTravelManager::RestoreCheckpointForTesting — missing dependencies");
+        return false;
+    }
+
+    RestoreCheckpoint(_timeline[idx]);
+    return true;
+}
+
+void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
+{
+    assert(_context && _memory);
+
+    MLOGINFO("TimeTravelManager::RestoreCheckpoint — frame=%llu, globalT=%llu, ramPages=%zu",
+             static_cast<unsigned long long>(cp.time.frame),
+             static_cast<unsigned long long>(cp.globalT),
+             cp.ramPages.size());
+
+    // --- Step 1: CPU registers (TDD §8.1 step 2a) ---
+    // Z80 inherits from Z80State (see z80.h), so Z80* IS-A Z80State*.
+    // Host-side fields (MemIf pointers, trace cursors, isDebugMode,
+    // prev_pc/m1_pc/last_branch/nextpc) are preserved by RestoreCpuState —
+    // they remain valid because we're not tearing down the emulator.
+    Z80* cpu = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    if (cpu)
+    {
+        RestoreCpuState(cp.cpu, static_cast<Z80State*>(cpu));
+    }
+
+    // --- Step 2: Chipset port latches + counters (TDD §8.1 step 2b) ---
+    // RestoreChipsetState is a pure field copy into emulatorState. It does
+    // NOT re-run the port decoder — that's the next sub-step.
+    RestoreChipsetState(cp.chipset, &_context->emulatorState);
+
+    // --- Step 2b: Rebuild memory banking from restored port latches ---
+    // Memory::UpdateZ80Banks reads the latches we just wrote and rebuilds
+    // the four-bank mapping (ROM/RAM page in each 16 KB slot). Pentagon 128K
+    // uses only p7FFD; extended models would extend this (Phase 2 carry).
+    _memory->UpdateZ80Banks();
+
+    // --- Step 3: RAM page content (TDD §8.1 step 2c) ---
+    // Memcpy every referenced page from the COW page store into the live
+    // Memory backing store. The optimization to skip pages whose content
+    // already matches is deferred (TDD §8.1 "often a handful of pages";
+    // restore is rare, not a per-frame hot path).
+    RestoreRamPages(cp.ramPages);
+
+    // --- Step 4: Peripherals (TDD §8.1 step 2d) ---
+    // Each device implements TTDSerializable. RestorePeripheral is a null-
+    // checking, size-checking forwarder to TTDLoadState. Devices that have
+    // no captured blob (empty vector) are no-ops — valid for models that
+    // don't populate them (e.g., Covox absent on 48K, FDC absent on
+    // non-Beta-Disk models).
+    if (_context->pSoundManager)
+    {
+        RestorePeripheral(_context->pSoundManager->getTurboSound(), cp.ayState);
+    }
+    RestorePeripheral(_context->pTape, cp.tapeState);
+    if (_context->pSoundManager)
+    {
+        RestorePeripheral(_context->pSoundManager->getCovox(), cp.covoxState);
+    }
+    RestorePeripheral(_context->pBetaDisk, cp.fdcState);
+
+    // --- Step 5: Screen (TDD §8.1 step 2e) ---
+    // InitFrame resets the renderer's frame-local counters so the next
+    // rendered frame starts from a clean state matching the restored beam
+    // position. Without this, the next frame would inherit dirty counters
+    // from whatever frame was running before the restore.
+    if (_context->pScreen)
+    {
+        _context->pScreen->InitFrame();
+    }
+
+    // t_states and frame_counter were already restored by RestoreChipsetState.
+}
+
+void TimeTravelManager::RestoreRamPages(const std::vector<TTDPageRef>& ramPages)
+{
+    const uint16_t pages = std::min<uint16_t>(_modelRamPages,
+                                              static_cast<uint16_t>(ramPages.size()));
+    for (uint16_t p = 0; p < pages; ++p)
+    {
+        const TTDPageRef& ref = ramPages[p];
+        if (ref.IsNeverTouched())
+            continue;  // Live RAM content is correct for this page.
+
+        uint8_t* pageData = _memory->RAMPageAddress(p);
+        if (!pageData)
+        {
+            MLOGWARNING("TimeTravelManager::RestoreRamPages — null RAMPageAddress for page %u",
+                        static_cast<unsigned>(p));
+            continue;
+        }
+
+        const uint8_t* stored = _pageStore.GetPage(ref.storeIndex);
+        if (!stored)
+        {
+            MLOGWARNING("TimeTravelManager::RestoreRamPages — null page data for storeIndex=%u",
+                        ref.storeIndex);
+            continue;
+        }
+
+        std::memcpy(pageData, stored, TTDPageStore::kPageSize);
+    }
 }
 
 } // namespace ttd

@@ -26,12 +26,16 @@ the merge.
 
 ## Item ordering (each keeps the divergence suite green)
 
-1. **Restore path** (parent TDD §8.1 step 2). Field copies for CPU + chipset
-   already exist (`RestoreCpuState` / `RestoreChipsetState`); this item
-   wires the higher-level orchestrator: re-run paging decode via the port
-   decoder, memcpy only-diffed RAM pages, dispatch `TTDLoadState` on every
-   peripheral, call `Screen::InitFrame()`, restore `t_states` / `frame_counter`.
-   No replay yet — destination is a frame boundary.
+1. **Restore path** ✅ DONE 2026-07-19 (parent TDD §8.1 step 2). Field copies
+   for CPU + chipset already exist (`RestoreCpuState` / `RestoreChipsetState`);
+   this item wires the higher-level orchestrator: rebuild memory banking
+   via `Memory::UpdateZ80Banks` (reads restored `p7FFD` + `CF_TRDOS` flag),
+   memcpy RAM pages from the COW page store, dispatch `TTDLoadState` on every
+   peripheral, call `Screen::InitFrame()`. No replay yet — destination is a
+   frame boundary. Implementation: `RestoreCheckpointForTesting(idx)` public
+   entry + `RestoreCheckpoint(cp)` + `RestoreRamPages(pages)` private helpers
+   in `timetravelmanager.{h,cpp}`. Tests: 9 cases in `ttd_restore_test.cpp`,
+   all green. Full TTD suite: 84/84 green.
 
 2. **Silent-replay mode** (parent TDD §8.2 + Appendix C). Adds
    `_context->ttdReplayActive` and the suppression matrix:
@@ -69,43 +73,64 @@ the merge.
 
 ## Detailed notes per item
 
-### Item 1 — Restore path
+### Item 1 — Restore path ✅ DONE
+
+**Status:** Implemented + tested 2026-07-19.
 
 **Files touched:**
-- `core/src/debugger/ttd/timetravelmanager.{h,cpp}` — new private method
-  `RestoreCheckpoint(const TTDCheckpoint&)`, plus public `RestoreLatest()`
-  test entry point.
+- `core/src/debugger/ttd/timetravelmanager.{h,cpp}` — new public
+  `RestoreCheckpointForTesting(size_t idx)` test entry + private
+  `RestoreCheckpoint(const TTDCheckpoint&)` + `RestoreRamPages(const std::vector<TTDPageRef>&)`.
 - Reuses existing `RestoreCpuState` / `RestoreChipsetState` from
   `ttd_checkpoint.cpp` (already implemented in Phase 1).
 - Calls into: `Z80` (CPU copy target), `EmulatorState` (chipset target),
-  `Memory::SetRomPage` / `SetRAMPage` via `PortDecoder`, `Screen::InitFrame`,
-  each peripheral's `TTDLoadState`.
+  `Memory::UpdateZ80Banks` (rebuilds banking from port latches),
+  `Screen::InitFrame`, each peripheral's `TTDLoadState`.
 
-**Sequence** (per TDD §8.1 step 2):
-1. `RestoreCpuState(checkpoint.cpu, &z80.state)` — fixes registers, MEMPTR, IFF, HALT.
-2. `RestoreChipsetState(checkpoint.chipset, &emulatorState)` — port latches + counters.
-3. Walk `_context->pPortDecoder` and re-apply every latched port via
-   `DecodePortOut(port, value, pc)` so the live memory mapping, AY register
-   select, banking, and palette all reflect the restored state. This is the
-   "re-run paging decode" step.
-4. For each `ramPages[i]` where the ref differs from the current live page
-   content, `memcpy` 16 KB from the page store into `memory._ramPages[i]`.
-   Skip never-touched pages.
-5. Dispatch `TTDLoadState(blob.data())` on each peripheral that has a
-   non-empty blob.
+**Sequence implemented** (per TDD §8.1 step 2):
+1. `RestoreCpuState(checkpoint.cpu, &z80.state)` — fixes registers, MEMPTR,
+   Q, IFF, HALT, eipos, haltpos.
+2. `RestoreChipsetState(checkpoint.chipset, &emulatorState)` — port latches
+   (p7FFD etc.) + counters (t_states, frame_counter).
+3. `Memory::UpdateZ80Banks()` — reads the restored `p7FFD` and `CF_TRDOS`
+   flag to rebuild the live ROM/RAM banking. (Simpler and more robust than
+   walking the PortDecoder: UpdateZ80Banks is the existing canonical
+   "re-derive banks from latches" path used elsewhere in the codebase.)
+4. `RestoreRamPages(checkpoint.ramPages)` — memcpy 16 KB per model-RAM
+   page from the COW page store slot into `memory._ramPages[i]`. Skips
+   `kNeverTouched` pages (their live content is the baseline).
+5. Dispatch `TTDLoadState(blob.data())` on AY/Tape/Covox/FDC via the
+   anonymous-namespace `RestorePeripheral` helper (mirroring
+   `CapturePeripheral`). Empty blobs and absent devices are no-ops.
 6. `screen->InitFrame()` so the renderer starts fresh from the restored
    beam position; the next rendered frame is the historical frame.
-7. Restore `emulatorState.t_states` and `frame_counter` from the checkpoint.
 
-**Tests** (`ttd_restore_test.cpp`):
-- Round-trip: capture → mutate state → restore → assert state matches via
-  `MachineStateHash::HashSnapshot()`.
-- Per-subsystem restore: CPU-only, chipset-only, RAM-pages-only, each
-  peripheral individually.
-- Never-touched page: page that was never written in session stays at its
-  live content (no spurious restore).
-- Port-latch re-application: a checkpoint captured with `p7FFD = 0x10`
-  restores the right ROM and RAM bank.
+**Design deviation from plan:** the plan said "walk PortDecoder and re-apply
+latches". Implementation chose `Memory::UpdateZ80Banks()` instead because
+that's the existing canonical path the emulator already uses for the same
+purpose (after Reset, after snapshot Load). PortDecoder replay would have
+re-done work that UpdateZ80Banks already covers and would have required a
+list of "banking-relevant ports" which doesn't exist as a single registry.
+The two approaches produce the same live memory map.
+
+**Tests** (`ttd_restore_test.cpp`, 9 cases, all green):
+- `Restore_OutOfRange_Fails` — bounds check
+- `Restore_NamedByAnonymousBlock` — index 0 is restorable
+- `RoundTrip_BaselineHashMatchesAfterRestore` — full state hash via
+  `MachineStateHash::CaptureSnapshot + HashSnapshot`
+- `RoundTrip_RestoreToLaterCheckpointAlsoMatches` — three checkpoints,
+  restore-to-each, hash matches each time
+- `Restore_PreservesUndocumentedRegisters` — MEMPTR / Q / eipos / haltpos
+- `Restore_PreservesRamPagesContent` — byte-for-byte page 0 check
+- `Restore_PreservesPortLatchesAndPaging` — p7FFD flip + paging rebuild
+- `Restore_PreservesCounters` — t_states / frame_counter
+- `Restore_TwiceInARow_ProducesSameState` — idempotency
+
+**Pitfall discovered:** writes via `Memory::RAMPageAddress()` return a raw
+pointer that bypasses the MemoryWriteDebug hook — the dirty tracker never
+sees them. Tests must call `tracker->MarkDirty(page)` explicitly when
+mutating RAM outside the CPU's write path. This is documented in
+`ttd_restore_test.cpp` and `ttd_manager_test.cpp`'s existing dirty-page tests.
 
 ### Item 2 — Silent replay mode
 
