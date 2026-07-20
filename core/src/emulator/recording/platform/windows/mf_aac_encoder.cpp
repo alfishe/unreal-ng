@@ -10,9 +10,11 @@
 #include <wmcodecdsp.h>
 #include <initguid.h>
 
+#ifdef _MSC_VER
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mfuuid.lib")
 #pragma comment(lib, "mf.lib")
+#endif
 
 // AAC encoder CLSID
 DEFINE_GUID(CLSID_AACMFTEncoder,
