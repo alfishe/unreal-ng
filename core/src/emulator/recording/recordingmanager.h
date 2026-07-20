@@ -361,8 +361,10 @@ protected:
     bool _isSubscribed = false;
 
     // Emulator instance ID we are currently recording on.
-    // NC_EMULATOR_STATE_CHANGE is a global broadcast with no instance ID in the
-    // payload, so we store our own ID and verify the emulator's actual state
+    // Since Sprint 0 (GDB TDD §6.3), NC_EMULATOR_STATE_CHANGE carries an
+    // EmulatorStateChangePayload with the instance UUID; the legacy
+    // _payloadNumber path is retained for observers that have not been
+    // migrated. We still store our own ID as a belt-and-suspenders check
     // before reacting to a stop notification.
     std::string _recordingEmulatorId;
 

@@ -14,6 +14,7 @@
 #include "debugger/debugmanager.h"
 #include "emulator/emulator.h"
 #include "emulator/memory/memoryaccesstracker.h"
+#include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
@@ -202,9 +203,10 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, [[maybe_unused]] bool isExecution
             // Pause emulator (single source of truth)
             emulator.Pause();
 
-            // Broadcast notification - breakpoint triggered
+            // Broadcast notification - breakpoint triggered (instance-tagged per GDB TDD §6.3)
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+            BreakpointTriggeredPayload* payload =
+                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, addr);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
             // Wait until emulator resumed externally
@@ -271,9 +273,10 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
             // Pause emulator (single source of truth)
             emulator.Pause();
 
-            // Broadcast notification - breakpoint triggered
+            // Broadcast notification - breakpoint triggered (instance-tagged per GDB TDD §6.3)
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+            BreakpointTriggeredPayload* payload =
+                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, addr);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
             // Wait until emulator resumed externally

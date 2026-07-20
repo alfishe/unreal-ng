@@ -174,8 +174,11 @@ void RecordingManager::onEmulatorStateChange(int /*id*/, Message* message)
         {
             // NC_EMULATOR_STATE_CHANGE is a global broadcast — every emulator
             // instance posts it and every RecordingManager receives it.
-            // The payload carries only the state number, NOT the emulator ID.
-            // We must verify this is OUR emulator being destroyed before stopping.
+            // Since Sprint 0 (GDB TDD §6.3) the payload is an
+            // EmulatorStateChangePayload that also carries the instance UUID,
+            // but we verify our own emulator's state directly here because the
+            // legacy code path used only _payloadNumber and the explicit check
+            // remains robust to any unmigrated poster.
             bool ourDestroying = false;
             if (_context && _context->pEmulator)
             {

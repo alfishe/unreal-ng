@@ -10,6 +10,7 @@
 #include "emulator/cpu/op_noprefix.h"
 #include "emulator/cpu/opcode_profiler.h"
 #include "emulator/emulator.h"
+#include "emulator/notifications.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
 #include "stdafx.h"
@@ -233,9 +234,10 @@ void Z80::Z80Step(bool skipBreakpoints)
                 // Pause emulator (single source of truth)
                 emulator.Pause();
 
-                // Broadcast notification - breakpoint triggered
+                // Broadcast notification - breakpoint triggered (instance-tagged per GDB TDD §6.3)
                 MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-                SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+                BreakpointTriggeredPayload* payload =
+                    new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, pc);
                 messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
                 // Wait until emulator resumed externally (by debugger or scripting engine)

@@ -85,7 +85,8 @@ bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
         if (enabled)
         {
             const std::string& id = feature->id;
-            if (id == Features::kBreakpoints || id == Features::kCallTrace || id == Features::kMemoryTracking)
+            if (id == Features::kBreakpoints || id == Features::kCallTrace || id == Features::kMemoryTracking ||
+                id == Features::kTimeTravel)
             {
                 auto* master = findFeature(Features::kDebugMode);
                 if (master && !master->enabled)
@@ -264,6 +265,13 @@ void FeatureManager::setDefaults()
                      "",
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryAnalysis});
+    registerFeature({Features::kTimeTravel,
+                     Features::kTimeTravelAlias,
+                     Features::kTimeTravelDesc,
+                     false,  // OFF by default - heavy feature, opt-in
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryDebug});
 
     _dirty = false;
 }

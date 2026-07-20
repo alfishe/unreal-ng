@@ -10,6 +10,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/memory/memoryaccesstracker.h"
+#include "emulator/notifications.h"
 #include "emulator/ports/models/portdecoder_pentagon128.h"
 #include "emulator/ports/models/portdecoder_pentagon512.h"
 #include "emulator/ports/models/portdecoder_profi.h"
@@ -107,9 +108,10 @@ uint8_t PortDecoder::DecodePortIn(uint16_t addr, [[maybe_unused]] uint16_t pc)
             // Pause emulator (single source of truth)
             emulator.Pause();
 
-            // Broadcast notification - breakpoint triggered
+            // Broadcast notification - breakpoint triggered (instance-tagged per GDB TDD §6.3)
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+            BreakpointTriggeredPayload* payload =
+                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, addr);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
             // Wait until emulator resumed externally
@@ -149,7 +151,8 @@ void PortDecoder::OnPortInComplete(uint16_t port, uint8_t result, [[maybe_unused
         {
             emulator.Pause();
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+            BreakpointTriggeredPayload* payload =
+                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, port);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
             emulator.WaitWhilePaused();
         }
@@ -179,7 +182,8 @@ void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [
         {
             emulator.Pause();
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+            BreakpointTriggeredPayload* payload =
+                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, addr);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
             emulator.WaitWhilePaused();
         }
@@ -215,7 +219,8 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
         {
             emulator.Pause();
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+            BreakpointTriggeredPayload* payload =
+                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, port);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
             emulator.WaitWhilePaused();
         }

@@ -18,6 +18,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
+#include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "loaders/snapshot/loader_sna.h"
 
@@ -623,9 +624,9 @@ void Emulator::Start()
     _isRunning = true;
     _stopRequested = false;
 
-    // Broadcast notification - Emulator started
+    // Broadcast notification - Emulator started (instance-tagged per GDB TDD §6.3)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    SimpleNumberPayload* payload = new SimpleNumberPayload(StateRun);
+    EmulatorStateChangePayload* payload = new EmulatorStateChangePayload(GetId(), StateRun);
     messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
 
     // Update state
@@ -709,9 +710,9 @@ void Emulator::Pause(bool broadcast)
     {
         SetState(StatePaused);
 
-        // Broadcast notification - Emulator execution paused
+        // Broadcast notification - Emulator execution paused (instance-tagged per GDB TDD §6.3)
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        SimpleNumberPayload* payload = new SimpleNumberPayload(StatePaused);
+        EmulatorStateChangePayload* payload = new EmulatorStateChangePayload(GetId(), StatePaused);
         messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
     }
 }
@@ -760,9 +761,9 @@ void Emulator::Resume(bool broadcast)
     {
         SetState(StateResumed);
 
-        // Broadcast notification - Emulator execution resumed
+        // Broadcast notification - Emulator execution resumed (instance-tagged per GDB TDD §6.3)
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        SimpleNumberPayload* payload = new SimpleNumberPayload(StateResumed);
+        EmulatorStateChangePayload* payload = new EmulatorStateChangePayload(GetId(), StateResumed);
         messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
     }
 }
@@ -827,9 +828,9 @@ void Emulator::Stop()
     _stopRequested = false;
     _isPaused = false;
 
-    // Broadcast notification - Emulator stopped
+    // Broadcast notification - Emulator stopped (instance-tagged per GDB TDD §6.3)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    SimpleNumberPayload* payload = new SimpleNumberPayload(StateStopped);
+    EmulatorStateChangePayload* payload = new EmulatorStateChangePayload(GetId(), StateStopped);
     messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
 }
 

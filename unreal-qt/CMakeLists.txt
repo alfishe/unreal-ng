@@ -12,6 +12,9 @@ set(ENABLE_LUA_AUTOMATION ON CACHE BOOL "Enable Lua automation" FORCE)
 # Never override with ON here — root CMakeLists.txt is the single source of truth.
 set(ENABLE_WEBAPI_AUTOMATION OFF CACHE BOOL "Enable WebAPI automation" FORCE)
 set(ENABLE_CLI_AUTOMATION ON CACHE BOOL "Enable CLI automation" FORCE)
+# GDB RSP server automation is OFF by default — the stub does not exist yet (GDB TDD G1).
+# When G1 lands, flip this to ON or pass -DENABLE_GDB_AUTOMATION=ON at configure time.
+set(ENABLE_GDB_AUTOMATION OFF CACHE BOOL "Enable GDB RSP server automation" FORCE)
 
 # Set C++ standard (C++20 required)
 set(CMAKE_CXX_STANDARD 20)
@@ -265,6 +268,7 @@ if (ENABLE_AUTOMATION)
         $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:ENABLE_PYTHON_AUTOMATION>
         $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:ENABLE_WEBAPI_AUTOMATION>
         $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:ENABLE_CLI_AUTOMATION>
+        $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:ENABLE_GDB_AUTOMATION>
     )
 endif ()
 
@@ -496,6 +500,7 @@ message(STATUS "    ENABLE_LUA_AUTOMATION: ${ENABLE_LUA_AUTOMATION}")
 message(STATUS "    ENABLE_PYTHON_AUTOMATION: ${ENABLE_PYTHON_AUTOMATION}")
 message(STATUS "    ENABLE_WEBAPI_AUTOMATION: ${ENABLE_WEBAPI_AUTOMATION}")
 message(STATUS "    ENABLE_CLI_AUTOMATION: ${ENABLE_CLI_AUTOMATION}")
+message(STATUS "    ENABLE_GDB_AUTOMATION: ${ENABLE_GDB_AUTOMATION}")
 message(STATUS "Settings:")
 message(STATUS "  PROJECT_NAME:        ${PROJECT_NAME}")
 message(STATUS "  SRC_DIR:             ${SRC_DIR}")

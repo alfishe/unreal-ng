@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 #include "3rdparty/message-center/eventqueue.h"
@@ -97,3 +98,60 @@ public:
         return static_cast<char>('A' + (_driveId & 0x03));
     }
 };
+
+/// region <Instance-tagged payloads (GDB TDD §6.3 prerequisite)>
+//
+// These payloads inherit from SimpleNumberPayload so that existing observers
+// reading `_payloadNumber` keep working unchanged. New observers (GDB stub,
+// per-instance videowall, TTD seek) dynamic_cast to read the instance UUID.
+//
+// The UUID is mandatory at the post site; if a caller cannot identify the
+// instance it should pass a nil UUID (default-constructed) — observers that
+// still ignore the field continue to work, but instance-filtered observers
+// will treat nil as "does not match my instance".
+
+/// Payload for NC_EMULATOR_STATE_CHANGE.
+/// `_payloadNumber` carries the new EmulatorStateEnum value (StateRun /
+/// StatePaused / StateResumed / StateStopped) — same as the legacy
+/// SimpleNumberPayload so legacy observers are unaffected.
+class EmulatorStateChangePayload : public SimpleNumberPayload
+{
+public:
+    unreal::UUID emulatorId;
+
+    EmulatorStateChangePayload(const unreal::UUID& id, uint32_t newState)
+        : SimpleNumberPayload(newState), emulatorId(id) {}
+
+    EmulatorStateChangePayload(const std::string& id, uint32_t newState)
+        : SimpleNumberPayload(newState)
+        , emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id))
+    {}
+
+    virtual ~EmulatorStateChangePayload() = default;
+};
+
+/// Payload for NC_EXECUTION_BREAKPOINT.
+/// `_payloadNumber` carries the breakpoint ID — same as the legacy
+/// SimpleNumberPayload so legacy observers are unaffected. Adds the instance
+/// UUID and the Z80 address that triggered the hit (PC for execution, target
+/// address for memory R/W, port for I/O) so GDB and the videowall can both
+/// filter by instance and report a precise stop location.
+class BreakpointTriggeredPayload : public SimpleNumberPayload
+{
+public:
+    unreal::UUID emulatorId;
+    uint16_t    address;   // Z80 address that triggered (0 if unknown / N/A)
+
+    BreakpointTriggeredPayload(const unreal::UUID& id, uint32_t breakpointId, uint16_t addr)
+        : SimpleNumberPayload(breakpointId), emulatorId(id), address(addr) {}
+
+    BreakpointTriggeredPayload(const std::string& id, uint32_t breakpointId, uint16_t addr)
+        : SimpleNumberPayload(breakpointId)
+        , emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id))
+        , address(addr)
+    {}
+
+    virtual ~BreakpointTriggeredPayload() = default;
+};
+
+/// endregion </Instance-tagged payloads (GDB TDD §6.3 prerequisite)>

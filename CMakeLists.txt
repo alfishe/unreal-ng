@@ -22,6 +22,7 @@ option(ENABLE_LUA_AUTOMATION "Enable Lua automation" ON)
 option(ENABLE_PYTHON_AUTOMATION "Enable Python automation" OFF)
 option(ENABLE_WEBAPI_AUTOMATION "Enable WebAPI automation" ON)
 option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
+option(ENABLE_GDB_AUTOMATION "Enable GDB RSP server automation (GDB TDD G1+)" OFF)
 
 project(unreal)
 
@@ -319,6 +320,7 @@ if (ENABLE_AUTOMATION)
     message(STATUS "    ENABLE_PYTHON_AUTOMATION: ${ENABLE_PYTHON_AUTOMATION}")
     message(STATUS "    ENABLE_WEBAPI_AUTOMATION: ${ENABLE_WEBAPI_AUTOMATION}")
     message(STATUS "    ENABLE_CLI_AUTOMATION:    ${ENABLE_CLI_AUTOMATION}")
+    message(STATUS "    ENABLE_GDB_AUTOMATION:    ${ENABLE_GDB_AUTOMATION}")
 endif ()
 message(STATUS "====================================================")
 

@@ -3,10 +3,15 @@
 #include "stdafx.h"
 
 #include <atomic>
+#include <mutex>
+#include <string>
 #include "common/modulelogger.h"
+#include "common/uuid.h"
 #include "emulator/platform.h"
 #include "corestate.h"
 #include "emulator/io/tape/tape.h"
+
+using unreal::UUID;
 
 class Core;
 class Emulator;
@@ -104,4 +109,53 @@ public:
     EmulatorContext(Emulator* emulator, LoggerLevel level = LoggerLevel::LogTrace);    // Constructor registering reference to parent Emulator object
     virtual ~EmulatorContext();
     /// endregion </Constructors / destructors>
+
+    /// region <Run-control claim (GDB TDD §3.3 / parent TDD §7.2)>
+    //
+    // Advisory owner token: while a surface (GDB, Qt timeline, WebAPI, ...) holds the claim
+    // with the target paused, other surfaces' Resume/Step/Seek/state-writes are refused.
+    // Pause and read-only queries are always allowed. The claim is NOT taken automatically
+    // by Emulator::Pause() — explicit surfaces take it. Enforcement is wired in Phase 2
+    // (TTD seek) and G1 (GDB stub); Sprint 0 ships the mechanism only.
+    //
+    // Mutex guards take/release only; never held during emulator work.
+public:
+    struct RunControlState
+    {
+        bool claimed = false;
+        std::string surfaceLabel;  // "gdb", "webapi", "qt-timeline", "lua", "cli", ... for error/UI
+        std::string ownerUuid;     // String form for diagnostics / JSON responses
+    };
+
+    /// Attempt to take the run-control claim.
+    /// @param owner UUID of the claiming surface (use UUID::Generate() at surface startup).
+    /// @param surfaceLabel Human-readable label for error messages and UI.
+    /// @param errorReason Optional: filled with a reason string when returning false.
+    /// @return true if claim taken (or already held by the same owner — idempotent);
+    ///         false if held by a different owner.
+    bool TakeRunControl(const UUID& owner, const std::string& surfaceLabel,
+                        std::string* errorReason = nullptr);
+
+    /// Release the claim. No-op if @p owner does not match the current holder (defensive —
+    /// surfaces release only what they hold).
+    void ReleaseRunControl(const UUID& owner);
+
+    /// Identity check: does @p owner currently hold the claim? No blocking.
+    bool HasRunControl(const UUID& owner) const;
+
+    /// Is the claim held by anyone?
+    bool IsRunControlClaimed() const;
+
+    /// Snapshot for UI status / diagnostics. Thread-safe.
+    RunControlState GetRunControlState() const;
+
+private:
+    struct RunControlClaim
+    {
+        UUID owner;                   // Nil UUID = unclaimed
+        std::string surfaceLabel;
+        mutable std::mutex mutex;     // Guards take/release only; never held during emulator work
+    };
+    RunControlClaim _runControlClaim;
+    /// endregion </Run-control claim>
 };
