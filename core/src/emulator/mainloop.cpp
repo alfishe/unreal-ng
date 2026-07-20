@@ -10,7 +10,7 @@
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
-#include "debugger/ttd/ttd_manager.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "emulator.h"
 #include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
@@ -393,15 +393,15 @@ void MainLoop::OnFrameEnd()
     // is off (the cached bool in Memory gates the dirty hook). Cost when
     // idle: one predictable branch. Cost when recording: dirty pages get
     // a 16 KB Intern each, clean pages get a cheap AddRef.
-    if (_context->pTTDManager)
+    if (_context->pTimeTravelManager)
     {
         try
         {
-            _context->pTTDManager->OnFrameBoundary();
+            _context->pTimeTravelManager->OnFrameBoundary();
         }
         catch (const std::exception& e)
         {
-            MLOGERROR("TTDManager::OnFrameBoundary failed: %s", e.what());
+            MLOGERROR("TimeTravelManager::OnFrameBoundary failed: %s", e.what());
         }
     }
 

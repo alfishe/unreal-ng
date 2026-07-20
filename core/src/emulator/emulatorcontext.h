@@ -29,7 +29,7 @@ class FeatureManager;
 
 // TTD manager lives in the ttd namespace — forward-declare so the context
 // can hold a pointer without pulling the full TTD headers into every consumer.
-namespace ttd { class TTDManager; }
+namespace ttd { class TimeTravelManager; }
 
 // Create callback type for audio
 // User in emulator/sound/soundmanager and client/GUI
@@ -100,7 +100,7 @@ public:
     // Time-travel debugging manager (owned by Emulator, lives across the
     // lifetime of the context). May be null on minimal builds without TTD.
     // Per TDD §10.2.
-    ttd::TTDManager* pTTDManager = nullptr;
+    ttd::TimeTravelManager* pTimeTravelManager = nullptr;
 
     // Feature toggle manager
     FeatureManager* pFeatureManager = nullptr;

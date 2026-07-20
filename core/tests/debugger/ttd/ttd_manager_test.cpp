@@ -1,5 +1,5 @@
 /// @file ttd_manager_test.cpp
-/// @brief Integration tests for TTDManager (per-frame capture orchestrator).
+/// @brief Integration tests for TimeTravelManager (per-frame capture orchestrator).
 ///
 /// These tests spin up a real Emulator instance (matching the SharedMemory
 /// test pattern) and exercise the recording/capture path end-to-end:
@@ -19,7 +19,7 @@
 #include "common/modulelogger.h"
 #include "debugger/ttd/ttd_checkpoint.h"
 #include "debugger/ttd/ttd_dirty_tracker.h"
-#include "debugger/ttd/ttd_manager.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttd_page_store.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -45,11 +45,11 @@ bool WaitForState(Emulator& emu, EmulatorStateEnum target, int timeoutMs = 1000)
 // Fixture: real Emulator instance per test
 // ===========================================================================
 
-class TTDManager_Test : public ::testing::Test
+class TimeTravelManager_Test : public ::testing::Test
 {
 protected:
     Emulator* _emulator = nullptr;
-    ttd::TTDManager* _ttd = nullptr;
+    ttd::TimeTravelManager* _ttd = nullptr;
     Memory*  _memory = nullptr;
     FeatureManager* _fm = nullptr;
 
@@ -61,8 +61,8 @@ protected:
 
         EmulatorContext* ctx = _emulator->GetContext();
         ASSERT_NE(ctx, nullptr);
-        _ttd = ctx->pTTDManager;
-        ASSERT_NE(_ttd, nullptr) << "TTDManager was not created during Emulator::Init";
+        _ttd = ctx->pTimeTravelManager;
+        ASSERT_NE(_ttd, nullptr) << "TimeTravelManager was not created during Emulator::Init";
         _memory = ctx->pMemory;
         ASSERT_NE(_memory, nullptr);
         _fm = _emulator->GetFeatureManager();
@@ -93,14 +93,14 @@ protected:
 // Construction / initial state
 // ===========================================================================
 
-TEST_F(TTDManager_Test, FreshManager_IsIdle)
+TEST_F(TimeTravelManager_Test, FreshManager_IsIdle)
 {
     EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Idle);
     EXPECT_FALSE(_ttd->IsRecording());
     EXPECT_EQ(_ttd->GetCheckpointCount(), 0u);
 }
 
-TEST_F(TTDManager_Test, GetSessionInfo_InitiallyEmpty)
+TEST_F(TimeTravelManager_Test, GetSessionInfo_InitiallyEmpty)
 {
     auto info = _ttd->GetSessionInfo();
     EXPECT_EQ(info.state, ttd::TTDSessionState::Idle);
@@ -114,7 +114,7 @@ TEST_F(TTDManager_Test, GetSessionInfo_InitiallyEmpty)
 // OnFrameBoundary is a no-op when not Recording
 // ===========================================================================
 
-TEST_F(TTDManager_Test, OnFrameBoundary_NoOp_WhenNotRecording)
+TEST_F(TimeTravelManager_Test, OnFrameBoundary_NoOp_WhenNotRecording)
 {
     _ttd->OnFrameBoundary();
     _ttd->OnFrameBoundary();
@@ -127,7 +127,7 @@ TEST_F(TTDManager_Test, OnFrameBoundary_NoOp_WhenNotRecording)
 // StartRecording
 // ===========================================================================
 
-TEST_F(TTDManager_Test, StartRecording_CapturesBaseline)
+TEST_F(TimeTravelManager_Test, StartRecording_CapturesBaseline)
 {
     EnableTTD();
     ASSERT_TRUE(_ttd->StartRecording());
@@ -154,7 +154,7 @@ TEST_F(TTDManager_Test, StartRecording_CapturesBaseline)
     }
 }
 
-TEST_F(TTDManager_Test, StartRecording_PageStoreGrows_ByModelRamPagesTimesPageSize)
+TEST_F(TimeTravelManager_Test, StartRecording_PageStoreGrows_ByModelRamPagesTimesPageSize)
 {
     EnableTTD();
     ASSERT_TRUE(_ttd->StartRecording());
@@ -166,7 +166,7 @@ TEST_F(TTDManager_Test, StartRecording_PageStoreGrows_ByModelRamPagesTimesPageSi
     EXPECT_EQ(_ttd->GetPageStore().GetUsedSlots(), static_cast<uint32_t>(pages));
 }
 
-TEST_F(TTDManager_Test, StartRecording_Idempotent)
+TEST_F(TimeTravelManager_Test, StartRecording_Idempotent)
 {
     EnableTTD();
     ASSERT_TRUE(_ttd->StartRecording());
@@ -181,7 +181,7 @@ TEST_F(TTDManager_Test, StartRecording_Idempotent)
 // OnFrameBoundary when Recording
 // ===========================================================================
 
-TEST_F(TTDManager_Test, OnFrameBoundary_WhenRecording_AppendsCheckpoint)
+TEST_F(TimeTravelManager_Test, OnFrameBoundary_WhenRecording_AppendsCheckpoint)
 {
     EnableTTD();
     ASSERT_TRUE(_ttd->StartRecording());
@@ -194,7 +194,7 @@ TEST_F(TTDManager_Test, OnFrameBoundary_WhenRecording_AppendsCheckpoint)
     EXPECT_EQ(_ttd->GetCheckpointCount(), 3u);
 }
 
-TEST_F(TTDManager_Test, OnFrameBoundary_CleanFrame_AddRefs_AllPages)
+TEST_F(TimeTravelManager_Test, OnFrameBoundary_CleanFrame_AddRefs_AllPages)
 {
     // After StartRecording, no writes have happened, so the next OnFrameBoundary
     // should AddRef every page (no new Interns). Page store capacity stays the same.
@@ -220,7 +220,7 @@ TEST_F(TTDManager_Test, OnFrameBoundary_CleanFrame_AddRefs_AllPages)
     }
 }
 
-TEST_F(TTDManager_Test, OnFrameBoundary_DirtyFrame_InternsOnlyDirtyPages)
+TEST_F(TimeTravelManager_Test, OnFrameBoundary_DirtyFrame_InternsOnlyDirtyPages)
 {
     EnableTTD();
     ASSERT_TRUE(_ttd->StartRecording());
@@ -246,7 +246,7 @@ TEST_F(TTDManager_Test, OnFrameBoundary_DirtyFrame_InternsOnlyDirtyPages)
     EXPECT_NE(cp->ramPages[0].storeIndex, 0u);  // Not the baseline slot
 }
 
-TEST_F(TTDManager_Test, OnFrameBoundary_MultipleDirtyPages_InternsAll)
+TEST_F(TimeTravelManager_Test, OnFrameBoundary_MultipleDirtyPages_InternsAll)
 {
     EnableTTD();
     ASSERT_TRUE(_ttd->StartRecording());
@@ -273,7 +273,7 @@ TEST_F(TTDManager_Test, OnFrameBoundary_MultipleDirtyPages_InternsAll)
 // Checkpoint content correctness
 // ===========================================================================
 
-TEST_F(TTDManager_Test, Checkpoint_Records_FrameCounter)
+TEST_F(TimeTravelManager_Test, Checkpoint_Records_FrameCounter)
 {
     EnableTTD();
     ASSERT_TRUE(_ttd->StartRecording());
@@ -295,7 +295,7 @@ TEST_F(TTDManager_Test, Checkpoint_Records_FrameCounter)
     EXPECT_GT(cp1->time.frame, cp0->time.frame);
 }
 
-TEST_F(TTDManager_Test, Checkpoint_StoresCpuState)
+TEST_F(TimeTravelManager_Test, Checkpoint_StoresCpuState)
 {
     EnableTTD();
     ASSERT_TRUE(_ttd->StartRecording());
@@ -313,7 +313,7 @@ TEST_F(TTDManager_Test, Checkpoint_StoresCpuState)
 // Stop / Invalidate
 // ===========================================================================
 
-TEST_F(TTDManager_Test, StopRecording_RetainsHistory)
+TEST_F(TimeTravelManager_Test, StopRecording_RetainsHistory)
 {
     EnableTTD();
     ASSERT_TRUE(_ttd->StartRecording());
@@ -329,7 +329,7 @@ TEST_F(TTDManager_Test, StopRecording_RetainsHistory)
     EXPECT_EQ(_ttd->GetCheckpointCount(), 3u);
 }
 
-TEST_F(TTDManager_Test, OnFrameBoundary_NoOp_AfterStop)
+TEST_F(TimeTravelManager_Test, OnFrameBoundary_NoOp_AfterStop)
 {
     EnableTTD();
     ASSERT_TRUE(_ttd->StartRecording());
@@ -343,7 +343,7 @@ TEST_F(TTDManager_Test, OnFrameBoundary_NoOp_AfterStop)
     EXPECT_EQ(_ttd->GetCheckpointCount(), before);  // No growth
 }
 
-TEST_F(TTDManager_Test, InvalidateSession_DropsAllHistory)
+TEST_F(TimeTravelManager_Test, InvalidateSession_DropsAllHistory)
 {
     EnableTTD();
     ASSERT_TRUE(_ttd->StartRecording());
@@ -360,7 +360,7 @@ TEST_F(TTDManager_Test, InvalidateSession_DropsAllHistory)
     EXPECT_EQ(_ttd->GetPageStore().GetUsedSlots(), 0u);
 }
 
-TEST_F(TTDManager_Test, InvalidateSession_Idempotent)
+TEST_F(TimeTravelManager_Test, InvalidateSession_Idempotent)
 {
     EnableTTD();
     ASSERT_TRUE(_ttd->StartRecording());
@@ -369,7 +369,7 @@ TEST_F(TTDManager_Test, InvalidateSession_Idempotent)
     EXPECT_EQ(_ttd->GetCheckpointCount(), 0u);
 }
 
-TEST_F(TTDManager_Test, StartRecording_AfterInvalidate_StartedFresh)
+TEST_F(TimeTravelManager_Test, StartRecording_AfterInvalidate_StartedFresh)
 {
     EnableTTD();
     ASSERT_TRUE(_ttd->StartRecording());
@@ -387,7 +387,7 @@ TEST_F(TTDManager_Test, StartRecording_AfterInvalidate_StartedFresh)
 // Page refcount integrity through the lifecycle
 // ===========================================================================
 
-TEST_F(TTDManager_Test, PageStore_NoLeaks_AfterFullLifecycle)
+TEST_F(TimeTravelManager_Test, PageStore_NoLeaks_AfterFullLifecycle)
 {
     EnableTTD();
     ASSERT_TRUE(_ttd->StartRecording());
@@ -411,25 +411,25 @@ TEST_F(TTDManager_Test, PageStore_NoLeaks_AfterFullLifecycle)
     EXPECT_EQ(_ttd->GetPageStore().GetUsedSlots(), 0u);
 }
 
-TEST_F(TTDManager_Test, Destructor_ReleasesPageStoreRefs)
+TEST_F(TimeTravelManager_Test, Destructor_ReleasesPageStoreRefs)
 {
-    // Use a standalone TTDManager on a separate context so we can destroy it
+    // Use a standalone TimeTravelManager on a separate context so we can destroy it
     // without tearing down the fixture's emulator.
     Emulator secondary(LoggerLevel::LogError);
     ASSERT_TRUE(secondary.Init());
     EmulatorContext* ctx = secondary.GetContext();
-    ASSERT_NE(ctx->pTTDManager, nullptr);
+    ASSERT_NE(ctx->pTimeTravelManager, nullptr);
 
     FeatureManager* fm = secondary.GetFeatureManager();
     fm->setFeature(Features::kDebugMode, true);
     fm->setFeature(Features::kTimeTravel, true);
     ctx->pMemory->UpdateFeatureCache();
 
-    ASSERT_TRUE(ctx->pTTDManager->StartRecording());
-    ctx->pTTDManager->OnFrameBoundary();
-    ASSERT_GT(ctx->pTTDManager->GetCheckpointCount(), 1u);
+    ASSERT_TRUE(ctx->pTimeTravelManager->StartRecording());
+    ctx->pTimeTravelManager->OnFrameBoundary();
+    ASSERT_GT(ctx->pTimeTravelManager->GetCheckpointCount(), 1u);
 
-    // Stop the emulator so the TTDManager can be cleanly destroyed on
+    // Stop the emulator so the TimeTravelManager can be cleanly destroyed on
     // Emulator::Release. The destructor must release all page refs —
     // verified indirectly by no leak sanitizer complaints.
     secondary.Stop();
@@ -442,7 +442,7 @@ TEST_F(TTDManager_Test, Destructor_ReleasesPageStoreRefs)
 // Session info
 // ===========================================================================
 
-TEST_F(TTDManager_Test, GetSessionInfo_AfterStart_ReflectsBaseline)
+TEST_F(TimeTravelManager_Test, GetSessionInfo_AfterStart_ReflectsBaseline)
 {
     EnableTTD();
     ASSERT_TRUE(_ttd->StartRecording());
@@ -454,7 +454,7 @@ TEST_F(TTDManager_Test, GetSessionInfo_AfterStart_ReflectsBaseline)
     EXPECT_GT(info.pageStoreUsedBytes, 0u);
 }
 
-TEST_F(TTDManager_Test, GetSessionInfo_FrameBounds_UpdateWithCapture)
+TEST_F(TimeTravelManager_Test, GetSessionInfo_FrameBounds_UpdateWithCapture)
 {
     EnableTTD();
     ASSERT_TRUE(_ttd->StartRecording());

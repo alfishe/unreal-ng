@@ -72,7 +72,7 @@ the merge.
 ### Item 1 — Restore path
 
 **Files touched:**
-- `core/src/debugger/ttd/ttd_manager.{h,cpp}` — new private method
+- `core/src/debugger/ttd/timetravelmanager.{h,cpp}` — new private method
   `RestoreCheckpoint(const TTDCheckpoint&)`, plus public `RestoreLatest()`
   test entry point.
 - Reuses existing `RestoreCpuState` / `RestoreChipsetState` from
@@ -120,7 +120,7 @@ the merge.
   - `AnalyzerManager::dispatchFrameStart` — early return
   - `RecordingManager` — already feature-gated; add replay gate
   - `DebugKeyboardManager` — block matrix mutation; journal injects instead
-  - `TTDManager::OnFrameBoundary` — already early-returns when not Recording;
+  - `TimeTravelManager::OnFrameBoundary` — already early-returns when not Recording;
     replay sets state to Detached so this is automatic
 
 **Tests** (`ttd_replay_mode_test.cpp`):
@@ -149,7 +149,7 @@ time == current time, mutate the matrix to the recorded value.
 
 ### Item 4 — Seek API
 
-**Public API** (on TTDManager):
+**Public API** (on TimeTravelManager):
 ```cpp
 // All require emulator paused. All transition state to Detached on success.
 bool SeekTo(const TTDTimePoint& target);

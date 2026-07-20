@@ -25,7 +25,7 @@
 
 #include "common/modulelogger.h"
 #include "debugger/ttd/ttd_checkpoint.h"
-#include "debugger/ttd/ttd_manager.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttd_serializable.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -344,11 +344,11 @@ TEST_F(TTD_TurboSound_Serializer_Test, RoundTrip_CurrentChipSelector_Restored)
 
 /// endregion </SoundChip_TurboSound serializer tests>
 
-/// region <TTDManager integration: ayState blob is populated>
+/// region <TimeTravelManager integration: ayState blob is populated>
 
 TEST(TTD_AY_ManagerIntegration_Test, CaptureNow_PopulatesAyStateBlob)
 {
-    // Verify the TTDManager capture path actually fills the ayState checkpoint
+    // Verify the TimeTravelManager capture path actually fills the ayState checkpoint
     // blob with a TurboSound payload when recording. This is the wire-up test
     // for P1.5 (peripheral capture in CaptureNow).
     Emulator emulator(LoggerLevel::LogError);
@@ -356,7 +356,7 @@ TEST(TTD_AY_ManagerIntegration_Test, CaptureNow_PopulatesAyStateBlob)
 
     EmulatorContext* context = emulator.GetContext();
     ASSERT_NE(context, nullptr);
-    ASSERT_NE(context->pTTDManager, nullptr);
+    ASSERT_NE(context->pTimeTravelManager, nullptr);
 
     // TurboSound must exist on the default model for the blob to be non-empty.
     SoundManager* sm = context->pSoundManager;
@@ -364,11 +364,11 @@ TEST(TTD_AY_ManagerIntegration_Test, CaptureNow_PopulatesAyStateBlob)
     ASSERT_NE(sm->getTurboSound(), nullptr)
         << "Test precondition: TurboSound must be created by Init()";
 
-    ASSERT_TRUE(context->pTTDManager->StartRecording());
+    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
 
     // Baseline checkpoint should have captured the AY state.
-    ASSERT_GE(context->pTTDManager->GetCheckpointCount(), 1u);
-    const ttd::TTDCheckpoint* cp = context->pTTDManager->GetCheckpoint(0);
+    ASSERT_GE(context->pTimeTravelManager->GetCheckpointCount(), 1u);
+    const ttd::TTDCheckpoint* cp = context->pTimeTravelManager->GetCheckpoint(0);
     ASSERT_NE(cp, nullptr);
 
     EXPECT_EQ(cp->ayState.size(), 115u)
@@ -378,4 +378,4 @@ TEST(TTD_AY_ManagerIntegration_Test, CaptureNow_PopulatesAyStateBlob)
     emulator.Release();
 }
 
-/// endregion </TTDManager integration>
+/// endregion </TimeTravelManager integration>

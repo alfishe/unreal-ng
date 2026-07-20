@@ -16,7 +16,7 @@
 
 #include "common/modulelogger.h"
 #include "debugger/ttd/ttd_checkpoint.h"
-#include "debugger/ttd/ttd_manager.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttd_serializable.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -151,7 +151,7 @@ TEST_F(TTD_Covox_Serializer_Test, RoundTrip_All256ValuesPerChannel)
 
 /// endregion </Covox serializer tests>
 
-/// region <TTDManager integration: covoxState blob is populated>
+/// region <TimeTravelManager integration: covoxState blob is populated>
 
 TEST(TTD_Covox_ManagerIntegration_Test, CaptureNow_PopulatesCovoxStateBlob)
 {
@@ -160,17 +160,17 @@ TEST(TTD_Covox_ManagerIntegration_Test, CaptureNow_PopulatesCovoxStateBlob)
 
     EmulatorContext* context = emulator.GetContext();
     ASSERT_NE(context, nullptr);
-    ASSERT_NE(context->pTTDManager, nullptr);
+    ASSERT_NE(context->pTimeTravelManager, nullptr);
 
     // Covox is created by SoundManager during Init on models that have one.
     // The covoxState blob is 4 bytes when Covox is present, empty otherwise.
     SoundManager* sm = context->pSoundManager;
     ASSERT_NE(sm, nullptr);
 
-    ASSERT_TRUE(context->pTTDManager->StartRecording());
-    ASSERT_GE(context->pTTDManager->GetCheckpointCount(), 1u);
+    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
+    ASSERT_GE(context->pTimeTravelManager->GetCheckpointCount(), 1u);
 
-    const ttd::TTDCheckpoint* cp = context->pTTDManager->GetCheckpoint(0);
+    const ttd::TTDCheckpoint* cp = context->pTimeTravelManager->GetCheckpoint(0);
     ASSERT_NE(cp, nullptr);
 
     if (sm->hasCovox())
@@ -184,4 +184,4 @@ TEST(TTD_Covox_ManagerIntegration_Test, CaptureNow_PopulatesCovoxStateBlob)
     emulator.Release();
 }
 
-/// endregion </TTDManager integration>
+/// endregion </TimeTravelManager integration>

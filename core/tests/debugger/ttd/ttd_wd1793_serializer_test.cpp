@@ -30,7 +30,7 @@
 
 #include "common/modulelogger.h"
 #include "debugger/ttd/ttd_checkpoint.h"
-#include "debugger/ttd/ttd_manager.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttd_serializable.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -375,7 +375,7 @@ TEST_F(TTD_WD1793_Serializer_Test, RoundTrip_CrossDevice_LoadProducesSameSave)
 
 /// endregion </WD1793 controller + subsystem serializer tests>
 
-/// region <TTDManager integration: fdcState blob is populated>
+/// region <TimeTravelManager integration: fdcState blob is populated>
 
 TEST(TTD_WD1793_ManagerIntegration_Test, CaptureNow_PopulatesFdcStateBlob_OnBetaDiskModel)
 {
@@ -384,17 +384,17 @@ TEST(TTD_WD1793_ManagerIntegration_Test, CaptureNow_PopulatesFdcStateBlob_OnBeta
 
     EmulatorContext* context = emulator.GetContext();
     ASSERT_NE(context, nullptr);
-    ASSERT_NE(context->pTTDManager, nullptr);
+    ASSERT_NE(context->pTimeTravelManager, nullptr);
 
     // pBetaDisk is populated by Init() only on Beta Disk models (Pentagon,
     // Scorpion, etc.). The default test model may or may not have one —
     // either outcome is a valid v1 result.
     WD1793* fdc = context->pBetaDisk;
 
-    ASSERT_TRUE(context->pTTDManager->StartRecording());
-    ASSERT_GE(context->pTTDManager->GetCheckpointCount(), 1u);
+    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
+    ASSERT_GE(context->pTimeTravelManager->GetCheckpointCount(), 1u);
 
-    const ttd::TTDCheckpoint* cp = context->pTTDManager->GetCheckpoint(0);
+    const ttd::TTDCheckpoint* cp = context->pTimeTravelManager->GetCheckpoint(0);
     ASSERT_NE(cp, nullptr);
 
     if (fdc != nullptr)
@@ -410,4 +410,4 @@ TEST(TTD_WD1793_ManagerIntegration_Test, CaptureNow_PopulatesFdcStateBlob_OnBeta
     emulator.Release();
 }
 
-/// endregion </TTDManager integration>
+/// endregion </TimeTravelManager integration>

@@ -1,7 +1,7 @@
 #pragma once
 
-/// @file ttd_manager.h
-/// @brief TTDManager — facade and capture orchestrator for Time-Travel Debugging.
+/// @file timetravelmanager.h
+/// @brief TimeTravelManager — facade and capture orchestrator for Time-Travel Debugging.
 ///
 /// Per parent TDD §7.1, §10.2. This class owns:
 ///   - The COW page store (TTDPageStore)
@@ -93,16 +93,16 @@ struct TTDSessionInfo
     uint64_t baselineFramesCaptured = 0;  ///< Diagnostic
 };
 
-class TTDManager
+class TimeTravelManager
 {
 public:
     /// @brief Construct the manager. Does NOT start recording.
     /// @param context  Emulator context (provides Memory, EmulatorState, Z80).
-    explicit TTDManager(EmulatorContext* context);
-    ~TTDManager();
+    explicit TimeTravelManager(EmulatorContext* context);
+    ~TimeTravelManager();
 
-    TTDManager(const TTDManager&) = delete;
-    TTDManager& operator=(const TTDManager&) = delete;
+    TimeTravelManager(const TimeTravelManager&) = delete;
+    TimeTravelManager& operator=(const TimeTravelManager&) = delete;
 
     // -----------------------------------------------------------------------
     // Session lifecycle (control thread; emulator must be paused)

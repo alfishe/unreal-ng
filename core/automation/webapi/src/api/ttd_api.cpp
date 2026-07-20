@@ -17,7 +17,7 @@
 #include <json/json.h>
 
 #include "../emulator_api.h"
-#include "debugger/ttd/ttd_manager.h"
+#include "debugger/ttd/timetravelmanager.h"
 
 using namespace drogon;
 using namespace api::v1;
@@ -118,7 +118,7 @@ void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
     ret["baseline_frames_captured"] = Json::UInt64(0);
     ret["ttd_available"]            = false;
 
-    if (ttd::TTDManager* mgr = context->pTTDManager)
+    if (ttd::TimeTravelManager* mgr = context->pTimeTravelManager)
     {
         ttd::TTDSessionInfo info = mgr->GetSessionInfo();
         ret["state"]                    = ttd::TTDSessionStateToString(info.state);

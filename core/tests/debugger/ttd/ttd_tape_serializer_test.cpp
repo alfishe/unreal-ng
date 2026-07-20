@@ -16,7 +16,7 @@
 
 #include "common/modulelogger.h"
 #include "debugger/ttd/ttd_checkpoint.h"
-#include "debugger/ttd/ttd_manager.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttd_serializable.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -163,7 +163,7 @@ TEST_F(TTD_Tape_Serializer_Test, LoadDoesNotAlterContent_BlocksVectorUntouched)
 
 /// endregion </Tape serializer tests>
 
-/// region <TTDManager integration: tapeState blob is populated>
+/// region <TimeTravelManager integration: tapeState blob is populated>
 
 TEST(TTD_Tape_ManagerIntegration_Test, CaptureNow_PopulatesTapeStateBlob)
 {
@@ -172,14 +172,14 @@ TEST(TTD_Tape_ManagerIntegration_Test, CaptureNow_PopulatesTapeStateBlob)
 
     EmulatorContext* context = emulator.GetContext();
     ASSERT_NE(context, nullptr);
-    ASSERT_NE(context->pTTDManager, nullptr);
+    ASSERT_NE(context->pTimeTravelManager, nullptr);
     ASSERT_NE(context->pTape, nullptr)
         << "Test precondition: Tape must be created by Init()";
 
-    ASSERT_TRUE(context->pTTDManager->StartRecording());
-    ASSERT_GE(context->pTTDManager->GetCheckpointCount(), 1u);
+    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
+    ASSERT_GE(context->pTimeTravelManager->GetCheckpointCount(), 1u);
 
-    const ttd::TTDCheckpoint* cp = context->pTTDManager->GetCheckpoint(0);
+    const ttd::TTDCheckpoint* cp = context->pTimeTravelManager->GetCheckpoint(0);
     ASSERT_NE(cp, nullptr);
 
     EXPECT_EQ(cp->tapeState.size(), 41u)
@@ -189,4 +189,4 @@ TEST(TTD_Tape_ManagerIntegration_Test, CaptureNow_PopulatesTapeStateBlob)
     emulator.Release();
 }
 
-/// endregion </TTDManager integration>
+/// endregion </TimeTravelManager integration>

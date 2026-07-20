@@ -4,7 +4,7 @@
 /// The endpoint (core/automation/webapi/src/api/ttd_api.cpp) is a thin
 /// adapter around two pieces of state from the core library:
 ///   - `ttd::TTDSessionStateToString(state)` — stable public identifier
-///   - `ttd::TTDManager::GetSessionInfo()`   — every numeric field
+///   - `ttd::TimeTravelManager::GetSessionInfo()`   — every numeric field
 ///
 /// Testing strategy: since core-tests does not link against the webapi
 /// target (which carries the Drogon HTTP machinery), we verify the *contract*
@@ -30,7 +30,7 @@
 
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
-#include "debugger/ttd/ttd_manager.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttd_page_store.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -59,7 +59,7 @@ TEST(TTD_StatusString_Test, StateString_Detached_IsCanonical)
 }
 
 // ===========================================================================
-// Fixture: real Emulator + TTDManager, so byte math reflects real life
+// Fixture: real Emulator + TimeTravelManager, so byte math reflects real life
 // ===========================================================================
 
 class TTD_StatusEndpoint_Test : public ::testing::Test
@@ -67,7 +67,7 @@ class TTD_StatusEndpoint_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TTDManager* _ttd = nullptr;
+    ttd::TimeTravelManager* _ttd = nullptr;
     Memory* _memory = nullptr;
     FeatureManager* _fm = nullptr;
 
@@ -79,8 +79,8 @@ protected:
 
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTTDManager;
-        ASSERT_NE(_ttd, nullptr) << "TTDManager was not created during Emulator::Init";
+        _ttd = _context->pTimeTravelManager;
+        ASSERT_NE(_ttd, nullptr) << "TimeTravelManager was not created during Emulator::Init";
         _memory = _context->pMemory;
         ASSERT_NE(_memory, nullptr);
         _fm = _emulator->GetFeatureManager();
@@ -231,15 +231,15 @@ TEST_F(TTD_StatusEndpoint_Test, Invalidate_ClearsAllObservableFields)
 
 /// @test The endpoint surfaces `ttd_available: true` when the manager is
 /// populated (the normal P1 build path). We can't directly test the null
-/// path from core-tests because every Emulator constructs a TTDManager, but
+/// path from core-tests because every Emulator constructs a TimeTravelManager, but
 /// we verify the positive direction here and rely on the endpoint source
 /// (which builds the same payload either way) for the negative direction.
 TEST_F(TTD_StatusEndpoint_Test, ManagerPresent_CapabilityFlagWouldBeTrue)
 {
-    // The endpoint emits `ttd_available: (context->pTTDManager != nullptr)`.
+    // The endpoint emits `ttd_available: (context->pTimeTravelManager != nullptr)`.
     // Mirror that condition explicitly so a regression in either side is
     // surfaced by this test.
-    EXPECT_NE(_context->pTTDManager, nullptr)
+    EXPECT_NE(_context->pTimeTravelManager, nullptr)
         << "Endpoint would emit ttd_available=false on this build — "
            "the test fixture expects every P1 Emulator to construct a manager";
 }

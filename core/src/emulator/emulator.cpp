@@ -18,7 +18,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
-#include "debugger/ttd/ttd_manager.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "loaders/snapshot/loader_sna.h"
@@ -229,10 +229,10 @@ bool Emulator::Init()
     // also exposes GetState() == Idle until StartRecording() is called.
     if (result)
     {
-        ttd::TTDManager* ttdManager = new ttd::TTDManager(_context);
+        ttd::TimeTravelManager* ttdManager = new ttd::TimeTravelManager(_context);
         if (ttdManager != nullptr)
         {
-            _context->pTTDManager = ttdManager;
+            _context->pTimeTravelManager = ttdManager;
             MLOGDEBUG("Emulator::Init - TTD manager created");
         }
         else
@@ -409,10 +409,10 @@ void Emulator::ReleaseNoGuard()
 
     // Release TTD manager. The manager's destructor releases all page-store
     // refs held by the timeline before the page store itself goes away.
-    if (_context->pTTDManager)
+    if (_context->pTimeTravelManager)
     {
-        delete _context->pTTDManager;
-        _context->pTTDManager = nullptr;
+        delete _context->pTimeTravelManager;
+        _context->pTimeTravelManager = nullptr;
     }
 
     // Stop and release main loop
@@ -538,8 +538,8 @@ void Emulator::SetSpeedMultiplier(uint8_t multiplier)
     // TTD v1 (P1.6): speed change invalidates the recording because frame
     // timing is part of the determinism contract (parent TDD §4.2 + §5 row 13).
     // Simpler to invalidate than to model; revisit if it proves annoying.
-    if (_context && _context->pTTDManager)
-        _context->pTTDManager->InvalidateSession("speed-multiplier-change");
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->InvalidateSession("speed-multiplier-change");
 
     _core->SetSpeedMultiplier(multiplier);
 }
@@ -637,8 +637,8 @@ void Emulator::Reset()
     // TTD v1 (P1.6): Reset teleports CPU/RAM/peripheral state, which breaks
     // the determinism contract on every captured checkpoint. Drop the session
     // before _core->Reset() actually mutates anything (parent TDD §4.2).
-    if (_context && _context->pTTDManager)
-        _context->pTTDManager->InvalidateSession("reset");
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->InvalidateSession("reset");
 
     // Now perform reset while paused (safe, no race condition)
     _core->Reset();
@@ -914,8 +914,8 @@ bool Emulator::LoadSnapshot(const std::string& path)
 
     // TTD v1 (P1.6): snapshot load teleports full machine state (parent TDD §4.2).
     // Drop the session before the loader runs.
-    if (_context && _context->pTTDManager)
-        _context->pTTDManager->InvalidateSession("snapshot-load");
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->InvalidateSession("snapshot-load");
 
     // Pause execution
     bool wasRunning = false;
@@ -1099,8 +1099,8 @@ bool Emulator::LoadTape(const std::string& path)
     // TTD v1 (P1.6): tape insertion is a session-invalidating event in v1
     // (parent TDD §4.2 + §5 row 3 — tape *insertion/start/stop* commands
     // invalidate; only playback position is checkpointed).
-    if (_context && _context->pTTDManager)
-        _context->pTTDManager->InvalidateSession("tape-load");
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->InvalidateSession("tape-load");
 
     // Store validated path
     _context->coreState.tapeFilePath = resolvedPath;
@@ -1140,8 +1140,8 @@ bool Emulator::LoadDisk(const std::string& path)
 
     // TTD v1 (P1.6): disk image swap teleports FDC + media state
     // (parent TDD §4.2 + §12.2). Drop the session before the loader runs.
-    if (_context && _context->pTTDManager)
-        _context->pTTDManager->InvalidateSession("disk-load");
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->InvalidateSession("disk-load");
 
     // Pause emulator while swapping disk image to prevent data race with emulator thread
     bool wasRunning = false;
@@ -2111,8 +2111,8 @@ bool Emulator::LoadROM(std::string path)
     // TTD v1 (P1.6): ROM reload changes immutable code/data backing every
     // checkpoint relies on (parent TDD §4.2 — "ROM reload" is listed
     // explicitly as a session invalidator).
-    if (_context && _context->pTTDManager)
-        _context->pTTDManager->InvalidateSession("rom-reload");
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->InvalidateSession("rom-reload");
 
     ROM& rom = *_core->GetROM();
 

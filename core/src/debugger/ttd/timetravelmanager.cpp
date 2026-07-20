@@ -1,11 +1,11 @@
-/// @file ttd_manager.cpp
-/// @brief TTDManager — capture orchestrator implementation.
+/// @file timetravelmanager.cpp
+/// @brief TimeTravelManager — capture orchestrator implementation.
 ///
 /// Per parent TDD §6.3, §7.1. The hot path is OnFrameBoundary: dirty pages
 /// are freshly Intern'd, clean pages AddRef the previous checkpoint's slot,
 /// CPU/chipset are field-copied via the helpers in ttd_checkpoint.cpp.
 
-#include "ttd_manager.h"
+#include "timetravelmanager.h"
 
 #include <cassert>
 #include <cstring>
@@ -77,7 +77,7 @@ const char* TTDSessionStateToString(TTDSessionState state)
 // Construction / destruction
 // ---------------------------------------------------------------------------
 
-TTDManager::TTDManager(EmulatorContext* context)
+TimeTravelManager::TimeTravelManager(EmulatorContext* context)
     : _context(context)
 {
     if (_context)
@@ -91,7 +91,7 @@ TTDManager::TTDManager(EmulatorContext* context)
     }
 }
 
-TTDManager::~TTDManager()
+TimeTravelManager::~TimeTravelManager()
 {
     // Release all page-store refs held by the timeline before the page store
     // itself goes away (it's a member, destroyed right after this dtor body).
@@ -105,14 +105,14 @@ TTDManager::~TTDManager()
 // Session lifecycle
 // ---------------------------------------------------------------------------
 
-bool TTDManager::StartRecording()
+bool TimeTravelManager::StartRecording()
 {
     if (_state == TTDSessionState::Recording)
         return true;  // Idempotent
 
     if (!_context || !_memory || !_dirtyTracker)
     {
-        MLOGWARNING("TTDManager::StartRecording — missing dependencies (context=%p memory=%p tracker=%p)",
+        MLOGWARNING("TimeTravelManager::StartRecording — missing dependencies (context=%p memory=%p tracker=%p)",
                     (void*)_context, (void*)_memory, (void*)_dirtyTracker);
         return false;
     }
@@ -131,7 +131,7 @@ bool TTDManager::StartRecording()
     _modelRamPages = ResolveModelRamPages();
     if (_modelRamPages == 0 || _modelRamPages > MAX_RAM_PAGES)
     {
-        MLOGWARNING("TTDManager::StartRecording — implausible modelRamPages=%u, refusing to start",
+        MLOGWARNING("TimeTravelManager::StartRecording — implausible modelRamPages=%u, refusing to start",
                     static_cast<unsigned>(_modelRamPages));
         _modelRamPages = 0;
         return false;
@@ -146,27 +146,27 @@ bool TTDManager::StartRecording()
 
     _state = TTDSessionState::Recording;
 
-    MLOGINFO("TTDManager::StartRecording — baseline captured: modelRamPages=%u, timeline=1, pageStoreBytes=%zu",
+    MLOGINFO("TimeTravelManager::StartRecording — baseline captured: modelRamPages=%u, timeline=1, pageStoreBytes=%zu",
              static_cast<unsigned>(_modelRamPages), _pageStore.GetCapacityBytes());
 
     return true;
 }
 
-void TTDManager::StopRecording()
+void TimeTravelManager::StopRecording()
 {
     if (_state != TTDSessionState::Recording)
         return;  // Idempotent
     _state = TTDSessionState::Idle;
-    MLOGINFO("TTDManager::StopRecording — timeline retained with %zu checkpoints",
+    MLOGINFO("TimeTravelManager::StopRecording — timeline retained with %zu checkpoints",
              _timeline.size());
 }
 
-void TTDManager::InvalidateSession(const char* reason)
+void TimeTravelManager::InvalidateSession(const char* reason)
 {
     if (_timeline.empty() && _state == TTDSessionState::Idle)
         return;  // Nothing to invalidate
 
-    MLOGINFO("TTDManager::InvalidateSession — reason='%s', dropping %zu checkpoints",
+    MLOGINFO("TimeTravelManager::InvalidateSession — reason='%s', dropping %zu checkpoints",
              reason ? reason : "(null)", _timeline.size());
 
     for (auto& cp : _timeline)
@@ -183,7 +183,7 @@ void TTDManager::InvalidateSession(const char* reason)
         _dirtyTracker->ResetSession();
 }
 
-TTDSessionInfo TTDManager::GetSessionInfo() const
+TTDSessionInfo TimeTravelManager::GetSessionInfo() const
 {
     TTDSessionInfo info;
     info.state = _state;
@@ -207,7 +207,7 @@ TTDSessionInfo TTDManager::GetSessionInfo() const
 // Capture (emulator thread)
 // ---------------------------------------------------------------------------
 
-void TTDManager::OnFrameBoundary()
+void TimeTravelManager::OnFrameBoundary()
 {
     if (_state != TTDSessionState::Recording)
         return;
@@ -224,7 +224,7 @@ void TTDManager::OnFrameBoundary()
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-void TTDManager::CaptureNow(TTDCheckpoint& out)
+void TimeTravelManager::CaptureNow(TTDCheckpoint& out)
 {
     assert(_context && _memory && _dirtyTracker);
 
@@ -309,7 +309,7 @@ void TTDManager::CaptureNow(TTDCheckpoint& out)
     CapturePeripheral(_context->pBetaDisk, out.fdcState);
 }
 
-void TTDManager::CaptureBaselineRamPages(std::vector<TTDPageRef>& outRamPages)
+void TimeTravelManager::CaptureBaselineRamPages(std::vector<TTDPageRef>& outRamPages)
 {
     outRamPages.resize(_modelRamPages);
     for (uint16_t p = 0; p < _modelRamPages; ++p)
@@ -324,7 +324,7 @@ void TTDManager::CaptureBaselineRamPages(std::vector<TTDPageRef>& outRamPages)
     }
 }
 
-void TTDManager::UpdateRamPages(const std::vector<uint16_t>& dirtyPages,
+void TimeTravelManager::UpdateRamPages(const std::vector<uint16_t>& dirtyPages,
                                 const std::vector<TTDPageRef>& prevRamPages,
                                 std::vector<TTDPageRef>& outRamPages)
 {
@@ -384,7 +384,7 @@ void TTDManager::UpdateRamPages(const std::vector<uint16_t>& dirtyPages,
     // belongs in the dirty tracker, not here).
 }
 
-void TTDManager::ReleaseCheckpointRefs(TTDCheckpoint& cp)
+void TimeTravelManager::ReleaseCheckpointRefs(TTDCheckpoint& cp)
 {
     for (auto& ref : cp.ramPages)
     {
@@ -396,7 +396,7 @@ void TTDManager::ReleaseCheckpointRefs(TTDCheckpoint& cp)
     }
 }
 
-uint16_t TTDManager::ResolveModelRamPages() const
+uint16_t TimeTravelManager::ResolveModelRamPages() const
 {
     if (!_context)
         return 0;
@@ -405,14 +405,14 @@ uint16_t TTDManager::ResolveModelRamPages() const
     const CONFIG& cfg = _context->config;
     if (cfg.ramsize == 0 || cfg.ramsize > MAX_RAM_PAGES * (PAGE_SIZE / 1024))
     {
-        MLOGWARNING("TTDManager::ResolveModelRamPages — implausible ramsize=%u KB, falling back to MAX_RAM_PAGES",
+        MLOGWARNING("TimeTravelManager::ResolveModelRamPages — implausible ramsize=%u KB, falling back to MAX_RAM_PAGES",
                     cfg.ramsize);
         return MAX_RAM_PAGES;
     }
     return static_cast<uint16_t>(cfg.ramsize / (PAGE_SIZE / 1024));
 }
 
-const TTDCheckpoint* TTDManager::GetCheckpoint(size_t idx) const
+const TTDCheckpoint* TimeTravelManager::GetCheckpoint(size_t idx) const
 {
     if (idx >= _timeline.size())
         return nullptr;
