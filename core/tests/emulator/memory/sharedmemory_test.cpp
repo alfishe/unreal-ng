@@ -634,6 +634,12 @@ TEST_F(SharedMemory_Test, ExternalProcessRigorousValidation)
     // We use a variety of patterns to catch stuck bits, synchronization glitches, or offset issues.
     const uint8_t patterns[] = {0x00, 0xFF, 0x55, 0xAA, 0x33, 0xCC};
 
+    // Allow any background writes (deferred notifications, Z80 thread frame
+    // tail) to settle before rigorous validation. The emulator is paused, but
+    // a brief race window exists between StatePaused being reported and the
+    // Z80 thread fully quiescing.
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
     for (uint8_t pattern : patterns)
     {
         // Fill from inside the emulator
@@ -645,12 +651,13 @@ TEST_F(SharedMemory_Test, ExternalProcessRigorousValidation)
         {
             if (externalBytes[i] != pattern)
             {
+                uint8_t actual = externalBytes[i];
                 // Cleanup before failing
                 CloseSharedMemoryExternal(externalData, totalSize, handle);
                 _emulator->Resume();
 
                 FAIL() << "Rigorous validation failed at offset " << i << ": expected 0x" << std::hex << (int)pattern
-                       << ", got 0x" << (int)externalBytes[i] << " during full-memory scan";
+                       << ", got 0x" << (int)actual << " during full-memory scan";
             }
         }
     }

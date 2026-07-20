@@ -12,6 +12,7 @@
 #include "common/timehelper.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "debugger/ttd/ttd_dirty_tracker.h"
 #include "emulator/emulator.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/notifications.h"
@@ -59,6 +60,10 @@ Memory::Memory(EmulatorContext* context)
         _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
         _feature_breakpoints_enabled = debugMode && fm->isEnabled(Features::kBreakpoints);
         _feature_sharedmemory_enabled = fm->isEnabled(Features::kSharedMemory);
+        // TTD requires debugMode (uses the debug write path) AND the runtime timetravel flag.
+        // Per TDD §6.2 the gate is the same shape as _feature_memorytracking_enabled:
+        // cached bool checked once per write.
+        _feature_ttd_enabled = debugMode && fm->isEnabled(Features::kTimeTravel);
     }
 
     // Allocate ZX-Spectrum memory and make it memory mapped to file for debugging
@@ -74,6 +79,11 @@ Memory::Memory(EmulatorContext* context)
     // Create memory access tracker
     _memoryAccessTracker = new MemoryAccessTracker(this, context);
     _memoryAccessTracker->Initialize();
+
+    // Create TTD dirty tracker (per TDD §6.2). Always constructed; the
+    // per-write MarkDirty call is gated by the cached _feature_ttd_enabled
+    // bool, so cost is zero when TTD is off.
+    _ttdDirtyTracker = new ttd::TTDDirtyTracker();
 
     // Memory filling with random values will give a false positive on memory changes analyzer,
     // so disable it if shared memory mapping is enabled
@@ -120,6 +130,13 @@ Memory::~Memory()
     {
         delete _memoryAccessTracker;
         _memoryAccessTracker = nullptr;
+    }
+
+    // Clean up TTD dirty tracker
+    if (_ttdDirtyTracker != nullptr)
+    {
+        delete _ttdDirtyTracker;
+        _ttdDirtyTracker = nullptr;
     }
 
     _context = nullptr;
@@ -254,6 +271,24 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
     {
         uint16_t pc = _context->pCore->GetZ80()->m1_pc;
         _memoryAccessTracker->TrackMemoryWrite(addr, value, pc);
+    }
+
+    // TTD dirty-page tracking (parent TDD §6.2). Cost when enabled: one
+    // predictable branch + one OR. Cost when disabled: one predictable
+    // branch. The tracker is always constructed; the flag is the gate.
+    //
+    // We mark dirty only on RAM banks (ROM is immutable within a session
+    // per TDD §6.3, so ROM writes don't happen through this path in
+    // practice — the bank-mode guard below is defensive).
+    if (_feature_ttd_enabled && _ttdDirtyTracker != nullptr)
+    {
+        if (_bank_mode[bank] == BANK_RAM)
+        {
+            uint16_t absRamPage = GetRAMPageForBank(bank);
+            // GetRAMPageForBank returns the absolute RAM page index already
+            // (0..MAX_RAM_PAGES-1); MarkDirty is a single OR into the bitmap.
+            _ttdDirtyTracker->MarkDirty(absRamPage);
+        }
     }
 
     // Raise a flag that video memory was changed
@@ -1476,6 +1511,7 @@ void Memory::UpdateFeatureCache()
         bool debugMode = fm->isEnabled(Features::kDebugMode);
         _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
         _feature_breakpoints_enabled = debugMode && fm->isEnabled(Features::kBreakpoints);
+        _feature_ttd_enabled = debugMode && fm->isEnabled(Features::kTimeTravel);
 
         // Handle sharedmemory feature - can be toggled at runtime
         bool sharedMemoryRequested = fm->isEnabled(Features::kSharedMemory);

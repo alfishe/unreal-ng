@@ -6,6 +6,7 @@
 class MemoryAccessTracker;
 class Z80;
 class FeatureManager;
+namespace ttd { class TTDDirtyTracker; }
 
 // Max RAM size is 4MBytes. Each model has own limits. Max ram used for ZX-Evo / TSConf
 // MAX_RAM_PAGES and PAGE defined in platform.h
@@ -114,10 +115,17 @@ protected:
     // Memory access tracker
     MemoryAccessTracker* _memoryAccessTracker = nullptr;  // Flexible memory access tracking system
 
+    // TTD dirty tracker (per TDD §6.2). Owned by Memory because the write hook
+    // lives in MemoryWriteDebug and the bank->page lookup is already here.
+    // Always constructed (fixed ~64 byte cost); MarkDirty is a no-op when
+    // the cached _feature_ttd_enabled flag is false.
+    ttd::TTDDirtyTracker* _ttdDirtyTracker = nullptr;
+
     // Feature-gate flags
     bool _feature_memorytracking_enabled = false;
     bool _feature_breakpoints_enabled = false;
     bool _feature_sharedmemory_enabled = false;
+    bool _feature_ttd_enabled = false;  // mirrors Features::kTimeTravel, cached for the write hot path
 
     bool _isPage0ROM48k;
     bool _isPage0ROM128k;
@@ -326,6 +334,14 @@ public:
     {
         return *_memoryAccessTracker;
     }
+
+    /// region <TTD dirty tracker access>
+    // Exposed so the per-frame capture orchestrator (lands in P1 Item 4)
+    // can call CollectAndClear at OnFrameEnd, and so session lifecycle
+    // (ttd clear / invalidation hooks, lands in P1 Item 6) can call
+    // ResetSession. Tests also reach in to verify the hook is firing.
+    inline ttd::TTDDirtyTracker* GetTTDDirtyTracker() { return _ttdDirtyTracker; }
+    /// endregion </TTD dirty tracker access>
     /// endregion </Memory access tracking>
 };
 
@@ -355,6 +371,8 @@ public:
     using Memory::_isPage0ROMDOS;
     using Memory::_isPge0ROMService;
     using Memory::_memoryAccessTracker;
+    using Memory::_ttdDirtyTracker;
+    using Memory::_feature_ttd_enabled;
     
     // ROM base pointers for testing ROM switching
     using Memory::base_dos_rom;
