@@ -119,9 +119,9 @@ if (UNIX AND NOT APPLE)
 endif ()
 
 if (WIN32 AND MINGW)
-    target_link_libraries(${PROJECT_NAME} PRIVATE -static-libstdc++ Shlwapi ws2_32 d3d11 dxgi)
+    target_link_libraries(${PROJECT_NAME} PRIVATE -static-libstdc++ Shlwapi ws2_32 d3d11 dxgi mfplat mfuuid mf ole32)
 endif()
 
 if (WIN32 AND MSVC)
-    target_link_libraries(${PROJECT_NAME} PRIVATE Shlwapi ws2_32 d3d11 dxgi)
+    target_link_libraries(${PROJECT_NAME} PRIVATE Shlwapi ws2_32 d3d11 dxgi mfplat mfuuid mf ole32)
 endif()
