@@ -19,6 +19,7 @@
 #include "common/modulelogger.h"
 #include "emulator/cpu/z80.h"            // Z80, Z80State
 #include "emulator/emulatorcontext.h"    // EmulatorContext
+#include "emulator/io/fdc/wd1793.h"      // WD1793 (peripheral, P1.5)
 #include "emulator/io/tape/tape.h"        // Tape (peripheral, P1.5)
 #include "emulator/memory/memory.h"      // Memory
 #include "emulator/platform.h"           // EmulatorState, CONFIG, PAGE_SIZE, MAX_RAM_PAGES
@@ -279,6 +280,18 @@ void TTDManager::CaptureNow(TTDCheckpoint& out)
     {
         out.covoxState.clear();
     }
+
+    // FDC subsystem: WD1793 controller + 4 FDDs. Per parent TDD §4 row 4,
+    // "FDC internal state (state machine phase, track/sector regs, DRQ/INTRQ
+    // timers) must be fully serialized". WD1793's serializer delegates to
+    // each FDD's TTDSerializable. Per TDD §12.2, sector writes invalidate
+    // the session in v1 (this is enforced elsewhere — not the serializer's
+    // concern).
+    //
+    // Only models with a Beta Disk controller populate pBetaDisk. Other
+    // models (pure Spectrum 48/128 without BDI) leave it nullptr and the
+    // blob is empty (valid no-op on restore).
+    CapturePeripheral(_context->pBetaDisk, out.fdcState);
 }
 
 void TTDManager::CaptureBaselineRamPages(std::vector<TTDPageRef>& outRamPages)
