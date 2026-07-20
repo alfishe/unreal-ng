@@ -1,4 +1,4 @@
-#include "process.h"
+#include "subprocess.h"
 
 #ifndef _WIN32
 // Unix includes
@@ -20,7 +20,7 @@
 // Destructor
 // ============================================================================
 
-Process::~Process()
+Subprocess::~Subprocess()
 {
     if (_spawned)
     {
@@ -36,7 +36,7 @@ Process::~Process()
 
 #ifndef _WIN32
 
-bool Process::spawn(const std::string& command, const std::vector<std::string>& args)
+bool Subprocess::spawn(const std::string& command, const std::vector<std::string>& args)
 {
     // Create pipes for stdin, stdout, stderr
     int stdinPipe[2] = {-1, -1};
@@ -144,7 +144,7 @@ bool Process::spawn(const std::string& command, const std::vector<std::string>& 
     return true;
 }
 
-bool Process::writeToStdin(const void* data, size_t size)
+bool Subprocess::writeToStdin(const void* data, size_t size)
 {
     if (!_spawned || _stdinFd < 0)
     {
@@ -180,7 +180,7 @@ bool Process::writeToStdin(const void* data, size_t size)
     return true;
 }
 
-void Process::closeStdin()
+void Subprocess::closeStdin()
 {
     if (_stdinFd >= 0)
     {
@@ -189,7 +189,7 @@ void Process::closeStdin()
     }
 }
 
-std::string Process::readStderr()
+std::string Subprocess::readStderr()
 {
     if (!_spawned || _stderrFd < 0)
         return {};
@@ -261,7 +261,7 @@ static std::string readAllFromFd(int fd)
     return result;
 }
 
-std::string Process::readAllStdout()
+std::string Subprocess::readAllStdout()
 {
     if (!_spawned)
         return {};
@@ -269,7 +269,7 @@ std::string Process::readAllStdout()
     return readAllFromFd(_stdoutFd);
 }
 
-std::string Process::readAllStderr()
+std::string Subprocess::readAllStderr()
 {
     if (!_spawned || _stderrFd < 0)
         return {};
@@ -303,7 +303,7 @@ std::string Process::readAllStderr()
     return result;
 }
 
-bool Process::isRunning() const
+bool Subprocess::isRunning() const
 {
     if (!_spawned || _pid <= 0)
         return false;
@@ -313,7 +313,7 @@ bool Process::isRunning() const
     return result == 0; // 0 = still running
 }
 
-int Process::waitForFinished(int timeoutMs)
+int Subprocess::waitForFinished(int timeoutMs)
 {
     if (!_spawned || _pid <= 0)
         return _exitCode;
@@ -377,7 +377,7 @@ int Process::waitForFinished(int timeoutMs)
     return -1; // Timeout
 }
 
-void Process::terminate()
+void Subprocess::terminate()
 {
     if (!_spawned || _pid <= 0)
         return;
@@ -385,7 +385,7 @@ void Process::terminate()
     ::kill(_pid, SIGTERM);
 }
 
-void Process::kill()
+void Subprocess::kill()
 {
     if (!_spawned || _pid <= 0)
         return;
@@ -393,7 +393,7 @@ void Process::kill()
     ::kill(_pid, SIGKILL);
 }
 
-void Process::closeStderr()
+void Subprocess::closeStderr()
 {
     if (_stderrFd >= 0)
     {
@@ -402,7 +402,7 @@ void Process::closeStderr()
     }
 }
 
-void Process::cleanup()
+void Subprocess::cleanup()
 {
     closeStdin();
 
@@ -428,7 +428,7 @@ void Process::cleanup()
 
 #else // _WIN32
 
-bool Process::spawn(const std::string& command, const std::vector<std::string>& args)
+bool Subprocess::spawn(const std::string& command, const std::vector<std::string>& args)
 {
     SECURITY_ATTRIBUTES saAttr;
     saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
@@ -529,7 +529,7 @@ bool Process::spawn(const std::string& command, const std::vector<std::string>& 
     return true;
 }
 
-bool Process::writeToStdin(const void* data, size_t size)
+bool Subprocess::writeToStdin(const void* data, size_t size)
 {
     if (!_spawned || !_hStdinWrite)
     {
@@ -556,7 +556,7 @@ bool Process::writeToStdin(const void* data, size_t size)
     return true;
 }
 
-void Process::closeStdin()
+void Subprocess::closeStdin()
 {
     if (_hStdinWrite)
     {
@@ -565,7 +565,7 @@ void Process::closeStdin()
     }
 }
 
-std::string Process::readStderr()
+std::string Subprocess::readStderr()
 {
     if (!_spawned || !_hStderrRead)
         return {};
@@ -591,7 +591,7 @@ std::string Process::readStderr()
     return result;
 }
 
-std::string Process::readAllStderr()
+std::string Subprocess::readAllStderr()
 {
     if (!_spawned || !_hStderrRead)
         return {};
@@ -608,7 +608,7 @@ std::string Process::readAllStderr()
     return result;
 }
 
-std::string Process::readAllStdout()
+std::string Subprocess::readAllStdout()
 {
     if (!_spawned || !_hStdoutRead)
         return {};
@@ -625,7 +625,7 @@ std::string Process::readAllStdout()
     return result;
 }
 
-bool Process::isRunning() const
+bool Subprocess::isRunning() const
 {
     if (!_spawned || !_hProcess)
         return false;
@@ -638,7 +638,7 @@ bool Process::isRunning() const
     return false;
 }
 
-int Process::waitForFinished(int timeoutMs)
+int Subprocess::waitForFinished(int timeoutMs)
 {
     if (!_spawned || !_hProcess)
         return _exitCode;
@@ -658,7 +658,7 @@ int Process::waitForFinished(int timeoutMs)
     return -1; // Timeout or error
 }
 
-void Process::terminate()
+void Subprocess::terminate()
 {
     if (!_spawned || !_hProcess)
         return;
@@ -666,13 +666,13 @@ void Process::terminate()
     TerminateProcess(_hProcess, 1);
 }
 
-void Process::kill()
+void Subprocess::kill()
 {
     // On Windows, TerminateProcess is already unconditional (no SIGTERM equivalent)
     terminate();
 }
 
-void Process::closeStderr()
+void Subprocess::closeStderr()
 {
     if (_hStderrRead)
     {
@@ -681,7 +681,7 @@ void Process::closeStderr()
     }
 }
 
-void Process::cleanup()
+void Subprocess::cleanup()
 {
     closeStdin();
 

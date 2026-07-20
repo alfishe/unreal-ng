@@ -10,7 +10,7 @@ set(ENABLE_AUTOMATION ON CACHE BOOL "Enable automation features (Lua, Python, We
 set(ENABLE_LUA_AUTOMATION ON CACHE BOOL "Enable Lua automation" FORCE)
 # Python automation: always follow the root CMakeLists.txt setting (OFF by default)
 # Never override with ON here — root CMakeLists.txt is the single source of truth.
-set(ENABLE_WEBAPI_AUTOMATION ON CACHE BOOL "Enable WebAPI automation" FORCE)
+set(ENABLE_WEBAPI_AUTOMATION OFF CACHE BOOL "Enable WebAPI automation" FORCE)
 set(ENABLE_CLI_AUTOMATION ON CACHE BOOL "Enable CLI automation" FORCE)
 
 # Set C++ standard (C++20 required)
@@ -204,6 +204,12 @@ include_directories(
 
 # Build all dependency libraries
 add_subdirectory("3rdparty/QHexView-5.0")
+
+# QHexView sets CXX_STANDARD 11 internally (bumped to 17 by Qt6). On MSVC 14.29 (VS2019),
+# Qt 6.9's qtmochelpers.h fails to compile in C++17 mode (lambda-captured variable not
+# resolved after decltype(...)::template expression — MSVC conformance bug in C++17 mode).
+# C++20 mode has the correct behavior, so override QHexView to match the project standard.
+set_target_properties(QHexView PROPERTIES CXX_STANDARD 20)
 
 # Add core/tests only if not already defined by parent build
 if (NOT TARGET unrealng::core)

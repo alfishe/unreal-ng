@@ -1,5 +1,13 @@
 #pragma once
 
+// NOTE: This file is intentionally named `subprocess.h` (not `process.h`) to avoid
+// shadowing the C runtime header <process.h> on Windows. A local file named
+// `process.h` placed in an include path (-I) directory causes MSVC to pick it up
+// instead of the CRT <process.h> even for angle-bracket includes like
+// `#include <process.h>` performed by MSVC's own <thread> header. That starves
+// std::thread of the `_beginthreadex` symbol it needs, breaking any translation
+// unit that instantiates std::thread. See MSVC <thread> line ~13/76.
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -16,17 +24,17 @@
 /// 4. Call closeStdin() when done feeding data
 /// 5. Call waitForFinished() to get exit code
 /// 6. Destructor calls terminate() if still running
-class Process
+class Subprocess
 {
 public:
-    Process() = default;
-    ~Process();
+    Subprocess() = default;
+    ~Subprocess();
 
     // Non-copyable, non-movable (owns OS handles)
-    Process(const Process&) = delete;
-    Process& operator=(const Process&) = delete;
-    Process(Process&&) = delete;
-    Process& operator=(Process&&) = delete;
+    Subprocess(const Subprocess&) = delete;
+    Subprocess& operator=(const Subprocess&) = delete;
+    Subprocess(Subprocess&&) = delete;
+    Subprocess& operator=(Subprocess&&) = delete;
 
     /// @brief Spawn a child process with stdin as a pipe
     /// @param command Path to executable

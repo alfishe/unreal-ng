@@ -1,5 +1,5 @@
 #include "ffmpeg_probe.h"
-#include "../../common/process.h"
+#include "../../common/subprocess.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -201,7 +201,7 @@ std::string FFmpegProbe::searchPath(const std::string& binaryName)
 
 std::string FFmpegProbe::runCommand(const std::string& command, const std::vector<std::string>& args, int timeoutMs)
 {
-    Process proc;
+    Subprocess proc;
     if (!proc.spawn(command, args))
         return {};
 
