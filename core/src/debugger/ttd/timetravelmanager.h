@@ -48,6 +48,7 @@
 #include "emulator/platform.h"       // PlatformModulesEnum, MAX_RAM_PAGES
 #include "common/modulelogger.h"    // ModuleLogger
 #include "ttd_checkpoint.h"
+#include "ttd_input_journal.h"
 #include "ttd_page_store.h"
 
 // Forward declarations — we don't pull emulator headers into this header.
@@ -201,6 +202,47 @@ public:
     bool IsReplayActive() const;
 
     // -----------------------------------------------------------------------
+    // Input journal (Phase 2 Item 3; parent TDD §5 row #1)
+    // -----------------------------------------------------------------------
+    //
+    // Captures keyboard matrix mutations with their TTDTimePoint. The seek
+    // engine (Item 4) replays them at the recorded timestamps during
+    // intra-frame replay instead of letting live input through (which is
+    // blocked by the Item 2 suppression).
+    //
+    // Capture call sites live in DebugKeyboardManager::PressKey/ReleaseKey,
+    // guarded by `IsRecording()` and `!IsReplayActive()`. The journal is
+    // dropped together with the timeline on InvalidateSession/StartRecording
+    // and truncated by Resume-from-past (Item 5).
+
+    /// @brief Append a keyboard event to the journal.
+    ///
+    /// Called by DebugKeyboardManager::PressKey/ReleaseKey. The current
+    /// TTDTimePoint is derived from EmulatorState (frame_counter + the
+    /// intra-frame t-state). No-op when not Recording or when replay is
+    /// active — but the caller already gates on those, so this method
+    /// doesn't double-check.
+    ///
+    /// @param key   ZXKeysEnum value (callers cast from the typed enum).
+    /// @param pressed true for press, false for release.
+    void RecordInputEvent(uint8_t key, bool pressed);
+
+    /// @brief Read-only access to the input journal. Used by the seek engine
+    /// (Item 4) and by tests.
+    inline const TTDInputJournal& GetInputJournal() const { return _inputJournal; }
+
+    /// @brief Inject every event scheduled at `now` into the live keyboard.
+    ///
+    /// High-level wrapper around TTDInputJournal::InjectDueEvents — looks
+    /// up the Keyboard pointer from EmulatorContext so the seek engine
+    /// (Item 4) doesn't need to know about peripheral plumbing. Returns 0
+    /// silently if no keyboard is attached.
+    ///
+    /// No-op when replay is not active (defensive — the seek engine should
+    /// already be inside an EnterReplayMode / ExitReplayMode pair).
+    size_t InjectDueInputEvents(const TTDTimePoint& now);
+
+    // -----------------------------------------------------------------------
     // Test/diagnostic accessors
     // -----------------------------------------------------------------------
 
@@ -299,6 +341,11 @@ private:
 
     /// Reusable scratch buffer for CollectAndClear (avoids per-frame alloc).
     std::vector<uint16_t> _dirtyScratch;
+
+    /// Input journal — keyboard matrix mutations captured for replay (Item 3).
+    /// Dropped on InvalidateSession/StartRecording; truncated by Item 5
+    /// Resume-from-past.
+    TTDInputJournal _inputJournal;
 
     // -----------------------------------------------------------------------
     // Replay-mode state (Phase 2 Item 2; parent TDD §8.2)

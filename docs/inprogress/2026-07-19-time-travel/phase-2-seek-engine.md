@@ -55,10 +55,20 @@ the merge.
    Tests: 12 cases in `ttd_replay_mode_test.cpp`, all green. Full TTD suite:
    96/96 green.
 
-3. **Input journal** (parent TDD §5.1). Capture keyboard matrix mutations
-   with their TTDTimePoint; inject them at the recorded timestamps during
-   replay instead of letting live input through. Without this, any
-   keyboard-driven workload diverges the moment replay crosses a key event.
+3. **Input journal** ✅ DONE 2026-07-19 (parent TDD §5 row #1 + §5.1).
+   New module `ttd_input_journal.{h,cpp}` with
+   `TTDInputEvent { TTDTimePoint time; uint8_t key; bool pressed }` and an
+   append-only `TTDInputJournal` (Record / Peek / Inject / DropAfter /
+   Clear). Capture wired into `DebugKeyboardManager::{PressKey,ReleaseKey}`
+   via `TimeTravelManager::RecordInputEvent`, AFTER the Item 2 replay
+   guard so injected events are not re-recorded. Injection API
+   `InjectDueEvents(Keyboard&, now)` fires every event with
+   `time == now` (exact match — each event fires once). Manager exposes
+   `InjectDueInputEvents(now)` helper that resolves the Keyboard pointer.
+   Journal cleared on `StartRecording` and `InvalidateSession(reason)`;
+   preserved by `StopRecording`. Tests: 27 cases in
+   `ttd_input_journal_test.cpp` (3 fixtures: pure journal, inject,
+   capture+lifecycle), all green. Full TTD suite: 123/123 green.
 
 4. **`SeekTo` / `StepBackInstruction` / `StepBackFrame` / `StepForward*`**
    (parent TDD §8.1 step 3 + §8.1 last paragraph). Binary-search the
@@ -207,24 +217,114 @@ mutating RAM outside the CPU's write path. This is documented in
   processor still runs during replay — Item 3 will address this when the
   input journal injects recorded events instead.
 
-### Item 3 — Input journal
+### Item 3 — Input journal ✅ DONE
 
-**Files touched:**
-- `core/src/debugger/ttd/ttd_input_journal.{h,cpp}` — new
-- Capture hook in `DebugKeyboardManager` (existing key-event observer)
-- Injection hook in the silent-replay path
+**Parent TDD refs:** §5 row #1 (determinism audit), §5.1 (External-Event
+Markers / Input journal).
 
-**Record format:**
-```cpp
-struct TTDInputEvent {
-    TTDTimePoint time;     // 12 B
-    uint16_t     keyMatrix;// 1 B packed (8 rows × 5 keys would lose info → use 8 B row bitmask)
-    uint8_t      kind;     // press / release / matrix-update
-};
-```
+**What landed:**
 
-Replay injection: when `_context->ttdReplayActive` and a journal entry's
-time == current time, mutate the matrix to the recorded value.
+- New module `core/src/debugger/ttd/ttd_input_journal.{h,cpp}`:
+  - `TTDInputEvent { TTDTimePoint time; uint8_t key; bool pressed; }`
+    (17 B on 64-bit). `key` is `ZXKeysEnum` stored as `uint8_t` to keep
+    `keyboard.h` out of the header.
+  - `TTDInputJournal` — append-only sorted vector with:
+    - `Record(ev)` — capture path
+    - `Events() / Size() / IsEmpty()` — read access
+    - `PeekNextEventTimeOnOrAfter(from)` — next-pending-event query for
+      the seek engine
+    - `InjectDueEvents(Keyboard&, now)` — injects every event with
+      `time == now` (exact-match, not `<=`; each event fires once at its
+      recorded TTDTimePoint)
+    - `DropAfter(t)` — Resume-from-past hook for Item 5 (keeps events
+      with `time <= t`)
+    - `Clear()` — full reset
+
+- Capture wired into `DebugKeyboardManager::{PressKey, ReleaseKey}`.
+  Order: replay-guard → record-if-Recording → apply-to-keyboard. The
+  record call lives AFTER the Item 2 replay guard so events injected
+  during replay are not re-recorded.
+
+- `TimeTravelManager` facade:
+  - `RecordInputEvent(uint8_t key, bool pressed)` — derives the current
+    `TTDTimePoint` from `EmulatorState` (`frame_counter` +
+    `t_states % config.frame`) and forwards to the journal.
+  - `InjectDueInputEvents(const TTDTimePoint& now)` — looks up the
+    Keyboard pointer from `EmulatorContext` and dispatches; defensive
+    no-op when not in replay mode or no keyboard.
+  - `GetInputJournal()` — const read-only accessor for tests/seek engine.
+
+- Journal cleared alongside timeline on `StartRecording` (fresh session),
+  `InvalidateSession(reason)`. Preserved by `StopRecording` so the seek
+  engine can still replay events from the captured history.
+
+**Design decisions:**
+
+- **Exact-match injection, not `<=`.** Each event must fire exactly once,
+  at its recorded TTDTimePoint. `<=` would re-inject earlier events every
+  step; `==` plus the seek engine's "advance to next event, fire, repeat"
+  loop (Item 4) is the correct shape.
+
+- **Plain `std::vector`, not a tree or ring.** A 5-minute session at
+  ~10 keys/sec sustained typing is ~3 000 events = ~50 KB. Linear scan
+  is fast enough; binary search would add complexity without measurable
+  benefit at this scale.
+
+- **`uint8_t` storage for key, not `ZXKeysEnum`.** Avoids pulling
+  `keyboard.h` into every translation unit that includes the journal
+  header. Cast at the boundary in `.cpp`.
+
+- **Forward-declared `Keyboard` in journal header.** `InjectDueEvents`
+  is defined out-of-line in the `.cpp` (where `keyboard.h` is included),
+  keeping the header light.
+
+- **Monotonicity not enforced in the journal.** `Record()` is a plain
+  append. Host input events arrive in wall-clock order which under the
+  emulator's pause/pacing maps to monotonic TTDTimePoint order. A future
+  hardening pass could add an assert + log in `RecordInputEvent`.
+
+**Tests:**
+
+- New `core/tests/debugger/ttd/ttd_input_journal_test.cpp` — 27 tests
+  across three fixtures:
+  - `TTD_InputJournal_Test` (10 tests) — pure journal data structure:
+    empty/Record/Clear/Peek (4 cases)/DropAfter (5 cases).
+  - `TTD_InputJournal_Inject_Test` (4 tests) — `InjectDueEvents` against
+    the real Keyboard: zero-match/count-match/press+release round
+    trip/simultaneous-events.
+  - `TTD_InputJournal_Capture_Test` (9 tests) — end-to-end capture via
+    `DebugKeyboardManager` + lifecycle integration: no-capture-outside-
+    Recording, capture-on-press, capture-on-release, no-capture-during-
+    replay, manager-helper inject count, manager-helper no-op-when-not-
+    in-replay, `StartRecording` clears, `StopRecording` preserves,
+    `InvalidateSession` clears.
+
+- Full TTD suite: **123/123 green** (was 96 — added 27 input journal
+  tests). All other test suites unchanged.
+
+**Deferred to Item 4 (Seek API):**
+
+- The replay-time *coordination* loop (advance RunTStates to the next
+  event's TTDTimePoint, call `InjectDueInputEvents`, repeat until
+  target). The journal API needed for that loop
+  (`PeekNextEventTimeOnOrAfter`, `InjectDueInputEvents`) is already in
+  place.
+
+- Per-instruction injection callback. The seek engine will instead use
+  the "advance to next event" pattern above — same precision, no
+  per-instruction overhead.
+
+**Parent TDD field-name reconciliation:** the original Item 3 stub
+sketched the record as `(TTDTimePoint, keyMatrix, kind)`. Shipped as
+`(TTDTimePoint, key, pressed)` because:
+
+- The emulator already models the keyboard as 40 individual keys
+  (`ZXKeysEnum`), not as an 8-row bitmask. Per-key events are how
+  `Keyboard::PressKey/ReleaseKey` actually mutate state.
+- A row-bitmask would force the journal to capture every partial-row
+  state, doubling record count for chord presses (CAPS+letter).
+- `pressed: bool` is simpler than a `kind: enum` with two values and
+  maps directly to the existing Keyboard API.
 
 ### Item 4 — Seek API
 

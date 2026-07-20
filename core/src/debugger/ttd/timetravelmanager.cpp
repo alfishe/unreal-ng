@@ -156,6 +156,7 @@ bool TimeTravelManager::StartRecording()
         _pageStore.Reset();
         _dirtyTracker->ResetSession();
         _dirtyScratch.clear();
+        _inputJournal.Clear();  // Phase 2 Item 3 — drop any prior input events
     }
 
     _modelRamPages = ResolveModelRamPages();
@@ -204,6 +205,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     _timeline.clear();
     _pageStore.Reset();
     _dirtyScratch.clear();
+    _inputJournal.Clear();  // Phase 2 Item 3 — input history invalidates with the timeline
     _modelRamPages = 0;
     _state = TTDSessionState::Idle;
 
@@ -645,6 +647,51 @@ void TimeTravelManager::ExitReplayMode()
 bool TimeTravelManager::IsReplayActive() const
 {
     return _context && _context->ttdReplayActive;
+}
+
+// ---------------------------------------------------------------------------
+// Input journal (Phase 2 Item 3; parent TDD §5 row #1)
+// ---------------------------------------------------------------------------
+
+void TimeTravelManager::RecordInputEvent(uint8_t key, bool pressed)
+{
+    // Caller (DebugKeyboardManager::PressKey/ReleaseKey) already gates on
+    // IsRecording() and !IsReplayActive(). We don't double-check here.
+    //
+    // Derive the current TTDTimePoint from EmulatorState. t_states is the
+    // running total since session start (well, since reset); the intra-frame
+    // position is t_states % config.frame.
+    if (!_context)
+        return;
+
+    const EmulatorState& st = _context->emulatorState;
+    TTDInputEvent ev;
+    ev.time.frame    = st.frame_counter;
+    ev.time.tInFrame = static_cast<uint32_t>(st.t_states % _context->config.frame);
+    ev.key           = key;
+    ev.pressed       = pressed;
+    _inputJournal.Record(ev);
+}
+
+size_t TimeTravelManager::InjectDueInputEvents(const TTDTimePoint& now)
+{
+    // Defensive no-op when not in replay mode — Item 4's seek engine should
+    // already be inside an EnterReplayMode/ExitReplayMode pair, but a stray
+    // call from somewhere else shouldn't crash or corrupt the live keyboard.
+    if (!_context || !_context->ttdReplayActive)
+        return 0;
+
+    if (!_context->pKeyboard)
+    {
+        MLOGWARNING("TimeTravelManager::InjectDueInputEvents — no keyboard attached, "
+                    "skipping %zu journal events at (frame=%llu, tInFrame=%u)",
+                    _inputJournal.Size(),
+                    static_cast<unsigned long long>(now.frame),
+                    static_cast<unsigned>(now.tInFrame));
+        return 0;
+    }
+
+    return _inputJournal.InjectDueEvents(*_context->pKeyboard, now);
 }
 
 } // namespace ttd

@@ -1,4 +1,5 @@
 #include "debugkeyboardmanager.h"
+#include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (input journal capture, Phase 2 Item 3)
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/keyboard/keyboard.h"
 
@@ -62,6 +63,15 @@ void DebugKeyboardManager::PressKey(ZXKeysEnum key)
     if (_context && _context->ttdReplayActive)
         return;
 
+    // TTD input journal capture (parent TDD §5 row #1, Phase 2 Item 3).
+    // Record BEFORE applying — the journal entry's TTDTimePoint is the
+    // moment of mutation, which is exactly this call. TimeTravelManager
+    // derives the timepoint from EmulatorState internally.
+    if (_context && _context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording())
+    {
+        _context->pTimeTravelManager->RecordInputEvent(static_cast<uint8_t>(key), /*pressed=*/true);
+    }
+
     // Track in our direct press set
     _directPressedKeys.insert(key);
 
@@ -84,6 +94,12 @@ void DebugKeyboardManager::ReleaseKey(ZXKeysEnum key)
     // TTD silent-replay suppression (parent TDD §8.2 + Appendix C).
     if (_context && _context->ttdReplayActive)
         return;
+
+    // TTD input journal capture (Phase 2 Item 3).
+    if (_context && _context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording())
+    {
+        _context->pTimeTravelManager->RecordInputEvent(static_cast<uint8_t>(key), /*pressed=*/false);
+    }
 
     // Remove from our direct press set
     _directPressedKeys.erase(key);
