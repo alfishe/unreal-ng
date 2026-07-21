@@ -89,11 +89,23 @@ the merge.
    contract). For sources of nondeterminism that aren't journaled in v1
    (tape control, disk writes, debugger edits), record a marker on the
    timeline. Seek refuses to cross a marker silently — returns the marker's
-   time and reason via `TTDSeekResult`. Hook points in Tape / BetaDisk /
-   debugger edit paths are deferred (the data structure, capture API, and
-   barrier logic ship now). Tests: 41 cases in
-   `ttd_external_events_test.cpp` (3 suites: pure journal, capture
-   integration, marker-blocks-seek). Full TTD suite: 212/212 green.
+   time and reason via `TTDSeekResult`. Production hook points wired:
+
+   - **Tape control** (`tape.cpp`): `startTape` / `stopTape` / `reset` (only
+     when `wasStarted`) each emit a `TapeControl` marker.
+   - **WD1793 disk writes** (`wd1793.cpp`): `cmdWriteSector` and
+     `cmdWriteTrack` emit `DiskWrite` markers after write-protect / disk-
+     presence early-returns, with reason formatting `trk/sec/side`.
+   - **Debugger memory edits** (CLI `memory write` dispatcher + WebAPI
+     `POST /memory/write`) emit `DebuggerEdit` markers — one marker per
+     user action, regardless of byte count.
+
+   Python `WriteByte` / WebAPI `PUT /memory/{addr}` / `memory fill` / direct
+   `Memory::DirectWriteToZ80Memory` callers follow the same pattern but are
+   not yet wired (lower-traffic paths — add when these surfaces are extended).
+   Tests: 41 cases in `ttd_external_events_test.cpp` (3 suites: pure journal,
+   capture integration, marker-blocks-seek) + 12 hook integration cases in
+   `ttd_external_events_hooks_test.cpp`. Full TTD suite: 224/224 green.
 
 7. **Divergence corpus + capture-benchmark gate** (exit work). Wire the
    five corpus titles into a `TTD_Divergence_*` test family. Add a CI
@@ -624,12 +636,33 @@ Full TTD suite: 183/183 green (was 164 + 19 new resume tests).
     OutOfRange, null outResult still returns false, StepBackFrame
     unaffected by markers.
 
-**Deferred:** hook points in Tape (TapeManager), BetaDisk/WD1793 write
-  commands, and debugger edit paths. These call
-  `RecordExternalEvent(kind, reason)` guarded by `IsRecording()`. Until
-  wired, those nondeterminism sources are silently corrupting (pre-
-  existing behavior — Item 6 ships the safety net, the call sites are a
-  follow-up).
+**Production hook points wired** (follow-up to faf50d9c):
+  - `core/src/emulator/io/tape/tape.cpp` — `startTape()` / `stopTape()` /
+    `reset()` (only when `wasStarted`) emit `TapeControl` markers.
+  - `core/src/emulator/io/fdc/wd1793.cpp` — `cmdWriteSector` and
+    `cmdWriteTrack` emit `DiskWrite` markers after WP / disk-presence early-
+    returns. Reason formatted via `std::snprintf` with `trk/sec/side`.
+  - `core/automation/cli/src/commands/cli-processor-memory.cpp` — `memory
+    write` dispatcher emits a `DebuggerEdit` marker (one per CLI
+    invocation, regardless of byte count).
+  - `core/automation/webapi/src/api/state_memory_api.cpp` — `writeMemory`
+    (`POST /memory/write`) emits a `DebuggerEdit` marker (one per call).
+
+  Hooks are guarded by `IsRecording()` so they are no-op when no TTD session
+  is active.
+
+  **Hook integration tests** (12 cases, `ttd_external_events_hooks_test.cpp`):
+  Tape start/stop/rewind record markers; no-op when Idle; rewind not
+  recorded when tape wasn't started; marker captures live frame_counter;
+  tape marker blocks intra-frame SeekTo with correct blockingMarker fields;
+  debugger edit (direct RecordExternalEvent) records marker; not recorded
+  when Idle; mixed sources all surface; InvalidateSession clears; Resume
+  drops strictly-future captured markers.
+
+**Lower-traffic debugger-edit surfaces not yet wired:** Python
+  `WriteByte` / WebAPI `PUT /memory/{addr}` / `memory fill` / direct
+  `Memory::DirectWriteToZ80Memory` callers. These follow the same pattern;
+  add when those surfaces are extended or used in production TTD flows.
 
 ### Item 7 — Divergence corpus + benchmark gate
 

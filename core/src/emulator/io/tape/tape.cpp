@@ -3,6 +3,7 @@
 #include <cstring>
 
 #include "common/stringhelper.h"
+#include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (Item 6 markers)
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/soundmanager.h"
@@ -28,6 +29,19 @@ void Tape::startTape()
 {
     _tapeStarted = true;
     _muteEAR = true;
+
+    // Phase 2 Item 6 — record an external-event marker. Tape playback is
+    // nondeterministic from the emulator's perspective (content arrives via
+    // the host clock, not via CPU-readable state), so SeekTo across a
+    // startTape boundary would silently produce wrong state. The marker is
+    // a replay barrier: SeekTo stops at it and surfaces it to the caller.
+    //
+    // No-op unless the TTD session is Recording — same guard as
+    // RecordInputEvent. The CLI / WebAPI handlers pause the emulator
+    // before calling startTape, so frame_counter and z80.t are stable.
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::TapeControl, "tape play");
 }
 
 void Tape::stopTape()
@@ -43,11 +57,24 @@ void Tape::stopTape()
     _currentOffsetWithinPulse = 0;
 
     _currentClockCount = 0;
+
+    // Phase 2 Item 6 — see startTape() for rationale.
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::TapeControl, "tape stop");
 }
 /// endregion </Tape control methods>
 
 void Tape::reset()
 {
+    // Distinguish "user-driven rewind" from "system-level reset". The
+    // constructor calls reset() before _context is fully wired; CLI/WebAPI
+    // rewind calls it after pausing the emulator. In both cases the marker
+    // capture is guarded by RecordExternalEvent (no-op unless Recording),
+    // so we don't need an explicit caller-passed flag here. The marker is
+    // only recorded when an active TTD session exists at call time.
+    const bool wasStarted = _tapeStarted;
+
     _tapeStarted = false;
     _tapePosition = 0LL;
 
@@ -59,6 +86,14 @@ void Tape::reset()
     _currentOffsetWithinPulse = 0;
 
     _currentClockCount = 0;
+
+    // Phase 2 Item 6 — only record a rewind marker when reset() actually
+    // changes tape state mid-session. A no-op reset (constructor, system
+    // reset before any session) should not pollute the journal even if a
+    // session somehow exists.
+    if (wasStarted && _context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::TapeControl, "tape rewind");
 };
 
 /// region <Port events>

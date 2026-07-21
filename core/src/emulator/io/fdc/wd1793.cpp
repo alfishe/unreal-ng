@@ -5,6 +5,7 @@
 #include "common/dumphelper.h"
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
+#include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (Item 6 markers)
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulator.h"
@@ -1285,6 +1286,27 @@ void WD1793::cmdWriteSector(uint8_t value)
         return;
     }
 
+    // Phase 2 Item 6 — record an external-event marker. Disk writes mutate
+    // sector content; the next time the same sector is read back, the bytes
+    // will differ from what a replay-from-checkpoint would produce. The
+    // marker makes SeekTo refuse to cross this point silently.
+    //
+    // Hooked *after* the WP early-return so the marker only fires when the
+    // write actually starts. No-op unless the TTD session is Recording.
+    // This runs on the emulator thread (port-write dispatch), so
+    // frame_counter and z80.t are live and meaningful.
+    if (_context && _context->pTimeTravelManager)
+    {
+        char reason[64];
+        std::snprintf(reason, sizeof(reason),
+                      "Write Sector trk=%u sec=%u side=%u",
+                      static_cast<unsigned>(_trackRegister),
+                      static_cast<unsigned>(_sectorRegister),
+                      static_cast<unsigned>(_sideUp));
+        _context->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::DiskWrite, reason);
+    }
+
     // Decode command bits:
     // Bit 0 (a0): 0 = Normal Data Mark (FB), 1 = Deleted Data Mark (F8)
     // Bit 4 (m):  0 = Single sector, 1 = Multiple sectors
@@ -1496,6 +1518,21 @@ void WD1793::cmdWriteTrack(uint8_t value)
         _statusRegister |= WDS_NOTFOUND;
         transitionFSM(S_END_COMMAND);
         return;
+    }
+
+    // Phase 2 Item 6 — record a disk-write marker for the format command.
+    // Write Track reformats an entire track, which is heavily destructive
+    // to replay fidelity. Hooked after the WP / disk-presence early-returns
+    // so the marker only fires when the format actually starts.
+    if (_context && _context->pTimeTravelManager)
+    {
+        char reason[64];
+        std::snprintf(reason, sizeof(reason),
+                      "Write Track (format) trk=%u side=%u",
+                      static_cast<unsigned>(_trackRegister),
+                      static_cast<unsigned>(_sideUp));
+        _context->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::DiskWrite, reason);
     }
 
     // Set DRQ to request first byte from host (per datasheet: "wait for DRQ service")

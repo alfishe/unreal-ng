@@ -4,8 +4,10 @@
 #include "../emulator_api.h"
 
 #include <drogon/HttpResponse.h>
+#include <debugger/ttd/timetravelmanager.h>  // TimeTravelManager (Item 6 markers)
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/emulatorcontext.h>
 #include <json/json.h>
 #include <common/stringhelper.h>
 
@@ -549,6 +551,15 @@ void EmulatorAPI::writeMemory(const HttpRequestPtr& req, std::function<void(cons
     // Write data
     Json::Value& data = (*body)["data"];
     size_t bytesWritten = 0;
+
+    // Phase 2 Item 6 — record a debugger-edit marker before the write
+    // executes. One marker per API call, regardless of byte count. The
+    // marker is a no-op unless a TTD session is Recording.
+    EmulatorContext* ctx = emulator->GetContext();
+    if (ctx && ctx->pTimeTravelManager)
+        ctx->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::DebuggerEdit, "WebAPI memory write");
+
     for (Json::ArrayIndex i = 0; i < data.size(); i++)
     {
         memory->DirectWriteToZ80Memory(address + i, static_cast<uint8_t>(data[i].asUInt()));
