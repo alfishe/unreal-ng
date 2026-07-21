@@ -21,7 +21,14 @@ namespace ttd {
 
 TTDCpuState CaptureCpuState(const Z80State& src)
 {
+    // Zero the entire struct first so any padding bytes between fields are
+    // deterministic. Without this, byte-wise hashing of the captured state
+    // (e.g. by the Phase 2 Item 7 divergence oracle) would pick up
+    // uninitialized padding and produce non-reproducible hashes. Default
+    // member initializers zero the named fields but not the padding between
+    // them; this memset closes that gap and matches CaptureSnapshot's pattern.
     TTDCpuState dst;
+    std::memset(&dst, 0, sizeof(dst));
 
     // 16-bit registers (unions in Z80Registers mean we can read either form)
     dst.pc = src.pc;
@@ -120,7 +127,13 @@ void RestoreCpuState(const TTDCpuState& src, Z80State* dst)
 
 TTDChipsetState CaptureChipsetState(const EmulatorState& src)
 {
+    // Zero first so padding is deterministic — see CaptureCpuState for the
+    // full rationale. The chipset struct has many sub-arrays (wd_shadow,
+    // comp_pal, ulaplus_cram, pFFF7, ...) which are explicitly memcpy'd
+    // below; the memset ensures any byte NOT covered by an explicit copy
+    // is zero rather than indeterminate.
     TTDChipsetState dst;
+    std::memset(&dst, 0, sizeof(dst));
 
     // Counters
     dst.t_states = src.t_states;
