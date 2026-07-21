@@ -159,6 +159,7 @@ bool TimeTravelManager::StartRecording()
         _dirtyTracker->ResetSession();
         _dirtyScratch.clear();
         _inputJournal.Clear();  // Phase 2 Item 3 — drop any prior input events
+        _externalEvents.Clear();  // Phase 2 Item 6 — drop any prior markers
     }
 
     _modelRamPages = ResolveModelRamPages();
@@ -208,6 +209,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     _pageStore.Reset();
     _dirtyScratch.clear();
     _inputJournal.Clear();  // Phase 2 Item 3 — input history invalidates with the timeline
+    _externalEvents.Clear();  // Phase 2 Item 6 — markers invalidate with the timeline
     _modelRamPages = 0;
     _state = TTDSessionState::Idle;
 
@@ -701,6 +703,54 @@ size_t TimeTravelManager::InjectDueInputEvents(const TTDTimePoint& now)
 }
 
 // ---------------------------------------------------------------------------
+// External-event markers (Phase 2 Item 6; parent TDD §5.1)
+// ---------------------------------------------------------------------------
+
+void TimeTravelManager::RecordExternalEvent(TTDExternalEventKind kind, const char* reason)
+{
+    if (!_context)
+        return;
+
+    // Same defensive guard as RecordInputEvent: callers (Tape, BetaDisk,
+    // debugger edit paths) are expected to check IsRecording() first, but a
+    // stray call when not recording is a no-op rather than a journal
+    // corruption.
+    if (_state != TTDSessionState::Recording)
+        return;
+
+    const EmulatorState& st = _context->emulatorState;
+    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+
+    TTDExternalEvent ev;
+    ev.time.frame    = st.frame_counter;
+    ev.time.tInFrame = z80 ? z80->t : 0;
+    ev.kind          = kind;
+
+    // Truncate-and-copy the reason string into the inline buffer. strncpy
+    // returns `dest` and zero-pads the remainder when src is shorter than
+    // the count; the explicit NUL at the last byte guards against the
+    // `src longer than count` case (no NUL terminator written).
+    if (reason)
+    {
+        std::strncpy(ev.reason, reason, sizeof(ev.reason) - 1);
+        ev.reason[sizeof(ev.reason) - 1] = '\0';
+    }
+    else
+    {
+        ev.reason[0] = '\0';
+    }
+
+    _externalEvents.Record(ev);
+
+    MLOGINFO("TimeTravelManager::RecordExternalEvent — recorded marker at "
+             "(frame=%llu,tInFrame=%u) kind=%s reason='%.63s'",
+             static_cast<unsigned long long>(ev.time.frame),
+             static_cast<unsigned>(ev.time.tInFrame),
+             TTDExternalEventKindToString(kind),
+             ev.reason);
+}
+
+// ---------------------------------------------------------------------------
 // Seek engine (Phase 2 Item 4; parent TTD §8.1)
 // ---------------------------------------------------------------------------
 
@@ -729,8 +779,21 @@ TTDTimePoint TimeTravelManager::SessionEndPosition() const
     return _timeline.back().time;
 }
 
-bool TimeTravelManager::SeekTo(const TTDTimePoint& target)
+bool TimeTravelManager::SeekTo(const TTDTimePoint& target, TTDSeekResult* outResult)
 {
+    // ------------------------------------------------------------------
+    // Default the out-result to a failure state. Every return path below
+    // either leaves this default (false / OutOfRange) or overwrites it
+    // before returning true.
+    // ------------------------------------------------------------------
+    if (outResult)
+    {
+        outResult->reached     = false;
+        outResult->arrivedAt   = TTDTimePoint{};
+        outResult->haltReason  = TTDSeekHaltReason::OutOfRange;
+        outResult->blockingMarker = TTDExternalEvent{};
+    }
+
     // ------------------------------------------------------------------
     // Validate preconditions.
     // ------------------------------------------------------------------
@@ -761,6 +824,7 @@ bool TimeTravelManager::SeekTo(const TTDTimePoint& target)
                     static_cast<unsigned>(target.tInFrame),
                     static_cast<unsigned long long>(sessionEnd.frame),
                     static_cast<unsigned>(sessionEnd.tInFrame));
+        // outResult already defaults to OutOfRange / reached=false.
         return false;
     }
 
@@ -816,9 +880,45 @@ bool TimeTravelManager::SeekTo(const TTDTimePoint& target)
 
     // ------------------------------------------------------------------
     // Step 3: intra-frame silent replay if target.tInFrame > 0.
+    //
+    // Phase 2 Item 6 (parent TDD §5.1): check for external-event markers in
+    // the replay interval (cp.time, target]. If any marker falls there, the
+    // seek must stop at the earliest such marker — replay cannot reproduce
+    // the marker's nondeterministic effect, so crossing it silently would
+    // produce a misleading "this is the state at target" claim.
+    //
+    // Frame-aligned targets never trigger this check: with target.tInFrame
+    // == 0, no intra-frame replay runs, and the chosen checkpoint already
+    // reflects any markers at or before that frame boundary.
     // ------------------------------------------------------------------
     if (target.tInFrame > 0)
     {
+        if (const TTDExternalEvent* barrier = _externalEvents.FirstMarkerInInterval(cp.time, target))
+        {
+            MLOGINFO("TimeTravelManager::SeekTo — marker barrier at (frame=%llu,tInFrame=%u) "
+                     "kind=%s reason='%.63s'; stopping replay at marker",
+                     static_cast<unsigned long long>(barrier->time.frame),
+                     static_cast<unsigned>(barrier->time.tInFrame),
+                     TTDExternalEventKindToString(barrier->kind),
+                     barrier->reason);
+
+            // Replay only as far as the marker — its effect is reproducible
+            // up to but not including the marker itself.
+            if (barrier->time.tInFrame > 0)
+                ReplayWithinFrame(cp.time.frame, barrier->time.tInFrame);
+
+            _state = TTDSessionState::Detached;
+
+            if (outResult)
+            {
+                outResult->reached        = false;
+                outResult->arrivedAt      = barrier->time;
+                outResult->haltReason     = TTDSeekHaltReason::ExternalEvent;
+                outResult->blockingMarker = *barrier;
+            }
+            return false;
+        }
+
         ReplayWithinFrame(cp.time.frame, target.tInFrame);
     }
 
@@ -831,6 +931,12 @@ bool TimeTravelManager::SeekTo(const TTDTimePoint& target)
              static_cast<unsigned long long>(target.frame),
              static_cast<unsigned>(target.tInFrame));
 
+    if (outResult)
+    {
+        outResult->reached    = true;
+        outResult->arrivedAt  = target;
+        outResult->haltReason = TTDSeekHaltReason::Target;
+    }
     return true;
 }
 
@@ -1011,6 +1117,7 @@ bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
 
     const size_t preTimelineSize  = _timeline.size();
     const size_t preJournalSize   = _inputJournal.Size();
+    const size_t preMarkerCount   = _externalEvents.Size();
 
     // ------------------------------------------------------------------
     // Step 1: ensure the emulator is positioned at `from`. SeekTo handles
@@ -1040,6 +1147,7 @@ bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
     // are kept (they happened at the resume point, not after it).
     // ------------------------------------------------------------------
     _inputJournal.DropAfter(from);
+    _externalEvents.DropAfter(from);  // Phase 2 Item 6 — markers past `from` are dead future
 
     // ------------------------------------------------------------------
     // Step 4: return to Recording. Next OnFrameBoundary will append a fresh
@@ -1050,11 +1158,12 @@ bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
 
     MLOGINFO("TimeTravelManager::ResumeRecordingFrom — resumed at "
              "(frame=%llu, tInFrame=%u); timeline %zu→%zu checkpoints, "
-             "journal %zu→%zu events, state=Recording",
+             "journal %zu→%zu events, markers %zu→%zu, state=Recording",
              static_cast<unsigned long long>(from.frame),
              static_cast<unsigned>(from.tInFrame),
              preTimelineSize, _timeline.size(),
-             preJournalSize, _inputJournal.Size());
+             preJournalSize, _inputJournal.Size(),
+             preMarkerCount, _externalEvents.Size());
 
     return true;
 }

@@ -48,6 +48,7 @@
 #include "emulator/platform.h"       // PlatformModulesEnum, MAX_RAM_PAGES
 #include "common/modulelogger.h"    // ModuleLogger
 #include "ttd_checkpoint.h"
+#include "ttd_external_events.h"
 #include "ttd_input_journal.h"
 #include "ttd_page_store.h"
 
@@ -257,22 +258,6 @@ public:
     //   - Emulator is paused (caller's responsibility — these are control-
     //     thread entry points, matching RestoreCheckpointForTesting).
 
-    /// @brief Seek to an arbitrary TTDTimePoint within the recorded timeline.
-    ///
-    /// Algorithm (TDD §8.1):
-    ///   1. Binary-search the timeline for the latest checkpoint with
-    ///      `cp.time <= target`.
-    ///   2. RestoreCheckpoint(cp).
-    ///   3. If `target.tInFrame > 0`, silent-replay forward to that t-state:
-    ///      enter replay mode, drive RunTStates in chunks (one chunk per
-    ///      journaled input event scheduled inside the interval, plus a
-    ///      final chunk for the remainder), exit replay mode.
-    ///   4. Transition to Detached.
-    ///
-    /// @return true on success. False (with a logged warning) if state is
-    ///         Idle, the timeline is empty, or target is out of bounds.
-    bool SeekTo(const TTDTimePoint& target);
-
     /// @brief Step back exactly one frame, preserving the intra-frame position.
     ///
     /// Composition of SeekTo: reads the current position from EmulatorState
@@ -291,7 +276,8 @@ public:
     ///
     /// Convenience for callers (UI, step helpers, tests). Derived from
     /// EmulatorState: `frame = frame_counter`,
-    /// `tInFrame = t_states % config.frame`.
+    /// `tInFrame = z80->t` (per-frame accumulator — see implementation
+    /// note in the .cpp about why it's not `t_states % config.frame`).
     TTDTimePoint CurrentPosition() const;
 
     /// @brief Upper bound of the recorded timeline.
@@ -299,6 +285,93 @@ public:
     /// Returns the time of the last checkpoint. Seeks to any point > this
     /// will fail. Returns {0,0} when the timeline is empty.
     TTDTimePoint SessionEndPosition() const;
+
+    // -----------------------------------------------------------------------
+    // External-event markers (Phase 2 Item 6; parent TDD §5.1)
+    // -----------------------------------------------------------------------
+    //
+    // Sources of nondeterminism that aren't covered by an input journal in
+    // v1 (tape control, disk writes, debugger-initiated state edits) get
+    // a marker on the timeline. Markers are replay barriers: SeekTo refuses
+    // to cross them silently and surfaces the marker to the caller via
+    // TTDSeekResult. This keeps TTD honest — it never pretends to reproduce
+    // what it cannot. Journals (input today, tape/disk later) progressively
+    // convert marker classes into replayable events.
+    //
+    // Item 6 v1 ships the data structure, the capture API, and the
+    // SeekTo barrier logic. Hook points in Tape / BetaDisk / debugger edit
+    // paths land incrementally — each new hook is a one-line call to
+    // RecordExternalEvent() guarded by IsRecording().
+
+    /// @brief Record an external-event marker at the current position.
+    ///
+    /// Captures `time = CurrentPosition()` (frame + z80->t), `kind`, and a
+    /// truncated copy of `reason` (up to 63 chars + NUL). No-op when not
+    /// Recording — the caller's guard avoids double-checking, but this
+    /// method is defensive anyway.
+    ///
+    /// @param kind   Source classification (UI / automation hint).
+    /// @param reason Short human-readable description. May be nullptr.
+    void RecordExternalEvent(TTDExternalEventKind kind, const char* reason);
+
+    /// @brief Read-only access to the marker journal. Used by tests, the UI,
+    /// and automation surfaces that surface the marker list.
+    inline const TTDExternalEventJournal& GetExternalEvents() const { return _externalEvents; }
+
+    // -----------------------------------------------------------------------
+    // Seek engine — barrier-aware overload (Phase 2 Item 6)
+    // -----------------------------------------------------------------------
+
+    /// @brief Why a SeekTo call stopped where it did.
+    ///
+    /// Mirrors the automation contract per parent TDD §10.4 / §717:
+    ///   halt_reason ∈ {target, external_event, out_of_range}
+    enum class TTDSeekHaltReason : uint8_t
+    {
+        Target        = 0,  ///< Reached the requested target normally.
+        ExternalEvent = 1,  ///< Stopped at an external-event marker (Item 6).
+        OutOfRange    = 2,  ///< Target was beyond the session end.
+    };
+
+    /// @brief Struct returned by the barrier-aware SeekTo overload.
+    ///
+    /// `reached` is true iff the emulator is now positioned at the requested
+    /// target. When false, `haltReason` explains why and (if ExternalEvent)
+    /// `blockingMarker` describes the barrier.
+    struct TTDSeekResult
+    {
+        bool              reached       = false;
+        TTDTimePoint      arrivedAt     {};
+        TTDSeekHaltReason haltReason    = TTDSeekHaltReason::Target;
+        TTDExternalEvent  blockingMarker{};  ///< Valid iff haltReason == ExternalEvent.
+    };
+
+    /// @brief SeekTo with explicit result reporting.
+    ///
+    /// Same algorithm as the bool overload, plus marker-barrier detection:
+    /// if intra-frame replay would cross an external-event marker, the seek
+    /// stops at the marker's TTDTimePoint and `outResult.haltReason` is set
+    /// to ExternalEvent. The bool return value is `outResult.reached`.
+    ///
+    /// Frame-aligned targets (tInFrame == 0) never cross markers — the
+    /// chosen checkpoint already reflects any markers at or before that
+    /// frame boundary, so no replay is needed.
+    ///
+    /// @param target    Where to seek to.
+    /// @param outResult Written on both success and failure. May be nullptr
+    ///                  (the bool overload passes nullptr and discards).
+    /// @return true iff `outResult.reached` (target reached without barrier).
+    bool SeekTo(const TTDTimePoint& target, TTDSeekResult* outResult);
+
+    /// @brief Compatibility SeekTo — discards the result struct.
+    ///
+    /// Existing callers (StepBackFrame, StepForwardFrame, ResumeRecordingFrom,
+    /// tests) keep working unchanged. New callers that care about halt_reason
+    /// should use the overload above.
+    inline bool SeekTo(const TTDTimePoint& target)
+    {
+        return SeekTo(target, /*outResult=*/nullptr);
+    }
 
     // -----------------------------------------------------------------------
     // Resume-from-past (Phase 2 Item 5; parent TDD §8.3)
@@ -470,6 +543,11 @@ private:
     /// Dropped on InvalidateSession/StartRecording; truncated by Item 5
     /// Resume-from-past.
     TTDInputJournal _inputJournal;
+
+    /// External-event journal — replay barriers for nondeterminism sources
+    /// that aren't input-journaled in v1 (Item 6). Same lifecycle as the
+    /// input journal: dropped on Invalidate/Start, truncated by Resume.
+    TTDExternalEventJournal _externalEvents;
 
     // -----------------------------------------------------------------------
     // Replay-mode state (Phase 2 Item 2; parent TDD §8.2)

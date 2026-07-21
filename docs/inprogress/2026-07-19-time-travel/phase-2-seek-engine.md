@@ -84,11 +84,16 @@ the merge.
    Atomic under pause. Tests: 19 cases in `ttd_resume_test.cpp`. Full
    TTD suite: 183/183 green.
 
-6. **External-event markers as replay barriers** (parent TDD §5.1). For
-   sources of nondeterminism that aren't journaled in v1 (tape control,
-   disk writes), record a marker on the timeline. Seek and reverse search
-   surface the marker to the caller instead of silently crossing it.
-   Keeps TTD honest: it never pretends to reproduce what it cannot.
+6. **External-event markers as replay barriers** ✅ DONE 2026-07-19
+   (parent TDD §5.1 + §717 `halt_reason ∈ {target, external_event, out_of_range}`
+   contract). For sources of nondeterminism that aren't journaled in v1
+   (tape control, disk writes, debugger edits), record a marker on the
+   timeline. Seek refuses to cross a marker silently — returns the marker's
+   time and reason via `TTDSeekResult`. Hook points in Tape / BetaDisk /
+   debugger edit paths are deferred (the data structure, capture API, and
+   barrier logic ship now). Tests: 41 cases in
+   `ttd_external_events_test.cpp` (3 suites: pure journal, capture
+   integration, marker-blocks-seek). Full TTD suite: 212/212 green.
 
 7. **Divergence corpus + capture-benchmark gate** (exit work). Wire the
    five corpus titles into a `TTD_Divergence_*` test family. Add a CI
@@ -540,13 +545,91 @@ instruction-level ops need the per-instruction PC probe — deferred.
 
 Full TTD suite: 183/183 green (was 164 + 19 new resume tests).
 
-### Item 6 — External-event markers
+### Item 6 — External-event markers ✅ DONE
 
-**Storage:** alongside `_timeline`, a sorted `std::vector<TTDExternalEvent>`.
-**Sources:** tape control commands, disk writes (until journaled),
-debugger-initiated state edits while running.
-**Behavior:** SeekTo refuses to cross a marker silently — returns the
-marker's time and reason to the caller. UI shows a barrier on the timeline.
+**Module:** `core/src/debugger/ttd/ttd_external_events.{h,cpp}` (new).
+
+**Data structure:**
+  - `TTDExternalEventKind ∈ {TapeControl=0, DiskWrite=1, DebuggerEdit=2,
+    Other=255}` — stable enum for automation JSON per TDD §10.4.
+  - `TTDExternalEvent { TTDTimePoint time; TTDExternalEventKind kind;
+    char reason[64] }` — 80 bytes on 64-bit. Inline reason avoids heap
+    alloc per event; strncpy with explicit NUL guards truncation.
+  - `TTDExternalEventJournal` (append-only `std::vector<TTDExternalEvent>`):
+      * `Record(ev)` — caller (TimeTravelManager) enforces monotonicity
+      * `FirstMarkerInInterval(from, to)` — strict-inside predicate
+        `(from < m.time) && !(to < m.time)`. Linear scan; markers at
+        `from` itself are NOT in the interval (their effect is in the
+        restored checkpoint). Markers at `to` ARE in (closed upper bound —
+        replay would have to cross one to land at `to`).
+      * `DropAfter(t)` — strict-greater rule (events at `t` are kept)
+      * `Clear()` — used by StartRecording / InvalidateSession
+  - `TTDExternalEventKindToString` — stable strings: `tape_control`,
+    `disk_write`, `debugger_edit`, `other`, `unknown`.
+
+**TimeTravelManager API additions:**
+  - `RecordExternalEvent(kind, reason)` — derives time from
+    `(emulatorState.frame_counter, z80->t)`; no-op unless Recording.
+  - `GetExternalEvents()` — const& access for UI / tests.
+  - `TTDSeekHaltReason ∈ {Target, ExternalEvent, OutOfRange}` (nested
+    enum) per TDD §717.
+  - `TTDSeekResult { reached, arrivedAt, haltReason, blockingMarker }`
+    (nested struct) — written on both success and failure.
+  - `SeekTo(target, TTDSeekResult*)` — barrier-aware overload. Defaults
+    outResult to OutOfRange; every code path either leaves the default
+    or overwrites it.
+  - `SeekTo(target)` — inline compatibility wrapper (existing callers
+    unaffected; passes nullptr for outResult).
+
+**SeekTo barrier logic (Step 3 of the algorithm):**
+  - Only engaged when `target.tInFrame > 0` (intra-frame replay). Frame-
+    aligned targets never trigger the check — the chosen checkpoint
+    already reflects markers at or before that frame boundary.
+  - `FirstMarkerInInterval(cp.time, target)` finds the earliest marker
+    strictly inside the replay interval. If non-null:
+      * Replay only as far as the marker (`ReplayWithinFrame(cp.frame,
+        barrier.time.tInFrame)`).
+      * Transition to Detached (same as success path — user can inspect,
+        single-step, or resume from the barrier).
+      * `outResult = { reached=false, arrivedAt=barrier.time,
+        haltReason=ExternalEvent, blockingMarker=*barrier }`.
+      * Return false.
+  - Otherwise: replay to target, transition to Detached, return true
+    with `haltReason=Target`.
+
+**Lifecycle integration:**
+  - `StartRecording` (when not already Recording) → `_externalEvents.Clear()`
+  - `InvalidateSession` → `_externalEvents.Clear()`
+  - `ResumeRecordingFrom(from)` → `_externalEvents.DropAfter(from)`
+    (strict-greater rule — markers at `from` are kept)
+
+**Test coverage** (`ttd_external_events_test.cpp`, 3 suites, 41 tests):
+  - Pure journal (15 tests): Record, Clear, FirstMarkerInInterval edge
+    cases (empty, no-match, mid-interval, at-from excluded, at-to
+    included, multiple-match returns first, same-frame-different-tInFrame,
+    DropAfter variants), KindToString stability.
+  - Capture API (10 tests): no-op when not Recording, capture while
+    Recording with correct time, null reason → empty string, long
+    reason truncated at 63 chars, StartRecording clears (via Stop+Start
+    since Start is idempotent), InvalidateSession clears,
+    ResumeRecordingFrom keeps-at-threshold (forced z80.t=0) and drops-
+    strictly-future.
+  - Marker-blocks-seek (14 tests): no-markers baseline (frame-aligned +
+    intra-frame), frame-aligned ignores markers, marker-in-interval
+    stops with full blockingMarker, marker at restore point (forced
+    z80.t=0) not a barrier, marker at target blocks (closed upper),
+    marker past target not a barrier, multiple markers stops at
+    earliest, blocked seek → Detached, blocked seek → replay halts near
+    marker (RunTStates cycle drift tolerated), idle/out-of-range →
+    OutOfRange, null outResult still returns false, StepBackFrame
+    unaffected by markers.
+
+**Deferred:** hook points in Tape (TapeManager), BetaDisk/WD1793 write
+  commands, and debugger edit paths. These call
+  `RecordExternalEvent(kind, reason)` guarded by `IsRecording()`. Until
+  wired, those nondeterminism sources are silently corrupting (pre-
+  existing behavior — Item 6 ships the safety net, the call sites are a
+  follow-up).
 
 ### Item 7 — Divergence corpus + benchmark gate
 
