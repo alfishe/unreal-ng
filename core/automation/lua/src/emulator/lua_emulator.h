@@ -14,6 +14,8 @@
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/disassembler/z80disasm.h>
+#include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/ttd_external_events.h>
 
 class LuaEmulator
 {
@@ -894,6 +896,170 @@ public:
 
         // Set the emulator instance in the Lua environment
         lua["emulator"] = _emulator;
+
+        // -----------------------------------------------------------------
+        // TTD (Time-Travel Debug) bindings — Phase 2 surface
+        // -----------------------------------------------------------------
+        // All functions return tables or booleans matching the WebAPI/Python
+        // shape. No-op (return false / empty table) when TTD is unavailable.
+        // -----------------------------------------------------------------
+
+        lua.set_function("ttd_status", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table info = lua_view.create_table();
+            if (!_emulator) { info["ttd_available"] = false; return info; }
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager)
+            {
+                info["state"]         = "idle";
+                info["ttd_available"] = false;
+                return info;
+            }
+            ttd::TimeTravelManager* mgr = ctx->pTimeTravelManager;
+            ttd::TTDSessionInfo si = mgr->GetSessionInfo();
+            info["state"]                    = ttd::TTDSessionStateToString(si.state);
+            info["session_start_frame"]      = si.sessionStartFrame;
+            info["current_end_frame"]        = si.currentEndFrame;
+            info["checkpoint_count"]         = static_cast<uint64_t>(si.checkpointCount);
+            info["page_store_bytes"]         = static_cast<uint64_t>(si.pageStoreBytes);
+            info["page_store_used_bytes"]    = static_cast<uint64_t>(si.pageStoreUsedBytes);
+            info["baseline_frames_captured"] = si.baselineFramesCaptured;
+            info["ttd_available"]            = true;
+            return info;
+        });
+
+        lua.set_function("ttd_start", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return false;
+            return ctx->pTimeTravelManager->StartRecording();
+        });
+
+        lua.set_function("ttd_stop", [this]() {
+            if (!_emulator) return;
+            auto* ctx = _emulator->GetContext();
+            if (ctx && ctx->pTimeTravelManager)
+                ctx->pTimeTravelManager->StopRecording();
+        });
+
+        lua.set_function("ttd_invalidate", [this](sol::optional<std::string> reason) {
+            if (!_emulator) return;
+            auto* ctx = _emulator->GetContext();
+            if (ctx && ctx->pTimeTravelManager)
+                ctx->pTimeTravelManager->InvalidateSession(
+                    reason.value_or("lua invalidate").c_str());
+        });
+
+        lua.set_function("ttd_seek", [this](uint64_t frame, sol::optional<uint32_t> tInFrameOpt) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) { result["reached"] = false; return result; }
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager)
+            {
+                result["reached"] = false;
+                result["error"]   = "TTD not available";
+                return result;
+            }
+            uint32_t tInFrame = tInFrameOpt.value_or(0);
+            ttd::TTDTimePoint target{frame, tInFrame};
+            ttd::TimeTravelManager::TTDSeekResult r;
+            bool reached = ctx->pTimeTravelManager->SeekTo(target, &r);
+            result["reached"] = reached;
+
+            sol::table arrivedAt = lua_view.create_table();
+            arrivedAt["frame"]    = r.arrivedAt.frame;
+            arrivedAt["tinframe"] = r.arrivedAt.tInFrame;
+            result["arrived_at"]  = arrivedAt;
+
+            const char* reasonStr = "target";
+            switch (r.haltReason)
+            {
+                case ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent: reasonStr = "external_event"; break;
+                case ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange:    reasonStr = "out_of_range"; break;
+                default: break;
+            }
+            result["halt_reason"] = reasonStr;
+
+            if (r.haltReason == ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent)
+            {
+                sol::table marker = lua_view.create_table();
+                marker["frame"]    = r.blockingMarker.time.frame;
+                marker["tinframe"] = r.blockingMarker.time.tInFrame;
+                marker["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
+                marker["reason"]   = r.blockingMarker.reason;
+                result["blocking_marker"] = marker;
+            }
+            return result;
+        });
+
+        lua.set_function("ttd_step_back", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return false;
+            return ctx->pTimeTravelManager->StepBackFrame();
+        });
+
+        lua.set_function("ttd_step_forward", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return false;
+            return ctx->pTimeTravelManager->StepForwardFrame();
+        });
+
+        lua.set_function("ttd_resume", [this](sol::optional<uint64_t> frameOpt, sol::optional<uint32_t> tInFrameOpt) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return false;
+            ttd::TTDTimePoint from = ctx->pTimeTravelManager->CurrentPosition();
+            if (frameOpt)
+                from.frame = *frameOpt;
+            from.tInFrame = tInFrameOpt.value_or(0);
+            return ctx->pTimeTravelManager->ResumeRecordingFrom(from);
+        });
+
+        lua.set_function("ttd_position", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) { result["error"] = "no emulator"; return result; }
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager)
+            {
+                result["error"] = "TTD not available";
+                return result;
+            }
+            ttd::TTDTimePoint pos = ctx->pTimeTravelManager->CurrentPosition();
+            ttd::TTDTimePoint end = ctx->pTimeTravelManager->SessionEndPosition();
+            sol::table current = lua_view.create_table();
+            current["frame"]    = pos.frame;
+            current["tinframe"] = pos.tInFrame;
+            result["current"]   = current;
+            sol::table sessionEnd = lua_view.create_table();
+            sessionEnd["frame"]    = end.frame;
+            sessionEnd["tinframe"] = end.tInFrame;
+            result["session_end"]  = sessionEnd;
+            return result;
+        });
+
+        lua.set_function("ttd_markers", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) return result;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return result;
+            const auto& journal = ctx->pTimeTravelManager->GetExternalEvents();
+            int idx = 1;  // Lua tables are 1-based
+            for (const auto& e : journal.Events())
+            {
+                sol::table marker = lua_view.create_table();
+                marker["frame"]    = e.time.frame;
+                marker["tinframe"] = e.time.tInFrame;
+                marker["kind"]     = ttd::TTDExternalEventKindToString(e.kind);
+                marker["reason"]   = e.reason;
+                result[idx++]       = marker;
+            }
+            return result;
+        });
     }
 
     void setEmulator(Emulator* emulator) { _emulator = emulator; }

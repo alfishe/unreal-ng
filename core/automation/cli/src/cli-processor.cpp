@@ -175,7 +175,10 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
 
                         // Keyboard injection commands
                         {"key", &CLIProcessor::HandleKey},
-                        {"keyboard", &CLIProcessor::HandleKey}};
+                        {"keyboard", &CLIProcessor::HandleKey},
+
+                        // Time-Travel Debug commands
+                        {"ttd", &CLIProcessor::HandleTTD}};
 }
 
 void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& command)

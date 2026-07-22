@@ -22,6 +22,8 @@
 #include <emulator/video/screencapture.h>
 #include <emulator/cpu/opcode_profiler.h>
 #include <debugger/keyboard/debugkeyboardmanager.h>
+#include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/ttd_external_events.h>
 
 namespace py = pybind11;
 
@@ -1345,6 +1347,152 @@ namespace PythonBindings
                     keys.append(name);
                 }
                 return keys;
-            }, "List all recognized key names");
+            }, "List all recognized key names")
+
+            // -----------------------------------------------------------------
+            // TTD (Time-Travel Debug) bindings — Phase 2 surface
+            // -----------------------------------------------------------------
+
+            // Session status — returns a dict mirroring the WebAPI shape
+            .def("ttd_status", [](Emulator& self) -> py::dict {
+                py::dict info;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager)
+                {
+                    info["state"] = "idle";
+                    info["ttd_available"] = false;
+                    return info;
+                }
+                ttd::TimeTravelManager* mgr = ctx->pTimeTravelManager;
+                ttd::TTDSessionInfo si = mgr->GetSessionInfo();
+                info["state"]                    = ttd::TTDSessionStateToString(si.state);
+                info["session_start_frame"]      = py::cast(si.sessionStartFrame);
+                info["current_end_frame"]        = py::cast(si.currentEndFrame);
+                info["checkpoint_count"]         = py::cast(si.checkpointCount);
+                info["page_store_bytes"]         = py::cast(si.pageStoreBytes);
+                info["page_store_used_bytes"]    = py::cast(si.pageStoreUsedBytes);
+                info["baseline_frames_captured"] = py::cast(si.baselineFramesCaptured);
+                info["ttd_available"]            = true;
+                return info;
+            }, "Get TTD session status")
+
+            .def("ttd_start", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager) return false;
+                return ctx->pTimeTravelManager->StartRecording();
+            }, "Start TTD recording")
+
+            .def("ttd_stop", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                if (ctx && ctx->pTimeTravelManager)
+                    ctx->pTimeTravelManager->StopRecording();
+            }, "Stop TTD recording (history retained)")
+
+            .def("ttd_invalidate", [](Emulator& self, const std::string& reason) {
+                auto* ctx = self.GetContext();
+                if (ctx && ctx->pTimeTravelManager)
+                    ctx->pTimeTravelManager->InvalidateSession(reason.c_str());
+            }, "Drop all TTD history", py::arg("reason") = "python invalidate")
+
+            .def("ttd_seek", [](Emulator& self, uint64_t frame, uint32_t tInFrame) -> py::dict {
+                py::dict result;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager)
+                {
+                    result["reached"] = false;
+                    result["error"]   = "TTD not available";
+                    return result;
+                }
+                ttd::TTDTimePoint target{frame, tInFrame};
+                ttd::TimeTravelManager::TTDSeekResult r;
+                bool reached = ctx->pTimeTravelManager->SeekTo(target, &r);
+                result["reached"] = reached;
+
+                py::dict arrivedAt;
+                arrivedAt["frame"]    = py::cast(r.arrivedAt.frame);
+                arrivedAt["tinframe"] = py::cast(r.arrivedAt.tInFrame);
+                result["arrived_at"]  = arrivedAt;
+
+                const char* reasonStr = "target";
+                switch (r.haltReason)
+                {
+                    case ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent: reasonStr = "external_event"; break;
+                    case ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange:    reasonStr = "out_of_range"; break;
+                    default: break;
+                }
+                result["halt_reason"] = reasonStr;
+
+                if (r.haltReason == ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent)
+                {
+                    py::dict marker;
+                    marker["frame"]    = py::cast(r.blockingMarker.time.frame);
+                    marker["tinframe"] = py::cast(r.blockingMarker.time.tInFrame);
+                    marker["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
+                    marker["reason"]   = r.blockingMarker.reason;
+                    result["blocking_marker"] = marker;
+                }
+                return result;
+            }, "Seek to a point in the timeline", py::arg("frame"), py::arg("tinframe") = 0)
+
+            .def("ttd_step_back", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager) return false;
+                return ctx->pTimeTravelManager->StepBackFrame();
+            }, "Step back one frame")
+
+            .def("ttd_step_forward", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager) return false;
+                return ctx->pTimeTravelManager->StepForwardFrame();
+            }, "Step forward one frame")
+
+            .def("ttd_resume", [](Emulator& self, py::object frameObj, uint32_t tInFrame) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager) return false;
+                ttd::TTDTimePoint from = ctx->pTimeTravelManager->CurrentPosition();
+                if (!frameObj.is_none())
+                    from.frame = frameObj.cast<uint64_t>();
+                from.tInFrame = tInFrame;
+                return ctx->pTimeTravelManager->ResumeRecordingFrom(from);
+            }, "Resume recording from current or specified point",
+               py::arg("frame") = py::none(), py::arg("tinframe") = 0)
+
+            .def("ttd_position", [](Emulator& self) -> py::dict {
+                py::dict result;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager)
+                {
+                    result["error"] = "TTD not available";
+                    return result;
+                }
+                ttd::TTDTimePoint pos = ctx->pTimeTravelManager->CurrentPosition();
+                ttd::TTDTimePoint end = ctx->pTimeTravelManager->SessionEndPosition();
+                py::dict current;
+                current["frame"]    = py::cast(pos.frame);
+                current["tinframe"] = py::cast(pos.tInFrame);
+                result["current"]   = current;
+                py::dict sessionEnd;
+                sessionEnd["frame"]    = py::cast(end.frame);
+                sessionEnd["tinframe"] = py::cast(end.tInFrame);
+                result["session_end"]  = sessionEnd;
+                return result;
+            }, "Get current TTD position")
+
+            .def("ttd_markers", [](Emulator& self) -> py::list {
+                py::list markers;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager) return markers;
+                const auto& journal = ctx->pTimeTravelManager->GetExternalEvents();
+                for (const auto& e : journal.Events())
+                {
+                    py::dict marker;
+                    marker["frame"]    = py::cast(e.time.frame);
+                    marker["tinframe"] = py::cast(e.time.tInFrame);
+                    marker["kind"]     = ttd::TTDExternalEventKindToString(e.kind);
+                    marker["reason"]   = e.reason;
+                    markers.append(marker);
+                }
+                return markers;
+            }, "List external-event markers (replay barriers)");
     }
 }

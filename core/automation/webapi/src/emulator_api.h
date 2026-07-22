@@ -289,10 +289,17 @@ public:
     // endregion Keyboard Injection
 
     // region TTD (Time-Travel Debug) (implementation: api/ttd_api.cpp)
-    // P1 (implementation-plan §3.A1 item 7) ships only the status endpoint
-    // for test observability. The rest of the TTD surface (start/stop/clear/
-    // seek/step/find_last/timeline) lands with Phase 4 (parent TDD §10.4).
+    // Full TTD automation surface (Phase 2 complete). Per parent TDD §10.4.
     ADD_METHOD_TO(EmulatorAPI::getTTDStatus, "/api/v1/emulator/{id}/ttd/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::startTTD, "/api/v1/emulator/{id}/ttd/start", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::stopTTD, "/api/v1/emulator/{id}/ttd/stop", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::invalidateTTD, "/api/v1/emulator/{id}/ttd/invalidate", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::seekTTD, "/api/v1/emulator/{id}/ttd/seek", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::stepBackTTD, "/api/v1/emulator/{id}/ttd/step-back", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::stepForwardTTD, "/api/v1/emulator/{id}/ttd/step-forward", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::resumeTTD, "/api/v1/emulator/{id}/ttd/resume", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getTTDPosition, "/api/v1/emulator/{id}/ttd/position", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getTTDMarkers, "/api/v1/emulator/{id}/ttd/markers", drogon::Get);
     // endregion TTD
     METHOD_LIST_END
 
@@ -789,10 +796,27 @@ public:
     // endregion Keyboard Injection Methods
 
     // region TTD Methods (implementation: api/ttd_api.cpp)
-    // Per parent TDD §10.4. P1 ships only the status endpoint (test
-    // observability); the rest of the surface arrives with Phase 4.
+    // Per parent TDD §10.4. Full surface available after Phase 2 completion.
     void getTTDStatus(const drogon::HttpRequestPtr& req,
                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void startTTD(const drogon::HttpRequestPtr& req,
+                  std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void stopTTD(const drogon::HttpRequestPtr& req,
+                 std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void invalidateTTD(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void seekTTD(const drogon::HttpRequestPtr& req,
+                 std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void stepBackTTD(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void stepForwardTTD(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void resumeTTD(const drogon::HttpRequestPtr& req,
+                   std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getTTDPosition(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getTTDMarkers(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // endregion TTD Methods
 
     // region Helper Methods (implementation: emulator_api.cpp)
