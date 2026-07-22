@@ -132,7 +132,9 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     tags.append(tagInterpreter);
     Json::Value tagTTD;
     tagTTD["name"] = "Time-Travel Debug";
-    tagTTD["description"] = "TTD recorder state (P1 ships status only; remaining surface lands with Phase 4)";
+    tagTTD["description"] =
+        "Time-Travel Debug recorder control — start/stop recording, seek, step, "
+        "resume, and inspect external-event markers (parent TDD §10.4)";
     tags.append(tagTTD);
 
     spec["tags"] = tags;
