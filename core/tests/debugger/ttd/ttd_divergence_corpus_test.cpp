@@ -10,13 +10,19 @@
 /// to surface state-completeness bugs in the serializers.
 ///
 /// Corpus:
-///   - BASIC idle (Dizzy Y or similar 48K idle title): steady-state loop,
-///     low RAM churn, exercises CPU + screen serialization.
+///   - Dizzy Y (48K title-screen attract mode): the SNA loads at the game's
+///     menu, no keyboard input is injected, so the workload is the title
+///     screen's music + attribute flash loop. Low-to-moderate RAM churn,
+///     exercises CPU + chipset + screen serialization.
 ///   - AccuracyCoinZX (self-modifying code, 48K): exercises memory writes
 ///     between captures — the highest-value single title for finding
 ///     serializer holes.
 ///   - Across the Edge (multicolor demo, 128K): heavy RAM churn, contention-
 ///     sensitive timing, exercises paging rebuild + multiple RAM banks.
+///
+/// Note: parent TDD §15.1 also calls for true BASIC idle, a scroller demo,
+/// a TR-DOS read-only loader, and a scripted-input game. Those fixtures are
+/// pending — the two wired titles already exercise the serializer matrix.
 ///
 /// All titles verified by sampling every N-th frame; the last frame is always
 /// included.

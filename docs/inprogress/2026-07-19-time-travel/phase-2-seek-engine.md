@@ -112,9 +112,13 @@ the merge.
    into `TTD_Divergence_Corpus_Test` plus a wall-clock cost gate that runs
    on every commit.
 
-   - **Dizzy Y** (48K idle): 100 frames, sample every 10. Recording-only
-     oracle — start TTD, run, extract hashes from timeline, SeekTo each
-     sampled frame, compare CPU + chipset + RAM digest bit-for-bit.
+   - **Dizzy Y** (48K title-screen attract mode): 100 frames, sample every
+     10. Recording-only oracle — start TTD, run, extract hashes from timeline,
+     SeekTo each sampled frame, compare CPU + chipset + RAM digest bit-for-bit.
+     The snapshot loads at the game's menu, not BASIC — no keyboard input is
+     injected, so the workload is the title screen's music + attribute flash
+     loop. (True BASIC-idle, scroller, and multicolor-demo entries from the
+     parent TDD §15.1 corpus are still pending fixtures.)
    - **AccuracyCoinZX** (48K self-modifying): 200 frames, sample every 10.
      Same recording-only oracle — exposes serializer holes via the
      highest-churn workload in the corpus.
