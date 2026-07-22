@@ -14,7 +14,7 @@ the network directly. Signals from PollWorker update the widgets.
 
 import logging
 
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import Qt, Slot, QThread
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QLineEdit, QPushButton, QComboBox, QSlider, QListWidget,
@@ -44,8 +44,11 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._wire_worker()
 
-        # Kick off the worker thread.
-        self._worker.start()
+        # Start the worker QThread. The worker QObject has already been
+        # moved to it in _wire_worker(); starting it triggers
+        # on_thread_started() which creates the QTimer on the worker
+        # thread.
+        self._worker_thread.start()
         # Trigger the initial connect.
         self._url_field.setText(base_url)
         self._on_connect_clicked()
@@ -196,12 +199,19 @@ class MainWindow(QMainWindow):
     # Wire the worker thread signals/slots to UI handlers.
     # ------------------------------------------------------------------
     def _wire_worker(self):
-        self._worker = PollWorker(self)
-        # Forward UI requests into worker slots (queued, cross-thread).
-        # No explicit connect() needed for these — instead, the click
-        # handlers call worker.on_*(...) directly.
+        # Worker-object pattern: PollWorker is a QObject moved to a
+        # dedicated QThread. Cross-thread signal/slot connections are
+        # queued automatically by Qt.
+        self._worker_thread = QThread(self)
+        self._worker = PollWorker()
+        self._worker.moveToThread(self._worker_thread)
 
-        # Worker signals -> UI updates.
+        # When the thread starts, the worker creates its QTimer.
+        self._worker_thread.started.connect(self._worker.on_thread_started)
+        # When the worker signals finished, the thread can quit.
+        self._worker.finished.connect(self._worker_thread.quit)
+
+        # Worker signals -> UI updates (auto queued cross-thread).
         self._worker.connected.connect(self._on_worker_connected)
         self._worker.instances.connect(self._on_worker_instances)
         self._worker.selected.connect(self._on_worker_selected)
@@ -213,10 +223,15 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         # Stop the worker before the window goes away.
-        if self._worker.isRunning():
-            self._worker.on_shutdown()
-            self._worker.quit()
-            self._worker.wait(3000)
+        if self._worker_thread.isRunning():
+            # request_shutdown is a slot on the worker; calling it via
+            # invokeMethod with QueuedConnection would be cleaner, but
+            # since it only flips a flag and stops the timer (which is
+            # safe across threads for these operations), we call it
+            # directly. The finished signal quits the thread.
+            self._worker.request_shutdown()
+            self._worker_thread.quit()
+            self._worker_thread.wait(3000)
         super().closeEvent(event)
 
     # ------------------------------------------------------------------
@@ -229,7 +244,10 @@ class MainWindow(QMainWindow):
         self._conn_badge.setStyleSheet(
             "background:#cc8800;color:#fff;border-radius:8px;padding:2px 8px;"
         )
-        self._worker.on_connect_to(url)
+        # Cross-thread slot invocation: since the worker was moved to
+        # its thread, AutoConnection picks QueuedConnection and the
+        # slot runs on the worker thread.
+        self._worker.request_connect_to(url)
 
     @Slot(int)
     def _on_instance_changed(self, index: int):
@@ -238,15 +256,15 @@ class MainWindow(QMainWindow):
         instance_id = self._instance_combo.itemData(index)
         if instance_id is None:
             return
-        self._worker.on_select_instance(str(instance_id))
+        self._worker.request_select_instance(str(instance_id))
 
     @Slot()
     def _on_start_clicked(self):
-        self._worker.on_start_recording()
+        self._worker.request_start_recording()
 
     @Slot()
     def _on_stop_clicked(self):
-        self._worker.on_stop_recording()
+        self._worker.request_stop_recording()
 
     @Slot()
     def _on_invalidate_clicked(self):
@@ -260,37 +278,37 @@ class MainWindow(QMainWindow):
         )
         if reply != QMessageBox.Yes:
             return
-        self._worker.on_invalidate("User requested via TTD Scrubber")
+        self._worker.request_invalidate("User requested via TTD Scrubber")
 
     @Slot()
     def _on_step_back_clicked(self):
-        self._worker.on_step_back()
+        self._worker.request_step_back()
 
     @Slot()
     def _on_step_fwd_clicked(self):
-        self._worker.on_step_forward()
+        self._worker.request_step_forward()
 
     @Slot()
     def _on_seek_clicked(self):
         frame = self._slider.value()
-        self._worker.on_seek(frame, 0)
+        self._worker.request_seek(frame, 0)
 
     @Slot()
     def _on_resume_clicked(self):
         frame = self._slider.value()
-        self._worker.on_resume(frame, 0)
+        self._worker.request_resume(frame, 0)
 
     @Slot()
     def _on_slider_released(self):
         frame = self._slider.value()
-        self._worker.on_seek(frame, 0)
+        self._worker.request_seek(frame, 0)
 
     @Slot()
     def _on_marker_double_clicked(self, item: QListWidgetItem):
         marker = item.data(Qt.UserRole) or {}
         frame = marker.get("frame", 0)
         self.statusBar().showMessage(f"Seeking to marker at frame {frame}…", 3000)
-        self._worker.on_seek(int(frame), int(marker.get("tinframe", 0)))
+        self._worker.request_seek(int(frame), int(marker.get("tinframe", 0)))
 
     # ------------------------------------------------------------------
     # Worker signal handlers (UI thread).

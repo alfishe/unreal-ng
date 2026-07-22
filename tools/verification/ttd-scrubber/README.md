@@ -135,16 +135,23 @@ Every UI control maps to exactly one TTD endpoint:
 
 ```
 MainWindow (UI thread)
-    │  click handlers emit
+    │  click handlers call worker.request_*  (cross-thread queued slots)
     ▼
-PollWorker (QThread)
-    │  QTimer drives adaptive poll loop
+PollWorker (QObject moved to a dedicated QThread)
+    │  QTimer on the worker thread drives adaptive poll loop
     ▼
 TTDApiClient (subclass of UnrealApiClient)
     │  requests
     ▼
   HTTP  /api/v1/emulator/{id}/ttd/*
 ```
+
+The worker uses the Qt **worker-object pattern**: `PollWorker` is a
+`QObject` (not a `QThread` subclass) that is moved to a dedicated
+`QThread` via `moveToThread()`. This is the officially recommended Qt
+pattern for worker threads. Every `QTimer` it creates and every slot
+that runs on it executes on the worker thread — no thread-affinity
+ambiguity, no `QTimer` warnings.
 
 All HTTP I/O happens on the worker thread; the UI never blocks. The
 worker emits signals back to the UI thread for state updates, position
@@ -169,14 +176,37 @@ ttd-scrubber/
     ├── __init__.py                 empty package marker
     ├── main.py                     QApplication entry point
     ├── main_window.py              UI composition (5 panels)
-    ├── poll_worker.py              QThread-based HTTP worker
-    └── ttd_client.py               TTDApiClient (subclass of UnrealApiClient)
+    ├── poll_worker.py              QObject HTTP worker (moved to QThread)
+    ├── ttd_client.py               TTDApiClient (subclass of UnrealApiClient)
+    └── _threading_smoke_test.py    headless threading verifier
 ```
 
 The shared `UnrealApiClient` (`../webapi/src/api_client.py`) hosts the
 10 `ttd_*` HTTP methods. This tool's `TTDApiClient` only adds instance
 discovery helpers; it inherits the HTTP surface so any other tool (or
 pytest fixture) reuses the same code path.
+
+### Threading smoke test
+
+`src/_threading_smoke_test.py` is a headless verifier for the
+worker-object pattern. It runs without a display and without a live
+emulator (the HTTP client is stubbed). It checks three things:
+
+1. The QTimer inside `PollWorker` has worker-thread affinity
+   (`QTimer.thread() is worker_thread`).
+2. The timer keeps firing across many intervals (i.e. `setInterval()`
+   does not silently kill the timer).
+3. A queued `start` action drains via the `action_result` signal.
+
+Run it from the `src/` directory:
+
+```bash
+cd tools/verification/ttd-scrubber/src
+python3 _threading_smoke_test.py
+```
+
+This test caught the original bug where `_tick` ran on the UI thread
+and silently killed the timer via cross-thread `setInterval()`.
 
 ## Troubleshooting
 
@@ -208,7 +238,18 @@ history at the current position.
 
 **Worker thread won't stop on close.**
 
-The window's `closeEvent` calls `on_shutdown()` then `quit()` then
+The window's `closeEvent` calls `request_shutdown()` then `quit()` then
 `wait(3000)`. If the worker is mid-HTTP-request, it may take up to the
 HTTP timeout to return. If you see this consistently, file a bug with
 the contents of the status bar at exit time.
+
+**Console shows `QObject::killTimer: Timers cannot be stopped from
+another thread` during process exit.**
+
+Benign. This warning appears when Python's garbage collector destroys
+the worker `QObject` (and its child `QTimer`) after the worker thread
+has already exited. The timer was already inert (its event loop is
+gone); the warning is Qt complaining that the cleanup call crossed
+threads. To suppress it entirely, ensure the `QThread` is fully torn
+down before the `QObject` is GC'd — in practice this only happens at
+process exit and is harmless.

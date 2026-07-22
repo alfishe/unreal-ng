@@ -1,11 +1,20 @@
 """
-PollWorker — the background HTTP thread for the TTD Scrubber.
+PollWorker — the background HTTP worker for the TTD Scrubber.
 
-Runs in its own QThread so the UI never blocks on a network call. A QTimer
-on the thread drives adaptive polling (2s when no instance, 1s idle, 500ms
-when recording or detached). UI clicks are forwarded as slot calls; the
-worker performs the HTTP request and emits a result signal back to the UI
-thread.
+Implemented using the recommended Qt worker-object pattern:
+PollWorker is a QObject that lives on a dedicated QThread (created and
+owned by MainWindow). Because the worker object is moved to that thread
+via moveToThread(), every QTimer it creates and every slot that runs on
+it executes on the worker thread — no threading ambiguity.
+
+Adaptive polling cadence:
+  - No instance selected          → 2000 ms
+  - Instance selected, idle       → 1000 ms
+  - Recording or detached         → 500 ms
+
+UI clicks are delivered via the request_* slots below; with the worker
+moved to its thread, cross-thread signal/slot invocations are queued
+automatically. The worker never touches widgets.
 
 Signals (UI consumes these):
     connected(bool, str)              — server reachable, message
@@ -16,37 +25,42 @@ Signals (UI consumes these):
     ttd_markers(list[dict])           — /ttd/markers payload
     action_result(str, dict, str)     — (verb, response, error_or_empty)
     error(str)                        — unrecoverable error message
+    finished()                        — emitted when the worker exits
 
-Slots (UI emits these):
-    connect_to(url)
-    select_instance(str)
-    start_recording()
-    stop_recording()
-    invalidate(str)
-    seek(int, int)
-    step_back()
-    step_forward()
-    resume(int, int)
-    shutdown()
+Slots (UI emits these — connected with Qt.QueuedConnection):
+    on_thread_started()               — starts the QTimer (auto-connected)
+    request_connect_to(str)
+    request_select_instance(str)
+    request_start_recording()
+    request_stop_recording()
+    request_invalidate(str)
+    request_seek(int, int)
+    request_step_back()
+    request_step_forward()
+    request_resume(int, int)
+    request_shutdown()
 """
 
 import logging
-import time
 from typing import Optional
 
-from PySide6.QtCore import QThread, QTimer, Signal, Slot, QMutex
+from PySide6.QtCore import QObject, QTimer, Signal, Slot, QMutex
 
 
 logger = logging.getLogger("PollWorker")
 
 
-class PollWorker(QThread):
-    """Background HTTP worker. Owns the TTDApiClient; never touches widgets."""
+class PollWorker(QObject):
+    """Background HTTP worker. Owns the TTDApiClient; never touches widgets.
+
+    Thread-affinity contract: the caller constructs this object on the UI
+    thread, then immediately calls moveToThread(worker_thread) before the
+    thread is started. After that, all slots execute on the worker thread.
+    """
 
     # ------------------------------------------------------------------
-    # Signals (emitted on the worker thread; UI must use Qt.QueuedConnection
-    # for any slot that touches widgets, which is the default for cross-
-    # thread signal/slot connections).
+    # Signals (emitted on the worker thread; UI consumes via Qt's
+    # automatic cross-thread queueing).
     # ------------------------------------------------------------------
     connected = Signal(bool, str)
     instances = Signal(list)
@@ -56,35 +70,56 @@ class PollWorker(QThread):
     ttd_markers = Signal(list)
     action_result = Signal(str, dict, str)  # (verb, response, error_msg)
     error = Signal(str)
+    finished = Signal()
 
     # ------------------------------------------------------------------
-    # ctor
+    # ctor — runs on whatever thread constructs the object (UI thread).
+    # After moveToThread(), all subsequent slot calls run on the worker.
     # ------------------------------------------------------------------
     def __init__(self, parent=None):
         super().__init__(parent)
-        # The TTDApiClient lives on the worker thread. Created in run().
+        # The TTDApiClient lives on the worker thread. Created in
+        # _ensure_client() the first time _tick runs.
         self._client = None
-        # Base URL set by on_connect_to.
+        # Base URL set by request_connect_to.
         self._base_url: Optional[str] = None
-        # The currently selected instance id (string) and its info dict.
+        # Currently selected instance id and info dict.
         self._instance_id: Optional[str] = None
         self._instance_info: dict = {}
-        # Last observed TTD state ("idle" / "recording" / "detached").
-        # Drives the adaptive poll cadence.
+        # Last observed TTD state — drives the adaptive poll cadence.
         self._last_state: str = "idle"
         # Mutex guards _instance_id and _pending_actions.
         self._mutex = QMutex()
         # Action queue: list of (verb, args) tuples. The tick drains one
         # entry per cycle so HTTP calls stay serialized and predictable.
         self._pending_actions: list = []
-        # Set true by shutdown(). Stops the timer and exits run().
+        # Set true by request_shutdown(). Stops the timer and exits.
         self._stopping = False
+        # The QTimer itself — created in on_thread_started() so it has
+        # worker-thread affinity.
+        self._timer: Optional[QTimer] = None
 
     # ------------------------------------------------------------------
-    # Slot: connect to a WebAPI base URL.
+    # Lifecycle: starts the QTimer when the owning QThread starts.
+    # Auto-connected by MainWindow to QThread.started.
+    # ------------------------------------------------------------------
+    @Slot()
+    def on_thread_started(self):
+        # QTimer created here — affinity is the worker thread (because
+        # this slot runs on the worker thread after moveToThread).
+        self._timer = QTimer()
+        self._timer.timeout.connect(self._tick)  # DirectConnection implied:
+        # both sender (QTimer) and receiver (self QObject) live on the
+        # worker thread, so Qt picks DirectConnection by default.
+        self._timer.setInterval(1000)
+        self._timer.start()
+        logger.info("PollWorker started on its thread")
+
+    # ------------------------------------------------------------------
+    # Request slots — UI emits these; they execute on the worker thread.
     # ------------------------------------------------------------------
     @Slot(str)
-    def on_connect_to(self, url: str):
+    def request_connect_to(self, url: str):
         url = (url or "").strip().rstrip("/")
         if not url:
             url = "http://localhost:8090"
@@ -99,92 +134,65 @@ class PollWorker(QThread):
         self._mutex.unlock()
         logger.info("connect_to: %s", url)
 
-    # ------------------------------------------------------------------
-    # Slot: select a specific instance by id.
-    # ------------------------------------------------------------------
     @Slot(str)
-    def on_select_instance(self, instance_id: str):
+    def request_select_instance(self, instance_id: str):
         self._mutex.lock()
         self._instance_id = instance_id or None
         self._instance_info = {}
         self._pending_actions.clear()
         self._mutex.unlock()
-        # Emit the new selection immediately (info may be empty until the
-        # next instances tick refreshes it).
         self.selected.emit(self._instance_id or "", self._instance_info)
         logger.info("select_instance: %s", self._instance_id)
 
-    # ------------------------------------------------------------------
-    # Slots: queue UI-driven TTD actions. The tick loop drains them one
-    # per cycle so HTTP stays serialized and the UI sees a clean
-    # action_result signal for each.
-    # ------------------------------------------------------------------
     @Slot()
-    def on_start_recording(self):
+    def request_start_recording(self):
         self._enqueue("start", {})
 
     @Slot()
-    def on_stop_recording(self):
+    def request_stop_recording(self):
         self._enqueue("stop", {})
 
     @Slot(str)
-    def on_invalidate(self, reason: str):
+    def request_invalidate(self, reason: str):
         self._enqueue("invalidate", {"reason": reason or "User requested"})
 
     @Slot(int, int)
-    def on_seek(self, frame: int, tinframe: int):
+    def request_seek(self, frame: int, tinframe: int):
         self._enqueue("seek", {"frame": int(frame), "tinframe": int(tinframe)})
 
     @Slot()
-    def on_step_back(self):
+    def request_step_back(self):
         self._enqueue("step_back", {})
 
     @Slot()
-    def on_step_forward(self):
+    def request_step_forward(self):
         self._enqueue("step_forward", {})
 
     @Slot(int, int)
-    def on_resume(self, frame: int, tinframe: int):
+    def request_resume(self, frame: int, tinframe: int):
         # frame == -1 means "resume from current position"
         args = {} if frame < 0 else {"frame": int(frame), "tinframe": int(tinframe)}
         self._enqueue("resume", args)
 
     @Slot()
-    def on_shutdown(self):
+    def request_shutdown(self):
+        # Just flip the flag. We deliberately do NOT call
+        # self._timer.stop() here because this slot may be invoked
+        # directly from the UI thread (e.g. closeEvent) — touching the
+        # QTimer from a non-worker thread triggers Qt warnings and is
+        # silently ignored anyway. Setting _stopping makes _tick a
+        # no-op, so the timer is effectively inert; it will be cleaned
+        # up when the worker QThread exits and the worker QObject is
+        # eventually garbage-collected.
         self._stopping = True
-        # Quit the Qt event loop inside run().
-        self.quit()
         logger.info("shutdown requested")
+        self.finished.emit()
 
     def _enqueue(self, verb: str, args: dict):
         self._mutex.lock()
         self._pending_actions.append((verb, args))
         self._mutex.unlock()
         logger.debug("queued action: %s %s", verb, args)
-
-    # ------------------------------------------------------------------
-    # Thread entry point.
-    # ------------------------------------------------------------------
-    def run(self):
-        # Lazy import so the module loads even without PySide6 in the
-        # environment (e.g. unit tests of the API client alone).
-        # (TTDApiClient is created in _ensure_client.)
-
-        # The QTimer lives on this thread. Start at 1s; _tick adjusts it.
-        self._timer = QTimer()
-        self._timer.timeout.connect(self._tick)
-        self._timer.setInterval(1000)
-        self._timer.start()
-
-        logger.info("PollWorker started")
-
-        # Run the thread's Qt event loop. This blocks until quit() is
-        # called from shutdown(). The QTimer fires _tick from within
-        # this loop, so polling runs without a manual while loop.
-        super().run()
-
-        self._timer.stop()
-        logger.info("PollWorker stopped")
 
     # ------------------------------------------------------------------
     # Helpers
@@ -206,10 +214,10 @@ class PollWorker(QThread):
             return False
 
     # ------------------------------------------------------------------
-    # Main tick — fires on every timer interval.
+    # Main tick — fires on every timer interval (worker thread).
     # ------------------------------------------------------------------
     def _tick(self):
-        if self._stopping:
+        if self._stopping or self._timer is None:
             return
         if not self._ensure_client():
             # No base URL configured yet. Nothing to poll.
@@ -226,9 +234,11 @@ class PollWorker(QThread):
         if not self._poll_instances():
             return
         if self._instance_id is None:
-            # Auto-select when none chosen.
+            # Auto-select when none chosen. May succeed or not.
             self._auto_select()
-            # Slow down when no instance is selected.
+        # Re-check selection after auto-select attempt.
+        if self._instance_id is None:
+            # Still no instance — slow down the poll.
             if self._timer.interval() != 2000:
                 self._timer.setInterval(2000)
                 logger.debug("poll cadence -> 2000 ms (no instance)")
@@ -284,8 +294,7 @@ class PollWorker(QThread):
         raise ValueError(f"unknown action verb: {verb}")
 
     # ------------------------------------------------------------------
-    # Poll the instance list. Returns False if the call failed (caller
-    # skips TTD polling).
+    # Poll the instance list. Returns False if the call failed.
     # ------------------------------------------------------------------
     def _poll_instances(self) -> bool:
         try:
@@ -295,7 +304,6 @@ class PollWorker(QThread):
             return False
 
         if not isinstance(data, list):
-            # Older or unexpected payload shape — treat as empty.
             data = []
 
         self.connected.emit(True, f"connected — {len(data)} instance(s)")
@@ -339,7 +347,7 @@ class PollWorker(QThread):
     # ------------------------------------------------------------------
     def _poll_ttd_state(self):
         instance_id = self._instance_id
-        if not instance_id or not self._client:
+        if not instance_id or not self._client or self._timer is None:
             return
 
         # Status
@@ -358,8 +366,7 @@ class PollWorker(QThread):
         except Exception as exc:
             logger.warning("ttd_position failed: %s", exc)
 
-        # Markers (lower priority — every other tick is fine, but we
-        # fetch every tick for simplicity; the volume is tiny).
+        # Markers
         try:
             markers_resp = self._client.ttd_markers(instance_id)
             markers_list = (markers_resp or {}).get("markers", [])
@@ -367,11 +374,21 @@ class PollWorker(QThread):
         except Exception as exc:
             logger.warning("ttd_markers failed: %s", exc)
 
-        # Adapt cadence. Recording/detached = 500 ms; idle = 1 s;
-        # if no instance was selected earlier in this tick, the timer
-        # stays slow (set in _poll_instances path implicitly).
+        # Adapt cadence: recording/detached = 500 ms; otherwise 1 s.
         if state != self._last_state:
             logger.info("state transition %s -> %s", self._last_state, state)
+            self._last_state = state
+
+        target_interval = 500 if state in ("recording", "detached") else 1000
+        if self._timer.interval() != target_interval:
+            self._timer.setInterval(target_interval)
+            logger.debug("poll cadence -> %d ms", target_interval)
+            self._last_state = state
+
+        target_interval = 500 if state in ("recording", "detached") else 1000
+        if self._timer.interval() != target_interval:
+            self._timer.setInterval(target_interval)
+            logger.debug("poll cadence -> %d ms", target_interval)
             self._last_state = state
 
         target_interval = 500 if state in ("recording", "detached") else 1000
