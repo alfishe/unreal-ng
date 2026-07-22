@@ -383,15 +383,3 @@ class PollWorker(QObject):
         if self._timer.interval() != target_interval:
             self._timer.setInterval(target_interval)
             logger.debug("poll cadence -> %d ms", target_interval)
-            self._last_state = state
-
-        target_interval = 500 if state in ("recording", "detached") else 1000
-        if self._timer.interval() != target_interval:
-            self._timer.setInterval(target_interval)
-            logger.debug("poll cadence -> %d ms", target_interval)
-            self._last_state = state
-
-        target_interval = 500 if state in ("recording", "detached") else 1000
-        if self._timer.interval() != target_interval:
-            self._timer.setInterval(target_interval)
-            logger.debug("poll cadence -> %d ms", target_interval)

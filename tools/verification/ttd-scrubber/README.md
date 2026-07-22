@@ -178,7 +178,8 @@ ttd-scrubber/
     ├── main_window.py              UI composition (5 panels)
     ├── poll_worker.py              QObject HTTP worker (moved to QThread)
     ├── ttd_client.py               TTDApiClient (subclass of UnrealApiClient)
-    └── _threading_smoke_test.py    headless threading verifier
+    ├── _threading_smoke_test.py    headless threading verifier
+    └── _sigint_smoke_test.py       headless Ctrl+C / shutdown verifier
 ```
 
 The shared `UnrealApiClient` (`../webapi/src/api_client.py`) hosts the
@@ -207,6 +208,27 @@ python3 _threading_smoke_test.py
 
 This test caught the original bug where `_tick` ran on the UI thread
 and silently killed the timer via cross-thread `setInterval()`.
+
+### SIGINT smoke test
+
+`src/_sigint_smoke_test.py` verifies that Ctrl+C in the console leads
+to a clean shutdown:
+
+1. The Python SIGINT handler fires (made possible by the 50ms wakeup
+   `QTimer` in `main._install_sigint_handler`).
+2. The handler triggers `window.close()` which delegates to
+   `worker.request_shutdown()`.
+3. The worker thread exits cleanly within 2 seconds.
+
+Run:
+
+```bash
+cd tools/verification/ttd-scrubber/src
+python3 _sigint_smoke_test.py
+```
+
+Both smoke tests run without a display and without a live emulator
+(HTTP client is stubbed), so they're safe to run in CI.
 
 ## Troubleshooting
 
