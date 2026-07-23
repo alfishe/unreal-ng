@@ -20,6 +20,7 @@
 #include "debugger/disassembler/z80disasm.h"
 #include "emulator/monitoring/monitoringmanager.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/porttracker.h"
 #include "loaders/snapshot/loader_sna.h"
 
 /// region <Constructors / Destructors>
@@ -229,6 +230,13 @@ bool Emulator::Init()
         MLOGDEBUG("Emulator::Init - monitoring manager created");
     }
 
+    // Create port tracker for analysis classifiers
+    if (result)
+    {
+        _context->pPortTracker = new PortTracker(_context);
+        MLOGDEBUG("Emulator::Init - port tracker created");
+    }
+
     /// region <Sanity checks>
 
     if (!_context)
@@ -408,6 +416,13 @@ void Emulator::ReleaseNoGuard()
         _context->pMonitoringManager->shutdown();
         delete _context->pMonitoringManager;
         _context->pMonitoringManager = nullptr;
+    }
+
+    // Release port tracker
+    if (_context->pPortTracker)
+    {
+        delete _context->pPortTracker;
+        _context->pPortTracker = nullptr;
     }
 
     // Release debug manager (and related components)

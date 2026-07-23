@@ -9,6 +9,7 @@
 #include "debugger/debugmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
+#include "emulator/io/porttracker.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/ports/models/portdecoder_pentagon128.h"
 #include "emulator/ports/models/portdecoder_pentagon512.h"
@@ -124,11 +125,18 @@ uint8_t PortDecoder::DecodePortIn(uint16_t addr, [[maybe_unused]] uint16_t pc)
     // Subclasses should call OnPortInComplete() after performing I/O.
     result = PeripheralPortIn(addr);
 
-    // Track port read access
+    // Track port read access (MemoryAccessTracker - legacy)
     if (_memory && _memory->_memoryAccessTracker)
     {
         uint16_t callerAddress = _context->pCore->GetZ80()->m1_pc;
         _memory->_memoryAccessTracker->TrackPortRead(addr, result, callerAddress);
+    }
+
+    // Track in PortTracker for detailed I/O analysis
+    if (_context->pPortTracker && _context->pPortTracker->IsActive())
+    {
+        uint16_t callerAddress = _context->pCore->GetZ80()->m1_pc;
+        _context->pPortTracker->TrackRead(addr, result, callerAddress);
     }
 
     return result;
@@ -155,14 +163,19 @@ void PortDecoder::OnPortInComplete(uint16_t port, uint8_t result, [[maybe_unused
         }
     }
 
-    // 2. Port access tracking
+    // 2. Port access tracking (MemoryAccessTracker - legacy)
     if (_memory && _memory->_memoryAccessTracker)
     {
         uint16_t callerAddress = _context->pCore->GetZ80()->m1_pc;
         _memory->_memoryAccessTracker->TrackPortRead(port, result, callerAddress);
     }
 
-    // 3. Future: Analyzer notifications can be added here
+    // 3. PortTracker - detailed I/O analysis
+    if (_context->pPortTracker && _context->pPortTracker->IsActive())
+    {
+        uint16_t callerAddress = _context->pCore->GetZ80()->m1_pc;
+        _context->pPortTracker->TrackRead(port, result, callerAddress);
+    }
 }
 
 void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [[maybe_unused]] uint16_t pc)
@@ -192,11 +205,18 @@ void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [
     // Subclasses should call OnPortOutComplete() after performing I/O.
     PeripheralPortOut(addr, value);
 
-    // Track port write access
+    // Track port write access (MemoryAccessTracker - legacy)
     if (_memory && _memory->_memoryAccessTracker)
     {
         uint16_t callerAddress = _context->pCore->GetZ80()->m1_pc;
         _memory->_memoryAccessTracker->TrackPortWrite(addr, value, callerAddress);
+    }
+
+    // Track in PortTracker for detailed I/O analysis
+    if (_context->pPortTracker && _context->pPortTracker->IsActive())
+    {
+        uint16_t callerAddress = _context->pCore->GetZ80()->m1_pc;
+        _context->pPortTracker->TrackWrite(addr, value, callerAddress);
     }
 }
 
@@ -221,14 +241,19 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
         }
     }
 
-    // 2. Port access tracking
+    // 2. Port access tracking (MemoryAccessTracker - legacy)
     if (_memory && _memory->_memoryAccessTracker)
     {
         uint16_t callerAddress = _context->pCore->GetZ80()->m1_pc;
         _memory->_memoryAccessTracker->TrackPortWrite(port, value, callerAddress);
     }
 
-    // 3. Future: Analyzer notifications can be added here
+    // 3. PortTracker - detailed I/O analysis
+    if (_context->pPortTracker && _context->pPortTracker->IsActive())
+    {
+        uint16_t callerAddress = _context->pCore->GetZ80()->m1_pc;
+        _context->pPortTracker->TrackWrite(port, value, callerAddress);
+    }
 }
 
 

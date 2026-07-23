@@ -4,6 +4,7 @@
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/analyzers/trdos/trdosanalyzer.h"
+#include "debugger/analyzers/memory-region/memoryregionanalyzer.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 
 /// region <Constructors / Destructors>
@@ -27,6 +28,7 @@ DebugManager::DebugManager(EmulatorContext* context)
     
     // Register built-in analyzers
     _analyzerManager->registerAnalyzer("trdos", std::make_unique<TRDOSAnalyzer>(_context));
+    _analyzerManager->registerAnalyzer("memory-region", std::make_unique<MemoryRegionAnalyzer>(_context));
 
     _disassembler = std::make_unique<Z80Disassembler>(_context);
     _disassembler->SetLogger(_context->pModuleLogger);

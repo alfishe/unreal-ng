@@ -265,6 +265,41 @@ void FeatureManager::setDefaults()
                      "",
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryAnalysis});
+    registerFeature({Features::kPortTracking,
+                     Features::kPortTrackingAlias,
+                     "Track I/O port read/write activity for analysis classifiers",
+                     false,  // OFF by default
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryAnalysis});
+    registerFeature({Features::kAnalysis,
+                     Features::kAnalysisAlias,
+                     "Master analysis toggle for memory segmentation and classifiers",
+                     false,  // OFF by default
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryAnalysis});
+    registerFeature({Features::kAnalysisSegmentation,
+                     Features::kAnalysisSegmentationAlias,
+                     "Memory segmentation analysis (CODE/DATA/VARIABLE/SMC)",
+                     false,  // OFF by default
+                     Features::kAnalysis,  // parent
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryAnalysis});
+    registerFeature({Features::kAnalysisClassifiers,
+                     Features::kAnalysisClassifiersAlias,
+                     "Semantic tag classifiers (screen, music, loader, etc.)",
+                     false,  // OFF by default
+                     Features::kAnalysisSegmentation,  // parent
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryAnalysis});
+    registerFeature({Features::kAnalysisBehaviorDetection,
+                     Features::kAnalysisBehaviorDetectionAlias,
+                     "Detect execution phase changes (loading, running, etc.)",
+                     false,  // OFF by default
+                     Features::kAnalysisSegmentation,  // parent
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryAnalysis});
 
 
     _dirty = false;

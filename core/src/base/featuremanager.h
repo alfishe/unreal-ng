@@ -29,6 +29,11 @@ constexpr const char* const kScreenHQ = "screenhq";
 constexpr const char* const kRecording = "recording";
 constexpr const char* const kSharedMemory = "sharedmemory";
 constexpr const char* const kOpcodeProfiler = "opcodeprofiler";
+constexpr const char* const kPortTracking = "porttracking";
+constexpr const char* const kAnalysis = "analysis";
+constexpr const char* const kAnalysisSegmentation = "analysis.segmentation";
+constexpr const char* const kAnalysisClassifiers = "analysis.classifiers";
+constexpr const char* const kAnalysisBehaviorDetection = "analysis.behavior";
 
 
 // Feature Aliases
@@ -42,6 +47,11 @@ constexpr const char* const kScreenHQAlias = "vhq";
 constexpr const char* const kRecordingAlias = "rec";
 constexpr const char* const kSharedMemoryAlias = "shm";
 constexpr const char* const kOpcodeProfilerAlias = "op";
+constexpr const char* const kPortTrackingAlias = "port";
+constexpr const char* const kAnalysisAlias = "ana";
+constexpr const char* const kAnalysisSegmentationAlias = "seg";
+constexpr const char* const kAnalysisClassifiersAlias = "cls";
+constexpr const char* const kAnalysisBehaviorDetectionAlias = "beh";
 
 
 // Feature Descriptions

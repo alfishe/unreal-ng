@@ -64,7 +64,18 @@ Emulator* EmulatorTestHelper::CreateDebugEmulator(const std::vector<std::string>
             {
                 context->pFeatureManager->setFeature(Features::kDebugMode, true);
             }
-            // Add more feature mappings as needed
+            else if (feature == "memorytracking")
+            {
+                context->pFeatureManager->setFeature(Features::kMemoryTracking, true);
+            }
+            else if (feature == "porttracking")
+            {
+                context->pFeatureManager->setFeature(Features::kPortTracking, true);
+            }
+            else if (feature == "analysis")
+            {
+                context->pFeatureManager->setFeature(Features::kAnalysis, true);
+            }
         }
     }
 

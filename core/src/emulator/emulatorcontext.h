@@ -15,6 +15,7 @@ class MainLoop;
 class Memory;
 class WD1793;
 class PortDecoder;
+class PortTracker;
 class Screen;
 class SoundManager;
 class RecordingManager;
@@ -94,6 +95,9 @@ public:
 
     // Real-time monitoring via shared memory (for external observer tools)
     MonitoringManager* pMonitoringManager = nullptr;
+
+    // I/O port activity tracker (for analysis classifiers)
+    PortTracker* pPortTracker = nullptr;
     /// endregion </Child object references>
 
     /// region <Parent object references>
