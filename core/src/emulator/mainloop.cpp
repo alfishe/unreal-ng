@@ -138,7 +138,10 @@ void MainLoop::Run(volatile bool& stopRequested)
         /// endregion </Info logging>
 
         // Synchronization strategy depends on turbo mode setting
+        // Recording should NEVER interfere with normal frame pacing - encoder
+        // backpressure (blocking mode) handles non-realtime encoders separately
         const CONFIG& config = _context->config;
+
         if (!config.turbo_mode)
         {
             // Normal mode: Wait until audio callback requests more data and buffer is about half-full
@@ -348,19 +351,6 @@ void MainLoop::OnFrameEnd()
         }
     }
 
-    // Real-time monitoring: snapshot state, signal observers, poll control commands
-    if (_context->pMonitoringManager && _context->pMonitoringManager->isEnabled())
-    {
-        try
-        {
-            _context->pMonitoringManager->onFrameEnd();
-        }
-        catch (const std::exception& e)
-        {
-            MLOGERROR("MonitoringManager::onFrameEnd failed: %s", e.what());
-        }
-    }
-
     // Notify that video frame is composed and ready for rendering
     // Send per-instance frame refresh event with emulator ID for filtering
     try
@@ -381,7 +371,20 @@ void MainLoop::OnFrameEnd()
     {
         _context->pDebugManager->GetAnalyzerManager()->dispatchFrameEnd();
     }
-    
+
+    // Dispatch frame end event to MonitoringManager (for real-time monitoring)
+    if (_context->pMonitoringManager && _context->pMonitoringManager->isEnabled())
+    {
+        try
+        {
+            _context->pMonitoringManager->onFrameEnd();
+        }
+        catch (const std::exception& e)
+        {
+            MLOGERROR("MonitoringManager::onFrameEnd failed: %s", e.what());
+        }
+    }
+
     // Process keyboard injection sequences (for automation)
     // This is called each frame to advance any queued key sequences (tap/release timing)
     if (_context->pDebugManager && _context->pDebugManager->GetKeyboardManager())
