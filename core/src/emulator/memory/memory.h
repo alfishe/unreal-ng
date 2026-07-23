@@ -210,6 +210,10 @@ public:
     void LoadContentToMemory(uint8_t* contentBuffer, size_t size, uint16_t z80address);
     void LoadRAMPageData(uint8_t page, uint8_t* fromBuffer, size_t bufferSize);
     void SetROMPageFlags();
+
+    /// @brief Get the filepath for memory-mapped shared memory (stub for future shared memory feature).
+    /// @return Empty string - shared memory not yet implemented.
+    std::string GetMappedMemoryFilepath() const { return ""; }
     /// endregion </Service methods>
 
     /// region <Bank / Page identification helpers>

@@ -97,6 +97,10 @@ enum class SectionType : uint16_t
     // Configuration
     LOGGER_STATE    = 0x0300,
 
+    // Analysis
+    SEGMENTATION_MAP = 0x0120,
+    PORT_ACTIVITY    = 0x0121,
+
     // User/plugin range: 0x1000–0x1FFF
     USER_BASE       = 0x1000,
 };
