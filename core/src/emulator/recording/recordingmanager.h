@@ -1,8 +1,12 @@
 #pragma once
+#include <chrono>
 #include <memory>
+#include <mutex>
 #include <vector>
 
+#include "3rdparty/message-center/eventqueue.h"
 #include "emulator/platform.h"
+#include "emulator/sound/soundmanager.h"  // AudioSourceType lives here now
 #include "encoder_base.h"
 #include "encoder_config.h"
 #include "stdafx.h"
@@ -24,39 +28,7 @@ enum class RecordingMode
     AudioOnly      // Record audio without video
 };
 
-/// Audio source types for individual device/channel selection
-enum class AudioSourceType
-{
-    // Master output
-    MasterMix,  // Final mixed output (all devices)
-
-    // Individual devices
-    Beeper,        // Beeper output
-    AY1_All,       // AY chip #1 (all channels mixed)
-    AY2_All,       // AY chip #2 (all channels mixed)
-    AY3_All,       // AY chip #3 (all channels mixed)
-    COVOX,         // COVOX/DAC output
-    GeneralSound,  // General Sound output
-    Moonsound,     // Moonsound/OPL4 output
-
-    // Individual AY channels (chip 1)
-    AY1_ChannelA,  // AY chip #1, channel A
-    AY1_ChannelB,  // AY chip #1, channel B
-    AY1_ChannelC,  // AY chip #1, channel C
-
-    // Individual AY channels (chip 2)
-    AY2_ChannelA,  // AY chip #2, channel A
-    AY2_ChannelB,  // AY chip #2, channel B
-    AY2_ChannelC,  // AY chip #2, channel C
-
-    // Individual AY channels (chip 3)
-    AY3_ChannelA,  // AY chip #3, channel A
-    AY3_ChannelB,  // AY chip #3, channel B
-    AY3_ChannelC,  // AY chip #3, channel C
-
-    // Custom source (for future extensions)
-    Custom
-};
+// AudioSourceType is now defined in soundmanager.h (shared with device registry)
 
 /// Audio track configuration for multi-track recordings
 struct AudioTrackConfig
@@ -72,6 +44,15 @@ struct AudioTrackConfig
 };
 
 /// endregion </Recording types>
+
+/// Encoder backend selection
+enum class EncoderBackend
+{
+    Auto,    ///< Try native first, fall back to FFmpeg
+    Native,  ///< Force native encoder (VideoToolbox on macOS). Fail if unavailable.
+    FFmpeg,  ///< Force FFmpeg pipe encoder. Fail if unavailable.
+    Custom   ///< Use externally provided encoder (via StartRecordingWithEncoder)
+};
 
 /// @brief Video/Audio Recording Manager - Captures emulated output for video encoding
 ///
@@ -92,7 +73,7 @@ struct AudioTrackConfig
 /// 4. StopRecording() - Finalize and write output file
 ///
 /// Future codec implementations will fill in the encoder stubs.
-class RecordingManager
+class RecordingManager : public Observer
 {
     /// region <ModuleLogger definitions for Module/Submodule>
 protected:
@@ -132,6 +113,12 @@ public:
     /// @return true if recording started successfully
     bool StartRecordingEx(const std::string& filename);
 
+    /// Start recording with a custom encoder instance
+    /// @param filename Output filename
+    /// @param encoder Pre-configured encoder (ownership transferred)
+    /// @return true if recording started successfully
+    bool StartRecordingWithEncoder(const std::string& filename, std::unique_ptr<EncoderBase> encoder);
+
     /// Stop current recording and finalize output file
     void StopRecording();
 
@@ -152,6 +139,25 @@ public:
     {
         return _isPaused;
     }
+
+    /// Check if encoder can keep up with realtime
+    bool IsRealtimeCapable() const
+    {
+        return _realtimeCapable;
+    }
+
+    /// Set realtime capability flag (called after encoder init)
+    void SetRealtimeCapable(bool capable)
+    {
+        _realtimeCapable = capable;
+    }
+
+    /// Get the detailed error message from the last failed recording attempt
+    /// @return Error string with specifics (encoder name, failure reason, path, codec)
+    std::string GetLastRecordingError() const
+    {
+        return _lastRecordingError;
+    }
     /// endregion </Recording control>
 
     /// region <Frame/Audio capture>
@@ -167,12 +173,6 @@ public:
     /// @param sampleCount Number of samples (total, not per channel)
     void CaptureAudio(const int16_t* samples, size_t sampleCount);
 
-    /// @brief Called at each frame end with both video and audio data
-    /// Dispatches to all active encoders
-    /// @param framebuffer Video frame data
-    /// @param audioSamples Audio sample buffer
-    /// @param audioSampleCount Number of audio samples
-    void OnFrameEnd(const FramebufferDescriptor& framebuffer, const int16_t* audioSamples, size_t audioSampleCount);
     /// endregion </Frame/Audio capture>
 
     /// region <Statistics>
@@ -182,10 +182,15 @@ public:
     {
         uint64_t framesRecorded = 0;        // Total video frames captured
         uint64_t audioSamplesRecorded = 0;  // Total audio samples captured
-        double recordedDuration = 0.0;      // Duration in seconds (emulated time)
+        double recordedDuration = 0.0;      // Duration in seconds (wall clock — real elapsed time)
+        double emulatedDuration = 0.0;      // Duration in seconds (emulated time — may differ in turbo mode)
         uint64_t outputFileSize = 0;        // Output file size in bytes
         double averageFrameTime = 0.0;      // Average time per frame encode (ms)
+        double recentFps = 0.0;             // FPS over the last N seconds (rolling window)
     };
+
+    /// Set the rolling FPS window duration in seconds (default: 5.0)
+    void SetFpsWindowSeconds(double seconds) { _fpsWindowSeconds = seconds; }
 
     RecordingStats GetStats() const
     {
@@ -195,6 +200,10 @@ public:
 
     /// region <Configuration>
 public:
+    // Encoder backend selection
+    void SetEncoderBackend(EncoderBackend backend) { _encoderBackend = backend; }
+    EncoderBackend GetEncoderBackend() const { return _encoderBackend; }
+
     // Recording mode
     void SetRecordingMode(RecordingMode mode);
     RecordingMode GetRecordingMode() const
@@ -212,6 +221,37 @@ public:
     void SetVideoFrameRate(float fps);
     void SetVideoCodec(const std::string& codec);
     void SetVideoBitrate(uint32_t kbps);
+
+    /// Quality preset (0-10, 0 = fastest/lowest quality, 10 = slowest/best)
+    void SetQualityPreset(int preset)
+    {
+        _qualityPreset = preset < 0 ? 0 : (preset > 10 ? 10 : preset);
+    }
+
+    /// Capture region: full frame with border, or main screen only (256×192)
+    void SetCaptureRegion(VideoCaptureRegion region)
+    {
+        if (!_isRecording)
+            _captureRegion = region;
+    }
+    VideoCaptureRegion GetCaptureRegion() const
+    {
+        return _captureRegion;
+    }
+
+    /// Integer nearest-neighbor output upscale (1-4). 2x+ preserves per-pixel
+    /// color detail through YUV 4:2:0 chroma subsampling.
+    void SetScaleFactor(uint32_t factor)
+    {
+        if (!_isRecording)
+            _scaleFactor = factor < 1 ? 1 : (factor > 4 ? 4 : factor);
+    }
+
+    /// Explicit ffmpeg binary path (empty = auto-detect)
+    void SetFFmpegPath(const std::string& path)
+    {
+        _ffmpegPath = path;
+    }
 
     // Audio configuration (global)
     void SetAudioSampleRate(uint32_t sampleRate);
@@ -248,6 +288,9 @@ protected:
     // Recording mode
     RecordingMode _recordingMode = RecordingMode::SingleTrack;
 
+    // Encoder backend (Auto / Native / FFmpeg)
+    EncoderBackend _encoderBackend = EncoderBackend::Auto;
+
     // Configuration
     std::string _outputFilename;
 
@@ -265,6 +308,17 @@ protected:
     uint32_t _audioSampleRate = 44100;
     uint32_t _audioChannels = 2;  // Stereo
 
+    // Quality preset (0-10) applied to encoder config
+    int _qualityPreset = 5;
+
+    // Capture region and output scaling
+    VideoCaptureRegion _captureRegion = VideoCaptureRegion::FullFrame;
+    uint32_t _scaleFactor = 1;
+    std::vector<uint8_t> _cropBuffer;  // Reused per-frame when cropping to main screen
+
+    // Explicit ffmpeg binary path (empty = auto-detect)
+    std::string _ffmpegPath;
+
     // Audio tracks (for multi-track mode)
     std::vector<AudioTrackConfig> _audioTracks;
 
@@ -275,11 +329,45 @@ protected:
     uint64_t _emulatedFrameCount = 0;
     uint64_t _emulatedAudioSampleCount = 0;
 
+    // Wall clock tracking for real elapsed recording time
+    using Clock = std::chrono::steady_clock;
+    Clock::time_point _wallClockStart;
+    Clock::time_point _wallClockPauseStart;
+    Clock::duration _wallClockPausedTotal = Clock::duration::zero();
+
     // Statistics
     RecordingStats _stats;
 
+    // Rolling FPS: ring buffer of frame timestamps
+    double _fpsWindowSeconds = 5.0;
+    std::vector<Clock::time_point> _frameTimestamps;
+    size_t _frameTimestampIndex = 0;
+
     // Active encoders registry
     std::vector<EncoderPtr> _activeEncoders;
+
+    // Serializes encoder dispatch (emulation thread: CaptureFrame/CaptureAudio)
+    // against start/stop/finalize (UI thread). Without it, StopRecording can
+    // close an encoder's output file while a frame is still being written.
+    std::mutex _captureMutex;
+
+    // Realtime capability (false = non-realtime mode, emulation slows)
+    bool _realtimeCapable = true;
+
+    // Detailed error message from the last failed start attempt
+    std::string _lastRecordingError;
+
+    // Message center subscription tracking
+    bool _isSubscribed = false;
+
+    // Emulator instance ID we are currently recording on.
+    // NC_EMULATOR_STATE_CHANGE is a global broadcast with no instance ID in the
+    // payload, so we store our own ID and verify the emulator's actual state
+    // before reacting to a stop notification.
+    std::string _recordingEmulatorId;
+
+    // MessageCenter callback (Observer interface)
+    void onEmulatorStateChange(int id, Message* message);
     /// endregion </Internal state>
 
     /// region <Encoder interface (to be implemented)>

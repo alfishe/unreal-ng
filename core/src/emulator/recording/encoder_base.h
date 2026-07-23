@@ -106,6 +106,12 @@ public:
         return 0;
     }
 
+    /// @brief Get last error message (empty string if no error)
+    virtual std::string GetLastError() const
+    {
+        return {};
+    }
+
     /// endregion </Statistics>
 };
 
