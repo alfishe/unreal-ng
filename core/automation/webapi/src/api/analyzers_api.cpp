@@ -5,9 +5,12 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/emulatorcontext.h>
+#include <emulator/io/porttracker.h>
 #include <debugger/debugmanager.h>
 #include <debugger/analyzers/analyzermanager.h>
 #include <debugger/analyzers/trdos/trdosanalyzer.h>
+#include <debugger/analyzers/memory-region/memoryregionanalyzer.h>
+#include <base/featuremanager.h>
 #include <json/json.h>
 
 #include "../emulator_api.h"
@@ -867,6 +870,340 @@ void EmulatorAPI::getAnalyzerRawBreakpoints(const HttpRequestPtr& req, std::func
         ret["events"] = Json::Value(Json::arrayValue);
         ret["message"] = "Raw breakpoint events not supported for this analyzer";
     }
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/{id}/analysis/regions
+/// @brief Get memory segmentation regions
+void EmulatorAPI::getAnalysisRegions(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                      const std::string& id) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto* context = emulator->GetContext();
+    AnalyzerManager* analyzerManager = context && context->pDebugManager
+        ? context->pDebugManager->GetAnalyzerManager() : nullptr;
+
+    if (!analyzerManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Analyzer manager not available";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto* mra = dynamic_cast<MemoryRegionAnalyzer*>(analyzerManager->getAnalyzer("memory-region"));
+    if (!mra)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "MemoryRegionAnalyzer not available";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    mra->refresh();
+    const auto& regions = mra->getRegions();
+
+    Json::Value ret;
+    ret["emulator_id"] = id;
+    Json::Value regionsJson(Json::arrayValue);
+
+    for (const auto& r : regions)
+    {
+        Json::Value region;
+        region["start"] = r.startAddress;
+        region["end"] = r.endAddress;
+        region["size"] = r.endAddress - r.startAddress + 1;
+
+        const char* typeName = "UNKNOWN";
+        switch (r.type) {
+            case BlockType::CODE: typeName = "CODE"; break;
+            case BlockType::DATA: typeName = "DATA"; break;
+            case BlockType::VARIABLE: typeName = "VARIABLE"; break;
+            case BlockType::SMC: typeName = "SMC"; break;
+            default: break;
+        }
+        region["type"] = typeName;
+        region["tags"] = static_cast<Json::UInt>(r.tags);
+
+        regionsJson.append(region);
+    }
+
+    ret["regions"] = regionsJson;
+    ret["total_regions"] = static_cast<Json::UInt>(regions.size());
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/{id}/analysis/stats
+/// @brief Get memory segmentation statistics
+void EmulatorAPI::getAnalysisStats(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto* context = emulator->GetContext();
+    AnalyzerManager* analyzerManager = context && context->pDebugManager
+        ? context->pDebugManager->GetAnalyzerManager() : nullptr;
+
+    auto* mra = analyzerManager ? dynamic_cast<MemoryRegionAnalyzer*>(analyzerManager->getAnalyzer("memory-region")) : nullptr;
+    if (!mra)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "MemoryRegionAnalyzer not available";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    mra->refresh();
+    SegmentationStats s = mra->getStats();
+
+    Json::Value ret;
+    ret["emulator_id"] = id;
+    ret["code_bytes"] = s.codeBytes;
+    ret["data_bytes"] = s.dataBytes;
+    ret["variable_bytes"] = s.variableBytes;
+    ret["smc_bytes"] = s.smcBytes;
+    ret["unknown_bytes"] = s.unknownBytes;
+    ret["total_regions"] = s.totalRegions;
+    ret["tagged_regions"] = s.taggedRegions;
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/{id}/analysis/ports
+/// @brief Get I/O port activity
+void EmulatorAPI::getAnalysisPorts(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto* context = emulator->GetContext();
+    if (!context || !context->pPortTracker)
+    {
+        Json::Value error;
+        error["error"] = "Not Available";
+        error["message"] = "PortTracker not available";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto summaries = context->pPortTracker->GetPortSummaries();
+
+    Json::Value ret;
+    ret["emulator_id"] = id;
+    ret["active"] = context->pPortTracker->IsActive();
+
+    Json::Value portsJson(Json::arrayValue);
+    for (const auto& s : summaries)
+    {
+        Json::Value port;
+        port["port"] = s.port;
+        port["reads"] = s.readCount;
+        port["writes"] = s.writeCount;
+        port["read_callers"] = s.uniqueReadCallers;
+        port["write_callers"] = s.uniqueWriteCallers;
+        portsJson.append(port);
+    }
+
+    ret["ports"] = portsJson;
+    ret["total_active_ports"] = static_cast<Json::UInt>(summaries.size());
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/analysis/start
+/// @brief Start analysis session
+void EmulatorAPI::startAnalysis(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto* context = emulator->GetContext();
+    if (!context || !context->pDebugManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Context or debug manager not available";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Enable port tracking feature
+    FeatureManager* fm = emulator->GetFeatureManager();
+    if (fm)
+    {
+        fm->setFeature("porttracking", true);
+    }
+
+    // Start port tracker session
+    if (context->pPortTracker)
+    {
+        context->pPortTracker->StartSession();
+    }
+
+    // Activate memory-region analyzer
+    auto* mgr = context->pDebugManager->GetAnalyzerManager();
+    if (mgr)
+    {
+        mgr->activate("memory-region");
+    }
+
+    Json::Value ret;
+    ret["emulator_id"] = id;
+    ret["success"] = true;
+    ret["message"] = "Analysis session started";
+    ret["port_tracking"] = context->pPortTracker && context->pPortTracker->IsActive();
+    ret["analyzer_active"] = mgr && mgr->isActive("memory-region");
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/analysis/stop
+/// @brief Stop analysis session
+void EmulatorAPI::stopAnalysis(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto* context = emulator->GetContext();
+    if (!context)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Context not available";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Stop port tracker
+    if (context->pPortTracker)
+    {
+        context->pPortTracker->StopSession();
+    }
+
+    // Deactivate analyzer
+    if (context->pDebugManager)
+    {
+        auto* mgr = context->pDebugManager->GetAnalyzerManager();
+        if (mgr)
+        {
+            mgr->deactivate("memory-region");
+        }
+    }
+
+    Json::Value ret;
+    ret["emulator_id"] = id;
+    ret["success"] = true;
+    ret["message"] = "Analysis session stopped";
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);

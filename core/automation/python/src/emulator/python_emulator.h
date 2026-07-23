@@ -9,6 +9,7 @@
 #include <emulator/cpu/z80.h>
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/diskimage.h>
+#include <emulator/io/porttracker.h>
 #include <emulator/video/screen.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
@@ -18,6 +19,7 @@
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/analyzers/analyzermanager.h>
 #include <debugger/analyzers/trdos/trdosanalyzer.h>
+#include <debugger/analyzers/memory-region/memoryregionanalyzer.h>
 #include <debugger/analyzers/rom-print/screenocr.h>
 #include <emulator/video/screencapture.h>
 #include <emulator/cpu/opcode_profiler.h>
@@ -1345,6 +1347,170 @@ namespace PythonBindings
                     keys.append(name);
                 }
                 return keys;
-            }, "List all recognized key names");
+            }, "List all recognized key names")
+
+            // ==================== Analysis API ====================
+            .def("analysis_start", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return false;
+
+                // Enable port tracking feature
+                FeatureManager* fm = self.GetFeatureManager();
+                if (fm) {
+                    fm->setFeature("porttracking", true);
+                }
+
+                // Start port tracker session
+                if (ctx->pPortTracker) {
+                    ctx->pPortTracker->StartSession();
+                }
+
+                // Activate memory-region analyzer
+                auto* mgr = ctx->pDebugManager->GetAnalyzerManager();
+                if (mgr) {
+                    mgr->activate("memory-region");
+                }
+                return true;
+            }, "Start analysis session (port tracking + memory-region analyzer)")
+            .def("analysis_stop", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return false;
+
+                // Stop port tracker
+                if (ctx->pPortTracker) {
+                    ctx->pPortTracker->StopSession();
+                }
+
+                // Deactivate analyzer
+                auto* mgr = ctx->pDebugManager->GetAnalyzerManager();
+                if (mgr) {
+                    mgr->deactivate("memory-region");
+                }
+                return true;
+            }, "Stop analysis session")
+            .def("analysis_status", [](Emulator& self) -> py::dict {
+                py::dict result;
+                auto* ctx = self.GetContext();
+                if (!ctx) return result;
+
+                result["port_tracking"] = ctx->pPortTracker && ctx->pPortTracker->IsActive();
+
+                if (ctx->pDebugManager) {
+                    auto* mgr = ctx->pDebugManager->GetAnalyzerManager();
+                    result["analyzer_active"] = mgr && mgr->isActive("memory-region");
+                } else {
+                    result["analyzer_active"] = false;
+                }
+
+                return result;
+            }, "Get analysis session status")
+            .def("analysis_regions", [](Emulator& self) -> py::list {
+                py::list result;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return result;
+
+                auto* mgr = ctx->pDebugManager->GetAnalyzerManager();
+                if (!mgr) return result;
+
+                auto* mra = dynamic_cast<MemoryRegionAnalyzer*>(mgr->getAnalyzer("memory-region"));
+                if (!mra) return result;
+
+                mra->refresh();
+                const auto& regions = mra->getRegions();
+
+                for (const auto& r : regions) {
+                    py::dict region;
+                    region["start"] = r.startAddress;
+                    region["end"] = r.endAddress;
+                    region["size"] = r.endAddress - r.startAddress + 1;
+
+                    const char* typeName = "UNKNOWN";
+                    switch (r.type) {
+                        case BlockType::CODE: typeName = "CODE"; break;
+                        case BlockType::DATA: typeName = "DATA"; break;
+                        case BlockType::VARIABLE: typeName = "VARIABLE"; break;
+                        case BlockType::SMC: typeName = "SMC"; break;
+                        default: break;
+                    }
+                    region["type"] = typeName;
+                    region["tags"] = static_cast<uint32_t>(r.tags);
+
+                    result.append(region);
+                }
+                return result;
+            }, "Get all memory regions")
+            .def("analysis_region_at", [](Emulator& self, uint16_t addr) -> py::dict {
+                py::dict region;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return region;
+
+                auto* mgr = ctx->pDebugManager->GetAnalyzerManager();
+                if (!mgr) return region;
+
+                auto* mra = dynamic_cast<MemoryRegionAnalyzer*>(mgr->getAnalyzer("memory-region"));
+                if (!mra) return region;
+
+                const RawRegion* r = mra->getRegionAt(addr);
+                if (!r) return region;
+
+                region["start"] = r->startAddress;
+                region["end"] = r->endAddress;
+                region["size"] = r->endAddress - r->startAddress + 1;
+
+                const char* typeName = "UNKNOWN";
+                switch (r->type) {
+                    case BlockType::CODE: typeName = "CODE"; break;
+                    case BlockType::DATA: typeName = "DATA"; break;
+                    case BlockType::VARIABLE: typeName = "VARIABLE"; break;
+                    case BlockType::SMC: typeName = "SMC"; break;
+                    default: break;
+                }
+                region["type"] = typeName;
+                region["tags"] = static_cast<uint32_t>(r->tags);
+
+                return region;
+            }, "Get region containing address", py::arg("addr"))
+            .def("analysis_stats", [](Emulator& self) -> py::dict {
+                py::dict stats;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return stats;
+
+                auto* mgr = ctx->pDebugManager->GetAnalyzerManager();
+                if (!mgr) return stats;
+
+                auto* mra = dynamic_cast<MemoryRegionAnalyzer*>(mgr->getAnalyzer("memory-region"));
+                if (!mra) return stats;
+
+                mra->refresh();
+                SegmentationStats s = mra->getStats();
+
+                stats["code_bytes"] = s.codeBytes;
+                stats["data_bytes"] = s.dataBytes;
+                stats["variable_bytes"] = s.variableBytes;
+                stats["smc_bytes"] = s.smcBytes;
+                stats["unknown_bytes"] = s.unknownBytes;
+                stats["total_regions"] = s.totalRegions;
+                stats["tagged_regions"] = s.taggedRegions;
+
+                return stats;
+            }, "Get segmentation statistics")
+            .def("analysis_ports", [](Emulator& self) -> py::list {
+                py::list result;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pPortTracker) return result;
+
+                auto summaries = ctx->pPortTracker->GetPortSummaries();
+
+                for (const auto& s : summaries) {
+                    py::dict port;
+                    port["port"] = s.port;
+                    port["reads"] = s.readCount;
+                    port["writes"] = s.writeCount;
+                    port["read_callers"] = s.uniqueReadCallers;
+                    port["write_callers"] = s.uniqueWriteCallers;
+                    result.append(port);
+                }
+                return result;
+            }, "Get port activity");
     }
 }

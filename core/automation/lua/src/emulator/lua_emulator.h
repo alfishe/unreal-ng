@@ -7,6 +7,7 @@
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/tape/tape.h>
+#include <emulator/io/porttracker.h>
 #include <emulator/cpu/z80.h>
 #include <emulator/video/screen.h>
 #include <emulator/sound/soundmanager.h>
@@ -14,6 +15,9 @@
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/disassembler/z80disasm.h>
+#include <debugger/analyzers/analyzermanager.h>
+#include <debugger/analyzers/memory-region/memoryregionanalyzer.h>
+#include <base/featuremanager.h>
 #include <common/modulelogger.h>
 
 class LuaEmulator
@@ -977,6 +981,197 @@ public:
             for (int i = 0; i < ModuleLogger::GetLevelCount(); i++) {
                 const char* name = ModuleLogger::GetLevelApiName(i);
                 if (name) result[idx++] = name;
+            }
+            return result;
+        });
+
+        // ==================== Analysis API ====================
+
+        // analysis.start() - Start analysis session (activates memory-region analyzer + port tracking)
+        lua.set_function("analysis_start", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager) return false;
+
+            // Enable port tracking feature
+            if (ctx->pFeatureManager) {
+                ctx->pFeatureManager->setFeature("porttracking", true);
+            }
+
+            // Start port tracker session
+            if (ctx->pPortTracker) {
+                ctx->pPortTracker->StartSession();
+            }
+
+            // Activate memory-region analyzer
+            auto* mgr = ctx->pDebugManager->GetAnalyzerManager();
+            if (mgr) {
+                mgr->activate("memory-region");
+            }
+            return true;
+        });
+
+        // analysis.stop() - Stop analysis session
+        lua.set_function("analysis_stop", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager) return false;
+
+            // Stop port tracker
+            if (ctx->pPortTracker) {
+                ctx->pPortTracker->StopSession();
+            }
+
+            // Deactivate analyzer
+            auto* mgr = ctx->pDebugManager->GetAnalyzerManager();
+            if (mgr) {
+                mgr->deactivate("memory-region");
+            }
+            return true;
+        });
+
+        // analysis.status() - Get analysis session status
+        lua.set_function("analysis_status", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table status = lua_view.create_table();
+            if (!_emulator) return status;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx) return status;
+
+            status["port_tracking"] = ctx->pPortTracker && ctx->pPortTracker->IsActive();
+
+            if (ctx->pDebugManager) {
+                auto* mgr = ctx->pDebugManager->GetAnalyzerManager();
+                status["analyzer_active"] = mgr && mgr->isActive("memory-region");
+            } else {
+                status["analyzer_active"] = false;
+            }
+
+            return status;
+        });
+
+        // analysis.regions() - Get all memory regions
+        lua.set_function("analysis_regions", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) return result;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager) return result;
+
+            auto* mgr = ctx->pDebugManager->GetAnalyzerManager();
+            if (!mgr) return result;
+
+            auto* mra = dynamic_cast<MemoryRegionAnalyzer*>(mgr->getAnalyzer("memory-region"));
+            if (!mra) return result;
+
+            mra->refresh();
+            const auto& regions = mra->getRegions();
+
+            int idx = 1;
+            for (const auto& r : regions) {
+                sol::table region = lua_view.create_table();
+                region["start"] = r.startAddress;
+                region["end"] = r.endAddress;
+                region["size"] = r.endAddress - r.startAddress + 1;
+
+                const char* typeName = "UNKNOWN";
+                switch (r.type) {
+                    case BlockType::CODE: typeName = "CODE"; break;
+                    case BlockType::DATA: typeName = "DATA"; break;
+                    case BlockType::VARIABLE: typeName = "VARIABLE"; break;
+                    case BlockType::SMC: typeName = "SMC"; break;
+                    default: break;
+                }
+                region["type"] = typeName;
+                region["tags"] = static_cast<uint32_t>(r.tags);
+
+                result[idx++] = region;
+            }
+            return result;
+        });
+
+        // analysis.region_at(addr) - Get region containing address
+        lua.set_function("analysis_region_at", [this](uint16_t addr) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table region = lua_view.create_table();
+            if (!_emulator) return region;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager) return region;
+
+            auto* mgr = ctx->pDebugManager->GetAnalyzerManager();
+            if (!mgr) return region;
+
+            auto* mra = dynamic_cast<MemoryRegionAnalyzer*>(mgr->getAnalyzer("memory-region"));
+            if (!mra) return region;
+
+            const RawRegion* r = mra->getRegionAt(addr);
+            if (!r) return region;
+
+            region["start"] = r->startAddress;
+            region["end"] = r->endAddress;
+            region["size"] = r->endAddress - r->startAddress + 1;
+
+            const char* typeName = "UNKNOWN";
+            switch (r->type) {
+                case BlockType::CODE: typeName = "CODE"; break;
+                case BlockType::DATA: typeName = "DATA"; break;
+                case BlockType::VARIABLE: typeName = "VARIABLE"; break;
+                case BlockType::SMC: typeName = "SMC"; break;
+                default: break;
+            }
+            region["type"] = typeName;
+            region["tags"] = static_cast<uint32_t>(r->tags);
+
+            return region;
+        });
+
+        // analysis.stats() - Get segmentation statistics
+        lua.set_function("analysis_stats", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table stats = lua_view.create_table();
+            if (!_emulator) return stats;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager) return stats;
+
+            auto* mgr = ctx->pDebugManager->GetAnalyzerManager();
+            if (!mgr) return stats;
+
+            auto* mra = dynamic_cast<MemoryRegionAnalyzer*>(mgr->getAnalyzer("memory-region"));
+            if (!mra) return stats;
+
+            mra->refresh();
+            SegmentationStats s = mra->getStats();
+
+            stats["code_bytes"] = s.codeBytes;
+            stats["data_bytes"] = s.dataBytes;
+            stats["variable_bytes"] = s.variableBytes;
+            stats["smc_bytes"] = s.smcBytes;
+            stats["unknown_bytes"] = s.unknownBytes;
+            stats["total_regions"] = s.totalRegions;
+            stats["tagged_regions"] = s.taggedRegions;
+
+            return stats;
+        });
+
+        // analysis.ports() - Get port activity
+        lua.set_function("analysis_ports", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) return result;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pPortTracker) return result;
+
+            auto summaries = ctx->pPortTracker->GetPortSummaries();
+
+            int idx = 1;
+            for (const auto& s : summaries) {
+                sol::table port = lua_view.create_table();
+                port["port"] = s.port;
+                port["reads"] = s.readCount;
+                port["writes"] = s.writeCount;
+                port["read_callers"] = s.uniqueReadCallers;
+                port["write_callers"] = s.uniqueWriteCallers;
+                result[idx++] = port;
             }
             return result;
         });

@@ -141,6 +141,13 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getAnalyzerRawFDC, "/api/v1/emulator/{id}/analyzer/{name}/raw/fdc", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getAnalyzerRawBreakpoints, "/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints",
                   drogon::Get);
+
+    // Analysis API (memory-region analyzer + port tracking)
+    ADD_METHOD_TO(EmulatorAPI::startAnalysis, "/api/v1/emulator/{id}/analysis/start", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::stopAnalysis, "/api/v1/emulator/{id}/analysis/stop", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getAnalysisRegions, "/api/v1/emulator/{id}/analysis/regions", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getAnalysisStats, "/api/v1/emulator/{id}/analysis/stats", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getAnalysisPorts, "/api/v1/emulator/{id}/analysis/ports", drogon::Get);
     // endregion Analyzer Management
 
     // region Memory State (implementation: api/state_memory_api.cpp)
@@ -496,6 +503,18 @@ public:
     void getAnalyzerRawBreakpoints(const drogon::HttpRequestPtr& req,
                                    std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                    const std::string& id, const std::string& name) const;
+
+    // Analysis API (memory-region analyzer + port tracking)
+    void startAnalysis(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void stopAnalysis(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getAnalysisRegions(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getAnalysisStats(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getAnalysisPorts(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // endregion Analyzer Management Methods
 
     // region Memory State Methods (implementation: api/state_memory_api.cpp)

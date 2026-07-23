@@ -459,6 +459,115 @@ Response:
 > - 16-byte stack snapshot
 > - Timing information (tstate, frame_number)
 
+### Analysis API (Memory Region Analyzer)
+
+> **Status**: ✅ Implemented (2026-07)
+
+The Analysis API provides memory segmentation and port tracking functionality.
+
+```
+POST   /api/v1/emulator/{id}/analysis/start       # Start analysis session
+POST   /api/v1/emulator/{id}/analysis/stop        # Stop analysis session
+GET    /api/v1/emulator/{id}/analysis/regions     # Get memory regions
+GET    /api/v1/emulator/{id}/analysis/stats       # Get segmentation statistics
+GET    /api/v1/emulator/{id}/analysis/ports       # Get I/O port activity
+```
+
+**Example - Start Analysis**:
+```bash
+curl -X POST http://localhost:8090/api/v1/emulator/{id}/analysis/start
+```
+Response:
+```json
+{
+  "emulator_id": "550e8400-...",
+  "success": true,
+  "message": "Analysis session started",
+  "port_tracking": true,
+  "analyzer_active": true
+}
+```
+
+**Example - Get Regions**:
+```bash
+curl http://localhost:8090/api/v1/emulator/{id}/analysis/regions
+```
+Response:
+```json
+{
+  "emulator_id": "550e8400-...",
+  "total_regions": 42,
+  "regions": [
+    {
+      "start": 16384,
+      "end": 22527,
+      "size": 6144,
+      "type": "DATA",
+      "tags": 3
+    },
+    {
+      "start": 32768,
+      "end": 33023,
+      "size": 256,
+      "type": "CODE",
+      "tags": 64
+    }
+  ]
+}
+```
+
+**Example - Get Stats**:
+```bash
+curl http://localhost:8090/api/v1/emulator/{id}/analysis/stats
+```
+Response:
+```json
+{
+  "emulator_id": "550e8400-...",
+  "code_bytes": 4096,
+  "data_bytes": 6912,
+  "variable_bytes": 256,
+  "smc_bytes": 64,
+  "unknown_bytes": 54208,
+  "total_regions": 42,
+  "tagged_regions": 12
+}
+```
+
+**Example - Get Port Activity**:
+```bash
+curl http://localhost:8090/api/v1/emulator/{id}/analysis/ports
+```
+Response:
+```json
+{
+  "emulator_id": "550e8400-...",
+  "active": true,
+  "total_active_ports": 5,
+  "ports": [
+    {
+      "port": 254,
+      "reads": 15000,
+      "writes": 3200,
+      "read_callers": 3,
+      "write_callers": 2
+    },
+    {
+      "port": 65533,
+      "reads": 0,
+      "writes": 450,
+      "read_callers": 0,
+      "write_callers": 1
+    }
+  ]
+}
+```
+
+> [!NOTE]
+> - `tags` is a bitmask of semantic tags (ScreenBitmap=1, ScreenAttributes=2, MusicPlayerCode=64, etc.)
+> - `type` values: `UNKNOWN`, `CODE`, `DATA`, `VARIABLE`, `SMC`
+> - Port 254 (0xFE) is the keyboard/beeper port; 65533 (0xFFFD) is AY register select
+
 ### Memory Profiler
 
 > **Status**: ✅ Implemented (2026-01)

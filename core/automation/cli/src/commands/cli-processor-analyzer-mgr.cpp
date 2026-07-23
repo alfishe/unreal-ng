@@ -7,7 +7,9 @@
 #include <debugger/debugmanager.h>
 #include <debugger/analyzers/analyzermanager.h>
 #include <debugger/analyzers/trdos/trdosanalyzer.h>
+#include <debugger/analyzers/memory-region/memoryregionanalyzer.h>
 #include <emulator/emulatorcontext.h>
+#include <emulator/io/porttracker.h>
 
 #include <iostream>
 #include <sstream>
@@ -51,6 +53,12 @@ void CLIProcessor::HandleAnalyzer(const ClientSession& session, const std::vecto
         ss << "  analyzer <name> raw fdc [--limit=N]  - Get raw FDC events" << NEWLINE;
         ss << "  analyzer <name> raw breakpoints      - Get raw breakpoint events" << NEWLINE;
         ss << "  analyzer <name> clear                - Clear event buffer" << NEWLINE;
+        ss << "" << NEWLINE;
+        ss << "Memory-region analyzer:" << NEWLINE;
+        ss << "  analyzer memory-region regions       - List all memory regions" << NEWLINE;
+        ss << "  analyzer memory-region region <addr> - Show region containing address" << NEWLINE;
+        ss << "  analyzer memory-region stats         - Show segmentation statistics" << NEWLINE;
+        ss << "  analyzer memory-region ports         - Show port activity (requires porttracking)" << NEWLINE;
         ss << "" << NEWLINE;
         ss << "Legacy aliases:" << NEWLINE;
         ss << "  analyzer enable <name>               - Alias for 'activate'" << NEWLINE;
@@ -303,11 +311,188 @@ void CLIProcessor::HandleAnalyzer(const ClientSession& session, const std::vecto
                 
                 session.SendResponse(ss.str());
             }
+            else if (analyzerName == "memory-region")
+            {
+                session.SendResponse(std::string("Error: memory-region analyzer uses 'regions' or 'stats', not 'events'.") + NEWLINE);
+            }
             else
             {
                 session.SendResponse("Error: events not implemented for '" + analyzerName + "'." + NEWLINE);
             }
             return;
+        }
+
+        // ==================== memory-region specific commands ====================
+        if (analyzerName == "memory-region")
+        {
+            MemoryRegionAnalyzer* mra = dynamic_cast<MemoryRegionAnalyzer*>(manager->getAnalyzer(analyzerName));
+            if (!mra)
+            {
+                session.SendResponse(std::string("Error: MemoryRegionAnalyzer not available.") + NEWLINE);
+                return;
+            }
+
+            // ==================== regions ====================
+            if (action == "regions")
+            {
+                mra->refresh();
+                const auto& regions = mra->getRegions();
+                std::stringstream ss;
+
+                ss << "Memory Regions (" << regions.size() << " total):" << NEWLINE;
+
+                for (const auto& r : regions)
+                {
+                    std::string typeName;
+                    switch (r.type)
+                    {
+                        case BlockType::UNKNOWN:  typeName = "UNKNOWN"; break;
+                        case BlockType::CODE:     typeName = "CODE"; break;
+                        case BlockType::DATA:     typeName = "DATA"; break;
+                        case BlockType::VARIABLE: typeName = "VARIABLE"; break;
+                        case BlockType::SMC:      typeName = "SMC"; break;
+                        default:                  typeName = "?"; break;
+                    }
+
+                    uint16_t size = r.endAddress - r.startAddress + 1;
+                    ss << "  0x" << std::hex << std::setw(4) << std::setfill('0') << r.startAddress
+                       << "-0x" << std::setw(4) << std::setfill('0') << r.endAddress << std::dec
+                       << " (" << std::setw(5) << size << " bytes) "
+                       << std::left << std::setw(8) << typeName;
+
+                    if (r.tags != 0)
+                    {
+                        ss << " [";
+                        bool first = true;
+                        auto appendTag = [&](MemoryTag tag, const char* name) {
+                            if (static_cast<uint32_t>(r.tags) & static_cast<uint32_t>(tag))
+                            {
+                                if (!first) ss << ",";
+                                ss << name;
+                                first = false;
+                            }
+                        };
+                        appendTag(MemoryTag::ScreenBitmap, "Screen");
+                        appendTag(MemoryTag::ScreenAttributes, "Attr");
+                        appendTag(MemoryTag::SystemVariables, "SysVars");
+                        appendTag(MemoryTag::MusicPlayerCode, "Music");
+                        appendTag(MemoryTag::GraphicsCode, "Graphics");
+                        appendTag(MemoryTag::DiskLoaderCode, "DiskLoader");
+                        appendTag(MemoryTag::TapeLoaderCode, "TapeLoader");
+                        appendTag(MemoryTag::SMCProcedure, "SMC");
+                        appendTag(MemoryTag::ISRCode, "ISR");
+                        ss << "]";
+                    }
+                    ss << NEWLINE;
+                }
+
+                if (regions.empty())
+                {
+                    ss << "(no regions - activate analyzer first)" << NEWLINE;
+                }
+
+                session.SendResponse(ss.str());
+                return;
+            }
+
+            // ==================== region <addr> ====================
+            if (action == "region")
+            {
+                if (args.size() < 3)
+                {
+                    session.SendResponse(std::string("Error: analyzer memory-region region requires an address.") + NEWLINE);
+                    return;
+                }
+
+                uint16_t addr;
+                if (!ParseAddress(args[2], addr))
+                {
+                    session.SendResponse("Error: Invalid address '" + args[2] + "'." + NEWLINE);
+                    return;
+                }
+
+                const RawRegion* r = mra->getRegionAt(addr);
+                if (!r)
+                {
+                    std::stringstream err;
+                    err << "Error: No region found at 0x" << std::hex << std::setw(4) << std::setfill('0') << addr << "." << NEWLINE;
+                    session.SendResponse(err.str());
+                    return;
+                }
+
+                std::stringstream ss;
+                std::string typeName;
+                switch (r->type)
+                {
+                    case BlockType::UNKNOWN:  typeName = "UNKNOWN"; break;
+                    case BlockType::CODE:     typeName = "CODE"; break;
+                    case BlockType::DATA:     typeName = "DATA"; break;
+                    case BlockType::VARIABLE: typeName = "VARIABLE"; break;
+                    case BlockType::SMC:      typeName = "SMC"; break;
+                    default:                  typeName = "?"; break;
+                }
+
+                ss << "Region at 0x" << std::hex << std::setw(4) << std::setfill('0') << addr << ":" << NEWLINE;
+                ss << "  Range: 0x" << std::setw(4) << r->startAddress
+                   << "-0x" << std::setw(4) << r->endAddress << std::dec << NEWLINE;
+                ss << "  Size: " << (r->endAddress - r->startAddress + 1) << " bytes" << NEWLINE;
+                ss << "  Type: " << typeName << NEWLINE;
+                ss << "  Tags: 0x" << std::hex << static_cast<uint32_t>(r->tags) << std::dec << NEWLINE;
+
+                session.SendResponse(ss.str());
+                return;
+            }
+
+            // ==================== stats ====================
+            if (action == "stats")
+            {
+                mra->refresh();
+                SegmentationStats stats = mra->getStats();
+
+                std::stringstream ss;
+                ss << "Segmentation Statistics:" << NEWLINE;
+                ss << "  CODE:     " << std::setw(6) << stats.codeBytes << " bytes" << NEWLINE;
+                ss << "  DATA:     " << std::setw(6) << stats.dataBytes << " bytes" << NEWLINE;
+                ss << "  VARIABLE: " << std::setw(6) << stats.variableBytes << " bytes" << NEWLINE;
+                ss << "  SMC:      " << std::setw(6) << stats.smcBytes << " bytes" << NEWLINE;
+                ss << "  UNKNOWN:  " << std::setw(6) << stats.unknownBytes << " bytes" << NEWLINE;
+                ss << "  Total regions: " << stats.totalRegions << NEWLINE;
+
+                session.SendResponse(ss.str());
+                return;
+            }
+
+            // ==================== ports ====================
+            if (action == "ports")
+            {
+                PortTracker* pt = context->pPortTracker;
+                if (!pt)
+                {
+                    session.SendResponse(std::string("Error: PortTracker not available.") + NEWLINE);
+                    return;
+                }
+
+                std::stringstream ss;
+                auto summaries = pt->GetPortSummaries();
+
+                ss << "Port Activity (" << summaries.size() << " active ports):" << NEWLINE;
+
+                for (const auto& summary : summaries)
+                {
+                    ss << "  Port 0x" << std::hex << std::setw(4) << std::setfill('0') << summary.port << std::dec;
+                    ss << ": R=" << std::setw(6) << summary.readCount;
+                    ss << " W=" << std::setw(6) << summary.writeCount;
+                    ss << NEWLINE;
+                }
+
+                if (summaries.empty())
+                {
+                    ss << "(no port activity - enable porttracking feature)" << NEWLINE;
+                }
+
+                session.SendResponse(ss.str());
+                return;
+            }
         }
 
         // ==================== <name> raw fdc/breakpoints ====================

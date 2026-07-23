@@ -2939,6 +2939,64 @@ analyzer raw fdc trdos
 analyzer deactivate trdos
 ```
 
+#### Memory Region Analyzer (`memory-region`)
+
+The `memory-region` analyzer classifies the Z80 64KB address space into semantic regions based on execution patterns.
+
+**Commands**:
+
+| Command | Arguments | Description | Status |
+|:---|:---|:---|:---|
+| `analyzer activate memory-region` | | Start analysis session | ✅ Implemented |
+| `analyzer deactivate memory-region` | | Stop analysis session | ✅ Implemented |
+| `analyzer memory-region regions` | | List all classified memory regions | ✅ Implemented |
+| `analyzer memory-region region <addr>` | `<address>` | Get region containing address | ✅ Implemented |
+| `analyzer memory-region stats` | | Show segmentation statistics | ✅ Implemented |
+| `analyzer memory-region ports` | | Show I/O port activity | ✅ Implemented |
+
+**Region Types**:
+
+| Type | Description |
+|:---|:---|
+| `UNKNOWN` | Unaccessed memory |
+| `CODE` | Executed but not written (X>0, W=0) |
+| `DATA` | Read/written but not executed |
+| `VARIABLE` | Read AND written (R>0, W>0, X=0) |
+| `SMC` | Self-modifying code (X>0 AND W>0) |
+
+**Memory Tags** (combinable bitmask):
+
+| Tag | Description |
+|:---|:---|
+| `ScreenBitmap` | Main/shadow screen bitmap (0x4000-0x57FF) |
+| `ScreenAttributes` | Screen attributes (0x5800-0x5AFF) |
+| `SystemVariables` | BASIC system variables (0x5B00-0x5CBF) |
+| `MusicPlayerCode` | Code accessing AY/beeper ports |
+| `DiskLoaderCode` | Code accessing FDC ports |
+| `TapeLoaderCode` | Code reading tape port frequently |
+| `SMCProcedure` | Self-modifying code procedure |
+| `ISRCode` | Interrupt service routine |
+
+**Example Usage**:
+```bash
+# Enable features
+feature analysis on
+feature porttracking on
+
+# Start analysis session
+analyzer activate memory-region
+
+# Run emulator for a while...
+
+# Check segmentation
+analyzer memory-region stats
+analyzer memory-region regions
+analyzer memory-region region 0x8000
+
+# Stop session
+analyzer deactivate memory-region
+```
+
 ### 9. LLM Integration Interfaces (MCP/A2A)
 
 **Status**: 🔮 Planned (Q3-Q4 2026)
