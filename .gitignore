@@ -71,6 +71,9 @@ htmlcov/
 # Various IDE files / folders
 **/.cache
 **/.cursorindexingignore
+**/.claude
+**/.quoder
+**/.vscode
 
 # Temporary files
 *.user
@@ -99,3 +102,5 @@ htmlcov/
 .DS_Store
 
 .specstory/
+**/.claude
+.vscode
