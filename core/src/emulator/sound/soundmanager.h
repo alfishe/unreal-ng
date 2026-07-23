@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <string>
 #include <vector>
 
 #include "common/modulelogger.h"
@@ -8,11 +9,45 @@
 #include "common/sound/filters/audio_character_chain.h"
 #include "emulator/sound/audio.h"
 #include "emulator/sound/beeper.h"
+#include "emulator/sound/covox.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/chips/soundchip_turbosound.h"
 #include "stdafx.h"
 
 class EmulatorContext;
+
+/// Audio source types for device/channel selection (shared with recording)
+enum class AudioSourceType
+{
+    MasterMix,
+    Beeper,
+    AY1_All,
+    AY2_All,
+    AY3_All,
+    COVOX,
+    GeneralSound,
+    Moonsound,
+    AY1_ChannelA, AY1_ChannelB, AY1_ChannelC,
+    AY2_ChannelA, AY2_ChannelB, AY2_ChannelC,
+    AY3_ChannelA, AY3_ChannelB, AY3_ChannelC,
+    Custom
+};
+
+/// Per-device descriptor for the registry-driven mixer
+struct AudioDeviceInfo
+{
+    AudioSourceType type;
+    std::string     name;
+
+    // Monitor state (runtime, per emulator instance)
+    bool  mute   = false;
+    bool  solo   = false;
+    float volume = 1.0f;
+
+    // Read-only status for UI (updated each frame)
+    float peak           = 0.0f;
+    bool  activeRecently = false;
+};
 
 class SoundManager
 {
@@ -38,16 +73,18 @@ protected:
     uint32_t _audioBufferWrites = 0;
 
     // Supported sound chips
-    Beeper* _beeper;
-    SoundChip_TurboSound* _turboSound;
+    Beeper* _beeper = nullptr;
+    SoundChip_TurboSound* _turboSound = nullptr;
+    Covox* _covox = nullptr;
     // SoundChip_TurboSoundFM;
     // SoundChip_MoonSound;
     // SoundChip_SAA1099;
     // SoundChip_GeneralSound;
 
     // Audio character chains (punch enhancement + room simulation)
-    // Separate chains for AY and beeper allow independent tuning
-    AudioCharacterChain _ayChain;      // For AY/TurboSound
+    // Separate chains per AY chip to preserve independent DSP state
+    AudioCharacterChain _ayChain0;     // For AY chip 0 (TurboSound first chip)
+    AudioCharacterChain _ayChain1;     // For AY chip 1 (TurboSound second chip)
     AudioCharacterChain _beeperChain;  // For beeper (digidrums, PWM synths)
 
     // Beeper lowpass filter (removes ultrasonic harshness, preserves music)
@@ -57,7 +94,10 @@ protected:
     float _beeperLp1R = 0.0f, _beeperLp2R = 0.0f;
     static constexpr float BEEPER_LP_COEF = 0.85f;  // ~16kHz with 2 poles @ 44.1kHz
 
-    // Master volume controls
+    // Device registry (replaces hardwired master volumes)
+    std::vector<AudioDeviceInfo> _devices;
+
+    // Legacy master volume fields kept for backward compat (delegate to registry)
     double _ayVolume = 1.0;
     double _beeperVolume = 1.0;
 
@@ -94,6 +134,10 @@ public:
     {
         return _turboSound != nullptr;
     }
+    SoundChip_TurboSound* getTurboSound() const
+    {
+        return _turboSound;
+    }
     SoundChip_AY8910* getAYChip(int index) const;
     int getAYChipCount() const;
     bool wasTurboSoundChip1Selected() const;
@@ -102,24 +146,41 @@ public:
         return _mute;
     }
 
+    // Covox access
+    bool hasCovox() const { return _covox != nullptr; }
+    Covox* getCovox() const { return _covox; }
+
     void updateDAC(uint32_t frameTState, int16_t left, int16_t right);
 
     // Audio character chains (punch + room simulation)
-    AudioCharacterChain& getAYChain() { return _ayChain; }
+    // Returns chain for chip 0 (settings shared between both chips)
+    AudioCharacterChain& getAYChain() { return _ayChain0; }
     AudioCharacterChain& getBeeperChain() { return _beeperChain; }
+
+    // Apply AY chain settings to both chips
+    void syncAYChainSettings();
 
     // Beeper filter control
     void setBeeperFilterEnabled(bool enabled) { _beeperFilterEnabled = enabled; }
     bool isBeeperFilterEnabled() const { return _beeperFilterEnabled; }
 
-    // Master volume controls
-    void setAYVolume(double volume) { _ayVolume = std::clamp(volume, 0.0, 1.0); }
-    void setBeeperVolume(double volume) { _beeperVolume = std::clamp(volume, 0.0, 1.0); }
+    // Device registry API
+    const std::vector<AudioDeviceInfo>& devices() const { return _devices; }
+    AudioDeviceInfo* device(AudioSourceType type);
+    const AudioDeviceInfo* device(AudioSourceType type) const;
+    const int16_t* deviceBuffer(AudioSourceType type) const;
+    void setDeviceMute(AudioSourceType type, bool mute);
+    void setDeviceSolo(AudioSourceType type, bool solo);
+    void setDeviceVolume(AudioSourceType type, float volume);
+
+    // Legacy master volume controls (delegate to registry entries)
+    void setAYVolume(double volume);
+    void setBeeperVolume(double volume);
     double getAYVolume() const { return _ayVolume; }
     double getBeeperVolume() const { return _beeperVolume; }
 
     // Legacy accessor for compatibility
-    AudioCharacterChain& getCharacterChain() { return _ayChain; }
+    AudioCharacterChain& getCharacterChain() { return _ayChain0; }
 
     // Feature cache update (called by FeatureManager::onFeatureChanged)
     void UpdateFeatureCache();

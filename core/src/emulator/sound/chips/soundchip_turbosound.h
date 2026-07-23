@@ -2,10 +2,13 @@
 
 #include <stdafx.h>
 
+#include <memory>
+
 #include "common/sound/filters/filter_interpolate.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/audio.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
+#include "emulator/sound/native_audio_tap.h"
 
 class SoundChip_TurboSound : public PortDecoder, public PortDevice
 {
@@ -16,8 +19,14 @@ protected:
 
     SoundChip_AY8910* _currentChip = nullptr;
 
-    AudioFrameDescriptor _ayAudioDescriptor;                               // Audio descriptor for AY
+    AudioFrameDescriptor _ayAudioDescriptor;                               // Audio descriptor for combined AY output
     int16_t* const _ayBuffer = (int16_t*)_ayAudioDescriptor.memoryBuffer;  // Shortcut to it's sample buffer
+
+    // Per-chip buffers for registry-driven mixing (AY 1 / AY 2 capture)
+    AudioFrameDescriptor _chip0AudioDescriptor;
+    AudioFrameDescriptor _chip1AudioDescriptor;
+    int16_t* const _chip0Buffer = (int16_t*)_chip0AudioDescriptor.memoryBuffer;
+    int16_t* const _chip1Buffer = (int16_t*)_chip1AudioDescriptor.memoryBuffer;
 
     /// region <AY emulation>
     double _ayPLL;
@@ -34,6 +43,10 @@ protected:
 
     // TurboSound chip1 selection tracking (monitoring only)
     bool _chip1Selected = false;
+
+    // Native-rate recording tap (218.75 kHz, pre-decimation).
+    // shared_ptr so a DSD encoder worker can outlive this chip safely.
+    std::shared_ptr<NativeAudioTap> _nativeTap = std::make_shared<NativeAudioTap>();
     /// endregion </AY emulation>
 
     /// endregion </Fields>
@@ -51,6 +64,24 @@ public:
         return (uint16_t*)_ayBuffer;
     }
 
+    // Per-chip buffer access for registry-driven mixing / capture
+    int16_t* getChipBuffer(int index)
+    {
+        if (index == 0)
+            return _chip0Buffer;
+        if (index == 1)
+            return _chip1Buffer;
+        return nullptr;
+    }
+    const int16_t* getChipBuffer(int index) const
+    {
+        if (index == 0)
+            return _chip0Buffer;
+        if (index == 1)
+            return _chip1Buffer;
+        return nullptr;
+    }
+
     // Chip access for monitoring purposes
     SoundChip_AY8910* getChip(int index) const
     {
@@ -63,15 +94,6 @@ public:
         return nullptr;
     }
 
-    int getActiveChipIndex() const
-    {
-        if (_currentChip == _chip1)
-            return 1;
-        return 0;
-    }
-
-    bool wasChip1Selected() const { return _chip1Selected; }
-
     int getChipCount() const
     {
         int count = 0;
@@ -83,6 +105,10 @@ public:
 
         return count;
     }
+
+    // Monitoring: check if chip1 was ever selected this frame
+    bool wasChip1Selected() const { return _chip1Selected; }
+    void resetChip1Selected() { _chip1Selected = false; }
     /// endregion </Properties>
 
     /// region <Constructors / destructor>
@@ -119,7 +145,6 @@ public:
 
         // Set Chip0 active by default
         _currentChip = _chip0;
-        _chip1Selected = false;
 
         // Reset internal state
         _lastTStates = 0;
@@ -152,6 +177,12 @@ public:
     void setHQEnabled(bool enabled)
     {
         _hqEnabled = enabled;
+    }
+
+    /// Native-rate recording tap (for DSD capture bypassing 44.1 kHz decimation)
+    std::shared_ptr<NativeAudioTap> getNativeTap() const
+    {
+        return _nativeTap;
     }
     /// endregion </Methods>
 

@@ -9,12 +9,10 @@ void SoundChip_TurboSound::handleFrameStart()
     _ayPLL = 0.0;
     _ayBufferIndex = 0;
 
-    // Reset per-frame activity counters for monitoring
-    _chip0->resetActivityCounters();
-    _chip1->resetActivityCounters();
-
-    // Initialize render buffers
+    // Initialize render buffers (combined + per-chip)
     memset(_ayBuffer, 0x00, _ayAudioDescriptor.memoryBufferSizeInBytes);
+    memset(_chip0Buffer, 0x00, _chip0AudioDescriptor.memoryBufferSizeInBytes);
+    memset(_chip1Buffer, 0x00, _chip1AudioDescriptor.memoryBufferSizeInBytes);
 }
 
 /// @brief Generate audio samples synchronized to CPU t-states
@@ -51,6 +49,10 @@ void SoundChip_TurboSound::handleStep()
 
     if (diff > 0)
     {
+        // Native-rate recording tap: active only during DSD capture.
+        // Checked once per handleStep batch; per-tick cost is a plain bool.
+        const bool tapActive = _nativeTap->isActive();
+
         _ayPLL += diff * AUDIO_SAMPLE_TSTATE_INCREMENT;
 
         while (_ayPLL > 1.0 && _ayBufferIndex < AUDIO_SAMPLES_PER_VIDEO_FRAME * AUDIO_CHANNELS)
@@ -74,6 +76,13 @@ void SoundChip_TurboSound::handleStep()
                     // Tick generators (bypass internal prescaler)
                     updateState(true);
 
+                    // Native-rate tap for DSD capture (pre-decimation, both chips summed)
+                    if (tapActive)
+                    {
+                        _nativeTap->push(static_cast<float>(_chip0->mixedLeft() + _chip1->mixedLeft()),
+                                         static_cast<float>(_chip0->mixedRight() + _chip1->mixedRight()));
+                    }
+
                     // Feed mixed output to decimators
                     _chip0->decimatorLeft().feedSample(_chip0->mixedLeft());
                     _chip0->decimatorRight().feedSample(_chip0->mixedRight());
@@ -81,11 +90,21 @@ void SoundChip_TurboSound::handleStep()
                     _chip1->decimatorRight().feedSample(_chip1->mixedRight());
                 }
 
-                // Get decimated output
-                leftSample = (_chip0->decimatorLeft().getOutput() +
-                              _chip1->decimatorLeft().getOutput()) * INT16_MAX;
-                rightSample = (_chip0->decimatorRight().getOutput() +
-                               _chip1->decimatorRight().getOutput()) * INT16_MAX;
+                // Get decimated output per chip
+                float c0L = _chip0->decimatorLeft().getOutput();
+                float c0R = _chip0->decimatorRight().getOutput();
+                float c1L = _chip1->decimatorLeft().getOutput();
+                float c1R = _chip1->decimatorRight().getOutput();
+
+                // Store per-chip buffers for registry-driven capture
+                _chip0Buffer[_ayBufferIndex]     = static_cast<int16_t>(c0L * INT16_MAX);
+                _chip0Buffer[_ayBufferIndex + 1] = static_cast<int16_t>(c0R * INT16_MAX);
+                _chip1Buffer[_ayBufferIndex]     = static_cast<int16_t>(c1L * INT16_MAX);
+                _chip1Buffer[_ayBufferIndex + 1] = static_cast<int16_t>(c1R * INT16_MAX);
+
+                // Combined output
+                leftSample = static_cast<int16_t>((c0L + c1L) * INT16_MAX);
+                rightSample = static_cast<int16_t>((c0R + c1R) * INT16_MAX);
             }
             else
             {
@@ -110,27 +129,60 @@ void SoundChip_TurboSound::handleStep()
                     // Tick generators directly (bypass internal prescaler)
                     updateState(true);
 
+                    double l = _chip0->mixedLeft() + _chip1->mixedLeft();
+                    double r = _chip0->mixedRight() + _chip1->mixedRight();
+
+                    // Native-rate tap for DSD capture (pre-decimation)
+                    if (tapActive)
+                    {
+                        _nativeTap->push(static_cast<float>(l), static_cast<float>(r));
+                    }
+
                     // Accumulate samples
-                    leftSum += _chip0->mixedLeft() + _chip1->mixedLeft();
-                    rightSum += _chip0->mixedRight() + _chip1->mixedRight();
+                    leftSum += l;
+                    rightSum += r;
                     sampleCount++;
                 }
 
                 // Average (simple boxcar decimation)
+                float c0L, c0R, c1L, c1R;
                 if (sampleCount > 0)
                 {
-                    leftSample = (leftSum / sampleCount) * INT16_MAX;
-                    rightSample = (rightSum / sampleCount) * INT16_MAX;
+                    // Split the accumulated sums per chip for per-chip buffers
+                    // In LQ mode we don't have separate accumulators, so approximate
+                    // by using current chip output ratios
+                    double total = leftSum + rightSum;
+                    double r0 = (total > 0) ? (_chip0->mixedLeft() + _chip0->mixedRight()) /
+                                              (_chip0->mixedLeft() + _chip0->mixedRight() +
+                                               _chip1->mixedLeft() + _chip1->mixedRight() + 1e-9) : 0.5;
+
+                    c0L = static_cast<float>((leftSum * r0) / sampleCount);
+                    c0R = static_cast<float>((rightSum * r0) / sampleCount);
+                    c1L = static_cast<float>((leftSum * (1.0 - r0)) / sampleCount);
+                    c1R = static_cast<float>((rightSum * (1.0 - r0)) / sampleCount);
+
+                    leftSample = static_cast<int16_t>((leftSum / sampleCount) * INT16_MAX);
+                    rightSample = static_cast<int16_t>((rightSum / sampleCount) * INT16_MAX);
                 }
                 else
                 {
                     // No ticks this sample - use previous value
-                    leftSample = (_chip0->mixedLeft() + _chip1->mixedLeft()) * INT16_MAX;
-                    rightSample = (_chip0->mixedRight() + _chip1->mixedRight()) * INT16_MAX;
+                    c0L = static_cast<float>(_chip0->mixedLeft());
+                    c0R = static_cast<float>(_chip0->mixedRight());
+                    c1L = static_cast<float>(_chip1->mixedLeft());
+                    c1R = static_cast<float>(_chip1->mixedRight());
+                    leftSample = static_cast<int16_t>((c0L + c1L) * INT16_MAX);
+                    rightSample = static_cast<int16_t>((c0R + c1R) * INT16_MAX);
                 }
+
+                // Store per-chip buffers
+                _chip0Buffer[_ayBufferIndex]     = static_cast<int16_t>(c0L * INT16_MAX);
+                _chip0Buffer[_ayBufferIndex + 1] = static_cast<int16_t>(c0R * INT16_MAX);
+                _chip1Buffer[_ayBufferIndex]     = static_cast<int16_t>(c1L * INT16_MAX);
+                _chip1Buffer[_ayBufferIndex + 1] = static_cast<int16_t>(c1R * INT16_MAX);
             }
 
-            // Store samples in output buffer
+            // Store samples in combined output buffer
             _ayBuffer[_ayBufferIndex++] = leftSample;
             _ayBuffer[_ayBufferIndex++] = rightSample;
         }
@@ -166,7 +218,7 @@ void SoundChip_TurboSound::portDeviceOutMethod(uint16_t port, uint8_t value)
                         break;
                     case 0xFE:
                         _currentChip = _chip1;
-                        _chip1Selected = true;
+                        _chip1Selected = true;  // Monitoring flag
                         break;
                     default:
                         break;
