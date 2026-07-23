@@ -345,10 +345,10 @@ TEST_F(BreakpointManager_test, portInBreakpoint)
     std::atomic<bool> breakpointTriggered{false};
     uint8_t testCommands[] = {
         0xAF,        // $0000 XOR A - Ensure A = 0
-        0xDB, 0x00,  // $0001 IN A,($00) - Read from port $00
+        0xDB, 0xFE,  // $0001 IN A,($FE) - Read keyboard port
         0x76         // $0003 HALT
     };
-    uint8_t portNumber = 0x00;  // Test port input from port $00
+    uint16_t portNumber = 0x00FE;  // Keyboard port (decoded from xxFE)
 
     /// region <Initialize>
     Emulator* emulator = new Emulator(LoggerLevel::LogError);

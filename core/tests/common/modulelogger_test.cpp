@@ -99,8 +99,8 @@ TEST_F(ModuleLogger_Test, DumpModules)
         "DMA",
         "Loader",
         "Debugger",
-        "Core, Z80, Memory, I/O, Disk, Video, Sound, DMA, Loader, Debugger, Disassembler",
-        "<Unknown>, Core, Z80, Memory, I/O, Disk, Video, Sound, DMA, Loader, Debugger, Disassembler"};
+        "Core, Z80, Memory, I/O, Disk, Video, Sound, DMA, Loader, Debugger, Disassembler, Recording",
+        "<Unknown>, Core, Z80, Memory, I/O, Disk, Video, Sound, DMA, Loader, Debugger, Disassembler, Recording"};
 
     for (int i = 0; i < refInputs.size(); i++)
     {
@@ -121,7 +121,7 @@ TEST_F(ModuleLogger_Test, DumpSettings)
         "Submodules:\n<All>\nMemory: partial\n  Submodules:\n<All>\nI/O: partial\n  Submodules:\n<All>\nDisk: "
         "partial\n  Submodules:\n<All>\nVideo: partial\n  Submodules:\n<All>\nSound: partial\n  "
         "Submodules:\n<All>\nDMA: partial\n  Submodules:\n<All>\nLoader: partial\n  Submodules:\n<All>\nDebugger: "
-        "partial\n  Submodules:\n<All>\nDisassembler: partial\n  Submodules:\n<All>\n";
+        "partial\n  Submodules:\n<All>\nDisassembler: partial\n  Submodules:\n<All>\nRecording: on\n";
     EXPECT_EQ(expected, result);
 
     settings.modules = 0x00000002;  // Core module only
@@ -132,7 +132,7 @@ TEST_F(ModuleLogger_Test, DumpSettings)
         "Module logger settings dump:\nCore: partial\n  Submodules:\n<All>\nZ80: off\n  Submodules:\n<All>\nMemory: "
         "off\n  Submodules:\n<All>\nI/O: off\n  Submodules:\n<All>\nDisk: off\n  Submodules:\n<All>\nVideo: off\n  "
         "Submodules:\n<All>\nSound: off\n  Submodules:\n<All>\nDMA: off\n  Submodules:\n<All>\nLoader: off\n  "
-        "Submodules:\n<All>\nDebugger: off\n  Submodules:\n<All>\nDisassembler: off\n  Submodules:\n<All>\n";
+        "Submodules:\n<All>\nDebugger: off\n  Submodules:\n<All>\nDisassembler: off\n  Submodules:\n<All>\nRecording: off\n";
     EXPECT_EQ(expected, result);
 }
 

@@ -253,22 +253,21 @@ TEST_F(AtomicStepping_Test, RunNScanlines_CrossesFrame)
 
 TEST_F(AtomicStepping_Test, RunUntilNextScreenPixel_FromFrameStart)
 {
-    const CONFIG& config = getConfig();
     uint64_t startFrame = getFrameCounter();
 
-    // CPU starts near frame start (t≈0), paper area is ~64 scanlines in
+    // Get actual paper start position from screen (accounts for mode-specific timing)
+    unsigned paperStartT = _emulator->GetContext()->pScreen->GetPaperStartTstate();
+
+    // CPU starts near frame start (t≈0), paper area is ahead
     _emulator->RunUntilNextScreenPixel();
 
     unsigned endT = getCurrentT();
     uint64_t endFrame = getFrameCounter();
 
-    // Paper area starts at approximately line 64 for Pentagon
-    unsigned paperStartT = 64 * config.t_line + 24;  // 64 lines + left border
-
     EXPECT_GE(endT, paperStartT)
         << "Should reach paper area start (expected ~" << paperStartT << ", got " << endT << ")";
 
-    // Should not overshoot by much
+    // Should not overshoot by much (within one instruction)
     EXPECT_LT(endT, paperStartT + 30)
         << "Should not overshoot paper area start";
 
@@ -467,9 +466,10 @@ TEST_F(AtomicStepping_Test, CompoundStepping_ScanlineThenFrame)
     uint64_t endFrame = getFrameCounter();
     EXPECT_EQ(endFrame, startFrame + 1) << "Should complete exactly one frame";
 
-    // T-states should have wrapped
+    // T-states should be near the same position (RunFrame returns to same point)
     unsigned endT = getCurrentT();
-    EXPECT_LT(endT, 30) << "Should be near frame start after RunFrame";
+    EXPECT_GE(endT, expectedT) << "RunFrame should return to approximately same T position";
+    EXPECT_LT(endT, expectedT + 50) << "Should not overshoot by more than a few instructions";
 }
 
 TEST_F(AtomicStepping_Test, CompoundStepping_MultipleScanlineSteps)
