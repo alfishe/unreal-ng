@@ -1,0 +1,8 @@
+# Core dependencies — kept minimal so the analyzer can run in a clean venv
+# without requiring Pillow/numpy unless the user actually wants image output.
+#
+# Required:
+#   none — the core parser + analyzer uses only the Python standard library.
+#
+# Optional (only needed for framebuffer rendering and heatmap output):
+pillow>=10.0
