@@ -340,6 +340,16 @@ void DebuggerWindow::setBinding(EmulatorBinding* binding)
         // Use updateState() instead of onBindingReady() to ensure setZ80State() is called on widgets
         connect(m_binding, &EmulatorBinding::cpuStepComplete, this, &DebuggerWindow::updateState);
 
+        // Connect frame refresh signal so TTD seek / step-back / step-forward
+        // (which rebuild CPU + RAM + chipset state in-place via RestoreCheckpoint
+        // and post NC_VIDEO_FRAME_REFRESH) refresh the debugger widgets too.
+        // EmulatorBinding filters NC_VIDEO_FRAME_REFRESH by emulator ID before
+        // emitting this signal, so we only get refreshes for OUR emulator —
+        // no risk of cross-instance UI corruption when multiple emulators run.
+        // Same handler as cpuStepComplete: updateState() rebuilds registers,
+        // disassembler (with new PC), memory pages, stack, and hex view.
+        connect(m_binding, &EmulatorBinding::frameRefresh, this, &DebuggerWindow::updateState);
+
         qDebug() << "DebuggerWindow: Connected to EmulatorBinding";
 
         // If binding already has an emulator, sync state
