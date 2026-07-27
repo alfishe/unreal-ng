@@ -1382,6 +1382,31 @@ void Memory::DirectWriteToZ80Memory(uint16_t address, uint8_t value)
     }
 
     *(baseAddress + address) = value;
+
+    // TTD dirty-page tracking (parent TDD §6.2). Mirrors the hook in
+    // MemoryWriteDebug. Callers of DirectWriteToZ80Memory (WebAPI
+    // /memory/write, snapshot loader, Lua poke) historically bypassed the
+    // dirty tracker, which silently dropped their writes from TTD
+    // checkpoints — seeks to frames captured after such writes returned
+    // the pre-write byte. The tracker is a single OR into a bitmap; cost
+    // is one predictable branch (+ one OR when TTD is enabled).
+    //
+    // ROM is immutable within a session per TDD §6.3, so we only mark RAM.
+    if (_feature_ttd_enabled && _ttdDirtyTracker != nullptr)
+    {
+        if (_bank_mode[bank] == BANK_RAM)
+        {
+            uint16_t absRamPage = GetRAMPageForBank(bank);
+            _ttdDirtyTracker->MarkDirty(absRamPage);
+        }
+    }
+
+    // Mirror the video-memory-changed flag set by MemoryWriteDebug so the
+    // renderer knows a refresh may be needed.
+    if (address >= 0x4000 && address <= 0x5B00 && bank >= 1)
+    {
+        _state->video_memory_changed = true;
+    }
 }
 
 //

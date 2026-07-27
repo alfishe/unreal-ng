@@ -10,13 +10,19 @@
 ///   - `_everDirty` distinguishes "never touched in this session" pages,
 ///     which carry the NEVER_TOUCHED sentinel in checkpoints and cost
 ///     nothing to capture or restore.
-///   - MarkDirty is hot-path code: one predictable branch + one OR when
-///     the feature is enabled; zero cost when disabled.
+///   - MarkDirty is hot-path code: one predictable branch + one atomic OR
+///     when the feature is enabled; zero cost when disabled.
 ///
-/// Thread model: touched only from the emulator thread (the same thread
-/// that runs the CPU and the per-frame capture at OnFrameEnd). No
-/// internal locking.
+/// Thread model: bitmaps are std::atomic<uint64_t>. MarkDirty is safe to
+/// call from any thread (typically the emulator thread via
+/// MemoryWriteDebug, but also the WebAPI IO thread via
+/// DirectWriteToZ80Memory, or the Lua thread). CollectAndClear atomically
+/// exchanges each word to 0 so concurrent MarkDirty calls are not lost
+/// — the page will appear in the next frame's dirty set instead of the
+/// current one, which is correct because the write happened after the
+/// snapshot was taken.
 
+#include <atomic>
 #include <cstdint>
 #include <cstddef>
 #include <vector>
@@ -42,12 +48,19 @@ public:
     TTDDirtyTracker& operator=(const TTDDirtyTracker&) = delete;
 
     /// @brief Mark a physical RAM page as dirty.
-    /// Called from Memory::MemoryWriteDebug on every RAM write when TTD is enabled.
+    /// Called from Memory::MemoryWriteDebug (emulator thread) and
+    /// Memory::DirectWriteToZ80Memory (WebAPI/Lua/snapshot-loader threads)
+    /// on every RAM write when TTD is enabled.
     /// @param absPage  Physical RAM page index (0 .. MAX_RAM_PAGES-1).
     inline void MarkDirty(uint16_t absPage)
     {
-        _dirty[absPage >> 6]     |= (1ULL << (absPage & 63));
-        _everDirty[absPage >> 6] |= (1ULL << (absPage & 63));
+        const uint64_t mask = (1ULL << (absPage & 63));
+        // relaxed: we don't need cross-thread ordering with other memory;
+        // we only need the bitmap word itself to be atomically OR'd so
+        // a concurrent CollectAndClear (exchange) cannot lose the bit or
+        // corrupt the word.
+        _dirty[absPage >> 6].fetch_or(mask, std::memory_order_relaxed);
+        _everDirty[absPage >> 6].fetch_or(mask, std::memory_order_relaxed);
     }
 
     /// @brief Test whether a page has ever been written in this session.
@@ -57,13 +70,15 @@ public:
     /// written at least once).
     inline bool WasEverDirty(uint16_t absPage) const
     {
-        return (_everDirty[absPage >> 6] & (1ULL << (absPage & 63))) != 0;
+        return (_everDirty[absPage >> 6].load(std::memory_order_relaxed)
+                & (1ULL << (absPage & 63))) != 0;
     }
 
     /// @brief Test whether a page is dirty in the current frame window.
     inline bool IsDirty(uint16_t absPage) const
     {
-        return (_dirty[absPage >> 6] & (1ULL << (absPage & 63))) != 0;
+        return (_dirty[absPage >> 6].load(std::memory_order_relaxed)
+                & (1ULL << (absPage & 63))) != 0;
     }
 
     /// @brief Collect the set of pages dirty since the last CollectAndClear,
@@ -96,8 +111,14 @@ public:
     size_t EverDirtyCount() const;
 
 private:
-    uint64_t _dirty[kWords]     = {0};
-    uint64_t _everDirty[kWords] = {0};
+    // std::atomic<uint64_t> is the same size as uint64_t and is lock-free
+    // on every platform we support (verified via ATOMIC_LLONG_LOCK_FREE,
+    // which is 2 = always lock-free on x86-64/ARM64). The array elements
+    // default-construct to 0 (std::atomic<uint64_t> default value).
+    static_assert(ATOMIC_LLONG_LOCK_FREE == 2,
+                  "atomic<uint64_t> must be always lock-free on this platform");
+    std::atomic<uint64_t> _dirty[kWords];
+    std::atomic<uint64_t> _everDirty[kWords];
 };
 
 } // namespace ttd

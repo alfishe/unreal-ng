@@ -9,11 +9,17 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cstring>
+#include <iostream>
+#include <unordered_map>
 
 #include "ttd_checkpoint.h"
 #include "ttd_dirty_tracker.h"
+#include "ttd_dump_format.h"     // .ttd binary format constants
 #include "ttd_page_store.h"
+
+#include "machine_state_hash.h"  // CaptureSnapshot / HashSnapshot (self-test)
 
 // Pull in the actual struct definitions for the capture call sites.
 #include "base/featuremanager.h"
@@ -26,10 +32,17 @@
 #include "emulator/memory/memory.h"      // Memory
 #include "emulator/platform.h"           // EmulatorState, CONFIG, PAGE_SIZE, MAX_RAM_PAGES
 #include "emulator/sound/chips/soundchip_turbosound.h"  // SoundChip_TurboSound (AY peripheral, P1.5)
+#include "emulator/video/screen.h"       // Screen, SpectrumScreenEnum (SetActiveScreen / SetBorderColor on restore)
 #include "emulator/sound/covox.h"                        // Covox (peripheral, P1.5)
 #include "emulator/sound/soundmanager.h"                 // SoundManager
-#include "emulator/video/screen.h"                       // Screen::InitFrame (restore path)
 #include "stdafx.h"
+
+// Static assertion: the .ttd v1 format assumes a little-endian host. Every
+// multi-byte field in the header / cpu_state / chipset_state is written in
+// host order. If we ever port to a big-endian platform we must either add
+// byte-swapping or bump the schema version and document the new convention.
+static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
+              ".ttd v1 schema assumes little-endian host; add endian conversion if porting");
 
 namespace
 {
@@ -142,11 +155,64 @@ bool TimeTravelManager::StartRecording()
     if (_state == TTDSessionState::Recording)
         return true;  // Idempotent
 
+    // Fresh session — clear any stale auto-pause signal from a previous
+    // Detached window.
+    _autoPauseRequested.store(false, std::memory_order_release);
+
     if (!_context || !_memory || !_dirtyTracker)
     {
         MLOGWARNING("TimeTravelManager::StartRecording — missing dependencies (context=%p memory=%p tracker=%p)",
                     (void*)_context, (void*)_memory, (void*)_dirtyTracker);
         return false;
+    }
+
+    // Pause the emulator while we toggle features + capture the baseline.
+    // The kDebugMode flip swaps Z80::MemIf (read on every memory access by
+    // the CPU thread), so we must not race with emulation. Pause blocks
+    // until the Z80 thread has parked.
+    Emulator* emu = _context->pEmulator;
+    const bool wasRunning = emu && emu->IsRunning() && !emu->IsPaused();
+    if (wasRunning)
+    {
+        emu->Pause(false);
+        emu->WaitForPauseConfirmation(1000);
+    }
+
+    // --- Feature-flag stewardship (TDD §6.2/§6.3) ---------------------------
+    // Capture requires:
+    //   - Features::kDebugMode ON  -> Core routes writes through
+    //     MemoryWriteDebug, which is the only path that calls
+    //     TTDDirtyTracker::MarkDirty.
+    //   - Features::kTimeTravel ON -> Memory's cached _feature_ttd_enabled
+    //     flag is true, so the dirty-tracker call is not skipped.
+    // If either is OFF, flip it ON and remember that we did so StopRecording
+    // can restore the prior state. setFeature cascades through
+    // FeatureManager::onFeatureChanged -> UseDebugMemoryInterface +
+    // Memory::UpdateFeatureCache, so the gating cache is coherent before
+    // we capture the baseline.
+    FeatureManager* fm = _context->pFeatureManager;
+    _toggledDebugModeOn = false;
+    _toggledTimeTravelOn = false;
+    if (fm)
+    {
+        if (!fm->isEnabled(Features::kTimeTravel))
+        {
+            fm->setFeature(Features::kTimeTravel, true);
+            _toggledTimeTravelOn = true;
+            MLOGINFO("TimeTravelManager::StartRecording — auto-enabled feature '%s' (required for TTD capture)",
+                     Features::kTimeTravel);
+        }
+        if (!fm->isEnabled(Features::kDebugMode))
+        {
+            fm->setFeature(Features::kDebugMode, true);
+            _toggledDebugModeOn = true;
+            MLOGINFO("TimeTravelManager::StartRecording — auto-enabled feature '%s' (required to route writes through MemoryWriteDebug -> MarkDirty)",
+                     Features::kDebugMode);
+        }
+    }
+    else
+    {
+        MLOGWARNING("TimeTravelManager::StartRecording — FeatureManager is null; cannot verify debug/ttd flags. Capture will be a no-op if debug memory interface is inactive.");
     }
 
     // Clear any prior history (StartRecording always begins a fresh session).
@@ -168,6 +234,9 @@ bool TimeTravelManager::StartRecording()
         MLOGWARNING("TimeTravelManager::StartRecording — implausible modelRamPages=%u, refusing to start",
                     static_cast<unsigned>(_modelRamPages));
         _modelRamPages = 0;
+        // Restore emulator run state before bailing.
+        if (wasRunning && emu)
+            emu->Resume(false);
         return false;
     }
 
@@ -180,8 +249,14 @@ bool TimeTravelManager::StartRecording()
 
     _state = TTDSessionState::Recording;
 
-    MLOGINFO("TimeTravelManager::StartRecording — baseline captured: modelRamPages=%u, timeline=1, pageStoreBytes=%zu",
-             static_cast<unsigned>(_modelRamPages), _pageStore.GetCapacityBytes());
+    MLOGINFO("TimeTravelManager::StartRecording — baseline captured: modelRamPages=%u, timeline=1, pageStoreBytes=%zu, debugMemIf=%s",
+             static_cast<unsigned>(_modelRamPages), _pageStore.GetCapacityBytes(),
+             (_toggledDebugModeOn ? "switched-on" : "already-on"));
+
+    // Resume the emulator if we paused it. The recording OnFrameBoundary
+    // hook will now see dirty bits being set correctly.
+    if (wasRunning && emu)
+        emu->Resume(false);
 
     return true;
 }
@@ -193,6 +268,38 @@ void TimeTravelManager::StopRecording()
     _state = TTDSessionState::Idle;
     MLOGINFO("TimeTravelManager::StopRecording — timeline retained with %zu checkpoints",
              _timeline.size());
+
+    // Pause the emulator while we restore feature flags (same race concern
+    // as StartRecording — MemIf swap must not race with CPU execution).
+    Emulator* emu = _context ? _context->pEmulator : nullptr;
+    const bool wasRunning = emu && emu->IsRunning() && !emu->IsPaused();
+    if (wasRunning)
+    {
+        emu->Pause(false);
+        emu->WaitForPauseConfirmation(1000);
+    }
+
+    // Restore feature flags we toggled in StartRecording. Only flip back the
+    // ones we actually turned ON — pre-existing user/debugger debug mode is
+    // left intact.
+    FeatureManager* fm = _context ? _context->pFeatureManager : nullptr;
+    if (fm)
+    {
+        if (_toggledDebugModeOn)
+        {
+            fm->setFeature(Features::kDebugMode, false);
+            _toggledDebugModeOn = false;
+            MLOGINFO("TimeTravelManager::StopRecording — restored feature '%s' to OFF (was auto-enabled by StartRecording)",
+                     Features::kDebugMode);
+        }
+        // Note: kTimeTravel is left enabled. It only gates Memory's cached
+        // _feature_ttd_enabled flag, which is harmless when not recording,
+        // and leaving it on lets the next StartRecording skip the toggle.
+        _toggledTimeTravelOn = false;
+    }
+
+    if (wasRunning && emu)
+        emu->Resume(false);
 }
 
 void TimeTravelManager::InvalidateSession(const char* reason)
@@ -226,7 +333,19 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
     info.checkpointCount    = _timeline.size();
     info.pageStoreBytes     = _pageStore.GetCapacityBytes();
     info.pageStoreUsedBytes = _pageStore.GetUsedBytes();
-    info.baselineFramesCaptured = 0;  // Diagnostic hook for v2 (working-set-proportional mode)
+    // Distinct RAM snapshots currently live in the page store. Each slot
+    // is a 16 KB page captured at some frame; slots are shared across
+    // checkpoints via refcount when a page hasn't changed. This is the
+    // most direct measure of "how much unique state has been captured"
+    // and tracks the working-set size of the session.
+    info.baselineFramesCaptured = _pageStore.GetUsedSlots();
+
+    // Real heap footprint — the actual number to display for "session
+    // size". Distinct from pageStore* above: this includes checkpoint
+    // metadata, journal backing, and counts allocated (not just live)
+    // page-store bytes because that's what the process is actually
+    // consuming.
+    info.sessionHeapBytes = EstimateSessionHeapBytes();
 
     if (!_timeline.empty())
     {
@@ -239,21 +358,103 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
     return info;
 }
 
+size_t TimeTravelManager::EstimateSessionHeapBytes() const
+{
+    // Page store: count the allocated vector backing. The COW store grows
+    // by one slot per Intern-that-can't-reuse and never shrinks until
+    // Reset, so capacity is the right measure of "what the process is
+    // consuming right now" even though some of those slots are on the
+    // free list. GetCapacityBytes returns _pages.size() which is exactly
+    // the backing vector's byte size.
+    size_t total = _pageStore.GetCapacityBytes();
+
+    // Per-checkpoint: the struct itself + every vector's allocated backing
+    // (capacity, not size — capacity is what's actually on the heap).
+    //sizeof(TTDCheckpoint) covers time, globalT, cpu, chipset, journal
+    // offsets, and the std::vector headers (pointer/size/capacity triple).
+    // The vector capacity × element-size additions below account for the
+    // heap allocations those vector headers point at.
+    for (const TTDCheckpoint& cp : _timeline)
+    {
+        total += sizeof(TTDCheckpoint);
+        total += cp.ayState.capacity()    * sizeof(uint8_t);
+        total += cp.fdcState.capacity()   * sizeof(uint8_t);
+        total += cp.tapeState.capacity()  * sizeof(uint8_t);
+        total += cp.covoxState.capacity() * sizeof(uint8_t);
+        total += cp.ramPages.capacity()   * sizeof(TTDPageRef);
+    }
+
+    // Input journal + external-event journal — same pattern: capacity is
+    // what's allocated, size is what's logically used.
+    total += _inputJournal.Events().capacity()   * sizeof(TTDInputEvent);
+    total += _externalEvents.Events().capacity() * sizeof(TTDExternalEvent);
+
+    // Session-scope dirty-page scratch buffer (reused every frame — counted
+    // once because there's only one).
+    total += _dirtyScratch.capacity() * sizeof(uint16_t);
+
+    return total;
+}
+
 // ---------------------------------------------------------------------------
 // Capture (emulator thread)
 // ---------------------------------------------------------------------------
 
 void TimeTravelManager::OnFrameBoundary()
 {
-    if (_state != TTDSessionState::Recording)
+    if (!_context)
         return;
 
-    if (!_context || !_memory || !_dirtyTracker)
-        return;  // Defensive — should not happen if StartRecording succeeded
+    // ------------------------------------------------------------------
+    // Recording: append a checkpoint for the just-completed frame.
+    // ------------------------------------------------------------------
+    if (_state == TTDSessionState::Recording)
+    {
+        if (!_memory || !_dirtyTracker)
+            return;  // Defensive — should not happen if StartRecording succeeded
 
-    TTDCheckpoint cp;
-    CaptureNow(cp);
-    _timeline.push_back(std::move(cp));
+        TTDCheckpoint cp;
+        CaptureNow(cp);
+        _timeline.push_back(std::move(cp));
+        return;
+    }
+
+    // ------------------------------------------------------------------
+    // Detached: the user seeked to a historical point and then resumed.
+    // Auto-pause once execution reaches the end of the recorded session
+    // so the emulator doesn't silently run past the timeline's known
+    // state into unrecorded territory. The user can explicitly
+    // ResumeRecordingFrom() to continue capturing new frames beyond the
+    // original session end, or StartRecording() to begin a fresh session.
+    //
+    // This runs on the emulator thread (called from MainLoop::OnFrameEnd
+    // and Emulator::RunFrame's boundary handler). Emulator::Pause() is
+    // safe to call here — it just sets the _isPaused flag, which the
+    // MainLoop checks at the top of its next iteration.
+    // ------------------------------------------------------------------
+    if (_state == TTDSessionState::Detached && !_timeline.empty())
+    {
+        const uint64_t sessionEnd = _timeline.back().time.frame;
+        const uint64_t currentFrame = _context->emulatorState.frame_counter;
+        if (currentFrame > sessionEnd)
+        {
+            MLOGINFO("TimeTravelManager: auto-pause at frame %llu "
+                     "(reached session end %llu, state=Detached)",
+                     static_cast<unsigned long long>(currentFrame),
+                     static_cast<unsigned long long>(sessionEnd));
+            // Set the flag first so synchronous-test callers can observe
+            // the request even when Emulator::Pause() is a no-op (the
+            // async main loop isn't running in test mode).
+            _autoPauseRequested.store(true, std::memory_order_release);
+            if (_context->pEmulator)
+                _context->pEmulator->Pause();
+        }
+    }
+}
+
+bool TimeTravelManager::ConsumeAutoPauseRequest()
+{
+    return _autoPauseRequested.exchange(false, std::memory_order_acq_rel);
 }
 
 // ---------------------------------------------------------------------------
@@ -468,12 +669,11 @@ bool TimeTravelManager::RestoreCheckpointForTesting(size_t idx)
         return false;
     }
 
-    if (_state != TTDSessionState::Recording && _state != TTDSessionState::Detached)
-    {
-        MLOGWARNING("TimeTravelManager::RestoreCheckpointForTesting — state is %s, expected Recording or Detached",
-                    TTDSessionStateToString(_state));
-        return false;
-    }
+    // Allow any non-empty state: Recording, Detached, and Idle-with-history
+    // are all valid for direct checkpoint inspection. The timeline-empty
+    // check above already handles the truly-empty case.
+    // Note: this test-only API is intended to be permissive so tests can
+    // inspect history without first transitioning to Detached.
 
     if (!_context || !_memory)
     {
@@ -541,13 +741,44 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     RestorePeripheral(_context->pBetaDisk, cp.fdcState);
 
     // --- Step 5: Screen (TDD §8.1 step 2e) ---
-    // InitFrame resets the renderer's frame-local counters so the next
-    // rendered frame starts from a clean state matching the restored beam
-    // position. Without this, the next frame would inherit dirty counters
-    // from whatever frame was running before the restore.
+    //
+    // The screen renderer caches two pieces of derived state that the
+    // RestoreChipsetState field-copy above does NOT update:
+    //
+    //   1. _activeScreenMemoryOffset — points to bank 5 (normal) or bank 7
+    //      (shadow) depending on bit 3 of p7FFD. The port decoder's
+    //      Port_7FFD_Out keeps this in sync on every real port write by
+    //      calling SetActiveScreen(); RestoreCheckpoint bypasses the
+    //      decoder, so we must do it explicitly. Without this call the
+    //      renderer reads pixels from whichever bank was active when the
+    //      PREVIOUS frame ran — typically garbage after a seek.
+    //
+    //   2. _borderColor — derived from bits 0-2 of pFE. Same situation:
+    //      the field copy restores pFE in emulatorState but the cached
+    //      screen field is stale until SetBorderColor / FillBorderWithColor
+    //      runs.
+    //
+    // After re-syncing the cached fields, InitFrame resets the renderer's
+    // frame-local counters so the next rendered frame starts from a clean
+    // state matching the restored beam position, and RenderOnlyMainScreen
+    // rebuilds the RGBA framebuffer in one batch from the freshly-restored
+    // screen memory. The snapshot loader (loader_z80.cpp:521) uses the
+    // exact same pattern for the same reason.
     if (_context->pScreen)
     {
+        // Sync active screen bank from restored p7FFD bit 3.
+        const uint8_t p7FFD = _context->emulatorState.p7FFD;
+        const SpectrumScreenEnum screen = (p7FFD & 0b0000'1000)
+                                            ? SCREEN_SHADOW   // bit 3 set → bank 7
+                                            : SCREEN_NORMAL;  // bit 3 clear → bank 5
+        _context->pScreen->SetActiveScreen(screen);
+
+        // Sync border color from restored pFE bits 0-2.
+        const uint8_t borderColor = _context->emulatorState.pFE & 0b0000'0111;
+        _context->pScreen->SetBorderColor(borderColor);
+
         _context->pScreen->InitFrame();
+        _context->pScreen->RenderOnlyMainScreen();
     }
 
     // t_states and frame_counter were already restored by RestoreChipsetState.
@@ -781,6 +1012,43 @@ TTDTimePoint TimeTravelManager::SessionEndPosition() const
 
 bool TimeTravelManager::SeekTo(const TTDTimePoint& target, TTDSeekResult* outResult)
 {
+    // Each new Detached window starts with a clean auto-pause signal.
+    // The flag is set by OnFrameBoundary when execution runs past
+    // SessionEndPosition(); clearing here means callers can poll
+    // ConsumeAutoPauseRequest() after resuming from this seek and get a
+    // meaningful result.
+    _autoPauseRequested.store(false, std::memory_order_release);
+
+    // ------------------------------------------------------------------
+    // Public SeekTo guards against Recording state — scrubbing during
+    // recording would trash live emulator state (RestoreCheckpoint
+    // overwrites it) and corrupt the timeline's sorted invariant (the
+    // next OnFrameBoundary would capture at the restored frame, potentially
+    // before existing checkpoints). Callers MUST StopRecording first.
+    //
+    // ResumeRecordingFrom legitimately needs to seek during Recording —
+    // it uses SeekToInternal directly because it owns the timeline
+    // truncation that keeps the invariant intact.
+    // ------------------------------------------------------------------
+    if (_state == TTDSessionState::Recording)
+    {
+        if (outResult)
+        {
+            outResult->reached        = false;
+            outResult->arrivedAt      = TTDTimePoint{};
+            outResult->haltReason     = TTDSeekHaltReason::OutOfRange;
+            outResult->blockingMarker = TTDExternalEvent{};
+        }
+        MLOGWARNING("TimeTravelManager::SeekTo — rejected: session is Recording "
+                    "(call StopRecording first to preserve history)");
+        return false;
+    }
+
+    return SeekToInternal(target, outResult);
+}
+
+bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult* outResult)
+{
     // ------------------------------------------------------------------
     // Default the out-result to a failure state. Every return path below
     // either leaves this default (false / OutOfRange) or overwrites it
@@ -799,19 +1067,18 @@ bool TimeTravelManager::SeekTo(const TTDTimePoint& target, TTDSeekResult* outRes
     // ------------------------------------------------------------------
     if (!_context)
     {
-        MLOGWARNING("TimeTravelManager::SeekTo — null _context");
+        MLOGWARNING("TimeTravelManager::SeekToInternal — null _context");
         return false;
     }
 
-    if (_state == TTDSessionState::Idle)
-    {
-        MLOGWARNING("TimeTravelManager::SeekTo — session is Idle (no history)");
-        return false;
-    }
-
+    // Idle-with-history is allowed (typical after StopRecording); Detached
+    // is the other valid state. Recording is also allowed for internal
+    // callers (ResumeRecordingFrom) — they manage the invariant themselves.
     if (_timeline.empty())
     {
-        MLOGWARNING("TimeTravelManager::SeekTo — timeline is empty");
+        MLOGWARNING("TimeTravelManager::SeekToInternal — timeline is empty "
+                    "(state=%s)",
+                    TTDSessionStateToString(_state));
         return false;
     }
 
@@ -1029,7 +1296,15 @@ void TimeTravelManager::ReplayWithinFrame(uint64_t targetFrame, uint32_t targetT
 
 bool TimeTravelManager::StepBackFrame()
 {
-    if (_state == TTDSessionState::Idle || _timeline.empty())
+    if (_state == TTDSessionState::Recording)
+    {
+        MLOGWARNING("TimeTravelManager::StepBackFrame — rejected: session is Recording "
+                    "(call StopRecording first)");
+        return false;
+    }
+
+    // Idle-with-history is allowed; only the timeline-empty case fails.
+    if (_timeline.empty())
     {
         MLOGWARNING("TimeTravelManager::StepBackFrame — no recorded history");
         return false;
@@ -1050,7 +1325,15 @@ bool TimeTravelManager::StepBackFrame()
 
 bool TimeTravelManager::StepForwardFrame()
 {
-    if (_state == TTDSessionState::Idle || _timeline.empty())
+    if (_state == TTDSessionState::Recording)
+    {
+        MLOGWARNING("TimeTravelManager::StepForwardFrame — rejected: session is Recording "
+                    "(call StopRecording first)");
+        return false;
+    }
+
+    // Idle-with-history is allowed; only the timeline-empty case fails.
+    if (_timeline.empty())
     {
         MLOGWARNING("TimeTravelManager::StepForwardFrame — no recorded history");
         return false;
@@ -1120,18 +1403,18 @@ bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
     const size_t preMarkerCount   = _externalEvents.Size();
 
     // ------------------------------------------------------------------
-    // Step 1: ensure the emulator is positioned at `from`. SeekTo handles
-    // binary search, RestoreCheckpoint, intra-frame silent replay, and the
-    // Detached transition. If the caller already SeekTo'd to `from` this
-    // is a re-restore (deterministic — same machine state results).
+    // Step 1: ensure the emulator is positioned at `from`. SeekToInternal
+    // handles binary search, RestoreCheckpoint, intra-frame silent replay,
+    // and the Detached transition. If the caller already SeekTo'd to `from`
+    // this is a re-restore (deterministic — same machine state results).
     //
-    // Doing the seek inside Resume (rather than requiring the caller to
-    // SeekTo first) makes the API self-contained and matches the TDD's
-    // "atomic under pause" requirement.
+    // We use SeekToInternal (NOT public SeekTo) because we legitimately
+    // need to seek during Recording — the truncation in Step 2 keeps the
+    // timeline's sorted invariant intact.
     // ------------------------------------------------------------------
-    if (!SeekTo(from))
+    if (!SeekToInternal(from, nullptr))
     {
-        // SeekTo already logged the specific failure.
+        // SeekToInternal already logged the specific failure.
         return false;
     }
 
@@ -1203,6 +1486,573 @@ void TimeTravelManager::TruncateTimelineAfter(const TTDTimePoint& from)
              static_cast<unsigned long long>(from.frame),
              static_cast<unsigned>(from.tInFrame),
              _timeline.size());
+}
+
+// ---------------------------------------------------------------------------
+// Session serialization (.ttd format)
+// ---------------------------------------------------------------------------
+//
+// The .ttd binary format is the portable contract between every TTD consumer:
+//   - core tests (round-trip verification)
+//   - the CLI (`automation-cli ttd dump`)
+//   - WebAPI wrapper (optional — a thin handler around SerializeSession)
+//   - the Python analyzer in tools/verification/ttd-analyzer/
+//   - any third-party tool that generates a parser from ttd.ksy
+//
+// Format (see core/src/debugger/ttd/ttd.ksy for the canonical schema):
+//
+//   header:
+//     magic               (4 bytes: 'T' 'T' 'D' 'D')
+//     schema_version      (u16)
+//     flags               (u16, bit 0 = little-endian)
+//     model_id            (u8)
+//     model_ram_pages     (u8)
+//     cpu_state_size      (u16)
+//     chipset_state_size  (u16)
+//     captured_at_unix_ms (u64)
+//     emulator_id_len     (u8)
+//     emulator_id         (emulator_id_len bytes, UTF-8)
+//     session_state       (u8)
+//     session_start_frame (u64)
+//     session_end_frame   (u64)
+//     page_store_count    (u32)
+//     checkpoint_count    (u32)
+//     reserved            (8 bytes, zero)
+//
+//   page_store:           page_store_count slots, each 16384 bytes raw
+//
+//   checkpoints:          checkpoint_count records, each:
+//     frame               (u64)
+//     global_t            (u64)
+//     cpu_state           (raw TTDCpuState, cpu_state_size bytes)
+//     chipset_state       (raw TTDChipsetState, chipset_state_size bytes)
+//     ram_page_refs       (model_ram_pages × u32)
+//     ay_size, fdc_size, tape_size, covox_size (u32 each)
+//     ay_blob, fdc_blob, tape_blob, covox_blob (variable)
+//
+// We serialize only the live page-store slots (refcount > 0). The original
+// slot indices are remapped to a compact [0..N) range via a map; checkpoints'
+// ram_page_refs are translated through this map on write and read. This keeps
+// the dump file proportional to the working set, not to high-water-mark
+// capacity (free slots left behind by thinning are not emitted).
+
+namespace {
+
+/// @brief Write a POD struct verbatim to the stream (host order = LE on
+/// little-endian hosts, which is asserted at the top of this file).
+template <typename Pod>
+bool WritePod(std::ostream& out, const Pod& value, std::string& err)
+{
+    static_assert(std::is_trivially_copyable<Pod>::value,
+                  "WritePod requires trivially-copyable type");
+    out.write(reinterpret_cast<const char*>(&value), sizeof(Pod));
+    if (!out)
+    {
+        err = "stream write failed";
+        return false;
+    }
+    return true;
+}
+
+/// @brief Read a POD struct verbatim from the stream.
+template <typename Pod>
+bool ReadPod(std::istream& in, Pod& value, std::string& err)
+{
+    static_assert(std::is_trivially_copyable<Pod>::value,
+                  "ReadPod requires trivially-copyable type");
+    in.read(reinterpret_cast<char*>(&value), sizeof(Pod));
+    if (!in)
+    {
+        err = "stream read failed";
+        return false;
+    }
+    return true;
+}
+
+/// @brief Write a length-prefixed byte vector (size as u32, then raw bytes).
+bool WriteBlob(std::ostream& out, const std::vector<uint8_t>& blob, std::string& err)
+{
+    const uint32_t sz = static_cast<uint32_t>(blob.size());
+    if (!WritePod(out, sz, err))
+        return false;
+    if (sz != 0)
+    {
+        out.write(reinterpret_cast<const char*>(blob.data()), sz);
+        if (!out)
+        {
+            err = "stream write failed (blob body)";
+            return false;
+        }
+    }
+    return true;
+}
+
+/// @brief Read a length-prefixed byte vector written by WriteBlob.
+bool ReadBlob(std::istream& in, std::vector<uint8_t>& blob, std::string& err)
+{
+    uint32_t sz = 0;
+    if (!ReadPod(in, sz, err))
+        return false;
+    // Defensive sanity cap — individual peripheral blobs are tiny (AY=64,
+    // FDC=~200, Tape=16, Covox=4). A claim of >1 MB is certainly corruption.
+    if (sz > (1u << 20))
+    {
+        err = "implausible peripheral blob size " + std::to_string(sz);
+        return false;
+    }
+    blob.resize(sz);
+    if (sz != 0)
+    {
+        in.read(reinterpret_cast<char*>(blob.data()), sz);
+        if (!in)
+        {
+            err = "stream read failed (blob body)";
+            return false;
+        }
+    }
+    return true;
+}
+
+} // anonymous namespace
+
+bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) const
+{
+    // --- Resolve header metadata ---
+    // cpu_state_size / chipset_state_size are written so a future C++ reader
+    // can detect struct-layout drift between the writer and reader builds.
+    // Kaitai-generated readers ignore these fields (the .ksy is the layout
+    // contract for them).
+    const uint16_t cpuStateSize     = static_cast<uint16_t>(sizeof(TTDCpuState));
+    const uint16_t chipsetStateSize = static_cast<uint16_t>(sizeof(TTDChipsetState));
+
+    // model_ram_pages is u8 in the .ksy format. _modelRamPages is uint16_t in
+    // the engine (could exceed 255 only on >4 MB machines, which no v1-supported
+    // model approaches). Truncate defensively.
+    const uint8_t modelRamPagesOut = static_cast<uint8_t>(_modelRamPages);
+
+    // Symbolic emulator identifier (best-effort; empty when no Emulator is
+    // attached — e.g. a deserialized-then-reserialized session).
+    std::string emulatorId;
+    if (_context && _context->pEmulator)
+    {
+        emulatorId = _context->pEmulator->GetSymbolicId();
+    }
+    if (emulatorId.size() > 255)
+        emulatorId.resize(255);  // emulator_id_len is u8
+
+    // Model metadata (best-effort).
+    uint8_t modelId = 0;
+    if (_context)
+        modelId = static_cast<uint8_t>(_context->config.mem_model);
+
+    // Wall-clock capture time. Informational; not used by the format.
+    const auto now = std::chrono::system_clock::now();
+    const uint64_t capturedAtMs = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()).count());
+
+    // --- Build the live-slot remap ---
+    // Walk the page store; assign compact indices 0, 1, 2, ... to every slot
+    // whose refcount > 0. The map translates from the in-memory storeIndex
+    // used by checkpoints to the on-disk slot index. NEVER_TOUCHED refs pass
+    // through unchanged (they're never looked up in the map on read).
+    std::unordered_map<uint32_t, uint32_t> slotRemap;
+    slotRemap.reserve(_pageStore.GetCapacity());
+    for (uint32_t idx = 0; idx < _pageStore.GetCapacity(); ++idx)
+    {
+        if (_pageStore.GetRefCount(idx) > 0)
+        {
+            slotRemap.emplace(idx, static_cast<uint32_t>(slotRemap.size()));
+        }
+    }
+    const uint32_t liveSlotCount = static_cast<uint32_t>(slotRemap.size());
+
+    // --- Write header ---
+    out.write(ttd::dump::kMagic, 4);
+    if (!out) { err = "stream write failed (magic)"; return false; }
+
+    const uint16_t schemaVersion = ttd::dump::kSchemaVersion;
+    if (!WritePod(out, schemaVersion, err)) return false;
+
+    const uint16_t flags = ttd::dump::kFlagsLittleEndian;
+    if (!WritePod(out, flags, err)) return false;
+
+    if (!WritePod(out, modelId, err)) return false;
+    if (!WritePod(out, modelRamPagesOut, err)) return false;
+    if (!WritePod(out, cpuStateSize, err)) return false;
+    if (!WritePod(out, chipsetStateSize, err)) return false;
+    if (!WritePod(out, capturedAtMs, err)) return false;
+
+    const uint8_t emulatorIdLen = static_cast<uint8_t>(emulatorId.size());
+    if (!WritePod(out, emulatorIdLen, err)) return false;
+    if (emulatorIdLen != 0)
+    {
+        out.write(emulatorId.data(), emulatorIdLen);
+        if (!out) { err = "stream write failed (emulator_id)"; return false; }
+    }
+
+    const uint8_t sessionState = static_cast<uint8_t>(_state);
+    if (!WritePod(out, sessionState, err)) return false;
+
+    const uint64_t sessionStart = _timeline.empty() ? 0 : _timeline.front().time.frame;
+    const uint64_t sessionEnd   = _timeline.empty() ? 0 : _timeline.back().time.frame;
+    if (!WritePod(out, sessionStart, err)) return false;
+    if (!WritePod(out, sessionEnd, err)) return false;
+
+    if (!WritePod(out, liveSlotCount, err)) return false;
+
+    const uint32_t checkpointCount = static_cast<uint32_t>(_timeline.size());
+    if (!WritePod(out, checkpointCount, err)) return false;
+
+    static_assert(ttd::dump::kPageSize == TTDPageStore::kPageSize,
+                  "page size mismatch between format and page store");
+    for (int i = 0; i < 8; ++i)
+    {
+        const char zero = 0;
+        out.write(&zero, 1);
+        if (!out) { err = "stream write failed (reserved)"; return false; }
+    }
+
+    // --- Write page store (only live slots, in remapped order) ---
+    // Walk slots in original-index order and emit any with refcount > 0.
+    // The remap above assigns compact indices in the same order, so the
+    // on-disk slot at offset N corresponds to the Nth live slot emitted.
+    for (uint32_t idx = 0; idx < _pageStore.GetCapacity(); ++idx)
+    {
+        if (_pageStore.GetRefCount(idx) == 0)
+            continue;
+        const uint8_t* pageData = _pageStore.GetPage(idx);
+        if (!pageData)
+        {
+            err = "page store returned null for live slot " + std::to_string(idx);
+            return false;
+        }
+        out.write(reinterpret_cast<const char*>(pageData), ttd::dump::kPageSize);
+        if (!out)
+        {
+            err = "stream write failed (page " + std::to_string(idx) + ")";
+            return false;
+        }
+    }
+
+    // --- Write checkpoints ---
+    for (const TTDCheckpoint& cp : _timeline)
+    {
+        if (!WritePod(out, cp.time.frame, err)) return false;
+        if (!WritePod(out, cp.globalT, err)) return false;
+
+        // CPU + chipset: POD structs, written verbatim. Padding bytes were
+        // zeroed by CaptureCpuState/CaptureChipsetState (memset before field
+        // copies), so the output is deterministic across runs.
+        if (!WritePod(out, cp.cpu, err)) return false;
+        if (!WritePod(out, cp.chipset, err)) return false;
+
+        // RAM page refs (remapped to compact on-disk indices).
+        // Defensive: a checkpoint's ramPages.size() should equal _modelRamPages,
+        // but historical checkpoints from earlier sessions might have a
+        // different count if the model was reconfigured mid-session (which
+        // P1.6 invalidation should have prevented — but be defensive here).
+        const uint32_t pagesToWrite =
+            std::min<uint32_t>(static_cast<uint32_t>(cp.ramPages.size()),
+                                static_cast<uint32_t>(_modelRamPages));
+        for (uint32_t p = 0; p < static_cast<uint32_t>(_modelRamPages); ++p)
+        {
+            uint32_t refOut = ttd::dump::kNeverTouchedPageRef;
+            if (p < pagesToWrite)
+            {
+                const TTDPageRef& ref = cp.ramPages[p];
+                if (!ref.IsNeverTouched())
+                {
+                    auto it = slotRemap.find(ref.storeIndex);
+                    if (it == slotRemap.end())
+                    {
+                        err = "checkpoint " + std::to_string(cp.time.frame) +
+                              " references page slot " + std::to_string(ref.storeIndex) +
+                              " which is not in the live remap (corrupt timeline?)";
+                        return false;
+                    }
+                    refOut = it->second;
+                }
+            }
+            if (!WritePod(out, refOut, err)) return false;
+        }
+
+        // Peripheral blobs (length-prefixed).
+        if (!WriteBlob(out, cp.ayState, err))    return false;
+        if (!WriteBlob(out, cp.fdcState, err))   return false;
+        if (!WriteBlob(out, cp.tapeState, err))  return false;
+        if (!WriteBlob(out, cp.covoxState, err)) return false;
+    }
+
+    return true;
+}
+
+bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
+{
+    // --- Read + validate header ---
+    char magic[4];
+    in.read(magic, 4);
+    if (!in) { err = "stream read failed (magic)"; return false; }
+    if (std::memcmp(magic, ttd::dump::kMagic, 4) != 0)
+    {
+        err = "bad magic — not a .ttd file";
+        return false;
+    }
+
+    uint16_t schemaVersion = 0;
+    if (!ReadPod(in, schemaVersion, err)) return false;
+    if (schemaVersion > ttd::dump::kMaxSupportedSchemaVersion)
+    {
+        err = "file is schema v" + std::to_string(schemaVersion) +
+              ", this reader supports up to v" +
+              std::to_string(ttd::dump::kMaxSupportedSchemaVersion);
+        return false;
+    }
+    if (schemaVersion != ttd::dump::kSchemaVersion)
+    {
+        // v1 is the only version we know how to read. Future versions will
+        // branch here.
+        err = "unsupported schema v" + std::to_string(schemaVersion) +
+              " (only v" + std::to_string(ttd::dump::kSchemaVersion) + " implemented)";
+        return false;
+    }
+
+    uint16_t flags = 0;
+    if (!ReadPod(in, flags, err)) return false;
+    if ((flags & ttd::dump::kFlagsLittleEndian) == 0)
+    {
+        err = "file is big-endian; only little-endian .ttd files are supported";
+        return false;
+    }
+
+    uint8_t modelId = 0, modelRamPages = 0;
+    uint16_t cpuStateSize = 0, chipsetStateSize = 0;
+    uint64_t capturedAtMs = 0;
+    if (!ReadPod(in, modelId, err)) return false;
+    if (!ReadPod(in, modelRamPages, err)) return false;
+    if (!ReadPod(in, cpuStateSize, err)) return false;
+    if (!ReadPod(in, chipsetStateSize, err)) return false;
+    if (!ReadPod(in, capturedAtMs, err)) return false;
+
+    // Drift detection: warn (not fail) if the producer's struct sizes don't
+    // match ours. A size mismatch means the producer was built from a different
+    // source revision; the field layout may differ even at the same schema
+    // version. We refuse rather than risk silent misparse.
+    if (cpuStateSize != sizeof(TTDCpuState))
+    {
+        err = "cpu_state_size mismatch: file has " + std::to_string(cpuStateSize) +
+              ", this build has " + std::to_string(sizeof(TTDCpuState));
+        return false;
+    }
+    if (chipsetStateSize != sizeof(TTDChipsetState))
+    {
+        err = "chipset_state_size mismatch: file has " + std::to_string(chipsetStateSize) +
+              ", this build has " + std::to_string(sizeof(TTDChipsetState));
+        return false;
+    }
+
+    uint8_t emulatorIdLen = 0;
+    if (!ReadPod(in, emulatorIdLen, err)) return false;
+    std::string emulatorId;
+    if (emulatorIdLen != 0)
+    {
+        emulatorId.resize(emulatorIdLen);
+        in.read(&emulatorId[0], emulatorIdLen);
+        if (!in) { err = "stream read failed (emulator_id)"; return false; }
+    }
+
+    uint8_t sessionState = 0;
+    uint64_t sessionStart = 0, sessionEnd = 0;
+    uint32_t pageStoreCount = 0, checkpointCount = 0;
+    if (!ReadPod(in, sessionState, err)) return false;
+    if (!ReadPod(in, sessionStart, err)) return false;
+    if (!ReadPod(in, sessionEnd, err)) return false;
+    if (!ReadPod(in, pageStoreCount, err)) return false;
+    if (!ReadPod(in, checkpointCount, err)) return false;
+
+    // Skip reserved bytes.
+    char reserved[8];
+    in.read(reserved, 8);
+    if (!in) { err = "stream read failed (reserved)"; return false; }
+
+    // --- Clear existing state ---
+    // The file completely replaces the current session. Release all page
+    // refs held by the existing timeline before resetting the store.
+    for (auto& cp : _timeline)
+        ReleaseCheckpointRefs(cp);
+    _timeline.clear();
+    _pageStore.Reset();
+    _inputJournal.Clear();
+    _externalEvents.Clear();
+    _dirtyScratch.clear();
+    _modelRamPages = modelRamPages;
+
+    // --- Read page store ---
+    //
+    // We do NOT use _pageStore.Intern() here because Intern sets refcount=1
+    // and we need refcount = (total references across the timeline). Instead
+    // we Intern each slot (giving refcount=1), then after reading all the
+    // checkpoints we Release every slot once. The net effect: refcount ends
+    // up at (total references), matching what SerializeSession would produce
+    // for the same content. This keeps the invariants straight even though
+    // the page-store API was designed for the incremental-capture pattern,
+    // not bulk load.
+    //
+    // Each on-disk slot is at compact index [0..pageStoreCount). The page
+    // store was just Reset, so Intern calls produce sequential indices
+    // matching the on-disk layout — we assert that.
+    for (uint32_t i = 0; i < pageStoreCount; ++i)
+    {
+        uint8_t pageBuffer[ttd::dump::kPageSize];
+        in.read(reinterpret_cast<char*>(pageBuffer), ttd::dump::kPageSize);
+        if (!in)
+        {
+            err = "stream read failed (page slot " + std::to_string(i) + ")";
+            return false;
+        }
+        const uint32_t newIdx = _pageStore.Intern(pageBuffer);
+        if (newIdx != i)
+        {
+            err = "page store layout drift: slot " + std::to_string(i) +
+                  " interned as " + std::to_string(newIdx);
+            return false;
+        }
+    }
+
+    // --- Read checkpoints ---
+    //
+    // For each checkpoint's ram_page_refs we Intern'd every slot already,
+    // so a slot referenced by this checkpoint is live in the store. We AddRef
+    // for every reference; the Intern's initial refcount=1 is corrected by a
+    // single Release per slot after the checkpoint loop.
+    _timeline.reserve(checkpointCount);
+    for (uint32_t i = 0; i < checkpointCount; ++i)
+    {
+        TTDCheckpoint cp;
+
+        if (!ReadPod(in, cp.time.frame, err)) return false;
+        if (!ReadPod(in, cp.globalT, err)) return false;
+        if (!ReadPod(in, cp.cpu, err)) return false;
+        if (!ReadPod(in, cp.chipset, err)) return false;
+
+        cp.ramPages.resize(_modelRamPages);
+        for (uint16_t p = 0; p < _modelRamPages; ++p)
+        {
+            uint32_t ref = 0;
+            if (!ReadPod(in, ref, err)) return false;
+            if (ref == ttd::dump::kNeverTouchedPageRef)
+            {
+                cp.ramPages[p].storeIndex = TTDPageRef::kNeverTouched;
+            }
+            else if (ref < pageStoreCount)
+            {
+                cp.ramPages[p].storeIndex = ref;
+                // Bump refcount for this reference. The Intern above set
+                // refcount=1; we'll subtract that initial 1 once after the
+                // checkpoint loop. Net: refcount == number of references
+                // across the deserialized timeline.
+                _pageStore.AddRef(ref);
+            }
+            else
+            {
+                err = "checkpoint " + std::to_string(i) + " page " + std::to_string(p) +
+                      ": slot index " + std::to_string(ref) +
+                      " out of range (pageStoreCount=" +
+                      std::to_string(pageStoreCount) + ")";
+                return false;
+            }
+        }
+
+        if (!ReadBlob(in, cp.ayState, err))    return false;
+        if (!ReadBlob(in, cp.fdcState, err))   return false;
+        if (!ReadBlob(in, cp.tapeState, err))  return false;
+        if (!ReadBlob(in, cp.covoxState, err)) return false;
+
+        _timeline.push_back(std::move(cp));
+    }
+
+    // Correct the Intern's initial refcount=1 for each live slot. After all
+    // checkpoints have been materialized, each slot's refcount is
+    // (number_of_references + 1). We need it to equal number_of_references
+    // so the page store's bookkeeping matches what a fresh in-memory capture
+    // of the same content would produce.
+    for (uint32_t i = 0; i < pageStoreCount; ++i)
+        _pageStore.Release(i);
+
+    // --- Finalize state ---
+    // The file does not carry live recording semantics; force Idle. Callers
+    // who want to browse the timeline can call RestoreCheckpointForTesting()
+    // or SeekTo() to position the emulator at any captured frame.
+    _state = TTDSessionState::Idle;
+
+    MLOGINFO("TimeTravelManager::DeserializeSession — loaded schema v%u: "
+             "%u pages, %zu checkpoints (frames %llu..%llu), model_ram_pages=%u",
+             static_cast<unsigned>(schemaVersion),
+             static_cast<unsigned>(pageStoreCount),
+             _timeline.size(),
+             static_cast<unsigned long long>(sessionStart),
+             static_cast<unsigned long long>(sessionEnd),
+             static_cast<unsigned>(_modelRamPages));
+
+    return true;
+}
+
+TimeTravelManager::SelfTestResult TimeTravelManager::CaptureRestoreSelfTest()
+{
+    SelfTestResult result;
+
+    if (!_context || !_memory)
+    {
+        result.notes = "missing dependencies (context or memory)";
+        return result;
+    }
+
+    Z80* cpu = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    if (!cpu)
+    {
+        result.notes = "missing CPU";
+        return result;
+    }
+
+    // Hash the live architectural state before capture. The RAM digest is
+    // included so any missed page restoration shows up here.
+    const uint32_t ramBytes = static_cast<uint32_t>(_context->config.ramsize) * 1024u;
+    const uint64_t preRamDigest = ttd::HashBytes(_memory->RAMBase(), ramBytes);
+    const auto preSnap = ttd::CaptureSnapshot(*static_cast<Z80State*>(cpu),
+                                              _context->emulatorState,
+                                              preRamDigest);
+    result.pre_hash = ttd::HashSnapshot(preSnap);
+
+    // Capture a fresh checkpoint at the current live state, then immediately
+    // restore it. This isolates capture/restore correctness from timeline
+    // evolution — if a single-frame round-trip diverges, RestoreCheckpoint
+    // or CaptureNow is broken.
+    TTDCheckpoint cp;
+    CaptureNow(cp);
+    RestoreCheckpoint(cp);
+    ReleaseCheckpointRefs(cp);  // Don't leak page refs from the test capture.
+
+    // Hash the post-restore state. Identical to pre_hash iff capture and
+    // restore are mutually inverse on every architectural field.
+    const uint64_t postRamDigest = ttd::HashBytes(_memory->RAMBase(), ramBytes);
+    const auto postSnap = ttd::CaptureSnapshot(*static_cast<Z80State*>(cpu),
+                                               _context->emulatorState,
+                                               postRamDigest);
+    result.post_hash = ttd::HashSnapshot(postSnap);
+
+    result.pre_post_match = (result.pre_hash == result.post_hash);
+    if (result.pre_post_match)
+    {
+        result.notes = "OK — single-frame capture/restore round-trip is byte-identical";
+    }
+    else
+    {
+        result.notes = "MISMATCH — pre=" + ttd::HashToString(result.pre_hash) +
+                       " post=" + ttd::HashToString(result.post_hash) +
+                       "; RestoreCheckpoint lost or corrupted some architectural field";
+    }
+
+    return result;
 }
 
 } // namespace ttd

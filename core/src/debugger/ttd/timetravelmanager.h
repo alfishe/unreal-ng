@@ -40,6 +40,7 @@
 ///   optimization can be added later as a fast path without changing the
 ///   public API.
 
+#include <atomic>
 #include <cstdint>
 #include <cstddef>
 #include <vector>
@@ -92,7 +93,23 @@ struct TTDSessionInfo
     size_t   checkpointCount   = 0;
     size_t   pageStoreBytes    = 0;   ///< Capacity (allocated) — for budget checks
     size_t   pageStoreUsedBytes = 0;  ///< Live slot bytes
-    uint64_t baselineFramesCaptured = 0;  ///< Diagnostic
+    uint64_t baselineFramesCaptured = 0;  ///< Live page slots (distinct RAM snapshots in store)
+
+    /// @brief Total heap footprint of the recorded session, in bytes.
+    ///
+    /// Real counter (not an estimate, not a percentage). Sums every
+    /// allocation the session owns:
+    ///   - page store backing (allocated vector capacity × page size)
+    ///   - per-checkpoint struct + peripheral blob + page-ref vector
+    ///   - input journal + external-event journal backing
+    ///   - session-scope dirty-page scratch buffer
+    ///
+    /// This is the number to display when a user asks "how much memory is
+    /// my recording consuming right now?". Distinct from pageStoreBytes
+    /// (which is just the page-store vector) and pageStoreUsedBytes (which
+    /// counts only live slots, not free-list capacity that's still
+    /// allocated).
+    size_t   sessionHeapBytes = 0;
 };
 
 class TimeTravelManager
@@ -128,6 +145,72 @@ public:
     inline TTDSessionState GetState() const { return _state; }
 
     TTDSessionInfo GetSessionInfo() const;
+
+    // -----------------------------------------------------------------------
+    // Session serialization (.ttd format) — universal capability
+    // -----------------------------------------------------------------------
+    //
+    // The .ttd binary format is the portable contract between every TTD
+    // consumer: core tests, CLI tools, WebAPI wrappers, the Python analyzer,
+    // and any third-party tool that generates a parser from the published
+    // Kaitai schema (ttd.ksy).
+    //
+    // Read-only with respect to the live recording: SerializeSession does
+    // not invalidate, thin, or otherwise mutate the timeline. The caller is
+    // expected to have paused the emulator so the timeline is stable for
+    // the duration of the serialize call.
+
+    /// @brief Serialize the current timeline + page store to a .ttd stream.
+    ///
+    /// Universal: callable from core tests, the CLI, or a WebAPI handler.
+    /// Read-only — does not invalidate or thin the live recording.
+    ///
+    /// @param out  Output stream. Written sequentially; no seeks.
+    /// @param err  Filled with a human-readable message on failure.
+    /// @return true on success, false on I/O error.
+    ///
+    /// Pre: caller holds the emulator lock (state is stable for the duration).
+    ///      The timeline may be empty (produces a valid zero-checkpoint dump).
+    bool SerializeSession(std::ostream& out, std::string& err) const;
+
+    /// @brief Restore a timeline + page store from a .ttd stream.
+    ///
+    /// Replaces the current session entirely. Used by the round-trip test
+    /// and by future replay/restore tools. Clears any existing timeline,
+    /// resets the page store, then materializes the file's contents.
+    ///
+    /// @param in   Input stream. Read sequentially; no seeks.
+    /// @param err  Filled with a human-readable message on failure.
+    /// @return true on success, false on I/O or format error.
+    ///
+    /// Pre: caller has paused the emulator. The session state is set to
+    ///      Idle after a successful load (the file does not carry live
+    ///      recording state; callers that want Detached can call
+    ///      SeekTo to position the emulator at any checkpoint).
+    ///
+    /// Refuses unknown future schema versions with a clear error message
+    /// (see ttd_dump_format.h::kMaxSupportedSchemaVersion).
+    bool DeserializeSession(std::istream& in, std::string& err);
+
+    /// @brief In-memory capture/restore divergence self-test.
+    ///
+    /// Captures the current live state as a checkpoint, immediately restores
+    /// it, and reports whether the architectural machine state (CPU + chipset
+    /// + RAM content) matches. Single-frame, deterministic.
+    ///
+    /// Used by the analyzer to distinguish capture-side bugs from restore-
+    /// side bugs without needing two emulators or a long timeline. If this
+    /// fails on a single checkpoint, RestoreCheckpoint itself is broken.
+    /// If it passes but seek shows drift after N frames, the issue is in
+    /// capture or in multi-frame state evolution.
+    struct SelfTestResult
+    {
+        bool   pre_post_match = false;  ///< True iff live state hashes match.
+        uint64_t pre_hash     = 0;      ///< 64-bit hash before capture.
+        uint64_t post_hash    = 0;      ///< 64-bit hash after restore.
+        std::string notes;              ///< Human-readable summary / failure details.
+    };
+    SelfTestResult CaptureRestoreSelfTest();
 
     // -----------------------------------------------------------------------
     // Capture (emulator thread only)
@@ -285,6 +368,24 @@ public:
     /// Returns the time of the last checkpoint. Seeks to any point > this
     /// will fail. Returns {0,0} when the timeline is empty.
     TTDTimePoint SessionEndPosition() const;
+
+    /// @brief Test whether OnFrameBoundary auto-paused the emulator and
+    ///        clear the request.
+    ///
+    /// When the session is Detached (post-seek) and the emulator is
+    /// resumed, OnFrameBoundary watches the live frame counter. The first
+    /// boundary past SessionEndPosition() triggers an Emulator::Pause()
+    /// call AND sets this flag. Production code never needs to read the
+    /// flag — Pause() is sufficient — but tests that drive the emulator
+    /// synchronously (where Pause() is a no-op because the emulator isn't
+    /// async-running) need this flag to observe that the auto-pause path
+    /// was reached.
+    ///
+    /// @return true iff an auto-pause request has fired since the last
+    ///         call. The flag is also cleared by StartRecording /
+    ///         InvalidateSession / SeekTo so each Detached→resume window
+    ///         starts with a clean signal.
+    bool ConsumeAutoPauseRequest();
 
     // -----------------------------------------------------------------------
     // External-event markers (Phase 2 Item 6; parent TDD §5.1)
@@ -457,6 +558,17 @@ private:
     /// Called once at StartRecording.
     uint16_t ResolveModelRamPages() const;
 
+    /// @brief Compute the real heap footprint of the recorded session.
+    ///
+    /// Sums every allocation the session owns (page store backing,
+    /// per-checkpoint struct + peripheral blobs + page-ref vectors,
+    /// input/external-event journals, session-scope dirty scratch).
+    /// Used by GetSessionInfo so callers (WebAPI/UI) get a single number
+    /// that reflects actual memory consumption — not the misleading
+    /// page-store percentage (which is always ~100% because the COW store
+    /// auto-grows to fit the working set).
+    size_t EstimateSessionHeapBytes() const;
+
     // -----------------------------------------------------------------------
     // Internal restore helpers (Phase 2 Item 1; parent TDD §8.1 step 2)
     // -----------------------------------------------------------------------
@@ -477,6 +589,13 @@ private:
     /// (their live RAM content IS the historical content). Pages beyond
     /// _modelRamPages are skipped (they're NEVER_TOUCHED by construction).
     void RestoreRamPages(const std::vector<TTDPageRef>& ramPages);
+
+    /// @brief Internal seek implementation without the Recording-state guard.
+    ///
+    /// Used by public SeekTo (which adds the guard) and by ResumeRecordingFrom
+    /// (which legitimately seeks during Recording — it controls the timeline
+    /// truncation itself, so the sorted invariant is preserved).
+    bool SeekToInternal(const TTDTimePoint& target, TTDSeekResult* outResult);
 
     // -----------------------------------------------------------------------
     // Internal seek helpers (Phase 2 Item 4; parent TTD §8.1 step 3)
@@ -560,6 +679,36 @@ private:
     /// SoundManager mute state as it was before EnterReplayMode forced it
     /// true. Restored by ExitReplayMode. Only meaningful while `_inReplayMode`.
     bool _soundMuteBeforeReplay = false;
+
+    // -----------------------------------------------------------------------
+    // Auto-pause at session end (Detached state)
+    // -----------------------------------------------------------------------
+    ///
+    /// Set by OnFrameBoundary when state == Detached and the live frame
+    /// counter has just exceeded SessionEndPosition(). Read and cleared by
+    /// ConsumeAutoPauseRequest(). Atomic because OnFrameBoundary runs on
+    /// the emulator thread while callers (tests, UI) typically read from
+    /// the control thread.
+    std::atomic<bool> _autoPauseRequested{false};
+
+    // -----------------------------------------------------------------------
+    // Feature-flag stewardship
+    // -----------------------------------------------------------------------
+    //
+    // StartRecording requires both Features::kDebugMode (so Core uses
+    // UseDebugMemoryInterface, which routes writes through MemoryWriteDebug
+    // where TTDDirtyTracker::MarkDirty is invoked) and Features::kTimeTravel
+    // (so Memory's cached _feature_ttd_enabled flag is true).
+    //
+    // If either is OFF when StartRecording is called, TTD flips it ON via
+    // FeatureManager::setFeature (which cascades through onFeatureChanged
+    // -> UseDebugMemoryInterface + Memory::UpdateFeatureCache). StopRecording
+    // restores the prior state, but only for flags we actually toggled —
+    // pre-existing user/debugger debug mode is left intact.
+    //
+    // Toggled flag (true == we turned it ON, so we turn it back OFF on stop).
+    bool _toggledDebugModeOn = false;
+    bool _toggledTimeTravelOn = false;
 };
 
 } // namespace ttd

@@ -33,14 +33,23 @@
 /// sustained (heavy tape use), a 5-minute session is ~300 events =
 /// ~24 KB. Negligible vs. the page store budget.
 ///
-/// Thread model: same as the input journal — Record() runs on the
-/// emulator thread (tape/disk hooks fire there) or the control thread
-/// (debugger edits). Read access (FirstMarkerInInterval, Size) runs on
-/// the control thread during seek. DropAfter / Clear run on the control
-/// thread under pause. No internal locking required.
+/// Thread model: Record() is callable from any thread — emulator thread
+/// (tape/disk hooks), WebAPI IO thread (DirectWriteToZ80Memory →
+/// RecordExternalEvent), Lua thread (poke), or the control thread.
+/// All mutations (Record, DropAfter, Clear) and read access (Size,
+/// FirstMarkerInInterval, SnapshotEvents) are guarded by an internal
+/// mutex. Callers that hold a reference from Events() must not iterate
+/// across a Record/DropAfter/Clear call; use SnapshotEvents() instead,
+/// which returns a stable copy under the lock.
+///
+/// Background: the WebAPI /memory/write handler calls MarkDirty +
+/// RecordExternalEvent from Drogon's IO thread. Multiple parallel
+/// requests therefore race on push_back — the mutex prevents heap
+/// corruption from reallocation happening mid-call.
 
 #include <cstdint>
 #include <cstddef>
+#include <mutex>
 #include <vector>
 
 #include "ttd_checkpoint.h"  // TTDTimePoint
@@ -58,6 +67,7 @@ enum class TTDExternalEventKind : uint8_t
     TapeControl    = 0,  ///< Tape play/stop/rewind/etc. (TapeManager API)
     DiskWrite      = 1,  ///< TR-DOS / +D / BetaDisk write command
     DebuggerEdit   = 2,  ///< User changed a register / memory via debugger
+    HardwareReset  = 3,  ///< Emulator::Reset() — state teleport (replay barrier)
     Other          = 255 ///< Unclassified (future-proof extension point)
 };
 
@@ -116,15 +126,35 @@ public:
     // Seek path (control thread; emulator paused between RunTStates batches)
     // -----------------------------------------------------------------------
 
-    /// @brief Read-only access to the full marker list. Used by tests, by
-    /// the UI, and by callers that need to iterate manually.
+    /// @brief Read-only access to the full marker list. UNSAFE for
+    /// cross-thread iteration — caller must hold no concurrent
+    /// Record/DropAfter/Clear. Prefer SnapshotEvents() when reading
+    /// from a non-emulator thread.
     inline const std::vector<TTDExternalEvent>& Events() const { return _events; }
 
-    /// @brief Number of markers currently in the journal.
-    inline size_t Size() const { return _events.size(); }
+    /// @brief Thread-safe snapshot of the marker list. Returns a copy
+    /// taken under the mutex, so callers can iterate safely even while
+    /// another thread records new markers. Use from any non-emulator
+    /// thread (WebAPI, Lua, Python, UI).
+    inline std::vector<TTDExternalEvent> SnapshotEvents() const
+    {
+        std::lock_guard<std::mutex> lk(_mutex);
+        return _events;
+    }
 
-    /// @brief True iff Size() == 0.
-    inline bool IsEmpty() const { return _events.empty(); }
+    /// @brief Number of markers currently in the journal. Thread-safe.
+    inline size_t Size() const
+    {
+        std::lock_guard<std::mutex> lk(_mutex);
+        return _events.size();
+    }
+
+    /// @brief True iff Size() == 0. Thread-safe.
+    inline bool IsEmpty() const
+    {
+        std::lock_guard<std::mutex> lk(_mutex);
+        return _events.empty();
+    }
 
     /// @brief Find the first marker strictly inside the half-open interval
     /// `(from, to]`.
@@ -156,6 +186,7 @@ public:
     void Clear();
 
 private:
+    mutable std::mutex _mutex;
     std::vector<TTDExternalEvent> _events;
 };
 
