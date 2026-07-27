@@ -87,7 +87,15 @@ static void NotifyFrameRefresh(Emulator& emulator)
     if (!context)
         return;
 
-    const std::string emulatorId = emulator.GetSymbolicId();
+    // IMPORTANT: use GetId() (UUID-as-string), NOT GetSymbolicId().
+    // MainWindow::handleMessageScreenRefresh filters incoming
+    // EmulatorFramePayload by comparing _emulatorId against
+    // _emulator->GetUUID(). GetSymbolicId() is a human-readable label
+    // (often empty for WebAPI-created instances), which would parse to
+    // a nil UUID in EmulatorFramePayload's constructor and never match —
+    // the refresh would be silently dropped and the emulator screen would
+    // never repaint after seek/step. mainloop.cpp:402 uses GetId() too.
+    const std::string emulatorId = emulator.GetId();
     const uint32_t frameCounter = context->emulatorState.frame_counter;
 
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
