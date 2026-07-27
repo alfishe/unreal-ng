@@ -10,11 +10,13 @@ GDB reverse-debugging implementation for Unreal-NG.
 - **GDB TDD**: [`docs/emulator/design/debugger/time-travel-debug/gdb-reverse-debugging-tdd.md`](../../emulator/design/debugger/time-travel-debug/gdb-reverse-debugging-tdd.md)
 - **Overhead & gating**: [`docs/emulator/design/debugger/time-travel-debug/overhead-and-gating.md`](../../emulator/design/debugger/time-travel-debug/overhead-and-gating.md)
 - **UX**: [`docs/emulator/design/debugger/time-travel-debug/time-travel-ux.md`](../../emulator/design/debugger/time-travel-debug/time-travel-ux.md)
+- **.ttd schema (canonical)**: [`core/src/debugger/ttd/ttd.ksy`](../../../core/src/debugger/ttd/ttd.ksy) — Kaitai Struct, versioned, MIT-licensed; the single source of truth for the on-disk recording format. C++ constants in `core/src/debugger/ttd/ttd_dump_format.h` must stay in sync. Python analyzer parser at `tools/verification/ttd-analyzer/src/ttd_format.py` mirrors the same schema.
 
 ## Cross-cutting decisions
 
-See [`decisions.md`](decisions.md) for naming conventions and flag-layer
-choices that apply forward to every sprint and phase.
+See [`decisions.md`](decisions.md) for naming conventions, flag-layer
+choices, **the .ttd binary format / Kaitai schema / versioning policy**,
+and other rules that apply forward to every sprint and phase.
 
 ## Sprint / phase index
 
@@ -22,11 +24,19 @@ choices that apply forward to every sprint and phase.
 |---|---|---|
 | [Sprint 0 — Foundations](sprint-0-foundations.md) | ✅ Complete (2026-07-19) | 50 new tests, build green, baseline benchmarks recorded |
 | [Phase 1 — TTD recorder](phase-1-recorder.md) | ✅ Complete (2026-07-19) | Per-frame capture, peripheral serializers, lifecycle hooks, status endpoint. 131 TTD tests green |
-| [Phase 2 — TTD seek engine](phase-2-seek-engine.md) | 🚧 In progress | RestoreCheckpoint, silent replay, SeekTo/StepBack, resume-from-past |
-| Phase 3 — TTD timeline UI (Qt) | ⏳ Not started | Blocked on Phase 2 |
-| Phase 4 — Reverse search + automation | ⏳ Not started | Blocked on Phase 2 |
+| [Phase 2 — TTD seek engine](phase-2-seek-engine.md) | ✅ Complete (2026-07-20) | RestoreCheckpoint, silent replay, SeekTo/StepBack, resume-from-past, external-event markers, divergence corpus + cost gate. 230 TTD tests green |
+| [Phase S1 — Session serialization (.ttd)](phase-S1-session-serialization.md) | ✅ Complete (2026-07-23) | Kaitai schema + SerializeSession/DeserializeSession/CaptureRestoreSelfTest in core; standalone Python analyzer (parser, integrity, anomalies, framebuffer renderer, markdown report, CLI). 254 TTD tests green. **Side-phase** — orthogonal to Phase 3/4 |
+| Phase 3 — TTD timeline UI (Qt) | ⏳ Not started | Blocked on Phase 2 (now unblocked) |
+| Phase 4 — Reverse search + automation | ⏳ Not started | Blocked on Phase 2 (now unblocked) |
 | Phase G1 — GDB RSP server (live debug) | ⏳ Not started | `ENABLE_GDB_AUTOMATION` builds the actual server |
 | Phase G2 — Reverse execution | ⏳ Not started | Blocked on Phase 4 |
+
+**Naming convention for side-phases.** Phase numbers are linear and imply
+blocking dependencies (Phase 3 needs Phase 2). Side-phases — orthogonal
+capabilities that ship whenever they're needed without affecting the
+linear phase progression — use the `S` prefix (`S1`, `S2`, ...). This
+keeps the linear numbering stable when a side-capability lands between
+two linear phases.
 
 ## Per-sprint file convention
 
