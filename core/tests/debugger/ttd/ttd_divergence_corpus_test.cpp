@@ -35,6 +35,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/ttd_divergence_harness.h"
 #include "base/featuremanager.h"
+#include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (SeekTo in framebuffer determinism test)
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 
@@ -141,6 +142,113 @@ TEST(TTD_Divergence_Corpus_Test, AccuracyCoinZX_SelfModifying_FramesMatch)
         std::string failureMsg;
         EXPECT_TRUE(harness.VerifyReplayMatchesLive(i, expected, &failureMsg))
             << failureMsg;
+    }
+
+    cleanup();
+}
+
+// =========================================================================
+// Framebuffer determinism — catches screen-renderer restore bugs.
+//
+// The regular corpus tests above verify RAM/CPU/chipset bit-for-bit but
+// do NOT verify the framebuffer (ExtractHashesFromTimeline doesn't seek,
+// so it cannot populate a framebuffer digest). This test fills that gap
+// using a direct-corruption strategy:
+//
+//   1. Record N frames, stop.
+//   2. SeekTo frame X, hash framebuffer ("baseline").
+//   3. Manually corrupt the renderer's cached state — flip the active
+//      screen bank AND change the border color. This simulates the live
+//      emulator having rendered many frames since the last seek, leaving
+//      the renderer's _activeScreenMemoryOffset / _borderColor pointing
+//      at arbitrary values.
+//   4. SeekTo frame X again, hash framebuffer ("post-restore").
+//   5. Assert baseline == post-restore.
+//
+// If RestoreCheckpoint doesn't resync the renderer's cached state from
+// the restored port latches (p7FFD bit 3 for screen bank, pFE bits 0-2
+// for border color), the post-restore framebuffer will leak pixels from
+// the corrupted state and the digest will differ.
+//
+// This test catches the bug class directly without depending on the
+// fixture having visible per-frame action.
+// =========================================================================
+
+TEST(TTD_Divergence_Corpus_Test, DizzyY_48K_FramebufferDeterminism)
+{
+    Emulator* emu = MakeTtdEmulator("48K");
+    ASSERT_NE(emu, nullptr);
+    auto cleanup = [&]() { EmulatorTestHelper::CleanupEmulator(emu); };
+
+    ttd::TTDDivergenceHarness harness(emu);
+    ASSERT_TRUE(harness.LoadSnapshot("testdata/loaders/sna/Dizzy Y.sna"))
+        << "Dizzy Y snapshot not found — corpus fixture missing";
+
+    constexpr size_t kFrames = 30;
+    constexpr size_t kStep   = 5;
+
+    ASSERT_TRUE(harness.StartRecordingAndCaptureTimeline(kFrames));
+    auto expected = harness.ExtractHashesFromTimeline();
+    ASSERT_GE(expected.Size(), kFrames);
+
+    ttd::TimeTravelManager* ttd = emu->GetContext()->pTimeTravelManager;
+    ASSERT_NE(ttd, nullptr);
+
+    Screen* screen = emu->GetContext()->pScreen;
+    ASSERT_NE(screen, nullptr);
+
+    const auto samples = harness.PickSampleFrames(kFrames, kStep);
+    for (size_t i : samples)
+    {
+        SCOPED_TRACE("frame " + std::to_string(i));
+
+        const uint64_t targetFrame = expected.frames[i].frameCounter;
+
+        // Baseline: seek to target frame, hash framebuffer.
+        ASSERT_TRUE(ttd->SeekTo({targetFrame, 0}));
+        const uint64_t baseline = harness.HashFramebufferKnownGood();
+        ASSERT_NE(baseline, 0ULL) << "framebuffer hash returned 0 — screen not initialized?";
+
+        // Corrupt renderer state: flip to the OTHER screen bank and a
+        // different border color. On 48K, SCREEN_SHADOW points at bank 7
+        // which is uninitialized; on 128K it flips to the shadow screen.
+        // Either way the framebuffer will render very different pixels if
+        // the renderer's cached state is later read without resync.
+        const uint8_t borderBefore = screen->GetBorderColor();
+        const uint8_t borderCorrupt = (borderBefore ^ 0b111) & 0b0000'0111;
+        screen->SetActiveScreen(SCREEN_SHADOW);
+        screen->SetBorderColor(borderCorrupt);
+        screen->RenderOnlyMainScreen();  // commit the corrupted render
+        const uint64_t corrupted = harness.HashFramebufferKnownGood();
+        // The corrupted framebuffer MUST differ from baseline — otherwise
+        // the corruption didn't take effect and this iteration is vacuous.
+        if (corrupted == baseline)
+        {
+            std::cout << "[info] frame " << targetFrame
+                      << ": corruption did not change framebuffer; skipping\n";
+            // Re-corrupt with a guaranteed-different border just to be safe.
+            screen->SetBorderColor((borderCorrupt + 1) & 0b0000'0111);
+            screen->RenderOnlyMainScreen();
+        }
+
+        // Post-restore: seek to the SAME target frame, hash framebuffer.
+        // If RestoreCheckpoint correctly resyncs the renderer's cached state
+        // from the restored port latches, the framebuffer will match the
+        // baseline. If not, the corrupted bank pointer / border color leaks
+        // through and the hashes differ.
+        ASSERT_TRUE(ttd->SeekTo({targetFrame, 0}));
+        const uint64_t postRestore = harness.HashFramebufferKnownGood();
+
+        EXPECT_EQ(baseline, postRestore)
+            << "Framebuffer not restored deterministically after renderer corruption. "
+            << "Target frame=" << targetFrame
+            << ", baseline=0x" << std::hex << baseline
+            << ", postRestore=0x" << postRestore << std::dec
+            << " (renderer cached state leaked across seeks)";
+
+        // Also verify the renderer's exposed state was resynced.
+        EXPECT_EQ(screen->GetBorderColor(), borderBefore)
+            << "Border color not resynced after restore";
     }
 
     cleanup();

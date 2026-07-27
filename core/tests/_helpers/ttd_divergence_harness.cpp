@@ -19,6 +19,7 @@
 #include <emulator/emulatorcontext.h>
 #include <emulator/memory/memory.h>
 #include <emulator/platform.h>
+#include <emulator/video/screen.h>       // Screen::GetFramebufferData (framebuffer digest)
 
 #include <filesystem>
 #include <sstream>
@@ -225,6 +226,11 @@ bool TTDDivergenceHarness::StartRecordingAndCaptureTimeline(size_t frames)
     for (size_t i = 0; i < frames; ++i)
         _emulator->RunFrame(/*skipBreakpoints=*/true);
 
+    // Stop recording so VerifyReplayMatchesLive can SeekTo (scrubbing during
+    // Recording is rejected by the engine to prevent timeline corruption).
+    // History is retained — StopRecording only flips the state machine.
+    ttd->StopRecording();
+
     // Sanity: timeline should have at least one checkpoint per frame.
     return ttd->GetCheckpointCount() >= 1;
 }
@@ -298,6 +304,33 @@ bool TTDDivergenceHarness::VerifyReplayMatchesLive(size_t frameIndex,
         return false;
     }
 
+    // Framebuffer digest — this is the check that catches screen-rendering
+    // restore bugs. The RAM/CPU/chipset may all match bit-for-bit, but if
+    // the screen renderer's cached bank pointer wasn't resynced from p7FFD
+    // after the restore, the framebuffer will read from the wrong bank
+    // (typically garbage from the live pre-seek state) and the digest will
+    // differ.
+    //
+    // Skipped when the expected entry has no framebuffer digest (== 0).
+    // ExtractHashesFromTimeline doesn't seek, so it cannot populate the
+    // framebuffer digest; tests that want framebuffer verification must
+    // either use RunLiveAndCapture (which runs live and captures each
+    // frame's real framebuffer) or call VerifyReplayMatchesLive after
+    // pre-populating expected via SeekTo + CaptureCurrentFrame.
+    if (exp.framebuffer_digest != 0 && actual.framebuffer_digest != exp.framebuffer_digest)
+    {
+        if (failureMsg)
+        {
+            std::ostringstream oss;
+            oss << "Framebuffer digest mismatch at frame " << frameIndex
+                << ": expected=" << HashToString(exp.framebuffer_digest)
+                << " actual=" << HashToString(actual.framebuffer_digest)
+                << " (RAM/CPU/chipset all matched — renderer state out of sync with restored ports)";
+            *failureMsg = oss.str();
+        }
+        return false;
+    }
+
     return true;
 }
 
@@ -358,7 +391,28 @@ DivergenceFrame TTDDivergenceHarness::CaptureCurrentFrame()
     f.frameCounter = _context->emulatorState.frame_counter;
     f.t_states     = _context->emulatorState.t_states;
 
+    // Framebuffer digest — catches restore bugs that leave the renderer
+    // pointing at the wrong bank (e.g. p7FFD bit 3 not synced) or stale
+    // framebuffer content. The renderer must have called RenderOnlyMainScreen
+    // before this is meaningful; the harness invokes it explicitly during
+    // VerifyReplayMatchesLive via the engine's SeekTo path.
+    f.framebuffer_digest = HashFramebuffer();
+
     return f;
+}
+
+uint64_t TTDDivergenceHarness::HashFramebuffer() const
+{
+    if (!_context || !_context->pScreen)
+        return 0;
+
+    uint32_t* buf  = nullptr;
+    size_t    size = 0;
+    _context->pScreen->GetFramebufferData(&buf, &size);
+    if (!buf || size == 0)
+        return 0;
+
+    return HashBytes(reinterpret_cast<const uint8_t*>(buf), size);
 }
 
 uint64_t TTDDivergenceHarness::HashRamInUse() const

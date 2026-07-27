@@ -171,6 +171,7 @@ TEST_F(TTD_Resume_Test, AtMidFrame_CheckpointAtSameFrameKept)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(4);
+    _ttd->StopRecording();
     ASSERT_EQ(_ttd->GetCheckpointCount(), 5u);
 
     // Seek forward to frame 2 first, then advance some t-states mid-frame.
@@ -284,6 +285,7 @@ TEST_F(TTD_Resume_Test, InputJournal_EventAtResumePointKept)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(5);  // 6 checkpoints at frames 0..5.
+    _ttd->StopRecording();
 
     // Position emulator at frame 3, tInFrame == 0 (SeekTo syncs z80.t = 0
     // at frame-aligned targets — see timetravelmanager.cpp SeekTo step 2).
@@ -309,6 +311,7 @@ TEST_F(TTD_Resume_Test, InputJournal_MidFrameEventAtResumeFrameDropped)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(5);
+    _ttd->StopRecording();
 
     ASSERT_TRUE(_ttd->SeekTo({3, 0}));
 
@@ -425,6 +428,9 @@ TEST_F(TTD_Resume_Test, DroppedCheckpoint_IsNoLongerSeekable)
     ASSERT_TRUE(_ttd->ResumeRecordingFrom({1, 0}));
     ASSERT_EQ(_ttd->GetCheckpointCount(), 2u);
 
+    // State is Recording again after Resume. Must stop before scrubbing.
+    _ttd->StopRecording();
+
     // Session end is now frame 1. Seeking to frame 3 must fail.
     EXPECT_FALSE(_ttd->SeekTo({3, 0}));
 
@@ -441,6 +447,7 @@ TEST_F(TTD_Resume_Test, FromDetached_SeeksAndTruncates)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(4);
+    _ttd->StopRecording();
     ASSERT_EQ(_ttd->GetCheckpointCount(), 5u);
 
     // User steps back twice: 4 → 3 → 2.

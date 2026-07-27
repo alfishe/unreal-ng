@@ -146,6 +146,7 @@ TEST_F(TTD_Seek_Test, SessionEndPosition_AdvancesWithFramesRun)
 
 TEST_F(TTD_Seek_Test, SeekTo_IdleState_ReturnsFalse)
 {
+    // Pure Idle (never started, empty timeline) — must reject.
     EXPECT_FALSE(_ttd->SeekTo({0, 0}));
 }
 
@@ -159,10 +160,38 @@ TEST_F(TTD_Seek_Test, SeekTo_EmptyTimeline_ReturnsFalse)
     EXPECT_FALSE(_ttd->SeekTo({0, 0}));
 }
 
+TEST_F(TTD_Seek_Test, SeekTo_RecordingState_ReturnsFalse)
+{
+    // New contract (2026-07-19): scrubbing during Recording is forbidden.
+    // SeekTo would RestoreCheckpoint over live emulator state and the next
+    // OnFrameBoundary would corrupt the timeline's sorted invariant.
+    // Callers MUST StopRecording first.
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(3);
+    ASSERT_EQ(_ttd->GetCheckpointCount(), 4u);
+    ASSERT_EQ(_ttd->GetState(), ttd::TTDSessionState::Recording);
+
+    EXPECT_FALSE(_ttd->SeekTo({1, 0}))
+        << "SeekTo during Recording must be rejected";
+    EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Recording)
+        << "State must remain Recording after rejected seek";
+
+    // StopRecording transitions to Idle WITH history retained.
+    _ttd->StopRecording();
+    EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Idle);
+    EXPECT_EQ(_ttd->GetCheckpointCount(), 4u)
+        << "StopRecording must retain timeline";
+
+    // Now seek is allowed (Idle-with-history → Detached).
+    EXPECT_TRUE(_ttd->SeekTo({1, 0}));
+    EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Detached);
+}
+
 TEST_F(TTD_Seek_Test, SeekTo_TargetBeyondSessionEnd_ReturnsFalse)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(2);
+    _ttd->StopRecording();
     // Session end is frame 2; try frame 5
     EXPECT_FALSE(_ttd->SeekTo({5, 0}));
 }
@@ -178,6 +207,7 @@ TEST_F(TTD_Seek_Test, SeekTo_FrameAligned_AtBaseline_IsNoOp)
     const uint64_t baselineHash = HashNow();
 
     RunFrames(2);
+    _ttd->StopRecording();
     // Live state has now diverged from baseline.
     ASSERT_NE(HashNow(), baselineHash)
         << "Sanity: after RunFrames(2) the live state must differ from baseline";
@@ -194,6 +224,7 @@ TEST_F(TTD_Seek_Test, SeekTo_FrameAligned_ToMidpoint_CheckpointRestored)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(4);
+    _ttd->StopRecording();
     ASSERT_EQ(_ttd->GetCheckpointCount(), 5u);
 
     // Seek to frame 2 (a checkpoint exists there)
@@ -216,6 +247,7 @@ TEST_F(TTD_Seek_Test, SeekTo_FrameAligned_RoundTripDeterminism)
     // RestoreCheckpoint code path. We verify SeekTo reproduces it.
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(4);
+    _ttd->StopRecording();
     ASSERT_EQ(_ttd->GetCheckpointCount(), 5u);
 
     for (int i = 0; i <= 4; ++i)
@@ -249,8 +281,9 @@ TEST_F(TTD_Seek_Test, SeekTo_FrameAligned_TransitionsToDetached)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(2);
+    _ttd->StopRecording();
 
-    EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Recording);
+    EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Idle);
     EXPECT_TRUE(_ttd->SeekTo({1, 0}));
     EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Detached);
 }
@@ -259,6 +292,7 @@ TEST_F(TTD_Seek_Test, SeekTo_FromDetached_ToEarlier_Succeeds)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(3);
+    _ttd->StopRecording();
 
     ASSERT_TRUE(_ttd->SeekTo({2, 0}));
     EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Detached);
@@ -273,6 +307,7 @@ TEST_F(TTD_Seek_Test, SeekTo_FromDetached_Forward_Succeeds)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(3);
+    _ttd->StopRecording();
 
     ASSERT_TRUE(_ttd->SeekTo({0, 0}));  // back to baseline
 
@@ -289,6 +324,7 @@ TEST_F(TTD_Seek_Test, SeekTo_IntraFrame_ToSmallTInFrame_Succeeds)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(2);
+    _ttd->StopRecording();
 
     // Target frame 1, t-state 100 (well within a frame).
     // Intra-frame replay will engage.
@@ -309,6 +345,7 @@ TEST_F(TTD_Seek_Test, SeekTo_IntraFrame_ReplayModeFlagRestored)
     // must be cleared (ExitReplayMode was called even on the happy path).
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(1);
+    _ttd->StopRecording();
 
     EXPECT_TRUE(_ttd->SeekTo({0, 50}));
     EXPECT_FALSE(_context->ttdReplayActive);
@@ -324,6 +361,7 @@ TEST_F(TTD_Seek_Test, SeekTo_IntraFrame_RoundTripDeterminism)
 
     // Capture baseline + advance 2 frames
     RunFrames(2);
+    _ttd->StopRecording();
 
     // Walk forward to (frame=1, tInFrame=500), hash, then walk to frame 2
     // boundary. We can't easily hash at (1, 500) without seeking, so this
@@ -347,6 +385,7 @@ TEST_F(TTD_Seek_Test, SeekTo_IntraFrame_AtFrameStart_EquivalentToFrameAligned)
     // The code path skips ReplayWithinFrame entirely.
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(2);
+    _ttd->StopRecording();
 
     EXPECT_TRUE(_ttd->SeekTo({1, 0}));
     EXPECT_FALSE(_context->ttdReplayActive)
@@ -360,6 +399,7 @@ TEST_F(TTD_Seek_Test, SeekTo_IntraFrame_AtFrameStart_EquivalentToFrameAligned)
 TEST_F(TTD_Seek_Test, StepBackFrame_AtFrame0_Fails)
 {
     ASSERT_TRUE(_ttd->StartRecording());
+    _ttd->StopRecording();
     // Seek to baseline (frame 0)
     ASSERT_TRUE(_ttd->SeekTo({0, 0}));
 
@@ -371,6 +411,7 @@ TEST_F(TTD_Seek_Test, StepBackFrame_PreservesTInFrame)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(3);
+    _ttd->StopRecording();
 
     // Seek to (2, 100) — sets current t-in-frame to ≈100 (RunTStates may
     // overshoot by the last instruction length; accept ±32).
@@ -393,6 +434,7 @@ TEST_F(TTD_Seek_Test, StepForwardFrame_AtLastFrame_Fails)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(2);
+    _ttd->StopRecording();
     // Session end is frame 2
     ASSERT_TRUE(_ttd->SeekTo({2, 0}));
 
@@ -404,6 +446,7 @@ TEST_F(TTD_Seek_Test, StepForwardFrame_FromDetached_Succeeds)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(3);
+    _ttd->StopRecording();
 
     // Seek to baseline
     ASSERT_TRUE(_ttd->SeekTo({0, 0}));
@@ -419,6 +462,7 @@ TEST_F(TTD_Seek_Test, StepForwardFrame_PreservesTInFrame)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(3);
+    _ttd->StopRecording();
 
     // Seek to (0, 50)
     ASSERT_TRUE(_ttd->SeekTo({0, 50}));
@@ -440,4 +484,115 @@ TEST_F(TTD_Seek_Test, StepBackFrame_Idle_Fails)
 TEST_F(TTD_Seek_Test, StepForwardFrame_Idle_Fails)
 {
     EXPECT_FALSE(_ttd->StepForwardFrame());
+}
+
+// ===========================================================================
+// Auto-pause at session end (Detached state).
+//
+// When the user seeks into the timeline and then resumes execution, the
+// emulator must auto-pause once the live frame counter crosses the last
+// recorded frame — otherwise it silently runs into unrecorded territory
+// and the user loses the "this state is historically known" guarantee
+// that Detached state provides.
+//
+// The production path sets Emulator::_isPaused via Emulator::Pause(),
+// which the MainLoop checks at the top of its next iteration. Tests that
+// drive the emulator synchronously (RunNFrames) can't observe _isPaused
+// directly because Pause() short-circuits when the async loop isn't
+// running, so TimeTravelManager also exposes ConsumeAutoPauseRequest()
+// which returns true iff OnFrameBoundary fired the auto-pause branch.
+// ===========================================================================
+
+TEST_F(TTD_Seek_Test, AutoPause_FiresWhenDetached_RunPastSessionEnd)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(3);
+    _ttd->StopRecording();
+    // Timeline: frames 0, 1, 2, 3. sessionEnd == 3.
+
+    // Seek into the middle. State → Detached, frame_counter == 1.
+    ASSERT_TRUE(_ttd->SeekTo({1, 0}));
+    EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Detached);
+    EXPECT_EQ(_context->emulatorState.frame_counter, 1u);
+
+    // Clear any signal from the seek itself (defensive — SeekTo already
+    // resets the flag, but the contract test should be explicit).
+    EXPECT_FALSE(_ttd->ConsumeAutoPauseRequest())
+        << "No auto-pause should fire immediately after seek";
+
+    // Run frames 2 and 3 — still inside the recorded range. No auto-pause.
+    RunFrames(2);
+    EXPECT_EQ(_context->emulatorState.frame_counter, 3u);
+    EXPECT_FALSE(_ttd->ConsumeAutoPauseRequest())
+        << "Auto-pause must NOT fire while inside the recorded range";
+
+    // Run one more — frame_counter goes to 4, past sessionEnd == 3.
+    // OnFrameBoundary must fire the auto-pause branch.
+    RunFrames(1);
+    EXPECT_EQ(_context->emulatorState.frame_counter, 4u);
+    EXPECT_TRUE(_ttd->ConsumeAutoPauseRequest())
+        << "Auto-pause MUST fire after running one frame past session end";
+
+    // Flag is cleared by ConsumeAutoPauseRequest — subsequent reads
+    // return false until the next boundary past sessionEnd.
+    EXPECT_FALSE(_ttd->ConsumeAutoPauseRequest());
+}
+
+TEST_F(TTD_Seek_Test, AutoPause_DoesNotFireWhileRecording)
+{
+    // Sanity: the auto-pause branch is gated on Detached state. While
+    // Recording, OnFrameBoundary must keep capturing checkpoints and
+    // never request a pause (the whole point of recording is to extend
+    // the timeline).
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(5);
+    EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Recording);
+    EXPECT_FALSE(_ttd->ConsumeAutoPauseRequest())
+        << "Auto-pause must not fire while Recording";
+
+    // Continue running well past the previous session end — still no
+    // auto-pause because state is Recording.
+    RunFrames(5);
+    EXPECT_FALSE(_ttd->ConsumeAutoPauseRequest())
+        << "Auto-pause must not fire while Recording (even past old end)";
+
+    _ttd->StopRecording();
+}
+
+TEST_F(TTD_Seek_Test, AutoPause_FiresImmediately_WhenSeekingToSessionEnd)
+{
+    // Edge case: seeking to the very last frame and then resuming must
+    // trigger auto-pause on the FIRST frame boundary (frame_counter goes
+    // sessionEnd → sessionEnd+1).
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(2);
+    _ttd->StopRecording();
+    // sessionEnd == 2.
+
+    ASSERT_TRUE(_ttd->SeekTo({2, 0}));
+    EXPECT_FALSE(_ttd->ConsumeAutoPauseRequest())
+        << "Seek itself must not fire auto-pause";
+
+    RunFrames(1);
+    EXPECT_EQ(_context->emulatorState.frame_counter, 3u);
+    EXPECT_TRUE(_ttd->ConsumeAutoPauseRequest())
+        << "Auto-pause must fire on first frame past session end";
+}
+
+TEST_F(TTD_Seek_Test, AutoPause_SeekResetsFlag)
+{
+    // After auto-pause fires, a new seek must clear the flag so the next
+    // Detached window starts with a clean signal.
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(2);
+    _ttd->StopRecording();
+
+    ASSERT_TRUE(_ttd->SeekTo({0, 0}));
+    RunFrames(3);  // → frame_counter 3, past sessionEnd 2
+    EXPECT_TRUE(_ttd->ConsumeAutoPauseRequest());
+
+    // New seek — flag should be cleared.
+    ASSERT_TRUE(_ttd->SeekTo({0, 0}));
+    EXPECT_FALSE(_ttd->ConsumeAutoPauseRequest())
+        << "SeekTo must reset the auto-pause flag";
 }

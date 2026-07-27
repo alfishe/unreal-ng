@@ -39,8 +39,8 @@ namespace ttd {
 
 /// Per-frame capture of architectural state at a frame boundary.
 /// Records the digest of all RAM pages in use, the architectural snapshot,
-/// and the resulting composite hash. Used both for the live run and as the
-/// expected value when replaying.
+/// the resulting composite hash, AND a digest of the rendered framebuffer.
+/// Used both for the live run and as the expected value when replaying.
 struct DivergenceFrame
 {
     uint64_t               frameCounter = 0;
@@ -48,6 +48,7 @@ struct DivergenceFrame
     uint64_t               ram_digest   = 0;
     MachineStateSnapshot  snapshot{};
     uint64_t               hash         = 0;  // HashSnapshot(snapshot)
+    uint64_t               framebuffer_digest = 0;  // Hash of RGBA framebuffer bytes
 };
 
 /// A captured sequence of per-frame state from a live run.
@@ -152,6 +153,13 @@ public:
     /// @return Indices to verify. Always includes the last frame.
     std::vector<size_t> PickSampleFrames(size_t totalFrames, size_t step) const;
 
+    /// @brief Hash the current RGBA framebuffer bytes. Public so tests can
+    /// perform framebuffer-determinism checks without going through the
+    /// expected/actual history pattern (e.g. "seek twice to same frame,
+    /// bytes must match").
+    /// @return Framebuffer digest, or 0 if screen is null / unallocated.
+    uint64_t HashFramebufferKnownGood() const { return HashFramebuffer(); }
+
 private:
     // -------------------------------------------------------------
     // Internal capture helper — called at each frame boundary.
@@ -164,6 +172,15 @@ private:
     // directly comparable.
     // -------------------------------------------------------------
     uint64_t HashRamInUse() const;
+
+    // -------------------------------------------------------------
+    // Framebuffer digest — hashes the RGBA framebuffer bytes the renderer
+    // has produced. Catches restore-path bugs that leave the renderer's
+    // bank pointer / border color out of sync with restored port latches
+    // (RAM/CPU/chipset all match but pixels are wrong). Exposed publicly
+    // via HashFramebufferKnownGood() so tests can do ad-hoc verification.
+    // -------------------------------------------------------------
+    uint64_t HashFramebuffer() const;
 
     // -------------------------------------------------------------
     // Re-apply the loaded snapshot so the next run starts from the

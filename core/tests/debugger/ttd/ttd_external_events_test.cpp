@@ -525,6 +525,7 @@ TEST_F(TTD_ExternalEvents_Seek_Test, NoMarkers_SeekToFrameAligned_ReturnsTarget)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(3);
+    _ttd->StopRecording();
 
     SeekResult r;
     EXPECT_TRUE(_ttd->SeekTo({2, 0}, &r));
@@ -538,6 +539,7 @@ TEST_F(TTD_ExternalEvents_Seek_Test, NoMarkers_SeekToIntraFrame_ReturnsTarget)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(2);
+    _ttd->StopRecording();
 
     SeekResult r;
     EXPECT_TRUE(_ttd->SeekTo({1, 500}, &r));
@@ -556,6 +558,7 @@ TEST_F(TTD_ExternalEvents_Seek_Test, FrameAligned_MarkerAtSameFrame_NotABarrier)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(3);
+    _ttd->StopRecording();
 
     // Marker captured at frame 2 boundary (after RunFrames(2) the
     // emulator is at frame 2; RecordExternalEvent captures (2, 0)).
@@ -588,6 +591,7 @@ TEST_F(TTD_ExternalEvents_Seek_Test, IntraFrame_MarkerInInterval_StopsAtMarker)
     _emulator->RunTStates(500, true);   // advance within frame 1
     _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::DiskWrite, "wd1793 write");
     RunFrames(2);                       // extend timeline so intra-frame seek is in range
+    _ttd->StopRecording();
 
     ASSERT_EQ(_ttd->GetExternalEvents().Size(), 1u);
     const uint32_t markerT = _ttd->GetExternalEvents().Events()[0].time.tInFrame;
@@ -621,6 +625,7 @@ TEST_F(TTD_ExternalEvents_Seek_Test, IntraFrame_MarkerAtRestorePoint_NotABarrier
     _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::Other, "at-cp");  // (1, 0)
 
     RunFrames(2);                       // extend timeline
+    _ttd->StopRecording();
 
     ASSERT_EQ(_ttd->GetExternalEvents().Size(), 1u);
     EXPECT_EQ(_ttd->GetExternalEvents().Events()[0].time.tInFrame, 0u);
@@ -640,6 +645,7 @@ TEST_F(TTD_ExternalEvents_Seek_Test, IntraFrame_MarkerAtTarget_BlocksAtTarget)
     _emulator->RunTStates(1000, true);
     _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::Other, "at-target");
     RunFrames(2);
+    _ttd->StopRecording();
 
     ASSERT_EQ(_ttd->GetExternalEvents().Size(), 1u);
     const uint32_t markerT = _ttd->GetExternalEvents().Events()[0].time.tInFrame;
@@ -661,6 +667,7 @@ TEST_F(TTD_ExternalEvents_Seek_Test, IntraFrame_MarkerPastTarget_NotABarrier)
     _emulator->RunTStates(2000, true);
     _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::Other, "past-target");
     RunFrames(2);
+    _ttd->StopRecording();
 
     SeekResult r;
     EXPECT_TRUE(_ttd->SeekTo({1, 1000}, &r));
@@ -679,6 +686,7 @@ TEST_F(TTD_ExternalEvents_Seek_Test, MultipleMarkers_StopsAtEarliest)
     _emulator->RunTStates(500, true);
     _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::Other,       "third");
     RunFrames(2);
+    _ttd->StopRecording();
 
     ASSERT_EQ(_ttd->GetExternalEvents().Size(), 3u);
     const uint32_t firstT = _ttd->GetExternalEvents().Events()[0].time.tInFrame;
@@ -703,6 +711,7 @@ TEST_F(TTD_ExternalEvents_Seek_Test, BlockedSeek_TransitionsToDetached)
     _emulator->RunTStates(500, true);
     _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::Other, "block");
     RunFrames(2);
+    _ttd->StopRecording();
 
     ASSERT_EQ(_ttd->GetExternalEvents().Size(), 1u);
     const uint32_t markerT = _ttd->GetExternalEvents().Events()[0].time.tInFrame;
@@ -729,6 +738,7 @@ TEST_F(TTD_ExternalEvents_Seek_Test, BlockedSeek_ReplayStopsAtMarkerTInFrame)
     _emulator->RunTStates(500, true);
     _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::Other, "block");
     RunFrames(2);
+    _ttd->StopRecording();
 
     ASSERT_EQ(_ttd->GetExternalEvents().Size(), 1u);
     const uint32_t markerT = _ttd->GetExternalEvents().Events()[0].time.tInFrame;
@@ -781,6 +791,7 @@ TEST_F(TTD_ExternalEvents_Seek_Test, NullOutResult_MarkerBarrier_StillReturnsFal
     _emulator->RunTStates(500, true);
     _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::Other, "block");
     RunFrames(2);
+    _ttd->StopRecording();
 
     ASSERT_EQ(_ttd->GetExternalEvents().Size(), 1u);
     const uint32_t markerT = _ttd->GetExternalEvents().Events()[0].time.tInFrame;
@@ -803,6 +814,7 @@ TEST_F(TTD_ExternalEvents_Seek_Test, StepBackFrame_FrameAligned_NotAffectedByMar
     _emulator->RunTStates(500, true);
     _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::Other, "mid-frame");
     RunFrames(3);  // → frame 4
+    _ttd->StopRecording();
 
     EXPECT_TRUE(_ttd->StepBackFrame());
     EXPECT_EQ(_ttd->CurrentPosition().frame, 3u);

@@ -4,14 +4,20 @@
 /// Per parent TDD §4.2: "Invalidated (history cleared, new session started)
 /// by any event that breaks determinism or teleports state":
 ///   - Snapshot/tape/disk load
-///   - `Emulator::Reset()`
 ///   - ROM reload
 ///   - Speed multiplier change
 ///   - (Disk media write-back — staged handling per TDD §12.2)
 ///
-/// These tests verify the wiring: each listed entry point calls
-/// TimeTravelManager::InvalidateSession, which transitions Recording → Idle and
-/// clears the timeline. When no session is active the calls are no-ops.
+/// Reset() is NOT in this list — it must NEVER modify the recorded timeline.
+/// If recording is active, Reset() stops it first (transitioning Recording
+/// → Idle with history retained) so the timeline isn't corrupted by the
+/// frame_counter teleport. If recording is already stopped, Reset() is a
+/// pure no-op for TTD. See Reset_StopsRecordingAndPreservesHistory below.
+///
+/// These tests verify the wiring: each listed entry point (EXCEPT Reset)
+/// calls TimeTravelManager::InvalidateSession, which transitions Recording
+/// → Idle and clears the timeline. When no session is active the calls are
+/// no-ops.
 
 #include <gtest/gtest.h>
 
@@ -59,8 +65,23 @@ void ExpectSessionState(ttd::TimeTravelManager* mgr,
 
 /// region <Invalidation hook tests>
 
-/// @test Reset() invalidates the session.
-TEST(TTD_SessionLifecycle_Test, Reset_InvalidatesActiveSession)
+/// @test Reset() on an active recording STOPS the recording and preserves
+///       the timeline — it does NOT invalidate and does NOT add markers.
+///
+///       The recorded history is the user's property; Reset() must never
+///       touch it. Stopping recording before _core->Reset() runs prevents
+///       frame_counter teleport from corrupting the timeline (a checkpoint
+///       captured at frame 0 after reset would break the sorted invariant
+///       when appended after checkpoints at higher frame numbers).
+///
+///       After Reset():
+///         - State is Idle (Recording was stopped, not invalidated)
+///         - Timeline is intact (checkpoint count unchanged)
+///         - No new markers (the HardwareReset event is not recorded —
+///           markers are for nondeterministic INPUT events, not for
+///           state teleports that happen AFTER recording stops)
+///         - User can seek and replay within the captured history
+TEST(TTD_SessionLifecycle_Test, Reset_StopsRecordingAndPreservesHistory)
 {
     Emulator emulator(LoggerLevel::LogError);
     ASSERT_TRUE(emulator.Init());
@@ -70,13 +91,66 @@ TEST(TTD_SessionLifecycle_Test, Reset_InvalidatesActiveSession)
     ASSERT_NE(context->pTimeTravelManager, nullptr);
 
     ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
-    ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Recording, 1,
-                       "after StartRecording");
+    const size_t checkpointsBefore =
+        context->pTimeTravelManager->GetSessionInfo().checkpointCount;
+    EXPECT_GE(checkpointsBefore, 1u);
+
+    const size_t markersBefore = context->pTimeTravelManager->GetExternalEvents().Size();
 
     emulator.Reset();
 
-    ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Idle, 0,
-                       "after Reset");
+    // State transitioned Recording → Idle (stopped, not invalidated).
+    EXPECT_EQ(context->pTimeTravelManager->GetState(),
+              ttd::TTDSessionState::Idle)
+        << "Reset must stop recording (Recording → Idle)";
+
+    // Timeline is UNTOUCHED — same checkpoint count as before Reset.
+    const size_t checkpointsAfter =
+        context->pTimeTravelManager->GetSessionInfo().checkpointCount;
+    EXPECT_EQ(checkpointsAfter, checkpointsBefore)
+        << "Reset must not modify the timeline (checkpoints changed)";
+
+    // No markers were added — Reset is not a recorded event.
+    const size_t markersAfter = context->pTimeTravelManager->GetExternalEvents().Size();
+    EXPECT_EQ(markersAfter, markersBefore)
+        << "Reset must not add markers to the timeline";
+
+    emulator.Stop();
+    emulator.Release();
+}
+
+/// @test Reset() on a stopped recording (Idle with history) is a pure
+///       no-op for TTD — the timeline is preserved exactly so the user
+///       can replay anytime.
+TEST(TTD_SessionLifecycle_Test, Reset_OnStoppedRecording_PreservesHistory)
+{
+    Emulator emulator(LoggerLevel::LogError);
+    ASSERT_TRUE(emulator.Init());
+
+    EmulatorContext* context = emulator.GetContext();
+    ASSERT_NE(context, nullptr);
+    ASSERT_NE(context->pTimeTravelManager, nullptr);
+
+    // Start then stop — leaves state=Idle with history retained.
+    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
+    context->pTimeTravelManager->StopRecording();
+
+    const size_t checkpointsBefore =
+        context->pTimeTravelManager->GetSessionInfo().checkpointCount;
+    const size_t markersBefore = context->pTimeTravelManager->GetExternalEvents().Size();
+    ASSERT_GE(checkpointsBefore, 1u) << "Precondition: history must exist";
+
+    emulator.Reset();
+
+    // Everything is preserved — state stays Idle, timeline untouched.
+    EXPECT_EQ(context->pTimeTravelManager->GetState(),
+              ttd::TTDSessionState::Idle);
+    EXPECT_EQ(context->pTimeTravelManager->GetSessionInfo().checkpointCount,
+              checkpointsBefore)
+        << "Reset on stopped recording must not touch the timeline";
+    EXPECT_EQ(context->pTimeTravelManager->GetExternalEvents().Size(),
+              markersBefore)
+        << "Reset on stopped recording must not add markers";
 
     emulator.Stop();
     emulator.Release();
@@ -224,6 +298,7 @@ TEST(TTD_SessionLifecycle_Test, StopRecording_RetainsHistory)
 }
 
 /// @test Re-StartRecording after invalidation works cleanly.
+///       Uses LoadTape() to invalidate (Reset() no longer invalidates).
 TEST(TTD_SessionLifecycle_Test, ReStartRecording_AfterInvalidation)
 {
     Emulator emulator(LoggerLevel::LogError);
@@ -236,7 +311,8 @@ TEST(TTD_SessionLifecycle_Test, ReStartRecording_AfterInvalidation)
     EXPECT_EQ(context->pTimeTravelManager->GetSessionInfo().state,
               ttd::TTDSessionState::Recording);
 
-    emulator.Reset();
+    bool ok = emulator.LoadTape(TestPathHelper::GetTestDataPath(kTestTapeRelPath));
+    ASSERT_TRUE(ok) << "Test precondition: LoadTape must succeed";
     EXPECT_EQ(context->pTimeTravelManager->GetSessionInfo().state,
               ttd::TTDSessionState::Idle);
 

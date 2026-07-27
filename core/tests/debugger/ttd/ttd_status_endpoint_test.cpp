@@ -148,6 +148,11 @@ TEST_F(TTD_StatusEndpoint_Test, Recording_BaselinePopulatesAllFields)
     EXPECT_EQ(info.pageStoreUsedBytes, expectedBytes)
         << "page_store_used_bytes must equal capacity right after baseline";
 
+    // Real heap footprint: at least the page-store backing plus the
+    // baseline checkpoint struct.
+    EXPECT_GE(info.sessionHeapBytes, info.pageStoreBytes)
+        << "session_heap_bytes must include page-store backing + checkpoint metadata";
+
     // Frames must come from the live EmulatorState — non-zero once the
     // emulator has run at least one frame's worth of bookkeeping.
     EXPECT_GE(info.currentEndFrame, info.sessionStartFrame)
@@ -223,6 +228,8 @@ TEST_F(TTD_StatusEndpoint_Test, Invalidate_ClearsAllObservableFields)
     EXPECT_EQ(info.pageStoreBytes, 0u);
     EXPECT_EQ(info.pageStoreUsedBytes, 0u);
     EXPECT_EQ(info.baselineFramesCaptured, 0u);
+    EXPECT_EQ(info.sessionHeapBytes, 0u)
+        << "session_heap_bytes must be zero after Invalidate";
 }
 
 // ===========================================================================

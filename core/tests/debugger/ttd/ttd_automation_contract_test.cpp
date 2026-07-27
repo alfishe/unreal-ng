@@ -132,6 +132,13 @@ TEST_F(TTD_Automation_Contract_Test, SessionInfo_HasExpectedFields)
     EXPECT_GT(info.pageStoreBytes, 0u);  // Capacity > 0
     EXPECT_GE(info.pageStoreUsedBytes, 0u);
 
+    // Real heap footprint — must be present, non-zero, and at least as
+    // large as the page-store backing (pageStoreBytes counts only the
+    // page-store vector; sessionHeapBytes also includes per-checkpoint
+    // metadata + journal backing).
+    EXPECT_GT(info.sessionHeapBytes, 0u);
+    EXPECT_GE(info.sessionHeapBytes, info.pageStoreBytes);
+
     // Verify the string conversion (used by all surfaces for JSON/table values)
     std::string stateStr = ttd::TTDSessionStateToString(info.state);
     EXPECT_EQ(stateStr, "recording");
@@ -155,6 +162,7 @@ TEST_F(TTD_Automation_Contract_Test, Seek_WithResult_ReportsTargetHalt)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(10);
+    _ttd->StopRecording();
 
     // Seek to frame 5 (within bounds)
     ttd::TTDTimePoint target{5, 0};
@@ -194,6 +202,7 @@ TEST_F(TTD_Automation_Contract_Test, Seek_MarkerBarrier_ReportsExternalEvent)
     ASSERT_GT(markerT, 0u);
 
     RunFrames(2);
+    _ttd->StopRecording();
 
     // Seek to a target past the marker
     ttd::TTDTimePoint target{1, markerT + 500};
@@ -214,6 +223,7 @@ TEST_F(TTD_Automation_Contract_Test, Step_BackAndForward_RoundTrip)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(10);
+    _ttd->StopRecording();
 
     // Read the session end — stepping forward beyond this will fail
     ttd::TTDTimePoint sessionEnd = _ttd->SessionEndPosition();
@@ -239,6 +249,7 @@ TEST_F(TTD_Automation_Contract_Test, Step_BackAtStart_Fails)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(2);
+    _ttd->StopRecording();
 
     // Seek to the first frame
     ttd::TTDTimePoint first{_ttd->GetSessionInfo().sessionStartFrame, 0};
@@ -345,6 +356,10 @@ TEST_F(TTD_Automation_Contract_Test, FullRoundTrip_StartRecordSeekStepResume)
     ttd::TTDTimePoint current = _ttd->CurrentPosition();
     ttd::TTDTimePoint end = _ttd->SessionEndPosition();
     EXPECT_LE(current.frame, end.frame);
+
+    // Stop recording before scrubbing — scrubbing during Recording is
+    // rejected by the engine (would corrupt the timeline).
+    _ttd->StopRecording();
 
     // 5. Seek to mid-session
     uint64_t midFrame = info1.sessionStartFrame + 10;

@@ -108,6 +108,8 @@ TEST_F(TimeTravelManager_Test, GetSessionInfo_InitiallyEmpty)
     EXPECT_EQ(info.pageStoreBytes, 0u);
     EXPECT_EQ(info.sessionStartFrame, 0u);
     EXPECT_EQ(info.currentEndFrame, 0u);
+    // Real heap footprint counter is present (zero before any recording).
+    EXPECT_EQ(info.sessionHeapBytes, 0u);
 }
 
 // ===========================================================================
@@ -468,4 +470,74 @@ TEST_F(TimeTravelManager_Test, GetSessionInfo_FrameBounds_UpdateWithCapture)
     auto info1 = _ttd->GetSessionInfo();
     EXPECT_GT(info1.currentEndFrame, info0.currentEndFrame);
     EXPECT_EQ(info1.checkpointCount, info0.checkpointCount + 1);
+}
+
+// ===========================================================================
+// sessionHeapBytes — real heap footprint counter (not a percentage, not an
+// estimate). The COW page store always reports page_store_bytes ==
+// page_store_used_bytes because it auto-grows to fit the working set, so
+// those fields are useless for "how much memory is my recording using?".
+// sessionHeapBytes is the real number: page-store backing vector +
+// per-checkpoint metadata + journal backing + scratch buffers.
+// ===========================================================================
+
+TEST_F(TimeTravelManager_Test, SessionHeapBytes_NonZero_AfterStartRecording)
+{
+    EnableTTD();
+    ASSERT_TRUE(_ttd->StartRecording());
+
+    auto info = _ttd->GetSessionInfo();
+    // After StartRecording the baseline checkpoint captured all model RAM
+    // pages, so the page store backing vector is non-zero. The baseline
+    // checkpoint struct itself also contributes sizeof(TTDCheckpoint).
+    EXPECT_GT(info.sessionHeapBytes, 0u);
+    // sessionHeapBytes counts the page store backing (capacity, not just
+    // live slots), so it must be >= pageStoreBytes.
+    EXPECT_GE(info.sessionHeapBytes, info.pageStoreBytes);
+}
+
+TEST_F(TimeTravelManager_Test, SessionHeapBytes_GrowsWith_CheckpointCount)
+{
+    EnableTTD();
+    ASSERT_TRUE(_ttd->StartRecording());
+
+    auto info0 = _ttd->GetSessionInfo();
+
+    // Force several OnFrameBoundary calls — each appends a checkpoint
+    // struct (sizeof(TTDCheckpoint) + ramPages vector capacity) which
+    // directly adds to the heap footprint.
+    EmulatorContext* ctx = _emulator->GetContext();
+    for (int i = 0; i < 5; ++i)
+    {
+        ctx->emulatorState.frame_counter++;
+        _ttd->OnFrameBoundary();
+    }
+
+    auto info1 = _ttd->GetSessionInfo();
+    EXPECT_GT(info1.checkpointCount, info0.checkpointCount);
+    // Each new checkpoint adds at minimum sizeof(TTDCheckpoint) bytes plus
+    // its page-ref vector capacity (modelRamPages * sizeof(TTDPageRef)).
+    // The heap counter MUST reflect that growth.
+    EXPECT_GT(info1.sessionHeapBytes, info0.sessionHeapBytes)
+        << "sessionHeapBytes must grow as checkpoints are captured";
+}
+
+TEST_F(TimeTravelManager_Test, SessionHeapBytes_DropsToZero_OnInvalidate)
+{
+    EnableTTD();
+    ASSERT_TRUE(_ttd->StartRecording());
+    EmulatorContext* ctx = _emulator->GetContext();
+    for (int i = 0; i < 3; ++i)
+    {
+        ctx->emulatorState.frame_counter++;
+        _ttd->OnFrameBoundary();
+    }
+    ASSERT_GT(_ttd->GetSessionInfo().sessionHeapBytes, 0u);
+
+    _ttd->InvalidateSession("test");
+
+    auto info = _ttd->GetSessionInfo();
+    EXPECT_EQ(info.sessionHeapBytes, 0u)
+        << "Invalidate must release every heap allocation the session owned";
+    EXPECT_EQ(info.checkpointCount, 0u);
 }

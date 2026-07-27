@@ -192,6 +192,7 @@ TEST_F(TTD_ExternalEvents_Hooks_Test, Tape_MarkerBlocksIntraFrameSeek)
 
     // Extend the timeline so an intra-frame seek past the marker is in range.
     RunFrames(2);
+    _ttd->StopRecording();
 
     ttd::TimeTravelManager::TTDSeekResult r;
     EXPECT_FALSE(_ttd->SeekTo({1, markerT + 500}, &r));
