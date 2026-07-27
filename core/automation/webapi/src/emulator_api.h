@@ -821,11 +821,6 @@ public:
 
     // region Helper Methods (implementation: emulator_api.cpp)
 private:
-    // Get emulator by ID (UUID) or index (numeric)
-    // @param idOrIndex Either a UUID string or numeric index (0-based)
-    // @return Shared pointer to emulator, or nullptr if not found
-    std::shared_ptr<Emulator> getEmulatorByIdOrIndex(const std::string& idOrIndex) const;
-
     // Get emulator using global selection priority, then stateless fallback
     // First checks globally selected emulator, then falls back to stateless behavior
     // @return Shared pointer to emulator, or nullptr if no emulator can be selected
@@ -842,5 +837,15 @@ private:
                               std::function<std::string(std::shared_ptr<Emulator>)> action) const;
     // endregion Helper Methods
 };
+
+// -----------------------------------------------------------------------
+// Free-function helpers (declared in api::v1; implemented in emulator_api.cpp)
+// Available to any handler in the api::v1 namespace — usable from
+// ttd_api.cpp, state_audio_api.cpp, etc. without an EmulatorAPI instance.
+// -----------------------------------------------------------------------
+/// Resolve an emulator by ID (UUID) or numeric index.
+/// Does NOT auto-select; returns nullptr if not found.
+std::shared_ptr<Emulator> getEmulatorByIdOrIndex(const std::string& idOrIndex);
+
 }  // namespace v1
 }  // namespace api

@@ -634,13 +634,32 @@ void Emulator::Reset()
         sleep_ms(20);
     }
 
-    // TTD v1 (P1.6): Reset teleports CPU/RAM/peripheral state, which breaks
-    // the determinism contract on every captured checkpoint. Drop the session
-    // before _core->Reset() actually mutates anything (parent TDD §4.2).
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->InvalidateSession("reset");
+    // TTD: Reset must NEVER touch the recorded timeline. The recorded
+    // history is the user's property — they should be able to replay it
+    // at any time, regardless of live emulator state.
+    //
+    // If recording is active, we must STOP it first. Otherwise _core->Reset()
+    // would teleport frame_counter back to 0, and the next OnFrameBoundary
+    // would append a checkpoint at frame 0 to a timeline that already has
+    // checkpoints at higher frame numbers — breaking the sorted invariant
+    // and corrupting every future seek.
+    //
+    // StopRecording() transitions Recording → Idle while retaining the
+    // timeline. The user can seek, replay, or resume from any captured
+    // point. After _core->Reset() runs, the live emulator is at frame 0
+    // with fresh state, but the timeline is untouched.
+    //
+    // See parent TDD §4.2 (StopRecording retains history) and §5.1
+    // (markers are for nondeterministic INPUT events, not for state
+    // teleports that happen AFTER recording stops).
+    if (_context && _context->pTimeTravelManager
+        && _context->pTimeTravelManager->IsRecording())
+    {
+        _context->pTimeTravelManager->StopRecording();
+    }
 
-    // Now perform reset while paused (safe, no race condition)
+    // Now perform reset while paused (safe, no race condition).
+    // The live emulator state is teleported; the TTD timeline is not.
     _core->Reset();
 
     // Resume if it was running before
@@ -828,6 +847,31 @@ void Emulator::WaitWhilePaused()
             break;
         }
     }
+}
+
+/// @brief Block until the Z80 thread observes the pause flag and parks.
+///
+/// Emulator::Pause() is asynchronous — it sets _isPaused and returns. The
+/// Z80 thread notices at the top of the next frame iteration and signals
+/// _isPausedConfirmed via MainLoop's _pauseCV. This method wraps that CV
+/// wait so callers that mutate emulator state right after Pause() (e.g.
+/// TTD seek/step-back/step-forward via WebAPI) don't race with the
+/// in-flight frame loop overwriting their freshly written state.
+///
+/// Returns true on confirmation, false on timeout. On timeout the caller
+/// should proceed anyway — the mutation is still correct, just slightly
+/// racy, and the alternative (blocking forever) is worse.
+///
+/// When the emulator is not running async (tests, synchronous mode), the
+/// Z80 thread doesn't exist, _isPausedConfirmed never flips, and this
+/// method correctly times out. Callers should not interpret timeout as
+/// failure in those configurations.
+bool Emulator::WaitForPauseConfirmation(uint32_t timeout_ms)
+{
+    if (!_mainloop)
+        return false;
+
+    return _mainloop->WaitForPauseConfirmation(timeout_ms);
 }
 
 void Emulator::Stop()

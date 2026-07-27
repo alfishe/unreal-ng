@@ -46,6 +46,24 @@ public:
     void Run(volatile bool& exit);
     void Stop();
 
+    /// @brief Block until the Z80 thread has actually entered the paused state.
+    ///
+    /// Emulator::Pause() only sets a flag and returns immediately — the
+    /// emulator thread notices it at the top of the next frame iteration
+    /// and parks. Any caller that mutates emulator state right after
+    /// Pause() (e.g. TTD seek/step-back/step-forward) MUST call this first
+    /// to close the race window in which the in-flight frame loop could
+    /// overwrite the freshly restored framebuffer /writethrough.
+    ///
+    /// Returns true if pause was confirmed before the timeout elapsed,
+    /// false on timeout (caller should proceed anyway — the state mutation
+    /// is still correct, just slightly racy).
+    ///
+    /// Safe to call when the emulator is not running async (e.g. tests,
+    /// synchronous mode): in that case _isPausedConfirmed may never flip
+    /// and the wait will time out, which is the correct behaviour.
+    bool WaitForPauseConfirmation(uint32_t timeout_ms = 1000);
+
 protected:
     void RunFrame();
     void ExecuteCPUFrameCycle();

@@ -252,8 +252,8 @@
         "Returns every external-event marker recorded in this session. "
         "Each marker is a replay barrier: a SeekTo whose target lies on "
         "or after a marker will halt at the marker rather than crossing "
-        "it. Markers cover TapeControl, DiskWrite, DebuggerEdit, and Other "
-        "(per ttd::TTDExternalEventKind).";
+        "it. Markers cover TapeControl, DiskWrite, DebuggerEdit, "
+        "HardwareReset, and Other (per ttd::TTDExternalEventKind).";
     paths["/api/v1/emulator/{id}/ttd/markers"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/markers"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/markers"]["get"]["parameters"][0]["required"] = true;

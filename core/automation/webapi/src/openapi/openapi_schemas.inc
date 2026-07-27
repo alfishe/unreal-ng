@@ -315,6 +315,23 @@
         "Live slot bytes currently held by the COW page store";
     schemas["TTDStatusResponse"]["properties"]["baseline_frames_captured"]["type"] = "integer";
     schemas["TTDStatusResponse"]["properties"]["baseline_frames_captured"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["baseline_frames_captured"]["description"] =
+            "Count of distinct 16 KB RAM page snapshots currently held in the "
+            "COW page store (live slots). Grows when new pages are captured, "
+            "shrinks when old pages are released via session invalidation or "
+            "future thinning. Multiply by 16384 to compare against "
+            "page_store_used_bytes.";
+    schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["description"] =
+            "Real heap footprint of the recorded session in bytes. Sums every "
+            "allocation the session owns: page store backing vector, "
+            "per-checkpoint metadata (CPU/chipset snapshot + page-ref vector + "
+            "peripheral blobs), input journal, external-event journal, and "
+            "session-scope dirty-page scratch. This is the number to display "
+            "for 'session size' — distinct from page_store_bytes (just the "
+            "page-store vector) and page_store_used_bytes (live slots only, "
+            "always ~100% of capacity because the COW store auto-grows).";
     schemas["TTDStatusResponse"]["properties"]["ttd_available"]["type"] = "boolean";
     schemas["TTDStatusResponse"]["properties"]["ttd_available"]["description"] =
         "False when the manager is missing (minimal build); state will be \"idle\"";
@@ -412,7 +429,8 @@
     schemas["TTDMarker"]["type"] = "object";
     schemas["TTDMarker"]["description"] =
         "External-event marker (replay barrier). Per ttd::TTDExternalEventKind "
-        "the kind is one of: tape_control, disk_write, debugger_edit, other.";
+        "the kind is one of: tape_control, disk_write, debugger_edit, "
+        "hardware_reset, other.";
     schemas["TTDMarker"]["properties"]["frame"]["type"] = "integer";
     schemas["TTDMarker"]["properties"]["frame"]["format"] = "uint64";
     schemas["TTDMarker"]["properties"]["tinframe"]["type"] = "integer";
@@ -421,6 +439,7 @@
     schemas["TTDMarker"]["properties"]["kind"]["enum"].append("tape_control");
     schemas["TTDMarker"]["properties"]["kind"]["enum"].append("disk_write");
     schemas["TTDMarker"]["properties"]["kind"]["enum"].append("debugger_edit");
+    schemas["TTDMarker"]["properties"]["kind"]["enum"].append("hardware_reset");
     schemas["TTDMarker"]["properties"]["kind"]["enum"].append("other");
     schemas["TTDMarker"]["properties"]["reason"]["type"] = "string";
 

@@ -1372,6 +1372,7 @@ namespace PythonBindings
                 info["page_store_bytes"]         = py::cast(si.pageStoreBytes);
                 info["page_store_used_bytes"]    = py::cast(si.pageStoreUsedBytes);
                 info["baseline_frames_captured"] = py::cast(si.baselineFramesCaptured);
+                info["session_heap_bytes"]       = py::cast(si.sessionHeapBytes);
                 info["ttd_available"]            = true;
                 return info;
             }, "Get TTD session status")

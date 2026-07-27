@@ -31,17 +31,20 @@ class _FakeClient:
         self.base_url = base_url
 
     def list_instances(self):
-        return [{"id": "fake-instance-id", "model": "TestModel"}]
+        return [{"id": "fake-instance-id", "model": "TestModel",
+                 "is_running": True, "is_paused": False}]
 
     def find_first_active(self):
         return ("fake-instance-id",
-                {"id": "fake-instance-id", "model": "TestModel"}, 0)
+                {"id": "fake-instance-id", "model": "TestModel",
+                 "is_running": True, "is_paused": False}, 0)
 
     def ttd_status(self, instance_id):
         return {"state": "idle", "ttd_available": True,
                 "session_start_frame": 0, "current_end_frame": 0,
                 "checkpoint_count": 0, "page_store_bytes": 0,
-                "page_store_used_bytes": 0, "baseline_frames_captured": 0}
+                "page_store_used_bytes": 0, "baseline_frames_captured": 0,
+                "session_heap_bytes": 0}
 
     def ttd_position(self, instance_id):
         return {"current": {"frame": 0, "tinframe": 0},
@@ -53,6 +56,15 @@ class _FakeClient:
 
     def ttd_start(self, instance_id):
         return {"started": True, "already_active": False, "state": "recording"}
+
+    # Emulator-level lifecycle endpoints used by the timeline Pause and
+    # Resume buttons. Stubs exist so the PollWorker's _dispatch() doesn't
+    # raise AttributeError if a stray action lands in the queue mid-test.
+    def resume_emulator(self, emulator_id):
+        return {"running": True}
+
+    def pause_emulator(self, emulator_id):
+        return {"paused": True}
 
 
 # Install the fake module BEFORE constructing the worker.

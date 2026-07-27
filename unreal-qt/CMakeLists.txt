@@ -5,12 +5,18 @@ message(">> unreal-qt CMakeLists.txt")
 # Project named 'unreal-qt' on C++
 project(unreal-qt LANGUAGES CXX)
 
-# Define global options with CACHE and FORCE to ensure they propagate to /core/automation projects
+# Define global options with CACHE and FORCE to ensure they propagate to /core/automation projects.
+# Notes:
+#  - ENABLE_AUTOMATION is the master switch (always ON for unreal-qt).
+#  - ENABLE_LUA_AUTOMATION and ENABLE_CLI_AUTOMATION are always ON (no
+#    extra deps on this platform).
+#  - ENABLE_WEBAPI_AUTOMATION and ENABLE_PYTHON_AUTOMATION follow the
+#    root CMakeLists.txt setting (single source of truth). Do NOT
+#    override here — the parent cache value (or the -D flag passed on
+#    the cmake command line) decides.
+#  - ENABLE_GDB_AUTOMATION is OFF until the GDB RSP stub ships (TDD G1).
 set(ENABLE_AUTOMATION ON CACHE BOOL "Enable automation features (Lua, Python, WebAPI)" FORCE)
 set(ENABLE_LUA_AUTOMATION ON CACHE BOOL "Enable Lua automation" FORCE)
-# Python automation: always follow the root CMakeLists.txt setting (OFF by default)
-# Never override with ON here — root CMakeLists.txt is the single source of truth.
-set(ENABLE_WEBAPI_AUTOMATION OFF CACHE BOOL "Enable WebAPI automation" FORCE)
 set(ENABLE_CLI_AUTOMATION ON CACHE BOOL "Enable CLI automation" FORCE)
 # GDB RSP server automation is OFF by default — the stub does not exist yet (GDB TDD G1).
 # When G1 lands, flip this to ON or pass -DENABLE_GDB_AUTOMATION=ON at configure time.

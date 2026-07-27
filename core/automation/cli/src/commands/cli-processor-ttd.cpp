@@ -149,6 +149,7 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
     ss << "  Page store capacity:    " << info.pageStoreBytes << " bytes" << NEWLINE;
     ss << "  Page store used:        " << info.pageStoreUsedBytes << " bytes" << NEWLINE;
     ss << "  Baseline frames cap'd:  " << info.baselineFramesCaptured << NEWLINE;
+    ss << "  Session heap total:     " << info.sessionHeapBytes << " bytes" << NEWLINE;
 
     session.SendResponse(ss.str());
 }

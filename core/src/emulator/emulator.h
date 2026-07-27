@@ -166,6 +166,12 @@ public:
     void Pause(bool broadcast = true);   // broadcast=false for internal operations (won't trigger UI updates)
     void Resume(bool broadcast = true);  // broadcast=false for internal operations (won't trigger UI updates)
     void WaitWhilePaused();              // Block until resumed (used by breakpoint handlers)
+    /// Block until the Z80 thread has actually parked in response to a prior Pause().
+    /// Returns true on confirmation, false on timeout. Callers that mutate emulator
+    /// state (TTD seek/step, snapshot restore, memory patches) MUST call this between
+    /// Pause() and the mutation to close the race in which the in-flight frame loop
+    /// overwrites the freshly written state. See MainLoop::WaitForPauseConfirmation.
+    bool WaitForPauseConfirmation(uint32_t timeout_ms = 1000);
     void Stop();
 
     // File format operations

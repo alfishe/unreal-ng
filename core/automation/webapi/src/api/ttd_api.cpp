@@ -21,10 +21,13 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/notifications.h>  // EmulatorFramePayload
+#include <emulator/platform.h>       // NC_VIDEO_FRAME_REFRESH
 #include <json/json.h>
 
 #include <sstream>
 
+#include "3rdparty/message-center/messagecenter.h"
 #include "../emulator_api.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttd_external_events.h"
@@ -37,9 +40,60 @@ namespace api
 namespace v1
 {
 
-// Helper function declared in emulator_api.cpp
+// Helper functions declared in emulator_api.h / emulator_api.cpp.
 extern void addCorsHeaders(HttpResponsePtr& resp);
-extern std::shared_ptr<Emulator> getEmulatorByIdOrIndex(const std::string& idOrIndex);
+// getEmulatorByIdOrIndex is a free function in api::v1 (emulator_api.h) —
+// visible here without an EmulatorAPI instance.
+
+/// @brief Synchronous pause discipline for TTD state mutations.
+///
+/// Emulator::Pause() is asynchronous: it sets the _isPaused flag and returns
+/// immediately, and the Z80 thread only notices at the top of the next frame
+/// iteration. If a TTD seek/step ran immediately after Pause(), the in-flight
+/// frame could overwrite the freshly restored framebuffer / emulator state
+/// — the user would see a stale screen and border that didn't match the
+/// target snapshot.
+///
+/// This helper closes that race by waiting for the Z80 thread to actually
+/// park before the caller mutates state. After the mutation, callers MUST
+/// also invoke NotifyFrameRefresh() so any attached UI surface (unreal-qt
+/// widget, unreal-screen-viewer, debug visualization window) repaints with
+/// the freshly rebuilt framebuffer — when the emulator is paused, MainLoop
+/// doesn't run and therefore doesn't post NC_VIDEO_FRAME_REFRESH itself.
+///
+/// Returns true if pause was confirmed, false on timeout. Callers proceed
+/// regardless — the mutation is still correct, just slightly racy on timeout.
+static bool PauseAndConfirm(const std::shared_ptr<Emulator>& emulator,
+                            uint32_t timeout_ms = 1000)
+{
+    if (!emulator)
+        return false;
+    emulator->Pause();
+    return emulator->WaitForPauseConfirmation(timeout_ms);
+}
+
+/// @brief Notify UI surfaces that the framebuffer has changed.
+///
+/// Posts NC_VIDEO_FRAME_REFRESH exactly as MainLoop::OnFrameEnd() does, so
+/// every observer (unreal-qt MainWindow, EmulatorBinding, debug visualization
+/// window) repaints with the current framebuffer. Required after TTD
+/// seek/step-back/step-forward because those paths rebuild the framebuffer
+/// in-place via RestoreCheckpoint -> Screen::RenderOnlyMainScreen() but do
+/// NOT run a MainLoop iteration, so the observers never see a frame event
+/// and keep displaying the pre-seek frame.
+static void NotifyFrameRefresh(Emulator& emulator)
+{
+    EmulatorContext* context = emulator.GetContext();
+    if (!context)
+        return;
+
+    const std::string emulatorId = emulator.GetSymbolicId();
+    const uint32_t frameCounter = context->emulatorState.frame_counter;
+
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_VIDEO_FRAME_REFRESH,
+                       new EmulatorFramePayload(emulatorId, frameCounter));
+}
 
 /// @brief GET /api/v1/emulator/{id}/ttd/status
 ///
@@ -54,7 +108,8 @@ extern std::shared_ptr<Emulator> getEmulatorByIdOrIndex(const std::string& idOrI
 ///   "checkpoint_count":    <uint64>,
 ///   "page_store_bytes":     <uint64>,   // capacity, for budget checks
 ///   "page_store_used_bytes": <uint64>,  // live slot bytes
-///   "baseline_frames_captured": <uint64>
+///   "baseline_frames_captured": <uint64>,
+///   "session_heap_bytes":   <uint64>   // real heap footprint of session
 /// }
 /// @endcode
 ///
@@ -126,6 +181,7 @@ void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
     ret["page_store_bytes"]         = Json::UInt64(0);
     ret["page_store_used_bytes"]    = Json::UInt64(0);
     ret["baseline_frames_captured"] = Json::UInt64(0);
+    ret["session_heap_bytes"]       = Json::UInt64(0);
     ret["ttd_available"]            = false;
 
     if (ttd::TimeTravelManager* mgr = context->pTimeTravelManager)
@@ -138,6 +194,7 @@ void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
         ret["page_store_bytes"]         = Json::UInt64(info.pageStoreBytes);
         ret["page_store_used_bytes"]    = Json::UInt64(info.pageStoreUsedBytes);
         ret["baseline_frames_captured"] = Json::UInt64(info.baselineFramesCaptured);
+        ret["session_heap_bytes"]       = Json::UInt64(info.sessionHeapBytes);
         ret["ttd_available"]            = true;
     }
 
@@ -147,13 +204,46 @@ void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
 }
 
 // ---------------------------------------------------------------------------
+// Internal helper: reject scrub-style operations during active recording.
+// Returns true if the request was rejected (callback already invoked).
+//
+// Scrubbing (seek / step-back / step-forward) during Recording trashes
+// emulator state — RestoreCheckpoint overwrites the live emulator with old
+// captured data, and the next OnFrameBoundary would append a checkpoint at
+// the restored (older) frame, breaking the timeline's sorted invariant.
+// Callers MUST StopRecording first.
+// ---------------------------------------------------------------------------
+static bool rejectIfRecording(ttd::TimeTravelManager* mgr,
+                               std::function<void(const HttpResponsePtr&)>& callback)
+{
+    if (!mgr || !mgr->IsRecording())
+        return false;  // Not recording — caller may proceed.
+
+    Json::Value error;
+    error["error"]   = "Conflict";
+    error["message"] = "Cannot scrub while recording is active — call "
+                       "POST /ttd/stop first. Scrubbing during recording "
+                       "would overwrite live emulator state with restored "
+                       "checkpoint data and corrupt the timeline.";
+    error["state"]   = ttd::TTDSessionStateToString(mgr->GetState());
+    auto resp = HttpResponse::newHttpJsonResponse(error);
+    resp->setStatusCode(HttpStatusCode::k409Conflict);
+    addCorsHeaders(resp);
+    callback(resp);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Internal helper: resolve emulator + context + TTD manager, or send error.
 // Returns nullptr on failure (error response already sent).
+// On success, `outEmulator` (if non-null) receives the emulator pointer so
+// callers can Pause/Resume it around state-mutating TTD operations.
 // ---------------------------------------------------------------------------
 static ttd::TimeTravelManager* resolveTTD(
     const std::string& id,
     std::function<void(const HttpResponsePtr&)>& callback,
-    bool requireManager = true)
+    bool requireManager = true,
+    std::shared_ptr<Emulator>* outEmulator = nullptr)
 {
     auto emulator = getEmulatorByIdOrIndex(id);
     if (!emulator)
@@ -205,6 +295,9 @@ static ttd::TimeTravelManager* resolveTTD(
         callback(resp);
         return nullptr;
     }
+
+    if (outEmulator)
+        *outEmulator = emulator;
 
     return mgr;
 }
@@ -295,8 +388,14 @@ void EmulatorAPI::seekTTD(const HttpRequestPtr& req,
                            std::function<void(const HttpResponsePtr&)>&& callback,
                            const std::string& id) const
 {
-    auto* mgr = resolveTTD(id, callback);
+    std::shared_ptr<Emulator> emulator;
+    auto* mgr = resolveTTD(id, callback, /*requireManager=*/true, &emulator);
     if (!mgr) return;
+
+    // Defense-in-depth: engine-level SeekTo also rejects, but we want to
+    // return a clear 409 with an actionable message rather than a 200
+    // with reached=false.
+    if (rejectIfRecording(mgr, callback)) return;
 
     auto jsonBody = req->getJsonObject();
     if (!jsonBody || !jsonBody->isMember("frame"))
@@ -315,8 +414,25 @@ void EmulatorAPI::seekTTD(const HttpRequestPtr& req,
     target.frame    = (*jsonBody)["frame"].asUInt64();
     target.tInFrame = jsonBody->isMember("tinframe") ? static_cast<uint32_t>((*jsonBody)["tinframe"].asUInt()) : 0;
 
+    // Pause the emulator while we mutate TTD state so the emulator thread
+    // can't advance frame_counter past the restored checkpoint before the
+    // caller sees the result. PauseAndConfirm() blocks until the Z80 thread
+    // has actually parked, closing the race in which the in-flight frame
+    // loop would overwrite the freshly restored framebuffer. The emulator
+    // stays paused after a successful seek — the TTD state machine is now
+    // Detached and the next /ttd/resume call will Resume() it.
+    PauseAndConfirm(emulator);
+
     ttd::TimeTravelManager::TTDSeekResult result;
     bool reached = mgr->SeekTo(target, &result);
+
+    // SeekTo rebuilt the framebuffer in-place via RestoreCheckpoint ->
+    // Screen::RenderOnlyMainScreen(). The emulator is paused, so MainLoop
+    // won't post NC_VIDEO_FRAME_REFRESH on its own — do it explicitly so
+    // every observer (unreal-qt widget, screen viewer, debug visualization)
+    // repaints with the target snapshot's screen + border.
+    if (emulator)
+        NotifyFrameRefresh(*emulator);
 
     Json::Value ret;
     ret["reached"] = reached;
@@ -357,11 +473,22 @@ void EmulatorAPI::stepBackTTD(const HttpRequestPtr& req,
                                std::function<void(const HttpResponsePtr&)>&& callback,
                                const std::string& id) const
 {
-    auto* mgr = resolveTTD(id, callback);
+    std::shared_ptr<Emulator> emulator;
+    auto* mgr = resolveTTD(id, callback, /*requireManager=*/true, &emulator);
     if (!mgr) return;
+
+    if (rejectIfRecording(mgr, callback)) return;
+
+    // Same pause-around-state-mutation discipline as seekTTD: wait for the
+    // Z80 thread to park so it can't overwrite the restored framebuffer,
+    // then notify observers to repaint.
+    PauseAndConfirm(emulator);
 
     bool ok = mgr->StepBackFrame();
     ttd::TTDTimePoint pos = mgr->CurrentPosition();
+
+    if (emulator)
+        NotifyFrameRefresh(*emulator);
 
     Json::Value ret;
     ret["stepped"]  = ok;
@@ -378,11 +505,22 @@ void EmulatorAPI::stepForwardTTD(const HttpRequestPtr& req,
                                   std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id) const
 {
-    auto* mgr = resolveTTD(id, callback);
+    std::shared_ptr<Emulator> emulator;
+    auto* mgr = resolveTTD(id, callback, /*requireManager=*/true, &emulator);
     if (!mgr) return;
+
+    if (rejectIfRecording(mgr, callback)) return;
+
+    // Same pause-around-state-mutation discipline as seekTTD: wait for the
+    // Z80 thread to park so it can't overwrite the restored framebuffer,
+    // then notify observers to repaint.
+    PauseAndConfirm(emulator);
 
     bool ok = mgr->StepForwardFrame();
     ttd::TTDTimePoint pos = mgr->CurrentPosition();
+
+    if (emulator)
+        NotifyFrameRefresh(*emulator);
 
     Json::Value ret;
     ret["stepped"]  = ok;
@@ -402,7 +540,8 @@ void EmulatorAPI::resumeTTD(const HttpRequestPtr& req,
                              std::function<void(const HttpResponsePtr&)>&& callback,
                              const std::string& id) const
 {
-    auto* mgr = resolveTTD(id, callback);
+    std::shared_ptr<Emulator> emulator;
+    auto* mgr = resolveTTD(id, callback, /*requireManager=*/true, &emulator);
     if (!mgr) return;
 
     ttd::TTDTimePoint from = mgr->CurrentPosition();
@@ -415,6 +554,11 @@ void EmulatorAPI::resumeTTD(const HttpRequestPtr& req,
     }
 
     bool ok = mgr->ResumeRecordingFrom(from);
+
+    // Mirror of seekTTD: now that the TTD state machine is Recording again,
+    // resume emulator execution so the capture can continue.
+    if (ok && emulator)
+        emulator->Resume();
 
     Json::Value ret;
     ret["resumed"]  = ok;

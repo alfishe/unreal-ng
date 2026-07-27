@@ -174,6 +174,26 @@ void MainLoop::Stop()
     _stopRequested = true;
 }
 
+bool MainLoop::WaitForPauseConfirmation(uint32_t timeout_ms)
+{
+    // Fast path: emulator thread has already parked.
+    if (_isPausedConfirmed.load(std::memory_order_acquire))
+        return true;
+
+    // Slow path: wait for the Z80 thread's Run() loop to observe Emulator::IsPaused()
+    // and signal _isPausedConfirmed via _pauseCV. The predicate re-checks the flag
+    // so spurious wakeups are harmless.
+    //
+    // We do NOT touch Emulator::IsPaused() here — that flag is set by the caller
+    // (Emulator::Pause) before this method is entered, and cleared by Emulator::Resume.
+    // The whole point of this wait is to let the Z80 thread notice that flag.
+    std::unique_lock<std::mutex> lock(_pauseMutex);
+    return _pauseCV.wait_for(lock, std::chrono::milliseconds(timeout_ms),
+                             [this]() {
+                                 return _isPausedConfirmed.load(std::memory_order_acquire);
+                             });
+}
+
 void MainLoop::RunFrame()
 {
     /// region <Sanity checks>
