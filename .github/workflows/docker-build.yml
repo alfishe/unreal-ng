@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # 1. Set up QEMU (Required for ARM64/Mac support)
       - name: Set up QEMU
