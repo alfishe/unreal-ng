@@ -54,6 +54,27 @@ void repopulateCombo(QComboBox* combo, const QStringList& items)
         combo->setCurrentIndex(idx);
     combo->blockSignals(false);
 }
+
+/// Default filename pattern with {timestamp} placeholder
+const QString kDefaultFilenamePattern = "{timestamp}-recording";
+
+/// Resolve {timestamp} placeholder to actual value
+QString resolveFilenamePattern(const QString& pattern)
+{
+    QString result = pattern;
+    if (result.contains("{timestamp}"))
+    {
+        QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss");
+        result.replace("{timestamp}", timestamp);
+    }
+    return result;
+}
+
+/// Check if path contains our placeholder pattern
+bool hasPlaceholder(const QString& path)
+{
+    return path.contains("{timestamp}");
+}
 }  // namespace
 
 VideoRecordingWidget::VideoRecordingWidget(EmulatorContext* context, QWidget* parent)
@@ -307,10 +328,16 @@ void VideoRecordingWidget::createVideoTab()
     auto* fileLayout = new QHBoxLayout();
     fileLayout->addWidget(new QLabel("File:"));
     _filePathEdit = new QLineEdit();
-    QString defaultDir = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
-    if (defaultDir.isEmpty())
-        defaultDir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
-    _filePathEdit->setText(defaultDir + "/recording.mp4");
+    QSettings settings("unreal-ng", "recording");
+    QString videoDir = settings.value("lastVideoDir").toString();
+    if (videoDir.isEmpty() || !QDir(videoDir).exists())
+    {
+        videoDir = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
+        if (videoDir.isEmpty())
+            videoDir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+    }
+    _filePathEdit->setText(videoDir + "/" + kDefaultFilenamePattern + ".mp4");
+    _filePathEdit->setPlaceholderText(videoDir + "/" + kDefaultFilenamePattern + ".mp4");
     fileLayout->addWidget(_filePathEdit);
     _browseButton = new QPushButton("Browse...");
     fileLayout->addWidget(_browseButton);
@@ -342,10 +369,11 @@ void VideoRecordingWidget::createVideoTab()
 
     regionLayout->addWidget(new QLabel("Size:"));
     _sizeCombo = new QComboBox();
-    _sizeCombo->addItems({"1× native", "2× (recommended)", "3×", "4×"});
+    _sizeCombo->addItems({"1× native", "2× (recommended)", "3×", "4×", "5×", "6×", "7×", "8×"});
     _sizeCombo->setCurrentIndex(1);
     _sizeCombo->setToolTip("Integer nearest-neighbor upscale. 2× or more keeps ZX pixels crisp and\n"
-                           "preserves per-pixel color (multicolor) effects through video chroma subsampling.");
+                           "preserves per-pixel color (multicolor) effects through video chroma subsampling.\n"
+                           "6× fits H.264 (1920×1080), 8× fits H.265 (2560×1440).");
     regionLayout->addWidget(_sizeCombo);
     outputLayout->addLayout(regionLayout);
 
@@ -430,10 +458,16 @@ void VideoRecordingWidget::createAudioTab()
     auto* fileLayout = new QHBoxLayout();
     fileLayout->addWidget(new QLabel("File:"));
     _audioFilePathEdit = new QLineEdit();
-    QString defaultDir = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
-    if (defaultDir.isEmpty())
-        defaultDir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
-    _audioFilePathEdit->setText(defaultDir + "/recording.wav");
+    QSettings audioSettings("unreal-ng", "recording");
+    QString audioDir = audioSettings.value("lastAudioDir").toString();
+    if (audioDir.isEmpty() || !QDir(audioDir).exists())
+    {
+        audioDir = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
+        if (audioDir.isEmpty())
+            audioDir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+    }
+    _audioFilePathEdit->setText(audioDir + "/" + kDefaultFilenamePattern + ".wav");
+    _audioFilePathEdit->setPlaceholderText(audioDir + "/" + kDefaultFilenamePattern + ".wav");
     fileLayout->addWidget(_audioFilePathEdit);
     _audioBrowseButton = new QPushButton("Browse...");
     fileLayout->addWidget(_audioBrowseButton);
@@ -739,13 +773,24 @@ void VideoRecordingWidget::updateFileExtension()
 {
     // The destination path never changes when options change —
     // only the file extension follows the selected container.
-    QString path = _filePathEdit->text();
-    if (path.isEmpty())
-        return;
+    QString newExt = extensionForContainer(_containerCombo->currentText());
 
-    QFileInfo fi(path);
-    QString base = fi.absolutePath() + "/" + fi.completeBaseName();
-    _filePathEdit->setText(base + "." + extensionForContainer(_containerCombo->currentText()));
+    QString path = _filePathEdit->text();
+    if (!path.isEmpty())
+    {
+        QFileInfo fi(path);
+        QString base = fi.absolutePath() + "/" + fi.completeBaseName();
+        _filePathEdit->setText(base + "." + newExt);
+    }
+
+    // Also update the placeholder
+    QString placeholder = _filePathEdit->placeholderText();
+    if (!placeholder.isEmpty())
+    {
+        QFileInfo fi(placeholder);
+        QString base = fi.absolutePath() + "/" + fi.completeBaseName();
+        _filePathEdit->setPlaceholderText(base + "." + newExt);
+    }
 }
 
 void VideoRecordingWidget::onBrowseFile()
@@ -1064,6 +1109,21 @@ void VideoRecordingWidget::onStartRecording()
     if (isAudioOnlyMode())
     {
         QString filename = _audioFilePathEdit->text();
+
+        // Restore default if empty
+        if (filename.trimmed().isEmpty())
+        {
+            filename = _audioFilePathEdit->placeholderText();
+            _audioFilePathEdit->setText(filename);
+        }
+
+        // Resolve {timestamp} placeholder at recording time
+        if (hasPlaceholder(filename))
+        {
+            filename = resolveFilenamePattern(filename);
+            // Don't update the edit field - keep the pattern for next recording
+        }
+
         if (filename.isEmpty())
         {
             QMessageBox::warning(this, "Error", "Please specify an output file path.");
@@ -1149,6 +1209,11 @@ void VideoRecordingWidget::onStartRecording()
 
         if (success)
         {
+            // Save last used directory
+            QFileInfo fi(filename);
+            QSettings settings("unreal-ng", "recording");
+            settings.setValue("lastAudioDir", fi.absolutePath());
+
             _wasRecording = true;
             if (_context && _context->pEmulator)
                 _recordingEmulatorId = _context->pEmulator->GetId();
@@ -1168,6 +1233,21 @@ void VideoRecordingWidget::onStartRecording()
 
     // Video+Audio mode
     QString filename = _filePathEdit->text();
+
+    // Restore default if empty
+    if (filename.trimmed().isEmpty())
+    {
+        filename = _filePathEdit->placeholderText();
+        _filePathEdit->setText(filename);
+    }
+
+    // Resolve {timestamp} placeholder at recording time
+    if (hasPlaceholder(filename))
+    {
+        filename = resolveFilenamePattern(filename);
+        // Don't update the edit field - keep the pattern for next recording
+    }
+
     if (filename.isEmpty())
     {
         QMessageBox::warning(this, "Error", "Please specify an output file path.");
@@ -1237,6 +1317,11 @@ void VideoRecordingWidget::onStartRecording()
 
     if (success)
     {
+        // Save last used directory
+        QFileInfo fi(filename);
+        QSettings settings("unreal-ng", "recording");
+        settings.setValue("lastVideoDir", fi.absolutePath());
+
         _wasRecording = true;
         // Track which emulator instance we started recording on.
         // Recording continues on this instance even if the user switches
