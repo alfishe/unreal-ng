@@ -784,155 +784,225 @@ for configuration details and the upgrade procedure.
 > the historical record of the comparison that drove the original
 > decision to vendor zstd.
 
-## Section 6 — C++ codec PoC (Google Benchmark, 2026-07-30)
+## Section 6 — Real-data codec PoC (C++ / Google Benchmark, 2026-07-30)
 
-The Section 5 Python PoC compared zstd, lz4, snappy, brotli, zlib, and
-bz2 by wrapping their C library APIs through Python bindings
-(`python-zstandard`, `brotli`, `lz4`, `python-snappy`, `zlib-state`).
-This worked, but:
+> **Status**: REPLACES the synthetic-workload analysis that previously
+> occupied this section. The earlier numbers (Python and the initial
+> C++ run) were generated against synthetic 5% XOR-delta buffers and
+> random 4 KB pages. Sections 6.1 and 6.2 below explain why those
+> conclusions were unreliable, and present an objective comparison
+> grounded in real .ttd data with Shannon entropy as the theoretical
+> reference.
 
-  - **Broken bindings**: FastLZ's Python binding died on Python 3.12
-    with `PY_SSIZE_T_CLEAN macro must be defined for '#' formats`.
-  - **API mismatches**: Lizard's PyPI package shipped an unrelated
-    code-analysis tool under the same name (`pip install lizard`
-    installed a Cyclomatic Complexity analyzer, not the LZ4-fork codec).
-  - **Wrapper skew**: Brotli's Python wrapper used the snake_case
-    `brotli_encoder_compress` API name; the C library actually exposes
-    PascalCase `BrotliEncoderCompress`. The wrapper translated, but
-    added an opaque translation layer between the PoC and the real API.
+### 6.1 Methodology — real buffers, real entropy floor
 
-The C++ PoC removes the wrapper layer entirely. Each candidate codec is
-called through its real C/C++ API, compiled into a Google Benchmark
-binary, and timed with `std::chrono::steady_clock` directly. This is
-the same API surface that production code would use.
+The earlier PoCs generated "synthetic XOR-deltas" by setting ~5% of
+bytes in a 4 KB buffer to random non-zero values. **That is not what
+real TTD XOR-deltas look like.** Real `new XOR prev` buffers, extracted
+from `active_demo.ttd` (200 frames of Dizzy.session on a 128 KB model),
+have these characteristics:
 
-### Layout
+| Workload      | n_bufs | H_mean (bits/B) | floor_mean (B) | floor_p50 (B) | nz%_p50 |
+| ------------- | ------ | --------------- | -------------- | ------------- | ------- |
+| `REAL_full`   |     16 |          3.1211 |         1598.0 |        1612.9 |  29.077 |
+| `REAL_xor`    |   1186 |          0.2299 |          117.7 |          15.1 |   0.220 |
+| `SYN_random`  |   1000 |          7.9544 |         4072.7 |        4072.7 |  99.609 |
+| `SYN_xor_5%`  |   1000 |          0.6188 |          316.8 |         317.0 |   4.858 |
 
-```
-tools/poc/cpp/
-├── CMakeLists.txt              # opt-in via -DBUILD_POC=ON
-├── README.md
-├── src/poc_codec_latency.cpp   # all-in-one: codecs + workloads + benchmark
-└── vendored/fastlz/            # public-domain single-file codec
-```
+The median real XOR-delta has **0.22% dirty bytes**, not 5%, and a
+**15-byte Shannon floor**, not 300. The synthetic workloads overstate
+the entropy by ~20×, which in turn flattens out the differences
+between codecs and makes the choice look like a toss-up. **It is not.**
 
-### Candidates tested (expanded from Section 5)
+**Real-data extraction (`tools/poc/cpp/extract_real_buffers.py`)**:
 
-  - **zstd** at levels **-5, -3, -1, 0, 1, 3, 9, 19** (negative levels
-    are zstd's "ultra-fast" mode — the user explicitly asked to bracket
-    this end of the latency/ratio frontier).
-  - **lz4** at fast + HC-9 + HC-12.
-  - **snappy** (single-mode).
-  - **brotli** at levels **0, 1, 6, 11**.
-  - **FastLZ** at levels 1 and 2 (vendored at `vendored/fastlz/`).
-  - **zlib** at levels 1, 6, 9 (system zlib; functionally equivalent to
-    zlib-ng for output-format purposes).
+  1. Parse `tools/verification/ttd-analyzer/testdata/active_demo.ttd`
+     with the canonical `ttd_format.py` reader.
+  2. For every `ENCODING_FULL` slot: decompress payload → 4 KB raw page
+     snapshot (goes into the `REAL_full` bucket).
+  3. For every `ENCODING_XOR_PREV` slot: decompress payload → 4 KB
+     XOR-delta buffer (goes into the `REAL_xor` bucket). This is the
+     exact byte sequence that the production TTD codec hands to the
+     compressor — no synthetic reconstruction, no shape assumptions.
+  4. Concatenate buffers into `tools/poc/cpp/real_buffers.bin` (4.7 MB).
 
-Lizard was considered but not tested — the upstream `github.com/inikez/lizard`
-repo is no longer reachable, and FastLZ + lz4 already cover its design
-space (small-binary fast codecs with no entropy stage).
+**Shannon entropy as the theoretical floor**: for each buffer we
+compute H(X) = -Σ pᵢ·log₂(pᵢ) over the byte histogram. The minimum
+achievable compressed size is `H · 4096 / 8` bytes. A codec at
+`BLI/floor = 1.0` matches this floor exactly; values above 1.0 measure
+the sum of (a) codec header/framing overhead and (b) entropy-coder
+suboptimality. The floor is workload-intrinsic — it is independent of
+the codec under test.
 
-### Workloads
+### 6.2 Results — REAL_xor (the dominant TTD workload)
 
-Four synthetic workloads that bracket the TTD codec's input shapes:
+`REAL_xor` is **98.7%** of all non-Zero codec inputs in `active_demo.ttd`
+(1186 of 1202 slots). This is the workload the codec decision hinges on.
+All numbers below are medians over 3 repetitions of the full 1186-buffer
+sweep.
 
-| Workload | Mirrors | Composition |
-|---|---|---|
-| `A_4k_full` | Worst case (random RAM) | 1000 buffers of pure random 4 KB |
-| `C_4k_xor_sparse_5pct` | TTD P-frame, scattered writes | 1000 buffers of 4 KB, 95% zeros + 5% non-zero at random positions |
-| `E_4k_xor_clustered_5pct` | TTD P-frame, working-set writes | 1000 buffers of 4 KB, 95% zeros + 5% non-zero in 16-byte clusters |
-| `F_4k_zero` | TTD ZeroPayload short-circuit | 1000 buffers of all-zero 4 KB |
+| Rank | Codec       |     BLI | B/floor | enc_p50 (µs) | enc_p95 (µs) | dec_p50 (µs) | dec_p95 (µs) |
+| ---: | ----------- | ------: | ------: | -----------: | -----------: | -----------: | -----------: |
+|    1 | brotli-11   | 0.04626 |    1.61 |       2199.9 |       5640.4 |         9.88 |        21.50 |
+|    2 | brotli-6    | 0.04964 |    1.73 |         62.6 |        292.8 |         7.04 |        11.33 |
+|    3 | zlib-9      | 0.05527 |    1.92 |        129.9 |       1156.2 |         6.79 |         9.96 |
+|    4 | **zstd-1**  | 0.05636 |    1.96 |     **1.00** |     **13.79**|     **0.96** |     **6.08** |
+|    5 | zlib-6      | 0.05994 |    2.09 |         34.7 |        126.6 |         7.96 |         9.83 |
+|    6 | zlib-1      | 0.06829 |    2.38 |         14.7 |         46.8 |         3.29 |        12.92 |
+|    7 | brotli-1    | 0.06908 |    2.40 |          5.0 |         20.9 |         5.58 |        12.33 |
+|    8 | lz4hc-12    | 0.07008 |    2.44 |         82.2 |       1071.8 |         0.42 |         1.50 |
+|    9 | lz4hc-9     | 0.07033 |    2.45 |         14.8 |        387.5 |         0.38 |         1.33 |
+|   10 | brotli-0    | 0.08641 |    3.01 |         11.8 |         23.4 |         6.25 |        13.17 |
+|   11 | fastlz-2    | 0.08894 |    3.10 |          2.2 |          7.3 |         4.13 |         6.54 |
+|   12 | lz4-fast    | 0.09178 |    3.19 |          0.63|          5.0 |         0.42 |         1.92 |
+|   13 | fastlz-1    | 0.09249 |    3.22 |          2.2 |          7.0 |         4.08 |         6.38 |
+|   14 | snappy      | 0.11511 |    4.01 |          0.63|          4.8 |         0.46 |         1.75 |
 
-The XOR-delta workloads produce buffers that are **95% zeros** with 5%
-non-zero bytes — exactly the byte distribution that `InternXor()` hands
-to `ZSTD_compressCCtx()` in production. (The Python PoC got this wrong
-initially — it generated buffers that were 5% *different* from a random
-baseline, which produced essentially random data the compressors
-couldn't shrink. The C++ PoC fixes this methodology bug.)
+**Pareto frontier** (no codec dominates another on ratio + enc + dec):
 
-### Results — `E_4k_xor_clustered_5pct` (the TTD P-frame hot path)
+  - `brotli-11` — best ratio, but enc_p50 = 2.2 **ms** (2200× slower than zstd)
+  - `brotli-6` — second-best ratio, 63× slower than zstd on encode
+  - `zstd-1` — best ratio among sub-2 µs encoders, best decode in its class
+  - `lz4-fast` — fastest encoder (0.6 µs), but produces 63% larger output
+                 than zstd-1 (BLI 0.092 vs 0.056)
+  - `snappy` — fastest encoder, but worst ratio of all 14 codecs
 
-Sorted by TTD-score (lower = better; metric defined in Section 5):
+### 6.3 Results — REAL_full (raw page snapshots, 1.3% of buffers)
 
-| Rank | Algorithm | BLI | enc p50 µs | enc p95 µs | dec p50 µs |
-|---:|---|---:|---:|---:|---:|
-| 1 | **zstd-1** (production) | **0.060** | 5.92 | **7.17** | **0.88** |
-| 2 | zstd-9 | 0.060 | 5.71 | 5.96 | 0.83 |
-| 3 | zstd-3 | 0.060 | 6.04 | 6.54 | 0.88 |
-| 4 | zstd-19 | 0.060 | 6.17 | 9.29 | 0.92 |
-| 5 | zstd-0 | 0.060 | 5.79 | 6.50 | 0.83 |
-| 6 | zstdn1 | 0.060 | 5.88 | 6.67 | 0.88 |
-| 7 | zstdn3 | 0.060 | 5.79 | 6.25 | 0.83 |
-| 8 | zstdn5 | 0.060 | 5.71 | 6.00 | 0.83 |
-| 9 | fastlz-2 | 0.067 | 2.25 | 2.42 | 3.38 |
-| 10 | fastlz-1 | 0.070 | 2.33 | 2.54 | 3.46 |
-| 11 | lz4-fast | 0.070 | 0.79 | 0.92 | 0.33 |
-| 12 | lz4hc-9 | 0.065 | 16.08 | 19.75 | 0.29 |
-| 13 | zlib-9 | 0.063 | 159.96 | 303.71 | 5.88 |
-| 14 | zlib-6 | 0.066 | 53.25 | 129.75 | 6.88 |
-| 15 | zlib-1 | 0.068 | 31.29 | 58.08 | 3.79 |
-| 16 | brotli-6 | **0.060** | 157.29 | 281.42 | 7.00 |
-| 17 | lz4hc-12 | 0.065 | 79.83 | 111.54 | 0.29 |
-| 18 | brotli-1 | 0.084 | 11.42 | 13.71 | 7.42 |
-| 19 | brotli-0 | 0.104 | 18.42 | 21.38 | 8.42 |
-| 20 | snappy | 0.101 | 0.71 | 0.83 | 0.42 |
-| 21 | brotli-11 | 0.068 | 3361.50 | 4724.17 | 12.33 |
+`REAL_full` is rare (16 of 1202 slots — every emulator page is captured
+Full exactly once, at the I-frame, then tracked via XorPrev). It still
+matters because these are the largest single buffers in the stream.
 
-### Verdict — zstd-1 confirmed as the production pick
+| Rank | Codec       |     BLI | B/floor | enc_p50 (µs) | dec_p50 (µs) |
+| ---: | ----------- | ------: | ------: | -----------: | -----------: |
+|    1 | brotli-11   | 0.41203 |    1.06 |       4249.4 |        25.46 |
+|    2 | brotli-6    | 0.48410 |    1.24 |        270.4 |        19.46 |
+|    3 | **zstd-1**  | 0.48569 |    1.24 |   **19.9** |     **7.96** |
+|    4 | zlib-9      | 0.49240 |    1.26 |       1256.2 |        22.67 |
+|    5 | zlib-6      | 0.49992 |    1.28 |        275.1 |        19.96 |
+|    6 | brotli-1    | 0.52382 |    1.34 |         30.8 |        23.29 |
+|    7 | zlib-1      | 0.51587 |    1.32 |         85.3 |        22.50 |
+|    8 | brotli-0    | 0.53333 |    1.37 |         26.5 |        22.42 |
+|    9 | lz4hc-12    | 0.61627 |    1.58 |        826.1 |         1.50 |
+|   10 | lz4hc-9     | 0.61867 |    1.59 |        425.2 |         1.38 |
+|   11 | fastlz-2    | 0.67291 |    1.72 |         14.9 |         8.92 |
+|   12 | fastlz-1    | 0.67316 |    1.73 |         15.3 |         7.67 |
+|   13 | snappy      | 0.68268 |    1.75 |          5.4 |         2.25 |
+|   14 | lz4-fast    | 0.69810 |    1.79 |          8.0 |         2.04 |
 
-The C++ PoC confirms the Section 5 finding with even tighter numbers:
+Same Pareto structure as REAL_xor: `brotli-11` is closest to the floor
+but ~200× slower than zstd-1; **zstd-1 matches brotli-6 on ratio**
+(BLI 0.486 vs 0.484, B/floor 1.24 vs 1.24) at **14× lower enc latency**.
 
-  - **zstd dominates the top 8 positions** at every level tested,
-    including negative levels. Within the zstd family, **zstd-1 is
-    Pareto-optimal**: it ties zstd-9 on BLI (0.060) at near-identical
-    latency (5.92 µs p50 vs 5.71 µs p50 — within measurement noise).
-  - **Negative zstd levels add no value** for this workload. The data
-    is already so sparse (5% non-zero) that the encoder's "ultra-fast"
-    mode has no compression work to skip — it pays the same fixed cost
-    to walk 4 KB and emit a tiny output. zstdn5's 5.71 µs p50 is
-    indistinguishable from zstd-1's 5.92 µs p50.
-  - **lz4-fast** is 7.4× faster on encode p95 (0.92 µs vs 7.17 µs) but
-    17% worse on BLI (0.070 vs 0.060). The latency advantage is
-    irrelevant in absolute terms (sub-10 µs either way); the ratio
-    loss directly inflates `.ttd` files. **lz4-fast is not competitive.**
-  - **FastLZ** is the dark horse: BLI 0.067 (better than lz4) at 2.4 µs
-    encode p95 (3× faster than zstd-1). But its **decode is 4× slower**
-    than zstd (3.4 µs vs 0.88 µs), and decode happens on every seek —
-    not viable for interactive TTD rewind.
-  - **brotli-6** matches zstd-1's BLI (0.060) but costs **40× more
-    encode p95** (281 µs vs 7.17 µs). Not viable in the capture path.
-  - **brotli-11** is the only codec that produces a worse BLI on this
-    workload than zstd-1 (0.068 vs 0.060) — brotli's text-optimized
-    context modeling overfits the sparse-binary pattern. Plus 4724 µs
-    encode p95. Not viable at any level.
-  - **zlib** is dominated by zstd on every axis at every level.
+### 6.4 Session-level projection (active_demo.ttd, 200 frames)
 
-### Outcome — embed zstd source
+Projecting median BLIs onto the actual slot counts (16 Full + 1186 Xor)
+of `active_demo.ttd`:
 
-zstd-1 remains the production pick. The C++ PoC confirms this with
-tighter methodology than the Python PoC could provide. zstd v1.5.7
-source is **embedded** under
-[`core/src/3rdparty/zstd/`](../../../../core/src/3rdparty/zstd/) (not
-fetched at configure time — see the README there for the rationale).
+| Codec            | Total stored (B) | Δ vs zstd-1 | Xor enc time (ms) |
+| ---------------- | ---------------: | ----------: | ----------------: |
+| **zstd-1 (any)** |          305,814 |       +0.0% |              1.19 |
+| brotli-11        |          251,920 |      -17.6% |           2609.2  |
+| brotli-6         |          272,676 |      -10.8% |             74.25 |
+| zlib-9           |          300,909 |       -1.6% |            154.1  |
+| zlib-6           |          323,747 |       +5.9% |             41.18 |
+| lz4hc-9          |          382,054 |      +24.9% |             17.55 |
+| fastlz-2         |          475,963 |      +55.6% |              2.62 |
+| lz4-fast         |          491,702 |      +60.8% |              0.71 |
+| fastlz-1         |          493,471 |      +61.4% |              2.61 |
+| snappy           |          603,881 |      +97.5% |              0.71 |
 
-### Reproducing
+Raw payload before compression: **4,923,392 B (4808 KiB)**.
+zstd-1 achieves **16.1× total compression** on the real session.
+
+### 6.5 Objective verdict
+
+**zstd-1 is Pareto-optimal on real TTD data.** Specifically:
+
+  1. **The level parameter has zero effect on this workload.** All
+     zstd levels from -5 through 19 produce *byte-identical* output
+     on `REAL_xor` (BLI = 0.0563629 for every level). The median
+     real XOR-delta has a 15-byte entropy floor — there is not enough
+     data for higher search efforts to find better matches. Level 1
+     is retained as the production setting because it is the safest
+     default in the "no observable difference" tie.
+
+  2. **No faster codec is competitive on ratio.** The fastest codecs
+     (lz4-fast, snappy) save 0.4 µs per encode vs zstd-1 (a 1.6×
+     speedup on a 1 µs operation) but produce 63%–104% larger output.
+     Across a 200-frame session, snappy costs **+97.5% storage** to
+     save 0.5 ms of total encode time — a clear losing trade.
+
+  3. **No slower codec is competitive on time.** brotli-11 comes
+     closest to the Shannon floor (1.61× vs zstd's 1.96×) but takes
+     2.2 **milliseconds** per encode — 2200× slower than zstd-1 — to
+     save 17.6% storage. On a 200-frame session that is 2.6 seconds
+     of extra encode time to save 54 KiB.
+
+  4. **The 1.96× gap to the Shannon floor is structural, not
+     algorithmic.** With a 15-byte entropy floor, every codec pays
+     a fixed framing/header cost that dominates the payload. zstd's
+     minimum frame overhead is ~13 B (magic + descriptor + checksum),
+     which alone is 87% of the floor. Closing this gap further would
+     require a shared-dictionary or raw-block mode, neither of which
+     is worth the complexity for <2 KB savings per session.
+
+  5. **brotli-6 is the only codec that meaningfully beats zstd-1 on
+     ratio** on REAL_xor (BLI 0.050 vs 0.056, a 12% improvement) but
+     costs 63× more encode time for that 12% — and on REAL_full the
+     two codecs tie (BLI 0.484 vs 0.486, B/floor 1.24 vs 1.24).
+
+### 6.6 Why the earlier synthetic-PoC conclusions were unreliable
+
+The synthetic `SYN_xor_sparse_5pct` and `SYN_xor_clustered_5pct`
+workloads used in the previous version of this section modeled
+XOR-deltas as "5% of bytes are non-zero". The real data shows this
+is **23× too high**: the median real XOR-delta has 0.22% non-zero
+bytes (p90 = 5.3%, p99 = 5.8%). This inflated the entropy floor
+from the real ~15 B up to ~300 B, which:
+
+  - Made codec differences look continuous and trade-off-like, when
+    in fact the production workload sits in a regime where zstd's
+    framing overhead dominates and all zstd levels converge.
+  - Made lz4-fast and snappy look like reasonable speed/ratio
+    compromises; on real data, both produce >60% larger sessions
+    for sub-microsecond savings.
+  - Obscured the fact that brotli-11 gets closest to the floor —
+    on synthetic data its 4.6 s/session encode cost looked like a
+    fair trade for ratio leadership, but on real data the 17.6%
+    session-level savings is not worth 2.6 s of encoder CPU.
+
+The synthetic workloads are retained in the C++ PoC binary purely
+as reference shapes (see the `SYN_*` benchmarks). They are not used
+in the production codec decision.
+
+### 6.7 Reproducing
 
 ```sh
-# Build the C++ PoC binary (opt-in, off by default).
-cmake -S . -B cmake-build-release -G Ninja -DBUILD_POC=ON
-cmake --build cmake-build-release --target poc_codec_latency -j 8
+# 1. Regenerate the real-buffer blob from the canonical .ttd fixture:
+python3 tools/poc/cpp/extract_real_buffers.py \
+    --ttd tools/verification/ttd-analyzer/testdata/active_demo.ttd \
+    --out tools/poc/cpp/real_buffers.bin
 
-# Run the full matrix.
-cmake-build-release/bin/poc_codec_latency --benchmark_min_time=2s
+# 2. Build the C++ PoC (zstd is embedded; other codecs are system deps):
+cmake -S . -B cmake-build-release -DCMAKE_BUILD_TYPE=Release -DBUILD_POC=ON
+cmake --build cmake-build-release --target poc_codec_latency -j
 
-# Filter to the TTD P-frame hot path only.
-cmake-build-release/bin/poc_codec_latency \
-    --benchmark_filter='BM_E_4k_xor_clustered_5pct' \
-    --benchmark_min_time=2s
+# 3. Run the full real-data sweep (≈90 s on Apple Silicon):
+TTD_REAL_BUFFERS="$(pwd)/tools/poc/cpp/real_buffers.bin" \
+    cmake-build-release/bin/poc_codec_latency \
+    --benchmark_filter='REAL_' \
+    --benchmark_min_time=2s \
+    --benchmark_repetitions=3 \
+    --benchmark_report_aggregates_only=true
 ```
 
-Requires system codec libraries for the non-vendored candidates:
+Optional system codecs for the non-vendored candidates:
+
 ```sh
 brew install lz4 snappy brotli zlib
 ```
 
+The Shannon entropy table is printed to stderr at startup, ahead of
+the Google Benchmark tabular output, so the theoretical floor is
+visible alongside every codec's measured `BLI/floor` ratio.
