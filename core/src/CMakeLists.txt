@@ -46,21 +46,25 @@ include(${ROOT_DIR}/cmake/func.cmake)
 # liblzma
 add_subdirectory(3rdparty/liblzma)
 
-# zstd (system-installed; used by TTD codec for RAM page compression).
-# The official zstd cmake config exports `zstd::libzstd` with
-# INTERFACE_INCLUDE_DIRECTORIES. We propagate that path via the core
-# target's PUBLIC target_include_directories below so that consumers
-# using either target_link_libraries(core) OR
-# $<TARGET_PROPERTY:unrealng::core,INCLUDE_DIRECTORIES> see zstd.h.
+# zstd (vendored from official v1.5.7 release via FetchContent).
+# The CMake project in 3rdparty/zstd/ downloads the canonical tarball,
+# builds libzstd_static, and exposes the `zstd::libzstd` alias target
+# (matching the name previously exported by the Homebrew package).
 #
-# CRITICAL: do NOT use directory-scoped include_directories(${_zstd_iface_inc})
-# here — that would pollute every add_subdirectory under core/, including
-# core/automation/webapi/lib/jsoncpp, which would then resolve `json/reader.h`
-# to the Homebrew-installed jsoncpp (/opt/homebrew/include/json/reader.h)
-# instead of the vendored 1.9.5 headers, breaking the build.
-find_package(zstd REQUIRED)
-message(STATUS "zstd found: ${zstd_VERSION}")
-get_target_property(_zstd_iface_inc zstd::libzstd INTERFACE_INCLUDE_DIRECTORIES)
+# Why vendor: see 3rdparty/zstd/README.md. The TTD codec depends on zstd
+# at the .ttd on-disk format protocol level, so we cannot ship without
+# a known-pinned version. The codec PoC (tools/poc/poc_codec_extended.py)
+# confirmed zstd-1 remains optimal for the TTD workload in v2.
+#
+# CRITICAL: do NOT use directory-scoped include_directories() here — that
+# would pollute every add_subdirectory under core/, including
+# core/automation/webapi/lib/jsoncpp, which would then resolve
+# `json/reader.h` to the Homebrew-installed jsoncpp
+# (/opt/homebrew/include/json/reader.h) instead of the vendored 1.9.5
+# headers, breaking the build. The libzstd_static target propagates its
+# own include dir via INTERFACE_INCLUDE_DIRECTORIES, so we don't need to
+# forward it manually.
+add_subdirectory(3rdparty/zstd)
 
 # All C++ sources in /src and sub-folders will be compiled
 file (GLOB_RECURSE CPP_FILES ${SOURCE_DIR}/*.cpp)
@@ -105,7 +109,6 @@ target_include_directories(${PROJECT_NAME} PUBLIC
     ${SOURCE_DIR}/
     ${SOURCE_DIR}/common
     ${SOURCE_DIR}/emulator
-    ${_zstd_iface_inc}
 )
 
 

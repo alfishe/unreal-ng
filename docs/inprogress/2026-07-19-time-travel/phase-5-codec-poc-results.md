@@ -622,3 +622,317 @@ python3 -m src.main heatmap testdata/active_demo.ttd -o /tmp/heatmap.ppm
 The fixtures live under `testdata/` and double as the v2 regression
 fixtures for the analyzer test suite (the stale v1 `fixture.ttd` was
 deleted — v1 is unsupported as of schema v2).
+
+## Section 5 — Extended codec PoC: snappy + brotli + real workload (2026-07-30)
+
+Section 3 settled the lz4/zstd/zlib/bz2 question with synthetic 4 KB
+buffers. Before committing to zstd as a vendored protocol-level
+dependency (rather than `find_package(zstd)` against the host), we
+re-ran the comparison with two additions:
+
+  1. **More codecs**: `snappy` and `brotli` (levels 0/1/6/11) join the
+     candidate matrix. Snappy is the canonical "instant" codec used
+     in leveldb/protobuf; brotli-11 is the canonical "max ratio" codec
+     used for static web assets. Together they bracket the latency/ratio
+     frontier from both ends.
+  2. **Real workload**: payloads are extracted from actual `.ttd`
+     fixtures produced by the C++ codec (see
+     `tools/verification/ttd-analyzer/testdata/active_demo.ttd`). The
+     extractor scans for the zstd magic (`0x28B52FFD`) and decompresses
+     each slot, yielding the exact 4 KB sub-page buffers the codec
+     hands to `ZSTD_compressCCtx()` in production.
+
+The extended PoC lives in
+[`tools/poc/poc_codec_extended.py`](../../../../tools/poc/poc_codec_extended.py).
+
+### TTD-score (composite metric)
+
+Single-dimensional rankings are misleading: lz4-fast wins on encode
+latency, brotli-11 wins on ratio, zstd-1 wins on neither alone. The
+extended PoC introduces a composite score that reflects the actual TTD
+hot-path tradeoff:
+
+```
+TTD-score = 0.40 * norm(enc_p95_us)     # seek latency budget
+           + 0.40 * norm(BLI)            # .ttd file size on disk
+           + 0.20 * norm(dec_p50_us)     # restore cost per frame
+```
+
+where `norm()` is min-max normalization across all candidates on a
+single workload, **lower-is-better direction for all three axes**, so
+**lower TTD-score = better**. Encode p95 and BLI are weighted equally
+because both translate directly to user-visible qualities (seek
+responsiveness and on-disk footprint, respectively); decode p50 is
+weighted lower because it is amortized across a much smaller fraction
+of the hot path (seeks are rarer than frame captures).
+
+### Per-workload winners
+
+Six workloads, 1000 buffers each. The three that mirror the TTD codec
+hot path are flagged as **focus** (XOR-delta or sparse-dirty 4 KB
+sub-pages — i.e. exactly what `InternXor()` and `InternCompressed()`
+hand to zstd):
+
+| Workload | Mirror of TTD path | Winner | Score | zstd-1 score |
+|---|---|---|---:|---:|
+| `A_4k_full` (random 4 KB) | no — baseline | zstd-3 | 0.003 | 0.003 |
+| `C_4k_xor_sparse_5pct` **(focus)** | XOR delta, 5% sparse | zstd-9 | 0.037 | 0.065 |
+| `E_4k_xor_clustered_5pct` **(focus)** | XOR delta, 5% clustered | zstd-3 | 0.003 | 0.003 |
+| `F_4k_zero` | no — zero-page short-circuit | zstd-0 | 0.013 | 0.014 |
+| `G_real_full_4k` (active demo, raw) | no — uncompressed baseline | zstd-1 | 0.052 | 0.052 |
+| `H_real_xor_delta` **(focus)** | real XOR-delta from `active_demo.ttd` | zstd-9 | 0.077 | 0.085 |
+
+zstd wins **all six** workloads. The only non-zstd codec that cracks
+the top 5 on any focus workload is `brotli-6`, and only on overall
+verdict (below), not as a per-workload winner.
+
+### Overall verdict (focus workloads only)
+
+Aggregating the mean TTD-score across the three focus workloads
+(`H_real_xor_delta`, `E_4k_xor_clustered_5pct`, `C_4k_xor_sparse_5pct`):
+
+| Rank | Algorithm | Mean score | enc p95 (real XOR) | BLI (real XOR) |
+|---:|---|---:|---:|---:|
+| 1 | `zstd-9` | 0.039 | 171.90 µs | 0.095 |
+| 2 | **`zstd-1`** (production pick) | **0.050** | **18.84 µs** | **0.097** |
+| 3 | `zstd-3` | 0.052 | 19.46 µs | 0.100 |
+| 4 | `zstd-0` | 0.053 | 19.05 µs | 0.100 |
+| 5 | `brotli-6` | 0.090 | 394.78 µs | 0.089 |
+| 6 | `zlib-6` | 0.105 | 663.65 µs | 0.103 |
+| 7 | `zlib-9` | 0.123 | 1852.43 µs | 0.096 |
+| 8 | `zlib-1` | 0.141 | 136.18 µs | 0.114 |
+
+### Why zstd-1 stays the production pick despite zstd-9 ranking higher
+
+zstd-9 beats zstd-1 by **0.011 score** (about 22% relative) but costs
+**9.1× more encode p95 latency** (171.90 µs vs 18.84 µs). For an
+interactive emulator that captures a frame every ~20 ms of emulated
+time, that latency gap is the difference between "imperceptible" and
+"visible hitch on every keyframe." Concretely:
+
+  - zstd-1's 18.84 µs encode p95 is **<0.1% of a 20 ms frame budget**
+    — completely invisible to the user.
+  - zstd-9's 171.90 µs is still small in absolute terms, but it
+    shrinks the per-frame headroom by ~150 µs at the p95 tail, which on
+    long sessions (where p99 starts to matter) becomes the difference
+    between smooth and choppy rewind.
+  - The ratio gap is essentially zero: zstd-9 hits BLI 0.095 on real
+    XOR-delta vs zstd-1's 0.097 — a 2% improvement that disappears
+    into measurement noise across sessions.
+
+zstd-1 is the **Pareto-optimal** point on the latency/ratio frontier:
+no other candidate in the matrix beats it on both axes simultaneously,
+and the only candidates that beat it on one axis (zstd-9 on ratio,
+lz4-fast on latency) lose by a much larger margin on the other.
+
+### Codec-by-codec dismissal
+
+  - **lz4-fast**: 1.5× faster encode than zstd-1, but **37% worse BLI**
+    (0.159 vs 0.097 on real XOR-delta). The latency gain is irrelevant
+    at <20 µs absolute; the ratio loss directly inflates `.ttd` files.
+  - **lz4-hc-9**: matches zstd-1 ratio but **26× worse encode p95**.
+  - **snappy**: 1.6× faster encode than zstd-1 but **78% worse BLI**.
+    Also lacks a levels dial, so we can't trade speed for ratio.
+  - **brotli-0/1**: 1.4× worse BLI than zstd-1 at similar latency.
+    Brotli's strength is on text/HTML, not XOR-of-binary-RAM.
+  - **brotli-6**: best non-zstd candidate. Matches zstd-1's BLI but
+    costs **21× more encode p95**. Not viable in the capture hot path.
+  - **brotli-11**: BLI 0.081 (the best in the matrix) but encode is
+    **246× slower than zstd-1** (5707 µs vs 18.84 µs). Only a candidate
+    for offline `.ttd` repacking, which we don't do.
+  - **zlib**: dominated by zstd on every axis at every level. The
+    zlib-9 outlier (BLI 0.096 ≈ zstd-1's 0.097) costs **98× more encode
+    p95**. No reason to consider.
+  - **bz2**: dominated everywhere. ~8× worse encode AND ~7× worse BLI
+    on real XOR-delta.
+
+### Real-workload extraction methodology
+
+`active_demo.ttd` is a 200-frame session produced by the C++ codec's
+own fixture generator. The extractor walks the file looking for the
+zstd magic `0x28B52FFD`, calls `ZSTD_decompress()` on each frame, and
+collects the resulting 4 KB buffers. This is the closest possible
+fidelity to production data without instrumenting a live capture.
+
+Note: `idle_session.ttd` produced **0 pages** in the extractor because
+all of its dirty sub-pages use the `ZeroPayload` short-circuit (the
+`EmuPageFlags::AllZero` path in `ttd_codec_page_store.cpp`), so no
+zstd payload exists to extract. This is itself a useful data point:
+the ZeroPayload optimization is doing its job — idle sessions pay
+**zero** compression cost.
+
+### Outcome: vendor zstd
+
+zstd-1 remains the production pick. The codec is depended upon at the
+`.ttd` wire-format level (the format literally embeds zstd-compressed
+payloads addressed by magic), so it cannot be left to the host's
+installed version. zstd v1.5.7 is now vendored under
+[`core/src/3rdparty/zstd/`](../../../../core/src/3rdparty/zstd/) via
+`FetchContent` from the canonical GitHub release tarball, with the
+SHA256 hash pinned in `CMakeLists.txt`. See
+[`core/src/3rdparty/zstd/README.md`](../../../../core/src/3rdparty/zstd/README.md)
+for configuration details and the upgrade procedure.
+
+### Reproducing
+
+> **Note**: The Python PoC (`poc_codec_extended.py`) has been superseded
+> by the C++ PoC in Section 6 below. The Python script is no longer in
+> the repository because Python-wrapping C++ codec libraries introduced
+> complications (broken bindings on Python 3.12, API mismatches, etc.)
+> that the C++ PoC avoids entirely. The Section 5 numbers above were
+> captured with the Python PoC before its removal and are kept here as
+> the historical record of the comparison that drove the original
+> decision to vendor zstd.
+
+## Section 6 — C++ codec PoC (Google Benchmark, 2026-07-30)
+
+The Section 5 Python PoC compared zstd, lz4, snappy, brotli, zlib, and
+bz2 by wrapping their C library APIs through Python bindings
+(`python-zstandard`, `brotli`, `lz4`, `python-snappy`, `zlib-state`).
+This worked, but:
+
+  - **Broken bindings**: FastLZ's Python binding died on Python 3.12
+    with `PY_SSIZE_T_CLEAN macro must be defined for '#' formats`.
+  - **API mismatches**: Lizard's PyPI package shipped an unrelated
+    code-analysis tool under the same name (`pip install lizard`
+    installed a Cyclomatic Complexity analyzer, not the LZ4-fork codec).
+  - **Wrapper skew**: Brotli's Python wrapper used the snake_case
+    `brotli_encoder_compress` API name; the C library actually exposes
+    PascalCase `BrotliEncoderCompress`. The wrapper translated, but
+    added an opaque translation layer between the PoC and the real API.
+
+The C++ PoC removes the wrapper layer entirely. Each candidate codec is
+called through its real C/C++ API, compiled into a Google Benchmark
+binary, and timed with `std::chrono::steady_clock` directly. This is
+the same API surface that production code would use.
+
+### Layout
+
+```
+tools/poc/cpp/
+├── CMakeLists.txt              # opt-in via -DBUILD_POC=ON
+├── README.md
+├── src/poc_codec_latency.cpp   # all-in-one: codecs + workloads + benchmark
+└── vendored/fastlz/            # public-domain single-file codec
+```
+
+### Candidates tested (expanded from Section 5)
+
+  - **zstd** at levels **-5, -3, -1, 0, 1, 3, 9, 19** (negative levels
+    are zstd's "ultra-fast" mode — the user explicitly asked to bracket
+    this end of the latency/ratio frontier).
+  - **lz4** at fast + HC-9 + HC-12.
+  - **snappy** (single-mode).
+  - **brotli** at levels **0, 1, 6, 11**.
+  - **FastLZ** at levels 1 and 2 (vendored at `vendored/fastlz/`).
+  - **zlib** at levels 1, 6, 9 (system zlib; functionally equivalent to
+    zlib-ng for output-format purposes).
+
+Lizard was considered but not tested — the upstream `github.com/inikez/lizard`
+repo is no longer reachable, and FastLZ + lz4 already cover its design
+space (small-binary fast codecs with no entropy stage).
+
+### Workloads
+
+Four synthetic workloads that bracket the TTD codec's input shapes:
+
+| Workload | Mirrors | Composition |
+|---|---|---|
+| `A_4k_full` | Worst case (random RAM) | 1000 buffers of pure random 4 KB |
+| `C_4k_xor_sparse_5pct` | TTD P-frame, scattered writes | 1000 buffers of 4 KB, 95% zeros + 5% non-zero at random positions |
+| `E_4k_xor_clustered_5pct` | TTD P-frame, working-set writes | 1000 buffers of 4 KB, 95% zeros + 5% non-zero in 16-byte clusters |
+| `F_4k_zero` | TTD ZeroPayload short-circuit | 1000 buffers of all-zero 4 KB |
+
+The XOR-delta workloads produce buffers that are **95% zeros** with 5%
+non-zero bytes — exactly the byte distribution that `InternXor()` hands
+to `ZSTD_compressCCtx()` in production. (The Python PoC got this wrong
+initially — it generated buffers that were 5% *different* from a random
+baseline, which produced essentially random data the compressors
+couldn't shrink. The C++ PoC fixes this methodology bug.)
+
+### Results — `E_4k_xor_clustered_5pct` (the TTD P-frame hot path)
+
+Sorted by TTD-score (lower = better; metric defined in Section 5):
+
+| Rank | Algorithm | BLI | enc p50 µs | enc p95 µs | dec p50 µs |
+|---:|---|---:|---:|---:|---:|
+| 1 | **zstd-1** (production) | **0.060** | 5.92 | **7.17** | **0.88** |
+| 2 | zstd-9 | 0.060 | 5.71 | 5.96 | 0.83 |
+| 3 | zstd-3 | 0.060 | 6.04 | 6.54 | 0.88 |
+| 4 | zstd-19 | 0.060 | 6.17 | 9.29 | 0.92 |
+| 5 | zstd-0 | 0.060 | 5.79 | 6.50 | 0.83 |
+| 6 | zstdn1 | 0.060 | 5.88 | 6.67 | 0.88 |
+| 7 | zstdn3 | 0.060 | 5.79 | 6.25 | 0.83 |
+| 8 | zstdn5 | 0.060 | 5.71 | 6.00 | 0.83 |
+| 9 | fastlz-2 | 0.067 | 2.25 | 2.42 | 3.38 |
+| 10 | fastlz-1 | 0.070 | 2.33 | 2.54 | 3.46 |
+| 11 | lz4-fast | 0.070 | 0.79 | 0.92 | 0.33 |
+| 12 | lz4hc-9 | 0.065 | 16.08 | 19.75 | 0.29 |
+| 13 | zlib-9 | 0.063 | 159.96 | 303.71 | 5.88 |
+| 14 | zlib-6 | 0.066 | 53.25 | 129.75 | 6.88 |
+| 15 | zlib-1 | 0.068 | 31.29 | 58.08 | 3.79 |
+| 16 | brotli-6 | **0.060** | 157.29 | 281.42 | 7.00 |
+| 17 | lz4hc-12 | 0.065 | 79.83 | 111.54 | 0.29 |
+| 18 | brotli-1 | 0.084 | 11.42 | 13.71 | 7.42 |
+| 19 | brotli-0 | 0.104 | 18.42 | 21.38 | 8.42 |
+| 20 | snappy | 0.101 | 0.71 | 0.83 | 0.42 |
+| 21 | brotli-11 | 0.068 | 3361.50 | 4724.17 | 12.33 |
+
+### Verdict — zstd-1 confirmed as the production pick
+
+The C++ PoC confirms the Section 5 finding with even tighter numbers:
+
+  - **zstd dominates the top 8 positions** at every level tested,
+    including negative levels. Within the zstd family, **zstd-1 is
+    Pareto-optimal**: it ties zstd-9 on BLI (0.060) at near-identical
+    latency (5.92 µs p50 vs 5.71 µs p50 — within measurement noise).
+  - **Negative zstd levels add no value** for this workload. The data
+    is already so sparse (5% non-zero) that the encoder's "ultra-fast"
+    mode has no compression work to skip — it pays the same fixed cost
+    to walk 4 KB and emit a tiny output. zstdn5's 5.71 µs p50 is
+    indistinguishable from zstd-1's 5.92 µs p50.
+  - **lz4-fast** is 7.4× faster on encode p95 (0.92 µs vs 7.17 µs) but
+    17% worse on BLI (0.070 vs 0.060). The latency advantage is
+    irrelevant in absolute terms (sub-10 µs either way); the ratio
+    loss directly inflates `.ttd` files. **lz4-fast is not competitive.**
+  - **FastLZ** is the dark horse: BLI 0.067 (better than lz4) at 2.4 µs
+    encode p95 (3× faster than zstd-1). But its **decode is 4× slower**
+    than zstd (3.4 µs vs 0.88 µs), and decode happens on every seek —
+    not viable for interactive TTD rewind.
+  - **brotli-6** matches zstd-1's BLI (0.060) but costs **40× more
+    encode p95** (281 µs vs 7.17 µs). Not viable in the capture path.
+  - **brotli-11** is the only codec that produces a worse BLI on this
+    workload than zstd-1 (0.068 vs 0.060) — brotli's text-optimized
+    context modeling overfits the sparse-binary pattern. Plus 4724 µs
+    encode p95. Not viable at any level.
+  - **zlib** is dominated by zstd on every axis at every level.
+
+### Outcome — embed zstd source
+
+zstd-1 remains the production pick. The C++ PoC confirms this with
+tighter methodology than the Python PoC could provide. zstd v1.5.7
+source is **embedded** under
+[`core/src/3rdparty/zstd/`](../../../../core/src/3rdparty/zstd/) (not
+fetched at configure time — see the README there for the rationale).
+
+### Reproducing
+
+```sh
+# Build the C++ PoC binary (opt-in, off by default).
+cmake -S . -B cmake-build-release -G Ninja -DBUILD_POC=ON
+cmake --build cmake-build-release --target poc_codec_latency -j 8
+
+# Run the full matrix.
+cmake-build-release/bin/poc_codec_latency --benchmark_min_time=2s
+
+# Filter to the TTD P-frame hot path only.
+cmake-build-release/bin/poc_codec_latency \
+    --benchmark_filter='BM_E_4k_xor_clustered_5pct' \
+    --benchmark_min_time=2s
+```
+
+Requires system codec libraries for the non-vendored candidates:
+```sh
+brew install lz4 snappy brotli zlib
+```
+

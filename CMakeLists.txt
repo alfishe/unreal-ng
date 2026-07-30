@@ -15,6 +15,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ToolchainDetection.cmake)
 option(TESTS "Enable tests" ON)
 option(BENCHMARKS "Enable benchmarks" ON)
 option(BUILD_QT_APPS "Build Qt-based applications (unreal-qt, unreal-screen-viewer)" ON)
+option(BUILD_POC "Build PoC research tools (codec comparison etc.)" OFF)
 
 # Automation options (enabled by default for full builds)
 option(ENABLE_AUTOMATION "Enable automation features (Lua, Python, WebAPI, CLI)" ON)
@@ -255,16 +256,18 @@ if (BUILD_QT_APPS)
 endif ()
 
 # ========================================
-# zstd (system-installed; used by TTD codec for RAM page compression)
+# zstd (vendored; fetched at configure time)
 # ========================================
-# find_package here so the `zstd::libzstd` target is visible everywhere.
-# The actual include-path propagation is done per-target in
-# core/src/CMakeLists.txt via target_include_directories(... PUBLIC ...) —
-# NOT via directory-scoped include_directories(), which would pollute
-# sibling targets like the vendored jsoncpp (whose own headers must win
-# over any system-installed jsoncpp from /opt/homebrew/include).
-find_package(zstd REQUIRED)
-message(STATUS "zstd found: ${zstd_VERSION} (top-level)")
+# zstd is now vendored under core/src/3rdparty/zstd/ via FetchContent
+# from the official v1.5.7 release tarball (SHA256-pinned). The
+# add_subdirectory() call inside core/src/CMakeLists.txt builds
+# libzstd_static and exposes the `zstd::libzstd` alias target that
+# the rest of the build links against.
+#
+# Why vendor instead of find_package(zstd REQUIRED): see
+# core/src/3rdparty/zstd/README.md. The TTD codec depends on zstd at
+# the .ttd on-disk format protocol level, so we cannot ship without a
+# known-pinned version.
 
 # ========================================
 # Core Library
@@ -319,6 +322,16 @@ if (BENCHMARKS)
 endif (BENCHMARKS)
 
 # ========================================
+# PoC research tools (opt-in)
+# ========================================
+# Off by default — these are research/diagnostic binaries, not production.
+# Enable with -DBUILD_POC=ON. Each tool lives under tools/poc/<name>/.
+if (BUILD_POC)
+	message(STATUS ">>> Building PoC research tools")
+	add_subdirectory(tools/poc/cpp)
+endif (BUILD_POC)
+
+# ========================================
 # Summary
 # ========================================
 message(STATUS "")
@@ -326,6 +339,7 @@ message(STATUS "========== Unreal-NG Build Configuration ==========")
 message(STATUS "  BUILD_QT_APPS:              ${BUILD_QT_APPS}")
 message(STATUS "  TESTS:                      ${TESTS}")
 message(STATUS "  BENCHMARKS:                 ${BENCHMARKS}")
+message(STATUS "  BUILD_POC:                  ${BUILD_POC}")
 message(STATUS "  ENABLE_AUTOMATION:          ${ENABLE_AUTOMATION}")
 if (ENABLE_AUTOMATION)
     message(STATUS "    ENABLE_LUA_AUTOMATION:    ${ENABLE_LUA_AUTOMATION}")
