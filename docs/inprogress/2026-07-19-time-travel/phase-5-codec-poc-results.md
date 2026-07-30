@@ -917,9 +917,54 @@ zstd-1 achieves **16.1× total compression** on the real session.
 
 ### 6.5 Objective verdict
 
-**zstd-1 is Pareto-optimal on real TTD data.** Specifically:
+**Decision: zstd-1.** Reasoning, in plain terms:
 
-  1. **The level parameter has zero effect on this workload.** All
+**BLI** = Bytes-out / Bytes-in. BLI = 0.056 means the compressed
+output is 5.6% of the input (≈18× compression). BLI = 0.092 means
+9.2% (≈11× compression). Lower is better — smaller files on disk.
+
+**The core trade-off vs lz4-fast (the fastest contender):**
+
+| Metric (per 4 KB buffer, median) | zstd-1 | lz4-fast | lz4 advantage |
+| -------------------------------- | ------ | -------- | ------------- |
+| Encode latency                   | 1.0 µs |   0.6 µs | 0.4 µs saved  |
+| Decode latency                   | 1.0 µs |   0.4 µs | 0.6 µs saved  |
+| BLI (compressed / raw)           | 0.056  |   0.092  | **+64% larger files** |
+
+**Why the latency advantage doesn't win:** the TTD capture loop runs
+at 50 FPS, so each frame has a **20 ms budget**. Encoding one XOR
+buffer takes 1 µs with zstd vs 0.6 µs with lz4 — that is **0.005%
+vs 0.003% of the frame budget**. The 0.4 µs difference is below
+cache-effect noise, below OS-scheduler jitter, and below the
+resolution of `steady_clock` on most platforms. It is not observable
+at runtime.
+
+**Why the storage advantage does win:** TTD is a **record-once,
+replay-many** archival format. The bytes written at capture time are
+paid every time the file is read back, kept in memory during replay,
+backed up, copied, or transferred. For one 200-frame session of
+`active_demo.ttd`:
+
+| Codec     | Total stored | Δ vs zstd-1 |
+| --------- | -----------: | ----------: |
+| **zstd-1** |     306 KB |        +0% |
+| lz4-fast  |     492 KB |       +61% |
+| snappy    |     604 KB |       +97% |
+
+lz4-fast saves **0.5 ms of CPU per session** and wastes **186 KB of
+storage per session**. Across thousands of recorded sessions the
+storage compounds; the CPU savings does not.
+
+**Where lz4-fast would be the right answer:** if TTD were a real-time
+streaming format (fixed-bandwidth network pipe, encode latency on the
+critical path, files never persisted). It is not — the .ttd format is
+written once and replayed many times.
+
+---
+
+**Supporting detail (why no other codec beats zstd-1 either):**
+
+  1. **The zstd level parameter has zero effect on this workload.** All
      zstd levels from -5 through 19 produce *byte-identical* output
      on `REAL_xor` (BLI = 0.0563629 for every level). The median
      real XOR-delta has a 15-byte entropy floor — there is not enough
@@ -927,19 +972,13 @@ zstd-1 achieves **16.1× total compression** on the real session.
      is retained as the production setting because it is the safest
      default in the "no observable difference" tie.
 
-  2. **No faster codec is competitive on ratio.** The fastest codecs
-     (lz4-fast, snappy) save 0.4 µs per encode vs zstd-1 (a 1.6×
-     speedup on a 1 µs operation) but produce 63%–104% larger output.
-     Across a 200-frame session, snappy costs **+97.5% storage** to
-     save 0.5 ms of total encode time — a clear losing trade.
-
-  3. **No slower codec is competitive on time.** brotli-11 comes
+  2. **No slower codec is competitive on time.** brotli-11 comes
      closest to the Shannon floor (1.61× vs zstd's 1.96×) but takes
      2.2 **milliseconds** per encode — 2200× slower than zstd-1 — to
      save 17.6% storage. On a 200-frame session that is 2.6 seconds
      of extra encode time to save 54 KiB.
 
-  4. **The 1.96× gap to the Shannon floor is structural, not
+  3. **The 1.96× gap to the Shannon floor is structural, not
      algorithmic.** With a 15-byte entropy floor, every codec pays
      a fixed framing/header cost that dominates the payload. zstd's
      minimum frame overhead is ~13 B (magic + descriptor + checksum),
@@ -947,7 +986,7 @@ zstd-1 achieves **16.1× total compression** on the real session.
      require a shared-dictionary or raw-block mode, neither of which
      is worth the complexity for <2 KB savings per session.
 
-  5. **brotli-6 is the only codec that meaningfully beats zstd-1 on
+  4. **brotli-6 is the only codec that meaningfully beats zstd-1 on
      ratio** on REAL_xor (BLI 0.050 vs 0.056, a 12% improvement) but
      costs 63× more encode time for that 12% — and on REAL_full the
      two codecs tie (BLI 0.484 vs 0.486, B/floor 1.24 vs 1.24).
