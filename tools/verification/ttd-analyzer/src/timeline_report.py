@@ -17,7 +17,14 @@ from typing import List, Optional
 
 from .anomaly_detector import AnomalyReport, detect_anomalies
 from .integrity_check import IntegrityReport, check_integrity
-from .ttd_format import NEVER_TOUCHED_PAGE_REF, TtdDump
+from .ttd_format import (
+    ENCODING_FULL,
+    ENCODING_XOR_PREV,
+    ENCODING_ZERO,
+    NEVER_TOUCHED_SLOT,
+    SUB_PAGES_PER_EMU_PAGE,
+    TtdDump,
+)
 
 # Spectrum model ID table — must mirror eModelIds in the engine.
 # Unknown IDs render as a generic label so the report stays useful when
@@ -65,6 +72,15 @@ def _format_t_states(t: int) -> str:
     if t < 1_000_000:
         return f"{t / 1000:.2f}K"
     return f"{t / 1_000_000:.2f}M"
+
+
+def _format_size_mb(n: int) -> str:
+    """Format a byte count for the report. Uses B/KB/MB suffixes."""
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    return f"{n / (1024 * 1024):.2f} MB"
 
 
 @dataclass
@@ -124,9 +140,47 @@ def generate_markdown_report(
                  f"(0=idle, 1=recording, 2=playing) |")
     lines.append(f"| Session frame range | "
                  f"{h.session_start_frame} … {h.session_end_frame} |")
-    lines.append(f"| Page store slots | {h.page_store_count} "
-                 f"({h.page_store_count * 16 / 1024:.1f} MB unique RAM content) |")
+    # v2: live payload bytes is the meaningful size metric. The old
+    # "slots × 16 KB" estimate assumed one fixed-size slot per emu page,
+    # which is no longer true under the codec.
+    live_bytes = dump.live_payload_bytes
+    raw_bytes = sum(4096 for s in dump.slots if s.encoding != ENCODING_ZERO)
+    lines.append(f"| Page store slots | {h.page_store_count} live "
+                 f"({_format_size_mb(live_bytes)} compressed / "
+                 f"{_format_size_mb(raw_bytes)} raw, "
+                 f"{dump.compression_ratio * 100:.1f}% ratio) |")
+    n_full = sum(1 for s in dump.slots if s.encoding == ENCODING_FULL)
+    n_xor  = sum(1 for s in dump.slots if s.encoding == ENCODING_XOR_PREV)
+    n_zero = sum(1 for s in dump.slots if s.encoding == ENCODING_ZERO)
+    lines.append(f"| Slot encodings | {n_full} Full / {n_xor} XorPrev / "
+                 f"{n_zero} Zero |")
     lines.append(f"| Checkpoints | {h.checkpoint_count} |")
+    if dump.checkpoints:
+        n_key = sum(1 for cp in dump.checkpoints if cp.is_keyframe)
+        lines.append(f"| Frame kinds | {n_key} I-frame / "
+                     f"{len(dump.checkpoints) - n_key} P-frame "
+                     f"({n_key * 100 / max(1, len(dump.checkpoints)):.1f}% I) |")
+    lines.append("")
+
+    # ---- Codec telemetry (v2) ----
+    lines.append("## Codec telemetry")
+    lines.append("")
+    lines.append("Phase-5 codec layout (4 KB sub-pages, zstd-1, XOR-delta, "
+                 "CRC32C). Ratios are computed across non-Zero live slots.")
+    lines.append("")
+    lines.append("| Metric | Value |")
+    lines.append("|---|---|")
+    lines.append(f"| Compression ratio (mean) | "
+                 f"{dump.compression_ratio * 100:.2f}% of raw |")
+    lines.append(f"| Total compressed payload | "
+                 f"{_format_size_mb(live_bytes)} |")
+    lines.append(f"| Total raw sub-page bytes | "
+                 f"{_format_size_mb(raw_bytes)} |")
+    if dump.checkpoints:
+        n_key = sum(1 for cp in dump.checkpoints if cp.is_keyframe)
+        lines.append(f"| I-frame count | {n_key} / "
+                     f"{len(dump.checkpoints)} "
+                     f"({n_key * 100 / max(1, len(dump.checkpoints)):.1f}%) |")
     lines.append("")
 
     # ---- Integrity findings ----
@@ -185,24 +239,40 @@ def generate_markdown_report(
         limit = opts.checkpoint_table_limit
         cps_to_show = dump.checkpoints if len(dump.checkpoints) <= limit \
             else dump.checkpoints[:limit // 2] + [None] + dump.checkpoints[-limit // 2:]
-        lines.append("| idx | frame | T-states | PC | SP | halt | iff1 | "
+        lines.append("| idx | frame | kind | T-states | PC | SP | halt | iff1 | "
                      "p7FFD | border | screen bank | dirty pages |")
-        lines.append("|---|---|---|---|---|---|---|---|---|---|---|")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
         for cp in cps_to_show:
             if cp is None:
                 lines.append(f"| _… {len(dump.checkpoints) - limit} more …_ |"
-                             "||||||||||")
+                             "|||||||||||")
                 continue
-            dirty = sum(1 for r in cp.ram_page_refs if r != NEVER_TOUCHED_PAGE_REF)
-            unique = len(set(r for r in cp.ram_page_refs
-                             if r != NEVER_TOUCHED_PAGE_REF))
+            # Collapse 4 sub-slots per emu page back to emu-page granularity
+            # for the report ("dirty pages" is what humans expect to see; the
+            # sub-slot detail lives in the heatmap PNG).
+            n_emu_pages = len(cp.ram_sub_slots) // SUB_PAGES_PER_EMU_PAGE
+            dirty_emu_pages = 0
+            unique_sub_slots: set = set()
+            for page_idx in range(n_emu_pages):
+                base = page_idx * SUB_PAGES_PER_EMU_PAGE
+                page_dirty = False
+                for sub in range(SUB_PAGES_PER_EMU_PAGE):
+                    ref = cp.ram_sub_slots[base + sub]
+                    if ref != NEVER_TOUCHED_SLOT:
+                        page_dirty = True
+                        unique_sub_slots.add(ref)
+                if page_dirty:
+                    dirty_emu_pages += 1
+            kind = "I" if cp.is_keyframe else "P"
             screen_bank = 7 if (cp.chipset.p7ffd & 0b0000_1000) else 5
             lines.append(
-                f"| {cp.index} | {cp.frame} | {_format_t_states(cp.global_t)} | "
+                f"| {cp.index} | {cp.frame} | {kind} | "
+                f"{_format_t_states(cp.global_t)} | "
                 f"`0x{cp.cpu.pc:04X}` | `0x{cp.cpu.sp:04X}` | "
                 f"{cp.cpu.halted} | {cp.cpu.iff1} | "
                 f"`0x{cp.chipset.p7ffd:02X}` | {cp.chipset.border_attr} | "
-                f"{screen_bank} | {dirty}/{h.model_ram_pages} ({unique} unique) |"
+                f"{screen_bank} | {dirty_emu_pages}/{h.model_ram_pages} "
+                f"({len(unique_sub_slots)} sub) |"
             )
         lines.append("")
 

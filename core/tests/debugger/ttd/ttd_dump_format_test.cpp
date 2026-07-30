@@ -33,7 +33,7 @@
 #include "debugger/ttd/ttd_dirty_tracker.h"
 #include "debugger/ttd/ttd_dump_format.h"
 #include "debugger/ttd/timetravelmanager.h"
-#include "debugger/ttd/ttd_page_store.h"
+#include "debugger/ttd/ttd_codec_page_store.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -148,20 +148,42 @@ protected:
             d.chipsetStates.push_back(cp->chipset);
             d.ayBlobs.push_back(cp->ayState);
 
+            // v2 codec: each 16 KB emu page is split into 4 × 4 KB sub-pages,
+            // each with its own slot in the codec page store. We reconstruct
+            // the full 16 KB page by walking each sub-slot through GetPage
+            // (which transparently walks the XOR-prev chain back to a Full slot).
             std::vector<std::vector<uint8_t>> cpPages;
             cpPages.reserve(cp->ramPages.size());
+            uint8_t subPageBuf[ttd::TTDCodecPageStore::kPageSize];
             for (const auto& ref : cp->ramPages)
             {
                 if (ref.IsNeverTouched())
                 {
                     cpPages.emplace_back();
+                    continue;
                 }
-                else
+                std::vector<uint8_t> fullPage;
+                fullPage.reserve(4 * ttd::TTDCodecPageStore::kPageSize);
+                for (uint32_t s = 0; s < 4; ++s)
                 {
-                    const uint8_t* pageData = store.GetPage(ref.storeIndex);
-                    if (pageData == nullptr) { ADD_FAILURE() << "null page"; return d; }
-                    cpPages.emplace_back(pageData, pageData + ttd::TTDPageStore::kPageSize);
+                    const uint32_t slot = ref.slots[s];
+                    if (slot == ttd::TTDPageRef::kNeverTouched)
+                    {
+                        // Sub-page never touched — pad with zeros (matches
+                        // what RestoreRamPages leaves in place).
+                        fullPage.resize(fullPage.size() + ttd::TTDCodecPageStore::kPageSize, 0);
+                        continue;
+                    }
+                    if (!store.GetPage(slot, subPageBuf))
+                    {
+                        ADD_FAILURE() << "CRC mismatch on sub-page " << s
+                                      << " slot " << slot;
+                        return d;
+                    }
+                    fullPage.insert(fullPage.end(), subPageBuf,
+                                    subPageBuf + ttd::TTDCodecPageStore::kPageSize);
                 }
+                cpPages.emplace_back(std::move(fullPage));
             }
             d.ramPagesPerCheckpoint.push_back(std::move(cpPages));
         }

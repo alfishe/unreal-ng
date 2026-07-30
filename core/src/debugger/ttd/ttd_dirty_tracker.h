@@ -3,13 +3,23 @@
 /// @file ttd_dirty_tracker.h
 /// @brief Per-physical-page dirty bitmap for TTD checkpoint capture.
 ///
-/// Per parent TDD §6.2 and §6.3:
-///   - One bit per physical RAM page (16 KB granularity).
+/// Per parent TDD §6.2 and §6.3 (Phase 5 codec update):
+///   - One bit per physical RAM page. **16 KB granularity** is kept here
+///     on purpose: this is the smallest unit the emulator's Memory class
+///     banks in, and write traps fire per 16 KB page. Sub-page splitting
+///     happens later, at the codec-store level — see ttd_codec_page_store.h
+///     (kPageSize = 4096, 4 sub-pages per emulator page) and the P-frame
+///     path in TimeTravelManager::UpdateRamPages.
+///   - Why not track at 4 KB here? Measured: per-page dirty cost is already
+///     <1 % of the frame budget at 16 KB granularity, and 4 KB bit-tracking
+///     would force the write-protect trap path in Memory to fire 4× more
+///     often for no net win (the codec store already drops unchanged
+///     sub-pages via InternXor's all-zero fast path).
 ///   - Two bitmaps: `_dirty` (per-frame, cleared by CollectAndClear) and
 ///     `_everDirty` (session-scoped, never cleared within a session).
 ///   - `_everDirty` distinguishes "never touched in this session" pages,
-///     which carry the NEVER_TOUCHED sentinel in checkpoints and cost
-///     nothing to capture or restore.
+///     which carry the kNeverTouchedSlot sentinel across all 4 sub-page
+///     slots in their TTDPageRef and cost nothing to capture or restore.
 ///   - MarkDirty is hot-path code: one predictable branch + one atomic OR
 ///     when the feature is enabled; zero cost when disabled.
 ///

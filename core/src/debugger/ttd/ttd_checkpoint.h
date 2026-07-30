@@ -161,33 +161,69 @@ struct TTDChipsetState
     // compatibility to preserve in v1).
 };
 
-/// @brief Reference to a 16 KB RAM page in the COW page store (item P1.3).
+/// @brief Frame kind discriminator (I-frame / P-frame).
 ///
-/// Per TDD §6.3. The special value #kNeverTouched marks a page that was
+/// Mirrors video codec terminology:
+///   - I-frame (key frame): every RAM page is captured as a Full snapshot.
+///     Restore is O(1) — just decompress the slots. Emitted every
+///     kKeyFrameInterval (default 50 frames = 1 second @ 50 Hz).
+///   - P-frame (delta frame): only dirty pages are captured, encoded as
+///     XOR deltas against their previous slot. Restore requires walking
+///     the delta chain back to the nearest I-frame.
+enum class TTDFrameKind : uint8_t {
+    KeyFrame  = 0,   ///< I-frame: all pages stored as Full
+    DeltaFrame = 1,  ///< P-frame: only dirty pages stored as Xor
+};
+
+/// @brief Reference to one 16 KB emulator RAM page in the codec page store.
+///
+/// Each 16 KB page is split into 4 × 4 KB sub-pages internally (see PoC
+/// results doc — 92.9 % of dirty 16K pages have only one dirty 4K sub-page,
+/// so 4K granularity saves ~50 % storage on real workloads).
+///
+/// The special value #kNeverTouched in all four slots marks a page that was
 /// never written during the session up to this checkpoint; restore leaves
 /// live RAM as-is for it (its content IS the historical content).
 struct TTDPageRef
 {
-    uint32_t storeIndex = 0;
+    /// 4 sub-page slot indices, one per 4 KB chunk of the 16 KB page.
+    /// slots[0] covers bytes [0..4095], slots[1] covers [4096..8191], etc.
+    uint32_t slots[4] = {0, 0, 0, 0};
 
     /// Sentinel for "page never touched in session up to this checkpoint".
-    /// Distinct from any valid store index (store indices are allocated
-    /// from 0 upward and never reach 2^32-1 in practice).
     static constexpr uint32_t kNeverTouched = 0xFFFFFFFFu;
 
-    bool IsNeverTouched() const { return storeIndex == kNeverTouched; }
+    bool IsNeverTouched() const
+    {
+        return slots[0] == kNeverTouched && slots[1] == kNeverTouched
+            && slots[2] == kNeverTouched && slots[3] == kNeverTouched;
+    }
+
+    /// Mark this ref as never-touched (initial state for untouched pages).
+    void SetNeverTouched()
+    {
+        slots[0] = slots[1] = slots[2] = slots[3] = kNeverTouched;
+    }
 };
 
 /// @brief A complete, self-sufficient machine state at a frame boundary.
 ///
 /// Per TDD §6.1. This is the in-memory representation of one timeline
-/// entry. Items P1.2 (dirty tracker) and P1.3 (page store) populate
+/// entry. Items P1.2 (dirty tracker) and P1.3 (codec page store) populate
 /// #ramPages; items P1.5 (peripheral serializers) populate the
 /// peripheral blob vectors.
 struct TTDCheckpoint
 {
     TTDTimePoint time;
-    uint64_t     globalT = 0;  ///< Denormalized sort key (== time.frame at frame boundary in v1)
+    uint64_t     globalT = 0;  ///< Denormalized sort key (== time.frame at frame boundary)
+
+    /// I-frame or P-frame? Determines restore strategy.
+    TTDFrameKind frameKind = TTDFrameKind::KeyFrame;
+
+    /// For P-frames: the frame index of the nearest preceding I-frame.
+    /// Restore walks deltas from keyFrameAnchor to time.frame.
+    /// For I-frames: equal to time.frame.
+    uint64_t keyFrameAnchor = 0;
 
     TTDCpuState     cpu;
     TTDChipsetState chipset;
@@ -203,9 +239,8 @@ struct TTDCheckpoint
     std::vector<uint8_t> covoxState;
 
     // --- RAM pages (populated by P1.3) ---
-    /// One entry per physical RAM page of the active model. Empty until
-    /// the page store lands; capture/restore of CPU+chipset does not
-    /// require this vector to be populated.
+    /// One entry per physical RAM page (16 KB) of the active model. Each
+    /// entry references 4 codec-store sub-page slots (4 KB each).
     std::vector<TTDPageRef> ramPages;
 
     // --- Journal offsets (populated by P2 and P4) ---

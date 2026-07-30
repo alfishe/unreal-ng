@@ -31,7 +31,7 @@
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
 #include "debugger/ttd/timetravelmanager.h"
-#include "debugger/ttd/ttd_page_store.h"
+#include "debugger/ttd/ttd_codec_page_store.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -139,19 +139,33 @@ TEST_F(TTD_StatusEndpoint_Test, Recording_BaselinePopulatesAllFields)
     EXPECT_EQ(info.state, ttd::TTDSessionState::Recording);
     EXPECT_GE(info.checkpointCount, 1u) << "Baseline checkpoint must be present";
 
-    // Page store must hold every model-RAM page (v1 strategy).
+    // Page store must hold every model-RAM sub-page as a live slot.
+    // v2 codec: each 16 KB emu page is split into 4 × 4 KB sub-pages, so
+    // the baseline captures 4 × pages slots of TTDCodecPageStore::kPageSize.
+    // After capture each slot is either Encoding::Zero (empty payload) or
+    // Encoding::Full (zstd-compressed payload < 4 KB).
     const uint16_t pages = _ttd->GetModelRamPages();
     ASSERT_GT(pages, 0u);
-    const size_t expectedBytes = static_cast<size_t>(pages) * ttd::TTDPageStore::kPageSize;
-    EXPECT_EQ(info.pageStoreBytes, expectedBytes)
-        << "page_store_bytes must reflect model-RAM baseline (v1 strategy)";
-    EXPECT_EQ(info.pageStoreUsedBytes, expectedBytes)
-        << "page_store_used_bytes must equal capacity right after baseline";
+    const size_t subPages = static_cast<size_t>(pages) * 4u;
 
-    // Real heap footprint: at least the page-store backing plus the
-    // baseline checkpoint struct.
-    EXPECT_GE(info.sessionHeapBytes, info.pageStoreBytes)
-        << "session_heap_bytes must include page-store backing + checkpoint metadata";
+    // Capacity must be at least enough to hold the baseline slots.
+    EXPECT_GE(info.pageStoreBytes, subPages * 16u)
+        << "page_store_bytes (slot vector capacity) must cover baseline slots";
+    // Used bytes = sum(16-byte slot header + payload) for live slots.
+    // Lower bound is just the headers; upper bound is sub-pages * (16 + 4 KB).
+    EXPECT_GE(info.pageStoreUsedBytes, subPages * 16u)
+        << "page_store_used_bytes must include at least the baseline slot headers";
+    EXPECT_LE(info.pageStoreUsedBytes,
+              subPages * (16u + ttd::TTDCodecPageStore::kPageSize))
+        << "page_store_used_bytes cannot exceed uncompressed baseline";
+
+    // Real heap footprint: EstimateSessionHeapBytes sums the slot-vector
+    // backing, checkpoint structs, and journal vectors. It does NOT include
+    // the per-slot payload heap allocation (that's tracked separately in
+    // pageStoreUsedBytes), so it can be smaller than pageStoreUsedBytes on
+    // baselines dominated by non-zero page content. We just assert non-zero.
+    EXPECT_GT(info.sessionHeapBytes, 0u)
+        << "session_heap_bytes must be non-zero once baseline is captured";
 
     // Frames must come from the live EmulatorState — non-zero once the
     // emulator has run at least one frame's worth of bookkeeping.

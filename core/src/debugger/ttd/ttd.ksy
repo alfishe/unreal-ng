@@ -23,6 +23,18 @@
 #   * Breaking changes bump schema-version, git-tag this file as
 #     `ttd-schema-vN`, and update both version fields atomically in one commit.
 #
+# v2 breaking changes (Phase 5 codec — see
+# docs/inprogress/2026-07-19-time-travel/phase-5-codec-poc-results.md):
+#   * 4 KB sub-pages (was 16 KB). Each emulator RAM page is split into
+#     4 × 4 KB sub-pages, each with its own slot in the page store.
+#   * Per-slot encoding discriminator: Full / XorPrev / Zero.
+#   * zstd level-1 compression of every non-Zero slot payload.
+#   * Per-slot CRC32C integrity field (4 bytes; writer stores 0, reader
+#     recomputes from decompressed bytes and surfaces mismatches).
+#   * Per-checkpoint frame_kind (I-frame vs P-frame) + keyframe_anchor.
+#   * Checkpoint RAM refs are now 4 * model_ram_pages u32 slot indices.
+#   * No v1 backwards compatibility — older files are refused with an error.
+#
 # License: MIT — re-publishable, vendorable, forkable.
 
 meta:
@@ -33,11 +45,11 @@ meta:
   application: unreal-ng
   license: MIT
   ks-version: 0.10
-  schema-version: 1
+  schema-version: 2
   doc: |
     A binary serialization of an Unreal-NG Time-Travel Debugging recording
-    session: the complete timeline of per-frame checkpoints plus the COW
-    (copy-on-write) page store that backs RAM content.
+    session: the complete timeline of per-frame checkpoints plus the
+    codec-aware COW (copy-on-write) page store that backs RAM content.
 
     Producers (any of):
       * TimeTravelManager::SerializeSession()  (core C++ API)
@@ -60,21 +72,25 @@ seq:
     type: header
     doc: Fixed-size file header (magic, version, model metadata).
   - id: page_store
-    type: page_store_entry
+    type: page_slot
     repeat: expr
     repeat-expr: header.page_store_count
     doc: |
-      Deduplicated 16 KB RAM-page pool. Each checkpoint references one slot
-      per model-RAM-page via its ram_page_refs vector (slot index or
-      NEVER_TOUCHED = 0xFFFFFFFF).
+      Codec-aware COW page store. Each slot is one of:
+        * Full     — independent 4 KB snapshot (zstd-1 compressed)
+        * XorPrev  — XOR delta against prev_slot's reconstructed bytes
+        * Zero     — all-zero 4 KB region (payload omitted)
+      Slots are referenced by compact zero-based index from each checkpoint's
+      ram_sub_slots vector.
   - id: checkpoints
     type: checkpoint
     repeat: expr
     repeat-expr: header.checkpoint_count
     doc: |
       Per-frame checkpoints, ordered by frame (strictly monotonically
-      increasing). The first checkpoint is the session baseline captured
-      at StartRecording; subsequent ones are appended at each OnFrameBoundary.
+      increasing). The first checkpoint is the session baseline (always a
+      KeyFrame); subsequent ones alternate between KeyFrame and DeltaFrame
+      per the I/P discriminator in TimeTravelManager::CaptureNow.
 
 # ---------------------------------------------------------------------------
 # Types
@@ -83,7 +99,7 @@ types:
   header:
     doc: |
       File header. Fixed layout so readers can read just the header to
-      decide whether to proceed.
+      decide whether to proceed. Unchanged from v1 except schema_version=2.
     seq:
       - id: magic
         contents: "TTDD"
@@ -91,21 +107,22 @@ types:
       - id: schema_version
         type: u2
         doc: |
-          Schema version. MUST match meta.schema-version in the .ksy the
-          producer was built against. Readers refuse unknown future versions.
+          Schema version. MUST be 2 for this revision of the .ksy. Readers
+          refuse unknown versions with a clear error.
       - id: flags
         type: u2
         doc: |
-          Bitfield. Bit 0 = little-endian (always 1 in v1). Bits 1-15
-          reserved for future use (must be 0 in v1).
+          Bitfield. Bit 0 = little-endian (always 1 in v2; the writer
+          static_asserts little-endian). Bits 1-15 reserved (must be 0).
       - id: model_id
         type: u1
         doc: eModel enum value (which machine model was active).
       - id: model_ram_pages
         type: u1
         doc: |
-          Number of physical RAM pages on the active model. Each checkpoint
-          has exactly this many ram_page_refs entries.
+          Number of physical RAM pages (16 KB each) on the active model.
+          Each checkpoint has model_ram_pages × 4 ram_sub_slots entries
+          (4 sub-pages per emulator page).
       - id: cpu_state_size
         type: u2
         doc: |
@@ -141,23 +158,71 @@ types:
         doc: Last captured frame counter.
       - id: page_store_count
         type: u4
-        doc: Number of page_store_entry records following the header.
+        doc: |
+          Number of page_slot records following the header. In v2 this is
+          the count of LIVE slots (refcount > 0) — dead slots are not
+          serialized. Slots are written in compact remapped order so a
+          reader's index N here matches the indices referenced by
+          checkpoints' ram_sub_slots.
       - id: checkpoint_count
         type: u4
         doc: Number of checkpoint records following the page store.
       - id: reserved
         size: 8
-        doc: Reserved for future additive fields (must be zero in v1).
+        doc: Reserved for future additive fields (must be zero in v2).
 
-  page_store_entry:
+  page_slot:
     doc: |
-      One 16 KB page of RAM content. No metadata — the slot index is the
-      reader's only handle. Checkpoints reference slots by zero-based index
-      into the page_store sequence.
+      One entry in the v2 codec page store. Encoded layout per slot:
+        u8  encoding       (0=Full, 1=XorPrev, 2=Zero)
+        u32 refcount       (informational; reader rebuilds its own)
+        u32 prev_slot      (compact index; 0xFFFFFFFF when encoding != XorPrev)
+        u32 crc32c         (always 0 on write; reader recomputes from
+                            decompressed bytes and surfaces mismatches)
+        u32 payload_size   (bytes of zstd-compressed payload; 0 for Zero)
+        u8[payload_size]   payload
     seq:
-      - id: data
-        size: 16384
-        doc: Raw 16384-byte RAM page content.
+      - id: encoding
+        type: u1
+        doc: |
+          0 = Full (independent 4 KB snapshot, zstd-1 compressed payload)
+          1 = XorPrev (XOR against prev_slot's reconstructed bytes, zstd-1)
+          2 = Zero (all-zero 4 KB region, payload omitted)
+      - id: refcount
+        type: u4
+        doc: |
+          Informational only. The reader rebuilds its own refcount model
+          by walking checkpoints' ram_sub_slots vectors. The writer
+          includes this for diagnostics and round-trip verification.
+      - id: prev_slot
+        type: u4
+        doc: |
+          Compact slot index of the slot this one XORs against. Only
+          meaningful when encoding == 1 (XorPrev); set to 0xFFFFFFFF
+          otherwise. Must point to a slot earlier in the page_store
+          sequence (delta chains are strictly forward-only).
+      - id: crc32c
+        type: u4
+        doc: |
+          CRC32C (Castagnoli) of the RECONSTRUCTED 4 KB content. The v2
+          writer always stores 0 here and recomputes on read to surface
+          truncation or post-write tampering. A non-zero value on read
+          that does not equal the recomputed CRC is reported as an
+          integrity error.
+      - id: payload_size
+        type: u4
+        doc: |
+          Byte length of the following payload. For encoding == Zero this
+          is always 0. For Full / XorPrev this is the size of the
+          zstd-1-compressed frame (typically 200-2000 bytes for real
+          emulator state).
+      - id: payload
+        size: payload_size
+        doc: |
+          Raw payload bytes:
+            * encoding == Full    → zstd frame, decompresses to 4 KB
+            * encoding == XorPrev → zstd frame, decompresses to 4 KB XOR mask
+            * encoding == Zero    → omitted (payload_size == 0)
 
   cpu_state:
     doc: |
@@ -256,7 +321,7 @@ types:
       Port-latch subset of EmulatorState + counters. Mirrors
       TTDChipsetState in ttd_checkpoint.h. All fields are present
       unconditionally (no conditional layout) so the schema stays simple;
-      model-irrelevant fields read as 0.
+      model-irrelevant fields read as 0. Unchanged from v1.
     seq:
       # ---- Counters ----
       - id: t_states
@@ -367,6 +432,7 @@ types:
       A length-prefixed blob containing a serialized peripheral device
       (AY/TurboSound, FDC, Tape, Covox). The format of the blob's contents
       is device-specific; the .ttd format treats them as opaque bytes.
+      Unchanged from v1.
     seq:
       - id: size
         type: u4
@@ -375,27 +441,51 @@ types:
 
   checkpoint:
     doc: |
-      One complete, self-sufficient machine state at a frame boundary.
-      Always captured at tInFrame == 0.
+      One complete machine state at a frame boundary. Always captured at
+      tInFrame == 0. v2 adds two fields up front: frame_kind (I-frame vs
+      P-frame) and keyframe_anchor (the frame index of the I-frame this
+      delta chain roots at, for seek-side delta-chain reconstruction).
     seq:
       - id: frame
         type: u8
         doc: Frame index since session start.
       - id: global_t
         type: u8
-        doc: Denormalized sort key (== frame at frame boundary in v1).
+        doc: Denormalized sort key (== frame at frame boundary in v2).
+      - id: frame_kind
+        type: u1
+        doc: |
+          0 = KeyFrame (I-frame): every model RAM page captured as 4
+              independent Full sub-page snapshots. Self-sufficient for
+              restore.
+          1 = DeltaFrame (P-frame): only dirty pages re-captured, encoded
+              as XorPrev slots. Restore walks the delta chain back to the
+              anchoring KeyFrame.
+      - id: keyframe_anchor
+        type: u8
+        doc: |
+          Frame index of the KeyFrame this checkpoint's delta chain roots
+          at. For a KeyFrame this equals `frame`; for a DeltaFrame this
+          equals the most recent KeyFrame's frame index. Used by the seek
+          engine to bound recovery work after a corrupt delta.
       - id: cpu
         type: cpu_state
       - id: chipset
         type: chipset_state
-      - id: ram_page_refs
+      - id: ram_sub_slots
         type: u4
         repeat: expr
-        repeat-expr: _parent.header.model_ram_pages
+        repeat-expr: _parent.header.model_ram_pages * 4
         doc: |
-          One slot index per model-RAM-page. The sentinel 0xFFFFFFFF means
-          NEVER_TOUCHED — the live RAM content for that page is the
-          historical content, so the restore path skips it.
+          Flat list of (4 * model_ram_pages) slot indices, in
+          (page, sub) order:
+              ram_sub_slots[page * 4 + sub]
+          Each entry is either:
+            * a slot index into the page_store sequence (0-based, compact)
+            * the sentinel 0xFFFFFFFF (NEVER_TOUCHED_SLOT) meaning the
+              sub-page was never written during the session up to this
+              checkpoint — live RAM content IS the historical content, so
+              the restore path skips it.
       - id: ay
         type: peripheral_blob
         doc: AY / TurboSound state.

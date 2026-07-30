@@ -2,7 +2,11 @@
 # without requiring Pillow/numpy unless the user actually wants image output.
 #
 # Required:
-#   none — the core parser + analyzer uses only the Python standard library.
+#   zstandard — v2 .ttd files store every page-store slot zstd-compressed
+#               (Phase 5 codec). The Python parser needs zstandard to
+#               decompress Full / XorPrev slots. Zero slots need no
+#               decompression but are rare in real sessions.
+zstandard>=0.22
 #
 # Optional (only needed for framebuffer rendering and heatmap output):
 pillow>=10.0

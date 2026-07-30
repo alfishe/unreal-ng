@@ -27,7 +27,13 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
 
-from .ttd_format import Checkpoint, TtdDump, NEVER_TOUCHED_PAGE_REF, PAGE_SIZE
+from .ttd_format import (
+    Checkpoint,
+    TtdDump,
+    NEVER_TOUCHED_SLOT,
+    EMU_PAGE_SIZE,
+    SUB_PAGES_PER_EMU_PAGE,
+)
 
 
 @dataclass
@@ -59,8 +65,12 @@ class AnomalyReport:
 
 
 def _ram_top_bytes(model_ram_pages: int) -> int:
-    """Top of physical RAM (last byte address + 1) for the model."""
-    return model_ram_pages * PAGE_SIZE
+    """Top of physical RAM (last byte address + 1) for the model.
+
+    Banks are 16 KB each (``EMU_PAGE_SIZE``) — the codec's 4 KB sub-pages
+    are a storage-side split, not an addressing-side one.
+    """
+    return model_ram_pages * EMU_PAGE_SIZE
 
 
 def _page_fingerprint(page_bytes: bytes) -> str:
@@ -242,42 +252,68 @@ def _check_chipset(dump: TtdDump, rep: AnomalyReport) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _dirty_emu_page_count(cp: Checkpoint) -> int:
+    """Number of 16 KB emulator pages that have ≥1 dirty sub-slot.
+
+    v2 stores 4 sub-slots per emu page; we collapse them back to emu-page
+    granularity here because that's the unit the dirty tracker reports on
+    (TTDDirtyTracker operates at 16 KB) and it's what humans expect to see
+    in "N dirty pages" style summaries.
+    """
+    n_pages = len(cp.ram_sub_slots) // SUB_PAGES_PER_EMU_PAGE
+    dirty = 0
+    for page_idx in range(n_pages):
+        base = page_idx * SUB_PAGES_PER_EMU_PAGE
+        for sub in range(SUB_PAGES_PER_EMU_PAGE):
+            if cp.ram_sub_slots[base + sub] != NEVER_TOUCHED_SLOT:
+                dirty += 1
+                break
+    return dirty
+
+
 def _check_capture_completeness(dump: TtdDump, rep: AnomalyReport) -> None:
-    """Look for patterns suggesting the dirty tracker missed writes."""
+    """Look for patterns suggesting the dirty tracker missed writes.
+
+    In v2 each checkpoint carries ``4 * model_ram_pages`` sub-slot refs;
+    a slot index that's NEW vs the previous checkpoint indicates a freshly
+    Interned 4 KB sub-page. Frames with zero new sub-slots between busy
+    frames are suspect — the dirty tracker likely missed a write.
+    """
     if len(dump.checkpoints) < 2:
         return
 
-    # Per-checkpoint set of unique pages referenced (excluding NEVER_TOUCHED).
+    # Per-checkpoint set of unique sub-slot indices referenced
+    # (excluding NEVER_TOUCHED_SLOT).
     dirty_counts: List[int] = []
     for cp in dump.checkpoints:
-        unique_pages = set()
-        for ref in cp.ram_page_refs:
-            if ref != NEVER_TOUCHED_PAGE_REF:
-                unique_pages.add(ref)
-        dirty_counts.append(len(unique_pages))
+        unique_sub_slots = set()
+        for ref in cp.ram_sub_slots:
+            if ref != NEVER_TOUCHED_SLOT:
+                unique_sub_slots.add(ref)
+        dirty_counts.append(len(unique_sub_slots))
 
-    # Compute delta vs previous checkpoint: how many NEW pages appeared.
-    # A "new page" is one whose slot index wasn't referenced by the previous
-    # checkpoint — i.e., it was freshly Interned.
+    # Compute delta vs previous checkpoint: how many NEW sub-slots appeared.
+    # A "new sub-slot" is one whose slot index wasn't referenced by the
+    # previous checkpoint — i.e., it was freshly Interned.
     for i in range(1, len(dump.checkpoints)):
-        prev_refs = set(r for r in dump.checkpoints[i - 1].ram_page_refs
-                        if r != NEVER_TOUCHED_PAGE_REF)
-        curr_refs = set(r for r in dump.checkpoints[i].ram_page_refs
-                        if r != NEVER_TOUCHED_PAGE_REF)
+        prev_refs = set(r for r in dump.checkpoints[i - 1].ram_sub_slots
+                        if r != NEVER_TOUCHED_SLOT)
+        curr_refs = set(r for r in dump.checkpoints[i].ram_sub_slots
+                        if r != NEVER_TOUCHED_SLOT)
         new_refs = curr_refs - prev_refs
         if len(new_refs) == 0 and dirty_counts[i] > 0:
-            # No new content but the count differs — page was re-used.
+            # No new content but the count differs — sub-slot was re-used.
             pass
-        # Frames with zero dirty pages between busy frames are suspect.
+        # Frames with zero dirty sub-slots between busy frames are suspect.
         if i >= 2 and len(new_refs) == 0:
-            prev_prev = set(r for r in dump.checkpoints[i - 2].ram_page_refs
-                            if r != NEVER_TOUCHED_PAGE_REF)
+            prev_prev = set(r for r in dump.checkpoints[i - 2].ram_sub_slots
+                            if r != NEVER_TOUCHED_SLOT)
             if len(curr_refs - prev_prev) > 0 or len(prev_prev - curr_refs) > 0:
                 # Frame had changes vs i-2, just shared with i-1 — that's fine.
                 pass
 
-    # Page content flip-flop detection: same slot index referenced across
-    # consecutive checkpoints but with different SHA-256 implies the page
+    # Sub-slot content flip-flop detection: same slot index referenced across
+    # consecutive checkpoints but with different SHA-256 implies the sub-page
     # was re-Interned (good — capture saw the write). Same content + same
     # slot = no change. Same content + different slot = wasteful but not
     # incorrect. Different content + same slot across non-adjacent frames

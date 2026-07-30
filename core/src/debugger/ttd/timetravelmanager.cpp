@@ -17,7 +17,8 @@
 #include "ttd_checkpoint.h"
 #include "ttd_dirty_tracker.h"
 #include "ttd_dump_format.h"     // .ttd binary format constants
-#include "ttd_page_store.h"
+#include "ttd_codec_page_store.h"
+#include "ttd_compression.h"    // codec::Compress / Decompress / Crc32C
 
 #include "machine_state_hash.h"  // CaptureSnapshot / HashSnapshot (self-test)
 
@@ -320,6 +321,13 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     _modelRamPages = 0;
     _state = TTDSessionState::Idle;
 
+    // Reset Phase 5 codec state.
+    _lastKeyFrameIdx = 0;
+    _forceNextKeyFrame = true;
+    _ramCache.valid = false;
+    _ramCache.ram.clear();
+    _ramCache.frame = 0;
+
     // Reset the dirty tracker too — the session-scoped _everDirty set is part
     // of the captured history's validity contract.
     if (_dirtyTracker)
@@ -334,9 +342,9 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
     info.pageStoreBytes     = _pageStore.GetCapacityBytes();
     info.pageStoreUsedBytes = _pageStore.GetUsedBytes();
     // Distinct RAM snapshots currently live in the page store. Each slot
-    // is a 16 KB page captured at some frame; slots are shared across
-    // checkpoints via refcount when a page hasn't changed. This is the
-    // most direct measure of "how much unique state has been captured"
+    // is a 4 KB sub-page captured at some frame; slots are shared across
+    // checkpoints via refcount when a sub-page hasn't changed. This is
+    // the most direct measure of "how much unique state has been captured"
     // and tracks the working-set size of the session.
     info.baselineFramesCaptured = _pageStore.GetUsedSlots();
 
@@ -346,6 +354,20 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
     // page-store bytes because that's what the process is actually
     // consuming.
     info.sessionHeapBytes = EstimateSessionHeapBytes();
+
+    // Phase 5 codec telemetry — useful for the UI / WebAPI status surface
+    // to show compression effectiveness at a glance.
+    info.compressionRatio = _pageStore.GetCompressionRatio();
+    info.livePayloadBytes = _pageStore.GetLivePayloadBytes();
+    info.keyFrameCount    = 0;
+    info.deltaFrameCount  = 0;
+    for (const auto& cp : _timeline)
+    {
+        if (cp.frameKind == TTDFrameKind::KeyFrame)
+            ++info.keyFrameCount;
+        else
+            ++info.deltaFrameCount;
+    }
 
     if (!_timeline.empty())
     {
@@ -481,23 +503,47 @@ void TimeTravelManager::CaptureNow(TTDCheckpoint& out)
     out.chipset = CaptureChipsetState(st);
 
     // --- RAM pages ---
-    // First capture of a session: Intern every model-RAM page as the baseline.
-    // Subsequent captures: dirty → Intern, clean → AddRef previous checkpoint's slot.
+    // First capture of a session: Intern every model-RAM page as the baseline
+    // (this is an I-frame by definition). Subsequent captures follow the
+    // I/P pattern: every kKeyFrameInterval-th frame is a key frame, others
+    // are delta frames that only re-intern dirty pages.
+    const bool isKeyFrame = _timeline.empty()
+                            || _forceNextKeyFrame
+                            || (out.time.frame - _lastKeyFrameIdx >= kKeyFrameInterval);
+    out.frameKind = isKeyFrame ? TTDFrameKind::KeyFrame : TTDFrameKind::DeltaFrame;
+
     if (_timeline.empty())
     {
         CaptureBaselineRamPages(out.ramPages);
+        out.keyFrameAnchor = out.time.frame;
+        _lastKeyFrameIdx = out.time.frame;
+        _forceNextKeyFrame = false;
     }
     else
     {
         const TTDCheckpoint& prev = _timeline.back();
+
+        if (isKeyFrame)
+        {
+            out.keyFrameAnchor = out.time.frame;
+            _lastKeyFrameIdx = out.time.frame;
+            _forceNextKeyFrame = false;
+        }
+        else
+        {
+            out.keyFrameAnchor = _lastKeyFrameIdx;
+        }
 
         // Collect dirty pages from the tracker. The buffer is reused across
         // frames to avoid per-frame allocation (CollectAndClear appends).
         _dirtyScratch.clear();
         _dirtyTracker->CollectAndClear(_dirtyScratch);
 
-        UpdateRamPages(_dirtyScratch, prev.ramPages, out.ramPages);
+        UpdateRamPages(_dirtyScratch, prev.ramPages, out.ramPages, isKeyFrame);
     }
+
+    // Invalidate the materialized-RAM cache — live RAM is changing under us.
+    _ramCache.valid = false;
 
     // --- Peripherals (P1.5 — parent TDD §6.1, §6.4) ---
     // Each device implements TTDSerializable and serializes itself into the
@@ -548,77 +594,135 @@ void TimeTravelManager::CaptureNow(TTDCheckpoint& out)
 
 void TimeTravelManager::CaptureBaselineRamPages(std::vector<TTDPageRef>& outRamPages)
 {
+    // Baseline = I-frame: every model RAM page is captured as 4 × Full
+    // sub-pages. This is the only place where we pay the full uncompressed
+    // cost up front (modulo zstd-1 compression, which typically achieves
+    // 2-3x ratio on real emulator state).
     outRamPages.resize(_modelRamPages);
     for (uint16_t p = 0; p < _modelRamPages; ++p)
     {
         // Memory owns the RAM backing; RAMPageAddress returns a host pointer
-        // to the 16 KB page. We Intern a copy.
+        // to the 16 KB page. We split it into 4 × 4 KB sub-pages and intern
+        // each one independently. Most baseline pages compress well with
+        // zstd-1; the codec store handles the Full encoding automatically.
         const uint8_t* pageData = _memory->RAMPageAddress(p);
-        uint32_t idx = (pageData != nullptr)
-            ? _pageStore.Intern(pageData)
-            : _pageStore.Intern(static_cast<const uint8_t*>(nullptr));  // Should never happen; Intern asserts
-        outRamPages[p].storeIndex = idx;
+        if (pageData == nullptr)
+        {
+            // Should never happen — Memory always allocates the full model
+            // RAM backing. Defensive: mark as never-touched so restore skips.
+            outRamPages[p].SetNeverTouched();
+            continue;
+        }
+
+        // Intern each of the 4 × 4 KB sub-pages as Full snapshots.
+        for (uint32_t s = 0; s < 4; ++s)
+        {
+            const uint8_t* sub = pageData + (s * TTDCodecPageStore::kPageSize);
+            outRamPages[p].slots[s] = _pageStore.InternFull(sub);
+        }
     }
 }
 
 void TimeTravelManager::UpdateRamPages(const std::vector<uint16_t>& dirtyPages,
                                 const std::vector<TTDPageRef>& prevRamPages,
-                                std::vector<TTDPageRef>& outRamPages)
+                                std::vector<TTDPageRef>& outRamPages,
+                                bool isKeyFrame)
 {
-    // Output has same shape as previous checkpoint's ramPages.
+    // ------------------------------------------------------------------
+    // Refcount invariant: every slot index that appears in any
+    // _timeline checkpoint's ramPages[*].slots[s] MUST have a matching
+    // live refcount in the page store, INCLUDING the delta-chain refs
+    // that XorPrev slots hold against their prevSlot (the latter are
+    // managed internally by InternXor / Release — see
+    // ttd_codec_page_store.cpp).
+    //
+    // outRamPages.assign(prevRamPages) COPIES slot indices but does NOT
+    // bump refcounts. The logic below must therefore AddRef every slot
+    // that outRamPages will keep referencing. There is no "phantom ref"
+    // to release later — outRamPages's references must each be paid for
+    // with an explicit AddRef or replaced with a freshly-interned slot
+    // (whose Intern returns refcount=1).
+    //
+    // Concretely, for each sub-page we do exactly ONE of:
+    //   (a) Clean: AddRef the existing slot  → outRamPages shares prev.
+    //   (b) Dirty P-frame: InternXor          → outRamPages gets new slot.
+    //   (c) Dirty I-frame: InternFull         → outRamPages gets new slot.
+    // In none of these branches do we Release prevSlot — prevRamPages
+    // (the previous checkpoint, still in _timeline) keeps its own ref,
+    // and the codec store tracks any delta-chain ref internally.
+    // ------------------------------------------------------------------
     outRamPages.assign(prevRamPages.begin(), prevRamPages.end());
 
     // dirtyPages is in ascending order (CollectAndClear guarantee), so a
-    // two-pointer walk avoids a hash-set lookup per page. We'll move a
-    // cursor through dirtyPages as we iterate pages in [0, _modelRamPages).
+    // two-pointer walk avoids a hash-set lookup per page.
     size_t dirtyCursor = 0;
     for (uint16_t p = 0; p < _modelRamPages; ++p)
     {
-        bool dirty = (dirtyCursor < dirtyPages.size() && dirtyPages[dirtyCursor] == p);
+        const bool dirty = (dirtyCursor < dirtyPages.size() && dirtyPages[dirtyCursor] == p);
         if (dirty)
             ++dirtyCursor;
 
-        // Pages beyond _modelRamPages are NEVER_TOUCHED; this loop doesn't touch them.
-
-        if (dirty)
+        if (!dirty)
         {
-            // Page changed this frame — Intern the new content. The previous
-            // checkpoint's slot for this page is released implicitly when the
-            // previous checkpoint itself is dropped (by thinning or session
-            // invalidation). AddRef is the COW path; Intern is the dirty path.
-            const uint8_t* pageData = _memory->RAMPageAddress(p);
-            outRamPages[p].storeIndex = (pageData != nullptr)
-                ? _pageStore.Intern(pageData)
-                : _pageStore.Intern(static_cast<const uint8_t*>(nullptr));
-        }
-        else
-        {
-            // Page clean since last checkpoint — share the previous slot.
-            // AddRef so the slot survives even if the previous checkpoint
-            // is thinned out before this one.
+            // Clean page (I-frame OR P-frame): share prev's slots via AddRef.
+            // The I-frame path deliberately does NOT re-intern clean pages —
+            // doing so would (a) waste storage duplicating unchanged content
+            // and (b) drop prevRamPages's ref via a spurious Release, which
+            // was the root cause of the backward-seek screen-corruption bug.
+            // Sharing is correctness-equivalent because restore reads the
+            // same bytes regardless of who else references the slot.
             const TTDPageRef& prevRef = prevRamPages[p];
             if (!prevRef.IsNeverTouched())
             {
-                _pageStore.AddRef(prevRef.storeIndex);
-                // outRamPages[p].storeIndex already copied from prevRef above.
+                for (uint32_t s = 0; s < 4; ++s)
+                {
+                    if (prevRef.slots[s] != TTDPageRef::kNeverTouched)
+                    {
+                        _pageStore.AddRef(prevRef.slots[s]);
+                    }
+                }
+                // outRamPages[p].slots[s] already copied from prevRef above.
+            }
+            // else: was NEVER_TOUCHED, still NEVER_TOUCHED — nothing to do.
+            continue;
+        }
+
+        // Dirty page: re-intern each sub-page. I-frame uses InternFull so
+        // the new slot is an independent anchor (no delta-chain dependency);
+        // P-frame uses InternXor which falls back to Full automatically when
+        // XOR doesn't compress well. Both paths leave prevRamPages's slots
+        // untouched — the previous checkpoint must remain restorable.
+        const uint8_t* pageData = _memory->RAMPageAddress(p);
+        if (pageData == nullptr)
+        {
+            outRamPages[p].SetNeverTouched();
+            continue;
+        }
+
+        for (uint32_t s = 0; s < 4; ++s)
+        {
+            const uint8_t* sub = pageData + (s * TTDCodecPageStore::kPageSize);
+            const uint32_t prevSlot = prevRamPages[p].slots[s];
+
+            if (isKeyFrame || prevSlot == TTDPageRef::kNeverTouched)
+            {
+                // I-frame dirty page, or first-ever capture of this sub-page:
+                // emit an independent Full snapshot so future P-frames can
+                // build fresh XOR chains off a known-good anchor.
+                outRamPages[p].slots[s] = _pageStore.InternFull(sub);
             }
             else
             {
-                // Page was NEVER_TOUCHED in the previous checkpoint and is
-                // still clean — leave it NEVER_TOUCHED.
-                // (Restoration reads live RAM for this page; if the live
-                // RAM has been overwritten since session start, this is
-                // incorrect — but that case can't happen in v1 because the
-                // baseline capture Intern'd every model-RAM page, so no
-                // model-RAM page is ever NEVER_TOUCHED. The branch is here
-                // for the v2 working-set-proportional optimization.)
+                // P-frame dirty page: XOR against prev. InternXor returns
+                // either a new XorPrev slot (delta non-zero) or prevSlot
+                // itself with refcount++ (delta was zero — page effectively
+                // unchanged). In both cases the assignment below is correct;
+                // we must NOT Release prevSlot — that would drop prevRamPages's
+                // own ref and break restore of the previous checkpoint.
+                outRamPages[p].slots[s] = _pageStore.InternXor(prevSlot, sub);
             }
         }
     }
-
-    // Any dirty pages beyond _modelRamPages are anomalies (dirty tracker
-    // shouldn't mark pages the model doesn't have, but defensive logging
-    // belongs in the dirty tracker, not here).
 }
 
 void TimeTravelManager::ReleaseCheckpointRefs(TTDCheckpoint& cp)
@@ -627,8 +731,14 @@ void TimeTravelManager::ReleaseCheckpointRefs(TTDCheckpoint& cp)
     {
         if (!ref.IsNeverTouched())
         {
-            _pageStore.Release(ref.storeIndex);
-            ref.storeIndex = TTDPageRef::kNeverTouched;
+            for (uint32_t s = 0; s < 4; ++s)
+            {
+                if (ref.slots[s] != TTDPageRef::kNeverTouched)
+                {
+                    _pageStore.Release(ref.slots[s]);
+                    ref.slots[s] = TTDPageRef::kNeverTouched;
+                }
+            }
         }
     }
 }
@@ -802,15 +912,29 @@ void TimeTravelManager::RestoreRamPages(const std::vector<TTDPageRef>& ramPages)
             continue;
         }
 
-        const uint8_t* stored = _pageStore.GetPage(ref.storeIndex);
-        if (!stored)
+        // Restore each of the 4 × 4 KB sub-pages individually. GetPage
+        // returns false on CRC mismatch — log and continue with zero-fill
+        // for the affected sub-page so the rest of the page is still restored.
+        // The caller (RestoreCheckpoint) can detect the corruption via
+        // subsequent verification (e.g., CaptureRestoreSelfTest hash compare).
+        for (uint32_t s = 0; s < 4; ++s)
         {
-            MLOGWARNING("TimeTravelManager::RestoreRamPages — null page data for storeIndex=%u",
-                        ref.storeIndex);
-            continue;
-        }
+            const uint32_t slot = ref.slots[s];
+            if (slot == TTDPageRef::kNeverTouched)
+            {
+                // Sub-page was never touched in session — leave live bytes alone.
+                continue;
+            }
 
-        std::memcpy(pageData, stored, TTDPageStore::kPageSize);
+            uint8_t* subDst = pageData + (s * TTDCodecPageStore::kPageSize);
+            if (!_pageStore.GetPage(slot, subDst))
+            {
+                MLOGWARNING("TimeTravelManager::RestoreRamPages — CRC mismatch on page=%u sub=%u slot=%u; zero-filling",
+                            static_cast<unsigned>(p), static_cast<unsigned>(s),
+                            static_cast<unsigned>(slot));
+                std::memset(subDst, 0, TTDCodecPageStore::kPageSize);
+            }
+        }
     }
 }
 
@@ -1083,14 +1207,19 @@ bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult
     }
 
     const TTDTimePoint sessionEnd = _timeline.back().time;
-    if (sessionEnd < target)
+    // Reject only if the target frame is beyond the session. Intra-frame
+    // replay at the session-end frame IS allowed: checkpoints sit at frame
+    // boundaries (tInFrame == 0), so {lastFrame, T>0} is a valid target
+    // that ReplayWithinFrame handles by running T t-states forward from
+    // the lastFrame checkpoint. The old `sessionEnd < target` comparison
+    // wrongly rejected this case because {lastFrame, 0} < {lastFrame, T}
+    // for any T > 0.
+    if (target.frame > sessionEnd.frame)
     {
-        MLOGWARNING("TimeTravelManager::SeekTo — target (frame=%llu, tInFrame=%u) "
-                    "is beyond session end (frame=%llu, tInFrame=%u)",
+        MLOGWARNING("TimeTravelManager::SeekTo — target frame %llu "
+                    "is beyond session end frame %llu",
                     static_cast<unsigned long long>(target.frame),
-                    static_cast<unsigned>(target.tInFrame),
-                    static_cast<unsigned long long>(sessionEnd.frame),
-                    static_cast<unsigned>(sessionEnd.tInFrame));
+                    static_cast<unsigned long long>(sessionEnd.frame));
         // outResult already defaults to OutOfRange / reached=false.
         return false;
     }
@@ -1704,8 +1833,8 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     const uint32_t checkpointCount = static_cast<uint32_t>(_timeline.size());
     if (!WritePod(out, checkpointCount, err)) return false;
 
-    static_assert(ttd::dump::kPageSize == TTDPageStore::kPageSize,
-                  "page size mismatch between format and page store");
+    static_assert(ttd::dump::kSubPageSize == TTDCodecPageStore::kPageSize,
+                  "sub-page size mismatch between format and codec page store");
     for (int i = 0; i < 8; ++i)
     {
         const char zero = 0;
@@ -1714,24 +1843,81 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     }
 
     // --- Write page store (only live slots, in remapped order) ---
-    // Walk slots in original-index order and emit any with refcount > 0.
-    // The remap above assigns compact indices in the same order, so the
-    // on-disk slot at offset N corresponds to the Nth live slot emitted.
+    //
+    // v2 layout per slot:
+    //   u8  encoding       (0=Full, 1=XorPrev, 2=Zero)
+    //   u32 refcount       (informational; reader uses timeline-derived refcount)
+    //   u32 prev_slot      (compact index; 0xFFFFFFFF when encoding != XorPrev)
+    //   u32 crc32c         (always 0 on write — reader recomputes from decompressed bytes)
+    //   u32 payload_size   (bytes of zstd-compressed payload)
+    //   u8[payload_size]   payload
+    //
+    // We re-derive the payload via Compress(GetPage(idx)) because the codec
+    // page store doesn't yet expose its internal compressed payload. This is
+    // a redundant ~10 us per slot on serialize (a future optimization adds
+    // GetPayload/GetCrc32C accessors).
     for (uint32_t idx = 0; idx < _pageStore.GetCapacity(); ++idx)
     {
         if (_pageStore.GetRefCount(idx) == 0)
             continue;
-        const uint8_t* pageData = _pageStore.GetPage(idx);
-        if (!pageData)
+
+        const auto encoding = _pageStore.GetEncoding(idx);
+        const uint8_t encByte = static_cast<uint8_t>(encoding);
+        if (!WritePod(out, encByte, err)) return false;
+
+        const uint32_t refcount = _pageStore.GetRefCount(idx);
+        if (!WritePod(out, refcount, err)) return false;
+
+        // prev_slot in compact-remapped form (or sentinel).
+        uint32_t prevSlotOut = ttd::dump::kNeverTouchedSlot;
+        if (encoding == TTDCodecPageStore::Encoding::XorPrev)
         {
-            err = "page store returned null for live slot " + std::to_string(idx);
-            return false;
+            const uint32_t prevSlotIn = _pageStore.GetPrevSlot(idx);
+            auto it = slotRemap.find(prevSlotIn);
+            if (it == slotRemap.end())
+            {
+                err = "slot " + std::to_string(idx) + " has prev_slot " +
+                      std::to_string(prevSlotIn) + " not in live remap (corrupt store?)";
+                return false;
+            }
+            prevSlotOut = it->second;
         }
-        out.write(reinterpret_cast<const char*>(pageData), ttd::dump::kPageSize);
-        if (!out)
+        if (!WritePod(out, prevSlotOut, err)) return false;
+
+        // CRC field: 0 on write. Reader verifies by recomputing.
+        const uint32_t crcPlaceholder = 0;
+        if (!WritePod(out, crcPlaceholder, err)) return false;
+
+        // Payload: empty for Zero; zstd-compressed reconstructed page otherwise.
+        if (encoding == TTDCodecPageStore::Encoding::Zero)
         {
-            err = "stream write failed (page " + std::to_string(idx) + ")";
-            return false;
+            const uint32_t payloadSize = 0;
+            if (!WritePod(out, payloadSize, err)) return false;
+        }
+        else
+        {
+            // Reconstruct the 4 KB page (handles XorPrev recursively).
+            uint8_t pageBuf[ttd::dump::kSubPageSize];
+            if (!_pageStore.GetPage(idx, pageBuf))
+            {
+                err = "CRC mismatch on slot " + std::to_string(idx) +
+                      " during serialize — corrupt live slot";
+                return false;
+            }
+            auto payload = ttd::codec::Compress(pageBuf, ttd::dump::kSubPageSize);
+            if (payload.empty())
+            {
+                err = "zstd compress failed on slot " + std::to_string(idx);
+                return false;
+            }
+            const uint32_t payloadSize = static_cast<uint32_t>(payload.size());
+            if (!WritePod(out, payloadSize, err)) return false;
+            out.write(reinterpret_cast<const char*>(payload.data()), payloadSize);
+            if (!out)
+            {
+                err = "stream write failed (slot " + std::to_string(idx) + " payload)";
+                return false;
+            }
         }
     }
 
@@ -1741,13 +1927,19 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
         if (!WritePod(out, cp.time.frame, err)) return false;
         if (!WritePod(out, cp.globalT, err)) return false;
 
+        // v2 additions: frame kind + keyframe anchor.
+        const uint8_t frameKindByte = static_cast<uint8_t>(cp.frameKind);
+        if (!WritePod(out, frameKindByte, err)) return false;
+        if (!WritePod(out, cp.keyFrameAnchor, err)) return false;
+
         // CPU + chipset: POD structs, written verbatim. Padding bytes were
         // zeroed by CaptureCpuState/CaptureChipsetState (memset before field
         // copies), so the output is deterministic across runs.
         if (!WritePod(out, cp.cpu, err)) return false;
         if (!WritePod(out, cp.chipset, err)) return false;
 
-        // RAM page refs (remapped to compact on-disk indices).
+        // RAM page refs: 4 sub-page slots per emulator RAM page, remapped to
+        // compact on-disk indices.
         // Defensive: a checkpoint's ramPages.size() should equal _modelRamPages,
         // but historical checkpoints from earlier sessions might have a
         // different count if the model was reconfigured mid-session (which
@@ -1757,24 +1949,29 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
                                 static_cast<uint32_t>(_modelRamPages));
         for (uint32_t p = 0; p < static_cast<uint32_t>(_modelRamPages); ++p)
         {
-            uint32_t refOut = ttd::dump::kNeverTouchedPageRef;
-            if (p < pagesToWrite)
+            for (uint32_t s = 0; s < ttd::dump::kSubPagesPerEmuPage; ++s)
             {
-                const TTDPageRef& ref = cp.ramPages[p];
-                if (!ref.IsNeverTouched())
+                uint32_t refOut = ttd::dump::kNeverTouchedSlot;
+                if (p < pagesToWrite)
                 {
-                    auto it = slotRemap.find(ref.storeIndex);
-                    if (it == slotRemap.end())
+                    const TTDPageRef& ref = cp.ramPages[p];
+                    if (ref.slots[s] != TTDPageRef::kNeverTouched)
                     {
-                        err = "checkpoint " + std::to_string(cp.time.frame) +
-                              " references page slot " + std::to_string(ref.storeIndex) +
-                              " which is not in the live remap (corrupt timeline?)";
-                        return false;
+                        auto it = slotRemap.find(ref.slots[s]);
+                        if (it == slotRemap.end())
+                        {
+                            err = "checkpoint " + std::to_string(cp.time.frame) +
+                                  " references page " + std::to_string(p) + " sub " +
+                                  std::to_string(s) + " slot " +
+                                  std::to_string(ref.slots[s]) +
+                                  " which is not in the live remap (corrupt timeline?)";
+                            return false;
+                        }
+                        refOut = it->second;
                     }
-                    refOut = it->second;
                 }
+                if (!WritePod(out, refOut, err)) return false;
             }
-            if (!WritePod(out, refOut, err)) return false;
         }
 
         // Peripheral blobs (length-prefixed).
@@ -1810,10 +2007,12 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     }
     if (schemaVersion != ttd::dump::kSchemaVersion)
     {
-        // v1 is the only version we know how to read. Future versions will
-        // branch here.
+        // v2 is the only version we know how to read. Future versions will
+        // branch here. v1 files are refused without migration — the codec
+        // format change is breaking by design (no v1 support).
         err = "unsupported schema v" + std::to_string(schemaVersion) +
-              " (only v" + std::to_string(ttd::dump::kSchemaVersion) + " implemented)";
+              " (only v" + std::to_string(ttd::dump::kSchemaVersion) +
+              " implemented; v1 files are not supported — re-capture the session)";
         return false;
     }
 
@@ -1887,30 +2086,108 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     _dirtyScratch.clear();
     _modelRamPages = modelRamPages;
 
-    // --- Read page store ---
+    // --- Read page store (v2 codec format) ---
     //
-    // We do NOT use _pageStore.Intern() here because Intern sets refcount=1
-    // and we need refcount = (total references across the timeline). Instead
-    // we Intern each slot (giving refcount=1), then after reading all the
-    // checkpoints we Release every slot once. The net effect: refcount ends
-    // up at (total references), matching what SerializeSession would produce
-    // for the same content. This keeps the invariants straight even though
-    // the page-store API was designed for the incremental-capture pattern,
-    // not bulk load.
+    // Each on-disk slot is at compact index [0..pageStoreCount). We re-intern
+    // each slot using InternFull / InternXor as appropriate. The codec page
+    // store produces sequential indices matching the on-disk layout — we
+    // assert that.
     //
-    // Each on-disk slot is at compact index [0..pageStoreCount). The page
-    // store was just Reset, so Intern calls produce sequential indices
-    // matching the on-disk layout — we assert that.
+    // Refcount bookkeeping: Intern* sets refcount=1. Checkpoint reads below
+    // call AddRef for each reference. We Release every slot once after all
+    // checkpoints are read; net refcount = number of references across the
+    // timeline, matching what SerializeSession would produce for the same
+    // content.
     for (uint32_t i = 0; i < pageStoreCount; ++i)
     {
-        uint8_t pageBuffer[ttd::dump::kPageSize];
-        in.read(reinterpret_cast<char*>(pageBuffer), ttd::dump::kPageSize);
-        if (!in)
+        uint8_t encByte = 0;
+        if (!ReadPod(in, encByte, err)) return false;
+        uint32_t refcount = 0, prevSlot = 0, crc = 0, payloadSize = 0;
+        if (!ReadPod(in, refcount, err)) return false;
+        if (!ReadPod(in, prevSlot, err)) return false;
+        if (!ReadPod(in, crc, err)) return false;
+        if (!ReadPod(in, payloadSize, err)) return false;
+
+        // Sanity: payload is bounded (4 KB page compresses to at most ~4 KB).
+        if (payloadSize > ttd::dump::kSubPageSize * 2)
         {
-            err = "stream read failed (page slot " + std::to_string(i) + ")";
+            err = "slot " + std::to_string(i) + ": implausible payload size " +
+                  std::to_string(payloadSize);
             return false;
         }
-        const uint32_t newIdx = _pageStore.Intern(pageBuffer);
+
+        std::vector<uint8_t> payload(payloadSize);
+        if (payloadSize != 0)
+        {
+            in.read(reinterpret_cast<char*>(payload.data()), payloadSize);
+            if (!in)
+            {
+                err = "stream read failed (slot " + std::to_string(i) + " payload)";
+                return false;
+            }
+        }
+
+        // Materialize the slot in the codec page store.
+        // The codec page store API doesn't have a "bulk load" path; we use
+        // InternFull / InternXor to recreate each slot.
+        //
+        // Future optimization: add a TTDCodecPageStore::LoadSlot() that
+        // stores the pre-compressed payload directly without re-decoding /
+        // re-compressing.
+        uint32_t newIdx = 0;
+        if (encByte == ttd::dump::kEncodingZero)
+        {
+            // Reconstruct the zero page and InternFull it (codec detects zero).
+            uint8_t zeroBuf[ttd::dump::kSubPageSize];
+            std::memset(zeroBuf, 0, sizeof(zeroBuf));
+            newIdx = _pageStore.InternFull(zeroBuf);
+        }
+        else if (encByte == ttd::dump::kEncodingFull)
+        {
+            // Decompress payload → 4 KB page → InternFull.
+            uint8_t pageBuf[ttd::dump::kSubPageSize];
+            if (!ttd::codec::Decompress(payload, ttd::dump::kSubPageSize, pageBuf))
+            {
+                err = "zstd decompress failed on slot " + std::to_string(i);
+                return false;
+            }
+            newIdx = _pageStore.InternFull(pageBuf);
+        }
+        else if (encByte == ttd::dump::kEncodingXorPrev)
+        {
+            // The on-disk payload is Compress(GetPage(idx)) — i.e. the FULL
+            // reconstructed 4 KB page, NOT a delta (see SerializeSession).
+            // We decompress and pass the full page to InternXor, which will
+            // internally compute the XOR-against-prev delta and pick the
+            // smaller of (delta, full) for the in-memory encoding.
+            //
+            // NB: an earlier version of this code XORed the decompressed
+            // payload with prev_page before calling InternXor, treating the
+            // payload as if it were a delta. That double-XORed on GetPage
+            // and produced systematically wrong page content for every
+            // XorPrev slot. Round-trip tests caught it.
+            if (prevSlot == ttd::dump::kNeverTouchedSlot || prevSlot >= i)
+            {
+                err = "slot " + std::to_string(i) +
+                      ": invalid prev_slot " + std::to_string(prevSlot) +
+                      " (must be < current index)";
+                return false;
+            }
+            uint8_t pageBuf[ttd::dump::kSubPageSize];
+            if (!ttd::codec::Decompress(payload, ttd::dump::kSubPageSize, pageBuf))
+            {
+                err = "zstd decompress failed on XorPrev slot " + std::to_string(i);
+                return false;
+            }
+            newIdx = _pageStore.InternXor(prevSlot, pageBuf);
+        }
+        else
+        {
+            err = "slot " + std::to_string(i) + ": unknown encoding " +
+                  std::to_string(encByte);
+            return false;
+        }
+
         if (newIdx != i)
         {
             err = "page store layout drift: slot " + std::to_string(i) +
@@ -1932,34 +2209,45 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
 
         if (!ReadPod(in, cp.time.frame, err)) return false;
         if (!ReadPod(in, cp.globalT, err)) return false;
+
+        // v2 additions: frame kind + keyframe anchor.
+        uint8_t frameKindByte = 0;
+        if (!ReadPod(in, frameKindByte, err)) return false;
+        cp.frameKind = static_cast<TTDFrameKind>(frameKindByte);
+        if (!ReadPod(in, cp.keyFrameAnchor, err)) return false;
+
         if (!ReadPod(in, cp.cpu, err)) return false;
         if (!ReadPod(in, cp.chipset, err)) return false;
 
         cp.ramPages.resize(_modelRamPages);
         for (uint16_t p = 0; p < _modelRamPages; ++p)
         {
-            uint32_t ref = 0;
-            if (!ReadPod(in, ref, err)) return false;
-            if (ref == ttd::dump::kNeverTouchedPageRef)
+            for (uint32_t s = 0; s < ttd::dump::kSubPagesPerEmuPage; ++s)
             {
-                cp.ramPages[p].storeIndex = TTDPageRef::kNeverTouched;
-            }
-            else if (ref < pageStoreCount)
-            {
-                cp.ramPages[p].storeIndex = ref;
-                // Bump refcount for this reference. The Intern above set
-                // refcount=1; we'll subtract that initial 1 once after the
-                // checkpoint loop. Net: refcount == number of references
-                // across the deserialized timeline.
-                _pageStore.AddRef(ref);
-            }
-            else
-            {
-                err = "checkpoint " + std::to_string(i) + " page " + std::to_string(p) +
-                      ": slot index " + std::to_string(ref) +
-                      " out of range (pageStoreCount=" +
-                      std::to_string(pageStoreCount) + ")";
-                return false;
+                uint32_t ref = 0;
+                if (!ReadPod(in, ref, err)) return false;
+                if (ref == ttd::dump::kNeverTouchedSlot)
+                {
+                    cp.ramPages[p].slots[s] = TTDPageRef::kNeverTouched;
+                }
+                else if (ref < pageStoreCount)
+                {
+                    cp.ramPages[p].slots[s] = ref;
+                    // Bump refcount for this reference. The Intern above set
+                    // refcount=1; we'll subtract that initial 1 once after the
+                    // checkpoint loop. Net: refcount == number of references
+                    // across the deserialized timeline.
+                    _pageStore.AddRef(ref);
+                }
+                else
+                {
+                    err = "checkpoint " + std::to_string(i) + " page " + std::to_string(p) +
+                          " sub " + std::to_string(s) +
+                          ": slot index " + std::to_string(ref) +
+                          " out of range (pageStoreCount=" +
+                          std::to_string(pageStoreCount) + ")";
+                    return false;
+                }
             }
         }
 

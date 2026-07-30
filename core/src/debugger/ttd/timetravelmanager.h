@@ -51,7 +51,7 @@
 #include "ttd_checkpoint.h"
 #include "ttd_external_events.h"
 #include "ttd_input_journal.h"
-#include "ttd_page_store.h"
+#include "ttd_codec_page_store.h"
 
 // Forward declarations — we don't pull emulator headers into this header.
 // (EmulatorContext, Memory, Z80State, EmulatorState are all classes/structs
@@ -110,11 +110,25 @@ struct TTDSessionInfo
     /// counts only live slots, not free-list capacity that's still
     /// allocated).
     size_t   sessionHeapBytes = 0;
+
+    // --- Phase 5 codec telemetry (XOR+zstd-1 compression) ---
+    uint64_t keyFrameCount    = 0;  ///< Number of I-frames captured
+    uint64_t deltaFrameCount  = 0;  ///< Number of P-frames captured
+    double   compressionRatio = 1.0; ///< kPageSize / mean(payload) across live slots
+    size_t   livePayloadBytes = 0;  ///< Sum of compressed payload bytes (live slots)
 };
 
 class TimeTravelManager
 {
 public:
+    /// @brief I-frame / P-frame discriminator.
+    ///
+    /// Per Phase 5 PoC: every K-th frame is a key frame (full RAM snapshot);
+    /// frames in between are delta frames (only dirty pages, XOR-encoded).
+    /// K=50 gives ~2 ms average seek and ~50 ms worst case (full chain walk).
+    /// See docs/inprogress/2026-07-19-time-travel/phase-5-codec-poc-results.md
+    static constexpr uint32_t kKeyFrameInterval = 50;
+
     /// @brief Construct the manager. Does NOT start recording.
     /// @param context  Emulator context (provides Memory, EmulatorState, Z80).
     explicit TimeTravelManager(EmulatorContext* context);
@@ -517,7 +531,7 @@ public:
     const TTDCheckpoint* GetCheckpoint(size_t idx) const;
 
     /// @brief Read-only access to the page store (for tests / budget checks).
-    inline const TTDPageStore& GetPageStore() const { return _pageStore; }
+    inline const TTDCodecPageStore& GetPageStore() const { return _pageStore; }
 
     /// @brief Number of model-RAM pages (set at StartRecording from the
     /// active model's RAM size).
@@ -546,9 +560,14 @@ private:
     /// @brief Update outRamPages for the next checkpoint: dirty pages get
     /// freshly Intern'd, clean pages AddRef the previous checkpoint's slot.
     /// Pages beyond _modelRamPages stay NEVER_TOUCHED.
+    ///
+    /// @param isKeyFrame  When true, every model RAM page is re-interned as
+    ///                   Full (I-frame path). When false, only dirty pages
+    ///                   are touched (P-frame path).
     void UpdateRamPages(const std::vector<uint16_t>& dirtyPages,
                         const std::vector<TTDPageRef>& prevRamPages,
-                        std::vector<TTDPageRef>& outRamPages);
+                        std::vector<TTDPageRef>& outRamPages,
+                        bool isKeyFrame);
 
     /// @brief Release every page ref held by a checkpoint (used when
     /// invalidating or thinning).
@@ -647,8 +666,33 @@ private:
     /// The recorded timeline. Appended only on the emulator thread.
     std::vector<TTDCheckpoint> _timeline;
 
-    /// Backing COW page pool.
-    TTDPageStore _pageStore;
+    /// Backing codec page store (4 KB pages, XOR+zstd-1 compression).
+    TTDCodecPageStore _pageStore;
+
+    /// Last captured keyframe index. P-frames between this and the next
+    /// I-frame restore by walking deltas from this anchor. Updated on
+    /// every OnFrameBoundary when an I-frame is emitted.
+    uint64_t _lastKeyFrameIdx = 0;
+
+    /// Force the next OnFrameBoundary capture to be an I-frame regardless
+    /// of the periodic interval. Set by Reset / Load / debugger-edit hooks
+    /// (anything that introduces non-deterministic state the codec can't
+    /// reconstruct from deltas).
+    bool _forceNextKeyFrame = true;
+
+    /// Materialized-RAM cache: when restoring P-frames in sequence, we
+    /// keep the most-recent fully-reconstructed RAM image here so the next
+    /// restore can walk only the *new* deltas from the cached anchor
+    /// instead of decompressing the full delta chain back to the I-frame.
+    ///
+    /// Invalidation: any write to live RAM (capture path, live run)
+    /// invalidates this. Only valid while _state == Detached.
+    struct MaterializedRamCache {
+        bool        valid = false;
+        uint64_t    frame = 0;      ///< Frame index that this cache represents
+        std::vector<uint8_t> ram;   ///< _modelRamPages × PAGE_SIZE bytes
+    };
+    MaterializedRamCache _ramCache;
 
     /// Number of physical RAM pages on the active model (set at StartRecording).
     /// Pages in [0, _modelRamPages) are captured; pages in [_modelRamPages,

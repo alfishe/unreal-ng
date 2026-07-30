@@ -255,6 +255,18 @@ if (BUILD_QT_APPS)
 endif ()
 
 # ========================================
+# zstd (system-installed; used by TTD codec for RAM page compression)
+# ========================================
+# find_package here so the `zstd::libzstd` target is visible everywhere.
+# The actual include-path propagation is done per-target in
+# core/src/CMakeLists.txt via target_include_directories(... PUBLIC ...) —
+# NOT via directory-scoped include_directories(), which would pollute
+# sibling targets like the vendored jsoncpp (whose own headers must win
+# over any system-installed jsoncpp from /opt/homebrew/include).
+find_package(zstd REQUIRED)
+message(STATUS "zstd found: ${zstd_VERSION} (top-level)")
+
+# ========================================
 # Core Library
 # ========================================
 message(STATUS ">>> Building core library")

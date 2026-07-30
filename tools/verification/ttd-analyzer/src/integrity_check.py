@@ -1,8 +1,9 @@
-"""Structural integrity checks for parsed .ttd dumps.
+"""Structural integrity checks for parsed .ttd dumps (v2).
 
 These verify that the *file format itself* is sound: every page reference
 resolves, the timeline is monotonically increasing, peripheral blob sizes
-are within expected bounds, and the page store is the right size.
+are within expected bounds, the codec page store is internally consistent,
+and every CRC32C recomputes correctly.
 
 If a dump fails integrity checks, the analyzer output is unreliable — the
 file is corrupt or was produced by a buggy writer. Report and stop.
@@ -13,7 +14,19 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List
 
-from .ttd_format import Checkpoint, TtdDump, NEVER_TOUCHED_PAGE_REF, PAGE_SIZE
+from .ttd_format import (
+    Checkpoint,
+    PageSlot,
+    TtdDump,
+    ENCODING_FULL,
+    ENCODING_XOR_PREV,
+    ENCODING_ZERO,
+    FRAME_KIND_KEY_FRAME,
+    FRAME_KIND_DELTA_FRAME,
+    NEVER_TOUCHED_SLOT,
+    NEVER_TOUCHED_PAGE_REF,  # backward-compat alias
+    SUB_PAGES_PER_EMU_PAGE,
+)
 
 
 @dataclass
@@ -46,18 +59,21 @@ def check_integrity(dump: TtdDump) -> IntegrityReport:
     rep = IntegrityReport()
     h = dump.header
 
-    # ---- Page store sanity ----
-    actual_page_bytes = len(dump.page_store)
-    expected_page_bytes = h.page_store_count * PAGE_SIZE
-    if actual_page_bytes != expected_page_bytes:
+    # ---- Page store count sanity (v2: variable-size slots, no byte-size check) ----
+    actual_slot_count = len(dump.slots)
+    if actual_slot_count != h.page_store_count:
         rep.issues.append(Issue(
             severity="error",
-            code="page_store_size_mismatch",
+            code="page_store_count_mismatch",
             message=(
-                f"page store is {actual_page_bytes} bytes, header claims "
-                f"{h.page_store_count} pages * {PAGE_SIZE} = {expected_page_bytes}"
+                f"page store has {actual_slot_count} slots, header claims "
+                f"{h.page_store_count}"
             ),
         ))
+
+    # ---- Per-slot codec sanity (cross-field rules + chain topology) ----
+    for slot in dump.slots:
+        _check_slot(rep, slot)
 
     # ---- Checkpoint count sanity ----
     if len(dump.checkpoints) != h.checkpoint_count:
@@ -70,37 +86,64 @@ def check_integrity(dump: TtdDump) -> IntegrityReport:
             ),
         ))
 
-    # ---- Per-checkpoint page reference checks ----
-    page_count = dump.page_count
+    # ---- Per-checkpoint checks ----
+    expected_refs = h.model_ram_pages * SUB_PAGES_PER_EMU_PAGE
+    slot_count = len(dump.slots)
     for cp in dump.checkpoints:
-        # Each checkpoint should have exactly model_ram_pages refs
-        if len(cp.ram_page_refs) != h.model_ram_pages:
+        # Each checkpoint must have exactly 4 * model_ram_pages sub-slot refs.
+        if len(cp.ram_sub_slots) != expected_refs:
             rep.issues.append(Issue(
                 severity="error",
-                code="wrong_ram_page_count",
+                code="wrong_ram_sub_slot_count",
                 message=(
-                    f"checkpoint {cp.index} has {len(cp.ram_page_refs)} "
-                    f"ram_page_refs, expected {h.model_ram_pages}"
+                    f"checkpoint {cp.index} has {len(cp.ram_sub_slots)} "
+                    f"ram_sub_slots, expected {expected_refs} "
+                    f"({h.model_ram_pages} pages × {SUB_PAGES_PER_EMU_PAGE} sub)"
                 ),
                 checkpoint_index=cp.index,
             ))
 
-        # Every non-NEVER_TOUCHED ref must point at a valid slot
-        for page_idx, ref in enumerate(cp.ram_page_refs):
-            if ref == NEVER_TOUCHED_PAGE_REF:
+        # Every non-NEVER_TOUCHED ref must point at a valid slot index.
+        for i, ref in enumerate(cp.ram_sub_slots):
+            page_idx = i // SUB_PAGES_PER_EMU_PAGE
+            sub_idx = i % SUB_PAGES_PER_EMU_PAGE
+            if ref == NEVER_TOUCHED_SLOT:
                 continue
-            if ref >= page_count:
+            if ref >= slot_count:
                 rep.issues.append(Issue(
                     severity="error",
-                    code="dangling_page_ref",
+                    code="dangling_sub_slot_ref",
                     message=(
-                        f"checkpoint {cp.index} page {page_idx} references "
-                        f"slot {ref}, but page store has only {page_count} slots"
+                        f"checkpoint {cp.index} page {page_idx} sub {sub_idx} "
+                        f"references slot {ref}, but page store has only "
+                        f"{slot_count} slots"
                     ),
                     checkpoint_index=cp.index,
                 ))
 
-        # Peripheral blob size sanity (peripheral blobs are tiny)
+        # Frame-kind consistency with the timeline.
+        if cp.index == 0 and cp.frame_kind != FRAME_KIND_KEY_FRAME:
+            rep.issues.append(Issue(
+                severity="error",
+                code="first_checkpoint_not_keyframe",
+                message=(
+                    f"checkpoint 0 (baseline) must be a KeyFrame; got "
+                    f"frame_kind={cp.frame_kind}"
+                ),
+                checkpoint_index=cp.index,
+            ))
+        if cp.frame_kind == FRAME_KIND_KEY_FRAME and cp.keyframe_anchor != cp.frame:
+            rep.issues.append(Issue(
+                severity="error",
+                code="keyframe_anchor_mismatch",
+                message=(
+                    f"KeyFrame checkpoint {cp.index} (frame={cp.frame}) must "
+                    f"have keyframe_anchor == frame; got {cp.keyframe_anchor}"
+                ),
+                checkpoint_index=cp.index,
+            ))
+
+        # Peripheral blob size sanity (peripheral blobs are tiny).
         for blob_name, blob, max_reasonable in (
             ("ay",    cp.ay_blob,    4096),
             ("fdc",   cp.fdc_blob,   4096),
@@ -158,4 +201,113 @@ def check_integrity(dump: TtdDump) -> IntegrityReport:
                 ),
             ))
 
+    # ---- Optional: CRC verification (only if no errors so far) ----
+    # Decompression + CRC recompute is expensive (walks every XorPrev chain);
+    # we skip it if structural checks already failed since results would be
+    # unreliable. The integrity surface is still meaningful because each
+    # decompression already validates the zstd framing.
+    if rep.ok:
+        _verify_crcs(rep, dump)
+
     return rep
+
+
+def _check_slot(rep: IntegrityReport, slot: PageSlot) -> None:
+    """Per-slot cross-field consistency rules. Cheap; runs on every slot."""
+    # Encoding-specific payload rules (parser enforces these too — this is
+    # the analyzer's defense-in-depth check).
+    if slot.encoding == ENCODING_ZERO:
+        if slot.payload:
+            rep.issues.append(Issue(
+                severity="error",
+                code="zero_slot_has_payload",
+                message=(
+                    f"slot {slot.index} is Zero encoding but has "
+                    f"{len(slot.payload)} bytes of payload (must be empty)"
+                ),
+            ))
+        if slot.prev_slot != NEVER_TOUCHED_SLOT:
+            rep.issues.append(Issue(
+                severity="warning",
+                code="zero_slot_has_prev",
+                message=(
+                    f"slot {slot.index} is Zero encoding but prev_slot="
+                    f"{slot.prev_slot} (should be NEVER_TOUCHED)"
+                ),
+            ))
+    elif slot.encoding == ENCODING_FULL:
+        if not slot.payload:
+            rep.issues.append(Issue(
+                severity="error",
+                code="full_slot_empty_payload",
+                message=(
+                    f"slot {slot.index} is Full encoding but payload is empty"
+                ),
+            ))
+        if slot.prev_slot != NEVER_TOUCHED_SLOT:
+            rep.issues.append(Issue(
+                severity="warning",
+                code="full_slot_has_prev",
+                message=(
+                    f"slot {slot.index} is Full encoding but prev_slot="
+                    f"{slot.prev_slot} (should be NEVER_TOUCHED)"
+                ),
+            ))
+    elif slot.encoding == ENCODING_XOR_PREV:
+        if not slot.payload:
+            rep.issues.append(Issue(
+                severity="error",
+                code="xorprev_slot_empty_payload",
+                message=(
+                    f"slot {slot.index} is XorPrev encoding but payload is empty"
+                ),
+            ))
+        if slot.prev_slot == NEVER_TOUCHED_SLOT:
+            rep.issues.append(Issue(
+                severity="error",
+                code="xorprev_slot_missing_prev",
+                message=(
+                    f"slot {slot.index} is XorPrev encoding but prev_slot is "
+                    f"NEVER_TOUCHED sentinel"
+                ),
+            ))
+        # Chain topology: prev_slot must point earlier in the store (forward-only).
+        # This catches cycles and back-references that would infinite-loop on
+        # decompression.
+        elif slot.prev_slot >= slot.index:
+            rep.issues.append(Issue(
+                severity="error",
+                code="xorprev_backward_or_self_ref",
+                message=(
+                    f"slot {slot.index} has prev_slot={slot.prev_slot} "
+                    f"(must be strictly less than {slot.index} — chains "
+                    f"are forward-only)"
+                ),
+            ))
+
+
+def _verify_crcs(rep: IntegrityReport, dump: TtdDump) -> None:
+    """Re-decompress every slot referenced by any checkpoint and verify CRC.
+
+    Skips unreferenced slots (they're dead code in the dump and don't
+    contribute to integrity for any visible checkpoint).
+    """
+    referenced = set()
+    for cp in dump.checkpoints:
+        for ref in cp.ram_sub_slots:
+            if ref != NEVER_TOUCHED_SLOT:
+                referenced.add(ref)
+
+    for slot_idx in sorted(referenced):
+        try:
+            # get_sub_page recompresses, decompresses, walks XorPrev chain.
+            # Any tampering post-write would surface here.
+            dump.get_sub_page(slot_idx)
+        except Exception as e:
+            rep.issues.append(Issue(
+                severity="error",
+                code="slot_decompress_failed",
+                message=(
+                    f"slot {slot_idx}: decompress/CRC verify failed: {e}"
+                ),
+            ))

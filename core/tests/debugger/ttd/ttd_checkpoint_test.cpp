@@ -497,13 +497,27 @@ TEST(TTDCheckpointTest, Composite_RoundTrip)
 
 TEST(TTDPageRefTest, NeverTouchedSentinel)
 {
+    // v2: TTDPageRef holds 4 sub-page slot indices. A ref is "normal" iff
+    // at least one sub-slot is populated; "never touched" iff all four are
+    // the kNeverTouched sentinel.
     TTDPageRef normal;
-    normal.storeIndex = 5;
+    normal.slots[0] = 5;
+    normal.slots[1] = 6;
+    normal.slots[2] = 7;
+    normal.slots[3] = 8;
     EXPECT_FALSE(normal.IsNeverTouched());
 
     TTDPageRef untouched;
-    untouched.storeIndex = TTDPageRef::kNeverTouched;
+    untouched.SetNeverTouched();
     EXPECT_TRUE(untouched.IsNeverTouched());
+
+    // Mixed (some sub-pages touched, others never touched) is NOT never-touched.
+    TTDPageRef mixed;
+    mixed.slots[0] = 5;
+    mixed.slots[1] = TTDPageRef::kNeverTouched;
+    mixed.slots[2] = TTDPageRef::kNeverTouched;
+    mixed.slots[3] = TTDPageRef::kNeverTouched;
+    EXPECT_FALSE(mixed.IsNeverTouched());
 }
 
 TEST(TTDPageRefTest, SentinelValueDoesNotCollideWithSmallIndices)

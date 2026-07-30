@@ -581,7 +581,7 @@ uint8_t WD1793::getStatusRegister()
         };
 
         // Set head load state based on HLD and HLT signals
-        uint8_t headStatus = ((_extStatus & SIG_OUT_HLD) && (_beta128Register & 0b0000'1000)) ? WDS_HEADLOADED : 0;
+        uint8_t headStatus = (_extStatus & SIG_OUT_HLD) ? WDS_HEADLOADED : 0;
         if (headStatus)
         {
             _statusRegister |= headStatus;

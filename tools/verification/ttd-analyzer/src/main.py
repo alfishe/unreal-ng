@@ -56,7 +56,15 @@ from .anomaly_detector import detect_anomalies
 from .framebuffer_renderer import RenderError, render_checkpoint, render_dirty_heatmap
 from .integrity_check import check_integrity
 from .timeline_report import generate_markdown_report, ReportOptions
-from .ttd_format import NEVER_TOUCHED_PAGE_REF, TtdFormatError, parse_file
+from .ttd_format import (
+    ENCODING_FULL,
+    ENCODING_XOR_PREV,
+    ENCODING_ZERO,
+    NEVER_TOUCHED_SLOT,
+    SUB_PAGES_PER_EMU_PAGE,
+    TtdFormatError,
+    parse_file,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -106,16 +114,35 @@ def cmd_info(args: argparse.Namespace) -> int:
           f"{h.model_ram_pages * 16} KB RAM)")
     print(f"cpu_state_size={h.cpu_state_size}, "
           f"chipset_state_size={h.chipset_state_size}")
-    print(f"page_store: {h.page_store_count} slots "
-          f"({_format_size(h.page_store_count * 16384)})")
+    # v2: slots are variable-size and compressed. Report live payload bytes
+    # (sum of compressed payloads) and the codec ratio rather than the v1
+    # "slots × 16 KB" estimate, which no longer reflects reality.
+    live_bytes = dump.live_payload_bytes
+    raw_bytes = sum(
+        4096 for s in dump.slots
+        if s.encoding != ENCODING_ZERO
+    )
+    n_zero = sum(1 for s in dump.slots if s.encoding == ENCODING_ZERO)
+    n_full = sum(1 for s in dump.slots if s.encoding == ENCODING_FULL)
+    n_xor  = sum(1 for s in dump.slots if s.encoding == ENCODING_XOR_PREV)
+    print(f"page_store: {h.page_store_count} live slots "
+          f"({_format_size(live_bytes)} compressed payload, "
+          f"{_format_size(raw_bytes)} raw → "
+          f"{dump.compression_ratio * 100:.1f}% of raw)")
+    print(f"  slot breakdown: {n_full} Full, {n_xor} XorPrev, {n_zero} Zero")
     print(f"checkpoints: {h.checkpoint_count}")
     print(f"frame range: {h.session_start_frame} … {h.session_end_frame}")
     print(f"emulator_id: {h.emulator_id!r}")
     if dump.checkpoints:
+        n_key = sum(1 for cp in dump.checkpoints if cp.is_keyframe)
+        print(f"frame kinds:   {n_key} I-frame, "
+              f"{len(dump.checkpoints) - n_key} P-frame")
         print(f"\nFirst checkpoint: frame={dump.checkpoints[0].frame}, "
+              f"kind={'I' if dump.checkpoints[0].is_keyframe else 'P'}, "
               f"PC=0x{dump.checkpoints[0].cpu.pc:04X}, "
               f"SP=0x{dump.checkpoints[0].cpu.sp:04X}")
         print(f"Last checkpoint:  frame={dump.checkpoints[-1].frame}, "
+              f"kind={'I' if dump.checkpoints[-1].is_keyframe else 'P'}, "
               f"PC=0x{dump.checkpoints[-1].cpu.pc:04X}, "
               f"SP=0x{dump.checkpoints[-1].cpu.sp:04X}")
     return 0
@@ -173,15 +200,20 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         print(f"  checkpoints: {len(dump.checkpoints)}")
         print(f"  first frame: {dump.checkpoints[0].frame}")
         print(f"  last frame:  {dump.checkpoints[-1].frame}")
-        # Quick stats
+        # Quick stats. v2: ram_sub_slots is the flat 4×model_ram_pages list;
+        # report per-checkpoint dirty sub-slot count.
         dirty_counts = [
-            sum(1 for r in cp.ram_page_refs if r != NEVER_TOUCHED_PAGE_REF)
+            sum(1 for r in cp.ram_sub_slots if r != NEVER_TOUCHED_SLOT)
             for cp in dump.checkpoints
         ]
         if dirty_counts:
-            print(f"  dirty pages/checkpoint: "
+            print(f"  dirty sub-slots/checkpoint: "
                   f"min={min(dirty_counts)}, max={max(dirty_counts)}, "
-                  f"avg={sum(dirty_counts) / len(dirty_counts):.1f}")
+                  f"avg={sum(dirty_counts) / len(dirty_counts):.1f} "
+                  f"(of {dump.header.model_ram_pages * SUB_PAGES_PER_EMU_PAGE} possible)")
+        n_key = sum(1 for cp in dump.checkpoints if cp.is_keyframe)
+        print(f"  I-frames: {n_key} / {len(dump.checkpoints)} "
+              f"({n_key * 100 / max(1, len(dump.checkpoints)):.1f}%)")
 
     return 0
 
@@ -325,8 +357,9 @@ def cmd_heatmap(args: argparse.Namespace) -> int:
     except RenderError as e:
         print(f"error: {e}", file=sys.stderr)
         return 4
-    print(f"wrote dirty-page heatmap "
-          f"({len(dump.checkpoints)} × {dump.header.model_ram_pages} px) "
+    print(f"wrote dirty-sub-page heatmap "
+          f"({len(dump.checkpoints)} × "
+          f"{dump.header.model_ram_pages * SUB_PAGES_PER_EMU_PAGE} px) "
           f"to {args.output}", file=sys.stderr)
     return 0
 

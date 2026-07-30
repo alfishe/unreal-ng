@@ -145,7 +145,15 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 )
 
 # Note: core library is linked by the parent project (unreal-qt)
-# Static libraries should only use headers, not link dependencies
+# Static libraries should only use headers, not link dependencies.
+#
+# EXCEPTION: zstd::libzstd is linked here because core's ttd_compression.h
+# (pulled in transitively via timetravelmanager.h -> ttd_codec_page_store.h
+# -> lua_emulator.h) #includes <zstd.h>, and we use core/src via raw include
+# paths rather than target_link_libraries(unrealng::core). zstd::libzstd is
+# an INTERFACE IMPORTED target so this does NOT add any link output to
+# automation_lua; it only propagates zstd's include directory.
+target_link_libraries(${PROJECT_NAME} PUBLIC zstd::libzstd)
 
 #------------------------------------------------------------------------------
 # Export targets (disabled for now due to core dependency issues)

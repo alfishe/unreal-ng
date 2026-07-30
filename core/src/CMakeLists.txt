@@ -46,6 +46,22 @@ include(${ROOT_DIR}/cmake/func.cmake)
 # liblzma
 add_subdirectory(3rdparty/liblzma)
 
+# zstd (system-installed; used by TTD codec for RAM page compression).
+# The official zstd cmake config exports `zstd::libzstd` with
+# INTERFACE_INCLUDE_DIRECTORIES. We propagate that path via the core
+# target's PUBLIC target_include_directories below so that consumers
+# using either target_link_libraries(core) OR
+# $<TARGET_PROPERTY:unrealng::core,INCLUDE_DIRECTORIES> see zstd.h.
+#
+# CRITICAL: do NOT use directory-scoped include_directories(${_zstd_iface_inc})
+# here — that would pollute every add_subdirectory under core/, including
+# core/automation/webapi/lib/jsoncpp, which would then resolve `json/reader.h`
+# to the Homebrew-installed jsoncpp (/opt/homebrew/include/json/reader.h)
+# instead of the vendored 1.9.5 headers, breaking the build.
+find_package(zstd REQUIRED)
+message(STATUS "zstd found: ${zstd_VERSION}")
+get_target_property(_zstd_iface_inc zstd::libzstd INTERFACE_INCLUDE_DIRECTORIES)
+
 # All C++ sources in /src and sub-folders will be compiled
 file (GLOB_RECURSE CPP_FILES ${SOURCE_DIR}/*.cpp)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/build/" FALSE OUTVAR CPP_FILES)
@@ -76,11 +92,20 @@ if (CMAKE_BUILD_TYPE MATCHES Debug)
     target_compile_definitions(${PROJECT_NAME} PRIVATE _DEBUG)
 endif (CMAKE_BUILD_TYPE MATCHES Debug)
 
-# Set include paths for compiler
+# Set include paths for compiler.
+# zstd's include dir is added PUBLIC so:
+#   - Direct linkers (target_link_libraries(... core)) inherit it.
+#   - Sibling targets that use
+#     $<TARGET_PROPERTY:unrealng::core,INCLUDE_DIRECTORIES> (e.g.
+#     automation-cli, automation-lua, automation-webapi) also see it.
+# This is the only correct way to propagate a system include path without
+# polluting the global include search order (which would shadow vendored
+# headers like jsoncpp's).
 target_include_directories(${PROJECT_NAME} PUBLIC
     ${SOURCE_DIR}/
     ${SOURCE_DIR}/common
     ${SOURCE_DIR}/emulator
+    ${_zstd_iface_inc}
 )
 
 
@@ -90,6 +115,13 @@ target_precompile_headers(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/stdafx.h)
 
 # Link lzma library
 target_link_libraries(${PROJECT_NAME} PRIVATE lzma)
+
+# Link zstd (TTD codec)
+# PUBLIC because ttd_compression.h is a public header (included by
+# ttd_codec_page_store.h → timetravelmanager.h → consumed by unreal-qt,
+# automation/lua, automation/webapi, tests). All consumers need zstd's
+# include path available.
+target_link_libraries(${PROJECT_NAME} PUBLIC $<TARGET_NAME:zstd::libzstd>)
 
 # Platform-specific framework and library linkage
 # For static libraries consumed externally, framework deps MUST be PUBLIC

@@ -156,10 +156,17 @@ DivergenceHistory TTDDivergenceHarness::ExtractHashesFromTimeline()
         // miniature. Pages marked NEVER_TOUCHED hash as zero (their live
         // content at capture time was the baseline, and the baseline is
         // whatever the snapshot set up).
+        //
+        // v2 codec: each emu page is split into 4 × 4 KB sub-pages with
+        // independent slot indices. We reconstruct the 16 KB page by
+        // walking each sub-slot through GetPage (which transparently
+        // walks the XOR-prev chain back to a Full slot).
         uint64_t ram_digest = 0;
         const uint16_t pages = std::min<uint16_t>(
             ttd->GetModelRamPages(),
             static_cast<uint16_t>(cp->ramPages.size()));
+        // Scratch buffer for one reconstructed 4 KB sub-page.
+        uint8_t subPageBuf[TTDCodecPageStore::kPageSize];
         for (uint16_t p = 0; p < pages; ++p)
         {
             const TTDPageRef& ref = cp->ramPages[p];
@@ -172,9 +179,24 @@ DivergenceHistory TTDDivergenceHarness::ExtractHashesFromTimeline()
                     ram_digest = HashCombine(ram_digest, page, PAGE_SIZE);
                 continue;
             }
-            const uint8_t* stored = ttd->GetPageStore().GetPage(ref.storeIndex);
-            if (stored)
-                ram_digest = HashCombine(ram_digest, stored, PAGE_SIZE);
+            // v2: reconstruct each of the 4 sub-pages individually.
+            for (uint32_t s = 0; s < 4; ++s)
+            {
+                const uint32_t slot = ref.slots[s];
+                if (slot == TTDPageRef::kNeverTouched)
+                {
+                    // Sub-page never touched — hash the live 4 KB slice.
+                    uint8_t* page = _memory ? _memory->RAMPageAddress(p) : nullptr;
+                    if (page)
+                        ram_digest = HashCombine(ram_digest,
+                                                 page + s * TTDCodecPageStore::kPageSize,
+                                                 TTDCodecPageStore::kPageSize);
+                    continue;
+                }
+                if (ttd->GetPageStore().GetPage(slot, subPageBuf))
+                    ram_digest = HashCombine(ram_digest, subPageBuf,
+                                             TTDCodecPageStore::kPageSize);
+            }
         }
         f.ram_digest = ram_digest;
 

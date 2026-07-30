@@ -45,7 +45,13 @@ import struct
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-from .ttd_format import Checkpoint, PAGE_SIZE, TtdDump
+from .ttd_format import (
+    Checkpoint,
+    EMU_PAGE_SIZE,
+    NEVER_TOUCHED_SLOT,
+    SUB_PAGES_PER_EMU_PAGE,
+    TtdDump,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -140,7 +146,9 @@ def decode_screen_rgb(
         The checkpoint (its ``chipset.p7ffd`` selects the screen bank; its
         ``chipset.border_attr`` paints the border).
     ram
-        Materialized RAM image (use ``dump.materialize_ram(cp)``).
+        Materialized RAM image (use ``dump.materialize_ram(cp)``). Must be
+        at least ``(bank + 1) * EMU_PAGE_SIZE`` bytes; the screen occupies
+        the top 6912 bytes of the selected 16 KB bank.
     border_px
         Border thickness in pixels on each side. 0 disables the border.
     flash_phase
@@ -152,7 +160,7 @@ def decode_screen_rgb(
     ScreenImage with width = 256 + 2*border_px, height = 192 + 2*border_px.
     """
     bank = _selected_screen_bank(cp.chipset.p7ffd)
-    bank_offset = bank * PAGE_SIZE
+    bank_offset = bank * EMU_PAGE_SIZE
     if bank_offset + SCREEN_BYTES > len(ram):
         raise RenderError(
             f"materialized RAM is only {len(ram)} bytes; cannot read bank "
@@ -233,10 +241,15 @@ def render_dirty_heatmap(
     out_path: str,
     fmt: str = "auto",
 ) -> ScreenImage:
-    """Render a one-pixel-per-checkpoint wide heatmap of dirty pages.
+    """Render a one-pixel-per-checkpoint wide heatmap of dirty sub-pages.
 
     Useful for spotting capture gaps visually: a row of solid colour means
     the dirty tracker was inactive (bug); normal sessions show a noisy band.
+
+    v2 layout: rows are individual 4 KB sub-pages
+    (``model_ram_pages * SUB_PAGES_PER_EMU_PAGE`` rows tall). Each row of
+    four corresponds to one 16 KB emulator page; faint horizontal dividers
+    every 4 rows mark emu-page boundaries when viewed zoomed-out.
 
     Returns the produced image (also writes it to ``out_path``).
     """
@@ -244,27 +257,26 @@ def render_dirty_heatmap(
     if n_cps == 0:
         raise RenderError("no checkpoints to render")
 
-    # Heatmap dimensions: 1 px wide per checkpoint × 32 px high (one row
-    # per RAM page). Brightness = how many unique pages in that checkpoint's
-    # row had the slot dirty.
-    height = dump.header.model_ram_pages
+    # Heatmap dimensions: 1 px wide per checkpoint × (N sub-pages) high.
+    # v2 stores 4 sub-slots per emu page, so height is 4× the v1 value.
+    height = dump.header.model_ram_pages * SUB_PAGES_PER_EMU_PAGE
     buf = bytearray(n_cps * height * 3)
 
     for x, cp in enumerate(dump.checkpoints):
-        # For each RAM page slot, color = ink (colorful) if a real ref,
-        # black if NEVER_TOUCHED.
-        for page_idx, ref in enumerate(cp.ram_page_refs):
-            y = page_idx
-            base = (y * n_cps + x) * 3
-            if ref == 0xFFFFFFFF:
-                # Black = "never touched" — the page is at session-start
+        # Walk the flat sub-slot list (length = model_ram_pages * 4).
+        # The list is ordered (page, sub) — row 0..3 are page 0's sub-pages,
+        # row 4..7 are page 1's sub-pages, and so on.
+        for row, ref in enumerate(cp.ram_sub_slots):
+            base = (row * n_cps + x) * 3
+            if ref == NEVER_TOUCHED_SLOT:
+                # Black = "never touched" — the sub-page is at session-start
                 # content and the capture has nothing to replay.
                 continue
             # Colour the pixel by low bits of the slot index. This produces
             # a colourful but stable colour per slot, making it easy to spot
-            # "the same page flickered between captures" patterns visually.
-            # Clamp each channel to [0,255]: the formula (n*32 + 32) gives
-            # 0..256 inclusive, which overflows at ref%8 == 7.
+            # "the same sub-page flickered between captures" patterns
+            # visually. Clamp each channel to [0,255]: the formula
+            # (n*32 + 32) gives 0..256 inclusive, which overflows at ref%8==7.
             r = min(255, (ref & 0x07) * 32 + 32)
             g = min(255, ((ref >> 3) & 0x07) * 32 + 32)
             b = min(255, ((ref >> 6) & 0x07) * 32 + 32)

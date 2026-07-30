@@ -20,7 +20,7 @@
 #include "debugger/ttd/ttd_checkpoint.h"
 #include "debugger/ttd/ttd_dirty_tracker.h"
 #include "debugger/ttd/timetravelmanager.h"
-#include "debugger/ttd/ttd_page_store.h"
+#include "debugger/ttd/ttd_codec_page_store.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -138,7 +138,7 @@ TEST_F(TimeTravelManager_Test, StartRecording_CapturesBaseline)
     EXPECT_TRUE(_ttd->IsRecording());
     EXPECT_EQ(_ttd->GetCheckpointCount(), 1u);  // Baseline
 
-    // Baseline should have Intern'd every model RAM page (v1 strategy)
+    // Baseline (I-frame) captures every model RAM page as 4 × 4 KB Full sub-pages.
     const ttd::TTDCheckpoint* baseline = _ttd->GetCheckpoint(0);
     ASSERT_NE(baseline, nullptr);
 
@@ -148,11 +148,15 @@ TEST_F(TimeTravelManager_Test, StartRecording_CapturesBaseline)
     ASSERT_GT(expectedPages, 0u);
     EXPECT_EQ(baseline->ramPages.size(), expectedPages);
 
-    // Every baseline page must have a real storeIndex (no NEVER_TOUCHED)
+    // Every baseline page must have real sub-slot indices (no NEVER_TOUCHED).
+    // v2: TTDPageRef.slots[4] holds 4 sub-page slot indices per 16 KB emu page.
     for (uint32_t p = 0; p < expectedPages; ++p)
     {
         EXPECT_FALSE(baseline->ramPages[p].IsNeverTouched())
             << "Baseline page " << p << " should be Intern'd, not NEVER_TOUCHED";
+        for (uint32_t s = 0; s < 4; ++s)
+            EXPECT_NE(baseline->ramPages[p].slots[s], ttd::TTDPageRef::kNeverTouched)
+                << "Baseline page " << p << " sub-page " << s;
     }
 }
 
@@ -161,11 +165,14 @@ TEST_F(TimeTravelManager_Test, StartRecording_PageStoreGrows_ByModelRamPagesTime
     EnableTTD();
     ASSERT_TRUE(_ttd->StartRecording());
 
+    // v2 codec: each emu page is 4 × 4 KB sub-pages → 4 × pages slots.
     uint16_t pages = _ttd->GetModelRamPages();
-    size_t expectedBytes = static_cast<size_t>(pages) * ttd::TTDPageStore::kPageSize;
+    size_t expectedBytes = static_cast<size_t>(pages) * 4u
+                           * ttd::TTDCodecPageStore::kPageSize;
+    size_t expectedSlots = static_cast<size_t>(pages) * 4u;
 
     EXPECT_EQ(_ttd->GetPageStore().GetCapacityBytes(), expectedBytes);
-    EXPECT_EQ(_ttd->GetPageStore().GetUsedSlots(), static_cast<uint32_t>(pages));
+    EXPECT_EQ(_ttd->GetPageStore().GetUsedSlots(), static_cast<uint32_t>(expectedSlots));
 }
 
 TEST_F(TimeTravelManager_Test, StartRecording_Idempotent)
@@ -199,26 +206,34 @@ TEST_F(TimeTravelManager_Test, OnFrameBoundary_WhenRecording_AppendsCheckpoint)
 TEST_F(TimeTravelManager_Test, OnFrameBoundary_CleanFrame_AddRefs_AllPages)
 {
     // After StartRecording, no writes have happened, so the next OnFrameBoundary
-    // should AddRef every page (no new Interns). Page store capacity stays the same.
+    // should AddRef every sub-page (no new Interns). Page store capacity stays
+    // the same.
     EnableTTD();
     ASSERT_TRUE(_ttd->StartRecording());
 
     uint32_t baselineCapacity = _ttd->GetPageStore().GetCapacity();
     uint32_t baselineUsed     = _ttd->GetPageStore().GetUsedSlots();
     uint16_t pages            = _ttd->GetModelRamPages();
+    uint32_t expectedSlots    = static_cast<uint32_t>(pages) * 4u;
 
-    ASSERT_EQ(baselineUsed, static_cast<uint32_t>(pages));
+    ASSERT_EQ(baselineUsed, expectedSlots);
 
-    // Clean frame — every page shared via AddRef
+    // Clean frame — every sub-page shared via AddRef
     _ttd->OnFrameBoundary();
 
     EXPECT_EQ(_ttd->GetCheckpointCount(), 2u);
     EXPECT_EQ(_ttd->GetPageStore().GetCapacity(), baselineCapacity);  // No growth
-    // Each slot now has refcount=2 (baseline + this checkpoint)
+    // Each slot now has refcount=2 (baseline + this checkpoint).
+    // v2: slots are indexed as (page * 4) + sub_page, so total is 4 × pages.
     for (uint32_t p = 0; p < pages; ++p)
     {
-        EXPECT_EQ(_ttd->GetPageStore().GetRefCount(p), 2u)
-            << "Page " << p << " should have refcount=2 after one clean frame";
+        for (uint32_t s = 0; s < 4; ++s)
+        {
+            const uint32_t slot = p * 4u + s;
+            EXPECT_EQ(_ttd->GetPageStore().GetRefCount(slot), 2u)
+                << "Page " << p << " sub-page " << s
+                << " should have refcount=2 after one clean frame";
+        }
     }
 }
 
@@ -230,7 +245,17 @@ TEST_F(TimeTravelManager_Test, OnFrameBoundary_DirtyFrame_InternsOnlyDirtyPages)
     uint16_t pages = _ttd->GetModelRamPages();
     ASSERT_GE(pages, 1u);
 
-    // Manually mark page 0 dirty through the dirty tracker
+    // v2 codec: marking page 0 dirty isn't enough — the codec store
+    // is content-aware and will dedup identical content back to the same slot.
+    // We must actually modify page 0 bytes so the XOR delta is non-zero,
+    // otherwise the new sub-page slots will collapse back to the baseline slots.
+    uint8_t* page0 = _memory->RAMPageAddress(0);
+    ASSERT_NE(page0, nullptr);
+    // Write distinct bytes across all 4 sub-pages so each InternXor produces
+    // a real delta and allocates a new slot.
+    for (uint32_t s = 0; s < 4; ++s)
+        page0[s * ttd::TTDCodecPageStore::kPageSize] = static_cast<uint8_t>(0xA0 + s);
+
     ttd::TTDDirtyTracker* tracker = _memory->GetTTDDirtyTracker();
     ASSERT_NE(tracker, nullptr);
     tracker->MarkDirty(0);  // Page 0
@@ -239,13 +264,14 @@ TEST_F(TimeTravelManager_Test, OnFrameBoundary_DirtyFrame_InternsOnlyDirtyPages)
 
     _ttd->OnFrameBoundary();
 
-    // One new Intern for page 0 → capacity grew by 1
-    EXPECT_EQ(_ttd->GetPageStore().GetCapacity(), capBefore + 1);
-    // Other pages were clean → AddRef'd, same slot index as baseline
-    // Page 0 has a NEW storeIndex (= capBefore, the freshly grown slot)
+    // v2: page 0's 4 sub-pages each get a new slot (4 new XorPrev slots).
+    EXPECT_EQ(_ttd->GetPageStore().GetCapacity(), capBefore + 4);
+    // Each sub-page of page 0 must reference a fresh slot (>= capBefore).
     const ttd::TTDCheckpoint* cp = _ttd->GetCheckpoint(1);
     ASSERT_NE(cp, nullptr);
-    EXPECT_NE(cp->ramPages[0].storeIndex, 0u);  // Not the baseline slot
+    for (uint32_t s = 0; s < 4; ++s)
+        EXPECT_GE(cp->ramPages[0].slots[s], capBefore)
+            << "Page 0 sub-page " << s << " should have a fresh slot index";
 }
 
 TEST_F(TimeTravelManager_Test, OnFrameBoundary_MultipleDirtyPages_InternsAll)
@@ -256,10 +282,19 @@ TEST_F(TimeTravelManager_Test, OnFrameBoundary_MultipleDirtyPages_InternsAll)
     uint16_t pages = _ttd->GetModelRamPages();
     ASSERT_GE(pages, 3u);
 
+    // See DirtyFrame_InternsOnlyDirtyPages for why we must modify bytes:
+    // the v2 codec dedups identical content back to the source slot.
+    for (uint16_t p : {0, 1, 2})
+    {
+        uint8_t* page = _memory->RAMPageAddress(p);
+        ASSERT_NE(page, nullptr);
+        for (uint32_t s = 0; s < 4; ++s)
+            page[s * ttd::TTDCodecPageStore::kPageSize] = static_cast<uint8_t>(0xB0 + p * 4 + s);
+    }
+
     ttd::TTDDirtyTracker* tracker = _memory->GetTTDDirtyTracker();
     ASSERT_NE(tracker, nullptr);
 
-    // Mark 3 pages dirty
     tracker->MarkDirty(0);
     tracker->MarkDirty(1);
     tracker->MarkDirty(2);
@@ -268,7 +303,8 @@ TEST_F(TimeTravelManager_Test, OnFrameBoundary_MultipleDirtyPages_InternsAll)
 
     _ttd->OnFrameBoundary();
 
-    EXPECT_EQ(_ttd->GetPageStore().GetCapacity(), capBefore + 3);
+    // v2: 3 dirty pages × 4 sub-pages = 12 new XorPrev slots.
+    EXPECT_EQ(_ttd->GetPageStore().GetCapacity(), capBefore + 12);
 }
 
 // ===========================================================================
