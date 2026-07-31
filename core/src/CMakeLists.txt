@@ -46,15 +46,16 @@ include(${ROOT_DIR}/cmake/func.cmake)
 # liblzma
 add_subdirectory(3rdparty/liblzma)
 
-# zstd (vendored from official v1.5.7 release via FetchContent).
-# The CMake project in 3rdparty/zstd/ downloads the canonical tarball,
-# builds libzstd_static, and exposes the `zstd::libzstd` alias target
-# (matching the name previously exported by the Homebrew package).
+# zstd v1.5.7 (embedded source — no FetchContent, no find_package).
+# The CMake project in 3rdparty/zstd/ compiles the checked-in source
+# tree under 3rdparty/zstd/lib/ directly into libzstd_static and
+# exposes the `zstd::libzstd` alias target.
 #
-# Why vendor: see 3rdparty/zstd/README.md. The TTD codec depends on zstd
+# Why embed: see 3rdparty/zstd/README.md. The TTD codec depends on zstd
 # at the .ttd on-disk format protocol level, so we cannot ship without
-# a known-pinned version. The codec PoC (tools/poc/poc_codec_extended.py)
-# confirmed zstd-1 remains optimal for the TTD workload in v2.
+# a known-pinned version. The C++ codec PoC (tools/poc/cpp/) confirmed
+# zstd-1 remains optimal for the TTD workload in v2 — see
+# docs/inprogress/2026-07-19-time-travel/phase-5-codec-poc-results.md.
 #
 # CRITICAL: do NOT use directory-scoped include_directories() here — that
 # would pollute every add_subdirectory under core/, including

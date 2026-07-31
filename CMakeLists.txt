@@ -256,18 +256,21 @@ if (BUILD_QT_APPS)
 endif ()
 
 # ========================================
-# zstd (vendored; fetched at configure time)
+# zstd (embedded source; no network dependency)
 # ========================================
-# zstd is now vendored under core/src/3rdparty/zstd/ via FetchContent
-# from the official v1.5.7 release tarball (SHA256-pinned). The
-# add_subdirectory() call inside core/src/CMakeLists.txt builds
-# libzstd_static and exposes the `zstd::libzstd` alias target that
-# the rest of the build links against.
+# zstd v1.5.7 source is embedded at core/src/3rdparty/zstd/lib/ (70
+# files from the official release tarball, checked into the repo). The
+# add_subdirectory() call inside core/src/CMakeLists.txt compiles those
+# sources directly into libzstd_static and exposes the `zstd::libzstd`
+# alias target that the rest of the build links against.
 #
-# Why vendor instead of find_package(zstd REQUIRED): see
-# core/src/3rdparty/zstd/README.md. The TTD codec depends on zstd at
-# the .ttd on-disk format protocol level, so we cannot ship without a
-# known-pinned version.
+# Why embed source instead of FetchContent / find_package(zstd REQUIRED):
+# see core/src/3rdparty/zstd/README.md. Short version:
+#   - No network at configure time (works on air-gapped CI).
+#   - Exact code that ships is auditable in `git log` / `git blame`.
+#   - No host prerequisite (`brew install zstd` not needed).
+#   - TTD codec depends on zstd at the .ttd on-disk format protocol
+#     level, so a known-pinned version is required.
 
 # ========================================
 # Core Library
