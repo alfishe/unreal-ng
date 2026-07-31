@@ -227,6 +227,19 @@ public:
     using Tape::generateBitstream;
 
     using Tape::getPilotSample;
+
+    // Cursor fields — exposed so integration tests can set the playback
+    // position to known values without depending on the ROM LOAD routine
+    // (which would make the test hostage to ROM timing). Used by
+    // ttd_subsystem_restore_test.cpp to verify SeekTo round-trips the
+    // serialized tape cursor blob.
+    using Tape::_tapeStarted;
+    using Tape::_tapePosition;
+    using Tape::_currentTapeBlockIndex;
+    using Tape::_currentPulseIdxInBlock;
+    using Tape::_currentOffsetWithinPulse;
+    using Tape::_currentClockCount;
+    using Tape::_currentTapeBlock;
 };
 
 #endif // _CODE_UNDER_TEST
