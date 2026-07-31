@@ -38,6 +38,7 @@
 #include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (SeekTo in framebuffer determinism test)
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/video/screen.h"       // Screen::FillBorderWithColor / GetBorderColor
 
 namespace {
 
@@ -214,21 +215,26 @@ TEST(TTD_Divergence_Corpus_Test, DizzyY_48K_FramebufferDeterminism)
         // which is uninitialized; on 128K it flips to the shadow screen.
         // Either way the framebuffer will render very different pixels if
         // the renderer's cached state is later read without resync.
+        //
+        // We also call FillBorderWithColor so the border PIXELS in the
+        // framebuffer are corrupted too — without it, RenderOnlyMainScreen
+        // only repaints the inner 256x192 and the test would be vacuous
+        // for border restoration (a real bug class — see
+        // Pentagon128_SeekRepaintsBorderInFramebuffer for the dedicated
+        // regression test).
         const uint8_t borderBefore = screen->GetBorderColor();
         const uint8_t borderCorrupt = (borderBefore ^ 0b111) & 0b0000'0111;
         screen->SetActiveScreen(SCREEN_SHADOW);
         screen->SetBorderColor(borderCorrupt);
-        screen->RenderOnlyMainScreen();  // commit the corrupted render
+        screen->RenderOnlyMainScreen();  // commit the corrupted inner-screen render
+        screen->FillBorderWithColor(borderCorrupt);  // commit the corrupted border render
         const uint64_t corrupted = harness.HashFramebufferKnownGood();
         // The corrupted framebuffer MUST differ from baseline — otherwise
         // the corruption didn't take effect and this iteration is vacuous.
         if (corrupted == baseline)
         {
-            std::cout << "[info] frame " << targetFrame
-                      << ": corruption did not change framebuffer; skipping\n";
             // Re-corrupt with a guaranteed-different border just to be safe.
-            screen->SetBorderColor((borderCorrupt + 1) & 0b0000'0111);
-            screen->RenderOnlyMainScreen();
+            screen->FillBorderWithColor((borderCorrupt + 1) & 0b0000'0111);
         }
 
         // Post-restore: seek to the SAME target frame, hash framebuffer.
@@ -250,6 +256,144 @@ TEST(TTD_Divergence_Corpus_Test, DizzyY_48K_FramebufferDeterminism)
         EXPECT_EQ(screen->GetBorderColor(), borderBefore)
             << "Border color not resynced after restore";
     }
+
+    cleanup();
+}
+
+// =========================================================================
+// Framebuffer BORDER determinism — catches the screen-renderer restore
+// bug where the border pixels in the framebuffer are NOT repainted after
+// a seek, even though the cached _borderColor field is updated.
+//
+// Background: ScreenZX::RenderOnlyMainScreen only paints the inner 256x192
+// screen area. The border pixels around it are painted separately by
+// per-t-state Draw() calls during normal MainLoop execution, OR by an
+// explicit FillBorderWithColor() call. RestoreCheckpoint calls
+// SetBorderColor (updates the cached field) + RenderOnlyMainScreen
+// (paints inner screen) — but does NOT call FillBorderWithColor. So the
+// framebuffer border keeps whatever pixels were there before the seek.
+//
+// The earlier DizzyY_48K_FramebufferDeterminism test was supposed to catch
+// this class of bug, but its corruption step only changes the cached field
+// (SetBorderColor) + calls RenderOnlyMainScreen — neither of which touches
+// the border pixels in the framebuffer. So the test was vacuous for border.
+//
+// This test fills that gap by using FillBorderWithColor for the corruption
+// step, which actually paints border pixels in the framebuffer. If
+// RestoreCheckpoint doesn't call FillBorderWithColor, the corrupted border
+// pixels will leak through the seek and the framebuffer hash will differ.
+//
+// Bug report (user-reported production failure): recorded a 128K demo that
+// had black-with-black-border at frame 1357, seeked there, got a white
+// screen instead. Root cause: framebuffer border had been left white from
+// a previous render and was never repainted by the seek path.
+// =========================================================================
+
+TEST(TTD_Divergence_Corpus_Test, Pentagon128_SeekRepaintsBorderInFramebuffer)
+{
+    Emulator* emu = MakeTtdEmulator("PENTAGON");
+    ASSERT_NE(emu, nullptr);
+    auto cleanup = [&]() { EmulatorTestHelper::CleanupEmulator(emu); };
+
+    ttd::TTDDivergenceHarness harness(emu);
+    ASSERT_TRUE(harness.LoadSnapshot("testdata/loaders/sna/Dizzy Y.sna"))
+        << "Dizzy Y snapshot not found — corpus fixture missing";
+
+    constexpr size_t kFrames = 30;
+    ASSERT_TRUE(harness.StartRecordingAndCaptureTimeline(kFrames));
+    auto expected = harness.ExtractHashesFromTimeline();
+    ASSERT_GE(expected.Size(), kFrames);
+
+    ttd::TimeTravelManager* ttd = emu->GetContext()->pTimeTravelManager;
+    ASSERT_NE(ttd, nullptr);
+    Screen* screen = emu->GetContext()->pScreen;
+    ASSERT_NE(screen, nullptr);
+
+    // Pick a target frame in the middle of the recording. This mirrors
+    // the user's report ("seek to frame 1357") — the bug is independent
+    // of frame number, but a mid-recording target exercises both the
+    // RestoreCheckpoint path and (potentially) the intra-frame silent
+    // replay path.
+    const uint64_t targetFrame = expected.frames[kFrames / 2].frameCounter;
+
+    // Baseline: seek to target frame, hash whole framebuffer (includes
+    // border pixels). This is the "correct" renderered state.
+    ASSERT_TRUE(ttd->SeekTo({targetFrame, 0}));
+    const uint64_t baselineHash = harness.HashFramebufferKnownGood();
+    ASSERT_NE(baselineHash, 0ULL) << "framebuffer hash returned 0 — screen not initialized?";
+    const uint8_t borderAtBaseline = screen->GetBorderColor();
+
+    // Sample the actual top-left border pixel from the framebuffer. The
+    // cached _borderColor field reflects only the LAST OUT (FE) write
+    // before the frame boundary, but the framebuffer border pixels reflect
+    // the full per-t-state history of border changes during the frame.
+    // For a deterministic corruption test we need a corrupt color whose
+    // RGBA value differs from the actual border pixel value — not just
+    // different from the cached field.
+    uint32_t* fbPtr  = nullptr;
+    size_t    fbSize = 0;
+    screen->GetFramebufferData(&fbPtr, &fbSize);
+    ASSERT_NE(fbPtr, nullptr);
+    ASSERT_GT(fbSize, 0u);
+    const uint32_t borderPixelBaseline = fbPtr[0];  // top-left corner = border
+
+    // Scan all 8 ZX border colors and pick one whose RGBA differs from
+    // the actual border pixel. Guaranteed to find one unless every palette
+    // entry maps to the same RGBA (impossible for the standard ZX palette).
+    uint8_t corruptBorder = 0;
+    bool    found         = false;
+    for (uint8_t c = 0; c < 8; ++c)
+    {
+        screen->FillBorderWithColor(c);
+        if (fbPtr[0] != borderPixelBaseline)
+        {
+            corruptBorder = c;
+            found         = true;
+            break;
+        }
+    }
+    ASSERT_TRUE(found) << "No border color produces a different pixel than baseline "
+                       << "— framebuffer is immutable or palette is degenerate";
+
+    // Reset the framebuffer back to baseline before the actual corruption
+    // test, so baselineHash is still valid.
+    ASSERT_TRUE(ttd->SeekTo({targetFrame, 0}));
+    ASSERT_EQ(fbPtr[0], borderPixelBaseline)
+        << "SeekTo did not restore the border pixel value "
+        << "— RestoreCheckpoint updated the cached _borderColor field "
+        << "but did not repaint the framebuffer border pixels";
+
+    // Corrupt the framebuffer border — this PAINTS the border pixels, unlike
+    // the existing test which only changes the cached field. After this,
+    // the framebuffer border pixels show `corruptBorder` instead of
+    // `borderPixelBaseline`.
+    screen->FillBorderWithColor(corruptBorder);
+
+    // Sanity: the corruption MUST have changed the framebuffer.
+    const uint64_t corruptedHash = harness.HashFramebufferKnownGood();
+    ASSERT_NE(corruptedHash, baselineHash)
+        << "FillBorderWithColor(corruptBorder=" << static_cast<int>(corruptBorder)
+        << ") did not change the framebuffer hash — corruption step is vacuous";
+
+    // Post-restore: seek to the SAME target frame. If RestoreCheckpoint
+    // repaints the border (via FillBorderWithColor or equivalent), the
+    // framebuffer hash will match baseline. If it only updates the cached
+    // _borderColor field (the bug), the border pixels stay corrupted and
+    // the hash differs.
+    ASSERT_TRUE(ttd->SeekTo({targetFrame, 0}));
+    const uint64_t postRestoreHash = harness.HashFramebufferKnownGood();
+
+    EXPECT_EQ(baselineHash, postRestoreHash)
+        << "Framebuffer border not repainted after seek. "
+        << "Target frame=" << targetFrame
+        << ", expected border color=" << static_cast<int>(borderAtBaseline)
+        << ", but framebuffer still has corrupted border color="
+        << static_cast<int>(corruptBorder)
+        << " (RestoreCheckpoint updated cached _borderColor but did not call FillBorderWithColor)";
+
+    // Also verify the cached field was resynced (the easy part).
+    EXPECT_EQ(screen->GetBorderColor(), borderAtBaseline)
+        << "Cached border color not resynced after restore";
 
     cleanup();
 }

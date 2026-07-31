@@ -852,7 +852,7 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
 
     // --- Step 5: Screen (TDD §8.1 step 2e) ---
     //
-    // The screen renderer caches two pieces of derived state that the
+    // The screen renderer caches three pieces of derived state that the
     // RestoreChipsetState field-copy above does NOT update:
     //
     //   1. _activeScreenMemoryOffset — points to bank 5 (normal) or bank 7
@@ -865,15 +865,27 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     //
     //   2. _borderColor — derived from bits 0-2 of pFE. Same situation:
     //      the field copy restores pFE in emulatorState but the cached
-    //      screen field is stale until SetBorderColor / FillBorderWithColor
-    //      runs.
+    //      screen field is stale until SetBorderColor runs.
+    //
+    //   3. The BORDER PIXELS IN THE FRAMEBUFFER. RenderOnlyMainScreen only
+    //      repaints the inner 256x192 screen area; the border around it is
+    //      painted separately — either by per-t-state Draw() calls during
+    //      normal MainLoop execution, or by an explicit FillBorderWithColor
+    //      call. When the emulator is paused (as it is here, post-seek),
+    //      MainLoop doesn't run, so the framebuffer border keeps whatever
+    //      pixels were left by the previous render. Without an explicit
+    //      FillBorderWithColor, seeking to a frame whose border color
+    //      differs from the live pre-seek state shows STALE BORDER PIXELS.
+    //      (User-visible bug: recorded a demo with black border, seeked to
+    //      a frame, got a white border from a prior render.)
     //
     // After re-syncing the cached fields, InitFrame resets the renderer's
     // frame-local counters so the next rendered frame starts from a clean
-    // state matching the restored beam position, and RenderOnlyMainScreen
-    // rebuilds the RGBA framebuffer in one batch from the freshly-restored
-    // screen memory. The snapshot loader (loader_z80.cpp:521) uses the
-    // exact same pattern for the same reason.
+    // state matching the restored beam position. RenderOnlyMainScreen then
+    // rebuilds the inner 256x192 RGBA pixels in one batch from the freshly-
+    // restored screen memory, and FillBorderWithColor repaints the border
+    // with the restored pFE bits 0-2. The snapshot loader (loader_z80.cpp)
+    // uses the same pattern for the same reason.
     if (_context->pScreen)
     {
         // Sync active screen bank from restored p7FFD bit 3.
@@ -889,6 +901,16 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
 
         _context->pScreen->InitFrame();
         _context->pScreen->RenderOnlyMainScreen();
+
+        // Repaint the framebuffer border to match the restored border color.
+        // RenderOnlyMainScreen above only touches the inner 256x192 screen
+        // area; without this call the border pixels keep whatever the
+        // previous render left there, producing visible artifacts when the
+        // restored border color differs from the live pre-seek color.
+        // FillBorderWithColor also re-calls SetBorderColor internally, but
+        // we set it explicitly above for clarity and to keep the cached
+        // field correct even if a future FillBorderWithColor impl forgets.
+        _context->pScreen->FillBorderWithColor(borderColor);
     }
 
     // t_states and frame_counter were already restored by RestoreChipsetState.
