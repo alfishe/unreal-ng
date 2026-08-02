@@ -1,17 +1,28 @@
 /// @file ttd_api.cpp
 /// @brief WebAPI TTD (Time-Travel Debug) endpoints.
 ///
-/// Per parent TDD §10.4. Full TTD automation surface (Phase 2 complete):
-///   GET  /ttd/status      — session info
-///   POST /ttd/start       — begin recording
-///   POST /ttd/stop        — stop recording (history retained)
-///   POST /ttd/invalidate  — drop all history, return to Idle
-///   POST /ttd/seek        — seek to (frame, tInFrame)
-///   POST /ttd/step-back   — step back one frame
-///   POST /ttd/step-forward — step forward one frame
-///   POST /ttd/resume      — resume recording from a past point
-///   GET  /ttd/position    — current TTDTimePoint
-///   GET  /ttd/markers     — list external-event markers (replay barriers)
+/// Per parent TDD §10.4. Full TTD automation surface:
+///
+/// Phase 2 (core TTD):
+///   GET  /ttd/status        — session info
+///   POST /ttd/start         — begin recording
+///   POST /ttd/stop          — stop recording (history retained)
+///   POST /ttd/invalidate    — drop all history, return to Idle
+///   POST /ttd/seek          — seek to (frame, tInFrame)
+///   POST /ttd/step-back     — step back one frame
+///   POST /ttd/step-forward  — step forward one frame
+///   POST /ttd/resume        — resume recording from a past point
+///   GET  /ttd/position      — current TTDTimePoint
+///   GET  /ttd/markers       — list external-event markers (replay barriers)
+///
+/// Phase 4 (reverse search):
+///   POST /ttd/dump          — serialize session to .ttd file
+///   POST /ttd/find-last     — reverse search: find last access at address
+///   POST /ttd/step-instruction — step one instruction back or forward
+///
+/// Phase 4 (reverse execution):
+///   POST /ttd/reverse-step       — step back N instructions or T t-states
+///   POST /ttd/reverse-continue   — run backward until any PC matches
 ///
 /// The status endpoint surfaces every field of TTDSessionInfo so automation
 /// clients and the divergence-test harness can poll the recorder without
@@ -830,6 +841,149 @@ void EmulatorAPI::stepInstructionTTD(const HttpRequestPtr& req,
     ret["dir"]      = forward ? "forward" : "back";
     ret["frame"]    = Json::UInt64(pos.frame);
     ret["tinframe"] = Json::UInt(pos.tInFrame);
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/ttd/reverse-step
+///
+/// Body: { "count"?: int, "tstates"?: int }  — exactly one of the two.
+///   count    : step back N instructions (M1 boundaries)
+///   tstates  : step back N t-states (lands at nearest M1 <= target)
+///
+/// Response: { "reached": bool, "frame": int, "tinframe": int }
+void EmulatorAPI::reverseStepTTD(const HttpRequestPtr& req,
+                                   std::function<void(const HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const
+{
+    std::shared_ptr<Emulator> emulator;
+    auto* mgr = resolveTTD(id, callback, /*requireManager=*/true, &emulator);
+    if (!mgr) return;
+
+    if (rejectIfRecording(mgr, callback)) return;
+
+    auto json = req->getJsonObject();
+    const bool hasCount   = json && json->isMember("count");
+    const bool hasTstates = json && json->isMember("tstates");
+
+    if (hasCount && hasTstates)
+    {
+        Json::Value err;
+        err["error"] = "Specify exactly one of 'count' or 'tstates' (not both)";
+        auto resp = HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    if (!hasCount && !hasTstates)
+    {
+        Json::Value err;
+        err["error"] = "Missing required field: 'count' or 'tstates'";
+        auto resp = HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    PauseAndConfirm(emulator);
+
+    bool ok = false;
+    if (hasTstates)
+    {
+        const uint64_t t = (*json)["tstates"].asUInt64();
+        ok = mgr->ReverseStepTStates(t);
+    }
+    else
+    {
+        const uint32_t n = static_cast<uint32_t>((*json)["count"].asUInt64());
+        ok = mgr->ReverseStepInstructions(n);
+    }
+
+    ttd::TTDTimePoint pos = mgr->CurrentPosition();
+    if (emulator)
+        NotifyFrameRefresh(*emulator);
+
+    Json::Value ret;
+    ret["reached"] = ok;
+    ret["mode"]    = hasTstates ? "tstates" : "count";
+    ret["frame"]   = Json::UInt64(pos.frame);
+    ret["tinframe"] = Json::UInt(pos.tInFrame);
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/ttd/reverse-continue
+///
+/// Body: { "pcs": [int, ...] }  — non-empty list of reverse breakpoints.
+///
+/// Response: { "matched": bool, "pc": int, "frame": int, "tinframe": int,
+///             "blocked_by_marker"?: { ... } }
+void EmulatorAPI::reverseContinueTTD(const HttpRequestPtr& req,
+                                       std::function<void(const HttpResponsePtr&)>&& callback,
+                                       const std::string& id) const
+{
+    std::shared_ptr<Emulator> emulator;
+    auto* mgr = resolveTTD(id, callback, /*requireManager=*/true, &emulator);
+    if (!mgr) return;
+
+    if (rejectIfRecording(mgr, callback)) return;
+
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("pcs") || !(*json)["pcs"].isArray())
+    {
+        Json::Value err;
+        err["error"] = "Missing or invalid 'pcs' (expected a JSON array of integers)";
+        auto resp = HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    const auto& pcsArr = (*json)["pcs"];
+    if (pcsArr.empty())
+    {
+        Json::Value err;
+        err["error"] = "'pcs' array must be non-empty";
+        auto resp = HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    std::vector<uint16_t> bps;
+    bps.reserve(pcsArr.size());
+    for (Json::ArrayIndex i = 0; i < pcsArr.size(); ++i)
+        bps.push_back(static_cast<uint16_t>(pcsArr[i].asUInt()));
+
+    PauseAndConfirm(emulator);
+
+    auto result = mgr->ReverseContinue(bps);
+    if (emulator)
+        NotifyFrameRefresh(*emulator);
+
+    Json::Value ret;
+    ret["matched"]  = result.matched;
+    ret["pc"]       = result.pc;
+    ret["frame"]    = Json::UInt64(result.arrivedAt.frame);
+    ret["tinframe"] = Json::UInt(result.arrivedAt.tInFrame);
+
+    if (result.blockingMarker.reason[0] != '\0')
+    {
+        Json::Value m;
+        m["kind"]   = ttd::TTDExternalEventKindToString(result.blockingMarker.kind);
+        m["reason"] = result.blockingMarker.reason;
+        m["frame"]  = Json::UInt64(result.blockingMarker.time.frame);
+        m["tinframe"] = Json::UInt(result.blockingMarker.time.tInFrame);
+        ret["blocked_by_marker"] = m;
+    }
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);

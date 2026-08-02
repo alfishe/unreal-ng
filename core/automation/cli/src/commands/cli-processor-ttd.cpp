@@ -114,6 +114,16 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     {
         HandleTTDStepInstruction(session, context, args);
     }
+    else if (subcommand == "reverse-step"   ||
+             subcommand == "reverse-continue" ||
+             subcommand == "rs"             ||
+             subcommand == "rc")
+    {
+        if (subcommand == "reverse-continue" || subcommand == "rc")
+            HandleTTDReverseContinue(session, context, args);
+        else
+            HandleTTDReverseStep(session, context, args);
+    }
     else if (subcommand == "help" || subcommand == "?")
     {
         ShowTTDHelp(session);
@@ -149,6 +159,13 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "    [--value V] [--pc-from X] [--pc-to Y]" << NEWLINE;
     ss << "    [--before-frame F] [--before-tin T]" << NEWLINE;
     ss << "  ttd step-instruction <back|fwd>  Step one instruction (aliases: si-back, si-forward)" << NEWLINE;
+    ss << NEWLINE;
+    ss << "Phase 4 — Reverse Execution:" << NEWLINE;
+    ss << "  ttd reverse-step [--count N]     Step back N instructions (default: 1)" << NEWLINE;
+    ss << "    [--tstates T]                     Step back T t-states (aligns to M1)" << NEWLINE;
+    ss << "  ttd reverse-continue --pc <A>    Run backward until any PC matches" << NEWLINE;
+    ss << "    [--pc <B> ...]                    (repeat --pc for multiple breakpoints)" << NEWLINE;
+    ss << "  Aliases: rs=reverse-step, rc=reverse-continue" << NEWLINE;
     ss << NEWLINE;
     ss << "Notes:" << NEWLINE;
     ss << "  - Seek/step/resume require the emulator to be paused." << NEWLINE;
@@ -582,6 +599,114 @@ void CLIProcessor::HandleTTDStepInstruction(const ClientSession& session, Emulat
                              (forward ? "forward (at session end)" : "back (at session start)") +
                              NEWLINE);
     }
+}
+
+void CLIProcessor::HandleTTDReverseStep(const ClientSession& session, EmulatorContext* context,
+                                          const std::vector<std::string>& args)
+{
+    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
+
+    // Parse --count N and --tstates T from args[1..]
+    uint32_t count   = 1;
+    bool     hasCount = false;
+    uint64_t tstates  = 0;
+    bool     hasTstates = false;
+
+    for (size_t i = 1; i < args.size(); ++i)
+    {
+        const std::string& tok = args[i];
+        if (tok == "--count" && i + 1 < args.size())
+        {
+            count = static_cast<uint32_t>(std::stoul(args[++i]));
+            hasCount = true;
+        }
+        else if (tok == "--tstates" && i + 1 < args.size())
+        {
+            tstates = std::stoull(args[++i]);
+            hasTstates = true;
+        }
+    }
+
+    bool ok;
+    ttd::TTDTimePoint pos{};
+    if (hasTstates)
+    {
+        ok = mgr->ReverseStepTStates(tstates);
+    }
+    else
+    {
+        ok = mgr->ReverseStepInstructions(count);
+    }
+    (void)hasCount;
+
+    if (ok)
+    {
+        pos = mgr->CurrentPosition();
+        std::stringstream ss;
+        if (hasTstates)
+        {
+            ss << "TTD: Stepped back " << tstates << " t-states to ";
+        }
+        else
+        {
+            ss << "TTD: Stepped back " << count << " instruction"
+               << (count == 1 ? "" : "s") << " to ";
+        }
+        ss << "(frame=" << pos.frame << ", tInFrame=" << pos.tInFrame << ")" << NEWLINE;
+        session.SendResponse(ss.str());
+    }
+    else
+    {
+        session.SendResponse(std::string("TTD: Reverse-step failed (at session start or out of history)") + NEWLINE);
+    }
+}
+
+void CLIProcessor::HandleTTDReverseContinue(const ClientSession& session, EmulatorContext* context,
+                                             const std::vector<std::string>& args)
+{
+    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
+
+    // Parse one or more --pc <V> arguments.
+    std::vector<uint16_t> bps;
+    for (size_t i = 1; i < args.size(); ++i)
+    {
+        const std::string& tok = args[i];
+        if (tok == "--pc" && i + 1 < args.size())
+        {
+            bps.push_back(static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0)));
+        }
+    }
+
+    if (bps.empty())
+    {
+        session.SendResponse(std::string("Error: --pc is required (at least one)") + NEWLINE +
+                             "Usage: ttd reverse-continue --pc <A> [--pc <B> ...]" + NEWLINE);
+        return;
+    }
+
+    auto result = mgr->ReverseContinue(bps);
+
+    std::stringstream ss;
+    if (result.matched)
+    {
+        ss << "TTD: Reverse-continue hit PC=0x" << std::hex << std::uppercase
+           << std::setfill('0') << std::setw(4) << result.pc << std::dec
+           << " at (frame=" << result.arrivedAt.frame
+           << ", tInFrame=" << result.arrivedAt.tInFrame << ")" << NEWLINE;
+    }
+    else if (result.blockingMarker.reason[0] != '\0')
+    {
+        ss << "TTD: Reverse-continue blocked by marker at "
+           << "(frame=" << result.blockingMarker.time.frame
+           << ", tInFrame=" << result.blockingMarker.time.tInFrame << ")" << NEWLINE;
+        ss << "  Kind: " << ttd::TTDExternalEventKindToString(result.blockingMarker.kind) << NEWLINE;
+        ss << "  Reason: " << result.blockingMarker.reason << NEWLINE;
+    }
+    else
+    {
+        ss << "TTD: Reverse-continue found no match (reached session start)" << NEWLINE;
+    }
+    session.SendResponse(ss.str());
 }
 
 /// endregion </TTD Commands>

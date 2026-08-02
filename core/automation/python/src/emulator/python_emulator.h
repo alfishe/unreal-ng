@@ -1580,6 +1580,38 @@ namespace PythonBindings
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pTimeTravelManager) return false;
                 return ctx->pTimeTravelManager->StepForwardInstruction();
-            }, "Step forward one instruction");
+            }, "Step forward one instruction")
+
+        // -----------------------------------------------------------------
+        // Phase 4 reverse execution (multi-step + reverse-continue).
+        // -----------------------------------------------------------------
+            .def("ttd_reverse_step", [](Emulator& self, uint32_t count) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager) return false;
+                return ctx->pTimeTravelManager->ReverseStepInstructions(count);
+            }, "Step back N instructions (M1 boundaries)",
+               py::arg("count") = 1)
+
+            .def("ttd_reverse_step_tstates", [](Emulator& self, uint64_t tstates) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager) return false;
+                return ctx->pTimeTravelManager->ReverseStepTStates(tstates);
+            }, "Step back N t-states (lands at nearest M1 <= target)",
+               py::arg("tstates"))
+
+            .def("ttd_reverse_continue", [](Emulator& self, const std::vector<uint16_t>& pcs) -> py::object {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager) return py::none();
+                auto r = ctx->pTimeTravelManager->ReverseContinue(pcs);
+                if (!r.matched)
+                    return py::none();
+                py::dict d;
+                d["matched"]  = true;
+                d["pc"]       = r.pc;
+                d["frame"]    = r.arrivedAt.frame;
+                d["tinframe"] = r.arrivedAt.tInFrame;
+                return d;
+            }, "Run backward until any PC matches; returns dict or None",
+               py::arg("pcs"));
     }
 }

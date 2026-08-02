@@ -296,6 +296,10 @@ private:
                            const std::vector<std::string>& args);
     void HandleTTDStepInstruction(const ClientSession& session, EmulatorContext* context,
                                    const std::vector<std::string>& args);
+    void HandleTTDReverseStep(const ClientSession& session, EmulatorContext* context,
+                              const std::vector<std::string>& args);
+    void HandleTTDReverseContinue(const ClientSession& session, EmulatorContext* context,
+                                   const std::vector<std::string>& args);
 
     // Command map
     std::unordered_map<std::string, CommandHandler> _commandHandlers;

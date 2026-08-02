@@ -18,6 +18,10 @@ four automation surfaces (CLI, Python, WebAPI, contract tests) expose `dump`,
 `find-last`, and `step-instruction`. The `.ttd` binary format evolves
 additively to v3 with an embedded write journal section.
 
+> **Note**: LUA bindings for `dump`, `find-last`, `step-instruction`, and
+> reverse-execution were added in the follow-up Phase 4 reverse-execution
+> delivery — see [`phase-4-reverse-execution.md`](phase-4-reverse-execution.md).
+
 **Exit criteria** (per parent TDD §16):
 - `StepBackInstruction` / `StepForwardInstruction` green (§16 row 2)
 - `FindLastAccess` green (§16 row 3)

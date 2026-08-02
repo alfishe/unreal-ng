@@ -583,7 +583,96 @@ public:
     /// from the current position. Returns false when at or past the session
     /// end (no further history).
     bool StepForwardInstruction();
-    
+
+    // -----------------------------------------------------------------------
+    // Phase 4 reverse execution (extends single-opcode step helpers with
+    // multi-step / reverse-continue primitives).
+    //
+    // The single-opcode StepBackInstruction above internally calls
+    // FindLastAccess(Execute) which restore+replays once per call. For N
+    // backward opcodes, that's N independent restore+replay passes —
+    // wasteful when the N target M1 cycles all live within (or near) the
+    // same frame interval.
+    //
+    // The reverse execution primitives use a smarter strategy: do ONE
+    // silent-replay pass over the interval [target_start, currentGlobalT],
+    // recording every M1 cycle in a vector, then either index the Nth-
+    /// from-end record (ReverseStepInstructions / ReverseStepTStates) or
+    // scan backward for the first PC match (ReverseContinue).
+    //
+    // Strategy selection (constants below):
+    //   - n <= kReverseSeqStepMaxN:       delegate to N × StepBackInstruction
+    //                                     (no enumeration overhead)
+    //   - kReverseSeqStepMaxN < n <= large: M1 enumeration + index/scan
+    //
+    // Thresholds are pinned by `core/benchmarks/debugger/ttd/
+    // ttd_reverse_benchmark.cpp` — see Stage C of the reverse-execution
+    // phase plan.
+    // -----------------------------------------------------------------------
+
+    /// @brief Adaptive per-strategy cutoffs.
+    ///
+    /// Tuned by `core/benchmarks/debugger/ttd/ttd_reverse_benchmark.cpp`.
+    /// See `docs/inprogress/2026-07-19-time-travel/phase-4-reverse-execution.md`
+    /// for the benchmark table and threshold rationale.
+    ///
+    /// @note Calibrated for Release builds. In Debug the per-call overhead
+    ///       of A_seq (one restore+replay per step) is ~30 ms, so the
+    ///       crossover to B_m1list is at N=2; in Release it's at N=4.
+    ///       Production binaries run Release, so we use 4.
+    static constexpr uint32_t kReverseSeqStepMaxN  = 4;   // N ≤ this → A_seq (repeated StepBackInstruction)
+    static constexpr uint32_t kReverseM1ListLargeN = 64;  // N ≥ this → B_m1list is decisively faster (≥ 2×)
+
+    /// @brief Step back N instructions (M1 boundaries) in one call.
+    ///
+    /// For n <= kReverseSeqStepMaxN:   delegates to repeated StepBackInstruction().
+    /// For n > kReverseSeqStepMaxN:    single M1-enumeration pass + index Nth-from-end.
+    ///
+    /// @return true on success. False (with a warning log) if the manager
+    ///         is Recording, the timeline is empty, the current position is
+    ///         at session start, or fewer than n instructions exist before
+    ///         the current position.
+    bool ReverseStepInstructions(uint32_t n);
+
+    /// @brief Step back N t-states, landing at the nearest M1 cycle
+    ///        whose globalT <= (currentGlobalT - n).
+    ///
+    /// Z80 has no observable state between M1 cycles, so landing mid-
+    /// instruction is meaningless; this primitive always lands on a clean
+    /// instruction boundary.
+    ///
+    /// Internally: enumerate M1 records over [startGlobalT, currentGlobalT],
+    /// where startGlobalT is comfortably below (currentGlobalT - n) to ensure
+    /// the landing M1 is captured; pick the last M1 whose globalT <= target.
+    ///
+    /// @return true on success. False at session start, in Recording state,
+    ///         or when no M1 record ≤ target exists.
+    bool ReverseStepTStates(uint64_t n);
+
+    /// @brief Result struct returned by ReverseContinue.
+    struct TTDReverseContinueResult
+    {
+        bool           matched   = false;
+        uint16_t       pc        = 0xFFFF;   ///< Valid iff matched.
+        TTDTimePoint   arrivedAt{};          ///< Where the emulator landed.
+        TTDExternalEvent blockingMarker{};   ///< Set iff a barrier halted the scan.
+    };
+
+    /// @brief Run backward until any PC in `breakpoints` matches.
+    ///
+    /// Enumerates every M1 cycle from session start (or first barrier) up to
+    /// the current position in a single forward silent-replay pass, then
+    /// scans the resulting vector backward for the first PC hit. The
+    /// emulator is positioned at the hit (or at the blocking marker).
+    ///
+    /// This is the primitive GDB G3 will eventually wrap as
+    /// `reverse-continue` over RSP.
+    ///
+    /// @param breakpoints  Set of PC values to match. Empty set returns
+    ///                     {matched=false} immediately.
+    /// @return See TTDReverseContinueResult.
+    TTDReverseContinueResult ReverseContinue(const std::vector<uint16_t>& breakpoints);
+
     /// @brief Read-only accessor for the write journal (for serialization
     /// and tests).
     inline const TTDWriteJournal& GetWriteJournal() const { return _writeJournal; }
@@ -705,6 +794,37 @@ private:
     /// @param targetFrame  Frame index (must match the restored checkpoint).
     /// @param targetTInFrame T-state offset within the frame to stop at.
     void ReplayWithinFrame(uint64_t targetFrame, uint32_t targetTInFrame);
+
+    // -----------------------------------------------------------------------
+    // Phase 4 reverse execution: M1 enumeration helper (private).
+    // -----------------------------------------------------------------------
+    //
+    // Enumerates every M1 cycle in [startGlobalT, endGlobalT) into outM1s.
+    // Walks checkpoint intervals backward from the one containing endGlobalT
+    // until reaching the one containing startGlobalT (or a barrier). For
+    // each interval: restore the checkpoint, arm the Execute probe with
+    // full address range, silent-replay forward to the interval end, extract
+    // hits, prepend them to outM1s in time order. Stops at the first marker
+    // barrier; the caller (ReverseStep*/ReverseContinue) decides what to do
+    // with the partial results.
+    //
+    // Note: doesn't SeekTo anywhere — the caller consumes the M1 list and
+    // then SeekTos the chosen record's globalT. The probe is disarmed on
+    // return (matches FindLastAccess discipline).
+    //
+    // Returns the blocking marker (if any) via outBlockingMarker. Returns
+    // the globalT of the earliest interval scanned via outEarliestScannedGlobalT
+    // so ReverseStepInstructions can tell the difference between "nothing in
+    // range" and "the range was clipped by a barrier / session start".
+    struct EnumerateResult
+    {
+        const TTDExternalEvent* barrier = nullptr;            ///< Non-owning; valid only during the caller's stack frame.
+        uint64_t earliestScannedGlobalT = 0;                  ///< Lowest globalT actually inspected.
+    };
+    EnumerateResult EnumerateM1InRange(uint64_t startGlobalT,
+                                       uint64_t endGlobalT,
+                                       std::vector<TTDM1Record>& outM1s,
+                                       TTDExternalEvent* outBlockingMarkerStorage);
 
     // -----------------------------------------------------------------------
     // Internal resume helpers (Phase 2 Item 5; parent TDD §8.3)

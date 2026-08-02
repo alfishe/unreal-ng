@@ -1628,6 +1628,14 @@ void Emulator::RunTStates(unsigned tStates, bool skipBreakpoints)
             {
                 targetT -= frameLimit;
             }
+            else
+            {
+                // targetT was within the frame that just ended — the
+                // overshooting instruction already executed past it. Stop
+                // to avoid running an entire extra frame (which would
+                // inflate frame_counter and corrupt TTD probe records).
+                break;
+            }
         }
     }
 

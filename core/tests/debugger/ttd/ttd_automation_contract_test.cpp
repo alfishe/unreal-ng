@@ -541,4 +541,75 @@ TEST_F(TTD_Automation_Contract_Test, StepInstruction_BackwardForwardRoundTrip)
     EXPECT_LE(globalTAfterBack, globalTAfterForward);
 }
 
+// ===========================================================================
+// Phase 4 — Reverse Execution contract tests
+//
+// These verify the method signatures and return shapes that the WebAPI
+// endpoints (/ttd/reverse-step, /ttd/reverse-continue), CLI handlers
+// (ttd reverse-step, ttd reverse-continue), and Python bindings
+// (ttd_reverse_step, ttd_reverse_continue) all depend on.
+// ===========================================================================
+
+TEST_F(TTD_Automation_Contract_Test, ReverseStep_QueryShape_HasExpectedFields)
+{
+    // ReverseStepInstructions(count) returns bool. After a successful call,
+    // CurrentPosition must return a valid (frame, tInFrame) pair.
+    // The WebAPI serializes this as { "reached": bool, "frame": int, "tinframe": int }.
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(10);
+    _ttd->StopRecording();
+
+    ASSERT_TRUE(_ttd->SeekTo(_ttd->SessionEndPosition()));
+    const ttd::TTDTimePoint before = _ttd->CurrentPosition();
+
+    // Contract: returns bool.
+    bool ok = _ttd->ReverseStepInstructions(16);
+    EXPECT_TRUE(ok);
+
+    // Contract: CurrentPosition returns a valid TTDTimePoint that moved backward.
+    const ttd::TTDTimePoint after = _ttd->CurrentPosition();
+    EXPECT_TRUE(after < before);
+
+    // Contract: frame and tInFrame are accessible scalar fields.
+    EXPECT_GE(after.frame, 0u);
+    EXPECT_LT(after.frame, before.frame + 1);
+    // tInFrame is bounded by config.frame.
+    const uint32_t frameT = _context->config.frame;
+    EXPECT_LT(after.tInFrame, frameT);
+}
+
+TEST_F(TTD_Automation_Contract_Test, ReverseContinue_QueryShape_HasExpectedFields)
+{
+    // ReverseContinue(pcs) returns TTDReverseContinueResult with fields:
+    //   matched (bool), pc (uint16_t), arrivedAt (TTDTimePoint).
+    // The WebAPI serializes this as
+    //   { "matched": bool, "pc": int, "frame": int, "tinframe": int }.
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(10);
+    _ttd->StopRecording();
+
+    ASSERT_TRUE(_ttd->SeekTo(_ttd->SessionEndPosition()));
+
+    // Use the current PC as the reverse breakpoint — it must match.
+    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    ASSERT_NE(z80, nullptr);
+    const uint16_t targetPC = z80->pc;
+
+    auto result = _ttd->ReverseContinue({targetPC});
+
+    // Contract: matched is bool, pc is uint16_t.
+    EXPECT_TRUE(result.matched);
+    EXPECT_EQ(result.pc, targetPC);
+
+    // Contract: arrivedAt has valid frame and tInFrame.
+    EXPECT_GE(result.arrivedAt.frame, 0u);
+    const uint32_t frameT = _context->config.frame;
+    EXPECT_LT(result.arrivedAt.tInFrame, frameT);
+
+    // Contract: no-match returns matched=false, pc=0xFFFF.
+    auto noMatch = _ttd->ReverseContinue({0xFFFE});
+    EXPECT_FALSE(noMatch.matched);
+    EXPECT_EQ(noMatch.pc, 0xFFFF);
+}
+
 /// endregion

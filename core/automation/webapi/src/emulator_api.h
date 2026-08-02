@@ -303,6 +303,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::dumpTTD, "/api/v1/emulator/{id}/ttd/dump", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::findLastTTD, "/api/v1/emulator/{id}/ttd/find-last", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::stepInstructionTTD, "/api/v1/emulator/{id}/ttd/step-instruction", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::reverseStepTTD, "/api/v1/emulator/{id}/ttd/reverse-step", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::reverseContinueTTD, "/api/v1/emulator/{id}/ttd/reverse-continue", drogon::Post);
     // endregion TTD
     METHOD_LIST_END
 
@@ -826,6 +828,10 @@ public:
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void stepInstructionTTD(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void reverseStepTTD(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void reverseContinueTTD(const drogon::HttpRequestPtr& req,
+                              std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // endregion TTD Methods
 
     // region Helper Methods (implementation: emulator_api.cpp)

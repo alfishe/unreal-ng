@@ -29,6 +29,7 @@ and other rules that apply forward to every sprint and phase.
 | [Phase S2 — Seek engine hardening](phase-S2-hardening.md) | ✅ Complete (2026-07-29) | Fixed 3 bugs (refcount leak in delta chain, .ttd round-trip double-XOR, SeekTo session-end rejection). Added 18 exhaustive + 30-second long-duration tests. 248 TTD tests green. **Side-phase** — pins the user-reported "rare backward-seek screen corruption" |
 | Phase 3 — TTD timeline UI (Qt) | ⏳ Not started | Blocked on Phase 2 (now unblocked) |
 | [Phase 4 — Reverse search + automation](phase-4-reverse-search.md) | ✅ Complete (2026-07-30) | Write journal (256 MB ring), access probes (W/R/X/IO), FindLastAccess (journal fast path + replay fallback), StepBack/ForwardInstruction, .ttd schema v3, CLI/Python/WebAPI surfaces for dump/find-last/step-instruction, TTD_Thinning_EveryPointReachable. 375 TTD tests green |
+| [Phase 4 — Reverse execution](phase-4-reverse-execution.md) | ✅ Complete (2026-08-02) | Multi-step ReverseStepInstructions (adaptive A_seq/B_m1list), ReverseStepTStates (M1-aligned), ReverseContinue (backward breakpoint scan), EnumerateM1InRange helper, RunTStates overshoot fix, CLI/Python/WebAPI surfaces for reverse-step/reverse-continue. 446 TTD tests green |
 | Phase G1 — GDB RSP server (live debug) | ⏳ Not started | `ENABLE_GDB_AUTOMATION` builds the actual server |
 | Phase G2 — Reverse execution | ⏳ Not started | Blocked on Phase 4 |
 

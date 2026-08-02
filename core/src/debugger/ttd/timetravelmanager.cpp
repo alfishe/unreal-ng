@@ -2729,4 +2729,457 @@ bool TimeTravelManager::StepForwardInstruction()
     return true;
 }
 
+// ===========================================================================
+// Phase 4 reverse execution: M1 enumeration + ReverseStep / ReverseContinue
+// ===========================================================================
+//
+// The single-opcode StepBackInstruction above calls FindLastAccess(Execute)
+// which restores a checkpoint + replays forward — once per call. For N
+// backward opcodes, that's N independent restore+replay passes.
+//
+// The reverse-execution primitives do ONE restore+replay pass over the
+// whole interval of interest, recording every M1 cycle in a vector, then
+// index/scan the result. Strategy thresholds are pinned by
+// `core/benchmarks/debugger/ttd/ttd_reverse_benchmark.cpp`.
+// ===========================================================================
+
+TimeTravelManager::EnumerateResult
+TimeTravelManager::EnumerateM1InRange(uint64_t startGlobalT,
+                                      uint64_t endGlobalT,
+                                      std::vector<TTDM1Record>& outM1s,
+                                      TTDExternalEvent* outBlockingMarkerStorage)
+{
+    EnumerateResult result;
+    if (outBlockingMarkerStorage)
+        *outBlockingMarkerStorage = TTDExternalEvent{};
+
+    outM1s.clear();
+
+    if (!_context || !_context->pEmulator)
+    {
+        MLOGWARNING("TimeTravelManager::EnumerateM1InRange — null _context or pEmulator");
+        return result;
+    }
+    if (_timeline.empty())
+    {
+        MLOGINFO("TimeTravelManager::EnumerateM1InRange — empty timeline");
+        return result;
+    }
+    if (startGlobalT >= endGlobalT)
+    {
+        MLOGINFO("TimeTravelManager::EnumerateM1InRange — empty interval "
+                 "(start=%llu, end=%llu)",
+                 static_cast<unsigned long long>(startGlobalT),
+                 static_cast<unsigned long long>(endGlobalT));
+        return result;
+    }
+
+    const uint32_t frameT = _context->config.frame;
+    const uint64_t sessionEndGlobalT =
+        static_cast<uint64_t>(_timeline.back().time.frame) * frameT
+        + _timeline.back().time.tInFrame;
+    if (endGlobalT > sessionEndGlobalT)
+        endGlobalT = sessionEndGlobalT;
+    if (startGlobalT >= endGlobalT)
+        return result;
+
+    // Decompose endpoints into (frame, tInFrame).
+    TTDTimePoint startTime;
+    startTime.frame    = startGlobalT / frameT;
+    startTime.tInFrame = static_cast<uint32_t>(startGlobalT % frameT);
+
+    TTDTimePoint endTime;
+    endTime.frame    = endGlobalT / frameT;
+    endTime.tInFrame = static_cast<uint32_t>(endGlobalT % frameT);
+
+    // Find the checkpoint at-or-before endTime. This is the latest interval
+    // we'll scan. (Same upper_bound pattern as SeekToInternal.)
+    auto endUpperIt = std::upper_bound(_timeline.begin(), _timeline.end(), endTime,
+        [](const TTDTimePoint& t, const TTDCheckpoint& cp) {
+            return t < cp.time;
+        });
+    if (endUpperIt == _timeline.begin())
+    {
+        // endTime precedes the first checkpoint — nothing to scan.
+        return result;
+    }
+    const size_t endCpIdx = static_cast<size_t>((endUpperIt - _timeline.begin()) - 1);
+
+    // Walk backward from endCpIdx, collecting M1 records in each interval.
+    // Hits get prepended to keep `outM1s` sorted ascending by globalT.
+    // We stop when we either (a) hit the startGlobalT boundary or (b) hit
+    // a marker barrier.
+    bool hitBarrier = false;
+    for (size_t i = endCpIdx + 1; i-- > 0; )
+    {
+        const TTDCheckpoint& cp = _timeline[i];
+
+        // Interval end for this checkpoint. For the endCpIdx we use
+        // endTime.tInFrame; for earlier checkpoints the whole frame.
+        uint32_t replayEndT = (i == endCpIdx) ? endTime.tInFrame : frameT;
+
+        // Skip zero-length interval (e.g. endTime exactly at frame boundary).
+        if (replayEndT == 0 && i == endCpIdx)
+            continue;
+
+        // Marker barrier check (same logic as FindLastAccess).
+        TTDTimePoint intervalEnd;
+        intervalEnd.frame    = cp.time.frame;
+        intervalEnd.tInFrame = replayEndT;
+        if (const TTDExternalEvent* barrier =
+                _externalEvents.FirstMarkerInInterval(cp.time, intervalEnd))
+        {
+            MLOGINFO("TimeTravelManager::EnumerateM1InRange — marker barrier at "
+                     "(frame=%llu, tInFrame=%u) blocks interval %zu",
+                     static_cast<unsigned long long>(barrier->time.frame),
+                     static_cast<unsigned>(barrier->time.tInFrame), i);
+            result.barrier = barrier;
+            if (outBlockingMarkerStorage)
+                *outBlockingMarkerStorage = *barrier;
+            hitBarrier = true;
+            break;
+        }
+
+        // Record the earliest globalT actually scanned (for the caller's
+        // "we covered this much" logic).
+        const uint64_t intervalStartGlobalT =
+            static_cast<uint64_t>(cp.time.frame) * frameT;
+        result.earliestScannedGlobalT =
+            (i == 0) ? intervalStartGlobalT : result.earliestScannedGlobalT;
+        if (i == endCpIdx)
+            result.earliestScannedGlobalT = intervalStartGlobalT;
+
+        // Restore the checkpoint + sync z80.t to 0 (frame boundary).
+        RestoreCheckpoint(cp);
+        Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+        if (z80)
+            z80->t = 0;
+
+        // Arm probe with Execute + full address range, no value/PC filter.
+        TTDSearchQuery q;
+        q.access        = TTDAccessType::Execute;
+        q.addrFrom      = 0;
+        q.addrTo        = 0xFFFF;
+        q.beforeGlobalT = UINT64_MAX;
+        _context->ttdProbe.Reset();
+        _context->ttdProbe.Arm(q);
+
+        EnterReplayMode();
+        ReplayWithinFrame(cp.time.frame, replayEndT);
+        ExitReplayMode();
+
+        auto hits = _context->ttdProbe.ExtractHits();
+        _context->ttdProbe.Disarm();
+
+        // Convert hits (TTDSearchResult) → TTDM1Record and prepend to keep
+        // ascending time order.
+        std::vector<TTDM1Record> intervalM1s;
+        intervalM1s.reserve(hits.size());
+        for (const TTDSearchResult& h : hits)
+        {
+            TTDM1Record m1;
+            m1.globalT  = static_cast<uint64_t>(h.time.frame) * frameT
+                          + h.time.tInFrame;
+            m1.pc       = h.pc;
+            m1.physPage = h.physPage;
+            intervalM1s.push_back(m1);
+        }
+
+        if (!intervalM1s.empty())
+        {
+            // Prepend. (vector::insert at begin is O(N) but the cumulative
+            // size across all intervals stays bounded by total instructions
+            // in the session — typically a few thousand for the magnitudes
+            // we're called with. A deque would be marginally faster but the
+            // outM1s storage is also consumed as a vector by callers, so the
+            // conversion would cost the same.)
+            outM1s.insert(outM1s.begin(),
+                          std::make_move_iterator(intervalM1s.begin()),
+                          std::make_move_iterator(intervalM1s.end()));
+        }
+
+        // If this checkpoint's frame is at or before startTime.frame, we've
+        // reached the lower bound — stop scanning further back.
+        if (cp.time.frame <= startTime.frame)
+            break;
+    }
+
+    // Trim leading M1s whose globalT < startGlobalT. (The earliest interval
+    // may have captured instructions before startGlobalT; drop them.)
+    while (!outM1s.empty() && outM1s.front().globalT < startGlobalT)
+        outM1s.erase(outM1s.begin());
+
+    MLOGINFO("TimeTravelManager::EnumerateM1InRange — enumerated %zu M1 records "
+             "in [%llu, %llu)%s",
+             outM1s.size(),
+             static_cast<unsigned long long>(startGlobalT),
+             static_cast<unsigned long long>(endGlobalT),
+             hitBarrier ? " (stopped at barrier)" : "");
+    (void)hitBarrier;
+    return result;
+}
+
+bool TimeTravelManager::ReverseStepInstructions(uint32_t n)
+{
+    if (n == 0)
+    {
+        MLOGWARNING("TimeTravelManager::ReverseStepInstructions — n=0 is a no-op");
+        return true;
+    }
+
+    // State guards — same shape as StepBackInstruction.
+    if (_state == TTDSessionState::Recording)
+    {
+        MLOGWARNING("TimeTravelManager::ReverseStepInstructions — rejected: session is Recording");
+        return false;
+    }
+    if (_timeline.empty())
+    {
+        MLOGWARNING("TimeTravelManager::ReverseStepInstructions — no recorded history");
+        return false;
+    }
+    if (!_context || !_context->pEmulator)
+    {
+        MLOGWARNING("TimeTravelManager::ReverseStepInstructions — null _context or pEmulator");
+        return false;
+    }
+
+    // Strategy A: small n delegates to repeated StepBackInstruction.
+    if (n <= kReverseSeqStepMaxN)
+    {
+        for (uint32_t i = 0; i < n; ++i)
+        {
+            if (!StepBackInstruction())
+            {
+                MLOGINFO("TimeTravelManager::ReverseStepInstructions — ran out of "
+                         "history after %u/%u steps", i, n);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Strategy B: M1 enumeration + index Nth-from-end.
+    const TTDTimePoint now = CurrentPosition();
+    const uint32_t frameT  = _context->config.frame;
+    const uint64_t nowGlobalT =
+        static_cast<uint64_t>(now.frame) * frameT + now.tInFrame;
+
+    if (now.frame == 0 && now.tInFrame == 0)
+    {
+        MLOGINFO("TimeTravelManager::ReverseStepInstructions — already at session start");
+        return false;
+    }
+
+    // Estimate a safe lower bound for the enumeration window. The longest
+    // Z80 instruction is 23 cycles, so N instructions fit in N*23 t-states.
+    // We add one frame of slack to absorb estimation error at frame
+    // boundaries (the leading-trim in EnumerateM1InRange drops over-scan).
+    const uint64_t estimatedTStates = static_cast<uint64_t>(n) * 23;
+    const uint64_t slack            = frameT;
+    uint64_t startGlobalT = (estimatedTStates >= nowGlobalT)
+                            ? 0
+                            : (nowGlobalT - estimatedTStates);
+    if (startGlobalT >= slack)
+        startGlobalT -= slack;
+    else
+        startGlobalT = 0;
+
+    // Enumerate M1s in [startGlobalT, nowGlobalT). The end is exclusive in
+    // our intent (we want M1s strictly before the current position), so we
+    // subtract 1 from nowGlobalT to exclude the M1 at the current position
+    // itself (matches StepBackInstruction's beforeGlobalT = nowGlobalT - 1).
+    const uint64_t endGlobalT = nowGlobalT > 0 ? nowGlobalT - 1 : 0;
+    if (endGlobalT == 0)
+        return false;  // At session start — caller should've been caught above.
+
+    std::vector<TTDM1Record> m1s;
+    TTDExternalEvent barrierStorage;
+    EnumerateM1InRange(startGlobalT, endGlobalT, m1s, &barrierStorage);
+
+    if (m1s.size() < n)
+    {
+        MLOGINFO("TimeTravelManager::ReverseStepInstructions — only %zu M1s in "
+                 "range, need %u",
+                 m1s.size(), n);
+        return false;
+    }
+
+    // Nth-from-end (0-indexed: size - n).
+    const size_t targetIdx = m1s.size() - n;
+    const TTDM1Record& target = m1s[targetIdx];
+
+    TTDTimePoint targetTime;
+    targetTime.frame    = target.globalT / frameT;
+    targetTime.tInFrame = static_cast<uint32_t>(target.globalT % frameT);
+
+    if (!SeekTo(targetTime))
+    {
+        MLOGWARNING("TimeTravelManager::ReverseStepInstructions — SeekTo(target) failed");
+        return false;
+    }
+
+    MLOGINFO("TimeTravelManager::ReverseStepInstructions — stepped back %u opcodes "
+             "to (frame=%llu, tInFrame=%u) pc=0x%04X",
+             n,
+             static_cast<unsigned long long>(targetTime.frame),
+             static_cast<unsigned>(targetTime.tInFrame),
+             target.pc);
+    return true;
+}
+
+bool TimeTravelManager::ReverseStepTStates(uint64_t n)
+{
+    // State guards.
+    if (_state == TTDSessionState::Recording)
+    {
+        MLOGWARNING("TimeTravelManager::ReverseStepTStates — rejected: session is Recording");
+        return false;
+    }
+    if (_timeline.empty())
+    {
+        MLOGWARNING("TimeTravelManager::ReverseStepTStates — no recorded history");
+        return false;
+    }
+    if (!_context || !_context->pEmulator)
+    {
+        MLOGWARNING("TimeTravelManager::ReverseStepTStates — null _context or pEmulator");
+        return false;
+    }
+
+    const TTDTimePoint now = CurrentPosition();
+    const uint32_t frameT  = _context->config.frame;
+    const uint64_t nowGlobalT =
+        static_cast<uint64_t>(now.frame) * frameT + now.tInFrame;
+
+    if (n >= nowGlobalT)
+    {
+        MLOGINFO("TimeTravelManager::ReverseStepTStates — n=%llu >= nowGlobalT=%llu "
+                 "(would step past session start)",
+                 static_cast<unsigned long long>(n),
+                 static_cast<unsigned long long>(nowGlobalT));
+        return false;
+    }
+
+    const uint64_t targetGlobalT = nowGlobalT - n;
+
+    // Enumerate M1s in a window around target. Start one frame below target
+    // to ensure the M1 ≤ target is captured (instructions span up to 23
+    // t-states, so the M1 ≤ target.globalT could be up to 23 t-states earlier).
+    uint64_t startGlobalT = (targetGlobalT > frameT) ? (targetGlobalT - frameT) : 0;
+
+    std::vector<TTDM1Record> m1s;
+    TTDExternalEvent barrierStorage;
+    EnumerateM1InRange(startGlobalT, nowGlobalT, m1s, &barrierStorage);
+
+    // Find the last M1 whose globalT <= targetGlobalT.
+    auto it = std::find_if(m1s.rbegin(), m1s.rend(),
+        [&](const TTDM1Record& m) { return m.globalT <= targetGlobalT; });
+    if (it == m1s.rend())
+    {
+        MLOGINFO("TimeTravelManager::ReverseStepTStates — no M1 ≤ targetGlobalT=%llu "
+                 "in window",
+                 static_cast<unsigned long long>(targetGlobalT));
+        return false;
+    }
+
+    const TTDM1Record& target = *it;
+    TTDTimePoint targetTime;
+    targetTime.frame    = target.globalT / frameT;
+    targetTime.tInFrame = static_cast<uint32_t>(target.globalT % frameT);
+
+    if (!SeekTo(targetTime))
+    {
+        MLOGWARNING("TimeTravelManager::ReverseStepTStates — SeekTo(target) failed");
+        return false;
+    }
+
+    MLOGINFO("TimeTravelManager::ReverseStepTStates — stepped back %llu t-states "
+             "to (frame=%llu, tInFrame=%u) pc=0x%04X",
+             static_cast<unsigned long long>(n),
+             static_cast<unsigned long long>(targetTime.frame),
+             static_cast<unsigned>(targetTime.tInFrame),
+             target.pc);
+    return true;
+}
+
+TimeTravelManager::TTDReverseContinueResult
+TimeTravelManager::ReverseContinue(const std::vector<uint16_t>& breakpoints)
+{
+    TTDReverseContinueResult result;
+
+    if (_state == TTDSessionState::Recording)
+    {
+        MLOGWARNING("TimeTravelManager::ReverseContinue — rejected: session is Recording");
+        return result;
+    }
+    if (_timeline.empty())
+    {
+        MLOGWARNING("TimeTravelManager::ReverseContinue — no recorded history");
+        return result;
+    }
+    if (!_context || !_context->pEmulator)
+    {
+        MLOGWARNING("TimeTravelManager::ReverseContinue — null _context or pEmulator");
+        return result;
+    }
+    if (breakpoints.empty())
+    {
+        MLOGINFO("TimeTravelManager::ReverseContinue — empty breakpoint set, no-op");
+        return result;
+    }
+
+    const TTDTimePoint now = CurrentPosition();
+    const uint32_t frameT  = _context->config.frame;
+    const uint64_t nowGlobalT =
+        static_cast<uint64_t>(now.frame) * frameT + now.tInFrame;
+
+    // Enumerate M1s from session start up to (but not including) now.
+    std::vector<TTDM1Record> m1s;
+    TTDExternalEvent barrierStorage;
+    EnumerateM1InRange(0, nowGlobalT, m1s, &barrierStorage);
+
+    // If we hit a barrier, surface it to the caller.
+    if (barrierStorage.reason[0] != '\0')
+    {
+        result.blockingMarker = barrierStorage;
+        MLOGINFO("TimeTravelManager::ReverseContinue — barrier at (frame=%llu, tInFrame=%u) "
+                 "halted the scan",
+                 static_cast<unsigned long long>(barrierStorage.time.frame),
+                 static_cast<unsigned>(barrierStorage.time.tInFrame));
+    }
+
+    // Scan backward for the first PC match.
+    auto it = std::find_if(m1s.rbegin(), m1s.rend(),
+        [&](const TTDM1Record& m) {
+            return std::find(breakpoints.begin(), breakpoints.end(), m.pc)
+                   != breakpoints.end();
+        });
+    if (it == m1s.rend())
+    {
+        MLOGINFO("TimeTravelManager::ReverseContinue — no PC match in %zu M1s",
+                 m1s.size());
+        return result;
+    }
+
+    result.matched    = true;
+    result.pc         = it->pc;
+    result.arrivedAt.frame    = it->globalT / frameT;
+    result.arrivedAt.tInFrame = static_cast<uint32_t>(it->globalT % frameT);
+
+    if (!SeekTo(result.arrivedAt))
+    {
+        MLOGWARNING("TimeTravelManager::ReverseContinue — SeekTo(arrivedAt) failed");
+        result.matched = false;
+        return result;
+    }
+
+    MLOGINFO("TimeTravelManager::ReverseContinue — hit PC=0x%04X at "
+             "(frame=%llu, tInFrame=%u)",
+             result.pc,
+             static_cast<unsigned long long>(result.arrivedAt.frame),
+             static_cast<unsigned>(result.arrivedAt.tInFrame));
+    return result;
+}
+
 } // namespace ttd

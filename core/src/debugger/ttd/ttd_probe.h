@@ -81,6 +81,26 @@ struct TTDSearchResult
     TTDAccessType access = TTDAccessType::Write;
 };
 
+/// @brief A single M1 (instruction-start) cycle recorded during reverse
+/// execution enumeration (Phase 4 reverse execution).
+///
+/// Emitted by `TimeTravelManager::EnumerateM1InRange`, which arms the access
+/// probe with `Execute` + full address range during a single silent-replay
+/// pass over an interval. Each M1 cycle inside the interval produces one of
+/// these records.
+///
+/// `globalT` is `frame * config.frame + tInFrame` — a dense, monotonic
+/// coordinate across the entire recorded session. The PC at M1 is the opcode
+/// byte's address (i.e. the address the user wants to set a reverse
+/// breakpoint on). physPage is currently 0 (Z80 hook reports 0 for Execute
+/// accesses; v1 of reverse execution doesn't distinguish banked PCs).
+struct TTDM1Record
+{
+    uint64_t globalT = 0;    ///< Absolute t-state since session start
+    uint16_t pc      = 0;    ///< PC at the M1 cycle (opcode byte address)
+    uint16_t physPage = 0;   ///< Banking context (currently always 0)
+};
+
 /// @brief Lightweight access probe, armed during reverse-search replay.
 ///
 /// The probe is a POD-with-vector — cheap to construct, cheap to reset.

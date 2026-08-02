@@ -16,6 +16,9 @@
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/ttd/timetravelmanager.h>
 #include <debugger/ttd/ttd_external_events.h>
+#include <debugger/ttd/ttd_probe.h>
+#include <fstream>
+#include <string>
 
 class LuaEmulator
 {
@@ -1058,6 +1061,115 @@ public:
                 marker["kind"]     = ttd::TTDExternalEventKindToString(e.kind);
                 marker["reason"]   = e.reason;
                 result[idx++]       = marker;
+            }
+            return result;
+        });
+
+        // -----------------------------------------------------------------
+        // Phase 4 — Reverse search + dump + instruction step
+        // -----------------------------------------------------------------
+
+        lua.set_function("ttd_dump", [this](const std::string& path) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return false;
+            std::ofstream out(path, std::ios::binary);
+            if (!out.is_open()) return false;
+            std::string err;
+            return ctx->pTimeTravelManager->SerializeSession(out, err);
+        });
+
+        lua.set_function("ttd_find_last", [this](uint16_t addr,
+                                                   sol::optional<std::string> accessOpt,
+                                                   sol::optional<uint8_t> valueOpt,
+                                                   sol::optional<uint16_t> pcFromOpt,
+                                                   sol::optional<uint16_t> pcToOpt,
+                                                   sol::optional<uint64_t> beforeFrameOpt,
+                                                   sol::optional<uint32_t> beforeTinOpt) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) { result["found"] = false; return result; }
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) { result["found"] = false; return result; }
+
+            ttd::TTDSearchQuery q;
+            q.addrFrom = q.addrTo = addr;
+            q.access = ttd::TTDAccessTypeFromString(
+                accessOpt.value_or("write").c_str());
+            if (valueOpt) { q.hasValueFilter = true; q.value = *valueOpt; }
+            if (pcFromOpt) { q.hasPcFilter = true; q.pcFrom = *pcFromOpt; q.pcTo = pcToOpt.value_or(0xFFFF); }
+            const uint32_t frameT = ctx->config.frame;
+            if (beforeFrameOpt)
+                q.beforeGlobalT = static_cast<uint64_t>(*beforeFrameOpt) * frameT
+                                  + beforeTinOpt.value_or(0);
+
+            auto found = ctx->pTimeTravelManager->FindLastAccess(q);
+            if (!found) { result["found"] = false; return result; }
+            result["found"]    = true;
+            result["frame"]    = found->time.frame;
+            result["tinframe"]  = found->time.tInFrame;
+            result["pc"]        = found->pc;
+            result["value"]     = found->value;
+            result["phys_page"] = found->physPage;
+            result["access"]    = ttd::TTDAccessTypeToString(found->access);
+            return result;
+        });
+
+        lua.set_function("ttd_step_instruction_back", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return false;
+            return ctx->pTimeTravelManager->StepBackInstruction();
+        });
+
+        lua.set_function("ttd_step_instruction_forward", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return false;
+            return ctx->pTimeTravelManager->StepForwardInstruction();
+        });
+
+        // -----------------------------------------------------------------
+        // Phase 4 — Reverse execution (multi-step)
+        // -----------------------------------------------------------------
+
+        lua.set_function("ttd_reverse_step", [this](sol::optional<uint32_t> countOpt) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return false;
+            return ctx->pTimeTravelManager->ReverseStepInstructions(
+                countOpt.value_or(1));
+        });
+
+        lua.set_function("ttd_reverse_step_tstates", [this](uint64_t tstates) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return false;
+            return ctx->pTimeTravelManager->ReverseStepTStates(tstates);
+        });
+
+        lua.set_function("ttd_reverse_continue", [this](sol::table pcsTable) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) { result["matched"] = false; return result; }
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) { result["matched"] = false; return result; }
+
+            std::vector<uint16_t> pcs;
+            pcs.reserve(pcsTable.size());
+            for (auto& pair : pcsTable)
+            {
+                uint16_t pc = static_cast<uint16_t>(pair.second.as<uint32_t>());
+                pcs.push_back(pc);
+            }
+
+            auto r = ctx->pTimeTravelManager->ReverseContinue(pcs);
+            result["matched"] = r.matched;
+            result["pc"]      = r.pc;
+            if (r.matched)
+            {
+                result["frame"]   = r.arrivedAt.frame;
+                result["tinframe"] = r.arrivedAt.tInFrame;
             }
             return result;
         });
