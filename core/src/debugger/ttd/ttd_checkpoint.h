@@ -187,22 +187,22 @@ enum class TTDFrameKind : uint8_t {
 struct TTDPageRef
 {
     /// 4 sub-page slot indices, one per 4 KB chunk of the 16 KB page.
-    /// slots[0] covers bytes [0..4095], slots[1] covers [4096..8191], etc.
-    uint32_t slots[4] = {0, 0, 0, 0};
+    /// pageSlots[0] covers bytes [0..4095], pageSlots[1] covers [4096..8191], etc.
+    uint32_t pageSlots[4] = {0, 0, 0, 0};
 
     /// Sentinel for "page never touched in session up to this checkpoint".
     static constexpr uint32_t kNeverTouched = 0xFFFFFFFFu;
 
     bool IsNeverTouched() const
     {
-        return slots[0] == kNeverTouched && slots[1] == kNeverTouched
-            && slots[2] == kNeverTouched && slots[3] == kNeverTouched;
+        return pageSlots[0] == kNeverTouched && pageSlots[1] == kNeverTouched
+            && pageSlots[2] == kNeverTouched && pageSlots[3] == kNeverTouched;
     }
 
     /// Mark this ref as never-touched (initial state for untouched pages).
     void SetNeverTouched()
     {
-        slots[0] = slots[1] = slots[2] = slots[3] = kNeverTouched;
+        pageSlots[0] = pageSlots[1] = pageSlots[2] = pageSlots[3] = kNeverTouched;
     }
 };
 

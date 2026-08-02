@@ -24,7 +24,10 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <cstdio>
+#include <fstream>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 #include "emulator/emulator.h"
@@ -34,6 +37,7 @@
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttd_external_events.h"
+#include "debugger/ttd/ttd_probe.h"
 
 /// region <Test fixture>
 
@@ -384,6 +388,157 @@ TEST_F(TTD_Automation_Contract_Test, FullRoundTrip_StartRecordSeekStepResume)
     // 9. Invalidate
     _ttd->InvalidateSession("round-trip complete");
     EXPECT_EQ(_ttd->GetCheckpointCount(), 0u);
+}
+
+/// endregion
+
+/// region <Phase 4: Dump contract — matches ttd dump / POST /ttd/dump>
+
+TEST_F(TTD_Automation_Contract_Test, Dump_SerializeSession_RoundTrip)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+
+    // Populate the journal with known write records so we can verify
+    // they survive serialization.
+    _ttd->RecordMemoryWrite(0x1000, 0, 0x42, 0x2000, 1);
+    _ttd->RecordMemoryWrite(0x2000, 0, 0x55, 0x2100, 2);
+    _ttd->RecordIoWrite(0xFE, 0x08, 0x2200);
+
+    RunFrames(3);
+    _ttd->StopRecording();
+
+    const size_t journalSizeBefore = _ttd->GetWriteJournal().Size();
+    ASSERT_GT(journalSizeBefore, 0u);
+    const size_t checkpointCount = _ttd->GetCheckpointCount();
+    ASSERT_GT(checkpointCount, 0u);
+
+    // Serialize to a temp file
+    char tmpfile[] = "/tmp/ttd_contract_dump_XXXXXX";
+    int fd = mkstemp(tmpfile);
+    ASSERT_GE(fd, 0);
+    close(fd);
+
+    {
+        std::ofstream out(tmpfile, std::ios::binary);
+        std::string err;
+        ASSERT_TRUE(_ttd->SerializeSession(out, err)) << err;
+    }
+
+    // Deserialize into a fresh emulator instance
+    Emulator* emu2 = new Emulator(LoggerLevel::LogError);
+    ASSERT_TRUE(emu2->Init());
+    ttd::TimeTravelManager* ttd2 = emu2->GetContext()->pTimeTravelManager;
+    ASSERT_NE(ttd2, nullptr);
+
+    {
+        std::ifstream in(tmpfile, std::ios::binary);
+        std::string err;
+        ASSERT_TRUE(ttd2->DeserializeSession(in, err)) << err;
+    }
+
+    // Verify round-trip preserves checkpoint count and journal records
+    EXPECT_EQ(ttd2->GetCheckpointCount(), checkpointCount);
+    EXPECT_EQ(ttd2->GetWriteJournal().Size(), journalSizeBefore);
+
+    // Verify the journal is queryable after load — this is the contract
+    // shape that all automation surfaces rely on post-dump.
+    ttd::TTDSearchQuery q;
+    q.addrFrom = 0x1000;
+    q.addrTo   = 0x1000;
+    q.access   = ttd::TTDAccessType::Write;
+    auto result = ttd2->FindLastAccess(q);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->value, 0x42u);
+
+    emu2->Stop();
+    emu2->Release();
+    delete emu2;
+    remove(tmpfile);
+}
+
+/// endregion
+
+/// region <Phase 4: FindLast contract — matches ttd find-last / POST /ttd/find-last>
+
+TEST_F(TTD_Automation_Contract_Test, FindLast_QueryShape_HasExpectedFields)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+
+    // Perform a known write to the journal
+    _ttd->RecordMemoryWrite(0x4000, 0, 0x99, 0x1234, 5);
+
+    RunFrames(1);
+    _ttd->StopRecording();
+
+    // Query the write — this exercises the same TTDSearchQuery → FindLastAccess
+    // → TTDSearchResult path used by all automation surfaces.
+    ttd::TTDSearchQuery q;
+    q.addrFrom = 0x4000;
+    q.addrTo   = 0x4000;
+    q.access   = ttd::TTDAccessType::Write;
+    auto result = _ttd->FindLastAccess(q);
+
+    ASSERT_TRUE(result.has_value());
+
+    // Verify all expected fields — this is the contract shape that
+    // CLI/WebAPI/Python adapters serialize into their respective formats.
+    EXPECT_EQ(result->pc, 0x1234u);
+    EXPECT_EQ(result->value, 0x99u);
+    EXPECT_EQ(result->physPage, 5u);
+    EXPECT_EQ(result->access, ttd::TTDAccessType::Write);
+    // Time fields must be valid
+    EXPECT_GE(result->time.frame, 0u);
+
+    // Verify access-type string conversion (used by JSON serialization
+    // across all surfaces)
+    EXPECT_STREQ(ttd::TTDAccessTypeToString(result->access), "write");
+
+    // Verify all four access-type strings are available (contract stability)
+    EXPECT_STREQ(ttd::TTDAccessTypeToString(ttd::TTDAccessType::Write),   "write");
+    EXPECT_STREQ(ttd::TTDAccessTypeToString(ttd::TTDAccessType::Read),    "read");
+    EXPECT_STREQ(ttd::TTDAccessTypeToString(ttd::TTDAccessType::Execute), "execute");
+    EXPECT_STREQ(ttd::TTDAccessTypeToString(ttd::TTDAccessType::Io),      "io");
+}
+
+/// endregion
+
+/// region <Phase 4: StepInstruction contract — matches ttd step-instruction / POST /ttd/step-instruction>
+
+TEST_F(TTD_Automation_Contract_Test, StepInstruction_BackwardForwardRoundTrip)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(10);
+    _ttd->StopRecording();
+
+    // Seek to a mid-session position
+    ttd::TTDTimePoint sessionEnd = _ttd->SessionEndPosition();
+    uint64_t midFrame = sessionEnd.frame > 1 ? sessionEnd.frame / 2 : 1;
+    ASSERT_TRUE(_ttd->SeekTo({midFrame, 0}));
+
+    const uint32_t frameT = _context->config.frame;
+    ttd::TTDTimePoint posBefore = _ttd->CurrentPosition();
+    const uint64_t globalTBefore =
+        static_cast<uint64_t>(posBefore.frame) * frameT + posBefore.tInFrame;
+
+    // Step forward one instruction (should succeed — we're before session end)
+    EXPECT_TRUE(_ttd->StepForwardInstruction());
+
+    ttd::TTDTimePoint posAfterForward = _ttd->CurrentPosition();
+    const uint64_t globalTAfterForward =
+        static_cast<uint64_t>(posAfterForward.frame) * frameT + posAfterForward.tInFrame;
+
+    // Position must have advanced
+    EXPECT_GT(globalTAfterForward, globalTBefore);
+
+    // Step back one instruction (should succeed — we're not at session start)
+    EXPECT_TRUE(_ttd->StepBackInstruction());
+
+    ttd::TTDTimePoint posAfterBack = _ttd->CurrentPosition();
+    const uint64_t globalTAfterBack =
+        static_cast<uint64_t>(posAfterBack.frame) * frameT + posAfterBack.tInFrame;
+
+    // Position should have moved backward from the post-forward position
+    EXPECT_LE(globalTAfterBack, globalTAfterForward);
 }
 
 /// endregion

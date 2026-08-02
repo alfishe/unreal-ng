@@ -7,6 +7,7 @@
 #include "common/stringhelper.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "debugger/ttd/timetravelmanager.h"  // Phase 4 — RecordIoWrite hot-path call
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/memory/memoryaccesstracker.h"
@@ -233,7 +234,24 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
         _memory->_memoryAccessTracker->TrackPortWrite(port, value, callerAddress);
     }
 
-    // 3. Future: Analyzer notifications can be added here
+    // 3. Phase 4 — IO write journal (TDD §9.3) + access probe (§9.2).
+    // OnPortOutComplete is the single common path called by ALL subclass
+    // DecodePortOut overrides after the hardware write completes.
+    if (_context->pTimeTravelManager != nullptr)
+    {
+        _context->pTimeTravelManager->RecordIoWrite(port, value, pc);
+    }
+    if (_context->ttdProbe.IsArmed())
+    {
+        if (_context->ttdProbe.Matches(port, ttd::TTDAccessType::Io, value, pc))
+        {
+            const auto& st = _context->emulatorState;
+            const uint16_t tin = _context->pCore ? _context->pCore->GetZ80()->t : 0;
+            const ttd::TTDTimePoint tp{st.frame_counter, tin};
+            _context->ttdProbe.RecordHit(tp, pc, value, /*physPage=*/0,
+                                          ttd::TTDAccessType::Io);
+        }
+    }
 }
 
 

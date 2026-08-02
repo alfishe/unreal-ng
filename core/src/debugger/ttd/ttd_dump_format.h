@@ -1,10 +1,14 @@
 #pragma once
 
 /// @file ttd_dump_format.h
-/// @brief C++ constants and helpers for the .ttd binary format v2.
+/// @brief C++ constants and helpers for the .ttd binary format v3.
 ///
-/// v2 is a breaking change from v1 — there is no backwards-compatibility
-/// surface. v2 introduces:
+/// v3 is an additive evolution from v2 — v2 readers can still parse v3
+/// files if they ignore the new write-journal section. v3 introduces:
+///   - Write journal section (flag bit 1): ring-buffer of 12-byte
+///     TTDWriteRecord entries for reverse-watchpoint fast-path scan.
+///
+/// v2 (retained for reference):
 ///   - Codec-aware page store: 4 KB sub-pages (was 16 KB)
 ///   - Three encodings per slot: Full / XorPrev / Zero
 ///   - zstd level 1 compression of every slot payload
@@ -32,13 +36,17 @@ namespace ttd::dump {
 /// 4-byte magic at the head of every .ttd file. ASCII "TTDD".
 constexpr char kMagic[4] = {'T', 'T', 'D', 'D'};
 
-/// Schema version. v2 = codec-aware format (XOR deltas + zstd-1 + CRC32C).
+/// Schema version. v3 = v2 + write journal section.
 /// MUST match `meta.schema-version` in ttd.ksy.
-constexpr uint16_t kSchemaVersion = 2;
+constexpr uint16_t kSchemaVersion = 3;
 
 /// Bit 0 of header.flags — set when the writer is little-endian (always 1
-/// in v2; we static_assert against little-endian in the writer).
+/// in v2+; we static_assert against little-endian in the writer).
 constexpr uint16_t kFlagsLittleEndian = 0x0001;
+
+/// Bit 1 of header.flags — set when the file includes a write-journal
+/// section after the checkpoint table (v3 additive extension).
+constexpr uint16_t kFlagsHasWriteJournal = 0x0002;
 
 // ---------------------------------------------------------------------------
 // Page slot encodings (Encoding enum in TTDCodecPageStore)

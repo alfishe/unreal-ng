@@ -21,9 +21,12 @@
 
 #include <debugger/ttd/timetravelmanager.h>
 #include <debugger/ttd/ttd_external_events.h>
+#include <debugger/ttd/ttd_probe.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
 
+#include <fstream>
+#include <iomanip>
 #include <sstream>
 
 /// region <TTD Commands>
@@ -97,6 +100,20 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     {
         HandleTTDMarkers(session, context);
     }
+    else if (subcommand == "dump" || subcommand == "save")
+    {
+        HandleTTDDump(session, context, args);
+    }
+    else if (subcommand == "find-last" || subcommand == "fl")
+    {
+        HandleTTDFindLast(session, context, args);
+    }
+    else if (subcommand == "step-instruction" ||
+             subcommand == "si-back"    ||
+             subcommand == "si-forward")
+    {
+        HandleTTDStepInstruction(session, context, args);
+    }
     else if (subcommand == "help" || subcommand == "?")
     {
         ShowTTDHelp(session);
@@ -124,6 +141,14 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "  ttd resume [frame] [tinframe]    Resume recording from current or specified point" << NEWLINE;
     ss << "  ttd position                     Show current TTDTimePoint (frame + tInFrame)" << NEWLINE;
     ss << "  ttd markers                      List external-event markers (replay barriers)" << NEWLINE;
+    ss << NEWLINE;
+    ss << "Phase 4 — Reverse Search + Automation:" << NEWLINE;
+    ss << "  ttd dump <path>                  Serialize session to .ttd file" << NEWLINE;
+    ss << "  ttd find-last --addr <A>         Reverse search: find last access at address" << NEWLINE;
+    ss << "    [--access write|read|execute|io]  (default: write)" << NEWLINE;
+    ss << "    [--value V] [--pc-from X] [--pc-to Y]" << NEWLINE;
+    ss << "    [--before-frame F] [--before-tin T]" << NEWLINE;
+    ss << "  ttd step-instruction <back|fwd>  Step one instruction (aliases: si-back, si-forward)" << NEWLINE;
     ss << NEWLINE;
     ss << "Notes:" << NEWLINE;
     ss << "  - Seek/step/resume require the emulator to be paused." << NEWLINE;
@@ -385,6 +410,178 @@ void CLIProcessor::HandleTTDMarkers(const ClientSession& session, EmulatorContex
     }
 
     session.SendResponse(ss.str());
+}
+
+// -------------------------------------------------------------------------
+// Phase 4 — Reverse-search + dump + instruction-step handlers
+// -------------------------------------------------------------------------
+
+void CLIProcessor::HandleTTDDump(const ClientSession& session, EmulatorContext* context,
+                                  const std::vector<std::string>& args)
+{
+    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
+
+    if (args.size() < 2)
+    {
+        session.SendResponse(std::string("Error: Missing path argument") + NEWLINE +
+                             "Usage: ttd dump <path>" + NEWLINE);
+        return;
+    }
+
+    const std::string& path = args[1];
+    std::ofstream out(path, std::ios::binary);
+    if (!out.is_open())
+    {
+        session.SendResponse(std::string("Error: Cannot open file: ") + path + NEWLINE);
+        return;
+    }
+
+    std::string err;
+    bool ok = mgr->SerializeSession(out, err);
+    if (ok)
+    {
+        auto bytes = out.tellp();
+        std::stringstream ss;
+        ss << "TTD: Session dumped to '" << path << "' ("
+           << static_cast<long long>(bytes) << " bytes)" << NEWLINE;
+        session.SendResponse(ss.str());
+    }
+    else
+    {
+        session.SendResponse(std::string("TTD: Dump failed: ") + err + NEWLINE);
+    }
+}
+
+void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorContext* context,
+                                      const std::vector<std::string>& args)
+{
+    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
+
+    // Parse --key value pairs from args[1..]
+    ttd::TTDSearchQuery q;
+    bool hasAddr = false;
+
+    for (size_t i = 1; i < args.size(); ++i)
+    {
+        const std::string& tok = args[i];
+        if (tok == "--addr" && i + 1 < args.size())
+        {
+            q.addrFrom = q.addrTo = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
+            hasAddr = true;
+        }
+        else if (tok == "--access" && i + 1 < args.size())
+        {
+            q.access = ttd::TTDAccessTypeFromString(args[++i].c_str());
+        }
+        else if (tok == "--value" && i + 1 < args.size())
+        {
+            q.value = static_cast<uint8_t>(std::stoul(args[++i], nullptr, 0));
+            q.hasValueFilter = true;
+        }
+        else if (tok == "--pc-from" && i + 1 < args.size())
+        {
+            q.pcFrom = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
+            q.hasPcFilter = true;
+        }
+        else if (tok == "--pc-to" && i + 1 < args.size())
+        {
+            q.pcTo = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
+            if (!q.hasPcFilter) q.hasPcFilter = true;
+        }
+        else if (tok == "--before-frame" && i + 1 < args.size())
+        {
+            uint64_t f = std::stoull(args[++i]);
+            // Will be combined with before-tin below; store frame in upper bits
+            const uint32_t frameT = context->config.frame;
+            uint32_t tin = 0;
+            // If before-tin was already set, preserve it
+            if (q.beforeGlobalT != UINT64_MAX)
+                tin = static_cast<uint32_t>(q.beforeGlobalT % frameT);
+            q.beforeGlobalT = f * frameT + tin;
+        }
+        else if (tok == "--before-tin" && i + 1 < args.size())
+        {
+            uint32_t tin = static_cast<uint32_t>(std::stoul(args[++i]));
+            const uint32_t frameT = context->config.frame;
+            uint64_t frame = (q.beforeGlobalT != UINT64_MAX) ? (q.beforeGlobalT / frameT) : 0;
+            q.beforeGlobalT = frame * frameT + tin;
+        }
+    }
+
+    if (!hasAddr)
+    {
+        session.SendResponse(std::string("Error: --addr is required") + NEWLINE +
+                             "Usage: ttd find-last --addr <A> [--access write|read|execute|io] "
+                             "[--value V] [--pc-from X] [--pc-to Y] "
+                             "[--before-frame F] [--before-tin T]" + NEWLINE);
+        return;
+    }
+
+    ttd::TTDExternalEvent blockingMarker;
+    auto result = mgr->FindLastAccess(q, &blockingMarker);
+
+    if (result)
+    {
+        std::stringstream ss;
+        ss << "TTD: Match found" << NEWLINE;
+        ss << "  Frame:    " << result->time.frame << NEWLINE;
+        ss << "  tInFrame: " << result->time.tInFrame << NEWLINE;
+        ss << "  PC:       0x" << std::hex << std::uppercase << std::setfill('0')
+           << std::setw(4) << result->pc << NEWLINE;
+        ss << "  Value:    0x" << std::setw(2) << static_cast<int>(result->value) << NEWLINE;
+        ss << "  PhysPage: " << std::dec << static_cast<int>(result->physPage) << NEWLINE;
+        ss << "  Access:   " << ttd::TTDAccessTypeToString(result->access) << NEWLINE;
+        session.SendResponse(ss.str());
+    }
+    else if (blockingMarker.reason[0] != '\0')
+    {
+        std::stringstream ss;
+        ss << "TTD: Search blocked by external-event marker" << NEWLINE;
+        ss << "  Marker at frame=" << blockingMarker.time.frame
+           << " tInFrame=" << blockingMarker.time.tInFrame << NEWLINE;
+        ss << "  Kind: " << ttd::TTDExternalEventKindToString(blockingMarker.kind) << NEWLINE;
+        ss << "  Reason: " << blockingMarker.reason << NEWLINE;
+        session.SendResponse(ss.str());
+    }
+    else
+    {
+        session.SendResponse(std::string("TTD: No match found") + NEWLINE);
+    }
+}
+
+void CLIProcessor::HandleTTDStepInstruction(const ClientSession& session, EmulatorContext* context,
+                                             const std::vector<std::string>& args)
+{
+    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
+
+    // Determine direction from subcommand or explicit arg.
+    bool forward = false;
+    if (!args.empty())
+    {
+        const std::string& sub = args[0];
+        if (sub == "si-forward")
+            forward = true;
+        else if (sub == "si-back")
+            forward = false;
+        else if (args.size() > 1 && (args[1] == "forward" || args[1] == "fwd"))
+            forward = true;
+    }
+
+    bool ok = forward ? mgr->StepForwardInstruction() : mgr->StepBackInstruction();
+    if (ok)
+    {
+        ttd::TTDTimePoint pos = mgr->CurrentPosition();
+        std::stringstream ss;
+        ss << "TTD: Stepped " << (forward ? "forward" : "back")
+           << " to (frame=" << pos.frame << ", tInFrame=" << pos.tInFrame << ")" << NEWLINE;
+        session.SendResponse(ss.str());
+    }
+    else
+    {
+        session.SendResponse(std::string("TTD: Cannot step ") +
+                             (forward ? "forward (at session end)" : "back (at session start)") +
+                             NEWLINE);
+    }
 }
 
 /// endregion </TTD Commands>

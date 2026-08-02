@@ -424,7 +424,22 @@ uint8_t Z80::m1_cycle()
 
     // Record PC for current opcode (prefixes should not alter original PC)
     if (prefix == 0x0000)
+    {
         m1_pc = cpu.pc;
+
+        // Phase 4 — access probe for Execute access type (TDD §9.2).
+        // Fires once per instruction at the M1 (instruction fetch) cycle.
+        if (_context->ttdProbe.IsArmed())
+        {
+            if (_context->ttdProbe.Matches(m1_pc, ttd::TTDAccessType::Execute, 0, m1_pc))
+            {
+                const auto& st = _context->emulatorState;
+                const ttd::TTDTimePoint tp{st.frame_counter, t};
+                _context->ttdProbe.RecordHit(tp, m1_pc, /*value=*/0, /*physPage=*/0,
+                                              ttd::TTDAccessType::Execute);
+            }
+        }
+    }
 
     // Z80 CPU M1 cycle logic
     r_low = ((r_low + 1) & 0x7f) | (r_low & 0x80);  // Keep memory refresh register ticking

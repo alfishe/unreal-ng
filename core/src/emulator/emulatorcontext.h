@@ -29,7 +29,9 @@ class FeatureManager;
 
 // TTD manager lives in the ttd namespace — forward-declare so the context
 // can hold a pointer without pulling the full TTD headers into every consumer.
-namespace ttd { class TimeTravelManager; }
+namespace ttd { class TimeTravelManager; class TTDAccessProbe; }
+
+#include "debugger/ttd/ttd_probe.h"  // inline member — needs full definition
 
 // Create callback type for audio
 // User in emulator/sound/soundmanager and client/GUI
@@ -118,6 +120,14 @@ public:
     // checks are read from the same thread. No cross-thread visibility
     // concern; matching the existing pattern for emulatorState flags.
     bool ttdReplayActive = false;
+
+    // Phase 4 — reverse-search access probe (parent TDD §9.2). Inline
+    // instance: every hot-path call site (MemoryWriteDebug, MemoryReadDebug,
+    // Z80 M1 cycle, DecodePortOut) reads `ttdProbe.IsArmed()` with one
+    // predictable branch. Cost when not armed: ~1 cycle. Arming/disarming
+    // and hits extraction happen on the control thread around silent
+    // replay batches.
+    ttd::TTDAccessProbe ttdProbe;
 
     // Feature toggle manager
     FeatureManager* pFeatureManager = nullptr;

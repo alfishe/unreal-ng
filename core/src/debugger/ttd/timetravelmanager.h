@@ -43,6 +43,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
+#include <optional>
 #include <vector>
 #include <string>
 
@@ -51,6 +52,8 @@
 #include "ttd_checkpoint.h"
 #include "ttd_external_events.h"
 #include "ttd_input_journal.h"
+#include "ttd_write_journal.h"
+#include "ttd_probe.h"
 #include "ttd_codec_page_store.h"
 
 // Forward declarations — we don't pull emulator headers into this header.
@@ -520,12 +523,78 @@ public:
     bool ResumeRecordingFrom(const TTDTimePoint& from);
 
     // -----------------------------------------------------------------------
+    // Phase 4: Reverse search (parent TDD §9 + §10.4)
+    // -----------------------------------------------------------------------
+    //
+    // Two-layer reverse-watchpoint engine:
+    //   1. Write journal (§9.3): 256 MB ring of TTDWriteRecord, scanned
+    //      backward for the fast path. Memory/port writes append to it from
+    //      the existing MemoryWriteDebug / DecodePortOut hooks.
+    //   2. Two-pass silent replay (§9.2): the fallback when the ring has
+    //      wrapped past the query window. Restores each checkpoint interval
+    //      with the access probe armed; the probe records every hit.
+    //
+    // On top of the search engine, StepBackInstruction / StepForwardInstruction
+    // provide single-M1 navigation (TDD §10.2 + §16 row 2).
+    
+    /// @brief Hot-path capture: record a memory write.
+    ///
+    /// Called from Memory::MemoryWriteDebug when TTD is enabled and recording
+    /// is active. Builds a TTDWriteRecord from the current frame/t-state
+    /// (EmulatorState) + the write's address/value/PC/physical-page and
+    /// appends it to the write journal. Also arms the access probe when a
+    /// search is in flight (probe state lives in EmulatorContext).
+    ///
+    /// No-op when not Recording or when replay is active — replay-driven
+    /// writes must NOT pollute the journal (they're reconstructions, not
+    /// new history).
+    void RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t newVal,
+                           uint16_t m1pc, uint8_t physPage);
+    
+    /// @brief Hot-path capture: record a port OUT (used for IO probe).
+    ///
+    /// Same threading/lifecycle as RecordMemoryWrite but for port writes
+    /// (decoder::DecodePortOut path). Marked with isIo=1 in the record.
+    void RecordIoWrite(uint16_t port, uint8_t value, uint16_t m1pc);
+    
+    /// @brief Reverse-search entry point (TDD §9.1).
+    ///
+    /// Returns the most recent TTDSearchResult matching the query before
+    /// `query.beforeGlobalT`, or std::nullopt if no match exists in the
+    /// recorded history. Honors external-event markers (TDD §5.1): if the
+    /// search would cross a marker, returns std::nullopt and (if non-null)
+    /// fills *outBlockingMarker with the barrier.
+    ///
+    /// Preconditions: emulator paused, state is Recording or Detached.
+    std::optional<TTDSearchResult> FindLastAccess(
+        const TTDSearchQuery& query,
+        TTDExternalEvent* outBlockingMarker = nullptr);
+    
+    /// @brief Step back one instruction (TDD §10.2 + §16 row 2).
+    ///
+    /// Implemented as FindLastAccess(Execute, before=currentGlobalT) followed
+    /// by SeekTo(result.time) on a hit. Returns false if there is no earlier
+    /// instruction in the recorded history.
+    bool StepBackInstruction();
+    
+    /// @brief Step forward one instruction (TDD §10.2).
+    ///
+    /// Only valid when Detached: runs a single M1 cycle via silent replay
+    /// from the current position. Returns false when at or past the session
+    /// end (no further history).
+    bool StepForwardInstruction();
+    
+    /// @brief Read-only accessor for the write journal (for serialization
+    /// and tests).
+    inline const TTDWriteJournal& GetWriteJournal() const { return _writeJournal; }
+    
+    // -----------------------------------------------------------------------
     // Test/diagnostic accessors
     // -----------------------------------------------------------------------
-
+    
     /// @brief Number of checkpoints currently in the timeline.
     inline size_t GetCheckpointCount() const { return _timeline.size(); }
-
+    
     /// @brief Read-only access to a timeline entry (bounds-checked).
     /// Returns nullptr if idx is out of range.
     const TTDCheckpoint* GetCheckpoint(size_t idx) const;
@@ -711,6 +780,12 @@ private:
     /// that aren't input-journaled in v1 (Item 6). Same lifecycle as the
     /// input journal: dropped on Invalidate/Start, truncated by Resume.
     TTDExternalEventJournal _externalEvents;
+
+    /// Write journal — fast-path accelerator for FindLastAccess (Phase 4;
+    /// parent TDD §9.3). 256 MB ring of 12-byte TTDWriteRecords. Appended
+    /// from MemoryWriteDebug / DecodePortOut hooks. Same lifecycle as the
+    /// other journals: dropped on Invalidate/Start, truncated by Resume.
+    TTDWriteJournal _writeJournal;
 
     // -----------------------------------------------------------------------
     // Replay-mode state (Phase 2 Item 2; parent TDD §8.2)

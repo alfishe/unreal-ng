@@ -227,6 +227,7 @@ bool TimeTravelManager::StartRecording()
         _dirtyScratch.clear();
         _inputJournal.Clear();  // Phase 2 Item 3 — drop any prior input events
         _externalEvents.Clear();  // Phase 2 Item 6 — drop any prior markers
+        _writeJournal.Clear();  // Phase 4 — drop any prior write records
     }
 
     _modelRamPages = ResolveModelRamPages();
@@ -318,6 +319,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     _dirtyScratch.clear();
     _inputJournal.Clear();  // Phase 2 Item 3 — input history invalidates with the timeline
     _externalEvents.Clear();  // Phase 2 Item 6 — markers invalidate with the timeline
+    _writeJournal.Clear();  // Phase 4 — write journal invalidates with the timeline
     _modelRamPages = 0;
     _state = TTDSessionState::Idle;
 
@@ -618,7 +620,7 @@ void TimeTravelManager::CaptureBaselineRamPages(std::vector<TTDPageRef>& outRamP
         for (uint32_t s = 0; s < 4; ++s)
         {
             const uint8_t* sub = pageData + (s * TTDCodecPageStore::kPageSize);
-            outRamPages[p].slots[s] = _pageStore.InternFull(sub);
+            outRamPages[p].pageSlots[s] = _pageStore.InternFull(sub);
         }
     }
 }
@@ -630,7 +632,7 @@ void TimeTravelManager::UpdateRamPages(const std::vector<uint16_t>& dirtyPages,
 {
     // ------------------------------------------------------------------
     // Refcount invariant: every slot index that appears in any
-    // _timeline checkpoint's ramPages[*].slots[s] MUST have a matching
+    // _timeline checkpoint's ramPages[*].pageSlots[s] MUST have a matching
     // live refcount in the page store, INCLUDING the delta-chain refs
     // that XorPrev slots hold against their prevSlot (the latter are
     // managed internally by InternXor / Release — see
@@ -676,12 +678,12 @@ void TimeTravelManager::UpdateRamPages(const std::vector<uint16_t>& dirtyPages,
             {
                 for (uint32_t s = 0; s < 4; ++s)
                 {
-                    if (prevRef.slots[s] != TTDPageRef::kNeverTouched)
+                    if (prevRef.pageSlots[s] != TTDPageRef::kNeverTouched)
                     {
-                        _pageStore.AddRef(prevRef.slots[s]);
+                        _pageStore.AddRef(prevRef.pageSlots[s]);
                     }
                 }
-                // outRamPages[p].slots[s] already copied from prevRef above.
+                // outRamPages[p].pageSlots[s] already copied from prevRef above.
             }
             // else: was NEVER_TOUCHED, still NEVER_TOUCHED — nothing to do.
             continue;
@@ -702,14 +704,14 @@ void TimeTravelManager::UpdateRamPages(const std::vector<uint16_t>& dirtyPages,
         for (uint32_t s = 0; s < 4; ++s)
         {
             const uint8_t* sub = pageData + (s * TTDCodecPageStore::kPageSize);
-            const uint32_t prevSlot = prevRamPages[p].slots[s];
+            const uint32_t prevSlot = prevRamPages[p].pageSlots[s];
 
             if (isKeyFrame || prevSlot == TTDPageRef::kNeverTouched)
             {
                 // I-frame dirty page, or first-ever capture of this sub-page:
                 // emit an independent Full snapshot so future P-frames can
                 // build fresh XOR chains off a known-good anchor.
-                outRamPages[p].slots[s] = _pageStore.InternFull(sub);
+                outRamPages[p].pageSlots[s] = _pageStore.InternFull(sub);
             }
             else
             {
@@ -719,7 +721,7 @@ void TimeTravelManager::UpdateRamPages(const std::vector<uint16_t>& dirtyPages,
                 // unchanged). In both cases the assignment below is correct;
                 // we must NOT Release prevSlot — that would drop prevRamPages's
                 // own ref and break restore of the previous checkpoint.
-                outRamPages[p].slots[s] = _pageStore.InternXor(prevSlot, sub);
+                outRamPages[p].pageSlots[s] = _pageStore.InternXor(prevSlot, sub);
             }
         }
     }
@@ -733,10 +735,10 @@ void TimeTravelManager::ReleaseCheckpointRefs(TTDCheckpoint& cp)
         {
             for (uint32_t s = 0; s < 4; ++s)
             {
-                if (ref.slots[s] != TTDPageRef::kNeverTouched)
+                if (ref.pageSlots[s] != TTDPageRef::kNeverTouched)
                 {
-                    _pageStore.Release(ref.slots[s]);
-                    ref.slots[s] = TTDPageRef::kNeverTouched;
+                    _pageStore.Release(ref.pageSlots[s]);
+                    ref.pageSlots[s] = TTDPageRef::kNeverTouched;
                 }
             }
         }
@@ -941,7 +943,7 @@ void TimeTravelManager::RestoreRamPages(const std::vector<TTDPageRef>& ramPages)
         // subsequent verification (e.g., CaptureRestoreSelfTest hash compare).
         for (uint32_t s = 0; s < 4; ++s)
         {
-            const uint32_t slot = ref.slots[s];
+            const uint32_t slot = ref.pageSlots[s];
             if (slot == TTDPageRef::kNeverTouched)
             {
                 // Sub-page was never touched in session — leave live bytes alone.
@@ -1583,6 +1585,15 @@ bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
     _inputJournal.DropAfter(from);
     _externalEvents.DropAfter(from);  // Phase 2 Item 6 — markers past `from` are dead future
 
+    // Phase 4 — write journal: convert `from` to a globalT and drop records
+    // strictly past it. Records exactly at `from` are kept (they happened
+    // at the resume point, not after it).
+    {
+        const uint32_t frameT = _context ? _context->config.frame : 69888;
+        const uint64_t globalT = from.frame * frameT + from.tInFrame;
+        _writeJournal.DropAfter(globalT);
+    }
+
     // ------------------------------------------------------------------
     // Step 4: return to Recording. Next OnFrameBoundary will append a fresh
     // checkpoint at frame `from.frame + 1` (the live emulator's frame
@@ -1825,7 +1836,7 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     const uint16_t schemaVersion = ttd::dump::kSchemaVersion;
     if (!WritePod(out, schemaVersion, err)) return false;
 
-    const uint16_t flags = ttd::dump::kFlagsLittleEndian;
+    const uint16_t flags = ttd::dump::kFlagsLittleEndian | ttd::dump::kFlagsHasWriteJournal;
     if (!WritePod(out, flags, err)) return false;
 
     if (!WritePod(out, modelId, err)) return false;
@@ -1977,15 +1988,15 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
                 if (p < pagesToWrite)
                 {
                     const TTDPageRef& ref = cp.ramPages[p];
-                    if (ref.slots[s] != TTDPageRef::kNeverTouched)
+                    if (ref.pageSlots[s] != TTDPageRef::kNeverTouched)
                     {
-                        auto it = slotRemap.find(ref.slots[s]);
+                        auto it = slotRemap.find(ref.pageSlots[s]);
                         if (it == slotRemap.end())
                         {
                             err = "checkpoint " + std::to_string(cp.time.frame) +
                                   " references page " + std::to_string(p) + " sub " +
                                   std::to_string(s) + " slot " +
-                                  std::to_string(ref.slots[s]) +
+                                  std::to_string(ref.pageSlots[s]) +
                                   " which is not in the live remap (corrupt timeline?)";
                             return false;
                         }
@@ -2001,6 +2012,15 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
         if (!WriteBlob(out, cp.fdcState, err))   return false;
         if (!WriteBlob(out, cp.tapeState, err))  return false;
         if (!WriteBlob(out, cp.covoxState, err)) return false;
+    }
+
+    // --- Write journal section (v3 additive, TDD §9.3) ---
+    // Flag bit 1 in the header tells the reader this section exists.
+    // The journal serializes its own count + records.
+    if (!_writeJournal.Serialize(out))
+    {
+        err = "stream write failed (write journal section)";
+        return false;
     }
 
     return true;
@@ -2027,14 +2047,14 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
               std::to_string(ttd::dump::kMaxSupportedSchemaVersion);
         return false;
     }
-    if (schemaVersion != ttd::dump::kSchemaVersion)
+    if (schemaVersion < 2 || schemaVersion > ttd::dump::kSchemaVersion)
     {
         // v2 is the only version we know how to read. Future versions will
         // branch here. v1 files are refused without migration — the codec
         // format change is breaking by design (no v1 support).
         err = "unsupported schema v" + std::to_string(schemaVersion) +
-              " (only v" + std::to_string(ttd::dump::kSchemaVersion) +
-              " implemented; v1 files are not supported — re-capture the session)";
+              " (supported: v2..v" + std::to_string(ttd::dump::kSchemaVersion) +
+              "; v1 files are not supported \u2014 re-capture the session)";
         return false;
     }
 
@@ -2045,6 +2065,7 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
         err = "file is big-endian; only little-endian .ttd files are supported";
         return false;
     }
+    const bool hasJournal = (flags & ttd::dump::kFlagsHasWriteJournal) != 0;
 
     uint8_t modelId = 0, modelRamPages = 0;
     uint16_t cpuStateSize = 0, chipsetStateSize = 0;
@@ -2250,11 +2271,11 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
                 if (!ReadPod(in, ref, err)) return false;
                 if (ref == ttd::dump::kNeverTouchedSlot)
                 {
-                    cp.ramPages[p].slots[s] = TTDPageRef::kNeverTouched;
+                    cp.ramPages[p].pageSlots[s] = TTDPageRef::kNeverTouched;
                 }
                 else if (ref < pageStoreCount)
                 {
-                    cp.ramPages[p].slots[s] = ref;
+                    cp.ramPages[p].pageSlots[s] = ref;
                     // Bump refcount for this reference. The Intern above set
                     // refcount=1; we'll subtract that initial 1 once after the
                     // checkpoint loop. Net: refcount == number of references
@@ -2288,6 +2309,18 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     // of the same content would produce.
     for (uint32_t i = 0; i < pageStoreCount; ++i)
         _pageStore.Release(i);
+
+    // --- Read journal section (v3 additive, TDD §9.3) ---
+    if (hasJournal)
+    {
+        uint64_t journalCount = 0;
+        if (!ReadPod(in, journalCount, err)) return false;
+        if (!_writeJournal.Deserialize(in, journalCount))
+        {
+            err = "stream read failed (write journal section)";
+            return false;
+        }
+    }
 
     // --- Finalize state ---
     // The file does not carry live recording semantics; force Idle. Callers
@@ -2363,6 +2396,337 @@ TimeTravelManager::SelfTestResult TimeTravelManager::CaptureRestoreSelfTest()
     }
 
     return result;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4: Reverse-search engine (parent TDD §9 + §10.4)
+// ---------------------------------------------------------------------------
+
+void TimeTravelManager::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t newVal,
+                                          uint16_t m1pc, uint8_t physPage)
+{
+    // Only journal during active recording. During replay (seek / probe),
+    // writes are reproducing recorded state — re-journaling would corrupt
+    // the ring with duplicate records (TDD §9.3).
+    if (_state != TTDSessionState::Recording)
+        return;
+    if (!_context)
+        return;
+
+    const uint32_t frameT = _context->config.frame;
+    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    const uint32_t tInFrame = z80 ? z80->t : 0;
+
+    TTDWriteRecord rec{};
+    rec.globalT  = static_cast<uint64_t>(_context->emulatorState.frame_counter) * frameT + tInFrame;
+    rec.addr     = addr;
+    rec.isIo     = 0;
+    rec.m1pc     = m1pc;
+    rec.value    = newVal;
+    rec.physPage = physPage;
+    (void)oldVal;  // Not stored in the compact 12-byte record (TDD §9.3)
+
+    _writeJournal.Append(rec);
+}
+
+void TimeTravelManager::RecordIoWrite(uint16_t port, uint8_t value, uint16_t m1pc)
+{
+    if (_state != TTDSessionState::Recording)
+        return;
+    if (!_context)
+        return;
+
+    const uint32_t frameT = _context->config.frame;
+    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    const uint32_t tInFrame = z80 ? z80->t : 0;
+
+    TTDWriteRecord rec{};
+    rec.globalT  = static_cast<uint64_t>(_context->emulatorState.frame_counter) * frameT + tInFrame;
+    rec.addr     = port;
+    rec.isIo     = 1;
+    rec.m1pc     = m1pc;
+    rec.value    = value;
+    rec.physPage = 0;  // IO writes don't have a physical RAM page
+
+    _writeJournal.Append(rec);
+}
+
+std::optional<TTDSearchResult>
+TimeTravelManager::FindLastAccess(const TTDSearchQuery& q,
+                                  TTDExternalEvent* outBlockingMarker)
+{
+    // ------------------------------------------------------------------
+    // Guards — same shape as SeekTo.
+    // ------------------------------------------------------------------
+    if (outBlockingMarker)
+        *outBlockingMarker = TTDExternalEvent{};
+
+    if (_state == TTDSessionState::Recording)
+    {
+        MLOGWARNING("TimeTravelManager::FindLastAccess — rejected: session is Recording");
+        return std::nullopt;
+    }
+    if (_timeline.empty())
+    {
+        MLOGWARNING("TimeTravelManager::FindLastAccess — no recorded history");
+        return std::nullopt;
+    }
+    if (!_context || !_context->pEmulator)
+    {
+        MLOGWARNING("TimeTravelManager::FindLastAccess — null context or emulator");
+        return std::nullopt;
+    }
+
+    const uint32_t frameT = _context->config.frame;
+
+    // ------------------------------------------------------------------
+    // Step 1: resolve beforeGlobalT → absolute t-state coordinate.
+    // Default beforeGlobalT == UINT64_MAX means "current position".
+    // ------------------------------------------------------------------
+    uint64_t beforeGlobalT = q.beforeGlobalT;
+    if (beforeGlobalT == UINT64_MAX)
+    {
+        const TTDTimePoint now = CurrentPosition();
+        beforeGlobalT = static_cast<uint64_t>(now.frame) * frameT + now.tInFrame;
+    }
+
+    // ------------------------------------------------------------------
+    // Step 2: Journal fast path (Write / Io access types only).
+    // Read and Execute are not journaled — skip to replay fallback.
+    // ------------------------------------------------------------------
+    if (q.access == TTDAccessType::Write || q.access == TTDAccessType::Io)
+    {
+        auto pred = [&](const TTDWriteRecord& rec) -> bool {
+            if (q.access == TTDAccessType::Write && rec.isIo) return false;
+            if (q.access == TTDAccessType::Io && !rec.isIo) return false;
+            if (rec.addr < q.addrFrom || rec.addr > q.addrTo) return false;
+            if (q.hasValueFilter && rec.value != q.value) return false;
+            if (q.hasPcFilter && (rec.m1pc < q.pcFrom || rec.m1pc > q.pcTo)) return false;
+            return true;
+        };
+
+        auto found = _writeJournal.FindLast(beforeGlobalT, pred);
+        const uint64_t oldestInRing = _writeJournal.OldestGlobalT();
+
+        if (found)
+        {
+            TTDSearchResult result;
+            result.time.frame    = static_cast<uint64_t>(found->globalT / frameT);
+            result.time.tInFrame = static_cast<uint32_t>(found->globalT % frameT);
+            result.pc      = found->m1pc;
+            result.value   = found->value;
+            result.physPage = found->physPage;
+            result.access   = found->isIo ? TTDAccessType::Io : TTDAccessType::Write;
+            return result;
+        }
+
+        // No match in journal. If the ring covers the full history (never
+        // wrapped past the target), there is genuinely no match.
+        if (oldestInRing <= 1)
+            return std::nullopt;
+
+        // Ring wrapped — older records were lost. Fall through to replay.
+        MLOGINFO("TimeTravelManager::FindLastAccess — journal wrapped (oldest=%llu), "
+                 "falling back to replay",
+                 static_cast<unsigned long long>(oldestInRing));
+    }
+
+    // ------------------------------------------------------------------
+    // Step 3: Replay fallback (TDD §9.2).
+    //
+    // Walk checkpoint intervals backward from the target. For each interval:
+    //   a. Check external-event markers — stop if blocked.
+    //   b. Restore the checkpoint.
+    //   c. Arm the probe with the query.
+    //   d. Silent-replay the frame up to the interval end.
+    //   e. Extract hits — if any, the last hit is the answer.
+    // ------------------------------------------------------------------
+
+    // Convert beforeGlobalT to a TTDTimePoint for checkpoint lookup.
+    TTDTimePoint targetTime;
+    targetTime.frame    = beforeGlobalT / frameT;
+    targetTime.tInFrame = static_cast<uint32_t>(beforeGlobalT % frameT);
+
+    // Clamp target frame to session bounds.
+    const uint64_t sessionEndFrame = _timeline.back().time.frame;
+    if (targetTime.frame > sessionEndFrame)
+    {
+        targetTime.frame    = sessionEndFrame;
+        targetTime.tInFrame = 0;
+    }
+
+    // Binary-search for the checkpoint at-or-before the target frame.
+    // Same upper_bound trick as SeekToInternal.
+    auto upperIt = std::upper_bound(_timeline.begin(), _timeline.end(), targetTime,
+        [](const TTDTimePoint& t, const TTDCheckpoint& cp) {
+            return t < cp.time;
+        });
+    if (upperIt == _timeline.begin())
+    {
+        // Target precedes the first checkpoint — nothing to scan.
+        return std::nullopt;
+    }
+    const size_t targetCpIdx = static_cast<size_t>((upperIt - _timeline.begin()) - 1);
+
+    TTDSearchResult answer;
+    bool found = false;
+
+    // Walk backward from the target checkpoint to the beginning.
+    for (size_t i = targetCpIdx + 1; i-- > 0; )
+    {
+        const TTDCheckpoint& cp = _timeline[i];
+
+        // Interval end: for the target checkpoint, it's the target position;
+        // for earlier checkpoints, it's the full frame.
+        uint32_t replayEndT;
+        if (i == targetCpIdx)
+            replayEndT = targetTime.tInFrame;
+        else
+            replayEndT = frameT;
+
+        // Skip zero-length interval (target exactly at frame boundary).
+        if (replayEndT == 0 && i == targetCpIdx)
+            continue;
+
+        // Check external-event markers in this interval.
+        TTDTimePoint intervalEnd;
+        intervalEnd.frame    = cp.time.frame;
+        intervalEnd.tInFrame = replayEndT;
+
+        if (const TTDExternalEvent* barrier = _externalEvents.FirstMarkerInInterval(cp.time, intervalEnd))
+        {
+            MLOGINFO("TimeTravelManager::FindLastAccess — marker barrier at "
+                     "(frame=%llu, tInFrame=%u) blocks interval %zu",
+                     static_cast<unsigned long long>(barrier->time.frame),
+                     static_cast<unsigned>(barrier->time.tInFrame),
+                     i);
+            if (outBlockingMarker)
+                *outBlockingMarker = *barrier;
+            break;  // Can't replay past a marker — stop searching.
+        }
+
+        // Restore checkpoint silently.
+        RestoreCheckpoint(cp);
+        Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+        if (z80)
+            z80->t = 0;
+
+        // Arm probe, replay, extract hits.
+        _context->ttdProbe.Reset();
+        _context->ttdProbe.Arm(q);
+
+        EnterReplayMode();
+        ReplayWithinFrame(cp.time.frame, replayEndT);
+        ExitReplayMode();
+
+        auto hits = _context->ttdProbe.ExtractHits();
+        _context->ttdProbe.Disarm();
+
+        if (!hits.empty())
+        {
+            answer = hits.back();  // Last hit in the interval = closest to target.
+            found = true;
+            break;  // First interval (walking backward) with a hit is the answer.
+        }
+    }
+
+    if (!found)
+        return std::nullopt;
+
+    // Position the emulator at the answer.
+    SeekTo(answer.time);
+
+    MLOGINFO("TimeTravelManager::FindLastAccess — match at (frame=%llu, tInFrame=%u) "
+             "pc=0x%04X value=0x%02X access=%s",
+             static_cast<unsigned long long>(answer.time.frame),
+             static_cast<unsigned>(answer.time.tInFrame),
+             answer.pc, answer.value,
+             TTDAccessTypeToString(answer.access));
+
+    return answer;
+}
+
+bool TimeTravelManager::StepBackInstruction()
+{
+    if (_state == TTDSessionState::Recording)
+    {
+        MLOGWARNING("TimeTravelManager::StepBackInstruction — rejected: session is Recording");
+        return false;
+    }
+    if (_timeline.empty())
+    {
+        MLOGWARNING("TimeTravelManager::StepBackInstruction — no recorded history");
+        return false;
+    }
+
+    // Find the most recent Execute (M1) access strictly before the current
+    // position. That is the previous instruction boundary.
+    const TTDTimePoint now = CurrentPosition();
+    const uint32_t frameT = _context->config.frame;
+    const uint64_t nowGlobalT = static_cast<uint64_t>(now.frame) * frameT + now.tInFrame;
+
+    // Refuse at position (0, 0) — no prior instruction exists.
+    if (now.frame == 0 && now.tInFrame == 0)
+    {
+        MLOGINFO("TimeTravelManager::StepBackInstruction — already at session start");
+        return false;
+    }
+
+    TTDSearchQuery q;
+    q.access        = TTDAccessType::Execute;
+    q.addrFrom      = 0;
+    q.addrTo        = 0xFFFF;
+    q.beforeGlobalT = nowGlobalT > 0 ? nowGlobalT - 1 : 0;
+
+    auto result = FindLastAccess(q);
+    if (!result)
+    {
+        MLOGINFO("TimeTravelManager::StepBackInstruction — no prior instruction found");
+        return false;
+    }
+
+    // FindLastAccess already SeekTo'd the answer.
+    return true;
+}
+
+bool TimeTravelManager::StepForwardInstruction()
+{
+    if (_state == TTDSessionState::Recording)
+    {
+        MLOGWARNING("TimeTravelManager::StepForwardInstruction — rejected: session is Recording");
+        return false;
+    }
+    if (_timeline.empty())
+    {
+        MLOGWARNING("TimeTravelManager::StepForwardInstruction — no recorded history");
+        return false;
+    }
+
+    const TTDTimePoint now        = CurrentPosition();
+    const TTDTimePoint sessionEnd = SessionEndPosition();
+
+    // Refuse if at or past the session end.
+    if (now.frame > sessionEnd.frame ||
+        (now.frame == sessionEnd.frame && now.tInFrame >= sessionEnd.tInFrame))
+    {
+        MLOGINFO("TimeTravelManager::StepForwardInstruction — at or past session end");
+        return false;
+    }
+
+    if (!_context || !_context->pEmulator)
+    {
+        MLOGWARNING("TimeTravelManager::StepForwardInstruction — null context or emulator");
+        return false;
+    }
+
+    // Run exactly one instruction via silent replay. RunTStates(1, true)
+    // enters the Z80Step loop once — Z80Step executes one complete
+    // instruction regardless of its t-state length.
+    EnterReplayMode();
+    _context->pEmulator->RunTStates(1, true);
+    ExitReplayMode();
+
+    return true;
 }
 
 } // namespace ttd

@@ -501,10 +501,10 @@ TEST(TTDPageRefTest, NeverTouchedSentinel)
     // at least one sub-slot is populated; "never touched" iff all four are
     // the kNeverTouched sentinel.
     TTDPageRef normal;
-    normal.slots[0] = 5;
-    normal.slots[1] = 6;
-    normal.slots[2] = 7;
-    normal.slots[3] = 8;
+    normal.pageSlots[0] = 5;
+    normal.pageSlots[1] = 6;
+    normal.pageSlots[2] = 7;
+    normal.pageSlots[3] = 8;
     EXPECT_FALSE(normal.IsNeverTouched());
 
     TTDPageRef untouched;
@@ -513,10 +513,10 @@ TEST(TTDPageRefTest, NeverTouchedSentinel)
 
     // Mixed (some sub-pages touched, others never touched) is NOT never-touched.
     TTDPageRef mixed;
-    mixed.slots[0] = 5;
-    mixed.slots[1] = TTDPageRef::kNeverTouched;
-    mixed.slots[2] = TTDPageRef::kNeverTouched;
-    mixed.slots[3] = TTDPageRef::kNeverTouched;
+    mixed.pageSlots[0] = 5;
+    mixed.pageSlots[1] = TTDPageRef::kNeverTouched;
+    mixed.pageSlots[2] = TTDPageRef::kNeverTouched;
+    mixed.pageSlots[3] = TTDPageRef::kNeverTouched;
     EXPECT_FALSE(mixed.IsNeverTouched());
 }
 

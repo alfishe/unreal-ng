@@ -182,7 +182,7 @@ DivergenceHistory TTDDivergenceHarness::ExtractHashesFromTimeline()
             // v2: reconstruct each of the 4 sub-pages individually.
             for (uint32_t s = 0; s < 4; ++s)
             {
-                const uint32_t slot = ref.slots[s];
+                const uint32_t slot = ref.pageSlots[s];
                 if (slot == TTDPageRef::kNeverTouched)
                 {
                     // Sub-page never touched — hash the live 4 KB slice.

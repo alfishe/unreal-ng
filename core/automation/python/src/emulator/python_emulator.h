@@ -23,6 +23,9 @@
 #include <emulator/cpu/opcode_profiler.h>
 #include <debugger/keyboard/debugkeyboardmanager.h>
 #include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/ttd_probe.h>
+
+#include <fstream>
 #include <debugger/ttd/ttd_external_events.h>
 
 namespace py = pybind11;
@@ -1494,6 +1497,89 @@ namespace PythonBindings
                     markers.append(marker);
                 }
                 return markers;
-            }, "List external-event markers (replay barriers)");
+            }, "List external-event markers (replay barriers)")
+
+            // -------------------------------------------------------------
+            // Phase 4 — Reverse search + dump + instruction step
+            // -------------------------------------------------------------
+            .def("ttd_dump", [](Emulator& self, const std::string& path) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager) return false;
+                std::ofstream out(path, std::ios::binary);
+                if (!out.is_open()) return false;
+                std::string err;
+                return ctx->pTimeTravelManager->SerializeSession(out, err);
+            }, "Dump TTD session to .ttd file", py::arg("path"))
+
+            .def("ttd_find_last", [](Emulator& self, uint16_t addr,
+                                      const std::string& access,
+                                      py::object valueObj,
+                                      py::object pcFromObj,
+                                      py::object pcToObj,
+                                      py::object beforeFrameObj,
+                                      uint32_t beforeTin) -> py::object {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager) return py::none();
+
+                ttd::TTDSearchQuery q;
+                q.addrFrom = q.addrTo = addr;
+                q.access = ttd::TTDAccessTypeFromString(access.c_str());
+
+                if (!valueObj.is_none())
+                {
+                    q.value = static_cast<uint8_t>(valueObj.cast<int>());
+                    q.hasValueFilter = true;
+                }
+                if (!pcFromObj.is_none())
+                {
+                    q.pcFrom = static_cast<uint16_t>(pcFromObj.cast<int>());
+                    q.hasPcFilter = true;
+                }
+                if (!pcToObj.is_none())
+                {
+                    q.pcTo = static_cast<uint16_t>(pcToObj.cast<int>());
+                    if (!q.hasPcFilter) q.hasPcFilter = true;
+                }
+
+                const uint32_t frameT = ctx->config.frame;
+                if (!beforeFrameObj.is_none())
+                {
+                    uint64_t f = beforeFrameObj.cast<uint64_t>();
+                    q.beforeGlobalT = f * frameT + beforeTin;
+                }
+
+                ttd::TTDExternalEvent marker;
+                auto result = ctx->pTimeTravelManager->FindLastAccess(q, &marker);
+                if (!result)
+                    return py::none();
+
+                py::dict r;
+                r["frame"]     = py::cast(result->time.frame);
+                r["tinframe"]  = py::cast(result->time.tInFrame);
+                r["pc"]        = py::cast(result->pc);
+                r["value"]     = py::cast(result->value);
+                r["phys_page"] = py::cast(result->physPage);
+                r["access"]    = ttd::TTDAccessTypeToString(result->access);
+                return r;
+            }, "Reverse search: find last access at address",
+               py::arg("addr"),
+               py::arg("access") = "write",
+               py::arg("value") = py::none(),
+               py::arg("pc_from") = py::none(),
+               py::arg("pc_to") = py::none(),
+               py::arg("before_frame") = py::none(),
+               py::arg("before_tin") = 0)
+
+            .def("ttd_step_instruction_back", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager) return false;
+                return ctx->pTimeTravelManager->StepBackInstruction();
+            }, "Step back one instruction")
+
+            .def("ttd_step_instruction_forward", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager) return false;
+                return ctx->pTimeTravelManager->StepForwardInstruction();
+            }, "Step forward one instruction");
     }
 }

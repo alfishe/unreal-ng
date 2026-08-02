@@ -149,13 +149,13 @@ TEST_F(TimeTravelManager_Test, StartRecording_CapturesBaseline)
     EXPECT_EQ(baseline->ramPages.size(), expectedPages);
 
     // Every baseline page must have real sub-slot indices (no NEVER_TOUCHED).
-    // v2: TTDPageRef.slots[4] holds 4 sub-page slot indices per 16 KB emu page.
+    // v2: TTDPageRef.pageSlots[4] holds 4 sub-page slot indices per 16 KB emu page.
     for (uint32_t p = 0; p < expectedPages; ++p)
     {
         EXPECT_FALSE(baseline->ramPages[p].IsNeverTouched())
             << "Baseline page " << p << " should be Intern'd, not NEVER_TOUCHED";
         for (uint32_t s = 0; s < 4; ++s)
-            EXPECT_NE(baseline->ramPages[p].slots[s], ttd::TTDPageRef::kNeverTouched)
+            EXPECT_NE(baseline->ramPages[p].pageSlots[s], ttd::TTDPageRef::kNeverTouched)
                 << "Baseline page " << p << " sub-page " << s;
     }
 }
@@ -270,7 +270,7 @@ TEST_F(TimeTravelManager_Test, OnFrameBoundary_DirtyFrame_InternsOnlyDirtyPages)
     const ttd::TTDCheckpoint* cp = _ttd->GetCheckpoint(1);
     ASSERT_NE(cp, nullptr);
     for (uint32_t s = 0; s < 4; ++s)
-        EXPECT_GE(cp->ramPages[0].slots[s], capBefore)
+        EXPECT_GE(cp->ramPages[0].pageSlots[s], capBefore)
             << "Page 0 sub-page " << s << " should have a fresh slot index";
 }
 

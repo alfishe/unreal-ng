@@ -166,7 +166,7 @@ protected:
                 fullPage.reserve(4 * ttd::TTDCodecPageStore::kPageSize);
                 for (uint32_t s = 0; s < 4; ++s)
                 {
-                    const uint32_t slot = ref.slots[s];
+                    const uint32_t slot = ref.pageSlots[s];
                     if (slot == ttd::TTDPageRef::kNeverTouched)
                     {
                         // Sub-page never touched — pad with zeros (matches

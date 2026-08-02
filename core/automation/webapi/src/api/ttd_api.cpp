@@ -31,6 +31,12 @@
 #include "../emulator_api.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttd_external_events.h"
+#include "debugger/ttd/ttd_probe.h"
+
+#include <fstream>
+#include "debugger/ttd/ttd_probe.h"
+
+#include <fstream>
 
 using namespace drogon;
 using namespace api::v1;
@@ -633,6 +639,197 @@ void EmulatorAPI::getTTDMarkers(const HttpRequestPtr& req,
         markers.append(marker);
     }
     ret["markers"] = markers;
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+// -------------------------------------------------------------------------
+// Phase 4 — Reverse search + dump + instruction step
+// -------------------------------------------------------------------------
+
+/// @brief POST /api/v1/emulator/{id}/ttd/dump
+void EmulatorAPI::dumpTTD(const HttpRequestPtr& req,
+                            std::function<void(const HttpResponsePtr&)>&& callback,
+                            const std::string& id) const
+{
+    auto* mgr = resolveTTD(id, callback);
+    if (!mgr) return;
+
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("path"))
+    {
+        Json::Value err;
+        err["error"] = "Missing 'path' in request body";
+        auto resp = HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    const std::string path = (*json)["path"].asString();
+    std::ofstream out(path, std::ios::binary);
+    if (!out.is_open())
+    {
+        Json::Value err;
+        err["error"] = "Cannot open file: " + path;
+        auto resp = HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    std::string errMsg;
+    bool ok = mgr->SerializeSession(out, errMsg);
+    auto bytes = out.tellp();
+
+    Json::Value ret;
+    ret["ok"] = ok;
+    if (ok)
+    {
+        ret["path"]  = path;
+        ret["bytes"] = Json::Int64(static_cast<long long>(bytes));
+    }
+    else
+    {
+        ret["error"] = errMsg;
+    }
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/ttd/find-last
+void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
+                                std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id) const
+{
+    std::shared_ptr<Emulator> emulator;
+    auto* mgr = resolveTTD(id, callback, /*requireManager=*/true, &emulator);
+    if (!mgr) return;
+
+    if (rejectIfRecording(mgr, callback)) return;
+
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("addr"))
+    {
+        Json::Value err;
+        err["error"] = "Missing 'addr' in request body";
+        auto resp = HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    ttd::TTDSearchQuery q;
+    q.addrFrom = q.addrTo = static_cast<uint16_t>((*json)["addr"].asUInt());
+
+    if (json->isMember("access"))
+        q.access = ttd::TTDAccessTypeFromString((*json)["access"].asCString());
+
+    if (json->isMember("value"))
+    {
+        q.value = static_cast<uint8_t>((*json)["value"].asUInt());
+        q.hasValueFilter = true;
+    }
+
+    if (json->isMember("pc_from"))
+    {
+        q.pcFrom = static_cast<uint16_t>((*json)["pc_from"].asUInt());
+        q.hasPcFilter = true;
+    }
+
+    if (json->isMember("pc_to"))
+    {
+        q.pcTo = static_cast<uint16_t>((*json)["pc_to"].asUInt());
+        if (!q.hasPcFilter) q.hasPcFilter = true;
+    }
+
+    if (emulator)
+    {
+        const uint32_t frameT = emulator->GetContext()->config.frame;
+        if (json->isMember("before_frame"))
+        {
+            uint64_t f = (*json)["before_frame"].asUInt64();
+            uint32_t tin = json->isMember("before_tin") ? (*json)["before_tin"].asUInt() : 0;
+            q.beforeGlobalT = f * frameT + tin;
+        }
+    }
+
+    PauseAndConfirm(emulator);
+
+    ttd::TTDExternalEvent marker;
+    auto result = mgr->FindLastAccess(q, &marker);
+
+    if (emulator)
+        NotifyFrameRefresh(*emulator);
+
+    Json::Value ret;
+    if (result)
+    {
+        ret["found"]      = true;
+        ret["frame"]      = Json::UInt64(result->time.frame);
+        ret["tinframe"]   = Json::UInt(result->time.tInFrame);
+        ret["pc"]         = Json::UInt(result->pc);
+        ret["value"]      = Json::UInt(result->value);
+        ret["phys_page"]  = Json::UInt(result->physPage);
+        ret["access"]     = ttd::TTDAccessTypeToString(result->access);
+    }
+    else if (marker.reason[0] != '\0')
+    {
+        ret["found"]  = false;
+        ret["blocked"] = true;
+        ret["marker_frame"]    = Json::UInt64(marker.time.frame);
+        ret["marker_tinframe"] = Json::UInt(marker.time.tInFrame);
+        ret["marker_kind"]     = ttd::TTDExternalEventKindToString(marker.kind);
+        ret["marker_reason"]   = marker.reason;
+    }
+    else
+    {
+        ret["found"] = false;
+    }
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/ttd/step-instruction
+void EmulatorAPI::stepInstructionTTD(const HttpRequestPtr& req,
+                                       std::function<void(const HttpResponsePtr&)>&& callback,
+                                       const std::string& id) const
+{
+    std::shared_ptr<Emulator> emulator;
+    auto* mgr = resolveTTD(id, callback, /*requireManager=*/true, &emulator);
+    if (!mgr) return;
+
+    if (rejectIfRecording(mgr, callback)) return;
+
+    auto json = req->getJsonObject();
+    std::string dir = "back";
+    if (json && json->isMember("dir"))
+        dir = (*json)["dir"].asString();
+
+    const bool forward = (dir == "forward" || dir == "fwd");
+
+    PauseAndConfirm(emulator);
+
+    bool ok = forward ? mgr->StepForwardInstruction() : mgr->StepBackInstruction();
+    ttd::TTDTimePoint pos = mgr->CurrentPosition();
+
+    if (emulator)
+        NotifyFrameRefresh(*emulator);
+
+    Json::Value ret;
+    ret["stepped"]  = ok;
+    ret["dir"]      = forward ? "forward" : "back";
+    ret["frame"]    = Json::UInt64(pos.frame);
+    ret["tinframe"] = Json::UInt(pos.tInFrame);
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);

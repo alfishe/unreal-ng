@@ -13,6 +13,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/ttd/ttd_dirty_tracker.h"
+#include "debugger/ttd/timetravelmanager.h"  // Phase 4 — RecordMemoryWrite hot-path call
 #include "emulator/emulator.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/notifications.h"
@@ -208,6 +209,22 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, [[maybe_unused]] bool isExecution
     }
     /// endregion </Memory access tracking>
 
+    // Phase 4 — access probe hot-path check for Read access type (§9.2).
+    // Instruction fetches (isExecution=true) are handled by the Execute
+    // probe in the Z80 M1 cycle, not here — so skip this check for those.
+    if (!isExecution && _feature_ttd_enabled && _context->ttdProbe.IsArmed())
+    {
+        const uint16_t pc = _context->pCore ? _context->pCore->GetZ80()->m1_pc : 0;
+        if (_context->ttdProbe.Matches(addr, ttd::TTDAccessType::Read, result, pc))
+        {
+            const auto& st = _context->emulatorState;
+            const uint16_t tin = _context->pCore ? _context->pCore->GetZ80()->t : 0;
+            const ttd::TTDTimePoint tp{st.frame_counter, tin};
+            _context->ttdProbe.RecordHit(tp, pc, result, /*physPage=*/0,
+                                          ttd::TTDAccessType::Read);
+        }
+    }
+
     /// region <Read breakpoint logic>
     if (_feature_breakpoints_enabled && _context->pDebugManager != nullptr)
     {
@@ -280,14 +297,46 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
     // We mark dirty only on RAM banks (ROM is immutable within a session
     // per TDD §6.3, so ROM writes don't happen through this path in
     // practice — the bank-mode guard below is defensive).
+    uint8_t physPage = 0;
+    bool isRamWrite = false;
     if (_feature_ttd_enabled && _ttdDirtyTracker != nullptr)
     {
         if (_bank_mode[bank] == BANK_RAM)
         {
             uint16_t absRamPage = GetRAMPageForBank(bank);
+            physPage = static_cast<uint8_t>(absRamPage & 0xFF);
+            isRamWrite = true;
             // GetRAMPageForBank returns the absolute RAM page index already
             // (0..MAX_RAM_PAGES-1); MarkDirty is a single OR into the bitmap.
             _ttdDirtyTracker->MarkDirty(absRamPage);
+        }
+    }
+
+    // Phase 4 — write journal (parent TDD §9.3) + access probe (§9.2).
+    // Gated by TTD flag AND Recording state (the manager is the authority on
+    // the latter — we don't reach into _state directly here). Hot-path cost
+    // when not recording or in replay: one predictable branch.
+    if (_feature_ttd_enabled && isRamWrite && _context->pTimeTravelManager != nullptr)
+    {
+        const uint16_t m1pc = _context->pCore ? _context->pCore->GetZ80()->m1_pc : 0;
+        _context->pTimeTravelManager->RecordMemoryWrite(addr, /*oldVal=*/0, value,
+                                                         m1pc, physPage);
+    }
+
+    // Phase 4 — access probe hot-path check (parent TDD §9.2). The probe
+    // is owned by EmulatorContext so all hot-path sites can read it without
+    // a virtual call. Cost when not armed: one relaxed atomic load + branch.
+    if (_feature_ttd_enabled && _context->ttdProbe.IsArmed())
+    {
+        const uint16_t pc = _context->pCore ? _context->pCore->GetZ80()->m1_pc : 0;
+        if (_context->ttdProbe.Matches(addr, ttd::TTDAccessType::Write, value, pc))
+        {
+            const uint64_t frameT = _context->config.frame;
+            const auto& st = _context->emulatorState;
+            const uint16_t tin = _context->pCore ? _context->pCore->GetZ80()->t : 0;
+            const ttd::TTDTimePoint t{st.frame_counter, tin};
+            (void)frameT;
+            _context->ttdProbe.RecordHit(t, pc, value, physPage, ttd::TTDAccessType::Write);
         }
     }
 
