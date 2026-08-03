@@ -513,3 +513,141 @@
     schemas["TTDMarkersResponse"]["properties"]["markers"]["items"]["$ref"] =
         "#/components/schemas/TTDMarker";
 
+    // ---------------------------------------------------------------------
+    // Phase 4 — reverse-search + dump + instruction-step schemas
+    // ---------------------------------------------------------------------
+
+    // POST /ttd/dump
+    schemas["TTDDumpRequest"]["type"] = "object";
+    schemas["TTDDumpRequest"]["description"] =
+        "Request body for POST /ttd/dump.";
+    schemas["TTDDumpRequest"]["properties"]["path"]["type"] = "string";
+    schemas["TTDDumpRequest"]["properties"]["path"]["description"] =
+        "Filesystem path where the .ttd file will be written.";
+    schemas["TTDDumpRequest"]["required"].append("path");
+
+    schemas["TTDDumpResponse"]["type"] = "object";
+    schemas["TTDDumpResponse"]["description"] =
+        "Response from POST /ttd/dump.";
+    schemas["TTDDumpResponse"]["properties"]["ok"]["type"] = "boolean";
+    schemas["TTDDumpResponse"]["properties"]["path"]["type"] = "string";
+    schemas["TTDDumpResponse"]["properties"]["bytes"]["type"] = "integer";
+    schemas["TTDDumpResponse"]["properties"]["bytes"]["format"] = "int64";
+    schemas["TTDDumpResponse"]["properties"]["error"]["type"] = "string";
+
+    // POST /ttd/find-last
+    schemas["TTDFindLastRequest"]["type"] = "object";
+    schemas["TTDFindLastRequest"]["description"] =
+        "Request body for POST /ttd/find-last.";
+    schemas["TTDFindLastRequest"]["properties"]["addr"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["addr"]["format"] = "uint16";
+    schemas["TTDFindLastRequest"]["properties"]["addr"]["description"] =
+        "Memory address to search for (required).";
+    schemas["TTDFindLastRequest"]["required"].append("addr");
+    schemas["TTDFindLastRequest"]["properties"]["access"]["type"] = "string";
+    schemas["TTDFindLastRequest"]["properties"]["access"]["enum"].append("write");
+    schemas["TTDFindLastRequest"]["properties"]["access"]["enum"].append("read");
+    schemas["TTDFindLastRequest"]["properties"]["access"]["enum"].append("execute");
+    schemas["TTDFindLastRequest"]["properties"]["access"]["enum"].append("io");
+    schemas["TTDFindLastRequest"]["properties"]["access"]["default"] = "write";
+    schemas["TTDFindLastRequest"]["properties"]["value"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["value"]["format"] = "uint8";
+    schemas["TTDFindLastRequest"]["properties"]["pc_from"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["pc_from"]["format"] = "uint16";
+    schemas["TTDFindLastRequest"]["properties"]["pc_to"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["pc_to"]["format"] = "uint16";
+    schemas["TTDFindLastRequest"]["properties"]["before_frame"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["before_frame"]["format"] = "uint64";
+    schemas["TTDFindLastRequest"]["properties"]["before_tin"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["before_tin"]["format"] = "uint32";
+
+    schemas["TTDFindLastResponse"]["type"] = "object";
+    schemas["TTDFindLastResponse"]["description"] =
+        "Response from POST /ttd/find-last.";
+    schemas["TTDFindLastResponse"]["properties"]["found"]["type"] = "boolean";
+    schemas["TTDFindLastResponse"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["frame"]["format"] = "uint64";
+    schemas["TTDFindLastResponse"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["tinframe"]["format"] = "uint32";
+    schemas["TTDFindLastResponse"]["properties"]["pc"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["pc"]["format"] = "uint16";
+    schemas["TTDFindLastResponse"]["properties"]["value"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["value"]["format"] = "uint8";
+    schemas["TTDFindLastResponse"]["properties"]["phys_page"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["phys_page"]["format"] = "uint16";
+    schemas["TTDFindLastResponse"]["properties"]["access"]["type"] = "string";
+    schemas["TTDFindLastResponse"]["properties"]["blocked"]["type"] = "boolean";
+    schemas["TTDFindLastResponse"]["properties"]["marker_frame"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["marker_frame"]["format"] = "uint64";
+    schemas["TTDFindLastResponse"]["properties"]["marker_tinframe"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["marker_tinframe"]["format"] = "uint32";
+    schemas["TTDFindLastResponse"]["properties"]["marker_kind"]["type"] = "string";
+    schemas["TTDFindLastResponse"]["properties"]["marker_reason"]["type"] = "string";
+
+    // POST /ttd/step-instruction
+    schemas["TTDStepInstructionRequest"]["type"] = "object";
+    schemas["TTDStepInstructionRequest"]["description"] =
+        "Request body for POST /ttd/step-instruction.";
+    schemas["TTDStepInstructionRequest"]["properties"]["dir"]["type"] = "string";
+    schemas["TTDStepInstructionRequest"]["properties"]["dir"]["enum"].append("back");
+    schemas["TTDStepInstructionRequest"]["properties"]["dir"]["enum"].append("forward");
+    schemas["TTDStepInstructionRequest"]["properties"]["dir"]["enum"].append("fwd");
+    schemas["TTDStepInstructionRequest"]["properties"]["dir"]["default"] = "back";
+
+    schemas["TTDStepInstructionResponse"]["type"] = "object";
+    schemas["TTDStepInstructionResponse"]["description"] =
+        "Response from POST /ttd/step-instruction.";
+    schemas["TTDStepInstructionResponse"]["properties"]["stepped"]["type"] = "boolean";
+    schemas["TTDStepInstructionResponse"]["properties"]["dir"]["type"] = "string";
+    schemas["TTDStepInstructionResponse"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDStepInstructionResponse"]["properties"]["frame"]["format"] = "uint64";
+    schemas["TTDStepInstructionResponse"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDStepInstructionResponse"]["properties"]["tinframe"]["format"] = "uint32";
+
+    // POST /ttd/reverse-step
+    schemas["TTDReverseStepRequest"]["type"] = "object";
+    schemas["TTDReverseStepRequest"]["description"] =
+        "Request body for POST /ttd/reverse-step. Exactly one of count or "
+        "tstates must be specified.";
+    schemas["TTDReverseStepRequest"]["properties"]["count"]["type"] = "integer";
+    schemas["TTDReverseStepRequest"]["properties"]["count"]["format"] = "uint32";
+    schemas["TTDReverseStepRequest"]["properties"]["count"]["description"] =
+        "Number of instructions to step back (M1 boundaries).";
+    schemas["TTDReverseStepRequest"]["properties"]["tstates"]["type"] = "integer";
+    schemas["TTDReverseStepRequest"]["properties"]["tstates"]["format"] = "uint64";
+    schemas["TTDReverseStepRequest"]["properties"]["tstates"]["description"] =
+        "Number of T-states to step back (lands at nearest M1 <= target).";
+
+    schemas["TTDReverseStepResponse"]["type"] = "object";
+    schemas["TTDReverseStepResponse"]["description"] =
+        "Response from POST /ttd/reverse-step.";
+    schemas["TTDReverseStepResponse"]["properties"]["reached"]["type"] = "boolean";
+    schemas["TTDReverseStepResponse"]["properties"]["mode"]["type"] = "string";
+    schemas["TTDReverseStepResponse"]["properties"]["mode"]["enum"].append("count");
+    schemas["TTDReverseStepResponse"]["properties"]["mode"]["enum"].append("tstates");
+    schemas["TTDReverseStepResponse"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDReverseStepResponse"]["properties"]["frame"]["format"] = "uint64";
+    schemas["TTDReverseStepResponse"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDReverseStepResponse"]["properties"]["tinframe"]["format"] = "uint32";
+
+    // POST /ttd/reverse-continue
+    schemas["TTDReverseContinueRequest"]["type"] = "object";
+    schemas["TTDReverseContinueRequest"]["description"] =
+        "Request body for POST /ttd/reverse-continue.";
+    schemas["TTDReverseContinueRequest"]["properties"]["pcs"]["type"] = "array";
+    schemas["TTDReverseContinueRequest"]["properties"]["pcs"]["items"]["type"] = "integer";
+    schemas["TTDReverseContinueRequest"]["properties"]["pcs"]["items"]["format"] = "uint16";
+    schemas["TTDReverseContinueRequest"]["properties"]["pcs"]["description"] =
+        "Non-empty list of reverse breakpoint PCs (required).";
+    schemas["TTDReverseContinueRequest"]["required"].append("pcs");
+
+    schemas["TTDReverseContinueResponse"]["type"] = "object";
+    schemas["TTDReverseContinueResponse"]["description"] =
+        "Response from POST /ttd/reverse-continue.";
+    schemas["TTDReverseContinueResponse"]["properties"]["matched"]["type"] = "boolean";
+    schemas["TTDReverseContinueResponse"]["properties"]["pc"]["type"] = "integer";
+    schemas["TTDReverseContinueResponse"]["properties"]["pc"]["format"] = "uint16";
+    schemas["TTDReverseContinueResponse"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDReverseContinueResponse"]["properties"]["frame"]["format"] = "uint64";
+    schemas["TTDReverseContinueResponse"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDReverseContinueResponse"]["properties"]["tinframe"]["format"] = "uint32";

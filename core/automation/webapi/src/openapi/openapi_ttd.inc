@@ -1,6 +1,8 @@
-    // Time-Travel Debug endpoints (parent TDD §10.4 — full Phase 2 surface).
+    // Time-Travel Debug endpoints (parent TDD §10.4).
     //
-    // All 10 endpoints exposed by core/automation/webapi/src/api/ttd_api.cpp.
+    // Phase 2 surface (10 endpoints) + Phase 4 reverse-search (3 endpoints)
+    // + Phase 4 reverse-execution (2 endpoints) = 15 endpoints total,
+    // all exposed by core/automation/webapi/src/api/ttd_api.cpp.
     // The status endpoint also serves as a capability probe: it returns 200
     // with state="idle" and ttd_available=false when the TTD engine is not
     // compiled in. All other endpoints return 501 in that case.
@@ -265,4 +267,160 @@
     paths["/api/v1/emulator/{id}/ttd/markers"]["get"]["responses"]["404"]["description"] =
         "Emulator instance not found";
     paths["/api/v1/emulator/{id}/ttd/markers"]["get"]["responses"]["501"]["description"] =
+        "TTD engine not available in this build";
+
+    // =====================================================================
+    // POST /ttd/dump — serialize session to .ttd file (Phase 4)
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["summary"] =
+        "Dump TTD session to .ttd file (Phase 4 reverse search)";
+    paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["description"] =
+        "Serializes the current TTD session to a .ttd binary file at the "
+        "given filesystem path. The file format is documented in "
+        "ttd_dump_format.h (schema v3 with embedded write journal).";
+    paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["requestBody"]["description"] =
+        "Output path for the .ttd file";
+    paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["requestBody"]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/TTDDumpRequest";
+    paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["responses"]["200"]["description"] =
+        "Dump attempted (check ok flag)";
+    paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/TTDDumpResponse";
+    paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["responses"]["400"]["description"] =
+        "Missing required field: path";
+    paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["responses"]["404"]["description"] =
+        "Emulator instance not found";
+    paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["responses"]["501"]["description"] =
+        "TTD engine not available in this build";
+
+    // =====================================================================
+    // POST /ttd/find-last — reverse search: find last access at address (Phase 4)
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["summary"] =
+        "Reverse search: find last memory access at address (Phase 4 reverse search)";
+    paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["description"] =
+        "Searches backward through the recorded timeline for the most recent "
+        "memory access matching the query. Returns the TTDTimePoint, PC, value, "
+        "and physical page of the matching access. Optional filters: access "
+        "type, value, PC range, and before-frame/tin bound. If a blocking "
+        "external-event marker prevents the scan from reaching the matching "
+        "access, the response carries blocked=true with the marker details.";
+    paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["requestBody"]["description"] =
+        "Search query";
+    paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["requestBody"]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/TTDFindLastRequest";
+    paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["responses"]["200"]["description"] =
+        "Search completed (check found flag)";
+    paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/TTDFindLastResponse";
+    paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["responses"]["400"]["description"] =
+        "Missing required field: addr";
+    paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["responses"]["404"]["description"] =
+        "Emulator instance not found";
+    paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["responses"]["501"]["description"] =
+        "TTD engine not available in this build";
+
+    // =====================================================================
+    // POST /ttd/step-instruction — step one instruction back or forward (Phase 4)
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/step-instruction"]["post"]["summary"] =
+        "Step one Z80 instruction back or forward (Phase 4 reverse search)";
+    paths["/api/v1/emulator/{id}/ttd/step-instruction"]["post"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/step-instruction"]["post"]["description"] =
+        "Single-instruction step in either direction. Uses M1-cycle boundaries "
+        "so the resulting position is always at an instruction start. Backward "
+        "step uses the M1 probe to locate the previous M1; forward step replays "
+        "forward to the next M1. Fails (stepped=false) at session boundaries.";
+    paths["/api/v1/emulator/{id}/ttd/step-instruction"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/step-instruction"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/step-instruction"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/step-instruction"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/step-instruction"]["post"]["requestBody"]["description"] =
+        "Direction (default: back)";
+    paths["/api/v1/emulator/{id}/ttd/step-instruction"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/TTDStepInstructionRequest";
+    paths["/api/v1/emulator/{id}/ttd/step-instruction"]["post"]["responses"]["200"]["description"] =
+        "Step attempted (check stepped flag)";
+    paths["/api/v1/emulator/{id}/ttd/step-instruction"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/TTDStepInstructionResponse";
+    paths["/api/v1/emulator/{id}/ttd/step-instruction"]["post"]["responses"]["404"]["description"] =
+        "Emulator instance not found";
+    paths["/api/v1/emulator/{id}/ttd/step-instruction"]["post"]["responses"]["501"]["description"] =
+        "TTD engine not available in this build";
+
+    // =====================================================================
+    // POST /ttd/reverse-step — multi-step backward (Phase 4 reverse execution)
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["summary"] =
+        "Step back N instructions or T t-states (Phase 4 reverse execution)";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["description"] =
+        "Multi-step backward jump. Exactly one of 'count' (instructions) or "
+        "'tstates' (T-states) must be specified. For small N (<=4) delegates "
+        "to repeated single-step; for larger N uses a single M1 enumeration "
+        "pass. T-state mode aligns the landing to the nearest M1 boundary "
+        "at or before the target T-state count.";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["requestBody"]["description"] =
+        "Step size — exactly one of count or tstates";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["requestBody"]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/TTDReverseStepRequest";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["responses"]["200"]["description"] =
+        "Step attempted (check reached flag)";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/TTDReverseStepResponse";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["responses"]["400"]["description"] =
+        "Missing or conflicting 'count'/'tstates' fields";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["responses"]["404"]["description"] =
+        "Emulator instance not found";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["responses"]["501"]["description"] =
+        "TTD engine not available in this build";
+
+    // =====================================================================
+    // POST /ttd/reverse-continue — run backward until PC matches (Phase 4)
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["summary"] =
+        "Run backward until any PC matches (Phase 4 reverse execution)";
+    paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["description"] =
+        "Backward breakpoint scan. Enumerates M1 cycles from session start "
+        "to the current position and finds the most recent M1 whose PC is in "
+        "the supplied list. Equivalent to 'reverse-continue' in WinDbg TTD. "
+        "Response carries matched=true with the matched PC and arrival time "
+        "point; matched=false when no PC in the list was visited. A blocking "
+        "external-event marker may also short-circuit the scan.";
+    paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["requestBody"]["description"] =
+        "Reverse breakpoints";
+    paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["requestBody"]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/TTDReverseContinueRequest";
+    paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["responses"]["200"]["description"] =
+        "Scan completed (check matched flag)";
+    paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/TTDReverseContinueResponse";
+    paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["responses"]["400"]["description"] =
+        "Missing or empty 'pcs' array";
+    paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["responses"]["404"]["description"] =
+        "Emulator instance not found";
+    paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["responses"]["501"]["description"] =
         "TTD engine not available in this build";
