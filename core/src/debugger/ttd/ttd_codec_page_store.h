@@ -85,6 +85,20 @@ public:
     /// @return Slot index.
     uint32_t InternXor(uint32_t prevSlot, const uint8_t* pageData);
 
+    /// @brief Load a pre-compressed slot directly from a .ttd file.
+    ///
+    /// Used by DeserializeSession to restore slots without decompress/recompress.
+    /// The payload is stored as-is; caller is responsible for ensuring the
+    /// payload was produced by the same codec (zstd-1).
+    ///
+    /// @param encoding   Slot encoding (Full, XorPrev, or Zero).
+    /// @param prevSlot   For XorPrev: the slot index this delta references.
+    /// @param crc32c     CRC32C of the original uncompressed page.
+    /// @param payload    Pre-compressed payload (empty for Zero encoding).
+    /// @return Slot index.
+    uint32_t InternDirect(Encoding encoding, uint32_t prevSlot, uint32_t crc32c,
+                          const std::vector<uint8_t>& payload);
+
     /// @brief Increment refcount of a slot.
     /// Used when a new checkpoint shares a clean page with the previous one.
     void AddRef(uint32_t idx);
@@ -115,6 +129,23 @@ public:
     /// A Full slot has depth 0; an XorPrev slot has depth(prevSlot) + 1.
     /// Useful to detect pathological chains that would slow restore.
     uint32_t GetDeltaDepth(uint32_t idx) const;
+
+    // -------------------------------------------------------------------
+    // Direct payload access (for serialization)
+    // -------------------------------------------------------------------
+
+    /// @brief Get the raw compressed payload for a slot (no decompression).
+    /// Used by DumpSession to write XOR-delta payloads directly to disk
+    /// without the decompress-then-recompress round-trip.
+    /// @param idx    Slot index.
+    /// @param out    Output vector; resized and filled with payload bytes.
+    /// @return true on success; false if slot is invalid or empty.
+    bool GetPayload(uint32_t idx, std::vector<uint8_t>& out) const;
+
+    /// @brief Get the CRC32C stored for a slot.
+    /// @param idx  Slot index.
+    /// @return CRC32C of the original raw page (not the XOR buffer).
+    uint32_t GetCrc32C(uint32_t idx) const;
 
     // -------------------------------------------------------------------
     // Diagnostics

@@ -1045,3 +1045,100 @@ brew install lz4 snappy brotli zlib
 The Shannon entropy table is printed to stderr at startup, ahead of
 the Google Benchmark tabular output, so the theoretical floor is
 visible alongside every codec's measured `BLI/floor` ratio.
+
+---
+
+## Section 7 — Implementation Status & Remaining Optimization (2026-08-03)
+
+### Current state
+
+The in-memory codec (`TTDCodecPageStore`) correctly implements XOR-delta + zstd-1 encoding during capture. However, **the `.ttd` dump path does NOT preserve XOR deltas** — it reconstructs full pages and re-compresses them:
+
+```cpp
+// timetravelmanager.cpp:1932-1940 (current implementation)
+uint8_t pageBuf[kSubPageSize];
+_pageStore.GetPage(idx, pageBuf);  // <-- Reconstructs full page (loses XOR!)
+auto payload = codec::Compress(pageBuf, kSubPageSize);  // <-- Re-compresses full page
+```
+
+**Measured impact (action.sna demo, 3353 frames):**
+
+| Metric | Current | Expected (v2 spec) | Gap |
+|--------|---------|-------------------|-----|
+| File size | 118 MB | ~6 MB | 20× |
+| Per-frame | 35.2 KB | ~1.8 KB | 20× |
+| 7z -mx=9 | 22 MB | ~5 MB | 4× |
+
+The 5.3:1 7z compression ratio proves the data is highly redundant — the XOR deltas that would eliminate this redundancy are being discarded.
+
+### Root cause
+
+`DumpSession()` iterates over page store slots and calls `GetPage(idx, buf)` which **recursively decompresses** XOR chains into a full 4 KB page, then re-compresses the full page. This loses the XOR structure that gave us 92% compression wins in the PoC.
+
+### Proposed fix
+
+Add `GetPayload()` accessor to `TTDCodecPageStore` that returns the raw compressed payload (already stored internally) instead of reconstructing:
+
+```cpp
+// New accessor in TTDCodecPageStore
+bool GetPayload(uint32_t idx, std::vector<uint8_t>& out) const {
+    if (idx >= _capacity || _slots[idx].refcount == 0) return false;
+    const Slot& s = _slots[idx];
+    out.assign(s.payload, s.payload + s.compressedSize);
+    return true;
+}
+
+// Updated dump path
+std::vector<uint8_t> payload;
+if (encoding == Encoding::Zero) {
+    // no payload
+} else {
+    _pageStore.GetPayload(idx, payload);  // <-- Direct access to stored payload
+}
+```
+
+For XorPrev-encoded slots, write the stored XOR-delta payload directly. The file already stores `prev_slot` references, so the reader can reconstruct by walking the chain.
+
+### Performance impact
+
+| Operation | Before fix | After fix | Change |
+|-----------|-----------|-----------|--------|
+| **Dump (write)** | ~10 µs/slot (decompress + recompress) | ~1 µs/slot (memcpy) | 10× faster |
+| **Load (read)** | No change | No change | — |
+| **Seek** | No change | No change | — |
+| **Scrub** | No change | No change | — |
+| **File size** | ~35 KB/frame | ~1.8 KB/frame | 20× smaller |
+
+### Recording latency impact: None
+
+Recording already uses the XOR+zstd path in `TTDCodecPageStore::InternXor()`. The fix only affects the dump/serialize path, which is a one-shot operation triggered by `/ttd/dump` or session save.
+
+### Scrubbing/restore latency impact: Slight improvement
+
+Smaller files = less I/O on load. The XOR chain walk is the same either way — the codec page store already handles reconstruction. File-backed sessions would see faster initial load times proportional to the size reduction (~20×).
+
+### Implementation effort
+
+| Task | Estimate |
+|------|----------|
+| Add `GetPayload()` + `GetCrc32C()` to TTDCodecPageStore | 1h |
+| Update `DumpSession()` to use direct payload | 1h |
+| Update `LoadSession()` to intern payloads directly | 2h |
+| Integration tests | 2h |
+| **Total** | **6h** |
+
+### Why the current code works (but inefficiently)
+
+The file format already specifies XorPrev encoding and stores `prev_slot` references. The reader (`LoadSession`) can handle XOR-delta payloads. The only bug is that the writer discards the deltas and substitutes full pages.
+
+This is why the file parses correctly and seek/restore work — the reader treats every slot as `Full` encoding in practice because the payload is a full compressed page, regardless of what `encoding` byte says.
+
+### Migration path
+
+**No backward compatibility required** — previous formats were never released. Clean break:
+
+1. Reset schema version to **v1.0** (fresh start)
+2. Remove all legacy format code paths
+3. Dump writes true XOR-delta payloads directly from page store
+4. Load expects XOR-delta payloads and reconstructs via chain walk
+5. Old .ttd files (v3.x) are incompatible and should be regenerated

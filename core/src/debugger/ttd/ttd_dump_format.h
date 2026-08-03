@@ -1,19 +1,16 @@
 #pragma once
 
 /// @file ttd_dump_format.h
-/// @brief C++ constants and helpers for the .ttd binary format v3.
+/// @brief C++ constants and helpers for the .ttd binary format v1.
 ///
-/// v3 is an additive evolution from v2 — v2 readers can still parse v3
-/// files if they ignore the new write-journal section. v3 introduces:
-///   - Write journal section (flag bit 1): ring-buffer of 12-byte
-///     TTDWriteRecord entries for reverse-watchpoint fast-path scan.
-///
-/// v2 (retained for reference):
-///   - Codec-aware page store: 4 KB sub-pages (was 16 KB)
+/// v1 is the first production release format with proper XOR-delta encoding:
+///   - Codec-aware page store: 4 KB sub-pages
 ///   - Three encodings per slot: Full / XorPrev / Zero
+///   - XOR-delta payloads written directly (not reconstructed full pages)
 ///   - zstd level 1 compression of every slot payload
 ///   - Per-slot CRC32C integrity check (4 bytes overhead per slot)
 ///   - I-frame / P-frame discriminator per checkpoint
+///   - Write journal section for reverse-watchpoint fast-path scan
 ///
 /// Mirrors the canonical Kaitai Struct schema in ttd.ksy. The schema is the
 /// single source of truth — this header exists only to give the C++ writer
@@ -23,8 +20,6 @@
 /// Compatibility contract:
 ///   - kSchemaVersion here MUST equal meta.schema-version in ttd.ksy
 ///   - Both are bumped atomically in one commit on any breaking change
-///   - Additive-only evolution within a major version (new encoding values,
-///     new flag bits) — never reorder or shrink existing fields.
 ///
 /// The .ksy is git-tagged `ttd-schema-vN` on every breaking change so
 /// third-party parsers can pin to a known schema version.
@@ -36,9 +31,9 @@ namespace ttd::dump {
 /// 4-byte magic at the head of every .ttd file. ASCII "TTDD".
 constexpr char kMagic[4] = {'T', 'T', 'D', 'D'};
 
-/// Schema version. v3 = v2 + write journal section.
+/// Schema version. v1 = first production release with XOR-delta encoding.
 /// MUST match `meta.schema-version` in ttd.ksy.
-constexpr uint16_t kSchemaVersion = 3;
+constexpr uint16_t kSchemaVersion = 1;
 
 /// Bit 0 of header.flags — set when the writer is little-endian (always 1
 /// in v2+; we static_assert against little-endian in the writer).

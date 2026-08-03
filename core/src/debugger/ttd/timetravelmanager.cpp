@@ -1917,11 +1917,12 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
         }
         if (!WritePod(out, prevSlotOut, err)) return false;
 
-        // CRC field: 0 on write. Reader verifies by recomputing.
-        const uint32_t crcPlaceholder = 0;
-        if (!WritePod(out, crcPlaceholder, err)) return false;
+        // CRC field: write the stored CRC32C directly.
+        const uint32_t crc32c = _pageStore.GetCrc32C(idx);
+        if (!WritePod(out, crc32c, err)) return false;
 
-        // Payload: empty for Zero; zstd-compressed reconstructed page otherwise.
+        // Payload: write the stored compressed payload directly (no decompress/recompress).
+        // This preserves XOR-delta encoding for ~20x smaller files.
         if (encoding == TTDCodecPageStore::Encoding::Zero)
         {
             const uint32_t payloadSize = 0;
@@ -1929,18 +1930,10 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
         }
         else
         {
-            // Reconstruct the 4 KB page (handles XorPrev recursively).
-            uint8_t pageBuf[ttd::dump::kSubPageSize];
-            if (!_pageStore.GetPage(idx, pageBuf))
+            std::vector<uint8_t> payload;
+            if (!_pageStore.GetPayload(idx, payload))
             {
-                err = "CRC mismatch on slot " + std::to_string(idx) +
-                      " during serialize — corrupt live slot";
-                return false;
-            }
-            auto payload = ttd::codec::Compress(pageBuf, ttd::dump::kSubPageSize);
-            if (payload.empty())
-            {
-                err = "zstd compress failed on slot " + std::to_string(idx);
+                err = "failed to get payload for slot " + std::to_string(idx);
                 return false;
             }
             const uint32_t payloadSize = static_cast<uint32_t>(payload.size());
@@ -2040,21 +2033,11 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
 
     uint16_t schemaVersion = 0;
     if (!ReadPod(in, schemaVersion, err)) return false;
-    if (schemaVersion > ttd::dump::kMaxSupportedSchemaVersion)
+    if (schemaVersion != ttd::dump::kSchemaVersion)
     {
-        err = "file is schema v" + std::to_string(schemaVersion) +
-              ", this reader supports up to v" +
-              std::to_string(ttd::dump::kMaxSupportedSchemaVersion);
-        return false;
-    }
-    if (schemaVersion < 2 || schemaVersion > ttd::dump::kSchemaVersion)
-    {
-        // v2 is the only version we know how to read. Future versions will
-        // branch here. v1 files are refused without migration — the codec
-        // format change is breaking by design (no v1 support).
         err = "unsupported schema v" + std::to_string(schemaVersion) +
-              " (supported: v2..v" + std::to_string(ttd::dump::kSchemaVersion) +
-              "; v1 files are not supported \u2014 re-capture the session)";
+              " (this reader requires v" + std::to_string(ttd::dump::kSchemaVersion) +
+              "; re-capture the session)";
         return false;
     }
 
@@ -2170,45 +2153,16 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
             }
         }
 
-        // Materialize the slot in the codec page store.
-        // The codec page store API doesn't have a "bulk load" path; we use
-        // InternFull / InternXor to recreate each slot.
-        //
-        // Future optimization: add a TTDCodecPageStore::LoadSlot() that
-        // stores the pre-compressed payload directly without re-decoding /
-        // re-compressing.
-        uint32_t newIdx = 0;
+        // Load the slot directly using InternDirect — no decompress/recompress.
+        // v1 format stores XOR-delta payloads as-is from the codec page store.
+        TTDCodecPageStore::Encoding encoding;
         if (encByte == ttd::dump::kEncodingZero)
-        {
-            // Reconstruct the zero page and InternFull it (codec detects zero).
-            uint8_t zeroBuf[ttd::dump::kSubPageSize];
-            std::memset(zeroBuf, 0, sizeof(zeroBuf));
-            newIdx = _pageStore.InternFull(zeroBuf);
-        }
+            encoding = TTDCodecPageStore::Encoding::Zero;
         else if (encByte == ttd::dump::kEncodingFull)
-        {
-            // Decompress payload → 4 KB page → InternFull.
-            uint8_t pageBuf[ttd::dump::kSubPageSize];
-            if (!ttd::codec::Decompress(payload, ttd::dump::kSubPageSize, pageBuf))
-            {
-                err = "zstd decompress failed on slot " + std::to_string(i);
-                return false;
-            }
-            newIdx = _pageStore.InternFull(pageBuf);
-        }
+            encoding = TTDCodecPageStore::Encoding::Full;
         else if (encByte == ttd::dump::kEncodingXorPrev)
         {
-            // The on-disk payload is Compress(GetPage(idx)) — i.e. the FULL
-            // reconstructed 4 KB page, NOT a delta (see SerializeSession).
-            // We decompress and pass the full page to InternXor, which will
-            // internally compute the XOR-against-prev delta and pick the
-            // smaller of (delta, full) for the in-memory encoding.
-            //
-            // NB: an earlier version of this code XORed the decompressed
-            // payload with prev_page before calling InternXor, treating the
-            // payload as if it were a delta. That double-XORed on GetPage
-            // and produced systematically wrong page content for every
-            // XorPrev slot. Round-trip tests caught it.
+            encoding = TTDCodecPageStore::Encoding::XorPrev;
             if (prevSlot == ttd::dump::kNeverTouchedSlot || prevSlot >= i)
             {
                 err = "slot " + std::to_string(i) +
@@ -2216,13 +2170,6 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
                       " (must be < current index)";
                 return false;
             }
-            uint8_t pageBuf[ttd::dump::kSubPageSize];
-            if (!ttd::codec::Decompress(payload, ttd::dump::kSubPageSize, pageBuf))
-            {
-                err = "zstd decompress failed on XorPrev slot " + std::to_string(i);
-                return false;
-            }
-            newIdx = _pageStore.InternXor(prevSlot, pageBuf);
         }
         else
         {
@@ -2230,6 +2177,8 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
                   std::to_string(encByte);
             return false;
         }
+
+        uint32_t newIdx = _pageStore.InternDirect(encoding, prevSlot, crc, payload);
 
         if (newIdx != i)
         {

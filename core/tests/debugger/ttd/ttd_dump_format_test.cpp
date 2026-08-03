@@ -237,7 +237,7 @@ TEST_F(TTD_Dump_Format_Test, Deserialize_FutureSchemaVersion_Fails)
     std::string err;
     EXPECT_FALSE(_ttd->DeserializeSession(in, err));
     EXPECT_NE(err.find("schema"), std::string::npos) << "Error: " << err;
-    EXPECT_NE(err.find("reader supports"), std::string::npos) << "Error: " << err;
+    EXPECT_NE(err.find("requires"), std::string::npos) << "Error: " << err;
 }
 
 // ===========================================================================

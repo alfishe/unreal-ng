@@ -136,6 +136,29 @@ uint32_t TTDCodecPageStore::InternXor(uint32_t prevSlot, const uint8_t* pageData
     return idx;
 }
 
+uint32_t TTDCodecPageStore::InternDirect(Encoding encoding, uint32_t prevSlot,
+                                          uint32_t crc32c,
+                                          const std::vector<uint8_t>& payload)
+{
+    const uint32_t idx = AllocateSlot();
+    Slot& s = _slots[idx];
+    s.encoding = encoding;
+    s.refcount = 1;
+    s.crc32c = crc32c;
+    s.payload = payload;  // copy
+    s.prevSlot = (encoding == Encoding::XorPrev) ? prevSlot : 0;
+
+    // XorPrev slots hold a reference to their prevSlot (same as InternXor).
+    if (encoding == Encoding::XorPrev)
+    {
+        assert(prevSlot < _slots.size() && _slots[prevSlot].refcount > 0);
+        _slots[prevSlot].refcount++;
+    }
+
+    _usedSlots++;
+    return idx;
+}
+
 void TTDCodecPageStore::AddRef(uint32_t idx)
 {
     assert(idx < _slots.size());
@@ -284,6 +307,21 @@ uint32_t TTDCodecPageStore::GetPrevSlot(uint32_t idx) const
 {
     assert(idx < _slots.size());
     return _slots[idx].prevSlot;
+}
+
+bool TTDCodecPageStore::GetPayload(uint32_t idx, std::vector<uint8_t>& out) const
+{
+    if (idx >= _slots.size() || _slots[idx].refcount == 0)
+        return false;
+    const Slot& s = _slots[idx];
+    out = s.payload;  // copy
+    return true;
+}
+
+uint32_t TTDCodecPageStore::GetCrc32C(uint32_t idx) const
+{
+    assert(idx < _slots.size());
+    return _slots[idx].crc32c;
 }
 
 size_t TTDCodecPageStore::GetUsedBytes() const
