@@ -349,6 +349,10 @@
     schemas["TTDStartResponse"]["properties"]["state"]["enum"].append("idle");
     schemas["TTDStartResponse"]["properties"]["state"]["enum"].append("recording");
     schemas["TTDStartResponse"]["properties"]["state"]["enum"].append("detached");
+    schemas["TTDStartResponse"]["properties"]["write_journal_enabled"]["type"] = "boolean";
+    schemas["TTDStartResponse"]["properties"]["write_journal_enabled"]["description"] =
+        "Whether write journal capture is enabled. false = gaming mode (smaller files), "
+        "true = development mode (fast reverse-watchpoint queries).";
 
     // ---------------------------------------------------------------------
     // POST /ttd/stop response

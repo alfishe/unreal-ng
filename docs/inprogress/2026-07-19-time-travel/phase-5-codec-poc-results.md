@@ -1142,3 +1142,177 @@ This is why the file parses correctly and seek/restore work — the reader treat
 3. Dump writes true XOR-delta payloads directly from page store
 4. Load expects XOR-delta payloads and reconstructs via chain walk
 5. Old .ttd files (v3.x) are incompatible and should be regenerated
+
+---
+
+## Section 8 — Future Optimizations (v2 Format Roadmap)
+
+### 8.1 Optional Write Journal (IMPLEMENTED)
+
+The write journal stores every memory/port write for reverse-watchpoint queries ("where was this address last written?"). Each record is 12 bytes:
+
+```cpp
+struct TTDWriteRecord {   // 12 bytes per write, packed
+    uint64_t globalT  : 40;  // Absolute t-state since session start (~9 years max)
+    uint64_t addr     : 16;  // Z80 address or port number
+    uint64_t isIo     : 1;   // 1 = port OUT, 0 = memory write
+    uint64_t pad      : 7;   // Reserved
+    uint16_t m1pc;           // PC of the writing instruction
+    uint8_t  value;          // Byte written
+    uint8_t  physPage;       // Physical RAM page (disambiguates banked writes)
+};
+```
+
+For a 500-frame demo with ~800K memory writes, this adds ~9.5 MB — 90% of the file.
+
+**Implementation**: `SetEnableWriteJournal(false)` disables capture:
+- `RecordMemoryWrite()` / `RecordIoWrite()` early-exit when disabled
+- Serialize writes no journal section (flag `kFlagsHasWriteJournal` cleared)
+- Deserialize already handles empty journal
+- Reverse watchpoints fall back to checkpoint replay (slower but functional)
+
+**API**:
+```cpp
+// Gaming mode: smaller files, checkpoint scrubbing works, no fast reverse-watchpoints
+ttd->SetEnableWriteJournal(false);
+ttd->StartRecording();
+
+// Development mode (default): full journal, fast reverse-watchpoint queries
+ttd->SetEnableWriteJournal(true);
+ttd->StartRecording();
+```
+
+**Use cases**:
+- **Gaming mode** (`enable = false`): Recording gameplay, demos, general time-travel
+- **Development mode** (`enable = true`): Debugging, step-back analysis, "where was X written?"
+
+**Impact**: 10.5 MB → 1.0 MB for typical demo capture (90% reduction)
+
+### 8.2 Peripheral Back-References (XOR-based change detection)
+
+Peripheral state (FDC, Tape, AY, Covox) is stored every checkpoint even when unchanged. FDC alone is 251 bytes/frame but idle 99% of the time after initial disk load.
+
+**Proposal**: Apply same XOR pattern as RAM pages:
+
+```
+CapturePeripheral(device, prevState):
+    currState = device.TTDSaveState()
+    xorBuf = currState XOR prevState
+    
+    if IsAllZero(xorBuf):
+        return BackRef(prevCheckpointIdx)  // 5 bytes
+    else:
+        return FullData(currState)         // full blob
+```
+
+**I-frame rule**: Always store FullData on keyframes (every 50 frames).
+- Max back-ref chain: 49 frames
+- Restore: scan back to nearest checkpoint with FullData
+- Worst case latency: ~500μs (49 checkpoint header reads)
+
+**On-disk format**:
+```
+PeripheralBlob {
+    u8  type          // 0=NotPresent, 1=BackRef, 2=FullData
+    if (type == BackRef):
+        u32 refIdx    // checkpoint index with actual data
+    if (type == FullData):
+        u32 size
+        u8  data[size]
+}
+```
+
+**Impact** (500-frame demo, disk loads in first 100 frames):
+- FDC: 125 KB → 27 KB (78% savings)
+- Tape: 20 KB → 5 KB (75% savings when loaded)
+
+### 8.3 AY Minimal Mode
+
+AY state is 57 bytes per chip, but 40 bytes are generator counters/phase that change every t-state. Only 17 bytes (registers + current_reg) are needed for functional restore.
+
+**Proposal**: Store only registers; regenerate counters from register values on restore.
+
+**Tradeoff**: Audio may have micro-discontinuity on restore (phase mismatch). Acceptable for scrubbing; store full state on I-frames for clean audio at keyframe boundaries.
+
+**Impact**: 115 bytes → 34 bytes for TurboSound (70% savings)
+
+### 8.4 Combined Savings Estimate
+
+| Component | Current (500 fr) | Optimized | Savings |
+|-----------|------------------|-----------|---------|
+| Write journal | 9,500 KB | 0 KB | 100% |
+| RAM (XOR+zstd) | 1,150 KB | 1,150 KB | 0% |
+| Peripherals | 200 KB | 50 KB | 75% |
+| CPU/Chipset | 110 KB | 110 KB | 0% |
+| **Total** | **10,960 KB** | **1,310 KB** | **88%** |
+| **Per-frame** | **21.9 KB** | **2.6 KB** | **88%** |
+
+---
+
+## Section 9 — Comprehensive Test Suite (2026-08-03)
+
+Test file: `core/tests/debugger/ttd/ttd_format_v2_test.cpp`
+
+### 9.1 Test Categories
+
+The v2 format test suite covers 5 categories:
+
+1. **Round-trip integrity tests** — capture → serialize → deserialize → verify
+2. **XOR-delta encoding tests** — slot sharing, chain depth, encoding selection
+3. **Frame kind tests** — I-frame/P-frame discrimination, keyframe anchoring
+4. **State preservation tests** — CPU registers, chipset ports, peripheral blobs
+5. **Edge case tests** — empty sessions, corrupt data, truncated files
+
+### 9.2 Test Matrix
+
+| Test Name | Category | What It Verifies |
+|-----------|----------|------------------|
+| `RoundTrip_SingleCheckpoint_MatchesOriginal` | Round-trip | Single-frame baseline capture/restore |
+| `RoundTrip_MultiCheckpoint_PreservesAllPages` | Round-trip | Multi-frame with dirty pages |
+| `RoundTrip_RandomData_PreservesContent` | Round-trip | Random page content survives |
+| `XorDelta_UnchangedPage_SharesSlot` | XOR-delta | Unchanged pages share slot (AddRef) |
+| `XorDelta_MinimalChange_UsesXorPrev` | XOR-delta | Single-byte change → XorPrev encoding |
+| `XorDelta_ChainDepthMatchesDeltaFrameCount` | XOR-delta | Delta chains build correctly |
+| `IFrame_AtKeyframeInterval_HasKeyFrameKind` | Frame kind | Keyframe interval enforced |
+| `PFrame_BetweenKeyframes_HasDeltaFrameKind` | Frame kind | Non-keyframes are P-frames |
+| `IFrame_RoundTrip_PreservesKeyFrameAnchor` | Frame kind | keyFrameAnchor survives round-trip |
+| `CpuState_AllRegisters_PreservedOnRoundTrip` | State | All 36 bytes of CPU state |
+| `ChipsetState_PortLatches_PreservedOnRoundTrip` | State | Port latches and counters |
+| `EdgeCase_EmptySession_SerializesCleanly` | Edge | Empty timeline produces valid file |
+| `EdgeCase_EmptySession_DeserializesCleanly` | Edge | Empty file loads without error |
+| `EdgeCase_BadMagic_RejectsGracefully` | Edge | Wrong magic rejected with clear error |
+| `EdgeCase_FutureSchema_RejectsGracefully` | Edge | Future version rejected with clear error |
+| `EdgeCase_TruncatedFile_RejectsGracefully` | Edge | Truncated file fails to load |
+| `Efficiency_XorDelta_SmallerThanFull` | Efficiency | XOR delta < full page for minimal change |
+| `Efficiency_UnchangedFrames_MinimalGrowth` | Efficiency | Per-checkpoint overhead is bounded |
+| `SelfTest_FreshSession_Passes` | Self-test | CaptureRestoreSelfTest baseline |
+| `SelfTest_AfterRamMutation_Passes` | Self-test | Self-test after RAM changes |
+| `Scrub_ForwardSequential_NoDrift` | Seek | Sequential seek preserves state |
+
+### 9.3 Running the Tests
+
+```bash
+# Run all v2 format tests
+./cmake-build-release/bin/core-tests --gtest_filter="TTD_Format_V2*"
+
+# Run all TTD tests (includes v1 tests)
+./cmake-build-release/bin/core-tests --gtest_filter="TTD_*"
+```
+
+### 9.4 Implemented Optimizations (2026-08-03)
+
+1. **Optional write journal** (IMPLEMENTED)
+   - `SetEnableWriteJournal(false)` disables journal capture
+   - Gaming mode produces ~90% smaller .ttd files
+   - WebAPI: `POST /ttd/start` with `{"mode": "gaming"}`
+   - Lua: `ttd_start("gaming")`
+   - Reverse-watchpoint queries fall back to checkpoint replay
+
+### 9.5 Future Test Categories
+
+When remaining optimizations are implemented, add:
+
+1. **Feature flag tests** — conditional serialization based on model
+2. **Peripheral back-reference tests** — XOR-zero detection, chain resolution
+3. **Model configuration tests** — ZX-48K through ATM feature flags
+4. **AY minimal mode tests** — register-only vs full state

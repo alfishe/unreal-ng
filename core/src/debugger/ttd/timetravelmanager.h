@@ -164,6 +164,27 @@ public:
     TTDSessionInfo GetSessionInfo() const;
 
     // -----------------------------------------------------------------------
+    // Session configuration (v2 optimizations)
+    // -----------------------------------------------------------------------
+
+    /// @brief Enable/disable write journal capture.
+    ///
+    /// **Gaming mode** (`enable = false`):
+    ///   - Smaller .ttd files (~90% reduction)
+    ///   - Checkpoint scrubbing and rewind work normally
+    ///   - Reverse-watchpoint queries fall back to checkpoint replay (slower)
+    ///   - Best for: recording gameplay, demos, general time-travel
+    ///
+    /// **Development mode** (`enable = true`, default):
+    ///   - Full write journal with every memory/port write (12 bytes each)
+    ///   - Fast reverse-watchpoint queries ("where was X last written?")
+    ///   - Best for: debugging, step-back analysis, reverse debugging
+    ///
+    /// Must be called before StartRecording() to take effect.
+    void SetEnableWriteJournal(bool enable) { _enableWriteJournal = enable; }
+    bool GetEnableWriteJournal() const { return _enableWriteJournal; }
+
+    // -----------------------------------------------------------------------
     // Session serialization (.ttd format) — universal capability
     // -----------------------------------------------------------------------
     //
@@ -906,6 +927,11 @@ private:
     /// from MemoryWriteDebug / DecodePortOut hooks. Same lifecycle as the
     /// other journals: dropped on Invalidate/Start, truncated by Resume.
     TTDWriteJournal _writeJournal;
+
+    /// Whether to capture write journal entries. When false, journal is empty
+    /// and reverse-watchpoint queries fall back to checkpoint replay.
+    /// Set via SetEnableWriteJournal() before StartRecording().
+    bool _enableWriteJournal = true;
 
     // -----------------------------------------------------------------------
     // Replay-mode state (Phase 2 Item 2; parent TDD §8.2)

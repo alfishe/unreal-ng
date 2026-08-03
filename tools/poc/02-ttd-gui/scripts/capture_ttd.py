@@ -55,6 +55,8 @@ def main():
     parser.add_argument("--snapshot", default="/Users/dev/Projects/Test/unreal-ng/testdata/loaders/sna/action.sna")
     parser.add_argument("--output", default="/Users/dev/Projects/Test/unreal-ng/tools/poc/02-ttd-gui/testdata/capture.ttd")
     parser.add_argument("--model", default="128k", help="Emulator model")
+    parser.add_argument("--mode", default="development", choices=["gaming", "development"],
+                        help="gaming=smaller files (no journal), development=full debug (default)")
     args = parser.parse_args()
 
     capture_seconds = args.frames // 50 + 5
@@ -95,12 +97,13 @@ def main():
         time.sleep(0.5)
 
         # Start TTD
-        print(f"\n[4] Starting TTD recording...")
-        st, resp = http("POST", f"/emulator/{iid}/ttd/start")
+        print(f"\n[4] Starting TTD recording (mode={args.mode})...")
+        st, resp = http("POST", f"/emulator/{iid}/ttd/start", {"mode": args.mode})
         if st != 200:
             print(f"    FAILED: {resp}")
             return 1
         print(f"    State: {resp.get('state')}")
+        print(f"    Journal: {'enabled' if resp.get('write_journal_enabled') else 'disabled'}")
 
         # Record
         print(f"\n[5] Recording {args.frames} frames...")
@@ -144,14 +147,22 @@ def main():
         return 0
 
     finally:
+        print(f"\n[*] Cleanup...")
         if iid:
-            print(f"\n[*] Cleanup...")
-            http("POST", f"/emulator/{iid}/destroy", timeout=5)
+            try:
+                http("POST", f"/emulator/{iid}/destroy", timeout=5)
+            except Exception:
+                pass  # Ignore cleanup errors
+        # Terminate the GUI process
         proc.terminate()
         try:
-            proc.wait(timeout=3)
-        except:
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+        # Force kill if still running
+        if proc.poll() is None:
             proc.kill()
+            proc.wait(timeout=2)
         print("    Done")
 
 

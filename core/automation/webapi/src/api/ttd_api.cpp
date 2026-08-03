@@ -328,6 +328,12 @@ static ttd::TimeTravelManager* resolveTTD(
 }
 
 /// @brief POST /api/v1/emulator/{id}/ttd/start
+///
+/// Optional JSON body:
+/// {
+///   "mode": "gaming" | "development"   // gaming = no journal, development = full journal (default)
+///   "enable_write_journal": bool       // explicit override (takes precedence over mode)
+/// }
 void EmulatorAPI::startTTD(const HttpRequestPtr& req,
                             std::function<void(const HttpResponsePtr&)>&& callback,
                             const std::string& id) const
@@ -335,13 +341,36 @@ void EmulatorAPI::startTTD(const HttpRequestPtr& req,
     auto* mgr = resolveTTD(id, callback);
     if (!mgr) return;
 
+    // Parse optional config from JSON body
+    bool enableWriteJournal = true;  // default: development mode
+    auto json = req->getJsonObject();
+    if (json)
+    {
+        if (json->isMember("enable_write_journal"))
+        {
+            enableWriteJournal = (*json)["enable_write_journal"].asBool();
+        }
+        else if (json->isMember("mode"))
+        {
+            const std::string mode = (*json)["mode"].asString();
+            if (mode == "gaming")
+                enableWriteJournal = false;
+            // "development" or any other value keeps the default (true)
+        }
+    }
+
     bool alreadyRecording = mgr->IsRecording();
+    if (!alreadyRecording)
+    {
+        mgr->SetEnableWriteJournal(enableWriteJournal);
+    }
     bool ok = mgr->StartRecording();
 
     Json::Value ret;
-    ret["started"]        = ok && !alreadyRecording;
-    ret["already_active"] = alreadyRecording;
-    ret["state"]          = ttd::TTDSessionStateToString(mgr->GetState());
+    ret["started"]              = ok && !alreadyRecording;
+    ret["already_active"]       = alreadyRecording;
+    ret["state"]                = ttd::TTDSessionStateToString(mgr->GetState());
+    ret["write_journal_enabled"] = mgr->GetEnableWriteJournal();
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);

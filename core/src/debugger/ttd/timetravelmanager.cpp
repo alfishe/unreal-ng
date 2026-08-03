@@ -1836,7 +1836,11 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     const uint16_t schemaVersion = ttd::dump::kSchemaVersion;
     if (!WritePod(out, schemaVersion, err)) return false;
 
-    const uint16_t flags = ttd::dump::kFlagsLittleEndian | ttd::dump::kFlagsHasWriteJournal;
+    // Only set journal flag if we actually have journal entries to write
+    const bool hasJournalData = _enableWriteJournal && !_writeJournal.IsEmpty();
+    uint16_t flags = ttd::dump::kFlagsLittleEndian;
+    if (hasJournalData)
+        flags |= ttd::dump::kFlagsHasWriteJournal;
     if (!WritePod(out, flags, err)) return false;
 
     if (!WritePod(out, modelId, err)) return false;
@@ -2009,11 +2013,14 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
 
     // --- Write journal section (v3 additive, TDD §9.3) ---
     // Flag bit 1 in the header tells the reader this section exists.
-    // The journal serializes its own count + records.
-    if (!_writeJournal.Serialize(out))
+    // Only write if journal capture was enabled and has data.
+    if (hasJournalData)
     {
-        err = "stream write failed (write journal section)";
-        return false;
+        if (!_writeJournal.Serialize(out))
+        {
+            err = "stream write failed (write journal section)";
+            return false;
+        }
     }
 
     return true;
@@ -2359,6 +2366,8 @@ void TimeTravelManager::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t
     // the ring with duplicate records (TDD §9.3).
     if (_state != TTDSessionState::Recording)
         return;
+    if (!_enableWriteJournal)
+        return;
     if (!_context)
         return;
 
@@ -2381,6 +2390,8 @@ void TimeTravelManager::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t
 void TimeTravelManager::RecordIoWrite(uint16_t port, uint8_t value, uint16_t m1pc)
 {
     if (_state != TTDSessionState::Recording)
+        return;
+    if (!_enableWriteJournal)
         return;
     if (!_context)
         return;

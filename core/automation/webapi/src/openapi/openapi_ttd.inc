@@ -42,7 +42,11 @@
         "Begins recording. Captures the baseline checkpoint at the current "
         "frame, transitions the session to state=\"recording\", and starts "
         "per-frame checkpoint capture. Idempotent: returns already_active=true "
-        "if recording was already in progress.";
+        "if recording was already in progress.\n\n"
+        "**Optional JSON body:**\n"
+        "- `mode`: \"gaming\" (smaller files, no write journal) or \"development\" (full journal, default)\n"
+        "- `enable_write_journal`: explicit bool override (takes precedence over mode)\n\n"
+        "Gaming mode produces ~90% smaller .ttd files but disables fast reverse-watchpoint queries.";
     paths["/api/v1/emulator/{id}/ttd/start"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/start"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/start"]["post"]["parameters"][0]["required"] = true;

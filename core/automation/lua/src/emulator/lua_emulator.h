@@ -932,11 +932,37 @@ public:
             return info;
         });
 
-        lua.set_function("ttd_start", [this]() -> bool {
+        // ttd_start([mode]) - start recording
+        // mode: "gaming" (smaller files, no journal) or "development" (default, full journal)
+        lua.set_function("ttd_start", [this](sol::optional<std::string> modeOpt) -> bool {
             if (!_emulator) return false;
             auto* ctx = _emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return false;
+            // Set journal mode before starting
+            bool enableJournal = true;  // default: development mode
+            if (modeOpt.has_value())
+            {
+                const std::string& mode = modeOpt.value();
+                if (mode == "gaming")
+                    enableJournal = false;
+            }
+            ctx->pTimeTravelManager->SetEnableWriteJournal(enableJournal);
             return ctx->pTimeTravelManager->StartRecording();
+        });
+
+        // ttd_set_journal_enabled(bool) - configure write journal capture
+        lua.set_function("ttd_set_journal_enabled", [this](bool enabled) {
+            if (!_emulator) return;
+            auto* ctx = _emulator->GetContext();
+            if (ctx && ctx->pTimeTravelManager)
+                ctx->pTimeTravelManager->SetEnableWriteJournal(enabled);
+        });
+
+        lua.set_function("ttd_get_journal_enabled", [this]() -> bool {
+            if (!_emulator) return true;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return true;
+            return ctx->pTimeTravelManager->GetEnableWriteJournal();
         });
 
         lua.set_function("ttd_stop", [this]() {

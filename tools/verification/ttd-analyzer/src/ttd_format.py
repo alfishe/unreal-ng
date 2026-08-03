@@ -1,4 +1,4 @@
-"""Hand-written Python parser for the Unreal-NG .ttd binary format (v2).
+"""Hand-written Python parser for the Unreal-NG .ttd binary format (v1).
 
 This module mirrors the canonical Kaitai Struct schema at
 ``core/src/debugger/ttd/ttd.ksy``. The .ksy is the single source of truth;
@@ -27,22 +27,18 @@ The .ttd schema is versioned in two places (must always agree):
 
 This parser refuses unknown future versions with a clear error message.
 
-v2 layout (breaking change from v1)
------------------------------------
-v2 introduces the Phase 5 codec:
+v1 layout (production release with Phase 5 codec)
+-------------------------------------------------
+v1 is the first production release with XOR-delta encoding:
 
-* 4 KB sub-pages (was 16 KB). Each 16 KB emulator RAM page is split into
+* 4 KB sub-pages. Each 16 KB emulator RAM page is split into
   4 × 4 KB sub-pages, each with its own slot in the page store.
 * Per-slot encoding discriminator: ``Full`` / ``XorPrev`` / ``Zero``.
 * zstd level-1 compression of every non-``Zero`` slot payload.
-* Per-slot CRC32C integrity field (4 bytes; writer stores 0, reader
-  recomputes from the decompressed bytes and surfaces mismatches).
-* Per-checkpoint ``frame_kind`` (I-frame vs P-frame) and ``keyframe_anchor``
-  (frame index of the I-frame this delta chain roots at).
-* Checkpoint RAM refs are now ``4 * model_ram_pages`` u32 slot indices
-  (was ``model_ram_pages`` in v1).
-
-v1 files are refused with a clear error — no backwards compatibility.
+* Per-slot CRC32C integrity field (4 bytes).
+* Per-checkpoint ``frame_kind`` (I-frame vs P-frame) and ``keyframe_anchor``.
+* Checkpoint RAM refs are ``4 * model_ram_pages`` u32 slot indices.
+* Optional write journal (flag bit 1 in header).
 """
 
 from __future__ import annotations
@@ -64,9 +60,10 @@ else:
 # ---------------------------------------------------------------------------
 
 MAGIC = b"TTDD"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 1  # v1 is the production release with XOR-delta encoding
 MAX_SUPPORTED_SCHEMA_VERSION = SCHEMA_VERSION
 FLAGS_LITTLE_ENDIAN = 0x0001
+FLAGS_HAS_WRITE_JOURNAL = 0x0002  # v2 extension: write journal section present
 
 # Page geometry. EMU_PAGE_SIZE is the Z80 banking unit (16 KB). SUB_PAGE_SIZE
 # is the codec unit (4 KB) — each emulator page splits into 4 sub-pages.
