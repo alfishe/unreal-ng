@@ -522,6 +522,12 @@ void DebuggerWindow::updateState()
         return;
     }
 
+    // Skip heavy UI updates while emulator is running to avoid race conditions
+    // and excessive CPU usage (frameRefresh fires at 50fps during recording)
+    if (_emulator && !_emulator->IsPaused())
+    {
+        return;
+    }
 
     if (_emulator)
     {
