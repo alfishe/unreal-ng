@@ -2213,6 +2213,10 @@ void WD1793::processWriteSector()
 {
     _bytesToWrite = _sectorSize;
 
+    // Reset drq_served before requesting the first byte
+    // (startType2Command sets it true for read commands, but write needs it false)
+    _drq_served = false;
+
     // Request the first byte from the host by raising DRQ
     raiseDrq();
     _statusRegister |= WDS_DRQ;
@@ -2652,15 +2656,15 @@ void WD1793::processEndCommand()
         
         // Emit notification if disk is now dirty
         DiskImage* diskImage = _selectedDrive ? _selectedDrive->getDiskImage() : nullptr;
-        if (diskImage && diskImage->isDirty())
+        if (diskImage && diskImage->isDirty() && _context->pEmulator)
         {
             // Emit pending write notification
             std::string emulatorId = _context->pEmulator->GetId();
             uint8_t driveId = _drive;  // Currently selected drive index [0..3]
             std::string diskPath = diskImage->getFilePath();
-            
+
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            messageCenter.Post(NC_FDD_DISK_PENDING_WRITE, 
+            messageCenter.Post(NC_FDD_DISK_PENDING_WRITE,
                 new FDDDiskPayload(emulatorId, driveId, diskPath), true);
         }
     }
