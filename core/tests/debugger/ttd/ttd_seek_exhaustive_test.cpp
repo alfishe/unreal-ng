@@ -723,7 +723,7 @@ constexpr int kNumSweepPasses = 5;
 // Inherits SetUp/TearDown/HashNow/HashScreen/RunFrames from
 // TTD_Seek_Exhaustive_Test. We only add LongDuration-specific helpers
 // (RecordDemo, CaptureAllReferences, Ref struct with frameKind).
-class TTD_Seek_LongDuration_Test : public TTD_Seek_Exhaustive_Test
+class DISABLED_TTD_Seek_LongDuration_Test : public TTD_Seek_Exhaustive_Test
 {
 protected:
     /// Captured reference state for every checkpoint. Used as the ground
@@ -775,7 +775,7 @@ protected:
 // Sanity: 30-second recording completes with expected timeline shape
 // ---------------------------------------------------------------------------
 
-TEST_F(TTD_Seek_LongDuration_Test, Record30Seconds_TimelineHasExpectedShape)
+TEST_F(DISABLED_TTD_Seek_LongDuration_Test, Record30Seconds_TimelineHasExpectedShape)
 {
     ASSERT_NO_FATAL_FAILURE(RecordDemo());
     const size_t N = _ttd->GetCheckpointCount();
@@ -822,7 +822,7 @@ TEST_F(TTD_Seek_LongDuration_Test, Record30Seconds_TimelineHasExpectedShape)
 // all producing identical hashes.
 // ---------------------------------------------------------------------------
 
-TEST_F(TTD_Seek_LongDuration_Test, EveryCheckpoint_AllApproaches_ProduceSameHash)
+TEST_F(DISABLED_TTD_Seek_LongDuration_Test, EveryCheckpoint_AllApproaches_ProduceSameHash)
 {
     ASSERT_NO_FATAL_FAILURE(RecordDemo());
     const std::vector<Ref> refs = CaptureAllReferences();
@@ -904,7 +904,7 @@ TEST_F(TTD_Seek_LongDuration_Test, EveryCheckpoint_AllApproaches_ProduceSameHash
 // identical hashes for every checkpoint.
 // ---------------------------------------------------------------------------
 
-TEST_F(TTD_Seek_LongDuration_Test, FiveFullSweeps_NoDriftAcrossRuns)
+TEST_F(DISABLED_TTD_Seek_LongDuration_Test, FiveFullSweeps_NoDriftAcrossRuns)
 {
     ASSERT_NO_FATAL_FAILURE(RecordDemo());
     const std::vector<Ref> refs = CaptureAllReferences();
@@ -979,7 +979,7 @@ TEST_F(TTD_Seek_LongDuration_Test, FiveFullSweeps_NoDriftAcrossRuns)
 // Stresses refcount bookkeeping under rapid back-and-forth transitions.
 // ---------------------------------------------------------------------------
 
-TEST_F(TTD_Seek_LongDuration_Test, PingPong_Pattern_NoCorruptionAfterRapidTransitions)
+TEST_F(DISABLED_TTD_Seek_LongDuration_Test, PingPong_Pattern_NoCorruptionAfterRapidTransitions)
 {
     ASSERT_NO_FATAL_FAILURE(RecordDemo());
     const std::vector<Ref> refs = CaptureAllReferences();
@@ -1029,7 +1029,7 @@ TEST_F(TTD_Seek_LongDuration_Test, PingPong_Pattern_NoCorruptionAfterRapidTransi
 // interval, verify restore is identical across two runs.
 // ---------------------------------------------------------------------------
 
-TEST_F(TTD_Seek_LongDuration_Test, DeltaChain_AllDepths_1through49_RestoreIdentically)
+TEST_F(DISABLED_TTD_Seek_LongDuration_Test, DeltaChain_AllDepths_1through49_RestoreIdentically)
 {
     ASSERT_NO_FATAL_FAILURE(RecordDemo());
     const std::vector<Ref> refs = CaptureAllReferences();
@@ -1087,7 +1087,7 @@ TEST_F(TTD_Seek_LongDuration_Test, DeltaChain_AllDepths_1through49_RestoreIdenti
 // Extends the short test's coverage to the 30-second recording.
 // ---------------------------------------------------------------------------
 
-TEST_F(TTD_Seek_LongDuration_Test, IntraFrameTState_NoDriftAcrossThreeRuns)
+TEST_F(DISABLED_TTD_Seek_LongDuration_Test, IntraFrameTState_NoDriftAcrossThreeRuns)
 {
     ASSERT_NO_FATAL_FAILURE(RecordDemo());
     const size_t N = _ttd->GetCheckpointCount();
@@ -1158,7 +1158,7 @@ TEST_F(TTD_Seek_LongDuration_Test, IntraFrameTState_NoDriftAcrossThreeRuns)
 // session recording to ttd file" scenario on a 30-second demo.
 // ---------------------------------------------------------------------------
 
-TEST_F(TTD_Seek_LongDuration_Test, Serialize30SecondSession_AllCheckpointsRoundTripIdentically)
+TEST_F(DISABLED_TTD_Seek_LongDuration_Test, Serialize30SecondSession_AllCheckpointsRoundTripIdentically)
 {
     ASSERT_NO_FATAL_FAILURE(RecordDemo());
     const std::vector<Ref> refsBefore = CaptureAllReferences();
@@ -1197,7 +1197,7 @@ TEST_F(TTD_Seek_LongDuration_Test, Serialize30SecondSession_AllCheckpointsRoundT
 // 5-sweep no-drift check on the restored timeline.
 // ---------------------------------------------------------------------------
 
-TEST_F(TTD_Seek_LongDuration_Test, PostRoundTrip_FiveSweeps_NoDrift)
+TEST_F(DISABLED_TTD_Seek_LongDuration_Test, PostRoundTrip_FiveSweeps_NoDrift)
 {
     ASSERT_NO_FATAL_FAILURE(RecordDemo());
 

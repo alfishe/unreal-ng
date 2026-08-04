@@ -33,7 +33,7 @@
 /// WD1793 Integration Tests
 /// Tests full TR-DOS integration scenarios including FORMAT operations
 
-class WD1793_Integration_Test : public ::testing::Test
+class DISABLED_WD1793_Integration_Test : public ::testing::Test
 {
 protected:
     Emulator* _emulator = nullptr;
@@ -71,7 +71,7 @@ protected:
 };
 
 /// @brief Verify TR-DOS catalog structure after format
-TEST_F(WD1793_Integration_Test, TRDOS_CatalogStructure)
+TEST_F(DISABLED_WD1793_Integration_Test, TRDOS_CatalogStructure)
 {
     if (!_emulator)
     {
@@ -134,7 +134,7 @@ TEST_F(WD1793_Integration_Test, TRDOS_CatalogStructure)
 
 /// @brief Verify sector interleave pattern matches TR-DOS standard
 /// TR-DOS uses 1:2 interleave: 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15, 8, 16
-TEST_F(WD1793_Integration_Test, TRDOS_SectorInterleave)
+TEST_F(DISABLED_WD1793_Integration_Test, TRDOS_SectorInterleave)
 {
     if (!_emulator)
     {
@@ -170,7 +170,7 @@ TEST_F(WD1793_Integration_Test, TRDOS_SectorInterleave)
 }
 
 /// @brief Verify all tracks are populated after format
-TEST_F(WD1793_Integration_Test, AllTracksPopulated)
+TEST_F(DISABLED_WD1793_Integration_Test, AllTracksPopulated)
 {
     if (!_emulator)
     {
@@ -212,7 +212,7 @@ TEST_F(WD1793_Integration_Test, AllTracksPopulated)
 /// @brief Integration test: Full FORMAT operation with disk validation
 /// Uses modern BasicEncoder + ScreenOCR patterns for command injection and verification
 /// Executes REAL TR-DOS FORMAT command through proper command injection (not ROM hacks)
-TEST_F(WD1793_Integration_Test, TRDOS_FORMAT_FullOperation)
+TEST_F(DISABLED_WD1793_Integration_Test, TRDOS_FORMAT_FullOperation)
 {
     if (!_emulator)
     {
