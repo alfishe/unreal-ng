@@ -430,9 +430,20 @@ class UnrealApiClient:
         resp = self.session.get(self._url(f"/api/v1/emulator/{emulator_id}/ttd/status"))
         return self._handle_response(resp)
 
-    def ttd_start(self, emulator_id):
-        """POST /api/v1/emulator/{id}/ttd/start"""
-        resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/ttd/start"))
+    def ttd_start(self, emulator_id, enable_write_journal: bool = True):
+        """POST /api/v1/emulator/{id}/ttd/start
+
+        Args:
+            emulator_id: Emulator instance ID.
+            enable_write_journal: If True (default), enables the 256MB write
+                journal for reverse-search (FindLast). Set to False for lighter
+                memory footprint during gaming/demo playback.
+        """
+        data = {"enable_write_journal": enable_write_journal}
+        resp = self.session.post(
+            self._url(f"/api/v1/emulator/{emulator_id}/ttd/start"),
+            json=data
+        )
         return self._handle_response(resp)
 
     def ttd_stop(self, emulator_id):

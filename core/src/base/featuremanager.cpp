@@ -7,6 +7,7 @@
 
 #include "3rdparty/simpleini/simpleini.h"
 #include "common/modulelogger.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/recording/recordingmanager.h"
@@ -390,6 +391,12 @@ void FeatureManager::onFeatureChanged()
     if (_context && _context->pScreen)
     {
         _context->pScreen->UpdateFeatureCache();
+    }
+
+    // Notify TTD manager of feature changes (for memory deallocation on disable)
+    if (_context && _context->pTimeTravelManager)
+    {
+        _context->pTimeTravelManager->UpdateFeatureCache();
     }
 
     if (_dirty)

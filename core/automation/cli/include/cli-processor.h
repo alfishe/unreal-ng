@@ -281,7 +281,8 @@ private:
     void HandleTTD(const ClientSession& session, const std::vector<std::string>& args);
     void ShowTTDHelp(const ClientSession& session);
     void HandleTTDStatus(const ClientSession& session, EmulatorContext* context);
-    void HandleTTDStart(const ClientSession& session, EmulatorContext* context);
+    void HandleTTDStart(const ClientSession& session, EmulatorContext* context,
+                         const std::vector<std::string>& args);
     void HandleTTDStop(const ClientSession& session, EmulatorContext* context);
     void HandleTTDInvalidate(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleTTDSeek(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);

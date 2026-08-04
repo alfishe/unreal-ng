@@ -200,9 +200,9 @@ class PollWorker(QObject):
         self.selected.emit(self._instance_id or "", self._instance_info)
         logger.info("select_instance: %s", self._instance_id)
 
-    @Slot()
-    def request_start_recording(self):
-        self._enqueue("start", {})
+    @Slot(bool)
+    def request_start_recording(self, enable_write_journal: bool = True):
+        self._enqueue("start", {"enable_write_journal": enable_write_journal})
 
     @Slot()
     def request_stop_recording(self):
@@ -389,7 +389,8 @@ class PollWorker(QObject):
     def _dispatch(self, verb: str, instance_id: str, args: dict) -> dict:
         """Single dispatch. One verb -> one HTTP call."""
         if verb == "start":
-            return self._client.ttd_start(instance_id)
+            enable_journal = args.get("enable_write_journal", True)
+            return self._client.ttd_start(instance_id, enable_write_journal=enable_journal)
         if verb == "stop":
             return self._client.ttd_stop(instance_id)
         if verb == "invalidate":

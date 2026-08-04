@@ -18,7 +18,7 @@ from PySide6.QtCore import Qt, Slot, QThread
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QLineEdit, QPushButton, QComboBox, QSlider, QListWidget,
-    QListWidgetItem, QMessageBox, QGroupBox, QStatusBar,
+    QListWidgetItem, QMessageBox, QGroupBox, QStatusBar, QCheckBox,
 )
 from PySide6.QtGui import QColor
 
@@ -205,6 +205,19 @@ class MainWindow(QMainWindow):
         form.addRow("Session size:", self._lbl_session_size)
         outer.addLayout(form)
 
+        # Recording options row.
+        opts = QHBoxLayout()
+        self._chk_write_journal = QCheckBox("Enable write journal")
+        self._chk_write_journal.setChecked(True)
+        self._chk_write_journal.setToolTip(
+            "When enabled, captures every memory write for reverse-search "
+            "(FindLast). Disable for lighter memory footprint during gaming/"
+            "demo playback where reverse debugging isn't needed."
+        )
+        opts.addWidget(self._chk_write_journal)
+        opts.addStretch(1)
+        outer.addLayout(opts)
+
         # Action buttons.
         btns = QHBoxLayout()
         self._btn_start = QPushButton("Start recording")
@@ -367,7 +380,8 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_start_clicked(self):
-        self._worker.request_start_recording()
+        enable_journal = self._chk_write_journal.isChecked()
+        self._worker.request_start_recording(enable_journal)
 
     @Slot()
     def _on_stop_clicked(self):
@@ -713,6 +727,8 @@ class MainWindow(QMainWindow):
         self._btn_start.setEnabled(base_enabled and state != "recording")
         self._btn_stop.setEnabled(base_enabled and state == "recording")
         self._btn_invalidate.setEnabled(base_enabled and has_history)
+        # Journal checkbox only editable before recording starts.
+        self._chk_write_journal.setEnabled(base_enabled and state != "recording")
 
         # Timeline panel — scrubbing whenever history exists and we're not
         # actively capturing. State after Stop is 'idle' (history retained);

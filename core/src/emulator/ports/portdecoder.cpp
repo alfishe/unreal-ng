@@ -333,6 +333,9 @@ void PortDecoder::Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc)
     [[maybe_unused]] bool micBit = (value & 0b0000'1000) > 0;
     [[maybe_unused]] bool beeperBit = (value & 0b0001'0000) > 0;
 
+    // Sync border_attr with pFE bits 0-2 (TTD capture reads this field)
+    _context->emulatorState.border_attr = borderColor;
+
     // Pass value to the tape and beeper sound generator
     _tape->handlePortOut(value);
     //_soundManager->getBeeper().handlePortOut(value, tState);

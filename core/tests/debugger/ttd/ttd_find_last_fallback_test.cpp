@@ -179,7 +179,7 @@ TEST_F(TTD_FindLast_Fallback_Test, WriteQuery_NoMatch_JournalHasRecords_ReturnsN
     _ttd->StopRecording();
 
     // Verify journal is not empty
-    EXPECT_GT(_ttd->GetWriteJournal().Size(), 0u);
+    EXPECT_GT(_ttd->GetWriteJournal()->Size(), 0u);
 
     ttd::TTDSearchQuery q;
     q.addrFrom = 0x2000;

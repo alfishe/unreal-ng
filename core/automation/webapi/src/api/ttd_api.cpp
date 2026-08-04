@@ -220,6 +220,7 @@ void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
         ret["page_store_used_bytes"]    = Json::UInt64(info.pageStoreUsedBytes);
         ret["baseline_frames_captured"] = Json::UInt64(info.baselineFramesCaptured);
         ret["session_heap_bytes"]       = Json::UInt64(info.sessionHeapBytes);
+        ret["write_journal_enabled"]    = info.writeJournalEnabled;
         ret["ttd_available"]            = true;
     }
 

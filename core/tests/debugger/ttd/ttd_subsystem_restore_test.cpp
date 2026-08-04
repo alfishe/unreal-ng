@@ -325,6 +325,81 @@ TEST_F(TTD_Subsystem_Restore_Test, ScreenBankSwitch_SeekRestoresActiveBank)
 }
 
 // ===========================================================================
+// 2b. BORDER COLOR (pFE bits 0-2)
+//
+// The border color is set via OUT to port 0xFE, bits 0-2. TTD captures the
+// border color as part of pFE in the chipset state. On restore, the border
+// color must be correctly repainted in the framebuffer via FillBorderWithColor.
+//
+// This test verifies that border color changes during recording are correctly
+// captured and restored when seeking to different frames.
+// ===========================================================================
+
+TEST_F(TTD_Subsystem_Restore_Test, BorderColor_SeekRestoresBorderColor)
+{
+    EnableTTD();
+
+    RunFrames(2);
+
+    ASSERT_TRUE(_ttd->StartRecording());
+
+    Screen* screen = _context->pScreen;
+    ASSERT_NE(screen, nullptr);
+    PortDecoder* pd = _context->pPortDecoder;
+    ASSERT_NE(pd, nullptr);
+    EmulatorState& st = _context->emulatorState;
+
+    // Capture with BLACK border (color 0).
+    pd->DecodePortOut(0xFE, 0x00, 0x0000);
+    EXPECT_EQ(st.pFE & 0x07, 0u);
+    EXPECT_EQ(st.border_attr, 0u);
+    _ttd->OnFrameBoundary();
+    const uint64_t frameAtBlack = st.frame_counter;
+
+    // Change to RED border (color 2) and capture at next frame.
+    pd->DecodePortOut(0xFE, 0x02, 0x0000);
+    EXPECT_EQ(st.pFE & 0x07, 2u);
+    EXPECT_EQ(st.border_attr, 2u);
+    st.frame_counter++;
+    _ttd->OnFrameBoundary();
+    const uint64_t frameAtRed = st.frame_counter;
+
+    // Change to CYAN border (color 5) and capture at next frame.
+    pd->DecodePortOut(0xFE, 0x05, 0x0000);
+    EXPECT_EQ(st.pFE & 0x07, 5u);
+    EXPECT_EQ(st.border_attr, 5u);
+    st.frame_counter++;
+    _ttd->OnFrameBoundary();
+    const uint64_t frameAtCyan = st.frame_counter;
+
+    _ttd->StopRecording();
+
+    // Seek to BLACK border frame.
+    ASSERT_TRUE(_ttd->SeekTo({frameAtBlack, 0}));
+    EXPECT_EQ(st.pFE & 0x07, 0u) << "BLACK frame: pFE bits 0-2 not restored";
+    EXPECT_EQ(st.border_attr, 0u) << "BLACK frame: border_attr not restored";
+    EXPECT_EQ(screen->GetBorderColor(), 0u) << "BLACK frame: screen border color not restored";
+
+    // Seek to RED border frame.
+    ASSERT_TRUE(_ttd->SeekTo({frameAtRed, 0}));
+    EXPECT_EQ(st.pFE & 0x07, 2u) << "RED frame: pFE bits 0-2 not restored";
+    EXPECT_EQ(st.border_attr, 2u) << "RED frame: border_attr not restored";
+    EXPECT_EQ(screen->GetBorderColor(), 2u) << "RED frame: screen border color not restored";
+
+    // Seek to CYAN border frame.
+    ASSERT_TRUE(_ttd->SeekTo({frameAtCyan, 0}));
+    EXPECT_EQ(st.pFE & 0x07, 5u) << "CYAN frame: pFE bits 0-2 not restored";
+    EXPECT_EQ(st.border_attr, 5u) << "CYAN frame: border_attr not restored";
+    EXPECT_EQ(screen->GetBorderColor(), 5u) << "CYAN frame: screen border color not restored";
+
+    // Round-trip back to BLACK to verify determinism.
+    ASSERT_TRUE(_ttd->SeekTo({frameAtBlack, 0}));
+    EXPECT_EQ(st.pFE & 0x07, 0u);
+    EXPECT_EQ(st.border_attr, 0u);
+    EXPECT_EQ(screen->GetBorderColor(), 0u);
+}
+
+// ===========================================================================
 // 3. TAPE PLAYBACK POSITION
 //
 // The tape subsystem serializes playback position (block index, pulse index,

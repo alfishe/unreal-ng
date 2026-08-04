@@ -107,8 +107,9 @@ TEST_F(TTD_FeatureGating_Test, BothFeaturesOff_NoCheckpointsAllocated)
     EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Idle);
     EXPECT_EQ(_ttd->GetCheckpointCount(), 0u);
 
-    // Write journal must be empty.
-    EXPECT_EQ(_ttd->GetWriteJournal().Size(), 0u);
+    // Write journal must be empty (or not allocated when feature off).
+    auto* journal = _ttd->GetWriteJournal();
+    EXPECT_TRUE(journal == nullptr || journal->Size() == 0u);
 }
 
 TEST_F(TTD_FeatureGating_Test, BothFeaturesOff_StartRecording_RefusesOrNoCapture)
@@ -149,7 +150,8 @@ TEST_F(TTD_FeatureGating_Test, DebugModeOn_TimeTravelOff_NoTTDCapture)
     // No TTD session should be active.
     EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Idle);
     EXPECT_EQ(_ttd->GetCheckpointCount(), 0u);
-    EXPECT_EQ(_ttd->GetWriteJournal().Size(), 0u);
+    auto* journal1 = _ttd->GetWriteJournal();
+    EXPECT_TRUE(journal1 == nullptr || journal1->Size() == 0u);
 }
 
 TEST_F(TTD_FeatureGating_Test, TimeTravelOn_DebugModeOff_NoTTDCapture)
@@ -163,7 +165,8 @@ TEST_F(TTD_FeatureGating_Test, TimeTravelOn_DebugModeOff_NoTTDCapture)
 
     EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Idle);
     EXPECT_EQ(_ttd->GetCheckpointCount(), 0u);
-    EXPECT_EQ(_ttd->GetWriteJournal().Size(), 0u);
+    auto* journal2 = _ttd->GetWriteJournal();
+    EXPECT_TRUE(journal2 == nullptr || journal2->Size() == 0u);
 }
 
 TEST_F(TTD_FeatureGating_Test, BothFeaturesOn_StartRecording_ActivatesCapture)
@@ -236,8 +239,92 @@ TEST_F(TTD_FeatureGating_Test, WriteJournalEmpty_WhenFeaturesOff)
     // The journal remains empty because the feature flag gates the hook.
     // RecordMemoryWrite still works (called from the manager), but the
     // MemoryWriteDebug hook path is blocked.
-    const size_t journalBefore = _ttd->GetWriteJournal().Size();
+    const size_t journalBefore = _ttd->GetWriteJournal()->Size();
     EXPECT_EQ(journalBefore, 0u);
 
+    _ttd->StopRecording();
+}
+
+// Tests for lazy allocation and deallocation on feature toggle (TDD §15.2 extension)
+
+TEST_F(TTD_FeatureGating_Test, FeatureOff_WriteJournalNotAllocated)
+{
+    // With features OFF at startup, the write journal should not be allocated.
+    EXPECT_FALSE(_fm->isEnabled(Features::kTimeTravel));
+    EXPECT_EQ(_ttd->GetWriteJournal(), nullptr);
+}
+
+TEST_F(TTD_FeatureGating_Test, StartRecording_AllocatesWriteJournal)
+{
+    // StartRecording allocates the write journal (lazy allocation).
+    EXPECT_EQ(_ttd->GetWriteJournal(), nullptr);
+
+    ASSERT_TRUE(_ttd->StartRecording());
+
+    EXPECT_NE(_ttd->GetWriteJournal(), nullptr);
+    _ttd->StopRecording();
+}
+
+TEST_F(TTD_FeatureGating_Test, FeatureDisable_DeallocatesWriteJournal_WhenIdle)
+{
+    // After StopRecording + feature disable, memory should be reclaimed.
+    ASSERT_TRUE(_ttd->StartRecording());
+    EXPECT_NE(_ttd->GetWriteJournal(), nullptr);
+
+    _ttd->StopRecording();
+    EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Idle);
+    EXPECT_NE(_ttd->GetWriteJournal(), nullptr);  // Still allocated after stop
+
+    // Now disable the feature — this should deallocate since state is Idle.
+    DisableTTD();
+    EXPECT_EQ(_ttd->GetWriteJournal(), nullptr);
+}
+
+TEST_F(TTD_FeatureGating_Test, ReEnableFeature_RecordingWorks)
+{
+    // Full cycle: enable -> record -> stop -> disable -> re-enable -> record.
+    // Ensures everything works correctly after feature re-enable.
+
+    // First session
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(2);
+    size_t checkpoints1 = _ttd->GetCheckpointCount();
+    EXPECT_GT(checkpoints1, 0u);
+    _ttd->StopRecording();
+
+    // Disable feature (deallocates memory)
+    DisableTTD();
+    EXPECT_EQ(_ttd->GetWriteJournal(), nullptr);
+
+    // Re-enable and start new session
+    EnableTTD();
+    ASSERT_TRUE(_ttd->StartRecording());
+    EXPECT_NE(_ttd->GetWriteJournal(), nullptr);
+
+    RunFrames(2);
+    size_t checkpoints2 = _ttd->GetCheckpointCount();
+    EXPECT_GT(checkpoints2, 0u);
+
+    _ttd->StopRecording();
+}
+
+TEST_F(TTD_FeatureGating_Test, MultipleEnableDisableCycles)
+{
+    // Stress test: multiple enable/disable cycles should not leak or crash.
+    for (int i = 0; i < 5; ++i)
+    {
+        ASSERT_TRUE(_ttd->StartRecording()) << "Cycle " << i;
+        RunFrames(1);
+        EXPECT_GT(_ttd->GetCheckpointCount(), 0u) << "Cycle " << i;
+        _ttd->StopRecording();
+
+        DisableTTD();
+        EXPECT_EQ(_ttd->GetWriteJournal(), nullptr) << "Cycle " << i;
+    }
+
+    // One final recording to prove system is still functional
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);
+    EXPECT_GT(_ttd->GetCheckpointCount(), 0u);
     _ttd->StopRecording();
 }

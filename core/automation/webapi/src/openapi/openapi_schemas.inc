@@ -335,6 +335,10 @@
     schemas["TTDStatusResponse"]["properties"]["ttd_available"]["type"] = "boolean";
     schemas["TTDStatusResponse"]["properties"]["ttd_available"]["description"] =
         "False when the manager is missing (minimal build); state will be \"idle\"";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_enabled"]["type"] = "boolean";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_enabled"]["description"] =
+        "True when the write journal is active (for FindLast / reverse debugging). "
+        "Set via enable_write_journal on /ttd/start; false in 'gaming' mode.";
 
     // ---------------------------------------------------------------------
     // POST /ttd/start response

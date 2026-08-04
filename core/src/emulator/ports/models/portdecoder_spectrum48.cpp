@@ -28,6 +28,7 @@ void PortDecoder_Spectrum48::reset()
     // Explicitly reset port states to ensure consistent reset behavior
     EmulatorState& state = _context->emulatorState;
     state.pFE = 0xFF;       // Reset ULA port (border white, no sound)
+    state.border_attr = 0x07;  // Sync border_attr with pFE bits 0-2 (white)
 
     // Set default 48K memory pages
     Memory& memory = *_context->pMemory;

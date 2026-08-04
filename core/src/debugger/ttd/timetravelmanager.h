@@ -119,6 +119,8 @@ struct TTDSessionInfo
     uint64_t deltaFrameCount  = 0;  ///< Number of P-frames captured
     double   compressionRatio = 1.0; ///< kPageSize / mean(payload) across live slots
     size_t   livePayloadBytes = 0;  ///< Sum of compressed payload bytes (live slots)
+
+    bool writeJournalEnabled = false;  ///< True if write journal is active (for FindLast)
 };
 
 class TimeTravelManager
@@ -162,6 +164,10 @@ public:
     inline TTDSessionState GetState() const { return _state; }
 
     TTDSessionInfo GetSessionInfo() const;
+
+    /// @brief Called by FeatureManager when feature flags change.
+    /// Deallocates write journal when TimeTravel feature is disabled.
+    void UpdateFeatureCache();
 
     // -----------------------------------------------------------------------
     // Session configuration (v2 optimizations)
@@ -696,7 +702,7 @@ public:
 
     /// @brief Read-only accessor for the write journal (for serialization
     /// and tests).
-    inline const TTDWriteJournal& GetWriteJournal() const { return _writeJournal; }
+    inline const TTDWriteJournal* GetWriteJournal() const { return _writeJournal.get(); }
     
     // -----------------------------------------------------------------------
     // Test/diagnostic accessors
@@ -926,7 +932,8 @@ private:
     /// parent TDD §9.3). 256 MB ring of 12-byte TTDWriteRecords. Appended
     /// from MemoryWriteDebug / DecodePortOut hooks. Same lifecycle as the
     /// other journals: dropped on Invalidate/Start, truncated by Resume.
-    TTDWriteJournal _writeJournal;
+    /// Lazily allocated on first StartRecording() when _enableWriteJournal is true.
+    std::unique_ptr<TTDWriteJournal> _writeJournal;
 
     /// Whether to capture write journal entries. When false, journal is empty
     /// and reverse-watchpoint queries fall back to checkpoint replay.

@@ -928,6 +928,7 @@ public:
             info["page_store_used_bytes"]    = static_cast<uint64_t>(si.pageStoreUsedBytes);
             info["baseline_frames_captured"] = si.baselineFramesCaptured;
             info["session_heap_bytes"]       = static_cast<uint64_t>(si.sessionHeapBytes);
+            info["write_journal_enabled"]    = si.writeJournalEnabled;
             info["ttd_available"]            = true;
             return info;
         });

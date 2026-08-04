@@ -407,7 +407,7 @@ TEST_F(TTD_Automation_Contract_Test, Dump_SerializeSession_RoundTrip)
     RunFrames(3);
     _ttd->StopRecording();
 
-    const size_t journalSizeBefore = _ttd->GetWriteJournal().Size();
+    const size_t journalSizeBefore = _ttd->GetWriteJournal()->Size();
     ASSERT_GT(journalSizeBefore, 0u);
     const size_t checkpointCount = _ttd->GetCheckpointCount();
     ASSERT_GT(checkpointCount, 0u);
@@ -438,7 +438,7 @@ TEST_F(TTD_Automation_Contract_Test, Dump_SerializeSession_RoundTrip)
 
     // Verify round-trip preserves checkpoint count and journal records
     EXPECT_EQ(ttd2->GetCheckpointCount(), checkpointCount);
-    EXPECT_EQ(ttd2->GetWriteJournal().Size(), journalSizeBefore);
+    EXPECT_EQ(ttd2->GetWriteJournal()->Size(), journalSizeBefore);
 
     // Verify the journal is queryable after load — this is the contract
     // shape that all automation surfaces rely on post-dump.

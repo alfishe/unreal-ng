@@ -150,7 +150,7 @@ TEST_F(TTD_StepInstruction_Test, SerializeSession_RoundTrip_PreservesJournal)
     RunFrames(1);
     _ttd->StopRecording();
 
-    const size_t journalSizeBefore = _ttd->GetWriteJournal().Size();
+    const size_t journalSizeBefore = _ttd->GetWriteJournal()->Size();
     ASSERT_GT(journalSizeBefore, 0u);
 
     // Serialize
@@ -178,7 +178,7 @@ TEST_F(TTD_StepInstruction_Test, SerializeSession_RoundTrip_PreservesJournal)
     }
 
     // Verify journal was preserved
-    EXPECT_EQ(ttd2->GetWriteJournal().Size(), journalSizeBefore);
+    EXPECT_EQ(ttd2->GetWriteJournal()->Size(), journalSizeBefore);
 
     // Verify checkpoint count
     EXPECT_GT(ttd2->GetCheckpointCount(), 0u);

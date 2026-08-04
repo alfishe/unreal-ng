@@ -139,7 +139,7 @@ TEST_F(TTD_Lifecycle_Stress_Test, InvalidateClearsAllState)
         _ttd->StopRecording();
 
         EXPECT_GT(_ttd->GetCheckpointCount(), 0u);
-        EXPECT_GT(_ttd->GetWriteJournal().Size(), 0u);
+        EXPECT_GT(_ttd->GetWriteJournal()->Size(), 0u);
 
         ttd::TTDSessionInfo infoBefore = _ttd->GetSessionInfo();
         EXPECT_GT(infoBefore.sessionHeapBytes, 0u);
@@ -147,7 +147,7 @@ TEST_F(TTD_Lifecycle_Stress_Test, InvalidateClearsAllState)
         _ttd->InvalidateSession("stress test");
 
         EXPECT_EQ(_ttd->GetCheckpointCount(), 0u);
-        EXPECT_EQ(_ttd->GetWriteJournal().Size(), 0u);
+        EXPECT_EQ(_ttd->GetWriteJournal()->Size(), 0u);
         EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Idle);
 
         ttd::TTDSessionInfo infoAfter = _ttd->GetSessionInfo();

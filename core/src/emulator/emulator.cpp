@@ -91,6 +91,7 @@ bool Emulator::Init()
 
     bool result = false;
 
+
     // Lock mutex until exiting current scope
     std::lock_guard<std::mutex> lock(_mutexInitialization);
 
@@ -318,6 +319,7 @@ bool Emulator::Init()
 
     /// endregion </Sanity checks>
 
+
     // Reset CPU and set-up all ports / ROM and RAM pages
     if (result)
     {
@@ -333,7 +335,7 @@ bool Emulator::Init()
         {
             _featureManager->onFeatureChanged();
         }
-        
+
         // Ensure SoundManager feature cache is definitely synced (belt-and-suspenders)
         // This guards against race conditions during async start
         if (_context->pSoundManager)

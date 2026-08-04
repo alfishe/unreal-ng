@@ -227,7 +227,14 @@ bool TimeTravelManager::StartRecording()
         _dirtyScratch.clear();
         _inputJournal.Clear();  // Phase 2 Item 3 — drop any prior input events
         _externalEvents.Clear();  // Phase 2 Item 6 — drop any prior markers
-        _writeJournal.Clear();  // Phase 4 — drop any prior write records
+        if (_writeJournal)
+            _writeJournal->Clear();  // Phase 4 — drop any prior write records
+    }
+
+    // Lazy-allocate write journal on first recording if enabled
+    if (_enableWriteJournal && !_writeJournal)
+    {
+        _writeJournal = std::make_unique<TTDWriteJournal>();
     }
 
     _modelRamPages = ResolveModelRamPages();
@@ -319,7 +326,8 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     _dirtyScratch.clear();
     _inputJournal.Clear();  // Phase 2 Item 3 — input history invalidates with the timeline
     _externalEvents.Clear();  // Phase 2 Item 6 — markers invalidate with the timeline
-    _writeJournal.Clear();  // Phase 4 — write journal invalidates with the timeline
+    if (_writeJournal)
+        _writeJournal->Clear();  // Phase 4 — write journal invalidates with the timeline
     _modelRamPages = 0;
     _state = TTDSessionState::Idle;
 
@@ -334,6 +342,23 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     // of the captured history's validity contract.
     if (_dirtyTracker)
         _dirtyTracker->ResetSession();
+}
+
+void TimeTravelManager::UpdateFeatureCache()
+{
+    FeatureManager* fm = _context ? _context->pFeatureManager : nullptr;
+    if (!fm)
+        return;
+
+    const bool ttdEnabled = fm->isEnabled(Features::kTimeTravel);
+
+    // When TimeTravel feature is disabled and we're not recording,
+    // deallocate the write journal to free ~256MB
+    if (!ttdEnabled && _state == TTDSessionState::Idle && _writeJournal)
+    {
+        MLOGINFO("TimeTravelManager::UpdateFeatureCache — TTD disabled, deallocating write journal");
+        _writeJournal.reset();
+    }
 }
 
 TTDSessionInfo TimeTravelManager::GetSessionInfo() const
@@ -378,6 +403,8 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
         info.sessionStartFrame = first.time.frame;
         info.currentEndFrame   = last.time.frame;
     }
+
+    info.writeJournalEnabled = _enableWriteJournal && _writeJournal != nullptr;
 
     return info;
 }
@@ -1588,10 +1615,11 @@ bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
     // Phase 4 — write journal: convert `from` to a globalT and drop records
     // strictly past it. Records exactly at `from` are kept (they happened
     // at the resume point, not after it).
+    if (_writeJournal)
     {
         const uint32_t frameT = _context ? _context->config.frame : 69888;
         const uint64_t globalT = from.frame * frameT + from.tInFrame;
-        _writeJournal.DropAfter(globalT);
+        _writeJournal->DropAfter(globalT);
     }
 
     // ------------------------------------------------------------------
@@ -1837,7 +1865,7 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     if (!WritePod(out, schemaVersion, err)) return false;
 
     // Only set journal flag if we actually have journal entries to write
-    const bool hasJournalData = _enableWriteJournal && !_writeJournal.IsEmpty();
+    const bool hasJournalData = _enableWriteJournal && _writeJournal && !_writeJournal->IsEmpty();
     uint16_t flags = ttd::dump::kFlagsLittleEndian;
     if (hasJournalData)
         flags |= ttd::dump::kFlagsHasWriteJournal;
@@ -2014,9 +2042,9 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     // --- Write journal section (v3 additive, TDD §9.3) ---
     // Flag bit 1 in the header tells the reader this section exists.
     // Only write if journal capture was enabled and has data.
-    if (hasJournalData)
+    if (hasJournalData && _writeJournal)
     {
-        if (!_writeJournal.Serialize(out))
+        if (!_writeJournal->Serialize(out))
         {
             err = "stream write failed (write journal section)";
             return false;
@@ -2269,9 +2297,13 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     // --- Read journal section (v3 additive, TDD §9.3) ---
     if (hasJournal)
     {
+        // Allocate journal if needed (may have been cleared)
+        if (!_writeJournal)
+            _writeJournal = std::make_unique<TTDWriteJournal>();
+
         uint64_t journalCount = 0;
         if (!ReadPod(in, journalCount, err)) return false;
-        if (!_writeJournal.Deserialize(in, journalCount))
+        if (!_writeJournal->Deserialize(in, journalCount))
         {
             err = "stream read failed (write journal section)";
             return false;
@@ -2384,7 +2416,8 @@ void TimeTravelManager::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t
     rec.physPage = physPage;
     (void)oldVal;  // Not stored in the compact 12-byte record (TDD §9.3)
 
-    _writeJournal.Append(rec);
+    if (_writeJournal)
+        _writeJournal->Append(rec);
 }
 
 void TimeTravelManager::RecordIoWrite(uint16_t port, uint8_t value, uint16_t m1pc)
@@ -2393,7 +2426,7 @@ void TimeTravelManager::RecordIoWrite(uint16_t port, uint8_t value, uint16_t m1p
         return;
     if (!_enableWriteJournal)
         return;
-    if (!_context)
+    if (!_context || !_writeJournal)
         return;
 
     const uint32_t frameT = _context->config.frame;
@@ -2408,7 +2441,7 @@ void TimeTravelManager::RecordIoWrite(uint16_t port, uint8_t value, uint16_t m1p
     rec.value    = value;
     rec.physPage = 0;  // IO writes don't have a physical RAM page
 
-    _writeJournal.Append(rec);
+    _writeJournal->Append(rec);
 }
 
 std::optional<TTDSearchResult>
@@ -2465,8 +2498,11 @@ TimeTravelManager::FindLastAccess(const TTDSearchQuery& q,
             return true;
         };
 
-        auto found = _writeJournal.FindLast(beforeGlobalT, pred);
-        const uint64_t oldestInRing = _writeJournal.OldestGlobalT();
+        if (!_writeJournal)
+            goto replay_fallback;  // Journal not allocated
+
+        auto found = _writeJournal->FindLast(beforeGlobalT, pred);
+        const uint64_t oldestInRing = _writeJournal->OldestGlobalT();
 
         if (found)
         {
@@ -2501,6 +2537,7 @@ TimeTravelManager::FindLastAccess(const TTDSearchQuery& q,
     //   d. Silent-replay the frame up to the interval end.
     //   e. Extract hits — if any, the last hit is the answer.
     // ------------------------------------------------------------------
+replay_fallback:
 
     // Convert beforeGlobalT to a TTDTimePoint for checkpoint lookup.
     TTDTimePoint targetTime;

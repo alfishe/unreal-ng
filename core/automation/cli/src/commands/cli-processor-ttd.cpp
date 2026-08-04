@@ -3,7 +3,7 @@
 ///
 /// Exposes the full TTD engine surface (Phase 2 complete) to CLI automation:
 ///   ttd status                 — session info (state, frame range, checkpoint count)
-///   ttd start                  — begin recording (captures baseline checkpoint)
+///   ttd start [--no-journal]   — begin recording (--no-journal = gaming mode)
 ///   ttd stop                   — stop recording (history retained, browsable)
 ///   ttd invalidate [reason]    — drop all history, return to Idle
 ///   ttd seek <frame> [tinframe] — seek to a point in the timeline
@@ -66,7 +66,7 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     }
     else if (subcommand == "start" || subcommand == "record")
     {
-        HandleTTDStart(session, context);
+        HandleTTDStart(session, context, args);
     }
     else if (subcommand == "stop")
     {
@@ -142,7 +142,8 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "=================================" << NEWLINE;
     ss << NEWLINE;
     ss << "  ttd status                       Show session info (state, frames, checkpoints)" << NEWLINE;
-    ss << "  ttd start                        Begin recording (captures baseline checkpoint)" << NEWLINE;
+    ss << "  ttd start [--no-journal]         Begin recording (captures baseline checkpoint)" << NEWLINE;
+    ss << "                                     --no-journal: gaming mode, smaller memory footprint" << NEWLINE;
     ss << "  ttd stop                         Stop recording (history retained, browsable)" << NEWLINE;
     ss << "  ttd invalidate [reason]          Drop all history, return to Idle" << NEWLINE;
     ss << "  ttd seek <frame> [tinframe]      Seek to a point in the timeline" << NEWLINE;
@@ -196,7 +197,8 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
     session.SendResponse(ss.str());
 }
 
-void CLIProcessor::HandleTTDStart(const ClientSession& session, EmulatorContext* context)
+void CLIProcessor::HandleTTDStart(const ClientSession& session, EmulatorContext* context,
+                                   const std::vector<std::string>& args)
 {
     ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
 
@@ -206,10 +208,24 @@ void CLIProcessor::HandleTTDStart(const ClientSession& session, EmulatorContext*
         return;
     }
 
+    // Parse optional --no-journal or --journal flag.
+    bool enableJournal = true;  // Default: development mode with write journal.
+    for (size_t i = 1; i < args.size(); ++i)
+    {
+        if (args[i] == "--no-journal" || args[i] == "-n")
+            enableJournal = false;
+        else if (args[i] == "--journal" || args[i] == "-j")
+            enableJournal = true;
+    }
+
+    mgr->SetEnableWriteJournal(enableJournal);
     bool ok = mgr->StartRecording();
     if (ok)
     {
-        session.SendResponse(std::string("TTD: Recording started") + NEWLINE);
+        std::string msg = enableJournal
+            ? "TTD: Recording started (with write journal)"
+            : "TTD: Recording started (gaming mode, no journal)";
+        session.SendResponse(msg + NEWLINE);
     }
     else
     {
