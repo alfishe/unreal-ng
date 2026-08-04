@@ -112,6 +112,12 @@ protected:
     uint8_t* _bank_read[4];            // Memory pointers to RAM/ROM/Cache 16k blocks mapped to four Z80 memory windows
     uint8_t* _bank_write[4];           // Memory pointers to RAM/ROM/Cache 16k blocks mapped to four Z80 memory windows
 
+    /// Cached RAM page numbers per bank for TTD hot path optimization.
+    /// Updated only when bank mapping changes (SetRAMPageToBank*).
+    /// Value is 0xFF when bank is not RAM (ROM/Cache mode).
+    /// Avoids expensive GetRAMPageForBank() pointer arithmetic on every write.
+    uint8_t _bank_ram_page_cache[4] = {0xFF, 0xFF, 0xFF, 0xFF};
+
     // Memory access tracker
     MemoryAccessTracker* _memoryAccessTracker = nullptr;  // Flexible memory access tracking system
 
@@ -373,6 +379,7 @@ public:
     using Memory::_memoryAccessTracker;
     using Memory::_ttdDirtyTracker;
     using Memory::_feature_ttd_enabled;
+    using Memory::_bank_ram_page_cache;
     
     // ROM base pointers for testing ROM switching
     using Memory::base_dos_rom;

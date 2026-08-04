@@ -107,6 +107,12 @@ Memory::Memory(EmulatorContext* context)
     _bank_mode[2] = BANK_RAM;
     _bank_mode[3] = BANK_RAM;
 
+    // Initialize RAM page cache (0xFF = not RAM)
+    _bank_ram_page_cache[0] = 0xFF;  // Bank 0 is ROM
+    _bank_ram_page_cache[1] = 5;     // Default bank 1 = RAM page 5
+    _bank_ram_page_cache[2] = 2;     // Default bank 2 = RAM page 2
+    _bank_ram_page_cache[3] = 0;     // Default bank 3 = RAM page 0
+
     /// region <Debug info>
     MLOGDEBUG("Memory::Memory() - Instance created");
     MLOGDEBUG("Memory::Memory() - Memory size: %zu bytes", _memorySize);
@@ -266,8 +272,12 @@ void Memory::MemoryWriteFast(uint16_t addr, uint8_t value)
     *(_bank_write[bank] + addressInBank) = value;
 }
 
-/// Implementation memory write method
-/// Used from Z80::DbgMemIf
+/// Implementation memory write method (debug path with TTD/breakpoint hooks).
+/// Used from Z80::DbgMemIf. Optimized for hot-path performance:
+///   - Cached RAM page lookup via _bank_ram_page_cache[] (avoids pointer arithmetic)
+///   - Single TTD feature check guards all TTD-related logic
+///   - pCore pointer cached once at entry
+///
 /// \param addr 16-bit address in Z80 memory space
 /// \param value 8-bit value to write into Z80 memory
 void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
@@ -275,68 +285,55 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
     /// region <MemoryWriteFast functionality>
 
     // Determine CPU bank (from address bits 14 and 15)
-    uint8_t bank = (addr >> 14) & 0b0000'0011;
-    uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
+    const uint8_t bank = (addr >> 14) & 0b0000'0011;
+    const uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
 
     // Write byte to the correspondent memory bank cell
     *(_bank_write[bank] + addressInBank) = value;
 
     /// endregion </MemoryWriteFast functionality>
 
+    // Cache pCore pointer once — used by multiple features below.
+    // Safe: pCore is set during Init() and never null during emulation.
+    Core* const core = _context->pCore;
+
     // Track memory write if tracker is initialized
     if (_feature_memorytracking_enabled && _memoryAccessTracker != nullptr)
     {
-        uint16_t pc = _context->pCore->GetZ80()->m1_pc;
+        const uint16_t pc = core->GetZ80()->m1_pc;
         _memoryAccessTracker->TrackMemoryWrite(addr, value, pc);
     }
 
-    // TTD dirty-page tracking (parent TDD §6.2). Cost when enabled: one
-    // predictable branch + one OR. Cost when disabled: one predictable
-    // branch. The tracker is always constructed; the flag is the gate.
-    //
-    // We mark dirty only on RAM banks (ROM is immutable within a session
-    // per TDD §6.3, so ROM writes don't happen through this path in
-    // practice — the bank-mode guard below is defensive).
-    uint8_t physPage = 0;
-    bool isRamWrite = false;
-    if (_feature_ttd_enabled && _ttdDirtyTracker != nullptr)
+    // TTD hot path — single feature gate for all TTD logic.
+    // Uses cached RAM page number to avoid expensive GetRAMPageForBank() call.
+    // physPage is 0xFF for ROM/Cache banks (no TTD tracking needed).
+    const uint8_t physPage = _bank_ram_page_cache[bank];
+    if (_feature_ttd_enabled && physPage != 0xFF)
     {
-        if (_bank_mode[bank] == BANK_RAM)
+        // Dirty-page tracking (parent TDD §6.2): single OR into bitmap
+        if (_ttdDirtyTracker != nullptr)
         {
-            uint16_t absRamPage = GetRAMPageForBank(bank);
-            physPage = static_cast<uint8_t>(absRamPage & 0xFF);
-            isRamWrite = true;
-            // GetRAMPageForBank returns the absolute RAM page index already
-            // (0..MAX_RAM_PAGES-1); MarkDirty is a single OR into the bitmap.
-            _ttdDirtyTracker->MarkDirty(absRamPage);
+            _ttdDirtyTracker->MarkDirty(physPage);
         }
-    }
 
-    // Phase 4 — write journal (parent TDD §9.3) + access probe (§9.2).
-    // Gated by TTD flag AND Recording state (the manager is the authority on
-    // the latter — we don't reach into _state directly here). Hot-path cost
-    // when not recording or in replay: one predictable branch.
-    if (_feature_ttd_enabled && isRamWrite && _context->pTimeTravelManager != nullptr)
-    {
-        const uint16_t m1pc = _context->pCore ? _context->pCore->GetZ80()->m1_pc : 0;
-        _context->pTimeTravelManager->RecordMemoryWrite(addr, /*oldVal=*/0, value,
-                                                         m1pc, physPage);
-    }
-
-    // Phase 4 — access probe hot-path check (parent TDD §9.2). The probe
-    // is owned by EmulatorContext so all hot-path sites can read it without
-    // a virtual call. Cost when not armed: one relaxed atomic load + branch.
-    if (_feature_ttd_enabled && _context->ttdProbe.IsArmed())
-    {
-        const uint16_t pc = _context->pCore ? _context->pCore->GetZ80()->m1_pc : 0;
-        if (_context->ttdProbe.Matches(addr, ttd::TTDAccessType::Write, value, pc))
+        // Write journal (parent TDD §9.3): record for reverse-watchpoint queries
+        if (_context->pTimeTravelManager != nullptr)
         {
-            const uint64_t frameT = _context->config.frame;
-            const auto& st = _context->emulatorState;
-            const uint16_t tin = _context->pCore ? _context->pCore->GetZ80()->t : 0;
-            const ttd::TTDTimePoint t{st.frame_counter, tin};
-            (void)frameT;
-            _context->ttdProbe.RecordHit(t, pc, value, physPage, ttd::TTDAccessType::Write);
+            const uint16_t m1pc = core->GetZ80()->m1_pc;
+            _context->pTimeTravelManager->RecordMemoryWrite(addr, /*oldVal=*/0, value, m1pc, physPage);
+        }
+
+        // Access probe (parent TDD §9.2): check armed watchpoint
+        if (_context->ttdProbe.IsArmed())
+        {
+            const uint16_t pc = core->GetZ80()->m1_pc;
+            if (_context->ttdProbe.Matches(addr, ttd::TTDAccessType::Write, value, pc))
+            {
+                const auto& st = _context->emulatorState;
+                const uint16_t tin = core->GetZ80()->t;
+                const ttd::TTDTimePoint t{st.frame_counter, tin};
+                _context->ttdProbe.RecordHit(t, pc, value, physPage, ttd::TTDAccessType::Write);
+            }
         }
     }
 
@@ -823,6 +820,7 @@ void Memory::SetROMPage(uint16_t page, bool updatePorts)
     _bank_mode[0] = BANK_ROM;
     _bank_read[0] = romBankHostAddress;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;  // Redirect all ROM writes to special memory region
+    _bank_ram_page_cache[0] = 0xFF;  // Invalidate RAM cache for bank 0
 
     // Set property flags (_isPage0ROM48k, _isPage0ROM128k, _isPage0ROMDOS, _isPage0ROMService)
     SetROMPageFlags();
@@ -857,6 +855,7 @@ void Memory::SetRAMPageToBank0(uint16_t page, [[maybe_unused]] bool updatePorts)
 
     _bank_mode[0] = BANK_RAM;
     _bank_write[0] = _bank_read[0] = RAMPageAddress(page);
+    _bank_ram_page_cache[0] = static_cast<uint8_t>(page & 0xFF);
 }
 
 /// Switch to specified RAM Bank in RAM Page 1
@@ -880,6 +879,7 @@ void Memory::SetRAMPageToBank1(uint16_t page)
 
     _bank_mode[1] = BANK_RAM;
     _bank_write[1] = _bank_read[1] = RAMPageAddress(page);
+    _bank_ram_page_cache[1] = static_cast<uint8_t>(page & 0xFF);
 }
 
 /// Switch to specified RAM Bank in RAM Page 2
@@ -903,6 +903,7 @@ void Memory::SetRAMPageToBank2(uint16_t page)
 
     _bank_mode[2] = BANK_RAM;
     _bank_write[2] = _bank_read[2] = RAMPageAddress(page);
+    _bank_ram_page_cache[2] = static_cast<uint8_t>(page & 0xFF);
 }
 
 /// Switch to specified RAM Bank in RAM Page 3
@@ -926,6 +927,7 @@ void Memory::SetRAMPageToBank3(uint16_t page, bool updatePorts)
 
     _bank_mode[3] = BANK_RAM;
     _bank_write[3] = _bank_read[3] = RAMPageAddress(page);
+    _bank_ram_page_cache[3] = static_cast<uint8_t>(page & 0xFF);
 
     if (updatePorts)
         _context->pPortDecoder->SetRAMPage(page);
@@ -1214,10 +1216,11 @@ void Memory::SetROM48k(bool updatePorts)
     _bank_mode[0] = BANK_ROM;
     _bank_read[0] = base_sos_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
-    
+    _bank_ram_page_cache[0] = 0xFF;  // Invalidate RAM cache
+
     // Update ROM page identification flags
     SetROMPageFlags();
-    
+
     // Update port decoder state if requested
     if (updatePorts && _context->pPortDecoder)
     {
@@ -1231,10 +1234,11 @@ void Memory::SetROM128k(bool updatePorts)
     _bank_mode[0] = BANK_ROM;
     _bank_read[0] = base_128_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
-    
+    _bank_ram_page_cache[0] = 0xFF;  // Invalidate RAM cache
+
     // Update ROM page identification flags
     SetROMPageFlags();
-    
+
     // Update port decoder state if requested
     if (updatePorts && _context->pPortDecoder)
     {
@@ -1248,10 +1252,11 @@ void Memory::SetROMDOS(bool updatePorts)
     _bank_mode[0] = BANK_ROM;
     _bank_read[0] = base_dos_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
-    
+    _bank_ram_page_cache[0] = 0xFF;  // Invalidate RAM cache
+
     // Update ROM page identification flags
     SetROMPageFlags();
-    
+
     // Update port decoder state if requested (like regular Z80 OUT to port 1FFD)
     if (updatePorts && _context->pPortDecoder)
     {
@@ -1265,10 +1270,11 @@ void Memory::SetROMSystem(bool updatePorts)
     _bank_mode[0] = BANK_ROM;
     _bank_read[0] = base_sys_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
-    
+    _bank_ram_page_cache[0] = 0xFF;  // Invalidate RAM cache
+
     // Update ROM page identification flags
     SetROMPageFlags();
-    
+
     // Update port decoder state if requested
     if (updatePorts && _context->pPortDecoder)
     {
