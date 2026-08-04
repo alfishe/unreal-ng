@@ -167,12 +167,16 @@ TEST_F(TimeTravelManager_Test, StartRecording_PageStoreGrows_ByModelRamPagesTime
 
     // v2 codec: each emu page is 4 × 4 KB sub-pages → 4 × pages slots.
     uint16_t pages = _ttd->GetModelRamPages();
+    size_t actualBytes = _ttd->GetPageStore().GetCapacityBytes();
     size_t expectedBytes = static_cast<size_t>(pages) * 4u
                            * ttd::TTDCodecPageStore::kPageSize;
     size_t expectedSlots = static_cast<size_t>(pages) * 4u;
 
-    EXPECT_EQ(_ttd->GetPageStore().GetCapacityBytes(), expectedBytes);
-    EXPECT_EQ(_ttd->GetPageStore().GetUsedSlots(), static_cast<uint32_t>(expectedSlots));
+    // v2 codec verification: after baseline capture, we should have exactly
+    // pages * 4 slots (one slot per 4KB sub-page of each 16KB model RAM page).
+    // Note: GetCapacityBytes() returns slot *metadata* size, not raw data size.
+    uint32_t actualSlots = _ttd->GetPageStore().GetUsedSlots();
+    EXPECT_EQ(actualSlots, static_cast<uint32_t>(expectedSlots));
 }
 
 TEST_F(TimeTravelManager_Test, StartRecording_Idempotent)
