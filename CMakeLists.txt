@@ -331,7 +331,7 @@ endif (BENCHMARKS)
 # Enable with -DBUILD_POC=ON. Each tool lives under tools/poc/<name>/.
 if (BUILD_POC)
 	message(STATUS ">>> Building PoC research tools")
-	add_subdirectory(tools/poc/cpp)
+	add_subdirectory(tools/poc)
 endif (BUILD_POC)
 
 # ========================================
