@@ -114,6 +114,18 @@ void Keyboard::Reset()
 /// @param key ZX Spectrum key pressed
 void Keyboard::PressKey(ZXKeysEnum key)
 {
+    // Handle extended keys (e.g., cursor keys) by pressing both component keys
+    if (isExtendedKey(key))
+    {
+        ZXKeysEnum base = getExtendedKeyBase(key);
+        ZXKeysEnum modifier = getExtendedKeyModifier(key);
+        if (base != ZXKEY_NONE)
+            PressKey(base);
+        if (modifier != ZXKEY_NONE)
+            PressKey(modifier);
+        return;
+    }
+
     KeyDescriptor keyDescriptor = _zxKeyMap[key];
     uint8_t matrixIndex = keyDescriptor.matrix_offset;
     uint8_t keyBits = ~keyDescriptor.mask | keyDescriptor.match;
@@ -126,6 +138,18 @@ void Keyboard::PressKey(ZXKeysEnum key)
 /// @param key ZX Spectrum key released
 void Keyboard::ReleaseKey(ZXKeysEnum key)
 {
+    // Handle extended keys (e.g., cursor keys) by releasing both component keys
+    if (isExtendedKey(key))
+    {
+        ZXKeysEnum base = getExtendedKeyBase(key);
+        ZXKeysEnum modifier = getExtendedKeyModifier(key);
+        if (base != ZXKEY_NONE)
+            ReleaseKey(base);
+        if (modifier != ZXKEY_NONE)
+            ReleaseKey(modifier);
+        return;
+    }
+
     KeyDescriptor keyDescriptor = _zxKeyMap[key];
     uint8_t matrixIndex = keyDescriptor.matrix_offset;
     uint8_t keyBits = ~keyDescriptor.mask | ~keyDescriptor.match;
