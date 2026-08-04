@@ -108,6 +108,11 @@ protected:
     bool _feature_sound_enabled = true;
     bool _feature_soundhq_enabled = true;
 
+    // Batch processing: only call TurboSound::handleStep() every N t-states
+    // 0 = disabled (call every instruction), 80 = 1 audio sample period (default)
+    uint32_t _batchInterval = 80;
+    uint32_t _lastBatchTStates = 0;
+
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -183,6 +188,11 @@ public:
 
     // Feature cache update (called by FeatureManager::onFeatureChanged)
     void UpdateFeatureCache();
+
+    // Batch processing interval (t-states between handleStep calls to TurboSound)
+    // 0 = disabled (every instruction), 40/80/160 = batch at interval
+    void setBatchInterval(uint32_t interval) { _batchInterval = interval; _lastBatchTStates = 0; }
+    uint32_t getBatchInterval() const { return _batchInterval; }
     /// endregion </Methods>
 
     /// region <Emulation events>

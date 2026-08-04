@@ -117,6 +117,10 @@ public:
 
     void UpdateScreen() override;
 
+    /// @brief Optimized DrawPeriod - inlines Draw() to avoid virtual call overhead
+    /// Processes multiple t-states with direct LUT access
+    void DrawPeriod(uint32_t fromTstate, uint32_t toTstate) override;
+
     /// @brief Optimized Draw using pre-computed LUT
     /// Uses TstateCoordLUT to eliminate runtime division/modulo operations
     /// @param tstate T-state timing position

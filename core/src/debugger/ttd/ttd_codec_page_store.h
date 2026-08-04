@@ -85,6 +85,19 @@ public:
     /// @return Slot index.
     uint32_t InternXor(uint32_t prevSlot, const uint8_t* pageData);
 
+    /// @brief Store a 4 KB page as XOR delta using cached previous page data.
+    ///
+    /// OPTIMIZATION: Avoids decompressing prevSlot by using cached uncompressed
+    /// data from the previous checkpoint. During forward recording, the previous
+    /// page content is known (it was live RAM one frame ago), so we cache it
+    /// to avoid expensive recursive decompression.
+    ///
+    /// @param prevSlot      Slot index of the previous version (for slot linkage).
+    /// @param pageData      4 KB of new page data.
+    /// @param cachedPrev    4 KB of cached previous page data (uncompressed).
+    /// @return Slot index.
+    uint32_t InternXorCached(uint32_t prevSlot, const uint8_t* pageData, const uint8_t* cachedPrev);
+
     /// @brief Load a pre-compressed slot directly from a .ttd file.
     ///
     /// Used by DeserializeSession to restore slots without decompress/recompress.

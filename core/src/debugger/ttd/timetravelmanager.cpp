@@ -338,6 +338,11 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     _ramCache.ram.clear();
     _ramCache.frame = 0;
 
+    // Clear previous-page cache (only allocated during active recording)
+    _prevPageCache.clear();
+    _prevPageCache.shrink_to_fit();
+    _prevPageCacheValid = false;
+
     // Reset the dirty tracker too — the session-scoped _everDirty set is part
     // of the captured history's validity contract.
     if (_dirtyTracker)
@@ -574,6 +579,11 @@ void TimeTravelManager::CaptureNow(TTDCheckpoint& out)
     // Invalidate the materialized-RAM cache — live RAM is changing under us.
     _ramCache.valid = false;
 
+    // Update previous-page cache for next frame's XOR delta computation.
+    // This caches current RAM content so we can compute XOR deltas without
+    // decompressing the slots we just created.
+    UpdatePrevPageCache();
+
     // --- Peripherals (P1.5 — parent TDD §6.1, §6.4) ---
     // Each device implements TTDSerializable and serializes itself into the
     // corresponding checkpoint blob. Devices land one at a time (AY first);
@@ -742,13 +752,20 @@ void TimeTravelManager::UpdateRamPages(const std::vector<uint16_t>& dirtyPages,
             }
             else
             {
-                // P-frame dirty page: XOR against prev. InternXor returns
-                // either a new XorPrev slot (delta non-zero) or prevSlot
-                // itself with refcount++ (delta was zero — page effectively
-                // unchanged). In both cases the assignment below is correct;
-                // we must NOT Release prevSlot — that would drop prevRamPages's
-                // own ref and break restore of the previous checkpoint.
-                outRamPages[p].pageSlots[s] = _pageStore.InternXor(prevSlot, sub);
+                // P-frame dirty page: XOR against prev.
+                // OPTIMIZATION: Use cached previous page to avoid decompression
+                const size_t cacheOffset = (p * 4 + s) * TTDCodecPageStore::kPageSize;
+                if (_prevPageCacheValid && cacheOffset + TTDCodecPageStore::kPageSize <= _prevPageCache.size())
+                {
+                    // Use cached path - no decompression needed
+                    outRamPages[p].pageSlots[s] = _pageStore.InternXorCached(
+                        prevSlot, sub, &_prevPageCache[cacheOffset]);
+                }
+                else
+                {
+                    // Fallback to decompression path (first frame or cache miss)
+                    outRamPages[p].pageSlots[s] = _pageStore.InternXor(prevSlot, sub);
+                }
             }
         }
     }
@@ -770,6 +787,35 @@ void TimeTravelManager::ReleaseCheckpointRefs(TTDCheckpoint& cp)
             }
         }
     }
+}
+
+void TimeTravelManager::UpdatePrevPageCache()
+{
+    if (!_memory || _modelRamPages == 0)
+    {
+        _prevPageCacheValid = false;
+        return;
+    }
+
+    // Allocate cache on first use: _modelRamPages * 4 sub-pages * 4KB each
+    const size_t cacheSize = static_cast<size_t>(_modelRamPages) * 4 * TTDCodecPageStore::kPageSize;
+    if (_prevPageCache.size() != cacheSize)
+    {
+        _prevPageCache.resize(cacheSize);
+    }
+
+    // Copy current RAM state into cache
+    for (uint16_t p = 0; p < _modelRamPages; ++p)
+    {
+        const uint8_t* pageData = _memory->RAMPageAddress(p);
+        if (pageData)
+        {
+            const size_t cacheOffset = static_cast<size_t>(p) * 4 * TTDCodecPageStore::kPageSize;
+            std::memcpy(&_prevPageCache[cacheOffset], pageData, PAGE_SIZE);
+        }
+    }
+
+    _prevPageCacheValid = true;
 }
 
 uint16_t TimeTravelManager::ResolveModelRamPages() const

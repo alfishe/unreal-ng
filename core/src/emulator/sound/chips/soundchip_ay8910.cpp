@@ -75,18 +75,16 @@ void SoundChip_AY8910::ToneGenerator::setPanRight(double value)
 
 bool SoundChip_AY8910::ToneGenerator::updateState()
 {
-    // 0 period is not played
+    // Period of 0 produces no output change
     if (_period > 0)
     {
         _counter++;
-
         if (_counter >= _period)
         {
             _counter = 0;
             _out = !_out;
         }
     }
-
     return _out;
 }
 
@@ -121,11 +119,9 @@ void SoundChip_AY8910::NoiseGenerator::setPeriod(uint8_t period)
 void SoundChip_AY8910::NoiseGenerator::updateState()
 {
     _counter++;
-
     if (_counter >= (_period << 1))
     {
         _counter = 0;
-
         _out = shiftLSFR();
     }
 }
@@ -351,70 +347,82 @@ void SoundChip_AY8910::reset()
     _tick = 0;
 }
 
-/// Emulate single AY chip clock cycle
-/// All generator counters updated, output mixer value
+/// Emulate single AY chip clock cycle.
+/// Updates all generator counters and mixes output samples.
+/// @param bypassPrescaler If true, skip 1:8 prescaler (used for HQ mode)
 void SoundChip_AY8910::updateState(bool bypassPrescaler)
 {
     _tick++;
 
-    // Update state for all generators
-    if (bypassPrescaler || _tick % 8 == 0)    // Turn on 16 pre-scaler for all generators
+    // 1:8 prescaler - only update generators every 8th tick (bits 0-2 == 0)
+    // Most calls (~87.5%) exit here; branch predictor handles this well
+    if (!bypassPrescaler && (_tick & 7) != 0)
+        return;
+
+    // --- Noise generator (inline to avoid call overhead) ---
+    _noiseGenerator._counter++;
+    if (_noiseGenerator._counter >= (_noiseGenerator._period << 1))
     {
-        _noiseGenerator.updateState();
-        _envelopeGenerator.updateState();
-
-        _toneGenerators[AY_CHANNEL_A].updateState();
-        _toneGenerators[AY_CHANNEL_B].updateState();
-        _toneGenerators[AY_CHANNEL_C].updateState();
-
-        // Mix outputs into samples
-        updateMixer();
+        _noiseGenerator._counter = 0;
+        _noiseGenerator._out = _noiseGenerator.shiftLSFR();
     }
+
+    // --- Envelope generator (uses function pointer dispatch for shape) ---
+    _envelopeGenerator.updateState();
+
+    // --- Tone generators (unrolled, inline counter logic) ---
+    // Macro for repeated per-channel logic
+    #define UPDATE_TONE(idx) do { \
+        ToneGenerator& tg = _toneGenerators[idx]; \
+        if (tg._period > 0 && ++tg._counter >= tg._period) { \
+            tg._counter = 0; \
+            tg._out = !tg._out; \
+        } \
+    } while(0)
+
+    UPDATE_TONE(0);
+    UPDATE_TONE(1);
+    UPDATE_TONE(2);
+    #undef UPDATE_TONE
+
+    // --- Mix all channel outputs into stereo samples ---
+    updateMixer();
 }
 
 void SoundChip_AY8910::updateMixer()
 {
-    // Zero-down all output samples
-    _mixedLeft = 0.0;
-    _mixedRight = 0.0;
+    // Cache noise and envelope outputs (shared across all channels)
+    const uint8_t noiseOut = _noiseGenerator._out;
+    const uint8_t envOut = _envelopeGenerator.out();
 
-    for (size_t i = 0; i < TONE_CHANNELS; i++)
-    {
-        ToneGenerator& toneGenerator = _toneGenerators[i];
-        uint8_t channelOut;
+    // Accumulate stereo mix
+    double mixL = 0.0, mixR = 0.0;
 
-        // Apply mixer flags and mix tone and noise accordingly
-        // Formula: (ToneOn | ToneDisable) & (NoiseOn | NoiseDisable)
-        // Note: disabling both noise and tone does not turn off a channel.
-        // Turning a channel off can only be accomplished by writing all zeroes
-        // Into corresponding bits of R10, R11 and R12 for corresponding channel
-        channelOut = (toneGenerator.out() || !toneGenerator.toneEnabled()) && (_noiseGenerator.out() || !toneGenerator.noiseEnabled());
+    // Unrolled channel processing (3 channels, each independent)
+    #define MIX_CHANNEL(idx) do { \
+        ToneGenerator& tg = _toneGenerators[idx]; \
+        /* Mixer logic: (ToneOn | ToneDisable) & (NoiseOn | NoiseDisable) */ \
+        uint8_t chOut = (tg._out | !tg._toneEnabled) & (noiseOut | !tg._noiseEnabled); \
+        /* Volume: envelope or fixed (branchless select) */ \
+        uint8_t envMask = -static_cast<uint8_t>(tg._envelopeEnabled); \
+        uint8_t vol = (envOut & envMask) | ((tg._volume * 2 + 1) & ~envMask); \
+        chOut = (chOut * vol) & 0x1F; \
+        /* DAC lookup and user volume/mute */ \
+        double dac = _volumeDACTablePtr[chOut] * (tg._muted ? 0.0 : tg._userVolume); \
+        _left[idx] = _right[idx] = dac; \
+        mixL += dac * tg._panLeft; \
+        mixR += dac * tg._panRight; \
+    } while(0)
 
-        // Apply volume (set via register or controlled by envelope generator)
-        uint8_t volume = toneGenerator.envelopeEnabled() ? _envelopeGenerator.out() : toneGenerator.volume() * 2 + 1;
-        channelOut *= volume;
-        channelOut &= 0x1F; // Ensure that amplitude not exceed 5 bit value
+    MIX_CHANNEL(0);
+    MIX_CHANNEL(1);
+    MIX_CHANNEL(2);
+    #undef MIX_CHANNEL
 
-        // Get DAC value and apply user volume control
-        double dacValue = _volumeDACTablePtr[channelOut];
-        if (!toneGenerator.isMuted())
-        {
-            dacValue *= toneGenerator.userVolume();
-        }
-        else
-        {
-            dacValue = 0.0;
-        }
-
-        _left[i] = dacValue;
-        _right[i] = dacValue;
-
-        _mixedLeft += _left[i] * toneGenerator.panLeft();
-        _mixedRight += _right[i] * toneGenerator.panRight();
-    }
-
-    _mixedRight /= 3.0;
-    _mixedLeft /= 3.0;
+    // Multiply by 1/3 instead of divide (faster)
+    constexpr double INV_3 = 1.0 / 3.0;
+    _mixedLeft = mixL * INV_3;
+    _mixedRight = mixR * INV_3;
 
     // Filter out DC offset
     if (true)

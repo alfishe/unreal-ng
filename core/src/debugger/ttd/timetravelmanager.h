@@ -758,6 +758,14 @@ private:
     /// invalidating or thinning).
     void ReleaseCheckpointRefs(TTDCheckpoint& cp);
 
+    /// @brief Update the previous-page cache with current RAM contents.
+    ///
+    /// Called after each checkpoint capture. The cache stores uncompressed
+    /// RAM so the next frame can compute XOR deltas without decompressing
+    /// the slots from the previous checkpoint. This eliminates the O(chain_depth)
+    /// recursive decompression that would otherwise occur on every dirty page.
+    void UpdatePrevPageCache();
+
     /// @brief Read the active model's RAM page count from the Memory / config.
     /// Called once at StartRecording.
     uint16_t ResolveModelRamPages() const;
@@ -914,6 +922,24 @@ private:
     /// Pages in [0, _modelRamPages) are captured; pages in [_modelRamPages,
     /// MAX_RAM_PAGES) are NEVER_TOUCHED.
     uint16_t _modelRamPages = 0;
+
+    /// Previous-checkpoint page cache for XOR delta computation during capture.
+    ///
+    /// OPTIMIZATION: During forward recording, computing XOR deltas requires
+    /// the previous page content. Without caching, InternXor must decompress
+    /// the previous slot (and its entire delta chain back to the I-frame),
+    /// causing O(chain_depth) decompression per dirty page per frame.
+    ///
+    /// With this cache, we store the uncompressed 4KB sub-pages from the
+    /// previous checkpoint. The cache is:
+    ///   - Populated after each checkpoint capture (current RAM → cache)
+    ///   - Used by UpdateRamPages to call InternXorCached instead of InternXor
+    ///   - Invalidated on session start/stop/invalidate
+    ///
+    /// Layout: [page0_sub0, page0_sub1, page0_sub2, page0_sub3, page1_sub0, ...]
+    /// Size: _modelRamPages * 4 * 4KB = _modelRamPages * 16KB (e.g., 128KB for 128KB model)
+    std::vector<uint8_t> _prevPageCache;
+    bool _prevPageCacheValid = false;
 
     /// Reusable scratch buffer for CollectAndClear (avoids per-frame alloc).
     std::vector<uint16_t> _dirtyScratch;

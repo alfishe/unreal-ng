@@ -313,6 +313,15 @@ void SoundManager::handleStep()
     if (!_feature_sound_enabled)
         return;
 
+    // Batch mode: only call TurboSound every N t-states
+    if (_batchInterval > 0)
+    {
+        uint32_t currentTStates = _context->pCore->GetZ80()->t;
+        if (currentTStates - _lastBatchTStates < _batchInterval)
+            return;
+        _lastBatchTStates = currentTStates;
+    }
+
     _turboSound->handleStep();
 }
 

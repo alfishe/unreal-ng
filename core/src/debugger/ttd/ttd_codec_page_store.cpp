@@ -136,6 +136,50 @@ uint32_t TTDCodecPageStore::InternXor(uint32_t prevSlot, const uint8_t* pageData
     return idx;
 }
 
+uint32_t TTDCodecPageStore::InternXorCached(uint32_t prevSlot, const uint8_t* pageData, const uint8_t* cachedPrev)
+{
+    assert(prevSlot < _slots.size());
+    assert(_slots[prevSlot].refcount > 0);
+    assert(pageData != nullptr);
+    assert(cachedPrev != nullptr);
+
+    // Compute XOR buffer using cached previous (no decompression needed!)
+    uint8_t xorBuf[kPageSize];
+    codec::XorBuffers(pageData, cachedPrev, xorBuf, kPageSize);
+
+    // If XOR is all zeros, page hasn't changed
+    if (codec::IsAllZero(xorBuf, kPageSize))
+    {
+        _slots[prevSlot].refcount++;
+        return prevSlot;
+    }
+
+    // Decide between xor-prev and full encodings
+    auto compressedXor = codec::Compress(xorBuf, kPageSize);
+    auto compressedFull = codec::Compress(pageData, kPageSize);
+
+    uint32_t idx = AllocateSlot();
+    Slot& s = _slots[idx];
+    s.refcount = 1;
+    s.crc32c = codec::Crc32C(pageData, kPageSize);
+
+    if (compressedXor.size() < compressedFull.size())
+    {
+        s.encoding = Encoding::XorPrev;
+        s.payload = std::move(compressedXor);
+        s.prevSlot = prevSlot;
+        _slots[prevSlot].refcount++;
+    }
+    else
+    {
+        s.encoding = Encoding::Full;
+        s.payload = std::move(compressedFull);
+        s.prevSlot = 0;
+    }
+    _usedSlots++;
+    return idx;
+}
+
 uint32_t TTDCodecPageStore::InternDirect(Encoding encoding, uint32_t prevSlot,
                                           uint32_t crc32c,
                                           const std::vector<uint8_t>& payload)

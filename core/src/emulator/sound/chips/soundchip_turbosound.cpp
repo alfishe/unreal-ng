@@ -70,8 +70,8 @@ void SoundChip_TurboSound::handleStep()
                 // Generators tick at PSG_CLOCK_RATE/8 = 218.75 kHz
                 // FIR decimates to 44.1 kHz (~4.96:1 ratio)
 
-                // Feed generator samples to decimator until we have an output
-                while (!_chip0->decimatorLeft().hasOutput())
+                // Feed generator samples to stereo decimator until we have an output
+                while (!_chip0->stereoDecimator().hasOutput())
                 {
                     // Tick generators (bypass internal prescaler)
                     updateState(true);
@@ -83,18 +83,15 @@ void SoundChip_TurboSound::handleStep()
                                          static_cast<float>(_chip0->mixedRight() + _chip1->mixedRight()));
                     }
 
-                    // Feed mixed output to decimators
-                    _chip0->decimatorLeft().feedSample(_chip0->mixedLeft());
-                    _chip0->decimatorRight().feedSample(_chip0->mixedRight());
-                    _chip1->decimatorLeft().feedSample(_chip1->mixedLeft());
-                    _chip1->decimatorRight().feedSample(_chip1->mixedRight());
+                    // Feed mixed output to stereo decimators (2 instead of 4)
+                    _chip0->stereoDecimator().feedSample(_chip0->mixedLeft(), _chip0->mixedRight());
+                    _chip1->stereoDecimator().feedSample(_chip1->mixedLeft(), _chip1->mixedRight());
                 }
 
-                // Get decimated output per chip
-                float c0L = _chip0->decimatorLeft().getOutput();
-                float c0R = _chip0->decimatorRight().getOutput();
-                float c1L = _chip1->decimatorLeft().getOutput();
-                float c1R = _chip1->decimatorRight().getOutput();
+                // Get decimated stereo output per chip
+                double c0L, c0R, c1L, c1R;
+                _chip0->stereoDecimator().getOutput(c0L, c0R);
+                _chip1->stereoDecimator().getOutput(c1L, c1R);
 
                 // Store per-chip buffers for registry-driven capture
                 _chip0Buffer[_ayBufferIndex]     = static_cast<int16_t>(c0L * INT16_MAX);

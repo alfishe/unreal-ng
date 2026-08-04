@@ -697,15 +697,7 @@ void Z80::OnCPUStep()
     _context->pMainLoop->OnCPUStep();
 }
 
-//
-// Increment CPU cycles counter by specified number of cycles.
-// Required to keep exact timings for Z80 commands
-// Note: same as '#define cputact(a) cpu->tt += ((a) * cpu->rate)' macro defined in cpulogic.h
-//
-void Z80::IncrementCPUCyclesCounter(uint8_t cycles)
-{
-    tt += cycles * rate;
-}
+// IncrementCPUCyclesCounter is now inline in z80.h for hot-path performance
 
 /// region <Debug methods>
 #include <cstdio>
