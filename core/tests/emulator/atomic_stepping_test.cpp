@@ -50,6 +50,12 @@ protected:
     {
         return _emulator->GetContext()->config;
     }
+
+    /// Helper to get paper start t-state (exact value from screen raster descriptor)
+    unsigned getPaperStartTstate()
+    {
+        return _emulator->GetContext()->pScreen->GetPaperStartTstate();
+    }
 };
 
 /// region <RunTStates tests>
@@ -253,22 +259,21 @@ TEST_F(AtomicStepping_Test, RunNScanlines_CrossesFrame)
 
 TEST_F(AtomicStepping_Test, RunUntilNextScreenPixel_FromFrameStart)
 {
-    const CONFIG& config = getConfig();
     uint64_t startFrame = getFrameCounter();
 
-    // CPU starts near frame start (t≈0), paper area is ~64 scanlines in
+    // Get the actual paper start t-state from screen raster descriptor
+    unsigned paperStartT = getPaperStartTstate();
+
+    // CPU starts near frame start (t≈0), paper area is later in the frame
     _emulator->RunUntilNextScreenPixel();
 
     unsigned endT = getCurrentT();
     uint64_t endFrame = getFrameCounter();
 
-    // Paper area starts at approximately line 64 for Pentagon
-    unsigned paperStartT = 64 * config.t_line + 24;  // 64 lines + left border
-
     EXPECT_GE(endT, paperStartT)
         << "Should reach paper area start (expected ~" << paperStartT << ", got " << endT << ")";
 
-    // Should not overshoot by much
+    // Should not overshoot by much (Z80 instructions can take 4-23 t-states)
     EXPECT_LT(endT, paperStartT + 30)
         << "Should not overshoot paper area start";
 
@@ -277,9 +282,7 @@ TEST_F(AtomicStepping_Test, RunUntilNextScreenPixel_FromFrameStart)
 
 TEST_F(AtomicStepping_Test, RunUntilNextScreenPixel_AfterPaperStart)
 {
-    const CONFIG& config = getConfig();
-
-    // Advance to scanline 200 (well past paper start at ~64)
+    // Advance to scanline 200 (well past paper start)
     _emulator->RunUntilScanline(200);
     uint64_t frameAfterPosition = getFrameCounter();
 
@@ -289,7 +292,8 @@ TEST_F(AtomicStepping_Test, RunUntilNextScreenPixel_AfterPaperStart)
     uint64_t endFrame = getFrameCounter();
     unsigned endT = getCurrentT();
 
-    unsigned paperStartT = 64 * config.t_line + 24;
+    // Get the actual paper start t-state from screen raster descriptor
+    unsigned paperStartT = getPaperStartTstate();
 
     EXPECT_EQ(endFrame, frameAfterPosition + 1)
         << "Should advance to next frame when already past paper start";
@@ -463,13 +467,16 @@ TEST_F(AtomicStepping_Test, CompoundStepping_ScanlineThenFrame)
     EXPECT_GE(afterScanlineT, expectedT);
 
     // Then complete the frame
+    // Note: RunFrame() captures current position and returns to that same position
+    // in the next frame to prevent drift
     _emulator->RunFrame();
     uint64_t endFrame = getFrameCounter();
     EXPECT_EQ(endFrame, startFrame + 1) << "Should complete exactly one frame";
 
-    // T-states should have wrapped
+    // T-states should be at the same relative position (scanline 100)
     unsigned endT = getCurrentT();
-    EXPECT_LT(endT, 30) << "Should be near frame start after RunFrame";
+    EXPECT_GE(endT, expectedT) << "Should return to same position after RunFrame";
+    EXPECT_LT(endT, expectedT + 30) << "Should not overshoot target position";
 }
 
 TEST_F(AtomicStepping_Test, CompoundStepping_MultipleScanlineSteps)
