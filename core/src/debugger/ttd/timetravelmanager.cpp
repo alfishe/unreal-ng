@@ -231,10 +231,18 @@ bool TimeTravelManager::StartRecording()
             _writeJournal->Clear();  // Phase 4 — drop any prior write records
     }
 
-    // Lazy-allocate write journal on first recording if enabled
+    // Lazy-allocate write journal on first recording if enabled.
+    // Use async allocation to avoid blocking the emulator thread.
     if (_enableWriteJournal && !_writeJournal)
     {
-        _writeJournal = std::make_unique<TTDWriteJournal>();
+        _writeJournal = std::make_unique<TTDWriteJournal>(64u * 1024 * 1024, true);
+    }
+
+    // Wait for journal allocation to complete before proceeding.
+    // This synchronizes with the async allocation started above (or earlier).
+    if (_writeJournal)
+    {
+        _writeJournal->WaitReady();
     }
 
     _modelRamPages = ResolveModelRamPages();
@@ -357,8 +365,16 @@ void TimeTravelManager::UpdateFeatureCache()
 
     const bool ttdEnabled = fm->isEnabled(Features::kTimeTravel);
 
+    // Pre-allocate write journal when TTD is enabled (async, non-blocking).
+    // This way allocation completes before StartRecording() is called.
+    if (ttdEnabled && _enableWriteJournal && !_writeJournal)
+    {
+        MLOGINFO("TimeTravelManager::UpdateFeatureCache — TTD enabled, pre-allocating write journal (async)");
+        _writeJournal = std::make_unique<TTDWriteJournal>(64u * 1024 * 1024, true);
+    }
+
     // When TimeTravel feature is disabled and we're not recording,
-    // deallocate the write journal to free ~256MB
+    // deallocate the write journal to free memory (~64MB)
     if (!ttdEnabled && _state == TTDSessionState::Idle && _writeJournal)
     {
         MLOGINFO("TimeTravelManager::UpdateFeatureCache — TTD disabled, deallocating write journal");
@@ -2343,9 +2359,12 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     // --- Read journal section (v3 additive, TDD §9.3) ---
     if (hasJournal)
     {
-        // Allocate journal if needed (may have been cleared)
+        // Allocate journal if needed (may have been cleared).
+        // Use sync allocation for deserialization - we need it immediately.
         if (!_writeJournal)
-            _writeJournal = std::make_unique<TTDWriteJournal>();
+            _writeJournal = std::make_unique<TTDWriteJournal>(64u * 1024 * 1024, false);
+        else
+            _writeJournal->WaitReady();  // Ensure any prior async alloc completes
 
         uint64_t journalCount = 0;
         if (!ReadPod(in, journalCount, err)) return false;

@@ -554,7 +554,7 @@ public:
     // -----------------------------------------------------------------------
     //
     // Two-layer reverse-watchpoint engine:
-    //   1. Write journal (§9.3): 256 MB ring of TTDWriteRecord, scanned
+    //   1. Write journal (§9.3): 64 MB ring of TTDWriteRecord, scanned
     //      backward for the fast path. Memory/port writes append to it from
     //      the existing MemoryWriteDebug / DecodePortOut hooks.
     //   2. Two-pass silent replay (§9.2): the fallback when the ring has
@@ -955,9 +955,9 @@ private:
     TTDExternalEventJournal _externalEvents;
 
     /// Write journal — fast-path accelerator for FindLastAccess (Phase 4;
-    /// parent TDD §9.3). 256 MB ring of 12-byte TTDWriteRecords. Appended
-    /// from MemoryWriteDebug / DecodePortOut hooks. Same lifecycle as the
-    /// other journals: dropped on Invalidate/Start, truncated by Resume.
+    /// parent TDD §9.3). 64 MB ring of 12-byte TTDWriteRecords (~5.5M records,
+    /// ~50 sec at max intensity). Appended from MemoryWriteDebug / DecodePortOut
+    /// hooks. Same lifecycle as other journals: dropped on Invalidate/Start.
     /// Lazily allocated on first StartRecording() when _enableWriteJournal is true.
     std::unique_ptr<TTDWriteJournal> _writeJournal;
 

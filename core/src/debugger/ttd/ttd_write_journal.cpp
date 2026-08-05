@@ -32,16 +32,43 @@ size_t RoundToPowerOfTwoRecords(size_t ringBytes)
 } // namespace
 
 // ---------------------------------------------------------------------------
-// Constructor
+// Constructor / Destructor
 // ---------------------------------------------------------------------------
 
-TTDWriteJournal::TTDWriteJournal(size_t ringBytes)
+TTDWriteJournal::TTDWriteJournal(size_t ringBytes, bool asyncAlloc)
 {
     const size_t cap = RoundToPowerOfTwoRecords(ringBytes);
-    _ring.resize(cap);
     _mask = cap - 1;
     _seqHead = 0;
     _seqTail = 0;
+
+    if (asyncAlloc)
+    {
+        // Allocate on background thread to avoid blocking emulator
+        _allocFuture = std::async(std::launch::async, [this, cap]() {
+            _ring.resize(cap);
+            _ready.store(true, std::memory_order_release);
+        });
+    }
+    else
+    {
+        // Synchronous allocation (for tests and small buffers)
+        _ring.resize(cap);
+        _ready.store(true, std::memory_order_release);
+    }
+}
+
+TTDWriteJournal::~TTDWriteJournal()
+{
+    // Ensure async allocation completes before destruction
+    if (_allocFuture.valid())
+        _allocFuture.wait();
+}
+
+void TTDWriteJournal::WaitReady()
+{
+    if (_allocFuture.valid())
+        _allocFuture.wait();
 }
 
 // ---------------------------------------------------------------------------

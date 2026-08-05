@@ -376,3 +376,39 @@ TEST(TTDWriteJournal_Test, Deserialize_ReplacesExistingContents)
     ASSERT_TRUE(found.has_value());
     EXPECT_EQ(found->addr, 0x5000u);
 }
+
+// ===========================================================================
+// Async allocation
+// ===========================================================================
+
+TEST(TTDWriteJournal_Test, AsyncAlloc_IsReadyAfterWait)
+{
+    // Small buffer for fast test
+    TTDWriteJournal j(/*ringBytes=*/1024 * 1024, /*asyncAlloc=*/true);
+
+    // Initially might not be ready (race, but likely not ready)
+    // WaitReady should block until allocation completes
+    j.WaitReady();
+
+    EXPECT_TRUE(j.IsReady());
+    EXPECT_GT(j.Capacity(), 0u);
+}
+
+TEST(TTDWriteJournal_Test, AsyncAlloc_AppendAfterWait)
+{
+    TTDWriteJournal j(/*ringBytes=*/1024 * 1024, /*asyncAlloc=*/true);
+    j.WaitReady();
+
+    j.Append(MakeRec(100, 0x4000, 0x42));
+    EXPECT_EQ(j.Size(), 1u);
+
+    auto found = j.FindLast(UINT64_MAX, AddrPred(0x4000));
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(found->value, 0x42u);
+}
+
+TEST(TTDWriteJournal_Test, SyncAlloc_IsReadyImmediately)
+{
+    TTDWriteJournal j(/*ringBytes=*/1024, /*asyncAlloc=*/false);
+    EXPECT_TRUE(j.IsReady());
+}

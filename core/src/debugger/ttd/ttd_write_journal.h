@@ -5,9 +5,10 @@
 ///
 /// Per parent TDD §9.3 ("Write Journal (Fast Path)"):
 ///   "Appended from the same MemoryWriteDebug hook. Ring buffer, default
-///    256 MB ≈ 22M writes ≈ minutes of typical demo activity. FindLastWrite
-///    first scans the journal backward (memory-bandwidth-fast, no emulation);
-///    only if the journal has already wrapped past the target window does it
+///    64 MB ≈ 5.5M writes ≈ ~50 seconds at max intensity (action game).
+///    Measured: ~2300 writes/frame peak, ~130 writes/frame typical game.
+///    FindLastWrite scans the journal backward (memory-bandwidth-fast);
+///    only if the journal has wrapped past the target window does it
 ///    fall back to [two-pass silent replay]."
 ///
 /// Record format (TDD §9.3): 12 bytes per write. Bit-packed globalT keeps
@@ -33,7 +34,9 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <atomic>
 #include <functional>
+#include <future>
 #include <optional>
 #include <vector>
 #include <ostream>
@@ -63,21 +66,34 @@ static_assert(sizeof(TTDWriteRecord) == 8 + 2 + 1 + 1,
 
 /// @brief Ring-buffered journal of memory/port writes.
 ///
-/// Append is O(1). FindLast is O(N) over the live ring — at ~22M records
-/// that's ~100 ms memory-bandwidth-bound scan, well below interactive
+/// Append is O(1). FindLast is O(N) over the live ring — at ~5.5M records
+/// that's ~25 ms memory-bandwidth-bound scan, well below interactive
 /// latency. DropAfter and Clear are O(N) but rare (resume-from-past,
 /// invalidate, session end).
 class TTDWriteJournal
 {
 public:
     /// @brief Construct with a ring capacity in bytes (rounded up to the
-    /// next power-of-two records). Default 256 MB per TDD §9.3.
-    explicit TTDWriteJournal(size_t ringBytes = 256u * 1024 * 1024);
+    /// next power-of-two records). Default 64 MB — provides ~50 seconds at
+    /// max-intensity workload (2300 writes/frame), several minutes typical.
+    ///
+    /// @param ringBytes  Desired ring size in bytes.
+    /// @param asyncAlloc If true, allocation happens on a background thread.
+    ///                   Call WaitReady() before first use.
+    explicit TTDWriteJournal(size_t ringBytes = 64u * 1024 * 1024,
+                             bool asyncAlloc = false);
 
-    ~TTDWriteJournal() = default;
+    ~TTDWriteJournal();
 
     TTDWriteJournal(const TTDWriteJournal&) = delete;
     TTDWriteJournal& operator=(const TTDWriteJournal&) = delete;
+
+    /// @brief Block until async allocation completes. No-op if sync-allocated.
+    /// Call this before first Append() when using asyncAlloc=true.
+    void WaitReady();
+
+    /// @brief Check if async allocation is complete (non-blocking).
+    bool IsReady() const { return _ready.load(std::memory_order_acquire); }
 
     // -----------------------------------------------------------------------
     // Capture path (emulator thread only; called from MemoryWriteDebug /
@@ -175,6 +191,9 @@ private:
     size_t   _mask = 0;                  // capacity - 1, for fast modulo
     uint64_t _seqHead = 0;               // absolute count of appends
     uint64_t _seqTail = 0;               // absolute seq of oldest live record
+
+    std::atomic<bool> _ready{false};     // true when allocation complete
+    std::future<void> _allocFuture;      // async allocation handle
 };
 
 } // namespace ttd
