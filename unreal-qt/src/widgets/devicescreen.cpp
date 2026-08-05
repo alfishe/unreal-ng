@@ -85,12 +85,7 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
         int newWidth = event->rect().width();
         int newHeight = event->rect().height();
 
-        float curRatio = static_cast<float>(newWidth) / static_cast<float>(newHeight);
-        if (!isFloatsEqual(curRatio, ratio))
-        {
-            qDebug() << "width: " << newWidth << " height: " << newHeight << " ratio: " << curRatio;
-        }
-
+        // Render the ZX Spectrum screen directly into the event rect
         painter.drawImage(event->rect(), *devicePixels, devicePixelsRect);
     }
 }
