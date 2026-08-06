@@ -13,6 +13,7 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 public:
     explicit MainWindow(QWidget *parent = nullptr);
+    ~MainWindow() override;
 
 private slots:
     void onStart();
@@ -20,7 +21,10 @@ private slots:
     void onRestart();
     void onToggleFullscreen(bool on);
     void onToggleRecord(bool on);
+    void onToggle1to1(bool on);
     void onMachineChanged(QAction *a);
+    void onVideoModeChanged(QAction *a);
+    void onNextVideoMode();
     void onEjectAll();
 
 private:
@@ -34,8 +38,14 @@ private:
     void flash(const QString &message);
     void refreshTitle();
 
+    void setVideoMode(int modeIndex);
+    void adjustWindowToFitScreen();
+
     ScreenWidget *m_screen = nullptr;
     QToolBar     *m_toolBar = nullptr;
+
+    int m_currentModeIndex = 2;  // Default to 352x288
+    bool m_enforce1to1 = false;  // If true, window resizes to fit 1:1 on mode change
 
     // File
     QAction *m_actOpen = nullptr;
@@ -45,9 +55,10 @@ private:
     // View
     QAction *m_actToolBar = nullptr;
     QAction *m_actStatusBar = nullptr;
-    QAction *m_actBorder = nullptr;
-    QAction *m_actInteger = nullptr;
     QAction *m_actFullscreen = nullptr;
+    QAction *m_actNextVideoMode = nullptr;
+    QAction *m_act1to1 = nullptr;
+    QActionGroup *m_videoModes = nullptr;
     // Machine
     QActionGroup *m_machines = nullptr;
     QAction *m_actRestart = nullptr;

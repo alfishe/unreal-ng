@@ -2,92 +2,161 @@
 
 #include <QPainter>
 #include <QPaintEvent>
-#include <QtMath>
 
-namespace {
-constexpr int kScreenW = 256;
-constexpr int kScreenH = 192;
-constexpr int kBorderW = 320;   // 256 + 2*32
-constexpr int kBorderH = 240;   // 192 + 2*24
+static const VideoModeInfo s_videoModes[] = {
+    // Standard ZX Spectrum
+    { VideoMode::ZX_256x192,    256, 192, "256x192 (ZX inner)", ":/patterns/zx_256x192.png" },
+    { VideoMode::ZX_320x240,    320, 240, "320x240 (ZX partial)", ":/patterns/zx_320x240.png" },
+    { VideoMode::ZX_352x288,    352, 288, "352x288 (ZX PAL)", ":/patterns/zx_352x288.png" },
+    { VideoMode::ZX_384x304,    384, 304, "384x304 (ZX extended)", ":/patterns/zx_384x304.png" },
+    // ATM Turbo / Profi
+    { VideoMode::ATM_320x200,   320, 200, "320x200 (ATM)", ":/patterns/atm_320x200.png" },
+    { VideoMode::ATM_640x200,   640, 200, "640x200 (ATM hi-res)", ":/patterns/atm_640x200.png" },
+    { VideoMode::Profi_512x240, 512, 240, "512x240 (Profi)", ":/patterns/profi_512x240.png" },
+    // ZX Evolution / TS-Conf
+    { VideoMode::Evo_360x288,   360, 288, "360x288 (Evo)", ":/patterns/evo_360x288.png" },
+    { VideoMode::TSConf_640x400, 640, 400, "640x400 (TS-Conf)", ":/patterns/tsconf_640x400.png" },
+    { VideoMode::TSConf_640x480, 640, 480, "640x480 (TS-Conf VGA)", ":/patterns/tsconf_640x480.png" },
+    // ZX Next
+    { VideoMode::Next_320x256,  320, 256, "320x256 (Next)", ":/patterns/next_320x256.png" },
+    { VideoMode::Next_640x256,  640, 256, "640x256 (Next hi-res)", ":/patterns/next_640x256.png" },
+    // Generic hi-res
+    { VideoMode::HiRes_512x384, 512, 384, "512x384 (2x)", ":/patterns/hires_512x384.png" },
+    { VideoMode::HiRes_640x512, 640, 512, "640x512 (max)", ":/patterns/hires_640x512.png" },
+};
+
+const VideoModeInfo* ScreenWidget::videoModes()
+{
+    return s_videoModes;
 }
 
-ScreenWidget::ScreenWidget(QWidget *parent)
+int ScreenWidget::videoModeCount()
+{
+    return sizeof(s_videoModes) / sizeof(s_videoModes[0]);
+}
+
+ScreenWidget::ScreenWidget(QWidget* parent)
     : QWidget(parent)
 {
     setAutoFillBackground(true);
     QPalette p = palette();
     p.setColor(QPalette::Window, Qt::black);
     setPalette(p);
-    setMinimumSize(kBorderW, kBorderH);
 
-    // Placeholder framebuffer: the TR-DOS style boot screen.
-    m_frame = QImage(kScreenW, kScreenH, QImage::Format_RGB32);
-    m_frame.fill(Qt::black);
-    QPainter g(&m_frame);
-    QFont f(QStringLiteral("Monospace"), 8);
-    f.setStyleHint(QFont::TypeWriter);
-    g.setFont(f);
-    g.setPen(QColor(0xd8, 0xd8, 0xd8));
-    g.drawText(8, 18, QStringLiteral("unreal-ng 0.9.4"));
-    g.setPen(QColor(0x00, 0xc0, 0xc0));
-    g.drawText(8, 32, QStringLiteral("TR-DOS v5.04T"));
-    g.setPen(QColor(0xc0, 0xc0, 0x00));
-    g.drawText(8, 52, QStringLiteral("Loading \"manic\" CODE"));
+    setMinimumSize(m_baseWidth, m_baseHeight);
+    setFocusPolicy(Qt::StrongFocus);
 }
 
-void ScreenWidget::setViewMode(ViewMode mode)
+ScreenWidget::~ScreenWidget()
 {
-    if (m_mode == mode)
+    detachFramebuffer();
+}
+
+void ScreenWidget::attachFramebuffer(uint16_t width, uint16_t height, void* buffer)
+{
+    detachFramebuffer();
+
+    if (!buffer || width == 0 || height == 0)
         return;
-    m_mode = mode;
+
+    m_baseWidth = width;
+    m_baseHeight = height;
+    m_aspectRatio = static_cast<float>(width) / static_cast<float>(height);
+
+    m_image = new QImage(
+        static_cast<const uchar*>(buffer),
+        width,
+        height,
+        width * 4,
+        QImage::Format_RGBA8888
+    );
+
+    setMinimumSize(width, height);
     update();
 }
 
-void ScreenWidget::setIntegerScaling(bool on)
+void ScreenWidget::loadTestPattern(int modeIndex)
 {
-    if (m_integer == on)
-        return;
-    m_integer = on;
-    update();
-}
+    detachFramebuffer();
 
-void ScreenWidget::setBorderColor(const QColor &c)
-{
-    m_border = c;
-    update();
-}
+    int count = videoModeCount();
+    if (modeIndex < 0 || modeIndex >= count)
+        modeIndex = 2;
 
-void ScreenWidget::setFrame(const QImage &frame)
-{
-    m_frame = frame;
-    update();
-}
+    const auto& mode = s_videoModes[modeIndex];
 
-void ScreenWidget::paintEvent(QPaintEvent *)
-{
-    QPainter p(this);
-    p.fillRect(rect(), Qt::black);
-
-    const bool withBorder = (m_mode == WithBorder);
-    const QSize src = withBorder ? QSize(kBorderW, kBorderH) : QSize(kScreenW, kScreenH);
-
-    qreal scale = qMin(qreal(width()) / src.width(), qreal(height()) / src.height());
-    if (m_integer && scale >= 1.0)
-        scale = qFloor(scale);
-    if (scale <= 0)
-        scale = 1;
-
-    const QSize out(int(src.width() * scale), int(src.height() * scale));
-    const QRect target(QPoint((width() - out.width()) / 2, (height() - out.height()) / 2), out);
-
-    if (withBorder) {
-        p.fillRect(target, m_border);
-        const QRect inner(target.x() + int(32 * scale),
-                          target.y() + int(24 * scale),
-                          int(kScreenW * scale),
-                          int(kScreenH * scale));
-        p.drawImage(inner, m_frame);
-    } else {
-        p.drawImage(target, m_frame);
+    m_ownedImage = QImage(QString::fromLatin1(mode.patternFile));
+    if (m_ownedImage.isNull())
+    {
+        // Fallback: create solid color image
+        m_ownedImage = QImage(mode.width, mode.height, QImage::Format_RGBA8888);
+        m_ownedImage.fill(QColor(32, 32, 96));
     }
+
+    // Convert to RGBA8888 if needed
+    if (m_ownedImage.format() != QImage::Format_RGBA8888)
+    {
+        m_ownedImage = m_ownedImage.convertToFormat(QImage::Format_RGBA8888);
+    }
+
+    m_baseWidth = mode.width;
+    m_baseHeight = mode.height;
+    m_aspectRatio = static_cast<float>(mode.width) / static_cast<float>(mode.height);
+
+    m_image = &m_ownedImage;
+
+    setMinimumSize(mode.width, mode.height);
+    update();
+}
+
+void ScreenWidget::detachFramebuffer()
+{
+    if (m_image && m_image != &m_ownedImage)
+    {
+        delete m_image;
+    }
+    m_image = nullptr;
+    m_ownedImage = QImage();
+    update();
+}
+
+void ScreenWidget::refresh()
+{
+    update();
+}
+
+void ScreenWidget::paintEvent(QPaintEvent* event)
+{
+    Q_UNUSED(event);
+
+    QPainter painter(this);
+    painter.fillRect(rect(), Qt::black);
+
+    if (!m_image || m_image->isNull())
+        return;
+
+#if QT_VERSION >= QT_VERSION_CHECK(5, 13, 0)
+    painter.setRenderHint(QPainter::LosslessImageRendering);
+#endif
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+
+    const int widgetW = width();
+    const int widgetH = height();
+
+    int destW, destH;
+    if (static_cast<float>(widgetW) / widgetH > m_aspectRatio)
+    {
+        destH = widgetH;
+        destW = static_cast<int>(widgetH * m_aspectRatio);
+    }
+    else
+    {
+        destW = widgetW;
+        destH = static_cast<int>(widgetW / m_aspectRatio);
+    }
+
+    const int x = (widgetW - destW) / 2;
+    const int y = (widgetH - destH) / 2;
+
+    painter.drawImage(QRect(x, y, destW, destH), *m_image);
 }

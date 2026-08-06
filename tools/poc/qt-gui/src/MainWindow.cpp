@@ -11,11 +11,10 @@
 #include <QCloseEvent>
 #include <QFrame>
 #include <QFileInfo>
-#include <QTimer>
+#include <QScreen>
 
 static QIcon themedIcon(const QString &name)
 {
-    // Always use bundled SVGs for consistent appearance
     return QIcon(QStringLiteral(":/icons/%1.svg").arg(name));
 }
 
@@ -30,10 +29,77 @@ MainWindow::MainWindow(QWidget *parent)
     buildToolBar();
     buildStatusBar();
 
+    setVideoMode(m_currentModeIndex);
+
     refreshTitle();
     restoreLayout();
     flash(tr("Running — %1").arg(m_machine));
-    resize(672, 560);
+}
+
+MainWindow::~MainWindow()
+{
+}
+
+void MainWindow::setVideoMode(int modeIndex)
+{
+    int count = ScreenWidget::videoModeCount();
+    if (modeIndex < 0 || modeIndex >= count)
+        modeIndex = 2;
+
+    m_currentModeIndex = modeIndex;
+    m_screen->loadTestPattern(modeIndex);
+
+    // Update menu checkmarks
+    QList<QAction*> actions = m_videoModes->actions();
+    if (modeIndex < actions.size())
+    {
+        actions[modeIndex]->setChecked(true);
+    }
+
+    adjustWindowToFitScreen();
+}
+
+void MainWindow::adjustWindowToFitScreen()
+{
+    if (!m_screen)
+        return;
+
+    QSize native = m_screen->nativeSize();
+
+    // Calculate required window size (native + decorations)
+    int extraH = 0;
+    if (m_toolBar && m_toolBar->isVisible())
+        extraH += m_toolBar->height();
+    if (statusBar() && statusBar()->isVisible())
+        extraH += statusBar()->height();
+    if (menuBar())
+        extraH += menuBar()->height();
+
+    QSize targetSize(native.width(), native.height() + extraH);
+
+    // Get available screen geometry
+    QScreen* screen = this->screen();
+    if (!screen)
+        screen = QGuiApplication::primaryScreen();
+    QRect availableGeometry = screen->availableGeometry();
+
+    // If 1:1 mode enforced, always resize to native
+    // Otherwise, only resize if window is smaller than native
+    bool needResize = m_enforce1to1 ||
+        (size().width() < targetSize.width() || size().height() < targetSize.height());
+
+    if (needResize)
+    {
+        // Ensure we don't exceed screen size
+        int newW = qMin(targetSize.width(), availableGeometry.width());
+        int newH = qMin(targetSize.height(), availableGeometry.height());
+        resize(newW, newH);
+    }
+
+    // Update minimum size to prevent shrinking below native
+    setMinimumSize(native.width(), native.height() + extraH);
+
+    m_screen->refresh();
 }
 
 void MainWindow::buildActions()
@@ -62,7 +128,7 @@ void MainWindow::buildActions()
 
     m_actQuit = new QAction(tr("&Quit"), this);
     m_actQuit->setShortcut(QKeySequence::Quit);
-    m_actQuit->setMenuRole(QAction::QuitRole);   // moves to the app menu on macOS
+    m_actQuit->setMenuRole(QAction::QuitRole);
     connect(m_actQuit, &QAction::triggered, this, &QWidget::close);
 
     // ---- Transport -------------------------------------------------------
@@ -96,27 +162,39 @@ void MainWindow::buildActions()
     m_actStatusBar->setChecked(true);
     m_actStatusBar->setShortcut(QKeySequence(QStringLiteral("Ctrl+/")));
 
-    m_actBorder = new QAction(tr("&Border"), this);
-    m_actBorder->setCheckable(true);
-    m_actBorder->setChecked(true);
-    m_actBorder->setShortcut(QKeySequence(QStringLiteral("Ctrl+B")));
-    connect(m_actBorder, &QAction::toggled, this, [this](bool on) {
-        m_screen->setViewMode(on ? ScreenWidget::WithBorder : ScreenWidget::Pixel1to1);
-        flash(on ? tr("Border on") : tr("Border off"));
-    });
-
-    m_actInteger = new QAction(tr("&Integer scaling"), this);
-    m_actInteger->setCheckable(true);
-    m_actInteger->setChecked(true);
-    connect(m_actInteger, &QAction::toggled, this, [this](bool on) {
-        m_screen->setIntegerScaling(on);
-        flash(on ? tr("Integer scaling on") : tr("Integer scaling off"));
-    });
-
     m_actFullscreen = new QAction(themedIcon(QStringLiteral("fullscreen")), tr("&Fullscreen"), this);
     m_actFullscreen->setCheckable(true);
     m_actFullscreen->setShortcut(Qt::Key_F11);
     connect(m_actFullscreen, &QAction::toggled, this, &MainWindow::onToggleFullscreen);
+
+    // Next video mode button
+    m_actNextVideoMode = new QAction(themedIcon(QStringLiteral("videomode")), tr("Next Video Mode"), this);
+    m_actNextVideoMode->setShortcut(Qt::Key_F5);
+    m_actNextVideoMode->setToolTip(tr("Cycle to next video mode (F5)"));
+    connect(m_actNextVideoMode, &QAction::triggered, this, &MainWindow::onNextVideoMode);
+
+    // 1:1 pixel mode toggle
+    m_act1to1 = new QAction(tr("1:1 Pixel Size"), this);
+    m_act1to1->setCheckable(true);
+    m_act1to1->setChecked(false);
+    m_act1to1->setShortcut(Qt::Key_F4);
+    m_act1to1->setToolTip(tr("Enforce 1:1 pixel display on mode change (F4)"));
+    connect(m_act1to1, &QAction::toggled, this, &MainWindow::onToggle1to1);
+
+    // Video mode selection
+    m_videoModes = new QActionGroup(this);
+    m_videoModes->setExclusive(true);
+    const auto* modes = ScreenWidget::videoModes();
+    int count = ScreenWidget::videoModeCount();
+    for (int i = 0; i < count; ++i)
+    {
+        QAction* a = new QAction(QString::fromLatin1(modes[i].name), this);
+        a->setCheckable(true);
+        a->setData(i);
+        a->setChecked(i == m_currentModeIndex);
+        m_videoModes->addAction(a);
+    }
+    connect(m_videoModes, &QActionGroup::triggered, this, &MainWindow::onVideoModeChanged);
 
     // ---- Machine ---------------------------------------------------------
     m_machines = new QActionGroup(this);
@@ -176,8 +254,6 @@ void MainWindow::buildActions()
 
 void MainWindow::buildMenus()
 {
-    // On macOS Qt hands this menu bar to the system menu automatically;
-    // on Windows and Linux it is drawn inside the window.
     QMenuBar *mb = menuBar();
 
     QMenu *file = mb->addMenu(tr("&File"));
@@ -192,8 +268,14 @@ void MainWindow::buildMenus()
     view->addAction(m_actToolBar);
     view->addAction(m_actStatusBar);
     view->addSeparator();
-    view->addAction(m_actBorder);
-    view->addAction(m_actInteger);
+
+    QMenu *videoMode = view->addMenu(tr("&Video Mode"));
+    videoMode->addActions(m_videoModes->actions());
+    videoMode->addSeparator();
+    videoMode->addAction(m_actNextVideoMode);
+    videoMode->addAction(m_act1to1);
+
+    view->addSeparator();
     view->addAction(m_actFullscreen);
 
     QMenu *machine = mb->addMenu(tr("&Machine"));
@@ -232,11 +314,11 @@ void MainWindow::buildToolBar()
     m_toolBar->addAction(m_actPause);
     m_toolBar->addAction(m_actRestart);
     m_toolBar->addSeparator();
+    m_toolBar->addAction(m_actNextVideoMode);
     m_toolBar->addAction(m_actFullscreen);
-
+    m_toolBar->addSeparator();
     m_toolBar->addAction(m_actRecord);
 
-    // View > Toolbar drives visibility both ways.
     connect(m_actToolBar, &QAction::toggled, m_toolBar, &QWidget::setVisible);
     connect(m_actToolBar, &QAction::toggled, this, [this](bool on) {
         flash(on ? tr("Toolbar shown") : tr("Toolbar hidden"));
@@ -258,7 +340,7 @@ void MainWindow::buildStatusBar()
     sep->setFrameShadow(QFrame::Plain);
     sep->setFixedHeight(13);
 
-    m_fps = new QLabel(QStringLiteral("50.1 FPS"), this);
+    m_fps = new QLabel(QStringLiteral("50.0 FPS"), this);
 
     sb->addPermanentWidget(m_indTape);
     sb->addPermanentWidget(m_indDisk);
@@ -267,7 +349,6 @@ void MainWindow::buildStatusBar()
     sb->addPermanentWidget(sep);
     sb->addPermanentWidget(m_fps);
 
-    // Indicators and the Media / Audio menus stay in sync.
     auto bind = [this](StatusIndicator *ind, QAction *act, const QString &on, const QString &off) {
         ind->setActive(act->isChecked());
         connect(act, &QAction::toggled, ind, &StatusIndicator::setActive);
@@ -304,15 +385,23 @@ void MainWindow::onRestart()
     flash(tr("Machine restarted"));
 }
 
+void MainWindow::onToggle1to1(bool on)
+{
+    m_enforce1to1 = on;
+    if (on)
+    {
+        adjustWindowToFitScreen();
+    }
+    flash(on ? tr("1:1 pixel mode on") : tr("1:1 pixel mode off"));
+}
+
 void MainWindow::onToggleFullscreen(bool on)
 {
     if (on) {
-        m_screen->setViewMode(ScreenWidget::Fullscreen);
         showFullScreen();
     } else {
-        m_screen->setViewMode(m_actBorder->isChecked() ? ScreenWidget::WithBorder
-                                                       : ScreenWidget::Pixel1to1);
         showNormal();
+        adjustWindowToFitScreen();
     }
 }
 
@@ -326,6 +415,25 @@ void MainWindow::onMachineChanged(QAction *a)
     m_machine = a->text();
     refreshTitle();
     flash(tr("Machine: %1").arg(m_machine));
+}
+
+void MainWindow::onVideoModeChanged(QAction *a)
+{
+    int modeIndex = a->data().toInt();
+    setVideoMode(modeIndex);
+
+    const auto* modes = ScreenWidget::videoModes();
+    flash(tr("Video: %1").arg(QString::fromLatin1(modes[modeIndex].name)));
+}
+
+void MainWindow::onNextVideoMode()
+{
+    int count = ScreenWidget::videoModeCount();
+    int nextMode = (m_currentModeIndex + 1) % count;
+    setVideoMode(nextMode);
+
+    const auto* modes = ScreenWidget::videoModes();
+    flash(tr("Video: %1").arg(QString::fromLatin1(modes[nextMode].name)));
 }
 
 void MainWindow::onEjectAll()
@@ -358,6 +466,9 @@ void MainWindow::restoreLayout()
     m_toolBar->setVisible(tb);
     m_actStatusBar->setChecked(st);
     statusBar()->setVisible(st);
+
+    // Ensure window is at least native size after restore
+    adjustWindowToFitScreen();
 }
 
 void MainWindow::saveLayout()

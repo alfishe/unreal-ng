@@ -12,5 +12,26 @@
         <file>icons/hdd.svg</file>
         <file>icons/sound.svg</file>
         <file>icons/app.svg</file>
+        <file>icons/videomode.svg</file>
+        <file>icons/app/appicon_16.png</file>
+        <file>icons/app/appicon_32.png</file>
+        <file>icons/app/appicon_48.png</file>
+        <file>icons/app/appicon_64.png</file>
+        <file>icons/app/appicon_128.png</file>
+        <file>icons/app/appicon_256.png</file>
+        <file>patterns/zx_256x192.png</file>
+        <file>patterns/zx_320x240.png</file>
+        <file>patterns/zx_352x288.png</file>
+        <file>patterns/zx_384x304.png</file>
+        <file>patterns/atm_320x200.png</file>
+        <file>patterns/atm_640x200.png</file>
+        <file>patterns/profi_512x240.png</file>
+        <file>patterns/evo_360x288.png</file>
+        <file>patterns/tsconf_640x400.png</file>
+        <file>patterns/tsconf_640x480.png</file>
+        <file>patterns/next_320x256.png</file>
+        <file>patterns/next_640x256.png</file>
+        <file>patterns/hires_512x384.png</file>
+        <file>patterns/hires_640x512.png</file>
     </qresource>
 </RCC>

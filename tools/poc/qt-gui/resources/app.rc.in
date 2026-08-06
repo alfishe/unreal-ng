@@ -1,0 +1,2 @@
+// Windows resource file for application icon
+IDI_ICON1 ICON "@CMAKE_CURRENT_SOURCE_DIR@/resources/icons/app/unreal-ng.ico"
