@@ -99,10 +99,12 @@ if (WIN32 AND MINGW)
 endif (WIN32 AND MINGW)
 
 # Link with core library (and recording if enabled)
-target_link_libraries(${PROJECT_NAME} PRIVATE core)
+# Order matters on Linux: recording uses symbols from core (Subprocess, NamedPipe, Gif),
+# so recording must come first, then core provides the symbols recording needs.
 if (ENABLE_RECORDING)
     target_link_libraries(${PROJECT_NAME} PRIVATE unrealng::recording)
 endif()
+target_link_libraries(${PROJECT_NAME} PRIVATE core)
 target_link_libraries(${PROJECT_NAME} PRIVATE ${common_libraries})
 
 # Copy ROM and INI files to build/bin directory
