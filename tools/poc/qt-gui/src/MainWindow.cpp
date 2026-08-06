@@ -12,6 +12,9 @@
 #include <QFrame>
 #include <QFileInfo>
 #include <QScreen>
+#include <QTimer>
+#include <QPointer>
+#include <QCoreApplication>
 
 static QIcon themedIcon(const QString &name)
 {
@@ -23,6 +26,8 @@ MainWindow::MainWindow(QWidget *parent)
 {
     m_screen = new ScreenWidget(this);
     setCentralWidget(m_screen);
+
+    m_normalPalette = palette();
 
     buildActions();
     buildMenus();
@@ -40,6 +45,281 @@ MainWindow::~MainWindow()
 {
 }
 
+// ============================================================================
+// Fullscreen Style Helpers
+// ============================================================================
+
+void MainWindow::applyFullscreenStyle()
+{
+    QPalette p;
+    p.setColor(QPalette::Window, Qt::black);
+    setPalette(p);
+
+    menuBar()->hide();
+    statusBar()->hide();
+    m_toolBar->hide();
+}
+
+void MainWindow::restoreNormalStyle()
+{
+    setPalette(m_normalPalette);
+
+    if (m_actToolBar->isChecked())
+        m_toolBar->show();
+    if (m_actStatusBar->isChecked())
+        statusBar()->show();
+    menuBar()->show();
+}
+
+// ============================================================================
+// Platform-Specific Fullscreen Handlers
+// ============================================================================
+
+#ifdef Q_OS_WIN
+void MainWindow::toggleFullscreenWindows()
+{
+    if (m_fullscreenState == FullscreenState::Fullscreen)
+    {
+        m_fullscreenState = FullscreenState::Normal;
+        restoreNormalStyle();
+        setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
+
+        if (m_preFullscreenState & Qt::WindowMaximized)
+        {
+            showMaximized();
+        }
+        else
+        {
+            QRect savedGeom = m_normalGeometry;
+            showNormal();
+            setGeometry(savedGeom);
+        }
+
+        m_screen->setFocus();
+    }
+    else if (m_fullscreenState == FullscreenState::Normal)
+    {
+        m_preFullscreenState = (windowState() & Qt::WindowMaximized) ? Qt::WindowMaximized : Qt::WindowNoState;
+
+        if (m_preFullscreenState & Qt::WindowMaximized)
+            m_maximizedGeometry = geometry();
+        else
+            m_normalGeometry = geometry();
+
+        m_fullscreenState = FullscreenState::Fullscreen;
+        applyFullscreenStyle();
+        setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
+        showFullScreen();
+        m_screen->setFocus();
+    }
+}
+
+void MainWindow::handleWindowStateChangeWindows(Qt::WindowStates oldState, Qt::WindowStates newState)
+{
+    // Save normal geometry when entering maximized (not from fullscreen)
+    if ((newState & Qt::WindowMaximized) && !(oldState & Qt::WindowMaximized) && !(oldState & Qt::WindowFullScreen))
+    {
+        if (m_fullscreenState == FullscreenState::Normal)
+            m_normalGeometry = geometry();
+    }
+}
+#endif
+
+#ifdef Q_OS_MACOS
+void MainWindow::toggleFullscreenMacOS()
+{
+    if (m_fullscreenState == FullscreenState::Fullscreen)
+    {
+        // Exiting fullscreen
+        m_fullscreenState = FullscreenState::ExitingFullscreen;
+        showNormal();
+    }
+    else if (m_fullscreenState == FullscreenState::Normal)
+    {
+        // Entering fullscreen - save state
+        m_preFullscreenState = (windowState() & Qt::WindowMaximized) ? Qt::WindowMaximized : Qt::WindowNoState;
+
+        if (m_preFullscreenState & Qt::WindowMaximized)
+            m_maximizedGeometry = geometry();
+        else
+            m_normalGeometry = geometry();
+
+        m_fullscreenState = FullscreenState::EnteringFullscreen;
+
+        // Batch: hide title bar + UI elements, then fullscreen in one
+        setUpdatesEnabled(false);
+        setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
+        applyFullscreenStyle();
+        setUpdatesEnabled(true);
+
+        // Single
+        showFullScreen();
+    }
+}
+
+void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::WindowStates newState)
+{
+    bool wasFullscreen = oldState & Qt::WindowFullScreen;
+    bool isFullscreen = newState & Qt::WindowFullScreen;
+
+    if (!wasFullscreen && isFullscreen)
+    {
+        // Transition to fullscreen complete
+        m_fullscreenState = FullscreenState::Fullscreen;
+        m_screen->setFocus();
+    }
+    else if (wasFullscreen && !isFullscreen)
+    {
+        // Transition from fullscreen complete - batch restore
+        m_fullscreenState = FullscreenState::Normal;
+
+        setUpdatesEnabled(false);
+        setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
+        restoreNormalStyle();
+        setUpdatesEnabled(true);
+
+        // Restore geometry and show
+        if (m_preFullscreenState & Qt::WindowMaximized)
+            showMaximized();
+        else
+        {
+            showNormal();
+            setGeometry(m_normalGeometry);
+        }
+
+        m_screen->setFocus();
+    }
+
+    // Save normal geometry when maximizing (not from fullscreen)
+    if ((newState & Qt::WindowMaximized) && !(oldState & Qt::WindowMaximized) && !wasFullscreen)
+    {
+        m_normalGeometry = geometry();
+    }
+}
+#endif
+
+#ifdef Q_OS_LINUX
+void MainWindow::toggleFullscreenLinux()
+{
+    if (m_fullscreenState == FullscreenState::Fullscreen)
+    {
+        m_fullscreenState = FullscreenState::ExitingFullscreen;
+
+        if (m_preFullscreenState & Qt::WindowMaximized)
+            showMaximized();
+        else
+            showNormal();
+    }
+    else if (m_fullscreenState == FullscreenState::Normal)
+    {
+        m_preFullscreenState = (windowState() & Qt::WindowMaximized) ? Qt::WindowMaximized : Qt::WindowNoState;
+
+        if (m_preFullscreenState & Qt::WindowMaximized)
+            m_maximizedGeometry = geometry();
+        else
+            m_normalGeometry = geometry();
+
+        m_fullscreenState = FullscreenState::EnteringFullscreen;
+        applyFullscreenStyle();
+        showFullScreen();
+    }
+}
+
+void MainWindow::handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::WindowStates newState)
+{
+    bool wasFullscreen = oldState & Qt::WindowFullScreen;
+    bool isFullscreen = newState & Qt::WindowFullScreen;
+
+    if (!wasFullscreen && isFullscreen)
+    {
+        m_fullscreenState = FullscreenState::Fullscreen;
+        m_screen->setFocus();
+    }
+    else if (wasFullscreen && !isFullscreen)
+    {
+        m_fullscreenState = FullscreenState::Normal;
+        restoreNormalStyle();
+        if (!(m_preFullscreenState & Qt::WindowMaximized))
+            setGeometry(m_normalGeometry);
+        m_screen->setFocus();
+    }
+
+    // Save normal geometry when maximizing (not from fullscreen)
+    if ((newState & Qt::WindowMaximized) && !(oldState & Qt::WindowMaximized) && !wasFullscreen)
+    {
+        m_normalGeometry = geometry();
+    }
+}
+#endif
+
+// ============================================================================
+// Event Handlers
+// ============================================================================
+
+void MainWindow::changeEvent(QEvent *event)
+{
+    if (event->type() == QEvent::WindowStateChange)
+    {
+        auto *e = static_cast<QWindowStateChangeEvent*>(event);
+        Qt::WindowStates oldState = e->oldState();
+        Qt::WindowStates newState = windowState();
+
+#ifdef Q_OS_WIN
+        handleWindowStateChangeWindows(oldState, newState);
+#endif
+#ifdef Q_OS_MACOS
+        handleWindowStateChangeMacOS(oldState, newState);
+#endif
+#ifdef Q_OS_LINUX
+        handleWindowStateChangeLinux(oldState, newState);
+#endif
+
+        // Update action checkstate to match actual window state
+        bool isFs = (newState & Qt::WindowFullScreen);
+        if (m_actFullscreen->isChecked() != isFs)
+        {
+            m_actFullscreen->blockSignals(true);
+            m_actFullscreen->setChecked(isFs);
+            m_actFullscreen->blockSignals(false);
+        }
+    }
+
+    QMainWindow::changeEvent(event);
+}
+
+void MainWindow::onToggleFullscreen()
+{
+#ifdef Q_OS_WIN
+    toggleFullscreenWindows();
+#elif defined(Q_OS_MACOS)
+    toggleFullscreenMacOS();
+#elif defined(Q_OS_LINUX)
+    toggleFullscreenLinux();
+#else
+    // Fallback for other platforms
+    if (m_fullscreenState == FullscreenState::Fullscreen)
+    {
+        m_fullscreenState = FullscreenState::Normal;
+        restoreNormalStyle();
+        showNormal();
+        setGeometry(m_normalGeometry);
+        m_screen->setFocus();
+    }
+    else if (m_fullscreenState == FullscreenState::Normal)
+    {
+        m_normalGeometry = geometry();
+        m_fullscreenState = FullscreenState::Fullscreen;
+        applyFullscreenStyle();
+        showFullScreen();
+        m_screen->setFocus();
+    }
+#endif
+}
+
+// ============================================================================
+// Video Mode and Window Size
+// ============================================================================
+
 void MainWindow::setVideoMode(int modeIndex)
 {
     int count = ScreenWidget::videoModeCount();
@@ -49,14 +329,12 @@ void MainWindow::setVideoMode(int modeIndex)
     m_currentModeIndex = modeIndex;
     m_screen->loadTestPattern(modeIndex);
 
-    // Update menu checkmarks
     QList<QAction*> actions = m_videoModes->actions();
     if (modeIndex < actions.size())
-    {
         actions[modeIndex]->setChecked(true);
-    }
 
-    adjustWindowToFitScreen();
+    if (m_fullscreenState == FullscreenState::Normal)
+        adjustWindowToFitScreen();
 }
 
 void MainWindow::adjustWindowToFitScreen()
@@ -66,41 +344,38 @@ void MainWindow::adjustWindowToFitScreen()
 
     QSize native = m_screen->nativeSize();
 
-    // Calculate required window size (native + decorations)
     int extraH = 0;
     if (m_toolBar && m_toolBar->isVisible())
         extraH += m_toolBar->height();
     if (statusBar() && statusBar()->isVisible())
         extraH += statusBar()->height();
-    if (menuBar())
+    if (menuBar() && menuBar()->isVisible())
         extraH += menuBar()->height();
 
     QSize targetSize(native.width(), native.height() + extraH);
 
-    // Get available screen geometry
-    QScreen* screen = this->screen();
-    if (!screen)
-        screen = QGuiApplication::primaryScreen();
-    QRect availableGeometry = screen->availableGeometry();
+    QScreen* scr = screen();
+    if (!scr)
+        scr = QGuiApplication::primaryScreen();
+    QRect availableGeometry = scr->availableGeometry();
 
-    // If 1:1 mode enforced, always resize to native
-    // Otherwise, only resize if window is smaller than native
     bool needResize = m_enforce1to1 ||
         (size().width() < targetSize.width() || size().height() < targetSize.height());
 
     if (needResize)
     {
-        // Ensure we don't exceed screen size
         int newW = qMin(targetSize.width(), availableGeometry.width());
         int newH = qMin(targetSize.height(), availableGeometry.height());
         resize(newW, newH);
     }
 
-    // Update minimum size to prevent shrinking below native
     setMinimumSize(native.width(), native.height() + extraH);
-
     m_screen->refresh();
 }
+
+// ============================================================================
+// Actions and UI Building
+// ============================================================================
 
 void MainWindow::buildActions()
 {
@@ -164,16 +439,15 @@ void MainWindow::buildActions()
 
     m_actFullscreen = new QAction(themedIcon(QStringLiteral("fullscreen")), tr("&Fullscreen"), this);
     m_actFullscreen->setCheckable(true);
-    m_actFullscreen->setShortcut(Qt::Key_F11);
-    connect(m_actFullscreen, &QAction::toggled, this, &MainWindow::onToggleFullscreen);
+    m_actFullscreen->setShortcuts({QKeySequence(QStringLiteral("Ctrl+F")), QKeySequence(Qt::Key_F11)});
+    m_actFullscreen->setShortcutContext(Qt::WindowShortcut);
+    connect(m_actFullscreen, &QAction::triggered, this, &MainWindow::onToggleFullscreen);
 
-    // Next video mode button
     m_actNextVideoMode = new QAction(themedIcon(QStringLiteral("videomode")), tr("Next Video Mode"), this);
     m_actNextVideoMode->setShortcut(Qt::Key_F5);
     m_actNextVideoMode->setToolTip(tr("Cycle to next video mode (F5)"));
     connect(m_actNextVideoMode, &QAction::triggered, this, &MainWindow::onNextVideoMode);
 
-    // 1:1 pixel mode toggle
     m_act1to1 = new QAction(tr("1:1 Pixel Size"), this);
     m_act1to1->setCheckable(true);
     m_act1to1->setChecked(false);
@@ -181,7 +455,6 @@ void MainWindow::buildActions()
     m_act1to1->setToolTip(tr("Enforce 1:1 pixel display on mode change (F4)"));
     connect(m_act1to1, &QAction::toggled, this, &MainWindow::onToggle1to1);
 
-    // Video mode selection
     m_videoModes = new QActionGroup(this);
     m_videoModes->setExclusive(true);
     const auto* modes = ScreenWidget::videoModes();
@@ -365,6 +638,10 @@ void MainWindow::buildStatusBar()
     connect(m_actStatusBar, &QAction::toggled, sb, &QWidget::setVisible);
 }
 
+// ============================================================================
+// Slots
+// ============================================================================
+
 void MainWindow::onStart()
 {
     m_actStart->setChecked(true);
@@ -389,20 +666,8 @@ void MainWindow::onToggle1to1(bool on)
 {
     m_enforce1to1 = on;
     if (on)
-    {
         adjustWindowToFitScreen();
-    }
     flash(on ? tr("1:1 pixel mode on") : tr("1:1 pixel mode off"));
-}
-
-void MainWindow::onToggleFullscreen(bool on)
-{
-    if (on) {
-        showFullScreen();
-    } else {
-        showNormal();
-        adjustWindowToFitScreen();
-    }
 }
 
 void MainWindow::onToggleRecord(bool on)
@@ -467,7 +732,6 @@ void MainWindow::restoreLayout()
     m_actStatusBar->setChecked(st);
     statusBar()->setVisible(st);
 
-    // Ensure window is at least native size after restore
     adjustWindowToFitScreen();
 }
 

@@ -76,6 +76,9 @@ public:
     static const VideoModeInfo* videoModes();
     static int videoModeCount();
 
+    /// Calculate scaled image rect for given container size
+    QRect scaledRect(const QSize& containerSize) const;
+
 public slots:
     /// Schedule a repaint (call after framebuffer content changes)
     void refresh();

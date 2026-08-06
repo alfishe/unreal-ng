@@ -125,6 +125,26 @@ void ScreenWidget::refresh()
     update();
 }
 
+QRect ScreenWidget::scaledRect(const QSize& containerSize) const
+{
+    int destW, destH;
+    if (static_cast<float>(containerSize.width()) / containerSize.height() > m_aspectRatio)
+    {
+        destH = containerSize.height();
+        destW = static_cast<int>(destH * m_aspectRatio);
+    }
+    else
+    {
+        destW = containerSize.width();
+        destH = static_cast<int>(destW / m_aspectRatio);
+    }
+
+    int x = (containerSize.width() - destW) / 2;
+    int y = (containerSize.height() - destH) / 2;
+
+    return QRect(x, y, destW, destH);
+}
+
 void ScreenWidget::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event);

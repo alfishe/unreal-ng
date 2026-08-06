@@ -3,6 +3,7 @@
 #include <QMainWindow>
 #include <QActionGroup>
 #include <QLabel>
+#include <QEvent>
 
 class QToolBar;
 class ScreenWidget;
@@ -15,11 +16,14 @@ public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
 
+protected:
+    void changeEvent(QEvent *event) override;
+
 private slots:
     void onStart();
     void onPause();
     void onRestart();
-    void onToggleFullscreen(bool on);
+    void onToggleFullscreen();
     void onToggleRecord(bool on);
     void onToggle1to1(bool on);
     void onMachineChanged(QAction *a);
@@ -41,11 +45,36 @@ private:
     void setVideoMode(int modeIndex);
     void adjustWindowToFitScreen();
 
+    // Platform-specific fullscreen handlers
+#ifdef Q_OS_WIN
+    void toggleFullscreenWindows();
+    void handleWindowStateChangeWindows(Qt::WindowStates oldState, Qt::WindowStates newState);
+#endif
+#ifdef Q_OS_MACOS
+    void toggleFullscreenMacOS();
+    void handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::WindowStates newState);
+#endif
+#ifdef Q_OS_LINUX
+    void toggleFullscreenLinux();
+    void handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::WindowStates newState);
+#endif
+
+    void applyFullscreenStyle();
+    void restoreNormalStyle();
+
     ScreenWidget *m_screen = nullptr;
     QToolBar     *m_toolBar = nullptr;
 
     int m_currentModeIndex = 2;  // Default to 352x288
     bool m_enforce1to1 = false;  // If true, window resizes to fit 1:1 on mode change
+
+    // Fullscreen state
+    enum class FullscreenState { Normal, EnteringFullscreen, Fullscreen, ExitingFullscreen };
+    FullscreenState m_fullscreenState = FullscreenState::Normal;
+    Qt::WindowStates m_preFullscreenState = Qt::WindowNoState;
+    QRect m_normalGeometry;
+    QRect m_maximizedGeometry;
+    QPalette m_normalPalette;
 
     // File
     QAction *m_actOpen = nullptr;
