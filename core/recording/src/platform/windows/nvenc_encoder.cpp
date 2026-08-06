@@ -6,6 +6,7 @@
 #ifdef _WIN32
 
 #include <windows.h>
+#include <objbase.h>  // CoInitializeEx, CoUninitialize
 #include <d3d11.h>
 #include <dxgi.h>
 #include <cstring>
@@ -42,6 +43,9 @@ T nvencStruct(uint32_t version)
 
 struct NvencEncoder::Impl
 {
+    // COM state (must be initialized before DXGI/MF)
+    bool comInitialized = false;
+
     // Resources
     HMODULE hNvenc = nullptr;
     ID3D11Device* d3dDevice = nullptr;
@@ -340,6 +344,18 @@ bool NvencEncoder::Impl::createBuffers()
 
 bool NvencEncoder::Impl::init(const std::string& filename, const EncoderConfig& config, std::string& error)
 {
+    // Initialize COM for DXGI/Media Foundation (required on calling thread)
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (SUCCEEDED(hr) || hr == S_FALSE)  // S_FALSE means already initialized
+    {
+        comInitialized = (hr == S_OK);  // Only uninit if we initialized
+    }
+    else
+    {
+        error = "Failed to initialize COM";
+        return false;
+    }
+
     // Source dimensions come from the framebuffer; the encoder dimensions
     // are scaled up by scaleFactor (nearest-neighbor) to preserve per-pixel
     // ZX color detail through 4:2:0 chroma subsampling.
@@ -459,6 +475,13 @@ void NvencEncoder::Impl::cleanup()
     d3dContext = nullptr;
     d3dDevice = nullptr;
     hNvenc = nullptr;
+
+    // Uninitialize COM if we initialized it
+    if (comInitialized)
+    {
+        CoUninitialize();
+        comInitialized = false;
+    }
 }
 
 void NvencEncoder::Impl::convertRgbaToNv12(const uint8_t* rgba)
