@@ -2,6 +2,10 @@
 #include "ScreenWidget.h"
 #include "StatusIndicator.h"
 
+#ifdef Q_OS_MACOS
+#include "platform/macos/FullscreenHelper.h"
+#endif
+
 #include <QMenuBar>
 #include <QToolBar>
 #include <QStatusBar>
@@ -38,11 +42,15 @@ MainWindow::MainWindow(QWidget *parent)
 
     refreshTitle();
     restoreLayout();
+
     flash(tr("Running — %1").arg(m_machine));
 }
 
 MainWindow::~MainWindow()
 {
+#ifdef Q_OS_MACOS
+    FullscreenHelper::uninstall(windowHandle());
+#endif
 }
 
 // ============================================================================
@@ -128,15 +136,26 @@ void MainWindow::handleWindowStateChangeWindows(Qt::WindowStates oldState, Qt::W
 #ifdef Q_OS_MACOS
 void MainWindow::toggleFullscreenMacOS()
 {
+    // Guard against rapid toggling during transitions
+    if (m_fullscreenState == FullscreenState::EnteringFullscreen ||
+        m_fullscreenState == FullscreenState::ExitingFullscreen)
+        return;
+
+    // Ensure observer is installed (first call after window shown)
+    static bool installed = false;
+    if (!installed) {
+        FullscreenHelper::install(windowHandle(), this);
+        installed = true;
+    }
+
     if (m_fullscreenState == FullscreenState::Fullscreen)
     {
-        // Exiting fullscreen
         m_fullscreenState = FullscreenState::ExitingFullscreen;
-        showNormal();
+        FullscreenHelper::exitFullscreen(windowHandle());
     }
-    else if (m_fullscreenState == FullscreenState::Normal)
+    else
     {
-        // Entering fullscreen - save state
+        // Save state before fullscreen
         m_preFullscreenState = (windowState() & Qt::WindowMaximized) ? Qt::WindowMaximized : Qt::WindowNoState;
 
         if (m_preFullscreenState & Qt::WindowMaximized)
@@ -146,51 +165,44 @@ void MainWindow::toggleFullscreenMacOS()
 
         m_fullscreenState = FullscreenState::EnteringFullscreen;
 
-        // Batch: hide title bar + UI elements, then fullscreen in one
-        setUpdatesEnabled(false);
-        setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
+        // Hide UI BEFORE calling toggleFullScreen - macOS captures snapshot before willEnter
         applyFullscreenStyle();
-        setUpdatesEnabled(true);
+        FullscreenHelper::hideTitleBar(windowHandle());
+        repaint();
+        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
-        // Single
-        showFullScreen();
+        FullscreenHelper::enterFullscreen(windowHandle());
     }
+}
+
+void MainWindow::willEnterFullscreen()
+{
+    // UI already hidden in toggleFullscreenMacOS before calling enterFullscreen
+}
+
+void MainWindow::didEnterFullscreen()
+{
+    m_fullscreenState = FullscreenState::Fullscreen;
+    m_screen->setFocus();
+}
+
+void MainWindow::willExitFullscreen()
+{
+    // Restore UI during exit animation
+    restoreNormalStyle();
+    FullscreenHelper::showTitleBar(windowHandle());
+}
+
+void MainWindow::didExitFullscreen()
+{
+    m_fullscreenState = FullscreenState::Normal;
+    m_screen->setFocus();
 }
 
 void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::WindowStates newState)
 {
-    bool wasFullscreen = oldState & Qt::WindowFullScreen;
-    bool isFullscreen = newState & Qt::WindowFullScreen;
-
-    if (!wasFullscreen && isFullscreen)
-    {
-        // Transition to fullscreen complete
-        m_fullscreenState = FullscreenState::Fullscreen;
-        m_screen->setFocus();
-    }
-    else if (wasFullscreen && !isFullscreen)
-    {
-        // Transition from fullscreen complete - batch restore
-        m_fullscreenState = FullscreenState::Normal;
-
-        setUpdatesEnabled(false);
-        setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
-        restoreNormalStyle();
-        setUpdatesEnabled(true);
-
-        // Restore geometry and show
-        if (m_preFullscreenState & Qt::WindowMaximized)
-            showMaximized();
-        else
-        {
-            showNormal();
-            setGeometry(m_normalGeometry);
-        }
-
-        m_screen->setFocus();
-    }
-
     // Save normal geometry when maximizing (not from fullscreen)
+    bool wasFullscreen = oldState & Qt::WindowFullScreen;
     if ((newState & Qt::WindowMaximized) && !(oldState & Qt::WindowMaximized) && !wasFullscreen)
     {
         m_normalGeometry = geometry();

@@ -5,16 +5,31 @@
 #include <QLabel>
 #include <QEvent>
 
+#ifdef Q_OS_MACOS
+#include "platform/macos/FullscreenHelper.h"
+#endif
+
 class QToolBar;
 class ScreenWidget;
 class StatusIndicator;
 
 class MainWindow : public QMainWindow
+#ifdef Q_OS_MACOS
+    , public FullscreenHelper::Delegate
+#endif
 {
     Q_OBJECT
 public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
+
+#ifdef Q_OS_MACOS
+    // FullscreenHelper::Delegate
+    void willEnterFullscreen() override;
+    void didEnterFullscreen() override;
+    void willExitFullscreen() override;
+    void didExitFullscreen() override;
+#endif
 
 protected:
     void changeEvent(QEvent *event) override;

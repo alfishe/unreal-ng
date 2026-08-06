@@ -27,6 +27,38 @@ elseif(WIN32)
     set(APP_ICON_RESOURCE "${CMAKE_CURRENT_BINARY_DIR}/app.rc")
 endif()
 
+# Platform-specific sources and libraries
+set(PLATFORM_SOURCES)
+set(PLATFORM_LIBS)
+
+if(APPLE)
+    # macOS: Objective-C++ for native Cocoa APIs with ARC
+    enable_language(OBJCXX)
+    set(MACOS_OBJCXX_SOURCES src/platform/macos/FullscreenHelper.mm)
+    set_source_files_properties(${MACOS_OBJCXX_SOURCES} PROPERTIES
+        COMPILE_FLAGS "-fobjc-arc"
+    )
+    list(APPEND PLATFORM_SOURCES
+        src/platform/macos/FullscreenHelper.h
+        ${MACOS_OBJCXX_SOURCES}
+    )
+    find_library(COCOA_FRAMEWORK Cocoa REQUIRED)
+    find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
+    list(APPEND PLATFORM_LIBS ${COCOA_FRAMEWORK} ${QUARTZCORE_FRAMEWORK})
+elseif(WIN32)
+    # Windows: platform-specific sources would go here
+    # list(APPEND PLATFORM_SOURCES
+    #     src/platform/windows/FullscreenHelper.h
+    #     src/platform/windows/FullscreenHelper.cpp
+    # )
+elseif(UNIX)
+    # Linux: platform-specific sources would go here
+    # list(APPEND PLATFORM_SOURCES
+    #     src/platform/linux/FullscreenHelper.h
+    #     src/platform/linux/FullscreenHelper.cpp
+    # )
+endif()
+
 qt_add_executable(unreal-ng-ui
     src/main.cpp
     src/MainWindow.cpp
@@ -37,10 +69,11 @@ qt_add_executable(unreal-ng-ui
     src/StatusIndicator.h
     resources/assets.qrc
     ${APP_ICON_RESOURCE}
+    ${PLATFORM_SOURCES}
 )
 
 target_include_directories(unreal-ng-ui PRIVATE src)
-target_link_libraries(unreal-ng-ui PRIVATE Qt6::Widgets)
+target_link_libraries(unreal-ng-ui PRIVATE Qt6::Widgets ${PLATFORM_LIBS})
 
 set_target_properties(unreal-ng-ui PROPERTIES
     WIN32_EXECUTABLE ON
