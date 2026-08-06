@@ -34,17 +34,22 @@ set(PLATFORM_LIBS)
 if(APPLE)
     # macOS: Objective-C++ for native Cocoa APIs with ARC
     enable_language(OBJCXX)
-    set(MACOS_OBJCXX_SOURCES src/platform/macos/FullscreenHelper.mm)
+    set(MACOS_OBJCXX_SOURCES
+        src/platform/macos/FullscreenHelper.mm
+        src/platform/macos/MetalScreenWidget.mm
+    )
     set_source_files_properties(${MACOS_OBJCXX_SOURCES} PROPERTIES
         COMPILE_FLAGS "-fobjc-arc"
     )
     list(APPEND PLATFORM_SOURCES
         src/platform/macos/FullscreenHelper.h
+        src/platform/macos/MetalScreenWidget.h
         ${MACOS_OBJCXX_SOURCES}
     )
     find_library(COCOA_FRAMEWORK Cocoa REQUIRED)
     find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
-    list(APPEND PLATFORM_LIBS ${COCOA_FRAMEWORK} ${QUARTZCORE_FRAMEWORK})
+    find_library(METAL_FRAMEWORK Metal REQUIRED)
+    list(APPEND PLATFORM_LIBS ${COCOA_FRAMEWORK} ${QUARTZCORE_FRAMEWORK} ${METAL_FRAMEWORK})
 elseif(WIN32)
     # Windows: platform-specific sources would go here
     # list(APPEND PLATFORM_SOURCES

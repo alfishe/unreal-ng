@@ -4,6 +4,7 @@
 
 #ifdef Q_OS_MACOS
 #include "platform/macos/FullscreenHelper.h"
+#include "platform/macos/MetalScreenWidget.h"
 #endif
 
 #include <QMenuBar>
@@ -13,12 +14,14 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QCloseEvent>
+#include <QResizeEvent>
 #include <QFrame>
 #include <QFileInfo>
 #include <QScreen>
 #include <QTimer>
 #include <QPointer>
 #include <QCoreApplication>
+#include <QDateTime>
 
 static QIcon themedIcon(const QString &name)
 {
@@ -28,7 +31,11 @@ static QIcon themedIcon(const QString &name)
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
+#ifdef Q_OS_MACOS
+    m_screen = new MetalScreenWidget(this);
+#else
     m_screen = new ScreenWidget(this);
+#endif
     setCentralWidget(m_screen);
 
     m_normalPalette = palette();
@@ -59,6 +66,11 @@ MainWindow::~MainWindow()
 
 void MainWindow::applyFullscreenStyle()
 {
+    qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] applyFullscreenStyle START";
+
+    // Disable updates to prevent visible relayout during transition
+    setUpdatesEnabled(false);
+
     QPalette p;
     p.setColor(QPalette::Window, Qt::black);
     setPalette(p);
@@ -66,10 +78,16 @@ void MainWindow::applyFullscreenStyle()
     menuBar()->hide();
     statusBar()->hide();
     m_toolBar->hide();
+
+    setUpdatesEnabled(true);
+
+    qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] applyFullscreenStyle END";
 }
 
 void MainWindow::restoreNormalStyle()
 {
+    qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] restoreNormalStyle START";
+
     setPalette(m_normalPalette);
 
     if (m_actToolBar->isChecked())
@@ -77,6 +95,8 @@ void MainWindow::restoreNormalStyle()
     if (m_actStatusBar->isChecked())
         statusBar()->show();
     menuBar()->show();
+
+    qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] restoreNormalStyle END";
 }
 
 // ============================================================================
@@ -136,28 +156,37 @@ void MainWindow::handleWindowStateChangeWindows(Qt::WindowStates oldState, Qt::W
 #ifdef Q_OS_MACOS
 void MainWindow::toggleFullscreenMacOS()
 {
+    qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] toggleFullscreenMacOS state=" << (int)m_fullscreenState;
+
     // Guard against rapid toggling during transitions
     if (m_fullscreenState == FullscreenState::EnteringFullscreen ||
         m_fullscreenState == FullscreenState::ExitingFullscreen)
         return;
 
-    // Ensure observer is installed (first call after window shown)
+    // Ensure delegate is installed (first call after window shown)
     static bool installed = false;
     if (!installed) {
         FullscreenHelper::install(windowHandle(), this);
+        // Set callbacks for custom animation
+        FullscreenHelper::setCallbacks(
+            windowHandle(),
+            [this]() { applyFullscreenStyle(); },
+            [this]() { restoreNormalStyle(); }
+        );
         installed = true;
     }
 
     if (m_fullscreenState == FullscreenState::Fullscreen)
     {
+        qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] exiting fullscreen";
         m_fullscreenState = FullscreenState::ExitingFullscreen;
+        m_screen->setFullscreenLayout(0);
         FullscreenHelper::exitFullscreen(windowHandle());
     }
     else
     {
-        // Save state before fullscreen
+        qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] entering fullscreen";
         m_preFullscreenState = (windowState() & Qt::WindowMaximized) ? Qt::WindowMaximized : Qt::WindowNoState;
-
         if (m_preFullscreenState & Qt::WindowMaximized)
             m_maximizedGeometry = geometry();
         else
@@ -165,11 +194,10 @@ void MainWindow::toggleFullscreenMacOS()
 
         m_fullscreenState = FullscreenState::EnteringFullscreen;
 
-        // Hide UI BEFORE calling toggleFullScreen - macOS captures snapshot before willEnter
-        applyFullscreenStyle();
-        FullscreenHelper::hideTitleBar(windowHandle());
-        repaint();
-        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+        QSize screenSize = FullscreenHelper::fullscreenSize(windowHandle());
+        double screenAspect = (double)screenSize.width() / screenSize.height();
+        qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] setFullscreenLayout aspect=" << screenAspect;
+        m_screen->setFullscreenLayout(screenAspect);
 
         FullscreenHelper::enterFullscreen(windowHandle());
     }
@@ -177,24 +205,30 @@ void MainWindow::toggleFullscreenMacOS()
 
 void MainWindow::willEnterFullscreen()
 {
-    // UI already hidden in toggleFullscreenMacOS before calling enterFullscreen
+    qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] willEnterFullscreen";
 }
 
 void MainWindow::didEnterFullscreen()
 {
-    m_fullscreenState = FullscreenState::Fullscreen;
-    m_screen->setFocus();
+    qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] didEnterFullscreen";
+    // Keep state as EnteringFullscreen briefly to block spurious resize
+    // The resize event filter checks this state
+    QTimer::singleShot(200, this, [this]() {
+        m_fullscreenState = FullscreenState::Fullscreen;
+        m_screen->setFocus();
+    });
 }
 
 void MainWindow::willExitFullscreen()
 {
-    // Restore UI during exit animation
-    restoreNormalStyle();
-    FullscreenHelper::showTitleBar(windowHandle());
+    qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] willExitFullscreen";
 }
 
 void MainWindow::didExitFullscreen()
 {
+    qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] didExitFullscreen";
+    // Now safe to show Qt UI - Space transition complete
+    restoreNormalStyle();
     m_fullscreenState = FullscreenState::Normal;
     m_screen->setFocus();
 }
@@ -276,6 +310,8 @@ void MainWindow::changeEvent(QEvent *event)
         Qt::WindowStates oldState = e->oldState();
         Qt::WindowStates newState = windowState();
 
+        qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] WindowStateChange old=" << (int)oldState << " new=" << (int)newState;
+
 #ifdef Q_OS_WIN
         handleWindowStateChangeWindows(oldState, newState);
 #endif
@@ -297,6 +333,20 @@ void MainWindow::changeEvent(QEvent *event)
     }
 
     QMainWindow::changeEvent(event);
+}
+
+void MainWindow::resizeEvent(QResizeEvent *event)
+{
+    qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] resizeEvent " << event->oldSize().width() << "x" << event->oldSize().height() << " -> " << event->size().width() << "x" << event->size().height();
+
+    // Ignore resize events during fullscreen transitions - they cause visual glitches
+    if (m_fullscreenState == FullscreenState::EnteringFullscreen ||
+        m_fullscreenState == FullscreenState::ExitingFullscreen) {
+        qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] resizeEvent IGNORED (transition)";
+        return;
+    }
+
+    QMainWindow::resizeEvent(event);
 }
 
 void MainWindow::onToggleFullscreen()

@@ -7,6 +7,7 @@
 
 #ifdef Q_OS_MACOS
 #include "platform/macos/FullscreenHelper.h"
+class MetalScreenWidget;
 #endif
 
 class QToolBar;
@@ -33,6 +34,7 @@ public:
 
 protected:
     void changeEvent(QEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private slots:
     void onStart();
@@ -77,7 +79,11 @@ private:
     void applyFullscreenStyle();
     void restoreNormalStyle();
 
+#ifdef Q_OS_MACOS
+    MetalScreenWidget *m_screen = nullptr;
+#else
     ScreenWidget *m_screen = nullptr;
+#endif
     QToolBar     *m_toolBar = nullptr;
 
     int m_currentModeIndex = 2;  // Default to 352x288
