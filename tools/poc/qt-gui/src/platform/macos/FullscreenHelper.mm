@@ -17,6 +17,7 @@
 {
     FullscreenHelper::Delegate* _delegate;
     NSRect _originalFrame;
+    NSRect _originalContentRect;
     std::function<void()> _hideQtUI;
     std::function<void()> _showQtUI;
 }
@@ -38,6 +39,7 @@
     if (self) {
         _delegate = delegate;
         _originalFrame = NSZeroRect;
+        _originalContentRect = NSZeroRect;
     }
     return self;
 }
@@ -58,25 +60,37 @@
 {
     FS_LOG("customWindowsToEnterFullScreenForWindow");
 
-    // Save original frame FIRST
+    // Save original frame FIRST, and the content rect while the styleMask is
+    // still the normal one (in fullscreen contentRectForFrameRect is identity,
+    // so it must be computed now).
     _originalFrame = [window frame];
+    _originalContentRect = [window contentRectForFrameRect:_originalFrame];
 
     NSScreen* screen = [window screen] ?: [NSScreen mainScreen];
     NSRect screenFrame = [screen frame];
 
-    // Immediately hide Qt UI and title bar to prevent visible relayout during Space transition
+    // Immediately hide Qt UI and title bar chrome to prevent visible relayout
+    // during the Space transition. Do NOT touch the styleMask
+    // (FullSizeContentView): AppKit captures and restores the mask around the
+    // transition, and any modification here leaks back on exit, growing the
+    // content area by the title bar height on every fullscreen cycle.
     if (_hideQtUI) _hideQtUI();
 
     [[window standardWindowButton:NSWindowCloseButton] setHidden:YES];
     [[window standardWindowButton:NSWindowMiniaturizeButton] setHidden:YES];
     [[window standardWindowButton:NSWindowZoomButton] setHidden:YES];
-    window.styleMask |= NSWindowStyleMaskFullSizeContentView;
-    [window setTitlebarAppearsTransparent:YES];
     [window setTitleVisibility:NSWindowTitleHidden];
     [window setBackgroundColor:[NSColor blackColor]];
 
-    // Set frame to fullscreen immediately to prevent visible resize during Space transition
-    [window setFrame:screenFrame display:YES animate:NO];
+    // Cover the screen with the CONTENT area: extend the frame upward so the
+    // title bar strip sits above the visible screen edge. This avoids the
+    // FullSizeContentView hack while still showing fullscreen content
+    // immediately during the Space transition.
+    CGFloat titlebarH = NSHeight([window frame])
+        - NSHeight([window contentRectForFrameRect:[window frame]]);
+    NSRect coverFrame = screenFrame;
+    coverFrame.size.height += titlebarH;
+    [window setFrame:coverFrame display:YES animate:NO];
 
     FS_LOG("set frame to fullscreen immediately");
 
@@ -105,11 +119,15 @@
 {
     FS_LOG("startCustomAnimationToExitFullScreen duration=" << duration);
 
-    NSRect targetFrame = NSEqualRects(_originalFrame, NSZeroRect) ? [window frame] : _originalFrame;
+    // Animate to the original CONTENT rect, not the original frame. The window
+    // is still borderless (fullscreen styleMask) during this animation; when
+    // AppKit restores the title bar ~1s later in didExitFullScreen, the frame
+    // grows upward by the title bar height while the content stays put —
+    // instead of the content visibly snapping 28px shorter at the very end.
+    NSRect targetFrame = NSEqualRects(_originalContentRect, NSZeroRect)
+        ? [window frame] : _originalContentRect;
 
-    // Instant: restore title bar and buttons
-    window.styleMask &= ~NSWindowStyleMaskFullSizeContentView;
-    [window setTitlebarAppearsTransparent:NO];
+    // Instant: restore title bar chrome (styleMask untouched, nothing to undo)
     [window setTitleVisibility:NSWindowTitleVisible];
     [window setBackgroundColor:nil];
     [[window standardWindowButton:NSWindowCloseButton] setHidden:NO];
@@ -121,16 +139,20 @@
 
     // Fast shrink animation
     [NSAnimationContext runAnimationGroup:^(NSAnimationContext* context) {
-        context.duration = 0.15;
+        context.duration = 0.18;
         context.allowsImplicitAnimation = YES;
 
         [[window animator] setFrame:targetFrame display:YES];
 
     } completionHandler:^{
         FS_LOG("exit animation complete");
-        // Don't show Qt UI here - defer to didExitFullScreen to avoid glitch during Space transition
-        // Reset original frame for next cycle
+        // Restore the Qt UI (menu/tool/status bars, palette) right at the tail
+        // of the animation instead of ~1s later in didExitFullScreen — the
+        // relayout blends into the animation end instead of being a standalone
+        // hiccup after everything looks settled.
+        if (_showQtUI) _showQtUI();
         _originalFrame = NSZeroRect;
+        _originalContentRect = NSZeroRect;
     }];
 }
 
@@ -161,7 +183,7 @@
 - (void)windowDidExitFullScreen:(NSNotification*)notification
 {
     FS_LOG("didExitFullScreen");
-    // Qt UI already shown in animation completion handler
+    // Qt UI already shown in the exit-animation completion handler
     if (_delegate)
         _delegate->didExitFullscreen();
 }

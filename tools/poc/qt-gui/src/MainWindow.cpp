@@ -88,6 +88,9 @@ void MainWindow::restoreNormalStyle()
 {
     qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] restoreNormalStyle START";
 
+    // Batch the three bar-shows + palette into a single repaint
+    setUpdatesEnabled(false);
+
     setPalette(m_normalPalette);
 
     if (m_actToolBar->isChecked())
@@ -95,6 +98,8 @@ void MainWindow::restoreNormalStyle()
     if (m_actStatusBar->isChecked())
         statusBar()->show();
     menuBar()->show();
+
+    setUpdatesEnabled(true);
 
     qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] restoreNormalStyle END";
 }
@@ -227,10 +232,22 @@ void MainWindow::willExitFullscreen()
 void MainWindow::didExitFullscreen()
 {
     qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] didExitFullscreen";
-    // Now safe to show Qt UI - Space transition complete
-    restoreNormalStyle();
+    // Qt UI was restored in the exit-animation completion handler; here we only
+    // finalize state and enforce the pre-fullscreen geometry. AppKit can end
+    // the transition with the content area 28px taller (FullSizeContentView
+    // leftover), so re-apply the saved geometry once everything settled.
     m_fullscreenState = FullscreenState::Normal;
-    m_screen->setFocus();
+
+    QTimer::singleShot(0, this, [this]() {
+        if (m_fullscreenState != FullscreenState::Normal)
+            return;
+        if (!(m_preFullscreenState & Qt::WindowMaximized) && m_normalGeometry.isValid()
+            && geometry() != m_normalGeometry)
+        {
+            setGeometry(m_normalGeometry);
+        }
+        m_screen->setFocus();
+    });
 }
 
 void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::WindowStates newState)
