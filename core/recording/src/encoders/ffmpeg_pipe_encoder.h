@@ -10,10 +10,10 @@
 #include <atomic>
 #include <deque>
 
-#include "../encoder_base.h"
-#include "../encoder_config.h"
-#include "../../../common/subprocess.h"
-#include "../../../common/named_pipe.h"
+#include "encoder_base.h"
+#include "encoder_config.h"
+#include "common/subprocess.h"
+#include "common/named_pipe.h"
 
 /// @brief FFmpeg Pipe Encoder — Universal fallback encoder using external ffmpeg binary
 ///

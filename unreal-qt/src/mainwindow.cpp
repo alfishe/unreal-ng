@@ -31,8 +31,10 @@
 #include "emulator/sound/soundmanager.h"
 #include "emulator/soundmanager.h"
 #include "debugger/widgets/audiosettingswidget.h"
+#ifdef ENABLE_RECORDING
 #include "debugger/widgets/videorecordingwidget.h"
 #include "debugger/widgets/recordingpresets.h"
+#endif
 #include "base/featuremanager.h"
 // Avoid Qt 'signals' macro conflict with WD1793State::signals member
 #undef signals
@@ -164,8 +166,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
     connect(_menuManager, &MenuManager::intParametersRequested, this, &MainWindow::handleIntParametersRequested);
     connect(_menuManager, &MenuManager::audioSettingsRequested, this, &MainWindow::handleAudioSettingsRequested);
+#ifdef ENABLE_RECORDING
     connect(_menuManager, &MenuManager::videoRecordingRequested, this, &MainWindow::handleVideoRecordingRequested);
-        connect(_menuManager, &MenuManager::quickRecordRequested, this, &MainWindow::handleQuickRecord);
+    connect(_menuManager, &MenuManager::quickRecordRequested, this, &MainWindow::handleQuickRecord);
+#endif
 
     // Bring application windows to foreground
     debuggerWindow->raise();
@@ -2004,6 +2008,7 @@ void MainWindow::handleAudioSettingsRequested()
     _audioSettingsWidget->activateWindow();
 }
 
+#ifdef ENABLE_RECORDING
 void MainWindow::handleVideoRecordingRequested()
 {
     if (_videoRecordingWidget)
@@ -2029,7 +2034,9 @@ void MainWindow::handleVideoRecordingRequested()
     _videoRecordingWidget->raise();
     _videoRecordingWidget->activateWindow();
 }
+#endif
 
+#ifdef ENABLE_RECORDING
 void MainWindow::handleQuickRecord(const QString& presetName)
 {
     if (!m_binding || !m_binding->emulator())
@@ -2113,6 +2120,7 @@ void MainWindow::handleQuickRecord(const QString& presetName)
         qDebug() << "Quick Record: Failed to start recording";
     }
 }
+#endif
 
 void MainWindow::updateMenuStates()
 {
@@ -2612,6 +2620,7 @@ void MainWindow::unbindFromEmulator()
         _audioSettingsWidget->setContext(nullptr);
     }
 
+#ifdef ENABLE_RECORDING
     // 5b. Video recording widget — clear the active context so it doesn't
     // dereference a dangling pointer after the emulator is destroyed.
     // Recording itself is NOT stopped here: it continues on the original
@@ -2620,6 +2629,7 @@ void MainWindow::unbindFromEmulator()
     {
         _videoRecordingWidget->setContext(nullptr);
     }
+#endif
 
     // 6. Per-emulator event subscriptions
     unsubscribeFromPerEmulatorEvents();
@@ -2682,6 +2692,7 @@ void MainWindow::onBindingStateChanged(EmulatorStateEnum state)
     }
     updateMenuStates();
 
+#ifdef ENABLE_RECORDING
     // Single mechanism: rebind recording widget on any state change
     if (_videoRecordingWidget)
     {
@@ -2693,6 +2704,7 @@ void MainWindow::onBindingStateChanged(EmulatorStateEnum state)
         }
         _videoRecordingWidget->setContext(context);
     }
+#endif
 }
 
 void MainWindow::tryAdoptRemainingEmulator()

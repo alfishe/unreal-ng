@@ -22,9 +22,9 @@
 #include <thread>
 #include <vector>
 
-#include "emulator/recording/encoders/gif_encoder.h"
-#include "emulator/recording/encoders/ffmpeg_pipe_encoder.h"
-#include "emulator/recording/encoders/dsd/dsd_encoder.h"
+#include "encoders/gif_encoder.h"
+#include "encoders/ffmpeg_pipe_encoder.h"
+#include "encoders/dsd/dsd_encoder.h"
 #include "benchmarkfeeder.h"
 #include "multitrackdialog.h"
 
@@ -33,10 +33,10 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
-#include "emulator/recording/recordingmanager.h"
-#include "emulator/recording/platform_encoder.h"
-#include "emulator/recording/ffmpeg_probe.h"
-#include "emulator/recording/realtime_estimator.h"
+#include "recordingmanager.h"
+#include "platform_encoder.h"
+#include "ffmpeg_probe.h"
+#include "realtime_estimator.h"
 #include "base/featuremanager.h"
 
 namespace

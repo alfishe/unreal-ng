@@ -29,7 +29,9 @@ EmulatorContext::EmulatorContext(LoggerLevel level)
     pAudioManagerObj = nullptr;
     pAudioCallback = nullptr;
     pSoundManager = nullptr;
+#ifdef ENABLE_RECORDING
     pRecordingManager = nullptr;
+#endif
     pDebugManager = nullptr;
     pEmulator = nullptr;
 

@@ -1,5 +1,5 @@
 #include "ffmpeg_probe.h"
-#include "../../common/subprocess.h"
+#include "common/subprocess.h"
 
 #include <algorithm>
 #include <cstdlib>

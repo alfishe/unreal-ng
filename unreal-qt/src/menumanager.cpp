@@ -404,6 +404,7 @@ void MenuManager::createToolsMenu()
     _screenshotAction->setStatusTip(tr("Save screenshot to file"));
     _screenshotAction->setEnabled(false);  // TODO: Implement screenshot
 
+#ifdef ENABLE_RECORDING
     // Recording (dialog toggle)
     _videoRecordingAction = _toolsMenu->addAction(tr("&Recording"));
     _videoRecordingAction->setStatusTip(tr("Open recording panel"));
@@ -428,6 +429,7 @@ void MenuManager::createToolsMenu()
     addPresetAction(tr("High Quality (MKV)"));
     // TODO: Re-add "Music (FLAC)" / "Audio Only (WAV)" when audio-only
     // recording lands, and "Multi-Track (MKV)" when multi-track encoding lands.
+#endif
 }
 
 void MenuManager::createHelpMenu()
