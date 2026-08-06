@@ -1,0 +1,16 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/">
+        <file>icons/start.svg</file>
+        <file>icons/pause.svg</file>
+        <file>icons/restart.svg</file>
+        <file>icons/fullscreen.svg</file>
+        <file>icons/record.svg</file>
+        <file>icons/open.svg</file>
+        <file>icons/tape.svg</file>
+        <file>icons/disk.svg</file>
+        <file>icons/hdd.svg</file>
+        <file>icons/sound.svg</file>
+        <file>icons/app.svg</file>
+    </qresource>
+</RCC>
