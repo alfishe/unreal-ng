@@ -252,11 +252,14 @@ endif ()
 # Configure automation if enabled
 if (INCLUDE_AUTOMATION)
     # Link with appropriate libraries
+    # Circular dependency: core uses RecordingManager, recording uses core utilities.
+    # List core again after recording so linker resolves all symbols.
     target_link_libraries(${PROJECT_NAME} PRIVATE
         ${common_libraries}
         Qt6::Widgets
         unrealng::automation
         $<$<BOOL:${ENABLE_RECORDING}>:unrealng::recording>
+        $<$<BOOL:${ENABLE_RECORDING}>:unrealng::core>
         ${CMAKE_DL_LIBS}
         Threads::Threads
     )
@@ -266,12 +269,13 @@ if (INCLUDE_AUTOMATION)
         target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32 dbghelp)
     endif ()
 else ()
-    # Link without automation
+    # Link without automation - circular dependency handled by listing core twice
     target_link_libraries(${PROJECT_NAME} PRIVATE
         ${common_libraries}
         Qt6::Widgets
         unrealng::core
         $<$<BOOL:${ENABLE_RECORDING}>:unrealng::recording>
+        $<$<BOOL:${ENABLE_RECORDING}>:unrealng::core>
         Threads::Threads
     )
 endif ()
