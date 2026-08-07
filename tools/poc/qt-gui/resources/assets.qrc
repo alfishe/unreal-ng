@@ -19,6 +19,8 @@
         <file>icons/app/appicon_64.png</file>
         <file>icons/app/appicon_128.png</file>
         <file>icons/app/appicon_256.png</file>
+        <file>icons/app/appicon_512.png</file>
+        <file>icons/app/appicon_1024.png</file>
         <file>patterns/zx_256x192.png</file>
         <file>patterns/zx_320x240.png</file>
         <file>patterns/zx_352x288.png</file>

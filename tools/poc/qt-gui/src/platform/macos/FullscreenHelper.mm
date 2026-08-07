@@ -18,17 +18,23 @@
     FullscreenHelper::Delegate* _delegate;
     NSRect _originalFrame;
     NSRect _originalContentRect;
+    NSRect _originalScreenFrame;  // Screen widget frame before fullscreen
     std::function<void()> _hideQtUI;
     std::function<void()> _showQtUI;
+    std::function<void(int, int, int, int, double)> _screenZoomIn;
+    std::function<void(int, int, int, int, double)> _screenZoomOut;
 }
 @property (nonatomic, assign) FullscreenHelper::Delegate* delegate;
 @property (nonatomic, assign) NSRect originalFrame;
+@property (nonatomic, assign) NSRect originalScreenFrame;
 @property (nonatomic, copy) void (^hideQtUIBlock)(void);
 @property (nonatomic, copy) void (^showQtUIBlock)(void);
 
 - (instancetype)initWithDelegate:(FullscreenHelper::Delegate*)delegate;
 - (void)setHideQtUI:(std::function<void()>)func;
 - (void)setShowQtUI:(std::function<void()>)func;
+- (void)setScreenZoomIn:(std::function<void(int, int, int, int, double)>)func;
+- (void)setScreenZoomOut:(std::function<void(int, int, int, int, double)>)func;
 @end
 
 @implementation FullscreenWindowDelegate
@@ -52,6 +58,16 @@
 - (void)setShowQtUI:(std::function<void()>)func
 {
     _showQtUI = func;
+}
+
+- (void)setScreenZoomIn:(std::function<void(int, int, int, int, double)>)func
+{
+    _screenZoomIn = func;
+}
+
+- (void)setScreenZoomOut:(std::function<void(int, int, int, int, double)>)func
+{
+    _screenZoomOut = func;
 }
 
 #pragma mark - Custom Fullscreen Animation (Enter)
@@ -91,6 +107,15 @@
     NSRect coverFrame = screenFrame;
     coverFrame.size.height += titlebarH;
     [window setFrame:coverFrame display:YES animate:NO];
+
+    // Trigger screen widget zoom animation to fullscreen target
+    if (_screenZoomIn) {
+        int targetW = static_cast<int>(screenFrame.size.width);
+        int targetH = static_cast<int>(screenFrame.size.height);
+        int targetX = 0;
+        int targetY = 0;
+        _screenZoomIn(targetX, targetY, targetW, targetH, 0.3);
+    }
 
     FS_LOG("set frame to fullscreen immediately");
 
@@ -242,7 +267,11 @@ void uninstall(QWindow* window)
     }
 }
 
-void setCallbacks(QWindow* window, std::function<void()> hideQtUI, std::function<void()> showQtUI)
+void setCallbacks(QWindow* window,
+                  std::function<void()> hideQtUI,
+                  std::function<void()> showQtUI,
+                  std::function<void(int, int, int, int, double)> screenZoomIn,
+                  std::function<void(int, int, int, int, double)> screenZoomOut)
 {
     if (!window || !g_delegates)
         return;
@@ -255,6 +284,8 @@ void setCallbacks(QWindow* window, std::function<void()> hideQtUI, std::function
     if (fsDelegate) {
         [fsDelegate setHideQtUI:hideQtUI];
         [fsDelegate setShowQtUI:showQtUI];
+        [fsDelegate setScreenZoomIn:screenZoomIn];
+        [fsDelegate setScreenZoomOut:screenZoomOut];
     }
 }
 

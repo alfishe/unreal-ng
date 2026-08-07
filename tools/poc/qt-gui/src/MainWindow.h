@@ -10,9 +10,13 @@
 class MetalScreenWidget;
 #endif
 
+class QFrame;
 class QToolBar;
 class ScreenWidget;
 class StatusIndicator;
+class EmulatorWidget;
+class AppSoundManager;
+class AudioSettingsDialog;
 
 class MainWindow : public QMainWindow
 #ifdef Q_OS_MACOS
@@ -35,6 +39,11 @@ public:
 protected:
     void changeEvent(QEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
+    void keyReleaseEvent(QKeyEvent *event) override;
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dragLeaveEvent(QDragLeaveEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
 
 private slots:
     void onStart();
@@ -61,6 +70,7 @@ private:
 
     void setVideoMode(int modeIndex);
     void adjustWindowToFitScreen();
+    void loadFile(const QString &filePath);
 
     // Platform-specific fullscreen handlers
 #ifdef Q_OS_WIN
@@ -79,6 +89,7 @@ private:
     void applyFullscreenStyle();
     void restoreNormalStyle();
 
+    QFrame *m_contentFrame = nullptr;
 #ifdef Q_OS_MACOS
     MetalScreenWidget *m_screen = nullptr;
 #else
@@ -121,6 +132,7 @@ private:
     QAction *m_actSound = nullptr;
     QAction *m_actAy = nullptr;
     QAction *m_actBeeper = nullptr;
+    QAction *m_actAudioSettings = nullptr;
     // Transport
     QAction *m_actStart = nullptr;
     QAction *m_actPause = nullptr;
@@ -137,4 +149,11 @@ private:
 
     QString m_machine = QStringLiteral("Pentagon 128");
     QString m_media   = QStringLiteral("manic.trd");
+
+    // Emulator integration
+    EmulatorWidget *m_emulator = nullptr;
+    AppSoundManager *m_soundManager = nullptr;
+
+    // Dialogs
+    AudioSettingsDialog *m_audioSettingsDialog = nullptr;
 };

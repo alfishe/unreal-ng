@@ -23,6 +23,10 @@ public:
     explicit MetalScreenWidget(QWidget* parent = nullptr);
     ~MetalScreenWidget() override;
 
+    // Attach/detach emulator framebuffer (like ScreenWidget)
+    void attachFramebuffer(uint16_t width, uint16_t height, void* buffer);
+    void detachFramebuffer();
+
     // Set the emulator framebuffer size (e.g., 352x288)
     void setFramebufferSize(int width, int height);
 
@@ -35,7 +39,7 @@ public:
     // Compatibility with ScreenWidget interface
     void loadTestPattern(int modeIndex);
     QSize nativeSize() const { return m_framebufferSize; }
-    void refresh() { /* Metal renders continuously */ }
+    void refresh();  // Called on each emulator frame
 
     // Pre-fullscreen: render with target aspect ratio (pillarbox/letterbox)
     // Pass 0 to disable, or the target screen aspect ratio to enable
@@ -63,7 +67,8 @@ private:
     struct Impl;
     Impl* m_impl = nullptr;
 
-    QSize m_framebufferSize{352, 288};
+    QSize m_framebufferSize{1, 1};  // Set by setFramebufferSize() or loadTestPattern()
+    float m_aspectRatio = 1.0f;     // Updated when framebuffer size changes
     bool m_metalInitialized = false;
     bool m_hasTestPattern = false;
 };

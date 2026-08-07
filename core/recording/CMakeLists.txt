@@ -6,10 +6,8 @@ if(APPLE)
     enable_language(OBJCXX)
 endif()
 
-# C++ standard (inherit from parent, but ensure C++17 minimum)
-if(NOT CMAKE_CXX_STANDARD)
-    set(CMAKE_CXX_STANDARD 17)
-endif()
+# C++20 required - must match core library for ABI compatibility
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 

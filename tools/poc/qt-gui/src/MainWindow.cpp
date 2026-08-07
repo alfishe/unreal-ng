@@ -1,6 +1,10 @@
 #include "MainWindow.h"
 #include "ScreenWidget.h"
 #include "StatusIndicator.h"
+#include "emulator/EmulatorWidget.h"
+#include "emulator/AppSoundManager.h"
+#include "emulator/FileManager.h"
+#include "dialogs/AudioSettingsDialog.h"
 
 #ifdef Q_OS_MACOS
 #include "platform/macos/FullscreenHelper.h"
@@ -15,6 +19,10 @@
 #include <QMessageBox>
 #include <QCloseEvent>
 #include <QResizeEvent>
+#include <QKeyEvent>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QMimeData>
 #include <QFrame>
 #include <QFileInfo>
 #include <QScreen>
@@ -31,14 +39,29 @@ static QIcon themedIcon(const QString &name)
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
+    // Content frame (like unreal-qt's contentFrame) - screen is manually centered within
+    m_contentFrame = new QFrame(this);
+    m_contentFrame->setFrameStyle(QFrame::NoFrame);
+    m_contentFrame->setAutoFillBackground(true);
+    // Use system theme background (not hardcoded black)
+    setCentralWidget(m_contentFrame);
+
 #ifdef Q_OS_MACOS
-    m_screen = new MetalScreenWidget(this);
+    m_screen = new MetalScreenWidget(m_contentFrame);
 #else
-    m_screen = new ScreenWidget(this);
+    m_screen = new ScreenWidget(m_contentFrame);
 #endif
-    setCentralWidget(m_screen);
 
     m_normalPalette = palette();
+
+    // Initialize emulator and audio
+    m_emulator = new EmulatorWidget(this);
+    m_soundManager = new AppSoundManager(this);
+
+    // Connect emulator frame signal to screen refresh (like unreal-qt's binding->frameRefresh)
+    connect(m_emulator, &EmulatorWidget::frameReady, this, [this]() {
+        m_screen->refresh();
+    });
 
     buildActions();
     buildMenus();
@@ -50,11 +73,37 @@ MainWindow::MainWindow(QWidget *parent)
     refreshTitle();
     restoreLayout();
 
-    flash(tr("Running — %1").arg(m_machine));
+    // Initialize audio
+    if (m_soundManager->init()) {
+        m_soundManager->start();
+    }
+
+    // Enable drag and drop
+    setAcceptDrops(true);
+
+    flash(tr("Ready — %1").arg(m_machine));
 }
 
 MainWindow::~MainWindow()
 {
+    // Clear audio callback before stopping
+#ifdef HAS_EMULATOR_CORE
+    if (m_emulator && m_emulator->emulator()) {
+        m_emulator->emulator()->ClearAudioCallback();
+    }
+#endif
+
+    // Stop emulator first
+    if (m_emulator) {
+        m_emulator->stop();
+    }
+
+    // Stop audio
+    if (m_soundManager) {
+        m_soundManager->stop();
+        m_soundManager->deinit();
+    }
+
 #ifdef Q_OS_MACOS
     FullscreenHelper::uninstall(windowHandle());
 #endif
@@ -71,9 +120,11 @@ void MainWindow::applyFullscreenStyle()
     // Disable updates to prevent visible relayout during transition
     setUpdatesEnabled(false);
 
+    // Set black background for fullscreen
     QPalette p;
     p.setColor(QPalette::Window, Qt::black);
     setPalette(p);
+    m_contentFrame->setPalette(p);
 
     menuBar()->hide();
     statusBar()->hide();
@@ -91,7 +142,9 @@ void MainWindow::restoreNormalStyle()
     // Batch the three bar-shows + palette into a single repaint
     setUpdatesEnabled(false);
 
+    // Restore system theme palette
     setPalette(m_normalPalette);
+    m_contentFrame->setPalette(m_normalPalette);
 
     if (m_actToolBar->isChecked())
         m_toolBar->show();
@@ -211,13 +264,21 @@ void MainWindow::toggleFullscreenMacOS()
 void MainWindow::willEnterFullscreen()
 {
     qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] willEnterFullscreen";
+
+    // Apply fullscreen style before transition starts
+    applyFullscreenStyle();
 }
 
 void MainWindow::didEnterFullscreen()
 {
     qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] didEnterFullscreen";
+
+    // Screen fills content frame; Metal viewport handles aspect ratio
+    if (m_screen && m_contentFrame) {
+        m_screen->setGeometry(0, 0, m_contentFrame->width(), m_contentFrame->height());
+    }
+
     // Keep state as EnteringFullscreen briefly to block spurious resize
-    // The resize event filter checks this state
     QTimer::singleShot(200, this, [this]() {
         m_fullscreenState = FullscreenState::Fullscreen;
         m_screen->setFocus();
@@ -232,6 +293,10 @@ void MainWindow::willExitFullscreen()
 void MainWindow::didExitFullscreen()
 {
     qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] didExitFullscreen";
+
+    // Restore normal style
+    restoreNormalStyle();
+
     // Qt UI was restored in the exit-animation completion handler; here we only
     // finalize state and enforce the pre-fullscreen geometry. AppKit can end
     // the transition with the content area 28px taller (FullSizeContentView
@@ -246,6 +311,12 @@ void MainWindow::didExitFullscreen()
         {
             setGeometry(m_normalGeometry);
         }
+
+        // Screen fills content frame; Metal viewport handles aspect ratio
+        if (m_screen && m_contentFrame) {
+            m_screen->setGeometry(0, 0, m_contentFrame->width(), m_contentFrame->height());
+        }
+
         m_screen->setFocus();
     });
 }
@@ -319,6 +390,50 @@ void MainWindow::handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::Win
 // Event Handlers
 // ============================================================================
 
+void MainWindow::keyPressEvent(QKeyEvent *event)
+{
+    // Forward to emulator
+    if (m_emulator) {
+        m_emulator->handleKeyPress(event);
+    }
+    QMainWindow::keyPressEvent(event);
+}
+
+void MainWindow::keyReleaseEvent(QKeyEvent *event)
+{
+    // Forward to emulator
+    if (m_emulator) {
+        m_emulator->handleKeyRelease(event);
+    }
+    QMainWindow::keyReleaseEvent(event);
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent *event)
+{
+    if (event->mimeData()->hasUrls())
+        event->acceptProposedAction();
+}
+
+void MainWindow::dragLeaveEvent(QDragLeaveEvent *event)
+{
+    Q_UNUSED(event);
+}
+
+void MainWindow::dropEvent(QDropEvent *event)
+{
+    const QMimeData *mimeData = event->mimeData();
+    if (mimeData->hasUrls())
+    {
+        QList<QUrl> urlList = mimeData->urls();
+        if (!urlList.isEmpty())
+        {
+            QString filePath = urlList.first().toLocalFile();
+            qDebug() << "File dropped:" << filePath;
+            loadFile(filePath);
+        }
+    }
+}
+
 void MainWindow::changeEvent(QEvent *event)
 {
     if (event->type() == QEvent::WindowStateChange)
@@ -364,6 +479,11 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     }
 
     QMainWindow::resizeEvent(event);
+
+    // Screen fills content frame; Metal viewport handles aspect ratio centering
+    if (m_screen && m_contentFrame) {
+        m_screen->setGeometry(0, 0, m_contentFrame->width(), m_contentFrame->height());
+    }
 }
 
 void MainWindow::onToggleFullscreen()
@@ -591,6 +711,30 @@ void MainWindow::buildActions()
     m_actBeeper->setCheckable(true);
     m_actBeeper->setChecked(true);
 
+    m_actAudioSettings = new QAction(tr("Audio Settings..."), this);
+    connect(m_actAudioSettings, &QAction::triggered, this, [this] {
+        if (!m_audioSettingsDialog) {
+            m_audioSettingsDialog = new AudioSettingsDialog(this);
+            m_audioSettingsDialog->setAttribute(Qt::WA_DeleteOnClose);
+            connect(m_audioSettingsDialog, &QDialog::destroyed, this, [this] {
+                m_audioSettingsDialog = nullptr;
+            });
+        }
+#ifdef HAS_EMULATOR_CORE
+        if (m_emulator && m_emulator->isRunning()) {
+            if (auto emu = m_emulator->emulator()) {
+                EmulatorContext* ctx = emu->GetContext();
+                if (ctx && ctx->pSoundManager) {
+                    m_audioSettingsDialog->setContext(ctx);
+                }
+            }
+        }
+#endif
+        m_audioSettingsDialog->show();
+        m_audioSettingsDialog->raise();
+        m_audioSettingsDialog->activateWindow();
+    });
+
     // ---- Debug / Help ----------------------------------------------------
     m_actDebugger = new QAction(tr("&Debugger"), this);
     m_actDebugger->setShortcut(QKeySequence(QStringLiteral("Ctrl+D")));
@@ -646,6 +790,8 @@ void MainWindow::buildMenus()
     audio->addAction(m_actSound);
     audio->addAction(m_actAy);
     audio->addAction(m_actBeeper);
+    audio->addSeparator();
+    audio->addAction(m_actAudioSettings);
 
     QMenu *debug = mb->addMenu(tr("De&bug"));
     debug->addAction(m_actDebugger);
@@ -723,22 +869,59 @@ void MainWindow::buildStatusBar()
 
 void MainWindow::onStart()
 {
+    qDebug() << "onStart() called, isRunning:" << m_emulator->isRunning();
+    if (!m_emulator->isRunning()) {
+        qDebug() << "Starting emulator...";
+        if (m_emulator->start()) {
+            qDebug() << "Emulator started, framebuffer:"
+                     << m_emulator->framebufferWidth() << "x"
+                     << m_emulator->framebufferHeight()
+                     << "ptr:" << m_emulator->framebuffer();
+            // Attach screen to emulator framebuffer (cross-platform interface)
+            m_screen->attachFramebuffer(
+                m_emulator->framebufferWidth(),
+                m_emulator->framebufferHeight(),
+                const_cast<void*>(m_emulator->framebuffer())
+            );
+#ifdef HAS_EMULATOR_CORE
+            // Wire audio callback - this drives frame timing via NC_AUDIO_BUFFER_HALF_FULL
+            if (auto emu = m_emulator->emulator()) {
+                emu->SetAudioCallback(m_soundManager, &AppSoundManager::audioCallback);
+                qDebug() << "Audio callback wired to emulator";
+            }
+#endif
+            flash(tr("Emulator started"));
+        } else {
+            qDebug() << "Failed to start emulator!";
+            flash(tr("Failed to start emulator"));
+            return;
+        }
+    } else if (m_emulator->isPaused()) {
+        m_emulator->resume();
+        flash(tr("Resumed"));
+    }
     m_actStart->setChecked(true);
     m_actPause->setChecked(false);
-    flash(tr("Running"));
 }
 
 void MainWindow::onPause()
 {
+    if (m_emulator->isRunning() && !m_emulator->isPaused()) {
+        m_emulator->pause();
+        flash(tr("Paused"));
+    }
     m_actPause->setChecked(true);
     m_actStart->setChecked(false);
-    flash(tr("Paused"));
 }
 
 void MainWindow::onRestart()
 {
-    onStart();
-    flash(tr("Machine restarted"));
+    if (m_emulator->isRunning()) {
+        m_emulator->reset();
+        flash(tr("Machine reset"));
+    } else {
+        onStart();
+    }
 }
 
 void MainWindow::onToggle1to1(bool on)
@@ -825,6 +1008,53 @@ void MainWindow::saveLayout()
 
 void MainWindow::closeEvent(QCloseEvent *e)
 {
+    setAcceptDrops(false);
     saveLayout();
     QMainWindow::closeEvent(e);
+}
+
+void MainWindow::loadFile(const QString &filePath)
+{
+    SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(filePath);
+    std::string file = filePath.toStdString();
+
+    // Auto-start emulator if not running
+    if (!m_emulator->isRunning() && category != FileSymbol && category != FileUnknown)
+    {
+        qDebug() << "Auto-starting emulator for file:" << filePath;
+        onStart();
+    }
+
+#ifdef HAS_EMULATOR_CORE
+    auto emu = m_emulator->emulator();
+    if (!emu)
+        return;
+
+    switch (category)
+    {
+        case FileSnapshot:
+            emu->LoadSnapshot(file);
+            break;
+        case FileTape:
+            emu->LoadTape(file);
+            break;
+        case FileDisk:
+            emu->LoadDisk(file);
+            break;
+        case FileSymbol:
+            // Symbol loading requires debugger - not implemented in POC
+            qDebug() << "Symbol file loading not implemented:" << filePath;
+            break;
+        default:
+            qDebug() << "Unsupported file type:" << filePath;
+            break;
+    }
+#else
+    Q_UNUSED(file);
+    Q_UNUSED(category);
+#endif
+
+    m_media = QFileInfo(filePath).fileName();
+    refreshTitle();
+    flash(tr("Loaded %1").arg(m_media));
 }

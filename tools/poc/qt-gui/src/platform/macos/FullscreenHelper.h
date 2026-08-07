@@ -21,8 +21,13 @@ public:
 void install(QWindow* window, Delegate* delegate);
 void uninstall(QWindow* window);
 
-// Set callbacks for Qt UI hide/show during custom fullscreen animation
-void setCallbacks(QWindow* window, std::function<void()> hideQtUI, std::function<void()> showQtUI);
+// Set callbacks for Qt UI hide/show and screen zoom during custom fullscreen animation
+// screenZoom receives (targetX, targetY, targetWidth, targetHeight, duration) for smooth animation
+void setCallbacks(QWindow* window,
+                  std::function<void()> hideQtUI,
+                  std::function<void()> showQtUI,
+                  std::function<void(int, int, int, int, double)> screenZoomIn = nullptr,
+                  std::function<void(int, int, int, int, double)> screenZoomOut = nullptr);
 
 // Enter/exit native fullscreen (uses custom animation via NSWindowDelegate)
 void enterFullscreen(QWindow* window);

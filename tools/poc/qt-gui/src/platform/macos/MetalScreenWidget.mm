@@ -60,11 +60,16 @@ struct MetalScreenWidget::Impl {
     id<MTLSamplerState> sampler = nil;
     CAMetalLayer* metalLayer = nil;
 
-    QTimer* renderTimer = nullptr;
     int textureWidth = 0;
     int textureHeight = 0;
 
     double targetAspect = 0;  // 0 = normal mode, >0 = fullscreen layout with this aspect
+    bool useTestPattern = true;  // false when emulator provides frames
+
+    // Framebuffer from emulator (like DeviceScreen::devicePixels)
+    const uint8_t* framebuffer = nullptr;
+    int framebufferWidth = 0;
+    int framebufferHeight = 0;
 };
 
 MetalScreenWidget::MetalScreenWidget(QWidget* parent)
@@ -76,12 +81,8 @@ MetalScreenWidget::MetalScreenWidget(QWidget* parent)
     setAttribute(Qt::WA_NoSystemBackground, true);
     setAutoFillBackground(false);
 
-    // Render timer for continuous updates (50fps)
-    m_impl->renderTimer = new QTimer(this);
-    connect(m_impl->renderTimer, &QTimer::timeout, this, [this]() {
-        if (m_metalInitialized)
-            render();
-    });
+    // No timer - rendering is driven by emulator frame events (NC_VIDEO_FRAME_REFRESH)
+    // via updateFrame() which calls render()
 }
 
 MetalScreenWidget::~MetalScreenWidget()
@@ -112,15 +113,22 @@ void MetalScreenWidget::initMetal()
         m_impl->metalLayer.pixelFormat = MTLPixelFormatBGRA8Unorm;
         m_impl->metalLayer.framebufferOnly = YES;
         m_impl->metalLayer.contentsScale = devicePixelRatioF();
+        // Use 3 drawables for triple buffering to avoid stalls during resize
+        m_impl->metalLayer.maximumDrawableCount = 3;
+        // Disable vsync to prevent blocking during resize
+        m_impl->metalLayer.displaySyncEnabled = NO;
 
         // Attach to native view
         NSView* view = (__bridge NSView*)(void*)winId();
         [view setWantsLayer:YES];
         [view setLayer:m_impl->metalLayer];
 
-        // Keep layer live during fullscreen transitions (don't use snapshot)
-        m_impl->metalLayer.presentsWithTransaction = NO;
+        // Configure layer to auto-resize with view during animations
+        m_impl->metalLayer.autoresizingMask = kCALayerWidthSizable | kCALayerHeightSizable;
+        m_impl->metalLayer.needsDisplayOnBoundsChange = YES;
+
         view.layerContentsRedrawPolicy = NSViewLayerContentsRedrawDuringViewResize;
+        view.layerContentsPlacement = NSViewLayerContentsPlacementCenter;
 
         // Compile shaders
         NSError* error = nil;
@@ -176,20 +184,14 @@ void MetalScreenWidget::initMetal()
         updateDrawableSize();
         m_metalInitialized = true;
 
-        // Start rendering
-        m_impl->renderTimer->start(20); // ~50fps
-
-        // Generate initial test pattern
+        // Generate initial test pattern and render once
         generateTestPattern();
+        render();
     }
 }
 
 void MetalScreenWidget::cleanupMetal()
 {
-    if (m_impl->renderTimer) {
-        m_impl->renderTimer->stop();
-    }
-
     @autoreleasepool {
         m_impl->texture = nil;
         m_impl->sampler = nil;
@@ -203,12 +205,76 @@ void MetalScreenWidget::cleanupMetal()
     m_metalInitialized = false;
 }
 
+void MetalScreenWidget::attachFramebuffer(uint16_t width, uint16_t height, void* buffer)
+{
+    detachFramebuffer();
+
+    m_impl->framebuffer = static_cast<const uint8_t*>(buffer);
+    m_impl->framebufferWidth = width;
+    m_impl->framebufferHeight = height;
+    m_impl->useTestPattern = false;
+
+    m_framebufferSize = QSize(width, height);
+    m_aspectRatio = static_cast<float>(width) / static_cast<float>(height);
+    setMinimumSize(width, height);
+
+    updateGeometry();
+}
+
+void MetalScreenWidget::detachFramebuffer()
+{
+    m_impl->framebuffer = nullptr;
+    m_impl->framebufferWidth = 0;
+    m_impl->framebufferHeight = 0;
+
+    if (m_metalInitialized)
+        render();
+}
+
+void MetalScreenWidget::refresh()
+{
+    if (!m_metalInitialized)
+        return;
+
+    if (m_impl->framebuffer && m_impl->framebufferWidth > 0 && m_impl->framebufferHeight > 0) {
+        // Upload from stored framebuffer pointer (like DeviceScreen::paintEvent reads devicePixels)
+        @autoreleasepool {
+            int width = m_impl->framebufferWidth;
+            int height = m_impl->framebufferHeight;
+
+            // Recreate texture if size changed
+            if (m_impl->textureWidth != width || m_impl->textureHeight != height) {
+                MTLTextureDescriptor* texDesc = [MTLTextureDescriptor
+                    texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                                 width:width
+                                                height:height
+                                             mipmapped:NO];
+                texDesc.usage = MTLTextureUsageShaderRead;
+                m_impl->texture = [m_impl->device newTextureWithDescriptor:texDesc];
+                m_impl->textureWidth = width;
+                m_impl->textureHeight = height;
+            }
+
+            // Upload pixel data
+            MTLRegion region = MTLRegionMake2D(0, 0, width, height);
+            [m_impl->texture replaceRegion:region
+                               mipmapLevel:0
+                                 withBytes:m_impl->framebuffer
+                               bytesPerRow:width * 4];
+        }
+    }
+
+    render();
+}
+
 void MetalScreenWidget::setFramebufferSize(int width, int height)
 {
     if (m_framebufferSize.width() == width && m_framebufferSize.height() == height)
         return;
 
     m_framebufferSize = QSize(width, height);
+    m_aspectRatio = static_cast<float>(width) / static_cast<float>(height);
+    setMinimumSize(width, height);
 
     // Recreate texture with new size
     if (m_metalInitialized) {
@@ -226,6 +292,9 @@ void MetalScreenWidget::updateFrame(const uint8_t* data, int width, int height)
 {
     if (!m_metalInitialized || !data)
         return;
+
+    // Disable test pattern when receiving real frames
+    m_impl->useTestPattern = false;
 
     @autoreleasepool {
         // Recreate texture if size changed
@@ -247,6 +316,9 @@ void MetalScreenWidget::updateFrame(const uint8_t* data, int width, int height)
                            mipmapLevel:0
                              withBytes:data
                            bytesPerRow:width * 4];
+
+        // Render immediately after frame upload
+        render();
     }
 }
 
@@ -304,14 +376,18 @@ void MetalScreenWidget::render()
     @autoreleasepool {
         // =====================================================================
         // Step 1: Update texture content
-        // Always generate animated test pattern for debugging transitions
+        // Only generate test pattern if emulator isn't providing frames
         // =====================================================================
-        generateTestPattern();
+        if (m_impl->useTestPattern) {
+            generateTestPattern();
+        }
 
         // =====================================================================
         // Step 2: Acquire next drawable from Metal layer
         // This is the render target we'll draw into.
+        // Use non-blocking approach to avoid resize deadlocks.
         // =====================================================================
+        m_impl->metalLayer.allowsNextDrawableTimeout = YES;
         id<CAMetalDrawable> drawable = [m_impl->metalLayer nextDrawable];
         if (!drawable)
             return;
@@ -369,8 +445,27 @@ void MetalScreenWidget::render()
             CGFloat vpY = (drawableH - vpH) / 2;
 
             viewport = {vpX, vpY, vpW, vpH, 0.0, 1.0};
+        } else if (m_impl->textureWidth > 0 && m_impl->textureHeight > 0) {
+            // Normal mode: preserve aspect ratio via viewport, center content
+            CGFloat contentAspect = (CGFloat)m_impl->textureWidth / (CGFloat)m_impl->textureHeight;
+            CGFloat drawableAspect = drawableW / drawableH;
+
+            CGFloat vpW, vpH;
+            if (contentAspect > drawableAspect) {
+                // Content is wider - fit to width, letterbox top/bottom
+                vpW = drawableW;
+                vpH = drawableW / contentAspect;
+            } else {
+                // Content is taller - fit to height, pillarbox left/right
+                vpH = drawableH;
+                vpW = drawableH * contentAspect;
+            }
+
+            CGFloat vpX = (drawableW - vpW) / 2;
+            CGFloat vpY = (drawableH - vpH) / 2;
+            viewport = {vpX, vpY, vpW, vpH, 0.0, 1.0};
         } else {
-            // Normal mode: stretch to fill entire drawable
+            // No texture yet - fill drawable
             viewport = {0, 0, drawableW, drawableH, 0.0, 1.0};
         }
 
@@ -391,6 +486,8 @@ void MetalScreenWidget::render()
         [encoder endEncoding];
         [cmdBuffer presentDrawable:drawable];
         [cmdBuffer commit];
+        // Wait for completion to avoid exhausting drawable pool during rapid resize
+        [cmdBuffer waitUntilScheduled];
     }
 }
 
@@ -400,8 +497,13 @@ void MetalScreenWidget::updateDrawableSize()
         return;
 
     CGFloat scale = devicePixelRatioF();
-    CGSize size = CGSizeMake(width() * scale, height() * scale);
-    m_impl->metalLayer.drawableSize = size;
+    CGFloat w = width();
+    CGFloat h = height();
+
+    // Update layer frame to match widget bounds - this keeps the layer
+    // properly positioned/sized during resize animations
+    m_impl->metalLayer.frame = CGRectMake(0, 0, w, h);
+    m_impl->metalLayer.drawableSize = CGSizeMake(w * scale, h * scale);
     m_impl->metalLayer.contentsScale = scale;
 }
 
@@ -414,6 +516,8 @@ void MetalScreenWidget::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
     updateDrawableSize();
+    // Don't call render() here - let the emulator's frame events drive rendering.
+    // Calling render() synchronously during resize causes GPU contention.
     emit resized(event->size());
 }
 
@@ -443,8 +547,9 @@ void MetalScreenWidget::loadTestPattern(int modeIndex)
 
     const auto& mode = ScreenWidget::videoModes()[modeIndex];
 
-    // Update framebuffer size
+    // Update framebuffer size and aspect ratio
     m_framebufferSize = QSize(mode.width, mode.height);
+    m_aspectRatio = static_cast<float>(mode.width) / static_cast<float>(mode.height);
     setMinimumSize(mode.width, mode.height);
 
     // Load pattern image
