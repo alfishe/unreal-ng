@@ -59,6 +59,12 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_normalPalette = palette();
 
+    // Timer to update zoom menu after resize finishes
+    m_resizeTimer = new QTimer(this);
+    m_resizeTimer->setSingleShot(true);
+    m_resizeTimer->setInterval(150);
+    connect(m_resizeTimer, &QTimer::timeout, this, &MainWindow::updateZoomCheck);
+
     // Initialize emulator and audio
     m_emulator = new EmulatorWidget(this);
     m_soundManager = new AppSoundManager(this);
@@ -481,6 +487,9 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     }
 
     QMainWindow::resizeEvent(event);
+
+    // Debounce zoom menu update
+    m_resizeTimer->start();
 }
 
 void MainWindow::onToggleFullscreen()
@@ -651,6 +660,20 @@ void MainWindow::buildActions()
     m_act1to1->setToolTip(tr("Enforce 1:1 pixel display on mode change (F4)"));
     connect(m_act1to1, &QAction::toggled, this, &MainWindow::onToggle1to1);
 
+    m_zoomGroup = new QActionGroup(this);
+    m_zoomGroup->setExclusive(true);
+    for (int i = 1; i <= 4; ++i) {
+        QAction* a = new QAction(tr("%1x").arg(i), this);
+        a->setCheckable(true);
+        a->setData(i);
+        a->setChecked(i == 2);  // Default to 2x
+        m_zoomGroup->addAction(a);
+    }
+    connect(m_zoomGroup, &QActionGroup::triggered, this, &MainWindow::onZoomChanged);
+
+    m_actResetLayout = new QAction(tr("Reset Layout"), this);
+    connect(m_actResetLayout, &QAction::triggered, this, &MainWindow::onResetLayout);
+
     m_videoModes = new QActionGroup(this);
     m_videoModes->setExclusive(true);
     const auto* modes = ScreenWidget::videoModes();
@@ -770,6 +793,11 @@ void MainWindow::buildMenus()
 
     view->addSeparator();
     view->addAction(m_actFullscreen);
+    view->addSeparator();
+    QMenu *zoom = view->addMenu(tr("&Zoom"));
+    zoom->addActions(m_zoomGroup->actions());
+    zoom->addSeparator();
+    zoom->addAction(m_actResetLayout);
 
     QMenu *machine = mb->addMenu(tr("&Machine"));
     machine->addActions(m_machines->actions());
@@ -934,6 +962,74 @@ void MainWindow::onToggleRecord(bool on)
     flash(on ? tr("Recording RZX…") : tr("Recording stopped"));
 }
 
+void MainWindow::onZoomChanged(QAction *a)
+{
+    int scale = a->data().toInt();
+    QSize native = m_screen->nativeSize();
+
+    int extraH = 0;
+    if (m_toolBar && m_toolBar->isVisible())
+        extraH += m_toolBar->height();
+    if (statusBar() && statusBar()->isVisible())
+        extraH += statusBar()->height();
+    if (menuBar() && menuBar()->isVisible())
+        extraH += menuBar()->height();
+
+    resize(native.width() * scale, native.height() * scale + extraH);
+    flash(tr("Zoom: %1x").arg(scale));
+}
+
+void MainWindow::updateZoomCheck()
+{
+    if (!m_screen || !m_zoomGroup)
+        return;
+
+    QSize native = m_screen->nativeSize();
+    if (native.width() <= 0 || native.height() <= 0)
+        return;
+
+    // Calculate current scale based on content frame size
+    int contentW = m_contentFrame->width();
+    int contentH = m_contentFrame->height();
+
+    int scaleW = contentW / native.width();
+    int scaleH = contentH / native.height();
+
+    // Check if it's an exact integer scale (1-4)
+    int matchedScale = 0;
+    if (scaleW == scaleH && scaleW >= 1 && scaleW <= 4) {
+        if (contentW == native.width() * scaleW && contentH == native.height() * scaleH) {
+            matchedScale = scaleW;
+        }
+    }
+
+    // Update checked state
+    for (QAction* a : m_zoomGroup->actions()) {
+        a->setChecked(a->data().toInt() == matchedScale);
+    }
+}
+
+void MainWindow::onResetLayout()
+{
+    QSettings s;
+    s.remove(QStringLiteral("geometry"));
+    s.remove(QStringLiteral("windowState"));
+
+    // Reset toolbar/statusbar visibility
+    m_actToolBar->setChecked(true);
+    m_toolBar->setVisible(true);
+    m_actStatusBar->setChecked(true);
+    statusBar()->setVisible(true);
+
+    // Apply default 2x size and update zoom group
+    for (QAction* a : m_zoomGroup->actions()) {
+        a->setChecked(a->data().toInt() == 2);
+    }
+    onZoomChanged(m_zoomGroup->actions().at(1));  // 2x is second item
+
+    flash(tr("Layout reset to default"));
+}
+
 void MainWindow::onMachineChanged(QAction *a)
 {
     m_machine = a->text();
@@ -981,7 +1077,21 @@ void MainWindow::refreshTitle()
 void MainWindow::restoreLayout()
 {
     QSettings s;
-    restoreGeometry(s.value(QStringLiteral("geometry")).toByteArray());
+    QByteArray savedGeom = s.value(QStringLiteral("geometry")).toByteArray();
+
+    if (savedGeom.isEmpty()) {
+        // Default to 2x ZX Spectrum resolution (352x288 -> 704x576) plus UI chrome
+        int extraH = 0;
+        if (m_toolBar && m_toolBar->isVisible())
+            extraH += m_toolBar->sizeHint().height();
+        if (statusBar() && statusBar()->isVisible())
+            extraH += statusBar()->sizeHint().height();
+        if (menuBar() && menuBar()->isVisible())
+            extraH += menuBar()->sizeHint().height();
+        resize(704, 576 + extraH);
+    } else {
+        restoreGeometry(savedGeom);
+    }
     restoreState(s.value(QStringLiteral("windowState")).toByteArray());
 
     const bool tb = s.value(QStringLiteral("view/toolbar"), true).toBool();

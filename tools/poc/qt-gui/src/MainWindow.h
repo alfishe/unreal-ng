@@ -52,6 +52,9 @@ private slots:
     void onToggleFullscreen();
     void onToggleRecord(bool on);
     void onToggle1to1(bool on);
+    void onResetLayout();
+    void onZoomChanged(QAction *a);
+    void updateZoomCheck();
     void onMachineChanged(QAction *a);
     void onVideoModeChanged(QAction *a);
     void onNextVideoMode();
@@ -119,6 +122,8 @@ private:
     QAction *m_actFullscreen = nullptr;
     QAction *m_actNextVideoMode = nullptr;
     QAction *m_act1to1 = nullptr;
+    QAction *m_actResetLayout = nullptr;
+    QActionGroup *m_zoomGroup = nullptr;
     QActionGroup *m_videoModes = nullptr;
     // Machine
     QActionGroup *m_machines = nullptr;
@@ -156,4 +161,7 @@ private:
 
     // Dialogs
     AudioSettingsDialog *m_audioSettingsDialog = nullptr;
+
+    // Resize debounce timer for zoom menu update
+    QTimer *m_resizeTimer = nullptr;
 };
