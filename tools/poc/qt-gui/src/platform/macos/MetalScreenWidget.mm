@@ -3,6 +3,7 @@
 
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <CoreVideo/CVDisplayLink.h>
 #import <Cocoa/Cocoa.h>
 
 #include <QResizeEvent>
@@ -51,6 +52,76 @@ fragment float4 fragmentShader(VertexOut in [[stage_in]],
 }
 )";
 
+// DisplayLink helper to call back into the widget
+@interface MetalDisplayLinkHelper : NSObject
+{
+@public
+    MetalScreenWidget* _widget;
+    CVDisplayLinkRef _displayLink;
+}
+- (instancetype)initWithWidget:(MetalScreenWidget*)widget;
+- (void)start;
+- (void)stop;
+@end
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
+static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
+                                     const CVTimeStamp* now,
+                                     const CVTimeStamp* outputTime,
+                                     CVOptionFlags flagsIn,
+                                     CVOptionFlags* flagsOut,
+                                     void* context)
+{
+    MetalDisplayLinkHelper* helper = (__bridge MetalDisplayLinkHelper*)context;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (helper && helper->_widget) {
+            helper->_widget->displayLinkCallback();
+        }
+    });
+    return kCVReturnSuccess;
+}
+
+@implementation MetalDisplayLinkHelper
+- (instancetype)initWithWidget:(MetalScreenWidget*)widget
+{
+    self = [super init];
+    if (self) {
+        _widget = widget;
+        _displayLink = nullptr;
+    }
+    return self;
+}
+
+- (void)start
+{
+    if (_displayLink)
+        return;
+
+    CVDisplayLinkCreateWithActiveCGDisplays(&_displayLink);
+    CVDisplayLinkSetOutputCallback(_displayLink, &displayLinkCallback, (__bridge void*)self);
+    CVDisplayLinkStart(_displayLink);
+}
+
+- (void)stop
+{
+    _widget = nullptr;  // Prevent callbacks from accessing destroyed widget
+    if (_displayLink) {
+        CVDisplayLinkStop(_displayLink);
+        CVDisplayLinkRelease(_displayLink);
+        _displayLink = nullptr;
+    }
+}
+
+- (void)dealloc
+{
+    [self stop];
+}
+@end
+
+#pragma clang diagnostic pop
+
 struct MetalScreenWidget::Impl {
     id<MTLDevice> device = nil;
     id<MTLCommandQueue> commandQueue = nil;
@@ -59,6 +130,7 @@ struct MetalScreenWidget::Impl {
     id<MTLTexture> texture = nil;
     id<MTLSamplerState> sampler = nil;
     CAMetalLayer* metalLayer = nil;
+    MetalDisplayLinkHelper* displayLinkHelper = nil;
 
     int textureWidth = 0;
     int textureHeight = 0;
@@ -87,7 +159,11 @@ MetalScreenWidget::MetalScreenWidget(QWidget* parent)
 
 MetalScreenWidget::~MetalScreenWidget()
 {
+    stopDisplayLink();
     cleanupMetal();
+    @autoreleasepool {
+        m_impl->displayLinkHelper = nil;
+    }
     delete m_impl;
 }
 
@@ -516,8 +592,9 @@ void MetalScreenWidget::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
     updateDrawableSize();
-    // Don't call render() here - let the emulator's frame events drive rendering.
-    // Calling render() synchronously during resize causes GPU contention.
+    // Render immediately during resize to keep content centered during animations.
+    // The triple-buffered CAMetalLayer handles this efficiently.
+    render();
     emit resized(event->size());
 }
 
@@ -581,4 +658,45 @@ void MetalScreenWidget::setFullscreenLayout(double targetAspect)
     // When > 0, render() centers content within that aspect ratio frame.
     // When 0, content stretches to fill the widget.
     m_impl->targetAspect = targetAspect;
+}
+
+void MetalScreenWidget::setAnimating(bool animating)
+{
+    if (m_animating == animating)
+        return;
+
+    m_animating = animating;
+    if (animating) {
+        startDisplayLink();
+    } else {
+        stopDisplayLink();
+    }
+}
+
+void MetalScreenWidget::startDisplayLink()
+{
+    @autoreleasepool {
+        if (!m_impl->displayLinkHelper) {
+            m_impl->displayLinkHelper = [[MetalDisplayLinkHelper alloc] initWithWidget:this];
+        }
+        [m_impl->displayLinkHelper start];
+    }
+}
+
+void MetalScreenWidget::stopDisplayLink()
+{
+    @autoreleasepool {
+        if (m_impl->displayLinkHelper) {
+            [m_impl->displayLinkHelper stop];
+        }
+    }
+}
+
+void MetalScreenWidget::displayLinkCallback()
+{
+    if (!m_animating || !m_metalInitialized)
+        return;
+
+    updateDrawableSize();
+    render();
 }

@@ -45,6 +45,9 @@ public:
     // Pass 0 to disable, or the target screen aspect ratio to enable
     void setFullscreenLayout(double targetAspect);
 
+    // Enable/disable continuous rendering for window animations
+    void setAnimating(bool animating);
+
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override { return m_framebufferSize; }
     QPaintEngine* paintEngine() const override { return nullptr; }
@@ -57,12 +60,17 @@ protected:
     void showEvent(QShowEvent* event) override;
     bool event(QEvent* event) override;
 
+public:
+    void displayLinkCallback();  // Called by CVDisplayLink from Obj-C
+
 private:
     void initMetal();
     void cleanupMetal();
     void render();
     void updateDrawableSize();
     void uploadImage(const QImage& image);
+    void startDisplayLink();
+    void stopDisplayLink();
 
     struct Impl;
     Impl* m_impl = nullptr;
@@ -71,4 +79,5 @@ private:
     float m_aspectRatio = 1.0f;     // Updated when framebuffer size changes
     bool m_metalInitialized = false;
     bool m_hasTestPattern = false;
+    bool m_animating = false;
 };

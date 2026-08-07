@@ -104,6 +104,12 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
+#ifdef Q_OS_MACOS
+    // Stop display link first to prevent callbacks during destruction
+    m_screen->setAnimating(false);
+    FullscreenHelper::uninstall(windowHandle());
+#endif
+
     // Clear audio callback before stopping
 #ifdef HAS_EMULATOR_CORE
     if (m_emulator && m_emulator->emulator()) {
@@ -111,7 +117,7 @@ MainWindow::~MainWindow()
     }
 #endif
 
-    // Stop emulator first
+    // Stop emulator
     if (m_emulator) {
         m_emulator->stop();
     }
@@ -121,10 +127,6 @@ MainWindow::~MainWindow()
         m_soundManager->stop();
         m_soundManager->deinit();
     }
-
-#ifdef Q_OS_MACOS
-    FullscreenHelper::uninstall(windowHandle());
-#endif
 }
 
 // ============================================================================
@@ -283,6 +285,9 @@ void MainWindow::willEnterFullscreen()
 {
     qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] willEnterFullscreen";
 
+    // Start continuous rendering during transition
+    m_screen->setAnimating(true);
+
     // Apply fullscreen style before transition starts
     applyFullscreenStyle();
 }
@@ -290,6 +295,9 @@ void MainWindow::willEnterFullscreen()
 void MainWindow::didEnterFullscreen()
 {
     qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] didEnterFullscreen";
+
+    // Stop continuous rendering - emulator drives updates now
+    m_screen->setAnimating(false);
 
     // Keep state as EnteringFullscreen briefly to block spurious resize
     QTimer::singleShot(200, this, [this]() {
@@ -301,11 +309,17 @@ void MainWindow::didEnterFullscreen()
 void MainWindow::willExitFullscreen()
 {
     qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] willExitFullscreen";
+
+    // Start continuous rendering during exit transition
+    m_screen->setAnimating(true);
 }
 
 void MainWindow::didExitFullscreen()
 {
     qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] didExitFullscreen";
+
+    // Stop continuous rendering
+    m_screen->setAnimating(false);
 
     // Restore normal style
     restoreNormalStyle();
