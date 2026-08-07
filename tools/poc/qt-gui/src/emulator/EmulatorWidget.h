@@ -45,6 +45,7 @@ signals:
     void frameReady();
     void stateChanged();
     void audioReady(const int16_t* samples, size_t count);
+    void resolutionChanged(int width, int height);
 
 #ifdef HAS_EMULATOR_CORE
 public:
@@ -52,6 +53,7 @@ public:
 
 private:
     void handleVideoFrameRefresh(int id, Message* message);
+    void handleResolutionChanged(int id, Message* message);
     void handleEmulatorStateChanged(int id, Message* message);
     void subscribeToMessages();
     void unsubscribeFromMessages();

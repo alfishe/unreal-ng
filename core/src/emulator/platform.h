@@ -38,6 +38,7 @@ constexpr char const* NC_SCANLINE_BOUNDARY = "SCANLINE_BOUNDARY";               
 
 constexpr char const* NC_AUDIO_FRAME_REFRESH = "AUDIO_FRAME_REFRESH";           // Audio frame ready (TODO: add emulator ID to payload)
 constexpr char const* NC_VIDEO_FRAME_REFRESH = "VIDEO_FRAME_REFRESH";           // Video frame ready (payload: EmulatorFramePayload with ID)
+constexpr char const* NC_VIDEO_RESOLUTION_CHANGED = "VIDEO_RESOLUTION_CHANGED"; // Video resolution changed (payload: VideoResolutionPayload)
 constexpr char const* NC_AUDIO_BUFFER_HALF_FULL = "AUDIO_BUFFER_HALF_FULL";     // Audio buffer < 50% full
 
 constexpr char const* NC_FDD_MOTOR_STARTED = "FDD_MOTOR_START";                 // Floppy drive motor started

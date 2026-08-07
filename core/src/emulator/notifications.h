@@ -61,6 +61,35 @@ public:
     virtual ~EmulatorFramePayload() = default;
 };
 
+/// Payload for video resolution change notifications
+/// Sent when the emulator's video mode/resolution changes
+class VideoResolutionPayload : public MessagePayload
+{
+public:
+    unreal::UUID _emulatorId;
+    uint16_t _width;
+    uint16_t _height;
+
+public:
+    VideoResolutionPayload(const unreal::UUID& emulatorId, uint16_t width, uint16_t height)
+        : MessagePayload()
+        , _emulatorId(emulatorId)
+        , _width(width)
+        , _height(height)
+    {
+    }
+
+    VideoResolutionPayload(const std::string& emulatorId, uint16_t width, uint16_t height)
+        : MessagePayload()
+        , _emulatorId(emulatorId.empty() ? unreal::UUID() : unreal::UUID(emulatorId))
+        , _width(width)
+        , _height(height)
+    {
+    }
+
+    virtual ~VideoResolutionPayload() = default;
+};
+
 /// Payload for FDD disk insert/eject notifications
 /// Contains emulator ID, drive number, and disk image path
 /// Example: messageCenter.Post(NC_FDD_DISK_INSERTED, new FDDDiskPayload(emulatorId, driveId, path));

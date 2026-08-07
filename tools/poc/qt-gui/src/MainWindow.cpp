@@ -30,6 +30,7 @@
 #include <QPointer>
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QVBoxLayout>
 
 static QIcon themedIcon(const QString &name)
 {
@@ -39,11 +40,10 @@ static QIcon themedIcon(const QString &name)
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
-    // Content frame (like unreal-qt's contentFrame) - screen is manually centered within
+    // Content frame - contains screen widget with layout for proper minimum size propagation
     m_contentFrame = new QFrame(this);
     m_contentFrame->setFrameStyle(QFrame::NoFrame);
     m_contentFrame->setAutoFillBackground(true);
-    // Use system theme background (not hardcoded black)
     setCentralWidget(m_contentFrame);
 
 #ifdef Q_OS_MACOS
@@ -52,15 +52,27 @@ MainWindow::MainWindow(QWidget *parent)
     m_screen = new ScreenWidget(m_contentFrame);
 #endif
 
+    // Use a layout so content frame respects screen widget's minimum size
+    auto* layout = new QVBoxLayout(m_contentFrame);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(m_screen);
+
     m_normalPalette = palette();
 
     // Initialize emulator and audio
     m_emulator = new EmulatorWidget(this);
     m_soundManager = new AppSoundManager(this);
 
-    // Connect emulator frame signal to screen refresh (like unreal-qt's binding->frameRefresh)
+    // Connect emulator frame signal to screen refresh
     connect(m_emulator, &EmulatorWidget::frameReady, this, [this]() {
         m_screen->refresh();
+    });
+
+    // Connect resolution change signal to update screen widget size
+    connect(m_emulator, &EmulatorWidget::resolutionChanged, this, [this](int width, int height) {
+        qDebug() << "Resolution changed:" << width << "x" << height;
+        m_screen->attachFramebuffer(width, height, m_emulator->framebuffer());
+        adjustWindowToFitScreen();
     });
 
     buildActions();
@@ -273,11 +285,6 @@ void MainWindow::didEnterFullscreen()
 {
     qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] didEnterFullscreen";
 
-    // Screen fills content frame; Metal viewport handles aspect ratio
-    if (m_screen && m_contentFrame) {
-        m_screen->setGeometry(0, 0, m_contentFrame->width(), m_contentFrame->height());
-    }
-
     // Keep state as EnteringFullscreen briefly to block spurious resize
     QTimer::singleShot(200, this, [this]() {
         m_fullscreenState = FullscreenState::Fullscreen;
@@ -310,11 +317,6 @@ void MainWindow::didExitFullscreen()
             && geometry() != m_normalGeometry)
         {
             setGeometry(m_normalGeometry);
-        }
-
-        // Screen fills content frame; Metal viewport handles aspect ratio
-        if (m_screen && m_contentFrame) {
-            m_screen->setGeometry(0, 0, m_contentFrame->width(), m_contentFrame->height());
         }
 
         m_screen->setFocus();
@@ -479,11 +481,6 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     }
 
     QMainWindow::resizeEvent(event);
-
-    // Screen fills content frame; Metal viewport handles aspect ratio centering
-    if (m_screen && m_contentFrame) {
-        m_screen->setGeometry(0, 0, m_contentFrame->width(), m_contentFrame->height());
-    }
 }
 
 void MainWindow::onToggleFullscreen()

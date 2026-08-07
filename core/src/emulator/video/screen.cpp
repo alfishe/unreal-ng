@@ -4,11 +4,16 @@
 
 #include <cassert>
 
+#include "3rdparty/message-center/messagecenter.h"
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
+#include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/notifications.h"
+#include "emulator/platform.h"
 #include "stdafx.h"
 
 /// region <Static methods>
@@ -570,6 +575,15 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         DumpFramebufferInfo(videoModeInfo, sizeof(videoModeInfo));
         MLOGINFO(videoModeInfo);
 #endif
+
+        // Notify GUI about resolution change
+        if (_context && _context->pEmulator)
+        {
+            std::string emulatorId = _context->pEmulator->GetId();
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            messageCenter.Post(NC_VIDEO_RESOLUTION_CHANGED,
+                new VideoResolutionPayload(emulatorId, _framebuffer.width, _framebuffer.height));
+        }
     }
     else
     {

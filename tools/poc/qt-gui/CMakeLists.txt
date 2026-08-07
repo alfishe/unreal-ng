@@ -148,9 +148,9 @@ if(APPLE)
         ${AUDIOTOOLBOX_FRAMEWORK}
     )
 elseif(WIN32)
-    # Windows: TODO - add D3D or OpenGL screen widget
+    # Windows: uses ScreenWidget (QPainter-based)
 elseif(UNIX)
-    # Linux: TODO - add OpenGL screen widget
+    # Linux: uses ScreenWidget (QPainter-based)
 endif()
 
 # Emulator integration sources

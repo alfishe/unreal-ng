@@ -62,6 +62,12 @@ bool EmulatorWidget::start()
     m_emulatorManager->StartEmulatorAsync(m_emulatorId);
 
     emit stateChanged();
+
+    // Emit initial resolution (we missed the notification during creation)
+    if (m_width > 0 && m_height > 0) {
+        emit resolutionChanged(m_width, m_height);
+    }
+
     return true;
 #else
     qWarning() << "Emulator core not available (HAS_EMULATOR_CORE not defined)";
@@ -232,6 +238,8 @@ void EmulatorWidget::subscribeToMessages()
 
     mc.AddObserver(NC_VIDEO_FRAME_REFRESH, obs,
         static_cast<ObserverCallbackMethod>(&EmulatorWidget::handleVideoFrameRefresh));
+    mc.AddObserver(NC_VIDEO_RESOLUTION_CHANGED, obs,
+        static_cast<ObserverCallbackMethod>(&EmulatorWidget::handleResolutionChanged));
     mc.AddObserver(NC_EMULATOR_STATE_CHANGE, obs,
         static_cast<ObserverCallbackMethod>(&EmulatorWidget::handleEmulatorStateChanged));
 
@@ -248,6 +256,8 @@ void EmulatorWidget::unsubscribeFromMessages()
 
     mc.RemoveObserver(NC_VIDEO_FRAME_REFRESH, obs,
         static_cast<ObserverCallbackMethod>(&EmulatorWidget::handleVideoFrameRefresh));
+    mc.RemoveObserver(NC_VIDEO_RESOLUTION_CHANGED, obs,
+        static_cast<ObserverCallbackMethod>(&EmulatorWidget::handleResolutionChanged));
     mc.RemoveObserver(NC_EMULATOR_STATE_CHANGE, obs,
         static_cast<ObserverCallbackMethod>(&EmulatorWidget::handleEmulatorStateChanged));
 
@@ -272,6 +282,40 @@ void EmulatorWidget::handleVideoFrameRefresh(int id, Message* message)
     // MessageCenter callback runs on worker thread - queue to Qt main thread
     QMetaObject::invokeMethod(this, [this]() {
         emit frameReady();
+    }, Qt::QueuedConnection);
+}
+
+void EmulatorWidget::handleResolutionChanged(int id, Message* message)
+{
+    Q_UNUSED(id);
+
+    if (!m_emulator || !message || !message->obj)
+        return;
+
+    VideoResolutionPayload* payload = dynamic_cast<VideoResolutionPayload*>(message->obj);
+    if (!payload)
+        return;
+
+    // Filter by emulator UUID
+    if (payload->_emulatorId != m_emulator->GetUUID())
+        return;
+
+    int newWidth = payload->_width;
+    int newHeight = payload->_height;
+
+    // Update framebuffer pointer and dimensions
+    if (auto ctx = m_emulator->GetContext()) {
+        if (ctx->pScreen) {
+            FramebufferDescriptor desc = ctx->pScreen->GetFramebufferDescriptor();
+            m_framebuffer = desc.memoryBuffer;
+            m_width = desc.width;
+            m_height = desc.height;
+        }
+    }
+
+    // Queue signal to Qt main thread
+    QMetaObject::invokeMethod(this, [this, newWidth, newHeight]() {
+        emit resolutionChanged(newWidth, newHeight);
     }, Qt::QueuedConnection);
 }
 
