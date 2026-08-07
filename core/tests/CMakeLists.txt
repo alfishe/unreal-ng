@@ -5,8 +5,8 @@ message(">> core/tests CMakeLists.txt")
 # Project named 'core-tests' on C++
 project(core-tests LANGUAGES CXX)
 
-# C++ standard (C++17 minimum required for std::filesystem)
-set(CMAKE_CXX_STANDARD 17)
+# C++ standard - MUST match the rest of the project (C++20) to avoid ABI mismatch
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
