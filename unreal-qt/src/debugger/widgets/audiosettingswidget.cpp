@@ -29,6 +29,10 @@ AudioSettingsWidget::~AudioSettingsWidget()
 
 void AudioSettingsWidget::setContext(EmulatorContext* context)
 {
+    // Stop timer FIRST to prevent race with stale context access
+    if (_meterTimer)
+        _meterTimer->stop();
+
     _context = context;
     refreshFromContext();
 }

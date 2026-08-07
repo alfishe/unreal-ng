@@ -6,7 +6,8 @@ if(APPLE)
     enable_language(OBJCXX)
 endif()
 
-# C++20 required - must match core library for ABI compatibility
+# C++ standard - MUST match the rest of the project (C++20)
+# ABI mismatch (different std::string/unordered_map layouts) causes crashes
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

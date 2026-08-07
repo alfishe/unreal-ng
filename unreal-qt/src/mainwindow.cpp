@@ -2242,6 +2242,19 @@ void MainWindow::handleEmulatorInstanceDestroyed(int id, Message* message)
                         }
 
                         deviceScreen->detach();
+
+                        // Clear context from audio/video settings widgets
+                        if (_audioSettingsWidget)
+                        {
+                            _audioSettingsWidget->setContext(nullptr);
+                        }
+#ifdef ENABLE_RECORDING
+                        if (_videoRecordingWidget)
+                        {
+                            _videoRecordingWidget->setContext(nullptr);
+                        }
+#endif
+
                         unsubscribeFromPerEmulatorEvents();
                         // Note: Don't call _emulator->ClearAudioCallback() - emulator is already being destroyed
                         _emulator = nullptr;

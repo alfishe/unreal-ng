@@ -22,6 +22,11 @@ if (NOT DEFINED ENABLE_CLI_AUTOMATION)
     option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
 endif()
 
+# Recording support - use parent setting if defined
+if (NOT DEFINED ENABLE_RECORDING)
+    option(ENABLE_RECORDING "Enable audio/video recording support" ON)
+endif()
+
 # C++ standard - use parent CMakeLists.txt setting when included from parent
 # (C++20 is now set globally in root CMakeLists.txt for all compilers)
 
@@ -48,6 +53,13 @@ if (ENABLE_AUTOMATION)
     endif()
     set(INCLUDE_AUTOMATION True)
 endif ()
+
+# Add recording library if enabled (skip if target already exists from parent build)
+if (ENABLE_RECORDING)
+    if (NOT TARGET unrealng::recording)
+        add_subdirectory("${ROOT_DIR}/core/recording" recording)
+    endif()
+endif()
 
 # ========================================
 # Platform-specific Qt path detection
@@ -244,20 +256,22 @@ if (INCLUDE_AUTOMATION)
         ${common_libraries}
         Qt6::Widgets
         unrealng::automation
+        $<$<BOOL:${ENABLE_RECORDING}>:unrealng::recording>
         ${CMAKE_DL_LIBS}
         Threads::Threads
     )
-    
+
     # Link Winsock and crash handler deps on Windows
     if (WIN32)
         target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32 dbghelp)
     endif ()
 else ()
     # Link without automation
-    target_link_libraries(${PROJECT_NAME} PRIVATE 
+    target_link_libraries(${PROJECT_NAME} PRIVATE
         ${common_libraries}
         Qt6::Widgets
         unrealng::core
+        $<$<BOOL:${ENABLE_RECORDING}>:unrealng::recording>
         Threads::Threads
     )
 endif ()
