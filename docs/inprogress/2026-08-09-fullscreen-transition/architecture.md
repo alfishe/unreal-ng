@@ -20,9 +20,11 @@ The emulator's screen is drawn by Metal into a `CAMetalLayer` that is hosted
 directly by the Qt content view (`[view setLayer:...]` + `setWantsLayer:YES`).
 Entering and leaving macOS **native** fullscreen — the kind that creates a
 separate Space, keeps the menu bar on hover, and shows the green-button
-behaviour users expect — must keep that picture **live, correctly positioned and
-correctly proportioned** for the whole transition. No frozen snapshot, no drift,
-no aspect squash, no flash of garbage.
+behaviour users expect — must keep that picture **real, correctly positioned and
+correctly proportioned** for the whole transition. No AppKit snapshot pasted over
+the window, no drift, no aspect squash, no flash of garbage. (The picture the
+user sees is always the genuine Metal layer; §10.4 documents the one honest
+limitation, namely that the emulator does not advance during the ~0.4 s zoom.)
 
 ### 1.2 The core principle
 
@@ -124,7 +126,7 @@ Three properties of the Qt/AppKit boundary compound the difficulty:
 |---|---|
 | **The Metal layer is layer-*hosting*, not layer-*backed*** (`[view setLayer:]` before `setWantsLayer:YES`) | AppKit does not manage the layer's geometry for us, and `NSView.layerContentsPlacement` **does not apply** to a hosting view's own layer. `CAMetalLayer` simply stretches the drawable to the bounds. |
 | **Qt owns child-view geometry, asynchronously** | Qt's widget sizes lag AppKit by one or more ticks during a transition. Reading `QWidget::width()` mid-transition returns a stale value; even `NSView.bounds` is stale at finalization time (§10.3). |
-| **Qt installs its own `QNSWindowDelegate`** | Ours must replace it and forward everything it does not override via `respondsToSelector:` + `forwardingTargetForSelector:`, or Qt stops receiving window lifecycle events — the visible symptom is that closing the window no longer quits the app (F13). |
+| **Qt installs its own `QNSWindowDelegate`** | Ours must replace it and forward everything it does not override via `respondsToSelector:` + `forwardingTargetForSelector:`, or Qt stops receiving window lifecycle events — the visible symptom is that closing the window no longer quits the app (S13). |
 
 Additionally, the render loop is a `CVDisplayLink` running on its **own thread**
 (the VLC/IINA/MoltenVK pattern), which was adopted precisely because the main
@@ -140,7 +142,7 @@ threading constraints in §8.
 | # | Requirement | Acceptance |
 |---|---|---|
 | R1 | Native fullscreen semantics are preserved | A real Space is created; menu bar reveals on hover; green button and `Ctrl+F`/`F11` both work |
-| R2 | The emulator picture is live throughout | No interval in which the same frame is shown twice at 60 Hz for a perceptible time |
+| R2 | The picture is **never a frozen snapshot pasted over the window** — the real layer stays on screen and keeps moving with the transition | AppKit's snapshot zoom is disabled; the content the user sees is the actual Metal layer at every instant. See §10.4 for the honest limit: the emulator does not *advance* during the ~0.4 s zoom itself |
 | R3 | The picture never changes aspect ratio | Content-to-content uniform scale at every instant, not just at the endpoints |
 | R4 | The picture never leaves its correct position | No drift, no slide, no jump at either endpoint |
 | R5 | No visual garbage | No stale-drawable crop, no flash of the pre-transition chrome, no black frames |
@@ -186,7 +188,7 @@ stated as rules because the code enforces them as rules.
 | `FullscreenHelper` (C++ namespace) | `FullscreenHelper.{h,mm}` | Install/uninstall; `enterFullscreen`/`exitFullscreen`; chrome hide/restore; `flushGraphics`; `ensureKeyboardFocus`; the `Delegate` interface | Hold any transition state |
 | `MainWindow` | `MainWindow.{h,cpp}` | The application-level state machine (`FullscreenState`); Qt chrome (menu/tool/status bars, palette); translating `zoomStarted`/`zoomFinished` into renderer calls; geometry restore | Compute any zoom geometry itself — it forwards the numbers verbatim |
 | `MetalScreenWidget` | `MetalScreenWidget.{h,mm}` | The `CAMetalLayer`, its `frame`/`drawableSize`/`transform`; the letterbox math; `prepareZoom`/`animateZoom`/`endZoom`; both present paths; the `CVDisplayLink` | Know anything about `NSWindow`, Spaces, or fullscreen state — it only knows "a zoom is active" |
-| `EmulatorWidget` | `emulator/EmulatorWidget.{h,cpp}` | Releasing held ZX keys at `willEnter`/`willExitFullscreen` (§10.5) | Anything graphical |
+| `EmulatorWidget` | `emulator/EmulatorWidget.{h,cpp}` | Releasing held ZX keys at `willEnter`/`willExitFullscreen` (S14) | Anything graphical |
 
 The dependency direction is strictly one-way: `FullscreenHelper` knows only the
 abstract `Delegate`; `MainWindow` implements it; only `MainWindow` talks to
@@ -272,13 +274,13 @@ tracks the finalization state. They are deliberately separate.
 stateDiagram-v2
     [*] --> Normal
 
-    Normal --> EnteringFullscreen: onToggleFullscreen()<br/>save geometry, setFullscreenLayout(aspect),<br/>hide bars + chrome, flush
+    Normal --> EnteringFullscreen: onToggleFullscreen — save geometry, setFullscreenLayout(aspect), hide bars + chrome, flush
     EnteringFullscreen --> EnteringFullscreen: resizeEvent IGNORED
-    EnteringFullscreen --> Fullscreen: didEnterFullscreen()<br/>+ QTimer 200ms
+    EnteringFullscreen --> Fullscreen: didEnterFullscreen + QTimer 200 ms
 
-    Fullscreen --> ExitingFullscreen: onToggleFullscreen()<br/>exitFullscreen()
+    Fullscreen --> ExitingFullscreen: onToggleFullscreen — exitFullscreen
     ExitingFullscreen --> ExitingFullscreen: resizeEvent IGNORED
-    ExitingFullscreen --> Normal: didExitFullscreen()<br/>restoreNormalStyle + chrome
+    ExitingFullscreen --> Normal: didExitFullscreen — restoreNormalStyle + chrome
 
     note right of EnteringFullscreen
         Re-entrancy guard: toggleFullscreenMacOS()
@@ -700,9 +702,12 @@ if (syncPresent) {
 | Sync | `YES` | `waitUntilScheduled`, measured 10–50 ms under load | Main thread only | `resizeEvent` (normal path), `endZoom` |
 | Async | `NO` | Never | Any thread | `CVDisplayLink` callback, `prepareZoom`, emulator frame updates |
 
-The per-frame toggle is the SDL2 pattern. Calling the sync path off the main
-thread, or during the Space switch, is what produced the 7 fps and ~680 ms
-`nextDrawable` measurements in [dead-ends.md](dead-ends.md).
+The per-frame toggle is the SDL2 pattern. Neither path is usable as a general
+frame source during a Space switch: the sync path blocks the main thread on a
+window server that is busy, and the async path is simply not composited — using
+it as the only frame source through the transition measured **~7 fps**, with
+`inFlight` pinned at 3 (dead-ends D1). `nextDrawable` itself was measured at up
+to ~680 ms in the same window.
 
 ---
 
@@ -973,28 +978,35 @@ with a resize simply waits — acceptable, and preferable to a torn frame.
 
 ## 9. Failure modes and the safeguard for each
 
+Safeguards are labelled **S1…S21** and are referenced by those labels throughout
+this document. They are a different numbering from the failure-class labels
+(`A1`, `B1`, `D5a`, `E2`, …) used in [dead-ends.md](dead-ends.md); where a
+safeguard exists *because* of a specific failed attempt, the attempt's label is
+cited in the last column.
+
 | # | Safeguard (where) | Artefact it prevents | Measured evidence |
 |---|---|---|---|
-| F1 | Window teleports; only the layer's `transform` animates (`startCustomAnimationTo*`) | Content drifting off to the bottom right on enter, mirrored on exit | Two interpolators (AppKit ~55 Hz app-side timer vs. render-server CA) agree only at endpoints |
-| F2 | `prepareZoom()` applies a **static** transform before `animateZoom()` | One-frame pop: the oversized layer visible at full size for a single frame | Direct observation; removing the static transform reproduces it |
-| F3 | `zoomTransformFor()` uses **uniform** `k` derived content-to-content | Aspect squash whenever window aspect ≠ screen aspect (i.e. always) | Per-axis `sx`/`sy` visibly distorts a 4:3 picture on a 16:9 screen |
-| F4 | `zoomContentRect()` duplicates `render()`'s viewport math exactly | Position snap at the animation endpoints | Any divergence shifts the picture where the eye is focused |
-| F5 | `m_zoomActive` freeze in **both** `resizeEvent()` and `updateDrawableSize()` | Qt writing layer geometry underneath a running animation | AppKit reframes the window several times around the transition |
-| F6 | Idempotent `finishZoomForWindow:` on first-of-two triggers, run **before** the delegate callback | Un-teleported fullscreen-sized window that Qt reads as "maximized" (phantom 3840×2055 frame) with the transform still attached | AppKit finished **576 ms** before our `dispatch_after` |
-| F7 | Teleport + settle inside `NSDisableScreenUpdates()` and one `CATransaction` | A small rectangle drawn at the fullscreen window's origin — the screen's top-left corner — for ~2 frames | Layer settled **~30 ms** before the window move reached the screen |
-| F8 | `display:NO` on the teleport and **no** `[CATransaction flush]` inside the lock | Whole display frozen, everything appearing at once at the end | With `display:YES` or a flush: **400–690 ms** freeze; the window server is busy tearing the Space down |
-| F9 | `endZoom()` renders **inside** the geometry transaction with a transaction-tied present | Garbage crop in the top-left corner on exit | Layer already small while contents were the old fullscreen drawable; `TopLeft` placement showed the crop until the next frame |
-| F10 | Chrome hidden + `layout()->activate()` + `repaint()` + `[CATransaction flush]` **before** `toggleFullScreen:` | Old title bar / toolbar / status bar baked into AppKit's capture and floating on top of the transition | Reproducible whenever the relayout is left asynchronous |
-| F11 | `hideWindowChrome()` does **not** touch the `styleMask` | `NSWindowStyleMaskFullSizeContentView` leaking through the Space transition and breaking the responder chain (dead keyboard) | Source comment records the measurement |
-| F12 | Exit teleports to `_originalFrame`, not `_originalContentRect` | Second visible jump after the animation, as AppKit corrects a 28 px-short window | Title-bar height, reproducible |
-| F13 | `respondsToSelector:` + `forwardingTargetForSelector:` to Qt's delegate | Closing the window no longer quits the app (Qt never sees the lifecycle events) | Immediate, deterministic |
-| F14 | `EmulatorWidget::releaseAllKeys()` in `willEnter`/`willExitFullscreen` | Stuck `SYM_SHIFT`: Cmd from the `Ctrl+F` shortcut enters the ZX matrix and its release is lost in the transition; keyboard dead until reset | Deterministic on every `Ctrl+F` |
-| F15 | Application-level key filter forwards only when `obj == windowHandle()` | Every key delivered four times (once per node of the Qt delivery chain) | Deterministic |
-| F16 | `ensureKeyboardFocus()` retried at 200 / 700 / 1500 ms | No keyboard input at all after the first fullscreen enter — AppKit leaves `firstResponder` on a transient chrome view or `nil`, which Qt-level `setFocus()` cannot fix | AppKit can re-steal `firstResponder` after our first restore |
-| F17 | `MainWindow::resizeEvent` early-returns in both transitional states | Qt-level relayout churn (bars reflowing) competing with the transition | — |
-| F18 | Re-entrancy guard at the top of `toggleFullscreenMacOS()` | A second toggle mid-transition overwriting `_originalFrame` with the fullscreen frame | — |
-| F19 | `_widgetMutex` in `MetalDisplayLinkHelper::stop()` | Use-after-free: a callback in flight while the widget is destroyed | — |
-| F20 | `setFullscreenLayout(screenAspect)` before the transition, `setFullscreenLayout(0)` in `willExitFullscreen` | Endpoint mismatch: the animation's identity end not matching the actual rendered composition | — |
+| S1 | Window teleports; only the layer's `transform` animates (`startCustomAnimationTo*`) | Content drifting off to the bottom right on enter, mirrored on exit | Two interpolators (AppKit ~55 Hz app-side timer vs. render-server CA) agree only at endpoints. dead-ends A1, A2 |
+| S2 | `prepareZoom()` applies a **static** transform before `animateZoom()` | One-frame pop: the oversized layer visible at full size for a single frame | Direct observation; removing the static transform reproduces it |
+| S3 | `zoomTransformFor()` uses **uniform** `k` derived content-to-content | Aspect squash whenever window aspect ≠ screen aspect (i.e. always) | Per-axis `sx`/`sy` visibly distorts a 4:3 picture on a 16:9 screen |
+| S4 | `zoomContentRect()` duplicates `render()`'s viewport math exactly | Position snap at the animation endpoints | Any divergence shifts the picture where the eye is focused |
+| S5 | `m_zoomActive` freeze in **both** `resizeEvent()` and `updateDrawableSize()` | Qt writing layer geometry underneath a running animation | AppKit reframes the window several times around the transition. dead-ends B1 |
+| S6 | Idempotent `finishZoomForWindow:` on first-of-two triggers, run **before** the delegate callback | Un-teleported fullscreen-sized window that Qt reads as "maximized" (phantom 3840×2055 frame) with the transform still attached | AppKit finished **576 ms** before our `dispatch_after`. dead-ends E2 |
+| S7 | Teleport + settle inside `NSDisableScreenUpdates()` and one `CATransaction` | A small rectangle drawn at the fullscreen window's origin — the screen's top-left corner — for ~2 frames | Layer settled **~30 ms** before the window move reached the screen. dead-ends F2 |
+| S8 | `display:NO` on the teleport and **no** `[CATransaction flush]` inside the lock | Whole display frozen, everything appearing at once at the end | With `display:YES` or a flush: **400–690 ms** freeze; the window server is busy tearing the Space down. dead-ends F2 |
+| S9 | `endZoom()` renders **inside** the geometry transaction with a transaction-tied present | Garbage crop in the top-left corner on exit | Layer already small while contents were the old fullscreen drawable; `TopLeft` placement showed the crop until the next frame. dead-ends E4 |
+| S10 | Chrome hidden + `layout()->activate()` + `repaint()` + `[CATransaction flush]` **before** `toggleFullScreen:` | Old title bar / toolbar / status bar baked into AppKit's capture and floating on top of the transition | Reproducible whenever the relayout is left asynchronous |
+| S11 | `hideWindowChrome()` does **not** touch the `styleMask` | `NSWindowStyleMaskFullSizeContentView` leaking through the Space transition and breaking the responder chain (dead keyboard) | Source comment records the measurement |
+| S12 | Exit teleports to `_originalFrame`, not `_originalContentRect` | Second visible jump after the animation, as AppKit corrects a 28 px-short window | Title-bar height, reproducible. dead-ends E3 |
+| S13 | `respondsToSelector:` + `forwardingTargetForSelector:` to Qt's delegate | Closing the window no longer quits the app (Qt never sees the lifecycle events) | Immediate, deterministic |
+| S14 | `EmulatorWidget::releaseAllKeys()` in `willEnter`/`willExitFullscreen` | Stuck `SYM_SHIFT`: Cmd from the `Ctrl+F` shortcut enters the ZX matrix and its release is lost in the transition; keyboard dead until reset | Deterministic on every `Ctrl+F` |
+| S15 | Application-level key filter forwards only when `obj == windowHandle()` | Every key delivered four times (once per node of the Qt delivery chain) | Deterministic |
+| S16 | `ensureKeyboardFocus()` retried at 200 / 700 / 1500 ms | No keyboard input at all after the first fullscreen enter — AppKit leaves `firstResponder` on a transient chrome view or `nil`, which Qt-level `setFocus()` cannot fix | AppKit can re-steal `firstResponder` after our first restore |
+| S17 | `MainWindow::resizeEvent` early-returns in both transitional states | Qt-level relayout churn (bars reflowing) competing with the transition | — |
+| S18 | Re-entrancy guard at the top of `toggleFullscreenMacOS()` | A second toggle mid-transition overwriting `_originalFrame` with the fullscreen frame | — |
+| S19 | `_widgetMutex` in `MetalDisplayLinkHelper::stop()` | Use-after-free: a callback in flight while the widget is destroyed | — |
+| S20 | `setFullscreenLayout(screenAspect)` before the transition, `setFullscreenLayout(0)` in `willExitFullscreen` | Endpoint mismatch: the animation's identity end not matching the actual rendered composition | — |
+| S21 | `displayLinkCallback()` returns early while `m_inTransition` — the display link is **silent** for the duration | Jerky, stale frames during the zoom: an async present is not tied to a transaction, so it puts a surface on screen that no longer matches where the render server has interpolated the transform to | Removal tried twice, the second time in isolation, and rejected both times on a user-visible regression. dead-ends D5, D5a; full reasoning in §10.4 |
 
 ---
 
@@ -1135,7 +1147,7 @@ additional *transaction-tied* frames at exactly those moments.
 |---|---|
 | Dead API surface | `FullscreenHelper::setCallbacks()` still takes `screenZoomIn`/`screenZoomOut` `std::function`s, and the delegate stores `_screenZoomIn`/`_screenZoomOut`, `_hideQtUI`, `_showQtUI`, `_originalScreenFrame`. None are invoked any more — the `Delegate` interface replaced them. Removing them would shrink the surface meaningfully. |
 | `static bool installed` in `toggleFullscreenMacOS()` | Function-local static, so a second `MainWindow` would never get a delegate installed. Fine for a single-window PoC; a latent bug otherwise. |
-| `hideTitleBar()` / `showTitleBar()` | Unused on the fullscreen path (they touch the `styleMask`, see F11) but still exported. Their presence invites the F11 bug. |
+| `hideTitleBar()` / `showTitleBar()` | Unused on the fullscreen path (they touch the `styleMask`) but still exported. Their presence invites the S11 bug. |
 | `setRenderingEnabled()` | Declared as "block all rendering during fullscreen transitions" but not used by the transition path. |
 | `NSViewLayerContentsPlacement` toggling in `setAnimating()` | Documented as a "safety net for animation frames BETWEEN our synced presents". With the teleport design there are no intermediate synced presents, so it may be residual. Unverified — and note that the analogous "obviously residual" argument about the display-link guard turned out to be wrong twice (§10.4), so test in isolation before removing. |
 | Multi-monitor | Untested. `[window screen] ?: [NSScreen mainScreen]` is the only screen selection, evaluated once at animation start. |
@@ -1171,8 +1183,8 @@ grep -E "\[EV\]|\[FS\]|\[MW\]" fullscreen-trace.log \
 | T4 | Window maximized before entering | Restores to maximized, not to `m_normalGeometry` |
 | T5 | Rapid `Ctrl+F` × 5 | Guard holds; no interleaved transitions; final state consistent with the completed toggles |
 | T6 | Enter, wait 5 s, exit; then enter/exit ten times in a row | No state-dependent race, no cumulative drift in the restored geometry |
-| T7 | Type on the ZX keyboard immediately after entering and after exiting | Keys register; no stuck `SYM_SHIFT` (F14); exactly one matrix event per key (F15) |
-| T8 | Close the window with the red button after a full cycle | Application quits (F13) |
+| T7 | Type on the ZX keyboard immediately after entering and after exiting | Keys register; no stuck `SYM_SHIFT` (S14); exactly one matrix event per key (S15) |
+| T8 | Close the window with the red button after a full cycle | Application quits (S13) |
 | T9 | Change video mode (different content aspect), then enter fullscreen | Correct pillar/letterboxing at both endpoints, no squash |
 | T10 | Enter fullscreen with the emulator **paused** | Static picture but correct geometry — isolates geometry bugs from frame-pacing bugs |
 | T11 | Menu bar reveals on hover; Mission Control shows the app as its own Space | Confirms R1 — it really is a native Space |
@@ -1181,12 +1193,12 @@ grep -E "\[EV\]|\[FS\]|\[MW\]" fullscreen-trace.log \
 
 | # | Assertion | Why |
 |---|---|---|
-| A1 | `zoom finish` appears exactly **once** per transition | F6 idempotency |
+| A1 | `zoom finish` appears exactly **once** per transition | S6 idempotency |
 | A2 | Its `reason` is `didEnterFullScreen` / `didExitFullScreen`, not `timer`, in the common case | Confirms AppKit still finishes early |
 | A3 | `[MW] zoomFinished` precedes `[FS] didEnterFullScreen` / `didExitFullScreen` in the log | Finalization must run before the delegate callback |
-| A4 | No `[MW] resizeEvent` is *processed* (not merely logged) between `zoomStarted` and `zoomFinished` | F5, F17 |
+| A4 | No `[MW] resizeEvent` is *processed* (not merely logged) between `zoomStarted` and `zoomFinished` | S5, S17 |
 | A5 | Present count between `zoomStarted` and `zoomFinished` | Expected: **1** (from `prepareZoom`). The display link is silent during a transition by design — §10.4. A higher count means the guard was removed; see dead-ends §D5a |
-| A6 | No gap > 50 ms between `zoomStarted` and `zoomFinished` | A gap there is a dropped-frame window |
+| A6 | `zoomFinished` follows `zoomStarted` by roughly the advertised duration, and no other `[MW]` or `[FS]` work is interleaved | The zoom window belongs to the render server alone; main-thread work in it is what jitters the handoff |
 | A7 | Gap after `zoomFinished` before `didExitFullScreen` ≈ 576 ms | Confirms the known Space-teardown cost, and that it has not grown |
 | A8 | `restoreNormalStyle START` → `END` ≈ 949 ms | Same |
 
