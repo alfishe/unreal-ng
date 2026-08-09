@@ -61,7 +61,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -89,7 +89,7 @@ jobs:
         run: cmake --build build --target package_suite_linux
 
       - name: Upload Linux artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: UnrealNG-Suite-Linux
           path: build/packages/UnrealNG-Suite-Linux.tar.gz
@@ -98,7 +98,7 @@ jobs:
 
       - name: Upload Linux symbols
         if: env.PACKAGE_SYMBOLS == 'ON'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: UnrealNG-Symbols-Linux
           path: build/packages/UnrealNG-Symbols-Linux.tar.gz
@@ -113,12 +113,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -133,7 +133,7 @@ jobs:
           cache: true
 
       - name: Setup MSVC
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: egor-tensin/vs-shell@v2
         with:
           arch: x64
 
@@ -159,7 +159,7 @@ jobs:
         run: cmake --build build --target package_suite_windows
 
       - name: Upload Windows MSVC artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: UnrealNG-Suite-Windows-MSVC
           path: build/packages/UnrealNG-Suite-Windows.zip
@@ -168,7 +168,7 @@ jobs:
 
       - name: Upload Windows MSVC symbols
         if: env.PACKAGE_SYMBOLS == 'ON'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: UnrealNG-Symbols-Windows-MSVC
           path: build/packages/UnrealNG-Symbols-Windows-MSVC.zip
@@ -183,7 +183,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -252,7 +252,7 @@ jobs:
           Move-Item -Path "build/packages/UnrealNG-Suite-Windows.zip" -Destination "build/packages/UnrealNG-Suite-Windows-MinGW.zip" -Force
 
       - name: Upload Windows MinGW artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: UnrealNG-Suite-Windows-MinGW
           path: build/packages/UnrealNG-Suite-Windows-MinGW.zip
@@ -261,7 +261,7 @@ jobs:
 
       - name: Upload Windows MinGW symbols
         if: env.PACKAGE_SYMBOLS == 'ON'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: UnrealNG-Symbols-Windows-MinGW
           path: build/packages/UnrealNG-Symbols-Windows-MinGW.zip
@@ -279,7 +279,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -309,7 +309,7 @@ jobs:
         run: cmake --build build --target package_suite_macos
 
       - name: Upload macOS artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: UnrealNG-Suite-macOS
           path: build/packages/UnrealNG-Suite.dmg
@@ -324,7 +324,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -363,7 +363,7 @@ jobs:
         run: mv build/packages/UnrealNG-Suite.dmg build/packages/UnrealNG-Suite-macOS-ARM64.dmg
 
       - name: Upload macOS ARM64 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: UnrealNG-Suite-macOS-ARM64
           path: build/packages/UnrealNG-Suite-macOS-ARM64.dmg
@@ -372,7 +372,7 @@ jobs:
 
       - name: Upload macOS ARM64 symbols
         if: env.PACKAGE_SYMBOLS == 'ON'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: UnrealNG-Symbols-macOS-ARM64
           path: build/packages/UnrealNG-Symbols-macOS.tar.gz
@@ -398,12 +398,12 @@ jobs:
     steps:
       # Need full git history for git-describe to work
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           path: artifacts
 
@@ -506,7 +506,7 @@ jobs:
       #
       - name: Create Milestone Release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           name: UnrealNG ${{ github.ref_name }}

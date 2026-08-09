@@ -447,9 +447,13 @@ void PortDecoder::PeripheralPortOut(uint16_t port, uint8_t value)
 /// region <Privileged operations for snapshot loading / debug>
 
 /// Unlock port 7FFD paging for snapshot loading or debug sessions
-/// Clears the lock bit (bit 5) in emulatorState.p7FFD, allowing subsequent port writes
+/// Clears both the emulatorState.p7FFD lock bit AND the hardware latch (_7FFD_Locked)
+/// This ensures subsequent port writes via DecodePortOut() will be accepted
 void PortDecoder::UnlockPaging()
 {
+    // Clear the hardware latch so Port_7FFD_Out() will accept writes
+    _7FFD_Locked = false;
+
     if (_state)
     {
         _state->p7FFD &= ~PORT_7FFD_LOCK;
@@ -458,9 +462,12 @@ void PortDecoder::UnlockPaging()
 }
 
 /// Lock port 7FFD paging (for emulation accuracy or testing)
-/// Sets the lock bit (bit 5) in emulatorState.p7FFD
+/// Sets both the emulatorState.p7FFD lock bit AND the hardware latch (_7FFD_Locked)
 void PortDecoder::LockPaging()
 {
+    // Set the hardware latch to match the lock bit
+    _7FFD_Locked = true;
+
     if (_state)
     {
         _state->p7FFD |= PORT_7FFD_LOCK;

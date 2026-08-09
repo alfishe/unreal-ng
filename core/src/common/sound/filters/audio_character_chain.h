@@ -104,6 +104,7 @@ public:
 
     /// Set punch parameters using a preset tuned for specific chip type
     void setPunchPreset(PunchPreset preset);
+    PunchPreset getPunchPreset() const { return _punchPreset; }
 
     /// Set custom punch parameters
     /// @param edgeBlend Constant +6dB/oct tilt amount (0.03-0.15 typical)
@@ -118,6 +119,7 @@ public:
     /// Set chip type - affects room simulation parameters
     /// Must be called before setRoomMode() to take effect
     void setChipType(ChipType type) { _chipType = type; }
+    ChipType getChipType() const { return _chipType; }
 
     void setRoomMode(RoomMode mode);
     RoomMode getRoomMode() const { return _roomMode; }
@@ -148,6 +150,7 @@ private:
     // - transBoost: envelope-gated attack boost
     // - attack/release: envelope follower time constants
     bool _punchEnabled = false;
+    PunchPreset _punchPreset = PunchPreset::AY;
     float _edgeBlend = 0.08f;   // Paula default; use 0.03 for AY
     float _transBoost = 0.2f;   // Paula default; use 0.1 for AY
     float _attack = 0.3f;       // Envelope attack speed

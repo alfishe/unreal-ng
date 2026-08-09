@@ -1,3 +1,10 @@
+// miniaudio.h includes <windows.h> on Windows. winsock2.h MUST be included before
+// windows.h to prevent type conflicts (see core's stdafx.h for the same pattern).
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+#endif
+
 #define MA_LOG_LEVEL 4
 #define MA_NO_DECODING
 #define MINIAUDIO_IMPLEMENTATION

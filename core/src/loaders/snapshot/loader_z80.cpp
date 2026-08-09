@@ -410,21 +410,33 @@ void LoaderZ80::commitFromStage()
         Memory& memory = *_context->pMemory;
         Screen& screen = *_context->pScreen;
         PortDecoder& ports = *_context->pPortDecoder;
+        Core& core = *_context->pCore;
+
+        // Reset Z80 and all peripherals for a clean state-independent load
+        // Ensures AY registers, beeper, FDC, tape, screen mode etc. are clean
+        core.Reset();
 
         /// region <Apply port configuration>
         switch (_memoryMode)
         {
             case Z80_48K: {
-                uint8_t port7FFD =
-                    PORT_7FFD_RAM_BANK_0 | PORT_7FFD_SCREEN_NORMAL | PORT_7FFD_ROM_BANK_1 | PORT_7FFD_LOCK;
-                ports.PeripheralPortOut(0x7FFD, port7FFD);
-                ports.PeripheralPortOut(0xFFFD, _portFFFD);
+                // Step 1: Unlock paging for state-independent loading
+                ports.UnlockPaging();
 
+                // Step 2: Configure 48K memory banks
                 memory.SetRAMPageToBank1(5);
                 memory.SetRAMPageToBank2(2);
                 memory.SetRAMPageToBank3(0);
-
                 memory.SetROM48k();
+
+                // Step 3: Set port values via decoder (goes through hardware logic)
+                uint8_t port7FFD =
+                    PORT_7FFD_RAM_BANK_0 | PORT_7FFD_SCREEN_NORMAL | PORT_7FFD_ROM_BANK_1 | PORT_7FFD_LOCK;
+                ports.DecodePortOut(0x7FFD, port7FFD, _z80Registers.pc);
+                ports.DecodePortOut(0xFFFD, _portFFFD, _z80Registers.pc);
+
+                // Step 4: Explicit state assignment
+                _context->emulatorState.p7FFD = port7FFD;
             }
             break;
             case Z80_128K:
@@ -439,15 +451,7 @@ void LoaderZ80::commitFromStage()
                 // This allows subsequent port writes to succeed even if previously locked
                 ports.UnlockPaging();
                 
-                // Step 2: Set the actual snapshot port values via port decoder
-                ports.PeripheralPortOut(0x7FFD, _port7FFD);
-                ports.PeripheralPortOut(0xFFFD, _portFFFD);
-                
-                // Step 3: Ensure emulatorState reflects snapshot's port value (including lock bit)
-                // PeripheralPortOut may not update emulatorState directly
-                _context->emulatorState.p7FFD = _port7FFD;
-                
-                // Step 4: Set up standard 128K memory mapping
+                // Step 2: Set up standard 128K memory mapping
                 // Bank 0 (0x0000-0x3FFF): ROM (set by UpdateZ80Banks based on port 7FFD bit 4)
                 // Bank 1 (0x4000-0x7FFF): RAM page 5 (fixed)
                 // Bank 2 (0x8000-0xBFFF): RAM page 2 (fixed)  
@@ -455,6 +459,13 @@ void LoaderZ80::commitFromStage()
                 memory.SetRAMPageToBank1(5);
                 memory.SetRAMPageToBank2(2);
                 memory.SetRAMPageToBank3(bank3Page);
+
+                // Step 3: Set port values via decoder (goes through hardware logic for ROM/screen)
+                ports.DecodePortOut(0x7FFD, _port7FFD, _z80Registers.pc);
+                ports.DecodePortOut(0xFFFD, _portFFFD, _z80Registers.pc);
+                
+                // Step 4: Ensure emulatorState reflects snapshot's port value (including lock bit)
+                _context->emulatorState.p7FFD = _port7FFD;
                 
                 // Step 5: Trigger ROM selection based on port 7FFD bit 4
                 memory.UpdateZ80Banks();
