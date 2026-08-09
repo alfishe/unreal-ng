@@ -196,6 +196,7 @@ void EmulatorWidget::handleKeyPress(QKeyEvent* event)
     quint8 zxKey = KeyboardManager::mapQtKeyToEmulatorKeyWithModifiers(event->key(), event->modifiers());
     if (zxKey != ZXKEY_NONE)
     {
+        m_pressedKeys.insert(zxKey);
         std::string targetId = m_emulator->GetUUID();
         KeyboardEvent* keyEvent = new KeyboardEvent(zxKey, KEY_PRESSED, targetId);
         MessageCenter::DefaultMessageCenter().Post(MC_KEY_PRESSED, keyEvent);
@@ -217,12 +218,29 @@ void EmulatorWidget::handleKeyRelease(QKeyEvent* event)
     quint8 zxKey = KeyboardManager::mapQtKeyToEmulatorKeyWithModifiers(event->key(), event->modifiers());
     if (zxKey != ZXKEY_NONE)
     {
+        m_pressedKeys.remove(zxKey);
         std::string targetId = m_emulator->GetUUID();
         KeyboardEvent* keyEvent = new KeyboardEvent(zxKey, KEY_RELEASED, targetId);
         MessageCenter::DefaultMessageCenter().Post(MC_KEY_RELEASED, keyEvent);
     }
 #else
     Q_UNUSED(event);
+#endif
+}
+
+void EmulatorWidget::releaseAllKeys()
+{
+#ifdef HAS_EMULATOR_CORE
+    if (!m_emulator || m_pressedKeys.isEmpty())
+        return;
+
+    std::string targetId = m_emulator->GetUUID();
+    for (quint8 zxKey : m_pressedKeys)
+    {
+        KeyboardEvent* keyEvent = new KeyboardEvent(zxKey, KEY_RELEASED, targetId);
+        MessageCenter::DefaultMessageCenter().Post(MC_KEY_RELEASED, keyEvent);
+    }
+    m_pressedKeys.clear();
 #endif
 }
 

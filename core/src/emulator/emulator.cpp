@@ -69,7 +69,8 @@ Emulator::~Emulator()
 
     if (_featureManager)
     {
-        _context->pFeatureManager = nullptr;
+        if (_context)
+            _context->pFeatureManager = nullptr;
         delete _featureManager;
         _featureManager = nullptr;
     }

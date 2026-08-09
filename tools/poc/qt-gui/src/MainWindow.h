@@ -34,9 +34,13 @@ public:
     void didEnterFullscreen() override;
     void willExitFullscreen() override;
     void didExitFullscreen() override;
+    void zoomStarted(double duration, int layerW, int layerH,
+                     int fromX, int fromY, int fromW, int fromH, bool reverse) override;
+    void zoomFinished() override;
 #endif
 
 protected:
+    bool eventFilter(QObject *obj, QEvent *event) override;
     void changeEvent(QEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;

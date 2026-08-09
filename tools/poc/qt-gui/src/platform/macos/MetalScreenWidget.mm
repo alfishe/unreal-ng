@@ -3,6 +3,9 @@
 
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <QuartzCore/CATransaction.h>
+#import <QuartzCore/CAAnimation.h>
+#import <QuartzCore/CAMediaTimingFunction.h>
 #import <CoreVideo/CVDisplayLink.h>
 #import <Cocoa/Cocoa.h>
 
@@ -58,6 +61,7 @@ fragment float4 fragmentShader(VertexOut in [[stage_in]],
 @public
     MetalScreenWidget* _widget;
     CVDisplayLinkRef _displayLink;
+    std::mutex _widgetMutex;  // Guards _widget against teardown race with callback thread
 }
 - (instancetype)initWithWidget:(MetalScreenWidget*)widget;
 - (void)start;
@@ -75,11 +79,14 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
                                      void* context)
 {
     MetalDisplayLinkHelper* helper = (__bridge MetalDisplayLinkHelper*)context;
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (helper && helper->_widget) {
-            helper->_widget->displayLinkCallback();
-        }
-    });
+    // Render directly on the CVDisplayLink thread (VLC/IINA/MoltenVK pattern).
+    // This keeps frames flowing even while the main thread is monopolized by
+    // AppKit's fullscreen Space transition — the cause of the ~1s render pause
+    // when rendering was dispatched to the main queue.
+    std::lock_guard<std::mutex> lock(helper->_widgetMutex);
+    if (helper->_widget) {
+        helper->_widget->displayLinkCallback();
+    }
     return kCVReturnSuccess;
 }
 
@@ -106,7 +113,11 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
 
 - (void)stop
 {
-    _widget = nullptr;  // Prevent callbacks from accessing destroyed widget
+    {
+        // Blocks until any in-flight callback finishes, then detaches the widget
+        std::lock_guard<std::mutex> lock(_widgetMutex);
+        _widget = nullptr;
+    }
     if (_displayLink) {
         CVDisplayLinkStop(_displayLink);
         CVDisplayLinkRelease(_displayLink);
@@ -152,6 +163,10 @@ MetalScreenWidget::MetalScreenWidget(QWidget* parent)
     setAttribute(Qt::WA_OpaquePaintEvent, true);
     setAttribute(Qt::WA_NoSystemBackground, true);
     setAutoFillBackground(false);
+    // Accept keyboard focus (ScreenWidget has this too) — without it,
+    // setFocus() after fullscreen transitions may leave the window with no
+    // focus widget at all
+    setFocusPolicy(Qt::StrongFocus);
 
     // No timer - rendering is driven by emulator frame events (NC_VIDEO_FRAME_REFRESH)
     // via updateFrame() which calls render()
@@ -191,8 +206,14 @@ void MetalScreenWidget::initMetal()
         m_impl->metalLayer.contentsScale = devicePixelRatioF();
         // Use 3 drawables for triple buffering to avoid stalls during resize
         m_impl->metalLayer.maximumDrawableCount = 3;
-        // Disable vsync to prevent blocking during resize
-        m_impl->metalLayer.displaySyncEnabled = NO;
+        // Enable vsync (PassThrough/CoreAnimation handles frame timing).
+        // This is the default and what SDL2/MoltenVK use. Combined with
+        // presentDrawable: (non-blocking) the CPU never waits for the GPU.
+        m_impl->metalLayer.displaySyncEnabled = YES;
+        // presentsWithTransaction is toggled per-frame in render() (SDL2 pattern):
+        // YES only for synchronous resize/transition presents, NO for the normal
+        // non-blocking path driven by the CVDisplayLink thread.
+        m_impl->metalLayer.presentsWithTransaction = NO;
 
         // Attach to native view
         NSView* view = (__bridge NSView*)(void*)winId();
@@ -204,7 +225,8 @@ void MetalScreenWidget::initMetal()
         m_impl->metalLayer.needsDisplayOnBoundsChange = YES;
 
         view.layerContentsRedrawPolicy = NSViewLayerContentsRedrawDuringViewResize;
-        view.layerContentsPlacement = NSViewLayerContentsPlacementCenter;
+        // TopLeft hides edge glitches during resize
+        view.layerContentsPlacement = NSViewLayerContentsPlacementTopLeft;
 
         // Compile shaders
         NSError* error = nil;
@@ -268,6 +290,7 @@ void MetalScreenWidget::initMetal()
 
 void MetalScreenWidget::cleanupMetal()
 {
+    std::lock_guard<std::mutex> lock(m_renderMutex);
     @autoreleasepool {
         m_impl->texture = nil;
         m_impl->sampler = nil;
@@ -312,8 +335,9 @@ void MetalScreenWidget::refresh()
     if (!m_metalInitialized)
         return;
 
+    // Upload texture data from emulator framebuffer
     if (m_impl->framebuffer && m_impl->framebufferWidth > 0 && m_impl->framebufferHeight > 0) {
-        // Upload from stored framebuffer pointer (like DeviceScreen::paintEvent reads devicePixels)
+        std::lock_guard<std::mutex> lock(m_renderMutex);
         @autoreleasepool {
             int width = m_impl->framebufferWidth;
             int height = m_impl->framebufferHeight;
@@ -340,7 +364,11 @@ void MetalScreenWidget::refresh()
         }
     }
 
-    render();
+    // When CVDisplayLink is active, it handles rendering at display refresh rate.
+    // Otherwise render immediately for responsive updates.
+    if (!m_animating) {
+        render();
+    }
 }
 
 void MetalScreenWidget::setFramebufferSize(int width, int height)
@@ -372,28 +400,34 @@ void MetalScreenWidget::updateFrame(const uint8_t* data, int width, int height)
     // Disable test pattern when receiving real frames
     m_impl->useTestPattern = false;
 
-    @autoreleasepool {
-        // Recreate texture if size changed
-        if (m_impl->textureWidth != width || m_impl->textureHeight != height) {
-            MTLTextureDescriptor* texDesc = [MTLTextureDescriptor
-                texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
-                                             width:width
-                                            height:height
-                                         mipmapped:NO];
-            texDesc.usage = MTLTextureUsageShaderRead;
-            m_impl->texture = [m_impl->device newTextureWithDescriptor:texDesc];
-            m_impl->textureWidth = width;
-            m_impl->textureHeight = height;
+    {
+        std::lock_guard<std::mutex> lock(m_renderMutex);
+        @autoreleasepool {
+            // Recreate texture if size changed
+            if (m_impl->textureWidth != width || m_impl->textureHeight != height) {
+                MTLTextureDescriptor* texDesc = [MTLTextureDescriptor
+                    texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                                 width:width
+                                                height:height
+                                             mipmapped:NO];
+                texDesc.usage = MTLTextureUsageShaderRead;
+                m_impl->texture = [m_impl->device newTextureWithDescriptor:texDesc];
+                m_impl->textureWidth = width;
+                m_impl->textureHeight = height;
+            }
+
+            // Upload pixel data
+            MTLRegion region = MTLRegionMake2D(0, 0, width, height);
+            [m_impl->texture replaceRegion:region
+                               mipmapLevel:0
+                                 withBytes:data
+                               bytesPerRow:width * 4];
         }
+    }
 
-        // Upload pixel data
-        MTLRegion region = MTLRegionMake2D(0, 0, width, height);
-        [m_impl->texture replaceRegion:region
-                           mipmapLevel:0
-                             withBytes:data
-                           bytesPerRow:width * 4];
-
-        // Render immediately after frame upload
+    // When the display link is running it presents this texture on its next
+    // tick; render here only if it isn't
+    if (!m_animating) {
         render();
     }
 }
@@ -444,10 +478,12 @@ void MetalScreenWidget::generateTestPattern()
     updateFrame(pixels.data(), w, h);
 }
 
-void MetalScreenWidget::render()
+void MetalScreenWidget::render(bool syncPresent)
 {
-    if (!m_metalInitialized || !m_impl->texture)
+    if (!m_metalInitialized || !m_impl->texture || !m_renderingEnabled)
         return;
+
+    std::lock_guard<std::mutex> lock(m_renderMutex);
 
     @autoreleasepool {
         // =====================================================================
@@ -557,19 +593,39 @@ void MetalScreenWidget::render()
         [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
 
         // =====================================================================
-        // Step 6: Submit to GPU
+        // Step 6: Submit to GPU (SDL2 pattern — two present paths)
+        //
+        // Sync path (resize/transition, main thread): presentsWithTransaction=YES,
+        // commit, waitUntilScheduled, then present the drawable directly. The
+        // present is tied to the current CATransaction so the new frame appears
+        // in the same commit as the window geometry change — no stretching or
+        // stale-content flash at the edges.
+        //
+        // Async path (normal, CVDisplayLink thread): presentsWithTransaction=NO,
+        // presentDrawable BEFORE commit — fully non-blocking, never stalls the
+        // calling thread.
         // =====================================================================
         [encoder endEncoding];
-        [cmdBuffer presentDrawable:drawable];
-        [cmdBuffer commit];
-        // Wait for completion to avoid exhausting drawable pool during rapid resize
-        [cmdBuffer waitUntilScheduled];
+        if (syncPresent) {
+            m_impl->metalLayer.presentsWithTransaction = YES;
+            [cmdBuffer commit];
+            [cmdBuffer waitUntilScheduled];
+            [drawable present];
+        } else {
+            m_impl->metalLayer.presentsWithTransaction = NO;
+            [cmdBuffer presentDrawable:drawable];
+            [cmdBuffer commit];
+        }
     }
 }
 
 void MetalScreenWidget::updateDrawableSize()
 {
     if (!m_impl->metalLayer)
+        return;
+
+    // While the zoom owns the layer nobody else touches its geometry
+    if (m_zoomActive.load(std::memory_order_relaxed))
         return;
 
     CGFloat scale = devicePixelRatioF();
@@ -591,11 +647,141 @@ QSize MetalScreenWidget::sizeHint() const
 void MetalScreenWidget::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
+    // During the zoom the layer is driven by the CA animation only; AppKit
+    // reframes the window several times around the transition and rendering
+    // those would fight the animation.
+    if (m_zoomActive.load(std::memory_order_relaxed)) {
+        emit resized(event->size());
+        return;
+    }
     updateDrawableSize();
-    // Render immediately during resize to keep content centered during animations.
-    // The triple-buffered CAMetalLayer handles this efficiently.
-    render();
+    // Synchronous transaction-tied present: the freshly-sized frame lands in
+    // the SAME CATransaction as the geometry change, so content stays glued to
+    // the window edges during live resize and fullscreen transitions.
+    render(true);
     emit resized(event->size());
+}
+
+// Letterbox rect of the content inside a box — identical math to render()'s
+// viewport, so a transform built from these maps content exactly onto content.
+static CGRect zoomContentRect(CGFloat boxW, CGFloat boxH,
+                              double targetAspect, double contentAspect)
+{
+    if (boxW <= 0 || boxH <= 0 || contentAspect <= 0)
+        return CGRectMake(0, 0, boxW, boxH);
+
+    CGFloat frameW = boxW, frameH = boxH;
+    if (targetAspect > 0) {
+        if (boxW / boxH > targetAspect) { frameH = boxH; frameW = boxH * targetAspect; }
+        else                            { frameW = boxW; frameH = boxW / targetAspect; }
+    }
+    CGFloat w, h;
+    if (contentAspect > (frameW / frameH)) { w = frameW; h = frameW / contentAspect; }
+    else                                   { h = frameH; w = frameH * contentAspect; }
+    return CGRectMake((boxW - w) / 2, (boxH - h) / 2, w, h);
+}
+
+CATransform3D MetalScreenWidget::zoomTransformFor(const QRect& rect) const
+{
+    const double contentAspect = (m_impl->textureWidth > 0 && m_impl->textureHeight > 0)
+        ? (double)m_impl->textureWidth / (double)m_impl->textureHeight : 4.0 / 3.0;
+
+    CGRect lb = m_impl->metalLayer.bounds;
+    CGRect cLayer = zoomContentRect(lb.size.width, lb.size.height,
+                                    m_impl->targetAspect, contentAspect);
+    CGRect cSmall = zoomContentRect(rect.width(), rect.height(), 0.0, contentAspect);
+
+    // UNIFORM scale: content-to-content, so the picture never gets squashed
+    CGFloat k = (cLayer.size.width > 0) ? (cSmall.size.width / cLayer.size.width) : 1.0;
+    CGFloat tx = rect.x() + cSmall.origin.x - k * cLayer.origin.x;
+    CGFloat ty = rect.y() + cSmall.origin.y - k * cLayer.origin.y;
+
+    return CATransform3DConcat(CATransform3DMakeScale(k, k, 1),
+                               CATransform3DMakeTranslation(tx, ty, 0));
+}
+
+void MetalScreenWidget::prepareZoom(const QSize& layerSize, const QRect& contentBox)
+{
+    if (!m_metalInitialized || layerSize.isEmpty())
+        return;
+
+    @autoreleasepool {
+        CGFloat scale = devicePixelRatioF();
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        m_impl->metalLayer.frame = CGRectMake(0, 0, layerSize.width(), layerSize.height());
+        m_impl->metalLayer.drawableSize =
+            CGSizeMake(layerSize.width() * scale, layerSize.height() * scale);
+        // Static transform: the oversized layer already appears exactly where
+        // the content is now, so switching to the zoom layout is invisible.
+        m_impl->metalLayer.transform =
+            contentBox.isEmpty() ? CATransform3DIdentity : zoomTransformFor(contentBox);
+        [CATransaction commit];
+    }
+
+    m_zoomActive.store(true, std::memory_order_relaxed);
+    render(false);   // one frame at the new layout, plain async present
+}
+
+void MetalScreenWidget::animateZoom(const QRect& fromRect, double duration, bool reverse)
+{
+    if (!m_metalInitialized || fromRect.isEmpty())
+        return;
+
+    @autoreleasepool {
+        CATransform3D small = zoomTransformFor(fromRect);
+
+        // Model goes to its final value immediately; the animation only drives
+        // presentation. One animator (the render server) — nothing to desync.
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        m_impl->metalLayer.transform = reverse ? small : CATransform3DIdentity;
+        [CATransaction commit];
+
+        CABasicAnimation* a = [CABasicAnimation animationWithKeyPath:@"transform"];
+        a.fromValue = [NSValue valueWithCATransform3D:(reverse ? CATransform3DIdentity : small)];
+        a.toValue = [NSValue valueWithCATransform3D:(reverse ? small : CATransform3DIdentity)];
+        a.duration = duration > 0 ? duration : 0.4;
+        a.timingFunction =
+            [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+        a.removedOnCompletion = NO;
+        a.fillMode = kCAFillModeForwards;
+        [m_impl->metalLayer addAnimation:a forKey:@"fsZoom"];
+    }
+}
+
+void MetalScreenWidget::endZoom()
+{
+    if (!m_metalInitialized)
+        return;
+
+    m_zoomActive.store(false, std::memory_order_relaxed);
+
+    @autoreleasepool {
+        NSView* view = (__bridge NSView*)(void*)winId();
+        NSRect vb = [view bounds];           // Qt's size still lags here
+        CGFloat scale = devicePixelRatioF();
+
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        [m_impl->metalLayer removeAnimationForKey:@"fsZoom"];
+        m_impl->metalLayer.transform = CATransform3DIdentity;
+        if (vb.size.width > 0 && vb.size.height > 0) {
+            m_impl->metalLayer.frame = CGRectMake(0, 0, vb.size.width, vb.size.height);
+            m_impl->metalLayer.drawableSize =
+                CGSizeMake(vb.size.width * scale, vb.size.height * scale);
+        }
+
+        // Draw the first frame at the new size INSIDE this transaction, with a
+        // transaction-tied present. Rendering after the commit left the layer
+        // already small while its contents were still the old full-screen
+        // drawable: TopLeft placement showed that as a garbage crop in the top
+        // left corner, and the real frame arriving a moment later read as a
+        // jump there and back.
+        render(true);
+
+        [CATransaction commit];
+    }
 }
 
 void MetalScreenWidget::showEvent(QShowEvent* event)
@@ -603,7 +789,16 @@ void MetalScreenWidget::showEvent(QShowEvent* event)
     QWidget::showEvent(event);
     if (!m_metalInitialized) {
         // Delay init slightly to ensure window is ready
-        QTimer::singleShot(0, this, &MetalScreenWidget::initMetal);
+        QTimer::singleShot(0, this, [this]() {
+            initMetal();
+            // Start permanent always-on rendering (SDL2 pattern).
+            // CVDisplayLink drives rendering at display refresh rate for
+            // the lifetime of the widget. Emulator frame events only update
+            // texture data; the display link handles presentation.
+            if (m_metalInitialized) {
+                setContinuousRendering(true);
+            }
+        });
     }
 }
 
@@ -660,8 +855,37 @@ void MetalScreenWidget::setFullscreenLayout(double targetAspect)
     m_impl->targetAspect = targetAspect;
 }
 
+void MetalScreenWidget::setContinuousRendering(bool enabled)
+{
+    m_continuousRendering = enabled;
+    if (enabled && !m_animating) {
+        m_animating = true;
+        startDisplayLink();
+    }
+}
+
 void MetalScreenWidget::setAnimating(bool animating)
 {
+    // Transition flag always tracked — resize renders during a transition use
+    // the synchronous transaction path
+    m_inTransition = animating;
+
+    // Safety net for animation frames BETWEEN our synced presents: scale the
+    // last presented (letterboxed) frame proportionally instead of pinning it
+    // top-left. TopLeft returns after the transition (best for interactive
+    // live resize).
+    if (m_metalInitialized) {
+        NSView* view = (__bridge NSView*)(void*)winId();
+        view.layerContentsPlacement = animating
+            ? NSViewLayerContentsPlacementScaleProportionallyToFit
+            : NSViewLayerContentsPlacementTopLeft;
+    }
+
+    // When continuous rendering is active, the display link runs permanently.
+    // Transition code can call setAnimating() freely — nothing to start/stop.
+    if (m_continuousRendering)
+        return;
+
     if (m_animating == animating)
         return;
 
@@ -694,9 +918,23 @@ void MetalScreenWidget::stopDisplayLink()
 
 void MetalScreenWidget::displayLinkCallback()
 {
+    // Runs on the CVDisplayLink thread. No Qt geometry access, no layer.frame
+    // changes here — resizeEvent (main thread) owns drawable size updates.
     if (!m_animating || !m_metalInitialized)
         return;
 
-    updateDrawableSize();
-    render();
+    // SILENT during fullscreen transitions. Async presents here land outside
+    // the transactions that carry the geometry, so during the zoom the
+    // compositor shows stale surfaces — measured as jerky playback of old
+    // frames, visibly worse and slower than staying silent. The only renders
+    // in a transition are the single transaction-tied ones from prepareZoom()
+    // and endZoom(); the transform animation supplies the motion.
+    //
+    // TRIED AND REVERTED TWICE: removing this guard. It does remove a short
+    // freeze in the dead zones before/after the zoom, but the stale-frame
+    // jerking during the zoom itself is a much worse trade.
+    if (m_inTransition)
+        return;
+
+    render(false);
 }

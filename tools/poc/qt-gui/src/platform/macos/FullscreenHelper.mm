@@ -23,7 +23,11 @@
     std::function<void()> _showQtUI;
     std::function<void(int, int, int, int, double)> _screenZoomIn;
     std::function<void(int, int, int, int, double)> _screenZoomOut;
+    __weak id<NSWindowDelegate> _qtDelegate;  // Qt's original QNSWindowDelegate
+    BOOL _zoomFinished;          // idempotency guard
+    NSRect _pendingTeleport;     // frame to jump to when the zoom ends (exit)
 }
+@property (nonatomic, weak) id<NSWindowDelegate> qtDelegate;
 @property (nonatomic, assign) FullscreenHelper::Delegate* delegate;
 @property (nonatomic, assign) NSRect originalFrame;
 @property (nonatomic, assign) NSRect originalScreenFrame;
@@ -70,69 +74,114 @@
     _screenZoomOut = func;
 }
 
-#pragma mark - Custom Fullscreen Animation (Enter)
+#pragma mark - Forwarding to Qt's delegate
+// We REPLACE Qt's QNSWindowDelegate on the NSWindow, so every delegate method
+// we don't override ourselves must be forwarded to it — otherwise Qt never
+// hears about window lifecycle events. Symptom of not forwarding: closing the
+// window via the red button bypasses Qt entirely (no closeEvent, app doesn't
+// quit on last window close).
+
+- (BOOL)respondsToSelector:(SEL)aSelector
+{
+    return [super respondsToSelector:aSelector]
+        || [_qtDelegate respondsToSelector:aSelector];
+}
+
+- (id)forwardingTargetForSelector:(SEL)aSelector
+{
+    if ([_qtDelegate respondsToSelector:aSelector])
+        return _qtDelegate;
+    return [super forwardingTargetForSelector:aSelector];
+}
+
+#pragma mark - Custom Fullscreen Animation (live Metal, no snapshots)
+// Returning the window from customWindowsToEnter/ExitFullScreenForWindow tells
+// AppKit NOT to snapshot-zoom it. We animate the REAL window frame instead:
+// every animator tick delivers a genuine resize -> Qt relayout -> synchronous
+// presentsWithTransaction Metal render glued to that tick's CATransaction.
+// The content is therefore LIVE at full rate during the whole zoom.
 
 - (NSArray<NSWindow*>*)customWindowsToEnterFullScreenForWindow:(NSWindow*)window
 {
     FS_LOG("customWindowsToEnterFullScreenForWindow");
 
-    // Save original frame FIRST, and the content rect while the styleMask is
-    // still the normal one (in fullscreen contentRectForFrameRect is identity,
-    // so it must be computed now).
+    // Save frames while the styleMask is still the windowed one
     _originalFrame = [window frame];
     _originalContentRect = [window contentRectForFrameRect:_originalFrame];
 
-    NSScreen* screen = [window screen] ?: [NSScreen mainScreen];
-    NSRect screenFrame = [screen frame];
-
-    // Immediately hide Qt UI and title bar chrome to prevent visible relayout
-    // during the Space transition. Do NOT touch the styleMask
-    // (FullSizeContentView): AppKit captures and restores the mask around the
-    // transition, and any modification here leaks back on exit, growing the
-    // content area by the title bar height on every fullscreen cycle.
-    if (_hideQtUI) _hideQtUI();
-
-    [[window standardWindowButton:NSWindowCloseButton] setHidden:YES];
-    [[window standardWindowButton:NSWindowMiniaturizeButton] setHidden:YES];
-    [[window standardWindowButton:NSWindowZoomButton] setHidden:YES];
-    [window setTitleVisibility:NSWindowTitleHidden];
-    [window setBackgroundColor:[NSColor blackColor]];
-
-    // Cover the screen with the CONTENT area: extend the frame upward so the
-    // title bar strip sits above the visible screen edge. This avoids the
-    // FullSizeContentView hack while still showing fullscreen content
-    // immediately during the Space transition.
-    CGFloat titlebarH = NSHeight([window frame])
-        - NSHeight([window contentRectForFrameRect:[window frame]]);
-    NSRect coverFrame = screenFrame;
-    coverFrame.size.height += titlebarH;
-    [window setFrame:coverFrame display:YES animate:NO];
-
-    // Trigger screen widget zoom animation to fullscreen target
-    if (_screenZoomIn) {
-        int targetW = static_cast<int>(screenFrame.size.width);
-        int targetH = static_cast<int>(screenFrame.size.height);
-        int targetX = 0;
-        int targetY = 0;
-        _screenZoomIn(targetX, targetY, targetW, targetH, 0.3);
-    }
-
-    FS_LOG("set frame to fullscreen immediately");
-
-    // Return the window itself - tells AppKit we'll handle animation
     return @[window];
 }
 
+// The window TELEPORTS to its destination; the visible zoom is a single CA
+// transform animation on the Metal layer. Two animators (NSWindow's app-side
+// timer and CA's render-server bezier) can never track each other mid-motion,
+// which is what produced every drift artefact.
 - (void)window:(NSWindow*)window startCustomAnimationToEnterFullScreenWithDuration:(NSTimeInterval)duration
 {
     FS_LOG("startCustomAnimationToEnterFullScreen duration=" << duration);
 
-    // Frame already set in customWindowsToEnterFullScreenForWindow
-    // No animation needed - just signal completion immediately
-    FS_LOG("enter animation complete (instant)");
+    NSScreen* screen = [window screen] ?: [NSScreen mainScreen];
+    NSRect screenFrame = [screen frame];
+    NSTimeInterval animDuration = duration > 0 ? duration : 0.4;
+
+    NSRect oldContent = _originalContentRect;
+    _zoomFinished = NO;
+    _pendingTeleport = NSZeroRect;   // enter teleports right now, not at the end
+
+    // Teleport + animation start in ONE commit: no frame may show the layer
+    // full-size at identity before the animation is attached.
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+
+    [window setFrame:screenFrame display:NO animate:NO];
+    NSRect newContent = [window contentRectForFrameRect:screenFrame];
+
+    // Where the old content sits inside the new content area (flipped coords)
+    CGFloat fromX = oldContent.origin.x - newContent.origin.x;
+    CGFloat fromYTop = (newContent.origin.y + newContent.size.height)
+                     - (oldContent.origin.y + oldContent.size.height);
+
+    if (_delegate) {
+        _delegate->zoomStarted(animDuration,
+                               (int)newContent.size.width, (int)newContent.size.height,
+                               (int)fromX, (int)fromYTop,
+                               (int)oldContent.size.width, (int)oldContent.size.height,
+                               false);
+    }
+    [CATransaction commit];
+
+    FullscreenWindowDelegate* __weak weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((animDuration + 0.03) * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        [weakSelf finishZoomForWindow:window reason:"timer"];
+    });
 }
 
-#pragma mark - Custom Fullscreen Animation (Exit)
+// Idempotent: runs on whichever trigger comes first — our timer or AppKit's
+// own did-enter/did-exit. AppKit does NOT honour our duration (traced: it
+// finished 576ms before our timer), so waiting only for the timer left the
+// window un-teleported with the zoom transform still attached.
+- (void)finishZoomForWindow:(NSWindow*)window reason:(const char*)reason
+{
+    if (_zoomFinished)
+        return;
+    _zoomFinished = YES;
+
+    FS_LOG("zoom finish (" << reason << ")");
+
+    // Teleport (exit only) and layer settle must reach the screen together
+    NSDisableScreenUpdates();
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    if (!NSEqualRects(_pendingTeleport, NSZeroRect))
+        [window setFrame:_pendingTeleport display:NO animate:NO];
+    if (_delegate)
+        _delegate->zoomFinished();
+    [CATransaction commit];
+    NSEnableScreenUpdates();
+
+    _pendingTeleport = NSZeroRect;
+}
 
 - (NSArray<NSWindow*>*)customWindowsToExitFullScreenForWindow:(NSWindow*)window
 {
@@ -144,42 +193,39 @@
 {
     FS_LOG("startCustomAnimationToExitFullScreen duration=" << duration);
 
-    // Animate to the original CONTENT rect, not the original frame. The window
-    // is still borderless (fullscreen styleMask) during this animation; when
-    // AppKit restores the title bar ~1s later in didExitFullScreen, the frame
-    // grows upward by the title bar height while the content stays put —
-    // instead of the content visibly snapping 28px shorter at the very end.
-    NSRect targetFrame = NSEqualRects(_originalContentRect, NSZeroRect)
-        ? [window frame] : _originalContentRect;
+    // The window stays fullscreen for the whole zoom and teleports at the end.
+    NSRect targetFrame = NSEqualRects(_originalFrame, NSZeroRect)
+        ? [window frame] : _originalFrame;
+    NSRect targetContent = NSEqualRects(_originalContentRect, NSZeroRect)
+        ? targetFrame : _originalContentRect;
+    NSTimeInterval animDuration = duration > 0 ? duration : 0.3;
 
-    // Instant: restore title bar chrome (styleMask untouched, nothing to undo)
-    [window setTitleVisibility:NSWindowTitleVisible];
-    [window setBackgroundColor:nil];
-    [[window standardWindowButton:NSWindowCloseButton] setHidden:NO];
-    [[window standardWindowButton:NSWindowMiniaturizeButton] setHidden:NO];
-    [[window standardWindowButton:NSWindowZoomButton] setHidden:NO];
-    [[window standardWindowButton:NSWindowCloseButton] setAlphaValue:1];
-    [[window standardWindowButton:NSWindowMiniaturizeButton] setAlphaValue:1];
-    [[window standardWindowButton:NSWindowZoomButton] setAlphaValue:1];
+    NSRect curContent = [window contentRectForFrameRect:[window frame]];
+    CGFloat toX = targetContent.origin.x - curContent.origin.x;
+    CGFloat toYTop = (curContent.origin.y + curContent.size.height)
+                   - (targetContent.origin.y + targetContent.size.height);
 
-    // Fast shrink animation
-    [NSAnimationContext runAnimationGroup:^(NSAnimationContext* context) {
-        context.duration = 0.18;
-        context.allowsImplicitAnimation = YES;
+    _zoomFinished = NO;
+    _pendingTeleport = targetFrame;
 
-        [[window animator] setFrame:targetFrame display:YES];
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    if (_delegate) {
+        _delegate->zoomStarted(animDuration,
+                               (int)curContent.size.width, (int)curContent.size.height,
+                               (int)toX, (int)toYTop,
+                               (int)targetContent.size.width, (int)targetContent.size.height,
+                               true);
+    }
+    [CATransaction commit];
 
-    } completionHandler:^{
-        FS_LOG("exit animation complete");
-        // Restore the Qt UI (menu/tool/status bars, palette) right at the tail
-        // of the animation instead of ~1s later in didExitFullScreen — the
-        // relayout blends into the animation end instead of being a standalone
-        // hiccup after everything looks settled.
-        if (_showQtUI) _showQtUI();
-        _originalFrame = NSZeroRect;
-        _originalContentRect = NSZeroRect;
-    }];
+    FullscreenWindowDelegate* __weak weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((animDuration + 0.03) * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        [weakSelf finishZoomForWindow:window reason:"timer"];
+    });
 }
+
 
 #pragma mark - Standard Fullscreen Notifications
 
@@ -193,6 +239,10 @@
 
 - (void)windowDidEnterFullScreen:(NSNotification*)notification
 {
+    // BEFORE the delegate callback: AppKit is about to reframe the window and
+    // the zoom must already be settled by then
+    [self finishZoomForWindow:[notification object] reason:"didEnterFullScreen"];
+
     FS_LOG("didEnterFullScreen");
     if (_delegate)
         _delegate->didEnterFullscreen();
@@ -207,6 +257,8 @@
 
 - (void)windowDidExitFullScreen:(NSNotification*)notification
 {
+    [self finishZoomForWindow:[notification object] reason:"didExitFullScreen"];
+
     FS_LOG("didExitFullScreen");
     // Qt UI already shown in the exit-animation completion handler
     if (_delegate)
@@ -242,12 +294,14 @@ void install(QWindow* window, Delegate* delegate)
     // Remove existing
     uninstall(window);
 
-    // Create and set our delegate
+    // Create and set our delegate, keeping a reference to Qt's original
+    // delegate — all methods we don't override are forwarded to it
     FullscreenWindowDelegate* fsDelegate = [[FullscreenWindowDelegate alloc] initWithDelegate:delegate];
+    fsDelegate.qtDelegate = [nsWindow delegate];
     [nsWindow setDelegate:fsDelegate];
     [g_delegates setObject:fsDelegate forKey:key];
 
-    FS_LOG("installed custom fullscreen delegate");
+    FS_LOG("installed custom fullscreen delegate (forwarding to Qt delegate)");
 }
 
 void uninstall(QWindow* window)
@@ -262,7 +316,7 @@ void uninstall(QWindow* window)
     FullscreenWindowDelegate* fsDelegate = [g_delegates objectForKey:key];
     if (fsDelegate) {
         if ([nsWindow delegate] == fsDelegate)
-            [nsWindow setDelegate:nil];
+            [nsWindow setDelegate:fsDelegate.qtDelegate];  // Restore Qt's delegate
         [g_delegates removeObjectForKey:key];
     }
 }
@@ -392,6 +446,82 @@ QSize fullscreenSize(QWindow* window)
 void flushGraphics()
 {
     [CATransaction flush];
+}
+
+void hideWindowChrome(QWindow* window)
+{
+    if (!window)
+        return;
+
+    NSView* view = (__bridge NSView*)(void*)window->winId();
+    NSWindow* nsWindow = [view window];
+
+    // ONE non-animated batch. Deliberately does NOT touch the styleMask
+    // (leaks through the Space transition and breaks the responder chain).
+    [NSAnimationContext beginGrouping];
+    [[NSAnimationContext currentContext] setDuration:0];
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+
+    [[nsWindow standardWindowButton:NSWindowCloseButton] setHidden:YES];
+    [[nsWindow standardWindowButton:NSWindowMiniaturizeButton] setHidden:YES];
+    [[nsWindow standardWindowButton:NSWindowZoomButton] setHidden:YES];
+    [nsWindow setTitleVisibility:NSWindowTitleHidden];
+    [nsWindow setTitlebarAppearsTransparent:YES];
+    [nsWindow setBackgroundColor:[NSColor blackColor]];
+
+    [CATransaction commit];
+    [NSAnimationContext endGrouping];
+
+    FS_LOG("hideWindowChrome done");
+}
+
+void restoreWindowChrome(QWindow* window)
+{
+    if (!window)
+        return;
+
+    NSView* view = (__bridge NSView*)(void*)window->winId();
+    NSWindow* nsWindow = [view window];
+
+    [NSAnimationContext beginGrouping];
+    [[NSAnimationContext currentContext] setDuration:0];
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+
+    [[nsWindow standardWindowButton:NSWindowCloseButton] setHidden:NO];
+    [[nsWindow standardWindowButton:NSWindowMiniaturizeButton] setHidden:NO];
+    [[nsWindow standardWindowButton:NSWindowZoomButton] setHidden:NO];
+    [[nsWindow standardWindowButton:NSWindowCloseButton] setAlphaValue:1];
+    [[nsWindow standardWindowButton:NSWindowMiniaturizeButton] setAlphaValue:1];
+    [[nsWindow standardWindowButton:NSWindowZoomButton] setAlphaValue:1];
+    [nsWindow setTitleVisibility:NSWindowTitleVisible];
+    [nsWindow setTitlebarAppearsTransparent:NO];
+    [nsWindow setBackgroundColor:nil];
+
+    [CATransaction commit];
+    [NSAnimationContext endGrouping];
+
+    FS_LOG("restoreWindowChrome done");
+}
+
+void ensureKeyboardFocus(QWindow* window)
+{
+    if (!window)
+        return;
+
+    NSView* view = (__bridge NSView*)(void*)window->winId();
+    NSWindow* nsWindow = [view window];
+    if (!nsWindow)
+        return;
+
+    NSResponder* current = [nsWindow firstResponder];
+    FS_LOG("ensureKeyboardFocus: firstResponder=" << [NSStringFromClass([current class]) UTF8String]
+           << (current == view ? " (qt view, ok)" : " -> restoring to qt view"));
+
+    if (current != view) {
+        [nsWindow makeFirstResponder:view];
+    }
 }
 
 } // namespace FullscreenHelper

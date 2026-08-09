@@ -49,48 +49,12 @@ qt_standard_project_setup()
 
 # Build core library if not already available (standalone build)
 if(NOT TARGET unrealng::core)
-    # For standalone builds, we need the core library
-    # Option 1: Build from unified root (recommended)
-    # Option 2: Use pre-built library
-    message(STATUS "unrealng::core not found - checking for standalone core build")
-
-    # Try to find pre-built core library
-    find_library(CORE_LIBRARY
-        NAMES core libcore
-        PATHS "${ROOT_DIR}/cmake-build-release/lib"
-              "${ROOT_DIR}/cmake-build-debug/lib"
-              "${ROOT_DIR}/build/lib"
-        NO_DEFAULT_PATH
-    )
-
-    if(CORE_LIBRARY)
-        message(STATUS "Found pre-built core library: ${CORE_LIBRARY}")
-
-        # Also find recording library (core depends on it)
-        find_library(RECORDING_LIBRARY
-            NAMES recording librecording
-            PATHS "${ROOT_DIR}/cmake-build-release/lib"
-                  "${ROOT_DIR}/cmake-build-debug/lib"
-                  "${ROOT_DIR}/build/lib"
-            NO_DEFAULT_PATH
-        )
-
-        add_library(unrealng::core STATIC IMPORTED)
-        set_target_properties(unrealng::core PROPERTIES
-            IMPORTED_LOCATION "${CORE_LIBRARY}"
-            INTERFACE_INCLUDE_DIRECTORIES "${CORE_DIR};${ROOT_DIR}/core"
-        )
-
-        if(RECORDING_LIBRARY)
-            message(STATUS "Found pre-built recording library: ${RECORDING_LIBRARY}")
-            add_library(unrealng::recording STATIC IMPORTED)
-            set_target_properties(unrealng::recording PROPERTIES
-                IMPORTED_LOCATION "${RECORDING_LIBRARY}"
-            )
-        endif()
+    # Add core as subdirectory so it rebuilds automatically when sources change
+    if(EXISTS "${ROOT_DIR}/core/src/CMakeLists.txt")
+        message(STATUS "Adding core library as subdirectory for automatic rebuilds")
+        add_subdirectory("${ROOT_DIR}/core/src" "${CMAKE_CURRENT_BINARY_DIR}/core")
     else()
-        message(WARNING "Core library not found. Build from root CMakeLists.txt or build core first.")
-        message(STATUS "Tip: cmake -B build -S ${ROOT_DIR} && cmake --build build --target core")
+        message(FATAL_ERROR "Core library source not found at ${ROOT_DIR}/core/src/CMakeLists.txt")
     endif()
 endif()
 

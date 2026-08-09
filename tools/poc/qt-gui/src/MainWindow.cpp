@@ -99,30 +99,44 @@ MainWindow::MainWindow(QWidget *parent)
     // Enable drag and drop
     setAcceptDrops(true);
 
+    // Application-level key forwarding: emulator receives keyboard input
+    // whenever ANY widget of this window has focus (screen, toolbar, frame...),
+    // not only when events bubble up to MainWindow::keyPressEvent. This
+    // survives focus shuffling caused by fullscreen transitions.
+    qApp->installEventFilter(this);
+
     flash(tr("Ready — %1").arg(m_machine));
 }
 
 MainWindow::~MainWindow()
 {
+    // 1. Disconnect emulator signals to prevent frameReady/resolutionChanged
+    //    callbacks from reaching screen widget during destruction
+    if (m_emulator) {
+        m_emulator->disconnect(this);
+    }
+
 #ifdef Q_OS_MACOS
-    // Stop display link first to prevent callbacks during destruction
+    // 2. Stop display link first to prevent render callbacks during destruction.
+    //    Must disable continuous rendering guard before setAnimating(false) can stop it.
+    m_screen->setContinuousRendering(false);
     m_screen->setAnimating(false);
     FullscreenHelper::uninstall(windowHandle());
 #endif
 
-    // Clear audio callback before stopping
+    // 3. Clear audio callback before stopping emulator
 #ifdef HAS_EMULATOR_CORE
     if (m_emulator && m_emulator->emulator()) {
         m_emulator->emulator()->ClearAudioCallback();
     }
 #endif
 
-    // Stop emulator
+    // 4. Stop emulator (this calls Emulator::Release which cleans up resources)
     if (m_emulator) {
         m_emulator->stop();
     }
 
-    // Stop audio
+    // 5. Stop audio subsystem
     if (m_soundManager) {
         m_soundManager->stop();
         m_soundManager->deinit();
@@ -258,7 +272,7 @@ void MainWindow::toggleFullscreenMacOS()
     {
         qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] exiting fullscreen";
         m_fullscreenState = FullscreenState::ExitingFullscreen;
-        m_screen->setFullscreenLayout(0);
+        // Don't reset fullscreenLayout here - do it in didExitFullscreen after transition completes
         FullscreenHelper::exitFullscreen(windowHandle());
     }
     else
@@ -277,16 +291,67 @@ void MainWindow::toggleFullscreenMacOS()
         qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] setFullscreenLayout aspect=" << screenAspect;
         m_screen->setFullscreenLayout(screenAspect);
 
-        FullscreenHelper::enterFullscreen(windowHandle());
+        // Hide the bars and commit the bar-less black layout to the window
+        // server BEFORE toggleFullScreen: AppKit snapshots the window for the
+        // zoom animation immediately, and an async relayout would leave the
+        // OLD chrome (title/toolbar/status) baked into that snapshot, visible
+        // on top of the transition until it ends.
+        m_screen->setAnimating(true);
+        applyFullscreenStyle();
+        FullscreenHelper::hideWindowChrome(windowHandle());  // titlebar buttons/title/black bg
+        if (layout())
+            layout()->activate();   // synchronous relayout (delivers resize -> synced Metal render)
+        repaint();                  // synchronous paint of remaining widgets
+        FullscreenHelper::flushGraphics();  // [CATransaction flush] — push to window server
+
+        // Give the window server one runloop turn to pick up the chrome-less
+        // frame, THEN start the system animation — its snapshot is taken at
+        // toggle time and must not contain the old chrome
+        QTimer::singleShot(50, this, [this]() {
+            FullscreenHelper::enterFullscreen(windowHandle());
+        });
     }
+}
+
+void MainWindow::zoomStarted(double duration, int layerW, int layerH,
+                             int fromX, int fromY, int fromW, int fromH, bool reverse)
+{
+    qDebug().nospace() << QDateTime::currentMSecsSinceEpoch()
+                       << " [MW] zoomStarted layer=" << layerW << "x" << layerH
+                       << " rect=" << fromX << "," << fromY << " " << fromW << "x" << fromH
+                       << (reverse ? " out" : " in");
+
+    // On enter the window has just teleported: place the oversized layer so the
+    // content still appears where it was (rect in the OLD window's coords is
+    // simply the content box of the pre-transition window), then animate.
+    // On exit the layer is already correct at identity — only animate.
+    if (!reverse)
+        m_screen->prepareZoom(QSize(layerW, layerH), QRect(fromX, fromY, fromW, fromH));
+    else
+        m_screen->prepareZoom(QSize(layerW, layerH), QRect());
+
+    m_screen->animateZoom(QRect(fromX, fromY, fromW, fromH), duration, reverse);
+}
+
+void MainWindow::zoomFinished()
+{
+    qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] zoomFinished";
+    m_screen->endZoom();
 }
 
 void MainWindow::willEnterFullscreen()
 {
     qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] willEnterFullscreen";
 
-    // Start continuous rendering during transition
+    // Start CVDisplayLink for smooth animation (async render path)
     m_screen->setAnimating(true);
+
+    // The toggle shortcut's modifier press (Cmd -> SYM_SHIFT) already went
+    // into the ZX matrix, and its release will be lost during the transition.
+    // Release everything now — otherwise the modifier stays stuck and the
+    // keyboard appears dead until an emulator reset.
+    if (m_emulator)
+        m_emulator->releaseAllKeys();
 
     // Apply fullscreen style before transition starts
     applyFullscreenStyle();
@@ -296,13 +361,22 @@ void MainWindow::didEnterFullscreen()
 {
     qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] didEnterFullscreen";
 
-    // Stop continuous rendering - emulator drives updates now
+    // Stop CVDisplayLink — back to sync render path
     m_screen->setAnimating(false);
 
-    // Keep state as EnteringFullscreen briefly to block spurious resize
+    // Keep state as EnteringFullscreen briefly to block spurious resize.
+    // ensureKeyboardFocus is retried several times: on the FIRST fullscreen
+    // enter AppKit can re-steal firstResponder again after our 200ms restore.
     QTimer::singleShot(200, this, [this]() {
         m_fullscreenState = FullscreenState::Fullscreen;
         m_screen->setFocus();
+        FullscreenHelper::ensureKeyboardFocus(windowHandle());
+    });
+    QTimer::singleShot(700, this, [this]() {
+        FullscreenHelper::ensureKeyboardFocus(windowHandle());
+    });
+    QTimer::singleShot(1500, this, [this]() {
+        FullscreenHelper::ensureKeyboardFocus(windowHandle());
     });
 }
 
@@ -310,7 +384,15 @@ void MainWindow::willExitFullscreen()
 {
     qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] willExitFullscreen";
 
-    // Start continuous rendering during exit transition
+    // Reset fullscreen layout BEFORE shrink animation starts
+    // This ensures Metal renders correctly sized content during transition
+    m_screen->setFullscreenLayout(0);
+
+    // Same stuck-modifier protection as on enter
+    if (m_emulator)
+        m_emulator->releaseAllKeys();
+
+    // Start CVDisplayLink for smooth animation (async render path)
     m_screen->setAnimating(true);
 }
 
@@ -318,18 +400,18 @@ void MainWindow::didExitFullscreen()
 {
     qDebug().nospace() << QDateTime::currentMSecsSinceEpoch() << " [MW] didExitFullscreen";
 
-    // Stop continuous rendering
+    // Stop CVDisplayLink — back to sync render path
     m_screen->setAnimating(false);
 
-    // Restore normal style
-    restoreNormalStyle();
-
-    // Qt UI was restored in the exit-animation completion handler; here we only
-    // finalize state and enforce the pre-fullscreen geometry. AppKit can end
-    // the transition with the content area 28px taller (FullSizeContentView
-    // leftover), so re-apply the saved geometry once everything settled.
+    // Finalize state
     m_fullscreenState = FullscreenState::Normal;
 
+    // Bring the Qt bars and window chrome back in one batch (with the default
+    // system animation there is no custom exit-animation completion anymore)
+    restoreNormalStyle();
+    FullscreenHelper::restoreWindowChrome(windowHandle());
+
+    // Restore geometry if needed
     QTimer::singleShot(0, this, [this]() {
         if (m_fullscreenState != FullscreenState::Normal)
             return;
@@ -340,6 +422,7 @@ void MainWindow::didExitFullscreen()
         }
 
         m_screen->setFocus();
+        FullscreenHelper::ensureKeyboardFocus(windowHandle());
     });
 }
 
@@ -412,21 +495,42 @@ void MainWindow::handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::Win
 // Event Handlers
 // ============================================================================
 
+bool MainWindow::eventFilter(QObject *obj, QEvent *event)
+{
+    // Forward keyboard input to the emulator whenever it targets any widget
+    // belonging to this window. Menu shortcuts still win (a matched shortcut
+    // never arrives as KeyPress), and modal dialogs are excluded because their
+    // widgets have a different window().
+    const QEvent::Type type = event->type();
+    if ((type == QEvent::KeyPress || type == QEvent::KeyRelease) && m_emulator)
+    {
+        // Forward ONLY on the QWindow (QWidgetWindow) delivery: every key event
+        // of this window passes through it exactly once. Widget-level
+        // deliveries of the SAME event (focus widget, then propagation up the
+        // parent chain) must not forward again — that quadrupled every key.
+        const bool forMainWindow = (obj == windowHandle());
+
+        if (forMainWindow)
+        {
+            QKeyEvent *ke = static_cast<QKeyEvent *>(event);
+            if (type == QEvent::KeyPress)
+                m_emulator->handleKeyPress(ke);
+            else
+                m_emulator->handleKeyRelease(ke);
+        }
+    }
+    return QMainWindow::eventFilter(obj, event);
+}
+
 void MainWindow::keyPressEvent(QKeyEvent *event)
 {
-    // Forward to emulator
-    if (m_emulator) {
-        m_emulator->handleKeyPress(event);
-    }
+    // Key forwarding handled by the application-level eventFilter
     QMainWindow::keyPressEvent(event);
 }
 
 void MainWindow::keyReleaseEvent(QKeyEvent *event)
 {
-    // Forward to emulator
-    if (m_emulator) {
-        m_emulator->handleKeyRelease(event);
-    }
+    // Key forwarding handled by the application-level eventFilter
     QMainWindow::keyReleaseEvent(event);
 }
 

@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QKeyEvent>
+#include <QSet>
 #include <memory>
 #include <string>
 
@@ -37,6 +38,12 @@ public:
     void handleKeyPress(QKeyEvent* event);
     void handleKeyRelease(QKeyEvent* event);
 
+    // Release every ZX key currently held in the emulator matrix. Call at the
+    // start of fullscreen transitions: a modifier press (e.g. Cmd -> SYM_SHIFT)
+    // from the toggle shortcut otherwise loses its release during the
+    // transition and stays stuck in the matrix — "dead" keyboard until reset.
+    void releaseAllKeys();
+
     void* framebuffer() const { return m_framebuffer; }
     int framebufferWidth() const { return m_width; }
     int framebufferHeight() const { return m_height; }
@@ -69,4 +76,5 @@ private:
     int m_width = 352;
     int m_height = 288;
     bool m_subscribed = false;
+    QSet<quint8> m_pressedKeys;  // ZX keys currently pressed (for releaseAllKeys)
 };

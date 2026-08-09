@@ -4,9 +4,12 @@
 #include <QSize>
 #include <QImage>
 #include <functional>
+#include <mutex>
+#include <atomic>
 
 // Forward declarations - Metal types defined in .mm
 #ifdef __OBJC__
+#import <QuartzCore/CATransform3D.h>
 @protocol MTLDevice;
 @protocol MTLCommandQueue;
 @protocol MTLRenderPipelineState;
@@ -48,6 +51,25 @@ public:
     // Enable/disable continuous rendering for window animations
     void setAnimating(bool animating);
 
+    // Permanent always-on rendering (SDL2 pattern: CVDisplayLink runs at display
+    // refresh rate for the lifetime of the widget). When enabled, setAnimating()
+    // becomes a no-op so transition code can't accidentally stop rendering.
+    void setContinuousRendering(bool enabled);
+
+    // Block all rendering during fullscreen transitions
+    void setRenderingEnabled(bool enabled) { m_renderingEnabled = enabled; }
+
+    // ---- Fullscreen zoom: the window teleports, only this layer animates ----
+    // Freeze the drawable at layerSize and place the layer so the content
+    // appears inside contentBox of the CURRENT window (no animation yet).
+    void prepareZoom(const QSize& layerSize, const QRect& contentBox);
+    // Animate the layer transform. fromRect is where the content sits at the
+    // small end, in the coordinates of the window as it is DURING the zoom.
+    void animateZoom(const QRect& fromRect, double duration, bool reverse);
+    // Drop the animation and settle on the real view geometry (one transaction).
+    void endZoom();
+    bool zoomActive() const { return m_zoomActive.load(std::memory_order_relaxed); }
+
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override { return m_framebufferSize; }
     QPaintEngine* paintEngine() const override { return nullptr; }
@@ -66,8 +88,15 @@ public:
 private:
     void initMetal();
     void cleanupMetal();
-    void render();
+    // syncPresent=true: commit + waitUntilScheduled + present within the current
+    // CATransaction (glitch-free resize, main thread only).
+    // syncPresent=false: non-blocking presentDrawable + commit (normal path,
+    // safe from the CVDisplayLink thread).
+    void render(bool syncPresent = false);
     void updateDrawableSize();
+#ifdef __OBJC__
+    CATransform3D zoomTransformFor(const QRect& rect) const;
+#endif
     void uploadImage(const QImage& image);
     void startDisplayLink();
     void stopDisplayLink();
@@ -79,5 +108,15 @@ private:
     float m_aspectRatio = 1.0f;     // Updated when framebuffer size changes
     bool m_metalInitialized = false;
     bool m_hasTestPattern = false;
-    bool m_animating = false;
+    std::atomic<bool> m_animating{false};
+    bool m_continuousRendering = false;
+    std::atomic<bool> m_renderingEnabled{true};
+    // True during fullscreen enter/exit transitions — resize renders use the
+    // synchronous transaction path to stay glued to the animated window frame
+    std::atomic<bool> m_inTransition{false};
+    // Serializes render()/texture upload between main and CVDisplayLink threads
+    std::mutex m_renderMutex;
+    // True from prepareZoom() until endZoom(): the layer geometry belongs to
+    // the zoom, nobody else may write it
+    std::atomic<bool> m_zoomActive{false};
 };
