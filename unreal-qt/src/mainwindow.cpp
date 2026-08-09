@@ -8,6 +8,9 @@
 #include <QDebug>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QStandardPaths>
+#include <QDir>
+#include <QDateTime>
 #include <QMessageBox>
 #include <QMimeData>
 #include <QScopedValueRollback>
@@ -27,6 +30,12 @@
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/soundmanager.h"
+#include "debugger/widgets/audiosettingswidget.h"
+#ifdef ENABLE_RECORDING
+#include "debugger/widgets/videorecordingwidget.h"
+#include "debugger/widgets/recordingpresets.h"
+#endif
+#include "base/featuremanager.h"
 // Avoid Qt 'signals' macro conflict with WD1793State::signals member
 #undef signals
 #include "emulator/io/fdc/fdd.h"
@@ -70,11 +79,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Put emulator screen into resizable content frame
     QFrame* contentFrame = ui->contentFrame;
     deviceScreen = new DeviceScreen(contentFrame);
-
-    QHBoxLayout* layout = new QHBoxLayout;
-    layout->addWidget(deviceScreen, Qt::AlignHCenter);
-    contentFrame->setLayout(layout);
-
+    
+    // NOTE: We do NOT use a layout manager for contentFrame. 
+    // DeviceScreen relies on shrinking itself to maintain aspect ratio, which fights Qt layouts.
+    // We manually resize and center it in resizeEvent and showEvent.
     /*
         QSizePolicy dp;
         dp.setHorizontalPolicy(QSizePolicy::Expanding);
@@ -157,6 +165,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::logWindowToggled, this, &MainWindow::handleLogWindowToggled);
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
     connect(_menuManager, &MenuManager::intParametersRequested, this, &MainWindow::handleIntParametersRequested);
+    connect(_menuManager, &MenuManager::audioSettingsRequested, this, &MainWindow::handleAudioSettingsRequested);
+#ifdef ENABLE_RECORDING
+    connect(_menuManager, &MenuManager::videoRecordingRequested, this, &MainWindow::handleVideoRecordingRequested);
+    connect(_menuManager, &MenuManager::quickRecordRequested, this, &MainWindow::handleQuickRecord);
+#endif
 
     // Bring application windows to foreground
     debuggerWindow->raise();
@@ -319,8 +332,10 @@ void MainWindow::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
 
-    // Center device screen within content frame
-    updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
+    if (deviceScreen && ui->contentFrame) {
+        deviceScreen->resize(ui->contentFrame->size());
+        updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
+    }
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)
@@ -402,10 +417,23 @@ void MainWindow::closeEvent(QCloseEvent* event)
 
 void MainWindow::resizeEvent(QResizeEvent* event)
 {
-    // deviceScreen->move(this->rect().center() - deviceScreen->rect().center());
+    if (deviceScreen && ui->contentFrame) {
+        deviceScreen->resize(ui->contentFrame->size());
+        updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
 
-    // Keep widget center-aligned. Alignment policy is not working good
-    updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
+        // DeviceScreen::resizeEvent self-resizes to maintain aspect ratio, which invalidates
+        // the position we just set above. Defer re-centering to the next event loop iteration
+        // so it runs after DeviceScreen has settled to its final size.
+        QTimer::singleShot(0, this, [this]() {
+            if (deviceScreen && ui->contentFrame)
+            {
+                updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
+
+                // Repaint contentFrame to clear stale pixels from the previous larger rect
+                ui->contentFrame->update();
+            }
+        });
+    }
 
     // Update normal geometry ONLY when in normal state
     // This preserves the geometry for: normal → maximized → fullscreen → maximized → normal
@@ -518,19 +546,12 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
     // Prevent recursive calls
     QScopedValueRollback<bool> guard(_inHandler, true);
 
-    // Handle maximize state (triggered by green button or double-click)
-    if (newState & Qt::WindowMaximized && !_isFullScreen)
+    // Handle maximize state (triggered by green button or double-click, or returning from fullscreen)
+    if (newState & Qt::WindowMaximized && !(newState & Qt::WindowFullScreen))
     {
         qDebug() << "Maximizing window (macOS)";
 
         _isFullScreen = false;
-
-        // Ensure we're not in fullscreen mode
-        if (windowFlags() & Qt::FramelessWindowHint)
-        {
-            qDebug() << "Clearing frameless window hint";
-            setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
-        }
 
         // Restore normal palette if needed
         if (palette() != _originalPalette)
@@ -548,7 +569,6 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
     {
         qDebug() << "Entering fullscreen (macOS)";
 
-        hide();
         _isFullScreen = true;
 
         // Store previous geometry if we're not already in fullscreen
@@ -566,10 +586,6 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
         // Hide all control elements
         statusBar()->hide();
         startButton->hide();
-
-        // Set frameless window hint for fullscreen
-        setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
-        showFullScreen();
     }
     // Handle restore to normal state
     else if (newState == Qt::WindowNoState)
@@ -581,38 +597,13 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
         // Restore normal styling
         setPalette(_originalPalette);
 
-        // Show controls
+        // Show controls instantly so the layout calculates the correct target geometry for the OS animation.
+        // (Docking manager updates are still deferred in the shortcut handler to prevent stutter).
         statusBar()->show();
         startButton->show();
 
-        // Clear frameless window hint if set
-        if (windowFlags() & Qt::FramelessWindowHint)
-        {
-            qDebug() << "Clearing frameless window hint during restore";
-            setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
-        }
-
-        // Restore all window flags
-        initializePlatformMacOS();
-
-        showNormal();
-
-        // Restore to previous geometry if available
-        if (_normalGeometry.isValid())
-        {
-            qDebug() << "Restoring to normal geometry:" << _normalGeometry;
-            setGeometry(_normalGeometry);
-        }
-        else
-        {
-            qDebug() << "No stored normal geometry available, using default";
-        }
-
-        if (!isVisible())
-        {
-            qDebug() << "Window is not visible after showNormal/flag changes, explicitly calling show().";
-            show();
-        }
+        // macOS natively handles returning to the previous geometry after un-maximizing or exiting fullscreen.
+        // Calling setGeometry explicitly here breaks the native animation.
     }
 
     // Ensure the window is properly updated
@@ -770,53 +761,8 @@ void MainWindow::dropEvent(QDropEvent* event)
         qDebug() << pathList.size() << "files dropped";
         qDebug() << pathList.join(",");
 
-        // Process the dropped file
-        QString filepath = pathList.first();
-        std::string file = filepath.toStdString();
-
-        // Save the directory for next time
-        QFileInfo fileInfo(filepath);
-        QString ext = fileInfo.suffix();
-
-        // Save directory to settings
-        saveLastDirectory(filepath);
-
-        // Determine file type
-        SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(filepath);
-
-        // Auto-start emulator if not running (except for symbol files which don't need it)
-        if (!_emulator && category != FileSymbol && category != FileUnknown)
-        {
-            qDebug() << "Auto-starting emulator for dropped file";
-            handleStartButton();  // Create and start new emulator instance
-        }
-
-        // Now proceed with file loading
-        switch (category)
-        {
-            case FileROM:
-                break;
-            case FileSnapshot:
-                if (_emulator)
-                    _emulator->LoadSnapshot(file);
-                break;
-            case FileTape:
-                if (_emulator)
-                    _emulator->LoadTape(file);
-                break;
-            case FileDisk:
-                if (_emulator)
-                    _emulator->LoadDisk(file);
-                break;
-            case FileSymbol:
-                if (_emulator && _emulator->GetDebugManager())
-                {
-                    _emulator->GetDebugManager()->GetLabelManager()->LoadLabels(file);
-                }
-                break;
-            default:
-                break;
-        };
+        // Load the first dropped file
+        loadFile(pathList.first());
     }
 
     // Remove drop area highlight
@@ -1242,23 +1188,20 @@ void MainWindow::handleFullScreenShortcutMacOS()
         if (_dockingManager)
             _dockingManager->setSnappingLocked(true);
 
-        setWindowFlags(Qt::Window);  // Prevent horizontal transition from full screen to system desktop
-        // Restore previous state and geometry
+        // Do NOT use setWindowFlags(Qt::Window) here, as it forces window recreation and kills the native macOS smooth animation.
+        // Let macOS natively handle returning to the previous geometry via showMaximized() / showNormal().
         if (_preFullScreenState & Qt::WindowMaximized)
         {
-            if (_maximizedGeometry.isValid())
-                setGeometry(_maximizedGeometry);
             showMaximized();
         }
         else
         {
-            if (_normalGeometry.isValid())
-                setGeometry(_normalGeometry);
             showNormal();
         }
 
-        // Defer child window restoration and unlock until the event queue has processed the main window changes.
-        QTimer::singleShot(100, this, [this]() {
+        // Defer child window restoration and unlock until the macOS native swipe animation has fully completed (~400-500ms).
+        // Executing heavy docking calculations mid-swipe causes severe choppiness.
+        QTimer::singleShot(1000, this, [this]() {
             if (_dockingManager)
             {
                 _dockingManager->onExitFullscreen();
@@ -1499,53 +1442,20 @@ void MainWindow::handleFileOpenRequest(int id, Message* message)
 
 void MainWindow::openSpecificFile(const QString& filepath)
 {
-    // Check if the file exists
     QFileInfo fileInfo(filepath);
     if (fileInfo.exists() && fileInfo.isFile())
     {
-        // Save directory to settings
-        saveLastDirectory(filepath);
-
-        // Process the file based on its extension
-        QString filepathCopy = filepath;  // Create a non-const copy for the method call
-        SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(filepathCopy);
-        std::string file = filepath.toStdString();
-
-        switch (category)
-        {
-            case FileROM:
-                break;
-            case FileSnapshot:
-                _emulator->LoadSnapshot(file);
-                break;
-            case FileTape:
-                _emulator->LoadTape(file);
-                break;
-            case FileDisk:
-                _emulator->LoadDisk(file);
-                break;
-            case FileSymbol:
-                if (_emulator && _emulator->GetDebugManager())
-                {
-                    _emulator->GetDebugManager()->GetLabelManager()->LoadLabels(file);
-                }
-                break;
-            default:
-                qDebug() << "Unsupported file type:" << filepath;
-                break;
-        };
+        loadFile(filepath);
     }
     else
     {
         qDebug() << "File does not exist or is not a regular file:" << filepath;
-        // If the specified file doesn't exist, fall back to the file dialog
         openFileDialog();
     }
 }
 
 void MainWindow::openFileDialog()
 {
-    // Show a file open dialog using the last directory
     QString filePath = QFileDialog::getOpenFileName(
         this, tr("Open File"), _lastDirectory,
         tr("All Supported Files (*.sna *.z80 *.tap *.tzx *.trd *.scl *.fdi *.td0 *.udi);;Snapshots (*.sna "
@@ -1553,38 +1463,53 @@ void MainWindow::openFileDialog()
 
     if (!filePath.isEmpty())
     {
-        // Save directory to settings
-        saveLastDirectory(filePath);
-
-        // Process the selected file
-        QString filePathCopy = filePath;  // Create a non-const copy for the method call
-        SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(filePathCopy);
-        std::string file = filePath.toStdString();
-
-        switch (category)
-        {
-            case FileROM:
-                break;
-            case FileSnapshot:
-                _emulator->LoadSnapshot(file);
-                break;
-            case FileTape:
-                _emulator->LoadTape(file);
-                break;
-            case FileDisk:
-                _emulator->LoadDisk(file);
-                break;
-            case FileSymbol:
-                if (_emulator && _emulator->GetDebugManager())
-                {
-                    _emulator->GetDebugManager()->GetLabelManager()->LoadLabels(file);
-                }
-                break;
-            default:
-                qDebug() << "Unsupported file type:" << filePath;
-                break;
-        };
+        loadFile(filePath);
     }
+}
+
+void MainWindow::loadFile(const QString& filePath)
+{
+    // Save directory to settings
+    saveLastDirectory(filePath);
+
+    // Determine file type
+    QString filePathCopy = filePath;
+    SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(filePathCopy);
+    std::string file = filePath.toStdString();
+
+    // Auto-start emulator if not running (except for symbol files which don't need it)
+    if (!_emulator && category != FileSymbol && category != FileUnknown)
+    {
+        qDebug() << "Auto-starting emulator for file:" << filePath;
+        handleStartButton();
+    }
+
+    switch (category)
+    {
+        case FileROM:
+            break;
+        case FileSnapshot:
+            if (_emulator)
+                _emulator->LoadSnapshot(file);
+            break;
+        case FileTape:
+            if (_emulator)
+                _emulator->LoadTape(file);
+            break;
+        case FileDisk:
+            if (_emulator)
+                _emulator->LoadDisk(file);
+            break;
+        case FileSymbol:
+            if (_emulator && _emulator->GetDebugManager())
+            {
+                _emulator->GetDebugManager()->GetLabelManager()->LoadLabels(file);
+            }
+            break;
+        default:
+            qDebug() << "Unsupported file type:" << filePath;
+            break;
+    };
 }
 
 void MainWindow::saveFileDialog()
@@ -2056,6 +1981,147 @@ void MainWindow::handleIntParametersRequested()
     dialog->activateWindow();
 }
 
+void MainWindow::handleAudioSettingsRequested()
+{
+    // Toggle: if already open, close it
+    if (_audioSettingsWidget)
+    {
+        _audioSettingsWidget->close();
+        return;
+    }
+
+    // Open even without an active emulator: the widget shows a status
+    // banner and greys out its controls when context is null, which is
+    // less confusing than the menu item silently doing nothing
+    EmulatorContext* context = nullptr;
+    if (m_binding && m_binding->emulator())
+    {
+        context = m_binding->emulator()->GetContext();
+    }
+
+    // Create audio settings widget as a dialog
+    _audioSettingsWidget = new AudioSettingsWidget(context, this);
+    _audioSettingsWidget->setAttribute(Qt::WA_DeleteOnClose);
+    _audioSettingsWidget->setWindowFlags(Qt::Dialog);
+    _audioSettingsWidget->show();
+    _audioSettingsWidget->raise();
+    _audioSettingsWidget->activateWindow();
+}
+
+#ifdef ENABLE_RECORDING
+void MainWindow::handleVideoRecordingRequested()
+{
+    if (_videoRecordingWidget)
+    {
+        _videoRecordingWidget->close();
+        return;
+    }
+
+    // Widget can be opened without an emulator — the benchmark is fully
+    // synthetic, and recording-specific controls are disabled via
+    // updateRecordingControls() when no context is available.
+    EmulatorContext* context = nullptr;
+    if (m_binding && m_binding->emulator())
+    {
+        context = m_binding->emulator()->GetContext();
+    }
+
+    _videoRecordingWidget = new VideoRecordingWidget(context, nullptr);
+    _videoRecordingWidget->setAttribute(Qt::WA_DeleteOnClose);
+    // Non-modal tool window: stays on top, does NOT block the main window
+    _videoRecordingWidget->setWindowFlags(Qt::Tool | Qt::Window);
+    _videoRecordingWidget->show();
+    _videoRecordingWidget->raise();
+    _videoRecordingWidget->activateWindow();
+}
+#endif
+
+#ifdef ENABLE_RECORDING
+void MainWindow::handleQuickRecord(const QString& presetName)
+{
+    if (!m_binding || !m_binding->emulator())
+    {
+        qDebug() << "Cannot start Quick Record: No active emulator instance";
+        return;
+    }
+
+    EmulatorContext* context = m_binding->emulator()->GetContext();
+    if (!context || !context->pRecordingManager)
+    {
+        qDebug() << "Cannot start Quick Record: No recording manager";
+        return;
+    }
+
+    auto* rm = context->pRecordingManager;
+
+    // Recording subsystem is behind a master feature switch — Quick Record
+    // must enable it (the recording dialog does the same on show)
+    if (context->pFeatureManager && !context->pFeatureManager->isEnabled(Features::kRecording))
+    {
+        context->pFeatureManager->setFeature(Features::kRecording, true);
+    }
+
+    // If already recording, stop first
+    if (rm->IsRecording())
+    {
+        rm->StopRecording();
+    }
+
+    // Find the preset
+    static RecordingPresetManager presetManager;
+    const RecordingPreset* preset = presetManager.findPreset(presetName);
+    if (!preset)
+    {
+        qDebug() << "Quick Record: Preset not found:" << presetName;
+        return;
+    }
+
+    // Apply preset to recording manager
+    rm->SetRecordingMode(preset->mode);
+    rm->SetVideoEnabled(!preset->videoCodec.isEmpty());
+
+    // Set audio source
+    rm->SelectAudioSource(AudioSourceType::MasterMix);
+
+    // Set video params via individual setters
+    if (!preset->videoCodec.isEmpty())
+    {
+        rm->SetVideoCodec(preset->videoCodec.toStdString());
+        rm->SetVideoBitrate(preset->videoBitrate);
+        rm->SetVideoFrameRate(preset->frameRate);
+    }
+
+    // Same defaults as the recording dialog: full frame, 2x nearest-neighbor
+    // (preserves multicolor detail through chroma subsampling; GIF ignores it)
+    rm->SetCaptureRegion(VideoCaptureRegion::FullFrame);
+    rm->SetScaleFactor(2);
+    rm->SetVideoResolution(0, 0);  // Derive from screen + capture region
+
+    // Generate output filename
+    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_HH-mm-ss");
+    QString defaultDir = preset->outputDir.isEmpty()
+        ? QStandardPaths::writableLocation(QStandardPaths::MoviesLocation)
+        : preset->outputDir;
+    QDir().mkpath(defaultDir);
+    QString filename = QString("%1/unreal_%2_%3.%4")
+        .arg(defaultDir)
+        .arg(timestamp)
+        .arg(preset->name.split(' ').first())
+        .arg(preset->container);
+
+    qDebug() << "Quick Record: Starting recording with preset" << presetName << "to" << filename;
+
+    // Start recording (StartRecording takes codec/bitrate directly)
+    std::string vidCodec = preset->videoCodec.toStdString();
+    std::string audCodec = preset->includeAudio ? preset->audioCodec.toStdString() : "";
+    if (!rm->StartRecording(filename.toStdString(), vidCodec, audCodec,
+                            preset->videoBitrate, preset->audioBitrate))
+    {
+        qDebug() << "Quick Record: Failed to start recording";
+    }
+}
+#endif
+
 void MainWindow::updateMenuStates()
 {
     if (_menuManager)
@@ -2176,6 +2242,19 @@ void MainWindow::handleEmulatorInstanceDestroyed(int id, Message* message)
                         }
 
                         deviceScreen->detach();
+
+                        // Clear context from audio/video settings widgets
+                        if (_audioSettingsWidget)
+                        {
+                            _audioSettingsWidget->setContext(nullptr);
+                        }
+#ifdef ENABLE_RECORDING
+                        if (_videoRecordingWidget)
+                        {
+                            _videoRecordingWidget->setContext(nullptr);
+                        }
+#endif
+
                         unsubscribeFromPerEmulatorEvents();
                         // Note: Don't call _emulator->ClearAudioCallback() - emulator is already being destroyed
                         _emulator = nullptr;
@@ -2504,6 +2583,12 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
     startButton->setEnabled(true);
     updateMenuStates();
 
+    // 8. Update audio settings widget if open
+    if (_audioSettingsWidget)
+    {
+        _audioSettingsWidget->setContext(_emulator->GetContext());
+    }
+
     qDebug() << "MainWindow::adoptEmulator() - Successfully adopted emulator"
              << QString::fromStdString(_emulator->GetId());
 }
@@ -2542,13 +2627,30 @@ void MainWindow::unbindFromEmulator()
     // 4. Device screen
     deviceScreen->detach();
 
-    // 5. Per-emulator event subscriptions
+    // 5. Audio settings widget
+    if (_audioSettingsWidget)
+    {
+        _audioSettingsWidget->setContext(nullptr);
+    }
+
+#ifdef ENABLE_RECORDING
+    // 5b. Video recording widget — clear the active context so it doesn't
+    // dereference a dangling pointer after the emulator is destroyed.
+    // Recording itself is NOT stopped here: it continues on the original
+    // emulator instance until explicit stop or that instance is destroyed.
+    if (_videoRecordingWidget)
+    {
+        _videoRecordingWidget->setContext(nullptr);
+    }
+#endif
+
+    // 6. Per-emulator event subscriptions
     unsubscribeFromPerEmulatorEvents();
 
-    // 6. Audio cleanup
+    // 7. Audio cleanup
     _emulator->ClearAudioCallback();
 
-    // 7. Clear reference (does NOT destroy emulator)
+    // 8. Clear reference (does NOT destroy emulator)
     _emulator = nullptr;
 
     qDebug() << "MainWindow::unbindFromEmulator() - Emulator unbound (still running headless)";
@@ -2602,6 +2704,20 @@ void MainWindow::onBindingStateChanged(EmulatorStateEnum state)
             break;
     }
     updateMenuStates();
+
+#ifdef ENABLE_RECORDING
+    // Single mechanism: rebind recording widget on any state change
+    if (_videoRecordingWidget)
+    {
+        EmulatorContext* context = nullptr;
+        if (state != StateStopped && state != StateUnknown &&
+            m_binding && m_binding->emulator())
+        {
+            context = m_binding->emulator()->GetContext();
+        }
+        _videoRecordingWidget->setContext(context);
+    }
+#endif
 }
 
 void MainWindow::tryAdoptRemainingEmulator()

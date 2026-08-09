@@ -22,7 +22,7 @@ class PortDecoder_Spectrum128 : public PortDecoder
 {
     /// region <Fields>
 protected:
-    bool _7FFD_Locked = false;
+    // _7FFD_Locked is now inherited from PortDecoder base class
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>

@@ -1997,13 +1997,13 @@ void EmulatorAPI::getDisasmPage(const HttpRequestPtr& req, std::function<void(co
     uint16_t currentOffset = offset;
     for (size_t i = 0; i < count && currentOffset < PAGE_SIZE; ++i)
     {
-        // Read up to 4 bytes from physical page
-        std::vector<uint8_t> buffer;
+        // Read up to 4 bytes from physical page (Z80 instructions are max 4 bytes)
+        // Pre-size to avoid GCC 16 false-positive -Wstringop-overflow warning
+        std::vector<uint8_t> buffer(4, 0);
         for (int j = 0; j < 4 && (currentOffset + j) < PAGE_SIZE; ++j)
         {
-            buffer.push_back(pageBase[currentOffset + j]);
+            buffer[j] = pageBase[currentOffset + j];
         }
-        if (buffer.size() < 4) buffer.resize(4, 0);  // Pad if near end
         
         uint8_t cmdLen = 0;
         DecodedInstruction decoded;

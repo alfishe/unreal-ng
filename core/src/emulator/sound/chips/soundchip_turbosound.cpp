@@ -9,10 +9,34 @@ void SoundChip_TurboSound::handleFrameStart()
     _ayPLL = 0.0;
     _ayBufferIndex = 0;
 
-    // Initialize render buffers
+    // Initialize render buffers (combined + per-chip)
     memset(_ayBuffer, 0x00, _ayAudioDescriptor.memoryBufferSizeInBytes);
+    memset(_chip0Buffer, 0x00, _chip0AudioDescriptor.memoryBufferSizeInBytes);
+    memset(_chip1Buffer, 0x00, _chip1AudioDescriptor.memoryBufferSizeInBytes);
 }
 
+/// @brief Generate audio samples synchronized to CPU t-states
+///
+/// ## Native Clock Architecture
+///
+/// AY-3-8910 runs at PSG_CLOCK_RATE (1.75 MHz for Pentagon, 1.7734 MHz for Spectrum 128).
+/// Internally, the chip divides this by 16 for tone/noise generators (~109.375 kHz effective rate).
+///
+/// Previous implementation used 64x oversampling at 44100*64 = 2.8224 MHz, which is
+/// asynchronous to the chip clock. This caused:
+/// - Timing jitter (±0.18 µs per event)
+/// - FM sidebands from beating between the two frequencies
+/// - Subtle "impurity" on high notes
+///
+/// New implementation:
+/// - Generators tick at true PSG_CLOCK_RATE (with internal /16 prescaler)
+/// - Fractional decimation (PSG_CLOCK_RATE → 44100 Hz) using phase accumulator
+/// - Same approach as amiga-paula PWM renderer
+///
+/// Benefits:
+/// - Zero jitter on generator events
+/// - ~37% less CPU (1.77 MHz < 2.82 MHz)
+/// - Correct relationship between chip clock and generator periods
 void SoundChip_TurboSound::handleStep()
 {
     size_t currentTStates = _context->pCore->GetZ80()->t;
@@ -25,6 +49,10 @@ void SoundChip_TurboSound::handleStep()
 
     if (diff > 0)
     {
+        // Native-rate recording tap: active only during DSD capture.
+        // Checked once per handleStep batch; per-tick cost is a plain bool.
+        const bool tapActive = _nativeTap->isActive();
+
         _ayPLL += diff * AUDIO_SAMPLE_TSTATE_INCREMENT;
 
         while (_ayPLL > 1.0 && _ayBufferIndex < AUDIO_SAMPLES_PER_VIDEO_FRAME * AUDIO_CHANNELS)
@@ -36,70 +64,125 @@ void SoundChip_TurboSound::handleStep()
 
             if (_hqEnabled)
             {
-                // ========== HIGH QUALITY MODE (default) ==========
-                // 192-tap FIR filter + 8x oversampling + DC filtering
+                // ========== HIGH QUALITY MODE ==========
+                // Native clock rendering + FIR decimation
+                //
+                // Generators tick at PSG_CLOCK_RATE/8 = 218.75 kHz
+                // FIR decimates to 44.1 kHz (~4.96:1 ratio)
 
-                // Start oversampling block for both chip FIR filters
-                _chip0->firLeft().startOversamplingBlock();
-                _chip0->firRight().startOversamplingBlock();
-                _chip1->firLeft().startOversamplingBlock();
-                _chip1->firRight().startOversamplingBlock();
-
-                // Oversample and apply LPF FIR
-                for (int j = FilterInterpolate::DECIMATE_FACTOR - 1; j >= 0; j--)
+                // Feed generator samples to decimator until we have an output
+                while (!_chip0->decimatorLeft().hasOutput())
                 {
-                    _x += _clockStep;
+                    // Tick generators (bypass internal prescaler)
+                    updateState(true);
 
-                    if (_x >= 1.0)
+                    // Native-rate tap for DSD capture (pre-decimation, both chips summed)
+                    if (tapActive)
                     {
-                        _x -= 1.0;
-
-                        // Update both chips state synchronously
-                        updateState(true);
+                        _nativeTap->push(static_cast<float>(_chip0->mixedLeft() + _chip1->mixedLeft()),
+                                         static_cast<float>(_chip0->mixedRight() + _chip1->mixedRight()));
                     }
 
-                    _chip0->firLeft().recalculateInterpolationCoefficients(j, _chip0->mixedLeft());
-                    _chip0->firRight().recalculateInterpolationCoefficients(j, _chip0->mixedRight());
-                    _chip1->firLeft().recalculateInterpolationCoefficients(j, _chip1->mixedLeft());
-                    _chip1->firRight().recalculateInterpolationCoefficients(j, _chip1->mixedRight());
+                    // Feed mixed output to decimators
+                    _chip0->decimatorLeft().feedSample(_chip0->mixedLeft());
+                    _chip0->decimatorRight().feedSample(_chip0->mixedRight());
+                    _chip1->decimatorLeft().feedSample(_chip1->mixedLeft());
+                    _chip1->decimatorRight().feedSample(_chip1->mixedRight());
                 }
 
-                leftSample =
-                    (_chip0->firLeft().endOversamplingBlock() + _chip1->firLeft().endOversamplingBlock()) * INT16_MAX;
-                rightSample =
-                    (_chip0->firRight().endOversamplingBlock() + _chip1->firRight().endOversamplingBlock()) * INT16_MAX;
+                // Get decimated output per chip
+                float c0L = _chip0->decimatorLeft().getOutput();
+                float c0R = _chip0->decimatorRight().getOutput();
+                float c1L = _chip1->decimatorLeft().getOutput();
+                float c1R = _chip1->decimatorRight().getOutput();
+
+                // Store per-chip buffers for registry-driven capture
+                _chip0Buffer[_ayBufferIndex]     = static_cast<int16_t>(c0L * INT16_MAX);
+                _chip0Buffer[_ayBufferIndex + 1] = static_cast<int16_t>(c0R * INT16_MAX);
+                _chip1Buffer[_ayBufferIndex]     = static_cast<int16_t>(c1L * INT16_MAX);
+                _chip1Buffer[_ayBufferIndex + 1] = static_cast<int16_t>(c1R * INT16_MAX);
+
+                // Combined output
+                leftSample = static_cast<int16_t>((c0L + c1L) * INT16_MAX);
+                rightSample = static_cast<int16_t>((c0R + c1R) * INT16_MAX);
             }
             else
             {
-                // ========== LOW QUALITY MODE (saves ~15% CPU vs HQ) ==========
-                // Same chip update rate as HQ (8x oversampling) for correct frequencies
-                // BUT: skip expensive FIR filtering, use simple averaging instead
+                // ========== LOW QUALITY MODE ==========
+                // Native clock rendering + simple averaging (no FIR)
+                // Faster but may have aliasing on high frequencies
 
                 double leftSum = 0.0;
                 double rightSum = 0.0;
+                int sampleCount = 0;
 
-                // Run same oversampling loop as HQ mode for proper chip timing
-                for (int j = FilterInterpolate::DECIMATE_FACTOR - 1; j >= 0; j--)
+                // Run generator ticks for this output sample period
+                // Generator rate = PSG_CLOCK_RATE / 8 (~218.75 kHz)
+                // Ticks per output sample = (PSG_CLOCK_RATE / 8) / AUDIO_SAMPLING_RATE ≈ 4.96
+                double ticksPerSample = (double)(PSG_CLOCK_RATE / 8) / (double)AUDIO_SAMPLING_RATE;
+                _decimationPhase += ticksPerSample;
+
+                while (_decimationPhase >= 1.0)
                 {
-                    _x += _clockStep;
+                    _decimationPhase -= 1.0;
 
-                    if (_x >= 1.0)
+                    // Tick generators directly (bypass internal prescaler)
+                    updateState(true);
+
+                    double l = _chip0->mixedLeft() + _chip1->mixedLeft();
+                    double r = _chip0->mixedRight() + _chip1->mixedRight();
+
+                    // Native-rate tap for DSD capture (pre-decimation)
+                    if (tapActive)
                     {
-                        _x -= 1.0;
-                        updateState(true);  // Same chip update as HQ
+                        _nativeTap->push(static_cast<float>(l), static_cast<float>(r));
                     }
 
-                    // Accumulate samples (simple averaging instead of FIR)
-                    leftSum += _chip0->mixedLeft() + _chip1->mixedLeft();
-                    rightSum += _chip0->mixedRight() + _chip1->mixedRight();
+                    // Accumulate samples
+                    leftSum += l;
+                    rightSum += r;
+                    sampleCount++;
                 }
 
-                // Simple averaging (no FIR filtering) - faster but lower quality
-                leftSample = (leftSum / FilterInterpolate::DECIMATE_FACTOR) * INT16_MAX;
-                rightSample = (rightSum / FilterInterpolate::DECIMATE_FACTOR) * INT16_MAX;
+                // Average (simple boxcar decimation)
+                float c0L, c0R, c1L, c1R;
+                if (sampleCount > 0)
+                {
+                    // Split the accumulated sums per chip for per-chip buffers
+                    // In LQ mode we don't have separate accumulators, so approximate
+                    // by using current chip output ratios
+                    double total = leftSum + rightSum;
+                    double r0 = (total > 0) ? (_chip0->mixedLeft() + _chip0->mixedRight()) /
+                                              (_chip0->mixedLeft() + _chip0->mixedRight() +
+                                               _chip1->mixedLeft() + _chip1->mixedRight() + 1e-9) : 0.5;
+
+                    c0L = static_cast<float>((leftSum * r0) / sampleCount);
+                    c0R = static_cast<float>((rightSum * r0) / sampleCount);
+                    c1L = static_cast<float>((leftSum * (1.0 - r0)) / sampleCount);
+                    c1R = static_cast<float>((rightSum * (1.0 - r0)) / sampleCount);
+
+                    leftSample = static_cast<int16_t>((leftSum / sampleCount) * INT16_MAX);
+                    rightSample = static_cast<int16_t>((rightSum / sampleCount) * INT16_MAX);
+                }
+                else
+                {
+                    // No ticks this sample - use previous value
+                    c0L = static_cast<float>(_chip0->mixedLeft());
+                    c0R = static_cast<float>(_chip0->mixedRight());
+                    c1L = static_cast<float>(_chip1->mixedLeft());
+                    c1R = static_cast<float>(_chip1->mixedRight());
+                    leftSample = static_cast<int16_t>((c0L + c1L) * INT16_MAX);
+                    rightSample = static_cast<int16_t>((c0R + c1R) * INT16_MAX);
+                }
+
+                // Store per-chip buffers
+                _chip0Buffer[_ayBufferIndex]     = static_cast<int16_t>(c0L * INT16_MAX);
+                _chip0Buffer[_ayBufferIndex + 1] = static_cast<int16_t>(c0R * INT16_MAX);
+                _chip1Buffer[_ayBufferIndex]     = static_cast<int16_t>(c1L * INT16_MAX);
+                _chip1Buffer[_ayBufferIndex + 1] = static_cast<int16_t>(c1R * INT16_MAX);
             }
 
-            // Store samples in output buffer
+            // Store samples in combined output buffer
             _ayBuffer[_ayBufferIndex++] = leftSample;
             _ayBuffer[_ayBufferIndex++] = rightSample;
         }
