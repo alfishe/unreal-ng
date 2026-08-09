@@ -104,4 +104,11 @@ protected:
 	void CopyStringValue(const char* src, char* dst, size_t dst_len);
     std::string StripComment(const char* src);
     std::string PrintModelAvailableRAM(uint32_t availRAM);
+
+    // Model timing defaults
+public:
+    /// \brief Apply hardware-accurate INT position and duration defaults based on selected model.
+    /// Called after DetermineModel() to ensure correct timing even if INI has wrong/missing values.
+    /// User-specified non-default INI values (intstart != 13, intlen != 32) are preserved as overrides.
+    void ApplyModelTimingDefaults(CONFIG& config);
 };

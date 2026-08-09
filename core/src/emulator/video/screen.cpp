@@ -393,6 +393,27 @@ void Screen::SetVideoMode(VideoModeEnum mode)
 
     /// endregion </Calculate raster values>
 
+    /// region <Model-specific ULA behavior>
+    // Set border update granularity and contention per model.
+    // Derived from MiSTer HDL ula.sv:
+    //   Pentagon (!mZX): border updated every HC cycle (1T), no contention
+    //   ZX-48K/128K (mZX): border latched every 8 HC (4T), contention active
+    switch (mode)
+    {
+        case M_PENTAGON128K:
+        case M_PMC:
+            _rasterState.borderUpdateTStates = 1;
+            _rasterState.contentionEnabled = false;
+            break;
+        case M_ZX48:
+        case M_ZX128:
+        default:
+            _rasterState.borderUpdateTStates = 4;
+            _rasterState.contentionEnabled = true;
+            break;
+    }
+    /// endregion </Model-specific ULA behavior>
+
     // Allocate framebuffer
     AllocateFramebuffer(_mode);
 
@@ -431,8 +452,49 @@ void Screen::SetActiveScreen(SpectrumScreenEnum screen)
 /// \param color
 void Screen::SetBorderColor(uint8_t color)
 {
+    // Flush/Render all pending pixels using the CURRENT (old) border color 
+    // up to the exact CPU T-state of the I/O port write.
+    // This fixes pixel-perfect multicolor effects (raster bars) across all models.
+    UpdateScreen();
+
     // Only bits [0:2] contain border color
     _borderColor = color & 0b0000'0111;
+}
+
+/// ULA memory contention delay table for ZX-48K/128K.
+// The ULA stalls the CPU clock when accessing contended memory (0x4000-0x7FFF)
+// during the visible screen area. The delay pattern repeats every 8 t-states
+// within each scanline during the paper area, following this sequence:
+//   t-state offset in line: 0  1  2  3  4  5  6  7  (then repeats)
+//   delay:                   6  5  4  3  2  1  0  0
+// Source: https://faqwiki.zxnet.co.uk/wiki/Contended_memory
+static const uint8_t contentionPattern[8] = {6, 5, 4, 3, 2, 1, 0, 0};
+
+uint8_t Screen::GetContentionDelay() const
+{
+    if (!_rasterState.contentionEnabled)
+        return 0;  // Pentagon: no contention
+
+    uint32_t t = _cpu->t % _rasterState.configFrameDuration;
+
+    // Only contend during the screen (paper) area
+    if (t < _rasterState.screenAreaStart || t > _rasterState.screenAreaEnd)
+        return 0;
+
+    // Calculate position within the scanline
+    uint32_t tInLine = (t - _rasterState.screenAreaStart) % _rasterState.tstatesPerLine;
+
+    // Only contend during the paper portion of the line (not left/right borders)
+    // Paper starts at screenLineAreaStart relative to line start
+    uint32_t paperStart = _rasterState.screenLineAreaStart;
+    uint32_t paperEnd = _rasterState.screenLineAreaEnd;
+
+    if (tInLine < paperStart || tInLine > paperEnd)
+        return 0;
+
+    // Delay is based on the position within the 8-t-state cell
+    uint32_t offsetInCell = (tInLine - paperStart) % 8;
+    return contentionPattern[offsetInCell];
 }
 
 VideoModeEnum Screen::GetVideoMode()

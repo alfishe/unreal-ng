@@ -99,10 +99,9 @@ if (WIN32 AND MINGW)
 endif (WIN32 AND MINGW)
 
 # Link with core library (and recording if enabled)
-# Circular dependency: core uses RecordingManager, recording uses core utilities.
-# List both twice so the linker can resolve all symbols.
+# Recording is self-contained - no circular dependency with core
 if (ENABLE_RECORDING)
-    target_link_libraries(${PROJECT_NAME} PRIVATE core unrealng::recording core)
+    target_link_libraries(${PROJECT_NAME} PRIVATE core unrealng::recording)
 else()
     target_link_libraries(${PROJECT_NAME} PRIVATE core)
 endif()

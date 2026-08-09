@@ -252,6 +252,7 @@ endif ()
 # Configure automation if enabled
 if (INCLUDE_AUTOMATION)
     # Link with appropriate libraries
+    # Recording is self-contained - no circular dependency with core
     target_link_libraries(${PROJECT_NAME} PRIVATE
         ${common_libraries}
         Qt6::Widgets
