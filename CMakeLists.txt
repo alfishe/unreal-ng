@@ -19,9 +19,13 @@ option(BUILD_QT_APPS "Build Qt-based applications (unreal-qt, unreal-screen-view
 # Automation options (enabled by default for full builds)
 option(ENABLE_AUTOMATION "Enable automation features (Lua, Python, WebAPI, CLI)" ON)
 option(ENABLE_LUA_AUTOMATION "Enable Lua automation" ON)
-option(ENABLE_PYTHON_AUTOMATION "Enable Python automation" ON)
+option(ENABLE_PYTHON_AUTOMATION "Enable Python automation" OFF)
 option(ENABLE_WEBAPI_AUTOMATION "Enable WebAPI automation" ON)
 option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
+
+# Recording support (audio/video capture) - must be defined here to ensure consistent
+# struct layout (EmulatorContext) across all compilation units
+option(ENABLE_RECORDING "Enable audio/video recording support" ON)
 
 project(unreal)
 
@@ -55,6 +59,37 @@ if (MSVC)
 	add_definitions(-DWIN32_LEAN_AND_MEAN)
 	add_definitions(-DNOMINMAX)
 endif (MSVC)
+
+# ========================================
+# Debug Symbols for Release Builds
+# ========================================
+# Generate debug symbols even in Release mode for crash analysis.
+# Symbols are packaged separately and don't bloat release archives.
+option(RELEASE_WITH_DEBUG_SYMBOLS "Generate debug symbols in Release builds" ON)
+
+if (RELEASE_WITH_DEBUG_SYMBOLS AND CMAKE_BUILD_TYPE STREQUAL "Release")
+    if (MSVC)
+        # MSVC: Generate PDB files for Release builds
+        # /Zi: Generate complete debug info in PDB
+        # /DEBUG:FULL: Include all debug info in PDB (not /DEBUG:FASTLINK)
+        # /OPT:REF,ICF: Still optimize (remove unused functions, fold identical code)
+        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /Zi")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Zi")
+        set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /DEBUG:FULL /OPT:REF /OPT:ICF")
+        set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /DEBUG:FULL /OPT:REF /OPT:ICF")
+        message(STATUS "MSVC Release with PDB symbols: ENABLED")
+    elseif (MINGW)
+        # MinGW: Generate DWARF debug info, will be separated later
+        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -g")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -g")
+        message(STATUS "MinGW Release with DWARF symbols: ENABLED")
+    elseif (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        # GCC/Clang on Linux/macOS: Generate debug info
+        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -g")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -g")
+        message(STATUS "GCC/Clang Release with debug symbols: ENABLED")
+    endif()
+endif()
 
 # Set the output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -94,15 +129,24 @@ endif()
 # use the same MSYS2-provided version and avoid picking up system Python.
 if(MINGW AND ENABLE_PYTHON_AUTOMATION)
     message(STATUS "[Root] MinGW: Pre-configuring MSYS2 Python")
-    
-    # Force CMake to find MSYS2 Python, not system Python
-    set(Python3_ROOT_DIR "C:/msys64/mingw64" CACHE PATH "MSYS2 Python root" FORCE)
+
+    # Don't search Windows registry, let CMake find MSYS2 Python from PATH
     set(Python3_FIND_REGISTRY NEVER)
     set(Python3_FIND_STRATEGY LOCATION)
-    
+
     find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
-    
+
+    # Get the bin directory from the Python executable path
+    get_filename_component(PYTHON3_BIN_DIR "${Python3_EXECUTABLE}" DIRECTORY)
+    set(PYTHON3_BIN_DIR "${PYTHON3_BIN_DIR}" CACHE PATH "Python bin directory" FORCE)
+
+    # Extract version for DLL naming (e.g., 3.12 -> 312)
+    string(REPLACE "." "" PYTHON3_VERSION_NODOT "${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}")
+    set(PYTHON3_VERSION_NODOT "${PYTHON3_VERSION_NODOT}" CACHE STRING "Python version without dots" FORCE)
+
     message(STATUS "[Root] Found MinGW Python: ${Python3_EXECUTABLE} (${Python3_VERSION})")
+    message(STATUS "[Root] Python bin dir: ${PYTHON3_BIN_DIR}")
+    message(STATUS "[Root] Python version for DLL: ${PYTHON3_VERSION_NODOT}")
     
     # MinGW Debug ABI Fix: MSYS2 only provides release Python libraries.
     # In Debug builds (_DEBUG defined), Python headers enable debug reference counting
@@ -137,6 +181,14 @@ run_dependency_checks()
 if (BUILD_QT_APPS)
     set(QT_FOUND_PATH "")
     
+    if (NOT DEFINED QT_INSTALL_PATH OR QT_INSTALL_PATH STREQUAL "")
+        # Check environment variable first (set by Docker container)
+        if(DEFINED ENV{QT_INSTALL_PATH} AND NOT "$ENV{QT_INSTALL_PATH}" STREQUAL "")
+            set(QT_INSTALL_PATH "$ENV{QT_INSTALL_PATH}" CACHE PATH "Qt install path from environment")
+            message(STATUS "QT_INSTALL_PATH from environment: $ENV{QT_INSTALL_PATH}")
+        endif()
+    endif()
+
     if (NOT DEFINED QT_INSTALL_PATH OR QT_INSTALL_PATH STREQUAL "")
         if (APPLE)
             set(QT_POSSIBLE_PATHS
@@ -302,22 +354,45 @@ if (BUILD_QT_APPS)
             COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.app" "${SUITE_STAGING_DIR}/Screen Viewer.app"
             COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-videowall.app" "${SUITE_STAGING_DIR}/Video Wall.app"
             
-            # Copy shared resources into the MAIN bundle BEFORE macdeployqt runs
+            # Copy shared resources into ALL app bundles
+            # (unreal-qt POST_BUILD already copies to bin/unreal-qt.app, but cp -a may miss if POST_BUILD ran before copy)
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.ini"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/fonts"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/unreal.ini"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/fonts"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/unreal.ini"
             
-            # Run macdeployqt on each app bundle with ad-hoc signing as the FINAL step
-            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/UnrealNG.app" -always-overwrite -codesign=-
-            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Screen Viewer.app" -always-overwrite -codesign=-
-            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Video Wall.app" -always-overwrite -codesign=-
+            # Copy shared icon to bundles that reference it
+            COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/unreal-qt/install/macos/unreal.icns" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.icns"
+            COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/unreal-qt/install/macos/unreal.icns" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/unreal.icns"
+            COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/unreal-qt/install/macos/unreal.icns" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/unreal.icns"
+            
+            # Run macdeployqt to deploy Qt frameworks into each bundle
+            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/UnrealNG.app" -always-overwrite
+            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Screen Viewer.app" -always-overwrite
+            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Video Wall.app" -always-overwrite
+            
+            # Sign each app with hardened runtime and entitlements
+            # macdeployqt doesn't support entitlements, so we sign manually after deployment
+            # -f forces re-signing of already-signed frameworks
+            # --options runtime enables hardened runtime (required by Gatekeeper)
+            # --entitlements injects the JIT/shared-memory permissions the emulator needs
+            COMMAND codesign --force --deep --options runtime --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/entitlements.plist" --sign - "${SUITE_STAGING_DIR}/UnrealNG.app"
+            COMMAND codesign --force --deep --options runtime --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/entitlements.plist" --sign - "${SUITE_STAGING_DIR}/Screen Viewer.app"
+            COMMAND codesign --force --deep --options runtime --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/entitlements.plist" --sign - "${SUITE_STAGING_DIR}/Video Wall.app"
             
             # Create combined DMG from the correctly signed staging directory
             COMMAND hdiutil create -volname "UnrealNG Suite" -srcfolder "${SUITE_STAGING_DIR}" -ov -format UDZO "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite.dmg"
             
             DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
-            COMMENT "Creating combined macOS DMG with all applications"
+            COMMENT "Creating combined macOS DMG with all applications (signed with entitlements)"
         )
     endif()
     
@@ -362,11 +437,12 @@ if (BUILD_QT_APPS)
             COMMAND ${CMAKE_COMMAND} -E copy
                 "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/unreal.ini"
             
-            # Create ZIP archive
-            COMMAND ${CMAKE_COMMAND} -E tar "cf"
-                "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite-Windows.zip"
-                "--format=zip" "--" "${SUITE_STAGING_DIR}"
-            
+            # Create ZIP archive (change to parent dir to avoid nested paths)
+            COMMAND ${CMAKE_COMMAND} -E chdir "${CMAKE_BINARY_DIR}/packages"
+                ${CMAKE_COMMAND} -E tar "cf"
+                "UnrealNG-Suite-Windows.zip"
+                "--format=zip" "--" "UnrealNG-Suite"
+
             DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
             COMMENT "Creating combined Windows ZIP with all applications and Qt dependencies"
         )
@@ -376,7 +452,7 @@ if (BUILD_QT_APPS)
             # Get MSYS2 bin path from compiler location
             get_filename_component(MINGW_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
             message(STATUS "MinGW bin directory for packaging: ${MINGW_BIN_DIR}")
-            
+
             add_custom_target(package_mingw_runtime
                 # Copy MinGW runtime DLLs
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -388,7 +464,6 @@ if (BUILD_QT_APPS)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${MINGW_BIN_DIR}/libwinpthread-1.dll"
                     "${SUITE_STAGING_DIR}/"
-                    
                 # Copy OpenSSL DLLs (required for WebAPI/network features)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${MINGW_BIN_DIR}/libcrypto-3-x64.dll"
@@ -396,10 +471,34 @@ if (BUILD_QT_APPS)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${MINGW_BIN_DIR}/libssl-3-x64.dll"
                     "${SUITE_STAGING_DIR}/"
-                    
+                # Re-create ZIP with MinGW runtime DLLs included
+                COMMAND ${CMAKE_COMMAND} -E remove
+                    "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite-Windows.zip"
+                COMMAND ${CMAKE_COMMAND} -E chdir "${CMAKE_BINARY_DIR}/packages"
+                    ${CMAKE_COMMAND} -E tar "cf"
+                    "UnrealNG-Suite-Windows.zip"
+                    "--format=zip" "--" "UnrealNG-Suite"
+
                 DEPENDS package_suite_windows
-                COMMENT "Copying MinGW/MSYS2 runtime DLLs for packaging"
+                COMMENT "Copying MinGW/MSYS2 runtime DLLs and re-packaging ZIP"
             )
+
+            # Add Python DLLs copying only when Python automation is enabled
+            if(ENABLE_PYTHON_AUTOMATION)
+                add_custom_target(package_mingw_python
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${PYTHON3_BIN_DIR}/libpython3.dll"
+                        "${SUITE_STAGING_DIR}/"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${PYTHON3_BIN_DIR}/libpython${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}.dll"
+                        "${SUITE_STAGING_DIR}/"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${PYTHON3_BIN_DIR}/libpython${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}.dll"
+                        "${SUITE_STAGING_DIR}/python${PYTHON3_VERSION_NODOT}.dll"
+                    DEPENDS package_mingw_runtime
+                    COMMENT "Copying Python DLLs for MinGW package"
+                )
+            endif()
         endif()
     endif()
     
@@ -439,6 +538,160 @@ if (BUILD_QT_APPS)
             
             DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
             COMMENT "Creating combined Linux tarball with all applications"
+        )
+    endif()
+
+    # ========================================
+    # Debug Symbol Packaging (separate from release archives)
+    # ========================================
+    # These targets create symbol archives for crash analysis.
+    # Symbols are NOT included in release archives to keep them small.
+    # Enable with -DPACKAGE_SYMBOLS=ON (used for rolling snapshot builds).
+
+    option(PACKAGE_SYMBOLS "Extract and package debug symbols separately" OFF)
+
+    set(SYMBOLS_STAGING_DIR "${CMAKE_BINARY_DIR}/packages/symbols")
+
+    if(PACKAGE_SYMBOLS AND WIN32 AND MSVC)
+        # MSVC: Package PDB files
+        add_custom_target(package_symbols_windows
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E remove_directory "${SYMBOLS_STAGING_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
+
+            # Copy PDB files for all executables
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${CMAKE_BINARY_DIR}/bin/unreal-qt.pdb"
+                "${SYMBOLS_STAGING_DIR}/"
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.pdb"
+                "${SYMBOLS_STAGING_DIR}/"
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${CMAKE_BINARY_DIR}/bin/unreal-videowall.pdb"
+                "${SYMBOLS_STAGING_DIR}/"
+
+            # Create symbols ZIP
+            COMMAND ${CMAKE_COMMAND} -E chdir "${CMAKE_BINARY_DIR}/packages"
+                ${CMAKE_COMMAND} -E tar "cf"
+                "UnrealNG-Symbols-Windows-MSVC.zip"
+                "--format=zip" "--" "symbols"
+
+            DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
+            COMMENT "Packaging MSVC debug symbols (PDB files)"
+        )
+    endif()
+
+    if(PACKAGE_SYMBOLS AND WIN32 AND MINGW)
+        # MinGW: Extract DWARF debug info and strip executables
+        # The symbols are extracted BEFORE the main package target runs
+        add_custom_target(package_symbols_mingw
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E remove_directory "${SYMBOLS_STAGING_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
+
+            # Extract debug symbols from executables
+            COMMAND objcopy --only-keep-debug
+                "${CMAKE_BINARY_DIR}/bin/unreal-qt.exe"
+                "${SYMBOLS_STAGING_DIR}/unreal-qt.debug"
+            COMMAND objcopy --only-keep-debug
+                "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.exe"
+                "${SYMBOLS_STAGING_DIR}/unreal-screen-viewer.debug"
+            COMMAND objcopy --only-keep-debug
+                "${CMAKE_BINARY_DIR}/bin/unreal-videowall.exe"
+                "${SYMBOLS_STAGING_DIR}/unreal-videowall.debug"
+
+            # Strip debug info from executables (in-place)
+            COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-qt.exe"
+            COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.exe"
+            COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-videowall.exe"
+
+            # Add debug link back to executable (for addr2line to find symbols)
+            COMMAND objcopy --add-gnu-debuglink="${SYMBOLS_STAGING_DIR}/unreal-qt.debug"
+                "${CMAKE_BINARY_DIR}/bin/unreal-qt.exe"
+            COMMAND objcopy --add-gnu-debuglink="${SYMBOLS_STAGING_DIR}/unreal-screen-viewer.debug"
+                "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.exe"
+            COMMAND objcopy --add-gnu-debuglink="${SYMBOLS_STAGING_DIR}/unreal-videowall.debug"
+                "${CMAKE_BINARY_DIR}/bin/unreal-videowall.exe"
+
+            # Create symbols ZIP
+            COMMAND ${CMAKE_COMMAND} -E chdir "${CMAKE_BINARY_DIR}/packages"
+                ${CMAKE_COMMAND} -E tar "cf"
+                "UnrealNG-Symbols-Windows-MinGW.zip"
+                "--format=zip" "--" "symbols"
+
+            DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
+            COMMENT "Extracting MinGW debug symbols (DWARF) and stripping executables"
+        )
+    endif()
+
+    if(PACKAGE_SYMBOLS AND UNIX AND NOT APPLE)
+        # Linux: Extract debug info and strip executables
+        add_custom_target(package_symbols_linux
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E remove_directory "${SYMBOLS_STAGING_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
+
+            # Extract debug symbols
+            COMMAND objcopy --only-keep-debug
+                "${CMAKE_BINARY_DIR}/bin/unreal-qt"
+                "${SYMBOLS_STAGING_DIR}/unreal-qt.debug"
+            COMMAND objcopy --only-keep-debug
+                "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer"
+                "${SYMBOLS_STAGING_DIR}/unreal-screen-viewer.debug"
+            COMMAND objcopy --only-keep-debug
+                "${CMAKE_BINARY_DIR}/bin/unreal-videowall"
+                "${SYMBOLS_STAGING_DIR}/unreal-videowall.debug"
+
+            # Strip executables
+            COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-qt"
+            COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer"
+            COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-videowall"
+
+            # Add debug link
+            COMMAND objcopy --add-gnu-debuglink="${SYMBOLS_STAGING_DIR}/unreal-qt.debug"
+                "${CMAKE_BINARY_DIR}/bin/unreal-qt"
+            COMMAND objcopy --add-gnu-debuglink="${SYMBOLS_STAGING_DIR}/unreal-screen-viewer.debug"
+                "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer"
+            COMMAND objcopy --add-gnu-debuglink="${SYMBOLS_STAGING_DIR}/unreal-videowall.debug"
+                "${CMAKE_BINARY_DIR}/bin/unreal-videowall"
+
+            # Create symbols tarball
+            COMMAND ${CMAKE_COMMAND} -E tar "cfz"
+                "${CMAKE_BINARY_DIR}/packages/UnrealNG-Symbols-Linux.tar.gz"
+                "--" "${SYMBOLS_STAGING_DIR}"
+
+            DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
+            COMMENT "Extracting Linux debug symbols and stripping executables"
+        )
+    endif()
+
+    if(PACKAGE_SYMBOLS AND APPLE)
+        # macOS: Generate dSYM bundles
+        add_custom_target(package_symbols_macos
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E remove_directory "${SYMBOLS_STAGING_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
+
+            # Generate dSYM bundles for each app
+            COMMAND dsymutil "${CMAKE_BINARY_DIR}/bin/unreal-qt.app/Contents/MacOS/unreal-qt"
+                -o "${SYMBOLS_STAGING_DIR}/unreal-qt.dSYM"
+            COMMAND dsymutil "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.app/Contents/MacOS/unreal-screen-viewer"
+                -o "${SYMBOLS_STAGING_DIR}/unreal-screen-viewer.dSYM"
+            COMMAND dsymutil "${CMAKE_BINARY_DIR}/bin/unreal-videowall.app/Contents/MacOS/unreal-videowall"
+                -o "${SYMBOLS_STAGING_DIR}/unreal-videowall.dSYM"
+
+            # Strip executables in app bundles
+            COMMAND strip -S "${CMAKE_BINARY_DIR}/bin/unreal-qt.app/Contents/MacOS/unreal-qt"
+            COMMAND strip -S "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.app/Contents/MacOS/unreal-screen-viewer"
+            COMMAND strip -S "${CMAKE_BINARY_DIR}/bin/unreal-videowall.app/Contents/MacOS/unreal-videowall"
+
+            # Create symbols tarball (tar preserves dSYM bundle structure better than zip)
+            COMMAND ${CMAKE_COMMAND} -E tar "cfz"
+                "${CMAKE_BINARY_DIR}/packages/UnrealNG-Symbols-macOS.tar.gz"
+                "--" "${SYMBOLS_STAGING_DIR}"
+
+            DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
+            COMMENT "Generating macOS dSYM bundles and stripping executables"
         )
     endif()
 endif()

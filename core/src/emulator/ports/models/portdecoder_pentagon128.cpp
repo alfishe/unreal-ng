@@ -279,6 +279,11 @@ uint16_t PortDecoder_Pentagon128::decodePort(uint16_t port)
         { 0b1000'0000'0000'0010, 0b0000'0000'0000'0000, 0x7FFD },   // Mem #7FFD        Match value: (0x0000)
         { 0b0000'0000'0000'0001, 0b0000'0000'0000'0000, 0x00FE },   // Sys $00FE        Match value: (0x0000)
 
+        // COVOX/SOUNDRIVE ports #F1,#F3,#F9,#FB - decoded as: bits[7:4]=1111, bit2=0, bit0=1
+        // Mask: 11110101 (0xF5), Match: 11110001 (0xF1)
+        // This decodes all 4 SOUNDRIVE channels, resolved to port 0x00FB for handler
+        { 0b0000'0000'1111'0101, 0b0000'0000'1111'0001, 0x00FB },   // COVOX/SOUNDRIVE
+
         { 0b0000'0000'1000'0011, 0b0000'0000'1000'0011, 0x00FF },   // Beta128 #00FF    Match value: (131, 0x0083)
         //{ 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x001F },   // Beta128 #001F    Match value: (131, 0x0083)
         //{ 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x003F },   // Beta128 #003F    Match value: (131, 0x0083)

@@ -105,6 +105,10 @@ protected:
     // Frame step target (persistent to prevent cumulative drift)
     unsigned _frameStepTargetPos = 0;                   // Target t-state position within frame
     bool _hasFrameStepTarget = false;                   // Whether target has been set
+
+    // Line-step anchor (prevents horizontal drift when stepping by scanlines)
+    // Stores the initial offset within a scanline; subsequent steps target the same offset.
+    int _lineStepAnchorOffset = -1;                     // -1 = not set (first line-step will capture it)
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -183,7 +187,8 @@ public:
     // Atomic debug stepping — zero overhead in non-debug mode (never called from hot path)
     void RunTStates(unsigned tStates, bool skipBreakpoints = true);           // Run exact N t-states (1 = ULA step / 2 pixels)
     void RunUntilScanline(unsigned targetLine, bool skipBreakpoints = true);  // Run until scanline N boundary
-    void RunNScanlines(unsigned count, bool skipBreakpoints = true);          // Run N complete scanlines from current position
+    void RunNScanlines(unsigned count, bool skipBreakpoints = true);          // Run N complete scanlines from current position (drift-free)
+    void ResetLineStepAnchor();                                               // Clear scanline-step anchor (call when switching away from line stepping)
     void RunUntilNextScreenPixel(bool skipBreakpoints = true);                // Skip vblank/borders to first paper pixel
     void RunUntilInterrupt(bool skipBreakpoints = true);                      // Run until Z80 accepts maskable interrupt (iff1 1→0)
     void RunUntilCondition(std::function<bool(const Z80State&)> predicate, unsigned maxTStates = 0);

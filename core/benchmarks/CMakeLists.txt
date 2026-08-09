@@ -24,6 +24,7 @@ get_filename_component(ROOT_DIR ../../ ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_
 
 # Set paths
 set(CORE_DIR ${ROOT_DIR}/core/src)
+set(RECORDING_DIR ${ROOT_DIR}/core/recording/src)
 set(BENCHMARKS_DIR ${ROOT_DIR}/core/benchmarks)
 set(GOOGLEBENCHMARK_DIR ${ROOT_DIR}/lib/benchmark)
 message("CORE_DIR:${CORE_DIR}")
@@ -62,6 +63,10 @@ if (WIN32 AND MINGW)
 
     # Suppress benchmark deprecation messages
     set(CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS} -Wno-deprecated-declarations)
+
+    # Tell benchmark headers we're doing a static build (compiling sources directly)
+    # Without this, the headers apply __declspec(dllimport) on MinGW, causing errors
+    add_compile_definitions(BENCHMARK_STATIC_DEFINE)
 else (WIN32 AND MINGW)
     # Google benchmark folder
     set(BENCHMARK_ENABLE_TESTING OFF)   # Disable Google Benchmark self-testing
@@ -81,13 +86,15 @@ message("SOURCES:${SOURCES}")
 include_directories(
     ${BENCHMARKS_DIR}
     ${CORE_DIR}
+    ${RECORDING_DIR}
     ${GOOGLEBENCHMARK_DIR}/include
 )
 
 # Check if we're being included from the top CMakeLists.txt
 if (CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
-    # We're being built directly, so build core first
+    # We're being built directly, so build core and recording first
     add_subdirectory(${CORE_DIR} core)
+    add_subdirectory(${ROOT_DIR}/core/recording recording)
 else()
     # I am called from other project with add_subdirectory()
     # So skip /src/core dependency build
@@ -138,14 +145,16 @@ endif (APPLE)
 # Link with Google Benchmark libraries
 if (WIN32 AND MINGW)
     # MinGW: benchmark sources are compiled directly, no need to link external target
-    target_link_libraries(${PROJECT_NAME} PRIVATE 
+    target_link_libraries(${PROJECT_NAME} PRIVATE
         ${common_libraries}
         core
+        recording
     )
 else()
-    target_link_libraries(${PROJECT_NAME} PRIVATE 
+    target_link_libraries(${PROJECT_NAME} PRIVATE
         ${common_libraries}
         core
+        recording
         benchmark::benchmark_main
     )
 endif()

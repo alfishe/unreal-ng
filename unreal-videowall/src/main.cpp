@@ -1,16 +1,17 @@
-// MSVC: winsock2.h must be included before windows.h to prevent redefinition errors
+// Windows: winsock2.h must be included before windows.h to prevent redefinition errors
 #ifdef _WIN32
     #ifndef NOMINMAX
         #define NOMINMAX
     #endif
 
+    #include <winsock2.h>
     #include <windows.h>
-    #include <winsock2.h>  // winsock2.h include MUST go before windows.h
 #endif
 
 #include <common/filehelper.h>
 
 #include <QApplication>
+#include "crashhandler/crashhandler.h"
 #include <QDebug>
 #include <QDir>
 #include <QStandardPaths>
@@ -39,6 +40,9 @@ static void clearMacOSSavedState()
 
 int main(int argc, char* argv[])
 {
+    auto crashHandler = std::unique_ptr<CrashHandler>(CrashHandler::create());
+    crashHandler->install();
+
     // Disable macOS state restoration via Qt before creating QApplication
     // Or use 'defaults write com.unrealng.videowall NSQuitAlwaysKeepsWindows -bool false' in Terminal
 #if defined(__APPLE__)

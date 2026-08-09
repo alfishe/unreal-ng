@@ -77,6 +77,7 @@ using utf8::ofstream;
 #include <malloc.h>
 #include <process.h>
 #include <stddef.h>  // #include <algorithm> depends on size_t defined here
+#include <thread>    // Must come after process.h for _beginthreadex
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

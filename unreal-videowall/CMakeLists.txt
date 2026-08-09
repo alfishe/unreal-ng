@@ -22,6 +22,11 @@ if (NOT DEFINED ENABLE_CLI_AUTOMATION)
     option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
 endif()
 
+# Recording support - use parent setting if defined
+if (NOT DEFINED ENABLE_RECORDING)
+    option(ENABLE_RECORDING "Enable audio/video recording support" ON)
+endif()
+
 # C++ standard - use parent CMakeLists.txt setting when included from parent
 # (C++20 is now set globally in root CMakeLists.txt for all compilers)
 
@@ -48,6 +53,13 @@ if (ENABLE_AUTOMATION)
     endif()
     set(INCLUDE_AUTOMATION True)
 endif ()
+
+# Add recording library if enabled (skip if target already exists from parent build)
+if (ENABLE_RECORDING)
+    if (NOT TARGET unrealng::recording)
+        add_subdirectory("${ROOT_DIR}/core/recording" recording)
+    endif()
+endif()
 
 # ========================================
 # Platform-specific Qt path detection
@@ -240,24 +252,27 @@ endif ()
 # Configure automation if enabled
 if (INCLUDE_AUTOMATION)
     # Link with appropriate libraries
+    # Recording is self-contained - no circular dependency with core
     target_link_libraries(${PROJECT_NAME} PRIVATE
         ${common_libraries}
         Qt6::Widgets
         unrealng::automation
+        $<$<BOOL:${ENABLE_RECORDING}>:unrealng::recording>
         ${CMAKE_DL_LIBS}
         Threads::Threads
     )
-    
-    # Link Winsock on Windows for automation
+
+    # Link Winsock and crash handler deps on Windows
     if (WIN32)
-        target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
+        target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32 dbghelp)
     endif ()
 else ()
     # Link without automation
-    target_link_libraries(${PROJECT_NAME} PRIVATE 
+    target_link_libraries(${PROJECT_NAME} PRIVATE
         ${common_libraries}
         Qt6::Widgets
         unrealng::core
+        $<$<BOOL:${ENABLE_RECORDING}>:unrealng::recording>
         Threads::Threads
     )
 endif ()
@@ -341,14 +356,17 @@ if(APPLE)
         # 2. Copy App Bundle (preserving symlinks)
         COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-videowall.app" "${VIDEOWALL_STAGING_DIR}/Video Wall.app"
         
-        # 3. Deploy and Sign (LAST step before DMG creation)
-        COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${VIDEOWALL_STAGING_DIR}/Video Wall.app" -always-overwrite -codesign=-
+        # 3. Deploy Qt frameworks
+        COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${VIDEOWALL_STAGING_DIR}/Video Wall.app" -always-overwrite
         
-        # 4. Create DMG from staging
+        # 4. Sign with hardened runtime and entitlements
+        COMMAND codesign --force --deep --options runtime --entitlements "${ROOT_DIR}/install/macos/entitlements.plist" --sign - "${VIDEOWALL_STAGING_DIR}/Video Wall.app"
+        
+        # 5. Create DMG from staging
         COMMAND hdiutil create -volname "UnrealNG-VideoWall" -srcfolder "${VIDEOWALL_STAGING_DIR}" -ov -format UDZO "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall.dmg"
         
         DEPENDS ${PROJECT_NAME}
-        COMMENT "Creating individual macOS DMG package for Video Wall in ${CMAKE_BINARY_DIR}/packages"
+        COMMENT "Creating individual macOS DMG package for Video Wall (signed with entitlements)"
     )
     
     # Create a macOS application bundle
@@ -359,6 +377,7 @@ if(APPLE)
         MACOSX_BUNDLE_BUNDLE_NAME "UnrealNG Video Wall"
         MACOSX_BUNDLE_BUNDLE_VERSION "${PACKAGE_VERSION}"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PACKAGE_VERSION}"
+        MACOSX_BUNDLE_ICON_FILE "unreal.icns"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.unrealng.videowall"
         MACOSX_BUNDLE_COPYRIGHT "Copyright © 2025 UnrealNG Team"
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/Info.plist"
@@ -367,11 +386,12 @@ if(APPLE)
     # Copy resources to bundle
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources"
+        COMMAND ${CMAKE_COMMAND} -E copy "${ROOT_DIR}/unreal-qt/install/macos/unreal.icns" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/fonts" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/rom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/testrom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy "${ROOT_DIR}/data/configs/pentagon512k/unreal.ini" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/unreal.ini"
-        COMMENT "Copying resources to Video Wall app bundle"
+        COMMENT "Copying icon and resources to Video Wall app bundle"
     )
 endif()
 
