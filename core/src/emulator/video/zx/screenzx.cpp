@@ -608,14 +608,8 @@ bool ScreenZX::IsOnScreenByTiming(uint32_t tstate)
 /// See: http://www.zxdesign.info/vidparam.shtml
 void ScreenZX::UpdateScreen()
 {
-    Screen& screen = *this;
-
-    // Border color is latched in PortDecoder (or model-specific override) after each 'out (#FE)' port command and
-    // stored in Screen object property
-    [[maybe_unused]] uint8_t borderColor = screen.GetBorderColor();
-
     // Get current t-state (value corresponds to CPU cycles relative to current video frame)
-    uint32_t tstate = screen.GetCurrentTstate();
+    uint32_t tstate = GetCurrentTstate();
 
     // Allow renderer to do its job. Cover whole period between previous call and current one
     DrawPeriod(_prevTstate, tstate);

@@ -426,6 +426,11 @@ void Screen::SetActiveScreen(SpectrumScreenEnum screen)
 /// \param color
 void Screen::SetBorderColor(uint8_t color)
 {
+    // Flush/Render all pending pixels using the CURRENT (old) border color 
+    // up to the exact CPU T-state of the I/O port write.
+    // This fixes pixel-perfect multicolor effects (raster bars) across all models.
+    UpdateScreen();
+
     // Only bits [0:2] contain border color
     _borderColor = color & 0b0000'0111;
 }
