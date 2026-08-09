@@ -10,7 +10,7 @@
 #include <QSlider>
 #include <vector>
 
-#include "emulator/recording/recordingmanager.h"
+#include "recordingmanager.h"
 
 /// @brief Multi-track audio configuration dialog
 ///

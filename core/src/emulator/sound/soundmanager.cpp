@@ -444,12 +444,14 @@ void SoundManager::handleFrameEnd()
     }
     /// endregion </Registry-driven mixing>
 
+#ifdef ENABLE_RECORDING
     // Capture audio for recording BEFORE muting
     // This ensures recordings get the actual audio, not silence
     if (_context->pRecordingManager && _context->pRecordingManager->IsRecording())
     {
         _context->pRecordingManager->CaptureAudio(_outBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
     }
+#endif
 
     // Enqueue generated sound data via previously registered application callback
     // Note: Audio callbacks are cleared when emulator loses audio device access to prevent

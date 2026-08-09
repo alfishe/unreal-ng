@@ -3,7 +3,7 @@
 #include <chrono>
 #include <vector>
 
-#include "emulator/recording/encoder_config.h"
+#include "encoder_config.h"
 #include "emulator/sound/native_audio_tap.h"
 
 DSDEncoder::DSDEncoder()
