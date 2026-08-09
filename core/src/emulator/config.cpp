@@ -116,7 +116,10 @@ bool Config::LoadConfig()
         std::string configPath = FileHelper::PathCombine(path, GetDefaultConfig());
         std::string absoluteConfigPath = FileHelper::AbsolutePath(configPath);
 
-		if (LoadConfig(absoluteConfigPath))
+		// Probe before loading: inside a macOS .app the config legitimately
+		// lives in Contents/Resources, not next to the binary, so a miss here
+		// is the normal path and must not be reported as an error.
+		if (FileHelper::FileExists(absoluteConfigPath) && LoadConfig(absoluteConfigPath))
 		{
 			result = true;
 		}

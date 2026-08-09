@@ -154,6 +154,10 @@ public:
     void reset();
     void startTape();
     void stopTape();
+    /// Is the tape currently streaming? Note that the tape auto-starts on the first
+    /// port read and auto-stops at end of data, so this is the only truthful source
+    /// for a UI "tape activity" indicator.
+    bool isStarted() const { return _tapeStarted; }
     /// endregion </Tape control methods>
 
     /// region <Port events>
