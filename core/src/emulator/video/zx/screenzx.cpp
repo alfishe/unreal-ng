@@ -54,6 +54,9 @@ void ScreenZX::CreateTables()
         _rgbaFlashColors[idx] = TransformZXSpectrumColorsToRGBA(idx, false);  // Flashing state colors
     }
 
+    // Initialize latched border color from palette (default border = 0/black)
+    _latchedBorderColorRGBA = _rgbaColors[0];
+
     // Screen mode dependent
     CreateTimingTable();
 }
@@ -686,9 +689,14 @@ void ScreenZX::Draw(uint32_t tstate)
         }
         else if (_borderColor != _latchedBorderColorIndex)
         {
-            // ZX models: only latch at 4T boundaries (when t-in-line is divisible by 4)
+            // ZX models: border is latched at 8-HC boundaries.
+            // MiSTer HDL: hc_next[2:0] == 4, meaning the new border register
+            // becomes effective when pixel counter transitions 3→4 (t-state 1→2).
+            // So in t-states, the latch point is at phase offset 2 within each
+            // 4T group: t-states 2, 6, 10, 14, ...
             uint32_t tInLine = tstate % _rasterState.tstatesPerLine;
-            if (tInLine % _rasterState.borderUpdateTStates == 0)
+            uint8_t phase = _rasterState.borderUpdateTStates / 2;
+            if (tInLine % _rasterState.borderUpdateTStates == phase)
             {
                 _latchedBorderColorRGBA = _rgbaColors[_borderColor];
                 _latchedBorderColorIndex = _borderColor;

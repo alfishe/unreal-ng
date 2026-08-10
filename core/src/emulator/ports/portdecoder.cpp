@@ -400,6 +400,7 @@ uint8_t PortDecoder::PeripheralPortIn(uint16_t port)
         if (device)
         {
             result = device->portDeviceInMethod(port);
+            _lastPortDecoded = true;
         }
     }
     else

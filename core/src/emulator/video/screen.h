@@ -230,6 +230,12 @@ struct RasterState
     // Pentagon: no contention. ZX-48K/128K: contention on 0x4000-0x7FFF.
     bool contentionEnabled = false;
 
+    // Video controller fetch architecture type.
+    // Controls floating bus phase behavior (8T Ferranti vs 4T discrete).
+    // Pentagon/Scorpion: discrete logic (continuous fetch, no shift gaps).
+    // ZX-48K/128K: Ferranti ULA (8T pipeline with shift phases).
+    uint8_t fetchType = 0;  // UlaFetchType enum value
+
     /// endregion </Model-specific ULA behavior>
 };
 
@@ -425,13 +431,6 @@ public:
         return _rasterState.screenAreaStart + rd.screenOffsetLeft / _rasterState.pixelsPerTState;
     }
 
-    /// \brief Calculate ULA memory contention delay for the current t-state.
-    /// On real ZX hardware, the ULA stops the CPU clock when both the CPU and
-    /// the ULA access the shared video RAM (0x4000-0x7FFF) during screen rendering.
-    /// This delay follows a known pattern based on the t-state position within
-    /// the scanline during the screen area.
-    /// \return Number of t-states to delay (0 if no contention)
-    uint8_t GetContentionDelay() const;
     virtual void RenderOnlyMainScreen();
 
     /// @brief Render entire screen at frame end when ScreenHQ=OFF (batch rendering mode)

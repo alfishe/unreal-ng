@@ -68,11 +68,17 @@ uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t port, uint16_t pc)
     /// endregion </Override submodule>
 
     uint8_t result = 0xFF;
+    _lastPortDecoded = false;
 
     if (IsPort_FE(port))
     {
         // Call default implementation
         result = Default_Port_FE_In(port, pc);
+        _lastPortDecoded = true;
+    }
+    else
+    {
+        result = PeripheralPortIn(port);
     }
 
     /// region <Debug logging>

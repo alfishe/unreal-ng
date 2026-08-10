@@ -79,6 +79,9 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
 
     uint8_t result = 0xFF;
     uint16_t decodedPort = decodePort(port);
+    
+    // Reset decoded flag before processing
+    _lastPortDecoded = false;
 
     if (decodedPort != 0x0000)
     {
@@ -87,9 +90,11 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
             case 0x00FE:
                 // FE port must be passed as non-decoded since keyboard handler uses it
                 result = Default_Port_FE_In(port, pc);
+                _lastPortDecoded = true;
                 break;
             case 0x7FFD:
                 result = _context->emulatorState.p7FFD;
+                _lastPortDecoded = true;
                 break;
             default:
                 // All ports registered with PortDecoder will be handled

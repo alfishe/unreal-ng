@@ -378,8 +378,8 @@ public:
 public:
     void RequestMaskedInterrupt();
     void RequestNonMaskedInterrupt();
-    void ProcessInterrupts(bool int_occured,  // Take care about incoming interrupts
-                           unsigned int_start, unsigned int_end);
+    bool ProcessInterrupts(bool int_occured,  // Take care about incoming interrupts
+                           unsigned int_start, unsigned int_end);  // Returns true if INT was handled (skip Z80Step)
 
     // Event handlers
 public:

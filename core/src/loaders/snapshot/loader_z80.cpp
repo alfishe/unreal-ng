@@ -478,9 +478,11 @@ void LoaderZ80::commitFromStage()
                 break;
         }
 
-        // Pre-fill whole border with color
+        // Pre-fill whole border with color (visual only, no timing side effects)
+        // Don't call Default_Port_FE_Out here - it triggers UpdateScreen() with stale t-state
+        // Just set the visual state directly like SNA loader does
         screen.FillBorderWithColor(_borderColor);
-        ports.Default_Port_FE_Out(0x00FE, _borderColor, _z80Registers.pc);
+        _context->emulatorState.pFE = _borderColor;
 
         /// endregion </Apply port configuration>
 
@@ -513,8 +515,25 @@ void LoaderZ80::commitFromStage()
         /// endregion </Transfer memory content>
 
         /// region <Transfer Z80 registers>
-        Z80Registers* actualRegisters = static_cast<Z80Registers*>(_context->pCore->GetZ80());
+        Z80* z80 = _context->pCore->GetZ80();
+
+        // Copy registers but preserve timing state (t) from Reset
+        // memcpy would overwrite t to 0, but Reset set it to 3
+        // SNA loader uses individual assignments which preserve t
+        uint32_t preservedT = z80->tt;
+        Z80Registers* actualRegisters = static_cast<Z80Registers*>(z80);
         memcpy(actualRegisters, &_z80Registers, sizeof(Z80Registers));
+        z80->tt = preservedT;  // Restore timing state
+
+        // Detect if CPU was halted when snapshot was taken
+        // If PC points to HALT instruction (0x76), set halted state
+        // This ensures proper INT timing on first frame after load
+        if (memory.DirectReadFromZ80Memory(z80->pc) == 0x76)
+        {
+            z80->halted = 1;
+            z80->halt_cycle = 0;
+            z80->haltpos = 0;
+        }
         /// endregion </Transfer Z80 registers>
 
         // Trigger screen redraw to show snapshot screen immediately

@@ -265,7 +265,7 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 
 	// ULA section (video signal timings)
 	config.intfq = (uint8_t)inimanager.GetLongValue(ula, "int", 50);
-	config.intstart = (unsigned)inimanager.GetLongValue(ula, "instart", 0);
+	config.intstart = (unsigned)inimanager.GetLongValue(ula, "intstart", 0);
 	config.intlen = (unsigned)inimanager.GetLongValue(ula, "intlen", 32);
 	config.t_line = (unsigned)inimanager.GetLongValue(ula, "line", 224);		// CPU cycles per video line
 	config.frame = (unsigned)inimanager.GetLongValue(ula, "frame", 71680);		// ZX48/128: 69888; Pentagon: 71680; ScorpionZS256: 69888;
@@ -481,13 +481,13 @@ void Config::ApplyModelTimingDefaults(CONFIG& config)
 
     // Apply hardware-accurate defaults per model.
     // Values derived from MiSTer HDL ula.sv INT generation logic:
-    //   Pentagon: INT at vc=239, hc=326 → emulator t-state 71619 (99.9% through frame)
+    //   Pentagon: INT at vc=239, hc=326 → emulator t-state 71623 (99.9% through frame)
     //   ZX-48K:   INT at vc=248, hc=4   → emulator t-state 1794  (2.6% through frame)
     //   ZX-128K:  INT at vc=248, hc=8   → emulator t-state 2056  (2.9% through frame)
     switch (config.mem_model)
     {
         case MM_PENTAGON:
-            config.intstart = 71619;
+            config.intstart = 71625;  // MiSTer vc=239 hc=326 + 6T LUT compensation
             config.intlen   = 32;
             break;
 

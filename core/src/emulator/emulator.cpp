@@ -61,17 +61,20 @@ Emulator::~Emulator()
 {
     MLOGDEBUG("Emulator::~Emulator()");
 
+    // Clean up FeatureManager BEFORE Release(), because Release() deletes _context.
+    // Accessing _context->pFeatureManager after Release() is a use-after-free.
+    if (_featureManager)
+    {
+        if (_context)
+            _context->pFeatureManager = nullptr;
+        delete _featureManager;
+        _featureManager = nullptr;
+    }
+
     // Ensure resources are released if Release() wasn't called explicitly
     if (_initialized.load(std::memory_order_acquire))
     {
         Release();
-    }
-
-    if (_featureManager)
-    {
-        _context->pFeatureManager = nullptr;
-        delete _featureManager;
-        _featureManager = nullptr;
     }
 }
 

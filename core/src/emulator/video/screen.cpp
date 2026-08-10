@@ -1,8 +1,12 @@
 #include "screen.h"
+#include "ulacontention.h"
 
 #include <common/image/imagehelper.h>
 
 #include <cassert>
+#include <cstring>
+#include <fstream>
+#include <iostream>
 
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
@@ -399,15 +403,32 @@ void Screen::SetVideoMode(VideoModeEnum mode)
         case M_PMC:
             _rasterState.borderUpdateTStates = 1;
             _rasterState.contentionEnabled = false;
+            _rasterState.fetchType = ULA_DISCRETE_LOGIC;
             break;
         case M_ZX48:
         case M_ZX128:
         default:
             _rasterState.borderUpdateTStates = 4;
             _rasterState.contentionEnabled = true;
+            _rasterState.fetchType = ULA_FERRANTI;
             break;
     }
     /// endregion </Model-specific ULA behavior>
+
+    // Push raster timing + contention flag to the standalone ULA contention component
+    if (_context && _context->pUlaContention)
+    {
+        ContentionRaster cr;
+        cr.configFrameDuration = _rasterState.configFrameDuration;
+        cr.screenAreaStart = _rasterState.screenAreaStart;
+        cr.screenAreaEnd = _rasterState.screenAreaEnd;
+        cr.tstatesPerLine = _rasterState.tstatesPerLine;
+        cr.screenLineAreaStart = _rasterState.screenLineAreaStart;
+        cr.screenLineAreaEnd = _rasterState.screenLineAreaEnd;
+        _context->pUlaContention->UpdateRaster(cr);
+        _context->pUlaContention->SetContentionEnabled(_rasterState.contentionEnabled);
+        _context->pUlaContention->SetFetchType((UlaFetchType)_rasterState.fetchType);
+    }
 
     // Allocate framebuffer
     AllocateFramebuffer(_mode);
@@ -450,46 +471,25 @@ void Screen::SetBorderColor(uint8_t color)
     // Flush/Render all pending pixels using the CURRENT (old) border color 
     // up to the exact CPU T-state of the I/O port write.
     // This fixes pixel-perfect multicolor effects (raster bars) across all models.
+    uint32_t currentT = GetCurrentTstate();
+    
+    // Debug logging for border effects
+    static std::ofstream logFile("border_tstates.log");
+    if (logFile.is_open())
+    {
+        uint32_t tInLine = currentT % _rasterState.tstatesPerLine;
+        uint32_t line = currentT / _rasterState.tstatesPerLine;
+        logFile << "Frame: " << _state->frame_counter 
+                << " | T: " << currentT 
+                << " | Line: " << line 
+                << " | T-in-line: " << tInLine 
+                << " | Color: " << (int)(color & 7) << "\n";
+    }
+
     UpdateScreen();
 
     // Only bits [0:2] contain border color
     _borderColor = color & 0b0000'0111;
-}
-
-/// ULA memory contention delay table for ZX-48K/128K.
-// The ULA stalls the CPU clock when accessing contended memory (0x4000-0x7FFF)
-// during the visible screen area. The delay pattern repeats every 8 t-states
-// within each scanline during the paper area, following this sequence:
-//   t-state offset in line: 0  1  2  3  4  5  6  7  (then repeats)
-//   delay:                   6  5  4  3  2  1  0  0
-// Source: https://faqwiki.zxnet.co.uk/wiki/Contended_memory
-static const uint8_t contentionPattern[8] = {6, 5, 4, 3, 2, 1, 0, 0};
-
-uint8_t Screen::GetContentionDelay() const
-{
-    if (!_rasterState.contentionEnabled)
-        return 0;  // Pentagon: no contention
-
-    uint32_t t = _cpu->t % _rasterState.configFrameDuration;
-
-    // Only contend during the screen (paper) area
-    if (t < _rasterState.screenAreaStart || t > _rasterState.screenAreaEnd)
-        return 0;
-
-    // Calculate position within the scanline
-    uint32_t tInLine = (t - _rasterState.screenAreaStart) % _rasterState.tstatesPerLine;
-
-    // Only contend during the paper portion of the line (not left/right borders)
-    // Paper starts at screenLineAreaStart relative to line start
-    uint32_t paperStart = _rasterState.screenLineAreaStart;
-    uint32_t paperEnd = _rasterState.screenLineAreaEnd;
-
-    if (tInLine < paperStart || tInLine > paperEnd)
-        return 0;
-
-    // Delay is based on the position within the 8-t-state cell
-    uint32_t offsetInCell = (tInLine - paperStart) % 8;
-    return contentionPattern[offsetInCell];
 }
 
 VideoModeEnum Screen::GetVideoMode()

@@ -1222,10 +1222,15 @@ Z80OPCODE op_D2(Z80 *cpu) { // jp nc,nnnn
 Z80OPCODE op_D3(Z80 *cpu) { // out (n),a
     uint16_t port = cpu->rd(cpu->pc++, true);
 
-    cputact(4);
-
     cpu->memptr = ((port + 1) & 0xFF) + (cpu->a << 8);
+
+    // IO write: port access happens at the START of the IO cycle, not the end.
+    // Real Z80: IORQ goes low at T2 of the IO machine cycle.
+    // Calling out() before cputact(4) ensures cpu.t is at the IO cycle entry
+    // point, so contention delay and SetBorderColor see the correct T-state.
     cpu->out(port + (cpu->a << 8), cpu->a);
+
+    cputact(4);
 }
 
 Z80OPCODE op_D4(Z80 *cpu) { // call nc,nnnn
@@ -1315,9 +1320,10 @@ Z80OPCODE op_DB(Z80 *cpu) { // in a,(nn)
 
     cpu->memptr = (cpu->a << 8) + (port + 1);
 
-    cputact(4);
-
+    // IO read: port access happens at the START of the IO cycle, not the end.
     cpu->a = cpu->in(port);
+
+    cputact(4);
 }
 
 Z80OPCODE op_DC(Z80 *cpu) { // call c,nnnn

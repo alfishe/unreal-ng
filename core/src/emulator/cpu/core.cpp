@@ -221,6 +221,46 @@ bool Core::Init()
 
     /// endregion </HDD>
 
+    /// region <Z80>
+
+    if (result)
+    {
+        result = false;
+
+        // Create main Core core instance (Z80)
+        // Note: Z80 must be created before Video controller so that Screen
+        // can capture the Z80 pointer during construction
+        _z80 = new Z80(_context);
+        if (_z80)
+        {
+            UseFastMemoryInterface();  // Use fast memory interface by default
+
+            result = true;
+        }
+    }
+
+    /// endregion </Z80>
+
+    /// region <ULA Contention>
+
+    if (result)
+    {
+        result = false;
+
+        // Create standalone ULA contention component
+        // Must be created after Z80 (needs cpu pointer) and Memory
+        _ulaContention = new UlaContention();
+        if (_ulaContention)
+        {
+            _ulaContention->SetDependencies(_z80, _memory, _context);
+            _context->pUlaContention = _ulaContention;
+
+            result = true;
+        }
+    }
+
+    /// endregion </ULA Contention>
+
     /// region <Video controller>
 
     if (result)
@@ -239,24 +279,6 @@ bool Core::Init()
     }
 
     /// endregion </Video controller>
-
-    /// region <Z80>
-
-    if (result)
-    {
-        result = false;
-
-        // Create main Core core instance (Z80)
-        _z80 = new Z80(_context);
-        if (_z80)
-        {
-            UseFastMemoryInterface();  // Use fast memory interface by default
-
-            result = true;
-        }
-    }
-
-    /// endregion </Z80>
 
     /// region <Ports decoder>
 
@@ -393,6 +415,13 @@ void Core::Release()
     {
         delete _memory;
         _memory = nullptr;
+    }
+
+    _context->pUlaContention = nullptr;
+    if (_ulaContention != nullptr)
+    {
+        delete _ulaContention;
+        _ulaContention = nullptr;
     }
 
     if (_z80 != nullptr)
