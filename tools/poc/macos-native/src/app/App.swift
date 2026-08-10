@@ -237,6 +237,9 @@ struct ContentView: View {
     @State private var isTargeted = false
 
     var body: some View {
+        let _ = GeometryLog.enabled
+            ? NSLog("[ContentView] body: chromeHidden=%@", windowManager.chromeHidden ? "yes" : "no")
+            : ()
         VStack(spacing: 0) {
             ZStack {
                 Color.black
@@ -260,13 +263,20 @@ struct ContentView: View {
                 }
             }
 
-            if showStatusBar {
+            // `chromeHidden` overrides the preference for the duration of a fullscreen
+            // transition and of fullscreen itself, without disturbing the setting.
+            if showStatusBar && !windowManager.chromeHidden {
                 StatusBarView(controller: controller,
                               windowManager: windowManager,
                               telemetry: controller.telemetry)
             }
         }
         .frame(minWidth: UnrealNGApp.nativeWidth, minHeight: UnrealNGApp.nativeHeight)
+        // With the bars gone there is no titlebar to inset for, but SwiftUI keeps
+        // reserving its 28pt safe area - and re-deciding that mid-transition shifts
+        // the picture by exactly that much. Give the content the whole window while
+        // the chrome is suppressed so no such re-decision is pending.
+        .ignoresSafeArea(.all, edges: windowManager.chromeHidden ? .all : [])
         .background(WindowAccessor {
             windowManager.attach($0)
             // SwiftUI's `.toolbar` never materialised on this window, so the toolbar
@@ -288,6 +298,12 @@ struct ContentView: View {
         }
         .onChange(of: controller.frameSize) { size in
             windowManager.update(frameSize: size)
+        }
+        // Fires only after SwiftUI has re-evaluated this body, i.e. the status bar is
+        // genuinely out of the tree. The fullscreen transition waits for this before
+        // handing over to AppKit - see whenChromeSettled.
+        .onChange(of: windowManager.chromeHidden) { _ in
+            windowManager.chromeDidApply()
         }
     }
 

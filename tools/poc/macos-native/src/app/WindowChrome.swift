@@ -48,12 +48,39 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     var statusBarVisible: Bool = true {
         didSet {
             guard statusBarVisible != oldValue else { return }
+            let delta = statusBarVisible ? Self.statusBarHeight : -Self.statusBarHeight
+            // While the chrome is suppressed the bar is not on screen, so the change
+            // only concerns the geometry we will restore to.
+            if chromeHidden {
+                if var saved = savedChrome {
+                    saved.height = max(0, saved.height + delta)
+                    savedChrome = saved
+                }
+                return
+            }
             // Best guess until the next layout measures the truth (see report(pictureSize:)).
-            measuredChrome.height += statusBarVisible ? Self.statusBarHeight : -Self.statusBarHeight
-            measuredChrome.height = max(0, measuredChrome.height)
+            measuredChrome.height = max(0, measuredChrome.height + delta)
             reapply()
         }
     }
+
+    /// True while the window wears no toolbar and no status bar because a fullscreen
+    /// transition is in flight or in effect. Published because the status bar is a
+    /// SwiftUI view and has to disappear from the tree; it changes twice per
+    /// transition, so it costs two `.commands` rebuilds, not a stream of them.
+    @Published private(set) var chromeHidden = false
+
+    /// Chrome measurement to restore once the bars come back.
+    private var savedChrome: CGSize?
+
+    /// Window frame from before the teleport, restored when leaving fullscreen.
+    private var savedFrame: NSRect?
+
+    /// The toolbar while it is detached for the duration of fullscreen.
+    private var savedToolbar: NSToolbar?
+
+    /// Screen rect the exit zoom is shrinking the picture into.
+    private var exitPictureRect: NSRect?
 
     private weak var window: NSWindow?
     /// SwiftUI's own window delegate. Held strongly: the delegate slot on NSWindow is
@@ -167,6 +194,9 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         guard let window,
               !window.styleMask.contains(.fullScreen),
               !window.inLiveResize,
+              // Mid-transition the bars are gone but the window has not been reframed
+              // yet; measuring there would record a chrome of zero as the truth.
+              !isTransitioning, !chromeHidden,
               pictureSize.width > 0, pictureSize.height > 0
         else { return }
 
@@ -248,11 +278,143 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
 
     // MARK: Full screen
 
+    /// Screen rect the emulated picture occupies right now.
+    private func pictureScreenRect() -> NSRect? {
+        guard let window, let view = pictureView else { return nil }
+        return window.convertToScreen(view.convert(view.bounds, to: nil))
+    }
+
+    /// Strips the toolbar and the status bar and shrinks the window by exactly the
+    /// height they occupied, so the picture keeps the screen rect it already had.
+    ///
+    /// Both halves are required. Hiding the bars alone lets the picture grow into the
+    /// freed space, and since only the height changes the aspect ratio breaks - that
+    /// is the distortion seen at the very start of the zoom. Reframing alone would
+    /// zoom a window that still carries its bars. Done here, in `will`, the snapshot
+    /// AppKit is about to take already shows a bare device frame at the target ratio.
+    private func hideChromeForFullScreen(reframe: Bool) {
+        guard let window, !chromeHidden else { return }
+
+        let picture = pictureScreenRect()
+        savedChrome = measuredChrome
+        savedFrame = window.frame          // the real windowed frame, bars included
+
+        chromeHidden = true
+        // Detached, not just hidden: AppKit takes over toolbar visibility in
+        // fullscreen and puts a hidden toolbar back up as a titlebar overlay. With the
+        // content spanning the whole window (ignoresSafeArea) that overlay lands on
+        // top of the picture - which is the toolbar still being there in fullscreen.
+        // A window with no toolbar at all has nothing to restore.
+        savedToolbar = window.toolbar
+        window.toolbar = nil
+        measuredChrome = .zero
+
+        // Shrinking the window by exactly the height the bars occupied keeps the
+        // picture on the same screen rect. Without it the picture grows into the freed
+        // space - and since only the height changes, the aspect breaks.
+        if reframe, let picture {
+            window.setFrame(window.frameRect(forContentRect: picture),
+                            display: false, animate: false)
+        }
+
+        if GeometryLog.enabled {
+            NSLog("[WindowManager] chrome hidden (was %.0fx%.0f) reframe=%@",
+                  savedChrome?.width ?? -1, savedChrome?.height ?? -1,
+                  reframe ? "yes" : "no")
+        }
+    }
+
+    /// Puts the bars back. Called from the `did` callback, so the zoom is over and the
+    /// window is already at its normal frame - `reapply` then re-establishes the
+    /// integer multiple with the chrome included.
+    private func restoreChromeAfterFullScreen() {
+        guard let window, chromeHidden else { return }
+        chromeHidden = false
+        if let savedToolbar {
+            window.toolbar = savedToolbar
+            savedToolbar.isVisible = true
+            // Re-attaching resets the style, and a differently-sized toolbar means a
+            // different chrome height. It must match what install(on:) uses or the
+            // measurement flips after every exit and costs a resize correction.
+            window.toolbarStyle = .unifiedCompact
+            self.savedToolbar = nil
+        }
+        if let savedChrome {
+            measuredChrome = savedChrome
+            self.savedChrome = nil
+        }
+        if GeometryLog.enabled { NSLog("[WindowManager] chrome restored") }
+    }
+
     func toggleFullScreen() {
         guard let window, !isTransitioning else { return }
         // Belt and braces: a window restored from an old state may lack the behaviour.
         window.collectionBehavior.insert(.fullScreenPrimary)
-        window.toggleFullScreen(nil)
+
+        guard !window.styleMask.contains(.fullScreen) else {
+            window.toggleFullScreen(nil)
+            return
+        }
+
+        // Chrome goes BEFORE the transition is asked for, not inside it. Dropping the
+        // status bar is a SwiftUI change, and SwiftUI relayouts on ITS own cycle, one
+        // or two frames later - landing in the middle of the zoom. Every such relayout
+        // moves the layer our transform is relative to, which is the picture jumping
+        // to a different place mid-animation. Doing it here, with the reframe that
+        // keeps the picture rect fixed, lets the layout settle while nothing moves.
+        clearAspectConstraint()
+
+        // ARM THE WAIT FIRST. SwiftUI re-evaluates the body synchronously inside the
+        // `chromeHidden = true` assignment, so subscribing afterwards misses the only
+        // notification there will ever be - the wait then always timed out and the
+        // transition started with the bars still drawn.
+        whenChromeSettled { window.toggleFullScreen(nil) }
+        hideChromeForFullScreen(reframe: true)
+    }
+
+    private var chromeSettledHandler: (() -> Void)?
+    private var chromeWaitStarted: CFAbsoluteTime = 0
+
+    /// Runs `body` once SwiftUI has ACTED on `chromeHidden` and the bar-less window has
+    /// been composited.
+    ///
+    /// Polling geometry for this does not work: every quantity worth comparing already
+    /// held its final value before SwiftUI re-evaluated anything, so the wait passed
+    /// immediately, toggleFullScreen went out in the same runloop turn, and macOS
+    /// captured the space with the bars still on it. That is why the chrome looked
+    /// like it came off after the transition rather than before it. ContentView calls
+    /// chromeDidApply() from .onChange, which only fires once the body has actually
+    /// been re-evaluated - a real event, not a guess about one.
+    private func whenChromeSettled(_ body: @escaping () -> Void) {
+        chromeSettledHandler = body
+
+        // A view that is off-screen or otherwise never updated must not wedge the
+        // transition forever.
+        chromeWaitStarted = CFAbsoluteTimeGetCurrent()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self, let pending = self.chromeSettledHandler else { return }
+            if GeometryLog.enabled { NSLog("[WindowManager] chrome settle timed out") }
+            self.chromeSettledHandler = nil
+            pending()
+        }
+    }
+
+    /// Called by ContentView when SwiftUI has re-evaluated with the new chrome state.
+    func chromeDidApply() {
+        guard let pending = chromeSettledHandler else { return }
+        chromeSettledHandler = nil
+
+        // SwiftUI has re-laid out; force the result onto the screen, then hand over on
+        // the next turn so the bar-less window is what gets captured.
+        window?.contentView?.layoutSubtreeIfNeeded()
+        window?.displayIfNeeded()
+
+        if GeometryLog.enabled {
+            NSLog("[WindowManager] chrome applied by SwiftUI after %.0fms, picture %.0f",
+                  (CFAbsoluteTimeGetCurrent() - chromeWaitStarted) * 1000,
+                  pictureView?.bounds.height ?? -1)
+        }
+        DispatchQueue.main.async(execute: pending)
     }
 
     /// macOS's "double-click the title bar to" preference defaults to Zoom, and this
@@ -316,23 +478,306 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         return frame
     }
 
-    // The transition is deliberately AppKit's DEFAULT snapshot zoom: this app does not
-    // return the window from customWindowsToEnter/ExitFullScreen, so there is no second
-    // animator to desync from Core Animation. What the artefacts came from instead was
-    // our own frame pump presenting asynchronously while AppKit reframed the window,
-    // and the aspect constraint being dropped too late. Both are fixed by arming the
-    // freeze one callback EARLIER, in `will`, rather than in `did`.
+    // MARK: The teleport transition
+    //
+    // Returning the window from customWindowsTo{Enter,Exit}FullScreen takes AppKit's
+    // snapshot zoom out of the picture entirely - that is the ONLY way to be rid of
+    // it. Its snapshot is taken before windowWillEnterFullScreen, so no amount of
+    // hiding chrome from a delegate callback can keep the bars out of it; that is what
+    // the last two attempts ran into.
+    //
+    // In exchange we owe AppKit the animation. It is deliberately NOT a window
+    // animation: NSWindow's animator is an app-side timer with its own curve while
+    // Core Animation interpolates on the render server, and two animators only ever
+    // agree at the endpoints. So the WINDOW TELEPORTS - one setFrame, no animation -
+    // and the only thing that moves is a transform on the Metal layer. One animator,
+    // no desync, and every intermediate frame is real live content rather than a
+    // stale bitmap.
+
+    /// Keep the menu bar and any titlebar strip out of the way unless the pointer goes
+    /// looking for them - the emulated picture owns the screen in fullscreen.
+    func window(_ window: NSWindow,
+                willUseFullScreenPresentationOptions proposedOptions: NSApplication.PresentationOptions
+                = []) -> NSApplication.PresentationOptions {
+        proposedOptions.union([.fullScreen, .autoHideToolbar, .autoHideMenuBar, .autoHideDock])
+    }
+
+    func customWindowsToEnterFullScreen(for window: NSWindow) -> [NSWindow]? { [window] }
+    func customWindowsToExitFullScreen(for window: NSWindow) -> [NSWindow]? { [window] }
+
+    func window(_ window: NSWindow,
+                startCustomAnimationToEnterFullScreenWithDuration duration: TimeInterval) {
+        beginTransition()
+
+        guard let view = pictureView, let sourceView = viewScreenRect() else {
+            window.setFrame(window.screen?.frame ?? window.frame, display: true)
+            finishZoom(reason: "enter-nopicture")
+            return
+        }
+
+        // Where the picture is now, before anything moves.
+        let source = pictureRect(in: sourceView)
+
+        // Everything between here and NSEnableScreenUpdates lands on screen at once,
+        // so the intermediate geometry is never composited. NOTE: display:false and no
+        // CATransaction flush - flushing here froze the display for hundreds of ms.
+        NSDisableScreenUpdates()
+
+        // Normally a no-op: toggleFullScreen() already did this and let the layout
+        // settle. It still runs for transitions we did not start ourselves, such as
+        // AppKit's own Ctrl-Cmd-F.
+        clearAspectConstraint()
+        hideChromeForFullScreen(reframe: true)
+
+        window.setFrame(window.screen?.frame ?? window.frame, display: false, animate: false)
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        // Fill the freshly reallocated drawable before it can be composited empty.
+        view.renderForTransition()
+
+        let targetView = viewScreenRect() ?? sourceView
+        zoom(view: view, from: source, viewRect: targetView, duration: duration, reverse: false)
+
+        NSEnableScreenUpdates()
+
+        armFinish(after: duration, reason: "enter")
+    }
+
+    func window(_ window: NSWindow,
+                startCustomAnimationToExitFullScreenWithDuration duration: TimeInterval) {
+        beginTransition()
+
+        guard let view = pictureView, let viewRect = viewScreenRect() else {
+            window.setFrame(savedFrame ?? window.frame, display: true)
+            finishZoom(reason: "exit-nopicture")
+            return
+        }
+
+        // Backwards the window CANNOT teleport first: it would already be small, and a
+        // layer scaled up beyond the window's own surface simply has nowhere to draw.
+        // So the window stays fullscreen for the whole animation, the layer shrinks
+        // into the rect the picture is about to occupy, and the teleport happens at
+        // the very end - under disabled screen updates, so the swap is not seen.
+        let destination = destinationPictureRect(for: window)
+        exitPictureRect = destination
+        zoom(view: view, from: destination, viewRect: viewRect,
+             duration: duration, reverse: true)
+
+        armFinish(after: duration, reason: "exit")
+    }
+
+    /// Screen rect of the Metal view.
+    private func viewScreenRect() -> NSRect? {
+        guard let window, let view = pictureView else { return nil }
+        return window.convertToScreen(view.convert(view.bounds, to: nil))
+    }
+
+    /// Where the emulated picture sits inside a given view rect: aspect-fit, centred -
+    /// the same letterbox the renderer's viewport computes, in screen coordinates.
+    private func pictureRect(in viewRect: NSRect) -> NSRect {
+        guard frameSize.width > 0, frameSize.height > 0 else { return viewRect }
+        let aspect = frameSize.width / frameSize.height
+        var size = CGSize(width: viewRect.width, height: viewRect.width / aspect)
+        if size.height > viewRect.height {
+            size = CGSize(width: viewRect.height * aspect, height: viewRect.height)
+        }
+        return NSRect(x: viewRect.midX - size.width / 2,
+                      y: viewRect.midY - size.height / 2,
+                      width: size.width,
+                      height: size.height)
+    }
+
+    /// Screen rect the picture will occupy once the window is back to `savedFrame`
+    /// with its bars restored. Derived rather than measured because the window is
+    /// still fullscreen when the exit animation has to be set up.
+    private func destinationPictureRect(for window: NSWindow) -> NSRect {
+        let frame = savedFrame ?? window.frame
+        let content = window.contentRect(forFrameRect: frame)
+        let chrome = savedChrome ?? measuredChrome
+        let size = CGSize(width: max(1, content.width - chrome.width),
+                          height: max(1, content.height - chrome.height))
+
+        // Where the picture will really be, i.e. inside the window's own frame - the
+        // same thing the Qt POC animates to. Centring this on the screen was a fix for
+        // a misdiagnosis; the sliding came from the anchor-point error in zoom().
+        let bottom = statusBarVisible ? Self.statusBarHeight : 0
+        return NSRect(x: (content.midX - size.width / 2).rounded(),
+                      y: (content.minY + bottom).rounded(),
+                      width: size.width,
+                      height: size.height)
+    }
+
+    /// Window frame that puts the emulated picture exactly at `picture`.
+    private func restoreFrame(for window: NSWindow, pictureAt picture: NSRect) -> NSRect {
+        let chrome = savedChrome ?? measuredChrome
+        // The status bar is the bottom part of the chrome; the rest is the toolbar
+        // strip above the picture.
+        let bottom = statusBarVisible ? Self.statusBarHeight : 0
+        let content = NSRect(x: picture.minX - chrome.width / 2,
+                             y: picture.minY - bottom,
+                             width: picture.width + chrome.width,
+                             height: picture.height + chrome.height)
+        return window.frameRect(forContentRect: content)
+    }
+
+    /// Animates the layer between "picture appears at `rect`" and "picture sits where
+    /// it really is". Forward runs rect -> identity, backward identity -> rect.
+    ///
+    /// The transform is built around the PICTURE, not the view: in fullscreen the view
+    /// is the whole screen and the picture is pillarboxed inside it, so scaling by the
+    /// view's height would size the emulated image wrong at t=0 and pop.
+    private func zoom(view: NSView, from rect: NSRect, viewRect: NSRect,
+                      duration: TimeInterval, reverse: Bool) {
+        guard let layer = view.layer else { return }
+
+        // Everything below is in the LAYER's own coordinates, not screen ones.
+        let target = NSRect(x: rect.minX - viewRect.minX, y: rect.minY - viewRect.minY,
+                            width: rect.width, height: rect.height)
+        let bounds = NSRect(origin: .zero, size: viewRect.size)
+        let picture = pictureRect(in: bounds)
+        guard picture.height > 0, target.height > 0 else { return }
+
+        // A view's backing layer has anchorPoint (0,0), so the transform scales about
+        // the layer's CORNER, not its centre. Offsetting by the difference of centres -
+        // which is what a centre anchor would want - therefore pulls the shrinking
+        // picture towards that corner: the "sliding away down-left" artefact. Map
+        // corner to corner instead, exactly as the Qt POC does.
+        let scale = target.height / picture.height
+        let offset = CATransform3DConcat(
+            CATransform3DMakeScale(scale, scale, 1),
+            CATransform3DMakeTranslation(target.minX - scale * picture.minX,
+                                         target.minY - scale * picture.minY, 0))
+
+        let animation = CABasicAnimation(keyPath: "transform")
+        animation.fromValue = NSValue(caTransform3D: reverse ? CATransform3DIdentity : offset)
+        animation.toValue = NSValue(caTransform3D: reverse ? offset : CATransform3DIdentity)
+        animation.duration = duration
+        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        animation.fillMode = .forwards
+        animation.isRemovedOnCompletion = false
+
+        // The model value is the endpoint, so nothing snaps back if the animation is
+        // dropped early.
+        layer.transform = reverse ? offset : CATransform3DIdentity
+        layer.add(animation, forKey: "un.zoom")
+
+        if GeometryLog.enabled {
+            NSLog("[WindowManager] zoom %@ target=%@ picture=%@ anchor=%.1f,%.1f scale=%.3f dur=%.0fms",
+                  reverse ? "out" : "in", NSStringFromRect(target),
+                  NSStringFromRect(picture), layer.anchorPoint.x, layer.anchorPoint.y,
+                  scale, duration * 1000)
+        }
+    }
+
+    /// When the running zoom is due to be over.
+    private var zoomDeadline: CFAbsoluteTime = 0
+
+    private func armFinish(after duration: TimeInterval, reason: String) {
+        transitionToken &+= 1
+        let token = transitionToken
+        zoomDeadline = CFAbsoluteTimeGetCurrent() + duration
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+            guard let self, self.transitionToken == token else { return }
+            self.finishZoom(reason: reason + "-timer")
+        }
+    }
+
+    private func finishZoom(reason: String) {
+        guard isTransitioning, let window else { return }
+
+        // AppKit does not honour the duration it handed us - it fires its did-callback
+        // hundreds of ms early. Finishing there would tear down a zoom that is still
+        // running: the animation visibly stops half way and the window snaps to its
+        // end state. So an early notification does not finalise, it only makes sure
+        // finalisation happens at the deadline.
+        let remaining = zoomDeadline - CFAbsoluteTimeGetCurrent()
+        if remaining > 0.005 {
+            if GeometryLog.enabled {
+                NSLog("[WindowManager] %@ arrived %.0fms early - deferring", reason, remaining * 1000)
+            }
+            transitionToken &+= 1
+            let token = transitionToken
+            DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self] in
+                guard let self, self.transitionToken == token else { return }
+                self.finishZoom(reason: reason + "-deferred")
+            }
+            return
+        }
+
+        if GeometryLog.enabled { NSLog("[WindowManager] finish zoom (%@)", reason) }
+
+        // A CATransaction, NOT NSDisableScreenUpdates: measured at 524ms of dead time
+        // here, which is the performance problem its deprecation note warns about.
+        // Nothing in this block reallocates a drawable, so suppressing implicit
+        // animations is enough to make the swap atomic.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+
+        // Which way we are going comes from the will-callbacks and NOTHING else.
+        // Asking the style mask does not work: with a custom transition AppKit only
+        // sets .fullScreen at its did-callback, which lands AFTER this runs - so on
+        // the way IN the window still looks windowed here, the exit branch ran by
+        // mistake, and the bars came back mid-flight while AppKit went on to finish
+        // the transition around them.
+        let leaving = isExiting
+        // Where the zoom just put the picture - computed BEFORE restoring the chrome,
+        // which clears the saved measurement this depends on.
+        let restoreFrame = leaving
+            ? restoreFrame(for: window, pictureAt: exitPictureRect ?? destinationPictureRect(for: window))
+            : nil
+
+        if leaving {
+            restoreChromeAfterFullScreen()
+            if let restoreFrame {
+                window.setFrame(restoreFrame, display: false, animate: false)
+            }
+            savedFrame = nil
+            exitPictureRect = nil
+            window.contentView?.layoutSubtreeIfNeeded()
+        }
+
+        pictureView?.layer?.removeAnimation(forKey: "un.zoom")
+        pictureView?.layer?.transform = CATransform3DIdentity
+
+        endTransition()
+        CATransaction.commit()
+
+        // Only now, with nothing left to animate, is it safe to publish. Same reason
+        // as above: the style mask is not yet authoritative at this point.
+        set(isFullScreen: !leaving)
+
+        guard leaving else { return }
+        reapply()
+
+        // AppKit finishes an exit by restoring the frame IT recorded when the
+        // transition began - which is the shrunk, chrome-less one, since the chrome
+        // comes off before we ask to go fullscreen. That lands after everything here,
+        // so the window ends up offset by the height of the bars. Re-assert the real
+        // pre-fullscreen frame once AppKit is done having its say.
+        if let restoreFrame {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let window = self.window,
+                      !window.styleMask.contains(.fullScreen), !self.isTransitioning,
+                      window.frame != restoreFrame
+                else { return }
+                if GeometryLog.enabled {
+                    NSLog("[WindowManager] re-asserting frame %@ (AppKit left it at %@)",
+                          NSStringFromRect(restoreFrame), NSStringFromRect(window.frame))
+                }
+                window.setFrame(restoreFrame, display: true, animate: false)
+            }
+        }
+    }
+
+    private var isExiting = false
 
     func windowWillEnterFullScreen(_ notification: Notification) {
-        beginTransition()
-        // Must be cleared BEFORE AppKit starts reframing, not after: an aspect
-        // constraint applied to the intermediate frames is the ratio distortion.
-        clearAspectConstraint()
+        isExiting = false
         forwardee?.windowWillEnterFullScreen?(notification)
     }
 
     func windowWillExitFullScreen(_ notification: Notification) {
-        beginTransition()
+        isExiting = true
         forwardee?.windowWillExitFullScreen?(notification)
     }
 
@@ -344,15 +789,9 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         pictureView?.freezeForTransition()
 
         // Safety net: a silent frame pump is fatal (a permanently frozen picture), so
-        // never let a missed did-callback strand it. Tokenised so a late timer from a
-        // previous transition cannot cut short the one currently running.
-        transitionToken &+= 1
-        let token = transitionToken
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-            guard let self, self.transitionToken == token else { return }
-            if GeometryLog.enabled { NSLog("[WindowManager] transition watchdog fired") }
-            self.endTransition()
-        }
+        // never let a lost callback strand it. armFinish() re-stamps the token with
+        // the real duration, which retires this one.
+        armFinish(after: 3.0, reason: "watchdog")
     }
 
     private func endTransition() {
@@ -386,19 +825,21 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         apply(scale: snapped, animate: false)
     }
 
+    // NOTE: neither of these publishes anything. `isFullScreen` is @Published, and a
+    // publish rebuilds the SwiftUI tree AND re-runs the toolbar's Combine sink, both
+    // of which relayout the view the zoom transform is anchored to. Setting it here
+    // is what produced the run of jumps mid-animation; it is set in finishZoom
+    // instead, when nothing is moving any more.
+
     @objc private func handleEnterFullScreen() {
-        set(isFullScreen: true)
-        // Integer snapping and the aspect lock must not fight AppKit here.
+        // Integer snapping and the aspect lock must not fight the fullscreen frame.
         clearAspectConstraint()
-        endTransition()
+        // Whichever comes first wins; finishZoom is idempotent.
+        finishZoom(reason: "didEnter")
     }
 
     @objc private func handleExitFullScreen() {
-        set(isFullScreen: false)
-        // AppKit restores the pre-fullscreen frame, which may no longer match the
-        // current framebuffer - re-snap (this also restores the aspect constraint).
-        reapply()
-        endTransition()
+        finishZoom(reason: "didExit")
     }
 }
 
@@ -450,7 +891,11 @@ final class EmulatorToolbarController: NSObject, NSToolbarDelegate, NSToolbarIte
         toolbar.allowsUserCustomization = false
 
         window.styleMask.insert(.titled)
-        window.toolbarStyle = .unified
+        // Must agree with the scene's .windowToolbarStyle(.unifiedCompact): declaring
+        // .unified here made the chrome 74pt at launch and 50pt after a fullscreen
+        // round trip, and that 24pt difference was a visible jerk at the end of every
+        // exit as the window resized to match the new measurement.
+        window.toolbarStyle = .unifiedCompact
         window.toolbar = toolbar
         toolbar.isVisible = true
     }

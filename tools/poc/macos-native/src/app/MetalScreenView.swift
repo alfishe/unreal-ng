@@ -146,7 +146,7 @@ final class EmulatorMetalView: MTKView, MTKViewDelegate {
     func draw(in view: MTKView) {
         // Silent for the whole transition. settleAfterTransition() calls draw()
         // directly and clears the flag first, so the final frame still lands.
-        guard windowManager?.isTransitioning != true else { return }
+        guard forceDraw || windowManager?.isTransitioning != true else { return }
 
         guard
             let controller,
@@ -266,6 +266,38 @@ final class EmulatorMetalView: MTKView, MTKViewDelegate {
 
     // MARK: Fullscreen transition
 
+    /// Set only around the deliberate in-transition redraws below, which have to get
+    /// past the `isTransitioning` guard that silences everything else.
+    private var forceDraw = false
+
+    /// One frame at whatever geometry the view has RIGHT NOW, drawn synchronously.
+    ///
+    /// The teleport gives the view its fullscreen bounds in an instant, and
+    /// autoResizeDrawable then reallocates the drawable - which comes up cleared. With
+    /// the frame pump silent nothing would ever fill it, and the zoom would animate a
+    /// black rectangle. That was the black flash. Rendering once here means the layer
+    /// carries a real picture at the target resolution before the transform shrinks it
+    /// back to where the window used to be.
+    func renderForTransition() {
+        layoutSubtreeIfNeeded()
+
+        let backing = window?.backingScaleFactor ?? 1
+        let size = CGSize(width: (bounds.width * backing).rounded(),
+                          height: (bounds.height * backing).rounded())
+
+        forceDraw = true
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if size.width > 0, size.height > 0, size != drawableSize {
+            drawableSize = size
+        }
+        presentsWithTransaction = true
+        draw()
+        presentsWithTransaction = false
+        CATransaction.commit()
+        forceDraw = false
+    }
+
     /// Stop PRODUCING frames for the duration of the transition.
     ///
     /// Note what this deliberately does NOT do: it does not clear
@@ -273,9 +305,8 @@ final class EmulatorMetalView: MTKView, MTKViewDelegate {
     /// its windowed size in the top-left corner of the fullscreen window - MTKView
     /// only recomputes `drawableSize` from a bounds change, so a bounds change that
     /// happens while the flag is off is lost forever and no later layout brings it
-    /// back. The drawable-churn hazard the fullscreen-transition notes warn about
-    /// applies to a custom per-step animation; AppKit's default snapshot zoom, which
-    /// this app uses, resizes the window once.
+    /// back. The teleport resizes the window exactly once, so there is no per-step
+    /// drawable churn for the flag to protect against anyway.
     func freezeForTransition() {
         isPaused = true
     }
