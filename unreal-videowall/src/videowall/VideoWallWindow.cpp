@@ -307,6 +307,7 @@ void VideoWallWindow::addEmulatorTile()
         connect(tile, &EmulatorTile::tileClicked, this, &VideoWallWindow::onTileClicked);
 
         _tileGrid->addTile(tile);
+        updateStaggeredPacingPhases();
     }
 }
 
@@ -1122,6 +1123,7 @@ void VideoWallWindow::bindAudioToTile(EmulatorTile* tile)
     _soundManager->setActiveContext(emulator->GetContext());
 
     _audioBoundTile = tile;
+    updateStaggeredPacingPhases();
     qDebug() << "Audio bound to tile (Sound & SoundHQ enabled):" << QString::fromStdString(emulator->GetUUID());
 }
 
@@ -1176,4 +1178,44 @@ void VideoWallWindow::unbindAudioFromTile()
 
     qDebug() << "Audio unbound from tile (Sound & SoundHQ disabled):" << QString::fromStdString(emulator->GetUUID());
     _audioBoundTile = nullptr;
+    updateStaggeredPacingPhases();
+}
+
+void VideoWallWindow::updateStaggeredPacingPhases()
+{
+    if (!_tileGrid)
+        return;
+
+    const auto& tiles = _tileGrid->tiles();
+    if (tiles.empty())
+        return;
+
+    size_t count = tiles.size();
+    constexpr uint32_t totalSpreadUs = 12000;  // Spread follower calculations smoothly over 12ms
+
+    size_t followerIndex = 0;
+    size_t followerCount = (count > 1) ? (count - 1) : 1;
+
+    for (auto* tile : tiles)
+    {
+        if (!tile || !tile->emulator())
+            continue;
+
+        auto* context = tile->emulator()->GetContext();
+        if (!context)
+            continue;
+
+        if (tile == _audioBoundTile)
+        {
+            // Active audio tile runs at t = 0us (no stagger phase delay)
+            context->staggerPhaseUs.store(0, std::memory_order_release);
+        }
+        else
+        {
+            // Follower tiles are assigned staggered phase delays smoothly distributed across time
+            uint32_t phaseUs = static_cast<uint32_t>((followerIndex * totalSpreadUs) / followerCount);
+            context->staggerPhaseUs.store(phaseUs, std::memory_order_release);
+            followerIndex++;
+        }
+    }
 }

@@ -38,6 +38,9 @@ public:
     // Unique identifier for this emulator instance
     unreal::UUID emulatorId;
 
+    // Staggered multi-instance pacing phase offset (in microseconds)
+    std::atomic<uint32_t> staggerPhaseUs{0};
+
     // Advanced logger instance
     ModuleLogger* pModuleLogger = nullptr;
 

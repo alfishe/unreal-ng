@@ -99,6 +99,9 @@ private:
     /// Set sound feature for all tiles (performance optimization)
     void setSoundForAllTiles(bool enabled);
 
+    /// Update staggered phase offset delays across all tiles
+    void updateStaggeredPacingPhases();
+
     /// Toggle screen HQ feature for all tiles (Cmd+S)
     void toggleScreenHQForAllTiles();
 

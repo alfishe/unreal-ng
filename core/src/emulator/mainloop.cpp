@@ -454,6 +454,16 @@ void MainLoop::handleAudioBufferHalfFull([[maybe_unused]] int id, Message* messa
     {
         _isMasterAudioPacer.store(true, std::memory_order_release);
     }
+    else
+    {
+        // Staggered batching for follower instances: spread frame calculations smoothly
+        // across the 20ms frame window to eliminate CPU thundering herd spikes
+        uint32_t delayUs = _context ? _context->staggerPhaseUs.load(std::memory_order_relaxed) : 0;
+        if (delayUs > 0)
+        {
+            std::this_thread::sleep_for(std::chrono::microseconds(delayUs));
+        }
+    }
 
     std::unique_lock<std::mutex> lock(_audioBufferMutex);
 
