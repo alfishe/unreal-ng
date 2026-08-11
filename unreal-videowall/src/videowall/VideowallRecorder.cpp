@@ -146,3 +146,5 @@ void VideowallRecorder::captureVideoFrame()
 
     _recordingManager->CaptureFrame(fb);
 }
+
+#include "moc_VideowallRecorder.cpp"

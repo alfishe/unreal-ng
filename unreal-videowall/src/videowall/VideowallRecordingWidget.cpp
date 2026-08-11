@@ -602,3 +602,5 @@ void VideowallRecordingWidget::updateRecordingControls()
         _statusLabel->setStyleSheet("font-weight: bold; color: #555;");
     }
 }
+
+#include "moc_VideowallRecordingWidget.cpp"
