@@ -1,6 +1,6 @@
 #include "ffmpeg_pipe_encoder.h"
-#include "../ffmpeg_probe.h"
-#include "../../video/screen.h"
+#include "ffmpeg_probe.h"
+#include "emulator/video/screen.h"
 
 #include <algorithm>
 #include <chrono>

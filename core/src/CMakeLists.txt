@@ -51,15 +51,7 @@ file (GLOB_RECURSE CPP_FILES ${SOURCE_DIR}/*.cpp)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/build/" FALSE OUTVAR CPP_FILES)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/CMakeFiles/" FALSE OUTVAR CPP_FILES)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "liblzma/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
-
-# Exclude platform-specific encoder files on wrong platforms
-if (NOT WIN32)
-    EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "platform/windows/" FALSE OUTVAR CPP_FILES)
-endif()
-if (NOT APPLE)
-    EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "platform/macos/" FALSE OUTVAR CPP_FILES)
-endif()
-
+EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/recording/" FALSE OUTVAR CPP_FILES) # Moved to separate library
 message("CPP_FILES:${CPP_FILES}")
 
 set (SOURCES ${CPP_FILES})
@@ -69,6 +61,7 @@ if (APPLE)
     file (GLOB_RECURSE MM_FILES ${SOURCE_DIR}/*.mm)
     EXCLUDE_FILES_FROM_DIR_IN_LIST("${MM_FILES}" "/build/" FALSE OUTVAR MM_FILES)
     EXCLUDE_FILES_FROM_DIR_IN_LIST("${MM_FILES}" "/CMakeFiles/" FALSE OUTVAR MM_FILES)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${MM_FILES}" "/recording/" FALSE OUTVAR MM_FILES) # Moved to separate library
     set_source_files_properties(${MM_FILES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
     list(APPEND SOURCES ${MM_FILES})
 endif()
@@ -85,9 +78,22 @@ if (CMAKE_BUILD_TYPE MATCHES Debug)
     target_compile_definitions(${PROJECT_NAME} PRIVATE _DEBUG)
 endif (CMAKE_BUILD_TYPE MATCHES Debug)
 
+# Recording support - if the option is set by parent CMake, define the symbol, add include path, and link
+if (ENABLE_RECORDING)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC ENABLE_RECORDING)
+    target_include_directories(${PROJECT_NAME} PUBLIC ${ROOT_DIR}/core/recording/src)
+    # Build recording library if not already built by parent
+    if (NOT TARGET unrealng::recording)
+        add_subdirectory("${ROOT_DIR}/core/recording" "${CMAKE_CURRENT_BINARY_DIR}/recording")
+    endif()
+    # Link to recording so linker resolves RecordingManager symbols
+    target_link_libraries(${PROJECT_NAME} PUBLIC unrealng::recording)
+endif()
+
 # Set include paths for compiler
 target_include_directories(${PROJECT_NAME} PUBLIC
     ${SOURCE_DIR}/
+    ${SOURCE_DIR}/3rdparty
     ${SOURCE_DIR}/common
     ${SOURCE_DIR}/emulator
 )
@@ -101,25 +107,15 @@ target_precompile_headers(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/stdafx.h)
 target_link_libraries(${PROJECT_NAME} PRIVATE lzma)
 
 # Platform-specific framework and library linkage
-# For static libraries consumed externally, framework deps MUST be PUBLIC
-# so that external linkers inherit them transitively.
+# Note: Recording-specific frameworks (VideoToolbox, AVFoundation, CoreMedia, CoreVideo, AudioToolbox)
+# are now linked via the recording library (core/recording/CMakeLists.txt)
 if (APPLE)
     find_library(FOUNDATION_LIB Foundation REQUIRED)
     find_library(COREFOUNDATION_LIB CoreFoundation REQUIRED)
-    find_library(AVFOUNDATION_LIB AVFoundation REQUIRED)
-    find_library(COREMEDIA_LIB CoreMedia REQUIRED)
-    find_library(COREVIDEO_LIB CoreVideo REQUIRED)
-    find_library(VIDEOTOOLBOX_LIB VideoToolbox REQUIRED)
-    find_library(AUDIOTOOLBOX_LIB AudioToolbox REQUIRED)
 
     target_link_libraries(${PROJECT_NAME} PUBLIC
         ${FOUNDATION_LIB}
         ${COREFOUNDATION_LIB}
-        ${AVFOUNDATION_LIB}
-        ${COREMEDIA_LIB}
-        ${COREVIDEO_LIB}
-        ${VIDEOTOOLBOX_LIB}
-        ${AUDIOTOOLBOX_LIB}
     )
 endif ()
 
@@ -127,10 +123,12 @@ if (UNIX AND NOT APPLE)
     target_link_libraries(${PROJECT_NAME} PRIVATE -static-libstdc++)
 endif ()
 
+# Note: Recording-specific Windows libs (d3d11, dxgi, mfplat, mfuuid, mf, ole32)
+# are now linked via the recording library (core/recording/CMakeLists.txt)
 if (WIN32 AND MINGW)
-    target_link_libraries(${PROJECT_NAME} PRIVATE -static-libstdc++ Shlwapi ws2_32 d3d11 dxgi)
+    target_link_libraries(${PROJECT_NAME} PRIVATE -static-libstdc++ Shlwapi ws2_32)
 endif()
 
 if (WIN32 AND MSVC)
-    target_link_libraries(${PROJECT_NAME} PRIVATE Shlwapi ws2_32 d3d11 dxgi)
+    target_link_libraries(${PROJECT_NAME} PRIVATE Shlwapi ws2_32)
 endif()

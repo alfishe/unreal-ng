@@ -334,6 +334,7 @@ void MainLoop::OnFrameEnd()
         }
     }
 
+#ifdef ENABLE_RECORDING
     // Capture video frame for recording (if recording is active)
     // This is called AFTER UpdateScreen() has rendered the current frame
     // In turbo mode, this captures every emulated frame for correct timing
@@ -349,6 +350,7 @@ void MainLoop::OnFrameEnd()
             MLOGERROR("RecordingManager::CaptureFrame failed: %s", e.what());
         }
     }
+#endif
 
     // Sync shared memory if enabled (for external viewers like screen-viewer, debuggers, memory dumpers, etc.)
     // This ensures the memory-mapped region is visible to other processes

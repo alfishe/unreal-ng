@@ -185,6 +185,7 @@ bool Core::Init()
 
     /// region <Recording manager>
 
+#ifdef ENABLE_RECORDING
     if (result)
     {
         result = false;
@@ -200,6 +201,7 @@ bool Core::Init()
             result = true;
         }
     }
+#endif
 
     /// endregion </Recording manager>
 
@@ -335,12 +337,14 @@ void Core::Release()
         _sound = nullptr;
     }
 
+#ifdef ENABLE_RECORDING
     _context->pRecordingManager = nullptr;
     if (_recordingManager != nullptr)
     {
         delete _recordingManager;
         _recordingManager = nullptr;
     }
+#endif
 
     _context->pScreen = nullptr;
     if (_screen != nullptr)
@@ -440,8 +444,10 @@ void Core::Reset()
     _betaDisk->reset();          // BetaDisk floppy controller
     _hdd->Reset();               // Reset IDE controller
     _portDecoder->reset();       // Reset peripheral port decoder (sets model-specific port defaults)
+#ifdef ENABLE_RECORDING
     if (_recordingManager)
         _recordingManager->Reset();  // Reset recording manager (stops active recording, clears counters)
+#endif
 
     messageCenter.Post(topicID, new SimpleTextPayload("Core reset finished"));
 }

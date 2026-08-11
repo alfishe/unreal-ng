@@ -31,8 +31,10 @@
 #include "emulator/sound/soundmanager.h"
 #include "emulator/soundmanager.h"
 #include "debugger/widgets/audiosettingswidget.h"
+#ifdef ENABLE_RECORDING
 #include "debugger/widgets/videorecordingwidget.h"
 #include "debugger/widgets/recordingpresets.h"
+#endif
 #include "base/featuremanager.h"
 // Avoid Qt 'signals' macro conflict with WD1793State::signals member
 #undef signals
@@ -77,11 +79,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Put emulator screen into resizable content frame
     QFrame* contentFrame = ui->contentFrame;
     deviceScreen = new DeviceScreen(contentFrame);
-
-    QHBoxLayout* layout = new QHBoxLayout;
-    layout->addWidget(deviceScreen, Qt::AlignHCenter);
-    contentFrame->setLayout(layout);
-
+    
+    // NOTE: We do NOT use a layout manager for contentFrame. 
+    // DeviceScreen relies on shrinking itself to maintain aspect ratio, which fights Qt layouts.
+    // We manually resize and center it in resizeEvent and showEvent.
     /*
         QSizePolicy dp;
         dp.setHorizontalPolicy(QSizePolicy::Expanding);
@@ -165,8 +166,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
     connect(_menuManager, &MenuManager::intParametersRequested, this, &MainWindow::handleIntParametersRequested);
     connect(_menuManager, &MenuManager::audioSettingsRequested, this, &MainWindow::handleAudioSettingsRequested);
+#ifdef ENABLE_RECORDING
     connect(_menuManager, &MenuManager::videoRecordingRequested, this, &MainWindow::handleVideoRecordingRequested);
-        connect(_menuManager, &MenuManager::quickRecordRequested, this, &MainWindow::handleQuickRecord);
+    connect(_menuManager, &MenuManager::quickRecordRequested, this, &MainWindow::handleQuickRecord);
+#endif
 
     // Bring application windows to foreground
     debuggerWindow->raise();
@@ -329,8 +332,10 @@ void MainWindow::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
 
-    // Center device screen within content frame
-    updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
+    if (deviceScreen && ui->contentFrame) {
+        deviceScreen->resize(ui->contentFrame->size());
+        updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
+    }
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)
@@ -412,10 +417,23 @@ void MainWindow::closeEvent(QCloseEvent* event)
 
 void MainWindow::resizeEvent(QResizeEvent* event)
 {
-    // deviceScreen->move(this->rect().center() - deviceScreen->rect().center());
+    if (deviceScreen && ui->contentFrame) {
+        deviceScreen->resize(ui->contentFrame->size());
+        updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
 
-    // Keep widget center-aligned. Alignment policy is not working good
-    updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
+        // DeviceScreen::resizeEvent self-resizes to maintain aspect ratio, which invalidates
+        // the position we just set above. Defer re-centering to the next event loop iteration
+        // so it runs after DeviceScreen has settled to its final size.
+        QTimer::singleShot(0, this, [this]() {
+            if (deviceScreen && ui->contentFrame)
+            {
+                updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
+
+                // Repaint contentFrame to clear stale pixels from the previous larger rect
+                ui->contentFrame->update();
+            }
+        });
+    }
 
     // Update normal geometry ONLY when in normal state
     // This preserves the geometry for: normal → maximized → fullscreen → maximized → normal
@@ -528,19 +546,12 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
     // Prevent recursive calls
     QScopedValueRollback<bool> guard(_inHandler, true);
 
-    // Handle maximize state (triggered by green button or double-click)
-    if (newState & Qt::WindowMaximized && !_isFullScreen)
+    // Handle maximize state (triggered by green button or double-click, or returning from fullscreen)
+    if (newState & Qt::WindowMaximized && !(newState & Qt::WindowFullScreen))
     {
         qDebug() << "Maximizing window (macOS)";
 
         _isFullScreen = false;
-
-        // Ensure we're not in fullscreen mode
-        if (windowFlags() & Qt::FramelessWindowHint)
-        {
-            qDebug() << "Clearing frameless window hint";
-            setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
-        }
 
         // Restore normal palette if needed
         if (palette() != _originalPalette)
@@ -558,7 +569,6 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
     {
         qDebug() << "Entering fullscreen (macOS)";
 
-        hide();
         _isFullScreen = true;
 
         // Store previous geometry if we're not already in fullscreen
@@ -576,10 +586,6 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
         // Hide all control elements
         statusBar()->hide();
         startButton->hide();
-
-        // Set frameless window hint for fullscreen
-        setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
-        showFullScreen();
     }
     // Handle restore to normal state
     else if (newState == Qt::WindowNoState)
@@ -591,38 +597,13 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
         // Restore normal styling
         setPalette(_originalPalette);
 
-        // Show controls
+        // Show controls instantly so the layout calculates the correct target geometry for the OS animation.
+        // (Docking manager updates are still deferred in the shortcut handler to prevent stutter).
         statusBar()->show();
         startButton->show();
 
-        // Clear frameless window hint if set
-        if (windowFlags() & Qt::FramelessWindowHint)
-        {
-            qDebug() << "Clearing frameless window hint during restore";
-            setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
-        }
-
-        // Restore all window flags
-        initializePlatformMacOS();
-
-        showNormal();
-
-        // Restore to previous geometry if available
-        if (_normalGeometry.isValid())
-        {
-            qDebug() << "Restoring to normal geometry:" << _normalGeometry;
-            setGeometry(_normalGeometry);
-        }
-        else
-        {
-            qDebug() << "No stored normal geometry available, using default";
-        }
-
-        if (!isVisible())
-        {
-            qDebug() << "Window is not visible after showNormal/flag changes, explicitly calling show().";
-            show();
-        }
+        // macOS natively handles returning to the previous geometry after un-maximizing or exiting fullscreen.
+        // Calling setGeometry explicitly here breaks the native animation.
     }
 
     // Ensure the window is properly updated
@@ -1207,23 +1188,20 @@ void MainWindow::handleFullScreenShortcutMacOS()
         if (_dockingManager)
             _dockingManager->setSnappingLocked(true);
 
-        setWindowFlags(Qt::Window);  // Prevent horizontal transition from full screen to system desktop
-        // Restore previous state and geometry
+        // Do NOT use setWindowFlags(Qt::Window) here, as it forces window recreation and kills the native macOS smooth animation.
+        // Let macOS natively handle returning to the previous geometry via showMaximized() / showNormal().
         if (_preFullScreenState & Qt::WindowMaximized)
         {
-            if (_maximizedGeometry.isValid())
-                setGeometry(_maximizedGeometry);
             showMaximized();
         }
         else
         {
-            if (_normalGeometry.isValid())
-                setGeometry(_normalGeometry);
             showNormal();
         }
 
-        // Defer child window restoration and unlock until the event queue has processed the main window changes.
-        QTimer::singleShot(100, this, [this]() {
+        // Defer child window restoration and unlock until the macOS native swipe animation has fully completed (~400-500ms).
+        // Executing heavy docking calculations mid-swipe causes severe choppiness.
+        QTimer::singleShot(1000, this, [this]() {
             if (_dockingManager)
             {
                 _dockingManager->onExitFullscreen();
@@ -2030,6 +2008,7 @@ void MainWindow::handleAudioSettingsRequested()
     _audioSettingsWidget->activateWindow();
 }
 
+#ifdef ENABLE_RECORDING
 void MainWindow::handleVideoRecordingRequested()
 {
     if (_videoRecordingWidget)
@@ -2055,7 +2034,9 @@ void MainWindow::handleVideoRecordingRequested()
     _videoRecordingWidget->raise();
     _videoRecordingWidget->activateWindow();
 }
+#endif
 
+#ifdef ENABLE_RECORDING
 void MainWindow::handleQuickRecord(const QString& presetName)
 {
     if (!m_binding || !m_binding->emulator())
@@ -2139,6 +2120,7 @@ void MainWindow::handleQuickRecord(const QString& presetName)
         qDebug() << "Quick Record: Failed to start recording";
     }
 }
+#endif
 
 void MainWindow::updateMenuStates()
 {
@@ -2260,6 +2242,19 @@ void MainWindow::handleEmulatorInstanceDestroyed(int id, Message* message)
                         }
 
                         deviceScreen->detach();
+
+                        // Clear context from audio/video settings widgets
+                        if (_audioSettingsWidget)
+                        {
+                            _audioSettingsWidget->setContext(nullptr);
+                        }
+#ifdef ENABLE_RECORDING
+                        if (_videoRecordingWidget)
+                        {
+                            _videoRecordingWidget->setContext(nullptr);
+                        }
+#endif
+
                         unsubscribeFromPerEmulatorEvents();
                         // Note: Don't call _emulator->ClearAudioCallback() - emulator is already being destroyed
                         _emulator = nullptr;
@@ -2638,6 +2633,7 @@ void MainWindow::unbindFromEmulator()
         _audioSettingsWidget->setContext(nullptr);
     }
 
+#ifdef ENABLE_RECORDING
     // 5b. Video recording widget — clear the active context so it doesn't
     // dereference a dangling pointer after the emulator is destroyed.
     // Recording itself is NOT stopped here: it continues on the original
@@ -2646,6 +2642,7 @@ void MainWindow::unbindFromEmulator()
     {
         _videoRecordingWidget->setContext(nullptr);
     }
+#endif
 
     // 6. Per-emulator event subscriptions
     unsubscribeFromPerEmulatorEvents();
@@ -2708,6 +2705,7 @@ void MainWindow::onBindingStateChanged(EmulatorStateEnum state)
     }
     updateMenuStates();
 
+#ifdef ENABLE_RECORDING
     // Single mechanism: rebind recording widget on any state change
     if (_videoRecordingWidget)
     {
@@ -2719,6 +2717,7 @@ void MainWindow::onBindingStateChanged(EmulatorStateEnum state)
         }
         _videoRecordingWidget->setContext(context);
     }
+#endif
 }
 
 void MainWindow::tryAdoptRemainingEmulator()

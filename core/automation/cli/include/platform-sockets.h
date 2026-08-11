@@ -127,6 +127,7 @@ inline bool setSocketNonBlocking(SOCKET sock)
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -236,3 +237,22 @@ inline bool setSocketNonBlocking(SOCKET sock)
     return unix_sockets::setSocketNonBlocking(sock);
 }
 #endif
+
+// Wait for socket to become readable (cross-platform, no FD_SETSIZE limit)
+// Returns: 1 if readable, 0 if timeout, -1 on error
+inline int waitForSocketRead(SOCKET sock, int timeoutMs)
+{
+#ifdef _WIN32
+    WSAPOLLFD pfd;
+    pfd.fd = sock;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    return WSAPoll(&pfd, 1, timeoutMs);
+#else
+    struct pollfd pfd;
+    pfd.fd = sock;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    return poll(&pfd, 1, timeoutMs);
+#endif
+}

@@ -129,6 +129,12 @@ RecordingManager::RecordingManager(EmulatorContext* context) : _context(context)
 
 RecordingManager::~RecordingManager()
 {
+    // Stop recording if still active (before unsubscribing from message center)
+    if (_isRecording)
+    {
+        StopRecording();
+    }
+
     // Unsubscribe from message center
     if (_isSubscribed)
     {
@@ -139,13 +145,14 @@ RecordingManager::~RecordingManager()
         _isSubscribed = false;
     }
 
-    // Stop recording if still active
-    if (_isRecording)
+    // Clear logger reference before logging - context may already be destroyed
+    // during shutdown when destruction order differs between static/shared libraries
+    if (_logger)
     {
-        StopRecording();
+        MLOGINFO("RecordingManager::~RecordingManager - Instance destroyed");
     }
-
-    MLOGINFO("RecordingManager::~RecordingManager - Instance destroyed");
+    _logger = nullptr;
+    _context = nullptr;
 }
 
 /// region <Initialization>

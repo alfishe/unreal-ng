@@ -17,7 +17,9 @@ class WD1793;
 class PortDecoder;
 class Screen;
 class SoundManager;
+#ifdef ENABLE_RECORDING
 class RecordingManager;
+#endif
 class DebugManager;
 class Z80Disassembler;
 class FeatureManager;
@@ -82,8 +84,10 @@ public:
     // Sound manager
     SoundManager* pSoundManager = nullptr;
 
+#ifdef ENABLE_RECORDING
     // Recording manager (video/audio capture for recordings)
     RecordingManager* pRecordingManager = nullptr;
+#endif
 
 	// Debug manager (includes Breakpoints, Labels and Disassembler)
 	DebugManager* pDebugManager = nullptr;

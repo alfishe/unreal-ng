@@ -543,7 +543,7 @@ bool Subprocess::writeToStdin(const void* data, size_t size)
 
     while (totalWritten < size)
     {
-        DWORD toWrite = static_cast<DWORD>(min(size - totalWritten, static_cast<size_t>((std::numeric_limits<DWORD>::max)())));
+        DWORD toWrite = static_cast<DWORD>(std::min(size - totalWritten, static_cast<size_t>((std::numeric_limits<DWORD>::max)())));
         if (!WriteFile(_hStdinWrite, buf + totalWritten, toWrite, &bytesWritten, nullptr))
         {
             DWORD err = GetLastError();
@@ -577,7 +577,7 @@ std::string Subprocess::readStderr()
 
     while (PeekNamedPipe(_hStderrRead, nullptr, 0, nullptr, &bytesAvailable, nullptr) && bytesAvailable > 0)
     {
-        DWORD toRead = min(bytesAvailable, static_cast<DWORD>(sizeof(buffer)));
+        DWORD toRead = std::min(bytesAvailable, static_cast<DWORD>(sizeof(buffer)));
         if (ReadFile(_hStderrRead, buffer, toRead, &bytesRead, nullptr) && bytesRead > 0)
         {
             result.append(buffer, bytesRead);

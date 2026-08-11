@@ -264,16 +264,8 @@ void AutomationCLI::run()
         // Main server loop
         while (!_stopThread)
         {
-            fd_set readfds;
-            FD_ZERO(&readfds);
-            FD_SET(_serverSocket, &readfds);
-
-            // Set timeout to 100ms to allow checking _stopThread
-            struct timeval timeout;
-            timeout.tv_sec = 0;
-            timeout.tv_usec = 100000;  // 100ms
-
-            int activity = select(_serverSocket + 1, &readfds, nullptr, nullptr, &timeout);
+            // Use poll() instead of select() to avoid FD_SETSIZE (1024) limit
+            int activity = waitForSocketRead(_serverSocket, 100);  // 100ms timeout
 
             if (activity < 0 && errno != EINTR)
             {
@@ -282,18 +274,18 @@ void AutomationCLI::run()
                     // Expected during shutdown when socket is closed - only log if not stopping
                     if (!_stopThread)
                     {
-                        std::cerr << "Select error: Bad file descriptor (socket may be closed)" << std::endl;
+                        std::cerr << "Poll error: Bad file descriptor (socket may be closed)" << std::endl;
                     }
                 }
                 else
                 {
-                    std::cerr << "select() error: " << strerror(errno) << std::endl;
+                    std::cerr << "poll() error: " << strerror(errno) << std::endl;
                 }
                 break;
             }
 
             // Check if there's an incoming connection
-            if (activity > 0 && FD_ISSET(_serverSocket, &readfds))
+            if (activity > 0)
             {
                 sockaddr_in clientAddr{};
                 socklen_t clientAddrLen = sizeof(clientAddr);

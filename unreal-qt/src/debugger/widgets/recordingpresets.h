@@ -8,7 +8,7 @@
 #include <QDateTime>
 #include <cstdint>
 
-#include "emulator/recording/recordingmanager.h"
+#include "recordingmanager.h"
 
 /// @brief A recording preset that captures all encoding parameters
 ///

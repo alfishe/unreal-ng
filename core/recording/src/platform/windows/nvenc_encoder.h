@@ -1,7 +1,7 @@
 #pragma once
 
-#include "emulator/recording/encoder_base.h"
-#include "emulator/recording/encoder_config.h"
+#include "encoder_base.h"
+#include "encoder_config.h"
 
 #include <memory>
 #include <string>

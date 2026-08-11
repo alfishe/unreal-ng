@@ -6,9 +6,9 @@
 #include <fstream>
 #include <vector>
 
-#include "emulator/recording/encoders/dsd/dsd_types.h"
-#include "emulator/recording/encoders/dsd/dsf_writer.h"
-#include "emulator/recording/encoders/dsd/native_dsd_converter.h"
+#include "encoders/dsd/dsd_types.h"
+#include "encoders/dsd/dsf_writer.h"
+#include "encoders/dsd/native_dsd_converter.h"
 #include "emulator/sound/native_audio_tap.h"
 
 namespace
@@ -333,8 +333,8 @@ TEST(NativeDSDConverterTest, PunchDoesNotBreakModulator)
 
 /// region <DSDEncoder end-to-end>
 
-#include "emulator/recording/encoders/dsd/dsd_encoder.h"
-#include "emulator/recording/encoder_config.h"
+#include "encoders/dsd/dsd_encoder.h"
+#include "encoder_config.h"
 
 #include <chrono>
 #include <memory>

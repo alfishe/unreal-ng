@@ -9,7 +9,7 @@
 
 /// region <Constructors / destructors>
 
-Tape::Tape(EmulatorContext* context) : _lpfFilter(6000, AUDIO_SAMPLING_RATE)
+Tape::Tape(EmulatorContext* context)
 {
     _context = context;
     _logger = _context->pModuleLogger;
@@ -26,6 +26,7 @@ void Tape::startTape()
 {
     _tapeStarted = true;
     _muteEAR = true;
+    _lastTapeBit = false;
 }
 
 void Tape::stopTape()
@@ -41,6 +42,7 @@ void Tape::stopTape()
     _currentOffsetWithinPulse = 0;
 
     _currentClockCount = 0;
+    _lastTapeBit = false;
 }
 /// endregion </Tape control methods>
 
@@ -57,6 +59,7 @@ void Tape::reset()
     _currentOffsetWithinPulse = 0;
 
     _currentClockCount = 0;
+    _lastTapeBit = false;
 };
 
 /// region <Port events>
@@ -73,8 +76,8 @@ uint8_t Tape::handlePortIn()
     [[maybe_unused]] uint8_t prevPortValue = _context->emulatorState.pFE;
 
     // Scale t-state by speed multiplier for correct audio timing
-    uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
-    uint32_t scaledTState = tState * speedMultiplier;
+    [[maybe_unused]] uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
+    [[maybe_unused]] uint32_t scaledTState = tState * speedMultiplier;
 
     if (_tapeStarted)
     {
@@ -83,13 +86,6 @@ uint8_t Tape::handlePortIn()
 
         bool tapeBit = getTapeStreamBit(clockCount);
         result = (uint8_t)tapeBit << 6;
-
-        // Only mic sound is heard to prevent clicks from keyboard polling out (#FE)
-        int16_t micSample = tapeBit ? 1000 : -1000;
-        int16_t sample = _lpfFilter.filter(micSample);  // Apply LPF filtering to remove high-frequency noise
-        sample = _dcFilter.filter(sample);
-
-        _context->pSoundManager->updateDAC(scaledTState, sample, sample);
     }
     else
     {
@@ -150,38 +146,11 @@ uint8_t Tape::handlePortIn()
     return result;
 }
 
-void Tape::handlePortOut(uint8_t value)
+void Tape::handlePortOut([[maybe_unused]] uint8_t value)
 {
-    // Fetch absolute timing (unused in this function)
-    [[maybe_unused]] uint64_t clockCount = _context->emulatorState.t_states + _context->pCore->GetZ80()->t;
-    uint32_t tState = _context->pCore->GetZ80()->t;
-
-    // Scale t-state by speed multiplier for correct audio pitch
-    // Beeper should play faster at higher speeds
-    uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
-    uint32_t scaledTState = tState * speedMultiplier;
-
-    bool outBit = value & 0b0001'0000;
-    [[maybe_unused]] bool micBit = value & 0b0000'1000;
-
-    int16_t sample;
-    if (!_muteEAR)
-    {
-        // Use only EAR output sound
-        int16_t earSample = outBit ? 3000 : -3000;
-        sample = _dcFilter.filter(earSample);  // Apply LPF filtering to remove high-frequency noise;
-
-        _context->pSoundManager->updateDAC(scaledTState, sample, sample);
-    }
-    else  // Ignore outputs while tape is playing
-    {
-        // Use only tape sound
-        // int16_t micSample = micBit ? 1000: -1000;
-        // sample = micSample;
-    }
-
-    // MLOGINFO("%09ld, %d", clockCount, value);
-    // MLOGINFO("[Out] [%09ld] Value: %d", clockCount, value);
+    // Hardware ULA Port #FE OUT (EAR/MIC bits) audio synthesis is handled
+    // directly by Beeper::handlePortOut(). Tape audio input (during tape loading)
+    // is processed in handlePortIn().
 }
 
 /// endregion </Port events>
@@ -241,6 +210,28 @@ void Tape::handleFrameStart()
     }
 }
 
+void Tape::handleStep()
+{
+    if (!_tapeStarted)
+        return;
+
+    const uint32_t tState = _context->pCore->GetZ80()->t;
+    uint64_t clockCount = _context->emulatorState.t_states + tState;
+
+    bool tapeBit = getTapeStreamBit(clockCount);
+
+    if (tapeBit != _lastTapeBit)
+    {
+        _lastTapeBit = tapeBit;
+
+        int16_t amp = tapeBit ? 6000 : -6000;
+        uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
+        uint32_t scaledTState = tState * speedMultiplier;
+
+        _context->pSoundManager->updateDAC(scaledTState, amp, amp);
+    }
+}
+
 void Tape::handleFrameEnd()
 {
     // Fetch absolute timing (unused in this function)
@@ -253,63 +244,81 @@ void Tape::handleFrameEnd()
 
 bool Tape::getTapeStreamBit(uint64_t clockCount)
 {
-    static bool result = false;
+    if (!_tapeStarted || _currentTapeBlockIndex == UINT64_MAX)
+    {
+        _currentClockCount = clockCount;
+        return _tapeBitState;
+    }
+
+    if (_currentClockCount == 0 || clockCount <= _currentClockCount)
+    {
+        _currentClockCount = clockCount;
+        return _tapeBitState;
+    }
 
     uint64_t deltaTime = clockCount - _currentClockCount;
+    _currentClockCount = clockCount;
 
-    if (_tapeStarted && _currentTapeBlock && _currentTapeBlockIndex != UINT64_MAX)
+    while (deltaTime > 0 && _currentTapeBlockIndex < _tapeBlocks.size())
     {
-        // Determine position within bit stream
-        // Find correspondent pulse timings record and then count up to its value
-        TapeBlock& block = *_currentTapeBlock;
-        uint32_t currentPulseDuration = block.edgePulseTimings[_currentOffsetWithinPulse];
-
-        // Forward playback for the whole deltaTime period
-        for (uint64_t i = 0; i < deltaTime; i++)
+        if (_currentTapeBlock == nullptr)
         {
-            // Create signal edge by inverting tape bit
-            if (currentPulseDuration > 0 && _currentPulseIdxInBlock == 0)
-            {
-                result = !result;
-            }
+            _currentTapeBlock = &_tapeBlocks[_currentTapeBlockIndex];
+            generateBitstreamForStandardBlock(*_currentTapeBlock);
+            _currentOffsetWithinPulse = 0;
+            _currentPulseIdxInBlock = 0;
+        }
 
-            if (_currentPulseIdxInBlock + deltaTime > currentPulseDuration)
-            {
-                size_t pulsesToSkip = currentPulseDuration - _currentPulseIdxInBlock;
+        TapeBlock& block = *_currentTapeBlock;
+        if (_currentOffsetWithinPulse >= block.edgePulseTimings.size())
+        {
+            _currentTapeBlockIndex++;
+            _currentTapeBlock = nullptr;
+            _currentOffsetWithinPulse = 0;
+            _currentPulseIdxInBlock = 0;
 
-                _currentPulseIdxInBlock += pulsesToSkip;
-                i += pulsesToSkip;
-            }
-            else
+            if (_currentTapeBlockIndex >= _tapeBlocks.size())
             {
-                _currentPulseIdxInBlock++;
+                stopTape();
+                break;
             }
+            continue;
+        }
 
-            /// region <Perform repositioning for next bit in stream>
-            if (_currentPulseIdxInBlock >= currentPulseDuration)
+        uint32_t currentPulseDuration = block.edgePulseTimings[_currentOffsetWithinPulse];
+        uint32_t remainingInPulse = (currentPulseDuration > _currentPulseIdxInBlock)
+                                      ? (currentPulseDuration - static_cast<uint32_t>(_currentPulseIdxInBlock))
+                                      : 0;
+
+        if (deltaTime < remainingInPulse)
+        {
+            _currentPulseIdxInBlock += deltaTime;
+            deltaTime = 0;
+        }
+        else
+        {
+            deltaTime -= remainingInPulse;
+            _currentOffsetWithinPulse++;
+            _currentPulseIdxInBlock = 0;
+            _tapeBitState = !_tapeBitState;  // Flip digital tape bit on pulse edge transition!
+
+            if (_currentOffsetWithinPulse >= block.edgePulseTimings.size())
             {
-                // Pulse duration finished, switch to next
-                _currentOffsetWithinPulse++;
+                _currentTapeBlockIndex++;
+                _currentTapeBlock = nullptr;
+                _currentOffsetWithinPulse = 0;
                 _currentPulseIdxInBlock = 0;
 
-                if (_currentOffsetWithinPulse >= block.edgePulseTimings.size())
+                if (_currentTapeBlockIndex >= _tapeBlocks.size())
                 {
-                    // We're depleted all pulses within this block. Switching to next one
-                    _currentTapeBlockIndex++;
-                    _currentTapeBlock = nullptr;
-                    _currentOffsetWithinPulse = 0;
-                    _currentPulseIdxInBlock = 0;
+                    stopTape();
                     break;
                 }
             }
-            /// endregion </Perform repositioning for next bit in stream>
         }
     }
 
-    // Remember last used clock count for the next iteration
-    _currentClockCount = clockCount;
-
-    return result;
+    return _tapeBitState;
 }
 
 /// Generate bitstream assistive data for the TapeBlock data
@@ -354,9 +363,8 @@ size_t Tape::generateBitstream(TapeBlock& tapeBlock, uint16_t pilotHalfPeriod_tS
 
     if (pilotLength_periods > 0)
     {
-        // Required number of pilot periods
-        // Calling code determines it based on block type: header or data
-        for (size_t i = 0; i < pilotLength_periods; i++)
+        // Required number of pilot half-periods (2 half-periods per period)
+        for (size_t i = 0; i < pilotLength_periods * 2; i++)
         {
             tapeBlock.edgePulseTimings.push_back(pilotHalfPeriod_tStates);
 
