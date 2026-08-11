@@ -394,6 +394,17 @@ void MainLoop::OnFrameEnd()
     {
         _context->pDebugManager->GetKeyboardManager()->OnFrame();
     }
+
+    // Master-follower synchronization: if this instance was directly targeted by the audio callback,
+    // after completing its frame calculation and writing audio samples to the ring buffer,
+    // broadcast a frame sync pulse (nil UUID) to wake up all follower instances in lockstep.
+    if (_isMasterAudioPacer.exchange(false, std::memory_order_acq_rel))
+    {
+        MessageCenter::DefaultMessageCenter().Post(
+            NC_AUDIO_BUFFER_HALF_FULL,
+            new TargetContextPayload(unreal::UUID()),
+            true);
+    }
 }
 
 /// @brief Handles audio buffer low-watermark notifications (NC_AUDIO_BUFFER_HALF_FULL) to pace frame execution.
@@ -417,21 +428,31 @@ void MainLoop::OnFrameEnd()
 /// targeted to its own `EmulatorContext`. If the event is intended for a different instance, it returns
 /// immediately before acquiring `_audioBufferMutex` or notifying `_cv`. This eliminates unnecessary lock
 /// acquisitions per audio event for all non-active emulator instances, while preserving identical
-//audio-driven frame synchronization.
+/// audio-driven frame synchronization.
 ///
 /// @param id Event topic identifier (NC_AUDIO_BUFFER_HALF_FULL)
 /// @param message Message pointer optionally containing a TargetContextPayload
 void MainLoop::handleAudioBufferHalfFull([[maybe_unused]] int id, Message* message)
 {
+    bool isTargetedToMe = false;
     // Filter targeted events: receivers MUST filter by emulator UUID.
     if (message && message->obj)
     {
         auto* payload = dynamic_cast<TargetContextPayload*>(message->obj);
-        if (payload && !payload->targetEmulatorId.isNil() && payload->targetEmulatorId != _context->emulatorId)
+        if (payload && !payload->targetEmulatorId.isNil())
         {
-            // Event is targeted to a different emulator instance - ignore to prevent lock storms
-            return;
+            if (payload->targetEmulatorId != _context->emulatorId)
+            {
+                // Event is targeted to a different emulator instance - ignore to prevent lock storms
+                return;
+            }
+            isTargetedToMe = true;
         }
+    }
+
+    if (isTargetedToMe)
+    {
+        _isMasterAudioPacer.store(true, std::memory_order_release);
     }
 
     std::unique_lock<std::mutex> lock(_audioBufferMutex);

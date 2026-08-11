@@ -32,6 +32,7 @@ protected:
     std::mutex _pauseMutex;                        // Protects pause state
 
     std::atomic<bool> _moreAudioDataRequested;
+    std::atomic<bool> _isMasterAudioPacer{false};
     std::condition_variable _cv;
     std::mutex _audioBufferMutex;
     /// endregion </Fields>
