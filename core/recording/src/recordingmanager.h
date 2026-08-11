@@ -380,6 +380,9 @@ protected:
     // Message center subscription tracking
     bool _isSubscribed = false;
 
+    // Owned logger instance when context is nullptr (e.g. Videowall recording)
+    std::unique_ptr<ModuleLogger> _ownedLogger;
+
     // Emulator instance ID we are currently recording on.
     // NC_EMULATOR_STATE_CHANGE is a global broadcast with no instance ID in the
     // payload, so we store our own ID and verify the emulator's actual state

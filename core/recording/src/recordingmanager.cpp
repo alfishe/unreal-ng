@@ -121,10 +121,15 @@ static std::string PrepareOutputPath(const std::string& path, std::string& error
 
 RecordingManager::RecordingManager(EmulatorContext* context) : _context(context)
 {
-    // Initialize logger from context (if present)
-    if (context)
+    if (context && context->pModuleLogger)
     {
         _logger = context->pModuleLogger;
+    }
+    else
+    {
+        // Instantiate a standalone ModuleLogger when no EmulatorContext is provided (e.g. Video Wall recording)
+        _ownedLogger = std::make_unique<ModuleLogger>(nullptr);
+        _logger = _ownedLogger.get();
     }
 
     MLOGINFO("RecordingManager::RecordingManager - Instance created");
