@@ -130,6 +130,34 @@ RecordingManager::RecordingManager(EmulatorContext* context) : _context(context)
     MLOGINFO("RecordingManager::RecordingManager - Instance created");
 }
 
+const std::vector<RecordingProfile>& RecordingProfileCollection::getStandardProfiles()
+{
+    static const std::vector<RecordingProfile> profiles = {
+        {"1080p", "Full HD (1920×1080)", 1920, 1080, 8000},
+        {"720p", "HD (1280×720)", 1280, 720, 4500},
+        {"1440p", "Quad HD (2560×1440)", 2560, 1440, 16000},
+        {"4k", "4K Ultra HD (3840×2160)", 3840, 2160, 35000},
+        {"native_1x", "Native 1×", 320, 240, 2000},
+        {"native_2x", "Native 2× (Double)", 640, 480, 4000}
+    };
+    return profiles;
+}
+
+RecordingProfile RecordingProfileCollection::getDefaultProfile()
+{
+    return getStandardProfiles()[0]; // 1080p default
+}
+
+RecordingProfile RecordingProfileCollection::getProfileById(const std::string& id)
+{
+    for (const auto& p : getStandardProfiles())
+    {
+        if (p.id == id)
+            return p;
+    }
+    return getDefaultProfile();
+}
+
 RecordingManager::~RecordingManager()
 {
     // Stop recording if still active (before unsubscribing from message center)
@@ -311,8 +339,9 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
         }
         else
         {
-            _videoWidth = 1920;
-            _videoHeight = 1080;
+            RecordingProfile defaultProf = RecordingProfileCollection::getDefaultProfile();
+            _videoWidth = defaultProf.width;
+            _videoHeight = defaultProf.height;
         }
     }
 
@@ -400,8 +429,9 @@ bool RecordingManager::StartRecordingEx(const std::string& filename)
         }
         else
         {
-            _videoWidth = 1920;
-            _videoHeight = 1080;
+            RecordingProfile defaultProf = RecordingProfileCollection::getDefaultProfile();
+            _videoWidth = defaultProf.width;
+            _videoHeight = defaultProf.height;
         }
     }
 

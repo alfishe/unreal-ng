@@ -191,19 +191,22 @@ void VideowallRecordingWidget::createVideoTab()
     formatLayout->addWidget(_qualityCombo);
     outputLayout->addLayout(formatLayout);
 
-    // Capture resolution choices
+    // Capture resolution choices populated from RecordingProfileCollection
     auto* regionLayout = new QHBoxLayout();
     regionLayout->addWidget(new QLabel("Resolution:"));
     _sizeCombo = new QComboBox();
-    _sizeCombo->addItems({
-        "1× Native Grid (Current Screen)",
-        "2× Scaling",
-        "3× Scaling",
-        "4× Scaling",
-        "1080p Full HD (1920×1080)",
-        "1440p Quad HD (2560×1440)",
-        "4K UHD (3840×2160)"
-    });
+    _sizeCombo->addItem("1× Native Grid (Current Screen)", "native_1x");
+    _sizeCombo->addItem("2× Scaling", "native_2x");
+    _sizeCombo->addItem("3× Scaling", "native_3x");
+    _sizeCombo->addItem("4× Scaling", "native_4x");
+
+    for (const auto& profile : RecordingProfileCollection::getStandardProfiles())
+    {
+        if (profile.width >= 1280)
+        {
+            _sizeCombo->addItem(QString::fromStdString(profile.displayName), QString::fromStdString(profile.id));
+        }
+    }
     _sizeCombo->setCurrentIndex(0);
     _sizeCombo->setToolTip("Resolution of the captured Video Wall buffer.\n4K UHD or integer scaling provides pristine high-resolution video recordings.");
     regionLayout->addWidget(_sizeCombo);
@@ -389,23 +392,13 @@ void VideowallRecordingWidget::getTargetDimensions(uint32_t& width, uint32_t& he
     width = 0;
     height = 0;
 
-    int idx = _sizeCombo->currentIndex();
-    if (idx == 4)  // 1080p
+    QString profileId = _sizeCombo->currentData().toString();
+    if (!profileId.isEmpty())
     {
-        width = 1920;
-        height = 1080;
+        RecordingProfile profile = RecordingProfileCollection::getProfileById(profileId.toStdString());
+        width = profile.width;
+        height = profile.height;
     }
-    else if (idx == 5)  // 1440p
-    {
-        width = 2560;
-        height = 1440;
-    }
-    else if (idx == 6)  // 4K UHD
-    {
-        width = 3840;
-        height = 2160;
-    }
-    // Note: 1x, 2x, 3x, 4x scaling are handled dynamically based on native Qt widget size
 }
 
 QStringList VideowallRecordingWidget::containersForBackend() const

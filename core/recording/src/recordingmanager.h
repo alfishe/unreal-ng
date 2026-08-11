@@ -43,6 +43,25 @@ struct AudioTrackConfig
     uint32_t sampleRate = 44100;  // Sample rate (Hz)
 };
 
+/// Video resolution and quality profile configuration
+struct RecordingProfile
+{
+    std::string id;              // Profile identifier e.g. "1080p", "4k", "720p", "1440p"
+    std::string displayName;     // Display title e.g. "Full HD (1920x1080)", "4K Ultra HD (3840x2160)"
+    uint32_t width = 0;          // Width in pixels (0 = auto/native)
+    uint32_t height = 0;         // Height in pixels (0 = auto/native)
+    uint32_t defaultBitrate = 0; // Bitrate in kbps (0 = auto)
+};
+
+/// Collection of standard recording profiles
+class RecordingProfileCollection
+{
+public:
+    static const std::vector<RecordingProfile>& getStandardProfiles();
+    static RecordingProfile getDefaultProfile();
+    static RecordingProfile getProfileById(const std::string& id);
+};
+
 /// endregion </Recording types>
 
 /// Encoder backend selection
