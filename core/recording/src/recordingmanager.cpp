@@ -121,8 +121,11 @@ static std::string PrepareOutputPath(const std::string& path, std::string& error
 
 RecordingManager::RecordingManager(EmulatorContext* context) : _context(context)
 {
-    // Initialize logger from context
-    _logger = context->pModuleLogger;
+    // Initialize logger from context (if present)
+    if (context)
+    {
+        _logger = context->pModuleLogger;
+    }
 
     MLOGINFO("RecordingManager::RecordingManager - Instance created");
 }
@@ -290,18 +293,26 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
     // Use capture-region dimensions if not explicitly set
     if (_videoEnabled && (_videoWidth == 0 || _videoHeight == 0))
     {
-        FramebufferDescriptor fb = _context->pScreen->GetFramebufferDescriptor();
-        _videoWidth = fb.width;
-        _videoHeight = fb.height;
-
-        if (_captureRegion == VideoCaptureRegion::MainScreen)
+        if (_context && _context->pScreen)
         {
-            const RasterDescriptor& rd = _context->pScreen->rasterDescriptors[fb.videoMode];
-            if (rd.screenWidth > 0 && rd.screenHeight > 0)
+            FramebufferDescriptor fb = _context->pScreen->GetFramebufferDescriptor();
+            _videoWidth = fb.width;
+            _videoHeight = fb.height;
+
+            if (_captureRegion == VideoCaptureRegion::MainScreen)
             {
-                _videoWidth = rd.screenWidth;
-                _videoHeight = rd.screenHeight;
+                const RasterDescriptor& rd = _context->pScreen->rasterDescriptors[fb.videoMode];
+                if (rd.screenWidth > 0 && rd.screenHeight > 0)
+                {
+                    _videoWidth = rd.screenWidth;
+                    _videoHeight = rd.screenHeight;
+                }
             }
+        }
+        else
+        {
+            _videoWidth = 1920;
+            _videoHeight = 1080;
         }
     }
 
@@ -381,9 +392,17 @@ bool RecordingManager::StartRecordingEx(const std::string& filename)
     // Use native framebuffer dimensions if not explicitly set
     if (_videoEnabled && (_videoWidth == 0 || _videoHeight == 0))
     {
-        FramebufferDescriptor fb = _context->pScreen->GetFramebufferDescriptor();
-        _videoWidth = fb.width;
-        _videoHeight = fb.height;
+        if (_context && _context->pScreen)
+        {
+            FramebufferDescriptor fb = _context->pScreen->GetFramebufferDescriptor();
+            _videoWidth = fb.width;
+            _videoHeight = fb.height;
+        }
+        else
+        {
+            _videoWidth = 1920;
+            _videoHeight = 1080;
+        }
     }
 
     if (_videoEnabled)
