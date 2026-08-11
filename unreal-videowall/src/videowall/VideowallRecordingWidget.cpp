@@ -195,17 +195,9 @@ void VideowallRecordingWidget::createVideoTab()
     auto* regionLayout = new QHBoxLayout();
     regionLayout->addWidget(new QLabel("Resolution:"));
     _sizeCombo = new QComboBox();
-    _sizeCombo->addItem("1× Native Grid (Current Screen)", "native_1x");
-    _sizeCombo->addItem("2× Scaling", "native_2x");
-    _sizeCombo->addItem("3× Scaling", "native_3x");
-    _sizeCombo->addItem("4× Scaling", "native_4x");
-
     for (const auto& profile : RecordingProfileCollection::getStandardProfiles())
     {
-        if (profile.width >= 1280)
-        {
-            _sizeCombo->addItem(QString::fromStdString(profile.displayName), QString::fromStdString(profile.id));
-        }
+        _sizeCombo->addItem(QString::fromStdString(profile.displayName), QString::fromStdString(profile.id));
     }
     _sizeCombo->setCurrentIndex(0);
     _sizeCombo->setToolTip("Resolution of the captured Video Wall buffer.\n4K UHD or integer scaling provides pristine high-resolution video recordings.");

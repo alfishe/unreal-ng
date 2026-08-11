@@ -133,13 +133,26 @@ RecordingManager::RecordingManager(EmulatorContext* context) : _context(context)
 const std::vector<RecordingProfile>& RecordingProfileCollection::getStandardProfiles()
 {
     static const std::vector<RecordingProfile> profiles = {
-        {"native_1x", "Native 1× (Clone Screen Mode)", 0, 0, 1.0f, 2000},
-        {"native_2x", "Native 2× (Clone Double)", 0, 0, 2.0f, 4000},
-        {"native_3x", "Native 3× (Clone Triple)", 0, 0, 3.0f, 6000},
-        {"native_4x", "Native 4× (Clone Quad)", 0, 0, 4.0f, 8000},
-        {"1080p", "Full HD (1920×1080)", 1920, 1080, 1.0f, 8000},
-        {"720p", "HD (1280×720)", 1280, 720, 1.0f, 4500},
-        {"1440p", "Quad HD (2560×1440)", 2560, 1440, 1.0f, 16000},
+        // Dynamic Active Clone Screen Modes
+        {"native_1x", "Native 1× (Active Clone Screen Mode)", 0, 0, 1.0f, 2000},
+        {"native_2x", "Native 2× (Integer Scale 2x)", 0, 0, 2.0f, 4000},
+        {"native_3x", "Native 3× (Integer Scale 3x)", 0, 0, 3.0f, 6000},
+        {"native_4x", "Native 4× (Integer Scale 4x)", 0, 0, 4.0f, 8000},
+
+        // Spectrum & Clone Hardware Resolution Presets (p-ratings)
+        {"240p", "240p Retro (320×240 - ZX 48K/128K Frame)", 320, 240, 1.0f, 1500},
+        {"288p", "288p PAL (352×288 - Pentagon/PAL Frame)", 352, 288, 1.0f, 2000},
+        {"320p", "320p Extended (400×320 - TS-Conf/Border)", 400, 320, 1.0f, 2200},
+        {"360p", "360p Low-HD (640×360 - TS-Conf Hi-Res)", 640, 360, 1.0f, 2500},
+        {"480p", "480p VGA (640×480 - ATM Turbo / Double)", 640, 480, 1.0f, 3500},
+        {"576p", "576p SDTV (720×576 - PAL Double)", 720, 576, 1.0f, 4000},
+        {"640p", "640p Hi-Res (800×640 - ProFi/ATM HD)", 800, 640, 1.0f, 4500},
+
+        // HD & Ultra-HD Broadcast Presets
+        {"720p", "720p HD (1280×720 - HD Ready)", 1280, 720, 1.0f, 5000},
+        {"960p", "960p Quad-VGA (1280×960 - 4x Integer 240p)", 1280, 960, 1.0f, 6500},
+        {"1080p", "1080p Full HD (1920×1080)", 1920, 1080, 1.0f, 8000},
+        {"1440p", "1440p Quad HD (2560×1440)", 2560, 1440, 1.0f, 16000},
         {"4k", "4K Ultra HD (3840×2160)", 3840, 2160, 1.0f, 35000}
     };
     return profiles;
