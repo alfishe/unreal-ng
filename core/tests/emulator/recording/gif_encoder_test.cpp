@@ -1,11 +1,11 @@
-#include "emulator/recording/encoders/gif_encoder.h"
+#include "encoders/gif_encoder.h"
 
 #include <gtest/gtest.h>
 
 #include <filesystem>
 
 #include "3rdparty/gif/gif.h"
-#include "emulator/recording/encoder_config.h"
+#include "encoder_config.h"
 #include "emulator/video/screen.h"
 
 /// @brief Test fixture for GIF encoder tests

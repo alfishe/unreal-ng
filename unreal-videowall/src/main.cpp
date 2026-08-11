@@ -1,11 +1,11 @@
-// MSVC: winsock2.h must be included before windows.h to prevent redefinition errors
+// Windows: winsock2.h must be included before windows.h to prevent redefinition errors
 #ifdef _WIN32
     #ifndef NOMINMAX
         #define NOMINMAX
     #endif
 
+    #include <winsock2.h>
     #include <windows.h>
-    #include <winsock2.h>  // winsock2.h include MUST go before windows.h
 #endif
 
 #include <common/filehelper.h>

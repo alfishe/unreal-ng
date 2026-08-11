@@ -2,6 +2,13 @@
 
 #include <QObject>
 
+// miniaudio.h includes <windows.h> on Windows. winsock2.h MUST be included before
+// windows.h to prevent type conflicts (see core's stdafx.h for the same pattern).
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+#endif
+
 #include <3rdparty/tinywav/tinywav.h>
 #include <3rdparty/miniaudio/miniaudio.h>
 #include <common/stringhelper.h>
