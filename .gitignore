@@ -98,3 +98,5 @@ htmlcov/
 # MacOS files
 .DS_Store
 
+.specstory/
+**/.claude

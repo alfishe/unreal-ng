@@ -44,6 +44,8 @@ permissions:
 env:
   BUILD_TYPE: Release
   QT_VERSION: '6.9.3'
+  # Enable symbol packaging for rolling snapshots only
+  PACKAGE_SYMBOLS: ${{ github.event_name == 'workflow_dispatch' && 'ON' || 'OFF' }}
 
 jobs:
   # ========================================
@@ -59,7 +61,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -73,21 +75,35 @@ jobs:
             -DBUILD_QT_APPS=ON \
             -DTESTS=OFF \
             -DBENCHMARKS=OFF \
+            -DPACKAGE_SYMBOLS=${{ env.PACKAGE_SYMBOLS }} \
             -DQT_INSTALL_PATH=/opt/qt/current
 
       - name: Build
         run: cmake --build build --parallel
 
+      - name: Package Symbols
+        if: env.PACKAGE_SYMBOLS == 'ON'
+        run: cmake --build build --target package_symbols_linux
+
       - name: Package
         run: cmake --build build --target package_suite_linux
 
       - name: Upload Linux artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: UnrealNG-Suite-Linux
           path: build/packages/UnrealNG-Suite-Linux.tar.gz
           retention-days: 7
           compression-level: 0  # Already compressed, skip double-compression
+
+      - name: Upload Linux symbols
+        if: env.PACKAGE_SYMBOLS == 'ON'
+        uses: actions/upload-artifact@v6
+        with:
+          name: UnrealNG-Symbols-Linux
+          path: build/packages/UnrealNG-Symbols-Linux.tar.gz
+          retention-days: 7
+          compression-level: 0
 
   # ========================================
   # Windows MSVC Build
@@ -97,12 +113,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -117,7 +133,7 @@ jobs:
           cache: true
 
       - name: Setup MSVC
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: egor-tensin/vs-shell@v2
         with:
           arch: x64
 
@@ -129,21 +145,35 @@ jobs:
             -DTESTS=OFF `
             -DBENCHMARKS=OFF `
             -DENABLE_PYTHON_AUTOMATION=OFF `
+            -DPACKAGE_SYMBOLS=${{ env.PACKAGE_SYMBOLS }} `
             -DQT_INSTALL_PATH="${{ env.QT_ROOT_DIR }}"
 
       - name: Build
         run: cmake --build build --parallel
 
+      - name: Package Symbols
+        if: env.PACKAGE_SYMBOLS == 'ON'
+        run: cmake --build build --target package_symbols_windows
+
       - name: Package
         run: cmake --build build --target package_suite_windows
 
       - name: Upload Windows MSVC artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: UnrealNG-Suite-Windows-MSVC
           path: build/packages/UnrealNG-Suite-Windows.zip
           retention-days: 7
           compression-level: 0  # Already compressed, skip double-compression
+
+      - name: Upload Windows MSVC symbols
+        if: env.PACKAGE_SYMBOLS == 'ON'
+        uses: actions/upload-artifact@v6
+        with:
+          name: UnrealNG-Symbols-Windows-MSVC
+          path: build/packages/UnrealNG-Symbols-Windows-MSVC.zip
+          retention-days: 7
+          compression-level: 0
 
   # ========================================
   # Windows MinGW Build
@@ -153,7 +183,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -198,11 +228,17 @@ jobs:
             -DTESTS=OFF \
             -DBENCHMARKS=OFF \
             -DENABLE_PYTHON_AUTOMATION=OFF \
+            -DPACKAGE_SYMBOLS=${{ env.PACKAGE_SYMBOLS }} \
             -DQT_INSTALL_PATH="$QT_PATH"
 
       - name: Build
         shell: msys2 {0}
         run: cmake --build build --parallel
+
+      - name: Package Symbols
+        if: env.PACKAGE_SYMBOLS == 'ON'
+        shell: msys2 {0}
+        run: cmake --build build --target package_symbols_mingw
 
       - name: Package
         shell: msys2 {0}
@@ -216,12 +252,21 @@ jobs:
           Move-Item -Path "build/packages/UnrealNG-Suite-Windows.zip" -Destination "build/packages/UnrealNG-Suite-Windows-MinGW.zip" -Force
 
       - name: Upload Windows MinGW artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: UnrealNG-Suite-Windows-MinGW
           path: build/packages/UnrealNG-Suite-Windows-MinGW.zip
           retention-days: 7
           compression-level: 0  # Already compressed, skip double-compression
+
+      - name: Upload Windows MinGW symbols
+        if: env.PACKAGE_SYMBOLS == 'ON'
+        uses: actions/upload-artifact@v6
+        with:
+          name: UnrealNG-Symbols-Windows-MinGW
+          path: build/packages/UnrealNG-Symbols-Windows-MinGW.zip
+          retention-days: 7
+          compression-level: 0
 
   # ========================================
   # macOS Build (Intel x64) - DISABLED
@@ -234,7 +279,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -264,7 +309,7 @@ jobs:
         run: cmake --build build --target package_suite_macos
 
       - name: Upload macOS artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: UnrealNG-Suite-macOS
           path: build/packages/UnrealNG-Suite.dmg
@@ -279,7 +324,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -301,10 +346,15 @@ jobs:
             -DBUILD_QT_APPS=ON \
             -DTESTS=OFF \
             -DBENCHMARKS=OFF \
+            -DPACKAGE_SYMBOLS=${{ env.PACKAGE_SYMBOLS }} \
             -DQT_INSTALL_PATH="${{ env.QT_ROOT_DIR }}"
 
       - name: Build
         run: cmake --build build --parallel
+
+      - name: Package Symbols
+        if: env.PACKAGE_SYMBOLS == 'ON'
+        run: cmake --build build --target package_symbols_macos
 
       - name: Package
         run: cmake --build build --target package_suite_macos
@@ -313,12 +363,21 @@ jobs:
         run: mv build/packages/UnrealNG-Suite.dmg build/packages/UnrealNG-Suite-macOS-ARM64.dmg
 
       - name: Upload macOS ARM64 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: UnrealNG-Suite-macOS-ARM64
           path: build/packages/UnrealNG-Suite-macOS-ARM64.dmg
           retention-days: 7
           compression-level: 0  # DMG is already compressed
+
+      - name: Upload macOS ARM64 symbols
+        if: env.PACKAGE_SYMBOLS == 'ON'
+        uses: actions/upload-artifact@v6
+        with:
+          name: UnrealNG-Symbols-macOS-ARM64
+          path: build/packages/UnrealNG-Symbols-macOS.tar.gz
+          retention-days: 7
+          compression-level: 0
 
   # ========================================
   # Create GitHub Release
@@ -339,12 +398,12 @@ jobs:
     steps:
       # Need full git history for git-describe to work
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           path: artifacts
 
@@ -355,6 +414,16 @@ jobs:
           cp artifacts/UnrealNG-Suite-Windows-MSVC/UnrealNG-Suite-Windows.zip release/UnrealNG-Suite-Windows-MSVC.zip
           cp artifacts/UnrealNG-Suite-Windows-MinGW/UnrealNG-Suite-Windows-MinGW.zip release/
           cp artifacts/UnrealNG-Suite-macOS-ARM64/UnrealNG-Suite-macOS-ARM64.dmg release/
+          ls -la release/
+
+      - name: Prepare symbol files (rolling snapshots only)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          # Copy symbol archives if they exist (only for rolling snapshots)
+          cp artifacts/UnrealNG-Symbols-Linux/UnrealNG-Symbols-Linux.tar.gz release/ 2>/dev/null || true
+          cp artifacts/UnrealNG-Symbols-Windows-MSVC/UnrealNG-Symbols-Windows-MSVC.zip release/ 2>/dev/null || true
+          cp artifacts/UnrealNG-Symbols-Windows-MinGW/UnrealNG-Symbols-Windows-MinGW.zip release/ 2>/dev/null || true
+          cp artifacts/UnrealNG-Symbols-macOS-ARM64/UnrealNG-Symbols-macOS.tar.gz release/UnrealNG-Symbols-macOS-ARM64.tar.gz 2>/dev/null || true
           ls -la release/
 
       - name: Generate checksums
@@ -413,6 +482,15 @@ jobs:
           | Windows MinGW (x64) | \`UnrealNG-Suite-Windows-MinGW.zip\` |
           | macOS Apple Silicon (ARM64) | \`UnrealNG-Suite-macOS-ARM64.dmg\` |
 
+          ### Debug Symbols (for crash analysis)
+
+          | Platform | File |
+          |----------|------|
+          | Linux | \`UnrealNG-Symbols-Linux.tar.gz\` |
+          | Windows MSVC | \`UnrealNG-Symbols-Windows-MSVC.zip\` |
+          | Windows MinGW | \`UnrealNG-Symbols-Windows-MinGW.zip\` |
+          | macOS ARM64 | \`UnrealNG-Symbols-macOS-ARM64.tar.gz\` |
+
           ### Verify Downloads
           \`\`\`bash
           sha256sum -c SHA256SUMS.txt
@@ -428,7 +506,7 @@ jobs:
       #
       - name: Create Milestone Release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           name: UnrealNG ${{ github.ref_name }}

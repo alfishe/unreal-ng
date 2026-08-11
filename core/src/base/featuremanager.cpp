@@ -9,7 +9,9 @@
 #include "common/modulelogger.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
-#include "emulator/recording/recordingmanager.h"
+#ifdef ENABLE_RECORDING
+#include "recordingmanager.h"
+#endif
 #include "emulator/video/screen.h"
 
 /// region <Logging>
@@ -372,11 +374,13 @@ void FeatureManager::onFeatureChanged()
         _context->pSoundManager->UpdateFeatureCache();
     }
 
+#ifdef ENABLE_RECORDING
     // Update feature cache in RecordingManager if it exists
     if (_context && _context->pRecordingManager)
     {
         _context->pRecordingManager->UpdateFeatureCache();
     }
+#endif
 
     // Update feature cache in Screen (for ScreenHQ toggle) if it exists
     if (_context && _context->pScreen)

@@ -34,6 +34,12 @@ struct EncoderConfig
     /// Video codec hint (e.g., "h264", "h265", "vp9")
     std::string videoCodec = "h264";
 
+    /// Integer nearest-neighbor upscale before encoding (1 = native size).
+    /// Important for ZX pixel art with YUV codecs: at 1x, 4:2:0 chroma
+    /// subsampling halves color resolution and smears per-pixel multicolor
+    /// effects; 2x+ preserves them.
+    uint32_t scaleFactor = 1;
+
     /// endregion </Video Configuration>
 
     /// region <Audio Configuration>
@@ -82,4 +88,45 @@ struct EncoderConfig
     bool lossless = false;
 
     /// endregion </Quality Settings>
+
+    /// region <FFmpeg-specific>
+
+    /// Path to ffmpeg binary (empty = auto-detect)
+    std::string ffmpegPath;
+
+    /// Prefer hardware-accelerated encoder when available
+    bool useHardwareAccel = true;
+
+    /// Encoder preset for libx264/libx265 (e.g., "ultrafast", "fast", "medium")
+    std::string encoderPreset;
+
+    /// Constant Rate Factor for libx264/libx265 (0-51, lower = better quality)
+    int crf = 23;
+
+    /// Output container format ("mp4", "mkv", "avi", "webm", "gif")
+    std::string container = "mp4";
+
+    /// endregion </FFmpeg-specific>
+
+    /// region <Backend Selection>
+
+    /// Encoder backend preference
+    enum class Backend
+    {
+        Auto,     ///< Pick best available (native preferred)
+        Native,   ///< Force native encoder (VideoToolbox/NVENC/VA-API)
+        FFmpeg    ///< Force FFmpeg pipe encoder
+    };
+
+    /// Selected backend (default: Auto)
+    Backend backend = Backend::Auto;
+
+    /// endregion </Backend Selection>
+
+    /// region <Realtime>
+
+    /// Allow non-realtime recording (emulator slows to guarantee 50Hz output)
+    bool allowNonRealtime = true;
+
+    /// endregion </Realtime>
 };

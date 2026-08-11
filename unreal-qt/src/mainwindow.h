@@ -36,6 +36,10 @@
 #define slots Q_SLOTS
 #endif  // ENABLE_AUTOMATION
 
+class AudioSettingsWidget;
+#ifdef ENABLE_RECORDING
+class VideoRecordingWidget;
+#endif
 class DockingManager;
 
 QT_BEGIN_NAMESPACE
@@ -69,6 +73,7 @@ private slots:
     void handleEmulatorSelectionChanged(int id, Message* message);
     void openFileDialog();
     void openSpecificFile(const QString& filepath);
+    void loadFile(const QString& filePath);
     void saveFileDialog();
     void saveFileDialogZ80();
     void saveDiskDialog();
@@ -90,6 +95,11 @@ private slots:
     void handleDebuggerToggled(bool visible);
     void handleLogWindowToggled(bool visible);
     void handleIntParametersRequested();
+    void handleAudioSettingsRequested();
+#ifdef ENABLE_RECORDING
+    void handleVideoRecordingRequested();
+    void handleQuickRecord(const QString& presetName);
+#endif
     void updateMenuStates();
 
     // Binding state handler
@@ -213,4 +223,10 @@ private:
 
     DockingManager* _dockingManager = nullptr;
     MenuManager* _menuManager = nullptr;
+
+    // Audio settings dialog (singleton, toggled via menu)
+    QPointer<AudioSettingsWidget> _audioSettingsWidget;
+#ifdef ENABLE_RECORDING
+    QPointer<VideoRecordingWidget> _videoRecordingWidget;
+#endif
 };

@@ -185,6 +185,7 @@ bool Core::Init()
 
     /// region <Recording manager>
 
+#ifdef ENABLE_RECORDING
     if (result)
     {
         result = false;
@@ -200,6 +201,7 @@ bool Core::Init()
             result = true;
         }
     }
+#endif
 
     /// endregion </Recording manager>
 
@@ -335,12 +337,14 @@ void Core::Release()
         _sound = nullptr;
     }
 
+#ifdef ENABLE_RECORDING
     _context->pRecordingManager = nullptr;
     if (_recordingManager != nullptr)
     {
         delete _recordingManager;
         _recordingManager = nullptr;
     }
+#endif
 
     _context->pScreen = nullptr;
     if (_screen != nullptr)
@@ -419,23 +423,31 @@ void Core::Reset()
     // Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM)
     _mode = static_cast<ROMModeEnum>(_config->reset_rom);
 
+    // Reset EmulatorState fields that are not covered by individual peripheral resets
+    // These must be cleared BEFORE peripheral resets so PortDecoder::reset() can set
+    // model-specific defaults without stale values interfering
+    _state->t_states = 0;       // Cumulative T-State counter (used for tape/peripheral timing)
+    _state->frame_counter = 0;  // Frame counter
+    _state->flags = 0x00;       // Execution flags (CF_TRDOS, CF_DOSPORTS, CF_LEAVEDOSRAM, etc.)
+    _state->border_attr = 0x07; // Default border color (white)
+    _state->active_ay = 0;      // Default AY chip (first)
+    _state->ulaplus_mode = 0;   // Disable ULA+ palette
+    _state->ulaplus_reg = 0;    // Reset ULA+ register selector
+
     // Reset main Z80 Core and all peripherals
-    _z80->Reset();          // Main Z80
-    _memory->Reset();       // Memory
-    _keyboard->Reset();     // Keyboard
-    _sound->reset();        // All sound devices (AY(s), COVOX, MoonSound, GS) and sound subsystem
-    _screen->Reset();       // Reset all video subsystem
-    _tape->reset();         // Reset tape loader state
-    _betaDisk->reset();     // BetaDisk floppy controller
-    _hdd->Reset();          // Reset IDE controller
-    _portDecoder->reset();  // Reset peripheral port decoder
-
-    // Input controllers reset
-    // input.atm51.reset();
-    // input.buffer.Enable(false);
-
-    // Reset counters
-    _state->frame_counter = 0;
+    _z80->Reset();               // Main Z80
+    _memory->Reset();            // Memory
+    _keyboard->Reset();          // Keyboard
+    _sound->reset();             // All sound devices (AY(s), COVOX, MoonSound, GS) and sound subsystem
+    _screen->Reset();            // Reset all video subsystem
+    _tape->reset();              // Reset tape loader state
+    _betaDisk->reset();          // BetaDisk floppy controller
+    _hdd->Reset();               // Reset IDE controller
+    _portDecoder->reset();       // Reset peripheral port decoder (sets model-specific port defaults)
+#ifdef ENABLE_RECORDING
+    if (_recordingManager)
+        _recordingManager->Reset();  // Reset recording manager (stops active recording, clears counters)
+#endif
 
     messageCenter.Post(topicID, new SimpleTextPayload("Core reset finished"));
 }
