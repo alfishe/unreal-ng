@@ -103,6 +103,9 @@ private:
     /// Toggle screen HQ feature for all tiles (Cmd+S)
     void toggleScreenHQForAllTiles();
 
+    /// Open Video Wall recording dialog (Cmd+R / Ctrl+R)
+    void handleVideoRecordingRequested();
+
     // UI Components
     TileGrid* _tileGrid = nullptr;
 
@@ -115,6 +118,9 @@ private:
     // Currently audio-bound tile (only one at a time)
     // Using QPointer to auto-nullify when tile is deleted
     QPointer<EmulatorTile> _audioBoundTile;
+
+    // Recording widget dialog
+    QPointer<QWidget> _recordingWidget;
 
 #ifdef ENABLE_AUTOMATION
     // Automation system (WebAPI, CLI, Python, Lua) - singleton, not owned

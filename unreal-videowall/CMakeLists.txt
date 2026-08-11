@@ -213,7 +213,14 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     "${ROOT_DIR}/core/src"
     "${ROOT_DIR}/core"
     "${ROOT_DIR}/core/automation"
+    "${ROOT_DIR}/core/recording/src"
+    "${ROOT_DIR}/unreal-qt/src"
+    "${ROOT_DIR}/unreal-qt/src/debugger/widgets"
 )
+
+if (ENABLE_RECORDING)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_RECORDING)
+endif()
 
 # Add automation include directories if enabled
 if (ENABLE_AUTOMATION)

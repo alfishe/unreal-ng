@@ -11,6 +11,7 @@
 #include <3rdparty/miniaudio/miniaudio.h>
 
 #include "soundmanager.h"
+#include "videowall/VideowallRecorder.h"
 #include <QDebug>
 
 #include <emulator/sound/soundmanager.h>
@@ -109,6 +110,12 @@ void AppSoundManager::audioDataCallback(ma_device* pDevice, void* pOutput, const
     if (obj)
     {
         obj->_ringBuffer.dequeue((int16_t*)pOutput, frameCount * 2);
+
+        // Feed active tile final miniaudio output buffer into VideowallRecorder if recording
+        if (VideowallRecorder::instance().isRecording())
+        {
+            VideowallRecorder::instance().captureAudio((const int16_t*)pOutput, frameCount * 2);
+        }
 
         // Maintain 50 Hz frame pacing by requesting more audio data from MainLoop
         // when ring buffer drops below ~2 frames (40ms) of buffered audio.

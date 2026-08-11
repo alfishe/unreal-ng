@@ -10,6 +10,8 @@
 #include <platform.h>
 
 #include "videowall/VideoWallWindow.h"
+#include "videowall/VideowallRecorder.h"
+#include "videowall/VideowallRecordingWidget.h"
 
 #ifdef ENABLE_AUTOMATION
 #include <automation/automation.h>
@@ -155,6 +157,9 @@ void VideoWallWindow::initializeAfterEventLoopStart()
         qWarning() << "Failed to initialize sound manager";
     }
 
+    // Attach tile grid widget to VideowallRecorder for 50Hz combined Qt buffer capture
+    VideowallRecorder::instance().setTargetWidget(_tileGrid);
+
     // Now safe to create menus - the window is fully initialized
     createMenus();
 }
@@ -163,6 +168,13 @@ void VideoWallWindow::createMenus()
 {
     // File menu
     QMenu* fileMenu = menuBar()->addMenu(tr("&File"));
+
+#ifdef ENABLE_RECORDING
+    QAction* recordAction = fileMenu->addAction(tr("&Record Video / Audio...\tCtrl+R"));
+    recordAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
+    connect(recordAction, &QAction::triggered, this, &VideoWallWindow::handleVideoRecordingRequested);
+    fileMenu->addSeparator();
+#endif
 
     QAction* exitAction = fileMenu->addAction(tr("E&xit"));
     exitAction->setShortcut(QKeySequence::Quit);
@@ -218,6 +230,8 @@ void VideoWallWindow::setupShortcutsWindows()
 
     connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_N)), &QShortcut::activated,
             this, &VideoWallWindow::addEmulatorTile);
+    connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_R)), &QShortcut::activated,
+            this, &VideoWallWindow::handleVideoRecordingRequested);
     connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_Backspace)), &QShortcut::activated,
             this, &VideoWallWindow::removeLastTile);
     connect(makeShortcut(QKeySequence(Qt::Key_F10)), &QShortcut::activated,
@@ -240,6 +254,8 @@ void VideoWallWindow::setupShortcutsMacOS()
 
     connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_N)), &QShortcut::activated,
             this, &VideoWallWindow::addEmulatorTile);
+    connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_R)), &QShortcut::activated,
+            this, &VideoWallWindow::handleVideoRecordingRequested);
     connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_Backspace)), &QShortcut::activated,
             this, &VideoWallWindow::removeLastTile);
     connect(makeShortcut(QKeySequence(Qt::Key_F10)), &QShortcut::activated,
@@ -261,6 +277,8 @@ void VideoWallWindow::setupShortcutsLinux()
 
     connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_N)), &QShortcut::activated,
             this, &VideoWallWindow::addEmulatorTile);
+    connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_R)), &QShortcut::activated,
+            this, &VideoWallWindow::handleVideoRecordingRequested);
     connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_Backspace)), &QShortcut::activated,
             this, &VideoWallWindow::removeLastTile);
     connect(makeShortcut(QKeySequence(Qt::Key_F10)), &QShortcut::activated,
@@ -269,6 +287,23 @@ void VideoWallWindow::setupShortcutsLinux()
             this, &VideoWallWindow::toggleFullscreenMode);
     connect(makeShortcut(QKeySequence(Qt::Key_Escape)), &QShortcut::activated,
             this, [this]() { if (_isFullscreen) toggleFullscreenMode(); });
+}
+
+void VideoWallWindow::handleVideoRecordingRequested()
+{
+    if (_recordingWidget)
+    {
+        _recordingWidget->close();
+        return;
+    }
+
+    VideowallRecordingWidget* widget = new VideowallRecordingWidget(nullptr);
+    widget->setAttribute(Qt::WA_DeleteOnClose);
+    widget->setWindowFlags(Qt::Tool | Qt::Window);
+    widget->show();
+    widget->raise();
+    widget->activateWindow();
+    _recordingWidget = widget;
 }
 
 void VideoWallWindow::createDefaultPresets()
