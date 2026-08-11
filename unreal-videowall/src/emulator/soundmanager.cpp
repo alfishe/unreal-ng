@@ -37,8 +37,8 @@ bool AppSoundManager::init()
     config.playback.channels = AUDIO_CHANNELS;      // Set to 0 to use the device's native channel count.
     config.sampleRate        = AUDIO_SAMPLING_RATE; // Set to 0 to use the device's native sample rate.
     config.performanceProfile = ma_performance_profile_low_latency;
-    config.periodSizeInFrames = 256;                 // ~5.8ms period @ 44.1kHz
-    config.periods            = 2;                   // 2 periods = 512 frames (~11.6ms hardware buffer @ 44.1kHz)
+    config.periodSizeInFrames = 512;                 // ~11.6ms period @ 44.1kHz
+    config.periods            = 4;                   // 4 periods = 2048 frames (~46.4ms hardware buffer @ 44.1kHz)
     config.dataCallback      = AppSoundManager::audioDataCallback; // This function will be called when miniaudio needs more data.
     config.pUserData         = (void*)this;         // Can be accessed from the device object (device.pUserData).
 
@@ -111,8 +111,8 @@ void AppSoundManager::audioDataCallback(ma_device* pDevice, void* pOutput, const
         obj->_ringBuffer.dequeue((int16_t*)pOutput, frameCount * 2);
 
         // Maintain 50 Hz frame pacing by requesting more audio data from MainLoop
-        // when ring buffer drops below ~2 frames (40ms) of buffered audio.
-        constexpr size_t lowWatermark = SAMPLES_PER_FRAME * AUDIO_CHANNELS * 2;
+        // when ring buffer drops below ~3 frames (60ms) of buffered audio.
+        constexpr size_t lowWatermark = SAMPLES_PER_FRAME * AUDIO_CHANNELS * 3;
         if (obj->_ringBuffer.getAvailableData() < lowWatermark)
         {
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
