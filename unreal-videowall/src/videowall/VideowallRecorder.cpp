@@ -45,8 +45,36 @@ bool VideowallRecorder::startRecording(const std::string& filename,
     if (!_recordingManager)
         return false;
 
-    _targetWidth = targetWidth;
-    _targetHeight = targetHeight;
+    uint32_t w = targetWidth;
+    uint32_t h = targetHeight;
+
+    // Auto-detect resolution from target widget (window or fullscreen grab buffer)
+    if ((w == 0 || h == 0) && _targetWidget)
+    {
+        QPixmap pixmap = _targetWidget->grab();
+        if (!pixmap.isNull() && pixmap.width() > 0 && pixmap.height() > 0)
+        {
+            w = static_cast<uint32_t>(pixmap.width());
+            h = static_cast<uint32_t>(pixmap.height());
+        }
+        else
+        {
+            w = static_cast<uint32_t>(_targetWidget->width());
+            h = static_cast<uint32_t>(_targetWidget->height());
+        }
+    }
+
+    if (w == 0) w = 1920;
+    if (h == 0) h = 1080;
+
+    // Hardware encoders (VideoToolbox H.264/HEVC, NVENC, FFmpeg) require even dimensions (multiples of 2)
+    w = (w + 1) & ~1u;
+    h = (h + 1) & ~1u;
+
+    _targetWidth = w;
+    _targetHeight = h;
+
+    _recordingManager->SetVideoResolution(_targetWidth, _targetHeight);
 
     bool ok = _recordingManager->StartRecording(filename, videoCodec, audioCodec, videoBitrate, audioBitrate);
     if (ok)

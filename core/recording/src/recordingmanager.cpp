@@ -166,7 +166,7 @@ const std::vector<RecordingProfile>& RecordingProfileCollection::getStandardProf
 
 RecordingProfile RecordingProfileCollection::getDefaultProfile()
 {
-    return getStandardProfiles()[0]; // 1080p default
+    return getProfileById("1080p");
 }
 
 RecordingProfile RecordingProfileCollection::getProfileById(const std::string& id)
