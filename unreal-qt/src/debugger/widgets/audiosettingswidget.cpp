@@ -29,6 +29,10 @@ AudioSettingsWidget::~AudioSettingsWidget()
 
 void AudioSettingsWidget::setContext(EmulatorContext* context)
 {
+    // Stop timer FIRST to prevent race with stale context access
+    if (_meterTimer)
+        _meterTimer->stop();
+
     _context = context;
     refreshFromContext();
 }
@@ -155,9 +159,6 @@ void AudioSettingsWidget::createUI()
     // ============ Beeper section ============
     _beeperGroup = new QGroupBox("Beeper (1-bit)", this);
     auto* beeperLayout = new QHBoxLayout(_beeperGroup);
-    _beeperFilterCheckbox = new QCheckBox("Lowpass", this);
-    _beeperFilterCheckbox->setToolTip("Smooths harsh edges");
-    beeperLayout->addWidget(_beeperFilterCheckbox);
     _beeperPunchCheckbox = new QCheckBox("Punch", this);
     _beeperPunchCheckbox->setToolTip("Attack enhancement for digidrums");
     beeperLayout->addWidget(_beeperPunchCheckbox);
@@ -323,7 +324,6 @@ void AudioSettingsWidget::connectSignals()
     }
 
     // Beeper
-    connect(_beeperFilterCheckbox, &QCheckBox::checkStateChanged, this, &AudioSettingsWidget::onBeeperFilterChanged);
     connect(_beeperPunchCheckbox, &QCheckBox::checkStateChanged, this, &AudioSettingsWidget::onBeeperPunchChanged);
 
     // Covox
@@ -363,7 +363,6 @@ void AudioSettingsWidget::disconnectSignals()
         }
     }
 
-    disconnect(_beeperFilterCheckbox, nullptr, this, nullptr);
     disconnect(_beeperPunchCheckbox, nullptr, this, nullptr);
     disconnect(_covoxDCRemovalCheckbox, nullptr, this, nullptr);
     for (int i = 0; i < 4; i++)
@@ -424,7 +423,6 @@ void AudioSettingsWidget::refreshFromContext()
         _ayRoomCombo->setCurrentIndex(static_cast<int>(sm->getAYChain().getRoomMode()));
 
         // Beeper settings
-        _beeperFilterCheckbox->setChecked(sm->isBeeperFilterEnabled());
         _beeperPunchCheckbox->setChecked(sm->getBeeperChain().isPunchEnabled());
 
         // FIR filter
@@ -480,7 +478,7 @@ void AudioSettingsWidget::updateSoloIndicator()
 
 // ============ Source row slots ============
 
-void AudioSettingsWidget::onSourceMuteChanged(Qt::CheckState state)
+void AudioSettingsWidget::onSourceMuteChanged(int state)
 {
     auto* check = qobject_cast<QCheckBox*>(sender());
     if (!check || !_context || !_context->pSoundManager)
@@ -490,7 +488,7 @@ void AudioSettingsWidget::onSourceMuteChanged(Qt::CheckState state)
     _context->pSoundManager->setDeviceMute(type, state == Qt::Checked);
 }
 
-void AudioSettingsWidget::onSourceSoloChanged(Qt::CheckState state)
+void AudioSettingsWidget::onSourceSoloChanged(int state)
 {
     auto* check = qobject_cast<QCheckBox*>(sender());
     if (!check || !_context || !_context->pSoundManager)
@@ -551,7 +549,7 @@ void AudioSettingsWidget::onChipModelChanged(int index)
     }
 }
 
-void AudioSettingsWidget::onAYPunchChanged(Qt::CheckState state)
+void AudioSettingsWidget::onAYPunchChanged(int state)
 {
     if (_context && _context->pSoundManager)
     {
@@ -570,7 +568,7 @@ void AudioSettingsWidget::onAYRoomModeChanged(int index)
     }
 }
 
-void AudioSettingsWidget::onFirChanged(Qt::CheckState state)
+void AudioSettingsWidget::onFirChanged(int state)
 {
     if (_context && _context->pFeatureManager)
         _context->pFeatureManager->setFeature("soundhq", state == Qt::Checked);
@@ -578,7 +576,7 @@ void AudioSettingsWidget::onFirChanged(Qt::CheckState state)
 
 // ============ Channel slots ============
 
-void AudioSettingsWidget::onChannelMuteChanged(Qt::CheckState state)
+void AudioSettingsWidget::onChannelMuteChanged(int state)
 {
     auto* check = qobject_cast<QCheckBox*>(sender());
     if (!check || !_context || !_context->pSoundManager)
@@ -607,15 +605,9 @@ void AudioSettingsWidget::onChannelVolumeChanged(int value)
         ay->setChannelVolume(channel, value / 100.0);
 }
 
-// ============ Beeper slots ============
 
-void AudioSettingsWidget::onBeeperFilterChanged(Qt::CheckState state)
-{
-    if (_context && _context->pSoundManager)
-        _context->pSoundManager->setBeeperFilterEnabled(state == Qt::Checked);
-}
 
-void AudioSettingsWidget::onBeeperPunchChanged(Qt::CheckState state)
+void AudioSettingsWidget::onBeeperPunchChanged(int state)
 {
     if (_context && _context->pSoundManager)
         _context->pSoundManager->getBeeperChain().setPunchEnabled(state == Qt::Checked);
@@ -623,13 +615,13 @@ void AudioSettingsWidget::onBeeperPunchChanged(Qt::CheckState state)
 
 // ============ Covox slots ============
 
-void AudioSettingsWidget::onCovoxDCRemovalChanged(Qt::CheckState state)
+void AudioSettingsWidget::onCovoxDCRemovalChanged(int state)
 {
     if (_context && _context->pSoundManager && _context->pSoundManager->hasCovox())
         _context->pSoundManager->getCovox()->setDCRemovalEnabled(state == Qt::Checked);
 }
 
-void AudioSettingsWidget::onCovoxChannelMuteChanged(Qt::CheckState state)
+void AudioSettingsWidget::onCovoxChannelMuteChanged(int state)
 {
     auto* check = qobject_cast<QCheckBox*>(sender());
     if (!check || !_context || !_context->pSoundManager || !_context->pSoundManager->hasCovox())

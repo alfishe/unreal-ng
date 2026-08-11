@@ -55,7 +55,7 @@ void SoundChip_TurboSound::handleStep()
 
         _ayPLL += diff * AUDIO_SAMPLE_TSTATE_INCREMENT;
 
-        while (_ayPLL > 1.0 && _ayBufferIndex < AUDIO_SAMPLES_PER_VIDEO_FRAME * AUDIO_CHANNELS)
+        while (_ayPLL > 1.0 && _ayBufferIndex < MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS)
         {
             _ayPLL -= 1.0;
 

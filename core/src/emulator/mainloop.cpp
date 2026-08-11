@@ -335,6 +335,7 @@ void MainLoop::OnFrameEnd()
         }
     }
 
+#ifdef ENABLE_RECORDING
     // Capture video frame for recording (if recording is active)
     // This is called AFTER UpdateScreen() has rendered the current frame
     // In turbo mode, this captures every emulated frame for correct timing
@@ -350,6 +351,7 @@ void MainLoop::OnFrameEnd()
             MLOGERROR("RecordingManager::CaptureFrame failed: %s", e.what());
         }
     }
+#endif
 
     // Notify that video frame is composed and ready for rendering
     // Send per-instance frame refresh event with emulator ID for filtering

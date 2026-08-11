@@ -16,7 +16,7 @@ SoundManager::SoundManager(EmulatorContext* context)
     _context = context;
     _logger = context->pModuleLogger;
 
-    _beeper = new Beeper(_context, CPU_CLOCK_RATE, AUDIO_SAMPLING_RATE);
+    _beeper = new Beeper(_context, CPU_CLOCK_RATE, AUDIO_SAMPLING_RATE, _beeperBuffer);
     _turboSound = new SoundChip_TurboSound(_context);
 
     // Build the device registry based on what this machine has
@@ -58,7 +58,7 @@ SoundManager::SoundManager(EmulatorContext* context)
     _beeperChain.setup(AUDIO_SAMPLING_RATE);
     _beeperChain.setChipType(AudioCharacterChain::ChipType::AY);
     _beeperChain.setPunchPreset(AudioCharacterChain::PunchPreset::Beeper);
-    _beeperChain.setPunchEnabled(true);
+    _beeperChain.setPunchEnabled(false);
     _beeperChain.setRoomMode(AudioCharacterChain::RoomMode::Off);
 }
 
@@ -95,19 +95,6 @@ void SoundManager::reset()
     std::fill(_beeperBuffer, _beeperBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
     std::fill(_outBuffer, _outBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
 
-    // Reset sound rendering state
-    _prevFrane = 0;
-    _prevFrameTState = 0;
-    _prevLeftValue = 0;
-    _prevRightValue = 0;
-
-    // Reset beeper lowpass filter state
-    _beeperLp1L = _beeperLp2L = 0.0f;
-    _beeperLp1R = _beeperLp2R = 0.0f;
-
-    // Reset audio buffer write counter
-    _audioBufferWrites = 0;
-
     // New wave file
     // closeWaveFile();
     // std::string filePath = "unreal.wav";
@@ -134,70 +121,15 @@ Beeper& SoundManager::getBeeper()
     return *_beeper;
 }
 
-void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
+/// Compatibility shim for tape audio.
+/// Routes the amplitude into the beeper's blip_buf at the given T-state position.
+/// This preserves backward compatibility with Tape::handlePortOut() which
+/// calls updateDAC() with pre-filtered samples.
+void SoundManager::updateDAC(uint32_t frameTState, int16_t left, [[maybe_unused]] int16_t right)
 {
-    CONFIG& config = _context->config;
-
-    // We're transitioned to new frame
-    if (_prevFrameTState > frameTState && _prevFrameTState >= config.frame)
-    {
-        _prevFrameTState -= config.frame;
-    }
-
-    [[maybe_unused]] int32_t deltaTime = (frameTState - _prevFrameTState) % config.frame;
-
-    /*
-    const double ratio = (double)config.frame / (double)SAMPLES_PER_FRAME;
-
-    size_t prevIndex = (floor)((double)_prevFrameTState / ratio);
-    size_t sampleIndex = (floor)((double)frameTState / ratio);
-    */
-
-    uint32_t scaledFrame = config.frame * _context->emulatorState.current_z80_frequency_multiplier;
-
-    size_t prevIndex = (_prevFrameTState * SAMPLES_PER_FRAME) / scaledFrame;
-    size_t sampleIndex = (frameTState * SAMPLES_PER_FRAME) / scaledFrame;
-
-    // region <If we're over frame duration>
-    if (prevIndex >= 882)
-    {
-        _prevFrameTState = frameTState;
-        return;
-    }
-
-    if (sampleIndex >= 882)
-        sampleIndex = 881;
-    // endregion <If we're over frame duration>
-
-    // Fill the gap between previous call and current
-    if (sampleIndex > prevIndex)
-    {
-        for (size_t i = prevIndex; i < sampleIndex && i < _beeperAudioDescriptor.memoryBufferSizeInBytes / 2; i++)
-        {
-            _beeperBuffer[i * 2] = _prevLeftValue;
-            _beeperBuffer[i * 2 + 1] = _prevRightValue;
-        }
-    }
-    else
-    {
-        // Audio callback not active - this emulator doesn't have audio device access
-        // This is normal for headless emulators or emulators that lost audio device ownership
-    }
-
-    // Render current samples
-    if (sampleIndex != prevIndex)
-    {
-        _beeperBuffer[sampleIndex * 2] = left;
-        _beeperBuffer[sampleIndex * 2 + 1] = right;
-    }
-
-    _audioBufferWrites++;
-
-    // Remember timestamp and channel values
-    _prevLeftValue = left;
-    _prevRightValue = right;
-    _prevFrameTState = frameTState;
-    _prevFrane = _context->emulatorState.frame_counter;
+    // Feed the averaged mono amplitude into the beeper's blip_buf.
+    // Tape output is mono (left == right), so we use left as the amplitude.
+    _beeper->handleTapeAudio(static_cast<int32_t>(left), frameTState);
 }
 
 // TurboSound/AY chip access for debugging
@@ -311,7 +243,10 @@ void SoundManager::handleFrameStart()
     if (_covox)
         _covox->handleFrameStart();
 
-    // Initialize render buffers
+    // Beeper starts its frame (blip_buf ready to receive deltas)
+    _beeper->handleFrameStart();
+
+    // Clear the beeper output buffer (will be filled by handleFrameEnd)
     memset(_beeperBuffer, 0x00, _beeperAudioDescriptor.memoryBufferSizeInBytes);
 }
 
@@ -342,31 +277,25 @@ void SoundManager::handleFrameEnd()
     /// endregion </Process AY>
 
     /// region <Process beeper>
-    // Optional 2-pole lowpass @ 16kHz - removes ultrasonic harshness, preserves music
-    if (_beeperFilterEnabled)
+    // Finalize the beeper's blip_buf frame — produces band-limited output
+    size_t samplesThisFrame = SAMPLES_PER_FRAME;
     {
-        constexpr float toFloat = 1.0f / 32768.0f;
-        constexpr float toInt16 = 32767.0f;
+        CONFIG& config = _context->config;
+        uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
+        uint32_t frameDuration = config.frame * speedMultiplier;
 
-        for (int i = 0; i < SAMPLES_PER_FRAME; i++)
+        if (frameDuration > 0)
         {
-            float left = _beeperBuffer[i * 2] * toFloat;
-            float right = _beeperBuffer[i * 2 + 1] * toFloat;
-
-            // Two cascaded 1-pole = 2-pole with -12dB/octave rolloff
-            _beeperLp1L += BEEPER_LP_COEF * (left - _beeperLp1L);
-            _beeperLp2L += BEEPER_LP_COEF * (_beeperLp1L - _beeperLp2L);
-
-            _beeperLp1R += BEEPER_LP_COEF * (right - _beeperLp1R);
-            _beeperLp2R += BEEPER_LP_COEF * (_beeperLp1R - _beeperLp2R);
-
-            _beeperBuffer[i * 2] = static_cast<int16_t>(std::clamp(_beeperLp2L * toInt16, -32768.0f, 32767.0f));
-            _beeperBuffer[i * 2 + 1] = static_cast<int16_t>(std::clamp(_beeperLp2R * toInt16, -32768.0f, 32767.0f));
+            size_t calculated = static_cast<size_t>(std::round(frameDuration * (double)AUDIO_SAMPLING_RATE / (double)CPU_CLOCK_RATE));
+            if (calculated > 0)
+                samplesThisFrame = std::min(calculated, static_cast<size_t>(MAX_SAMPLES_PER_FRAME));
         }
+
+        _beeper->handleFrameEnd(frameDuration);
     }
 
-    // Beeper chain: stronger punch for 1-bit synths (digidrums, PWM synths)
-    _beeperChain.processInt16(_beeperBuffer, SAMPLES_PER_FRAME);
+    // Beeper chain: operates on alias-free blip_buf output
+    _beeperChain.processInt16(_beeperBuffer, samplesThisFrame);
     /// endregion </Process beeper>
 
     /// region <Registry-driven mixing with mute/solo/volume + peak calculation>
@@ -386,7 +315,7 @@ void SoundManager::handleFrameEnd()
     }
 
     // Clear output buffer before mixing
-    memset(_outBuffer, 0, SAMPLES_PER_FRAME * AUDIO_CHANNELS * sizeof(int16_t));
+    memset(_outBuffer, 0, samplesThisFrame * AUDIO_CHANNELS * sizeof(int16_t));
 
     // Mix each device according to audibility rules and compute peaks
     for (auto& d : _devices)
@@ -420,7 +349,7 @@ void SoundManager::handleFrameEnd()
 
         // Compute peak and activity (always, even if muted — for UI meters)
         float peak = 0.0f;
-        for (size_t i = 0; i < SAMPLES_PER_FRAME * AUDIO_CHANNELS; i++)
+        for (size_t i = 0; i < samplesThisFrame * AUDIO_CHANNELS; i++)
         {
             float absVal = std::abs(static_cast<float>(srcBuffer[i])) / 32768.0f;
             if (absVal > peak)
@@ -433,7 +362,7 @@ void SoundManager::handleFrameEnd()
         if (audible && d.volume > 0.0f)
         {
             float vol = d.volume;
-            for (size_t i = 0; i < SAMPLES_PER_FRAME * AUDIO_CHANNELS; i++)
+            for (size_t i = 0; i < samplesThisFrame * AUDIO_CHANNELS; i++)
             {
                 int32_t mixed = _outBuffer[i] + static_cast<int32_t>(srcBuffer[i] * vol);
                 // Saturating add
@@ -443,12 +372,14 @@ void SoundManager::handleFrameEnd()
     }
     /// endregion </Registry-driven mixing>
 
+#ifdef ENABLE_RECORDING
     // Capture audio for recording BEFORE muting
     // This ensures recordings get the actual audio, not silence
     if (_context->pRecordingManager && _context->pRecordingManager->IsRecording())
     {
-        _context->pRecordingManager->CaptureAudio(_outBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
+        _context->pRecordingManager->CaptureAudio(_outBuffer, samplesThisFrame * AUDIO_CHANNELS);
     }
+#endif
 
     // Enqueue generated sound data via previously registered application callback
     // Note: Audio callbacks are cleared when emulator loses audio device access to prevent
@@ -465,12 +396,12 @@ void SoundManager::handleFrameEnd()
         if (_feature_sound_enabled && _mute)
         {
             // Zero out the buffer (silence)
-            memset(_outBuffer, 0, SAMPLES_PER_FRAME * AUDIO_CHANNELS * sizeof(int16_t));
+            memset(_outBuffer, 0, samplesThisFrame * AUDIO_CHANNELS * sizeof(int16_t));
         }
 
         try
         {
-            callback(obj, _outBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
+            callback(obj, _outBuffer, samplesThisFrame * AUDIO_CHANNELS);
         }
         catch (const std::exception& e)
         {

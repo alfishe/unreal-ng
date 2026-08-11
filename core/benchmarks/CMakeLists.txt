@@ -24,6 +24,7 @@ get_filename_component(ROOT_DIR ../../ ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_
 
 # Set paths
 set(CORE_DIR ${ROOT_DIR}/core/src)
+set(RECORDING_DIR ${ROOT_DIR}/core/recording/src)
 set(BENCHMARKS_DIR ${ROOT_DIR}/core/benchmarks)
 set(GOOGLEBENCHMARK_DIR ${ROOT_DIR}/lib/benchmark)
 message("CORE_DIR:${CORE_DIR}")
@@ -85,13 +86,15 @@ message("SOURCES:${SOURCES}")
 include_directories(
     ${BENCHMARKS_DIR}
     ${CORE_DIR}
+    ${RECORDING_DIR}
     ${GOOGLEBENCHMARK_DIR}/include
 )
 
 # Check if we're being included from the top CMakeLists.txt
 if (CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
-    # We're being built directly, so build core first
+    # We're being built directly, so build core and recording first
     add_subdirectory(${CORE_DIR} core)
+    add_subdirectory(${ROOT_DIR}/core/recording recording)
 else()
     # I am called from other project with add_subdirectory()
     # So skip /src/core dependency build
@@ -142,14 +145,16 @@ endif (APPLE)
 # Link with Google Benchmark libraries
 if (WIN32 AND MINGW)
     # MinGW: benchmark sources are compiled directly, no need to link external target
-    target_link_libraries(${PROJECT_NAME} PRIVATE 
+    target_link_libraries(${PROJECT_NAME} PRIVATE
         ${common_libraries}
         core
+        recording
     )
 else()
-    target_link_libraries(${PROJECT_NAME} PRIVATE 
+    target_link_libraries(${PROJECT_NAME} PRIVATE
         ${common_libraries}
         core
+        recording
         benchmark::benchmark_main
     )
 endif()
