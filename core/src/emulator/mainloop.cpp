@@ -146,9 +146,8 @@ void MainLoop::Run(volatile bool& stopRequested)
             // Normal mode: Wait until audio callback requests more data and buffer is about half-full
             // That means we're in sync between audio and video frames
             std::unique_lock<std::mutex> lock(_audioBufferMutex);
-            auto moreAudioDataRequested = std::ref(_moreAudioDataRequested);
-            _cv.wait_for(lock, timeout, [&moreAudioDataRequested] {
-                return moreAudioDataRequested.get().load(std::memory_order_acquire);
+            _cv.wait_for(lock, timeout, [this, &stopRequested] {
+                return _moreAudioDataRequested.load(std::memory_order_acquire) || stopRequested;
             });
             _moreAudioDataRequested.store(false);
             lock.unlock();
@@ -171,6 +170,9 @@ void MainLoop::Run(volatile bool& stopRequested)
 void MainLoop::Stop()
 {
     _stopRequested = true;
+    _moreAudioDataRequested.store(true, std::memory_order_release);
+    _cv.notify_all();
+    _pauseCV.notify_all();
 }
 
 void MainLoop::RunFrame()
@@ -394,17 +396,6 @@ void MainLoop::OnFrameEnd()
     {
         _context->pDebugManager->GetKeyboardManager()->OnFrame();
     }
-
-    // Master-follower synchronization: if this instance was directly targeted by the audio callback,
-    // after completing its frame calculation and writing audio samples to the ring buffer,
-    // broadcast a frame sync pulse (nil UUID) to wake up all follower instances in lockstep.
-    if (_isMasterAudioPacer.exchange(false, std::memory_order_acq_rel))
-    {
-        MessageCenter::DefaultMessageCenter().Post(
-            NC_AUDIO_BUFFER_HALF_FULL,
-            new TargetContextPayload(unreal::UUID()),
-            true);
-    }
 }
 
 /// @brief Handles audio buffer low-watermark notifications (NC_AUDIO_BUFFER_HALF_FULL) to pace frame execution.
@@ -415,53 +406,18 @@ void MainLoop::OnFrameEnd()
 /// the audio device callback posts an NC_AUDIO_BUFFER_HALF_FULL notification. This method receives
 /// that event, marks `_moreAudioDataRequested` as true, and unblocks the main execution loop via `_cv`.
 ///
-/// **Multi-Instance Targeted Filtering Rationale**:
-/// In multi-instance environments (such as Videowall with 48+ concurrent emulator tiles), all instances
-/// subscribe to NC_AUDIO_BUFFER_HALF_FULL on the process-wide MessageCenter singleton.
-///
-/// Without payload filtering, every audio buffer notification posted by the single active tile would
-/// broadcast to all 48+ MainLoop instances simultaneously. Waking 48 worker threads at 50-100Hz causes
-/// severe lock storms on `_audioBufferMutex`, cross-thread scheduling thrashing, and CPU starvation that
-/// causes miniaudio ring-buffer underruns (audio stuttering/crackling).
-///
-/// By inspecting `TargetContextPayload::targetContext`, an instance checks whether the event was specifically
-/// targeted to its own `EmulatorContext`. If the event is intended for a different instance, it returns
-/// immediately before acquiring `_audioBufferMutex` or notifying `_cv`. This eliminates unnecessary lock
-/// acquisitions per audio event for all non-active emulator instances, while preserving identical
-/// audio-driven frame synchronization.
-///
 /// @param id Event topic identifier (NC_AUDIO_BUFFER_HALF_FULL)
 /// @param message Message pointer optionally containing a TargetContextPayload
 void MainLoop::handleAudioBufferHalfFull([[maybe_unused]] int id, Message* message)
 {
-    bool isTargetedToMe = false;
-    // Filter targeted events: receivers MUST filter by emulator UUID.
+    // Filter targeted events: receivers MUST filter by emulator UUID if target is specified.
     if (message && message->obj)
     {
         auto* payload = dynamic_cast<TargetContextPayload*>(message->obj);
-        if (payload && !payload->targetEmulatorId.isNil())
+        if (payload && !payload->targetEmulatorId.isNil() && payload->targetEmulatorId != _context->emulatorId)
         {
-            if (payload->targetEmulatorId != _context->emulatorId)
-            {
-                // Event is targeted to a different emulator instance - ignore to prevent lock storms
-                return;
-            }
-            isTargetedToMe = true;
-        }
-    }
-
-    if (isTargetedToMe)
-    {
-        _isMasterAudioPacer.store(true, std::memory_order_release);
-    }
-    else
-    {
-        // Staggered batching for follower instances: spread frame calculations smoothly
-        // across the 20ms frame window to eliminate CPU thundering herd spikes
-        uint32_t delayUs = _context ? _context->staggerPhaseUs.load(std::memory_order_relaxed) : 0;
-        if (delayUs > 0)
-        {
-            std::this_thread::sleep_for(std::chrono::microseconds(delayUs));
+            // Event is targeted to a different emulator instance - ignore
+            return;
         }
     }
 
