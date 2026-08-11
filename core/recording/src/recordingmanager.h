@@ -152,6 +152,10 @@ public:
     void setFeatureEnabled(bool enabled) { _featureEnabled = enabled; }
     bool isFeatureEnabled() const { return _featureEnabled; }
 
+    /// Use wall-clock time for video timestamps (used for Video Wall and real-time screen capture)
+    void SetUseRealTimeClock(bool useRealTime) { _useRealTimeClock = useRealTime; }
+    bool GetUseRealTimeClock() const { return _useRealTimeClock; }
+
     /// Check if currently recording
     bool IsRecording() const
     {
@@ -304,6 +308,7 @@ protected:
 
     // Feature flag (cached from FeatureManager)
     bool _featureEnabled = false;
+    bool _useRealTimeClock = false;
 
     // Recording state
     bool _isRecording = false;

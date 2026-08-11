@@ -75,6 +75,7 @@ bool VideowallRecorder::startRecording(const std::string& filename,
     _targetHeight = h;
 
     _recordingManager->SetVideoResolution(_targetWidth, _targetHeight);
+    _recordingManager->SetUseRealTimeClock(true);
 
     bool ok = _recordingManager->StartRecording(filename, videoCodec, audioCodec, videoBitrate, audioBitrate);
     if (ok)

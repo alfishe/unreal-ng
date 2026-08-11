@@ -676,8 +676,20 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
         return;
     }
 
-    // Calculate presentation timestamp based on emulated frame count
-    double timestamp = static_cast<double>(_emulatedFrameCount) / _videoFrameRate;
+    // Calculate presentation timestamp based on real wall-clock elapsed time for VideoWall/real-time capture
+    // or emulated frame count for cycle-accurate single-emulator capture
+    double timestamp = 0.0;
+    if (_useRealTimeClock || !_context)
+    {
+        auto wallNow = Clock::now();
+        auto wallElapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            wallNow - _wallClockStart - _wallClockPausedTotal).count();
+        timestamp = static_cast<double>(wallElapsedMs) / 1000.0;
+    }
+    else
+    {
+        timestamp = static_cast<double>(_emulatedFrameCount) / _videoFrameRate;
+    }
 
     // Crop to the main screen area (no border) when requested
     const FramebufferDescriptor* toEncode = &framebuffer;
