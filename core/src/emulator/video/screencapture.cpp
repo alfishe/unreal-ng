@@ -2,8 +2,9 @@
 
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
-#include "emulator/video/screen.h"
+#ifdef ENABLE_RECORDING
 #include "3rdparty/gif/gif.h"
+#endif
 #include "3rdparty/lodepng/lodepng.h"
 
 #include <cstdio>
@@ -27,12 +28,12 @@ ScreenCapture::CaptureResult ScreenCapture::captureAsPng(const std::string& emul
     return captureScreen(emulatorId, "png", mode);
 }
 
-ScreenCapture::CaptureResult ScreenCapture::captureScreen(const std::string& emulatorId, 
+ScreenCapture::CaptureResult ScreenCapture::captureScreen(const std::string& emulatorId,
                                                            const std::string& format,
                                                            CaptureMode mode)
 {
     CaptureResult result;
-    
+
     // Get emulator
     auto* manager = EmulatorManager::GetInstance();
     if (!manager)
@@ -86,7 +87,7 @@ ScreenCapture::CaptureResult ScreenCapture::captureScreen(const std::string& emu
 
     // Encode to requested format
     std::vector<uint8_t> encodedData;
-    
+
     if (format == "png")
     {
         encodedData = encodeToPng(imageData, imageWidth, imageHeight);
@@ -133,7 +134,7 @@ bool ScreenCapture::extractScreenArea(const FramebufferDescriptor& fb, std::vect
     // Copy screen area line by line
     const uint8_t* src = fb.memoryBuffer;
     uint8_t* dst = outData.data();
-    
+
     for (uint16_t y = 0; y < ZX_SCREEN_HEIGHT; y++)
     {
         const uint8_t* srcLine = src + ((offsetY + y) * fb.width + offsetX) * 4;
@@ -152,17 +153,18 @@ std::vector<uint8_t> ScreenCapture::encodeToGif(const uint8_t* data, uint16_t wi
 {
     std::vector<uint8_t> result;
 
+#ifdef ENABLE_RECORDING
     // GIF library writes to file, so we need a temp file approach
     char tempPath[256];
 #ifdef _WIN32
-    snprintf(tempPath, sizeof(tempPath), "%s\\unreal_capture_%p.gif", 
+    snprintf(tempPath, sizeof(tempPath), "%s\\unreal_capture_%p.gif",
              std::getenv("TEMP") ? std::getenv("TEMP") : ".", data);
 #else
     snprintf(tempPath, sizeof(tempPath), "/tmp/unreal_capture_%p.gif", static_cast<const void*>(data));
 #endif
 
     GifWriter writer = {};
-    
+
     // Start GIF (single frame, delay=0 for static image)
     if (!GifBegin(&writer, tempPath, width, height, 0))
     {
@@ -187,7 +189,7 @@ std::vector<uint8_t> ScreenCapture::encodeToGif(const uint8_t* data, uint16_t wi
         fseek(f, 0, SEEK_END);
         long size = ftell(f);
         fseek(f, 0, SEEK_SET);
-        
+
         if (size > 0)
         {
             result.resize(size);
@@ -199,6 +201,11 @@ std::vector<uint8_t> ScreenCapture::encodeToGif(const uint8_t* data, uint16_t wi
 
     // Clean up temp file
     std::remove(tempPath);
+#else
+    (void)data;
+    (void)width;
+    (void)height;
+#endif
 
     return result;
 }
