@@ -46,10 +46,11 @@ struct AudioTrackConfig
 /// Video resolution and quality profile configuration
 struct RecordingProfile
 {
-    std::string id;              // Profile identifier e.g. "1080p", "4k", "720p", "1440p"
-    std::string displayName;     // Display title e.g. "Full HD (1920x1080)", "4K Ultra HD (3840x2160)"
-    uint32_t width = 0;          // Width in pixels (0 = auto/native)
-    uint32_t height = 0;         // Height in pixels (0 = auto/native)
+    std::string id;              // Profile identifier e.g. "1080p", "4k", "720p", "native_1x", "native_2x"
+    std::string displayName;     // Display title e.g. "Native 1x (Clone Screen Mode)", "Full HD (1920x1080)"
+    uint32_t width = 0;          // Width in pixels (0 = dynamic/native clone resolution)
+    uint32_t height = 0;         // Height in pixels (0 = dynamic/native clone resolution)
+    float scaleMultiplier = 1.0f; // Scale multiplier for dynamic native clone screen modes
     uint32_t defaultBitrate = 0; // Bitrate in kbps (0 = auto)
 };
 

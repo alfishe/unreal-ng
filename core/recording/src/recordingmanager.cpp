@@ -133,12 +133,14 @@ RecordingManager::RecordingManager(EmulatorContext* context) : _context(context)
 const std::vector<RecordingProfile>& RecordingProfileCollection::getStandardProfiles()
 {
     static const std::vector<RecordingProfile> profiles = {
-        {"1080p", "Full HD (1920×1080)", 1920, 1080, 8000},
-        {"720p", "HD (1280×720)", 1280, 720, 4500},
-        {"1440p", "Quad HD (2560×1440)", 2560, 1440, 16000},
-        {"4k", "4K Ultra HD (3840×2160)", 3840, 2160, 35000},
-        {"native_1x", "Native 1×", 320, 240, 2000},
-        {"native_2x", "Native 2× (Double)", 640, 480, 4000}
+        {"native_1x", "Native 1× (Clone Screen Mode)", 0, 0, 1.0f, 2000},
+        {"native_2x", "Native 2× (Clone Double)", 0, 0, 2.0f, 4000},
+        {"native_3x", "Native 3× (Clone Triple)", 0, 0, 3.0f, 6000},
+        {"native_4x", "Native 4× (Clone Quad)", 0, 0, 4.0f, 8000},
+        {"1080p", "Full HD (1920×1080)", 1920, 1080, 1.0f, 8000},
+        {"720p", "HD (1280×720)", 1280, 720, 1.0f, 4500},
+        {"1440p", "Quad HD (2560×1440)", 2560, 1440, 1.0f, 16000},
+        {"4k", "4K Ultra HD (3840×2160)", 3840, 2160, 1.0f, 35000}
     };
     return profiles;
 }
