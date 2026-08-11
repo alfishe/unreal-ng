@@ -81,6 +81,12 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     /// Duration AppKit gave us for the exit, replayed when the zoom actually starts.
     private var exitZoomDuration: TimeInterval = 0.4
     private var exitZoomStarted = false
+    /// True while AppKit is resizing the window itself (the exit). The renderer keeps
+    /// producing frames in that case, one per resize step - see EmulatorMetalView.layout.
+    private(set) var rendersDuringTransition = false
+
+    /// True only while one of OUR zoom animations is on screen.
+    private var zoomAnimating = false
 
     private weak var window: NSWindow?
     /// SwiftUI's own window delegate. Held strongly: the delegate slot on NSWindow is
@@ -498,7 +504,18 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     func customWindowsToEnterFullScreen(for window: NSWindow) -> [NSWindow]? { [window] }
-    func customWindowsToExitFullScreen(for window: NSWindow) -> [NSWindow]? { [window] }
+    /// nil on purpose: AppKit owns the way OUT.
+    ///
+    /// Taking the exit over means the zoom cannot start until the window is back on
+    /// the active space, and by then the space switch has already put a full-screen
+    /// window on screen - so the picture appears at full size and only then shrinks.
+    /// That second appearance is what a custom exit cannot avoid: while the space is
+    /// switching the window is not ours to draw. AppKit does the whole thing as one
+    /// movement, which is what "no disappearing and reappearing" actually needs.
+    ///
+    /// The chrome stays suppressed for the duration, so what it zooms is still a bare
+    /// device frame; the bars come back in finishZoom.
+    func customWindowsToExitFullScreen(for window: NSWindow) -> [NSWindow]? { nil }
 
     func window(_ window: NSWindow,
                 startCustomAnimationToEnterFullScreenWithDuration duration: TimeInterval) {
@@ -667,6 +684,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         // dropped early.
         layer.transform = reverse ? offset : CATransform3DIdentity
         layer.add(animation, forKey: "un.zoom")
+        zoomAnimating = true
 
         if GeometryLog.enabled {
             NSLog("[WindowManager] zoom %@ target=%@ picture=%@ anchor=%.1f,%.1f scale=%.3f dur=%.0fms",
@@ -698,7 +716,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         // end state. So an early notification does not finalise, it only makes sure
         // finalisation happens at the deadline.
         let remaining = zoomDeadline - CFAbsoluteTimeGetCurrent()
-        if remaining > 0.005 {
+        if zoomAnimating, remaining > 0.005 {
             if GeometryLog.enabled {
                 NSLog("[WindowManager] %@ arrived %.0fms early - deferring", reason, remaining * 1000)
             }
@@ -747,6 +765,8 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
             window.contentView?.layoutSubtreeIfNeeded()
         }
 
+        zoomAnimating = false
+        rendersDuringTransition = false
         pictureView?.layer?.removeAnimation(forKey: "un.zoom")
         pictureView?.layer?.transform = CATransform3DIdentity
 
@@ -791,6 +811,10 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
 
     func windowWillExitFullScreen(_ notification: Notification) {
         isExiting = true
+        // The exit is AppKit's, so nothing else arms the transition for it - and the
+        // picture has to be redrawn at every size AppKit takes the window through.
+        beginTransition()
+        rendersDuringTransition = true
         forwardee?.windowWillExitFullScreen?(notification)
     }
 

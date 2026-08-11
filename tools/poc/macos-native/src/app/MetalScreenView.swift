@@ -259,6 +259,17 @@ final class EmulatorMetalView: MTKView, MTKViewDelegate {
 
     override func layout() {
         super.layout()
+
+        // AppKit owns the exit, so the window really does resize, step by step. With
+        // the frame pump silent the layer just stretches the last frame it has - one
+        // taken at 16:9 - across every intermediate size, which is the squashed
+        // picture seen mid-animation. Drawing here glues a correctly letterboxed frame
+        // to each step's transaction instead.
+        if windowManager?.rendersDuringTransition == true {
+            renderForTransition(layoutFirst: false)
+            return
+        }
+
         // Nobody writes drawable geometry during a fullscreen transition.
         guard windowManager?.isTransitioning != true else { return }
         windowManager?.report(pictureSize: bounds.size)
@@ -278,8 +289,9 @@ final class EmulatorMetalView: MTKView, MTKViewDelegate {
     /// black rectangle. That was the black flash. Rendering once here means the layer
     /// carries a real picture at the target resolution before the transform shrinks it
     /// back to where the window used to be.
-    func renderForTransition() {
-        layoutSubtreeIfNeeded()
+    func renderForTransition(layoutFirst: Bool = true) {
+        // Never from inside layout() - that is what calls this.
+        if layoutFirst { layoutSubtreeIfNeeded() }
 
         let backing = window?.backingScaleFactor ?? 1
         let size = CGSize(width: (bounds.width * backing).rounded(),
