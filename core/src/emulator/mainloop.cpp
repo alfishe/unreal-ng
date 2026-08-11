@@ -154,9 +154,8 @@ void MainLoop::Run(volatile bool& stopRequested)
         }
         else
         {
-            // Turbo mode: Run as fast as possible without audio synchronization
-            // Optional: Yield CPU to prevent 100% core usage if desired
-            // std::this_thread::yield();
+            // Turbo mode: Yield CPU time-slice to prevent 100% core usage
+            std::this_thread::yield();
         }
 
         lastRun = startTime;
