@@ -76,9 +76,6 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     /// Window frame from before the teleport, restored when leaving fullscreen.
     private var savedFrame: NSRect?
 
-    /// The toolbar while it is detached for the duration of fullscreen.
-    private var savedToolbar: NSToolbar?
-
     /// Screen rect the exit zoom is shrinking the picture into.
     private var exitPictureRect: NSRect?
 
@@ -300,13 +297,11 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         savedFrame = window.frame          // the real windowed frame, bars included
 
         chromeHidden = true
-        // Detached, not just hidden: AppKit takes over toolbar visibility in
-        // fullscreen and puts a hidden toolbar back up as a titlebar overlay. With the
-        // content spanning the whole window (ignoresSafeArea) that overlay lands on
-        // top of the picture - which is the toolbar still being there in fullscreen.
-        // A window with no toolbar at all has nothing to restore.
-        savedToolbar = window.toolbar
-        window.toolbar = nil
+        // Hidden, NOT detached. Detaching it was a workaround from before
+        // willUseFullScreenPresentationOptions declared .autoHideToolbar, and putting
+        // an NSToolbar back on a window costs 762ms (measured) - which is the window
+        // sitting there bare after the exit zoom before the bars reappear.
+        window.toolbar?.isVisible = false
         measuredChrome = .zero
 
         // Shrinking the window by exactly the height the bars occupied keeps the
@@ -330,15 +325,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     private func restoreChromeAfterFullScreen() {
         guard let window, chromeHidden else { return }
         chromeHidden = false
-        if let savedToolbar {
-            window.toolbar = savedToolbar
-            savedToolbar.isVisible = true
-            // Re-attaching resets the style, and a differently-sized toolbar means a
-            // different chrome height. It must match what install(on:) uses or the
-            // measurement flips after every exit and costs a resize correction.
-            window.toolbarStyle = .unifiedCompact
-            self.savedToolbar = nil
-        }
+        window.toolbar?.isVisible = true
         if let savedChrome {
             measuredChrome = savedChrome
             self.savedChrome = nil
