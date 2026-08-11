@@ -169,13 +169,6 @@ void VideoWallWindow::createMenus()
     // File menu
     QMenu* fileMenu = menuBar()->addMenu(tr("&File"));
 
-#ifdef ENABLE_RECORDING
-    QAction* recordAction = fileMenu->addAction(tr("&Record Video / Audio...\tCtrl+R"));
-    recordAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
-    connect(recordAction, &QAction::triggered, this, &VideoWallWindow::handleVideoRecordingRequested);
-    fileMenu->addSeparator();
-#endif
-
     QAction* exitAction = fileMenu->addAction(tr("E&xit"));
     exitAction->setShortcut(QKeySequence::Quit);
     connect(exitAction, &QAction::triggered, this, &QWidget::close);
@@ -207,6 +200,15 @@ void VideoWallWindow::createMenus()
     QAction* screenHQAction = viewMenu->addAction(tr("Toggle Screen &HQ"));
     screenHQAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S));
     connect(screenHQAction, &QAction::triggered, this, &VideoWallWindow::toggleScreenHQForAllTiles);
+
+#ifdef ENABLE_RECORDING
+    // Tools menu
+    QMenu* toolsMenu = menuBar()->addMenu(tr("&Tools"));
+
+    QAction* recordAction = toolsMenu->addAction(tr("&Record Video / Audio...\tCtrl+R"));
+    recordAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
+    connect(recordAction, &QAction::triggered, this, &VideoWallWindow::handleVideoRecordingRequested);
+#endif
 
     // Platform-specific shortcut installation
 #ifdef Q_OS_WIN
