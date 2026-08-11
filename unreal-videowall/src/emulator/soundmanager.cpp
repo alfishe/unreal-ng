@@ -116,9 +116,9 @@ void AppSoundManager::audioDataCallback(ma_device* pDevice, void* pOutput, const
         if (obj->_ringBuffer.getAvailableData() < lowWatermark)
         {
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            EmulatorContext* activeCtx = obj->getActiveContext();
-            unreal::UUID targetId = activeCtx ? activeCtx->emulatorId : unreal::UUID();
-            messageCenter.Post(NC_AUDIO_BUFFER_HALF_FULL, new TargetContextPayload(targetId), true);
+            // Broadcast audio pacing notification (empty/nil UUID) so the single active audio clock
+            // drives 50 Hz frame synchronization across ALL videowall emulator instances in lockstep.
+            messageCenter.Post(NC_AUDIO_BUFFER_HALF_FULL, new TargetContextPayload(unreal::UUID()), true);
         }
     }
 
