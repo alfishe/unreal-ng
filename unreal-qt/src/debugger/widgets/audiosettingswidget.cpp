@@ -294,8 +294,8 @@ void AudioSettingsWidget::connectSignals()
     // Source row signals
     for (auto& row : _sourceRows)
     {
-        connect(row.muteCheck, &QCheckBox::stateChanged, this, &AudioSettingsWidget::onSourceMuteChanged);
-        connect(row.soloCheck, &QCheckBox::stateChanged, this, &AudioSettingsWidget::onSourceSoloChanged);
+        connect(row.muteCheck, &QCheckBox::checkStateChanged, this, &AudioSettingsWidget::onSourceMuteChanged);
+        connect(row.soloCheck, &QCheckBox::checkStateChanged, this, &AudioSettingsWidget::onSourceSoloChanged);
         connect(row.volumeSlider, &QSlider::valueChanged, this, &AudioSettingsWidget::onSourceVolumeChanged);
     }
 
@@ -304,8 +304,8 @@ void AudioSettingsWidget::connectSignals()
             this, &AudioSettingsWidget::onStereoModeChanged);
     connect(_chipModelCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &AudioSettingsWidget::onChipModelChanged);
-    connect(_firCheckbox, &QCheckBox::stateChanged, this, &AudioSettingsWidget::onFirChanged);
-    connect(_ayPunchCheckbox, &QCheckBox::stateChanged, this, &AudioSettingsWidget::onAYPunchChanged);
+    connect(_firCheckbox, &QCheckBox::checkStateChanged, this, &AudioSettingsWidget::onFirChanged);
+    connect(_ayPunchCheckbox, &QCheckBox::checkStateChanged, this, &AudioSettingsWidget::onAYPunchChanged);
     connect(_ayRoomCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &AudioSettingsWidget::onAYRoomModeChanged);
 
@@ -318,19 +318,19 @@ void AudioSettingsWidget::connectSignals()
             _channelMuteChecks[chip][ch]->setProperty("channel", ch);
             _channelVolumeSliders[chip][ch]->setProperty("chip", chip);
             _channelVolumeSliders[chip][ch]->setProperty("channel", ch);
-            connect(_channelMuteChecks[chip][ch], &QCheckBox::stateChanged, this, &AudioSettingsWidget::onChannelMuteChanged);
+            connect(_channelMuteChecks[chip][ch], &QCheckBox::checkStateChanged, this, &AudioSettingsWidget::onChannelMuteChanged);
             connect(_channelVolumeSliders[chip][ch], &QSlider::valueChanged, this, &AudioSettingsWidget::onChannelVolumeChanged);
         }
     }
 
     // Beeper
-    connect(_beeperPunchCheckbox, &QCheckBox::stateChanged, this, &AudioSettingsWidget::onBeeperPunchChanged);
+    connect(_beeperPunchCheckbox, &QCheckBox::checkStateChanged, this, &AudioSettingsWidget::onBeeperPunchChanged);
 
     // Covox
-    connect(_covoxDCRemovalCheckbox, &QCheckBox::stateChanged, this, &AudioSettingsWidget::onCovoxDCRemovalChanged);
+    connect(_covoxDCRemovalCheckbox, &QCheckBox::checkStateChanged, this, &AudioSettingsWidget::onCovoxDCRemovalChanged);
     for (int i = 0; i < 4; i++)
     {
-        connect(_covoxChannelMute[i], &QCheckBox::stateChanged, this, &AudioSettingsWidget::onCovoxChannelMuteChanged);
+        connect(_covoxChannelMute[i], &QCheckBox::checkStateChanged, this, &AudioSettingsWidget::onCovoxChannelMuteChanged);
     }
 
     _signalsConnected = true;
