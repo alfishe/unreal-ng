@@ -396,8 +396,44 @@ void MainLoop::OnFrameEnd()
     }
 }
 
-void MainLoop::handleAudioBufferHalfFull([[maybe_unused]] int id, [[maybe_unused]] Message* message)
+/// @brief Handles audio buffer low-watermark notifications (NC_AUDIO_BUFFER_HALF_FULL) to pace frame execution.
+///
+/// @details
+/// **Synchronization Mechanism**:
+/// When miniaudio's output buffer drops below its low-watermark threshold (~2 frames remaining),
+/// the audio device callback posts an NC_AUDIO_BUFFER_HALF_FULL notification. This method receives
+/// that event, marks `_moreAudioDataRequested` as true, and unblocks the main execution loop via `_cv`.
+///
+/// **Multi-Instance Targeted Filtering Rationale**:
+/// In multi-instance environments (such as Videowall with 48+ concurrent emulator tiles), all instances
+/// subscribe to NC_AUDIO_BUFFER_HALF_FULL on the process-wide MessageCenter singleton.
+///
+/// Without payload filtering, every audio buffer notification posted by the single active tile would
+/// broadcast to all 48+ MainLoop instances simultaneously. Waking 48 worker threads at 50-100Hz causes
+/// severe lock storms on `_audioBufferMutex`, cross-thread scheduling thrashing, and CPU starvation that
+/// causes miniaudio ring-buffer underruns (audio stuttering/crackling).
+///
+/// By inspecting `TargetContextPayload::targetContext`, an instance checks whether the event was specifically
+/// targeted to its own `EmulatorContext`. If the event is intended for a different instance, it returns
+/// immediately before acquiring `_audioBufferMutex` or notifying `_cv`. This eliminates unnecessary lock
+/// acquisitions per audio event for all non-active emulator instances, while preserving identical
+//audio-driven frame synchronization.
+///
+/// @param id Event topic identifier (NC_AUDIO_BUFFER_HALF_FULL)
+/// @param message Message pointer optionally containing a TargetContextPayload
+void MainLoop::handleAudioBufferHalfFull([[maybe_unused]] int id, Message* message)
 {
+    // Filter targeted events: receivers MUST filter by emulator UUID.
+    if (message && message->obj)
+    {
+        auto* payload = dynamic_cast<TargetContextPayload*>(message->obj);
+        if (payload && !payload->targetEmulatorId.isNil() && payload->targetEmulatorId != _context->emulatorId)
+        {
+            // Event is targeted to a different emulator instance - ignore to prevent lock storms
+            return;
+        }
+    }
+
     std::unique_lock<std::mutex> lock(_audioBufferMutex);
 
     // Set the atomic variable to indicate frame sync

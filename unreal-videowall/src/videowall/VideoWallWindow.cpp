@@ -88,6 +88,14 @@ VideoWallWindow::~VideoWallWindow()
         }
 #endif
 
+        // CRITICAL: Unbind audio BEFORE stopping sound manager.
+        // This clears the emulator's audio callback to prevent race conditions
+        // where the audio thread accesses emulator memory during destruction.
+        if (_audioBoundTile)
+        {
+            unbindAudioFromTile();
+        }
+
         // Clean up sound manager
         if (_soundManager)
         {
@@ -314,6 +322,12 @@ void VideoWallWindow::removeEmulatorTile(int index)
     EmulatorTile* tile = tiles[index];
     std::shared_ptr<Emulator> emulator = tile->emulator();
 
+    // Unbind audio if removing the audio-bound tile
+    if (tile == _audioBoundTile)
+    {
+        unbindAudioFromTile();
+    }
+
     // Remove from grid
     _tileGrid->removeTile(tile);
 
@@ -321,6 +335,13 @@ void VideoWallWindow::removeEmulatorTile(int index)
     if (emulator)
     {
         _emulatorManager->RemoveEmulator(emulator->GetUUID());
+    }
+
+    // Rebind audio to another tile if available
+    const auto& remainingTiles = _tileGrid->tiles();
+    if (!_audioBoundTile && !remainingTiles.empty())
+    {
+        bindAudioToTile(remainingTiles.front());
     }
 
     qDebug() << "Removed tile at index" << index;
@@ -339,11 +360,24 @@ void VideoWallWindow::removeLastTile()
     EmulatorTile* lastTile = tiles.back();
     std::shared_ptr<Emulator> emulator = lastTile->emulator();
 
+    // Unbind audio if removing the audio-bound tile
+    if (lastTile == _audioBoundTile)
+    {
+        unbindAudioFromTile();
+    }
+
     // Remove from grid
     _tileGrid->removeTile(lastTile);
 
     // Destroy emulator
     _emulatorManager->RemoveEmulator(emulator->GetUUID());
+
+    // Rebind audio to another tile if available
+    const auto& remainingTiles = _tileGrid->tiles();
+    if (!_audioBoundTile && !remainingTiles.empty())
+    {
+        bindAudioToTile(remainingTiles.front());
+    }
 
     qDebug() << "Removed last tile:" << QString::fromStdString(emulator->GetUUID());
 }
@@ -858,6 +892,14 @@ void VideoWallWindow::resizeGridIntelligently(QSize screenSize)
                 EmulatorTile* tile = tiles[lastIndex];
                 if (tile)
                 {
+                    // If removing the audio-bound tile, unbind audio first to prevent
+                    // dangling pointer and fix audio sync (empty ring buffer causes
+                    // NC_AUDIO_BUFFER_HALF_FULL spam, making remaining emulators run too fast)
+                    if (tile == _audioBoundTile)
+                    {
+                        unbindAudioFromTile();
+                    }
+
                     // Get emulator ID before clearing the reference
                     std::string emulatorId;
                     if (tile->emulator())
@@ -883,6 +925,14 @@ void VideoWallWindow::resizeGridIntelligently(QSize screenSize)
                     qDebug() << "Removed excess tile:" << QString::fromStdString(emulatorId);
                 }
             }
+        }
+
+        // If audio was unbound (removed tile was audio-bound), rebind to first remaining tile
+        // to restore proper audio pacing for all emulators
+        if (!_audioBoundTile && !tiles.empty())
+        {
+            bindAudioToTile(tiles.front());
+            qDebug() << "Rebound audio to first remaining tile after removal";
         }
     }
     else
@@ -941,6 +991,12 @@ void VideoWallWindow::restoreSavedEmulators()
         if (!tile)
             continue;
 
+        // Unbind audio if removing the audio-bound tile
+        if (tile == _audioBoundTile)
+        {
+            unbindAudioFromTile();
+        }
+
         // Get emulator ID before clearing the reference
         std::string uuid;
         if (tile->emulator())
@@ -964,13 +1020,21 @@ void VideoWallWindow::restoreSavedEmulators()
         // NOTE: Do NOT delete tile here - removeTile already calls deleteLater()
     }
 
+    // If audio was unbound, rebind to first remaining tile
+    const auto& remainingTiles = _tileGrid->tiles();
+    if (!_audioBoundTile && !remainingTiles.empty())
+    {
+        bindAudioToTile(remainingTiles.front());
+        qDebug() << "Rebound audio to first remaining tile after restore";
+    }
+
     qDebug() << "Restored" << _savedEmulatorIds.size() << "emulators, removed" << tilesToRemove.size() << "excessive";
 }
 
 void VideoWallWindow::setSoundForAllTiles(bool enabled)
 {
     // Set sound feature for ALL emulator instances in the grid
-    // This is called when entering/exiting fullscreen to optimize CPU usage
+    // This is called when entering/exiting fullscreen or bulk toggling
     const auto& tiles = _tileGrid->tiles();
     int successCount = 0;
 
@@ -981,7 +1045,6 @@ void VideoWallWindow::setSoundForAllTiles(bool enabled)
             auto* featureManager = tile->emulator()->GetFeatureManager();
             if (featureManager)
             {
-                // Disable both sound generation and high-quality DSP for maximum savings
                 featureManager->setFeature(Features::kSoundGeneration, enabled);
                 featureManager->setFeature(Features::kSoundHQ, enabled);
                 successCount++;
@@ -989,7 +1052,7 @@ void VideoWallWindow::setSoundForAllTiles(bool enabled)
         }
     }
 
-    qDebug() << "Sound" << (enabled ? "enabled" : "disabled") << "for" << successCount << "/" << tiles.size()
+    qDebug() << "Sound and SoundHQ" << (enabled ? "enabled" : "disabled") << "for" << successCount << "/" << tiles.size()
              << "tiles";
 }
 
@@ -1037,31 +1100,34 @@ void VideoWallWindow::bindAudioToTile(EmulatorTile* tile)
         // Clear audio callback from previous emulator
         prevEmulator->ClearAudioCallback();
 
-        // Disable sound generation for previous tile (saves CPU)
+        // Disable sound generation and SoundHQ for previous tile on deselection (saves CPU)
         if (auto* fm = prevEmulator->GetFeatureManager())
         {
             fm->setFeature(Features::kSoundGeneration, false);
+            fm->setFeature(Features::kSoundHQ, false);
         }
 
         qDebug() << "Audio unbound from tile:" << QString::fromStdString(prevEmulator->GetUUID());
     }
 
-    // Enable sound generation for focused tile
+    // Enable sound generation AND SoundHQ for selected active tile
     if (auto* fm = emulator->GetFeatureManager())
     {
         fm->setFeature(Features::kSoundGeneration, true);
+        fm->setFeature(Features::kSoundHQ, true);
     }
 
     // Bind audio callback to new emulator
     emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback);
+    _soundManager->setActiveContext(emulator->GetContext());
 
     _audioBoundTile = tile;
-    qDebug() << "Audio bound to tile:" << QString::fromStdString(emulator->GetUUID());
+    qDebug() << "Audio bound to tile (Sound & SoundHQ enabled):" << QString::fromStdString(emulator->GetUUID());
 }
 
 void VideoWallWindow::onTileClicked(EmulatorTile* tile)
 {
-    // Toggle behavior: if clicking already-bound tile, unbind (mute)
+    // Toggle behavior: if clicking already-bound tile, unbind (mute / deselect)
     if (_audioBoundTile == tile)
     {
         unbindAudioFromTile();
@@ -1085,6 +1151,10 @@ void VideoWallWindow::unbindAudioFromTile()
 {
     if (!_audioBoundTile || !_audioBoundTile->emulator())
     {
+        if (_soundManager)
+        {
+            _soundManager->setActiveContext(nullptr);
+        }
         return;
     }
 
@@ -1092,13 +1162,18 @@ void VideoWallWindow::unbindAudioFromTile()
 
     // Clear audio callback
     emulator->ClearAudioCallback();
+    if (_soundManager)
+    {
+        _soundManager->setActiveContext(nullptr);
+    }
 
-    // Disable sound generation (saves CPU)
+    // Disable sound generation and SoundHQ on deselection (saves CPU)
     if (auto* fm = emulator->GetFeatureManager())
     {
         fm->setFeature(Features::kSoundGeneration, false);
+        fm->setFeature(Features::kSoundHQ, false);
     }
 
-    qDebug() << "Audio unbound from tile:" << QString::fromStdString(emulator->GetUUID());
+    qDebug() << "Audio unbound from tile (Sound & SoundHQ disabled):" << QString::fromStdString(emulator->GetUUID());
     _audioBoundTile = nullptr;
 }

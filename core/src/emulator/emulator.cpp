@@ -41,6 +41,7 @@ Emulator::Emulator(const std::string& symbolicId, LoggerLevel level)
     {
         _logger = _context->pModuleLogger;
         _context->pEmulator = this;
+        _context->emulatorId = _uuid;
 
         // Create FeatureManager and assign to context
         _featureManager = new FeatureManager(_context);

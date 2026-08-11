@@ -61,12 +61,12 @@ uint8_t PortDecoder_Spectrum48::DecodePortIn(uint16_t port, uint16_t pc)
         result = PeripheralPortIn(port);
     }
 
-#ifndef NDEBUG
-    // Determine RAM/ROM page where code executed from
-    std::string currentMemoryPage = GetPCAddressLocator(pc);
-
-    MLOGWARNING("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
-#endif
+    if (_logger && _logger->GetLevel() <= LoggerLevel::LogWarning)
+    {
+        // Determine RAM/ROM page where code executed from
+        std::string currentMemoryPage = GetPCAddressLocator(pc);
+        MLOGWARNING("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
+    }
 
     // Universal handler for breakpoints, tracking, analyzers
     OnPortInComplete(port, result, pc);
@@ -87,9 +87,12 @@ void PortDecoder_Spectrum48::DecodePortOut(uint16_t port, uint8_t value, uint16_
     }
     else
     {
-        // Determine RAM/ROM page where code executed from
-        std::string currentMemoryPage = GetPCAddressLocator(pc);
-        LOGWARNING("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
+        if (_logger && _logger->GetLevel() <= LoggerLevel::LogWarning)
+        {
+            // Determine RAM/ROM page where code executed from
+            std::string currentMemoryPage = GetPCAddressLocator(pc);
+            LOGWARNING("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
+        }
     }
 
     // Universal handler for breakpoints, tracking, analyzers

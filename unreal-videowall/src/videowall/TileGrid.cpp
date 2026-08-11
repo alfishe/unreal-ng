@@ -47,29 +47,41 @@ void TileGrid::removeTile(EmulatorTile* tile, bool skipLayout)
 
 void TileGrid::clearAllTiles()
 {
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+
+    // PHASE 1: Pre-stop all emulator threads before releasing any.
+    // This prevents race conditions where one emulator is being released while
+    // another's thread is still running and potentially accessing shared resources.
+    for (EmulatorTile* tile : _tiles)
+    {
+        if (tile && tile->emulator())
+        {
+            if (manager)
+            {
+                manager->StopEmulator(tile->emulator()->GetUUID());
+            }
+        }
+    }
+
+    // PHASE 2: Release emulators and delete tiles
     for (EmulatorTile* tile : _tiles)
     {
         if (tile)
         {
-            // CRITICAL: Prepare tile for deletion FIRST - this clears the shared_ptr reference
-            // to the emulator, preventing double-destruction when EmulatorManager destroys it
+            // Get emulator ID before clearing the reference
             std::string emulatorId;
             if (tile->emulator())
             {
                 emulatorId = tile->emulator()->GetUUID();
             }
-            
+
             // Clear tile's reference to emulator before destroying it
             tile->prepareForDeletion();
 
-            // Stop and destroy the emulator instance via EmulatorManager
-            if (!emulatorId.empty())
+            // Destroy the emulator instance via EmulatorManager
+            if (!emulatorId.empty() && manager)
             {
-                EmulatorManager* manager = EmulatorManager::GetInstance();
-                if (manager)
-                {
-                    manager->RemoveEmulator(emulatorId);
-                }
+                manager->RemoveEmulator(emulatorId);
             }
 
             // Now delete the tile widget (shared_ptr already cleared)

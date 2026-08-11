@@ -1,5 +1,12 @@
 #pragma once
 
+// miniaudio.h includes <windows.h> on Windows. winsock2.h MUST be included before
+// windows.h to prevent type conflicts (see core's stdafx.h for the same pattern).
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+#endif
+
 #include <QObject>
 
 #include <3rdparty/tinywav/tinywav.h>
@@ -9,6 +16,9 @@
 #include <common/sound/filters/filter_dc.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/emulatorcontext.h>
+
+#include <atomic>
+#include <emulator/mainloop.h>
 
 class AppSoundManager : QObject
 {
@@ -22,11 +32,10 @@ protected:
     ma_device _audioDevice;
     AudioRingBuffer<int16_t, AUDIO_BUFFER_SAMPLES_PER_FRAME * 8> _ringBuffer;
 
-    bool _isInitialized = false;
-    bool _isStarted = false;
-
     // Save to Wave file
     TinyWav _tinyWav;
+
+    std::atomic<EmulatorContext*> _activeContext{nullptr};
 
     /// endregion </Fields>
 
@@ -43,6 +52,9 @@ public:
 
     void start();
     void stop();
+
+    void setActiveContext(EmulatorContext* context) { _activeContext.store(context, std::memory_order_release); }
+    EmulatorContext* getActiveContext() const { return _activeContext.load(std::memory_order_acquire); }
 
 public:
     static void audioDataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);

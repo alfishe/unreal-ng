@@ -7,6 +7,7 @@
 #include "emulator/platform.h"
 #include "corestate.h"
 #include "emulator/io/tape/tape.h"
+#include "emulator/notifications.h"
 
 class Core;
 class Emulator;
@@ -34,6 +35,9 @@ class EmulatorContext
 {
     /// region <Child object references>
 public:
+    // Unique identifier for this emulator instance
+    unreal::UUID emulatorId;
+
     // Advanced logger instance
     ModuleLogger* pModuleLogger = nullptr;
 

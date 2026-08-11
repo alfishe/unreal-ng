@@ -104,17 +104,18 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
     }
 
     /// region <Debug logging>
-
-    // Treat all FE ports as one for logging purposes
-    if ((port & 0x00FE) == 0x00FE)
-        port = 0x00FE;
-
-    // Check if port was not explicitly muted
-    if (!key_exists(_loggingMutePorts, port))
+    if (_logger && _logger->GetLevel() <= LoggerLevel::LogInfo)
     {
-        // Determine RAM/ROM page where code executed from
-        std::string currentMemoryPage = GetPCAddressLocator(pc);
-        MLOGINFO("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
+        // Treat all FE ports as one for logging purposes
+        uint16_t logPort = ((port & 0x00FE) == 0x00FE) ? 0x00FE : port;
+
+        // Check if port was not explicitly muted
+        if (!key_exists(_loggingMutePorts, logPort))
+        {
+            // Determine RAM/ROM page where code executed from
+            std::string currentMemoryPage = GetPCAddressLocator(pc);
+            MLOGINFO("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
+        }
     }
     /// endregion </Debug logging>
 
@@ -150,13 +151,15 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
     }
 
     /// region <Debug logging>
-
-    // Check if port was not explicitly muted
-    if (!key_exists(_loggingMutePorts, decodedPort))
+    if (_logger && _logger->GetLevel() <= LoggerLevel::LogInfo)
     {
-        // Determine RAM/ROM page where code executed from
-        std::string currentMemoryPage = GetPCAddressLocator(pc);
-        MLOGINFO("[Out] [PC:%04X%s] Port: %04X; Decoded port: %04X; Value: %02X", pc, currentMemoryPage.c_str(), port, decodedPort, value);
+        // Check if port was not explicitly muted
+        if (!key_exists(_loggingMutePorts, decodedPort))
+        {
+            // Determine RAM/ROM page where code executed from
+            std::string currentMemoryPage = GetPCAddressLocator(pc);
+            MLOGINFO("[Out] [PC:%04X%s] Port: %04X; Decoded port: %04X; Value: %02X", pc, currentMemoryPage.c_str(), port, decodedPort, value);
+        }
     }
     /// endregion </Debug logging>
 

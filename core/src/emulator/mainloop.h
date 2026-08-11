@@ -1,6 +1,7 @@
 #pragma once
 #include <atomic>
 
+#include "3rdparty/message-center/eventqueue.h"
 #include "common/logger.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"

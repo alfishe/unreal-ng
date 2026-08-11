@@ -471,21 +471,6 @@ void Screen::SetBorderColor(uint8_t color)
     // Flush/Render all pending pixels using the CURRENT (old) border color 
     // up to the exact CPU T-state of the I/O port write.
     // This fixes pixel-perfect multicolor effects (raster bars) across all models.
-    uint32_t currentT = GetCurrentTstate();
-    
-    // Debug logging for border effects
-    static std::ofstream logFile("border_tstates.log");
-    if (logFile.is_open())
-    {
-        uint32_t tInLine = currentT % _rasterState.tstatesPerLine;
-        uint32_t line = currentT / _rasterState.tstatesPerLine;
-        logFile << "Frame: " << _state->frame_counter 
-                << " | T: " << currentT 
-                << " | Line: " << line 
-                << " | T-in-line: " << tInLine 
-                << " | Color: " << (int)(color & 7) << "\n";
-    }
-
     UpdateScreen();
 
     // Only bits [0:2] contain border color
