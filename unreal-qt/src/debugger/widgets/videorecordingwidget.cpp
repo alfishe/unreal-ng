@@ -498,7 +498,7 @@ void VideoRecordingWidget::connectSignals()
     connect(_audioCodecCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int) { updateRealtimeEstimate(); });
     connect(_browseButton, &QPushButton::clicked, this, &VideoRecordingWidget::onBrowseFile);
-    connect(_includeAudioCheck, &QCheckBox::checkStateChanged, this, &VideoRecordingWidget::onIncludeAudioChanged);
+    connect(_includeAudioCheck, &QCheckBox::stateChanged, this, &VideoRecordingWidget::onIncludeAudioChanged);
     connect(_multiTrackButton, &QPushButton::clicked, this, &VideoRecordingWidget::onMultiTrackConfigure);
     connect(_benchmarkButton, &QPushButton::clicked, this, &VideoRecordingWidget::onBenchmark);
 
