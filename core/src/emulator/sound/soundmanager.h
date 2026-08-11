@@ -65,13 +65,6 @@ protected:
     AudioFrameDescriptor _outAudioDescriptor;                                // Audio descriptor for mixer output
     int16_t* const _outBuffer = (int16_t*)_outAudioDescriptor.memoryBuffer;  // Shortcut to it's sample buffer
 
-    size_t _prevFrane = 0;
-    uint32_t _prevFrameTState = 0;
-    int16_t _prevLeftValue;
-    int16_t _prevRightValue;
-
-    uint32_t _audioBufferWrites = 0;
-
     // Supported sound chips
     Beeper* _beeper = nullptr;
     SoundChip_TurboSound* _turboSound = nullptr;
@@ -86,13 +79,6 @@ protected:
     AudioCharacterChain _ayChain0;     // For AY chip 0 (TurboSound first chip)
     AudioCharacterChain _ayChain1;     // For AY chip 1 (TurboSound second chip)
     AudioCharacterChain _beeperChain;  // For beeper (digidrums, PWM synths)
-
-    // Beeper lowpass filter (removes ultrasonic harshness, preserves music)
-    // 2-pole Butterworth @ 16kHz - steeper rolloff than 1-pole
-    bool _beeperFilterEnabled = false;
-    float _beeperLp1L = 0.0f, _beeperLp2L = 0.0f;  // Two cascaded 1-pole stages
-    float _beeperLp1R = 0.0f, _beeperLp2R = 0.0f;
-    static constexpr float BEEPER_LP_COEF = 0.85f;  // ~16kHz with 2 poles @ 44.1kHz
 
     // Device registry (replaces hardwired master volumes)
     std::vector<AudioDeviceInfo> _devices;
@@ -149,6 +135,9 @@ public:
     bool hasCovox() const { return _covox != nullptr; }
     Covox* getCovox() const { return _covox; }
 
+    /// Compatibility shim for tape audio. Routes amplitude into the beeper's
+    /// blip_buf at the given T-state position. New code should use
+    /// Beeper::handlePortOut() or Beeper::handleTapeAudio() directly.
     void updateDAC(uint32_t frameTState, int16_t left, int16_t right);
 
     // Audio character chains (punch + room simulation)
@@ -158,10 +147,6 @@ public:
 
     // Apply AY chain settings to both chips
     void syncAYChainSettings();
-
-    // Beeper filter control
-    void setBeeperFilterEnabled(bool enabled) { _beeperFilterEnabled = enabled; }
-    bool isBeeperFilterEnabled() const { return _beeperFilterEnabled; }
 
     // Device registry API
     const std::vector<AudioDeviceInfo>& devices() const { return _devices; }

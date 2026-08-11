@@ -218,6 +218,19 @@ struct RasterState
     uint8_t rightBorderAreaEnd;
 
     /// endregion </Horizontal timings>
+
+    /// region <Model-specific ULA behavior>
+
+    // Border color update granularity in t-states.
+    // Pentagon: updates every 1 t-state (immediate)
+    // ZX-48K/128K: updates every 4 t-states (latched at 8-HC boundaries)
+    uint8_t borderUpdateTStates = 1;
+
+    // Whether ULA memory contention is active for this model.
+    // Pentagon: no contention. ZX-48K/128K: contention on 0x4000-0x7FFF.
+    bool contentionEnabled = false;
+
+    /// endregion </Model-specific ULA behavior>
 };
 
 struct FramebufferDescriptor
@@ -311,7 +324,7 @@ public:
     const RasterDescriptor rasterDescriptors[M_MAX] = {
         {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},                  // M_NUL
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 8, 16},   // M_ZX48k
-        {352, 288, 256, 192, 48, 48, 456, 64, 32, 8, 16},   // M_ZX128 - Not ready!
+        {352, 288, 256, 192, 48, 48, 456, 64, 32, 8, 15},   // M_ZX128 (311 lines: 228*311=70908)
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_PENTAGON128K
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16}   // M_PMC - Not Ready!
     };
@@ -411,6 +424,14 @@ public:
         const RasterDescriptor& rd = rasterDescriptors[_mode];
         return _rasterState.screenAreaStart + rd.screenOffsetLeft / _rasterState.pixelsPerTState;
     }
+
+    /// \brief Calculate ULA memory contention delay for the current t-state.
+    /// On real ZX hardware, the ULA stops the CPU clock when both the CPU and
+    /// the ULA access the shared video RAM (0x4000-0x7FFF) during screen rendering.
+    /// This delay follows a known pattern based on the t-state position within
+    /// the scanline during the screen area.
+    /// \return Number of t-states to delay (0 if no contention)
+    uint8_t GetContentionDelay() const;
     virtual void RenderOnlyMainScreen();
 
     /// @brief Render entire screen at frame end when ScreenHQ=OFF (batch rendering mode)

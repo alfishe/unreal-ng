@@ -256,7 +256,7 @@ bool NamedPipe::write(const void* data, size_t size, const std::atomic<bool>* ab
         }
 
         DWORD bytesWritten = 0;
-        DWORD toWrite = static_cast<DWORD>(min(size - totalWritten, static_cast<size_t>((std::numeric_limits<DWORD>::max)())));
+        DWORD toWrite = static_cast<DWORD>(std::min(size - totalWritten, static_cast<size_t>((std::numeric_limits<DWORD>::max)())));
 
         if (!WriteFile(_handle, buf + totalWritten, toWrite, &bytesWritten, nullptr))
         {

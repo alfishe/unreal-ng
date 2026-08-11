@@ -14,8 +14,9 @@ static constexpr const double AUDIO_SAMPLE_TSTATE_INCREMENT = (double)AUDIO_SAMP
 
 static constexpr const int AUDIO_BUFFER_DURATION_MILLISEC = 1000 / FRAMES_PER_SECOND;
 static constexpr const int SAMPLES_PER_FRAME = AUDIO_SAMPLING_RATE / FRAMES_PER_SECOND;   // 882 audio samples per frame @44100
-static constexpr const int AUDIO_BUFFER_SAMPLES_PER_FRAME = SAMPLES_PER_FRAME * AUDIO_CHANNELS;
-static constexpr const int AUDIO_BUFFER_SIZE_PER_FRAME = SAMPLES_PER_FRAME * AUDIO_CHANNELS * sizeof(uint16_t);
+static constexpr const int MAX_SAMPLES_PER_FRAME = 2048;
+static constexpr const int AUDIO_BUFFER_SAMPLES_PER_FRAME = MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS;
+static constexpr const int AUDIO_BUFFER_SIZE_PER_FRAME = MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS * sizeof(int16_t);
 
 /// Holds memory buffer capable to store 20ms of stereo PCM samples at selected sampling rate
 /// The rest is just meta-information about that buffer

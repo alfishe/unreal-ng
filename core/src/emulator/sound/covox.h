@@ -1,14 +1,28 @@
 #pragma once
 
+#include <cstdint>
+#include <cstddef>
 #include "emulator/sound/audio.h"
 #include "emulator/ports/portdecoder.h"
 #include "common/modulelogger.h"
 
 class EmulatorContext;
+struct blip_t;
 
-/// SOUNDRIVE 1.05 / COVOX - 4-channel 8-bit DAC
+/// SOUNDRIVE 1.05 / COVOX - 4-channel 8-bit DAC with band-limited synthesis.
+///
 /// Ports: #F1 (Left A), #F3 (Left B), #F9 (Right A), #FB (Right B)
 /// Decoding: bits[7:4]=1111, bit2=0, bit0=1
+///
+/// Each DAC write computes a stereo delta and inserts it into blip_buf
+/// at the exact T-state position. At frame end, blip_buf produces
+/// alias-free 44.1 kHz output via windowed-sinc interpolation.
+///
+/// Stereo mixing: Left = (LeftA + LeftB) * 128, Right = (RightA + RightB) * 128
+/// The ×128 scaling (instead of ×256) provides 0.5× headroom per channel-pair,
+/// preventing hard clipping when both channels on one side are at full amplitude.
+/// Mono COVOX programs (writing only to #FB/RightB) produce centered output
+/// naturally — idle channels stay at midpoint (0x80) and contribute zero.
 class Covox : public PortDevice
 {
 public:
@@ -31,13 +45,21 @@ protected:
     AudioFrameDescriptor _audioDescriptor;
     int16_t* const _buffer = reinterpret_cast<int16_t*>(_audioDescriptor.memoryBuffer);
 
+    // blip_buf accumulators (one per stereo output channel)
+    blip_t* _blipL = nullptr;
+    blip_t* _blipR = nullptr;
+
     // Per-channel DAC state
     uint8_t _dacValue[4] = {0x80, 0x80, 0x80, 0x80};  // Start at midpoint (silence)
+
+    // Last stereo amplitudes written to blip_buf (for computing deltas)
+    int32_t _lastL = 0;
+    int32_t _lastR = 0;
 
     // Per-channel mute (for UI)
     bool _channelMute[4] = {false, false, false, false};
 
-    // DC offset removal (optional)
+    // DC offset removal (optional, applied post-blip)
     bool _dcRemovalEnabled = false;
     float _dcAccumL = 0.0f;
     float _dcAccumR = 0.0f;
@@ -47,7 +69,7 @@ protected:
 public:
     Covox() = delete;
     explicit Covox(EmulatorContext* context);
-    virtual ~Covox() = default;
+    virtual ~Covox();
 
     // Buffer access for registry
     int16_t* getBuffer() { return _buffer; }
@@ -74,7 +96,7 @@ public:
     static Channel portToChannel(uint16_t port);
 
 private:
-    void renderFromSample(size_t startSample);
-    void computeMixedOutput(int16_t& left, int16_t& right) const;
-    int16_t dacToSample(uint8_t value) const;
+    /// Compute stereo amplitudes from current DAC values.
+    /// Each side sums two channels with 0.5× scaling to prevent clipping.
+    void computeStereoAmplitudes(int32_t& outL, int32_t& outR) const;
 };
