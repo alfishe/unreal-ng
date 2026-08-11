@@ -78,6 +78,9 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
 
     /// Screen rect the exit zoom is shrinking the picture into.
     private var exitPictureRect: NSRect?
+    /// Duration AppKit gave us for the exit, replayed when the zoom actually starts.
+    private var exitZoomDuration: TimeInterval = 0.4
+    private var exitZoomStarted = false
 
     private weak var window: NSWindow?
     /// SwiftUI's own window delegate. Held strongly: the delegate slot on NSWindow is
@@ -324,13 +327,18 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     /// integer multiple with the chrome included.
     private func restoreChromeAfterFullScreen() {
         guard let window, chromeHidden else { return }
+        let t0 = CFAbsoluteTimeGetCurrent()
         chromeHidden = false
+        let t1 = CFAbsoluteTimeGetCurrent()
         window.toolbar?.isVisible = true
         if let savedChrome {
             measuredChrome = savedChrome
             self.savedChrome = nil
         }
-        if GeometryLog.enabled { NSLog("[WindowManager] chrome restored") }
+        if GeometryLog.enabled {
+            NSLog("[WindowManager] chrome restored: swiftui=%.0fms toolbar=%.0fms",
+                  (t1 - t0) * 1000, (CFAbsoluteTimeGetCurrent() - t1) * 1000)
+        }
     }
 
     func toggleFullScreen() {
@@ -545,12 +553,24 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         // So the window stays fullscreen for the whole animation, the layer shrinks
         // into the rect the picture is about to occupy, and the teleport happens at
         // the very end - under disabled screen updates, so the swap is not seen.
-        let destination = destinationPictureRect(for: window)
-        exitPictureRect = destination
-        zoom(view: view, from: destination, viewRect: viewRect,
-             duration: duration, reverse: true)
-
-        armFinish(after: duration, reason: "exit")
+        // NOTHING IS ANIMATED HERE. Measured: for the whole of this callback and for
+        // ~500ms after it the window is not on the active space -
+        //
+        //     after exit finalise: onActiveSpace=no
+        //     didExitFullScreen:   onActiveSpace=yes   (+500ms)
+        //
+        // so a zoom started here plays to nobody; what the user actually watches is
+        // the system's space switch, and whether any of our animation shows through
+        // is a race. That was the "sometimes it disappears" report.
+        //
+        // windowDidExitFullScreen is the moment the window is back on the active space
+        // AND still fullscreen-sized, which is exactly the frame the zoom should start
+        // from. The animation is started from there instead; see handleExitFullScreen.
+        exitPictureRect = destinationPictureRect(for: window)
+        exitZoomDuration = duration
+        exitZoomStarted = false
+        _ = view
+        _ = viewRect
     }
 
     /// Screen rect of the Metal view.
@@ -697,8 +717,12 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         // here, which is the performance problem its deprecation note warns about.
         // Nothing in this block reallocates a drawable, so suppressing implicit
         // animations is enough to make the swap atomic.
+        let tf0 = CFAbsoluteTimeGetCurrent()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        if GeometryLog.enabled {
+            NSLog("[WindowManager] transaction begin took %.0fms", (CFAbsoluteTimeGetCurrent() - tf0) * 1000)
+        }
 
         // Which way we are going comes from the will-callbacks and NOTHING else.
         // Asking the style mask does not work: with a custom transition AppKit only
@@ -728,6 +752,8 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
 
         endTransition()
         CATransaction.commit()
+
+        logWindowState(leaving ? "after exit finalise" : "after enter finalise")
 
         // Only now, with nothing left to animate, is it safe to publish. Same reason
         // as above: the style mask is not yet authoritative at this point.
@@ -818,7 +844,18 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     // is what produced the run of jumps mid-animation; it is set in finishZoom
     // instead, when nothing is moving any more.
 
+    private func logWindowState(_ tag: String) {
+        guard GeometryLog.enabled, let window else { return }
+        NSLog("[WindowManager] %@: fullScreenStyle=%@ frame=%@ onActiveSpace=%@ visible=%@",
+              tag,
+              window.styleMask.contains(.fullScreen) ? "yes" : "no",
+              NSStringFromRect(window.frame),
+              window.isOnActiveSpace ? "yes" : "no",
+              window.isVisible ? "yes" : "no")
+    }
+
     @objc private func handleEnterFullScreen() {
+        logWindowState("didEnterFullScreen")
         // Integer snapping and the aspect lock must not fight the fullscreen frame.
         clearAspectConstraint()
         // Whichever comes first wins; finishZoom is idempotent.
@@ -826,6 +863,22 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     @objc private func handleExitFullScreen() {
+        logWindowState("didExitFullScreen")
+
+        // The exit zoom starts HERE, not in startCustomAnimationToExitFullScreen: this
+        // is the first moment the window is on the active space, and it is still
+        // fullscreen-sized, so the shrink is both visible and starts from the right
+        // rect. The window teleports to its restored frame when the zoom finishes.
+        if isTransitioning, isExiting, !exitZoomStarted,
+           let view = pictureView, let viewRect = viewScreenRect(),
+           let destination = exitPictureRect {
+            exitZoomStarted = true
+            zoom(view: view, from: destination, viewRect: viewRect,
+                 duration: exitZoomDuration, reverse: true)
+            armFinish(after: exitZoomDuration, reason: "exit")
+            return
+        }
+
         finishZoom(reason: "didExit")
     }
 }
