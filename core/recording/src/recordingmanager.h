@@ -148,6 +148,10 @@ public:
     /// Resume paused recording
     void ResumeRecording();
 
+    /// Explicitly enable/disable recording feature state (used in standalone/Videowall modes)
+    void setFeatureEnabled(bool enabled) { _featureEnabled = enabled; }
+    bool isFeatureEnabled() const { return _featureEnabled; }
+
     /// Check if currently recording
     bool IsRecording() const
     {

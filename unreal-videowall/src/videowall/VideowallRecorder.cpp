@@ -14,6 +14,7 @@ VideowallRecorder::VideowallRecorder()
 {
     // Initialize RecordingManager without binding to a single EmulatorContext
     _recordingManager = std::make_unique<RecordingManager>(nullptr);
+    _recordingManager->setFeatureEnabled(true);
     _recordingManager->Init();
 
     // 50 Hz frame capture timer (20 ms interval)
