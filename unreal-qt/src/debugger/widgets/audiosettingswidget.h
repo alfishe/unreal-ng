@@ -57,7 +57,6 @@ private slots:
     void onChannelVolumeChanged(int value);
 
     // Beeper controls
-    void onBeeperFilterChanged(Qt::CheckState state);
     void onBeeperPunchChanged(Qt::CheckState state);
 
     // Covox controls
@@ -102,7 +101,6 @@ private:
 
     // Beeper section
     QGroupBox* _beeperGroup = nullptr;
-    QCheckBox* _beeperFilterCheckbox = nullptr;
     QCheckBox* _beeperPunchCheckbox = nullptr;
 
     // SOUNDRIVE/COVOX section (shown only when present)

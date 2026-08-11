@@ -87,6 +87,7 @@ endif()
 # Set include paths for compiler
 target_include_directories(${PROJECT_NAME} PUBLIC
     ${SOURCE_DIR}/
+    ${SOURCE_DIR}/3rdparty
     ${SOURCE_DIR}/common
     ${SOURCE_DIR}/emulator
 )

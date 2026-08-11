@@ -159,9 +159,6 @@ void AudioSettingsWidget::createUI()
     // ============ Beeper section ============
     _beeperGroup = new QGroupBox("Beeper (1-bit)", this);
     auto* beeperLayout = new QHBoxLayout(_beeperGroup);
-    _beeperFilterCheckbox = new QCheckBox("Lowpass", this);
-    _beeperFilterCheckbox->setToolTip("Smooths harsh edges");
-    beeperLayout->addWidget(_beeperFilterCheckbox);
     _beeperPunchCheckbox = new QCheckBox("Punch", this);
     _beeperPunchCheckbox->setToolTip("Attack enhancement for digidrums");
     beeperLayout->addWidget(_beeperPunchCheckbox);
@@ -327,7 +324,6 @@ void AudioSettingsWidget::connectSignals()
     }
 
     // Beeper
-    connect(_beeperFilterCheckbox, &QCheckBox::checkStateChanged, this, &AudioSettingsWidget::onBeeperFilterChanged);
     connect(_beeperPunchCheckbox, &QCheckBox::checkStateChanged, this, &AudioSettingsWidget::onBeeperPunchChanged);
 
     // Covox
@@ -367,7 +363,6 @@ void AudioSettingsWidget::disconnectSignals()
         }
     }
 
-    disconnect(_beeperFilterCheckbox, nullptr, this, nullptr);
     disconnect(_beeperPunchCheckbox, nullptr, this, nullptr);
     disconnect(_covoxDCRemovalCheckbox, nullptr, this, nullptr);
     for (int i = 0; i < 4; i++)
@@ -428,7 +423,6 @@ void AudioSettingsWidget::refreshFromContext()
         _ayRoomCombo->setCurrentIndex(static_cast<int>(sm->getAYChain().getRoomMode()));
 
         // Beeper settings
-        _beeperFilterCheckbox->setChecked(sm->isBeeperFilterEnabled());
         _beeperPunchCheckbox->setChecked(sm->getBeeperChain().isPunchEnabled());
 
         // FIR filter
@@ -611,13 +605,7 @@ void AudioSettingsWidget::onChannelVolumeChanged(int value)
         ay->setChannelVolume(channel, value / 100.0);
 }
 
-// ============ Beeper slots ============
 
-void AudioSettingsWidget::onBeeperFilterChanged(Qt::CheckState state)
-{
-    if (_context && _context->pSoundManager)
-        _context->pSoundManager->setBeeperFilterEnabled(state == Qt::Checked);
-}
 
 void AudioSettingsWidget::onBeeperPunchChanged(Qt::CheckState state)
 {
