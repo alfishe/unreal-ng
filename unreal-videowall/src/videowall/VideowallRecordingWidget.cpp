@@ -191,17 +191,11 @@ void VideowallRecordingWidget::createVideoTab()
     formatLayout->addWidget(_qualityCombo);
     outputLayout->addLayout(formatLayout);
 
-    // Capture resolution choices populated from RecordingProfileCollection
+    // Capture resolution: auto-match active window or fullscreen buffer
     auto* regionLayout = new QHBoxLayout();
-    regionLayout->addWidget(new QLabel("Resolution:"));
-    _sizeCombo = new QComboBox();
-    for (const auto& profile : RecordingProfileCollection::getStandardProfiles())
-    {
-        _sizeCombo->addItem(QString::fromStdString(profile.displayName), QString::fromStdString(profile.id));
-    }
-    _sizeCombo->setCurrentIndex(0);
-    _sizeCombo->setToolTip("Resolution of the captured Video Wall buffer.\n4K UHD or integer scaling provides pristine high-resolution video recordings.");
-    regionLayout->addWidget(_sizeCombo);
+    auto* resLabel = new QLabel("🎥 Resolution: Auto-matching active window / fullscreen buffer");
+    resLabel->setStyleSheet("font-weight: bold; color: #0066cc; padding: 4px;");
+    regionLayout->addWidget(resLabel);
     outputLayout->addLayout(regionLayout);
 
     // Audio inclusion
@@ -381,16 +375,9 @@ bool VideowallRecordingWidget::isAudioOnlyMode() const
 
 void VideowallRecordingWidget::getTargetDimensions(uint32_t& width, uint32_t& height) const
 {
+    // Auto-match exact Qt window frame / fullscreen screen buffer resolution
     width = 0;
     height = 0;
-
-    QString profileId = _sizeCombo->currentData().toString();
-    if (!profileId.isEmpty())
-    {
-        RecordingProfile profile = RecordingProfileCollection::getProfileById(profileId.toStdString());
-        width = profile.width;
-        height = profile.height;
-    }
 }
 
 QStringList VideowallRecordingWidget::containersForBackend() const

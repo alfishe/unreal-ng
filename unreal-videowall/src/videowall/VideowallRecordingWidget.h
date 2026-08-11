@@ -73,7 +73,6 @@ private:
     QComboBox* _containerCombo = nullptr;
     QComboBox* _videoCodecCombo = nullptr;
     QComboBox* _qualityCombo = nullptr;
-    QComboBox* _sizeCombo = nullptr;
 
     QCheckBox* _includeAudioCheck = nullptr;
     QComboBox* _audioCodecCombo = nullptr;

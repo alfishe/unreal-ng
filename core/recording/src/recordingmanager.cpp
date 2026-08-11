@@ -132,6 +132,7 @@ RecordingManager::RecordingManager(EmulatorContext* context) : _context(context)
         _logger = _ownedLogger.get();
     }
 
+    _featureEnabled = true;
     MLOGINFO("RecordingManager::RecordingManager - Instance created");
 }
 
@@ -221,6 +222,9 @@ void RecordingManager::Init()
 
     // Reset state
     Reset();
+
+    // Ensure feature is enabled when initialized
+    UpdateFeatureCache();
 }
 
 void RecordingManager::onEmulatorStateChange(int /*id*/, Message* message)
@@ -279,6 +283,10 @@ void RecordingManager::UpdateFeatureCache()
         _featureEnabled = _context->pFeatureManager->isEnabled(Features::kRecording);
         MLOGDEBUG("RecordingManager::UpdateFeatureCache - recording feature = %s", _featureEnabled ? "ON" : "OFF");
     }
+    else
+    {
+        _featureEnabled = true;
+    }
 }
 
 /// endregion </Initialization>
@@ -288,12 +296,18 @@ void RecordingManager::UpdateFeatureCache()
 bool RecordingManager::StartRecording(const std::string& filename, const std::string& videoCodec,
                                       const std::string& audioCodec, uint32_t videoBitrate, uint32_t audioBitrate)
 {
-    // Feature guard - early exit if recording disabled
+    // Auto-enable recording feature if disabled
     if (!_featureEnabled)
     {
-        MLOGWARNING("RecordingManager::StartRecording - Recording disabled (feature 'recording' = off)");
-        _lastRecordingError = "Recording feature is disabled. Enable the 'recording' feature first.";
-        return false;
+        if (_context && _context->pFeatureManager)
+        {
+            _context->pFeatureManager->setFeature(Features::kRecording, true);
+            _featureEnabled = true;
+        }
+        else
+        {
+            _featureEnabled = true;
+        }
     }
 
     if (_isRecording)
