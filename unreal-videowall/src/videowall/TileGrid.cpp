@@ -30,6 +30,11 @@ void TileGrid::addTile(EmulatorTile* tile)
 
     _tiles.push_back(tile);
     tile->setParent(this);
+    
+    // Inherit CRT effect settings
+    tile->setCrtPhosphorEnabled(_crtPhosphorEnabled);
+    tile->setCrtScanlinesEnabled(_crtScanlinesEnabled);
+    
     tile->show();
 
     updateLayout();
@@ -223,11 +228,23 @@ void TileGrid::setCrtPhosphorEnabled(bool enable)
         _prevFrame1 = QImage();
         _prevFrame2 = QImage();
     }
+    
+    // Propagate to all child tiles for non-singlesync mode
+    for (auto* tile : _tiles)
+    {
+        if (tile) tile->setCrtPhosphorEnabled(enable);
+    }
 }
 
 void TileGrid::setCrtScanlinesEnabled(bool enable)
 {
     _crtScanlinesEnabled = enable;
+    
+    // Propagate to all child tiles for non-singlesync mode
+    for (auto* tile : _tiles)
+    {
+        if (tile) tile->setCrtScanlinesEnabled(enable);
+    }
 }
 
 void TileGrid::subscribeToNotifications()

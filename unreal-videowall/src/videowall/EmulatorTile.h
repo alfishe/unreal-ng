@@ -41,6 +41,13 @@ public:
 
     // Enable/disable synchronous rendering mode
     void setSynchronousMode(bool enable);
+    bool isSynchronousMode() const { return _isSynchronousMode; }
+
+    /// Toggle CRT Phosphor (temporal blur) effect
+    void setCrtPhosphorEnabled(bool enable);
+
+    /// Toggle CRT Scanlines effect
+    void setCrtScanlinesEnabled(bool enable);
 
     /// Prepare tile for deletion - stop timers and cleanup (call before deleteLater)
     void prepareForDeletion();
@@ -67,6 +74,8 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
 
 private:
+    void applyPhosphorBlend(QImage& current);
+    void applyScanlines(QImage& current);
     QImage convertFramebuffer();
 
     std::shared_ptr<Emulator> _emulator;
@@ -78,8 +87,13 @@ private:
     bool _isSynchronousMode = false;
     bool _isPrimarySyncTile = false;
     
-    
     QTimer* _blinkTimer = nullptr;  // Timer for blink effect
+
+    // CRT effects state
+    bool _crtPhosphorEnabled = false;
+    bool _crtScanlinesEnabled = false;
+    QImage _prevFrame1;
+    QImage _prevFrame2;
 
     // Tile size from TileLayoutManager.h: TILE_WIDTH x TILE_HEIGHT
 };
