@@ -75,6 +75,8 @@ void EmulatorTile::prepareForDeletion()
 
 void EmulatorTile::paintEvent(QPaintEvent* event)
 {
+    if (_isSynchronousMode) return;
+
     QPainter painter(this);
 
     if (!_emulator)
@@ -358,15 +360,10 @@ void EmulatorTile::handleVideoFrameRefresh()
 
 void EmulatorTile::subscribeToNotifications()
 {
-    _videoFrameCallback = [this](int id, Message* message) {
-        if (message && message->obj) {
-            auto* payload = dynamic_cast<EmulatorFramePayload*>(message->obj);
-            if (payload && payload->_emulatorId.toString() == _emulatorId) {
-                update();
-            }
-        }
-    };
-    MessageCenter::DefaultMessageCenter().AddObserver(NC_VIDEO_FRAME_REFRESH, _videoFrameCallback);
+    // Deliberately disabled for non-singlesync mode to prevent event loop starvation
+    // from 48-180 tiles spamming Qt::QueuedConnection updates at 50Hz from background threads.
+    // Instead, rely exclusively on the 50Hz QTimer (_refreshTimer) driving handleVideoFrameRefresh()
+    // on the UI thread, which is completely starvation-proof.
 }
 
 void EmulatorTile::unsubscribeFromNotifications()

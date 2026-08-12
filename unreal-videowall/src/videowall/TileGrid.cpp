@@ -4,8 +4,13 @@
 #include <emulator/notifications.h>
 #include <3rdparty/message-center/messagecenter.h>
 
+#include <QPainter>
+#include <QImage>
+#include <QPaintEvent>
 #include <QResizeEvent>
-
+#include <future>
+#include <thread>
+#include <cstring>
 #include "videowall/EmulatorTile.h"
 #include "videowall/TileLayoutManager.h"
 #include "videowall/VideowallRecorder.h"
@@ -193,6 +198,12 @@ void TileGrid::setSingleSyncMode(bool enable, const std::string& primaryEmulator
     if (_singleSyncMode && !_primaryEmulatorId.empty())
     {
         subscribeToNotifications();
+        
+        if (width() > 0 && height() > 0 && (_compositeImage.isNull() || width() != _compositeImage.width() || height() != _compositeImage.height()))
+        {
+            _compositeImage = QImage(width(), height(), QImage::Format_RGBA8888);
+            _compositeImage.fill(Qt::black);
+        }
     }
     updateLayout();
 }
@@ -206,7 +217,12 @@ void TileGrid::subscribeToNotifications()
                 // Drop frame if UI is still rendering the previous one (prevents event queue flooding)
                 bool expected = false;
                 if (_isRepaintPending.compare_exchange_strong(expected, true)) {
+                    
+                    // --- Perform SIMD / Multithreaded compositing on the emulator thread ---
+                    compositeSingleSyncFrame();
+
                     QMetaObject::invokeMethod(this, [this]() {
+                        // In single sync mode, repaintAllTiles just calls this->update() to draw the composite image
                         repaintAllTiles();
                         _isRepaintPending = false;
                     }, Qt::QueuedConnection);
@@ -228,11 +244,19 @@ void TileGrid::unsubscribeFromNotifications()
 
 void TileGrid::repaintAllTiles()
 {
-    for (EmulatorTile* tile : _tiles)
+    if (_singleSyncMode)
     {
-        if (tile && tile->isVisible())
+        // Draw the composite image directly to TileGrid
+        update();
+    }
+    else
+    {
+        for (EmulatorTile* tile : _tiles)
         {
-            tile->repaint();
+            if (tile && tile->isVisible())
+            {
+                tile->repaint();
+            }
         }
     }
 
@@ -253,4 +277,98 @@ void TileGrid::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
     updateLayout();
+    
+    // Resize the composite image if the window size changed
+    if (_singleSyncMode && (width() != _compositeImage.width() || height() != _compositeImage.height()))
+    {
+        _compositeImage = QImage(width(), height(), QImage::Format_RGBA8888);
+        _compositeImage.fill(Qt::black);
+    }
 }
+
+void TileGrid::paintEvent(QPaintEvent* event)
+{
+    if (_singleSyncMode && !_compositeImage.isNull())
+    {
+        QPainter painter(this);
+        // Use fast nearest neighbor when drawing the whole composite to the screen (if scaling is needed at all)
+        painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
+        painter.drawImage(rect(), _compositeImage);
+    }
+    else
+    {
+        QWidget::paintEvent(event);
+    }
+}
+
+void TileGrid::compositeSingleSyncFrame()
+{
+    if (_tiles.empty() || _compositeImage.isNull()) return;
+
+    auto emulator = _tiles.front()->emulator();
+    if (!emulator) return;
+
+    auto fb = emulator->GetFramebuffer();
+    if (!fb.memoryBuffer || fb.width <= 0 || fb.height <= 0) return;
+
+    // 1. Create a QImage wrapping the raw framebuffer
+    // Format_RGBA8888 assumes 32 bits per pixel.
+    QImage rawImage(static_cast<const unsigned char*>(fb.memoryBuffer), fb.width, fb.height, fb.width * 4, QImage::Format_RGBA8888);
+    
+    // 2. Extract the 256x192 active area
+    QImage activeArea = rawImage.copy(48, 48, 256, 192);
+
+    // 3. Scale it *once* to the target tile size
+    QImage scaledTile = activeArea.scaled(TILE_WIDTH, TILE_HEIGHT, Qt::IgnoreAspectRatio, Qt::FastTransformation);
+    
+    if (scaledTile.isNull()) return;
+
+    // 4. Multithreaded Blit to Composite Buffer
+    int cols = (_explicitCols > 0) ? _explicitCols : ((width() + TILE_WIDTH - 1) / TILE_WIDTH);
+    int rows = (_explicitRows > 0) ? _explicitRows : ((height() + TILE_HEIGHT - 1) / TILE_HEIGHT);
+
+    // Ensure we don't exceed the number of tiles we actually have, though in single sync mode
+    // we want to fill the whole grid. Wait, the layout might have fewer tiles if they aren't generated?
+    // Actually, filling the whole calculated rows*cols is safer for the background.
+    
+    int tileByteWidth = TILE_WIDTH * 4;
+    
+    std::vector<std::future<void>> futures;
+    for (int r = 0; r < rows; ++r)
+    {
+        for (int c = 0; c < cols; ++c)
+        {
+            futures.push_back(std::async(std::launch::async, [this, r, c, &scaledTile, tileByteWidth]() {
+                int startX = c * TILE_WIDTH;
+                int startY = r * TILE_HEIGHT;
+                
+                // Copy row by row
+                for (int y = 0; y < TILE_HEIGHT; ++y)
+                {
+                    int destY = startY + y;
+                    if (destY >= _compositeImage.height()) break; // Clip vertically
+                    
+                    uchar* destLine = _compositeImage.scanLine(destY) + (startX * 4);
+                    const uchar* srcLine = scaledTile.constScanLine(y);
+                    
+                    int bytesToCopy = tileByteWidth;
+                    // Clip horizontally if needed
+                    if (startX + TILE_WIDTH > _compositeImage.width()) {
+                        bytesToCopy = (_compositeImage.width() - startX) * 4;
+                    }
+                    
+                    if (bytesToCopy > 0) {
+                        // libc memcpy on macOS is SIMD optimized (Neon)
+                        std::memcpy(destLine, srcLine, bytesToCopy);
+                    }
+                }
+            }));
+        }
+    }
+    
+    // Wait for all blits to finish
+    for (auto& f : futures) {
+        f.wait();
+    }
+}
+
