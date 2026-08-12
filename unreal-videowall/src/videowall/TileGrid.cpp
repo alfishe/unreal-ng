@@ -316,7 +316,7 @@ void TileGrid::repaintAllTiles()
         {
             if (tile && tile->isVisible())
             {
-                tile->repaint();
+                tile->update();
             }
         }
     }

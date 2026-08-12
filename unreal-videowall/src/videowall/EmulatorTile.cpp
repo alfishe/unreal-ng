@@ -78,10 +78,9 @@ void EmulatorTile::paintEvent(QPaintEvent* event)
         // This reduces Qt scaling overhead by ~90% (qt_blend_argb32_on_argb32_neon)
         painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
 
-        // Extract central 256x192 screen from 352x288 framebuffer, scale to widget size
-        QRectF sourceRect(48, 48, 256, 192);
-        QRectF targetRect(rect());
-        painter.drawImage(targetRect, image, sourceRect);
+        // The image is already cropped to active area and scaled to TILE_WIDTH x TILE_HEIGHT
+        // in convertFramebuffer(), so we just draw it directly to the widget rect.
+        painter.drawImage(rect(), image);
     }
     else
     {

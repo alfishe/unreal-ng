@@ -403,6 +403,13 @@ void VideoWallWindow::addEmulatorTile()
         connect(tile, &EmulatorTile::tileClicked, this, &VideoWallWindow::onTileClicked);
 
         _tileGrid->addTile(tile);
+        
+        // Default to the first emulator driving the audio
+        if (_tileGrid->tiles().size() == 1)
+        {
+            bindAudioToTile(tile);
+            tile->setFocus();
+        }
     }
 }
 
@@ -1076,6 +1083,7 @@ void VideoWallWindow::resizeGridIntelligently(QSize screenSize)
         if (!_audioBoundTile && !tiles.empty())
         {
             bindAudioToTile(tiles.front());
+            tiles.front()->setFocus();
             qDebug() << "Rebound audio to first remaining tile after removal";
         }
     }
@@ -1169,6 +1177,7 @@ void VideoWallWindow::restoreSavedEmulators()
     if (!_audioBoundTile && !remainingTiles.empty())
     {
         bindAudioToTile(remainingTiles.front());
+        remainingTiles.front()->setFocus();
         qDebug() << "Rebound audio to first remaining tile after restore";
     }
 
