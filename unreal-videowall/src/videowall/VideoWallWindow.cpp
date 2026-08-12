@@ -204,11 +204,27 @@ void VideoWallWindow::createMenus()
     fullscreenAction->setChecked(false);
     connect(fullscreenAction, &QAction::triggered, this, &VideoWallWindow::toggleFullscreenMode);
 
+    QAction* screenHQAction = viewMenu->addAction(tr("Toggle Screen &HQ"));
+    screenHQAction->setShortcut(QKeySequence("Ctrl+S")); // Using Ctrl+S instead of Cmd+S to match docs/cross-platform
+    connect(screenHQAction, &QAction::triggered, this, &VideoWallWindow::toggleScreenHQForAllTiles);
+
     viewMenu->addSeparator();
 
-    QAction* screenHQAction = viewMenu->addAction(tr("Toggle Screen &HQ"));
-    screenHQAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S));
-    connect(screenHQAction, &QAction::triggered, this, &VideoWallWindow::toggleScreenHQForAllTiles);
+    QAction* crtPhosphorAction = viewMenu->addAction(tr("Toggle CRT &Phosphor"));
+    crtPhosphorAction->setCheckable(true);
+    crtPhosphorAction->setChecked(false);
+    connect(crtPhosphorAction, &QAction::triggered, this, [this](bool checked) {
+        _crtPhosphorEnabled = checked;
+        toggleCrtPhosphor();
+    });
+
+    QAction* crtScanlinesAction = viewMenu->addAction(tr("Toggle CRT &Scanlines"));
+    crtScanlinesAction->setCheckable(true);
+    crtScanlinesAction->setChecked(false);
+    connect(crtScanlinesAction, &QAction::triggered, this, [this](bool checked) {
+        _crtScanlinesEnabled = checked;
+        toggleCrtScanlines();
+    });
 
 #ifdef ENABLE_RECORDING
     // Tools menu
@@ -1184,6 +1200,24 @@ void VideoWallWindow::toggleScreenHQForAllTiles()
 
     qDebug() << "Screen HQ" << (_screenHQEnabled ? "enabled" : "disabled") << "for" << successCount << "/"
              << tiles.size() << "tiles";
+}
+
+void VideoWallWindow::toggleCrtPhosphor()
+{
+    if (_tileGrid)
+    {
+        _tileGrid->setCrtPhosphorEnabled(_crtPhosphorEnabled);
+        qDebug() << "CRT Phosphor" << (_crtPhosphorEnabled ? "enabled" : "disabled");
+    }
+}
+
+void VideoWallWindow::toggleCrtScanlines()
+{
+    if (_tileGrid)
+    {
+        _tileGrid->setCrtScanlinesEnabled(_crtScanlinesEnabled);
+        qDebug() << "CRT Scanlines" << (_crtScanlinesEnabled ? "enabled" : "disabled");
+    }
 }
 
 void VideoWallWindow::bindAudioToTile(EmulatorTile* tile)

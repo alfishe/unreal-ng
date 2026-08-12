@@ -107,6 +107,12 @@ private:
     /// Toggle screen HQ feature for all tiles (Cmd+S)
     void toggleScreenHQForAllTiles();
 
+    /// Toggle CRT Phosphor (temporal blur) effect
+    void toggleCrtPhosphor();
+
+    /// Toggle CRT Scanlines effect
+    void toggleCrtScanlines();
+
     /// Open Video Wall recording dialog (Cmd+R / Ctrl+R)
     void handleVideoRecordingRequested();
 
@@ -159,6 +165,10 @@ private:
 
     // Screen HQ toggle state (default: enabled)
     bool _screenHQEnabled = true;
+
+    // CRT effects state
+    bool _crtPhosphorEnabled = false;
+    bool _crtScanlinesEnabled = false;
 
     // Single sync mode state
     bool _singleSyncMode = false;

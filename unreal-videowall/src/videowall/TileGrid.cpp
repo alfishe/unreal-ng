@@ -215,6 +215,21 @@ void TileGrid::setSyncEmulatorId(const std::string& emulatorId)
     }
 }
 
+void TileGrid::setCrtPhosphorEnabled(bool enable)
+{
+    _crtPhosphorEnabled = enable;
+    if (!enable)
+    {
+        _prevFrame1 = QImage();
+        _prevFrame2 = QImage();
+    }
+}
+
+void TileGrid::setCrtScanlinesEnabled(bool enable)
+{
+    _crtScanlinesEnabled = enable;
+}
+
 void TileGrid::subscribeToNotifications()
 {
     _videoFrameCallback = [this](int id, Message* message) {
@@ -327,6 +342,17 @@ void TileGrid::compositeSingleSyncFrame()
     // 2. Extract the 256x192 active area
     QImage activeArea = rawImage.copy(48, 48, 256, 192);
 
+    // Apply CRT Effects on the 256x192 area (faster than post-scaling)
+    // Note: Applying scanlines *before* scaling gives thicker retro scanlines
+    if (_crtPhosphorEnabled)
+    {
+        applyPhosphorBlend(activeArea);
+    }
+    if (_crtScanlinesEnabled)
+    {
+        applyScanlines(activeArea);
+    }
+
     // 3. Scale it *once* to the target tile size
     QImage scaledTile = activeArea.scaled(TILE_WIDTH, TILE_HEIGHT, Qt::IgnoreAspectRatio, Qt::FastTransformation);
     
@@ -375,9 +401,76 @@ void TileGrid::compositeSingleSyncFrame()
         }
     }
     
-    // Wait for all blits to finish
-    for (auto& f : futures) {
+    // Wait for all blit threads to complete
+    for (auto& f : futures)
+    {
         f.wait();
     }
 }
 
+void TileGrid::applyPhosphorBlend(QImage& current)
+{
+    if (current.format() != QImage::Format_RGBA8888 && current.format() != QImage::Format_ARGB32) {
+        current = current.convertToFormat(QImage::Format_RGBA8888);
+    }
+
+    if (_prevFrame1.isNull() || _prevFrame1.size() != current.size())
+    {
+        _prevFrame1 = current.copy();
+        _prevFrame2 = current.copy();
+        return; // Nothing to blend yet
+    }
+
+    // Blend using weights: 0.5 current, 0.3 prev1, 0.2 prev2
+    int width = current.width();
+    int height = current.height();
+    
+    for (int y = 0; y < height; y++)
+    {
+        QRgb* curLine = reinterpret_cast<QRgb*>(current.scanLine(y));
+        const QRgb* p1Line = reinterpret_cast<const QRgb*>(_prevFrame1.constScanLine(y));
+        const QRgb* p2Line = reinterpret_cast<const QRgb*>(_prevFrame2.constScanLine(y));
+        
+        for (int x = 0; x < width; x++)
+        {
+            QRgb c = curLine[x];
+            QRgb p1 = p1Line[x];
+            QRgb p2 = p2Line[x];
+            
+            int r = (qRed(c) * 5 + qRed(p1) * 3 + qRed(p2) * 2) / 10;
+            int g = (qGreen(c) * 5 + qGreen(p1) * 3 + qGreen(p2) * 2) / 10;
+            int b = (qBlue(c) * 5 + qBlue(p1) * 3 + qBlue(p2) * 2) / 10;
+            
+            curLine[x] = qRgb(r, g, b);
+        }
+    }
+    
+    _prevFrame2 = _prevFrame1;
+    _prevFrame1 = current.copy();
+}
+
+void TileGrid::applyScanlines(QImage& current)
+{
+    if (current.format() != QImage::Format_RGBA8888 && current.format() != QImage::Format_ARGB32) {
+        current = current.convertToFormat(QImage::Format_RGBA8888);
+    }
+
+    int width = current.width();
+    int height = current.height();
+    
+    for (int y = 0; y < height; y++)
+    {
+        if (y % 2 != 0) // Darken every odd line
+        {
+            QRgb* curLine = reinterpret_cast<QRgb*>(current.scanLine(y));
+            for (int x = 0; x < width; x++)
+            {
+                QRgb c = curLine[x];
+                int r = (qRed(c) * 85) / 100;
+                int g = (qGreen(c) * 85) / 100;
+                int b = (qBlue(c) * 85) / 100;
+                curLine[x] = qRgb(r, g, b);
+            }
+        }
+    }
+}

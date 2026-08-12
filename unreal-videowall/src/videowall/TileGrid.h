@@ -65,6 +65,12 @@ public:
     /// Set the emulator ID to use for frame synchronization
     void setSyncEmulatorId(const std::string& emulatorId);
 
+    /// Toggle CRT Phosphor (temporal blur) effect
+    void setCrtPhosphorEnabled(bool enable);
+
+    /// Toggle CRT Scanlines effect
+    void setCrtScanlinesEnabled(bool enable);
+
 protected:
     void resizeEvent(QResizeEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
@@ -73,6 +79,16 @@ private:
     void subscribeToNotifications();
     void unsubscribeFromNotifications();
     void compositeSingleSyncFrame();
+    void applyPhosphorBlend(QImage& current);
+    void applyScanlines(QImage& current);
+
+    // Framebuffer variables for effects
+    QImage _prevFrame1;
+    QImage _prevFrame2;
+
+    // Feature toggles
+    bool _crtPhosphorEnabled = false;
+    bool _crtScanlinesEnabled = false;
 
     std::vector<EmulatorTile*> _tiles;
     EmulatorTile* _focusedTile = nullptr;
