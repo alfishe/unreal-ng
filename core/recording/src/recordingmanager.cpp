@@ -801,8 +801,8 @@ void RecordingManager::CaptureAudio(const int16_t* samples, size_t sampleCount)
         return;
     }
 
-    // Calculate presentation timestamp based on emulated sample count
-    double timestamp = static_cast<double>(_emulatedAudioSampleCount) / _audioSampleRate;
+    // Calculate presentation timestamp based on emulated sample count (accounting for channels)
+    double timestamp = static_cast<double>(_emulatedAudioSampleCount / _audioChannels) / _audioSampleRate;
 
     // Encode audio samples
     EncodeAudioSamples(samples, sampleCount, timestamp);
