@@ -27,6 +27,23 @@ for (int y = 0; y < height; y++) {
 }
 ```
 
+### Smart Phosphor (Motion-Adaptive Similarity)
+
+To prevent smearing moving objects across the screen, the **Smart Phosphor** mode introduces a motion-adaptive similarity check based on Luma.
+By comparing the current frame's pixel against the previous frame, we only apply the temporal decay if the pixels are geometrically identical (which on the ZX Spectrum accounts for attribute clashing and flicker effects, where the pixel shape stays the same but the color cycles). 
+This allows us to increase the depth of the decay (up to 8 frames) without destroying moving graphics.
+
+### Cross-Platform SIMD Acceleration
+
+Executing the temporal blend across 186 separate emulator instances using an 8-frame ring buffer requires aggressive optimization.
+The `SIMDBlend` engine applies the Smart Phosphor logic utilizing cross-platform intrinsics:
+
+- **ARM NEON**: Uses `uint8x16_t` vectors (`vabdq_u8`, `vcgeq_u8`) to check the absolute difference threshold simultaneously across 4 RGBA pixels.
+- **x86 SSE2 / AVX**: Provides identical fallback paths for Intel architectures.
+- **Scalar Fallback**: Clean standard C++ implementation for unsupported platforms.
+
+This keeps CPU utilization extremely low and maintains the critical 50 FPS threshold across the entire Video Wall.
+
 ### Chroma-Only Blur (Sharper Edges)
 
 For ZX Spectrum border flicker, blend only color channels while keeping luma sharp:
@@ -179,7 +196,7 @@ ffmpeg -i input.mp4 \
 
 | Parameter | Range | Default | Effect |
 |-----------|-------|---------|--------|
-| `persistence_weights` | 0.0-1.0 | [0.5, 0.3, 0.2] | Phosphor decay curve |
+| `depth` | 2 - 8 | 3 | Number of frames to blend (ring buffer size) |
+| `persistence_weights` | 0.0-1.0 | variable | Phosphor decay curve, auto-calculated as `(N - i)/sum` |
 | `scanline_intensity` | 0.5-1.0 | 0.85 | Scanline darkness |
-| `mask_intensity` | 0.5-1.0 | 0.7 | RGB mask strength |
-| `blur_chroma_only` | bool | true | Keep edges sharp |
+| `lumaThreshold` | 0-255 | 25 | Maximum difference in channel value to consider a pixel "similar" for Smart Phosphor |

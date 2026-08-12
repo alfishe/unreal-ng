@@ -7,8 +7,8 @@
 #include <QImage>
 #include <future>
 #include <3rdparty/message-center/eventqueue.h>
-
-class EmulatorTile;
+#include "EmulatorTile.h"
+#include <deque>
 
 /**
  * @brief Container widget managing the grid of emulator tiles
@@ -68,6 +68,12 @@ public:
     /// Toggle CRT Phosphor (temporal blur) effect
     void setCrtPhosphorEnabled(bool enable);
 
+    /// Toggle Smart CRT Phosphor (adaptive blur) effect
+    void setSmartPhosphorEnabled(bool enable);
+
+    /// Set Phosphor blend depth (2 to 8 frames)
+    void setPhosphorDepth(int depth);
+
     /// Toggle CRT Scanlines effect
     void setCrtScanlinesEnabled(bool enable);
 
@@ -83,12 +89,13 @@ private:
     void applyScanlines(QImage& current);
 
     // Framebuffer variables for effects
-    QImage _prevFrame1;
-    QImage _prevFrame2;
+    std::deque<QImage> _phosphorHistory;
 
     // Feature toggles
     bool _crtPhosphorEnabled = false;
+    bool _smartPhosphorEnabled = false;
     bool _crtScanlinesEnabled = false;
+    int _phosphorDepth = 3;
 
     std::vector<EmulatorTile*> _tiles;
     EmulatorTile* _focusedTile = nullptr;

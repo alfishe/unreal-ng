@@ -110,6 +110,12 @@ private:
     /// Toggle CRT Phosphor (temporal blur) effect
     void toggleCrtPhosphor();
 
+    /// Toggle Smart CRT Phosphor (adaptive blur) effect
+    void toggleSmartPhosphor();
+
+    /// Set CRT Phosphor depth (2 to 8 frames)
+    void setPhosphorDepth(int depth);
+
     /// Toggle CRT Scanlines effect
     void toggleCrtScanlines();
 
@@ -168,7 +174,9 @@ private:
 
     // CRT effects state
     bool _crtPhosphorEnabled = false;
+    bool _smartPhosphorEnabled = false;
     bool _crtScanlinesEnabled = false;
+    int _phosphorDepth = 3;
 
     // Single sync mode state
     bool _singleSyncMode = false;

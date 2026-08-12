@@ -20,6 +20,7 @@
 #endif
 
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QKeyEvent>
 #include <QMenuBar>
@@ -217,6 +218,29 @@ void VideoWallWindow::createMenus()
         _crtPhosphorEnabled = checked;
         toggleCrtPhosphor();
     });
+
+    QAction* smartPhosphorAction = viewMenu->addAction(tr("Toggle CRT &Smart Phosphor"));
+    smartPhosphorAction->setCheckable(true);
+    smartPhosphorAction->setChecked(false);
+    connect(smartPhosphorAction, &QAction::triggered, this, [this](bool checked) {
+        _smartPhosphorEnabled = checked;
+        toggleSmartPhosphor();
+    });
+
+    QMenu* depthMenu = viewMenu->addMenu(tr("CRT Phosphor &Depth"));
+    QActionGroup* depthGroup = new QActionGroup(this);
+    for (int i = 2; i <= 8; ++i) {
+        QAction* depthAction = depthMenu->addAction(QString("%1 Frames").arg(i));
+        depthAction->setCheckable(true);
+        depthGroup->addAction(depthAction);
+        if (i == _phosphorDepth) {
+            depthAction->setChecked(true);
+        }
+        connect(depthAction, &QAction::triggered, this, [this, i]() {
+            _phosphorDepth = i;
+            setPhosphorDepth(i);
+        });
+    }
 
     QAction* crtScanlinesAction = viewMenu->addAction(tr("Toggle CRT &Scanlines"));
     crtScanlinesAction->setCheckable(true);
@@ -1208,6 +1232,24 @@ void VideoWallWindow::toggleCrtPhosphor()
     {
         _tileGrid->setCrtPhosphorEnabled(_crtPhosphorEnabled);
         qDebug() << "CRT Phosphor" << (_crtPhosphorEnabled ? "enabled" : "disabled");
+    }
+}
+
+void VideoWallWindow::toggleSmartPhosphor()
+{
+    if (_tileGrid)
+    {
+        _tileGrid->setSmartPhosphorEnabled(_smartPhosphorEnabled);
+        qDebug() << "CRT Smart Phosphor" << (_smartPhosphorEnabled ? "enabled" : "disabled");
+    }
+}
+
+void VideoWallWindow::setPhosphorDepth(int depth)
+{
+    if (_tileGrid)
+    {
+        _tileGrid->setPhosphorDepth(depth);
+        qDebug() << "CRT Phosphor Depth set to" << depth;
     }
 }
 

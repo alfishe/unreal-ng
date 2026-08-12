@@ -5,6 +5,9 @@
 #include <QMimeData>
 #include "videowall/VideowallRecorder.h"
 #include <QPainter>
+#include <QResizeEvent>
+#include <QMouseEvent>
+#include "SIMDBlend.h"
 #include <QTimer>
 #include <emulator/notifications.h>
 
@@ -314,9 +317,19 @@ void EmulatorTile::setCrtPhosphorEnabled(bool enable)
     _crtPhosphorEnabled = enable;
     if (!enable)
     {
-        _prevFrame1 = QImage();
-        _prevFrame2 = QImage();
+        _phosphorHistory.clear();
     }
+}
+
+void EmulatorTile::setSmartPhosphorEnabled(bool enable)
+{
+    _smartPhosphorEnabled = enable;
+}
+
+void EmulatorTile::setPhosphorDepth(int depth)
+{
+    _phosphorDepth = depth;
+    _phosphorHistory.clear();
 }
 
 void EmulatorTile::setCrtScanlinesEnabled(bool enable)
@@ -381,38 +394,41 @@ void EmulatorTile::applyPhosphorBlend(QImage& current)
         current = current.convertToFormat(QImage::Format_RGBA8888);
     }
 
-    if (_prevFrame1.isNull() || _prevFrame1.size() != current.size())
+    _phosphorHistory.push_front(current.copy());
+    
+    if (_phosphorHistory.size() > _phosphorDepth)
     {
-        _prevFrame1 = current.copy();
-        _prevFrame2 = current.copy();
-        return; // Nothing to blend yet
+        _phosphorHistory.pop_back();
+    }
+    
+    if (_phosphorHistory.size() < _phosphorDepth)
+    {
+        return; // Wait until buffer fills up
     }
 
-    int width = current.width();
-    int height = current.height();
-    
-    for (int y = 0; y < height; y++)
-    {
-        QRgb* curLine = reinterpret_cast<QRgb*>(current.scanLine(y));
-        const QRgb* p1Line = reinterpret_cast<const QRgb*>(_prevFrame1.constScanLine(y));
-        const QRgb* p2Line = reinterpret_cast<const QRgb*>(_prevFrame2.constScanLine(y));
-        
-        for (int x = 0; x < width; x++)
-        {
-            QRgb c = curLine[x];
-            QRgb p1 = p1Line[x];
-            QRgb p2 = p2Line[x];
-            
-            int r = (qRed(c) * 5 + qRed(p1) * 3 + qRed(p2) * 2) / 10;
-            int g = (qGreen(c) * 5 + qGreen(p1) * 3 + qGreen(p2) * 2) / 10;
-            int b = (qBlue(c) * 5 + qBlue(p1) * 3 + qBlue(p2) * 2) / 10;
-            
-            curLine[x] = qRgb(r, g, b);
-        }
+    int weightSum = (_phosphorDepth * (_phosphorDepth + 1)) / 2;
+    std::vector<int> weights(_phosphorDepth);
+    for (int i = 0; i < _phosphorDepth; ++i) {
+        weights[i] = _phosphorDepth - i;
     }
     
-    _prevFrame2 = _prevFrame1;
-    _prevFrame1 = current.copy();
+    const int lumaThreshold = 25; // ~10% of 255
+    
+    // Create vector of const pointers to pass to SIMD
+    std::vector<const QImage*> historyPtrs(_phosphorDepth);
+    for (int i = 0; i < _phosphorDepth; ++i) {
+        historyPtrs[i] = &_phosphorHistory[i];
+    }
+
+    videowall::simd::applySmartPhosphorBlend(
+        current,
+        historyPtrs,
+        _phosphorDepth,
+        lumaThreshold,
+        weights,
+        weightSum,
+        _smartPhosphorEnabled
+    );
 }
 
 void EmulatorTile::applyScanlines(QImage& current)

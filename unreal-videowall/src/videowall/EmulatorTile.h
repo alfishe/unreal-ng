@@ -2,6 +2,8 @@
 
 #include <QWidget>
 #include <memory>
+#include <string>
+#include <deque>
 #include <3rdparty/message-center/eventqueue.h>
 
 #include "videowall/TileLayoutManager.h"  // TILE_WIDTH, TILE_HEIGHT
@@ -45,6 +47,12 @@ public:
 
     /// Toggle CRT Phosphor (temporal blur) effect
     void setCrtPhosphorEnabled(bool enable);
+
+    /// Toggle Smart CRT Phosphor (adaptive blur) effect
+    void setSmartPhosphorEnabled(bool enable);
+
+    /// Set Phosphor blend depth (2 to 8 frames)
+    void setPhosphorDepth(int depth);
 
     /// Toggle CRT Scanlines effect
     void setCrtScanlinesEnabled(bool enable);
@@ -91,9 +99,10 @@ private:
 
     // CRT effects state
     bool _crtPhosphorEnabled = false;
+    bool _smartPhosphorEnabled = false;
     bool _crtScanlinesEnabled = false;
-    QImage _prevFrame1;
-    QImage _prevFrame2;
+    int _phosphorDepth = 3;
+    std::deque<QImage> _phosphorHistory;
 
     // Tile size from TileLayoutManager.h: TILE_WIDTH x TILE_HEIGHT
 };
