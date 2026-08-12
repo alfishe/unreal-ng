@@ -189,16 +189,12 @@ void TileGrid::updateLayout()
     _inUpdateLayout = false;
 }
 
-void TileGrid::setSingleSyncMode(bool enable, const std::string& primaryEmulatorId)
+void TileGrid::setSingleSyncMode(bool enable)
 {
     _singleSyncMode = enable;
-    _primaryEmulatorId = primaryEmulatorId;
     
-    unsubscribeFromNotifications();
-    if (_singleSyncMode && !_primaryEmulatorId.empty())
+    if (_singleSyncMode)
     {
-        subscribeToNotifications();
-        
         if (width() > 0 && height() > 0 && (_compositeImage.isNull() || width() != _compositeImage.width() || height() != _compositeImage.height()))
         {
             _compositeImage = QImage(width(), height(), QImage::Format_RGBA8888);
@@ -208,18 +204,31 @@ void TileGrid::setSingleSyncMode(bool enable, const std::string& primaryEmulator
     updateLayout();
 }
 
+void TileGrid::setSyncEmulatorId(const std::string& emulatorId)
+{
+    _syncEmulatorId = emulatorId;
+    
+    unsubscribeFromNotifications();
+    if (!_syncEmulatorId.empty())
+    {
+        subscribeToNotifications();
+    }
+}
+
 void TileGrid::subscribeToNotifications()
 {
     _videoFrameCallback = [this](int id, Message* message) {
-        if (_singleSyncMode && message && message->obj) {
+        if (message && message->obj) {
             auto* payload = dynamic_cast<EmulatorFramePayload*>(message->obj);
-            if (payload && payload->_emulatorId.toString() == _primaryEmulatorId) {
+            if (payload && payload->_emulatorId.toString() == _syncEmulatorId) {
                 // Drop frame if UI is still rendering the previous one (prevents event queue flooding)
                 bool expected = false;
                 if (_isRepaintPending.compare_exchange_strong(expected, true)) {
                     
-                    // --- Perform SIMD / Multithreaded compositing on the emulator thread ---
-                    compositeSingleSyncFrame();
+                    if (_singleSyncMode) {
+                        // --- Perform SIMD / Multithreaded compositing on the emulator thread ---
+                        compositeSingleSyncFrame();
+                    }
 
                     QMetaObject::invokeMethod(this, [this]() {
                         // In single sync mode, repaintAllTiles just calls this->update() to draw the composite image

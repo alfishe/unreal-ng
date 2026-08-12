@@ -4,6 +4,8 @@
 #include <vector>
 #include <functional>
 #include <atomic>
+#include <QImage>
+#include <future>
 #include <3rdparty/message-center/eventqueue.h>
 
 class EmulatorTile;
@@ -58,14 +60,19 @@ public:
     }
 
     /// Set single sync mode (stretches single tile to fill grid)
-    void setSingleSyncMode(bool enable, const std::string& primaryEmulatorId = "");
+    void setSingleSyncMode(bool enable);
+
+    /// Set the emulator ID to use for frame synchronization
+    void setSyncEmulatorId(const std::string& emulatorId);
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
+    void paintEvent(QPaintEvent* event) override;
 
 private:
     void subscribeToNotifications();
     void unsubscribeFromNotifications();
+    void compositeSingleSyncFrame();
 
     std::vector<EmulatorTile*> _tiles;
     EmulatorTile* _focusedTile = nullptr;
@@ -82,7 +89,11 @@ private:
     
     // Single sync mode flag
     bool _singleSyncMode = false;
-    std::string _primaryEmulatorId;
+    std::string _syncEmulatorId;
     std::atomic<bool> _isRepaintPending {false};
     std::function<void(int, Message*)> _videoFrameCallback;
+    
+    QImage _compositeImage;
+    int _currentCols = 0;
+    int _currentRows = 0;
 };

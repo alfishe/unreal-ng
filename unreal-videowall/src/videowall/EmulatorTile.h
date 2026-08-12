@@ -66,12 +66,7 @@ protected:
     void dropEvent(QDropEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
 
-private slots:
-    void handleVideoFrameRefresh();
-
 private:
-    void subscribeToNotifications();
-    void unsubscribeFromNotifications();
     QImage convertFramebuffer();
 
     std::shared_ptr<Emulator> _emulator;
@@ -83,10 +78,7 @@ private:
     bool _isSynchronousMode = false;
     bool _isPrimarySyncTile = false;
     
-    // Store lambda for safe unsubscribing
-    std::function<void(int, Message*)> _videoFrameCallback;
     
-    QTimer* _refreshTimer = nullptr;
     QTimer* _blinkTimer = nullptr;  // Timer for blink effect
 
     // Tile size from TileLayoutManager.h: TILE_WIDTH x TILE_HEIGHT

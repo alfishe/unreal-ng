@@ -23,47 +23,28 @@ EmulatorTile::EmulatorTile(std::shared_ptr<Emulator> emulator, QWidget* parent) 
 
     if (_emulator)
     {
-        subscribeToNotifications();
-
-        // Set up 50Hz refresh timer (20ms = 50 FPS)
-        _refreshTimer = new QTimer(this);
-        connect(_refreshTimer, &QTimer::timeout, this, &EmulatorTile::handleVideoFrameRefresh);
-        _refreshTimer->start(20);  // 50Hz
     }
 }
 
 EmulatorTile::~EmulatorTile()
 {
     // Stop all timers to prevent callbacks during destruction
-    if (_refreshTimer)
-    {
-        _refreshTimer->stop();
-    }
     if (_blinkTimer)
     {
         _blinkTimer->stop();
     }
-    unsubscribeFromNotifications();
 }
 
 void EmulatorTile::prepareForDeletion()
 {
     // Stop all timers IMMEDIATELY to prevent callbacks during pending deletion
-    if (_refreshTimer)
-    {
-        _refreshTimer->stop();
-        _refreshTimer->deleteLater();
-        _refreshTimer = nullptr;
-    }
+    // Stop all timers IMMEDIATELY to prevent callbacks during pending deletion
     if (_blinkTimer)
     {
         _blinkTimer->stop();
         _blinkTimer->deleteLater();
         _blinkTimer = nullptr;
     }
-    
-    // Unsubscribe from notifications to prevent callbacks
-    unsubscribeFromNotifications();
     
     // Clear emulator reference to prevent any further access
     _emulator.reset();
@@ -317,13 +298,8 @@ void EmulatorTile::keyReleaseEvent(QKeyEvent* event)
 
 void EmulatorTile::setEmulator(std::shared_ptr<Emulator> emulator)
 {
-    unsubscribeFromNotifications();
     _emulator = emulator;
     _emulatorId = _emulator ? _emulator->GetUUID().toString() : "";
-    if (_emulator && !_isSynchronousMode)
-    {
-        subscribeToNotifications();
-    }
     update();
 }
 
@@ -331,49 +307,9 @@ void EmulatorTile::setSynchronousMode(bool enable)
 {
     if (_isSynchronousMode == enable) return;
     _isSynchronousMode = enable;
-    
-    if (_isSynchronousMode)
-    {
-        if (_refreshTimer)
-        {
-            _refreshTimer->stop();
-        }
-        unsubscribeFromNotifications();
-    }
-    else
-    {
-        if (_refreshTimer)
-        {
-            _refreshTimer->start(20);
-        }
-        if (_emulator)
-        {
-            subscribeToNotifications();
-        }
-    }
 }
 
-void EmulatorTile::handleVideoFrameRefresh()
-{
-    update();
-}
 
-void EmulatorTile::subscribeToNotifications()
-{
-    // Deliberately disabled for non-singlesync mode to prevent event loop starvation
-    // from 48-180 tiles spamming Qt::QueuedConnection updates at 50Hz from background threads.
-    // Instead, rely exclusively on the 50Hz QTimer (_refreshTimer) driving handleVideoFrameRefresh()
-    // on the UI thread, which is completely starvation-proof.
-}
-
-void EmulatorTile::unsubscribeFromNotifications()
-{
-    if (_videoFrameCallback)
-    {
-        MessageCenter::DefaultMessageCenter().RemoveObserver(NC_VIDEO_FRAME_REFRESH, _videoFrameCallback);
-        _videoFrameCallback = nullptr;
-    }
-}
 
 QImage EmulatorTile::convertFramebuffer()
 {

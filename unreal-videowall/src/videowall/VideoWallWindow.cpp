@@ -1226,7 +1226,14 @@ void VideoWallWindow::bindAudioToTile(EmulatorTile* tile)
     _soundManager->setActiveContext(emulator->GetContext());
 
     _audioBoundTile = tile;
-    qDebug() << "Audio bound to tile (Sound & SoundHQ enabled):" << QString::fromStdString(emulator->GetUUID());
+    
+    // In non-singlesync mode, synchronize all rendering on this active emulator
+    if (!_singleSyncMode)
+    {
+        _tileGrid->setSyncEmulatorId(emulator->GetUUID().toString());
+    }
+    
+    qDebug() << "Audio bound to tile (Sound & SoundHQ enabled):" << QString::fromStdString(emulator->GetUUID().toString());
 }
 
 void VideoWallWindow::onTileClicked(EmulatorTile* tile)
@@ -1283,6 +1290,13 @@ void VideoWallWindow::unbindAudioFromTile()
         }
 
         qDebug() << "Audio unbound from tile (Sound & SoundHQ disabled):" << QString::fromStdString(emulator->GetUUID().toString());
+    }
+
+    // In non-singlesync mode, if we unbind, we lose the sync source.
+    // We could fallback to the first tile if needed, but for now we'll just clear it.
+    if (!_singleSyncMode)
+    {
+        _tileGrid->setSyncEmulatorId("");
     }
 }
 void VideoWallWindow::handleSingleSyncModeMessage(MessagePayload* payload)
@@ -1355,7 +1369,8 @@ void VideoWallWindow::setSingleEmulatorSyncMode(bool enable, const std::string& 
         bindAudioToTile(primaryTile);
 
         // Configure TileGrid single sync state with primary emulator ID
-        _tileGrid->setSingleSyncMode(true, primaryId);
+        _tileGrid->setSingleSyncMode(true);
+        _tileGrid->setSyncEmulatorId(primaryId);
     }
     else
     {
@@ -1366,7 +1381,7 @@ void VideoWallWindow::setSingleEmulatorSyncMode(bool enable, const std::string& 
                 tile->setSynchronousMode(false);
             }
         }
-        _tileGrid->setSingleSyncMode(false, "");
+        _tileGrid->setSingleSyncMode(false);
         VideowallRecorder::instance().setSynchronousMode(false);
     }
 }
