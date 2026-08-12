@@ -2,6 +2,7 @@
 
 #include <QWidget>
 #include <memory>
+#include <3rdparty/message-center/eventqueue.h>
 
 #include "videowall/TileLayoutManager.h"  // TILE_WIDTH, TILE_HEIGHT
 
@@ -29,6 +30,18 @@ public:
         return _emulator;
     }
 
+    /// Set the emulator instance bound to this tile
+    void setEmulator(std::shared_ptr<Emulator> emulator);
+
+    /// Set whether this tile is the primary sync tile
+    void setPrimarySyncTile(bool isPrimary)
+    {
+        _isPrimarySyncTile = isPrimary;
+    }
+
+    // Enable/disable synchronous rendering mode
+    void setSynchronousMode(bool enable);
+
     /// Prepare tile for deletion - stop timers and cleanup (call before deleteLater)
     void prepareForDeletion();
 
@@ -53,10 +66,12 @@ protected:
     void dropEvent(QDropEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
 
+private slots:
+    void handleVideoFrameRefresh();
+
 private:
-    void handleVideoFrameRefresh();       // Will implement in Phase 3
-    void subscribeToNotifications();      // Placeholder for Phase 3
-    void unsubscribeFromNotifications();  // Placeholder for Phase 3
+    void subscribeToNotifications();
+    void unsubscribeFromNotifications();
     QImage convertFramebuffer();
 
     std::shared_ptr<Emulator> _emulator;
@@ -65,6 +80,12 @@ private:
     bool _isDragHovering = false;     // Track drag-over state for visual feedback
     bool _isBlinkingSuccess = false;  // Blink green after successful load
     bool _isBlinkingFailure = false;  // Blink red after failed load
+    bool _isSynchronousMode = false;
+    bool _isPrimarySyncTile = false;
+    
+    // Store lambda for safe unsubscribing
+    std::function<void(int, Message*)> _videoFrameCallback;
+    
     QTimer* _refreshTimer = nullptr;
     QTimer* _blinkTimer = nullptr;  // Timer for blink effect
 

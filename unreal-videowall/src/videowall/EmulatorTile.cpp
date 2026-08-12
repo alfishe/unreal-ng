@@ -1,9 +1,12 @@
 #include "videowall/EmulatorTile.h"
+#include "videowall/TileGrid.h"
 
 #include <QDragLeaveEvent>
 #include <QMimeData>
+#include "videowall/VideowallRecorder.h"
 #include <QPainter>
 #include <QTimer>
+#include <emulator/notifications.h>
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator.h"
@@ -14,7 +17,7 @@ EmulatorTile::EmulatorTile(std::shared_ptr<Emulator> emulator, QWidget* parent) 
 {
     setFixedSize(TILE_WIDTH, TILE_HEIGHT);
     // Cache emulator UUID
-    _emulatorId = _emulator ? _emulator->GetId() : "";
+    _emulatorId = _emulator ? _emulator->GetUUID().toString() : "";
     setFocusPolicy(Qt::StrongFocus);
     setAcceptDrops(true);
 
@@ -89,9 +92,9 @@ void EmulatorTile::paintEvent(QPaintEvent* event)
         // This reduces Qt scaling overhead by ~90% (qt_blend_argb32_on_argb32_neon)
         painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
 
-        // Extract central 256x192 screen from 352x288 framebuffer, scale 2x to 512x384
+        // Extract central 256x192 screen from 352x288 framebuffer, scale to widget size
         QRectF sourceRect(48, 48, 256, 192);
-        QRectF targetRect(0, 0, TILE_WIDTH, TILE_HEIGHT);
+        QRectF targetRect(rect());
         painter.drawImage(targetRect, image, sourceRect);
     }
     else
@@ -121,7 +124,7 @@ void EmulatorTile::paintEvent(QPaintEvent* event)
         painter.setPen(pen);
         painter.drawRect(rect().adjusted(2, 2, -4, -4));
     }
-    else if (_hasTileFocus)
+    else if (_hasTileFocus && !_isSynchronousMode)
     {
         // Lighter blue border when tile has keyboard focus
         QPen pen(QColor(120, 160, 255), 2);
@@ -310,20 +313,69 @@ void EmulatorTile::keyReleaseEvent(QKeyEvent* event)
     }
 }
 
+void EmulatorTile::setEmulator(std::shared_ptr<Emulator> emulator)
+{
+    unsubscribeFromNotifications();
+    _emulator = emulator;
+    _emulatorId = _emulator ? _emulator->GetUUID().toString() : "";
+    if (_emulator && !_isSynchronousMode)
+    {
+        subscribeToNotifications();
+    }
+    update();
+}
+
+void EmulatorTile::setSynchronousMode(bool enable)
+{
+    if (_isSynchronousMode == enable) return;
+    _isSynchronousMode = enable;
+    
+    if (_isSynchronousMode)
+    {
+        if (_refreshTimer)
+        {
+            _refreshTimer->stop();
+        }
+        unsubscribeFromNotifications();
+    }
+    else
+    {
+        if (_refreshTimer)
+        {
+            _refreshTimer->start(20);
+        }
+        if (_emulator)
+        {
+            subscribeToNotifications();
+        }
+    }
+}
+
 void EmulatorTile::handleVideoFrameRefresh()
 {
-    // TODO: Phase 3 - will implement Observer-based notifications
     update();
 }
 
 void EmulatorTile::subscribeToNotifications()
 {
-    // TODO: Phase 3 - will subscribe to NC_VIDEO_FRAME_REFRESH
+    _videoFrameCallback = [this](int id, Message* message) {
+        if (message && message->obj) {
+            auto* payload = dynamic_cast<EmulatorFramePayload*>(message->obj);
+            if (payload && payload->_emulatorId.toString() == _emulatorId) {
+                update();
+            }
+        }
+    };
+    MessageCenter::DefaultMessageCenter().AddObserver(NC_VIDEO_FRAME_REFRESH, _videoFrameCallback);
 }
 
 void EmulatorTile::unsubscribeFromNotifications()
 {
-    // TODO: Phase 3 - will unsubscribe from notifications
+    if (_videoFrameCallback)
+    {
+        MessageCenter::DefaultMessageCenter().RemoveObserver(NC_VIDEO_FRAME_REFRESH, _videoFrameCallback);
+        _videoFrameCallback = nullptr;
+    }
 }
 
 QImage EmulatorTile::convertFramebuffer()

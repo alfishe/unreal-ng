@@ -80,8 +80,11 @@ bool VideowallRecorder::startRecording(const std::string& filename,
     bool ok = _recordingManager->StartRecording(filename, videoCodec, audioCodec, videoBitrate, audioBitrate);
     if (ok)
     {
-        // Start 50 Hz frame grab timer (20ms)
-        _frameTimer.start(20);
+        if (!_isSynchronousMode)
+        {
+            // Start 50 Hz frame grab timer (20ms)
+            _frameTimer.start(20);
+        }
         qDebug() << "VideowallRecorder: Started recording to" << QString::fromStdString(filename)
                  << "Target resolution:" << _targetWidth << "x" << _targetHeight;
     }
@@ -118,7 +121,10 @@ void VideowallRecorder::resumeRecording()
     if (_recordingManager)
     {
         _recordingManager->ResumeRecording();
-        _frameTimer.start(20);
+        if (!_isSynchronousMode)
+        {
+            _frameTimer.start(20);
+        }
     }
 }
 
@@ -145,12 +151,31 @@ RecordingManager::RecordingStats VideowallRecorder::getStats() const
     return _recordingManager ? _recordingManager->GetStats() : RecordingManager::RecordingStats();
 }
 
+void VideowallRecorder::captureVideoFrameSync()
+{
+    captureVideoFrame();
+}
+
+void VideowallRecorder::setSynchronousMode(bool enable)
+{
+    if (_isSynchronousMode == enable) return;
+    
+    _isSynchronousMode = enable;
+    if (_isSynchronousMode)
+    {
+        _frameTimer.stop();
+    }
+    else if (isRecording() && !isPaused())
+    {
+        _frameTimer.start(20);
+    }
+}
+
 void VideowallRecorder::captureVideoFrame()
 {
     if (!isRecording() || !_targetWidget)
         return;
 
-    // Grab combined rendered Qt buffer of the tile grid / videowall
     QPixmap pixmap = _targetWidget->grab();
     if (pixmap.isNull())
         return;

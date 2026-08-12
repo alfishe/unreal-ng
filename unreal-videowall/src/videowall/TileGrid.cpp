@@ -1,16 +1,20 @@
 #include "videowall/TileGrid.h"
 
 #include <emulatormanager.h>
+#include <emulator/notifications.h>
+#include <3rdparty/message-center/messagecenter.h>
 
 #include <QResizeEvent>
 
 #include "videowall/EmulatorTile.h"
 #include "videowall/TileLayoutManager.h"
+#include "videowall/VideowallRecorder.h"
 
 TileGrid::TileGrid(QWidget* parent) : QWidget(parent) {}
 
 TileGrid::~TileGrid()
 {
+    unsubscribeFromNotifications();
     clearAllTiles();
 }
 
@@ -35,6 +39,24 @@ void TileGrid::removeTile(EmulatorTile* tile, bool skipLayout)
     if (it != _tiles.end())
     {
         _tiles.erase(it);
+
+        if (tile->emulator())
+        {
+            std::string emulatorId = tile->emulator()->GetUUID().toString();
+            tile->prepareForDeletion();
+            
+            EmulatorManager* manager = EmulatorManager::GetInstance();
+            if (manager && !emulatorId.empty())
+            {
+                manager->StopEmulator(emulatorId);
+                manager->RemoveEmulator(emulatorId);
+            }
+        }
+        else
+        {
+            tile->prepareForDeletion();
+        }
+
         tile->deleteLater();
         
         // Skip layout during batch removal to prevent crashes
@@ -134,7 +156,9 @@ void TileGrid::updateLayout()
         {
             continue;
         }
+        tile->setFixedSize(TILE_WIDTH, TILE_HEIGHT); // Restore fixed size constraint
         tile->move(x, y);
+        tile->show(); // Ensure it's visible
 
         // Move to next column
         col++;
@@ -150,7 +174,6 @@ void TileGrid::updateLayout()
     }
 
     // Resize widget to fit grid (but NOT in fullscreen mode - size constraints break fullscreen on Linux)
-    // Use resize() instead of setMinimumSize() to allow window shrinking on Windows
     if (!_isFullscreen)
     {
         int windowWidth = cols * TILE_WIDTH;
@@ -159,6 +182,64 @@ void TileGrid::updateLayout()
     }
 
     _inUpdateLayout = false;
+}
+
+void TileGrid::setSingleSyncMode(bool enable, const std::string& primaryEmulatorId)
+{
+    _singleSyncMode = enable;
+    _primaryEmulatorId = primaryEmulatorId;
+    
+    unsubscribeFromNotifications();
+    if (_singleSyncMode && !_primaryEmulatorId.empty())
+    {
+        subscribeToNotifications();
+    }
+    updateLayout();
+}
+
+void TileGrid::subscribeToNotifications()
+{
+    _videoFrameCallback = [this](int id, Message* message) {
+        if (_singleSyncMode && message && message->obj) {
+            auto* payload = dynamic_cast<EmulatorFramePayload*>(message->obj);
+            if (payload && payload->_emulatorId.toString() == _primaryEmulatorId) {
+                // Drop frame if UI is still rendering the previous one (prevents event queue flooding)
+                bool expected = false;
+                if (_isRepaintPending.compare_exchange_strong(expected, true)) {
+                    QMetaObject::invokeMethod(this, [this]() {
+                        repaintAllTiles();
+                        _isRepaintPending = false;
+                    }, Qt::QueuedConnection);
+                }
+            }
+        }
+    };
+    MessageCenter::DefaultMessageCenter().AddObserver(NC_VIDEO_FRAME_REFRESH, _videoFrameCallback);
+}
+
+void TileGrid::unsubscribeFromNotifications()
+{
+    if (_videoFrameCallback)
+    {
+        MessageCenter::DefaultMessageCenter().RemoveObserver(NC_VIDEO_FRAME_REFRESH, _videoFrameCallback);
+        _videoFrameCallback = nullptr;
+    }
+}
+
+void TileGrid::repaintAllTiles()
+{
+    for (EmulatorTile* tile : _tiles)
+    {
+        if (tile && tile->isVisible())
+        {
+            tile->repaint();
+        }
+    }
+
+    if (VideowallRecorder::instance().isRecording())
+    {
+        VideowallRecorder::instance().captureVideoFrameSync();
+    }
 }
 
 void TileGrid::setGridDimensions(int cols, int rows)

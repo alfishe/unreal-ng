@@ -4,6 +4,7 @@
 #include <QPointer>
 #include <memory>
 #include <vector>
+#include <3rdparty/message-center/eventqueue.h>
 
 class TileGrid;
 class EmulatorManager;
@@ -63,6 +64,9 @@ public:
     // Async batch creation
     void createEmulatorsAsync(int total);
     void createNextBatch();
+    
+    // Single Emulator Sync Mode
+    void setSingleEmulatorSyncMode(bool enable, const std::string& emulatorId = "");
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -156,8 +160,13 @@ private:
     // Screen HQ toggle state (default: enabled)
     bool _screenHQEnabled = true;
 
+    // Single sync mode state
+    bool _singleSyncMode = false;
+
     // Auto-hide menu bar in fullscreen
     QTimer* _menuAutoHideTimer = nullptr;
     static constexpr int MENU_AUTO_HIDE_DELAY_MS = 2000;
     static constexpr int MENU_TRIGGER_ZONE_HEIGHT = 10;  // pixels from top
+    
+    void handleSingleSyncModeMessage(MessagePayload* payload);
 };

@@ -2,6 +2,9 @@
 
 #include <QWidget>
 #include <vector>
+#include <functional>
+#include <atomic>
+#include <3rdparty/message-center/eventqueue.h>
 
 class EmulatorTile;
 
@@ -33,8 +36,17 @@ public:
         return _tiles;
     }
 
+    /// Get the currently focused tile
+    EmulatorTile* focusedTile() const
+    {
+        return _focusedTile;
+    }
+
     /// Recalculate and apply grid layout
     void updateLayout();
+
+    /// Repaint all child tiles synchronously
+    Q_INVOKABLE void repaintAllTiles();
 
     /// Set explicit grid dimensions (bypasses automatic calculation)
     void setGridDimensions(int cols, int rows);
@@ -45,10 +57,16 @@ public:
         _isFullscreen = fullscreen;
     }
 
+    /// Set single sync mode (stretches single tile to fill grid)
+    void setSingleSyncMode(bool enable, const std::string& primaryEmulatorId = "");
+
 protected:
     void resizeEvent(QResizeEvent* event) override;
 
 private:
+    void subscribeToNotifications();
+    void unsubscribeFromNotifications();
+
     std::vector<EmulatorTile*> _tiles;
     EmulatorTile* _focusedTile = nullptr;
 
@@ -61,4 +79,10 @@ private:
     
     // Fullscreen mode flag (disables setMinimumSize in updateLayout)
     bool _isFullscreen = false;
+    
+    // Single sync mode flag
+    bool _singleSyncMode = false;
+    std::string _primaryEmulatorId;
+    std::atomic<bool> _isRepaintPending {false};
+    std::function<void(int, Message*)> _videoFrameCallback;
 };

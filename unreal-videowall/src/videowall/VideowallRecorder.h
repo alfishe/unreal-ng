@@ -56,6 +56,13 @@ public:
     /// Get pointer to internal RecordingManager instance
     RecordingManager* recordingManager() { return _recordingManager.get(); }
 
+    /// Set synchronous recording mode (disables internal frame timer)
+    void setSynchronousMode(bool enable);
+
+public slots:
+    /// Synchronously capture frame (when driven externally instead of by QTimer)
+    void captureVideoFrameSync();
+
 private slots:
     void captureVideoFrame();
 
@@ -69,4 +76,6 @@ private:
 
     uint32_t _targetWidth = 0;
     uint32_t _targetHeight = 0;
+    
+    bool _isSynchronousMode = false;
 };
