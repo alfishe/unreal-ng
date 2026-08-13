@@ -175,7 +175,10 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
 
                         // Keyboard injection commands
                         {"key", &CLIProcessor::HandleKey},
-                        {"keyboard", &CLIProcessor::HandleKey}};
+                        {"keyboard", &CLIProcessor::HandleKey},
+                        
+                        // Videowall commands
+                        {"videowall", &CLIProcessor::HandleVideowall}};
 }
 
 void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& command)

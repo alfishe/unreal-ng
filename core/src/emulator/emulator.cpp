@@ -928,7 +928,6 @@ bool Emulator::LoadSnapshot(const std::string& path)
     // Resume execution
     if (wasRunning)
     {
-        // TODO: uncomment for the release
         Resume();
     }
 

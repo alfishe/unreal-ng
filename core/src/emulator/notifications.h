@@ -113,3 +113,29 @@ public:
         return static_cast<char>('A' + (_driveId & 0x03));
     }
 };
+
+/// Payload for requesting single sync mode in videowall
+/// Example: messageCenter.Post(NC_VIDEOWALL_SINGLE_SYNC_MODE, new VideowallSyncModePayload(emulatorId, true));
+class VideowallSyncModePayload : public MessagePayload
+{
+public:
+    unreal::UUID _emulatorId;
+    bool _enable;
+
+public:
+    VideowallSyncModePayload(const unreal::UUID& emulatorId, bool enable)
+        : MessagePayload()
+        , _emulatorId(emulatorId)
+        , _enable(enable)
+    {
+    }
+    
+    VideowallSyncModePayload(const std::string& emulatorId, bool enable)
+        : MessagePayload()
+        , _emulatorId(emulatorId.empty() ? unreal::UUID() : unreal::UUID(emulatorId))
+        , _enable(enable)
+    {
+    }
+    
+    virtual ~VideowallSyncModePayload() = default;
+};

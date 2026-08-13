@@ -11,6 +11,7 @@
 #include <emulator/video/screen.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
+#include "../../../automation.h"
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/disassembler/z80disasm.h>
@@ -78,10 +79,18 @@ public:
 
         lua.set_function("emu_get_selected", []() -> Emulator* {
             auto* mgr = EmulatorManager::GetInstance();
-            std::string selectedId = mgr->GetSelectedEmulatorId();
-            if (selectedId.empty()) return nullptr;
-            auto emu = mgr->GetEmulator(selectedId);
-            return emu.get();
+            if (mgr) {
+                std::string id = mgr->GetSelectedEmulatorId();
+                if (!id.empty()) {
+                    return mgr->GetEmulator(id).get();
+                }
+            }
+            return nullptr;
+        });
+
+        lua.set_function("videowall_singlesync", [](bool enable, sol::optional<std::string> emulatorId) -> bool {
+            std::string id = emulatorId.value_or("");
+            return Automation::GetInstance().SetVideowallSingleSyncMode(enable, id);
         });
 
         // Register access - requires emulator instance
