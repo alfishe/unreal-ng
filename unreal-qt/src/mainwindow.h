@@ -96,6 +96,8 @@ private slots:
     void handleLogWindowToggled(bool visible);
     void handleIntParametersRequested();
     void handleAudioSettingsRequested();
+    void handleOverscanModeToggled(bool enabled);
+    void handleViewportChanged(int presetIndex);
 #ifdef ENABLE_RECORDING
     void handleVideoRecordingRequested();
     void handleQuickRecord(const QString& presetName);

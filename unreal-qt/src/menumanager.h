@@ -70,6 +70,8 @@ signals:
     void debuggerToggled(bool visible);
     void logWindowToggled(bool visible);
     void fullScreenToggled();
+    void overscanModeToggled(bool enabled);
+    void viewportChanged(int presetIndex);
 
     // Tools signals
     void intParametersRequested();
@@ -130,6 +132,15 @@ private:
     QAction* _zoomInAction;
     QAction* _zoomOutAction;
     QAction* _zoomResetAction;
+
+    // Overscan Menu Actions (Pentagon only)
+    QAction* _overscanAction;
+    QMenu* _viewportMenu;
+    QActionGroup* _viewportGroup;
+    QAction* _viewportFullOverscanAction;
+    QAction* _viewportSymmetricAction;
+    QAction* _viewportStandardAction;
+    QAction* _viewportScreenOnlyAction;
 
     // Run Menu Actions
     QAction* _startAction;

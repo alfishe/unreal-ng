@@ -326,17 +326,21 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     /// Note!: all timings are in t-states, although raster descriptor has pixels as UOM. So recalculation is required
     const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
 
+    // For M_P384 overscan mode, use Pentagon timing for all calculations
+    // Only the framebuffer size differs - timing must be identical to Pentagon
+    const RasterDescriptor& timingDescriptor = (_mode == M_P384) ? rasterDescriptors[M_PENTAGON128K] : rasterDescriptor;
+
     /// region <Config values>
     _rasterState.configFrameDuration = _context->config.frame;
     /// endregion </Config values>
 
     /// region <Frame timings>
 
-    _rasterState.pixelsPerLine = rasterDescriptor.pixelsPerLine;
+    _rasterState.pixelsPerLine = timingDescriptor.pixelsPerLine;
     _rasterState.tstatesPerLine = _rasterState.pixelsPerLine / _rasterState.pixelsPerTState;
     _rasterState.maxFrameTiming =
         _rasterState.tstatesPerLine *
-        (rasterDescriptor.vSyncLines + rasterDescriptor.vBlankLines + rasterDescriptor.fullFrameHeight);
+        (timingDescriptor.vSyncLines + timingDescriptor.vBlankLines + timingDescriptor.fullFrameHeight);
 
     /// endregion </Frame timings>
 
@@ -345,24 +349,24 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     // Invisible blank area on top
     _rasterState.blankAreaStart = 0;
     _rasterState.blankAreaEnd =
-        _rasterState.tstatesPerLine * (rasterDescriptor.vSyncLines + rasterDescriptor.vBlankLines) - 1;
+        _rasterState.tstatesPerLine * (timingDescriptor.vSyncLines + timingDescriptor.vBlankLines) - 1;
 
     // Top border
     _rasterState.topBorderAreaStart = _rasterState.blankAreaEnd + 1;
     _rasterState.topBorderAreaEnd =
-        _rasterState.topBorderAreaStart + _rasterState.tstatesPerLine * rasterDescriptor.screenOffsetTop - 1;
+        _rasterState.topBorderAreaStart + _rasterState.tstatesPerLine * timingDescriptor.screenOffsetTop - 1;
 
     // Screen + side borders
     _rasterState.screenAreaStart = _rasterState.topBorderAreaEnd + 1;
     _rasterState.screenAreaEnd =
-        _rasterState.screenAreaStart + _rasterState.tstatesPerLine * rasterDescriptor.screenHeight - 1;
+        _rasterState.screenAreaStart + _rasterState.tstatesPerLine * timingDescriptor.screenHeight - 1;
 
     // Bottom border
     _rasterState.bottomBorderAreaStart = _rasterState.screenAreaEnd + 1;
     _rasterState.bottomBorderAreaEnd =
         _rasterState.bottomBorderAreaStart +
         _rasterState.tstatesPerLine *
-            (rasterDescriptor.fullFrameHeight - rasterDescriptor.screenHeight - rasterDescriptor.screenOffsetTop) -
+            (timingDescriptor.fullFrameHeight - timingDescriptor.screenHeight - timingDescriptor.screenOffsetTop) -
         1;
 
     /// endregion </Vertical timings>
@@ -371,20 +375,20 @@ void Screen::SetVideoMode(VideoModeEnum mode)
 
     _rasterState.blankLineAreaStart = 0;
     _rasterState.blankLineAreaEnd =
-        ((rasterDescriptor.hSyncPixels + rasterDescriptor.hBlankPixels) / _rasterState.pixelsPerTState) - 1;
+        ((timingDescriptor.hSyncPixels + timingDescriptor.hBlankPixels) / _rasterState.pixelsPerTState) - 1;
 
     _rasterState.leftBorderAreaStart = _rasterState.blankLineAreaEnd + 1;
     _rasterState.leftBorderAreaEnd =
-        _rasterState.leftBorderAreaStart + (rasterDescriptor.screenOffsetLeft / _rasterState.pixelsPerTState) - 1;
+        _rasterState.leftBorderAreaStart + (timingDescriptor.screenOffsetLeft / _rasterState.pixelsPerTState) - 1;
 
     _rasterState.screenLineAreaStart = _rasterState.leftBorderAreaEnd + 1;
     _rasterState.screenLineAreaEnd =
-        _rasterState.screenLineAreaStart + (rasterDescriptor.screenWidth / _rasterState.pixelsPerTState) - 1;
+        _rasterState.screenLineAreaStart + (timingDescriptor.screenWidth / _rasterState.pixelsPerTState) - 1;
 
     _rasterState.rightBorderAreaStart = _rasterState.screenLineAreaEnd + 1;
     _rasterState.rightBorderAreaEnd =
         _rasterState.rightBorderAreaStart +
-        ((rasterDescriptor.fullFrameWidth - rasterDescriptor.screenOffsetLeft - rasterDescriptor.screenWidth) /
+        ((timingDescriptor.fullFrameWidth - timingDescriptor.screenOffsetLeft - timingDescriptor.screenWidth) /
          _rasterState.pixelsPerTState) -
         1;
 
@@ -401,6 +405,9 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     {
         case M_PENTAGON128K:
         case M_PMC:
+        case M_P16:
+        case M_P384:  // Pentagon overscan - same ULA behavior as standard Pentagon
+        case M_PHR:
             _rasterState.borderUpdateTStates = 1;
             _rasterState.contentionEnabled = false;
             _rasterState.fetchType = ULA_DISCRETE_LOGIC;
@@ -587,6 +594,10 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         case M_ZX48:
         case M_ZX128:
         case M_PENTAGON128K:
+        case M_PMC:
+        case M_P16:
+        case M_P384:  // Pentagon 384x304 overscan mode
+        case M_PHR:
             break;
         default:
             MLOGWARNING("AllocateFramebuffer: Unknown video mode");
@@ -681,6 +692,30 @@ void Screen::GetRGBAPalette16(uint32_t* colors)
 }
 
 /// endregion </Framebuffer related>
+
+/// region <Display viewport>
+
+void Screen::SetDisplayViewport(const DisplayViewport& viewport)
+{
+    _displayViewport = viewport;
+}
+
+const DisplayViewport& Screen::GetDisplayViewport() const
+{
+    return _displayViewport;
+}
+
+uint16_t Screen::GetDisplayWidth() const
+{
+    return _displayViewport.GetDisplayWidth(_framebuffer.width);
+}
+
+uint16_t Screen::GetDisplayHeight() const
+{
+    return _displayViewport.GetDisplayHeight(_framebuffer.height);
+}
+
+/// endregion </Display viewport>
 
 std::string Screen::GetVideoModeName(VideoModeEnum mode)
 {

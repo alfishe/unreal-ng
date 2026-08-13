@@ -82,11 +82,21 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
 #if QT_VERSION >= QT_VERSION_CHECK(5, 13, 0)
         painter.setRenderHint(QPainter::LosslessImageRendering);
 #endif
-        int newWidth = event->rect().width();
-        int newHeight = event->rect().height();
+        // Calculate source rectangle with optional viewport cropping
+        QRectF sourceRect = devicePixelsRect;
+        if (_hasViewport)
+        {
+            // Apply viewport cropping to source rectangle
+            sourceRect = QRectF(
+                _displayViewport.cropLeft,
+                _displayViewport.cropTop,
+                devicePixelsRect.width() - _displayViewport.cropLeft - _displayViewport.cropRight,
+                devicePixelsRect.height() - _displayViewport.cropTop - _displayViewport.cropBottom
+            );
+        }
 
         // Render the ZX Spectrum screen directly into the event rect
-        painter.drawImage(event->rect(), *devicePixels, devicePixelsRect);
+        painter.drawImage(event->rect(), *devicePixels, sourceRect);
     }
 }
 

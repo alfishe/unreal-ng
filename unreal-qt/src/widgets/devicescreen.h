@@ -5,6 +5,8 @@
 #include <QWidget>
 #include <memory>
 
+#include "emulator/video/screen.h"  // For DisplayViewport
+
 class Emulator;  // Forward declaration
 
 namespace Ui
@@ -27,6 +29,12 @@ public:
 public:
     QSize sizeHint() const override
     {
+        if (_hasViewport && devicePixels)
+        {
+            int w = devicePixels->width() - _displayViewport.cropLeft - _displayViewport.cropRight;
+            int h = devicePixels->height() - _displayViewport.cropTop - _displayViewport.cropBottom;
+            return QSize(w, h);
+        }
         return QSize(352, 288);
     }
 
@@ -40,6 +48,29 @@ public:
     void setEmulator(std::shared_ptr<Emulator> emulator)
     {
         _emulator = emulator;
+    }
+
+    void setDisplayViewport(const DisplayViewport& viewport)
+    {
+        _displayViewport = viewport;
+        _hasViewport = true;
+
+        // Update aspect ratio for viewport dimensions
+        if (devicePixels)
+        {
+            int w = devicePixels->width() - viewport.cropLeft - viewport.cropRight;
+            int h = devicePixels->height() - viewport.cropTop - viewport.cropBottom;
+            if (h > 0)
+                ratio = static_cast<float>(w) / static_cast<float>(h);
+        }
+
+        update();  // Trigger repaint with new viewport
+    }
+
+    void clearDisplayViewport()
+    {
+        _hasViewport = false;
+        update();
     }
 
 protected:
@@ -63,6 +94,10 @@ private:
 
     std::shared_ptr<Emulator> _emulator = nullptr;  // Reference to emulator for UUID tagging
     bool _isShuttingDown = false;  // Flag to block refreshes during shutdown
+
+    // Viewport cropping for overscan mode
+    DisplayViewport _displayViewport;
+    bool _hasViewport = false;
 };
 
 #endif  // DEVICESCREEN_H
