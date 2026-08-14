@@ -64,7 +64,10 @@ TEST_F(Tape_Test, generateBitstream)
 
         // Pause
         3500000};
-    constexpr size_t referenceDuration = 3500000 + 58992;
+    // Pilot: 10 pulses x 2168 = 21680; sync: 667 + 735 = 1402;
+    // data: 2 edges per bit (0x00,0x01,0x02,0xFF) = 71820; pause: 3500000.
+    // Total equals the sum of the edgePulseTimings reference below.
+    constexpr size_t referenceDuration = 3500000 + 94902;
 
     TapeBlock tapeBlock;
     tapeBlock.type = TapeBlockFlagEnum::TAP_BLOCK_FLAG_HEADER;

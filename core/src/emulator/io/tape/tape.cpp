@@ -381,7 +381,7 @@ size_t Tape::generateBitstream(TapeBlock& tapeBlock, uint16_t pilotHalfPeriod_tS
 
     // Calculate collection size to fit all edge time intervals
     size_t resultSize = 0;
-    resultSize += (pilotLength_periods * 2);  // Each pilot signal period is encoded as 2 edges
+    resultSize += pilotLength_periods;        // Pilot length is specified in pulses (half-periods), one edge each
     resultSize += 2;                          // Two sync pulses at the end of pilot
     resultSize += (len * 8 * 2);              // Each byte split to bits and each bit encoded as 2 edges
     if (pause_ms > 0)
@@ -393,8 +393,10 @@ size_t Tape::generateBitstream(TapeBlock& tapeBlock, uint16_t pilotHalfPeriod_tS
 
     if (pilotLength_periods > 0)
     {
-        // Required number of pilot half-periods (2 half-periods per period)
-        for (size_t i = 0; i < pilotLength_periods * 2; i++)
+        // Pilot length is specified in pulses (half-periods), matching the TAP
+        // convention (header: 8063-8064 pulses, data: ~3220 pulses). Emitting
+        // 2x here would double the real pilot duration (~10s instead of ~5s).
+        for (size_t i = 0; i < pilotLength_periods; i++)
         {
             tapeBlock.edgePulseTimings.push_back(pilotHalfPeriod_tStates);
 
@@ -421,10 +423,12 @@ size_t Tape::generateBitstream(TapeBlock& tapeBlock, uint16_t pilotHalfPeriod_tS
             bool bit = (tapeBlock.data[i] & bitMask) != 0;
             uint16_t bitEncoded = bit ? oneEncodingHalfPeriod_tStates : zeroEncodingHalfPeriod_tState;
 
-            // Each bit is encoded by two edges
+            // Each bit is encoded by two edges; count both so
+            // totalBitstreamLength equals the sum of edgePulseTimings
             tapeBlock.edgePulseTimings.push_back(bitEncoded);
             tapeBlock.edgePulseTimings.push_back(bitEncoded);
 
+            result += bitEncoded;
             result += bitEncoded;
         }
     }

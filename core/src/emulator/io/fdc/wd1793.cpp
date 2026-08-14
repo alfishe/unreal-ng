@@ -2176,7 +2176,13 @@ void WD1793::processWriteSector()
 {
     _bytesToWrite = _sectorSize;
 
-    // Request the first byte from the host by raising DRQ
+    // Request the first byte from the host by raising DRQ.
+    // Reset _drq_served BEFORE raising DRQ: unlike reads (where the FDC supplies
+    // the first byte), a write requires the host to service this DRQ before the
+    // first byte cell passes. Without this reset, the stale _drq_served == true
+    // from startType2Command() makes the first byte cell consume the stale Data
+    // Register value, shifting all written data by one byte.
+    _drq_served = false;
     raiseDrq();
     _statusRegister |= WDS_DRQ;
 
@@ -2614,8 +2620,9 @@ void WD1793::processEndCommand()
         }
         
         // Emit notification if disk is now dirty
+        // _context->pEmulator can be null in headless/unit-test contexts
         DiskImage* diskImage = _selectedDrive ? _selectedDrive->getDiskImage() : nullptr;
-        if (diskImage && diskImage->isDirty())
+        if (diskImage && diskImage->isDirty() && _context && _context->pEmulator)
         {
             // Emit pending write notification
             std::string emulatorId = _context->pEmulator->GetId();
