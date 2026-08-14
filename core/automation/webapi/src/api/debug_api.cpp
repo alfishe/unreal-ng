@@ -971,11 +971,23 @@ void EmulatorAPI::getBreakpointStatus(const HttpRequestPtr& req, std::function<v
     }
     
     BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-    
+    if (!bpm)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Breakpoint manager not available";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     Json::Value ret;
     ret["is_paused"] = emulator->IsPaused();
-    ret["breakpoints_count"] = bpm ? static_cast<Json::UInt>(bpm->GetBreakpointsCount()) : 0u;
-    
+    ret["breakpoints_count"] = static_cast<Json::UInt>(bpm->GetBreakpointsCount());
+
     // Last triggered breakpoint info (using centralized method)
     auto bpInfo = bpm->GetLastTriggeredBreakpointInfo();
     if (bpInfo.valid)
