@@ -22,6 +22,23 @@ class LuaEmulator
 protected:
     Emulator* _emulator = nullptr;
     sol::state* _lua = nullptr;
+
+    /// Resolve the emulator to operate on: the explicitly bound instance if set,
+    /// otherwise the currently selected emulator (same source the REST API uses).
+    Emulator* effectiveEmulator() const
+    {
+        if (_emulator)
+            return _emulator;
+
+        auto* mgr = EmulatorManager::GetInstance();
+        if (mgr)
+        {
+            std::string id = mgr->GetSelectedEmulatorId();
+            if (!id.empty())
+                return mgr->GetEmulator(id).get();
+        }
+        return nullptr;
+    }
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -142,11 +159,13 @@ public:
             return z80 ? z80->iy : 0;
         });
 
-        lua.set_function("get_registers", [this]() -> sol::table {
-            sol::state_view lua_view(*_lua);
+        lua.set_function("get_registers", [this](sol::this_state s) -> sol::table {
+            // Use the calling Lua state directly (safe even if _lua was never wired)
+            sol::state_view lua_view(s);
             sol::table regs = lua_view.create_table();
-            if (_emulator) {
-                Z80State* z80 = _emulator->GetZ80State();
+            Emulator* emulator = effectiveEmulator();
+            if (emulator) {
+                Z80State* z80 = emulator->GetZ80State();
                 if (z80) {
                     regs["pc"] = z80->pc;
                     regs["sp"] = z80->sp;
