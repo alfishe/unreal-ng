@@ -884,6 +884,17 @@ bool Emulator::LoadSnapshot(const std::string& path)
         wasRunning = true;
     }
 
+    // Pause() only sets a flag - the emulation thread finishes its current frame before
+    // parking in MainLoop's pause loop. Wait for confirmation so the loader never resets
+    // CPU/memory/screen state while a frame is still executing (this race can corrupt the
+    // framebuffer when a WebAPI 'pause' is immediately followed by 'snapshot/load').
+    // The wait may time out legitimately when paused inside a frame (breakpoint) or in
+    // synchronous test mode - proceed anyway in those cases.
+    if (_mainloop && IsRunning())
+    {
+        _mainloop->WaitForPauseConfirmation(250);
+    }
+
     if (ext == "sna")
     {
         /// region <Load SNA snapshot>
@@ -1326,6 +1337,11 @@ void Emulator::RunFrame(bool skipBreakpoints)
     if (IsRunning() && !IsPaused())
     {
         Pause();  // Broadcast pause so debugger UI updates
+
+        // Wait for the emulation thread to park - otherwise we would step the Z80
+        // concurrently with the frame MainLoop is still finishing
+        if (_mainloop)
+            _mainloop->WaitForPauseConfirmation(250);
     }
 
     const CONFIG& config = _context->config;
@@ -1433,6 +1449,11 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
     if (IsRunning() && !IsPaused())
     {
         Pause();  // Broadcast pause so debugger UI updates
+
+        // Wait for the emulation thread to park - otherwise we would step the Z80
+        // concurrently with the frame MainLoop is still finishing
+        if (_mainloop)
+            _mainloop->WaitForPauseConfirmation(250);
     }
 
     const CONFIG& config = _context->config;

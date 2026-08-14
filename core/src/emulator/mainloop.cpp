@@ -166,6 +166,17 @@ void MainLoop::Run(volatile bool& stopRequested)
     _isRunning = false;
 }
 
+bool MainLoop::WaitForPauseConfirmation(uint32_t timeoutMs)
+{
+    // Fast path: not running at all means no frame can be mid-flight
+    if (!_isRunning)
+        return true;
+
+    std::unique_lock<std::mutex> lock(_pauseMutex);
+    return _pauseCV.wait_for(lock, std::chrono::milliseconds(timeoutMs),
+                             [this]() { return _isPausedConfirmed.load(std::memory_order_acquire); });
+}
+
 void MainLoop::Stop()
 {
     _stopRequested = true;

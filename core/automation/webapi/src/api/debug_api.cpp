@@ -465,7 +465,7 @@ void EmulatorAPI::runFrame(const HttpRequestPtr& req, std::function<void(const H
 
 /// @brief POST /api/v1/emulator/{id}/run_frames
 /// @brief Run N complete video frames
-/// @brief Request body: {"count": N}
+/// @brief Request body: {"count": N} (alias "frames" also accepted; other keys are rejected with 400)
 void EmulatorAPI::runFrames(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                             const std::string& id) const
 {
@@ -475,7 +475,34 @@ void EmulatorAPI::runFrames(const HttpRequestPtr& req, std::function<void(const 
     try
     {
         auto json = req->getJsonObject();
-        unsigned count = json && json->isMember("count") ? (*json)["count"].asUInt() : 1;
+        unsigned count = 1;
+        if (json)
+        {
+            // Accept both "count" (documented) and "frames" (common guess) keys
+            if (json->isMember("count"))
+            {
+                count = (*json)["count"].asUInt();
+            }
+            else if (json->isMember("frames"))
+            {
+                count = (*json)["frames"].asUInt();
+            }
+            else if (!json->getMemberNames().empty())
+            {
+                // Body present but neither key found - reject instead of silently running 1 frame
+                // (silent default caused "blank screen" confusion: users passed a mistyped key,
+                // only 1 frame ran, and the loaded program had not redrawn the screen yet)
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = "Missing 'count' parameter. Expected body: {\"count\": N} (alias: \"frames\")";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                addCorsHeaders(resp);
+                callback(resp);
+                return;
+            }
+        }
         if (count < 1) count = 1;
         if (count > 10000) count = 10000; // Safety limit
         

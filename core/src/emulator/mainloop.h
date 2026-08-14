@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <chrono>
 
 #include "3rdparty/message-center/eventqueue.h"
 #include "common/logger.h"
@@ -46,6 +47,18 @@ public:
 public:
     void Run(volatile bool& exit);
     void Stop();
+
+    /// @brief Returns true when the emulation thread has actually parked in the pause loop
+    /// (Emulator::Pause() only sets a flag; the current frame still finishes executing)
+    bool IsPauseConfirmed() const { return _isPausedConfirmed.load(std::memory_order_acquire); }
+
+    /// @brief Block until the emulation thread confirms it parked in the pause loop
+    /// @param timeoutMs Maximum time to wait, in milliseconds
+    /// @return true if pause was confirmed within the timeout
+    /// @note Never call from the emulation thread itself - it would deadlock until timeout.
+    ///       May time out legitimately when execution is paused inside a frame
+    ///       (e.g. breakpoint hit), since the pause loop is only reached at frame end.
+    bool WaitForPauseConfirmation(uint32_t timeoutMs);
 
 protected:
     void RunFrame();
