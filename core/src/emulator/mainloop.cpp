@@ -256,6 +256,7 @@ void MainLoop::OnCPUStep()
     _context->pScreen->UpdateScreen();  // Trigger screen update after each CPU command cycle
 
     _context->pBetaDisk->handleStep();
+    _context->pTape->handleStep();  // Process tape audio each step
     _context->pSoundManager->handleStep();
 }
 
