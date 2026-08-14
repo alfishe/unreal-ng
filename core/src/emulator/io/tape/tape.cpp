@@ -4,6 +4,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/soundmanager.h"
+#include "emulator/spectrumconstants.h"
 #include "loaders/tape/loader_tap.h"
 #include "stdafx.h"
 
@@ -27,6 +28,9 @@ void Tape::startTape()
     _tapeStarted = true;
     _muteEAR = true;
     _lastTapeBit = false;
+    _framesSinceLastRead = 0;
+    _initialErrNr = _context->pMemory->DirectReadFromZ80Memory(SystemVariables48k::ERR_NR);
+    MLOGINFO("Tape started, initial ERR_NR=0x%02X", _initialErrNr);
 }
 
 void Tape::stopTape()
@@ -81,6 +85,9 @@ uint8_t Tape::handlePortIn()
 
     if (_tapeStarted)
     {
+        // Reset frame counter - loader is actively reading
+        _framesSinceLastRead = 0;
+
         // Use monotonic counter for tape timing (t_states + t)
         uint64_t clockCount = _context->emulatorState.t_states + cpu.t;
 
@@ -119,7 +126,9 @@ uint8_t Tape::handlePortIn()
 
         // If we just executed instruction at $0562 IN A,($FE)
         // And our PC is currently on $0564 RRA (which has opcode 0x1F)
-        if (cpu.pc == 0x0564 && memory.IsCurrentROM48k() && memory.GetPhysicalAddressForZ80Page(0)[0x0564] == 0x1F)
+        // Check ROM content directly - works for both 48K and 128K modes
+        uint8_t* romBank = memory.GetPhysicalAddressForZ80Page(0);
+        if (cpu.pc == 0x0564 && romBank && romBank[0x0564] == 0x1F)
         {
             LoaderTAP loader(_context);
 
@@ -215,7 +224,8 @@ void Tape::handleStep()
     if (!_tapeStarted)
         return;
 
-    const uint32_t tState = _context->pCore->GetZ80()->t;
+    Z80& cpu = *_context->pCore->GetZ80();
+    const uint32_t tState = cpu.t;
     uint64_t clockCount = _context->emulatorState.t_states + tState;
 
     bool tapeBit = getTapeStreamBit(clockCount);
@@ -234,8 +244,28 @@ void Tape::handleStep()
 
 void Tape::handleFrameEnd()
 {
-    // Fetch absolute timing (unused in this function)
-    [[maybe_unused]] uint64_t clockCount = _context->emulatorState.t_states + _context->pCore->GetZ80()->t;
+    if (!_tapeStarted)
+        return;
+
+    // Check ERR_NR - ROM sets error code on break/error (immediate detection)
+    // System variables are in RAM at same addresses regardless of which ROM is paged
+    uint8_t errNr = _context->pMemory->DirectReadFromZ80Memory(SystemVariables48k::ERR_NR);
+    if (errNr != _initialErrNr)
+    {
+        MLOGINFO("Tape stopped: ERR_NR changed from 0x%02X to 0x%02X", _initialErrNr, errNr);
+        stopTape();
+        return;
+    }
+
+    // Track frames since last tape read (backup detection for load complete)
+    // 128K mode has longer gaps between reads due to ROM switching
+    _framesSinceLastRead++;
+
+    // 150 frames (~3 seconds) without reads = loader exited
+    if (_framesSinceLastRead > 150)
+    {
+        stopTape();
+    }
 }
 
 /// endregion </Emulation events>
