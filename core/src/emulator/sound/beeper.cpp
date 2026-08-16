@@ -13,10 +13,12 @@ Beeper::Beeper(EmulatorContext* context, size_t clockRate, size_t samplingRate, 
     , _samplingRate(samplingRate)
 {
     // Allocate blip_buf accumulators for left and right channels.
-    // Size must accommodate SAMPLES_PER_FRAME plus a small margin
+    // Size must accommodate the largest possible frame (long-frame machines
+    // like Pentagon produce >SAMPLES_PER_FRAME samples; speed multipliers
+    // scale the frame duration further) plus a small margin
     // for rounding at frame boundaries.
-    _blipL = blip_new(SAMPLES_PER_FRAME + 64);
-    _blipR = blip_new(SAMPLES_PER_FRAME + 64);
+    _blipL = blip_new(MAX_SAMPLES_PER_FRAME + 64);
+    _blipR = blip_new(MAX_SAMPLES_PER_FRAME + 64);
 
     // Set input clock rate → output sample rate conversion.
     // blip_buf will internally compute the fractional ratio and use

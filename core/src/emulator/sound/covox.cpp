@@ -1,5 +1,8 @@
 #include "covox.h"
 
+#include <algorithm>
+#include <cmath>
+
 #include "3rdparty/blip_buf/blip_buf.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/cpu/z80.h"
@@ -11,8 +14,8 @@ Covox::Covox(EmulatorContext* context)
     : _context(context)
 {
     // Allocate blip_buf accumulators for stereo output
-    _blipL = blip_new(SAMPLES_PER_FRAME + 64);
-    _blipR = blip_new(SAMPLES_PER_FRAME + 64);
+    _blipL = blip_new(MAX_SAMPLES_PER_FRAME + 64);
+    _blipR = blip_new(MAX_SAMPLES_PER_FRAME + 64);
 
     // Set input clock rate → output sample rate conversion
     blip_set_rates(_blipL, static_cast<double>(CPU_CLOCK_RATE), static_cast<double>(AUDIO_SAMPLING_RATE));
@@ -67,20 +70,28 @@ void Covox::handleFrameEnd()
     blip_end_frame(_blipL, frameDuration);
     blip_end_frame(_blipR, frameDuration);
 
+    // Actual samples for this frame, derived from the machine's frame length
+    // (Pentagon: 903, ZX48/128: 881) - must match what SoundManager mixes.
+    // Reading a hardcoded SAMPLES_PER_FRAME (882) leaves a stale tail that the
+    // mixer would consume every frame.
+    int samplesThisFrame = static_cast<int>(
+        std::round(frameDuration * (double)AUDIO_SAMPLING_RATE / (double)CPU_CLOCK_RATE));
+    samplesThisFrame = std::clamp(samplesThisFrame, 0, (int)MAX_SAMPLES_PER_FRAME);
+
     // Read out band-limited samples into the interleaved stereo buffer
-    int samplesL = blip_read_samples(_blipL, &_buffer[0], SAMPLES_PER_FRAME, 1 /* stereo stride */);
-    int samplesR = blip_read_samples(_blipR, &_buffer[1], SAMPLES_PER_FRAME, 1 /* stereo stride */);
+    int samplesL = blip_read_samples(_blipL, &_buffer[0], samplesThisFrame, 1 /* stereo stride */);
+    int samplesR = blip_read_samples(_blipR, &_buffer[1], samplesThisFrame, 1 /* stereo stride */);
 
     // Zero-fill any shortfall (defensive)
-    for (int i = samplesL; i < SAMPLES_PER_FRAME; i++)
+    for (int i = samplesL; i < samplesThisFrame; i++)
         _buffer[i * 2] = 0;
-    for (int i = samplesR; i < SAMPLES_PER_FRAME; i++)
+    for (int i = samplesR; i < samplesThisFrame; i++)
         _buffer[i * 2 + 1] = 0;
 
     // Optional DC offset removal (high-pass filter)
     if (_dcRemovalEnabled)
     {
-        for (int i = 0; i < SAMPLES_PER_FRAME; i++)
+        for (int i = 0; i < samplesThisFrame; i++)
         {
             float l = static_cast<float>(_buffer[i * 2]);
             float r = static_cast<float>(_buffer[i * 2 + 1]);
