@@ -707,6 +707,20 @@ void Emulator::Pause(bool broadcast)
     // leading to a crash when RemoveEmulator() destroys memory while thread is still running.
     // MainLoop::Run() will detect this via Emulator::IsPaused() check.
 
+    // Wait until the emulation thread actually parks in MainLoop's pause loop.
+    // Setting the flag alone is not enough: MainLoop only checks the pause flag
+    // between frames, so the in-flight frame keeps executing Z80 instructions
+    // (and writing to memory) after this method would otherwise have returned.
+    // Callers (tests, shared-memory migration, snapshot loading) rely on Pause()
+    // meaning "no more emulated writes". WaitForPauseConfirmation returns
+    // immediately when called from the emulation thread itself (breakpoint
+    // handlers pause mid-frame) and may time out legitimately when execution
+    // is already blocked inside a frame - proceed anyway in those cases.
+    if (_mainloop && _isRunning)
+    {
+        _mainloop->WaitForPauseConfirmation(500);
+    }
+
     // Update state and broadcast only if requested
     // broadcast=false is used for internal operations like shared memory migration
     // where we don't want to trigger UI updates during the brief pause

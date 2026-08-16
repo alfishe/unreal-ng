@@ -71,6 +71,7 @@ void MainLoop::Run(volatile bool& stopRequested)
 
     _stopRequested = false;
     _isRunning = true;
+    _runThreadId.store(std::this_thread::get_id(), std::memory_order_release);
 
     // Subscribe to audio buffer state event(s)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
@@ -197,6 +198,12 @@ bool MainLoop::WaitForPauseConfirmation(uint32_t timeoutMs)
 {
     // Fast path: not running at all means no frame can be mid-flight
     if (!_isRunning)
+        return true;
+
+    // Called from the emulation thread itself (e.g. breakpoint handler pausing
+    // mid-frame): no frame can be executing concurrently with the caller, and
+    // waiting here would only stall until the timeout. Return immediately.
+    if (_runThreadId.load(std::memory_order_acquire) == std::this_thread::get_id())
         return true;
 
     std::unique_lock<std::mutex> lock(_pauseMutex);
