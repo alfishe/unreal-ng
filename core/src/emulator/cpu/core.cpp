@@ -624,6 +624,17 @@ void Core::AdjustFrameCounters()
     // Re-adjust Core frame t-state counter and interrupt position
     _z80->t -= scaledFrame;
     _z80->eipos -= scaledFrame;
+
+    // Drop any stale INT request latched near the frame edge. The ULA INT line
+    // is only asserted inside [intstart, intstart+intlen); ProcessInterrupts
+    // clears int_pending via "t >= int_end", but when an instruction (typically
+    // the INT acceptance itself) carries t across the frame boundary that clear
+    // never fires. The stale flag would then deliver a SECOND interrupt in the
+    // new frame as soon as the program executes EI (observed as 1.5-2x music
+    // speedup in EI:HALT-synced IM2 demos, e.g. Insult megademo). Windows that
+    // legitimately wrap (int_end >= frame) are re-armed at the start of the
+    // next Z80FrameCycle, so unconditional clearing here is hardware-correct.
+    _z80->int_pending = false;
 }
 
 void Core::UpdateScreen()
