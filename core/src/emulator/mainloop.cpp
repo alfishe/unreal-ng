@@ -325,6 +325,11 @@ void MainLoop::OnFrameEnd()
         _context->pScreen->RenderFrameBatch();
     }
 
+    // Latch the completed frame into the presentation buffer (tear-free copy
+    // for GUI display and capture). Must happen after rendering is finished
+    // for both batch and per-t-state (ScreenHQ) modes.
+    _context->pScreen->LatchFramebuffer();
+
     // Basic sanity check for context corruption
     if (_context->config.frame == 0 || _context->config.frame > 100000)
         return;  // Invalid frame timing suggests corruption

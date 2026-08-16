@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <mutex>
 
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
@@ -468,7 +469,27 @@ protected:
     void AllocateFramebuffer(VideoModeEnum mode);
     void DeallocateFramebuffer();
 
+    // Presentation (latched) framebuffer: a complete-frame snapshot taken at
+    // frame end on the emulation thread. GUI/capture consumers read this copy
+    // instead of the live _framebuffer, which the emulator overwrites
+    // concurrently (the source of mid-frame tearing).
+    uint8_t* _presentBuffer = nullptr;
+    size_t _presentBufferSize = 0;  // Authoritative size for readers; set under _presentMutex
+    std::mutex _presentMutex;
+
 public:
+    /// @brief Latch the completed frame into the presentation buffer.
+    /// Call on the emulation thread at frame end, after rendering is finished.
+    /// Holds _presentMutex only for one SIMD frame copy (~40us for 340x284).
+    void LatchFramebuffer();
+
+    /// @brief Copy the latched (tear-free) frame into a caller-provided buffer.
+    /// Safe to call from any thread.
+    /// @param dst Destination buffer
+    /// @param dstSize Destination size in bytes; must be >= framebuffer size
+    /// @return true if a frame was copied
+    bool CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize);
+
     FramebufferDescriptor& GetFramebufferDescriptor();
     void GetFramebufferData(uint32_t** buffer, size_t* size);
 

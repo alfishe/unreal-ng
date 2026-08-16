@@ -2548,6 +2548,14 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
         {
             auto& framebufferDesc = context->pScreen->GetFramebufferDescriptor();
             deviceScreen->init(framebufferDesc.width, framebufferDesc.height, framebufferDesc.memoryBuffer);
+
+            // Paint from the frame-end latched snapshot instead of the live
+            // framebuffer - prevents mid-frame tearing (emulation thread
+            // overwrites the live buffer while the GUI thread paints it).
+            // deviceScreen->detach() clears this on emulator switch/shutdown.
+            Screen* screen = context->pScreen;
+            deviceScreen->setFrameSource(
+                [screen](uint8_t* dst, size_t dstSize) { return screen->CopyPresentedFramebuffer(dst, dstSize); });
         }
         catch (const std::exception& e)
         {
