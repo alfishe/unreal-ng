@@ -81,7 +81,6 @@ void MainLoop::Run(volatile bool& stopRequested)
     messageCenter.AddObserver(NC_AUDIO_BUFFER_HALF_FULL, observerInstance, callback);
 
     /// region <Info logging>
-    static std::chrono::milliseconds timeout(20);  // Set timeout for audio buffer refresh wait
     uint64_t lastRun = 0;
     [[maybe_unused]] uint64_t betweenIterations = 0;
     /// endregion </Info logging>
@@ -143,14 +142,42 @@ void MainLoop::Run(volatile bool& stopRequested)
 
         if (!config.turbo_mode)
         {
-            // Normal mode: Wait until audio callback requests more data and buffer is about half-full
-            // That means we're in sync between audio and video frames
+            // Normal mode: absolute-deadline frame pacing.
+            // The frame clock is the timing master: each frame is released at
+            // exactly config.frame_duration_us intervals (Pentagon: 20480us =
+            // 48.83 fps; see CalculateFrameDurationUs). wait_until against an
+            // accumulated deadline self-corrects scheduler wake-up latency -
+            // a relative wait_for would add that latency to every period,
+            // slowly draining the audio ring and causing visible speed
+            // rubber-banding when catch-up frames fire.
+            // The audio low-watermark request remains only as rare slip
+            // correction for clock drift between the CPU pacing clock and the
+            // audio DAC crystal: it wakes the loop early, and the deadline is
+            // then re-anchored to 'now' so the 48.83 fps cadence resumes.
+            const std::chrono::microseconds frameDuration(config.frame_duration_us);
+            const auto now = std::chrono::steady_clock::now();
+
+            // (Re)anchor after start, pause, debugger stall, or heavy lag -
+            // never try to "catch up" more than one frame via a stale deadline
+            if (_nextFrameTime < now - frameDuration || _nextFrameTime > now + frameDuration)
+            {
+                _nextFrameTime = now;
+            }
+            _nextFrameTime += frameDuration;
+
             std::unique_lock<std::mutex> lock(_audioBufferMutex);
-            _cv.wait_for(lock, timeout, [this, &stopRequested] {
+            bool audioRequested = _cv.wait_until(lock, _nextFrameTime, [this, &stopRequested] {
                 return _moreAudioDataRequested.load(std::memory_order_acquire) || stopRequested;
             });
             _moreAudioDataRequested.store(false);
             lock.unlock();
+
+            if (audioRequested && !stopRequested)
+            {
+                // Audio device outran us (buffer below watermark) - produce the
+                // next frame now and pace subsequent frames from this moment
+                _nextFrameTime = std::chrono::steady_clock::now();
+            }
         }
         else
         {

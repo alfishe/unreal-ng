@@ -110,13 +110,33 @@ void AppSoundManager::audioDataCallback(ma_device* pDevice, void* pOutput, const
     {
         obj->_ringBuffer.dequeue((int16_t*)pOutput, frameCount * 2);
 
-        // Maintain 50 Hz frame pacing by requesting more audio data from MainLoop
-        // when ring buffer drops below ~2 frames (40ms) of buffered audio.
+        // Request more audio data from MainLoop when the ring buffer drops
+        // below ~2 frames (40ms) of buffered audio.
+        //
+        // Rate-limited to one post per emulated frame duration: this callback
+        // fires every ~5.8ms (256-frame device period), and posting on every
+        // callback while below the watermark piles up stale requests in the
+        // MessageCenter queue. Each stale request delivered after the ring has
+        // refilled releases one extra frame (+20.5ms of audio), permanently
+        // inflating ring occupancy - and ring occupancy IS the A/V offset
+        // (video is presented live, audio is delayed by the ring). Observed as
+        // a constant 100-200ms video-ahead-of-audio skew after startup.
+        // One request per ~4 callbacks (~23ms) keeps at most one request in
+        // flight while preserving refill liveness.
         constexpr size_t lowWatermark = SAMPLES_PER_FRAME * AUDIO_CHANNELS * 2;
+        constexpr uint32_t callbacksPerRequest = 4;
         if (obj->_ringBuffer.getAvailableData() < lowWatermark)
         {
-            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            messageCenter.Post(NC_AUDIO_BUFFER_HALF_FULL);
+            if (obj->_watermarkCallbackCounter == 0)
+            {
+                MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+                messageCenter.Post(NC_AUDIO_BUFFER_HALF_FULL);
+            }
+            obj->_watermarkCallbackCounter = (obj->_watermarkCallbackCounter + 1) % callbacksPerRequest;
+        }
+        else
+        {
+            obj->_watermarkCallbackCounter = 0;
         }
     }
 

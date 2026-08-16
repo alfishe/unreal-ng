@@ -35,6 +35,13 @@ protected:
     std::atomic<bool> _moreAudioDataRequested;
     std::condition_variable _cv;
     std::mutex _audioBufferMutex;
+
+    // Absolute deadline for the next frame (steady clock). Advanced by exactly
+    // one frame duration per iteration so scheduler wake-up latency does not
+    // accumulate into the effective frame period (that accumulation drains the
+    // audio ring to its watermark and causes visible rubber-banding when the
+    // catch-up frames arrive). Zero-initialized = resync on first frame.
+    std::chrono::steady_clock::time_point _nextFrameTime{};
     /// endregion </Fields>
 
     /// region <Constructors / destructors>

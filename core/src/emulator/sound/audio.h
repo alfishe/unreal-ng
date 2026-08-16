@@ -12,6 +12,19 @@ static constexpr const size_t AUDIO_SAMPLES_PER_VIDEO_FRAME = AUDIO_SAMPLING_RAT
 static constexpr const double TSTATES_PER_AUDIO_SAMPLE = (double)CPU_CLOCK_RATE / (double)AUDIO_SAMPLING_RATE;
 static constexpr const double AUDIO_SAMPLE_TSTATE_INCREMENT = (double)AUDIO_SAMPLING_RATE / (double)CPU_CLOCK_RATE;
 
+/// Real-time duration of one emulated frame in microseconds, derived from the
+/// machine's t-states per frame at the base Z80 clock (Pentagon: 71680 t-states
+/// = 20480 us = 48.83 FPS; ZX48/128/Scorpion: 69888 t-states = 19968 us).
+/// Rounded UP: pacing emulation even 1 us faster than the audio produced per
+/// frame makes the playback ring buffer fill up, delaying audio behind video.
+/// Falls back to a 50 Hz frame when t-states per frame is not configured yet.
+static constexpr uint32_t CalculateFrameDurationUs(uint32_t frameTStates)
+{
+    return frameTStates == 0
+        ? 1'000'000u / FRAMES_PER_SECOND
+        : static_cast<uint32_t>((static_cast<uint64_t>(frameTStates) * 1'000'000ULL + CPU_CLOCK_RATE - 1) / CPU_CLOCK_RATE);
+}
+
 static constexpr const int AUDIO_BUFFER_DURATION_MILLISEC = 1000 / FRAMES_PER_SECOND;
 static constexpr const int SAMPLES_PER_FRAME = AUDIO_SAMPLING_RATE / FRAMES_PER_SECOND;   // 882 audio samples per frame @44100
 static constexpr const int MAX_SAMPLES_PER_FRAME = 2048;
