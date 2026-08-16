@@ -56,8 +56,11 @@ TEST_F(VideoUtilsCopy_Test, ExactCopy_TailSizes)
 
 TEST_F(VideoUtilsCopy_Test, ExactCopy_FramebufferSize)
 {
-    // Pentagon presentation framebuffer: 340x284 RGBA (not a multiple of 64)
-    verifyCopy(340 * 284 * 4);
+    // Real presentation framebuffer: 352x288 RGBA = 405504 bytes (all raster
+    // modes share this geometry). A multiple of 64 - pure SIMD iterations, no
+    // scalar tail; the size minus 4 adds a realistic tail on top.
+    verifyCopy(352 * 288 * 4);
+    verifyCopy(352 * 288 * 4 - 4);
 }
 
 /// endregion </VideoUtils::CopyFrameBuffer>

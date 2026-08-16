@@ -71,9 +71,14 @@ a presentation buffer under `_presentMutex`. Consumers call
 `Screen::CopyPresentedFramebuffer(dst, size)` from any thread.
 
 - Copies use `VideoUtils::CopyFrameBuffer` (`core/src/common/video/videoutils.h`):
-  64 B/iteration NEON/SSE2 with a scalar memcpy tail (~40 us for 340x284x4).
-  The mutex is held only for the copy, so the emulation thread is never
-  blocked by GUI paint duration.
+  64 B/iteration NEON/SSE2 with a scalar memcpy tail (~40 us for 352x288x4;
+  all raster modes share this 352x288 geometry). The mutex is held only for
+  the copy, so the emulation thread is never blocked by GUI paint duration.
+- `_presentBufferSize` (set under `_presentMutex` together with the buffer
+  itself) is the authoritative size for cross-thread readers:
+  `_framebuffer.memoryBufferSize` is published outside the lock during
+  mode-switch reallocation and must never be trusted by `LatchFramebuffer()` /
+  `CopyPresentedFramebuffer()` callers.
 - `DeviceScreen` (unreal-qt) pulls via a `FrameCopyFn` set in
   `MainWindow::adoptEmulator` into an owned QImage; the legacy zero-copy path
   remains as fallback when no frame source is set. `detach()` clears the
@@ -130,6 +135,11 @@ length within one sample.
 5. `int_pending` must not survive a frame wrap (except via the explicit
    wrapped-window re-arm in `Z80FrameCycle`).
 6. Audio-hunger posts must stay rate-limited (< 1 per frame duration).
+7. Cross-thread readers of the presentation buffer must validate and copy
+   against `_presentBufferSize` under `_presentMutex`, never against
+   `_framebuffer.memoryBufferSize`.
+8. Sound generators and DSP stages must use the per-frame sample count
+   derived from `config.frame`, never the 50 Hz `SAMPLES_PER_FRAME` constant.
 
 ## Files
 
@@ -150,5 +160,8 @@ length within one sample.
 - `core/tests/emulator/cpu/int_pending_wrap_test.cpp` - stale INT latch
   cleared on wrap, in-window request preserved mid-frame
 - `core/tests/emulator/video/present_latch_test.cpp` - SIMD copy exactness
-  (tail sizes, overrun guard), latch snapshot isolation from live-buffer
-  writes, undersized-destination rejection
+  (tail sizes, overrun guard, real 352x288 framebuffer size), latch snapshot
+  isolation from live-buffer writes, undersized-destination rejection
+- `core/tests/emulator/sound/sound_adaptivity_test.cpp` - per-frame sample
+  counts follow the machine frame length (Pentagon 903, ZX 881, +2A/+3 893,
+  plus hypothetical clone rates) across SoundManager/Beeper/Covox/TurboSound

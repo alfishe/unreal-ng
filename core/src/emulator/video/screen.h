@@ -480,7 +480,7 @@ protected:
 public:
     /// @brief Latch the completed frame into the presentation buffer.
     /// Call on the emulation thread at frame end, after rendering is finished.
-    /// Holds _presentMutex only for one SIMD frame copy (~40us for 340x284).
+    /// Holds _presentMutex only for one SIMD frame copy (~40us for 352x288).
     void LatchFramebuffer();
 
     /// @brief Copy the latched (tear-free) frame into a caller-provided buffer.
