@@ -41,7 +41,7 @@ protected:
             case MM_PENTAGON:
                 config.frame = 71680;
                 config.t_line = 224;
-                config.intstart = 71623;
+                config.intstart = 71635;
                 config.intlen = 32;
                 _screen->SetVideoMode(M_PENTAGON128K);
                 break;
@@ -77,7 +77,7 @@ TEST_F(INTTiming_Test, Pentagon_INTStartCorrect)
 {
     SetupModel(MM_PENTAGON);
     CONFIG& config = _context->config;
-    EXPECT_EQ(config.intstart, 71623u);
+    EXPECT_EQ(config.intstart, 71635u);
 }
 
 TEST_F(INTTiming_Test, Pentagon_INTLengthCorrect)
@@ -87,23 +87,30 @@ TEST_F(INTTiming_Test, Pentagon_INTLengthCorrect)
     EXPECT_EQ(config.intlen, 32u);
 }
 
-TEST_F(INTTiming_Test, Pentagon_INTFiresAtCorrectPosition)
+TEST_F(INTTiming_Test, Pentagon_INTAcceptanceIsStrictlyAfterStart)
 {
     SetupModel(MM_PENTAGON);
     CONFIG& config = _context->config;
 
-    // INT should fire when cpu.t reaches intstart
+    // INT acceptance is strict (cpu.t > int_start), mirroring ProcessInterrupts:
+    // the ULA registers INT one clock after the raster compare and the CPU samples
+    // it only at end-of-instruction edges - a boundary exactly at int_start still
+    // sees INT inactive (doc 20).
     Z80* z80 = _cpu->GetZ80();
 
-    // Just before INT start - should not be pending
+    // Before and exactly at INT start - INT not yet visible to the CPU
     z80->t = config.intstart - 1;
-    bool beforeInt = (z80->t >= config.intstart);
+    bool beforeInt = (z80->t > config.intstart);
     EXPECT_FALSE(beforeInt);
 
-    // At INT start - should fire
     z80->t = config.intstart;
-    bool atInt = (z80->t >= config.intstart);
-    EXPECT_TRUE(atInt);
+    bool atInt = (z80->t > config.intstart);
+    EXPECT_FALSE(atInt);
+
+    // One clock later - INT registered high, acceptance possible at this boundary
+    z80->t = config.intstart + 1;
+    bool afterInt = (z80->t > config.intstart);
+    EXPECT_TRUE(afterInt);
 }
 
 TEST_F(INTTiming_Test, Pentagon_INTPositionIsEndOfFrame)
@@ -324,7 +331,7 @@ TEST_F(INTTiming_Test, ApplyDefaults_Pentagon)
     Config configHelper(_context);
     configHelper.ApplyModelTimingDefaults(config);
 
-    EXPECT_EQ(config.intstart, 71623u);
+    EXPECT_EQ(config.intstart, 71635u);
     EXPECT_EQ(config.intlen, 32u);
 }
 
@@ -412,7 +419,7 @@ TEST_F(INTTiming_Test, ApplyDefaults_ReplacesOldPlaceholder13)
     configHelper.ApplyModelTimingDefaults(config);
 
     // Should be replaced, not preserved
-    EXPECT_EQ(config.intstart, 71623u);
+    EXPECT_EQ(config.intstart, 71635u);
 }
 
 TEST_F(INTTiming_Test, ApplyDefaults_ReplacesOldPlaceholder32For128k)

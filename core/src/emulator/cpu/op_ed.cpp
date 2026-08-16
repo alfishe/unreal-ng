@@ -81,18 +81,20 @@
 Z80OPCODE ope_40(Z80 *cpu) { // in b,(c)
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->b = cpu->in(cpu->bc);
    cpu->f = log_f[cpu->b] | (cpu->f & CF);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_41(Z80 *cpu) { // out (c),b
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->out(cpu->bc, cpu->b);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_42(Z80 *cpu) { // sbc hl,bc
@@ -172,18 +174,20 @@ Z80OPCODE ope_47(Z80 *cpu) { // ld i,a
 Z80OPCODE ope_48(Z80 *cpu) { // in c,(c)
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->c = cpu->in(cpu->bc);
    cpu->f = log_f[cpu->c] | (cpu->f & CF);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_49(Z80 *cpu) { // out (c),c
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->out(cpu->bc, cpu->c);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_4A(Z80 *cpu) { // adc hl,bc
@@ -258,18 +262,20 @@ Z80OPCODE ope_4F(Z80 *cpu) { // ld r,a
 Z80OPCODE ope_50(Z80 *cpu) { // in d,(c)
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->d = cpu->in(cpu->bc);
    cpu->f = log_f[cpu->d] | (cpu->f & CF);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_51(Z80 *cpu) { // out (c),d
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->out(cpu->bc, cpu->d);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_52(Z80 *cpu) { // sbc hl,de
@@ -334,18 +340,20 @@ Z80OPCODE ope_57(Z80 *cpu) { // ld a,i
 Z80OPCODE ope_58(Z80 *cpu) { // in e,(c)
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->e = cpu->in(cpu->bc);
    cpu->f = log_f[cpu->e] | (cpu->f & CF);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_59(Z80 *cpu) { // out (c),e
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->out(cpu->bc, cpu->e);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_5A(Z80 *cpu) { // adc hl,de
@@ -406,18 +414,20 @@ Z80OPCODE ope_5F(Z80 *cpu) { // ld a,r
 Z80OPCODE ope_60(Z80 *cpu) { // in h,(c)
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->h = cpu->in(cpu->bc);
    cpu->f = log_f[cpu->h] | (cpu->f & CF);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_61(Z80 *cpu) { // out (c),h
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->out(cpu->bc, cpu->h);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_62(Z80 *cpu) { // sbc hl,hl
@@ -460,18 +470,20 @@ Z80OPCODE ope_67(Z80 *cpu) { // rrd
 Z80OPCODE ope_68(Z80 *cpu) { // in l,(c)
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->l = cpu->in(cpu->bc);
    cpu->f = log_f[cpu->l] | (cpu->f & CF);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_69(Z80 *cpu) { // out (c),l
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->out(cpu->bc, cpu->l);
 
-   cputact(4);
+   cputact(3);
 }
 Z80OPCODE ope_6A(Z80 *cpu) { // adc hl,hl
    cpu->memptr = cpu->hl + 1;
@@ -516,17 +528,19 @@ Z80OPCODE ope_6F(Z80 *cpu) { // rld
 Z80OPCODE ope_70(Z80 *cpu) { // in (c) - Undocumented. Reads from the port and affects flags, but does not store the value to a register
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->f = log_f[cpu->in(cpu->bc)] | (cpu->f & CF);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_71(Z80 *cpu) { // out (c),0 - Undocumented. Writes zero to the port
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->out(cpu->bc, cpu->outc0);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_72(Z80 *cpu) { // sbc hl,sp
@@ -585,18 +599,20 @@ Z80OPCODE ope_76(Z80 *cpu) { // im 1
 Z80OPCODE ope_78(Z80 *cpu) { // in a,(c)
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->a = cpu->in(cpu->bc);
    cpu->f = log_f[cpu->a] | (cpu->f & CF);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_79(Z80 *cpu) { // out (c),a
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->out(cpu->bc, cpu->a);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_7A(Z80 *cpu) { // adc hl,sp

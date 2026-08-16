@@ -1224,13 +1224,16 @@ Z80OPCODE op_D3(Z80 *cpu) { // out (n),a
 
     cpu->memptr = ((port + 1) & 0xFF) + (cpu->a << 8);
 
-    // IO write: port access happens at the START of the IO cycle, not the end.
-    // Real Z80: IORQ goes low at T2 of the IO machine cycle.
-    // Calling out() before cputact(4) ensures cpu.t is at the IO cycle entry
-    // point, so contention delay and SetBorderColor see the correct T-state.
+    // IO write: Z80 IO machine cycles assert IORQ/WR one clock late - at T2 of
+    // the 4T IO cycle (T1 carries no IORQ; Z80 UM "the CPU automatically inserts
+    // one wait state" before IO). The port write must land on that T-state, not
+    // at the IO cycle entry: charging 1T first places the SetBorderColor() flush
+    // exactly at the IORQ T-state. At the cycle entry border changes render 1T
+    // (2 px) early - Pentagon updates border every 1T (MiSTer ula.sv line 185),
+    // which makes the offset clearly visible in border-synced effects.
+    cputact(1);
     cpu->out(port + (cpu->a << 8), cpu->a);
-
-    cputact(4);
+    cputact(3);
 }
 
 Z80OPCODE op_D4(Z80 *cpu) { // call nc,nnnn
@@ -1320,10 +1323,11 @@ Z80OPCODE op_DB(Z80 *cpu) { // in a,(nn)
 
     cpu->memptr = (cpu->a << 8) + (port + 1);
 
-    // IO read: port access happens at the START of the IO cycle, not the end.
+    // IO read: IORQ/RD assert at T2 of the IO cycle - sample the port there,
+    // not at the cycle entry (see op_D3).
+    cputact(1);
     cpu->a = cpu->in(port);
-
-    cputact(4);
+    cputact(3);
 }
 
 Z80OPCODE op_DC(Z80 *cpu) { // call c,nnnn
