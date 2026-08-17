@@ -466,7 +466,12 @@ uint8_t Z80::rd(uint16_t addr, bool isExecution)
 
     IncrementCPUCyclesCounter(3);
 
-    return (_memory->*MemIf->MemoryRead)(addr, isExecution);
+    uint8_t value = (_memory->*MemIf->MemoryRead)(addr, isExecution);
+
+    if (busTraceHook)
+        busTraceHook('R', addr, value);
+
+    return value;
 }
 
 /// Dispatching memory write method. Used directly from Z80 microcode (CPULogic and opcode)
@@ -491,6 +496,9 @@ void Z80::wd(uint16_t addr, uint8_t val)
     IncrementCPUCyclesCounter(3);
 
     (_memory->*MemIf->MemoryWrite)(addr, val);
+
+    if (busTraceHook)
+        busTraceHook('W', addr, val);
 }
 
 uint8_t Z80::in(uint16_t port)
@@ -512,6 +520,9 @@ uint8_t Z80::in(uint16_t port)
 
     // Let model-specific decoder to process port input
     uint8_t result = portDecoder.DecodePortIn(port, m1_pc);
+
+    if (busTraceHook)
+        busTraceHook('I', port, result);
 
     // Floating bus: if no hardware device decoded the port, the ULA returns
     // the video byte currently on the data bus.
@@ -553,6 +564,9 @@ void Z80::out(uint16_t port, uint8_t val)
 
     // Let model-specific decoder to process port output
     portDecoder.DecodePortOut(port, val, m1_pc);
+
+    if (busTraceHook)
+        busTraceHook('O', port, val);
 }
 
 void Z80::retn() {}
