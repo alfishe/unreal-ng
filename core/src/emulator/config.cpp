@@ -475,7 +475,7 @@ string Config::PrintModelAvailableRAM(uint32_t availRAM)
 	return ss.str();
 }
 
-void Config::ApplyModelTimingDefaults(CONFIG& config)
+void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
 {
     // Save user-specified INI values (if non-default)
     unsigned userIntstart = config.intstart;
@@ -521,6 +521,39 @@ void Config::ApplyModelTimingDefaults(CONFIG& config)
         config.intstart = userIntstart;
     if (userIntlen != 0 && userIntlen != 32)
         config.intlen = userIntlen;
+
+    // Programmatically-requested models also get canonical frame geometry: the
+    // INI in use typically describes a different machine (e.g. the global
+    // Pentagon ini) so its frame/line values must not leak into the requested
+    // model. INI-driven runs (per-model config dirs) pass false and are untouched.
+    if (canonicalGeometry)
+    {
+        switch (config.mem_model)
+        {
+            case MM_SPECTRUM48:
+                config.frame = 69888;   // 224 * 312
+                config.t_line = 224;
+                config.intstart = 1794;
+                config.intlen = 32;
+                break;
+            case MM_SPECTRUM128:
+            case MM_PLUS3:
+                config.frame = 70908;   // 228 * 311
+                config.t_line = 228;
+                config.intstart = 2056;
+                config.intlen = 36;
+                break;
+            case MM_PENTAGON:
+                config.frame = 71680;   // 224 * 320
+                config.t_line = 224;
+                break;
+            default:
+                break;
+        }
+
+        // Invariant: frame_duration_us must be recomputed with config.frame
+        config.frame_duration_us = CalculateFrameDurationUs(config.frame);
+    }
 
     MLOGINFO("ApplyModelTimingDefaults: model=%d intstart=%u intlen=%u frame=%u line=%u",
              config.mem_model, config.intstart, config.intlen, config.frame, config.t_line);

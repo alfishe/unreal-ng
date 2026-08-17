@@ -119,6 +119,19 @@ bool Emulator::Init()
         if (result)
         {
             MLOGDEBUG("Emulator::Init - Config file successfully loaded");
+
+            // Apply the programmatically-requested model (if any) now - before
+            // any model-dependent subsystem (ROMs, port decoder, screen) reads
+            // the config. Overrides the INI's HIMEM/RamSize selection and gets
+            // canonical frame geometry for the model.
+            if (_hasPreferredModel)
+            {
+                _context->config.mem_model = _preferredModel;
+                _context->config.ramsize = _preferredRamSize;
+                _config->ApplyModelTimingDefaults(_context->config, true /* canonicalGeometry */);
+                MLOGINFO("Emulator::Init - Applied preferred model %d (INI HIMEM overridden)",
+                         (int)_preferredModel);
+            }
         }
         else
         {

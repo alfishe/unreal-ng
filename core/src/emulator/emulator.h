@@ -79,6 +79,13 @@ protected:
     LoggerLevel _loggerLevel = LoggerLevel::LogTrace;
     EmulatorContext* _context = nullptr;
 
+    // Programmatically-requested machine model (CreateEmulatorWithModel):
+    // applied by Init() right after config load, overriding the INI's
+    // HIMEM/RamSize selection before any model-dependent subsystem initializes
+    bool _hasPreferredModel = false;
+    MEM_MODEL _preferredModel = MM_PENTAGON;
+    uint32_t _preferredRamSize = 0;
+
     Config* _config = nullptr;
     Core* _core = nullptr;
     Z80* _z80 = nullptr;
@@ -123,6 +130,16 @@ private:
 
 public:
     // Initialization operations
+    /// Request a specific machine model (applied during Init() right after
+    /// config load, overriding the INI's HIMEM/RamSize). Must be called
+    /// before Init(). Lifecycle intent lives here, not in CONFIG.
+    void SetPreferredModel(MEM_MODEL model, uint32_t ramSize)
+    {
+        _preferredModel = model;
+        _preferredRamSize = ramSize;
+        _hasPreferredModel = true;
+    }
+
     [[nodiscard]] bool Init();
     void Release();
 

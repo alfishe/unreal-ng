@@ -152,6 +152,27 @@ void Screen::InitRaster()
 
     /// region Set current video mode
 
+    // Base video mode per machine model. Without this, every model inherited
+    // the constructor's default mode - ZX-48K/128K ran with the wrong raster
+    // geometry and, critically, with ULA contention state of another machine.
+    // Special modes (ATM, AlCo, Profi, GMX) override below.
+    switch (config.mem_model)
+    {
+        case MM_SPECTRUM48:
+            video.mode = M_ZX48;
+            break;
+        case MM_SPECTRUM128:
+        case MM_PLUS3:
+            video.mode = M_ZX128;
+            break;
+        case MM_PENTAGON:
+            video.mode = M_PENTAGON128K;
+            break;
+        default:
+            // Other models keep their current/legacy mode selection
+            break;
+    }
+
     uint8_t m = EFF7_4BPP | EFF7_HWMC;
 
     // ATM 1
@@ -275,7 +296,13 @@ void Screen::InitRaster()
     /// endregion
 
     // Select renderer for the mode
-    if (prevMode != video.mode)
+    // Apply when the detected mode differs from the ACTIVE raster mode (_mode),
+    // not merely from the previous detection result: the constructor defaults
+    // (_mode/_vid.mode) can disagree with the model's base mode, and comparing
+    // detection-to-detection left 48K/128K machines running with the Pentagon
+    // raster and contention disabled.
+    (void)prevMode;
+    if (video.mode != _mode)
     {
         SetVideoMode(video.mode);
 

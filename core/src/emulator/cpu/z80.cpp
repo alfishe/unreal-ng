@@ -451,12 +451,13 @@ uint8_t Z80::m1_cycle()
 /// \return
 uint8_t Z80::rd(uint16_t addr, bool isExecution)
 {
-    // ULA memory contention: if accessing contended memory (0x4000-0x7FFF)
-    // during screen rendering on ZX-48K/128K, the CPU is stalled.
-    if (!isExecution && addr >= 0x4000 && addr <= 0x7FFF)
+    // ULA memory contention: accessing contended memory (0x4000-0x7FFF; on
+    // 128K also 0xC000+ with an odd page mapped) during screen rendering on
+    // ZX-48K/128K stalls the CPU.
+    if (!isExecution)
     {
         UlaContention* ula = _context->pUlaContention;
-        if (ula)
+        if (ula && ula->IsAddressContended(addr))
         {
             uint8_t delay = ula->GetContentionDelay();
             if (delay > 0)
@@ -480,12 +481,12 @@ uint8_t Z80::rd(uint16_t addr, bool isExecution)
 /// \param val
 void Z80::wd(uint16_t addr, uint8_t val)
 {
-    // ULA memory contention: if accessing contended memory (0x4000-0x7FFF)
-    // during screen rendering on ZX-48K/128K, the CPU is stalled.
-    if (addr >= 0x4000 && addr <= 0x7FFF)
+    // ULA memory contention: accessing contended memory (0x4000-0x7FFF; on
+    // 128K also 0xC000+ with an odd page mapped) during screen rendering on
+    // ZX-48K/128K stalls the CPU.
     {
         UlaContention* ula = _context->pUlaContention;
-        if (ula)
+        if (ula && ula->IsAddressContended(addr))
         {
             uint8_t delay = ula->GetContentionDelay();
             if (delay > 0)
