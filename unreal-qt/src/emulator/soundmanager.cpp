@@ -73,7 +73,9 @@ void AppSoundManager::start()
     }
     else
     {
-        qDebug() << "AppSoundManager::start() - Audio device started successfully";
+        qDebug() << "AppSoundManager::start() - Audio device started successfully:"
+                 << QString::fromUtf8(_audioDevice.playback.name)
+                 << "@" << _audioDevice.sampleRate << "Hz," << _audioDevice.playback.channels << "channels";
     }
 
     // New wave file

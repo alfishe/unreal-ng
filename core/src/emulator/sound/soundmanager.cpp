@@ -11,13 +11,45 @@
 
 /// region <Constructors / Destructors>
 
+/// Resolve the core audio rate from [SOUND] CoreRate (multirate plan phase 6).
+/// Explicit supported rates pass through (validated at config load); auto (0)
+/// matches the audio device's native rate when the frontend has already
+/// published it and it is a supported rate, else falls back to 44100.
+size_t SoundManager::resolveCoreRate() const
+{
+    const unsigned configured = _context->config.sound.coreRate;
+    if (configured != 0)
+        return configured;
+
+    const uint32_t devRate = _context->pAudioDeviceSampleRate.load(std::memory_order_relaxed);
+    switch (devRate)
+    {
+        case 44100:
+        case 48000:
+        case 88200:
+        case 96000:
+        case 176400:
+        case 192000:
+            return devRate;
+        default:
+            return CORE_SAMPLING_RATE;
+    }
+}
+
 SoundManager::SoundManager(EmulatorContext* context)
 {
     _context = context;
     _logger = context->pModuleLogger;
 
-    _beeper = new Beeper(_context, CPU_CLOCK_RATE, AUDIO_SAMPLING_RATE, _beeperBuffer);
+    _coreRate = resolveCoreRate();
+    if (_coreRate != CORE_SAMPLING_RATE)
+    {
+        LOGINFO("SoundManager: core audio rate %zu Hz", _coreRate);
+    }
+
+    _beeper = new Beeper(_context, CPU_CLOCK_RATE, _coreRate, _beeperBuffer);
     _turboSound = new SoundChip_TurboSound(_context);
+    _turboSound->setCoreRate(_coreRate);
 
     // Build the device registry based on what this machine has
     // Beeper is always present
@@ -33,20 +65,20 @@ SoundManager::SoundManager(EmulatorContext* context)
     // Covox if config flag is set (Pentagon/Scorpion style)
     if (_context->config.sound.covoxFB)
     {
-        _covox = new Covox(_context);
+        _covox = new Covox(_context, _coreRate);
         _devices.push_back({AudioSourceType::COVOX, "COVOX", false, false, 1.0f, 0.0f, false});
     }
 
     // Initialize AY character chains (one per TurboSound chip for independent DSP state)
     // - ChipType::AY uses shorter delay and no LP (preserves square wave harmonics)
     // - Punch: AY preset (gentler - square waves already have rich harmonics)
-    _ayChain0.setup(AUDIO_SAMPLING_RATE);
+    _ayChain0.setup(_coreRate);
     _ayChain0.setChipType(AudioCharacterChain::ChipType::AY);
     _ayChain0.setPunchPreset(AudioCharacterChain::PunchPreset::AY);
     _ayChain0.setPunchEnabled(true);
     _ayChain0.setRoomMode(AudioCharacterChain::RoomMode::Off);
 
-    _ayChain1.setup(AUDIO_SAMPLING_RATE);
+    _ayChain1.setup(_coreRate);
     _ayChain1.setChipType(AudioCharacterChain::ChipType::AY);
     _ayChain1.setPunchPreset(AudioCharacterChain::PunchPreset::AY);
     _ayChain1.setPunchEnabled(true);
@@ -55,7 +87,7 @@ SoundManager::SoundManager(EmulatorContext* context)
     // Initialize beeper character chain
     // - ChipType::AY (no LP) - beeper is also square waves, LP kills brightness
     // - Punch: Beeper preset (stronger - 1-bit audio needs attack definition)
-    _beeperChain.setup(AUDIO_SAMPLING_RATE);
+    _beeperChain.setup(_coreRate);
     _beeperChain.setChipType(AudioCharacterChain::ChipType::AY);
     _beeperChain.setPunchPreset(AudioCharacterChain::PunchPreset::Beeper);
     _beeperChain.setPunchEnabled(false);
@@ -277,7 +309,7 @@ void SoundManager::handleFrameEnd()
 
         if (frameDuration > 0)
         {
-            _sampleAccumulator += static_cast<uint64_t>(frameDuration) * AUDIO_SAMPLING_RATE;
+            _sampleAccumulator += static_cast<uint64_t>(frameDuration) * _coreRate;
             samplesThisFrame = static_cast<size_t>(_sampleAccumulator / CPU_CLOCK_RATE);
             _sampleAccumulator %= CPU_CLOCK_RATE;
 
@@ -499,9 +531,9 @@ void SoundManager::updateDrcControl()
     // Device native rate (audio-sync Fix 3): base resample ratio dev/core;
     // ring occupancy is measured in DEVICE-rate frames
     const uint32_t devRateRaw = _context->pAudioDeviceSampleRate.load(std::memory_order_relaxed);
-    const double devRate = (devRateRaw == 0) ? static_cast<double>(CORE_SAMPLING_RATE)
+    const double devRate = (devRateRaw == 0) ? static_cast<double>(_coreRate)
                                              : static_cast<double>(devRateRaw);
-    const double baseRatio = devRate / static_cast<double>(CORE_SAMPLING_RATE);
+    const double baseRatio = devRate / static_cast<double>(_coreRate);
 
     const double occMs = occCell->load(std::memory_order_relaxed) * 1000.0 / devRate;
 
@@ -584,7 +616,7 @@ bool SoundManager::openWaveFile(std::string& path)
     bool result = false;
 
     int res =
-        tinywav_open_write(&_tinyWav, AUDIO_CHANNELS, AUDIO_SAMPLING_RATE, TW_INT16, TW_INTERLEAVED, path.c_str());
+        tinywav_open_write(&_tinyWav, AUDIO_CHANNELS, (int32_t)_coreRate, TW_INT16, TW_INTERLEAVED, path.c_str());
 
     if (res == 0 && _tinyWav.file)
     {

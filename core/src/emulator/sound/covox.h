@@ -64,11 +64,14 @@ protected:
     float _dcAccumL = 0.0f;
     float _dcAccumR = 0.0f;
     static constexpr float DC_COEF = 0.995f;  // ~7 Hz cutoff @ 44.1 kHz
+    float _dcCoefEff = DC_COEF;               // DC_COEF^(44100/fs): same cutoff Hz at every core rate
 
+    // Core output rate (multirate plan phase 6)
+    size_t _sampleRate;
 
 public:
     Covox() = delete;
-    explicit Covox(EmulatorContext* context);
+    explicit Covox(EmulatorContext* context, size_t sampleRate = 44100);
     virtual ~Covox();
 
     // Buffer access for registry

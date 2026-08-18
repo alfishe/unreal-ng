@@ -306,6 +306,28 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	config.sound.covoxFB = (int)inimanager.GetLongValue(sound, "CovoxFB", 0);
 	config.sound.covoxDD = (int)inimanager.GetLongValue(sound, "CovoxDD", 0);
 
+	// Core audio rate: auto | 44100 | 48000 | 88200 | 96000 | 176400 | 192000
+	// (multirate plan phase 6). 0 = auto. Unsupported values fall back to auto.
+	{
+		long rate = inimanager.GetLongValue(sound, "CoreRate", 0);  // "auto" parses as 0
+		switch (rate)
+		{
+			case 0:
+			case 44100:
+			case 48000:
+			case 88200:
+			case 96000:
+			case 176400:
+			case 192000:
+				config.sound.coreRate = (unsigned)rate;
+				break;
+			default:
+				MLOGWARNING("Config: unsupported [SOUND] CoreRate=%ld, using auto", rate);
+				config.sound.coreRate = 0;
+				break;
+		}
+	}
+
 	// Emulated model
 	CopyStringValue(inimanager.GetValue(misc, "HIMEM", "PENTAGON", nullptr), line, sizeof line);
 	config.ramsize = inimanager.GetLongValue(misc, "RamSize", 128, nullptr);

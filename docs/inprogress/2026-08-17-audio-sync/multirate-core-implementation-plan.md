@@ -1,6 +1,11 @@
 # Multi-Rate Audio Core — Implementation Plan
 
-**Status:** detailed plan (companion to `multirate-core-evaluation.md`)
+**Status:** IMPLEMENTED 2026-08-18 (all 7 phases; see notes below). Companion to `multirate-core-evaluation.md`.
+**Implementation notes:**
+- Baked tables removed entirely: `FirDesigner` (`common/sound/filters/fir_designer.h`) designs at construction; the shipped MATLAB tables live on only as golden references in `fir_designer_test.cpp`, which asserts the designer reproduces both bit-exactly.
+- `FilterDecimator::configure(rate, Quality, extendedBandwidth)` — Reference (96-tap β=5) / HighFidelity (192-tap β=9) tiers; extended BW opens 40 kHz @ ≥88.2k, 80 kHz @ ≥176.4k.
+- Phase 7 pitch invariance uses a hysteresis zero-crossing estimator (`multirate_test.cpp`) instead of `AudioHelper::detectBaseFrequencyFFT` — that helper hardcodes 48 kHz and is itself not rate-parametric.
+- Bonus fix surfaced by the rate-matrix tests: `SoundChip_TurboSound`'s PLL/decimation state was only initialized in `reset()`, so a freshly constructed chip rendered garbage until the first reset; now initialized at declaration.
 **Scope:** run the emulation core's audio at 44100 / 48000 / 88200 / 96000 / 176400 / 192000 Hz
 **Verification cornerstone:** every coefficient table below was produced by a generator that reproduces both shipped 44.1 kHz tables **bit-exactly** (validated 2026-08-17), so these numbers are authoritative, not approximations.
 

@@ -60,6 +60,15 @@ protected:
     volatile bool _mute = false;  // MUST initialize - sound unmuted by default
     bool _soundEnabled = true;
 
+    // The core audio rate all chip DSP is designed for (multirate plan phase
+    // 6). Resolved ONCE at construction from [SOUND] CoreRate (auto = device
+    // native rate when already published, else 44100); every filter, chain
+    // and chip designs itself for this value. Changing it requires a sound
+    // stack rebuild - no hot switch.
+    size_t _coreRate = CORE_SAMPLING_RATE;
+
+    size_t resolveCoreRate() const;
+
     AudioFrameDescriptor _beeperAudioDescriptor;                                   // Audio descriptor for the beeper
     int16_t* const _beeperBuffer = (int16_t*)_beeperAudioDescriptor.memoryBuffer;  // Shortcut to it's sample buffer
 
@@ -201,6 +210,10 @@ public:
 
     // Feature cache update (called by FeatureManager::onFeatureChanged)
     void UpdateFeatureCache();
+
+    /// The resolved core audio rate (Hz) - recording and analysis consumers
+    /// must read this instead of assuming 44100
+    size_t getCoreRate() const { return _coreRate; }
 
     // DRC telemetry (tests / diagnostics)
     double getDrcRatio() const { return _drcResampler.getRatio(); }

@@ -10,16 +10,20 @@
 
 /// region <Constructors / destructors>
 
-Covox::Covox(EmulatorContext* context)
+Covox::Covox(EmulatorContext* context, size_t sampleRate)
     : _context(context)
+    , _sampleRate(sampleRate)
 {
     // Allocate blip_buf accumulators for stereo output
     _blipL = blip_new(MAX_SAMPLES_PER_FRAME + 64);
     _blipR = blip_new(MAX_SAMPLES_PER_FRAME + 64);
 
     // Set input clock rate → output sample rate conversion
-    blip_set_rates(_blipL, static_cast<double>(CPU_CLOCK_RATE), static_cast<double>(AUDIO_SAMPLING_RATE));
-    blip_set_rates(_blipR, static_cast<double>(CPU_CLOCK_RATE), static_cast<double>(AUDIO_SAMPLING_RATE));
+    blip_set_rates(_blipL, static_cast<double>(CPU_CLOCK_RATE), static_cast<double>(_sampleRate));
+    blip_set_rates(_blipR, static_cast<double>(CPU_CLOCK_RATE), static_cast<double>(_sampleRate));
+
+    // Keep the DC blocker cutoff in Hz constant across core rates
+    _dcCoefEff = static_cast<float>(std::pow(DC_COEF, 44100.0 / static_cast<double>(_sampleRate)));
 
     reset();
 }
@@ -81,7 +85,7 @@ void Covox::handleFrameEnd(size_t expectedSamples)
     else
     {
         samplesThisFrame = static_cast<int>(
-            std::round(frameDuration * (double)AUDIO_SAMPLING_RATE / (double)CPU_CLOCK_RATE));
+            std::round(frameDuration * (double)_sampleRate / (double)CPU_CLOCK_RATE));
     }
     samplesThisFrame = std::clamp(samplesThisFrame, 0, (int)MAX_SAMPLES_PER_FRAME);
 
@@ -103,8 +107,8 @@ void Covox::handleFrameEnd(size_t expectedSamples)
             float l = static_cast<float>(_buffer[i * 2]);
             float r = static_cast<float>(_buffer[i * 2 + 1]);
 
-            _dcAccumL = _dcAccumL * DC_COEF + l * (1.0f - DC_COEF);
-            _dcAccumR = _dcAccumR * DC_COEF + r * (1.0f - DC_COEF);
+            _dcAccumL = _dcAccumL * _dcCoefEff + l * (1.0f - _dcCoefEff);
+            _dcAccumR = _dcAccumR * _dcCoefEff + r * (1.0f - _dcCoefEff);
 
             _buffer[i * 2]     = static_cast<int16_t>(std::clamp(l - _dcAccumL, -32768.0f, 32767.0f));
             _buffer[i * 2 + 1] = static_cast<int16_t>(std::clamp(r - _dcAccumR, -32768.0f, 32767.0f));
