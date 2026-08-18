@@ -635,6 +635,11 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
     _viewportMenu->setEnabled(isOverscanActive);
 }
 
+void MenuManager::resetViewportSelection()
+{
+    _viewportFullOverscanAction->setChecked(true);
+}
+
 void MenuManager::setActiveEmulator(std::shared_ptr<Emulator> emulator)
 {
     // Update menu states - must be done on main thread since it modifies UI menus

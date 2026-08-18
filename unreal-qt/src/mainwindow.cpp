@@ -2025,6 +2025,15 @@ void MainWindow::handleOverscanModeToggled(bool enabled)
         {
             auto& fb = context->pScreen->GetFramebufferDescriptor();
             deviceScreen->init(fb.width, fb.height, fb.memoryBuffer);
+
+            if (!enabled)
+            {
+                // Leaving overscan mode - reset viewport to full framebuffer
+                DisplayViewport fullViewport = {0, 0, 0, 0};
+                emulator->SetDisplayViewport(fullViewport);
+                deviceScreen->clearDisplayViewport();
+                _menuManager->resetViewportSelection();
+            }
         }
         updateMenuStates();
     }

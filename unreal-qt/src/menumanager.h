@@ -31,6 +31,9 @@ public:
     // Set the current active emulator instance
     void setActiveEmulator(std::shared_ptr<Emulator> emulator);
 
+    // Reset viewport selection to default (Full Overscan)
+    void resetViewportSelection();
+
     // Observer callback for emulator state changes
     void handleEmulatorStateChanged(int id, Message* message);
     void handleEmulatorInstanceCreated(int id, Message* message);

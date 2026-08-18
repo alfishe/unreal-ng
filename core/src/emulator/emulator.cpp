@@ -2135,7 +2135,20 @@ bool Emulator::SetOverscanMode(bool enable)
 
     if (newMode != currentMode)
     {
+        // Pause emulation while changing video mode to avoid framebuffer access during reallocation
+        bool wasRunning = IsRunning() && !IsPaused();
+        if (wasRunning)
+        {
+            Pause(false);
+        }
+
         screen->SetVideoMode(newMode);
+
+        if (wasRunning)
+        {
+            Resume(false);
+        }
+
         return true;
     }
     return false;
