@@ -18,7 +18,7 @@
 #include <emulator/sound/soundmanager.h>
 #include <emulator/emulatorcontext.h>
 
-class AppSoundManager : QObject
+class AppSoundManager : public QObject
 {
     Q_OBJECT
 
@@ -35,6 +35,9 @@ protected:
     // the cell outlives any emulator instance.
     std::atomic<uint32_t> _occupancyFrames{0};
     uint32_t _deviceSampleRate = AUDIO_SAMPLING_RATE;  // Read back from ma_device after init
+
+    // Device reroute handling (OS default-output change / hotplug)
+    std::atomic<bool> _shuttingDown{false};
 
     // Ring error observability (emulator thread, audioCallback only)
     uint32_t _errorLogCounter = 0;
@@ -64,7 +67,21 @@ public:
     void start();
     void stop();
 
+signals:
+    /// Emitted after the audio device was re-established at a DIFFERENT native
+    /// sample rate (device hotplug / OS default-output change). Consumers must
+    /// republish the rate to the emulator (SetAudioDeviceSampleRate) so the
+    /// DRC resampler re-bases its core->device ratio.
+    void deviceReinitialized(uint32_t sampleRate);
+
+protected slots:
+    /// GUI-thread half of reroute handling: re-init the device at the new
+    /// output's native rate. NEVER run on the notification thread - a device
+    /// cannot be uninitialized from its own callback context.
+    void handleDeviceRerouted();
+
 public:
     static void audioDataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);
     static void audioCallback(void* obj, int16_t* samples, size_t numSamples);
+    static void deviceNotificationCallback(const ma_device_notification* pNotification);
 };

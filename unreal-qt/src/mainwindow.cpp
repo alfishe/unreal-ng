@@ -103,6 +103,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     // Init audio subsystem (initialize once, keep running)
     _soundManager = new AppSoundManager();
+
+    // Device reroute (hotplug / OS default-output change) at a different
+    // native rate: republish so the emulator's DRC resampler re-bases its
+    // core->device ratio - no emulator or sound-stack restart needed
+    connect(_soundManager, &AppSoundManager::deviceReinitialized, this, [this](uint32_t sampleRate) {
+        if (_emulator)
+            _emulator->SetAudioDeviceSampleRate(sampleRate);
+    });
+
     {
         QMutexLocker locker(&_audioMutex);
         if (_soundManager->init())

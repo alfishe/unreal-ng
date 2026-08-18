@@ -31,6 +31,8 @@ bool AppSoundManager::init()
 {
     bool result = true;
 
+    _shuttingDown.store(false, std::memory_order_release);
+
     // Set audio output parameters for low latency
     ma_device_config config = ma_device_config_init(ma_device_type_playback);
     config.playback.format   = ma_format_s16;       // Set to ma_format_unknown to use the device's native format.
@@ -44,6 +46,9 @@ bool AppSoundManager::init()
     config.periods            = 2;                   // 2 periods = 512 frames (~11.6ms hardware buffer @ 44.1kHz)
     config.dataCallback      = AppSoundManager::audioDataCallback; // This function will be called when miniaudio needs more data.
     config.pUserData         = (void*)this;         // Can be accessed from the device object (device.pUserData).
+    // Device reroute detection (default-output change / hotplug): re-init at
+    // the new output's native rate instead of letting miniaudio resample
+    config.notificationCallback = AppSoundManager::deviceNotificationCallback;
 
     if (ma_device_init(NULL, &config, &_audioDevice) != MA_SUCCESS)
     {
@@ -58,6 +63,8 @@ bool AppSoundManager::init()
 
 void AppSoundManager::deinit()
 {
+    _shuttingDown.store(true, std::memory_order_release);
+
     this->stop();
 
     ma_device_uninit(&_audioDevice);
@@ -156,5 +163,58 @@ void AppSoundManager::audioCallback(void* obj, int16_t* samples, size_t numSampl
                 appSoundManager->_lastDequeueErrors = deq;
             }
         }
+    }
+}
+
+/// Miniaudio device notification (arrives on a backend/OS thread). Reroutes
+/// happen when the OS default output changes (headphones plugged/unplugged,
+/// device removed). Only hop to the GUI thread here - a device cannot be
+/// re-initialized from its own callback context.
+void AppSoundManager::deviceNotificationCallback(const ma_device_notification* pNotification)
+{
+    if (!pNotification || !pNotification->pDevice)
+        return;
+
+    AppSoundManager* obj = (AppSoundManager*)pNotification->pDevice->pUserData;
+    if (!obj || obj->_shuttingDown.load(std::memory_order_acquire))
+        return;
+
+    if (pNotification->type == ma_device_notification_type_rerouted)
+    {
+        QMetaObject::invokeMethod(obj, &AppSoundManager::handleDeviceRerouted, Qt::QueuedConnection);
+    }
+}
+
+void AppSoundManager::handleDeviceRerouted()
+{
+    if (_shuttingDown.load(std::memory_order_acquire))
+        return;
+
+    const uint32_t oldRate = _deviceSampleRate;
+
+    qDebug() << "AppSoundManager::handleDeviceRerouted() - Audio device rerouted, re-establishing at native rate";
+
+    // Miniaudio keeps streaming after a reroute but resamples internally to
+    // the ORIGINALLY negotiated rate. Re-init at the new output's native rate
+    // so the core's DRC resampler stays the only conversion in the chain
+    // (audio-sync design Fix 3).
+    ma_device_uninit(&_audioDevice);
+
+    if (!init())
+    {
+        qWarning() << "AppSoundManager::handleDeviceRerouted() - Failed to re-initialize audio device after reroute";
+        return;
+    }
+
+    // Frames queued in the ring were resampled for the previous device rate
+    _ringBuffer.clear();
+
+    start();  // Logs the re-established device the same way as the initial start
+
+    if (_deviceSampleRate != oldRate)
+    {
+        qDebug() << "AppSoundManager::handleDeviceRerouted() - Device sample rate changed"
+                 << oldRate << "->" << _deviceSampleRate << "Hz; republishing for DRC re-base";
+        emit deviceReinitialized(_deviceSampleRate);
     }
 }

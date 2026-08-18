@@ -20,7 +20,7 @@
 #include <atomic>
 #include <emulator/mainloop.h>
 
-class AppSoundManager : QObject
+class AppSoundManager : public QObject
 {
     Q_OBJECT
 
@@ -39,6 +39,9 @@ protected:
 
     // Save to Wave file
     TinyWav _tinyWav;
+
+    // Device reroute handling (OS default-output change / hotplug)
+    std::atomic<bool> _shuttingDown{false};
 
     std::atomic<EmulatorContext*> _activeContext{nullptr};
 
@@ -63,7 +66,21 @@ public:
     void setActiveContext(EmulatorContext* context) { _activeContext.store(context, std::memory_order_release); }
     EmulatorContext* getActiveContext() const { return _activeContext.load(std::memory_order_acquire); }
 
+signals:
+    /// Emitted after the audio device was re-established at a DIFFERENT native
+    /// sample rate (device hotplug / OS default-output change). Consumers must
+    /// republish the rate to the emulator (SetAudioDeviceSampleRate) so the
+    /// DRC resampler re-bases its core->device ratio.
+    void deviceReinitialized(uint32_t sampleRate);
+
+protected slots:
+    /// GUI-thread half of reroute handling: re-init the device at the new
+    /// output's native rate. NEVER run on the notification thread - a device
+    /// cannot be uninitialized from its own callback context.
+    void handleDeviceRerouted();
+
 public:
     static void audioDataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);
     static void audioCallback(void* obj, int16_t* samples, size_t numSamples);
+    static void deviceNotificationCallback(const ma_device_notification* pNotification);
 };

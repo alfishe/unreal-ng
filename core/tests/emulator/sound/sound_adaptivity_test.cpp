@@ -381,6 +381,66 @@ TEST_F(SoundAdaptivity_Test, DRC_DisengagedWithoutOccupancyCell)
 
 /// endregion </DRC rate controller>
 
+TEST_F(SoundAdaptivity_Test, DRC_RebasesOnDeviceRateChangeMidRun)
+{
+    // Device hotplug / OS default-output change: the frontend re-inits the
+    // audio device at the new native rate, clears the ring and republishes
+    // pAudioDeviceSampleRate. The DRC reads the cell every frame, so the
+    // resample ratio must re-base to the new device/core ratio immediately
+    // and occupancy must re-converge to the 70 ms setpoint - with no
+    // emulator or sound-stack restart.
+    SoundManager* sound = _context->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+
+    CallbackCapture capture;
+    _context->pAudioCallback.store(&CallbackCapture::callback, std::memory_order_release);
+    _context->pAudioManagerObj.store(&capture, std::memory_order_release);
+
+    std::atomic<uint32_t> occCell{0};
+    _context->pAudioRingOccupancy.store(&occCell, std::memory_order_release);
+    _context->pAudioDeviceSampleRate.store(44100, std::memory_order_release);
+
+    _context->config.frame = 71680;
+    sound->reset();
+
+    double devRate = 44100.0;
+    double ring = 70.0 * devRate / 1000.0;  // Start converged at the setpoint
+    occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
+
+    auto runFrames = [&](int frames) {
+        for (int f = 0; f < frames; f++)
+        {
+            sound->handleFrameStart();
+            sound->handleFrameEnd();
+            ring += static_cast<double>(capture.lastNumSamples) / AUDIO_CHANNELS;
+            ring = std::max(0.0, ring - 71680.0 * devRate / 3500000.0);  // Real-time DAC
+            occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
+        }
+    };
+
+    runFrames(2000);
+    EXPECT_NEAR(sound->getDrcRatio(), 1.0, 0.005) << "Converged unity before the reroute";
+
+    // Reroute: device re-established at 48000, ring cleared then reseeded by
+    // the emergency refill (~46 ms), new rate published
+    devRate = 48000.0;
+    ring = 46.0 * devRate / 1000.0;
+    occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
+    _context->pAudioDeviceSampleRate.store(48000, std::memory_order_release);
+
+    sound->handleFrameStart();
+    sound->handleFrameEnd();
+    EXPECT_NEAR(sound->getDrcRatio(), 48000.0 / 44100.0, 48000.0 / 44100.0 * 0.006)
+        << "Base ratio must re-base to the new device rate on the next frame";
+
+    runFrames(6000);
+    const double finalMs = ring * 1000.0 / devRate;
+    EXPECT_NEAR(finalMs, 70.0, 8.0) << "Occupancy must re-converge at the new device rate";
+
+    _context->pAudioRingOccupancy.store(nullptr, std::memory_order_release);
+    _context->pAudioDeviceSampleRate.store(0, std::memory_order_release);
+}
+
 TEST_F(SoundAdaptivity_Test, DRC_NativeDeviceRate48k_ConvergesAndConverts)
 {
     // Device at native 48000 Hz (audio-sync Fix 3): the DRC resampler's base
