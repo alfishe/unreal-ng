@@ -645,12 +645,16 @@ TEST_F(SharedMemory_Test, ExternalProcessRigorousValidation)
         {
             if (externalBytes[i] != pattern)
             {
+                // Capture the mismatched byte BEFORE unmapping (reading externalBytes
+                // after CloseSharedMemoryExternal would be use-after-munmap -> SIGSEGV)
+                uint8_t actual = externalBytes[i];
+
                 // Cleanup before failing
                 CloseSharedMemoryExternal(externalData, totalSize, handle);
                 _emulator->Resume();
 
                 FAIL() << "Rigorous validation failed at offset " << i << ": expected 0x" << std::hex << (int)pattern
-                       << ", got 0x" << (int)externalBytes[i] << " during full-memory scan";
+                       << ", got 0x" << (int)actual << " during full-memory scan";
             }
         }
     }
@@ -670,11 +674,17 @@ TEST_F(SharedMemory_Test, ExternalProcessRigorousValidation)
                 uint8_t expected = static_cast<uint8_t>((seed + i) & 0xFF);
                 if (externalBytes[i] != expected)
                 {
+                    // Capture the mismatched byte BEFORE unmapping (reading externalBytes
+                    // after CloseSharedMemoryExternal would be use-after-munmap -> SIGSEGV)
+                    uint8_t actual = externalBytes[i];
+                    uint8_t internalNow = memory->RAMBase()[i];
+
                     CloseSharedMemoryExternal(externalData, totalSize, handle);
                     _emulator->Resume();
 
                     FAIL() << "Rigorous seeded validation failed at offset " << i << " with seed 0x" << std::hex
-                           << (int)seed << ": expected 0x" << (int)expected << ", got 0x" << (int)externalBytes[i];
+                           << (int)seed << ": expected 0x" << (int)expected << ", got 0x" << (int)actual
+                           << " (internal view now holds 0x" << (int)internalNow << ")";
                 }
             }
         }

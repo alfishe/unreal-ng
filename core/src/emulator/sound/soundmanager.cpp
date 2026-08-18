@@ -253,6 +253,29 @@ void SoundManager::handleStep()
 
 void SoundManager::handleFrameEnd()
 {
+    /// region <Determine actual samples for this frame>
+    // Per-frame sample count derives from the machine's frame length, NOT the
+    // 50 Hz SAMPLES_PER_FRAME constant: Pentagon (71680 t-states, 48.83 fps)
+    // produces 903 samples/frame, ZX48/128 produces 881. Every stage below
+    // (DSP chains, mixing, callback) must use this count - processing a
+    // hardcoded 882 leaves a tail of samples bypassing the filter chain each
+    // frame, audible as ~49 Hz harmonics/hiss on pure tones.
+    size_t samplesThisFrame = SAMPLES_PER_FRAME;
+    uint32_t frameDuration = 0;
+    {
+        CONFIG& config = _context->config;
+        uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
+        frameDuration = config.frame * speedMultiplier;
+
+        if (frameDuration > 0)
+        {
+            size_t calculated = static_cast<size_t>(std::round(frameDuration * (double)AUDIO_SAMPLING_RATE / (double)CPU_CLOCK_RATE));
+            if (calculated > 0)
+                samplesThisFrame = std::min(calculated, static_cast<size_t>(MAX_SAMPLES_PER_FRAME));
+        }
+    }
+    /// endregion </Determine actual samples for this frame>
+
     /// region <Process AY through its character chain>
     // AY chain: gentler punch (square waves already have harmonics)
     // Room uses no LP to preserve brightness
@@ -262,29 +285,15 @@ void SoundManager::handleFrameEnd()
         int16_t* chip0Buf = _turboSound->getChipBuffer(0);
         int16_t* chip1Buf = _turboSound->getChipBuffer(1);
         if (chip0Buf)
-            _ayChain0.processInt16(chip0Buf, SAMPLES_PER_FRAME);
+            _ayChain0.processInt16(chip0Buf, samplesThisFrame);
         if (chip1Buf)
-            _ayChain1.processInt16(chip1Buf, SAMPLES_PER_FRAME);
+            _ayChain1.processInt16(chip1Buf, samplesThisFrame);
     }
     /// endregion </Process AY>
 
     /// region <Process beeper>
     // Finalize the beeper's blip_buf frame — produces band-limited output
-    size_t samplesThisFrame = SAMPLES_PER_FRAME;
-    {
-        CONFIG& config = _context->config;
-        uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
-        uint32_t frameDuration = config.frame * speedMultiplier;
-
-        if (frameDuration > 0)
-        {
-            size_t calculated = static_cast<size_t>(std::round(frameDuration * (double)AUDIO_SAMPLING_RATE / (double)CPU_CLOCK_RATE));
-            if (calculated > 0)
-                samplesThisFrame = std::min(calculated, static_cast<size_t>(MAX_SAMPLES_PER_FRAME));
-        }
-
-        _beeper->handleFrameEnd(frameDuration);
-    }
+    _beeper->handleFrameEnd(frameDuration);
 
     // Beeper chain: operates on alias-free blip_buf output
     _beeperChain.processInt16(_beeperBuffer, samplesThisFrame);

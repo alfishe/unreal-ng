@@ -190,23 +190,34 @@ TEST_F(KeyboardInjection_Integration_test, TypeNumbers_In48KBASIC)
     
     auto keyMgr = context->pDebugManager->GetKeyboardManager();
     
-    // Press 4 to select "48 BASIC" from 128K menu
-    keyMgr->TapKey("4", 3);
-    
+    // Navigate 128K menu to "48 BASIC" (item 3: Tape Loader, 128 BASIC, Calculator, 48 BASIC).
+    // The menu is cursor-driven - digit keys are ignored by the ROM.
+    // The emulator mainloop drives keyMgr->OnFrame(), so just wait for each tap to finish.
+    for (int i = 0; i < 3; i++)
+    {
+        keyMgr->TapKey("down", 3);
+        for (int f = 0; f < 50 && keyMgr->IsSequenceRunning(); f++)
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        // Extra frames so the ROM sees the key released before the next tap
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    }
+    keyMgr->TapKey("enter", 3);
+
     // Wait for 48K BASIC to load (poll for copyright text)
     bool basicReady = WaitForOCRText(emulatorId, "1982", 3000);
-    ASSERT_TRUE(basicReady) << "48K BASIC not ready";
-    
+    ASSERT_TRUE(basicReady) << "48K BASIC not ready. Screen:\n" << GetScreenText(emulatorId);
+
     // Now in 48K BASIC - type numbers (they appear literally)
     keyMgr->TypeText("12345", 3);
     
-    // Wait for sequence to complete
+    // Wait for sequence to complete. The running emulator's mainloop already
+    // pumps keyMgr->OnFrame() every frame — calling it from the test thread too
+    // double-steps the sequence state machine and randomly truncates key holds.
     for (int i = 0; i < 50 && keyMgr->IsSequenceRunning(); i++)
     {
-        keyMgr->OnFrame();
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
-    
+
     // Poll for typed numbers to appear on screen
     bool found = WaitForOCRText(emulatorId, "12345", 2000);
     
@@ -241,18 +252,27 @@ TEST_F(KeyboardInjection_Integration_test, Type48K_PrintHello)
     auto keyMgr = context->pDebugManager->GetKeyboardManager();
     const int holdFrames = 3;
     
-    // press 4 to enter 48K BASIC
-    keyMgr->TapKey("4", holdFrames);
-    
+    // Navigate 128K menu to "48 BASIC" (item 3) - the menu is cursor-driven,
+    // digit keys are ignored by the ROM. Mainloop drives keyMgr->OnFrame().
+    for (int i = 0; i < 3; i++)
+    {
+        keyMgr->TapKey("down", holdFrames);
+        for (int f = 0; f < 50 && keyMgr->IsSequenceRunning(); f++)
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    }
+    keyMgr->TapKey("enter", holdFrames);
+
     // Wait for 48K BASIC
     bool basicReady = WaitForOCRText(emulatorId, "1982", 3000);
     ASSERT_TRUE(basicReady) << "48K BASIC not ready";
     
-    // Helper lambda to wait for sequence completion
+    // Helper lambda to wait for sequence completion. The running emulator's
+    // mainloop already pumps keyMgr->OnFrame() every frame — calling it from
+    // the test thread too double-steps the sequence and truncates key holds.
     auto waitSequence = [&keyMgr]() {
         for (int i = 0; i < 50 && keyMgr->IsSequenceRunning(); i++)
         {
-            keyMgr->OnFrame();
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
     };

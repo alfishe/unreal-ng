@@ -81,18 +81,20 @@
 Z80OPCODE ope_40(Z80 *cpu) { // in b,(c)
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->b = cpu->in(cpu->bc);
    cpu->f = log_f[cpu->b] | (cpu->f & CF);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_41(Z80 *cpu) { // out (c),b
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->out(cpu->bc, cpu->b);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_42(Z80 *cpu) { // sbc hl,bc
@@ -172,18 +174,20 @@ Z80OPCODE ope_47(Z80 *cpu) { // ld i,a
 Z80OPCODE ope_48(Z80 *cpu) { // in c,(c)
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->c = cpu->in(cpu->bc);
    cpu->f = log_f[cpu->c] | (cpu->f & CF);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_49(Z80 *cpu) { // out (c),c
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->out(cpu->bc, cpu->c);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_4A(Z80 *cpu) { // adc hl,bc
@@ -258,18 +262,20 @@ Z80OPCODE ope_4F(Z80 *cpu) { // ld r,a
 Z80OPCODE ope_50(Z80 *cpu) { // in d,(c)
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->d = cpu->in(cpu->bc);
    cpu->f = log_f[cpu->d] | (cpu->f & CF);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_51(Z80 *cpu) { // out (c),d
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->out(cpu->bc, cpu->d);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_52(Z80 *cpu) { // sbc hl,de
@@ -334,18 +340,20 @@ Z80OPCODE ope_57(Z80 *cpu) { // ld a,i
 Z80OPCODE ope_58(Z80 *cpu) { // in e,(c)
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->e = cpu->in(cpu->bc);
    cpu->f = log_f[cpu->e] | (cpu->f & CF);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_59(Z80 *cpu) { // out (c),e
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->out(cpu->bc, cpu->e);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_5A(Z80 *cpu) { // adc hl,de
@@ -406,18 +414,20 @@ Z80OPCODE ope_5F(Z80 *cpu) { // ld a,r
 Z80OPCODE ope_60(Z80 *cpu) { // in h,(c)
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->h = cpu->in(cpu->bc);
    cpu->f = log_f[cpu->h] | (cpu->f & CF);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_61(Z80 *cpu) { // out (c),h
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->out(cpu->bc, cpu->h);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_62(Z80 *cpu) { // sbc hl,hl
@@ -460,18 +470,20 @@ Z80OPCODE ope_67(Z80 *cpu) { // rrd
 Z80OPCODE ope_68(Z80 *cpu) { // in l,(c)
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->l = cpu->in(cpu->bc);
    cpu->f = log_f[cpu->l] | (cpu->f & CF);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_69(Z80 *cpu) { // out (c),l
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->out(cpu->bc, cpu->l);
 
-   cputact(4);
+   cputact(3);
 }
 Z80OPCODE ope_6A(Z80 *cpu) { // adc hl,hl
    cpu->memptr = cpu->hl + 1;
@@ -498,7 +510,7 @@ Z80OPCODE ope_6A(Z80 *cpu) { // adc hl,hl
 #define ope_6B op_2A // ld hl,(nnnn)
 #define ope_6C ope_44   // neg
 #define ope_6D ope_4D   // reti
-#define ope_6E ope_56   // im 0/1 -> im 1
+#define ope_6E ope_46   // im 0 (undocumented "IM 0/1" acts as IM 0; z80.info / FUSE)
 
 Z80OPCODE ope_6F(Z80 *cpu) { // rld
   uint8_t value = cpu->rd(cpu->hl);
@@ -516,17 +528,19 @@ Z80OPCODE ope_6F(Z80 *cpu) { // rld
 Z80OPCODE ope_70(Z80 *cpu) { // in (c) - Undocumented. Reads from the port and affects flags, but does not store the value to a register
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->f = log_f[cpu->in(cpu->bc)] | (cpu->f & CF);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_71(Z80 *cpu) { // out (c),0 - Undocumented. Writes zero to the port
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->out(cpu->bc, cpu->outc0);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_72(Z80 *cpu) { // sbc hl,sp
@@ -585,18 +599,20 @@ Z80OPCODE ope_76(Z80 *cpu) { // im 1
 Z80OPCODE ope_78(Z80 *cpu) { // in a,(c)
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->a = cpu->in(cpu->bc);
    cpu->f = log_f[cpu->a] | (cpu->f & CF);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_79(Z80 *cpu) { // out (c),a
    cpu->memptr = cpu->bc + 1;
 
+   cputact(1);
    cpu->out(cpu->bc, cpu->a);
 
-   cputact(4);
+   cputact(3);
 }
 
 Z80OPCODE ope_7A(Z80 *cpu) { // adc hl,sp
@@ -680,10 +696,15 @@ Z80OPCODE ope_A1(Z80 *cpu) { // cpi
 
 Z80OPCODE ope_A2(Z80 *cpu) { // ini
     // Based on Xpeccy emulator implementation
+    // Cycle order (Xpeccy "5 4in 3wr" / ZXMAK2): M1 stall T, IO read, memory write.
+    // 1T stall + 1T to reach IORQ at T2 of the IO cycle (see op_D3), then the
+    // remaining 3T of the IO cycle before the 3T memory write.
     cpu->memptr = cpu->bc + 1;
 
+    cputact(2);
     uint16_t hl = cpu->hl;
-    uint8_t value = cpu->in(cpu->bc);  // M = port value (at IO cycle start)
+    uint8_t value = cpu->in(cpu->bc);  // M = port value (IORQ at T2)
+    cputact(3);
     cpu->wd(hl++, value);
 
     // Decrement B
@@ -707,11 +728,12 @@ Z80OPCODE ope_A2(Z80 *cpu) { // ini
     if (!(pf & 1)) cpu->f |= PV;
 
     cpu->hl = hl;
-    cputact(5);
 }
 
 Z80OPCODE ope_A3(Z80 *cpu) { // outi
     // Based on Xpeccy emulator implementation
+    // Cycle order (Xpeccy "5 3rd 4wr" / ZXMAK2): M1 stall T, memory read, IO write.
+    // IORQ asserts at T2 of the IO cycle (see op_D3).
     cputact(1);
 
     uint16_t hl = cpu->hl;
@@ -723,8 +745,9 @@ Z80OPCODE ope_A3(Z80 *cpu) { // outi
 
     cpu->memptr = cpu->bc + 1;
 
+    cputact(1);
     cpu->out(cpu->bc, value);
-    cputact(4);
+    cputact(3);
     hl++;
 
     // T = M + L (output value of L)
@@ -788,10 +811,13 @@ Z80OPCODE ope_A9(Z80 *cpu) { // cpd
 
 Z80OPCODE ope_AA(Z80 *cpu) { // ind
     // Based on Xpeccy emulator implementation
+    // Cycle order and IO phase: see ope_A2 (ini)
     cpu->memptr = cpu->bc - 1;
 
+    cputact(2);
     uint16_t hl = cpu->hl;
-    uint8_t value = cpu->in(cpu->bc);  // M = port value (at IO cycle start)
+    uint8_t value = cpu->in(cpu->bc);  // M = port value (IORQ at T2)
+    cputact(3);
     cpu->wd(hl--, value);
 
     // Decrement B
@@ -815,11 +841,11 @@ Z80OPCODE ope_AA(Z80 *cpu) { // ind
     if (!(pf & 1)) cpu->f |= PV;
 
     cpu->hl = hl;
-    cputact(5);
 }
 
 Z80OPCODE ope_AB(Z80 *cpu) { // outd
     // Based on Xpeccy emulator implementation
+    // Cycle order and IO phase: see ope_A3 (outi)
     cputact(1);
 
     uint16_t hl = cpu->hl;
@@ -831,8 +857,9 @@ Z80OPCODE ope_AB(Z80 *cpu) { // outd
 
     cpu->memptr = cpu->bc - 1;
 
+    cputact(1);
     cpu->out(cpu->bc, value);
-    cputact(4);
+    cputact(3);
     hl--;
 
     // T = M + L (output value of L)
@@ -933,10 +960,12 @@ Z80OPCODE ope_B2(Z80 *cpu) { // inir
     // For INIR: T = M + ((C + 1) & 0xFF)
     cpu->memptr = cpu->bc + 1;
 
+    // Cycle order and IO phase: see ope_A2 (ini)
+    cputact(2);
     uint16_t hl = cpu->hl;
-    uint8_t value = cpu->in(cpu->bc);  // M = port value (at IO cycle start)
+    uint8_t value = cpu->in(cpu->bc);  // M = port value (IORQ at T2)
+    cputact(3);
     cpu->wd(hl++, value);
-    cputact(4);  // IO cycle time
 
     // Decrement B
     uint8_t b_out = cpu->b - 1;  // Bo = output value of B
@@ -985,7 +1014,7 @@ Z80OPCODE ope_B2(Z80 *cpu) { // inir
         cpu->pc = (cpu->pc - 2) & 0xFFFF;
         cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
 
-        cputact(6);
+        cputact(5);
     }
     else
     {
@@ -996,8 +1025,6 @@ Z80OPCODE ope_B2(Z80 *cpu) { // inir
         pf = (pf & 1) ? 0 : PV;
 
         cpu->f = ZF | pf | hf | nf | cf;
-
-        cputact(1);
     }
 
     cpu->hl = hl;
@@ -1016,8 +1043,9 @@ Z80OPCODE ope_B3(Z80 *cpu) { // otir
     uint8_t value = cpu->rd(hl++);  // M = memory value
     uint8_t l_out = hl & 0xFF;      // Lo = output value of L
 
+    cputact(1);
     cpu->out(cpu->bc, value);
-    cputact(4);
+    cputact(3);
 
     // T = M + Lo (for OTIR/OTDR)
     uint16_t t = value + l_out;
@@ -1115,6 +1143,9 @@ Z80OPCODE ope_B8(Z80 *cpu) { // lddr
        // Interrupted block instruction: YF=PC.13, XF=PC.11
        cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
 
+       // Repeating block op: MEMPTR = PC+1 (FUSE-verified, same as LDIR)
+       cpu->memptr = cpu->pc + 1;
+
        cputact(7);
     }
     else
@@ -1171,10 +1202,12 @@ Z80OPCODE ope_BA(Z80 *cpu) { // indr
     // For INDR: T = M + ((C - 1) & 0xFF)
     cpu->memptr = cpu->bc - 1;
 
+    // Cycle order and IO phase: see ope_A2 (ini)
+    cputact(2);
     uint16_t hl = cpu->hl;
-    uint8_t value = cpu->in(cpu->bc);  // M = port value (at IO cycle start)
+    uint8_t value = cpu->in(cpu->bc);  // M = port value (IORQ at T2)
+    cputact(3);
     cpu->wd(hl--, value);
-    cputact(4);  // IO cycle time
 
     // Decrement B
     uint8_t b_out = cpu->b - 1;  // Bo = output value of B
@@ -1223,7 +1256,7 @@ Z80OPCODE ope_BA(Z80 *cpu) { // indr
         cpu->pc = (cpu->pc - 2) & 0xFFFF;
         cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
 
-        cputact(6);
+        cputact(5);
     }
     else
     {
@@ -1235,7 +1268,6 @@ Z80OPCODE ope_BA(Z80 *cpu) { // indr
 
         cpu->f = ZF | pf | hf | nf | cf;
 
-        cputact(1);
     }
 
     cpu->hl = hl;
@@ -1253,8 +1285,9 @@ Z80OPCODE ope_BB(Z80 *cpu) { // otdr
     uint8_t value = cpu->rd(hl--);  // M = memory value
     uint8_t l_out = hl & 0xFF;      // Lo = output value of L
 
+    cputact(1);
     cpu->out(cpu->bc, value);
-    cputact(4);
+    cputact(3);
 
     // T = M + Lo (for OTIR/OTDR)
     uint16_t t = value + l_out;

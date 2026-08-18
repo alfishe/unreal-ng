@@ -707,6 +707,20 @@ void Emulator::Pause(bool broadcast)
     // leading to a crash when RemoveEmulator() destroys memory while thread is still running.
     // MainLoop::Run() will detect this via Emulator::IsPaused() check.
 
+    // Wait until the emulation thread actually parks in MainLoop's pause loop.
+    // Setting the flag alone is not enough: MainLoop only checks the pause flag
+    // between frames, so the in-flight frame keeps executing Z80 instructions
+    // (and writing to memory) after this method would otherwise have returned.
+    // Callers (tests, shared-memory migration, snapshot loading) rely on Pause()
+    // meaning "no more emulated writes". WaitForPauseConfirmation returns
+    // immediately when called from the emulation thread itself (breakpoint
+    // handlers pause mid-frame) and may time out legitimately when execution
+    // is already blocked inside a frame - proceed anyway in those cases.
+    if (_mainloop && _isRunning)
+    {
+        _mainloop->WaitForPauseConfirmation(500);
+    }
+
     // Update state and broadcast only if requested
     // broadcast=false is used for internal operations like shared memory migration
     // where we don't want to trigger UI updates during the brief pause
@@ -882,6 +896,17 @@ bool Emulator::LoadSnapshot(const std::string& path)
     {
         Pause();
         wasRunning = true;
+    }
+
+    // Pause() only sets a flag - the emulation thread finishes its current frame before
+    // parking in MainLoop's pause loop. Wait for confirmation so the loader never resets
+    // CPU/memory/screen state while a frame is still executing (this race can corrupt the
+    // framebuffer when a WebAPI 'pause' is immediately followed by 'snapshot/load').
+    // The wait may time out legitimately when paused inside a frame (breakpoint) or in
+    // synchronous test mode - proceed anyway in those cases.
+    if (_mainloop && IsRunning())
+    {
+        _mainloop->WaitForPauseConfirmation(250);
     }
 
     if (ext == "sna")
@@ -1326,6 +1351,11 @@ void Emulator::RunFrame(bool skipBreakpoints)
     if (IsRunning() && !IsPaused())
     {
         Pause();  // Broadcast pause so debugger UI updates
+
+        // Wait for the emulation thread to park - otherwise we would step the Z80
+        // concurrently with the frame MainLoop is still finishing
+        if (_mainloop)
+            _mainloop->WaitForPauseConfirmation(250);
     }
 
     const CONFIG& config = _context->config;
@@ -1433,6 +1463,11 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
     if (IsRunning() && !IsPaused())
     {
         Pause();  // Broadcast pause so debugger UI updates
+
+        // Wait for the emulation thread to park - otherwise we would step the Z80
+        // concurrently with the frame MainLoop is still finishing
+        if (_mainloop)
+            _mainloop->WaitForPauseConfirmation(250);
     }
 
     const CONFIG& config = _context->config;

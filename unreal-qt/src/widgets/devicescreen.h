@@ -3,6 +3,7 @@
 
 #include <QImage>
 #include <QWidget>
+#include <functional>
 #include <memory>
 
 #include "emulator/video/screen.h"  // For DisplayViewport
@@ -25,6 +26,18 @@ public:
 public:
     void init(uint16_t width, uint16_t height, void* buffer);
     void detach();
+
+    /// Copies the latched (tear-free) frame into dst; returns true on success.
+    using FrameCopyFn = std::function<bool(uint8_t* dst, size_t dstSize)>;
+
+    /// When set, paintEvent pulls frames into an owned backing image via this
+    /// callback (Screen::CopyPresentedFramebuffer) instead of reading the
+    /// emulator's live framebuffer, which the emulation thread overwrites
+    /// concurrently and causes mid-frame tearing.
+    void setFrameSource(FrameCopyFn frameSource)
+    {
+        _frameSource = std::move(frameSource);
+    }
 
 public:
     QSize sizeHint() const override
@@ -89,6 +102,8 @@ private:
 
     QRectF devicePixelsRect;
     QImage* devicePixels = nullptr;
+    QImage _latchedFrame;           // Owned backing store filled via _frameSource
+    FrameCopyFn _frameSource;       // Tear-free frame provider (empty = legacy live-buffer path)
 
     float ratio = 352.0f / 288.0f;
 

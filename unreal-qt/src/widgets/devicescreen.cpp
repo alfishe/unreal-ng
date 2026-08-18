@@ -38,6 +38,10 @@ void DeviceScreen::init(uint16_t width, uint16_t height, void* buffer)
 
     devicePixelsRect = QRectF(0.0, 0.0, width, height);
     devicePixels = new QImage(static_cast<const unsigned char*>(buffer), width, height, QImage::Format_RGBA8888);
+
+    // Owned backing store for the tear-free path (filled via _frameSource)
+    _latchedFrame = QImage(width, height, QImage::Format_RGBA8888);
+    _latchedFrame.fill(Qt::black);
 }
 
 void DeviceScreen::detach()
@@ -47,6 +51,9 @@ void DeviceScreen::detach()
         delete devicePixels;
         devicePixels = nullptr;
     }
+
+    _frameSource = nullptr;
+    _latchedFrame = QImage();
 
     // Trigger immediate repaint to show default background when detached
     update();
@@ -77,7 +84,19 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
 {
     QPainter painter = QPainter(this);
 
-    if (devicePixels != nullptr)
+    // Tear-free path: pull the latched full-frame snapshot into our owned
+    // backing image (SIMD copy under the screen's present mutex, ~40us),
+    // then draw without holding any lock. The legacy path below reads the
+    // emulator's live framebuffer and can show a mid-frame seam.
+    if (_frameSource && !_latchedFrame.isNull() &&
+        _frameSource(_latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes())))
+    {
+#if QT_VERSION >= QT_VERSION_CHECK(5, 13, 0)
+        painter.setRenderHint(QPainter::LosslessImageRendering);
+#endif
+        painter.drawImage(event->rect(), _latchedFrame, devicePixelsRect);
+    }
+    else if (devicePixels != nullptr)
     {
 #if QT_VERSION >= QT_VERSION_CHECK(5, 13, 0)
         painter.setRenderHint(QPainter::LosslessImageRendering);

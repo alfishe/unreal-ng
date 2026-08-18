@@ -4,6 +4,7 @@
 #include "base/featuremanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/sound/audio.h"
 #include "emulator/video/screen.h"
 #include "encoders/gif_encoder.h"
 #include "encoders/ffmpeg_pipe_encoder.h"
@@ -688,7 +689,19 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
     }
     else
     {
-        timestamp = static_cast<double>(_emulatedFrameCount) / _videoFrameRate;
+        // Calculate timestamp from actual T-states per frame, not hardcoded frame rate
+        // This ensures audio/video sync regardless of which machine model is emulated
+        // (Pentagon runs at ~48.83 fps, not 50 fps like ZX Spectrum 48K/128K)
+        uint32_t tstatesPerFrame = _context->config.frame;
+        if (tstatesPerFrame > 0)
+        {
+            double frameDurationSec = static_cast<double>(tstatesPerFrame) / static_cast<double>(CPU_CLOCK_RATE);
+            timestamp = static_cast<double>(_emulatedFrameCount) * frameDurationSec;
+        }
+        else
+        {
+            timestamp = static_cast<double>(_emulatedFrameCount) / _videoFrameRate;
+        }
     }
 
     // Crop to the main screen area (no border) when requested

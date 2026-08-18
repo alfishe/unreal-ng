@@ -120,7 +120,10 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
     /// endregion </Debug logging>
 
     // Universal handler for breakpoints, tracking, analyzers
-    OnPortInComplete(decodedPort, result, pc);
+    // Universal handler must receive the raw port address (as seen by the Z80),
+    // not the decoded one - otherwise port breakpoints set on raw addresses never match
+    // (e.g. IN A,($00) decodes to $00FE and would bypass a breakpoint on port $00)
+    OnPortInComplete(port, result, pc);
 
     return result;
 }
@@ -164,7 +167,9 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
     /// endregion </Debug logging>
 
     // Universal handler for breakpoints, tracking, analyzers
-    OnPortOutComplete(decodedPort, value, pc);
+    // Must receive the raw port address (as seen by the Z80), not the decoded one,
+    // so that port breakpoints set on raw addresses match correctly
+    OnPortOutComplete(port, value, pc);
 }
 
 /// Actualize port(s) state according selected RAM page

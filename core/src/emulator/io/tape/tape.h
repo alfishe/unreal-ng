@@ -140,6 +140,9 @@ protected:
     bool _lastTapeBit = false;          // Last tape bit state for band-limited step edge detection
     bool _tapeBitState = false;         // Digital signal output level of current tape pulse
 
+    uint8_t _initialErrNr = 0;          // ERR_NR value when tape started (to detect change)
+    uint32_t _framesSinceLastRead = 0;  // Frames since last tape IN read (to detect loader exit)
+
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>

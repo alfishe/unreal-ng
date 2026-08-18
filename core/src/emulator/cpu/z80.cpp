@@ -466,7 +466,12 @@ uint8_t Z80::rd(uint16_t addr, bool isExecution)
 
     IncrementCPUCyclesCounter(3);
 
-    return (_memory->*MemIf->MemoryRead)(addr, isExecution);
+    uint8_t value = (_memory->*MemIf->MemoryRead)(addr, isExecution);
+
+    if (busTraceHook)
+        busTraceHook('R', addr, value);
+
+    return value;
 }
 
 /// Dispatching memory write method. Used directly from Z80 microcode (CPULogic and opcode)
@@ -491,6 +496,9 @@ void Z80::wd(uint16_t addr, uint8_t val)
     IncrementCPUCyclesCounter(3);
 
     (_memory->*MemIf->MemoryWrite)(addr, val);
+
+    if (busTraceHook)
+        busTraceHook('W', addr, val);
 }
 
 uint8_t Z80::in(uint16_t port)
@@ -512,6 +520,9 @@ uint8_t Z80::in(uint16_t port)
 
     // Let model-specific decoder to process port input
     uint8_t result = portDecoder.DecodePortIn(port, m1_pc);
+
+    if (busTraceHook)
+        busTraceHook('I', port, result);
 
     // Floating bus: if no hardware device decoded the port, the ULA returns
     // the video byte currently on the data bus.
@@ -553,6 +564,9 @@ void Z80::out(uint16_t port, uint8_t val)
 
     // Let model-specific decoder to process port output
     portDecoder.DecodePortOut(port, val, m1_pc);
+
+    if (busTraceHook)
+        busTraceHook('O', port, val);
 }
 
 void Z80::retn() {}
@@ -633,7 +647,12 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
 
     // Generate INT
     // TODO: move INT forming logic to Screen class since in reality it's formed by ULA / frame counters
-    if (!int_occurred && cpu.t >= int_start)
+    // Strict sampling (cpu.t > int_start): the ULA registers the INT signal one clock
+    // after the raster compare (MiSTer ula.sv: INT <= 1 on the next edge) and the CPU
+    // samples INT only at end-of-instruction edges - an instruction boundary landing
+    // exactly at int_start still sees INT inactive. Inclusive ">=" accepts 1T early,
+    // which shifts interrupt-locked raster effects by one locked state (doc 20).
+    if (!int_occurred && cpu.t > int_start)
     {
         int_occurred = true;
         cpu.int_pending = true;
@@ -693,8 +712,11 @@ void Z80::HandleINT(uint8_t vector)
     else
     {
         // IM2
+        // Raw memory access without T-state accounting: the vector fetch time
+        // is already included in interruptDuration below (rd() would add +3T per byte)
         uint16_t vectorAddress = vector + cpu.i * 0x100;
-        interruptHandlerAddress = rd(vectorAddress) + 0x100 * rd(vectorAddress + 1);
+        interruptHandlerAddress = (_memory->*MemIf->MemoryRead)(vectorAddress, false) +
+                                  0x100 * (_memory->*MemIf->MemoryRead)(vectorAddress + 1, false);
     }
     /// endregion </Determine interrupt handler address>
 
@@ -726,9 +748,12 @@ void Z80::HandleINT(uint8_t vector)
     /// endregion </Calculate INT duration>
 
     // Push return address to stack
+    // Raw memory access without T-state accounting: both stack write cycles
+    // are already included in interruptDuration above (wd() would add +3T per byte).
+    // Same approach as the original Unreal Speccy handle_int (MemIf->wm() without t increment)
     uint16_t sp = cpu.sp;
-    wd(--sp, cpu.pch);
-    wd(--sp, cpu.pcl);
+    (_memory->*MemIf->MemoryWrite)(--sp, cpu.pch);
+    (_memory->*MemIf->MemoryWrite)(--sp, cpu.pcl);
     cpu.sp = sp;
 
     // Jump to interrupt handler

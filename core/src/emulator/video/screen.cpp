@@ -11,6 +11,7 @@
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
+#include "common/video/videoutils.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "stdafx.h"
@@ -621,6 +622,19 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         // Clear the whole framebuffer
         memset(_framebuffer.memoryBuffer, 0x00, _framebuffer.memoryBufferSize);
 
+        // Allocate the matching presentation (latched) buffer.
+        // _presentBufferSize is the authoritative size for cross-thread readers
+        // and changes only together with the buffer, under the mutex - readers
+        // must never trust _framebuffer.memoryBufferSize, which is published
+        // outside the lock during mode switches.
+        {
+            std::lock_guard<std::mutex> lock(_presentMutex);
+            delete[] _presentBuffer;
+            _presentBuffer = new uint8_t[_framebuffer.memoryBufferSize];
+            _presentBufferSize = _framebuffer.memoryBufferSize;
+            memset(_presentBuffer, 0x00, _presentBufferSize);
+        }
+
 #ifdef _DEBUG
         MLOGINFO("Framebuffer allocated");
 
@@ -644,6 +658,44 @@ void Screen::DeallocateFramebuffer()
         _framebuffer.memoryBuffer = nullptr;
         _framebuffer.memoryBufferSize = 0;
     }
+
+    {
+        std::lock_guard<std::mutex> lock(_presentMutex);
+        delete[] _presentBuffer;
+        _presentBuffer = nullptr;
+        _presentBufferSize = 0;
+    }
+}
+
+void Screen::LatchFramebuffer()
+{
+    // Runs on the emulation thread, which is also the only mutator of
+    // _framebuffer - those fields are stable here
+    if (_framebuffer.memoryBuffer == nullptr)
+        return;
+
+    std::lock_guard<std::mutex> lock(_presentMutex);
+    if (_presentBuffer && _presentBufferSize == _framebuffer.memoryBufferSize)
+    {
+        VideoUtils::CopyFrameBuffer(_presentBuffer, _framebuffer.memoryBuffer, _presentBufferSize);
+    }
+}
+
+bool Screen::CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize)
+{
+    if (dst == nullptr)
+        return false;
+
+    // Size check and copy length must both use _presentBufferSize under the
+    // mutex: _framebuffer.memoryBufferSize is published outside the lock
+    // during mode-switch reallocation, and trusting it here could overread
+    // a present buffer from the previous video mode
+    std::lock_guard<std::mutex> lock(_presentMutex);
+    if (_presentBuffer == nullptr || _presentBufferSize == 0 || dstSize < _presentBufferSize)
+        return false;
+
+    VideoUtils::CopyFrameBuffer(dst, _presentBuffer, _presentBufferSize);
+    return true;
 }
 
 FramebufferDescriptor& Screen::GetFramebufferDescriptor()
