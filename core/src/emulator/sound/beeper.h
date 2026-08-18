@@ -79,6 +79,10 @@ public:
 public:
     void reset();
 
+    /// Live core-rate change (device reroute with CoreRate=auto): re-point
+    /// the blip_buf resampler at the new output rate and clear pending deltas
+    void setSampleRate(size_t samplingRate);
+
     /// Called at the start of each video frame.
     void handleFrameStart();
 

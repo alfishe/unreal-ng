@@ -579,12 +579,14 @@ FramebufferDescriptor Emulator::GetFramebuffer()
     return _context->pScreen->GetFramebufferDescriptor();
 }
 
-void Emulator::SetAudioCallback(void* obj, AudioCallback callback, const std::atomic<uint32_t>* occupancyFrames)
+void Emulator::SetAudioCallback(void* obj, AudioCallback callback, const std::atomic<uint32_t>* occupancyFrames,
+                                const AudioDeviceDescriptor* deviceDescriptor)
 {
     // Use memory_order_release to ensure all previous writes are visible to the emulator thread
     _context->pAudioManagerObj.store(obj, std::memory_order_release);
     _context->pAudioCallback.store(callback, std::memory_order_release);
     _context->pAudioRingOccupancy.store(occupancyFrames, std::memory_order_release);
+    _context->pAudioDeviceDescriptor.store(deviceDescriptor, std::memory_order_release);
 
     MLOGINFO("Emulator::SetAudioCallback() - Audio callback set: obj=%p, callback=%p", obj, (void*)callback);
 }
@@ -592,6 +594,21 @@ void Emulator::SetAudioCallback(void* obj, AudioCallback callback, const std::at
 void Emulator::SetAudioDeviceSampleRate(uint32_t rate)
 {
     _context->pAudioDeviceSampleRate.store(rate, std::memory_order_release);
+
+    // CoreRate=auto: a device-rate CHANGE (hotplug / reroute at a different
+    // native rate) requests a full pipeline re-rate - every digital filter
+    // re-derives for the new core rate at the next frame boundary on the
+    // emulation thread (SoundManager::handleFrameStart applies it there;
+    // deferred while a recording is in progress).
+    if (rate != 0 && _context->config.sound.coreRate == 0 && _context->pSoundManager)
+    {
+        _context->pSoundManager->requestCoreRate(rate);
+    }
+}
+
+const AudioDeviceDescriptor* Emulator::GetAudioDeviceDescriptor() const
+{
+    return _context->pAudioDeviceDescriptor.load(std::memory_order_acquire);
 }
 
 void Emulator::ClearAudioCallback()
@@ -601,6 +618,7 @@ void Emulator::ClearAudioCallback()
     _context->pAudioCallback.store(nullptr, std::memory_order_release);
     _context->pAudioRingOccupancy.store(nullptr, std::memory_order_release);
     _context->pAudioDeviceSampleRate.store(0, std::memory_order_release);
+    _context->pAudioDeviceDescriptor.store(nullptr, std::memory_order_release);
 
     MLOGINFO("Emulator::ClearAudioCallback() - Audio callback cleared for emulator %s", _emulatorId.c_str());
 }

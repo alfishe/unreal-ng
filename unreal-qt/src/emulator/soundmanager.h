@@ -30,14 +30,26 @@ protected:
     ma_device _audioDevice;
     AudioRingBuffer<int16_t, AUDIO_BUFFER_SAMPLES_PER_FRAME * 8> _ringBuffer;
 
-    // Ring occupancy in stereo frames, published for the emulator-side DRC
-    // controller (registered via Emulator::SetAudioCallback). Owned here so
-    // the cell outlives any emulator instance.
-    std::atomic<uint32_t> _occupancyFrames{0};
-    uint32_t _deviceSampleRate = AUDIO_SAMPLING_RATE;  // Read back from ma_device after init
+    // Realtime-observable device/ring state (audiodevicedescriptor.h):
+    // occupancy cell for the DRC controller plus device parameters and ring
+    // health counters for monitoring. Owned here so it outlives any emulator
+    // instance; registered via Emulator::SetAudioCallback.
+    AudioDeviceDescriptor _deviceDescriptor;
 
     // Device reroute handling (OS default-output change / hotplug)
     std::atomic<bool> _shuttingDown{false};
+    // macOS: CoreAudio property listener for NOMINAL SAMPLE RATE changes on
+    // the SAME device (e.g. Audio MIDI Setup / Background Music switching
+    // 48k -> 192k). miniaudio only fires 'rerouted' on device changes, not
+    // on rate changes - without this watch the pipeline keeps running with
+    // a hidden OS resampler at the old rate.
+#ifdef __APPLE__
+    uint32_t _watchedDeviceObjectID = 0;
+
+    void startNominalRateWatch();
+    void stopNominalRateWatch();
+#endif
+
 
     // Ring error observability (emulator thread, audioCallback only)
     uint32_t _errorLogCounter = 0;
@@ -59,9 +71,11 @@ public:
     /// region <Methods>
 public:
     bool init();
-    const std::atomic<uint32_t>* occupancyCell() const { return &_occupancyFrames; }
+    const std::atomic<uint32_t>* occupancyCell() const { return &_deviceDescriptor.occupancyFrames; }
     /// Actual device sample rate after init (native rate; audio-sync Fix 3)
-    uint32_t deviceSampleRate() const { return _deviceSampleRate; }
+    uint32_t deviceSampleRate() const { return _deviceDescriptor.sampleRate.load(std::memory_order_acquire); }
+    /// Full realtime monitoring descriptor (register with Emulator::SetAudioCallback)
+    const AudioDeviceDescriptor* deviceDescriptor() const { return &_deviceDescriptor; }
     void deinit();
 
     void start();

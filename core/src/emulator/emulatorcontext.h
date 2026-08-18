@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include "common/modulelogger.h"
+#include "common/sound/audiodevicedescriptor.h"
 #include "emulator/platform.h"
 #include "corestate.h"
 #include "emulator/io/tape/tape.h"
@@ -101,6 +102,12 @@ public:
     /// Fix 3). 0 = same as CORE_SAMPLING_RATE. The DRC resampler uses
     /// device/core as its base ratio; ring occupancy is in DEVICE-rate frames.
     std::atomic<uint32_t> pAudioDeviceSampleRate{0};
+
+    /// Full realtime-observable device/ring state (audiodevicedescriptor.h),
+    /// owned by the frontend's sound manager. Superset of the two cells
+    /// above (occupancy cell points INTO it); monitoring consumers (WebAPI,
+    /// diagnostics) read it lock-free. nullptr = no device attached.
+    std::atomic<const AudioDeviceDescriptor*> pAudioDeviceDescriptor{nullptr};
 
     // Sound manager
     SoundManager* pSoundManager = nullptr;

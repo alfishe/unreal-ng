@@ -176,13 +176,23 @@ public:
     FramebufferDescriptor GetFramebuffer();
     /// @param occupancyFrames Optional ring-occupancy cell (stereo frames)
     ///        owned by the caller; enables the DRC rate controller
+    /// @param deviceDescriptor Optional full device/ring descriptor
+    ///        (audiodevicedescriptor.h) for realtime monitoring; owned by the
+    ///        caller and must outlive the registration
     void SetAudioCallback(void* obj, AudioCallback callback,
-                          const std::atomic<uint32_t>* occupancyFrames = nullptr);
+                          const std::atomic<uint32_t>* occupancyFrames = nullptr,
+                          const AudioDeviceDescriptor* deviceDescriptor = nullptr);
 
     /// Report the attached audio device's native sample rate (0 = core rate).
-    /// The DRC resampler converts core->device at this base ratio.
+    /// The DRC resampler converts core->device at this base ratio. With
+    /// [SOUND] CoreRate=auto, a rate CHANGE (device hotplug/reroute) also
+    /// requests a full sound-pipeline re-rate: all digital filters re-derive
+    /// for the new core rate at the next frame boundary.
     void SetAudioDeviceSampleRate(uint32_t rate);
     void ClearAudioCallback();
+
+    /// Realtime device/ring monitoring state (nullptr = no device attached)
+    const AudioDeviceDescriptor* GetAudioDeviceDescriptor() const;
 
     // Emulator control cycle
     void Reset();

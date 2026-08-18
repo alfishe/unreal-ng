@@ -2620,7 +2620,8 @@ void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
     // Bind the audio callback to the new emulator
     qDebug() << "MainWindow::bindEmulatorAudio() - Binding audio callback to emulator"
              << QString::fromStdString(emulator->GetId());
-    emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback, _soundManager->occupancyCell());
+    emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback, _soundManager->occupancyCell(),
+                               _soundManager->deviceDescriptor());
     emulator->SetAudioDeviceSampleRate(_soundManager->deviceSampleRate());
 
     qDebug() << "MainWindow::bindEmulatorAudio() - Audio device now owned by emulator"

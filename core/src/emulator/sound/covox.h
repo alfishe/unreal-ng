@@ -78,6 +78,9 @@ public:
     int16_t* getBuffer() { return _buffer; }
     const int16_t* getBuffer() const { return _buffer; }
 
+    /// Live core-rate change (device reroute with CoreRate=auto)
+    void setSampleRate(size_t sampleRate);
+
     // Frame lifecycle
     void reset();
     void handleFrameStart();

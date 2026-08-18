@@ -72,11 +72,13 @@ private:
     void connectSignals();
     void disconnectSignals();
     void updateSoloIndicator();
+    void updateDeviceInfo();
 
     EmulatorContext* _context = nullptr;
 
     // Shown when no emulator is active
     QLabel* _statusLabel = nullptr;
+    QLabel* _deviceInfoLabel = nullptr;  // Live device/core sample-rate readout
     QWidget* _controlsContainer = nullptr;
 
     // Sources section (registry-driven)

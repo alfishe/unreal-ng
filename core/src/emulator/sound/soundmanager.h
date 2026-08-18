@@ -69,6 +69,22 @@ protected:
 
     size_t resolveCoreRate() const;
 
+    // Live core-rate change request (device reroute with CoreRate=auto).
+    // Written from any thread via requestCoreRate(); APPLIED only at the next
+    // frame boundary on the emulation thread (handleFrameStart), which owns
+    // all DSP state. 0 = no change pending. Deferred while recording.
+    std::atomic<uint32_t> _pendingCoreRate{0};
+    bool _pendingRateLoggedWhileRecording = false;
+
+    void applyCoreRate(size_t rate);
+
+    // Process-wide device native rate, published by the frontend right after
+    // audio device init - BEFORE any emulator exists. CoreRate=auto consults
+    // it when the per-emulator pAudioDeviceSampleRate cell is still unset
+    // (emulators are constructed before the frontend binds/publishes to
+    // them, so the per-context cell alone resolves auto to 44100 always).
+    static std::atomic<uint32_t> _defaultDeviceSampleRate;
+
     AudioFrameDescriptor _beeperAudioDescriptor;                                   // Audio descriptor for the beeper
     int16_t* const _beeperBuffer = (int16_t*)_beeperAudioDescriptor.memoryBuffer;  // Shortcut to it's sample buffer
 
@@ -214,6 +230,23 @@ public:
     /// The resolved core audio rate (Hz) - recording and analysis consumers
     /// must read this instead of assuming 44100
     size_t getCoreRate() const { return _coreRate; }
+
+    /// Request a live core-rate change (thread-safe; applied at the next
+    /// frame boundary on the emulation thread). Every rate-dependent DSP
+    /// stage re-derives: beeper/covox blip resamplers, AY sample PLL and
+    /// decimation FIRs, character chains, the exact sample accumulator, and
+    /// the recording rate. No-op for unsupported rates or when equal to the
+    /// current core rate; deferred while a recording is in progress.
+    void requestCoreRate(uint32_t rate);
+
+    /// Publish the audio device's native rate for CoreRate=auto resolution.
+    /// Call right after device init (and re-init on reroute), before creating
+    /// emulators. Process-wide: the playback device is shared by all
+    /// emulator instances.
+    static void PublishDefaultDeviceSampleRate(uint32_t rate)
+    {
+        _defaultDeviceSampleRate.store(rate, std::memory_order_release);
+    }
 
     // DRC telemetry (tests / diagnostics)
     double getDrcRatio() const { return _drcResampler.getRatio(); }

@@ -27,6 +27,15 @@ Beeper::Beeper(EmulatorContext* context, size_t clockRate, size_t samplingRate, 
     blip_set_rates(_blipR, static_cast<double>(_clockRate), static_cast<double>(_samplingRate));
 }
 
+void Beeper::setSampleRate(size_t samplingRate)
+{
+    _samplingRate = samplingRate;
+    blip_set_rates(_blipL, static_cast<double>(_clockRate), static_cast<double>(_samplingRate));
+    blip_set_rates(_blipR, static_cast<double>(_clockRate), static_cast<double>(_samplingRate));
+    blip_clear(_blipL);
+    blip_clear(_blipR);
+}
+
 Beeper::~Beeper()
 {
     blip_delete(_blipL);

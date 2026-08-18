@@ -104,6 +104,33 @@ TEST_F(Multirate_Test, CoreRateResolution)
         SoundManager sound(_context);
         EXPECT_EQ(sound.getCoreRate(), 44100u);
     }
+
+    // auto + process-wide default published (frontend audio init happens
+    // BEFORE emulator creation - the per-context cell is 0 at that point):
+    // resolver must fall back to the published default
+    SoundManager::PublishDefaultDeviceSampleRate(48000);
+    {
+        SoundManager sound(_context);
+        EXPECT_EQ(sound.getCoreRate(), 48000u)
+            << "auto must match the device rate published before emulator creation";
+    }
+
+    // Per-context cell takes priority over the process-wide default
+    _context->pAudioDeviceSampleRate.store(96000, std::memory_order_release);
+    {
+        SoundManager sound(_context);
+        EXPECT_EQ(sound.getCoreRate(), 96000u);
+    }
+
+    // Unsupported process-wide default -> conservative 44100
+    _context->pAudioDeviceSampleRate.store(0, std::memory_order_release);
+    SoundManager::PublishDefaultDeviceSampleRate(22050);
+    {
+        SoundManager sound(_context);
+        EXPECT_EQ(sound.getCoreRate(), 44100u);
+    }
+
+    SoundManager::PublishDefaultDeviceSampleRate(0);  // Reset for other tests
 }
 
 /// endregion </Core rate resolution rules>
@@ -311,5 +338,100 @@ TEST_F(Multirate_Test, AY_PitchInvariantAcrossRates)
             << rate << " Hz core: AY tone pitch must be invariant to the core rate";
     }
 }
+
+/// region <Live core-rate change (device reroute with CoreRate=auto)>
+
+TEST_F(Multirate_Test, LiveCoreRateChange_RederivesPipeline)
+{
+    // Device reroute at a different native rate with CoreRate=auto: the whole
+    // pipeline must re-derive at the next frame boundary - blip resamplers,
+    // AY PLL/decimators, character chains, sample accumulator.
+    CallbackCapture capture;
+    _context->pAudioCallback.store(&CallbackCapture::callback, std::memory_order_release);
+    _context->pAudioManagerObj.store(&capture, std::memory_order_release);
+    _context->config.frame = PENTAGON_FRAME;
+    _context->config.sound.coreRate = 0;
+
+    SoundManager sound(_context);
+    ASSERT_EQ(sound.getCoreRate(), 44100u);
+
+    sound.handleFrameStart();
+    sound.handleFrameEnd();
+    EXPECT_NEAR(capture.lastNumSamples / 2.0, 903.0, 2.0) << "Pentagon frame at 44.1k";
+
+    // Reroute: applied at the NEXT frame boundary, on the emulation thread
+    sound.requestCoreRate(48000);
+    sound.handleFrameStart();
+    EXPECT_EQ(sound.getCoreRate(), 48000u);
+    EXPECT_EQ(sound.getTurboSound()->getCoreRate(), 48000u) << "AY chain must re-derive";
+    sound.handleFrameEnd();
+    EXPECT_NEAR(capture.lastNumSamples / 2.0, 983.0, 2.0) << "Pentagon frame at 48k";
+
+    // Unsupported rates are ignored
+    sound.requestCoreRate(22050);
+    sound.handleFrameStart();
+    sound.handleFrameEnd();
+    EXPECT_EQ(sound.getCoreRate(), 48000u);
+
+    // Equal rate is a no-op (no state reset churn)
+    sound.requestCoreRate(48000);
+    sound.handleFrameStart();
+    EXPECT_EQ(sound.getCoreRate(), 48000u);
+}
+
+TEST_F(Multirate_Test, DeviceRateChange_TriggersAutoCoreRerate)
+{
+    // Frontend reroute path end-to-end: SetAudioDeviceSampleRate on an
+    // auto-rate emulator must request the pipeline re-rate (applied at the
+    // next frame boundary by the emulator's own SoundManager).
+    SoundManager* sound = _context->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+    ASSERT_EQ(_context->config.sound.coreRate, 0u) << "Test requires CoreRate=auto";
+    ASSERT_EQ(sound->getCoreRate(), 44100u);
+
+    _emulator->SetAudioDeviceSampleRate(48000);
+    sound->handleFrameStart();
+    EXPECT_EQ(sound->getCoreRate(), 48000u)
+        << "Auto core rate must follow the re-established device rate";
+
+    // Explicitly configured rate must NOT follow the device
+    _context->config.sound.coreRate = 44100;
+    _emulator->SetAudioDeviceSampleRate(96000);
+    sound->handleFrameStart();
+    EXPECT_EQ(sound->getCoreRate(), 48000u) << "Explicit CoreRate pins the core rate";
+    _context->config.sound.coreRate = 0;
+    _emulator->SetAudioDeviceSampleRate(0);
+}
+
+/// endregion </Live core-rate change>
+
+/// region <Audio device descriptor (realtime monitoring)>
+
+TEST_F(Multirate_Test, AudioDeviceDescriptor_RegisteredAndObservable)
+{
+    AudioDeviceDescriptor desc;
+    desc.sampleRate.store(48000, std::memory_order_relaxed);
+    desc.channels.store(2, std::memory_order_relaxed);
+    desc.capacityFrames.store(16384, std::memory_order_relaxed);
+    desc.setDeviceName("Test Output");
+    desc.occupancyFrames.store(3360, std::memory_order_relaxed);  // 70 ms @ 48k
+
+    EXPECT_NEAR(desc.occupancyMs(), 70.0, 0.01);
+
+    // Registration lifecycle mirrors the frontend bind/unbind flow
+    _emulator->SetAudioCallback(nullptr, nullptr, &desc.occupancyFrames, &desc);
+    ASSERT_EQ(_emulator->GetAudioDeviceDescriptor(), &desc);
+    EXPECT_EQ(_emulator->GetAudioDeviceDescriptor()->sampleRate.load(), 48000u);
+    EXPECT_STREQ(_emulator->GetAudioDeviceDescriptor()->deviceName, "Test Output");
+
+    _emulator->ClearAudioCallback();
+    EXPECT_EQ(_emulator->GetAudioDeviceDescriptor(), nullptr);
+
+    // No device attached -> occupancyMs reports 0, not a division blowup
+    AudioDeviceDescriptor detached;
+    EXPECT_EQ(detached.occupancyMs(), 0.0);
+}
+
+/// endregion </Audio device descriptor>
 
 /// endregion </Pitch invariance>

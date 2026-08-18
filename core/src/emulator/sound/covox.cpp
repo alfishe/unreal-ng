@@ -28,6 +28,18 @@ Covox::Covox(EmulatorContext* context, size_t sampleRate)
     reset();
 }
 
+void Covox::setSampleRate(size_t sampleRate)
+{
+    _sampleRate = sampleRate;
+    blip_set_rates(_blipL, static_cast<double>(CPU_CLOCK_RATE), static_cast<double>(_sampleRate));
+    blip_set_rates(_blipR, static_cast<double>(CPU_CLOCK_RATE), static_cast<double>(_sampleRate));
+    if (_blipL) blip_clear(_blipL);
+    if (_blipR) blip_clear(_blipR);
+
+    // Keep the DC blocker cutoff in Hz constant across core rates
+    _dcCoefEff = static_cast<float>(std::pow(DC_COEF, 44100.0 / static_cast<double>(_sampleRate)));
+}
+
 Covox::~Covox()
 {
     blip_delete(_blipL);

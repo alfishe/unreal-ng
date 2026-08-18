@@ -52,6 +52,12 @@ void AudioSettingsWidget::createUI()
     _statusLabel->setVisible(false);
     outerLayout->addWidget(_statusLabel);
 
+    // Live device/pipeline readout: device name + native rate, core rate,
+    // ring occupancy (= the A/V presentation offset). Refreshed with meters.
+    _deviceInfoLabel = new QLabel("Audio device: —", this);
+    _deviceInfoLabel->setStyleSheet("color: gray; font-style: italic; padding: 2px;");
+    outerLayout->addWidget(_deviceInfoLabel);
+
     _controlsContainer = new QWidget(this);
     outerLayout->addWidget(_controlsContainer);
 
@@ -381,6 +387,7 @@ void AudioSettingsWidget::refreshFromContext()
 
     _controlsContainer->setEnabled(hasContext);
     _statusLabel->setVisible(!hasContext);
+    updateDeviceInfo();
 
     // Rebuild sources section from registry
     rebuildSourcesSection();
@@ -633,10 +640,50 @@ void AudioSettingsWidget::onCovoxChannelMuteChanged(int state)
 
 // ============ Meter updates ============
 
+void AudioSettingsWidget::updateDeviceInfo()
+{
+    if (!_deviceInfoLabel)
+        return;
+
+    if (!_context || !_context->pSoundManager)
+    {
+        _deviceInfoLabel->setText("Audio device: — (no active emulator)");
+        return;
+    }
+
+    const size_t coreRate = _context->pSoundManager->getCoreRate();
+    QString text;
+
+    if (const AudioDeviceDescriptor* dev = _context->pAudioDeviceDescriptor.load(std::memory_order_acquire))
+    {
+        const uint32_t devRate = dev->sampleRate.load(std::memory_order_relaxed);
+        text = QString("Device: %1 @ %2 Hz · Core: %3 Hz · Buffer: %4 ms")
+                   .arg(QString::fromUtf8(dev->deviceName))
+                   .arg(devRate)
+                   .arg(coreRate)
+                   .arg(dev->occupancyMs(), 0, 'f', 1);
+        const uint32_t reinits = dev->reinitCount.load(std::memory_order_relaxed);
+        if (reinits > 0)
+            text += QString(" · Reroutes: %1").arg(reinits);
+    }
+    else
+    {
+        text = QString("Device: none · Core: %1 Hz").arg(coreRate);
+    }
+
+    // The full text can exceed the window width (long device names): show
+    // an elided readout with the complete text in the tooltip
+    _deviceInfoLabel->setToolTip(text);
+    const int avail = _deviceInfoLabel->width() > 50 ? _deviceInfoLabel->width() - 4 : 400;
+    _deviceInfoLabel->setText(_deviceInfoLabel->fontMetrics().elidedText(text, Qt::ElideRight, avail));
+}
+
 void AudioSettingsWidget::onUpdateMeters()
 {
     if (!_context || !_context->pSoundManager || !isVisible())
         return;
+
+    updateDeviceInfo();
 
     const auto& devices = _context->pSoundManager->devices();
 

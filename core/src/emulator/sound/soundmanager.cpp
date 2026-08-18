@@ -11,17 +11,25 @@
 
 /// region <Constructors / Destructors>
 
+std::atomic<uint32_t> SoundManager::_defaultDeviceSampleRate{0};
+
 /// Resolve the core audio rate from [SOUND] CoreRate (multirate plan phase 6).
 /// Explicit supported rates pass through (validated at config load); auto (0)
-/// matches the audio device's native rate when the frontend has already
-/// published it and it is a supported rate, else falls back to 44100.
+/// matches the audio device's native rate when known and supported, else
+/// falls back to 44100. The device rate comes from the per-emulator cell if
+/// the frontend already bound this emulator, otherwise from the process-wide
+/// default published at audio device init (the usual case: emulators are
+/// constructed BEFORE the frontend binds audio to them).
 size_t SoundManager::resolveCoreRate() const
 {
     const unsigned configured = _context->config.sound.coreRate;
     if (configured != 0)
         return configured;
 
-    const uint32_t devRate = _context->pAudioDeviceSampleRate.load(std::memory_order_relaxed);
+    uint32_t devRate = _context->pAudioDeviceSampleRate.load(std::memory_order_relaxed);
+    if (devRate == 0)
+        devRate = _defaultDeviceSampleRate.load(std::memory_order_acquire);
+
     switch (devRate)
     {
         case 44100:
@@ -265,8 +273,96 @@ void SoundManager::setBeeperVolume(double volume)
 /// endregion </Methods>
 
 /// region <Emulation events>
+void SoundManager::requestCoreRate(uint32_t rate)
+{
+    switch (rate)
+    {
+        case 44100:
+        case 48000:
+        case 88200:
+        case 96000:
+        case 176400:
+        case 192000:
+            break;
+        default:
+            LOGWARNING("SoundManager::requestCoreRate: unsupported rate %u ignored", rate);
+            return;
+    }
+
+    if (rate == _coreRate)
+        return;
+
+    _pendingCoreRate.store(rate, std::memory_order_release);
+}
+
+/// Re-derive the whole audio pipeline for a new core rate. Emulation thread
+/// only (frame boundary): no consumer touches DSP state here - the device
+/// callback only reads the ring buffer downstream of the DRC resampler.
+void SoundManager::applyCoreRate(size_t rate)
+{
+    const size_t oldRate = _coreRate;
+    _coreRate = rate;
+
+    // Band-limited synthesis resamplers (T-state -> core rate)
+    _beeper->setSampleRate(rate);
+    if (_covox)
+        _covox->setSampleRate(rate);
+
+    // AY: sample PLL increment, decimation ratios, anti-alias FIR redesign
+    _turboSound->setCoreRate(rate);
+
+    // Character chains: re-derive envelope/room/punch coefficients for the
+    // new rate (setup preserves chip type and presets; resets DSP state)
+    _ayChain0.setup(rate);
+    _ayChain1.setup(rate);
+    _beeperChain.setup(rate);
+
+    // Restart the exact sample accumulator - its residue is in old-rate units
+    _sampleAccumulator = 0;
+
+    // Recording must stamp future captures with the new rate (applyCoreRate
+    // is never reached while a recording is active - see handleFrameStart)
+#ifdef ENABLE_RECORDING
+    if (_context->pRecordingManager)
+    {
+        _context->pRecordingManager->SetAudioSampleRate(static_cast<uint32_t>(rate));
+    }
+#endif  // ENABLE_RECORDING
+
+    LOGINFO("SoundManager: core audio rate re-established %zu -> %zu Hz (all filters re-derived)",
+            oldRate, rate);
+}
+
 void SoundManager::handleFrameStart()
 {
+    // Apply a pending live core-rate change at the frame boundary (the
+    // emulation thread owns all DSP state here). Deferred while a recording
+    // is in progress - a recording must keep one rate end to end.
+    const uint32_t pending = _pendingCoreRate.load(std::memory_order_acquire);
+    if (pending != 0)
+    {
+#ifdef ENABLE_RECORDING
+        const bool recording = _context->pRecordingManager && _context->pRecordingManager->IsRecording();
+#else
+        const bool recording = false;
+#endif  // ENABLE_RECORDING
+        if (recording)
+        {
+            if (!_pendingRateLoggedWhileRecording)
+            {
+                LOGINFO("SoundManager: core-rate change to %u Hz deferred until recording stops", pending);
+                _pendingRateLoggedWhileRecording = true;
+            }
+        }
+        else
+        {
+            _pendingCoreRate.store(0, std::memory_order_release);
+            _pendingRateLoggedWhileRecording = false;
+            if (pending != _coreRate)
+                applyCoreRate(pending);
+        }
+    }
+
     _turboSound->handleFrameStart();
     if (_covox)
         _covox->handleFrameStart();

@@ -43,6 +43,12 @@ public:
         std::fill(_buffer, _buffer + Size, 0);
     }
 
+    /// Total capacity in stereo frames (Size is in interleaved samples)
+    static constexpr size_t capacityStereoFrames()
+    {
+        return Size / 2;
+    }
+
     inline bool isEmpty() const
     {
         return _readPtr.load(std::memory_order_acquire) == _writePtr.load(std::memory_order_acquire);

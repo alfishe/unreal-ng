@@ -38,7 +38,10 @@ bool AppSoundManager::init()
     ma_device_config config = ma_device_config_init(ma_device_type_playback);
     config.playback.format   = ma_format_s16;       // Set to ma_format_unknown to use the device's native format.
     config.playback.channels = AUDIO_CHANNELS;      // Set to 0 to use the device's native channel count.
-    config.sampleRate        = AUDIO_SAMPLING_RATE; // Set to 0 to use the device's native sample rate.
+    // Use the device's NATIVE rate (audio-sync design Fix 3): eliminates the
+    // OS mixer's hidden resampler - the core's DRC resampler does the
+    // core->device conversion under our quality control.
+    config.sampleRate        = 0;
     config.performanceProfile = ma_performance_profile_low_latency;
     config.periodSizeInFrames = 256;                 // ~5.8ms period @ 44.1kHz
     config.periods            = 2;                   // 2 periods = 512 frames (~11.6ms hardware buffer @ 44.1kHz)
@@ -53,12 +56,41 @@ bool AppSoundManager::init()
         result = false;  // Failed to initialize the device.
     }
 
+    // Native rate actually granted by the device (config.sampleRate = 0).
+    // Fill the monitoring descriptor: device parameters change only here and
+    // on reroute re-init, while the device is stopped.
+    const uint32_t grantedRate = _audioDevice.sampleRate ? _audioDevice.sampleRate : AUDIO_SAMPLING_RATE;
+    _deviceDescriptor.sampleRate.store(grantedRate, std::memory_order_release);
+    _deviceDescriptor.channels.store(_audioDevice.playback.channels, std::memory_order_release);
+    _deviceDescriptor.capacityFrames.store(static_cast<uint32_t>(_ringBuffer.capacityStereoFrames()),
+                                           std::memory_order_release);
+    _deviceDescriptor.setDeviceName(_audioDevice.playback.name);
+
+    // Publish for CoreRate=auto resolution: emulators are created AFTER audio
+    // init but BEFORE the frontend binds/publishes the rate to them, so the
+    // core-side resolver needs this process-wide default to match the device
+    // family (otherwise auto always resolved to 44100)
+    if (result)
+    {
+        SoundManager::PublishDefaultDeviceSampleRate(grantedRate);
+
+#ifdef __APPLE__
+        // Watch for nominal-rate changes on THIS device (same-device rate
+        // switch fires no miniaudio reroute notification)
+        startNominalRateWatch();
+#endif
+    }
+
     return result;
 }
 
 void AppSoundManager::deinit()
 {
     _shuttingDown.store(true, std::memory_order_release);
+
+#ifdef __APPLE__
+    stopNominalRateWatch();
+#endif
 
     this->stop();
 
@@ -129,8 +161,11 @@ void AppSoundManager::audioDataCallback(ma_device* pDevice, void* pOutput, const
         // Publish ring occupancy for the DRC rate controller in the active
         // emulator's SoundManager (audio-sync design, Fix 2). Replaces the
         // former NC_AUDIO_BUFFER_HALF_FULL watermark posts.
-        obj->_occupancyFrames.store(static_cast<uint32_t>(obj->_ringBuffer.getOccupancyStereoFrames()),
-                                    std::memory_order_relaxed);
+        obj->_deviceDescriptor.occupancyFrames.store(
+            static_cast<uint32_t>(obj->_ringBuffer.getOccupancyStereoFrames()), std::memory_order_relaxed);
+        obj->_deviceDescriptor.framesDequeued.fetch_add(frameCount, std::memory_order_relaxed);
+        obj->_deviceDescriptor.dequeueErrors.store(obj->_ringBuffer.getDequeueErrorCount(),
+                                                   std::memory_order_relaxed);
     }
 
     (void)pInput; // Not used during playback
@@ -142,6 +177,13 @@ void AppSoundManager::audioCallback(void* obj, int16_t* samples, size_t numSampl
     if (appSoundManager)
     {
         appSoundManager->_ringBuffer.enqueue(samples, numSamples);
+        AudioDeviceDescriptor& desc = appSoundManager->_deviceDescriptor;
+        desc.occupancyFrames.store(
+            static_cast<uint32_t>(appSoundManager->_ringBuffer.getOccupancyStereoFrames()),
+            std::memory_order_relaxed);
+        desc.framesEnqueued.fetch_add(numSamples / 2, std::memory_order_relaxed);
+        desc.enqueueErrors.store(appSoundManager->_ringBuffer.getEnqueueErrorCount(),
+                                 std::memory_order_relaxed);
     }
 }
 
@@ -169,7 +211,7 @@ void AppSoundManager::handleDeviceRerouted()
     if (_shuttingDown.load(std::memory_order_acquire))
         return;
 
-    const uint32_t oldRate = _deviceSampleRate;
+    const uint32_t oldRate = _deviceDescriptor.sampleRate.load(std::memory_order_acquire);
 
     qDebug() << "AppSoundManager::handleDeviceRerouted() - Audio device rerouted, re-establishing at native rate";
 
@@ -177,6 +219,12 @@ void AppSoundManager::handleDeviceRerouted()
     // the ORIGINALLY negotiated rate. Re-init at the new output's native rate
     // so the core's DRC resampler stays the only conversion in the chain
     // (audio-sync design Fix 3).
+#ifdef __APPLE__
+    // The device object (and possibly its ID) is about to be torn down;
+    // init() re-arms the watch on the re-established device
+    stopNominalRateWatch();
+#endif
+
     ma_device_uninit(&_audioDevice);
 
     if (!init())
@@ -187,13 +235,63 @@ void AppSoundManager::handleDeviceRerouted()
 
     // Frames queued in the ring were resampled for the previous device rate
     _ringBuffer.clear();
+    _deviceDescriptor.reinitCount.fetch_add(1, std::memory_order_relaxed);
 
     start();  // Logs the re-established device the same way as the initial start
 
-    if (_deviceSampleRate != oldRate)
+    const uint32_t newRate = _deviceDescriptor.sampleRate.load(std::memory_order_acquire);
+    if (newRate != oldRate)
     {
         qDebug() << "AppSoundManager::handleDeviceRerouted() - Device sample rate changed"
-                 << oldRate << "->" << _deviceSampleRate << "Hz; republishing for DRC re-base";
-        emit deviceReinitialized(_deviceSampleRate);
+                 << oldRate << "->" << newRate << "Hz; republishing for DRC re-base";
+        emit deviceReinitialized(newRate);
     }
 }
+
+#ifdef __APPLE__
+#include <CoreAudio/CoreAudio.h>
+
+/// CoreAudio property listener: the device's nominal sample rate changed
+/// underneath us (same device, new rate - e.g. Audio MIDI Setup or a virtual
+/// device like Background Music). Runs on a CoreAudio thread: compare and
+/// hop to the GUI thread for the full re-negotiation.
+static OSStatus nominalRateListenerProc(AudioObjectID objectID, UInt32 numAddresses,
+                                        const AudioObjectPropertyAddress* addresses, void* clientData)
+{
+    (void)objectID;
+    (void)numAddresses;
+    (void)addresses;
+
+    AppSoundManager* obj = static_cast<AppSoundManager*>(clientData);
+    if (!obj)
+        return noErr;
+
+    QMetaObject::invokeMethod(obj, "handleDeviceRerouted", Qt::QueuedConnection);
+    return noErr;
+}
+
+void AppSoundManager::startNominalRateWatch()
+{
+    const uint32_t deviceID = _audioDevice.coreaudio.deviceObjectIDPlayback;
+    if (deviceID == 0)
+        return;
+
+    AudioObjectPropertyAddress addr = {kAudioDevicePropertyNominalSampleRate, kAudioObjectPropertyScopeGlobal,
+                                       kAudioObjectPropertyElementMain};
+    if (AudioObjectAddPropertyListener(deviceID, &addr, nominalRateListenerProc, this) == noErr)
+    {
+        _watchedDeviceObjectID = deviceID;
+    }
+}
+
+void AppSoundManager::stopNominalRateWatch()
+{
+    if (_watchedDeviceObjectID == 0)
+        return;
+
+    AudioObjectPropertyAddress addr = {kAudioDevicePropertyNominalSampleRate, kAudioObjectPropertyScopeGlobal,
+                                       kAudioObjectPropertyElementMain};
+    AudioObjectRemovePropertyListener(_watchedDeviceObjectID, &addr, nominalRateListenerProc, this);
+    _watchedDeviceObjectID = 0;
+}
+#endif  // __APPLE__

@@ -412,6 +412,31 @@ std::vector<std::string> FFmpegProbe::getAvailableEncoders(const std::string& ff
     return encoders;
 }
 
+bool FFmpegProbe::isSoxrAvailable(const std::string& ffmpegPath)
+{
+    std::string path = ffmpegPath.empty() ? findFFmpeg() : ffmpegPath;
+    if (path.empty())
+        return false;
+
+    static std::mutex soxrMutex;
+    static std::map<std::string, bool> soxrCache;
+    {
+        std::lock_guard<std::mutex> lock(soxrMutex);
+        auto it = soxrCache.find(path);
+        if (it != soxrCache.end())
+            return it->second;
+    }
+
+    std::string output = runCommand(path, {"-hide_banner", "-buildconf"}, 3000);
+    bool available = output.find("--enable-libsoxr") != std::string::npos;
+
+    {
+        std::lock_guard<std::mutex> lock(soxrMutex);
+        soxrCache[path] = available;
+    }
+    return available;
+}
+
 bool FFmpegProbe::isEncoderAvailable(const std::string& encoder, const std::string& ffmpegPath)
 {
     auto encoders = getAvailableEncoders(ffmpegPath.empty() ? findFFmpeg() : ffmpegPath);
