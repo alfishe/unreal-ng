@@ -2128,6 +2128,72 @@ void Emulator::DebugOff()
     _z80->isDebugMode = false;
 }
 
+// region <Video mode>
+
+bool Emulator::SetOverscanMode(bool enable)
+{
+    if (!_context || !_context->pScreen)
+        return false;
+
+    Screen* screen = _context->pScreen;
+    VideoModeEnum currentMode = screen->GetVideoMode();
+
+    // Only Pentagon supports overscan
+    if (currentMode != M_PENTAGON128K && currentMode != M_P384)
+    {
+        return false;  // ZX48/128 have no overscan
+    }
+
+    VideoModeEnum newMode = enable ? M_P384 : M_PENTAGON128K;
+
+    if (newMode != currentMode)
+    {
+        // Pause emulation while changing video mode to avoid framebuffer access during reallocation
+        bool wasRunning = IsRunning() && !IsPaused();
+        if (wasRunning)
+        {
+            Pause(false);
+        }
+
+        screen->SetVideoMode(newMode);
+
+        if (wasRunning)
+        {
+            Resume(false);
+        }
+
+        return true;
+    }
+    return false;
+}
+
+bool Emulator::IsOverscanMode() const
+{
+    if (!_context || !_context->pScreen)
+        return false;
+
+    return _context->pScreen->IsOverscanMode();
+}
+
+void Emulator::SetDisplayViewport(const DisplayViewport& viewport)
+{
+    if (_context && _context->pScreen)
+    {
+        _context->pScreen->SetDisplayViewport(viewport);
+    }
+}
+
+const DisplayViewport& Emulator::GetDisplayViewport() const
+{
+    static DisplayViewport defaultViewport;
+    if (!_context || !_context->pScreen)
+        return defaultViewport;
+
+    return _context->pScreen->GetDisplayViewport();
+}
+
+// endregion </Video mode>
+
 Z80State* Emulator::GetZ80State()
 {
     return static_cast<Z80State*>(_z80);
