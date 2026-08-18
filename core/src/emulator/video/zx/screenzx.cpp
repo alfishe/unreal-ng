@@ -54,6 +54,9 @@ void ScreenZX::CreateTables()
         _rgbaFlashColors[idx] = TransformZXSpectrumColorsToRGBA(idx, false);  // Flashing state colors
     }
 
+    // Initialize latched border color from palette (default border = 0/black)
+    _latchedBorderColorRGBA = _rgbaColors[0];
+
     // Screen mode dependent
     CreateTimingTable();
 }
@@ -74,11 +77,12 @@ void ScreenZX::CreateTimingTable()
     const RasterState& state = _rasterState;
 
     RenderTypeEnum type = RT_BLANK;
-    uint16_t rasterLines = 288;
+    // This iterates over horizontal positions (t-states per line), not vertical lines
+    uint16_t tstatesPerLine = state.tstatesPerLine;
 
     /// region <Line renderer in screen area>
 
-    for (uint16_t i = 0; i < rasterLines; i++)
+    for (uint16_t i = 0; i < tstatesPerLine; i++)
     {
         if (i >= state.blankLineAreaStart && i <= state.blankLineAreaEnd)
         {
@@ -141,6 +145,16 @@ void ScreenZX::CreateTstateLUT()
     const RasterDescriptor& rd = rasterDescriptors[_mode];
     const uint32_t maxFrameTiming = _rasterState.maxFrameTiming;
 
+    // For M_P384 overscan, use Pentagon timing but render to larger framebuffer
+    // This ensures identical timing while showing more border area
+    const RasterDescriptor& timing = (_mode == M_P384) ? rasterDescriptors[M_PENTAGON128K] : rd;
+
+    // For M_P384, we render 16 more lines from vBlank (at top) and 32 more pixels horizontally
+    // No framebuffer offset needed - the extra content fills the larger buffer directly
+    // The screen position shifts within the buffer (48,48 → 72,64) because more border is visible
+    const int overscanExtraLines = (_mode == M_P384) ? 16 : 0;
+    const int overscanExtraPixels = (_mode == M_P384) ? 32 : 0;
+
     // Clear LUT first
     memset(_tstateLUT, 0, sizeof(_tstateLUT));
 
@@ -148,23 +162,35 @@ void ScreenZX::CreateTstateLUT()
     {
         TstateCoordLUT& entry = _tstateLUT[t];
 
-        // Calculate framebuffer coordinates
-        const int framebufferX = (t % _rasterState.tstatesPerLine) * _rasterState.pixelsPerTState;
-        const int framebufferY = t / _rasterState.tstatesPerLine - (rd.vSyncLines + rd.vBlankLines);
+        // Calculate line number within frame (0 = start of vSync)
+        const int lineInFrame = t / _rasterState.tstatesPerLine;
+        const int pixelInLine = (t % _rasterState.tstatesPerLine) * _rasterState.pixelsPerTState;
 
-        if (framebufferY >= 0 && framebufferY < rd.fullFrameHeight && framebufferX < rd.fullFrameWidth)
+        // For standard mode: visible starts at line 32 (after vSync+vBlank)
+        // For M_P384 overscan: visible starts at line 16 (after vSync only, into vBlank)
+        const int visibleStartLine = timing.vSyncLines + timing.vBlankLines - overscanExtraLines;
+        const int framebufferY = lineInFrame - visibleStartLine;
+
+        // For M_P384, we render 32 more pixels per line (from what's normally hBlank)
+        // No horizontal offset - just extend the visible width
+        const int framebufferX = pixelInLine;
+
+        // Check if within visible framebuffer area (use actual framebuffer dimensions)
+        const int visibleWidth = timing.fullFrameWidth + overscanExtraPixels;
+        const int visibleHeight = timing.fullFrameHeight + overscanExtraLines;
+        if (framebufferY >= 0 && framebufferY < visibleHeight && framebufferX < visibleWidth)
         {
             entry.framebufferX = static_cast<uint16_t>(framebufferX);
             entry.framebufferY = static_cast<uint16_t>(framebufferY);
 
-            // Check if within ZX screen area
+            // Check if within ZX screen area (using timing boundaries)
             if (t >= _rasterState.screenAreaStart && t <= _rasterState.screenAreaEnd)
             {
-                const uint16_t pixelX = framebufferX;
+                const uint16_t pixelX = pixelInLine;  // Use pixel position for screen detection
 
-                if (pixelX >= rd.screenOffsetLeft && pixelX < (rd.screenOffsetLeft + rd.screenWidth))
+                if (pixelX >= timing.screenOffsetLeft && pixelX < (timing.screenOffsetLeft + timing.screenWidth))
                 {
-                    const uint16_t zxX = pixelX - rd.screenOffsetLeft;
+                    const uint16_t zxX = pixelX - timing.screenOffsetLeft;
                     const uint16_t zxY = (t - _rasterState.screenAreaStart) / _rasterState.tstatesPerLine;
 
                     if (zxX <= 255 && zxY < 192)
@@ -686,9 +712,14 @@ void ScreenZX::Draw(uint32_t tstate)
         }
         else if (_borderColor != _latchedBorderColorIndex)
         {
-            // ZX models: only latch at 4T boundaries (when t-in-line is divisible by 4)
+            // ZX models: border is latched at 8-HC boundaries.
+            // MiSTer HDL: hc_next[2:0] == 4, meaning the new border register
+            // becomes effective when pixel counter transitions 3→4 (t-state 1→2).
+            // So in t-states, the latch point is at phase offset 2 within each
+            // 4T group: t-states 2, 6, 10, 14, ...
             uint32_t tInLine = tstate % _rasterState.tstatesPerLine;
-            if (tInLine % _rasterState.borderUpdateTStates == 0)
+            uint8_t phase = _rasterState.borderUpdateTStates / 2;
+            if (tInLine % _rasterState.borderUpdateTStates == phase)
             {
                 _latchedBorderColorRGBA = _rgbaColors[_borderColor];
                 _latchedBorderColorIndex = _borderColor;

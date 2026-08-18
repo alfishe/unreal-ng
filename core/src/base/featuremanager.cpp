@@ -266,6 +266,13 @@ void FeatureManager::setDefaults()
                      "",
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryAnalysis});
+    registerFeature({Features::kOverscan,
+                     Features::kOverscanAlias,
+                     Features::kOverscanDesc,
+                     false,  // OFF by default - Pentagon only, demo development
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
 
     _dirty = false;
 }

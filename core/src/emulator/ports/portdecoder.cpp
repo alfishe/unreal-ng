@@ -312,7 +312,7 @@ void PortDecoder::Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc)
 
     // Pass value to the tape and beeper sound generator
     _tape->handlePortOut(value);
-    //_soundManager->getBeeper().handlePortOut(value, tState);
+    _soundManager->getBeeper().handlePortOut(value, tState);
 
     // Set border color
     _screen->SetBorderColor(borderColor);
@@ -400,6 +400,7 @@ uint8_t PortDecoder::PeripheralPortIn(uint16_t port)
         if (device)
         {
             result = device->portDeviceInMethod(port);
+            _lastPortDecoded = true;
         }
     }
     else

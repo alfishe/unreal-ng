@@ -4,6 +4,7 @@
 #include "base/featuremanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/sound/audio.h"
 #include "emulator/video/screen.h"
 #include "encoders/gif_encoder.h"
 #include "encoders/ffmpeg_pipe_encoder.h"
@@ -121,10 +122,62 @@ static std::string PrepareOutputPath(const std::string& path, std::string& error
 
 RecordingManager::RecordingManager(EmulatorContext* context) : _context(context)
 {
-    // Initialize logger from context
-    _logger = context->pModuleLogger;
+    if (context && context->pModuleLogger)
+    {
+        _logger = context->pModuleLogger;
+    }
+    else
+    {
+        // Instantiate a standalone ModuleLogger when no EmulatorContext is provided (e.g. Video Wall recording)
+        _ownedLogger = std::make_unique<ModuleLogger>(nullptr);
+        _logger = _ownedLogger.get();
+    }
 
+    UpdateFeatureCache();
     MLOGINFO("RecordingManager::RecordingManager - Instance created");
+}
+
+const std::vector<RecordingProfile>& RecordingProfileCollection::getStandardProfiles()
+{
+    static const std::vector<RecordingProfile> profiles = {
+        // Dynamic Active Clone Screen Modes
+        {"native_1x", "Native 1× (Active Clone Screen Mode)", 0, 0, 1.0f, 2000},
+        {"native_2x", "Native 2× (Integer Scale 2x)", 0, 0, 2.0f, 4000},
+        {"native_3x", "Native 3× (Integer Scale 3x)", 0, 0, 3.0f, 6000},
+        {"native_4x", "Native 4× (Integer Scale 4x)", 0, 0, 4.0f, 8000},
+
+        // Spectrum & Clone Hardware Resolution Presets (p-ratings)
+        {"240p", "240p Retro (320×240 - ZX 48K/128K Frame)", 320, 240, 1.0f, 1500},
+        {"288p", "288p PAL (352×288 - Pentagon/PAL Frame)", 352, 288, 1.0f, 2000},
+        {"320p", "320p Extended (400×320 - TS-Conf/Border)", 400, 320, 1.0f, 2200},
+        {"360p", "360p Low-HD (640×360 - TS-Conf Hi-Res)", 640, 360, 1.0f, 2500},
+        {"480p", "480p VGA (640×480 - ATM Turbo / Double)", 640, 480, 1.0f, 3500},
+        {"576p", "576p SDTV (720×576 - PAL Double)", 720, 576, 1.0f, 4000},
+        {"640p", "640p Hi-Res (800×640 - ProFi/ATM HD)", 800, 640, 1.0f, 4500},
+
+        // HD & Ultra-HD Broadcast Presets
+        {"720p", "720p HD (1280×720 - HD Ready)", 1280, 720, 1.0f, 5000},
+        {"960p", "960p Quad-VGA (1280×960 - 4x Integer 240p)", 1280, 960, 1.0f, 6500},
+        {"1080p", "1080p Full HD (1920×1080)", 1920, 1080, 1.0f, 8000},
+        {"1440p", "1440p Quad HD (2560×1440)", 2560, 1440, 1.0f, 16000},
+        {"4k", "4K Ultra HD (3840×2160)", 3840, 2160, 1.0f, 35000}
+    };
+    return profiles;
+}
+
+RecordingProfile RecordingProfileCollection::getDefaultProfile()
+{
+    return getProfileById("1080p");
+}
+
+RecordingProfile RecordingProfileCollection::getProfileById(const std::string& id)
+{
+    for (const auto& p : getStandardProfiles())
+    {
+        if (p.id == id)
+            return p;
+    }
+    return getDefaultProfile();
 }
 
 RecordingManager::~RecordingManager()
@@ -170,6 +223,9 @@ void RecordingManager::Init()
 
     // Reset state
     Reset();
+
+    // Ensure feature is checked when initialized
+    UpdateFeatureCache();
 }
 
 void RecordingManager::onEmulatorStateChange(int /*id*/, Message* message)
@@ -223,10 +279,18 @@ void RecordingManager::Reset()
 
 void RecordingManager::UpdateFeatureCache()
 {
-    if (_context && _context->pFeatureManager)
+    if (_context)
     {
-        _featureEnabled = _context->pFeatureManager->isEnabled(Features::kRecording);
-        MLOGDEBUG("RecordingManager::UpdateFeatureCache - recording feature = %s", _featureEnabled ? "ON" : "OFF");
+        if (_context->pFeatureManager)
+        {
+            _featureEnabled = _context->pFeatureManager->isEnabled(Features::kRecording);
+            MLOGDEBUG("RecordingManager::UpdateFeatureCache - recording feature = %s", _featureEnabled ? "ON" : "OFF");
+        }
+        else
+        {
+            MLOGERROR("RecordingManager::UpdateFeatureCache - FeatureManager missing in EmulatorContext");
+            _featureEnabled = false;
+        }
     }
 }
 
@@ -237,7 +301,13 @@ void RecordingManager::UpdateFeatureCache()
 bool RecordingManager::StartRecording(const std::string& filename, const std::string& videoCodec,
                                       const std::string& audioCodec, uint32_t videoBitrate, uint32_t audioBitrate)
 {
-    // Feature guard - early exit if recording disabled
+    // Check feature state from FeatureManager when context is attached
+    if (_context)
+    {
+        UpdateFeatureCache();
+    }
+
+    // Feature guard - fail cleanly if recording feature is disabled
     if (!_featureEnabled)
     {
         MLOGWARNING("RecordingManager::StartRecording - Recording disabled (feature 'recording' = off)");
@@ -290,18 +360,27 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
     // Use capture-region dimensions if not explicitly set
     if (_videoEnabled && (_videoWidth == 0 || _videoHeight == 0))
     {
-        FramebufferDescriptor fb = _context->pScreen->GetFramebufferDescriptor();
-        _videoWidth = fb.width;
-        _videoHeight = fb.height;
-
-        if (_captureRegion == VideoCaptureRegion::MainScreen)
+        if (_context && _context->pScreen)
         {
-            const RasterDescriptor& rd = _context->pScreen->rasterDescriptors[fb.videoMode];
-            if (rd.screenWidth > 0 && rd.screenHeight > 0)
+            FramebufferDescriptor fb = _context->pScreen->GetFramebufferDescriptor();
+            _videoWidth = fb.width;
+            _videoHeight = fb.height;
+
+            if (_captureRegion == VideoCaptureRegion::MainScreen)
             {
-                _videoWidth = rd.screenWidth;
-                _videoHeight = rd.screenHeight;
+                const RasterDescriptor& rd = _context->pScreen->rasterDescriptors[fb.videoMode];
+                if (rd.screenWidth > 0 && rd.screenHeight > 0)
+                {
+                    _videoWidth = rd.screenWidth;
+                    _videoHeight = rd.screenHeight;
+                }
             }
+        }
+        else
+        {
+            RecordingProfile defaultProf = RecordingProfileCollection::getDefaultProfile();
+            _videoWidth = defaultProf.width;
+            _videoHeight = defaultProf.height;
         }
     }
 
@@ -381,9 +460,18 @@ bool RecordingManager::StartRecordingEx(const std::string& filename)
     // Use native framebuffer dimensions if not explicitly set
     if (_videoEnabled && (_videoWidth == 0 || _videoHeight == 0))
     {
-        FramebufferDescriptor fb = _context->pScreen->GetFramebufferDescriptor();
-        _videoWidth = fb.width;
-        _videoHeight = fb.height;
+        if (_context && _context->pScreen)
+        {
+            FramebufferDescriptor fb = _context->pScreen->GetFramebufferDescriptor();
+            _videoWidth = fb.width;
+            _videoHeight = fb.height;
+        }
+        else
+        {
+            RecordingProfile defaultProf = RecordingProfileCollection::getDefaultProfile();
+            _videoWidth = defaultProf.width;
+            _videoHeight = defaultProf.height;
+        }
     }
 
     if (_videoEnabled)
@@ -589,8 +677,32 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
         return;
     }
 
-    // Calculate presentation timestamp based on emulated frame count
-    double timestamp = static_cast<double>(_emulatedFrameCount) / _videoFrameRate;
+    // Calculate presentation timestamp based on real wall-clock elapsed time for VideoWall/real-time capture
+    // or emulated frame count for cycle-accurate single-emulator capture
+    double timestamp = 0.0;
+    if (_useRealTimeClock || !_context)
+    {
+        auto wallNow = Clock::now();
+        auto wallElapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            wallNow - _wallClockStart - _wallClockPausedTotal).count();
+        timestamp = static_cast<double>(wallElapsedMs) / 1000.0;
+    }
+    else
+    {
+        // Calculate timestamp from actual T-states per frame, not hardcoded frame rate
+        // This ensures audio/video sync regardless of which machine model is emulated
+        // (Pentagon runs at ~48.83 fps, not 50 fps like ZX Spectrum 48K/128K)
+        uint32_t tstatesPerFrame = _context->config.frame;
+        if (tstatesPerFrame > 0)
+        {
+            double frameDurationSec = static_cast<double>(tstatesPerFrame) / static_cast<double>(CPU_CLOCK_RATE);
+            timestamp = static_cast<double>(_emulatedFrameCount) * frameDurationSec;
+        }
+        else
+        {
+            timestamp = static_cast<double>(_emulatedFrameCount) / _videoFrameRate;
+        }
+    }
 
     // Crop to the main screen area (no border) when requested
     const FramebufferDescriptor* toEncode = &framebuffer;
@@ -702,8 +814,8 @@ void RecordingManager::CaptureAudio(const int16_t* samples, size_t sampleCount)
         return;
     }
 
-    // Calculate presentation timestamp based on emulated sample count
-    double timestamp = static_cast<double>(_emulatedAudioSampleCount) / _audioSampleRate;
+    // Calculate presentation timestamp based on emulated sample count (accounting for channels)
+    double timestamp = static_cast<double>(_emulatedAudioSampleCount / _audioChannels) / _audioSampleRate;
 
     // Encode audio samples
     EncodeAudioSamples(samples, sampleCount, timestamp);

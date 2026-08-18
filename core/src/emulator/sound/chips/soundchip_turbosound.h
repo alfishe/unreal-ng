@@ -62,6 +62,13 @@ public:
     }
 
     // Per-chip buffer access for registry-driven mixing / capture
+    /// Number of stereo sample pairs rendered into the frame buffers so far
+    /// this frame (diagnostics / adaptivity tests)
+    size_t getRenderedSamplesThisFrame() const
+    {
+        return _ayBufferIndex / AUDIO_CHANNELS;
+    }
+
     int16_t* getChipBuffer(int index)
     {
         if (index == 0)

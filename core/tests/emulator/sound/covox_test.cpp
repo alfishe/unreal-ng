@@ -184,14 +184,12 @@ TEST_F(CovoxTest, DCRemovalReducesOffset)
     for (int frame = 0; frame < 10; frame++)
     {
         covox->handleFrameStart();
-        int16_t* buf = covox->getBuffer();
-        for (size_t i = 0; i < SAMPLES_PER_FRAME * 2; i++)
-            buf[i] = dcValue;
+        covox->portDeviceOutMethod(Covox::PORT_RIGHT_B, 0xC0);
         covox->handleFrameEnd();
     }
 
     const int16_t* buf = covox->getBuffer();
-    // The last sample should be closer to zero than the raw value (16384)
+    // The last sample should be closer to zero than the raw initial offset
     // Due to DC removal, it should be significantly reduced
     EXPECT_LT(std::abs(buf[SAMPLES_PER_FRAME * 2 - 2]), 10000);
 }

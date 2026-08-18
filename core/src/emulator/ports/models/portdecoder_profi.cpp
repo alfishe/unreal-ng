@@ -59,8 +59,18 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
     (void)pc;
 
     uint8_t result = 0xFF;
+    _lastPortDecoded = false;
 
-    // Universal handler for breakpoints, tracking, analyzers
+    if (IsFEPort(port))
+    {
+        // Call default implementation
+        result = Default_Port_FE_In(port, pc);
+        _lastPortDecoded = true;
+    }
+    else
+    {
+        result = PeripheralPortIn(port);
+    }
     OnPortInComplete(port, result, pc);
 
     return result;

@@ -22,6 +22,7 @@
 #include <emulator/video/screencapture.h>
 #include <emulator/cpu/opcode_profiler.h>
 #include <debugger/keyboard/debugkeyboardmanager.h>
+#include "../../../automation.h"
 
 namespace py = pybind11;
 
@@ -60,8 +61,12 @@ namespace PythonBindings
 
         m.def("emu_select", [](const std::string& id) -> bool {
             auto* mgr = EmulatorManager::GetInstance();
-            return mgr->SetSelectedEmulatorId(id);
-        }, "Select an emulator by ID");
+            return mgr && mgr->SelectEmulator(id);
+        }, "Set emulator as currently selected by ID", py::arg("id"));
+
+        m.def("videowall_singlesync", [](bool enable, const std::string& emulatorId) -> bool {
+            return Automation::GetInstance().SetVideowallSingleSyncMode(enable, emulatorId);
+        }, "Enable or disable Single Emulator Sync Mode for the videowall", py::arg("enable"), py::arg("emulator_id") = "");
 
         // Emulator class bindings
         py::class_<Emulator>(m, "Emulator")

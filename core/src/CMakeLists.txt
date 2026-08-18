@@ -78,15 +78,22 @@ if (CMAKE_BUILD_TYPE MATCHES Debug)
     target_compile_definitions(${PROJECT_NAME} PRIVATE _DEBUG)
 endif (CMAKE_BUILD_TYPE MATCHES Debug)
 
-# Recording support - if the option is set by parent CMake, define the symbol and add include path
+# Recording support - if the option is set by parent CMake, define the symbol, add include path, and link
 if (ENABLE_RECORDING)
     target_compile_definitions(${PROJECT_NAME} PUBLIC ENABLE_RECORDING)
     target_include_directories(${PROJECT_NAME} PUBLIC ${ROOT_DIR}/core/recording/src)
+    # Build recording library if not already built by parent
+    if (NOT TARGET unrealng::recording)
+        add_subdirectory("${ROOT_DIR}/core/recording" "${CMAKE_CURRENT_BINARY_DIR}/recording")
+    endif()
+    # Link to recording so linker resolves RecordingManager symbols
+    target_link_libraries(${PROJECT_NAME} PUBLIC unrealng::recording)
 endif()
 
 # Set include paths for compiler
 target_include_directories(${PROJECT_NAME} PUBLIC
     ${SOURCE_DIR}/
+    ${SOURCE_DIR}/3rdparty
     ${SOURCE_DIR}/common
     ${SOURCE_DIR}/emulator
 )

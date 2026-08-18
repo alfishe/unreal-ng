@@ -1,13 +1,18 @@
 #include "screen.h"
+#include "ulacontention.h"
 
 #include <common/image/imagehelper.h>
 
 #include <cassert>
+#include <cstring>
+#include <fstream>
+#include <iostream>
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
+#include "common/video/videoutils.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -327,17 +332,21 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     /// Note!: all timings are in t-states, although raster descriptor has pixels as UOM. So recalculation is required
     const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
 
+    // For M_P384 overscan mode, use Pentagon timing for all calculations
+    // Only the framebuffer size differs - timing must be identical to Pentagon
+    const RasterDescriptor& timingDescriptor = (_mode == M_P384) ? rasterDescriptors[M_PENTAGON128K] : rasterDescriptor;
+
     /// region <Config values>
     _rasterState.configFrameDuration = _context->config.frame;
     /// endregion </Config values>
 
     /// region <Frame timings>
 
-    _rasterState.pixelsPerLine = rasterDescriptor.pixelsPerLine;
+    _rasterState.pixelsPerLine = timingDescriptor.pixelsPerLine;
     _rasterState.tstatesPerLine = _rasterState.pixelsPerLine / _rasterState.pixelsPerTState;
     _rasterState.maxFrameTiming =
         _rasterState.tstatesPerLine *
-        (rasterDescriptor.vSyncLines + rasterDescriptor.vBlankLines + rasterDescriptor.fullFrameHeight);
+        (timingDescriptor.vSyncLines + timingDescriptor.vBlankLines + timingDescriptor.fullFrameHeight);
 
     /// endregion </Frame timings>
 
@@ -346,24 +355,24 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     // Invisible blank area on top
     _rasterState.blankAreaStart = 0;
     _rasterState.blankAreaEnd =
-        _rasterState.tstatesPerLine * (rasterDescriptor.vSyncLines + rasterDescriptor.vBlankLines) - 1;
+        _rasterState.tstatesPerLine * (timingDescriptor.vSyncLines + timingDescriptor.vBlankLines) - 1;
 
     // Top border
     _rasterState.topBorderAreaStart = _rasterState.blankAreaEnd + 1;
     _rasterState.topBorderAreaEnd =
-        _rasterState.topBorderAreaStart + _rasterState.tstatesPerLine * rasterDescriptor.screenOffsetTop - 1;
+        _rasterState.topBorderAreaStart + _rasterState.tstatesPerLine * timingDescriptor.screenOffsetTop - 1;
 
     // Screen + side borders
     _rasterState.screenAreaStart = _rasterState.topBorderAreaEnd + 1;
     _rasterState.screenAreaEnd =
-        _rasterState.screenAreaStart + _rasterState.tstatesPerLine * rasterDescriptor.screenHeight - 1;
+        _rasterState.screenAreaStart + _rasterState.tstatesPerLine * timingDescriptor.screenHeight - 1;
 
     // Bottom border
     _rasterState.bottomBorderAreaStart = _rasterState.screenAreaEnd + 1;
     _rasterState.bottomBorderAreaEnd =
         _rasterState.bottomBorderAreaStart +
         _rasterState.tstatesPerLine *
-            (rasterDescriptor.fullFrameHeight - rasterDescriptor.screenHeight - rasterDescriptor.screenOffsetTop) -
+            (timingDescriptor.fullFrameHeight - timingDescriptor.screenHeight - timingDescriptor.screenOffsetTop) -
         1;
 
     /// endregion </Vertical timings>
@@ -372,20 +381,20 @@ void Screen::SetVideoMode(VideoModeEnum mode)
 
     _rasterState.blankLineAreaStart = 0;
     _rasterState.blankLineAreaEnd =
-        ((rasterDescriptor.hSyncPixels + rasterDescriptor.hBlankPixels) / _rasterState.pixelsPerTState) - 1;
+        ((timingDescriptor.hSyncPixels + timingDescriptor.hBlankPixels) / _rasterState.pixelsPerTState) - 1;
 
     _rasterState.leftBorderAreaStart = _rasterState.blankLineAreaEnd + 1;
     _rasterState.leftBorderAreaEnd =
-        _rasterState.leftBorderAreaStart + (rasterDescriptor.screenOffsetLeft / _rasterState.pixelsPerTState) - 1;
+        _rasterState.leftBorderAreaStart + (timingDescriptor.screenOffsetLeft / _rasterState.pixelsPerTState) - 1;
 
     _rasterState.screenLineAreaStart = _rasterState.leftBorderAreaEnd + 1;
     _rasterState.screenLineAreaEnd =
-        _rasterState.screenLineAreaStart + (rasterDescriptor.screenWidth / _rasterState.pixelsPerTState) - 1;
+        _rasterState.screenLineAreaStart + (timingDescriptor.screenWidth / _rasterState.pixelsPerTState) - 1;
 
     _rasterState.rightBorderAreaStart = _rasterState.screenLineAreaEnd + 1;
     _rasterState.rightBorderAreaEnd =
         _rasterState.rightBorderAreaStart +
-        ((rasterDescriptor.fullFrameWidth - rasterDescriptor.screenOffsetLeft - rasterDescriptor.screenWidth) /
+        ((timingDescriptor.fullFrameWidth - timingDescriptor.screenOffsetLeft - timingDescriptor.screenWidth) /
          _rasterState.pixelsPerTState) -
         1;
 
@@ -402,17 +411,37 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     {
         case M_PENTAGON128K:
         case M_PMC:
+        case M_P16:
+        case M_P384:  // Pentagon overscan - same ULA behavior as standard Pentagon
+        case M_PHR:
             _rasterState.borderUpdateTStates = 1;
             _rasterState.contentionEnabled = false;
+            _rasterState.fetchType = ULA_DISCRETE_LOGIC;
             break;
         case M_ZX48:
         case M_ZX128:
         default:
             _rasterState.borderUpdateTStates = 4;
             _rasterState.contentionEnabled = true;
+            _rasterState.fetchType = ULA_FERRANTI;
             break;
     }
     /// endregion </Model-specific ULA behavior>
+
+    // Push raster timing + contention flag to the standalone ULA contention component
+    if (_context && _context->pUlaContention)
+    {
+        ContentionRaster cr;
+        cr.configFrameDuration = _rasterState.configFrameDuration;
+        cr.screenAreaStart = _rasterState.screenAreaStart;
+        cr.screenAreaEnd = _rasterState.screenAreaEnd;
+        cr.tstatesPerLine = _rasterState.tstatesPerLine;
+        cr.screenLineAreaStart = _rasterState.screenLineAreaStart;
+        cr.screenLineAreaEnd = _rasterState.screenLineAreaEnd;
+        _context->pUlaContention->UpdateRaster(cr);
+        _context->pUlaContention->SetContentionEnabled(_rasterState.contentionEnabled);
+        _context->pUlaContention->SetFetchType((UlaFetchType)_rasterState.fetchType);
+    }
 
     // Allocate framebuffer
     AllocateFramebuffer(_mode);
@@ -459,42 +488,6 @@ void Screen::SetBorderColor(uint8_t color)
 
     // Only bits [0:2] contain border color
     _borderColor = color & 0b0000'0111;
-}
-
-/// ULA memory contention delay table for ZX-48K/128K.
-// The ULA stalls the CPU clock when accessing contended memory (0x4000-0x7FFF)
-// during the visible screen area. The delay pattern repeats every 8 t-states
-// within each scanline during the paper area, following this sequence:
-//   t-state offset in line: 0  1  2  3  4  5  6  7  (then repeats)
-//   delay:                   6  5  4  3  2  1  0  0
-// Source: https://faqwiki.zxnet.co.uk/wiki/Contended_memory
-static const uint8_t contentionPattern[8] = {6, 5, 4, 3, 2, 1, 0, 0};
-
-uint8_t Screen::GetContentionDelay() const
-{
-    if (!_rasterState.contentionEnabled)
-        return 0;  // Pentagon: no contention
-
-    uint32_t t = _cpu->t % _rasterState.configFrameDuration;
-
-    // Only contend during the screen (paper) area
-    if (t < _rasterState.screenAreaStart || t > _rasterState.screenAreaEnd)
-        return 0;
-
-    // Calculate position within the scanline
-    uint32_t tInLine = (t - _rasterState.screenAreaStart) % _rasterState.tstatesPerLine;
-
-    // Only contend during the paper portion of the line (not left/right borders)
-    // Paper starts at screenLineAreaStart relative to line start
-    uint32_t paperStart = _rasterState.screenLineAreaStart;
-    uint32_t paperEnd = _rasterState.screenLineAreaEnd;
-
-    if (tInLine < paperStart || tInLine > paperEnd)
-        return 0;
-
-    // Delay is based on the position within the 8-t-state cell
-    uint32_t offsetInCell = (tInLine - paperStart) % 8;
-    return contentionPattern[offsetInCell];
 }
 
 VideoModeEnum Screen::GetVideoMode()
@@ -607,6 +600,10 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         case M_ZX48:
         case M_ZX128:
         case M_PENTAGON128K:
+        case M_PMC:
+        case M_P16:
+        case M_P384:  // Pentagon 384x304 overscan mode
+        case M_PHR:
             break;
         default:
             MLOGWARNING("AllocateFramebuffer: Unknown video mode");
@@ -629,6 +626,19 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
 
         // Clear the whole framebuffer
         memset(_framebuffer.memoryBuffer, 0x00, _framebuffer.memoryBufferSize);
+
+        // Allocate the matching presentation (latched) buffer.
+        // _presentBufferSize is the authoritative size for cross-thread readers
+        // and changes only together with the buffer, under the mutex - readers
+        // must never trust _framebuffer.memoryBufferSize, which is published
+        // outside the lock during mode switches.
+        {
+            std::lock_guard<std::mutex> lock(_presentMutex);
+            delete[] _presentBuffer;
+            _presentBuffer = new uint8_t[_framebuffer.memoryBufferSize];
+            _presentBufferSize = _framebuffer.memoryBufferSize;
+            memset(_presentBuffer, 0x00, _presentBufferSize);
+        }
 
 #ifdef _DEBUG
         MLOGINFO("Framebuffer allocated");
@@ -662,6 +672,44 @@ void Screen::DeallocateFramebuffer()
         _framebuffer.memoryBuffer = nullptr;
         _framebuffer.memoryBufferSize = 0;
     }
+
+    {
+        std::lock_guard<std::mutex> lock(_presentMutex);
+        delete[] _presentBuffer;
+        _presentBuffer = nullptr;
+        _presentBufferSize = 0;
+    }
+}
+
+void Screen::LatchFramebuffer()
+{
+    // Runs on the emulation thread, which is also the only mutator of
+    // _framebuffer - those fields are stable here
+    if (_framebuffer.memoryBuffer == nullptr)
+        return;
+
+    std::lock_guard<std::mutex> lock(_presentMutex);
+    if (_presentBuffer && _presentBufferSize == _framebuffer.memoryBufferSize)
+    {
+        VideoUtils::CopyFrameBuffer(_presentBuffer, _framebuffer.memoryBuffer, _presentBufferSize);
+    }
+}
+
+bool Screen::CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize)
+{
+    if (dst == nullptr)
+        return false;
+
+    // Size check and copy length must both use _presentBufferSize under the
+    // mutex: _framebuffer.memoryBufferSize is published outside the lock
+    // during mode-switch reallocation, and trusting it here could overread
+    // a present buffer from the previous video mode
+    std::lock_guard<std::mutex> lock(_presentMutex);
+    if (_presentBuffer == nullptr || _presentBufferSize == 0 || dstSize < _presentBufferSize)
+        return false;
+
+    VideoUtils::CopyFrameBuffer(dst, _presentBuffer, _presentBufferSize);
+    return true;
 }
 
 FramebufferDescriptor& Screen::GetFramebufferDescriptor()
@@ -710,6 +758,30 @@ void Screen::GetRGBAPalette16(uint32_t* colors)
 }
 
 /// endregion </Framebuffer related>
+
+/// region <Display viewport>
+
+void Screen::SetDisplayViewport(const DisplayViewport& viewport)
+{
+    _displayViewport = viewport;
+}
+
+const DisplayViewport& Screen::GetDisplayViewport() const
+{
+    return _displayViewport;
+}
+
+uint16_t Screen::GetDisplayWidth() const
+{
+    return _displayViewport.GetDisplayWidth(_framebuffer.width);
+}
+
+uint16_t Screen::GetDisplayHeight() const
+{
+    return _displayViewport.GetDisplayHeight(_framebuffer.height);
+}
+
+/// endregion </Display viewport>
 
 std::string Screen::GetVideoModeName(VideoModeEnum mode)
 {

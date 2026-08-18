@@ -1,9 +1,12 @@
 #include "videowall/EmulatorTile.h"
+#include "videowall/TileGrid.h"
 
 #include <QDragLeaveEvent>
 #include <QMimeData>
+#include "videowall/VideowallRecorder.h"
 #include <QPainter>
 #include <QTimer>
+#include <emulator/notifications.h>
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator.h"
@@ -14,53 +17,34 @@ EmulatorTile::EmulatorTile(std::shared_ptr<Emulator> emulator, QWidget* parent) 
 {
     setFixedSize(TILE_WIDTH, TILE_HEIGHT);
     // Cache emulator UUID
-    _emulatorId = _emulator ? _emulator->GetId() : "";
+    _emulatorId = _emulator ? _emulator->GetUUID().toString() : "";
     setFocusPolicy(Qt::StrongFocus);
     setAcceptDrops(true);
 
     if (_emulator)
     {
-        subscribeToNotifications();
-
-        // Set up 50Hz refresh timer (20ms = 50 FPS)
-        _refreshTimer = new QTimer(this);
-        connect(_refreshTimer, &QTimer::timeout, this, &EmulatorTile::handleVideoFrameRefresh);
-        _refreshTimer->start(20);  // 50Hz
     }
 }
 
 EmulatorTile::~EmulatorTile()
 {
     // Stop all timers to prevent callbacks during destruction
-    if (_refreshTimer)
-    {
-        _refreshTimer->stop();
-    }
     if (_blinkTimer)
     {
         _blinkTimer->stop();
     }
-    unsubscribeFromNotifications();
 }
 
 void EmulatorTile::prepareForDeletion()
 {
     // Stop all timers IMMEDIATELY to prevent callbacks during pending deletion
-    if (_refreshTimer)
-    {
-        _refreshTimer->stop();
-        _refreshTimer->deleteLater();
-        _refreshTimer = nullptr;
-    }
+    // Stop all timers IMMEDIATELY to prevent callbacks during pending deletion
     if (_blinkTimer)
     {
         _blinkTimer->stop();
         _blinkTimer->deleteLater();
         _blinkTimer = nullptr;
     }
-    
-    // Unsubscribe from notifications to prevent callbacks
-    unsubscribeFromNotifications();
     
     // Clear emulator reference to prevent any further access
     _emulator.reset();
@@ -72,6 +56,8 @@ void EmulatorTile::prepareForDeletion()
 
 void EmulatorTile::paintEvent(QPaintEvent* event)
 {
+    if (_isSynchronousMode) return;
+
     QPainter painter(this);
 
     if (!_emulator)
@@ -89,9 +75,9 @@ void EmulatorTile::paintEvent(QPaintEvent* event)
         // This reduces Qt scaling overhead by ~90% (qt_blend_argb32_on_argb32_neon)
         painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
 
-        // Extract central 256x192 screen from 352x288 framebuffer, scale 2x to 512x384
+        // Extract central 256x192 screen from 352x288 framebuffer, scale to widget size
         QRectF sourceRect(48, 48, 256, 192);
-        QRectF targetRect(0, 0, TILE_WIDTH, TILE_HEIGHT);
+        QRectF targetRect(rect());
         painter.drawImage(targetRect, image, sourceRect);
     }
     else
@@ -121,7 +107,7 @@ void EmulatorTile::paintEvent(QPaintEvent* event)
         painter.setPen(pen);
         painter.drawRect(rect().adjusted(2, 2, -4, -4));
     }
-    else if (_hasTileFocus)
+    else if (_hasTileFocus && !_isSynchronousMode)
     {
         // Lighter blue border when tile has keyboard focus
         QPen pen(QColor(120, 160, 255), 2);
@@ -310,21 +296,20 @@ void EmulatorTile::keyReleaseEvent(QKeyEvent* event)
     }
 }
 
-void EmulatorTile::handleVideoFrameRefresh()
+void EmulatorTile::setEmulator(std::shared_ptr<Emulator> emulator)
 {
-    // TODO: Phase 3 - will implement Observer-based notifications
+    _emulator = emulator;
+    _emulatorId = _emulator ? _emulator->GetUUID().toString() : "";
     update();
 }
 
-void EmulatorTile::subscribeToNotifications()
+void EmulatorTile::setSynchronousMode(bool enable)
 {
-    // TODO: Phase 3 - will subscribe to NC_VIDEO_FRAME_REFRESH
+    if (_isSynchronousMode == enable) return;
+    _isSynchronousMode = enable;
 }
 
-void EmulatorTile::unsubscribeFromNotifications()
-{
-    // TODO: Phase 3 - will unsubscribe from notifications
-}
+
 
 QImage EmulatorTile::convertFramebuffer()
 {

@@ -1,9 +1,17 @@
+// miniaudio.h includes <windows.h> on Windows. winsock2.h MUST be included before
+// windows.h to prevent type conflicts (see core's stdafx.h for the same pattern).
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+#endif
+
 #define MA_LOG_LEVEL 4
 #define MA_NO_DECODING
 #define MINIAUDIO_IMPLEMENTATION
 #include <3rdparty/miniaudio/miniaudio.h>
 
 #include "soundmanager.h"
+#include "videowall/VideowallRecorder.h"
 #include <QDebug>
 
 #include <emulator/sound/soundmanager.h>
@@ -22,27 +30,22 @@ AppSoundManager::~AppSoundManager()
 
 bool AppSoundManager::init()
 {
-    if (_isInitialized)
-        return true;
-
     bool result = true;
 
-    // Set audio output parameters
+    // Set audio output parameters for low latency
     ma_device_config config = ma_device_config_init(ma_device_type_playback);
     config.playback.format   = ma_format_s16;       // Set to ma_format_unknown to use the device's native format.
     config.playback.channels = AUDIO_CHANNELS;      // Set to 0 to use the device's native channel count.
     config.sampleRate        = AUDIO_SAMPLING_RATE; // Set to 0 to use the device's native sample rate.
+    config.performanceProfile = ma_performance_profile_low_latency;
+    config.periodSizeInFrames = 256;                 // ~5.8ms period @ 44.1kHz
+    config.periods            = 2;                   // 2 periods = 512 frames (~11.6ms hardware buffer @ 44.1kHz)
     config.dataCallback      = AppSoundManager::audioDataCallback; // This function will be called when miniaudio needs more data.
     config.pUserData         = (void*)this;         // Can be accessed from the device object (device.pUserData).
-
 
     if (ma_device_init(NULL, &config, &_audioDevice) != MA_SUCCESS)
     {
         result = false;  // Failed to initialize the device.
-    }
-    else
-    {
-        _isInitialized = true;
     }
 
     return result;
@@ -50,20 +53,13 @@ bool AppSoundManager::init()
 
 void AppSoundManager::deinit()
 {
-    if (!_isInitialized)
-        return;
-
     this->stop();
 
     ma_device_uninit(&_audioDevice);
-    _isInitialized = false;
 }
 
 void AppSoundManager::start()
 {
-    if (!_isInitialized || _isStarted)
-        return;
-
     ma_result result = ma_device_start(&_audioDevice);     // The device is sleeping by default, so you'll need to start it manually.
 
     if (result != MA_SUCCESS)
@@ -72,7 +68,6 @@ void AppSoundManager::start()
     }
     else
     {
-        _isStarted = true;
         qDebug() << "AppSoundManager::start() - Audio device started successfully";
     }
 
@@ -93,11 +88,7 @@ void AppSoundManager::start()
 
 void AppSoundManager::stop()
 {
-    if (!_isStarted)
-        return;
-
     ma_device_stop(&_audioDevice);
-    _isStarted = false;
 
     // Wipe ring buffer to prevent crackles during next emulation session
     _ringBuffer.clear();
@@ -114,19 +105,27 @@ void AppSoundManager::stop()
 ///                   samples: one for the left, one for the right. The channel count is defined by the device config.
 void AppSoundManager::audioDataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount)
 {
-    // In playback mode copy data to pOutput. In capture mode read data from pInput. In full-duplex mode, both
-    // pOutput and pInput will be valid and you can move data from pInput into pOutput. Never process more than
-    // frameCount frames
     AppSoundManager* obj = (AppSoundManager*)pDevice->pUserData;
 
     if (obj)
     {
         obj->_ringBuffer.dequeue((int16_t*)pOutput, frameCount * 2);
 
-        if (!obj->_ringBuffer.isHalfFull())
+        // Feed active tile final miniaudio output buffer into VideowallRecorder if recording
+        if (VideowallRecorder::instance().isRecording())
+        {
+            VideowallRecorder::instance().captureAudio((const int16_t*)pOutput, frameCount * 2);
+        }
+
+        // Maintain 50 Hz frame pacing by requesting more audio data from MainLoop
+        // when ring buffer drops below ~2 frames (40ms) of buffered audio.
+        constexpr size_t lowWatermark = SAMPLES_PER_FRAME * AUDIO_CHANNELS * 2;
+        if (obj->_ringBuffer.getAvailableData() < lowWatermark)
         {
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            messageCenter.Post(NC_AUDIO_BUFFER_HALF_FULL);
+            EmulatorContext* activeCtx = obj->getActiveContext();
+            unreal::UUID targetId = activeCtx ? activeCtx->emulatorId : unreal::UUID();
+            messageCenter.Post(NC_AUDIO_BUFFER_HALF_FULL, new TargetContextPayload(targetId), true);
         }
     }
 

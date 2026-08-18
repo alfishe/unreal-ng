@@ -40,6 +40,7 @@ constexpr char const* NC_AUDIO_FRAME_REFRESH = "AUDIO_FRAME_REFRESH";           
 constexpr char const* NC_VIDEO_FRAME_REFRESH = "VIDEO_FRAME_REFRESH";           // Video frame ready (payload: EmulatorFramePayload with ID)
 constexpr char const* NC_VIDEO_RESOLUTION_CHANGED = "VIDEO_RESOLUTION_CHANGED"; // Video resolution changed (payload: VideoResolutionPayload)
 constexpr char const* NC_AUDIO_BUFFER_HALF_FULL = "AUDIO_BUFFER_HALF_FULL";     // Audio buffer < 50% full
+constexpr char const* NC_VIDEOWALL_SINGLE_SYNC_MODE = "VIDEOWALL_SINGLE_SYNC_MODE"; // Request videowall single sync mode (payload: VideowallSyncModePayload)
 
 constexpr char const* NC_FDD_MOTOR_STARTED = "FDD_MOTOR_START";                 // Floppy drive motor started
 constexpr char const* NC_FDD_MOTOR_STOPPED = "FDD_MOTOR_STOP";                  // Floppy drive motor stopped
@@ -382,6 +383,12 @@ struct CONFIG
 {
 	unsigned t_line;	// t-states per line
 	unsigned frame;		// t-states per frame
+
+	/// Real-time duration of one frame in microseconds, derived from `frame`
+	/// via CalculateFrameDurationUs() during config load. Used by MainLoop as
+	/// the frame pacing timeout when the audio callback is not driving pacing.
+	/// Anyone mutating `frame` directly must recalculate this field as well.
+	unsigned frame_duration_us = 20000;
 	uint8_t intfq;		// INT interrupt frequency (in Hz). Typically 50Hz
 	unsigned intstart;	// INT pulse start position (delay in clock cycles)
 	unsigned intlen;	// Duration of INT signal (for Z80) in clock cycles. Should be no less than 23, since some IX/IY instructions take so long to execute and interrupt is handled only at the end of such instruction execution

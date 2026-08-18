@@ -29,6 +29,10 @@ protected:
     ma_device _audioDevice;
     AudioRingBuffer<int16_t, AUDIO_BUFFER_SAMPLES_PER_FRAME * 8> _ringBuffer;
 
+    // Rate limiter for NC_AUDIO_BUFFER_HALF_FULL posts (audio thread only) -
+    // see audioDataCallback for why posting every callback inflates A/V offset
+    uint32_t _watermarkCallbackCounter = 0;
+
 
     // Save to Wave file
     TinyWav _tinyWav;

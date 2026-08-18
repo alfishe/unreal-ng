@@ -36,6 +36,7 @@
 #include "debugger/widgets/recordingpresets.h"
 #endif
 #include "base/featuremanager.h"
+#include "emulator/video/screen.h"  // For DisplayViewport, ViewportPresets
 // Avoid Qt 'signals' macro conflict with WD1793State::signals member
 #undef signals
 #include "emulator/io/fdc/fdd.h"
@@ -166,6 +167,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
     connect(_menuManager, &MenuManager::intParametersRequested, this, &MainWindow::handleIntParametersRequested);
     connect(_menuManager, &MenuManager::audioSettingsRequested, this, &MainWindow::handleAudioSettingsRequested);
+    connect(_menuManager, &MenuManager::overscanModeToggled, this, &MainWindow::handleOverscanModeToggled);
+    connect(_menuManager, &MenuManager::viewportChanged, this, &MainWindow::handleViewportChanged);
 #ifdef ENABLE_RECORDING
     connect(_menuManager, &MenuManager::videoRecordingRequested, this, &MainWindow::handleVideoRecordingRequested);
     connect(_menuManager, &MenuManager::quickRecordRequested, this, &MainWindow::handleQuickRecord);
@@ -2008,6 +2011,69 @@ void MainWindow::handleAudioSettingsRequested()
     _audioSettingsWidget->activateWindow();
 }
 
+void MainWindow::handleOverscanModeToggled(bool enabled)
+{
+    if (!m_binding || !m_binding->emulator())
+        return;
+
+    auto emulator = m_binding->emulator();
+    if (emulator->SetOverscanMode(enabled))
+    {
+        // Mode changed - update device screen to handle new framebuffer size
+        EmulatorContext* context = emulator->GetContext();
+        if (context && context->pScreen)
+        {
+            auto& fb = context->pScreen->GetFramebufferDescriptor();
+            deviceScreen->init(fb.width, fb.height, fb.memoryBuffer);
+
+            if (!enabled)
+            {
+                // Leaving overscan mode - reset viewport to full framebuffer
+                DisplayViewport fullViewport = {0, 0, 0, 0};
+                emulator->SetDisplayViewport(fullViewport);
+                deviceScreen->clearDisplayViewport();
+                _menuManager->resetViewportSelection();
+            }
+        }
+        updateMenuStates();
+    }
+}
+
+void MainWindow::handleViewportChanged(int presetIndex)
+{
+    if (!m_binding || !m_binding->emulator())
+        return;
+
+    auto emulator = m_binding->emulator();
+
+    // Apply viewport preset
+    DisplayViewport viewport;
+    switch (presetIndex)
+    {
+        case 0:  // Full Overscan (384x304)
+            viewport = ViewportPresets::FULL_OVERSCAN;
+            break;
+        case 1:  // Symmetric Horizontal (352x304)
+            viewport = ViewportPresets::SYMMETRIC_HORIZONTAL;
+            break;
+        case 2:  // Standard (352x288)
+            viewport = ViewportPresets::STANDARD;
+            break;
+        case 3:  // Screen Only (256x192)
+            viewport = ViewportPresets::SCREEN_ONLY;
+            break;
+        default:
+            viewport = ViewportPresets::FULL_OVERSCAN;
+            break;
+    }
+
+    emulator->SetDisplayViewport(viewport);
+
+    // Update device screen with new display dimensions
+    // The viewport will be applied during rendering
+    deviceScreen->setDisplayViewport(viewport);
+}
+
 #ifdef ENABLE_RECORDING
 void MainWindow::handleVideoRecordingRequested()
 {
@@ -2548,6 +2614,14 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
         {
             auto& framebufferDesc = context->pScreen->GetFramebufferDescriptor();
             deviceScreen->init(framebufferDesc.width, framebufferDesc.height, framebufferDesc.memoryBuffer);
+
+            // Paint from the frame-end latched snapshot instead of the live
+            // framebuffer - prevents mid-frame tearing (emulation thread
+            // overwrites the live buffer while the GUI thread paints it).
+            // deviceScreen->detach() clears this on emulator switch/shutdown.
+            Screen* screen = context->pScreen;
+            deviceScreen->setFrameSource(
+                [screen](uint8_t* dst, size_t dstSize) { return screen->CopyPresentedFramebuffer(dst, dstSize); });
         }
         catch (const std::exception& e)
         {

@@ -7,6 +7,7 @@
 #include "emulator/platform.h"
 #include "corestate.h"
 #include "emulator/io/tape/tape.h"
+#include "emulator/notifications.h"
 
 class Core;
 class Emulator;
@@ -16,6 +17,7 @@ class Memory;
 class WD1793;
 class PortDecoder;
 class Screen;
+class UlaContention;
 class SoundManager;
 #ifdef ENABLE_RECORDING
 class RecordingManager;
@@ -33,6 +35,9 @@ class EmulatorContext
 {
     /// region <Child object references>
 public:
+    // Unique identifier for this emulator instance
+    unreal::UUID emulatorId;
+
     // Advanced logger instance
     ModuleLogger* pModuleLogger = nullptr;
 
@@ -75,6 +80,9 @@ public:
 
 	// Video controller parameters and logic
 	Screen* pScreen = nullptr;
+
+	// Standalone ULA contention component (memory/IO contention + floating bus)
+	UlaContention* pUlaContention = nullptr;
 
     // Audio callback (will be triggered after each video frame render and provide audio samples for host system)
     // Using std::atomic to ensure proper memory ordering between UI thread (setting) and emulator thread (reading)

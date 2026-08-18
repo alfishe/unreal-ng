@@ -14,28 +14,28 @@
 #define MLOGDEBUG(format, ...)                                          \
     do                                                                  \
     {                                                                   \
-        if (_logger->GetLevel() <= LoggerLevel::LogDebug)               \
+        if (_logger && _logger->GetLevel() <= LoggerLevel::LogDebug)    \
             _logger->Debug(_MODULE, _SUBMODULE, format, ##__VA_ARGS__); \
     } while (0)
 #define MLOGINFO(format, ...)                                          \
     do                                                                 \
     {                                                                  \
-        if (_logger->GetLevel() <= LoggerLevel::LogInfo)               \
+        if (_logger && _logger->GetLevel() <= LoggerLevel::LogInfo)    \
             _logger->Info(_MODULE, _SUBMODULE, format, ##__VA_ARGS__); \
     } while (0)
 #define MLOGWARNING(format, ...)                                          \
     do                                                                    \
     {                                                                     \
-        if (_logger->GetLevel() <= LoggerLevel::LogWarning)               \
+        if (_logger && _logger->GetLevel() <= LoggerLevel::LogWarning)    \
             _logger->Warning(_MODULE, _SUBMODULE, format, ##__VA_ARGS__); \
     } while (0)
 #define MLOGERROR(format, ...)                                          \
     do                                                                  \
     {                                                                   \
-        if (_logger->GetLevel() <= LoggerLevel::LogError)               \
+        if (_logger && _logger->GetLevel() <= LoggerLevel::LogError)    \
             _logger->Error(_MODULE, _SUBMODULE, format, ##__VA_ARGS__); \
     } while (0)
-#define MLOGEMPTY(...) _logger->EmptyLine(##__VA_ARGS__)
+#define MLOGEMPTY(...) do { if (_logger) _logger->EmptyLine(##__VA_ARGS__); } while (0)
 
 // Macros with custom submodule
 #define MLOGDEBUG_SUBMODULE(submodule, format, ...) _logger->Debug(_MODULE, submodule, format, ##__VA_ARGS__)

@@ -71,6 +71,13 @@ python->executePython("print('Hello from embedded Python!')");
 
 ## API Reference
 
+### Module Functions
+
+```python
+def videowall_singlesync(enable: bool, emulator_id: str = "") -> bool:
+    """Toggle Videowall Single Sync Mode"""
+```
+
 ### Emulator Class
 
 ```python

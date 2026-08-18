@@ -103,7 +103,7 @@
     paths["/api/v1/emulator/{id}/run_frames"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["count"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/run_frames"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
-         ["count"]["description"] = "Number of frames to run (max: 10000)";
+         ["count"]["description"] = "Number of frames to run (max: 10000). Alias key 'frames' is also accepted.";
     paths["/api/v1/emulator/{id}/run_frames"]["post"]["responses"]["200"]["description"] = "Frames executed";
 
     // Debug mode

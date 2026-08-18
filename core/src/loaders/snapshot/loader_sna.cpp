@@ -531,6 +531,17 @@ bool LoaderSNA::applySnapshotFromStaging()
             }
         }
 
+        // Detect if CPU was halted when snapshot was taken
+        // If PC points to HALT instruction (0x76), set halted state
+        // This ensures proper INT timing on first frame after load
+        if (memory.DirectReadFromZ80Memory(z80.pc) == 0x76)
+        {
+            z80.halted = 1;
+            z80.halt_cycle = 0;
+            // haltpos is unknown from SNA, set to 0 for consistent behavior
+            z80.haltpos = 0;
+        }
+
         // Pre-fill border with color
         screen.FillBorderWithColor(_borderColor);
 

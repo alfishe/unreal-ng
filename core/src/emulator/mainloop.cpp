@@ -71,6 +71,7 @@ void MainLoop::Run(volatile bool& stopRequested)
 
     _stopRequested = false;
     _isRunning = true;
+    _runThreadId.store(std::this_thread::get_id(), std::memory_order_release);
 
     // Subscribe to audio buffer state event(s)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
@@ -81,7 +82,6 @@ void MainLoop::Run(volatile bool& stopRequested)
     messageCenter.AddObserver(NC_AUDIO_BUFFER_HALF_FULL, observerInstance, callback);
 
     /// region <Info logging>
-    static std::chrono::milliseconds timeout(20);  // Set timeout for audio buffer refresh wait
     uint64_t lastRun = 0;
     [[maybe_unused]] uint64_t betweenIterations = 0;
     /// endregion </Info logging>
@@ -143,21 +143,47 @@ void MainLoop::Run(volatile bool& stopRequested)
 
         if (!config.turbo_mode)
         {
-            // Normal mode: Wait until audio callback requests more data and buffer is about half-full
-            // That means we're in sync between audio and video frames
+            // Normal mode: absolute-deadline frame pacing.
+            // The frame clock is the timing master: each frame is released at
+            // exactly config.frame_duration_us intervals (Pentagon: 20480us =
+            // 48.83 fps; see CalculateFrameDurationUs). wait_until against an
+            // accumulated deadline self-corrects scheduler wake-up latency -
+            // a relative wait_for would add that latency to every period,
+            // slowly draining the audio ring and causing visible speed
+            // rubber-banding when catch-up frames fire.
+            // The audio low-watermark request remains only as rare slip
+            // correction for clock drift between the CPU pacing clock and the
+            // audio DAC crystal: it wakes the loop early, and the deadline is
+            // then re-anchored to 'now' so the 48.83 fps cadence resumes.
+            const std::chrono::microseconds frameDuration(config.frame_duration_us);
+            const auto now = std::chrono::steady_clock::now();
+
+            // (Re)anchor after start, pause, debugger stall, or heavy lag -
+            // never try to "catch up" more than one frame via a stale deadline
+            if (_nextFrameTime < now - frameDuration || _nextFrameTime > now + frameDuration)
+            {
+                _nextFrameTime = now;
+            }
+            _nextFrameTime += frameDuration;
+
             std::unique_lock<std::mutex> lock(_audioBufferMutex);
-            auto moreAudioDataRequested = std::ref(_moreAudioDataRequested);
-            _cv.wait_for(lock, timeout, [&moreAudioDataRequested] {
-                return moreAudioDataRequested.get().load(std::memory_order_acquire);
+            bool audioRequested = _cv.wait_until(lock, _nextFrameTime, [this, &stopRequested] {
+                return _moreAudioDataRequested.load(std::memory_order_acquire) || stopRequested;
             });
             _moreAudioDataRequested.store(false);
             lock.unlock();
+
+            if (audioRequested && !stopRequested)
+            {
+                // Audio device outran us (buffer below watermark) - produce the
+                // next frame now and pace subsequent frames from this moment
+                _nextFrameTime = std::chrono::steady_clock::now();
+            }
         }
         else
         {
-            // Turbo mode: Run as fast as possible without audio synchronization
-            // Optional: Yield CPU to prevent 100% core usage if desired
-            // std::this_thread::yield();
+            // Turbo mode: Yield CPU time-slice to prevent 100% core usage
+            std::this_thread::yield();
         }
 
         lastRun = startTime;
@@ -168,9 +194,29 @@ void MainLoop::Run(volatile bool& stopRequested)
     _isRunning = false;
 }
 
+bool MainLoop::WaitForPauseConfirmation(uint32_t timeoutMs)
+{
+    // Fast path: not running at all means no frame can be mid-flight
+    if (!_isRunning)
+        return true;
+
+    // Called from the emulation thread itself (e.g. breakpoint handler pausing
+    // mid-frame): no frame can be executing concurrently with the caller, and
+    // waiting here would only stall until the timeout. Return immediately.
+    if (_runThreadId.load(std::memory_order_acquire) == std::this_thread::get_id())
+        return true;
+
+    std::unique_lock<std::mutex> lock(_pauseMutex);
+    return _pauseCV.wait_for(lock, std::chrono::milliseconds(timeoutMs),
+                             [this]() { return _isPausedConfirmed.load(std::memory_order_acquire); });
+}
+
 void MainLoop::Stop()
 {
     _stopRequested = true;
+    _moreAudioDataRequested.store(true, std::memory_order_release);
+    _cv.notify_all();
+    _pauseCV.notify_all();
 }
 
 void MainLoop::RunFrame()
@@ -255,6 +301,7 @@ void MainLoop::OnCPUStep()
     _context->pScreen->UpdateScreen();  // Trigger screen update after each CPU command cycle
 
     _context->pBetaDisk->handleStep();
+    _context->pTape->handleStep();  // Process tape audio each step
     _context->pSoundManager->handleStep();
 }
 
@@ -284,6 +331,11 @@ void MainLoop::OnFrameEnd()
     {
         _context->pScreen->RenderFrameBatch();
     }
+
+    // Latch the completed frame into the presentation buffer (tear-free copy
+    // for GUI display and capture). Must happen after rendering is finished
+    // for both batch and per-t-state (ScreenHQ) modes.
+    _context->pScreen->LatchFramebuffer();
 
     // Basic sanity check for context corruption
     if (_context->config.frame == 0 || _context->config.frame > 100000)
@@ -396,8 +448,29 @@ void MainLoop::OnFrameEnd()
     }
 }
 
-void MainLoop::handleAudioBufferHalfFull([[maybe_unused]] int id, [[maybe_unused]] Message* message)
+/// @brief Handles audio buffer low-watermark notifications (NC_AUDIO_BUFFER_HALF_FULL) to pace frame execution.
+///
+/// @details
+/// **Synchronization Mechanism**:
+/// When miniaudio's output buffer drops below its low-watermark threshold (~2 frames remaining),
+/// the audio device callback posts an NC_AUDIO_BUFFER_HALF_FULL notification. This method receives
+/// that event, marks `_moreAudioDataRequested` as true, and unblocks the main execution loop via `_cv`.
+///
+/// @param id Event topic identifier (NC_AUDIO_BUFFER_HALF_FULL)
+/// @param message Message pointer optionally containing a TargetContextPayload
+void MainLoop::handleAudioBufferHalfFull([[maybe_unused]] int id, Message* message)
 {
+    // Filter targeted events: receivers MUST filter by emulator UUID if target is specified.
+    if (message && message->obj)
+    {
+        auto* payload = dynamic_cast<TargetContextPayload*>(message->obj);
+        if (payload && !payload->targetEmulatorId.isNil() && payload->targetEmulatorId != _context->emulatorId)
+        {
+            // Event is targeted to a different emulator instance - ignore
+            return;
+        }
+    }
+
     std::unique_lock<std::mutex> lock(_audioBufferMutex);
 
     // Set the atomic variable to indicate frame sync

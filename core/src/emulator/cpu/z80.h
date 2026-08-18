@@ -1,4 +1,6 @@
 #pragma once
+#include <functional>
+
 #include "emulator/cpu/cpulogic.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -245,7 +247,13 @@ struct Z80Registers
 
     /// endregion </Undocumented Internal Registers>
 
-    uint16_t eipos;
+    // EI shadow position: t-state of the last EI, used to defer INT acceptance
+    // by one instruction. Must cover the full frame t-state range - as uint16_t
+    // it truncated for t > 65535, silently losing the EI shadow in the last
+    // ~6K t-states of a Pentagon frame (where its INT window lives at 71635).
+    // Signed: AdjustFrameCounters subtracts the frame length on wrap, which
+    // may legitimately go negative (the '!=' guard then never matches).
+    int32_t eipos;
     uint16_t haltpos;
 
     /*------------------------------*/
@@ -361,6 +369,14 @@ public:
     // Memory access dispatching methods
     uint8_t rd(uint16_t addr, bool isExecution = false);
     void wd(uint16_t addr, uint8_t val);
+
+    /// Test-only bus trace hook (null in production - a single empty-function
+    /// check per bus access when unset). Fired at the access point of each bus
+    /// event with cpu.t already advanced to it:
+    ///   'R' memory read (data latched at T3 of the cycle - rd() charges first)
+    ///   'W' memory write, 'I' port read, 'O' port write (IORQ T-state)
+    /// Used by bus-phase timing tests (io_phase_test / bus_phase tests).
+    std::function<void(char type, uint16_t addr, uint8_t value)> busTraceHook;
     /// endregion </Z80 lifecycle>
 
     // Direct memory access methods
@@ -378,8 +394,8 @@ public:
 public:
     void RequestMaskedInterrupt();
     void RequestNonMaskedInterrupt();
-    void ProcessInterrupts(bool int_occured,  // Take care about incoming interrupts
-                           unsigned int_start, unsigned int_end);
+    bool ProcessInterrupts(bool int_occured,  // Take care about incoming interrupts
+                           unsigned int_start, unsigned int_end);  // Returns true if INT was handled (skip Z80Step)
 
     // Event handlers
 public:

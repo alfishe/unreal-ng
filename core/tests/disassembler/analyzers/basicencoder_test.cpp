@@ -719,9 +719,17 @@ TEST_F(BasicEncoder_Test, StateDetection_TrapRangeBoundaries)
 {
     // Verify trap range detection at boundaries
     using namespace TRDOS::ROMSwitch;
-    
+
     uint16_t sp = 0xFF00;
-    
+
+    // The scan walks up to 16 stack entries (SP..SP+31), not just the first.
+    // Clear the whole window so stale memory left by earlier tests can't
+    // alias into the trap range and break the negative assertions below.
+    for (int i = 0; i < 32; i++)
+    {
+        _memory->DirectWriteToZ80Memory(sp + i, 0x00);
+    }
+
     // Test $3D00 (start of trap range)
     _memory->DirectWriteToZ80Memory(sp, TRAP_START & 0xFF);
     _memory->DirectWriteToZ80Memory(sp + 1, (TRAP_START >> 8) & 0xFF);

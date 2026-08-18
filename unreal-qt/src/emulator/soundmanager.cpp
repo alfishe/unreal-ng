@@ -31,14 +31,16 @@ bool AppSoundManager::init()
 {
     bool result = true;
 
-    // Set audio output parameters
+    // Set audio output parameters for low latency
     ma_device_config config = ma_device_config_init(ma_device_type_playback);
     config.playback.format   = ma_format_s16;       // Set to ma_format_unknown to use the device's native format.
     config.playback.channels = AUDIO_CHANNELS;      // Set to 0 to use the device's native channel count.
     config.sampleRate        = AUDIO_SAMPLING_RATE; // Set to 0 to use the device's native sample rate.
+    config.performanceProfile = ma_performance_profile_low_latency;
+    config.periodSizeInFrames = 256;                 // ~5.8ms period @ 44.1kHz
+    config.periods            = 2;                   // 2 periods = 512 frames (~11.6ms hardware buffer @ 44.1kHz)
     config.dataCallback      = AppSoundManager::audioDataCallback; // This function will be called when miniaudio needs more data.
     config.pUserData         = (void*)this;         // Can be accessed from the device object (device.pUserData).
-
 
     if (ma_device_init(NULL, &config, &_audioDevice) != MA_SUCCESS)
     {
@@ -102,19 +104,39 @@ void AppSoundManager::stop()
 ///                   samples: one for the left, one for the right. The channel count is defined by the device config.
 void AppSoundManager::audioDataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount)
 {
-    // In playback mode copy data to pOutput. In capture mode read data from pInput. In full-duplex mode, both
-    // pOutput and pInput will be valid and you can move data from pInput into pOutput. Never process more than
-    // frameCount frames
     AppSoundManager* obj = (AppSoundManager*)pDevice->pUserData;
 
     if (obj)
     {
         obj->_ringBuffer.dequeue((int16_t*)pOutput, frameCount * 2);
 
-        if (!obj->_ringBuffer.isHalfFull())
+        // Request more audio data from MainLoop when the ring buffer drops
+        // below ~2 frames (40ms) of buffered audio.
+        //
+        // Rate-limited to one post per emulated frame duration: this callback
+        // fires every ~5.8ms (256-frame device period), and posting on every
+        // callback while below the watermark piles up stale requests in the
+        // MessageCenter queue. Each stale request delivered after the ring has
+        // refilled releases one extra frame (+20.5ms of audio), permanently
+        // inflating ring occupancy - and ring occupancy IS the A/V offset
+        // (video is presented live, audio is delayed by the ring). Observed as
+        // a constant 100-200ms video-ahead-of-audio skew after startup.
+        // One request per ~4 callbacks (~23ms) keeps at most one request in
+        // flight while preserving refill liveness.
+        constexpr size_t lowWatermark = SAMPLES_PER_FRAME * AUDIO_CHANNELS * 2;
+        constexpr uint32_t callbacksPerRequest = 4;
+        if (obj->_ringBuffer.getAvailableData() < lowWatermark)
         {
-            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            messageCenter.Post(NC_AUDIO_BUFFER_HALF_FULL);
+            if (obj->_watermarkCallbackCounter == 0)
+            {
+                MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+                messageCenter.Post(NC_AUDIO_BUFFER_HALF_FULL);
+            }
+            obj->_watermarkCallbackCounter = (obj->_watermarkCallbackCounter + 1) % callbacksPerRequest;
+        }
+        else
+        {
+            obj->_watermarkCallbackCounter = 0;
         }
     }
 

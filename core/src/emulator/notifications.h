@@ -6,6 +6,22 @@
 #include "common/uuid.h"
 using unreal::UUID;  // Explicitly bring into scope to avoid Windows GUID typedef collision
 
+class EmulatorContext;
+
+/// Payload allowing MessageCenter notifications to be targeted to a specific emulator UUID.
+class TargetContextPayload : public MessagePayload
+{
+public:
+    unreal::UUID targetEmulatorId;
+
+    TargetContextPayload() : MessagePayload(), targetEmulatorId() {}
+    TargetContextPayload(const unreal::UUID& emulatorId) : MessagePayload(), targetEmulatorId(emulatorId) {}
+    TargetContextPayload(const std::string& emulatorId)
+        : MessagePayload(), targetEmulatorId(emulatorId.empty() ? unreal::UUID() : unreal::UUID(emulatorId)) {}
+
+    virtual ~TargetContextPayload() = default;
+};
+
 /// Payload for emulator selection change notifications
 /// Sent when the active/selected emulator instance changes in the CLI or UI
 /// Uses cross-platform UUID class for strong typing without platform-specific dependencies
@@ -125,4 +141,30 @@ public:
     {
         return static_cast<char>('A' + (_driveId & 0x03));
     }
+};
+
+/// Payload for requesting single sync mode in videowall
+/// Example: messageCenter.Post(NC_VIDEOWALL_SINGLE_SYNC_MODE, new VideowallSyncModePayload(emulatorId, true));
+class VideowallSyncModePayload : public MessagePayload
+{
+public:
+    unreal::UUID _emulatorId;
+    bool _enable;
+
+public:
+    VideowallSyncModePayload(const unreal::UUID& emulatorId, bool enable)
+        : MessagePayload()
+        , _emulatorId(emulatorId)
+        , _enable(enable)
+    {
+    }
+    
+    VideowallSyncModePayload(const std::string& emulatorId, bool enable)
+        : MessagePayload()
+        , _emulatorId(emulatorId.empty() ? unreal::UUID() : unreal::UUID(emulatorId))
+        , _enable(enable)
+    {
+    }
+    
+    virtual ~VideowallSyncModePayload() = default;
 };

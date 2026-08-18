@@ -114,6 +114,22 @@ void Keyboard::Reset()
 /// @param key ZX Spectrum key pressed
 void Keyboard::PressKey(ZXKeysEnum key)
 {
+    // Extended keys (cursor / delete / break, ...) are shift combinations and have
+    // no matrix entry of their own. Decompose here so direct callers
+    // (DebugKeyboardManager, automation) work the same as the MessageCenter path.
+    if (isExtendedKey(key))
+    {
+        ZXKeysEnum modifier = getExtendedKeyModifier(key);
+        ZXKeysEnum base = getExtendedKeyBase(key);
+
+        if (modifier != ZXKEY_NONE)
+            PressKey(modifier);
+        if (base != ZXKEY_NONE && base != key)
+            PressKey(base);
+
+        return;
+    }
+
     KeyDescriptor keyDescriptor = _zxKeyMap[key];
     uint8_t matrixIndex = keyDescriptor.matrix_offset;
     uint8_t keyBits = ~keyDescriptor.mask | keyDescriptor.match;
@@ -126,6 +142,20 @@ void Keyboard::PressKey(ZXKeysEnum key)
 /// @param key ZX Spectrum key released
 void Keyboard::ReleaseKey(ZXKeysEnum key)
 {
+    // Decompose extended keys (shift combinations), mirroring PressKey
+    if (isExtendedKey(key))
+    {
+        ZXKeysEnum modifier = getExtendedKeyModifier(key);
+        ZXKeysEnum base = getExtendedKeyBase(key);
+
+        if (base != ZXKEY_NONE && base != key)
+            ReleaseKey(base);
+        if (modifier != ZXKEY_NONE)
+            ReleaseKey(modifier);
+
+        return;
+    }
+
     KeyDescriptor keyDescriptor = _zxKeyMap[key];
     uint8_t matrixIndex = keyDescriptor.matrix_offset;
     uint8_t keyBits = ~keyDescriptor.mask | ~keyDescriptor.match;
