@@ -8,6 +8,7 @@
 #include "common/sound/filters/filter_interpolate.h"
 #include "common/sound/filters/audio_character_chain.h"
 #include "emulator/sound/audio.h"
+#include "common/sound/filters/resampler_drc.h"
 #include "emulator/sound/beeper.h"
 #include "emulator/sound/covox.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
@@ -79,6 +80,38 @@ protected:
     AudioCharacterChain _ayChain0;     // For AY chip 0 (TurboSound first chip)
     AudioCharacterChain _ayChain1;     // For AY chip 1 (TurboSound second chip)
     AudioCharacterChain _beeperChain;  // For beeper (digidrums, PWM synths)
+
+    // DRC resampler stage between the mixed CORE_RATE stream and the device
+    // callback (audio-sync design, Fix 2). Unity bypass by default. The
+    // recording tap sits UPSTREAM and never sees resampled audio.
+    // Device buffer sized for ratio up to ~1.1x (48k device / 44.1k core
+    // plus max trim) over the largest frame.
+    static constexpr size_t DEVICE_BUFFER_FRAMES = MAX_SAMPLES_PER_FRAME + MAX_SAMPLES_PER_FRAME / 4;
+    ResamplerDRC _drcResampler;
+    int16_t _deviceBuffer[DEVICE_BUFFER_FRAMES * AUDIO_CHANNELS] = {};
+
+    // DRC PI controller state (audio-sync design 5.1). Process variable: ring
+    // occupancy in ms (EMA-filtered); output: resample-ratio trim in +-0.5%.
+    // Sampled once per frame in the emulation thread. Disengaged (unity
+    // bypass, integrator reset) when no occupancy cell is registered, in
+    // turbo mode, or with sound disabled.
+    static constexpr double DRC_TARGET_MS = 70.0;
+    static constexpr double DRC_MAX_TRIM = 0.005;
+    static constexpr double DRC_KP = 0.08;
+    static constexpr double DRC_KI = 0.0008;
+    static constexpr double DRC_EMA_ALPHA = 0.05;
+    double _drcOccFiltered = -1.0;  // <0 = uninitialized (seeded on first sample)
+    double _drcErrIntegral = 0.0;
+
+    void updateDrcControl();
+
+    // Exact per-frame sample count accumulator (audio-sync design, Fix 1).
+    // Units: T-states x sampling rate, carried modulo CPU_CLOCK_RATE so the
+    // fractional sample per frame is never lost. Reset in reset() only -
+    // NOT at frame or speed-multiplier boundaries.
+    uint64_t _sampleAccumulator = 0;
+    uint64_t _accumulatorClampCount = 0;  // Diagnostics: overflow-guard activations
+    uint64_t _blipMismatchCount = 0;      // Diagnostics: blip vs accumulator divergence
 
     // Device registry (replaces hardwired master volumes)
     std::vector<AudioDeviceInfo> _devices;
@@ -168,6 +201,10 @@ public:
 
     // Feature cache update (called by FeatureManager::onFeatureChanged)
     void UpdateFeatureCache();
+
+    // DRC telemetry (tests / diagnostics)
+    double getDrcRatio() const { return _drcResampler.getRatio(); }
+    double getDrcFilteredOccupancyMs() const { return _drcOccFiltered; }
     /// endregion </Methods>
 
     /// region <Emulation events>

@@ -173,7 +173,14 @@ public:
     DebugManager* GetDebugManager();
     BreakpointManager* GetBreakpointManager();
     FramebufferDescriptor GetFramebuffer();
-    void SetAudioCallback(void* obj, AudioCallback callback);
+    /// @param occupancyFrames Optional ring-occupancy cell (stereo frames)
+    ///        owned by the caller; enables the DRC rate controller
+    void SetAudioCallback(void* obj, AudioCallback callback,
+                          const std::atomic<uint32_t>* occupancyFrames = nullptr);
+
+    /// Report the attached audio device's native sample rate (0 = core rate).
+    /// The DRC resampler converts core->device at this base ratio.
+    void SetAudioDeviceSampleRate(uint32_t rate);
     void ClearAudioCallback();
 
     // Emulator control cycle

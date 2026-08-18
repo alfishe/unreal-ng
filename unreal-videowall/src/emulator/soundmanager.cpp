@@ -117,16 +117,11 @@ void AppSoundManager::audioDataCallback(ma_device* pDevice, void* pOutput, const
             VideowallRecorder::instance().captureAudio((const int16_t*)pOutput, frameCount * 2);
         }
 
-        // Maintain 50 Hz frame pacing by requesting more audio data from MainLoop
-        // when ring buffer drops below ~2 frames (40ms) of buffered audio.
-        constexpr size_t lowWatermark = SAMPLES_PER_FRAME * AUDIO_CHANNELS * 2;
-        if (obj->_ringBuffer.getAvailableData() < lowWatermark)
-        {
-            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            EmulatorContext* activeCtx = obj->getActiveContext();
-            unreal::UUID targetId = activeCtx ? activeCtx->emulatorId : unreal::UUID();
-            messageCenter.Post(NC_AUDIO_BUFFER_HALF_FULL, new TargetContextPayload(targetId), true);
-        }
+        // Publish ring occupancy for the DRC rate controller in the active
+        // emulator's SoundManager (audio-sync design, Fix 2). Replaces the
+        // former NC_AUDIO_BUFFER_HALF_FULL watermark posts.
+        obj->_occupancyFrames.store(static_cast<uint32_t>(obj->_ringBuffer.getOccupancyStereoFrames()),
+                                    std::memory_order_relaxed);
     }
 
     (void)pInput; // Not used during playback

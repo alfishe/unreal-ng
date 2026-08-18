@@ -1222,7 +1222,8 @@ void VideoWallWindow::bindAudioToTile(EmulatorTile* tile)
     }
 
     // Bind audio callback to new emulator
-    emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback);
+    emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback, _soundManager->occupancyCell());
+    emulator->SetAudioDeviceSampleRate(_soundManager->deviceSampleRate());
     _soundManager->setActiveContext(emulator->GetContext());
 
     _audioBoundTile = tile;

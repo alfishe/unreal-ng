@@ -95,6 +95,10 @@ void SoundManager::reset()
     std::fill(_beeperBuffer, _beeperBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
     std::fill(_outBuffer, _outBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
 
+    // Restart the exact sample accumulator (machine change / hard reset /
+    // snapshot load all route through reset())
+    _sampleAccumulator = 0;
+
     // New wave file
     // closeWaveFile();
     // std::string filePath = "unreal.wav";
@@ -256,10 +260,14 @@ void SoundManager::handleFrameEnd()
     /// region <Determine actual samples for this frame>
     // Per-frame sample count derives from the machine's frame length, NOT the
     // 50 Hz SAMPLES_PER_FRAME constant: Pentagon (71680 t-states, 48.83 fps)
-    // produces 903 samples/frame, ZX48/128 produces 881. Every stage below
-    // (DSP chains, mixing, callback) must use this count - processing a
-    // hardcoded 882 leaves a tail of samples bypassing the filter chain each
-    // frame, audible as ~49 Hz harmonics/hiss on pure tones.
+    // produces 903.168 samples/frame, ZX48/128 produces 880.5888.
+    //
+    // Exact integer accumulator (audio-sync design, Fix 1): the fractional
+    // part is CARRIED, not rounded away. Rounding emitted a systematic rate
+    // bias (-0.019% Pentagon / +0.047% ZX48) - the dominant source of both
+    // realtime ring drift and audio-behind-video drift in recordings. With
+    // the carry, the sequence is exactly periodic (903,903,...,904 with
+    // period 125 on Pentagon@44.1k) and drift-free by construction.
     size_t samplesThisFrame = SAMPLES_PER_FRAME;
     uint32_t frameDuration = 0;
     {
@@ -269,9 +277,23 @@ void SoundManager::handleFrameEnd()
 
         if (frameDuration > 0)
         {
-            size_t calculated = static_cast<size_t>(std::round(frameDuration * (double)AUDIO_SAMPLING_RATE / (double)CPU_CLOCK_RATE));
-            if (calculated > 0)
-                samplesThisFrame = std::min(calculated, static_cast<size_t>(MAX_SAMPLES_PER_FRAME));
+            _sampleAccumulator += static_cast<uint64_t>(frameDuration) * AUDIO_SAMPLING_RATE;
+            samplesThisFrame = static_cast<size_t>(_sampleAccumulator / CPU_CLOCK_RATE);
+            _sampleAccumulator %= CPU_CLOCK_RATE;
+
+            // Overflow guard: buffers are sized MAX_SAMPLES_PER_FRAME (speed
+            // multiplier >= 3 exceeds it). Drop the excess KNOWINGLY - turbo
+            // has no realtime constraint; a silent overrun would be worse.
+            if (samplesThisFrame > MAX_SAMPLES_PER_FRAME)
+            {
+                if ((_accumulatorClampCount++ % 256) == 0)
+                {
+                    LOGWARNING("SoundManager: samplesThisFrame %zu clamped to %d (speed multiplier %u)",
+                                samplesThisFrame, MAX_SAMPLES_PER_FRAME, speedMultiplier);
+                }
+                samplesThisFrame = MAX_SAMPLES_PER_FRAME;
+                _sampleAccumulator = 0;
+            }
         }
     }
     /// endregion </Determine actual samples for this frame>
@@ -295,6 +317,34 @@ void SoundManager::handleFrameEnd()
     // Finalize the beeper's blip_buf frame — produces band-limited output
     _beeper->handleFrameEnd(frameDuration);
 
+    // Cross-check blip's internal fractional accumulator against ours. Both
+    // are driven by the same clock ratio and stay in lockstep; >1 sample
+    // divergence indicates an accumulator reset bug (logged, not asserted -
+    // snapshot load / multiplier changes may legitimately differ for 1 frame)
+    {
+        int blipRead = _beeper->getLastSamplesRead();
+        int diff = blipRead - static_cast<int>(samplesThisFrame);
+        if (diff > 1 || diff < -1)
+        {
+            if ((_blipMismatchCount++ % 256) == 0)
+            {
+                LOGWARNING("SoundManager: blip delivered %d samples, accumulator expects %zu", blipRead,
+                            samplesThisFrame);
+            }
+        }
+
+        // Pad shortfall with the last delivered value so the mixer never
+        // consumes a stale tail (blip can be 1 short right after a reset)
+        if (blipRead >= 1 && static_cast<size_t>(blipRead) < samplesThisFrame)
+        {
+            for (size_t i = blipRead; i < samplesThisFrame; i++)
+            {
+                _beeperBuffer[i * 2] = _beeperBuffer[(blipRead - 1) * 2];
+                _beeperBuffer[i * 2 + 1] = _beeperBuffer[(blipRead - 1) * 2 + 1];
+            }
+        }
+    }
+
     // Beeper chain: operates on alias-free blip_buf output
     _beeperChain.processInt16(_beeperBuffer, samplesThisFrame);
     /// endregion </Process beeper>
@@ -302,7 +352,7 @@ void SoundManager::handleFrameEnd()
     /// region <Registry-driven mixing with mute/solo/volume + peak calculation>
     // Finalize Covox frame (DC removal etc.) before mixing
     if (_covox)
-        _covox->handleFrameEnd();
+        _covox->handleFrameEnd(samplesThisFrame);
 
     // Determine if any device has solo active
     bool soloActive = false;
@@ -400,9 +450,20 @@ void SoundManager::handleFrameEnd()
             memset(_outBuffer, 0, samplesThisFrame * AUDIO_CHANNELS * sizeof(int16_t));
         }
 
+        // DRC rate control (audio-sync design, Fix 2): trim the resample
+        // ratio from ring occupancy, once per frame
+        updateDrcControl();
+
+        // DRC resampler stage. Sits AFTER the recording tap above - recording
+        // always receives the pure CORE_RATE stream - and BEFORE the device
+        // callback. At unity ratio (controller disengaged) this is a
+        // bit-exact memcpy bypass.
+        size_t deviceFrames =
+            _drcResampler.process(_outBuffer, samplesThisFrame, _deviceBuffer, DEVICE_BUFFER_FRAMES);
+
         try
         {
-            callback(obj, _outBuffer, samplesThisFrame * AUDIO_CHANNELS);
+            callback(obj, _deviceBuffer, deviceFrames * AUDIO_CHANNELS);
         }
         catch (const std::exception& e)
         {
@@ -415,6 +476,46 @@ void SoundManager::handleFrameEnd()
             LOGERROR("SoundManager::handleFrameEnd - Audio callback failed with unknown exception\n");
         }
     }
+}
+
+/// DRC PI controller (audio-sync design 5.1): holds ring occupancy at
+/// DRC_TARGET_MS by trimming the resample ratio within +-0.5%. Ring
+/// occupancy IS the A/V offset, so this defines and stabilizes lip-sync.
+/// Sign: ring too full => producing faster than the DAC consumes => emit
+/// fewer output samples per input sample => negative trim.
+void SoundManager::updateDrcControl()
+{
+    const std::atomic<uint32_t>* occCell = _context->pAudioRingOccupancy.load(std::memory_order_acquire);
+    const bool engaged = occCell != nullptr && !_context->config.turbo_mode && _feature_sound_enabled;
+
+    if (!engaged)
+    {
+        _drcResampler.setRatio(1.0);
+        _drcErrIntegral = 0.0;
+        _drcOccFiltered = -1.0;
+        return;
+    }
+
+    // Device native rate (audio-sync Fix 3): base resample ratio dev/core;
+    // ring occupancy is measured in DEVICE-rate frames
+    const uint32_t devRateRaw = _context->pAudioDeviceSampleRate.load(std::memory_order_relaxed);
+    const double devRate = (devRateRaw == 0) ? static_cast<double>(CORE_SAMPLING_RATE)
+                                             : static_cast<double>(devRateRaw);
+    const double baseRatio = devRate / static_cast<double>(CORE_SAMPLING_RATE);
+
+    const double occMs = occCell->load(std::memory_order_relaxed) * 1000.0 / devRate;
+
+    if (_drcOccFiltered < 0.0)
+        _drcOccFiltered = occMs;  // Seed the EMA on first engagement
+    else
+        _drcOccFiltered += DRC_EMA_ALPHA * (occMs - _drcOccFiltered);
+
+    const double err = (_drcOccFiltered - DRC_TARGET_MS) / DRC_TARGET_MS;
+    _drcErrIntegral = std::clamp(_drcErrIntegral + err, -50.0, 50.0);  // Anti-windup
+
+    const double trim = std::clamp(-(DRC_KP * err + DRC_KI * _drcErrIntegral), -DRC_MAX_TRIM, DRC_MAX_TRIM);
+
+    _drcResampler.setRatio(baseRatio * (1.0 + trim));
 }
 
 /// @brief Update feature cache flags from FeatureManager.

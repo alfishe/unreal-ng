@@ -116,6 +116,8 @@ void Beeper::handleFrameEnd(uint32_t frameDuration)
         blip_read_samples(_blipL, &_outputBuffer[0], avail, 1 /* stereo stride */);
         blip_read_samples(_blipR, &_outputBuffer[1], avail, 1 /* stereo stride */);
     }
+
+    _lastSamplesRead = avail;
 }
 
 /// endregion </Methods>

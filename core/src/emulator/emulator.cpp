@@ -579,13 +579,19 @@ FramebufferDescriptor Emulator::GetFramebuffer()
     return _context->pScreen->GetFramebufferDescriptor();
 }
 
-void Emulator::SetAudioCallback(void* obj, AudioCallback callback)
+void Emulator::SetAudioCallback(void* obj, AudioCallback callback, const std::atomic<uint32_t>* occupancyFrames)
 {
     // Use memory_order_release to ensure all previous writes are visible to the emulator thread
     _context->pAudioManagerObj.store(obj, std::memory_order_release);
     _context->pAudioCallback.store(callback, std::memory_order_release);
+    _context->pAudioRingOccupancy.store(occupancyFrames, std::memory_order_release);
 
     MLOGINFO("Emulator::SetAudioCallback() - Audio callback set: obj=%p, callback=%p", obj, (void*)callback);
+}
+
+void Emulator::SetAudioDeviceSampleRate(uint32_t rate)
+{
+    _context->pAudioDeviceSampleRate.store(rate, std::memory_order_release);
 }
 
 void Emulator::ClearAudioCallback()
@@ -593,6 +599,8 @@ void Emulator::ClearAudioCallback()
     // Use memory_order_release to ensure the nullptr writes are visible to the emulator thread
     _context->pAudioManagerObj.store(nullptr, std::memory_order_release);
     _context->pAudioCallback.store(nullptr, std::memory_order_release);
+    _context->pAudioRingOccupancy.store(nullptr, std::memory_order_release);
+    _context->pAudioDeviceSampleRate.store(0, std::memory_order_release);
 
     MLOGINFO("Emulator::ClearAudioCallback() - Audio callback cleared for emulator %s", _emulatorId.c_str());
 }

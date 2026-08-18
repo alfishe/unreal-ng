@@ -89,6 +89,19 @@ public:
     std::atomic<void*> pAudioManagerObj;
     std::atomic<AudioCallback> pAudioCallback;
 
+    /// Audio ring occupancy cell in STEREO FRAMES, owned by the app-side
+    /// sound manager (outlives the emulator) and registered together with the
+    /// audio callback. The DRC controller (SoundManager::updateDrcControl)
+    /// reads it once per frame as its process variable; MainLoop reads it for
+    /// the emergency refill path. nullptr = no audio device attached -> DRC
+    /// disengaged (unity bypass).
+    std::atomic<const std::atomic<uint32_t>*> pAudioRingOccupancy{nullptr};
+
+    /// Native sample rate of the attached audio device (audio-sync design
+    /// Fix 3). 0 = same as CORE_SAMPLING_RATE. The DRC resampler uses
+    /// device/core as its base ratio; ring occupancy is in DEVICE-rate frames.
+    std::atomic<uint32_t> pAudioDeviceSampleRate{0};
+
     // Sound manager
     SoundManager* pSoundManager = nullptr;
 

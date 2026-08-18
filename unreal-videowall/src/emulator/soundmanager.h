@@ -32,6 +32,11 @@ protected:
     ma_device _audioDevice;
     AudioRingBuffer<int16_t, AUDIO_BUFFER_SAMPLES_PER_FRAME * 8> _ringBuffer;
 
+    // Ring occupancy in stereo frames, published for the emulator-side DRC
+    // controller (registered via Emulator::SetAudioCallback)
+    std::atomic<uint32_t> _occupancyFrames{0};
+    uint32_t _deviceSampleRate = AUDIO_SAMPLING_RATE;
+
     // Save to Wave file
     TinyWav _tinyWav;
 
@@ -48,6 +53,8 @@ public:
     /// region <Methods>
 public:
     bool init();
+    const std::atomic<uint32_t>* occupancyCell() const { return &_occupancyFrames; }
+    uint32_t deviceSampleRate() const { return _deviceSampleRate; }
     void deinit();
 
     void start();

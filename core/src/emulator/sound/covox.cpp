@@ -57,7 +57,7 @@ void Covox::handleFrameStart()
     // The buffer will be filled in handleFrameEnd().
 }
 
-void Covox::handleFrameEnd()
+void Covox::handleFrameEnd(size_t expectedSamples)
 {
     CONFIG& config = _context->config;
     uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
@@ -70,12 +70,19 @@ void Covox::handleFrameEnd()
     blip_end_frame(_blipL, frameDuration);
     blip_end_frame(_blipR, frameDuration);
 
-    // Actual samples for this frame, derived from the machine's frame length
-    // (Pentagon: 903, ZX48/128: 881) - must match what SoundManager mixes.
-    // Reading a hardcoded SAMPLES_PER_FRAME (882) leaves a stale tail that the
-    // mixer would consume every frame.
-    int samplesThisFrame = static_cast<int>(
-        std::round(frameDuration * (double)AUDIO_SAMPLING_RATE / (double)CPU_CLOCK_RATE));
+    // Actual samples for this frame - must match what SoundManager mixes.
+    // Preferred: the exact count from SoundManager's sample accumulator
+    // (alternates e.g. 903/904 on Pentagon). Fallback: local rounding.
+    int samplesThisFrame;
+    if (expectedSamples > 0)
+    {
+        samplesThisFrame = static_cast<int>(expectedSamples);
+    }
+    else
+    {
+        samplesThisFrame = static_cast<int>(
+            std::round(frameDuration * (double)AUDIO_SAMPLING_RATE / (double)CPU_CLOCK_RATE));
+    }
     samplesThisFrame = std::clamp(samplesThisFrame, 0, (int)MAX_SAMPLES_PER_FRAME);
 
     // Read out band-limited samples into the interleaved stereo buffer

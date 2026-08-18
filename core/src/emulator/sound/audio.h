@@ -4,6 +4,13 @@
 
 static constexpr const int FRAMES_PER_SECOND = 50;
 static constexpr const size_t AUDIO_SAMPLING_RATE = 44100;
+/// The emulation core's internal audio rate. All chip DSP (blip_buf, AY
+/// decimation FIRs, character chains) is designed for this rate - changing it
+/// requires regenerating every coefficient set. The DEVICE may run at a
+/// different native rate (audio-sync design Fix 3): the DRC resampler converts
+/// core -> device as its base ratio. AUDIO_SAMPLING_RATE is kept as the legacy
+/// name; new code should read CORE_SAMPLING_RATE for clarity.
+static constexpr const size_t CORE_SAMPLING_RATE = AUDIO_SAMPLING_RATE;
 static constexpr const size_t AUDIO_CHANNELS = 2;
 static constexpr const size_t CPU_CLOCK_RATE = 3.5 * 1'000'000;
 static constexpr const size_t PSG_CLOCK_RATE = CPU_CLOCK_RATE / 2;

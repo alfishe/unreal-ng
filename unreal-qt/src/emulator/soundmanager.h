@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <atomic>
 
 // miniaudio.h includes <windows.h> on Windows. winsock2.h MUST be included before
 // windows.h to prevent type conflicts (see core's stdafx.h for the same pattern).
@@ -29,9 +30,16 @@ protected:
     ma_device _audioDevice;
     AudioRingBuffer<int16_t, AUDIO_BUFFER_SAMPLES_PER_FRAME * 8> _ringBuffer;
 
-    // Rate limiter for NC_AUDIO_BUFFER_HALF_FULL posts (audio thread only) -
-    // see audioDataCallback for why posting every callback inflates A/V offset
-    uint32_t _watermarkCallbackCounter = 0;
+    // Ring occupancy in stereo frames, published for the emulator-side DRC
+    // controller (registered via Emulator::SetAudioCallback). Owned here so
+    // the cell outlives any emulator instance.
+    std::atomic<uint32_t> _occupancyFrames{0};
+    uint32_t _deviceSampleRate = AUDIO_SAMPLING_RATE;  // Read back from ma_device after init
+
+    // Ring error observability (emulator thread, audioCallback only)
+    uint32_t _errorLogCounter = 0;
+    size_t _lastEnqueueErrors = 0;
+    size_t _lastDequeueErrors = 0;
 
 
     // Save to Wave file
@@ -48,6 +56,9 @@ public:
     /// region <Methods>
 public:
     bool init();
+    const std::atomic<uint32_t>* occupancyCell() const { return &_occupancyFrames; }
+    /// Actual device sample rate after init (native rate; audio-sync Fix 3)
+    uint32_t deviceSampleRate() const { return _deviceSampleRate; }
     void deinit();
 
     void start();

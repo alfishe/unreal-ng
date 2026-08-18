@@ -1,22 +1,35 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 
+/// Lock-free SPSC ring buffer for interleaved stereo int16 audio.
+///
+/// Threading contract: exactly ONE producer (emulation thread, enqueue) and
+/// ONE consumer (audio device thread, dequeue). Indices are atomics with
+/// release/acquire ordering so each side observes a consistent view of the
+/// other's progress - previously they were plain size_t, a genuine data race.
+///
+/// Units: the buffer stores int16 values; one stereo frame = 2 values.
+/// Occupancy for rate-control purposes should be read via
+/// getOccupancyStereoFrames() (audio-sync design: ring occupancy IS the A/V
+/// offset, and is the DRC controller's process variable).
 template <typename T, size_t Size>
 class AudioRingBuffer
 {
 protected:
     T _buffer[Size];
-    size_t _readPtr;
-    size_t _writePtr;
+    std::atomic<size_t> _readPtr;
+    std::atomic<size_t> _writePtr;
 
-    /// region <Debug>
+    /// region <Diagnostics>
 protected:
-    size_t _enqueueErrorCount = 0;
-    size_t _dequeueErrorCount = 0;
-    /// endregion <Debug>
+    std::atomic<size_t> _enqueueErrorCount{0};  // Full-buffer drops (producer)
+    std::atomic<size_t> _dequeueErrorCount{0};  // Empty-buffer underruns (consumer)
+    /// endregion <Diagnostics>
 
 public:
     AudioRingBuffer() : _readPtr{0}, _writePtr{0}
@@ -32,38 +45,43 @@ public:
 
     inline bool isEmpty() const
     {
-        return _readPtr == _writePtr;
+        return _readPtr.load(std::memory_order_acquire) == _writePtr.load(std::memory_order_acquire);
     }
 
     inline bool isHalfFull() const
     {
-        int occupiedFrames = getOccupiedFrames();
-        bool result = occupiedFrames >= Size >> 1;
-
-        return result;
+        return getAvailableData() >= (Size >> 1);
     }
 
     inline bool isFull() const
     {
-        return getBufferIndex(_writePtr, 1) == _readPtr;
+        return getBufferIndex(_writePtr.load(std::memory_order_acquire), 1) ==
+               _readPtr.load(std::memory_order_acquire);
     }
 
+    /// Producer side only
     size_t enqueue(const T* samples, size_t numSamples)
     {
-        size_t result = 0;
+        size_t writePtr = _writePtr.load(std::memory_order_relaxed);   // Own index
+        size_t readPtr = _readPtr.load(std::memory_order_acquire);     // Consumer's progress
 
-        if (isFull())
+        size_t availableSpace = (readPtr - writePtr + Size - 1) % Size;
+        if (availableSpace == 0)
         {
-            _enqueueErrorCount++;
-            //std::cout << StringHelper::Format("[%06d] Buffer is full. Unable to enqueue samples.", _enqueueErrorCount) << std::endl;
-            return result;
+            _enqueueErrorCount.fetch_add(1, std::memory_order_relaxed);
+            return 0;
         }
 
-        size_t availableSpace = getAvailableSpace();
         size_t samplesToCopy = std::min(availableSpace, numSamples);
+        if (samplesToCopy < numSamples)
+        {
+            // Partial write = dropped tail; count it so DRC convergence
+            // problems are observable rather than silent
+            _enqueueErrorCount.fetch_add(1, std::memory_order_relaxed);
+        }
 
-        size_t firstChunk = std::min(samplesToCopy, Size - _writePtr);
-        memcpy(_buffer + _writePtr, samples, firstChunk * sizeof(T));
+        size_t firstChunk = std::min(samplesToCopy, Size - writePtr);
+        memcpy(_buffer + writePtr, samples, firstChunk * sizeof(T));
 
         size_t secondChunk = samplesToCopy - firstChunk;
         if (secondChunk > 0)
@@ -71,58 +89,70 @@ public:
             memcpy(_buffer, samples + firstChunk, secondChunk * sizeof(T));
         }
 
-        _writePtr = getBufferIndex(_writePtr, samplesToCopy);
+        // Publish: data writes must be visible before the index moves
+        _writePtr.store(getBufferIndex(writePtr, samplesToCopy), std::memory_order_release);
 
-        result = samplesToCopy;
-
-        return result;
+        return samplesToCopy;
     }
 
+    /// Consumer side only
     size_t dequeue(T* samples, size_t numSamples)
     {
-        size_t result = 0;
+        size_t readPtr = _readPtr.load(std::memory_order_relaxed);     // Own index
+        size_t writePtr = _writePtr.load(std::memory_order_acquire);   // Producer's progress
 
-        if (isEmpty())
+        size_t availableData = (writePtr - readPtr + Size) % Size;
+        if (availableData == 0)
         {
-            _dequeueErrorCount++;
-            //std::cout << StringHelper::Format("[%06d] Buffer is empty. Unable to dequeue samples. Requested %d", _dequeueErrorCount, numSamples) << std::endl;
-
-            return result;
+            _dequeueErrorCount.fetch_add(1, std::memory_order_relaxed);
+            return 0;
         }
 
-        size_t availableData = getAvailableData();
         size_t samplesToCopy = std::min(availableData, numSamples);
 
-        size_t firstChunk = std::min(samplesToCopy, Size - _readPtr);
-        memcpy(samples, _buffer + _readPtr, firstChunk * sizeof(T));
+        size_t firstChunk = std::min(samplesToCopy, Size - readPtr);
+        memcpy(samples, _buffer + readPtr, firstChunk * sizeof(T));
 
         size_t secondChunk = samplesToCopy - firstChunk;
-        memcpy(samples + firstChunk, _buffer, secondChunk * sizeof(T));
+        if (secondChunk > 0)
+        {
+            memcpy(samples + firstChunk, _buffer, secondChunk * sizeof(T));
+        }
 
-        _readPtr = getBufferIndex(_readPtr, samplesToCopy);
+        _readPtr.store(getBufferIndex(readPtr, samplesToCopy), std::memory_order_release);
 
-        result = samplesToCopy;
-
-        /// region <Debug>
-        //std::cout << StringHelper::Format("Requested %d, returned %d, stored %d", numSamples, result, getAvailableData()) << std::endl;
-
-        /// endregion </Debug>
-
-        return result;
+        return samplesToCopy;
     }
 
     inline size_t getAvailableSpace() const
     {
-        size_t result = (_readPtr - _writePtr + Size - 1) % Size;
-
-        return result;
+        size_t readPtr = _readPtr.load(std::memory_order_acquire);
+        size_t writePtr = _writePtr.load(std::memory_order_acquire);
+        return (readPtr - writePtr + Size - 1) % Size;
     }
 
     inline size_t getAvailableData() const
     {
-        size_t result = (_writePtr - _readPtr + Size) % Size;
+        size_t readPtr = _readPtr.load(std::memory_order_acquire);
+        size_t writePtr = _writePtr.load(std::memory_order_acquire);
+        return (writePtr - readPtr + Size) % Size;
+    }
 
-        return result;
+    /// Ring occupancy in STEREO FRAMES (the natural unit for latency and for
+    /// the DRC controller; ends the int16-vs-frames unit confusion)
+    inline size_t getOccupancyStereoFrames() const
+    {
+        return getAvailableData() / 2;
+    }
+
+    inline size_t getEnqueueErrorCount() const
+    {
+        return _enqueueErrorCount.load(std::memory_order_relaxed);
+    }
+
+    inline size_t getDequeueErrorCount() const
+    {
+        return _dequeueErrorCount.load(std::memory_order_relaxed);
     }
 
     inline size_t size() const
@@ -133,25 +163,6 @@ public:
 private:
     inline size_t getBufferIndex(size_t index, size_t increment = 1) const
     {
-        size_t result = (index + increment) % Size;
-
-        return result;
-    }
-
-    // Helper function to calculate the number of occupied frames in the buffer
-    inline int getOccupiedFrames() const
-    {
-        int result;
-
-        if (_writePtr >= _readPtr)
-        {
-            result = _writePtr - _readPtr;
-        }
-        else
-        {
-            result = Size - (_readPtr - _writePtr);
-        }
-
-        return result;
+        return (index + increment) % Size;
     }
 };

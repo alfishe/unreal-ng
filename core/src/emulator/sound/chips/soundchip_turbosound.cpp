@@ -6,7 +6,12 @@
 void SoundChip_TurboSound::handleFrameStart()
 {
     _lastTStates = 0;
-    _ayPLL = 0.0;
+    // NOTE: _ayPLL deliberately NOT reset here. The fractional sample phase
+    // must be free-running across frames (audio-sync design, Fix 1): zeroing
+    // it every frame truncated the fractional sample per frame, locking the
+    // AY at 903 samples/frame (never 904) - a systematic -0.019% rate bias
+    // vs the exact accumulator, plus a phase discontinuity at each frame
+    // boundary. _ayPLL resets only in reset().
     _ayBufferIndex = 0;
 
     // Initialize render buffers (combined + per-chip)

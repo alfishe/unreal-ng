@@ -78,7 +78,10 @@ public:
     // Frame lifecycle
     void reset();
     void handleFrameStart();
-    void handleFrameEnd();
+    /// @param expectedSamples Exact per-frame sample count from SoundManager's
+    ///        accumulator (0 = compute locally via rounding, legacy behavior).
+    ///        Passing it keeps the covox stream in lockstep with the mixer.
+    void handleFrameEnd(size_t expectedSamples = 0);
 
     // DC removal control (for UI section)
     void setDCRemovalEnabled(bool enabled) { _dcRemovalEnabled = enabled; }

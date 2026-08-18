@@ -35,7 +35,10 @@ bool AppSoundManager::init()
     ma_device_config config = ma_device_config_init(ma_device_type_playback);
     config.playback.format   = ma_format_s16;       // Set to ma_format_unknown to use the device's native format.
     config.playback.channels = AUDIO_CHANNELS;      // Set to 0 to use the device's native channel count.
-    config.sampleRate        = AUDIO_SAMPLING_RATE; // Set to 0 to use the device's native sample rate.
+    // Use the device's NATIVE rate (audio-sync design Fix 3): eliminates the
+    // OS mixer's hidden resampler (PipeWire/CoreAudio) - the core's DRC
+    // resampler does the core->device conversion under our quality control.
+    config.sampleRate        = 0;
     config.performanceProfile = ma_performance_profile_low_latency;
     config.periodSizeInFrames = 256;                 // ~5.8ms period @ 44.1kHz
     config.periods            = 2;                   // 2 periods = 512 frames (~11.6ms hardware buffer @ 44.1kHz)
@@ -46,6 +49,9 @@ bool AppSoundManager::init()
     {
         result = false;  // Failed to initialize the device.
     }
+
+    // Native rate actually granted by the device (config.sampleRate = 0)
+    _deviceSampleRate = _audioDevice.sampleRate ? _audioDevice.sampleRate : AUDIO_SAMPLING_RATE;
 
     return result;
 }
@@ -110,34 +116,13 @@ void AppSoundManager::audioDataCallback(ma_device* pDevice, void* pOutput, const
     {
         obj->_ringBuffer.dequeue((int16_t*)pOutput, frameCount * 2);
 
-        // Request more audio data from MainLoop when the ring buffer drops
-        // below ~2 frames (40ms) of buffered audio.
-        //
-        // Rate-limited to one post per emulated frame duration: this callback
-        // fires every ~5.8ms (256-frame device period), and posting on every
-        // callback while below the watermark piles up stale requests in the
-        // MessageCenter queue. Each stale request delivered after the ring has
-        // refilled releases one extra frame (+20.5ms of audio), permanently
-        // inflating ring occupancy - and ring occupancy IS the A/V offset
-        // (video is presented live, audio is delayed by the ring). Observed as
-        // a constant 100-200ms video-ahead-of-audio skew after startup.
-        // One request per ~4 callbacks (~23ms) keeps at most one request in
-        // flight while preserving refill liveness.
-        constexpr size_t lowWatermark = SAMPLES_PER_FRAME * AUDIO_CHANNELS * 2;
-        constexpr uint32_t callbacksPerRequest = 4;
-        if (obj->_ringBuffer.getAvailableData() < lowWatermark)
-        {
-            if (obj->_watermarkCallbackCounter == 0)
-            {
-                MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-                messageCenter.Post(NC_AUDIO_BUFFER_HALF_FULL);
-            }
-            obj->_watermarkCallbackCounter = (obj->_watermarkCallbackCounter + 1) % callbacksPerRequest;
-        }
-        else
-        {
-            obj->_watermarkCallbackCounter = 0;
-        }
+        // Publish ring occupancy for the DRC rate controller (audio-sync
+        // design, Fix 2): SoundManager::updateDrcControl reads this cell once
+        // per emulated frame and trims the resample ratio continuously.
+        // Replaces the former NC_AUDIO_BUFFER_HALF_FULL watermark posts
+        // (level trigger + async queue latency -> rubber-banding).
+        obj->_occupancyFrames.store(static_cast<uint32_t>(obj->_ringBuffer.getOccupancyStereoFrames()),
+                                    std::memory_order_relaxed);
     }
 
     (void)pInput; // Not used during playback
@@ -149,5 +134,25 @@ void AppSoundManager::audioCallback(void* obj, int16_t* samples, size_t numSampl
     if (appSoundManager)
     {
         appSoundManager->_ringBuffer.enqueue(samples, numSamples);
+        appSoundManager->_occupancyFrames.store(
+            static_cast<uint32_t>(appSoundManager->_ringBuffer.getOccupancyStereoFrames()),
+            std::memory_order_relaxed);
+
+        // Observability (audio-sync design 5.4): under correct rate control
+        // both error counters stay at zero permanently. Log transitions
+        // rate-limited (once per ~256 frames = ~5s) so a non-converging
+        // controller or a stalled device is visible instead of silent.
+        if ((appSoundManager->_errorLogCounter++ % 256) == 0)
+        {
+            size_t enq = appSoundManager->_ringBuffer.getEnqueueErrorCount();
+            size_t deq = appSoundManager->_ringBuffer.getDequeueErrorCount();
+            if (enq != appSoundManager->_lastEnqueueErrors || deq != appSoundManager->_lastDequeueErrors)
+            {
+                qWarning("AppSoundManager: ring errors enqueue=%zu dequeue=%zu (occupancy %zu frames)", enq,
+                         deq, appSoundManager->_ringBuffer.getOccupancyStereoFrames());
+                appSoundManager->_lastEnqueueErrors = enq;
+                appSoundManager->_lastDequeueErrors = deq;
+            }
+        }
     }
 }

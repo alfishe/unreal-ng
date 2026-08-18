@@ -34,7 +34,9 @@ protected:
     std::mutex _pauseMutex;                        // Protects pause state
     std::atomic<std::thread::id> _runThreadId{};   // Thread currently executing Run() (emulation thread)
 
-    std::atomic<bool> _moreAudioDataRequested;
+    // Interruptible frame-pacing sleep: _cv notified by Stop(). (The former
+    // audio watermark request path is replaced by the DRC rate controller in
+    // SoundManager - see audio-sync design 5.3.)
     std::condition_variable _cv;
     std::mutex _audioBufferMutex;
 
@@ -82,8 +84,6 @@ public:
     void OnFrameEnd();
     /// endregion </Event handlers>
 
-public:
-    void handleAudioBufferHalfFull(int id, Message* message);
 };
 
 /// CUT (Component Under Test) wrapper for unit testing
