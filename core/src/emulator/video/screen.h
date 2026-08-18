@@ -536,6 +536,9 @@ protected:
     size_t _presentBufferSize = 0;  // Authoritative size for readers; set under _presentMutex
     std::mutex _presentMutex;
 
+    // User-forced Pentagon overscan (see SetOverscanForced)
+    bool _overscanForced = false;
+
 public:
     /// @brief Latch the completed frame into the presentation buffer.
     /// Call on the emulation thread at frame end, after rendering is finished.
@@ -558,6 +561,14 @@ public:
 
     /// Check if current mode is overscan (M_P384)
     bool IsOverscanMode() const { return _mode == M_P384; }
+
+    /// User-forced Pentagon overscan (UI toggle, not guest-visible hardware).
+    /// InitRaster re-detects the video mode from config/ports every frame;
+    /// without this flag a manual SetVideoMode(M_P384) is reverted to the
+    /// model's base mode on the next frame. Guest-programmed AlCo modes
+    /// (EFF7 bits) still take priority over the override.
+    void SetOverscanForced(bool forced) { _overscanForced = forced; }
+    bool IsOverscanForced() const { return _overscanForced; }
 
     /// Get display dimensions after viewport cropping
     uint16_t GetDisplayWidth() const;

@@ -1418,6 +1418,42 @@ void MainWindow::handleMessageScreenRefresh(int id, Message* message)
     _lastFrameCount = frameCount;
 }
 
+void MainWindow::handleVideoModeChanged(int id, Message* message)
+{
+    // NC_VIDEO_MODE_CHANGED: the emulator's framebuffer geometry (and, for
+    // size-changing switches, the buffer address) changed - either by the UI
+    // overscan toggle or by GUEST SOFTWARE programming an AlCo/Profi/ATM mode
+    // via ports. Re-attach the device screen to the new descriptor on the GUI
+    // thread (the notification arrives on the MessageCenter dispatch thread).
+    (void)id;
+
+    if (!deviceScreen || !_emulator || !message || !message->obj)
+        return;
+
+    EmulatorFramePayload* payload = dynamic_cast<EmulatorFramePayload*>(message->obj);
+    if (!payload || payload->_emulatorId != _emulator->GetUUID())
+        return;
+
+    QMetaObject::invokeMethod(
+        this,
+        [this]() {
+            if (!deviceScreen || !_emulator)
+                return;
+            auto* context = _emulator->GetContext();
+            if (!context || !context->pScreen)
+                return;
+
+            auto& fb = context->pScreen->GetFramebufferDescriptor();
+            deviceScreen->init(fb.width, fb.height, fb.memoryBuffer);
+
+            // init() -> detach() clears the tear-free frame source - re-install
+            Screen* screen = context->pScreen;
+            deviceScreen->setFrameSource(
+                [screen](uint8_t* dst, size_t dstSize) { return screen->CopyPresentedFramebuffer(dst, dstSize); });
+        },
+        Qt::QueuedConnection);
+}
+
 void MainWindow::handleFileOpenRequest(int id, Message* message)
 {
     if (!_emulator)
@@ -2026,6 +2062,11 @@ void MainWindow::handleOverscanModeToggled(bool enabled)
             auto& fb = context->pScreen->GetFramebufferDescriptor();
             deviceScreen->init(fb.width, fb.height, fb.memoryBuffer);
 
+            // init() -> detach() clears the tear-free frame source - re-install it
+            Screen* screen = context->pScreen;
+            deviceScreen->setFrameSource(
+                [screen](uint8_t* dst, size_t dstSize) { return screen->CopyPresentedFramebuffer(dst, dstSize); });
+
             if (!enabled)
             {
                 // Leaving overscan mode - reset viewport to full framebuffer
@@ -2522,6 +2563,9 @@ void MainWindow::subscribeToPerEmulatorEvents()
 
     ObserverCallbackMethod stateCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorStateChanged);
     messageCenter.AddObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
+
+    ObserverCallbackMethod modeCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleVideoModeChanged);
+    messageCenter.AddObserver(NC_VIDEO_MODE_CHANGED, observerInstance, modeCallback);
 }
 
 void MainWindow::unsubscribeFromPerEmulatorEvents()
@@ -2538,6 +2582,9 @@ void MainWindow::unsubscribeFromPerEmulatorEvents()
 
     ObserverCallbackMethod stateCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorStateChanged);
     messageCenter.RemoveObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
+
+    ObserverCallbackMethod modeCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleVideoModeChanged);
+    messageCenter.RemoveObserver(NC_VIDEO_MODE_CHANGED, observerInstance, modeCallback);
 }
 
 void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)

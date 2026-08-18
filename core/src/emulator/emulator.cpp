@@ -2155,6 +2155,10 @@ bool Emulator::SetOverscanMode(bool enable)
             Pause(false);
         }
 
+        // Record the user's intent FIRST: InitRaster re-detects the video mode
+        // from config/ports every frame and would revert a bare SetVideoMode
+        // back to the model's base mode on the next frame
+        screen->SetOverscanForced(enable);
         screen->SetVideoMode(newMode);
 
         if (wasRunning)

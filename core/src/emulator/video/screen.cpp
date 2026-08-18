@@ -8,12 +8,15 @@
 #include <fstream>
 #include <iostream>
 
+#include "3rdparty/message-center/messagecenter.h"
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
 #include "common/video/videoutils.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
+#include "emulator/emulator.h"
+#include "emulator/notifications.h"
 #include "stdafx.h"
 
 /// region <Static methods>
@@ -225,6 +228,16 @@ void Screen::InitRaster()
     }
 
     video.raster = raster[R_256_192];
+
+    // User-forced Pentagon overscan (UI toggle): must survive the per-frame
+    // re-detection - detection would otherwise revert the manual mode to the
+    // model's base mode on the next frame. Guest-programmed AlCo modes (EFF7
+    // bits below) still take priority.
+    if (_overscanForced && config.mem_model == MM_PENTAGON)
+    {
+        video.mode = M_P384;
+        video.raster = raster[R_384_304];
+    }
 
     // ATM 3 AlCo modes
     if (config.mem_model == MM_ATM3 && (state.pEFF7 & m))
@@ -468,6 +481,22 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     // Allocate framebuffer
     AllocateFramebuffer(_mode);
 
+    // Notify consumers that the video mode changed. JUSTIFICATION: mode
+    // switches are not only UI-driven - guest software switches modes by
+    // port writes (Pentagon AlCo via EFF7, Profi via DFFD, ATM via FF77,
+    // GMX), detected by InitRaster mid-emulation on the emulation thread.
+    // Framebuffer geometry (and, for size-changing switches, the buffer
+    // address) is different afterwards; a GUI consumer with cached
+    // dimensions has CopyPresentedFramebuffer rejecting every copy (dst too
+    // small) and freezes on the last frame. Consumers must re-attach.
+    // Skipped during construction (pEmulator not wired yet).
+    if (_context && _context->pEmulator)
+    {
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        messageCenter.Post(NC_VIDEO_MODE_CHANGED,
+                           new EmulatorFramePayload(_context->pEmulator->GetUUID(), 0));
+    }
+
 #ifdef _DEBUG
     MLOGINFO("%s", DumpRasterState().c_str());
 #endif  // _DEBUG
@@ -611,6 +640,32 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
     if (_framebuffer.memoryBuffer != nullptr && _framebuffer.videoMode == mode)
     {
         return;
+    }
+
+    // Same-size mode switch (e.g. M_ZX48 <-> M_ZX128 <-> M_PENTAGON128K, all
+    // 352x288): KEEP the existing buffers. JUSTIFICATION: consumers hold raw
+    // framebuffer pointers without locks (DeviceScreen's live QImage wrap,
+    // videowall tiles); reallocating identical-size buffers frees memory the
+    // GUI thread may be reading mid-paint - a use-after-free with zero upside.
+    // Different-size switches still reallocate (unavoidable) and are covered
+    // by the NC_VIDEO_MODE_CHANGED re-attach.
+    if (_framebuffer.memoryBuffer != nullptr && mode < M_MAX)
+    {
+        const RasterDescriptor& rd = rasterDescriptors[mode];
+        size_t newSize = (size_t)rd.fullFrameWidth * rd.fullFrameHeight * RGBA_SIZE;
+
+        if (newSize != 0 && newSize == _framebuffer.memoryBufferSize)
+        {
+            _framebuffer.videoMode = mode;
+            _framebuffer.width = rd.fullFrameWidth;
+            _framebuffer.height = rd.fullFrameHeight;
+            memset(_framebuffer.memoryBuffer, 0x00, _framebuffer.memoryBufferSize);
+
+            std::lock_guard<std::mutex> lock(_presentMutex);
+            if (_presentBuffer)
+                memset(_presentBuffer, 0x00, _presentBufferSize);
+            return;
+        }
     }
 
     // Deallocate existing framebuffer memory
