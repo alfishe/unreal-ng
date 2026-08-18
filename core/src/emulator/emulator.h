@@ -20,6 +20,7 @@ using unreal::UUID;  // Explicitly bring into scope to avoid Windows GUID typede
 #include "cpu/z80.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "emulator/config.h"
+#include "emulator/video/screen.h"  // For DisplayViewport
 #include "emulator/cpu/core.h"
 #include "emulator/mainloop.h"
 #include "emulatorcontext.h"
@@ -223,6 +224,22 @@ public:
     // Debug methods
     void DebugOn();
     void DebugOff();
+
+    // Video mode methods
+    /// @brief Enable/disable Pentagon overscan mode (384x304 with extra border)
+    /// @param enable true to enable overscan, false for standard 352x288
+    /// @return true if mode changed, false if model doesn't support overscan
+    bool SetOverscanMode(bool enable);
+
+    /// @brief Check if currently in overscan mode
+    bool IsOverscanMode() const;
+
+    /// @brief Set display viewport for cropping framebuffer
+    /// Only meaningful in overscan mode (M_P384)
+    void SetDisplayViewport(const DisplayViewport& viewport);
+
+    /// @brief Get current display viewport
+    const DisplayViewport& GetDisplayViewport() const;
 
     Z80State* GetZ80State();
 

@@ -251,6 +251,45 @@ struct FramebufferDescriptor
     size_t memoryBufferSize = 0;
 };
 
+/// Display viewport configuration for cropping framebuffer to display
+/// Used with M_P384 overscan mode to allow symmetric display output
+struct DisplayViewport
+{
+    uint16_t cropLeft = 0;    // Pixels to crop from left
+    uint16_t cropRight = 0;   // Pixels to crop from right
+    uint16_t cropTop = 0;     // Lines to crop from top
+    uint16_t cropBottom = 0;  // Lines to crop from bottom
+
+    /// Get resulting display width after cropping
+    uint16_t GetDisplayWidth(uint16_t framebufferWidth) const
+    {
+        return framebufferWidth - cropLeft - cropRight;
+    }
+
+    /// Get resulting display height after cropping
+    uint16_t GetDisplayHeight(uint16_t framebufferHeight) const
+    {
+        return framebufferHeight - cropTop - cropBottom;
+    }
+};
+
+/// Preset viewports for M_P384 overscan mode
+namespace ViewportPresets
+{
+    // Full overscan (384x304) - show everything including extra border areas
+    constexpr DisplayViewport FULL_OVERSCAN = {0, 0, 0, 0};
+
+    // Symmetric horizontal (352x304) - equal 48px left/right borders, full vertical
+    // Crops 32px from right to match 48px left border
+    constexpr DisplayViewport SYMMETRIC_HORIZONTAL = {0, 32, 0, 0};
+
+    // Standard (352x288) - match standard Pentagon display (48px borders, no overscan)
+    constexpr DisplayViewport STANDARD = {0, 32, 16, 0};
+
+    // Screen only (256x192) - paper area only
+    constexpr DisplayViewport SCREEN_ONLY = {48, 80, 64, 48};
+}
+
 /// endregion </Structures>
 
 // ULA+ color models:
@@ -333,7 +372,26 @@ public:
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 8, 16},   // M_ZX48k
         {352, 288, 256, 192, 48, 48, 456, 64, 32, 8, 15},   // M_ZX128 (311 lines: 228*311=70908)
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_PENTAGON128K
-        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16}   // M_PMC - Not Ready!
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_PMC
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_P16
+        // M_P384: Pentagon Overscan - larger framebuffer with same timing as Pentagon
+        // Timing must be IDENTICAL to M_PENTAGON128K for correct border effects
+        // Only fullFrameWidth/Height differ for larger framebuffer allocation
+        // Screen position (48,48) same as Pentagon - extra border rendered around it
+        // Frame: 16 vSync + 16 vBlank + 288 visible = 320 lines, same 71680 T-states
+        {384, 304, 256, 192, 48, 48, 448, 64, 32, 16, 16},   // M_P384 (Pentagon 384x304 overscan)
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_PHR
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 8, 16},   // M_TIMEX
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_TS16
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_TS256
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_TSTX
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_ATM16
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_ATMHR
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_ATMTX
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_ATMTL
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_PROFI
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_GMX
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_BRD
     };
 
     // Default color table: 0RRrrrGG gggBBbbb
@@ -361,6 +419,7 @@ protected:
     VideoModeEnum _mode;
     RasterState _rasterState;
     FramebufferDescriptor _framebuffer;
+    DisplayViewport _displayViewport;  // Current viewport for display cropping
 
     uint32_t _prevTstate = 0;  // Previous Draw call t-state value (since emulation is not concurrent as in hardware -
                                // we need to know what time period to replay)
@@ -477,6 +536,9 @@ protected:
     size_t _presentBufferSize = 0;  // Authoritative size for readers; set under _presentMutex
     std::mutex _presentMutex;
 
+    // User-forced Pentagon overscan (see SetOverscanForced)
+    bool _overscanForced = false;
+
 public:
     /// @brief Latch the completed frame into the presentation buffer.
     /// Call on the emulation thread at frame end, after rendering is finished.
@@ -492,6 +554,25 @@ public:
 
     FramebufferDescriptor& GetFramebufferDescriptor();
     void GetFramebufferData(uint32_t** buffer, size_t* size);
+
+    /// Display viewport for cropping framebuffer to display
+    void SetDisplayViewport(const DisplayViewport& viewport);
+    const DisplayViewport& GetDisplayViewport() const;
+
+    /// Check if current mode is overscan (M_P384)
+    bool IsOverscanMode() const { return _mode == M_P384; }
+
+    /// User-forced Pentagon overscan (UI toggle, not guest-visible hardware).
+    /// InitRaster re-detects the video mode from config/ports every frame;
+    /// without this flag a manual SetVideoMode(M_P384) is reverted to the
+    /// model's base mode on the next frame. Guest-programmed AlCo modes
+    /// (EFF7 bits) still take priority over the override.
+    void SetOverscanForced(bool forced) { _overscanForced = forced; }
+    bool IsOverscanForced() const { return _overscanForced; }
+
+    /// Get display dimensions after viewport cropping
+    uint16_t GetDisplayWidth() const;
+    uint16_t GetDisplayHeight() const;
 
     /// Get the 16-color RGBA palette used for rendering (ABGR format on little-endian)
     /// This is useful for GIF encoding where the same palette must be used

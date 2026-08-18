@@ -810,6 +810,12 @@ TEST_F(ScreenZX_Test, TstateLUT_MatchesTransformTstateToZXCoords)
 /// @brief Test that Draw and DrawOriginal produce the same framebuffer output
 TEST_F(ScreenZX_Test, TstateLUT_DrawProducesSameOutputAsDrawOriginal)
 {
+    // InitFrame() re-detects the video mode from config (base-mode mapping in
+    // InitRaster), so the machine must be configured as ZX48 - the bare test
+    // context defaults to mem_model 0 (Pentagon) with frame 0, which fails
+    // the SetVideoMode frame-duration sanity check
+    _context->config.mem_model = MM_SPECTRUM48;
+    _context->config.frame = 69888;
     // Initialize with memory
     _cpu->GetMemory()->DefaultBanksFor48k();
     _screenzx->SetVideoMode(M_ZX48);
@@ -913,6 +919,12 @@ TEST_F(ScreenZX_Test, TstateLUT_InitializedForAllModes)
 /// @brief Test that DrawBatch8_Scalar produces correct output for known pixel patterns
 TEST_F(ScreenZX_Test, Batch8_ScalarProducesCorrectOutput)
 {
+    // InitFrame() re-detects the video mode from config (base-mode mapping in
+    // InitRaster), so the machine must be configured as ZX48 - the bare test
+    // context defaults to mem_model 0 (Pentagon) with frame 0, which fails
+    // the SetVideoMode frame-duration sanity check
+    _context->config.mem_model = MM_SPECTRUM48;
+    _context->config.frame = 69888;
     _cpu->GetMemory()->DefaultBanksFor48k();
     _screenzx->SetVideoMode(M_ZX48);
     _screenzx->InitFrame();
@@ -944,6 +956,12 @@ TEST_F(ScreenZX_Test, Batch8_ScalarProducesCorrectOutput)
 /// @brief Test that DrawBatch8_NEON produces same output as scalar version
 TEST_F(ScreenZX_Test, Batch8_NEONMatchesScalar)
 {
+    // InitFrame() re-detects the video mode from config (base-mode mapping in
+    // InitRaster), so the machine must be configured as ZX48 - the bare test
+    // context defaults to mem_model 0 (Pentagon) with frame 0, which fails
+    // the SetVideoMode frame-duration sanity check
+    _context->config.mem_model = MM_SPECTRUM48;
+    _context->config.frame = 69888;
     _cpu->GetMemory()->DefaultBanksFor48k();
     _screenzx->SetVideoMode(M_ZX48);
     _screenzx->InitFrame();
@@ -979,6 +997,12 @@ TEST_F(ScreenZX_Test, Batch8_NEONMatchesScalar)
 /// @brief Test that RenderScreen_Batch8 produces same output as RenderOnlyMainScreen
 TEST_F(ScreenZX_Test, Batch8_RenderScreenMatchesPerPixel)
 {
+    // InitFrame() re-detects the video mode from config (base-mode mapping in
+    // InitRaster), so the machine must be configured as ZX48 - the bare test
+    // context defaults to mem_model 0 (Pentagon) with frame 0, which fails
+    // the SetVideoMode frame-duration sanity check
+    _context->config.mem_model = MM_SPECTRUM48;
+    _context->config.frame = 69888;
     _cpu->GetMemory()->DefaultBanksFor48k();
     _screenzx->SetVideoMode(M_ZX48);
     _screenzx->InitFrame();

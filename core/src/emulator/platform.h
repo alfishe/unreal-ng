@@ -38,6 +38,7 @@ constexpr char const* NC_SCANLINE_BOUNDARY = "SCANLINE_BOUNDARY";               
 
 constexpr char const* NC_AUDIO_FRAME_REFRESH = "AUDIO_FRAME_REFRESH";           // Audio frame ready (TODO: add emulator ID to payload)
 constexpr char const* NC_VIDEO_FRAME_REFRESH = "VIDEO_FRAME_REFRESH";           // Video frame ready (payload: EmulatorFramePayload with ID)
+constexpr char const* NC_VIDEO_MODE_CHANGED = "VIDEO_MODE_CHANGED";             // Video mode switched: framebuffer geometry (and possibly its address) changed - consumers holding raw pointers or cached dimensions must re-attach (payload: EmulatorFramePayload with ID)
 constexpr char const* NC_VIDEOWALL_SINGLE_SYNC_MODE = "VIDEOWALL_SINGLE_SYNC_MODE"; // Request videowall single sync mode (payload: VideowallSyncModePayload)
 
 constexpr char const* NC_FDD_MOTOR_STARTED = "FDD_MOTOR_START";                 // Floppy drive motor started
