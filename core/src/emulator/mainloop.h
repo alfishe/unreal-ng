@@ -86,12 +86,35 @@ public:
 
 };
 
-/// CUT (Component Under Test) wrapper for unit testing
-/// Exposes protected and private methods for direct testing access
+// Code Under Test (CUT) wrapper to allow access to protected and private methods
+// for unit testing / benchmark purposes.
+//
+// Guarded like the other CUTs in the codebase (see screenzx.h): the wrapper only
+// exists in translation units that ask for it, so a production build cannot reach
+// RunFrame()/ExecuteCPUFrameCycle() around the run-loop's own pacing. Both macros
+// are honoured - the tests target defines _CODE_UNDER_TEST, the benchmarks target
+// defines _CODE_UNDER_BENCHMARK.
+
+#if defined(_CODE_UNDER_TEST) || defined(_CODE_UNDER_BENCHMARK)
+
 class MainLoop_CUT : public MainLoop
 {
 public:
     using MainLoop::MainLoop;  // Inherit constructors
     using MainLoop::RunFrame;
     using MainLoop::ExecuteCPUFrameCycle;
+
+    /// Alias kept because the TTD frame-overhead benchmark calls it under this
+    /// name. It is one frame of work with no sync and no frame limiting - which
+    /// is the whole point of driving RunFrame() directly rather than Run().
+    void RunFramePublic() { RunFrame(); }
+
+    /// Same, for the CPU-only path the benchmark measures as its baseline.
+    void ExecuteCPUFrameCyclePublic() { ExecuteCPUFrameCycle(); }
 };
+
+/// Underscore-free spelling. Both names are in use: the tests say MainLoop_CUT,
+/// the TTD frame-overhead benchmark says MainLoopCUT.
+using MainLoopCUT = MainLoop_CUT;
+
+#endif  // _CODE_UNDER_TEST || _CODE_UNDER_BENCHMARK
