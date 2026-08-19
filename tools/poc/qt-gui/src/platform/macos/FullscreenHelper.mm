@@ -169,8 +169,14 @@
 
     FS_LOG("zoom finish (" << reason << ")");
 
-    // Teleport (exit only) and layer settle must reach the screen together
-    NSDisableScreenUpdates();
+    // Teleport (exit only) and layer settle must reach the screen together.
+    //
+    // The CATransaction alone is what provides that. NSDisableScreenUpdates used to
+    // wrap it as well, but it is deprecated precisely for the performance problem it
+    // caused here: measured in the native POC, the identical block spent 524ms inside
+    // it doing nothing, which is the pause between the end of the zoom and the bars
+    // coming back. Nothing in this block reallocates a drawable, so suppressing
+    // implicit animations is enough.
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     if (!NSEqualRects(_pendingTeleport, NSZeroRect))
@@ -178,7 +184,6 @@
     if (_delegate)
         _delegate->zoomFinished();
     [CATransaction commit];
-    NSEnableScreenUpdates();
 
     _pendingTeleport = NSZeroRect;
 }
