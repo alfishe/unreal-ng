@@ -13,6 +13,7 @@
 #include "recordingmanager.h"
 #endif
 #include "emulator/video/screen.h"
+#include "emulator/video/ulacontention.h"
 #include "stdafx.h"
 
 
@@ -59,6 +60,7 @@ protected:
     HDD* _hdd = nullptr;
     VideoControl* _video = nullptr;
     Screen* _screen = nullptr;
+    UlaContention* _ulaContention = nullptr;
 
     ROMModeEnum _mode = ROMModeEnum::RM_NOCHANGE;
     /// endregion </Fields>

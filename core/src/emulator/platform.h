@@ -38,7 +38,8 @@ constexpr char const* NC_SCANLINE_BOUNDARY = "SCANLINE_BOUNDARY";               
 
 constexpr char const* NC_AUDIO_FRAME_REFRESH = "AUDIO_FRAME_REFRESH";           // Audio frame ready (TODO: add emulator ID to payload)
 constexpr char const* NC_VIDEO_FRAME_REFRESH = "VIDEO_FRAME_REFRESH";           // Video frame ready (payload: EmulatorFramePayload with ID)
-constexpr char const* NC_AUDIO_BUFFER_HALF_FULL = "AUDIO_BUFFER_HALF_FULL";     // Audio buffer < 50% full
+constexpr char const* NC_VIDEO_MODE_CHANGED = "VIDEO_MODE_CHANGED";             // Video mode switched: framebuffer geometry (and possibly its address) changed - consumers holding raw pointers or cached dimensions must re-attach (payload: EmulatorFramePayload with ID)
+constexpr char const* NC_VIDEOWALL_SINGLE_SYNC_MODE = "VIDEOWALL_SINGLE_SYNC_MODE"; // Request videowall single sync mode (payload: VideowallSyncModePayload)
 
 constexpr char const* NC_FDD_MOTOR_STARTED = "FDD_MOTOR_START";                 // Floppy drive motor started
 constexpr char const* NC_FDD_MOTOR_STOPPED = "FDD_MOTOR_STOP";                  // Floppy drive motor stopped
@@ -381,6 +382,12 @@ struct CONFIG
 {
 	unsigned t_line;	// t-states per line
 	unsigned frame;		// t-states per frame
+
+	/// Real-time duration of one frame in microseconds, derived from `frame`
+	/// via CalculateFrameDurationUs() during config load. Used by MainLoop as
+	/// the frame pacing timeout when the audio callback is not driving pacing.
+	/// Anyone mutating `frame` directly must recalculate this field as well.
+	unsigned frame_duration_us = 20000;
 	uint8_t intfq;		// INT interrupt frequency (in Hz). Typically 50Hz
 	unsigned intstart;	// INT pulse start position (delay in clock cycles)
 	unsigned intlen;	// Duration of INT signal (for Z80) in clock cycles. Should be no less than 23, since some IX/IY instructions take so long to execute and interrupt is handled only at the end of such instruction execution
@@ -469,9 +476,24 @@ struct CONFIG
 	uint8_t soundfilter; //Alone Coder (IDC_SOUNDFILTER)
 	uint8_t RejectDC;
 
+	/// Video presentation delay in frames for A/V sync ([VIDEO]
+	/// AVSyncDelayFrames). Audio trails the emulated frame by the DRC ring
+	/// target + device HW buffer (~2 frames); delaying video by the same
+	/// amount collapses the net A/V offset to ~0 at the cost of input
+	/// latency. -1 = auto (2 frames), 0 = present immediately (lowest input
+	/// latency), 1..3 explicit.
+	int videoPresentDelayFrames;
+
 	struct
 	{
 		unsigned fq, ayfq, saa1099fq;
+
+		/// Core audio rate from [SOUND] CoreRate (multirate plan phase 6):
+		/// one of 44100/48000/88200/96000/176400/192000, or 0 = auto
+		/// (match the audio device's native rate when known, else 44100).
+		/// All chip DSP self-designs for this rate at SoundManager construction.
+		unsigned coreRate;
+
 		int covoxFB, covoxDD, sd, saa1099, moonsound;
 		int beeper_vol, micout_vol, micin_vol, ay_vol, aydig_vol, saa1099_vol;
 		int covoxFB_vol, covoxDD_vol, sd_vol, covoxProfi_vol;

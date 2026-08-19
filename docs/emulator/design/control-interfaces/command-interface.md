@@ -2140,6 +2140,14 @@ Commands to configure emulator instance behavior and performance characteristics
 
 ---
 
+### 8. Videowall API
+
+Commands specifically for managing the multi-emulator videowall environment.
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `videowall singlesync <on\|off> [id]` | | `on` or `off`, `[id]` (optional) | Toggles the Single Sync Mode which locks an emulator tile into a synchronous rendering loop for 100% accurate recording without performance drops. | ✅ Implemented |
+
 ## Future Capabilities
 
 The following commands and interfaces are planned for future implementation. This section documents the roadmap for expanding the ECI to support more advanced debugging, analysis, and automation workflows.

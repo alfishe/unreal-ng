@@ -44,8 +44,20 @@ struct EncoderConfig
 
     /// region <Audio Configuration>
 
-    /// Audio sample rate in Hz
+    /// INPUT audio sample rate in Hz: the rate the emulator core actually
+    /// produces (RecordingManager::SetAudioSampleRate wires the resolved core
+    /// rate here). Never override this to request a different output rate -
+    /// it describes the incoming data; lying about it pitch-shifts the audio.
     uint32_t audioSampleRate = 44100;
+
+    /// OUTPUT audio sample rate in Hz. 0 = automatic policy:
+    ///   - audio-only output: native passthrough at audioSampleRate
+    ///     (bit-exact capture, no resampling)
+    ///   - video containers: always 48000 (the delivery-standard rate every
+    ///     player/platform expects), high-quality resampled when the core
+    ///     rate differs
+    /// A non-zero value overrides the policy for both cases.
+    uint32_t audioOutputSampleRate = 0;
 
     /// Number of audio channels (1 = mono, 2 = stereo)
     uint32_t audioChannels = 2;

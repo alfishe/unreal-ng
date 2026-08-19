@@ -254,7 +254,7 @@ def generate_pattern_assignments(grid: List[List[str]], rows: int, cols: int, pa
     return assignments
 
 
-def run_test(base_url: str, pattern: Pattern, whitelist_file: str, basepath: str = None) -> bool:
+def run_test(base_url: str, pattern: Pattern, whitelist_file: str = None, basepath: str = None, snapshot_file: str = None) -> bool:
     """
     Run the pattern snapshot loading test.
 
@@ -263,11 +263,23 @@ def run_test(base_url: str, pattern: Pattern, whitelist_file: str, basepath: str
         pattern: Pattern to use for loading
         whitelist_file: Path to whitelist file containing allowed snapshots
         basepath: Optional remote project root path for cross-machine setups
+        snapshot_file: Optional path to a specific snapshot file to load
 
     Returns:
         True if test passed, False otherwise
     """
+    import os
     client = WebAPIClient(base_url)
+
+    # Resolve whitelist path if needed
+    if whitelist_file:
+        if not os.path.exists(whitelist_file):
+            script_dir_whitelist = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "whitelist.txt")
+            if os.path.exists(script_dir_whitelist):
+                whitelist_file = script_dir_whitelist
+            elif snapshot_file:
+                whitelist_file = None
+
     testdata = TestDataHelper(whitelist_file, basepath=basepath)
 
     log(f"Connecting to WebAPI at {base_url}...")
@@ -309,14 +321,30 @@ def run_test(base_url: str, pattern: Pattern, whitelist_file: str, basepath: str
 
     # Step 3: Get available snapshots
     log("Step 3: Getting available snapshots...")
-    snapshots = testdata.get_snapshots()
+    if snapshot_file:
+        expanded_path = os.path.expanduser(snapshot_file)
+        abs_snapshot = os.path.abspath(expanded_path)
+        if not testdata.remote_basepath and not os.path.exists(abs_snapshot):
+            log(f"ERROR: Snapshot file not found: {abs_snapshot}")
+            return False
+        if testdata.remote_basepath:
+            snapshots = [testdata._to_remote_path(abs_snapshot)]
+        else:
+            snapshots = [abs_snapshot]
+    else:
+        snapshots = testdata.get_snapshots()
+
     if not snapshots:
         log("ERROR: No snapshots available")
         return False
 
-    log(f"Found {len(snapshots)} snapshots in whitelist")
-    if snapshots:
-        log(f"  (First path: {snapshots[0]})")
+    if snapshot_file:
+        log(f"Using specified snapshot ({len(snapshots)} path configured)")
+        log(f"  (Path: {snapshots[0]})")
+    else:
+        log(f"Found {len(snapshots)} snapshots in whitelist")
+        if snapshots:
+            log(f"  (First path: {snapshots[0]})")
 
     # Step 4: Generate pattern assignments
     log(f"Step 4: Generating {pattern.value} pattern assignments...")
@@ -414,8 +442,22 @@ def main():
              "When specified, snapshot paths sent to the emulator will use this basepath. "
              "Example: O:/Projects/unreal-ng for Windows remote."
     )
+    parser.add_argument(
+        "--snapshot",
+        dest="snapshot_opt",
+        default=None,
+        help="Optional path to a specific snapshot file (.sna or .z80) to load"
+    )
+    parser.add_argument(
+        "snapshot",
+        nargs="?",
+        default=None,
+        help="Optional positional path to a specific snapshot file (.sna or .z80) to load"
+    )
 
     args = parser.parse_args()
+
+    snapshot_file = args.snapshot_opt or args.snapshot
 
     # Validate pattern
     try:
@@ -429,13 +471,16 @@ def main():
     log("=" * 60)
     log(f"Pattern: {pattern.value}")
     log(f"Description: {get_pattern_description(pattern)}")
-    log(f"Using whitelist: {args.whitelist}")
+    if snapshot_file:
+        log(f"Using snapshot: {snapshot_file}")
+    else:
+        log(f"Using whitelist: {args.whitelist}")
     if args.basepath:
         log(f"Remote basepath: {args.basepath}")
     log("=" * 60)
 
     try:
-        success = run_test(args.url, pattern, args.whitelist, args.basepath)
+        success = run_test(args.url, pattern, args.whitelist, args.basepath, snapshot_file)
         sys.exit(0 if success else 1)
     except KeyboardInterrupt:
         log("\nTest interrupted by user")

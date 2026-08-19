@@ -204,6 +204,9 @@ private:
     void HandleKeyList(const ClientSession& session);
     void HandleKeyClear(const ClientSession& session, EmulatorContext* context);
 
+    // Videowall commands
+    void HandleVideowall(const ClientSession& session, const std::vector<std::string>& args);
+
     // Instance management command handlers
     void HandleStart(const ClientSession& session, const std::vector<std::string>& args);
     void HandleStop(const ClientSession& session, const std::vector<std::string>& args);

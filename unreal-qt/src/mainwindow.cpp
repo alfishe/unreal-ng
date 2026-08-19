@@ -1,5 +1,8 @@
 #include "mainwindow.h"
 
+#include <algorithm>
+#include <chrono>
+
 #include <stdio.h>
 #include <webapi/src/automation-webapi.h>
 
@@ -36,6 +39,7 @@
 #include "debugger/widgets/recordingpresets.h"
 #endif
 #include "base/featuremanager.h"
+#include "emulator/video/screen.h"  // For DisplayViewport, ViewportPresets
 // Avoid Qt 'signals' macro conflict with WD1793State::signals member
 #undef signals
 #include "emulator/io/fdc/fdd.h"
@@ -102,6 +106,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     // Init audio subsystem (initialize once, keep running)
     _soundManager = new AppSoundManager();
+
+    // Device reroute (hotplug / OS default-output change) at a different
+    // native rate: republish so the emulator's DRC resampler re-bases its
+    // core->device ratio - no emulator or sound-stack restart needed
+    connect(_soundManager, &AppSoundManager::deviceReinitialized, this, [this](uint32_t sampleRate) {
+        if (_emulator)
+            _emulator->SetAudioDeviceSampleRate(sampleRate);
+    });
+
     {
         QMutexLocker locker(&_audioMutex);
         if (_soundManager->init())
@@ -166,6 +179,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
     connect(_menuManager, &MenuManager::intParametersRequested, this, &MainWindow::handleIntParametersRequested);
     connect(_menuManager, &MenuManager::audioSettingsRequested, this, &MainWindow::handleAudioSettingsRequested);
+    connect(_menuManager, &MenuManager::overscanModeToggled, this, &MainWindow::handleOverscanModeToggled);
+    connect(_menuManager, &MenuManager::viewportChanged, this, &MainWindow::handleViewportChanged);
 #ifdef ENABLE_RECORDING
     connect(_menuManager, &MenuManager::videoRecordingRequested, this, &MainWindow::handleVideoRecordingRequested);
     connect(_menuManager, &MenuManager::quickRecordRequested, this, &MainWindow::handleQuickRecord);
@@ -1415,6 +1430,65 @@ void MainWindow::handleMessageScreenRefresh(int id, Message* message)
     _lastFrameCount = frameCount;
 }
 
+void MainWindow::handleVideoModeChanged(int id, Message* message)
+{
+    // NC_VIDEO_MODE_CHANGED: the emulator's framebuffer geometry (and, for
+    // size-changing switches, the buffer address) changed - either by the UI
+    // overscan toggle or by GUEST SOFTWARE programming an AlCo/Profi/ATM mode
+    // via ports. Re-attach the device screen to the new descriptor on the GUI
+    // thread (the notification arrives on the MessageCenter dispatch thread).
+    (void)id;
+
+    if (!deviceScreen || !_emulator || !message || !message->obj)
+        return;
+
+    EmulatorFramePayload* payload = dynamic_cast<EmulatorFramePayload*>(message->obj);
+    if (!payload || payload->_emulatorId != _emulator->GetUUID())
+        return;
+
+    QMetaObject::invokeMethod(
+        this,
+        [this]() {
+            if (!deviceScreen || !_emulator)
+                return;
+            auto* context = _emulator->GetContext();
+            if (!context || !context->pScreen)
+                return;
+
+            auto& fb = context->pScreen->GetFramebufferDescriptor();
+            deviceScreen->init(fb.width, fb.height, fb.memoryBuffer);
+
+            // init() -> detach() clears the tear-free frame source - re-install
+            Screen* screen = context->pScreen;
+            deviceScreen->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
+                if (!screen->CopyPresentedFramebuffer(dst, dstSize))
+                    return false;
+
+                // Stamp video presentation latency (paint - latch), EMA 1/8:
+                // half of the realtime A/V offset readout
+                const uint64_t latchUs = screen->GetLastLatchTimestampUs();
+                if (latchUs != 0)
+                {
+                    const uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now().time_since_epoch())
+                                               .count();
+                    // Signed EMA: unsigned (sample - prev) wraps when the new
+                    // sample is smaller, exploding the average
+                    // Include the A/V-sync present delay: the painted frame is
+                    // GetPresentDelayFrames older than the newest latch
+                    const int64_t sample = static_cast<int64_t>(std::min<uint64_t>(nowUs - latchUs, 1000000)) +
+                                           screen->GetPresentDelayUs();
+                    const int64_t prev = context->pVideoPresentLatencyUs.load(std::memory_order_relaxed);
+                    const int64_t next = (prev == 0) ? sample : prev + (sample - prev) / 8;
+                    context->pVideoPresentLatencyUs.store(
+                        static_cast<uint32_t>(std::clamp<int64_t>(next, 0, 1000000)), std::memory_order_relaxed);
+                }
+                return true;
+            });
+        },
+        Qt::QueuedConnection);
+}
+
 void MainWindow::handleFileOpenRequest(int id, Message* message)
 {
     if (!_emulator)
@@ -2008,6 +2082,97 @@ void MainWindow::handleAudioSettingsRequested()
     _audioSettingsWidget->activateWindow();
 }
 
+void MainWindow::handleOverscanModeToggled(bool enabled)
+{
+    if (!m_binding || !m_binding->emulator())
+        return;
+
+    auto emulator = m_binding->emulator();
+    if (emulator->SetOverscanMode(enabled))
+    {
+        // Mode changed - update device screen to handle new framebuffer size
+        EmulatorContext* context = emulator->GetContext();
+        if (context && context->pScreen)
+        {
+            auto& fb = context->pScreen->GetFramebufferDescriptor();
+            deviceScreen->init(fb.width, fb.height, fb.memoryBuffer);
+
+            // init() -> detach() clears the tear-free frame source - re-install it
+            Screen* screen = context->pScreen;
+            deviceScreen->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
+                if (!screen->CopyPresentedFramebuffer(dst, dstSize))
+                    return false;
+
+                // Stamp video presentation latency (paint - latch), EMA 1/8:
+                // half of the realtime A/V offset readout
+                const uint64_t latchUs = screen->GetLastLatchTimestampUs();
+                if (latchUs != 0)
+                {
+                    const uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now().time_since_epoch())
+                                               .count();
+                    // Signed EMA: unsigned (sample - prev) wraps when the new
+                    // sample is smaller, exploding the average
+                    // Include the A/V-sync present delay: the painted frame is
+                    // GetPresentDelayFrames older than the newest latch
+                    const int64_t sample = static_cast<int64_t>(std::min<uint64_t>(nowUs - latchUs, 1000000)) +
+                                           screen->GetPresentDelayUs();
+                    const int64_t prev = context->pVideoPresentLatencyUs.load(std::memory_order_relaxed);
+                    const int64_t next = (prev == 0) ? sample : prev + (sample - prev) / 8;
+                    context->pVideoPresentLatencyUs.store(
+                        static_cast<uint32_t>(std::clamp<int64_t>(next, 0, 1000000)), std::memory_order_relaxed);
+                }
+                return true;
+            });
+
+            if (!enabled)
+            {
+                // Leaving overscan mode - reset viewport to full framebuffer
+                DisplayViewport fullViewport = {0, 0, 0, 0};
+                emulator->SetDisplayViewport(fullViewport);
+                deviceScreen->clearDisplayViewport();
+                _menuManager->resetViewportSelection();
+            }
+        }
+        updateMenuStates();
+    }
+}
+
+void MainWindow::handleViewportChanged(int presetIndex)
+{
+    if (!m_binding || !m_binding->emulator())
+        return;
+
+    auto emulator = m_binding->emulator();
+
+    // Apply viewport preset
+    DisplayViewport viewport;
+    switch (presetIndex)
+    {
+        case 0:  // Full Overscan (384x304)
+            viewport = ViewportPresets::FULL_OVERSCAN;
+            break;
+        case 1:  // Symmetric Horizontal (352x304)
+            viewport = ViewportPresets::SYMMETRIC_HORIZONTAL;
+            break;
+        case 2:  // Standard (352x288)
+            viewport = ViewportPresets::STANDARD;
+            break;
+        case 3:  // Screen Only (256x192)
+            viewport = ViewportPresets::SCREEN_ONLY;
+            break;
+        default:
+            viewport = ViewportPresets::FULL_OVERSCAN;
+            break;
+    }
+
+    emulator->SetDisplayViewport(viewport);
+
+    // Update device screen with new display dimensions
+    // The viewport will be applied during rendering
+    deviceScreen->setDisplayViewport(viewport);
+}
+
 #ifdef ENABLE_RECORDING
 void MainWindow::handleVideoRecordingRequested()
 {
@@ -2456,6 +2621,9 @@ void MainWindow::subscribeToPerEmulatorEvents()
 
     ObserverCallbackMethod stateCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorStateChanged);
     messageCenter.AddObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
+
+    ObserverCallbackMethod modeCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleVideoModeChanged);
+    messageCenter.AddObserver(NC_VIDEO_MODE_CHANGED, observerInstance, modeCallback);
 }
 
 void MainWindow::unsubscribeFromPerEmulatorEvents()
@@ -2472,6 +2640,9 @@ void MainWindow::unsubscribeFromPerEmulatorEvents()
 
     ObserverCallbackMethod stateCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorStateChanged);
     messageCenter.RemoveObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
+
+    ObserverCallbackMethod modeCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleVideoModeChanged);
+    messageCenter.RemoveObserver(NC_VIDEO_MODE_CHANGED, observerInstance, modeCallback);
 }
 
 void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
@@ -2498,7 +2669,9 @@ void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
     // Bind the audio callback to the new emulator
     qDebug() << "MainWindow::bindEmulatorAudio() - Binding audio callback to emulator"
              << QString::fromStdString(emulator->GetId());
-    emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback);
+    emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback, _soundManager->occupancyCell(),
+                               _soundManager->deviceDescriptor());
+    emulator->SetAudioDeviceSampleRate(_soundManager->deviceSampleRate());
 
     qDebug() << "MainWindow::bindEmulatorAudio() - Audio device now owned by emulator"
              << QString::fromStdString(emulator->GetId());
@@ -2548,6 +2721,37 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
         {
             auto& framebufferDesc = context->pScreen->GetFramebufferDescriptor();
             deviceScreen->init(framebufferDesc.width, framebufferDesc.height, framebufferDesc.memoryBuffer);
+
+            // Paint from the frame-end latched snapshot instead of the live
+            // framebuffer - prevents mid-frame tearing (emulation thread
+            // overwrites the live buffer while the GUI thread paints it).
+            // deviceScreen->detach() clears this on emulator switch/shutdown.
+            Screen* screen = context->pScreen;
+            deviceScreen->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
+                if (!screen->CopyPresentedFramebuffer(dst, dstSize))
+                    return false;
+
+                // Stamp video presentation latency (paint - latch), EMA 1/8:
+                // half of the realtime A/V offset readout
+                const uint64_t latchUs = screen->GetLastLatchTimestampUs();
+                if (latchUs != 0)
+                {
+                    const uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now().time_since_epoch())
+                                               .count();
+                    // Signed EMA: unsigned (sample - prev) wraps when the new
+                    // sample is smaller, exploding the average
+                    // Include the A/V-sync present delay: the painted frame is
+                    // GetPresentDelayFrames older than the newest latch
+                    const int64_t sample = static_cast<int64_t>(std::min<uint64_t>(nowUs - latchUs, 1000000)) +
+                                           screen->GetPresentDelayUs();
+                    const int64_t prev = context->pVideoPresentLatencyUs.load(std::memory_order_relaxed);
+                    const int64_t next = (prev == 0) ? sample : prev + (sample - prev) / 8;
+                    context->pVideoPresentLatencyUs.store(
+                        static_cast<uint32_t>(std::clamp<int64_t>(next, 0, 1000000)), std::memory_order_relaxed);
+                }
+                return true;
+            });
         }
         catch (const std::exception& e)
         {

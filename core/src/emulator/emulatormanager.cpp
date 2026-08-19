@@ -141,10 +141,9 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::st
         return nullptr;
     }
 
-    // Configure the emulator for this model before initialization
-    CONFIG& config = emulator->GetContext()->config;
-    config.mem_model = modelInfo->Model;
-    config.ramsize = modelInfo->defaultRAM;
+    // Request this model for initialization: Emulator::Init applies it right
+    // after config load, before any model-dependent subsystem initializes
+    emulator->SetPreferredModel(modelInfo->Model, modelInfo->defaultRAM);
 
     // Initialize the emulator
     if (emulator->Init())
@@ -215,10 +214,8 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const s
         return nullptr;
     }
 
-    // Configure the emulator for this model and RAM size before initialization
-    CONFIG& config = emulator->GetContext()->config;
-    config.mem_model = modelInfo->Model;
-    config.ramsize = ramSize;
+    // Request this model and RAM size for initialization
+    emulator->SetPreferredModel(modelInfo->Model, ramSize);
 
     // Initialize the emulator
     if (emulator->Init())

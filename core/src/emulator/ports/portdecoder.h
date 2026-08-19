@@ -141,6 +141,12 @@ protected:
     // which is just a cached copy of the last written value
     bool _7FFD_Locked = false;
 
+    // Set by DecodePortIn/PeripheralPortIn to indicate whether a real hardware device
+    // actually responded to the port read. When false, the port is unmapped and the
+    // Z80 floating bus logic may apply (prevents floating bus from clobbering
+    // legitimate 0xFF values from devices like WD1793).
+    bool _lastPortDecoded = false;
+
     // Registered port handlers from external peripheral devices
     std::map<uint16_t, PortDevice*> _portDevices;
 
@@ -166,6 +172,12 @@ public:
     virtual void SetROMPage(uint8_t page) { (void)page; /* Intentionally unused */ };
 
     virtual bool IsFEPort(uint16_t port);
+
+    /// Returns true if the last DecodePortIn call was handled by a real hardware device.
+    /// Z80::in() uses this to decide whether to apply the floating bus override:
+    /// only unmapped ports (no device responded) get the floating bus byte.
+    bool WasLastPortDecoded() const { return _lastPortDecoded; }
+
     uint8_t Default_Port_FE_In(uint16_t port, uint16_t pc);
     void Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc);
 

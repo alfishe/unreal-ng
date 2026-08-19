@@ -61,6 +61,7 @@ protected:
 
     // Output buffer — points into SoundManager's beeper AudioFrameDescriptor
     int16_t* _outputBuffer = nullptr;
+    int _lastSamplesRead = 0;  // Samples delivered on last handleFrameEnd
 
     // Clock rate and sample rate (passed at construction)
     size_t _clockRate;
@@ -77,6 +78,10 @@ public:
     /// region <Methods>
 public:
     void reset();
+
+    /// Live core-rate change (device reroute with CoreRate=auto): re-point
+    /// the blip_buf resampler at the new output rate and clear pending deltas
+    void setSampleRate(size_t samplingRate);
 
     /// Called at the start of each video frame.
     void handleFrameStart();
@@ -99,6 +104,10 @@ public:
     /// into the output buffer.
     /// @param frameDuration  Total T-states in this frame (config.frame * speed_multiplier)
     void handleFrameEnd(uint32_t frameDuration);
+
+    /// Number of samples blip_buf delivered on the last handleFrameEnd -
+    /// cross-checked by SoundManager against its exact sample accumulator
+    int getLastSamplesRead() const { return _lastSamplesRead; }
     /// endregion</Methods>
 
     /// region <Helper methods>

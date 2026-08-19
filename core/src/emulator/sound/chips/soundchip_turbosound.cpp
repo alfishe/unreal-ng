@@ -6,7 +6,12 @@
 void SoundChip_TurboSound::handleFrameStart()
 {
     _lastTStates = 0;
-    _ayPLL = 0.0;
+    // NOTE: _ayPLL deliberately NOT reset here. The fractional sample phase
+    // must be free-running across frames (audio-sync design, Fix 1): zeroing
+    // it every frame truncated the fractional sample per frame, locking the
+    // AY at 903 samples/frame (never 904) - a systematic -0.019% rate bias
+    // vs the exact accumulator, plus a phase discontinuity at each frame
+    // boundary. _ayPLL resets only in reset().
     _ayBufferIndex = 0;
 
     // Initialize render buffers (combined + per-chip)
@@ -53,7 +58,7 @@ void SoundChip_TurboSound::handleStep()
         // Checked once per handleStep batch; per-tick cost is a plain bool.
         const bool tapActive = _nativeTap->isActive();
 
-        _ayPLL += diff * AUDIO_SAMPLE_TSTATE_INCREMENT;
+        _ayPLL += diff * _sampleTStateIncrement;
 
         while (_ayPLL > 1.0 && _ayBufferIndex < MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS)
         {
@@ -118,9 +123,8 @@ void SoundChip_TurboSound::handleStep()
 
                 // Run generator ticks for this output sample period
                 // Generator rate = PSG_CLOCK_RATE / 8 (~218.75 kHz)
-                // Ticks per output sample = (PSG_CLOCK_RATE / 8) / AUDIO_SAMPLING_RATE ≈ 4.96
-                double ticksPerSample = (double)(PSG_CLOCK_RATE / 8) / (double)AUDIO_SAMPLING_RATE;
-                _decimationPhase += ticksPerSample;
+                // Ticks per output sample = (PSG_CLOCK_RATE / 8) / core rate (~4.96 @44.1k)
+                _decimationPhase += _lqTicksPerSample;
 
                 while (_decimationPhase >= 1.0)
                 {

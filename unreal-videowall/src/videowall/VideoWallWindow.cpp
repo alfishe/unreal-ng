@@ -10,6 +10,10 @@
 #include <platform.h>
 
 #include "videowall/VideoWallWindow.h"
+#include "videowall/VideowallRecorder.h"
+#include "videowall/VideowallRecordingWidget.h"
+#include "3rdparty/message-center/messagecenter.h"
+#include "emulator/notifications.h"
 
 #ifdef ENABLE_AUTOMATION
 #include <automation/automation.h>
@@ -38,6 +42,13 @@ VideoWallWindow::VideoWallWindow(QWidget* parent) : QMainWindow(parent)
 
     setupUI();
     createDefaultPresets();
+
+    MessageCenter::DefaultMessageCenter().AddObserver(NC_VIDEOWALL_SINGLE_SYNC_MODE,
+        [this](int id, Message* message) {
+            if (message && message->obj) {
+                handleSingleSyncModeMessage(message->obj);
+            }
+        });
 
 #ifdef ENABLE_AUTOMATION
     // CRITICAL: Get Automation singleton reference immediately (not deferred) so it's guaranteed
@@ -88,6 +99,14 @@ VideoWallWindow::~VideoWallWindow()
         }
 #endif
 
+        // CRITICAL: Unbind audio BEFORE stopping sound manager.
+        // This clears the emulator's audio callback to prevent race conditions
+        // where the audio thread accesses emulator memory during destruction.
+        if (_audioBoundTile)
+        {
+            unbindAudioFromTile();
+        }
+
         // Clean up sound manager
         if (_soundManager)
         {
@@ -137,6 +156,15 @@ void VideoWallWindow::initializeAfterEventLoopStart()
 
     // Initialize sound manager for audio binding to focused tile
     _soundManager = new AppSoundManager();
+
+    // Device reroute (hotplug / OS default-output change) at a different
+    // native rate: republish to the audio-bound tile's emulator so its DRC
+    // resampler re-bases the core->device ratio
+    connect(_soundManager, &AppSoundManager::deviceReinitialized, this, [this](uint32_t sampleRate) {
+        if (_audioBoundTile && _audioBoundTile->emulator())
+            _audioBoundTile->emulator()->SetAudioDeviceSampleRate(sampleRate);
+    });
+
     if (_soundManager->init())
     {
         _soundManager->start();
@@ -146,6 +174,9 @@ void VideoWallWindow::initializeAfterEventLoopStart()
     {
         qWarning() << "Failed to initialize sound manager";
     }
+
+    // Attach tile grid widget to VideowallRecorder for 50Hz combined Qt buffer capture
+    VideowallRecorder::instance().setTargetWidget(_tileGrid);
 
     // Now safe to create menus - the window is fully initialized
     createMenus();
@@ -188,6 +219,15 @@ void VideoWallWindow::createMenus()
     screenHQAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S));
     connect(screenHQAction, &QAction::triggered, this, &VideoWallWindow::toggleScreenHQForAllTiles);
 
+#ifdef ENABLE_RECORDING
+    // Tools menu
+    QMenu* toolsMenu = menuBar()->addMenu(tr("&Tools"));
+
+    QAction* recordAction = toolsMenu->addAction(tr("&Record Video / Audio...\tCtrl+R"));
+    recordAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
+    connect(recordAction, &QAction::triggered, this, &VideoWallWindow::handleVideoRecordingRequested);
+#endif
+
     // Platform-specific shortcut installation
 #ifdef Q_OS_WIN
     setupShortcutsWindows();
@@ -210,6 +250,8 @@ void VideoWallWindow::setupShortcutsWindows()
 
     connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_N)), &QShortcut::activated,
             this, &VideoWallWindow::addEmulatorTile);
+    connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_R)), &QShortcut::activated,
+            this, &VideoWallWindow::handleVideoRecordingRequested);
     connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_Backspace)), &QShortcut::activated,
             this, &VideoWallWindow::removeLastTile);
     connect(makeShortcut(QKeySequence(Qt::Key_F10)), &QShortcut::activated,
@@ -232,6 +274,8 @@ void VideoWallWindow::setupShortcutsMacOS()
 
     connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_N)), &QShortcut::activated,
             this, &VideoWallWindow::addEmulatorTile);
+    connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_R)), &QShortcut::activated,
+            this, &VideoWallWindow::handleVideoRecordingRequested);
     connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_Backspace)), &QShortcut::activated,
             this, &VideoWallWindow::removeLastTile);
     connect(makeShortcut(QKeySequence(Qt::Key_F10)), &QShortcut::activated,
@@ -253,6 +297,8 @@ void VideoWallWindow::setupShortcutsLinux()
 
     connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_N)), &QShortcut::activated,
             this, &VideoWallWindow::addEmulatorTile);
+    connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_R)), &QShortcut::activated,
+            this, &VideoWallWindow::handleVideoRecordingRequested);
     connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_Backspace)), &QShortcut::activated,
             this, &VideoWallWindow::removeLastTile);
     connect(makeShortcut(QKeySequence(Qt::Key_F10)), &QShortcut::activated,
@@ -261,6 +307,23 @@ void VideoWallWindow::setupShortcutsLinux()
             this, &VideoWallWindow::toggleFullscreenMode);
     connect(makeShortcut(QKeySequence(Qt::Key_Escape)), &QShortcut::activated,
             this, [this]() { if (_isFullscreen) toggleFullscreenMode(); });
+}
+
+void VideoWallWindow::handleVideoRecordingRequested()
+{
+    if (_recordingWidget)
+    {
+        _recordingWidget->close();
+        return;
+    }
+
+    VideowallRecordingWidget* widget = new VideowallRecordingWidget(nullptr);
+    widget->setAttribute(Qt::WA_DeleteOnClose);
+    widget->setWindowFlags(Qt::Tool | Qt::Window);
+    widget->show();
+    widget->raise();
+    widget->activateWindow();
+    _recordingWidget = widget;
 }
 
 void VideoWallWindow::createDefaultPresets()
@@ -273,6 +336,16 @@ void VideoWallWindow::createDefaultPresets()
 
 void VideoWallWindow::addEmulatorTile()
 {
+    if (_singleSyncMode && !_tileGrid->tiles().empty() && _tileGrid->tiles().front()->emulator())
+    {
+        auto primaryEmulator = _tileGrid->tiles().front()->emulator();
+        EmulatorTile* tile = new EmulatorTile(primaryEmulator, this);
+        tile->setSynchronousMode(true); // Ensure new tile doesn't run its own refresh loops
+        connect(tile, &EmulatorTile::tileClicked, this, &VideoWallWindow::onTileClicked);
+        _tileGrid->addTile(tile);
+        return;
+    }
+
     std::shared_ptr<Emulator> emulator = _emulatorManager->CreateEmulator("Pentagon", LoggerLevel::LogError);
 
     if (emulator)
@@ -314,6 +387,12 @@ void VideoWallWindow::removeEmulatorTile(int index)
     EmulatorTile* tile = tiles[index];
     std::shared_ptr<Emulator> emulator = tile->emulator();
 
+    // Unbind audio if removing the audio-bound tile
+    if (tile == _audioBoundTile)
+    {
+        unbindAudioFromTile();
+    }
+
     // Remove from grid
     _tileGrid->removeTile(tile);
 
@@ -321,6 +400,13 @@ void VideoWallWindow::removeEmulatorTile(int index)
     if (emulator)
     {
         _emulatorManager->RemoveEmulator(emulator->GetUUID());
+    }
+
+    // Rebind audio to another tile if available
+    const auto& remainingTiles = _tileGrid->tiles();
+    if (!_audioBoundTile && !remainingTiles.empty())
+    {
+        bindAudioToTile(remainingTiles.front());
     }
 
     qDebug() << "Removed tile at index" << index;
@@ -339,11 +425,24 @@ void VideoWallWindow::removeLastTile()
     EmulatorTile* lastTile = tiles.back();
     std::shared_ptr<Emulator> emulator = lastTile->emulator();
 
+    // Unbind audio if removing the audio-bound tile
+    if (lastTile == _audioBoundTile)
+    {
+        unbindAudioFromTile();
+    }
+
     // Remove from grid
     _tileGrid->removeTile(lastTile);
 
     // Destroy emulator
     _emulatorManager->RemoveEmulator(emulator->GetUUID());
+
+    // Rebind audio to another tile if available
+    const auto& remainingTiles = _tileGrid->tiles();
+    if (!_audioBoundTile && !remainingTiles.empty())
+    {
+        bindAudioToTile(remainingTiles.front());
+    }
 
     qDebug() << "Removed last tile:" << QString::fromStdString(emulator->GetUUID());
 }
@@ -411,6 +510,23 @@ void VideoWallWindow::mouseMoveEvent(QMouseEvent* event)
     }
 
     QMainWindow::mouseMoveEvent(event);
+}
+
+void VideoWallWindow::closeEvent(QCloseEvent* event)
+{
+    // If closing while in fullscreen, exit fullscreen first to restore native OS window state
+    if (_isFullscreen)
+    {
+        toggleFullscreenMode();
+    }
+
+    // Pre-stop and clear all emulator tiles before window teardown to prevent thread deadlocks
+    if (_tileGrid)
+    {
+        _tileGrid->clearAllTiles();
+    }
+
+    QMainWindow::closeEvent(event);
 }
 
 bool VideoWallWindow::eventFilter(QObject* watched, QEvent* event)
@@ -814,6 +930,37 @@ void VideoWallWindow::resizeGridIntelligently(QSize screenSize)
     // Set grid dimensions for proper layout
     _tileGrid->setGridDimensions(tilesWide, tilesHigh);
 
+    // In single sync mode: do NOT touch the single emulator instance or unbind audio!
+    // Just adjust the number of visual tile widgets matching the new layout size.
+    if (_singleSyncMode)
+    {
+        if (targetTotal > currentTotal)
+        {
+            int tilesToAdd = targetTotal - currentTotal;
+            for (int i = 0; i < tilesToAdd; i++)
+            {
+                addEmulatorTile();
+            }
+        }
+        else if (targetTotal < currentTotal)
+        {
+            int tilesToRemove = currentTotal - targetTotal;
+            for (int i = 0; i < tilesToRemove; i++)
+            {
+                const auto& tiles = _tileGrid->tiles();
+                if (!tiles.empty())
+                {
+                    EmulatorTile* tile = tiles.back();
+                    // Clear tile's emulator pointer so removeTile doesn't stop primaryEmulator
+                    tile->setEmulator(nullptr);
+                    _tileGrid->removeTile(tile, true);
+                }
+            }
+            _tileGrid->updateLayout();
+        }
+        return;
+    }
+
     if (targetTotal > currentTotal)
     {
         // Need MORE tiles - add them
@@ -858,6 +1005,14 @@ void VideoWallWindow::resizeGridIntelligently(QSize screenSize)
                 EmulatorTile* tile = tiles[lastIndex];
                 if (tile)
                 {
+                    // If removing the audio-bound tile, unbind audio first to prevent
+                    // dangling pointer and fix audio sync (empty ring buffer causes
+                    // NC_AUDIO_BUFFER_HALF_FULL spam, making remaining emulators run too fast)
+                    if (tile == _audioBoundTile)
+                    {
+                        unbindAudioFromTile();
+                    }
+
                     // Get emulator ID before clearing the reference
                     std::string emulatorId;
                     if (tile->emulator())
@@ -883,6 +1038,14 @@ void VideoWallWindow::resizeGridIntelligently(QSize screenSize)
                     qDebug() << "Removed excess tile:" << QString::fromStdString(emulatorId);
                 }
             }
+        }
+
+        // If audio was unbound (removed tile was audio-bound), rebind to first remaining tile
+        // to restore proper audio pacing for all emulators
+        if (!_audioBoundTile && !tiles.empty())
+        {
+            bindAudioToTile(tiles.front());
+            qDebug() << "Rebound audio to first remaining tile after removal";
         }
     }
     else
@@ -941,6 +1104,12 @@ void VideoWallWindow::restoreSavedEmulators()
         if (!tile)
             continue;
 
+        // Unbind audio if removing the audio-bound tile
+        if (tile == _audioBoundTile)
+        {
+            unbindAudioFromTile();
+        }
+
         // Get emulator ID before clearing the reference
         std::string uuid;
         if (tile->emulator())
@@ -964,13 +1133,21 @@ void VideoWallWindow::restoreSavedEmulators()
         // NOTE: Do NOT delete tile here - removeTile already calls deleteLater()
     }
 
+    // If audio was unbound, rebind to first remaining tile
+    const auto& remainingTiles = _tileGrid->tiles();
+    if (!_audioBoundTile && !remainingTiles.empty())
+    {
+        bindAudioToTile(remainingTiles.front());
+        qDebug() << "Rebound audio to first remaining tile after restore";
+    }
+
     qDebug() << "Restored" << _savedEmulatorIds.size() << "emulators, removed" << tilesToRemove.size() << "excessive";
 }
 
 void VideoWallWindow::setSoundForAllTiles(bool enabled)
 {
     // Set sound feature for ALL emulator instances in the grid
-    // This is called when entering/exiting fullscreen to optimize CPU usage
+    // This is called when entering/exiting fullscreen or bulk toggling
     const auto& tiles = _tileGrid->tiles();
     int successCount = 0;
 
@@ -981,7 +1158,6 @@ void VideoWallWindow::setSoundForAllTiles(bool enabled)
             auto* featureManager = tile->emulator()->GetFeatureManager();
             if (featureManager)
             {
-                // Disable both sound generation and high-quality DSP for maximum savings
                 featureManager->setFeature(Features::kSoundGeneration, enabled);
                 featureManager->setFeature(Features::kSoundHQ, enabled);
                 successCount++;
@@ -989,7 +1165,7 @@ void VideoWallWindow::setSoundForAllTiles(bool enabled)
         }
     }
 
-    qDebug() << "Sound" << (enabled ? "enabled" : "disabled") << "for" << successCount << "/" << tiles.size()
+    qDebug() << "Sound and SoundHQ" << (enabled ? "enabled" : "disabled") << "for" << successCount << "/" << tiles.size()
              << "tiles";
 }
 
@@ -1037,31 +1213,45 @@ void VideoWallWindow::bindAudioToTile(EmulatorTile* tile)
         // Clear audio callback from previous emulator
         prevEmulator->ClearAudioCallback();
 
-        // Disable sound generation for previous tile (saves CPU)
+        // Disable sound generation and SoundHQ for previous tile on deselection (saves CPU)
         if (auto* fm = prevEmulator->GetFeatureManager())
         {
             fm->setFeature(Features::kSoundGeneration, false);
+            fm->setFeature(Features::kSoundHQ, false);
         }
 
         qDebug() << "Audio unbound from tile:" << QString::fromStdString(prevEmulator->GetUUID());
     }
 
-    // Enable sound generation for focused tile
+    // Enable sound generation AND SoundHQ for selected active tile
     if (auto* fm = emulator->GetFeatureManager())
     {
         fm->setFeature(Features::kSoundGeneration, true);
+        fm->setFeature(Features::kSoundHQ, true);
     }
 
     // Bind audio callback to new emulator
-    emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback);
+    emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback, _soundManager->occupancyCell(),
+                               _soundManager->deviceDescriptor());
+    emulator->SetAudioDeviceSampleRate(_soundManager->deviceSampleRate());
+    _soundManager->setActiveContext(emulator->GetContext());
 
     _audioBoundTile = tile;
-    qDebug() << "Audio bound to tile:" << QString::fromStdString(emulator->GetUUID());
+    
+    // In non-singlesync mode, synchronize all rendering on this active emulator
+    if (!_singleSyncMode)
+    {
+        _tileGrid->setSyncEmulatorId(emulator->GetUUID().toString());
+    }
+    
+    qDebug() << "Audio bound to tile (Sound & SoundHQ enabled):" << QString::fromStdString(emulator->GetUUID().toString());
 }
 
 void VideoWallWindow::onTileClicked(EmulatorTile* tile)
 {
-    // Toggle behavior: if clicking already-bound tile, unbind (mute)
+    if (_singleSyncMode) return;
+
+    // Toggle behavior: if clicking already-bound tile, unbind (mute / deselect)
     if (_audioBoundTile == tile)
     {
         unbindAudioFromTile();
@@ -1083,22 +1273,126 @@ void VideoWallWindow::onTileClicked(EmulatorTile* tile)
 
 void VideoWallWindow::unbindAudioFromTile()
 {
-    if (!_audioBoundTile || !_audioBoundTile->emulator())
+    // Clear pointer FIRST to prevent infinite recursion on secondary events
+    EmulatorTile* tile = _audioBoundTile;
+    _audioBoundTile = nullptr;
+
+    if (_soundManager)
+    {
+        _soundManager->setActiveContext(nullptr);
+    }
+
+    if (!tile || !tile->emulator())
     {
         return;
     }
 
-    auto emulator = _audioBoundTile->emulator();
-
-    // Clear audio callback
-    emulator->ClearAudioCallback();
-
-    // Disable sound generation (saves CPU)
-    if (auto* fm = emulator->GetFeatureManager())
+    auto emulator = tile->emulator();
+    if (emulator)
     {
-        fm->setFeature(Features::kSoundGeneration, false);
+        // Clear audio callback
+        emulator->ClearAudioCallback();
+
+        // Disable sound generation and SoundHQ on deselection (saves CPU)
+        if (auto* fm = emulator->GetFeatureManager())
+        {
+            fm->setFeature(Features::kSoundGeneration, false);
+            fm->setFeature(Features::kSoundHQ, false);
+        }
+
+        qDebug() << "Audio unbound from tile (Sound & SoundHQ disabled):" << QString::fromStdString(emulator->GetUUID().toString());
     }
 
-    qDebug() << "Audio unbound from tile:" << QString::fromStdString(emulator->GetUUID());
-    _audioBoundTile = nullptr;
+    // In non-singlesync mode, if we unbind, we lose the sync source.
+    // We could fallback to the first tile if needed, but for now we'll just clear it.
+    if (!_singleSyncMode)
+    {
+        _tileGrid->setSyncEmulatorId("");
+    }
+}
+void VideoWallWindow::handleSingleSyncModeMessage(MessagePayload* payload)
+{
+    auto* syncPayload = dynamic_cast<VideowallSyncModePayload*>(payload);
+    if (syncPayload)
+    {
+        // Use QMetaObject::invokeMethod to ensure this runs on the UI thread
+        QMetaObject::invokeMethod(this, [this, enable = syncPayload->_enable, id = syncPayload->_emulatorId.toString()]() {
+            setSingleEmulatorSyncMode(enable, id);
+        }, Qt::QueuedConnection);
+    }
+}
+
+void VideoWallWindow::setSingleEmulatorSyncMode(bool enable, const std::string& emulatorId)
+{
+    if (!_tileGrid || _tileGrid->tiles().empty()) return;
+    
+    _singleSyncMode = enable;
+
+    if (enable)
+    {
+        // ALWAYS use tile (0, 0) as the single primary tile & emulator instance
+        EmulatorTile* primaryTile = _tileGrid->tiles().front();
+        if (!primaryTile || !primaryTile->emulator())
+        {
+            qWarning() << "VideoWallWindow: Cannot enable single sync mode, no valid emulator at tile (0,0)";
+            _singleSyncMode = false;
+            return;
+        }
+
+        auto primaryEmulator = primaryTile->emulator();
+        std::string primaryId = primaryEmulator->GetUUID().toString();
+
+        // Dispose all OTHER emulators in EmulatorManager (free CPU & memory)
+        EmulatorManager* manager = EmulatorManager::GetInstance();
+        if (manager)
+        {
+            auto allIds = manager->GetEmulatorIds();
+            for (const auto& id : allIds)
+            {
+                if (id != primaryId)
+                {
+                    manager->StopEmulator(id);
+                    manager->RemoveEmulator(id);
+                }
+            }
+        }
+
+        // Point ALL 48 tiles in the grid to the single primary emulator instance
+        for (EmulatorTile* tile : _tileGrid->tiles())
+        {
+            if (tile)
+            {
+                tile->setEmulator(primaryEmulator);
+                tile->setPrimarySyncTile(false);
+                tile->setSynchronousMode(true);
+            }
+        }
+
+        // Configure tile (0, 0) as the primary sync tile
+        primaryTile->setPrimarySyncTile(true);
+        primaryTile->setSynchronousMode(true);
+
+        // Ensure primary emulator is running
+        primaryEmulator->Resume();
+
+        // Configure recording & bind HQ audio to tile (0, 0)
+        VideowallRecorder::instance().setSynchronousMode(true);
+        bindAudioToTile(primaryTile);
+
+        // Configure TileGrid single sync state with primary emulator ID
+        _tileGrid->setSingleSyncMode(true);
+        _tileGrid->setSyncEmulatorId(primaryId);
+    }
+    else
+    {
+        for (EmulatorTile* tile : _tileGrid->tiles())
+        {
+            if (tile)
+            {
+                tile->setSynchronousMode(false);
+            }
+        }
+        _tileGrid->setSingleSyncMode(false);
+        VideowallRecorder::instance().setSynchronousMode(false);
+    }
 }

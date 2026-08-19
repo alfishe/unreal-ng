@@ -79,6 +79,9 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
 
     uint8_t result = 0xFF;
     uint16_t decodedPort = decodePort(port);
+    
+    // Reset decoded flag before processing
+    _lastPortDecoded = false;
 
     if (decodedPort != 0x0000)
     {
@@ -87,9 +90,11 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
             case 0x00FE:
                 // FE port must be passed as non-decoded since keyboard handler uses it
                 result = Default_Port_FE_In(port, pc);
+                _lastPortDecoded = true;
                 break;
             case 0x7FFD:
                 result = _context->emulatorState.p7FFD;
+                _lastPortDecoded = true;
                 break;
             default:
                 // All ports registered with PortDecoder will be handled
@@ -99,22 +104,26 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
     }
 
     /// region <Debug logging>
-
-    // Treat all FE ports as one for logging purposes
-    if ((port & 0x00FE) == 0x00FE)
-        port = 0x00FE;
-
-    // Check if port was not explicitly muted
-    if (!key_exists(_loggingMutePorts, port))
+    if (_logger && _logger->GetLevel() <= LoggerLevel::LogInfo)
     {
-        // Determine RAM/ROM page where code executed from
-        std::string currentMemoryPage = GetPCAddressLocator(pc);
-        MLOGINFO("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
+        // Treat all FE ports as one for logging purposes
+        uint16_t logPort = ((port & 0x00FE) == 0x00FE) ? 0x00FE : port;
+
+        // Check if port was not explicitly muted
+        if (!key_exists(_loggingMutePorts, logPort))
+        {
+            // Determine RAM/ROM page where code executed from
+            std::string currentMemoryPage = GetPCAddressLocator(pc);
+            MLOGINFO("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
+        }
     }
     /// endregion </Debug logging>
 
     // Universal handler for breakpoints, tracking, analyzers
-    OnPortInComplete(decodedPort, result, pc);
+    // Universal handler must receive the raw port address (as seen by the Z80),
+    // not the decoded one - otherwise port breakpoints set on raw addresses never match
+    // (e.g. IN A,($00) decodes to $00FE and would bypass a breakpoint on port $00)
+    OnPortInComplete(port, result, pc);
 
     return result;
 }
@@ -145,18 +154,22 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
     }
 
     /// region <Debug logging>
-
-    // Check if port was not explicitly muted
-    if (!key_exists(_loggingMutePorts, decodedPort))
+    if (_logger && _logger->GetLevel() <= LoggerLevel::LogInfo)
     {
-        // Determine RAM/ROM page where code executed from
-        std::string currentMemoryPage = GetPCAddressLocator(pc);
-        MLOGINFO("[Out] [PC:%04X%s] Port: %04X; Decoded port: %04X; Value: %02X", pc, currentMemoryPage.c_str(), port, decodedPort, value);
+        // Check if port was not explicitly muted
+        if (!key_exists(_loggingMutePorts, decodedPort))
+        {
+            // Determine RAM/ROM page where code executed from
+            std::string currentMemoryPage = GetPCAddressLocator(pc);
+            MLOGINFO("[Out] [PC:%04X%s] Port: %04X; Decoded port: %04X; Value: %02X", pc, currentMemoryPage.c_str(), port, decodedPort, value);
+        }
     }
     /// endregion </Debug logging>
 
     // Universal handler for breakpoints, tracking, analyzers
-    OnPortOutComplete(decodedPort, value, pc);
+    // Must receive the raw port address (as seen by the Z80), not the decoded one,
+    // so that port breakpoints set on raw addresses match correctly
+    OnPortOutComplete(port, value, pc);
 }
 
 /// Actualize port(s) state according selected RAM page

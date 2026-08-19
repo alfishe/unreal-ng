@@ -213,7 +213,14 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     "${ROOT_DIR}/core/src"
     "${ROOT_DIR}/core"
     "${ROOT_DIR}/core/automation"
+    "${ROOT_DIR}/core/recording/src"
+    "${ROOT_DIR}/unreal-qt/src"
+    "${ROOT_DIR}/unreal-qt/src/debugger/widgets"
 )
+
+if (ENABLE_RECORDING)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_RECORDING)
+endif()
 
 # Add automation include directories if enabled
 if (ENABLE_AUTOMATION)
@@ -242,7 +249,9 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 # Link all dependencies
 if (APPLE)
     target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)
-    set(common_libraries iconv)
+    # CoreAudio: direct AudioObject property listener for device nominal
+    # sample-rate changes (AppSoundManager nominal-rate watch)
+    set(common_libraries iconv "-framework CoreAudio")
     find_package(Threads REQUIRED)
 elseif (UNIX AND NOT APPLE)
     set(common_libraries -static-libstdc++)

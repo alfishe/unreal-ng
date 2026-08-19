@@ -47,7 +47,15 @@ def run_test(base_url: str, whitelist_file: str, basepath: str = None) -> bool:
     Returns:
         True if test passed, False otherwise
     """
+    import os
     client = WebAPIClient(base_url)
+
+    # Resolve whitelist path if needed
+    if whitelist_file and not os.path.exists(whitelist_file):
+        script_dir_whitelist = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "whitelist.txt")
+        if os.path.exists(script_dir_whitelist):
+            whitelist_file = script_dir_whitelist
+
     testdata = TestDataHelper(whitelist_file, basepath=basepath)
     
     log(f"Connecting to WebAPI at {base_url}...")
