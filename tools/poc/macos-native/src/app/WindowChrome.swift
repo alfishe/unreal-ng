@@ -81,9 +81,33 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     /// Duration AppKit gave us for the exit, replayed when the zoom actually starts.
     private var exitZoomDuration: TimeInterval = 0.4
     private var exitZoomStarted = false
-    /// True while AppKit is resizing the window itself (the exit). The renderer keeps
-    /// producing frames in that case, one per resize step - see EmulatorMetalView.layout.
-    private(set) var rendersDuringTransition = false
+    /// How the renderer must behave right now.
+    ///
+    /// A single "frozen" flag was too blunt: the two directions need opposite things,
+    /// and freezing either of them for the length of the animation is what made the
+    /// picture a still image mid-transition.
+    enum TransitionRendering {
+        /// No transition in flight - ordinary 50Hz on the frame tick.
+        case none
+        /// The teleport itself. A handful of milliseconds in which the window frame,
+        /// the drawable and the layer transform are all being replaced; a frame
+        /// presented here would belong to none of those states.
+        case frozen
+        /// Entry zoom. The window has already teleported, so the drawable size is
+        /// fixed for the whole animation and only the layer transform moves - which
+        /// the render server interpolates on its own. Ordinary async presents at 50Hz
+        /// are therefore safe, and the zoom shows live emulator output.
+        case live
+        /// AppKit is resizing the window itself (the exit). Geometry changes under our
+        /// feet, so every frame must be sized from the CURRENT bounds and presented
+        /// inside the transaction that carries that step.
+        case stepped
+    }
+
+    private(set) var transitionRendering: TransitionRendering = .none
+
+    /// Kept for the exit path's layout hook.
+    var rendersDuringTransition: Bool { transitionRendering == .stepped }
 
     /// True only while one of OUR zoom animations is on screen.
     private var zoomAnimating = false
@@ -530,10 +554,14 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         // Where the picture is now, before anything moves.
         let source = pictureRect(in: sourceView)
 
-        // Everything between here and NSEnableScreenUpdates lands on screen at once,
-        // so the intermediate geometry is never composited. NOTE: display:false and no
-        // CATransaction flush - flushing here froze the display for hundreds of ms.
-        NSDisableScreenUpdates()
+        // Everything from here to the end of this method runs in ONE runloop turn and
+        // the window server composites only after it returns, so the intermediate
+        // geometry is never seen. NSDisableScreenUpdates used to bracket this; it is
+        // deprecated for a real performance reason (measured at 524ms around the exit),
+        // and isolating it in an Objective-C shim was not an option either - a bridging
+        // header that reaches AppKit makes ld pull SwiftUICore.tbd, which a non-SwiftUI
+        // product may not link. NOTE: display:false and no CATransaction flush -
+        // flushing here froze the display for hundreds of ms.
 
         // Normally a no-op: toggleFullScreen() already did this and let the layout
         // settle. It still runs for transitions we did not start ourselves, such as
@@ -550,7 +578,9 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         let targetView = viewScreenRect() ?? sourceView
         zoom(view: view, from: source, viewRect: targetView, duration: duration, reverse: false)
 
-        NSEnableScreenUpdates()
+        // From here the geometry no longer moves - only the transform does - so the
+        // pump can run at full rate and the zoom carries live output.
+        transitionRendering = .live
 
         armFinish(after: duration, reason: "enter")
     }
@@ -766,7 +796,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         }
 
         zoomAnimating = false
-        rendersDuringTransition = false
+        transitionRendering = .none
         pictureView?.layer?.removeAnimation(forKey: "un.zoom")
         pictureView?.layer?.transform = CATransform3DIdentity
 
@@ -814,7 +844,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         // The exit is AppKit's, so nothing else arms the transition for it - and the
         // picture has to be redrawn at every size AppKit takes the window through.
         beginTransition()
-        rendersDuringTransition = true
+        transitionRendering = .stepped
         forwardee?.windowWillExitFullScreen?(notification)
     }
 
@@ -822,6 +852,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         guard !isTransitioning else { return }
         if GeometryLog.enabled { NSLog("[WindowManager] transition begin") }
         isTransitioning = true
+        transitionRendering = .frozen
         controller?.releaseAllKeys()
         pictureView?.freezeForTransition()
 
