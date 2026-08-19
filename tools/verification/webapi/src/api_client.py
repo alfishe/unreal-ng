@@ -457,6 +457,19 @@ class UnrealApiClient:
         resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/ttd/invalidate"), json=data)
         return self._handle_response(resp)
 
+    def ttd_dump(self, emulator_id, path):
+        """POST /api/v1/emulator/{id}/ttd/dump - write the session to a file.
+
+        NOTE: the file is written by the EMULATOR process, so `path` is resolved
+        on the emulator's machine and against its working directory. Pass an
+        absolute path unless you know where that is.
+
+        Returns: ok (bool), path (str), bytes (int).
+        """
+        data = {"path": str(path)}
+        resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/ttd/dump"), json=data)
+        return self._handle_response(resp)
+
     def ttd_seek(self, emulator_id, frame, tinframe=0):
         """POST /api/v1/emulator/{id}/ttd/seek
 

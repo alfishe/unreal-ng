@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QLineEdit, QPushButton, QComboBox, QSlider, QListWidget,
     QListWidgetItem, QMessageBox, QGroupBox, QStatusBar, QCheckBox,
+    QFileDialog,
 )
 from PySide6.QtGui import QColor
 
@@ -226,7 +227,14 @@ class MainWindow(QMainWindow):
         self._btn_stop.clicked.connect(self._on_stop_clicked)
         self._btn_invalidate = QPushButton("Invalidate")
         self._btn_invalidate.clicked.connect(self._on_invalidate_clicked)
-        for b in (self._btn_start, self._btn_stop, self._btn_invalidate):
+        self._btn_save = QPushButton("Save session…")
+        self._btn_save.setToolTip(
+            "Write the recorded session to a .ttd file for offline analysis\n"
+            "(tools/verification/ttd-analyzer). The emulator writes the file, so\n"
+            "the path is resolved on the emulator's machine."
+        )
+        self._btn_save.clicked.connect(self._on_save_clicked)
+        for b in (self._btn_start, self._btn_stop, self._btn_invalidate, self._btn_save):
             btns.addWidget(b)
         btns.addStretch(1)
         outer.addLayout(btns)
@@ -400,6 +408,24 @@ class MainWindow(QMainWindow):
         if reply != QMessageBox.Yes:
             return
         self._worker.request_invalidate("User requested via TTD Scrubber")
+
+    def _on_save_clicked(self):
+        # The dump is produced by the emulator process, not by this tool: the
+        # path travels over the API and is opened on the emulator's side. A
+        # local file dialog is still the friendliest way to compose one, but the
+        # result only lands where the user expects when both run on the same
+        # machine - hence the reminder in the button's tooltip.
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save TTD session",
+            "session.ttd",
+            "TTD sessions (*.ttd);;All files (*)",
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".ttd"):
+            path += ".ttd"
+        self._worker.request_dump(path)
 
     @Slot()
     def _on_step_back_clicked(self):
