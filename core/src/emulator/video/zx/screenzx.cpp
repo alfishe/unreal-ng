@@ -608,14 +608,8 @@ bool ScreenZX::IsOnScreenByTiming(uint32_t tstate)
 /// See: http://www.zxdesign.info/vidparam.shtml
 void ScreenZX::UpdateScreen()
 {
-    Screen& screen = *this;
-
-    // Border color is latched in PortDecoder (or model-specific override) after each 'out (#FE)' port command and
-    // stored in Screen object property
-    [[maybe_unused]] uint8_t borderColor = screen.GetBorderColor();
-
     // Get current t-state (value corresponds to CPU cycles relative to current video frame)
-    uint32_t tstate = screen.GetCurrentTstate();
+    uint32_t tstate = GetCurrentTstate();
 
     // Allow renderer to do its job. Cover whole period between previous call and current one
     DrawPeriod(_prevTstate, tstate);
@@ -648,10 +642,21 @@ void ScreenZX::Draw(uint32_t tstate)
 
     if (lut.renderType == RT_SCREEN)
     {
-        // Render two sequential screen pixels using branch-free color selection
-        uint8_t* zxScreen = _activeScreenMemoryOffset;
-        uint8_t pixels = *(zxScreen + lut.screenOffset + lut.symbolX);
-        uint8_t attributes = *(zxScreen + lut.attrOffset + lut.symbolX);
+        // Attribute latching: the ULA fetches pixel+attr bytes once per
+        // 8-pixel character cell (every 4 t-states). We track which cell
+        // was last latched and only re-read RAM when entering a new cell.
+        // This matches the HDL fetch-latch-shift pipeline.
+        if (lut.symbolX != _lastLatchSymbolX || lut.zxY != _lastLatchZxY)
+        {
+            uint8_t* zxScreen = _activeScreenMemoryOffset;
+            _latchedPixels = *(zxScreen + lut.screenOffset + lut.symbolX);
+            _latchedAttributes = *(zxScreen + lut.attrOffset + lut.symbolX);
+            _lastLatchSymbolX = lut.symbolX;
+            _lastLatchZxY = lut.zxY;
+        }
+
+        uint8_t pixels = _latchedPixels;
+        uint8_t attributes = _latchedAttributes;
         uint32_t colorInk = _rgbaColors[attributes];
         uint32_t colorPaper = _rgbaFlashColors[attributes];
 
@@ -670,10 +675,29 @@ void ScreenZX::Draw(uint32_t tstate)
     }
     else
     {
-        // Render border (2 pixels)
-        uint32_t borderColor = _rgbaColors[_borderColor];
-        framebufferARGB[framebufferOffset] = borderColor;
-        framebufferARGB[framebufferOffset + 1] = borderColor;
+        // Border color latching: Pentagon updates every t-state (1T),
+        // ZX-48K/128K latches every 4 t-states (at 8-HC boundaries).
+        // We track the latched color index and only re-read when it changes.
+        if (_rasterState.borderUpdateTStates == 1)
+        {
+            // Pentagon: immediate update
+            _latchedBorderColorRGBA = _rgbaColors[_borderColor];
+            _latchedBorderColorIndex = _borderColor;
+        }
+        else if (_borderColor != _latchedBorderColorIndex)
+        {
+            // ZX models: only latch at 4T boundaries (when t-in-line is divisible by 4)
+            uint32_t tInLine = tstate % _rasterState.tstatesPerLine;
+            if (tInLine % _rasterState.borderUpdateTStates == 0)
+            {
+                _latchedBorderColorRGBA = _rgbaColors[_borderColor];
+                _latchedBorderColorIndex = _borderColor;
+            }
+        }
+
+        // Render border (2 pixels) using latched color
+        framebufferARGB[framebufferOffset] = _latchedBorderColorRGBA;
+        framebufferARGB[framebufferOffset + 1] = _latchedBorderColorRGBA;
     }
 }
 

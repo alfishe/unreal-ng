@@ -164,6 +164,20 @@ Documentation for controlling the emulator:
   - Qt GUI integration
   - Script automation
 
+## Debugger
+
+Documentation for debugging features:
+
+- **[Debugger Design](debugger/)** 🔍
+  - [Time-Travel Debugging (TTD)](debugger/time-travel-debug/time-travel-debugging-tdd.md) - Checkpoint + deterministic replay: rewind, reverse breakpoints, timeline, automation API
+  - [TTD UX Design](debugger/time-travel-debug/time-travel-ux.md) - Timeline panel, event marks, reverse search, Event Inspector, Frame Compare, per-persona workflows
+  - [TTD Overhead & Gating](debugger/time-travel-debug/overhead-and-gating.md) - CPU/memory budgets for capture and playback; runtime feature gates and presets
+  - [GDB Reverse Debugging](debugger/time-travel-debug/gdb-reverse-debugging-tdd.md) - RSP server as an automation transport; IDA/Ghidra/GDB frontends with reverse-step/continue
+  - [Implementation Plan](debugger/time-travel-debug/implementation-plan.md) - Cross-document sequencing: Sprint 0 foundations, two parallel tracks, milestones, risk register
+  - Breakpoint system
+  - Memory access tracking
+  - Call trace
+
 ---
 
 ## Contributing

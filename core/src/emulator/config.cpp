@@ -300,6 +300,10 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 
 	// HDD section
 
+	// SOUND section
+	config.sound.covoxFB = (int)inimanager.GetLongValue(sound, "CovoxFB", 0);
+	config.sound.covoxDD = (int)inimanager.GetLongValue(sound, "CovoxDD", 0);
+
 	// Emulated model
 	CopyStringValue(inimanager.GetValue(misc, "HIMEM", "PENTAGON", nullptr), line, sizeof line);
 	config.ramsize = inimanager.GetLongValue(misc, "RamSize", 128, nullptr);
@@ -307,6 +311,9 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	// Make sure we're emulating valid model & configuration
 	if (DetermineModel(line, config.ramsize))
 	{
+		// Apply hardware-accurate INT timing defaults based on the selected model
+		ApplyModelTimingDefaults(config);
+
 		result = true;
 	}
 	else
@@ -464,4 +471,49 @@ string Config::PrintModelAvailableRAM(uint32_t availRAM)
 	}
 
 	return ss.str();
+}
+
+void Config::ApplyModelTimingDefaults(CONFIG& config)
+{
+    // Save user-specified INI values (if non-default)
+    unsigned userIntstart = config.intstart;
+    unsigned userIntlen   = config.intlen;
+
+    // Apply hardware-accurate defaults per model.
+    // Values derived from MiSTer HDL ula.sv INT generation logic:
+    //   Pentagon: INT at vc=239, hc=326 → emulator t-state 71619 (99.9% through frame)
+    //   ZX-48K:   INT at vc=248, hc=4   → emulator t-state 1794  (2.6% through frame)
+    //   ZX-128K:  INT at vc=248, hc=8   → emulator t-state 2056  (2.9% through frame)
+    switch (config.mem_model)
+    {
+        case MM_PENTAGON:
+            config.intstart = 71619;
+            config.intlen   = 32;
+            break;
+
+        case MM_SPECTRUM48:
+            config.intstart = 1794;
+            config.intlen   = 32;
+            break;
+
+        case MM_SPECTRUM128:
+        case MM_PLUS3:
+            config.intstart = 2056;
+            config.intlen   = 36;   // ZX-128K ULA has 72-HC INT = 36 T-states
+            break;
+
+        default:
+            // Leave existing values for TSConf, ATM, Scorpion, Profi, etc.
+            break;
+    }
+
+    // Allow INI override if user explicitly set non-default values
+    // (i.e. not the old placeholder values 13/32)
+    if (userIntstart != 0 && userIntstart != 13)
+        config.intstart = userIntstart;
+    if (userIntlen != 0 && userIntlen != 32)
+        config.intlen = userIntlen;
+
+    MLOGINFO("ApplyModelTimingDefaults: model=%d intstart=%u intlen=%u frame=%u line=%u",
+             config.mem_model, config.intstart, config.intlen, config.frame, config.t_line);
 }

@@ -16,4 +16,6 @@ void HDD::Reset()
 	state.ide_hi_byte_r = 0;
 	state.ide_hi_byte_w = 0;
 	state.ide_hi_byte_w1 = 0;
+	state.ide_read = 0;
+	state.ide_write = 0;
 }

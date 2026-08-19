@@ -42,6 +42,13 @@ if (NOT TARGET core)
     add_subdirectory(${CORE_LIBRARY_PATH}/src core)
 endif (NOT TARGET core)
 
+# Add recording library if enabled (core depends on it when ENABLE_RECORDING=ON)
+if (ENABLE_RECORDING)
+    if (NOT TARGET unrealng::recording)
+        add_subdirectory(${CORE_LIBRARY_PATH}/recording recording)
+    endif()
+endif()
+
 # Use /src as root for include files
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -91,8 +98,13 @@ if (WIN32 AND MINGW)
     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -lshlwapi -Wl,--no-whole-archive")
 endif (WIN32 AND MINGW)
 
-# Link with core library
-target_link_libraries(${PROJECT_NAME} PRIVATE core)
+# Link with core library (and recording if enabled)
+# Recording is self-contained - no circular dependency with core
+if (ENABLE_RECORDING)
+    target_link_libraries(${PROJECT_NAME} PRIVATE core unrealng::recording)
+else()
+    target_link_libraries(${PROJECT_NAME} PRIVATE core)
+endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE ${common_libraries})
 
 # Copy ROM and INI files to build/bin directory

@@ -119,17 +119,39 @@ void Z80::Reset()
     last_branch = 0x0000;  // Address of last branch (in Z80 address space)
     int_pending = false;   // No interrupts pending
     int_gate = true;       // Allow external interrupts
+    nmi_in_progress = false;  // Clear NMI flag
 
     tt = 0;  // Scaled to CPU frequency multiplier cycle count
+    t = 0;   // Reset cycle counter for deterministic state
 
     // Z80 chip reset sequence. See: http://www.z80.info/interrup.htm (Reset Timing section)
-    int_flags = 0;  // Set interrupt mode 0
+    int_flags = 0;  // Set interrupt mode 0 (also clears iff1, iff2, halted via union)
     ir_ = 0;        // Reset IR (Instruction Register)
     pc = 0x0000;    // Reset PC (Program Counter)
     im = 0;         // IM0 mode is set by default
     sp = 0xFFFF;    // Stack pointer set to the end of memory address space
     af = 0xFFFF;    // Real chip behavior
     q = 0;          // Q register (undocumented) reset
+
+    // Clear general-purpose registers for deterministic reset state
+    // Real Z80 hardware leaves these undefined after reset, but for consistent
+    // emulation they must be cleared to prevent stale values from previous session
+    bc = 0;
+    de = 0;
+    hl = 0;
+    ix = 0;
+    iy = 0;
+
+    // Clear alternate register set
+    alt.af = 0;
+    alt.bc = 0;
+    alt.de = 0;
+    alt.hl = 0;
+
+    // Clear undocumented internal registers
+    memptr = 0;     // MEMPTR (WZ) internal address buffer
+    eipos = 0;      // EI command position
+    haltpos = 0;    // HALT position
 
     // All that takes 3 clock cycles
     IncrementCPUCyclesCounter(3);
@@ -423,6 +445,19 @@ uint8_t Z80::m1_cycle()
 /// \return
 uint8_t Z80::rd(uint16_t addr, bool isExecution)
 {
+    // ULA memory contention: if accessing contended memory (0x4000-0x7FFF)
+    // during screen rendering on ZX-48K/128K, the CPU is stalled.
+    if (!isExecution && addr >= 0x4000 && addr <= 0x7FFF)
+    {
+        Screen* screen = _context->pScreen;
+        if (screen)
+        {
+            uint8_t delay = screen->GetContentionDelay();
+            if (delay > 0)
+                IncrementCPUCyclesCounter(delay);
+        }
+    }
+
     IncrementCPUCyclesCounter(3);
 
     return (_memory->*MemIf->MemoryRead)(addr, isExecution);
@@ -434,6 +469,19 @@ uint8_t Z80::rd(uint16_t addr, bool isExecution)
 /// \param val
 void Z80::wd(uint16_t addr, uint8_t val)
 {
+    // ULA memory contention: if accessing contended memory (0x4000-0x7FFF)
+    // during screen rendering on ZX-48K/128K, the CPU is stalled.
+    if (addr >= 0x4000 && addr <= 0x7FFF)
+    {
+        Screen* screen = _context->pScreen;
+        if (screen)
+        {
+            uint8_t delay = screen->GetContentionDelay();
+            if (delay > 0)
+                IncrementCPUCyclesCounter(delay);
+        }
+    }
+
     IncrementCPUCyclesCounter(3);
 
     (_memory->*MemIf->MemoryWrite)(addr, val);

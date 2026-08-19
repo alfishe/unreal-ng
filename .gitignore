@@ -99,3 +99,4 @@ htmlcov/
 .DS_Store
 
 .specstory/
+**/.claude

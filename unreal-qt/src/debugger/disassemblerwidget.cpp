@@ -2,9 +2,12 @@
 
 #include <QHeaderView>
 #include <QMouseEvent>
+#include <QPointer>
 #include <QResizeEvent>
 #include <QScrollBar>
 #include <QTableView>
+#include <QTextBlock>
+#include <QThread>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
@@ -92,13 +95,17 @@ void DisassemblerWidget::initializeTable()
     // Configure vertical header
     QHeaderView* vHeader = tableView->verticalHeader();
     vHeader->setVisible(false);  // Hide vertical header
-    vHeader->setDefaultSectionSize(18);
-    vHeader->setMinimumSectionSize(1);
-    
+
+    // Calculate row height based on font metrics to ensure text fits
+    QFontMetrics rowFm(tableView->font());
+    int rowHeight = rowFm.height() + 4;  // Add padding for comfortable spacing
+    vHeader->setDefaultSectionSize(rowHeight);
+    vHeader->setMinimumSectionSize(rowHeight);
+
     // Enable grid for the table
-    //tableView->setShowGrid(true);
-    //tableView->setGridStyle(Qt::SolidLine);
-    
+    // tableView->setShowGrid(true);
+    // tableView->setGridStyle(Qt::SolidLine);
+
     // Style the header with borders
     QString headerStyle =
         "QHeaderView::section {"
@@ -133,6 +140,12 @@ void DisassemblerWidget::initializeTable()
 
 void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
 {
+    // Block all operations during shutdown
+    if (m_isShuttingDown)
+    {
+        return;
+    }
+
     // Validate input and state
     if (pc >= MAX_ADDRESS || !m_model || !ui || !ui->disassemblyTable)
     {
@@ -214,6 +227,12 @@ void DisassemblerWidget::reset()
 
 void DisassemblerWidget::refresh()
 {
+    // Block all operations during shutdown
+    if (m_isShuttingDown)
+    {
+        return;
+    }
+
     if (!m_emulator || !m_model)
     {
         return;
@@ -307,18 +326,18 @@ void DisassemblerWidget::mouseReleaseEvent(QMouseEvent* event)
 void DisassemblerWidget::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
-    
+
     // Get the row height to calculate how many rows fit in the visible area
     int rowHeight = ui->disassemblyTable->rowHeight(0);
     if (rowHeight <= 0)
     {
         rowHeight = ui->disassemblyTable->verticalHeader()->defaultSectionSize();
     }
-    
+
     // Calculate how many rows would be shown with the new size
     int currentRows = m_lastSize.isValid() ? m_lastSize.height() / rowHeight : 0;
     int newRows = event->size().height() / rowHeight;
-    
+
     // Only update if we can show at least 10 more rows than before
     // or if we've never updated before (m_lastSize is invalid)
     if (!m_lastSize.isValid() || abs(newRows - currentRows) >= 10)
@@ -326,9 +345,9 @@ void DisassemblerWidget::resizeEvent(QResizeEvent* event)
         // Restart the timer - this will delay the update until resizing stops
         m_resizeTimer.stop();
         m_resizeTimer.setSingleShot(true);
-        m_resizeTimer.start(100); // 100ms delay
+        m_resizeTimer.start(100);  // 100ms delay
     }
-    
+
     m_lastSize = event->size();
 }
 
@@ -455,17 +474,34 @@ void DisassemblerWidget::updateVisibleRange()
 
 void DisassemblerWidget::setEmulator(Emulator* emulator)
 {
-    if (m_emulator == emulator)
-    {
-        return;  // No change
-    }
-
+    // Always store the reference (may be called multiple times with same emulator)
     m_emulator = emulator;
 
-    // Update the model with the new emulator
+    // HOTFIX: Only proceed with disassembly if emulator is in a ready state
+    // During initialization the emulator is not yet fully set up
+    if (m_emulator)
+    {
+        EmulatorStateEnum state = m_emulator->GetState();
+        bool isReadyState = (state == StateRun || state == StateResumed || state == StatePaused);
+
+        if (!isReadyState)
+        {
+            qDebug() << "DisassemblerWidget::setEmulator - emulator state" << state
+                     << "not ready, deferring all operations";
+            // Don't set up model yet, but store reference for later
+            if (m_model)
+            {
+                m_model->setEmulator(nullptr);  // Clear model safely
+            }
+            ui->disassemblyTable->setEnabled(false);
+            return;
+        }
+    }
+
+    // Update the model with the new emulator (only if ready state)
     if (m_model)
     {
-        qDebug() << "Setting emulator on model";
+        qDebug() << "DisassemblerWidget::setEmulator - setting up model with ready emulator";
         m_model->setEmulator(emulator);
 
         // Dump model state for debugging
@@ -497,4 +533,10 @@ void DisassemblerWidget::setEmulator(Emulator* emulator)
 QString DisassemblerWidget::formatAddress(uint16_t address) const
 {
     return QString("$%1").arg(address, 4, 16, QChar('0')).toUpper();
+}
+
+void DisassemblerWidget::prepareForShutdown()
+{
+    qDebug() << "DisassemblerWidget::prepareForShutdown()";
+    m_isShuttingDown = true;
 }
