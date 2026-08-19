@@ -1166,8 +1166,8 @@ struct StatusBarView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            label(String(format: "%.0f fps", telemetry.fps))
-                .frame(width: 56, alignment: .leading)
+            label("\(Self.format(fps: telemetry.fps)) fps")
+                .frame(width: 72, alignment: .leading)
                 .monospacedDigit()
 
             divider
@@ -1198,6 +1198,21 @@ struct StatusBarView: View {
         .frame(height: WindowManager.statusBarHeight)
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
+    }
+
+    /// Up to two decimals, and none at all when the rate is a whole number.
+    ///
+    /// The fractional part matters: a machine's frame rate is t-states per frame
+    /// divided into the CPU clock and lands on values like Pentagon's 48.83
+    /// (3'500'000 / 71'680), which "%.0f" flattened to a meaningless 49.
+    static func format(fps: Double) -> String {
+        let rounded = (fps * 100).rounded() / 100
+        if rounded == rounded.rounded() {
+            return String(format: "%.0f", rounded)
+        }
+        // Trailing zero dropped too: 48.80 reads better as 48.8.
+        return String(format: "%.2f", rounded)
+            .replacingOccurrences(of: "0", with: "", options: [.anchored, .backwards])
     }
 
     private var divider: some View {
