@@ -16,6 +16,12 @@ set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 # Set CMake policy to allow linking to targets in other directories
 cmake_policy(SET CMP0079 NEW)
 
+# Recording support - follows the root CMakeLists.txt option (single source of truth
+# for the EmulatorContext/Core struct layout). Declared here so a standalone webapi
+# build defaults the same way as the root project; option() never overrides an
+# existing root-level cache entry.
+option(ENABLE_RECORDING "Enable audio/video recording support" ON)
+
 # Find OpenSSL (required by Drogon/Trantor)
 # Try to find OpenSSL, and if it fails, set the root directory explicitly
 find_package(OpenSSL QUIET)
@@ -371,6 +377,19 @@ else () # Called from upper level CMake => build static library
             DESTINATION "bin/resources/html"
             OPTIONAL)
 endif ()
+
+# Core layout consistency (prevents ODR violation):
+# ENABLE_RECORDING changes the layout of core classes (EmulatorContext, Core).
+# This target compiles core headers directly without linking unrealng::core,
+# so it does not inherit the PUBLIC define from core/src/CMakeLists.txt.
+# Without it, member offsets diverge between translation units and WebAPI
+# reads pRecordingManager where it expects pDebugManager.
+# The recording/src include is required for recordingmanager.h pulled in by
+# emulator/cpu/core.h when recording is enabled.
+if (ENABLE_RECORDING)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_RECORDING)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/recording/src)
+endif()
 
 
 

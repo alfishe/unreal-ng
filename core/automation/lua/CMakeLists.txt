@@ -12,6 +12,12 @@ option(AUTOMATION_LUA_SHARED "Build automation_lua as shared library instead of 
 option(LUA_BUILD_STATIC "Build static library for Lua" ON)
 option(LUA_BUILD_SHARED "Build shared library for Lua" OFF)
 
+# Recording support - follows the root CMakeLists.txt option (single source of truth
+# for the EmulatorContext/Core struct layout). Declared here so a standalone lua
+# build defaults the same way as the root project; option() never overrides an
+# existing root-level cache entry.
+option(ENABLE_RECORDING "Enable audio/video recording support" ON)
+
 # Explicitly set C++20 standard (required by sol2 and project)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -143,6 +149,19 @@ target_include_directories(${PROJECT_NAME} PUBLIC
     $<BUILD_INTERFACE:${ROOT_DIR}/core/src>
     $<INSTALL_INTERFACE:include>
 )
+
+# Core layout consistency (prevents ODR violation):
+# ENABLE_RECORDING changes the layout of core classes (EmulatorContext, Core).
+# This target compiles core headers directly without linking unrealng::core,
+# so it does not inherit the PUBLIC define from core/src/CMakeLists.txt.
+# Without it, member offsets diverge between translation units (e.g. Lua bindings
+# read pRecordingManager where they expect pDebugManager).
+# The recording/src include is required for recordingmanager.h pulled in by
+# emulator/cpu/core.h when recording is enabled.
+if (ENABLE_RECORDING)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_RECORDING)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/recording/src)
+endif()
 
 # Note: core library is linked by the parent project (unreal-qt)
 # Static libraries should only use headers, not link dependencies

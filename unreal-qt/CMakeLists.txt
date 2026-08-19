@@ -5,13 +5,15 @@ message(">> unreal-qt CMakeLists.txt")
 # Project named 'unreal-qt' on C++
 project(unreal-qt LANGUAGES CXX)
 
-# Define global options with CACHE and FORCE to ensure they propagate to /core/automation projects
-set(ENABLE_AUTOMATION ON CACHE BOOL "Enable automation features (Lua, Python, WebAPI)" FORCE)
-set(ENABLE_LUA_AUTOMATION ON CACHE BOOL "Enable Lua automation" FORCE)
-# Python automation: always follow the root CMakeLists.txt setting (OFF by default)
-# Never override with ON here — root CMakeLists.txt is the single source of truth.
-set(ENABLE_WEBAPI_AUTOMATION ON CACHE BOOL "Enable WebAPI automation" FORCE)
-set(ENABLE_CLI_AUTOMATION ON CACHE BOOL "Enable CLI automation" FORCE)
+# Automation options follow the root CMakeLists.txt (single source of truth).
+# option() never overrides an existing cache entry: in a root-level build the values
+# chosen there (including -D overrides) are inherited unchanged; in a standalone
+# unreal-qt build the defaults below apply.
+option(ENABLE_AUTOMATION "Enable automation features (Lua, Python, WebAPI)" ON)
+option(ENABLE_LUA_AUTOMATION "Enable Lua automation" ON)
+option(ENABLE_PYTHON_AUTOMATION "Enable Python automation" OFF)
+option(ENABLE_WEBAPI_AUTOMATION "Enable WebAPI automation" ON)
+option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
 
 # Recording support (audio/video capture)
 # Use option() instead of set(FORCE) so that command-line -DENABLE_RECORDING=OFF is respected
