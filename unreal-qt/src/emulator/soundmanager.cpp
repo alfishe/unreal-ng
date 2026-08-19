@@ -11,6 +11,10 @@
 #include <3rdparty/miniaudio/miniaudio.h>
 
 #include "soundmanager.h"
+
+#ifdef __APPLE__
+#include <CoreAudio/CoreAudio.h>
+#endif
 #include <QDebug>
 
 #include <emulator/sound/soundmanager.h>
@@ -26,6 +30,35 @@ AppSoundManager::~AppSoundManager()
 /// endregion </Constructors / destructors>
 
 /// region <Methods>
+
+
+#ifdef __APPLE__
+/// Total output latency the OS/driver adds BELOW our buffers: CoreAudio
+/// device latency + safety offset (output scope). Virtual loopback devices
+/// (Background Music, BlackHole) report their internal buffering here.
+static uint32_t queryCoreAudioOutputLatencyFrames(uint32_t deviceID)
+{
+    if (deviceID == 0)
+        return 0;
+
+    uint32_t total = 0;
+    UInt32 value = 0;
+    UInt32 size = sizeof(value);
+
+    AudioObjectPropertyAddress addr = {kAudioDevicePropertyLatency, kAudioObjectPropertyScopeOutput,
+                                       kAudioObjectPropertyElementMain};
+    if (AudioObjectGetPropertyData(deviceID, &addr, 0, nullptr, &size, &value) == noErr)
+        total += value;
+
+    addr.mSelector = kAudioDevicePropertySafetyOffset;
+    value = 0;
+    size = sizeof(value);
+    if (AudioObjectGetPropertyData(deviceID, &addr, 0, nullptr, &size, &value) == noErr)
+        total += value;
+
+    return total;
+}
+#endif  // __APPLE__
 
 bool AppSoundManager::init()
 {
@@ -63,6 +96,14 @@ bool AppSoundManager::init()
     _deviceDescriptor.channels.store(_audioDevice.playback.channels, std::memory_order_release);
     _deviceDescriptor.capacityFrames.store(static_cast<uint32_t>(_ringBuffer.capacityStereoFrames()),
                                            std::memory_order_release);
+    _deviceDescriptor.deviceBufferFrames.store(
+        _audioDevice.playback.internalPeriodSizeInFrames * _audioDevice.playback.internalPeriods,
+        std::memory_order_release);
+#ifdef __APPLE__
+    _deviceDescriptor.deviceOutputLatencyFrames.store(
+        queryCoreAudioOutputLatencyFrames(_audioDevice.coreaudio.deviceObjectIDPlayback),
+        std::memory_order_release);
+#endif
     _deviceDescriptor.setDeviceName(_audioDevice.playback.name);
 
     // Publish for CoreRate=auto resolution: emulators are created AFTER audio

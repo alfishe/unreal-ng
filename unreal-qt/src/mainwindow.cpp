@@ -1,5 +1,8 @@
 #include "mainwindow.h"
 
+#include <algorithm>
+#include <chrono>
+
 #include <stdio.h>
 #include <webapi/src/automation-webapi.h>
 
@@ -1457,8 +1460,31 @@ void MainWindow::handleVideoModeChanged(int id, Message* message)
 
             // init() -> detach() clears the tear-free frame source - re-install
             Screen* screen = context->pScreen;
-            deviceScreen->setFrameSource(
-                [screen](uint8_t* dst, size_t dstSize) { return screen->CopyPresentedFramebuffer(dst, dstSize); });
+            deviceScreen->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
+                if (!screen->CopyPresentedFramebuffer(dst, dstSize))
+                    return false;
+
+                // Stamp video presentation latency (paint - latch), EMA 1/8:
+                // half of the realtime A/V offset readout
+                const uint64_t latchUs = screen->GetLastLatchTimestampUs();
+                if (latchUs != 0)
+                {
+                    const uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now().time_since_epoch())
+                                               .count();
+                    // Signed EMA: unsigned (sample - prev) wraps when the new
+                    // sample is smaller, exploding the average
+                    // Include the A/V-sync present delay: the painted frame is
+                    // GetPresentDelayFrames older than the newest latch
+                    const int64_t sample = static_cast<int64_t>(std::min<uint64_t>(nowUs - latchUs, 1000000)) +
+                                           screen->GetPresentDelayUs();
+                    const int64_t prev = context->pVideoPresentLatencyUs.load(std::memory_order_relaxed);
+                    const int64_t next = (prev == 0) ? sample : prev + (sample - prev) / 8;
+                    context->pVideoPresentLatencyUs.store(
+                        static_cast<uint32_t>(std::clamp<int64_t>(next, 0, 1000000)), std::memory_order_relaxed);
+                }
+                return true;
+            });
         },
         Qt::QueuedConnection);
 }
@@ -2073,8 +2099,31 @@ void MainWindow::handleOverscanModeToggled(bool enabled)
 
             // init() -> detach() clears the tear-free frame source - re-install it
             Screen* screen = context->pScreen;
-            deviceScreen->setFrameSource(
-                [screen](uint8_t* dst, size_t dstSize) { return screen->CopyPresentedFramebuffer(dst, dstSize); });
+            deviceScreen->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
+                if (!screen->CopyPresentedFramebuffer(dst, dstSize))
+                    return false;
+
+                // Stamp video presentation latency (paint - latch), EMA 1/8:
+                // half of the realtime A/V offset readout
+                const uint64_t latchUs = screen->GetLastLatchTimestampUs();
+                if (latchUs != 0)
+                {
+                    const uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now().time_since_epoch())
+                                               .count();
+                    // Signed EMA: unsigned (sample - prev) wraps when the new
+                    // sample is smaller, exploding the average
+                    // Include the A/V-sync present delay: the painted frame is
+                    // GetPresentDelayFrames older than the newest latch
+                    const int64_t sample = static_cast<int64_t>(std::min<uint64_t>(nowUs - latchUs, 1000000)) +
+                                           screen->GetPresentDelayUs();
+                    const int64_t prev = context->pVideoPresentLatencyUs.load(std::memory_order_relaxed);
+                    const int64_t next = (prev == 0) ? sample : prev + (sample - prev) / 8;
+                    context->pVideoPresentLatencyUs.store(
+                        static_cast<uint32_t>(std::clamp<int64_t>(next, 0, 1000000)), std::memory_order_relaxed);
+                }
+                return true;
+            });
 
             if (!enabled)
             {
@@ -2678,8 +2727,31 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
             // overwrites the live buffer while the GUI thread paints it).
             // deviceScreen->detach() clears this on emulator switch/shutdown.
             Screen* screen = context->pScreen;
-            deviceScreen->setFrameSource(
-                [screen](uint8_t* dst, size_t dstSize) { return screen->CopyPresentedFramebuffer(dst, dstSize); });
+            deviceScreen->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
+                if (!screen->CopyPresentedFramebuffer(dst, dstSize))
+                    return false;
+
+                // Stamp video presentation latency (paint - latch), EMA 1/8:
+                // half of the realtime A/V offset readout
+                const uint64_t latchUs = screen->GetLastLatchTimestampUs();
+                if (latchUs != 0)
+                {
+                    const uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now().time_since_epoch())
+                                               .count();
+                    // Signed EMA: unsigned (sample - prev) wraps when the new
+                    // sample is smaller, exploding the average
+                    // Include the A/V-sync present delay: the painted frame is
+                    // GetPresentDelayFrames older than the newest latch
+                    const int64_t sample = static_cast<int64_t>(std::min<uint64_t>(nowUs - latchUs, 1000000)) +
+                                           screen->GetPresentDelayUs();
+                    const int64_t prev = context->pVideoPresentLatencyUs.load(std::memory_order_relaxed);
+                    const int64_t next = (prev == 0) ? sample : prev + (sample - prev) / 8;
+                    context->pVideoPresentLatencyUs.store(
+                        static_cast<uint32_t>(std::clamp<int64_t>(next, 0, 1000000)), std::memory_order_relaxed);
+                }
+                return true;
+            });
         }
         catch (const std::exception& e)
         {

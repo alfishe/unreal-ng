@@ -142,7 +142,7 @@ void MainLoop::Run(volatile bool& stopRequested)
             // empty (cold start, debugger stall, disk hitch), skip the sleep
             // and produce frames back-to-back until occupancy recovers -
             // DRC's +-0.5% trim is far too slow for bulk refill.
-            constexpr uint32_t EMERGENCY_REFILL_FRAMES = 2048;  // ~46ms @44.1k, ~66% of DRC target
+            constexpr uint32_t EMERGENCY_REFILL_FRAMES = 2048;  // ~46ms @44.1k, ~= DRC 40ms target (controller trims the small excess)
             const std::atomic<uint32_t>* occCell =
                 _context->pAudioRingOccupancy.load(std::memory_order_acquire);
             if (occCell && occCell->load(std::memory_order_relaxed) < EMERGENCY_REFILL_FRAMES)

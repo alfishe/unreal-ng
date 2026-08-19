@@ -528,22 +528,60 @@ protected:
     void AllocateFramebuffer(VideoModeEnum mode);
     void DeallocateFramebuffer();
 
-    // Presentation (latched) framebuffer: a complete-frame snapshot taken at
-    // frame end on the emulation thread. GUI/capture consumers read this copy
-    // instead of the live _framebuffer, which the emulator overwrites
+    // Presentation (latched) framebuffer QUEUE: complete-frame snapshots
+    // taken at frame end on the emulation thread. GUI consumers read these
+    // copies instead of the live _framebuffer, which the emulator overwrites
     // concurrently (the source of mid-frame tearing).
-    uint8_t* _presentBuffer = nullptr;
+    //
+    // A/V sync (audio-sync design): audio is presented ~DRC_TARGET_MS + HW
+    // buffer (~50 ms ~= 2 frames) behind the emulated frame that produced
+    // it - the ring depth is structural (production is bursty per-frame,
+    // the DAC drains continuously). Instead of shrinking the ring into
+    // underrun territory, VIDEO presentation is delayed by
+    // _presentDelayFrames so both land at the same constant latency and
+    // the net A/V offset collapses to ~0. Recording is unaffected: it taps
+    // emulated time upstream of both presentation paths.
+    static constexpr size_t PRESENT_SLOTS = 4;  // > max delay (3) + write slot
+    uint8_t* _presentSlots[PRESENT_SLOTS] = {};
+    uint64_t _presentLatchCounter = 0;  // Total frames latched (next write index)
     size_t _presentBufferSize = 0;  // Authoritative size for readers; set under _presentMutex
+    std::atomic<uint8_t> _presentDelayFrames{2};  // Frames of video delay (0..PRESENT_SLOTS-1)
     std::mutex _presentMutex;
 
     // User-forced Pentagon overscan (see SetOverscanForced)
     bool _overscanForced = false;
+
+    // Wall-clock (steady) timestamp of the last LatchFramebuffer, in us.
+    // GUI consumers compute video presentation latency = paint time - this.
+    std::atomic<uint64_t> _lastLatchTimestampUs{0};
 
 public:
     /// @brief Latch the completed frame into the presentation buffer.
     /// Call on the emulation thread at frame end, after rendering is finished.
     /// Holds _presentMutex only for one SIMD frame copy (~40us for 352x288).
     void LatchFramebuffer();
+
+    /// Steady-clock timestamp (us) of the last completed latch (0 = never)
+    uint64_t GetLastLatchTimestampUs() const { return _lastLatchTimestampUs.load(std::memory_order_acquire); }
+
+    /// Video presentation delay in frames (A/V sync: match the audio path's
+    /// ring + HW buffer latency, ~2 frames). 0 = present immediately
+    /// (lowest input latency, audio trails by the full ring depth).
+    void SetPresentDelayFrames(uint8_t frames)
+    {
+        _presentDelayFrames.store(frames < PRESENT_SLOTS ? frames : PRESENT_SLOTS - 1, std::memory_order_release);
+    }
+    uint8_t GetPresentDelayFrames() const { return _presentDelayFrames.load(std::memory_order_acquire); }
+
+    /// Present delay in microseconds at the current frame duration (for the
+    /// video presentation latency readout: paint-to-latch delta measures the
+    /// NEWEST latch, but the presented frame is GetPresentDelayFrames older)
+    uint32_t GetPresentDelayUs() const
+    {
+        const uint32_t frameTStates = (_context && _context->config.frame) ? _context->config.frame : 71680;
+        return static_cast<uint32_t>(_presentDelayFrames.load(std::memory_order_acquire) *
+                                     (static_cast<uint64_t>(frameTStates) * 10 / 35));
+    }
 
     /// @brief Copy the latched (tear-free) frame into a caller-provided buffer.
     /// Safe to call from any thread.

@@ -128,6 +128,49 @@ TEST_F(VideoModeChange_Test, SameSizeSwitch_KeepsFramebufferAddress)
     EXPECT_EQ(_screen->GetFramebufferDescriptor().memoryBuffer, before);
 }
 
+TEST_F(VideoModeChange_Test, PresentQueue_DelaysVideoByConfiguredFrames)
+{
+    // A/V sync: video presentation trails the newest latched frame by the
+    // configured delay so it lands at the same constant latency as the audio
+    // path (ring + HW buffer ~= 2 frames). During queue fill the delay is
+    // clamped to what exists (the 1-2 frame startup buffering).
+    auto& fb = _screen->GetFramebufferDescriptor();
+    ASSERT_NE(fb.memoryBuffer, nullptr);
+
+    std::vector<uint8_t> dst(fb.memoryBufferSize);
+    auto latchMarked = [&](uint8_t marker) {
+        fb.memoryBuffer[0] = marker;
+        _screen->LatchFramebuffer();
+    };
+
+    _screen->SetPresentDelayFrames(2);
+    ASSERT_EQ(_screen->GetPresentDelayFrames(), 2);
+
+    // Queue fill: with only one frame latched, present it (clamped delay)
+    latchMarked(10);
+    ASSERT_TRUE(_screen->CopyPresentedFramebuffer(dst.data(), dst.size()));
+    EXPECT_EQ(dst[0], 10) << "Startup: delay clamps to the oldest available frame";
+
+    // Steady state: present newest-2
+    latchMarked(20);
+    latchMarked(30);
+    latchMarked(40);
+    ASSERT_TRUE(_screen->CopyPresentedFramebuffer(dst.data(), dst.size()));
+    EXPECT_EQ(dst[0], 20) << "Delay 2 must present the frame latched 2 frames ago";
+
+    // Low-latency mode: newest frame immediately
+    _screen->SetPresentDelayFrames(0);
+    ASSERT_TRUE(_screen->CopyPresentedFramebuffer(dst.data(), dst.size()));
+    EXPECT_EQ(dst[0], 40) << "Delay 0 must present the newest latched frame";
+
+    // Loaded config defaults to auto (2 frames) - the value AllocateFramebuffer
+    // re-applies on every mode switch
+    EXPECT_EQ(_context->config.videoPresentDelayFrames, -1) << "Loaded config must default to auto";
+    _screen->SetVideoMode(M_ZX48);
+    _screen->SetVideoMode(M_PENTAGON128K);
+    EXPECT_EQ(_screen->GetPresentDelayFrames(), 2) << "auto = 2 frames after reallocation";
+}
+
 TEST_F(VideoModeChange_Test, ModeChange_PostsNotificationWithEmulatorId)
 {
     // GUI consumers re-attach on NC_VIDEO_MODE_CHANGED; the payload must

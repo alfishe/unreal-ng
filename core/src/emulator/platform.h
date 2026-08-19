@@ -476,6 +476,14 @@ struct CONFIG
 	uint8_t soundfilter; //Alone Coder (IDC_SOUNDFILTER)
 	uint8_t RejectDC;
 
+	/// Video presentation delay in frames for A/V sync ([VIDEO]
+	/// AVSyncDelayFrames). Audio trails the emulated frame by the DRC ring
+	/// target + device HW buffer (~2 frames); delaying video by the same
+	/// amount collapses the net A/V offset to ~0 at the cost of input
+	/// latency. -1 = auto (2 frames), 0 = present immediately (lowest input
+	/// latency), 1..3 explicit.
+	int videoPresentDelayFrames;
+
 	struct
 	{
 		unsigned fq, ayfq, saa1099fq;

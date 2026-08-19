@@ -636,6 +636,14 @@ void Screen::SaveZXSpectrumNativeScreen()
 
 void Screen::AllocateFramebuffer(VideoModeEnum mode)
 {
+    // Apply the configured A/V sync video delay (auto -1 = 2 frames: the
+    // audio path's ring target + HW buffer expressed in frame periods)
+    if (_context)
+    {
+        const int cfg = _context->config.videoPresentDelayFrames;
+        SetPresentDelayFrames(cfg < 0 ? 2 : static_cast<uint8_t>(cfg));
+    }
+
     // Buffer already allocated for the selected video mode
     if (_framebuffer.memoryBuffer != nullptr && _framebuffer.videoMode == mode)
     {
@@ -662,8 +670,12 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
             memset(_framebuffer.memoryBuffer, 0x00, _framebuffer.memoryBufferSize);
 
             std::lock_guard<std::mutex> lock(_presentMutex);
-            if (_presentBuffer)
-                memset(_presentBuffer, 0x00, _presentBufferSize);
+            for (size_t i = 0; i < PRESENT_SLOTS; i++)
+            {
+                if (_presentSlots[i])
+                    memset(_presentSlots[i], 0x00, _presentBufferSize);
+            }
+            _presentLatchCounter = 0;
             return;
         }
     }
@@ -711,10 +723,14 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         // outside the lock during mode switches.
         {
             std::lock_guard<std::mutex> lock(_presentMutex);
-            delete[] _presentBuffer;
-            _presentBuffer = new uint8_t[_framebuffer.memoryBufferSize];
+            for (size_t i = 0; i < PRESENT_SLOTS; i++)
+            {
+                delete[] _presentSlots[i];
+                _presentSlots[i] = new uint8_t[_framebuffer.memoryBufferSize];
+                memset(_presentSlots[i], 0x00, _framebuffer.memoryBufferSize);
+            }
             _presentBufferSize = _framebuffer.memoryBufferSize;
-            memset(_presentBuffer, 0x00, _presentBufferSize);
+            _presentLatchCounter = 0;
         }
 
 #ifdef _DEBUG
@@ -743,9 +759,13 @@ void Screen::DeallocateFramebuffer()
 
     {
         std::lock_guard<std::mutex> lock(_presentMutex);
-        delete[] _presentBuffer;
-        _presentBuffer = nullptr;
+        for (size_t i = 0; i < PRESENT_SLOTS; i++)
+        {
+            delete[] _presentSlots[i];
+            _presentSlots[i] = nullptr;
+        }
         _presentBufferSize = 0;
+        _presentLatchCounter = 0;
     }
 }
 
@@ -757,9 +777,16 @@ void Screen::LatchFramebuffer()
         return;
 
     std::lock_guard<std::mutex> lock(_presentMutex);
-    if (_presentBuffer && _presentBufferSize == _framebuffer.memoryBufferSize)
+    if (_presentSlots[0] && _presentBufferSize == _framebuffer.memoryBufferSize)
     {
-        VideoUtils::CopyFrameBuffer(_presentBuffer, _framebuffer.memoryBuffer, _presentBufferSize);
+        uint8_t* slot = _presentSlots[_presentLatchCounter % PRESENT_SLOTS];
+        VideoUtils::CopyFrameBuffer(slot, _framebuffer.memoryBuffer, _presentBufferSize);
+        _presentLatchCounter++;
+
+        _lastLatchTimestampUs.store(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count(),
+            std::memory_order_release);
     }
 }
 
@@ -773,10 +800,27 @@ bool Screen::CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize)
     // during mode-switch reallocation, and trusting it here could overread
     // a present buffer from the previous video mode
     std::lock_guard<std::mutex> lock(_presentMutex);
-    if (_presentBuffer == nullptr || _presentBufferSize == 0 || dstSize < _presentBufferSize)
+    if (_presentSlots[0] == nullptr || _presentBufferSize == 0 || dstSize < _presentBufferSize)
         return false;
+    if (_presentLatchCounter == 0)
+    {
+        // Nothing latched yet: serve the zeroed slot (black frame) - callers
+        // treat a false return as "no present buffer", not "not yet"
+        VideoUtils::CopyFrameBuffer(dst, _presentSlots[0], _presentBufferSize);
+        return true;
+    }
 
-    VideoUtils::CopyFrameBuffer(dst, _presentBuffer, _presentBufferSize);
+    // A/V sync: present the frame latched _presentDelayFrames ago so video
+    // trails by the same constant latency as the audio path. During the
+    // first frames after start/reset the delay is clamped to what exists -
+    // the queue "fills" naturally, exactly the 1-2 frame startup buffering.
+    const uint64_t newest = _presentLatchCounter - 1;
+    uint64_t delay = _presentDelayFrames.load(std::memory_order_acquire);
+    if (delay > newest)
+        delay = newest;
+
+    const uint8_t* slot = _presentSlots[(newest - delay) % PRESENT_SLOTS];
+    VideoUtils::CopyFrameBuffer(dst, slot, _presentBufferSize);
     return true;
 }
 

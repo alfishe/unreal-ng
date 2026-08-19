@@ -98,6 +98,11 @@ TEST_F(PresentLatch_Test, LatchSnapshotsCompletedFrame)
     ASSERT_NE(fb.memoryBuffer, nullptr);
     ASSERT_GT(fb.memoryBufferSize, 0u);
 
+    // This test pins the TEAR-FREE property of the latch, independent of the
+    // A/V-sync present delay (covered by VideoModeChange_Test.PresentQueue_*):
+    // run in low-latency mode so each latch is immediately visible
+    _screen->SetPresentDelayFrames(0);
+
     // Render a recognizable "frame" into the live framebuffer and latch it
     memset(fb.memoryBuffer, 0x11, fb.memoryBufferSize);
     _screen->LatchFramebuffer();

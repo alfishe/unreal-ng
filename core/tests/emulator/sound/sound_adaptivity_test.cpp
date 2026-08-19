@@ -357,8 +357,8 @@ TEST_F(SoundAdaptivity_Test, DRC_ConvergesToTargetOccupancy)
         double finalFrames = runLoop(startMs * 44100.0 / 1000.0, 6000);
         double finalMs = finalFrames * 1000.0 / 44100.0;
 
-        EXPECT_NEAR(finalMs, 70.0, 8.0)
-            << "DRC must converge ring occupancy to the 70ms setpoint (start " << startMs << "ms)";
+        EXPECT_NEAR(finalMs, SoundManager::DRC_TARGET_MS, 8.0)
+            << "DRC must converge ring occupancy to the setpoint (start " << startMs << "ms)";
         EXPECT_LT(std::abs(sound->getDrcRatio() - 1.0), 0.001)
             << "Converged trim must be small (start " << startMs << "ms)";
     }
@@ -380,6 +380,30 @@ TEST_F(SoundAdaptivity_Test, DRC_DisengagedWithoutOccupancyCell)
 }
 
 /// endregion </DRC rate controller>
+
+TEST_F(SoundAdaptivity_Test, AVLatencyBudget)
+{
+    // REGRESSION GUARD for audible A/V desync. The DRC pins ring occupancy
+    // at DRC_TARGET_MS - that occupancy IS the audio presentation delay
+    // (video presents within ~1 frame; audio trails by ring + HW buffer).
+    // Perception threshold for audio-late lip-sync is ~45 ms; the device HW
+    // buffer adds ~11 ms (2 x 256 frames @ 44.1k). The target must therefore
+    // stay at or below ~40 ms, with enough underrun margin (>= 5 device
+    // callback periods of ~5.8 ms).
+    //
+    // If this test fails after changing DRC_TARGET_MS: you have either
+    // reintroduced audible audio lag (too high) or removed the underrun
+    // safety margin (too low). Confirm with the realtime "A/V" readout in
+    // the audio settings window before adjusting the bounds.
+    constexpr double HW_BUFFER_MS = 2.0 * 256.0 * 1000.0 / 44100.0;  // ~11.6 ms
+    constexpr double PERCEPTION_THRESHOLD_MS = 45.0;
+    constexpr double MIN_UNDERRUN_MARGIN_MS = 5.0 * 5.8;  // 5 callback periods
+
+    EXPECT_LE(SoundManager::DRC_TARGET_MS + HW_BUFFER_MS, PERCEPTION_THRESHOLD_MS + 8.0)
+        << "Audio presentation delay exceeds the lip-sync perception budget";
+    EXPECT_GE(SoundManager::DRC_TARGET_MS, MIN_UNDERRUN_MARGIN_MS)
+        << "Ring target too small - underrun risk under scheduler jitter";
+}
 
 TEST_F(SoundAdaptivity_Test, DRC_RebasesOnDeviceRateChangeMidRun)
 {
@@ -404,7 +428,7 @@ TEST_F(SoundAdaptivity_Test, DRC_RebasesOnDeviceRateChangeMidRun)
     sound->reset();
 
     double devRate = 44100.0;
-    double ring = 70.0 * devRate / 1000.0;  // Start converged at the setpoint
+    double ring = SoundManager::DRC_TARGET_MS * devRate / 1000.0;  // Start converged at the setpoint
     occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
 
     auto runFrames = [&](int frames) {
@@ -435,7 +459,7 @@ TEST_F(SoundAdaptivity_Test, DRC_RebasesOnDeviceRateChangeMidRun)
 
     runFrames(6000);
     const double finalMs = ring * 1000.0 / devRate;
-    EXPECT_NEAR(finalMs, 70.0, 8.0) << "Occupancy must re-converge at the new device rate";
+    EXPECT_NEAR(finalMs, SoundManager::DRC_TARGET_MS, 8.0) << "Occupancy must re-converge at the new device rate";
 
     _context->pAudioRingOccupancy.store(nullptr, std::memory_order_release);
     _context->pAudioDeviceSampleRate.store(0, std::memory_order_release);
@@ -461,7 +485,7 @@ TEST_F(SoundAdaptivity_Test, DRC_NativeDeviceRate48k_ConvergesAndConverts)
     const double consumePerFrame = 71680.0 * 48000.0 / 3500000.0;  // Real-time DAC @48k
 
     sound->reset();
-    double ring = 70.0 * 48.0;  // Start at setpoint (in device frames): verify HOLD
+    double ring = SoundManager::DRC_TARGET_MS * 48.0;  // Start at setpoint (in device frames): verify HOLD
     occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
 
     uint64_t totalDeviceSamples = 0;
@@ -476,7 +500,7 @@ TEST_F(SoundAdaptivity_Test, DRC_NativeDeviceRate48k_ConvergesAndConverts)
     }
 
     double finalMs = ring * 1000.0 / 48000.0;
-    EXPECT_NEAR(finalMs, 70.0, 8.0) << "Occupancy must hold at setpoint with 48k device";
+    EXPECT_NEAR(finalMs, SoundManager::DRC_TARGET_MS, 8.0) << "Occupancy must hold at setpoint with 48k device";
 
     // Output volume converted at ~48/44.1: 6000 frames x 903.168 core samples
     double expectedDevice = 6000.0 * 903.168 * 48000.0 / 44100.0;

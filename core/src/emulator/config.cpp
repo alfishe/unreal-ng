@@ -328,6 +328,14 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 		}
 	}
 
+	// VIDEO section
+	// A/V sync video delay: auto (-1) = match the audio path latency
+	// (~2 frames); 0 = lowest input latency (audio trails by the ring depth)
+	{
+		long delay = inimanager.GetLongValue(video, "AVSyncDelayFrames", -1);  // "auto" parses as 0 - use -1 default
+		config.videoPresentDelayFrames = (delay >= -1 && delay <= 3) ? (int)delay : -1;
+	}
+
 	// Emulated model
 	CopyStringValue(inimanager.GetValue(misc, "HIMEM", "PENTAGON", nullptr), line, sizeof line);
 	config.ramsize = inimanager.GetLongValue(misc, "RamSize", 128, nullptr);

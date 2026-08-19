@@ -120,7 +120,17 @@ protected:
     // Sampled once per frame in the emulation thread. Disengaged (unity
     // bypass, integrator reset) when no occupancy cell is registered, in
     // turbo mode, or with sound disabled.
-    static constexpr double DRC_TARGET_MS = 70.0;
+public:
+    // Ring occupancy setpoint = the audio presentation delay (occupancy IS
+    // the A/V offset: video presents within ~1 frame, audio is delayed by
+    // exactly the ring content plus the device HW buffer). LATENCY BUDGET:
+    // target + HW buffer (~11 ms) must stay under the ~45 ms lip-sync
+    // perception threshold for audio-late. 40 ms = ~7 device callback
+    // periods of underrun margin (5.8 ms each) - regression-guarded by
+    // SoundAdaptivity.AVLatencyBudget.
+    static constexpr double DRC_TARGET_MS = 40.0;
+
+protected:
     static constexpr double DRC_MAX_TRIM = 0.005;
     static constexpr double DRC_KP = 0.08;
     static constexpr double DRC_KI = 0.0008;

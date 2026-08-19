@@ -109,6 +109,13 @@ public:
     /// diagnostics) read it lock-free. nullptr = no device attached.
     std::atomic<const AudioDeviceDescriptor*> pAudioDeviceDescriptor{nullptr};
 
+    /// Video presentation latency in microseconds (EMA), stamped by the GUI
+    /// frame source at paint time: wall-clock delta between the emulation
+    /// thread latching the finished frame and the GUI copying it for paint.
+    /// Together with AudioDeviceDescriptor::audioLatencyMs this yields the
+    /// realtime A/V offset (audio late = audioLatency - videoLatency).
+    std::atomic<uint32_t> pVideoPresentLatencyUs{0};
+
     // Sound manager
     SoundManager* pSoundManager = nullptr;
 

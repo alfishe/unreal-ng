@@ -27,6 +27,18 @@ struct AudioDeviceDescriptor
     /// Ring buffer capacity in stereo frames
     std::atomic<uint32_t> capacityFrames{0};
 
+    /// Device hardware buffer depth in frames (period size x period count):
+    /// audio already handed to the OS but not yet audible. Part of the audio
+    /// presentation delay alongside ring occupancy.
+    std::atomic<uint32_t> deviceBufferFrames{0};
+
+    /// Additional output latency reported by the OS/driver BELOW our buffers
+    /// (CoreAudio device latency + safety offset), in frames. Virtual
+    /// loopback devices (e.g. Background Music, BlackHole) can report
+    /// substantial values here - this is how a desync living OUTSIDE our
+    /// pipeline is identified. 0 when unknown/unsupported.
+    std::atomic<uint32_t> deviceOutputLatencyFrames{0};
+
     /// Number of device re-establishments (hotplug / OS default-output
     /// reroutes). 0 after the initial init.
     std::atomic<uint32_t> reinitCount{0};
@@ -64,6 +76,19 @@ struct AudioDeviceDescriptor
         if (rate == 0)
             return 0.0;
         return occupancyFrames.load(std::memory_order_relaxed) * 1000.0 / rate;
+    }
+
+    /// Total audio presentation delay in milliseconds: ring occupancy plus
+    /// the device hardware buffer. This is how far the audible sound trails
+    /// the emulated frame that produced it.
+    double audioLatencyMs() const
+    {
+        const uint32_t rate = sampleRate.load(std::memory_order_relaxed);
+        if (rate == 0)
+            return 0.0;
+        return (occupancyFrames.load(std::memory_order_relaxed) +
+                deviceBufferFrames.load(std::memory_order_relaxed) +
+                deviceOutputLatencyFrames.load(std::memory_order_relaxed)) * 1000.0 / rate;
     }
 
     /// Set the device name (init/re-init only, device stopped)
