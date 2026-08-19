@@ -192,6 +192,21 @@ void AppSoundManager::audioDataCallback(ma_device* pDevice, void* pOutput, const
     {
         obj->_ringBuffer.dequeue((int16_t*)pOutput, frameCount * 2);
 
+        // Hard resync (consumer thread, SPSC-safe): occupancy far beyond the
+        // target is unrecoverable by the DRC trim - discard down to the
+        // target in one step and let tracking continue from there
+        {
+            const uint32_t rate = obj->_deviceDescriptor.sampleRate.load(std::memory_order_relaxed);
+            const size_t occFrames = obj->_ringBuffer.getOccupancyStereoFrames();
+            if (rate != 0 && occFrames * 1000.0 > SoundManager::HARD_RESYNC_MS * rate)
+            {
+                const size_t targetFrames = static_cast<size_t>(SoundManager::DRC_TARGET_MS * rate / 1000.0);
+                const size_t dropped = obj->_ringBuffer.discard((occFrames - targetFrames) * 2) / 2;
+                qWarning("AppSoundManager: hard resync - dropped %zu frames (%.0f ms) of overfilled audio",
+                         dropped, dropped * 1000.0 / rate);
+            }
+        }
+
         // Publish ring occupancy for the DRC rate controller (audio-sync
         // design, Fix 2): SoundManager::updateDrcControl reads this cell once
         // per emulated frame and trims the resample ratio continuously.

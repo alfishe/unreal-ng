@@ -403,6 +403,78 @@ TEST_F(SoundAdaptivity_Test, AVLatencyBudget)
         << "Audio presentation delay exceeds the lip-sync perception budget";
     EXPECT_GE(SoundManager::DRC_TARGET_MS, MIN_UNDERRUN_MARGIN_MS)
         << "Ring target too small - underrun risk under scheduler jitter";
+
+    // The emergency-refill trigger must sit BELOW the occupancy sawtooth
+    // trough (target - 1 frame): production is bursty, so occupancy dips
+    // that far EVERY frame cycle. A threshold above the trough turns the
+    // emergency path into a periodic frame injector that spikes occupancy
+    // ~+1 frame and fights the DRC forever (shipped once: 70->40 ms target
+    // change left the old ~46 ms threshold in place -> intermittent
+    // +20..30 ms audio-late excursions).
+    constexpr double PENTAGON_FRAME_MS = 71680.0 / 3500.0;  // 20.48 ms (longest frame)
+    constexpr double SAWTOOTH_TROUGH_MS = SoundManager::DRC_TARGET_MS - PENTAGON_FRAME_MS;
+    EXPECT_LT(SoundManager::EMERGENCY_REFILL_MS, SAWTOOTH_TROUGH_MS - 3.0)
+        << "Refill threshold must clear the steady-state occupancy trough with margin";
+    EXPECT_GT(SoundManager::EMERGENCY_REFILL_MS, 5.0)
+        << "Refill threshold too low to catch genuine stalls before underrun";
+
+    // Hard-resync trigger: far enough above target that it can only be hit
+    // through abnormal events (reroute windows, long stalls), yet low enough
+    // that a resync restores the budget in ONE step instead of the DRC
+    // grinding down an overfill for minutes at +-0.5%
+    EXPECT_GE(SoundManager::HARD_RESYNC_MS, SoundManager::DRC_TARGET_MS * 3.0)
+        << "Hard resync must not trigger on normal DRC transients";
+    EXPECT_LE(SoundManager::HARD_RESYNC_MS, 250.0)
+        << "Hard resync threshold high enough to let audible lag persist";
+}
+
+TEST_F(SoundAdaptivity_Test, EmergencyRefill_NeverFiresAtSteadyState)
+{
+    // Closed loop with the mainloop's refill rule simulated: at converged
+    // steady state the instantaneous occupancy sawtooth must NEVER cross the
+    // refill threshold - the emergency path is for cold start and stalls
+    // only. Sampling right BEFORE each production burst hits the sawtooth
+    // trough, the worst case.
+    SoundManager* sound = _context->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+
+    CallbackCapture capture;
+    _context->pAudioCallback.store(&CallbackCapture::callback, std::memory_order_release);
+    _context->pAudioManagerObj.store(&capture, std::memory_order_release);
+
+    std::atomic<uint32_t> occCell{0};
+    _context->pAudioRingOccupancy.store(&occCell, std::memory_order_release);
+
+    _context->config.frame = 71680;
+    const double devRate = 44100.0;
+    const double consumePerFrame = 71680.0 * devRate / 3500000.0;
+    const double refillThresholdFrames = devRate * SoundManager::EMERGENCY_REFILL_MS / 1000.0;
+
+    sound->reset();
+    double ring = SoundManager::DRC_TARGET_MS * devRate / 1000.0;
+    occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
+
+    int refillTriggers = 0;
+    for (int f = 0; f < 3000; f++)
+    {
+        // DAC drains first: the trough is right before the production burst
+        ring = std::max(0.0, ring - consumePerFrame);
+        occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
+
+        if (f > 500 && ring < refillThresholdFrames)
+            refillTriggers++;
+
+        sound->handleFrameStart();
+        sound->handleFrameEnd();
+        ring += static_cast<double>(capture.lastNumSamples) / AUDIO_CHANNELS;
+        occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
+    }
+
+    EXPECT_EQ(refillTriggers, 0)
+        << "Emergency refill fired at steady state - it would inject extra "
+           "frames and spike occupancy above the A/V budget";
+
+    _context->pAudioRingOccupancy.store(nullptr, std::memory_order_release);
 }
 
 TEST_F(SoundAdaptivity_Test, DRC_RebasesOnDeviceRateChangeMidRun)

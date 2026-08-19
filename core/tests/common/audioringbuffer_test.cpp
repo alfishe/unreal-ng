@@ -123,3 +123,41 @@ TEST(AudioRingBuffer_Test, SPSC_ConcurrentIntegrity)
     EXPECT_TRUE(sequenceOk) << "SPSC stream must be strictly sequential (no tears/gaps)";
     EXPECT_EQ(consumed, TOTAL);
 }
+
+TEST(AudioRingBuffer_Test, ClearDropsQueuedContent)
+{
+    // clear() must reset OCCUPANCY, not just zero the bytes: zeroing alone
+    // turns stale audio into queued silence that still delays everything
+    // behind it (the 200-1000 ms post-reroute lag regression)
+    AudioRingBuffer<int16_t, 1024> ring;
+    int16_t data[512] = {};
+    ring.enqueue(data, 512);
+    ASSERT_EQ(ring.getOccupancyStereoFrames(), 256u);
+
+    ring.clear();
+    EXPECT_EQ(ring.getOccupancyStereoFrames(), 0u)
+        << "clear() must drop queued content, not merely silence it";
+}
+
+TEST(AudioRingBuffer_Test, DiscardAdvancesReadPointer)
+{
+    AudioRingBuffer<int16_t, 1024> ring;
+    int16_t data[600];
+    for (int i = 0; i < 600; i++)
+        data[i] = static_cast<int16_t>(i);
+    ring.enqueue(data, 600);
+    ASSERT_EQ(ring.getOccupancyStereoFrames(), 300u);
+
+    // Drop 200 samples (100 frames); the next dequeue starts at sample 200
+    EXPECT_EQ(ring.discard(200), 200u);
+    EXPECT_EQ(ring.getOccupancyStereoFrames(), 200u);
+
+    int16_t out[4] = {};
+    ring.dequeue(out, 4);
+    EXPECT_EQ(out[0], 200);
+    EXPECT_EQ(out[1], 201);
+
+    // Discard beyond occupancy clamps to what exists
+    EXPECT_EQ(ring.discard(100000), 396u);
+    EXPECT_EQ(ring.getOccupancyStereoFrames(), 0u);
+}

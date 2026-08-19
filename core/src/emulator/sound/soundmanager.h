@@ -130,6 +130,33 @@ public:
     // SoundAdaptivity.AVLatencyBudget.
     static constexpr double DRC_TARGET_MS = 40.0;
 
+    // Emergency-refill trigger (MainLoop): produce frames back-to-back when
+    // ring occupancy collapses below this. MUST sit well below the occupancy
+    // sawtooth trough (target - 1 frame ~= 20 ms on Pentagon): production is
+    // bursty, so instantaneous occupancy legitimately dips that far every
+    // frame cycle. A threshold above the trough makes the "emergency" path
+    // fire routinely, injecting extra frames and spiking occupancy ~+20 ms -
+    // the DRC then fights the refill forever. (This exact regression shipped
+    // when the target moved 70 -> 40 ms with the old 2048-frame (~46 ms)
+    // threshold left in place.) Guarded by SoundAdaptivity.AVLatencyBudget.
+    static constexpr double EMERGENCY_REFILL_MS = 15.0;
+
+    // Hard-resync trigger (frontend device callback): occupancy beyond this
+    // is unrecoverable by the DRC's +-0.5% trim in reasonable time (draining
+    // 500 ms excess would take minutes) - the consumer discards down to
+    // DRC_TARGET_MS in one step and tracking restarts from there. Reached
+    // only through abnormal events (device re-init windows, long stalls).
+    static constexpr double HARD_RESYNC_MS = 160.0;  // 4x target
+
+    /// Restart the DRC controller state (EMA seed + integrator): called on
+    /// device re-establishment so tracking resumes from the fresh occupancy
+    /// instead of stale pre-reroute state
+    void resetDrcController()
+    {
+        _drcOccFiltered = -1.0;
+        _drcErrIntegral = 0.0;
+    }
+
 protected:
     static constexpr double DRC_MAX_TRIM = 0.005;
     static constexpr double DRC_KP = 0.08;

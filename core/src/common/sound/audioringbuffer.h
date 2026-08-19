@@ -38,9 +38,30 @@ public:
         clear();
     }
 
+    /// Drop all queued content and zero the storage. NOTE: dropping is done
+    /// by advancing the read pointer to the write pointer - zeroing the bytes
+    /// alone (the old behavior) leaves occupancy intact and turns stale audio
+    /// into queued SILENCE that still delays everything behind it (observed
+    /// as 200-1000 ms A/V lag after device reroute: the slow device re-init
+    /// window's production stayed queued forever).
     void clear()
     {
+        _readPtr.store(_writePtr.load(std::memory_order_acquire), std::memory_order_release);
         std::fill(_buffer, _buffer + Size, 0);
+    }
+
+    /// Drop up to `samples` queued samples (consumer side: advances the read
+    /// pointer, SPSC-safe only from the consumer thread). Returns samples
+    /// actually dropped. Used for hard resync when occupancy overshoots far
+    /// beyond what the DRC's +-0.5% trim could ever drain.
+    size_t discard(size_t samples)
+    {
+        const size_t readPtr = _readPtr.load(std::memory_order_relaxed);
+        const size_t writePtr = _writePtr.load(std::memory_order_acquire);
+        const size_t available = (writePtr - readPtr + Size) % Size;
+        const size_t toDrop = std::min(samples, available);
+        _readPtr.store((readPtr + toDrop) % Size, std::memory_order_release);
+        return toDrop;
     }
 
     /// Total capacity in stereo frames (Size is in interleaved samples)

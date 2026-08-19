@@ -1,5 +1,10 @@
 # unreal-ng — Audio Clock, Rate Control and A/V Synchronisation
 
+> **Implemented.** The living operating manual - architecture, latency
+> budget, constants and the post-ship field notes (every desync bug found
+> and its regression guard) - is `docs/emulator/design/audio/drc-rate-control.md`.
+> This document remains the original design and defect analysis.
+
 **Status:** design proposal
 **Scope:** `core/src/emulator/sound/`, `core/src/emulator/mainloop.cpp`, `unreal-qt/src/emulator/soundmanager.cpp`, plus the future SDL3 client
 **Goal:** a single, drift-free audio clock; continuous (not stepwise) rate correction; video decoupled from both, so that display refresh rate becomes irrelevant to correctness.
@@ -138,7 +143,7 @@ The AY path (`soundchip_turbosound.cpp`, phase-accumulator decimation) needs the
 Sampled once per frame, in the emulation thread, immediately before enqueue:
 
 ```cpp
-constexpr double TARGET_MS   = 70.0;   // ring occupancy setpoint
+constexpr double TARGET_MS   = 70.0;   // ring occupancy setpoint (as designed; see update note below)
 constexpr double MAX_TRIM    = 0.005;  // ±0.5 %  ≈ ±8.6 cents, inaudible
 constexpr double KP          = 0.08;
 constexpr double KI          = 0.0008;
@@ -213,6 +218,16 @@ Emergency path to retain: if occupancy hits zero, skip the sleep entirely and pr
 - Expose `getAvailableData()` results in stereo frames, not `int16_t` counts, to end the D5 unit confusion.
 - Add a `getOccupancyFrames()` accessor with acquire semantics for cross-thread read.
 - Size: 371 ms is generous; keep it. Target 70 ms leaves 5× headroom for scheduler hiccups and lets `TARGET_MS` be raised on Bluetooth output without resizing.
+
+> **Update (2026-08, post-ship):** the target IS the audio presentation
+> delay - 70 ms proved audibly late and was lowered to **40 ms**
+> (`DRC_TARGET_MS`), with video presentation delayed 2 frames to match
+> (net A/V ~= +11 ms). Ring capacity later grew to ~1.5 s with 192 kHz
+> support, which made overfill bugs far more visible; a hard-resync path
+> (one-step discard to target at >160 ms) was added. The emergency-refill
+> threshold is now rate-aware (15 ms) and calibrated against the occupancy
+> sawtooth trough, not the setpoint. Full rationale and the regression
+> history: `docs/emulator/design/audio/drc-rate-control.md`.
 - Make `_enqueueErrorCount` / `_dequeueErrorCount` observable (log once per second when nonzero). Under DRC these should be permanently zero; if they aren't, the controller isn't converging and that is worth knowing.
 
 ---
@@ -261,7 +276,7 @@ There is no panel rate that makes this exact, so **do not attempt vsync-lock**. 
 1. Emulation thread writes completed frames into a triple buffer and never blocks on the presenter.
 2. Presenter (SDL3 renderer) draws the most recent complete frame each vsync. At 60 Hz panel and ~49 emulated fps this duplicates roughly every fifth frame; the duplication is regular and reads as far less objectionable than a stutter caused by the audio clock being yanked.
 3. Optional quality setting for scrolling-sensitive users: set the panel to 50 Hz for ZX48 machines via `SDL_SetWindowFullscreenMode` with a 50 Hz mode. Judder then drops to one duplicated frame per 12.5 s. Leave Pentagon at 60 Hz — 49 Hz would judder three times as often.
-4. Never let the presenter's timing feed back into emulation pacing. A/V offset is now defined solely as ring occupancy (~70 ms), and is stable because DRC holds it there.
+4. Never let the presenter's timing feed back into emulation pacing. A/V offset is now defined solely as ring occupancy (~70 ms as designed; 40 ms as shipped, with a matching 2-frame video present delay - see the operating manual), and is stable because DRC holds it there.
 
 Expose the panel-rate choice as a setting rather than hardcoding it: on desktop the same code runs at 144 Hz or on a VRR display where the question is moot.
 
@@ -291,6 +306,13 @@ Measurable, and the project already has the instrumentation:
 **A. Sample-count exactness.** Run 10 emulated minutes headless (`core/automation/cli`), count samples delivered to the callback. Expected Pentagon@44.1k: `round(600 × 48.828125 × 903.168)` = 26 460 000 ± 1. Current code is short by ~4900 samples.
 
 **B. Occupancy stability.** Log ring occupancy each frame for 10 minutes. Criterion: mean within ±3 ms of `TARGET_MS`, standard deviation < 5 ms, no sample outside 20–150 ms, `_enqueueErrorCount == _dequeueErrorCount == 0`.
+
+> **Update (2026-08):** with `TARGET_MS = 40`, instantaneous occupancy is a
+> sawtooth swinging ±1 full frame around the setpoint by construction -
+> judge the EMA-filtered value against the ±3 ms criterion, and the
+> instantaneous band as roughly [target − 1 frame, target + 1 frame].
+> Much of this acceptance now runs automatically: see the regression-guard
+> table in `drc-rate-control.md` §8.
 
 **C. Pitch stability.** Emit a steady AY tone; capture via `AudioFileHelper`; run `AudioHelper::detectBaseFrequencyFFT` over successive 1-second windows. Criterion: frequency spread < 0.1 % across the run, no step discontinuities (the current watermark kick shows up here as a visible staircase).
 

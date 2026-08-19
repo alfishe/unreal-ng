@@ -7,6 +7,7 @@
 #include "3rdparty/message-center/eventqueue.h"
 #include "common/modulelogger.h"
 #include "common/timehelper.h"
+#include "emulator/sound/soundmanager.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
@@ -142,10 +143,16 @@ void MainLoop::Run(volatile bool& stopRequested)
             // empty (cold start, debugger stall, disk hitch), skip the sleep
             // and produce frames back-to-back until occupancy recovers -
             // DRC's +-0.5% trim is far too slow for bulk refill.
-            constexpr uint32_t EMERGENCY_REFILL_FRAMES = 2048;  // ~46ms @44.1k, ~= DRC 40ms target (controller trims the small excess)
+            // Threshold is rate-aware and deliberately far below the DRC
+            // target: the occupancy sawtooth dips ~1 frame below target every
+            // cycle, and the refill must NEVER fire in steady state (see
+            // SoundManager::EMERGENCY_REFILL_MS)
+            const uint32_t devRate = _context->pAudioDeviceSampleRate.load(std::memory_order_relaxed);
+            const uint32_t refillThresholdFrames = static_cast<uint32_t>(
+                (devRate ? devRate : AUDIO_SAMPLING_RATE) * SoundManager::EMERGENCY_REFILL_MS / 1000.0);
             const std::atomic<uint32_t>* occCell =
                 _context->pAudioRingOccupancy.load(std::memory_order_acquire);
-            if (occCell && occCell->load(std::memory_order_relaxed) < EMERGENCY_REFILL_FRAMES)
+            if (occCell && occCell->load(std::memory_order_relaxed) < refillThresholdFrames)
             {
                 _nextFrameTime = now;  // Re-anchor: refill burst must not distort the cadence after
                 continue;

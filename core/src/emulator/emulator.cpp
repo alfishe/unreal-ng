@@ -595,6 +595,13 @@ void Emulator::SetAudioDeviceSampleRate(uint32_t rate)
 {
     _context->pAudioDeviceSampleRate.store(rate, std::memory_order_release);
 
+    // Device (re)established: restart DRC tracking from the fresh occupancy
+    // instead of stale pre-reroute EMA/integrator state
+    if (_context->pSoundManager)
+    {
+        _context->pSoundManager->resetDrcController();
+    }
+
     // CoreRate=auto: a device-rate CHANGE (hotplug / reroute at a different
     // native rate) requests a full pipeline re-rate - every digital filter
     // re-derives for the new core rate at the next frame boundary on the
