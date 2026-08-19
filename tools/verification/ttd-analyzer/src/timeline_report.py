@@ -29,26 +29,28 @@ from .ttd_format import (
 # Spectrum model ID table — must mirror eModelIds in the engine.
 # Unknown IDs render as a generic label so the report stays useful when
 # new models land without an analyzer update.
+# Mirrors MEM_MODEL in core/src/emulator/platform.h. Keep the order in sync -
+# the dump stores the raw enum value, and this table used to start at
+# "Spectrum 48K", which shifted every name by one and reported a Pentagon
+# recording as a 48K machine with 512 KB of RAM.
 _MODEL_NAMES = {
-    0: "Spectrum 48K",
-    1: "Spectrum 128K",
-    2: "Pentagon 128K",
-    3: "Pentagon 512K",
-    4: "Pentagon 1024",
-    5: "Scorpion 256",
-    6: "Scorpion 1024",
-    7: "Profiman 7.1 (Profi)",
-    8: "Kay 1024",
-    9: "ATM 1",
-    10: "ATM 2",
-    11: "ATM 3",
-    12: "TS-Conf",
-    13: "Spectrum +2",
-    14: "Spectrum +2A",
-    15: "Spectrum +3",
-    16: "Quorum 512",
-    17: "GMX",
-    18: "LSY 256",
+    0: "Pentagon 128/256/512/1024K",
+    1: "Spectrum 48K",
+    2: "Spectrum 128K/+2A",
+    3: "Spectrum +2B/+3",
+    4: "TS-Conf",
+    5: "ATM Turbo 3.0",
+    6: "ATM Turbo 7.1.0",
+    7: "ATM Turbo 4.5.0",
+    8: "Profi 1024K",
+    9: "Scorpion ZS256",
+    10: "Scorpion ZS256 + ProfROM",
+    11: "GMX",
+    12: "Kay 1024",
+    13: "Quorum",
+    14: "LSY256",
+    15: "Phoenix",
+    16: "ZX Next",
 }
 
 

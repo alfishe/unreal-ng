@@ -22,4 +22,6 @@ else
     PY="python3"
 fi
 
-exec "$PY" src/main.py "$@"
+# src/main.py uses package-relative imports ("from . import __version__"), so it
+# has to run as a module - launching it as a script raises ImportError.
+exec "$PY" -m src.main "$@"

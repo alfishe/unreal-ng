@@ -922,7 +922,12 @@ void MainWindow::handleStartButton()
         EmulatorManager* test = EmulatorManager::GetInstance();
 
         // Create a new emulator instance (use local var - adoptEmulator will set _emulator)
-        auto newEmulator = _emulatorManager->CreateEmulator("test", LoggerLevel::LogInfo);
+        //
+        // The symbolic id is not decoration: it identifies the instance in the
+        // manager, in log lines, and it is what TTD stores as emulator_id in a
+        // session dump. It used to be "test", which is what every recording made
+        // from this app was labelled with.
+        auto newEmulator = _emulatorManager->CreateEmulator("unreal-qt", LoggerLevel::LogInfo);
 
         // Initialize emulator instance
         if (newEmulator)
