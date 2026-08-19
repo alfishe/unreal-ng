@@ -58,12 +58,19 @@ static_assert((uint8_t)UNZXKeyExtDblQuote == (uint8_t)ZXKEY_EXT_DBLQUOTE, "ZX ke
 
 @class UNEmulatorBridge;
 
-/// Private hooks the C++ observer calls back into.
+/// Private hooks the C++ observer calls back into. Everything here is implemented
+/// in the matching category below.
 @interface UNEmulatorBridge (CoreCallbacks)
 - (void)coreDidRenderFrame;
 - (void)coreDidChangeResolution;
 - (void)coreDidChangeState;
 - (void)coreWantsMoreAudio;
+@end
+
+/// Internal to the main @implementation. It used to be declared in the category
+/// above while being implemented in the main block, which is what the compiler
+/// meant by "method definition for 'refreshFramebufferDescriptor' not found".
+@interface UNEmulatorBridge ()
 - (void)refreshFramebufferDescriptor;
 @end
 

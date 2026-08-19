@@ -5,13 +5,15 @@
 #include <iostream>
 #include <cmath>
 
-// Constants
-const double pi = 3.14159265358979323846;
-
 // LPF filter class
 class LowPassFilter
 {
 private:
+    // Scoped deliberately. As a global in a header this collided with CarbonCore's
+    // own `pi` (fp.h), which macOS deprecated in 10.8 - every translation unit that
+    // reached this header through emulatorcontext.h then warned.
+    static constexpr double kPi = 3.14159265358979323846;
+
     double omega;
     double alpha;
     double yPrev;
@@ -20,8 +22,8 @@ private:
 public:
     LowPassFilter(double cutoffFrequency, double samplingFrequency)
     {
-        omega = 2.0 * pi * cutoffFrequency / samplingFrequency;
-        alpha = sin(omega) / (2.0 * pi * cutoffFrequency);
+        omega = 2.0 * kPi * cutoffFrequency / samplingFrequency;
+        alpha = sin(omega) / (2.0 * kPi * cutoffFrequency);
         yPrev = 0.0;
         yPrev2 = 0.0;
     }

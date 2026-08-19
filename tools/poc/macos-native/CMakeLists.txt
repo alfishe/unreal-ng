@@ -36,7 +36,10 @@ set(CMAKE_OBJCXX_STANDARD 20)
 set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
 
 if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "macOS deployment target" FORCE)
+    # 14.0, not 13.0: SwiftUI deprecated the single-parameter onChange(of:perform:)
+    # in 14 and the replacement exists only there. An `if #available` does not help -
+    # Swift warns on a deprecated call whether or not it is reachable.
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0" CACHE STRING "macOS deployment target" FORCE)
 endif()
 
 if(NOT CMAKE_BUILD_TYPE)

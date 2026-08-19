@@ -291,18 +291,18 @@ struct ContentView: View {
             // Boot the machine straight into BASIC, like a real Spectrum
             controller.start()
         }
-        .onChange(of: showStatusBar) { visible in
+        .onChange(of: showStatusBar) { _, visible in
             // Growing/shrinking the content by the bar's height keeps the picture an
             // exact integer multiple instead of stealing 22pt from it.
             windowManager.statusBarVisible = visible
         }
-        .onChange(of: controller.frameSize) { size in
+        .onChange(of: controller.frameSize) { _, size in
             windowManager.update(frameSize: size)
         }
         // Fires only after SwiftUI has re-evaluated this body, i.e. the status bar is
         // genuinely out of the tree. The fullscreen transition waits for this before
         // handing over to AppKit - see whenChromeSettled.
-        .onChange(of: windowManager.chromeHidden) { _ in
+        .onChange(of: windowManager.chromeHidden) {
             windowManager.chromeDidApply()
         }
     }
