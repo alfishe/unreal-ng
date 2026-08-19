@@ -747,10 +747,19 @@ QString AudioSettingsWidget::buildDeviceDetailText() const
 
     const uint32_t rate = dev->sampleRate.load(std::memory_order_relaxed);
     const double frameToMs = rate ? 1000.0 / rate : 0.0;
-    const double ringMs = dev->occupancyMs();
+    const double ringInstantMs = dev->occupancyMs();
+
+    // Ring occupancy is a SAWTOOTH (a whole emulated frame lands at once,
+    // then drains continuously): the instantaneous value swings +-1/2 frame
+    // (~10 ms) around the setpoint depending on sampling phase. The
+    // DRC-filtered EMA is the stable figure - per-sample latency is
+    // constant; use it for the A/V offset so the readout doesn't wander.
+    const double ringFilteredMs = _context->pSoundManager->getDrcFilteredOccupancyMs();
+    const double ringMs = (ringFilteredMs > 0.0) ? ringFilteredMs : ringInstantMs;
+
     const double hwMs = dev->deviceBufferFrames.load(std::memory_order_relaxed) * frameToMs;
     const double devOutMs = dev->deviceOutputLatencyFrames.load(std::memory_order_relaxed) * frameToMs;
-    const double audioMs = dev->audioLatencyMs();
+    const double audioMs = ringMs + hwMs + devOutMs;
     const double videoMs = _context->pVideoPresentLatencyUs.load(std::memory_order_relaxed) / 1000.0;
 
     QString text;
@@ -759,8 +768,9 @@ QString AudioSettingsWidget::buildDeviceDetailText() const
                 .arg(rate)
                 .arg(dev->channels.load(std::memory_order_relaxed));
     text += QString("Core rate: %1 Hz\n").arg(_context->pSoundManager->getCoreRate());
-    text += QString("Audio delay: ring %1 ms + HW %2 ms + device output %3 ms = %4 ms\n")
+    text += QString("Audio delay: ring %1 ms (%2 now) + HW %3 ms + device output %4 ms = %5 ms\n")
                 .arg(ringMs, 0, 'f', 1)
+                .arg(ringInstantMs, 0, 'f', 1)
                 .arg(hwMs, 0, 'f', 1)
                 .arg(devOutMs, 0, 'f', 1)
                 .arg(audioMs, 0, 'f', 1);
