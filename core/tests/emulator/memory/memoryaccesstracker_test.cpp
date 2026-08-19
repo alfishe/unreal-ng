@@ -55,6 +55,10 @@ void MemoryAccessTracker_Test::SetUp()
     // Make sure tracker is initialized
     ASSERT_NE(_tracker, nullptr) << "MemoryAccessTracker was not initialized in Memory";
 
+    // Start a memory tracking session - TrackMemoryRead/Write/Execute are gated by
+    // IsMemoryCapturing(), which requires feature flags AND an active capturing session
+    _tracker->StartMemorySession();
+
     // Initialize some test data in memory
     for (uint16_t i = 0; i < 0x100; i++)
     {

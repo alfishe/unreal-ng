@@ -13,6 +13,7 @@
 #include "emulator/notifications.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
+#include "emulator/video/ulacontention.h"
 #include "stdafx.h"
 
 /// region <Constructors / Destructors>
@@ -395,10 +396,15 @@ void Z80::Z80FrameCycle()
     while (cpu.t < frameLimit)
     {
         // Handle interrupts if arrived
-        ProcessInterrupts(int_occurred, int_start, int_end);
+        // Returns true if INT was handled - in that case, skip Z80Step for this iteration
+        // because INT entry IS the "instruction" that consumes this cycle
+        bool intHandled = ProcessInterrupts(int_occurred, int_start, int_end);
 
-        // Perform single Z80 command cycle
-        Z80Step();
+        if (!intHandled)
+        {
+            // Perform single Z80 command cycle
+            Z80Step();
+        }
 
         // Update peripheral states after CPU cycle
         OnCPUStep();
@@ -462,9 +468,28 @@ uint8_t Z80::m1_cycle()
 /// \return
 uint8_t Z80::rd(uint16_t addr, bool isExecution)
 {
+    // ULA memory contention: accessing contended memory (0x4000-0x7FFF; on
+    // 128K also 0xC000+ with an odd page mapped) during screen rendering on
+    // ZX-48K/128K stalls the CPU.
+    if (!isExecution)
+    {
+        UlaContention* ula = _context->pUlaContention;
+        if (ula && ula->IsAddressContended(addr))
+        {
+            uint8_t delay = ula->GetContentionDelay();
+            if (delay > 0)
+                IncrementCPUCyclesCounter(delay);
+        }
+    }
+
     IncrementCPUCyclesCounter(3);
 
-    return (_memory->*MemIf->MemoryRead)(addr, isExecution);
+    uint8_t value = (_memory->*MemIf->MemoryRead)(addr, isExecution);
+
+    if (busTraceHook)
+        busTraceHook('R', addr, value);
+
+    return value;
 }
 
 /// Dispatching memory write method. Used directly from Z80 microcode (CPULogic and opcode)
@@ -473,27 +498,93 @@ uint8_t Z80::rd(uint16_t addr, bool isExecution)
 /// \param val
 void Z80::wd(uint16_t addr, uint8_t val)
 {
+    // ULA memory contention: accessing contended memory (0x4000-0x7FFF; on
+    // 128K also 0xC000+ with an odd page mapped) during screen rendering on
+    // ZX-48K/128K stalls the CPU.
+    {
+        UlaContention* ula = _context->pUlaContention;
+        if (ula && ula->IsAddressContended(addr))
+        {
+            uint8_t delay = ula->GetContentionDelay();
+            if (delay > 0)
+                IncrementCPUCyclesCounter(delay);
+        }
+    }
+
     IncrementCPUCyclesCounter(3);
 
     (_memory->*MemIf->MemoryWrite)(addr, val);
+
+    if (busTraceHook)
+        busTraceHook('W', addr, val);
 }
 
 uint8_t Z80::in(uint16_t port)
 {
+    // ULA IO contention: accessing contended ports during screen rendering
+    // on ZX-48K/128K delays the CPU by the contention pattern.
+    // This is critical for accurate timing of raster-sync effects.
+    {
+        UlaContention* ula = _context->pUlaContention;
+        if (ula)
+        {
+            uint8_t delay = ula->GetIOContentionDelay(port);
+            if (delay > 0)
+                IncrementCPUCyclesCounter(delay);
+        }
+    }
+
     PortDecoder& portDecoder = *_context->pPortDecoder;
 
-    // Let model-specific decoder to process port output
+    // Let model-specific decoder to process port input
     uint8_t result = portDecoder.DecodePortIn(port, m1_pc);
+
+    if (busTraceHook)
+        busTraceHook('I', port, result);
+
+    // Floating bus: if no hardware device decoded the port, the ULA returns
+    // the video byte currently on the data bus.
+    // On ZX-48K/128K, any port with A0=1 (odd port) that isn't handled
+    // by a specific device returns the floating bus value.
+    // IMPORTANT: ports decoded by real hardware (WD1793, Kempston, etc.)
+    // must NOT get the floating bus override even if they return 0xFF.
+    if (!portDecoder.WasLastPortDecoded() && (port & 0x0001))
+    {
+        UlaContention* ula = _context->pUlaContention;
+        if (ula)
+        {
+            uint8_t floatVal = ula->GetFloatingBus();
+            if (floatVal != 0xFF)
+                result = floatVal;
+        }
+    }
 
     return result;
 }
 
 void Z80::out(uint16_t port, uint8_t val)
 {
+    // ULA IO contention: accessing contended ports during screen rendering
+    // on ZX-48K/128K delays the CPU by the contention pattern.
+    // This must be applied BEFORE the port write so that SetBorderColor()
+    // sees the correct (delayed) t-state.
+    {
+        UlaContention* ula = _context->pUlaContention;
+        if (ula)
+        {
+            uint8_t delay = ula->GetIOContentionDelay(port);
+            if (delay > 0)
+                IncrementCPUCyclesCounter(delay);
+        }
+    }
+
     PortDecoder& portDecoder = *_context->pPortDecoder;
 
     // Let model-specific decoder to process port output
     portDecoder.DecodePortOut(port, val, m1_pc);
+
+    if (busTraceHook)
+        busTraceHook('O', port, val);
 }
 
 void Z80::retn() {}
@@ -539,10 +630,11 @@ void Z80::RequestNonMaskedInterrupt() {}
 /// \param int_occurred
 /// \param int_start
 /// \param int_end
-void Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_end)
+bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_end)
 {
     Z80& cpu = *this;
     VideoControl& video = _context->pScreen->_vid;
+    bool intHandled = false;
 
     // NMI processing
     if (_nmi_pending_count > 0)
@@ -573,7 +665,12 @@ void Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
 
     // Generate INT
     // TODO: move INT forming logic to Screen class since in reality it's formed by ULA / frame counters
-    if (!int_occurred && cpu.t >= int_start)
+    // Strict sampling (cpu.t > int_start): the ULA registers the INT signal one clock
+    // after the raster compare (MiSTer ula.sv: INT <= 1 on the next edge) and the CPU
+    // samples INT only at end-of-instruction edges - an instruction boundary landing
+    // exactly at int_start still sees INT inactive. Inclusive ">=" accepts 1T early,
+    // which shifts interrupt-locked raster effects by one locked state (doc 20).
+    if (!int_occurred && cpu.t > int_start)
     {
         int_occurred = true;
         cpu.int_pending = true;
@@ -594,9 +691,12 @@ void Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
     )
     {
         HandleINT();
+        intHandled = true;  // Signal caller to skip Z80Step this iteration
     }
 
     /// endregion </INT (Non-masked interrupt)>
+
+    return intHandled;
 }
 
 void Z80::HandleNMI(ROMModeEnum mode)
@@ -630,23 +730,31 @@ void Z80::HandleINT(uint8_t vector)
     else
     {
         // IM2
+        // Raw memory access without T-state accounting: the vector fetch time
+        // is already included in interruptDuration below (rd() would add +3T per byte)
         uint16_t vectorAddress = vector + cpu.i * 0x100;
-        interruptHandlerAddress = rd(vectorAddress) + 0x100 * rd(vectorAddress + 1);
+        interruptHandlerAddress = (_memory->*MemIf->MemoryRead)(vectorAddress, false) +
+                                  0x100 * (_memory->*MemIf->MemoryRead)(vectorAddress + 1, false);
     }
     /// endregion </Determine interrupt handler address>
 
     /// region <Calculate INT duration>
 
+    // INT timing per Z80 manual:
+    // IM0/IM1: 13T total (M1=7T for INT ack, M2=3T push PCH, M3=3T push PCL)
+    // IM2: 19T total (M1=7T INT ack, M2=3T push PCH, M3=3T push PCL, M4=3T read VL, M5=3T read VH)
+    // Note: Since ProcessInterrupts() returns true and Z80Step() is skipped,
+    // we add the full INT duration here (no M1 subtraction needed).
     int interruptDuration = 0;
 
     switch (cpu.im)
     {
         case 0:
         case 1:
-            interruptDuration = 13 - 3;  // M1 cycle (3 cycles) is already counted
+            interruptDuration = 13;  // Full IM0/IM1 timing
             break;
         case 2:
-            interruptDuration = 19 - 3;  // M1 cycle (3 cycles) is already counted
+            interruptDuration = 19;  // Full IM2 timing
             break;
         default:
             throw std::logic_error("Unknown interrupt mode detected");
@@ -658,9 +766,12 @@ void Z80::HandleINT(uint8_t vector)
     /// endregion </Calculate INT duration>
 
     // Push return address to stack
+    // Raw memory access without T-state accounting: both stack write cycles
+    // are already included in interruptDuration above (wd() would add +3T per byte).
+    // Same approach as the original Unreal Speccy handle_int (MemIf->wm() without t increment)
     uint16_t sp = cpu.sp;
-    wd(--sp, cpu.pch);
-    wd(--sp, cpu.pcl);
+    (_memory->*MemIf->MemoryWrite)(--sp, cpu.pch);
+    (_memory->*MemIf->MemoryWrite)(--sp, cpu.pcl);
     cpu.sp = sp;
 
     // Jump to interrupt handler

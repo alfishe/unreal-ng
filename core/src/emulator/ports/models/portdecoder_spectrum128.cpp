@@ -69,11 +69,17 @@ uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t port, uint16_t pc)
     /// endregion </Override submodule>
 
     uint8_t result = 0xFF;
+    _lastPortDecoded = false;
 
     if (IsPort_FE(port))
     {
         // Call default implementation
         result = Default_Port_FE_In(port, pc);
+        _lastPortDecoded = true;
+    }
+    else
+    {
+        result = PeripheralPortIn(port);
     }
 
     /// region <Debug logging>
@@ -120,19 +126,24 @@ void PortDecoder_Spectrum128::DecodePortOut(uint16_t port, uint8_t value, uint16
     }
     else
     {
-        // Determine RAM/ROM page where code executed from
-        std::string currentMemoryPage = GetPCAddressLocator(pc);
-        MLOGWARNING("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
+        if (_logger && _logger->GetLevel() <= LoggerLevel::LogWarning)
+        {
+            // Determine RAM/ROM page where code executed from
+            std::string currentMemoryPage = GetPCAddressLocator(pc);
+            MLOGWARNING("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
+        }
     }
 
     /// region <Debug logging>
-
-    // Check if port was not explicitly muted
-    if (!key_exists(_loggingMutePorts, port))
+    if (_logger && _logger->GetLevel() <= LoggerLevel::LogInfo)
     {
-        // Determine RAM/ROM page where code executed from
-        std::string currentMemoryPage = GetPCAddressLocator(pc);
-        MLOGINFO("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
+        // Check if port was not explicitly muted
+        if (!key_exists(_loggingMutePorts, port))
+        {
+            // Determine RAM/ROM page where code executed from
+            std::string currentMemoryPage = GetPCAddressLocator(pc);
+            MLOGINFO("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
+        }
     }
     /// endregion </Debug logging>
 

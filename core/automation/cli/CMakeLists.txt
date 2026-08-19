@@ -1,6 +1,12 @@
 # CLI Automation Module
 project(automation-cli LANGUAGES CXX)
 
+# Recording support - follows the root CMakeLists.txt option (single source of truth
+# for the EmulatorContext/Core struct layout). Declared here so a standalone cli
+# build defaults the same way as the root project; option() never overrides an
+# existing root-level cache entry.
+option(ENABLE_RECORDING "Enable audio/video recording support" ON)
+
 # Get root directory
 get_filename_component(ROOT_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../" ABSOLUTE)
 
@@ -57,6 +63,19 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:ENABLE_WEBAPI_AUTOMATION>
     $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:ENABLE_CLI_AUTOMATION>
 )
+
+# Core layout consistency (prevents ODR violation):
+# ENABLE_RECORDING changes the layout of core classes (EmulatorContext, Core).
+# This target compiles core headers directly without linking unrealng::core,
+# so it does not inherit the PUBLIC define from core/src/CMakeLists.txt.
+# Without it, member offsets diverge between translation units (e.g. CLI reads
+# pRecordingManager where it expects pDebugManager).
+# The recording/src include is required for recordingmanager.h pulled in by
+# emulator/cpu/core.h when recording is enabled.
+if (ENABLE_RECORDING)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_RECORDING)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/recording/src)
+endif()
 
 # Suppress deprecated-declarations warning for pybind11 (uses deprecated _Py_fopen_obj in Python 3.14)
 if (ENABLE_PYTHON_AUTOMATION)

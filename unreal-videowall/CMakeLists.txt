@@ -22,6 +22,11 @@ if (NOT DEFINED ENABLE_CLI_AUTOMATION)
     option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
 endif()
 
+# Recording support - use parent setting if defined
+if (NOT DEFINED ENABLE_RECORDING)
+    option(ENABLE_RECORDING "Enable audio/video recording support" ON)
+endif()
+
 # C++ standard - use parent CMakeLists.txt setting when included from parent
 # (C++20 is now set globally in root CMakeLists.txt for all compilers)
 
@@ -48,6 +53,13 @@ if (ENABLE_AUTOMATION)
     endif()
     set(INCLUDE_AUTOMATION True)
 endif ()
+
+# Add recording library if enabled (skip if target already exists from parent build)
+if (ENABLE_RECORDING)
+    if (NOT TARGET unrealng::recording)
+        add_subdirectory("${ROOT_DIR}/core/recording" recording)
+    endif()
+endif()
 
 # ========================================
 # Platform-specific Qt path detection
@@ -201,7 +213,14 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     "${ROOT_DIR}/core/src"
     "${ROOT_DIR}/core"
     "${ROOT_DIR}/core/automation"
+    "${ROOT_DIR}/core/recording/src"
+    "${ROOT_DIR}/unreal-qt/src"
+    "${ROOT_DIR}/unreal-qt/src/debugger/widgets"
 )
+
+if (ENABLE_RECORDING)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_RECORDING)
+endif()
 
 # Add automation include directories if enabled
 if (ENABLE_AUTOMATION)
@@ -230,7 +249,9 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 # Link all dependencies
 if (APPLE)
     target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)
-    set(common_libraries iconv)
+    # CoreAudio: direct AudioObject property listener for device nominal
+    # sample-rate changes (AppSoundManager nominal-rate watch)
+    set(common_libraries iconv "-framework CoreAudio")
     find_package(Threads REQUIRED)
 elseif (UNIX AND NOT APPLE)
     set(common_libraries -static-libstdc++)
@@ -240,24 +261,27 @@ endif ()
 # Configure automation if enabled
 if (INCLUDE_AUTOMATION)
     # Link with appropriate libraries
+    # Recording is self-contained - no circular dependency with core
     target_link_libraries(${PROJECT_NAME} PRIVATE
         ${common_libraries}
         Qt6::Widgets
         unrealng::automation
+        $<$<BOOL:${ENABLE_RECORDING}>:unrealng::recording>
         ${CMAKE_DL_LIBS}
         Threads::Threads
     )
-    
+
     # Link Winsock and crash handler deps on Windows
     if (WIN32)
         target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32 dbghelp)
     endif ()
 else ()
     # Link without automation
-    target_link_libraries(${PROJECT_NAME} PRIVATE 
+    target_link_libraries(${PROJECT_NAME} PRIVATE
         ${common_libraries}
         Qt6::Widgets
         unrealng::core
+        $<$<BOOL:${ENABLE_RECORDING}>:unrealng::recording>
         Threads::Threads
     )
 endif ()

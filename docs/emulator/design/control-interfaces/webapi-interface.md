@@ -711,7 +711,30 @@ Response contains type-specific fields based on breakpoint type:
 }
 ```
 
-### Keyboard Injection
+## Videowall API
+
+### 8. Set Videowall Single Sync Mode
+**Endpoint**: `POST /api/v1/videowall/singlesync`  
+**Description**: Toggles the Single Emulator Sync mode in the Videowall app, providing 100% synchronized rendering and video recording.  
+
+**Request**:
+```json
+{
+  "enable": true,
+  "emulator_id": "optional-id"
+}
+```
+
+**Response**:
+```json
+{
+  "success": true
+}
+```
+
+## Input API
+
+### 9. Keyboard Inputjection
 
 > **Status**: ✅ Implemented (2026-01)
 

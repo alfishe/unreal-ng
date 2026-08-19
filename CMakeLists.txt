@@ -25,6 +25,10 @@ option(ENABLE_WEBAPI_AUTOMATION "Enable WebAPI automation" ON)
 option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
 option(ENABLE_GDB_AUTOMATION "Enable GDB RSP server automation (GDB TDD G1+)" OFF)
 
+# Recording support (audio/video capture) - must be defined here to ensure consistent
+# struct layout (EmulatorContext) across all compilation units
+option(ENABLE_RECORDING "Enable audio/video recording support" ON)
+
 project(unreal)
 
 # Validate toolchain/dependency compatibility (MSVC+vcpkg OR MinGW+pacman)

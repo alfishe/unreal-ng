@@ -31,6 +31,9 @@ public:
     // Set the current active emulator instance
     void setActiveEmulator(std::shared_ptr<Emulator> emulator);
 
+    // Reset viewport selection to default (Full Overscan)
+    void resetViewportSelection();
+
     // Observer callback for emulator state changes
     void handleEmulatorStateChanged(int id, Message* message);
     void handleEmulatorInstanceCreated(int id, Message* message);
@@ -70,12 +73,16 @@ signals:
     void debuggerToggled(bool visible);
     void logWindowToggled(bool visible);
     void fullScreenToggled();
+    void overscanModeToggled(bool enabled);
+    void viewportChanged(int presetIndex);
 
     // Tools signals
     void intParametersRequested();
     void audioSettingsRequested();
+#ifdef ENABLE_RECORDING
     void videoRecordingRequested();
     void quickRecordRequested(const QString& presetName);
+#endif
 
 private:
     void createFileMenu();
@@ -129,6 +136,15 @@ private:
     QAction* _zoomOutAction;
     QAction* _zoomResetAction;
 
+    // Overscan Menu Actions (Pentagon only)
+    QAction* _overscanAction;
+    QMenu* _viewportMenu;
+    QActionGroup* _viewportGroup;
+    QAction* _viewportFullOverscanAction;
+    QAction* _viewportSymmetricAction;
+    QAction* _viewportStandardAction;
+    QAction* _viewportScreenOnlyAction;
+
     // Run Menu Actions
     QAction* _startAction;
     QAction* _pauseAction;
@@ -161,10 +177,12 @@ private:
     QAction* _intParametersAction;
     QAction* _audioSettingsAction;
     QAction* _screenshotAction;
+#ifdef ENABLE_RECORDING
     QAction* _videoRecordingAction;
 
     // Quick Record submenu
     QMenu* _quickRecordMenu = nullptr;
+#endif
 
     // Help Menu Actions
     QAction* _aboutAction;

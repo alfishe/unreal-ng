@@ -9,8 +9,11 @@
 #include "emulator/memory/rom.h"
 #include "emulator/ports/ports.h"
 #include "emulator/sound/soundmanager.h"
-#include "emulator/recording/recordingmanager.h"
+#ifdef ENABLE_RECORDING
+#include "recordingmanager.h"
+#endif
 #include "emulator/video/screen.h"
+#include "emulator/video/ulacontention.h"
 #include "stdafx.h"
 
 
@@ -51,10 +54,13 @@ protected:
     // VG93* _betaDisk = nullptr;
     WD1793* _betaDisk = nullptr;
     SoundManager* _sound = nullptr;
+#ifdef ENABLE_RECORDING
     RecordingManager* _recordingManager = nullptr;
+#endif
     HDD* _hdd = nullptr;
     VideoControl* _video = nullptr;
     Screen* _screen = nullptr;
+    UlaContention* _ulaContention = nullptr;
 
     ROMModeEnum _mode = ROMModeEnum::RM_NOCHANGE;
     /// endregion </Fields>

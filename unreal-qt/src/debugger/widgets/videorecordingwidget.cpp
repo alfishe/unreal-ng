@@ -22,9 +22,9 @@
 #include <thread>
 #include <vector>
 
-#include "emulator/recording/encoders/gif_encoder.h"
-#include "emulator/recording/encoders/ffmpeg_pipe_encoder.h"
-#include "emulator/recording/encoders/dsd/dsd_encoder.h"
+#include "encoders/gif_encoder.h"
+#include "encoders/ffmpeg_pipe_encoder.h"
+#include "encoders/dsd/dsd_encoder.h"
 #include "benchmarkfeeder.h"
 #include "multitrackdialog.h"
 
@@ -33,10 +33,10 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
-#include "emulator/recording/recordingmanager.h"
-#include "emulator/recording/platform_encoder.h"
-#include "emulator/recording/ffmpeg_probe.h"
-#include "emulator/recording/realtime_estimator.h"
+#include "recordingmanager.h"
+#include "platform_encoder.h"
+#include "ffmpeg_probe.h"
+#include "realtime_estimator.h"
 #include "base/featuremanager.h"
 
 namespace
@@ -53,6 +53,27 @@ void repopulateCombo(QComboBox* combo, const QStringList& items)
     if (idx >= 0)
         combo->setCurrentIndex(idx);
     combo->blockSignals(false);
+}
+
+/// Default filename pattern with {timestamp} placeholder
+const QString kDefaultFilenamePattern = "{timestamp}-recording";
+
+/// Resolve {timestamp} placeholder to actual value
+QString resolveFilenamePattern(const QString& pattern)
+{
+    QString result = pattern;
+    if (result.contains("{timestamp}"))
+    {
+        QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss");
+        result.replace("{timestamp}", timestamp);
+    }
+    return result;
+}
+
+/// Check if path contains our placeholder pattern
+bool hasPlaceholder(const QString& path)
+{
+    return path.contains("{timestamp}");
 }
 }  // namespace
 
@@ -75,6 +96,14 @@ VideoRecordingWidget::VideoRecordingWidget(EmulatorContext* context, QWidget* pa
     _statsTimer = new QTimer(this);
     _statsTimer->setInterval(250);
     connect(_statsTimer, &QTimer::timeout, this, &VideoRecordingWidget::onUpdateStats);
+
+    // Rate readout refresh: cheap atomic reads; tracks device reroutes and
+    // live core-rate changes while the widget is visible
+    _rateInfoTimer = new QTimer(this);
+    _rateInfoTimer->setInterval(1000);
+    connect(_rateInfoTimer, &QTimer::timeout, this, &VideoRecordingWidget::updateAudioRateInfo);
+    _rateInfoTimer->start();
+    updateAudioRateInfo();
 }
 
 VideoRecordingWidget::~VideoRecordingWidget()
@@ -307,10 +336,16 @@ void VideoRecordingWidget::createVideoTab()
     auto* fileLayout = new QHBoxLayout();
     fileLayout->addWidget(new QLabel("File:"));
     _filePathEdit = new QLineEdit();
-    QString defaultDir = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
-    if (defaultDir.isEmpty())
-        defaultDir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
-    _filePathEdit->setText(defaultDir + "/recording.mp4");
+    QSettings settings("unreal-ng", "recording");
+    QString videoDir = settings.value("lastVideoDir").toString();
+    if (videoDir.isEmpty() || !QDir(videoDir).exists())
+    {
+        videoDir = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
+        if (videoDir.isEmpty())
+            videoDir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+    }
+    _filePathEdit->setText(videoDir + "/" + kDefaultFilenamePattern + ".mp4");
+    _filePathEdit->setPlaceholderText(videoDir + "/" + kDefaultFilenamePattern + ".mp4");
     fileLayout->addWidget(_filePathEdit);
     _browseButton = new QPushButton("Browse...");
     fileLayout->addWidget(_browseButton);
@@ -342,10 +377,11 @@ void VideoRecordingWidget::createVideoTab()
 
     regionLayout->addWidget(new QLabel("Size:"));
     _sizeCombo = new QComboBox();
-    _sizeCombo->addItems({"1× native", "2× (recommended)", "3×", "4×"});
+    _sizeCombo->addItems({"1× native", "2× (recommended)", "3×", "4×", "5×", "6×", "7×", "8×"});
     _sizeCombo->setCurrentIndex(1);
     _sizeCombo->setToolTip("Integer nearest-neighbor upscale. 2× or more keeps ZX pixels crisp and\n"
-                           "preserves per-pixel color (multicolor) effects through video chroma subsampling.");
+                           "preserves per-pixel color (multicolor) effects through video chroma subsampling.\n"
+                           "6× fits H.264 (1920×1080), 8× fits H.265 (2560×1440).");
     regionLayout->addWidget(_sizeCombo);
     outputLayout->addLayout(regionLayout);
 
@@ -391,8 +427,21 @@ void VideoRecordingWidget::createAudioTab()
     _audioQualityCombo = new QComboBox();
     _audioQualityCombo->addItems({"128 kbps", "192 kbps", "256 kbps", "320 kbps"});
     _audioQualityCombo->setCurrentIndex(1);
+    _audioQualityCombo->setToolTip("Bitrate applies to lossy formats (MP3, OGG Vorbis) only;\n"
+                                   "WAV and FLAC are lossless and ignore it");
+    // Bitrate is meaningless for lossless formats: the default selection is
+    // WAV (PCM), so start disabled - the format-change handler below manages
+    // the state from then on
+    _audioQualityLabel->setEnabled(false);
+    _audioQualityCombo->setEnabled(false);
     qualityRow->addWidget(_audioQualityCombo);
     formatLayout->addLayout(qualityRow);
+
+    // Live sample-rate readout: audio-only recordings capture at the CORE
+    // rate (native, no resampling); the device rate is shown for reference
+    _audioRateInfoLabel = new QLabel("Capture rate: —");
+    _audioRateInfoLabel->setStyleSheet("color: gray; font-style: italic;");
+    formatLayout->addWidget(_audioRateInfoLabel);
 
     audioLayout->addWidget(formatGroup);
 
@@ -430,10 +479,16 @@ void VideoRecordingWidget::createAudioTab()
     auto* fileLayout = new QHBoxLayout();
     fileLayout->addWidget(new QLabel("File:"));
     _audioFilePathEdit = new QLineEdit();
-    QString defaultDir = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
-    if (defaultDir.isEmpty())
-        defaultDir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
-    _audioFilePathEdit->setText(defaultDir + "/recording.wav");
+    QSettings audioSettings("unreal-ng", "recording");
+    QString audioDir = audioSettings.value("lastAudioDir").toString();
+    if (audioDir.isEmpty() || !QDir(audioDir).exists())
+    {
+        audioDir = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
+        if (audioDir.isEmpty())
+            audioDir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+    }
+    _audioFilePathEdit->setText(audioDir + "/" + kDefaultFilenamePattern + ".wav");
+    _audioFilePathEdit->setPlaceholderText(audioDir + "/" + kDefaultFilenamePattern + ".wav");
     fileLayout->addWidget(_audioFilePathEdit);
     _audioBrowseButton = new QPushButton("Browse...");
     fileLayout->addWidget(_audioBrowseButton);
@@ -550,6 +605,39 @@ void VideoRecordingWidget::connectSignals()
     connect(_stopButton, &QPushButton::clicked, this, &VideoRecordingWidget::onStopRecording);
 
     _signalsConnected = true;
+}
+
+void VideoRecordingWidget::updateAudioRateInfo()
+{
+    if (!_audioRateInfoLabel || !isVisible())
+        return;
+
+    validateContext();
+
+    if (!_context || !_context->pSoundManager)
+    {
+        _audioRateInfoLabel->setText("Capture rate: — (no active emulator)");
+        return;
+    }
+
+    const size_t coreRate = _context->pSoundManager->getCoreRate();
+    QString text = QString("Capture rate: %1 Hz (core, native - no resampling)").arg(coreRate);
+
+    if (const AudioDeviceDescriptor* dev = _context->pAudioDeviceDescriptor.load(std::memory_order_acquire))
+    {
+        const uint32_t devRate = dev->sampleRate.load(std::memory_order_relaxed);
+        text += QString(" · Device: %1 @ %2 Hz")
+                    .arg(QString::fromUtf8(dev->deviceName))
+                    .arg(devRate);
+        if (devRate != 0 && devRate != coreRate)
+            text += " (DRC resamples playback)";
+    }
+
+    // The full text can exceed the window width (long device names): show
+    // an elided readout with the complete text in the tooltip
+    _audioRateInfoLabel->setToolTip(text);
+    const int avail = _audioRateInfoLabel->width() > 50 ? _audioRateInfoLabel->width() - 4 : 400;
+    _audioRateInfoLabel->setText(_audioRateInfoLabel->fontMetrics().elidedText(text, Qt::ElideRight, avail));
 }
 
 void VideoRecordingWidget::refreshFromContext()
@@ -739,13 +827,24 @@ void VideoRecordingWidget::updateFileExtension()
 {
     // The destination path never changes when options change —
     // only the file extension follows the selected container.
-    QString path = _filePathEdit->text();
-    if (path.isEmpty())
-        return;
+    QString newExt = extensionForContainer(_containerCombo->currentText());
 
-    QFileInfo fi(path);
-    QString base = fi.absolutePath() + "/" + fi.completeBaseName();
-    _filePathEdit->setText(base + "." + extensionForContainer(_containerCombo->currentText()));
+    QString path = _filePathEdit->text();
+    if (!path.isEmpty())
+    {
+        QFileInfo fi(path);
+        QString base = fi.absolutePath() + "/" + fi.completeBaseName();
+        _filePathEdit->setText(base + "." + newExt);
+    }
+
+    // Also update the placeholder
+    QString placeholder = _filePathEdit->placeholderText();
+    if (!placeholder.isEmpty())
+    {
+        QFileInfo fi(placeholder);
+        QString base = fi.absolutePath() + "/" + fi.completeBaseName();
+        _filePathEdit->setPlaceholderText(base + "." + newExt);
+    }
 }
 
 void VideoRecordingWidget::onBrowseFile()
@@ -1064,6 +1163,21 @@ void VideoRecordingWidget::onStartRecording()
     if (isAudioOnlyMode())
     {
         QString filename = _audioFilePathEdit->text();
+
+        // Restore default if empty
+        if (filename.trimmed().isEmpty())
+        {
+            filename = _audioFilePathEdit->placeholderText();
+            _audioFilePathEdit->setText(filename);
+        }
+
+        // Resolve {timestamp} placeholder at recording time
+        if (hasPlaceholder(filename))
+        {
+            filename = resolveFilenamePattern(filename);
+            // Don't update the edit field - keep the pattern for next recording
+        }
+
         if (filename.isEmpty())
         {
             QMessageBox::warning(this, "Error", "Please specify an output file path.");
@@ -1149,6 +1263,11 @@ void VideoRecordingWidget::onStartRecording()
 
         if (success)
         {
+            // Save last used directory
+            QFileInfo fi(filename);
+            QSettings settings("unreal-ng", "recording");
+            settings.setValue("lastAudioDir", fi.absolutePath());
+
             _wasRecording = true;
             if (_context && _context->pEmulator)
                 _recordingEmulatorId = _context->pEmulator->GetId();
@@ -1168,6 +1287,21 @@ void VideoRecordingWidget::onStartRecording()
 
     // Video+Audio mode
     QString filename = _filePathEdit->text();
+
+    // Restore default if empty
+    if (filename.trimmed().isEmpty())
+    {
+        filename = _filePathEdit->placeholderText();
+        _filePathEdit->setText(filename);
+    }
+
+    // Resolve {timestamp} placeholder at recording time
+    if (hasPlaceholder(filename))
+    {
+        filename = resolveFilenamePattern(filename);
+        // Don't update the edit field - keep the pattern for next recording
+    }
+
     if (filename.isEmpty())
     {
         QMessageBox::warning(this, "Error", "Please specify an output file path.");
@@ -1237,6 +1371,11 @@ void VideoRecordingWidget::onStartRecording()
 
     if (success)
     {
+        // Save last used directory
+        QFileInfo fi(filename);
+        QSettings settings("unreal-ng", "recording");
+        settings.setValue("lastVideoDir", fi.absolutePath());
+
         _wasRecording = true;
         // Track which emulator instance we started recording on.
         // Recording continues on this instance even if the user switches

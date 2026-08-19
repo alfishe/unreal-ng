@@ -6,6 +6,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/platform.h"
+#include "emulator/video/screen.h"
 
 /// Test fixture for atomic debug stepping methods
 /// All tests verify correctness by checking frame_counter and t-states position
@@ -49,12 +50,6 @@ protected:
     const CONFIG& getConfig()
     {
         return _emulator->GetContext()->config;
-    }
-
-    /// Helper to get paper start t-state (exact value from screen raster descriptor)
-    unsigned getPaperStartTstate()
-    {
-        return _emulator->GetContext()->pScreen->GetPaperStartTstate();
     }
 };
 
@@ -259,21 +254,24 @@ TEST_F(AtomicStepping_Test, RunNScanlines_CrossesFrame)
 
 TEST_F(AtomicStepping_Test, RunUntilNextScreenPixel_FromFrameStart)
 {
+    const CONFIG& config = getConfig();
     uint64_t startFrame = getFrameCounter();
 
-    // Get the actual paper start t-state from screen raster descriptor
-    unsigned paperStartT = getPaperStartTstate();
-
-    // CPU starts near frame start (t≈0), paper area is later in the frame
+    // CPU starts near frame start (t≈0), paper area is ~64 scanlines in
     _emulator->RunUntilNextScreenPixel();
 
     unsigned endT = getCurrentT();
     uint64_t endFrame = getFrameCounter();
 
+    // Derive paper start from the screen's raster state — the same source
+    // RunUntilNextScreenPixel uses. This tracks the active timing model
+    // (e.g. MiSTer-anchored Pentagon raster) instead of hardcoding line 64.
+    unsigned paperStartT = _emulator->GetContext()->pScreen->GetPaperStartTstate();
+
     EXPECT_GE(endT, paperStartT)
         << "Should reach paper area start (expected ~" << paperStartT << ", got " << endT << ")";
 
-    // Should not overshoot by much (Z80 instructions can take 4-23 t-states)
+    // Should not overshoot by much
     EXPECT_LT(endT, paperStartT + 30)
         << "Should not overshoot paper area start";
 
@@ -282,7 +280,9 @@ TEST_F(AtomicStepping_Test, RunUntilNextScreenPixel_FromFrameStart)
 
 TEST_F(AtomicStepping_Test, RunUntilNextScreenPixel_AfterPaperStart)
 {
-    // Advance to scanline 200 (well past paper start)
+    const CONFIG& config = getConfig();
+
+    // Advance to scanline 200 (well past paper start at ~64)
     _emulator->RunUntilScanline(200);
     uint64_t frameAfterPosition = getFrameCounter();
 
@@ -292,8 +292,7 @@ TEST_F(AtomicStepping_Test, RunUntilNextScreenPixel_AfterPaperStart)
     uint64_t endFrame = getFrameCounter();
     unsigned endT = getCurrentT();
 
-    // Get the actual paper start t-state from screen raster descriptor
-    unsigned paperStartT = getPaperStartTstate();
+    unsigned paperStartT = _emulator->GetContext()->pScreen->GetPaperStartTstate();
 
     EXPECT_EQ(endFrame, frameAfterPosition + 1)
         << "Should advance to next frame when already past paper start";
@@ -466,17 +465,20 @@ TEST_F(AtomicStepping_Test, CompoundStepping_ScanlineThenFrame)
     unsigned expectedT = 100 * config.t_line;
     EXPECT_GE(afterScanlineT, expectedT);
 
-    // Then complete the frame
-    // Note: RunFrame() captures current position and returns to that same position
-    // in the next frame to prevent drift
+    // Then advance exactly one frame.
+    // RunFrame uses a persistent intra-frame target (anti-drift): it advances
+    // one full frame while preserving the current raster position, so after
+    // stepping to scanline 100 we should land near scanline 100 of the NEXT frame.
     _emulator->RunFrame();
     uint64_t endFrame = getFrameCounter();
     EXPECT_EQ(endFrame, startFrame + 1) << "Should complete exactly one frame";
 
-    // T-states should be at the same relative position (scanline 100)
+    // T-states should be back at (approximately) the same intra-frame position
     unsigned endT = getCurrentT();
-    EXPECT_GE(endT, expectedT) << "Should return to same position after RunFrame";
-    EXPECT_LT(endT, expectedT + 30) << "Should not overshoot target position";
+    EXPECT_GE(endT, afterScanlineT)
+        << "RunFrame should return to the same intra-frame position (target " << afterScanlineT << ")";
+    EXPECT_LT(endT, afterScanlineT + 30)
+        << "Should not overshoot the preserved intra-frame position by more than one instruction";
 }
 
 TEST_F(AtomicStepping_Test, CompoundStepping_MultipleScanlineSteps)

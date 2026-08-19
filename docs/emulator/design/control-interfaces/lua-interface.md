@@ -93,6 +93,9 @@ sleep(100)
 
 -- Get current timestamp
 time = os.time()
+
+-- Toggle Videowall Single Sync Mode
+videowall_singlesync(true, "emulator-id")
 ```
 
 ### Emulator Object

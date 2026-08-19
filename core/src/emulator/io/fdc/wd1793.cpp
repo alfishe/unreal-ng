@@ -5,13 +5,15 @@
 #include "common/dumphelper.h"
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
-#include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (Item 6 markers)
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulator.h"
 #include "emulator/notifications.h"
 #include "wd1793_collector.h"
 #include "iwd1793observer.h"
+#include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (Item 6 markers)
+#include <cstdio>
+#include <cstring>
 
 /// region <Constructors / destructors>
 
@@ -581,7 +583,7 @@ uint8_t WD1793::getStatusRegister()
         };
 
         // Set head load state based on HLD and HLT signals
-        uint8_t headStatus = (_extStatus & SIG_OUT_HLD) ? WDS_HEADLOADED : 0;
+        uint8_t headStatus = ((_extStatus & SIG_OUT_HLD) && (_beta128Register & 0b0000'1000)) ? WDS_HEADLOADED : 0;
         if (headStatus)
         {
             _statusRegister |= headStatus;
@@ -1286,15 +1288,13 @@ void WD1793::cmdWriteSector(uint8_t value)
         return;
     }
 
-    // Phase 2 Item 6 — record an external-event marker. Disk writes mutate
+    // Phase 2 Item 6 - record an external-event marker. Disk writes mutate
     // sector content; the next time the same sector is read back, the bytes
     // will differ from what a replay-from-checkpoint would produce. The
     // marker makes SeekTo refuse to cross this point silently.
     //
     // Hooked *after* the WP early-return so the marker only fires when the
     // write actually starts. No-op unless the TTD session is Recording.
-    // This runs on the emulator thread (port-write dispatch), so
-    // frame_counter and z80.t are live and meaningful.
     if (_context && _context->pTimeTravelManager)
     {
         char reason[64];
@@ -1433,6 +1433,20 @@ void WD1793::cmdReadTrack(uint8_t value)
         return;
     }
 
+    // Phase 2 Item 6 - record a disk-write marker for the format command.
+    // Write Track reformats an entire track, which is heavily destructive
+    // to replay fidelity.
+    if (_context && _context->pTimeTravelManager)
+    {
+        char reason[64];
+        std::snprintf(reason, sizeof(reason),
+                      "Write Track (format) trk=%u side=%u",
+                      static_cast<unsigned>(_trackRegister),
+                      static_cast<unsigned>(_sideUp));
+        _context->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::DiskWrite, reason);
+    }
+
     uint8_t* rawTrackData = track->getRawTrackData(_trackRegister, _sideUp);
     if (!rawTrackData)
     {
@@ -1518,21 +1532,6 @@ void WD1793::cmdWriteTrack(uint8_t value)
         _statusRegister |= WDS_NOTFOUND;
         transitionFSM(S_END_COMMAND);
         return;
-    }
-
-    // Phase 2 Item 6 — record a disk-write marker for the format command.
-    // Write Track reformats an entire track, which is heavily destructive
-    // to replay fidelity. Hooked after the WP / disk-presence early-returns
-    // so the marker only fires when the format actually starts.
-    if (_context && _context->pTimeTravelManager)
-    {
-        char reason[64];
-        std::snprintf(reason, sizeof(reason),
-                      "Write Track (format) trk=%u side=%u",
-                      static_cast<unsigned>(_trackRegister),
-                      static_cast<unsigned>(_sideUp));
-        _context->pTimeTravelManager->RecordExternalEvent(
-            ttd::TTDExternalEventKind::DiskWrite, reason);
     }
 
     // Set DRQ to request first byte from host (per datasheet: "wait for DRQ service")
@@ -2213,11 +2212,13 @@ void WD1793::processWriteSector()
 {
     _bytesToWrite = _sectorSize;
 
-    // Reset drq_served before requesting the first byte
-    // (startType2Command sets it true for read commands, but write needs it false)
+    // Request the first byte from the host by raising DRQ.
+    // Reset _drq_served BEFORE raising DRQ: unlike reads (where the FDC supplies
+    // the first byte), a write requires the host to service this DRQ before the
+    // first byte cell passes. Without this reset, the stale _drq_served == true
+    // from startType2Command() makes the first byte cell consume the stale Data
+    // Register value, shifting all written data by one byte.
     _drq_served = false;
-
-    // Request the first byte from the host by raising DRQ
     raiseDrq();
     _statusRegister |= WDS_DRQ;
 
@@ -2655,16 +2656,17 @@ void WD1793::processEndCommand()
         }
         
         // Emit notification if disk is now dirty
+        // _context->pEmulator can be null in headless/unit-test contexts
         DiskImage* diskImage = _selectedDrive ? _selectedDrive->getDiskImage() : nullptr;
-        if (diskImage && diskImage->isDirty() && _context->pEmulator)
+        if (diskImage && diskImage->isDirty() && _context && _context->pEmulator)
         {
             // Emit pending write notification
             std::string emulatorId = _context->pEmulator->GetId();
             uint8_t driveId = _drive;  // Currently selected drive index [0..3]
             std::string diskPath = diskImage->getFilePath();
-
+            
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            messageCenter.Post(NC_FDD_DISK_PENDING_WRITE,
+            messageCenter.Post(NC_FDD_DISK_PENDING_WRITE, 
                 new FDDDiskPayload(emulatorId, driveId, diskPath), true);
         }
     }

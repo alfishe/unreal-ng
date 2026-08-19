@@ -7,6 +7,7 @@
 #include "common/filehelper.h"
 #include <filesystem>
 #include "emulator/platform.h"
+#include "emulator/sound/audio.h"
 #include "emulator/memory/memory.h"
 #include <cassert>
 #include <array>
@@ -265,10 +266,11 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 
 	// ULA section (video signal timings)
 	config.intfq = (uint8_t)inimanager.GetLongValue(ula, "int", 50);
-	config.intstart = (unsigned)inimanager.GetLongValue(ula, "instart", 0);
+	config.intstart = (unsigned)inimanager.GetLongValue(ula, "intstart", 0);
 	config.intlen = (unsigned)inimanager.GetLongValue(ula, "intlen", 32);
 	config.t_line = (unsigned)inimanager.GetLongValue(ula, "line", 224);		// CPU cycles per video line
 	config.frame = (unsigned)inimanager.GetLongValue(ula, "frame", 71680);		// ZX48/128: 69888; Pentagon: 71680; ScorpionZS256: 69888;
+	config.frame_duration_us = CalculateFrameDurationUs(config.frame);			// Pentagon: 20480us (48.83 FPS); ZX48/128: 19968us
 	
 	// Speed multiplier: 1x (default), 2x, 4x, 8x, 16x
 		config.speed_multiplier = (uint8_t)inimanager.GetLongValue(ula, "speedmultiplier", 1);
@@ -304,6 +306,36 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	config.sound.covoxFB = (int)inimanager.GetLongValue(sound, "CovoxFB", 0);
 	config.sound.covoxDD = (int)inimanager.GetLongValue(sound, "CovoxDD", 0);
 
+	// Core audio rate: auto | 44100 | 48000 | 88200 | 96000 | 176400 | 192000
+	// (multirate plan phase 6). 0 = auto. Unsupported values fall back to auto.
+	{
+		long rate = inimanager.GetLongValue(sound, "CoreRate", 0);  // "auto" parses as 0
+		switch (rate)
+		{
+			case 0:
+			case 44100:
+			case 48000:
+			case 88200:
+			case 96000:
+			case 176400:
+			case 192000:
+				config.sound.coreRate = (unsigned)rate;
+				break;
+			default:
+				MLOGWARNING("Config: unsupported [SOUND] CoreRate=%ld, using auto", rate);
+				config.sound.coreRate = 0;
+				break;
+		}
+	}
+
+	// VIDEO section
+	// A/V sync video delay: auto (-1) = match the audio path latency
+	// (~2 frames); 0 = lowest input latency (audio trails by the ring depth)
+	{
+		long delay = inimanager.GetLongValue(video, "AVSyncDelayFrames", -1);  // "auto" parses as 0 - use -1 default
+		config.videoPresentDelayFrames = (delay >= -1 && delay <= 3) ? (int)delay : -1;
+	}
+
 	// Emulated model
 	CopyStringValue(inimanager.GetValue(misc, "HIMEM", "PENTAGON", nullptr), line, sizeof line);
 	config.ramsize = inimanager.GetLongValue(misc, "RamSize", 128, nullptr);
@@ -311,6 +343,9 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	// Make sure we're emulating valid model & configuration
 	if (DetermineModel(line, config.ramsize))
 	{
+		// Apply hardware-accurate INT timing defaults based on the selected model
+		ApplyModelTimingDefaults(config);
+
 		result = true;
 	}
 	else
@@ -468,4 +503,88 @@ string Config::PrintModelAvailableRAM(uint32_t availRAM)
 	}
 
 	return ss.str();
+}
+
+void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
+{
+    // Save user-specified INI values (if non-default)
+    unsigned userIntstart = config.intstart;
+    unsigned userIntlen   = config.intlen;
+
+    // Apply hardware-accurate defaults per model.
+    // Values derived from MiSTer HDL ula.sv INT generation logic:
+    //   Pentagon: INT at vc=239, hc=326; converted to our raster geometry (see doc 18):
+    //     paper first pixel at T=17944 (line 80 + 24T, see ScreenZX::CreateTstateLUT),
+    //     real-Pentagon INT-to-paper distance = 17989T (Unreal Speccy conf.paper calibration,
+    //     INT at frame wrap) => intstart = 17944 - 17989 + 71680 = 71635
+    //   ZX-48K:   INT at vc=248, hc=4   → emulator t-state 1794  (2.6% through frame)
+    //   ZX-128K:  INT at vc=248, hc=8   → emulator t-state 2056  (2.9% through frame)
+    switch (config.mem_model)
+    {
+        case MM_PENTAGON:
+            // MiSTer vc=239/hc=326 maps to 71619 in our frame, but our raster window places
+            // paper 24T into the line (framebuffer x = T_in_line*2, paper x∈[48,304)).
+            // +16T aligns INT-to-paper to the real-Pentagon 17989T distance. See doc 18.
+            config.intstart = 71635;
+            config.intlen   = 32;
+            break;
+
+        case MM_SPECTRUM48:
+            config.intstart = 1794;
+            config.intlen   = 32;
+            break;
+
+        case MM_SPECTRUM128:
+        case MM_PLUS3:
+            config.intstart = 2056;
+            config.intlen   = 36;   // ZX-128K ULA has 72-HC INT = 36 T-states
+            break;
+
+        default:
+            // Leave existing values for TSConf, ATM, Scorpion, Profi, etc.
+            break;
+    }
+
+    // Allow INI override if user explicitly set non-default values
+    // (i.e. not the old placeholder values 13/32)
+    if (userIntstart != 0 && userIntstart != 13)
+        config.intstart = userIntstart;
+    if (userIntlen != 0 && userIntlen != 32)
+        config.intlen = userIntlen;
+
+    // Programmatically-requested models also get canonical frame geometry: the
+    // INI in use typically describes a different machine (e.g. the global
+    // Pentagon ini) so its frame/line values must not leak into the requested
+    // model. INI-driven runs (per-model config dirs) pass false and are untouched.
+    if (canonicalGeometry)
+    {
+        switch (config.mem_model)
+        {
+            case MM_SPECTRUM48:
+                config.frame = 69888;   // 224 * 312
+                config.t_line = 224;
+                config.intstart = 1794;
+                config.intlen = 32;
+                break;
+            case MM_SPECTRUM128:
+            case MM_PLUS3:
+                config.frame = 70908;   // 228 * 311
+                config.t_line = 228;
+                config.intstart = 2056;
+                config.intlen = 36;
+                break;
+            case MM_PENTAGON:
+                config.frame = 71680;   // 224 * 320
+                config.t_line = 224;
+                break;
+            default:
+                break;
+        }
+
+        // Invariant: frame_duration_us must be recomputed with config.frame
+        config.frame_duration_us = CalculateFrameDurationUs(config.frame);
+    }
+
+    MLOGINFO("ApplyModelTimingDefaults: model=%d intstart=%u intlen=%u frame=%u line=%u",
+             config.mem_model, config.intstart, config.intlen, config.frame, config.t_line);
 }

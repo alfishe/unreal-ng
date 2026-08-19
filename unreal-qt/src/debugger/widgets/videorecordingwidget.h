@@ -73,6 +73,10 @@ private:
     /// emulator was destroyed (raw pointer can dangle after Release()).
     void validateContext();
 
+    /// Refresh the audio tab's capture-rate readout (core rate = the rate
+    /// audio-only recordings capture at; device native rate for reference)
+    void updateAudioRateInfo();
+
     /// Look up the RecordingManager for the emulator we started recording
     /// with. Returns nullptr if that emulator was destroyed.
     /// When not recording, falls back to the active _context.
@@ -146,6 +150,8 @@ private:
     QComboBox* _audioFormatCombo = nullptr;
     QComboBox* _audioQualityCombo = nullptr;
     QLabel* _audioQualityLabel = nullptr;
+    QLabel* _audioRateInfoLabel = nullptr;  // Live core/device sample-rate readout
+    QTimer* _rateInfoTimer = nullptr;
     QLineEdit* _audioFilePathEdit = nullptr;
     QPushButton* _audioBrowseButton = nullptr;
 

@@ -293,7 +293,9 @@ TEST(TTDCpuStateTest, Capture_DetectsAllArchitecturalChanges)
     EXPECT_FIELD_SEEN([](Z80State& z)->uint8_t& { return z.halted; }, 0x00);
     EXPECT_FIELD_SEEN([](Z80State& z)->uint16_t& { return z.memptr; }, 0xFFFF);
     EXPECT_FIELD_SEEN([](Z80State& z)->uint8_t& { return z.q; }, 0xFF);
-    EXPECT_FIELD_SEEN([](Z80State& z)->uint16_t& { return z.eipos; }, 0xFFFF);
+    // eipos is int32_t in the current Z80State (it stores a t-state position,
+    // not a 16-bit register), so the getter must match or the reference will not bind.
+    EXPECT_FIELD_SEEN([](Z80State& z)->int32_t& { return z.eipos; }, 0xFFFF);
     EXPECT_FIELD_SEEN([](Z80State& z)->uint16_t& { return z.haltpos; }, 0xFFFF);
     EXPECT_FIELD_SEEN([](Z80State& z)->bool& { return z.nmi_in_progress; }, false);
     EXPECT_FIELD_SEEN([](Z80State& z)->bool& { return z.int_pending; }, false);

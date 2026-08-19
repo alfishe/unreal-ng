@@ -10,7 +10,9 @@
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
-#include "emulator/recording/recordingmanager.h"
+#ifdef ENABLE_RECORDING
+#include "recordingmanager.h"
+#endif
 #include "emulator/video/screen.h"
 
 /// region <Logging>
@@ -273,6 +275,13 @@ void FeatureManager::setDefaults()
                      "",
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryDebug});
+    registerFeature({Features::kOverscan,
+                     Features::kOverscanAlias,
+                     Features::kOverscanDesc,
+                     false,  // OFF by default - Pentagon only, demo development
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
 
     _dirty = false;
 }
@@ -381,11 +390,13 @@ void FeatureManager::onFeatureChanged()
         _context->pSoundManager->UpdateFeatureCache();
     }
 
+#ifdef ENABLE_RECORDING
     // Update feature cache in RecordingManager if it exists
     if (_context && _context->pRecordingManager)
     {
         _context->pRecordingManager->UpdateFeatureCache();
     }
+#endif
 
     // Update feature cache in Screen (for ScreenHQ toggle) if it exists
     if (_context && _context->pScreen)

@@ -185,6 +185,7 @@ bool Core::Init()
 
     /// region <Recording manager>
 
+#ifdef ENABLE_RECORDING
     if (result)
     {
         result = false;
@@ -197,9 +198,14 @@ bool Core::Init()
             _context->pRecordingManager = _recordingManager;
             _recordingManager->Init();
 
+            // Recordings must be stamped with the resolved core audio rate
+            // (multirate plan phase 6) - never the 44100 default
+            _recordingManager->SetAudioSampleRate(static_cast<uint32_t>(_sound->getCoreRate()));
+
             result = true;
         }
     }
+#endif
 
     /// endregion </Recording manager>
 
@@ -219,6 +225,46 @@ bool Core::Init()
 
     /// endregion </HDD>
 
+    /// region <Z80>
+
+    if (result)
+    {
+        result = false;
+
+        // Create main Core core instance (Z80)
+        // Note: Z80 must be created before Video controller so that Screen
+        // can capture the Z80 pointer during construction
+        _z80 = new Z80(_context);
+        if (_z80)
+        {
+            UseFastMemoryInterface();  // Use fast memory interface by default
+
+            result = true;
+        }
+    }
+
+    /// endregion </Z80>
+
+    /// region <ULA Contention>
+
+    if (result)
+    {
+        result = false;
+
+        // Create standalone ULA contention component
+        // Must be created after Z80 (needs cpu pointer) and Memory
+        _ulaContention = new UlaContention();
+        if (_ulaContention)
+        {
+            _ulaContention->SetDependencies(_z80, _memory, _context);
+            _context->pUlaContention = _ulaContention;
+
+            result = true;
+        }
+    }
+
+    /// endregion </ULA Contention>
+
     /// region <Video controller>
 
     if (result)
@@ -237,24 +283,6 @@ bool Core::Init()
     }
 
     /// endregion </Video controller>
-
-    /// region <Z80>
-
-    if (result)
-    {
-        result = false;
-
-        // Create main Core core instance (Z80)
-        _z80 = new Z80(_context);
-        if (_z80)
-        {
-            UseFastMemoryInterface();  // Use fast memory interface by default
-
-            result = true;
-        }
-    }
-
-    /// endregion </Z80>
 
     /// region <Ports decoder>
 
@@ -335,12 +363,14 @@ void Core::Release()
         _sound = nullptr;
     }
 
+#ifdef ENABLE_RECORDING
     _context->pRecordingManager = nullptr;
     if (_recordingManager != nullptr)
     {
         delete _recordingManager;
         _recordingManager = nullptr;
     }
+#endif
 
     _context->pScreen = nullptr;
     if (_screen != nullptr)
@@ -389,6 +419,13 @@ void Core::Release()
     {
         delete _memory;
         _memory = nullptr;
+    }
+
+    _context->pUlaContention = nullptr;
+    if (_ulaContention != nullptr)
+    {
+        delete _ulaContention;
+        _ulaContention = nullptr;
     }
 
     if (_z80 != nullptr)
@@ -440,8 +477,10 @@ void Core::Reset()
     _betaDisk->reset();          // BetaDisk floppy controller
     _hdd->Reset();               // Reset IDE controller
     _portDecoder->reset();       // Reset peripheral port decoder (sets model-specific port defaults)
+#ifdef ENABLE_RECORDING
     if (_recordingManager)
         _recordingManager->Reset();  // Reset recording manager (stops active recording, clears counters)
+#endif
 
     messageCenter.Post(topicID, new SimpleTextPayload("Core reset finished"));
 }
@@ -589,6 +628,17 @@ void Core::AdjustFrameCounters()
     // Re-adjust Core frame t-state counter and interrupt position
     _z80->t -= scaledFrame;
     _z80->eipos -= scaledFrame;
+
+    // Drop any stale INT request latched near the frame edge. The ULA INT line
+    // is only asserted inside [intstart, intstart+intlen); ProcessInterrupts
+    // clears int_pending via "t >= int_end", but when an instruction (typically
+    // the INT acceptance itself) carries t across the frame boundary that clear
+    // never fires. The stale flag would then deliver a SECOND interrupt in the
+    // new frame as soon as the program executes EI (observed as 1.5-2x music
+    // speedup in EI:HALT-synced IM2 demos, e.g. Insult megademo). Windows that
+    // legitimately wrap (int_end >= frame) are re-armed at the start of the
+    // next Z80FrameCycle, so unconditional clearing here is hardware-correct.
+    _z80->int_pending = false;
 }
 
 void Core::UpdateScreen()

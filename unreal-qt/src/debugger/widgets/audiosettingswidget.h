@@ -8,6 +8,8 @@
 #include <QGroupBox>
 #include <QLabel>
 #include <QProgressBar>
+#include <QFrame>
+#include <QToolButton>
 #include <QTimer>
 #include <vector>
 
@@ -41,28 +43,27 @@ public:
 
 private slots:
     // Sources section
-    void onSourceMuteChanged(Qt::CheckState state);
-    void onSourceSoloChanged(Qt::CheckState state);
+    void onSourceMuteChanged(int state);
+    void onSourceSoloChanged(int state);
     void onSourceVolumeChanged(int value);
 
     // AY controls
-    void onAYPunchChanged(Qt::CheckState state);
+    void onAYPunchChanged(int state);
     void onAYRoomModeChanged(int index);
-    void onFirChanged(Qt::CheckState state);
+    void onFirChanged(int state);
     void onStereoModeChanged(int index);
     void onChipModelChanged(int index);
 
     // Per-channel controls
-    void onChannelMuteChanged(Qt::CheckState state);
+    void onChannelMuteChanged(int state);
     void onChannelVolumeChanged(int value);
 
     // Beeper controls
-    void onBeeperFilterChanged(Qt::CheckState state);
-    void onBeeperPunchChanged(Qt::CheckState state);
+    void onBeeperPunchChanged(int state);
 
     // Covox controls
-    void onCovoxDCRemovalChanged(Qt::CheckState state);
-    void onCovoxChannelMuteChanged(Qt::CheckState state);
+    void onCovoxDCRemovalChanged(int state);
+    void onCovoxChannelMuteChanged(int state);
 
     // Meter updates
     void onUpdateMeters();
@@ -73,11 +74,18 @@ private:
     void connectSignals();
     void disconnectSignals();
     void updateSoloIndicator();
+    void updateDeviceInfo();
+    QString buildDeviceDetailText() const;  // Full breakdown for the (i) popup
 
     EmulatorContext* _context = nullptr;
 
     // Shown when no emulator is active
     QLabel* _statusLabel = nullptr;
+    QLabel* _deviceInfoLabel = nullptr;   // Compact device/core readout (rarely changes)
+    QToolButton* _deviceInfoButton = nullptr;  // (i): detailed latency/AV breakdown popup
+    QFrame* _detailPopup = nullptr;            // Live-refreshing breakdown popup
+    QLabel* _detailLabel = nullptr;
+    QTimer* _detailTimer = nullptr;
     QWidget* _controlsContainer = nullptr;
 
     // Sources section (registry-driven)
@@ -102,7 +110,6 @@ private:
 
     // Beeper section
     QGroupBox* _beeperGroup = nullptr;
-    QCheckBox* _beeperFilterCheckbox = nullptr;
     QCheckBox* _beeperPunchCheckbox = nullptr;
 
     // SOUNDRIVE/COVOX section (shown only when present)

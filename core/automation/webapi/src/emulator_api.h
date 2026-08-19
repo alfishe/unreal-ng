@@ -277,6 +277,10 @@ public:
     // region Keyboard Injection (implementation: api/keyboard_api.cpp)
     // Key operations
     ADD_METHOD_TO(EmulatorAPI::keyTap, "/api/v1/emulator/{id}/keyboard/tap", drogon::Post);
+    
+    // Videowall API
+    ADD_METHOD_TO(EmulatorAPI::setVideowallSingleSyncMode, "/api/v1/videowall/singlesync", drogon::Post);
+
     ADD_METHOD_TO(EmulatorAPI::keyPress, "/api/v1/emulator/{id}/keyboard/press", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::keyRelease, "/api/v1/emulator/{id}/keyboard/release", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::keyCombo, "/api/v1/emulator/{id}/keyboard/combo", drogon::Post);
@@ -307,6 +311,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::reverseContinueTTD, "/api/v1/emulator/{id}/ttd/reverse-continue", drogon::Post);
     // endregion TTD
     METHOD_LIST_END
+
+    // Videowall API
+    void setVideowallSingleSyncMode(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
 
     // region Root and OpenAPI Methods (implementation: emulator_api.cpp)
     // Root redirect

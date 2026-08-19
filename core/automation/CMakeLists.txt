@@ -20,6 +20,12 @@ option(ENABLE_WEBAPI_AUTOMATION "Enable automation for WebAPI" ON)
 option(ENABLE_CLI_AUTOMATION "Enable automation for CLI" ON)
 option(ENABLE_GDB_AUTOMATION "Enable automation for GDB RSP server (GDB TDD G1+)" OFF)
 
+# Recording support - follows the root CMakeLists.txt option (single source of truth
+# for the EmulatorContext/Core struct layout). Declared here so a standalone automation
+# build defaults the same way as the root project; option() never overrides an existing
+# root-level cache entry.
+option(ENABLE_RECORDING "Enable audio/video recording support" ON)
+
 # NOTE: Python dependency checks are handled by root CMakeLists.txt via DependencyCheck.cmake
 
 # Respect parent's ENABLE_AUTOMATION option
@@ -173,8 +179,10 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 )
 
 # Add conditional compiler definitions for automation modules
-# Must exactly match the definitions in unreal-qt/CMakeLists.txt!!!
+# Both sides derive these from the same cache options, so the definitions
+# automatically match the ones in unreal-qt/CMakeLists.txt.
 target_compile_definitions(${PROJECT_NAME} PRIVATE
+    $<$<BOOL:${ENABLE_AUTOMATION}>:ENABLE_AUTOMATION>
     $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:ENABLE_LUA_AUTOMATION>
     $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:ENABLE_PYTHON_AUTOMATION>
     $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:ENABLE_WEBAPI_AUTOMATION>

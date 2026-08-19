@@ -5,10 +5,9 @@
 #include <cmath>
 #include "common/sound/filters/filter_dc.h"
 #include "common/sound/filters/filter_decimator.h"
-#include "common/sound/filters/filter_decimator_stereo.h"
 #include "common/sound/filters/filter_interpolate.h"
-#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 #include "emulator/ports/portdecoder.h"
+#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 
 /// Information:
 /// See:
@@ -378,10 +377,6 @@ protected:
     FilterInterpolate _rightFIR;
 
     // Native clock decimation filters (218.75 kHz → 44.1 kHz)
-    // Stereo interleaved for better cache locality and fewer function calls
-    FilterDecimatorStereo _stereoDecimator;
-
-    // Legacy mono decimators (kept for compatibility, may be removed)
     FilterDecimator _leftDecimator;
     FilterDecimator _rightDecimator;
 
@@ -413,7 +408,6 @@ public:
     FilterInterpolate& firRight() { return _rightFIR; }
     FilterDecimator& decimatorLeft() { return _leftDecimator; }
     FilterDecimator& decimatorRight() { return _rightDecimator; }
-    FilterDecimatorStereo& stereoDecimator() { return _stereoDecimator; }
 
     double mixedLeft() { return _mixedLeft; }
     double mixedRight() { return _mixedRight; }
@@ -466,29 +460,6 @@ public:
     uint8_t getCurrentRegister() const { return _currentRegister; }
     /// endregion </Debug access methods>
 
-    /// region <TTDSerializable interface (P1.5 — parent TDD §6.4)>
-    ///
-    /// Serializes the complete runtime state of one AY-3-8910 chip:
-    ///   - Register file R0..R15 (CPU-visible; the only part that affects
-    ///     determinism — pFFFD readback exposes these)
-    ///   - _currentRegister (CPU-visible)
-    ///   - 3x ToneGenerator phase (period/counter/volume/flags/out) — audio
-    ///     continuity only, never CPU divergence (parent TDD §5.5)
-    ///   - NoiseGenerator phase (period/counter/out/LFSR)
-    ///   - EnvelopeGenerator phase (shape/period/counter/segment/out)
-    ///
-    /// Excluded (host-side / user-config / transient): audio FIR/decimator/DC
-    /// filters (rebuilt by handleFrameStart), _tick (monotonic), _stereoMode,
-    /// _chipModel, _mixedLeft/Right, _left[]/_right[], per-channel panning /
-    /// mute / user volume.
-    ///
-    /// Layout is cursor-packed (memcpy per field) to stay alignment-safe on
-    /// all targets. See soundchip_ay8910.cpp for the byte-by-byte map.
-    size_t TTDStateSize() const override;
-    void   TTDSaveState(uint8_t* dst) const override;
-    void   TTDLoadState(const uint8_t* src) override;
-    /// endregion </TTDSerializable interface>
-
     /// region <PortDevice interface methods>
     uint8_t portDeviceInMethod(uint16_t port) override;
     void portDeviceOutMethod(uint16_t port, uint8_t value) override;
@@ -516,6 +487,13 @@ public:
     std::string dumpAY8910EnvelopeGeneratorState();
     std::string dumpAY8910VolumeState(uint8_t channel);
     /// endregion <Debug methods>
+
+public:
+    /// region <TTDSerializable interface (P1.5 - parent TDD 6.4)>
+    size_t TTDStateSize() const override;
+    void   TTDSaveState(uint8_t* dst) const override;
+    void   TTDLoadState(const uint8_t* src) override;
+    /// endregion </TTDSerializable interface>
 };
 
 //

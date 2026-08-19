@@ -26,6 +26,12 @@ include(${ROOT_DIR}/cmake/func.cmake)
 
 option(PYTHON_USE_STATIC "Build and link Python statically" ON)
 
+# Recording support - follows the root CMakeLists.txt option (single source of truth
+# for the EmulatorContext/Core struct layout). Declared here so a standalone python
+# build defaults the same way as the root project; option() never overrides an
+# existing root-level cache entry.
+option(ENABLE_RECORDING "Enable audio/video recording support" ON)
+
 if(PYTHON_USE_STATIC)
     message(STATUS "[automation_python] Building static Python from source")
     
@@ -238,6 +244,17 @@ else()
         ${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE_DIR}
         ${ROOT_DIR}/core/src
     )
+
+    # Core layout consistency (prevents ODR violation):
+    # ENABLE_RECORDING changes the layout of core classes (EmulatorContext, Core).
+    # This target compiles core headers directly without linking unrealng::core,
+    # so it does not inherit the PUBLIC define from core/src/CMakeLists.txt.
+    # The recording/src include is required for recordingmanager.h pulled in by
+    # emulator/cpu/core.h when recording is enabled.
+    if (ENABLE_RECORDING)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_RECORDING)
+        target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/recording/src)
+    endif()
 
     if(PYTHON_USE_STATIC)
         # Link against static Python built from source

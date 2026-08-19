@@ -129,8 +129,6 @@ protected:
     size_t _tapePosition;
 
     bool _muteEAR = false;              // Mute EAR output when active tape loading is done (prevent noise clicks)
-    LowPassFilter _lpfFilter;
-    FilterDC<int16_t> _dcFilter;
 
     // Tape input bitstream related
     std::vector<TapeBlock> _tapeBlocks; // Tape representation as parsed TapeBlock vector
@@ -140,6 +138,11 @@ protected:
     size_t _currentPulseIdxInBlock;     // Index in TapeBlock::edgePulseTimings vector
     size_t _currentOffsetWithinPulse;   // How many pulses already processed within single TapeBlock::edgePulseTimings vector element
     uint64_t _currentClockCount;        // Store clock count for next iteration
+    bool _lastTapeBit = false;          // Last tape bit state for band-limited step edge detection
+    bool _tapeBitState = false;         // Digital signal output level of current tape pulse
+
+    uint8_t _initialErrNr = 0;          // ERR_NR value when tape started (to detect change)
+    uint32_t _framesSinceLastRead = 0;  // Frames since last tape IN read (to detect loader exit)
 
     /// endregion </Fields>
 
@@ -166,6 +169,7 @@ public:
     /// region <Emulation events>
 public:
     void handleFrameStart();
+    void handleStep();
     void handleFrameEnd();
     /// endregion </Emulation events>
 

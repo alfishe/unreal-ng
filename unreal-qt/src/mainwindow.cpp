@@ -1,5 +1,8 @@
 #include "mainwindow.h"
 
+#include <algorithm>
+#include <chrono>
+
 #include <stdio.h>
 #include <webapi/src/automation-webapi.h>
 
@@ -31,9 +34,12 @@
 #include "emulator/sound/soundmanager.h"
 #include "emulator/soundmanager.h"
 #include "debugger/widgets/audiosettingswidget.h"
+#ifdef ENABLE_RECORDING
 #include "debugger/widgets/videorecordingwidget.h"
 #include "debugger/widgets/recordingpresets.h"
+#endif
 #include "base/featuremanager.h"
+#include "emulator/video/screen.h"  // For DisplayViewport, ViewportPresets
 // Avoid Qt 'signals' macro conflict with WD1793State::signals member
 #undef signals
 #include "emulator/io/fdc/fdd.h"
@@ -77,11 +83,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Put emulator screen into resizable content frame
     QFrame* contentFrame = ui->contentFrame;
     deviceScreen = new DeviceScreen(contentFrame);
-
-    QHBoxLayout* layout = new QHBoxLayout;
-    layout->addWidget(deviceScreen, Qt::AlignHCenter);
-    contentFrame->setLayout(layout);
-
+    
+    // NOTE: We do NOT use a layout manager for contentFrame. 
+    // DeviceScreen relies on shrinking itself to maintain aspect ratio, which fights Qt layouts.
+    // We manually resize and center it in resizeEvent and showEvent.
     /*
         QSizePolicy dp;
         dp.setHorizontalPolicy(QSizePolicy::Expanding);
@@ -101,6 +106,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     // Init audio subsystem (initialize once, keep running)
     _soundManager = new AppSoundManager();
+
+    // Device reroute (hotplug / OS default-output change) at a different
+    // native rate: republish so the emulator's DRC resampler re-bases its
+    // core->device ratio - no emulator or sound-stack restart needed
+    connect(_soundManager, &AppSoundManager::deviceReinitialized, this, [this](uint32_t sampleRate) {
+        if (_emulator)
+            _emulator->SetAudioDeviceSampleRate(sampleRate);
+    });
+
     {
         QMutexLocker locker(&_audioMutex);
         if (_soundManager->init())
@@ -165,8 +179,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
     connect(_menuManager, &MenuManager::intParametersRequested, this, &MainWindow::handleIntParametersRequested);
     connect(_menuManager, &MenuManager::audioSettingsRequested, this, &MainWindow::handleAudioSettingsRequested);
+    connect(_menuManager, &MenuManager::overscanModeToggled, this, &MainWindow::handleOverscanModeToggled);
+    connect(_menuManager, &MenuManager::viewportChanged, this, &MainWindow::handleViewportChanged);
+#ifdef ENABLE_RECORDING
     connect(_menuManager, &MenuManager::videoRecordingRequested, this, &MainWindow::handleVideoRecordingRequested);
-        connect(_menuManager, &MenuManager::quickRecordRequested, this, &MainWindow::handleQuickRecord);
+    connect(_menuManager, &MenuManager::quickRecordRequested, this, &MainWindow::handleQuickRecord);
+#endif
 
     // Bring application windows to foreground
     debuggerWindow->raise();
@@ -329,8 +347,10 @@ void MainWindow::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
 
-    // Center device screen within content frame
-    updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
+    if (deviceScreen && ui->contentFrame) {
+        deviceScreen->resize(ui->contentFrame->size());
+        updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
+    }
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)
@@ -412,10 +432,23 @@ void MainWindow::closeEvent(QCloseEvent* event)
 
 void MainWindow::resizeEvent(QResizeEvent* event)
 {
-    // deviceScreen->move(this->rect().center() - deviceScreen->rect().center());
+    if (deviceScreen && ui->contentFrame) {
+        deviceScreen->resize(ui->contentFrame->size());
+        updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
 
-    // Keep widget center-aligned. Alignment policy is not working good
-    updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
+        // DeviceScreen::resizeEvent self-resizes to maintain aspect ratio, which invalidates
+        // the position we just set above. Defer re-centering to the next event loop iteration
+        // so it runs after DeviceScreen has settled to its final size.
+        QTimer::singleShot(0, this, [this]() {
+            if (deviceScreen && ui->contentFrame)
+            {
+                updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
+
+                // Repaint contentFrame to clear stale pixels from the previous larger rect
+                ui->contentFrame->update();
+            }
+        });
+    }
 
     // Update normal geometry ONLY when in normal state
     // This preserves the geometry for: normal → maximized → fullscreen → maximized → normal
@@ -528,19 +561,12 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
     // Prevent recursive calls
     QScopedValueRollback<bool> guard(_inHandler, true);
 
-    // Handle maximize state (triggered by green button or double-click)
-    if (newState & Qt::WindowMaximized && !_isFullScreen)
+    // Handle maximize state (triggered by green button or double-click, or returning from fullscreen)
+    if (newState & Qt::WindowMaximized && !(newState & Qt::WindowFullScreen))
     {
         qDebug() << "Maximizing window (macOS)";
 
         _isFullScreen = false;
-
-        // Ensure we're not in fullscreen mode
-        if (windowFlags() & Qt::FramelessWindowHint)
-        {
-            qDebug() << "Clearing frameless window hint";
-            setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
-        }
 
         // Restore normal palette if needed
         if (palette() != _originalPalette)
@@ -558,7 +584,6 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
     {
         qDebug() << "Entering fullscreen (macOS)";
 
-        hide();
         _isFullScreen = true;
 
         // Store previous geometry if we're not already in fullscreen
@@ -576,10 +601,6 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
         // Hide all control elements
         statusBar()->hide();
         startButton->hide();
-
-        // Set frameless window hint for fullscreen
-        setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
-        showFullScreen();
     }
     // Handle restore to normal state
     else if (newState == Qt::WindowNoState)
@@ -591,38 +612,13 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
         // Restore normal styling
         setPalette(_originalPalette);
 
-        // Show controls
+        // Show controls instantly so the layout calculates the correct target geometry for the OS animation.
+        // (Docking manager updates are still deferred in the shortcut handler to prevent stutter).
         statusBar()->show();
         startButton->show();
 
-        // Clear frameless window hint if set
-        if (windowFlags() & Qt::FramelessWindowHint)
-        {
-            qDebug() << "Clearing frameless window hint during restore";
-            setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
-        }
-
-        // Restore all window flags
-        initializePlatformMacOS();
-
-        showNormal();
-
-        // Restore to previous geometry if available
-        if (_normalGeometry.isValid())
-        {
-            qDebug() << "Restoring to normal geometry:" << _normalGeometry;
-            setGeometry(_normalGeometry);
-        }
-        else
-        {
-            qDebug() << "No stored normal geometry available, using default";
-        }
-
-        if (!isVisible())
-        {
-            qDebug() << "Window is not visible after showNormal/flag changes, explicitly calling show().";
-            show();
-        }
+        // macOS natively handles returning to the previous geometry after un-maximizing or exiting fullscreen.
+        // Calling setGeometry explicitly here breaks the native animation.
     }
 
     // Ensure the window is properly updated
@@ -1207,23 +1203,20 @@ void MainWindow::handleFullScreenShortcutMacOS()
         if (_dockingManager)
             _dockingManager->setSnappingLocked(true);
 
-        setWindowFlags(Qt::Window);  // Prevent horizontal transition from full screen to system desktop
-        // Restore previous state and geometry
+        // Do NOT use setWindowFlags(Qt::Window) here, as it forces window recreation and kills the native macOS smooth animation.
+        // Let macOS natively handle returning to the previous geometry via showMaximized() / showNormal().
         if (_preFullScreenState & Qt::WindowMaximized)
         {
-            if (_maximizedGeometry.isValid())
-                setGeometry(_maximizedGeometry);
             showMaximized();
         }
         else
         {
-            if (_normalGeometry.isValid())
-                setGeometry(_normalGeometry);
             showNormal();
         }
 
-        // Defer child window restoration and unlock until the event queue has processed the main window changes.
-        QTimer::singleShot(100, this, [this]() {
+        // Defer child window restoration and unlock until the macOS native swipe animation has fully completed (~400-500ms).
+        // Executing heavy docking calculations mid-swipe causes severe choppiness.
+        QTimer::singleShot(1000, this, [this]() {
             if (_dockingManager)
             {
                 _dockingManager->onExitFullscreen();
@@ -1435,6 +1428,65 @@ void MainWindow::handleMessageScreenRefresh(int id, Message* message)
 #endif
 
     _lastFrameCount = frameCount;
+}
+
+void MainWindow::handleVideoModeChanged(int id, Message* message)
+{
+    // NC_VIDEO_MODE_CHANGED: the emulator's framebuffer geometry (and, for
+    // size-changing switches, the buffer address) changed - either by the UI
+    // overscan toggle or by GUEST SOFTWARE programming an AlCo/Profi/ATM mode
+    // via ports. Re-attach the device screen to the new descriptor on the GUI
+    // thread (the notification arrives on the MessageCenter dispatch thread).
+    (void)id;
+
+    if (!deviceScreen || !_emulator || !message || !message->obj)
+        return;
+
+    EmulatorFramePayload* payload = dynamic_cast<EmulatorFramePayload*>(message->obj);
+    if (!payload || payload->_emulatorId != _emulator->GetUUID())
+        return;
+
+    QMetaObject::invokeMethod(
+        this,
+        [this]() {
+            if (!deviceScreen || !_emulator)
+                return;
+            auto* context = _emulator->GetContext();
+            if (!context || !context->pScreen)
+                return;
+
+            auto& fb = context->pScreen->GetFramebufferDescriptor();
+            deviceScreen->init(fb.width, fb.height, fb.memoryBuffer);
+
+            // init() -> detach() clears the tear-free frame source - re-install
+            Screen* screen = context->pScreen;
+            deviceScreen->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
+                if (!screen->CopyPresentedFramebuffer(dst, dstSize))
+                    return false;
+
+                // Stamp video presentation latency (paint - latch), EMA 1/8:
+                // half of the realtime A/V offset readout
+                const uint64_t latchUs = screen->GetLastLatchTimestampUs();
+                if (latchUs != 0)
+                {
+                    const uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now().time_since_epoch())
+                                               .count();
+                    // Signed EMA: unsigned (sample - prev) wraps when the new
+                    // sample is smaller, exploding the average
+                    // Include the A/V-sync present delay: the painted frame is
+                    // GetPresentDelayFrames older than the newest latch
+                    const int64_t sample = static_cast<int64_t>(std::min<uint64_t>(nowUs - latchUs, 1000000)) +
+                                           screen->GetPresentDelayUs();
+                    const int64_t prev = context->pVideoPresentLatencyUs.load(std::memory_order_relaxed);
+                    const int64_t next = (prev == 0) ? sample : prev + (sample - prev) / 8;
+                    context->pVideoPresentLatencyUs.store(
+                        static_cast<uint32_t>(std::clamp<int64_t>(next, 0, 1000000)), std::memory_order_relaxed);
+                }
+                return true;
+            });
+        },
+        Qt::QueuedConnection);
 }
 
 void MainWindow::handleFileOpenRequest(int id, Message* message)
@@ -2030,6 +2082,98 @@ void MainWindow::handleAudioSettingsRequested()
     _audioSettingsWidget->activateWindow();
 }
 
+void MainWindow::handleOverscanModeToggled(bool enabled)
+{
+    if (!m_binding || !m_binding->emulator())
+        return;
+
+    auto emulator = m_binding->emulator();
+    if (emulator->SetOverscanMode(enabled))
+    {
+        // Mode changed - update device screen to handle new framebuffer size
+        EmulatorContext* context = emulator->GetContext();
+        if (context && context->pScreen)
+        {
+            auto& fb = context->pScreen->GetFramebufferDescriptor();
+            deviceScreen->init(fb.width, fb.height, fb.memoryBuffer);
+
+            // init() -> detach() clears the tear-free frame source - re-install it
+            Screen* screen = context->pScreen;
+            deviceScreen->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
+                if (!screen->CopyPresentedFramebuffer(dst, dstSize))
+                    return false;
+
+                // Stamp video presentation latency (paint - latch), EMA 1/8:
+                // half of the realtime A/V offset readout
+                const uint64_t latchUs = screen->GetLastLatchTimestampUs();
+                if (latchUs != 0)
+                {
+                    const uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now().time_since_epoch())
+                                               .count();
+                    // Signed EMA: unsigned (sample - prev) wraps when the new
+                    // sample is smaller, exploding the average
+                    // Include the A/V-sync present delay: the painted frame is
+                    // GetPresentDelayFrames older than the newest latch
+                    const int64_t sample = static_cast<int64_t>(std::min<uint64_t>(nowUs - latchUs, 1000000)) +
+                                           screen->GetPresentDelayUs();
+                    const int64_t prev = context->pVideoPresentLatencyUs.load(std::memory_order_relaxed);
+                    const int64_t next = (prev == 0) ? sample : prev + (sample - prev) / 8;
+                    context->pVideoPresentLatencyUs.store(
+                        static_cast<uint32_t>(std::clamp<int64_t>(next, 0, 1000000)), std::memory_order_relaxed);
+                }
+                return true;
+            });
+
+            if (!enabled)
+            {
+                // Leaving overscan mode - reset viewport to full framebuffer
+                DisplayViewport fullViewport = {0, 0, 0, 0};
+                emulator->SetDisplayViewport(fullViewport);
+                deviceScreen->clearDisplayViewport();
+                _menuManager->resetViewportSelection();
+            }
+        }
+        updateMenuStates();
+    }
+}
+
+void MainWindow::handleViewportChanged(int presetIndex)
+{
+    if (!m_binding || !m_binding->emulator())
+        return;
+
+    auto emulator = m_binding->emulator();
+
+    // Apply viewport preset
+    DisplayViewport viewport;
+    switch (presetIndex)
+    {
+        case 0:  // Full Overscan (384x304)
+            viewport = ViewportPresets::FULL_OVERSCAN;
+            break;
+        case 1:  // Symmetric Horizontal (352x304)
+            viewport = ViewportPresets::SYMMETRIC_HORIZONTAL;
+            break;
+        case 2:  // Standard (352x288)
+            viewport = ViewportPresets::STANDARD;
+            break;
+        case 3:  // Screen Only (256x192)
+            viewport = ViewportPresets::SCREEN_ONLY;
+            break;
+        default:
+            viewport = ViewportPresets::FULL_OVERSCAN;
+            break;
+    }
+
+    emulator->SetDisplayViewport(viewport);
+
+    // Update device screen with new display dimensions
+    // The viewport will be applied during rendering
+    deviceScreen->setDisplayViewport(viewport);
+}
+
+#ifdef ENABLE_RECORDING
 void MainWindow::handleVideoRecordingRequested()
 {
     if (_videoRecordingWidget)
@@ -2055,7 +2199,9 @@ void MainWindow::handleVideoRecordingRequested()
     _videoRecordingWidget->raise();
     _videoRecordingWidget->activateWindow();
 }
+#endif
 
+#ifdef ENABLE_RECORDING
 void MainWindow::handleQuickRecord(const QString& presetName)
 {
     if (!m_binding || !m_binding->emulator())
@@ -2139,6 +2285,7 @@ void MainWindow::handleQuickRecord(const QString& presetName)
         qDebug() << "Quick Record: Failed to start recording";
     }
 }
+#endif
 
 void MainWindow::updateMenuStates()
 {
@@ -2260,6 +2407,19 @@ void MainWindow::handleEmulatorInstanceDestroyed(int id, Message* message)
                         }
 
                         deviceScreen->detach();
+
+                        // Clear context from audio/video settings widgets
+                        if (_audioSettingsWidget)
+                        {
+                            _audioSettingsWidget->setContext(nullptr);
+                        }
+#ifdef ENABLE_RECORDING
+                        if (_videoRecordingWidget)
+                        {
+                            _videoRecordingWidget->setContext(nullptr);
+                        }
+#endif
+
                         unsubscribeFromPerEmulatorEvents();
                         // Note: Don't call _emulator->ClearAudioCallback() - emulator is already being destroyed
                         _emulator = nullptr;
@@ -2461,6 +2621,9 @@ void MainWindow::subscribeToPerEmulatorEvents()
 
     ObserverCallbackMethod stateCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorStateChanged);
     messageCenter.AddObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
+
+    ObserverCallbackMethod modeCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleVideoModeChanged);
+    messageCenter.AddObserver(NC_VIDEO_MODE_CHANGED, observerInstance, modeCallback);
 }
 
 void MainWindow::unsubscribeFromPerEmulatorEvents()
@@ -2477,6 +2640,9 @@ void MainWindow::unsubscribeFromPerEmulatorEvents()
 
     ObserverCallbackMethod stateCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorStateChanged);
     messageCenter.RemoveObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
+
+    ObserverCallbackMethod modeCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleVideoModeChanged);
+    messageCenter.RemoveObserver(NC_VIDEO_MODE_CHANGED, observerInstance, modeCallback);
 }
 
 void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
@@ -2503,7 +2669,9 @@ void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
     // Bind the audio callback to the new emulator
     qDebug() << "MainWindow::bindEmulatorAudio() - Binding audio callback to emulator"
              << QString::fromStdString(emulator->GetId());
-    emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback);
+    emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback, _soundManager->occupancyCell(),
+                               _soundManager->deviceDescriptor());
+    emulator->SetAudioDeviceSampleRate(_soundManager->deviceSampleRate());
 
     qDebug() << "MainWindow::bindEmulatorAudio() - Audio device now owned by emulator"
              << QString::fromStdString(emulator->GetId());
@@ -2553,6 +2721,37 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
         {
             auto& framebufferDesc = context->pScreen->GetFramebufferDescriptor();
             deviceScreen->init(framebufferDesc.width, framebufferDesc.height, framebufferDesc.memoryBuffer);
+
+            // Paint from the frame-end latched snapshot instead of the live
+            // framebuffer - prevents mid-frame tearing (emulation thread
+            // overwrites the live buffer while the GUI thread paints it).
+            // deviceScreen->detach() clears this on emulator switch/shutdown.
+            Screen* screen = context->pScreen;
+            deviceScreen->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
+                if (!screen->CopyPresentedFramebuffer(dst, dstSize))
+                    return false;
+
+                // Stamp video presentation latency (paint - latch), EMA 1/8:
+                // half of the realtime A/V offset readout
+                const uint64_t latchUs = screen->GetLastLatchTimestampUs();
+                if (latchUs != 0)
+                {
+                    const uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now().time_since_epoch())
+                                               .count();
+                    // Signed EMA: unsigned (sample - prev) wraps when the new
+                    // sample is smaller, exploding the average
+                    // Include the A/V-sync present delay: the painted frame is
+                    // GetPresentDelayFrames older than the newest latch
+                    const int64_t sample = static_cast<int64_t>(std::min<uint64_t>(nowUs - latchUs, 1000000)) +
+                                           screen->GetPresentDelayUs();
+                    const int64_t prev = context->pVideoPresentLatencyUs.load(std::memory_order_relaxed);
+                    const int64_t next = (prev == 0) ? sample : prev + (sample - prev) / 8;
+                    context->pVideoPresentLatencyUs.store(
+                        static_cast<uint32_t>(std::clamp<int64_t>(next, 0, 1000000)), std::memory_order_relaxed);
+                }
+                return true;
+            });
         }
         catch (const std::exception& e)
         {
@@ -2638,6 +2837,7 @@ void MainWindow::unbindFromEmulator()
         _audioSettingsWidget->setContext(nullptr);
     }
 
+#ifdef ENABLE_RECORDING
     // 5b. Video recording widget — clear the active context so it doesn't
     // dereference a dangling pointer after the emulator is destroyed.
     // Recording itself is NOT stopped here: it continues on the original
@@ -2646,6 +2846,7 @@ void MainWindow::unbindFromEmulator()
     {
         _videoRecordingWidget->setContext(nullptr);
     }
+#endif
 
     // 6. Per-emulator event subscriptions
     unsubscribeFromPerEmulatorEvents();
@@ -2708,6 +2909,7 @@ void MainWindow::onBindingStateChanged(EmulatorStateEnum state)
     }
     updateMenuStates();
 
+#ifdef ENABLE_RECORDING
     // Single mechanism: rebind recording widget on any state change
     if (_videoRecordingWidget)
     {
@@ -2719,6 +2921,7 @@ void MainWindow::onBindingStateChanged(EmulatorStateEnum state)
         }
         _videoRecordingWidget->setContext(context);
     }
+#endif
 }
 
 void MainWindow::tryAdoptRemainingEmulator()

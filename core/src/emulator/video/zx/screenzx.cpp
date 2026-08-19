@@ -2,13 +2,6 @@
 
 #include <cassert>
 
-// SIMD support for optimized pixel rendering
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
-#include <arm_neon.h>
-#elif defined(__SSE2__)
-#include <emmintrin.h>
-#endif
-
 #include "common/stringhelper.h"
 #include "emulator/cpu/z80.h"
 
@@ -61,6 +54,9 @@ void ScreenZX::CreateTables()
         _rgbaFlashColors[idx] = TransformZXSpectrumColorsToRGBA(idx, false);  // Flashing state colors
     }
 
+    // Initialize latched border color from palette (default border = 0/black)
+    _latchedBorderColorRGBA = _rgbaColors[0];
+
     // Screen mode dependent
     CreateTimingTable();
 }
@@ -81,11 +77,12 @@ void ScreenZX::CreateTimingTable()
     const RasterState& state = _rasterState;
 
     RenderTypeEnum type = RT_BLANK;
-    uint16_t rasterLines = 288;
+    // This iterates over horizontal positions (t-states per line), not vertical lines
+    uint16_t tstatesPerLine = state.tstatesPerLine;
 
     /// region <Line renderer in screen area>
 
-    for (uint16_t i = 0; i < rasterLines; i++)
+    for (uint16_t i = 0; i < tstatesPerLine; i++)
     {
         if (i >= state.blankLineAreaStart && i <= state.blankLineAreaEnd)
         {
@@ -148,6 +145,16 @@ void ScreenZX::CreateTstateLUT()
     const RasterDescriptor& rd = rasterDescriptors[_mode];
     const uint32_t maxFrameTiming = _rasterState.maxFrameTiming;
 
+    // For M_P384 overscan, use Pentagon timing but render to larger framebuffer
+    // This ensures identical timing while showing more border area
+    const RasterDescriptor& timing = (_mode == M_P384) ? rasterDescriptors[M_PENTAGON128K] : rd;
+
+    // For M_P384, we render 16 more lines from vBlank (at top) and 32 more pixels horizontally
+    // No framebuffer offset needed - the extra content fills the larger buffer directly
+    // The screen position shifts within the buffer (48,48 → 72,64) because more border is visible
+    const int overscanExtraLines = (_mode == M_P384) ? 16 : 0;
+    const int overscanExtraPixels = (_mode == M_P384) ? 32 : 0;
+
     // Clear LUT first
     memset(_tstateLUT, 0, sizeof(_tstateLUT));
 
@@ -155,23 +162,35 @@ void ScreenZX::CreateTstateLUT()
     {
         TstateCoordLUT& entry = _tstateLUT[t];
 
-        // Calculate framebuffer coordinates
-        const int framebufferX = (t % _rasterState.tstatesPerLine) * _rasterState.pixelsPerTState;
-        const int framebufferY = t / _rasterState.tstatesPerLine - (rd.vSyncLines + rd.vBlankLines);
+        // Calculate line number within frame (0 = start of vSync)
+        const int lineInFrame = t / _rasterState.tstatesPerLine;
+        const int pixelInLine = (t % _rasterState.tstatesPerLine) * _rasterState.pixelsPerTState;
 
-        if (framebufferY >= 0 && framebufferY < rd.fullFrameHeight && framebufferX < rd.fullFrameWidth)
+        // For standard mode: visible starts at line 32 (after vSync+vBlank)
+        // For M_P384 overscan: visible starts at line 16 (after vSync only, into vBlank)
+        const int visibleStartLine = timing.vSyncLines + timing.vBlankLines - overscanExtraLines;
+        const int framebufferY = lineInFrame - visibleStartLine;
+
+        // For M_P384, we render 32 more pixels per line (from what's normally hBlank)
+        // No horizontal offset - just extend the visible width
+        const int framebufferX = pixelInLine;
+
+        // Check if within visible framebuffer area (use actual framebuffer dimensions)
+        const int visibleWidth = timing.fullFrameWidth + overscanExtraPixels;
+        const int visibleHeight = timing.fullFrameHeight + overscanExtraLines;
+        if (framebufferY >= 0 && framebufferY < visibleHeight && framebufferX < visibleWidth)
         {
             entry.framebufferX = static_cast<uint16_t>(framebufferX);
             entry.framebufferY = static_cast<uint16_t>(framebufferY);
 
-            // Check if within ZX screen area
+            // Check if within ZX screen area (using timing boundaries)
             if (t >= _rasterState.screenAreaStart && t <= _rasterState.screenAreaEnd)
             {
-                const uint16_t pixelX = framebufferX;
+                const uint16_t pixelX = pixelInLine;  // Use pixel position for screen detection
 
-                if (pixelX >= rd.screenOffsetLeft && pixelX < (rd.screenOffsetLeft + rd.screenWidth))
+                if (pixelX >= timing.screenOffsetLeft && pixelX < (timing.screenOffsetLeft + timing.screenWidth))
                 {
-                    const uint16_t zxX = pixelX - rd.screenOffsetLeft;
+                    const uint16_t zxX = pixelX - timing.screenOffsetLeft;
                     const uint16_t zxY = (t - _rasterState.screenAreaStart) / _rasterState.tstatesPerLine;
 
                     if (zxX <= 255 && zxY < 192)
@@ -615,11 +634,8 @@ bool ScreenZX::IsOnScreenByTiming(uint32_t tstate)
 /// See: http://www.zxdesign.info/vidparam.shtml
 void ScreenZX::UpdateScreen()
 {
-    // Inline GetCurrentTstate() to avoid member access chain overhead
-    // Z80 runs at scaled speed, ULA expects unscaled t-states (base 3.5MHz)
-    const uint32_t scaledTstate = _context->pCore->GetZ80()->t;
-    const uint32_t freqMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
-    const uint32_t tstate = scaledTstate / freqMultiplier;
+    // Get current t-state (value corresponds to CPU cycles relative to current video frame)
+    uint32_t tstate = GetCurrentTstate();
 
     // Allow renderer to do its job. Cover whole period between previous call and current one
     DrawPeriod(_prevTstate, tstate);
@@ -652,195 +668,67 @@ void ScreenZX::Draw(uint32_t tstate)
 
     if (lut.renderType == RT_SCREEN)
     {
-        // OPTIMIZATION: Batch 8 pixels (4 t-states) for screen area
-        // ULA reads attributes at 8-pixel boundaries, so this is lossless for multicolor effects
-        // Skip if not at character cell boundary (render all 8 on pixelXBit == 0)
-        if (lut.pixelXBit != 0)
+        // Attribute latching: the ULA fetches pixel+attr bytes once per
+        // 8-pixel character cell (every 4 t-states). We track which cell
+        // was last latched and only re-read RAM when entering a new cell.
+        // This matches the HDL fetch-latch-shift pipeline.
+        if (lut.symbolX != _lastLatchSymbolX || lut.zxY != _lastLatchZxY)
         {
-            return;  // Already rendered when pixelXBit was 0
+            uint8_t* zxScreen = _activeScreenMemoryOffset;
+            _latchedPixels = *(zxScreen + lut.screenOffset + lut.symbolX);
+            _latchedAttributes = *(zxScreen + lut.attrOffset + lut.symbolX);
+            _lastLatchSymbolX = lut.symbolX;
+            _lastLatchZxY = lut.zxY;
         }
 
-        // Render all 8 pixels of this character cell
-        uint8_t* zxScreen = _activeScreenMemoryOffset;
-        uint8_t pixels = *(zxScreen + lut.screenOffset + lut.symbolX);
-        uint8_t attributes = *(zxScreen + lut.attrOffset + lut.symbolX);
+        uint8_t pixels = _latchedPixels;
+        uint8_t attributes = _latchedAttributes;
         uint32_t colorInk = _rgbaColors[attributes];
         uint32_t colorPaper = _rgbaFlashColors[attributes];
 
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
-        // NEON: Process 4 pixels at a time
-        uint32x4_t vInk = vdupq_n_u32(colorInk);
-        uint32x4_t vPaper = vdupq_n_u32(colorPaper);
+        // Branch-free first pixel:
+        // 1. Extract pixel bit and shift to bit 7 position
+        // 2. Arithmetic right shift by 7 extends the sign bit to all 32 bits
+        // 3. Result is 0xFFFFFFFF (ink) or 0x00000000 (paper)
+        uint32_t bit0 = (pixels << lut.pixelXBit) & 0x80;
+        uint32_t mask0 = static_cast<uint32_t>(-static_cast<int32_t>(bit0 >> 7));
+        framebufferARGB[framebufferOffset] = (colorInk & mask0) | (colorPaper & ~mask0);
 
-        // Masks for pixels 0-3 (bits 7,6,5,4)
-        uint32x4_t masks0 = {
-            static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 7) & 1)),
-            static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 6) & 1)),
-            static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 5) & 1)),
-            static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 4) & 1))
-        };
-        // Masks for pixels 4-7 (bits 3,2,1,0)
-        uint32x4_t masks1 = {
-            static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 3) & 1)),
-            static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 2) & 1)),
-            static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 1) & 1)),
-            static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 0) & 1))
-        };
-
-        vst1q_u32(&framebufferARGB[framebufferOffset], vbslq_u32(masks0, vInk, vPaper));
-        vst1q_u32(&framebufferARGB[framebufferOffset + 4], vbslq_u32(masks1, vInk, vPaper));
-#elif defined(__SSE2__)
-        // SSE2: Process 4 pixels at a time
-        __m128i vInk = _mm_set1_epi32(static_cast<int>(colorInk));
-        __m128i vPaper = _mm_set1_epi32(static_cast<int>(colorPaper));
-
-        // Masks for pixels 0-3
-        __m128i masks0 = _mm_set_epi32(
-            -static_cast<int>((pixels >> 4) & 1),
-            -static_cast<int>((pixels >> 5) & 1),
-            -static_cast<int>((pixels >> 6) & 1),
-            -static_cast<int>((pixels >> 7) & 1)
-        );
-        // Masks for pixels 4-7
-        __m128i masks1 = _mm_set_epi32(
-            -static_cast<int>((pixels >> 0) & 1),
-            -static_cast<int>((pixels >> 1) & 1),
-            -static_cast<int>((pixels >> 2) & 1),
-            -static_cast<int>((pixels >> 3) & 1)
-        );
-
-        // Select: (ink & mask) | (paper & ~mask)
-        __m128i result0 = _mm_or_si128(_mm_and_si128(vInk, masks0), _mm_andnot_si128(masks0, vPaper));
-        __m128i result1 = _mm_or_si128(_mm_and_si128(vInk, masks1), _mm_andnot_si128(masks1, vPaper));
-
-        _mm_storeu_si128(reinterpret_cast<__m128i*>(&framebufferARGB[framebufferOffset]), result0);
-        _mm_storeu_si128(reinterpret_cast<__m128i*>(&framebufferARGB[framebufferOffset + 4]), result1);
-#else
-        // Scalar fallback: 8 pixels with branch-free selection
-        for (int i = 0; i < 8; i++)
-        {
-            uint32_t bit = (pixels >> (7 - i)) & 1;
-            uint32_t mask = static_cast<uint32_t>(-static_cast<int32_t>(bit));
-            framebufferARGB[framebufferOffset + i] = (colorInk & mask) | (colorPaper & ~mask);
-        }
-#endif
+        // Branch-free second pixel
+        uint32_t bit1 = (pixels << (lut.pixelXBit + 1)) & 0x80;
+        uint32_t mask1 = static_cast<uint32_t>(-static_cast<int32_t>(bit1 >> 7));
+        framebufferARGB[framebufferOffset + 1] = (colorInk & mask1) | (colorPaper & ~mask1);
     }
     else
     {
-        // Render border (2 pixels)
-        uint32_t borderColor = _rgbaColors[_borderColor];
-        framebufferARGB[framebufferOffset] = borderColor;
-        framebufferARGB[framebufferOffset + 1] = borderColor;
-    }
-}
-
-/// Optimized DrawPeriod - inlines Draw() logic to avoid virtual call overhead
-/// Processes multiple t-states with direct LUT access
-void ScreenZX::DrawPeriod(uint32_t fromTstate, uint32_t toTstate)
-{
-    // Skip if ScreenHQ is disabled (batch render at frame end)
-    if (!_feature_screenhq_enabled)
-        return;
-
-    // Early exit for null mode
-    if (_mode == M_NUL)
-        return;
-
-    // Bounds check
-    const uint32_t maxTstate = _rasterState.maxFrameTiming;
-    if (fromTstate >= maxTstate)
-        return;
-    if (toTstate > maxTstate)
-        toTstate = maxTstate;
-
-    // Handle wrap-around (next frame started)
-    if (fromTstate > toTstate)
-    {
-        if (toTstate < 100)
-            toTstate = fromTstate + toTstate;
-        else
-            return;
-    }
-
-    // Skip already-handled t-state
-    if (toTstate > fromTstate)
-        fromTstate++;
-
-    // Cache frequently accessed values
-    const RasterDescriptor& rd = rasterDescriptors[_mode];
-    uint32_t* const fb = reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer);
-    const size_t fbWidth = rd.fullFrameWidth;
-    uint8_t* const zxScreen = _activeScreenMemoryOffset;
-    const uint32_t borderColorARGB = _rgbaColors[_borderColor];
-
-    // Process each t-state with inlined Draw logic
-    for (uint32_t t = fromTstate; t <= toTstate; t++)
-    {
-        const TstateCoordLUT& lut = _tstateLUT[t];
-
-        // Skip invisible area
-        if (lut.renderType == RT_BLANK)
-            continue;
-
-        const size_t fbOffset = lut.framebufferY * fbWidth + lut.framebufferX;
-
-        if (lut.renderType == RT_SCREEN)
+        // Border color latching: Pentagon updates every t-state (1T),
+        // ZX-48K/128K latches every 4 t-states (at 8-HC boundaries).
+        // We track the latched color index and only re-read when it changes.
+        if (_rasterState.borderUpdateTStates == 1)
         {
-            // Skip non-boundary pixels (already rendered)
-            if (lut.pixelXBit != 0)
-                continue;
-
-            // Render 8 pixels at character cell boundary
-            uint8_t pixels = *(zxScreen + lut.screenOffset + lut.symbolX);
-            uint8_t attrs = *(zxScreen + lut.attrOffset + lut.symbolX);
-            uint32_t ink = _rgbaColors[attrs];
-            uint32_t paper = _rgbaFlashColors[attrs];
-
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
-            uint32x4_t vInk = vdupq_n_u32(ink);
-            uint32x4_t vPaper = vdupq_n_u32(paper);
-            uint32x4_t m0 = {
-                static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 7) & 1)),
-                static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 6) & 1)),
-                static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 5) & 1)),
-                static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 4) & 1))
-            };
-            uint32x4_t m1 = {
-                static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 3) & 1)),
-                static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 2) & 1)),
-                static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 1) & 1)),
-                static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 0) & 1))
-            };
-            vst1q_u32(&fb[fbOffset], vbslq_u32(m0, vInk, vPaper));
-            vst1q_u32(&fb[fbOffset + 4], vbslq_u32(m1, vInk, vPaper));
-#elif defined(__SSE2__)
-            __m128i vInk = _mm_set1_epi32(static_cast<int>(ink));
-            __m128i vPaper = _mm_set1_epi32(static_cast<int>(paper));
-            __m128i m0 = _mm_set_epi32(
-                -static_cast<int>((pixels >> 4) & 1), -static_cast<int>((pixels >> 5) & 1),
-                -static_cast<int>((pixels >> 6) & 1), -static_cast<int>((pixels >> 7) & 1));
-            __m128i m1 = _mm_set_epi32(
-                -static_cast<int>((pixels >> 0) & 1), -static_cast<int>((pixels >> 1) & 1),
-                -static_cast<int>((pixels >> 2) & 1), -static_cast<int>((pixels >> 3) & 1));
-            _mm_storeu_si128(reinterpret_cast<__m128i*>(&fb[fbOffset]),
-                _mm_or_si128(_mm_and_si128(vInk, m0), _mm_andnot_si128(m0, vPaper)));
-            _mm_storeu_si128(reinterpret_cast<__m128i*>(&fb[fbOffset + 4]),
-                _mm_or_si128(_mm_and_si128(vInk, m1), _mm_andnot_si128(m1, vPaper)));
-#else
-            for (int i = 0; i < 8; i++)
+            // Pentagon: immediate update
+            _latchedBorderColorRGBA = _rgbaColors[_borderColor];
+            _latchedBorderColorIndex = _borderColor;
+        }
+        else if (_borderColor != _latchedBorderColorIndex)
+        {
+            // ZX models: border is latched at 8-HC boundaries.
+            // MiSTer HDL: hc_next[2:0] == 4, meaning the new border register
+            // becomes effective when pixel counter transitions 3→4 (t-state 1→2).
+            // So in t-states, the latch point is at phase offset 2 within each
+            // 4T group: t-states 2, 6, 10, 14, ...
+            uint32_t tInLine = tstate % _rasterState.tstatesPerLine;
+            uint8_t phase = _rasterState.borderUpdateTStates / 2;
+            if (tInLine % _rasterState.borderUpdateTStates == phase)
             {
-                uint32_t bit = (pixels >> (7 - i)) & 1;
-                uint32_t mask = static_cast<uint32_t>(-static_cast<int32_t>(bit));
-                fb[fbOffset + i] = (ink & mask) | (paper & ~mask);
+                _latchedBorderColorRGBA = _rgbaColors[_borderColor];
+                _latchedBorderColorIndex = _borderColor;
             }
-#endif
         }
-        else
-        {
-            // Border: 2 pixels per t-state
-            fb[fbOffset] = borderColorARGB;
-            fb[fbOffset + 1] = borderColorARGB;
-        }
+
+        // Render border (2 pixels) using latched color
+        framebufferARGB[framebufferOffset] = _latchedBorderColorRGBA;
+        framebufferARGB[framebufferOffset + 1] = _latchedBorderColorRGBA;
     }
 }
 

@@ -217,6 +217,45 @@ void MenuManager::createViewMenu()
     _zoomResetAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
     _zoomResetAction->setStatusTip(tr("Reset zoom to 1x"));
     _zoomResetAction->setEnabled(false);  // TODO: Implement zoom
+
+    _viewMenu->addSeparator();
+
+    // Overscan mode (Pentagon only - 384x304 with extended border)
+    _overscanAction = _viewMenu->addAction(tr("&Overscan Mode"));
+    _overscanAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
+    _overscanAction->setStatusTip(tr("Pentagon overscan mode (384x304) - shows invisible border areas"));
+    _overscanAction->setCheckable(true);
+    _overscanAction->setEnabled(false);  // Enabled only for Pentagon
+    connect(_overscanAction, &QAction::triggered, this, &MenuManager::overscanModeToggled);
+
+    // Viewport submenu (only meaningful in overscan mode)
+    _viewportMenu = _viewMenu->addMenu(tr("Display &Viewport"));
+    _viewportMenu->setStatusTip(tr("Crop framebuffer for display"));
+    _viewportMenu->setEnabled(false);  // Enabled when overscan is active
+
+    _viewportGroup = new QActionGroup(this);
+    _viewportGroup->setExclusive(true);
+
+    _viewportFullOverscanAction = _viewportMenu->addAction(tr("&Full Overscan (384x304)"));
+    _viewportFullOverscanAction->setCheckable(true);
+    _viewportFullOverscanAction->setChecked(true);
+    _viewportGroup->addAction(_viewportFullOverscanAction);
+    connect(_viewportFullOverscanAction, &QAction::triggered, this, [this]() { emit viewportChanged(0); });
+
+    _viewportSymmetricAction = _viewportMenu->addAction(tr("&Symmetric Horizontal (352x304)"));
+    _viewportSymmetricAction->setCheckable(true);
+    _viewportGroup->addAction(_viewportSymmetricAction);
+    connect(_viewportSymmetricAction, &QAction::triggered, this, [this]() { emit viewportChanged(1); });
+
+    _viewportStandardAction = _viewportMenu->addAction(tr("S&tandard (352x288)"));
+    _viewportStandardAction->setCheckable(true);
+    _viewportGroup->addAction(_viewportStandardAction);
+    connect(_viewportStandardAction, &QAction::triggered, this, [this]() { emit viewportChanged(2); });
+
+    _viewportScreenOnlyAction = _viewportMenu->addAction(tr("Screen &Only (256x192)"));
+    _viewportScreenOnlyAction->setCheckable(true);
+    _viewportGroup->addAction(_viewportScreenOnlyAction);
+    connect(_viewportScreenOnlyAction, &QAction::triggered, this, [this]() { emit viewportChanged(3); });
 }
 
 void MenuManager::createRunMenu()
@@ -404,6 +443,7 @@ void MenuManager::createToolsMenu()
     _screenshotAction->setStatusTip(tr("Save screenshot to file"));
     _screenshotAction->setEnabled(false);  // TODO: Implement screenshot
 
+#ifdef ENABLE_RECORDING
     // Recording (dialog toggle)
     _videoRecordingAction = _toolsMenu->addAction(tr("&Recording"));
     _videoRecordingAction->setStatusTip(tr("Open recording panel"));
@@ -428,6 +468,7 @@ void MenuManager::createToolsMenu()
     addPresetAction(tr("High Quality (MKV)"));
     // TODO: Re-add "Music (FLAC)" / "Audio Only (WAV)" when audio-only
     // recording lands, and "Multi-Track (MKV)" when multi-track encoding lands.
+#endif
 }
 
 void MenuManager::createHelpMenu()
@@ -576,6 +617,27 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
     // Debug menu states
     _stepInAction->setEnabled(!isRunning || isPaused);
     _stepOverAction->setEnabled(!isRunning || isPaused);
+
+    // Overscan menu states (Pentagon only)
+    bool isPentagon = false;
+    bool isOverscanActive = false;
+    if (emulatorExists)
+    {
+        EmulatorContext* context = activeEmulator->GetContext();
+        if (context && context->config.mem_model == MM_PENTAGON)
+        {
+            isPentagon = true;
+            isOverscanActive = activeEmulator->IsOverscanMode();
+        }
+    }
+    _overscanAction->setEnabled(isPentagon);
+    _overscanAction->setChecked(isOverscanActive);
+    _viewportMenu->setEnabled(isOverscanActive);
+}
+
+void MenuManager::resetViewportSelection()
+{
+    _viewportFullOverscanAction->setChecked(true);
 }
 
 void MenuManager::setActiveEmulator(std::shared_ptr<Emulator> emulator)

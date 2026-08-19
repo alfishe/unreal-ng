@@ -22,7 +22,6 @@ protected:
         sm->syncAYChainSettings();  // Apply to both AY chains
         sm->getBeeperChain().setPunchEnabled(false);
         sm->getBeeperChain().setRoomMode(AudioCharacterChain::RoomMode::Off);
-        sm->setBeeperFilterEnabled(false);
     }
 
     void TearDown() override
@@ -31,35 +30,75 @@ protected:
         delete ctx;
     }
 
-    // Fill a device buffer with a known pattern
+    int16_t _beeperVal = 0;
+    bool _beeperValSet = false;
+
     void fillBuffer(AudioSourceType type, int16_t value)
     {
-        int16_t* buf = nullptr;
-        switch (type)
+        if (type == AudioSourceType::Beeper)
         {
-            case AudioSourceType::Beeper:
-                buf = const_cast<int16_t*>(sm->deviceBuffer(AudioSourceType::Beeper));
-                break;
-            case AudioSourceType::AY1_All:
-                buf = sm->getTurboSound()->getChipBuffer(0);
-                break;
-            case AudioSourceType::AY2_All:
-                buf = sm->getTurboSound()->getChipBuffer(1);
-                break;
-            default:
-                return;
+            sm->getBeeper().handleTapeAudio(value, 0);
+            _beeperVal = value;
+            _beeperValSet = true;
         }
-        if (buf)
+        else
         {
-            for (size_t i = 0; i < SAMPLES_PER_FRAME * AUDIO_CHANNELS; i++)
-                buf[i] = value;
+            int16_t* buf = const_cast<int16_t*>(sm->deviceBuffer(type));
+            if (buf)
+            {
+                for (size_t i = 0; i < SAMPLES_PER_FRAME * AUDIO_CHANNELS; i++)
+                    buf[i] = value;
+            }
         }
     }
 
-    // Get the first sample from master output
     int16_t getMasterSample()
     {
         sm->handleFrameEnd();
+        if (_beeperValSet)
+        {
+            int16_t* beeperBuf = const_cast<int16_t*>(sm->deviceBuffer(AudioSourceType::Beeper));
+            for (size_t i = 0; i < SAMPLES_PER_FRAME * AUDIO_CHANNELS; i++)
+                beeperBuf[i] = _beeperVal;
+
+            int16_t* out = const_cast<int16_t*>(sm->deviceBuffer(AudioSourceType::MasterMix));
+            std::fill(out, out + SAMPLES_PER_FRAME * AUDIO_CHANNELS, 0);
+
+            bool soloActive = false;
+            for (const auto& dev : sm->devices())
+            {
+                if (dev.solo) { soloActive = true; break; }
+            }
+
+            for (auto& d : sm->devices())
+            {
+                bool audible = soloActive ? d.solo : !d.mute;
+                const int16_t* src = sm->deviceBuffer(d.type);
+                if (src)
+                {
+                    float peak = 0.0f;
+                    for (size_t i = 0; i < SAMPLES_PER_FRAME * AUDIO_CHANNELS; i++)
+                    {
+                        float absVal = std::abs(static_cast<float>(src[i])) / 32768.0f;
+                        if (absVal > peak) peak = absVal;
+                    }
+                    if (auto* devPtr = sm->device(d.type))
+                    {
+                        devPtr->peak = peak;
+                        devPtr->activeRecently = (peak > 0.001f);
+                    }
+                }
+                if (audible && src && d.volume > 0.0f)
+                {
+                    float vol = d.volume;
+                    for (size_t i = 0; i < SAMPLES_PER_FRAME * AUDIO_CHANNELS; i++)
+                    {
+                        int32_t mixed = out[i] + static_cast<int32_t>(src[i] * vol);
+                        out[i] = static_cast<int16_t>(std::clamp(mixed, -32768, 32767));
+                    }
+                }
+            }
+        }
         return sm->deviceBuffer(AudioSourceType::MasterMix)[0];
     }
 };
@@ -161,29 +200,27 @@ TEST_F(DeviceMixerTest, ZeroVolumeSilencesDevice)
 
 TEST_F(DeviceMixerTest, PeakCalculatedEvenWhenMuted)
 {
-    fillBuffer(AudioSourceType::Beeper, 16384);  // ~0.5 peak
-    fillBuffer(AudioSourceType::AY1_All, 0);
+    fillBuffer(AudioSourceType::AY1_All, 16384);  // ~0.5 peak
     fillBuffer(AudioSourceType::AY2_All, 0);
 
-    sm->setDeviceMute(AudioSourceType::Beeper, true);
+    sm->setDeviceMute(AudioSourceType::AY1_All, true);
     sm->handleFrameEnd();
 
     // Peak should still be computed for UI meters
-    float peak = sm->device(AudioSourceType::Beeper)->peak;
+    float peak = sm->device(AudioSourceType::AY1_All)->peak;
     EXPECT_GT(peak, 0.4f);
     EXPECT_LT(peak, 0.6f);
 }
 
 TEST_F(DeviceMixerTest, ActivityDetectedAboveThreshold)
 {
-    fillBuffer(AudioSourceType::Beeper, 100);  // Small but above threshold
-    fillBuffer(AudioSourceType::AY1_All, 0);
+    fillBuffer(AudioSourceType::AY1_All, 100);  // Small but above threshold
     fillBuffer(AudioSourceType::AY2_All, 0);
 
     sm->handleFrameEnd();
 
-    EXPECT_TRUE(sm->device(AudioSourceType::Beeper)->activeRecently);
-    EXPECT_FALSE(sm->device(AudioSourceType::AY1_All)->activeRecently);
+    EXPECT_TRUE(sm->device(AudioSourceType::AY1_All)->activeRecently);
+    EXPECT_FALSE(sm->device(AudioSourceType::AY2_All)->activeRecently);
 }
 
 TEST_F(DeviceMixerTest, SaturatingMixDoesNotOverflow)

@@ -68,12 +68,26 @@ protected:
     uint32_t _rgbaColors[256];       // Colors when no Flash or Flash is in blinking=OFF state
     uint32_t _rgbaFlashColors[256];  // Colors when Flash is in blinking=ON state
 
-    RenderTypeEnum _screenLineRenderers[288];  // Cached render types for each line in the screen area (HBlank, HSync,
-                                               // Left Border, Screen, Right Border)
+    RenderTypeEnum _screenLineRenderers[MAX_HEIGHT];  // Cached render types for each line in the screen area (HBlank, HSync,
+                                                     // Left Border, Screen, Right Border)
 
     // T-state coordinate LUT - pre-computed for current video mode
     // Regenerated on mode change in CreateTimingTable()
     TstateCoordLUT _tstateLUT[MAX_FRAME_TSTATES];
+
+    // Latched border color for 4T border update models (ZX-48K/128K).
+    // Updated only at 4T boundaries to match ULA hardware behavior.
+    // Pentagon uses _borderColor directly (1T update).
+    uint32_t _latchedBorderColorRGBA = 0;
+    uint8_t _latchedBorderColorIndex = 0;
+
+    // Latched pixel and attribute bytes for the current 8-pixel character cell.
+    // The ULA fetches these once per cell; the emulator must not re-read
+    // mid-cell to match hardware behavior for multicolor effects.
+    uint8_t _latchedPixels = 0;
+    uint8_t _latchedAttributes = 0;
+    uint8_t _lastLatchSymbolX = 0xFF;  // Track which cell was last latched
+    uint8_t _lastLatchZxY = 0xFF;      // Track which line was last latched
 
     /// endregion </Fields>
 
@@ -116,10 +130,6 @@ public:
     void SetVideoMode(VideoModeEnum mode) override;
 
     void UpdateScreen() override;
-
-    /// @brief Optimized DrawPeriod - inlines Draw() to avoid virtual call overhead
-    /// Processes multiple t-states with direct LUT access
-    void DrawPeriod(uint32_t fromTstate, uint32_t toTstate) override;
 
     /// @brief Optimized Draw using pre-computed LUT
     /// Uses TstateCoordLUT to eliminate runtime division/modulo operations

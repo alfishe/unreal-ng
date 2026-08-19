@@ -634,12 +634,6 @@ TEST_F(SharedMemory_Test, ExternalProcessRigorousValidation)
     // We use a variety of patterns to catch stuck bits, synchronization glitches, or offset issues.
     const uint8_t patterns[] = {0x00, 0xFF, 0x55, 0xAA, 0x33, 0xCC};
 
-    // Allow any background writes (deferred notifications, Z80 thread frame
-    // tail) to settle before rigorous validation. The emulator is paused, but
-    // a brief race window exists between StatePaused being reported and the
-    // Z80 thread fully quiescing.
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-
     for (uint8_t pattern : patterns)
     {
         // Fill from inside the emulator
@@ -651,7 +645,10 @@ TEST_F(SharedMemory_Test, ExternalProcessRigorousValidation)
         {
             if (externalBytes[i] != pattern)
             {
+                // Capture the mismatched byte BEFORE unmapping (reading externalBytes
+                // after CloseSharedMemoryExternal would be use-after-munmap -> SIGSEGV)
                 uint8_t actual = externalBytes[i];
+
                 // Cleanup before failing
                 CloseSharedMemoryExternal(externalData, totalSize, handle);
                 _emulator->Resume();
@@ -677,11 +674,17 @@ TEST_F(SharedMemory_Test, ExternalProcessRigorousValidation)
                 uint8_t expected = static_cast<uint8_t>((seed + i) & 0xFF);
                 if (externalBytes[i] != expected)
                 {
+                    // Capture the mismatched byte BEFORE unmapping (reading externalBytes
+                    // after CloseSharedMemoryExternal would be use-after-munmap -> SIGSEGV)
+                    uint8_t actual = externalBytes[i];
+                    uint8_t internalNow = memory->RAMBase()[i];
+
                     CloseSharedMemoryExternal(externalData, totalSize, handle);
                     _emulator->Resume();
 
                     FAIL() << "Rigorous seeded validation failed at offset " << i << " with seed 0x" << std::hex
-                           << (int)seed << ": expected 0x" << (int)expected << ", got 0x" << (int)externalBytes[i];
+                           << (int)seed << ": expected 0x" << (int)expected << ", got 0x" << (int)actual
+                           << " (internal view now holds 0x" << (int)internalNow << ")";
                 }
             }
         }

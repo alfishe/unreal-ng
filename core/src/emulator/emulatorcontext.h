@@ -7,9 +7,11 @@
 #include <string>
 #include "common/modulelogger.h"
 #include "common/uuid.h"
+#include "common/sound/audiodevicedescriptor.h"
 #include "emulator/platform.h"
 #include "corestate.h"
 #include "emulator/io/tape/tape.h"
+#include "emulator/notifications.h"
 
 using unreal::UUID;
 
@@ -21,17 +23,20 @@ class Memory;
 class WD1793;
 class PortDecoder;
 class Screen;
+class UlaContention;
 class SoundManager;
+#ifdef ENABLE_RECORDING
 class RecordingManager;
+#endif
 class DebugManager;
 class Z80Disassembler;
 class FeatureManager;
 
-// TTD manager lives in the ttd namespace — forward-declare so the context
+// TTD manager lives in the ttd namespace - forward-declare so the context
 // can hold a pointer without pulling the full TTD headers into every consumer.
 namespace ttd { class TimeTravelManager; class TTDAccessProbe; }
 
-#include "debugger/ttd/ttd_probe.h"  // inline member — needs full definition
+#include "debugger/ttd/ttd_probe.h"  // inline member - needs full definition
 
 // Create callback type for audio
 // User in emulator/sound/soundmanager and client/GUI
@@ -42,6 +47,9 @@ class EmulatorContext
 {
     /// region <Child object references>
 public:
+    // Unique identifier for this emulator instance
+    unreal::UUID emulatorId;
+
     // Advanced logger instance
     ModuleLogger* pModuleLogger = nullptr;
 
@@ -85,74 +93,87 @@ public:
 	// Video controller parameters and logic
 	Screen* pScreen = nullptr;
 
+	// Standalone ULA contention component (memory/IO contention + floating bus)
+	UlaContention* pUlaContention = nullptr;
+
     // Audio callback (will be triggered after each video frame render and provide audio samples for host system)
     // Using std::atomic to ensure proper memory ordering between UI thread (setting) and emulator thread (reading)
     std::atomic<void*> pAudioManagerObj;
     std::atomic<AudioCallback> pAudioCallback;
 
+    /// Audio ring occupancy cell in STEREO FRAMES, owned by the app-side
+    /// sound manager (outlives the emulator) and registered together with the
+    /// audio callback. The DRC controller (SoundManager::updateDrcControl)
+    /// reads it once per frame as its process variable; MainLoop reads it for
+    /// the emergency refill path. nullptr = no audio device attached -> DRC
+    /// disengaged (unity bypass).
+    std::atomic<const std::atomic<uint32_t>*> pAudioRingOccupancy{nullptr};
+
+    /// Native sample rate of the attached audio device (audio-sync design
+    /// Fix 3). 0 = same as CORE_SAMPLING_RATE. The DRC resampler uses
+    /// device/core as its base ratio; ring occupancy is in DEVICE-rate frames.
+    std::atomic<uint32_t> pAudioDeviceSampleRate{0};
+
+    /// Full realtime-observable device/ring state (audiodevicedescriptor.h),
+    /// owned by the frontend's sound manager. Superset of the two cells
+    /// above (occupancy cell points INTO it); monitoring consumers (WebAPI,
+    /// diagnostics) read it lock-free. nullptr = no device attached.
+    std::atomic<const AudioDeviceDescriptor*> pAudioDeviceDescriptor{nullptr};
+
+    /// Video presentation latency in microseconds (EMA), stamped by the GUI
+    /// frame source at paint time: wall-clock delta between the emulation
+    /// thread latching the finished frame and the GUI copying it for paint.
+    /// Together with AudioDeviceDescriptor::audioLatencyMs this yields the
+    /// realtime A/V offset (audio late = audioLatency - videoLatency).
+    std::atomic<uint32_t> pVideoPresentLatencyUs{0};
+
     // Sound manager
     SoundManager* pSoundManager = nullptr;
 
+#ifdef ENABLE_RECORDING
     // Recording manager (video/audio capture for recordings)
     RecordingManager* pRecordingManager = nullptr;
+#endif
 
 	// Debug manager (includes Breakpoints, Labels and Disassembler)
 	DebugManager* pDebugManager = nullptr;
 
+    // Feature toggle manager
+    FeatureManager* pFeatureManager = nullptr;
+
     // Time-travel debugging manager (owned by Emulator, lives across the
     // lifetime of the context). May be null on minimal builds without TTD.
-    // Per TDD §10.2.
     ttd::TimeTravelManager* pTimeTravelManager = nullptr;
 
-    // TTD silent-replay mode flag (parent TDD §8.2 + Appendix C).
+    // TTD silent-replay mode flag (parent TDD 8.2 + Appendix C).
     //
     // Set by TimeTravelManager::EnterReplayMode() before any intra-frame
     // replay (SeekTo with tInFrame > 0, StepBackInstruction, reverse-search
     // probes). Cleared by ExitReplayMode(). Read by every suppression site
-    // listed in Appendix C — breakpoints skip, analyzers dispatch no-op,
+    // listed in Appendix C - breakpoints skip, analyzers dispatch no-op,
     // keyboard matrix mutation blocked, recording capture skipped, video
     // frame refresh notifications dropped, audio host buffer muted (device
     // state still advances).
     //
-    // Plain bool (not atomic) — replay runs under the existing pause
+    // Plain bool (not atomic) - replay runs under the existing pause
     // discipline: EnterReplayMode / RunTStates / ExitReplayMode happen on
     // the control thread with the emulator paused, and the suppression
-    // checks are read from the same thread. No cross-thread visibility
-    // concern; matching the existing pattern for emulatorState flags.
+    // checks are read from the same thread.
     bool ttdReplayActive = false;
 
-    // Phase 4 — reverse-search access probe (parent TDD §9.2). Inline
+    // Phase 4 - reverse-search access probe (parent TDD 9.2). Inline
     // instance: every hot-path call site (MemoryWriteDebug, MemoryReadDebug,
     // Z80 M1 cycle, DecodePortOut) reads `ttdProbe.IsArmed()` with one
-    // predictable branch. Cost when not armed: ~1 cycle. Arming/disarming
-    // and hits extraction happen on the control thread around silent
-    // replay batches.
+    // predictable branch. Cost when not armed: ~1 cycle.
     ttd::TTDAccessProbe ttdProbe;
-
-    // Feature toggle manager
-    FeatureManager* pFeatureManager = nullptr;
     /// endregion </Child object references>
 
-    /// region <Parent object references>
-public:
-    Emulator* pEmulator;
-    /// endregion </Parent object references>
-
-    /// region <Constructors / destructors>
-public:
-    EmulatorContext();                      // Default constructor with LogTrace default logging level
-    EmulatorContext(LoggerLevel level);     // Constructor allowing to specify default logging level
-    EmulatorContext(Emulator* emulator, LoggerLevel level = LoggerLevel::LogTrace);    // Constructor registering reference to parent Emulator object
-    virtual ~EmulatorContext();
-    /// endregion </Constructors / destructors>
-
-    /// region <Run-control claim (GDB TDD §3.3 / parent TDD §7.2)>
+    /// region <Run-control claim (GDB TDD 3.3 / parent TDD 7.2)>
     //
     // Advisory owner token: while a surface (GDB, Qt timeline, WebAPI, ...) holds the claim
     // with the target paused, other surfaces' Resume/Step/Seek/state-writes are refused.
     // Pause and read-only queries are always allowed. The claim is NOT taken automatically
-    // by Emulator::Pause() — explicit surfaces take it. Enforcement is wired in Phase 2
-    // (TTD seek) and G1 (GDB stub); Sprint 0 ships the mechanism only.
+    // by Emulator::Pause() - explicit surfaces take it.
     //
     // Mutex guards take/release only; never held during emulator work.
 public:
@@ -167,13 +188,12 @@ public:
     /// @param owner UUID of the claiming surface (use UUID::Generate() at surface startup).
     /// @param surfaceLabel Human-readable label for error messages and UI.
     /// @param errorReason Optional: filled with a reason string when returning false.
-    /// @return true if claim taken (or already held by the same owner — idempotent);
+    /// @return true if claim taken (or already held by the same owner - idempotent);
     ///         false if held by a different owner.
     bool TakeRunControl(const UUID& owner, const std::string& surfaceLabel,
                         std::string* errorReason = nullptr);
 
-    /// Release the claim. No-op if @p owner does not match the current holder (defensive —
-    /// surfaces release only what they hold).
+    /// Release the claim. No-op if @p owner does not match the current holder.
     void ReleaseRunControl(const UUID& owner);
 
     /// Identity check: does @p owner currently hold the claim? No blocking.
@@ -194,4 +214,17 @@ private:
     };
     RunControlClaim _runControlClaim;
     /// endregion </Run-control claim>
+
+    /// region <Parent object references>
+public:
+    Emulator* pEmulator;
+    /// endregion </Parent object references>
+
+    /// region <Constructors / destructors>
+public:
+    EmulatorContext();                      // Default constructor with LogTrace default logging level
+    EmulatorContext(LoggerLevel level);     // Constructor allowing to specify default logging level
+    EmulatorContext(Emulator* emulator, LoggerLevel level = LoggerLevel::LogTrace);    // Constructor registering reference to parent Emulator object
+    virtual ~EmulatorContext();
+    /// endregion </Constructors / destructors>
 };

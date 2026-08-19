@@ -43,6 +43,7 @@ Emulator::Emulator(const std::string& symbolicId, LoggerLevel level)
     {
         _logger = _context->pModuleLogger;
         _context->pEmulator = this;
+        _context->emulatorId = _uuid;
 
         // Create FeatureManager and assign to context
         _featureManager = new FeatureManager(_context);
@@ -63,16 +64,20 @@ Emulator::~Emulator()
 {
     MLOGDEBUG("Emulator::~Emulator()");
 
+    // Clean up FeatureManager BEFORE Release(), because Release() deletes _context.
+    // Accessing _context->pFeatureManager after Release() is a use-after-free.
+    if (_featureManager)
+    {
+        if (_context)
+            _context->pFeatureManager = nullptr;
+        delete _featureManager;
+        _featureManager = nullptr;
+    }
+
     // Ensure resources are released if Release() wasn't called explicitly
     if (_initialized.load(std::memory_order_acquire))
     {
         Release();
-    }
-
-    if (_featureManager)
-    {
-        delete _featureManager;
-        _featureManager = nullptr;
     }
 }
 
@@ -117,6 +122,19 @@ bool Emulator::Init()
         if (result)
         {
             MLOGDEBUG("Emulator::Init - Config file successfully loaded");
+
+            // Apply the programmatically-requested model (if any) now - before
+            // any model-dependent subsystem (ROMs, port decoder, screen) reads
+            // the config. Overrides the INI's HIMEM/RamSize selection and gets
+            // canonical frame geometry for the model.
+            if (_hasPreferredModel)
+            {
+                _context->config.mem_model = _preferredModel;
+                _context->config.ramsize = _preferredRamSize;
+                _config->ApplyModelTimingDefaults(_context->config, true /* canonicalGeometry */);
+                MLOGINFO("Emulator::Init - Applied preferred model %d (INI HIMEM overridden)",
+                         (int)_preferredModel);
+            }
         }
         else
         {
@@ -598,13 +616,43 @@ FramebufferDescriptor Emulator::GetFramebuffer()
     return _context->pScreen->GetFramebufferDescriptor();
 }
 
-void Emulator::SetAudioCallback(void* obj, AudioCallback callback)
+void Emulator::SetAudioCallback(void* obj, AudioCallback callback, const std::atomic<uint32_t>* occupancyFrames,
+                                const AudioDeviceDescriptor* deviceDescriptor)
 {
     // Use memory_order_release to ensure all previous writes are visible to the emulator thread
     _context->pAudioManagerObj.store(obj, std::memory_order_release);
     _context->pAudioCallback.store(callback, std::memory_order_release);
+    _context->pAudioRingOccupancy.store(occupancyFrames, std::memory_order_release);
+    _context->pAudioDeviceDescriptor.store(deviceDescriptor, std::memory_order_release);
 
     MLOGINFO("Emulator::SetAudioCallback() - Audio callback set: obj=%p, callback=%p", obj, (void*)callback);
+}
+
+void Emulator::SetAudioDeviceSampleRate(uint32_t rate)
+{
+    _context->pAudioDeviceSampleRate.store(rate, std::memory_order_release);
+
+    // Device (re)established: restart DRC tracking from the fresh occupancy
+    // instead of stale pre-reroute EMA/integrator state
+    if (_context->pSoundManager)
+    {
+        _context->pSoundManager->resetDrcController();
+    }
+
+    // CoreRate=auto: a device-rate CHANGE (hotplug / reroute at a different
+    // native rate) requests a full pipeline re-rate - every digital filter
+    // re-derives for the new core rate at the next frame boundary on the
+    // emulation thread (SoundManager::handleFrameStart applies it there;
+    // deferred while a recording is in progress).
+    if (rate != 0 && _context->config.sound.coreRate == 0 && _context->pSoundManager)
+    {
+        _context->pSoundManager->requestCoreRate(rate);
+    }
+}
+
+const AudioDeviceDescriptor* Emulator::GetAudioDeviceDescriptor() const
+{
+    return _context->pAudioDeviceDescriptor.load(std::memory_order_acquire);
 }
 
 void Emulator::ClearAudioCallback()
@@ -612,6 +660,9 @@ void Emulator::ClearAudioCallback()
     // Use memory_order_release to ensure the nullptr writes are visible to the emulator thread
     _context->pAudioManagerObj.store(nullptr, std::memory_order_release);
     _context->pAudioCallback.store(nullptr, std::memory_order_release);
+    _context->pAudioRingOccupancy.store(nullptr, std::memory_order_release);
+    _context->pAudioDeviceSampleRate.store(0, std::memory_order_release);
+    _context->pAudioDeviceDescriptor.store(nullptr, std::memory_order_release);
 
     MLOGINFO("Emulator::ClearAudioCallback() - Audio callback cleared for emulator %s", _emulatorId.c_str());
 }
@@ -763,6 +814,20 @@ void Emulator::Pause(bool broadcast)
     // Setting _isRunning = false would cause Stop() to skip _asyncThread->join(),
     // leading to a crash when RemoveEmulator() destroys memory while thread is still running.
     // MainLoop::Run() will detect this via Emulator::IsPaused() check.
+
+    // Wait until the emulation thread actually parks in MainLoop's pause loop.
+    // Setting the flag alone is not enough: MainLoop only checks the pause flag
+    // between frames, so the in-flight frame keeps executing Z80 instructions
+    // (and writing to memory) after this method would otherwise have returned.
+    // Callers (tests, shared-memory migration, snapshot loading) rely on Pause()
+    // meaning "no more emulated writes". WaitForPauseConfirmation returns
+    // immediately when called from the emulation thread itself (breakpoint
+    // handlers pause mid-frame) and may time out legitimately when execution
+    // is already blocked inside a frame - proceed anyway in those cases.
+    if (_mainloop && _isRunning)
+    {
+        _mainloop->WaitForPauseConfirmation(500);
+    }
 
     // Update state and broadcast only if requested
     // broadcast=false is used for internal operations like shared memory migration
@@ -971,6 +1036,17 @@ bool Emulator::LoadSnapshot(const std::string& path)
         wasRunning = true;
     }
 
+    // Pause() only sets a flag - the emulation thread finishes its current frame before
+    // parking in MainLoop's pause loop. Wait for confirmation so the loader never resets
+    // CPU/memory/screen state while a frame is still executing (this race can corrupt the
+    // framebuffer when a WebAPI 'pause' is immediately followed by 'snapshot/load').
+    // The wait may time out legitimately when paused inside a frame (breakpoint) or in
+    // synchronous test mode - proceed anyway in those cases.
+    if (_mainloop && IsRunning())
+    {
+        _mainloop->WaitForPauseConfirmation(250);
+    }
+
     if (ext == "sna")
     {
         /// region <Load SNA snapshot>
@@ -1015,7 +1091,6 @@ bool Emulator::LoadSnapshot(const std::string& path)
     // Resume execution
     if (wasRunning)
     {
-        // TODO: uncomment for the release
         Resume();
     }
 
@@ -1425,6 +1500,11 @@ void Emulator::RunFrame(bool skipBreakpoints)
     if (IsRunning() && !IsPaused())
     {
         Pause();  // Broadcast pause so debugger UI updates
+
+        // Wait for the emulation thread to park - otherwise we would step the Z80
+        // concurrently with the frame MainLoop is still finishing
+        if (_mainloop)
+            _mainloop->WaitForPauseConfirmation(250);
     }
 
     const CONFIG& config = _context->config;
@@ -1532,6 +1612,11 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
     if (IsRunning() && !IsPaused())
     {
         Pause();  // Broadcast pause so debugger UI updates
+
+        // Wait for the emulation thread to park - otherwise we would step the Z80
+        // concurrently with the frame MainLoop is still finishing
+        if (_mainloop)
+            _mainloop->WaitForPauseConfirmation(250);
     }
 
     const CONFIG& config = _context->config;
@@ -2192,6 +2277,76 @@ void Emulator::DebugOff()
     _isDebug = false;
     _z80->isDebugMode = false;
 }
+
+// region <Video mode>
+
+bool Emulator::SetOverscanMode(bool enable)
+{
+    if (!_context || !_context->pScreen)
+        return false;
+
+    Screen* screen = _context->pScreen;
+    VideoModeEnum currentMode = screen->GetVideoMode();
+
+    // Only Pentagon supports overscan
+    if (currentMode != M_PENTAGON128K && currentMode != M_P384)
+    {
+        return false;  // ZX48/128 have no overscan
+    }
+
+    VideoModeEnum newMode = enable ? M_P384 : M_PENTAGON128K;
+
+    if (newMode != currentMode)
+    {
+        // Pause emulation while changing video mode to avoid framebuffer access during reallocation
+        bool wasRunning = IsRunning() && !IsPaused();
+        if (wasRunning)
+        {
+            Pause(false);
+        }
+
+        // Record the user's intent FIRST: InitRaster re-detects the video mode
+        // from config/ports every frame and would revert a bare SetVideoMode
+        // back to the model's base mode on the next frame
+        screen->SetOverscanForced(enable);
+        screen->SetVideoMode(newMode);
+
+        if (wasRunning)
+        {
+            Resume(false);
+        }
+
+        return true;
+    }
+    return false;
+}
+
+bool Emulator::IsOverscanMode() const
+{
+    if (!_context || !_context->pScreen)
+        return false;
+
+    return _context->pScreen->IsOverscanMode();
+}
+
+void Emulator::SetDisplayViewport(const DisplayViewport& viewport)
+{
+    if (_context && _context->pScreen)
+    {
+        _context->pScreen->SetDisplayViewport(viewport);
+    }
+}
+
+const DisplayViewport& Emulator::GetDisplayViewport() const
+{
+    static DisplayViewport defaultViewport;
+    if (!_context || !_context->pScreen)
+        return defaultViewport;
+
+    return _context->pScreen->GetDisplayViewport();
+}
+
+// endregion </Video mode>
 
 Z80State* Emulator::GetZ80State()
 {

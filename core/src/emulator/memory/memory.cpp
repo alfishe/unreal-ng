@@ -20,6 +20,7 @@
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
+#include "emulator/video/ulacontention.h"
 #include "stdafx.h"
 
 // Platform-specific includes for memory mapping
@@ -928,6 +929,12 @@ void Memory::SetRAMPageToBank3(uint16_t page, bool updatePorts)
     _bank_mode[3] = BANK_RAM;
     _bank_write[3] = _bank_read[3] = RAMPageAddress(page);
     _bank_ram_page_cache[3] = static_cast<uint8_t>(page & 0xFF);
+
+    // Update the ULA contention cache: odd RAM pages (1/3/5/7) at 0xC000 are
+    // contended on 128K. Cached here (cold path - port 7FFD writes) so the
+    // per-memory-access IsAddressContended() check stays branch-only.
+    if (_context && _context->pUlaContention)
+        _context->pUlaContention->SetBank3ContendedPage((page & 1) != 0);
 
     if (updatePorts)
         _context->pPortDecoder->SetRAMPage(page);

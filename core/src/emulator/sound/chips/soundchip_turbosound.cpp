@@ -6,7 +6,12 @@
 void SoundChip_TurboSound::handleFrameStart()
 {
     _lastTStates = 0;
-    _ayPLL = 0.0;
+    // NOTE: _ayPLL deliberately NOT reset here. The fractional sample phase
+    // must be free-running across frames (audio-sync design, Fix 1): zeroing
+    // it every frame truncated the fractional sample per frame, locking the
+    // AY at 903 samples/frame (never 904) - a systematic -0.019% rate bias
+    // vs the exact accumulator, plus a phase discontinuity at each frame
+    // boundary. _ayPLL resets only in reset().
     _ayBufferIndex = 0;
 
     // Initialize render buffers (combined + per-chip)
@@ -53,9 +58,9 @@ void SoundChip_TurboSound::handleStep()
         // Checked once per handleStep batch; per-tick cost is a plain bool.
         const bool tapActive = _nativeTap->isActive();
 
-        _ayPLL += diff * AUDIO_SAMPLE_TSTATE_INCREMENT;
+        _ayPLL += diff * _sampleTStateIncrement;
 
-        while (_ayPLL > 1.0 && _ayBufferIndex < AUDIO_SAMPLES_PER_VIDEO_FRAME * AUDIO_CHANNELS)
+        while (_ayPLL > 1.0 && _ayBufferIndex < MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS)
         {
             _ayPLL -= 1.0;
 
@@ -70,8 +75,8 @@ void SoundChip_TurboSound::handleStep()
                 // Generators tick at PSG_CLOCK_RATE/8 = 218.75 kHz
                 // FIR decimates to 44.1 kHz (~4.96:1 ratio)
 
-                // Feed generator samples to stereo decimator until we have an output
-                while (!_chip0->stereoDecimator().hasOutput())
+                // Feed generator samples to decimator until we have an output
+                while (!_chip0->decimatorLeft().hasOutput())
                 {
                     // Tick generators (bypass internal prescaler)
                     updateState(true);
@@ -83,15 +88,18 @@ void SoundChip_TurboSound::handleStep()
                                          static_cast<float>(_chip0->mixedRight() + _chip1->mixedRight()));
                     }
 
-                    // Feed mixed output to stereo decimators (2 instead of 4)
-                    _chip0->stereoDecimator().feedSample(_chip0->mixedLeft(), _chip0->mixedRight());
-                    _chip1->stereoDecimator().feedSample(_chip1->mixedLeft(), _chip1->mixedRight());
+                    // Feed mixed output to decimators
+                    _chip0->decimatorLeft().feedSample(_chip0->mixedLeft());
+                    _chip0->decimatorRight().feedSample(_chip0->mixedRight());
+                    _chip1->decimatorLeft().feedSample(_chip1->mixedLeft());
+                    _chip1->decimatorRight().feedSample(_chip1->mixedRight());
                 }
 
-                // Get decimated stereo output per chip
-                double c0L, c0R, c1L, c1R;
-                _chip0->stereoDecimator().getOutput(c0L, c0R);
-                _chip1->stereoDecimator().getOutput(c1L, c1R);
+                // Get decimated output per chip
+                float c0L = _chip0->decimatorLeft().getOutput();
+                float c0R = _chip0->decimatorRight().getOutput();
+                float c1L = _chip1->decimatorLeft().getOutput();
+                float c1R = _chip1->decimatorRight().getOutput();
 
                 // Store per-chip buffers for registry-driven capture
                 _chip0Buffer[_ayBufferIndex]     = static_cast<int16_t>(c0L * INT16_MAX);
@@ -115,9 +123,8 @@ void SoundChip_TurboSound::handleStep()
 
                 // Run generator ticks for this output sample period
                 // Generator rate = PSG_CLOCK_RATE / 8 (~218.75 kHz)
-                // Ticks per output sample = (PSG_CLOCK_RATE / 8) / AUDIO_SAMPLING_RATE ≈ 4.96
-                double ticksPerSample = (double)(PSG_CLOCK_RATE / 8) / (double)AUDIO_SAMPLING_RATE;
-                _decimationPhase += ticksPerSample;
+                // Ticks per output sample = (PSG_CLOCK_RATE / 8) / core rate (~4.96 @44.1k)
+                _decimationPhase += _lqTicksPerSample;
 
                 while (_decimationPhase >= 1.0)
                 {

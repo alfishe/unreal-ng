@@ -37,7 +37,9 @@
 #endif  // ENABLE_AUTOMATION
 
 class AudioSettingsWidget;
+#ifdef ENABLE_RECORDING
 class VideoRecordingWidget;
+#endif
 class DockingManager;
 
 QT_BEGIN_NAMESPACE
@@ -64,6 +66,7 @@ private slots:
     void handleStartButton();
     void tryAdoptRemainingEmulator();
     void handleMessageScreenRefresh(int id, Message* message);
+    void handleVideoModeChanged(int id, Message* message);
     void handleFileOpenRequest(int id, Message* message);
     void handleEmulatorStateChanged(int id, Message* message);
     void handleEmulatorInstanceDestroyed(int id, Message* message);
@@ -94,8 +97,12 @@ private slots:
     void handleLogWindowToggled(bool visible);
     void handleIntParametersRequested();
     void handleAudioSettingsRequested();
+    void handleOverscanModeToggled(bool enabled);
+    void handleViewportChanged(int presetIndex);
+#ifdef ENABLE_RECORDING
     void handleVideoRecordingRequested();
     void handleQuickRecord(const QString& presetName);
+#endif
     void updateMenuStates();
 
     // Binding state handler
@@ -222,5 +229,7 @@ private:
 
     // Audio settings dialog (singleton, toggled via menu)
     QPointer<AudioSettingsWidget> _audioSettingsWidget;
+#ifdef ENABLE_RECORDING
     QPointer<VideoRecordingWidget> _videoRecordingWidget;
+#endif
 };

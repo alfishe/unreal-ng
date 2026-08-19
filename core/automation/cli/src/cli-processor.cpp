@@ -178,7 +178,10 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"keyboard", &CLIProcessor::HandleKey},
 
                         // Time-Travel Debug commands
-                        {"ttd", &CLIProcessor::HandleTTD}};
+                        {"ttd", &CLIProcessor::HandleTTD},
+                        
+                        // Videowall commands
+                        {"videowall", &CLIProcessor::HandleVideowall}};
 }
 
 void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& command)

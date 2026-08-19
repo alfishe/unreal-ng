@@ -1,5 +1,7 @@
 #include "breakpointmanager.h"
 
+#include <cstring>
+
 #include "common/collectionhelper.h"
 #include "common/stringhelper.h"
 #include "emulator/cpu/z80.h"
@@ -37,6 +39,8 @@ void BreakpointManager::ClearBreakpoints()
     _breakpointMapByAddress.clear();
     _breakpointMapByPort.clear();
     _breakpointMapByID.clear();
+
+    RebuildFilters();
 }
 
 /// @brief Adds a new breakpoint with the given descriptor
@@ -143,6 +147,8 @@ bool BreakpointManager::RemoveBreakpointByID(uint16_t breakpointID)
         // Since the map is ordered by key, the last element has the highest ID
         _breakpointIDSeq = _breakpointMapByID.rbegin()->first + 1;
     }
+
+    RebuildFilters();
 
     return true;
 }
@@ -646,6 +652,7 @@ bool BreakpointManager::ActivateBreakpoint(uint16_t breakpointID)
     {
         BreakpointDescriptor* bp = _breakpointMapByID[breakpointID];
         bp->active = true;
+        RebuildFilters();
         return true;
     }
     return false;
@@ -663,6 +670,7 @@ bool BreakpointManager::DeactivateBreakpoint(uint16_t breakpointID)
     {
         BreakpointDescriptor* bp = _breakpointMapByID[breakpointID];
         bp->active = false;
+        RebuildFilters();
         return true;
     }
     return false;
@@ -678,6 +686,7 @@ void BreakpointManager::ActivateAllBreakpoints()
     {
         pair.second->active = true;
     }
+    RebuildFilters();
 }
 
 /// @brief Deactivates all breakpoints in the manager
@@ -690,6 +699,7 @@ void BreakpointManager::DeactivateAllBreakpoints()
     {
         pair.second->active = false;
     }
+    RebuildFilters();
 }
 
 /// @brief Activates all breakpoints of a specific type
@@ -707,6 +717,7 @@ void BreakpointManager::ActivateBreakpointsByType(BreakpointTypeEnum type)
             pair.second->active = true;
         }
     }
+    RebuildFilters();
 }
 
 /// @brief Deactivates all breakpoints of a specific type
@@ -724,6 +735,7 @@ void BreakpointManager::DeactivateBreakpointsByType(BreakpointTypeEnum type)
             pair.second->active = false;
         }
     }
+    RebuildFilters();
 }
 
 /// @brief Activates memory breakpoints matching specific access types
@@ -741,6 +753,7 @@ void BreakpointManager::ActivateMemoryBreakpointsByType(uint8_t memoryType)
             pair.second->active = true;
         }
     }
+    RebuildFilters();
 }
 
 /// @brief Deactivates memory breakpoints matching specific access types
@@ -758,6 +771,7 @@ void BreakpointManager::DeactivateMemoryBreakpointsByType(uint8_t memoryType)
             pair.second->active = false;
         }
     }
+    RebuildFilters();
 }
 
 /// @brief Activates I/O port breakpoints matching specific access types
@@ -775,6 +789,7 @@ void BreakpointManager::ActivatePortBreakpointsByType(uint8_t ioType)
             pair.second->active = true;
         }
     }
+    RebuildFilters();
 }
 
 /// @brief Deactivates I/O port breakpoints matching specific access types
@@ -792,6 +807,7 @@ void BreakpointManager::DeactivatePortBreakpointsByType(uint8_t ioType)
             pair.second->active = false;
         }
     }
+    RebuildFilters();
 }
 
 // Breakpoint group management
@@ -943,6 +959,7 @@ void BreakpointManager::ActivateBreakpointGroup(const std::string& groupName)
             breakpoint->active = true;
         }
     }
+    RebuildFilters();
 }
 
 /// @brief Deactivates all breakpoints in a specific group
@@ -965,6 +982,7 @@ void BreakpointManager::DeactivateBreakpointGroup(const std::string& groupName)
             breakpoint->active = false;
         }
     }
+    RebuildFilters();
 }
 
 /// @brief Removes a breakpoint from its current group
@@ -1138,16 +1156,19 @@ void BreakpointManager::RemovePortBreakpointsByType(uint8_t ioType)
 /// region <Runtime methods>
 uint16_t BreakpointManager::HandlePCChange(uint16_t pc)
 {
-    // TTD silent-replay suppression (parent TDD §8.2 + Appendix C).
-    // Breakpoints must not fire during intra-frame replay — the replay
+    // TTD silent-replay suppression (parent TDD 8.2 + Appendix C).
+    // Breakpoints must not fire during intra-frame replay - the replay
     // engine is re-executing known history, not user-driven execution.
     if (_context && _context->ttdReplayActive)
         return BRK_INVALID;
 
-    if (_breakpointMapByAddress.empty())
-    {
+    // Fast path: skip entirely if no execute breakpoints exist
+    if (!_hotState.hasExec)
         return BRK_INVALID;
-    }
+
+    // Fast path: skip if this address has no execute breakpoint
+    if (!(_hotState.addressFlags[pc] & BRK_FILTER_EXEC))
+        return BRK_INVALID;
 
     uint16_t result = BRK_INVALID;
 
@@ -1201,15 +1222,17 @@ uint16_t BreakpointManager::HandlePCChange(uint16_t pc)
 /// and returns the breakpoint ID if triggered.
 uint16_t BreakpointManager::HandleMemoryRead(uint16_t readAddress)
 {
-    // TTD silent-replay suppression (parent TDD §8.2 + Appendix C).
+    // TTD silent-replay suppression (parent TDD 8.2 + Appendix C).
     if (_context && _context->ttdReplayActive)
         return BRK_INVALID;
 
-    // Fast path: skip expensive lookups if no memory breakpoints exist
-    if (_breakpointMapByAddress.empty())
-    {
+    // Fast path: skip entirely if no read breakpoints exist
+    if (!_hotState.hasRead)
         return BRK_INVALID;
-    }
+
+    // Fast path: skip if this address has no read breakpoint
+    if (!(_hotState.addressFlags[readAddress] & BRK_FILTER_READ))
+        return BRK_INVALID;
 
     uint16_t result = BRK_INVALID;
 
@@ -1236,15 +1259,17 @@ uint16_t BreakpointManager::HandleMemoryRead(uint16_t readAddress)
 /// and returns the breakpoint ID if triggered.
 uint16_t BreakpointManager::HandleMemoryWrite(uint16_t writeAddress)
 {
-    // TTD silent-replay suppression (parent TDD §8.2 + Appendix C).
+    // TTD silent-replay suppression (parent TDD 8.2 + Appendix C).
     if (_context && _context->ttdReplayActive)
         return BRK_INVALID;
 
-    // Fast path: skip expensive lookups if no memory breakpoints exist
-    if (_breakpointMapByAddress.empty())
-    {
+    // Fast path: skip entirely if no write breakpoints exist
+    if (!_hotState.hasWrite)
         return BRK_INVALID;
-    }
+
+    // Fast path: skip if this address has no write breakpoint
+    if (!(_hotState.addressFlags[writeAddress] & BRK_FILTER_WRITE))
+        return BRK_INVALID;
 
     uint16_t result = BRK_INVALID;
 
@@ -1271,14 +1296,13 @@ uint16_t BreakpointManager::HandleMemoryWrite(uint16_t writeAddress)
 /// and returns the breakpoint ID if triggered.
 uint16_t BreakpointManager::HandlePortIn(uint16_t portAddress)
 {
-    // TTD silent-replay suppression (parent TDD §8.2 + Appendix C).
+    // TTD silent-replay suppression (parent TDD 8.2 + Appendix C).
     if (_context && _context->ttdReplayActive)
         return BRK_INVALID;
 
-    if (_breakpointMapByPort.empty())
-    {
+    // Fast path: skip if no port-in breakpoints exist
+    if (!_hotState.hasPortIn)
         return BRK_INVALID;
-    }
 
     uint16_t result = BRK_INVALID;
 
@@ -1305,14 +1329,13 @@ uint16_t BreakpointManager::HandlePortIn(uint16_t portAddress)
 /// and returns the breakpoint ID if triggered.
 uint16_t BreakpointManager::HandlePortOut(uint16_t portAddress)
 {
-    // TTD silent-replay suppression (parent TDD §8.2 + Appendix C).
+    // TTD silent-replay suppression (parent TDD 8.2 + Appendix C).
     if (_context && _context->ttdReplayActive)
         return BRK_INVALID;
 
-    if (_breakpointMapByPort.empty())
-    {
+    // Fast path: skip if no port-out breakpoints exist
+    if (!_hotState.hasPortOut)
         return BRK_INVALID;
-    }
 
     uint16_t result = BRK_INVALID;
 
@@ -1404,6 +1427,8 @@ uint16_t BreakpointManager::AddMemoryBreakpoint(BreakpointDescriptor* descriptor
 
         _breakpointMapByAddress.insert({key, descriptor});
         _breakpointMapByID.insert({result, descriptor});
+
+        RebuildFilters();
     }
 
     return result;
@@ -1435,6 +1460,8 @@ uint16_t BreakpointManager::AddPortBreakpoint(BreakpointDescriptor* descriptor)
 
         _breakpointMapByPort.insert({key, descriptor});
         _breakpointMapByID.insert({result, descriptor});
+
+        RebuildFilters();
     }
 
     return result;
@@ -1508,6 +1535,68 @@ BreakpointDescriptor* BreakpointManager::FindPortBreakpoint(uint16_t port)
     }
 
     return result;
+}
+
+/// @brief Rebuilds hot-path filter state from current breakpoint set
+///
+/// This method is called after every mutation (add/remove/activate/deactivate).
+/// It clears and repopulates:
+///   - Per-kind flags (hasExec, hasRead, hasWrite, hasPortIn, hasPortOut)
+///   - 64KB address filter array with bits for each breakpoint kind
+///
+/// The rebuild-from-scratch approach is simple and correct; with typical
+/// breakpoint counts (tens) this runs in microseconds at human/UI frequency.
+void BreakpointManager::RebuildFilters()
+{
+    // Clear all state
+    _hotState.hasExec = 0;
+    _hotState.hasRead = 0;
+    _hotState.hasWrite = 0;
+    _hotState.hasPortIn = 0;
+    _hotState.hasPortOut = 0;
+    std::memset(_hotState.addressFlags, 0, sizeof(_hotState.addressFlags));
+
+    // Scan all memory breakpoints and set flags + address filter
+    for (const auto& [key, bp] : _breakpointMapByAddress)
+    {
+        if (!bp || !bp->active)
+            continue;
+
+        // Extract Z80 address (lower 16 bits of key)
+        uint16_t addr = bp->z80address;
+
+        if (bp->memoryType & BRK_MEM_EXECUTE)
+        {
+            _hotState.hasExec = 1;
+            _hotState.addressFlags[addr] |= BRK_FILTER_EXEC;
+        }
+        if (bp->memoryType & BRK_MEM_READ)
+        {
+            _hotState.hasRead = 1;
+            _hotState.addressFlags[addr] |= BRK_FILTER_READ;
+        }
+        if (bp->memoryType & BRK_MEM_WRITE)
+        {
+            _hotState.hasWrite = 1;
+            _hotState.addressFlags[addr] |= BRK_FILTER_WRITE;
+        }
+    }
+
+    // Scan all port breakpoints and set port flags
+    for (const auto& [port, bp] : _breakpointMapByPort)
+    {
+        if (!bp || !bp->active)
+            continue;
+
+        if (bp->ioType & BRK_IO_IN)
+        {
+            _hotState.hasPortIn = 1;
+        }
+        if (bp->ioType & BRK_IO_OUT)
+        {
+            _hotState.hasPortOut = 1;
+        }
+    }
 }
 
 /// endregion </Helper methods>
