@@ -26,6 +26,12 @@ option(ENABLE_GDB_AUTOMATION "Enable automation for GDB RSP server (GDB TDD G1+)
 # root-level cache entry.
 option(ENABLE_RECORDING "Enable audio/video recording support" ON)
 
+# Recording support - follows the root CMakeLists.txt option (single source of truth
+# for the EmulatorContext/Core struct layout). Declared here so a standalone automation
+# build defaults the same way as the root project; option() never overrides an existing
+# root-level cache entry.
+option(ENABLE_RECORDING "Enable audio/video recording support" ON)
+
 # NOTE: Python dependency checks are handled by root CMakeLists.txt via DependencyCheck.cmake
 
 # Respect parent's ENABLE_AUTOMATION option
