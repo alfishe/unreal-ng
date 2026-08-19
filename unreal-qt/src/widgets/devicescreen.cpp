@@ -84,6 +84,20 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
 {
     QPainter painter = QPainter(this);
 
+    // Source rectangle with optional viewport cropping - applies to BOTH
+    // paint paths (the tear-free latched frame and the legacy live buffer
+    // share the same framebuffer geometry)
+    QRectF sourceRect = devicePixelsRect;
+    if (_hasViewport)
+    {
+        sourceRect = QRectF(
+            _displayViewport.cropLeft,
+            _displayViewport.cropTop,
+            devicePixelsRect.width() - _displayViewport.cropLeft - _displayViewport.cropRight,
+            devicePixelsRect.height() - _displayViewport.cropTop - _displayViewport.cropBottom
+        );
+    }
+
     // Tear-free path: pull the latched full-frame snapshot into our owned
     // backing image (SIMD copy under the screen's present mutex, ~40us),
     // then draw without holding any lock. The legacy path below reads the
@@ -94,26 +108,13 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
 #if QT_VERSION >= QT_VERSION_CHECK(5, 13, 0)
         painter.setRenderHint(QPainter::LosslessImageRendering);
 #endif
-        painter.drawImage(event->rect(), _latchedFrame, devicePixelsRect);
+        painter.drawImage(event->rect(), _latchedFrame, sourceRect);
     }
     else if (devicePixels != nullptr)
     {
 #if QT_VERSION >= QT_VERSION_CHECK(5, 13, 0)
         painter.setRenderHint(QPainter::LosslessImageRendering);
 #endif
-        // Calculate source rectangle with optional viewport cropping
-        QRectF sourceRect = devicePixelsRect;
-        if (_hasViewport)
-        {
-            // Apply viewport cropping to source rectangle
-            sourceRect = QRectF(
-                _displayViewport.cropLeft,
-                _displayViewport.cropTop,
-                devicePixelsRect.width() - _displayViewport.cropLeft - _displayViewport.cropRight,
-                devicePixelsRect.height() - _displayViewport.cropTop - _displayViewport.cropBottom
-            );
-        }
-
         // Render the ZX Spectrum screen directly into the event rect
         painter.drawImage(event->rect(), *devicePixels, sourceRect);
     }

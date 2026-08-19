@@ -53,7 +53,6 @@ private slots:
     void onChipModelChanged(int index);
     void onChannelMuteChanged(Qt::CheckState state);
     void onChannelVolumeChanged(int value);
-    void onBeeperFilterChanged(Qt::CheckState state);
     void onBeeperPunchChanged(Qt::CheckState state);
     void onCovoxDCRemovalChanged(Qt::CheckState state);
     void onCovoxChannelMuteChanged(Qt::CheckState state);
@@ -94,7 +93,6 @@ private:
     QLabel* _channelVolumeLabels[2][3] = {};
 
     QGroupBox* _beeperGroup = nullptr;
-    QCheckBox* _beeperFilterCheckbox = nullptr;
     QCheckBox* _beeperPunchCheckbox = nullptr;
 
     QGroupBox* _covoxGroup = nullptr;

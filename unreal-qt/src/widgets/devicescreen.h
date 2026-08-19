@@ -77,12 +77,14 @@ public:
                 ratio = static_cast<float>(w) / static_cast<float>(h);
         }
 
-        update();  // Trigger repaint with new viewport
+        updateGeometry();  // sizeHint/aspect changed - let the layout re-frame
+        update();          // Trigger repaint with new viewport
     }
 
     void clearDisplayViewport()
     {
         _hasViewport = false;
+        updateGeometry();
         update();
     }
 

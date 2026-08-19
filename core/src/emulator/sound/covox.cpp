@@ -10,18 +10,34 @@
 
 /// region <Constructors / destructors>
 
-Covox::Covox(EmulatorContext* context)
+Covox::Covox(EmulatorContext* context, size_t sampleRate)
     : _context(context)
+    , _sampleRate(sampleRate)
 {
     // Allocate blip_buf accumulators for stereo output
     _blipL = blip_new(MAX_SAMPLES_PER_FRAME + 64);
     _blipR = blip_new(MAX_SAMPLES_PER_FRAME + 64);
 
     // Set input clock rate → output sample rate conversion
-    blip_set_rates(_blipL, static_cast<double>(CPU_CLOCK_RATE), static_cast<double>(AUDIO_SAMPLING_RATE));
-    blip_set_rates(_blipR, static_cast<double>(CPU_CLOCK_RATE), static_cast<double>(AUDIO_SAMPLING_RATE));
+    blip_set_rates(_blipL, static_cast<double>(CPU_CLOCK_RATE), static_cast<double>(_sampleRate));
+    blip_set_rates(_blipR, static_cast<double>(CPU_CLOCK_RATE), static_cast<double>(_sampleRate));
+
+    // Keep the DC blocker cutoff in Hz constant across core rates
+    _dcCoefEff = static_cast<float>(std::pow(DC_COEF, 44100.0 / static_cast<double>(_sampleRate)));
 
     reset();
+}
+
+void Covox::setSampleRate(size_t sampleRate)
+{
+    _sampleRate = sampleRate;
+    blip_set_rates(_blipL, static_cast<double>(CPU_CLOCK_RATE), static_cast<double>(_sampleRate));
+    blip_set_rates(_blipR, static_cast<double>(CPU_CLOCK_RATE), static_cast<double>(_sampleRate));
+    if (_blipL) blip_clear(_blipL);
+    if (_blipR) blip_clear(_blipR);
+
+    // Keep the DC blocker cutoff in Hz constant across core rates
+    _dcCoefEff = static_cast<float>(std::pow(DC_COEF, 44100.0 / static_cast<double>(_sampleRate)));
 }
 
 Covox::~Covox()
@@ -57,7 +73,7 @@ void Covox::handleFrameStart()
     // The buffer will be filled in handleFrameEnd().
 }
 
-void Covox::handleFrameEnd()
+void Covox::handleFrameEnd(size_t expectedSamples)
 {
     CONFIG& config = _context->config;
     uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
@@ -70,12 +86,19 @@ void Covox::handleFrameEnd()
     blip_end_frame(_blipL, frameDuration);
     blip_end_frame(_blipR, frameDuration);
 
-    // Actual samples for this frame, derived from the machine's frame length
-    // (Pentagon: 903, ZX48/128: 881) - must match what SoundManager mixes.
-    // Reading a hardcoded SAMPLES_PER_FRAME (882) leaves a stale tail that the
-    // mixer would consume every frame.
-    int samplesThisFrame = static_cast<int>(
-        std::round(frameDuration * (double)AUDIO_SAMPLING_RATE / (double)CPU_CLOCK_RATE));
+    // Actual samples for this frame - must match what SoundManager mixes.
+    // Preferred: the exact count from SoundManager's sample accumulator
+    // (alternates e.g. 903/904 on Pentagon). Fallback: local rounding.
+    int samplesThisFrame;
+    if (expectedSamples > 0)
+    {
+        samplesThisFrame = static_cast<int>(expectedSamples);
+    }
+    else
+    {
+        samplesThisFrame = static_cast<int>(
+            std::round(frameDuration * (double)_sampleRate / (double)CPU_CLOCK_RATE));
+    }
     samplesThisFrame = std::clamp(samplesThisFrame, 0, (int)MAX_SAMPLES_PER_FRAME);
 
     // Read out band-limited samples into the interleaved stereo buffer
@@ -96,8 +119,8 @@ void Covox::handleFrameEnd()
             float l = static_cast<float>(_buffer[i * 2]);
             float r = static_cast<float>(_buffer[i * 2 + 1]);
 
-            _dcAccumL = _dcAccumL * DC_COEF + l * (1.0f - DC_COEF);
-            _dcAccumR = _dcAccumR * DC_COEF + r * (1.0f - DC_COEF);
+            _dcAccumL = _dcAccumL * _dcCoefEff + l * (1.0f - _dcCoefEff);
+            _dcAccumR = _dcAccumR * _dcCoefEff + r * (1.0f - _dcCoefEff);
 
             _buffer[i * 2]     = static_cast<int16_t>(std::clamp(l - _dcAccumL, -32768.0f, 32767.0f));
             _buffer[i * 2 + 1] = static_cast<int16_t>(std::clamp(r - _dcAccumR, -32768.0f, 32767.0f));

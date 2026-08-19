@@ -127,7 +127,12 @@ TEST_F(SoundAdaptivity_Test, SoundManager_CallbackSizeFollowsFrameLength)
         sound->handleFrameEnd();
 
         ASSERT_GT(capture.callCount, before) << machine.name << ": audio callback was not invoked";
-        EXPECT_EQ(capture.lastNumSamples, expectedSamples(machine.frameTStates) * AUDIO_CHANNELS)
+        // Per-frame counts alternate by +-1 around the exact rational value
+        // (integer accumulator carries the fraction); cumulative exactness is
+        // verified by SoundManager_ExactSampleCountOverAccumulatorPeriod
+        EXPECT_NEAR(static_cast<double>(capture.lastNumSamples),
+                    static_cast<double>(expectedSamples(machine.frameTStates) * AUDIO_CHANNELS),
+                    static_cast<double>(AUDIO_CHANNELS))
             << machine.name << " (" << machine.frameTStates
             << "T): mixed output size must derive from the frame length";
     }
@@ -228,3 +233,352 @@ TEST_F(SoundAdaptivity_Test, TurboSound_SampleCountFollowsFrameLength)
 }
 
 /// endregion </TurboSound>
+
+/// region <Exact sample accumulator (audio-sync Fix 1)>
+
+TEST_F(SoundAdaptivity_Test, SoundManager_ExactSampleCountOverAccumulatorPeriod)
+{
+    // The integer accumulator makes total samples over N frames EXACTLY
+    // floor(N * frame * SR / CPU_CLOCK) - drift-free by construction.
+    // The old round() emitted a systematic bias (-0.019% Pentagon,
+    // +0.047% ZX48) responsible for realtime ring drift and
+    // audio-behind-video drift in recordings.
+    SoundManager* sound = _context->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+
+    CallbackCapture capture;
+    _context->pAudioCallback.store(&CallbackCapture::callback, std::memory_order_release);
+    _context->pAudioManagerObj.store(&capture, std::memory_order_release);
+
+    struct Case
+    {
+        const char* name;
+        uint32_t frame;
+        uint32_t frames;  // Full accumulator period
+    };
+    const Case cases[] = {
+        {"Pentagon", 71680, 125},   // 125 * 903.168 = 112896 exactly
+        {"ZX48/128", 69888, 625},   // 625 * 880.5888 = 550368 exactly
+    };
+
+    for (const auto& c : cases)
+    {
+        _context->config.frame = c.frame;
+        sound->reset();  // Restart the accumulator for a clean period
+
+        uint64_t totalStereoSamples = 0;
+        for (uint32_t f = 0; f < c.frames; f++)
+        {
+            sound->handleFrameStart();
+            sound->handleFrameEnd();
+            totalStereoSamples += capture.lastNumSamples / AUDIO_CHANNELS;
+        }
+
+        uint64_t expected =
+            (static_cast<uint64_t>(c.frames) * c.frame * AUDIO_SAMPLING_RATE) / CPU_CLOCK_RATE;
+        EXPECT_EQ(totalStereoSamples, expected)
+            << c.name << ": " << c.frames << " frames must deliver exactly " << expected
+            << " samples (zero drift by construction)";
+    }
+}
+
+TEST_F(SoundAdaptivity_Test, TurboSound_PLLContinuityAcrossFrames)
+{
+    // The AY phase accumulator must be free-running across frames: zeroing it
+    // per frame locked the AY at 903 samples/frame (never 904), a systematic
+    // -0.019% rate bias vs the exact accumulator.
+    SoundManager* sound = _context->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+    SoundChip_TurboSound* turboSound = sound->getTurboSound();
+    if (!turboSound)
+        GTEST_SKIP() << "TurboSound not available";
+
+    Z80* z80 = _context->pCore->GetZ80();
+    _context->config.frame = 71680;
+    turboSound->reset();
+
+    uint64_t total = 0;
+    for (int f = 0; f < 125; f++)
+    {
+        turboSound->handleFrameStart();
+        z80->t = 71680;
+        turboSound->handleStep();
+        total += turboSound->getRenderedSamplesThisFrame();
+    }
+    z80->t = 0;
+
+    // 125 * 903.168 = 112896; allow FP phase accumulation slack of 2
+    EXPECT_NEAR(static_cast<double>(total), 112896.0, 2.0)
+        << "AY PLL must carry fractional phase across frames (903/904 pattern)";
+}
+
+/// endregion </Exact sample accumulator>
+
+/// region <DRC rate controller (audio-sync Fix 2)>
+
+TEST_F(SoundAdaptivity_Test, DRC_ConvergesToTargetOccupancy)
+{
+    // Closed loop: a simulated DAC consumes exactly real-time while the
+    // emulator produces through the full pipeline (mix -> DRC resampler ->
+    // callback). The PI controller must drive ring occupancy to the 70 ms
+    // setpoint from both directions and hold it with a small trim.
+    SoundManager* sound = _context->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+
+    CallbackCapture capture;
+    _context->pAudioCallback.store(&CallbackCapture::callback, std::memory_order_release);
+    _context->pAudioManagerObj.store(&capture, std::memory_order_release);
+
+    std::atomic<uint32_t> occCell{0};
+    _context->pAudioRingOccupancy.store(&occCell, std::memory_order_release);
+
+    _context->config.frame = 71680;
+    const double consumePerFrame = 71680.0 * 44100.0 / 3500000.0;  // Real-time DAC
+
+    auto runLoop = [&](double startFrames, int frames) -> double {
+        sound->reset();
+        double ring = startFrames;
+        occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
+        for (int f = 0; f < frames; f++)
+        {
+            sound->handleFrameStart();
+            sound->handleFrameEnd();
+            ring += static_cast<double>(capture.lastNumSamples) / AUDIO_CHANNELS;
+            ring = std::max(0.0, ring - consumePerFrame);
+            occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
+        }
+        return ring;
+    };
+
+    // From near-empty (emergency refill seeds ~46ms in the real mainloop;
+    // start there) and from badly overfull
+    for (double startMs : {46.0, 300.0})
+    {
+        double finalFrames = runLoop(startMs * 44100.0 / 1000.0, 6000);
+        double finalMs = finalFrames * 1000.0 / 44100.0;
+
+        EXPECT_NEAR(finalMs, SoundManager::DRC_TARGET_MS, 8.0)
+            << "DRC must converge ring occupancy to the setpoint (start " << startMs << "ms)";
+        EXPECT_LT(std::abs(sound->getDrcRatio() - 1.0), 0.001)
+            << "Converged trim must be small (start " << startMs << "ms)";
+    }
+
+    _context->pAudioRingOccupancy.store(nullptr, std::memory_order_release);
+}
+
+TEST_F(SoundAdaptivity_Test, DRC_DisengagedWithoutOccupancyCell)
+{
+    // No audio device attached (headless/tests): DRC must stay at exact
+    // unity bypass so output remains bit-identical and sample-exact
+    SoundManager* sound = _context->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+    ASSERT_EQ(_context->pAudioRingOccupancy.load(), nullptr);
+
+    sound->handleFrameStart();
+    sound->handleFrameEnd();
+    EXPECT_EQ(sound->getDrcRatio(), 1.0);
+}
+
+/// endregion </DRC rate controller>
+
+TEST_F(SoundAdaptivity_Test, AVLatencyBudget)
+{
+    // REGRESSION GUARD for audible A/V desync. The DRC pins ring occupancy
+    // at DRC_TARGET_MS - that occupancy IS the audio presentation delay
+    // (video presents within ~1 frame; audio trails by ring + HW buffer).
+    // Perception threshold for audio-late lip-sync is ~45 ms; the device HW
+    // buffer adds ~11 ms (2 x 256 frames @ 44.1k). The target must therefore
+    // stay at or below ~40 ms, with enough underrun margin (>= 5 device
+    // callback periods of ~5.8 ms).
+    //
+    // If this test fails after changing DRC_TARGET_MS: you have either
+    // reintroduced audible audio lag (too high) or removed the underrun
+    // safety margin (too low). Confirm with the realtime "A/V" readout in
+    // the audio settings window before adjusting the bounds.
+    constexpr double HW_BUFFER_MS = 2.0 * 256.0 * 1000.0 / 44100.0;  // ~11.6 ms
+    constexpr double PERCEPTION_THRESHOLD_MS = 45.0;
+    constexpr double MIN_UNDERRUN_MARGIN_MS = 5.0 * 5.8;  // 5 callback periods
+
+    EXPECT_LE(SoundManager::DRC_TARGET_MS + HW_BUFFER_MS, PERCEPTION_THRESHOLD_MS + 8.0)
+        << "Audio presentation delay exceeds the lip-sync perception budget";
+    EXPECT_GE(SoundManager::DRC_TARGET_MS, MIN_UNDERRUN_MARGIN_MS)
+        << "Ring target too small - underrun risk under scheduler jitter";
+
+    // The emergency-refill trigger must sit BELOW the occupancy sawtooth
+    // trough (target - 1 frame): production is bursty, so occupancy dips
+    // that far EVERY frame cycle. A threshold above the trough turns the
+    // emergency path into a periodic frame injector that spikes occupancy
+    // ~+1 frame and fights the DRC forever (shipped once: 70->40 ms target
+    // change left the old ~46 ms threshold in place -> intermittent
+    // +20..30 ms audio-late excursions).
+    constexpr double PENTAGON_FRAME_MS = 71680.0 / 3500.0;  // 20.48 ms (longest frame)
+    constexpr double SAWTOOTH_TROUGH_MS = SoundManager::DRC_TARGET_MS - PENTAGON_FRAME_MS;
+    EXPECT_LT(SoundManager::EMERGENCY_REFILL_MS, SAWTOOTH_TROUGH_MS - 3.0)
+        << "Refill threshold must clear the steady-state occupancy trough with margin";
+    EXPECT_GT(SoundManager::EMERGENCY_REFILL_MS, 5.0)
+        << "Refill threshold too low to catch genuine stalls before underrun";
+
+    // Hard-resync trigger: far enough above target that it can only be hit
+    // through abnormal events (reroute windows, long stalls), yet low enough
+    // that a resync restores the budget in ONE step instead of the DRC
+    // grinding down an overfill for minutes at +-0.5%
+    EXPECT_GE(SoundManager::HARD_RESYNC_MS, SoundManager::DRC_TARGET_MS * 3.0)
+        << "Hard resync must not trigger on normal DRC transients";
+    EXPECT_LE(SoundManager::HARD_RESYNC_MS, 250.0)
+        << "Hard resync threshold high enough to let audible lag persist";
+}
+
+TEST_F(SoundAdaptivity_Test, EmergencyRefill_NeverFiresAtSteadyState)
+{
+    // Closed loop with the mainloop's refill rule simulated: at converged
+    // steady state the instantaneous occupancy sawtooth must NEVER cross the
+    // refill threshold - the emergency path is for cold start and stalls
+    // only. Sampling right BEFORE each production burst hits the sawtooth
+    // trough, the worst case.
+    SoundManager* sound = _context->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+
+    CallbackCapture capture;
+    _context->pAudioCallback.store(&CallbackCapture::callback, std::memory_order_release);
+    _context->pAudioManagerObj.store(&capture, std::memory_order_release);
+
+    std::atomic<uint32_t> occCell{0};
+    _context->pAudioRingOccupancy.store(&occCell, std::memory_order_release);
+
+    _context->config.frame = 71680;
+    const double devRate = 44100.0;
+    const double consumePerFrame = 71680.0 * devRate / 3500000.0;
+    const double refillThresholdFrames = devRate * SoundManager::EMERGENCY_REFILL_MS / 1000.0;
+
+    sound->reset();
+    double ring = SoundManager::DRC_TARGET_MS * devRate / 1000.0;
+    occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
+
+    int refillTriggers = 0;
+    for (int f = 0; f < 3000; f++)
+    {
+        // DAC drains first: the trough is right before the production burst
+        ring = std::max(0.0, ring - consumePerFrame);
+        occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
+
+        if (f > 500 && ring < refillThresholdFrames)
+            refillTriggers++;
+
+        sound->handleFrameStart();
+        sound->handleFrameEnd();
+        ring += static_cast<double>(capture.lastNumSamples) / AUDIO_CHANNELS;
+        occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
+    }
+
+    EXPECT_EQ(refillTriggers, 0)
+        << "Emergency refill fired at steady state - it would inject extra "
+           "frames and spike occupancy above the A/V budget";
+
+    _context->pAudioRingOccupancy.store(nullptr, std::memory_order_release);
+}
+
+TEST_F(SoundAdaptivity_Test, DRC_RebasesOnDeviceRateChangeMidRun)
+{
+    // Device hotplug / OS default-output change: the frontend re-inits the
+    // audio device at the new native rate, clears the ring and republishes
+    // pAudioDeviceSampleRate. The DRC reads the cell every frame, so the
+    // resample ratio must re-base to the new device/core ratio immediately
+    // and occupancy must re-converge to the 70 ms setpoint - with no
+    // emulator or sound-stack restart.
+    SoundManager* sound = _context->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+
+    CallbackCapture capture;
+    _context->pAudioCallback.store(&CallbackCapture::callback, std::memory_order_release);
+    _context->pAudioManagerObj.store(&capture, std::memory_order_release);
+
+    std::atomic<uint32_t> occCell{0};
+    _context->pAudioRingOccupancy.store(&occCell, std::memory_order_release);
+    _context->pAudioDeviceSampleRate.store(44100, std::memory_order_release);
+
+    _context->config.frame = 71680;
+    sound->reset();
+
+    double devRate = 44100.0;
+    double ring = SoundManager::DRC_TARGET_MS * devRate / 1000.0;  // Start converged at the setpoint
+    occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
+
+    auto runFrames = [&](int frames) {
+        for (int f = 0; f < frames; f++)
+        {
+            sound->handleFrameStart();
+            sound->handleFrameEnd();
+            ring += static_cast<double>(capture.lastNumSamples) / AUDIO_CHANNELS;
+            ring = std::max(0.0, ring - 71680.0 * devRate / 3500000.0);  // Real-time DAC
+            occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
+        }
+    };
+
+    runFrames(2000);
+    EXPECT_NEAR(sound->getDrcRatio(), 1.0, 0.005) << "Converged unity before the reroute";
+
+    // Reroute: device re-established at 48000, ring cleared then reseeded by
+    // the emergency refill (~46 ms), new rate published
+    devRate = 48000.0;
+    ring = 46.0 * devRate / 1000.0;
+    occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
+    _context->pAudioDeviceSampleRate.store(48000, std::memory_order_release);
+
+    sound->handleFrameStart();
+    sound->handleFrameEnd();
+    EXPECT_NEAR(sound->getDrcRatio(), 48000.0 / 44100.0, 48000.0 / 44100.0 * 0.006)
+        << "Base ratio must re-base to the new device rate on the next frame";
+
+    runFrames(6000);
+    const double finalMs = ring * 1000.0 / devRate;
+    EXPECT_NEAR(finalMs, SoundManager::DRC_TARGET_MS, 8.0) << "Occupancy must re-converge at the new device rate";
+
+    _context->pAudioRingOccupancy.store(nullptr, std::memory_order_release);
+    _context->pAudioDeviceSampleRate.store(0, std::memory_order_release);
+}
+
+TEST_F(SoundAdaptivity_Test, DRC_NativeDeviceRate48k_ConvergesAndConverts)
+{
+    // Device at native 48000 Hz (audio-sync Fix 3): the DRC resampler's base
+    // ratio becomes 48000/44100 and the controller still converges occupancy
+    // (measured in DEVICE frames) to the 70 ms setpoint.
+    SoundManager* sound = _context->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+
+    CallbackCapture capture;
+    _context->pAudioCallback.store(&CallbackCapture::callback, std::memory_order_release);
+    _context->pAudioManagerObj.store(&capture, std::memory_order_release);
+
+    std::atomic<uint32_t> occCell{0};
+    _context->pAudioRingOccupancy.store(&occCell, std::memory_order_release);
+    _context->pAudioDeviceSampleRate.store(48000, std::memory_order_release);
+
+    _context->config.frame = 71680;
+    const double consumePerFrame = 71680.0 * 48000.0 / 3500000.0;  // Real-time DAC @48k
+
+    sound->reset();
+    double ring = SoundManager::DRC_TARGET_MS * 48.0;  // Start at setpoint (in device frames): verify HOLD
+    occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
+
+    uint64_t totalDeviceSamples = 0;
+    for (int f = 0; f < 6000; f++)
+    {
+        sound->handleFrameStart();
+        sound->handleFrameEnd();
+        totalDeviceSamples += capture.lastNumSamples / AUDIO_CHANNELS;
+        ring += static_cast<double>(capture.lastNumSamples) / AUDIO_CHANNELS;
+        ring = std::max(0.0, ring - consumePerFrame);
+        occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
+    }
+
+    double finalMs = ring * 1000.0 / 48000.0;
+    EXPECT_NEAR(finalMs, SoundManager::DRC_TARGET_MS, 8.0) << "Occupancy must hold at setpoint with 48k device";
+
+    // Output volume converted at ~48/44.1: 6000 frames x 903.168 core samples
+    double expectedDevice = 6000.0 * 903.168 * 48000.0 / 44100.0;
+    EXPECT_NEAR(static_cast<double>(totalDeviceSamples), expectedDevice, expectedDevice * 0.002)
+        << "Device stream volume must reflect the 48000/44100 base ratio";
+
+    _context->pAudioRingOccupancy.store(nullptr, std::memory_order_release);
+    _context->pAudioDeviceSampleRate.store(0, std::memory_order_release);
+}

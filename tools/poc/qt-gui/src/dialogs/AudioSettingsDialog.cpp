@@ -144,8 +144,6 @@ void AudioSettingsDialog::createUI()
     // Beeper section
     _beeperGroup = new QGroupBox("Beeper (1-bit)", this);
     auto* beeperLayout = new QHBoxLayout(_beeperGroup);
-    _beeperFilterCheckbox = new QCheckBox("Lowpass", _beeperGroup);
-    beeperLayout->addWidget(_beeperFilterCheckbox);
     _beeperPunchCheckbox = new QCheckBox("Punch", _beeperGroup);
     beeperLayout->addWidget(_beeperPunchCheckbox);
     beeperLayout->addStretch();
@@ -306,7 +304,6 @@ void AudioSettingsDialog::connectSignals()
         }
     }
 
-    connect(_beeperFilterCheckbox, &QCheckBox::checkStateChanged, this, &AudioSettingsDialog::onBeeperFilterChanged);
     connect(_beeperPunchCheckbox, &QCheckBox::checkStateChanged, this, &AudioSettingsDialog::onBeeperPunchChanged);
 
     connect(_covoxDCRemovalCheckbox, &QCheckBox::checkStateChanged, this, &AudioSettingsDialog::onCovoxDCRemovalChanged);
@@ -345,7 +342,6 @@ void AudioSettingsDialog::disconnectSignals()
         }
     }
 
-    disconnect(_beeperFilterCheckbox, nullptr, this, nullptr);
     disconnect(_beeperPunchCheckbox, nullptr, this, nullptr);
     disconnect(_covoxDCRemovalCheckbox, nullptr, this, nullptr);
     for (int i = 0; i < 4; i++)
@@ -401,7 +397,6 @@ void AudioSettingsDialog::refreshFromContext()
         _ayPunchCheckbox->setChecked(sm->getAYChain().isPunchEnabled());
         _ayRoomCombo->setCurrentIndex(static_cast<int>(sm->getAYChain().getRoomMode()));
 
-        _beeperFilterCheckbox->setChecked(sm->isBeeperFilterEnabled());
         _beeperPunchCheckbox->setChecked(sm->getBeeperChain().isPunchEnabled());
 
         // FIR filter
@@ -575,12 +570,6 @@ void AudioSettingsDialog::onChannelVolumeChanged(int value)
     SoundChip_AY8910* ay = _context->pSoundManager->getAYChip(chip);
     if (ay)
         ay->setChannelVolume(channel, value / 100.0);
-}
-
-void AudioSettingsDialog::onBeeperFilterChanged(Qt::CheckState state)
-{
-    if (_context && _context->pSoundManager)
-        _context->pSoundManager->setBeeperFilterEnabled(state == Qt::Checked);
 }
 
 void AudioSettingsDialog::onBeeperPunchChanged(Qt::CheckState state)

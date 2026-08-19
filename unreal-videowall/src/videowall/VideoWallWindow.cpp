@@ -156,6 +156,15 @@ void VideoWallWindow::initializeAfterEventLoopStart()
 
     // Initialize sound manager for audio binding to focused tile
     _soundManager = new AppSoundManager();
+
+    // Device reroute (hotplug / OS default-output change) at a different
+    // native rate: republish to the audio-bound tile's emulator so its DRC
+    // resampler re-bases the core->device ratio
+    connect(_soundManager, &AppSoundManager::deviceReinitialized, this, [this](uint32_t sampleRate) {
+        if (_audioBoundTile && _audioBoundTile->emulator())
+            _audioBoundTile->emulator()->SetAudioDeviceSampleRate(sampleRate);
+    });
+
     if (_soundManager->init())
     {
         _soundManager->start();
@@ -1222,7 +1231,9 @@ void VideoWallWindow::bindAudioToTile(EmulatorTile* tile)
     }
 
     // Bind audio callback to new emulator
-    emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback);
+    emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback, _soundManager->occupancyCell(),
+                               _soundManager->deviceDescriptor());
+    emulator->SetAudioDeviceSampleRate(_soundManager->deviceSampleRate());
     _soundManager->setActiveContext(emulator->GetContext());
 
     _audioBoundTile = tile;

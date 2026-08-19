@@ -119,6 +119,19 @@ bool Emulator::Init()
         if (result)
         {
             MLOGDEBUG("Emulator::Init - Config file successfully loaded");
+
+            // Apply the programmatically-requested model (if any) now - before
+            // any model-dependent subsystem (ROMs, port decoder, screen) reads
+            // the config. Overrides the INI's HIMEM/RamSize selection and gets
+            // canonical frame geometry for the model.
+            if (_hasPreferredModel)
+            {
+                _context->config.mem_model = _preferredModel;
+                _context->config.ramsize = _preferredRamSize;
+                _config->ApplyModelTimingDefaults(_context->config, true /* canonicalGeometry */);
+                MLOGINFO("Emulator::Init - Applied preferred model %d (INI HIMEM overridden)",
+                         (int)_preferredModel);
+            }
         }
         else
         {
@@ -566,13 +579,43 @@ FramebufferDescriptor Emulator::GetFramebuffer()
     return _context->pScreen->GetFramebufferDescriptor();
 }
 
-void Emulator::SetAudioCallback(void* obj, AudioCallback callback)
+void Emulator::SetAudioCallback(void* obj, AudioCallback callback, const std::atomic<uint32_t>* occupancyFrames,
+                                const AudioDeviceDescriptor* deviceDescriptor)
 {
     // Use memory_order_release to ensure all previous writes are visible to the emulator thread
     _context->pAudioManagerObj.store(obj, std::memory_order_release);
     _context->pAudioCallback.store(callback, std::memory_order_release);
+    _context->pAudioRingOccupancy.store(occupancyFrames, std::memory_order_release);
+    _context->pAudioDeviceDescriptor.store(deviceDescriptor, std::memory_order_release);
 
     MLOGINFO("Emulator::SetAudioCallback() - Audio callback set: obj=%p, callback=%p", obj, (void*)callback);
+}
+
+void Emulator::SetAudioDeviceSampleRate(uint32_t rate)
+{
+    _context->pAudioDeviceSampleRate.store(rate, std::memory_order_release);
+
+    // Device (re)established: restart DRC tracking from the fresh occupancy
+    // instead of stale pre-reroute EMA/integrator state
+    if (_context->pSoundManager)
+    {
+        _context->pSoundManager->resetDrcController();
+    }
+
+    // CoreRate=auto: a device-rate CHANGE (hotplug / reroute at a different
+    // native rate) requests a full pipeline re-rate - every digital filter
+    // re-derives for the new core rate at the next frame boundary on the
+    // emulation thread (SoundManager::handleFrameStart applies it there;
+    // deferred while a recording is in progress).
+    if (rate != 0 && _context->config.sound.coreRate == 0 && _context->pSoundManager)
+    {
+        _context->pSoundManager->requestCoreRate(rate);
+    }
+}
+
+const AudioDeviceDescriptor* Emulator::GetAudioDeviceDescriptor() const
+{
+    return _context->pAudioDeviceDescriptor.load(std::memory_order_acquire);
 }
 
 void Emulator::ClearAudioCallback()
@@ -580,6 +623,9 @@ void Emulator::ClearAudioCallback()
     // Use memory_order_release to ensure the nullptr writes are visible to the emulator thread
     _context->pAudioManagerObj.store(nullptr, std::memory_order_release);
     _context->pAudioCallback.store(nullptr, std::memory_order_release);
+    _context->pAudioRingOccupancy.store(nullptr, std::memory_order_release);
+    _context->pAudioDeviceSampleRate.store(0, std::memory_order_release);
+    _context->pAudioDeviceDescriptor.store(nullptr, std::memory_order_release);
 
     MLOGINFO("Emulator::ClearAudioCallback() - Audio callback cleared for emulator %s", _emulatorId.c_str());
 }
@@ -2142,6 +2188,10 @@ bool Emulator::SetOverscanMode(bool enable)
             Pause(false);
         }
 
+        // Record the user's intent FIRST: InitRaster re-detects the video mode
+        // from config/ports every frame and would revert a bare SetVideoMode
+        // back to the model's base mode on the next frame
+        screen->SetOverscanForced(enable);
         screen->SetVideoMode(newMode);
 
         if (wasRunning)

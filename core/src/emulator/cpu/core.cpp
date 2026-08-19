@@ -198,6 +198,10 @@ bool Core::Init()
             _context->pRecordingManager = _recordingManager;
             _recordingManager->Init();
 
+            // Recordings must be stamped with the resolved core audio rate
+            // (multirate plan phase 6) - never the 44100 default
+            _recordingManager->SetAudioSampleRate(static_cast<uint32_t>(_sound->getCoreRate()));
+
             result = true;
         }
     }

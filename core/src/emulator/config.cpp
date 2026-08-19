@@ -309,6 +309,36 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	config.sound.covoxFB = (int)inimanager.GetLongValue(sound, "CovoxFB", 0);
 	config.sound.covoxDD = (int)inimanager.GetLongValue(sound, "CovoxDD", 0);
 
+	// Core audio rate: auto | 44100 | 48000 | 88200 | 96000 | 176400 | 192000
+	// (multirate plan phase 6). 0 = auto. Unsupported values fall back to auto.
+	{
+		long rate = inimanager.GetLongValue(sound, "CoreRate", 0);  // "auto" parses as 0
+		switch (rate)
+		{
+			case 0:
+			case 44100:
+			case 48000:
+			case 88200:
+			case 96000:
+			case 176400:
+			case 192000:
+				config.sound.coreRate = (unsigned)rate;
+				break;
+			default:
+				MLOGWARNING("Config: unsupported [SOUND] CoreRate=%ld, using auto", rate);
+				config.sound.coreRate = 0;
+				break;
+		}
+	}
+
+	// VIDEO section
+	// A/V sync video delay: auto (-1) = match the audio path latency
+	// (~2 frames); 0 = lowest input latency (audio trails by the ring depth)
+	{
+		long delay = inimanager.GetLongValue(video, "AVSyncDelayFrames", -1);  // "auto" parses as 0 - use -1 default
+		config.videoPresentDelayFrames = (delay >= -1 && delay <= 3) ? (int)delay : -1;
+	}
+
 	// Emulated model
 	CopyStringValue(inimanager.GetValue(misc, "HIMEM", "PENTAGON", nullptr), line, sizeof line);
 	config.ramsize = inimanager.GetLongValue(misc, "RamSize", 128, nullptr);
@@ -478,7 +508,7 @@ string Config::PrintModelAvailableRAM(uint32_t availRAM)
 	return ss.str();
 }
 
-void Config::ApplyModelTimingDefaults(CONFIG& config)
+void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
 {
     // Save user-specified INI values (if non-default)
     unsigned userIntstart = config.intstart;
@@ -524,6 +554,39 @@ void Config::ApplyModelTimingDefaults(CONFIG& config)
         config.intstart = userIntstart;
     if (userIntlen != 0 && userIntlen != 32)
         config.intlen = userIntlen;
+
+    // Programmatically-requested models also get canonical frame geometry: the
+    // INI in use typically describes a different machine (e.g. the global
+    // Pentagon ini) so its frame/line values must not leak into the requested
+    // model. INI-driven runs (per-model config dirs) pass false and are untouched.
+    if (canonicalGeometry)
+    {
+        switch (config.mem_model)
+        {
+            case MM_SPECTRUM48:
+                config.frame = 69888;   // 224 * 312
+                config.t_line = 224;
+                config.intstart = 1794;
+                config.intlen = 32;
+                break;
+            case MM_SPECTRUM128:
+            case MM_PLUS3:
+                config.frame = 70908;   // 228 * 311
+                config.t_line = 228;
+                config.intstart = 2056;
+                config.intlen = 36;
+                break;
+            case MM_PENTAGON:
+                config.frame = 71680;   // 224 * 320
+                config.t_line = 224;
+                break;
+            default:
+                break;
+        }
+
+        // Invariant: frame_duration_us must be recomputed with config.frame
+        config.frame_duration_us = CalculateFrameDurationUs(config.frame);
+    }
 
     MLOGINFO("ApplyModelTimingDefaults: model=%d intstart=%u intlen=%u frame=%u line=%u",
              config.mem_model, config.intstart, config.intlen, config.frame, config.t_line);

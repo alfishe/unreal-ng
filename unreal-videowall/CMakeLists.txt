@@ -249,7 +249,9 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 # Link all dependencies
 if (APPLE)
     target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)
-    set(common_libraries iconv)
+    # CoreAudio: direct AudioObject property listener for device nominal
+    # sample-rate changes (AppSoundManager nominal-rate watch)
+    set(common_libraries iconv "-framework CoreAudio")
     find_package(Threads REQUIRED)
 elseif (UNIX AND NOT APPLE)
     set(common_libraries -static-libstdc++)

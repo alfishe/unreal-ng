@@ -367,7 +367,7 @@ bool ROM::LoadROMSet()
 
 	// BASIC48 (SOS)
 	string romPath = config.romSetSOSPath;
-	bool result1 = LoadROM(romPath, memory.base_sos_rom);
+	bool result1 = (memory.base_sos_rom == nullptr) || LoadROM(romPath, memory.base_sos_rom);
 	if (!result1)
 	{
 		MLOGERROR("Unable to load BASIC48 (SOS) ROM from file: '%s'", config.sos_rom_path);
@@ -375,7 +375,7 @@ bool ROM::LoadROMSet()
 
 	// BASIC128
     romPath = config.romSet128Path;
-	bool result2 = LoadROM(romPath, memory.base_128_rom);
+	bool result2 = (memory.base_128_rom == nullptr) || LoadROM(romPath, memory.base_128_rom);
 	if (!result2)
 	{
 		MLOGERROR("Unable to load BASIC128 ROM from file: '%s'", config.zx128_rom_path);
@@ -383,7 +383,7 @@ bool ROM::LoadROMSet()
 
 	// DOS (TR-DOS)
     romPath = config.romSetDOSPath;
-	bool result3 = LoadROM(romPath, memory.base_dos_rom);
+	bool result3 = (memory.base_dos_rom == nullptr) || LoadROM(romPath, memory.base_dos_rom);
 	if (!result3)
 	{
 		MLOGERROR("Unable to load DOS (TR-DOS) ROM from file: '%s'", config.dos_rom_path);
@@ -391,7 +391,7 @@ bool ROM::LoadROMSet()
 
 	// Shadow (SYS)
     romPath = config.romSetSYSPath;
-	bool result4 = LoadROM(romPath, memory.base_sys_rom);
+	bool result4 = (memory.base_sys_rom == nullptr) || LoadROM(romPath, memory.base_sys_rom);
 	if (!result4)
 	{
 		MLOGERROR("Unable to load Shadow (SYS) ROM from file: '%s'", config.sys_rom_path);
@@ -410,6 +410,13 @@ bool ROM::LoadROMSet()
 uint16_t ROM::LoadROM(string& path, uint8_t* bank, uint16_t max_banks)
 {
 	uint16_t result = 0;
+
+	// Models without this ROM slot (e.g. 48K has no 128/DOS/SYS ROM) pass nullptr
+	if (bank == nullptr)
+	{
+		MLOGWARNING("ROM::LoadROM - null bank pointer for '%s', skipping", path.c_str());
+		return result;
+	}
 
 	// Clear whole ROM area before loading
 	memset(bank, 0xFF, max_banks * PAGE_SIZE);

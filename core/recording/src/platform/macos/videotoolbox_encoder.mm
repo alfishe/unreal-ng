@@ -246,7 +246,12 @@ bool VideoToolboxEncoder::initAssetWriter(const std::string& filename, const Enc
         // Audio input
         if (_hasAudio)
         {
-            uint32_t sampleRate = config.audioSampleRate > 0 ? config.audioSampleRate : 44100;
+            // Output audio rate policy (encoder_config.h): video containers
+            // always carry 48 kHz unless explicitly overridden. The INPUT
+            // stays at the core's native rate (the CMAudioFormatDescription
+            // built in initAudioConverter); when they differ AVAssetWriter
+            // converts through Apple's AudioConverter (mastering-grade SRC).
+            uint32_t sampleRate = config.audioOutputSampleRate > 0 ? config.audioOutputSampleRate : 48000;
             uint32_t channels = config.audioChannels > 0 ? config.audioChannels : 2;
             uint32_t audioBitrate = config.audioBitrate > 0 ? config.audioBitrate * 1000 : 192000;
 

@@ -16,9 +16,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
-#include "emulator/emulatorcontext.h"
 #include "emulator/notifications.h"
-#include "emulator/platform.h"
 #include "stdafx.h"
 
 /// region <Static methods>
@@ -157,6 +155,27 @@ void Screen::InitRaster()
 
     /// region Set current video mode
 
+    // Base video mode per machine model. Without this, every model inherited
+    // the constructor's default mode - ZX-48K/128K ran with the wrong raster
+    // geometry and, critically, with ULA contention state of another machine.
+    // Special modes (ATM, AlCo, Profi, GMX) override below.
+    switch (config.mem_model)
+    {
+        case MM_SPECTRUM48:
+            video.mode = M_ZX48;
+            break;
+        case MM_SPECTRUM128:
+        case MM_PLUS3:
+            video.mode = M_ZX128;
+            break;
+        case MM_PENTAGON:
+            video.mode = M_PENTAGON128K;
+            break;
+        default:
+            // Other models keep their current/legacy mode selection
+            break;
+    }
+
     uint8_t m = EFF7_4BPP | EFF7_HWMC;
 
     // ATM 1
@@ -209,6 +228,16 @@ void Screen::InitRaster()
     }
 
     video.raster = raster[R_256_192];
+
+    // User-forced Pentagon overscan (UI toggle): must survive the per-frame
+    // re-detection - detection would otherwise revert the manual mode to the
+    // model's base mode on the next frame. Guest-programmed AlCo modes (EFF7
+    // bits below) still take priority.
+    if (_overscanForced && config.mem_model == MM_PENTAGON)
+    {
+        video.mode = M_P384;
+        video.raster = raster[R_384_304];
+    }
 
     // ATM 3 AlCo modes
     if (config.mem_model == MM_ATM3 && (state.pEFF7 & m))
@@ -280,7 +309,13 @@ void Screen::InitRaster()
     /// endregion
 
     // Select renderer for the mode
-    if (prevMode != video.mode)
+    // Apply when the detected mode differs from the ACTIVE raster mode (_mode),
+    // not merely from the previous detection result: the constructor defaults
+    // (_mode/_vid.mode) can disagree with the model's base mode, and comparing
+    // detection-to-detection left 48K/128K machines running with the Pentagon
+    // raster and contention disabled.
+    (void)prevMode;
+    if (video.mode != _mode)
     {
         SetVideoMode(video.mode);
 
@@ -446,6 +481,32 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     // Allocate framebuffer
     AllocateFramebuffer(_mode);
 
+    // Notify consumers that the video mode changed. JUSTIFICATION: mode
+    // switches are not only UI-driven - guest software switches modes by
+    // port writes (Pentagon AlCo via EFF7, Profi via DFFD, ATM via FF77,
+    // GMX), detected by InitRaster mid-emulation on the emulation thread.
+    // Framebuffer geometry (and, for size-changing switches, the buffer
+    // address) is different afterwards; a GUI consumer with cached
+    // dimensions has CopyPresentedFramebuffer rejecting every copy (dst too
+    // small) and freezes on the last frame. Consumers must re-attach.
+    // Skipped during construction (pEmulator not wired yet).
+    if (_context && _context->pEmulator)
+    {
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        messageCenter.Post(NC_VIDEO_MODE_CHANGED,
+                           new EmulatorFramePayload(_context->pEmulator->GetUUID(), 0));
+
+        // The same event, carrying the new geometry. Both are posted because the two
+        // notifications were developed independently and their consumers differ:
+        // NC_VIDEO_MODE_CHANGED is a re-attach trigger whose payload has no
+        // dimensions, while the POC front-ends (qt-gui's EmulatorWidget, the
+        // macOS-native bridge) read width and height straight off this one and would
+        // otherwise have to query the screen again just to learn what changed.
+        messageCenter.Post(NC_VIDEO_RESOLUTION_CHANGED,
+                           new VideoResolutionPayload(_context->pEmulator->GetId(),
+                                                      _framebuffer.width, _framebuffer.height));
+    }
+
 #ifdef _DEBUG
     MLOGINFO("%s", DumpRasterState().c_str());
 #endif  // _DEBUG
@@ -585,10 +646,48 @@ void Screen::SaveZXSpectrumNativeScreen()
 
 void Screen::AllocateFramebuffer(VideoModeEnum mode)
 {
+    // Apply the configured A/V sync video delay (auto -1 = 2 frames: the
+    // audio path's ring target + HW buffer expressed in frame periods)
+    if (_context)
+    {
+        const int cfg = _context->config.videoPresentDelayFrames;
+        SetPresentDelayFrames(cfg < 0 ? 2 : static_cast<uint8_t>(cfg));
+    }
+
     // Buffer already allocated for the selected video mode
     if (_framebuffer.memoryBuffer != nullptr && _framebuffer.videoMode == mode)
     {
         return;
+    }
+
+    // Same-size mode switch (e.g. M_ZX48 <-> M_ZX128 <-> M_PENTAGON128K, all
+    // 352x288): KEEP the existing buffers. JUSTIFICATION: consumers hold raw
+    // framebuffer pointers without locks (DeviceScreen's live QImage wrap,
+    // videowall tiles); reallocating identical-size buffers frees memory the
+    // GUI thread may be reading mid-paint - a use-after-free with zero upside.
+    // Different-size switches still reallocate (unavoidable) and are covered
+    // by the NC_VIDEO_MODE_CHANGED re-attach.
+    if (_framebuffer.memoryBuffer != nullptr && mode < M_MAX)
+    {
+        const RasterDescriptor& rd = rasterDescriptors[mode];
+        size_t newSize = (size_t)rd.fullFrameWidth * rd.fullFrameHeight * RGBA_SIZE;
+
+        if (newSize != 0 && newSize == _framebuffer.memoryBufferSize)
+        {
+            _framebuffer.videoMode = mode;
+            _framebuffer.width = rd.fullFrameWidth;
+            _framebuffer.height = rd.fullFrameHeight;
+            memset(_framebuffer.memoryBuffer, 0x00, _framebuffer.memoryBufferSize);
+
+            std::lock_guard<std::mutex> lock(_presentMutex);
+            for (size_t i = 0; i < PRESENT_SLOTS; i++)
+            {
+                if (_presentSlots[i])
+                    memset(_presentSlots[i], 0x00, _presentBufferSize);
+            }
+            _presentLatchCounter = 0;
+            return;
+        }
     }
 
     // Deallocate existing framebuffer memory
@@ -634,10 +733,14 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         // outside the lock during mode switches.
         {
             std::lock_guard<std::mutex> lock(_presentMutex);
-            delete[] _presentBuffer;
-            _presentBuffer = new uint8_t[_framebuffer.memoryBufferSize];
+            for (size_t i = 0; i < PRESENT_SLOTS; i++)
+            {
+                delete[] _presentSlots[i];
+                _presentSlots[i] = new uint8_t[_framebuffer.memoryBufferSize];
+                memset(_presentSlots[i], 0x00, _framebuffer.memoryBufferSize);
+            }
             _presentBufferSize = _framebuffer.memoryBufferSize;
-            memset(_presentBuffer, 0x00, _presentBufferSize);
+            _presentLatchCounter = 0;
         }
 
 #ifdef _DEBUG
@@ -647,15 +750,6 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         DumpFramebufferInfo(videoModeInfo, sizeof(videoModeInfo));
         MLOGINFO(videoModeInfo);
 #endif
-
-        // Notify GUI about resolution change
-        if (_context && _context->pEmulator)
-        {
-            std::string emulatorId = _context->pEmulator->GetId();
-            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            messageCenter.Post(NC_VIDEO_RESOLUTION_CHANGED,
-                new VideoResolutionPayload(emulatorId, _framebuffer.width, _framebuffer.height));
-        }
     }
     else
     {
@@ -675,9 +769,13 @@ void Screen::DeallocateFramebuffer()
 
     {
         std::lock_guard<std::mutex> lock(_presentMutex);
-        delete[] _presentBuffer;
-        _presentBuffer = nullptr;
+        for (size_t i = 0; i < PRESENT_SLOTS; i++)
+        {
+            delete[] _presentSlots[i];
+            _presentSlots[i] = nullptr;
+        }
         _presentBufferSize = 0;
+        _presentLatchCounter = 0;
     }
 }
 
@@ -689,9 +787,16 @@ void Screen::LatchFramebuffer()
         return;
 
     std::lock_guard<std::mutex> lock(_presentMutex);
-    if (_presentBuffer && _presentBufferSize == _framebuffer.memoryBufferSize)
+    if (_presentSlots[0] && _presentBufferSize == _framebuffer.memoryBufferSize)
     {
-        VideoUtils::CopyFrameBuffer(_presentBuffer, _framebuffer.memoryBuffer, _presentBufferSize);
+        uint8_t* slot = _presentSlots[_presentLatchCounter % PRESENT_SLOTS];
+        VideoUtils::CopyFrameBuffer(slot, _framebuffer.memoryBuffer, _presentBufferSize);
+        _presentLatchCounter++;
+
+        _lastLatchTimestampUs.store(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count(),
+            std::memory_order_release);
     }
 }
 
@@ -705,10 +810,27 @@ bool Screen::CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize)
     // during mode-switch reallocation, and trusting it here could overread
     // a present buffer from the previous video mode
     std::lock_guard<std::mutex> lock(_presentMutex);
-    if (_presentBuffer == nullptr || _presentBufferSize == 0 || dstSize < _presentBufferSize)
+    if (_presentSlots[0] == nullptr || _presentBufferSize == 0 || dstSize < _presentBufferSize)
         return false;
+    if (_presentLatchCounter == 0)
+    {
+        // Nothing latched yet: serve the zeroed slot (black frame) - callers
+        // treat a false return as "no present buffer", not "not yet"
+        VideoUtils::CopyFrameBuffer(dst, _presentSlots[0], _presentBufferSize);
+        return true;
+    }
 
-    VideoUtils::CopyFrameBuffer(dst, _presentBuffer, _presentBufferSize);
+    // A/V sync: present the frame latched _presentDelayFrames ago so video
+    // trails by the same constant latency as the audio path. During the
+    // first frames after start/reset the delay is clamped to what exists -
+    // the queue "fills" naturally, exactly the 1-2 frame startup buffering.
+    const uint64_t newest = _presentLatchCounter - 1;
+    uint64_t delay = _presentDelayFrames.load(std::memory_order_acquire);
+    if (delay > newest)
+        delay = newest;
+
+    const uint8_t* slot = _presentSlots[(newest - delay) % PRESENT_SLOTS];
+    VideoUtils::CopyFrameBuffer(dst, slot, _presentBufferSize);
     return true;
 }
 

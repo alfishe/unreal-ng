@@ -80,6 +80,13 @@ protected:
     LoggerLevel _loggerLevel = LoggerLevel::LogTrace;
     EmulatorContext* _context = nullptr;
 
+    // Programmatically-requested machine model (CreateEmulatorWithModel):
+    // applied by Init() right after config load, overriding the INI's
+    // HIMEM/RamSize selection before any model-dependent subsystem initializes
+    bool _hasPreferredModel = false;
+    MEM_MODEL _preferredModel = MM_PENTAGON;
+    uint32_t _preferredRamSize = 0;
+
     Config* _config = nullptr;
     Core* _core = nullptr;
     Z80* _z80 = nullptr;
@@ -124,6 +131,16 @@ private:
 
 public:
     // Initialization operations
+    /// Request a specific machine model (applied during Init() right after
+    /// config load, overriding the INI's HIMEM/RamSize). Must be called
+    /// before Init(). Lifecycle intent lives here, not in CONFIG.
+    void SetPreferredModel(MEM_MODEL model, uint32_t ramSize)
+    {
+        _preferredModel = model;
+        _preferredRamSize = ramSize;
+        _hasPreferredModel = true;
+    }
+
     [[nodiscard]] bool Init();
     void Release();
 
@@ -157,8 +174,25 @@ public:
     DebugManager* GetDebugManager();
     BreakpointManager* GetBreakpointManager();
     FramebufferDescriptor GetFramebuffer();
-    void SetAudioCallback(void* obj, AudioCallback callback);
+    /// @param occupancyFrames Optional ring-occupancy cell (stereo frames)
+    ///        owned by the caller; enables the DRC rate controller
+    /// @param deviceDescriptor Optional full device/ring descriptor
+    ///        (audiodevicedescriptor.h) for realtime monitoring; owned by the
+    ///        caller and must outlive the registration
+    void SetAudioCallback(void* obj, AudioCallback callback,
+                          const std::atomic<uint32_t>* occupancyFrames = nullptr,
+                          const AudioDeviceDescriptor* deviceDescriptor = nullptr);
+
+    /// Report the attached audio device's native sample rate (0 = core rate).
+    /// The DRC resampler converts core->device at this base ratio. With
+    /// [SOUND] CoreRate=auto, a rate CHANGE (device hotplug/reroute) also
+    /// requests a full sound-pipeline re-rate: all digital filters re-derive
+    /// for the new core rate at the next frame boundary.
+    void SetAudioDeviceSampleRate(uint32_t rate);
     void ClearAudioCallback();
+
+    /// Realtime device/ring monitoring state (nullptr = no device attached)
+    const AudioDeviceDescriptor* GetAudioDeviceDescriptor() const;
 
     // Emulator control cycle
     void Reset();
