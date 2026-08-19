@@ -347,6 +347,23 @@ namespace
 
 #pragma mark - Media loading
 
+- (BOOL)saveSnapshot:(NSString*)path
+{
+    if (path.length == 0)
+        return NO;
+
+    // Unlike loadFile, this must NOT start the machine: saving the state of a
+    // machine that has not run yet is meaningless.
+    if (!_emulator)
+    {
+        NSLog(@"[UNEmulatorBridge] No emulator running, cannot save snapshot");
+        return NO;
+    }
+
+    const std::string filePath = path.fileSystemRepresentation;
+    return _emulator->SaveSnapshot(filePath) ? YES : NO;
+}
+
 - (BOOL)loadFile:(NSString*)path
 {
     if (path.length == 0)

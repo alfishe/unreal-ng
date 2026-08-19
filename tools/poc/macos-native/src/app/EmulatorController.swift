@@ -140,6 +140,20 @@ final class EmulatorController: NSObject, ObservableObject, UNEmulatorBridgeDele
         return ok
     }
 
+    /// Writes the machine state to `url`. The core picks the format from the
+    /// extension, so the caller is responsible for putting one there.
+    @discardableResult
+    func saveSnapshot(to url: URL) -> Bool {
+        let ok = bridge.saveSnapshot(url.path)
+        statusText = ok ? "Saved \(url.lastPathComponent)"
+                        : "Failed to save \(url.lastPathComponent)"
+        if ok {
+            NSDocumentController.shared.noteNewRecentDocumentURL(url)
+            recentURLs = NSDocumentController.shared.recentDocumentURLs
+        }
+        return ok
+    }
+
     /// The bridge has no eject entry point, so "eject" is the closest equivalent we
     /// can build on top of what exists: forget the media and reset the machine, which
     /// drops whatever the loaded image had installed in RAM.
@@ -161,6 +175,11 @@ final class EmulatorController: NSObject, ObservableObject, UNEmulatorBridgeDele
     }
 
     static var supportedExtensions: [String] { UNEmulatorBridge.supportedFileExtensions() }
+
+    /// Groups behind the File menu's separate Open entries, mirroring unreal-qt.
+    static let snapshotExtensions = ["sna", "z80"]
+    static let tapeExtensions = ["tap", "tzx"]
+    static let diskExtensions = ["trd", "scl", "fdi", "td0", "udi"]
 
     static func isSupported(url: URL) -> Bool {
         supportedExtensions.contains(url.pathExtension.lowercased())

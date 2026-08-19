@@ -55,6 +55,10 @@ typedef NS_OPTIONS(NSUInteger, UNActivityFlags) {
 /// Starts the emulator first if it is not running yet.
 - (BOOL)loadFile:(NSString*)path NS_SWIFT_NAME(loadFile(_:));
 
+/// Writes the current machine state to `path`. The format is chosen from the
+/// extension - .sna or .z80 - by the core, which rejects anything else.
+- (BOOL)saveSnapshot:(NSString*)path NS_SWIFT_NAME(saveSnapshot(_:));
+
 /// File extensions this build accepts (lowercase, no dot).
 + (NSArray<NSString*>*)supportedFileExtensions;
 

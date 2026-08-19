@@ -84,6 +84,39 @@ struct UnrealNGApp: App {
                 Button("Open…") { openFile() }
                     .keyboardShortcut("o", modifiers: .command)
 
+                Button("Open Snapshot…") {
+                    EmulatorActions.openFile(controller,
+                                             title: "Open Snapshot",
+                                             extensions: EmulatorController.snapshotExtensions)
+                }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
+
+                Button("Open Tape…") {
+                    EmulatorActions.openFile(controller,
+                                             title: "Open Tape",
+                                             extensions: EmulatorController.tapeExtensions)
+                }
+
+                Button("Open Disk…") {
+                    EmulatorActions.openFile(controller,
+                                             title: "Open Disk",
+                                             extensions: EmulatorController.diskExtensions)
+                }
+
+                Divider()
+
+                Menu("Save Snapshot") {
+                    Button("Save as .sna…") {
+                        EmulatorActions.saveSnapshot(controller, ext: "sna")
+                    }
+                    .keyboardShortcut("s", modifiers: .command)
+
+                    Button("Save as .z80…") {
+                        EmulatorActions.saveSnapshot(controller, ext: "z80")
+                    }
+                }
+                .disabled(!controller.isRunning)
+
                 Menu("Open Recent") {
                     ForEach(controller.recentURLs, id: \.self) { url in
                         Button(url.lastPathComponent) {
@@ -177,20 +210,45 @@ struct UnrealNGApp: App {
 
 /// Actions shared by the menu bar and the window toolbar.
 enum EmulatorActions {
-    static func openFile(_ controller: EmulatorController) {
+    static func openFile(_ controller: EmulatorController,
+                         title: String = "Open",
+                         extensions: [String]? = nil) {
         // Any modal steals key focus - drop held keys first so nothing latches.
         controller.releaseAllKeys()
 
         let panel = NSOpenPanel()
+        panel.title = title
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        panel.allowedContentTypes = EmulatorController.supportedExtensions.compactMap {
-            UTType(filenameExtension: $0)
-        }
+        panel.allowedContentTypes = (extensions ?? EmulatorController.supportedExtensions)
+            .compactMap { UTType(filenameExtension: $0) }
 
         if panel.runModal() == .OK, let url = panel.url {
             controller.load(url: url)
             controller.start()
+        }
+        controller.requestFocus()
+    }
+
+    /// Save panel for one snapshot format. The core picks the format from the
+    /// extension, so the extension is forced on rather than trusted from the panel -
+    /// a user can always type a name without one.
+    static func saveSnapshot(_ controller: EmulatorController, ext: String) {
+        controller.releaseAllKeys()
+
+        let panel = NSSavePanel()
+        panel.title = "Save \(ext.uppercased()) Snapshot"
+        panel.nameFieldStringValue = "snapshot.\(ext)"
+        if let type = UTType(filenameExtension: ext) {
+            panel.allowedContentTypes = [type]
+        }
+
+        if panel.runModal() == .OK, var url = panel.url {
+            if url.pathExtension.lowercased() != ext {
+                url.deletePathExtension()
+                url.appendPathExtension(ext)
+            }
+            controller.saveSnapshot(to: url)
         }
         controller.requestFocus()
     }
