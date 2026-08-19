@@ -39,7 +39,7 @@ sequenceDiagram
     WM->>WM: arm chrome-settled handler
     WM->>SU: chromeHidden = true
     SU-->>WM: body re-evaluated (synchronously!)
-    WM->>WM: detach toolbar, shrink window by chrome height
+    WM->>WM: hide toolbar, shrink window by chrome height
     WM->>AK: toggleFullScreen(nil)
     AK->>WM: customWindowsToEnterFullScreen → [window]
     Note over AK: no snapshot zoom
@@ -51,6 +51,8 @@ sequenceDiagram
     WM->>WM: finishZoom (timer or didEnter, whichever is first)
 ```
 
+**This applies to the way IN only.** The way out is AppKit's — see §3.
+
 Two rules that come straight from the Qt work and still hold:
 
 * **The window teleports; only the layer animates.** NSWindow's animator is an
@@ -61,7 +63,59 @@ Two rules that come straight from the Qt work and still hold:
 
 ---
 
-## 3. The bug that cost the session: anchorPoint
+## 3. The animation nobody could see: `onActiveSpace`
+
+The exit was a coin flip — sometimes part of the zoom showed, sometimes the
+window simply vanished and reappeared. Logging the window's space membership
+around the transition ended the argument:
+
+```
+after enter finalise: fullScreenStyle=no  onActiveSpace=no    ← our zoom has just finished
+didEnterFullScreen:   fullScreenStyle=yes onActiveSpace=yes   ← +400ms
+```
+
+For the whole of `startCustomAnimationTo…FullScreen`, and for roughly half a
+second after it, **the window is not on the active space**. Our 500 ms zoom
+therefore played to nobody. What the user was actually watching was the system's
+space switch; whether any of our animation showed through depended on how the two
+happened to overlap. That is the randomness — and the reason every retiming
+*inside* the animation changed nothing visible.
+
+### Why the way out is AppKit's now
+
+The obvious repair is to start the exit zoom at `windowDidExitFullScreen`, the
+first moment the window is back on the active space. That works, and it is
+visible — but it introduces a defect that cannot be tuned away: by then the space
+switch has already put a **full-screen** window on screen, so the picture appears
+at full size and only then begins to shrink. A second appearance.
+
+While the space is switching, the window is not ours to draw. So a custom exit
+can be invisible (animate too early) or double (animate too late), and nothing in
+between. AppKit's own exit does the resize as one movement together with the
+space switch, which is what "no disappearing and reappearing" actually requires.
+
+`customWindowsToExitFullScreen` therefore returns **nil**, while
+`customWindowsToEnterFullScreen` still returns the window. The chrome stays
+suppressed across the whole exit, so what AppKit moves is still a bare device
+frame; the bars come back in finalisation.
+
+### The consequence: the window really resizes
+
+AppKit takes the window through every intermediate size. With the frame pump
+silent, the layer stretched the last frame it had — one rendered at 16:9 — across
+sizes of 11:9, which is the squashed picture reported mid-animation.
+
+`EmulatorMetalView.layout()` now draws one correctly letterboxed frame per resize
+step, glued to that step's transaction. This is exactly what the Qt POC does, and
+the reason its notes say the content is "live at full rate during the whole zoom".
+
+Note the recursion hazard: `renderForTransition` used to call
+`layoutSubtreeIfNeeded` itself, and it is now called *from* `layout()` — hence the
+`layoutFirst` parameter.
+
+---
+
+## 4. The bug that cost the session: anchorPoint
 
 **Symptom.** The picture did not zoom into place. On the way back it slid away
 towards the bottom-left corner while shrinking, then snapped to the target frame.
@@ -111,7 +165,7 @@ Two further details:
 
 ---
 
-## 4. SwiftUI publishes synchronously
+## 5. SwiftUI publishes synchronously
 
 **Symptom.** The chrome came off only *after* the transition, no matter how early
 `chromeHidden = true` was set. Instrumentation said the opposite — the flag was
@@ -149,7 +203,7 @@ bar" to a clean fullscreen picture — the decisive before/after.
 
 ---
 
-## 5. The AppKit snapshot cannot be beaten by timing
+## 6. The AppKit snapshot cannot be beaten by timing
 
 **Symptom.** A ghost image of the chromed window zooming, while the live window
 underneath had none.
@@ -165,7 +219,7 @@ the picture entirely — and obliges us to provide the animation.
 
 ---
 
-## 6. Direction of travel: never ask the style mask
+## 7. Direction of travel: never ask the style mask
 
 **Symptom.** Entering fullscreen restored the chrome half-way through, then AppKit
 finished the transition around it — fullscreen *with* a title bar and status bar.
@@ -190,7 +244,7 @@ The same applies to publishing `isFullScreen`.
 
 ---
 
-## 7. Publishes during the animation
+## 8. Publishes during the animation
 
 **Symptom.** Four discrete redraws of the device frame at different positions and
 zoom levels instead of one smooth zoom.
@@ -211,7 +265,7 @@ i.e. mid-flight.
 
 ---
 
-## 8. The drawable comes up cleared
+## 9. The drawable comes up cleared
 
 **Symptom.** A black flash at the start of the zoom.
 
@@ -231,7 +285,7 @@ corner.
 
 ---
 
-## 9. The toolbar comes back by itself
+## 10. The toolbar comes back by itself
 
 **Symptom.** Fullscreen still showed a toolbar strip over the picture, even though
 `toolbar.isVisible = false` had been set.
@@ -240,10 +294,25 @@ corner.
 hidden toolbar as a titlebar overlay. With the content spanning the whole window
 (`ignoresSafeArea`) that overlay lands on top of the picture.
 
-**Fix.** Detach it — `savedToolbar = window.toolbar; window.toolbar = nil` — and
-put it back on exit. A window with no toolbar has nothing to re-present. Plus
-`willUseFullScreenPresentationOptions` returning `.autoHideToolbar`,
-`.autoHideMenuBar`, `.autoHideDock`.
+**First fix, later reverted.** Detach it — `savedToolbar = window.toolbar;
+window.toolbar = nil` — and put it back on exit. It works, but putting an NSToolbar
+back on a window costs up to **762 ms**, measured inside the exit finalisation:
+
+```
+finish zoom (exit-timer)
+chrome restored: swiftui=0ms toolbar=762ms
+```
+
+That gap is the window sitting on the desktop at its normal size with no title bar
+and no status bar before the chrome pops in — reported as the window disappearing
+and reappearing on the way back. The cost is not constant, which made it look
+intermittent.
+
+**Actual fix.** `willUseFullScreenPresentationOptions` returning `.autoHideToolbar`,
+`.autoHideMenuBar`, `.autoHideDock`. With those in place, plain
+`toolbar.isVisible = false` is enough — AppKit no longer re-presents it over the
+picture, and restoring is free (`toolbar=0ms`). Detaching was a workaround from
+before those options existed.
 
 **Watch out:** re-attaching resets `toolbarStyle`. Declaring `.unified` in
 `install(on:)` while the scene declared `.unifiedCompact` made the measured chrome
@@ -252,7 +321,7 @@ as a resize jerk at the end of every exit. Both declarations must agree.
 
 ---
 
-## 10. NSDisableScreenUpdates is expensive here
+## 11. NSDisableScreenUpdates is expensive here
 
 Measured inside finalisation:
 
@@ -272,7 +341,7 @@ display for 400–690 ms.
 
 ---
 
-## 11. AppKit re-asserts its own idea of the frame
+## 12. AppKit re-asserts its own idea of the frame
 
 At the end of an exit, AppKit restores the frame it recorded when the transition
 began — which is the shrunk, chrome-less one, because the chrome comes off before
@@ -284,7 +353,7 @@ if it actually differs.
 
 ---
 
-## 12. Dead ends
+## 13. Dead ends
 
 | Attempt | Result |
 |---|---|
@@ -293,12 +362,15 @@ if it actually differs.
 | Poll geometry to detect that SwiftUI had relayouted | Every quantity worth comparing already held its final value, so the wait passed on attempt 0. Logged "settled after 0 passes" while the bars were still on screen. |
 | `layoutSubtreeIfNeeded()` to force a SwiftUI update | Lays out the existing tree; does not make SwiftUI re-evaluate a body for a changed `@Published`. |
 | Centre the exit target on the screen | A fix for a misdiagnosis (the real cause was the anchor point) that also moved the window away from where the user left it. Reverted. |
-| Decide direction from `styleMask` | Not authoritative during a custom transition. See §6. |
+| Decide direction from `styleMask` | Not authoritative during a custom transition. See §7. |
+| Custom exit animation started in `startCustomAnimationToExitFullScreen` | Runs while the window is off the active space — invisible, and randomly half-visible. See §3. |
+| Custom exit animation started at `windowDidExitFullScreen` | Visible, but the space switch has already shown a full-screen window, so the picture appears at full size and only then shrinks. |
+| Detaching the NSToolbar for the duration of fullscreen | Correct, but re-attaching costs up to 762ms. See §10. |
 | `.fullSizeContentView` in the style mask | Not attempted on purpose: per the Qt notes it leaks through the Space transition and breaks the responder chain. |
 
 ---
 
-## 13. How to debug this
+## 14. How to debug this
 
 Guessing does not converge here; three things gave ground truth.
 
@@ -326,9 +398,12 @@ first `sizing` line in the log before trusting a run.
 
 ---
 
-## 14. Still open
+## 15. Still open
 
-* The forward transition has not been signed off by eye; the backward one has.
-* Debug instrumentation (ContentView body log, verbose zoom lines) is still in,
-  gated behind `UN_GEOMETRY_LOG`.
+* Redrawing the device frame at 50 Hz for the **whole** of both transitions, with
+  the picture tracking the animation's size and aspect at every instant. The exit
+  already redraws once per resize step; the entry is still silent between the
+  teleport and the end of the zoom.
+* Debug instrumentation (ContentView body log, window-state and zoom lines) is
+  still in, gated behind `UN_GEOMETRY_LOG`.
 * File menu: snapshot load/save (SNA/Z80) to match unreal-qt is not started.

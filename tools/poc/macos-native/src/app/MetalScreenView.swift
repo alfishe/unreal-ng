@@ -80,8 +80,18 @@ final class EmulatorMetalView: MTKView, MTKViewDelegate {
         frameSubscription = controller.frameTick
             .receive(on: RunLoop.main)
             .sink { [weak self] in
-                guard let self, self.windowManager?.isTransitioning != true else { return }
-                self.needsDisplay = true
+                guard let self else { return }
+                switch self.windowManager?.transitionRendering ?? .none {
+                case .frozen:
+                    // Only the teleport itself, a few milliseconds.
+                    break
+                case .stepped:
+                    // AppKit is resizing the window; size this frame from the bounds
+                    // it has right now and tie the present to this transaction.
+                    self.renderForTransition(layoutFirst: false)
+                case .none, .live:
+                    self.needsDisplay = true
+                }
             }
 
         // A toolbar button or menu item can take key focus away from the screen; the
@@ -146,7 +156,7 @@ final class EmulatorMetalView: MTKView, MTKViewDelegate {
     func draw(in view: MTKView) {
         // Silent for the whole transition. settleAfterTransition() calls draw()
         // directly and clears the flag first, so the final frame still lands.
-        guard forceDraw || windowManager?.isTransitioning != true else { return }
+        guard forceDraw || windowManager?.transitionRendering != .frozen else { return }
 
         guard
             let controller,
@@ -265,7 +275,7 @@ final class EmulatorMetalView: MTKView, MTKViewDelegate {
         // taken at 16:9 - across every intermediate size, which is the squashed
         // picture seen mid-animation. Drawing here glues a correctly letterboxed frame
         // to each step's transaction instead.
-        if windowManager?.rendersDuringTransition == true {
+        if windowManager?.transitionRendering == .stepped {
             renderForTransition(layoutFirst: false)
             return
         }
@@ -320,7 +330,7 @@ final class EmulatorMetalView: MTKView, MTKViewDelegate {
     /// back. The teleport resizes the window exactly once, so there is no per-step
     /// drawable churn for the flag to protect against anyway.
     func freezeForTransition() {
-        isPaused = true
+        isPaused = true     // still driven by needsDisplay, never by a timer
     }
 
     /// One fresh frame at the settled geometry, presented inside the same
