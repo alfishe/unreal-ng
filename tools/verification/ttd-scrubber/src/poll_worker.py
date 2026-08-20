@@ -216,6 +216,10 @@ class PollWorker(QObject):
     def request_dump(self, path: str):
         self._enqueue("dump", {"path": path})
 
+    @Slot(str)
+    def request_load(self, path: str):
+        self._enqueue("load", {"path": path})
+
     @Slot(int, int)
     def request_seek(self, frame: int, tinframe: int):
         self._enqueue("seek", {"frame": int(frame), "tinframe": int(tinframe)})
@@ -401,6 +405,8 @@ class PollWorker(QObject):
             return self._client.ttd_invalidate(instance_id, args.get("reason", ""))
         if verb == "dump":
             return self._client.ttd_dump(instance_id, args["path"])
+        if verb == "load":
+            return self._client.ttd_load(instance_id, args["path"])
         if verb == "seek":
             return self._client.ttd_seek(instance_id, args["frame"], args.get("tinframe", 0))
         if verb == "step_back":

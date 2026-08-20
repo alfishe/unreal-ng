@@ -470,6 +470,24 @@ class UnrealApiClient:
         resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/ttd/dump"), json=data)
         return self._handle_response(resp)
 
+    def ttd_load(self, emulator_id, path):
+        """POST /api/v1/emulator/{id}/ttd/load - load a .ttd session for playback.
+
+        Like ttd_dump, the file is opened by the EMULATOR process, so `path` is
+        resolved on its machine.
+
+        A session only restores into an instance of the model it was recorded
+        on; a mismatch comes back as ok=False with an error naming both model
+        ids. On success the session is Idle - use ttd_seek() to position the
+        emulator inside the loaded timeline.
+
+        Returns: ok, path, checkpoint_count, session_start_frame,
+                 current_end_frame, state.
+        """
+        data = {"path": str(path)}
+        resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/ttd/load"), json=data)
+        return self._handle_response(resp)
+
     def ttd_seek(self, emulator_id, frame, tinframe=0):
         """POST /api/v1/emulator/{id}/ttd/seek
 

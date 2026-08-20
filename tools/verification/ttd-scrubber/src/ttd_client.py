@@ -17,6 +17,24 @@ from typing import List, Tuple
 from api_client import UnrealApiClient
 
 
+def _is_connection_error(exc: Exception) -> bool:
+    """Is this a transport failure (server down) rather than an HTTP error?
+
+    Mirrors PollWorker._is_connection_error: the two must agree, or the worker
+    and the client will disagree about whether the server is up.
+    """
+    import requests
+
+    if isinstance(exc, (requests.exceptions.ConnectionError,
+                        requests.exceptions.Timeout)):
+        return True
+
+    text = str(exc).lower()
+    return any(marker in text for marker in
+               ("connection refused", "failed to establish a new connection",
+                "max retries exceeded", "connection aborted", "timed out"))
+
+
 class TTDApiClient(UnrealApiClient):
     """UnrealApiClient + instance-discovery helpers for the TTD Scrubber."""
 
@@ -36,10 +54,18 @@ class TTDApiClient(UnrealApiClient):
           - a JSON object with an 'emulators' field (older shape).
         Both are handled here.
         """
+        # Connection failures PROPAGATE. PollWorker judges reachability from
+        # this call, so swallowing them here returned an empty list that looked
+        # like "server up, no instances" - the worker announced "reachable
+        # again", the next TTD call failed for real, and the log filled with one
+        # up/down pair per second. Only an HTTP-level failure (server up, request
+        # refused) degrades to an empty list.
         try:
             data = self.list_emulators()
         except Exception as exc:
-            self.logger.debug("list_instances failed: %s", exc)
+            if _is_connection_error(exc):
+                raise
+            self.logger.debug("list_instances failed (server responded): %s", exc)
             return []
 
         if isinstance(data, list):

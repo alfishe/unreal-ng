@@ -227,6 +227,13 @@ class MainWindow(QMainWindow):
         self._btn_stop.clicked.connect(self._on_stop_clicked)
         self._btn_invalidate = QPushButton("Invalidate")
         self._btn_invalidate.clicked.connect(self._on_invalidate_clicked)
+        self._btn_load = QPushButton("Load session…")
+        self._btn_load.setToolTip(
+            "Load a .ttd session recorded earlier and scrub it.\n"
+            "The emulator opens the file, so the path is resolved on its machine.\n"
+            "A session only loads into an instance of the model it was recorded on."
+        )
+        self._btn_load.clicked.connect(self._on_load_clicked)
         self._btn_save = QPushButton("Save session…")
         self._btn_save.setToolTip(
             "Write the recorded session to a .ttd file for offline analysis\n"
@@ -234,7 +241,8 @@ class MainWindow(QMainWindow):
             "the path is resolved on the emulator's machine."
         )
         self._btn_save.clicked.connect(self._on_save_clicked)
-        for b in (self._btn_start, self._btn_stop, self._btn_invalidate, self._btn_save):
+        for b in (self._btn_start, self._btn_stop, self._btn_invalidate,
+                  self._btn_save, self._btn_load):
             btns.addWidget(b)
         btns.addStretch(1)
         outer.addLayout(btns)
@@ -408,6 +416,29 @@ class MainWindow(QMainWindow):
         if reply != QMessageBox.Yes:
             return
         self._worker.request_invalidate("User requested via TTD Scrubber")
+
+    def _on_load_clicked(self):
+        # Loading replaces whatever session is held, so warn if one exists.
+        if self._last_status and self._last_status.get("checkpoint_count"):
+            reply = QMessageBox.question(
+                self,
+                "Load TTD session",
+                "This replaces the session currently held in memory. Continue?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load TTD session",
+            "",
+            "TTD sessions (*.ttd);;All files (*)",
+        )
+        if not path:
+            return
+        self._worker.request_load(path)
 
     def _on_save_clicked(self):
         # The dump is produced by the emulator process, not by this tool: the
