@@ -545,6 +545,18 @@ bool LoaderSNA::applySnapshotFromStaging()
         // Pre-fill border with color
         screen.FillBorderWithColor(_borderColor);
 
+        // Keep the machine state in step with the picture. FillBorderWithColor
+        // only paints; pFE is the port latch every consumer reads back, and
+        // border_attr is what a TTD checkpoint captures and the machine-state
+        // hash folds in. Leaving them at their reset value made a checkpoint
+        // record a border the machine never had - a snapshot with a black
+        // border restored as white on seek.
+        EmulatorState& borderState = _context->emulatorState;
+        borderState.pFE = static_cast<uint8_t>((borderState.pFE & 0b1111'1000) |
+                                               (_borderColor & 0b0000'0111));
+        borderState.border_attr = static_cast<uint8_t>(_borderColor & 0b0000'0111);
+
+
         // Trigger screen redraw to show snapshot screen immediately
         screen.RenderOnlyMainScreen();
 
