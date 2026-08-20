@@ -363,7 +363,8 @@ endif ()
 
 # Define data paths
 set(DATA_PATH "${ROOT_DIR}/data")
-set(CONFIG_FILE "${DATA_PATH}/configs/pentagon512k/unreal.ini")
+set(CONFIG_FILE "${DATA_PATH}/configs/pentagon128k/unreal.ini")
+set(CONFIGS_DIR "${DATA_PATH}/configs")
 
 # Copy resources using modern CMake syntax
 add_custom_command(
@@ -372,6 +373,8 @@ add_custom_command(
         "${DATA_PATH}/fonts" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/fonts"
     COMMAND ${CMAKE_COMMAND} -E copy
         "${CONFIG_FILE}" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/unreal.ini"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CONFIGS_DIR}" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/configs"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -428,7 +431,8 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/fonts" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/rom" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/testrom" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
-        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/data/configs/pentagon512k/unreal.ini" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.ini"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/data/configs/pentagon128k/unreal.ini" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.ini"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/configs" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/configs"
         
         # 4. Deploy Qt frameworks
         COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app" -always-overwrite
@@ -462,7 +466,8 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/fonts" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/rom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/testrom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
-        COMMAND ${CMAKE_COMMAND} -E copy "${ROOT_DIR}/data/configs/pentagon512k/unreal.ini" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/unreal.ini"
+        COMMAND ${CMAKE_COMMAND} -E copy "${ROOT_DIR}/data/configs/pentagon128k/unreal.ini" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/unreal.ini"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/configs" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/configs"
     )
 endif()
 

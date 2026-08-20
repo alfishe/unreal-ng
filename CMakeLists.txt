@@ -332,7 +332,8 @@ message(STATUS "====================================================")
 if (BUILD_QT_APPS)
     # Shared resource paths
     set(DATA_PATH "${CMAKE_CURRENT_SOURCE_DIR}/data")
-    set(CONFIG_FILE "${DATA_PATH}/configs/pentagon512k/unreal.ini")
+    set(CONFIG_FILE "${DATA_PATH}/configs/pentagon128k/unreal.ini")
+    set(CONFIGS_DIR "${DATA_PATH}/configs")
     set(SUITE_STAGING_DIR "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite")
     
     # macOS: Combined DMG with all apps
@@ -360,6 +361,7 @@ if (BUILD_QT_APPS)
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.ini"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/configs"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/rom"
@@ -436,7 +438,9 @@ if (BUILD_QT_APPS)
                 "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/rom"
             COMMAND ${CMAKE_COMMAND} -E copy
                 "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/unreal.ini"
-            
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/configs"
+
             # Create ZIP archive (change to parent dir to avoid nested paths)
             COMMAND ${CMAKE_COMMAND} -E chdir "${CMAKE_BINARY_DIR}/packages"
                 ${CMAKE_COMMAND} -E tar "cf"
@@ -530,7 +534,9 @@ if (BUILD_QT_APPS)
                 "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/rom"
             COMMAND ${CMAKE_COMMAND} -E copy
                 "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/unreal.ini"
-            
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/configs"
+
             # Create tarball
             COMMAND ${CMAKE_COMMAND} -E tar "cfz"
                 "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite-Linux.tar.gz"
