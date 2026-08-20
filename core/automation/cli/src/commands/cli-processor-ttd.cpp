@@ -104,6 +104,10 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     {
         HandleTTDDump(session, context, args);
     }
+    else if (subcommand == "load" || subcommand == "open")
+    {
+        HandleTTDLoad(session, context, args);
+    }
     else if (subcommand == "find-last" || subcommand == "fl")
     {
         HandleTTDFindLast(session, context, args);
@@ -155,6 +159,7 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << NEWLINE;
     ss << "Phase 4 — Reverse Search + Automation:" << NEWLINE;
     ss << "  ttd dump <path>                  Serialize session to .ttd file" << NEWLINE;
+    ss << "  ttd load <path>                  Load a .ttd session for playback (alias: open)" << NEWLINE;
     ss << "  ttd find-last --addr <A>         Reverse search: find last access at address" << NEWLINE;
     ss << "    [--access write|read|execute|io]  (default: write)" << NEWLINE;
     ss << "    [--value V] [--pc-from X] [--pc-to Y]" << NEWLINE;
@@ -483,6 +488,45 @@ void CLIProcessor::HandleTTDDump(const ClientSession& session, EmulatorContext* 
     {
         session.SendResponse(std::string("TTD: Dump failed: ") + err + NEWLINE);
     }
+}
+
+void CLIProcessor::HandleTTDLoad(const ClientSession& session, EmulatorContext* context,
+                                 const std::vector<std::string>& args)
+{
+    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
+
+    if (args.size() < 2)
+    {
+        session.SendResponse(std::string("Error: Missing path argument") + NEWLINE +
+                             "Usage: ttd load <path>" + NEWLINE);
+        return;
+    }
+
+    const std::string& path = args[1];
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open())
+    {
+        session.SendResponse(std::string("Error: Cannot open file: ") + path + NEWLINE);
+        return;
+    }
+
+    std::string err;
+    if (!mgr->DeserializeSession(in, err))
+    {
+        // The most common failure is a model mismatch: a session is raw RAM
+        // pages plus a chipset snapshot from one machine, so it only restores
+        // into an instance of the model it was recorded on.
+        session.SendResponse(std::string("TTD: Load failed: ") + err + NEWLINE);
+        return;
+    }
+
+    const ttd::TTDSessionInfo info = mgr->GetSessionInfo();
+    std::stringstream ss;
+    ss << "TTD: Session loaded from '" << path << "' ("
+       << info.checkpointCount << " checkpoints, frames "
+       << info.sessionStartFrame << ".." << info.currentEndFrame << ")" << NEWLINE
+       << "     Session is idle - use 'ttd seek' to position the emulator." << NEWLINE;
+    session.SendResponse(ss.str());
 }
 
 void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorContext* context,

@@ -1516,6 +1516,39 @@ namespace PythonBindings
                 return ctx->pTimeTravelManager->SerializeSession(out, err);
             }, "Dump TTD session to .ttd file", py::arg("path"))
 
+            // Loading refuses a session recorded on a different machine model:
+            // a checkpoint is raw RAM pages plus a chipset snapshot, so it only
+            // restores into an instance of the model it came from. Returns a
+            // dict rather than a bool so the caller can show the reason.
+            .def("ttd_load", [](Emulator& self, const std::string& path) -> py::dict {
+                py::dict result;
+                result["ok"] = false;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager)
+                {
+                    result["error"] = "TTD not available";
+                    return result;
+                }
+                std::ifstream in(path, std::ios::binary);
+                if (!in.is_open())
+                {
+                    result["error"] = "Cannot open file: " + path;
+                    return result;
+                }
+                std::string err;
+                if (!ctx->pTimeTravelManager->DeserializeSession(in, err))
+                {
+                    result["error"] = err;
+                    return result;
+                }
+                const ttd::TTDSessionInfo info = ctx->pTimeTravelManager->GetSessionInfo();
+                result["ok"] = true;
+                result["checkpoint_count"] = static_cast<uint64_t>(info.checkpointCount);
+                result["session_start_frame"] = info.sessionStartFrame;
+                result["current_end_frame"] = info.currentEndFrame;
+                return result;
+            }, "Load a .ttd session for playback (seek to position the emulator)", py::arg("path"))
+
             .def("ttd_find_last", [](Emulator& self, uint16_t addr,
                                       const std::string& access,
                                       py::object valueObj,

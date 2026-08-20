@@ -744,6 +744,79 @@ void EmulatorAPI::dumpTTD(const HttpRequestPtr& req,
     callback(resp);
 }
 
+/// @brief POST /api/v1/emulator/{id}/ttd/load
+///
+/// Loads a .ttd session for playback. The file is opened by the EMULATOR
+/// process, so the path is resolved on this machine and against this process's
+/// working directory.
+///
+/// A session only restores into an instance of the model it was recorded on -
+/// a checkpoint is raw RAM pages plus a chipset snapshot, and pushing a
+/// Pentagon recording into a 48K machine would corrupt it silently. The core
+/// refuses that and the reason is returned verbatim, naming both model ids, so
+/// the caller can provision a matching instance (POST /api/v1/emulator/create)
+/// and retry.
+///
+/// After a successful load the session is Idle: use /ttd/seek to position the
+/// emulator inside the loaded timeline.
+void EmulatorAPI::loadTTD(const HttpRequestPtr& req,
+                          std::function<void(const HttpResponsePtr&)>&& callback,
+                          const std::string& id) const
+{
+    auto* mgr = resolveTTD(id, callback);
+    if (!mgr) return;
+
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("path"))
+    {
+        Json::Value err;
+        err["error"] = "Missing 'path' in request body";
+        auto resp = HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    const std::string path = (*json)["path"].asString();
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open())
+    {
+        Json::Value err;
+        err["error"] = "Cannot open file: " + path;
+        auto resp = HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    std::string errMsg;
+    Json::Value ret;
+    if (!mgr->DeserializeSession(in, errMsg))
+    {
+        ret["ok"] = false;
+        ret["error"] = errMsg;
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        resp->setStatusCode(k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    const ttd::TTDSessionInfo info = mgr->GetSessionInfo();
+    ret["ok"] = true;
+    ret["path"] = path;
+    ret["checkpoint_count"] = Json::UInt64(info.checkpointCount);
+    ret["session_start_frame"] = Json::UInt64(info.sessionStartFrame);
+    ret["current_end_frame"] = Json::UInt64(info.currentEndFrame);
+    ret["state"] = ttd::TTDSessionStateToString(info.state);
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
 /// @brief POST /api/v1/emulator/{id}/ttd/find-last
 void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
                                 std::function<void(const HttpResponsePtr&)>&& callback,

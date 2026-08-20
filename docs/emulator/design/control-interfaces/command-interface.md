@@ -2169,6 +2169,31 @@ Record a per-frame checkpoint timeline of the running emulator, then seek backwa
 | `ttd find-last` | `ttd fl` | `--addr <A> --access <write\|read\|execute\|out> [--value V] [--pc-from <A>] [--pc-to <A>] [--before <T>]` | Reverse search: most recent access matching the query, scanning backward from current position. Returns `{frame, tstate, pc, value, physpage}` or null if no match. | 🔮 Phase 4 |
 | `ttd bookmark` | `ttd bm` | `<add\|remove\|list> [--at <T>] [--label <text>]` | Manage named bookmarks in the timeline. Bookmarks act as replay barriers (no silent coalescing across them). | 🔮 Phase 3 (UI) |
 | `ttd resume-from-here` | — | — | Truncate future history at the current (detached) position and resume live recording from there. Confirmation required if truncation would drop > N frames. | 🔮 Phase 2 |
+| `ttd position` | — | — | Current `TTDTimePoint` (`frame` + `tInFrame`) and the session end. | ✅ Implemented |
+| `ttd markers` | `ttd barriers` | — | List external-event markers (tape control, disk writes) that act as replay barriers. | ✅ Implemented |
+| `ttd dump` | `ttd save` | `<path>` | Serialize the session to a `.ttd` file for offline analysis with `tools/verification/ttd-analyzer`. | ✅ Implemented |
+| `ttd load` | `ttd open` | `<path>` | Load a `.ttd` session for playback. Replaces whatever session is held; afterwards the session is Idle, so use `ttd seek` to position the emulator. | ✅ Implemented |
+
+**Sessions on disk (`ttd dump` / `ttd load`).**
+
+The file is written and read by the **emulator process**, not by the client
+issuing the command. A relative path is therefore resolved against the
+emulator's working directory, and with a remote emulator the file lives on that
+machine. There is no default location: both verbs require an explicit path.
+
+A session only loads into an instance of the **machine model it was recorded
+on**. A checkpoint is raw RAM pages plus a chipset snapshot, so restoring a
+Pentagon recording into a 48K instance would push pages the target does not have
+and read chipset fields that mean something else there — and it would fail
+silently, as a seek that "works" and produces a corrupt machine. `ttd load`
+refuses instead, naming both model ids. Provision a matching instance first
+(`POST /api/v1/emulator/create` takes `model` and `ram_size`, and
+`Emulator::SetPreferredModel()` is applied during `Init()` before any
+model-dependent subsystem starts).
+
+Loading is available on every control surface: CLI (`ttd load <path>`), WebAPI
+(`POST /api/v1/emulator/{id}/ttd/load`), Lua (`ttd_load(path)`), Python
+(`ttd_load(path)`), and the TTD Scrubber's **Load session…** button.
 
 **Halt reasons** (returned in `seek` / `step` / `find-last` result envelopes):
 

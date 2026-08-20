@@ -1134,6 +1134,33 @@ public:
             return ctx->pTimeTravelManager->SerializeSession(out, err);
         });
 
+        // Loading refuses a session recorded on a different machine model: a
+        // checkpoint is raw RAM pages plus a chipset snapshot, so it only
+        // restores into an instance of the model it came from. Returns a table
+        // with ok/error so scripts can report the reason.
+        lua.set_function("ttd_load", [this](const std::string& path) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            result["ok"] = false;
+            if (!_emulator) { result["error"] = "no emulator"; return result; }
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) { result["error"] = "TTD not available"; return result; }
+            std::ifstream in(path, std::ios::binary);
+            if (!in.is_open()) { result["error"] = "cannot open file: " + path; return result; }
+            std::string err;
+            if (!ctx->pTimeTravelManager->DeserializeSession(in, err))
+            {
+                result["error"] = err;
+                return result;
+            }
+            const ttd::TTDSessionInfo info = ctx->pTimeTravelManager->GetSessionInfo();
+            result["ok"] = true;
+            result["checkpoint_count"] = static_cast<uint64_t>(info.checkpointCount);
+            result["session_start_frame"] = info.sessionStartFrame;
+            result["current_end_frame"] = info.currentEndFrame;
+            return result;
+        });
+
         lua.set_function("ttd_find_last", [this](uint16_t addr,
                                                    sol::optional<std::string> accessOpt,
                                                    sol::optional<uint8_t> valueOpt,

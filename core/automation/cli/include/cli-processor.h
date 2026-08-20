@@ -296,6 +296,8 @@ private:
     void HandleTTDMarkers(const ClientSession& session, EmulatorContext* context);
     void HandleTTDDump(const ClientSession& session, EmulatorContext* context,
                        const std::vector<std::string>& args);
+    void HandleTTDLoad(const ClientSession& session, EmulatorContext* context,
+                       const std::vector<std::string>& args);
     void HandleTTDFindLast(const ClientSession& session, EmulatorContext* context,
                            const std::vector<std::string>& args);
     void HandleTTDStepInstruction(const ClientSession& session, EmulatorContext* context,
