@@ -330,34 +330,20 @@ uint8_t Keyboard::HandlePortIn(uint16_t port)
     /// endregion </Info>
 
     uint8_t portFE = port & 0x00FF;  // Lower byte for the port. Should be always #FE
-    uint8_t subport =
-        port >>
-        8;  // Higher byte for the port. Should contain single zero bit indicating half-row of keys where key is pressed
-    uint8_t subport_inv = ~subport;  // Inverted hi-byte (single set bit will point to pressed key half-row)
-    uint8_t matrix_index = 0xFF;
+    uint8_t subport = port >> 8;    // Higher byte - cleared bits select half-rows to scan
+    uint8_t subport_inv = ~subport; // Set bits indicate selected half-rows
 
     if (portFE == 0xFE)
     {
-        if (subport != 0x00)
+        // ZX Spectrum keyboard scanning: each cleared bit in high byte selects a half-row.
+        // Multiple half-rows can be scanned simultaneously - result is AND of all selected rows.
+        // subport_inv has set bits for each selected half-row.
+        result = 0xFF;
+        for (uint8_t i = 0; i < 8; i++)
         {
-            // Find index of single set bit (corresponds to reset bit in high-byte of #FE port IN request)
-            matrix_index = BitHelper::GetFirstSetBitPosition(subport_inv);
-
-            if (matrix_index != 0xFF)
+            if (subport_inv & (1 << i))
             {
-                result = _keyboardMatrixState[matrix_index];
-            }
-        }
-        else
-        {
-            // IN #FE request was made - so any key will work
-            for (uint8_t i = 0; i < sizeof(_keyboardMatrixState) / sizeof(_keyboardMatrixState[0]); i++)
-            {
-                if (_keyboardMatrixState[i] != 0xFF)
-                {
-                    result = _keyboardMatrixState[i];
-                    break;
-                }
+                result &= _keyboardMatrixState[i];
             }
         }
     }
