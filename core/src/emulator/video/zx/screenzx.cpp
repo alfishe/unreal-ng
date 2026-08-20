@@ -76,6 +76,16 @@ void ScreenZX::CreateTimingTable()
     const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
     const RasterState& state = _rasterState;
 
+    // Reset the WHOLE lookup table first: the fill loop below only writes
+    // [0, tstatesPerLine), leaving the tail as constructor garbage on a
+    // fresh instance (heap-reuse-dependent - the source of a long-standing
+    // order-dependent test flake) or as stale entries from a previous mode
+    // with a longer line (228 -> 224 switch)
+    for (size_t i = 0; i < sizeof(_screenLineRenderers) / sizeof(_screenLineRenderers[0]); i++)
+    {
+        _screenLineRenderers[i] = RT_BLANK;
+    }
+
     RenderTypeEnum type = RT_BLANK;
     // This iterates over horizontal positions (t-states per line), not vertical lines
     uint16_t tstatesPerLine = state.tstatesPerLine;

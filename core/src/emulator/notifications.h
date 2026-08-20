@@ -4,7 +4,6 @@
 
 #include "3rdparty/message-center/eventqueue.h"
 #include "common/uuid.h"
-using unreal::UUID;  // Explicitly bring into scope to avoid Windows GUID typedef collision
 
 class EmulatorContext;
 

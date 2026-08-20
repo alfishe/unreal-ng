@@ -99,6 +99,7 @@ private slots:
     void handleAudioSettingsRequested();
     void handleOverscanModeToggled(bool enabled);
     void handleViewportChanged(int presetIndex);
+    void handleMachineModelChangeRequested(const QString& modelShortName);
 #ifdef ENABLE_RECORDING
     void handleVideoRecordingRequested();
     void handleQuickRecord(const QString& presetName);

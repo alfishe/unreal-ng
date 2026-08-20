@@ -286,7 +286,9 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	config.even_M1 = (unsigned)inimanager.GetLongValue(ula, "EvenM1", 0);
 	config.floatbus = (unsigned)inimanager.GetLongValue(ula, "FloatBus", 0);
 	config.floatdos = (unsigned)inimanager.GetLongValue(ula, "FloatDOS", 0);
-	config.portff = (unsigned)inimanager.GetLongValue(ula, "PortFF", 0) != 0;	// Enable port FF (reflects current screen color attributes when ULA renders the frame, 0xFF otherwise)
+	// Note: the original UnrealSpeccy "PortFF" option (simplified always-attribute
+	// floating bus model) is intentionally not ported - UlaContention implements the
+	// full architecture-aware floating bus (pixel/attr per fetch phase) instead.
 
 	// Beta128 section
 	config.trdos_present = inimanager.GetLongValue(beta128, "beta128", 1) ? true : false;

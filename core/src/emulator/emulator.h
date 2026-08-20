@@ -15,7 +15,6 @@
 #include "base/featuremanager.h"
 #include "common/autoresetevent.h"
 #include "common/uuid.h"
-using unreal::UUID;  // Explicitly bring into scope to avoid Windows GUID typedef collision
 #include "corestate.h"
 #include "cpu/z80.h"
 #include "debugger/disassembler/z80disasm.h"
@@ -64,7 +63,7 @@ protected:
     /// region <Fields>
 protected:
     // Emulator identity
-    UUID _uuid;                                           // Auto-generated UUID
+    unreal::UUID _uuid;                                           // Auto-generated UUID
     std::string _emulatorId;                              // Symbolic representation  of the UUID
     std::string _symbolicId;                              // Optional user-provided symbolic ID
     std::chrono::system_clock::time_point _createdAt;     // When instance was created
@@ -151,7 +150,7 @@ public:
     std::string GetUptimeString() const;
 
     // ID management
-    UUID GetUUID() const;
+    unreal::UUID GetUUID() const;
     std::string GetSymbolicId() const;
     void SetSymbolicId(const std::string& symbolicId);
 

@@ -44,7 +44,7 @@ private:
 
 	const struct TMemModel mem_model[N_MM_MODELS] =
 	{
-		{ "Pentagon", "PENTAGON",                MM_PENTAGON, 128,  RAM_128 | RAM_256 | RAM_512 | RAM_1024 },
+		{ "Pentagon", "PENTAGON",                MM_PENTAGON, 128,  RAM_128 | RAM_512 | RAM_1024 },
         { "ZX-Spectrum 48k", "48K",              MM_SPECTRUM48, 48, RAM_48 },
         { "ZX-Spectrum 128k", "128k",            MM_SPECTRUM128, 128, RAM_128 },
         { "ZX-Spectrum +3", "PLUS3",             MM_PLUS3, 128,  RAM_128 },

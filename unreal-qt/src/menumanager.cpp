@@ -4,6 +4,7 @@
 #include <QMessageBox>
 
 #include "emulator/emulator.h"
+#include "emulator/emulatormanager.h"
 #include "emulator/platform.h"
 #include "emulator/notifications.h"
 // Avoid Qt 'signals' macro conflict with WD1793State::signals member
@@ -20,6 +21,7 @@ MenuManager::MenuManager(MainWindow* mainWindow, QMenuBar* menuBar, QObject* par
     createEditMenu();
     createViewMenu();
     createRunMenu();
+    createMachineMenu();
     createDebugMenu();
     createToolsMenu();
     createHelpMenu();
@@ -344,6 +346,130 @@ void MenuManager::createRunMenu()
     connect(_turboModeAction, &QAction::triggered, this, &MenuManager::turboModeToggled);
 }
 
+void MenuManager::createMachineMenu()
+{
+    _machineMenu = _menuBar->addMenu(tr("&Machine"));
+    _machineModelGroup = new QActionGroup(this);
+    _machineModelGroup->setExclusive(true);
+
+    // Get available models from EmulatorManager
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    if (!manager)
+        return;
+
+    std::vector<TMemModel> models = manager->GetAvailableModels();
+    const int ramSizes[] = {48, 128, 256, 512, 1024, 2048, 4096};
+
+    for (const auto& model : models)
+    {
+        QString shortName = QString::fromUtf8(model.ShortName);
+        QString baseName = QString::fromUtf8(model.FullName);
+
+        // Count available RAM sizes for this model
+        int ramCount = 0;
+        for (int ram : ramSizes)
+        {
+            if (model.AvailRAMs & ram)
+                ramCount++;
+        }
+
+        // If only one RAM option, show just the model name
+        if (ramCount <= 1)
+        {
+            QAction* action = _machineMenu->addAction(baseName);
+            action->setCheckable(true);
+            // Store as "MODEL:RAM" for parsing
+            action->setData(QString("%1:%2").arg(shortName).arg(model.defaultRAM));
+            action->setStatusTip(tr("Switch to %1").arg(baseName));
+            _machineModelGroup->addAction(action);
+            _machineModelActions.push_back(action);
+
+            connect(action, &QAction::triggered, this, [this, shortName, ram = model.defaultRAM]() {
+                QString key = QString("%1:%2").arg(shortName).arg(ram);
+                if (key != _currentModelShortName)
+                {
+                    emit machineModelChangeRequested(key);
+                }
+            });
+        }
+        else
+        {
+            // Multiple RAM options - create entry for each
+            for (int ram : ramSizes)
+            {
+                if (!(model.AvailRAMs & ram))
+                    continue;
+
+                QString displayName = QString("%1 %2K").arg(baseName).arg(ram);
+                QAction* action = _machineMenu->addAction(displayName);
+                action->setCheckable(true);
+                action->setData(QString("%1:%2").arg(shortName).arg(ram));
+                action->setStatusTip(tr("Switch to %1 with %2K RAM").arg(baseName).arg(ram));
+                _machineModelGroup->addAction(action);
+                _machineModelActions.push_back(action);
+
+                connect(action, &QAction::triggered, this, [this, shortName, ram]() {
+                    QString key = QString("%1:%2").arg(shortName).arg(ram);
+                    if (key != _currentModelShortName)
+                    {
+                        emit machineModelChangeRequested(key);
+                    }
+                });
+            }
+        }
+    }
+
+    // Set default selection (first entry)
+    if (!_machineModelActions.empty())
+    {
+        _machineModelActions[0]->setChecked(true);
+        _currentModelShortName = _machineModelActions[0]->data().toString();
+    }
+}
+
+void MenuManager::updateMachineModelSelection(std::shared_ptr<Emulator> activeEmulator)
+{
+    if (!activeEmulator)
+        return;
+
+    // Get current model from emulator context
+    EmulatorContext* ctx = activeEmulator->GetContext();
+    if (!ctx)
+        return;
+
+    MEM_MODEL currentModel = ctx->config.mem_model;
+    uint32_t currentRam = ctx->config.ramsize;
+
+    // Find and check the matching action (format: "MODEL:RAM")
+    for (QAction* action : _machineModelActions)
+    {
+        QString data = action->data().toString();
+        QStringList parts = data.split(':');
+        if (parts.size() != 2)
+            continue;
+
+        QString modelName = parts[0];
+        uint32_t ram = parts[1].toUInt();
+
+        // Find model info to get the MEM_MODEL enum
+        EmulatorManager* manager = EmulatorManager::GetInstance();
+        if (manager)
+        {
+            std::vector<TMemModel> models = manager->GetAvailableModels();
+            for (const auto& model : models)
+            {
+                if (QString::fromUtf8(model.ShortName) == modelName &&
+                    model.Model == currentModel && ram == currentRam)
+                {
+                    action->setChecked(true);
+                    _currentModelShortName = data;
+                    return;
+                }
+            }
+        }
+    }
+}
+
 void MenuManager::createDebugMenu()
 {
     _debugMenu = _menuBar->addMenu(tr("&Debug"));
@@ -633,6 +759,9 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
     _overscanAction->setEnabled(isPentagon);
     _overscanAction->setChecked(isOverscanActive);
     _viewportMenu->setEnabled(isOverscanActive);
+
+    // Update machine model selection
+    updateMachineModelSelection(activeEmulator);
 }
 
 void MenuManager::resetViewportSelection()

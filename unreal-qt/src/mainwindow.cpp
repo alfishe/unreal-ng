@@ -181,6 +181,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::audioSettingsRequested, this, &MainWindow::handleAudioSettingsRequested);
     connect(_menuManager, &MenuManager::overscanModeToggled, this, &MainWindow::handleOverscanModeToggled);
     connect(_menuManager, &MenuManager::viewportChanged, this, &MainWindow::handleViewportChanged);
+    connect(_menuManager, &MenuManager::machineModelChangeRequested, this, &MainWindow::handleMachineModelChangeRequested);
 #ifdef ENABLE_RECORDING
     connect(_menuManager, &MenuManager::videoRecordingRequested, this, &MainWindow::handleVideoRecordingRequested);
     connect(_menuManager, &MenuManager::quickRecordRequested, this, &MainWindow::handleQuickRecord);
@@ -2171,6 +2172,81 @@ void MainWindow::handleViewportChanged(int presetIndex)
     // Update device screen with new display dimensions
     // The viewport will be applied during rendering
     deviceScreen->setDisplayViewport(viewport);
+}
+
+void MainWindow::handleMachineModelChangeRequested(const QString& modelSpec)
+{
+    if (!_emulatorManager)
+    {
+        qWarning() << "handleMachineModelChangeRequested: EmulatorManager not available";
+        return;
+    }
+
+    // Parse "MODEL:RAM" format
+    QStringList parts = modelSpec.split(':');
+    if (parts.size() != 2)
+    {
+        qWarning() << "handleMachineModelChangeRequested: Invalid model spec format:" << modelSpec;
+        return;
+    }
+
+    std::string modelName = parts[0].toStdString();
+    uint32_t ramSize = parts[1].toUInt();
+    QString displayName = QString("%1 %2K").arg(parts[0]).arg(ramSize);
+
+    // Confirm with user
+    QMessageBox::StandardButton reply = QMessageBox::question(
+        this,
+        tr("Switch Machine Model"),
+        tr("Switch to %1?\n\nThis will stop and destroy the current emulator instance.\nAny unsaved state will be lost.").arg(displayName),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No
+    );
+
+    if (reply != QMessageBox::Yes)
+    {
+        // User cancelled - restore menu selection to current model
+        if (_menuManager)
+        {
+            _menuManager->updateMachineModelSelection(_emulator);
+        }
+        return;
+    }
+
+    qInfo() << "MainWindow::handleMachineModelChangeRequested() - Switching to model:" << displayName;
+
+    // Stop and release current emulator
+    if (_emulator)
+    {
+        if (_emulator->IsRunning())
+        {
+            _emulator->Stop();
+        }
+        releaseEmulator();
+    }
+
+    // Create new emulator with requested model and RAM size
+    std::shared_ptr<Emulator> newEmulator = _emulatorManager->CreateEmulatorWithModelAndRAM("", modelName, ramSize);
+    if (!newEmulator)
+    {
+        qWarning() << "handleMachineModelChangeRequested: Failed to create emulator with model" << displayName;
+        QMessageBox::critical(this, tr("Error"), tr("Failed to create emulator with model %1").arg(displayName));
+        return;
+    }
+
+    // Adopt the new emulator
+    adoptEmulator(newEmulator);
+
+    // Start the new emulator
+    if (newEmulator->Init())
+    {
+        newEmulator->Start();
+        qInfo() << "MainWindow::handleMachineModelChangeRequested() - Successfully switched to model:" << displayName;
+    }
+    else
+    {
+        qWarning() << "handleMachineModelChangeRequested: Failed to initialize emulator with model" << displayName;
+    }
 }
 
 #ifdef ENABLE_RECORDING
