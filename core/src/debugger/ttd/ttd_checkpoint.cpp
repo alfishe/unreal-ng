@@ -150,6 +150,11 @@ TTDChipsetState CaptureChipsetState(const EmulatorState& src)
     dst.pFDFD = src.pFDFD;
     dst.p1FFD = src.p1FFD;
     dst.pFF77 = src.pFF77;
+
+    // border_attr mirrors pFE bits 0-2 and is maintained by whoever writes the
+    // latch. Captured verbatim: a checkpoint records machine state as it is,
+    // and silently deriving it here would hide a desynchronised writer instead
+    // of surfacing it (the SNA loader was one - fixed in loader_sna.cpp).
     dst.border_attr = src.border_attr;
     dst.flags = src.flags;
 

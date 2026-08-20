@@ -749,6 +749,8 @@ private:
     /// @param isKeyFrame  When true, every model RAM page is re-interned as
     ///                   Full (I-frame path). When false, only dirty pages
     ///                   are touched (P-frame path).
+    static bool IsPageAllZero(const uint8_t* page);
+
     void UpdateRamPages(const std::vector<uint16_t>& dirtyPages,
                         const std::vector<TTDPageRef>& prevRamPages,
                         std::vector<TTDPageRef>& outRamPages,

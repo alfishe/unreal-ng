@@ -678,6 +678,24 @@ void TimeTravelManager::CaptureBaselineRamPages(std::vector<TTDPageRef>& outRamP
     }
 }
 
+/// @brief Is a 16 KB RAM page entirely zero?
+/// Cheap pre-check that keeps a key frame from paying the intern + hash cost
+/// for RAM the guest never populated.
+bool TimeTravelManager::IsPageAllZero(const uint8_t* page)
+{
+    if (page == nullptr)
+        return true;
+
+    const size_t words = (4 * TTDCodecPageStore::kPageSize) / sizeof(uint64_t);
+    const uint64_t* p64 = reinterpret_cast<const uint64_t*>(page);
+    for (size_t i = 0; i < words; ++i)
+    {
+        if (p64[i] != 0)
+            return false;
+    }
+    return true;
+}
+
 void TimeTravelManager::UpdateRamPages(const std::vector<uint16_t>& dirtyPages,
                                 const std::vector<TTDPageRef>& prevRamPages,
                                 std::vector<TTDPageRef>& outRamPages,
@@ -717,7 +735,30 @@ void TimeTravelManager::UpdateRamPages(const std::vector<uint16_t>& dirtyPages,
         if (dirty)
             ++dirtyCursor;
 
-        if (!dirty)
+        // A key frame must be a SELF-CONTAINED snapshot, so it re-interns every
+        // page that holds data - not just the ones dirtied since the previous
+        // checkpoint.
+        //
+        // Sharing prev's slots for clean pages is correct only while the chain
+        // still reaches the session's first checkpoint, the one place that ever
+        // captured RAM in full. Anything that re-anchors a timeline (truncate +
+        // resume-from-here, a restored session, a dropped baseline) leaves key
+        // frames inheriting refs for pages that were never captured, and their
+        // content is gone for good - the symptom being a seek that restores
+        // correct registers into empty memory.
+        //
+        // Untouched pages stay cheap: an all-zero page is recognised by the
+        // store and interned as a shared Zero slot, so the cost of a key frame
+        // is proportional to the RAM that actually holds something.
+        bool capture = dirty;
+        if (isKeyFrame && !dirty)
+        {
+            const uint8_t* pageData = _memory->RAMPageAddress(p);
+            if (pageData != nullptr && !IsPageAllZero(pageData))
+                capture = true;
+        }
+
+        if (!capture)
         {
             // Clean page (I-frame OR P-frame): share prev's slots via AddRef.
             // The I-frame path deliberately does NOT re-intern clean pages —
@@ -742,7 +783,7 @@ void TimeTravelManager::UpdateRamPages(const std::vector<uint16_t>& dirtyPages,
             continue;
         }
 
-        // Dirty page: re-intern each sub-page. I-frame uses InternFull so
+        // Page carrying data: re-intern each sub-page. I-frame uses InternFull so
         // the new slot is an independent anchor (no delta-chain dependency);
         // P-frame uses InternXor which falls back to Full automatically when
         // XOR doesn't compress well. Both paths leave prevRamPages's slots
@@ -2155,6 +2196,25 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     if (!ReadPod(in, cpuStateSize, err)) return false;
     if (!ReadPod(in, chipsetStateSize, err)) return false;
     if (!ReadPod(in, capturedAtMs, err)) return false;
+
+    // Machine model must match. A checkpoint is raw RAM pages plus a chipset
+    // snapshot captured on a specific machine; restoring a Pentagon recording
+    // into a 48K instance would push pages the target does not have and read
+    // chipset fields that mean something else there. The failure would be
+    // silent - a seek that "works" and produces a corrupt machine - so refuse
+    // here and let the caller provision the right model (Emulator::Init()
+    // applies SetPreferredModel() before any model-dependent subsystem starts).
+    if (_context)
+    {
+        const uint8_t currentModel = static_cast<uint8_t>(_context->config.mem_model);
+        if (modelId != currentModel)
+        {
+            err = "model mismatch: file was recorded on model id " + std::to_string(modelId) +
+                  ", this emulator is model id " + std::to_string(currentModel) +
+                  " - load it into an instance of the recorded model";
+            return false;
+        }
+    }
 
     // Drift detection: warn (not fail) if the producer's struct sizes don't
     // match ours. A size mismatch means the producer was built from a different
