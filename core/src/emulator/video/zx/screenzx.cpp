@@ -607,7 +607,9 @@ RenderTypeEnum ScreenZX::GetRenderType(uint16_t line, uint16_t col)
     if (lineType != RT_BLANK)
     {
         // If line is in visible area (Border / screen) - determine exact ray position and correspondent render type
-        RenderTypeEnum posType = _screenLineRenderers[col];
+        // Clamp to array bounds to avoid reading garbage if col exceeds table size
+        uint16_t clampedCol = (col < MAX_HEIGHT) ? col : (MAX_HEIGHT - 1);
+        RenderTypeEnum posType = _screenLineRenderers[clampedCol];
 
         result = posType;
     }
@@ -1174,6 +1176,7 @@ std::string ScreenZX::DumpRenderForTState(uint32_t tstate)
     const uint8_t column = tstate % tstatesPerLine;
 
     RenderTypeEnum lineType = GetLineRenderTypeByTiming(tstate);
+    // Clamp to array bounds (column is uint8_t so always < MAX_HEIGHT=320, but guard for safety)
     RenderTypeEnum posType = _screenLineRenderers[column];
     std::string lineTypeName = GetRenderTypeName(lineType);
     std::string posTypeName = GetRenderTypeName(posType);
