@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QMessageBox>
+#include <set>
 
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
@@ -240,12 +241,12 @@ void MenuManager::createViewMenu()
 
     _viewportFullOverscanAction = _viewportMenu->addAction(tr("&Full Overscan (384x304)"));
     _viewportFullOverscanAction->setCheckable(true);
-    _viewportFullOverscanAction->setChecked(true);
     _viewportGroup->addAction(_viewportFullOverscanAction);
     connect(_viewportFullOverscanAction, &QAction::triggered, this, [this]() { emit viewportChanged(0); });
 
     _viewportSymmetricAction = _viewportMenu->addAction(tr("&Symmetric Horizontal (352x304)"));
     _viewportSymmetricAction->setCheckable(true);
+    _viewportSymmetricAction->setChecked(true);  // Default viewport
     _viewportGroup->addAction(_viewportSymmetricAction);
     connect(_viewportSymmetricAction, &QAction::triggered, this, [this]() { emit viewportChanged(1); });
 
@@ -360,10 +361,30 @@ void MenuManager::createMachineMenu()
     std::vector<TMemModel> models = manager->GetAvailableModels();
     const int ramSizes[] = {48, 128, 256, 512, 1024, 2048, 4096};
 
+    // Only show supported models for now
+    // TODO: Enable other models as they become fully supported
+    std::set<MEM_MODEL> supportedModels = {
+        MM_PENTAGON,      // Pentagon 128K/512K/1024K
+        MM_SPECTRUM48,    // ZX-Spectrum 48K
+        MM_SPECTRUM128    // ZX-Spectrum 128K
+    };
+
     for (const auto& model : models)
     {
+        // Skip unsupported models
+        if (supportedModels.find(model.Model) == supportedModels.end())
+            continue;
+
         QString shortName = QString::fromUtf8(model.ShortName);
         QString baseName = QString::fromUtf8(model.FullName);
+
+        // Skip models with empty names (shouldn't happen, but guard against it)
+        if (baseName.isEmpty() || shortName.isEmpty())
+        {
+            qWarning() << "MenuManager::createMachineMenu - Skipping model with empty name:"
+                       << "FullName=" << baseName << "ShortName=" << shortName;
+            continue;
+        }
 
         // Count available RAM sizes for this model
         int ramCount = 0;
@@ -373,8 +394,16 @@ void MenuManager::createMachineMenu()
                 ramCount++;
         }
 
+        // Skip models with no matching RAM sizes
+        if (ramCount == 0)
+        {
+            qWarning() << "MenuManager::createMachineMenu - Skipping model with no valid RAM sizes:"
+                       << baseName << "AvailRAMs=" << model.AvailRAMs;
+            continue;
+        }
+
         // If only one RAM option, show just the model name
-        if (ramCount <= 1)
+        if (ramCount == 1)
         {
             QAction* action = _machineMenu->addAction(baseName);
             action->setCheckable(true);
@@ -745,20 +774,32 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
     _stepOverAction->setEnabled(!isRunning || isPaused);
 
     // Overscan menu states (Pentagon only)
-    bool isPentagon = false;
-    bool isOverscanActive = false;
+    // Only update overscan visibility when there's an active emulator
+    // Skip update when emulator is null (during transitions) to avoid hiding menu incorrectly
     if (emulatorExists)
     {
         EmulatorContext* context = activeEmulator->GetContext();
-        if (context && context->config.mem_model == MM_PENTAGON)
-        {
-            isPentagon = true;
-            isOverscanActive = activeEmulator->IsOverscanMode();
-        }
+        bool isPentagon = (context && context->config.mem_model == MM_PENTAGON);
+        bool isOverscanActive = isPentagon && activeEmulator->IsOverscanMode();
+
+        // Pentagon: show and enable overscan, show viewport when overscan active
+        // Non-Pentagon: hide overscan, hide viewport
+        _overscanAction->setVisible(isPentagon);
+        _overscanAction->setEnabled(isPentagon);
+        _overscanAction->setChecked(isOverscanActive);
+        // Use menuAction() to control submenu visibility in parent menu
+        // (calling setVisible() on QMenu itself can trigger unwanted popup)
+        _viewportMenu->menuAction()->setVisible(isPentagon);
+        _viewportMenu->setEnabled(isOverscanActive);
     }
-    _overscanAction->setEnabled(isPentagon);
-    _overscanAction->setChecked(isOverscanActive);
-    _viewportMenu->setEnabled(isOverscanActive);
+    else
+    {
+        // No emulator: hide Pentagon-only menus
+        _overscanAction->setVisible(false);
+        _overscanAction->setEnabled(false);
+        _viewportMenu->menuAction()->setVisible(false);
+        _viewportMenu->setEnabled(false);
+    }
 
     // Update machine model selection
     updateMachineModelSelection(activeEmulator);
@@ -766,7 +807,7 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
 
 void MenuManager::resetViewportSelection()
 {
-    _viewportFullOverscanAction->setChecked(true);
+    _viewportSymmetricAction->setChecked(true);
 }
 
 void MenuManager::setActiveEmulator(std::shared_ptr<Emulator> emulator)

@@ -207,6 +207,7 @@ private:
     GUIEmulatorContext* _guiContext = nullptr;
     std::shared_ptr<Emulator> _emulator = nullptr;  // TODO: Remove after full binding migration
     uint32_t _lastFrameCount = 0;
+    bool _switchingModel = false;  // True while model switch is in progress (prevents notification handler interference)
 
     QPoint _lastCursorPos;
     QPalette _originalPalette;

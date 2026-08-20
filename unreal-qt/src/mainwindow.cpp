@@ -2126,7 +2126,14 @@ void MainWindow::handleOverscanModeToggled(bool enabled)
                 return true;
             });
 
-            if (!enabled)
+            if (enabled)
+            {
+                // Entering overscan mode - apply default viewport (Symmetric Horizontal)
+                emulator->SetDisplayViewport(ViewportPresets::SYMMETRIC_HORIZONTAL);
+                deviceScreen->setDisplayViewport(ViewportPresets::SYMMETRIC_HORIZONTAL);
+                _menuManager->resetViewportSelection();
+            }
+            else
             {
                 // Leaving overscan mode - reset viewport to full framebuffer
                 DisplayViewport fullViewport = {0, 0, 0, 0};
@@ -2213,14 +2220,21 @@ void MainWindow::handleMachineModelChangeRequested(const QString& modelSpec)
         return;
     }
 
+    // Process events to ensure dialog is fully closed before heavy operations
+    QApplication::processEvents();
+
+    // Set flag to prevent notification handler from interfering
+    _switchingModel = true;
+
     qInfo() << "MainWindow::handleMachineModelChangeRequested() - Switching to model:" << displayName;
 
-    // Stop and release current emulator
+    // Pause, stop and release current emulator
     if (_emulator)
     {
         if (_emulator->IsRunning())
         {
-            _emulator->Stop();
+            _emulator->Pause(false);  // Pause first to stop frame generation
+            _emulator->Stop();        // Then stop before destroying
         }
         releaseEmulator();
     }
@@ -2234,19 +2248,19 @@ void MainWindow::handleMachineModelChangeRequested(const QString& modelSpec)
         return;
     }
 
-    // Adopt the new emulator
+    // Adopt the new emulator (already initialized by CreateEmulatorWithModelAndRAM)
     adoptEmulator(newEmulator);
+    qDebug() << "handleMachineModelChangeRequested: adoptEmulator completed";
 
-    // Start the new emulator
-    if (newEmulator->Init())
-    {
-        newEmulator->Start();
-        qInfo() << "MainWindow::handleMachineModelChangeRequested() - Successfully switched to model:" << displayName;
-    }
-    else
-    {
-        qWarning() << "handleMachineModelChangeRequested: Failed to initialize emulator with model" << displayName;
-    }
+    // Start the new emulator asynchronously (Start() blocks, StartAsync() returns immediately)
+    newEmulator->StartAsync();
+    qDebug() << "handleMachineModelChangeRequested: StartAsync completed";
+
+    // Note: Menu update happens via adoptEmulator -> setActiveEmulator -> updateMenuStates
+
+    _switchingModel = false;
+
+    qInfo() << "MainWindow::handleMachineModelChangeRequested() - Successfully switched to model:" << displayName;
 }
 
 #ifdef ENABLE_RECORDING
@@ -2527,6 +2541,13 @@ void MainWindow::handleEmulatorInstanceCreated(int id, Message* message)
             std::string createdId = payload->_payloadText;
 
             qDebug() << "MainWindow: Detected new emulator instance" << QString::fromStdString(createdId);
+
+            // Skip if we're in the middle of a model switch (handleMachineModelChangeRequested handles adoption)
+            if (_switchingModel)
+            {
+                qDebug() << "MainWindow: Model switch in progress, skipping auto-adoption";
+                return;
+            }
 
             // Check if this is the emulator we already have adopted
             if (_emulator && _emulator->GetId() == createdId)
@@ -2954,7 +2975,11 @@ void MainWindow::releaseEmulator()
 
     // UI state
     startButton->setText("Start");
-    updateMenuStates();
+    if (!_switchingModel)
+    {
+        // Only update menu if not in model switch (adoptEmulator handles menu during switch)
+        updateMenuStates();
+    }
 
     qDebug() << "MainWindow::releaseEmulator() - Emulator released and destroyed";
 }
