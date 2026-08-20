@@ -27,7 +27,7 @@ Emulator::Emulator(LoggerLevel level) : Emulator("", level) {}
 
 Emulator::Emulator(const std::string& symbolicId, LoggerLevel level)
 {
-    _uuid = UUID::Generate(); // Generate new unique UUID
+    _uuid = unreal::UUID::Generate(); // Generate new unique UUID
     _emulatorId = _uuid.toString();
     _symbolicId = symbolicId;
     _createdAt = std::chrono::system_clock::now();
@@ -2242,7 +2242,7 @@ Z80State* Emulator::GetZ80State()
 
 // Identity and state methods
 
-UUID Emulator::GetUUID() const
+unreal::UUID Emulator::GetUUID() const
 {
     return _uuid;
 }
