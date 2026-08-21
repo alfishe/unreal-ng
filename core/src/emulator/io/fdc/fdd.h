@@ -2,6 +2,7 @@
 
 #include <stdafx.h>
 #include "3rdparty/message-center/messagecenter.h"
+#include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "emulator/io/fdc/fdc.h"
 

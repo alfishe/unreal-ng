@@ -5,7 +5,10 @@ message(">> core/benchmarks CMakeLists.txt")
 
 project (core-benchmarks LANGUAGES CXX)
 
-# C++ standard is inherited from root CMakeLists.txt (C++20)
+# Require C++20
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Default to Release mode
 if (NOT CMAKE_BUILD_TYPE)
