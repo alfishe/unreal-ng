@@ -628,66 +628,75 @@ void Memory::MigratePointersAfterReallocation(uint8_t* oldBase, uint8_t* newBase
 // Address space: [0x0000 - 0x3FFF]
 void Memory::SetROMMode(ROMModeEnum mode)
 {
-    throw std::runtime_error("SetROMMode is deprecated");
-
-    [[maybe_unused]] EmulatorState& state = _context->emulatorState;
-    [[maybe_unused]] const CONFIG& config = _context->config;
-    [[maybe_unused]] const PortDecoder& portDecoder = *_context->pPortDecoder;
+    EmulatorState& state = _context->emulatorState;
+    const CONFIG& config = _context->config;
 
     if (mode == RM_NOCHANGE)
         return;
 
+    // Validate the requested mode against the available ROMs (guards from the
+    // original m_reset()): TR-DOS mode requires the DOS + service ROMs to be
+    // loaded, the memory cache is not emulated
+    bool dosAvailable = base_dos_rom != nullptr && base_sys_rom != nullptr;
+    if (mode == RM_DOS && !(config.trdos_present && dosAvailable))
+        mode = RM_SOS;
     if (mode == RM_CACHE)
+        mode = RM_SOS;
+
+    // No RAM/cache/SERVICE
+    state.p1FFD &= ~7;
+    state.pDFFD &= ~0x10;
+    state.flags &= ~CF_CACHEON;
+
+    // comp.aFF77 |= 0x100; // enable ATM memory
+
+    switch (mode)
     {
-        state.flags |= CF_CACHEON;
-    }
-    else
-    {
-        // No RAM/cache/SERVICE
-        state.p1FFD &= ~7;
-        state.pDFFD &= ~0x10;
-        state.flags &= ~CF_CACHEON;
+        case RM_128:
+            state.flags &= ~CF_TRDOS;
+            state.p7FFD &= ~0x10;
+            break;
+        case RM_SOS:
+            state.flags &= ~CF_TRDOS;
+            state.p7FFD |= 0x10;
 
-        // comp.aFF77 |= 0x100; // enable ATM memory
+            if (config.mem_model == MM_PLUS3)  // Disable paging
+                state.p7FFD |= 0x20;
+            break;
+        case RM_SYS:
+            state.flags |= CF_TRDOS;
+            state.p7FFD &= ~0x10;
+            break;
+        case RM_DOS:
+            state.flags |= CF_TRDOS;
+            state.p7FFD |= 0x10;
 
-        switch (mode)
-        {
-            case RM_128:
-                state.flags &= ~CF_TRDOS;
+            if (config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3)
                 state.p7FFD &= ~0x10;
-                break;
-            case RM_SOS:
-                state.flags &= ~CF_TRDOS;
-                state.p7FFD |= 0x10;
-
-                if (config.mem_model == MM_PLUS3)  // Disable paging
-                    state.p7FFD |= 0x20;
-                break;
-            case RM_SYS:
-                state.flags |= CF_TRDOS;
-                state.p7FFD &= ~0x10;
-                break;
-            case RM_DOS:
-                state.flags |= CF_TRDOS;
-                state.p7FFD |= 0x10;
-
-                if (config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3)
-                    state.p7FFD &= ~0x10;
-                break;
-            default:
-                break;
-        }
+            break;
+        default:
+            break;
     }
 
-    // SetBanks();
+    UpdateZ80Banks();
 }
 
 /// input: ports 7FFD,1FFD,DFFD,FFF7,FF77,EFF7, flags CF_TRDOS,CF_CACHEON
 void Memory::UpdateZ80Banks()
 {
     EmulatorState& state = _context->emulatorState;
+    const CONFIG& config = _context->config;
 
-    if (state.flags & CF_TRDOS)
+    // TR-DOS session machinery requires both DOS and service ROMs to be present
+    // (models without them can never enter a TR-DOS session)
+    bool dosAvailable = base_dos_rom != nullptr && base_sys_rom != nullptr;
+
+    // Recalculate TR-DOS session flags on every bank update (port of the original
+    // UnrealSpeccy set_banks()): CF_TRDOS itself is preserved, the derived session
+    // flags are re-derived below from the current CF_TRDOS / p7FFD state
+    state.flags &= ~(CF_DOSPORTS | CF_Z80FBUS | CF_LEAVEDOSRAM | CF_LEAVEDOSADR | CF_SETDOSROM);
+
+    if ((state.flags & CF_TRDOS) && dosAvailable)
     {
         if (state.p7FFD & 0x10)
         {
@@ -708,6 +717,26 @@ void Memory::UpdateZ80Banks()
         {
             SetROM128k();
         }
+    }
+
+    unsigned char dosflags = CF_LEAVEDOSRAM;
+    if (config.mem_model == MM_PENTAGON || config.mem_model == MM_PROFI)
+        dosflags = CF_LEAVEDOSADR;
+
+    if ((state.flags & CF_TRDOS) && dosAvailable)
+    {
+        // TR-DOS session active: FDC ports on the bus; session closes per model
+        // semantics (PC leaves ROM area / execution from RAM)
+        state.flags |= dosflags | CF_DOSPORTS;
+    }
+    else if ((state.p7FFD & 0x10) && config.trdos_present && dosAvailable)
+    {
+        // 48K ROM slot selected with Beta128 attached: the DOS ROM will be paged in
+        // automatically once execution reaches $3Dxx (armed in Z80Step).
+        // Skipped for RAM-bank0 models with LEAVEDOSRAM semantics while bank0 is RAM
+        // (matches the original set_banks() guard)
+        if (!((dosflags & CF_LEAVEDOSRAM) && _bank_mode[0] == MemoryBankModeEnum::BANK_RAM))
+            state.flags |= CF_SETDOSROM;
     }
 
     // TODO: implement support for extended ports and cache

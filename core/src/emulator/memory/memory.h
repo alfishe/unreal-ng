@@ -224,6 +224,8 @@ public:
 
     /// region <Runtime methods>
 public:
+    /// Switch bank 0 to the requested ROM section and refresh the paging state
+    /// (port of the original UnrealSpeccy set_mode(); used for RESET= boot modes)
     void SetROMMode(ROMModeEnum mode);
 
     void UpdateZ80Banks();

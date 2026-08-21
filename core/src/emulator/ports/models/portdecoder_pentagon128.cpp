@@ -390,23 +390,33 @@ void PortDecoder_Pentagon128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16
     Memory& memory = *_context->pMemory;
 
     uint8_t screenNumber = (value & 0b0000'1000) >> 3;  // Bit 3: 0 = Normal (Bank 5), 1 = Shadow (Bank 7)
-    uint8_t romPage = (value & 0b0001'0000) >> 4;       // Bit 4: 0 = 128K, 1 = 48K
     bool isPagingDisabled = value & 0b0010'0000;        // Bit 5: 0 = none, 1 = blocked
+
+    // Capture previous screen selection before p7FFD is updated below
+    uint8_t prevScreenNumber = (_state->p7FFD & 0b00001000) >> 3;
+
+    // Cache out port value in state. Must happen before UpdateZ80Banks(): the bank
+    // update reads p7FFD to select the ROM/RAM pages. Cached even when locked
+    // (writes to a locked port update the cache but never remap pages)
+    state.p7FFD = value;
 
     // Disabling latch is kept until reset
     if (!_7FFD_Locked)
     {
-        romPage |= 0b0000'0010; // Pentagon has 128K/48K ROMs in pages 2 and 3, not 0 and 1. So we need make correction (add 2 or set bit 1)
-
         switchRAMPage(value);   // Separate virtual method is used to unify 128k and 512k behavior
-        memory.SetROMPage(romPage);
+
+        // Bank0 mapping is CF_TRDOS-aware (matches the original set_banks()): while a
+        // TR-DOS session is active the DOS/SYS ROM stays mapped - bit 4 only selects
+        // between them. The regular Pentagon 128K/48K ROM pair (pages 2/3) is mapped
+        // only when no TR-DOS session is active. UpdateZ80Banks() also re-arms the
+        // CF_SETDOSROM / CF_LEAVEDOS* session flags consumed by the Z80Step paging trap
+        memory.UpdateZ80Banks();
 
         _7FFD_Locked = isPagingDisabled;
     }
     // When locked, writes to 7FFD are ignored (no else branch needed)
 
     // Detect if screen switch requested. Do not switch screen if state not changed
-    uint8_t prevScreenNumber = (_state->p7FFD & 0b00001000) >> 3;
     if (prevScreenNumber != screenNumber && _screen != nullptr)
     {
         SpectrumScreenEnum screen = screenNumber ? SCREEN_SHADOW : SCREEN_NORMAL;
@@ -416,9 +426,6 @@ void PortDecoder_Pentagon128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16
     {
         MLOGWARNING("Port_7FFD_Out: Screen pointer is null, cannot switch screen");
     }
-
-    // Cache out port value in state
-    state.p7FFD = value;
 
     /// region <Debug logging>
 
