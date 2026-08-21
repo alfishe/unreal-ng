@@ -329,15 +329,14 @@ uint8_t Keyboard::HandlePortIn(uint16_t port)
     /// See: http://www.breakintoprogram.co.uk/computers/zx-spectrum/keyboard
     /// endregion </Info>
 
-    uint8_t portFE = port & 0x00FF;  // Lower byte for the port. Should be always #FE
-    uint8_t subport = port >> 8;    // Higher byte - cleared bits select half-rows to scan
-    uint8_t subport_inv = ~subport; // Set bits indicate selected half-rows
-
-    if (portFE == 0xFE)
+    // ULA responds to any port with A0=0 (even ports), not just #FE
+    if ((port & 1) == 0)
     {
         // ZX Spectrum keyboard scanning: each cleared bit in high byte selects a half-row.
         // Multiple half-rows can be scanned simultaneously - result is AND of all selected rows.
-        // subport_inv has set bits for each selected half-row.
+        uint8_t subport = port >> 8;
+        uint8_t subport_inv = ~subport; // Set bits indicate selected half-rows
+
         result = 0xFF;
         for (uint8_t i = 0; i < 8; i++)
         {
@@ -349,8 +348,8 @@ uint8_t Keyboard::HandlePortIn(uint16_t port)
     }
     else
     {
-        MLOGERROR("Keyboard cannot handle non #FE port");
-        assert("Keyboard non-#FE port");
+        MLOGWARNING("Keyboard::HandlePortIn called with odd port 0x%04X", port);
+        assert(false && "Keyboard should only handle even ports");
     }
 
     return result;
