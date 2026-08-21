@@ -44,8 +44,14 @@
 // multi-byte field in the header / cpu_state / chipset_state is written in
 // host order. If we ever port to a big-endian platform we must either add
 // byte-swapping or bump the schema version and document the new convention.
+#if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__)
 static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
               ".ttd v1 schema assumes little-endian host; add endian conversion if porting");
+#elif defined(_MSC_VER)
+// MSVC on Windows is always little-endian (x86/x64/ARM)
+#else
+#error "Unknown compiler - cannot verify endianness"
+#endif
 
 namespace
 {
