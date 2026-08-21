@@ -423,8 +423,7 @@ struct CONFIG
 	uint8_t even_M1, border_4T;
 
 	uint8_t floatbus, floatdos;
-	bool portff;
-
+	
 	/// Speed multiplier: 1x (default), 2x, 4x, 8x, or 16x
 	/// Multiplies the number of t-states executed per frame
 	uint8_t speed_multiplier = 1;

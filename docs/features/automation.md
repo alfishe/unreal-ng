@@ -58,13 +58,15 @@ nc localhost 3333
 #### Lifecycle Management
 ```
 list                    # List all emulator instances
-create [model]          # Create new instance (48k/128k/pentagon128k/pentagon512k)
+create [model]          # Create new instance
 start                   # Start selected instance
 stop / remove           # Destroy instance
 select <uuid>           # Set active instance
 status                  # Show all instances status
-models                  # List supported models
+models                  # List supported models and RAM configurations
 ```
+
+Supported models: `48K`, `128K`, `PENTAGON` (128/256/512/1024K), `PLUS3`, `SCORPION`, `PROFI`, `KAY`, `ATM710`, `ATM450`, `ATM3`, `TSL`, `PHOENIX`
 
 #### Execution Control
 ```
@@ -137,18 +139,22 @@ Interactive documentation available at `/api/swagger`
 #### Emulator Management
 | Method | Endpoint | Description |
 |:-------|:---------|:------------|
-| GET | `/emulators` | List all instances |
-| POST | `/emulators` | Create new instance |
-| DELETE | `/emulators/{id}` | Destroy instance |
-| GET | `/emulators/{id}/status` | Instance status |
+| GET | `/api/v1/emulator` | List all instances |
+| GET | `/api/v1/emulator/models` | List available machine models |
+| POST | `/api/v1/emulator/create` | Create new instance |
+| POST | `/api/v1/emulator/start` | Create and start instance |
+| DELETE | `/api/v1/emulator/{id}` | Destroy instance |
+| GET | `/api/v1/emulator/{id}` | Instance details |
+| POST | `/api/v1/emulator/{id}/model` | Switch machine model |
 
 #### Execution Control
 | Method | Endpoint | Description |
 |:-------|:---------|:------------|
-| POST | `/emulators/{id}/pause` | Pause |
-| POST | `/emulators/{id}/resume` | Resume |
-| POST | `/emulators/{id}/reset` | Reset |
-| POST | `/emulators/{id}/step` | Single step |
+| POST | `/api/v1/emulator/{id}/start` | Start |
+| POST | `/api/v1/emulator/{id}/stop` | Stop |
+| POST | `/api/v1/emulator/{id}/pause` | Pause |
+| POST | `/api/v1/emulator/{id}/resume` | Resume |
+| POST | `/api/v1/emulator/{id}/reset` | Reset |
 
 #### State & Memory
 | Method | Endpoint | Description |
@@ -176,6 +182,25 @@ Interactive documentation available at `/api/swagger`
   "emulator_id": "optional-uuid"
 }
 ```
+
+#### Machine Model Switching
+Switch between ZX Spectrum models at runtime:
+```bash
+# Get available models
+curl http://localhost:8090/api/v1/emulator/models
+
+# Switch to Spectrum 48K
+curl -X POST http://localhost:8090/api/v1/emulator/{id}/model \
+  -H "Content-Type: application/json" \
+  -d '{"model": "48K"}'
+
+# Switch to Pentagon 512K
+curl -X POST http://localhost:8090/api/v1/emulator/{id}/model \
+  -H "Content-Type: application/json" \
+  -d '{"model": "PENTAGON", "ram_size": 512}'
+```
+
+**Note**: Model switching destroys the current emulator instance and creates a new one. The response includes both old and new emulator IDs.
 
 #### Command Batching
 For VideoWall and bulk operations:
@@ -292,20 +317,21 @@ videowall.set_single_sync(False)
 
 ## Feature Parity Matrix
 
-| Feature | CLI | WebAPI | Lua | Python |
-|:--------|:---:|:------:|:---:|:------:|
-| Create/Destroy | ✅ | ✅ | ✅ | ✅ |
-| Pause/Resume | ✅ | ✅ | ✅ | ✅ |
-| Step/Run | ✅ | ✅ | ✅ | ✅ |
-| Registers | ✅ | ✅ | ✅ | ✅ |
-| Memory R/W | ✅ | ✅ | ✅ | ✅ |
-| Breakpoints | ✅ | ✅ | ✅ | ✅ |
-| Load/Save | ✅ | ✅ | ✅ | ✅ |
-| Feature Toggle | ✅ | ✅ | ✅ | ✅ |
-| VideoWall Control | ✅ | ✅ | ✅ | ✅ |
-| Keyboard Input | ❌ | ❌ | ✅ | ✅ |
-| Screen Buffer | ❌ | ❌ | ✅ | ✅ |
-| Event Callbacks | ❌ | 🔶 | 🔶 | 🔶 |
+| Feature | CLI | WebAPI | Lua | Python | Qt Menu |
+|:--------|:---:|:------:|:---:|:------:|:-------:|
+| Create/Destroy | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Model Switch | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Pause/Resume | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Step/Run | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Registers | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Memory R/W | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Breakpoints | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Load/Save | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Feature Toggle | ✅ | ✅ | ✅ | ✅ | 🔶 |
+| VideoWall Control | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Keyboard Input | ❌ | ✅ | ✅ | ✅ | ❌ |
+| Screen Buffer | ❌ | ✅ | ✅ | ✅ | ❌ |
+| Event Callbacks | ❌ | 🔶 | 🔶 | 🔶 | ❌ |
 
 ---
 

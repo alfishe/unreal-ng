@@ -7,7 +7,6 @@
     #endif
     #define _CRT_SECURE_NO_WARNINGS 1
     #include <windows.h>
-    #include <process.h>
     #include <stdlib.h>
 #endif
 
@@ -131,36 +130,16 @@ void MessageCenter::ThreadWorker()
     #include <pthread.h>
 	pthread_setname_np(pthread_self(), threadName);
 #endif
-#if defined _WIN32 && defined MSVC
-    typedef HRESULT (WINAPI *SetThreadDescriptionFunc)(HANDLE, PCWSTR);
-    static auto setThreadDescription = (SetThreadDescriptionFunc)
-        GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription");
+#ifdef _WIN32
+    using SetThreadDescriptionFunc = HRESULT(WINAPI*)(HANDLE, PCWSTR);
+    static auto setThreadDescription = reinterpret_cast<SetThreadDescriptionFunc>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription")));
     if (setThreadDescription != nullptr)
     {
-        wchar_t wname[24];
+        wchar_t wname[32];
         size_t retval;
-        mbstowcs_s(&retval, wname, 24, threadName, strlen(threadName));
+        mbstowcs_s(&retval, wname, 32, threadName, 31);
         setThreadDescription(GetCurrentThread(), wname);
-    }
-#endif
-
-#if defined _WIN32 && defined __GNUC__
-    typedef HRESULT (WINAPI *SetThreadDescriptionFunc)(HANDLE, PCWSTR);
-    HMODULE hModule = GetModuleHandle(TEXT("kernelbase.dll"));
-    if (hModule)
-    {
-        // Use reinterpret_cast for FARPROC to avoid direct casting between incompatible function types
-        SetThreadDescriptionFunc setThreadDescription = reinterpret_cast<SetThreadDescriptionFunc>(
-            reinterpret_cast<void*>(GetProcAddress(hModule, "SetThreadDescription")));
-        if (setThreadDescription != nullptr)
-        {
-            wchar_t wname[24];
-            size_t retval;
-            mbstate_t conversion = {};
-            const char* temp = threadName;
-            mbsrtowcs_s(&retval, wname, 24, &temp, strlen(threadName), &conversion);
-            setThreadDescription(GetCurrentThread(), wname);
-        }
     }
 #endif
 

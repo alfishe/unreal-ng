@@ -94,38 +94,9 @@ public:
     std::string _payloadText;
 
 public:
-    SimpleTextPayload(const std::string& text) : MessagePayload() { _payloadText = text; };
-    SimpleTextPayload(const char* text) : MessagePayload() { _payloadText = std::string(text); };
+    SimpleTextPayload(const std::string& text) : MessagePayload(), _payloadText(text) {}
+    SimpleTextPayload(const char* text) : MessagePayload(), _payloadText(text) {}
     virtual ~SimpleTextPayload() = default;
-};
-
-/// Allows to pass 32 bit numbers in MessageCenter message
-/// Example: messageCenter.Post(topic, new SimpleNumberPayload(0x12345678);
-class SimpleNumberPayload : public MessagePayload
-{
-public:
-    uint32_t _payloadNumber;
-
-public:
-    SimpleNumberPayload(uint32_t value) : MessagePayload() { _payloadNumber = value; };
-    virtual ~SimpleNumberPayload() = default;
-};
-
-
-/// Allows to transfer uint8_t data blocks (as std::vector<uint8_t> in MessageCenter message
-/// std::move for parameter is mandatory since we don't want double copy for all content
-/// Warning: payloads longer than 10k are not recommended. Copy constructors to transfer large data blocks will be slow.
-/// Example:
-///   std::vector<uint8_t> payload = { 0x00, 0x01, 0x02, 0x03 };
-///   messageCenter.Post(topic, new SimpleByteDataPayload(std::move(payload)));
-class SimpleByteDataPayload : public MessagePayload
-{
-public:
-    std::vector<uint8_t> _payloadByteVector;
-
-public:
-    SimpleByteDataPayload(const std::vector<uint8_t>&& payload) : MessagePayload() { _payloadByteVector = payload; };
-    virtual ~SimpleByteDataPayload()  = default;
 };
 
 
@@ -144,7 +115,7 @@ protected:
 protected:
     std::string m_topics[MAX_TOPICS];
     TopicResolveMap m_topicsResolveMap;
-    unsigned m_topicMax = 0;
+    int m_topicMax = 0;
 
     TopicObserversMap m_topicObservers;
 
@@ -181,8 +152,8 @@ public:
     std::string GetTopicByID(int id);
     void ClearTopics();
 
-    void Post(int id, MessagePayload* obj = nullptr, bool autoCleanupPayload = true);
-    void Post(std::string topic, MessagePayload* obj = nullptr, bool autoCleanupPayload = true);
+    void Post(int id, MessagePayload* obj = nullptr, bool autoCleanupPayload = false);
+    void Post(std::string topic, MessagePayload* obj = nullptr, bool autoCleanupPayload = false);
 
 protected:
     Message* GetQueueMessage();

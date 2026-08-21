@@ -15,7 +15,6 @@
 #include "base/featuremanager.h"
 #include "common/autoresetevent.h"
 #include "common/uuid.h"
-using unreal::UUID;  // Explicitly bring into scope to avoid Windows GUID typedef collision
 #include "corestate.h"
 #include "cpu/z80.h"
 #include "debugger/disassembler/z80disasm.h"
@@ -64,7 +63,7 @@ protected:
     /// region <Fields>
 protected:
     // Emulator identity
-    UUID _uuid;                                           // Auto-generated UUID
+    unreal::UUID _uuid;                                           // Auto-generated UUID
     std::string _emulatorId;                              // Symbolic representation  of the UUID
     std::string _symbolicId;                              // Optional user-provided symbolic ID
     std::chrono::system_clock::time_point _createdAt;     // When instance was created
@@ -86,6 +85,7 @@ protected:
     bool _hasPreferredModel = false;
     MEM_MODEL _preferredModel = MM_PENTAGON;
     uint32_t _preferredRamSize = 0;
+    std::string _customConfigPath;  // Optional custom config file path
 
     Config* _config = nullptr;
     Core* _core = nullptr;
@@ -141,6 +141,13 @@ public:
         _hasPreferredModel = true;
     }
 
+    /// Set a custom config file path. Must be called before Init().
+    /// If set, this path is used instead of the default config search.
+    void SetCustomConfigPath(const std::string& path)
+    {
+        _customConfigPath = path;
+    }
+
     [[nodiscard]] bool Init();
     void Release();
 
@@ -151,7 +158,7 @@ public:
     std::string GetUptimeString() const;
 
     // ID management
-    UUID GetUUID() const;
+    unreal::UUID GetUUID() const;
     std::string GetSymbolicId() const;
     void SetSymbolicId(const std::string& symbolicId);
 

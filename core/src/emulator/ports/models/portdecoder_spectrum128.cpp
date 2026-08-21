@@ -188,14 +188,14 @@ bool PortDecoder_Spectrum128::IsPort_7FFD(uint16_t port)
 {
     //    ZX Spectrum 128 / +2A
     //    Port: #7FFD
-    //    Match pattern: 0xxxxxxx xxxxxx0x
+    //    Match pattern: 0xxxxxxx xxxxx10x  (A15=0, A2=1, A1=0)
     //    Full pattern:  01111111 11111101
     //    The additional memory features of the 128K/+2 are controlled to by writes to port 0x7ffd.
-    //    As normal on Sinclair hardware, the port address is in fact only partially decoded and the hardware will respond
-    //    to any port address with bits 1 and 15 reset.
+    //    As normal on Sinclair hardware, the port address is in fact only partially decoded.
+    //    Mask includes bit2=1 to avoid conflict with SOUNDRIVE ports F1/F9 which have bit2=0.
     static const uint16_t port_7FFD_full    = 0b0111'1111'1111'1101;
-    static const uint16_t port_7FFD_mask    = 0b1000'0000'0000'0010;
-    static const uint16_t port_7FFD_match   = 0b0000'0000'0000'0000;
+    static const uint16_t port_7FFD_mask    = 0b1000'0000'0000'0110;  // A15, A2, A1
+    static const uint16_t port_7FFD_match   = 0b0000'0000'0000'0100;  // A15=0, A2=1, A1=0
 
     // Compile-time check
     static_assert((port_7FFD_full & port_7FFD_mask) == port_7FFD_match && "Mask pattern incorrect");

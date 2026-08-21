@@ -3,6 +3,7 @@
 #include <stdafx.h>
 #include "3rdparty/message-center/messagecenter.h"
 #include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 — captured via WD1793)
+#include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "emulator/io/fdc/fdc.h"
 

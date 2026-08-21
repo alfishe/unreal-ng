@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "3rdparty/message-center/eventqueue.h"
+#include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "emulator/sound/soundmanager.h"  // AudioSourceType lives here now
 #include "encoder_base.h"

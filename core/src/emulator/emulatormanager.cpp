@@ -1,5 +1,6 @@
 #include "emulatormanager.h"
 
+#include "common/filehelper.h"
 #include "common/modulelogger.h"
 #include "stdafx.h"
 #include "3rdparty/message-center/messagecenter.h"
@@ -132,9 +133,8 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::st
     // Create a new emulator instance
     auto emulator = std::make_shared<Emulator>(symbolicId, level);
 
-    // Find the model configuration
-    Config tempConfig(emulator->GetContext());
-    const TMemModel* modelInfo = tempConfig.FindModelByShortName(modelName);
+    // Find the model configuration (static lookup, no context needed)
+    const TMemModel* modelInfo = Config::FindModelByShortName(modelName);
     if (!modelInfo)
     {
         LOGERROR("EmulatorManager::CreateEmulatorWithModel - Unknown model: '%s'", modelName.c_str());
@@ -197,9 +197,8 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const s
     // Create a new emulator instance
     auto emulator = std::make_shared<Emulator>(symbolicId, level);
 
-    // Find the model configuration
-    Config tempConfig(emulator->GetContext());
-    const TMemModel* modelInfo = tempConfig.FindModelByShortName(modelName);
+    // Find the model configuration (static lookup, no context needed)
+    const TMemModel* modelInfo = Config::FindModelByShortName(modelName);
     if (!modelInfo)
     {
         LOGERROR("EmulatorManager::CreateEmulatorWithModelAndRAM - Unknown model: '%s'", modelName.c_str());
@@ -216,6 +215,40 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const s
 
     // Request this model and RAM size for initialization
     emulator->SetPreferredModel(modelInfo->Model, ramSize);
+
+    // Try to find model-specific config in configs subdirectory
+    // Map model+RAM to config folder name
+    std::string configFolder;
+    switch (modelInfo->Model)
+    {
+        case MM_PENTAGON:
+            configFolder = (ramSize == 512) ? "pentagon512k" : "pentagon128k";
+            break;
+        case MM_SPECTRUM48:
+            configFolder = "spectrum48";
+            break;
+        case MM_SPECTRUM128:
+            configFolder = "spectrum128";
+            break;
+        default:
+            // Use default config for unsupported models
+            break;
+    }
+
+    if (!configFolder.empty())
+    {
+        // Look for model-specific config in configs subdirectory
+        std::string resourcesPath = FileHelper::GetResourcesPath();
+        std::string configPath = FileHelper::PathCombine(resourcesPath, "configs");
+        configPath = FileHelper::PathCombine(configPath, configFolder);
+        configPath = FileHelper::PathCombine(configPath, "unreal.ini");
+
+        if (FileHelper::FileExists(configPath))
+        {
+            emulator->SetCustomConfigPath(configPath);
+            LOGINFO("EmulatorManager::CreateEmulatorWithModelAndRAM - Using model-specific config: %s", configPath.c_str());
+        }
+    }
 
     // Initialize the emulator
     if (emulator->Init())
@@ -266,12 +299,8 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const s
 
 std::vector<TMemModel> EmulatorManager::GetAvailableModels() const
 {
-    // Create a temporary config to access the model list
-    // This is a bit of a hack, but since the models are static data,
-    // we can access them through any config instance
-    EmulatorContext tempContext;
-    Config tempConfig(&tempContext);
-    return tempConfig.GetAvailableModels();
+    // Model list is static data, access directly
+    return Config::GetAvailableModels();
 }
 
 std::shared_ptr<Emulator> EmulatorManager::GetEmulator(const std::string& emulatorId)

@@ -218,7 +218,9 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	{
 		config.reset_rom = RM_DOS;
 	}
-	else if (StringHelper::CompareCaseInsensitive(line, "MENU", 4) == 0)
+	else if (StringHelper::CompareCaseInsensitive(line, "MENU", 4) == 0 ||
+	         StringHelper::CompareCaseInsensitive(line, "BASIC128", 8) == 0 ||
+	         StringHelper::CompareCaseInsensitive(line, "128", 3) == 0)
 	{
 		config.reset_rom = RM_128;
 	}
@@ -226,6 +228,7 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	{
 		config.reset_rom = RM_SYS;
 	}
+	// Note: "BASIC" (or any other value) defaults to RM_SOS (48K ROM)
 
 	// MISC::CMOS sub-section
 
@@ -286,7 +289,9 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	config.even_M1 = (unsigned)inimanager.GetLongValue(ula, "EvenM1", 0);
 	config.floatbus = (unsigned)inimanager.GetLongValue(ula, "FloatBus", 0);
 	config.floatdos = (unsigned)inimanager.GetLongValue(ula, "FloatDOS", 0);
-	config.portff = (unsigned)inimanager.GetLongValue(ula, "PortFF", 0) != 0;	// Enable port FF (reflects current screen color attributes when ULA renders the frame, 0xFF otherwise)
+	// Note: the original UnrealSpeccy "PortFF" option (simplified always-attribute
+	// floating bus model) is intentionally not ported - UlaContention implements the
+	// full architecture-aware floating bus (pixel/attr per fetch phase) instead.
 
 	// Beta128 section
 	config.trdos_present = inimanager.GetLongValue(beta128, "beta128", 1) ? true : false;
@@ -413,7 +418,7 @@ bool Config::DetermineModel(const char* model, uint32_t ramsize)
 	return result;
 }
 
-std::vector<TMemModel> Config::GetAvailableModels() const
+std::vector<TMemModel> Config::GetAvailableModels()
 {
 	std::vector<TMemModel> models;
 	for (uint8_t i = 0; i < N_MM_MODELS; i++)
@@ -423,7 +428,7 @@ std::vector<TMemModel> Config::GetAvailableModels() const
 	return models;
 }
 
-const TMemModel* Config::FindModelByShortName(const std::string& shortName) const
+const TMemModel* Config::FindModelByShortName(const std::string& shortName)
 {
 	// Handle empty or invalid input
 	if (shortName.empty())

@@ -2,12 +2,44 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "3rdparty/message-center/eventqueue.h"
 #include "common/uuid.h"
-using unreal::UUID;  // Explicitly bring into scope to avoid Windows GUID typedef collision
 
 class EmulatorContext;
+
+/// region <Generic payload types>
+
+/// Allows to pass 32 bit numbers in MessageCenter message
+/// Example: messageCenter.Post(topic, new SimpleNumberPayload(0x12345678));
+class SimpleNumberPayload : public MessagePayload
+{
+public:
+    uint32_t _payloadNumber;
+
+public:
+    SimpleNumberPayload(uint32_t value) : MessagePayload(), _payloadNumber(value) {}
+    virtual ~SimpleNumberPayload() = default;
+};
+
+/// Allows to transfer uint8_t data blocks (as std::vector<uint8_t>) in MessageCenter message
+/// std::move for parameter is mandatory since we don't want double copy for all content
+/// Warning: payloads longer than 10k are not recommended.
+/// Example:
+///   std::vector<uint8_t> payload = { 0x00, 0x01, 0x02, 0x03 };
+///   messageCenter.Post(topic, new SimpleByteDataPayload(std::move(payload)));
+class SimpleByteDataPayload : public MessagePayload
+{
+public:
+    std::vector<uint8_t> _payloadByteVector;
+
+public:
+    SimpleByteDataPayload(std::vector<uint8_t>&& payload) : MessagePayload(), _payloadByteVector(std::move(payload)) {}
+    virtual ~SimpleByteDataPayload() = default;
+};
+
+/// endregion </Generic payload types>
 
 /// Payload allowing MessageCenter notifications to be targeted to a specific emulator UUID.
 class TargetContextPayload : public MessagePayload

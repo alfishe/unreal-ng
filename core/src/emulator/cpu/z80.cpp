@@ -11,7 +11,6 @@
 #include "emulator/cpu/op_noprefix.h"
 #include "emulator/cpu/opcode_profiler.h"
 #include "emulator/emulator.h"
-#include "emulator/notifications.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/ulacontention.h"
@@ -176,27 +175,47 @@ void Z80::Z80Step(bool skipBreakpoints)
     // (e.g., TR-DOS ROM at $1EDD) can match the correct memory page.
     // Previously this was after breakpoint dispatch, causing page-specific breakpoints to fail.
 
-    // Execution address is within range [0x3D00 .. 0x3DFF] => Beta Disk Interface (TR-DOS) ROM must be activated
-    //
-    // Gated on the model actually having a TR-DOS ROM. A 48K machine has none
-    // (rom.cpp leaves base_dos_rom null), and paging it in would install a null
-    // read pointer for bank 0 — the next opcode fetch then dereferences null and
-    // takes the whole emulator down. Guest code is free to jump into 0x3D00 on a
-    // 48K; there it is ordinary ROM, not a paging trigger.
-    if (!(state.flags & CF_TRDOS) && (cpu.pch == 0x3D) && memory.HasDosRom())
+    // TR-DOS ROM session tracking (port of the original UnrealSpeccy step() logic).
+    // Session flags are (re)armed by Memory::UpdateZ80Banks() on every paging change:
+    // - CF_SETDOSROM: armed while the 48K ROM slot is selected (p7FFD bit 4) with
+    //   Beta128 present. First opcode fetch in $3Dxx activates the TR-DOS session:
+    //   bank0 switches to the DOS ROM (bit 4 set) or service ROM (bit 4 clear).
+    // - CF_LEAVEDOSADR (Pentagon/Profi): active while in a TR-DOS session; closes it
+    //   once PC leaves the ROM area (pc >= $4000), restoring the regular
+    //   128K/48K ROM selected by p7FFD bit 4.
+    // - CF_LEAVEDOSRAM (other models): closes the session once code executes from a
+    //   RAM-mapped bank instead.
+    if (state.flags & CF_SETDOSROM)
     {
-        state.flags |= CF_TRDOS;
+        if (cpu.pch == 0x3D)  // Execution enters $3D00-$3DFF => activate TR-DOS ROM
+        {
+            state.flags |= CF_TRDOS;
 
-        // Apply ROM page changes
-        memory.UpdateZ80Banks();
+            // Apply ROM page changes
+            memory.UpdateZ80Banks();
+        }
     }
-    else if ((state.flags & CF_TRDOS) &&
-             (cpu.pch >= 0x40))  // When execution leaves ROM area (>= 0x4000) - DOS must be disabled
+    else if (state.flags & CF_LEAVEDOSADR)
     {
-        state.flags &= ~CF_TRDOS;
+        if (cpu.pch & 0xC0)  // PC > $3FFF closes TR-DOS
+        {
+            state.flags &= ~CF_TRDOS;
 
-        // Apply ROM page changes
-        memory.UpdateZ80Banks();
+            // Apply ROM page changes
+            memory.UpdateZ80Banks();
+        }
+    }
+    else if (state.flags & CF_LEAVEDOSRAM)
+    {
+        // Execution code from RAM address - disables TR-DOS ROM
+        uint8_t bank = (cpu.pc >> 14) & 3;
+        if (memory.GetMemoryBankMode(bank) == MemoryBankModeEnum::BANK_RAM)
+        {
+            state.flags &= ~CF_TRDOS;
+
+            // Apply ROM page changes
+            memory.UpdateZ80Banks();
+        }
     }
 
     /// endregion  </Ports logic>
@@ -242,10 +261,9 @@ void Z80::Z80Step(bool skipBreakpoints)
                 // Pause emulator (single source of truth)
                 emulator.Pause();
 
-                // Broadcast notification - breakpoint triggered (instance-tagged per GDB TDD §6.3)
+                // Broadcast notification - breakpoint triggered
                 MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-                BreakpointTriggeredPayload* payload =
-                    new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, pc);
+                SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
                 messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
                 // Wait until emulator resumed externally (by debugger or scripting engine)
@@ -253,43 +271,6 @@ void Z80::Z80Step(bool skipBreakpoints)
             }
         }
     }
-
-    /* TODO: move to Ports class
-    if (state.flags & CF_SETDOSROM)
-    {
-        if (cpu.pch == 0x3D)
-        {
-            state.flags |= CF_TRDOS;  // !!! add here TS memconf behaviour !!!
-            SetBanks();
-        }
-    }
-    else if (state.flags & CF_LEAVEDOSADR)
-    {
-        if (cpu.pch & 0xC0) // PC > 3FFF closes TR-DOS
-        {
-            state.flags &= ~CF_TRDOS;
-            SetBanks();
-        }
-
-        //if (config.trdos_traps)
-        //	state.wd.trdos_traps();
-    }
-    else if (state.flags & CF_LEAVEDOSRAM)
-    {
-        // Execution code from RAM address - disables TR-DOS ROM
-        uint8_t bank = (cpu.pc >> 14) & 3;
-        if (memory.GetMemoryBankMode(bank) == MemoryBankModeEnum::BANK_RAM)
-        {
-            state.flags &= ~CF_TRDOS;
-            SetBanks();
-        }
-
-        // WD93 logic
-        //if (config.trdos_traps)
-        //	state.wd.trdos_traps();
-    }
-     */
-    /// endregion  </Ports logic>
 
     if (cpu.vm1 && cpu.halted)
     {
@@ -447,7 +428,7 @@ uint8_t Z80::m1_cycle()
         // branch on a plain bool when recording is off, which is the common
         // case; the page lookup and the append only happen while a session is
         // actually capturing. This is the only record that a frame executed a
-        // given address — instruction fetches are not journalled — so without
+        // given address - instruction fetches are not journalled - so without
         // it a reverse breakpoint has no choice but to replay every frame.
         if (_context->ttdCoverageActive && _context->pTimeTravelManager != nullptr)
         {
@@ -455,7 +436,7 @@ uint8_t Z80::m1_cycle()
                 _memory->GetPhysPageForZ80Address(m1_pc), m1_pc);
         }
 
-        // Phase 4 — access probe for Execute access type (TDD §9.2).
+        // Phase 4 - access probe for Execute access type (TDD 9.2).
         // Fires once per instruction at the M1 (instruction fetch) cycle.
         if (_context->ttdProbe.IsArmed())
         {
@@ -835,7 +816,15 @@ void Z80::OnCPUStep()
     _context->pMainLoop->OnCPUStep();
 }
 
-// IncrementCPUCyclesCounter is now inline in z80.h for hot-path performance
+//
+// Increment CPU cycles counter by specified number of cycles.
+// Required to keep exact timings for Z80 commands
+// Note: same as '#define cputact(a) cpu->tt += ((a) * cpu->rate)' macro defined in cpulogic.h
+//
+void Z80::IncrementCPUCyclesCounter(uint8_t cycles)
+{
+    tt += cycles * rate;
+}
 
 /// region <Debug methods>
 #include <cstdio>

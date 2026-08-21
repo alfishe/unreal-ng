@@ -1,5 +1,6 @@
 #include "eventqueue.h"
 
+
 EventQueue::EventQueue()
 {
     init();
@@ -84,8 +85,7 @@ int EventQueue::AddObserver(const std::string& topic, ObserverCallback callback)
 //
 // TestObservers_ClassMethod_class observerDerivedInstance;
 // Observer* observerInstance = static_cast<Observer*>(&observerDerivedInstance);
-// ObserverCallbackMethod callback =
-// static_cast<ObserverCallbackMethod>(&TestObservers_ClassMethod_class::ObserverTestMethod);
+// ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&TestObservers_ClassMethod_class::ObserverTestMethod);
 //
 // queue.AddObserver(topic, observerInstance, callback);
 int EventQueue::AddObserver(const std::string& topic, Observer* instance, ObserverCallbackMethod callback)
@@ -119,7 +119,7 @@ int EventQueue::AddObserver(const std::string& topic, ObserverDescriptor* observ
         {
             // Observers list not created yet - create vector and register it in topic-observers map collection
             observers = new ObserversVector();
-            m_topicObservers.insert({result, observers});
+            m_topicObservers.insert( {result, observers });
         }
 
         if (observers != nullptr)
@@ -142,7 +142,7 @@ void EventQueue::RemoveObserver(const std::string& topic, ObserverCallback callb
     if (observers != nullptr)
     {
         ObserversVector::const_iterator it;
-        for (it = observers->begin(); it != observers->end();)
+        for (it = observers->begin(); it != observers->end(); )
         {
             ObserverDescriptor* observer = *it;
 
@@ -173,7 +173,7 @@ void EventQueue::RemoveObserver(const std::string& topic, Observer* instance, Ob
     if (observers != nullptr)
     {
         ObserversVector::const_iterator it;
-        for (it = observers->begin(); it != observers->end();)
+        for (it = observers->begin(); it != observers->end(); )
         {
             ObserverDescriptor* observer = *it;
 
@@ -206,7 +206,7 @@ void EventQueue::RemoveObserver(const std::string& topic, ObserverCallbackFunc c
         auto callbackTargetAddr = mc_lambda_display::getTargetAddress(callback);
 
         ObserversVector::const_iterator it;
-        for (it = observers->begin(); it != observers->end();)
+        for (it = observers->begin(); it != observers->end(); )
         {
             ObserverDescriptor* observer = *it;
             auto curTargetAddr = mc_lambda_display::getTargetAddress(observer->callbackFunc);
@@ -234,6 +234,7 @@ int EventQueue::ResolveTopic(const char* topic)
 
     return result;
 }
+
 
 int EventQueue::ResolveTopic(const std::string& topic)
 {
@@ -271,10 +272,10 @@ int EventQueue::RegisterTopic(const std::string& topic)
         }
         else
         {
-            if (m_topicMax < MAX_TOPICS)
+            if (static_cast<unsigned>(m_topicMax) < MAX_TOPICS)
             {
                 // Registering new ID
-                m_topicsResolveMap.insert({topic, m_topicMax});
+                m_topicsResolveMap.insert({ topic, m_topicMax });
                 m_topics[m_topicMax] = topic;
 
                 result = m_topicMax;
@@ -295,7 +296,7 @@ std::string EventQueue::GetTopicByID(int id)
 {
     std::string result;
 
-    if (id > 0 && (unsigned)id < MAX_TOPICS)
+    if (id > 0 && static_cast<unsigned>(id) < MAX_TOPICS)
     {
         result = m_topics[id];
     }
@@ -306,9 +307,9 @@ std::string EventQueue::GetTopicByID(int id)
 void EventQueue::ClearTopics()
 {
     m_topicsResolveMap.clear();
-    for (unsigned i = 0; i < MAX_TOPICS; ++i)
+    for (auto& topic : m_topics)
     {
-        m_topics[i] = "";
+        topic.clear();
     }
     m_topicMax = 0;
 }
@@ -325,14 +326,6 @@ void EventQueue::Post(int id, MessagePayload* obj, bool autoCleanupPayload)
         lock.unlock();
 
         m_cvEvents.notify_one();
-    }
-    else
-    {
-        // Topic not registered - cleanup payload to prevent memory leak
-        if (autoCleanupPayload && obj != nullptr)
-        {
-            delete obj;
-        }
     }
 }
 
@@ -376,11 +369,6 @@ void EventQueue::Dispatch(int id, Message* message)
 {
     if (message == nullptr)
         return;
-
-    // Lock observers to prevent concurrent modification during iteration
-    // This is critical: RemoveObserver() can be called from another thread
-    // while we're iterating, causing use-after-free crashes.
-    std::lock_guard<std::mutex> lock(m_mutexObservers);
 
     ObserverVectorPtr observers = GetObservers(id);
 
@@ -465,7 +453,7 @@ std::string EventQueue::DumpObservers()
                 if (observer->callback != nullptr)
                 {
                     using namespace mc_function_display;
-                    ss << "callback: " << observer->callback << std::endl;
+                    ss << "callback: " <<  observer->callback << std::endl;
                 }
                 else if (observer->callbackFunc != nullptr)
                 {
@@ -529,4 +517,4 @@ std::string EventQueue::DumpMessageQueueNoLock()
     return result;
 }
 
-#endif  // _DEBUG
+#endif // _DEBUG

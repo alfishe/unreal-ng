@@ -7,6 +7,8 @@
 #include "emulator/video/screen.h"
 #include "emulator/video/ulacontention.h"
 #include "emulator/video/zx/screenzx.h"
+#include "emulator/ports/portdecoder.h"
+#include "emulator/ports/models/portdecoder_pentagon128.h"
 
 /// Test fixture for ULA IO contention and floating bus tests
 class IOContention_Test : public ::testing::Test
@@ -337,6 +339,59 @@ TEST_F(IOContention_Test, Pentagon_FloatingBusWorksDespiteNoContention)
 
     EXPECT_EQ(_ula->GetFloatingBus(), 0x42)
         << "Pentagon floating bus should return video byte even without contention";
+}
+
+TEST_F(IOContention_Test, Pentagon_InFF_ServesFloatingBusWhenTrdosOff)
+{
+    // End-to-end pin of the Beta128 TR-DOS port gate at the Z80::in() level:
+    // with the TR-DOS ROM paged out the FDC does not decode $FF (and its
+    // register aliases), so IN A,($FF) must return the floating bus byte -
+    // the beam-synchronous read beam-locked effects sync on. Outside paper
+    // the floating bus is 0xFF, so the read must return 0xFF (not FDC status).
+    //
+    // The TR-DOS-active counterpart (FDC owns $FF, no floating bus leak)
+    // is covered by PortDecoder_Pentagon128_Test::DecodePortIn_Beta128Ports_TRDosOn_
+    // at decoder level: executing the IN from >= $4000 in this test would clear
+    // CF_TRDOS via the M1 paging hook before the port access.
+    SetupPentagon();
+
+    Memory& memory = *_context->pMemory;
+    memory.DefaultBanksFor48k();
+
+    // Route Z80::in() through a real Pentagon decoder
+    PortDecoder_Pentagon128 decoder(_context);
+    PortDecoder* savedDecoder = _context->pPortDecoder;
+    _context->pPortDecoder = &decoder;
+
+    // Pixel byte under the beam at paper start of line 64 (same geometry as
+    // Pentagon_FloatingBusWorksDespiteNoContention): cell 1 -> 0x4801
+    memory.DirectWriteToZ80Memory(0x4801, 0x42);
+
+    // IN A,($FF) at $8000: port access lands at +8T (IORQ at T2 of the IO cycle)
+    memory.DirectWriteToZ80Memory(0x8000, 0xDB);
+    memory.DirectWriteToZ80Memory(0x8001, 0xFF);
+    _z80->iff1 = 0;
+    _z80->a = 0x00;
+
+    uint32_t paperStart = PaperStartOnLine(64);
+
+    // Beam over paper: the pixel byte must come through port $FF
+    _context->emulatorState.flags &= ~CF_TRDOS;
+    _z80->pc = 0x8000;
+    _z80->t = paperStart - 8;
+    _z80->Z80Step();
+    EXPECT_EQ(_z80->a, 0x42)
+        << "TR-DOS off: IN A,($FF) must serve the floating bus during paper";
+
+    // Beam in vertical blank: floating bus reads 0xFF -> port reads 0xFF
+    _z80->pc = 0x8000;
+    _z80->a = 0x00;
+    _z80->t = 100;
+    _z80->Z80Step();
+    EXPECT_EQ(_z80->a, 0xFF)
+        << "TR-DOS off: IN A,($FF) must read 0xFF outside paper (no FDC attached to the bus)";
+
+    _context->pPortDecoder = savedDecoder;
 }
 
 TEST_F(IOContention_Test, ZX48k_FloatingBusReturnsFFInBlank)
