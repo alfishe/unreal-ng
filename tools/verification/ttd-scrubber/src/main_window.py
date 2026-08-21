@@ -290,6 +290,24 @@ class MainWindow(QMainWindow):
         self._frame_label = QLabel("Frame: 0 / 0")
         outer.addWidget(self._frame_label)
 
+        # Direct frame entry. The slider is fine for browsing but hopeless for
+        # returning to a specific frame — a bug report says "frame 41207", not
+        # "about two thirds along". Enter or the button jumps there.
+        goto_row = QHBoxLayout()
+        goto_row.addWidget(QLabel("Go to frame:"))
+        self._goto_field = QLineEdit()
+        self._goto_field.setPlaceholderText("frame number")
+        self._goto_field.setMaximumWidth(140)
+        self._goto_field.returnPressed.connect(self._on_goto_clicked)
+        goto_row.addWidget(self._goto_field)
+        self._btn_goto = QPushButton("Go")
+        self._btn_goto.clicked.connect(self._on_goto_clicked)
+        goto_row.addWidget(self._btn_goto)
+        self._goto_hint = QLabel("")
+        self._goto_hint.setStyleSheet("color:#888;")
+        goto_row.addWidget(self._goto_hint, stretch=1)
+        outer.addLayout(goto_row)
+
         # Scrub controls — restore historical state, never record.
         scrub_row = QHBoxLayout()
         self._btn_step_back = QPushButton("◂ Frame")
@@ -470,6 +488,54 @@ class MainWindow(QMainWindow):
     def _on_seek_clicked(self):
         frame = self._slider.value()
         self._worker.request_seek(frame, 0)
+
+    def _on_goto_clicked(self):
+        """Jump to the frame typed into the Go-to field.
+
+        Validates against the recorded range here rather than letting the
+        engine answer OutOfRange: the user gets told what the range actually is,
+        instead of a silent no-op that looks like the scrubber ignored them.
+        """
+        text = self._goto_field.text().strip()
+        if not text:
+            # Clearing the field clears the complaint with it; leaving a stale
+            # error under an empty box reads as if the box were still wrong.
+            self._set_goto_hint("")
+            return
+
+        # Accept 0x-prefixed values too - frame numbers show up in hex in some
+        # logs, and rejecting them would be gratuitous.
+        try:
+            frame = int(text, 0)
+        except ValueError:
+            self._set_goto_hint(f"not a number: {text!r}", error=True)
+            return
+
+        status = self._last_status or {}
+        start_frame = int(status.get("session_start_frame", 0) or 0)
+        end_frame = int(status.get("current_end_frame", 0) or 0)
+
+        if end_frame <= 0:
+            self._set_goto_hint("no recorded session to seek in", error=True)
+            return
+
+        if frame < start_frame or frame > end_frame:
+            self._set_goto_hint(
+                f"out of range — session holds {start_frame}..{end_frame}", error=True)
+            return
+
+        self._set_goto_hint(f"seeking to {frame}…")
+        self._worker.request_seek(frame, 0)
+
+        # Keep the slider in step so the two controls never disagree about
+        # where we are.
+        self._suppress_slider_emit = True
+        self._slider.setValue(frame)
+        self._suppress_slider_emit = False
+
+    def _set_goto_hint(self, text: str, error: bool = False):
+        self._goto_hint.setText(text)
+        self._goto_hint.setStyleSheet("color:#c33;" if error else "color:#888;")
 
     @Slot()
     def _on_pause_clicked(self):
@@ -803,6 +869,18 @@ class MainWindow(QMainWindow):
         self._btn_step_back.setEnabled(scrub_enabled)
         self._btn_step_fwd.setEnabled(scrub_enabled)
         self._btn_seek.setEnabled(scrub_enabled)
+        self._btn_goto.setEnabled(scrub_enabled)
+        self._goto_field.setEnabled(scrub_enabled)
+
+        # Show the range the field will accept, so the user does not have to
+        # read it off the session panel or discover it by being rejected.
+        if scrub_enabled:
+            start_frame = int((self._last_status or {}).get("session_start_frame", 0) or 0)
+            end_frame = int((self._last_status or {}).get("current_end_frame", 0) or 0)
+            if not self._goto_hint.text().startswith("seeking"):
+                self._set_goto_hint(f"range {start_frame}..{end_frame}")
+        else:
+            self._set_goto_hint("")
 
         # Transport controls (Pause / Play): emulator-level, only
         # meaningful when browsing history (Detached). In Idle/Recording
