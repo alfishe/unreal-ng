@@ -1297,10 +1297,11 @@ void Memory::SetROM128k(bool updatePorts)
 
 void Memory::SetROMDOS(bool updatePorts)
 {
-    // A model without a TR-DOS ROM (48K, plain 128K) leaves base_dos_rom null.
-    // Installing it would fault on the next instruction fetch, so refuse and
-    // leave bank 0 as it is. Callers are expected to gate on HasDosRom(); this
-    // is the backstop for any path that does not.
+    // A model without a TR-DOS ROM (48K, plain 128K) leaves base_dos_rom null,
+    // and installing it would fault on the next instruction fetch. The TR-DOS
+    // session flags (CF_SETDOSROM et al.) already prevent this structurally by
+    // only arming when a Beta128 is present; this is a backstop for any future
+    // path that reaches here without that guarantee.
     if (base_dos_rom == nullptr)
     {
         MLOGWARNING("Memory::SetROMDOS — model has no TR-DOS ROM; keeping the current ROM bank");

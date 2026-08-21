@@ -186,9 +186,11 @@ public:
     }
 
     /// @brief Does the active model have a TR-DOS (Beta Disk) ROM?
-    /// Callers must consult this before triggering TR-DOS paging: entering it
-    /// on a machine without the ROM would map a null bank and fault on the
-    /// next instruction fetch.
+    ///
+    /// TR-DOS paging is gated structurally by the CF_SETDOSROM session flags
+    /// (Z80::Z80Step), which are only armed when a Beta128 is present, so this
+    /// is not on that path. It remains as a cheap query for code that needs to
+    /// know whether the model has the ROM at all.
     inline bool HasDosRom() const { return base_dos_rom != nullptr; }
 
     /// endregion </Fields>

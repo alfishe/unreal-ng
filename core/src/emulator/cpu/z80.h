@@ -420,10 +420,7 @@ public:
     void (*callbackCPUCycleFinished)();  // Corrected function pointer declaration
 
 protected:
-    inline void IncrementCPUCyclesCounter(uint8_t cycles)
-    {
-        tt += cycles * rate;
-    }
+    __forceinline void IncrementCPUCyclesCounter(uint8_t cycles);  // Increment cycle counters
 
     // TSConf specific
     // TODO: Move to plugin
