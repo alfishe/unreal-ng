@@ -218,7 +218,9 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	{
 		config.reset_rom = RM_DOS;
 	}
-	else if (StringHelper::CompareCaseInsensitive(line, "MENU", 4) == 0)
+	else if (StringHelper::CompareCaseInsensitive(line, "MENU", 4) == 0 ||
+	         StringHelper::CompareCaseInsensitive(line, "BASIC128", 8) == 0 ||
+	         StringHelper::CompareCaseInsensitive(line, "128", 3) == 0)
 	{
 		config.reset_rom = RM_128;
 	}
@@ -226,6 +228,7 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	{
 		config.reset_rom = RM_SYS;
 	}
+	// Note: "BASIC" (or any other value) defaults to RM_SOS (48K ROM)
 
 	// MISC::CMOS sub-section
 
@@ -415,7 +418,7 @@ bool Config::DetermineModel(const char* model, uint32_t ramsize)
 	return result;
 }
 
-std::vector<TMemModel> Config::GetAvailableModels() const
+std::vector<TMemModel> Config::GetAvailableModels()
 {
 	std::vector<TMemModel> models;
 	for (uint8_t i = 0; i < N_MM_MODELS; i++)
@@ -425,7 +428,7 @@ std::vector<TMemModel> Config::GetAvailableModels() const
 	return models;
 }
 
-const TMemModel* Config::FindModelByShortName(const std::string& shortName) const
+const TMemModel* Config::FindModelByShortName(const std::string& shortName)
 {
 	// Handle empty or invalid input
 	if (shortName.empty())

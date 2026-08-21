@@ -42,7 +42,7 @@ private:
     static constexpr const char* romset_sys = "sys";
 
 
-	const struct TMemModel mem_model[N_MM_MODELS] =
+	static constexpr TMemModel mem_model[N_MM_MODELS] =
 	{
 		{ "Pentagon", "PENTAGON",                MM_PENTAGON, 128,  RAM_128 | RAM_512 | RAM_1024 },
         { "ZX-Spectrum 48k", "48K",              MM_SPECTRUM48, 48, RAM_48 },
@@ -84,20 +84,20 @@ public:
 
 	[[nodiscard]] bool DetermineModel(const char* model, uint32_t ramsize);
 
-	// Model enumeration methods
+	// Model enumeration methods (static - no Config instance required)
 public:
 	/**
 	 * @brief Get a list of all available emulator models
 	 * @return Vector of model information structures
 	 */
-	std::vector<TMemModel> GetAvailableModels() const;
+	static std::vector<TMemModel> GetAvailableModels();
 
 	/**
 	 * @brief Find a model by its short name (case-insensitive)
 	 * @param shortName The short name to search for (e.g., "PENTAGON", "48K")
 	 * @return Pointer to the model info, or nullptr if not found
 	 */
-	const TMemModel* FindModelByShortName(const std::string& shortName) const;
+	static const TMemModel* FindModelByShortName(const std::string& shortName);
 
 	// Helper methods
 protected:
