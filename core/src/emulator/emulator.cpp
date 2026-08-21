@@ -114,7 +114,15 @@ bool Emulator::Init()
     _config = new Config(_context);
     if (_config != nullptr)
     {
-        result = _config->LoadConfig();
+        // Use custom config path if set, otherwise use default search
+        if (!_customConfigPath.empty())
+        {
+            result = _config->LoadConfig(_customConfigPath);
+        }
+        else
+        {
+            result = _config->LoadConfig();
+        }
 
         if (result)
         {

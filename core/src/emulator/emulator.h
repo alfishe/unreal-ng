@@ -85,6 +85,7 @@ protected:
     bool _hasPreferredModel = false;
     MEM_MODEL _preferredModel = MM_PENTAGON;
     uint32_t _preferredRamSize = 0;
+    std::string _customConfigPath;  // Optional custom config file path
 
     Config* _config = nullptr;
     Core* _core = nullptr;
@@ -138,6 +139,13 @@ public:
         _preferredModel = model;
         _preferredRamSize = ramSize;
         _hasPreferredModel = true;
+    }
+
+    /// Set a custom config file path. Must be called before Init().
+    /// If set, this path is used instead of the default config search.
+    void SetCustomConfigPath(const std::string& path)
+    {
+        _customConfigPath = path;
     }
 
     [[nodiscard]] bool Init();
