@@ -241,7 +241,21 @@ TEST_F(FileHelper_Test, AbsolutePath_ExistingPath)
     std::string normalizedResult = PlatformPath(result);
     ASSERT_EQ(normalizedResult, expected);
 
-    // Test with relative path
+    // Test with relative path.
+    //
+    // The chdir below used to leak: every later test in the binary inherited
+    // /tmp as its working directory, so anything resolving a fixture by
+    // relative path silently failed. Two TTD subsystem tests skipped for months
+    // because of it, reporting "fixture not found" while the fixture was right
+    // there in the repository. Restore on the way out - including the early
+    // return an ASSERT_ macro performs.
+    struct CwdRestorer
+    {
+        std::string saved;
+        CwdRestorer() { char buf[PATH_MAX]; saved = getcwd(buf, sizeof(buf)) ? buf : ""; }
+        ~CwdRestorer() { if (!saved.empty()) { int r = chdir(saved.c_str()); (void)r; } }
+    } cwdRestorer;
+
     std::string relPath = "./filehelper_test/test.txt";
     ret = chdir("/tmp");
     ASSERT_EQ(ret, 0);

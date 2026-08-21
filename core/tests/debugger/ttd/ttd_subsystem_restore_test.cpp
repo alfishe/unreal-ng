@@ -25,6 +25,8 @@
 
 #include <gtest/gtest.h>
 
+#include "_helpers/test_path_helper.h"
+
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -428,7 +430,12 @@ TEST_F(TTD_Subsystem_Restore_Test, TapePosition_SeekRestoresPlaybackCursor)
 
     // Load a tape file before recording. Use a small tap so we have at least
     // one block in _tapeBlocks for the cursor to point into.
-    const std::string tapePath = "data/testtapes/hardware test 2005-01-16.tap";
+    // Resolved from the executable, not the working directory. A relative path
+    // here made the test hostage to whatever CWD an earlier test left behind,
+    // and it skipped itself with "fixture not found" while the fixture was
+    // present in the repository - a silent loss of coverage that reads as green.
+    const std::string tapePath =
+        (TestPathHelper::findProjectRoot() / "data/testtapes/hardware test 2005-01-16.tap").string();
     if (!_emulator->LoadTape(tapePath))
     {
         GTEST_SKIP() << "Tape fixture not found at " << tapePath
@@ -540,7 +547,7 @@ TEST_F(TTD_Subsystem_Restore_Test, FDCRegisters_SeekRestoresAllRegisters)
 
     // Load a disk image before recording so the FDDs have media and the
     // FDC's _selectedDrive pointer has something valid to point at.
-    const std::string diskPath = "testdata/loaders/trd/zx-format8.trd";
+    const std::string diskPath = TestPathHelper::GetTestDataPath("loaders/trd/zx-format8.trd");
     if (!_emulator->LoadDisk(diskPath))
     {
         GTEST_SKIP() << "Disk fixture not found at " << diskPath
