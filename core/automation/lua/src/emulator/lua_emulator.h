@@ -956,6 +956,15 @@ public:
             info["page_store_used_bytes"]    = static_cast<uint64_t>(si.pageStoreUsedBytes);
             info["baseline_frames_captured"] = si.baselineFramesCaptured;
             info["session_heap_bytes"]       = static_cast<uint64_t>(si.sessionHeapBytes);
+            info["loaded_from_file"]      = si.loadedFromFile;
+            info["source_path"]           = si.sourcePath;
+            info["captured_at_unix_ms"]   = si.capturedAtUnixMs;
+            info["model_id"]              = si.modelId;
+            info["model_ram_pages"]       = si.modelRamPages;
+            info["write_journal_records"] = si.writeJournalRecords;
+            info["write_journal_bytes"]   = si.writeJournalBytes;
+            info["coverage_index_frames"] = si.coverageIndexFrames;
+            info["coverage_index_bytes"]  = si.coverageIndexBytes;
             info["write_journal_enabled"]    = si.writeJournalEnabled;
             info["ttd_available"]            = true;
             return info;
@@ -1167,7 +1176,8 @@ public:
                                                    sol::optional<uint16_t> pcFromOpt,
                                                    sol::optional<uint16_t> pcToOpt,
                                                    sol::optional<uint64_t> beforeFrameOpt,
-                                                   sol::optional<uint32_t> beforeTinOpt) -> sol::table {
+                                                   sol::optional<uint32_t> beforeTinOpt,
+                                                   sol::optional<uint8_t> physPageOpt) -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
             if (!_emulator) { result["found"] = false; return result; }
@@ -1180,6 +1190,8 @@ public:
                 accessOpt.value_or("write").c_str());
             if (valueOpt) { q.hasValueFilter = true; q.value = *valueOpt; }
             if (pcFromOpt) { q.hasPcFilter = true; q.pcFrom = *pcFromOpt; q.pcTo = pcToOpt.value_or(0xFFFF); }
+            // Bank-aware search: pins the query to one physical RAM page.
+            if (physPageOpt) { q.hasPhysPageFilter = true; q.physPage = *physPageOpt; }
             const uint32_t frameT = ctx->config.frame;
             if (beforeFrameOpt)
                 q.beforeGlobalT = static_cast<uint64_t>(*beforeFrameOpt) * frameT

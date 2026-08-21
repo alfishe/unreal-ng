@@ -100,4 +100,9 @@ htmlcov/
 
 .specstory/
 **/.claude
+# Ad-hoc TTD recordings are scratch data and stay out of the repository.
 *.ttd
+# ...except the shared fixture corpus, which the analyzer, the compression PoC
+# and the loaded-session benchmarks all read. Regenerate with
+# tools/verification/ttd-analyzer/scripts/record_fixtures.py.
+!testdata/ttd/*.ttd

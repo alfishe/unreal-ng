@@ -341,9 +341,15 @@ test suites unchanged — no behavior change for non-Phase-4 paths.
 
 - **TDD §16 row 6:** Timeline UI (Qt — explicitly excluded, Phase 3).
 - **TDD §16 row 7:** GDB RSP server (Phase G1–G4 — separate work).
-- **Per-frame Bloom filter / dirty-page summary** for journal scan acceleration
-  (TDD §9.3 future optimization). The linear backward scan over 256 MB is fast
-  enough at current session sizes; optimization deferred until profiling
-  justifies it.
+- **Per-frame coverage index** for reverse-search acceleration (TDD §9.3 future
+  optimization). Still deferred, but the reasoning above has been superseded by
+  measurement — see `docs/inprogress/2026-08-20-ttd-reverse-search-index/`.
+  In short: the linear scan is fine for the journal but reverse search is not
+  bounded by the journal, because Read and Execute fall back to replay. A
+  per-frame sparse coverage set costs ~307 B/frame (54 MB/hour for executed,
+  written and read together) and replaces ~111-215 replayed frames per query
+  with ~12 KB of decompression. A Bloom filter is not needed — an exact sparse
+  set is already that cheap — and it must be keyed by `(physical page, offset)`
+  rather than Z80 address.
 - **`GET /ttd/timeline`** paginated endpoint (lower priority; not blocking
   reverse search).

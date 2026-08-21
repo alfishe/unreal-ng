@@ -313,3 +313,70 @@ TEST_F(TTD_FindLast_Test, FindWrite_ResultShape_HasExpectedFields)
     EXPECT_EQ(result->physPage, 3u);
     EXPECT_GE(result->time.frame, 0u);
 }
+
+// ===========================================================================
+// Bank-aware search (parent TDD §9.4)
+// ===========================================================================
+//
+// On a banked machine one Z80 address names different bytes of RAM depending
+// on which page is mapped into that window. Without a page filter, "who wrote
+// 0xC000?" answers with writes to pages the caller never asked about — the
+// journal has always recorded physPage, but nothing consulted it.
+
+TEST_F(TTD_FindLast_Test, FindWrite_PhysPageFilter_SeparatesBankedAddresses)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+
+    // Same Z80 address, three different pages banked in at the time.
+    _ttd->RecordMemoryWrite(0xC000, 0, 0xAA, 0x8000, 0);
+    _ttd->RecordMemoryWrite(0xC000, 0, 0xBB, 0x8100, 3);
+    _ttd->RecordMemoryWrite(0xC000, 0, 0xCC, 0x8200, 7);  // newest overall
+
+    _ttd->StopRecording();
+
+    ttd::TTDSearchQuery q;
+    q.addrFrom = 0xC000;
+    q.addrTo   = 0xC000;
+    q.access   = ttd::TTDAccessType::Write;
+
+    // Unfiltered: the newest write wins regardless of page.
+    auto newest = _ttd->FindLastAccess(q);
+    ASSERT_TRUE(newest.has_value());
+    EXPECT_EQ(newest->value, 0xCCu);
+
+    // Filtered to page 3: must skip the newer page-7 write.
+    q.hasPhysPageFilter = true;
+    q.physPage = 3;
+    auto page3 = _ttd->FindLastAccess(q);
+    ASSERT_TRUE(page3.has_value());
+    EXPECT_EQ(page3->value, 0xBBu) << "page filter did not exclude writes from other banks";
+    EXPECT_EQ(page3->physPage, 3u);
+
+    // Filtered to page 0: the oldest of the three.
+    q.physPage = 0;
+    auto page0 = _ttd->FindLastAccess(q);
+    ASSERT_TRUE(page0.has_value());
+    EXPECT_EQ(page0->value, 0xAAu);
+}
+
+/// A page that was never written must report no hit, not fall back to another
+/// bank's write at the same address.
+TEST_F(TTD_FindLast_Test, FindWrite_PhysPageFilter_UnwrittenPageReturnsNullopt)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+
+    _ttd->RecordMemoryWrite(0xC000, 0, 0xAA, 0x8000, 1);
+    _ttd->RecordMemoryWrite(0xC000, 0, 0xBB, 0x8100, 2);
+
+    _ttd->StopRecording();
+
+    ttd::TTDSearchQuery q;
+    q.addrFrom = 0xC000;
+    q.addrTo   = 0xC000;
+    q.access   = ttd::TTDAccessType::Write;
+    q.hasPhysPageFilter = true;
+    q.physPage = 5;  // never written
+
+    EXPECT_FALSE(_ttd->FindLastAccess(q).has_value())
+        << "a page filter matched a write that belongs to a different bank";
+}

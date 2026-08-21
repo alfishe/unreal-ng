@@ -4,6 +4,13 @@
 **Methodology**: `tools/poc/`
 **Workloads**: 102 frames idle boot screen + 122 frames Binary Love I demo (sampled every 5th frame over a 10 s recording)
 
+> **Re-measured 2026-08-20.** Everything below is the original analysis and is
+> kept as written. Section 10 at the end of this document repeats the codec
+> comparison on real recordings made through the emulator API, across four
+> workloads instead of one, and records where the original inputs turned out to
+> be synthetic. The headline conclusion — zstd-1 on XOR deltas — survived; the
+> workload assumptions around it did not.
+
 ## Executive summary
 
 The original analysis missed the dominant lever. Three measurements in priority order of impact:
@@ -1316,3 +1323,103 @@ When remaining optimizations are implemented, add:
 2. **Peripheral back-reference tests** — XOR-zero detection, chain resolution
 3. **Model configuration tests** — ZX-48K through ATM feature flags
 4. **AY minimal mode tests** — register-only vs full state
+
+---
+
+# 10. Re-measurement on real recordings (2026-08-20)
+
+**Methodology**: `tools/poc/01-ttd-compression/`
+**Workloads**: four 300-frame sessions recorded through the emulator WebAPI,
+stored in `testdata/ttd/`
+
+The original section 5 above compared codecs on raw pages, and the C++ PoC that
+followed it compared them on buffers extracted from `active_demo.ttd`. That
+fixture was **synthesised**: a Python script wrote the `.ttd` byte by byte and
+filled its pages with random bytes over zeros. The PoC's workloads were
+nonetheless labelled `REAL_full` and `REAL_xor` and described as "real
+XOR-delta buffers", so the distinction was invisible to anyone reading the
+results.
+
+Fixtures are now recorded from a running machine
+(`tools/verification/ttd-analyzer/scripts/record_fixtures.py`), which also means
+they are written by the same C++ writer production uses rather than by a second
+implementation of the format.
+
+Two defects had to be fixed before any of this could be measured, both dating
+from a directory move and both silent:
+
+* `extract_real_buffers.py` resolved the repository root one level too shallow,
+  so importing the analyzer failed outright.
+* `poc_codec_latency.cpp` carried a stale path to `real_buffers.bin`. On a miss
+  it printed one line, **skipped every `REAL_` workload and continued**, so a
+  run that measured only synthetic data still looked like a successful run.
+
+## 10.1 One fixture is not a workload
+
+The first re-measurement used a single game recording and suggested XOR deltas
+were extraordinarily sparse. Widening to four workloads showed that conclusion
+was an artifact of the choice:
+
+| Fixture | Full: entropy / nonzero | XOR: entropy / nonzero (p50) | XOR floor mean / p50 |
+|---|---|---|---|
+| `idle_session` (128 BASIC menu) | 1.09 / 3.9% | 0.048 / 0.049% | 24 B / 3.4 B |
+| `active_demo` (Dizzy Y, a game) | 3.42 / 58.1% | 0.019 / 0.171% | 9.8 B / 10.2 B |
+| `demo_7threality` | 5.69 / **93.1%** | 0.055 / 0.122% | 28 B / 6.9 B |
+| `demo_across-the-edge-second` | 3.72 / 59.9% | 0.144 / 0.073% | **74 B / 5.0 B** |
+
+Where the synthetic model misled:
+
+* **Full pages.** A demo that precalculates fills memory: 93% of bytes nonzero
+  on 7threality against 3.9% on an idle machine. Sizing that assumes
+  lightly-populated pages is calibrated on the idle case only.
+* **XOR deltas.** `SYN_xor_sparse_5pct` models 5% of bytes changing, uniformly.
+  Real deltas are sparser at the median (0.05–0.17%) but **heavy-tailed**:
+  across-the-edge averages a 74-byte entropy floor against a 5-byte median, so
+  the mean is set by a minority of large frames. The synthetic model is wrong in
+  distribution shape, not merely in magnitude — which matters more, because a
+  codec chosen against a uniform profile is tuned for a workload that does not
+  occur.
+
+## 10.2 Codec comparison on the heaviest workload
+
+`demo_across-the-edge-second`, bytes per 4 KB buffer, p50 latencies:
+
+| Codec | XOR bytes | XOR enc | XOR dec | Full bytes | Full enc | Full dec |
+|---|---|---|---|---|---|---|
+| zstd (n1 / 1 / 3) | **63** | 0.96 µs | 1.0 µs | **1343** | 8.6 µs | 2.0 µs |
+| brotli-1 | 72 | 2.9 µs | 6.8 µs | 1389 | 14.9 µs | 9.2 µs |
+| zlib-1 | 86 | 4.7 µs | 3.4 µs | 1355 | 24.3 µs | 6.6 µs |
+| lz4-fast | 99 | 0.54 µs | 0.54 µs | 1546 | 1.25 µs | 0.54 µs |
+| snappy | 250 | 0.42 µs | 0.38 µs | 1588 | 0.92 µs | 0.54 µs |
+
+## 10.3 Verdict
+
+**The original decision holds.** zstd-1 remains Pareto-optimal on real data:
+nothing smaller is close on latency, nothing faster is close on size, and every
+zstd level produces byte-identical output on the XOR workload — so the "level
+tuning is <1%" line in the executive summary is, if anything, understated for
+deltas: it is exactly 0%.
+
+What changed is the confidence around it rather than the choice itself. The
+supporting numbers in sections 1–5 were measured on one workload each, and the
+spread above shows how far apart workloads sit. Anything derived from those
+numbers — memory budgets, per-frame size expectations, the keyframe interval —
+should be re-checked against the range in 10.1 rather than against a single
+figure.
+
+## 10.4 Reproducing
+
+```sh
+# Record fixtures (needs a running emulator with the WebAPI enabled)
+python3 tools/verification/ttd-analyzer/scripts/record_fixtures.py \
+    --out-dir "$(pwd)/testdata/ttd"
+
+# Extract codec input buffers from one fixture
+python3 tools/poc/01-ttd-compression/cpp/extract_real_buffers.py \
+    --ttd testdata/ttd/demo_across-the-edge-second.ttd \
+    --out tools/poc/01-ttd-compression/cpp/real_buffers.bin
+
+# Run from the repository root - the buffer path is relative to it
+./tools/poc/01-ttd-compression/cpp/build/bin/poc_codec_latency \
+    --benchmark_filter='REAL'
+```

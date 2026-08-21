@@ -48,6 +48,13 @@ enum class TTDAccessType : uint8_t
 const char* TTDAccessTypeToString(TTDAccessType k);
 TTDAccessType TTDAccessTypeFromString(const char* s);
 
+/// @brief "This access has no physical RAM page" sentinel.
+///
+/// Matches Memory's convention for _bank_ram_page_cache: 0xFF means the bank
+/// holds ROM or cache rather than RAM. Reused here so an I/O access or a ROM
+/// fetch can say "no page" without inventing page 0, which is a real page.
+constexpr uint8_t kPhysPageNone = 0xFF;
+
 /// @brief Reverse-search query (parent TDD §9.4 — "Conditional Variants").
 ///
 /// The default-constructed query matches any Write access anywhere — the
@@ -64,6 +71,18 @@ struct TTDSearchQuery
     bool     hasPcFilter = false;
     uint16_t pcFrom = 0;               ///< Valid iff hasPcFilter
     uint16_t pcTo   = 0xFFFF;
+
+    /// Restrict matches to one physical RAM page (parent TDD §9.4).
+    ///
+    /// Without this, an address query is ambiguous on any banked machine: the
+    /// Z80 address 0xC000 is a different byte of RAM depending on which page is
+    /// paged into bank 3, so "who wrote 0xC000?" answers with writes to pages
+    /// the caller never asked about. The journal has carried physPage all
+    /// along; this is the filter that finally uses it.
+    ///
+    /// Ignored for Io accesses, where a port number has no page.
+    bool     hasPhysPageFilter = false;
+    uint8_t  physPage = 0;             ///< Valid iff hasPhysPageFilter
 
     /// Only matches at-or-before this globalT (absolute t-state). Default
     /// "no upper bound" is UINT64_MAX — caller typically substitutes the
@@ -92,13 +111,15 @@ struct TTDSearchResult
 /// `globalT` is `frame * config.frame + tInFrame` — a dense, monotonic
 /// coordinate across the entire recorded session. The PC at M1 is the opcode
 /// byte's address (i.e. the address the user wants to set a reverse
-/// breakpoint on). physPage is currently 0 (Z80 hook reports 0 for Execute
-/// accesses; v1 of reverse execution doesn't distinguish banked PCs).
+/// breakpoint on). physPage carries the bank the opcode was fetched from, so a
+/// reverse breakpoint can tell "PC 0xC000 with page 3 banked in" apart from the
+/// same address reached under a different page. Code running from ROM reports
+/// kPhysPageNone.
 struct TTDM1Record
 {
     uint64_t globalT = 0;    ///< Absolute t-state since session start
     uint16_t pc      = 0;    ///< PC at the M1 cycle (opcode byte address)
-    uint16_t physPage = 0;   ///< Banking context (currently always 0)
+    uint16_t physPage = kPhysPageNone;  ///< Physical RAM page behind pc, or kPhysPageNone
 };
 
 /// @brief Lightweight access probe, armed during reverse-search replay.
@@ -133,7 +154,10 @@ public:
     /// @brief Hot-path check. Returns true iff the probe is armed AND the
     /// access matches the query's predicate. Called from every memory/cpu
     /// hook site.
-    inline bool Matches(uint16_t addr, TTDAccessType kind, uint8_t value, uint16_t pc) const
+    /// @param physPage Physical RAM page behind `addr`, or kPhysPageNone when
+    ///                 the access has no page (I/O ports, ROM/cache banks).
+    inline bool Matches(uint16_t addr, TTDAccessType kind, uint8_t value, uint16_t pc,
+                        uint8_t physPage = kPhysPageNone) const
     {
         if (!IsArmed())
             return false;
@@ -144,6 +168,10 @@ public:
         if (_query.hasValueFilter && value != _query.value)
             return false;
         if (_query.hasPcFilter && (pc < _query.pcFrom || pc > _query.pcTo))
+            return false;
+        // A page filter can never be satisfied by an access that has no page,
+        // so those are rejected rather than waved through.
+        if (_query.hasPhysPageFilter && kind != TTDAccessType::Io && physPage != _query.physPage)
             return false;
         return true;
     }

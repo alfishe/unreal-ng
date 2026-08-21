@@ -377,6 +377,14 @@ public:
     ///   'W' memory write, 'I' port read, 'O' port write (IORQ T-state)
     /// Used by bus-phase timing tests (io_phase_test / bus_phase tests).
     std::function<void(char type, uint16_t addr, uint8_t value)> busTraceHook;
+
+    /// Test-only instruction-fetch trace hook (null in production - a single
+    /// empty-function check per instruction when unset). Fired once per
+    /// executed instruction at the M1 cycle, with the PC of the opcode itself;
+    /// prefixed opcodes report the PC of the prefix, not of the continuation.
+    /// Kept separate from busTraceHook so that adding it does not perturb the
+    /// event counts the bus-phase timing tests assert on.
+    std::function<void(uint16_t pc)> m1TraceHook;
     /// endregion </Z80 lifecycle>
 
     // Direct memory access methods

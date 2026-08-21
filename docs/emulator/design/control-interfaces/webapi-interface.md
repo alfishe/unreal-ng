@@ -834,7 +834,7 @@ All TTD endpoints are scoped under `/api/v1/emulator/{id}/ttd/...`. Full command
 
 | Method | Path | Body / Query | Description | Status |
 | :--- | :--- | :--- | :--- | :--- |
-| `GET`  | `/ttd/status` | — | Recording state, frame range, memory used vs budget, current position, last invalidation reason. Always available regardless of the `timetravel` feature flag. | 🔮 Phase 1 |
+| `GET`  | `/ttd/status` | — | Session origin (`loaded_from_file`, `source_path`, `captured_at_unix_ms`), machine (`model_id`, `model_ram_pages`), frame range, checkpoint count, write-journal size (`write_journal_records`/`_bytes`), coverage-index size (`coverage_index_frames`/`_bytes`) and memory. Schema: `TTDStatusResponse`. Always available regardless of the `timetravel` feature flag. | ✅ Implemented |
 | `POST` | `/ttd/start` | — | Begin recording at the next frame boundary. Returns `202 Accepted` with `{armed: true, anchor_frame: null}` if invoked mid-frame. | 🔮 Phase 1 |
 | `POST` | `/ttd/stop` | — | Stop capturing; retain history. | 🔮 Phase 1 |
 | `POST` | `/ttd/clear` | — | Drop all captured data; live emulator state untouched. | 🔮 Phase 1 |

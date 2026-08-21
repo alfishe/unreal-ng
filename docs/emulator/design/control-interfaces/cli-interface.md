@@ -138,7 +138,7 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 
 | CLI Verb | Alias | Description | Status |
 | :--- | :--- | :--- | :--- |
-| `ttd status` | `ttd` | Show recording state, frame range, memory used, current position. Always available. | 🔮 Phase 1 |
+| `ttd status` | `ttd info` | Show session origin (recorded here vs loaded from a file, with the path), machine model, frame range, checkpoint count, write-journal and coverage-index sizes, and memory used. Always available. | ✅ Implemented |
 | `ttd start` | `ttd rec` | Begin recording at the next frame boundary. | 🔮 Phase 1 |
 | `ttd stop` | — | Stop capturing; retain history. | 🔮 Phase 1 |
 | `ttd clear` | — | Drop all captured data. | 🔮 Phase 1 |

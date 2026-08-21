@@ -166,6 +166,13 @@ public:
     // Z80 M1 cycle, DecodePortOut) reads `ttdProbe.IsArmed()` with one
     // predictable branch. Cost when not armed: ~1 cycle.
     ttd::TTDAccessProbe ttdProbe;
+
+    // Per-frame coverage collection (reverse-search index). Read on the
+    // instruction-fetch path, so it is a plain bool rather than a call into
+    // TimeTravelManager: one predictable, almost-always-false branch. Set by
+    // StartRecording and cleared by StopRecording / InvalidateSession, all of
+    // which run on the control thread with the emulator paused.
+    bool ttdCoverageActive = false;
     /// endregion </Child object references>
 
     /// region <Run-control claim (GDB TDD 3.3 / parent TDD 7.2)>

@@ -55,6 +55,7 @@
 #include "ttd_write_journal.h"
 #include "ttd_probe.h"
 #include "ttd_codec_page_store.h"
+#include "ttd_coverage_index.h"
 
 // Forward declarations — we don't pull emulator headers into this header.
 // (EmulatorContext, Memory, Z80State, EmulatorState are all classes/structs
@@ -121,6 +122,37 @@ struct TTDSessionInfo
     size_t   livePayloadBytes = 0;  ///< Sum of compressed payload bytes (live slots)
 
     bool writeJournalEnabled = false;  ///< True if write journal is active (for FindLast)
+
+    // --- Provenance -------------------------------------------------------
+    //
+    // "Is this something I just recorded, or something I opened?" is the first
+    // question when a session is handed around, and nothing in the numbers
+    // above answers it: a loaded session and a live one look identical.
+
+    /// True when the timeline came from a file rather than from live capture.
+    bool loadedFromFile = false;
+
+    /// Path the session was loaded from. Empty for live recordings.
+    std::string sourcePath;
+
+    /// Wall-clock capture time recorded in the file (ms since Unix epoch).
+    /// Zero for a live recording, which has not been written anywhere yet.
+    uint64_t capturedAtUnixMs = 0;
+
+    // --- Machine ----------------------------------------------------------
+
+    uint8_t  modelId = 0;         ///< eModel value the session belongs to
+    uint16_t modelRamPages = 0;   ///< Exclusive RAM page-index bound (see TDD 6.2a)
+
+    // --- Sections ---------------------------------------------------------
+
+    uint64_t writeJournalRecords = 0;  ///< Records currently held in the ring
+    size_t   writeJournalBytes = 0;    ///< Their in-memory footprint
+
+    /// Coverage index: frames indexed and bytes held. Zero when the session
+    /// carries no index — correct but slower for reverse queries.
+    size_t coverageIndexFrames = 0;
+    size_t coverageIndexBytes = 0;
 };
 
 class TimeTravelManager
@@ -235,6 +267,11 @@ public:
     /// Refuses unknown future schema versions with a clear error message
     /// (see ttd_dump_format.h::kMaxSupportedSchemaVersion).
     bool DeserializeSession(std::istream& in, std::string& err);
+
+    /// @brief Record where a just-deserialized session came from.
+    /// Callers that loaded from a path should set it so GetSessionInfo can
+    /// report provenance; streams with no path leave it empty.
+    void SetSessionSourcePath(const std::string& path) { _sourcePath = path; }
 
     /// @brief In-memory capture/restore divergence self-test.
     ///
@@ -575,6 +612,90 @@ public:
     /// No-op when not Recording or when replay is active — replay-driven
     /// writes must NOT pollute the journal (they're reconstructions, not
     /// new history).
+    /// @brief Record an instruction fetch in the coverage index.
+    ///
+    /// Called from the Z80 M1 cycle, which gates on
+    /// EmulatorContext::ttdCoverageActive first. Separate from the write path
+    /// because instruction fetches are not journalled - the coverage set is the
+    /// only record that a frame executed a given address, and therefore the
+    /// only thing that lets a reverse breakpoint skip frames instead of
+    /// replaying them.
+    /// @brief Record a memory read in the coverage index.
+    ///
+    /// Reads are the one access kind with no journal at all, so without this a
+    /// reverse read-watchpoint has nothing to prune with and must replay every
+    /// frame. Inline for the same reason as the execute path: reads outnumber
+    /// writes roughly 3:1, so the call itself would dominate.
+    inline void RecordReadCoverage(uint8_t physPage, uint16_t addr)
+    {
+        if (_state != TTDSessionState::Recording)
+            return;
+
+        // Accesses with no RAM page (ROM, cache) are recorded under the
+        // kPhysPageNone bucket rather than dropped. Dropping them made the
+        // index claim frames were empty when they in fact held ROM accesses,
+        // and pruning then deleted real search hits. Every ROM page collapses
+        // into one bucket, which over-approximates — extra replays, never a
+        // lost answer.
+        _coverageIndex.Record(TTDCoverageKind::Read, MakeCoverageKey(physPage, addr));
+    }
+
+    inline void RecordExecutedCoverage(uint8_t physPage, uint16_t pc)
+    {
+        // Inline for the same reason TTDCoverageIndex::Record is: this sits on
+        // the instruction-fetch path, so the call itself was the cost.
+        if (_state != TTDSessionState::Recording)
+            return;
+
+        // ROM execution is recorded under the kPhysPageNone bucket, not
+        // dropped — see RecordReadCoverage for why.
+        _coverageIndex.Record(TTDCoverageKind::Executed, MakeCoverageKey(physPage, pc));
+    }
+
+    /// @brief Read-only access to the coverage index (control thread).
+    inline const TTDCoverageIndex& GetCoverageIndex() const { return _coverageIndex; }
+
+    /// @brief Is per-frame coverage collection enabled for new sessions?
+    inline bool IsCoverageIndexEnabled() const { return _enableCoverageIndex; }
+    void SetEnableCoverageIndex(bool enable);
+
+private:
+    /// @brief Make the result of a user-initiated seek visible.
+    ///
+    /// Flushes the video delay line, publishes the restored frame and posts
+    /// NC_VIDEO_FRAME_REFRESH. Called only from the public SeekTo — internal
+    /// restores during search and reverse execution must not touch the display.
+    void PublishSeekedFrame();
+
+public:
+
+private:
+    /// @brief May the coverage index be used to skip frames for this query?
+    ///
+    /// Only Read and Execute searches reach the replay loop at all (Write and
+    /// Io are answered by the journal), and pruning is sound only when the
+    /// query's Z80 address range collapses to one non-wrapping offset interval
+    /// inside a 16 KB page. A range spanning a page boundary, or wider than a
+    /// page, could match any offset, so it is left unpruned rather than
+    /// approximated.
+    inline bool CanPruneByCoverage(const TTDSearchQuery& q) const
+    {
+        if (!_enableCoverageIndex)
+            return false;
+        if (q.access != TTDAccessType::Read && q.access != TTDAccessType::Execute)
+            return false;
+        if (q.addrTo < q.addrFrom)
+            return false;
+        if (static_cast<uint32_t>(q.addrTo - q.addrFrom) >= 0x4000u)
+            return false;  // Wider than a page — every offset is possible.
+
+        // Reject ranges that wrap across a 16 KB boundary: their offsets are two
+        // disjoint intervals, which FrameMayContain does not model.
+        return (q.addrFrom & 0x3FFF) <= (q.addrTo & 0x3FFF);
+    }
+
+public:
+
     void RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t newVal,
                            uint16_t m1pc, uint8_t physPage);
     
@@ -920,10 +1041,31 @@ private:
     };
     MaterializedRamCache _ramCache;
 
-    /// Number of physical RAM pages on the active model (set at StartRecording).
+    /// Exclusive page-index bound for the active model (set at StartRecording).
     /// Pages in [0, _modelRamPages) are captured; pages in [_modelRamPages,
     /// MAX_RAM_PAGES) are NEVER_TOUCHED.
+    ///
+    /// This is a BOUND, not a page count: models that map their RAM at
+    /// non-contiguous page numbers need a bound above their page count. The 48K
+    /// machine has 3 pages but uses page numbers {0, 2, 5}, so its bound is 6
+    /// and three slots inside the range stay unused. See ResolveModelRamPages().
     uint16_t _modelRamPages = 0;
+
+    /// Latches the first "dirty page outside the captured range" warning so a
+    /// mis-sized model reports once per session instead of every frame.
+    bool _dirtyPageOverflowReported = false;
+
+    /// Where this session came from. Set by DeserializeSession, cleared by
+    /// StartRecording and InvalidateSession, so GetSessionInfo can tell a
+    /// loaded recording from a live one.
+    bool        _loadedFromFile = false;
+    std::string _sourcePath;
+    uint64_t    _capturedAtUnixMs = 0;
+    uint8_t     _sessionModelId = 0;
+
+    /// Per-frame coverage sets backing reverse-search frame skipping.
+    TTDCoverageIndex _coverageIndex;
+    bool _enableCoverageIndex = true;
 
     /// Previous-checkpoint page cache for XOR delta computation during capture.
     ///

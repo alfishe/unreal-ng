@@ -190,6 +190,14 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
     ss << "TTD Session Status" << NEWLINE;
     ss << "==================" << NEWLINE;
     ss << NEWLINE;
+    ss << "  Origin:                 "
+       << (info.loadedFromFile ? "loaded from file" : "recorded in this process") << NEWLINE;
+    if (info.loadedFromFile && !info.sourcePath.empty())
+        ss << "  Source:                 " << info.sourcePath << NEWLINE;
+    if (info.capturedAtUnixMs != 0)
+        ss << "  Captured at:            " << info.capturedAtUnixMs << " (unix ms)" << NEWLINE;
+    ss << "  Model:                  id=" << static_cast<unsigned>(info.modelId)
+       << ", RAM page bound " << info.modelRamPages << NEWLINE;
     ss << "  State:                  " << ttd::TTDSessionStateToString(info.state) << NEWLINE;
     ss << "  Session start frame:    " << info.sessionStartFrame << NEWLINE;
     ss << "  Current end frame:      " << info.currentEndFrame << NEWLINE;
@@ -198,6 +206,21 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
     ss << "  Page store used:        " << info.pageStoreUsedBytes << " bytes" << NEWLINE;
     ss << "  Baseline frames cap'd:  " << info.baselineFramesCaptured << NEWLINE;
     ss << "  Session heap total:     " << info.sessionHeapBytes << " bytes" << NEWLINE;
+    ss << NEWLINE;
+    ss << "  Write journal:          "
+       << (info.writeJournalEnabled ? "enabled" : "disabled") << ", "
+       << info.writeJournalRecords << " records ("
+       << info.writeJournalBytes << " bytes in memory)" << NEWLINE;
+    if (info.coverageIndexFrames != 0)
+    {
+        ss << "  Coverage index:         " << info.coverageIndexFrames << " frames ("
+           << info.coverageIndexBytes << " bytes)" << NEWLINE;
+    }
+    else
+    {
+        ss << "  Coverage index:         absent (reverse queries fall back to replay)"
+           << NEWLINE;
+    }
 
     session.SendResponse(ss.str());
 }
@@ -511,6 +534,7 @@ void CLIProcessor::HandleTTDLoad(const ClientSession& session, EmulatorContext* 
     }
 
     std::string err;
+    mgr->SetSessionSourcePath(path);
     if (!mgr->DeserializeSession(in, err))
     {
         // The most common failure is a model mismatch: a session is raw RAM
@@ -564,6 +588,13 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
         {
             q.pcTo = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
             if (!q.hasPcFilter) q.hasPcFilter = true;
+        }
+        else if (tok == "--phys-page" && i + 1 < args.size())
+        {
+            // Bank-aware search: pins the query to one physical RAM page so a
+            // banked address does not answer with another page's write.
+            q.physPage = static_cast<uint8_t>(std::stoul(args[++i], nullptr, 0));
+            q.hasPhysPageFilter = true;
         }
         else if (tok == "--before-frame" && i + 1 < args.size())
         {

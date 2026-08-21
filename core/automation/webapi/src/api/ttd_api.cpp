@@ -220,7 +220,16 @@ void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
         ret["page_store_used_bytes"]    = Json::UInt64(info.pageStoreUsedBytes);
         ret["baseline_frames_captured"] = Json::UInt64(info.baselineFramesCaptured);
         ret["session_heap_bytes"]       = Json::UInt64(info.sessionHeapBytes);
-        ret["write_journal_enabled"]    = info.writeJournalEnabled;
+        ret["loaded_from_file"]      = info.loadedFromFile;
+    ret["source_path"]           = info.sourcePath;
+    ret["captured_at_unix_ms"]   = Json::UInt64(info.capturedAtUnixMs);
+    ret["model_id"]              = Json::UInt(info.modelId);
+    ret["model_ram_pages"]       = Json::UInt(info.modelRamPages);
+    ret["write_journal_records"] = Json::UInt64(info.writeJournalRecords);
+    ret["write_journal_bytes"]   = Json::UInt64(info.writeJournalBytes);
+    ret["coverage_index_frames"] = Json::UInt64(info.coverageIndexFrames);
+    ret["coverage_index_bytes"]  = Json::UInt64(info.coverageIndexBytes);
+    ret["write_journal_enabled"]    = info.writeJournalEnabled;
         ret["ttd_available"]            = true;
     }
 
@@ -793,6 +802,7 @@ void EmulatorAPI::loadTTD(const HttpRequestPtr& req,
 
     std::string errMsg;
     Json::Value ret;
+    mgr->SetSessionSourcePath(path);
     if (!mgr->DeserializeSession(in, errMsg))
     {
         ret["ok"] = false;
@@ -862,6 +872,15 @@ void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
     {
         q.pcTo = static_cast<uint16_t>((*json)["pc_to"].asUInt());
         if (!q.hasPcFilter) q.hasPcFilter = true;
+    }
+
+    // Bank-aware search: without this, an address query on a banked machine
+    // answers with writes to whatever page happened to be mapped, which is
+    // rarely the page the caller meant.
+    if (json->isMember("phys_page"))
+    {
+        q.physPage = static_cast<uint8_t>((*json)["phys_page"].asUInt());
+        q.hasPhysPageFilter = true;
     }
 
     if (emulator)

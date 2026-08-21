@@ -50,7 +50,7 @@ the canonical fixture `active_demo.ttd`:
 
 ```sh
 python3 tools/poc/cpp/extract_real_buffers.py \
-    --ttd tools/verification/ttd-analyzer/testdata/active_demo.ttd \
+    --ttd testdata/ttd/active_demo.ttd \
     --out tools/poc/cpp/real_buffers.bin
 ```
 
@@ -58,8 +58,11 @@ This produces `real_buffers.bin` containing two buffer classes:
 
 | Bucket      | Source                                  | Count | Use |
 | ----------- | --------------------------------------- | ----: | --- |
-| `REAL_full` | Decompressed `ENCODING_FULL` slots      |    16 | Raw 4 KB page snapshots (I-frame content) |
-| `REAL_xor`  | Decompressed `ENCODING_XOR_PREV` slots  |  1186 | Real `new XOR prev` delta buffers (P-frame content) |
+| `REAL_full` | Decompressed `ENCODING_FULL` slots      | varies | Raw 4 KB page snapshots (I-frame content) |
+| `REAL_xor`  | Decompressed `ENCODING_XOR_PREV` slots  | varies | Real `new XOR prev` delta buffers (P-frame content) |
+
+Buffer counts depend on which fixture is extracted — see "Workload range"
+below. Point the extractor at any file in `testdata/ttd/`.
 
 The XOR bucket is the **dominant** production workload — it is 98.7% of
 all non-Zero codec inputs in the fixture. Synthetic XOR-deltas (see
@@ -99,6 +102,8 @@ workload                 n_bufs     H_mean floor_mean  floor_p50    nz%_p50
 -------                  ------     ------ ---------- ----------    -------
 REAL_full                    16     3.1211     1598.0     1612.9     29.077
 REAL_xor                   1186     0.2299      117.7       15.1      0.220
+(illustrative shape only — these came from the old synthetic fixture;
+ current numbers are in "Workload range" below)
 SYN_random_4k              1000     7.9544     4072.7     4072.7     99.609
 SYN_xor_sparse_5pct        1000     0.6188      316.8      317.0      4.858
 SYN_xor_clustered_5pct     1000     0.5866      300.3      305.0      4.688
@@ -121,8 +126,8 @@ Each benchmark line then reports:
 
 | Workload                 | Class     | Description |
 | ------------------------ | --------- | ----------- |
-| `REAL_full`              | Real      | Raw 4 KB page snapshots from active_demo.ttd |
-| `REAL_xor`               | Real      | Real XOR-delta buffers from active_demo.ttd (the dominant TTD workload) |
+| `REAL_full`              | Real      | Raw 4 KB page snapshots from a recorded session |
+| `REAL_xor`               | Real      | Real XOR-delta buffers from a recorded session (the dominant TTD workload) |
 | `SYN_random_4k`          | Synthetic | Uniform-random 4 KB baseline (worst case) |
 | `SYN_xor_sparse_5pct`    | Synthetic | 5% scattered XOR-delta (reference shape) |
 | `SYN_xor_clustered_5pct` | Synthetic | 5% clustered XOR-delta (reference shape) |
@@ -135,12 +140,50 @@ the analysis of why the synthetic 5% XOR-deltas (which have a ~300-byte
 entropy floor) led to wrong conclusions about real TTD buffers (which
 have a ~15-byte entropy floor).
 
+## Workload range (re-measured 2026-08-20)
+
+Earlier runs of this PoC drew on a *synthesised* `active_demo.ttd` — a Python
+script wrote the file byte by byte and filled its pages with random bytes over
+zeros. Fixtures now come from real recordings made through the emulator API
+(`tools/verification/ttd-analyzer/scripts/record_fixtures.py`), and a single
+fixture turned out not to be representative either. Four workloads, 300 frames
+each:
+
+| Fixture | Full: entropy / nonzero | XOR: entropy / nonzero (p50) | XOR floor mean / p50 |
+|---|---|---|---|
+| `idle_session` (128 BASIC menu) | 1.09 / 3.9% | 0.048 / 0.049% | 24 B / 3.4 B |
+| `active_demo` (Dizzy Y, a game) | 3.42 / 58.1% | 0.019 / 0.171% | 9.8 B / 10.2 B |
+| `demo_7threality` | 5.69 / **93.1%** | 0.055 / 0.122% | 28 B / 6.9 B |
+| `demo_across-the-edge-second` | 3.72 / 59.9% | 0.144 / 0.073% | **74 B / 5.0 B** |
+
+Two things the synthetic model got wrong:
+
+* **Full pages.** A demo doing precalculation fills memory — 93% of bytes
+  nonzero on 7threality against 3.9% on an idle machine. Any sizing that
+  assumes lightly-populated pages is calibrated on the idle case.
+* **XOR deltas.** The synthetic `SYN_xor_sparse_5pct` models 5% of bytes
+  changing, uniformly. Real deltas are far sparser (0.05–0.17% at the median)
+  **and heavy-tailed**: across-the-edge averages a 74-byte entropy floor against
+  a 5-byte median, so the mean is dominated by a minority of large frames. The
+  synthetic model is wrong in shape, not only in magnitude.
+
 ## Findings
 
-See Section 6 of
-`docs/inprogress/2026-07-19-time-travel/phase-5-codec-poc-results.md`
-for the full results, entropy analysis, and objective verdict. Summary:
-on real TTD data, **zstd-1 is Pareto-optimal** — all zstd levels produce
-byte-identical output on the dominant XOR-delta workload, no faster
-codec is competitive on ratio, and no slower codec is competitive on
-latency.
+Measured on `demo_across-the-edge-second`, the heaviest of the four (BLI shown
+as bytes per 4 KB buffer, p50 latencies):
+
+| Codec | XOR bytes | XOR enc | XOR dec | Full bytes | Full enc | Full dec |
+|---|---|---|---|---|---|---|
+| zstd (n1/1/3) | **63** | 0.96 µs | 1.0 µs | **1343** | 8.6 µs | 2.0 µs |
+| brotli-1 | 72 | 2.9 µs | 6.8 µs | 1389 | 14.9 µs | 9.2 µs |
+| zlib-1 | 86 | 4.7 µs | 3.4 µs | 1355 | 24.3 µs | 6.6 µs |
+| lz4-fast | 99 | 0.54 µs | 0.54 µs | 1546 | 1.25 µs | 0.54 µs |
+| snappy | 250 | 0.42 µs | 0.38 µs | 1588 | 0.92 µs | 0.54 µs |
+
+The original verdict survives re-measurement on real data: **zstd-1 is
+Pareto-optimal**. Every zstd level produces byte-identical output on the XOR
+workload, so level tuning buys nothing there; lz4 is ~1.6× larger for ~2× the
+speed, and everything slower than zstd is also no smaller.
+
+Full results and entropy analysis: Section 6 of
+`docs/inprogress/2026-07-19-time-travel/phase-5-codec-poc-results.md`.

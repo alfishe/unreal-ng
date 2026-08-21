@@ -14,9 +14,16 @@ The hand-written version is shipped by default to avoid the ksc build-time
 dependency and to keep the analyzer runnable from a fresh checkout with
 only ``zstandard`` as a third-party requirement.
 
-Conformance is verified by ``tests/test_parser_conformance.py`` which loads
-the C++-generated fixture under ``testdata/fixture.ttd`` and asserts every
-field round-trips correctly.
+Fixtures live under ``testdata/`` and are produced by
+``scripts/record_fixtures.py``, which records a real session through the
+emulator's WebAPI. They are therefore written by the same C++ writer production
+uses — which is the point: an earlier generator synthesised .ttd files in
+Python, making this a second implementation of the format that had to be kept
+in sync by hand, filled with random bytes rather than real machine memory.
+
+Note there is currently no automated conformance test asserting this reader
+against those fixtures; that check is worth adding now that the fixtures come
+from the real writer.
 
 Format versioning
 -----------------
@@ -60,10 +67,32 @@ else:
 # ---------------------------------------------------------------------------
 
 MAGIC = b"TTDD"
-SCHEMA_VERSION = 1  # v1 is the production release with XOR-delta encoding
+
+# The format has not shipped, so it is amended in place rather than versioned.
+# model_ram_pages is u16 (it was u8 until a 4 MB machine's 256 pages were found
+# to truncate to 0). Sessions recorded before that amendment do not parse.
+SCHEMA_VERSION = 1
 MAX_SUPPORTED_SCHEMA_VERSION = SCHEMA_VERSION
 FLAGS_LITTLE_ENDIAN = 0x0001
-FLAGS_HAS_WRITE_JOURNAL = 0x0002  # v2 extension: write journal section present
+FLAGS_HAS_WRITE_JOURNAL = 0x0002  # write journal section present
+
+# Write journal section. Records are stored as zstd-compressed columnar blocks
+# rather than verbatim: the journal is by far the largest thing in a .ttd (89%
+# of the file on a demo recording before compression), and transposing records
+# into columns before compressing is what makes it shrink - the columns are
+# individually near-constant, while an interleaved record stream mixes five
+# unrelated distributions.
+JOURNAL_SECTION_MAGIC = 0x4A574C42  # 'BLWJ'
+
+# Reverse-search coverage index. Derived data: which physical addresses each
+# frame executed, wrote and read, so a reverse query can skip frames without
+# replaying them. Absent sections are normal - the session is still complete,
+# its reverse queries just fall back to replay.
+FLAGS_HAS_COVERAGE_INDEX = 0x0004
+COVERAGE_SECTION_MAGIC = 0x56435654  # 'TVCV'
+COVERAGE_KIND_NAMES = ("executed", "written", "read")
+JOURNAL_BLOCK_DIR_ENTRY_SIZE = 32   # u64 firstT, u64 lastT, u32 count, u32 comp, u32 raw, u32 rsvd
+WRITE_RECORD_SIZE = 12              # packed size of TTDWriteRecord
 
 # Page geometry. EMU_PAGE_SIZE is the Z80 banking unit (16 KB). SUB_PAGE_SIZE
 # is the codec unit (4 KB) — each emulator page splits into 4 sub-pages.
@@ -283,6 +312,109 @@ class Checkpoint:
 
 
 @dataclass
+class JournalBlock:
+    """One compressed run of write-journal records."""
+    first_global_t: int
+    last_global_t: int
+    record_count: int
+    compressed_size: int
+    raw_size: int
+
+
+@dataclass
+class JournalSection:
+    """The write journal as stored in the file.
+
+    Only the directory is parsed eagerly; block payloads are kept as bytes and
+    decoded on demand, because most analysis wants the size and shape of the
+    journal rather than its individual records.
+    """
+    record_count: int = 0
+    blocks: List[JournalBlock] = field(default_factory=list)
+    payloads: List[bytes] = field(default_factory=list)
+
+    @property
+    def compressed_bytes(self) -> int:
+        return sum(b.compressed_size for b in self.blocks)
+
+    @property
+    def raw_bytes(self) -> int:
+        return sum(b.raw_size for b in self.blocks)
+
+    @property
+    def verbatim_bytes(self) -> int:
+        """What the same records would cost stored uncompressed, as they were
+        before block compression. This is the number the ratio is against."""
+        return self.record_count * WRITE_RECORD_SIZE
+
+    @property
+    def compression_ratio(self) -> float:
+        comp = self.compressed_bytes
+        return (self.verbatim_bytes / comp) if comp else 0.0
+
+    @property
+    def section_bytes(self) -> int:
+        """Total on-disk size of the section, directory included."""
+        return (8 + 4 + 4
+                + len(self.blocks) * JOURNAL_BLOCK_DIR_ENTRY_SIZE
+                + self.compressed_bytes)
+
+
+@dataclass
+class CoverageBlock:
+    """One compressed run of per-frame coverage sets."""
+    base_frame: int
+    frame_count: int
+    raw_size: int
+    compressed_size: int
+
+
+@dataclass
+class CoverageKindSection:
+    """Coverage for one access kind (executed / written / read)."""
+    name: str
+    blocks: List[CoverageBlock] = field(default_factory=list)
+
+    @property
+    def frame_count(self) -> int:
+        return sum(b.frame_count for b in self.blocks)
+
+    @property
+    def compressed_bytes(self) -> int:
+        return sum(b.compressed_size for b in self.blocks)
+
+    @property
+    def raw_bytes(self) -> int:
+        return sum(b.raw_size for b in self.blocks)
+
+    @property
+    def compression_ratio(self) -> float:
+        comp = self.compressed_bytes
+        return (self.raw_bytes / comp) if comp else 0.0
+
+    @property
+    def covered_range(self) -> Optional[Tuple[int, int]]:
+        if not self.blocks:
+            return None
+        first = min(b.base_frame for b in self.blocks)
+        last = max(b.base_frame + max(b.frame_count - 1, 0) for b in self.blocks)
+        return (first, last)
+
+
+@dataclass
+class CoverageIndexSection:
+    kinds: List[CoverageKindSection] = field(default_factory=list)
+
+    @property
+    def compressed_bytes(self) -> int:
+        return sum(k.compressed_bytes for k in self.kinds)
+
+    @property
+    def raw_bytes(self) -> int:
+        return sum(k.raw_bytes for k in self.kinds)
+
+
+@dataclass
 class TtdDump:
     """The fully-parsed .ttd file in memory.
 
@@ -293,6 +425,8 @@ class TtdDump:
     header: Header
     slots: List[PageSlot] = field(default_factory=list)
     checkpoints: List[Checkpoint] = field(default_factory=list)
+    journal: Optional[JournalSection] = None
+    coverage: Optional[CoverageIndexSection] = None
     # Lazily-decompressed sub-page cache. Keyed by slot index; populated on
     # first ``get_sub_page`` call for that slot. The cache holds onto the
     # bytes for the lifetime of the TtdDump, which is the right policy for
@@ -536,12 +670,6 @@ def parse_header(r: _Reader) -> Header:
 
     schema_version = r.u16()
     if schema_version != SCHEMA_VERSION:
-        if schema_version < SCHEMA_VERSION:
-            raise TtdFormatError(
-                f"file is schema v{schema_version}; older versions are no longer "
-                f"supported. Re-record the session with a v{SCHEMA_VERSION} writer "
-                f"(TimeTravelManager built against the current ttd_dump_format.h)."
-            )
         raise TtdFormatError(
             f"file is schema v{schema_version}, this parser supports up to "
             f"v{MAX_SUPPORTED_SCHEMA_VERSION}. Regenerate the analyzer from "
@@ -555,7 +683,9 @@ def parse_header(r: _Reader) -> Header:
         )
 
     model_id = r.u8()
-    model_ram_pages = r.u8()
+    # u16: a 4 MB machine (TSConf / ZX-Evo) has exactly 256 RAM pages, which
+    # truncated to 0 in the original u8 field.
+    model_ram_pages = r.u16()
     cpu_state_size = r.u16()
     chipset_state_size = r.u16()
     captured_at_unix_ms = r.u64()
@@ -803,7 +933,99 @@ def parse_bytes(data: bytes) -> TtdDump:
     for i in range(header.checkpoint_count):
         checkpoints.append(parse_checkpoint(r, header.model_ram_pages, i))
 
-    return TtdDump(header=header, slots=slots, checkpoints=checkpoints)
+    journal = None
+    if header.flags & FLAGS_HAS_WRITE_JOURNAL:
+        journal = parse_journal_section(r)
+
+    coverage = None
+    if header.flags & FLAGS_HAS_COVERAGE_INDEX:
+        coverage = parse_coverage_section(r)
+
+    return TtdDump(header=header, slots=slots, checkpoints=checkpoints,
+                   journal=journal, coverage=coverage)
+
+
+def parse_coverage_section(r: _Reader) -> Optional[CoverageIndexSection]:
+    """Parse the reverse-search coverage index.
+
+    Returns None on any problem rather than raising: the index is derived data,
+    and refusing a whole session because its optional accelerator is malformed
+    would be the wrong trade.
+    """
+    try:
+        magic = r.u32()
+        if magic != COVERAGE_SECTION_MAGIC:
+            return None
+        version = r.u16()
+        if version != 1:
+            return None
+        kind_count = r.u16()
+    except Exception:
+        return None
+
+    section = CoverageIndexSection()
+    try:
+        for k in range(kind_count):
+            name = COVERAGE_KIND_NAMES[k] if k < len(COVERAGE_KIND_NAMES) else f"kind{k}"
+            kind = CoverageKindSection(name=name)
+            block_count = r.u32()
+            for _ in range(block_count):
+                base_frame = r.u64()
+                frame_count = r.u32()
+                raw_size = r.u32()
+                comp_size = r.u32()
+                r.take(comp_size)  # payload; not decoded here
+                kind.blocks.append(
+                    CoverageBlock(base_frame, frame_count, raw_size, comp_size))
+            section.kinds.append(kind)
+    except Exception:
+        return None
+
+    return section
+
+
+def parse_journal_section(r: _Reader) -> Optional[JournalSection]:
+    """Parse the write-journal section that follows the checkpoint table.
+
+    Returns None rather than raising when the section is absent or malformed:
+    the journal is auxiliary data, and a reader that refuses the whole file
+    because of it would be worse than one that reports the rest.
+    """
+    try:
+        record_count = r.u64()
+    except Exception:
+        return None
+
+    section = JournalSection(record_count=record_count)
+
+    try:
+        magic = r.u32()
+    except Exception:
+        return None
+    if magic != JOURNAL_SECTION_MAGIC:
+        raise TtdFormatError(
+            f"write journal section has magic {magic:#010x}, expected "
+            f"{JOURNAL_SECTION_MAGIC:#010x} — the file predates block "
+            f"compression and must be re-recorded"
+        )
+
+    block_count = r.u32()
+    if record_count == 0:
+        return section
+
+    for _ in range(block_count):
+        first_t = r.u64()
+        last_t = r.u64()
+        count = r.u32()
+        comp = r.u32()
+        raw = r.u32()
+        r.u32()  # reserved
+        section.blocks.append(JournalBlock(first_t, last_t, count, comp, raw))
+
+    for block in section.blocks:
+        section.payloads.append(bytes(r.take(block.compressed_size)))
+
+    return section
 
 
 def parse_file(path: str) -> TtdDump:

@@ -33,7 +33,16 @@
 #     recomputes from decompressed bytes and surfaces mismatches).
 #   * Per-checkpoint frame_kind (I-frame vs P-frame) + keyframe_anchor.
 #   * Checkpoint RAM refs are now 4 * model_ram_pages u32 slot indices.
-#   * No v1 backwards compatibility — older files are refused with an error.
+#   * No v1 backwards compatibility - older files are refused with an error.
+#
+# The format has not shipped, so it is amended in place rather than versioned.
+# header.model_ram_pages is u2; it was u1 until a 4 MB machine (TSConf / ZX-Evo)
+# was found to have exactly 256 RAM pages, truncating to 0 and making the
+# checkpoint RAM ref table parse as empty. Sessions recorded before that
+# amendment do not parse and must be re-recorded.
+#
+# This file previously declared schema-version 2 while the C++ writer emitted 1.
+# They are both 1 now.
 #
 # License: MIT — re-publishable, vendorable, forkable.
 
@@ -45,7 +54,7 @@ meta:
   application: unreal-ng
   license: MIT
   ks-version: 0.10
-  schema-version: 2
+  schema-version: 1
   doc: |
     A binary serialization of an Unreal-NG Time-Travel Debugging recording
     session: the complete timeline of per-frame checkpoints plus the
@@ -99,7 +108,7 @@ types:
   header:
     doc: |
       File header. Fixed layout so readers can read just the header to
-      decide whether to proceed. Unchanged from v1 except schema_version=2.
+      decide whether to proceed.
     seq:
       - id: magic
         contents: "TTDD"
@@ -107,22 +116,31 @@ types:
       - id: schema_version
         type: u2
         doc: |
-          Schema version. MUST be 2 for this revision of the .ksy. Readers
-          refuse unknown versions with a clear error.
+          Schema version. MUST be 1. Readers refuse unknown versions with a
+          clear error.
       - id: flags
         type: u2
         doc: |
-          Bitfield. Bit 0 = little-endian (always 1 in v2; the writer
-          static_asserts little-endian). Bits 1-15 reserved (must be 0).
+          Bitfield. Bit 0 = little-endian (always 1; the writer
+          static_asserts little-endian). Bit 1 = a write-journal section
+          follows the checkpoint table. Bits 2-15 reserved (must be 0).
       - id: model_id
         type: u1
         doc: eModel enum value (which machine model was active).
       - id: model_ram_pages
-        type: u1
+        type: u2
         doc: |
-          Number of physical RAM pages (16 KB each) on the active model.
-          Each checkpoint has model_ram_pages × 4 ram_sub_slots entries
-          (4 sub-pages per emulator page).
+          Exclusive RAM page-index bound for the active model. Each checkpoint
+          carries model_ram_pages x 4 ram_sub_slots entries (4 sub-pages per
+          16 KB emulator page).
+
+          This is a BOUND, not a page count. Models that map RAM at
+          non-contiguous page numbers need a bound larger than the number of
+          pages they actually own: a 48K machine has 3 pages but addresses them
+          as pages 0, 2 and 5, so its bound is 6 and the unused slots inside the
+          range are serialized as never-touched refs.
+
+          u2 because a 4 MB machine has exactly 256 pages.
       - id: cpu_state_size
         type: u2
         doc: |
@@ -169,8 +187,7 @@ types:
         doc: Number of checkpoint records following the page store.
       - id: reserved
         size: 8
-        doc: Reserved for future additive fields (must be zero in v2).
-
+        doc: Reserved for future additive fields (must be zero).
   page_slot:
     doc: |
       One entry in the v2 codec page store. Encoded layout per slot:

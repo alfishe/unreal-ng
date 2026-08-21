@@ -435,16 +435,33 @@ emu.ttd_clear()              -- Drop all captured data; live state untouched
 
 ```lua
 local status = emu.ttd_status()
--- status.recording          = true
--- status.feature_enabled    = true
--- status.position.frame     = 12345
--- status.position.tstate    = 0
--- status.bounds.first_frame = 0
--- status.bounds.last_frame  = 12345
--- status.memory.used_bytes  = 222298112
--- status.memory.budget_bytes = 67108864
--- status.detached           = false
--- status.invalidation_reason = nil   -- string or nil
+-- status.state                 = "idle"   -- idle | recording | detached
+--
+-- Provenance: recorded here, or opened from a file?
+-- status.loaded_from_file      = true
+-- status.source_path           = "/sessions/bug-1274.ttd"
+-- status.captured_at_unix_ms   = 1755712345678  -- 0 for a live recording
+--
+-- Machine
+-- status.model_id              = 0
+-- status.model_ram_pages       = 32   -- BOUND, not a count (48K reports 6)
+--
+-- Timeline
+-- status.session_start_frame   = 98
+-- status.current_end_frame     = 397
+-- status.checkpoint_count      = 301
+--
+-- Sections
+-- status.write_journal_enabled = true
+-- status.write_journal_records = 729025
+-- status.write_journal_bytes   = 8748300
+-- status.coverage_index_frames = 300  -- 0 => reverse queries replay instead
+-- status.coverage_index_bytes  = 13926
+--
+-- Memory
+-- status.page_store_bytes      = 40960
+-- status.page_store_used_bytes = 665600
+-- status.session_heap_bytes    = 1043968
 ```
 
 **Navigation (require run-control claim; emulator must be paused):**

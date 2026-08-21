@@ -480,16 +480,43 @@ emu.ttd_clear()             # Drop all captured data; live state untouched
 ```python
 status = emu.ttd_status()
 # {
-#   'recording': True,
-#   'feature_enabled': True,
-#   'position': {'frame': 12345, 'tstate': 0},
-#   'bounds': {'first_frame': 0, 'last_frame': 12345},
-#   'memory': {'used_bytes': 222298112, 'budget_bytes': 67108864},
-#   'budget_exceeded': False,
-#   'detached': False,
-#   'invalidation_reason': None
+#   'ttd_available': True,
+#   'state': 'idle',                  # idle | recording | detached
+#
+#   # Provenance — recorded here, or opened from a file?
+#   'loaded_from_file': True,
+#   'source_path': '/sessions/bug-1274.ttd',
+#   'captured_at_unix_ms': 1755712345678,   # 0 for a live recording
+#
+#   # Machine the session belongs to
+#   'model_id': 0,
+#   'model_ram_pages': 32,            # BOUND, not a count (48K reports 6)
+#
+#   # Timeline
+#   'session_start_frame': 98,
+#   'current_end_frame': 397,
+#   'checkpoint_count': 301,
+#
+#   # Sections
+#   'write_journal_enabled': True,
+#   'write_journal_records': 729025,
+#   'write_journal_bytes': 8748300,   # in memory; on disk it is compressed
+#   'coverage_index_frames': 300,     # 0 => reverse queries fall back to replay
+#   'coverage_index_bytes': 13926,
+#
+#   # Memory
+#   'page_store_bytes': 40960,
+#   'page_store_used_bytes': 665600,
+#   'baseline_frames_captured': 2159,
+#   'session_heap_bytes': 1043968,
 # }
 ```
+
+`loaded_from_file` is the field to check first when a session is handed to you:
+a loaded recording and a live one are otherwise indistinguishable from the
+counters. `coverage_index_frames == 0` means reverse search and reverse
+breakpoints will replay frames instead of consulting the index — correct, but
+orders of magnitude slower.
 
 **Navigation (require run-control claim; emulator must be paused):**
 

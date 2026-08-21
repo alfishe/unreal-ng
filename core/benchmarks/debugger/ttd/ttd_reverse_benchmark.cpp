@@ -302,3 +302,55 @@ BENCHMARK(BM_TTD_Reverse_Continue_Bp)
     ->Args({100})
     ->Iterations(50)
     ->Unit(benchmark::kMicrosecond);
+
+// ===========================================================================
+// FindLastAccess — coverage index on vs off
+// ===========================================================================
+//
+// Reverse search for Read and Execute has no journal to consult, so it walks
+// backward restoring and replaying one frame at a time. The coverage index
+// exists to skip frames that provably cannot match. This is the benchmark that
+// says whether collecting it pays for itself.
+//
+// The distance to the target dominates: a hit in the current frame is found
+// immediately either way, while a target last touched long ago is where the
+// index earns its keep. Args({distanceInFrames, coverageEnabled}).
+
+static void BM_TTD_FindLastAccess_Coverage(benchmark::State& state)
+{
+    if (!EnsureFixture()) { state.SkipWithError("fixture init failed"); return; }
+
+    const uint32_t frames  = static_cast<uint32_t>(state.range(0));
+    const bool coverageOn  = state.range(1) != 0;
+
+    g_fixture.ttd->SetEnableCoverageIndex(coverageOn);
+    g_fixture.ResetRecording(frames);
+
+    // An address the workload does not touch, so the search has to walk the
+    // whole history rather than stopping at the first frame. That is the worst
+    // case, and the one that scales with session length.
+    ttd::TTDSearchQuery q;
+    q.addrFrom = q.addrTo = 0xFFFF;
+    q.access = ttd::TTDAccessType::Read;
+
+    for (auto _ : state)
+    {
+        state.PauseTiming();
+        PositionAtSessionEnd();
+        state.ResumeTiming();
+
+        benchmark::DoNotOptimize(g_fixture.ttd->FindLastAccess(q));
+    }
+
+    state.SetLabel(std::string(coverageOn ? "index" : "replay-scan") +
+                   " frames=" + std::to_string(frames));
+
+    // Leave the fixture in the default state for whatever runs next.
+    g_fixture.ttd->SetEnableCoverageIndex(true);
+}
+BENCHMARK(BM_TTD_FindLastAccess_Coverage)
+    ->Args({10,  0})->Args({10,  1})
+    ->Args({50,  0})->Args({50,  1})
+    ->Args({200, 0})->Args({200, 1})
+    ->Iterations(20)
+    ->Unit(benchmark::kMicrosecond);

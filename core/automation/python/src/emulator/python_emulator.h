@@ -1381,6 +1381,17 @@ namespace PythonBindings
                 info["page_store_used_bytes"]    = py::cast(si.pageStoreUsedBytes);
                 info["baseline_frames_captured"] = py::cast(si.baselineFramesCaptured);
                 info["session_heap_bytes"]       = py::cast(si.sessionHeapBytes);
+                // Provenance and section sizes: "is this something I recorded
+                // or something I opened, and what is inside it".
+                info["loaded_from_file"]         = py::cast(si.loadedFromFile);
+                info["source_path"]              = py::cast(si.sourcePath);
+                info["captured_at_unix_ms"]      = py::cast(si.capturedAtUnixMs);
+                info["model_id"]                 = py::cast(si.modelId);
+                info["model_ram_pages"]          = py::cast(si.modelRamPages);
+                info["write_journal_records"]    = py::cast(si.writeJournalRecords);
+                info["write_journal_bytes"]      = py::cast(si.writeJournalBytes);
+                info["coverage_index_frames"]    = py::cast(si.coverageIndexFrames);
+                info["coverage_index_bytes"]     = py::cast(si.coverageIndexBytes);
                 info["ttd_available"]            = true;
                 return info;
             }, "Get TTD session status")
@@ -1555,7 +1566,8 @@ namespace PythonBindings
                                       py::object pcFromObj,
                                       py::object pcToObj,
                                       py::object beforeFrameObj,
-                                      uint32_t beforeTin) -> py::object {
+                                      uint32_t beforeTin,
+                                      py::object physPageObj) -> py::object {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pTimeTravelManager) return py::none();
 
@@ -1577,6 +1589,12 @@ namespace PythonBindings
                 {
                     q.pcTo = static_cast<uint16_t>(pcToObj.cast<int>());
                     if (!q.hasPcFilter) q.hasPcFilter = true;
+                }
+                // Bank-aware search: pins the query to one physical RAM page.
+                if (!physPageObj.is_none())
+                {
+                    q.physPage = static_cast<uint8_t>(physPageObj.cast<int>());
+                    q.hasPhysPageFilter = true;
                 }
 
                 const uint32_t frameT = ctx->config.frame;
@@ -1606,7 +1624,8 @@ namespace PythonBindings
                py::arg("pc_from") = py::none(),
                py::arg("pc_to") = py::none(),
                py::arg("before_frame") = py::none(),
-               py::arg("before_tin") = 0)
+               py::arg("before_tin") = 0,
+               py::arg("phys_page") = py::none())
 
             .def("ttd_step_instruction_back", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();

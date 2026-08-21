@@ -31,8 +31,13 @@ namespace ttd::dump {
 /// 4-byte magic at the head of every .ttd file. ASCII "TTDD".
 constexpr char kMagic[4] = {'T', 'T', 'D', 'D'};
 
-/// Schema version. v1 = first production release with XOR-delta encoding.
+/// Schema version. v1 = pre-release format with XOR-delta encoding.
 /// MUST match `meta.schema-version` in ttd.ksy.
+///
+/// The format has not shipped, so it is still being amended in place rather
+/// than versioned: header.model_ram_pages is u2 (it was u1 until a 4 MB
+/// machine's 256 pages were found to truncate to 0). Sessions recorded before
+/// that amendment do not parse and must be re-recorded.
 constexpr uint16_t kSchemaVersion = 1;
 
 /// Bit 0 of header.flags — set when the writer is little-endian (always 1
@@ -40,8 +45,18 @@ constexpr uint16_t kSchemaVersion = 1;
 constexpr uint16_t kFlagsLittleEndian = 0x0001;
 
 /// Bit 1 of header.flags — set when the file includes a write-journal
-/// section after the checkpoint table (v3 additive extension).
+/// section after the checkpoint table.
 constexpr uint16_t kFlagsHasWriteJournal = 0x0002;
+
+/// Bit 2 of header.flags — set when a reverse-search coverage index follows
+/// the write journal.
+///
+/// The index is derived data: a session without it is complete and correct,
+/// just slower to search (reverse queries fall back to replaying frames, which
+/// is what they did before the index existed). Storing it costs 3-5 MB per hour
+/// of recording against a session measured in gigabytes, and saves the ~32
+/// seconds per ten minutes of history that rebuilding by replay would take.
+constexpr uint16_t kFlagsHasCoverageIndex = 0x0004;
 
 // ---------------------------------------------------------------------------
 // Page slot encodings (Encoding enum in TTDCodecPageStore)

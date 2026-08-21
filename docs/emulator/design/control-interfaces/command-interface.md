@@ -2161,12 +2161,12 @@ Record a per-frame checkpoint timeline of the running emulator, then seek backwa
 | `ttd start` | `ttd rec` | — | Begin recording from the next frame boundary. Sets a pending flag if invoked mid-frame; the first checkpoint anchors the session at the next `OnFrameEnd`. | 🔮 Phase 1 |
 | `ttd stop` | — | — | Stop capturing new frames. Recorded history is retained until `ttd clear` or session invalidation. | 🔮 Phase 1 |
 | `ttd clear` | — | — | Drop all captured checkpoints, journals, and page-store data. The live emulator state is untouched. | 🔮 Phase 1 |
-| `ttd status` | `ttd` | — | Report current session state: `{recording, frame_range, memory_used, budget, position}`. Always available regardless of the `timetravel` feature flag. | 🔮 Phase 1 |
+| `ttd status` | `ttd info` | — | Report the session. Always available regardless of the `timetravel` feature flag. See "Status fields" below. | ✅ Implemented |
 | `ttd timeline` | — | `[--from N] [--to N] [--limit N]` | Return per-frame summary entries (dirty-page counts, event ticks, bookmark presence) for UI rendering. Pagination via `--from`/`--to` frame indices. | 🔮 Phase 3 (UI) |
 | `ttd seek` | — | `--frame N` *or* `--tstate T` | Seek to an absolute target point. Emulator must be paused (run-control claim enforced). Result envelope: `{ok, reached_frame, reached_tstate, halt_reason}`. | 🔮 Phase 2 |
 | `ttd step-back` | `ttd sb` | `[--unit instruction\|frame] [--count N]` | Relative backward navigation. Default unit is one instruction. | 🔮 Phase 2 |
 | `ttd step-forward` | `ttd sf` | `[--unit instruction\|frame] [--count N]` | Relative forward navigation within recorded history (does not extend the timeline). | 🔮 Phase 2 |
-| `ttd find-last` | `ttd fl` | `--addr <A> --access <write\|read\|execute\|out> [--value V] [--pc-from <A>] [--pc-to <A>] [--before <T>]` | Reverse search: most recent access matching the query, scanning backward from current position. Returns `{frame, tstate, pc, value, physpage}` or null if no match. | 🔮 Phase 4 |
+| `ttd find-last` | `ttd fl` | `--addr <A> --access <write\|read\|execute\|out> [--value V] [--pc-from <A>] [--pc-to <A>] [--phys-page <P>] [--before <T>]` | Reverse search: most recent access matching the query, scanning backward from current position. `--phys-page` pins the query to one physical RAM page — on a banked machine an address alone is ambiguous, since the same Z80 address names different bytes depending on what is paged in. Ignored for `out`, which has no page. Returns `{frame, tstate, pc, value, physpage}` or null if no match. | 🔮 Phase 4 |
 | `ttd bookmark` | `ttd bm` | `<add\|remove\|list> [--at <T>] [--label <text>]` | Manage named bookmarks in the timeline. Bookmarks act as replay barriers (no silent coalescing across them). | 🔮 Phase 3 (UI) |
 | `ttd resume-from-here` | — | — | Truncate future history at the current (detached) position and resume live recording from there. Confirmation required if truncation would drop > N frames. | 🔮 Phase 2 |
 | `ttd position` | — | — | Current `TTDTimePoint` (`frame` + `tInFrame`) and the session end. | ✅ Implemented |
@@ -2216,6 +2216,41 @@ A TTD session is **invalidated** (all captured data dropped) by:
 | Debugger memory write | Live state edit breaks historical determinism. |
 | Disk sector write (TR-DOS) | Phase 1 behavior: invalidate rather than journal. Phase 2 will journal and roll back. |
 | NVRAM write | Same as disk sector write — Phase 1 invalidates; later phases journal. |
+
+#### Status fields
+
+`ttd status` answers three separate questions, and it is worth knowing which
+field answers which.
+
+**Where did this session come from?** A loaded recording and one captured in
+this process are otherwise indistinguishable from the counters, so this is
+usually the first thing to check when a session is handed to you.
+
+| Field | Meaning |
+|---|---|
+| `loaded_from_file` | True when the timeline came from a `.ttd` rather than live capture |
+| `source_path` | Path it was loaded from; empty for live recordings |
+| `captured_at_unix_ms` | Capture time recorded in the file; 0 for a live recording |
+
+**What machine is it?**
+
+| Field | Meaning |
+|---|---|
+| `model_id` | `eModel` value. A session refuses to load into a different model |
+| `model_ram_pages` | Exclusive RAM page-index **bound**, not a page count — a 48K machine reports 6 because its three pages are numbered 0, 2 and 5 |
+
+**What is inside it?**
+
+| Field | Meaning |
+|---|---|
+| `state` | `idle` / `recording` / `detached` |
+| `session_start_frame`, `current_end_frame` | Timeline extent |
+| `checkpoint_count` | Frames captured |
+| `write_journal_enabled` | Whether writes are being journalled |
+| `write_journal_records`, `write_journal_bytes` | Journal contents and in-memory cost. Normally the largest part of a session; the on-disk section is block-compressed and much smaller |
+| `coverage_index_frames`, `coverage_index_bytes` | Reverse-search index. **Zero frames means reverse search and reverse breakpoints fall back to replaying frames** — correct, but orders of magnitude slower |
+| `page_store_bytes`, `page_store_used_bytes`, `baseline_frames_captured` | COW page store capacity, live bytes and distinct page snapshots |
+| `session_heap_bytes` | Real total heap footprint of the session |
 
 The `ttd status` response includes an `invalidation_reason` field if the most recent invalidation was not user-initiated.
 

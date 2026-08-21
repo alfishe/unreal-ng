@@ -169,11 +169,27 @@ public:
         return _feature_sharedmemory_enabled && !_mappedMemoryFilepath.empty();
     }
 
-    // Shortcuts to ROM pages
+    // Shortcuts to ROM pages. A model that has no such ROM leaves the
+    // corresponding pointer null (see rom.cpp) — a 48K machine has neither a
+    // TR-DOS nor a service ROM.
     uint8_t* base_sos_rom;
     uint8_t* base_dos_rom;
     uint8_t* base_128_rom;
     uint8_t* base_sys_rom;
+
+    /// @brief Physical RAM page currently mapped behind a Z80 address.
+    /// Returns 0xFF (ttd::kPhysPageNone) when that bank holds ROM or cache.
+    /// Cheap: reads the per-bank cache maintained by SetRAMPageToBank*.
+    inline uint8_t GetPhysPageForZ80Address(uint16_t addr) const
+    {
+        return _bank_ram_page_cache[(addr >> 14) & 0b11];
+    }
+
+    /// @brief Does the active model have a TR-DOS (Beta Disk) ROM?
+    /// Callers must consult this before triggering TR-DOS paging: entering it
+    /// on a machine without the ROM would map a null bank and fault on the
+    /// next instruction fetch.
+    inline bool HasDosRom() const { return base_dos_rom != nullptr; }
 
     /// endregion </Fields>
 

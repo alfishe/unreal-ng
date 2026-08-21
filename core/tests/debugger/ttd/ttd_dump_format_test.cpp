@@ -240,6 +240,7 @@ TEST_F(TTD_Dump_Format_Test, Deserialize_FutureSchemaVersion_Fails)
     EXPECT_NE(err.find("requires"), std::string::npos) << "Error: " << err;
 }
 
+
 // ===========================================================================
 // Round-trip: serialize → deserialize → compare digests
 // ===========================================================================

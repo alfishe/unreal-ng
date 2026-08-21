@@ -412,3 +412,165 @@ TEST(TTDWriteJournal_Test, SyncAlloc_IsReadyImmediately)
     TTDWriteJournal j(/*ringBytes=*/1024, /*asyncAlloc=*/false);
     EXPECT_TRUE(j.IsReady());
 }
+
+// ---------------------------------------------------------------------------
+// Block-compressed serialization
+// ---------------------------------------------------------------------------
+//
+// The journal section is stored as zstd-compressed columnar blocks. It is by
+// far the largest thing in a .ttd - 89% of the file on a real demo recording -
+// so the compression matters, but a lossy or reordering round trip would
+// corrupt every reverse query built on it. These check the round trip is
+// exact, field by field, including the cases the column layout is most likely
+// to get wrong: I/O records (a bitfield packed 8 to a byte), block boundaries,
+// and counts that do not divide evenly into blocks.
+
+namespace
+{
+
+ttd::TTDWriteRecord MakeRecord(uint64_t globalT, uint16_t addr, bool isIo,
+                               uint16_t m1pc, uint8_t value, uint8_t physPage)
+{
+    ttd::TTDWriteRecord r{};
+    r.globalT = globalT & ((uint64_t{1} << 40) - 1);
+    r.addr = addr;
+    r.isIo = isIo ? 1 : 0;
+    r.pad = 0;
+    r.m1pc = m1pc;
+    r.value = value;
+    r.physPage = physPage;
+    return r;
+}
+
+bool SameRecord(const ttd::TTDWriteRecord& a, const ttd::TTDWriteRecord& b)
+{
+    return a.globalT == b.globalT && a.addr == b.addr && a.isIo == b.isIo &&
+           a.m1pc == b.m1pc && a.value == b.value && a.physPage == b.physPage;
+}
+
+/// Round-trip `count` synthetic records and assert every field survives.
+void ExpectExactRoundTrip(size_t count)
+{
+    ttd::TTDWriteJournal src(64u * 1024 * 1024, /*asyncAlloc=*/false);
+
+    std::vector<ttd::TTDWriteRecord> expected;
+    expected.reserve(count);
+    for (size_t i = 0; i < count; ++i)
+    {
+        // Deliberately varied: monotonic but irregular time steps, addresses
+        // that wander, every 7th record an I/O write.
+        auto r = MakeRecord(1000 + i * 37 + (i % 13),
+                            static_cast<uint16_t>(0x4000 + (i * 251) % 0xC000),
+                            (i % 7) == 0,
+                            static_cast<uint16_t>(0x8000 + (i % 997)),
+                            static_cast<uint8_t>(i * 31),
+                            static_cast<uint8_t>(i % 8));
+        src.Append(r);
+        expected.push_back(r);
+    }
+    ASSERT_EQ(src.Size(), count);
+
+    std::ostringstream out(std::ios::binary);
+    ASSERT_TRUE(src.Serialize(out)) << "serialize failed for " << count << " records";
+
+    const std::string blob = out.str();
+    std::istringstream in(blob, std::ios::binary);
+
+    uint64_t storedCount = 0;
+    in.read(reinterpret_cast<char*>(&storedCount), sizeof(storedCount));
+    ASSERT_TRUE(in.good());
+    ASSERT_EQ(storedCount, count) << "record count header is wrong";
+
+    ttd::TTDWriteJournal dst(64u * 1024 * 1024, /*asyncAlloc=*/false);
+    ASSERT_TRUE(dst.Deserialize(in, storedCount))
+        << "deserialize failed for " << count << " records";
+    ASSERT_EQ(dst.Size(), count);
+
+    size_t mismatches = 0;
+    size_t firstMismatch = 0;
+    for (size_t i = 0; i < count; ++i)
+    {
+        auto got = dst.FindLast(UINT64_MAX, [&](const ttd::TTDWriteRecord&) { return true; });
+        (void)got;  // FindLast walks backwards; compare through the ring below.
+        break;
+    }
+
+    const auto& ring = dst.Ring();
+    for (size_t i = 0; i < count; ++i)
+    {
+        // Records were appended oldest-first into a freshly cleared journal,
+        // so ring index i is expected[i] as long as we stayed under capacity.
+        if (!SameRecord(ring[i], expected[i]))
+        {
+            if (mismatches == 0)
+                firstMismatch = i;
+            ++mismatches;
+        }
+    }
+    EXPECT_EQ(mismatches, 0u)
+        << mismatches << " of " << count << " records differ after the round trip; "
+        << "first at index " << firstMismatch;
+}
+
+}  // namespace
+
+/// Exactly one full block, plus the awkward counts around it.
+TEST(TTDWriteJournal_Compression_Test, RoundTripIsExactAcrossBlockBoundaries)
+{
+    ExpectExactRoundTrip(1);
+    ExpectExactRoundTrip(7);       // fewer records than the io bitfield's 8
+    ExpectExactRoundTrip(2047);    // one short of a block
+    ExpectExactRoundTrip(2048);    // exactly one block
+    ExpectExactRoundTrip(2049);    // one past a block
+    ExpectExactRoundTrip(5000);    // several blocks, ragged tail
+}
+
+/// An empty journal must still produce a readable section.
+TEST(TTDWriteJournal_Compression_Test, EmptyJournalRoundTrips)
+{
+    ttd::TTDWriteJournal src(1u * 1024 * 1024, false);
+    ASSERT_TRUE(src.IsEmpty());
+
+    std::ostringstream out(std::ios::binary);
+    ASSERT_TRUE(src.Serialize(out));
+
+    std::istringstream in(out.str(), std::ios::binary);
+    uint64_t storedCount = 0;
+    in.read(reinterpret_cast<char*>(&storedCount), sizeof(storedCount));
+    EXPECT_EQ(storedCount, 0u);
+
+    ttd::TTDWriteJournal dst(1u * 1024 * 1024, false);
+    EXPECT_TRUE(dst.Deserialize(in, storedCount));
+    EXPECT_TRUE(dst.IsEmpty());
+}
+
+/// The whole point: the section has to be substantially smaller than the
+/// 12-bytes-per-record it replaced.
+TEST(TTDWriteJournal_Compression_Test, SectionIsMuchSmallerThanRawRecords)
+{
+    constexpr size_t kCount = 20000;
+    ttd::TTDWriteJournal src(64u * 1024 * 1024, false);
+
+    // Shaped like a real workload: a handful of hot addresses written over and
+    // over from a small set of instructions, time advancing steadily.
+    for (size_t i = 0; i < kCount; ++i)
+    {
+        src.Append(MakeRecord(5000 + i * 29,
+                              static_cast<uint16_t>(0x5800 + (i % 64)),
+                              false,
+                              static_cast<uint16_t>(0x8000 + (i % 16)),
+                              static_cast<uint8_t>(i % 256),
+                              5));
+    }
+
+    std::ostringstream out(std::ios::binary);
+    ASSERT_TRUE(src.Serialize(out));
+
+    const size_t raw = kCount * sizeof(ttd::TTDWriteRecord);
+    const size_t stored = out.str().size();
+    const double ratio = double(raw) / double(stored);
+
+    EXPECT_GT(ratio, 5.0)
+        << "journal section compressed only " << ratio << "x ("
+        << raw << " -> " << stored << " bytes); the columnar layout is not working";
+}

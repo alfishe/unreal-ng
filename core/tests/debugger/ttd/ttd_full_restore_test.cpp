@@ -21,11 +21,13 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#include "_helpers/emulatortesthelper.h"
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
 #include "debugger/ttd/timetravelmanager.h"
@@ -203,6 +205,17 @@ TEST_F(TTD_FullRestore_Test, KeyFrame_IsSelfContained)
 /// if it interned 32 pages of nothing on every key frame.
 TEST_F(TTD_FullRestore_Test, KeyFrame_EmptyPagesDoNotInflateTheStore)
 {
+    // Establish the premise instead of assuming it. Memory::Init randomises RAM
+    // on power-on, so "empty pages" is not the state a fresh instance is in, and
+    // how much of RAM happens to be zero varies with whatever ran before. Zero
+    // everything first, then put content in exactly one page.
+    for (uint16_t p = 0; p < MAX_RAM_PAGES; ++p)
+    {
+        uint8_t* base = _memory->RAMPageAddress(p);
+        if (base != nullptr)
+            std::fill(base, base + kPageSize, uint8_t{0});
+    }
+
     FillRamPage(_memory, 1, 0x55);
     ASSERT_TRUE(_ttd->StartRecording());
     _ttd->OnFrameBoundary();
@@ -376,4 +389,85 @@ TEST_F(TTD_FullRestore_Test, LoadRefusesForeignModel)
         << "refusal did not explain the model mismatch: " << err;
 
     _context->config.mem_model = original;
+}
+
+// ---------------------------------------------------------------------------
+// Per-configuration page coverage
+// ---------------------------------------------------------------------------
+//
+// The captured page range used to be derived as ramsize/16, which reads as a
+// page COUNT. That holds only while a model numbers its pages 0..N-1. The 48K
+// machine does not: it owns three pages but Memory maps them as pages 5
+// (screen), 2 and 0, so a bound of 3 walked pages 0..2 and never captured the
+// display. Every existing test passed, because they all ran on models whose
+// pages happen to be contiguous.
+
+/// A fixture on a real 48K machine rather than the suite's default model.
+class TTD_FullRestore_Spectrum48_Test : public ::testing::Test
+{
+protected:
+    Emulator* _emulator = nullptr;
+    EmulatorContext* _context = nullptr;
+    ttd::TimeTravelManager* _ttd = nullptr;
+    Memory* _memory = nullptr;
+
+    void SetUp() override
+    {
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
+        ASSERT_NE(_emulator, nullptr);
+
+        _context = _emulator->GetContext();
+        ASSERT_NE(_context, nullptr);
+        ASSERT_EQ(_context->config.mem_model, MM_SPECTRUM48);
+
+        _ttd = _context->pTimeTravelManager;
+        _memory = _context->pMemory;
+        ASSERT_NE(_ttd, nullptr);
+        ASSERT_NE(_memory, nullptr);
+
+        FeatureManager* fm = _emulator->GetFeatureManager();
+        ASSERT_NE(fm, nullptr);
+        fm->setFeature(Features::kTimeTravel, true);
+        _memory->UpdateFeatureCache();
+    }
+
+    void TearDown() override
+    {
+        EmulatorTestHelper::CleanupEmulator(_emulator);
+        _emulator = nullptr;
+    }
+};
+
+/// The bound must reach the highest page number the model addresses, not merely
+/// count the pages it owns.
+TEST_F(TTD_FullRestore_Spectrum48_Test, PageBoundReachesTheScreenPage)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+
+    EXPECT_GT(_ttd->GetModelRamPages(), 5u)
+        << "the 48K screen lives in RAM page 5; a bound of "
+        << _ttd->GetModelRamPages() << " never reaches it";
+}
+
+/// The end-to-end consequence: whatever the guest drew must survive a restore.
+TEST_F(TTD_FullRestore_Spectrum48_Test, ScreenPageSurvivesCaptureAndRestore)
+{
+    constexpr uint16_t kScreenPage = 5;
+
+    FillRamPage(_memory, kScreenPage, 0x5A);
+
+    ASSERT_TRUE(_ttd->StartRecording());
+    _ttd->OnFrameBoundary();
+    ASSERT_GE(_ttd->GetCheckpointCount(), 1u);
+
+    // Wipe without touching the dirty bitmap, so only a genuine capture of the
+    // page can bring the content back.
+    uint8_t* p = _memory->RAMPageAddress(kScreenPage);
+    ASSERT_NE(p, nullptr);
+    std::fill(p, p + kPageSize, uint8_t{0});
+
+    ASSERT_TRUE(_ttd->RestoreCheckpointForTesting(0));
+
+    EXPECT_TRUE(RamPageMatches(_memory, kScreenPage, 0x5A))
+        << "RAM page 5 was not captured - a 48K recording restores a blank display";
 }

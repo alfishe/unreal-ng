@@ -216,18 +216,31 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, [[maybe_unused]] bool isExecution
     }
     /// endregion </Memory access tracking>
 
+    // Per-frame read coverage for reverse search. Instruction fetches are
+    // covered by the Execute path in the Z80 M1 cycle, so only data reads land
+    // here. Reads have no journal, so this set is the only thing that lets a
+    // reverse read-watchpoint skip frames rather than replay all of them.
+    if (!isExecution && _context->ttdCoverageActive && _context->pTimeTravelManager != nullptr)
+    {
+        _context->pTimeTravelManager->RecordReadCoverage(GetPhysPageForZ80Address(addr), addr);
+    }
+
     // Phase 4 — access probe hot-path check for Read access type (§9.2).
     // Instruction fetches (isExecution=true) are handled by the Execute
     // probe in the Z80 M1 cycle, not here — so skip this check for those.
     if (!isExecution && _feature_ttd_enabled && _context->ttdProbe.IsArmed())
     {
         const uint16_t pc = _context->pCore ? _context->pCore->GetZ80()->m1_pc : 0;
-        if (_context->ttdProbe.Matches(addr, ttd::TTDAccessType::Read, result, pc))
+        // Resolve the bank behind `addr` so a read watchpoint can be scoped to
+        // one physical page. Reads used to report page 0 unconditionally, which
+        // made every hit on a banked address indistinguishable.
+        const uint8_t readPhysPage = GetPhysPageForZ80Address(addr);
+        if (_context->ttdProbe.Matches(addr, ttd::TTDAccessType::Read, result, pc, readPhysPage))
         {
             const auto& st = _context->emulatorState;
             const uint16_t tin = _context->pCore ? _context->pCore->GetZ80()->t : 0;
             const ttd::TTDTimePoint tp{st.frame_counter, tin};
-            _context->ttdProbe.RecordHit(tp, pc, result, /*physPage=*/0,
+            _context->ttdProbe.RecordHit(tp, pc, result, readPhysPage,
                                           ttd::TTDAccessType::Read);
         }
     }
@@ -328,7 +341,7 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
         if (_context->ttdProbe.IsArmed())
         {
             const uint16_t pc = core->GetZ80()->m1_pc;
-            if (_context->ttdProbe.Matches(addr, ttd::TTDAccessType::Write, value, pc))
+            if (_context->ttdProbe.Matches(addr, ttd::TTDAccessType::Write, value, pc, physPage))
             {
                 const auto& st = _context->emulatorState;
                 const uint16_t tin = core->GetZ80()->t;
@@ -1255,6 +1268,16 @@ void Memory::SetROM128k(bool updatePorts)
 
 void Memory::SetROMDOS(bool updatePorts)
 {
+    // A model without a TR-DOS ROM (48K, plain 128K) leaves base_dos_rom null.
+    // Installing it would fault on the next instruction fetch, so refuse and
+    // leave bank 0 as it is. Callers are expected to gate on HasDosRom(); this
+    // is the backstop for any path that does not.
+    if (base_dos_rom == nullptr)
+    {
+        MLOGWARNING("Memory::SetROMDOS — model has no TR-DOS ROM; keeping the current ROM bank");
+        return;
+    }
+
     // Switch to DOS ROM page
     _bank_mode[0] = BANK_ROM;
     _bank_read[0] = base_dos_rom;
@@ -1273,6 +1296,14 @@ void Memory::SetROMDOS(bool updatePorts)
 
 void Memory::SetROMSystem(bool updatePorts)
 {
+    // Same backstop as SetROMDOS: models without a service ROM leave
+    // base_sys_rom null, and mapping it would fault on the next fetch.
+    if (base_sys_rom == nullptr)
+    {
+        MLOGWARNING("Memory::SetROMSystem — model has no service ROM; keeping the current ROM bank");
+        return;
+    }
+
     // Switch to System ROM page
     _bank_mode[0] = BANK_ROM;
     _bank_read[0] = base_sys_rom;

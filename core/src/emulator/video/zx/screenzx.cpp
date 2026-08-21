@@ -1,5 +1,6 @@
 #include "screenzx.h"
 
+#include <algorithm>
 #include <cassert>
 
 #include "common/stringhelper.h"
@@ -79,6 +80,21 @@ void ScreenZX::CreateTimingTable()
     RenderTypeEnum type = RT_BLANK;
     // This iterates over horizontal positions (t-states per line), not vertical lines
     uint16_t tstatesPerLine = state.tstatesPerLine;
+
+    // The table is sized for the widest supported raster, but only the first
+    // tstatesPerLine entries describe this mode. Blank the whole array first:
+    // the tail is indexed by column in DrawPeriod/render paths, and leaving it
+    // uninitialised means those reads pick up whatever the heap held — a
+    // garbage RenderTypeEnum whose behaviour depends on unrelated allocations.
+    std::fill(std::begin(_screenLineRenderers), std::end(_screenLineRenderers), RT_BLANK);
+
+    // Guard the fill below against a raster descriptor wider than the table.
+    if (tstatesPerLine > MAX_HEIGHT)
+    {
+        MLOGWARNING("ScreenZX::CreateTimingTable — tstatesPerLine=%u exceeds table size %u; clamping",
+                    static_cast<unsigned>(tstatesPerLine), static_cast<unsigned>(MAX_HEIGHT));
+        tstatesPerLine = MAX_HEIGHT;
+    }
 
     /// region <Line renderer in screen area>
 

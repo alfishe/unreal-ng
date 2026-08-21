@@ -23,11 +23,13 @@
 #include "machine_state_hash.h"  // CaptureSnapshot / HashSnapshot (self-test)
 
 // Pull in the actual struct definitions for the capture call sites.
+#include "3rdparty/message-center/messagecenter.h"
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
 #include "emulator/cpu/z80.h"            // Z80, Z80State
 #include "emulator/emulator.h"           // Emulator::RunTStates (seek engine)
 #include "emulator/emulatorcontext.h"    // EmulatorContext
+#include "emulator/notifications.h"   // EmulatorFramePayload
 #include "emulator/io/fdc/wd1793.h"      // WD1793 (peripheral, P1.5)
 #include "emulator/io/tape/tape.h"        // Tape (peripheral, P1.5)
 #include "emulator/memory/memory.h"      // Memory
@@ -265,6 +267,12 @@ bool TimeTravelManager::StartRecording()
     _timeline.push_back(std::move(baseline));
 
     _state = TTDSessionState::Recording;
+    _context->ttdCoverageActive = _enableCoverageIndex;
+
+    // This is live capture now, not the file it may have replaced.
+    _loadedFromFile   = false;
+    _sourcePath.clear();
+    _capturedAtUnixMs = 0;
 
     MLOGINFO("TimeTravelManager::StartRecording — baseline captured: modelRamPages=%u, timeline=1, pageStoreBytes=%zu, debugMemIf=%s",
              static_cast<unsigned>(_modelRamPages), _pageStore.GetCapacityBytes(),
@@ -280,6 +288,11 @@ bool TimeTravelManager::StartRecording()
 
 void TimeTravelManager::StopRecording()
 {
+    // Compress whatever coverage is still accumulating, so size reporting and
+    // any later serialization see the whole session rather than all-but-the-
+    // last block.
+    _coverageIndex.FlushOpenBlocks();
+
     if (_state != TTDSessionState::Recording)
         return;  // Idempotent
     _state = TTDSessionState::Idle;
@@ -337,6 +350,14 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     if (_writeJournal)
         _writeJournal->Clear();  // Phase 4 — write journal invalidates with the timeline
     _modelRamPages = 0;
+    _dirtyPageOverflowReported = false;
+    _loadedFromFile = false;
+    _sourcePath.clear();
+    _capturedAtUnixMs = 0;
+    _sessionModelId = 0;
+    _coverageIndex.Clear();
+    if (_context)
+        _context->ttdCoverageActive = false;
     _state = TTDSessionState::Idle;
 
     // Reset Phase 5 codec state.
@@ -402,6 +423,31 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
     // page-store bytes because that's what the process is actually
     // consuming.
     info.sessionHeapBytes = EstimateSessionHeapBytes();
+
+    // Provenance. A loaded session and a live one are otherwise
+    // indistinguishable from the numbers, which is the first thing anyone
+    // handed a session needs to know.
+    info.loadedFromFile    = _loadedFromFile;
+    info.sourcePath        = _sourcePath;
+    info.capturedAtUnixMs  = _capturedAtUnixMs;
+    info.modelId           = _loadedFromFile
+                                 ? _sessionModelId
+                                 : static_cast<uint8_t>(_context ? _context->config.mem_model : 0);
+    info.modelRamPages     = _modelRamPages;
+
+    // Sections. The write journal is normally the largest part of a session,
+    // and the coverage index decides whether reverse queries run in
+    // milliseconds or replay frames.
+    if (_writeJournal)
+    {
+        info.writeJournalRecords = _writeJournal->Size();
+        info.writeJournalBytes   = _writeJournal->Size() * sizeof(TTDWriteRecord);
+    }
+
+    info.coverageIndexFrames = _coverageIndex.SealedFrameCount(TTDCoverageKind::Executed);
+    info.coverageIndexBytes  = _coverageIndex.EncodedBytes(TTDCoverageKind::Executed) +
+                               _coverageIndex.EncodedBytes(TTDCoverageKind::Written) +
+                               _coverageIndex.EncodedBytes(TTDCoverageKind::Read);
 
     // Phase 5 codec telemetry — useful for the UI / WebAPI status surface
     // to show compression effectiveness at a glance.
@@ -484,6 +530,19 @@ void TimeTravelManager::OnFrameBoundary()
     {
         if (!_memory || !_dirtyTracker)
             return;  // Defensive — should not happen if StartRecording succeeded
+
+        // Close the coverage sets for the frame that just ended.
+        //
+        // The frame counter has ALREADY advanced by the time this runs, so the
+        // execution being sealed belongs to frame_counter - 1: a checkpoint
+        // labelled N holds the state at the START of frame N, and the M1
+        // records for frame N carry globalT in [N*frameT, (N+1)*frameT).
+        // Sealing under frame_counter shifted every coverage set one frame into
+        // the future, which made reverse search look in the wrong frame and
+        // report no match for a PC that had plainly executed.
+        const uint64_t endedFrame = _context->emulatorState.frame_counter;
+        if (_enableCoverageIndex && endedFrame > 0)
+            _coverageIndex.SealFrame(endedFrame - 1);
 
         TTDCheckpoint cp;
         CaptureNow(cp);
@@ -826,6 +885,22 @@ void TimeTravelManager::UpdateRamPages(const std::vector<uint16_t>& dirtyPages,
             }
         }
     }
+
+    // Safety net for configurations whose page bound is wrong. The walk above
+    // consumes dirtyPages in ascending order, so anything left over sits at a
+    // page index at or beyond _modelRamPages and was NOT captured. Silently
+    // dropping it is how the 48K screen went missing; make it loud instead.
+    // Logged once per session to keep a mis-sized model from flooding the log.
+    if (dirtyCursor < dirtyPages.size() && !_dirtyPageOverflowReported)
+    {
+        _dirtyPageOverflowReported = true;
+        MLOGWARNING("TimeTravelManager::UpdateRamPages — %zu dirty page(s) at or beyond the page bound %u were not "
+                    "captured (first is page %u). The model's RAM page set is wider than ResolveModelRamPages() "
+                    "reports; recordings for this configuration are incomplete.",
+                    dirtyPages.size() - dirtyCursor,
+                    static_cast<unsigned>(_modelRamPages),
+                    static_cast<unsigned>(dirtyPages[dirtyCursor]));
+    }
 }
 
 void TimeTravelManager::ReleaseCheckpointRefs(TTDCheckpoint& cp)
@@ -880,8 +955,26 @@ uint16_t TimeTravelManager::ResolveModelRamPages() const
     if (!_context)
         return 0;
 
-    // config.ramsize is in KB; each page is PAGE_SIZE = 16 KB.
     const CONFIG& cfg = _context->config;
+
+    // The result is an EXCLUSIVE PAGE-INDEX BOUND, not a page count. Capture
+    // walks [0, bound), so the bound must cover the highest page number the
+    // configuration can address — which is not ramsize/16 whenever a model maps
+    // its RAM at non-contiguous page numbers.
+    //
+    // The 48K machine is exactly that case: three pages of RAM, but Memory maps
+    // them as pages 5 (screen), 2 and 0 (Memory::Reset). A ramsize/16 bound of 3
+    // walks pages 0..2 and silently drops the screen, so a 48K recording
+    // restores correct registers into a blank display.
+    //
+    // TODO(models): this per-model knowledge belongs in the model/config layer
+    // next to the port decoders, not here. When TSConf/ZX-Evo/Profi/Scorpion
+    // extended paging lands, replace this with a page set published by the
+    // configuration itself — see the TDD section "Per-configuration RAM pages".
+    if (cfg.mem_model == MM_SPECTRUM48)
+        return 6;  // pages {0, 2, 5} in use → highest index 5
+
+    // config.ramsize is in KB; each page is PAGE_SIZE = 16 KB.
     if (cfg.ramsize == 0 || cfg.ramsize > MAX_RAM_PAGES * (PAGE_SIZE / 1024))
     {
         MLOGWARNING("TimeTravelManager::ResolveModelRamPages — implausible ramsize=%u KB, falling back to MAX_RAM_PAGES",
@@ -1043,6 +1136,7 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
         // we set it explicitly above for clarity and to keep the cached
         // field correct even if a future FillBorderWithColor impl forgets.
         _context->pScreen->FillBorderWithColor(borderColor);
+
     }
 
     // t_states and frame_counter were already restored by RestoreChipsetState.
@@ -1322,8 +1416,57 @@ bool TimeTravelManager::SeekTo(const TTDTimePoint& target, TTDSeekResult* outRes
         return false;
     }
 
-    return SeekToInternal(target, outResult);
+    const bool ok = SeekToInternal(target, outResult);
+
+    if (ok)
+        PublishSeekedFrame();
+
+    return ok;
 }
+
+void TimeTravelManager::PublishSeekedFrame()
+{
+    // Deliberately here and not in RestoreCheckpoint. Restores also happen deep
+    // inside FindLastAccess and ReverseContinue, which walk hundreds of
+    // checkpoints looking for a match; publishing each one would add a full
+    // framebuffer copy per restore and flicker the display through frames the
+    // user never asked to see. This is the user-initiated path — an explicit
+    // scrub, a frame step — and the only one whose result should reach the
+    // screen. Normal emulation does not come through here at all.
+    if (!_context)
+        return;
+
+    // 1. Flush the video delay line and publish the restored frame.
+    //
+    // The UI reads through Screen::CopyPresentedFramebuffer, which serves the
+    // present QUEUE rather than the live framebuffer, so a repaint alone leaves
+    // the pre-seek image on screen with the correct one sitting in memory
+    // behind it. On a paused machine no later frame arrives to push it through.
+    // The queue refills by itself once playback resumes.
+    if (_context->pScreen)
+        _context->pScreen->FlushAndPresentFramebuffer();
+
+    // 2. Tell observers a new final frame exists. NC_VIDEO_FRAME_REFRESH is
+    // otherwise posted only by MainLoop::OnFrameEnd, which does not run while
+    // paused.
+    try
+    {
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        const std::string emulatorId = _context->pEmulator ? _context->pEmulator->GetId() : "";
+        messageCenter.Post(NC_VIDEO_FRAME_REFRESH,
+                           new EmulatorFramePayload(emulatorId,
+                                                    _context->emulatorState.frame_counter));
+    }
+    catch (const std::exception& e)
+    {
+        // A refresh that fails to be announced is cosmetic; it must not take
+        // the seek down with it.
+        MLOGERROR("TimeTravelManager::PublishSeekedFrame — MessageCenter post failed: %s",
+                  e.what());
+    }
+}
+
+
 
 bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult* outResult)
 {
@@ -1918,10 +2061,10 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     const uint16_t cpuStateSize     = static_cast<uint16_t>(sizeof(TTDCpuState));
     const uint16_t chipsetStateSize = static_cast<uint16_t>(sizeof(TTDChipsetState));
 
-    // model_ram_pages is u8 in the .ksy format. _modelRamPages is uint16_t in
-    // the engine (could exceed 255 only on >4 MB machines, which no v1-supported
-    // model approaches). Truncate defensively.
-    const uint8_t modelRamPagesOut = static_cast<uint8_t>(_modelRamPages);
+    // model_ram_pages is u2. It was u1 until a 4 MB machine's 256 pages were
+    // found to truncate to 0, leaving the file describing a checkpoint table of
+    // zero RAM refs.
+    const uint16_t modelRamPagesOut = _modelRamPages;
 
     // Symbolic emulator identifier (best-effort; empty when no Emulator is
     // attached — e.g. a deserialized-then-reserialized session).
@@ -1972,6 +2115,15 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     uint16_t flags = ttd::dump::kFlagsLittleEndian;
     if (hasJournalData)
         flags |= ttd::dump::kFlagsHasWriteJournal;
+
+    // The coverage index is written whenever there is one. It is derived data,
+    // so a reader that skips it still gets a correct session — just one whose
+    // reverse queries fall back to replay.
+    const bool hasCoverage =
+        _enableCoverageIndex &&
+        _coverageIndex.SealedFrameCount(TTDCoverageKind::Executed) > 0;
+    if (hasCoverage)
+        flags |= ttd::dump::kFlagsHasCoverageIndex;
     if (!WritePod(out, flags, err)) return false;
 
     if (!WritePod(out, modelId, err)) return false;
@@ -2142,7 +2294,7 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
         if (!WriteBlob(out, cp.covoxState, err)) return false;
     }
 
-    // --- Write journal section (v3 additive, TDD §9.3) ---
+    // --- Write journal section (TDD §9.3) ---
     // Flag bit 1 in the header tells the reader this section exists.
     // Only write if journal capture was enabled and has data.
     if (hasJournalData && _writeJournal)
@@ -2150,6 +2302,19 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
         if (!_writeJournal->Serialize(out))
         {
             err = "stream write failed (write journal section)";
+            return false;
+        }
+    }
+
+    // --- Reverse-search coverage index ---
+    // Flag bit 2. Written last, after the journal, so a reader that knows only
+    // the earlier layout stops at the end of the journal rather than misparsing
+    // this as journal data.
+    if (hasCoverage)
+    {
+        if (!_coverageIndex.Serialize(out))
+        {
+            err = "stream write failed (coverage index section)";
             return false;
         }
     }
@@ -2188,7 +2353,8 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     }
     const bool hasJournal = (flags & ttd::dump::kFlagsHasWriteJournal) != 0;
 
-    uint8_t modelId = 0, modelRamPages = 0;
+    uint8_t modelId = 0;
+    uint16_t modelRamPages = 0;
     uint16_t cpuStateSize = 0, chipsetStateSize = 0;
     uint64_t capturedAtMs = 0;
     if (!ReadPod(in, modelId, err)) return false;
@@ -2268,6 +2434,14 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     _externalEvents.Clear();
     _dirtyScratch.clear();
     _modelRamPages = modelRamPages;
+
+    // Coverage from any previous recording describes a different timeline
+    // entirely; letting it survive would make reverse search prune frames of
+    // the newly loaded session using another session's data. Clear first, then
+    // load this file's own index if it carries one.
+    _coverageIndex.Clear();
+    if (_context)
+        _context->ttdCoverageActive = false;
 
     // --- Read page store (v2 codec format) ---
     //
@@ -2435,6 +2609,27 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
         }
     }
 
+    // --- Coverage index section ---
+    // Derived data: a file without it is complete, and a file whose index fails
+    // to load is still usable. Refuse the index rather than the session — a
+    // half-loaded index would authorise pruning frames it never observed, which
+    // silently drops search results.
+    if (flags & ttd::dump::kFlagsHasCoverageIndex)
+    {
+        if (!_coverageIndex.Deserialize(in))
+        {
+            _coverageIndex.Clear();
+            MLOGWARNING("TimeTravelManager::DeserializeSession — coverage index section "
+                        "could not be read; reverse queries will fall back to replay");
+        }
+    }
+
+    // Remember where this came from, so status can distinguish a loaded
+    // recording from one captured in this process.
+    _loadedFromFile   = true;
+    _capturedAtUnixMs = capturedAtMs;
+    _sessionModelId   = modelId;
+
     // --- Finalize state ---
     // The file does not carry live recording semantics; force Idle. Callers
     // who want to browse the timeline can call RestoreCheckpointForTesting()
@@ -2442,13 +2637,16 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     _state = TTDSessionState::Idle;
 
     MLOGINFO("TimeTravelManager::DeserializeSession — loaded schema v%u: "
-             "%u pages, %zu checkpoints (frames %llu..%llu), model_ram_pages=%u",
+             "%u pages, %zu checkpoints (frames %llu..%llu), model_ram_pages=%u, "
+             "coverage=%s",
              static_cast<unsigned>(schemaVersion),
              static_cast<unsigned>(pageStoreCount),
              _timeline.size(),
              static_cast<unsigned long long>(sessionStart),
              static_cast<unsigned long long>(sessionEnd),
-             static_cast<unsigned>(_modelRamPages));
+             static_cast<unsigned>(_modelRamPages),
+             (_coverageIndex.SealedFrameCount(TTDCoverageKind::Executed) > 0
+                  ? "loaded" : "absent"));
 
     return true;
 }
@@ -2515,6 +2713,19 @@ TimeTravelManager::SelfTestResult TimeTravelManager::CaptureRestoreSelfTest()
 // Phase 4: Reverse-search engine (parent TDD §9 + §10.4)
 // ---------------------------------------------------------------------------
 
+void TimeTravelManager::SetEnableCoverageIndex(bool enable)
+{
+    _enableCoverageIndex = enable;
+
+    if (!enable)
+        _coverageIndex.Clear();
+
+    // Only mirror into the hot-path flag while a session is live; StartRecording
+    // sets it otherwise.
+    if (_context && _state == TTDSessionState::Recording)
+        _context->ttdCoverageActive = enable;
+}
+
 void TimeTravelManager::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t newVal,
                                           uint16_t m1pc, uint8_t physPage)
 {
@@ -2523,9 +2734,17 @@ void TimeTravelManager::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t
     // the ring with duplicate records (TDD §9.3).
     if (_state != TTDSessionState::Recording)
         return;
-    if (!_enableWriteJournal)
-        return;
     if (!_context)
+        return;
+
+    // Coverage is recorded independently of the write journal: the journal
+    // answers "what was written", the coverage set answers "which frames are
+    // worth replaying at all", and a user may want the second without paying
+    // for the first.
+    if (_enableCoverageIndex)
+        _coverageIndex.Record(TTDCoverageKind::Written, MakeCoverageKey(physPage, addr));
+
+    if (!_enableWriteJournal)
         return;
 
     const uint32_t frameT = _context->config.frame;
@@ -2620,6 +2839,9 @@ TimeTravelManager::FindLastAccess(const TTDSearchQuery& q,
             if (rec.addr < q.addrFrom || rec.addr > q.addrTo) return false;
             if (q.hasValueFilter && rec.value != q.value) return false;
             if (q.hasPcFilter && (rec.m1pc < q.pcFrom || rec.m1pc > q.pcTo)) return false;
+            // Bank-aware match (TDD §9.4). A port record has no page, so the
+            // filter only constrains memory writes.
+            if (q.hasPhysPageFilter && !rec.isIo && rec.physPage != q.physPage) return false;
             return true;
         };
 
@@ -2725,6 +2947,32 @@ replay_fallback:
             if (outBlockingMarker)
                 *outBlockingMarker = *barrier;
             break;  // Can't replay past a marker — stop searching.
+        }
+
+        // Coverage-index prune. Restoring a checkpoint and replaying a frame is
+        // the expensive part of this loop (~1.3 ms), and most frames cannot
+        // possibly contain the access being searched for — measured densities
+        // are 7.3% for execution and 1.2% for writes. Asking the index first
+        // turns "replay everything backwards" into "replay only candidates".
+        //
+        // The check is conservative in both directions that matter: it prunes
+        // only frames the index actually watched, and only when the query's
+        // address range maps onto a single non-wrapping offset interval. Any
+        // uncertainty answers "maybe" and the frame gets replayed as before.
+        if (CanPruneByCoverage(q))
+        {
+            const uint16_t offsetLow  = static_cast<uint16_t>(q.addrFrom & 0x3FFF);
+            const uint16_t offsetHigh = static_cast<uint16_t>(q.addrTo & 0x3FFF);
+            const TTDCoverageKind coverageKind = (q.access == TTDAccessType::Execute)
+                                                     ? TTDCoverageKind::Executed
+                                                     : TTDCoverageKind::Read;
+
+            if (!_coverageIndex.FrameMayContain(coverageKind, cp.time.frame,
+                                                offsetLow, offsetHigh,
+                                                q.hasPhysPageFilter, q.physPage))
+            {
+                continue;  // Proven absent — no restore, no replay.
+            }
         }
 
         // Restore checkpoint silently.
@@ -3255,6 +3503,148 @@ TimeTravelManager::ReverseContinue(const std::vector<uint16_t>& breakpoints)
     const uint32_t frameT  = _context->config.frame;
     const uint64_t nowGlobalT =
         static_cast<uint64_t>(now.frame) * frameT + now.tInFrame;
+
+    // ------------------------------------------------------------------
+    // Fast path: let the coverage index nominate candidate frames.
+    //
+    // The fallback below enumerates every M1 cycle from session start, which
+    // means silently replaying the entire recording — measured at 68-168 ms and
+    // growing without bound as the session gets longer. The index already knows
+    // which frames executed which addresses, so instead of replaying everything
+    // we replay one candidate frame at a time, newest first, and stop at the
+    // first real hit.
+    //
+    // The index is keyed by (physical page, offset within page), while a
+    // breakpoint is a bare Z80 address. Asking "any page, this offset"
+    // over-approximates — four Z80 addresses share an offset — so a candidate
+    // frame may turn out not to contain the PC at all. That costs one wasted
+    // frame enumeration and is retried on the next candidate; it can never
+    // skip a real hit, which is the only direction that would be wrong.
+    // ------------------------------------------------------------------
+    uint64_t coverFirst = 0, coverLast = 0;
+    const bool coverageUsable =
+        _enableCoverageIndex &&
+        _coverageIndex.CoveredRange(TTDCoverageKind::Executed, coverFirst, coverLast);
+
+    if (coverageUsable)
+    {
+        const uint64_t scanFrom = std::min<uint64_t>(now.frame, coverLast);
+
+        // Note on degradation. With a large breakpoint set the index stops
+        // pruning — it is keyed by offset-within-page, so each breakpoint
+        // aliases four Z80 addresses and nearly every frame becomes a
+        // candidate. That is not a cliff: enumerating N frames one at a time
+        // costs about the same replay work as enumerating them in one pass,
+        // differing only by N checkpoint restores. Measured with 100
+        // breakpoints: 65 ms per-frame against 76 ms bulk. An explicit
+        // bail-out to the bulk path was tried and made it worse (97 ms),
+        // because the fruitless per-frame work is then paid twice.
+
+        for (uint64_t frame = scanFrom + 1; frame-- > coverFirst;)
+        {
+            bool candidate = false;
+            for (uint16_t bp : breakpoints)
+            {
+                const uint16_t offset = static_cast<uint16_t>(bp & 0x3FFF);
+                if (_coverageIndex.FrameMayContain(TTDCoverageKind::Executed, frame,
+                                                   offset, offset,
+                                                   /*hasPage=*/false, 0))
+                {
+                    candidate = true;
+                    break;
+                }
+            }
+            if (!candidate)
+            {
+                if (frame == 0) break;
+                continue;
+            }
+
+            // Enumerate only this frame, clipped to the current position.
+            const uint64_t frameStart = frame * frameT;
+            const uint64_t frameEnd =
+                std::min<uint64_t>(nowGlobalT, frameStart + frameT);
+            if (frameStart >= frameEnd)
+            {
+                if (frame == 0) break;
+                continue;
+            }
+
+            std::vector<TTDM1Record> frameM1s;
+            TTDExternalEvent frameBarrier;
+            EnumerateM1InRange(frameStart, frameEnd, frameM1s, &frameBarrier);
+
+            auto hit = std::find_if(frameM1s.rbegin(), frameM1s.rend(),
+                [&](const TTDM1Record& m) {
+                    return std::find(breakpoints.begin(), breakpoints.end(), m.pc)
+                           != breakpoints.end();
+                });
+
+            if (hit != frameM1s.rend())
+            {
+                result.matched = true;
+                result.pc      = hit->pc;
+                result.arrivedAt.frame    = hit->globalT / frameT;
+                result.arrivedAt.tInFrame = static_cast<uint32_t>(hit->globalT % frameT);
+                if (frameBarrier.reason[0] != '\0')
+                    result.blockingMarker = frameBarrier;
+
+                if (!SeekTo(result.arrivedAt))
+                {
+                    MLOGWARNING("TimeTravelManager::ReverseContinue — SeekTo(arrivedAt) failed");
+                    result.matched = false;
+                }
+                return result;
+            }
+
+            if (frame == 0)
+                break;
+        }
+
+        {
+
+        // The indexed range does not necessarily start where the session does.
+        // Coverage is sealed at frame boundaries, so the first recorded frame
+        // has no entry: the index covers [coverFirst, coverLast] while the
+        // timeline starts at coverFirst - 1 or earlier. Frames below coverFirst
+        // are UNKNOWN, not empty, and skipping them silently loses hits that
+        // happened during the session's opening frames.
+        const uint64_t prefixEnd = std::min<uint64_t>(nowGlobalT, coverFirst * frameT);
+        if (prefixEnd > 0)
+        {
+            std::vector<TTDM1Record> prefixM1s;
+            TTDExternalEvent prefixBarrier;
+            EnumerateM1InRange(0, prefixEnd, prefixM1s, &prefixBarrier);
+
+            auto hit = std::find_if(prefixM1s.rbegin(), prefixM1s.rend(),
+                [&](const TTDM1Record& m) {
+                    return std::find(breakpoints.begin(), breakpoints.end(), m.pc)
+                           != breakpoints.end();
+                });
+
+            if (hit != prefixM1s.rend())
+            {
+                result.matched = true;
+                result.pc      = hit->pc;
+                result.arrivedAt.frame    = hit->globalT / frameT;
+                result.arrivedAt.tInFrame = static_cast<uint32_t>(hit->globalT % frameT);
+                if (prefixBarrier.reason[0] != '\0')
+                    result.blockingMarker = prefixBarrier;
+
+                if (!SeekTo(result.arrivedAt))
+                {
+                    MLOGWARNING("TimeTravelManager::ReverseContinue — SeekTo(arrivedAt) failed");
+                    result.matched = false;
+                }
+                return result;
+            }
+        }
+
+            MLOGINFO("TimeTravelManager::ReverseContinue — no PC match in the indexed range "
+                     "nor in the unindexed prefix");
+            return result;
+        }
+    }
 
     // Enumerate M1s from session start up to (but not including) now.
     std::vector<TTDM1Record> m1s;

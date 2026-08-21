@@ -28,12 +28,12 @@ Subcommands
 Examples
 --------
     #!/bin/sh
-    ./run.sh info testdata/fixture.ttd
-    ./run.sh validate testdata/fixture.ttd && echo "OK"
-    ./run.sh analyze testdata/fixture.ttd | less
-    ./run.sh report testdata/fixture.ttd -o report.md
-    ./run.sh render testdata/fixture.ttd --frame 100 -o cp100.png
-    ./run.sh heatmap testdata/fixture.ttd -o heatmap.png
+    ./run.sh info testdata/ttd/active_demo.ttd
+    ./run.sh validate testdata/ttd/active_demo.ttd && echo "OK"
+    ./run.sh analyze testdata/ttd/active_demo.ttd | less
+    ./run.sh report testdata/ttd/active_demo.ttd -o report.md
+    ./run.sh render testdata/ttd/active_demo.ttd --frame 100 -o cp100.png
+    ./run.sh heatmap testdata/ttd/active_demo.ttd -o heatmap.png
 
 Exit codes
 ----------
@@ -109,9 +109,11 @@ def cmd_info(args: argparse.Namespace) -> int:
     print(f"file size: {_format_size(os.path.getsize(args.file))}")
     print(f"schema: v{h.schema_version}, flags=0x{h.flags:04X} "
           f"({'LE' if h.flags & 1 else 'BE'})")
+    # model_ram_pages is an exclusive page-index BOUND, not a page count, so it
+    # does not translate to an RAM size: a 48K machine reports 6 because its
+    # three pages are numbered 0, 2 and 5.
     print(f"model: {_model_name(h.model_id)} "
-          f"({h.model_ram_pages} × 16 KB = "
-          f"{h.model_ram_pages * 16} KB RAM)")
+          f"(RAM page bound {h.model_ram_pages}: pages 0..{h.model_ram_pages - 1})")
     print(f"cpu_state_size={h.cpu_state_size}, "
           f"chipset_state_size={h.chipset_state_size}")
     # v2: slots are variable-size and compressed. Report live payload bytes
@@ -130,6 +132,40 @@ def cmd_info(args: argparse.Namespace) -> int:
           f"{_format_size(raw_bytes)} raw → "
           f"{dump.compression_ratio * 100:.1f}% of raw)")
     print(f"  slot breakdown: {n_full} Full, {n_xor} XorPrev, {n_zero} Zero")
+    # The journal is usually the largest section in the file - 71% of a demo
+    # recording even after block compression - so it belongs in the summary
+    # rather than hidden behind a flag bit.
+    if dump.journal is not None:
+        j = dump.journal
+        if j.record_count:
+            print(f"write journal: {j.record_count:,} records in {len(j.blocks)} blocks "
+                  f"({_format_size(j.section_bytes)} on disk, "
+                  f"{_format_size(j.verbatim_bytes)} verbatim -> "
+                  f"{j.compression_ratio:.1f}x)")
+            print(f"  {j.section_bytes / max(j.record_count, 1):.2f} B/record, "
+                  f"globalT {j.blocks[0].first_global_t} … {j.blocks[-1].last_global_t}")
+        else:
+            print("write journal: present but empty")
+    elif h.flags & 0x0002:
+        print("write journal: flagged but unreadable")
+    else:
+        print("write journal: absent")
+    cov = getattr(dump, "coverage", None)
+    if cov is not None and cov.kinds:
+        total = cov.compressed_bytes
+        print(f"coverage index: {_format_size(total)} "
+              f"({_format_size(cov.raw_bytes)} raw -> "
+              f"{cov.raw_bytes / total:.1f}x)" if total else "coverage index: empty")
+        for kind in cov.kinds:
+            rng = kind.covered_range
+            span = f"frames {rng[0]}..{rng[1]}" if rng else "no frames"
+            print(f"  {kind.name:<9} {kind.frame_count:>5} frames, "
+                  f"{len(kind.blocks):>3} blocks, "
+                  f"{_format_size(kind.compressed_bytes):>9} ({span})")
+    elif h.flags & 0x0004:
+        print("coverage index: flagged but unreadable")
+    else:
+        print("coverage index: absent (reverse queries fall back to replay)")
     print(f"checkpoints: {h.checkpoint_count}")
     print(f"frame range: {h.session_start_frame} … {h.session_end_frame}")
     print(f"emulator_id: {h.emulator_id!r}")

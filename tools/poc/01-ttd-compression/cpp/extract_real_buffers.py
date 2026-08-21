@@ -28,7 +28,7 @@ Output layout (all little-endian):
 
 Usage:
     python3 extract_real_buffers.py \\
-        --ttd tools/verification/ttd-analyzer/testdata/active_demo.ttd \\
+        --ttd testdata/ttd/active_demo.ttd \\
         --out tools/poc/cpp/real_buffers.bin
 """
 from __future__ import annotations
@@ -39,7 +39,10 @@ import sys
 from pathlib import Path
 
 # Make the ttd-analyzer package importable without installation.
-REPO_ROOT = Path(__file__).resolve().parents[3]
+# parents: [0]=cpp [1]=01-ttd-compression [2]=poc [3]=tools [4]=repo root.
+# This said [3] before the script moved into 01-ttd-compression, which resolved
+# to tools/ and made the import below fail outright.
+REPO_ROOT = Path(__file__).resolve().parents[4]
 ANALYZER_SRC = REPO_ROOT / "tools" / "verification" / "ttd-analyzer" / "src"
 sys.path.insert(0, str(ANALYZER_SRC))
 

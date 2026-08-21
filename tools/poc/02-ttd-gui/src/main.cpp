@@ -45,9 +45,10 @@ int main(int argc, char* argv[]) {
             exeDir.filePath("../../tools/poc/02-ttd-gui/testdata/action_demo.ttd"),
             QStringLiteral("testdata/action_demo.ttd"),
             exeDir.filePath("testdata/active_demo.ttd"),
-            exeDir.filePath("../tools/poc/02-ttd-gui/testdata/active_demo.ttd"),
-            exeDir.filePath("../../tools/poc/02-ttd-gui/testdata/active_demo.ttd"),
-            QStringLiteral("testdata/active_demo.ttd"),
+            exeDir.filePath("../testdata/ttd/active_demo.ttd"),
+            exeDir.filePath("../../testdata/ttd/active_demo.ttd"),
+            exeDir.filePath("../../../testdata/ttd/active_demo.ttd"),
+            QStringLiteral("testdata/ttd/active_demo.ttd"),
         };
         for (const auto& p : searchPaths) {
             if (QFileInfo::exists(p)) {

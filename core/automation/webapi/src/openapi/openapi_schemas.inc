@@ -321,6 +321,54 @@
             "shrinks when old pages are released via session invalidation or "
             "future thinning. Multiply by 16384 to compare against "
             "page_store_used_bytes.";
+    // --- Provenance: recorded here, or opened from a file? -----------------
+    schemas["TTDStatusResponse"]["properties"]["loaded_from_file"]["type"] = "boolean";
+    schemas["TTDStatusResponse"]["properties"]["loaded_from_file"]["description"] =
+            "True when the timeline came from a .ttd file rather than from live "
+            "capture in this process. A loaded session and a live one are "
+            "otherwise indistinguishable from the counters below.";
+    schemas["TTDStatusResponse"]["properties"]["source_path"]["type"] = "string";
+    schemas["TTDStatusResponse"]["properties"]["source_path"]["description"] =
+            "Path the session was loaded from. Empty for live recordings.";
+    schemas["TTDStatusResponse"]["properties"]["captured_at_unix_ms"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["captured_at_unix_ms"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["captured_at_unix_ms"]["description"] =
+            "Wall-clock capture time recorded in the file (ms since Unix epoch). "
+            "Zero for a live recording, which has not been written anywhere yet.";
+
+    // --- Machine -----------------------------------------------------------
+    schemas["TTDStatusResponse"]["properties"]["model_id"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["model_id"]["description"] =
+            "eModel value the session belongs to. A session refuses to load into "
+            "a different model.";
+    schemas["TTDStatusResponse"]["properties"]["model_ram_pages"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["model_ram_pages"]["description"] =
+            "Exclusive RAM page-index bound for the model. A BOUND, not a page "
+            "count: a 48K machine reports 6 because its three pages are numbered "
+            "0, 2 and 5.";
+
+    // --- Sections ----------------------------------------------------------
+    schemas["TTDStatusResponse"]["properties"]["write_journal_records"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_records"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_records"]["description"] =
+            "Memory/port write records currently held in the ring. Normally the "
+            "largest part of a session.";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_bytes"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_bytes"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_bytes"]["description"] =
+            "In-memory footprint of those records (12 bytes each). The on-disk "
+            "section is block-compressed and much smaller.";
+    schemas["TTDStatusResponse"]["properties"]["coverage_index_frames"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["coverage_index_frames"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["coverage_index_frames"]["description"] =
+            "Frames covered by the reverse-search index. Zero means reverse "
+            "queries fall back to replaying frames — correct, but orders of "
+            "magnitude slower.";
+    schemas["TTDStatusResponse"]["properties"]["coverage_index_bytes"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["coverage_index_bytes"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["coverage_index_bytes"]["description"] =
+            "Compressed size of the coverage index across all access kinds.";
+
     schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["type"] = "integer";
     schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["format"] = "uint64";
     schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["description"] =
