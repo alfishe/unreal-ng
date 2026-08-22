@@ -33,18 +33,26 @@ struct MachineTiming
 {
     const char* name;
     uint32_t frameTStates;
+    uint32_t frameDurationUs;  // frame_duration_us for accurate audio timing
 };
 
 const std::vector<MachineTiming> MACHINE_TIMINGS = {
-    {"ZX48/ZX128/Scorpion", 69888},   // 50.08 Hz -> 881 samples
-    {"Spectrum +2A/+3", 70908},       // 49.36 Hz -> 893 samples
-    {"Pentagon", 71680},              // 48.83 Hz -> 903 samples
-    {"Hypothetical 60Hz clone", 58333},  // ~60 Hz -> 735 samples
-    {"Hypothetical slow clone", 80000},  // 43.75 Hz -> 1008 samples
+    {"ZX48/ZX128/Scorpion", 69888, 19968},   // 50.08 Hz -> 881 samples
+    {"Spectrum +2A/+3", 70908, 20260},       // 49.36 Hz -> 893 samples
+    {"Pentagon", 71680, 20480},              // 48.83 Hz -> 903 samples
+    {"Hypothetical 60Hz clone", 58333, 16667},  // ~60 Hz -> 735 samples
+    {"Hypothetical slow clone", 80000, 22857},  // 43.75 Hz -> 1008 samples
 };
 
-// The authoritative per-frame sample count for a given frame length
-size_t expectedSamples(uint32_t frameTStates)
+// Expected sample count from frame_duration_us (used by SoundManager)
+size_t expectedSamplesFromUs(uint32_t frameDurationUs)
+{
+    return static_cast<size_t>(
+        std::lround(static_cast<double>(frameDurationUs) * AUDIO_SAMPLING_RATE / 1'000'000.0));
+}
+
+// Expected sample count from T-states (used by blip_buf-based components: Beeper, Covox, AY)
+size_t expectedSamplesFromTstates(uint32_t frameTStates)
 {
     return static_cast<size_t>(
         std::lround(frameTStates * (double)AUDIO_SAMPLING_RATE / (double)CPU_CLOCK_RATE));
@@ -121,6 +129,7 @@ TEST_F(SoundAdaptivity_Test, SoundManager_CallbackSizeFollowsFrameLength)
     for (const auto& machine : MACHINE_TIMINGS)
     {
         _context->config.frame = machine.frameTStates;
+        _context->config.frame_duration_us = machine.frameDurationUs;
 
         size_t before = capture.callCount;
         sound->handleFrameStart();
@@ -131,7 +140,7 @@ TEST_F(SoundAdaptivity_Test, SoundManager_CallbackSizeFollowsFrameLength)
         // (integer accumulator carries the fraction); cumulative exactness is
         // verified by SoundManager_ExactSampleCountOverAccumulatorPeriod
         EXPECT_NEAR(static_cast<double>(capture.lastNumSamples),
-                    static_cast<double>(expectedSamples(machine.frameTStates) * AUDIO_CHANNELS),
+                    static_cast<double>(expectedSamplesFromUs(machine.frameDurationUs) * AUDIO_CHANNELS),
                     static_cast<double>(AUDIO_CHANNELS))
             << machine.name << " (" << machine.frameTStates
             << "T): mixed output size must derive from the frame length";
@@ -157,7 +166,7 @@ TEST_F(SoundAdaptivity_Test, Beeper_SampleCountFollowsFrameLength)
         beeper.handleFrameEnd(machine.frameTStates);
 
         size_t written = countWrittenPairs(buffer.data(), bufferPairs, SENTINEL);
-        size_t expected = expectedSamples(machine.frameTStates);
+        size_t expected = expectedSamplesFromTstates(machine.frameTStates);
 
         // blip_buf's internal resampling may land one sample either side of
         // the ideal count per frame; anything larger is a hardcoded-rate bug
@@ -189,7 +198,7 @@ TEST_F(SoundAdaptivity_Test, Covox_SampleCountFollowsFrameLength)
         covox.handleFrameEnd();
 
         size_t written = countWrittenPairs(buffer, bufferPairs, SENTINEL);
-        size_t expected = expectedSamples(machine.frameTStates);
+        size_t expected = expectedSamplesFromTstates(machine.frameTStates);
 
         EXPECT_NEAR(static_cast<double>(written), static_cast<double>(expected), 1.0)
             << machine.name << " (" << machine.frameTStates << "T)";
@@ -222,7 +231,7 @@ TEST_F(SoundAdaptivity_Test, TurboSound_SampleCountFollowsFrameLength)
         turboSound->handleStep();
 
         size_t rendered = turboSound->getRenderedSamplesThisFrame();
-        size_t expected = expectedSamples(machine.frameTStates);
+        size_t expected = expectedSamplesFromTstates(machine.frameTStates);
 
         // PLL accumulation may land one sample short of the rounded ideal
         EXPECT_NEAR(static_cast<double>(rendered), static_cast<double>(expected), 1.0)
@@ -254,16 +263,18 @@ TEST_F(SoundAdaptivity_Test, SoundManager_ExactSampleCountOverAccumulatorPeriod)
     {
         const char* name;
         uint32_t frame;
+        uint32_t frameDurationUs;
         uint32_t frames;  // Full accumulator period
     };
     const Case cases[] = {
-        {"Pentagon", 71680, 125},   // 125 * 903.168 = 112896 exactly
-        {"ZX48/128", 69888, 625},   // 625 * 880.5888 = 550368 exactly
+        {"Pentagon", 71680, 20480, 125},   // 125 * 903.168 -> exact over period
+        {"ZX48/128", 69888, 19968, 625},   // 625 * 880.5888 -> exact over period
     };
 
     for (const auto& c : cases)
     {
         _context->config.frame = c.frame;
+        _context->config.frame_duration_us = c.frameDurationUs;
         sound->reset();  // Restart the accumulator for a clean period
 
         uint64_t totalStereoSamples = 0;
@@ -274,8 +285,9 @@ TEST_F(SoundAdaptivity_Test, SoundManager_ExactSampleCountOverAccumulatorPeriod)
             totalStereoSamples += capture.lastNumSamples / AUDIO_CHANNELS;
         }
 
+        // Expected: frames * frame_duration_us * AUDIO_SAMPLING_RATE / 1_000_000
         uint64_t expected =
-            (static_cast<uint64_t>(c.frames) * c.frame * AUDIO_SAMPLING_RATE) / CPU_CLOCK_RATE;
+            (static_cast<uint64_t>(c.frames) * c.frameDurationUs * AUDIO_SAMPLING_RATE) / 1'000'000ULL;
         EXPECT_EQ(totalStereoSamples, expected)
             << c.name << ": " << c.frames << " frames must deliver exactly " << expected
             << " samples (zero drift by construction)";

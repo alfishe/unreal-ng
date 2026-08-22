@@ -370,25 +370,40 @@ void EventQueue::Dispatch(int id, Message* message)
     if (message == nullptr)
         return;
 
-    ObserverVectorPtr observers = GetObservers(id);
-
-    if (observers != nullptr)
+    // Take a deep copy of observer descriptors while holding the lock.
+    // This prevents race condition where RemoveObserver deletes a descriptor
+    // while we're iterating. We copy the actual descriptor data, not just pointers.
+    std::vector<ObserverDescriptor> observersCopy;
     {
-        for (auto it : *observers)
+        std::lock_guard<std::mutex> lock(m_mutexObservers);
+        ObserverVectorPtr observers = GetObservers(id);
+        if (observers != nullptr)
         {
-            if (it->callback != nullptr)
+            for (auto* desc : *observers)
             {
-                (*it->callback)(id, message);
+                if (desc != nullptr)
+                {
+                    observersCopy.push_back(*desc);  // Copy the descriptor itself
+                }
             }
-            else if (it->callbackMethod != nullptr && it->observerInstance != nullptr)
-            {
-                ObserverCallbackMethod callbackMethod = it->callbackMethod;
-                (it->observerInstance->*callbackMethod)(id, message);
-            }
-            else if (it->callbackFunc != nullptr)
-            {
-                (it->callbackFunc)(id, message);
-            }
+        }
+    }
+
+    // Iterate over the copy - safe even if original descriptors are deleted
+    for (const auto& obs : observersCopy)
+    {
+        if (obs.callback != nullptr)
+        {
+            (*obs.callback)(id, message);
+        }
+        else if (obs.callbackMethod != nullptr && obs.observerInstance != nullptr)
+        {
+            ObserverCallbackMethod callbackMethod = obs.callbackMethod;
+            (obs.observerInstance->*callbackMethod)(id, message);
+        }
+        else if (obs.callbackFunc != nullptr)
+        {
+            (obs.callbackFunc)(id, message);
         }
     }
 
