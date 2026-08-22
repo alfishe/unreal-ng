@@ -321,8 +321,9 @@ void TileGrid::compositeSingleSyncFrame()
     if (!fb.memoryBuffer || fb.width <= 0 || fb.height <= 0) return;
 
     // 1. Create a QImage wrapping the raw framebuffer
-    // Format_RGBA8888 assumes 32 bits per pixel.
-    QImage rawImage(static_cast<const unsigned char*>(fb.memoryBuffer), fb.width, fb.height, fb.width * 4, QImage::Format_RGBA8888);
+    // RGBX8888: 32 bits per pixel, alpha ignored (emulated framebuffer has no
+    // alpha channel - a 0x00-alpha clear would composite transparently)
+    QImage rawImage(static_cast<const unsigned char*>(fb.memoryBuffer), fb.width, fb.height, fb.width * 4, QImage::Format_RGBX8888);
     
     // 2. Extract the 256x192 active area
     QImage activeArea = rawImage.copy(48, 48, 256, 192);

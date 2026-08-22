@@ -320,8 +320,8 @@ QImage EmulatorTile::convertFramebuffer()
     // 4. Batch updates: Coordinate all tiles to repaint together in single window update
     // Current: Zero-copy direct read (fast, simple, works well for current scale)
 
-    // Default: black image if no emulator
-    QImage image(TILE_WIDTH, TILE_HEIGHT, QImage::Format_RGBA8888);
+    // Default: black image if no emulator (RGBX8888: alpha ignored)
+    QImage image(TILE_WIDTH, TILE_HEIGHT, QImage::Format_RGBX8888);
     image.fill(Qt::black);
 
     if (!_emulator)
@@ -343,8 +343,9 @@ QImage EmulatorTile::convertFramebuffer()
 
         // Create QImage from the full framebuffer data with proper stride
         // Qt will handle extracting the correct region when we use devicePixelsRect in paintEvent
+        // RGBX8888: alpha ignored - the emulated framebuffer has no alpha channel
         image = QImage(static_cast<const unsigned char*>(framebufferDesc.memoryBuffer), framebufferDesc.width,
-                       framebufferDesc.height, stride, QImage::Format_RGBA8888);
+                       framebufferDesc.height, stride, QImage::Format_RGBX8888);
     }
 
     return image;
