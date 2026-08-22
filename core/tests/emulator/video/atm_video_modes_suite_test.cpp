@@ -547,7 +547,7 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATMTX_All25TextRows_AddressedAt1C0Plus64P
         const uint8_t glyph = ATM_FONT[0x41 + r];
         const uint32_t row = 44 + 8 * r;
         for (uint32_t k = 0; k < 8; ++k)
-            EXPECT_EQ(At(row, 32 + k), ((glyph >> k) & 1) ? ink : paper) << "px " << k;
+            EXPECT_EQ(At(row, 32 + k), ((glyph >> (7 - k)) & 1) ? ink : paper) << "px " << k;
     }
 }
 
@@ -585,7 +585,7 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATMTX_PerScanlineFontLines)
         const uint8_t glyph = ATM_FONT[s * 256 + code];
         const uint32_t row = 44 + 16 + s;
         for (uint32_t k = 0; k < 8; ++k)
-            EXPECT_EQ(At(row, 32 + k), ((glyph >> k) & 1) ? ink : paper) << "px " << k;
+            EXPECT_EQ(At(row, 32 + k), ((glyph >> (7 - k)) & 1) ? ink : paper) << "px " << k;
     }
 }
 
@@ -615,15 +615,15 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATMTX_AttrQuirkByteAlignment)
     vp[0x2000 + T0 + 1] = 0x44;           // 'D' at char column 3
     ap[1 + T0 + 1] = 0x30;                // black ink on yellow paper
 
-    _screen->DrawATMMode(BeamT(0, 34));   // n=1, half=0 -> cols 40..43
-    _screen->DrawATMMode(BeamT(0, 38));   // n=3, half=0 -> cols 56..59
+    _screen->DrawATMMode(BeamT(0, 34));   // n=1, half=0 -> cols 40..43, bits 7..4
+    _screen->DrawATMMode(BeamT(0, 38));   // n=3, half=0 -> cols 56..59, bits 7..4
 
     const uint8_t gB = ATM_FONT[0x42];
     const uint8_t gD = ATM_FONT[0x44];
     for (uint32_t k = 0; k < 4; ++k)
     {
-        EXPECT_EQ(At(44, 40 + k), ((gB >> k) & 1) ? InkColor(0x20) : PaperColor(0x20)) << "px " << k;
-        EXPECT_EQ(At(44, 56 + k), ((gD >> k) & 1) ? InkColor(0x30) : PaperColor(0x30)) << "px " << k;
+        EXPECT_EQ(At(44, 40 + k), ((gB >> (7 - k)) & 1) ? InkColor(0x20) : PaperColor(0x20)) << "px " << k;
+        EXPECT_EQ(At(44, 56 + k), ((gD >> (7 - k)) & 1) ? InkColor(0x30) : PaperColor(0x30)) << "px " << k;
     }
 }
 
@@ -646,18 +646,19 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATMHR_Linear40ByteStride_SecondLine)
     uint8_t* ap = _memory->RAMPageAddress(1);
     uint8_t* vp = _memory->RAMPageAddress(5);
 
-    vp[0] = 0x01;   ap[0] = 0x47;               // screenY 0: bit 0 -> px0 ink
-    vp[40] = 0x08;  ap[40] = 0x47;              // screenY 1 (offset 40): bit 3 -> px3 ink
-    vp[0x2000 + 40] = 0x01;  ap[0x2000 + 40] = 0x02;  // right half, screenY 1
+    vp[0] = 0x80;   ap[0] = 0x47;               // screenY 0: bit 7 -> px0 ink
+    vp[40] = 0x10;  ap[40] = 0x47;              // screenY 1 (offset 40): bit 4 -> px3 ink
+    vp[0x2000 + 40] = 0x80;  ap[0x2000 + 40] = 0x02;  // odd byte group, screenY 1
 
     _screen->DrawATMMode(BeamT(0, 32));         // row 44
     _screen->DrawATMMode(BeamT(1, 32));         // row 45
+    _screen->DrawATMMode(BeamT(1, 34));         // row 45, odd byte group n=1
 
     EXPECT_EQ(At(44, 32), InkColor(0x47));
     EXPECT_EQ(At(45, 32), PaperColor(0x47));
-    EXPECT_EQ(At(45, 35), InkColor(0x47)) << "bit 3 of the byte at offset 40";
-    EXPECT_EQ(At(45, 352), InkColor(0x02)) << "right half = left col + 320";
-    EXPECT_EQ(At(45, 355), PaperColor(0x02));
+    EXPECT_EQ(At(45, 35), InkColor(0x47)) << "bit 4 of the byte at offset 40";
+    EXPECT_EQ(At(45, 40), InkColor(0x02)) << "odd byte group n=1 reads plane +0x2000";
+    EXPECT_EQ(At(45, 41), PaperColor(0x02));
 }
 
 TEST_F(ATMVideoModesSuite_Test, Render_ATM16_PlaneHalvesStride_SecondLine)

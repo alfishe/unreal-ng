@@ -450,7 +450,7 @@ TEST_F(ATMVideoMode_Test, Render_ATM16_NibbleDecodeAndLinearStride)
     EXPECT_EQ(At(45, 65), zx16(0x01));
 }
 
-TEST_F(ATMVideoMode_Test, Render_ATMHR_LSBFirstPixelsAndAttrPlanes)
+TEST_F(ATMVideoMode_Test, Render_ATMHR_MSBFirstPixelsAndPlaneAlternation)
 {
     SetATMModel();
     SetVideoMode(FF77_MC);
@@ -466,27 +466,36 @@ TEST_F(ATMVideoMode_Test, Render_ATMHR_LSBFirstPixelsAndAttrPlanes)
     uint8_t* ap = _memory->RAMPageAddress(1);
     uint8_t* vp = _memory->RAMPageAddress(5);
 
-    // Left half: pixels vp+0, attrs ap+0. Right half: pixels vp+0x2000, attrs ap+0x2000
-    vp[0] = 0x01;            // bit 0 set -> leftmost pixel of the byte is ink
+    // Byte groups alternate planes every 8 px (reference dxr_atm2.cpp
+    // line_atm2_8: h0 byte j -> px 16j..16j+7, h1 byte j -> px 16j+8..15).
+    // Bits are MSB-first: bit 7 = leftmost pixel of the byte.
+    vp[0] = 0x80;            // bit 7 set -> leftmost pixel of group 0 is ink
     ap[0] = 0x47;            // bright white ink, black paper
-    vp[0x2000] = 0x08;       // bit 3 set -> 4th pixel of the byte is ink
+    vp[0x2000] = 0x08;       // bit 3 set -> 5th pixel of group 1 is ink
     ap[0x2000] = 0x02;       // red ink, black paper
 
-    _screen->DrawATMMode(68 * 224 + 32);  // j=0, q=0: 4 px from each half
+    _screen->DrawATMMode(68 * 224 + 32);  // n=0, half=0: group 0 bits 7..4
+    _screen->DrawATMMode(68 * 224 + 34);  // n=1, half=0: group 1 bits 7..4 (plane +0x2000)
+    _screen->DrawATMMode(68 * 224 + 35);  // n=1, half=1: group 1 bits 3..0
 
     auto ink = [this](uint8_t a) { return _screen->TransformZXSpectrumColorsToRGBA(a, true); };
     auto paper = [this](uint8_t a) { return _screen->TransformZXSpectrumColorsToRGBA(a, false); };
 
-    // LSB-first order: px0 <- bit0 (ink), px1..3 <- bits 1..3 (paper)
+    // MSB-first order: px0 <- bit7 (ink), px1..3 <- bits 6..4 (paper)
     EXPECT_EQ(At(44, 32), ink(0x47));
     EXPECT_EQ(At(44, 33), paper(0x47));
     EXPECT_EQ(At(44, 34), paper(0x47));
     EXPECT_EQ(At(44, 35), paper(0x47));
-    // Right half starts at col 32+320
-    EXPECT_EQ(At(44, 352), paper(0x02));
-    EXPECT_EQ(At(44, 353), paper(0x02));
-    EXPECT_EQ(At(44, 354), paper(0x02));
-    EXPECT_EQ(At(44, 355), ink(0x02));
+    // Group 1 (odd -> plane +0x2000) spans cols 40..47: bits 7..4 paper
+    EXPECT_EQ(At(44, 40), paper(0x02));
+    EXPECT_EQ(At(44, 41), paper(0x02));
+    EXPECT_EQ(At(44, 42), paper(0x02));
+    EXPECT_EQ(At(44, 43), paper(0x02));
+    // Group 1 half=1: px4 <- bit3 (ink), px5..7 <- bits 2..0 (paper)
+    EXPECT_EQ(At(44, 44), ink(0x02));
+    EXPECT_EQ(At(44, 45), paper(0x02));
+    EXPECT_EQ(At(44, 46), paper(0x02));
+    EXPECT_EQ(At(44, 47), paper(0x02));
 }
 
 TEST_F(ATMVideoMode_Test, Render_ATMTX_FontAndCrossPlaneAttrs)
@@ -513,24 +522,24 @@ TEST_F(ATMVideoMode_Test, Render_ATMTX_FontAndCrossPlaneAttrs)
     vp[0x2000 + T0] = 0x42;          // 'B'
     ap[1 + T0] = 0x20;               // black ink on red paper (paper = bits 3..5 = 4)
 
-    // Row 0 of 'A': font bits 0..3 at t (half=0), bits 4..7 at t+1 (half=1)
+    // Row 0 of 'A': font bits 7..4 at t (half=0), bits 3..0 at t+1 (half=1)
     const uint8_t glyphA = ATM_FONT[0x41];
     const uint8_t glyphB = ATM_FONT[0x42];
-    _screen->DrawATMMode(68 * 224 + 32);  // n=0 half=0: 'A' bits 0..3
-    _screen->DrawATMMode(68 * 224 + 33);  // n=0 half=1: 'A' bits 4..7
-    _screen->DrawATMMode(68 * 224 + 34);  // n=1 half=0: 'B' bits 0..3
+    _screen->DrawATMMode(68 * 224 + 32);  // n=0 half=0: 'A' bits 7..4
+    _screen->DrawATMMode(68 * 224 + 33);  // n=0 half=1: 'A' bits 3..0
+    _screen->DrawATMMode(68 * 224 + 34);  // n=1 half=0: 'B' bits 7..4
 
     auto ink = [this](uint8_t a) { return _screen->TransformZXSpectrumColorsToRGBA(a, true); };
     auto paper = [this](uint8_t a) { return _screen->TransformZXSpectrumColorsToRGBA(a, false); };
 
     for (int k = 0; k < 4; ++k)
     {
-        EXPECT_EQ(At(44, 32 + k), ((glyphA >> k) & 1) ? ink(0x47) : paper(0x47));
-        EXPECT_EQ(At(44, 36 + k), ((glyphA >> (4 + k)) & 1) ? ink(0x47) : paper(0x47));
+        EXPECT_EQ(At(44, 32 + k), ((glyphA >> (7 - k)) & 1) ? ink(0x47) : paper(0x47));
+        EXPECT_EQ(At(44, 36 + k), ((glyphA >> (3 - k)) & 1) ? ink(0x47) : paper(0x47));
     }
     for (int k = 0; k < 4; ++k)
     {
-        EXPECT_EQ(At(44, 40 + k), ((glyphB >> k) & 1) ? ink(0x20) : paper(0x20));
+        EXPECT_EQ(At(44, 40 + k), ((glyphB >> (7 - k)) & 1) ? ink(0x20) : paper(0x20));
     }
 }
 

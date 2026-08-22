@@ -1090,26 +1090,25 @@ void ScreenZX::DrawATMMode(uint32_t tstate)
 
     if (_mode == M_ATMHR)
     {
-        // Hardware Multicolor 640x200: 1bpp pixel planes + ZX-attr planes,
-        // LSB-first bit order (bit 0 = leftmost pixel of the byte).
-        // Left half (px 0..319): pixels vp+0, attrs ap+0;
-        // right half (px 320..639): pixels vp+0x2000, attrs ap+0x2000.
-        const uint32_t j = t / 4;  // byte index 0..39 in each plane
-        const uint32_t q = t % 4;  // 4 px per T-state from each half
-        const uint8_t pixL = vp[offset + j];
-        const uint8_t pixR = vp[0x2000 + offset + j];
-        const uint8_t attrL = ap[offset + j];
-        const uint8_t attrR = ap[0x2000 + offset + j];
-        const uint32_t inkL = _rgbaColors[attrL], paperL = _rgbaFlashColors[attrL];
-        const uint32_t inkR = _rgbaColors[attrR], paperR = _rgbaFlashColors[attrR];
-        const uint32_t shift = 4 * q;
-        const uint32_t colL = rd.screenOffsetLeft + 8 * j + 4 * q;
-        const uint32_t colR = colL + 320;
+        // Hardware Multicolor 640x200: 1bpp pixel planes + ZX-attr planes.
+        // Pixel bytes alternate planes every 8 px: even byte groups read
+        // plane+0, odd groups plane+0x2000 (reference dxr_atm2.cpp
+        // line_atm2_8/16: h0 byte j -> px 16j..16j+7, h1 byte j -> px
+        // 16j+8..15; ZXMAK2 Atm640Renderer: +0x2000*((y*80+x)&1)). Attr
+        // planes pair same-parity (h2 with h0, h3 with h1). Bits are
+        // MSB-first: bit 7 is the leftmost pixel of the byte.
+        const uint32_t n = t / 2;      // pixel byte group 0..79 (8 px each)
+        const uint32_t half = t % 2;   // 0: bits 7..4, 1: bits 3..0
+        const bool fromP0 = (n % 2 == 0);
+        const uint8_t* pixPlane = fromP0 ? vp : vp + 0x2000;
+        const uint8_t* attrPlane = fromP0 ? ap : ap + 0x2000;
+        const uint8_t pix = pixPlane[offset + n / 2];
+        const uint8_t attr = attrPlane[offset + n / 2];
+        const uint32_t ink = _rgbaColors[attr], paper = _rgbaFlashColors[attr];
+        const uint32_t col = rd.screenOffsetLeft + 8 * n + 4 * half;
+        const uint32_t shift = 4 * half;
         for (uint32_t k = 0; k < 4; ++k)
-        {
-            framebufferARGB[rowOffset + colL + k] = ((pixL >> (shift + k)) & 1) ? inkL : paperL;
-            framebufferARGB[rowOffset + colR + k] = ((pixR >> (shift + k)) & 1) ? inkR : paperR;
-        }
+            framebufferARGB[rowOffset + col + k] = ((pix >> (7 - shift - k)) & 1) ? ink : paper;
         return;
     }
 
@@ -1123,10 +1122,12 @@ void ScreenZX::DrawATMMode(uint32_t tstate)
     // Char codes: p0 = vp+0, p1 = vp+0x2000; attrs: a1 = ap+0x2000 (pairs with
     // p0 chars) and a0 = ap+1 (pairs with p1 chars - the +1 offset is a
     // hardware quirk kept from the reference dxr_atm6.cpp). Font: built-in 2KB
-    // table (atmfont.h), row-major [row * 256 + code], LSB-first bits.
+    // table (atmfont.h), row-major [row * 256 + code], MSB-first bits (bit 7
+    // = leftmost pixel - reference dxr_atm6_8/16 and ZXMAK2 AtmTxtRenderer;
+    // the unrealspeccy 32bpp paths are LSB-first outliers).
     {
         const uint32_t n = t / 2;      // char column 0..79
-        const uint32_t half = t % 2;   // 0: font bits 0..3, 1: bits 4..7
+        const uint32_t half = t % 2;   // 0: font bits 7..4, 1: bits 3..0
         const uint32_t byteIdx = 0x1C0 + 64 * (screenY / 8) + n / 2;
         const bool fromP0 = (n % 2 == 0);
         const uint8_t code = fromP0 ? vp[byteIdx] : vp[0x2000 + byteIdx];
@@ -1137,7 +1138,7 @@ void ScreenZX::DrawATMMode(uint32_t tstate)
         const uint32_t col = rd.screenOffsetLeft + 8 * n + 4 * half;
         const uint32_t shift = 4 * half;
         for (uint32_t k = 0; k < 4; ++k)
-            framebufferARGB[rowOffset + col + k] = ((glyph >> (shift + k)) & 1) ? ink : paper;
+            framebufferARGB[rowOffset + col + k] = ((glyph >> (7 - shift - k)) & 1) ? ink : paper;
     }
 }
 

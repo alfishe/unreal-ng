@@ -3,7 +3,10 @@
 /// ATM turbo 2 built-in text-mode font (2KB, 256 chars x 8 rows).
 /// Layout per reference comment: data(chr, y) = font[chr + y*0x100],
 /// i.e. row-major font[v * 256 + code] = row v of char `code`.
-/// Font bits are LSB-first: bit 0 is the leftmost pixel.
+/// Font bits are MSB-first: bit 7 is the leftmost pixel (glyph shapes such
+/// as '2', 'b'/'d' and 'L' only read correctly under this order; reference
+/// renderers dxr_atm6_8/16 and ZXMAK2 AtmTxtRenderer agree - the unrealspeccy
+/// 32bpp paths that read bits LSB-first are internal outliers).
 /// Vendored verbatim from other/unrealspeccy/fontatm2.cpp (reference
 /// Unreal Speccy sources). The ATM text renderer (mode FF77_TX) uses this
 /// table instead of a ROM location - matches the reference renderer.
