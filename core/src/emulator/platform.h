@@ -819,6 +819,7 @@ struct EmulatorState
 	uint8_t aFE, aFB; // ATM 4.50 system ports
 	unsigned pFFF7[8]; // ATM 7.10 / ATM3(4Mb) memory map
 	// |7ffd|rom|b7b6|b5..b0| b7b6 = 0 for atm2
+	bool atmMemSwapped; // ATM memory address bits swapped (A5-A7 <-> A8-A10)
 
 	uint8_t wd_shadow[4]; // 2F, 4F, 6F, 8F
 

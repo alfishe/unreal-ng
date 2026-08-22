@@ -85,8 +85,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     deviceScreen = new DeviceScreen(contentFrame);
     
     // NOTE: We do NOT use a layout manager for contentFrame. 
-    // DeviceScreen relies on shrinking itself to maintain aspect ratio, which fights Qt layouts.
-    // We manually resize and center it in resizeEvent and showEvent.
+    // DeviceScreen maintains its aspect ratio itself (fitToParent), which fights Qt layouts.
+    // We fit and center it in resizeEvent, showEvent and on framebuffer geometry changes (init).
     /*
         QSizePolicy dp;
         dp.setHorizontalPolicy(QSizePolicy::Expanding);
@@ -349,8 +349,9 @@ void MainWindow::showEvent(QShowEvent* event)
     QWidget::showEvent(event);
 
     if (deviceScreen && ui->contentFrame) {
-        deviceScreen->resize(ui->contentFrame->size());
-        updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
+        // Largest aspect-conforming geometry inside the content frame,
+        // centered - grow-capable, no deferred re-centering needed
+        deviceScreen->fitToParent();
     }
 }
 
@@ -434,21 +435,12 @@ void MainWindow::closeEvent(QCloseEvent* event)
 void MainWindow::resizeEvent(QResizeEvent* event)
 {
     if (deviceScreen && ui->contentFrame) {
-        deviceScreen->resize(ui->contentFrame->size());
-        updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
+        // fitToParent() sets move+resize atomically, so no deferred
+        // re-centering dance is needed anymore
+        deviceScreen->fitToParent();
 
-        // DeviceScreen::resizeEvent self-resizes to maintain aspect ratio, which invalidates
-        // the position we just set above. Defer re-centering to the next event loop iteration
-        // so it runs after DeviceScreen has settled to its final size.
-        QTimer::singleShot(0, this, [this]() {
-            if (deviceScreen && ui->contentFrame)
-            {
-                updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
-
-                // Repaint contentFrame to clear stale pixels from the previous larger rect
-                ui->contentFrame->update();
-            }
-        });
+        // Repaint contentFrame to clear stale pixels from the previous larger rect
+        ui->contentFrame->update();
     }
 
     // Update normal geometry ONLY when in normal state

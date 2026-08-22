@@ -366,7 +366,9 @@ void MenuManager::createMachineMenu()
     std::set<MEM_MODEL> supportedModels = {
         MM_PENTAGON,      // Pentagon 128K/512K/1024K
         MM_SPECTRUM48,    // ZX-Spectrum 48K
-        MM_SPECTRUM128    // ZX-Spectrum 128K
+        MM_SPECTRUM128,   // ZX-Spectrum 128K
+        MM_ATM710,        // ATM Turbo 2+ v7.10
+        MM_ATM3           // ZX-Evo / ATM3 / PentEvo
     };
 
     for (const auto& model : models)

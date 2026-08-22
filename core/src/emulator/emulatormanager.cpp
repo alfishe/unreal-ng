@@ -230,6 +230,12 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const s
         case MM_SPECTRUM128:
             configFolder = "spectrum128";
             break;
+        case MM_ATM710:
+            configFolder = "atm710";
+            break;
+        case MM_ATM3:
+            configFolder = "atm3";
+            break;
         default:
             // Use default config for unsupported models
             break;

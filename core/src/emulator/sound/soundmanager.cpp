@@ -397,17 +397,22 @@ void SoundManager::handleFrameEnd()
     // the carry, the sequence is exactly periodic (903,903,...,904 with
     // period 125 on Pentagon@44.1k) and drift-free by construction.
     size_t samplesThisFrame = SAMPLES_PER_FRAME;
-    uint32_t frameDuration = 0;
+    uint32_t frameDuration = 0;     // T-states (for beeper)
+    uint32_t frameDurationUs = 0;   // microseconds (for sample calculation)
     {
         CONFIG& config = _context->config;
         uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
         frameDuration = config.frame * speedMultiplier;
+        // Use frame_duration_us which is correctly calculated for the machine's clock rate
+        // (ATM 7MHz: 99880 T-states = ~14269us, Pentagon 3.5MHz: 71680 T-states = ~20480us)
+        frameDurationUs = config.frame_duration_us * speedMultiplier;
 
-        if (frameDuration > 0)
+        if (frameDurationUs > 0)
         {
-            _sampleAccumulator += static_cast<uint64_t>(frameDuration) * _coreRate;
-            samplesThisFrame = static_cast<size_t>(_sampleAccumulator / CPU_CLOCK_RATE);
-            _sampleAccumulator %= CPU_CLOCK_RATE;
+            // Accumulate: (frame_us * sample_rate), then divide by 1,000,000 for samples
+            _sampleAccumulator += static_cast<uint64_t>(frameDurationUs) * _coreRate;
+            samplesThisFrame = static_cast<size_t>(_sampleAccumulator / 1'000'000ULL);
+            _sampleAccumulator %= 1'000'000ULL;
 
             // Overflow guard: buffers are sized MAX_SAMPLES_PER_FRAME (speed
             // multiplier >= 3 exceeds it). Drop the excess KNOWINGLY - turbo

@@ -478,11 +478,19 @@ void Core::Reset()
     _hdd->Reset();               // Reset IDE controller
     _portDecoder->reset();       // Reset peripheral port decoder (sets model-specific port defaults)
 
+    // Apply the model-specific boot register defaults for the RESET= mode (port
+    // of the original reset(mode) ATM block: RM_DOS installs the FF77/pFFF7
+    // memory-manager defaults, other modes leave the manager disabled so all
+    // windows read the last ROM page - the ATM BIOS)
+    _portDecoder->ApplyBootROMDefaults(_mode);
+
     // Apply the ROM mode requested by the RESET= config directive (port of the
     // original set_mode(conf.reset_rom) performed at the end of m_reset()).
     // The decoder reset above establishes the model defaults (p7FFD = 0, 128K
     // ROM selected); the configured mode is layered on top: BASIC -> 48K BASIC,
-    // DOS -> TR-DOS, MENU -> 128K menu, SYS -> service ROM
+    // DOS -> TR-DOS, MENU -> 128K menu, SYS -> service ROM. For models with
+    // their own memory manager (ATM) UpdateZ80Banks() re-runs the manager
+    // mapping instead of the generic ZX bank layout
     _memory->SetROMMode(_mode);
 #ifdef ENABLE_RECORDING
     if (_recordingManager)
