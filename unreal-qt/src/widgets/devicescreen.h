@@ -27,6 +27,11 @@ public:
     void init(uint16_t width, uint16_t height, void* buffer);
     void detach();
 
+    /// Largest ratio-conforming geometry inside the parent widget, centered.
+    /// Grow-capable replacement for the shrink-only conformToAspectRatio when
+    /// the framebuffer geometry changes (model/video-mode switch).
+    void fitToParent();
+
     /// Copies the latched (tear-free) frame into dst; returns true on success.
     using FrameCopyFn = std::function<bool(uint8_t* dst, size_t dstSize)>;
 
@@ -96,6 +101,7 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
 
     void resizeEvent(QResizeEvent* event) override;
+    void conformToAspectRatio();  // Shrink current size to the aspect ratio (safety net for external resizes)
     using QWidget::heightForWidth;  // Bring method declaration from QWidget
     int heightForWidth(int width);
 

@@ -385,10 +385,18 @@ public:
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_TS16
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_TS256
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_TSTX
-        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_ATM16
-        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_ATMHR
-        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_ATMTX
-        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_ATMTL
+        // ATM modes: ZX-compatible 312-line PAL timing at base clock
+        // Beam: 448 pixels/line = 224 T-states; 16 vSync + 8 vBlank + 288 visible = 312 lines
+        // maxFrameTiming = 224 x 312 = 69888 = config.frame (synchronized)
+        // 200-line screen vertically centered (44-line borders, like the reference
+        // renderer's (scy-200)/2 centering in dxr_atm0.cpp).
+        // 640-px modes (MC/Text) double the pixel clock inside the same 160-T screen
+        // window: storage is 704-wide (32-px side borders) while the beam stays
+        // 448 px/line - pixelsPerLine is timing, fullFrameWidth is storage.
+        {448, 288, 320, 200, 64, 44, 448, 64, 32, 16, 8},  // M_ATM16 (EGA 16-color)
+        {704, 288, 640, 200, 32, 44, 448, 64, 32, 16, 8},  // M_ATMHR (HW Multicolor 640x200)
+        {704, 288, 640, 200, 32, 44, 448, 64, 32, 16, 8},  // M_ATMTX (Text 80x25, 640x200)
+        {448, 288, 320, 200, 64, 44, 448, 64, 32, 16, 8},  // M_ATMTL (Linear Text ATM3, placeholder geometry)
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_PROFI
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_GMX
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_BRD
@@ -431,10 +439,26 @@ protected:
     DrawCallback _borderCallback;
 
     DrawCallback _drawCallbacks[M_MAX] = {
-        &Screen::DrawNull,  &Screen::DrawZX,       &Screen::DrawPMC,      &Screen::DrawP16,      &Screen::DrawP384,
-        &Screen::DrawPHR,   &Screen::DrawTimex,    &Screen::DrawTS16,     &Screen::DrawTS256,    &Screen::DrawTSText,
-        &Screen::DrawATM16, &Screen::DrawATMHiRes, &Screen::DrawATM2Text, &Screen::DrawATM3Text, &Screen::DrawProfi,
-        &Screen::DrawGMX,   &Screen::DrawBorder};
+        &Screen::DrawNull,      // M_NUL
+        &Screen::DrawZX,        // M_ZX48
+        &Screen::DrawZX,        // M_ZX128 (same rendering as ZX48)
+        &Screen::DrawZX,        // M_PENTAGON128K (same rendering as ZX48)
+        &Screen::DrawPMC,       // M_PMC
+        &Screen::DrawP16,       // M_P16
+        &Screen::DrawP384,      // M_P384
+        &Screen::DrawPHR,       // M_PHR
+        &Screen::DrawTimex,     // M_TIMEX
+        &Screen::DrawTS16,      // M_TS16
+        &Screen::DrawTS256,     // M_TS256
+        &Screen::DrawTSText,    // M_TSTX
+        &Screen::DrawATM16,     // M_ATM16
+        &Screen::DrawATMHiRes,  // M_ATMHR
+        &Screen::DrawATM2Text,  // M_ATMTX
+        &Screen::DrawATM3Text,  // M_ATMTL
+        &Screen::DrawProfi,     // M_PROFI
+        &Screen::DrawGMX,       // M_GMX
+        &Screen::DrawBorder     // M_BRD
+    };
 
 public:
     VideoControl _vid;
@@ -463,6 +487,33 @@ public:
     virtual void InitMemoryCounters();
     /// endregion </Initialization>
 
+    /// region <Video mode detection>
+protected:
+    /// Result of the per-model video mode detection: port/config state -> (mode, raster)
+    struct ModeSelection
+    {
+        VideoModeEnum mode;
+        RasterModeEnum raster;
+    };
+
+    /// Single routing point: maps the machine model to its per-family
+    /// detector. InitRaster calls only this; adding a model family means
+    /// one case here plus one DetectMode* implementation.
+    ModeSelection DetectVideoMode(MEM_MODEL model) const;
+
+    /// Per-model-family detection - each method fully owns its family's
+    /// mode + raster decision based on the current emulator port state
+    ModeSelection DetectModeZX48(const EmulatorState& state) const;
+    ModeSelection DetectModeZX128(const EmulatorState& state) const;
+    ModeSelection DetectModePentagon(const EmulatorState& state) const;
+    ModeSelection DetectModeATM1(const EmulatorState& state) const;
+    ModeSelection DetectModeATM2(const EmulatorState& state) const;
+    ModeSelection DetectModeATM3(const EmulatorState& state) const;
+    ModeSelection DetectModeProfi(const EmulatorState& state) const;
+    ModeSelection DetectModeGMX(const EmulatorState& state) const;
+    ModeSelection DetectModeLegacy(const EmulatorState& state) const;
+    /// endregion </Video mode detection>
+
 public:
     virtual void SetVideoMode(VideoModeEnum mode);
     virtual void SetActiveScreen(SpectrumScreenEnum screen);
@@ -472,6 +523,11 @@ public:
     virtual uint8_t GetActiveScreen();
     virtual uint8_t GetBorderColor();
     virtual uint32_t GetCurrentTstate();
+
+    /// Test observability: raster timing of the active mode. _rasterState is
+    /// refreshed by SetVideoMode, i.e. after InitRaster applied a mode change.
+    uint32_t GetMaxFrameTiming() const { return _rasterState.maxFrameTiming; }
+    uint32_t GetTstatesPerLine() const { return _rasterState.tstatesPerLine; }
 
     virtual void UpdateScreen() = 0;
     virtual void DrawPeriod(uint32_t fromTstate, uint32_t toTstate);

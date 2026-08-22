@@ -4,6 +4,10 @@
 #include <set>
 #include "emulator/platform.h"
 
+// Opaque declaration (defined in emulator/memory/memory.h): the base decoder
+// interface only passes ROMModeEnum by value
+enum ROMModeEnum : uint8_t;
+
 
 class ModuleLogger;
 class EmulatorContext;
@@ -170,6 +174,16 @@ public:
 
     virtual void SetRAMPage(uint8_t page) { (void)page; /* Intentionally unused */ };
     virtual void SetROMPage(uint8_t page) { (void)page; /* Intentionally unused */ };
+
+    /// Apply model-specific register defaults for the RESET= boot mode (port of the
+    /// original reset(mode) model blocks: e.g. ATM installs the FF77/pFFF7
+    /// memory-manager defaults when the requested mode is RM_DOS). Base: none.
+    virtual void ApplyBootROMDefaults(ROMModeEnum mode) { (void)mode; }
+
+    /// Re-run the model-specific set_banks() memory-manager branch. Only decoders
+    /// with their own memory manager (ATM710/ATM3) override this; all other models
+    /// use the generic Memory::UpdateZ80Banks() mapping instead.
+    virtual void UpdateModelMemoryBanks() {}
 
     virtual bool IsFEPort(uint16_t port);
 

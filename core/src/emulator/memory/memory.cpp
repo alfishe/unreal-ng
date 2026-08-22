@@ -696,7 +696,15 @@ void Memory::UpdateZ80Banks()
     // flags are re-derived below from the current CF_TRDOS / p7FFD state
     state.flags &= ~(CF_DOSPORTS | CF_Z80FBUS | CF_LEAVEDOSRAM | CF_LEAVEDOSADR | CF_SETDOSROM);
 
-    if ((state.flags & CF_TRDOS) && dosAvailable)
+    if (config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3)
+    {
+        // ATM models own their memory manager: the bank computation runs in the
+        // port decoder (port of the original set_banks() MM_ATM710 / MM_ATM3
+        // branch). The session-flags tail below still applies to every model.
+        if (_context->pPortDecoder)
+            _context->pPortDecoder->UpdateModelMemoryBanks();
+    }
+    else if ((state.flags & CF_TRDOS) && dosAvailable)
     {
         if (state.p7FFD & 0x10)
         {
@@ -777,6 +785,36 @@ void Memory::SetROMPage(uint16_t page, bool updatePorts)
     /// region <Debug info>
     MLOGDEBUG("ROM page %d activated. pc: 0x%04X", page, _context->pCore->GetZ80()->pc);
     /// endregion </Debug info>
+}
+
+/// Map a ROM page to any of the four Z80 memory banks (ATM memory manager)
+/// Writes to a ROM-mapped bank are redirected to the trash page
+/// Address space: bank * [0x4000] .. bank * [0x4000] + 0x3FFF
+/// \param bank Z80 memory bank (window) 0-3
+/// \param page ROM page number
+void Memory::SetROMPageToBank(uint8_t bank, uint16_t page)
+{
+    /// region <Override submodule>
+    [[maybe_unused]]
+    static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_ROM;
+    /// endregion </Override submodule>
+
+    /// region <Sanity check>
+    if (bank > 3 || page >= MAX_ROM_PAGES)
+    {
+        std::string message = StringHelper::Format(
+            "Memory::SetROMPageToBank - Invalid bank/page: %d / %04X provided. MAX_ROM_PAGES: %04X", (int)bank, page, MAX_ROM_PAGES);
+        throw std::logic_error(message);
+    }
+    /// endregion </Sanity check>
+
+    _bank_mode[bank] = BANK_ROM;
+    _bank_read[bank] = ROMPageHostAddress(static_cast<uint8_t>(page));
+    _bank_write[bank] = _memory + TRASH_MEMORY_OFFSET;  // Redirect all ROM writes to special memory region
+
+    // Bank 0 ROM identity flags are consumed by the TR-DOS session logic
+    if (bank == 0)
+        SetROMPageFlags();
 }
 
 /// Switch to specified RAM Bank in RAM Page 3

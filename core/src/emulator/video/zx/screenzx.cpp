@@ -2,6 +2,7 @@
 
 #include <cassert>
 
+#include "atmfont.h"
 #include "common/stringhelper.h"
 #include "emulator/cpu/z80.h"
 
@@ -661,8 +662,20 @@ void ScreenZX::UpdateScreen()
 /// @param tstate Clock time mark
 void ScreenZX::Draw(uint32_t tstate)
 {
-    if (_mode == M_NUL || tstate >= _rasterState.maxFrameTiming || tstate >= MAX_FRAME_TSTATES)
+    // Use configFrameDuration for ATM modes (config.frame = 99880) instead of maxFrameTiming
+    // which is calculated from rasterDescriptor and may not match the actual frame timing
+    uint32_t frameLimit = (_mode >= M_ATM16 && _mode <= M_ATMTL)
+                         ? _rasterState.configFrameDuration
+                         : _rasterState.maxFrameTiming;
+    if (_mode == M_NUL || tstate >= frameLimit || tstate >= MAX_FRAME_TSTATES)
     {
+        return;
+    }
+
+    // ATM extended modes use different rendering path
+    if (_mode == M_ATM16 || _mode == M_ATMHR || _mode == M_ATMTX || _mode == M_ATMTL)
+    {
+        DrawATMMode(tstate);
         return;
     }
 
@@ -952,6 +965,174 @@ void ScreenZX::RenderScreen_Batch8()
 /// endregion </ScreenHQ=OFF optimizations>
 
 // =============================================================================
+// ATM EXTENDED MODE RENDERING
+// =============================================================================
+
+void ScreenZX::DrawATMMode(uint32_t tstate)
+{
+    // ATM extended modes, ported from the reference renderer (other/unrealspeccy):
+    // dxr_atm0.cpp (EGA), dxr_atm2.cpp (HW Multicolor), dxr_atm6.cpp (Text).
+    // All modes share ZX-compatible timing: 224 T-states/line, 312 lines/frame
+    // (maxFrameTiming == config.frame == 69888). Video planes are LINEAR 8KB
+    // with 40 bytes per line (8000 bytes per plane) - NOT the ZX 32-byte stride.
+    constexpr uint32_t TSTATES_PER_LINE = 224;
+    constexpr uint32_t VSYNC_VBLANK_LINES = 24;  // 16 vSync + 8 vBlank before the visible area
+    constexpr uint32_t VISIBLE_LINES = 288;
+    constexpr uint32_t SCREEN_LINES = 200;
+    constexpr uint32_t BYTES_PER_LINE = 40;
+    // Screen T-window inside a line (160 T). 320-px modes render 2 px/T
+    // (cols 64..383 of the 448-wide frame); 640-px modes double the pixel
+    // clock inside the same window (4 px/T, cols 32..671 of the 704-wide frame)
+    constexpr uint32_t SCREEN_START_T = 32;
+    constexpr uint32_t SCREEN_END_T = SCREEN_START_T + 160;
+
+    if (_framebuffer.memoryBuffer == nullptr)
+        return;
+
+    uint32_t line = tstate / TSTATES_PER_LINE;
+    uint32_t tInLine = tstate % TSTATES_PER_LINE;
+
+    // Outside the visible framebuffer area (vertical sync/blank)
+    if (line < VSYNC_VBLANK_LINES || line >= VSYNC_VBLANK_LINES + VISIBLE_LINES)
+        return;
+
+    const RasterDescriptor& rd = rasterDescriptors[_mode];
+    uint32_t* framebufferARGB = reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer);
+    const uint32_t fbRow = line - VSYNC_VBLANK_LINES;           // 0..287
+    const uint32_t rowOffset = fbRow * rd.fullFrameWidth;
+
+    // Extended modes show the live ZX border color (port FE), like the
+    // reference rend_atmframe* border renderer. Mode 7 (ATM3 Text Linear)
+    // has no ported renderer yet - the whole frame stays border.
+    const uint32_t borderColor = _rgbaColors[_borderColor];
+    const bool inScreenRow = (_mode != M_ATMTL) &&
+                             (fbRow >= rd.screenOffsetTop) &&
+                             (fbRow < rd.screenOffsetTop + SCREEN_LINES);
+
+    // Border rows: fill by beam scan so every framebuffer column of the row
+    // is covered exactly once per line (2 px/T for 448-wide, ~3 px/T for 704)
+    if (!inScreenRow)
+    {
+        const uint32_t x0 = tInLine * rd.fullFrameWidth / TSTATES_PER_LINE;
+        const uint32_t x1 = (tInLine + 1) * rd.fullFrameWidth / TSTATES_PER_LINE;
+        for (uint32_t x = x0; x < x1; ++x)
+            framebufferARGB[rowOffset + x] = borderColor;
+        return;
+    }
+
+    // Side borders on screen rows: base pixel clock (2 px/T) in the line time
+    // outside the screen window. For 704-wide modes this over-reaches into
+    // screen columns at t < 32 - harmless: those columns are rewritten when
+    // the beam enters the screen window (t increases monotonically).
+    if (tInLine < SCREEN_START_T)
+    {
+        const uint32_t x = 2 * tInLine;
+        framebufferARGB[rowOffset + x] = borderColor;
+        if (x + 1 < rd.fullFrameWidth)
+            framebufferARGB[rowOffset + x + 1] = borderColor;
+        return;
+    }
+    if (tInLine >= SCREEN_END_T)
+    {
+        const uint32_t x = rd.screenOffsetLeft + rd.screenWidth + 2 * (tInLine - SCREEN_END_T);
+        if (x + 1 < rd.fullFrameWidth)
+        {
+            framebufferARGB[rowOffset + x] = borderColor;
+            framebufferARGB[rowOffset + x + 1] = borderColor;
+        }
+        return;
+    }
+
+    // --- Screen window [32, 192) ---
+    const uint32_t t = tInLine - SCREEN_START_T;         // 0..159
+    const uint32_t screenY = fbRow - rd.screenOffsetTop; // 0..199
+
+    // Video pages: 7FFD bit 3 selects the video page (7/5); plane pairs live
+    // in the page 4 below it (3/1) - the reference's -4*PAGE / +0 / +0x2000
+    // plane offsets relative to the video page.
+    EmulatorState& state = _context->emulatorState;
+    uint8_t videoPage = (state.p7FFD & 0x08) ? 7 : 5;
+    uint8_t altPage = videoPage - 4;
+    uint8_t* vp = _memory->RAMPageAddress(videoPage);
+    uint8_t* ap = _memory->RAMPageAddress(altPage);
+    const uint32_t offset = screenY * BYTES_PER_LINE; // linear plane base for this line
+
+    if (_mode == M_ATM16)
+    {
+        // EGA 16-color 320x200. Each plane byte holds TWO adjacent pixels as
+        // two 4-bit ZX-palette indices, bit-interleaved ZX-attribute-style
+        // (reference draw.cpp p4bpp_tables + dxr_atm0.cpp line_atm0_16):
+        //   first (left)  pixel color = rt = {b6, b2, b1, b0}
+        //   second (right) pixel color = lf = {b7, b5, b4, b3}
+        // Plane k serves the pixel pair (8j+2k, 8j+2k+1) of byte group j:
+        // ega0 = ap+0, ega1 = vp+0, ega2 = ap+0x2000, ega3 = vp+0x2000.
+        // Colors go through the 16-entry clut: the 4-bit index carries the
+        // bright flag in bit 3, while _rgbaColors expects full ULA attribute
+        // bytes (brightness = bit 6) and would silently drop it.
+        const uint32_t j = t / 4;  // byte group 0..39
+        const uint32_t q = t % 4;  // plane 0..3
+        uint8_t* plane = (q & 1) ? vp : ap;
+        const uint8_t bt = plane[((q >> 1) << 13) + offset + j];
+        const uint32_t col = rd.screenOffsetLeft + 8 * j + 2 * q;
+        framebufferARGB[rowOffset + col] = _vid.clut[(bt & 0x07) | (bt & 0x40 ? 0x08 : 0x00)];
+        framebufferARGB[rowOffset + col + 1] = _vid.clut[((bt >> 3) & 0x07) | (bt & 0x80 ? 0x08 : 0x00)];
+        return;
+    }
+
+    if (_mode == M_ATMHR)
+    {
+        // Hardware Multicolor 640x200: 1bpp pixel planes + ZX-attr planes,
+        // LSB-first bit order (bit 0 = leftmost pixel of the byte).
+        // Left half (px 0..319): pixels vp+0, attrs ap+0;
+        // right half (px 320..639): pixels vp+0x2000, attrs ap+0x2000.
+        const uint32_t j = t / 4;  // byte index 0..39 in each plane
+        const uint32_t q = t % 4;  // 4 px per T-state from each half
+        const uint8_t pixL = vp[offset + j];
+        const uint8_t pixR = vp[0x2000 + offset + j];
+        const uint8_t attrL = ap[offset + j];
+        const uint8_t attrR = ap[0x2000 + offset + j];
+        const uint32_t inkL = _rgbaColors[attrL], paperL = _rgbaFlashColors[attrL];
+        const uint32_t inkR = _rgbaColors[attrR], paperR = _rgbaFlashColors[attrR];
+        const uint32_t shift = 4 * q;
+        const uint32_t colL = rd.screenOffsetLeft + 8 * j + 4 * q;
+        const uint32_t colR = colL + 320;
+        for (uint32_t k = 0; k < 4; ++k)
+        {
+            framebufferARGB[rowOffset + colL + k] = ((pixL >> (shift + k)) & 1) ? inkL : paperL;
+            framebufferARGB[rowOffset + colR + k] = ((pixR >> (shift + k)) & 1) ? inkR : paperR;
+        }
+        return;
+    }
+
+    // M_ATMTX: Text 80x25, 640x200 (4 px per T-state = half a char column).
+    // Text rows live at plane byte 0x1C0 + 64*row (reference draw.cpp
+    // PrepareFrameATM2: Offset = 64*(rayLine/8) with the screen starting at
+    // ray line 56 -> row 0 at 0x1C0; dxr_atm6.cpp line_atm6_32 advances +2
+    // per 4-char group within the row). All 8 scanlines of a text row read
+    // the SAME 40 bytes per plane - the font row (screenY % 8) selects the
+    // glyph line.
+    // Char codes: p0 = vp+0, p1 = vp+0x2000; attrs: a1 = ap+0x2000 (pairs with
+    // p0 chars) and a0 = ap+1 (pairs with p1 chars - the +1 offset is a
+    // hardware quirk kept from the reference dxr_atm6.cpp). Font: built-in 2KB
+    // table (atmfont.h), row-major [row * 256 + code], LSB-first bits.
+    {
+        const uint32_t n = t / 2;      // char column 0..79
+        const uint32_t half = t % 2;   // 0: font bits 0..3, 1: bits 4..7
+        const uint32_t byteIdx = 0x1C0 + 64 * (screenY / 8) + n / 2;
+        const bool fromP0 = (n % 2 == 0);
+        const uint8_t code = fromP0 ? vp[byteIdx] : vp[0x2000 + byteIdx];
+        const uint8_t attr = fromP0 ? ap[0x2000 + byteIdx] : ap[1 + byteIdx];
+        const uint8_t glyph = ATM_FONT[(screenY % 8) * 256 + code];
+        const uint32_t ink = _rgbaColors[attr];
+        const uint32_t paper = _rgbaFlashColors[attr];
+        const uint32_t col = rd.screenOffsetLeft + 8 * n + 4 * half;
+        const uint32_t shift = 4 * half;
+        for (uint32_t k = 0; k < 4; ++k)
+            framebufferARGB[rowOffset + col + k] = ((glyph >> (shift + k)) & 1) ? ink : paper;
+    }
+}
+
+// =============================================================================
 // SCREENHQ=OFF FRAME BATCH RENDER
 // =============================================================================
 // This method is called by MainLoop::OnFrameEnd() when ScreenHQ=OFF.
@@ -965,6 +1146,24 @@ void ScreenZX::RenderScreen_Batch8()
 // =============================================================================
 void ScreenZX::RenderFrameBatch()
 {
+    // ATM extended modes have no batch renderer - RenderScreen_Batch8 assumes
+    // ZX screen geometry and would paint garbage over the ATM framebuffer.
+    // Run the per-t-state renderer across the whole frame instead so
+    // ScreenHQ=OFF still produces correct ATM output.
+    if (_mode == M_ATM16 || _mode == M_ATMHR || _mode == M_ATMTX || _mode == M_ATMTL)
+    {
+        if (_framebuffer.memoryBuffer == nullptr)
+            return;
+
+        uint32_t frameTstates = _rasterState.configFrameDuration != 0 ? _rasterState.configFrameDuration
+                                                                      : _rasterState.maxFrameTiming;
+        if (frameTstates > MAX_FRAME_TSTATES)
+            frameTstates = MAX_FRAME_TSTATES;
+        for (uint32_t t = 0; t < frameTstates; ++t)
+            DrawATMMode(t);
+        return;
+    }
+
     RenderScreen_Batch8();
 }
 

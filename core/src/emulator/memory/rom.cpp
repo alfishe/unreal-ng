@@ -4,6 +4,8 @@
 
 #include "rom.h"
 
+#include <algorithm>
+#include <cctype>
 #include "common/collectionhelper.h"
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
@@ -295,7 +297,7 @@ bool ROM::LoadROM()
 				else
 				{
 					// ATM3 and 7.10 keep standard ROM set in last 4 banks
-					uint8_t* lastPage = memory.ROMBase() + (loadedBanks - 4);
+					uint8_t* lastPage = memory.ROMBase() + (loadedBanks - 4) * PAGE_SIZE;
 					memory.base_sos_rom = lastPage + 0 * PAGE_SIZE;
 					memory.base_dos_rom = lastPage + 1 * PAGE_SIZE;
 					memory.base_128_rom = lastPage + 2 * PAGE_SIZE;
@@ -403,6 +405,7 @@ bool ROM::LoadROMSet()
 }
 
 /// Loads up to <max_banks> ROM banks (16KB each). from file with filepath <path> to the buffer with address <bank>
+/// Path can include `:page` suffix (e.g., "rom/atm2.rom:0") to load a specific 16KB page from a multi-bank ROM file
 /// \param path
 /// \param bank
 /// \param max_banks Max 16KiB banks to load
@@ -427,7 +430,23 @@ uint16_t ROM::LoadROM(string& path, uint8_t* bank, uint16_t max_banks)
 		return result;
 	}
 
-	std::string resolvedPath = FileHelper::NormalizePath(path);
+	// Parse optional :page suffix (e.g., "rom/atm2.rom:0" loads page 0 from atm2.rom)
+	std::string actualPath = path;
+	int pageOffset = -1;  // -1 means load entire file, >=0 means load specific page
+	size_t colonPos = path.rfind(':');
+	if (colonPos != std::string::npos && colonPos > 0)
+	{
+		// Check if everything after colon is a number
+		std::string pageSuffix = path.substr(colonPos + 1);
+		bool isNumber = !pageSuffix.empty() && std::all_of(pageSuffix.begin(), pageSuffix.end(), ::isdigit);
+		if (isNumber)
+		{
+			pageOffset = std::stoi(pageSuffix);
+			actualPath = path.substr(0, colonPos);
+		}
+	}
+
+	std::string resolvedPath = FileHelper::NormalizePath(actualPath);
 	if (!FileHelper::FileExists(resolvedPath))
 	{
 		// Try to use as relative path if not found using original path
@@ -438,7 +457,7 @@ uint16_t ROM::LoadROM(string& path, uint8_t* bank, uint16_t max_banks)
 		{
 			// Try resources path (especially for macOS app bundles)
 			string resourcesPath = FileHelper::GetResourcesPath();
-			resolvedPath = FileHelper::PathCombine(resourcesPath, path);
+			resolvedPath = FileHelper::PathCombine(resourcesPath, actualPath);
 
 			if (!FileHelper::FileExists(resolvedPath))
 			{
@@ -451,15 +470,33 @@ uint16_t ROM::LoadROM(string& path, uint8_t* bank, uint16_t max_banks)
 	FILE* romfile = fopen(resolvedPath.c_str(), "rb");
 	if (romfile)
 	{
-		size_t size = fread(bank, 1, max_banks * PAGE_SIZE, romfile);
-		if (size && !(size & (PAGE_SIZE - 1)))
+		size_t size;
+		if (pageOffset >= 0)
 		{
-
-			result = static_cast<uint16_t>(size / PAGE_SIZE);
+			// Load specific page from multi-bank ROM file
+			fseek(romfile, pageOffset * PAGE_SIZE, SEEK_SET);
+			size = fread(bank, 1, PAGE_SIZE, romfile);
+			if (size == PAGE_SIZE)
+			{
+				result = 1;  // Loaded 1 page
+			}
+			else
+			{
+				MLOGERROR("ROM::LoadROM - Failed to read page %d from ROM file (read %zu bytes)", pageOffset, size);
+			}
 		}
 		else
 		{
-			MLOGERROR("ROM::LoadROM - Incorrect ROM file size. Expected: %d, found %d", max_banks * PAGE_SIZE, size);
+			// Load entire file (original behavior)
+			size = fread(bank, 1, max_banks * PAGE_SIZE, romfile);
+			if (size && !(size & (PAGE_SIZE - 1)))
+			{
+				result = static_cast<uint16_t>(size / PAGE_SIZE);
+			}
+			else
+			{
+				MLOGERROR("ROM::LoadROM - Incorrect ROM file size. Expected: %d, found %zu", max_banks * PAGE_SIZE, size);
+			}
 		}
 
 		fclose(romfile);

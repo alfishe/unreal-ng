@@ -59,8 +59,33 @@ Screen::Screen(EmulatorContext* context)
     _vid.ts_pos = 0;
     _vid.memcyc_lcmd = 0;
 
-    // Initialize color lookup table
-    memset(_vid.clut, 0, sizeof(_vid.clut));
+    // Initialize the 256-entry programmable palette with ZX 16-color defaults.
+    // Framebuffer format is RGBA8888 (LE uint32 = 0xAABBGGRR) - values MUST be
+    // opaque. The previous 0x00RRGGBB defaults were transparent AND R/B-swapped,
+    // which showed as green-only garbage (green survives both errors).
+    // ATM extended modes themselves render via the fixed ZX palette
+    // (_rgbaColors), exactly like the reference renderer's sctab tables;
+    // clut is the hook for future ATM3/TSConf palette port writes.
+    static const uint32_t defaultPalette[16] = {
+        0xFF000000,  // 0: Black
+        0xFFC72200,  // 1: Blue
+        0xFF1628D6,  // 2: Red
+        0xFFC733D4,  // 3: Magenta
+        0xFF25C500,  // 4: Green
+        0xFFC9C700,  // 5: Cyan
+        0xFF2AC8CC,  // 6: Yellow
+        0xFFCACACA,  // 7: White (normal)
+        0xFF000000,  // 8: Black (bright)
+        0xFFFB2B00,  // 9: Bright Blue
+        0xFF1C33FF,  // A: Bright Red
+        0xFFFC40FF,  // B: Bright Magenta
+        0xFF2FF900,  // C: Bright Green
+        0xFFFEFB00,  // D: Bright Cyan
+        0xFF36FCFF,  // E: Bright Yellow
+        0xFFFFFFFF   // F: White (bright)
+    };
+    memcpy(_vid.clut, defaultPalette, sizeof(defaultPalette));
+    memset(_vid.clut + 16, 0x00, sizeof(_vid.clut) - sizeof(defaultPalette));
 
     // Initialize memory counters
     InitMemoryCounters();
@@ -127,7 +152,9 @@ void Screen::InitFrame()
 }
 
 //
-// Set appropriate video mode based on ports for current platform
+// Set appropriate video mode based on ports for current platform.
+// Routing only: the per-model detection logic lives in the DetectMode*
+// methods below (routed through DetectVideoMode), one per machine family.
 //
 void Screen::InitRaster()
 {
@@ -147,166 +174,26 @@ void Screen::InitRaster()
         return;
     }
 
-    EmulatorState& state = _context->emulatorState;
-    const CONFIG& config = _context->config;
     VideoControl& video = _vid;
 
-    VideoModeEnum prevMode = video.mode;
+    /// region <Set current video mode>
 
-    /// region Set current video mode
-
-    // Base video mode per machine model. Without this, every model inherited
-    // the constructor's default mode - ZX-48K/128K ran with the wrong raster
-    // geometry and, critically, with ULA contention state of another machine.
-    // Special modes (ATM, AlCo, Profi, GMX) override below.
-    switch (config.mem_model)
-    {
-        case MM_SPECTRUM48:
-            video.mode = M_ZX48;
-            break;
-        case MM_SPECTRUM128:
-        case MM_PLUS3:
-            video.mode = M_ZX128;
-            break;
-        case MM_PENTAGON:
-            video.mode = M_PENTAGON128K;
-            break;
-        default:
-            // Other models keep their current/legacy mode selection
-            break;
-    }
-
-    uint8_t m = EFF7_4BPP | EFF7_HWMC;
-
-    // ATM 1
-    if ((config.mem_model == MM_ATM450) && (((state.aFE >> 5) & 3) != FF77_ZX))
-    {
-        video.raster = raster[R_320_200];
-        if (((state.aFE >> 5) & 3) == aFE_16)
-        {
-            video.mode = M_ATM16;
-            return;
-        }
-        if (((state.aFE >> 5) & 3) == aFE_MC)
-        {
-            video.mode = M_ATMHR;
-            return;
-        }
-        video.mode = M_NUL;
-    }
-
-    // ATM 2 & 3
-    if ((config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3) && ((state.pFF77 & 7) != FF77_ZX))
-    {
-        video.raster = raster[R_320_200];
-        if (config.mem_model == MM_ATM3 && (state.pEFF7 & m))
-        {
-            video.mode = M_NUL;
-            return;
-        }  // EFF7 AlCo bits must be 00, or invalid mode
-        if ((state.pFF77 & 7) == FF77_16)
-        {
-            video.mode = M_ATM16;
-            return;
-        }
-        if ((state.pFF77 & 7) == FF77_MC)
-        {
-            video.mode = M_ATMHR;
-            return;
-        }
-        if ((state.pFF77 & 7) == FF77_TX)
-        {
-            video.mode = M_ATMTX;
-            return;
-        }
-        if (config.mem_model == MM_ATM3 && (state.pFF77 & 7) == FF77_TL)
-        {
-            video.mode = M_ATMTL;
-            return;
-        }
-        video.mode = M_NUL;
-    }
-
-    video.raster = raster[R_256_192];
-
-    // User-forced Pentagon overscan (UI toggle): must survive the per-frame
-    // re-detection - detection would otherwise revert the manual mode to the
-    // model's base mode on the next frame. Guest-programmed AlCo modes (EFF7
-    // bits below) still take priority.
-    if (_overscanForced && config.mem_model == MM_PENTAGON)
-    {
-        video.mode = M_P384;
-        video.raster = raster[R_384_304];
-    }
-
-    // ATM 3 AlCo modes
-    if (config.mem_model == MM_ATM3 && (state.pEFF7 & m))
-    {
-        if ((state.pEFF7 & m) == EFF7_4BPP)
-        {
-            video.mode = M_P16;
-            return;
-        }
-        if ((state.pEFF7 & m) == EFF7_HWMC)
-        {
-            video.mode = M_PMC;
-            return;
-        }
-
-        video.mode = M_NUL;
-    }
-
-    // Pentagon AlCo modes
-    m = EFF7_4BPP | EFF7_512 | EFF7_384 | EFF7_HWMC;
-    if (config.mem_model == MM_PENTAGON && (state.pEFF7 & m))
-    {
-        if ((state.pEFF7 & m) == EFF7_4BPP)
-        {
-            video.mode = M_P16;
-            return;
-        }
-        if ((state.pEFF7 & m) == EFF7_HWMC)
-        {
-            video.mode = M_PMC;
-            return;
-        }
-        if ((state.pEFF7 & m) == EFF7_512)
-        {
-            video.mode = M_PHR;
-            return;
-        }
-        if ((state.pEFF7 & m) == EFF7_384)
-        {
-            video.raster = raster[R_384_304];
-            video.mode = M_P384;
-            return;
-        }
-
-        video.mode = M_NUL;
-    }
-
-    if (config.mem_model == MM_PROFI && (state.pDFFD & 0x80))
-    {
-        video.raster = raster[R_512_240];
-        video.mode = M_PROFI;
-    }
-
-    if (config.mem_model == MM_GMX && (state.p7EFD & 0x08))
-    {
-        video.raster = raster[R_320_200];
-        video.mode = M_GMX;
-    }
+    // Per-model detection: port/config state -> (mode, raster)
+    ModeSelection selection = DetectVideoMode(_context->config.mem_model);
 
     // If after all the configuration checks, we still have an invalid mode (M_NUL),
     // we need to set a valid default mode to prevent framebuffer allocation errors
-    if (video.mode == M_NUL)
+    if (selection.mode == M_NUL)
     {
         // Default to ZX48 mode if we have an invalid mode
         // This ensures we always have a valid video mode for framebuffer allocation
-        video.mode = M_ZX48;
+        selection.mode = M_ZX48;
     }
 
-    /// endregion
+    video.mode = selection.mode;
+    video.raster = raster[selection.raster];
+
+    /// endregion </Set current video mode>
 
     // Select renderer for the mode
     // Apply when the detected mode differs from the ACTIVE raster mode (_mode),
@@ -314,7 +201,6 @@ void Screen::InitRaster()
     // (_mode/_vid.mode) can disagree with the model's base mode, and comparing
     // detection-to-detection left 48K/128K machines running with the Pentagon
     // raster and contention disabled.
-    (void)prevMode;
     if (video.mode != _mode)
     {
         SetVideoMode(video.mode);
@@ -322,7 +208,9 @@ void Screen::InitRaster()
         /// region <Sanity checks>
 #ifdef _DEBUG
         // 1. Frame duration from config should be longer than raster-defined frame duration
-        if (_rasterState.configFrameDuration < _rasterState.maxFrameTiming)
+        // (configFrameDuration == 0 means 'unconfigured' - bare test contexts - and is skipped)
+        if (_rasterState.configFrameDuration != 0 &&
+            _rasterState.configFrameDuration < _rasterState.maxFrameTiming)
         {
             std::string error = StringHelper::Format(
                 "Screen::SetVideoMode config.frame: %d cannot be less than _rasterState.maxFrameTiming: %d",
@@ -332,6 +220,184 @@ void Screen::InitRaster()
 #endif  // _DEBUG
         /// endregion </Sanity checks>
     }
+}
+
+Screen::ModeSelection Screen::DetectVideoMode(MEM_MODEL model) const
+{
+    const EmulatorState& state = _context->emulatorState;
+
+    switch (model)
+    {
+        case MM_SPECTRUM48:
+            return DetectModeZX48(state);
+        case MM_SPECTRUM128:
+        case MM_PLUS3:
+            return DetectModeZX128(state);
+        case MM_PENTAGON:
+            return DetectModePentagon(state);
+        case MM_ATM450:
+            return DetectModeATM1(state);
+        case MM_ATM710:
+            return DetectModeATM2(state);
+        case MM_ATM3:
+            return DetectModeATM3(state);
+        case MM_PROFI:
+            return DetectModeProfi(state);
+        case MM_GMX:
+            return DetectModeGMX(state);
+        default:
+            // Other models keep their current/legacy mode selection
+            return DetectModeLegacy(state);
+    }
+}
+
+Screen::ModeSelection Screen::DetectModeZX48(const EmulatorState& /*state*/) const
+{
+    return { M_ZX48, R_256_192 };
+}
+
+Screen::ModeSelection Screen::DetectModeZX128(const EmulatorState& /*state*/) const
+{
+    return { M_ZX128, R_256_192 };
+}
+
+// Pentagon 128K: user-forced overscan (UI toggle) must survive the per-frame
+// re-detection - without the flag a manual M_P384 selection is reverted to
+// the model's base mode on the next frame. Guest-programmed AlCo modes
+// (EFF7 bits) still take priority over the override.
+Screen::ModeSelection Screen::DetectModePentagon(const EmulatorState& state) const
+{
+    VideoModeEnum mode = M_PENTAGON128K;
+    RasterModeEnum rasterMode = R_256_192;
+
+    if (_overscanForced)
+    {
+        mode = M_P384;
+        rasterMode = R_384_304;
+    }
+
+    const uint8_t alco = state.pEFF7 & (EFF7_4BPP | EFF7_512 | EFF7_384 | EFF7_HWMC);
+    if (alco != 0)
+    {
+        switch (alco)
+        {
+            case EFF7_4BPP: mode = M_P16; break;
+            case EFF7_HWMC: mode = M_PMC; break;
+            case EFF7_512:  mode = M_PHR; break;
+            case EFF7_384:  mode = M_P384; rasterMode = R_384_304; break;
+
+            default:
+                // Several AlCo bits at once - unsupported combination
+                mode = M_NUL;
+                break;
+        }
+    }
+
+    return { mode, rasterMode };
+}
+
+// ATM ZX-compatible base mode (all ATM detectors): standard ZX rendering
+// (same DrawZX callback and 352x288 geometry as M_ZX128) but with ZX48-class
+// timing. The ATM ULA preset is 69888 T/frame @ 224 T/line (reference
+// unreal.ini PRESET.ATM1_2_3.5MHz), matching ApplyModelTimingDefaults;
+// M_ZX128's authentic 70908/228 timing would exceed the ATM config frame and
+// trip the SetVideoMode sanity check. Screen bank selection is mode-agnostic
+// (state.ts.vpage), so the 128K shadow screen still works.
+
+// ATM 1 (ATM-TURBO v4.50): extended modes via aFE bits 5-6
+Screen::ModeSelection Screen::DetectModeATM1(const EmulatorState& state) const
+{
+    VideoModeEnum mode = M_ZX48;
+    RasterModeEnum rasterMode = R_256_192;
+
+    const uint8_t atmMode = (state.aFE >> 5) & 3;
+    if (atmMode != FF77_ZX)
+    {
+        rasterMode = R_320_200;
+        if (atmMode == aFE_16)
+            mode = M_ATM16;
+        else if (atmMode == aFE_MC)
+            mode = M_ATMHR;
+        else
+            mode = M_NUL;
+    }
+
+    return { mode, rasterMode };
+}
+// ATM 2 (ATM-TURBO 2+ v7.10): extended modes via FF77 bits 0-2. FF77_TL is
+// ATM3-only and yields M_NUL here (InitRaster falls it back to a valid mode).
+Screen::ModeSelection Screen::DetectModeATM2(const EmulatorState& state) const
+{
+    VideoModeEnum mode = M_ZX48;
+    RasterModeEnum rasterMode = R_256_192;
+
+    const uint8_t atmMode = state.pFF77 & 7;
+    if (atmMode != FF77_ZX)
+    {
+        rasterMode = R_320_200;
+        switch (atmMode)
+        {
+            case FF77_16: mode = M_ATM16; break;
+            case FF77_MC: mode = M_ATMHR; break;
+            case FF77_TX: mode = M_ATMTX; break;
+            default:      mode = M_NUL; break;
+        }
+    }
+
+    return { mode, rasterMode };
+}
+
+// ATM 3 (ZX-Evo / PentEvo): FF77 extended modes incl. Text Linear. Unlike
+// Pentagon, EFF7 on ATM is extended CONTROL only (turbo / lockmem / rocache)
+// - its bits select no AlCo video modes. Mapping them to the Pentagon M_P16 /
+// M_PMC descriptors would also pull in 320-line / 71680 T timing that
+// conflicts with the ATM frame (69888 T, forced by ApplyModelTimingDefaults).
+Screen::ModeSelection Screen::DetectModeATM3(const EmulatorState& state) const
+{
+    VideoModeEnum mode = M_ZX48;
+    RasterModeEnum rasterMode = R_256_192;
+
+    const uint8_t atmMode = state.pFF77 & 7;
+    if (atmMode != FF77_ZX)
+    {
+        rasterMode = R_320_200;
+        switch (atmMode)
+        {
+            case FF77_16: mode = M_ATM16; break;
+            case FF77_MC: mode = M_ATMHR; break;
+            case FF77_TX: mode = M_ATMTX; break;
+            case FF77_TL: mode = M_ATMTL; break;
+            default:      mode = M_NUL; break;
+        }
+    }
+
+    return { mode, rasterMode };
+}
+
+// Profi: DFFD bit 7 selects the 512x240 hi-res mode; without it the model
+// keeps its current/legacy mode selection
+Screen::ModeSelection Screen::DetectModeProfi(const EmulatorState& state) const
+{
+    if (state.pDFFD & 0x80)
+        return { M_PROFI, R_512_240 };
+
+    return { _vid.mode, R_256_192 };
+}
+
+// GMX: 7EFD bit 3 selects the extended 320x200 mode; without it the model
+// keeps its current/legacy mode selection
+Screen::ModeSelection Screen::DetectModeGMX(const EmulatorState& state) const
+{
+    if (state.p7EFD & 0x08)
+        return { M_GMX, R_320_200 };
+
+    return { _vid.mode, R_256_192 };
+}
+
+// Unknown/legacy models: keep the current mode, standard ZX raster
+Screen::ModeSelection Screen::DetectModeLegacy(const EmulatorState& /*state*/) const
+{
+    return { _vid.mode, R_256_192 };
 }
 
 void Screen::InitMemoryCounters()
@@ -634,6 +700,20 @@ void Screen::SaveZXSpectrumNativeScreen()
 
 /// region <Framebuffer related>
 
+/// Framebuffer clear: OPAQUE black. The format is RGBA8888 (0xAABBGGRR) and
+/// must never expose transparency - consumers (DeviceScreen, videowall tiles)
+/// wrap the raw buffer with alpha honored. A 0x00-alpha clear (memset) left
+/// freshly allocated/switched buffers fully transparent and the window
+/// background flashed through until each pixel was redrawn (the ATM BIOS
+/// reprograms FF77 several times at boot, so every mode switch re-cleared).
+static void ClearFramebufferOpaque(uint8_t* buffer, size_t sizeBytes)
+{
+    uint32_t* pixels = reinterpret_cast<uint32_t*>(buffer);
+    const size_t count = sizeBytes / RGBA_SIZE;
+    for (size_t i = 0; i < count; i++)
+        pixels[i] = 0xFF000000u;
+}
+
 void Screen::AllocateFramebuffer(VideoModeEnum mode)
 {
     // Apply the configured A/V sync video delay (auto -1 = 2 frames: the
@@ -667,13 +747,13 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
             _framebuffer.videoMode = mode;
             _framebuffer.width = rd.fullFrameWidth;
             _framebuffer.height = rd.fullFrameHeight;
-            memset(_framebuffer.memoryBuffer, 0x00, _framebuffer.memoryBufferSize);
+            ClearFramebufferOpaque(_framebuffer.memoryBuffer, _framebuffer.memoryBufferSize);
 
             std::lock_guard<std::mutex> lock(_presentMutex);
             for (size_t i = 0; i < PRESENT_SLOTS; i++)
             {
                 if (_presentSlots[i])
-                    memset(_presentSlots[i], 0x00, _presentBufferSize);
+                    ClearFramebufferOpaque(_presentSlots[i], _presentBufferSize);
             }
             _presentLatchCounter = 0;
             return;
@@ -693,6 +773,10 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         case M_P16:
         case M_P384:  // Pentagon 384x304 overscan mode
         case M_PHR:
+        case M_ATM16:   // ATM EGA 16-color 320x200
+        case M_ATMHR:   // ATM Hardware Multicolor 640x200
+        case M_ATMTX:   // ATM Text 80x25 (640x200)
+        case M_ATMTL:   // ATM3 Linear Text
             break;
         default:
             MLOGWARNING("AllocateFramebuffer: Unknown video mode");
@@ -713,8 +797,8 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         _framebuffer.memoryBufferSize = _framebuffer.width * _framebuffer.height * RGBA_SIZE;
         _framebuffer.memoryBuffer = new uint8_t[_framebuffer.memoryBufferSize];
 
-        // Clear the whole framebuffer
-        memset(_framebuffer.memoryBuffer, 0x00, _framebuffer.memoryBufferSize);
+        // Clear the whole framebuffer (opaque black - see ClearFramebufferOpaque)
+        ClearFramebufferOpaque(_framebuffer.memoryBuffer, _framebuffer.memoryBufferSize);
 
         // Allocate the matching presentation (latched) buffer.
         // _presentBufferSize is the authoritative size for cross-thread readers
@@ -727,7 +811,7 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
             {
                 delete[] _presentSlots[i];
                 _presentSlots[i] = new uint8_t[_framebuffer.memoryBufferSize];
-                memset(_presentSlots[i], 0x00, _framebuffer.memoryBufferSize);
+                ClearFramebufferOpaque(_presentSlots[i], _framebuffer.memoryBufferSize);
             }
             _presentBufferSize = _framebuffer.memoryBufferSize;
             _presentLatchCounter = 0;
@@ -1213,22 +1297,317 @@ void Screen::DrawTSText(uint32_t n)
 
 void Screen::DrawATM16(uint32_t n)
 {
-    (void)n;
+    // ATM 16-color EGA mode (320x200)
+    // Memory layout: 4 bit-planes, each byte encodes 8 pixels' bit N
+    //   Plane 0: video_page - 4, offset 0x0000 (bit 0 of each pixel)
+    //   Plane 1: video_page,     offset 0x0000 (bit 1 of each pixel)
+    //   Plane 2: video_page - 4, offset 0x2000 (bit 2 of each pixel)
+    //   Plane 3: video_page,     offset 0x2000 (bit 3 of each pixel)
+    // Each bit position in 4 planes combines to form a 4-bit color index
+
+    EmulatorState& state = _context->emulatorState;
+    VideoControl& video = _vid;
+
+    // Get video page (5 or 7 based on 7FFD bit 3)
+    uint8_t videoPage = (state.p7FFD & 0x08) ? 7 : 5;
+    uint8_t altPage = videoPage - 4;  // Page 1 or 3
+
+    uint8_t* plane0 = _memory->RAMPageAddress(altPage);            // bit 0
+    uint8_t* plane1 = _memory->RAMPageAddress(videoPage);          // bit 1
+    uint8_t* plane2 = _memory->RAMPageAddress(altPage) + 0x2000;   // bit 2
+    uint8_t* plane3 = _memory->RAMPageAddress(videoPage) + 0x2000; // bit 3
+
+    // ATM palette lookup (uses programmable palette, but defaults to EGA-like)
+    const uint32_t* palette = video.clut;
+
+    uint32_t vptr = video.vptr;
+
+    // ATM 320x200 mode: 40 bytes per line per plane, 200 lines
+    uint32_t y = video.ygctr;
+    uint32_t screenOffset = y * 40;
+
+    for (uint32_t i = n; i > 0; i -= 4, video.t_next += 4, video.xctr++)
+    {
+        uint32_t x = video.xctr;
+        if (x >= 40) continue;
+
+        uint32_t offset = (screenOffset + x) & 0x1FFF;
+
+        // Read one byte from each plane
+        uint8_t b0 = plane0[offset];
+        uint8_t b1 = plane1[offset];
+        uint8_t b2 = plane2[offset];
+        uint8_t b3 = plane3[offset];
+
+        // Extract 8 pixels from bit-planes (MSB first)
+        for (int bit = 7; bit >= 0; bit--)
+        {
+            uint8_t color = ((b0 >> bit) & 1) |
+                           (((b1 >> bit) & 1) << 1) |
+                           (((b2 >> bit) & 1) << 2) |
+                           (((b3 >> bit) & 1) << 3);
+
+            uint32_t c = palette[color];
+            // Double pixels for 640 width output
+            vbuf[video.buf][vptr++] = c;
+            vbuf[video.buf][vptr++] = c;
+        }
+    }
+
+    video.vptr = vptr;
 }
 
 void Screen::DrawATMHiRes(uint32_t n)
 {
-    (void)n;
+    // ATM Hardware Multicolor mode (640x200, per-line attributes)
+    // Memory layout (relative to video page):
+    //   Pixels 0: video_page - 4, offset 0x0000 (page 1/3)
+    //   Pixels 1: video_page,     offset 0x0000 (page 5/7)
+    //   Attrs 0:  video_page - 4, offset 0x2000 (page 1/3 + 8KB)
+    //   Attrs 1:  video_page,     offset 0x2000 (page 5/7 + 8KB)
+    // Each byte from 2 pixel planes gives 8 pixels, with per-byte attributes
+
+    EmulatorState& state = _context->emulatorState;
+    VideoControl& video = _vid;
+
+    // Standard ZX palette (same as DrawZX)
+    static const uint32_t palette[2][8] = {{
+        0x00000000, 0x000022C7, 0x00D62816, 0x00D433C7,
+        0x0000C525, 0x0000C7C9, 0x00CCC82A, 0x00CACACA
+    }, {
+        0x00000000, 0x00002BFB, 0x00FF331C, 0x00FF40FC,
+        0x0000F92F, 0x0000FBFE, 0x00FFFC36, 0x00FFFFFF
+    }};
+
+    // Get video page (5 or 7 based on 7FFD bit 3)
+    uint8_t videoPage = (state.p7FFD & 0x08) ? 7 : 5;
+    uint8_t altPage = videoPage - 4;  // Page 1 or 3
+
+    uint8_t* pix0 = _memory->RAMPageAddress(altPage);         // pixel plane 0
+    uint8_t* pix1 = _memory->RAMPageAddress(videoPage);       // pixel plane 1
+    uint8_t* attr0 = _memory->RAMPageAddress(altPage) + 0x2000;    // attribute plane 0
+    uint8_t* attr1 = _memory->RAMPageAddress(videoPage) + 0x2000;  // attribute plane 1
+
+    uint32_t vptr = video.vptr;
+
+    // ATM HiRes: 80 bytes per line (40 bytes * 2 planes), 200 lines
+    uint32_t y = video.ygctr;  // Current line (0-199)
+    uint32_t screenOffset = y * 40;
+
+    for (uint32_t i = n; i > 0; i -= 4, video.t_next += 4, video.xctr++)
+    {
+        uint32_t x = video.xctr;
+        if (x >= 40) continue;
+
+        uint32_t offset = (screenOffset + x) & 0x1FFF;
+
+        // Read pixels and attributes from both planes
+        uint8_t pixels0 = pix0[offset];
+        uint8_t pixels1 = pix1[offset];
+        uint8_t attrib0 = attr0[offset];
+        uint8_t attrib1 = attr1[offset];
+
+        // Decode attribute (same as ZX: bit 6=bright, bits 5-3=paper, bits 2-0=ink)
+        uint8_t bright0 = (attrib0 & 0x40) ? 1 : 0;
+        uint8_t paper0 = (attrib0 >> 3) & 0x07;
+        uint8_t ink0 = attrib0 & 0x07;
+        uint32_t color_paper0 = palette[bright0][paper0];
+        uint32_t color_ink0 = palette[bright0][ink0];
+
+        uint8_t bright1 = (attrib1 & 0x40) ? 1 : 0;
+        uint8_t paper1 = (attrib1 >> 3) & 0x07;
+        uint8_t ink1 = attrib1 & 0x07;
+        uint32_t color_paper1 = palette[bright1][paper1];
+        uint32_t color_ink1 = palette[bright1][ink1];
+
+        // Render 8 pixels from plane 0, then 8 from plane 1 (16 total, no doubling needed)
+        vbuf[video.buf][vptr++] = (pixels0 & 0x80) ? color_ink0 : color_paper0;
+        vbuf[video.buf][vptr++] = (pixels0 & 0x40) ? color_ink0 : color_paper0;
+        vbuf[video.buf][vptr++] = (pixels0 & 0x20) ? color_ink0 : color_paper0;
+        vbuf[video.buf][vptr++] = (pixels0 & 0x10) ? color_ink0 : color_paper0;
+        vbuf[video.buf][vptr++] = (pixels0 & 0x08) ? color_ink0 : color_paper0;
+        vbuf[video.buf][vptr++] = (pixels0 & 0x04) ? color_ink0 : color_paper0;
+        vbuf[video.buf][vptr++] = (pixels0 & 0x02) ? color_ink0 : color_paper0;
+        vbuf[video.buf][vptr++] = (pixels0 & 0x01) ? color_ink0 : color_paper0;
+
+        vbuf[video.buf][vptr++] = (pixels1 & 0x80) ? color_ink1 : color_paper1;
+        vbuf[video.buf][vptr++] = (pixels1 & 0x40) ? color_ink1 : color_paper1;
+        vbuf[video.buf][vptr++] = (pixels1 & 0x20) ? color_ink1 : color_paper1;
+        vbuf[video.buf][vptr++] = (pixels1 & 0x10) ? color_ink1 : color_paper1;
+        vbuf[video.buf][vptr++] = (pixels1 & 0x08) ? color_ink1 : color_paper1;
+        vbuf[video.buf][vptr++] = (pixels1 & 0x04) ? color_ink1 : color_paper1;
+        vbuf[video.buf][vptr++] = (pixels1 & 0x02) ? color_ink1 : color_paper1;
+        vbuf[video.buf][vptr++] = (pixels1 & 0x01) ? color_ink1 : color_paper1;
+    }
+
+    video.vptr = vptr;
 }
 
 void Screen::DrawATM2Text(uint32_t n)
 {
-    (void)n;
+    // ATM Text mode (80x25, 640x200 effective)
+    // Memory layout:
+    //   Chars 0:  video_page - 4, offset 0x0000 (page 1/3)
+    //   Chars 1:  video_page,     offset 0x0000 (page 5/7)
+    //   Attrs 0:  video_page - 4, offset 0x2000 (page 1/3 + 8KB)
+    //   Attrs 1:  video_page,     offset 0x2000 (page 5/7 + 8KB)
+    // Font is stored in SYS ROM at offset 0x1C00 (standard ZX charset)
+
+    EmulatorState& state = _context->emulatorState;
+    VideoControl& video = _vid;
+
+    // Standard ZX palette
+    static const uint32_t palette[2][8] = {{
+        0x00000000, 0x000022C7, 0x00D62816, 0x00D433C7,
+        0x0000C525, 0x0000C7C9, 0x00CCC82A, 0x00CACACA
+    }, {
+        0x00000000, 0x00002BFB, 0x00FF331C, 0x00FF40FC,
+        0x0000F92F, 0x0000FBFE, 0x00FFFC36, 0x00FFFFFF
+    }};
+
+    // Get video page (5 or 7 based on 7FFD bit 3)
+    uint8_t videoPage = (state.p7FFD & 0x08) ? 7 : 5;
+    uint8_t altPage = videoPage - 4;
+
+    uint8_t* chars0 = _memory->RAMPageAddress(altPage);
+    uint8_t* chars1 = _memory->RAMPageAddress(videoPage);
+    uint8_t* attrs0 = _memory->RAMPageAddress(altPage) + 0x2000;
+    uint8_t* attrs1 = _memory->RAMPageAddress(videoPage) + 0x2000;
+
+    // Font from SYS ROM (page 3, offset 0x1C00)
+    // Note: In ATM, font is typically at 0x3D00 in ROM page 3
+    uint8_t* font = _memory->ROMPageHostAddress(3) + 0x1D00;
+
+    uint32_t vptr = video.vptr;
+
+    // 80x25 text mode: 64 bytes per row (80 chars interleaved between 2 planes)
+    // Screen has 200 lines, each character is 8 lines high
+    uint32_t y = video.ygctr;
+    uint32_t charRow = y / 8;        // Which text row (0-24)
+    uint32_t charLine = y % 8;       // Which line within character (0-7)
+    uint32_t rowOffset = charRow * 64;
+
+    for (uint32_t i = n; i > 0; i -= 4, video.t_next += 4, video.xctr++)
+    {
+        uint32_t x = video.xctr;
+        if (x >= 40) continue;
+
+        uint32_t offset = (rowOffset + x) & 0x1FFF;
+
+        // Read characters and attributes from both planes
+        uint8_t char0 = chars0[offset];
+        uint8_t char1 = chars1[offset];
+        uint8_t attr0 = attrs0[offset];
+        uint8_t attr1 = attrs1[offset];
+
+        // Get font data for this character line
+        uint8_t fontBits0 = font[char0 * 8 + charLine];
+        uint8_t fontBits1 = font[char1 * 8 + charLine];
+
+        // Decode attributes
+        uint8_t bright0 = (attr0 & 0x40) ? 1 : 0;
+        uint8_t paper0 = (attr0 >> 3) & 0x07;
+        uint8_t ink0 = attr0 & 0x07;
+        uint32_t color_paper0 = palette[bright0][paper0];
+        uint32_t color_ink0 = palette[bright0][ink0];
+
+        uint8_t bright1 = (attr1 & 0x40) ? 1 : 0;
+        uint8_t paper1 = (attr1 >> 3) & 0x07;
+        uint8_t ink1 = attr1 & 0x07;
+        uint32_t color_paper1 = palette[bright1][paper1];
+        uint32_t color_ink1 = palette[bright1][ink1];
+
+        // Render 8 pixels from char0, then 8 from char1 (16 total, no doubling)
+        vbuf[video.buf][vptr++] = (fontBits0 & 0x80) ? color_ink0 : color_paper0;
+        vbuf[video.buf][vptr++] = (fontBits0 & 0x40) ? color_ink0 : color_paper0;
+        vbuf[video.buf][vptr++] = (fontBits0 & 0x20) ? color_ink0 : color_paper0;
+        vbuf[video.buf][vptr++] = (fontBits0 & 0x10) ? color_ink0 : color_paper0;
+        vbuf[video.buf][vptr++] = (fontBits0 & 0x08) ? color_ink0 : color_paper0;
+        vbuf[video.buf][vptr++] = (fontBits0 & 0x04) ? color_ink0 : color_paper0;
+        vbuf[video.buf][vptr++] = (fontBits0 & 0x02) ? color_ink0 : color_paper0;
+        vbuf[video.buf][vptr++] = (fontBits0 & 0x01) ? color_ink0 : color_paper0;
+
+        vbuf[video.buf][vptr++] = (fontBits1 & 0x80) ? color_ink1 : color_paper1;
+        vbuf[video.buf][vptr++] = (fontBits1 & 0x40) ? color_ink1 : color_paper1;
+        vbuf[video.buf][vptr++] = (fontBits1 & 0x20) ? color_ink1 : color_paper1;
+        vbuf[video.buf][vptr++] = (fontBits1 & 0x10) ? color_ink1 : color_paper1;
+        vbuf[video.buf][vptr++] = (fontBits1 & 0x08) ? color_ink1 : color_paper1;
+        vbuf[video.buf][vptr++] = (fontBits1 & 0x04) ? color_ink1 : color_paper1;
+        vbuf[video.buf][vptr++] = (fontBits1 & 0x02) ? color_ink1 : color_paper1;
+        vbuf[video.buf][vptr++] = (fontBits1 & 0x01) ? color_ink1 : color_paper1;
+    }
+
+    video.vptr = vptr;
 }
 
 void Screen::DrawATM3Text(uint32_t n)
 {
-    (void)n;
+    // ATM3 Text Linear mode (FF77 mode 7) - undocumented Sinclair-style text
+    // Similar to ATM2 text but with linear memory layout
+    // Uses simple 32-column layout like ZX-Spectrum
+
+    EmulatorState& state = _context->emulatorState;
+    VideoControl& video = _vid;
+
+    // Standard ZX palette
+    static const uint32_t palette[2][8] = {{
+        0x00000000, 0x000022C7, 0x00D62816, 0x00D433C7,
+        0x0000C525, 0x0000C7C9, 0x00CCC82A, 0x00CACACA
+    }, {
+        0x00000000, 0x00002BFB, 0x00FF331C, 0x00FF40FC,
+        0x0000F92F, 0x0000FBFE, 0x00FFFC36, 0x00FFFFFF
+    }};
+
+    // Get video page
+    uint8_t videoPage = (state.p7FFD & 0x08) ? 7 : 5;
+
+    // Linear text mode uses a simpler layout
+    uint8_t* charMem = _memory->RAMPageAddress(videoPage) + 0x1840;
+    uint8_t* font = _memory->ROMPageHostAddress(3) + 0x1D00;
+
+    uint32_t vptr = video.vptr;
+
+    // 32 columns, similar to ZX
+    uint32_t y = video.ygctr;
+    uint32_t charRow = y / 8;
+    uint32_t charLine = y % 8;
+
+    for (uint32_t i = n; i > 0; i -= 4, video.t_next += 4, video.xctr++)
+    {
+        uint32_t x = video.xctr;
+        if (x >= 32) continue;
+
+        // Linear layout: characters in sequence
+        uint32_t offset = ((charRow * 32 + x) + 1) & 0x1F;
+        uint8_t chr = charMem[offset];
+
+        // Get font bits
+        uint8_t fontBits = font[chr * 8 + charLine];
+
+        // Simple white on black for linear text mode
+        uint32_t color_paper = palette[0][0];  // Black
+        uint32_t color_ink = palette[1][7];    // Bright white
+
+        // Render 8 pixels doubled to 16
+        vbuf[video.buf][vptr++] = (fontBits & 0x80) ? color_ink : color_paper;
+        vbuf[video.buf][vptr++] = (fontBits & 0x80) ? color_ink : color_paper;
+        vbuf[video.buf][vptr++] = (fontBits & 0x40) ? color_ink : color_paper;
+        vbuf[video.buf][vptr++] = (fontBits & 0x40) ? color_ink : color_paper;
+        vbuf[video.buf][vptr++] = (fontBits & 0x20) ? color_ink : color_paper;
+        vbuf[video.buf][vptr++] = (fontBits & 0x20) ? color_ink : color_paper;
+        vbuf[video.buf][vptr++] = (fontBits & 0x10) ? color_ink : color_paper;
+        vbuf[video.buf][vptr++] = (fontBits & 0x10) ? color_ink : color_paper;
+        vbuf[video.buf][vptr++] = (fontBits & 0x08) ? color_ink : color_paper;
+        vbuf[video.buf][vptr++] = (fontBits & 0x08) ? color_ink : color_paper;
+        vbuf[video.buf][vptr++] = (fontBits & 0x04) ? color_ink : color_paper;
+        vbuf[video.buf][vptr++] = (fontBits & 0x04) ? color_ink : color_paper;
+        vbuf[video.buf][vptr++] = (fontBits & 0x02) ? color_ink : color_paper;
+        vbuf[video.buf][vptr++] = (fontBits & 0x02) ? color_ink : color_paper;
+        vbuf[video.buf][vptr++] = (fontBits & 0x01) ? color_ink : color_paper;
+        vbuf[video.buf][vptr++] = (fontBits & 0x01) ? color_ink : color_paper;
+    }
+
+    video.vptr = vptr;
 }
 
 void Screen::DrawProfi(uint32_t n)

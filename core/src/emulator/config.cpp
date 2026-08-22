@@ -585,8 +585,26 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             default:
                 break;
         }
+    }
 
-        // Invariant: frame_duration_us must be recomputed with config.frame
+    // ATM timing is ALWAYS applied (not conditional on canonicalGeometry) because
+    // the ini file's Frame=99880 is a 7MHz preset label, not base-clock timing.
+    // ATM uses ZX-compatible 312-line PAL at base clock; turbo is runtime state.
+    if (config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3)
+    {
+        config.frame = 69888;   // 312 lines * 224 T/line (ZX-compatible PAL)
+        config.t_line = 224;
+        config.intstart = 2056; // ZX128-compatible INT timing
+        config.intlen = 32;
+    }
+
+    // Invariant: frame_duration_us must be recomputed with config.frame
+    // All models use the standard formula now (ATM uses ZX-compatible timing)
+    if (config.frame_duration_us == 0 || config.mem_model == MM_SPECTRUM48 ||
+        config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PLUS3 ||
+        config.mem_model == MM_PENTAGON || config.mem_model == MM_ATM710 ||
+        config.mem_model == MM_ATM3)
+    {
         config.frame_duration_us = CalculateFrameDurationUs(config.frame);
     }
 

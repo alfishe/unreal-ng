@@ -147,6 +147,10 @@ public:
     /// @param tstate T-state timing position
     void DrawLUT_Ternary(uint32_t tstate);
 
+    /// @brief ATM extended mode renderer (EGA, HiRes, Text modes)
+    /// @param tstate T-state timing position
+    void DrawATMMode(uint32_t tstate);
+
     /// region <ScreenHQ=OFF optimizations - Phase 4-5>
     /// These methods batch 8 pixels together, breaking demo multicolor compatibility
     /// but providing significant performance gains for non-demo usage
