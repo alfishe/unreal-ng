@@ -22,6 +22,15 @@
 ///   Before: ~25-50 ns per access when any breakpoint is armed
 ///   After:  ~3-4 ns for unrelated accesses (10x improvement)
 
+#ifdef NDEBUG
+constexpr double MAX_MISS_PATH_NS = 5.0;
+constexpr double MAX_HIT_PATH_NS = 200.0;
+#else
+// Debug builds have significant overhead for memory access and test execution
+constexpr double MAX_MISS_PATH_NS = 50.0;
+constexpr double MAX_HIT_PATH_NS = 1000.0;
+#endif
+
 class BreakpointHotpathBench : public ::testing::Test
 {
 protected:
@@ -110,7 +119,7 @@ TEST_F(BreakpointHotpathBench, NoBreakpoints_MemRead)
               << " ns/call" << std::endl;
 
     // With no breakpoints, should be nearly instant (empty check)
-    EXPECT_LT(nsPerCall, 5.0) << "No-breakpoint path should be < 5 ns";
+    EXPECT_LT(nsPerCall, MAX_MISS_PATH_NS) << "No-breakpoint path should be < " << MAX_MISS_PATH_NS << " ns";
 }
 
 /// Benchmark: cost of HandleMemoryRead with 1 exec breakpoint (read path should be cheap)
@@ -142,7 +151,7 @@ TEST_F(BreakpointHotpathBench, OneExecBp_MemRead)
               << " ns/call" << std::endl;
 
     // With only exec bp, read path hits kind flag (hasRead==0) and returns immediately
-    EXPECT_LT(nsPerCall, 5.0) << "Kind-filtered path should be < 5 ns";
+    EXPECT_LT(nsPerCall, MAX_MISS_PATH_NS) << "Kind-filtered path should be < " << MAX_MISS_PATH_NS << " ns";
 }
 
 /// Benchmark: cost of HandleMemoryWrite with 1 write breakpoint at different address
@@ -177,7 +186,7 @@ TEST_F(BreakpointHotpathBench, OneWriteBp_MemWriteMiss)
               << " ns/call" << std::endl;
 
     // Miss path checks kind flag + address filter, no hash lookup
-    EXPECT_LT(nsPerCall, 5.0) << "Miss path should be < 5 ns";
+    EXPECT_LT(nsPerCall, MAX_MISS_PATH_NS) << "Miss path should be < " << MAX_MISS_PATH_NS << " ns";
 }
 
 /// Benchmark: cost when we actually hit the breakpoint address
@@ -200,7 +209,7 @@ TEST_F(BreakpointHotpathBench, OneWriteBp_MemWriteHit)
 
     // Hit path cost should remain similar (we still do the lookup)
     // This is expected to stay ~25-50 ns - the optimization is for the miss path
-    EXPECT_LT(nsPerCall, 200.0) << "Hit path sanity check";
+    EXPECT_LT(nsPerCall, MAX_HIT_PATH_NS) << "Hit path sanity check";
 }
 
 /// Benchmark: cost with 10 mixed breakpoints, miss path
@@ -241,7 +250,7 @@ TEST_F(BreakpointHotpathBench, TenMixedBps_MemWriteMiss)
               << " ns/call" << std::endl;
 
     // Miss path cost is independent of breakpoint count
-    EXPECT_LT(nsPerCall, 5.0) << "Miss path should be < 5 ns regardless of bp count";
+    EXPECT_LT(nsPerCall, MAX_MISS_PATH_NS) << "Miss path should be < " << MAX_MISS_PATH_NS << " ns regardless of bp count";
 }
 
 /// Benchmark: HandlePCChange (execute path)
@@ -272,7 +281,7 @@ TEST_F(BreakpointHotpathBench, OneExecBp_PCChangeMiss)
               << " ns/call" << std::endl;
 
     // Miss path checks kind flag + address filter
-    EXPECT_LT(nsPerCall, 5.0) << "PC change miss path should be < 5 ns";
+    EXPECT_LT(nsPerCall, MAX_MISS_PATH_NS) << "PC change miss path should be < " << MAX_MISS_PATH_NS << " ns";
 }
 
 /// Summary test that prints all results in a table
