@@ -49,6 +49,7 @@ endif()
 if (WIN32 AND NOT MSVC)
     set (GOOGLETEST_FILES
         ${GOOGLETEST_DIR}/googletest/src/gtest.cc
+        ${GOOGLETEST_DIR}/googletest/src/gtest-assertion-result.cc
         ${GOOGLETEST_DIR}/googletest/src/gtest-death-test.cc
         ${GOOGLETEST_DIR}/googletest/src/gtest-filepath.cc
         ${GOOGLETEST_DIR}/googletest/src/gtest-matchers.cc

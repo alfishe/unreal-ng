@@ -1,16 +1,204 @@
 #include "stdafx.h"
 
 #include "filehelper.h"
+
 #include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
+#include <vector>
+
 #ifdef _WIN32
 #include <windows.h>
+#include <direct.h>  // _getdcwd
+#else
+#include <climits>
+#include <unistd.h>
 #endif
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
 
 namespace fs = std::filesystem;
+
+/// region <Internal helpers>
+
+namespace
+{
+    inline bool IsSep(char c)
+    {
+        return c == '/' || c == '\\';
+    }
+
+    /// "X:" prefix
+    inline bool HasDriveLetter(const std::string& p)
+    {
+        return p.size() >= 2 && std::isalpha(static_cast<unsigned char>(p[0])) && p[1] == ':';
+    }
+
+    bool EqualsIgnoreCase(const std::string& a, const char* b)
+    {
+        size_t n = std::strlen(b);
+        if (a.size() != n)
+            return false;
+        for (size_t i = 0; i < n; i++)
+        {
+            if (std::toupper(static_cast<unsigned char>(a[i])) != std::toupper(static_cast<unsigned char>(b[i])))
+                return false;
+        }
+        return true;
+    }
+
+    /// Root of a path (native separators already applied).
+    /// root       - text that is kept verbatim and never touched by "." / ".." processing
+    ///              Windows: "C:", "\\server\share", "\\?\C:", "\\?\UNC\server\share", "" (rooted without drive)
+    ///              POSIX:   "/" for a path starting with exactly "//" (POSIX keeps it significant), "" otherwise
+    /// hasRootDir - a separator follows the root (the path is anchored, ".." cannot climb above the root)
+    /// bodyStart  - offset where the regular components start
+    struct PathRoot
+    {
+        std::string root;
+        bool hasRootDir = false;
+        size_t bodyStart = 0;
+    };
+
+    PathRoot SplitRoot(const std::string& p)
+    {
+        PathRoot r;
+        const char sep = FileHelper::GetPathSeparator();
+        const size_t n = p.size();
+
+#ifdef _WIN32
+        if (n >= 2 && p[0] == sep && p[1] == sep)
+        {
+            // UNC or Win32 device path. Root components: "server\share", "?\C:", ".\device", "?\UNC\server\share".
+            // Extra separators between root components are collapsed.
+            size_t pos = 2;
+            while (pos < n && p[pos] == sep)
+                pos++;
+
+            std::vector<std::string> comps;
+            size_t wanted = 2;
+            while (comps.size() < wanted && pos < n)
+            {
+                size_t start = pos;
+                while (pos < n && p[pos] != sep)
+                    pos++;
+                comps.push_back(p.substr(start, pos - start));
+
+                if (comps.size() == 2 && (comps[0] == "?" || comps[0] == ".") && EqualsIgnoreCase(comps[1], "UNC"))
+                    wanted = 4;
+
+                if (comps.size() < wanted)
+                {
+                    while (pos < n && p[pos] == sep)
+                        pos++;
+                }
+            }
+
+            r.root.assign(2, sep);
+            for (size_t k = 0; k < comps.size(); k++)
+            {
+                if (k > 0)
+                    r.root += sep;
+                r.root += comps[k];
+            }
+            r.hasRootDir = pos < n && p[pos] == sep;
+            r.bodyStart = pos;
+            return r;
+        }
+
+        if (HasDriveLetter(p))
+        {
+            r.root = p.substr(0, 2);
+            r.hasRootDir = n > 2 && p[2] == sep;
+            r.bodyStart = 2;
+            return r;
+        }
+
+        if (n >= 1 && p[0] == sep)
+        {
+            // Rooted on the current drive
+            r.hasRootDir = true;
+            r.bodyStart = 0;
+            return r;
+        }
+#else
+        if (n >= 2 && p[0] == '/' && p[1] == '/' && (n == 2 || p[2] != '/'))
+        {
+            // POSIX: exactly two leading slashes are implementation-defined and must be preserved;
+            // three or more are equivalent to one (handled by the branch below)
+            r.root = "/";
+            r.hasRootDir = true;
+            r.bodyStart = 1;
+            return r;
+        }
+
+        if (n >= 1 && p[0] == '/')
+        {
+            r.hasRootDir = true;
+            r.bodyStart = 0;
+            return r;
+        }
+#endif
+
+        return r;  // relative
+    }
+
+    std::string CurrentDirectory()
+    {
+        std::error_code ec;
+        std::string cwd = fs::current_path(ec).string();
+        if (ec)
+            cwd.clear();
+        return cwd;
+    }
+
+    /// Resolve symlinks / on-disk letter case of an existing path. Returns empty string on failure.
+    std::string CanonicalExistingPath(const std::string& nativePath)
+    {
+        std::string result;
+
+#ifdef _WIN32
+        // Handle-based resolution works identically for drive paths, UNC shares and \\?\ prefixed paths
+        // on both MSVC and MinGW (libstdc++'s std::filesystem::canonical mangles UNC paths).
+        HANDLE handle = CreateFileA(nativePath.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                                    OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        if (handle == INVALID_HANDLE_VALUE)
+            return result;
+
+        std::vector<char> buffer(32768);
+        DWORD length = GetFinalPathNameByHandleA(handle, buffer.data(), static_cast<DWORD>(buffer.size()),
+                                                 FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+        CloseHandle(handle);
+
+        if (length == 0 || length >= buffer.size())
+            return result;
+
+        result.assign(buffer.data(), length);
+
+        // Strip the extended-length prefix: "\\?\UNC\server\share\x" -> "\\server\share\x", "\\?\C:\x" -> "C:\x"
+        static const std::string uncPrefix = "\\\\?\\UNC\\";
+        static const std::string devPrefix = "\\\\?\\";
+        if (result.compare(0, uncPrefix.size(), uncPrefix) == 0)
+            result = "\\\\" + result.substr(uncPrefix.size());
+        else if (result.compare(0, devPrefix.size(), devPrefix) == 0)
+            result = result.substr(devPrefix.size());
+#else
+        char* resolved = realpath(nativePath.c_str(), nullptr);
+        if (resolved != nullptr)
+        {
+            result = resolved;
+            free(resolved);
+        }
+#endif
+
+        return result;
+    }
+}  // namespace
+
+/// endregion </Internal helpers>
 
 char FileHelper::GetPathSeparator()
 {
@@ -94,238 +282,294 @@ std::string FileHelper::GetResourcesPath()
     return resourcesPath;
 }
 
+std::string FileHelper::ExpandPath(const std::string& path)
+{
+    // Only a leading "~" that is the whole path or is followed by a separator refers to the home directory
+    if (path.empty() || path[0] != '~' || (path.size() > 1 && !IsSep(path[1])))
+        return path;
+
+#ifdef _WIN32
+    const char* home = getenv("USERPROFILE");
+    std::string homeDir = home ? home : "";
+    if (homeDir.empty())
+    {
+        const char* drive = getenv("HOMEDRIVE");
+        const char* dir = getenv("HOMEPATH");
+        if (drive && dir)
+            homeDir = std::string(drive) + dir;
+    }
+#else
+    const char* home = getenv("HOME");
+    std::string homeDir = home ? home : "";
+#endif
+
+    if (homeDir.empty())
+        return path;
+
+    while (homeDir.size() > 1 && IsSep(homeDir.back()))
+        homeDir.pop_back();
+
+    return homeDir + path.substr(1);
+}
+
 std::string FileHelper::NormalizePath(const std::string& path, char separator)
 {
-    if (separator == L'\0')
+    if (separator == '\0')
         separator = GetPathSeparator();
 
     std::string result = path;
 
-    replace(result.begin(), result.end(), '/', separator);
-    replace(result.begin(), result.end(), '\\', separator);
+    std::replace(result.begin(), result.end(), '/', separator);
+    std::replace(result.begin(), result.end(), '\\', separator);
 
     return result;
 }
 
 std::string FileHelper::NormalizePath(const std::string& path)
 {
-    const char systemSeparator = GetPathSeparator();
-    std::string result = NormalizePath(path, systemSeparator);
+    return NormalizePath(path, GetPathSeparator());
+}
+
+std::string FileHelper::LexicallyNormalPath(const std::string& path)
+{
+    if (path.empty())
+        return path;
+
+    const char sep = GetPathSeparator();
+    const std::string p = NormalizePath(path, sep);
+    const size_t n = p.size();
+    const PathRoot root = SplitRoot(p);
+
+    // Split the body into components (empty ones = duplicated separators are dropped)
+    std::vector<std::string> comps;
+    size_t start = root.bodyStart;
+    for (size_t i = root.bodyStart; i <= n; i++)
+    {
+        if (i == n || p[i] == sep)
+        {
+            if (i > start)
+                comps.push_back(p.substr(start, i - start));
+            start = i + 1;
+        }
+    }
+
+    // Fold "." and ".." (std::filesystem::path::lexically_normal semantics)
+    bool trailing = p.back() == sep;
+    std::vector<std::string> out;
+    for (size_t k = 0; k < comps.size(); k++)
+    {
+        const std::string& c = comps[k];
+        const bool last = (k + 1 == comps.size());
+
+        if (c == ".")
+        {
+            if (last)
+                trailing = true;
+            continue;
+        }
+
+        if (c == "..")
+        {
+            if (!out.empty() && out.back() != "..")
+            {
+                out.pop_back();
+                if (last)
+                    trailing = true;
+            }
+            else if (root.hasRootDir)
+            {
+                // Cannot climb above the root - drop it
+                if (last)
+                    trailing = true;
+            }
+            else
+            {
+                out.push_back(c);
+            }
+            continue;
+        }
+
+        out.push_back(c);
+    }
+
+    if (!out.empty() && out.back() == "..")
+        trailing = false;
+
+    std::string result = root.root;
+    if (root.hasRootDir)
+        result += sep;
+    for (size_t k = 0; k < out.size(); k++)
+    {
+        if (k > 0)
+            result += sep;
+        result += out[k];
+    }
+    if (trailing && !out.empty())
+        result += sep;
+
+    if (result.empty())
+        result = ".";
 
     return result;
 }
 
+bool FileHelper::IsUNCPath(const std::string& path)
+{
+    return path.size() >= 3 && IsSep(path[0]) && IsSep(path[1]) && !IsSep(path[2]);
+}
+
+bool FileHelper::IsAbsolutePath(const std::string& path)
+{
+#ifdef _WIN32
+    // Anything starting with two separators lives in the UNC / device namespace and never depends on the cwd
+    if (path.size() >= 2 && IsSep(path[0]) && IsSep(path[1]))
+        return true;
+    return HasDriveLetter(path) && path.size() > 2 && IsSep(path[2]);
+#else
+    return !path.empty() && path[0] == '/';
+#endif
+}
+
 std::string FileHelper::AbsolutePath(const std::string& path, bool resolveSymlinks)
 {
-    std::string result = path;
+    if (path.empty())
+        return path;
 
-    try
+    const char sep = GetPathSeparator();
+    std::string result = NormalizePath(ExpandPath(path), sep);
+
+    if (!IsAbsolutePath(result))
     {
-        // On Unix/macOS, normalize backslashes to forward slashes first
-        // This ensures paths like "\\opt\\path" are recognized as absolute paths
-        std::string normalizedPath = path;
-#ifndef _WIN32
-        std::replace(normalizedPath.begin(), normalizedPath.end(), '\\', '/');
-#endif
-        
-        // Expand tilde to home directory (cross-platform)
-        if (!normalizedPath.empty() && normalizedPath[0] == '~')
-        {
 #ifdef _WIN32
-            const char* home = getenv("USERPROFILE");
-            if (!home) home = getenv("HOMEPATH");
+        if (HasDriveLetter(result))
+        {
+            // Drive-relative ("C:dir\file") - relative to the current directory of that drive
+            int drive = std::toupper(static_cast<unsigned char>(result[0])) - 'A' + 1;
+            char* driveCwd = _getdcwd(drive, nullptr, 0);
+            std::string base = driveCwd ? driveCwd : result.substr(0, 2) + sep;
+            free(driveCwd);
+
+            std::string rest = result.substr(2);
+            result = rest.empty() ? base : base + sep + rest;
+        }
+        else if (result[0] == sep)
+        {
+            // Rooted without drive ("\dir\file") - on the current drive
+            std::error_code ec;
+            result = fs::current_path(ec).root_name().string() + result;
+        }
+        else
+        {
+            result = CurrentDirectory() + sep + result;
+        }
 #else
-            const char* home = getenv("HOME");
+        result = CurrentDirectory() + sep + result;
 #endif
-            if (home)
-            {
-                normalizedPath = std::string(home) + normalizedPath.substr(1);
-            }
-        }
-
-        fs::path absolutePath = fs::path(normalizedPath);
-
-        if (resolveSymlinks)
-        {
-            // If the input isn't already absolute, prepend current path
-            if (!absolutePath.is_absolute())
-            {
-                absolutePath = fs::current_path() / absolutePath;
-            }
-
-            // Convert to absolute path and normalize - checks filesystem
-            absolutePath = fs::absolute(absolutePath);
-        }
-
-        // Normalize the path (remove . and ..)
-        absolutePath = absolutePath.lexically_normal();
-
-        if (resolveSymlinks && fs::exists(absolutePath))
-        {
-            // For consistent comparison, make sure to resolve any remaining symlinks
-            absolutePath = fs::canonical(absolutePath);
-        }
-
-        result = absolutePath.generic_string();
-        result = NormalizePath(result);
     }
-    catch (const std::exception& e)
+
+    result = LexicallyNormalPath(result);
+
+    if (resolveSymlinks && (FileExists(result) || FolderExists(result)))
     {
-        // Handle error (e.g., path doesn't exist)
-        // throw std::runtime_error("Failed to get absolute path and resolve symlinks: " + std::string(e.what()));
+        std::string canonical = CanonicalExistingPath(result);
+        if (!canonical.empty())
+            result = NormalizePath(canonical, sep);
     }
-
-    return result;
-
-#if defined _WIN32
-    char buffer[MAX_PATH];
-    DWORD length = GetFullPathNameA(path.c_str(), MAX_PATH, buffer, nullptr);
-    if (length != 0)
-    {
-        result = std::string(buffer, length);
-        result = NormalizePath(result);
-    }
-    return result;
-#else  // Unix-like systems (Linux and macOS)
-    char buffer[PATH_MAX];
-    char* resolved = realpath(path.c_str(), buffer);
-    if (resolved != nullptr)
-    {
-        result = std::string(resolved);
-        result = NormalizePath(result);
-    }
-    else if (errno == ENOENT)  // Path doesn't exist, but might be valid
-    {
-        // Try to resolve the parent directory
-        size_t lastSlash = path.find_last_of('/');
-        if (lastSlash != std::string::npos)
-        {
-            std::string parentDir = path.substr(0, lastSlash);
-            char* resolvedParent = realpath(parentDir.c_str(), buffer);
-            if (resolvedParent != nullptr)
-            {
-                result = std::string(resolvedParent) + path.substr(lastSlash);
-                result = NormalizePath(result);
-                return result;
-            }
-        }
-
-        // If parent directory resolution fails, handle as before
-        if (path[0] == '/')  // Absolute path
-        {
-            result = path;
-        }
-        else  // Relative path, convert to absolute
-        {
-            char cwd[PATH_MAX];
-            if (getcwd(cwd, sizeof(cwd)) != nullptr)
-            {
-                result = std::string(cwd) + "/" + path;
-            }
-        }
-        result = NormalizePath(result);
-    }
-#endif
 
     return result;
 }
 
 std::string FileHelper::PathCombine(const std::string& path1, const std::string& path2)
 {
-    std::string result;
-
-    // Handle empty paths
     if (path1.empty())
         return path2;
     if (path2.empty())
         return path1;
 
-    // Combine paths
-    char separator = '/';  // Use forward slash as universal separator
+    const char sep = GetPathSeparator();
+    std::string first = NormalizePath(path1, sep);
+    std::string second = NormalizePath(path2, sep);
 
-    // Check if path1 ends with separator or path2 starts with one
-    bool path1_has_sep = !path1.empty() && (path1.back() == '/' || path1.back() == '\\');
-    bool path2_has_sep = !path2.empty() && (path2.front() == '/' || path2.front() == '\\');
+    bool firstHasSep = first.back() == sep;
+    bool secondHasSep = second.front() == sep;
 
-    if (path1_has_sep && path2_has_sep)
-    {
-        result = path1 + path2.substr(1);
-    }
-    else if (path1_has_sep || path2_has_sep)
-    {
-        result = path1 + path2;
-    }
-    else
-    {
-        result = path1 + separator + path2;
-    }
-
-    // Normalize the path (convert to forward slashes, remove duplicates, etc.)
-    result = NormalizePath(result);
-
-#ifdef _WIN32
-    // On Windows, we might want to handle drive letters and UNC paths
-    if (result.size() >= 2 && result[1] == ':')
-    {
-        // Drive letter path - ensure proper formatting
-        if (result.size() > 2 && result[2] != '/')
-        {
-            result.insert(2, 1, '/');
-        }
-    }
-#endif
-
-    return result;
+    if (firstHasSep && secondHasSep)
+        return first + second.substr(1);
+    if (firstHasSep || secondHasSep)
+        return first + second;
+    return first + sep + second;
 }
 
 std::string FileHelper::PathCombine(const std::string& path1, const char* path2)
 {
-    string pathPart2 = path2;
-    return PathCombine(path1, pathPart2);
+    return PathCombine(path1, std::string(path2 ? path2 : ""));
 }
 
 bool FileHelper::IsFile(const std::string& path)
 {
-    bool result = FileExists(path);
-
-    return result;
+    return FileExists(path);
 }
 
 bool FileHelper::IsFolder(const std::string& path)
 {
-    bool result = FolderExists(path);
-
-    return result;
+    return FolderExists(path);
 }
 
 bool FileHelper::FileExists(const std::string& path)
 {
-    std::error_code ec;  // To avoid throwing exceptions
-    return fs::is_regular_file(path, ec) && !ec;
+    if (path.empty())
+        return false;
+
+    std::string nativePath = NormalizePath(path);
+
+#ifdef _WIN32
+    // Win32 API accepts every path shape (drive, UNC share root, \\?\ prefix) on MSVC and MinGW alike
+    DWORD attrs = GetFileAttributesA(nativePath.c_str());
+    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
+#else
+    std::error_code ec;
+    return fs::is_regular_file(nativePath, ec) && !ec;
+#endif
 }
 
 bool FileHelper::FolderExists(const std::string& path)
 {
-    std::error_code ec;  // To avoid throwing exceptions
-    return fs::is_directory(path, ec) && !ec;
+    if (path.empty())
+        return false;
+
+    std::string nativePath = NormalizePath(path);
+
+#ifdef _WIN32
+    DWORD attrs = GetFileAttributesA(nativePath.c_str());
+    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
+#else
+    std::error_code ec;
+    return fs::is_directory(nativePath, ec) && !ec;
+#endif
 }
 
 size_t FileHelper::GetFileSize(const std::string& path)
 {
-    size_t result = -1;
+    size_t result = static_cast<size_t>(-1);
 
-    std::ifstream ifile;
-    ifile.open(path);
+    if (path.empty())
+        return result;
 
-    if (ifile.is_open())
+    std::string nativePath = NormalizePath(path);
+
+#ifdef _WIN32
+    WIN32_FILE_ATTRIBUTE_DATA data;
+    if (GetFileAttributesExA(nativePath.c_str(), GetFileExInfoStandard, &data) &&
+        (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
     {
-        ifile.seekg(0, std::ios_base::end);
-        std::fpos pos = ifile.tellg();
-
-        result = pos;
-
-        ifile.close();
+        result = (static_cast<size_t>(data.nFileSizeHigh) << 32) | static_cast<size_t>(data.nFileSizeLow);
     }
+#else
+    std::error_code ec;
+    uintmax_t size = fs::file_size(nativePath, ec);
+    if (!ec)
+        result = static_cast<size_t>(size);
+#endif
 
     return result;
 }
@@ -354,20 +598,23 @@ size_t FileHelper::GetFileSize(FILE* file)
 
 std::string FileHelper::GetFileExtension(const std::string& path)
 {
-    fs::path filepath(path);
-    std::string ext = filepath.extension().string();
-    if (!ext.empty() && ext[0] == '.')
-        ext = ext.substr(1);
-    // Convert to lowercase if desired (common convention)
-    // std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-    return ext;
+    // Work on the last component only, so roots ("C:", "\\server\share", "\\?\") and folders with dots are ignored
+    size_t lastSep = path.find_last_of("/\\");
+    std::string name = (lastSep == std::string::npos) ? path : path.substr(lastSep + 1);
+
+    if (name == "." || name == "..")
+        return std::string();
+
+    size_t dot = name.find_last_of('.');
+    if (dot == std::string::npos || dot == 0)  // no extension, or dot-file without extension (".bashrc")
+        return std::string();
+
+    return name.substr(dot + 1);
 }
 
 std::string FileHelper::PrintablePath(const std::string& path)
 {
-    string result = path;
-
-    return result;
+    return path;
 }
 
 FILE* FileHelper::OpenExistingFile(const std::string& path, const char* mode)
@@ -376,7 +623,7 @@ FILE* FileHelper::OpenExistingFile(const std::string& path, const char* mode)
 
     if (FileExists(path))
     {
-        result = fopen(path.c_str(), mode);
+        result = OpenFile(path, mode);
     }
 
     return result;
@@ -384,11 +631,11 @@ FILE* FileHelper::OpenExistingFile(const std::string& path, const char* mode)
 
 FILE* FileHelper::OpenFile(const std::string& path, const char* mode)
 {
-    FILE* result = nullptr;
+    if (path.empty())
+        return nullptr;
 
-    result = fopen(path.c_str(), mode);
-
-    return result;
+    std::string nativePath = NormalizePath(path);
+    return fopen(nativePath.c_str(), mode);
 }
 
 void FileHelper::CloseFile(FILE* file)
@@ -466,13 +713,11 @@ bool FileHelper::SaveBufferToFile(const std::string& filePath, uint8_t* buffer, 
         return result;
     }
 
-    FILE* file = fopen(filePath.c_str(), "wb");
+    FILE* file = OpenFile(filePath, "wb");
     if (file != nullptr)
     {
-        fwrite(buffer, 1, size, file);
+        result = SaveBufferToFile(file, buffer, size);
         fclose(file);
-
-        result = true;
     }
 
     return result;

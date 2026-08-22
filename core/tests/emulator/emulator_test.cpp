@@ -6,6 +6,13 @@
 #include "common/modulelogger.h"
 #include "common/timehelper.h"
 #include "emulator/emulator.h"
+#include "common/filehelper.h"
+#include "_helpers/emulatortesthelper.h"
+#include "_helpers/test_path_helper.h"
+
+#include <cctype>
+#include <utility>
+#include <vector>
 
 /// region <SetUp / TearDown>
 
@@ -150,4 +157,101 @@ TEST_F(Emulator_Test, MultiInstanceRun)
     EXPECT_GE(successCount, 3) << "At least 3 instances should run successfully";
 }
 /// endregion </Emulator re-entrability tests>
+
+/// region <Path shape tests>
+
+namespace
+{
+    /// Rewrite a local Windows path "X:\a\b" (or "X:/a/b") into the localhost admin-share UNC form:
+    /// "//localhost/X$/a/b" (forwardSlashes) or "\\localhost\X$\a\b". Empty string when there is no drive letter.
+    std::string ToLocalhostUNC(const std::string& localPath, bool forwardSlashes)
+    {
+        if (localPath.size() < 2 || !isalpha(static_cast<unsigned char>(localPath[0])) || localPath[1] != ':')
+            return std::string();
+
+        const char sep = forwardSlashes ? '/' : '\\';
+        std::string result = {sep, sep};
+        result += "localhost";
+        result += sep;
+        result += static_cast<char>(toupper(static_cast<unsigned char>(localPath[0])));
+        result += '$';
+
+        std::string rest = localPath.substr(2);
+        if (rest.empty() || (rest[0] != '\\' && rest[0] != '/'))
+            rest.insert(rest.begin(), sep);
+        for (char c : rest)
+            result += (c == '\\' || c == '/') ? sep : c;
+
+        return result;
+    }
+
+    /// True when \\localhost\X$ for the drive of @p localPath is reachable (may be denied for non-admin users / CI).
+    bool IsLocalhostAdminShareAccessible(const std::string& localPath)
+    {
+        std::string uncRoot = ToLocalhostUNC(localPath.substr(0, 2) + "\\", false);
+        return !uncRoot.empty() && FileHelper::FolderExists(uncRoot);
+    }
+}  // namespace
+
+/// @brief Emulator::LoadSnapshot must accept every valid spelling of a snapshot path the host OS understands.
+///
+/// Regression for: a snapshot dropped from a macOS Samba share onto the Windows build arrived as
+/// "//172.16.17.10/Macintosh HD/.../earshaver-1.sna" and was rejected with
+/// "Snapshot file not found: '\172.16.17.10\Macintosh HD\...'" - the UNC prefix was mangled on the way to
+/// FileExists(). Here the same file is loaded through every alternative spelling of its own path:
+///   Windows: forward slashes, mixed separators, UNC admin share "//localhost/X$/..." and "\\localhost\X$\..."
+///            (UNC variants are skipped when the admin share is not reachable, e.g. non-admin CI runner)
+///   POSIX:   leading "//" (POSIX keeps it significant), backslash-separated, mixed separators
+TEST(Emulator_PathShapes_Test, LoadSnapshot_AllPathSpellings)
+{
+    const std::string local = TestPathHelper::GetTestDataPath("loaders/sna/multifix.sna");
+    ASSERT_TRUE(FileHelper::FileExists(local)) << "Test data missing: " << local;
+
+    std::vector<std::pair<std::string, std::string>> spellings;  // {description, path}
+
+    spellings.push_back({"native", local});
+    spellings.push_back({"forward slashes", FileHelper::NormalizePath(local, '/')});
+    spellings.push_back({"backslashes", FileHelper::NormalizePath(local, '\\')});
+
+    // Mixed separators: alternate '/' and '\' at every separator position
+    {
+        std::string mixed = local;
+        bool forward = true;
+        for (char& c : mixed)
+        {
+            if (c == '/' || c == '\\')
+            {
+                c = forward ? '/' : '\\';
+                forward = !forward;
+            }
+        }
+        spellings.push_back({"mixed separators", mixed});
+    }
+
+#ifdef _WIN32
+    if (IsLocalhostAdminShareAccessible(local))
+    {
+        spellings.push_back({"UNC admin share, forward slashes", ToLocalhostUNC(local, true)});
+        spellings.push_back({"UNC admin share, backslashes", ToLocalhostUNC(local, false)});
+    }
+    else
+    {
+        std::cout << "  (UNC admin share \\\\localhost\\X$ not reachable - UNC spellings skipped)" << std::endl;
+    }
+#else
+    spellings.push_back({"double leading slash", "/" + FileHelper::NormalizePath(local, '/')});
+#endif
+
+    Emulator* emu = EmulatorTestHelper::CreateStandardEmulator("PENTAGON");
+    ASSERT_NE(emu, nullptr);
+
+    for (const auto& spelling : spellings)
+    {
+        EXPECT_TRUE(emu->LoadSnapshot(spelling.second)) << "LoadSnapshot failed for " << spelling.first << ": " << spelling.second;
+    }
+
+    EmulatorTestHelper::CleanupEmulator(emu);
+}
+
+/// endregion </Path shape tests>
 
