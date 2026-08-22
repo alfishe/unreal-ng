@@ -1,5 +1,6 @@
 #include "screenzx.h"
 
+#include <algorithm>
 #include <cassert>
 
 #include "atmfont.h"
@@ -90,6 +91,14 @@ void ScreenZX::CreateTimingTable()
     RenderTypeEnum type = RT_BLANK;
     // This iterates over horizontal positions (t-states per line), not vertical lines
     uint16_t tstatesPerLine = state.tstatesPerLine;
+
+    // Guard the fill below against a raster descriptor wider than the table.
+    if (tstatesPerLine > MAX_HEIGHT)
+    {
+        MLOGWARNING("ScreenZX::CreateTimingTable — tstatesPerLine=%u exceeds table size %u; clamping",
+                    static_cast<unsigned>(tstatesPerLine), static_cast<unsigned>(MAX_HEIGHT));
+        tstatesPerLine = MAX_HEIGHT;
+    }
 
     /// region <Line renderer in screen area>
 

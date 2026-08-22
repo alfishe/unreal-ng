@@ -1156,6 +1156,12 @@ void BreakpointManager::RemovePortBreakpointsByType(uint8_t ioType)
 /// region <Runtime methods>
 uint16_t BreakpointManager::HandlePCChange(uint16_t pc)
 {
+    // TTD silent-replay suppression (parent TDD 8.2 + Appendix C).
+    // Breakpoints must not fire during intra-frame replay - the replay
+    // engine is re-executing known history, not user-driven execution.
+    if (_context && _context->ttdReplayActive)
+        return BRK_INVALID;
+
     // Fast path: skip entirely if no execute breakpoints exist
     if (!_hotState.hasExec)
         return BRK_INVALID;
@@ -1216,6 +1222,10 @@ uint16_t BreakpointManager::HandlePCChange(uint16_t pc)
 /// and returns the breakpoint ID if triggered.
 uint16_t BreakpointManager::HandleMemoryRead(uint16_t readAddress)
 {
+    // TTD silent-replay suppression (parent TDD 8.2 + Appendix C).
+    if (_context && _context->ttdReplayActive)
+        return BRK_INVALID;
+
     // Fast path: skip entirely if no read breakpoints exist
     if (!_hotState.hasRead)
         return BRK_INVALID;
@@ -1249,6 +1259,10 @@ uint16_t BreakpointManager::HandleMemoryRead(uint16_t readAddress)
 /// and returns the breakpoint ID if triggered.
 uint16_t BreakpointManager::HandleMemoryWrite(uint16_t writeAddress)
 {
+    // TTD silent-replay suppression (parent TDD 8.2 + Appendix C).
+    if (_context && _context->ttdReplayActive)
+        return BRK_INVALID;
+
     // Fast path: skip entirely if no write breakpoints exist
     if (!_hotState.hasWrite)
         return BRK_INVALID;
@@ -1282,6 +1296,10 @@ uint16_t BreakpointManager::HandleMemoryWrite(uint16_t writeAddress)
 /// and returns the breakpoint ID if triggered.
 uint16_t BreakpointManager::HandlePortIn(uint16_t portAddress)
 {
+    // TTD silent-replay suppression (parent TDD 8.2 + Appendix C).
+    if (_context && _context->ttdReplayActive)
+        return BRK_INVALID;
+
     // Fast path: skip if no port-in breakpoints exist
     if (!_hotState.hasPortIn)
         return BRK_INVALID;
@@ -1311,6 +1329,10 @@ uint16_t BreakpointManager::HandlePortIn(uint16_t portAddress)
 /// and returns the breakpoint ID if triggered.
 uint16_t BreakpointManager::HandlePortOut(uint16_t portAddress)
 {
+    // TTD silent-replay suppression (parent TDD 8.2 + Appendix C).
+    if (_context && _context->ttdReplayActive)
+        return BRK_INVALID;
+
     // Fast path: skip if no port-out breakpoints exist
     if (!_hotState.hasPortOut)
         return BRK_INVALID;

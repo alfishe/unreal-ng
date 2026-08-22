@@ -106,6 +106,7 @@ The Universal Debug Bridge is a custom high-performance binary protocol inspired
 | Tracing | 0x0600-0x06FF | Execution trace recording |
 | Scripting | 0x0700-0x07FF | Execute scripts, callbacks |
 | Batch | 0x0800-0x08FF | Atomic multi-command execution |
+| Time Travel | 0x0900-0x09FF | TTD recording, seek, reverse search |
 
 ### Flags
 
@@ -423,6 +424,129 @@ For each result:
   Status:         uint8   (0=success, error code)
   Result length:  uint32
   Result data:    bytes
+```
+
+### Time Travel Commands
+
+High-performance binary surface for the same TTD subsystem documented in [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd). UDB is the preferred transport for *bulk* TTD operations (e.g. dumping a long timeline window, batch seek-and-inspect) because the binary encoding avoids per-frame JSON serialization overhead.
+
+Capability advertisement: the HELLO handshake reports a `TTD_V1` capability bit only when both `ENABLE_GDB_AUTOMATION` is on at build time *and* the runtime `timetravel` feature flag is on. Clients must not issue 0x09xx commands when the capability bit is absent.
+
+Common error codes returned in the standard UDB status byte for the commands below:
+
+| Code | Meaning |
+| :--- | :--- |
+| 0x01 | `E_RUN_CONTROL_BUSY` — another surface holds the claim |
+| 0x02 | `E_TTD_NOT_RECORDING` — no active session |
+| 0x03 | `E_TTD_OUT_OF_RANGE` — target outside recorded bounds |
+| 0x04 | `E_TTD_FEATURE_DISABLED` — `timetravel` flag off |
+| 0x05 | `E_TTD_SESSION_INVALIDATED` — session invalidated; client must restart |
+
+#### TTD_STATUS (0x0900)
+Always available regardless of the `timetravel` feature flag (returns `recording=0` plus `feature_enabled=0` when off).
+
+**Response**:
+```
+recording:           uint8
+feature_enabled:     uint8
+position_frame:      uint64
+position_tstate:     uint32
+first_frame:         uint64
+last_frame:          uint64
+memory_used:         uint64
+memory_budget:       uint64
+detached:            uint8
+invalidation_reason: uint8   (0=none, 1=reset, 2=load, 3=media, 4=speed, 5=dbg_write, 6=disk_write, 7=nvram_write)
+```
+
+#### TTD_START (0x0901) / TTD_STOP (0x0902) / TTD_CLEAR (0x0903)
+Lifecycle verbs. No request payload; no response payload beyond the status byte.
+
+#### TTD_SEEK (0x0910)
+Absolute seek. Emulator must be paused (run-control claim enforced).
+
+**Request**:
+```
+target_frame:        uint64     (0 = "don't care")
+target_tstate:       uint32     (0 = "don't care")
+```
+
+**Response**:
+```
+ok:                  uint8
+reached_frame:       uint64
+reached_tstate:      uint32
+halt_reason:         uint8   (0=target, 1=external_event, 2=out_of_range)
+```
+
+#### TTD_STEP (0x0911)
+Relative navigation.
+
+**Request**:
+```
+direction:           uint8   (0=back, 1=forward)
+unit:                uint8   (0=instruction, 1=frame)
+count:               uint16
+```
+
+**Response**: same shape as `TTD_SEEK`.
+
+#### TTD_FIND_LAST (0x0912)
+Reverse watchpoint search. Returns the most recent access matching the query, scanning backward from the current position.
+
+**Request**:
+```
+addr:                uint32   (CPU address; or 0xFFFFFFFF for any)
+addr_mask:           uint32   (1 = match all addresses; default 0xFFFFFFFF)
+access_type:         uint8    (bitmask: 1=write, 2=read, 4=execute, 8=out)
+value_match:         uint8    (0=any, 1=exact, 2=mask)
+value:               uint32
+value_mask:          uint32   (relevant when value_match=2)
+pc_from:             uint16
+pc_to:               uint16
+before_frame:        uint64   (0 = no upper bound)
+before_tstate:       uint32
+```
+
+**Response** (status=1 with empty payload if no match):
+```
+found:               uint8
+frame:               uint64
+tstate:              uint32
+pc:                  uint16
+value:               uint32
+physpage:            uint32
+```
+
+#### TTD_TIMELINE (0x0920)
+Paginated per-frame summary, used by bulk-analysis clients.
+
+**Request**:
+```
+from_frame:          uint64
+to_frame:            uint64
+limit:               uint16   (max entries to return; 0 = server default)
+```
+
+**Response** (streamed if the result is large; uses the standard streaming flag):
+```
+count:               uint32
+For each entry:
+  frame:             uint64
+  dirty_pages:       uint32
+  event_ticks:       uint16   (count of event-track ticks in this frame)
+  has_bookmark:      uint8
+```
+
+#### TTD_BOOKMARK_ADD (0x0930) / TTD_BOOKMARK_REMOVE (0x0931) / TTD_BOOKMARK_LIST (0x0932)
+Bookmark management. `ADD` carries `frame(uint64) + tstate(uint32) + label_len(uint16) + label(bytes)`; `REMOVE` carries `id(uint32)`; `LIST` returns a streamed array of `{id, frame, tstate, label_len, label}`.
+
+#### TTD_RESUME_FROM_HERE (0x0940)
+Truncate future at the current (detached) position and resume live recording.
+
+**Request**:
+```
+confirm:             uint8    (must be 1)
 ```
 
 ## Streaming Architecture

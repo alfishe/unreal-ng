@@ -8,6 +8,7 @@
 #include "common/stringhelper.h"
 #include "common/timehelper.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/debugmanager.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -343,12 +344,14 @@ TEST_F(BreakpointManager_test, memoryWriteBreakpoint)
 TEST_F(BreakpointManager_test, portInBreakpoint)
 {
     std::atomic<bool> breakpointTriggered{false};
+    // Use port $FE (keyboard port) - it's a standard port that doesn't get re-decoded
+    // Port $00 gets decoded to $FE by Pentagon128 decoder, causing breakpoint mismatch
     uint8_t testCommands[] = {
         0xAF,        // $0000 XOR A - Ensure A = 0
-        0xDB, 0x00,  // $0001 IN A,($00) - Read from port $00
+        0xDB, 0xFE,  // $0001 IN A,($FE) - Read from port $FE (keyboard)
         0x76         // $0003 HALT
     };
-    uint8_t portNumber = 0x00;  // Test port input from port $00
+    uint8_t portNumber = 0xFE;  // Test port input from port $FE
 
     /// region <Initialize>
     Emulator* emulator = new Emulator(LoggerLevel::LogError);
@@ -380,6 +383,10 @@ TEST_F(BreakpointManager_test, portInBreakpoint)
 
     /// endregion </Initialize>
 
+    // Set PC to our test code at $0000 (we wrote XOR A, IN A, HALT there)
+    Z80* z80 = context->pCore->GetZ80();
+    z80->pc = 0x0000;
+
     // Create port input breakpoint
     BreakpointDescriptor* breakpoint = new BreakpointDescriptor();
     breakpoint->type = BreakpointTypeEnum::BRK_IO;
@@ -387,7 +394,8 @@ TEST_F(BreakpointManager_test, portInBreakpoint)
     breakpoint->z80address = portNumber;
     breakpointManager->AddBreakpoint(breakpoint);
 
-    emulator->RunNCPUCycles(20, false);
+    // Start emulator async so _isRunning is true (required for Pause/Resume to work)
+    emulator->StartAsync();
 
     // Wait for async callback to execute (max 200ms)
     auto start = std::chrono::steady_clock::now();

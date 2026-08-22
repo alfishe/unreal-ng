@@ -9,8 +9,9 @@
 #include "emulator/sound/audio.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/native_audio_tap.h"
+#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 
-class SoundChip_TurboSound : public PortDecoder, public PortDevice
+class SoundChip_TurboSound : public PortDecoder, public PortDevice, public ttd::TTDSerializable
 {
     /// region <Fields>
 protected:
@@ -149,7 +150,7 @@ public:
 
     /// region <Methods>
 public:
-    void reset()
+    void reset() override
     {
         _chip0->reset();
         _chip1->reset();
@@ -229,8 +230,8 @@ public:
 
     /// region <PortDevice interface methods>
 public:
-    uint8_t portDeviceInMethod(uint16_t port);
-    void portDeviceOutMethod(uint16_t port, uint8_t value);
+    uint8_t portDeviceInMethod(uint16_t port) override;
+    void portDeviceOutMethod(uint16_t port, uint8_t value) override;
     /// endregion </PortDevice interface methods>
 
     /// region <Ports interaction>
@@ -238,4 +239,12 @@ public:
     bool attachToPorts(PortDecoder* decoder);
     void detachFromPorts();
     /// endregion </Ports interaction>
+
+public:
+    /// region <TTDSerializable interface (P1.5 - parent TDD 6.4)>
+    /// Each child SoundChip_AY8910 serializes itself via its own TTDSerializable.
+    size_t TTDStateSize() const override;
+    void   TTDSaveState(uint8_t* dst) const override;
+    void   TTDLoadState(const uint8_t* src) override;
+    /// endregion </TTDSerializable interface>
 };

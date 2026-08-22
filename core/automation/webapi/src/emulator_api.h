@@ -294,6 +294,26 @@ public:
     ADD_METHOD_TO(EmulatorAPI::keyStatus, "/api/v1/emulator/{id}/keyboard/status", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::keyList, "/api/v1/emulator/{id}/keyboard/keys", drogon::Get);
     // endregion Keyboard Injection
+
+    // region TTD (Time-Travel Debug) (implementation: api/ttd_api.cpp)
+    // Full TTD automation surface (Phase 2 complete). Per parent TDD §10.4.
+    ADD_METHOD_TO(EmulatorAPI::getTTDStatus, "/api/v1/emulator/{id}/ttd/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::startTTD, "/api/v1/emulator/{id}/ttd/start", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::stopTTD, "/api/v1/emulator/{id}/ttd/stop", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::invalidateTTD, "/api/v1/emulator/{id}/ttd/invalidate", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::seekTTD, "/api/v1/emulator/{id}/ttd/seek", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::stepBackTTD, "/api/v1/emulator/{id}/ttd/step-back", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::stepForwardTTD, "/api/v1/emulator/{id}/ttd/step-forward", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::resumeTTD, "/api/v1/emulator/{id}/ttd/resume", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getTTDPosition, "/api/v1/emulator/{id}/ttd/position", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getTTDMarkers, "/api/v1/emulator/{id}/ttd/markers", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::dumpTTD, "/api/v1/emulator/{id}/ttd/dump", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::loadTTD, "/api/v1/emulator/{id}/ttd/load", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::findLastTTD, "/api/v1/emulator/{id}/ttd/find-last", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::stepInstructionTTD, "/api/v1/emulator/{id}/ttd/step-instruction", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::reverseStepTTD, "/api/v1/emulator/{id}/ttd/reverse-step", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::reverseContinueTTD, "/api/v1/emulator/{id}/ttd/reverse-continue", drogon::Post);
+    // endregion TTD
     METHOD_LIST_END
 
     // Videowall API
@@ -794,13 +814,44 @@ public:
                  const std::string& id) const;
     // endregion Keyboard Injection Methods
 
+    // region TTD Methods (implementation: api/ttd_api.cpp)
+    // Per parent TDD §10.4. Full surface available after Phase 2 completion.
+    void getTTDStatus(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void startTTD(const drogon::HttpRequestPtr& req,
+                  std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void stopTTD(const drogon::HttpRequestPtr& req,
+                 std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void invalidateTTD(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void seekTTD(const drogon::HttpRequestPtr& req,
+                 std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void stepBackTTD(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void stepForwardTTD(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void resumeTTD(const drogon::HttpRequestPtr& req,
+                   std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getTTDPosition(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getTTDMarkers(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void dumpTTD(const drogon::HttpRequestPtr& req,
+                 std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void loadTTD(const drogon::HttpRequestPtr& req,
+                 std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void findLastTTD(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void stepInstructionTTD(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void reverseStepTTD(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void reverseContinueTTD(const drogon::HttpRequestPtr& req,
+                              std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    // endregion TTD Methods
+
     // region Helper Methods (implementation: emulator_api.cpp)
 private:
-    // Get emulator by ID (UUID) or index (numeric)
-    // @param idOrIndex Either a UUID string or numeric index (0-based)
-    // @return Shared pointer to emulator, or nullptr if not found
-    std::shared_ptr<Emulator> getEmulatorByIdOrIndex(const std::string& idOrIndex) const;
-
     // Get emulator using global selection priority, then stateless fallback
     // First checks globally selected emulator, then falls back to stateless behavior
     // @return Shared pointer to emulator, or nullptr if no emulator can be selected
@@ -817,5 +868,15 @@ private:
                               std::function<std::string(std::shared_ptr<Emulator>)> action) const;
     // endregion Helper Methods
 };
+
+// -----------------------------------------------------------------------
+// Free-function helpers (declared in api::v1; implemented in emulator_api.cpp)
+// Available to any handler in the api::v1 namespace — usable from
+// ttd_api.cpp, state_audio_api.cpp, etc. without an EmulatorAPI instance.
+// -----------------------------------------------------------------------
+/// Resolve an emulator by ID (UUID) or numeric index.
+/// Does NOT auto-select; returns nullptr if not found.
+std::shared_ptr<Emulator> getEmulatorByIdOrIndex(const std::string& idOrIndex);
+
 }  // namespace v1
 }  // namespace api

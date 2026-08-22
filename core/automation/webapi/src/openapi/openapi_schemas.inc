@@ -275,3 +275,435 @@
     schemas["TraceEntry"]["properties"]["frame"]["type"] = "integer";
     schemas["TraceEntry"]["properties"]["tstate"]["type"] = "integer";
 
+    // TTD (Time-Travel Debug) schemas — parent TDD §10.4.
+    // Full Phase 2 surface: 10 endpoints across recording, seeking, stepping,
+    // resume, and marker inspection. All time points use the TTDTimePoint
+    // schema; responses that surface the session lifecycle state reuse the
+    // state enum (idle|recording|detached).
+
+    // Reusable time point — frame counter + intra-frame T-state offset.
+    schemas["TTDTimePoint"]["type"] = "object";
+    schemas["TTDTimePoint"]["description"] =
+        "Lexicographic (frame, tInFrame) pair identifying a position in the "
+        "recorded timeline. tInFrame is the T-state offset within the frame.";
+    schemas["TTDTimePoint"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDTimePoint"]["properties"]["frame"]["format"] = "uint64";
+    schemas["TTDTimePoint"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDTimePoint"]["properties"]["tinframe"]["format"] = "uint32";
+    schemas["TTDStatusResponse"]["type"] = "object";
+    schemas["TTDStatusResponse"]["description"] =
+        "Snapshot of the TTD recorder session for the requested emulator instance";
+    schemas["TTDStatusResponse"]["properties"]["state"]["type"] = "string";
+    schemas["TTDStatusResponse"]["properties"]["state"]["enum"].append("idle");
+    schemas["TTDStatusResponse"]["properties"]["state"]["enum"].append("recording");
+    schemas["TTDStatusResponse"]["properties"]["state"]["enum"].append("detached");
+    schemas["TTDStatusResponse"]["properties"]["state"]["description"] =
+        "Session lifecycle state (parent TDD §4.2)";
+    schemas["TTDStatusResponse"]["properties"]["session_start_frame"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["session_start_frame"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["current_end_frame"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["current_end_frame"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["checkpoint_count"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["checkpoint_count"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["page_store_bytes"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["page_store_bytes"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["page_store_bytes"]["description"] =
+        "Capacity (allocated) of the COW page store — for budget checks";
+    schemas["TTDStatusResponse"]["properties"]["page_store_used_bytes"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["page_store_used_bytes"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["page_store_used_bytes"]["description"] =
+        "Live slot bytes currently held by the COW page store";
+    schemas["TTDStatusResponse"]["properties"]["baseline_frames_captured"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["baseline_frames_captured"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["baseline_frames_captured"]["description"] =
+            "Count of distinct 16 KB RAM page snapshots currently held in the "
+            "COW page store (live slots). Grows when new pages are captured, "
+            "shrinks when old pages are released via session invalidation or "
+            "future thinning. Multiply by 16384 to compare against "
+            "page_store_used_bytes.";
+    // --- Provenance: recorded here, or opened from a file? -----------------
+    schemas["TTDStatusResponse"]["properties"]["loaded_from_file"]["type"] = "boolean";
+    schemas["TTDStatusResponse"]["properties"]["loaded_from_file"]["description"] =
+            "True when the timeline came from a .ttd file rather than from live "
+            "capture in this process. A loaded session and a live one are "
+            "otherwise indistinguishable from the counters below.";
+    schemas["TTDStatusResponse"]["properties"]["source_path"]["type"] = "string";
+    schemas["TTDStatusResponse"]["properties"]["source_path"]["description"] =
+            "Path the session was loaded from. Empty for live recordings.";
+    schemas["TTDStatusResponse"]["properties"]["captured_at_unix_ms"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["captured_at_unix_ms"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["captured_at_unix_ms"]["description"] =
+            "Wall-clock capture time recorded in the file (ms since Unix epoch). "
+            "Zero for a live recording, which has not been written anywhere yet.";
+
+    // --- Machine -----------------------------------------------------------
+    schemas["TTDStatusResponse"]["properties"]["model_id"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["model_id"]["description"] =
+            "eModel value the session belongs to. A session refuses to load into "
+            "a different model.";
+    schemas["TTDStatusResponse"]["properties"]["model_ram_pages"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["model_ram_pages"]["description"] =
+            "Exclusive RAM page-index bound for the model. A BOUND, not a page "
+            "count: a 48K machine reports 6 because its three pages are numbered "
+            "0, 2 and 5.";
+
+    // --- Sections ----------------------------------------------------------
+    schemas["TTDStatusResponse"]["properties"]["write_journal_records"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_records"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_records"]["description"] =
+            "Memory/port write records currently held in the ring. Normally the "
+            "largest part of a session.";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_bytes"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_bytes"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_bytes"]["description"] =
+            "In-memory footprint of those records (12 bytes each). The on-disk "
+            "section is block-compressed and much smaller.";
+    schemas["TTDStatusResponse"]["properties"]["coverage_index_frames"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["coverage_index_frames"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["coverage_index_frames"]["description"] =
+            "Frames covered by the reverse-search index. Zero means reverse "
+            "queries fall back to replaying frames — correct, but orders of "
+            "magnitude slower.";
+    schemas["TTDStatusResponse"]["properties"]["coverage_index_bytes"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["coverage_index_bytes"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["coverage_index_bytes"]["description"] =
+            "Compressed size of the coverage index across all access kinds.";
+
+    schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["description"] =
+            "Real heap footprint of the recorded session in bytes. Sums every "
+            "allocation the session owns: page store backing vector, "
+            "per-checkpoint metadata (CPU/chipset snapshot + page-ref vector + "
+            "peripheral blobs), input journal, external-event journal, and "
+            "session-scope dirty-page scratch. This is the number to display "
+            "for 'session size' — distinct from page_store_bytes (just the "
+            "page-store vector) and page_store_used_bytes (live slots only, "
+            "always ~100% of capacity because the COW store auto-grows).";
+    schemas["TTDStatusResponse"]["properties"]["ttd_available"]["type"] = "boolean";
+    schemas["TTDStatusResponse"]["properties"]["ttd_available"]["description"] =
+        "False when the manager is missing (minimal build); state will be \"idle\"";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_enabled"]["type"] = "boolean";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_enabled"]["description"] =
+        "True when the write journal is active (for FindLast / reverse debugging). "
+        "Set via enable_write_journal on /ttd/start; false in 'gaming' mode.";
+
+    // ---------------------------------------------------------------------
+    // POST /ttd/start response
+    // ---------------------------------------------------------------------
+    schemas["TTDStartResponse"]["type"] = "object";
+    schemas["TTDStartResponse"]["description"] =
+        "Response from POST /ttd/start. started=false when already recording; "
+        "already_active=true if recording was in progress before the call.";
+    schemas["TTDStartResponse"]["properties"]["started"]["type"] = "boolean";
+    schemas["TTDStartResponse"]["properties"]["already_active"]["type"] = "boolean";
+    schemas["TTDStartResponse"]["properties"]["state"]["type"] = "string";
+    schemas["TTDStartResponse"]["properties"]["state"]["enum"].append("idle");
+    schemas["TTDStartResponse"]["properties"]["state"]["enum"].append("recording");
+    schemas["TTDStartResponse"]["properties"]["state"]["enum"].append("detached");
+    schemas["TTDStartResponse"]["properties"]["write_journal_enabled"]["type"] = "boolean";
+    schemas["TTDStartResponse"]["properties"]["write_journal_enabled"]["description"] =
+        "Whether write journal capture is enabled. false = gaming mode (smaller files), "
+        "true = development mode (fast reverse-watchpoint queries).";
+
+    // ---------------------------------------------------------------------
+    // POST /ttd/stop response
+    // ---------------------------------------------------------------------
+    schemas["TTDStopResponse"]["type"] = "object";
+    schemas["TTDStopResponse"]["description"] =
+        "Response from POST /ttd/stop. stopped=false if recording was not "
+        "active; the session still transitions to detached when history exists.";
+    schemas["TTDStopResponse"]["properties"]["stopped"]["type"] = "boolean";
+    schemas["TTDStopResponse"]["properties"]["state"]["type"] = "string";
+    schemas["TTDStopResponse"]["properties"]["state"]["enum"].append("idle");
+    schemas["TTDStopResponse"]["properties"]["state"]["enum"].append("recording");
+    schemas["TTDStopResponse"]["properties"]["state"]["enum"].append("detached");
+
+    // ---------------------------------------------------------------------
+    // POST /ttd/invalidate request + response
+    // ---------------------------------------------------------------------
+    schemas["TTDInvalidateRequest"]["type"] = "object";
+    schemas["TTDInvalidateRequest"]["description"] =
+        "Optional request body for POST /ttd/invalidate. Carries a "
+        "human-readable reason that is logged and surfaced in subsequent "
+        "status queries. Entirely optional — defaults to "
+        "\"WebAPI invalidate\".";
+    schemas["TTDInvalidateRequest"]["properties"]["reason"]["type"] = "string";
+
+    schemas["TTDInvalidateResponse"]["type"] = "object";
+    schemas["TTDInvalidateResponse"]["description"] =
+        "Response from POST /ttd/invalidate. invalidated is always true on "
+        "200; the session returns to state=\"idle\".";
+    schemas["TTDInvalidateResponse"]["properties"]["invalidated"]["type"] = "boolean";
+    schemas["TTDInvalidateResponse"]["properties"]["reason"]["type"] = "string";
+    schemas["TTDInvalidateResponse"]["properties"]["state"]["type"] = "string";
+    schemas["TTDInvalidateResponse"]["properties"]["state"]["enum"].append("idle");
+    schemas["TTDInvalidateResponse"]["properties"]["state"]["enum"].append("recording");
+    schemas["TTDInvalidateResponse"]["properties"]["state"]["enum"].append("detached");
+
+    // ---------------------------------------------------------------------
+    // POST /ttd/seek request + response
+    // ---------------------------------------------------------------------
+    schemas["TTDSeekRequest"]["type"] = "object";
+    schemas["TTDSeekRequest"]["description"] =
+        "Request body for POST /ttd/seek. frame is required; tinframe "
+        "defaults to 0 (frame boundary).";
+    schemas["TTDSeekRequest"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDSeekRequest"]["properties"]["frame"]["format"] = "uint64";
+    schemas["TTDSeekRequest"]["required"].append("frame");
+    schemas["TTDSeekRequest"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDSeekRequest"]["properties"]["tinframe"]["format"] = "uint32";
+    schemas["TTDSeekRequest"]["properties"]["tinframe"]["default"] = 0;
+
+    schemas["TTDSeekResponse"]["type"] = "object";
+    schemas["TTDSeekResponse"]["description"] =
+        "Response from POST /ttd/seek. reached=true only when the engine "
+        "arrived at the requested target. halt_reason explains why the "
+        "engine halted where it did: target (success), external_event "
+        "(stopped at a replay barrier — see blocking_marker), out_of_range "
+        "(target lies outside the recorded timeline).";
+    schemas["TTDSeekResponse"]["properties"]["reached"]["type"] = "boolean";
+    schemas["TTDSeekResponse"]["properties"]["arrived_at"]["$ref"] =
+        "#/components/schemas/TTDTimePoint";
+    schemas["TTDSeekResponse"]["properties"]["halt_reason"]["type"] = "string";
+    schemas["TTDSeekResponse"]["properties"]["halt_reason"]["enum"].append("target");
+    schemas["TTDSeekResponse"]["properties"]["halt_reason"]["enum"].append("external_event");
+    schemas["TTDSeekResponse"]["properties"]["halt_reason"]["enum"].append("out_of_range");
+    schemas["TTDSeekResponse"]["properties"]["blocking_marker"]["$ref"] =
+        "#/components/schemas/TTDMarker";
+    schemas["TTDSeekResponse"]["properties"]["blocking_marker"]["description"] =
+        "Present only when halt_reason == external_event";
+    schemas["TTDSeekResponse"]["properties"]["state"]["type"] = "string";
+    schemas["TTDSeekResponse"]["properties"]["state"]["enum"].append("idle");
+    schemas["TTDSeekResponse"]["properties"]["state"]["enum"].append("recording");
+    schemas["TTDSeekResponse"]["properties"]["state"]["enum"].append("detached");
+
+    // ---------------------------------------------------------------------
+    // Reusable marker — external event that acts as a replay barrier.
+    // Surfaced in TTDSeekResponse.blocking_marker and TTDMarkersResponse.
+    // ---------------------------------------------------------------------
+    schemas["TTDMarker"]["type"] = "object";
+    schemas["TTDMarker"]["description"] =
+        "External-event marker (replay barrier). Per ttd::TTDExternalEventKind "
+        "the kind is one of: tape_control, disk_write, debugger_edit, "
+        "hardware_reset, other.";
+    schemas["TTDMarker"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDMarker"]["properties"]["frame"]["format"] = "uint64";
+    schemas["TTDMarker"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDMarker"]["properties"]["tinframe"]["format"] = "uint32";
+    schemas["TTDMarker"]["properties"]["kind"]["type"] = "string";
+    schemas["TTDMarker"]["properties"]["kind"]["enum"].append("tape_control");
+    schemas["TTDMarker"]["properties"]["kind"]["enum"].append("disk_write");
+    schemas["TTDMarker"]["properties"]["kind"]["enum"].append("debugger_edit");
+    schemas["TTDMarker"]["properties"]["kind"]["enum"].append("hardware_reset");
+    schemas["TTDMarker"]["properties"]["kind"]["enum"].append("other");
+    schemas["TTDMarker"]["properties"]["reason"]["type"] = "string";
+
+    // ---------------------------------------------------------------------
+    // POST /ttd/step-back and /ttd/step-forward share this response.
+    // ---------------------------------------------------------------------
+    schemas["TTDStepResponse"]["type"] = "object";
+    schemas["TTDStepResponse"]["description"] =
+        "Response from POST /ttd/step-back and /ttd/step-forward. stepped=false "
+        "when the step would move outside the recorded timeline; frame and "
+        "tinframe always reflect the current position after the attempt.";
+    schemas["TTDStepResponse"]["properties"]["stepped"]["type"] = "boolean";
+    schemas["TTDStepResponse"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDStepResponse"]["properties"]["frame"]["format"] = "uint64";
+    schemas["TTDStepResponse"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDStepResponse"]["properties"]["tinframe"]["format"] = "uint32";
+
+    // ---------------------------------------------------------------------
+    // POST /ttd/resume request + response
+    // ---------------------------------------------------------------------
+    schemas["TTDResumeRequest"]["type"] = "object";
+    schemas["TTDResumeRequest"]["description"] =
+        "Optional request body for POST /ttd/resume. Omit to resume from "
+        "the current position; include frame (and optionally tinframe) to "
+        "resume from a specific time point.";
+    schemas["TTDResumeRequest"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDResumeRequest"]["properties"]["frame"]["format"] = "uint64";
+    schemas["TTDResumeRequest"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDResumeRequest"]["properties"]["tinframe"]["format"] = "uint32";
+
+    schemas["TTDResumeResponse"]["type"] = "object";
+    schemas["TTDResumeResponse"]["description"] =
+        "Response from POST /ttd/resume. resumed=true on success. frame "
+        "and tinframe echo the effective resume point.";
+    schemas["TTDResumeResponse"]["properties"]["resumed"]["type"] = "boolean";
+    schemas["TTDResumeResponse"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDResumeResponse"]["properties"]["frame"]["format"] = "uint64";
+    schemas["TTDResumeResponse"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDResumeResponse"]["properties"]["tinframe"]["format"] = "uint32";
+    schemas["TTDResumeResponse"]["properties"]["state"]["type"] = "string";
+    schemas["TTDResumeResponse"]["properties"]["state"]["enum"].append("idle");
+    schemas["TTDResumeResponse"]["properties"]["state"]["enum"].append("recording");
+    schemas["TTDResumeResponse"]["properties"]["state"]["enum"].append("detached");
+
+    // ---------------------------------------------------------------------
+    // GET /ttd/position response
+    // ---------------------------------------------------------------------
+    schemas["TTDPositionResponse"]["type"] = "object";
+    schemas["TTDPositionResponse"]["description"] =
+        "Response from GET /ttd/position. current is where the engine is "
+        "now; session_end is the maximum reachable point in the timeline.";
+    schemas["TTDPositionResponse"]["properties"]["current"]["$ref"] =
+        "#/components/schemas/TTDTimePoint";
+    schemas["TTDPositionResponse"]["properties"]["session_end"]["$ref"] =
+        "#/components/schemas/TTDTimePoint";
+    schemas["TTDPositionResponse"]["properties"]["state"]["type"] = "string";
+    schemas["TTDPositionResponse"]["properties"]["state"]["enum"].append("idle");
+    schemas["TTDPositionResponse"]["properties"]["state"]["enum"].append("recording");
+    schemas["TTDPositionResponse"]["properties"]["state"]["enum"].append("detached");
+
+    // ---------------------------------------------------------------------
+    // GET /ttd/markers response
+    // ---------------------------------------------------------------------
+    schemas["TTDMarkersResponse"]["type"] = "object";
+    schemas["TTDMarkersResponse"]["description"] =
+        "Response from GET /ttd/markers. count is len(markers); markers is "
+        "the full journal of external events recorded in this session.";
+    schemas["TTDMarkersResponse"]["properties"]["count"]["type"] = "integer";
+    schemas["TTDMarkersResponse"]["properties"]["count"]["format"] = "uint64";
+    schemas["TTDMarkersResponse"]["properties"]["markers"]["type"] = "array";
+    schemas["TTDMarkersResponse"]["properties"]["markers"]["items"]["$ref"] =
+        "#/components/schemas/TTDMarker";
+
+    // ---------------------------------------------------------------------
+    // Phase 4 — reverse-search + dump + instruction-step schemas
+    // ---------------------------------------------------------------------
+
+    // POST /ttd/dump
+    schemas["TTDDumpRequest"]["type"] = "object";
+    schemas["TTDDumpRequest"]["description"] =
+        "Request body for POST /ttd/dump.";
+    schemas["TTDDumpRequest"]["properties"]["path"]["type"] = "string";
+    schemas["TTDDumpRequest"]["properties"]["path"]["description"] =
+        "Filesystem path where the .ttd file will be written.";
+    schemas["TTDDumpRequest"]["required"].append("path");
+
+    schemas["TTDDumpResponse"]["type"] = "object";
+    schemas["TTDDumpResponse"]["description"] =
+        "Response from POST /ttd/dump.";
+    schemas["TTDDumpResponse"]["properties"]["ok"]["type"] = "boolean";
+    schemas["TTDDumpResponse"]["properties"]["path"]["type"] = "string";
+    schemas["TTDDumpResponse"]["properties"]["bytes"]["type"] = "integer";
+    schemas["TTDDumpResponse"]["properties"]["bytes"]["format"] = "int64";
+    schemas["TTDDumpResponse"]["properties"]["error"]["type"] = "string";
+
+    // POST /ttd/find-last
+    schemas["TTDFindLastRequest"]["type"] = "object";
+    schemas["TTDFindLastRequest"]["description"] =
+        "Request body for POST /ttd/find-last.";
+    schemas["TTDFindLastRequest"]["properties"]["addr"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["addr"]["format"] = "uint16";
+    schemas["TTDFindLastRequest"]["properties"]["addr"]["description"] =
+        "Memory address to search for (required).";
+    schemas["TTDFindLastRequest"]["required"].append("addr");
+    schemas["TTDFindLastRequest"]["properties"]["access"]["type"] = "string";
+    schemas["TTDFindLastRequest"]["properties"]["access"]["enum"].append("write");
+    schemas["TTDFindLastRequest"]["properties"]["access"]["enum"].append("read");
+    schemas["TTDFindLastRequest"]["properties"]["access"]["enum"].append("execute");
+    schemas["TTDFindLastRequest"]["properties"]["access"]["enum"].append("io");
+    schemas["TTDFindLastRequest"]["properties"]["access"]["default"] = "write";
+    schemas["TTDFindLastRequest"]["properties"]["value"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["value"]["format"] = "uint8";
+    schemas["TTDFindLastRequest"]["properties"]["pc_from"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["pc_from"]["format"] = "uint16";
+    schemas["TTDFindLastRequest"]["properties"]["pc_to"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["pc_to"]["format"] = "uint16";
+    schemas["TTDFindLastRequest"]["properties"]["before_frame"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["before_frame"]["format"] = "uint64";
+    schemas["TTDFindLastRequest"]["properties"]["before_tin"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["before_tin"]["format"] = "uint32";
+
+    schemas["TTDFindLastResponse"]["type"] = "object";
+    schemas["TTDFindLastResponse"]["description"] =
+        "Response from POST /ttd/find-last.";
+    schemas["TTDFindLastResponse"]["properties"]["found"]["type"] = "boolean";
+    schemas["TTDFindLastResponse"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["frame"]["format"] = "uint64";
+    schemas["TTDFindLastResponse"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["tinframe"]["format"] = "uint32";
+    schemas["TTDFindLastResponse"]["properties"]["pc"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["pc"]["format"] = "uint16";
+    schemas["TTDFindLastResponse"]["properties"]["value"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["value"]["format"] = "uint8";
+    schemas["TTDFindLastResponse"]["properties"]["phys_page"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["phys_page"]["format"] = "uint16";
+    schemas["TTDFindLastResponse"]["properties"]["access"]["type"] = "string";
+    schemas["TTDFindLastResponse"]["properties"]["blocked"]["type"] = "boolean";
+    schemas["TTDFindLastResponse"]["properties"]["marker_frame"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["marker_frame"]["format"] = "uint64";
+    schemas["TTDFindLastResponse"]["properties"]["marker_tinframe"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["marker_tinframe"]["format"] = "uint32";
+    schemas["TTDFindLastResponse"]["properties"]["marker_kind"]["type"] = "string";
+    schemas["TTDFindLastResponse"]["properties"]["marker_reason"]["type"] = "string";
+
+    // POST /ttd/step-instruction
+    schemas["TTDStepInstructionRequest"]["type"] = "object";
+    schemas["TTDStepInstructionRequest"]["description"] =
+        "Request body for POST /ttd/step-instruction.";
+    schemas["TTDStepInstructionRequest"]["properties"]["dir"]["type"] = "string";
+    schemas["TTDStepInstructionRequest"]["properties"]["dir"]["enum"].append("back");
+    schemas["TTDStepInstructionRequest"]["properties"]["dir"]["enum"].append("forward");
+    schemas["TTDStepInstructionRequest"]["properties"]["dir"]["enum"].append("fwd");
+    schemas["TTDStepInstructionRequest"]["properties"]["dir"]["default"] = "back";
+
+    schemas["TTDStepInstructionResponse"]["type"] = "object";
+    schemas["TTDStepInstructionResponse"]["description"] =
+        "Response from POST /ttd/step-instruction.";
+    schemas["TTDStepInstructionResponse"]["properties"]["stepped"]["type"] = "boolean";
+    schemas["TTDStepInstructionResponse"]["properties"]["dir"]["type"] = "string";
+    schemas["TTDStepInstructionResponse"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDStepInstructionResponse"]["properties"]["frame"]["format"] = "uint64";
+    schemas["TTDStepInstructionResponse"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDStepInstructionResponse"]["properties"]["tinframe"]["format"] = "uint32";
+
+    // POST /ttd/reverse-step
+    schemas["TTDReverseStepRequest"]["type"] = "object";
+    schemas["TTDReverseStepRequest"]["description"] =
+        "Request body for POST /ttd/reverse-step. Exactly one of count or "
+        "tstates must be specified.";
+    schemas["TTDReverseStepRequest"]["properties"]["count"]["type"] = "integer";
+    schemas["TTDReverseStepRequest"]["properties"]["count"]["format"] = "uint32";
+    schemas["TTDReverseStepRequest"]["properties"]["count"]["description"] =
+        "Number of instructions to step back (M1 boundaries).";
+    schemas["TTDReverseStepRequest"]["properties"]["tstates"]["type"] = "integer";
+    schemas["TTDReverseStepRequest"]["properties"]["tstates"]["format"] = "uint64";
+    schemas["TTDReverseStepRequest"]["properties"]["tstates"]["description"] =
+        "Number of T-states to step back (lands at nearest M1 <= target).";
+
+    schemas["TTDReverseStepResponse"]["type"] = "object";
+    schemas["TTDReverseStepResponse"]["description"] =
+        "Response from POST /ttd/reverse-step.";
+    schemas["TTDReverseStepResponse"]["properties"]["reached"]["type"] = "boolean";
+    schemas["TTDReverseStepResponse"]["properties"]["mode"]["type"] = "string";
+    schemas["TTDReverseStepResponse"]["properties"]["mode"]["enum"].append("count");
+    schemas["TTDReverseStepResponse"]["properties"]["mode"]["enum"].append("tstates");
+    schemas["TTDReverseStepResponse"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDReverseStepResponse"]["properties"]["frame"]["format"] = "uint64";
+    schemas["TTDReverseStepResponse"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDReverseStepResponse"]["properties"]["tinframe"]["format"] = "uint32";
+
+    // POST /ttd/reverse-continue
+    schemas["TTDReverseContinueRequest"]["type"] = "object";
+    schemas["TTDReverseContinueRequest"]["description"] =
+        "Request body for POST /ttd/reverse-continue.";
+    schemas["TTDReverseContinueRequest"]["properties"]["pcs"]["type"] = "array";
+    schemas["TTDReverseContinueRequest"]["properties"]["pcs"]["items"]["type"] = "integer";
+    schemas["TTDReverseContinueRequest"]["properties"]["pcs"]["items"]["format"] = "uint16";
+    schemas["TTDReverseContinueRequest"]["properties"]["pcs"]["description"] =
+        "Non-empty list of reverse breakpoint PCs (required).";
+    schemas["TTDReverseContinueRequest"]["required"].append("pcs");
+
+    schemas["TTDReverseContinueResponse"]["type"] = "object";
+    schemas["TTDReverseContinueResponse"]["description"] =
+        "Response from POST /ttd/reverse-continue.";
+    schemas["TTDReverseContinueResponse"]["properties"]["matched"]["type"] = "boolean";
+    schemas["TTDReverseContinueResponse"]["properties"]["pc"]["type"] = "integer";
+    schemas["TTDReverseContinueResponse"]["properties"]["pc"]["format"] = "uint16";
+    schemas["TTDReverseContinueResponse"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDReverseContinueResponse"]["properties"]["frame"]["format"] = "uint64";
+    schemas["TTDReverseContinueResponse"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDReverseContinueResponse"]["properties"]["tinframe"]["format"] = "uint32";

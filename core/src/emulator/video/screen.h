@@ -617,6 +617,20 @@ public:
     /// Holds _presentMutex only for one SIMD frame copy (~40us for 352x288).
     void LatchFramebuffer();
 
+    /// @brief Flush the present queue and publish the current framebuffer.
+    ///
+    /// The present queue exists for A/V sync: CopyPresentedFramebuffer() serves
+    /// the frame latched _presentDelayFrames ago so video trails audio by a
+    /// constant latency. That is right while frames keep arriving and wrong
+    /// after a seek, where the machine repaints once and stops — a plain latch
+    /// would leave the UI showing a queued older frame with nothing coming to
+    /// push it through.
+    ///
+    /// Discarding the queue rather than back-filling it is what matches the
+    /// hardware analogy: the delay line is emptied, the new frame becomes the
+    /// only content, and normal playback repopulates it on resume.
+    void FlushAndPresentFramebuffer();
+
     /// Steady-clock timestamp (us) of the last completed latch (0 = never)
     uint64_t GetLastLatchTimestampUs() const { return _lastLatchTimestampUs.load(std::memory_order_acquire); }
 

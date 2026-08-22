@@ -195,10 +195,34 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
     // Number of instructions to disassemble
     static constexpr size_t INSTRUCTIONS_TO_DISASSEMBLE = 20;
 
-    Memory& memory = *getMemory();
+    // Every getter below is documented to return null when the emulator, its
+    // context or the debug manager is not available, and this runs on the GUI
+    // thread in response to state-change signals — including the ones a TTD
+    // seek emits while the machine is being rebuilt. Dereferencing them
+    // unchecked crashed here: getDisassembler() hands back an empty unique_ptr,
+    // *it binds a null reference, and the member call lands in
+    // Z80Disassembler::decodeInstruction with this == nullptr.
+    //
+    // Bailing out is safe: another refresh follows once the emulator settles.
+    Emulator* emulator = getEmulator();
+    Memory* memoryPtr = getMemory();
     Z80Registers* registers = getZ80Registers();
-    Z80Disassembler& disassembler = *getDisassembler();
-    LabelManager* labelManager = getEmulator()->GetDebugManager()->GetLabelManager();
+    std::unique_ptr<Z80Disassembler>& disassemblerPtr = getDisassembler();
+
+    if (!emulator || !memoryPtr || !registers || !disassemblerPtr)
+    {
+        return;
+    }
+
+    DebugManager* debugManager = emulator->GetDebugManager();
+    if (!debugManager)
+    {
+        return;
+    }
+
+    Memory& memory = *memoryPtr;
+    Z80Disassembler& disassembler = *disassemblerPtr;
+    LabelManager* labelManager = debugManager->GetLabelManager();
 
     // Clear the address map before generating new disassembly
     m_addressMap.clear();

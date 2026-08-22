@@ -234,6 +234,7 @@ set(COMMON_SOURCES
     src/api/capture_api.cpp
     src/api/profiler_api.cpp
     src/api/keyboard_api.cpp
+    src/api/ttd_api.cpp
     src/emulator_websocket.cpp
     src/emulator_websocket.h
     src/automation-webapi.cpp
@@ -316,6 +317,14 @@ else () # Called from upper level CMake => build static library
     target_link_libraries(${PROJECT_NAME} PRIVATE
         drogon
         jsoncpp_static
+        # zstd::libzstd is required because core's ttd_compression.h (pulled
+        # in transitively via timetravelmanager.h -> ttd_codec_page_store.h)
+        # #includes <zstd.h>, and we use core/src via raw include paths
+        # rather than target_link_libraries(unrealng::core). zstd::libzstd
+        # is an INTERFACE IMPORTED target so this does NOT add any link
+        # output to automation_webapi; it only propagates zstd's include
+        # directory.
+        zstd::libzstd
     )
 
     # Add conditional compiler definitions for automation modules
