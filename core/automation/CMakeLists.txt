@@ -18,6 +18,13 @@ option(ENABLE_LUA_AUTOMATION "Enable automation for Lua" ON)
 option(ENABLE_PYTHON_AUTOMATION "Enable automation for Python" OFF)
 option(ENABLE_WEBAPI_AUTOMATION "Enable automation for WebAPI" ON)
 option(ENABLE_CLI_AUTOMATION "Enable automation for CLI" ON)
+option(ENABLE_GDB_AUTOMATION "Enable automation for GDB RSP server (GDB TDD G1+)" OFF)
+
+# Recording support - follows the root CMakeLists.txt option (single source of truth
+# for the EmulatorContext/Core struct layout). Declared here so a standalone automation
+# build defaults the same way as the root project; option() never overrides an existing
+# root-level cache entry.
+option(ENABLE_RECORDING "Enable audio/video recording support" ON)
 
 # Recording support - follows the root CMakeLists.txt option (single source of truth
 # for the EmulatorContext/Core struct layout). Declared here so a standalone automation
@@ -33,6 +40,7 @@ if (NOT ENABLE_AUTOMATION)
     set(ENABLE_PYTHON_AUTOMATION OFF)
     set(ENABLE_WEBAPI_AUTOMATION OFF)
     set(ENABLE_CLI_AUTOMATION OFF)
+    set(ENABLE_GDB_AUTOMATION OFF)
 endif ()
 
 # Add subdirectories based on automation options
@@ -57,6 +65,15 @@ endif ()
 if (ENABLE_CLI_AUTOMATION)
     add_subdirectory(cli)
     set(AUTOMATION_CLI_TARGET automation-cli)
+endif ()
+
+# GDB RSP server transport (GDB TDD G1). Stub in Sprint 0:
+# the flag exists and configures cleanly, but no build target is produced yet.
+# When G1 lands, uncomment the add_subdirectory line.
+if (ENABLE_GDB_AUTOMATION)
+    # add_subdirectory(gdb)   # Added in G1 (GDB TDD §2)
+    message(STATUS "ENABLE_GDB_AUTOMATION=ON but GDB transport not yet implemented (Sprint 0 stub)")
+    set(AUTOMATION_GDB_TARGET "")   # Empty until G1 lands
 endif ()
 
 set (SOURCES
@@ -103,6 +120,7 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
             $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:automation_python>    # Conditional linking
             $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:automation_webapi>    # Conditional linking
             $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:automation-cli>          # Conditional linking
+            # ENABLE_GDB_AUTOMATION link target added in G1 (GDB TDD §2)
 
         PUBLIC
             unrealng::core
@@ -175,6 +193,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:ENABLE_PYTHON_AUTOMATION>
     $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:ENABLE_WEBAPI_AUTOMATION>
     $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:ENABLE_CLI_AUTOMATION>
+    $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:ENABLE_GDB_AUTOMATION>
 )
 
 # <Diagnostics>
@@ -185,6 +204,7 @@ message(STATUS "    ENABLE_LUA_AUTOMATION: ${ENABLE_LUA_AUTOMATION}")
 message(STATUS "    ENABLE_PYTHON_AUTOMATION: ${ENABLE_PYTHON_AUTOMATION}")
 message(STATUS "    ENABLE_CLI_AUTOMATION: ${ENABLE_CLI_AUTOMATION}")
 message(STATUS "    ENABLE_WEBAPI_AUTOMATION: ${ENABLE_WEBAPI_AUTOMATION}")
+message(STATUS "    ENABLE_GDB_AUTOMATION: ${ENABLE_GDB_AUTOMATION}")
 message(STATUS "Settings:")
 message(STATUS "  PROJECT_NAME:        ${PROJECT_NAME}")
 message(STATUS "  SRC_DIR:             ${SRC_DIR}")

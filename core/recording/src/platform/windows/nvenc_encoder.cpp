@@ -1,14 +1,18 @@
+// Windows headers must come BEFORE our headers to avoid UUID typedef collision
+// (rpcdce.h defines UUID typedef, our uuid.h defines unreal::UUID class)
+#ifdef _WIN32
+#include <windows.h>
+#include <objbase.h>  // CoInitializeEx, CoUninitialize
+#include <d3d11.h>
+#include <dxgi.h>
+#endif
+
 #include "nvenc_encoder.h"
 #include "mp4_muxer.h"
 #include "mf_aac_encoder.h"
 #include "emulator/video/screen.h"
 
 #ifdef _WIN32
-
-#include <windows.h>
-#include <objbase.h>  // CoInitializeEx, CoUninitialize
-#include <d3d11.h>
-#include <dxgi.h>
 #include <cstring>
 #include <algorithm>
 #include <mutex>

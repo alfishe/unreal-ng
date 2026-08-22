@@ -37,6 +37,7 @@ void PortDecoder_Spectrum128::reset()
     state.pBFFD = 0x00;     // Reset AY register select port
     state.pFFFD = 0x00;     // Reset AY data port
     state.pFE = 0xFF;       // Reset ULA port (border white, no sound)
+    state.border_attr = 0x07;  // Sync border_attr with pFE bits 0-2 (white)
 
     // Set default 120K memory pages
     Memory& memory = *_context->pMemory;

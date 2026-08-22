@@ -111,7 +111,7 @@ void MemoryAccessTracker::UpdateFeatureCache()
         _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
         _feature_calltrace_enabled = debugMode && fm->isEnabled(Features::kCallTrace);
 
-        LOGINFO("MemoryAccessTracker::UpdateFeatureCache - memoryTracking: %s (was %s), callTrace: %s (was %s)",
+        LOGDEBUG("MemoryAccessTracker::UpdateFeatureCache - memoryTracking: %s (was %s), callTrace: %s (was %s)",
                 _feature_memorytracking_enabled ? "ON" : "OFF", wasTrackingEnabled ? "ON" : "OFF",
                 _feature_calltrace_enabled ? "ON" : "OFF", wasCalltraceEnabled ? "ON" : "OFF");
 

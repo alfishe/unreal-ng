@@ -7,6 +7,7 @@
 
 #include "3rdparty/simpleini/simpleini.h"
 #include "common/modulelogger.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #ifdef ENABLE_RECORDING
@@ -87,7 +88,8 @@ bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
         if (enabled)
         {
             const std::string& id = feature->id;
-            if (id == Features::kBreakpoints || id == Features::kCallTrace || id == Features::kMemoryTracking)
+            if (id == Features::kBreakpoints || id == Features::kCallTrace || id == Features::kMemoryTracking ||
+                id == Features::kTimeTravel)
             {
                 auto* master = findFeature(Features::kDebugMode);
                 if (master && !master->enabled)
@@ -266,6 +268,13 @@ void FeatureManager::setDefaults()
                      "",
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryAnalysis});
+    registerFeature({Features::kTimeTravel,
+                     Features::kTimeTravelAlias,
+                     Features::kTimeTravelDesc,
+                     false,  // OFF by default - heavy feature, opt-in
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryDebug});
     registerFeature({Features::kOverscan,
                      Features::kOverscanAlias,
                      Features::kOverscanDesc,
@@ -393,6 +402,12 @@ void FeatureManager::onFeatureChanged()
     if (_context && _context->pScreen)
     {
         _context->pScreen->UpdateFeatureCache();
+    }
+
+    // Notify TTD manager of feature changes (for memory deallocation on disable)
+    if (_context && _context->pTimeTravelManager)
+    {
+        _context->pTimeTravelManager->UpdateFeatureCache();
     }
 
     if (_dirty)

@@ -790,6 +790,29 @@ void Screen::LatchFramebuffer()
     }
 }
 
+void Screen::FlushAndPresentFramebuffer()
+{
+    if (_framebuffer.memoryBuffer == nullptr)
+        return;
+
+    std::lock_guard<std::mutex> lock(_presentMutex);
+    if (_presentSlots[0] == nullptr || _presentBufferSize != _framebuffer.memoryBufferSize)
+        return;
+
+    // Empty the delay line, then make the freshly rendered frame its only
+    // content. With the counter reset, CopyPresentedFramebuffer clamps the
+    // configured delay to what exists (zero) and serves this frame; once
+    // playback resumes the queue refills on its own.
+    _presentLatchCounter = 0;
+    VideoUtils::CopyFrameBuffer(_presentSlots[0], _framebuffer.memoryBuffer, _presentBufferSize);
+    _presentLatchCounter = 1;
+
+    _lastLatchTimestampUs.store(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count(),
+        std::memory_order_release);
+}
+
 bool Screen::CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize)
 {
     if (dst == nullptr)

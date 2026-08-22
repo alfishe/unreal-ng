@@ -2,12 +2,13 @@
 
 ## Overview
 
-The GDB Remote Serial Protocol support enables standard GDB/LLDB debuggers and IDEs to connect to the emulator as if debugging a physical Z80 target. This provides professional debugging workflows using industry-standard tools.
+The GDB Remote Serial Protocol support enables compatible GDB/LLDB-based debuggers and IDEs to connect to the emulator as if debugging a physical Z80 target. Because Z80 is not an architecture in upstream GDB, client compatibility is conditional (see [Client Compatibility](#client-compatibility) below). When a compatible client is available, this provides professional debugging workflows using industry-standard tools.
 
 **Status**: 🔮 Planned (Q2 2026)
 **Protocol**: GDB Remote Serial Protocol (RSP)
 **Transport**: TCP socket (default port: 1234)
 **Standard**: [GDB Remote Protocol Documentation](https://sourceware.org/gdb/current/onlinedocs/gdb/Remote-Protocol.html)
+**Client support**: Conditional — requires a Z80-capable GDB build (e.g. the `gdb-z80` community fork) or IDA Pro 9.x with a Z80 processor module consuming the served `target.xml`. Upstream stock GDB has no Z80 architecture. See [Client Compatibility](#client-compatibility) below.
 
 **Note**: This interface provides GDB protocol compatibility for professional debugging tools. See [command-interface.md](./command-interface.md) for the underlying emulator command capabilities that GDB clients will access through this protocol.  
 
@@ -55,6 +56,21 @@ The GDB Remote Serial Protocol support enables standard GDB/LLDB debuggers and I
 - **Team Collaboration**: Share debugging sessions
 - **Education**: Teach debugging with familiar tools
 
+## Client Compatibility
+
+Z80 is not an architecture in upstream GDB, and not all GDB-compatible IDEs ship Z80-aware debugger modules. The stub implements the protocol correctly; compatibility is gated by the client side.
+
+| Client | Status | Notes |
+| :--- | :--- | :--- |
+| Upstream stock GDB (any version) | ❌ | Z80 is not in the upstream architecture tree; no `org.gnu.gdb.z80.*` feature is recognized. |
+| `gdb-z80` community fork | ⚠️ Best-effort | Unmaintained; protocol matches but `target.xml` parsing may regress between GDB releases. |
+| LLDB | ⚠️ Partial | Register / memory / breakpoint packets work. **Reverse execution is unsupported** (LLDB has no reverse mode in its GDB-remote client). |
+| IDA Pro 9.x — Remote GDB Debugger + Z80 processor module | ✅ Conditional | Works when IDA's Z80 processor module is installed and configured (`dbg_gdb.cfg`); the stub must serve a correct `target.xml`. |
+| Ghidra — GDB "Remote" launcher | ⚠️ Conditional | Requires a locally-installed Z80-capable GDB (e.g. the fork above); set via `set architecture` before `target remote`. |
+| `gdbgui` / `gdb-frontend` and similar | ⚠️ Conditional | Same upstream-GDB limitation as Ghidra.
+
+**Implication for the stub implementer:** do not assume the client understands Z80-specific quirks. Always serve a complete `target.xml` so the client can learn the register layout dynamically, and prefer standard RSP packets over extensions.
+
 ## Protocol Specification
 
 ### Connection Flow
@@ -86,32 +102,34 @@ $c#63                    - Continue execution
 -                        - NACK (retransmit)
 ```
 
+### Target XML Description (`qXfer:features:read:target.xml`)
+
+Modern debuggers (IDA Pro 9.x, Ghidra) and multi-arch GDB builds require a dynamic register layout definition. The emulator provides this via the `qXfer:features:read:target.xml` capability (assembled at client connect based on the active model).
+
 ### Register Mapping
 
-Z80 registers mapped to GDB register format:
+Since GDB does not define a single canonical Z80 layout, the register map is explicitly defined by what our `target.xml` advertises. It includes the standard registers, shadow registers, and uses 16-bit sizing for pairs/index registers:
 
 | GDB Reg # | Z80 Register | Size | Description |
 | :--- | :--- | :--- | :--- |
-| 0 | A | 8-bit | Accumulator |
-| 1 | F | 8-bit | Flags |
-| 2 | B | 8-bit | B register |
-| 3 | C | 8-bit | C register |
-| 4 | D | 8-bit | D register |
-| 5 | E | 8-bit | E register |
-| 6 | H | 8-bit | H register |
-| 7 | L | 8-bit | L register |
-| 8 | IXH | 8-bit | IX high byte |
-| 9 | IXL | 8-bit | IX low byte |
-| 10 | IYH | 8-bit | IY high byte |
-| 11 | IYL | 8-bit | IY low byte |
-| 12 | SP | 16-bit | Stack pointer |
-| 13 | PC | 16-bit | Program counter |
-| 14 | I | 8-bit | Interrupt vector |
-| 15 | R | 8-bit | Refresh register |
+| 0 | AF | 16-bit | Accumulator and Flags |
+| 1 | BC | 16-bit | BC register pair |
+| 2 | DE | 16-bit | DE register pair |
+| 3 | HL | 16-bit | HL register pair |
+| 4 | AF' | 16-bit | Alternate AF |
+| 5 | BC' | 16-bit | Alternate BC |
+| 6 | DE' | 16-bit | Alternate DE |
+| 7 | HL' | 16-bit | Alternate HL |
+| 8 | IX | 16-bit | Index register X |
+| 9 | IY | 16-bit | Index register Y |
+| 10 | SP | 16-bit | Stack pointer |
+| 11 | PC | 16-bit | Program counter |
+| 12 | I | 8-bit | Interrupt vector |
+| 13 | R | 8-bit | Refresh register |
 
 **Register Packet Format** (for `g` command):
 ```
-AAFFBBCCDDEEHHLLIXHIXLIYHIYLSPSPPPCPCIIRR
+AFAABBCCDDEEHHLLAFAABBCCDDEEHHLLIXIXIYIYSPSPPCPCIIRR
 ```
 All values in hex, little-endian where applicable.
 
@@ -143,29 +161,99 @@ All values in hex, little-endian where applicable.
 | `Z4,<addr>,<kind>` | Set access watchpoint | Read or write |
 | `z4,<addr>,<kind>` | Remove access WP | Remove access WP |
 
+#### Stop Reply Commands
+| Packet | Command | Description |
+| :--- | :--- | :--- |
+| `T<sig><key:val>` | Stop Reply | Formatted stop reason (e.g., `T05hwbreak:;thread:1;`) |
+
 #### Query Commands
 | Packet | Command | Description |
 | :--- | :--- | :--- |
-| `qSupported` | Supported features | Capability negotiation |
+| `qSupported` | Supported features | Capability negotiation (advertises `qXfer:features:read+`, `qXfer:osdata:read+`, `ReverseStep+`, `ReverseContinue+`, `multiprocess-`) |
 | `qAttached` | Attached status | Is process attached? |
 | `qC` | Current thread | Current thread ID (1) |
 | `qfThreadInfo` | Thread info | First thread (1) |
 | `qsThreadInfo` | Thread info | Subsequent threads (none) |
 | `qOffsets` | Section offsets | Text/data offsets (0) |
+| `qXfer:features:read` | Read features | Read `target.xml` Z80 description |
+| `qXfer:osdata:read` | Read OS data | Read emulator instance list (`processes`) |
+| `qRcmd` | Remote command | Execute emulator commands (e.g., `bankinfo`) |
 
 ### Extended Features
 
-#### Reverse Execution (if history enabled)
+#### Reverse Execution (Time-Travel Debugging)
+
+Reverse-execution packets let a GDB/LLDB client navigate the TTD timeline exposed by the emulator. They are forwarded to the same `TimeTravelManager` that powers the CLI / WebAPI / Python / Lua surfaces (see [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd) and the [time-travel TDD](../debugger/time-travel-debug/time-travel-debugging-tdd.md) §10.4).
+
+**Capability negotiation:** the GDB server advertises reverse-exec support in its `qSupported` reply only when both conditions hold:
+1. The `ENABLE_GDB_AUTOMATION` build-time gate is on (so the server is built).
+2. The runtime `timetravel` feature flag is ON *and* an active recording session exists.
+
+If either condition is false, `ReverseStep`/`ReverseContinue` are omitted from `qSupported` and the packets below return `\x00` (unsupported), so GDB hides its `reverse-step`/`reverse-continue` commands — matching the user-visible state of the emulator.
+
 | Packet | Command | Description |
 | :--- | :--- | :--- |
-| `bc` | Backward continue | Continue backwards |
-| `bs` | Backward step | Step backwards |
+| `bc` | Backward continue (`reverse-continue`, `rc`) | Resume backwards; stop at the next breakpoint/watchpoint hit *before* the current position, or at the session's first frame. |
+| `bs` | Backward step (`reverse-step`, `rs`) | Step one instruction backwards. Implemented via `StepBackInstruction()` (TDD §8.1). |
+
+**Stop replies** in reverse mode use the same `T<sig>` format as forward execution. The emulator reports halt reasons that mirror the CLI/WebAPI `halt_reason` field:
+
+- `target` → standard stop reply (e.g. `T05hwbreak:;`).
+- `external_event` → stop reply with standard `T05` (SIGTRAP). The TTD-specific reason is surfaced via `monitor ttd status`.
+- `out_of_range` → `E22` (EINVAL); the client stays at its current position.
+
+**`monitor` commands** (via `qRcmd`) map the CLI `ttd` surface into GDB:
+
+| GDB `monitor` command | Equivalent CLI verb |
+| :--- | :--- |
+| `monitor ttd status` | `ttd status` |
+| `monitor ttd start` | `ttd start` |
+| `monitor ttd stop` | `ttd stop` |
+| `monitor ttd clear` | `ttd clear` |
+| `monitor ttd seek <frame> [<tstate>]` | `ttd seek --frame N [--tstate T]` |
+| `monitor ttd step-back [instruction\|frame]` | `ttd step-back [--unit ...]` |
+| `monitor ttd find-last <addr> <write\|read\|execute\|out> [value=V] [pc=A..B]` | `ttd find-last ...` |
+| `monitor ttd bookmark add\|remove\|list ...` | `ttd bookmark ...` |
+| `monitor ttd resume-from-here` | `ttd resume-from-here` |
+
+`monitor ttd find-last` additionally positions the client at the match (equivalent to `ttd seek --frame N --tstate T` after the search) so the user can immediately inspect registers / memory.
+
+**GDB-side usage example** (recording a demo run and stepping backwards):
+
+```
+(gdb) target remote | /path/to/emu-gdbserver --gdb --emulator 1
+Remote debugging using ...
+
+(gdb) monitor ttd start
+[gdbserver] armed: capture begins at next frame boundary
+
+(gdb) continue
+Continuing.
+^C
+Program received signal SIGINT, Interrupt.
+0x4a21 in ?? ()
+
+(gdb) monitor ttd find-last 0x5b00 write
+[gdbserver] frame=4823 tstate=14982 pc=0x4a21 value=0x07 physpage=5
+0x4a21 in ?? ()
+
+(gdb) reverse-step
+0x4a1e in ?? ()
+
+(gdb) info registers
+```
+
+**Run-control claim:** the GDB server holds the run-control claim (Sprint 0 mechanism) while the client is connected and the emulator is paused. Reverse-exec packets are refused with `E01` if another surface (e.g. CLI) holds the claim; GDB surfaces this as a generic "Remote failure" error.
+
+**Session invalidation:** if the recording session is invalidated mid-reverse-exec (e.g. by a `load snapshot` from another surface), the in-flight `bc`/`bs` is aborted with `E01` (generic error). The explicit reason ("TTD session invalidated") can be retrieved via `monitor ttd status`. The client must re-issue `monitor ttd start` to resume recording.
 
 #### Multi-Process (multiple emulators)
+For v1, multi-process is not natively supported via GDB multi-process extensions (`qSupported` advertises `multiprocess-`). Instead, multi-instance attach is managed externally (e.g., via IDA's separate emulator attach).
+
 | Packet | Command | Description |
 | :--- | :--- | :--- |
-| `H<op><thread>` | Set thread | Select emulator instance |
-| `vAttach;<pid>` | Attach | Attach to emulator instance |
+| `H<op><thread>` | Set thread | Select emulator instance. Not legacy — GDB sends this before every `g`/`m`/`c` series even in single-process mode; the stub accepts and returns `OK`. |
+| `vAttach;<pid>` | Attach | Attach to emulator instance. Only sent by clients when `multiprocess+` is advertised; since v1 advertises `multiprocess-`, this packet will not arrive in practice but is handled defensively. |
 
 ## Connection Examples
 
@@ -444,35 +532,32 @@ std::string AutomationGDB::serializeRegisters() {
     std::stringstream ss;
     ss << std::hex << std::setfill('0');
     
-    // A, F, B, C, D, E, H, L
-    ss << std::setw(2) << cpu->GetA();
-    ss << std::setw(2) << cpu->GetF();
-    ss << std::setw(2) << cpu->GetB();
-    ss << std::setw(2) << cpu->GetC();
-    ss << std::setw(2) << cpu->GetD();
-    ss << std::setw(2) << cpu->GetE();
-    ss << std::setw(2) << cpu->GetH();
-    ss << std::setw(2) << cpu->GetL();
+    auto emit16 = [&ss](uint16_t val) {
+        ss << std::setw(2) << (val & 0xFF); // Little-endian
+        ss << std::setw(2) << (val >> 8);
+    };
+
+    // Main register pairs: AF, BC, DE, HL
+    emit16(cpu->GetAF());
+    emit16(cpu->GetBC());
+    emit16(cpu->GetDE());
+    emit16(cpu->GetHL());
+
+    // Alternate (shadow) register pairs: AF', BC', DE', HL'
+    emit16(cpu->GetAFPrime());
+    emit16(cpu->GetBCPrime());
+    emit16(cpu->GetDEPrime());
+    emit16(cpu->GetHLPrime());
     
-    // IX, IY (split into high/low)
-    uint16_t ix = cpu->GetIX();
-    ss << std::setw(2) << (ix >> 8);
-    ss << std::setw(2) << (ix & 0xFF);
+    // IX, IY
+    emit16(cpu->GetIX());
+    emit16(cpu->GetIY());
     
-    uint16_t iy = cpu->GetIY();
-    ss << std::setw(2) << (iy >> 8);
-    ss << std::setw(2) << (iy & 0xFF);
+    // SP, PC
+    emit16(cpu->GetSP());
+    emit16(cpu->GetPC());
     
-    // SP, PC (little-endian)
-    uint16_t sp = cpu->GetSP();
-    ss << std::setw(2) << (sp & 0xFF);
-    ss << std::setw(2) << (sp >> 8);
-    
-    uint16_t pc = cpu->GetPC();
-    ss << std::setw(2) << (pc & 0xFF);
-    ss << std::setw(2) << (pc >> 8);
-    
-    // I, R
+    // I, R (8-bit)
     ss << std::setw(2) << cpu->GetI();
     ss << std::setw(2) << cpu->GetR();
     
@@ -505,7 +590,7 @@ std::string AutomationGDB::serializeRegisters() {
 ## Limitations
 
 1. **Single Thread**: Z80 is single-threaded (GDB expects thread ID 1)
-2. **No MMU**: Z80 has flat memory space (no virtual memory)
+2. **No MMU**: Z80 has a flat 64KB logical memory space but uses banking. Memory layout is currently queried via `qRcmd bankinfo`. However, because GDB breakpoint placement across pages is genuinely ambiguous for banked Z80 models, `qXfer:memory-map:read` support should be considered as some clients natively consume it to disambiguate banking and hardware/software breakpoints.
 3. **No FPU**: Z80 has no floating-point (GDB FP commands not applicable)
 4. **Limited Symbols**: Symbol support requires external .map files
 5. **No Source-Level Debug**: Without debug info, only assembly debugging

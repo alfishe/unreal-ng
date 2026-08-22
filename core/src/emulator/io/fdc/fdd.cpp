@@ -1,5 +1,6 @@
 #include "fdd.h"
 
+#include <cstring>
 #include <random>
 #include "common/filehelper.h"
 #include "loaders/disk/loader_trd.h"
@@ -102,3 +103,83 @@ void FDD::ejectDisk()
 }
 
 /// endregion </Methods>
+
+/// region <TTDSerializable (P1.5 — parent TDD §6.4, §4 row 4)>
+//
+// Cursor-packed layout (27 bytes):
+//   0   1   _driveID
+//   1   1   _sideTop
+//   2   1   _motorOn
+//   3   1   _direction
+//   4   1   _headLoad
+//   5   1   _diskInserted
+//   6   1   _track
+//   7   1   _index (cached output signal)
+//   8   1   _ready
+//   9   1   _writeProtect
+//   10  8   _motorStopTimeoutMs (size_t → uint64)
+//   18  8   _motorRotationCounter (size_t → uint64)
+//   26  1   reserved (alignment / future use)
+//
+// Note: total is 27 bytes; the trailing reserved byte keeps the format
+// at a round size for snapshot-version bump headroom.
+
+namespace
+{
+inline void put_u8 (uint8_t*& cur, uint8_t v)        { *cur++ = v; }
+inline void put_u64(uint8_t*& cur, uint64_t v)      { std::memcpy(cur, &v, 8); cur += 8; }
+inline uint8_t  get_u8 (const uint8_t*& cur)        { return *cur++; }
+inline uint64_t get_u64(const uint8_t*& cur)        { uint64_t v; std::memcpy(&v, cur, 8); cur += 8; return v; }
+} // anonymous namespace
+
+static constexpr size_t kFddStateSize = 27;
+static_assert(kFddStateSize == 27, "FDD state size drift");
+
+size_t FDD::TTDStateSize() const
+{
+    return kFddStateSize;
+}
+
+void FDD::TTDSaveState(uint8_t* dst) const
+{
+    uint8_t* cur = dst;
+    put_u8 (cur, _driveID);
+    put_u8 (cur, _sideTop          ? 1 : 0);
+    put_u8 (cur, _motorOn          ? 1 : 0);
+    put_u8 (cur, _direction        ? 1 : 0);
+    put_u8 (cur, _headLoad         ? 1 : 0);
+    put_u8 (cur, _diskInserted     ? 1 : 0);
+    put_u8 (cur, _track);
+    put_u8 (cur, _index            ? 1 : 0);
+    put_u8 (cur, _ready            ? 1 : 0);
+    put_u8 (cur, _writeProtect     ? 1 : 0);
+    put_u64(cur, static_cast<uint64_t>(_motorStopTimeoutMs));
+    put_u64(cur, static_cast<uint64_t>(_motorRotationCounter));
+    put_u8 (cur, 0);  // reserved
+}
+
+void FDD::TTDLoadState(const uint8_t* src)
+{
+    const uint8_t* cur = src;
+    _driveID           = get_u8(cur);
+    _sideTop           = get_u8(cur) != 0;
+    _motorOn           = get_u8(cur) != 0;
+    _direction         = get_u8(cur) != 0;
+    _headLoad          = get_u8(cur) != 0;
+    _diskInserted      = get_u8(cur) != 0;
+    _track             = get_u8(cur);
+    _index             = get_u8(cur) != 0;
+    _ready             = get_u8(cur) != 0;
+    _writeProtect      = get_u8(cur) != 0;
+    _motorStopTimeoutMs   = static_cast<size_t>(get_u64(cur));
+    _motorRotationCounter = static_cast<size_t>(get_u64(cur));
+    (void)get_u8(cur);  // reserved
+
+    // _diskImage pointer is intentionally not restored — disk image identity
+    // is session-scoped per TDD §12.2; the loader layer (Emulator::LoadDisk)
+    // re-establishes the pointer from coreState.diskImages[_driveID] before
+    // any FDD operation. _context, _readDataBit/_writeDataBit/_step, and
+    // sync counters (_lastFrame/_lastTime) are host-side / transient.
+}
+
+/// endregion </TTDSerializable>

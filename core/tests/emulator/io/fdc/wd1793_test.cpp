@@ -2350,16 +2350,16 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_Single)
                 // Update time for FDC
                 fdc._time = clk;
 
-                // Feed data bytes with marking Data Register accessed so no DATA LOSS error occurs
-                if (fdc._state == WD1793::S_WRITE_BYTE && fdc._drq_out && !fdc._drq_served)
+                // Process FSM state updates
+                fdc.process();
+
+                // Feed data bytes when DRQ is active (check after process to catch newly raised DRQ)
+                if (fdc._drq_out && !fdc._drq_served)
                 {
                     uint8_t writeValue = sectorData[sectorDataIndex++];
 
                     fdc.writeDataRegister(writeValue);
                 }
-
-                // Process FSM state updates
-                fdc.process();
 
                 // Check that BUSY flag is set for the whole duration of head positioning
                 if (fdc._state != WD1793::S_IDLE)
@@ -2534,9 +2534,10 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_MultiSector)
     for (size_t clk = 0; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
     {
         fdc._time = clk;
+        fdc.process();
 
-        // Feed data when DRQ is active
-        if (fdc._state == WD1793::S_WRITE_BYTE && fdc._drq_out && !fdc._drq_served)
+        // Feed data when DRQ is active (check after process to catch newly raised DRQ)
+        if (fdc._drq_out && !fdc._drq_served)
         {
             if (currentSector < SECTORS_TO_WRITE && byteInSector < TRD_SECTORS_SIZE_BYTES)
             {
@@ -2551,8 +2552,6 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_MultiSector)
                 }
             }
         }
-
-        fdc.process();
 
         // Check if command finished
         if (fdc._state == WD1793::S_IDLE)
@@ -2636,17 +2635,16 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_DeletedDataMark)
     for (size_t clk = 0; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
     {
         fdc._time = clk;
+        fdc.process();
 
-        // Feed data when DRQ is active
-        if (fdc._state == WD1793::S_WRITE_BYTE && fdc._drq_out && !fdc._drq_served)
+        // Feed data when DRQ is active (check after process to catch newly raised DRQ)
+        if (fdc._drq_out && !fdc._drq_served)
         {
             if (byteIndex < TRD_SECTORS_SIZE_BYTES)
             {
                 fdc.writeDataRegister(sectorData[byteIndex++]);
             }
         }
-
-        fdc.process();
 
         // Check if command finished
         if (fdc._state == WD1793::S_IDLE)

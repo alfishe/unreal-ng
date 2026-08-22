@@ -7,6 +7,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/cpu/core.h"
+#include <cstring>
 
 /// region <Constructors / destructors>
 
@@ -212,3 +213,28 @@ void Covox::computeStereoAmplitudes(int32_t& outL, int32_t& outR) const
 }
 
 /// endregion </Helper methods>
+
+/// region <TTDSerializable (P1.5 - parent TDD 6.4)>
+//
+// Layout: 4 bytes - the four DAC latches (_dacValue[0..3]).
+// The DAC latches are the only CPU-visible machine state (set via OUT to
+// ports 0xF1/0xF3/0xF9/0xFB). Everything else is host-side audio pipeline.
+
+static constexpr size_t kCovoxStateSize = 4;
+static_assert(kCovoxStateSize == 4, "Covox state size drift");
+
+size_t Covox::TTDStateSize() const
+{
+    return kCovoxStateSize;
+}
+
+void Covox::TTDSaveState(uint8_t* dst) const
+{
+    std::memcpy(dst, _dacValue, 4);
+}
+
+void Covox::TTDLoadState(const uint8_t* src)
+{
+    std::memcpy(_dacValue, src, 4);
+}
+/// endregion </TTDSerializable>

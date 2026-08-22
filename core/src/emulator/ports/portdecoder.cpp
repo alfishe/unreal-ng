@@ -7,9 +7,11 @@
 #include "common/stringhelper.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "debugger/ttd/timetravelmanager.h"  // Phase 4 — RecordIoWrite hot-path call
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/memory/memoryaccesstracker.h"
+#include "emulator/notifications.h"
 #include "emulator/ports/models/portdecoder_pentagon128.h"
 #include "emulator/ports/models/portdecoder_pentagon512.h"
 #include "emulator/ports/models/portdecoder_profi.h"
@@ -107,9 +109,10 @@ uint8_t PortDecoder::DecodePortIn(uint16_t addr, [[maybe_unused]] uint16_t pc)
             // Pause emulator (single source of truth)
             emulator.Pause();
 
-            // Broadcast notification - breakpoint triggered
+            // Broadcast notification - breakpoint triggered (instance-tagged per GDB TDD §6.3)
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+            BreakpointTriggeredPayload* payload =
+                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, addr);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
             // Wait until emulator resumed externally
@@ -149,7 +152,8 @@ void PortDecoder::OnPortInComplete(uint16_t port, uint8_t result, [[maybe_unused
         {
             emulator.Pause();
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+            BreakpointTriggeredPayload* payload =
+                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, port);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
             emulator.WaitWhilePaused();
         }
@@ -179,7 +183,8 @@ void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [
         {
             emulator.Pause();
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+            BreakpointTriggeredPayload* payload =
+                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, addr);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
             emulator.WaitWhilePaused();
         }
@@ -215,7 +220,8 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
         {
             emulator.Pause();
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+            BreakpointTriggeredPayload* payload =
+                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, port);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
             emulator.WaitWhilePaused();
         }
@@ -228,7 +234,24 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
         _memory->_memoryAccessTracker->TrackPortWrite(port, value, callerAddress);
     }
 
-    // 3. Future: Analyzer notifications can be added here
+    // 3. Phase 4 — IO write journal (TDD §9.3) + access probe (§9.2).
+    // OnPortOutComplete is the single common path called by ALL subclass
+    // DecodePortOut overrides after the hardware write completes.
+    if (_context->pTimeTravelManager != nullptr)
+    {
+        _context->pTimeTravelManager->RecordIoWrite(port, value, pc);
+    }
+    if (_context->ttdProbe.IsArmed())
+    {
+        if (_context->ttdProbe.Matches(port, ttd::TTDAccessType::Io, value, pc))
+        {
+            const auto& st = _context->emulatorState;
+            const uint16_t tin = _context->pCore ? _context->pCore->GetZ80()->t : 0;
+            const ttd::TTDTimePoint tp{st.frame_counter, tin};
+            _context->ttdProbe.RecordHit(tp, pc, value, /*physPage=*/0,
+                                          ttd::TTDAccessType::Io);
+        }
+    }
 }
 
 
@@ -309,6 +332,9 @@ void PortDecoder::Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc)
     uint8_t borderColor = value & 0b000'00111;
     [[maybe_unused]] bool micBit = (value & 0b0000'1000) > 0;
     [[maybe_unused]] bool beeperBit = (value & 0b0001'0000) > 0;
+
+    // Sync border_attr with pFE bits 0-2 (TTD capture reads this field)
+    _context->emulatorState.border_attr = borderColor;
 
     // Pass value to the tape and beeper sound generator
     _tape->handlePortOut(value);

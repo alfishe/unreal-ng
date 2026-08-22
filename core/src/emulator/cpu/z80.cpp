@@ -7,6 +7,7 @@
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "emulator/cpu/op_noprefix.h"
 #include "emulator/cpu/opcode_profiler.h"
 #include "emulator/emulator.h"
@@ -417,7 +418,42 @@ uint8_t Z80::m1_cycle()
 
     // Record PC for current opcode (prefixes should not alter original PC)
     if (prefix == 0x0000)
+    {
         m1_pc = cpu.pc;
+
+        if (m1TraceHook)
+            m1TraceHook(m1_pc);
+
+        // Per-frame execution coverage for reverse search. One predictable
+        // branch on a plain bool when recording is off, which is the common
+        // case; the page lookup and the append only happen while a session is
+        // actually capturing. This is the only record that a frame executed a
+        // given address - instruction fetches are not journalled - so without
+        // it a reverse breakpoint has no choice but to replay every frame.
+        if (_context->ttdCoverageActive && _context->pTimeTravelManager != nullptr)
+        {
+            _context->pTimeTravelManager->RecordExecutedCoverage(
+                _memory->GetPhysPageForZ80Address(m1_pc), m1_pc);
+        }
+
+        // Phase 4 - access probe for Execute access type (TDD 9.2).
+        // Fires once per instruction at the M1 (instruction fetch) cycle.
+        if (_context->ttdProbe.IsArmed())
+        {
+            // Resolve the bank the opcode was fetched from, so a reverse
+            // breakpoint can distinguish "PC 0xC000 in page 3" from the same
+            // address reached with a different page banked in. Code executing
+            // from ROM reports kPhysPageNone.
+            const uint8_t execPhysPage = _memory->GetPhysPageForZ80Address(m1_pc);
+            if (_context->ttdProbe.Matches(m1_pc, ttd::TTDAccessType::Execute, 0, m1_pc, execPhysPage))
+            {
+                const auto& st = _context->emulatorState;
+                const ttd::TTDTimePoint tp{st.frame_counter, t};
+                _context->ttdProbe.RecordHit(tp, m1_pc, /*value=*/0, execPhysPage,
+                                              ttd::TTDAccessType::Execute);
+            }
+        }
+    }
 
     // Z80 CPU M1 cycle logic
     r_low = ((r_low + 1) & 0x7f) | (r_low & 0x80);  // Keep memory refresh register ticking
