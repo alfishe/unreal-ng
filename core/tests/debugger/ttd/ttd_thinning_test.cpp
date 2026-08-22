@@ -39,7 +39,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <filesystem>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 #include <vector>
 
 #include "base/featuremanager.h"
@@ -303,10 +306,8 @@ TEST_F(TTD_Thinning_Test, EveryPointReachable_AfterSerializationRoundTrip)
     ASSERT_GT(refsBefore.size(), 1u);
 
     // Serialize to a temp file.
-    char tmpfile[] = "/tmp/ttd_thinning_serialize_XXXXXX";
-    int fd = mkstemp(tmpfile);
-    ASSERT_GE(fd, 0);
-    close(fd);
+    const std::string tmpfile =
+        (std::filesystem::temp_directory_path() / "ttd_thinning_serialize.bin").string();
 
     {
         std::ofstream out(tmpfile, std::ios::binary);
@@ -380,7 +381,7 @@ TEST_F(TTD_Thinning_Test, EveryPointReachable_AfterSerializationRoundTrip)
     emu2->Stop();
     emu2->Release();
     delete emu2;
-    remove(tmpfile);
+    std::remove(tmpfile.c_str());
 }
 
 TEST_F(TTD_Thinning_Test, EveryPointReachable_CheckpointAtOrBeforeEveryFrame)

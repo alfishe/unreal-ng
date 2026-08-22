@@ -14,7 +14,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <filesystem>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
@@ -154,10 +157,8 @@ TEST_F(TTD_StepInstruction_Test, SerializeSession_RoundTrip_PreservesJournal)
     ASSERT_GT(journalSizeBefore, 0u);
 
     // Serialize
-    char tmpfile[] = "/tmp/ttd_step_instruction_test_XXXXXX";
-    int fd = mkstemp(tmpfile);
-    ASSERT_GE(fd, 0);
-    close(fd);
+    const std::string tmpfile =
+        (std::filesystem::temp_directory_path() / "ttd_step_instruction_test.bin").string();
 
     {
         std::ofstream out(tmpfile, std::ios::binary);
@@ -195,5 +196,5 @@ TEST_F(TTD_StepInstruction_Test, SerializeSession_RoundTrip_PreservesJournal)
     emu2->Stop();
     emu2->Release();
     delete emu2;
-    remove(tmpfile);
+    std::remove(tmpfile.c_str());
 }

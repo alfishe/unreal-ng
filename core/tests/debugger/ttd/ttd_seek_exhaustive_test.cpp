@@ -1057,8 +1057,8 @@ TEST_F(DISABLED_TTD_Seek_LongDuration_Test, DeltaChain_AllDepths_1through49_Rest
             const uint64_t v1 = HashScreen();
 
             // Run 2: seek from a different starting point.
-            const size_t far = (target + 200) % refs.size();
-            ASSERT_TRUE(_ttd->SeekTo({refs[far].frame, 0}));
+            const size_t farIdx = (target + 200) % refs.size();
+            ASSERT_TRUE(_ttd->SeekTo({refs[farIdx].frame, 0}));
             ASSERT_TRUE(_ttd->SeekTo({targetFrame, 0}));
             const uint64_t h2 = HashNow();
             const uint64_t v2 = HashScreen();

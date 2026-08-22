@@ -1,4 +1,4 @@
-/// @file ttd_automation_contract_test.cpp
+﻿/// @file ttd_automation_contract_test.cpp
 /// @brief Phase 2+ Automation: TTD API contract test.
 ///
 /// Verifies that the TimeTravelManager surface — as consumed by all four
@@ -25,9 +25,12 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <string>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 #include <vector>
 
 #include "emulator/emulator.h"
@@ -413,10 +416,8 @@ TEST_F(TTD_Automation_Contract_Test, Dump_SerializeSession_RoundTrip)
     ASSERT_GT(checkpointCount, 0u);
 
     // Serialize to a temp file
-    char tmpfile[] = "/tmp/ttd_contract_dump_XXXXXX";
-    int fd = mkstemp(tmpfile);
-    ASSERT_GE(fd, 0);
-    close(fd);
+    const std::string tmpfile =
+        (std::filesystem::temp_directory_path() / "ttd_contract_dump.bin").string();
 
     {
         std::ofstream out(tmpfile, std::ios::binary);
@@ -453,7 +454,7 @@ TEST_F(TTD_Automation_Contract_Test, Dump_SerializeSession_RoundTrip)
     emu2->Stop();
     emu2->Release();
     delete emu2;
-    remove(tmpfile);
+    remove(tmpfile.c_str());
 }
 
 /// endregion
