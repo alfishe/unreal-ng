@@ -125,8 +125,8 @@ public:
 protected:
     EmulatorContext* _context;
 
-    bool _tapeStarted;
-    size_t _tapePosition;
+    bool _tapeStarted = false;
+    size_t _tapePosition = 0;
 
     bool _muteEAR = false;              // Mute EAR output when active tape loading is done (prevent noise clicks)
 

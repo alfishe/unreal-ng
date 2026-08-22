@@ -28,7 +28,7 @@ TTDCpuState CaptureCpuState(const Z80State& src)
     // member initializers zero the named fields but not the padding between
     // them; this memset closes that gap and matches CaptureSnapshot's pattern.
     TTDCpuState dst;
-    std::memset(&dst, 0, sizeof(dst));
+    std::memset(static_cast<void*>(&dst), 0, sizeof(dst));
 
     // 16-bit registers (unions in Z80Registers mean we can read either form)
     dst.pc = src.pc;
@@ -133,7 +133,7 @@ TTDChipsetState CaptureChipsetState(const EmulatorState& src)
     // below; the memset ensures any byte NOT covered by an explicit copy
     // is zero rather than indeterminate.
     TTDChipsetState dst;
-    std::memset(&dst, 0, sizeof(dst));
+    std::memset(static_cast<void*>(&dst), 0, sizeof(dst));
 
     // Counters
     dst.t_states = src.t_states;

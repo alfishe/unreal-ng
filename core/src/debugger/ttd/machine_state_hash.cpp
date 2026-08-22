@@ -68,7 +68,7 @@ MachineStateSnapshot CaptureSnapshot(const Z80State& cpu,
     // pick up uninitialized padding and produce non-reproducible hashes.
     // (Default member initializers zero the named fields but not the padding
     // between them; this memset closes that gap.)
-    std::memset(&s, 0, sizeof(s));
+    std::memset(static_cast<void*>(&s), 0, sizeof(s));
 
     // ---- Z80 architectural registers ----
     s.pc = cpu.pc;
