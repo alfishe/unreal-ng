@@ -4,9 +4,14 @@
 
 #include "stdafx.h"
 
+#include <filesystem>
 #include <string>
 
 /// Path and file helpers.
+///
+/// Encoding: every std::string path is UTF-8 on every platform. On Windows FileHelper converts to UTF-16 at the
+/// Win32/CRT boundary (so non-ASCII paths work regardless of the ANSI code page); on POSIX UTF-8 is native.
+/// Use ToFsPath() whenever a std::filesystem::path has to be built from a UTF-8 string elsewhere.
 ///
 /// All path-manipulating functions accept any mix of '/' and '\' separators on every platform and
 /// understand every path shape the host OS does, without ever corrupting it:
@@ -22,6 +27,9 @@ class FileHelper
 {
 public:
     static char GetPathSeparator();
+
+    /// std::filesystem::path for a UTF-8 string (wide on Windows, as-is on POSIX). Separators are left untouched.
+    static std::filesystem::path ToFsPath(const std::string& utf8Path);
 
     static std::string GetExecutablePath();
     static std::string GetResourcesPath();

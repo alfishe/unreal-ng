@@ -253,5 +253,62 @@ TEST(Emulator_PathShapes_Test, LoadSnapshot_AllPathSpellings)
     EmulatorTestHelper::CleanupEmulator(emu);
 }
 
+/// @brief Non-ASCII paths: every std::string path in core is UTF-8 (QString::toStdString(), Lua, Python, web API
+/// all hand over UTF-8). On Windows that must reach the OS as UTF-16 - the narrow CRT/Win32 calls would read the
+/// bytes in the ANSI code page and fail for anything outside it. The snapshot is copied into
+/// <temp>/unreal-ng-Снимки-日本語-🙂/Снимок.sna (directory created through std::filesystem's u8 path ctor,
+/// independent of FileHelper) and then used through FileHelper, LoadSnapshot and SaveSnapshot via its UTF-8 spelling.
+TEST(Emulator_PathShapes_Test, LoadAndSaveSnapshot_NonAsciiUtf8Path)
+{
+    namespace fs = std::filesystem;
+    auto u8path = [](const std::string& utf8) { return fs::path(reinterpret_cast<const char8_t*>(utf8.c_str())); };
+    auto u8str = [](const fs::path& p) { std::u8string s = p.u8string(); return std::string(reinterpret_cast<const char*>(s.c_str()), s.size()); };
+
+    const std::string local = TestPathHelper::GetTestDataPath("loaders/sna/multifix.sna");
+    ASSERT_TRUE(FileHelper::FileExists(local)) << "Test data missing: " << local;
+
+    const std::string utf8Dir = "unreal-ng-\xD0\xA1\xD0\xBD\xD0\xB8\xD0\xBC\xD0\xBA\xD0\xB8-\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E-\xF0\x9F\x99\x82";  // Снимки-日本語-🙂
+    const std::string utf8Name = "\xD0\xA1\xD0\xBD\xD0\xB8\xD0\xBC\xD0\xBE\xD0\xBA.sna";                                                            // Снимок.sna
+    const std::string utf8Copy = "\xD0\x9A\xD0\xBE\xD0\xBF\xD0\xB8\xD1\x8F.sna";                                                                    // Копия.sna
+
+    std::error_code ec;
+    const fs::path dir = fs::temp_directory_path(ec) / u8path(utf8Dir);
+    ASSERT_FALSE(ec) << "temp_directory_path failed";
+    fs::create_directories(dir, ec);
+    ASSERT_FALSE(ec) << "create_directories failed for " << u8str(dir);
+    fs::copy_file(u8path(local), dir / u8path(utf8Name), fs::copy_options::overwrite_existing, ec);
+    ASSERT_FALSE(ec) << "copy_file failed into " << u8str(dir);
+
+    // The UTF-8 std::string spelling the GUI would hand over
+    const std::string sep(1, FileHelper::GetPathSeparator());
+    const std::string utf8Path = u8str(dir) + sep + utf8Name;
+    const std::string utf8SavePath = u8str(dir) + sep + utf8Copy;
+
+    // FileHelper primitives
+    EXPECT_TRUE(FileHelper::FileExists(utf8Path)) << utf8Path;
+    EXPECT_TRUE(FileHelper::FolderExists(u8str(dir))) << u8str(dir);
+    EXPECT_EQ(FileHelper::GetFileSize(utf8Path), static_cast<size_t>(fs::file_size(dir / u8path(utf8Name))));
+    FILE* f = FileHelper::OpenExistingFile(utf8Path, "rb");
+    EXPECT_NE(f, nullptr) << "OpenExistingFile failed for " << utf8Path;
+    if (f)
+        fclose(f);
+
+    // AbsolutePath with symlink/case resolution must give the file back in UTF-8, not mangled
+    std::string resolved = FileHelper::AbsolutePath(utf8Path);
+    EXPECT_NE(resolved.find(utf8Name), std::string::npos) << "AbsolutePath lost the UTF-8 file name: " << resolved;
+    EXPECT_TRUE(FileHelper::FileExists(resolved)) << resolved;
+
+    // Emulator load + save through non-ASCII paths
+    Emulator* emu = EmulatorTestHelper::CreateStandardEmulator("PENTAGON");
+    ASSERT_NE(emu, nullptr);
+    EXPECT_TRUE(emu->LoadSnapshot(utf8Path)) << "LoadSnapshot failed for " << utf8Path;
+    EXPECT_TRUE(emu->SaveSnapshot(utf8SavePath)) << "SaveSnapshot failed for " << utf8SavePath;
+    EXPECT_TRUE(fs::exists(dir / u8path(utf8Copy), ec)) << "Saved file not found under its UTF-8 name";
+    EXPECT_TRUE(emu->LoadSnapshot(utf8SavePath)) << "Reloading the saved snapshot failed for " << utf8SavePath;
+    EmulatorTestHelper::CleanupEmulator(emu);
+
+    fs::remove_all(dir, ec);
+}
+
 /// endregion </Path shape tests>
 

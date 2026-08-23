@@ -9,6 +9,7 @@
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/modulelogger.h"
+#include "common/filehelper.h"
 #include "emulator/emulatorcontext.h"
 #include "stdafx.h"
 
@@ -214,7 +215,7 @@ bool LabelManager::LoadLabels(const std::string& path)
         return false;
     }
 
-    std::ifstream file(path);
+    std::ifstream file(FileHelper::ToFsPath(path));
     if (!file.is_open())
     {
         LOGERROR("Failed to open label file: %s", path.c_str());
@@ -256,7 +257,7 @@ bool LabelManager::LoadLabels(const std::string& path)
 // @return false if the file could not be opened or parsed
 bool LabelManager::LoadMapFile(const std::string& path)
 {
-    std::ifstream file(path);
+    std::ifstream file(FileHelper::ToFsPath(path));
     if (!file.is_open())
     {
         return false;
@@ -271,7 +272,7 @@ bool LabelManager::LoadMapFile(const std::string& path)
 // @return false if the file could not be opened or parsed
 bool LabelManager::LoadSymFile(const std::string& path)
 {
-    std::ifstream file(path);
+    std::ifstream file(FileHelper::ToFsPath(path));
     if (!file.is_open())
     {
         return false;
@@ -287,7 +288,7 @@ bool LabelManager::LoadSymFile(const std::string& path)
 // @return false if the file could not be written
 bool LabelManager::SaveLabels(const std::string& path, FileFormat format) const
 {
-    std::ofstream file(path);
+    std::ofstream file(FileHelper::ToFsPath(path));
     if (!file.is_open())
     {
         return false;
@@ -339,7 +340,7 @@ bool LabelManager::SaveLabels(const std::string& path, FileFormat format) const
 // @return FileFormat Detected file format or FileFormat::UNKNOWN if format cannot be determined
 LabelManager::FileFormat LabelManager::DetectFileFormat(const std::string& path) const
 {
-    std::string ext = std::filesystem::path(path).extension().string();
+    std::string ext = FileHelper::ToFsPath(path).extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
     if (ext == ".map")
@@ -354,7 +355,7 @@ LabelManager::FileFormat LabelManager::DetectFileFormat(const std::string& path)
         return FileFormat::Z88DK;
 
     // Try to detect by content
-    std::ifstream file(path);
+    std::ifstream file(FileHelper::ToFsPath(path));
     if (file.is_open())
     {
         std::string line;

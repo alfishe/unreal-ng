@@ -146,7 +146,7 @@ bool LoaderZ80::captureStateToStaging()
 bool LoaderZ80::saveV3FromStaging()
 {
     // Open file for writing
-    FILE* outFile = fopen(_path.c_str(), "wb");
+    FILE* outFile = FileHelper::OpenFile(_path, "wb");
     if (outFile == nullptr)
     {
         MLOGERROR("Failed to open '%s' for writing", _path.c_str());

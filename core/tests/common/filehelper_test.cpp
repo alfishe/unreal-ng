@@ -611,6 +611,12 @@ TEST_F(FileHelper_Test, AbsolutePath_UNCPaths)
         {"\\\\?\\C:\\Temp\\..\\Temp\\file.txt", "\\\\?\\C:\\Temp\\file.txt", "//?/C:/Temp/file.txt", "\\\\?\\ drive prefix"},
         {"\\\\?\\UNC\\server\\share\\a\\..\\b", "\\\\?\\UNC\\server\\share\\b", "//?/UNC/server/share/b", "\\\\?\\UNC\\ prefix"},
 
+        // Non-ASCII (UTF-8 bytes must pass through untouched: Cyrillic share/folder, CJK folder, emoji file name)
+        {"//172.16.17.10/\xD0\x9E\xD0\xB1\xD1\x89\xD0\xB0\xD1\x8F/\xE6\x97\xA5\xE6\x9C\xAC/\xF0\x9F\x99\x82.sna",
+         "\\\\172.16.17.10\\\xD0\x9E\xD0\xB1\xD1\x89\xD0\xB0\xD1\x8F\\\xE6\x97\xA5\xE6\x9C\xAC\\\xF0\x9F\x99\x82.sna",
+         "//172.16.17.10/\xD0\x9E\xD0\xB1\xD1\x89\xD0\xB0\xD1\x8F/\xE6\x97\xA5\xE6\x9C\xAC/\xF0\x9F\x99\x82.sna",
+         "UNC with UTF-8 (Cyrillic/CJK/emoji) components"},
+
         // Edge cases
         {"//192.168.1.1/data/test.z80", "\\\\192.168.1.1\\data\\test.z80", "//192.168.1.1/data/test.z80", "UNC private IP"},
         {"//fileserver.domain.com/public/file.sna", "\\\\fileserver.domain.com\\public\\file.sna", "//fileserver.domain.com/public/file.sna", "UNC FQDN hostname"},
@@ -1128,6 +1134,10 @@ TEST_F(FileHelper_Test, LexicallyNormalPath)
         {"", "", ""},
         {"file.sna", "file.sna", "file.sna"},
         {"~/x/../y", "~\\y", "~/y"},  // no tilde expansion here - "~" is just a component
+
+        // UTF-8 components are opaque bytes to the normalizer (no separator byte can occur inside a UTF-8 sequence)
+        {"C:/\xD0\x98\xD0\xB3\xD1\x80\xD1\x8B/./\xE6\x97\xA5\xE6\x9C\xAC/../\xF0\x9F\x99\x82.sna",
+         "C:\\\xD0\x98\xD0\xB3\xD1\x80\xD1\x8B\\\xF0\x9F\x99\x82.sna", "C:/\xD0\x98\xD0\xB3\xD1\x80\xD1\x8B/\xF0\x9F\x99\x82.sna"},
     };
 
     for (const auto& test : cases)
@@ -1310,6 +1320,7 @@ TEST_F(FileHelper_Test, GetFileExtension_PathShapes)
     EXPECT_EQ(FileHelper::GetFileExtension("C:\\dir.d\\"), "");
     EXPECT_EQ(FileHelper::GetFileExtension("~/snapshots/.hidden.sna"), "sna");
     EXPECT_EQ(FileHelper::GetFileExtension("~/snapshots/.hidden"), "");
+    EXPECT_EQ(FileHelper::GetFileExtension("//server/\xD0\x98\xD0\xB3\xD1\x80\xD1\x8B/\xE6\x97\xA5\xE6\x9C\xAC.\xF0\x9F\x99\x82/\xD0\xA1\xD0\xBD\xD0\xB8\xD0\xBC\xD0\xBE\xD0\xBA.sna"), "sna");
 }
 
 /// endregion </Pure (no filesystem access) path-shape tests>

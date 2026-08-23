@@ -2,6 +2,8 @@
 
 #include "filehelper.h"
 
+#include "common/stringhelper.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
@@ -26,6 +28,20 @@ namespace fs = std::filesystem;
 
 namespace
 {
+#ifdef _WIN32
+    /// UTF-8 -> UTF-16 for Win32/CRT wide APIs
+    inline std::wstring W(const std::string& utf8)
+    {
+        return StringHelper::StringToWideString(utf8);
+    }
+
+    /// UTF-16 -> UTF-8
+    inline std::string U8(const std::wstring& wide)
+    {
+        return StringHelper::WideStringToString(wide);
+    }
+#endif
+
     inline bool IsSep(char c)
     {
         return c == '/' || c == '\\';
@@ -149,10 +165,14 @@ namespace
     std::string CurrentDirectory()
     {
         std::error_code ec;
-        std::string cwd = fs::current_path(ec).string();
+        fs::path cwd = fs::current_path(ec);
         if (ec)
-            cwd.clear();
-        return cwd;
+            return std::string();
+#ifdef _WIN32
+        return U8(cwd.wstring());
+#else
+        return cwd.string();
+#endif
     }
 
     /// Resolve symlinks / on-disk letter case of an existing path. Returns empty string on failure.
@@ -163,20 +183,20 @@ namespace
 #ifdef _WIN32
         // Handle-based resolution works identically for drive paths, UNC shares and \\?\ prefixed paths
         // on both MSVC and MinGW (libstdc++'s std::filesystem::canonical mangles UNC paths).
-        HANDLE handle = CreateFileA(nativePath.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+        HANDLE handle = CreateFileW(W(nativePath).c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
                                     OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
         if (handle == INVALID_HANDLE_VALUE)
             return result;
 
-        std::vector<char> buffer(32768);
-        DWORD length = GetFinalPathNameByHandleA(handle, buffer.data(), static_cast<DWORD>(buffer.size()),
+        std::vector<wchar_t> buffer(32768);
+        DWORD length = GetFinalPathNameByHandleW(handle, buffer.data(), static_cast<DWORD>(buffer.size()),
                                                  FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
         CloseHandle(handle);
 
         if (length == 0 || length >= buffer.size())
             return result;
 
-        result.assign(buffer.data(), length);
+        result = U8(std::wstring(buffer.data(), length));
 
         // Strip the extended-length prefix: "\\?\UNC\server\share\x" -> "\\server\share\x", "\\?\C:\x" -> "C:\x"
         static const std::string uncPrefix = "\\\\?\\UNC\\";
@@ -217,11 +237,11 @@ std::string FileHelper::GetExecutablePath()
     std::filesystem::path exePath;
 
 #if defined(_WIN32)
-    std::vector<char> buffer(4096);
-    DWORD length = GetModuleFileNameA(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    std::vector<wchar_t> buffer(32768);
+    DWORD length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
     if (length == 0 || length == buffer.size())
         return {};  // error
-    exePath = std::filesystem::path(buffer.data());
+    return U8(std::filesystem::path(std::wstring(buffer.data(), length)).parent_path().wstring());
 
 #elif defined(__APPLE__)
     uint32_t size = 0;
@@ -289,14 +309,15 @@ std::string FileHelper::ExpandPath(const std::string& path)
         return path;
 
 #ifdef _WIN32
-    const char* home = getenv("USERPROFILE");
-    std::string homeDir = home ? home : "";
+    // Wide environment - the narrow getenv() would return the ANSI rendering of a non-ASCII user name
+    const wchar_t* home = _wgetenv(L"USERPROFILE");
+    std::string homeDir = home ? U8(home) : "";
     if (homeDir.empty())
     {
-        const char* drive = getenv("HOMEDRIVE");
-        const char* dir = getenv("HOMEPATH");
+        const wchar_t* drive = _wgetenv(L"HOMEDRIVE");
+        const wchar_t* dir = _wgetenv(L"HOMEPATH");
         if (drive && dir)
-            homeDir = std::string(drive) + dir;
+            homeDir = U8(std::wstring(drive) + dir);
     }
 #else
     const char* home = getenv("HOME");
@@ -445,8 +466,8 @@ std::string FileHelper::AbsolutePath(const std::string& path, bool resolveSymlin
         {
             // Drive-relative ("C:dir\file") - relative to the current directory of that drive
             int drive = std::toupper(static_cast<unsigned char>(result[0])) - 'A' + 1;
-            char* driveCwd = _getdcwd(drive, nullptr, 0);
-            std::string base = driveCwd ? driveCwd : result.substr(0, 2) + sep;
+            wchar_t* driveCwd = _wgetdcwd(drive, nullptr, 0);
+            std::string base = driveCwd ? U8(driveCwd) : result.substr(0, 2) + sep;
             free(driveCwd);
 
             std::string rest = result.substr(2);
@@ -524,7 +545,7 @@ bool FileHelper::FileExists(const std::string& path)
 
 #ifdef _WIN32
     // Win32 API accepts every path shape (drive, UNC share root, \\?\ prefix) on MSVC and MinGW alike
-    DWORD attrs = GetFileAttributesA(nativePath.c_str());
+    DWORD attrs = GetFileAttributesW(W(nativePath).c_str());
     return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
 #else
     std::error_code ec;
@@ -540,7 +561,7 @@ bool FileHelper::FolderExists(const std::string& path)
     std::string nativePath = NormalizePath(path);
 
 #ifdef _WIN32
-    DWORD attrs = GetFileAttributesA(nativePath.c_str());
+    DWORD attrs = GetFileAttributesW(W(nativePath).c_str());
     return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
 #else
     std::error_code ec;
@@ -559,7 +580,7 @@ size_t FileHelper::GetFileSize(const std::string& path)
 
 #ifdef _WIN32
     WIN32_FILE_ATTRIBUTE_DATA data;
-    if (GetFileAttributesExA(nativePath.c_str(), GetFileExInfoStandard, &data) &&
+    if (GetFileAttributesExW(W(nativePath).c_str(), GetFileExInfoStandard, &data) &&
         (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
     {
         result = (static_cast<size_t>(data.nFileSizeHigh) << 32) | static_cast<size_t>(data.nFileSizeLow);
@@ -635,7 +656,21 @@ FILE* FileHelper::OpenFile(const std::string& path, const char* mode)
         return nullptr;
 
     std::string nativePath = NormalizePath(path);
+#ifdef _WIN32
+    // _wfopen: the narrow fopen() would interpret the UTF-8 bytes in the ANSI code page
+    return _wfopen(W(nativePath).c_str(), W(mode ? mode : "rb").c_str());
+#else
     return fopen(nativePath.c_str(), mode);
+#endif
+}
+
+std::filesystem::path FileHelper::ToFsPath(const std::string& utf8Path)
+{
+#ifdef _WIN32
+    return std::filesystem::path(W(utf8Path));
+#else
+    return std::filesystem::path(utf8Path);
+#endif
 }
 
 void FileHelper::CloseFile(FILE* file)
