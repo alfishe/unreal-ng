@@ -79,6 +79,11 @@ set(ZSTD_SOURCES
 # Build libzstd_static — a C-language static library.
 # C language (not C++) because zstd is a C project; using C avoids any
 # name-mangling or C++ ABI concerns and matches the upstream build.
+#
+# The enclosing projects declare LANGUAGES CXX only (core, unreal-qt when
+# configured standalone as CI does), so C must be enabled here explicitly -
+# otherwise CMake fails at generate time with "CMAKE_C_COMPILE_OBJECT not set".
+enable_language(C)
 add_library(libzstd_static STATIC ${ZSTD_SOURCES})
 
 # Public include directory: the lib/ root holds the public headers
