@@ -47,13 +47,13 @@ namespace
         return c == '/' || c == '\\';
     }
 
-    /// "X:" prefix
-    inline bool HasDriveLetter(const std::string& p)
+    /// "X:" prefix (Windows-only callers; POSIX treats "X:" as an ordinary component)
+    [[maybe_unused]] inline bool HasDriveLetter(const std::string& p)
     {
         return p.size() >= 2 && std::isalpha(static_cast<unsigned char>(p[0])) && p[1] == ':';
     }
 
-    bool EqualsIgnoreCase(const std::string& a, const char* b)
+    [[maybe_unused]] bool EqualsIgnoreCase(const std::string& a, const char* b)
     {
         size_t n = std::strlen(b);
         if (a.size() != n)
@@ -82,10 +82,10 @@ namespace
     PathRoot SplitRoot(const std::string& p)
     {
         PathRoot r;
-        const char sep = FileHelper::GetPathSeparator();
         const size_t n = p.size();
 
 #ifdef _WIN32
+        const char sep = FileHelper::GetPathSeparator();
         if (n >= 2 && p[0] == sep && p[1] == sep)
         {
             // UNC or Win32 device path. Root components: "server\share", "?\C:", ".\device", "?\UNC\server\share".

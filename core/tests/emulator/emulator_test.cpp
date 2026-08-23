@@ -160,6 +160,7 @@ TEST_F(Emulator_Test, MultiInstanceRun)
 
 /// region <Path shape tests>
 
+#ifdef _WIN32
 namespace
 {
     /// Rewrite a local Windows path "X:\a\b" (or "X:/a/b") into the localhost admin-share UNC form:
@@ -192,6 +193,7 @@ namespace
         return !uncRoot.empty() && FileHelper::FolderExists(uncRoot);
     }
 }  // namespace
+#endif  // _WIN32
 
 /// @brief Emulator::LoadSnapshot must accept every valid spelling of a snapshot path the host OS understands.
 ///
