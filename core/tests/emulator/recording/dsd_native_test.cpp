@@ -2,9 +2,14 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <vector>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 #include "encoders/dsd/dsd_types.h"
 #include "encoders/dsd/dsf_writer.h"

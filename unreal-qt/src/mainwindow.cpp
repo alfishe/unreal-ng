@@ -954,7 +954,10 @@ void MainWindow::handleStartButton()
                 // logger.TurnOnLoggingForModule(MODULE_IO, SUBMODULE_IO_TAPE);
                 // logger.TurnOnLoggingForModule(MODULE_IO, SUBMODULE_IO_IN);
                 // logger.TurnOnLoggingForModule(MODULE_IO, SUBMODULE_IO_OUT);
-                logger.TurnOnLoggingForModule(MODULE_DISK, SUBMODULE_DISK_FDC);
+                // logger.TurnOnLoggingForModule(MODULE_DISK, SUBMODULE_DISK_FDC);
+                logger.TurnOnLoggingForModule(MODULE_CORE, SUBMODULE_CORE_GENERIC);
+                logger.TurnOnLoggingForModule(MODULE_LOADER, SUBMODULE_LOADER_SNA);
+                logger.TurnOnLoggingForModule(MODULE_LOADER, SUBMODULE_LOADER_Z80);
 
                 std::string dumpSettings = logger.DumpSettings();
                 qDebug("%s", dumpSettings.c_str());
@@ -1559,27 +1562,57 @@ void MainWindow::loadFile(const QString& filePath)
     switch (category)
     {
         case FileROM:
+            qWarning() << "ROM loading not implemented:" << filePath;
             break;
         case FileSnapshot:
             if (_emulator)
-                _emulator->LoadSnapshot(file);
+            {
+                bool result = _emulator->LoadSnapshot(file);
+                if (!result)
+                    qWarning() << "Failed to load snapshot:" << filePath;
+            }
+            else
+            {
+                qWarning() << "Cannot load snapshot - emulator not running:" << filePath;
+            }
             break;
         case FileTape:
             if (_emulator)
-                _emulator->LoadTape(file);
+            {
+                bool result = _emulator->LoadTape(file);
+                if (!result)
+                    qWarning() << "Failed to load tape:" << filePath;
+            }
+            else
+            {
+                qWarning() << "Cannot load tape - emulator not running:" << filePath;
+            }
             break;
         case FileDisk:
             if (_emulator)
-                _emulator->LoadDisk(file);
+            {
+                bool result = _emulator->LoadDisk(file);
+                if (!result)
+                    qWarning() << "Failed to load disk:" << filePath;
+            }
+            else
+            {
+                qWarning() << "Cannot load disk - emulator not running:" << filePath;
+            }
             break;
         case FileSymbol:
             if (_emulator && _emulator->GetDebugManager())
             {
                 _emulator->GetDebugManager()->GetLabelManager()->LoadLabels(file);
             }
+            else
+            {
+                qWarning() << "Cannot load symbols - emulator not running:" << filePath;
+            }
             break;
+        case FileUnknown:
         default:
-            qDebug() << "Unsupported file type:" << filePath;
+            qWarning() << "Unsupported file type:" << filePath;
             break;
     };
 }

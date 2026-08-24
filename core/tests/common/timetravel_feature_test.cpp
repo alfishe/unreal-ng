@@ -13,6 +13,8 @@
 
 #include "_helpers/emulatortesthelper.h"
 
+#include <filesystem>
+
 /// region <Timetravel feature flag registration>
 
 TEST(TimeTravelFeature_Test, FlagRegisteredWithCorrectMetadata)

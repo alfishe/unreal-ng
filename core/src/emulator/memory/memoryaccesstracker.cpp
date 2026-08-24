@@ -1,6 +1,7 @@
 #include "memoryaccesstracker.h"
 
 #include "base/featuremanager.h"
+#include "common/filehelper.h"
 #include "calltrace.h"
 #include "filesystem"
 #include "memory.h"
@@ -1408,7 +1409,7 @@ std::string MemoryAccessTracker::SaveAccessData(const std::string& outputPath, c
         if (singleFile)
         {
             // Single file output - use outputPath directly
-            fs::path filePath = outputPath;
+            fs::path filePath = FileHelper::ToFsPath(outputPath);
 
             // If no specific file path provided, generate unique filename
             if (filePath.empty())
@@ -1435,10 +1436,10 @@ std::string MemoryAccessTracker::SaveAccessData(const std::string& outputPath, c
         else
         {
             // Multiple files in a directory
-            fs::path baseDir = outputPath;
+            fs::path baseDir = FileHelper::ToFsPath(outputPath);
             if (!fs::is_directory(baseDir))
             {
-                baseDir = fs::path(outputPath).parent_path();
+                baseDir = FileHelper::ToFsPath(outputPath).parent_path();
                 if (baseDir.empty())
                 {
                     baseDir = ".";
@@ -1738,7 +1739,7 @@ std::string MemoryAccessTracker::GetBankPageName(uint8_t bank) const
 
 bool MemoryAccessTracker::DumpVisualizationData(const std::string& filename)
 {
-    std::ofstream out(filename, std::ios::binary);
+    std::ofstream out(FileHelper::ToFsPath(filename), std::ios::binary);
     if (!out)
         return false;
 

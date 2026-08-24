@@ -14,7 +14,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <filesystem>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
@@ -500,10 +503,8 @@ TEST_F(TTD_Reverse_Executor_Test, SerializationRoundTrip_AfterReverseOp_Preserve
     const ttd::TTDTimePoint posBeforeDump = _ttd->CurrentPosition();
 
     // Serialize to a temp file, deserialize into a fresh manager state.
-    char tmpl[] = "/tmp/ttd_reverse_serialize_XXXXXX";
-    int fd = mkstemp(tmpl);
-    ASSERT_GE(fd, 0);
-    close(fd);
+    const std::string tmpl =
+        (std::filesystem::temp_directory_path() / "ttd_reverse_serialize.bin").string();
 
     {
         std::ofstream out(tmpl, std::ios::binary);
@@ -518,7 +519,7 @@ TEST_F(TTD_Reverse_Executor_Test, SerializationRoundTrip_AfterReverseOp_Preserve
         ASSERT_TRUE(_ttd->DeserializeSession(in, err)) << err;
     }
 
-    unlink(tmpl);
+    std::remove(tmpl.c_str());
 
     // DeserializeSession resets state to Idle. After a SeekTo, the position
     // must be queryable.

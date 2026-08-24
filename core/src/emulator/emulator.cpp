@@ -1023,7 +1023,7 @@ bool Emulator::LoadSnapshot(const std::string& path)
     std::string absolutePath = FileHelper::AbsolutePath(path);
     if (!FileHelper::FileExists(absolutePath))
     {
-        MLOGERROR("Snapshot file not found: {}", absolutePath.c_str());
+        MLOGERROR("Snapshot file not found: '%s'", absolutePath.c_str());
         return false;
     }
 

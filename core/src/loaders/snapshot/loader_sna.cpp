@@ -749,7 +749,7 @@ bool LoaderSNA::save48kFromStaging()
     Z80& z80 = *_context->pCore->GetZ80();
     
     // Open file for writing
-    FILE* file = fopen(_path.c_str(), "wb");
+    FILE* file = FileHelper::OpenFile(_path, "wb");
     if (!file)
     {
         MLOGERROR("Cannot create file: %s", _path.c_str());
@@ -822,7 +822,7 @@ bool LoaderSNA::save128kFromStaging()
     EmulatorState& state = _context->emulatorState;
     
     // Open file for writing  
-    FILE* file = fopen(_path.c_str(), "wb");
+    FILE* file = FileHelper::OpenFile(_path, "wb");
     if (!file)
     {
         MLOGERROR("Cannot create file: %s", _path.c_str());
@@ -946,7 +946,7 @@ bool LoaderSNA::save()
     }
     
     // Open file for writing
-    FILE* file = fopen(_path.c_str(), "wb");
+    FILE* file = FileHelper::OpenFile(_path, "wb");
     if (!file)
     {
         MLOGERROR("Cannot create file: %s", _path.c_str());

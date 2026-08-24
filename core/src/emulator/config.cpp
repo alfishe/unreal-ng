@@ -49,12 +49,12 @@ string Config::GetScreenshotsFolder()
 		// Try to create the directory to test if it's writable
 		bool isWritable = false;
 		try {
-			if (!std::filesystem::exists(testPath)) {
-				isWritable = std::filesystem::create_directories(testPath);
+			if (!std::filesystem::exists(FileHelper::ToFsPath(testPath))) {
+				isWritable = std::filesystem::create_directories(FileHelper::ToFsPath(testPath));
 			} else {
 				// Directory exists, check if it's writable by creating a test file
 				std::string testFile = FileHelper::PathCombine(testPath, "/test.tmp");
-				FILE* fp = fopen(testFile.c_str(), "w");
+				FILE* fp = FileHelper::OpenFile(testFile, "w");
 				if (fp) {
 					fclose(fp);
 					remove(testFile.c_str());
@@ -72,17 +72,17 @@ string Config::GetScreenshotsFolder()
 				std::string dirPath = std::string(homeDir) + "/Library/Application Support/UnrealNG/screenshots";
 				// Create the directory if it doesn't exist
 				try {
-					std::filesystem::create_directories(dirPath);
+					std::filesystem::create_directories(FileHelper::ToFsPath(dirPath));
 				} catch (const std::exception&) {
 					// If we can't create the directory, fall back to temporary directory
 					dirPath = "/tmp/UnrealNG/screenshots";
-					std::filesystem::create_directories(dirPath);
+					std::filesystem::create_directories(FileHelper::ToFsPath(dirPath));
 				}
 				screenshotsPath = dirPath;
 			} else {
 				// Fallback to temporary directory if HOME is not available
 				screenshotsPath = "/tmp/UnrealNG/screenshots";
-				std::filesystem::create_directories(screenshotsPath);
+				std::filesystem::create_directories(FileHelper::ToFsPath(screenshotsPath));
 			}
 		} else {
 			// Location is writable, use it
@@ -95,7 +95,7 @@ string Config::GetScreenshotsFolder()
 		
 		// Create the directory if it doesn't exist
 		try {
-			std::filesystem::create_directories(screenshotsPath);
+			std::filesystem::create_directories(FileHelper::ToFsPath(screenshotsPath));
 		} catch (const std::exception&) {
 			// Ignore errors
 		}

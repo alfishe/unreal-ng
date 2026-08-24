@@ -7,6 +7,7 @@
 
 #include "3rdparty/simpleini/simpleini.h"
 #include "common/modulelogger.h"
+#include "common/filehelper.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
@@ -290,7 +291,7 @@ void FeatureManager::setDefaults()
 /// @param path Path to the features.ini file
 void FeatureManager::loadFromFile(const std::string& path)
 {
-    if (!std::filesystem::exists(path))
+    if (!std::filesystem::exists(FileHelper::ToFsPath(path)))
     {
         return;
     }
