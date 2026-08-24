@@ -14,6 +14,20 @@ typedef std::chrono::high_resolution_clock hiresclock;
 class TimeHelper
 {
 public:
+	/// Worst-case wake-up lateness WaitUntilPrecise() is designed to deliver on every supported platform.
+	/// The audio latency budget depends on it: the emulation thread must land each frame's audio inside the ring
+	/// occupancy sawtooth trough (see docs/emulator/design/audio/drc-rate-control.md, SoundAdaptivity.AVLatencyBudget).
+	static constexpr double FRAME_PACING_JITTER_BUDGET_MS = 2.0;
+
+	/// Sleep until @p deadline with sub-millisecond precision, polling @p shouldAbort every few milliseconds.
+	/// @return true when the deadline was reached, false when aborted early.
+	///
+	/// Why not std::condition_variable::wait_until / this_thread::sleep_until: on Windows those wake 1 ms (MSVC) to
+	/// 10-17 ms (MinGW winpthreads) LATE - measured on a 20.48 ms frame cadence - which ate the whole audio ring
+	/// trough and caused periodic underruns. Windows uses a high-resolution waitable timer (~0.1-0.5 ms lateness,
+	/// independent of timeBeginPeriod); POSIX sleeps are precise already. Never returns before the deadline.
+	static bool WaitUntilPrecise(std::chrono::steady_clock::time_point deadline, const std::function<bool()>& shouldAbort);
+
 	static chrono_time_t GetPrecisionTime();
 	static unsigned GetTimeIntervalNs(chrono_time_t t1, chrono_time_t t2);
 	static unsigned GetTimeIntervalUs(chrono_time_t t1, chrono_time_t t2);

@@ -34,11 +34,6 @@ protected:
     std::mutex _pauseMutex;                        // Protects pause state
     std::atomic<std::thread::id> _runThreadId{};   // Thread currently executing Run() (emulation thread)
 
-    // Interruptible frame-pacing sleep: _cv notified by Stop(). (The former
-    // audio watermark request path is replaced by the DRC rate controller in
-    // SoundManager - see audio-sync design 5.3.)
-    std::condition_variable _cv;
-    std::mutex _audioBufferMutex;
 
     // Absolute deadline for the next frame (steady clock). Advanced by exactly
     // one frame duration per iteration so scheduler wake-up latency does not

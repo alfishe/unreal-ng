@@ -67,6 +67,14 @@ void MainLoop::Run(volatile bool& stopRequested)
     _isRunning = true;
     _runThreadId.store(std::this_thread::get_id(), std::memory_order_release);
 
+#ifdef _WIN32
+    // The emulation thread is the audio producer: a frame pre-empted by GUI /
+    // background work lands its audio late and eats the ring trough. Above
+    // normal (not time-critical) keeps it ahead of ordinary threads without
+    // starving the audio device thread, which miniaudio already runs under MMCSS.
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+#endif
+
     /// region <Info logging>
     uint64_t lastRun = 0;
     [[maybe_unused]] uint64_t betweenIterations = 0;
@@ -167,9 +175,14 @@ void MainLoop::Run(volatile bool& stopRequested)
             }
             _nextFrameTime += frameDuration;
 
-            // Interruptible sleep: _cv is notified by Stop()
-            std::unique_lock<std::mutex> lock(_audioBufferMutex);
-            _cv.wait_until(lock, _nextFrameTime, [&stopRequested] { return (bool)stopRequested; });
+            // Precise, interruptible sleep (polls the stop flag every few ms).
+            // Must NOT be std::condition_variable::wait_until: on Windows it
+            // wakes 1 ms (MSVC) to 10-17 ms (MinGW) late, which consumed the
+            // whole audio ring trough (DRC_TARGET_MS - 1 frame ~ 19.5 ms)
+            // against WASAPI's 10 ms pulls and caused steady underruns
+            // ("ring errors ... dequeue=N" growing) - see
+            // TimeHelper::WaitUntilPrecise and SoundAdaptivity.AVLatencyBudget
+            TimeHelper::WaitUntilPrecise(_nextFrameTime, [&stopRequested] { return (bool)stopRequested; });
         }
         else
         {
@@ -204,8 +217,7 @@ bool MainLoop::WaitForPauseConfirmation(uint32_t timeoutMs)
 
 void MainLoop::Stop()
 {
-    _stopRequested = true;
-    _cv.notify_all();
+    _stopRequested = true;  // Frame wait polls this flag (TimeHelper::WaitUntilPrecise, <= 4 ms)
     _pauseCV.notify_all();
 }
 
