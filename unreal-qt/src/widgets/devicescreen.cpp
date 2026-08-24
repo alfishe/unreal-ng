@@ -55,6 +55,11 @@ void DeviceScreen::detach()
     _frameSource = nullptr;
     _latchedFrame = QImage();
 
+    // Drop our ownership share: a detached screen must not keep a Release()d emulator alive until
+    // ~MainWindow (it was the last shared_ptr holder and destroyed the instance long after
+    // EmulatorManager::RemoveEmulator - crash on shutdown)
+    _emulator.reset();
+
     // Trigger immediate repaint to show default background when detached
     update();
 }

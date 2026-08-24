@@ -158,6 +158,28 @@ TEST_F(Emulator_Test, MultiInstanceRun)
 }
 /// endregion </Emulator re-entrability tests>
 
+/// region <Lifecycle tests>
+
+/// @brief An emulator that was Release()d through one owner (EmulatorManager::RemoveEmulator) and destroyed
+/// later through another (a UI widget's lingering shared_ptr) must not touch the ModuleLogger that died with
+/// the context. Regression for the shutdown access violation in ~Emulator -> Release() -> MLOG*/SetState().
+TEST(Emulator_Lifecycle_Test, ReleaseThenLateDestroy_DoesNotTouchFreedContext)
+{
+    std::shared_ptr<Emulator> owner = std::make_shared<Emulator>(LoggerLevel::LogDebug);  // LogDebug: MLOGDEBUG path is live
+    ASSERT_TRUE(owner->Init());
+    std::shared_ptr<Emulator> lingering = owner;  // e.g. DeviceScreen::_emulator
+
+    owner->Release();  // what RemoveEmulator does before erasing its map entry
+    owner.reset();
+
+    // Late calls through the lingering reference must be harmless
+    EXPECT_NO_THROW(lingering->GetState());
+    EXPECT_NO_THROW(lingering->Release());  // idempotent, logs through a (now null) logger
+    EXPECT_NO_THROW(lingering.reset());     // ~Emulator: must not Release() again into freed memory
+}
+
+/// endregion </Lifecycle tests>
+
 /// region <Path shape tests>
 
 #ifdef _WIN32
