@@ -237,16 +237,23 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	// MISC::TSConf sub-section
 
     // ROM set
-    config.romSetName = inimanager.GetValue(rom, "ROMSET");
+    // Note: SimpleINI GetValue() returns nullptr when the key is absent - assigning
+    // a nullptr to std::string is UB (crash). Guard every ROMSET-related lookup.
+    const char* romsetName = inimanager.GetValue(rom, "ROMSET");
+    config.romSetName = romsetName ? romsetName : "";
 
     if (!config.romSetName.empty())
     {
         config.use_romset = true;
 
-        config.romSet128Path = inimanager.GetValue(config.romSetName.c_str(), romset_128);
-        config.romSetSOSPath = inimanager.GetValue(config.romSetName.c_str(), romset_sos);
-        config.romSetDOSPath = inimanager.GetValue(config.romSetName.c_str(), romset_dos);
-        config.romSetSYSPath = inimanager.GetValue(config.romSetName.c_str(), romset_sys);
+        const char* romSet128 = inimanager.GetValue(config.romSetName.c_str(), romset_128);
+        const char* romSetSOS = inimanager.GetValue(config.romSetName.c_str(), romset_sos);
+        const char* romSetDOS = inimanager.GetValue(config.romSetName.c_str(), romset_dos);
+        const char* romSetSYS = inimanager.GetValue(config.romSetName.c_str(), romset_sys);
+        config.romSet128Path = romSet128 ? romSet128 : "";
+        config.romSetSOSPath = romSetSOS ? romSetSOS : "";
+        config.romSetDOSPath = romSetDOS ? romSetDOS : "";
+        config.romSetSYSPath = romSetSYS ? romSetSYS : "";
     }
 
     // Populate rom files for each platform

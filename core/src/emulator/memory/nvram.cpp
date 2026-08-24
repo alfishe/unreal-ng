@@ -6,42 +6,42 @@
 //
 // Constructor for CMOS NVRAM
 //
-NVRAM::NVRAM()
+CMOS::CMOS()
 {
 }
 
-NVRAM::~NVRAM()
+CMOS::~CMOS()
 {
 }
 
-void NVRAM::SetNVRAMAddress(uint32_t addr)
+void CMOS::SetNVRAMAddress(uint32_t addr)
 {
 	_address = addr;
 }
 
-void NVRAM::WriteNVRAM(uint8_t val)
+void CMOS::WriteNVRAM(uint8_t val)
 {
     (void)val;
 }
 
-uint8_t NVRAM::ReadNVRAM()
+uint8_t CMOS::ReadNVRAM()
 {
 	uint8_t result = 0;
 
 	return result;
 }
 
-void NVRAM::SetCMOSType(CMOSTypeEnum type)
+void CMOS::SetCMOSType(CMOSTypeEnum type)
 {
 	_cmos_type = type;
 }
 
-void NVRAM::SetCMOSAddress(uint8_t addr)
+void CMOS::SetCMOSAddress(uint8_t addr)
 {
 	_cmos_addr = addr;
 }
 
-void NVRAM::WriteCMOS(uint8_t val)
+void CMOS::WriteCMOS(uint8_t val)
 {
 	uint8_t cur_addr = _cmos_addr;
 
@@ -51,10 +51,28 @@ void NVRAM::WriteCMOS(uint8_t val)
 	_cmos[cur_addr] = val;
 }
 
-uint8_t NVRAM::ReadCMOS()
+// Host local time (original uses Win32 GetLocalTime / SYSTEMTIME)
+static tm make_local_tm()
 {
-	static tm time;
+	std::time_t now = std::time(nullptr);
+	tm result = {};
+
+#ifdef _WIN32
+	localtime_s(&result, &now);
+#else
+	localtime_r(&now, &result);
+#endif
+
+	return result;
+}
+
+uint8_t CMOS::ReadCMOS()
+{
+	static tm time = {};
 	static bool UF = false;
+	static unsigned Seconds = 0;
+	static std::chrono::steady_clock::time_point lastSample{};
+	static bool timeValid = false;
 
 	uint8_t result = 0;
 	uint8_t cur_addr = _cmos_addr;
@@ -62,10 +80,24 @@ uint8_t NVRAM::ReadCMOS()
 	if (_cmos_type == Rus512)
 		cur_addr = cur_addr & 0x3F;
 
-	// If Time/Date values requested from CMOS - provide current Host system values
+	// If Time/Date values requested from CMOS - provide current Host system values.
+	// The clock is sampled at most twice a second (original comment by [vv]);
+	// the Update-Ended Flag is raised when the wall-clock second changes.
 	if ((1 << cur_addr) & ((1 << 0) | (1 << 2) | (1 << 4) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 12)))
 	{
-		time = make_utc_tm(std::chrono::system_clock::now());
+		auto now = std::chrono::steady_clock::now();
+		if (!timeValid || now - lastSample >= std::chrono::milliseconds(500))
+		{
+			timeValid = true;
+			lastSample = now;
+			time = make_local_tm();
+
+			if ((unsigned)time.tm_sec != Seconds)
+			{
+				UF = true;
+				Seconds = (unsigned)time.tm_sec;
+			}
+		}
 	}
 
 	switch (cur_addr)
@@ -80,13 +112,15 @@ uint8_t NVRAM::ReadCMOS()
 			result = DecodeFromBCD((uint8_t)time.tm_hour);
 			break;
 		case CMOSMemoryEnum::DayOfWeek:
-			result = 1 + (time.tm_wday + 8 % 7);
+			// original: 1 + ((wDayOfWeek + 8 - conf.cmos) % 7)
+			result = 1 + ((time.tm_wday + 8 - (int)_cmos_type) % 7);
 			break;
 		case CMOSMemoryEnum::Day:
 			result = DecodeFromBCD((uint8_t)time.tm_mday);
 			break;
 		case CMOSMemoryEnum::Month:
-			result = DecodeFromBCD((uint8_t)time.tm_mon);
+			// std::tm::tm_mon is 0-based, Win32 SYSTEMTIME.wMonth is 1-based
+			result = DecodeFromBCD((uint8_t)(time.tm_mon + 1));
 			break;
 		case CMOSMemoryEnum::Year:
 			result = DecodeFromBCD(time.tm_year % 100);
@@ -105,7 +139,7 @@ uint8_t NVRAM::ReadCMOS()
 			result = 0x80;
 			break;
 		default:
-			result = _cmos[_cmos_addr];
+			result = _cmos[cur_addr];
 			break;
 	}
 
@@ -224,7 +258,7 @@ exit:
 */
 
 // Helper methods
-uint8_t NVRAM::DecodeFromBCD(uint8_t binary)
+uint8_t CMOS::DecodeFromBCD(uint8_t binary)
 {
 	if (!(_cmos[11] & 0x04))
 		binary = (binary % 10) + 0x10 * ((binary / 10) % 10);

@@ -570,7 +570,7 @@ TEST_F(ATMVideoMode_Test, Render_ATM_BorderOpaqueAndFullLineCoverage)
     }
 }
 
-TEST_F(ATMVideoMode_Test, Render_ATMTL_BorderOnlyNoCrash)
+TEST_F(ATMVideoMode_Test, Render_ATMTL_DedicatedPageContent)
 {
     _context->config.mem_model = MM_ATM3;
     _context->config.frame = 69888;
@@ -580,16 +580,36 @@ TEST_F(ATMVideoMode_Test, Render_ATMTL_BorderOnlyNoCrash)
     ASSERT_EQ(_screen->GetVideoMode(), M_ATMTL);
 
     auto& fb = _screen->GetFramebufferDescriptor();
-    ASSERT_EQ(fb.width, 448u);
+    ASSERT_EQ(fb.width, 704u);  // 640-px mode: doubled pixel clock, 32-px borders
+    ASSERT_EQ(fb.height, 288u);
     auto* px = reinterpret_cast<uint32_t*>(fb.memoryBuffer);
+    auto At = [&](uint32_t row, uint32_t col) -> uint32_t& { return px[row * fb.width + col]; };
 
-    // TL has no ported renderer yet: the whole frame must render as border,
-    // every pixel opaque, and nothing may crash
-    const uint32_t expected = _screen->TransformZXSpectrumColorsToRGBA(0x00, true);
-    for (uint32_t t = 24 * 224; t < 25 * 224; ++t)
-        _screen->DrawATMMode(t);
-    for (uint32_t col = 0; col < fb.width; ++col)
-        EXPECT_EQ(px[col], expected) << "col " << col;
+    // Text Linear reads the DEDICATED page (videoPage==5 -> RAM page 8),
+    // not the standard video page: only page 8 is filled, an all-ink page 5
+    // must not leak into the frame (reference ZXMAK2 EvoTxtRenderer)
+    uint8_t* page = _memory->RAMPageAddress(8);
+    memset(_memory->RAMPageAddress(5), 0xFF, 0x4000);
+    memset(page, 0, 0x4000);
+    page[0x01C0] = 0x41;   // row 0, even column 0: 'A'
+    page[0x31C0] = 0x47;   // even-column attrs
+
+    _screen->DrawATMMode(68 * 224 + 32);  // n=0 half=0: 'A' bits 7..4
+    _screen->DrawATMMode(68 * 224 + 33);  // n=0 half=1: 'A' bits 3..0
+
+    auto ink = [this](uint8_t a) { return _screen->TransformZXSpectrumColorsToRGBA(a, true); };
+    auto paper = [this](uint8_t a) { return _screen->TransformZXSpectrumColorsToRGBA(a, false); };
+
+    const uint8_t glyph = ATM_FONT[0x41];
+    for (int k = 0; k < 4; ++k)
+    {
+        EXPECT_EQ(At(44, 32 + k), ((glyph >> (7 - k)) & 1) ? ink(0x47) : paper(0x47));
+        EXPECT_EQ(At(44, 36 + k), ((glyph >> (3 - k)) & 1) ? ink(0x47) : paper(0x47));
+    }
+    // Column 1 renders the blank glyph of code 0 - the all-ink page-5 fill
+    // must not leak through as ink pixels
+    const uint8_t blank = ATM_FONT[0];
+    EXPECT_EQ(At(44, 40), ((blank >> 7) & 1) ? ink(0x00) : paper(0x00));
 }
 
 /// endregion </ATM Renderer Tests>

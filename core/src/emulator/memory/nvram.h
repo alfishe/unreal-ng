@@ -4,6 +4,10 @@
 #include <ctime>
 #include <chrono>
 
+// DS12885-style RTC/CMOS (ATM3 / ZX-Evo BaseConf config storage).
+// Ported from original Unreal Speccy memory.cpp (cmos_read / cmos_write).
+// Renamed from NVRAM to CMOS to avoid clashing with the legacy
+// `struct NVRAM` declared in platform.h (EmulatorState.nvram).
 enum CMOSTypeEnum
 {
 	None = 0,
@@ -29,7 +33,7 @@ enum CMOSMemoryEnum
 	Unknown_13 = 13
 };
 
-class NVRAM
+class CMOS
 {
 // CMOS fields
 protected:
@@ -37,7 +41,7 @@ protected:
 	CMOSTypeEnum _cmos_type = None;
 	uint8_t _cmos_addr = 0;
 
-// NVRAM fields
+// NVRAM (I2C EEPROM) fields
 protected:
 	uint8_t _nvram[0x800];
 	enum EEPROM_STATE { IDLE = 0, RCV_CMD, RCV_ADDR, RCV_DATA, SEND_DATA, RD_ACK };
@@ -52,8 +56,8 @@ protected:
 	uint8_t out_z;
 
 public:
-	NVRAM();
-	virtual ~NVRAM();
+	CMOS();
+	virtual ~CMOS();
 
 // NVRAM methods
 public:

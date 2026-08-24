@@ -72,12 +72,55 @@ void MainLoop::Run(volatile bool& stopRequested)
     [[maybe_unused]] uint64_t betweenIterations = 0;
     /// endregion </Info logging>
 
+    // TEMP DIAG (audio-underrun investigation): per-frame wake-lateness vs
+    // frame-work split, summary every ~5s on stderr. Remove with the diag test.
+    const bool audioDiag = getenv("UNREAL_AUDIO_DIAG") != nullptr;
+    uint64_t diagFrames = 0, diagLate3 = 0, diagLate10 = 0, diagLate25 = 0;
+    int64_t diagMaxLateUs = 0;
+    unsigned diagMaxWorkUs = 0;
+
     while (!stopRequested)
     {
         uint64_t startTime = TimeHelper::GetTimestampUs();
         betweenIterations = startTime - lastRun;
 
+        int64_t diagLateUs = 0;
+        if (audioDiag && _nextFrameTime.time_since_epoch().count() > 0)
+        {
+            // Lateness vs the deadline the previous iteration waited for
+            // (_nextFrameTime was already advanced past the wait). Negative
+            // values (early, e.g. refill burst) are ignored below.
+            diagLateUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                             std::chrono::steady_clock::now() - _nextFrameTime)
+                             .count();
+        }
+
         [[maybe_unused]] unsigned duration1 = measure_us(&MainLoop::RunFrame, this);
+
+        if (audioDiag)
+        {
+            diagFrames++;
+            if (duration1 > diagMaxWorkUs)
+                diagMaxWorkUs = duration1;
+            if (diagLateUs > diagMaxLateUs)
+                diagMaxLateUs = diagLateUs;
+            if (diagLateUs > 3000)
+                diagLate3++;
+            if (diagLateUs > 10000)
+                diagLate10++;
+            if (diagLateUs > 25000)
+                diagLate25++;
+            if ((diagFrames % 250) == 0)
+            {
+                const std::atomic<uint32_t>* occCellDiag =
+                    _context->pAudioRingOccupancy.load(std::memory_order_acquire);
+                fprintf(stderr, "[mainloop-diag] frames=%llu late>3ms=%llu >10ms=%llu >25ms=%llu maxLate=%lldus maxWork=%uu occ=%u\n",
+                        (unsigned long long)diagFrames, (unsigned long long)diagLate3, (unsigned long long)diagLate10,
+                        (unsigned long long)diagLate25, (long long)diagMaxLateUs, diagMaxWorkUs,
+                        occCellDiag ? occCellDiag->load(std::memory_order_relaxed) : 0);
+                fflush(stderr);
+            }
+        }
 
         /// region <Handle Pause>
         // Check if Emulator has requested pause (Emulator is single source of truth)
@@ -168,8 +211,19 @@ void MainLoop::Run(volatile bool& stopRequested)
             _nextFrameTime += frameDuration;
 
             // Interruptible sleep: _cv is notified by Stop()
-            std::unique_lock<std::mutex> lock(_audioBufferMutex);
-            _cv.wait_until(lock, _nextFrameTime, [&stopRequested] { return (bool)stopRequested; });
+            // TEMP DIAG: UNREAL_AUDIO_DIAG=2 A/B-tests the wait primitive -
+            // condition_variable::wait_until vs plain sleep_until (macOS cv
+            // wake-ups are coalesced much more aggressively). Remove with the diag.
+            if (audioDiag && getenv("UNREAL_AUDIO_DIAG")[0] == '2')
+            {
+                while (!stopRequested && std::chrono::steady_clock::now() < _nextFrameTime)
+                    std::this_thread::sleep_until(_nextFrameTime);
+            }
+            else
+            {
+                std::unique_lock<std::mutex> lock(_audioBufferMutex);
+                _cv.wait_until(lock, _nextFrameTime, [&stopRequested] { return (bool)stopRequested; });
+            }
         }
         else
         {

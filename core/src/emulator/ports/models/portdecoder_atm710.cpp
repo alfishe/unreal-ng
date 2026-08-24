@@ -41,10 +41,11 @@ void PortDecoder_ATM710::reset()
     // so that the pFF77 bit0 transition performs the physical memswap/unswap;
     // the atmMemSwapped flag itself is only ever toggled by atmMemSwap().
 
-    // Original Unreal Speccy boots at base clock (3.5MHz).
-    // Turbo is purely runtime port state - not enabled at boot.
-    _state->next_z80_frequency_multiplier = 1;
-    MLOGDEBUG("reset: multiplier=1 (base clock 3.5MHz)");
+    // Hardware boots at 7MHz: pFF77.3 = 0 and pEFF7.4 = 0 select the x2
+    // default of the turbo formula below (reference: Xpeccy pentevo.c
+    // compReset clears pEFF7, evoOut77d maps the cleared bits to x2)
+    _state->next_z80_frequency_multiplier = 2;
+    MLOGDEBUG("reset: multiplier=2 (7MHz hardware boot state)");
 }
 
 void PortDecoder_ATM710::ApplyBootROMDefaults(ROMModeEnum mode)
@@ -147,15 +148,20 @@ void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
     // Port #FFF7 group - bank select
     else
     {
+        // Port #EFF7 - extended control. Must be tested BEFORE the broad
+        // #xFFF7 window decode: IsPort_FFF7 matches any low byte 0xF7, so
+        // 0xEFF7 would otherwise land in the window-3 memory manager register
+        // and never reach the system port (reference: Xpeccy pentevo.c
+        // evoPortMap scans the exact-decoded EFF7 entry ahead of the x7F7
+        // window entry)
         uint8_t windowIndex;
-        if (IsPort_FFF7(port, windowIndex))
-        {
-            Port_FFF7_Out(port, value, windowIndex, pc);
-        }
-        // Port #EFF7 - extended control
-        else if (IsPort_EFF7(port))
+        if (IsPort_EFF7(port))
         {
             Port_EFF7_Out(port, value, pc);
+        }
+        else if (IsPort_FFF7(port, windowIndex))
+        {
+            Port_FFF7_Out(port, value, windowIndex, pc);
         }
         // Port #BFFD - AY data
         else if (IsPort_BFFD(port))
@@ -301,8 +307,9 @@ void PortDecoder_ATM710::Port_7FFD_Out([[maybe_unused]] uint16_t port, uint8_t v
         _7FFD_Locked = true;
     }
 
-    // Update memory banks
-    updateMemoryBanks();
+    // Full set_banks() equivalent: window mapping + TR-DOS session flag re-derivation
+    if (_memory)
+        _memory->UpdateZ80Banks();
 
     // Update screen if shadow bit changed
     if ((oldValue ^ value) & PORT_7FFD_SCREEN)
@@ -355,8 +362,9 @@ void PortDecoder_ATM710::Port_FF77_Out(uint16_t port, uint8_t value, [[maybe_unu
     // Update turbo mode
     updateTurboMode();
 
-    // Update memory banks
-    updateMemoryBanks();
+    // Full set_banks() equivalent: window mapping + TR-DOS session flag re-derivation
+    if (_memory)
+        _memory->UpdateZ80Banks();
 
     // Update INT gate (bit 5): controls whether external interrupts reach the CPU.
     // Original Unreal Speccy: cpu.int_gate = (comp.pFF77 & 0x20)
@@ -382,8 +390,9 @@ void PortDecoder_ATM710::Port_FFF7_Out([[maybe_unused]] uint16_t port, uint8_t v
     unsigned fullValue = (((value & 0xC0) << 2) | (value & 0x3F)) ^ 0x33F;
     _state->pFFF7[regIndex] = fullValue;
 
-    // Update memory banks
-    updateMemoryBanks();
+    // Full set_banks() equivalent: window mapping + TR-DOS session flag re-derivation
+    if (_memory)
+        _memory->UpdateZ80Banks();
 
     MLOGDEBUG("Port_FFF7_Out: window=%d regIndex=%d value=0x%04X %s",
               windowIndex, regIndex, fullValue, Dump_FFF7_value(fullValue).c_str());
@@ -391,14 +400,12 @@ void PortDecoder_ATM710::Port_FFF7_Out([[maybe_unused]] uint16_t port, uint8_t v
 
 void PortDecoder_ATM710::Port_EFF7_Out([[maybe_unused]] uint16_t port, uint8_t value, [[maybe_unused]] uint16_t pc)
 {
-    uint8_t oldValue = _state->pEFF7;
     _state->pEFF7 = value;
 
-    // Update turbo mode if relevant bits changed
-    if ((oldValue ^ value) & ATM_EFF7_TURBO_3_5)
-    {
-        updateTurboMode();
-    }
+    // Re-evaluate the turbo select on every write (reference: Xpeccy
+    // pentevo.c evoOutEFF7 calls compSetTurbo unconditionally, same as
+    // evoOut77d re-evaluates on FF77 writes)
+    updateTurboMode();
 
     MLOGDEBUG("Port_EFF7_Out: value=0x%02X %s", value, Dump_EFF7_value(value).c_str());
 }
@@ -436,7 +443,9 @@ void PortDecoder_ATM710::updateMemoryBanks()
 
     // ~CPM=0 (aFF77 bit 9 clear) selects the TR-DOS half of the ROM pair
     if (!(_state->aFF77 & ATM_AFF77_CPM))
+    {
         _state->flags |= CF_TRDOS;
+    }
     bool trdos = (_state->flags & CF_TRDOS) != 0;
 
     // PEN=0 (aFF77 bit 8 clear): memory manager disabled - all four windows
@@ -496,24 +505,25 @@ void PortDecoder_ATM710::updateMemoryBanks()
 
 void PortDecoder_ATM710::updateTurboMode()
 {
-    // STOPGAP: Force base clock until audio subsystem supports multiplier.
-    // The ATM genuinely boots at 7MHz (EFF7.4 clear = ×2), but the blip
-    // synth produces samples at 7MHz rate while the output DAC expects
-    // 3.5MHz rate → 2× overfill → periodic "hard resync" drops.
-    // Proper fix (TODO): plumb multiplier into blip's clock_rate so it
-    // decimates to 44.1kHz target, and remove ×speedMultiplier from
-    // SoundManager's frame duration calculation.
-    uint8_t multiplier = 1;  // Force 3.5MHz until audio fix lands
-
-    // Hardware-correct logic (re-enable when audio is fixed):
-    // if (_state->pFF77 & ATM_FF77_TURBO)
-    //     multiplier = 4;  // 14MHz (×4)
-    // else if (!(_state->pEFF7 & ATM_EFF7_TURBO_3_5))
-    //     multiplier = 2;  // 7MHz (×2)
+    // ZX-Evo / ATM turbo select (reference: Xpeccy pentevo.c evoOut77d):
+    //   pFF77.3 = 1             -> x4 (14MHz turbo)
+    //   pFF77.3 = 0, pEFF7.4 = 0 -> x2 (7MHz, hardware default)
+    //   pFF77.3 = 0, pEFF7.4 = 1 -> x1 (3.5MHz compatibility)
+    // The queued multiplier is applied by Z80::Z80FrameCycle at the next
+    // frame boundary; SoundManager::handleFrameStart re-clocks the synths
+    // (blip input clocks x multiplier, AY PLL increment / multiplier) so
+    // audio stays realtime with unchanged AY pitch (fixed PSG clock)
+    uint8_t multiplier;
+    if (_state->pFF77 & ATM_FF77_TURBO)
+        multiplier = 4;  // 14MHz
+    else if (!(_state->pEFF7 & ATM_EFF7_TURBO_3_5))
+        multiplier = 2;  // 7MHz
+    else
+        multiplier = 1;  // 3.5MHz
 
     _state->next_z80_frequency_multiplier = multiplier;
 
-    MLOGDEBUG("updateTurboMode: multiplier=%d (turbo disabled - stopgap)", multiplier);
+    MLOGDEBUG("updateTurboMode: multiplier=%d (pFF77=0x%02X pEFF7=0x%02X)", multiplier, _state->pFF77, _state->pEFF7);
 }
 
 void PortDecoder_ATM710::atmMemSwap()

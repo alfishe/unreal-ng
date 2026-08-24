@@ -50,6 +50,12 @@ protected:
     double _sampleTStateIncrement = AUDIO_SAMPLE_TSTATE_INCREMENT;
     double _lqTicksPerSample = (double)(PSG_CLOCK_RATE / 8) / (double)AUDIO_SAMPLING_RATE;
 
+    // Z80 frequency multiplier (turbo / speed control). Z80::t already
+    // counts multiplied cycles, so the PLL increment is divided by the same
+    // factor to keep the output sample rate realtime (AY pitch unchanged -
+    // the PSG clock is fixed, not CPU-derived)
+    uint8_t _frequencyMultiplier = 1;
+
     // HQ DSP flag (FIR filters vs simple averaging)
     bool _hqEnabled = true;
 
@@ -199,7 +205,7 @@ public:
     void setCoreRate(size_t rate)
     {
         _coreRate = rate;
-        _sampleTStateIncrement = (double)rate / (double)CPU_CLOCK_RATE;
+        _sampleTStateIncrement = (double)rate / ((double)CPU_CLOCK_RATE * _frequencyMultiplier);
         _lqTicksPerSample = (double)(PSG_CLOCK_RATE / 8) / (double)rate;
         _decimationStep = (double)(PSG_CLOCK_RATE / 8) / (double)(rate * FilterInterpolate::DECIMATE_FACTOR);
 
@@ -207,6 +213,17 @@ public:
         _chip0->decimatorRight().configure((double)rate);
         _chip1->decimatorLeft().configure((double)rate);
         _chip1->decimatorRight().configure((double)rate);
+    }
+
+    /// Track the Z80 frequency multiplier (turbo switches): the sample PLL
+    /// consumes already-multiplied t-states (Z80::t), so the increment must
+    /// shrink by the same factor. Frame boundary only - changing it mid-frame
+    /// would glitch the free-running PLL phase
+    void setFrequencyMultiplier(uint8_t multiplier)
+    {
+        _frequencyMultiplier = multiplier ? multiplier : 1;
+        _sampleTStateIncrement =
+            (double)_coreRate / ((double)CPU_CLOCK_RATE * _frequencyMultiplier);
     }
 
     size_t getCoreRate() const

@@ -8,6 +8,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstring>
 #include <mutex>
 #include <thread>
 
@@ -78,6 +79,62 @@ TEST_F(EmulatorManager_Test, CreateEmulatorWithId)
 
     // Verify the symbolic ID was set correctly
     ASSERT_EQ(emulator->GetSymbolicId(), symbolicId);
+}
+
+/// @brief ZX-Evo (MM_ATM3) must boot the BaseConf ROM set, not TSConf.
+///
+/// Regression: the atm3 model config once carried a ROMSET section mapping
+/// the slots to low pages of zxevo.rom, which put TSConf's TS-BIOS (page 0)
+/// into the sys slot - the machine booted TSConf firmware on BaseConf
+/// hardware and hung in ZX screen mode with a red border. Correct behavior
+/// (reference unrealspeccy config.cpp, non-ROMSET ATM branch): the whole
+/// 512K image loads raw and the standard set comes from the LAST 4 pages
+/// (sos=28, dos=29 EVO-DOS, 128=30 128_low, sys=31 service ROM), keeping
+/// the FFF7-paged extra ROMs (RAM disk / SD / MAGIC Service, pages 24..27).
+TEST_F(EmulatorManager_Test, CreateZXEvo_BootsBaseConfRomSet)
+{
+    // "ZX-Evo" is the FullName; the lookup key is the short name "ATM3"
+    auto emulator = _manager->CreateEmulatorWithModelAndRAM("zxevo-rom-test", "ATM3", 4096, LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_NE(context, nullptr);
+    ASSERT_EQ(context->config.mem_model, MM_ATM3);
+    EXPECT_FALSE(context->config.use_romset) << "atm3 config must not use ROMSET";
+
+    Memory* memory = context->pMemory;
+    ASSERT_NE(memory, nullptr);
+
+    // 512K image = 32 banks; standard set = last 4 banks (28..31)
+    EXPECT_EQ(memory->base_sos_rom, memory->ROMPageHostAddress(28));
+    EXPECT_EQ(memory->base_dos_rom, memory->ROMPageHostAddress(29));
+    EXPECT_EQ(memory->base_128_rom, memory->ROMPageHostAddress(30));
+    EXPECT_EQ(memory->base_sys_rom, memory->ROMPageHostAddress(31));
+
+    // dos = EVO-DOS (the ZX-Evo's own DOS ROM), not TR-DOS
+    bool evoDos = false;
+    for (size_t i = 0; i + 7 <= PAGE_SIZE; ++i)
+        if (memcmp(memory->base_dos_rom + i, "EVO-DOS", 7) == 0)
+        {
+            evoDos = true;
+            break;
+        }
+    EXPECT_TRUE(evoDos) << "dos slot must be EVO-DOS, not TR-DOS";
+
+    // sys must NOT be TSConf TS-BIOS (page 0 of the same image)
+    EXPECT_NE(memcmp(memory->base_sys_rom, memory->ROMPageHostAddress(0), PAGE_SIZE / 16), 0)
+        << "sys slot must be the BaseConf service ROM, not TS-BIOS";
+
+    // Whole image loaded: the FFF7-paged extra service ROMs must be present
+    bool magic = false;
+    const uint8_t* page26 = memory->ROMPageHostAddress(26);
+    for (size_t i = 0; i + 13 <= PAGE_SIZE; ++i)
+        if (memcmp(page26 + i, "MAGIC Service", 13) == 0)
+        {
+            magic = true;
+            break;
+        }
+    EXPECT_TRUE(magic) << "extra ROM pages 24..27 must be loaded (ROMSET loads only 4 banks)";
 }
 
 /// @brief Tests the full lifecycle of an emulator instance: create, start, pause, resume, stop, remove.

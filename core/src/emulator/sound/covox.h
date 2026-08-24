@@ -70,6 +70,10 @@ protected:
     // Core output rate (multirate plan phase 6)
     size_t _sampleRate;
 
+    // Input clock (T-states fed to blip): base CPU clock x frequency
+    // multiplier - re-clocked on turbo switches (see setClockRate)
+    size_t _clockRate = CPU_CLOCK_RATE;
+
 public:
     Covox() = delete;
     explicit Covox(EmulatorContext* context, size_t sampleRate = 44100);
@@ -81,6 +85,11 @@ public:
 
     /// Live core-rate change (device reroute with CoreRate=auto)
     void setSampleRate(size_t sampleRate);
+
+    /// CPU clock change (turbo / speed multiplier): Z80::t counts multiplied
+    /// cycles, so the blip input clock must track base x multiplier to keep
+    /// the output sample count realtime. Frame boundary only
+    void setClockRate(size_t clockRate);
 
     // Frame lifecycle
     void reset();

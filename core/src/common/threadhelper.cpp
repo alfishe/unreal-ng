@@ -1,5 +1,9 @@
 #include "threadhelper.h"
 
+#ifdef __APPLE__
+#include <pthread/qos.h>
+#endif
+
 void ThreadHelper::setThreadName(const char* name)
 {
     size_t len = strlen(name);
@@ -36,5 +40,22 @@ void ThreadHelper::setThreadName(const char* name)
         mbstowcs_s(&retval, wname, sizeof(wname) / sizeof(wname[0]), name, len);
         setThreadDescription(GetCurrentThread(), wname);
     }
+#endif
+}
+
+void ThreadHelper::setInteractiveQoS()
+{
+#ifdef __APPLE__
+    // USER_INTERACTIVE tells the scheduler this thread's deadlines gate
+    // user-perceivable output (video frames / audio): its wake-ups are
+    // exempt from the timer coalescing applied to default-class threads
+    pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
+#ifdef _WIN32
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+#endif
+#ifdef __linux__
+    // SCHED_OTHER with default niceness keeps wake-up latency low enough;
+    // real-time classes would need privilege handling - intentionally no-op
 #endif
 }

@@ -14,6 +14,12 @@ void PortDecoder_ATM3_Test::SetUp()
     _context->pMemory = _memory;
 
     _portDecoder = new PortDecoder_ATM3(_context);
+
+    // Mirror production wiring (Core::Init): port handlers delegate to
+    // Memory::UpdateZ80Banks(), which dispatches window mapping through
+    // EmulatorContext::pPortDecoder for the configured memory model
+    _context->config.mem_model = MM_ATM3;
+    _context->pPortDecoder = _portDecoder;
 }
 
 void PortDecoder_ATM3_Test::TearDown()
@@ -33,6 +39,7 @@ void PortDecoder_ATM3_Test::TearDown()
     if (_context != nullptr)
     {
         _context->pMemory = nullptr;
+        _context->pPortDecoder = nullptr;
         delete _context;
         _context = nullptr;
     }
@@ -44,21 +51,23 @@ void PortDecoder_ATM3_Test::TearDown()
 
 TEST_F(PortDecoder_ATM3_Test, IsPort_FF77_PartialDecode)
 {
-    // ATM3: Partial decode - matches any x*F77
-    // Mask: 0x0FFF, Match: 0x0F77
+    // ATM3: Partial decode - any port with low byte 0x77 (original io.cpp: `p1 == 0x77`).
+    // The BaseConf service ROM enables the memory manager via 0xBC77, which the
+    // old 0x0FFF/0x0F77 mask missed.
 
-    // Should match - various high nibbles
+    // Should match - any high byte, low byte 0x77
     EXPECT_TRUE(_portDecoder->IsPort_FF77(0xFF77));
     EXPECT_TRUE(_portDecoder->IsPort_FF77(0x0F77));
     EXPECT_TRUE(_portDecoder->IsPort_FF77(0x1F77));
-    EXPECT_TRUE(_portDecoder->IsPort_FF77(0x2F77));
     EXPECT_TRUE(_portDecoder->IsPort_FF77(0xAF77));
     EXPECT_TRUE(_portDecoder->IsPort_FF77(0xEF77));
+    EXPECT_TRUE(_portDecoder->IsPort_FF77(0xBC77));  // BaseConf manager-enable write
+    EXPECT_TRUE(_portDecoder->IsPort_FF77(0x0E77));
 
-    // Should NOT match - wrong pattern in bits 0-11
+    // Should NOT match - wrong low byte
     EXPECT_FALSE(_portDecoder->IsPort_FF77(0xFF76));
-    EXPECT_FALSE(_portDecoder->IsPort_FF77(0x0E77));
     EXPECT_FALSE(_portDecoder->IsPort_FF77(0xFFFF));
+    EXPECT_FALSE(_portDecoder->IsPort_FF77(0x0076));
 }
 
 /// endregion </Port FF77 tests>
@@ -226,6 +235,9 @@ TEST_F(PortDecoder_ATM3_Test, Port_37F7_MapsTopRAMPage)
 {
     EmulatorState& state = _context->emulatorState;
     state.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM;
+    // CP/M mode (~cpm inactive): open the memory-manager gate via shaden
+    // (original io.cpp: manager ports live inside the CF_DOSPORTS block)
+    state.pBF = 0x01;
     state.p7FFD = 0x00;
     state.pFFF7[1] = 0x0200;  // RAM from FFF7, page 0
 
@@ -238,11 +250,13 @@ TEST_F(PortDecoder_ATM3_Test, Port_37F7_MapsTopRAMPage)
 TEST_F(PortDecoder_ATM3_Test, NMI_ForcesTopRAMPageAtWindow0)
 {
     EmulatorState& state = _context->emulatorState;
-    _context->config.mem_model = MM_ATM3;
 
     _portDecoder->reset();
     _portDecoder->ApplyBootROMDefaults(RM_DOS);  // Manager on, windows = ROM 0 / RAM 5 / RAM 2 / RAM 0
 
+    // RM_DOS defaults latch cpm (aFF77.9): open the memory-manager gate via
+    // shaden so the window write reaches the decoder (original io.cpp CF_DOSPORTS)
+    state.pBF = 0x01;
     state.nmi_in_progress = true;
     state.p7FFD = 0x00;
     _portDecoder->DecodePortOut(0x3FF7, 0x7F, 0x0000);  // Any manager write re-runs the mapping
@@ -252,3 +266,30 @@ TEST_F(PortDecoder_ATM3_Test, NMI_ForcesTopRAMPageAtWindow0)
 }
 
 /// endregion </37F7 memory manager tests>
+
+/// region <Turbo mode tests>
+
+TEST_F(PortDecoder_ATM3_Test, Turbo_FF77Bit3_EFF7Bit4_MultiplierSelect)
+{
+    // Same formula as ATM710 (ZX-Evo BaseConf hardware, Xpeccy pentevo.c):
+    // FF77.3 -> x4 (14MHz), EFF7.4 -> x1 (3.5MHz), else x2 (7MHz)
+    EmulatorState& state = _context->emulatorState;
+
+    // Open the memory-manager gate: the first FF77 write latches cpm in
+    // aFF77 (see Port_FF77_Out_ATM3), which would otherwise swallow the write
+    state.pBF = 0x01;
+
+    // FF77 bit 3 -> 14MHz
+    _portDecoder->DecodePortOut(0xFF77, 0x08, 0x0000);
+    EXPECT_EQ(state.next_z80_frequency_multiplier, 4);
+
+    // Turbo off, EFF7.4 clear -> 7MHz
+    _portDecoder->DecodePortOut(0xFF77, 0x00, 0x0000);
+    EXPECT_EQ(state.next_z80_frequency_multiplier, 2);
+
+    // EFF7 bit 4 -> 3.5MHz lock
+    _portDecoder->DecodePortOut(0xEFF7, 0x10, 0x0000);
+    EXPECT_EQ(state.next_z80_frequency_multiplier, 1);
+}
+
+/// endregion </Turbo mode tests>

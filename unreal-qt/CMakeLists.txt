@@ -46,12 +46,14 @@ if (ENABLE_AUTOMATION)
     set(INCLUDE_AUTOMATION True)
 endif ()
 
-# Add recording library if enabled (skip if target already exists from parent build)
+# Add recording library if enabled (skip if target already exists from parent build).
+# Linking: core links unrealng::recording PUBLIC under the same option, so this
+# app inherits it - no direct link needed here (a direct one duplicated the
+# library on the link line: "ld: warning: ignoring duplicate libraries").
 if (ENABLE_RECORDING)
     if (NOT TARGET unrealng::recording)
         add_subdirectory("${ROOT_DIR}/core/recording" recording)
     endif()
-    set(INCLUDE_RECORDING True)
 endif ()
 
 # ========================================
@@ -341,8 +343,7 @@ if (INCLUDE_AUTOMATION)
         Qt6::Multimedia
         QHexView
 
-        unrealng::automation # This brings in core as PUBLIC dependency
-        $<$<BOOL:${INCLUDE_RECORDING}>:unrealng::recording>
+        unrealng::automation # This brings in core as PUBLIC dependency (core propagates unrealng::recording PUBLIC when ENABLE_RECORDING)
         ${CMAKE_DL_LIBS}
         Threads::Threads
     )
@@ -359,8 +360,7 @@ else ()
         Qt6::Multimedia
         QHexView
 
-        unrealng::core  # Keep this when automation is disabled
-        $<$<BOOL:${INCLUDE_RECORDING}>:unrealng::recording>
+        unrealng::core  # Keep this when automation is disabled (propagates unrealng::recording PUBLIC when ENABLE_RECORDING)
         Threads::Threads
     )
 endif ()

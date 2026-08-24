@@ -776,6 +776,10 @@ void Emulator::StartAsync()
 
     _asyncThread = new std::thread([this, threadName]() {
         ThreadHelper::setThreadName(threadName.c_str());
+        // Frame pacing quality: without an interactive QoS class the OS
+        // coalesces this thread's wait_until frame deadlines and it wakes
+        // up to ~30ms late - more than the audio ring headroom can absorb
+        ThreadHelper::setInteractiveQoS();
 
         this->Start();
     });

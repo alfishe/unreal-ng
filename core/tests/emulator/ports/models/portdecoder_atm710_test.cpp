@@ -14,6 +14,12 @@ void PortDecoder_ATM710_Test::SetUp()
     _context->pMemory = _memory;
 
     _portDecoder = new PortDecoder_ATM710(_context);
+
+    // Mirror production wiring (Core::Init): port handlers delegate to
+    // Memory::UpdateZ80Banks(), which dispatches window mapping through
+    // EmulatorContext::pPortDecoder for the configured memory model
+    _context->config.mem_model = MM_ATM710;
+    _context->pPortDecoder = _portDecoder;
 }
 
 void PortDecoder_ATM710_Test::TearDown()
@@ -33,6 +39,7 @@ void PortDecoder_ATM710_Test::TearDown()
     if (_context != nullptr)
     {
         _context->pMemory = nullptr;
+        _context->pPortDecoder = nullptr;
         delete _context;
         _context = nullptr;
     }
@@ -451,3 +458,44 @@ TEST_F(PortDecoder_ATM710_Test, Reset_ReferenceBootMapping)
 }
 
 /// endregion </FFF7 memory manager tests>
+
+/// region <Turbo mode tests>
+
+TEST_F(PortDecoder_ATM710_Test, Turbo_FF77Bit3_EFF7Bit4_MultiplierSelect)
+{
+    // ZX-Evo / ATM turbo formula (reference: Xpeccy pentevo.c evoOut77d):
+    //   FF77.3 = 1              -> x4 (14MHz turbo)
+    //   FF77.3 = 0, EFF7.4 = 0  -> x2 (7MHz, hardware default)
+    //   FF77.3 = 0, EFF7.4 = 1  -> x1 (3.5MHz compatibility)
+    // The multiplier is queued; Z80::Z80FrameCycle applies it at the next
+    // frame boundary and SoundManager::handleFrameStart re-clocks the synths
+    EmulatorState& state = _context->emulatorState;
+
+    // Reset selects the hardware boot state: 7MHz
+    _portDecoder->reset();
+    EXPECT_EQ(state.next_z80_frequency_multiplier, 2);
+
+    // FF77 bit 3 -> 14MHz
+    _portDecoder->DecodePortOut(0xFF77, 0x08, 0x0000);
+    EXPECT_EQ(state.next_z80_frequency_multiplier, 4);
+
+    // Turbo off, EFF7.4 clear -> back to 7MHz
+    _portDecoder->DecodePortOut(0xFF77, 0x00, 0x0000);
+    EXPECT_EQ(state.next_z80_frequency_multiplier, 2);
+
+    // EFF7 bit 4 locks 3.5MHz while the turbo bit is clear
+    _portDecoder->DecodePortOut(0xEFF7, 0x10, 0x0000);
+    EXPECT_EQ(state.next_z80_frequency_multiplier, 1);
+
+    // FF77.3 overrides the 3.5MHz lock (turbo has priority)
+    _portDecoder->DecodePortOut(0xFF77, 0x08, 0x0000);
+    EXPECT_EQ(state.next_z80_frequency_multiplier, 4);
+
+    // Boot defaults (full sequence: mode-neutral reset + RM_DOS block, as
+    // m_reset() pairs them): FF77.3 = 0, EFF7.4 = 0 -> 7MHz
+    _portDecoder->reset();
+    _portDecoder->ApplyBootROMDefaults(RM_DOS);
+    EXPECT_EQ(state.next_z80_frequency_multiplier, 2);
+}
+
+/// endregion </Turbo mode tests>

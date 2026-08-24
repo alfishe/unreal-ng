@@ -172,6 +172,10 @@ protected:
     // fractional sample per frame is never lost. Reset in reset() only -
     // NOT at frame or speed-multiplier boundaries.
     uint64_t _sampleAccumulator = 0;
+
+    // Last frequency multiplier applied to the synths (turbo switches).
+    // 0 forces a re-apply on the first frame after reset()
+    uint8_t _lastFrequencyMultiplier = 0;
     uint64_t _accumulatorClampCount = 0;  // Diagnostics: overflow-guard activations
     uint64_t _blipMismatchCount = 0;      // Diagnostics: blip vs accumulator divergence
 

@@ -266,7 +266,6 @@ if (INCLUDE_AUTOMATION)
         ${common_libraries}
         Qt6::Widgets
         unrealng::automation
-        $<$<BOOL:${ENABLE_RECORDING}>:unrealng::recording>
         ${CMAKE_DL_LIBS}
         Threads::Threads
     )
@@ -281,7 +280,6 @@ else ()
         ${common_libraries}
         Qt6::Widgets
         unrealng::core
-        $<$<BOOL:${ENABLE_RECORDING}>:unrealng::recording>
         Threads::Threads
     )
 endif ()

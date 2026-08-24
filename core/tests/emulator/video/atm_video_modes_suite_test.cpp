@@ -20,8 +20,9 @@
 ///  - 7FFD shadow-screen plane switching in the ATM renderer
 ///  - deep renderer coverage: TX text-row addressing (0x1C0 + 64*row) across
 ///    all 25 rows, per-scanline font lines, attr-quirk byte alignment,
-///    MC/EGA linear 40-byte plane stride, horizontal/vertical border geometry
-///    and RenderFrameBatch vs per-t-state equivalence for every ATM mode
+///    TL dedicated-page linear text rows (ZX-Evo), MC/EGA linear 40-byte
+///    plane stride, horizontal/vertical border geometry and RenderFrameBatch
+///    vs per-t-state equivalence for every ATM mode
 ///
 /// Reference: other/unrealspeccy draw.cpp (PrepareFrameATM2), dxr_atm0/2/6.cpp
 
@@ -262,7 +263,7 @@ TEST_F(ATMVideoModesSuite_Test, Geometry_ATMDescriptorsAndTiming)
         {FF77_16, M_ATM16, 448, 288, 320, 200, 64, 44},
         {FF77_MC, M_ATMHR, 704, 288, 640, 200, 32, 44},
         {FF77_TX, M_ATMTX, 704, 288, 640, 200, 32, 44},
-        {FF77_TL, M_ATMTL, 448, 288, 320, 200, 64, 44},
+        {FF77_TL, M_ATMTL, 704, 288, 640, 200, 32, 44},
     };
     for (const auto& c : cases)
     {
@@ -336,13 +337,13 @@ TEST_F(ATMVideoModesSuite_Test, Framebuffer_ModeSwitch_ClearsToOpaqueBlack)
     // composites it over the window background. A 0x00-alpha clear (the old
     // memset) flashed the background through on every mode switch - the ATM
     // BIOS reprograms FF77 several times at boot, so each switch re-clears.
-    _context->config.mem_model = MM_ATM3;  // TL needed for the same-size path
+    _context->config.mem_model = MM_ATM3;  // TL/TX share the 704x288 frame
     SetATMTiming();
 
-    // Fresh allocation: ZX default (352x288) -> EGA (448x288) reallocates
-    SetFF77Mode(FF77_16);
+    // Fresh allocation: ZX default (352x288) -> TL (704x288) reallocates
+    SetFF77Mode(FF77_TL);
     _screen->InitRaster();
-    ASSERT_EQ(_screen->GetVideoMode(), M_ATM16);
+    ASSERT_EQ(_screen->GetVideoMode(), M_ATMTL);
 
     auto& fb = _screen->GetFramebufferDescriptor();
     const size_t count = static_cast<size_t>(fb.width) * fb.height;
@@ -350,10 +351,10 @@ TEST_F(ATMVideoModesSuite_Test, Framebuffer_ModeSwitch_ClearsToOpaqueBlack)
     for (size_t i = 0; i < count; ++i)
         ASSERT_EQ(px[i], 0xFF000000u) << "fresh alloc pixel " << i;
 
-    // Same-size switch: EGA (448x288) -> TL (448x288) keeps buffers, re-clears
-    SetFF77Mode(FF77_TL);
+    // Same-size switch: TL (704x288) -> TX (704x288) keeps buffers, re-clears
+    SetFF77Mode(FF77_TX);
     _screen->InitRaster();
-    ASSERT_EQ(_screen->GetVideoMode(), M_ATMTL);
+    ASSERT_EQ(_screen->GetVideoMode(), M_ATMTX);
     px = reinterpret_cast<const uint32_t*>(fb.memoryBuffer);
     for (size_t i = 0; i < count; ++i)
         ASSERT_EQ(px[i], 0xFF000000u) << "same-size switch pixel " << i;
@@ -405,21 +406,24 @@ TEST_F(ATMVideoModesSuite_Test, PortFF77_ATM3PartialDecode_MatchesXF77)
     ReinitAs(MM_ATM3);
     auto* pd = _context->pPortDecoder;
 
-    // ATM3 decodes mask 0x0FFF / match 0x0F77: FF77 and any high-nibble alias
-    for (uint16_t port : {uint16_t(0xFF77), uint16_t(0x1F77), uint16_t(0x0F77)})
+    // xx77 responses live behind the DOS-port gate (original io.cpp CF_DOSPORTS
+    // block). Writing FF77 first latches aFF77 = 0xFF77 (cpm set) which would
+    // CLOSE the gate for the aliases - hold it open with shaden (pBF.0)
+    _context->emulatorState.pBF = 0x01;
+
+    // ATM3 decodes low byte 0x77 (original io.cpp `p1 == 0x77`): FF77, any
+    // high-byte alias, and the BaseConf manager-enable port 0xBC77
+    for (uint16_t port : {uint16_t(0xFF77), uint16_t(0x1F77), uint16_t(0x0F77), uint16_t(0xBC77)})
     {
         SCOPED_TRACE(testing::Message() << "port 0x" << std::hex << port);
         pd->DecodePortOut(port, 0x23, 0);
         EXPECT_EQ(_context->emulatorState.pFF77, 0x23);
     }
 
-    // Ports below 0x0F77 are not matched by ATM3's own decode, but the
-    // base-class fallback (PortDecoder_ATM710::DecodePortOut) re-checks its
-    // low-byte IsPort_FF77 - the effective decode is the UNION. Pin current
-    // behavior: x77 ports still land in the (base) FF77 handler.
+    // Plain low-byte x77 ports decode through the same handler
     pd->DecodePortOut(0x0077, 0x05, 0);
     EXPECT_EQ(_context->emulatorState.pFF77, 0x05)
-        << "base-class fallback accepts low-byte x77 ports (union decode)";
+        << "low-byte 0x77 ports land in the ATM3 FF77 handler";
 }
 
 TEST_F(ATMVideoModesSuite_Test, PortFF77_ModeBitsUnchanged_NoRedetection)
@@ -448,6 +452,10 @@ TEST_F(ATMVideoModesSuite_Test, PortEFF7_Stored_ControlOnly_NoImmediateRedetecti
 {
     ReinitAs(MM_ATM3);
     auto* pd = _context->pPortDecoder;
+
+    // Hold the DOS-port gate open for both FF77 writes: the first (0xFF77)
+    // latches aFF77 with cpm set, which would close it for the second
+    _context->emulatorState.pBF = 0x01;
 
     pd->DecodePortOut(0xFF77, 0x23, 0);  // ZX compat
     pd->DecodePortOut(0xFF77, 0x20, 0);  // EGA
@@ -629,6 +637,70 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATMTX_AttrQuirkByteAlignment)
 
 /// endregion </Renderer: TX text mode>
 
+/// region <Renderer: TL text mode (ZX-Evo Text Linear)>
+
+TEST_F(ATMVideoModesSuite_Test, Render_ATMTL_LinearRowStrideAndColumnParity)
+{
+    _context->config.mem_model = MM_ATM3;
+    SetATMTiming();
+    SetFF77Mode(FF77_TL);
+    _screen->InitRaster();
+    ASSERT_EQ(_screen->GetVideoMode(), M_ATMTL);
+
+    auto& fb = _screen->GetFramebufferDescriptor();
+    auto* px = reinterpret_cast<uint32_t*>(fb.memoryBuffer);
+    auto At = [&](uint32_t row, uint32_t col) -> uint32_t& { return px[row * fb.width + col]; };
+
+    // TL reads ONE dedicated page (videoPage==5 here -> RAM page 8) with
+    // linear 64-byte text rows - no +0x2000 plane halves like TX (reference
+    // ZXMAK2 EvoTxtRenderer):
+    //   row r, even columns: codes at 0x01C0 + 64r, attrs at 0x31C0 + 64r
+    //   row r, odd columns:  codes at 0x11C0 + 64r, attrs at 0x21C0 + 64r (+1)
+    uint8_t* page = _memory->RAMPageAddress(8);
+    memset(page, 0, 0x4000);
+
+    for (uint32_t r = 0; r < 25; ++r)
+    {
+        page[0x01C0 + 64 * r] = static_cast<uint8_t>(0x41 + r);  // col 0 (even) code
+        page[0x11C0 + 64 * r] = static_cast<uint8_t>(0x41 + r);  // col 1 (odd) code
+        page[0x31C0 + 64 * r] = 0x47;                            // col 0 attr (+((0+1)>>1)=0)
+        page[0x21C0 + 64 * r + 1] = 0x47;                        // col 1 attr (+((1+1)>>1)=1)
+    }
+
+    const uint32_t ink = InkColor(0x47);
+    const uint32_t paper = PaperColor(0x47);
+
+    // Scanline 0 of every text row: the same glyph at columns 0 and 1 proves
+    // the 64-byte row stride for both parity regions
+    for (uint32_t r = 0; r < 25; ++r)
+    {
+        SCOPED_TRACE(testing::Message() << "text row " << r);
+        _screen->DrawATMMode(BeamT(8 * r, 32));  // col 0, bits 7..4
+        _screen->DrawATMMode(BeamT(8 * r, 33));  // col 0, bits 3..0
+        _screen->DrawATMMode(BeamT(8 * r, 34));  // col 1, bits 7..4
+        const uint8_t glyph = ATM_FONT[0x41 + r];
+        const uint32_t row = 44 + 8 * r;
+        for (uint32_t k = 0; k < 8; ++k)
+            EXPECT_EQ(At(row, 32 + k), ((glyph >> (7 - k)) & 1) ? ink : paper) << "col 0 px " << k;
+        for (uint32_t k = 0; k < 4; ++k)
+            EXPECT_EQ(At(row, 40 + k), ((glyph >> (7 - k)) & 1) ? ink : paper) << "col 1 px " << k;
+    }
+
+    // All 8 scanlines of text row 2 select font line (screenY % 8)
+    for (uint32_t s = 0; s < 8; ++s)
+    {
+        SCOPED_TRACE(testing::Message() << "scanline " << s);
+        _screen->DrawATMMode(BeamT(16 + s, 32));
+        _screen->DrawATMMode(BeamT(16 + s, 33));
+        const uint8_t glyph = ATM_FONT[s * 256 + 0x43];
+        const uint32_t row = 44 + 16 + s;
+        for (uint32_t k = 0; k < 8; ++k)
+            EXPECT_EQ(At(row, 32 + k), ((glyph >> (7 - k)) & 1) ? ink : paper) << "px " << k;
+    }
+}
+
+/// endregion </Renderer: TL text mode (ZX-Evo Text Linear)>
+
 /// region <Renderer: plane strides and palette>
 
 TEST_F(ATMVideoModesSuite_Test, Render_ATMHR_Linear40ByteStride_SecondLine)
@@ -719,26 +791,30 @@ TEST_F(ATMVideoModesSuite_Test, Render_ScreenWindowHorizontalGeometry_PerMode)
 {
     const struct
     {
+        MEM_MODEL model;
         uint8_t ff77;
         VideoModeEnum m;
         uint32_t offL, screenW;
     } cases[] = {
-        {FF77_16, M_ATM16, 64, 320},
-        {FF77_MC, M_ATMHR, 32, 640},
-        {FF77_TX, M_ATMTX, 32, 640},
+        {MM_ATM710, FF77_16, M_ATM16, 64, 320},
+        {MM_ATM710, FF77_MC, M_ATMHR, 32, 640},
+        {MM_ATM710, FF77_TX, M_ATMTX, 32, 640},
+        {MM_ATM3, FF77_TL, M_ATMTL, 32, 640},
     };
     for (const auto& c : cases)
     {
         SCOPED_TRACE(testing::Message() << "mode " << c.m);
-        _context->config.mem_model = MM_ATM710;
+        _context->config.mem_model = c.model;
         SetATMTiming();
         SetFF77Mode(c.ff77);
         _screen->InitRaster();
         ASSERT_EQ(_screen->GetVideoMode(), c.m);
 
-        // All-zero planes -> the whole screen window renders black in every mode
+        // All-zero planes -> the whole screen window renders black in every
+        // mode (TL reads its dedicated page 8/10, zeroed here too)
         memset(_memory->RAMPageAddress(1), 0, 0x4000);
         memset(_memory->RAMPageAddress(5), 0, 0x4000);
+        memset(_memory->RAMPageAddress(8), 0, 0x4000);
 
         // Red border via the standard port FE path
         _context->pPortDecoder->DecodePortOut(0x00FE, 0x02, 0);
@@ -802,17 +878,19 @@ TEST_F(ATMVideoModesSuite_Test, RenderFrameBatch_EquivalentToPerTstate_AllModes)
 {
     const struct
     {
+        MEM_MODEL model;
         uint8_t ff77;
         VideoModeEnum m;
     } cases[] = {
-        {FF77_16, M_ATM16},
-        {FF77_MC, M_ATMHR},
-        {FF77_TX, M_ATMTX},
+        {MM_ATM710, FF77_16, M_ATM16},
+        {MM_ATM710, FF77_MC, M_ATMHR},
+        {MM_ATM710, FF77_TX, M_ATMTX},
+        {MM_ATM3, FF77_TL, M_ATMTL},
     };
     for (const auto& c : cases)
     {
         SCOPED_TRACE(testing::Message() << "mode " << c.m);
-        _context->config.mem_model = MM_ATM710;
+        _context->config.mem_model = c.model;
         SetATMTiming();
         SetFF77Mode(c.ff77);
         _screen->InitRaster();
@@ -825,6 +903,7 @@ TEST_F(ATMVideoModesSuite_Test, RenderFrameBatch_EquivalentToPerTstate_AllModes)
         };
         fill(_memory->RAMPageAddress(1));
         fill(_memory->RAMPageAddress(5));
+        fill(_memory->RAMPageAddress(8));  // TL dedicated page (unused elsewhere)
 
         _screen->RenderFrameBatch();
 
@@ -839,7 +918,7 @@ TEST_F(ATMVideoModesSuite_Test, RenderFrameBatch_EquivalentToPerTstate_AllModes)
     }
 }
 
-TEST_F(ATMVideoModesSuite_Test, RenderFrameBatch_ATMTL_BorderOnlyEverywhere)
+TEST_F(ATMVideoModesSuite_Test, RenderFrameBatch_ATMTL_TextFromDedicatedPage)
 {
     _context->config.mem_model = MM_ATM3;
     SetATMTiming();
@@ -847,25 +926,47 @@ TEST_F(ATMVideoModesSuite_Test, RenderFrameBatch_ATMTL_BorderOnlyEverywhere)
     _screen->InitRaster();
     ASSERT_EQ(_screen->GetVideoMode(), M_ATMTL);
 
+    // TL must read the DEDICATED page (videoPage==5 -> RAM page 8): fill
+    // only page 8 and leave page 5 all-ink - any leak of the standard video
+    // plane would light up the whole screen
+    uint8_t* page = _memory->RAMPageAddress(8);
+    memset(page, 0, 0x4000);
+    memset(_memory->RAMPageAddress(5), 0xFF, 0x4000);
+
+    // Text row 0: 'A' at the even-column slot (+0x01C0), 'B' at the
+    // odd-column slot (+0x11C0); attrs 0x47 in both parity slots
+    // (+0x31C0 for even n, +0x21C0+1 for odd n=1)
+    page[0x01C0] = 0x41;
+    page[0x11C0] = 0x42;
+    page[0x31C0] = 0x47;
+    page[0x21C0 + 1] = 0x47;
+
     _context->pPortDecoder->DecodePortOut(0x00FE, 0x05, 0);  // cyan border
     const uint32_t border = InkColor(0x05);
 
     _screen->RenderFrameBatch();
 
     auto& fb = _screen->GetFramebufferDescriptor();
-    ASSERT_EQ(fb.width, 448u);
+    ASSERT_EQ(fb.width, 704u);
     ASSERT_EQ(fb.height, 288u);
     auto* px = reinterpret_cast<uint32_t*>(fb.memoryBuffer);
+    auto At = [&](uint32_t row, uint32_t col) -> uint32_t& { return px[row * fb.width + col]; };
 
-    // TL has no ported renderer: the whole frame must be opaque border
-    int64_t firstMismatch = -1;
-    for (uint32_t i = 0; i < uint32_t(fb.width) * fb.height; ++i)
-        if (px[i] != border)
-        {
-            firstMismatch = i;
-            break;
-        }
-    EXPECT_EQ(firstMismatch, -1) << "first mismatch at pixel " << firstMismatch;
+    // Border geometry: 32-px side borders, 44-row top/bottom borders
+    for (uint32_t col : {0u, 31u, 672u, 703u})
+        EXPECT_EQ(At(44, col), border) << "side border col " << col;
+    for (uint32_t row : {0u, 43u, 244u, 287u})
+        EXPECT_EQ(At(row, 32), border) << "top/bottom border row " << row;
+
+    // Char columns 0 ('A') and 1 ('B') at framebuffer cols 32..47, row 44
+    // (scanline 0 -> font line 0), MSB-first bits
+    const uint8_t glyphA = ATM_FONT[0x41];
+    const uint8_t glyphB = ATM_FONT[0x42];
+    for (uint32_t k = 0; k < 8; ++k)
+    {
+        EXPECT_EQ(At(44, 32 + k), ((glyphA >> (7 - k)) & 1) ? InkColor(0x47) : PaperColor(0x47)) << "'A' px " << k;
+        EXPECT_EQ(At(44, 40 + k), ((glyphB >> (7 - k)) & 1) ? InkColor(0x47) : PaperColor(0x47)) << "'B' px " << k;
+    }
 }
 
 /// endregion </Renderer: border geometry and batch equivalence>

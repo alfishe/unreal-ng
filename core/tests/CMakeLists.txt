@@ -157,6 +157,8 @@ if (NOT TARGET ${PROJECT_NAME})
         COMMAND ${CMAKE_COMMAND} -E copy
             "${CONFIG_FILE}" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/unreal.ini"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${DATA_PATH}/configs" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/configs"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${DATA_PATH}/testrom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"

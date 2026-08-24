@@ -36,6 +36,15 @@ void Beeper::setSampleRate(size_t samplingRate)
     blip_clear(_blipR);
 }
 
+void Beeper::setClockRate(size_t clockRate)
+{
+    _clockRate = clockRate;
+    blip_set_rates(_blipL, static_cast<double>(_clockRate), static_cast<double>(_samplingRate));
+    blip_set_rates(_blipR, static_cast<double>(_clockRate), static_cast<double>(_samplingRate));
+    blip_clear(_blipL);
+    blip_clear(_blipR);
+}
+
 Beeper::~Beeper()
 {
     blip_delete(_blipL);

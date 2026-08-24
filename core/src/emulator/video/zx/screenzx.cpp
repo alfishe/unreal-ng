@@ -980,10 +980,12 @@ void ScreenZX::RenderScreen_Batch8()
 void ScreenZX::DrawATMMode(uint32_t tstate)
 {
     // ATM extended modes, ported from the reference renderer (other/unrealspeccy):
-    // dxr_atm0.cpp (EGA), dxr_atm2.cpp (HW Multicolor), dxr_atm6.cpp (Text).
-    // All modes share ZX-compatible timing: 224 T-states/line, 312 lines/frame
+    // dxr_atm0.cpp (EGA), dxr_atm2.cpp (HW Multicolor), dxr_atm6.cpp (Text);
+    // ZX-Evo Text Linear follows ZXMAK2 EvoTxtRenderer.cs. All modes share
+    // ZX-compatible timing: 224 T-states/line, 312 lines/frame
     // (maxFrameTiming == config.frame == 69888). Video planes are LINEAR 8KB
-    // with 40 bytes per line (8000 bytes per plane) - NOT the ZX 32-byte stride.
+    // with 40 bytes per line (8000 bytes per plane) - NOT the ZX 32-byte stride
+    // - except TL, which reads a dedicated page of linear 64-byte text rows.
     constexpr uint32_t TSTATES_PER_LINE = 224;
     constexpr uint32_t VSYNC_VBLANK_LINES = 24;  // 16 vSync + 8 vBlank before the visible area
     constexpr uint32_t VISIBLE_LINES = 288;
@@ -1011,11 +1013,9 @@ void ScreenZX::DrawATMMode(uint32_t tstate)
     const uint32_t rowOffset = fbRow * rd.fullFrameWidth;
 
     // Extended modes show the live ZX border color (port FE), like the
-    // reference rend_atmframe* border renderer. Mode 7 (ATM3 Text Linear)
-    // has no ported renderer yet - the whole frame stays border.
+    // reference rend_atmframe* border renderer.
     const uint32_t borderColor = _rgbaColors[_borderColor];
-    const bool inScreenRow = (_mode != M_ATMTL) &&
-                             (fbRow >= rd.screenOffsetTop) &&
+    const bool inScreenRow = (fbRow >= rd.screenOffsetTop) &&
                              (fbRow < rd.screenOffsetTop + SCREEN_LINES);
 
     // Border rows: fill by beam scan so every framebuffer column of the row
@@ -1109,6 +1109,39 @@ void ScreenZX::DrawATMMode(uint32_t tstate)
         const uint32_t shift = 4 * half;
         for (uint32_t k = 0; k < 4; ++k)
             framebufferARGB[rowOffset + col + k] = ((pix >> (7 - shift - k)) & 1) ? ink : paper;
+        return;
+    }
+
+    if (_mode == M_ATMTL)
+    {
+        // ZX-Evo Text Linear (FF77 mode 7): 80x25 text, 640x200, read from a
+        // single DEDICATED page - videoPage==5 -> RAM page 8, else page 10
+        // (reference ZXMAK2 UlaAtm450.UpdateVideoPage; unlike the modes above
+        // there are no vp/ap plane pairs, and videoPage comes from 7FFD bit 3
+        // exactly as for them). Text rows are linear 64-byte blocks inside
+        // that page (reference ZXMAK2 EvoTxtRenderer.OnParamsChanged):
+        //   codes: even char column n at +0x01C0 + 64*r + (n>>1),
+        //          odd char column n at +0x11C0 + 64*r + (n>>1)
+        //   attrs: complement parity - even n at +0x31C0 + 64*r + ((n+1)>>1),
+        //          odd n at +0x21C0 + 64*r + ((n+1)>>1)
+        // Font and bit order are the same as TX: built-in SGEN table,
+        // row-major [(scanline % 8)*256 + code], MSB-first (bit 7 = leftmost).
+        const uint32_t n = t / 2;      // char column 0..79
+        const uint32_t half = t % 2;   // 0: font bits 7..4, 1: bits 3..0
+        uint8_t* page = _memory->RAMPageAddress(videoPage == 5 ? 8 : 10);
+        const uint32_t rowBase = (screenY / 8) * 64;
+        const bool evenCol = (n % 2 == 0);
+        const uint32_t codeAddr = (evenCol ? 0x01C0u : 0x11C0u) + rowBase + (n >> 1);
+        const uint32_t attrAddr = (evenCol ? 0x31C0u : 0x21C0u) + rowBase + ((n + 1) >> 1);
+        const uint8_t code = page[codeAddr];
+        const uint8_t attr = page[attrAddr];
+        const uint8_t glyph = ATM_FONT[(screenY % 8) * 256 + code];
+        const uint32_t ink = _rgbaColors[attr];
+        const uint32_t paper = _rgbaFlashColors[attr];
+        const uint32_t col = rd.screenOffsetLeft + 8 * n + 4 * half;
+        const uint32_t shift = 4 * half;
+        for (uint32_t k = 0; k < 4; ++k)
+            framebufferARGB[rowOffset + col + k] = ((glyph >> (7 - shift - k)) & 1) ? ink : paper;
         return;
     }
 

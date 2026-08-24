@@ -390,13 +390,14 @@ public:
         // maxFrameTiming = 224 x 312 = 69888 = config.frame (synchronized)
         // 200-line screen vertically centered (44-line borders, like the reference
         // renderer's (scy-200)/2 centering in dxr_atm0.cpp).
-        // 640-px modes (MC/Text) double the pixel clock inside the same 160-T screen
-        // window: storage is 704-wide (32-px side borders) while the beam stays
-        // 448 px/line - pixelsPerLine is timing, fullFrameWidth is storage.
+        // 640-px modes (MC/Text/TextLinear) double the pixel clock inside the
+        // same 160-T screen window: storage is 704-wide (32-px side borders)
+        // while the beam stays 448 px/line - pixelsPerLine is timing,
+        // fullFrameWidth is storage.
         {448, 288, 320, 200, 64, 44, 448, 64, 32, 16, 8},  // M_ATM16 (EGA 16-color)
         {704, 288, 640, 200, 32, 44, 448, 64, 32, 16, 8},  // M_ATMHR (HW Multicolor 640x200)
         {704, 288, 640, 200, 32, 44, 448, 64, 32, 16, 8},  // M_ATMTX (Text 80x25, 640x200)
-        {448, 288, 320, 200, 64, 44, 448, 64, 32, 16, 8},  // M_ATMTL (Linear Text ATM3, placeholder geometry)
+        {704, 288, 640, 200, 32, 44, 448, 64, 32, 16, 8},  // M_ATMTL (ZX-Evo Text Linear 80x25, 640x200 - same geometry as TX)
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_PROFI
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_GMX
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_BRD

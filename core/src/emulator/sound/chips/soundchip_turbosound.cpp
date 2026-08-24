@@ -44,13 +44,14 @@ void SoundChip_TurboSound::handleFrameStart()
 /// - Correct relationship between chip clock and generator periods
 void SoundChip_TurboSound::handleStep()
 {
+    // Z80::t already counts executed cycles at the CURRENT clock (a turbo
+    // frame spans config.frame * multiplier t-states), so feed it straight
+    // into the PLL - the increment is pre-divided by the multiplier
+    // (setFrequencyMultiplier, called at frame boundaries) to keep the
+    // output sample rate realtime
     size_t currentTStates = _context->pCore->GetZ80()->t;
 
-    // Scale t-states by speed multiplier for correct AY audio pitch
-    uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
-    size_t scaledCurrentTStates = currentTStates * speedMultiplier;
-
-    int32_t diff = scaledCurrentTStates - _lastTStates;
+    int32_t diff = currentTStates - _lastTStates;
 
     if (diff > 0)
     {
@@ -192,7 +193,7 @@ void SoundChip_TurboSound::handleStep()
         }
     }
 
-    _lastTStates = scaledCurrentTStates;
+    _lastTStates = currentTStates;
 }
 
 void SoundChip_TurboSound::handleFrameEnd() {}

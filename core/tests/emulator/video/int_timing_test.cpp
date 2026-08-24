@@ -19,7 +19,7 @@ protected:
     {
         _context = new EmulatorContext(LoggerLevel::LogError);
         _cpu = new Core(_context);
-        _cpu->Init();
+        ASSERT_TRUE(_cpu->Init());
         _screen = new ScreenZXCUT(_context);
     }
 

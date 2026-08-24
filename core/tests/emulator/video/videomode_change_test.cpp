@@ -25,6 +25,40 @@
 ///      pointers without locks - reallocation would be a use-after-free),
 ///   4. post NC_VIDEO_MODE_CHANGED so GUI consumers re-attach.
 
+/// region <Test helpers>
+
+/// NC_VIDEO_MODE_CHANGED observer used by the notification test.
+///
+/// Must subscribe as an Observer instance + method pair: RemoveObserver
+/// matches those by the stable instance pointer. The std::function overload
+/// compares the heap address of the callable wrapper, which is different in
+/// every std::function copy - RemoveObserver(topic, lambda) silently matches
+/// NOTHING for capturing lambdas, the observer leaks forever and later fires
+/// on dead stack locals from the MessageCenter thread, corrupting whichever
+/// test reuses that stack region (first seen as a segfault in
+/// ZXEvoBoot_Test when the BaseConf boot posts video-mode changes).
+class ModeChangeObserver : public Observer
+{
+public:
+    std::atomic<int> received{0};
+    std::atomic<bool> idMatches{false};
+    unreal::UUID expectedId{};
+
+    void OnModeChanged(int id, Message* message)
+    {
+        (void)id;
+        if (message && message->obj)
+        {
+            auto* payload = dynamic_cast<EmulatorFramePayload*>(message->obj);
+            if (payload && payload->_emulatorId == expectedId)
+                idMatches.store(true);
+        }
+        received.fetch_add(1);
+    }
+};
+
+/// endregion </Test helpers>
+
 class VideoModeChange_Test : public ::testing::Test
 {
 protected:
@@ -175,37 +209,30 @@ TEST_F(VideoModeChange_Test, ModeChange_PostsNotificationWithEmulatorId)
 {
     // GUI consumers re-attach on NC_VIDEO_MODE_CHANGED; the payload must
     // carry the emulator ID so multi-emulator listeners can filter.
-    std::atomic<int> received{0};
-    std::atomic<bool> idMatches{false};
-    const unreal::UUID expectedId = _emulator->GetUUID();
+    ModeChangeObserver observer;
+    observer.expectedId = _emulator->GetUUID();
 
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    auto handler = [&received, &idMatches, expectedId](int id, Message* message) {
-        (void)id;
-        if (message && message->obj)
-        {
-            auto* payload = dynamic_cast<EmulatorFramePayload*>(message->obj);
-            if (payload && payload->_emulatorId == expectedId)
-                idMatches.store(true);
-        }
-        received.fetch_add(1);
-    };
-    messageCenter.AddObserver(NC_VIDEO_MODE_CHANGED, handler);
+    Observer* observerInstance = static_cast<Observer*>(&observer);
+    ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&ModeChangeObserver::OnModeChanged);
+    messageCenter.AddObserver(NC_VIDEO_MODE_CHANGED, observerInstance, callback);
 
     ASSERT_TRUE(_emulator->SetOverscanMode(true));
 
     // Notification dispatch is asynchronous (MessageCenter thread)
     auto start = std::chrono::steady_clock::now();
-    while (received.load() == 0 &&
+    while (observer.received.load() == 0 &&
            std::chrono::steady_clock::now() - start < std::chrono::milliseconds(500))
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
-    messageCenter.RemoveObserver(NC_VIDEO_MODE_CHANGED, handler);
+    // Waited for the first dispatch to complete above, so no in-flight
+    // dispatch can reference the observer after this removal
+    messageCenter.RemoveObserver(NC_VIDEO_MODE_CHANGED, observerInstance, callback);
 
-    EXPECT_GE(received.load(), 1) << "SetVideoMode must post NC_VIDEO_MODE_CHANGED";
-    EXPECT_TRUE(idMatches.load()) << "Payload must carry the posting emulator's ID";
+    EXPECT_GE(observer.received.load(), 1) << "SetVideoMode must post NC_VIDEO_MODE_CHANGED";
+    EXPECT_TRUE(observer.idMatches.load()) << "Payload must carry the posting emulator's ID";
 
     _emulator->SetOverscanMode(false);
 }

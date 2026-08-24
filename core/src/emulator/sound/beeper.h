@@ -83,6 +83,12 @@ public:
     /// the blip_buf resampler at the new output rate and clear pending deltas
     void setSampleRate(size_t samplingRate);
 
+    /// CPU clock change (turbo / speed multiplier): the input rate is the
+    /// CURRENT CPU clock (Z80::t counts multiplied cycles), so the blip
+    /// resampler must be re-pointed at base x multiplier to keep the output
+    /// sample count realtime. Frame boundary only (clears pending deltas)
+    void setClockRate(size_t clockRate);
+
     /// Called at the start of each video frame.
     void handleFrameStart();
 

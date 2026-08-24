@@ -138,6 +138,7 @@ void SoundManager::reset()
     // Restart the exact sample accumulator (machine change / hard reset /
     // snapshot load all route through reset())
     _sampleAccumulator = 0;
+    _lastFrequencyMultiplier = 0;  // Force synth re-clock on the next frame
 
     // New wave file
     // closeWaveFile();
@@ -363,6 +364,23 @@ void SoundManager::handleFrameStart()
         }
     }
 
+    // Turbo / speed-multiplier change: re-point the synths' T-state->sample
+    // mapping at the new CPU clock. Z80::t counts multiplied cycles, so the
+    // beeper/covox blip input clocks and the AY PLL increment must scale by
+    // the same multiplier - otherwise every synth produces multiplier-times
+    // realtime samples and the ring overfills (hard-resync drops). Applied
+    // at the frame boundary only, matching Z80::Z80FrameCycle
+    const uint8_t frequencyMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
+    if (frequencyMultiplier != _lastFrequencyMultiplier)
+    {
+        _lastFrequencyMultiplier = frequencyMultiplier;
+        const size_t synthClock = CPU_CLOCK_RATE * frequencyMultiplier;
+        _beeper->setClockRate(synthClock);
+        if (_covox)
+            _covox->setClockRate(synthClock);
+        _turboSound->setFrequencyMultiplier(frequencyMultiplier);
+    }
+
     _turboSound->handleFrameStart();
     if (_covox)
         _covox->handleFrameStart();
@@ -402,10 +420,15 @@ void SoundManager::handleFrameEnd()
     {
         CONFIG& config = _context->config;
         uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
+        // T-states executed this frame: at turbo the CPU runs multiplier-
+        // times the base frame length (Z80::frameLimit scales), so the
+        // beeper's blip frame is scaled - its input clock is re-clocked to
+        // base x multiplier (handleFrameStart), keeping blip output realtime
         frameDuration = config.frame * speedMultiplier;
-        // Use frame_duration_us which is correctly calculated for the machine's clock rate
-        // (ATM 7MHz: 99880 T-states = ~14269us, Pentagon 3.5MHz: 71680 T-states = ~20480us)
-        frameDurationUs = config.frame_duration_us * speedMultiplier;
+        // Wall-clock frame duration: a video frame takes the SAME real time
+        // at any CPU clock, so the realtime sample count (and ring fill
+        // rate) is multiplier-invariant
+        frameDurationUs = config.frame_duration_us;
 
         if (frameDurationUs > 0)
         {
