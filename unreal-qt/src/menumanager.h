@@ -6,9 +6,11 @@
 #include <QMenuBar>
 #include <QObject>
 #include <memory>
+#include <vector>
 
 class Emulator;
 class MainWindow;
+struct TMemModel;
 
 #include "3rdparty/message-center/messagecenter.h"
 
@@ -28,8 +30,14 @@ public:
     // Queries emulator directly - no state duplication!
     void updateMenuStates(std::shared_ptr<Emulator> activeEmulator);
 
+    // Update machine model selection based on active emulator's model
+    void updateMachineModelSelection(std::shared_ptr<Emulator> activeEmulator);
+
     // Set the current active emulator instance
     void setActiveEmulator(std::shared_ptr<Emulator> emulator);
+
+    // Reset viewport selection to default (Full Overscan)
+    void resetViewportSelection();
 
     // Observer callback for emulator state changes
     void handleEmulatorStateChanged(int id, Message* message);
@@ -70,6 +78,11 @@ signals:
     void debuggerToggled(bool visible);
     void logWindowToggled(bool visible);
     void fullScreenToggled();
+    void overscanModeToggled(bool enabled);
+    void viewportChanged(int presetIndex);
+
+    // Machine signals
+    void machineModelChangeRequested(const QString& modelShortName);
 
     // Tools signals
     void intParametersRequested();
@@ -84,6 +97,7 @@ private:
     void createEditMenu();
     void createViewMenu();
     void createRunMenu();
+    void createMachineMenu();
     void createDebugMenu();
     void createToolsMenu();
     void createHelpMenu();
@@ -101,6 +115,7 @@ private:
     QMenu* _editMenu;
     QMenu* _viewMenu;
     QMenu* _runMenu;
+    QMenu* _machineMenu;
     QMenu* _debugMenu;
     QMenu* _toolsMenu;
     QMenu* _helpMenu;
@@ -131,6 +146,15 @@ private:
     QAction* _zoomOutAction;
     QAction* _zoomResetAction;
 
+    // Overscan Menu Actions (Pentagon only)
+    QAction* _overscanAction;
+    QMenu* _viewportMenu;
+    QActionGroup* _viewportGroup;
+    QAction* _viewportFullOverscanAction;
+    QAction* _viewportSymmetricAction;
+    QAction* _viewportStandardAction;
+    QAction* _viewportScreenOnlyAction;
+
     // Run Menu Actions
     QAction* _startAction;
     QAction* _pauseAction;
@@ -145,6 +169,11 @@ private:
     QAction* _speed8xAction;
     QAction* _speed16xAction;
     QAction* _turboModeAction;
+
+    // Machine Menu Actions
+    QActionGroup* _machineModelGroup;
+    std::vector<QAction*> _machineModelActions;
+    QString _currentModelShortName;
 
     // Debug Menu Actions
     QAction* _debugModeAction;

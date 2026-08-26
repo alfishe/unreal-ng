@@ -32,6 +32,7 @@ void PortDecoder_Profi::reset()
     state.pBFFD = 0x00;     // Reset AY register select port
     state.pFFFD = 0x00;     // Reset AY data port
     state.pFE = 0xFF;       // Reset ULA port (border white, no sound)
+    state.border_attr = 0x07;  // Sync border_attr with pFE bits 0-2 (white)
 
     // Set default 128K memory pages
     Memory& memory = *_context->pMemory;
@@ -59,9 +60,47 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
     (void)pc;
 
     uint8_t result = 0xFF;
+    _lastPortDecoded = false;
 
-    // Universal handler for breakpoints, tracking, analyzers
-    OnPortInComplete(port, result, pc);
+    // AY #FFFD: A15=1, A14=1, A1=0. The AY-3-8910 does not decode the other
+    // address bits, so mirrored ports (#FF05, #FF00, #C000...) select it on IN
+    // too. Resolve mirrors to the canonical port BEFORE the weak FE (A0-only)
+    // check - otherwise register readback via a mirror reaches the keyboard or
+    // returns 0xFF and TurboSound players cannot detect the second chip
+    // (same order as the OUT dispatch and the Pentagon decode table)
+    // Port trace decode attribution (if-chain decoder: no mask/match table)
+    PortDecodeDisposition disp;
+    disp.decodeRuleIndex = PortTraceRule::kNoTable;
+
+    if ((port & 0xC002) == 0xC000)
+    {
+        result = PeripheralPortIn(0xFFFD);
+        disp.decodedPort = 0xFFFD;
+    }
+    // AY #BFFD: A15=1, A14=0, A1=0
+    else if ((port & 0xC002) == 0x8000)
+    {
+        result = PeripheralPortIn(0xBFFD);
+        disp.decodedPort = 0xBFFD;
+    }
+    else if (IsFEPort(port))
+    {
+        // Call default implementation
+        result = Default_Port_FE_In(port, pc);
+        _lastPortDecoded = true;
+        disp.decodedPort = 0x00FE;
+        disp.wasHandledInline = true;
+    }
+    else
+    {
+        result = PeripheralPortIn(port);
+        // Identity decode: mark decoded only when a device actually responded
+        if (_lastPortDecoded)
+            disp.decodedPort = port;
+    }
+    disp.wasDecoded = _lastPortDecoded;
+
+    OnPortInComplete(port, result, pc, disp);
 
     return result;
 }
@@ -72,20 +111,49 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     //    port: #7FFD
     //    port: #DFFD
 
+    // Port trace decode attribution (if-chain decoder: no mask/match table)
+    PortDecodeDisposition disp;
+    disp.decodeRuleIndex = PortTraceRule::kNoTable;
+
     bool isPort_7FFD = IsPort_7FFD(port);
     if (isPort_7FFD)
     {
         Port_7FFD(value, pc);
+        disp.decodedPort = 0x7FFD;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
     }
 
     bool isPort_DFFD = IsPort_DFFD(port);
     if (isPort_DFFD)
     {
         Port_DFFD(value, pc);
+        disp.decodedPort = 0xDFFD;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+    }
+
+    // AY #FFFD: A15=1, A14=1, A1=0 (register select / TurboSound chip select)
+    // Mask: 0b1100'0000'0000'0010, Match: 0b1100'0000'0000'0000
+    if ((port & 0xC002) == 0xC000)
+    {
+        _state->pFFFD = value;
+        PeripheralPortOut(0xFFFD, value);
+        disp.decodedPort = 0xFFFD;
+        disp.wasDecoded = true;
+    }
+    // AY #BFFD: A15=1, A14=0, A1=0 (data write)
+    // Mask: 0b1100'0000'0000'0010, Match: 0b1000'0000'0000'0000
+    else if ((port & 0xC002) == 0x8000)
+    {
+        _state->pBFFD = value;
+        PeripheralPortOut(0xBFFD, value);
+        disp.decodedPort = 0xBFFD;
+        disp.wasDecoded = true;
     }
 
     // Universal handler for breakpoints, tracking, analyzers
-    OnPortOutComplete(port, value, pc);
+    OnPortOutComplete(port, value, pc, disp);
 }
 
 void PortDecoder_Profi::SetRAMPage(uint8_t page)
@@ -106,11 +174,12 @@ bool PortDecoder_Profi::IsPort_7FFD(uint16_t port)
     //    Profi
     //    port: #7FFD
     //    Full match  :  01111111 11111101
-    //    Match pattern: 01x1xxxx xx1xx101
-    //    Equation: /IORQ /WR /A15 /A1
+    //    Match pattern: 0xxxxxxx xxxxx10x  (A15=0, A2=1, A1=0)
+    //    Equation: /IORQ /WR /A15 A2 /A1
+    //    Mask includes bit2=1 to avoid conflict with SOUNDRIVE ports F1/F9 which have bit2=0.
     static const uint16_t port_7FFD_full        = 0b0111'1111'1111'1101;
-    static const uint16_t port_7FFD_mask        = 0b1000'0000'0000'0010;
-    static const uint16_t port_7FFD_match       = 0b0000'0000'0000'0000;
+    static const uint16_t port_7FFD_mask        = 0b1000'0000'0000'0110;  // A15, A2, A1
+    static const uint16_t port_7FFD_match       = 0b0000'0000'0000'0100;  // A15=0, A2=1, A1=0
 
     // Compile-time check
     static_assert((port_7FFD_full & port_7FFD_mask) == port_7FFD_match && "Mask pattern incorrect");

@@ -6,6 +6,7 @@
 class MemoryAccessTracker;
 class Z80;
 class FeatureManager;
+namespace ttd { class TTDDirtyTracker; }
 
 // Max RAM size is 4MBytes. Each model has own limits. Max ram used for ZX-Evo / TSConf
 // MAX_RAM_PAGES and PAGE defined in platform.h
@@ -111,13 +112,26 @@ protected:
     uint8_t* _bank_read[4];            // Memory pointers to RAM/ROM/Cache 16k blocks mapped to four Z80 memory windows
     uint8_t* _bank_write[4];           // Memory pointers to RAM/ROM/Cache 16k blocks mapped to four Z80 memory windows
 
+    /// Cached RAM page numbers per bank for TTD hot path optimization.
+    /// Updated only when bank mapping changes (SetRAMPageToBank*).
+    /// Value is 0xFF when bank is not RAM (ROM/Cache mode).
+    /// Avoids expensive GetRAMPageForBank() pointer arithmetic on every write.
+    uint8_t _bank_ram_page_cache[4] = {0xFF, 0xFF, 0xFF, 0xFF};
+
     // Memory access tracker
     MemoryAccessTracker* _memoryAccessTracker = nullptr;  // Flexible memory access tracking system
+
+    // TTD dirty tracker (per TDD §6.2). Owned by Memory because the write hook
+    // lives in MemoryWriteDebug and the bank->page lookup is already here.
+    // Always constructed (fixed ~64 byte cost); MarkDirty is a no-op when
+    // the cached _feature_ttd_enabled flag is false.
+    ttd::TTDDirtyTracker* _ttdDirtyTracker = nullptr;
 
     // Feature-gate flags
     bool _feature_memorytracking_enabled = false;
     bool _feature_breakpoints_enabled = false;
     bool _feature_sharedmemory_enabled = false;
+    bool _feature_ttd_enabled = false;  // mirrors Features::kTimeTravel, cached for the write hot path
 
     bool _isPage0ROM48k;
     bool _isPage0ROM128k;
@@ -155,11 +169,29 @@ public:
         return _feature_sharedmemory_enabled && !_mappedMemoryFilepath.empty();
     }
 
-    // Shortcuts to ROM pages
+    // Shortcuts to ROM pages. A model that has no such ROM leaves the
+    // corresponding pointer null (see rom.cpp) — a 48K machine has neither a
+    // TR-DOS nor a service ROM.
     uint8_t* base_sos_rom;
     uint8_t* base_dos_rom;
     uint8_t* base_128_rom;
     uint8_t* base_sys_rom;
+
+    /// @brief Physical RAM page currently mapped behind a Z80 address.
+    /// Returns 0xFF (ttd::kPhysPageNone) when that bank holds ROM or cache.
+    /// Cheap: reads the per-bank cache maintained by SetRAMPageToBank*.
+    inline uint8_t GetPhysPageForZ80Address(uint16_t addr) const
+    {
+        return _bank_ram_page_cache[(addr >> 14) & 0b11];
+    }
+
+    /// @brief Does the active model have a TR-DOS (Beta Disk) ROM?
+    ///
+    /// TR-DOS paging is gated structurally by the CF_SETDOSROM session flags
+    /// (Z80::Z80Step), which are only armed when a Beta128 is present, so this
+    /// is not on that path. It remains as a cheap query for code that needs to
+    /// know whether the model has the ROM at all.
+    inline bool HasDosRom() const { return base_dos_rom != nullptr; }
 
     /// endregion </Fields>
 
@@ -224,6 +256,8 @@ public:
 
     /// region <Runtime methods>
 public:
+    /// Switch bank 0 to the requested ROM section and refresh the paging state
+    /// (port of the original UnrealSpeccy set_mode(); used for RESET= boot modes)
     void SetROMMode(ROMModeEnum mode);
 
     void UpdateZ80Banks();
@@ -326,6 +360,14 @@ public:
     {
         return *_memoryAccessTracker;
     }
+
+    /// region <TTD dirty tracker access>
+    // Exposed so the per-frame capture orchestrator (lands in P1 Item 4)
+    // can call CollectAndClear at OnFrameEnd, and so session lifecycle
+    // (ttd clear / invalidation hooks, lands in P1 Item 6) can call
+    // ResetSession. Tests also reach in to verify the hook is firing.
+    inline ttd::TTDDirtyTracker* GetTTDDirtyTracker() { return _ttdDirtyTracker; }
+    /// endregion </TTD dirty tracker access>
     /// endregion </Memory access tracking>
 };
 
@@ -355,6 +397,9 @@ public:
     using Memory::_isPage0ROMDOS;
     using Memory::_isPge0ROMService;
     using Memory::_memoryAccessTracker;
+    using Memory::_ttdDirtyTracker;
+    using Memory::_feature_ttd_enabled;
+    using Memory::_bank_ram_page_cache;
     
     // ROM base pointers for testing ROM switching
     using Memory::base_dos_rom;

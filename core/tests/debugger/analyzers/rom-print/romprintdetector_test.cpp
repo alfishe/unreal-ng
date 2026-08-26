@@ -269,7 +269,7 @@ TEST_F(ROMPrintDetector_test, AutomaticCleanup)
 // INTEGRATION TEST: Real BASIC execution with BasicEncoder injection
 // ============================================================================
 // This test validates the end-to-end chain using BasicEncoder APIs:
-// 1. Navigate to 48K BASIC mode (exits 128K menu)
+// 1. Boot into 48K BASIC (RESET=BASIC boots there directly, no 128K menu)
 // 2. loadProgram() - Injects tokenized BASIC into memory
 // 3. runCommand("RUN") - Executes the program
 // 4. Use ScreenOCR to verify PRINT output on screen
@@ -281,34 +281,22 @@ TEST_F(ROMPrintDetector_test, IntegrationTest_BasicEncoderExecution)
     std::string emulatorId = _emulator->GetId();
     auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(context->pMainLoop);
     
-    // Run ROM initialization frames (~50 frames for 128K menu to appear)
+    // Run ROM initialization frames - RESET=BASIC boots straight into 48K BASIC
     std::cout << "[TEST] Running ROM initialization frames..." << std::endl;
     for (int i = 0; i < 100; i++)
     {
         mainLoop->RunFrame();
     }
     
-    // OCR to see what state we're in
+    // Verify we're in 48K BASIC mode using OCR (no menu navigation needed;
+    // injecting ENTER here would scroll the copyright line off the screen)
     std::string screenInit = ScreenOCR::ocrScreen(emulatorId);
     std::cout << "[TEST] Screen after ROM init:\n" << screenInit << std::endl;
-    
-    // Navigate to 48K BASIC mode (exits 128K menu)
-    BasicEncoder::navigateToBasic48K(_emulator);
-    
-    // Run frames for menu transition (menu selection -> 48K BASIC)
-    for (int i = 0; i < 100; i++)
-    {
-        mainLoop->RunFrame();
-    }
-    
-    // Verify we're in 48K BASIC mode using OCR
-    std::string screenAfterNav = ScreenOCR::ocrScreen(emulatorId);
-    std::cout << "[TEST] Screen after navigation:\n" << screenAfterNav << std::endl;
-    ASSERT_TRUE(screenAfterNav.find("1982 Sinclair") != std::string::npos 
-             || screenAfterNav.find("(C)") != std::string::npos
-             || screenAfterNav.find("Sinclair") != std::string::npos
-             || screenAfterNav.find("BASIC") != std::string::npos)
-        << "Should be in 48K BASIC mode. Got:\n" << screenAfterNav;
+    ASSERT_TRUE(screenInit.find("1982 Sinclair") != std::string::npos 
+             || screenInit.find("(C)") != std::string::npos
+             || screenInit.find("Sinclair") != std::string::npos
+             || screenInit.find("BASIC") != std::string::npos)
+        << "Should be in 48K BASIC mode. Got:\n" << screenInit;
     
     // NOW activate the detector (after navigation to avoid capturing menu)
     auto detector = std::make_unique<ROMPrintDetector>();

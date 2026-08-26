@@ -50,6 +50,7 @@ void PortDecoder_Pentagon128::reset()
     state.pBFFD = 0x00;     // Reset AY register select port
     state.pFFFD = 0x00;     // Reset AY data port
     state.pFE = 0xFF;       // Reset ULA port (border white, no sound)
+    state.border_attr = 0x07;  // Sync border_attr with pFE bits 0-2 (white)
 
     // Set default 120K memory pages
     Memory& memory = *_context->pMemory;
@@ -78,7 +79,28 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
     /// endregion </Override submodule>
 
     uint8_t result = 0xFF;
-    uint16_t decodedPort = decodePort(port);
+    DecodeResult decoded = decodePortEx(port);
+    uint16_t decodedPort = decoded.port;
+    PortDecodeDisposition disp;
+    disp.decodeRuleIndex = decoded.ruleIndex;
+
+    // Reset decoded flag before processing
+    _lastPortDecoded = false;
+
+    // Beta128 FDC ports (#1F/#3F/#5F/#7F/#FF) are decoded by the disk interface
+    // only while the TR-DOS ROM is paged in (CF_TRDOS, maintained by the M1 fetch
+    // hook in Z80Step: executing from $3Dxx pages DOS in, leaving the ROM area
+    // >= $4000 pages it out). With TR-DOS inactive the FDC is off the bus: the
+    // read stays undecoded, so Z80::in() serves the floating bus (the VRAM byte
+    // under the video fetch) on these odd ports instead of FDC status.
+    // Matches the original UnrealSpeccy: io.cpp gates the whole WD93 block on
+    // CF_DOSPORTS, which memory.cpp set_banks() raises exactly when CF_TRDOS
+    // is set for the Pentagon memory model.
+    if (IsBeta128Port(decodedPort) && !(_context->emulatorState.flags & CF_TRDOS))
+    {
+        decodedPort = 0x0000; // FDC not on the bus: leave the port undecoded
+        disp.wasBeta128Gated = true;
+    }
 
     if (decodedPort != 0x0000)
     {
@@ -87,9 +109,13 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
             case 0x00FE:
                 // FE port must be passed as non-decoded since keyboard handler uses it
                 result = Default_Port_FE_In(port, pc);
+                _lastPortDecoded = true;
+                disp.wasHandledInline = true;
                 break;
             case 0x7FFD:
                 result = _context->emulatorState.p7FFD;
+                _lastPortDecoded = true;
+                disp.wasHandledInline = true;
                 break;
             default:
                 // All ports registered with PortDecoder will be handled
@@ -97,24 +123,30 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
                 break;
         }
     }
+    disp.decodedPort = decodedPort;
+    disp.wasDecoded = _lastPortDecoded;
 
     /// region <Debug logging>
-
-    // Treat all FE ports as one for logging purposes
-    if ((port & 0x00FE) == 0x00FE)
-        port = 0x00FE;
-
-    // Check if port was not explicitly muted
-    if (!key_exists(_loggingMutePorts, port))
+    if (_logger && _logger->GetLevel() <= LoggerLevel::LogInfo)
     {
-        // Determine RAM/ROM page where code executed from
-        std::string currentMemoryPage = GetPCAddressLocator(pc);
-        MLOGINFO("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
+        // Treat all FE ports as one for logging purposes
+        uint16_t logPort = ((port & 0x00FE) == 0x00FE) ? 0x00FE : port;
+
+        // Check if port was not explicitly muted
+        if (!key_exists(_loggingMutePorts, logPort))
+        {
+            // Determine RAM/ROM page where code executed from
+            std::string currentMemoryPage = GetPCAddressLocator(pc);
+            MLOGINFO("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
+        }
     }
     /// endregion </Debug logging>
 
     // Universal handler for breakpoints, tracking, analyzers
-    OnPortInComplete(decodedPort, result, pc);
+    // Universal handler must receive the raw port address (as seen by the Z80),
+    // not the decoded one - otherwise port breakpoints set on raw addresses never match
+    // (e.g. IN A,($00) decodes to $00FE and would bypass a breakpoint on port $00)
+    OnPortInComplete(port, result, pc, disp);
 
     return result;
 }
@@ -125,17 +157,31 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
     /// endregion </Override submodule>
 
-    uint16_t decodedPort = decodePort(port);
+    DecodeResult decoded = decodePortEx(port);
+    uint16_t decodedPort = decoded.port;
+    PortDecodeDisposition disp;
+    disp.decodeRuleIndex = decoded.ruleIndex;
+
+    // Same TR-DOS gate as DecodePortIn: with the FDC off the bus its registers
+    // cannot be written - hardware would silently ignore the OUT
+    if (IsBeta128Port(decodedPort) && !(_context->emulatorState.flags & CF_TRDOS))
+    {
+        decodedPort = 0x0000; // FDC not on the bus: drop the write
+        disp.wasBeta128Gated = true;
+    }
 
     if (decodedPort != 0x0000)
     {
+        disp.wasDecoded = true;
         switch (decodedPort)
         {
             case 0x00FE:
                 Default_Port_FE_Out(decodedPort, value, pc);
+                disp.wasHandledInline = true;
                 break;
             case 0x7FFD:
                 Port_7FFD_Out(decodedPort, value, pc);
+                disp.wasHandledInline = true;
                 break;
             default:
                 // All ports registered with PortDecoder will be handled
@@ -143,20 +189,25 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
                 break;
         }
     }
+    disp.decodedPort = decodedPort;
 
     /// region <Debug logging>
-
-    // Check if port was not explicitly muted
-    if (!key_exists(_loggingMutePorts, decodedPort))
+    if (_logger && _logger->GetLevel() <= LoggerLevel::LogInfo)
     {
-        // Determine RAM/ROM page where code executed from
-        std::string currentMemoryPage = GetPCAddressLocator(pc);
-        MLOGINFO("[Out] [PC:%04X%s] Port: %04X; Decoded port: %04X; Value: %02X", pc, currentMemoryPage.c_str(), port, decodedPort, value);
+        // Check if port was not explicitly muted
+        if (!key_exists(_loggingMutePorts, decodedPort))
+        {
+            // Determine RAM/ROM page where code executed from
+            std::string currentMemoryPage = GetPCAddressLocator(pc);
+            MLOGINFO("[Out] [PC:%04X%s] Port: %04X; Decoded port: %04X; Value: %02X", pc, currentMemoryPage.c_str(), port, decodedPort, value);
+        }
     }
     /// endregion </Debug logging>
 
     // Universal handler for breakpoints, tracking, analyzers
-    OnPortOutComplete(decodedPort, value, pc);
+    // Must receive the raw port address (as seen by the Z80), not the decoded one,
+    // so that port breakpoints set on raw addresses match correctly
+    OnPortOutComplete(port, value, pc, disp);
 }
 
 /// Actualize port(s) state according selected RAM page
@@ -212,14 +263,13 @@ bool PortDecoder_Pentagon128::IsPort_7FFD(uint16_t port)
 {
     //    Pentagon 128K
     //    Port: #7FFD
-    //    Match pattern: 0xxxxxxx xxxxxx0x
+    //    Match pattern: 0xxxxxxx xxxxx10x (A15=0, A2=1, A1=0)
     //    Full pattern:  01111111 11111101
     //    The additional memory features of the Pentagon 128K are controlled to by writes to port 0x7ffd.
-    //    As normal on Spectrum-clones hardware, the port address is in fact only partially decoded and the hardware will respond
-    //    to any port address with bits 1 and 15 reset.
+    //    Mask includes bit2=1 to avoid conflict with SOUNDRIVE ports F1/F9 which have bit2=0.
     static const uint16_t port_7FFD_full    = 0b0111'1111'1111'1101;
-    static const uint16_t port_7FFD_mask    = 0b1000'0000'0000'0010;
-    static const uint16_t port_7FFD_match   = 0b0000'0000'0000'0000;
+    static const uint16_t port_7FFD_mask    = 0b1000'0000'0000'0110;  // A15, A2, A1
+    static const uint16_t port_7FFD_match   = 0b0000'0000'0000'0100;  // A15=0, A2=1, A1=0
 
     // Compile-time check
     static_assert((port_7FFD_full & port_7FFD_mask) == port_7FFD_match && "Mask pattern incorrect");
@@ -267,16 +317,39 @@ bool PortDecoder_Pentagon128::IsPort_FFFD(uint16_t port)
     return result;
 }
 
+/// Whether a decoded port value belongs to the Beta128 FDC register set.
+/// #1F - WD1793 status/command, #3F - track, #5F - sector, #7F - data,
+/// #FF - Beta128 system register
+bool PortDecoder_Pentagon128::IsBeta128Port(uint16_t decodedPort)
+{
+    switch (decodedPort)
+    {
+        case 0x001F:
+        case 0x003F:
+        case 0x005F:
+        case 0x007F:
+        case 0x00FF:
+            return true;
+        default:
+            return false;
+    }
+}
+
 uint16_t PortDecoder_Pentagon128::decodePort(uint16_t port)
 {
-    uint16_t result = 0x0000;
+    return decodePortEx(port).port;
+}
 
-    static constexpr PortMatch const portMasksMatches[] =
-    {
+/// Table-based decode with rule attribution: returns both the resolved port and
+/// the index of the mask/match rule that fired (for the port trace recorder)
+// Pentagon decode table. File-scope so decodePortEx() and
+// getPortTraceDecodeRules() share the single authoritative copy.
+static constexpr PortMatch const pentagonPortMasksMatches[] =
+{
         // ------- Mask ------ , ------- Match ------ . - Port -
         { 0b1100'0000'0000'0010, 0b1100'0000'0000'0000, 0xFFFD },   // AY #FFFD         Match value: (0xF000)
         { 0b1100'0000'0000'0010, 0b1000'0000'0000'0000, 0xBFFD },   // AY #BFFD         Match value: (0x8000)
-        { 0b1000'0000'0000'0010, 0b0000'0000'0000'0000, 0x7FFD },   // Mem #7FFD        Match value: (0x0000)
+        { 0b1000'0000'0000'0110, 0b0000'0000'0000'0100, 0x7FFD },   // Mem #7FFD        A15=0, A2=1, A1=0 (excludes SOUNDRIVE F1/F9)
         { 0b0000'0000'0000'0001, 0b0000'0000'0000'0000, 0x00FE },   // Sys $00FE        Match value: (0x0000)
 
         // COVOX/SOUNDRIVE ports #F1,#F3,#F9,#FB - decoded as: bits[7:4]=1111, bit2=0, bit0=1
@@ -289,28 +362,30 @@ uint16_t PortDecoder_Pentagon128::decodePort(uint16_t port)
         //{ 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x003F },   // Beta128 #003F    Match value: (131, 0x0083)
         //{ 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x005F },   // Beta128 #005F    Match value: (131, 0x0083)
         //{ 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x007F },   // Beta128 #007F    Match value: (131, 0x0083)
-    };
-    static constexpr size_t const elements = sizeof(portMasksMatches) / sizeof(PortMatch);
+};
+
+DecodeResult PortDecoder_Pentagon128::decodePortEx(uint16_t port)
+{
+    DecodeResult result;
+
+    static constexpr size_t const elements = sizeof(pentagonPortMasksMatches) / sizeof(PortMatch);
 
     /// region <Full resolving>
     bool matchResult;
     for (size_t i = 0; i < elements; i++)
     {
-        const PortMatch& item = portMasksMatches[i];
+        const PortMatch& item = pentagonPortMasksMatches[i];
         matchResult = (port & item.mask) == item.match;
         if (matchResult)
         {
-            result = item.resolvedPort;
+            result.port = item.resolvedPort;
+            result.ruleIndex = static_cast<uint8_t>(i);
             break;
         }
     }
     /// endregion </Full resolving>
 
-    if (result == 0x00FF)
-    {
-    }
-
-    if (result == 0x0000)
+    if (result.port == 0x0000)
     {
         // Simplified resolving for BDI ports 1F, 3F, 5F, 7F
         static constexpr const uint8_t portsMask  = 0b1000'0011;    // 0x83 (131)
@@ -318,11 +393,25 @@ uint16_t PortDecoder_Pentagon128::decodePort(uint16_t port)
         if ((port & portsMask) == portsMatch)
         {
             // result = (port & 0x60) | 0x1F;
-            result = (port & 0b0110'0000) | 0b0001'1111;
+            result.port = (port & 0b0110'0000) | 0b0001'1111;
+            result.ruleIndex = PortTraceRule::kBdiFallback;
         }
     }
 
     return result;
+}
+
+/// Export the decode table for self-describing port traces (the BDI #1F/#3F/#5F/#7F
+/// fallback is positional logic, not a mask rule, and is reported per event via
+/// PortTraceRule::kBdiFallback instead)
+std::vector<PortTraceDecodeRule> PortDecoder_Pentagon128::getPortTraceDecodeRules() const
+{
+    std::vector<PortTraceDecodeRule> rules;
+    for (const PortMatch& item : pentagonPortMasksMatches)
+    {
+        rules.push_back({item.mask, item.match, item.resolvedPort});
+    }
+    return rules;
 }
 
 /// endregion <Helper methods>
@@ -339,28 +428,33 @@ void PortDecoder_Pentagon128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16
     Memory& memory = *_context->pMemory;
 
     uint8_t screenNumber = (value & 0b0000'1000) >> 3;  // Bit 3: 0 = Normal (Bank 5), 1 = Shadow (Bank 7)
-    uint8_t romPage = (value & 0b0001'0000) >> 4;       // Bit 4: 0 = 128K, 1 = 48K
     bool isPagingDisabled = value & 0b0010'0000;        // Bit 5: 0 = none, 1 = blocked
+
+    // Capture previous screen selection before p7FFD is updated below
+    uint8_t prevScreenNumber = (_state->p7FFD & 0b00001000) >> 3;
+
+    // Cache out port value in state. Must happen before UpdateZ80Banks(): the bank
+    // update reads p7FFD to select the ROM/RAM pages. Cached even when locked
+    // (writes to a locked port update the cache but never remap pages)
+    state.p7FFD = value;
 
     // Disabling latch is kept until reset
     if (!_7FFD_Locked)
     {
-        romPage |= 0b0000'0010; // Pentagon has 128K/48K ROMs in pages 2 and 3, not 0 and 1. So we need make correction (add 2 or set bit 1)
-
         switchRAMPage(value);   // Separate virtual method is used to unify 128k and 512k behavior
-        memory.SetROMPage(romPage);
+
+        // Bank0 mapping is CF_TRDOS-aware (matches the original set_banks()): while a
+        // TR-DOS session is active the DOS/SYS ROM stays mapped - bit 4 only selects
+        // between them. The regular Pentagon 128K/48K ROM pair (pages 2/3) is mapped
+        // only when no TR-DOS session is active. UpdateZ80Banks() also re-arms the
+        // CF_SETDOSROM / CF_LEAVEDOS* session flags consumed by the Z80Step paging trap
+        memory.UpdateZ80Banks();
 
         _7FFD_Locked = isPagingDisabled;
     }
-    else
-    {
-        // Set 48k ROM and lock RAM page0 at 0xC000...0xFFFF address window
-        switchRAMPage(0);
-        memory.SetROMPage(3);
-    }
+    // When locked, writes to 7FFD are ignored (no else branch needed)
 
     // Detect if screen switch requested. Do not switch screen if state not changed
-    uint8_t prevScreenNumber = (_state->p7FFD & 0b00001000) >> 3;
     if (prevScreenNumber != screenNumber && _screen != nullptr)
     {
         SpectrumScreenEnum screen = screenNumber ? SCREEN_SHADOW : SCREEN_NORMAL;
@@ -370,9 +464,6 @@ void PortDecoder_Pentagon128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16
     {
         MLOGWARNING("Port_7FFD_Out: Screen pointer is null, cannot switch screen");
     }
-
-    // Cache out port value in state
-    state.p7FFD = value;
 
     /// region <Debug logging>
 

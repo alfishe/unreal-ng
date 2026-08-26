@@ -20,7 +20,8 @@ Z80OPCODE op_01(Z80 *cpu) { // ld bc,nnnn [10]
 }
 
 Z80OPCODE op_02(Z80 *cpu) { // ld (bc),a [7]
-   cpu->memh = cpu->a;
+   // MEMPTR: low byte = (BC+1) & 0xFF, high byte = A (FUSE-verified)
+   cpu->memptr = ((cpu->bc + 1) & 0xFF) | (cpu->a << 8);
    cpu->wd(cpu->bc, cpu->a);
 }
 
@@ -135,8 +136,8 @@ Z80OPCODE op_11(Z80 *cpu) { // ld de,nnnn
 }
 
 Z80OPCODE op_12(Z80 *cpu) { // ld (de),a
-//   wm(cpu->de, cpu->a);
-   cpu->memh = cpu->a;
+   // MEMPTR: low byte = (DE+1) & 0xFF, high byte = A (FUSE-verified)
+   cpu->memptr = ((cpu->de + 1) & 0xFF) | (cpu->a << 8);
    cpu->wd(cpu->de, cpu->a);
 }
 
@@ -1222,10 +1223,18 @@ Z80OPCODE op_D2(Z80 *cpu) { // jp nc,nnnn
 Z80OPCODE op_D3(Z80 *cpu) { // out (n),a
     uint16_t port = cpu->rd(cpu->pc++, true);
 
-    cputact(4);
-
     cpu->memptr = ((port + 1) & 0xFF) + (cpu->a << 8);
+
+    // IO write: Z80 IO machine cycles assert IORQ/WR one clock late - at T2 of
+    // the 4T IO cycle (T1 carries no IORQ; Z80 UM "the CPU automatically inserts
+    // one wait state" before IO). The port write must land on that T-state, not
+    // at the IO cycle entry: charging 1T first places the SetBorderColor() flush
+    // exactly at the IORQ T-state. At the cycle entry border changes render 1T
+    // (2 px) early - Pentagon updates border every 1T (MiSTer ula.sv line 185),
+    // which makes the offset clearly visible in border-synced effects.
+    cputact(1);
     cpu->out(port + (cpu->a << 8), cpu->a);
+    cputact(3);
 }
 
 Z80OPCODE op_D4(Z80 *cpu) { // call nc,nnnn
@@ -1313,11 +1322,15 @@ Z80OPCODE op_DA(Z80 *cpu) { // jp c,nnnn
 Z80OPCODE op_DB(Z80 *cpu) { // in a,(nn)
     uint16_t port = cpu->rd(cpu->pc++, true) + (cpu->a << 8);
 
-    cpu->memptr = (cpu->a << 8) + (port + 1);
+    // MEMPTR = full port address + 1 ('port' already includes A on the high
+    // byte - adding A<<8 again double-counted it; FUSE-verified)
+    cpu->memptr = port + 1;
 
-    cputact(4);
-
+    // IO read: IORQ/RD assert at T2 of the IO cycle - sample the port there,
+    // not at the cycle entry (see op_D3).
+    cputact(1);
     cpu->a = cpu->in(port);
+    cputact(3);
 }
 
 Z80OPCODE op_DC(Z80 *cpu) { // call c,nnnn
@@ -1394,8 +1407,9 @@ Z80OPCODE op_E3(Z80 *cpu) { // ex (sp),hl
 
     cputact(1);
 
-    cpu->wd(cpu->sp, cpu->l);
+    // Real Z80 write order: high byte (SP+1) first, then low (SP) - FUSE-verified
     cpu->wd(cpu->sp + 1, cpu->h);
+    cpu->wd(cpu->sp, cpu->l);
 
     cpu->memptr = value;
 

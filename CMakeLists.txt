@@ -15,6 +15,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ToolchainDetection.cmake)
 option(TESTS "Enable tests" ON)
 option(BENCHMARKS "Enable benchmarks" ON)
 option(BUILD_QT_APPS "Build Qt-based applications (unreal-qt, unreal-screen-viewer)" ON)
+option(BUILD_POC "Build PoC research tools (codec comparison etc.)" OFF)
 
 # Automation options (enabled by default for full builds)
 option(ENABLE_AUTOMATION "Enable automation features (Lua, Python, WebAPI, CLI)" ON)
@@ -22,6 +23,7 @@ option(ENABLE_LUA_AUTOMATION "Enable Lua automation" ON)
 option(ENABLE_PYTHON_AUTOMATION "Enable Python automation" OFF)
 option(ENABLE_WEBAPI_AUTOMATION "Enable WebAPI automation" ON)
 option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
+option(ENABLE_GDB_AUTOMATION "Enable GDB RSP server automation (GDB TDD G1+)" OFF)
 
 # Recording support (audio/video capture) - must be defined here to ensure consistent
 # struct layout (EmulatorContext) across all compilation units
@@ -258,6 +260,23 @@ if (BUILD_QT_APPS)
 endif ()
 
 # ========================================
+# zstd (embedded source; no network dependency)
+# ========================================
+# zstd v1.5.7 source is embedded at core/src/3rdparty/zstd/lib/ (70
+# files from the official release tarball, checked into the repo). The
+# add_subdirectory() call inside core/src/CMakeLists.txt compiles those
+# sources directly into libzstd_static and exposes the `zstd::libzstd`
+# alias target that the rest of the build links against.
+#
+# Why embed source instead of FetchContent / find_package(zstd REQUIRED):
+# see core/src/3rdparty/zstd/README.md. Short version:
+#   - No network at configure time (works on air-gapped CI).
+#   - Exact code that ships is auditable in `git log` / `git blame`.
+#   - No host prerequisite (`brew install zstd` not needed).
+#   - TTD codec depends on zstd at the .ttd on-disk format protocol
+#     level, so a known-pinned version is required.
+
+# ========================================
 # Core Library
 # ========================================
 message(STATUS ">>> Building core library")
@@ -310,6 +329,16 @@ if (BENCHMARKS)
 endif (BENCHMARKS)
 
 # ========================================
+# PoC research tools (opt-in)
+# ========================================
+# Off by default — these are research/diagnostic binaries, not production.
+# Enable with -DBUILD_POC=ON. Each tool lives under tools/poc/<name>/.
+if (BUILD_POC)
+	message(STATUS ">>> Building PoC research tools")
+	add_subdirectory(tools/poc)
+endif (BUILD_POC)
+
+# ========================================
 # Summary
 # ========================================
 message(STATUS "")
@@ -317,12 +346,14 @@ message(STATUS "========== Unreal-NG Build Configuration ==========")
 message(STATUS "  BUILD_QT_APPS:              ${BUILD_QT_APPS}")
 message(STATUS "  TESTS:                      ${TESTS}")
 message(STATUS "  BENCHMARKS:                 ${BENCHMARKS}")
+message(STATUS "  BUILD_POC:                  ${BUILD_POC}")
 message(STATUS "  ENABLE_AUTOMATION:          ${ENABLE_AUTOMATION}")
 if (ENABLE_AUTOMATION)
     message(STATUS "    ENABLE_LUA_AUTOMATION:    ${ENABLE_LUA_AUTOMATION}")
     message(STATUS "    ENABLE_PYTHON_AUTOMATION: ${ENABLE_PYTHON_AUTOMATION}")
     message(STATUS "    ENABLE_WEBAPI_AUTOMATION: ${ENABLE_WEBAPI_AUTOMATION}")
     message(STATUS "    ENABLE_CLI_AUTOMATION:    ${ENABLE_CLI_AUTOMATION}")
+    message(STATUS "    ENABLE_GDB_AUTOMATION:    ${ENABLE_GDB_AUTOMATION}")
 endif ()
 message(STATUS "====================================================")
 
@@ -332,7 +363,7 @@ message(STATUS "====================================================")
 if (BUILD_QT_APPS)
     # Shared resource paths
     set(DATA_PATH "${CMAKE_CURRENT_SOURCE_DIR}/data")
-    set(CONFIG_FILE "${DATA_PATH}/configs/pentagon512k/unreal.ini")
+    set(CONFIGS_DIR "${DATA_PATH}/configs")
     set(SUITE_STAGING_DIR "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite")
     
     # macOS: Combined DMG with all apps
@@ -359,15 +390,15 @@ if (BUILD_QT_APPS)
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
-            COMMAND ${CMAKE_COMMAND} -E copy "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.ini"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/configs"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/rom"
-            COMMAND ${CMAKE_COMMAND} -E copy "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/unreal.ini"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/configs"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/rom"
-            COMMAND ${CMAKE_COMMAND} -E copy "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/unreal.ini"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/configs"
             
             # Copy shared icon to bundles that reference it
             COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/unreal-qt/install/macos/unreal.icns" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.icns"
@@ -434,9 +465,9 @@ if (BUILD_QT_APPS)
                 "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/rom"
-            COMMAND ${CMAKE_COMMAND} -E copy
-                "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/unreal.ini"
-            
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/configs"
+
             # Create ZIP archive (change to parent dir to avoid nested paths)
             COMMAND ${CMAKE_COMMAND} -E chdir "${CMAKE_BINARY_DIR}/packages"
                 ${CMAKE_COMMAND} -E tar "cf"
@@ -528,9 +559,9 @@ if (BUILD_QT_APPS)
                 "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/rom"
-            COMMAND ${CMAKE_COMMAND} -E copy
-                "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/unreal.ini"
-            
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/configs"
+
             # Create tarball
             COMMAND ${CMAKE_COMMAND} -E tar "cfz"
                 "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite-Linux.tar.gz"

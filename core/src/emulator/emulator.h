@@ -15,11 +15,11 @@
 #include "base/featuremanager.h"
 #include "common/autoresetevent.h"
 #include "common/uuid.h"
-using unreal::UUID;  // Explicitly bring into scope to avoid Windows GUID typedef collision
 #include "corestate.h"
 #include "cpu/z80.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "emulator/config.h"
+#include "emulator/video/screen.h"  // For DisplayViewport
 #include "emulator/cpu/core.h"
 #include "emulator/mainloop.h"
 #include "emulatorcontext.h"
@@ -63,7 +63,7 @@ protected:
     /// region <Fields>
 protected:
     // Emulator identity
-    UUID _uuid;                                           // Auto-generated UUID
+    unreal::UUID _uuid;                                           // Auto-generated UUID
     std::string _emulatorId;                              // Symbolic representation  of the UUID
     std::string _symbolicId;                              // Optional user-provided symbolic ID
     std::chrono::system_clock::time_point _createdAt;     // When instance was created
@@ -78,6 +78,14 @@ protected:
 
     LoggerLevel _loggerLevel = LoggerLevel::LogTrace;
     EmulatorContext* _context = nullptr;
+
+    // Programmatically-requested machine model (CreateEmulatorWithModel):
+    // applied by Init() right after config load, overriding the INI's
+    // HIMEM/RamSize selection before any model-dependent subsystem initializes
+    bool _hasPreferredModel = false;
+    MEM_MODEL _preferredModel = MM_PENTAGON;
+    uint32_t _preferredRamSize = 0;
+    std::string _customConfigPath;  // Optional custom config file path
 
     Config* _config = nullptr;
     Core* _core = nullptr;
@@ -123,6 +131,23 @@ private:
 
 public:
     // Initialization operations
+    /// Request a specific machine model (applied during Init() right after
+    /// config load, overriding the INI's HIMEM/RamSize). Must be called
+    /// before Init(). Lifecycle intent lives here, not in CONFIG.
+    void SetPreferredModel(MEM_MODEL model, uint32_t ramSize)
+    {
+        _preferredModel = model;
+        _preferredRamSize = ramSize;
+        _hasPreferredModel = true;
+    }
+
+    /// Set a custom config file path. Must be called before Init().
+    /// If set, this path is used instead of the default config search.
+    void SetCustomConfigPath(const std::string& path)
+    {
+        _customConfigPath = path;
+    }
+
     [[nodiscard]] bool Init();
     void Release();
 
@@ -133,7 +158,7 @@ public:
     std::string GetUptimeString() const;
 
     // ID management
-    UUID GetUUID() const;
+    unreal::UUID GetUUID() const;
     std::string GetSymbolicId() const;
     void SetSymbolicId(const std::string& symbolicId);
 
@@ -156,8 +181,25 @@ public:
     DebugManager* GetDebugManager();
     BreakpointManager* GetBreakpointManager();
     FramebufferDescriptor GetFramebuffer();
-    void SetAudioCallback(void* obj, AudioCallback callback);
+    /// @param occupancyFrames Optional ring-occupancy cell (stereo frames)
+    ///        owned by the caller; enables the DRC rate controller
+    /// @param deviceDescriptor Optional full device/ring descriptor
+    ///        (audiodevicedescriptor.h) for realtime monitoring; owned by the
+    ///        caller and must outlive the registration
+    void SetAudioCallback(void* obj, AudioCallback callback,
+                          const std::atomic<uint32_t>* occupancyFrames = nullptr,
+                          const AudioDeviceDescriptor* deviceDescriptor = nullptr);
+
+    /// Report the attached audio device's native sample rate (0 = core rate).
+    /// The DRC resampler converts core->device at this base ratio. With
+    /// [SOUND] CoreRate=auto, a rate CHANGE (device hotplug/reroute) also
+    /// requests a full sound-pipeline re-rate: all digital filters re-derive
+    /// for the new core rate at the next frame boundary.
+    void SetAudioDeviceSampleRate(uint32_t rate);
     void ClearAudioCallback();
+
+    /// Realtime device/ring monitoring state (nullptr = no device attached)
+    const AudioDeviceDescriptor* GetAudioDeviceDescriptor() const;
 
     // Emulator control cycle
     void Reset();
@@ -166,6 +208,12 @@ public:
     void Pause(bool broadcast = true);   // broadcast=false for internal operations (won't trigger UI updates)
     void Resume(bool broadcast = true);  // broadcast=false for internal operations (won't trigger UI updates)
     void WaitWhilePaused();              // Block until resumed (used by breakpoint handlers)
+    /// Block until the Z80 thread has actually parked in response to a prior Pause().
+    /// Returns true on confirmation, false on timeout. Callers that mutate emulator
+    /// state (TTD seek/step, snapshot restore, memory patches) MUST call this between
+    /// Pause() and the mutation to close the race in which the in-flight frame loop
+    /// overwrites the freshly written state. See MainLoop::WaitForPauseConfirmation.
+    bool WaitForPauseConfirmation(uint32_t timeout_ms = 1000);
     void Stop();
 
     // File format operations
@@ -199,6 +247,22 @@ public:
     // Debug methods
     void DebugOn();
     void DebugOff();
+
+    // Video mode methods
+    /// @brief Enable/disable Pentagon overscan mode (384x304 with extra border)
+    /// @param enable true to enable overscan, false for standard 352x288
+    /// @return true if mode changed, false if model doesn't support overscan
+    bool SetOverscanMode(bool enable);
+
+    /// @brief Check if currently in overscan mode
+    bool IsOverscanMode() const;
+
+    /// @brief Set display viewport for cropping framebuffer
+    /// Only meaningful in overscan mode (M_P384)
+    void SetDisplayViewport(const DisplayViewport& viewport);
+
+    /// @brief Get current display viewport
+    const DisplayViewport& GetDisplayViewport() const;
 
     Z80State* GetZ80State();
 

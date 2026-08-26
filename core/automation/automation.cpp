@@ -22,6 +22,10 @@
 #include "cli/include/automation-cli.h"
 #endif
 
+#include "3rdparty/message-center/messagecenter.h"
+#include "emulator/notifications.h"
+#include "emulator/platform.h"
+
 /// region <Singleton management>
 
 Automation& Automation::GetInstance()
@@ -80,6 +84,39 @@ void Automation::stop()
 #if ENABLE_CLI_AUTOMATION
     stopCLI();
 #endif
+}
+
+std::string Automation::getEmulatorIdOrFirst(const std::string& providedId)
+{
+    if (!providedId.empty()) {
+        return providedId;
+    }
+    
+    EmulatorManager* mgr = EmulatorManager::GetInstance();
+    if (!mgr) return "";
+    
+    std::vector<std::string> uuids = mgr->GetEmulatorIds();
+    if (!uuids.empty()) {
+        return uuids.front();
+    }
+    
+    return "";
+}
+
+bool Automation::SetVideowallSingleSyncMode(bool enable, const std::string& emulatorId)
+{
+    std::string targetId = enable ? getEmulatorIdOrFirst(emulatorId) : "";
+    if (enable && targetId.empty())
+    {
+        std::cerr << "Cannot enable single sync mode: no emulator found." << std::endl;
+        return false;
+    }
+    
+    // Post to message center - VideoWallWindow listens for this
+    auto* payload = new VideowallSyncModePayload(targetId, enable);
+    MessageCenter::DefaultMessageCenter().Post(NC_VIDEOWALL_SINGLE_SYNC_MODE, payload);
+    
+    return true;
 }
 
 /// endregion </Methods>

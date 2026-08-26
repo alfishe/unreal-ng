@@ -69,7 +69,7 @@ static const char* sigCodeName(int sig, int code)
 // All output goes through write() — async-signal-safe, bypasses all loggers.
 static void writeErr(const char* msg)
 {
-    write(STDERR_FILENO, msg, strlen(msg));
+    (void)write(STDERR_FILENO, msg, strlen(msg));
 }
 
 static void writeRegisters(ucontext_t* uc, char* buf, size_t bufSize)

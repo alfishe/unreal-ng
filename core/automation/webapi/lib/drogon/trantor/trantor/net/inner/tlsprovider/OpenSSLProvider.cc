@@ -22,6 +22,9 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <wincrypt.h>
+#undef X509_NAME
+#undef X509_CERT_PAIR
+#undef X509_EXTENSIONS
 #endif
 
 using namespace trantor;

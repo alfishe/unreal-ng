@@ -11,13 +11,53 @@
 
 /// region <Constructors / Destructors>
 
+std::atomic<uint32_t> SoundManager::_defaultDeviceSampleRate{0};
+
+/// Resolve the core audio rate from [SOUND] CoreRate (multirate plan phase 6).
+/// Explicit supported rates pass through (validated at config load); auto (0)
+/// matches the audio device's native rate when known and supported, else
+/// falls back to 44100. The device rate comes from the per-emulator cell if
+/// the frontend already bound this emulator, otherwise from the process-wide
+/// default published at audio device init (the usual case: emulators are
+/// constructed BEFORE the frontend binds audio to them).
+size_t SoundManager::resolveCoreRate() const
+{
+    const unsigned configured = _context->config.sound.coreRate;
+    if (configured != 0)
+        return configured;
+
+    uint32_t devRate = _context->pAudioDeviceSampleRate.load(std::memory_order_relaxed);
+    if (devRate == 0)
+        devRate = _defaultDeviceSampleRate.load(std::memory_order_acquire);
+
+    switch (devRate)
+    {
+        case 44100:
+        case 48000:
+        case 88200:
+        case 96000:
+        case 176400:
+        case 192000:
+            return devRate;
+        default:
+            return CORE_SAMPLING_RATE;
+    }
+}
+
 SoundManager::SoundManager(EmulatorContext* context)
 {
     _context = context;
     _logger = context->pModuleLogger;
 
-    _beeper = new Beeper(_context, CPU_CLOCK_RATE, AUDIO_SAMPLING_RATE);
+    _coreRate = resolveCoreRate();
+    if (_coreRate != CORE_SAMPLING_RATE)
+    {
+        LOGINFO("SoundManager: core audio rate %zu Hz", _coreRate);
+    }
+
+    _beeper = new Beeper(_context, CPU_CLOCK_RATE, _coreRate, _beeperBuffer);
     _turboSound = new SoundChip_TurboSound(_context);
+    _turboSound->setCoreRate(_coreRate);
 
     // Build the device registry based on what this machine has
     // Beeper is always present
@@ -33,20 +73,20 @@ SoundManager::SoundManager(EmulatorContext* context)
     // Covox if config flag is set (Pentagon/Scorpion style)
     if (_context->config.sound.covoxFB)
     {
-        _covox = new Covox(_context);
+        _covox = new Covox(_context, _coreRate);
         _devices.push_back({AudioSourceType::COVOX, "COVOX", false, false, 1.0f, 0.0f, false});
     }
 
     // Initialize AY character chains (one per TurboSound chip for independent DSP state)
     // - ChipType::AY uses shorter delay and no LP (preserves square wave harmonics)
     // - Punch: AY preset (gentler - square waves already have rich harmonics)
-    _ayChain0.setup(AUDIO_SAMPLING_RATE);
+    _ayChain0.setup(_coreRate);
     _ayChain0.setChipType(AudioCharacterChain::ChipType::AY);
     _ayChain0.setPunchPreset(AudioCharacterChain::PunchPreset::AY);
     _ayChain0.setPunchEnabled(true);
     _ayChain0.setRoomMode(AudioCharacterChain::RoomMode::Off);
 
-    _ayChain1.setup(AUDIO_SAMPLING_RATE);
+    _ayChain1.setup(_coreRate);
     _ayChain1.setChipType(AudioCharacterChain::ChipType::AY);
     _ayChain1.setPunchPreset(AudioCharacterChain::PunchPreset::AY);
     _ayChain1.setPunchEnabled(true);
@@ -55,10 +95,10 @@ SoundManager::SoundManager(EmulatorContext* context)
     // Initialize beeper character chain
     // - ChipType::AY (no LP) - beeper is also square waves, LP kills brightness
     // - Punch: Beeper preset (stronger - 1-bit audio needs attack definition)
-    _beeperChain.setup(AUDIO_SAMPLING_RATE);
+    _beeperChain.setup(_coreRate);
     _beeperChain.setChipType(AudioCharacterChain::ChipType::AY);
     _beeperChain.setPunchPreset(AudioCharacterChain::PunchPreset::Beeper);
-    _beeperChain.setPunchEnabled(true);
+    _beeperChain.setPunchEnabled(false);
     _beeperChain.setRoomMode(AudioCharacterChain::RoomMode::Off);
 }
 
@@ -95,18 +135,9 @@ void SoundManager::reset()
     std::fill(_beeperBuffer, _beeperBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
     std::fill(_outBuffer, _outBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
 
-    // Reset sound rendering state
-    _prevFrane = 0;
-    _prevFrameTState = 0;
-    _prevLeftValue = 0;
-    _prevRightValue = 0;
-
-    // Reset beeper lowpass filter state
-    _beeperLp1L = _beeperLp2L = 0.0f;
-    _beeperLp1R = _beeperLp2R = 0.0f;
-
-    // Reset audio buffer write counter
-    _audioBufferWrites = 0;
+    // Restart the exact sample accumulator (machine change / hard reset /
+    // snapshot load all route through reset())
+    _sampleAccumulator = 0;
 
     // New wave file
     // closeWaveFile();
@@ -134,70 +165,15 @@ Beeper& SoundManager::getBeeper()
     return *_beeper;
 }
 
-void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
+/// Compatibility shim for tape audio.
+/// Routes the amplitude into the beeper's blip_buf at the given T-state position.
+/// This preserves backward compatibility with Tape::handlePortOut() which
+/// calls updateDAC() with pre-filtered samples.
+void SoundManager::updateDAC(uint32_t frameTState, int16_t left, [[maybe_unused]] int16_t right)
 {
-    CONFIG& config = _context->config;
-
-    // We're transitioned to new frame
-    if (_prevFrameTState > frameTState && _prevFrameTState >= config.frame)
-    {
-        _prevFrameTState -= config.frame;
-    }
-
-    [[maybe_unused]] int32_t deltaTime = (frameTState - _prevFrameTState) % config.frame;
-
-    /*
-    const double ratio = (double)config.frame / (double)SAMPLES_PER_FRAME;
-
-    size_t prevIndex = (floor)((double)_prevFrameTState / ratio);
-    size_t sampleIndex = (floor)((double)frameTState / ratio);
-    */
-
-    uint32_t scaledFrame = config.frame * _context->emulatorState.current_z80_frequency_multiplier;
-
-    size_t prevIndex = (_prevFrameTState * SAMPLES_PER_FRAME) / scaledFrame;
-    size_t sampleIndex = (frameTState * SAMPLES_PER_FRAME) / scaledFrame;
-
-    // region <If we're over frame duration>
-    if (prevIndex >= 882)
-    {
-        _prevFrameTState = frameTState;
-        return;
-    }
-
-    if (sampleIndex >= 882)
-        sampleIndex = 881;
-    // endregion <If we're over frame duration>
-
-    // Fill the gap between previous call and current
-    if (sampleIndex > prevIndex)
-    {
-        for (size_t i = prevIndex; i < sampleIndex && i < _beeperAudioDescriptor.memoryBufferSizeInBytes / 2; i++)
-        {
-            _beeperBuffer[i * 2] = _prevLeftValue;
-            _beeperBuffer[i * 2 + 1] = _prevRightValue;
-        }
-    }
-    else
-    {
-        // Audio callback not active - this emulator doesn't have audio device access
-        // This is normal for headless emulators or emulators that lost audio device ownership
-    }
-
-    // Render current samples
-    if (sampleIndex != prevIndex)
-    {
-        _beeperBuffer[sampleIndex * 2] = left;
-        _beeperBuffer[sampleIndex * 2 + 1] = right;
-    }
-
-    _audioBufferWrites++;
-
-    // Remember timestamp and channel values
-    _prevLeftValue = left;
-    _prevRightValue = right;
-    _prevFrameTState = frameTState;
-    _prevFrane = _context->emulatorState.frame_counter;
+    // Feed the averaged mono amplitude into the beeper's blip_buf.
+    // Tape output is mono (left == right), so we use left as the amplitude.
+    _beeper->handleTapeAudio(static_cast<int32_t>(left), frameTState);
 }
 
 // TurboSound/AY chip access for debugging
@@ -297,13 +273,104 @@ void SoundManager::setBeeperVolume(double volume)
 /// endregion </Methods>
 
 /// region <Emulation events>
+void SoundManager::requestCoreRate(uint32_t rate)
+{
+    switch (rate)
+    {
+        case 44100:
+        case 48000:
+        case 88200:
+        case 96000:
+        case 176400:
+        case 192000:
+            break;
+        default:
+            LOGWARNING("SoundManager::requestCoreRate: unsupported rate %u ignored", rate);
+            return;
+    }
+
+    if (rate == _coreRate)
+        return;
+
+    _pendingCoreRate.store(rate, std::memory_order_release);
+}
+
+/// Re-derive the whole audio pipeline for a new core rate. Emulation thread
+/// only (frame boundary): no consumer touches DSP state here - the device
+/// callback only reads the ring buffer downstream of the DRC resampler.
+void SoundManager::applyCoreRate(size_t rate)
+{
+    const size_t oldRate = _coreRate;
+    _coreRate = rate;
+
+    // Band-limited synthesis resamplers (T-state -> core rate)
+    _beeper->setSampleRate(rate);
+    if (_covox)
+        _covox->setSampleRate(rate);
+
+    // AY: sample PLL increment, decimation ratios, anti-alias FIR redesign
+    _turboSound->setCoreRate(rate);
+
+    // Character chains: re-derive envelope/room/punch coefficients for the
+    // new rate (setup preserves chip type and presets; resets DSP state)
+    _ayChain0.setup(rate);
+    _ayChain1.setup(rate);
+    _beeperChain.setup(rate);
+
+    // Restart the exact sample accumulator - its residue is in old-rate units
+    _sampleAccumulator = 0;
+
+    // Recording must stamp future captures with the new rate (applyCoreRate
+    // is never reached while a recording is active - see handleFrameStart)
+#ifdef ENABLE_RECORDING
+    if (_context->pRecordingManager)
+    {
+        _context->pRecordingManager->SetAudioSampleRate(static_cast<uint32_t>(rate));
+    }
+#endif  // ENABLE_RECORDING
+
+    LOGINFO("SoundManager: core audio rate re-established %zu -> %zu Hz (all filters re-derived)",
+            oldRate, rate);
+}
+
 void SoundManager::handleFrameStart()
 {
+    // Apply a pending live core-rate change at the frame boundary (the
+    // emulation thread owns all DSP state here). Deferred while a recording
+    // is in progress - a recording must keep one rate end to end.
+    const uint32_t pending = _pendingCoreRate.load(std::memory_order_acquire);
+    if (pending != 0)
+    {
+#ifdef ENABLE_RECORDING
+        const bool recording = _context->pRecordingManager && _context->pRecordingManager->IsRecording();
+#else
+        const bool recording = false;
+#endif  // ENABLE_RECORDING
+        if (recording)
+        {
+            if (!_pendingRateLoggedWhileRecording)
+            {
+                LOGINFO("SoundManager: core-rate change to %u Hz deferred until recording stops", pending);
+                _pendingRateLoggedWhileRecording = true;
+            }
+        }
+        else
+        {
+            _pendingCoreRate.store(0, std::memory_order_release);
+            _pendingRateLoggedWhileRecording = false;
+            if (pending != _coreRate)
+                applyCoreRate(pending);
+        }
+    }
+
     _turboSound->handleFrameStart();
     if (_covox)
         _covox->handleFrameStart();
 
-    // Initialize render buffers
+    // Beeper starts its frame (blip_buf ready to receive deltas)
+    _beeper->handleFrameStart();
+
+    // Clear the beeper output buffer (will be filled by handleFrameEnd)
     memset(_beeperBuffer, 0x00, _beeperAudioDescriptor.memoryBufferSizeInBytes);
 }
 
@@ -318,6 +385,47 @@ void SoundManager::handleStep()
 
 void SoundManager::handleFrameEnd()
 {
+    /// region <Determine actual samples for this frame>
+    // Per-frame sample count derives from the machine's frame length, NOT the
+    // 50 Hz SAMPLES_PER_FRAME constant: Pentagon (71680 t-states, 48.83 fps)
+    // produces 903.168 samples/frame, ZX48/128 produces 880.5888.
+    //
+    // Exact integer accumulator (audio-sync design, Fix 1): the fractional
+    // part is CARRIED, not rounded away. Rounding emitted a systematic rate
+    // bias (-0.019% Pentagon / +0.047% ZX48) - the dominant source of both
+    // realtime ring drift and audio-behind-video drift in recordings. With
+    // the carry, the sequence is exactly periodic (903,903,...,904 with
+    // period 125 on Pentagon@44.1k) and drift-free by construction.
+    size_t samplesThisFrame = SAMPLES_PER_FRAME;
+    uint32_t frameDuration = 0;
+    {
+        CONFIG& config = _context->config;
+        uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
+        frameDuration = config.frame * speedMultiplier;
+
+        if (frameDuration > 0)
+        {
+            _sampleAccumulator += static_cast<uint64_t>(frameDuration) * _coreRate;
+            samplesThisFrame = static_cast<size_t>(_sampleAccumulator / CPU_CLOCK_RATE);
+            _sampleAccumulator %= CPU_CLOCK_RATE;
+
+            // Overflow guard: buffers are sized MAX_SAMPLES_PER_FRAME (speed
+            // multiplier >= 3 exceeds it). Drop the excess KNOWINGLY - turbo
+            // has no realtime constraint; a silent overrun would be worse.
+            if (samplesThisFrame > MAX_SAMPLES_PER_FRAME)
+            {
+                if ((_accumulatorClampCount++ % 256) == 0)
+                {
+                    LOGWARNING("SoundManager: samplesThisFrame %zu clamped to %d (speed multiplier %u)",
+                                samplesThisFrame, MAX_SAMPLES_PER_FRAME, speedMultiplier);
+                }
+                samplesThisFrame = MAX_SAMPLES_PER_FRAME;
+                _sampleAccumulator = 0;
+            }
+        }
+    }
+    /// endregion </Determine actual samples for this frame>
+
     /// region <Process AY through its character chain>
     // AY chain: gentler punch (square waves already have harmonics)
     // Room uses no LP to preserve brightness
@@ -327,44 +435,52 @@ void SoundManager::handleFrameEnd()
         int16_t* chip0Buf = _turboSound->getChipBuffer(0);
         int16_t* chip1Buf = _turboSound->getChipBuffer(1);
         if (chip0Buf)
-            _ayChain0.processInt16(chip0Buf, SAMPLES_PER_FRAME);
+            _ayChain0.processInt16(chip0Buf, samplesThisFrame);
         if (chip1Buf)
-            _ayChain1.processInt16(chip1Buf, SAMPLES_PER_FRAME);
+            _ayChain1.processInt16(chip1Buf, samplesThisFrame);
     }
     /// endregion </Process AY>
 
     /// region <Process beeper>
-    // Optional 2-pole lowpass @ 16kHz - removes ultrasonic harshness, preserves music
-    if (_beeperFilterEnabled)
+    // Finalize the beeper's blip_buf frame — produces band-limited output
+    _beeper->handleFrameEnd(frameDuration);
+
+    // Cross-check blip's internal fractional accumulator against ours. Both
+    // are driven by the same clock ratio and stay in lockstep; >1 sample
+    // divergence indicates an accumulator reset bug (logged, not asserted -
+    // snapshot load / multiplier changes may legitimately differ for 1 frame)
     {
-        constexpr float toFloat = 1.0f / 32768.0f;
-        constexpr float toInt16 = 32767.0f;
-
-        for (int i = 0; i < SAMPLES_PER_FRAME; i++)
+        int blipRead = _beeper->getLastSamplesRead();
+        int diff = blipRead - static_cast<int>(samplesThisFrame);
+        if (diff > 1 || diff < -1)
         {
-            float left = _beeperBuffer[i * 2] * toFloat;
-            float right = _beeperBuffer[i * 2 + 1] * toFloat;
+            if ((_blipMismatchCount++ % 256) == 0)
+            {
+                LOGWARNING("SoundManager: blip delivered %d samples, accumulator expects %zu", blipRead,
+                            samplesThisFrame);
+            }
+        }
 
-            // Two cascaded 1-pole = 2-pole with -12dB/octave rolloff
-            _beeperLp1L += BEEPER_LP_COEF * (left - _beeperLp1L);
-            _beeperLp2L += BEEPER_LP_COEF * (_beeperLp1L - _beeperLp2L);
-
-            _beeperLp1R += BEEPER_LP_COEF * (right - _beeperLp1R);
-            _beeperLp2R += BEEPER_LP_COEF * (_beeperLp1R - _beeperLp2R);
-
-            _beeperBuffer[i * 2] = static_cast<int16_t>(std::clamp(_beeperLp2L * toInt16, -32768.0f, 32767.0f));
-            _beeperBuffer[i * 2 + 1] = static_cast<int16_t>(std::clamp(_beeperLp2R * toInt16, -32768.0f, 32767.0f));
+        // Pad shortfall with the last delivered value so the mixer never
+        // consumes a stale tail (blip can be 1 short right after a reset)
+        if (blipRead >= 1 && static_cast<size_t>(blipRead) < samplesThisFrame)
+        {
+            for (size_t i = blipRead; i < samplesThisFrame; i++)
+            {
+                _beeperBuffer[i * 2] = _beeperBuffer[(blipRead - 1) * 2];
+                _beeperBuffer[i * 2 + 1] = _beeperBuffer[(blipRead - 1) * 2 + 1];
+            }
         }
     }
 
-    // Beeper chain: stronger punch for 1-bit synths (digidrums, PWM synths)
-    _beeperChain.processInt16(_beeperBuffer, SAMPLES_PER_FRAME);
+    // Beeper chain: operates on alias-free blip_buf output
+    _beeperChain.processInt16(_beeperBuffer, samplesThisFrame);
     /// endregion </Process beeper>
 
     /// region <Registry-driven mixing with mute/solo/volume + peak calculation>
     // Finalize Covox frame (DC removal etc.) before mixing
     if (_covox)
-        _covox->handleFrameEnd();
+        _covox->handleFrameEnd(samplesThisFrame);
 
     // Determine if any device has solo active
     bool soloActive = false;
@@ -378,7 +494,7 @@ void SoundManager::handleFrameEnd()
     }
 
     // Clear output buffer before mixing
-    memset(_outBuffer, 0, SAMPLES_PER_FRAME * AUDIO_CHANNELS * sizeof(int16_t));
+    memset(_outBuffer, 0, samplesThisFrame * AUDIO_CHANNELS * sizeof(int16_t));
 
     // Mix each device according to audibility rules and compute peaks
     for (auto& d : _devices)
@@ -412,7 +528,7 @@ void SoundManager::handleFrameEnd()
 
         // Compute peak and activity (always, even if muted — for UI meters)
         float peak = 0.0f;
-        for (size_t i = 0; i < SAMPLES_PER_FRAME * AUDIO_CHANNELS; i++)
+        for (size_t i = 0; i < samplesThisFrame * AUDIO_CHANNELS; i++)
         {
             float absVal = std::abs(static_cast<float>(srcBuffer[i])) / 32768.0f;
             if (absVal > peak)
@@ -425,7 +541,7 @@ void SoundManager::handleFrameEnd()
         if (audible && d.volume > 0.0f)
         {
             float vol = d.volume;
-            for (size_t i = 0; i < SAMPLES_PER_FRAME * AUDIO_CHANNELS; i++)
+            for (size_t i = 0; i < samplesThisFrame * AUDIO_CHANNELS; i++)
             {
                 int32_t mixed = _outBuffer[i] + static_cast<int32_t>(srcBuffer[i] * vol);
                 // Saturating add
@@ -440,7 +556,7 @@ void SoundManager::handleFrameEnd()
     // This ensures recordings get the actual audio, not silence
     if (_context->pRecordingManager && _context->pRecordingManager->IsRecording())
     {
-        _context->pRecordingManager->CaptureAudio(_outBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
+        _context->pRecordingManager->CaptureAudio(_outBuffer, samplesThisFrame * AUDIO_CHANNELS);
     }
 #endif
 
@@ -459,12 +575,23 @@ void SoundManager::handleFrameEnd()
         if (_feature_sound_enabled && _mute)
         {
             // Zero out the buffer (silence)
-            memset(_outBuffer, 0, SAMPLES_PER_FRAME * AUDIO_CHANNELS * sizeof(int16_t));
+            memset(_outBuffer, 0, samplesThisFrame * AUDIO_CHANNELS * sizeof(int16_t));
         }
+
+        // DRC rate control (audio-sync design, Fix 2): trim the resample
+        // ratio from ring occupancy, once per frame
+        updateDrcControl();
+
+        // DRC resampler stage. Sits AFTER the recording tap above - recording
+        // always receives the pure CORE_RATE stream - and BEFORE the device
+        // callback. At unity ratio (controller disengaged) this is a
+        // bit-exact memcpy bypass.
+        size_t deviceFrames =
+            _drcResampler.process(_outBuffer, samplesThisFrame, _deviceBuffer, DEVICE_BUFFER_FRAMES);
 
         try
         {
-            callback(obj, _outBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
+            callback(obj, _deviceBuffer, deviceFrames * AUDIO_CHANNELS);
         }
         catch (const std::exception& e)
         {
@@ -477,6 +604,46 @@ void SoundManager::handleFrameEnd()
             LOGERROR("SoundManager::handleFrameEnd - Audio callback failed with unknown exception\n");
         }
     }
+}
+
+/// DRC PI controller (audio-sync design 5.1): holds ring occupancy at
+/// DRC_TARGET_MS by trimming the resample ratio within +-0.5%. Ring
+/// occupancy IS the A/V offset, so this defines and stabilizes lip-sync.
+/// Sign: ring too full => producing faster than the DAC consumes => emit
+/// fewer output samples per input sample => negative trim.
+void SoundManager::updateDrcControl()
+{
+    const std::atomic<uint32_t>* occCell = _context->pAudioRingOccupancy.load(std::memory_order_acquire);
+    const bool engaged = occCell != nullptr && !_context->config.turbo_mode && _feature_sound_enabled;
+
+    if (!engaged)
+    {
+        _drcResampler.setRatio(1.0);
+        _drcErrIntegral = 0.0;
+        _drcOccFiltered = -1.0;
+        return;
+    }
+
+    // Device native rate (audio-sync Fix 3): base resample ratio dev/core;
+    // ring occupancy is measured in DEVICE-rate frames
+    const uint32_t devRateRaw = _context->pAudioDeviceSampleRate.load(std::memory_order_relaxed);
+    const double devRate = (devRateRaw == 0) ? static_cast<double>(_coreRate)
+                                             : static_cast<double>(devRateRaw);
+    const double baseRatio = devRate / static_cast<double>(_coreRate);
+
+    const double occMs = occCell->load(std::memory_order_relaxed) * 1000.0 / devRate;
+
+    if (_drcOccFiltered < 0.0)
+        _drcOccFiltered = occMs;  // Seed the EMA on first engagement
+    else
+        _drcOccFiltered += DRC_EMA_ALPHA * (occMs - _drcOccFiltered);
+
+    const double err = (_drcOccFiltered - DRC_TARGET_MS) / DRC_TARGET_MS;
+    _drcErrIntegral = std::clamp(_drcErrIntegral + err, -50.0, 50.0);  // Anti-windup
+
+    const double trim = std::clamp(-(DRC_KP * err + DRC_KI * _drcErrIntegral), -DRC_MAX_TRIM, DRC_MAX_TRIM);
+
+    _drcResampler.setRatio(baseRatio * (1.0 + trim));
 }
 
 /// @brief Update feature cache flags from FeatureManager.
@@ -545,7 +712,7 @@ bool SoundManager::openWaveFile(std::string& path)
     bool result = false;
 
     int res =
-        tinywav_open_write(&_tinyWav, AUDIO_CHANNELS, AUDIO_SAMPLING_RATE, TW_INT16, TW_INTERLEAVED, path.c_str());
+        tinywav_open_write(&_tinyWav, AUDIO_CHANNELS, (int32_t)_coreRate, TW_INT16, TW_INTERLEAVED, path.c_str());
 
     if (res == 0 && _tinyWav.file)
     {

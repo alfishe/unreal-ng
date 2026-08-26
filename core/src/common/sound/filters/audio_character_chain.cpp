@@ -1,5 +1,7 @@
 #include "audio_character_chain.h"
 
+#include <cmath>
+
 /// region <Constructors / Destructors>
 
 AudioCharacterChain::AudioCharacterChain()
@@ -14,7 +16,25 @@ AudioCharacterChain::AudioCharacterChain()
 void AudioCharacterChain::setup(double sampleRate)
 {
     _sampleRate = sampleRate;
+    deriveRateCoefficients();
     reset();
+}
+
+/// Map 44.1kHz-referenced coefficients to the actual sample rate.
+/// coeff^(44100/fs) preserves the time constant exactly:
+/// exp(-1/(tau*44100))^(44100/fs) == exp(-1/(tau*fs)).
+/// At 44.1kHz the exponent is 1 - bit-identical to the shipped behavior.
+void AudioCharacterChain::deriveRateCoefficients()
+{
+    const double ratio = 44100.0 / _sampleRate;
+
+    _releaseEff = static_cast<float>(std::pow(_release, ratio));
+    _attackEff = static_cast<float>(1.0 - std::pow(1.0 - _attack, ratio));
+    _roomLpCoefEff = static_cast<float>(1.0 - std::pow(1.0 - _roomLpCoef, ratio));
+
+    // Plan C.1: normalize the first difference so the punch tilt and the
+    // envelope input keep their 44.1kHz magnitudes at every rate
+    _diffNorm = static_cast<float>(_sampleRate / 44100.0);
 }
 
 void AudioCharacterChain::reset()
@@ -59,6 +79,8 @@ void AudioCharacterChain::setPunchPreset(PunchPreset preset)
             // Keep current values
             break;
     }
+
+    deriveRateCoefficients();
 }
 
 void AudioCharacterChain::setPunchParams(float edgeBlend, float transBoost, float attack, float release)
@@ -67,6 +89,7 @@ void AudioCharacterChain::setPunchParams(float edgeBlend, float transBoost, floa
     _transBoost = transBoost;
     _attack = attack;
     _release = release;
+    deriveRateCoefficients();
 }
 
 /// endregion </Punch Configuration>
@@ -174,6 +197,8 @@ void AudioCharacterChain::setRoomMode(RoomMode mode)
             _roomEnabled = false;
             break;
     }
+
+    deriveRateCoefficients();
 }
 
 /// endregion </Room Configuration>
@@ -224,8 +249,8 @@ void AudioCharacterChain::process(float* left, float* right, int32_t numSamples)
             float delayedR = _delayL[delayedIdx];  // L->R
 
             // Gentle lowpass (~10kHz - air absorption, not head shadow)
-            _roomLpL += _roomLpCoef * (delayedL - _roomLpL);
-            _roomLpR += _roomLpCoef * (delayedR - _roomLpR);
+            _roomLpL += _roomLpCoefEff * (delayedL - _roomLpL);
+            _roomLpR += _roomLpCoefEff * (delayedR - _roomLpR);
 
             // Mix
             outL += _roomLpL * _roomLevel;
@@ -257,13 +282,14 @@ void AudioCharacterChain::processInt16(int16_t* buffer, int32_t numSamples)
         // Punch enhancement
         if (_punchEnabled)
         {
-            float diffL = outL - _prevOutL;
-            float diffR = outR - _prevOutR;
+            // Normalized first difference (plan C.1): rate-invariant punch
+            float diffL = (outL - _prevOutL) * _diffNorm;
+            float diffR = (outR - _prevOutR) * _diffNorm;
 
             float magL = std::abs(diffL);
             float magR = std::abs(diffR);
-            _envL = (magL > _envL) ? magL * _attack + _envL * (1 - _attack) : _envL * _release;
-            _envR = (magR > _envR) ? magR * _attack + _envR * (1 - _attack) : _envR * _release;
+            _envL = (magL > _envL) ? magL * _attackEff + _envL * (1 - _attackEff) : _envL * _releaseEff;
+            _envR = (magR > _envR) ? magR * _attackEff + _envR * (1 - _attackEff) : _envR * _releaseEff;
 
             outL += diffL * _edgeBlend;
             outR += diffR * _edgeBlend;
@@ -284,8 +310,8 @@ void AudioCharacterChain::processInt16(int16_t* buffer, int32_t numSamples)
             float delayedL = _delayR[delayedIdx];
             float delayedR = _delayL[delayedIdx];
 
-            _roomLpL += _roomLpCoef * (delayedL - _roomLpL);
-            _roomLpR += _roomLpCoef * (delayedR - _roomLpR);
+            _roomLpL += _roomLpCoefEff * (delayedL - _roomLpL);
+            _roomLpR += _roomLpCoefEff * (delayedR - _roomLpR);
 
             outL += _roomLpL * _roomLevel;
             outR += _roomLpR * _roomLevel;

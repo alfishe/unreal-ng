@@ -1,15 +1,30 @@
 #pragma once
 
+#include <cstdint>
+#include <cstddef>
 #include "emulator/sound/audio.h"
 #include "emulator/ports/portdecoder.h"
 #include "common/modulelogger.h"
+#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 
 class EmulatorContext;
+struct blip_t;
 
-/// SOUNDRIVE 1.05 / COVOX - 4-channel 8-bit DAC
+/// SOUNDRIVE 1.05 / COVOX - 4-channel 8-bit DAC with band-limited synthesis.
+///
 /// Ports: #F1 (Left A), #F3 (Left B), #F9 (Right A), #FB (Right B)
 /// Decoding: bits[7:4]=1111, bit2=0, bit0=1
-class Covox : public PortDevice
+///
+/// Each DAC write computes a stereo delta and inserts it into blip_buf
+/// at the exact T-state position. At frame end, blip_buf produces
+/// alias-free 44.1 kHz output via windowed-sinc interpolation.
+///
+/// Stereo mixing: Left = (LeftA + LeftB) * 128, Right = (RightA + RightB) * 128
+/// The ×128 scaling (instead of ×256) provides 0.5× headroom per channel-pair,
+/// preventing hard clipping when both channels on one side are at full amplitude.
+/// Mono COVOX programs (writing only to #FB/RightB) produce centered output
+/// naturally — idle channels stay at midpoint (0x80) and contribute zero.
+class Covox : public PortDevice, public ttd::TTDSerializable
 {
 public:
     // Port addresses for 4 channels
@@ -31,32 +46,49 @@ protected:
     AudioFrameDescriptor _audioDescriptor;
     int16_t* const _buffer = reinterpret_cast<int16_t*>(_audioDescriptor.memoryBuffer);
 
+    // blip_buf accumulators (one per stereo output channel)
+    blip_t* _blipL = nullptr;
+    blip_t* _blipR = nullptr;
+
     // Per-channel DAC state
     uint8_t _dacValue[4] = {0x80, 0x80, 0x80, 0x80};  // Start at midpoint (silence)
+
+    // Last stereo amplitudes written to blip_buf (for computing deltas)
+    int32_t _lastL = 0;
+    int32_t _lastR = 0;
 
     // Per-channel mute (for UI)
     bool _channelMute[4] = {false, false, false, false};
 
-    // DC offset removal (optional)
+    // DC offset removal (optional, applied post-blip)
     bool _dcRemovalEnabled = false;
     float _dcAccumL = 0.0f;
     float _dcAccumR = 0.0f;
     static constexpr float DC_COEF = 0.995f;  // ~7 Hz cutoff @ 44.1 kHz
+    float _dcCoefEff = DC_COEF;               // DC_COEF^(44100/fs): same cutoff Hz at every core rate
 
+    // Core output rate (multirate plan phase 6)
+    size_t _sampleRate;
 
 public:
     Covox() = delete;
-    explicit Covox(EmulatorContext* context);
-    virtual ~Covox() = default;
+    explicit Covox(EmulatorContext* context, size_t sampleRate = 44100);
+    virtual ~Covox();
 
     // Buffer access for registry
     int16_t* getBuffer() { return _buffer; }
     const int16_t* getBuffer() const { return _buffer; }
 
+    /// Live core-rate change (device reroute with CoreRate=auto)
+    void setSampleRate(size_t sampleRate);
+
     // Frame lifecycle
     void reset();
     void handleFrameStart();
-    void handleFrameEnd();
+    /// @param expectedSamples Exact per-frame sample count from SoundManager's
+    ///        accumulator (0 = compute locally via rounding, legacy behavior).
+    ///        Passing it keeps the covox stream in lockstep with the mixer.
+    void handleFrameEnd(size_t expectedSamples = 0);
 
     // DC removal control (for UI section)
     void setDCRemovalEnabled(bool enabled) { _dcRemovalEnabled = enabled; }
@@ -74,7 +106,22 @@ public:
     static Channel portToChannel(uint16_t port);
 
 private:
-    void renderFromSample(size_t startSample);
-    void computeMixedOutput(int16_t& left, int16_t& right) const;
-    int16_t dacToSample(uint8_t value) const;
+    /// Compute stereo amplitudes from current DAC values.
+    /// Each side sums two channels with 0.5× scaling to prevent clipping.
+    void computeStereoAmplitudes(int32_t& outL, int32_t& outR) const;
+
+
+public:
+    /// region <TTDSerializable interface (P1.5 - parent TDD 6.4)>
+    ///
+    /// The Covox/Soundrive is a 4-channel 8-bit DAC. The only machine state is
+    /// the four DAC latches (_dacValue[4]) - everything else is host-side
+    /// audio pipeline (rebuilt by handleFrameStart) or user config (mute,
+    /// DC-removal toggle).
+    ///
+    /// Layout: 4 bytes - _dacValue[0..3] (LeftA, LeftB, RightA, RightB).
+    size_t TTDStateSize() const override;
+    void   TTDSaveState(uint8_t* dst) const override;
+    void   TTDLoadState(const uint8_t* src) override;
+    /// endregion </TTDSerializable interface>
 };

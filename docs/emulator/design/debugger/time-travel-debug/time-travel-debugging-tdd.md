@@ -282,7 +282,9 @@ struct TTDCheckpoint
     // --- Memory ---
     // References into the page store (Section 6.3); COW — pages shared
     // between checkpoints that didn't modify them.
-    std::vector<TTDPageRef> ramPages;   // One per physical RAM page
+    std::vector<TTDPageRef> ramPages;   // Indexed by page NUMBER, not a dense
+                                        // list of the pages a model owns —
+                                        // see "Per-configuration RAM pages"
     // ROM pages: not stored (immutable within a session; ROM identity captured
     //            once per session). Cache/MISC pages: stored iff dirty support
     //            confirms they are writable on the active model.
@@ -332,6 +334,45 @@ if (_feature_ttd_enabled)   // cached bool, same pattern as _feature_memorytrack
 Cost: one predictable branch + OR when enabled; zero when disabled (flag cached, same as today's tracker gate). Note that `MarkDirty` needs the *physical* page — `Memory` already maintains the bank→page mapping, so this is a table lookup, not a computation.
 
 **Non-CPU writers:** on ZX Spectrum, only the CPU writes RAM (no DMA on base models). Beta Disk sector reads into RAM go *through* CPU instructions (TR-DOS is programmed I/O), so the hook catches everything. If a future model adds DMA (TS-Conf), its write path must call `MarkDirty` too — this is called out as a checklist item in the model-support matrix (12.4).
+
+### 6.2a Per-configuration RAM pages
+
+`MAX_RAM_PAGES` (256 = 4 MB) is an emulator-wide compile-time ceiling that
+covers every supported machine. How many pages a given instance actually uses is
+a **runtime** property of its configuration, and TTD must take it from the
+instance rather than assume it.
+
+`ramPages` is indexed by **absolute page number**, so what capture needs is an
+exclusive **page-index bound**, not a page count. The two differ whenever a model
+maps its RAM at non-contiguous page numbers:
+
+| Model | Pages owned | Page numbers used | Correct bound |
+|---|---|---|---|
+| ZX Spectrum 48K | 3 | 0, 2, 5 | **6** |
+| ZX Spectrum 128K / Pentagon 128 | 8 | 0..7 | 8 |
+| Pentagon 512 | 32 | 0..31 | 32 |
+| TS-Conf / ZX-Evo | 256 | 0..255 | 256 |
+
+Deriving the bound as `ramsize / 16` reads it as a count and is wrong for the
+48K machine: a bound of 3 walks pages 0..2 and never captures page 5, which holds
+the display. The symptom is a recording that restores correct registers into a
+blank screen, and it passed every test in the suite because all of them ran on
+models whose page numbers happen to be contiguous. Regression coverage now lives
+in `TTD_FullRestore_Spectrum48_Test`.
+
+Pages inside the bound that a model does not own cost one never-touched ref each
+(48 bytes for the 48K machine) and are never interned.
+
+`UpdateRamPages` also reports, once per session, any dirty page at or beyond the
+bound. A model whose page set outgrows this table announces itself in the log
+instead of silently recording partial memory.
+
+> **Revisit when new models land.** The bound is currently a small switch in
+> `TimeTravelManager::ResolveModelRamPages()`. Once TS-Conf / ZX-Evo / Profi /
+> Scorpion extended paging is implemented — today those models have no port
+> decoder at all and `PortDecoder::GetPortDecoderForModel` throws for them — the
+> page set belongs to the configuration layer next to the port decoders, and this
+> function should consume it rather than re-derive it.
 
 ### 6.3 Copy-on-Write Page Store
 
@@ -590,11 +631,38 @@ struct TTDWriteRecord            // 12 bytes
 
 Appended from the same `MemoryWriteDebug` hook. Ring buffer, default 256 MB ≈ 22M writes ≈ minutes of typical demo activity. `FindLastWrite` first scans the journal backward (memory-bandwidth-fast, no emulation); only if the journal has already wrapped past the target window does it fall back to 9.2.
 
-Rejected alternative — full per-address index (`unordered_map<addr, vector<timestamp>>` from TDD v1): memory-unbounded, poor locality, and pointless given how fast a linear backward scan over a packed array is (a 256 MB journal scans in well under 100 ms). A simple per-frame Bloom filter or per-frame dirty-page summary can accelerate the scan later if profiling demands it.
+Rejected alternative — full per-address index (`unordered_map<addr, vector<timestamp>>` from TDD v1): memory-unbounded and poor locality.
+
+**Measured, 2026-08-20.** The "a linear backward scan is fast enough" argument holds only for the journal itself; it does not hold for reverse search as a whole, because Read and Execute are not journaled at all and fall back to replay. Numbers from a real demo (1200 frames) and from journals extracted from real `.ttd` files:
+
+| Per-frame set | Distinct entries | Sparse encoding, zstd-1 | Index cost |
+|---|---|---|---|
+| Executed PCs | 318 | 124 B | 18 MB/hour |
+| Written addresses | 75 | 47 B | 12 MB/hour |
+| Read addresses | 749 | 96 B | 23 MB/hour |
+
+Selectivity — frames scanned backwards before the first candidate: PC breakpoint 7.3% density → ~111 frames; write watchpoint 1.2% → ~183; read watchpoint 5.2% → ~215. Replaying a frame cost 1.3 ms (measured with instrumentation, so an upper bound), which makes an unassisted backward search ~145 ms for the typical case and minutes over a long session. Scanning the index instead costs ~12 KB of decompression for the same query, and the **worst** case — an address touched once an hour — is bounded by the size of the index (tens of ms), not by the length of history.
+
+Two findings decide the representation:
+
+* **Sparse beats bitmaps, and is universe-independent.** A flat 64K bitmap compresses to a similar size, but at 4 MB of physical address space its *scratch buffer* grows from 8 KB to 512 KB per frame and has to be cleared every frame — more expensive than the entire capture. Sorted delta-varint sets cost the same 47/96/124 bytes whether keys are 16 or 22 bits wide, because cost follows set cardinality, and cardinality does not depend on how much RAM the machine has. A 4 MB clone therefore indexes for the same price as a 128K machine.
+* **No pyramid.** One-second summaries are *less* selective than per-frame ones (26% vs 5.6%), because a demo touches 7.7% of the address space per second. At ~100 bytes per frame the per-frame level is cheap enough to keep whole.
+
+Keys must be `(physical page, offset)` rather than Z80 addresses, or banking produces false hits — the same reason the search predicate needs a `physPage` filter (9.4).
+
+> **Container.** The coverage index, the write journal and the timeline are
+> separate streams with different natural chunk sizes, and the current file
+> layout has no way to add or skip one. See
+> [ttd-container-format.md](./ttd-container-format.md) for the stream/frame/mux
+> design and the measured sizing behind it.
 
 ### 9.4 Conditional Variants
 
 The search predicate accepts optional filters, mirroring `BreakpointDescriptor` semantics: match on written value, on writer PC range, on physical page (bank-aware, using `physPage`). Execute-search ("when was address A last executed") uses the journal's M1 record variant or falls back to replay with an execute probe.
+
+**Status.** All four are implemented in `TTDSearchQuery`. The `physPage` filter (`hasPhysPageFilter` / `physPage`) applies on both paths — the journal predicate and the replay probe — and is exposed as `phys_page` on WebAPI, Python and Lua, and as `--phys-page` on the CLI. Without it an address query on a banked machine answers with writes to whatever page happened to be mapped at the time, which is rarely the page the caller meant. Port (`Io`) accesses have no page and are never constrained by the filter.
+
+Probe hits now carry a real page for every access type. Reads and instruction fetches previously reported page 0 unconditionally; both resolve the mapped bank now, which is also what makes `TTDM1Record::physPage` meaningful — reverse breakpoints can tell "PC 0xC000 with page 3 banked in" apart from the same address reached under a different page. Code fetched from ROM reports `kPhysPageNone` (0xFF).
 
 ---
 

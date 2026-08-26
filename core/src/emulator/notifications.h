@@ -1,10 +1,59 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 #include "3rdparty/message-center/eventqueue.h"
 #include "common/uuid.h"
-using unreal::UUID;  // Explicitly bring into scope to avoid Windows GUID typedef collision
+
+class EmulatorContext;
+
+/// region <Generic payload types>
+
+/// Allows to pass 32 bit numbers in MessageCenter message
+/// Example: messageCenter.Post(topic, new SimpleNumberPayload(0x12345678));
+class SimpleNumberPayload : public MessagePayload
+{
+public:
+    uint32_t _payloadNumber;
+
+public:
+    SimpleNumberPayload(uint32_t value) : MessagePayload(), _payloadNumber(value) {}
+    virtual ~SimpleNumberPayload() = default;
+};
+
+/// Allows to transfer uint8_t data blocks (as std::vector<uint8_t>) in MessageCenter message
+/// std::move for parameter is mandatory since we don't want double copy for all content
+/// Warning: payloads longer than 10k are not recommended.
+/// Example:
+///   std::vector<uint8_t> payload = { 0x00, 0x01, 0x02, 0x03 };
+///   messageCenter.Post(topic, new SimpleByteDataPayload(std::move(payload)));
+class SimpleByteDataPayload : public MessagePayload
+{
+public:
+    std::vector<uint8_t> _payloadByteVector;
+
+public:
+    SimpleByteDataPayload(std::vector<uint8_t>&& payload) : MessagePayload(), _payloadByteVector(std::move(payload)) {}
+    virtual ~SimpleByteDataPayload() = default;
+};
+
+/// endregion </Generic payload types>
+
+/// Payload allowing MessageCenter notifications to be targeted to a specific emulator UUID.
+class TargetContextPayload : public MessagePayload
+{
+public:
+    unreal::UUID targetEmulatorId;
+
+    TargetContextPayload() : MessagePayload(), targetEmulatorId() {}
+    TargetContextPayload(const unreal::UUID& emulatorId) : MessagePayload(), targetEmulatorId(emulatorId) {}
+    TargetContextPayload(const std::string& emulatorId)
+        : MessagePayload(), targetEmulatorId(emulatorId.empty() ? unreal::UUID() : unreal::UUID(emulatorId)) {}
+
+    virtual ~TargetContextPayload() = default;
+};
 
 /// Payload for emulator selection change notifications
 /// Sent when the active/selected emulator instance changes in the CLI or UI
@@ -97,3 +146,87 @@ public:
         return static_cast<char>('A' + (_driveId & 0x03));
     }
 };
+
+/// Payload for requesting single sync mode in videowall
+/// Example: messageCenter.Post(NC_VIDEOWALL_SINGLE_SYNC_MODE, new VideowallSyncModePayload(emulatorId, true));
+class VideowallSyncModePayload : public MessagePayload
+{
+public:
+    unreal::UUID _emulatorId;
+    bool _enable;
+
+public:
+    VideowallSyncModePayload(const unreal::UUID& emulatorId, bool enable)
+        : MessagePayload()
+        , _emulatorId(emulatorId)
+        , _enable(enable)
+    {
+    }
+    
+    VideowallSyncModePayload(const std::string& emulatorId, bool enable)
+        : MessagePayload()
+        , _emulatorId(emulatorId.empty() ? unreal::UUID() : unreal::UUID(emulatorId))
+        , _enable(enable)
+    {
+    }
+    
+    virtual ~VideowallSyncModePayload() = default;
+};
+
+
+/// region <Instance-tagged payloads (GDB TDD §6.3 prerequisite)>
+//
+// These payloads inherit from SimpleNumberPayload so that existing observers
+// reading `_payloadNumber` keep working unchanged. New observers (GDB stub,
+// per-instance videowall, TTD seek) dynamic_cast to read the instance UUID.
+//
+// The UUID is mandatory at the post site; if a caller cannot identify the
+// instance it should pass a nil UUID (default-constructed) — observers that
+// still ignore the field continue to work, but instance-filtered observers
+// will treat nil as "does not match my instance".
+
+/// Payload for NC_EMULATOR_STATE_CHANGE.
+/// `_payloadNumber` carries the new EmulatorStateEnum value (StateRun /
+/// StatePaused / StateResumed / StateStopped) — same as the legacy
+/// SimpleNumberPayload so legacy observers are unaffected.
+class EmulatorStateChangePayload : public SimpleNumberPayload
+{
+public:
+    unreal::UUID emulatorId;
+
+    EmulatorStateChangePayload(const unreal::UUID& id, uint32_t newState)
+        : SimpleNumberPayload(newState), emulatorId(id) {}
+
+    EmulatorStateChangePayload(const std::string& id, uint32_t newState)
+        : SimpleNumberPayload(newState)
+        , emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id))
+    {}
+
+    virtual ~EmulatorStateChangePayload() = default;
+};
+
+/// Payload for NC_EXECUTION_BREAKPOINT.
+/// `_payloadNumber` carries the breakpoint ID — same as the legacy
+/// SimpleNumberPayload so legacy observers are unaffected. Adds the instance
+/// UUID and the Z80 address that triggered the hit (PC for execution, target
+/// address for memory R/W, port for I/O) so GDB and the videowall can both
+/// filter by instance and report a precise stop location.
+class BreakpointTriggeredPayload : public SimpleNumberPayload
+{
+public:
+    unreal::UUID emulatorId;
+    uint16_t    address;   // Z80 address that triggered (0 if unknown / N/A)
+
+    BreakpointTriggeredPayload(const unreal::UUID& id, uint32_t breakpointId, uint16_t addr)
+        : SimpleNumberPayload(breakpointId), emulatorId(id), address(addr) {}
+
+    BreakpointTriggeredPayload(const std::string& id, uint32_t breakpointId, uint16_t addr)
+        : SimpleNumberPayload(breakpointId)
+        , emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id))
+        , address(addr)
+    {}
+
+    virtual ~BreakpointTriggeredPayload() = default;
+};
+
+/// endregion </Instance-tagged payloads (GDB TDD §6.3 prerequisite)>

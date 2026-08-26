@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <mutex>
 
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
@@ -218,6 +219,25 @@ struct RasterState
     uint8_t rightBorderAreaEnd;
 
     /// endregion </Horizontal timings>
+
+    /// region <Model-specific ULA behavior>
+
+    // Border color update granularity in t-states.
+    // Pentagon: updates every 1 t-state (immediate)
+    // ZX-48K/128K: updates every 4 t-states (latched at 8-HC boundaries)
+    uint8_t borderUpdateTStates = 1;
+
+    // Whether ULA memory contention is active for this model.
+    // Pentagon: no contention. ZX-48K/128K: contention on 0x4000-0x7FFF.
+    bool contentionEnabled = false;
+
+    // Video controller fetch architecture type.
+    // Controls floating bus phase behavior (8T Ferranti vs 4T discrete).
+    // Pentagon/Scorpion: discrete logic (continuous fetch, no shift gaps).
+    // ZX-48K/128K: Ferranti ULA (8T pipeline with shift phases).
+    uint8_t fetchType = 0;  // UlaFetchType enum value
+
+    /// endregion </Model-specific ULA behavior>
 };
 
 struct FramebufferDescriptor
@@ -230,6 +250,45 @@ struct FramebufferDescriptor
     uint8_t* memoryBuffer = nullptr;
     size_t memoryBufferSize = 0;
 };
+
+/// Display viewport configuration for cropping framebuffer to display
+/// Used with M_P384 overscan mode to allow symmetric display output
+struct DisplayViewport
+{
+    uint16_t cropLeft = 0;    // Pixels to crop from left
+    uint16_t cropRight = 0;   // Pixels to crop from right
+    uint16_t cropTop = 0;     // Lines to crop from top
+    uint16_t cropBottom = 0;  // Lines to crop from bottom
+
+    /// Get resulting display width after cropping
+    uint16_t GetDisplayWidth(uint16_t framebufferWidth) const
+    {
+        return framebufferWidth - cropLeft - cropRight;
+    }
+
+    /// Get resulting display height after cropping
+    uint16_t GetDisplayHeight(uint16_t framebufferHeight) const
+    {
+        return framebufferHeight - cropTop - cropBottom;
+    }
+};
+
+/// Preset viewports for M_P384 overscan mode
+namespace ViewportPresets
+{
+    // Full overscan (384x304) - show everything including extra border areas
+    constexpr DisplayViewport FULL_OVERSCAN = {0, 0, 0, 0};
+
+    // Symmetric horizontal (352x304) - equal 48px left/right borders, full vertical
+    // Crops 32px from right to match 48px left border
+    constexpr DisplayViewport SYMMETRIC_HORIZONTAL = {0, 32, 0, 0};
+
+    // Standard (352x288) - match standard Pentagon display (48px borders, no overscan)
+    constexpr DisplayViewport STANDARD = {0, 32, 16, 0};
+
+    // Screen only (256x192) - paper area only
+    constexpr DisplayViewport SCREEN_ONLY = {48, 80, 64, 48};
+}
 
 /// endregion </Structures>
 
@@ -311,9 +370,28 @@ public:
     const RasterDescriptor rasterDescriptors[M_MAX] = {
         {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},                  // M_NUL
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 8, 16},   // M_ZX48k
-        {352, 288, 256, 192, 48, 48, 456, 64, 32, 8, 16},   // M_ZX128 - Not ready!
+        {352, 288, 256, 192, 48, 48, 456, 64, 32, 8, 15},   // M_ZX128 (311 lines: 228*311=70908)
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_PENTAGON128K
-        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16}   // M_PMC - Not Ready!
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_PMC
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_P16
+        // M_P384: Pentagon Overscan - larger framebuffer with same timing as Pentagon
+        // Timing must be IDENTICAL to M_PENTAGON128K for correct border effects
+        // Only fullFrameWidth/Height differ for larger framebuffer allocation
+        // Screen position (48,48) same as Pentagon - extra border rendered around it
+        // Frame: 16 vSync + 16 vBlank + 288 visible = 320 lines, same 71680 T-states
+        {384, 304, 256, 192, 48, 48, 448, 64, 32, 16, 16},   // M_P384 (Pentagon 384x304 overscan)
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_PHR
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 8, 16},   // M_TIMEX
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_TS16
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_TS256
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_TSTX
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_ATM16
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_ATMHR
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_ATMTX
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_ATMTL
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_PROFI
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_GMX
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_BRD
     };
 
     // Default color table: 0RRrrrGG gggBBbbb
@@ -341,6 +419,7 @@ protected:
     VideoModeEnum _mode;
     RasterState _rasterState;
     FramebufferDescriptor _framebuffer;
+    DisplayViewport _displayViewport;  // Current viewport for display cropping
 
     uint32_t _prevTstate = 0;  // Previous Draw call t-state value (since emulation is not concurrent as in hardware -
                                // we need to know what time period to replay)
@@ -411,6 +490,7 @@ public:
         const RasterDescriptor& rd = rasterDescriptors[_mode];
         return _rasterState.screenAreaStart + rd.screenOffsetLeft / _rasterState.pixelsPerTState;
     }
+
     virtual void RenderOnlyMainScreen();
 
     /// @brief Render entire screen at frame end when ScreenHQ=OFF (batch rendering mode)
@@ -448,9 +528,103 @@ protected:
     void AllocateFramebuffer(VideoModeEnum mode);
     void DeallocateFramebuffer();
 
+    // Presentation (latched) framebuffer QUEUE: complete-frame snapshots
+    // taken at frame end on the emulation thread. GUI consumers read these
+    // copies instead of the live _framebuffer, which the emulator overwrites
+    // concurrently (the source of mid-frame tearing).
+    //
+    // A/V sync (audio-sync design): audio is presented ~DRC_TARGET_MS + HW
+    // buffer (~50 ms ~= 2 frames) behind the emulated frame that produced
+    // it - the ring depth is structural (production is bursty per-frame,
+    // the DAC drains continuously). Instead of shrinking the ring into
+    // underrun territory, VIDEO presentation is delayed by
+    // _presentDelayFrames so both land at the same constant latency and
+    // the net A/V offset collapses to ~0. Recording is unaffected: it taps
+    // emulated time upstream of both presentation paths.
+    static constexpr size_t PRESENT_SLOTS = 4;  // > max delay (3) + write slot
+    uint8_t* _presentSlots[PRESENT_SLOTS] = {};
+    uint64_t _presentLatchCounter = 0;  // Total frames latched (next write index)
+    size_t _presentBufferSize = 0;  // Authoritative size for readers; set under _presentMutex
+    std::atomic<uint8_t> _presentDelayFrames{2};  // Frames of video delay (0..PRESENT_SLOTS-1)
+    std::mutex _presentMutex;
+
+    // User-forced Pentagon overscan (see SetOverscanForced)
+    bool _overscanForced = false;
+
+    // Wall-clock (steady) timestamp of the last LatchFramebuffer, in us.
+    // GUI consumers compute video presentation latency = paint time - this.
+    std::atomic<uint64_t> _lastLatchTimestampUs{0};
+
 public:
+    /// @brief Latch the completed frame into the presentation buffer.
+    /// Call on the emulation thread at frame end, after rendering is finished.
+    /// Holds _presentMutex only for one SIMD frame copy (~40us for 352x288).
+    void LatchFramebuffer();
+
+    /// @brief Flush the present queue and publish the current framebuffer.
+    ///
+    /// The present queue exists for A/V sync: CopyPresentedFramebuffer() serves
+    /// the frame latched _presentDelayFrames ago so video trails audio by a
+    /// constant latency. That is right while frames keep arriving and wrong
+    /// after a seek, where the machine repaints once and stops — a plain latch
+    /// would leave the UI showing a queued older frame with nothing coming to
+    /// push it through.
+    ///
+    /// Discarding the queue rather than back-filling it is what matches the
+    /// hardware analogy: the delay line is emptied, the new frame becomes the
+    /// only content, and normal playback repopulates it on resume.
+    void FlushAndPresentFramebuffer();
+
+    /// Steady-clock timestamp (us) of the last completed latch (0 = never)
+    uint64_t GetLastLatchTimestampUs() const { return _lastLatchTimestampUs.load(std::memory_order_acquire); }
+
+    /// Video presentation delay in frames (A/V sync: match the audio path's
+    /// ring + HW buffer latency, ~2 frames). 0 = present immediately
+    /// (lowest input latency, audio trails by the full ring depth).
+    void SetPresentDelayFrames(uint8_t frames)
+    {
+        _presentDelayFrames.store(frames < PRESENT_SLOTS ? frames : PRESENT_SLOTS - 1, std::memory_order_release);
+    }
+    uint8_t GetPresentDelayFrames() const { return _presentDelayFrames.load(std::memory_order_acquire); }
+
+    /// Present delay in microseconds at the current frame duration (for the
+    /// video presentation latency readout: paint-to-latch delta measures the
+    /// NEWEST latch, but the presented frame is GetPresentDelayFrames older)
+    uint32_t GetPresentDelayUs() const
+    {
+        const uint32_t frameTStates = (_context && _context->config.frame) ? _context->config.frame : 71680;
+        return static_cast<uint32_t>(_presentDelayFrames.load(std::memory_order_acquire) *
+                                     (static_cast<uint64_t>(frameTStates) * 10 / 35));
+    }
+
+    /// @brief Copy the latched (tear-free) frame into a caller-provided buffer.
+    /// Safe to call from any thread.
+    /// @param dst Destination buffer
+    /// @param dstSize Destination size in bytes; must be >= framebuffer size
+    /// @return true if a frame was copied
+    bool CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize);
+
     FramebufferDescriptor& GetFramebufferDescriptor();
     void GetFramebufferData(uint32_t** buffer, size_t* size);
+
+    /// Display viewport for cropping framebuffer to display
+    void SetDisplayViewport(const DisplayViewport& viewport);
+    const DisplayViewport& GetDisplayViewport() const;
+
+    /// Check if current mode is overscan (M_P384)
+    bool IsOverscanMode() const { return _mode == M_P384; }
+
+    /// User-forced Pentagon overscan (UI toggle, not guest-visible hardware).
+    /// InitRaster re-detects the video mode from config/ports every frame;
+    /// without this flag a manual SetVideoMode(M_P384) is reverted to the
+    /// model's base mode on the next frame. Guest-programmed AlCo modes
+    /// (EFF7 bits) still take priority over the override.
+    void SetOverscanForced(bool forced) { _overscanForced = forced; }
+    bool IsOverscanForced() const { return _overscanForced; }
+
+    /// Get display dimensions after viewport cropping
+    uint16_t GetDisplayWidth() const;
+    uint16_t GetDisplayHeight() const;
 
     /// Get the 16-color RGBA palette used for rendering (ABGR format on little-endian)
     /// This is useful for GIF encoding where the same palette must be used

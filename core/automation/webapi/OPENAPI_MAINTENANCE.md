@@ -21,9 +21,9 @@ This means that **every API change** requires **manual updates** to the OpenAPI 
 ✅ **Organized Tags** - 20 feature-based categories  
 ✅ **Automated Verification** - Coverage test script available
 
-**Last Updated:** 2026-02-07  
-**Registered Routes:** 144 (across `emulator_api.h` and `interpreter_api.h`)  
-**OpenAPI Paths:** 149 (includes 5 planned profiler endpoints)
+**Last Updated:** 2026-08-19  
+**Registered Routes:** 145 (across `emulator_api.h` and `interpreter_api.h`)  
+**OpenAPI Paths:** 150 (includes 5 planned profiler endpoints)
 
 ## Code Organization
 

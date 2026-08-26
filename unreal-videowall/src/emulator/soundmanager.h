@@ -1,5 +1,12 @@
 #pragma once
 
+// miniaudio.h includes <windows.h> on Windows. winsock2.h MUST be included before
+// windows.h to prevent type conflicts (see core's stdafx.h for the same pattern).
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+#endif
+
 #include <QObject>
 
 #include <3rdparty/tinywav/tinywav.h>
@@ -10,7 +17,10 @@
 #include <emulator/sound/soundmanager.h>
 #include <emulator/emulatorcontext.h>
 
-class AppSoundManager : QObject
+#include <atomic>
+#include <emulator/mainloop.h>
+
+class AppSoundManager : public QObject
 {
     Q_OBJECT
 
@@ -22,11 +32,31 @@ protected:
     ma_device _audioDevice;
     AudioRingBuffer<int16_t, AUDIO_BUFFER_SAMPLES_PER_FRAME * 8> _ringBuffer;
 
-    bool _isInitialized = false;
-    bool _isStarted = false;
+    // Realtime-observable device/ring state (audiodevicedescriptor.h):
+    // occupancy cell for the DRC controller plus device parameters and ring
+    // health counters for monitoring. Owned here so it outlives any emulator
+    // instance; registered via Emulator::SetAudioCallback.
+    AudioDeviceDescriptor _deviceDescriptor;
 
     // Save to Wave file
     TinyWav _tinyWav;
+
+    // Device reroute handling (OS default-output change / hotplug)
+    std::atomic<bool> _shuttingDown{false};
+    // macOS: CoreAudio property listener for NOMINAL SAMPLE RATE changes on
+    // the SAME device (e.g. Audio MIDI Setup / Background Music switching
+    // 48k -> 192k). miniaudio only fires 'rerouted' on device changes, not
+    // on rate changes - without this watch the pipeline keeps running with
+    // a hidden OS resampler at the old rate.
+#ifdef __APPLE__
+    uint32_t _watchedDeviceObjectID = 0;
+
+    void startNominalRateWatch();
+    void stopNominalRateWatch();
+#endif
+
+
+    std::atomic<EmulatorContext*> _activeContext{nullptr};
 
     /// endregion </Fields>
 
@@ -39,12 +69,33 @@ public:
     /// region <Methods>
 public:
     bool init();
+    const std::atomic<uint32_t>* occupancyCell() const { return &_deviceDescriptor.occupancyFrames; }
+    uint32_t deviceSampleRate() const { return _deviceDescriptor.sampleRate.load(std::memory_order_acquire); }
+    /// Full realtime monitoring descriptor (register with Emulator::SetAudioCallback)
+    const AudioDeviceDescriptor* deviceDescriptor() const { return &_deviceDescriptor; }
     void deinit();
 
     void start();
     void stop();
 
+    void setActiveContext(EmulatorContext* context) { _activeContext.store(context, std::memory_order_release); }
+    EmulatorContext* getActiveContext() const { return _activeContext.load(std::memory_order_acquire); }
+
+signals:
+    /// Emitted after the audio device was re-established at a DIFFERENT native
+    /// sample rate (device hotplug / OS default-output change). Consumers must
+    /// republish the rate to the emulator (SetAudioDeviceSampleRate) so the
+    /// DRC resampler re-bases its core->device ratio.
+    void deviceReinitialized(uint32_t sampleRate);
+
+protected slots:
+    /// GUI-thread half of reroute handling: re-init the device at the new
+    /// output's native rate. NEVER run on the notification thread - a device
+    /// cannot be uninitialized from its own callback context.
+    void handleDeviceRerouted();
+
 public:
     static void audioDataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);
     static void audioCallback(void* obj, int16_t* samples, size_t numSamples);
+    static void deviceNotificationCallback(const ma_device_notification* pNotification);
 };

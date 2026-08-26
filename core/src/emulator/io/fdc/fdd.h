@@ -2,13 +2,15 @@
 
 #include <stdafx.h>
 #include "3rdparty/message-center/messagecenter.h"
+#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 — captured via WD1793)
+#include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "emulator/io/fdc/fdc.h"
 
 class EmulatorContext;
 class DiskImage;
 
-class FDD
+class FDD : public ttd::TTDSerializable
 {
     /// region <Constants>
 public:
@@ -135,6 +137,25 @@ public:
     void insertDisk(DiskImage* diskImage);
     void ejectDisk();
     /// endregion </Methods>
+
+    /// region <TTDSerializable interface (P1.5 — parent TDD §6.4, §4 row 4)>
+    ///
+    /// Per parent TDD §4 row 4 + §17: FDD state is captured as part of the
+    /// WD1793 subsystem blob. The FDD itself is a TTDSerializable so the
+    /// WD1793 serializer can delegate via the public interface without
+    /// friending; this also lets FDD-only unit tests exercise the path.
+    ///
+    /// Serialized: driveID, side, motor, direction, headLoad, diskInserted,
+    ///             track, motorStopTimeoutMs, motorRotationCounter,
+    ///             index/ready/writeProtect cached signals.
+    /// Excluded: _diskImage pointer (re-derived via coreState.diskImages[i]
+    ///           on session restore — disk image identity is session-scoped
+    ///           per TDD §12.2), _context, transient strobes (_step, _read/
+    ///           _writeDataBit/Byte), sync counters (_lastFrame, _lastTime).
+    size_t TTDStateSize() const override;
+    void   TTDSaveState(uint8_t* dst) const override;
+    void   TTDLoadState(const uint8_t* src) override;
+    /// endregion </TTDSerializable interface>
 
     /// region <Helper methods>
 protected:
