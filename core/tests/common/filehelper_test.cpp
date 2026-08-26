@@ -1061,6 +1061,7 @@ TEST_F(FileHelper_Test, IsAbsolutePath_IsUNCPath)
         {"/opt/unreal", false, false, true},   // rooted without drive: relative to current drive on Windows
         {"\\opt\\unreal", false, false, true},
         {"/", false, false, true},
+        {"\\", false, false, true},            // single-backslash root: '\' aliases '/' throughout FileHelper
         {"relative/dir", false, false, false},
         {"./file", false, false, false},
         {"../file", false, false, false},
@@ -1074,6 +1075,31 @@ TEST_F(FileHelper_Test, IsAbsolutePath_IsUNCPath)
         EXPECT_EQ(FileHelper::IsUNCPath(test.input), test.unc) << "IsUNCPath failed for: " << test.input;
         EXPECT_EQ(FileHelper::IsAbsolutePath(test.input), kIsWindows ? test.absoluteWindows : test.absolutePosix)
             << "IsAbsolutePath failed for: " << test.input;
+
+        // The invariant that makes '\'-rooted-is-absolute safe on POSIX:
+        // classification must not change across NormalizePath, because
+        // AbsolutePath() (the only production caller) normalizes BEFORE it
+        // classifies. If raw and normalized input ever diverge, cwd-prepending
+        // decisions would depend on where in the pipeline the check runs.
+        if (!test.input.empty())
+        {
+            std::string normalized = FileHelper::NormalizePath(test.input);
+            EXPECT_EQ(FileHelper::IsAbsolutePath(normalized), FileHelper::IsAbsolutePath(test.input))
+                << "IsAbsolutePath diverges across NormalizePath for: " << test.input << " -> " << normalized;
+        }
+    }
+
+    // End-to-end: a Windows-origin spelling resolves like its normalized form
+    // (no cwd prepended) on every platform
+    std::string resolved = FileHelper::AbsolutePath("\\opt\\unreal");
+    if (kIsWindows)
+    {
+        // Rooted-without-drive: anchored to the current drive's root
+        EXPECT_NE(resolved.find(":\\opt\\unreal"), std::string::npos) << resolved;
+    }
+    else
+    {
+        EXPECT_EQ(resolved, "/opt/unreal") << "must not be cwd-prepended";
     }
 }
 

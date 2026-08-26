@@ -127,15 +127,7 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
             ${common_libraries}
     )
 
-    # Copy default config file to binary folder after successful compilation
-    SET (CONFIG_FILE ${DATA_PATH}/configs/pentagon512k/unreal.ini)
-    message("CONFIG_FILE: ${CONFIG_FILE}")
     message("Binary: ${CMAKE_BINARY_DIR}/${PROJECT_NAME}")
-    add_custom_command(
-        TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E
-        copy ${CONFIG_FILE} "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/unreal.ini"
-    )
 
     # Copy all ROM files to /rom sub-folder
     add_custom_command(
