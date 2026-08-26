@@ -31,4 +31,4 @@ Tests are executed using the `core-tests` binary. They should be built first:
 ## Agent Rules & Guidelines
 - **Test Artifacts**: ALL test artifacts and temporary files (e.g. `.wav`, `.trd`, `.sna`) MUST be written to the `scratch/` directory. Do not clutter the project root. Use `TestPathHelper::GetTestScratchPath()` for this.
 - **Naming Conventions**: Do not use underscores in file names or C++ class/struct/method names unless specified. Use PascalCase for methods and camelCase for variables/fields.
-- **Coding Guidelines**: For detailed coding guidelines, see `docs/coding_guidelines.md`.
+- **Coding Guidelines**: For detailed coding guidelines, see `docs/coding-guidelines.md`.
