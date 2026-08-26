@@ -17,7 +17,7 @@ Last updated: 2026-08-26
 | 0.1.3 | Expose reg write via WebAPI | DONE | 4bd9e24e | PUT `/api/v1/emulator/{id}/registers/{name}` |
 | 0.1.4 | Expose reg write via Lua | DONE | 4bd9e24e | `get_register(name)`, `set_register(name, value)` |
 | 0.1.5 | Expose reg write via Python | DONE | 4bd9e24e | `get_register(name)`, `set_register(name, value)` |
-| 0.2.1 | Expose LabelManager to automation | DONE | | Core filtering API + CLI/WebAPI/Lua/Python bindings complete. See [label-manager.md](../../emulator/design/debugger/label-manager.md) |
+| 0.2.1 | Expose LabelManager to automation | DONE | 70a8ceb2 | Core filtering API + CLI/WebAPI/Lua/Python bindings complete. See [label-manager.md](../../emulator/design/debugger/label-manager.md) |
 | 0.2.2 | `symbols load` command | POSTPONED | | sjasmplus .sld primary |
 | 0.2.3 | Symbolic disassembly output | TODO | | Disasm should show both labels and raw addresses (e.g. `CALL main ($8000)` not `CALL $8000`) if label can be resolved |
 | 0.2.4 | Symbolic breakpoints `bp label` | DESIGN | | Not clear yet how to handle re-positioning breakpoint when label address changes|
