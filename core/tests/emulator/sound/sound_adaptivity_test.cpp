@@ -13,6 +13,7 @@
 #include "emulator/sound/beeper.h"
 #include "emulator/sound/covox.h"
 #include "emulator/sound/chips/soundchip_turbosound.h"
+#include "common/timehelper.h"
 #include "emulator/sound/soundmanager.h"
 
 /// Sound generation adaptivity tests.
@@ -429,6 +430,18 @@ TEST_F(SoundAdaptivity_Test, AVLatencyBudget)
         << "Refill threshold must clear the steady-state occupancy trough with margin";
     EXPECT_GT(SoundManager::EMERGENCY_REFILL_MS, 5.0)
         << "Refill threshold too low to catch genuine stalls before underrun";
+
+    // Windows/WASAPI budget: shared-mode WASAPI ignores our 256-frame period
+    // and pulls a 10 ms engine period at a time (miniaudio splits it into
+    // back-to-back 256-frame callbacks), occasionally with a ~20 ms gap
+    // followed by a double pull. The trough must therefore survive one
+    // engine period PLUS the frame clock's wake-up lateness
+    // (TimeHelper::FRAME_PACING_JITTER_BUDGET_MS). This is exactly what
+    // broke with std::condition_variable::wait_until on MinGW (10-17 ms
+    // late): 19.5 - 15 < 10 -> steady "ring errors ... dequeue=N" growth.
+    constexpr double WASAPI_SHARED_ENGINE_PERIOD_MS = 10.0;
+    EXPECT_GT(SAWTOOTH_TROUGH_MS - TimeHelper::FRAME_PACING_JITTER_BUDGET_MS, WASAPI_SHARED_ENGINE_PERIOD_MS)
+        << "Sawtooth trough cannot absorb one WASAPI engine period after frame-clock jitter";
 
     // Hard-resync trigger: far enough above target that it can only be hit
     // through abnormal events (reroute windows, long stalls), yet low enough

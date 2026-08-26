@@ -19,6 +19,7 @@
 
 #include <emulator/sound/soundmanager.h>
 #include <common/timehelper.h>
+#include <cstring>
 
 
 /// region <Constructors / destructors>
@@ -190,7 +191,15 @@ void AppSoundManager::audioDataCallback(ma_device* pDevice, void* pOutput, const
 
     if (obj)
     {
-        obj->_ringBuffer.dequeue((int16_t*)pOutput, frameCount * 2);
+        const size_t samplesRequested = frameCount * 2;
+        const size_t samplesDequeued = obj->_ringBuffer.dequeue((int16_t*)pOutput, samplesRequested);
+
+        // Zero any unfilled portion to prevent audio glitches on underrun
+        if (samplesDequeued < samplesRequested)
+        {
+            int16_t* outSamples = static_cast<int16_t*>(pOutput);
+            std::memset(outSamples + samplesDequeued, 0, (samplesRequested - samplesDequeued) * sizeof(int16_t));
+        }
 
         // Hard resync (consumer thread, SPSC-safe): occupancy far beyond the
         // target is unrecoverable by the DRC trim - discard down to the

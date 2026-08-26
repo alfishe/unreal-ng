@@ -504,6 +504,13 @@ void Emulator::ReleaseNoGuard()
         delete _context;
         _context = nullptr;
     }
+
+    // The ModuleLogger is owned by the context we just deleted: every MLOG* call on this object from now on
+    // (destructor, a late SetState(), GetState() from a lingering UI reference) must see a null logger, not a
+    // dangling one. Observed as an access violation in ~Emulator when the frontend dropped its last
+    // shared_ptr<Emulator> AFTER EmulatorManager::RemoveEmulator had already Release()d the instance.
+    _logger = nullptr;
+    _initialized.store(false, std::memory_order_release);
 }
 
 /// endregion </Initialization>
