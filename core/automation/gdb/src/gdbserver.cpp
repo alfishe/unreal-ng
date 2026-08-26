@@ -1,7 +1,16 @@
 #include "gdbserver.h"
 #include "gdbpacket.h"
+#include "gdbtarget_z80.h"
+
+#include <emulator/emulator.h>
+#include <emulator/emulatormanager.h>
+#include <emulator/emulatorcontext.h>
+#include <emulator/memory/memory.h>
+#include <debugger/debugmanager.h>
+#include <debugger/breakpoints/breakpointmanager.h>
 
 #include <iostream>
+#include <sstream>
 
 // Socket includes
 #ifdef _WIN32
@@ -233,6 +242,26 @@ GDBSession::~GDBSession()
 
 void GDBSession::run()
 {
+    // Auto-attach if enabled and single instance exists
+    if (_autoAttach && !_emulator)
+    {
+        auto* mgr = EmulatorManager::GetInstance();
+        if (mgr)
+        {
+            auto ids = mgr->GetEmulatorIds();
+            if (ids.size() == 1)
+            {
+                _emulator = mgr->GetEmulator(ids[0]);
+                if (_emulator)
+                {
+                    _context = _emulator->GetContext();
+                    _attachedInstanceId = ids[0];
+                    _lastStopReason = StopReason::Attached;
+                }
+            }
+        }
+    }
+
     while (_active)
     {
         std::string packet = receivePacket();
@@ -254,6 +283,8 @@ void GDBSession::run()
 void GDBSession::stop()
 {
     _active = false;
+    _emulator.reset();
+    _context = nullptr;
 }
 
 bool GDBSession::sendPacket(const std::string& data)
@@ -392,6 +423,14 @@ std::string GDBSession::handlePacket(const std::string& packet)
         case 'q':
             return handleQuery(packet);
 
+        case 'Q':
+            if (packet == "QStartNoAckMode")
+            {
+                _noAckMode = true;
+                return "OK";
+            }
+            return "";
+
         case 'v':
             return handleVCommand(packet);
 
@@ -447,45 +486,43 @@ std::string GDBSession::handleQSupported(const std::string& /*params*/)
     caps += "multiprocess-;";
 
     // TODO: Add ReverseStep+;ReverseContinue+ when TTD is enabled
-    // caps += "ReverseStep+;ReverseContinue+;";
 
     return caps;
 }
 
 std::string GDBSession::handleQXfer(const std::string& params)
 {
-    // Parse qXfer:object:operation:annex:offset,length
-    // TODO: Implement target.xml serving
     if (params.starts_with(":features:read:target.xml:"))
     {
-        // TODO: Return actual target XML
-        return "l" + std::string(R"(<?xml version="1.0"?>
-<!DOCTYPE target SYSTEM "gdb-target.dtd">
-<target version="1.0">
-  <architecture>z80</architecture>
-  <feature name="org.gnu.gdb.z80.cpu">
-    <reg name="af"  bitsize="16" regnum="0"/>
-    <reg name="bc"  bitsize="16"/>
-    <reg name="de"  bitsize="16"/>
-    <reg name="hl"  bitsize="16"/>
-    <reg name="sp"  bitsize="16" type="data_ptr"/>
-    <reg name="pc"  bitsize="16" type="code_ptr"/>
-    <reg name="ix"  bitsize="16" type="data_ptr"/>
-    <reg name="iy"  bitsize="16" type="data_ptr"/>
-    <reg name="af'" bitsize="16"/>
-    <reg name="bc'" bitsize="16"/>
-    <reg name="de'" bitsize="16"/>
-    <reg name="hl'" bitsize="16"/>
-    <reg name="ir"  bitsize="16"/>
-  </feature>
-</target>
-)");
+        std::string xml = GDBTargetZ80::generateFlatTargetXML(_context);
+        return "l" + xml;
     }
 
     if (params.starts_with(":osdata:read:processes:"))
     {
-        // TODO: Return actual instance list
-        return "l<osdata type=\"processes\"></osdata>";
+        std::ostringstream xml;
+        xml << "<osdata type=\"processes\">\n";
+
+        auto* mgr = EmulatorManager::GetInstance();
+        if (mgr)
+        {
+            auto ids = mgr->GetEmulatorIds();
+            int pid = 1;
+            for (const auto& id : ids)
+            {
+                auto emu = mgr->GetEmulator(id);
+                std::string state = emu ? (emu->IsPaused() ? "stopped" : "running") : "unknown";
+                xml << "  <item>\n";
+                xml << "    <column name=\"pid\">" << pid++ << "</column>\n";
+                xml << "    <column name=\"user\">emulator</column>\n";
+                xml << "    <column name=\"command\">" << id << "</column>\n";
+                xml << "    <column name=\"state\">" << state << "</column>\n";
+                xml << "  </item>\n";
+            }
+        }
+
+        xml << "</osdata>";
+        return "l" + xml.str();
     }
 
     return "";
@@ -505,7 +542,6 @@ std::string GDBSession::handleVCommand(const std::string& packet)
 
     if (packet.starts_with("vCont;"))
     {
-        // Parse vCont actions - for single thread, degenerates to c/s
         if (packet.find('c') != std::string::npos)
         {
             return handleContinue();
@@ -526,22 +562,86 @@ std::string GDBSession::handleVCommand(const std::string& packet)
 
 std::string GDBSession::handleMonitor(const std::string& cmd)
 {
-    // TODO: Implement monitor commands
-    std::string response = "Monitor command not implemented: " + cmd + "\n";
+    std::string response;
+
+    if (cmd == "help")
+    {
+        response = "Available commands:\n";
+        response += "  monitor help     - this message\n";
+        response += "  monitor model    - show emulator model\n";
+        response += "  monitor status   - show emulator status\n";
+        response += "  monitor reset    - reset emulator\n";
+    }
+    else if (cmd == "model")
+    {
+        if (_emulator && _context)
+        {
+            response = "Model: ZX Spectrum\n";  // TODO: get actual model
+        }
+        else
+        {
+            response = "No emulator attached\n";
+        }
+    }
+    else if (cmd == "status")
+    {
+        if (_emulator)
+        {
+            response = _emulator->IsPaused() ? "Status: paused\n" : "Status: running\n";
+        }
+        else
+        {
+            response = "No emulator attached\n";
+        }
+    }
+    else if (cmd == "reset")
+    {
+        if (_emulator)
+        {
+            _emulator->Reset();
+            response = "Emulator reset\n";
+        }
+        else
+        {
+            response = "No emulator attached\n";
+        }
+    }
+    else
+    {
+        response = "Unknown monitor command: " + cmd + "\n";
+    }
+
     return GDBPacket::hexEncode(response);
 }
 
 std::string GDBSession::handleReadRegisters()
 {
-    // TODO: Read actual Z80 registers
-    // Return placeholder for now (14 registers * 2 bytes * 2 hex chars = 56 chars)
-    return "0000000000000000000000000000000000000000000000000000";
+    if (!_context)
+    {
+        return "E31";  // Not attached
+    }
+
+    return GDBTargetZ80::serializeRegisters(_context);
 }
 
-std::string GDBSession::handleWriteRegisters(const std::string& /*data*/)
+std::string GDBSession::handleWriteRegisters(const std::string& data)
 {
-    // TODO: Write Z80 registers
-    return "OK";
+    if (!_context)
+    {
+        return "E31";
+    }
+
+    if (!_emulator || !_emulator->IsPaused())
+    {
+        return "E0D";  // Must be paused to write
+    }
+
+    if (GDBTargetZ80::deserializeRegisters(_context, data))
+    {
+        return "OK";
+    }
+
+    return "E01";
 }
 
 std::string GDBSession::handleReadRegister(const std::string& params)
@@ -549,11 +649,15 @@ std::string GDBSession::handleReadRegister(const std::string& params)
     auto regnum = GDBPacket::parseHex(params);
     if (!regnum)
     {
-        return "E02";
+        return "E01";
     }
 
-    // TODO: Read specific register
-    return "0000";
+    if (!_context)
+    {
+        return "E31";
+    }
+
+    return GDBTargetZ80::readRegister(_context, static_cast<int>(*regnum));
 }
 
 std::string GDBSession::handleWriteRegister(const std::string& params)
@@ -564,8 +668,23 @@ std::string GDBSession::handleWriteRegister(const std::string& params)
         return "E01";
     }
 
-    // TODO: Write specific register
-    return "OK";
+    auto regnum = GDBPacket::parseHex(params.substr(0, eqPos));
+    if (!regnum)
+    {
+        return "E01";
+    }
+
+    if (!_context)
+    {
+        return "E31";
+    }
+
+    if (!_emulator || !_emulator->IsPaused())
+    {
+        return "E0D";
+    }
+
+    return GDBTargetZ80::writeRegister(_context, static_cast<int>(*regnum), params.substr(eqPos + 1));
 }
 
 std::string GDBSession::handleReadMemory(const std::string& params)
@@ -584,83 +703,330 @@ std::string GDBSession::handleReadMemory(const std::string& params)
         return "E01";
     }
 
-    // TODO: Read actual memory
+    if (!_context || !_context->pMemory)
+    {
+        return "E31";
+    }
+
+    Memory* memory = _context->pMemory;
     std::string result;
+    result.reserve(*len * 2);
+
     for (size_t i = 0; i < *len; i++)
     {
-        result += "00";
+        uint16_t address = static_cast<uint16_t>((*addr + i) & 0xFFFF);
+        uint8_t byte = memory->DirectReadFromZ80Memory(address);
+        result += GDBPacket::toHex(byte, 2);
     }
 
     return result;
 }
 
-std::string GDBSession::handleWriteMemory(const std::string& /*params*/)
+std::string GDBSession::handleWriteMemory(const std::string& params)
 {
-    // TODO: Write memory
+    // M addr,length:data or X addr,length:binary
+    auto commaPos = params.find(',');
+    auto colonPos = params.find(':');
+
+    if (commaPos == std::string::npos || colonPos == std::string::npos)
+    {
+        return "E01";
+    }
+
+    auto addr = GDBPacket::parseHex(params.substr(0, commaPos));
+    auto len = GDBPacket::parseHex(params.substr(commaPos + 1, colonPos - commaPos - 1));
+
+    if (!addr || !len)
+    {
+        return "E01";
+    }
+
+    if (!_context || !_context->pMemory)
+    {
+        return "E31";
+    }
+
+    if (!_emulator || !_emulator->IsPaused())
+    {
+        return "E0D";
+    }
+
+    std::string data = params.substr(colonPos + 1);
+    Memory* memory = _context->pMemory;
+
+    // Decode hex data
+    auto bytes = GDBPacket::hexToBytes(data);
+    if (bytes.size() != *len)
+    {
+        return "E01";
+    }
+
+    for (size_t i = 0; i < bytes.size(); i++)
+    {
+        uint16_t address = static_cast<uint16_t>((*addr + i) & 0xFFFF);
+        memory->DirectWriteToZ80Memory(address, bytes[i]);
+    }
+
     return "OK";
 }
 
 std::string GDBSession::handleSetBreakpoint(const std::string& params)
 {
     // Z type,addr,kind
-    // TODO: Set breakpoint
-    (void)params;
+    auto firstComma = params.find(',');
+    auto secondComma = params.find(',', firstComma + 1);
+
+    if (firstComma == std::string::npos)
+    {
+        return "E01";
+    }
+
+    auto type = GDBPacket::parseHex(params.substr(0, firstComma));
+    auto addr = GDBPacket::parseHex(params.substr(firstComma + 1,
+        secondComma != std::string::npos ? secondComma - firstComma - 1 : std::string::npos));
+
+    if (!type || !addr)
+    {
+        return "E01";
+    }
+
+    if (!_emulator || !_context)
+    {
+        return "E31";
+    }
+
+    DebugManager* debugManager = _emulator->GetDebugManager();
+    if (!debugManager)
+    {
+        return "E01";
+    }
+
+    BreakpointManager* bpManager = debugManager->GetBreakpointsManager();
+    if (!bpManager)
+    {
+        return "E01";
+    }
+
+    uint16_t address = static_cast<uint16_t>(*addr & 0xFFFF);
+
+    switch (*type)
+    {
+        case 0:  // SW breakpoint
+        case 1:  // HW breakpoint (same for emulator)
+            bpManager->AddExecutionBreakpoint(address, "gdb");
+            break;
+
+        case 2:  // Write watchpoint
+            bpManager->AddMemWriteBreakpoint(address, "gdb");
+            break;
+
+        case 3:  // Read watchpoint
+            bpManager->AddMemReadBreakpoint(address, "gdb");
+            break;
+
+        case 4:  // Access watchpoint
+            bpManager->AddMemReadBreakpoint(address, "gdb");
+            bpManager->AddMemWriteBreakpoint(address, "gdb");
+            break;
+
+        default:
+            return "";  // Unsupported
+    }
+
     return "OK";
 }
 
 std::string GDBSession::handleRemoveBreakpoint(const std::string& params)
 {
     // z type,addr,kind
-    // TODO: Remove breakpoint
-    (void)params;
+    auto firstComma = params.find(',');
+    auto secondComma = params.find(',', firstComma + 1);
+
+    if (firstComma == std::string::npos)
+    {
+        return "E01";
+    }
+
+    auto type = GDBPacket::parseHex(params.substr(0, firstComma));
+    auto addr = GDBPacket::parseHex(params.substr(firstComma + 1,
+        secondComma != std::string::npos ? secondComma - firstComma - 1 : std::string::npos));
+
+    if (!type || !addr)
+    {
+        return "E01";
+    }
+
+    if (!_emulator || !_context)
+    {
+        return "E31";
+    }
+
+    DebugManager* debugManager = _emulator->GetDebugManager();
+    if (!debugManager)
+    {
+        return "E01";
+    }
+
+    BreakpointManager* bpManager = debugManager->GetBreakpointsManager();
+    if (!bpManager)
+    {
+        return "E01";
+    }
+
+    uint16_t address = static_cast<uint16_t>(*addr & 0xFFFF);
+
+    // RemoveBreakpointByAddress removes all breakpoints at that address
+    switch (*type)
+    {
+        case 0:
+        case 1:
+        case 2:
+        case 3:
+        case 4:
+            bpManager->RemoveBreakpointByAddress(address);
+            break;
+
+        default:
+            return "";
+    }
+
     return "OK";
 }
 
 std::string GDBSession::handleContinue()
 {
-    // TODO: Resume emulator and wait for stop event
+    if (!_emulator)
+    {
+        return "E31";
+    }
+
+    if (!_emulator->IsPaused())
+    {
+        return formatStopReply();  // Already running
+    }
+
+    _emulator->Resume();
+
+    // Wait for stop (breakpoint or interrupt)
+    // In a real implementation, we'd async wait for NC_EXECUTION_BREAKPOINT
+    // For now, return immediately - the emulator runs until breakpoint
+    while (_active && !_emulator->IsPaused())
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    _lastStopReason = StopReason::Breakpoint;
     return formatStopReply();
 }
 
 std::string GDBSession::handleStep()
 {
-    // TODO: Single step and return stop reply
+    if (!_emulator)
+    {
+        return "E31";
+    }
+
+    if (!_emulator->IsPaused())
+    {
+        _emulator->Pause();
+    }
+
+    // Execute single instruction
+    _emulator->RunSingleCPUCycle(true);
+
+    _lastStopReason = StopReason::Step;
     return formatStopReply();
 }
 
 std::string GDBSession::handleInterrupt()
 {
-    // TODO: Pause emulator
+    if (_emulator && !_emulator->IsPaused())
+    {
+        _emulator->Pause();
+    }
+
+    _lastStopReason = StopReason::Interrupt;
     return "T02thread:1;";  // SIGINT
 }
 
 std::string GDBSession::handleBackwardStep()
 {
-    // TODO: TTD reverse step
-    return formatStopReply();
+    // TODO: TTD integration
+    return "E01";
 }
 
 std::string GDBSession::handleBackwardContinue()
 {
-    // TODO: TTD reverse continue
-    return formatStopReply();
+    // TODO: TTD integration
+    return "E01";
 }
 
 std::string GDBSession::formatStopReply()
 {
-    // TODO: Format proper stop reply based on actual stop reason
-    return "T05thread:1;";
+    switch (_lastStopReason)
+    {
+        case StopReason::Breakpoint:
+            return "T05swbreak:;thread:1;";
+
+        case StopReason::Watchpoint:
+            return "T05watch:" + GDBPacket::toHex(_lastWatchAddress, 4) + ";thread:1;";
+
+        case StopReason::Interrupt:
+            return "T02thread:1;";
+
+        case StopReason::Step:
+        case StopReason::Attached:
+        case StopReason::None:
+        default:
+            return "T05thread:1;";
+    }
 }
 
 std::string GDBSession::handleAttach(const std::string& pid)
 {
-    // TODO: Attach to emulator instance
-    _attachedInstanceId = pid;
+    auto pidNum = GDBPacket::parseHex(pid);
+    if (!pidNum)
+    {
+        return "E01";
+    }
+
+    auto* mgr = EmulatorManager::GetInstance();
+    if (!mgr)
+    {
+        return "E31";
+    }
+
+    auto ids = mgr->GetEmulatorIds();
+    size_t index = static_cast<size_t>(*pidNum - 1);  // pid is 1-based
+
+    if (index >= ids.size())
+    {
+        return "E31";
+    }
+
+    _emulator = mgr->GetEmulator(ids[index]);
+    if (!_emulator)
+    {
+        return "E31";
+    }
+
+    _context = _emulator->GetContext();
+    _attachedInstanceId = ids[index];
+
+    // Pause if running
+    if (!_emulator->IsPaused())
+    {
+        _emulator->Pause();
+    }
+
+    _lastStopReason = StopReason::Attached;
     return "T05thread:1;";
 }
 
 std::string GDBSession::handleDetach()
 {
+    _emulator.reset();
+    _context = nullptr;
     _attachedInstanceId.clear();
     _hasRunControlClaim = false;
     _active = false;

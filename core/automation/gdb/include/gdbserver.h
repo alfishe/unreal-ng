@@ -11,6 +11,10 @@
 
 class GDBSession;
 class GDBPacketReader;
+class Emulator;
+class EmulatorContext;
+
+#include <memory>
 
 /// @brief GDB RSP server managing TCP connections and client sessions
 ///
@@ -138,8 +142,25 @@ private:
     std::string _attachedInstanceId;
     std::unique_ptr<GDBPacketReader> _reader;
 
+    // Attached emulator
+    std::shared_ptr<Emulator> _emulator;
+    EmulatorContext* _context = nullptr;
+
     // Run-control claim token (TDD §3.3)
     bool _hasRunControlClaim = false;
+
+    // Stop reason tracking
+    enum class StopReason
+    {
+        None,
+        Breakpoint,
+        Watchpoint,
+        Step,
+        Interrupt,
+        Attached
+    };
+    StopReason _lastStopReason = StopReason::Attached;
+    uint16_t _lastWatchAddress = 0;
 
     // Client compatibility quirk flags (TDD §4.7.1, §4.2.2)
     struct ClientQuirks
