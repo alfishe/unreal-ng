@@ -1,12 +1,14 @@
 # Unreal-NG Agent Rules
 
 > **CRITICAL**: NEVER commit changes without explicit user request.
-> 1. Run quality checks before proposing commit:
->    - Build: `ninja -C cmake-build-release` must pass
->    - Tests: `./cmake-build-release/bin/core-tests` must pass
->    - No compiler warnings (zero-warnings policy)
->    - Documentation: verify all cross-references and links are valid
-> 2. Report results and wait for explicit "commit" instruction
+> - Each commit permission is **one-time only** — no blanket permissions
+> - Steps before any commit:
+>   1. Run quality checks:
+>      - Build: `ninja -C cmake-build-release` must pass
+>      - Tests: `./cmake-build-release/bin/core-tests` must pass
+>      - No compiler warnings (zero-warnings policy)
+>      - Documentation: verify all cross-references and links are valid
+>   2. Report results and wait for explicit "commit" instruction
 
 ## Project Structure (What we have and where)
 

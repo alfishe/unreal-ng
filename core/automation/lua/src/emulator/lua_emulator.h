@@ -192,6 +192,31 @@ public:
             return regs;
         });
 
+        lua.set_function("get_register", [this](sol::this_state s, const std::string& name) -> sol::object {
+            sol::state_view lua_view(s);
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return sol::make_object(lua_view, sol::lua_nil);
+            Z80State* z80 = emulator->GetZ80State();
+            if (!z80)
+                return sol::make_object(lua_view, sol::lua_nil);
+            uint16_t value = 0;
+            bool is16bit = false;
+            if (!Z80::GetRegisterValue(z80, name, value, is16bit))
+                return sol::make_object(lua_view, sol::lua_nil);
+            return sol::make_object(lua_view, value);
+        });
+
+        lua.set_function("set_register", [this](const std::string& name, uint16_t value) -> bool {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return false;
+            Z80State* z80 = emulator->GetZ80State();
+            if (!z80)
+                return false;
+            return Z80::SetRegisterValue(z80, name, value);
+        });
+
         // Memory access (isExecution=false for data reads)
         lua.set_function("mem_read", [this](uint16_t addr) -> uint8_t {
             if (!_emulator) return 0;

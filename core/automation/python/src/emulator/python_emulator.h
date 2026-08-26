@@ -155,7 +155,23 @@ namespace PythonBindings
                 }
                 return regs;
             }, "Get all registers as dictionary")
-            
+            .def("get_register", [](Emulator& self, const std::string& name) -> py::object {
+                Z80State* z80 = self.GetZ80State();
+                if (!z80)
+                    return py::none();
+                uint16_t value = 0;
+                bool is16bit = false;
+                if (!Z80::GetRegisterValue(z80, name, value, is16bit))
+                    return py::none();
+                return py::cast(value);
+            }, "Get register value by name", py::arg("name"))
+            .def("set_register", [](Emulator& self, const std::string& name, uint16_t value) -> bool {
+                Z80State* z80 = self.GetZ80State();
+                if (!z80)
+                    return false;
+                return Z80::SetRegisterValue(z80, name, value);
+            }, "Set register value by name", py::arg("name"), py::arg("value"))
+
             // Memory access (isExecution=false for data reads)
             .def("mem_read", [](Emulator& self, uint16_t addr) -> uint8_t {
                 Memory* mem = self.GetMemory();

@@ -6,45 +6,56 @@ Last updated: 2026-08-26
 
 | ID | Task | Status | Commit | Notes |
 |----|------|--------|--------|-------|
-| 0.1.1 | Add Z80 register setters in core | TODO | | |
-| 0.1.2 | Expose reg write via CLI | TODO | | |
-| 0.1.3 | Expose reg write via WebAPI | TODO | | |
-| 0.1.4 | Expose reg write via Lua/Python | TODO | | |
+| 0.1.1 | Add Z80 register setters in core | DONE | | Z80State has public members |
+| 0.1.2 | Expose reg write via CLI | DONE | | `reg set <name> <value>` |
+| 0.1.3 | Expose reg write via WebAPI | DONE | | PUT `/api/v1/emulator/{id}/registers/{name}` |
+| 0.1.4 | Expose reg write via Lua | DONE | | `get_register(name)`, `set_register(name, value)` |
+| 0.1.5 | Expose reg write via Python | DONE | | `get_register(name)`, `set_register(name, value)` |
 | 0.2.1 | Expose LabelManager to automation | TODO | | |
-| 0.2.2 | `symbols load` command | TODO | | sjasmplus .sld primary |
+| 0.2.2 | `symbols load` command | POSTPONED | | sjasmplus .sld primary |
 | 0.2.3 | Symbolic disassembly output | TODO | | |
 | 0.2.4 | Symbolic breakpoints `bp label` | TODO | | |
 | 0.3.1 | Add instance ID to NC_EXECUTION_BREAKPOINT | TODO | | |
 | 0.3.2 | Add instance ID to NC_EMULATOR_STATE_CHANGE | TODO | | |
-| 0.3.3 | WebSocket push for events | TODO | | |
-| 0.3.4 | `subscribe` command | TODO | | |
-| 0.3.5 | Lua `on_breakpoint(callback)` | TODO | | |
-| 0.3.6 | Python `on_breakpoint(callback)` | TODO | | |
+| 0.3.3 | WebSocket push for events | DESIGN | | |
+| 0.3.4 | `subscribe` command | DESIGN | | |
+| 0.3.5 | Lua `on_breakpoint(callback)` | DESIGN | | Needs callback protection strategy |
+| 0.3.6 | Python `on_breakpoint(callback)` | DESIGN | | Needs callback protection strategy |
 | 0.4.1 | Python: add `run_frame` | TODO | | |
 | 0.4.2 | Python: add `run_frames` | TODO | | |
 | 0.4.3 | Python: add `run_tstates` | TODO | | |
 | 0.4.4 | Python: add `run_to_scanline` | TODO | | |
 | 0.4.5 | Python: add `run_to_pixel` | TODO | | |
 
-## Phase 1: Protocol Bridges
+## Phase 1A: GDB RSP Server
 
 | ID | Task | Status | Commit | Notes |
 |----|------|--------|--------|-------|
-| 1.1.1 | GDB RSP server skeleton | TODO | | Standalone module |
-| 1.1.2 | GDB `g`/`G` packets (registers) | TODO | | Requires 0.1.x |
-| 1.1.3 | GDB `m`/`M` packets (memory) | TODO | | |
-| 1.1.4 | GDB `Z`/`z` packets (breakpoints) | TODO | | |
-| 1.1.5 | GDB `c`/`s` packets (run control) | TODO | | |
-| 1.1.6 | GDB `?` packet (stop reason) | TODO | | |
-| 1.1.7 | Run-control ownership claim | TODO | | |
-| 1.2.1 | DZRP server skeleton | TODO | | Standalone module |
-| 1.2.2 | DZRP register commands | TODO | | |
-| 1.2.3 | DZRP bank-aware memory | TODO | | |
-| 1.2.4 | DZRP condition expressions | TODO | | |
-| 1.3.1 | DeZog launch.json template | TODO | | |
-| 1.3.2 | Document sjasmplus workflow | TODO | | |
-| 1.4.1 | MCP server skeleton | TODO | | Standalone module |
-| 1.4.2 | MCP tool schema from command registry | TODO | | |
+| 1A.1 | GDB RSP server skeleton | TODO | | Standalone module |
+| 1A.2 | GDB `g`/`G` packets (registers) | TODO | | Requires 0.1.x |
+| 1A.3 | GDB `m`/`M` packets (memory) | TODO | | |
+| 1A.4 | GDB `Z`/`z` packets (breakpoints) | TODO | | |
+| 1A.5 | GDB `c`/`s` packets (run control) | TODO | | |
+| 1A.6 | GDB `?` packet (stop reason) | TODO | | |
+| 1A.7 | Run-control ownership claim | TODO | | |
+
+## Phase 1B: DeZog / VS Code DAP
+
+| ID | Task | Status | Commit | Notes |
+|----|------|--------|--------|-------|
+| 1B.1 | DZRP server skeleton | TODO | | Standalone module |
+| 1B.2 | DZRP register commands | TODO | | |
+| 1B.3 | DZRP bank-aware memory | TODO | | |
+| 1B.4 | DZRP condition expressions | TODO | | |
+| 1B.5 | DeZog launch.json template | TODO | | |
+| 1B.6 | Document sjasmplus workflow | TODO | | |
+
+## Phase 1C: MCP Server
+
+| ID | Task | Status | Commit | Notes |
+|----|------|--------|--------|-------|
+| 1C.1 | MCP server skeleton | DESIGN | | Standalone module |
+| 1C.2 | MCP tool schema from command registry | DESIGN | | |
 
 ## Phase 2: Advanced Debugging
 
@@ -66,7 +77,7 @@ Last updated: 2026-08-26
 |----|------|--------|--------|-------|
 | 3.1.1 | `screen_get_buffer` raw data | TODO | | |
 | 3.1.2 | Beam position query | TODO | | |
-| 3.1.3 | Python numpy wrapper | TODO | | |
+| 3.1.3 | Python numpy wrapper | TODO | | Enables ML/CV pipelines (RL agents, sprite extraction) |
 | 3.2.1 | Headless deterministic mode | TODO | | |
 | 3.2.2 | Input recording | TODO | | RZX-compatible |
 | 3.2.3 | Input playback | TODO | | |
@@ -96,6 +107,8 @@ Last updated: 2026-08-26
 | REVIEW | Code complete, needs review |
 | DONE | Merged to master |
 | BLOCKED | Waiting on dependency |
+| DESIGN | Needs design/specification first |
+| POSTPONED | Deferred to later phase |
 | DROPPED | Decided not to implement |
 
 ## Dependencies
@@ -111,9 +124,9 @@ Last updated: 2026-08-26
 
 | Phase | Total | Done | WIP | TODO |
 |-------|-------|------|-----|------|
-| Phase 0 | 19 | 0 | 0 | 19 |
+| Phase 0 | 19 | 5 | 0 | 14 |
 | Phase 1 | 14 | 0 | 0 | 14 |
 | Phase 2 | 9 | 0 | 0 | 9 |
 | Phase 3 | 6 | 0 | 0 | 6 |
 | Phase 4 | 11 | 0 | 0 | 11 |
-| **Total** | **59** | **0** | **0** | **59** |
+| **Total** | **59** | **5** | **0** | **54** |

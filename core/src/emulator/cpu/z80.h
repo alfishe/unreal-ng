@@ -445,4 +445,22 @@ public:
     void UpdateFeatureCache();
     OpcodeProfiler* GetOpcodeProfiler() { return _opcodeProfiler; }
     /// endregion </Feature Cache>
+
+    /// region <Register Access API>
+public:
+    struct RegisterInfo
+    {
+        const char* name;
+        bool is16bit;
+        bool isAlternate;
+        uint16_t (*getter)(const Z80State*);
+        void (*setter)(Z80State*, uint16_t);
+    };
+
+    static const RegisterInfo* GetRegisterInfo();
+    static size_t GetRegisterCount();
+    static const RegisterInfo* FindRegister(const std::string& name);
+    static bool GetRegisterValue(Z80State* state, const std::string& name, uint16_t& value, bool& is16bit);
+    static bool SetRegisterValue(Z80State* state, const std::string& name, uint16_t value);
+    /// endregion </Register Access API>
 };

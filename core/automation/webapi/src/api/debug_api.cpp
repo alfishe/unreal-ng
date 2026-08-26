@@ -1093,7 +1093,80 @@ void EmulatorAPI::getRegisters(const HttpRequestPtr& req, std::function<void(con
     flags["n"] = (f & 0x02) ? 1 : 0;
     flags["c"] = (f & 0x01) ? 1 : 0;
     ret["flags"] = flags;
-    
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief PUT /api/v1/emulator/{id}/registers/{name}
+/// @brief Set a CPU register value
+/// @brief Request body: {"value": 0x1234} or {"value": 4660}
+void EmulatorAPI::setRegister(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id, const std::string& name) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    Z80State* z80 = emulator->GetZ80State();
+    if (!z80)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "CPU state not available";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Parse request body
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("value"))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Missing 'value' field in request body";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    uint16_t value = static_cast<uint16_t>((*json)["value"].asUInt());
+
+    // Use centralized register API
+    const Z80::RegisterInfo* regInfo = Z80::FindRegister(name);
+    if (!regInfo)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Unknown register: " + name;
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Z80::SetRegisterValue(z80, name, value);
+
+    // Read back to confirm
+    uint16_t readBack;
+    bool is16bit;
+    Z80::GetRegisterValue(z80, name, readBack, is16bit);
+
+    Json::Value ret;
+    ret["status"] = "success";
+    ret["register"] = regInfo->name;
+    ret["value"] = readBack;
+    ret["is16bit"] = regInfo->is16bit;
+
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);
