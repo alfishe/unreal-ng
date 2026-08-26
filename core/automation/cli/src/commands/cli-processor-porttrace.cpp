@@ -214,7 +214,8 @@ void CLIProcessor::ShowPortTraceHelp(const ClientSession& session)
     help << "  port-trace clear                    - Purge buffer" << NEWLINE;
     help << "  port-trace status                   - Session state, counters, filter" << NEWLINE;
     help << "  port-trace dump [N]                 - Show last N events (default 32)" << NEWLINE;
-    help << "  port-trace save <path> [json|csv|bin] - Save trace to file (default json)" << NEWLINE;
+    help << "  port-trace save <path> [json|csv|bin|binz] - Save trace to file (default json;" << NEWLINE;
+    help << "                                        binz = zstd-compressed, ~50-100x smaller)" << NEWLINE;
     help << "  port-trace include <cond...>        - Add compound include rule (AND within rule)" << NEWLINE;
     help << "  port-trace exclude <cond...>        - Add compound exclude rule (exclude wins)" << NEWLINE;
     help << "    conditions: port <hex> | raw <hex> | device <name> | direction in|out" << NEWLINE;
@@ -222,7 +223,7 @@ void CLIProcessor::ShowPortTraceHelp(const ClientSession& session)
     help << "    example: port-trace include port FFFD direction out" << NEWLINE;
     help << "  port-trace filter show              - Show filter configuration" << NEWLINE;
     help << "  port-trace filter clear [includes|excludes] - Reset filter rules" << NEWLINE;
-    help << "  port-trace preset <name>            - all|ay-only|fdc-only|no-fdc|outs-only|ins-only|unmapped" << NEWLINE;
+    help << "  port-trace preset <name>            - all|ay-only|fdc-only|no-fdc|no-fe|sound|paging|outs-only|ins-only|unmapped" << NEWLINE;
     help << "  port-trace config capacity <n>      - Ring buffer capacity (only while stopped)" << NEWLINE;
     help << "  port-trace config overflow ring|stop - Evict oldest vs stop-when-full" << NEWLINE;
     session.SendResponse(help.str());
@@ -356,9 +357,11 @@ void CLIProcessor::HandlePortTrace(const ClientSession& session, const std::vect
                 format = PortTraceExportFormat::CSV;
             else if (fmt == "bin" || fmt == "binary")
                 format = PortTraceExportFormat::Binary;
+            else if (fmt == "binz")
+                format = PortTraceExportFormat::BinaryCompressed;
             else if (fmt != "json")
             {
-                session.SendResponse("Unknown format (json/csv/bin expected): " + args[2] + NEWLINE);
+                session.SendResponse("Unknown format (json/csv/bin/binz expected): " + args[2] + NEWLINE);
                 return;
             }
         }
@@ -429,7 +432,7 @@ void CLIProcessor::HandlePortTrace(const ClientSession& session, const std::vect
         if (args.size() < 2)
         {
             session.SendResponse(
-                "Usage: port-trace preset all|ay-only|fdc-only|no-fdc|outs-only|ins-only|unmapped" +
+                "Usage: port-trace preset all|ay-only|fdc-only|no-fdc|no-fe|sound|paging|outs-only|ins-only|unmapped" +
                 std::string(NEWLINE));
             return;
         }
@@ -450,6 +453,12 @@ void CLIProcessor::HandlePortTrace(const ClientSession& session, const std::vect
             recorder->presetInsOnly();
         else if (name == "unmapped")
             recorder->presetUnmapped();
+        else if (name == "no-fe")
+            recorder->presetNoFe();
+        else if (name == "sound")
+            recorder->presetSound();
+        else if (name == "paging")
+            recorder->presetPaging();
         else
         {
             session.SendResponse("Unknown preset: " + args[1] + NEWLINE);

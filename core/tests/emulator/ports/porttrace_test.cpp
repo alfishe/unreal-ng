@@ -615,4 +615,130 @@ TEST_F(PortTrace_Test, FilterDescription)
     EXPECT_NE(description.find("WD1793_Data"), std::string::npos) << description;
 }
 
+TEST_F(PortTrace_Test, CompressedExportRoundTrip)
+{
+    PortDiagnosticRecorder* recorder = enablePortTrace();
+    recorder->start();
+
+    // Realistic mixed traffic: AY sequence, paging read-back, unmapped, aliases
+    for (int i = 0; i < 200; i++)
+    {
+        _portDecoder->DecodePortOut(0xFFFD, static_cast<uint8_t>(i & 0x0F), 0x8000 + i);
+        _portDecoder->DecodePortOut(0xBFFD, static_cast<uint8_t>(i), 0x8005 + i);
+        _portDecoder->DecodePortIn(0x7FFD, 0x9000);
+        if (i % 7 == 0)
+            _portDecoder->DecodePortOut(0x0001, static_cast<uint8_t>(i), 0xA000);
+    }
+    recorder->stop();
+
+    std::vector<PortTraceEvent> original = recorder->getAll();
+    ASSERT_GT(original.size(), 600u);
+
+    PortTraceSessionInfo info = _portDecoder->getPortTraceSessionInfo();
+    ASSERT_TRUE(recorder->saveToFile("porttrace_v2_test.bin", PortTraceExportFormat::Binary, info));
+    ASSERT_TRUE(
+        recorder->saveToFile("porttrace_v2_test.binz", PortTraceExportFormat::BinaryCompressed, info));
+
+    // Round-trip both containers through the core loader
+    for (const char* file : {"porttrace_v2_test.bin", "porttrace_v2_test.binz"})
+    {
+        PortTraceSessionInfo loadedInfo;
+        std::vector<PortTraceEvent> loaded;
+        ASSERT_TRUE(PortDiagnosticRecorder::loadFromFile(file, loadedInfo, loaded)) << file;
+        ASSERT_EQ(loaded.size(), original.size()) << file;
+        for (size_t i = 0; i < original.size(); i++)
+            ASSERT_TRUE(loaded[i] == original[i]) << file << " event " << i;
+        EXPECT_EQ(loadedInfo.decodeRules.size(), info.decodeRules.size()) << file;
+        EXPECT_EQ(loadedInfo.tStatesPerFrame, info.tStatesPerFrame) << file;
+    }
+
+    // The compressed container must actually compress this repetitive traffic
+    std::ifstream v1("porttrace_v2_test.bin", std::ios::binary | std::ios::ate);
+    std::ifstream v2("porttrace_v2_test.binz", std::ios::binary | std::ios::ate);
+    ASSERT_TRUE(v1.good() && v2.good());
+    EXPECT_LT(v2.tellg(), v1.tellg() / 4) << "v2 should be at least 4x smaller on repetitive traffic";
+
+    // Corrupt magic must be rejected
+    {
+        std::ofstream bad("porttrace_v2_test.garbage", std::ios::binary | std::ios::trunc);
+        bad << "definitely not a PTRC/PTR2 trace file, padded to header size....";
+    }
+    PortTraceSessionInfo dummyInfo;
+    std::vector<PortTraceEvent> dummy;
+    EXPECT_FALSE(PortDiagnosticRecorder::loadFromFile("porttrace_v2_test.garbage", dummyInfo, dummy));
+    EXPECT_FALSE(PortDiagnosticRecorder::loadFromFile("porttrace_v2_test.nonexistent", dummyInfo, dummy));
+}
+
+TEST_F(PortTrace_Test, StopThenSaveLosesNothing)
+{
+    // Integrity contract: stop() flips state only — nothing is buffered outside
+    // the ring, so every recorded event is in the file that save() writes.
+    PortDiagnosticRecorder* recorder = enablePortTrace();
+    recorder->start();
+
+    const int kOps = 500;
+    for (int i = 0; i < kOps; i++)
+        _portDecoder->DecodePortOut(0xFFFD, static_cast<uint8_t>(i), static_cast<uint16_t>(0x8000 + i));
+
+    recorder->stop();
+    uint64_t producedAtStop = recorder->totalProduced();
+    ASSERT_EQ(producedAtStop, static_cast<uint64_t>(kOps));
+
+    PortTraceSessionInfo info = _portDecoder->getPortTraceSessionInfo();
+    ASSERT_TRUE(recorder->saveToFile("porttrace_flush_test.binz", PortTraceExportFormat::BinaryCompressed, info));
+
+    PortTraceSessionInfo loadedInfo;
+    std::vector<PortTraceEvent> loaded;
+    ASSERT_TRUE(PortDiagnosticRecorder::loadFromFile("porttrace_flush_test.binz", loadedInfo, loaded));
+    ASSERT_EQ(loaded.size(), static_cast<size_t>(kOps)) << "every event recorded before stop must be in the file";
+    EXPECT_EQ(loaded.back().value, static_cast<uint8_t>(kOps - 1)) << "including the very last one";
+
+    // Events after stop must NOT appear (stop is effective immediately)
+    _portDecoder->DecodePortOut(0xFFFD, 0xEE, 0x9999);
+    EXPECT_EQ(recorder->eventCount(), static_cast<size_t>(kOps));
+}
+
+TEST_F(PortTrace_Test, SaveWhileCapturingIsConsistentSnapshot)
+{
+    // Saving mid-capture is legal: getAll() snapshots under the ring's shared
+    // lock, so the file is a consistent prefix of the session
+    PortDiagnosticRecorder* recorder = enablePortTrace();
+    recorder->start();
+
+    for (int i = 0; i < 100; i++)
+        _portDecoder->DecodePortOut(0xFFFD, static_cast<uint8_t>(i), 0x8000);
+
+    PortTraceSessionInfo info = _portDecoder->getPortTraceSessionInfo();
+    ASSERT_TRUE(recorder->saveToFile("porttrace_midcapture.binz", PortTraceExportFormat::BinaryCompressed, info));
+
+    // Capture continues unharmed after the snapshot
+    for (int i = 0; i < 50; i++)
+        _portDecoder->DecodePortOut(0xBFFD, static_cast<uint8_t>(i), 0x8100);
+    EXPECT_EQ(recorder->eventCount(), 150u);
+    EXPECT_TRUE(recorder->isCapturing());
+
+    PortTraceSessionInfo loadedInfo;
+    std::vector<PortTraceEvent> loaded;
+    ASSERT_TRUE(PortDiagnosticRecorder::loadFromFile("porttrace_midcapture.binz", loadedInfo, loaded));
+    ASSERT_EQ(loaded.size(), 100u);
+    for (size_t i = 0; i < loaded.size(); i++)
+        EXPECT_EQ(loaded[i].value, static_cast<uint8_t>(i)) << "snapshot must be an ordered prefix";
+}
+
+TEST_F(PortTrace_Test, SaveToUnwritablePathReportsFailure)
+{
+    PortDiagnosticRecorder* recorder = enablePortTrace();
+    recorder->start();
+    _portDecoder->DecodePortOut(0xFFFD, 0x01, 0x8000);
+    recorder->stop();
+
+    PortTraceSessionInfo info = _portDecoder->getPortTraceSessionInfo();
+    for (auto format : {PortTraceExportFormat::JSON, PortTraceExportFormat::CSV,
+                        PortTraceExportFormat::Binary, PortTraceExportFormat::BinaryCompressed})
+    {
+        EXPECT_FALSE(recorder->saveToFile("/nonexistent-dir-porttrace/trace.out", format, info))
+            << "format " << static_cast<int>(format);
+    }
+}
+
 /// endregion </Export>

@@ -69,6 +69,121 @@ BINARY_MAGIC = b"PTRC"
 BINARY_EVENT = struct.Struct("<QIHHHBBBBxx")
 BINARY_RULE = struct.Struct("<HHH")
 
+# Binary format v2 ("PTR2", .binz): same 32-byte header prefix (compressedSize
+# u64 at offset 20), decode-rule table, then ONE zstd frame containing the
+# columnar delta/xor payload (22 bytes/event):
+#   u64 tsDelta[n], u32 frameDelta[n], u16 rawXor[n], u16 decXor[n],
+#   u16 pcXor[n], u8 value[n], u8 rule[n], u8 dev[n], u8 flags[n]
+# (deltas/xors are against the previous event; first event vs zero)
+BINARY2_MAGIC = b"PTR2"
+V2_BYTES_PER_EVENT = 22
+
+
+def _zstd_decompress(buf: bytes, expected_size: int) -> bytes:
+    """Decompress a zstd frame using whatever this interpreter has:
+    stdlib compression.zstd (3.14+) -> zstandard package -> zstd CLI binary.
+    Raises RuntimeError with remediation hints when none is available —
+    including the emulator's WebAPI readfile endpoint (see --via-webapi)."""
+    try:
+        from compression import zstd as _z  # Python 3.14+
+        return _z.decompress(buf)
+    except ImportError:
+        pass
+    try:
+        import zstandard
+        return zstandard.ZstdDecompressor().decompress(buf, max_output_size=expected_size)
+    except ImportError:
+        pass
+    import subprocess
+    try:
+        result = subprocess.run(["zstd", "-d", "-c"], input=buf, capture_output=True)
+        if result.returncode == 0:
+            return result.stdout
+        raise RuntimeError(f"zstd CLI failed: {result.stderr.decode(errors='replace').strip()}")
+    except FileNotFoundError:
+        raise RuntimeError(
+            "No zstd available to read this compressed trace. Options: "
+            "run on Python 3.14+, `pip install zstandard`, install the `zstd` CLI, "
+            "or use --via-webapi URL to let the emulator core decompress it") from None
+
+
+def _zstd_compress(buf: bytes, level: int = 19) -> bytes:
+    try:
+        from compression import zstd as _z  # Python 3.14+
+        return _z.compress(buf, level)
+    except ImportError:
+        pass
+    try:
+        import zstandard
+        return zstandard.ZstdCompressor(level=level).compress(buf)
+    except ImportError:
+        pass
+    import subprocess
+    try:
+        result = subprocess.run(["zstd", f"-{level}", "-c"], input=buf, capture_output=True)
+        if result.returncode == 0:
+            return result.stdout
+        raise RuntimeError(f"zstd CLI failed: {result.stderr.decode(errors='replace').strip()}")
+    except FileNotFoundError:
+        raise RuntimeError("No zstd available to write a compressed trace "
+                           "(Python 3.14+, `pip install zstandard`, or the `zstd` CLI)") from None
+
+
+def encode_v2_payload(events: List["PortTraceEvent"]) -> bytes:
+    out = bytearray()
+    prev = 0
+    for e in events:
+        out += struct.pack("<Q", (e.timestamp - prev) & 0xFFFFFFFFFFFFFFFF)
+        prev = e.timestamp
+    prev = 0
+    for e in events:
+        out += struct.pack("<I", (e.frame - prev) & 0xFFFFFFFF)
+        prev = e.frame
+    for field in ("raw_port", "decoded_port", "pc"):
+        prev = 0
+        for e in events:
+            v = getattr(e, field)
+            out += struct.pack("<H", v ^ prev)
+            prev = v
+    for field in ("value", "decode_rule", "device_id", "flags"):
+        out += bytes(getattr(e, field) for e in events)
+    return bytes(out)
+
+
+def decode_v2_payload(payload: bytes, n: int) -> List["PortTraceEvent"]:
+    if len(payload) != n * V2_BYTES_PER_EVENT:
+        raise ValueError(f"PTR2 payload size mismatch: {len(payload)} != {n * V2_BYTES_PER_EVENT}")
+
+    off = 0
+    ts, acc = [], 0
+    for d in struct.unpack_from(f"<{n}Q", payload, off):
+        acc = (acc + d) & 0xFFFFFFFFFFFFFFFF
+        ts.append(acc)
+    off += 8 * n
+    frames, acc = [], 0
+    for d in struct.unpack_from(f"<{n}I", payload, off):
+        acc = (acc + d) & 0xFFFFFFFF
+        frames.append(acc)
+    off += 4 * n
+
+    cols16 = []
+    for _ in range(3):  # raw, dec, pc
+        col, acc = [], 0
+        for x in struct.unpack_from(f"<{n}H", payload, off):
+            acc ^= x
+            col.append(acc)
+        cols16.append(col)
+        off += 2 * n
+
+    cols8 = []
+    for _ in range(4):  # value, rule, dev, flags
+        cols8.append(payload[off:off + n])
+        off += n
+
+    return [PortTraceEvent(ts[i], frames[i], cols16[0][i], cols16[1][i], cols16[2][i],
+                           cols8[0][i], cols8[1][i], cols8[2][i], cols8[3][i])
+            for i in range(n)]
+
 
 @dataclass
 class PortTraceEvent:
@@ -218,35 +333,81 @@ def read_binary(path: Path) -> Tuple[SessionInfo, List[PortTraceEvent]]:
     session = SessionInfo()
     with open(path, "rb") as f:
         header = f.read(32)
-        if len(header) < 32 or header[:4] != BINARY_MAGIC:
-            raise ValueError(f"Not a PTRC trace: {path}")
+        if len(header) < 32 or header[:4] not in (BINARY_MAGIC, BINARY2_MAGIC):
+            raise ValueError(f"Not a PTRC/PTR2 trace: {path}")
+        is_v2 = header[:4] == BINARY2_MAGIC
         version = struct.unpack_from("<H", header, 4)[0]
-        if version != 1:
-            raise ValueError(f"Unsupported PTRC version {version}")
+        if version != (2 if is_v2 else 1):
+            raise ValueError(f"Unsupported trace version {version}")
         count = struct.unpack_from("<I", header, 6)[0]
         session.capacity = struct.unpack_from("<I", header, 10)[0]
         session.tstates_per_frame = struct.unpack_from("<I", header, 14)[0]
         rule_count = struct.unpack_from("<H", header, 18)[0]
+        compressed_size = struct.unpack_from("<Q", header, 20)[0] if is_v2 else 0
 
         for _ in range(rule_count):
             session.decode_rules.append(BINARY_RULE.unpack(f.read(BINARY_RULE.size)))
 
-        events = []
-        for _ in range(count):
-            data = f.read(BINARY_EVENT.size)
-            if len(data) < BINARY_EVENT.size:
-                raise ValueError("Truncated PTRC trace")
-            ts, frame, raw, dec, pc, val, rule, dev, flags = BINARY_EVENT.unpack(data)
-            events.append(PortTraceEvent(ts, frame, raw, dec, pc, val, rule, dev, flags))
+        if is_v2:
+            frame_data = f.read(compressed_size)
+            if len(frame_data) < compressed_size:
+                raise ValueError("Truncated PTR2 trace")
+            payload = _zstd_decompress(frame_data, count * V2_BYTES_PER_EVENT)
+            events = decode_v2_payload(payload, count)
+        else:
+            events = []
+            for _ in range(count):
+                data = f.read(BINARY_EVENT.size)
+                if len(data) < BINARY_EVENT.size:
+                    raise ValueError("Truncated PTRC trace")
+                ts, frame, raw, dec, pc, val, rule, dev, flags = BINARY_EVENT.unpack(data)
+                events.append(PortTraceEvent(ts, frame, raw, dec, pc, val, rule, dev, flags))
 
     session.total_captured = len(events)
     return session, events
 
 
-def read_any(path: Path) -> Tuple[SessionInfo, List[PortTraceEvent]]:
+def read_via_webapi(url: str, path: Path, emulator: str = "") -> Tuple[SessionInfo, List[PortTraceEvent]]:
+    """Let the emulator core read (and decompress) a saved binary trace:
+    POST /profiler/porttrace/readfile. Needs a running instance on the same
+    machine as the file; no local zstd required."""
+    import json as _json
+    import urllib.request
+
+    base = url.rstrip("/")
+
+    def post(p, body):
+        req = urllib.request.Request(base + p, data=_json.dumps(body).encode(), method="POST",
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return _json.loads(resp.read())
+
+    if not emulator:
+        with urllib.request.urlopen(base + "/api/v1/emulator", timeout=10) as resp:
+            listing = _json.loads(resp.read())
+        emulators = listing.get("emulators", [])
+        if not emulators:
+            raise ValueError("--via-webapi: no emulator instances running")
+        emulator = emulators[0]["id"]
+
+    data = post(f"/api/v1/emulator/{emulator}/profiler/porttrace/readfile",
+                {"path": str(Path(path).resolve())})
+    session = SessionInfo(
+        tstates_per_frame=data.get("session", {}).get("tstates_per_frame", 0),
+        decode_rules=[(r["mask"], r["match"], r["port"]) for r in data.get("decode_rules", [])],
+    )
+    events = [PortTraceEvent(e["ts"], e["frame"], e["raw"], e["dec"], e["pc"], e["val"],
+                             e["rule"], e["dev"], e["flags"]) for e in data.get("events", [])]
+    session.total_captured = len(events)
+    return session, events
+
+
+def read_any(path: Path, via_webapi: str = "") -> Tuple[SessionInfo, List[PortTraceEvent]]:
     with open(path, "rb") as f:
         head = f.read(4)
-    if head == BINARY_MAGIC:
+    if head in (BINARY_MAGIC, BINARY2_MAGIC):
+        if via_webapi:
+            return read_via_webapi(via_webapi, path)
         return read_binary(path)
     if path.suffix.lower() == ".csv":
         return read_csv(path)
@@ -328,6 +489,25 @@ def write_text(session: SessionInfo, events: List[PortTraceEvent], out) -> None:
                   f"{e.raw_port:04X}   {e.decoded_port:04X}     {e.value:02X}     "
                   f"{e.pc:04X}   {e.device_name:<14} {e.flags_string()}\n")
     out.write("Flags: D=decoded H=hadHandler G=beta128Gated I=handledInline T=cfTrdos L=legacyPath\n")
+
+
+def write_binz(session: SessionInfo, events: List[PortTraceEvent], path: Path) -> None:
+    """Write the compressed PTR2 v2 container (mirrors the C++ writer)."""
+    payload = encode_v2_payload(events)
+    frame = _zstd_compress(payload)
+    with open(path, "wb") as f:
+        header = bytearray(32)
+        header[:4] = BINARY2_MAGIC
+        struct.pack_into("<H", header, 4, 2)
+        struct.pack_into("<I", header, 6, len(events))
+        struct.pack_into("<I", header, 10, session.capacity)
+        struct.pack_into("<I", header, 14, session.tstates_per_frame)
+        struct.pack_into("<H", header, 18, len(session.decode_rules))
+        struct.pack_into("<Q", header, 20, len(frame))
+        f.write(header)
+        for rule in session.decode_rules:
+            f.write(BINARY_RULE.pack(*rule))
+        f.write(frame)
 
 
 def write_summary(session: SessionInfo, events: List[PortTraceEvent], out) -> None:
@@ -513,7 +693,21 @@ def selftest() -> int:
         assert "near-miss for 0x7FFD" in buf.getvalue(), "strictness analysis failed"
         assert "A2" in buf.getvalue()
 
-    print("porttrace_convert selftest: OK")
+        # PTR2 v2 round-trip: transform is always testable; the zstd frame
+        # needs a zstd source (stdlib 3.14+/zstandard/CLI)
+        assert decode_v2_payload(encode_v2_payload(events), len(events)) == events, \
+            "v2 delta/xor transform round-trip mismatch"
+        try:
+            binz_path = Path(tmp) / "t.binz"
+            write_binz(session, events, binz_path)
+            s5, ev5 = read_binary(binz_path)
+            assert ev5 == events, "PTR2 v2 round-trip mismatch"
+            assert s5.decode_rules == session.decode_rules
+            v2_note = f"v2 OK ({binz_path.stat().st_size} bytes)"
+        except RuntimeError as exc:
+            v2_note = f"v2 zstd round-trip SKIPPED ({exc})"
+
+    print(f"porttrace_convert selftest: OK ({v2_note})")
     return 0
 
 
@@ -522,7 +716,11 @@ def selftest() -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Unreal-NG Port Access Trace converter/analyzer")
     parser.add_argument("input", nargs="?", help="Input trace file (.json, .csv, or .bin)")
-    parser.add_argument("--to", choices=["json", "csv", "markdown", "text"], default="text")
+    parser.add_argument("--to", choices=["json", "csv", "markdown", "text", "binz"], default="text",
+                        help="Output format; binz = compressed PTR2 v2 (needs -o and a zstd source)")
+    parser.add_argument("--via-webapi", metavar="URL",
+                        help="Read binary/compressed input through a running emulator's WebAPI "
+                             "readfile endpoint (core-side decompression; no local zstd needed)")
     parser.add_argument("-o", "--output", help="Output file (default: stdout)")
     parser.add_argument("--summary", action="store_true", help="Print summary statistics")
     parser.add_argument("--analyze-strictness", action="store_true",
@@ -547,12 +745,23 @@ def main() -> int:
         return 1
 
     try:
-        session, events = read_any(path)
-    except (ValueError, KeyError, json.JSONDecodeError) as exc:
+        session, events = read_any(path, via_webapi=args.via_webapi or "")
+    except (ValueError, KeyError, json.JSONDecodeError, RuntimeError, OSError) as exc:
         print(f"Failed to parse {path}: {exc}", file=sys.stderr)
         return 1
 
     events = apply_filters(events, args)
+
+    if args.to == "binz" and not (args.summary or args.analyze_strictness):
+        if not args.output:
+            print("--to binz requires -o OUTPUT (binary format)", file=sys.stderr)
+            return 1
+        try:
+            write_binz(session, events, Path(args.output))
+        except RuntimeError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        return 0
 
     out = open(args.output, "w", encoding="utf-8", newline="") if args.output else sys.stdout
     try:
@@ -576,4 +785,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        # Output piped into head/less that closed early — not an error
+        sys.exit(0)

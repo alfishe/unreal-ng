@@ -231,9 +231,12 @@ inline void registerPortTraceBindings(EmulatorClass& emulatorClass)
                  else if (name == "outs-only") recorder->presetOutsOnly();
                  else if (name == "ins-only") recorder->presetInsOnly();
                  else if (name == "unmapped") recorder->presetUnmapped();
+                 else if (name == "no-fe") recorder->presetNoFe();
+                 else if (name == "sound") recorder->presetSound();
+                 else if (name == "paging") recorder->presetPaging();
                  else throw std::invalid_argument("Unknown preset: " + name);
              },
-             "Apply filter preset: all|ay-only|fdc-only|no-fdc|outs-only|ins-only|unmapped", py::arg("name"))
+             "Apply filter preset: all|ay-only|fdc-only|no-fdc|no-fe|sound|paging|outs-only|ins-only|unmapped", py::arg("name"))
 
         // ── Retrieval ──
         .def("porttrace_events",
@@ -271,11 +274,14 @@ inline void registerPortTraceBindings(EmulatorClass& emulatorClass)
                      fmt = PortTraceExportFormat::CSV;
                  else if (format == "bin" || format == "binary")
                      fmt = PortTraceExportFormat::Binary;
+                 else if (format == "binz")
+                     fmt = PortTraceExportFormat::BinaryCompressed;
                  else if (format != "json")
-                     throw std::invalid_argument("format must be json/csv/bin");
+                     throw std::invalid_argument("format must be json/csv/bin/binz");
                  return recorder->saveToFile(path, fmt, decoder->getPortTraceSessionInfo());
              },
-             "Save trace to file (json/csv/bin)", py::arg("path"), py::arg("format") = "json");
+             "Save trace to file (json/csv/bin/binz — binz is zstd-compressed)", py::arg("path"),
+             py::arg("format") = "json");
 }
 
 }  // namespace PythonBindings

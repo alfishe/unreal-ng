@@ -199,7 +199,7 @@ def main() -> int:
     parser.add_argument("--wait-key", action="store_true",
                         help="Interactive mode: capture until any key is pressed, "
                              "showing a live event counter")
-    parser.add_argument("--preset", help="Filter preset: all|ay-only|fdc-only|no-fdc|outs-only|ins-only|unmapped")
+    parser.add_argument("--preset", help="Filter preset: all|ay-only|fdc-only|no-fdc|no-fe|sound|paging|outs-only|ins-only|unmapped")
     parser.add_argument("--include", action="append", default=[], metavar="RULE",
                         help="Compound include rule, e.g. 'port=FFFD,direction=out' (repeatable; rules OR)")
     parser.add_argument("--exclude", action="append", default=[], metavar="RULE",
@@ -224,7 +224,7 @@ def main() -> int:
 
     formats = [f.strip().lower() for f in args.to.split(",") if f.strip()]
     for fmt in formats:
-        if fmt not in ("json", "csv", "text", "txt", "markdown", "md", "bin", "binary"):
+        if fmt not in ("json", "csv", "text", "txt", "markdown", "md", "bin", "binary", "binz"):
             parser.error(f"Unknown format '{fmt}'")
 
     api = WebApi(args.url)
@@ -295,6 +295,11 @@ def main() -> int:
         bin_path = out_base.with_suffix(".bin")
         api.post(f"{base}/save", {"path": str(bin_path), "format": "bin"})
         print(f"Saved: {bin_path}")
+
+    if "binz" in formats:
+        binz_path = out_base.with_suffix(".binz")
+        api.post(f"{base}/save", {"path": str(binz_path), "format": "binz"})
+        print(f"Saved: {binz_path}")
 
     # 6. Local conversion via porttrace_convert (same machine as the server)
     if not canonical.exists():

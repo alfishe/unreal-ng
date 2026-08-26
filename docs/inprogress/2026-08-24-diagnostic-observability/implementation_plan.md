@@ -167,6 +167,15 @@ All transports are always compiled in and always register their commands; when t
 - [ ] `PeripheralRegistrationTest` per model: reset + standard registration → every expected port has a handler
 - [ ] Integrate both into CI as regression guards
 
+### Phase 5: Compressed traces (PTR2 v2) + GUI — DONE (2026-08-25)
+- [x] `PortTraceExportFormat::BinaryCompressed` ("binz", magic `PTR2`): columnar delta/xor transform (22 B/event) + one zstd frame; measured live 50-100x vs v1 (3,761 events: 90 KB bin → 1.2 KB binz)
+- [x] Decompression embedded in the core: `PortDiagnosticRecorder::loadFromFile()` reads v1+v2; WebAPI `POST /profiler/porttrace/readfile` serves any saved binary trace as decompressed JSON (clients need no zstd)
+- [x] `binz` accepted by every save surface: CLI, WebAPI, Python, Lua, capture tool (`--to binz`)
+- [x] Python: `porttrace_convert` reads/writes `.binz` (zstd source order: stdlib 3.14+ → `zstandard` → `zstd` CLI → `--via-webapi` fallback); selftest covers the v2 round-trip; all three read paths (json / local binz / via-webapi) verified byte-identical on a live capture
+- [x] Preset parity across all transports per `recording-control.md` table: added `no-fe`, `sound`, `paging` (core + CLI + WebAPI + Python + Lua + tools); Lua gained the missing `porttrace_events_since`
+- [x] Save-integrity contract: stop is an atomic flip (no streaming writer to flush), save is a locked snapshot + full in-memory encode + verified write (explicit flush before the success check catches close-time errors); tests `StopThenSaveLosesNothing`, `SaveWhileCapturingIsConsistentSnapshot`, `SaveToUnwritablePathReportsFailure`
+- [x] `tools/porttrace/porttrace_gui.py`: PySide6 GUI — Capture tab (connect/instance picker, presets + compound rules, capacity/overflow, start/pause/resume/stop/clear, 2 Hz live counters incl. per-frame activity, server-side save in all formats) and Convert/Analyze tab (open any trace, preview/convert/summary/strictness, export incl. `.binz`); exercised end-to-end offscreen against a live Pentagon instance
+
 ### Phase 4: Offline Tools & UI — converter DONE (2026-08-25), UI pending
 - [x] `tools/porttrace/porttrace_convert.py`: readers (json/csv/bin, auto-detected by magic/extension), writers (json/csv/markdown/text), `--summary` (direction/device/port histograms, unmapped raw addresses, gated count, decode-rule distribution), filters (`--filter-port/device/direction/pc/unmapped`), `--selftest` (binary+JSON+CSV round-trip)
 - [x] `--analyze-strictness`: single-bit near-miss analysis of unmapped events driven by the decode-rule table **from the trace header** — reports every candidate rule with the exact address line that would need to be dropped from the mask (no hardcoded per-model masks in Python)

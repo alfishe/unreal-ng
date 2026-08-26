@@ -84,8 +84,22 @@
         paths[savePath]["post"]["tags"].append("Port Trace");
         paths[savePath]["post"]["description"] =
             "Save the buffered events server-side. Body: {\"path\": \"/tmp/trace.json\", \"format\": "
-            "\"json\"|\"csv\"|\"bin\"}. Exports embed the model's decode-rule table so traces are "
-            "self-describing (tools/porttrace/porttrace_convert.py reads all three formats).";
+            "\"json\"|\"csv\"|\"bin\"|\"binz\"}. 'binz' is the compressed PTR2 v2 container (columnar "
+            "delta/xor transform + zstd, typically 50-100x smaller than 'bin'). Exports embed the "
+            "model's decode-rule table so traces are self-describing "
+            "(tools/porttrace/porttrace_convert.py reads every format).";
         addIdParam(savePath, "post");
         paths[savePath]["post"]["responses"]["200"]["description"] = "Saved event count and path";
+
+        const std::string readfilePath = "/api/v1/emulator/{id}/profiler/porttrace/readfile";
+        paths[readfilePath]["post"]["summary"] = "Read a saved trace file (with decompression)";
+        paths[readfilePath]["post"]["tags"].append("Port Trace");
+        paths[readfilePath]["post"]["description"] =
+            "Read a saved binary trace (PTRC v1 or compressed PTR2 v2) server-side and return it as "
+            "JSON (session, decode_rules, compact numeric events). Decompression happens in the core, "
+            "so clients without zstd can consume compressed traces. Body: {\"path\": \"/tmp/trace.binz\", "
+            "\"limit\": N (optional, 0 = all)}. Does not require the porttrace feature to be enabled.";
+        addIdParam(readfilePath, "post");
+        paths[readfilePath]["post"]["responses"]["200"]["description"] = "Decoded trace content";
+        paths[readfilePath]["post"]["responses"]["422"]["description"] = "Not a readable trace file";
     }

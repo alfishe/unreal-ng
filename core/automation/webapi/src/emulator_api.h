@@ -280,6 +280,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::setPortTraceFilter, "/api/v1/emulator/{id}/profiler/porttrace/filter", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::setPortTraceConfig, "/api/v1/emulator/{id}/profiler/porttrace/config", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::savePortTrace, "/api/v1/emulator/{id}/profiler/porttrace/save", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::readPortTraceFile, "/api/v1/emulator/{id}/profiler/porttrace/readfile",
+                  drogon::Post);
 
     // Unified profiler control (all profilers at once)
     ADD_METHOD_TO(EmulatorAPI::unifiedProfilerStart, "/api/v1/emulator/{id}/profiler/start", drogon::Post);
@@ -830,6 +832,9 @@ public:
                             const std::string& id) const;
     void savePortTrace(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void readPortTraceFile(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                           const std::string& id) const;
 
     // endregion Profiler Commands Methods
 

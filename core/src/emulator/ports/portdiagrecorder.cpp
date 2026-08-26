@@ -2,6 +2,8 @@
 
 #include "portdiagrecorder.h"
 
+#include <zstd.h>
+
 #include <cstddef>
 #include <cstdio>
 #include <fstream>
@@ -296,6 +298,46 @@ void PortDiagnosticRecorder::presetUnmapped()
     setFilter(filter);
 }
 
+void PortDiagnosticRecorder::presetNoFe()
+{
+    PortTraceFilterSet filter;
+
+    PortTraceFilterRule rule;
+    rule.decodedPort = 0x00FE;
+    filter.exclude.push_back(rule);
+
+    setFilter(filter);
+}
+
+void PortDiagnosticRecorder::presetSound()
+{
+    PortTraceFilterSet filter;
+
+    for (PortDeviceId device : {PortDeviceId::AY_FFFD, PortDeviceId::AY_BFFD, PortDeviceId::Covox})
+    {
+        PortTraceFilterRule rule;
+        rule.device = device;
+        filter.include.push_back(rule);
+    }
+
+    setFilter(filter);
+}
+
+void PortDiagnosticRecorder::presetPaging()
+{
+    PortTraceFilterSet filter;
+
+    for (PortDeviceId device :
+         {PortDeviceId::Memory_7FFD, PortDeviceId::Memory_1FFD, PortDeviceId::Memory_DFFD})
+    {
+        PortTraceFilterRule rule;
+        rule.device = device;
+        filter.include.push_back(rule);
+    }
+
+    setFilter(filter);
+}
+
 /// endregion </Filtering>
 
 /// region <Hot path>
@@ -431,6 +473,96 @@ std::string PortDiagnosticRecorder::describeFilter() const
     return out.str();
 }
 
+/// region <PTR2 v2 columnar delta/xor transform>
+///
+/// Payload layout (22 bytes/event, no padding — columnar):
+///   u64 tsDelta[n]    d[0] = ts[0]; d[i] = ts[i] - ts[i-1]   (wrapping)
+///   u32 frameDelta[n]
+///   u16 rawXor[n]     x[0] = raw[0]; x[i] = raw[i] ^ raw[i-1]
+///   u16 decXor[n]
+///   u16 pcXor[n]
+///   u8  value[n], u8 rule[n], u8 dev[n], u8 flags[n]
+///
+/// Timestamps dominate the raw stream's entropy; their deltas are
+/// near-constant instruction spacings, so the transform + one zstd frame
+/// compresses real traces 50-100x (vs ~9x for zstd on the raw stream).
+/// The Python reader (tools/porttrace/porttrace_convert.py) mirrors this.
+
+namespace
+{
+
+constexpr size_t kV2BytesPerEvent = 22;
+
+template <typename T>
+void appendLE(std::vector<uint8_t>& out, T value)
+{
+    for (size_t i = 0; i < sizeof(T); i++)
+        out.push_back(static_cast<uint8_t>(value >> (8 * i)));
+}
+
+template <typename T>
+T readLE(const uint8_t* p)
+{
+    T value = 0;
+    for (size_t i = 0; i < sizeof(T); i++)
+        value |= static_cast<T>(p[i]) << (8 * i);
+    return value;
+}
+
+std::vector<uint8_t> encodePayloadV2(const std::vector<PortTraceEvent>& events)
+{
+    std::vector<uint8_t> out;
+    out.reserve(events.size() * kV2BytesPerEvent);
+
+    uint64_t prevTs = 0;
+    for (const auto& e : events) { appendLE<uint64_t>(out, e.timestamp - prevTs); prevTs = e.timestamp; }
+    uint32_t prevFrame = 0;
+    for (const auto& e : events) { appendLE<uint32_t>(out, e.frameNumber - prevFrame); prevFrame = e.frameNumber; }
+    uint16_t prev = 0;
+    for (const auto& e : events) { appendLE<uint16_t>(out, e.rawPort ^ prev); prev = e.rawPort; }
+    prev = 0;
+    for (const auto& e : events) { appendLE<uint16_t>(out, e.decodedPort ^ prev); prev = e.decodedPort; }
+    prev = 0;
+    for (const auto& e : events) { appendLE<uint16_t>(out, e.pc ^ prev); prev = e.pc; }
+    for (const auto& e : events) out.push_back(e.value);
+    for (const auto& e : events) out.push_back(e.decodeRuleIndex);
+    for (const auto& e : events) out.push_back(static_cast<uint8_t>(e.deviceId));
+    for (const auto& e : events) out.push_back(e.flags);
+
+    return out;
+}
+
+bool decodePayloadV2(const std::vector<uint8_t>& payload, size_t count,
+                     std::vector<PortTraceEvent>& outEvents)
+{
+    if (payload.size() != count * kV2BytesPerEvent)
+        return false;
+
+    outEvents.assign(count, PortTraceEvent{});
+    const uint8_t* p = payload.data();
+
+    uint64_t ts = 0;
+    for (size_t i = 0; i < count; i++, p += 8) { ts += readLE<uint64_t>(p); outEvents[i].timestamp = ts; }
+    uint32_t frame = 0;
+    for (size_t i = 0; i < count; i++, p += 4) { frame += readLE<uint32_t>(p); outEvents[i].frameNumber = frame; }
+    uint16_t prev = 0;
+    for (size_t i = 0; i < count; i++, p += 2) { prev ^= readLE<uint16_t>(p); outEvents[i].rawPort = prev; }
+    prev = 0;
+    for (size_t i = 0; i < count; i++, p += 2) { prev ^= readLE<uint16_t>(p); outEvents[i].decodedPort = prev; }
+    prev = 0;
+    for (size_t i = 0; i < count; i++, p += 2) { prev ^= readLE<uint16_t>(p); outEvents[i].pc = prev; }
+    for (size_t i = 0; i < count; i++) outEvents[i].value = *p++;
+    for (size_t i = 0; i < count; i++) outEvents[i].decodeRuleIndex = *p++;
+    for (size_t i = 0; i < count; i++) outEvents[i].deviceId = static_cast<PortDeviceId>(*p++);
+    for (size_t i = 0; i < count; i++) outEvents[i].flags = *p++;
+
+    return true;
+}
+
+}  // namespace
+
+/// endregion </PTR2 v2 columnar delta/xor transform>
+
 namespace
 {
 std::string jsonEscape(const std::string& s)
@@ -464,6 +596,54 @@ bool PortDiagnosticRecorder::saveToFile(const std::string& path, PortTraceExport
 {
     std::vector<PortTraceEvent> events = getAll();
 
+    if (format == PortTraceExportFormat::BinaryCompressed)
+    {
+        std::vector<uint8_t> payload = encodePayloadV2(events);
+
+        std::vector<uint8_t> compressed(ZSTD_compressBound(payload.size()));
+        size_t compressedSize = ZSTD_compress(compressed.data(), compressed.size(), payload.data(),
+                                              payload.size(), /*level=*/19);
+        if (ZSTD_isError(compressedSize))
+            return false;
+
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        if (!out)
+            return false;
+
+        // Header: 32 bytes — magic, version, count, capacity, tpf, ruleCount,
+        // compressedSize (u64), reserved. Rules stay uncompressed (tiny).
+        uint8_t header[32] = {};
+        memcpy(header, "PTR2", 4);
+        uint16_t version = 2;
+        uint32_t count = static_cast<uint32_t>(events.size());
+        uint32_t cap = static_cast<uint32_t>(_capacity);
+        uint16_t ruleCount = static_cast<uint16_t>(info.decodeRules.size());
+        uint64_t compSize = compressedSize;
+        memcpy(header + 4, &version, 2);
+        memcpy(header + 6, &count, 4);
+        memcpy(header + 10, &cap, 4);
+        memcpy(header + 14, &info.tStatesPerFrame, 4);
+        memcpy(header + 18, &ruleCount, 2);
+        memcpy(header + 20, &compSize, 8);
+        out.write(reinterpret_cast<const char*>(header), sizeof(header));
+
+        for (const auto& rule : info.decodeRules)
+        {
+            out.write(reinterpret_cast<const char*>(&rule.mask), 2);
+            out.write(reinterpret_cast<const char*>(&rule.match), 2);
+            out.write(reinterpret_cast<const char*>(&rule.port), 2);
+        }
+
+        out.write(reinterpret_cast<const char*>(compressed.data()),
+                  static_cast<std::streamsize>(compressedSize));
+
+        // Flush before checking: the ofstream destructor's close runs after
+        // return, so a failure in the final buffered write (disk full, EIO)
+        // would otherwise be reported as success
+        out.flush();
+        return out.good();
+    }
+
     if (format == PortTraceExportFormat::Binary)
     {
         std::ofstream out(path, std::ios::binary | std::ios::trunc);
@@ -495,6 +675,10 @@ bool PortDiagnosticRecorder::saveToFile(const std::string& path, PortTraceExport
             out.write(reinterpret_cast<const char*>(events.data()),
                       static_cast<std::streamsize>(events.size() * sizeof(PortTraceEvent)));
 
+        // Flush before checking: the ofstream destructor's close runs after
+        // return, so a failure in the final buffered write (disk full, EIO)
+        // would otherwise be reported as success
+        out.flush();
         return out.good();
     }
 
@@ -533,6 +717,10 @@ bool PortDiagnosticRecorder::saveToFile(const std::string& path, PortTraceExport
             out << line;
         }
 
+        // Flush before checking: the ofstream destructor's close runs after
+        // return, so a failure in the final buffered write (disk full, EIO)
+        // would otherwise be reported as success
+        out.flush();
         return out.good();
     }
 
@@ -589,7 +777,71 @@ bool PortDiagnosticRecorder::saveToFile(const std::string& path, PortTraceExport
     out << (events.empty() ? "]" : "\n  ]") << "\n";
     out << "}\n";
 
+    out.flush();  // surface close-time write failures (see comment above)
     return out.good();
+}
+
+bool PortDiagnosticRecorder::loadFromFile(const std::string& path, PortTraceSessionInfo& outInfo,
+                                          std::vector<PortTraceEvent>& outEvents)
+{
+    outInfo = {};
+    outEvents.clear();
+
+    std::ifstream in(path, std::ios::binary);
+    if (!in)
+        return false;
+
+    uint8_t header[32] = {};
+    in.read(reinterpret_cast<char*>(header), sizeof(header));
+    if (in.gcount() != sizeof(header))
+        return false;
+
+    bool isV1 = memcmp(header, "PTRC", 4) == 0;
+    bool isV2 = memcmp(header, "PTR2", 4) == 0;
+    if (!isV1 && !isV2)
+        return false;
+
+    uint32_t count = 0;
+    uint16_t ruleCount = 0;
+    memcpy(&count, header + 6, 4);
+    memcpy(&outInfo.tStatesPerFrame, header + 14, 4);
+    memcpy(&ruleCount, header + 18, 2);
+
+    for (uint16_t i = 0; i < ruleCount; i++)
+    {
+        PortTraceDecodeRule rule;
+        in.read(reinterpret_cast<char*>(&rule.mask), 2);
+        in.read(reinterpret_cast<char*>(&rule.match), 2);
+        in.read(reinterpret_cast<char*>(&rule.port), 2);
+        if (!in.good())
+            return false;
+        outInfo.decodeRules.push_back(rule);
+    }
+
+    if (isV1)
+    {
+        outEvents.resize(count);
+        in.read(reinterpret_cast<char*>(outEvents.data()),
+                static_cast<std::streamsize>(count * sizeof(PortTraceEvent)));
+        return in.gcount() == static_cast<std::streamsize>(count * sizeof(PortTraceEvent));
+    }
+
+    // V2: zstd frame of the columnar delta/xor payload
+    uint64_t compressedSize = 0;
+    memcpy(&compressedSize, header + 20, 8);
+
+    std::vector<uint8_t> compressed(compressedSize);
+    in.read(reinterpret_cast<char*>(compressed.data()), static_cast<std::streamsize>(compressedSize));
+    if (in.gcount() != static_cast<std::streamsize>(compressedSize))
+        return false;
+
+    std::vector<uint8_t> payload(static_cast<size_t>(count) * kV2BytesPerEvent);
+    size_t decompressedSize =
+        ZSTD_decompress(payload.data(), payload.size(), compressed.data(), compressed.size());
+    if (ZSTD_isError(decompressedSize) || decompressedSize != payload.size())
+        return false;
+
+    return decodePayloadV2(payload, count, outEvents);
 }
 
 /// endregion </Export>

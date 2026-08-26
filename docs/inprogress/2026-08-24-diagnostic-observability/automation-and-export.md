@@ -435,6 +435,12 @@ Raw dump for maximum speed and minimum size:
 
 Binary is intended for large captures (millions of events) where JSON/CSV overhead is prohibitive. The Python converter tool reads this format.
 
+A compressed variant **PTR2 v2** (`.binz`, format `binz` on every save surface) applies a
+columnar delta/xor transform and one zstd frame — 50-100x smaller on real traces. Spec and
+Python decompression fallbacks: `tools/porttrace/README.md` §5; core-side reader:
+`PortDiagnosticRecorder::loadFromFile()` + WebAPI `POST /profiler/porttrace/readfile`
+(core decompresses for clients without zstd).
+
 ---
 
 ## 7. Python Converter Tool (`porttrace_convert.py`)

@@ -278,6 +278,9 @@ inline void registerBindings(sol::state& lua, std::function<Emulator*()> getEmul
         else if (name == "outs-only") recorder->presetOutsOnly();
         else if (name == "ins-only") recorder->presetInsOnly();
         else if (name == "unmapped") recorder->presetUnmapped();
+        else if (name == "no-fe") recorder->presetNoFe();
+        else if (name == "sound") recorder->presetSound();
+        else if (name == "paging") recorder->presetPaging();
         else return false;
         return true;
     });
@@ -306,6 +309,19 @@ inline void registerBindings(sol::state& lua, std::function<Emulator*()> getEmul
         return result;
     });
 
+    lua.set_function("porttrace_events_since",
+                     [getEmulator](uint64_t timestamp, sol::this_state s) -> sol::table {
+                         sol::state_view lua(s);
+                         sol::table result = lua.create_table();
+                         std::string error;
+                         auto* recorder = resolveRecorder(getEmulator(), nullptr, error);
+                         if (!recorder) return result;
+                         int index = 1;
+                         for (const auto& e : recorder->getSince(timestamp))
+                             result[index++] = eventToTable(lua, e);
+                         return result;
+                     });
+
     lua.set_function("porttrace_save",
                      [getEmulator](const std::string& path, sol::optional<std::string> format) -> bool {
                          std::string error;
@@ -317,6 +333,8 @@ inline void registerBindings(sol::state& lua, std::function<Emulator*()> getEmul
                              fmt = PortTraceExportFormat::CSV;
                          else if (format && (*format == "bin" || *format == "binary"))
                              fmt = PortTraceExportFormat::Binary;
+                         else if (format && *format == "binz")
+                             fmt = PortTraceExportFormat::BinaryCompressed;
                          return recorder->saveToFile(path, fmt, decoder->getPortTraceSessionInfo());
                      });
 }

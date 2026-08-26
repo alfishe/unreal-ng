@@ -78,6 +78,14 @@ struct PortTraceEvent
     PortDeviceId deviceId = PortDeviceId::None;          // Which peripheral this belongs to
     uint8_t  flags = 0;           // PortTraceFlags bitfield
 
+    bool operator==(const PortTraceEvent& other) const
+    {
+        return timestamp == other.timestamp && frameNumber == other.frameNumber &&
+               rawPort == other.rawPort && decodedPort == other.decodedPort && pc == other.pc &&
+               value == other.value && decodeRuleIndex == other.decodeRuleIndex &&
+               deviceId == other.deviceId && flags == other.flags;
+    }
+
     bool isOut() const           { return flags & PortTraceFlags::kDirectionOut; }
     bool wasDecoded() const      { return flags & PortTraceFlags::kWasDecoded; }
     bool hadHandler() const      { return flags & PortTraceFlags::kHadHandler; }
@@ -152,6 +160,9 @@ enum class PortTraceExportFormat : uint8_t
     JSON,    // "unreal-ng-porttrace-v1": session + decode_rules + device_map + compact events
     CSV,     // Comment-header metadata + one row per event (hex ports/values)
     Binary,  // "PTRC" v1: 32-byte header + decode-rule table + raw little-endian events
+    BinaryCompressed,  // "PTR2" v2: columnar delta/xor transform + one zstd frame
+                       // (typically 50-100x smaller than v1 — timestamps dominate the
+                       // entropy and their deltas are near-constant)
 };
 
 /// One mask/match decode rule, exported into trace headers so saved traces are
@@ -251,6 +262,9 @@ public:
     void presetOutsOnly();  // Include direction=OUT
     void presetInsOnly();   // Include direction=IN
     void presetUnmapped();  // Include only unmapped events
+    void presetNoFe();      // Exclude #FE (skip high-frequency ULA keyboard/border traffic)
+    void presetSound();     // Include AY_FFFD + AY_BFFD + Covox devices
+    void presetPaging();    // Include Memory_7FFD + Memory_1FFD + Memory_DFFD devices
     /// endregion </Filtering>
 
     /// region <Hot path>
@@ -275,6 +289,14 @@ public:
     /// transports) so every interface produces identical output.
     bool saveToFile(const std::string& path, PortTraceExportFormat format,
                     const PortTraceSessionInfo& info) const;
+
+    /// Load a binary trace file (PTRC v1 or compressed PTR2 v2) back into
+    /// events + session metadata (tpf and decode rules; model/emulator id are
+    /// not stored in binary traces). Decompression lives here in the core so
+    /// transports (WebAPI readfile endpoint) can serve compressed traces to
+    /// clients that have no zstd of their own.
+    static bool loadFromFile(const std::string& path, PortTraceSessionInfo& outInfo,
+                             std::vector<PortTraceEvent>& outEvents);
 
     /// Human-readable one-line description of the active filter
     std::string describeFilter() const;

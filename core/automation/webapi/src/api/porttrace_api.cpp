@@ -401,6 +401,9 @@ void EmulatorAPI::setPortTraceFilter(const HttpRequestPtr& req,
         else if (name == "outs-only") recorder->presetOutsOnly();
         else if (name == "ins-only") recorder->presetInsOnly();
         else if (name == "unmapped") recorder->presetUnmapped();
+        else if (name == "no-fe") recorder->presetNoFe();
+        else if (name == "sound") recorder->presetSound();
+        else if (name == "paging") recorder->presetPaging();
         else
         {
             sendError(callback, HttpStatusCode::k400BadRequest, "Bad Request", "Unknown preset: " + name);
@@ -519,6 +522,8 @@ void EmulatorAPI::savePortTrace(const HttpRequestPtr& req, std::function<void(co
         fmt = PortTraceExportFormat::CSV;
     else if (format == "bin" || format == "binary")
         fmt = PortTraceExportFormat::Binary;
+    else if (format == "binz")
+        fmt = PortTraceExportFormat::BinaryCompressed;
     else if (format != "json")
     {
         sendError(callback, HttpStatusCode::k400BadRequest, "Bad Request", "Unknown format: " + format);
@@ -537,6 +542,79 @@ void EmulatorAPI::savePortTrace(const HttpRequestPtr& req, std::function<void(co
     body["saved"] = static_cast<Json::UInt64>(count);
     body["path"] = path;
     body["format"] = format;
+    sendJson(callback, body);
+}
+
+/// @brief POST /api/v1/emulator/{id}/profiler/porttrace/readfile
+/// Body: {"path": "/tmp/trace.binz", "limit": N (optional, 0 = all)}
+/// Reads a saved binary trace (PTRC v1 or compressed PTR2 v2) server-side —
+/// decompression happens here in the core, so clients without zstd (the
+/// Python tools) can consume compressed traces as plain JSON.
+void EmulatorAPI::readPortTraceFile(const HttpRequestPtr& req,
+                                    std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    // Only needs a valid emulator for routing consistency; the porttrace
+    // feature gate is not required to read a file from disk
+    auto manager = EmulatorManager::GetInstance();
+    if (!manager->GetEmulator(id))
+    {
+        sendError(callback, HttpStatusCode::k404NotFound, "Not Found", "Emulator with specified ID not found");
+        return;
+    }
+
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("path"))
+    {
+        sendError(callback, HttpStatusCode::k400BadRequest, "Bad Request", "JSON body with 'path' expected");
+        return;
+    }
+
+    std::string path = (*json)["path"].asString();
+    size_t limit = json->isMember("limit") ? (*json)["limit"].asUInt() : 0;
+
+    PortTraceSessionInfo info;
+    std::vector<PortTraceEvent> events;
+    if (!PortDiagnosticRecorder::loadFromFile(path, info, events))
+    {
+        sendError(callback, HttpStatusCode::k422UnprocessableEntity, "Unprocessable",
+                  "Not a readable PTRC/PTR2 trace file: " + path);
+        return;
+    }
+
+    Json::Value body;
+    body["session"]["tstates_per_frame"] = info.tStatesPerFrame;
+    body["session"]["total_events"] = static_cast<Json::UInt64>(events.size());
+    body["decode_rules"] = Json::Value(Json::arrayValue);
+    for (size_t i = 0; i < info.decodeRules.size(); i++)
+    {
+        Json::Value rule;
+        rule["index"] = static_cast<Json::UInt>(i);
+        rule["mask"] = info.decodeRules[i].mask;
+        rule["match"] = info.decodeRules[i].match;
+        rule["port"] = info.decodeRules[i].port;
+        body["decode_rules"].append(rule);
+    }
+
+    size_t emitCount = (limit > 0 && limit < events.size()) ? limit : events.size();
+    body["events"] = Json::Value(Json::arrayValue);
+    for (size_t i = 0; i < emitCount; i++)
+    {
+        const PortTraceEvent& e = events[i];
+        // Compact numeric form — identical to the trace-file JSON "events" schema
+        Json::Value v;
+        v["ts"] = static_cast<Json::UInt64>(e.timestamp);
+        v["frame"] = e.frameNumber;
+        v["raw"] = e.rawPort;
+        v["dec"] = e.decodedPort;
+        v["rule"] = e.decodeRuleIndex;
+        v["val"] = e.value;
+        v["pc"] = e.pc;
+        v["dev"] = static_cast<Json::UInt>(e.deviceId);
+        v["flags"] = e.flags;
+        body["events"].append(v);
+    }
+
     sendJson(callback, body);
 }
 

@@ -8,9 +8,13 @@ TR-DOS gating, mask collisions, over-strict decoding, ghost reads).
 | Tool | Purpose |
 |---|---|
 | [`porttrace_capture.py`](porttrace_capture.py) | One-command capture session over the WebAPI: enable → filter → capture → save → convert |
-| [`porttrace_convert.py`](porttrace_convert.py) | Standalone converter/analyzer for saved traces (json/csv/bin → json/csv/markdown/text, summary, strictness analysis) |
+| [`porttrace_convert.py`](porttrace_convert.py) | Standalone converter/analyzer for saved traces (json/csv/bin/binz → json/csv/markdown/text/binz, summary, strictness analysis) |
+| [`porttrace_gui.py`](porttrace_gui.py) | PySide6 GUI: connect, start/pause/resume/stop with live counters, presets & rules, save, offline convert/analyze |
 
-Both are Python 3.8+, standard library only — no pip installs.
+The CLI tools are Python 3.8+, standard library only — no pip installs
+(reading/writing the compressed `.binz` format needs a zstd source, see §5;
+everything else has zero dependencies). The GUI additionally needs
+`pip install PySide6`.
 
 Design documents: [`docs/inprogress/2026-08-24-diagnostic-observability/`](../../docs/inprogress/2026-08-24-diagnostic-observability/)
 
@@ -91,13 +95,13 @@ Runs a complete session against a live emulator:
 | `--emulator ID` | Emulator id or unique prefix (default: the single/running instance) |
 | `--duration N` | Capture length in seconds (float) |
 | `--wait-key` | Interactive mode: capture until **any key** is pressed, with a live event counter updating twice a second (alternative to `--duration`; falls back to Enter-terminated when stdin is not a terminal) |
-| `--preset NAME` | Filter preset: `all` `ay-only` `fdc-only` `no-fdc` `outs-only` `ins-only` `unmapped` |
+| `--preset NAME` | Filter preset: `all` `ay-only` `fdc-only` `no-fdc` `no-fe` `sound` `paging` `outs-only` `ins-only` `unmapped` |
 | `--include RULE` | Compound include rule (repeatable — rules OR together) |
 | `--exclude RULE` | Compound exclude rule (repeatable — exclude always wins) |
 | `--capacity N` | Ring buffer capacity in events. Default: **auto-sized** — `duration × 250k events/s × 1.5` headroom for `--duration`, 4M for `--wait-key`, clamped to 1M–8M (24 bytes/event: 1M = 24 MB, 8M = 192 MB) |
 | `--overflow ring\|stop` | `ring` = evict oldest (default); `stop` = auto-stop when full, keeping the **start** of the run |
 | `-o BASE` | Output base path; the extension is added per format (default `porttrace`) |
-| `--to LIST` | Comma-separated formats: `json,csv,text,markdown,bin` (default `json`) |
+| `--to LIST` | Comma-separated formats: `json,csv,text,markdown,bin,binz` (default `json`; `binz` = compressed PTR2 v2, typically 50–100× smaller than `bin`) |
 | `--summary` | Print the trace summary after conversion |
 | `--no-enable` | Do not auto-enable the feature (fail if it is off) |
 
@@ -274,6 +278,47 @@ The C++ side `static_assert`s this exact layout
 silently. Binary carries no model/emulator-id strings — use JSON when you need
 them.
 
+### Compressed binary (`PTR2` v2, `.binz`)
+
+Same 32-byte header shape (magic `PTR2`, version 2, `compressedSize` u64 at
+offset 20) and uncompressed decode-rule table, followed by **one zstd frame**
+containing a columnar delta/xor payload (22 bytes/event before compression):
+
+```text
+u64 tsDelta[n]     d[0]=ts[0]; d[i]=ts[i]-ts[i-1]   (wrapping)
+u32 frameDelta[n]
+u16 rawXor[n]      x[0]=raw[0]; x[i]=raw[i]^raw[i-1]
+u16 decXor[n]
+u16 pcXor[n]
+u8  value[n], rule[n], dev[n], flags[n]
+```
+
+Timestamps dominate the raw stream's entropy and their deltas are
+near-constant, so real traces compress **50–100×** vs `bin` (measured live:
+3,761 events → 90 KB bin / 1.2 KB binz / 450 KB JSON). Compression and
+decompression are embedded in the core (zstd is already linked for the TTD
+codec); reading `.binz` in Python needs one of, tried in order:
+
+1. Python 3.14+ stdlib (`compression.zstd`)
+2. `pip install zstandard`
+3. the `zstd` CLI binary on PATH
+4. none of those? `--via-webapi URL` makes a running emulator read and
+   decompress the file core-side (`POST /profiler/porttrace/readfile`)
+
+### Integrity guarantees
+
+There is no streaming writer: during capture events exist only in the in-RAM
+ring, and `stop` is an immediate atomic state flip — nothing is left half
+written anywhere. `save` is a snapshot operation: it reads the ring under its
+lock (a consistent, ordered prefix even if you save *while* capturing),
+encodes and compresses fully in memory, then writes the complete file and
+reports failure (disk full, bad path — the stream is flushed before the
+result is checked, so even a close-time write error is surfaced). Covered by
+`PortTrace_Test.StopThenSaveLosesNothing`, `SaveWhileCapturingIsConsistentSnapshot`,
+and `SaveToUnwritablePathReportsFailure`. Note the OS page cache is not fsync'd —
+a machine crash immediately after a reported-successful save can still lose the
+file, as with any normal file write.
+
 ---
 
 ## 6. Event reference
@@ -349,7 +394,29 @@ porttrace_convert.py /tmp/full.json --summary
 
 ---
 
-## 8. Other ways to reach the same recorder
+## 8. `porttrace_gui.py` — graphical tool
+
+```bash
+pip install PySide6
+tools/porttrace/porttrace_gui.py
+```
+
+Two tabs:
+
+- **Capture** — connect to the WebAPI, pick the emulator (the `porttrace`
+  feature is enabled automatically), choose a preset or type compound
+  include/exclude rules (same `port=FFFD,direction=out` grammar as the CLI
+  tool, `;`-separated), set capacity/overflow, then Start / Pause / Resume /
+  Stop / Clear with **live counters polled twice a second** (state, events,
+  produced/evicted/filtered, active filter, per-frame in/out/unmapped/gated
+  activity — including the buffer-full auto-stop indicator). Save writes the
+  trace server-side in any format including `.binz`.
+- **Convert / Analyze** — open any saved trace (`json`/`csv`/`bin`/`binz`),
+  preview it as text/json/csv/markdown or run the **summary** and
+  **strictness** analyses in the window, and Export… to a file (including
+  re-compressing to `.binz`). Works fully offline via `porttrace_convert`.
+
+## 9. Other ways to reach the same recorder
 
 Every transport drives the same core (`PortDiagnosticRecorder`); files saved by
 any of them are interchangeable inputs for `porttrace_convert.py`:
