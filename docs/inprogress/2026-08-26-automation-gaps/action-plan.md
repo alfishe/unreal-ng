@@ -34,17 +34,78 @@ Last updated: 2026-08-26
 | 0.4.5 | Python: add `run_to_pixel` | DONE | ef117f47 | |
 | 0.5.1 | Update automation.md with command parity | DONE | ef117f47 | Fixed CLI README port, added execution control docs |
 
-## Phase 1A: GDB RSP Server
+## Phase 1A: GDB RSP Server (Forward Debugging)
+
+See [gdb-protocol.md](../../emulator/design/control-interfaces/gdb-protocol.md) and [gdb-reverse-debugging-tdd.md](../../emulator/design/debugger/time-travel-debug/gdb-reverse-debugging-tdd.md) for full design.
+
+### G1: Forward-Only Stub
 
 | ID | Task | Status | Commit | Notes |
 |----|------|--------|--------|-------|
-| 1A.1 | GDB RSP server skeleton | TODO | | Standalone module |
-| 1A.2 | GDB `g`/`G` packets (registers) | TODO | | Requires 0.1.x |
-| 1A.3 | GDB `m`/`M` packets (memory) | TODO | | |
-| 1A.4 | GDB `Z`/`z` packets (breakpoints) | TODO | | |
-| 1A.5 | GDB `c`/`s` packets (run control) | TODO | | |
-| 1A.6 | GDB `?` packet (stop reason) | TODO | | |
-| 1A.7 | Run-control ownership claim | TODO | | |
+| 1A.1.1 | Directory structure + CMake | DONE | | `core/automation/gdb/` with ENABLE_GDB_AUTOMATION gate |
+| 1A.1.2 | RSP packet framing | DONE | | `$data#checksum`, ack/nack, escaping, RLE |
+| 1A.1.3 | TCP listener + session thread | DONE | | Port 2000 default, 127.0.0.1 only |
+| 1A.1.4 | `qSupported` handshake | DONE | | Capability negotiation, NoAckMode |
+| 1A.1.5 | `qXfer:features:read:target.xml` | WIP | | Z80 register description, basic XML done; TODO: model-aware features |
+| 1A.1.6 | `qXfer:osdata:read:processes` | TODO | | Instance list for `vAttach` selection |
+| 1A.1.7 | `vAttach` instance binding | TODO | | Takes run-control claim |
+| 1A.2.1 | `g` packet (read all regs) | TODO | | Z80State codec per target.xml order |
+| 1A.2.2 | `G` packet (write all regs) | TODO | | Refused while detached in history |
+| 1A.2.3 | `p`/`P` packets (single reg) | TODO | | Including pseudo-regs (paging latches) |
+| 1A.3.1 | `m` packet (read memory) | TODO | | Z80 view + physical view (0x01XX'XXXX) |
+| 1A.3.2 | `M`/`X` packets (write memory) | TODO | | Refused while detached |
+| 1A.4.1 | `Z0`/`z0` execution breakpoints | TODO | | AddExecutionBreakpoint with owner="gdb" |
+| 1A.5.1 | `c` continue | TODO | | Emulator::Resume(), async stop-reply |
+| 1A.5.2 | `s` single-step | TODO | | RunSingleCPUCycle |
+| 1A.5.3 | `0x03` interrupt (Ctrl-C) | TODO | | Emulator::Pause() → T02 |
+| 1A.6.1 | `?` stop reason query | TODO | | T05 with swbreak:/watch:/rwatch:/awatch: |
+| 1A.6.2 | `T05` stop replies (exact forms) | TODO | | Byte-exact per §4.7.1 |
+| 1A.7.1 | Run-control claim in EmulatorContext | TODO | | Advisory token, not mutex |
+| 1A.7.2 | Refuse Resume/Step from other surfaces | TODO | | Return error with "busy: GDB session" |
+| 1A.7.3 | External pause → T05 stop-reply | TODO | | Via NC_EMULATOR_STATE_CHANGE |
+
+### G2: Watchpoints + Monitor
+
+| ID | Task | Status | Commit | Notes |
+|----|------|--------|--------|-------|
+| 1A.8.1 | `Z2`/`z2` write watchpoints | TODO | | len ≤ 16 via per-address descriptors |
+| 1A.8.2 | `Z3`/`z3` read watchpoints | TODO | | |
+| 1A.8.3 | `Z4`/`z4` access watchpoints | TODO | | Combined R\|W |
+| 1A.8.4 | `watch:` stop replies | TODO | | T05watch:ADDR;thread:1; |
+| 1A.9.1 | `qRcmd` monitor framework | TODO | | Hex-encoded text output |
+| 1A.9.2 | `monitor model` | TODO | | Active model + capability list |
+| 1A.9.3 | `monitor instances` | TODO | | pid, symbolic id, model, state |
+| 1A.9.4 | `monitor bankinfo` | TODO | | Current paging decode + page table |
+| 1A.9.5 | `monitor frame` | TODO | | Frame / t-state / beam position |
+| 1A.9.6 | `monitor load snap/tape/disk` | TODO | | Paused only, invalidates TTD |
+| 1A.9.7 | `monitor reset` | TODO | | Paused only, preserves model |
+
+### G3: Reverse Execution (TTD Integration)
+
+| ID | Task | Status | Commit | Notes |
+|----|------|--------|--------|-------|
+| 1A.10.1 | Conditional `ReverseStep+`/`ReverseContinue+` | TODO | | Only when TTD enabled + recording |
+| 1A.10.2 | `bs` backward step | TODO | | TTDManager::StepBackInstruction() |
+| 1A.10.3 | `bc` backward continue | TODO | | FindLastAccess over armed bp/wp |
+| 1A.10.4 | `replaylog:begin` stop reason | TODO | | History exhausted / barrier |
+| 1A.10.5 | Detached read-only enforcement | TODO | | G/P/M refused with E0D |
+| 1A.10.6 | `monitor ttd status` | TODO | | Session bounds, position, barriers |
+| 1A.10.7 | `monitor ttd start` | TODO | | Arm recording mid-session |
+| 1A.10.8 | `monitor ttd seek <frame>` | TODO | | SeekTo frame boundary |
+| 1A.10.9 | `monitor ttd findlast w <addr>` | TODO | | Reverse search without arming wp |
+
+### G4: Polish
+
+| ID | Task | Status | Commit | Notes |
+|----|------|--------|--------|-------|
+| 1A.11.1 | Physical memory view (0x01XX'XXXX) | TODO | | Raw page access |
+| 1A.11.2 | Ephemeral dedicated ports | TODO | | `monitor gdbport <pid>` for legacy clients |
+| 1A.11.3 | Range descriptors for len > 16 | TODO | | BreakpointRangeDescription |
+| 1A.11.4 | Port breakpoints `monitor bport` | TODO | | IN/OUT breakpoints via BRK_IO |
+| 1A.11.5 | Paging pseudo-register writes | TODO | | Route through port decoder |
+| 1A.11.6 | Per-client setup docs | TODO | | GDB, IDA Pro, Ghidra, VS Code |
+| 1A.11.7 | Fuzz-lite packet tests | TODO | | Malformed packets never crash |
+| 1A.11.8 | Integration test with pygdbmi | TODO | | End-to-end proof TTD+RSP compose |
 
 ## Phase 1B: DeZog / VS Code DAP
 
@@ -136,8 +197,10 @@ Last updated: 2026-08-26
 | Phase | Total | Done | WIP | TODO |
 |-------|-------|------|-----|------|
 | Phase 0 | 20 | 15 | 0 | 5 |
-| Phase 1 | 14 | 0 | 0 | 14 |
+| Phase 1A (GDB) | 38 | 0 | 0 | 38 |
+| Phase 1B (DeZog) | 6 | 0 | 0 | 6 |
+| Phase 1C (MCP) | 2 | 0 | 0 | 2 |
 | Phase 2 | 9 | 0 | 0 | 9 |
 | Phase 3 | 6 | 0 | 0 | 6 |
 | Phase 4 | 11 | 0 | 0 | 11 |
-| **Total** | **60** | **15** | **0** | **45** |
+| **Total** | **92** | **15** | **0** | **77** |

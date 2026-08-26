@@ -7,6 +7,7 @@ class AutomationLua;
 class AutomationPython;
 class AutomationWebAPI;
 class AutomationCLI;
+class AutomationGDB;
 
 class Automation
 {
@@ -26,6 +27,10 @@ protected:
 
 #if ENABLE_CLI_AUTOMATION
     AutomationCLI* _cli = nullptr;
+#endif
+
+#if ENABLE_GDB_AUTOMATION
+    AutomationGDB* _gdb = nullptr;
 #endif
     bool _stopped = false;
     /// endregion </Fields>
@@ -86,10 +91,12 @@ protected:
     bool startPython();
     bool startWebAPI();
     bool startCLI();
+    bool startGDB();
 
     void stopLua();
     void stopPython();
     void stopWebAPI();
     void stopCLI();
+    void stopGDB();
     /// endregion </Helper methods>
 };

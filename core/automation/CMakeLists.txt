@@ -67,13 +67,10 @@ if (ENABLE_CLI_AUTOMATION)
     set(AUTOMATION_CLI_TARGET automation-cli)
 endif ()
 
-# GDB RSP server transport (GDB TDD G1). Stub in Sprint 0:
-# the flag exists and configures cleanly, but no build target is produced yet.
-# When G1 lands, uncomment the add_subdirectory line.
+# GDB RSP server transport (GDB TDD G1)
 if (ENABLE_GDB_AUTOMATION)
-    # add_subdirectory(gdb)   # Added in G1 (GDB TDD §2)
-    message(STATUS "ENABLE_GDB_AUTOMATION=ON but GDB transport not yet implemented (Sprint 0 stub)")
-    set(AUTOMATION_GDB_TARGET "")   # Empty until G1 lands
+    add_subdirectory(gdb)
+    set(AUTOMATION_GDB_TARGET automation_gdb)
 endif ()
 
 set (SOURCES
@@ -120,7 +117,7 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
             $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:automation_python>    # Conditional linking
             $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:automation_webapi>    # Conditional linking
             $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:automation-cli>          # Conditional linking
-            # ENABLE_GDB_AUTOMATION link target added in G1 (GDB TDD §2)
+            $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:automation_gdb>          # Conditional linking
 
         PUBLIC
             unrealng::core
@@ -162,6 +159,7 @@ else ()
             $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${AUTOMATION_LUA_TARGET}>
             $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${AUTOMATION_PYTHON_TARGET}>
             $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:${AUTOMATION_WEBAPI_TARGET}>
+            $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:${AUTOMATION_GDB_TARGET}>
             unrealng::core
     )
 endif ()
@@ -174,6 +172,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
     $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/python/src>
     $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/webapi/src>
     $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/cli/include>
+    $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/gdb/include>
 )
 
 # Add conditional compiler definitions for automation modules

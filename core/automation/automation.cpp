@@ -22,6 +22,10 @@
 #include "cli/include/automation-cli.h"
 #endif
 
+#if ENABLE_GDB_AUTOMATION
+#include "gdb/include/automation-gdb.h"
+#endif
+
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
@@ -59,6 +63,10 @@ bool Automation::start()
     result &= startCLI();
 #endif
 
+#if ENABLE_GDB_AUTOMATION
+    result &= startGDB();
+#endif
+
     return result;
 }
 
@@ -83,6 +91,10 @@ void Automation::stop()
 
 #if ENABLE_CLI_AUTOMATION
     stopCLI();
+#endif
+
+#if ENABLE_GDB_AUTOMATION
+    stopGDB();
 #endif
 }
 
@@ -241,6 +253,35 @@ void Automation::stopCLI()
         _cli->stop();
         delete _cli;
         _cli = nullptr;
+    }
+}
+#endif
+
+#if ENABLE_GDB_AUTOMATION
+bool Automation::startGDB()
+{
+    bool result = true;
+
+    _gdb = new AutomationGDB();
+    if (_gdb)
+    {
+        result = _gdb->start();
+    }
+    else
+    {
+        result = false;
+    }
+
+    return result;
+}
+
+void Automation::stopGDB()
+{
+    if (_gdb)
+    {
+        _gdb->stop();
+        delete _gdb;
+        _gdb = nullptr;
     }
 }
 #endif
