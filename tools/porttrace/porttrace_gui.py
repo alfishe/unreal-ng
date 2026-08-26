@@ -25,13 +25,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import porttrace_convert  # noqa: E402
 from porttrace_capture import ApiError, WebApi  # noqa: E402
 
-from PySide6.QtCore import Qt, QTimer  # noqa: E402
-from PySide6.QtGui import QFont  # noqa: E402
-from PySide6.QtWidgets import (  # noqa: E402
-    QApplication, QComboBox, QFileDialog, QFormLayout, QGridLayout, QGroupBox,
-    QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
-    QPushButton, QSpinBox, QSplitter, QStatusBar, QTabWidget, QVBoxLayout, QWidget,
-)
+try:
+    from PySide6.QtCore import Qt, QTimer  # noqa: E402
+    from PySide6.QtGui import QFont  # noqa: E402
+    from PySide6.QtWidgets import (  # noqa: E402
+        QApplication, QComboBox, QFileDialog, QFormLayout, QGridLayout, QGroupBox,
+        QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
+        QPushButton, QSpinBox, QStatusBar, QTabWidget, QVBoxLayout, QWidget,
+    )
+except ModuleNotFoundError:
+    print(f"PySide6 is not installed for this interpreter:\n  {sys.executable}\n\n"
+          f"Fix one of these ways:\n"
+          f"  pip install PySide6                     # into the current interpreter\n"
+          f"  pyenv shell 3.12.3                      # if another pyenv version has it\n"
+          f"  ~/.pyenv/versions/3.12.3/bin/python3 {Path(__file__).name}\n\n"
+          f"(An active virtualenv - e.g. jupyter_env - hides packages installed in\n"
+          f" the base interpreter.)", file=sys.stderr)
+    sys.exit(1)
 
 PRESETS = ["all", "ay-only", "fdc-only", "no-fdc", "no-fe", "sound", "paging",
            "outs-only", "ins-only", "unmapped"]

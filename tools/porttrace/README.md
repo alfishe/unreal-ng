@@ -401,6 +401,14 @@ pip install PySide6
 tools/porttrace/porttrace_gui.py
 ```
 
+> Getting `ModuleNotFoundError: No module named 'PySide6'`? Your shell is using
+> an interpreter without it (an active virtualenv such as `jupyter_env` hides
+> packages from the base interpreter). Either `pip install PySide6` into that
+> interpreter, or run with one that has it, e.g.
+> `~/.pyenv/versions/3.12.3/bin/python3 porttrace_gui.py`. The tool prints
+> exactly this guidance (with the offending interpreter path) when the import
+> fails.
+
 Two tabs:
 
 - **Capture** — connect to the WebAPI, pick the emulator (the `porttrace`
