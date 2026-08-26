@@ -42,13 +42,17 @@ Neither tool answers the core diagnostic questions for the two dominant bug clas
 
 ### Design Principles
 
-1. **Zero-cost when off** — a single `std::atomic<bool>` check on the hot path (branch predictor friendly, always-not-taken)
+0. **Runtime feature gate, no compile-time flags** — gated exclusively by the FeatureManager feature `porttrace` (alias `pt`, `features.ini`, default off), like `kMemoryTracking`/`kCallTrace`/`kTimeTravel`. Feature off → recorder not instantiated, no buffer allocated. See `implementation_plan.md` § "Feature Gate".
+1. **Zero-cost when off** — with the feature off, the hot path is a single cached-bool test + never-taken branch (same `UpdateFeatureCache` pattern as `Memory` and `TimeTravelManager`)
 2. **Structured, not textual** — fixed-size POD event struct pushed to `RingBuffer<T>`; no `std::string`, no `StringHelper::Format`
 3. **Hook into the existing universal handler** — `OnPortInComplete` / `OnPortOutComplete` already receive all needed data; add a 3-line capture block
 4. **Queryable via existing transports** — CLI, WebAPI, Python, Lua — using the established analyzer/profiler retrieval patterns
 5. **Complementary, not replacement** — ModuleLogger stays for human-readable narrative; PDR is for machine-parseable forensics
 
 ### Event Structure
+
+> [!WARNING]
+> **SUPERSEDED.** This early 20-byte sketch packs `decodeRuleIndex` into 3 flag bits (max 8 rules — decode tables will outgrow that) and lacks `deviceId`. The authoritative event struct is the 24-byte `PortTraceEvent` in `use-cases.md`, which uses a full `uint8_t decodeRuleIndex` and adds device attribution. Kept for historical context only.
 
 ```cpp
 struct PortDiagnosticEvent
@@ -73,21 +77,23 @@ struct PortDiagnosticEvent
 
 ### Capture Points
 
-Two additions, ~5 lines each, in the existing universal handlers:
+> [!IMPORTANT]
+> **Reality check (code audit)**: `OnPortInComplete`/`OnPortOutComplete` currently receive only the **raw** port (`portdecoder_pentagon128.cpp:194` passes `port`, not `decodedPort`). The decoded port, rule index, gate outcome, and handler attribution are locals inside each subclass's `DecodePortIn/Out`. The hooks therefore must be **extended** to receive a `PortDecodeDisposition` struct filled by the subclass — a mechanical edit across all 7 models. This keeps a single capture point; inline handlers contribute only a disposition flag and never push events themselves (one event per I/O operation is an invariant). See `implementation_plan.md`.
 
 ```cpp
-// In PortDecoder::OnPortInComplete (portdecoder.cpp ~L142)
-if (_portDiagRecorder && _portDiagRecorder->isArmed()) [[unlikely]]
+// Extended hook signature; capture is one guarded call behind the cached
+// runtime-feature flag (kPortTrace via UpdateFeatureCache):
+void PortDecoder::OnPortOutComplete(uint16_t rawPort, uint8_t value, uint16_t pc,
+                                    const PortDecodeDisposition& disp)
 {
-    _portDiagRecorder->recordIn(port, result, pc, _lastPortDecoded, ...);
-}
-
-// In PortDecoder::OnPortOutComplete (portdecoder.cpp ~L210)
-if (_portDiagRecorder && _portDiagRecorder->isArmed()) [[unlikely]]
-{
-    _portDiagRecorder->recordOut(port, value, pc, _lastPortDecoded, ...);
+    // ... existing breakpoint / tracker / TTD logic ...
+    if (_portTraceCache) [[unlikely]]
+        _portTrace->record(/*isOut=*/true, rawPort, value, pc, disp);
 }
 ```
+
+> [!NOTE]
+> The legacy base-class `DecodePortIn/Out` path calls `PeripheralPortIn/Out` directly without invoking the hooks (`portdecoder.cpp:128`). A Ghost-Byte double read through that path would be invisible to the PDR. It must be either retired or instrumented with a `viaLegacyBasePath` flag — see `implementation_plan.md`.
 
 ### Decode Rule Attribution
 
@@ -104,6 +110,9 @@ struct DecodeResult
 This is a low-risk refactor: `decodePort()` is called exactly twice per I/O operation (once in `DecodePortIn`, once in `DecodePortOut`), both in the same subclass. The struct is 3 bytes and returned by value.
 
 ### Selective Arming
+
+> [!WARNING]
+> **SUPERSEDED.** This single-mode `FilterMode` API cannot express real diagnostic sessions ("only AY OUTs", "everything except FDC noise"). The authoritative filter design is the two-layer include/exclude system with compound rules in `recording-control.md`. Kept for historical context only.
 
 ```cpp
 class PortDiagnosticRecorder
@@ -142,9 +151,10 @@ private:
 
 | Metric | Value |
 |---|---|
-| Ring buffer default | 4096 events (80 KB) |
-| Per-event push cost | ~50 ns (struct copy + shared_mutex acquire; no allocation) |
-| Hot-path cost when disarmed | Single relaxed atomic load (~1 cycle) + unlikely branch |
+| Ring buffer default | 1,048,576 events (24 MB), **configurable**. Rationale: ~3,500 port ops/frame unfiltered means the earlier 4096 default held barely one frame — useless for "capture everything during boot" workflows |
+| Overflow modes | `ring` (evict oldest, default) or `stop-when-full` (keep the start of the run) |
+| Per-event push cost | ~50 ns (struct copy + `shared_mutex` acquire; no allocation). **Not lock-free** — `RingBuffer<T>` takes a `unique_lock` per push; uncontended single-producer this is acceptable and the hot-path bench verifies it |
+| Hot-path cost, feature off or not capturing | Single cached-bool test + never-taken branch (feature off additionally means no recorder instance, no buffer memory) |
 | Worst-case overhead when armed | ~175 µs/frame at 3,500 port ops/frame (≈0.9% of 20ms frame) |
 
 ### Information Collected Per Bug Class
@@ -189,6 +199,9 @@ A parameterized test fixture that:
 4. Compares models pairwise to surface **decode divergences** — addresses that resolve differently across models
 
 This directly catches the class of bug where Pentagon128 adds a new mask rule (e.g., SOUNDRIVE bit2 exclusion) that Spectrum128 or Scorpion256 doesn't have.
+
+> [!NOTE]
+> `decodePort()` is state-dependent in some models (TR-DOS flag, paging lock), so the matrix must run under **pinned machine states** — at minimum TR-DOS on and off, compared separately. Also, models *genuinely* differ by design, so expect the first run to be an audit exercise that produces the divergence allow-list, not a green test.
 
 ```cpp
 TEST_P(CrossModelDecodeTest, CompareDecodeMap)
@@ -262,27 +275,8 @@ This could live as a member of `PortDecoder` and be incremented in `OnPortInComp
 
 ## Implementation Phases
 
-### Phase 1: Port Diagnostic Recorder (Core)
-- [ ] Define `PortDiagnosticEvent` struct in new `core/src/emulator/ports/portdiagrecorder.h`
-- [ ] Implement `PortDiagnosticRecorder` class using existing `RingBuffer<T>`
-- [ ] Add `_portDiagRecorder` pointer to `PortDecoder` base class (nullptr by default)
-- [ ] Hook into `OnPortInComplete` / `OnPortOutComplete` (3 lines each)
-- [ ] Add `DecodeResult` return type to `decodePort()` in Pentagon128 as proof-of-concept
-
-### Phase 2: Retrieval & Transport
-- [ ] CLI: `port-diag arm|disarm|dump|watch <port>` commands
-- [ ] WebAPI: `GET /debug/port-diag/events`, `POST /debug/port-diag/arm`
-- [ ] Python: `port_diag.arm()`, `port_diag.events()`
-
-### Phase 3: Cross-Model Verification Tests
-- [ ] `CrossModelDecodeTest` parameterized across all 7 models
-- [ ] `PeripheralRegistrationTest` per model
-- [ ] Integrate into CI as regression guards
-
-### Phase 4: Frame-Scoped Summary
-- [ ] `PortActivitySummary` struct in `PortDecoder`
-- [ ] Wire to debugger status panel
-- [ ] Optional: port heatmap visualization in the memory viewer
+> [!NOTE]
+> The authoritative phase breakdown lives in `implementation_plan.md`. Summary: **Phase 0/1** — runtime feature gate (FeatureManager `porttrace`), recorder core, extended `OnPort*Complete` hooks across all 7 models, `decodePort()` → `DecodeResult`, legacy-path resolution, TTD `RecordIoRead` symmetry fix, and the frame-scoped `PortActivitySummary` (promoted from Phase 4 — it's a 30-minute change with immediate payoff). **Phase 2** — CLI/WebAPI/Python/Lua transports + export. **Phase 3** — cross-model verification tests. **Phase 4** — offline converter tool, debugger UI, optional capture triggers.
 
 ---
 

@@ -1,5 +1,8 @@
 # Port Trace Recording Control: Filter Design
 
+> [!NOTE]
+> All of this machinery sits behind the `porttrace` runtime feature (FeatureManager, `features.ini`; no compile-time flags) — see `implementation_plan.md` § "Feature Gate". When the feature is off, the recorder is not instantiated: no filter code runs and no memory is allocated.
+
 ## The Problem
 
 Simple "watch port X" filters are insufficient for real diagnostic sessions:
@@ -220,40 +223,39 @@ Effective: Capture all OUTs except FDC/Beta128 ports
 
 ## Python API
 
-```python
-import unreal_emulator as emu
+As implemented (`python_porttrace.h`): methods on the `Emulator` object; kwargs
+within one call form a compound AND rule, separate calls OR together.
 
-# Scenario 1: Only AY-related OUTs
-emu.porttrace_include_port(0xFFFD)
-emu.porttrace_include_port(0xBFFD)
-emu.porttrace_include_direction("out")
+```python
+import unreal_emulator
+emu = unreal_emulator.emu_get_selected()
+
+# Scenario 1: Only AY-related OUTs (two compound rules, OR'ed)
+emu.porttrace_include(port=0xFFFD, direction="out")
+emu.porttrace_include(port=0xBFFD, direction="out")
 emu.porttrace_start()
 
 # Scenario 2: Everything except FDC noise
-emu.porttrace_exclude_device("WD1793_Status")
-emu.porttrace_exclude_device("WD1793_Track")
-emu.porttrace_exclude_device("WD1793_Sector")
-emu.porttrace_exclude_device("WD1793_Data")
-emu.porttrace_exclude_device("Beta128_System")
+for device in ("WD1793_Status", "WD1793_Track", "WD1793_Sector", "WD1793_Data", "Beta128_System"):
+    emu.porttrace_exclude(device=device)
 emu.porttrace_start()
 
 # Scenario 3: Use a preset, then customize
 emu.porttrace_preset("no-fdc")           # Exclude all FDC
-emu.porttrace_exclude_port(0x00FE)       # Also skip ULA
+emu.porttrace_exclude(port=0x00FE)       # Also skip ULA
 emu.porttrace_start()
 
 # Scenario 4: Start broad, then narrow without losing data
 emu.porttrace_start()                    # Capture everything
 # ... observe high volume ...
 # Narrow down WHILE still capturing:
-emu.porttrace_include_port(0xFFFD)       # Now only FFFD events are recorded
+emu.porttrace_include(port=0xFFFD)       # Now only FFFD events are recorded
 # ... captured events from before the filter change are PRESERVED ...
 
-# Scenario 5: Value filter — only AY chip-select commands
-emu.porttrace_include_port(0xFFFD)
-emu.porttrace_include_direction("out")
-# (value filtering in post-processing via porttrace_convert.py is preferred
-#  over capture-time value filters for most cases — see rationale below)
+# Scenario 5: Chip-select commands only (value range at capture time)
+emu.porttrace_include(port=0xFFFD, direction="out", value=(0xFE, 0xFF))
+# (broader value filtering in post-processing via tools/porttrace/porttrace_convert.py
+#  is preferred for exploratory sessions)
 
 # Clear everything
 emu.porttrace_filter_clear()
@@ -264,11 +266,14 @@ print(emu.porttrace_filter_show())
 
 ### Lua API (identical semantics)
 
+As implemented (`lua_porttrace.h`): global functions taking a table — table
+fields form a compound AND rule, separate calls OR together.
+
 ```lua
-emu.porttrace_include_port(0xFFFD)
-emu.porttrace_include_port(0xBFFD)
-emu.porttrace_exclude_direction("in")
-emu.porttrace_start()
+porttrace_include({ port = 0xFFFD, direction = "out" })
+porttrace_include({ port = 0xBFFD, direction = "out" })
+porttrace_exclude({ device = "WD1793_Data" })
+porttrace_start()
 ```
 
 ---
@@ -303,43 +308,36 @@ curl http://localhost:8090/api/v1/emulator/$ID/profiler/porttrace/filter
 
 ## Scenario Walkthrough Table
 
+Each include entry below is a **compound rule** (AND within an entry; OR between entries — this is the adopted design, see next section):
+
 | Scenario | Include Rules | Exclude Rules | Result |
 |---|---|---|---|
 | **Capture everything** | (empty) | (empty) | All IN+OUT recorded |
-| **Only AY OUTs** | port=FFFD, port=BFFD, dir=OUT | (empty) | ⚠️ This is wrong — see below |
-| **Only AY OUTs (correct)** | (empty) | dir=IN, all non-AY devices | All OUTs to AY ports |
+| **Only AY OUTs** | `{port=FFFD, dir=OUT}`, `{port=BFFD, dir=OUT}` | (empty) | All OUTs to AY ports, nothing else |
+| **Only AY OUTs (alt., exclude style)** | `{port=FFFD}`, `{port=BFFD}` | dir=IN | Same result via include-broad/exclude-narrow |
 | **Everything except FDC** | (empty) | device=WD1793_* | All I/O except FDC |
-| **All OUTs** | dir=OUT | (empty) | All OUT operations |
-| **Unmapped from ROM** | unmapped=true, pc=0000-3FFF | (empty) | Events decoded=false from ROM |
-| **AY chip-selects only** | port=FFFD, dir=OUT | (empty) | OUT to FFFD (includes reg selects AND chip-selects) |
+| **All OUTs** | `{dir=OUT}` | (empty) | All OUT operations |
+| **Unmapped from ROM** | `{unmapped=true, pc=0000-3FFF}` | (empty) | Events decoded=false from ROM |
+| **AY chip-selects only** | `{port=FFFD, dir=OUT}` | (empty) | OUT to FFFD (includes reg selects AND chip-selects; value-level narrowing happens offline) |
 
 ### Important: Include Rule Interaction
 
-Include rules use **OR** logic (match *any* one). This means:
+Simple single-dimension include rules use **OR** logic (match *any* one), so a naive
 
 ```
 include port=FFFD
 include direction=OUT
 ```
 
-Captures: **any event on port FFFD (IN or OUT)** + **any OUT on any port**. This is probably not what the user intended.
+captures **any event on port FFFD (IN or OUT)** *plus* **any OUT on any port** — almost never what the user intended. This is why compound rules (AND within a single include entry) are part of the design from the start, not a follow-up:
 
-To express "OUTs to FFFD only", you need **compound include rules** or a two-step approach:
-
-**Option A: Compound rule (AND within a single include entry)**
 ```
 include { port=FFFD AND direction=OUT }
 ```
 
-**Option B: Include broad, exclude narrow (simpler)**
-```
-include port=FFFD
-exclude direction=IN
-```
+The simpler include-broad/exclude-narrow style (`include port=FFFD` + `exclude direction=IN`) remains available and covers many cases, but compound include entries are the primary, unambiguous form.
 
-Option B is simpler to implement and covers the most common cases. Option A requires adding a `CompoundFilterRule` type. 
-
-### Recommendation: Support both simple and compound
+### Adopted design: simple and compound rules together
 
 ```cpp
 struct FilterRule
@@ -401,24 +399,29 @@ All filter changes apply **immediately** to the next event without stopping the 
   Total: 350 events (mixed filtering)
 ```
 
-This is safe because filter reconfiguration uses atomic pointer swap:
+This is safe because filter reconfiguration swaps an immutable `FilterSet` held by `shared_ptr` — the emulator thread keeps its reference alive for the duration of one event, so there is no lifetime hazard (an earlier raw-`FilterSet*` swap with "grace period" deletion was a use-after-free waiting to happen and is withdrawn):
+
 ```cpp
-void reconfigureFilter(FilterSet* newFilter)
+std::atomic<std::shared_ptr<const FilterSet>> _activeFilter;  // C++20 atomic<shared_ptr>
+
+void reconfigureFilter(std::shared_ptr<const FilterSet> newFilter)
 {
-    FilterSet* old = _activeFilter.exchange(newFilter, std::memory_order_acq_rel);
-    // old is deleted after a grace period (or immediately if no capture in progress)
+    _activeFilter.store(std::move(newFilter), std::memory_order_release);
+    // Old FilterSet is destroyed when the last in-flight reader drops its reference.
 }
 ```
 
-The capture hot path reads the pointer once per event:
+The capture hot path takes one reference per event:
 ```cpp
 void onEvent(const PortTraceEvent& event)
 {
-    FilterSet* filter = _activeFilter.load(std::memory_order_acquire);
+    std::shared_ptr<const FilterSet> filter = _activeFilter.load(std::memory_order_acquire);
     if (filter->matches(event))
         _ringBuffer.push(event);
 }
 ```
+
+If the target toolchain lacks lock-free `atomic<shared_ptr>`, the fallback is equally simple: filter changes are rare control-plane operations, so briefly pausing the emulator thread (or taking a small mutex on both sides) is acceptable — what is *not* acceptable is manual delayed deletion.
 
 ---
 

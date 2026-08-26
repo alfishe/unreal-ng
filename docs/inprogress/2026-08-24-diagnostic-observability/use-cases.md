@@ -8,11 +8,19 @@ Every I/O operation in the emulator should produce a **single structured trace r
 
 ## Trace Record Definition
 
+> [!NOTE]
+> This struct is the **authoritative** event definition (the earlier 20-byte sketch in `findings.md` is superseded). The whole recorder is gated at runtime by the FeatureManager feature `porttrace` (no compile-time flags) — see `implementation_plan.md` § "Feature Gate".
+
 ```cpp
 struct PortTraceEvent
 {
     // ── Timing ──
     uint64_t timestamp;         // Absolute T-state: (frame_counter * tStatesPerFrame) + cpu.t
+                                // Computed at capture from the recorder's cached tStatesPerFrame.
+                                // The session header records tStatesPerFrame; if the timing mode
+                                // changes mid-session (turbo), the recorder refreshes its cache and
+                                // notes the change in session metadata — (frameNumber, cpu.t) remain
+                                // the reliable ordering key in that case.
     uint32_t frameNumber;       // Emulator frame counter
 
     // ── Port Identity ──
@@ -36,11 +44,15 @@ struct PortTraceEvent
     //   bit 2:    hadHandler         (PortDevice* existed in _portDevices map)
     //   bit 3:    wasBeta128Gated    (port was in Beta128 set but CF_TRDOS was clear)
     //   bit 4:    wasHandledInline   (decoder handled it directly, not via PeripheralPortIn/Out)
-    //   bit 5:    reserved
-    //   bits 6-7: reserved
+    //   bit 5:    cfTrdosActive      (CF_TRDOS state at event time — lets gate events be judged
+    //                                 without a separate machine-state snapshot; see use case 1.5)
+    //   bit 6:    viaLegacyBasePath  (event captured on the legacy base-class DecodePortIn/Out
+    //                                 path, if that path survives the audit — see implementation_plan.md;
+    //                                 distinguishes the two reads of a Ghost-Byte pair)
+    //   bit 7:    reserved
 };
 // sizeof = 22 bytes (padded to 24 for alignment)
-// 4096 events = 96 KB
+// Default capacity 1,048,576 events = 24 MB (configurable; overflow mode ring / stop-when-full)
 ```
 
 ### Device ID Enumeration
@@ -84,7 +96,7 @@ These bugs are caused by the `decodePort()` mask/match table resolving a raw por
 | 1.2 | **Missing mask rule — port falls to unmapped** | New peripheral port added to hardware config but no entry in `portMasksMatches[]` | `decodePort()` returns `0x0000` | `rawPort`, `decodedPort=0x0000`, `hadHandler=false`, `deviceId=None` — immediate red flag |
 | 1.3 | **Alias resolution failure** | `OUT (0xFEFD), 0xFE` should decode as `#FFFD` but a model's `decodePort()` doesn't recognize this alias | Missing or incorrect mask bits for the aliased high byte | `rawPort=0xFEFD`, `decodedPort=???` — compare expected vs actual |
 | 1.4 | **Cross-model decode divergence** | Pentagon128 adds COVOX rule that Spectrum128 lacks; switching model breaks SOUNDRIVE | Model A's `decodePort()` returns different `decodedPort` than Model B for same `rawPort` | Capture traces from both models for same program; diff `decodedPort` column |
-| 1.5 | **Gate logic error — wrong state test** | Beta128 gate blocks FDC ports when `CF_TRDOS` is clear, but a code change inverted the flag test | `IsBeta128Port()` returns true, flag test wrong | `rawPort=0x001F`, `decodedPort=0x0000`, `wasBeta128Gated=true`, `deviceId=Gated` — shows gate fired; verify if CF_TRDOS state was correct |
+| 1.5 | **Gate logic error — wrong state test** | Beta128 gate blocks FDC ports when `CF_TRDOS` is clear, but a code change inverted the flag test | `IsBeta128Port()` returns true, flag test wrong | `rawPort=0x001F`, `decodedPort=0x0000`, `wasBeta128Gated=true`, `deviceId=Gated`, plus `cfTrdosActive` (flags bit 5) recorded at event time — the trace alone shows both that the gate fired *and* whether the flag state justified it |
 | 1.6 | **Rule ordering — priority inversion** | Port `#FF` matches both Beta128 system register rule AND a broader catch-all | Linear scan picks first match; reordering rules changes behavior | `decodeRuleIndex` — shows which rule was chosen; should be the Beta128-specific one (rule #5), not a generic one |
 
 ### Category 2: Over-Strict Decode vs Relaxed Software Addressing
@@ -142,10 +154,10 @@ The `#7FFD` case is the most instructive: we intentionally added an **extra bit*
 
 ```bash
 # Find all unmapped port accesses and test them against relaxed masks
-python tools/porttrace_convert.py trace.json --filter-unmapped --to text
+python tools/porttrace/porttrace_convert.py trace.json --filter-unmapped --to text
 
 # Future enhancement: --analyze-strictness flag
-python tools/porttrace_convert.py trace.json --analyze-strictness
+python tools/porttrace/porttrace_convert.py trace.json --analyze-strictness
 ```
 
 Output:
@@ -183,7 +195,7 @@ These bugs are caused by the right port being decoded but the peripheral device 
 
 | # | Use Case | Concrete Example | Root Cause Pattern | Trace Fields That Diagnose It |
 |---|----------|------------------|--------------------|-------------------------------|
-| 4.1 | **Ghost Byte — double read on stateful register** | WD1793 Data Register `#7F` read twice per Z80 instruction; FDC buffer drains at 2× speed | Base class `DecodePortIn` performs a hardware read before subclass does its own | Two consecutive trace events with same `decodedPort=0x007F`, `direction=IN`, T-state gap ≈ 11 cycles. `timestamp` diff reveals the double-read |
+| 4.1 | **Ghost Byte — double read on stateful register** | WD1793 Data Register `#7F` read twice per Z80 instruction; FDC buffer drains at 2× speed | Base class `DecodePortIn` performs a hardware read before subclass does its own | Two consecutive trace events with same `decodedPort=0x007F`, `direction=IN`, T-state gap ≈ 11 cycles. `timestamp` diff reveals the double-read. ⚠️ **Prerequisite**: the legacy base-class path calls `PeripheralPortIn` without the completion hook, so the second read is invisible unless that path is retired or instrumented (`viaLegacyBasePath`, flags bit 6) — see `implementation_plan.md` |
 | 4.2 | **BetaDisk stops working after model change** | Switch from Pentagon128 to Spectrum128; FDC ports no longer respond | New model's `decodePort()` table doesn't include BDI port entries, or doesn't call `PeripheralPortIn` for those ports | Trace for `rawPort ∈ {0x001F..0x00FF}` shows `deviceId=None` or `hadHandler=false` on the new model |
 | 4.3 | **FDC command not accepted** | `OUT #1F, 0x88` (Read Sector) goes to FDC but disk doesn't spin | Port correctly decoded and handler called, but the value doesn't reach the FDC's command register | `decodedPort=0x001F`, `value=0x88`, `deviceId=WD1793_Status`, `hadHandler=true` — if all correct, bug is inside FDC not in port layer |
 | 4.4 | **DRQ/INTRQ polling returns wrong status** | `IN #FF` always reads 0xFF; TR-DOS hangs in polling loop | Beta128 system register `#FF` gate is incorrectly blocking reads, or handler isn't registered | Trace shows `rawPort=0x00FF`, `wasBeta128Gated=true` when it shouldn't be; or `deviceId=None` meaning handler not registered |

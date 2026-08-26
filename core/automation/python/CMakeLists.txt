@@ -256,6 +256,14 @@ else()
         target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/recording/src)
     endif()
 
+    # zstd::libzstd is required because core's ttd_compression.h (pulled in
+    # transitively via python_emulator.h -> timetravelmanager.h ->
+    # ttd_codec_page_store.h) #includes <zstd.h>, and this target uses
+    # core/src via raw include paths rather than linking unrealng::core.
+    # zstd::libzstd is an INTERFACE IMPORTED target, so this only propagates
+    # zstd's include directory (same fix as automation_webapi).
+    target_link_libraries(${PROJECT_NAME} PRIVATE zstd::libzstd)
+
     if(PYTHON_USE_STATIC)
         # Link against static Python built from source
         target_link_libraries(${PROJECT_NAME}

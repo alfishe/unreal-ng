@@ -70,8 +70,9 @@ endif (WIN32 AND NOT MSVC)
 if (CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
     # We're being built directly, so build core first
     add_subdirectory(${CORE_DIR} core)
-    # Build recording library if enabled
-    if (ENABLE_RECORDING)
+    # Build recording library if enabled (skip if core already added it —
+    # core/src/CMakeLists.txt adds core/recording itself when ENABLE_RECORDING is ON)
+    if (ENABLE_RECORDING AND NOT TARGET recording)
         add_subdirectory(${ROOT_DIR}/core/recording recording)
     endif()
 else()

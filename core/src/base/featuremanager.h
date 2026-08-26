@@ -31,6 +31,7 @@ constexpr const char* const kSharedMemory = "sharedmemory";
 constexpr const char* const kOpcodeProfiler = "opcodeprofiler";
 constexpr const char* const kTimeTravel = "timetravel";
 constexpr const char* const kOverscan = "overscan";
+constexpr const char* const kPortTrace = "porttrace";
 
 // Feature Aliases
 constexpr const char* const kDebugModeAlias = "dbg";
@@ -45,6 +46,7 @@ constexpr const char* const kSharedMemoryAlias = "shm";
 constexpr const char* const kOpcodeProfilerAlias = "op";
 constexpr const char* const kTimeTravelAlias = "ttd";
 constexpr const char* const kOverscanAlias = "osc";
+constexpr const char* const kPortTraceAlias = "pt";
 
 // Feature Descriptions
 constexpr const char* const kDebugModeDesc = "Master debug mode, enables/disables all debug features for performance";
@@ -65,6 +67,8 @@ constexpr const char* const kTimeTravelDesc =
     "Record execution history for rewind and reverse debugging (time-travel debug).";
 constexpr const char* const kOverscanDesc =
     "Pentagon overscan mode (384x304). Shows invisible border areas for demo development. Pentagon only.";
+constexpr const char* const kPortTraceDesc =
+    "Structured port I/O trace recorder (ring buffer of IN/OUT events for peripheral diagnostics).";
 
 // Categories
 constexpr const char* const kCategoryDebug = "debug";

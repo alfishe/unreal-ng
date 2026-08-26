@@ -167,6 +167,10 @@ private:
     void HandleProfilerCalltrace(const ClientSession& session, const std::vector<std::string>& args);
     void HandleProfilerAll(const ClientSession& session, const std::vector<std::string>& args);
 
+    // Port trace command handlers (runtime feature "porttrace")
+    void HandlePortTrace(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowPortTraceHelp(const ClientSession& session);
+
 
     // Settings command handlers
     void HandleSetting(const ClientSession& session, const std::vector<std::string>& args);

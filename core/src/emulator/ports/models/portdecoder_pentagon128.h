@@ -57,6 +57,8 @@ public:
     bool IsBeta128Port(uint16_t decodedPort);
 
     uint16_t decodePort(uint16_t port);
+    DecodeResult decodePortEx(uint16_t port);
+    std::vector<PortTraceDecodeRule> getPortTraceDecodeRules() const override;
 
 protected:
     void Port_7FFD_Out(uint16_t port, uint8_t value, uint16_t pc);

@@ -71,16 +71,43 @@ uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t port, uint16_t pc)
     uint8_t result = 0xFF;
     _lastPortDecoded = false;
 
-    if (IsPort_FE(port))
+    // AY #FFFD: A15=1, A14=1, A1=0. The AY-3-8910 does not decode the other
+    // address bits, so mirrored ports (#FF05, #FF00, #C000...) select it on IN
+    // too. Resolve mirrors to the canonical port BEFORE the weak FE (A0-only)
+    // check - otherwise register readback via a mirror reaches the keyboard or
+    // returns 0xFF and TurboSound players cannot detect the second chip
+    // (same order as the OUT dispatch and the Pentagon decode table)
+    // Port trace decode attribution (if-chain decoder: no mask/match table)
+    PortDecodeDisposition disp;
+    disp.decodeRuleIndex = PortTraceRule::kNoTable;
+
+    if ((port & 0xC002) == 0xC000)
+    {
+        result = PeripheralPortIn(0xFFFD);
+        disp.decodedPort = 0xFFFD;
+    }
+    // AY #BFFD: A15=1, A14=0, A1=0
+    else if ((port & 0xC002) == 0x8000)
+    {
+        result = PeripheralPortIn(0xBFFD);
+        disp.decodedPort = 0xBFFD;
+    }
+    else if (IsPort_FE(port))
     {
         // Call default implementation
         result = Default_Port_FE_In(port, pc);
         _lastPortDecoded = true;
+        disp.decodedPort = 0x00FE;
+        disp.wasHandledInline = true;
     }
     else
     {
         result = PeripheralPortIn(port);
+        // Identity decode: mark decoded only when a device actually responded
+        if (_lastPortDecoded)
+            disp.decodedPort = port;
     }
+    disp.wasDecoded = _lastPortDecoded;
 
     /// region <Debug logging>
 
@@ -94,7 +121,7 @@ uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t port, uint16_t pc)
     /// endregion </Debug logging>
 
     // Universal handler for breakpoints, tracking, analyzers
-    OnPortInComplete(port, result, pc);
+    OnPortInComplete(port, result, pc, disp);
 
     return result;
 }
@@ -105,24 +132,40 @@ void PortDecoder_Spectrum128::DecodePortOut(uint16_t port, uint8_t value, uint16
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
     /// endregion </Override submodule>
 
+    // Port trace decode attribution (if-chain decoder: no mask/match table)
+    PortDecodeDisposition disp;
+    disp.decodeRuleIndex = PortTraceRule::kNoTable;
+
     //    ZX Spectrum 128 / +2
     //    port: #7FFD
     bool isPort_7FFD = IsPort_7FFD(port);
     if (isPort_7FFD)
     {
         Port_7FFD_Out(port, value, pc);
+        disp.decodedPort = 0x7FFD;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
     }
     else if (IsPort_BFFD(port))
     {
         Port_BFFD_Out(port, value, pc);
+        disp.decodedPort = 0xBFFD;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
     }
     else if (IsPort_FFFD(port))
     {
         Port_FFFD_Out(port, value, pc);
+        disp.decodedPort = 0xFFFD;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
     }
     else if (IsPort_FE(port))
     {
         Default_Port_FE_Out(port, value, pc);
+        disp.decodedPort = 0x00FE;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
     }
     else
     {
@@ -148,7 +191,7 @@ void PortDecoder_Spectrum128::DecodePortOut(uint16_t port, uint8_t value, uint16
     /// endregion </Debug logging>
 
     // Universal handler for breakpoints, tracking, analyzers
-    OnPortOutComplete(port, value, pc);
+    OnPortOutComplete(port, value, pc, disp);
 }
 
 void PortDecoder_Spectrum128::SetRAMPage(uint8_t page)
@@ -298,6 +341,9 @@ void PortDecoder_Spectrum128::Port_BFFD_Out(uint16_t port, uint8_t value, uint16
     // Cache out port value in state
     _state->pBFFD = value;
 
+    // Route to registered peripheral handlers (TurboSound, etc.)
+    PeripheralPortOut(0xBFFD, value);
+
     MLOGWARNING(DumpPortValue(0xBFFD, port, value, pc, Dump_BFFD_value(value).c_str()));
 }
 
@@ -313,6 +359,9 @@ void PortDecoder_Spectrum128::Port_FFFD_Out(uint16_t port, uint8_t value, uint16
 
     // Cache out port value in state
     _state->pFFFD = value;
+
+    // Route to registered peripheral handlers (TurboSound, etc.)
+    PeripheralPortOut(0xFFFD, value);
 
     MLOGWARNING(DumpPortValue(0xFFFD, port, value, pc, Dump_FFFD_value(value).c_str()));
 }

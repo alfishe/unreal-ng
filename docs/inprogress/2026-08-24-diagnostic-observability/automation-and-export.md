@@ -1,5 +1,8 @@
 # Port Access Trace: Automation Access and Export Design
 
+> [!NOTE]
+> The whole subsystem is gated at runtime by the FeatureManager feature `porttrace` (`features.ini`, alias `pt`; no compile-time flags — see `implementation_plan.md` § "Feature Gate"). Transports are always compiled in and always register their commands; when the feature is off, all commands report "porttrace feature is disabled — enable with `feature porttrace on`" and no recorder is instantiated.
+
 ## 1. Core API (C++ Layer)
 
 The `PortDiagnosticRecorder` lives in the core and provides a POD-returning API consumed by all automation transports. Following the "Common Controller" rule, all business logic is here — transports are thin proxies.
@@ -17,12 +20,16 @@ public:
     void resume();                  // Resume capture from paused
     void clear();                   // Purge buffer (any state)
 
+    // ── Buffer Configuration (only while stopped) ──
+    void setCapacity(size_t events);            // Default 1,048,576 (24 MB)
+    enum class OverflowMode : uint8_t { Ring, StopWhenFull };
+    void setOverflowMode(OverflowMode mode);    // Ring = evict oldest (default);
+                                                // StopWhenFull = keep the start of the run
+                                                // (boot-sequence debugging), auto-stop when full
+
     // ── Filter Configuration ──
-    void watchAllPorts();
-    void watchPort(uint16_t decodedPort);
-    void watchDevice(PortDeviceId deviceId);
-    void watchPCRange(uint16_t pcLo, uint16_t pcHi);
-    void watchUnmapped();           // Only events where decodedPort==0
+    // Two-layer include/exclude with compound rules — see recording-control.md.
+    // (An earlier single-mode watchPort()/watchDevice() API is superseded.)
 
     // ── Status ──
     ProfilerSessionState getSessionState() const;
@@ -39,31 +46,42 @@ public:
     std::vector<PortTraceEvent> getLast(size_t count) const;
 
     // ── Persistence ──
-    bool saveToFile(const std::string& path, ExportFormat format) const;
-
-    // ── Metadata ──
-    PortTraceSessionInfo getSessionInfo() const;
+    // Session metadata is assembled by PortDecoder::getPortTraceSessionInfo()
+    // (the recorder has no emulator-context knowledge) and passed in:
+    bool saveToFile(const std::string& path, PortTraceExportFormat format,
+                    const PortTraceSessionInfo& info) const;
+    std::string describeFilter() const;   // Human-readable one-line filter description
 };
 
-enum class ExportFormat : uint8_t
+enum class PortTraceExportFormat : uint8_t
 {
     JSON,       // Structured, machine-readable
     CSV,        // Flat tabular, spreadsheet-friendly
     Binary      // Raw POD dump (sizeof(PortTraceEvent) × N), fastest save/load
 };
 
+// As implemented (portdiagrecorder.h). Session time bounds are derived from the
+// first/last buffered events at read time rather than stored; counters
+// (capacity, produced/evicted/filtered, overflow mode, filter description) come
+// from the recorder itself at save time.
+struct PortTraceDecodeRule { uint16_t mask; uint16_t match; uint16_t port; };
+
 struct PortTraceSessionInfo
 {
-    std::string emulatorId;         // UUID
-    std::string modelName;          // "Pentagon128", "Spectrum128", etc.
-    uint64_t    startTimestamp;      // T-state when session started
-    uint64_t    endTimestamp;        // T-state when session stopped (0 if still active)
-    uint32_t    startFrame;
-    uint32_t    endFrame;
-    size_t      totalEvents;
-    size_t      evictedEvents;
-    std::string filterDescription;  // Human-readable: "All ports" / "Port 0xFFFD" / etc.
+    std::string emulatorId;         // Emulator UUID
+    std::string modelName;          // "Pentagon", "Spectrum128", ...
+    uint32_t    tStatesPerFrame;    // Timing base used for absolute timestamps
+
+    // Self-describing traces: the model's decode-rule table at capture time
+    // (PortDecoder::getPortTraceDecodeRules(); Pentagon128 exports its
+    // mask/match table, if-chain decoder models export an empty table),
+    // so decodeRuleIndex values in events resolve without hardcoding masks
+    // in offline tools.
+    std::vector<PortTraceDecodeRule> decodeRules;
 };
+
+// Assembled by PortDecoder::getPortTraceSessionInfo(); passed to
+// PortDiagnosticRecorder::saveToFile(path, format, info).
 ```
 
 ### 1.2 Resolution Chain
@@ -71,12 +89,13 @@ struct PortTraceSessionInfo
 ```
 EmulatorContext
   └─> pPortDecoder
-        └─> _portDiagRecorder (PortDiagnosticRecorder*)
+        └─> _portTrace (std::unique_ptr<PortDiagnosticRecorder>, nullptr while feature off)
 ```
 
-Access from automation:
+Access from automation (nullptr while the porttrace feature is off):
 ```cpp
-auto* recorder = context->pPortDecoder->getDiagRecorder();
+auto* recorder = context->pPortDecoder->getPortTraceRecorder();
+auto  info     = context->pPortDecoder->getPortTraceSessionInfo();
 ```
 
 ---
@@ -94,18 +113,23 @@ port-trace pause                      Pause capture
 port-trace resume                     Resume capture
 port-trace clear                      Clear buffer
 
-port-trace watch all                  Capture all port I/O (default)
-port-trace watch port <hex>           Filter by decoded port (e.g., "port-trace watch port FFFD")
-port-trace watch device <name>        Filter by device (e.g., "port-trace watch device WD1793_Data")
-port-trace watch pc <lo> <hi>         Filter by PC range
-port-trace watch unmapped             Only unmapped ports
+port-trace config capacity <n>        Set ring buffer capacity (default 1048576; only while stopped)
+port-trace config overflow ring|stop  ring = evict oldest; stop = keep start of run, auto-stop when full
+
+# Filtering uses the include/exclude command family from recording-control.md
+# (the earlier "watch ..." single-mode commands are superseded):
+port-trace include port FFFD direction out    Compound include rule (AND within one rule)
+port-trace exclude device WD1793_Data         Exclude rule
+port-trace preset <name>                      ay-only / fdc-only / no-fdc / unmapped / ...
+port-trace filter show|clear [includes|excludes]
 
 port-trace status                     Show session state, event count, filter
 
-port-trace dump [--last=N]            Dump events to terminal (formatted table)
-port-trace dump --format=csv          Dump as CSV to terminal
-port-trace save <path> [--format=json|csv|bin]   Save to file
+port-trace dump [N]                   Dump last N events to terminal (default 32)
+port-trace save <path> [json|csv|bin] Save to file (default json)
 ```
+
+Alias: `porttrace` dispatches to the same handler.
 
 ### 2.2 Terminal Output Format
 
@@ -150,7 +174,8 @@ RESTful endpoints under the profiler namespace, consistent with existing opcode 
 | `POST` | `/api/v1/emulator/{id}/profiler/porttrace/clear` | Clear buffer |
 | `GET`  | `/api/v1/emulator/{id}/profiler/porttrace/status` | Session state + stats |
 | `GET`  | `/api/v1/emulator/{id}/profiler/porttrace/events` | Retrieve events |
-| `POST` | `/api/v1/emulator/{id}/profiler/porttrace/watch` | Set filter |
+| `GET`/`POST` | `/api/v1/emulator/{id}/profiler/porttrace/filter` | Get description / set include-exclude filter wholesale (JSON rules or `{"preset": "name"}`) |
+| `POST` | `/api/v1/emulator/{id}/profiler/porttrace/config` | Set capacity and/or overflow mode (only while stopped; current values in the response) |
 | `POST` | `/api/v1/emulator/{id}/profiler/porttrace/save` | Save to file on server |
 
 ### 3.2 Event Retrieval Parameters
@@ -224,12 +249,17 @@ emu.porttrace_pause()
 emu.porttrace_resume()
 emu.porttrace_clear()
 
-# Filtering
-emu.porttrace_watch_all()
-emu.porttrace_watch_port(0xFFFD)
-emu.porttrace_watch_device("WD1793_Data")
-emu.porttrace_watch_pc_range(0x3D00, 0x3FFF)
-emu.porttrace_watch_unmapped()
+# Buffer configuration (only while stopped)
+emu.porttrace_set_capacity(65536)
+emu.porttrace_set_overflow("ring")       # or "stop" (keep start of run)
+
+# Filtering — include/exclude API with compound kwargs, per recording-control.md
+# (the earlier single-mode porttrace_watch_* API is superseded)
+emu.porttrace_include(port=0xFFFD, direction="out")   # kwargs = AND
+emu.porttrace_include(port=0xBFFD, direction="out")   # separate call = OR
+emu.porttrace_exclude(device="WD1793_Data")
+emu.porttrace_preset("no-fdc")
+emu.porttrace_filter_clear()
 
 # Status
 status = emu.porttrace_status()
@@ -288,8 +318,9 @@ Same API surface as Python, adapted for Lua conventions.
 emu.porttrace_start()
 emu.porttrace_stop()
 
--- Filtering
-emu.porttrace_watch_port(0xFFFD)
+-- Filtering (include/exclude, compound via table = AND; separate calls = OR)
+emu.porttrace_include({ port = 0xFFFD, direction = "out" })
+emu.porttrace_exclude({ device = "WD1793_Data" })
 
 -- Retrieval — returns Lua table of tables
 local events = emu.porttrace_events()
@@ -322,14 +353,21 @@ The `saveToFile()` method is implemented in the core, not in transports. This en
   "session": {
     "emulator_id": "a1b2c3d4-...",
     "model": "Pentagon128",
+    "tstates_per_frame": 71680,
     "start_tstate": 180000000,
     "end_tstate": 182500000,
     "start_frame": 312,
     "end_frame": 362,
     "filter": "Ports: 0xFFFD, 0xBFFD",
+    "overflow_mode": "ring",
     "total_captured": 847,
     "total_evicted": 0
   },
+  "decode_rules": [
+    {"index": 0, "mask": "0xC002", "match": "0xC000", "port": "0xFFFD"},
+    {"index": 1, "mask": "0xC002", "match": "0x8000", "port": "0xBFFD"},
+    {"index": 2, "mask": "0x8006", "match": "0x0004", "port": "0x7FFD"}
+  ],
   "device_map": {
     "0x04": "AY_FFFD",
     "0x05": "AY_BFFD",
@@ -375,15 +413,24 @@ CSV uses hex-formatted port/value/PC columns for readability. Comment lines (pre
 Raw dump for maximum speed and minimum size:
 
 ```
-[Header: 32 bytes]
-  magic:     "PTRC" (4 bytes)
-  version:   uint16_t = 1
-  count:     uint32_t
-  capacity:  uint32_t
-  reserved:  18 bytes
+[Header: 32 bytes, little-endian]
+  offset 0   magic:       "PTRC" (4 bytes)
+  offset 4   version:     uint16_t = 1
+  offset 6   count:       uint32_t
+  offset 10  capacity:    uint32_t
+  offset 14  tpf:         uint32_t  (tStatesPerFrame)
+  offset 18  ruleCount:   uint16_t
+  offset 20  reserved:    12 bytes
 
-[Events: count × sizeof(PortTraceEvent)]
-  Raw POD structs, no padding normalization needed (struct is already aligned)
+[Decode rules: ruleCount × 6 bytes]
+  {mask: uint16_t, match: uint16_t, port: uint16_t} — the model's decode table
+  at capture time, so decodeRuleIndex is self-describing offline
+
+[Events: count × 24 bytes]
+  Raw PortTraceEvent structs, layout static_assert-pinned in portdiagrecorder.cpp:
+    u64 timestamp, u32 frame, u16 rawPort, u16 decodedPort, u16 pc,
+    u8 value, u8 decodeRuleIndex, u8 deviceId, u8 flags, 2 bytes padding
+  Python struct format: "<QIHHHBBBBxx" (see tools/porttrace/porttrace_convert.py)
 ```
 
 Binary is intended for large captures (millions of events) where JSON/CSV overhead is prohibitive. The Python converter tool reads this format.
@@ -397,7 +444,7 @@ A standalone Python script (no emulator required) that reads saved trace files a
 ### 7.1 Location
 
 ```
-tools/porttrace_convert.py
+tools/porttrace/porttrace_convert.py
 ```
 
 ### 7.2 Usage
@@ -491,313 +538,30 @@ Decode Rule Distribution:
   No match:           16
 ```
 
-### 7.4 Implementation Sketch
+### 7.4 Implementation
 
-```python
-#!/usr/bin/env python3
-"""porttrace_convert.py — Unreal-NG Port Access Trace converter and analyzer."""
+> [!NOTE]
+> **Implemented** as `tools/porttrace/porttrace_convert.py` (standalone, stdlib-only, Python 3.8+).
+> The doc previously carried a design sketch here; the real tool supersedes it.
+>
+> A companion driver, **`tools/porttrace/porttrace_capture.py`**, performs the whole session in one
+> command over the WebAPI: enable the `porttrace` feature → configure buffer + filter
+> (presets or repeatable `--include port=FFFD,direction=out` compound rules) → capture
+> for `--duration N` seconds (or `--wait-key`) → save the canonical JSON server-side →
+> convert to any of `--to json,csv,text,markdown,bin` (plus `--summary`). It assumes the
+> WebAPI runs on the same machine so the saved trace is locally readable.
 
-import argparse
-import csv
-import json
-import struct
-import sys
-from dataclasses import dataclass
-from enum import IntEnum
-from pathlib import Path
-from typing import List, Optional
-
-
-class PortDeviceId(IntEnum):
-    NONE = 0x00
-    ULA_FE = 0x01
-    MEMORY_7FFD = 0x02
-    MEMORY_1FFD = 0x03
-    AY_FFFD = 0x04
-    AY_BFFD = 0x05
-    WD1793_STATUS = 0x06
-    WD1793_TRACK = 0x07
-    WD1793_SECTOR = 0x08
-    WD1793_DATA = 0x09
-    BETA128_SYSTEM = 0x0A
-    COVOX = 0x0B
-    KEMPSTON = 0x0C
-    MOUSE = 0x0D
-    CUSTOM = 0x0E
-    INLINE_DECODER = 0x0F
-    GATED = 0x10
-
-
-@dataclass
-class PortTraceEvent:
-    timestamp: int
-    frame: int
-    raw_port: int
-    decoded_port: int
-    decode_rule: int
-    value: int
-    pc: int
-    device_id: int
-    flags: int
-
-    @property
-    def direction(self) -> str:
-        return "OUT" if (self.flags & 0x01) else "IN"
-
-    @property
-    def decoded(self) -> bool:
-        return bool(self.flags & 0x02)
-
-    @property
-    def had_handler(self) -> bool:
-        return bool(self.flags & 0x04)
-
-    @property
-    def beta128_gated(self) -> bool:
-        return bool(self.flags & 0x08)
-
-    @property
-    def handled_inline(self) -> bool:
-        return bool(self.flags & 0x10)
-
-    @property
-    def device_name(self) -> str:
-        try:
-            return PortDeviceId(self.device_id).name
-        except ValueError:
-            return f"UNKNOWN_{self.device_id:#04x}"
-
-
-@dataclass
-class SessionInfo:
-    emulator_id: str = ""
-    model: str = ""
-    start_tstate: int = 0
-    end_tstate: int = 0
-    start_frame: int = 0
-    end_frame: int = 0
-    total_captured: int = 0
-    total_evicted: int = 0
-    filter_desc: str = "All ports"
-
-
-# ── Readers ────────────────────────────────────────────────────────
-
-def read_json(path: Path) -> tuple[SessionInfo, List[PortTraceEvent]]:
-    with open(path) as f:
-        data = json.load(f)
-    session = SessionInfo(**{k: data["session"].get(k, "") for k in SessionInfo.__dataclass_fields__})
-    events = [PortTraceEvent(
-        timestamp=e["ts"], frame=e["frame"], raw_port=e["raw"], decoded_port=e["dec"],
-        decode_rule=e["rule"], value=e["val"], pc=e["pc"], device_id=e["dev"], flags=e["flags"]
-    ) for e in data["events"]]
-    return session, events
-
-
-def read_csv(path: Path) -> tuple[SessionInfo, List[PortTraceEvent]]:
-    session = SessionInfo()
-    events = []
-    with open(path) as f:
-        for line in f:
-            if line.startswith("# Model:"):
-                session.model = line.split("Model:")[1].split(",")[0].strip()
-            if not line.startswith("#"):
-                break
-        reader = csv.DictReader(f)
-        for row in reader:
-            events.append(PortTraceEvent(
-                timestamp=int(row["timestamp"]),
-                frame=int(row["frame"]),
-                raw_port=int(row["raw_port"], 16),
-                decoded_port=int(row["decoded_port"], 16),
-                decode_rule=int(row["decode_rule"]),
-                value=int(row["value"], 16),
-                pc=int(row["pc"], 16),
-                device_id=PortDeviceId[row["device"]].value,
-                flags=(int(row.get("decoded", 0)) << 1) | ...
-            ))
-    return session, events
-
-
-BINARY_STRUCT = struct.Struct("<QIHHBBHBBxx")  # 24 bytes per event
-
-def read_binary(path: Path) -> tuple[SessionInfo, List[PortTraceEvent]]:
-    session = SessionInfo()
-    events = []
-    with open(path, "rb") as f:
-        header = f.read(32)
-        magic = header[:4]
-        assert magic == b"PTRC", f"Invalid magic: {magic}"
-        version = struct.unpack_from("<H", header, 4)[0]
-        count = struct.unpack_from("<I", header, 6)[0]
-        for _ in range(count):
-            data = f.read(BINARY_STRUCT.size)
-            ts, frame, raw, dec, rule, val, pc, dev, flags = BINARY_STRUCT.unpack(data)
-            events.append(PortTraceEvent(ts, frame, raw, dec, rule, val, pc, dev, flags))
-    return session, events
-
-
-# ── Writers ────────────────────────────────────────────────────────
-
-def write_json(session: SessionInfo, events: List[PortTraceEvent], out) -> None:
-    data = {
-        "format": "unreal-ng-porttrace-v1",
-        "session": vars(session),
-        "events": [{"ts": e.timestamp, "frame": e.frame, "raw": e.raw_port,
-                     "dec": e.decoded_port, "rule": e.decode_rule, "val": e.value,
-                     "pc": e.pc, "dev": e.device_id, "dir": 1 if e.direction == "OUT" else 0,
-                     "flags": e.flags} for e in events]
-    }
-    json.dump(data, out, indent=2)
-
-
-def write_csv(session: SessionInfo, events: List[PortTraceEvent], out) -> None:
-    out.write(f"# Unreal-NG Port Access Trace v1\n")
-    out.write(f"# Model: {session.model}, Emulator: {session.emulator_id}\n")
-    out.write(f"# Events: {len(events)}\n")
-    writer = csv.writer(out)
-    writer.writerow(["index", "timestamp", "frame", "direction", "raw_port",
-                      "decoded_port", "decode_rule", "value", "pc", "device",
-                      "decoded", "had_handler", "beta128_gated", "handled_inline"])
-    for i, e in enumerate(events):
-        writer.writerow([i, e.timestamp, e.frame, e.direction,
-                          f"0x{e.raw_port:04X}", f"0x{e.decoded_port:04X}",
-                          e.decode_rule, f"0x{e.value:02X}", f"0x{e.pc:04X}",
-                          e.device_name, int(e.decoded), int(e.had_handler),
-                          int(e.beta128_gated), int(e.handled_inline)])
-
-
-def write_markdown(session: SessionInfo, events: List[PortTraceEvent], out) -> None:
-    out.write(f"## Port Access Trace\n\n")
-    out.write(f"**Model**: {session.model} | **Events**: {len(events)}\n\n")
-    out.write("| # | Frame | T-State | Dir | Raw | Decoded | Value | PC | Device | Flags |\n")
-    out.write("|---|-------|---------|-----|-----|---------|-------|----|--------|-------|\n")
-    for i, e in enumerate(events):
-        flags = ""
-        if e.decoded: flags += "D"
-        if e.had_handler: flags += "H"
-        if e.beta128_gated: flags += "G"
-        if e.handled_inline: flags += "I"
-        out.write(f"| {i} | {e.frame} | {e.timestamp:X} | {e.direction} "
-                  f"| {e.raw_port:04X} | {e.decoded_port:04X} | {e.value:02X} "
-                  f"| {e.pc:04X} | {e.device_name} | {flags} |\n")
-
-
-def write_text(session: SessionInfo, events: List[PortTraceEvent], out) -> None:
-    out.write(f"Port Access Trace: {session.model} ({session.emulator_id})\n")
-    out.write(f"{'═' * 79}\n")
-    out.write(f" {'#':>4}  {'Frame':>6}  {'T-State':>13}  {'Dir':3}  {'Raw':>5}  "
-              f"{'Decoded':>7}  {'Value':>5}  {'PC':>5}  {'Device':<14}\n")
-    out.write(f" {'─'*4}  {'─'*6}  {'─'*13}  {'─'*3}  {'─'*5}  "
-              f"{'─'*7}  {'─'*5}  {'─'*5}  {'─'*14}\n")
-    for i, e in enumerate(events):
-        hi = (e.timestamp >> 16) & 0xFFFFFFFF
-        lo = e.timestamp & 0xFFFF
-        out.write(f" {i:>4}  {e.frame:>06}  {hi:08X}'{lo:04X}  {e.direction:3}  "
-                  f"{e.raw_port:>05X}  {e.decoded_port:>07X}  {e.value:>05X}  "
-                  f"{e.pc:>05X}  {e.device_name:<14}\n")
-
-
-def write_summary(session: SessionInfo, events: List[PortTraceEvent], out) -> None:
-    from collections import Counter
-    out.write(f"Port Access Trace Summary\n{'═' * 30}\n")
-    out.write(f"Model:    {session.model}\n")
-    out.write(f"Events:   {len(events)} captured, {session.total_evicted} evicted\n\n")
-
-    dirs = Counter(e.direction for e in events)
-    out.write("By Direction:\n")
-    for d, c in dirs.most_common():
-        out.write(f"  {d:3}:  {c:>5} ({100*c/len(events):5.1f}%)\n")
-
-    devs = Counter(e.device_name for e in events)
-    out.write("\nBy Device:\n")
-    bar_max = 20
-    for d, c in devs.most_common():
-        bar = "█" * int(bar_max * c / len(events)) + "░" * (bar_max - int(bar_max * c / len(events)))
-        out.write(f"  {d:<18} {c:>5}  ({100*c/len(events):5.1f}%)   {bar}\n")
-
-    ports = Counter(f"0x{e.decoded_port:04X}" if e.decoded_port else "unmapped" for e in events)
-    out.write("\nBy Decoded Port:\n")
-    for p, c in ports.most_common():
-        out.write(f"  {p:<8} {c:>5}  ({100*c/len(events):5.1f}%)\n")
-
-    unmapped = [e for e in events if not e.decoded]
-    if unmapped:
-        raw_unmapped = Counter(f"0x{e.raw_port:04X}" for e in unmapped)
-        out.write("\nUnmapped Port Addresses (raw):\n  ")
-        out.write("  ".join(f"{p} ×{c}" for p, c in raw_unmapped.most_common(10)))
-        out.write("\n")
-
-
-# ── Filters ────────────────────────────────────────────────────────
-
-def apply_filters(events, args) -> List[PortTraceEvent]:
-    if args.filter_port:
-        port_val = int(args.filter_port, 16)
-        events = [e for e in events if e.decoded_port == port_val or e.raw_port == port_val]
-    if args.filter_device:
-        dev = args.filter_device.upper()
-        events = [e for e in events if e.device_name == dev]
-    if args.filter_direction:
-        d = args.filter_direction.upper()
-        events = [e for e in events if e.direction == d]
-    if args.filter_pc:
-        lo, hi = (int(x, 16) for x in args.filter_pc.split("-"))
-        events = [e for e in events if lo <= e.pc <= hi]
-    if args.filter_unmapped:
-        events = [e for e in events if not e.decoded]
-    return events
-
-
-# ── Main ───────────────────────────────────────────────────────────
-
-def main():
-    parser = argparse.ArgumentParser(description="Unreal-NG Port Access Trace converter")
-    parser.add_argument("input", help="Input trace file (.json, .csv, or .bin)")
-    parser.add_argument("--to", choices=["json", "csv", "markdown", "text"], default="text")
-    parser.add_argument("-o", "--output", help="Output file (default: stdout)")
-    parser.add_argument("--summary", action="store_true", help="Print summary statistics")
-    parser.add_argument("--filter-port", help="Filter by port (hex, e.g. 0xFFFD)")
-    parser.add_argument("--filter-device", help="Filter by device name")
-    parser.add_argument("--filter-direction", help="Filter by direction (IN/OUT)")
-    parser.add_argument("--filter-pc", help="Filter by PC range (hex, e.g. 0x3D00-0x3FFF)")
-    parser.add_argument("--filter-unmapped", action="store_true", help="Only unmapped ports")
-    args = parser.parse_args()
-
-    path = Path(args.input)
-    if path.suffix == ".json":
-        session, events = read_json(path)
-    elif path.suffix == ".csv":
-        session, events = read_csv(path)
-    elif path.suffix == ".bin":
-        session, events = read_binary(path)
-    else:
-        print(f"Unknown file format: {path.suffix}", file=sys.stderr)
-        sys.exit(1)
-
-    events = apply_filters(events, args)
-    out = open(args.output, "w") if args.output else sys.stdout
-
-    if args.summary:
-        write_summary(session, events, out)
-    elif args.to == "json":
-        write_json(session, events, out)
-    elif args.to == "csv":
-        write_csv(session, events, out)
-    elif args.to == "markdown":
-        write_markdown(session, events, out)
-    elif args.to == "text":
-        write_text(session, events, out)
-
-    if args.output:
-        out.close()
-
-
-if __name__ == "__main__":
-    main()
-```
-
----
+Key facts:
+- Input format is auto-detected: `PTRC` magic → binary, `.csv` extension → CSV, otherwise JSON.
+- The binary event layout mirrors the C++ `PortTraceEvent` (`"<QIHHHBBBBxx"`); the C++ side
+  static_asserts the offsets so the two cannot drift silently.
+- `--analyze-strictness` performs single-bit near-miss analysis of unmapped events against the
+  decode-rule table embedded in the trace header — for each unmapped raw port it reports every
+  rule that would have matched if exactly one masked address line were ignored, naming the line
+  (use-case Category 2: over-strict decode).
+- `--selftest` round-trips a synthetic trace through the binary, JSON, and CSV readers/writers
+  and asserts the strictness analysis output; run it in CI alongside the C++ export test
+  (`PortTrace_Test.ExportAllFormats`), which produces real artifacts the converter parses.
 
 ## 8. End-to-End Workflow Examples
 
@@ -805,10 +569,10 @@ if __name__ == "__main__":
 
 ```
 $ telnet localhost 8091
-> port-trace watch port FFFD
-Filter set: Port 0xFFFD
-> port-trace watch port BFFD
-Filter set: Ports 0xFFFD, 0xBFFD
+> port-trace include port FFFD
+Include rule added: Port 0xFFFD
+> port-trace include port BFFD
+Include rule added: Port 0xBFFD
 > port-trace start
 Port trace started (capacity: 4096)
     ... user plays music for 2 seconds ...
@@ -828,8 +592,8 @@ Saved 847 events to /tmp/ay-debug.json
 import unreal_emulator as emu
 import time
 
-emu.porttrace_watch_port(0xFFFD)
-emu.porttrace_watch_port(0xBFFD)
+emu.porttrace_include(port=0xFFFD)
+emu.porttrace_include(port=0xBFFD)
 emu.porttrace_start()
 
 time.sleep(2.0)  # Let music play
@@ -852,17 +616,17 @@ emu.porttrace_save("results/turbosound-trace.json", "json")
 
 ```bash
 # Convert binary dump to markdown for pasting in issue tracker
-python tools/porttrace_convert.py results/turbosound-trace.bin --to markdown -o report.md
+python tools/porttrace/porttrace_convert.py results/turbosound-trace.bin --to markdown -o report.md
 
 # Show only unmapped ports (diagnostic for missing handlers)
-python tools/porttrace_convert.py results/trace.json --filter-unmapped --to text
+python tools/porttrace/porttrace_convert.py results/trace.json --filter-unmapped --to text
 
 # Get summary stats
-python tools/porttrace_convert.py results/trace.json --summary
+python tools/porttrace/porttrace_convert.py results/trace.json --summary
 
 # Compare FDC activity across two captures (diff the CSV)
-python tools/porttrace_convert.py trace-pentagon.json --filter-device WD1793_Data --to csv -o a.csv
-python tools/porttrace_convert.py trace-spectrum.json --filter-device WD1793_Data --to csv -o b.csv
+python tools/porttrace/porttrace_convert.py trace-pentagon.json --filter-device WD1793_Data --to csv -o a.csv
+python tools/porttrace/porttrace_convert.py trace-spectrum.json --filter-device WD1793_Data --to csv -o b.csv
 diff a.csv b.csv
 ```
 
@@ -873,9 +637,9 @@ diff a.csv b.csv
 curl -X POST http://localhost:8090/api/v1/emulator/$ID/profiler/porttrace/start
 
 # Set filter
-curl -X POST http://localhost:8090/api/v1/emulator/$ID/profiler/porttrace/watch \
+curl -X POST http://localhost:8090/api/v1/emulator/$ID/profiler/porttrace/filter \
      -H "Content-Type: application/json" \
-     -d '{"ports": ["0xFFFD", "0xBFFD"]}'
+     -d '{"include": [{"port": "0xFFFD"}, {"port": "0xBFFD"}]}'
 
 # Wait, then retrieve
 curl http://localhost:8090/api/v1/emulator/$ID/profiler/porttrace/events?limit=0 \
