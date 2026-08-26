@@ -1,13 +1,13 @@
 //
-// ttd_divergence_harness.cpp — implementation for the harness header.
+// ttddivergenceharness.cpp — implementation for the harness header.
 //
 // Test-only. Lives next to the header in tests/_helpers/ and is linked into
 // every corpus test that wants to share the oracle.
 //
 
-#include "ttd_divergence_harness.h"
+#include "ttddivergenceharness.h"
 
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 
 #include <common/filehelper.h>
 #include <common/stringhelper.h>
@@ -89,7 +89,7 @@ bool TTDDivergenceHarness::LoadSnapshot(const std::string& relativeOrAbsolutePat
         else
         {
             // Try under project root directly (handles data/testsoft/...).
-            std::filesystem::path root = TestPathHelper::findProjectRoot();
+            std::filesystem::path root = TestPathHelper::FindProjectRoot();
             candidate = (root / relativeOrAbsolutePath).string();
             if (std::filesystem::exists(candidate))
                 path = candidate;
@@ -150,7 +150,7 @@ DivergenceHistory TTDDivergenceHarness::ExtractHashesFromTimeline()
 
         DivergenceFrame f;
         f.frameCounter = cp->time.frame;
-        f.t_states     = cp->globalT;
+        f.tStates      = cp->globalT;
 
         // Compute RAM digest from the page store — restore semantics in
         // miniature. Pages marked NEVER_TOUCHED hash as zero (their live
@@ -198,7 +198,7 @@ DivergenceHistory TTDDivergenceHarness::ExtractHashesFromTimeline()
                                              TTDCodecPageStore::kPageSize);
             }
         }
-        f.ram_digest = ram_digest;
+        f.ramDigest = ram_digest;
 
         // Hash the raw captured bytes — matches CaptureCurrentFrame's
         // computation, so the two histories are directly comparable.
@@ -300,14 +300,14 @@ bool TTDDivergenceHarness::VerifyReplayMatchesLive(size_t frameIndex,
     // Capture the post-seek state and compare.
     const DivergenceFrame actual = CaptureCurrentFrame();
 
-    if (actual.ram_digest != exp.ram_digest)
+    if (actual.ramDigest != exp.ramDigest)
     {
         if (failureMsg)
         {
             std::ostringstream oss;
             oss << "RAM digest mismatch at frame " << frameIndex
-                << ": expected=" << HashToString(exp.ram_digest)
-                << " actual=" << HashToString(actual.ram_digest);
+                << ": expected=" << HashToString(exp.ramDigest)
+                << " actual=" << HashToString(actual.ramDigest);
             *failureMsg = oss.str();
         }
         return false;
@@ -339,14 +339,14 @@ bool TTDDivergenceHarness::VerifyReplayMatchesLive(size_t frameIndex,
     // either use RunLiveAndCapture (which runs live and captures each
     // frame's real framebuffer) or call VerifyReplayMatchesLive after
     // pre-populating expected via SeekTo + CaptureCurrentFrame.
-    if (exp.framebuffer_digest != 0 && actual.framebuffer_digest != exp.framebuffer_digest)
+    if (exp.framebufferDigest != 0 && actual.framebufferDigest != exp.framebufferDigest)
     {
         if (failureMsg)
         {
             std::ostringstream oss;
             oss << "Framebuffer digest mismatch at frame " << frameIndex
-                << ": expected=" << HashToString(exp.framebuffer_digest)
-                << " actual=" << HashToString(actual.framebuffer_digest)
+                << ": expected=" << HashToString(exp.framebufferDigest)
+                << " actual=" << HashToString(actual.framebufferDigest)
                 << " (RAM/CPU/chipset all matched — renderer state out of sync with restored ports)";
             *failureMsg = oss.str();
         }
@@ -391,7 +391,7 @@ DivergenceFrame TTDDivergenceHarness::CaptureCurrentFrame()
         return f;
 
     const uint64_t ram_digest = HashRamInUse();
-    f.ram_digest = ram_digest;
+    f.ramDigest = ram_digest;
 
     // Use the SAME capture path as the TTD checkpoint: CaptureCpuState /
     // CaptureChipsetState produce TTDCpuState / TTDChipsetState from the
@@ -411,14 +411,14 @@ DivergenceFrame TTDDivergenceHarness::CaptureCurrentFrame()
     f.hash = composite;
 
     f.frameCounter = _context->emulatorState.frame_counter;
-    f.t_states     = _context->emulatorState.t_states;
+    f.tStates      = _context->emulatorState.t_states;
 
     // Framebuffer digest — catches restore bugs that leave the renderer
     // pointing at the wrong bank (e.g. p7FFD bit 3 not synced) or stale
     // framebuffer content. The renderer must have called RenderOnlyMainScreen
     // before this is meaningful; the harness invokes it explicitly during
     // VerifyReplayMatchesLive via the engine's SeekTo path.
-    f.framebuffer_digest = HashFramebuffer();
+    f.framebufferDigest = HashFramebuffer();
 
     return f;
 }

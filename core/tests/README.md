@@ -88,7 +88,7 @@ core/
 │
 └── tests/
     ├── _helpers/                          # Test helper utilities (note underscore prefix)
-    │   ├── test_path_helper.h
+    │   ├── testpathhelper.h
     │   ├── testtiminghelper.h
     │   └── testtiminghelper.cpp
     ├── common/                            # Mirrors core/src/common/
@@ -140,7 +140,7 @@ core/
 | Test Implementation | `<component>_test.cpp` | `memory_test.cpp` |
 | Test Header | `<component>_test.h` | `memory_test.h` |
 | Test Helper Implementation | `<helper>.cpp` | `testtiminghelper.cpp` |
-| Test Helper Header | `<helper>.h` | `test_path_helper.h` |
+| Test Helper Header | `<helper>.h` | `testpathhelper.h` |
 
 ---
 
@@ -395,7 +395,7 @@ When you need to test non-public members and no CUT class exists:
 Provides reliable test data path resolution across different execution environments.
 
 ```cpp
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 
 TEST_F(LoaderTest, LoadFile)
 {
@@ -594,7 +594,7 @@ Test data files are stored in the project's `testdata/` directory (at project ro
 ### Accessing Test Data
 
 ```cpp
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 
 // Get absolute path to test data
 std::string path = TestPathHelper::GetTestDataPath("loaders/sna/test.sna");

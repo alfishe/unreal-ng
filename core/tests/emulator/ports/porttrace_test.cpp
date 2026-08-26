@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include "_helpers/testpathhelper.h"
 #include <base/featuremanager.h>
 #include <emulator/ports/models/portdecoder_pentagon128.h>
 #include <emulator/ports/portdecoder.h>
@@ -574,12 +575,15 @@ TEST_F(PortTrace_Test, ExportAllFormats)
 
     // All three formats write successfully; the offline converter
     // (tools/porttrace/porttrace_convert.py) is validated against these exact artifacts
-    ASSERT_TRUE(recorder->saveToFile("porttrace_export_test.json", PortTraceExportFormat::JSON, info));
-    ASSERT_TRUE(recorder->saveToFile("porttrace_export_test.csv", PortTraceExportFormat::CSV, info));
-    ASSERT_TRUE(recorder->saveToFile("porttrace_export_test.bin", PortTraceExportFormat::Binary, info));
+    const std::string jsonPath = TestPathHelper::GetTestScratchPath("porttrace_export_test.json");
+    const std::string csvPath = TestPathHelper::GetTestScratchPath("porttrace_export_test.csv");
+    const std::string binPath = TestPathHelper::GetTestScratchPath("porttrace_export_test.bin");
+    ASSERT_TRUE(recorder->saveToFile(jsonPath, PortTraceExportFormat::JSON, info));
+    ASSERT_TRUE(recorder->saveToFile(csvPath, PortTraceExportFormat::CSV, info));
+    ASSERT_TRUE(recorder->saveToFile(binPath, PortTraceExportFormat::Binary, info));
 
     // Binary header sanity: magic, version, count, rule count
-    std::ifstream in("porttrace_export_test.bin", std::ios::binary);
+    std::ifstream in(binPath, std::ios::binary);
     ASSERT_TRUE(in.good());
     uint8_t header[32] = {};
     in.read(reinterpret_cast<char*>(header), sizeof(header));
@@ -635,12 +639,17 @@ TEST_F(PortTrace_Test, CompressedExportRoundTrip)
     ASSERT_GT(original.size(), 600u);
 
     PortTraceSessionInfo info = _portDecoder->getPortTraceSessionInfo();
-    ASSERT_TRUE(recorder->saveToFile("porttrace_v2_test.bin", PortTraceExportFormat::Binary, info));
+    const std::string binV2Path = TestPathHelper::GetTestScratchPath("porttrace_v2_test.bin");
+    const std::string binzV2Path = TestPathHelper::GetTestScratchPath("porttrace_v2_test.binz");
+    const std::string garbageV2Path = TestPathHelper::GetTestScratchPath("porttrace_v2_test.garbage");
+    const std::string nonexistentV2Path = TestPathHelper::GetTestScratchPath("porttrace_v2_test.nonexistent");
+
+    ASSERT_TRUE(recorder->saveToFile(binV2Path, PortTraceExportFormat::Binary, info));
     ASSERT_TRUE(
-        recorder->saveToFile("porttrace_v2_test.binz", PortTraceExportFormat::BinaryCompressed, info));
+        recorder->saveToFile(binzV2Path, PortTraceExportFormat::BinaryCompressed, info));
 
     // Round-trip both containers through the core loader
-    for (const char* file : {"porttrace_v2_test.bin", "porttrace_v2_test.binz"})
+    for (const std::string& file : {binV2Path, binzV2Path})
     {
         PortTraceSessionInfo loadedInfo;
         std::vector<PortTraceEvent> loaded;
@@ -653,20 +662,20 @@ TEST_F(PortTrace_Test, CompressedExportRoundTrip)
     }
 
     // The compressed container must actually compress this repetitive traffic
-    std::ifstream v1("porttrace_v2_test.bin", std::ios::binary | std::ios::ate);
-    std::ifstream v2("porttrace_v2_test.binz", std::ios::binary | std::ios::ate);
+    std::ifstream v1(binV2Path, std::ios::binary | std::ios::ate);
+    std::ifstream v2(binzV2Path, std::ios::binary | std::ios::ate);
     ASSERT_TRUE(v1.good() && v2.good());
     EXPECT_LT(v2.tellg(), v1.tellg() / 4) << "v2 should be at least 4x smaller on repetitive traffic";
 
     // Corrupt magic must be rejected
     {
-        std::ofstream bad("porttrace_v2_test.garbage", std::ios::binary | std::ios::trunc);
+        std::ofstream bad(garbageV2Path, std::ios::binary | std::ios::trunc);
         bad << "definitely not a PTRC/PTR2 trace file, padded to header size....";
     }
     PortTraceSessionInfo dummyInfo;
     std::vector<PortTraceEvent> dummy;
-    EXPECT_FALSE(PortDiagnosticRecorder::loadFromFile("porttrace_v2_test.garbage", dummyInfo, dummy));
-    EXPECT_FALSE(PortDiagnosticRecorder::loadFromFile("porttrace_v2_test.nonexistent", dummyInfo, dummy));
+    EXPECT_FALSE(PortDiagnosticRecorder::loadFromFile(garbageV2Path, dummyInfo, dummy));
+    EXPECT_FALSE(PortDiagnosticRecorder::loadFromFile(nonexistentV2Path, dummyInfo, dummy));
 }
 
 TEST_F(PortTrace_Test, StopThenSaveLosesNothing)
@@ -685,11 +694,12 @@ TEST_F(PortTrace_Test, StopThenSaveLosesNothing)
     ASSERT_EQ(producedAtStop, static_cast<uint64_t>(kOps));
 
     PortTraceSessionInfo info = _portDecoder->getPortTraceSessionInfo();
-    ASSERT_TRUE(recorder->saveToFile("porttrace_flush_test.binz", PortTraceExportFormat::BinaryCompressed, info));
+    const std::string flushPath = TestPathHelper::GetTestScratchPath("porttrace_flush_test.binz");
+    ASSERT_TRUE(recorder->saveToFile(flushPath, PortTraceExportFormat::BinaryCompressed, info));
 
     PortTraceSessionInfo loadedInfo;
     std::vector<PortTraceEvent> loaded;
-    ASSERT_TRUE(PortDiagnosticRecorder::loadFromFile("porttrace_flush_test.binz", loadedInfo, loaded));
+    ASSERT_TRUE(PortDiagnosticRecorder::loadFromFile(flushPath, loadedInfo, loaded));
     ASSERT_EQ(loaded.size(), static_cast<size_t>(kOps)) << "every event recorded before stop must be in the file";
     EXPECT_EQ(loaded.back().value, static_cast<uint8_t>(kOps - 1)) << "including the very last one";
 
@@ -709,7 +719,8 @@ TEST_F(PortTrace_Test, SaveWhileCapturingIsConsistentSnapshot)
         _portDecoder->DecodePortOut(0xFFFD, static_cast<uint8_t>(i), 0x8000);
 
     PortTraceSessionInfo info = _portDecoder->getPortTraceSessionInfo();
-    ASSERT_TRUE(recorder->saveToFile("porttrace_midcapture.binz", PortTraceExportFormat::BinaryCompressed, info));
+    const std::string midcapturePath = TestPathHelper::GetTestScratchPath("porttrace_midcapture.binz");
+    ASSERT_TRUE(recorder->saveToFile(midcapturePath, PortTraceExportFormat::BinaryCompressed, info));
 
     // Capture continues unharmed after the snapshot
     for (int i = 0; i < 50; i++)
@@ -719,7 +730,7 @@ TEST_F(PortTrace_Test, SaveWhileCapturingIsConsistentSnapshot)
 
     PortTraceSessionInfo loadedInfo;
     std::vector<PortTraceEvent> loaded;
-    ASSERT_TRUE(PortDiagnosticRecorder::loadFromFile("porttrace_midcapture.binz", loadedInfo, loaded));
+    ASSERT_TRUE(PortDiagnosticRecorder::loadFromFile(midcapturePath, loadedInfo, loaded));
     ASSERT_EQ(loaded.size(), 100u);
     for (size_t i = 0; i < loaded.size(); i++)
         EXPECT_EQ(loaded[i].value, static_cast<uint8_t>(i)) << "snapshot must be an ordered prefix";

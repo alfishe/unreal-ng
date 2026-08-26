@@ -8,7 +8,7 @@
 #include <random>
 #include <set>
 
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 #include "_helpers/testtiminghelper.h"
 #include "common/dumphelper.h"
 #include "common/filehelper.h"
@@ -2050,7 +2050,7 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Track)
 
     // Create and format a fresh disk image (avoids _diskImage pointer issues with loaded images)
     DiskImage diskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool imageFormatted = loaderTrd.format(&diskImage);
     ASSERT_TRUE(imageFormatted) << "Failed to format TRD disk image";
 
@@ -2149,7 +2149,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Track)
 
     // Create and format a fresh disk image
     DiskImage diskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool imageFormatted = loaderTrd.format(&diskImage);
     ASSERT_TRUE(imageFormatted) << "Failed to format TRD disk image";
 
@@ -2227,7 +2227,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Track_WriteProtect)
 
     // Create and format a fresh disk image
     DiskImage diskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool imageFormatted = loaderTrd.format(&diskImage);
     ASSERT_TRUE(imageFormatted) << "Failed to format TRD disk image";
 
@@ -2294,7 +2294,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_Single)
 
     /// region <Create empty disk image>
     DiskImage diskImage = DiskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool imageFormatted = loaderTrd.format(&diskImage);
     EXPECT_EQ(imageFormatted, true) << "Empty test TRD image was not formatted";
     bool formatValid = loaderTrd.validateEmptyTRDOSImage(&diskImage);
@@ -2436,7 +2436,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_WriteProtect)
 
     /// region <Create empty disk image>
     DiskImage diskImage = DiskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool imageFormatted = loaderTrd.format(&diskImage);
     ASSERT_EQ(imageFormatted, true) << "Empty test TRD image was not formatted";
     /// endregion </Create empty disk image>
@@ -2487,7 +2487,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_MultiSector)
 
     /// region <Create empty disk image>
     DiskImage diskImage = DiskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool imageFormatted = loaderTrd.format(&diskImage);
     ASSERT_TRUE(imageFormatted) << "Empty test TRD image was not formatted";
     /// endregion </Create empty disk image>
@@ -2587,7 +2587,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_DeletedDataMark)
 
     /// region <Create empty disk image>
     DiskImage diskImage = DiskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool imageFormatted = loaderTrd.format(&diskImage);
     ASSERT_TRUE(imageFormatted) << "Empty test TRD image was not formatted";
     /// endregion </Create empty disk image>
@@ -3178,7 +3178,7 @@ TEST_F(WD1793_Test, Integration_TRDOS_CatalogStructure)
 
     // Create and format disk image using LoaderTRD
     DiskImage diskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool formatted = loaderTrd.format(&diskImage);
     ASSERT_TRUE(formatted) << "Failed to format TRD disk image";
 
@@ -3249,7 +3249,7 @@ TEST_F(WD1793_Test, Integration_TRDOS_SectorInterleave)
 
     // Create and format disk image
     DiskImage diskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool formatted = loaderTrd.format(&diskImage);
     ASSERT_TRUE(formatted) << "Failed to format TRD disk image";
 
@@ -3287,7 +3287,7 @@ TEST_F(WD1793_Test, Integration_AllTracksPopulated)
 
     // Create and format a full 80-track DS disk image
     DiskImage diskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool formatted = loaderTrd.format(&diskImage);
     ASSERT_TRUE(formatted) << "Failed to format TRD disk image";
 

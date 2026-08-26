@@ -8,7 +8,7 @@
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "_helpers/emulatortesthelper.h"
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 #include "_helpers/testtiminghelper.h"
 #include "_helpers/trdostesthelper.h"
 #include "common/dumphelper.h"
@@ -80,7 +80,7 @@ TEST_F(DISABLED_WD1793_Integration_Test, TRDOS_CatalogStructure)
 
     // Create and format disk image using LoaderTRD
     DiskImage diskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool formatted = loaderTrd.format(&diskImage);
     ASSERT_TRUE(formatted) << "Failed to format TRD disk image";
 
@@ -143,7 +143,7 @@ TEST_F(DISABLED_WD1793_Integration_Test, TRDOS_SectorInterleave)
 
     // Create and format disk image
     DiskImage diskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool formatted = loaderTrd.format(&diskImage);
     ASSERT_TRUE(formatted) << "Failed to format TRD disk image";
 
@@ -179,7 +179,7 @@ TEST_F(DISABLED_WD1793_Integration_Test, AllTracksPopulated)
 
     // Create and format disk image
     DiskImage diskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool formatted = loaderTrd.format(&diskImage);
     ASSERT_TRUE(formatted) << "Failed to format TRD disk image";
 

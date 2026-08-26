@@ -4,7 +4,7 @@
 #include <common/stringhelper.h>
 #include <gtest/gtest.h>
 
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 #include "emulator/cpu/core.h"
 
 /// region <Types>
@@ -196,7 +196,7 @@ TEST_F(LoaderTRD_Test, validateEmptyTRDOSImage)
         DiskImage diskImage(format.tracks, format.sides);
 
         // Create a loader and format the disk
-        LoaderTRDCUT loaderTrd(_context, "test.trd");
+        LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
         bool formatResult = loaderTrd.format(&diskImage);
         ASSERT_TRUE(formatResult) << "Failed to format empty disk image";
 

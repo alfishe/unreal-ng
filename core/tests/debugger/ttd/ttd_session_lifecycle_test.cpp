@@ -23,7 +23,7 @@
 
 #include <string>
 
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 #include "debugger/ttd/ttd_checkpoint.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/emulator.h"

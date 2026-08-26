@@ -1,7 +1,7 @@
 #include "loaders/disk/loader_scl.h"
 
 #include "3rdparty/digestpp/digestpp.hpp"
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 #include "common/dumphelper.h"
 #include "common/filehelper.h"
 #include "emulator/cpu/core.h"
@@ -189,12 +189,12 @@ TEST_F(LoaderSCL_Test, addFile)
 {
     // Create a test disk image with 80 tracks and 2 sides
     DiskImage diskImage = DiskImage(80, 2);
-    LoaderTRD loaderTrd(_context, "addFile.trd");
+    LoaderTRD loaderTrd(_context, TestPathHelper::GetTestScratchPath("addFile.trd"));
     bool result = loaderTrd.format(&diskImage);
     EXPECT_EQ(result, true) << "Empty image low level format unsuccessful";
 
     // Initialize LoaderSCL using CUT wrapper (no load from disk)
-    LoaderSCLCUT loader(_context, "test.scl");
+    LoaderSCLCUT loader(_context, TestPathHelper::GetTestScratchPath("test.scl"));
     loader._diskImage = &diskImage;
 
     /// region <Make system sector snapshots>

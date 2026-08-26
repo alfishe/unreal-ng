@@ -33,7 +33,7 @@
 #include <string>
 
 #include "_helpers/emulatortesthelper.h"
-#include "_helpers/ttd_divergence_harness.h"
+#include "_helpers/ttddivergenceharness.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (SeekTo in framebuffer determinism test)
 #include "emulator/emulator.h"

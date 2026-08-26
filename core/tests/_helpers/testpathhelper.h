@@ -19,7 +19,7 @@ public:
     /// regardless of the current working directory.
     ///
     /// @return The filesystem path to the directory containing the executable.
-    static fs::path getExecutableDir()
+    static fs::path GetExecutableDir()
     {
 #ifdef __APPLE__
         char path[PATH_MAX];
@@ -31,6 +31,12 @@ public:
 #endif
         // Fallback: use current path if we can't get executable path
         return fs::current_path();
+    }
+
+    /// @brief Backwards-compatible camelCase wrapper.
+    static fs::path getExecutableDir()
+    {
+        return GetExecutableDir();
     }
 
     /// @brief Helper function to find the project root directory.
@@ -47,7 +53,7 @@ public:
     /// @param startPath The starting path for the search. Defaults to executable directory.
     /// @return The filesystem path to the project root.
     /// @throws std::runtime_error if the project root cannot be found within the search depth.
-    static fs::path findProjectRoot(const fs::path& startPath = getExecutableDir())
+    static fs::path FindProjectRoot(const fs::path& startPath = GetExecutableDir())
     {
         fs::path current = startPath;
 
@@ -98,10 +104,44 @@ public:
         throw std::runtime_error(errorMsg);
     }
 
+    /// @brief Backwards-compatible camelCase wrapper.
+    static fs::path findProjectRoot(const fs::path& startPath = GetExecutableDir())
+    {
+        return FindProjectRoot(startPath);
+    }
+
     static std::string GetTestDataPath(const std::string& relativePath)
     {
-        fs::path root = findProjectRoot();
+        fs::path root = FindProjectRoot();
         fs::path fullPath = root / "testdata" / relativePath;
+        return fullPath.string();
+    }
+
+    /// @brief Get the scratch directory (<project_root>/scratch).
+    /// Creates the directory if it does not exist.
+    static fs::path GetScratchDir()
+    {
+        fs::path scratch = FindProjectRoot() / "scratch";
+        std::error_code ec;
+        fs::create_directories(scratch, ec);
+        return scratch;
+    }
+
+    /// @brief Backwards-compatible camelCase wrapper.
+    static fs::path getScratchDir()
+    {
+        return GetScratchDir();
+    }
+
+    /// @brief Get absolute path for a test scratch artifact.
+    static std::string GetTestScratchPath(const std::string& relativePath)
+    {
+        fs::path fullPath = GetScratchDir() / relativePath;
+        if (fullPath.has_parent_path())
+        {
+            std::error_code ec;
+            fs::create_directories(fullPath.parent_path(), ec);
+        }
         return fullPath.string();
     }
 };

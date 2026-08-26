@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 #include "common/filehelper.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"

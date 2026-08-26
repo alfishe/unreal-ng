@@ -19,7 +19,7 @@
 #include <fstream>
 #include <map>
 #include <filesystem>
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 
 // Relative path from project root to reference CSVs
 static const std::string REFERENCE_REL_PATH = "tools/verification/z80/reference/";

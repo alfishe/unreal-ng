@@ -6,7 +6,7 @@
 #include <cstring>
 #include <iostream>
 
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 #include "_helpers/testtiminghelper.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"

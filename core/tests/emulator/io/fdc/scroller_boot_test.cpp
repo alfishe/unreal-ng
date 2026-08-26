@@ -11,7 +11,7 @@
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "_helpers/emulatortesthelper.h"
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 #include "common/stringhelper.h"
 #include "debugger/analyzers/basic-lang/basicencoder.h"
 #include "debugger/analyzers/rom-print/screenocr.h"

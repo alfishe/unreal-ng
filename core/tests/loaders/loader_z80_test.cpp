@@ -4,7 +4,7 @@
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 #include "loader_z80_fuzzing_test.h"  // Includes LoaderZ80CUT
 
 /// region <SetUp / TearDown>

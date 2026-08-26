@@ -1,6 +1,7 @@
 // MSVC: Must be defined BEFORE any headers that might include <cmath> for M_PI
 #define _USE_MATH_DEFINES
 #include "audiofilehelper_test.h"
+#include "_helpers/testpathhelper.h"
 
 #include <common/sound/audiofilehelper.h>
 
@@ -19,7 +20,7 @@ void AudioFileHelper_Test::TearDown() {}
 
 TEST_F(AudioFileHelper_Test, FlowTestInterleaved)
 {
-    const std::string filepath = "test_interleaved.wav";
+    const std::string filepath = TestPathHelper::GetTestScratchPath("test_interleaved.wav");
     const uint8_t NUM_CHANNELS = 2;
     const uint32_t SAMPLE_RATE = 44100;
     const float frequencyInHz = 440.f;
@@ -48,7 +49,7 @@ TEST_F(AudioFileHelper_Test, FlowTestInterleaved)
 
 TEST_F(AudioFileHelper_Test, FlowTestSeparate)
 {
-    const std::string filepath = "test_separate.wav";
+    const std::string filepath = TestPathHelper::GetTestScratchPath("test_separate.wav");
     const uint8_t NUM_CHANNELS = 2;
     const uint32_t SAMPLE_RATE = 44100;
     const float frequencyInHz = 880.f;
@@ -77,7 +78,7 @@ TEST_F(AudioFileHelper_Test, FlowTestSeparate)
 
 TEST_F(AudioFileHelper_Test, FlowTestMultiblock)
 {
-    const std::string filepath = "test_multiblock.wav";
+    const std::string filepath = TestPathHelper::GetTestScratchPath("test_multiblock.wav");
     const uint8_t NUM_CHANNELS = 2;
     const uint32_t SAMPLE_RATE = 44100;
     const uint32_t durationInSec = 1;
@@ -110,7 +111,7 @@ TEST_F(AudioFileHelper_Test, FlowTestMultiblock)
 
 TEST_F(AudioFileHelper_Test, SquareTestInterleaved)
 {
-    const std::string filepath = "test_square_interleaved.wav";
+    const std::string filepath = TestPathHelper::GetTestScratchPath("test_square_interleaved.wav");
     const uint8_t NUM_CHANNELS = 2;
     const uint32_t SAMPLE_RATE = 44100;
     const float frequencyInHz = 880.f;

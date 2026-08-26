@@ -8,7 +8,7 @@
 #include "emulator/emulator.h"
 #include "common/filehelper.h"
 #include "_helpers/emulatortesthelper.h"
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 
 #include <cctype>
 #include <utility>

@@ -2,7 +2,7 @@
 
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 
 #include <random>
 #include <fstream>

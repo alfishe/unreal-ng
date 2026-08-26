@@ -1,6 +1,6 @@
 #pragma once
 //
-// ttd_divergence_harness.h — Phase 2 Item 7 (parent TDD §5, §15.1)
+// ttddivergenceharness.h — Phase 2 Item 7 (parent TDD §5, §15.1)
 //
 // Test-only helper that runs a workload twice (live + replay-from-checkpoint)
 // and asserts bit-identical per-frame machine state. The oracle for the
@@ -44,11 +44,11 @@ namespace ttd {
 struct DivergenceFrame
 {
     uint64_t               frameCounter = 0;
-    uint64_t               t_states     = 0;
-    uint64_t               ram_digest   = 0;
+    uint64_t               tStates      = 0;
+    uint64_t               ramDigest    = 0;
     MachineStateSnapshot  snapshot{};
     uint64_t               hash         = 0;  // HashSnapshot(snapshot)
-    uint64_t               framebuffer_digest = 0;  // Hash of RGBA framebuffer bytes
+    uint64_t               framebufferDigest = 0;  // Hash of RGBA framebuffer bytes
 };
 
 /// A captured sequence of per-frame state from a live run.

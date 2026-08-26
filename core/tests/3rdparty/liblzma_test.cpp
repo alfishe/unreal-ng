@@ -15,7 +15,7 @@
 #include "3rdparty/liblzma/include/7zTypes.h"
 
 // Test path helper for finding project root
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 
 namespace fs = std::filesystem;
 

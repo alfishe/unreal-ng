@@ -1,4 +1,4 @@
-#include <_helpers/test_path_helper.h>
+#include <_helpers/testpathhelper.h>
 #include <common/filehelper.h>
 #include <emulator/emulator.h>
 #include <gtest/gtest.h>
@@ -98,7 +98,7 @@ TEST_F(EmulatorPathValidationTest, LoadTape_TZXFormat_ReturnsTrue)
 TEST_F(EmulatorPathValidationTest, LoadTape_RelativePath_ResolvesAndLoads)
 {
     // Given: a relative path to tape file
-    std::string relativePath = "test_relative.tap";
+    std::string relativePath = TestPathHelper::GetTestScratchPath("test_relative.tap");
     std::ofstream out(relativePath, std::ios::binary);
     out << "TAPE DATA";
     out.close();
