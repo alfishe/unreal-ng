@@ -306,6 +306,24 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
 
     app.setCustom404Page(notFoundResp);
 
+    // Swagger UI documentation page
+    // Served at /api/v1/docs - loads embedded Swagger UI bundle from resources
+    std::string swaggerHtml = loadHtmlFile("docs.html");
+    app.registerHandler(
+        "/api/v1/docs",
+        [swaggerHtml](const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+            auto resp = drogon::HttpResponse::newHttpResponse();
+            resp->setBody(swaggerHtml);
+            resp->setContentTypeCode(drogon::ContentType::CT_TEXT_HTML);
+            resp->addHeader("Cache-Control", "public, max-age=86400");
+            resp->setExpiredTime(86400);  // Cache for 24 hours
+            callback(resp);
+        },
+        {drogon::Get});
+
+    LOG_INFO << "Swagger UI Documentation: http://localhost:8090/api/v1/docs";
+
     // Create a writable log directory in the user's home folder
     std::string logPath;
 #ifdef __APPLE__

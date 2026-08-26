@@ -6,158 +6,201 @@
     <title>Unreal Speccy Emulator API</title>
     <style>
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            max-width: 1200px;
-            margin: 50px auto;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
             padding: 20px;
             line-height: 1.6;
             color: #333;
+            background: #f5f5f5;
         }
-        h1 {
-            color: #2c3e50;
-            border-bottom: 3px solid #3498db;
-            padding-bottom: 10px;
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 25px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+            margin-bottom: 20px;
         }
-        .endpoint {
-            background: #f8f9fa;
-            border-left: 4px solid #3498db;
-            padding: 15px;
-            margin: 20px 0;
-            border-radius: 4px;
-        }
-        .endpoint h3 {
-            margin-top: 0;
-            color: #2c3e50;
-        }
-        code {
-            background: #e9ecef;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
-        }
-        pre {
-            background: #2c3e50;
-            color: #ecf0f1;
-            padding: 15px;
-            border-radius: 4px;
-            overflow-x: auto;
-        }
-        a {
-            color: #3498db;
-            text-decoration: none;
-        }
-        a:hover {
-            text-decoration: underline;
-        }
-        .tools {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin: 20px 0;
-        }
-        .tool-card {
-            background: #fff;
-            border: 2px solid #e9ecef;
-            padding: 15px;
-            border-radius: 8px;
-            text-align: center;
-            transition: border-color 0.3s;
-            overflow: hidden;
-        }
-        .tool-card:hover {
-            border-color: #3498db;
-        }
-        .tool-card pre {
-            overflow-x: auto;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-        }
-        .tool-card code {
-            word-break: break-all;
-        }
+        h1 { color: #2c3e50; margin: 0 0 10px 0; font-size: 28px; }
+        h2 { color: #2c3e50; margin: 0 0 15px 0; font-size: 18px; }
         .btn {
             display: inline-block;
             padding: 10px 20px;
             background: #3498db;
             color: white;
-            border-radius: 4px;
+            border-radius: 5px;
             text-decoration: none;
-            font-weight: bold;
-            margin: 10px 5px;
+            font-weight: 500;
+            margin: 4px 4px 4px 0;
+            font-size: 14px;
         }
-        .btn:hover {
-            background: #2980b9;
+        .btn:hover { background: #2980b9; }
+        .btn-large { padding: 14px 28px; font-size: 16px; background: #e74c3c; }
+        .btn-large:hover { background: #c0392b; }
+        code {
+            background: #e9ecef;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 13px;
         }
+        .code-wrap {
+            position: relative;
+        }
+        .code-wrap code {
+            display: inline;
+        }
+        pre {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 12px 40px 12px 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 12px;
+            margin: 10px 0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            position: relative;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: rgba(255,255,255,0.1);
+            border: none;
+            border-radius: 4px;
+            padding: 4px 6px;
+            cursor: pointer;
+            opacity: 0.6;
+            transition: opacity 0.2s;
+        }
+        .copy-btn:hover { opacity: 1; background: rgba(255,255,255,0.2); }
+        .copy-btn svg { width: 16px; height: 16px; fill: #ecf0f1; }
+        .copy-btn.copied { opacity: 1; }
+        .copy-btn.copied svg { fill: #2ecc71; }
+        .hero { text-align: center; padding: 30px; }
+        .hero p { color: #666; margin: 0 0 20px 0; }
+        .section-row {
+            padding: 12px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .section-row:last-child { border-bottom: none; }
+        .section-row .label {
+            font-weight: 500;
+            color: #495057;
+            margin-bottom: 6px;
+        }
+        .section-row pre { margin: 8px 0 0 0; }
+        table { width: 100%; border-collapse: collapse; }
+        td { padding: 8px 0; }
+        td:first-child { font-weight: 500; width: 100px; }
+        td code { background: #3498db; color: white; }
+        footer { text-align: center; color: #999; margin-top: 30px; font-size: 14px; }
+        footer a { color: #3498db; }
+        .inline-copy {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .inline-copy .copy-btn {
+            position: static;
+            background: #dee2e6;
+            padding: 2px 4px;
+        }
+        .inline-copy .copy-btn svg { fill: #495057; width: 14px; height: 14px; }
+        .inline-copy .copy-btn:hover { background: #ced4da; }
+        .inline-copy .copy-btn.copied svg { fill: #2ecc71; }
     </style>
 </head>
 <body>
-    <h1>🎮 Unreal Speccy Emulator API</h1>
-
-    <p>Welcome to the Unreal Speccy Emulator REST API. This API provides comprehensive control over ZX Spectrum emulator instances.</p>
-
-    <div class="endpoint" style="background: #e8f4fd; border-left-color: #2196f3;">
-        <h3>✅ CORS Enabled</h3>
-        <p>All endpoints support Cross-Origin Resource Sharing (CORS), allowing direct access from web applications and tools like Swagger UI.</p>
-    </div>
-    
-    <div class="endpoint">
-        <h3>📄 OpenAPI Specification</h3>
-        <p>Machine-readable API documentation in OpenAPI 3.0 format:</p>
-        <p style="font-size: 12px; color: #e74c3c;"><strong>⚠️ Note:</strong> This specification is manually maintained. API changes must be reflected here.</p>
-        <a href="/api/v1/openapi.json" class="btn">View OpenAPI Spec (JSON)</a>
+    <div class="card hero">
+        <h1>Unreal Speccy Emulator API</h1>
+        <p>ZX Spectrum emulator with full REST API control</p>
+        <a href="/api/v1/docs" class="btn btn-large">Open Swagger UI</a>
+        <a href="/api/v1/openapi.json" class="btn">OpenAPI JSON</a>
+        <a href="/api/v1/emulator" class="btn">List Emulators</a>
     </div>
 
-    <h2>🛠️ Testing Tools</h2>
-    <div class="tools">
-        <div class="tool-card">
-            <h3>Swagger UI</h3>
-            <p>Interactive API testing</p>
-            <pre style="text-align: left; font-size: 11px;">docker pull swaggerapi/swagger-ui
-docker run --name unreal-speccy-swagger-ui \
-  -p 8081:8080 \
-  -e SWAGGER_JSON_URL=http://localhost:8090/api/v1/openapi.json \
+    <div class="card">
+        <h2>API Tools</h2>
+        <div class="section-row">
+            <div class="label">Swagger UI (built-in)</div>
+            <div class="content"><a href="/api/v1/docs" class="btn">Open Swagger UI</a></div>
+        </div>
+        <div class="section-row">
+            <div class="label">Docker Swagger UI</div>
+            <div class="content">
+                <pre data-copy>docker run -p 8081:8080 \
+  -e SWAGGER_JSON_URL=http://host.docker.internal:8090/api/v1/openapi.json \
   swaggerapi/swagger-ui</pre>
-            <p style="font-size: 12px;">Then visit <code>localhost:8081</code><br>Swagger UI will automatically load the API spec!</p>
+                Then visit <code>localhost:8081</code>
+            </div>
         </div>
-        
-        <div class="tool-card">
-            <h3>Postman</h3>
-            <p>API client & testing</p>
-            <p style="font-size: 12px;">Import → Link<br><code>http://localhost:8090/api/v1/openapi.json</code></p>
-        </div>
-        
-        <div class="tool-card">
-            <h3>curl</h3>
-            <p>Command line access</p>
-            <pre style="text-align: left; font-size: 11px;">curl http://localhost:8090/\
-api/v1/openapi.json | jq .</pre>
+        <div class="section-row">
+            <div class="label">Postman / Insomnia</div>
+            <div class="content">Import OpenAPI: <span class="inline-copy"><code>http://localhost:8090/api/v1/openapi.json</code></span></div>
         </div>
     </div>
 
-    <h2>🚀 Quick Start</h2>
-    <div class="endpoint">
-        <h3>List all emulators</h3>
-        <pre>curl http://localhost:8090/api/v1/emulator</pre>
+    <div class="card">
+        <h2>Quick Start</h2>
+        <pre data-copy># List emulators
+curl http://localhost:8090/api/v1/emulator
+
+# Create and start emulator
+curl -X POST http://localhost:8090/api/v1/emulator/start \
+  -H "Content-Type: application/json" -d '{"model": "128k"}'
+
+# Get registers (replace {id} with emulator ID)
+curl http://localhost:8090/api/v1/emulator/{id}/registers</pre>
     </div>
 
-    <div class="endpoint">
-        <h3>Get emulator status</h3>
-        <pre>curl http://localhost:8090/api/v1/emulator/status</pre>
+    <div class="card">
+        <h2>Ports</h2>
+        <table>
+            <tr><td>WebAPI</td><td><code>8090</code></td><td>REST API + Swagger UI</td></tr>
+            <tr><td>CLI</td><td><code>8765</code></td><td>Telnet command interface</td></tr>
+            <tr><td>WebSocket</td><td><code>8090</code></td><td><code>/api/v1/websocket</code></td></tr>
+        </table>
     </div>
 
-    <div class="endpoint">
-        <h3>Get available models</h3>
-        <pre>curl http://localhost:8090/api/v1/emulator/models</pre>
-    </div>
-
-    <div class="endpoint">
-        <h3>Audio state inspection (active emulator)</h3>
-        <pre>curl http://localhost:8090/api/v1/emulator/state/audio/ay</pre>
-    </div>
-
-    <footer style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #e9ecef; text-align: center; color: #666;">
-        <p>For full documentation, see the <a href="/api/v1/openapi.json">OpenAPI specification</a></p>
+    <footer>
+        <a href="https://github.com/alfishe/unreal-ng">GitHub</a>
     </footer>
+
+    <script>
+        const copyIcon = '<svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>';
+        const checkIcon = '<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>';
+
+        document.querySelectorAll('pre[data-copy]').forEach(pre => {
+            const btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.innerHTML = copyIcon;
+            btn.title = 'Copy to clipboard';
+            btn.onclick = () => copyText(pre.textContent, btn);
+            pre.appendChild(btn);
+        });
+
+        document.querySelectorAll('.inline-copy').forEach(wrap => {
+            const code = wrap.querySelector('code');
+            const btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.innerHTML = copyIcon;
+            btn.title = 'Copy to clipboard';
+            btn.onclick = () => copyText(code.textContent, btn);
+            wrap.appendChild(btn);
+        });
+
+        function copyText(text, btn) {
+            navigator.clipboard.writeText(text).then(() => {
+                btn.innerHTML = checkIcon;
+                btn.classList.add('copied');
+                setTimeout(() => {
+                    btn.innerHTML = copyIcon;
+                    btn.classList.remove('copied');
+                }, 1500);
+            });
+        }
+    </script>
 </body>
 </html>
-
