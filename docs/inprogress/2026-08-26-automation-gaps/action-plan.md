@@ -6,11 +6,11 @@ Last updated: 2026-08-26
 
 | ID | Task | Status | Commit | Notes |
 |----|------|--------|--------|-------|
-| 0.1.1 | Add Z80 register setters in core | DONE | | Z80State has public members |
-| 0.1.2 | Expose reg write via CLI | DONE | | `reg set <name> <value>` |
-| 0.1.3 | Expose reg write via WebAPI | DONE | | PUT `/api/v1/emulator/{id}/registers/{name}` |
-| 0.1.4 | Expose reg write via Lua | DONE | | `get_register(name)`, `set_register(name, value)` |
-| 0.1.5 | Expose reg write via Python | DONE | | `get_register(name)`, `set_register(name, value)` |
+| 0.1.1 | Add Z80 register setters in core | DONE | 4bd9e24e | Z80State has public members |
+| 0.1.2 | Expose reg write via CLI | DONE | 4bd9e24e | `reg set <name> <value>` |
+| 0.1.3 | Expose reg write via WebAPI | DONE | 4bd9e24e | PUT `/api/v1/emulator/{id}/registers/{name}` |
+| 0.1.4 | Expose reg write via Lua | DONE | 4bd9e24e | `get_register(name)`, `set_register(name, value)` |
+| 0.1.5 | Expose reg write via Python | DONE | 4bd9e24e | `get_register(name)`, `set_register(name, value)` |
 | 0.2.1 | Expose LabelManager to automation | TODO | | |
 | 0.2.2 | `symbols load` command | POSTPONED | | sjasmplus .sld primary |
 | 0.2.3 | Symbolic disassembly output | TODO | | |
