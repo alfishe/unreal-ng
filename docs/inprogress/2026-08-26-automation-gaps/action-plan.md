@@ -21,8 +21,8 @@ Last updated: 2026-08-26
 | 0.2.2 | `symbols load` command | POSTPONED | | sjasmplus .sld primary |
 | 0.2.3 | Symbolic disassembly output | TODO | | Disasm shows labels instead of raw addresses (e.g. `CALL main` not `CALL $8000`) |
 | 0.2.4 | Symbolic breakpoints `bp label` | DESIGN | | Not clear yet how to handle re-positioning breakpoint when label address changes|
-| 0.3.1 | Add instance ID to NC_EXECUTION_BREAKPOINT | DONE | | z80.cpp was using SimpleNumberPayload |
-| 0.3.2 | Add instance ID to NC_EMULATOR_STATE_CHANGE | DONE | | Already implemented |
+| 0.3.1 | Add instance ID to NC_EXECUTION_BREAKPOINT | DONE | 3bd53395 | z80.cpp was using SimpleNumberPayload |
+| 0.3.2 | Add instance ID to NC_EMULATOR_STATE_CHANGE | DONE | 3bd53395 | Already implemented |
 | 0.3.3 | WebSocket push for events | DESIGN | | |
 | 0.3.4 | `subscribe` command | DESIGN | | |
 | 0.3.5 | Lua `on_breakpoint(callback)` | DESIGN | | Needs callback protection strategy |
