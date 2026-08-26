@@ -27,12 +27,12 @@ Last updated: 2026-08-26
 | 0.3.4 | `subscribe` command | DESIGN | | |
 | 0.3.5 | Lua `on_breakpoint(callback)` | DESIGN | | Needs callback protection strategy |
 | 0.3.6 | Python `on_breakpoint(callback)` | DESIGN | | Needs callback protection strategy |
-| 0.4.1 | Python: add `run_frame` | DONE | | Full parity with CLI/WebAPI/Lua |
-| 0.4.2 | Python: add `run_frames` | DONE | | |
-| 0.4.3 | Python: add `run_tstates` | DONE | | |
-| 0.4.4 | Python: add `run_to_scanline` | DONE | | Also added `run_scanlines`, `run_to_interrupt` |
-| 0.4.5 | Python: add `run_to_pixel` | DONE | | |
-| 0.5.1 | Update automation.md with command parity | DONE | | Fixed CLI README port, added execution control docs |
+| 0.4.1 | Python: add `run_frame` | DONE | ef117f47 | Full parity with CLI/WebAPI/Lua |
+| 0.4.2 | Python: add `run_frames` | DONE | ef117f47 | |
+| 0.4.3 | Python: add `run_tstates` | DONE | ef117f47 | |
+| 0.4.4 | Python: add `run_to_scanline` | DONE | ef117f47 | Also added `run_scanlines`, `run_to_interrupt` |
+| 0.4.5 | Python: add `run_to_pixel` | DONE | ef117f47 | |
+| 0.5.1 | Update automation.md with command parity | DONE | ef117f47 | Fixed CLI README port, added execution control docs |
 
 ## Phase 1A: GDB RSP Server
 
