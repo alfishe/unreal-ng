@@ -13,6 +13,7 @@
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/disassembler/z80disasm.h>
+#include <debugger/labels/labelmanager.h>
 #include <base/featuremanager.h>
 #include <common/dumphelper.h>
 #include <json/json.h>
@@ -2150,6 +2151,499 @@ void EmulatorAPI::getDisasmPage(const HttpRequestPtr& req, std::function<void(co
     addCorsHeaders(resp);
     callback(resp);
 }
+
+// region Labels/Symbols
+
+/// @brief GET /api/v1/emulator/{id}/labels
+/// @brief List labels with optional filtering via query params: module, bank, type, from, to, active
+void EmulatorAPI::getLabels(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                            const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Debug manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    if (!labelMgr)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Label manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Build filter from query params
+    LabelManager::LabelFilter filter;
+    auto params = req->getParameters();
+
+    if (params.count("module"))
+        filter.module = params.at("module");
+    if (params.count("type"))
+        filter.type = params.at("type");
+    if (params.count("bank"))
+        filter.bank = static_cast<uint16_t>(std::stoul(params.at("bank")));
+    if (params.count("from"))
+        filter.addressFrom = static_cast<uint16_t>(std::stoul(params.at("from"), nullptr, 0));
+    if (params.count("to"))
+        filter.addressTo = static_cast<uint16_t>(std::stoul(params.at("to"), nullptr, 0));
+    if (params.count("active") && params.at("active") == "true")
+        filter.activeOnly = true;
+
+    auto labels = labelMgr->GetLabels(filter);
+
+    Json::Value ret;
+    Json::Value labelsArray(Json::arrayValue);
+
+    for (const auto& label : labels)
+    {
+        Json::Value obj;
+        obj["name"] = label->name;
+        obj["address"] = label->address;
+        if (label->bank != UINT16_MAX)
+        {
+            obj["bank"] = label->bank;
+            obj["bankType"] = label->isROM() ? "rom" : "ram";
+        }
+        if (!label->type.empty())
+            obj["type"] = label->type;
+        if (!label->module.empty())
+            obj["module"] = label->module;
+        if (!label->comment.empty())
+            obj["comment"] = label->comment;
+        obj["active"] = label->active;
+        labelsArray.append(obj);
+    }
+
+    ret["count"] = static_cast<unsigned>(labels.size());
+    ret["total"] = static_cast<unsigned>(labelMgr->GetLabelCount());
+    ret["labels"] = labelsArray;
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/labels
+/// @brief Add a label. Body: {name, address, bank?, bankType?, type?, module?, comment?}
+void EmulatorAPI::addLabel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                           const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Debug manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    if (!labelMgr)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Label manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("name") || !json->isMember("address"))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Required: name, address";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    std::string name = (*json)["name"].asString();
+    uint16_t address = static_cast<uint16_t>((*json)["address"].asUInt());
+    uint16_t bank = json->isMember("bank") ? static_cast<uint16_t>((*json)["bank"].asUInt()) : UINT16_MAX;
+    uint16_t bankOffset = UINT16_MAX;
+    std::string type = json->isMember("type") ? (*json)["type"].asString() : "";
+    std::string module = json->isMember("module") ? (*json)["module"].asString() : "";
+    std::string comment = json->isMember("comment") ? (*json)["comment"].asString() : "";
+
+    if (labelMgr->AddLabel(name, address, bank, bankOffset, type, module, comment))
+    {
+        Json::Value ret;
+        ret["status"] = "success";
+        ret["name"] = name;
+        ret["address"] = address;
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+    else
+    {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = "Label already exists or invalid parameters";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+}
+
+/// @brief GET /api/v1/emulator/{id}/labels/{name}
+void EmulatorAPI::getLabel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                           const std::string& id, const std::string& name) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Debug manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    auto label = labelMgr ? labelMgr->GetLabelByName(name) : nullptr;
+
+    if (!label)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Label not found: " + name;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Json::Value ret;
+    ret["name"] = label->name;
+    ret["address"] = label->address;
+    if (label->bank != UINT16_MAX)
+    {
+        ret["bank"] = label->bank;
+        ret["bankType"] = label->isROM() ? "rom" : "ram";
+    }
+    if (!label->type.empty())
+        ret["type"] = label->type;
+    if (!label->module.empty())
+        ret["module"] = label->module;
+    if (!label->comment.empty())
+        ret["comment"] = label->comment;
+    ret["active"] = label->active;
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief DELETE /api/v1/emulator/{id}/labels/{name}
+void EmulatorAPI::removeLabel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id, const std::string& name) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Debug manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    if (labelMgr && labelMgr->RemoveLabel(name))
+    {
+        Json::Value ret;
+        ret["status"] = "success";
+        ret["message"] = "Label removed: " + name;
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+    else
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Label not found: " + name;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+}
+
+/// @brief PUT /api/v1/emulator/{id}/labels/{name}
+/// @brief Update label properties (active, comment, type, module)
+void EmulatorAPI::updateLabel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id, const std::string& name) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Debug manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    auto label = labelMgr ? labelMgr->GetLabelByName(name) : nullptr;
+
+    if (!label)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Label not found: " + name;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto json = req->getJsonObject();
+    if (json)
+    {
+        if (json->isMember("active"))
+            label->active = (*json)["active"].asBool();
+        if (json->isMember("comment"))
+            label->comment = (*json)["comment"].asString();
+        if (json->isMember("type"))
+            label->type = (*json)["type"].asString();
+        if (json->isMember("module"))
+            label->module = (*json)["module"].asString();
+    }
+
+    Json::Value ret;
+    ret["status"] = "success";
+    ret["name"] = label->name;
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief DELETE /api/v1/emulator/{id}/labels
+void EmulatorAPI::clearLabels(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Debug manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    if (labelMgr)
+        labelMgr->ClearAllLabels();
+
+    Json::Value ret;
+    ret["status"] = "success";
+    ret["message"] = "All labels cleared";
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/symbols/load
+/// @brief Load symbols from file. Body: {path: "symbols.sld"}
+void EmulatorAPI::loadSymbols(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Debug manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    if (!labelMgr)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Label manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("path"))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Required: path";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    std::string path = (*json)["path"].asString();
+    if (labelMgr->LoadLabels(path))
+    {
+        Json::Value ret;
+        ret["status"] = "success";
+        ret["count"] = static_cast<unsigned>(labelMgr->GetLabelCount());
+        ret["path"] = path;
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+    else
+    {
+        Json::Value error;
+        error["error"] = "Failed";
+        error["message"] = "Failed to load symbols from: " + path;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+}
+
+/// @brief POST /api/v1/emulator/{id}/symbols/save
+/// @brief Save symbols to file. Body: {path: "symbols.sld"}
+void EmulatorAPI::saveSymbols(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Debug manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    if (!labelMgr)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Label manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("path"))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Required: path";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    std::string path = (*json)["path"].asString();
+    if (labelMgr->SaveLabels(path))
+    {
+        Json::Value ret;
+        ret["status"] = "success";
+        ret["count"] = static_cast<unsigned>(labelMgr->GetLabelCount());
+        ret["path"] = path;
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+    else
+    {
+        Json::Value error;
+        error["error"] = "Failed";
+        error["message"] = "Failed to save symbols to: " + path;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+}
+
+// endregion Labels/Symbols
 
 } // namespace v1
 } // namespace api

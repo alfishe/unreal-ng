@@ -6,6 +6,7 @@
 #include <map>
 #include <vector>
 #include <memory>
+#include <optional>
 #include <filesystem>
 #include "emulator/platform.h"
 #include "emulator/memory/memory.h"
@@ -89,7 +90,27 @@ public:
     // Label lookup
     std::shared_ptr<Label> GetLabelByZ80Address(uint16_t address) const;
     std::shared_ptr<Label> GetLabelByName(const std::string& name) const;
-    
+    std::vector<std::shared_ptr<Label>> GetAllLabelsAtAddress(uint16_t address) const;
+
+    // Filtered queries
+    std::vector<std::shared_ptr<Label>> GetLabelsByModule(const std::string& module) const;
+    std::vector<std::shared_ptr<Label>> GetLabelsByBank(uint16_t bank,
+        std::optional<MemoryBankModeEnum> bankType = std::nullopt) const;
+    std::vector<std::shared_ptr<Label>> GetLabelsByType(const std::string& type) const;
+    std::vector<std::shared_ptr<Label>> GetLabelsInRange(uint16_t fromAddr, uint16_t toAddr) const;
+
+    // Combined filter
+    struct LabelFilter {
+        std::optional<std::string> module;
+        std::optional<uint16_t> bank;
+        std::optional<MemoryBankModeEnum> bankType;
+        std::optional<std::string> type;
+        std::optional<uint16_t> addressFrom;
+        std::optional<uint16_t> addressTo;
+        bool activeOnly = false;
+    };
+    std::vector<std::shared_ptr<Label>> GetLabels(const LabelFilter& filter) const;
+
     // File operations
     bool LoadLabels(const std::string& path);
     bool LoadMapFile(const std::string& path);

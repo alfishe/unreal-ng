@@ -125,6 +125,11 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"disasm_page", &CLIProcessor::HandleDisasmPage},
                         {"u", &CLIProcessor::HandleDisasm},  // Shortcut like debug monitors
 
+                        // Label/symbol commands
+                        {"label", &CLIProcessor::HandleLabel},    // Single label operations
+                        {"labels", &CLIProcessor::HandleLabels},  // List/filter labels
+                        {"symbols", &CLIProcessor::HandleSymbols}, // Load/save symbol files
+
                         // BASIC commands
                         {"basic", &CLIProcessor::HandleBasic},
 

@@ -16,6 +16,7 @@
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/disassembler/z80disasm.h>
+#include <debugger/labels/labelmanager.h>
 #include <debugger/ttd/timetravelmanager.h>
 #include <debugger/ttd/ttd_external_events.h>
 #include <debugger/ttd/ttd_probe.h>
@@ -729,6 +730,140 @@ public:
                 BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
                 if (bpm) bpm->ClearLastTriggeredBreakpoint();
             }
+        });
+
+        // Labels/Symbols
+        lua.set_function("label_get", [this](const std::string& name) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return result;
+            auto* ctx = emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager) return result;
+            LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+            auto label = lm ? lm->GetLabelByName(name) : nullptr;
+            if (!label) return result;
+            result["name"] = label->name;
+            result["address"] = label->address;
+            if (label->bank != UINT16_MAX) {
+                result["bank"] = label->bank;
+                result["bankType"] = label->isROM() ? "rom" : "ram";
+            }
+            result["type"] = label->type;
+            result["module"] = label->module;
+            result["comment"] = label->comment;
+            result["active"] = label->active;
+            return result;
+        });
+
+        lua.set_function("label_at", [this](uint16_t address) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return result;
+            auto* ctx = emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager) return result;
+            LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+            auto label = lm ? lm->GetLabelByZ80Address(address) : nullptr;
+            if (!label) return result;
+            result["name"] = label->name;
+            result["address"] = label->address;
+            if (label->bank != UINT16_MAX) {
+                result["bank"] = label->bank;
+                result["bankType"] = label->isROM() ? "rom" : "ram";
+            }
+            result["type"] = label->type;
+            result["module"] = label->module;
+            result["active"] = label->active;
+            return result;
+        });
+
+        lua.set_function("label_add", [this](const std::string& name, uint16_t address,
+                                             sol::optional<std::string> type,
+                                             sol::optional<std::string> module,
+                                             sol::optional<std::string> comment) -> bool {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            auto* ctx = emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager) return false;
+            LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+            return lm && lm->AddLabel(name, address, UINT16_MAX, UINT16_MAX,
+                                      type.value_or(""), module.value_or(""), comment.value_or(""));
+        });
+
+        lua.set_function("label_remove", [this](const std::string& name) -> bool {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            auto* ctx = emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager) return false;
+            LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+            return lm && lm->RemoveLabel(name);
+        });
+
+        lua.set_function("label_count", [this]() -> int {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return 0;
+            auto* ctx = emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager) return 0;
+            LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+            return lm ? static_cast<int>(lm->GetLabelCount()) : 0;
+        });
+
+        lua.set_function("labels_list", [this](sol::optional<std::string> module,
+                                               sol::optional<std::string> type) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return result;
+            auto* ctx = emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager) return result;
+            LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+            if (!lm) return result;
+
+            LabelManager::LabelFilter filter;
+            if (module.has_value()) filter.module = module.value();
+            if (type.has_value()) filter.type = type.value();
+
+            auto labels = lm->GetLabels(filter);
+            int idx = 1;
+            for (const auto& label : labels) {
+                sol::table lbl = lua_view.create_table();
+                lbl["name"] = label->name;
+                lbl["address"] = label->address;
+                if (label->bank != UINT16_MAX) lbl["bank"] = label->bank;
+                lbl["type"] = label->type;
+                lbl["module"] = label->module;
+                lbl["active"] = label->active;
+                result[idx++] = lbl;
+            }
+            return result;
+        });
+
+        lua.set_function("labels_clear", [this]() {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return;
+            auto* ctx = emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager) return;
+            LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+            if (lm) lm->ClearAllLabels();
+        });
+
+        lua.set_function("symbols_load", [this](const std::string& path) -> bool {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            auto* ctx = emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager) return false;
+            LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+            return lm && lm->LoadLabels(path);
+        });
+
+        lua.set_function("symbols_save", [this](const std::string& path) -> bool {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            auto* ctx = emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager) return false;
+            LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+            return lm && lm->SaveLabels(path);
         });
 
         // Disassembly

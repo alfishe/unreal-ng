@@ -16,6 +16,7 @@
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <debugger/labels/labelmanager.h>
 #include <debugger/analyzers/analyzermanager.h>
 #include <debugger/analyzers/trdos/trdosanalyzer.h>
 #include <debugger/analyzers/rom-print/screenocr.h>
@@ -559,7 +560,110 @@ namespace PythonBindings
                     if (bpm) bpm->ClearLastTriggeredBreakpoint();
                 }
             }, "Clear last triggered breakpoint tracking")
-            
+
+            // Labels/Symbols
+            .def("label_get", [](Emulator& self, const std::string& name) -> py::object {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return py::none();
+                LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+                auto label = lm ? lm->GetLabelByName(name) : nullptr;
+                if (!label) return py::none();
+                py::dict result;
+                result["name"] = label->name;
+                result["address"] = label->address;
+                if (label->bank != UINT16_MAX) {
+                    result["bank"] = label->bank;
+                    result["bankType"] = label->isROM() ? "rom" : "ram";
+                }
+                result["type"] = label->type;
+                result["module"] = label->module;
+                result["comment"] = label->comment;
+                result["active"] = label->active;
+                return result;
+            }, "Get label by name", py::arg("name"))
+            .def("label_at", [](Emulator& self, uint16_t address) -> py::object {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return py::none();
+                LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+                auto label = lm ? lm->GetLabelByZ80Address(address) : nullptr;
+                if (!label) return py::none();
+                py::dict result;
+                result["name"] = label->name;
+                result["address"] = label->address;
+                if (label->bank != UINT16_MAX) {
+                    result["bank"] = label->bank;
+                    result["bankType"] = label->isROM() ? "rom" : "ram";
+                }
+                result["type"] = label->type;
+                result["module"] = label->module;
+                result["active"] = label->active;
+                return result;
+            }, "Get label at address", py::arg("address"))
+            .def("label_add", [](Emulator& self, const std::string& name, uint16_t address,
+                                 const std::string& type, const std::string& module,
+                                 const std::string& comment) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return false;
+                LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+                return lm && lm->AddLabel(name, address, UINT16_MAX, UINT16_MAX, type, module, comment);
+            }, "Add a label", py::arg("name"), py::arg("address"),
+               py::arg("type") = "", py::arg("module") = "", py::arg("comment") = "")
+            .def("label_remove", [](Emulator& self, const std::string& name) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return false;
+                LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+                return lm && lm->RemoveLabel(name);
+            }, "Remove label by name", py::arg("name"))
+            .def("label_count", [](Emulator& self) -> size_t {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return 0;
+                LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+                return lm ? lm->GetLabelCount() : 0;
+            }, "Get label count")
+            .def("labels_list", [](Emulator& self, const std::string& module,
+                                   const std::string& type) -> py::list {
+                py::list result;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return result;
+                LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+                if (!lm) return result;
+
+                LabelManager::LabelFilter filter;
+                if (!module.empty()) filter.module = module;
+                if (!type.empty()) filter.type = type;
+
+                auto labels = lm->GetLabels(filter);
+                for (const auto& label : labels) {
+                    py::dict lbl;
+                    lbl["name"] = label->name;
+                    lbl["address"] = label->address;
+                    if (label->bank != UINT16_MAX) lbl["bank"] = label->bank;
+                    lbl["type"] = label->type;
+                    lbl["module"] = label->module;
+                    lbl["active"] = label->active;
+                    result.append(lbl);
+                }
+                return result;
+            }, "List labels with optional filter", py::arg("module") = "", py::arg("type") = "")
+            .def("labels_clear", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return;
+                LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+                if (lm) lm->ClearAllLabels();
+            }, "Clear all labels")
+            .def("symbols_load", [](Emulator& self, const std::string& path) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return false;
+                LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+                return lm && lm->LoadLabels(path);
+            }, "Load symbols from file", py::arg("path"))
+            .def("symbols_save", [](Emulator& self, const std::string& path) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return false;
+                LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+                return lm && lm->SaveLabels(path);
+            }, "Save symbols to file", py::arg("path"))
+
             // Disassembly
             .def("disasm", [](Emulator& self, int address, int count) -> py::list {
                 py::list result;

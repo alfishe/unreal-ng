@@ -326,12 +326,9 @@ Started emulator instance: emu-pentagon-87654321-dcba-4321-8765-987654321fed
 
 # List all instances
 > list
-┌─────────────────────────────────────┬────────────┬─────────────────────┐
-│ Instance ID                         │ Model      │ Status              │
-├─────────────────────────────────────┼────────────┼─────────────────────┤
-│ emu-12345678-abcd-1234-5678-123456789abc │ 48K        │ Paused              │
-│ emu-pentagon-87654321-dcba-4321-8765-987654321fed │ Pentagon  │ Paused              │
-└─────────────────────────────────────┴────────────┴─────────────────────┘
+Emulators (2):
+  [1] emu-12345678  48K       Paused
+  [2] emu-pentagon  Pentagon  Paused
 
 # Select and work with specific instance
 > select emu-pentagon-87654321-dcba-4321-8765-987654321fed
@@ -777,6 +774,50 @@ bpgroup show loader
 - Port breakpoints: minimal overhead (~1%)
 - Recommend <100 active breakpoints for real-time debugging
 - Disable unused breakpoints rather than deleting for faster re-enabling
+
+#### 4.4 Labels & Symbol Management
+
+Labels provide symbolic names for memory addresses, enabling human-readable debugging. The LabelManager supports bank-aware addressing, multiple symbol file formats, and filtering capabilities.
+
+| Command | Aliases | Arguments | Description |
+| :--- | :--- | :--- | :--- |
+| `label <name>` | | `<label-name>` | Get label by name. Returns address, bank, type, module, and comment. |
+| `label add <name> <addr>` | | `<name> <address> [options]` | Add a label at `<address>`. Options: `--type <code\|data\|const>`, `--module <name>`, `--bank <n>`, `--comment <text>`. |
+| `label remove <name>` | | `<label-name>` | Remove label by name. |
+| `label toggle <name>` | | `<label-name>` | Toggle label active state (active labels appear in disassembly). |
+| `labels` | | `[filters]` | List all labels with optional filters: `--module <name>`, `--type <type>`, `--bank <n>`, `--from <addr>`, `--to <addr>`, `--active`. |
+| `symbols load <file>` | | `<path>` | Load symbols from file. Auto-detects format: `.sld` (sjasmplus), `.sym`, `.map`. Appends to existing labels. |
+| `symbols save <file>` | | `<path>` | Save all symbols to file in SLD format. |
+| `symbols clear` | | | Clear all labels from memory. |
+| `symbols info` | | | Display label count and loaded symbol file info. |
+
+**Label Structure**:
+- `name`: Unique symbolic identifier
+- `address`: Z80 address (0x0000-0xFFFF)
+- `bank`: Physical memory bank (or UINT16_MAX for unbanked)
+- `bankType`: RAM or ROM designation
+- `bankOffset`: Offset within physical page
+- `type`: Label category (code, data, const, string, etc.)
+- `module`: Module/source file association
+- `comment`: Documentation text
+- `active`: Whether label appears in disassembly output
+
+**Symbol File Formats**:
+- **SLD** (sjasmplus): Primary format with full bank/module support
+- **SYM**: Simple `address label` pairs
+- **MAP**: Section-based symbol tables
+
+**Filtering API** (for automation):
+```cpp
+LabelFilter filter;
+filter.module = "main";         // Exact module match
+filter.bank = 5;                // Bank number
+filter.type = "code";           // Label type
+filter.addressFrom = 0x8000;    // Address range start
+filter.addressTo = 0x9FFF;      // Address range end
+filter.activeOnly = true;       // Active labels only
+auto labels = labelMgr->GetLabels(filter);
+```
 
 ### 5. Feature Management & Configuration
 

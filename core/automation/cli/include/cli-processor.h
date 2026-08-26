@@ -130,6 +130,11 @@ private:
     void HandleDisasm(const ClientSession& session, const std::vector<std::string>& args);
     void HandleDisasmPage(const ClientSession& session, const std::vector<std::string>& args);
 
+    // Label/symbol management
+    void HandleLabel(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleLabels(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleSymbols(const ClientSession& session, const std::vector<std::string>& args);
+
     // Interpreter control command handlers (Python)
     void HandlePython(const ClientSession& session, const std::vector<std::string>& args);
     void executePythonCode(const ClientSession& session, const std::string& code);

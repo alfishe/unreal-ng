@@ -330,6 +330,17 @@ public:
     ADD_METHOD_TO(EmulatorAPI::reverseStepTTD, "/api/v1/emulator/{id}/ttd/reverse-step", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::reverseContinueTTD, "/api/v1/emulator/{id}/ttd/reverse-continue", drogon::Post);
     // endregion TTD
+
+    // region Labels/Symbols (implementation: api/debug_api.cpp)
+    ADD_METHOD_TO(EmulatorAPI::getLabels, "/api/v1/emulator/{id}/labels", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::addLabel, "/api/v1/emulator/{id}/labels", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::clearLabels, "/api/v1/emulator/{id}/labels", drogon::Delete);
+    ADD_METHOD_TO(EmulatorAPI::getLabel, "/api/v1/emulator/{id}/labels/{name}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::removeLabel, "/api/v1/emulator/{id}/labels/{name}", drogon::Delete);
+    ADD_METHOD_TO(EmulatorAPI::updateLabel, "/api/v1/emulator/{id}/labels/{name}", drogon::Put);
+    ADD_METHOD_TO(EmulatorAPI::loadSymbols, "/api/v1/emulator/{id}/symbols/load", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::saveSymbols, "/api/v1/emulator/{id}/symbols/save", drogon::Post);
+    // endregion Labels/Symbols
     METHOD_LIST_END
 
     // Videowall API
@@ -718,6 +729,24 @@ public:
                    const std::string& id) const;
     void getDisasmPage(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
+    // Labels/Symbols
+    void getLabels(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                   const std::string& id) const;
+    void addLabel(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& id) const;
+    void getLabel(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& id, const std::string& name) const;
+    void removeLabel(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id, const std::string& name) const;
+    void updateLabel(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id, const std::string& name) const;
+    void clearLabels(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) const;
+    void loadSymbols(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) const;
+    void saveSymbols(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) const;
     // endregion Debug Commands Methods
 
     // region Profiler Commands Methods (implementation: api/profiler_api.cpp)

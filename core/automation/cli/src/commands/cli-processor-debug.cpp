@@ -6,6 +6,7 @@
 #include <3rdparty/message-center/messagecenter.h>
 #include <debugger/debugmanager.h>
 #include <debugger/disassembler/z80disasm.h>
+#include <debugger/labels/labelmanager.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/memory/memory.h>
@@ -1072,4 +1073,254 @@ void CLIProcessor::HandleDisasmPage(const ClientSession& session, const std::vec
     }
 
     session.SendResponse(ss.str());
+}
+
+// ============================================================================
+// Label/Symbol Management Commands
+// ============================================================================
+
+void CLIProcessor::HandleLabel(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected.");
+        return;
+    }
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        session.SendResponse("Debug manager not available.");
+        return;
+    }
+
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    if (!labelMgr)
+    {
+        session.SendResponse("Label manager not available.");
+        return;
+    }
+
+    if (args.empty())
+    {
+        std::stringstream ss;
+        ss << "Usage:" << NEWLINE;
+        ss << "  label <name>                    - Get label by name" << NEWLINE;
+        ss << "  label add <name> <addr>         - Add label" << NEWLINE;
+        ss << "  label remove <name>             - Remove label" << NEWLINE;
+        ss << "  label toggle <name>             - Toggle active state" << NEWLINE;
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    const std::string& subcmd = args[0];
+
+    if (subcmd == "add" && args.size() >= 3)
+    {
+        const std::string& name = args[1];
+        uint16_t address = 0;
+        try
+        {
+            address = static_cast<uint16_t>(std::stoul(args[2], nullptr, 0));
+        }
+        catch (...)
+        {
+            session.SendResponse("Error: Invalid address.");
+            return;
+        }
+
+        std::string type, module, comment;
+        uint16_t bank = UINT16_MAX;
+
+        for (size_t i = 3; i < args.size(); i++)
+        {
+            if (args[i] == "--type" && i + 1 < args.size())
+                type = args[++i];
+            else if (args[i] == "--module" && i + 1 < args.size())
+                module = args[++i];
+            else if (args[i] == "--bank" && i + 1 < args.size())
+                bank = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
+            else if (args[i] == "--comment" && i + 1 < args.size())
+                comment = args[++i];
+        }
+
+        if (labelMgr->AddLabel(name, address, bank, UINT16_MAX, type, module, comment))
+            session.SendResponse("Label '" + name + "' added at $" +
+                (std::stringstream() << std::hex << std::uppercase << address).str() + NEWLINE);
+        else
+            session.SendResponse("Error: Failed to add label." + std::string(NEWLINE));
+    }
+    else if (subcmd == "remove" && args.size() >= 2)
+    {
+        if (labelMgr->RemoveLabel(args[1]))
+            session.SendResponse("Label '" + args[1] + "' removed." + std::string(NEWLINE));
+        else
+            session.SendResponse("Error: Label not found." + std::string(NEWLINE));
+    }
+    else if (subcmd == "toggle" && args.size() >= 2)
+    {
+        auto label = labelMgr->GetLabelByName(args[1]);
+        if (label)
+        {
+            label->active = !label->active;
+            session.SendResponse("Label '" + args[1] + "' " +
+                (label->active ? "activated" : "deactivated") + "." + std::string(NEWLINE));
+        }
+        else
+            session.SendResponse("Error: Label not found." + std::string(NEWLINE));
+    }
+    else
+    {
+        auto label = labelMgr->GetLabelByName(args[0]);
+        if (label)
+        {
+            std::stringstream ss;
+            ss << std::hex << std::uppercase << std::setfill('0');
+            ss << "Name: " << label->name << NEWLINE;
+            ss << "Address: $" << std::setw(4) << label->address << NEWLINE;
+            if (label->bank != UINT16_MAX)
+                ss << "Bank: " << std::dec << label->bank << " (" << (label->isROM() ? "ROM" : "RAM") << ")" << NEWLINE;
+            if (!label->type.empty())
+                ss << "Type: " << label->type << NEWLINE;
+            if (!label->module.empty())
+                ss << "Module: " << label->module << NEWLINE;
+            if (!label->comment.empty())
+                ss << "Comment: " << label->comment << NEWLINE;
+            ss << "Active: " << (label->active ? "yes" : "no") << NEWLINE;
+            session.SendResponse(ss.str());
+        }
+        else
+            session.SendResponse("Label not found: " + args[0] + NEWLINE);
+    }
+}
+
+void CLIProcessor::HandleLabels(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected.");
+        return;
+    }
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        session.SendResponse("Debug manager not available.");
+        return;
+    }
+
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    if (!labelMgr)
+    {
+        session.SendResponse("Label manager not available.");
+        return;
+    }
+
+    LabelManager::LabelFilter filter;
+
+    for (size_t i = 0; i < args.size(); i++)
+    {
+        if (args[i] == "--module" && i + 1 < args.size())
+            filter.module = args[++i];
+        else if (args[i] == "--type" && i + 1 < args.size())
+            filter.type = args[++i];
+        else if (args[i] == "--bank" && i + 1 < args.size())
+            filter.bank = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
+        else if (args[i] == "--active")
+            filter.activeOnly = true;
+        else if (args[i] == "--from" && i + 1 < args.size())
+            filter.addressFrom = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
+        else if (args[i] == "--to" && i + 1 < args.size())
+            filter.addressTo = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
+    }
+
+    auto labels = labelMgr->GetLabels(filter);
+
+    std::stringstream ss;
+    ss << std::hex << std::uppercase << std::setfill('0');
+    ss << "Labels (" << std::dec << labels.size() << " of " << labelMgr->GetLabelCount() << "):" << NEWLINE;
+
+    for (const auto& label : labels)
+    {
+        ss << std::hex << "  $" << std::setw(4) << label->address << "  " << label->name;
+        if (!label->type.empty())
+            ss << " [" << label->type << "]";
+        if (!label->module.empty())
+            ss << " (" << label->module << ")";
+        if (!label->active)
+            ss << " (inactive)";
+        ss << NEWLINE;
+    }
+
+    session.SendResponse(ss.str());
+}
+
+void CLIProcessor::HandleSymbols(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected.");
+        return;
+    }
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        session.SendResponse("Debug manager not available.");
+        return;
+    }
+
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    if (!labelMgr)
+    {
+        session.SendResponse("Label manager not available.");
+        return;
+    }
+
+    if (args.empty())
+    {
+        std::stringstream ss;
+        ss << "Usage:" << NEWLINE;
+        ss << "  symbols load <file>             - Load symbol file" << NEWLINE;
+        ss << "  symbols save <file>             - Save symbols to file" << NEWLINE;
+        ss << "  symbols clear                   - Clear all symbols" << NEWLINE;
+        ss << "  symbols info                    - Show symbol count" << NEWLINE;
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    const std::string& subcmd = args[0];
+
+    if (subcmd == "load" && args.size() >= 2)
+    {
+        if (labelMgr->LoadLabels(args[1]))
+            session.SendResponse("Loaded " + std::to_string(labelMgr->GetLabelCount()) +
+                " symbols from " + args[1] + NEWLINE);
+        else
+            session.SendResponse("Error: Failed to load symbols from " + args[1] + NEWLINE);
+    }
+    else if (subcmd == "save" && args.size() >= 2)
+    {
+        if (labelMgr->SaveLabels(args[1]))
+            session.SendResponse("Saved " + std::to_string(labelMgr->GetLabelCount()) +
+                " symbols to " + args[1] + NEWLINE);
+        else
+            session.SendResponse("Error: Failed to save symbols to " + args[1] + NEWLINE);
+    }
+    else if (subcmd == "clear")
+    {
+        labelMgr->ClearAllLabels();
+        session.SendResponse("All symbols cleared." + std::string(NEWLINE));
+    }
+    else if (subcmd == "info")
+    {
+        session.SendResponse("Symbol count: " + std::to_string(labelMgr->GetLabelCount()) + NEWLINE);
+    }
+    else
+    {
+        session.SendResponse("Unknown subcommand: " + subcmd + NEWLINE);
+    }
 }

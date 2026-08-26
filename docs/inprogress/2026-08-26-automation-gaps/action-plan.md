@@ -17,9 +17,9 @@ Last updated: 2026-08-26
 | 0.1.3 | Expose reg write via WebAPI | DONE | 4bd9e24e | PUT `/api/v1/emulator/{id}/registers/{name}` |
 | 0.1.4 | Expose reg write via Lua | DONE | 4bd9e24e | `get_register(name)`, `set_register(name, value)` |
 | 0.1.5 | Expose reg write via Python | DONE | 4bd9e24e | `get_register(name)`, `set_register(name, value)` |
-| 0.2.1 | Expose LabelManager to automation | TODO | | See design notes below |
+| 0.2.1 | Expose LabelManager to automation | DONE | | Core filtering API + CLI/WebAPI/Lua/Python bindings complete. See [label-manager.md](../../emulator/design/debugger/label-manager.md) |
 | 0.2.2 | `symbols load` command | POSTPONED | | sjasmplus .sld primary |
-| 0.2.3 | Symbolic disassembly output | TODO | | Disasm shows labels instead of raw addresses (e.g. `CALL main` not `CALL $8000`) |
+| 0.2.3 | Symbolic disassembly output | TODO | | Disasm should show both labels and raw addresses (e.g. `CALL main ($8000)` not `CALL $8000`) if label can be resolved |
 | 0.2.4 | Symbolic breakpoints `bp label` | DESIGN | | Not clear yet how to handle re-positioning breakpoint when label address changes|
 | 0.3.1 | Add instance ID to NC_EXECUTION_BREAKPOINT | DONE | 3bd53395 | z80.cpp was using SimpleNumberPayload |
 | 0.3.2 | Add instance ID to NC_EMULATOR_STATE_CHANGE | DONE | 3bd53395 | Already implemented |
@@ -118,42 +118,9 @@ Last updated: 2026-08-26
 | POSTPONED | Deferred to later phase |
 | DROPPED | Decided not to implement |
 
-## Design Notes
+## Design Documents
 
-### 0.2.1 LabelManager API Design
-
-**Goal:** Expose symbol/label management to all automation modules for symbolic debugging.
-
-**Core API (in LabelManager):**
-```cpp
-// Query
-std::optional<uint16_t> GetAddress(const std::string& label);
-std::optional<std::string> GetLabel(uint16_t address);
-std::vector<std::pair<std::string, uint16_t>> GetAllLabels();
-
-// Mutation  
-bool AddLabel(const std::string& label, uint16_t address);
-bool RemoveLabel(const std::string& label);
-void Clear();
-
-// File I/O
-bool LoadSLD(const std::string& path);  // sjasmplus .sld format
-bool LoadSymbols(const std::string& path);  // auto-detect format
-```
-
-**Automation Surface:**
-| Transport | Commands/Methods |
-|-----------|-----------------|
-| CLI | `label <name>`, `label add <name> <addr>`, `label remove <name>`, `labels`, `symbols load <file>` |
-| WebAPI | GET/POST/DELETE `/api/v1/emulator/{id}/labels`, GET `/api/v1/emulator/{id}/labels/{name}` |
-| Lua | `get_label(name)`, `add_label(name, addr)`, `remove_label(name)`, `get_labels()`, `load_symbols(path)` |
-| Python | Same as Lua |
-
-**Implementation Order:**
-1. Verify LabelManager exists and has required methods
-2. Add automation bindings (CLI → WebAPI → Lua → Python)
-3. Update disassembler to use labels (0.2.3)
-4. Update docs
+- [Label Manager](../../emulator/design/debugger/label-manager.md) - Symbolic debugging, labels, filtering API
 
 ## Dependencies
 
@@ -168,9 +135,9 @@ bool LoadSymbols(const std::string& path);  // auto-detect format
 
 | Phase | Total | Done | WIP | TODO |
 |-------|-------|------|-----|------|
-| Phase 0 | 20 | 13 | 0 | 7 |
+| Phase 0 | 20 | 14 | 0 | 6 |
 | Phase 1 | 14 | 0 | 0 | 14 |
 | Phase 2 | 9 | 0 | 0 | 9 |
 | Phase 3 | 6 | 0 | 0 | 6 |
 | Phase 4 | 11 | 0 | 0 | 11 |
-| **Total** | **60** | **13** | **0** | **47** |
+| **Total** | **60** | **14** | **0** | **46** |

@@ -110,6 +110,19 @@ bpclear [id|all]        # Remove breakpoints
 bpon / bpoff            # Toggle breakpoints
 ```
 
+#### Labels & Symbols
+```
+label <name>            # Get label by name
+label add <name> <addr> # Add label (--type, --module, --comment options)
+label remove <name>     # Remove label
+label toggle <name>     # Toggle active state
+labels                  # List all labels (--module, --type, --from, --to filters)
+symbols load <file>     # Load symbol file (.sld/.sym/.map)
+symbols save <file>     # Save symbols to file
+symbols clear           # Clear all symbols
+symbols info            # Show symbol count
+```
+
 #### Media Operations
 ```
 open <file>             # Auto-detect and load file
@@ -183,6 +196,18 @@ Interactive documentation available at `/api/swagger`
 | PUT | `/api/v1/emulator/{id}/registers/{name}` | Set register |
 | GET | `/api/v1/emulator/{id}/memory?addr=&len=` | Memory dump |
 | PUT | `/api/v1/emulator/{id}/memory` | Poke memory |
+
+#### Labels & Symbols
+| Method | Endpoint | Description |
+|:-------|:---------|:------------|
+| GET | `/api/v1/emulator/{id}/labels` | List labels (query: module, type, bank, from, to, active) |
+| POST | `/api/v1/emulator/{id}/labels` | Add label |
+| DELETE | `/api/v1/emulator/{id}/labels` | Clear all labels |
+| GET | `/api/v1/emulator/{id}/labels/{name}` | Get label by name |
+| DELETE | `/api/v1/emulator/{id}/labels/{name}` | Remove label |
+| PUT | `/api/v1/emulator/{id}/labels/{name}` | Update label |
+| POST | `/api/v1/emulator/{id}/symbols/load` | Load symbol file |
+| POST | `/api/v1/emulator/{id}/symbols/save` | Save symbols to file |
 
 #### Files & Snapshots
 | Method | Endpoint | Description |
@@ -347,6 +372,7 @@ videowall.set_single_sync(False)
 | Registers | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Memory R/W | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Breakpoints | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Labels/Symbols | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Load/Save | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Feature Toggle | ✅ | ✅ | ✅ | ✅ | 🔶 |
 | VideoWall Control | ✅ | ✅ | ✅ | ✅ | ❌ |
