@@ -828,6 +828,65 @@ POST /api/v1/emulator/{id}/snapshot/save  ✅ Implemented
 POST /api/v1/emulator/{id}/snapshot/load  ✅ Implemented
 ```
 
+### Time-Travel Debugging
+
+All TTD endpoints are scoped under `/api/v1/emulator/{id}/ttd/...`. Full command semantics (request bodies, response envelopes, halt reasons, session invalidation rules) live in [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
+
+| Method | Path | Body / Query | Description | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `GET`  | `/ttd/status` | — | Session origin (`loaded_from_file`, `source_path`, `captured_at_unix_ms`), machine (`model_id`, `model_ram_pages`), frame range, checkpoint count, write-journal size (`write_journal_records`/`_bytes`), coverage-index size (`coverage_index_frames`/`_bytes`) and memory. Schema: `TTDStatusResponse`. Always available regardless of the `timetravel` feature flag. | ✅ Implemented |
+| `POST` | `/ttd/start` | — | Begin recording at the next frame boundary. Returns `202 Accepted` with `{armed: true, anchor_frame: null}` if invoked mid-frame. | 🔮 Phase 1 |
+| `POST` | `/ttd/stop` | — | Stop capturing; retain history. | 🔮 Phase 1 |
+| `POST` | `/ttd/clear` | — | Drop all captured data; live emulator state untouched. | 🔮 Phase 1 |
+| `GET`  | `/ttd/timeline` | `?from=N&to=N&limit=N` | Paginated per-frame summary entries (dirty-page counts, event ticks, bookmark presence) for UI rendering. | 🔮 Phase 3 |
+| `POST` | `/ttd/seek` | `{"frame": N}` *or* `{"tstate": T}` *or* `{"frame": N, "tstate": T}` | Seek to an absolute target point. Emulator must be paused (run-control claim enforced). Returns `{ok, reached_frame, reached_tstate, halt_reason}`. | 🔮 Phase 2 |
+| `POST` | `/ttd/step` | `{"dir": "back"\|"fwd", "unit": "instruction"\|"frame", "count"?: N}` | Relative navigation. Default `count` is 1. | 🔮 Phase 2 |
+| `POST` | `/ttd/find_last` | `{"addr": A, "access": "write"\|"read"\|"execute"\|"out", "value"?: V, "pc_from"?, "pc_to"?, "before"?}` | Reverse search (`FindLastAccess`). Returns `{frame, tstate, pc, value, physpage}` or `null`. | 🔮 Phase 4 |
+| `POST` | `/ttd/resume_from_here` | `{"confirm": true}` | Truncate future at current (detached) position; resume live recording. Confirmation required if truncation would drop > N frames. | 🔮 Phase 2 |
+| `GET`  | `/ttd/bookmarks` | — | List bookmarks. | 🔮 Phase 3 |
+| `POST` | `/ttd/bookmarks` | `{"at": T, "label": "..."}` | Add a bookmark at a recorded time point. | 🔮 Phase 3 |
+| `DELETE` | `/ttd/bookmarks/{id}` | — | Remove a bookmark. | 🔮 Phase 3 |
+
+**`GET /ttd/status` response shape:**
+
+```json
+{
+  "recording": true,
+  "feature_enabled": true,
+  "position": {"frame": 12345, "tstate": 0},
+  "bounds": {"first_frame": 0, "last_frame": 12345},
+  "memory": {"used_bytes": 222298112, "budget_bytes": 67108864},
+  "budget_exceeded": false,
+  "detached": false,
+  "invalidation_reason": null
+}
+```
+
+When `feature_enabled` is `false`, all fields except `recording` (which is `false`) and `feature_enabled` are omitted.
+
+**`POST /ttd/seek` response shape:**
+
+```json
+{
+  "ok": true,
+  "reached_frame": 4823,
+  "reached_tstate": 14982,
+  "halt_reason": "target"
+}
+```
+
+`halt_reason` is one of `target`, `external_event`, `out_of_range`. See [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd) for the full semantics.
+
+**Errors specific to TTD:**
+
+| HTTP | Code | Meaning |
+| :--- | :--- | :--- |
+| 409 | `E_RUN_CONTROL_BUSY` | Another surface holds the run-control claim on this instance. Response includes `holder` (surface label). |
+| 409 | `E_TTD_NOT_RECORDING` | Operation requires an active recording session; none exists. |
+| 400 | `E_TTD_OUT_OF_RANGE` | Target frame/tstate is outside recorded bounds. |
+| 403 | `E_TTD_FEATURE_DISABLED` | `timetravel` feature flag is off; recording/seek/replay refused. `GET /ttd/status` still works. |
+| 410 | `E_TTD_SESSION_INVALIDATED` | Session was invalidated (e.g. by a load/reset); client must `POST /ttd/start` again. Includes `invalidation_reason`. |
+
 ## WebSocket Support (Future)
 
 Real-time streaming for live updates without polling.

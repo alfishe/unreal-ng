@@ -18,6 +18,8 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
+#include "debugger/ttd/timetravelmanager.h"
+#include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "loaders/snapshot/loader_sna.h"
 
@@ -27,7 +29,7 @@ Emulator::Emulator(LoggerLevel level) : Emulator("", level) {}
 
 Emulator::Emulator(const std::string& symbolicId, LoggerLevel level)
 {
-    _uuid = UUID::Generate(); // Generate new unique UUID
+    _uuid = unreal::UUID::Generate(); // Generate new unique UUID
     _emulatorId = _uuid.toString();
     _symbolicId = symbolicId;
     _createdAt = std::chrono::system_clock::now();
@@ -94,6 +96,7 @@ bool Emulator::Init()
 
     bool result = false;
 
+
     // Lock mutex until exiting current scope
     std::lock_guard<std::mutex> lock(_mutexInitialization);
 
@@ -114,7 +117,17 @@ bool Emulator::Init()
     _config = new Config(_context);
     if (_config != nullptr)
     {
-        result = _config->LoadConfig();
+        // Use custom config path if set, otherwise resolve the config from
+        // the selected platform model: configs/<model>/unreal.ini
+        if (!_customConfigPath.empty())
+        {
+            result = _config->LoadConfigFile(_customConfigPath);
+        }
+        else
+        {
+            std::string configFolder = Config::GetConfigFolderForModel(_preferredModel, _preferredRamSize);
+            result = _config->LoadConfig(configFolder);
+        }
 
         if (result)
         {
@@ -239,6 +252,25 @@ bool Emulator::Init()
         }
     }
 
+    // Create TTD manager (per parent TDD §10.2). Always constructed; the
+    // per-frame capture cost is gated by the cached _feature_ttd_enabled
+    // bool in Memory (no work when timetravel feature is off). The manager
+    // also exposes GetState() == Idle until StartRecording() is called.
+    if (result)
+    {
+        ttd::TimeTravelManager* ttdManager = new ttd::TimeTravelManager(_context);
+        if (ttdManager != nullptr)
+        {
+            _context->pTimeTravelManager = ttdManager;
+            MLOGDEBUG("Emulator::Init - TTD manager created");
+        }
+        else
+        {
+            MLOGWARNING("Emulator::Init - TTD manager creation failed (non-fatal)");
+        }
+        // TTD manager creation is non-fatal — emulator works without it.
+    }
+
     /// region <Sanity checks>
 
     if (!_context)
@@ -315,6 +347,7 @@ bool Emulator::Init()
 
     /// endregion </Sanity checks>
 
+
     // Reset CPU and set-up all ports / ROM and RAM pages
     if (result)
     {
@@ -330,7 +363,7 @@ bool Emulator::Init()
         {
             _featureManager->onFeatureChanged();
         }
-        
+
         // Ensure SoundManager feature cache is definitely synced (belt-and-suspenders)
         // This guards against race conditions during async start
         if (_context->pSoundManager)
@@ -402,6 +435,14 @@ void Emulator::ReleaseNoGuard()
     {
         delete _context->pDebugManager;
         _context->pDebugManager = nullptr;
+    }
+
+    // Release TTD manager. The manager's destructor releases all page-store
+    // refs held by the timeline before the page store itself goes away.
+    if (_context->pTimeTravelManager)
+    {
+        delete _context->pTimeTravelManager;
+        _context->pTimeTravelManager = nullptr;
     }
 
     // Stop and release main loop
@@ -524,6 +565,12 @@ void Emulator::SetSpeed(BaseFrequency_t speed)
 
 void Emulator::SetSpeedMultiplier(uint8_t multiplier)
 {
+    // TTD v1 (P1.6): speed change invalidates the recording because frame
+    // timing is part of the determinism contract (parent TDD §4.2 + §5 row 13).
+    // Simpler to invalidate than to model; revisit if it proves annoying.
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->InvalidateSession("speed-multiplier-change");
+
     _core->SetSpeedMultiplier(multiplier);
 }
 
@@ -650,7 +697,32 @@ void Emulator::Reset()
         sleep_ms(20);
     }
 
-    // Now perform reset while paused (safe, no race condition)
+    // TTD: Reset must NEVER touch the recorded timeline. The recorded
+    // history is the user's property — they should be able to replay it
+    // at any time, regardless of live emulator state.
+    //
+    // If recording is active, we must STOP it first. Otherwise _core->Reset()
+    // would teleport frame_counter back to 0, and the next OnFrameBoundary
+    // would append a checkpoint at frame 0 to a timeline that already has
+    // checkpoints at higher frame numbers — breaking the sorted invariant
+    // and corrupting every future seek.
+    //
+    // StopRecording() transitions Recording → Idle while retaining the
+    // timeline. The user can seek, replay, or resume from any captured
+    // point. After _core->Reset() runs, the live emulator is at frame 0
+    // with fresh state, but the timeline is untouched.
+    //
+    // See parent TDD §4.2 (StopRecording retains history) and §5.1
+    // (markers are for nondeterministic INPUT events, not for state
+    // teleports that happen AFTER recording stops).
+    if (_context && _context->pTimeTravelManager
+        && _context->pTimeTravelManager->IsRecording())
+    {
+        _context->pTimeTravelManager->StopRecording();
+    }
+
+    // Now perform reset while paused (safe, no race condition).
+    // The live emulator state is teleported; the TTD timeline is not.
     _core->Reset();
 
     // Resume if it was running before
@@ -674,9 +746,9 @@ void Emulator::Start()
     _isRunning = true;
     _stopRequested = false;
 
-    // Broadcast notification - Emulator started
+    // Broadcast notification - Emulator started (instance-tagged per GDB TDD §6.3)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    SimpleNumberPayload* payload = new SimpleNumberPayload(StateRun);
+    EmulatorStateChangePayload* payload = new EmulatorStateChangePayload(GetId(), StateRun);
     messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
 
     // Update state
@@ -774,9 +846,9 @@ void Emulator::Pause(bool broadcast)
     {
         SetState(StatePaused);
 
-        // Broadcast notification - Emulator execution paused
+        // Broadcast notification - Emulator execution paused (instance-tagged per GDB TDD §6.3)
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        SimpleNumberPayload* payload = new SimpleNumberPayload(StatePaused);
+        EmulatorStateChangePayload* payload = new EmulatorStateChangePayload(GetId(), StatePaused);
         messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
     }
 }
@@ -825,9 +897,9 @@ void Emulator::Resume(bool broadcast)
     {
         SetState(StateResumed);
 
-        // Broadcast notification - Emulator execution resumed
+        // Broadcast notification - Emulator execution resumed (instance-tagged per GDB TDD §6.3)
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        SimpleNumberPayload* payload = new SimpleNumberPayload(StateResumed);
+        EmulatorStateChangePayload* payload = new EmulatorStateChangePayload(GetId(), StateResumed);
         messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
     }
 }
@@ -852,6 +924,31 @@ void Emulator::WaitWhilePaused()
             break;
         }
     }
+}
+
+/// @brief Block until the Z80 thread observes the pause flag and parks.
+///
+/// Emulator::Pause() is asynchronous — it sets _isPaused and returns. The
+/// Z80 thread notices at the top of the next frame iteration and signals
+/// _isPausedConfirmed via MainLoop's _pauseCV. This method wraps that CV
+/// wait so callers that mutate emulator state right after Pause() (e.g.
+/// TTD seek/step-back/step-forward via WebAPI) don't race with the
+/// in-flight frame loop overwriting their freshly written state.
+///
+/// Returns true on confirmation, false on timeout. On timeout the caller
+/// should proceed anyway — the mutation is still correct, just slightly
+/// racy, and the alternative (blocking forever) is worse.
+///
+/// When the emulator is not running async (tests, synchronous mode), the
+/// Z80 thread doesn't exist, _isPausedConfirmed never flips, and this
+/// method correctly times out. Callers should not interpret timeout as
+/// failure in those configurations.
+bool Emulator::WaitForPauseConfirmation(uint32_t timeout_ms)
+{
+    if (!_mainloop)
+        return false;
+
+    return _mainloop->WaitForPauseConfirmation(timeout_ms);
 }
 
 void Emulator::Stop()
@@ -892,9 +989,9 @@ void Emulator::Stop()
     _stopRequested = false;
     _isPaused = false;
 
-    // Broadcast notification - Emulator stopped
+    // Broadcast notification - Emulator stopped (instance-tagged per GDB TDD §6.3)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    SimpleNumberPayload* payload = new SimpleNumberPayload(StateStopped);
+    EmulatorStateChangePayload* payload = new EmulatorStateChangePayload(GetId(), StateStopped);
     messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
 }
 
@@ -924,7 +1021,7 @@ bool Emulator::LoadSnapshot(const std::string& path)
     std::string absolutePath = FileHelper::AbsolutePath(path);
     if (!FileHelper::FileExists(absolutePath))
     {
-        MLOGERROR("Snapshot file not found: {}", absolutePath.c_str());
+        MLOGERROR("Snapshot file not found: '%s'", absolutePath.c_str());
         return false;
     }
 
@@ -935,6 +1032,11 @@ bool Emulator::LoadSnapshot(const std::string& path)
         MLOGERROR("Invalid snapshot format: {}. Expected .z80 or .sna", ext.c_str());
         return false;
     }
+
+    // TTD v1 (P1.6): snapshot load teleports full machine state (parent TDD §4.2).
+    // Drop the session before the loader runs.
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->InvalidateSession("snapshot-load");
 
     // Pause execution
     bool wasRunning = false;
@@ -1125,6 +1227,12 @@ bool Emulator::LoadTape(const std::string& path)
         return false;
     }
 
+    // TTD v1 (P1.6): tape insertion is a session-invalidating event in v1
+    // (parent TDD §4.2 + §5 row 3 — tape *insertion/start/stop* commands
+    // invalidate; only playback position is checkpointed).
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->InvalidateSession("tape-load");
+
     // Store validated path
     _context->coreState.tapeFilePath = resolvedPath;
 
@@ -1160,6 +1268,11 @@ bool Emulator::LoadDisk(const std::string& path)
 
     // Validate extension
     std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(resolvedPath));
+
+    // TTD v1 (P1.6): disk image swap teleports FDC + media state
+    // (parent TDD §4.2 + §12.2). Drop the session before the loader runs.
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->InvalidateSession("disk-load");
 
     // Pause emulator while swapping disk image to prevent data race with emulator thread
     bool wasRunning = false;
@@ -1611,6 +1724,14 @@ void Emulator::RunTStates(unsigned tStates, bool skipBreakpoints)
             if (targetT >= frameLimit)
             {
                 targetT -= frameLimit;
+            }
+            else
+            {
+                // targetT was within the frame that just ended — the
+                // overshooting instruction already executed past it. Stop
+                // to avoid running an entire extra frame (which would
+                // inflate frame_counter and corrupt TTD probe records).
+                break;
             }
         }
     }
@@ -2136,6 +2257,12 @@ bool Emulator::LoadROM(std::string path)
 {
     Pause();
 
+    // TTD v1 (P1.6): ROM reload changes immutable code/data backing every
+    // checkpoint relies on (parent TDD §4.2 — "ROM reload" is listed
+    // explicitly as a session invalidator).
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->InvalidateSession("rom-reload");
+
     ROM& rom = *_core->GetROM();
 
     bool result = rom.LoadROM(path, _memory->ROMBase(), MAX_ROM_PAGES);
@@ -2242,7 +2369,7 @@ Z80State* Emulator::GetZ80State()
 
 // Identity and state methods
 
-UUID Emulator::GetUUID() const
+unreal::UUID Emulator::GetUUID() const
 {
     return _uuid;
 }

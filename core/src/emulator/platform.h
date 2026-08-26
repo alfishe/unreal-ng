@@ -30,10 +30,10 @@ constexpr char const* NC_EMULATOR_SELECTION_CHANGED = "EMULATOR_SELECTION_CHANGE
 // Listeners must filter events by emulator ID (if payload supports it) or by comparing
 // against their adopted emulator reference to avoid processing events from wrong instances.
 // Subscribe when adopting an emulator, unsubscribe when releasing it.
-constexpr char const* NC_EMULATOR_STATE_CHANGE = "LOGGER_EMULATOR_STATE";       // Emulator state change (Initialized/Run/Pause/Resume/Stop)
+constexpr char const* NC_EMULATOR_STATE_CHANGE = "LOGGER_EMULATOR_STATE";       // Emulator state change (Initialized/Run/Pause/Resume/Stop) — payload: EmulatorStateChangePayload (instance-tagged since Sprint 0 / GDB TDD §6.3)
 constexpr char const* NC_SYSTEM_RESET = "RESET";                                // System reset event
 constexpr char const* NC_EXECUTION_CPU_STEP = "CPU_STEP";                       // Single CPU step executed (debug mode only)
-constexpr char const* NC_EXECUTION_BREAKPOINT = "BREAKPOINT";                   // Breakpoint triggered
+constexpr char const* NC_EXECUTION_BREAKPOINT = "BREAKPOINT";                   // Breakpoint triggered — payload: BreakpointTriggeredPayload (instance-tagged since Sprint 0 / GDB TDD §6.3)
 constexpr char const* NC_SCANLINE_BOUNDARY = "SCANLINE_BOUNDARY";               // Scanline boundary reached (debug stepping only)
 
 constexpr char const* NC_AUDIO_FRAME_REFRESH = "AUDIO_FRAME_REFRESH";           // Audio frame ready (TODO: add emulator ID to payload)
@@ -425,8 +425,7 @@ struct CONFIG
 	uint8_t even_M1, border_4T;
 
 	uint8_t floatbus, floatdos;
-	bool portff;
-
+	
 	/// Speed multiplier: 1x (default), 2x, 4x, 8x, or 16x
 	/// Multiplies the number of t-states executed per frame
 	uint8_t speed_multiplier = 1;

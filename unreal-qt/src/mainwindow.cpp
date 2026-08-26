@@ -181,6 +181,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::audioSettingsRequested, this, &MainWindow::handleAudioSettingsRequested);
     connect(_menuManager, &MenuManager::overscanModeToggled, this, &MainWindow::handleOverscanModeToggled);
     connect(_menuManager, &MenuManager::viewportChanged, this, &MainWindow::handleViewportChanged);
+    connect(_menuManager, &MenuManager::machineModelChangeRequested, this, &MainWindow::handleMachineModelChangeRequested);
 #ifdef ENABLE_RECORDING
     connect(_menuManager, &MenuManager::videoRecordingRequested, this, &MainWindow::handleVideoRecordingRequested);
     connect(_menuManager, &MenuManager::quickRecordRequested, this, &MainWindow::handleQuickRecord);
@@ -922,7 +923,12 @@ void MainWindow::handleStartButton()
         EmulatorManager* test = EmulatorManager::GetInstance();
 
         // Create a new emulator instance (use local var - adoptEmulator will set _emulator)
-        auto newEmulator = _emulatorManager->CreateEmulator("test", LoggerLevel::LogInfo);
+        //
+        // The symbolic id is not decoration: it identifies the instance in the
+        // manager, in log lines, and it is what TTD stores as emulator_id in a
+        // session dump. It used to be "test", which is what every recording made
+        // from this app was labelled with.
+        auto newEmulator = _emulatorManager->CreateEmulator("unreal-qt", LoggerLevel::LogInfo);
 
         // Initialize emulator instance
         if (newEmulator)
@@ -956,7 +962,10 @@ void MainWindow::handleStartButton()
                 // logger.TurnOnLoggingForModule(MODULE_IO, SUBMODULE_IO_TAPE);
                 // logger.TurnOnLoggingForModule(MODULE_IO, SUBMODULE_IO_IN);
                 // logger.TurnOnLoggingForModule(MODULE_IO, SUBMODULE_IO_OUT);
-                logger.TurnOnLoggingForModule(MODULE_DISK, SUBMODULE_DISK_FDC);
+                // logger.TurnOnLoggingForModule(MODULE_DISK, SUBMODULE_DISK_FDC);
+                logger.TurnOnLoggingForModule(MODULE_CORE, SUBMODULE_CORE_GENERIC);
+                logger.TurnOnLoggingForModule(MODULE_LOADER, SUBMODULE_LOADER_SNA);
+                logger.TurnOnLoggingForModule(MODULE_LOADER, SUBMODULE_LOADER_Z80);
 
                 std::string dumpSettings = logger.DumpSettings();
                 qDebug("%s", dumpSettings.c_str());
@@ -1561,27 +1570,57 @@ void MainWindow::loadFile(const QString& filePath)
     switch (category)
     {
         case FileROM:
+            qWarning() << "ROM loading not implemented:" << filePath;
             break;
         case FileSnapshot:
             if (_emulator)
-                _emulator->LoadSnapshot(file);
+            {
+                bool result = _emulator->LoadSnapshot(file);
+                if (!result)
+                    qWarning() << "Failed to load snapshot:" << filePath;
+            }
+            else
+            {
+                qWarning() << "Cannot load snapshot - emulator not running:" << filePath;
+            }
             break;
         case FileTape:
             if (_emulator)
-                _emulator->LoadTape(file);
+            {
+                bool result = _emulator->LoadTape(file);
+                if (!result)
+                    qWarning() << "Failed to load tape:" << filePath;
+            }
+            else
+            {
+                qWarning() << "Cannot load tape - emulator not running:" << filePath;
+            }
             break;
         case FileDisk:
             if (_emulator)
-                _emulator->LoadDisk(file);
+            {
+                bool result = _emulator->LoadDisk(file);
+                if (!result)
+                    qWarning() << "Failed to load disk:" << filePath;
+            }
+            else
+            {
+                qWarning() << "Cannot load disk - emulator not running:" << filePath;
+            }
             break;
         case FileSymbol:
             if (_emulator && _emulator->GetDebugManager())
             {
                 _emulator->GetDebugManager()->GetLabelManager()->LoadLabels(file);
             }
+            else
+            {
+                qWarning() << "Cannot load symbols - emulator not running:" << filePath;
+            }
             break;
+        case FileUnknown:
         default:
-            qDebug() << "Unsupported file type:" << filePath;
+            qWarning() << "Unsupported file type:" << filePath;
             break;
     };
 }
@@ -2125,7 +2164,14 @@ void MainWindow::handleOverscanModeToggled(bool enabled)
                 return true;
             });
 
-            if (!enabled)
+            if (enabled)
+            {
+                // Entering overscan mode - apply default viewport (Symmetric Horizontal)
+                emulator->SetDisplayViewport(ViewportPresets::SYMMETRIC_HORIZONTAL);
+                deviceScreen->setDisplayViewport(ViewportPresets::SYMMETRIC_HORIZONTAL);
+                _menuManager->resetViewportSelection();
+            }
+            else
             {
                 // Leaving overscan mode - reset viewport to full framebuffer
                 DisplayViewport fullViewport = {0, 0, 0, 0};
@@ -2171,6 +2217,88 @@ void MainWindow::handleViewportChanged(int presetIndex)
     // Update device screen with new display dimensions
     // The viewport will be applied during rendering
     deviceScreen->setDisplayViewport(viewport);
+}
+
+void MainWindow::handleMachineModelChangeRequested(const QString& modelSpec)
+{
+    if (!_emulatorManager)
+    {
+        qWarning() << "handleMachineModelChangeRequested: EmulatorManager not available";
+        return;
+    }
+
+    // Parse "MODEL:RAM" format
+    QStringList parts = modelSpec.split(':');
+    if (parts.size() != 2)
+    {
+        qWarning() << "handleMachineModelChangeRequested: Invalid model spec format:" << modelSpec;
+        return;
+    }
+
+    std::string modelName = parts[0].toStdString();
+    uint32_t ramSize = parts[1].toUInt();
+    QString displayName = QString("%1 %2K").arg(parts[0]).arg(ramSize);
+
+    // Confirm with user
+    QMessageBox::StandardButton reply = QMessageBox::question(
+        this,
+        tr("Switch Machine Model"),
+        tr("Switch to %1?\n\nThis will stop and destroy the current emulator instance.\nAny unsaved state will be lost.").arg(displayName),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No
+    );
+
+    if (reply != QMessageBox::Yes)
+    {
+        // User cancelled - restore menu selection to current model
+        if (_menuManager)
+        {
+            _menuManager->updateMachineModelSelection(_emulator);
+        }
+        return;
+    }
+
+    // Process events to ensure dialog is fully closed before heavy operations
+    QApplication::processEvents();
+
+    // Set flag to prevent notification handler from interfering
+    _switchingModel = true;
+
+    qInfo() << "MainWindow::handleMachineModelChangeRequested() - Switching to model:" << displayName;
+
+    // Pause, stop and release current emulator
+    if (_emulator)
+    {
+        if (_emulator->IsRunning())
+        {
+            _emulator->Pause(false);  // Pause first to stop frame generation
+            _emulator->Stop();        // Then stop before destroying
+        }
+        releaseEmulator();
+    }
+
+    // Create new emulator with requested model and RAM size
+    std::shared_ptr<Emulator> newEmulator = _emulatorManager->CreateEmulatorWithModelAndRAM("", modelName, ramSize);
+    if (!newEmulator)
+    {
+        qWarning() << "handleMachineModelChangeRequested: Failed to create emulator with model" << displayName;
+        QMessageBox::critical(this, tr("Error"), tr("Failed to create emulator with model %1").arg(displayName));
+        return;
+    }
+
+    // Adopt the new emulator (already initialized by CreateEmulatorWithModelAndRAM)
+    adoptEmulator(newEmulator);
+    qDebug() << "handleMachineModelChangeRequested: adoptEmulator completed";
+
+    // Start the new emulator asynchronously (Start() blocks, StartAsync() returns immediately)
+    newEmulator->StartAsync();
+    qDebug() << "handleMachineModelChangeRequested: StartAsync completed";
+
+    // Note: Menu update happens via adoptEmulator -> setActiveEmulator -> updateMenuStates
+
+    _switchingModel = false;
+
+    qInfo() << "MainWindow::handleMachineModelChangeRequested() - Successfully switched to model:" << displayName;
 }
 
 #ifdef ENABLE_RECORDING
@@ -2451,6 +2579,13 @@ void MainWindow::handleEmulatorInstanceCreated(int id, Message* message)
             std::string createdId = payload->_payloadText;
 
             qDebug() << "MainWindow: Detected new emulator instance" << QString::fromStdString(createdId);
+
+            // Skip if we're in the middle of a model switch (handleMachineModelChangeRequested handles adoption)
+            if (_switchingModel)
+            {
+                qDebug() << "MainWindow: Model switch in progress, skipping auto-adoption";
+                return;
+            }
 
             // Check if this is the emulator we already have adopted
             if (_emulator && _emulator->GetId() == createdId)
@@ -2878,7 +3013,11 @@ void MainWindow::releaseEmulator()
 
     // UI state
     startButton->setText("Start");
-    updateMenuStates();
+    if (!_switchingModel)
+    {
+        // Only update menu if not in model switch (adoptEmulator handles menu during switch)
+        updateMenuStates();
+    }
 
     qDebug() << "MainWindow::releaseEmulator() - Emulator released and destroyed";
 }

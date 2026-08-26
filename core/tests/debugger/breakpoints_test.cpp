@@ -8,6 +8,7 @@
 #include "common/stringhelper.h"
 #include "common/timehelper.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/debugmanager.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -343,12 +344,14 @@ TEST_F(BreakpointManager_test, memoryWriteBreakpoint)
 TEST_F(BreakpointManager_test, portInBreakpoint)
 {
     std::atomic<bool> breakpointTriggered{false};
+    // Use port $FE (keyboard port) - it's a standard port that doesn't get re-decoded
+    // Port $00 gets decoded to $FE by Pentagon128 decoder, causing breakpoint mismatch
     uint8_t testCommands[] = {
         0xAF,        // $0000 XOR A - Ensure A = 0
-        0xDB, 0x00,  // $0001 IN A,($00) - Read from port $00
+        0xDB, 0xFE,  // $0001 IN A,($FE) - Read from port $FE (keyboard)
         0x76         // $0003 HALT
     };
-    uint8_t portNumber = 0x00;  // Test port input from port $00
+    uint8_t portNumber = 0xFE;  // Test port input from port $FE
 
     /// region <Initialize>
     Emulator* emulator = new Emulator(LoggerLevel::LogError);
@@ -380,6 +383,10 @@ TEST_F(BreakpointManager_test, portInBreakpoint)
 
     /// endregion </Initialize>
 
+    // Set PC to our test code at $0000 (we wrote XOR A, IN A, HALT there)
+    Z80* z80 = context->pCore->GetZ80();
+    z80->pc = 0x0000;
+
     // Create port input breakpoint
     BreakpointDescriptor* breakpoint = new BreakpointDescriptor();
     breakpoint->type = BreakpointTypeEnum::BRK_IO;
@@ -387,7 +394,8 @@ TEST_F(BreakpointManager_test, portInBreakpoint)
     breakpoint->z80address = portNumber;
     breakpointManager->AddBreakpoint(breakpoint);
 
-    emulator->RunNCPUCycles(20, false);
+    // Start emulator async so _isRunning is true (required for Pause/Resume to work)
+    emulator->StartAsync();
 
     // Wait for async callback to execute (max 200ms)
     auto start = std::chrono::steady_clock::now();
@@ -1089,15 +1097,23 @@ TEST_F(BreakpointManager_test, ROMPagingBeforeBreakpointDispatch)
     }
 
     // Place test code in RAM at $8000
-    // JP $3D00 at $8000 will jump to TR-DOS entry, triggering ROM paging
-    memory->DirectWriteToZ80Memory(0x8000, 0xC3);  // JP
-    memory->DirectWriteToZ80Memory(0x8001, 0x00);  // $3D00 low byte
-    memory->DirectWriteToZ80Memory(0x8002, 0x3D);  // $3D00 high byte
-    memory->DirectWriteToZ80Memory(0x8003, 0x76);  // HALT (never reached)
+    // The OUT (#7FFD),#10 arms the TR-DOS entry (CF_SETDOSROM: 48K ROM slot + Beta128),
+    // the JP $3D00 then triggers the Z80Step paging trap into the TR-DOS ROM
+    memory->DirectWriteToZ80Memory(0x8000, 0x01);  // LD BC, $7FFD
+    memory->DirectWriteToZ80Memory(0x8001, 0xFD);
+    memory->DirectWriteToZ80Memory(0x8002, 0x7F);
+    memory->DirectWriteToZ80Memory(0x8003, 0x3E);  // LD A, $10
+    memory->DirectWriteToZ80Memory(0x8004, 0x10);
+    memory->DirectWriteToZ80Memory(0x8005, 0xED);  // OUT (C), A
+    memory->DirectWriteToZ80Memory(0x8006, 0x79);
+    memory->DirectWriteToZ80Memory(0x8007, 0xC3);  // JP $3D00
+    memory->DirectWriteToZ80Memory(0x8008, 0x00);  // $3D00 low byte
+    memory->DirectWriteToZ80Memory(0x8009, 0x3D);  // $3D00 high byte
+    memory->DirectWriteToZ80Memory(0x800A, 0x76);  // HALT (never reached)
 
     // Set PC to our test code in RAM
     cpu->pc = 0x8000;
-    
+
     // Port $7FFD is the memory paging control port on all 128K configurations:
     //   Bit 0-2 (0x07): RAM page select - which RAM page (0-7) maps to bank 3 ($C000-$FFFF)
     //   Bit 3   (0x08): Screen select - 0 = normal screen (page 5), 1 = shadow screen (page 7)
@@ -1107,15 +1123,17 @@ TEST_F(BreakpointManager_test, ROMPagingBeforeBreakpointDispatch)
     //   Bit 5   (0x20): Paging disable - once set, paging disabled until reset (48K lock mode)
     //   Bit 6-7 (0xC0): Unused on standard 128K/Pentagon
     //
-    // When CF_TRDOS flag is set, UpdateZ80Banks() checks (p7FFD & 0x10):
+    // The OUT (#7FFD),#10 above goes through the hardware path: Port_7FFD_Out stores
+    // p7FFD and UpdateZ80Banks() maps the 48K ROM and arms CF_SETDOSROM (original
+    // UnrealSpeccy set_banks() semantics: 48K ROM slot + trdos_present). When CF_TRDOS
+    // is later set by the paging trap, UpdateZ80Banks() checks (p7FFD & 0x10):
     //   - If set: SetROMDOS() -> pages in TR-DOS ROM (page 1)
     //   - If not: SetROMSystem() -> pages in System ROM (page 0)
     //
-    // NOTE: We set p7FFD rather than calling SetROMDOS() directly because this test
-    // verifies the Z80 execution path: when PC enters $3D00-$3DFF, the step logic
-    // sets CF_TRDOS and calls UpdateZ80Banks(), which consults p7FFD to select ROM.
-    // Calling SetROMDOS() would bypass the execution path we're testing.
-    context->emulatorState.p7FFD |= 0x10;  // Ensure UpdateZ80Banks() selects TR-DOS ROM
+    // NOTE: paging is armed via a real OUT (not a raw p7FFD store) because this test
+    // verifies the Z80 execution path: CF_SETDOSROM is raised by UpdateZ80Banks() on
+    // the port write, and when PC enters $3D00-$3DFF the step logic sets CF_TRDOS and
+    // calls UpdateZ80Banks(), which consults p7FFD to select the ROM.
 
     // Register MessageCenter event handler
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
@@ -1137,12 +1155,14 @@ TEST_F(BreakpointManager_test, ROMPagingBeforeBreakpointDispatch)
                                                                      BANK_ROM, BreakpointManager::OWNER_INTERACTIVE);
     ASSERT_NE(brkID, BRK_INVALID) << "Failed to add page-specific breakpoint";
 
-    // Execute: The JP $3D00 instruction will:
-    // 1. Jump to $3D00 - PCH becomes 0x3D
-    // 2. (Post-fix) ROM paging: CF_TRDOS flag set, TR-DOS ROM paged in
-    // 3. Breakpoint dispatch: now sees correct ROM page 1
-    // 4. Breakpoint matches and fires
-    emulator->RunNCPUCycles(10, false);
+    // Execute: The test code at $8000 will:
+    // 1. LD BC,$7FFD / LD A,$10 / OUT (C),A - arm CF_SETDOSROM via Port_7FFD_Out
+    //    (p7FFD bit 4 = 48K ROM slot, Beta128 present)
+    // 2. JP $3D00 - PCH becomes 0x3D
+    // 3. (Post-fix) ROM paging: CF_TRDOS flag set, TR-DOS ROM paged in
+    // 4. Breakpoint dispatch: now sees correct ROM page 1
+    // 5. Breakpoint matches and fires
+    emulator->RunNCPUCycles(60, false);
 
     // Wait for async callback (max 200ms)
     auto start = std::chrono::steady_clock::now();

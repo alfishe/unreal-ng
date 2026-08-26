@@ -448,7 +448,7 @@ uint16_t ROM::LoadROM(string& path, uint8_t* bank, uint16_t max_banks)
 		}
 	}
 
-	FILE* romfile = fopen(resolvedPath.c_str(), "rb");
+	FILE* romfile = FileHelper::OpenFile(resolvedPath, "rb");
 	if (romfile)
 	{
 		size_t size = fread(bank, 1, max_banks * PAGE_SIZE, romfile);

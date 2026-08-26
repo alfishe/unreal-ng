@@ -3,6 +3,7 @@
 #include <sol/sol.hpp>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include "../bindings/lua_porttrace.h"
 #include <emulator/memory/memory.h>
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/diskimage.h>
@@ -15,6 +16,11 @@
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/disassembler/z80disasm.h>
+#include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/ttd_external_events.h>
+#include <debugger/ttd/ttd_probe.h>
+#include <fstream>
+#include <string>
 
 class LuaEmulator
 {
@@ -922,6 +928,349 @@ public:
 
         // Set the emulator instance in the Lua environment
         lua["emulator"] = _emulator;
+
+        // -----------------------------------------------------------------
+        // TTD (Time-Travel Debug) bindings — Phase 2 surface
+        // -----------------------------------------------------------------
+        // All functions return tables or booleans matching the WebAPI/Python
+        // shape. No-op (return false / empty table) when TTD is unavailable.
+        // -----------------------------------------------------------------
+
+        lua.set_function("ttd_status", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table info = lua_view.create_table();
+            if (!_emulator) { info["ttd_available"] = false; return info; }
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager)
+            {
+                info["state"]         = "idle";
+                info["ttd_available"] = false;
+                return info;
+            }
+            ttd::TimeTravelManager* mgr = ctx->pTimeTravelManager;
+            ttd::TTDSessionInfo si = mgr->GetSessionInfo();
+            info["state"]                    = ttd::TTDSessionStateToString(si.state);
+            info["session_start_frame"]      = si.sessionStartFrame;
+            info["current_end_frame"]        = si.currentEndFrame;
+            info["checkpoint_count"]         = static_cast<uint64_t>(si.checkpointCount);
+            info["page_store_bytes"]         = static_cast<uint64_t>(si.pageStoreBytes);
+            info["page_store_used_bytes"]    = static_cast<uint64_t>(si.pageStoreUsedBytes);
+            info["baseline_frames_captured"] = si.baselineFramesCaptured;
+            info["session_heap_bytes"]       = static_cast<uint64_t>(si.sessionHeapBytes);
+            info["loaded_from_file"]      = si.loadedFromFile;
+            info["source_path"]           = si.sourcePath;
+            info["captured_at_unix_ms"]   = si.capturedAtUnixMs;
+            info["model_id"]              = si.modelId;
+            info["model_ram_pages"]       = si.modelRamPages;
+            info["write_journal_records"] = si.writeJournalRecords;
+            info["write_journal_bytes"]   = si.writeJournalBytes;
+            info["coverage_index_frames"] = si.coverageIndexFrames;
+            info["coverage_index_bytes"]  = si.coverageIndexBytes;
+            info["write_journal_enabled"]    = si.writeJournalEnabled;
+            info["ttd_available"]            = true;
+            return info;
+        });
+
+        // ttd_start([mode]) - start recording
+        // mode: "gaming" (smaller files, no journal) or "development" (default, full journal)
+        lua.set_function("ttd_start", [this](sol::optional<std::string> modeOpt) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return false;
+            // Set journal mode before starting
+            bool enableJournal = true;  // default: development mode
+            if (modeOpt.has_value())
+            {
+                const std::string& mode = modeOpt.value();
+                if (mode == "gaming")
+                    enableJournal = false;
+            }
+            ctx->pTimeTravelManager->SetEnableWriteJournal(enableJournal);
+            return ctx->pTimeTravelManager->StartRecording();
+        });
+
+        // ttd_set_journal_enabled(bool) - configure write journal capture
+        lua.set_function("ttd_set_journal_enabled", [this](bool enabled) {
+            if (!_emulator) return;
+            auto* ctx = _emulator->GetContext();
+            if (ctx && ctx->pTimeTravelManager)
+                ctx->pTimeTravelManager->SetEnableWriteJournal(enabled);
+        });
+
+        lua.set_function("ttd_get_journal_enabled", [this]() -> bool {
+            if (!_emulator) return true;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return true;
+            return ctx->pTimeTravelManager->GetEnableWriteJournal();
+        });
+
+        lua.set_function("ttd_stop", [this]() {
+            if (!_emulator) return;
+            auto* ctx = _emulator->GetContext();
+            if (ctx && ctx->pTimeTravelManager)
+                ctx->pTimeTravelManager->StopRecording();
+        });
+
+        lua.set_function("ttd_invalidate", [this](sol::optional<std::string> reason) {
+            if (!_emulator) return;
+            auto* ctx = _emulator->GetContext();
+            if (ctx && ctx->pTimeTravelManager)
+                ctx->pTimeTravelManager->InvalidateSession(
+                    reason.value_or("lua invalidate").c_str());
+        });
+
+        lua.set_function("ttd_seek", [this](uint64_t frame, sol::optional<uint32_t> tInFrameOpt) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) { result["reached"] = false; return result; }
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager)
+            {
+                result["reached"] = false;
+                result["error"]   = "TTD not available";
+                return result;
+            }
+            uint32_t tInFrame = tInFrameOpt.value_or(0);
+            ttd::TTDTimePoint target{frame, tInFrame};
+            ttd::TimeTravelManager::TTDSeekResult r;
+            bool reached = ctx->pTimeTravelManager->SeekTo(target, &r);
+            result["reached"] = reached;
+
+            sol::table arrivedAt = lua_view.create_table();
+            arrivedAt["frame"]    = r.arrivedAt.frame;
+            arrivedAt["tinframe"] = r.arrivedAt.tInFrame;
+            result["arrived_at"]  = arrivedAt;
+
+            const char* reasonStr = "target";
+            switch (r.haltReason)
+            {
+                case ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent: reasonStr = "external_event"; break;
+                case ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange:    reasonStr = "out_of_range"; break;
+                default: break;
+            }
+            result["halt_reason"] = reasonStr;
+
+            if (r.haltReason == ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent)
+            {
+                sol::table marker = lua_view.create_table();
+                marker["frame"]    = r.blockingMarker.time.frame;
+                marker["tinframe"] = r.blockingMarker.time.tInFrame;
+                marker["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
+                marker["reason"]   = r.blockingMarker.reason;
+                result["blocking_marker"] = marker;
+            }
+            return result;
+        });
+
+        lua.set_function("ttd_step_back", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return false;
+            return ctx->pTimeTravelManager->StepBackFrame();
+        });
+
+        lua.set_function("ttd_step_forward", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return false;
+            return ctx->pTimeTravelManager->StepForwardFrame();
+        });
+
+        lua.set_function("ttd_resume", [this](sol::optional<uint64_t> frameOpt, sol::optional<uint32_t> tInFrameOpt) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return false;
+            ttd::TTDTimePoint from = ctx->pTimeTravelManager->CurrentPosition();
+            if (frameOpt)
+                from.frame = *frameOpt;
+            from.tInFrame = tInFrameOpt.value_or(0);
+            return ctx->pTimeTravelManager->ResumeRecordingFrom(from);
+        });
+
+        lua.set_function("ttd_position", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) { result["error"] = "no emulator"; return result; }
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager)
+            {
+                result["error"] = "TTD not available";
+                return result;
+            }
+            ttd::TTDTimePoint pos = ctx->pTimeTravelManager->CurrentPosition();
+            ttd::TTDTimePoint end = ctx->pTimeTravelManager->SessionEndPosition();
+            sol::table current = lua_view.create_table();
+            current["frame"]    = pos.frame;
+            current["tinframe"] = pos.tInFrame;
+            result["current"]   = current;
+            sol::table sessionEnd = lua_view.create_table();
+            sessionEnd["frame"]    = end.frame;
+            sessionEnd["tinframe"] = end.tInFrame;
+            result["session_end"]  = sessionEnd;
+            return result;
+        });
+
+        lua.set_function("ttd_markers", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) return result;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return result;
+            const auto& journal = ctx->pTimeTravelManager->GetExternalEvents();
+            int idx = 1;  // Lua tables are 1-based
+            for (const auto& e : journal.Events())
+            {
+                sol::table marker = lua_view.create_table();
+                marker["frame"]    = e.time.frame;
+                marker["tinframe"] = e.time.tInFrame;
+                marker["kind"]     = ttd::TTDExternalEventKindToString(e.kind);
+                marker["reason"]   = e.reason;
+                result[idx++]       = marker;
+            }
+            return result;
+        });
+
+        // -----------------------------------------------------------------
+        // Phase 4 — Reverse search + dump + instruction step
+        // -----------------------------------------------------------------
+
+        lua.set_function("ttd_dump", [this](const std::string& path) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return false;
+            std::ofstream out(path, std::ios::binary);
+            if (!out.is_open()) return false;
+            std::string err;
+            return ctx->pTimeTravelManager->SerializeSession(out, err);
+        });
+
+        // Loading refuses a session recorded on a different machine model: a
+        // checkpoint is raw RAM pages plus a chipset snapshot, so it only
+        // restores into an instance of the model it came from. Returns a table
+        // with ok/error so scripts can report the reason.
+        lua.set_function("ttd_load", [this](const std::string& path) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            result["ok"] = false;
+            if (!_emulator) { result["error"] = "no emulator"; return result; }
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) { result["error"] = "TTD not available"; return result; }
+            std::ifstream in(path, std::ios::binary);
+            if (!in.is_open()) { result["error"] = "cannot open file: " + path; return result; }
+            std::string err;
+            if (!ctx->pTimeTravelManager->DeserializeSession(in, err))
+            {
+                result["error"] = err;
+                return result;
+            }
+            const ttd::TTDSessionInfo info = ctx->pTimeTravelManager->GetSessionInfo();
+            result["ok"] = true;
+            result["checkpoint_count"] = static_cast<uint64_t>(info.checkpointCount);
+            result["session_start_frame"] = info.sessionStartFrame;
+            result["current_end_frame"] = info.currentEndFrame;
+            return result;
+        });
+
+        lua.set_function("ttd_find_last", [this](uint16_t addr,
+                                                   sol::optional<std::string> accessOpt,
+                                                   sol::optional<uint8_t> valueOpt,
+                                                   sol::optional<uint16_t> pcFromOpt,
+                                                   sol::optional<uint16_t> pcToOpt,
+                                                   sol::optional<uint64_t> beforeFrameOpt,
+                                                   sol::optional<uint32_t> beforeTinOpt,
+                                                   sol::optional<uint8_t> physPageOpt) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) { result["found"] = false; return result; }
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) { result["found"] = false; return result; }
+
+            ttd::TTDSearchQuery q;
+            q.addrFrom = q.addrTo = addr;
+            q.access = ttd::TTDAccessTypeFromString(
+                accessOpt.value_or("write").c_str());
+            if (valueOpt) { q.hasValueFilter = true; q.value = *valueOpt; }
+            if (pcFromOpt) { q.hasPcFilter = true; q.pcFrom = *pcFromOpt; q.pcTo = pcToOpt.value_or(0xFFFF); }
+            // Bank-aware search: pins the query to one physical RAM page.
+            if (physPageOpt) { q.hasPhysPageFilter = true; q.physPage = *physPageOpt; }
+            const uint32_t frameT = ctx->config.frame;
+            if (beforeFrameOpt)
+                q.beforeGlobalT = static_cast<uint64_t>(*beforeFrameOpt) * frameT
+                                  + beforeTinOpt.value_or(0);
+
+            auto found = ctx->pTimeTravelManager->FindLastAccess(q);
+            if (!found) { result["found"] = false; return result; }
+            result["found"]    = true;
+            result["frame"]    = found->time.frame;
+            result["tinframe"]  = found->time.tInFrame;
+            result["pc"]        = found->pc;
+            result["value"]     = found->value;
+            result["phys_page"] = found->physPage;
+            result["access"]    = ttd::TTDAccessTypeToString(found->access);
+            return result;
+        });
+
+        lua.set_function("ttd_step_instruction_back", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return false;
+            return ctx->pTimeTravelManager->StepBackInstruction();
+        });
+
+        lua.set_function("ttd_step_instruction_forward", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return false;
+            return ctx->pTimeTravelManager->StepForwardInstruction();
+        });
+
+        // -----------------------------------------------------------------
+        // Phase 4 — Reverse execution (multi-step)
+        // -----------------------------------------------------------------
+
+        lua.set_function("ttd_reverse_step", [this](sol::optional<uint32_t> countOpt) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return false;
+            return ctx->pTimeTravelManager->ReverseStepInstructions(
+                countOpt.value_or(1));
+        });
+
+        lua.set_function("ttd_reverse_step_tstates", [this](uint64_t tstates) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return false;
+            return ctx->pTimeTravelManager->ReverseStepTStates(tstates);
+        });
+
+        lua.set_function("ttd_reverse_continue", [this](sol::table pcsTable) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) { result["matched"] = false; return result; }
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) { result["matched"] = false; return result; }
+
+            std::vector<uint16_t> pcs;
+            pcs.reserve(pcsTable.size());
+            for (auto& pair : pcsTable)
+            {
+                uint16_t pc = static_cast<uint16_t>(pair.second.as<uint32_t>());
+                pcs.push_back(pc);
+            }
+
+            auto r = ctx->pTimeTravelManager->ReverseContinue(pcs);
+            result["matched"] = r.matched;
+            result["pc"]      = r.pc;
+            if (r.matched)
+            {
+                result["frame"]   = r.arrivedAt.frame;
+                result["tinframe"] = r.arrivedAt.tInFrame;
+            }
+            return result;
+        });
+
+        // Port trace (PDR) bindings — runtime feature "porttrace"
+        LuaPortTrace::registerBindings(lua, [this]() -> Emulator* { return effectiveEmulator(); });
     }
 
     void setEmulator(Emulator* emulator) { _emulator = emulator; }

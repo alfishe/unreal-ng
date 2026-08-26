@@ -1,6 +1,12 @@
 # CLI Automation Module
 project(automation-cli LANGUAGES CXX)
 
+# Recording support - follows the root CMakeLists.txt option (single source of truth
+# for the EmulatorContext/Core struct layout). Declared here so a standalone cli
+# build defaults the same way as the root project; option() never overrides an
+# existing root-level cache entry.
+option(ENABLE_RECORDING "Enable audio/video recording support" ON)
+
 # Get root directory
 get_filename_component(ROOT_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../" ABSOLUTE)
 
@@ -19,10 +25,12 @@ set(SOURCES
     src/commands/cli-processor-disk.cpp
     src/commands/cli-processor-snapshot.cpp
     src/commands/cli-processor-state.cpp
+    src/commands/cli-processor-ttd.cpp
     src/handlers/python-handler.cpp
     src/handlers/lua-handler.cpp
     src/commands/cli-processor-capture.cpp
     src/commands/cli-processor-profiler.cpp
+    src/commands/cli-processor-porttrace.cpp
     src/commands/cli-processor-keyboard.cpp
 )
 
@@ -56,6 +64,19 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:ENABLE_WEBAPI_AUTOMATION>
     $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:ENABLE_CLI_AUTOMATION>
 )
+
+# Core layout consistency (prevents ODR violation):
+# ENABLE_RECORDING changes the layout of core classes (EmulatorContext, Core).
+# This target compiles core headers directly without linking unrealng::core,
+# so it does not inherit the PUBLIC define from core/src/CMakeLists.txt.
+# Without it, member offsets diverge between translation units (e.g. CLI reads
+# pRecordingManager where it expects pDebugManager).
+# The recording/src include is required for recordingmanager.h pulled in by
+# emulator/cpu/core.h when recording is enabled.
+if (ENABLE_RECORDING)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_RECORDING)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/recording/src)
+endif()
 
 # Suppress deprecated-declarations warning for pybind11 (uses deprecated _Py_fopen_obj in Python 3.14)
 if (ENABLE_PYTHON_AUTOMATION)
@@ -92,7 +113,15 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 )
 
 # Note: core library is linked by the parent project (unreal-qt)
-# Static libraries should only use headers, not link dependencies
+# Static libraries should only use headers, not link dependencies.
+#
+# EXCEPTION: zstd::libzstd is linked here because core's ttd_compression.h
+# (pulled in transitively via timetravelmanager.h -> ttd_codec_page_store.h)
+# #includes <zstd.h>, and we use core/src via raw include paths rather than
+# target_link_libraries(unrealng::core). zstd::libzstd is an INTERFACE
+# IMPORTED target so this does NOT add any link output to automation-cli; it
+# only propagates zstd's include directory to this target's compilation.
+target_link_libraries(${PROJECT_NAME} PRIVATE zstd::libzstd)
 
 # Link against Winsock on Windows
 if (WIN32)

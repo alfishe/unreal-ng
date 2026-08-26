@@ -49,12 +49,12 @@ string Config::GetScreenshotsFolder()
 		// Try to create the directory to test if it's writable
 		bool isWritable = false;
 		try {
-			if (!std::filesystem::exists(testPath)) {
-				isWritable = std::filesystem::create_directories(testPath);
+			if (!std::filesystem::exists(FileHelper::ToFsPath(testPath))) {
+				isWritable = std::filesystem::create_directories(FileHelper::ToFsPath(testPath));
 			} else {
 				// Directory exists, check if it's writable by creating a test file
 				std::string testFile = FileHelper::PathCombine(testPath, "/test.tmp");
-				FILE* fp = fopen(testFile.c_str(), "w");
+				FILE* fp = FileHelper::OpenFile(testFile, "w");
 				if (fp) {
 					fclose(fp);
 					remove(testFile.c_str());
@@ -72,17 +72,17 @@ string Config::GetScreenshotsFolder()
 				std::string dirPath = std::string(homeDir) + "/Library/Application Support/UnrealNG/screenshots";
 				// Create the directory if it doesn't exist
 				try {
-					std::filesystem::create_directories(dirPath);
+					std::filesystem::create_directories(FileHelper::ToFsPath(dirPath));
 				} catch (const std::exception&) {
 					// If we can't create the directory, fall back to temporary directory
 					dirPath = "/tmp/UnrealNG/screenshots";
-					std::filesystem::create_directories(dirPath);
+					std::filesystem::create_directories(FileHelper::ToFsPath(dirPath));
 				}
 				screenshotsPath = dirPath;
 			} else {
 				// Fallback to temporary directory if HOME is not available
 				screenshotsPath = "/tmp/UnrealNG/screenshots";
-				std::filesystem::create_directories(screenshotsPath);
+				std::filesystem::create_directories(FileHelper::ToFsPath(screenshotsPath));
 			}
 		} else {
 			// Location is writable, use it
@@ -95,7 +95,7 @@ string Config::GetScreenshotsFolder()
 		
 		// Create the directory if it doesn't exist
 		try {
-			std::filesystem::create_directories(screenshotsPath);
+			std::filesystem::create_directories(FileHelper::ToFsPath(screenshotsPath));
 		} catch (const std::exception&) {
 			// Ignore errors
 		}
@@ -106,73 +106,58 @@ string Config::GetScreenshotsFolder()
 	return screenshotsPath;
 }
 
-bool Config::LoadConfig()
+bool Config::LoadConfig(const std::string& modelConfigName)
 {
-	bool result = false;
-
-	// First try to load config from executable directory
-	std::string path = FileHelper::GetExecutablePath();
-	if (!path.empty())
+	if (modelConfigName.empty())
 	{
-        std::string configPath = FileHelper::PathCombine(path, GetDefaultConfig());
-        std::string absoluteConfigPath = FileHelper::AbsolutePath(configPath);
-
-		// Probe before loading: inside a macOS .app the config legitimately
-		// lives in Contents/Resources, not next to the binary, so a miss here
-		// is the normal path and must not be reported as an error.
-		if (FileHelper::FileExists(absoluteConfigPath) && LoadConfig(absoluteConfigPath))
-		{
-			result = true;
-		}
-		else
-		{
-			// If not found in executable directory, try resources directory (especially for macOS app bundles)
-			std::string resourcesPath = FileHelper::GetResourcesPath();
-			if (!resourcesPath.empty() && resourcesPath != path) // Only try if different from executable path
-			{
-				std::string resourceConfigPath = FileHelper::PathCombine(resourcesPath, GetDefaultConfig());
-				std::string absoluteResourceConfigPath = FileHelper::AbsolutePath(resourceConfigPath);
-
-				if (LoadConfig(absoluteResourceConfigPath))
-				{
-					result = true;
-				}
-				else
-				{
-					MLOGERROR("Config::LoadConfig() - unable to process config file from executable or resources path");
-				}
-			}
-			else
-			{
-				MLOGERROR("Config::LoadConfig() - unable to process config file");
-			}
-		}
-	}
-	else
-	{
-	    std::string error = "Config::LoadConfig() - Unable to determine executable path";
-		MLOGERROR(error);
-		throw std::logic_error(error);
+		MLOGERROR("Config::LoadConfig - model config name is mandatory");
+		return false;
 	}
 
-	return result;
+	// Model config always lives in configs/<modelConfigName>/unreal.ini
+	std::string relativePath = FileHelper::PathCombine("configs", modelConfigName);
+	relativePath = FileHelper::PathCombine(relativePath, GetDefaultConfig());
+
+	// Search order: executable directory, then application resources (macOS app bundle)
+	std::string searchedPaths;
+	for (const std::string& basePath : { FileHelper::GetExecutablePath(), FileHelper::GetResourcesPath() })
+	{
+		if (basePath.empty())
+			continue;
+
+		std::string configPath = FileHelper::AbsolutePath(FileHelper::PathCombine(basePath, relativePath));
+		if (FileHelper::FileExists(configPath))
+		{
+			return LoadConfigFile(configPath);
+		}
+
+		if (!searchedPaths.empty())
+			searchedPaths += ", ";
+		searchedPaths += FileHelper::PrintablePath(configPath);
+	}
+
+	MLOGERROR("Config::LoadConfig - no config for model '%s'; searched: %s",
+	          modelConfigName.c_str(), searchedPaths.c_str());
+	return false;
 }
 
-bool Config::LoadConfig(string& filename)
+bool Config::LoadConfigFile(const std::string& filename)
 {
 	bool result = false;
 
 	if (filename.empty())
 	{
-		MLOGERROR("Config::LoadConfig - Empty config filename provided");
+		MLOGERROR("Config::LoadConfigFile - Empty config filename provided");
 		return result;
 	}
 
 	if (!FileHelper::FileExists(filename))
 	{
-		MLOGERROR("Config::LoadConfig - File '%s' does not exist", FileHelper::PrintablePath(filename).c_str());
+		MLOGERROR("Config::LoadConfigFile - File '%s' does not exist", FileHelper::PrintablePath(filename).c_str());
 		return result;
 	}
+
+	MLOGINFO("Config::LoadConfigFile - Loading config '%s'", FileHelper::PrintablePath(filename).c_str());
 
 	_configFilePath = filename;
 
@@ -184,13 +169,13 @@ bool Config::LoadConfig(string& filename)
 	SI_Error rc = inimanager.LoadFile(_configFilePath.c_str());
 	if (rc == SI_OK)
 	{
-		MLOGDEBUG("Config::LoadConfig - config '%s' successfully loaded to SimpleINI parser", FileHelper::PrintablePath(_configFilePath).c_str());	// FileHelper::PrintablePath is mandatory since Logger works only with 'string' type and formatters
+		MLOGDEBUG("Config::LoadConfigFile - config '%s' successfully loaded to SimpleINI parser", FileHelper::PrintablePath(_configFilePath).c_str());	// FileHelper::PrintablePath is mandatory since Logger works only with 'string' type and formatters
 
 		result = true;
 	}
 	else
 	{
-        MLOGDEBUG("Config::LoadConfig - error during loading config '%s' by SimpleINI", FileHelper::PrintablePath(_configFilePath).c_str());	// FileHelper::PrintablePath is mandatory since Logger works only with 'string' type and formatters
+        MLOGDEBUG("Config::LoadConfigFile - error during loading config '%s' by SimpleINI", FileHelper::PrintablePath(_configFilePath).c_str());	// FileHelper::PrintablePath is mandatory since Logger works only with 'string' type and formatters
 	}
 
 	// Populate configuration fields from config file data
@@ -215,19 +200,34 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	config.ConfirmExit = (uint8_t)inimanager.GetLongValue(misc, "ConfirmExit", 0);
 	config.sleepidle = (uint8_t)inimanager.GetLongValue(misc, "ShareCPU", 0);
 
+	// Map INI 'RESET=' setting to initial ROM bank (ROMModeEnum).
+	// Uses a table lookup to cleanly support aliases across configs (e.g. "128", "MENU", "BASIC128" -> RM_128; "BASIC", "48" -> RM_SOS).
+	// Default: RM_SOS (48K BASIC ROM).
+	struct ResetRomMapping
+	{
+		const char* name;
+		uint8_t mode;
+	};
+
+	static constexpr ResetRomMapping resetMappings[] = {
+		{ "DOS", RM_DOS },
+		{ "MENU", RM_128 },
+		{ "128", RM_128 },       // Introduced in commit 79bd9291 as default for Pentagon/Spectrum128
+		{ "BASIC128", RM_128 },
+		{ "BASIC", RM_SOS },
+		{ "48", RM_SOS },
+		{ "SYS", RM_SYS }
+	};
+
 	config.reset_rom = RM_SOS;
 	CopyStringValue(inimanager.GetValue(misc, "RESET", nullptr, nullptr), line, sizeof line); // What ROM bank to set active during reset
-	if (StringHelper::CompareCaseInsensitive(line, "DOS", 3) == 0)
+	for (const auto& mapping : resetMappings)
 	{
-		config.reset_rom = RM_DOS;
-	}
-	else if (StringHelper::CompareCaseInsensitive(line, "MENU", 4) == 0)
-	{
-		config.reset_rom = RM_128;
-	}
-	else if (StringHelper::CompareCaseInsensitive(line, "SYS", 3) == 0)
-	{
-		config.reset_rom = RM_SYS;
+		if (StringHelper::CompareCaseInsensitive(line, mapping.name, strlen(mapping.name)) == 0)
+		{
+			config.reset_rom = mapping.mode;
+			break;
+		}
 	}
 
 	// MISC::CMOS sub-section
@@ -289,7 +289,9 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	config.even_M1 = (unsigned)inimanager.GetLongValue(ula, "EvenM1", 0);
 	config.floatbus = (unsigned)inimanager.GetLongValue(ula, "FloatBus", 0);
 	config.floatdos = (unsigned)inimanager.GetLongValue(ula, "FloatDOS", 0);
-	config.portff = (unsigned)inimanager.GetLongValue(ula, "PortFF", 0) != 0;	// Enable port FF (reflects current screen color attributes when ULA renders the frame, 0xFF otherwise)
+	// Note: the original UnrealSpeccy "PortFF" option (simplified always-attribute
+	// floating bus model) is intentionally not ported - UlaContention implements the
+	// full architecture-aware floating bus (pixel/attr per fetch phase) instead.
 
 	// Beta128 section
 	config.trdos_present = inimanager.GetLongValue(beta128, "beta128", 1) ? true : false;
@@ -416,7 +418,7 @@ bool Config::DetermineModel(const char* model, uint32_t ramsize)
 	return result;
 }
 
-std::vector<TMemModel> Config::GetAvailableModels() const
+std::vector<TMemModel> Config::GetAvailableModels()
 {
 	std::vector<TMemModel> models;
 	for (uint8_t i = 0; i < N_MM_MODELS; i++)
@@ -426,7 +428,7 @@ std::vector<TMemModel> Config::GetAvailableModels() const
 	return models;
 }
 
-const TMemModel* Config::FindModelByShortName(const std::string& shortName) const
+const TMemModel* Config::FindModelByShortName(const std::string& shortName)
 {
 	// Handle empty or invalid input
 	if (shortName.empty())
@@ -446,6 +448,39 @@ const TMemModel* Config::FindModelByShortName(const std::string& shortName) cons
 		}
 	}
 	return nullptr;
+}
+
+std::string Config::GetConfigFolderForModel(MEM_MODEL model, uint32_t ramSizeKB)
+{
+	const TMemModel* info = nullptr;
+	for (uint8_t i = 0; i < N_MM_MODELS; i++)
+	{
+		if (mem_model[i].Model == model)
+		{
+			info = &mem_model[i];
+			break;
+		}
+	}
+
+	uint32_t ram = ramSizeKB ? ramSizeKB : (info ? info->defaultRAM : 128);
+
+	switch (model)
+	{
+		case MM_PENTAGON:    return (ram >= 512) ? "pentagon512k" : "pentagon128k";
+		case MM_SPECTRUM48:  return "spectrum48";
+		case MM_SPECTRUM128: return "spectrum128";
+		case MM_PLUS3:       return "spectrum3";
+		case MM_TSL:         return "ts-conf";
+		default:
+			break;
+	}
+
+	// No dedicated folder yet: derive it from the short name so the
+	// LoadConfig error message tells exactly which folder is expected
+	std::string folder = (info && info->ShortName) ? info->ShortName : "pentagon128k";
+	std::transform(folder.begin(), folder.end(), folder.begin(),
+	               [](unsigned char c) { return (char)std::tolower(c); });
+	return folder;
 }
 
 void Config::CopyStringValue(const char* src, char* dst, size_t dst_len)

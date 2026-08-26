@@ -301,6 +301,11 @@ bool Core::Init()
             {
                 _context->pPortDecoder = _portDecoder;
 
+                // Prime the porttrace feature cache: the decoder is created after
+                // FeatureManager loaded features.ini, so a persisted porttrace=on
+                // state would otherwise not take effect until the next toggle
+                _portDecoder->UpdateFeatureCache();
+
                 result = true;
             }
             else
@@ -477,6 +482,13 @@ void Core::Reset()
     _betaDisk->reset();          // BetaDisk floppy controller
     _hdd->Reset();               // Reset IDE controller
     _portDecoder->reset();       // Reset peripheral port decoder (sets model-specific port defaults)
+
+    // Apply the ROM mode requested by the RESET= config directive (port of the
+    // original set_mode(conf.reset_rom) performed at the end of m_reset()).
+    // The decoder reset above establishes the model defaults (p7FFD = 0, 128K
+    // ROM selected); the configured mode is layered on top: BASIC -> 48K BASIC,
+    // DOS -> TR-DOS, MENU -> 128K menu, SYS -> service ROM
+    _memory->SetROMMode(_mode);
 #ifdef ENABLE_RECORDING
     if (_recordingManager)
         _recordingManager->Reset();  // Reset recording manager (stops active recording, clears counters)
@@ -602,8 +614,8 @@ void Core::CPUFrameCycle()
         _z80->Z80FrameCycle();
     }
 
-    uint32_t t = _context->pCore->GetZ80()->t;
-    MLOGINFO("tState counter after the frame: %d", t);
+    // uint32_t t = _context->pCore->GetZ80()->t;
+    // MLOGINFO("tState counter after the frame: %d", t);
 
     AdjustFrameCounters();
 

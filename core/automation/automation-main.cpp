@@ -2,7 +2,8 @@
 #include <emulator/emulator.h>
 #include "automation.h"
 
-Automation automation;
+// Automation became a singleton (protected constructor) — use the instance
+Automation& automation = Automation::GetInstance();
 
 /// region <Platform-dependent handlers>
 

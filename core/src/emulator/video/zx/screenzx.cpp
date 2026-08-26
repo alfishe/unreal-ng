@@ -1,5 +1,6 @@
 #include "screenzx.h"
 
+#include <algorithm>
 #include <cassert>
 
 #include "common/stringhelper.h"
@@ -76,9 +77,27 @@ void ScreenZX::CreateTimingTable()
     const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
     const RasterState& state = _rasterState;
 
+    // Reset the WHOLE lookup table first: the fill loop below only writes
+    // [0, tstatesPerLine), leaving the tail as constructor garbage on a
+    // fresh instance (heap-reuse-dependent - the source of a long-standing
+    // order-dependent test flake) or as stale entries from a previous mode
+    // with a longer line (228 -> 224 switch)
+    for (size_t i = 0; i < sizeof(_screenLineRenderers) / sizeof(_screenLineRenderers[0]); i++)
+    {
+        _screenLineRenderers[i] = RT_BLANK;
+    }
+
     RenderTypeEnum type = RT_BLANK;
     // This iterates over horizontal positions (t-states per line), not vertical lines
     uint16_t tstatesPerLine = state.tstatesPerLine;
+
+    // Guard the fill below against a raster descriptor wider than the table.
+    if (tstatesPerLine > MAX_HEIGHT)
+    {
+        MLOGWARNING("ScreenZX::CreateTimingTable — tstatesPerLine=%u exceeds table size %u; clamping",
+                    static_cast<unsigned>(tstatesPerLine), static_cast<unsigned>(MAX_HEIGHT));
+        tstatesPerLine = MAX_HEIGHT;
+    }
 
     /// region <Line renderer in screen area>
 
@@ -597,7 +616,9 @@ RenderTypeEnum ScreenZX::GetRenderType(uint16_t line, uint16_t col)
     if (lineType != RT_BLANK)
     {
         // If line is in visible area (Border / screen) - determine exact ray position and correspondent render type
-        RenderTypeEnum posType = _screenLineRenderers[col];
+        // Clamp to array bounds to avoid reading garbage if col exceeds table size
+        uint16_t clampedCol = (col < MAX_HEIGHT) ? col : (MAX_HEIGHT - 1);
+        RenderTypeEnum posType = _screenLineRenderers[clampedCol];
 
         result = posType;
     }
@@ -1164,6 +1185,7 @@ std::string ScreenZX::DumpRenderForTState(uint32_t tstate)
     const uint8_t column = tstate % tstatesPerLine;
 
     RenderTypeEnum lineType = GetLineRenderTypeByTiming(tstate);
+    // Clamp to array bounds (column is uint8_t so always < MAX_HEIGHT=320, but guard for safety)
     RenderTypeEnum posType = _screenLineRenderers[column];
     std::string lineTypeName = GetRenderTypeName(lineType);
     std::string posTypeName = GetRenderTypeName(posType);

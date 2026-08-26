@@ -25,20 +25,19 @@ public:
 
         if (_count == _capacity)
         {
-            // Buffer full: evict oldest
+            // Buffer full: overwrite the oldest slot (at _head) and advance _head.
+            // (The previous implementation wrote at _head + _count - 1 and advanced
+            // _head as soon as the buffer became exactly full, which overwrote the
+            // newest element and corrupted FIFO order after wrap-around.)
+            _buffer[_head] = std::move(event);
+            _head = (_head + 1) % _capacity;
             _totalEvicted++;
         }
         else
         {
+            size_t index = (_head + _count) % _capacity;
+            _buffer[index] = std::move(event);
             _count++;
-        }
-
-        size_t index = (_head + _count - 1) % _capacity;
-        _buffer[index] = std::move(event);
-
-        if (_count == _capacity)
-        {
-            _head = (_head + 1) % _capacity;
         }
 
         _totalProduced++;

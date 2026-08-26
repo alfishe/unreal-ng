@@ -134,6 +134,10 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         // Profiler commands
                         {"profiler", &CLIProcessor::HandleProfiler},
 
+                        // Port trace commands (runtime feature "porttrace")
+                        {"port-trace", &CLIProcessor::HandlePortTrace},
+                        {"porttrace", &CLIProcessor::HandlePortTrace},
+
                         // Settings commands
                         {"setting", &CLIProcessor::HandleSetting},
                         {"settings", &CLIProcessor::HandleSetting},
@@ -176,6 +180,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         // Keyboard injection commands
                         {"key", &CLIProcessor::HandleKey},
                         {"keyboard", &CLIProcessor::HandleKey},
+
+                        // Time-Travel Debug commands
+                        {"ttd", &CLIProcessor::HandleTTD},
                         
                         // Videowall commands
                         {"videowall", &CLIProcessor::HandleVideowall}};

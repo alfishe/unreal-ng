@@ -11,6 +11,7 @@
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "emulator.h"
 #include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
@@ -410,25 +411,52 @@ void MainLoop::OnFrameEnd()
 
     // Notify that video frame is composed and ready for rendering
     // Send per-instance frame refresh event with emulator ID for filtering
-    try
+    //
+    // TTD silent-replay suppression (parent TDD §8.2 + Appendix C):
+    // during replay the UI must not redraw per-frame — replay may run
+    // dozens of frames per seek and a redraw storm would dominate seek
+    // latency. The replay engine restores the final frame visually via
+    // Screen::InitFrame after ExitReplayMode.
+    if (!_context->ttdReplayActive)
     {
-        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        std::string emulatorId = _context->pEmulator ? _context->pEmulator->GetId() : "";
-        messageCenter.Post(NC_VIDEO_FRAME_REFRESH,
-                           new EmulatorFramePayload(emulatorId, _context->emulatorState.frame_counter));
+        try
+        {
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            std::string emulatorId = _context->pEmulator ? _context->pEmulator->GetId() : "";
+            messageCenter.Post(NC_VIDEO_FRAME_REFRESH,
+                               new EmulatorFramePayload(emulatorId, _context->emulatorState.frame_counter));
+        }
+        catch (const std::exception& e)
+        {
+            // Log error but don't crash - message center failure shouldn't stop emulation
+            MLOGERROR("MessageCenter post failed: %s", e.what());
+        }
     }
-    catch (const std::exception& e)
-    {
-        // Log error but don't crash - message center failure shouldn't stop emulation
-        MLOGERROR("MessageCenter post failed: %s", e.what());
-    }
-    
+
     // Dispatch frame end event to AnalyzerManager
     if (_context->pDebugManager && _context->pDebugManager->GetAnalyzerManager())
     {
         _context->pDebugManager->GetAnalyzerManager()->dispatchFrameEnd();
     }
-    
+
+    // TTD per-frame checkpoint capture (parent TDD §7.1).
+    // OnFrameBoundary is a no-op when the TTD manager is null, when the
+    // session state is not Recording, or when the timetravel feature flag
+    // is off (the cached bool in Memory gates the dirty hook). Cost when
+    // idle: one predictable branch. Cost when recording: dirty pages get
+    // a 16 KB Intern each, clean pages get a cheap AddRef.
+    if (_context->pTimeTravelManager)
+    {
+        try
+        {
+            _context->pTimeTravelManager->OnFrameBoundary();
+        }
+        catch (const std::exception& e)
+        {
+            MLOGERROR("TimeTravelManager::OnFrameBoundary failed: %s", e.what());
+        }
+    }
+
     // Process keyboard injection sequences (for automation)
     // This is called each frame to advance any queued key sequences (tap/release timing)
     if (_context->pDebugManager && _context->pDebugManager->GetKeyboardManager())
