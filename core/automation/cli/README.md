@@ -1,75 +1,91 @@
 # CLI Automation Module
 
-This module provides a command-line interface (CLI) for controlling the emulator via a TCP socket. It's built using the CLI11 library for command parsing and provides a simple, scriptable interface for automation.
+Command-line interface for controlling the emulator via TCP socket. Provides a scriptable, thread-safe interface for automation and debugging.
 
-## Features
+## Connection
 
-- **Interactive Command Shell**: Connect via telnet or netcat to interact with the emulator
-- **Scriptable**: Can be used in scripts for automated testing and control
-- **Thread-Safe**: Safe to use while the emulator is running
-- **Extensible**: Easy to add new commands
+```bash
+# Default port: 3333
+telnet localhost 3333
+nc localhost 3333
+```
+
+## Command Reference
+
+### Lifecycle
+| Command | Description |
+|---------|-------------|
+| `list` | List all emulator instances |
+| `create [model]` | Create new instance |
+| `start` | Start selected instance |
+| `stop` / `remove` | Destroy instance |
+| `select <uuid>` | Set active instance |
+| `status` | Show all instances status |
+| `models` | List supported models |
+
+### Execution Control
+| Command | Description |
+|---------|-------------|
+| `pause` | Pause emulation |
+| `resume` | Resume emulation |
+| `reset` | Hardware reset |
+| `step` / `stepin` | Execute one instruction |
+| `stepover` | Step over CALL/RST |
+| `steps <N>` | Execute N instructions |
+| `run_frame` | Run one video frame |
+| `run_frames <N>` | Run N video frames |
+| `run_tstates <N>` | Run N T-states |
+| `run_to_scanline <N>` | Run until scanline N |
+| `run_scanlines <N>` | Run N scanlines |
+| `run_to_pixel` | Run to next screen pixel |
+| `run_to_interrupt` | Run until next interrupt |
+
+### Registers
+| Command | Description |
+|---------|-------------|
+| `registers` | Show all Z80 registers |
+| `reg <name>` | Get single register |
+| `reg get <name>` | Get single register (alias) |
+| `reg <name> <value>` | Set register |
+| `reg set <name> <value>` | Set register (alias) |
+
+### Memory
+| Command | Description |
+|---------|-------------|
+| `memory <addr> [len]` | Hex dump memory |
+| `state memory` | Bank mapping info |
+
+### Breakpoints
+| Command | Description |
+|---------|-------------|
+| `bp <addr>` | Set execution breakpoint |
+| `wp <addr> <r\|w\|rw>` | Set memory watchpoint |
+| `bport <port> <in\|out>` | Set I/O breakpoint |
+| `bplist` | List all breakpoints |
+| `bpclear [id\|all]` | Remove breakpoints |
+| `bpon` / `bpoff` | Toggle breakpoints |
+
+### Disassembly
+| Command | Description |
+|---------|-------------|
+| `disasm [addr] [count]` | Disassemble from address |
+| `disasm_page <ram\|rom> <page> [offset] [count]` | Disassemble physical page |
+
+### Media
+| Command | Description |
+|---------|-------------|
+| `open <file>` | Auto-detect and load file |
+| `snapshot save <file>` | Save snapshot |
+| `tape load/eject/play/stop` | Tape control |
+| `disk insert/eject/catalog` | Disk control |
+
+### Features
+| Command | Description |
+|---------|-------------|
+| `feature list` | List toggleable features |
+| `feature <name> on/off` | Toggle feature |
+| `debugmode on/off` | Enable/disable debug mode |
 
 ## Building
 
-The CLI module is enabled by default when building with `ENABLE_AUTOMATION=ON`. To disable it, set `ENABLE_CLI_AUTOMATION=OFF` during CMake configuration.
-
-## Usage
-
-1. Start the emulator with CLI automation enabled
-2. Connect to the CLI server using a TCP client (default port: 8765):
-   ```
-   telnet localhost 8765
-   ```
-   or
-   ```
-   nc localhost 8765
-   ```
-
-## Available Commands
-
-- `help [command]` - Show help for commands
-- `status` - Show emulator status
-- `reset` - Reset the emulator
-- `pause` - Pause emulation
-- `resume` - Resume emulation
-- `step [count]` - Execute a single instruction (or N instructions)
-- `break [address]` - Set/clear breakpoint at address
-- `memory <address> [count]` - Dump memory at address
-- `registers` - Show CPU registers
-- `exit` or `quit` - Disconnect from the CLI
-
-## Example Session
-
-```
-$ telnet localhost 8765
-Trying 127.0.0.1...
-Connected to localhost.
-Escape character is '^]'.
-Unreal Emulator CLI - Type 'help' for available commands
-> status
-Emulator status: Running
-> break 0x1000
-Breakpoint set at 0x1000
-> step
-Executed 1 instruction
-> memory 0x1000 16
-Memory dump at 0x1000 (16 bytes):
-00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F
-> quit
-Goodbye!
-Connection closed by foreign host.
-```
-
-## Extending
-
-To add a new command:
-
-1. Add a new handler method to the `AutomationCLI` class
-2. Register the command in the `registerCommands()` method
-3. Update the help text in the `handleHelp()` method if needed
-
-## Dependencies
-
-- CLI11 (included in the `lib/cli11` directory)
-- C++17 or later
-- POSIX sockets (for the TCP server)
+Enabled by default with `ENABLE_AUTOMATION=ON`. Disable with `ENABLE_CLI_AUTOMATION=OFF`.

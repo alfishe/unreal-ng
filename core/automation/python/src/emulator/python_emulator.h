@@ -386,7 +386,32 @@ namespace PythonBindings
                 self.RunNCPUCycles(count, skipBreakpoints);
             }, "Execute N CPU instructions", py::arg("count"), py::arg("skip_breakpoints") = false)
             .def("stepover", &Emulator::StepOver, "Step over call instructions")
-            
+
+            // Frame stepping
+            .def("run_frame", [](Emulator& self, bool skipBreakpoints) {
+                self.RunFrame(skipBreakpoints);
+            }, "Execute one frame", py::arg("skip_breakpoints") = true)
+            .def("run_frames", [](Emulator& self, unsigned count, bool skipBreakpoints) {
+                self.RunNFrames(count, skipBreakpoints);
+            }, "Execute N frames", py::arg("count"), py::arg("skip_breakpoints") = true)
+
+            // T-state and scanline stepping
+            .def("run_tstates", [](Emulator& self, unsigned count, bool skipBreakpoints) {
+                self.RunTStates(count, skipBreakpoints);
+            }, "Execute N T-states", py::arg("count"), py::arg("skip_breakpoints") = true)
+            .def("run_to_scanline", [](Emulator& self, unsigned scanline, bool skipBreakpoints) {
+                self.RunUntilScanline(scanline, skipBreakpoints);
+            }, "Run until specific scanline", py::arg("scanline"), py::arg("skip_breakpoints") = true)
+            .def("run_scanlines", [](Emulator& self, unsigned count, bool skipBreakpoints) {
+                self.RunNScanlines(count, skipBreakpoints);
+            }, "Run N scanlines", py::arg("count"), py::arg("skip_breakpoints") = true)
+            .def("run_to_pixel", [](Emulator& self, bool skipBreakpoints) {
+                self.RunUntilNextScreenPixel(skipBreakpoints);
+            }, "Run until next screen pixel", py::arg("skip_breakpoints") = true)
+            .def("run_to_interrupt", [](Emulator& self, bool skipBreakpoints) {
+                self.RunUntilInterrupt(skipBreakpoints);
+            }, "Run until next interrupt", py::arg("skip_breakpoints") = true)
+
             // Tape operations
             .def("tape_load", &Emulator::LoadTape, "Load tape file", py::arg("path"))
             .def("tape_is_inserted", [](Emulator& self) -> bool {

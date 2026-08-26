@@ -2,6 +2,12 @@
 
 Last updated: 2026-08-26
 
+> **AI Agent Instructions:**
+> 1. Update task **Status** to DONE immediately when implementation is complete
+> 2. Add **Commit** ID immediately after each commit is made
+> 3. Update **Summary** counts when task statuses change
+> 4. Keep **Notes** concise but informative
+
 ## Phase 0: Foundation
 
 | ID | Task | Status | Commit | Notes |
@@ -14,18 +20,19 @@ Last updated: 2026-08-26
 | 0.2.1 | Expose LabelManager to automation | TODO | | |
 | 0.2.2 | `symbols load` command | POSTPONED | | sjasmplus .sld primary |
 | 0.2.3 | Symbolic disassembly output | TODO | | |
-| 0.2.4 | Symbolic breakpoints `bp label` | TODO | | |
+| 0.2.4 | Symbolic breakpoints `bp label` | DESIGN | | Not clear yet how to handle re-positioning breakpoint when label address changes|
 | 0.3.1 | Add instance ID to NC_EXECUTION_BREAKPOINT | TODO | | |
 | 0.3.2 | Add instance ID to NC_EMULATOR_STATE_CHANGE | TODO | | |
 | 0.3.3 | WebSocket push for events | DESIGN | | |
 | 0.3.4 | `subscribe` command | DESIGN | | |
 | 0.3.5 | Lua `on_breakpoint(callback)` | DESIGN | | Needs callback protection strategy |
 | 0.3.6 | Python `on_breakpoint(callback)` | DESIGN | | Needs callback protection strategy |
-| 0.4.1 | Python: add `run_frame` | TODO | | |
-| 0.4.2 | Python: add `run_frames` | TODO | | |
-| 0.4.3 | Python: add `run_tstates` | TODO | | |
-| 0.4.4 | Python: add `run_to_scanline` | TODO | | |
-| 0.4.5 | Python: add `run_to_pixel` | TODO | | |
+| 0.4.1 | Python: add `run_frame` | DONE | | Full parity with CLI/WebAPI/Lua |
+| 0.4.2 | Python: add `run_frames` | DONE | | |
+| 0.4.3 | Python: add `run_tstates` | DONE | | |
+| 0.4.4 | Python: add `run_to_scanline` | DONE | | Also added `run_scanlines`, `run_to_interrupt` |
+| 0.4.5 | Python: add `run_to_pixel` | DONE | | |
+| 0.5.1 | Update automation.md with command parity | DONE | | Fixed CLI README port, added execution control docs |
 
 ## Phase 1A: GDB RSP Server
 
@@ -124,9 +131,9 @@ Last updated: 2026-08-26
 
 | Phase | Total | Done | WIP | TODO |
 |-------|-------|------|-----|------|
-| Phase 0 | 19 | 5 | 0 | 14 |
+| Phase 0 | 20 | 11 | 0 | 9 |
 | Phase 1 | 14 | 0 | 0 | 14 |
 | Phase 2 | 9 | 0 | 0 | 9 |
 | Phase 3 | 6 | 0 | 0 | 6 |
 | Phase 4 | 11 | 0 | 0 | 11 |
-| **Total** | **59** | **5** | **0** | **54** |
+| **Total** | **60** | **11** | **0** | **49** |

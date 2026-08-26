@@ -76,11 +76,22 @@ reset                   # Hardware reset
 step / stepin           # Execute one instruction
 stepover                # Step over CALL/RST
 steps <N>               # Execute N instructions
+run_frame               # Run one video frame
+run_frames <N>          # Run N video frames
+run_tstates <N>         # Run N T-states (1 = ULA step / 2 pixels)
+run_to_scanline <N>     # Run until scanline N boundary
+run_scanlines <N>       # Run N scanlines
+run_to_pixel            # Run to next screen pixel
+run_to_interrupt        # Run until next interrupt
 ```
 
 #### State Inspection
 ```
-registers               # Show Z80 registers
+registers               # Show all Z80 registers
+reg <name>              # Get single register by name
+reg get <name>          # Get single register (alias)
+reg <name> <value>      # Set register value
+reg set <name> <value>  # Set register (alias)
 memory <addr> [len]     # Hex dump memory
 state memory            # Bank mapping info
 state screen            # Video state
@@ -155,13 +166,23 @@ Interactive documentation available at `/api/swagger`
 | POST | `/api/v1/emulator/{id}/pause` | Pause |
 | POST | `/api/v1/emulator/{id}/resume` | Resume |
 | POST | `/api/v1/emulator/{id}/reset` | Reset |
+| POST | `/api/v1/emulator/{id}/step` | Step one instruction |
+| POST | `/api/v1/emulator/{id}/run_frame` | Run one frame |
+| POST | `/api/v1/emulator/{id}/run_frames` | Run N frames |
+| POST | `/api/v1/emulator/{id}/run_tstates` | Run N T-states |
+| POST | `/api/v1/emulator/{id}/run_to_scanline` | Run to scanline N |
+| POST | `/api/v1/emulator/{id}/run_scanlines` | Run N scanlines |
+| POST | `/api/v1/emulator/{id}/run_to_pixel` | Run to next pixel |
+| POST | `/api/v1/emulator/{id}/run_to_interrupt` | Run to interrupt |
 
 #### State & Memory
 | Method | Endpoint | Description |
 |:-------|:---------|:------------|
-| GET | `/emulators/{id}/registers` | CPU registers |
-| GET | `/emulators/{id}/memory?addr=&len=` | Memory dump |
-| PUT | `/emulators/{id}/memory` | Poke memory |
+| GET | `/api/v1/emulator/{id}/registers` | All CPU registers |
+| GET | `/api/v1/emulator/{id}/registers/{name}` | Single register |
+| PUT | `/api/v1/emulator/{id}/registers/{name}` | Set register |
+| GET | `/api/v1/emulator/{id}/memory?addr=&len=` | Memory dump |
+| PUT | `/api/v1/emulator/{id}/memory` | Poke memory |
 
 #### Files & Snapshots
 | Method | Endpoint | Description |
