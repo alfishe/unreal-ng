@@ -89,7 +89,9 @@ static std::string loadHtmlFile(const std::string& filename)
 {
     // Try multiple possible locations for the HTML resources
     std::vector<std::string> searchPaths = {
-        // Development/Build paths
+        // Development/Build paths (cmake-build-*/bin/ -> source)
+        "../../core/automation/webapi/resources/html/",  // From bin/ to source (typical cmake build)
+        "../../../core/automation/webapi/resources/html/", // From nested bin/
         "./resources/html/",                         // In current directory (from bin when running)
         "../resources/html/",                        // One level up (from bin to build root)
         "./core/automation/webapi/resources/html/",  // Development/build from project root
