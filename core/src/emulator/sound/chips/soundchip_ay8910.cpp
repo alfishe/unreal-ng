@@ -944,3 +944,143 @@ std::string SoundChip_AY8910::dumpAY8910VolumeState(uint8_t channel)
 }
 
 /// endregion <Debug methods>
+
+/// region <TTDSerializable (P1.5 — parent TDD §6.4)>
+//
+// Byte-by-byte packed layout for one AY chip (57 bytes, alignment-safe via
+// per-field memcpy — no struct, no padding assumptions):
+//
+//   Offset  Size  Field
+//   ------  ----  ----------------------------------------
+//   0       16    _registers[0..15]
+//   16       1    _currentRegister
+//   17       2    tone[0]._period
+//   19       2    tone[0]._counter
+//   21       1    tone[0]._volume
+//   22       1    tone[0] flags (b0=envelopeEnabled b1=toneEnabled b2=noiseEnabled)
+//   23       1    tone[0]._out
+//   24       7    tone[1] (same layout as tone[0])
+//   31       7    tone[2] (same layout as tone[0])
+//   38       1    noise._period
+//   39       2    noise._counter
+//   41       1    noise._out
+//   42       4    noise._registerLSFR
+//   46       1    env._shape
+//   47       4    env._period
+//   51       4    env._counter
+//   55       1    env._segment
+//   56       1    env._out
+//   ------  ---
+//   57 bytes total
+
+namespace
+{
+/// Cursor-based little-endian-agnostic writers/readers. memcpy avoids any
+/// alignment concern and any strict-aliasing issue.
+inline void put_u8 (uint8_t*& cur, uint8_t v)              { *cur++ = v; }
+inline void put_u16(uint8_t*& cur, uint16_t v)            { std::memcpy(cur, &v, 2); cur += 2; }
+inline void put_u32(uint8_t*& cur, uint32_t v)            { std::memcpy(cur, &v, 4); cur += 4; }
+inline void put_i8 (uint8_t*& cur, int8_t v)              { *cur++ = static_cast<uint8_t>(v); }
+
+inline uint8_t  get_u8 (const uint8_t*& cur)              { return *cur++; }
+inline uint16_t get_u16(const uint8_t*& cur)              { uint16_t v; std::memcpy(&v, cur, 2); cur += 2; return v; }
+inline uint32_t get_u32(const uint8_t*& cur)              { uint32_t v; std::memcpy(&v, cur, 4); cur += 4; return v; }
+inline int8_t   get_i8 (const uint8_t*& cur)              { return static_cast<int8_t>(*cur++); }
+} // anonymous namespace
+
+// Per-tone-generator packed size (period+counter+volume+flags+out = 7 bytes).
+static constexpr size_t kAYToneStateSize = 7;
+
+// The per-chip serialized size is fixed and must match the put/get layout below.
+static constexpr size_t kAYChipStateSize =
+    16 + 1 +                // registers + currentRegister
+    3 * kAYToneStateSize +  // 3 tone generators
+    1 + 2 + 1 + 4 +         // noise generator
+    1 + 4 + 4 + 1 + 1;      // envelope generator
+static_assert(kAYChipStateSize == 57, "AY chip state size drift");
+
+size_t SoundChip_AY8910::TTDStateSize() const
+{
+    return kAYChipStateSize;
+}
+
+void SoundChip_AY8910::TTDSaveState(uint8_t* dst) const
+{
+    uint8_t* cur = dst;
+
+    // --- CPU-visible state ---
+    std::memcpy(cur, _registers, 16); cur += 16;
+    put_u8(cur, _currentRegister);
+
+    // --- Tone generators (audio phase) ---
+    // Inlined (not a free helper) so the friend access to protected generator
+    // members applies — TTDSaveState is a member of SoundChip_AY8910.
+    for (size_t i = 0; i < 3; ++i)
+    {
+        const ToneGenerator& t = _toneGenerators[i];
+        put_u16(cur, t._period);
+        put_u16(cur, t._counter);
+        put_u8 (cur, t._volume);
+        uint8_t flags = 0;
+        flags |= t._envelopeEnabled ? 0x01 : 0;
+        flags |= t._toneEnabled     ? 0x02 : 0;
+        flags |= t._noiseEnabled    ? 0x04 : 0;
+        put_u8 (cur, flags);
+        put_u8 (cur, t._out ? 1 : 0);
+    }
+
+    // --- Noise generator ---
+    put_u8 (cur, _noiseGenerator._period);
+    put_u16(cur, _noiseGenerator._counter);
+    put_u8 (cur, _noiseGenerator._out ? 1 : 0);
+    put_u32(cur, _noiseGenerator._registerLSFR);
+
+    // --- Envelope generator ---
+    put_u8 (cur, _envelopeGenerator._shape);
+    put_u32(cur, _envelopeGenerator._period);
+    put_u32(cur, _envelopeGenerator._counter);
+    put_u8 (cur, _envelopeGenerator._segment);
+    put_i8 (cur, _envelopeGenerator._out);
+}
+
+void SoundChip_AY8910::TTDLoadState(const uint8_t* src)
+{
+    const uint8_t* cur = src;
+
+    // --- CPU-visible state ---
+    std::memcpy(_registers, cur, 16); cur += 16;
+    _currentRegister = get_u8(cur);
+
+    // --- Tone generators (audio phase) ---
+    for (size_t i = 0; i < 3; ++i)
+    {
+        ToneGenerator& t = _toneGenerators[i];
+        t._period          = get_u16(cur);
+        t._counter         = get_u16(cur);
+        t._volume          = get_u8 (cur);
+        uint8_t flags      = get_u8 (cur);
+        t._envelopeEnabled = (flags & 0x01) != 0;
+        t._toneEnabled     = (flags & 0x02) != 0;
+        t._noiseEnabled    = (flags & 0x04) != 0;
+        t._out             = (get_u8(cur) != 0);
+    }
+
+    // --- Noise generator ---
+    _noiseGenerator._period        = get_u8 (cur);
+    _noiseGenerator._counter       = get_u16(cur);
+    _noiseGenerator._out           = (get_u8(cur) != 0);
+    _noiseGenerator._registerLSFR  = get_u32(cur);
+
+    // --- Envelope generator ---
+    _envelopeGenerator._shape      = get_u8 (cur);
+    _envelopeGenerator._period     = get_u32(cur);
+    _envelopeGenerator._counter    = get_u32(cur);
+    _envelopeGenerator._segment    = get_u8 (cur);
+    _envelopeGenerator._out        = get_i8 (cur);
+
+    // Note: _tick, filters, panning, mixer buffers, stereoMode, chipModel are
+    // intentionally not restored — they are host-side / user-config / transient
+    // and are re-derived by handleFrameStart on the next rendered frame.
+}
+
+/// endregion </TTDSerializable>

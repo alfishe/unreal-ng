@@ -934,6 +934,13 @@ TEST_F(TRDOSIntegration_test, DISABLED_RealExecution_MinimalProof_JumpToTRDOSEnt
         _memory->SetROMDOS(true);
         std::cout << "[Minimal Proof] TR-DOS ROM activated\n";
     }
+
+    // CRITICAL: When PC enters $3D00, Z80Step sets CF_TRDOS and calls
+    // UpdateZ80Banks(), which consults p7FFD bit 4 to choose the ROM:
+    // set = TR-DOS ROM, clear = System ROM. Without this bit the bank update
+    // remaps $3D00 to System ROM and the page-specific analyzer breakpoint
+    // (registered for the DOS ROM page) can never match.
+    _emulator->GetContext()->emulatorState.p7FFD |= 0x10;
     
     // Write minimal test code that jumps to TR-DOS entry
     // JP $3D00 at address $8000
@@ -949,7 +956,11 @@ TEST_F(TRDOSIntegration_test, DISABLED_RealExecution_MinimalProof_JumpToTRDOSEnt
     {
         _z80->pc = 0x8000;
     }
-    
+
+    // CRITICAL: Z80::Z80Step only dispatches breakpoints (including analyzer-owned ones)
+    // when cpu.isDebugMode is set. Enable debug mode so the dispatch chain is active.
+    _emulator->DebugOn();
+
     std::cout << "[Minimal Proof] Running Z80 from $8000 (JP $3D00)...\n";
     std::cout << "[Minimal Proof] Breakpoints count: " << _breakpointManager->GetBreakpointsCount() << "\n";
     std::cout << "[Minimal Proof] TR-DOS ROM active: " << (_memory->isCurrentROMDOS() ? "YES" : "NO") << "\n";

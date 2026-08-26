@@ -1,4 +1,7 @@
 #include "audiosettingswidget.h"
+
+#include <QCursor>
+#include <QToolTip>
 #include "base/featuremanager.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/soundmanager.h"
@@ -51,6 +54,63 @@ void AudioSettingsWidget::createUI()
         "border: 1px solid #ffeeba; border-radius: 4px; font-weight: bold;");
     _statusLabel->setVisible(false);
     outerLayout->addWidget(_statusLabel);
+
+    // Device readout: a compact line that rarely changes, plus an (i) button
+    // opening the detailed latency/A-V breakdown on demand (the fast-moving
+    // numbers live in the popup, not in a constantly repainting label)
+    auto* deviceInfoRow = new QHBoxLayout();
+    _deviceInfoLabel = new QLabel("Audio device: —", this);
+    _deviceInfoLabel->setStyleSheet("color: gray; font-style: italic; padding: 2px;");
+    // Ignored horizontal policy: take exactly the stretch-allocated width
+    // (all of the row except the (i) button) - never force the window wider,
+    // never collapse below it
+    _deviceInfoLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    deviceInfoRow->addWidget(_deviceInfoLabel, 1);
+
+    _deviceInfoButton = new QToolButton(this);
+    _deviceInfoButton->setText("ⓘ");
+    _deviceInfoButton->setAutoRaise(true);
+    _deviceInfoButton->setToolTip("Show audio pipeline latency breakdown and realtime A/V offset");
+
+    // Live-refreshing detail popup: the fast-moving values (ring occupancy,
+    // A/V offset) belong here, refreshed while open; the static label above
+    // keeps only the device identity and rates
+    _detailPopup = new QFrame(this, Qt::Popup);
+    _detailPopup->setFrameShape(QFrame::StyledPanel);
+    auto* popupLayout = new QVBoxLayout(_detailPopup);
+    _detailLabel = new QLabel(_detailPopup);
+    _detailLabel->setTextFormat(Qt::PlainText);
+    popupLayout->addWidget(_detailLabel);
+
+    _detailTimer = new QTimer(this);
+    _detailTimer->setInterval(500);  // >= 1 Hz refresh while the popup is open
+    connect(_detailTimer, &QTimer::timeout, this, [this]() {
+        if (_detailPopup->isVisible())
+        {
+            _detailLabel->setText(buildDeviceDetailText());
+            _detailPopup->adjustSize();
+        }
+        else
+        {
+            _detailTimer->stop();
+        }
+    });
+
+    connect(_deviceInfoButton, &QToolButton::clicked, this, [this]() {
+        if (_detailPopup->isVisible())
+        {
+            _detailPopup->hide();
+            _detailTimer->stop();
+            return;
+        }
+        _detailLabel->setText(buildDeviceDetailText());
+        _detailPopup->adjustSize();
+        _detailPopup->move(_deviceInfoButton->mapToGlobal(QPoint(0, _deviceInfoButton->height())));
+        _detailPopup->show();
+        _detailTimer->start();
+    });
+    deviceInfoRow->addWidget(_deviceInfoButton, 0);
+    outerLayout->addLayout(deviceInfoRow);
 
     _controlsContainer = new QWidget(this);
     outerLayout->addWidget(_controlsContainer);
@@ -381,6 +441,7 @@ void AudioSettingsWidget::refreshFromContext()
 
     _controlsContainer->setEnabled(hasContext);
     _statusLabel->setVisible(!hasContext);
+    updateDeviceInfo();
 
     // Rebuild sources section from registry
     rebuildSourcesSection();
@@ -633,10 +694,114 @@ void AudioSettingsWidget::onCovoxChannelMuteChanged(int state)
 
 // ============ Meter updates ============
 
+void AudioSettingsWidget::updateDeviceInfo()
+{
+    if (!_deviceInfoLabel)
+        return;
+
+    QString text;
+    if (!_context || !_context->pSoundManager)
+    {
+        text = "Audio device: — (no active emulator)";
+    }
+    else
+    {
+        const size_t coreRate = _context->pSoundManager->getCoreRate();
+        if (const AudioDeviceDescriptor* dev = _context->pAudioDeviceDescriptor.load(std::memory_order_acquire))
+        {
+            text = QString("Device: %1 @ %2 Hz · Core: %3 Hz")
+                       .arg(QString::fromUtf8(dev->deviceName))
+                       .arg(dev->sampleRate.load(std::memory_order_relaxed))
+                       .arg(coreRate);
+        }
+        else
+        {
+            text = QString("Device: none · Core: %1 Hz").arg(coreRate);
+        }
+    }
+
+    // Re-elide against the CURRENT width every tick: the stretch layout
+    // hands the label all row width except the (i) button, and the first
+    // update can run before layout when the width is still tiny. Repaint
+    // only when the elided result actually differs.
+    _deviceInfoLabel->setToolTip(text);
+    const int avail = _deviceInfoLabel->width() > 50 ? _deviceInfoLabel->width() - 4 : 600;
+    const QString elided = _deviceInfoLabel->fontMetrics().elidedText(text, Qt::ElideRight, avail);
+    if (elided != _deviceInfoLabel->text())
+        _deviceInfoLabel->setText(elided);
+}
+
+/// Full latency/A-V breakdown, built on demand for the (i) popup. Each
+/// component is listed separately so the SOURCE of a desync is identifiable:
+/// ring+HW+device-output = audio presentation delay; video present latency
+/// is stamped by the GUI frame source; their difference is the A/V offset.
+QString AudioSettingsWidget::buildDeviceDetailText() const
+{
+    if (!_context || !_context->pSoundManager)
+        return "No active emulator";
+
+    const AudioDeviceDescriptor* dev = _context->pAudioDeviceDescriptor.load(std::memory_order_acquire);
+    if (!dev)
+        return QString("No audio device attached · Core: %1 Hz")
+            .arg(_context->pSoundManager->getCoreRate());
+
+    const uint32_t rate = dev->sampleRate.load(std::memory_order_relaxed);
+    const double frameToMs = rate ? 1000.0 / rate : 0.0;
+    const double ringInstantMs = dev->occupancyMs();
+
+    // Ring occupancy is a SAWTOOTH (a whole emulated frame lands at once,
+    // then drains continuously): the instantaneous value swings +-1/2 frame
+    // (~10 ms) around the setpoint depending on sampling phase. The
+    // DRC-filtered EMA is the stable figure - per-sample latency is
+    // constant; use it for the A/V offset so the readout doesn't wander.
+    const double ringFilteredMs = _context->pSoundManager->getDrcFilteredOccupancyMs();
+    const double ringMs = (ringFilteredMs > 0.0) ? ringFilteredMs : ringInstantMs;
+
+    const double hwMs = dev->deviceBufferFrames.load(std::memory_order_relaxed) * frameToMs;
+    const double devOutMs = dev->deviceOutputLatencyFrames.load(std::memory_order_relaxed) * frameToMs;
+    const double audioMs = ringMs + hwMs + devOutMs;
+    const double videoMs = _context->pVideoPresentLatencyUs.load(std::memory_order_relaxed) / 1000.0;
+
+    QString text;
+    text += QString("Device: %1 @ %2 Hz, %3 ch\n")
+                .arg(QString::fromUtf8(dev->deviceName))
+                .arg(rate)
+                .arg(dev->channels.load(std::memory_order_relaxed));
+    text += QString("Core rate: %1 Hz\n").arg(_context->pSoundManager->getCoreRate());
+    text += QString("Audio delay: ring %1 ms (%2 now) + HW %3 ms + device output %4 ms = %5 ms\n")
+                .arg(ringMs, 0, 'f', 1)
+                .arg(ringInstantMs, 0, 'f', 1)
+                .arg(hwMs, 0, 'f', 1)
+                .arg(devOutMs, 0, 'f', 1)
+                .arg(audioMs, 0, 'f', 1);
+
+    if (videoMs > 0.0 && videoMs < 200.0)
+    {
+        const double avMs = audioMs - videoMs;
+        text += QString("Video present: %1 ms\n").arg(videoMs, 0, 'f', 1);
+        text += QString("A/V offset: %1%2 ms (audio %3)\n")
+                    .arg(avMs >= 0 ? "+" : "")
+                    .arg(avMs, 0, 'f', 1)
+                    .arg(avMs >= 0 ? "late" : "early");
+    }
+    else
+    {
+        text += "A/V offset: — (video path idle)\n";
+    }
+
+    text += QString("Ring errors: %1 enq / %2 deq · Reroutes: %3")
+                .arg(dev->enqueueErrors.load(std::memory_order_relaxed))
+                .arg(dev->dequeueErrors.load(std::memory_order_relaxed))
+                .arg(dev->reinitCount.load(std::memory_order_relaxed));
+    return text;
+}
+
 void AudioSettingsWidget::onUpdateMeters()
 {
     if (!_context || !_context->pSoundManager || !isVisible())
         return;
+
+    updateDeviceInfo();
 
     const auto& devices = _context->pSoundManager->devices();
 

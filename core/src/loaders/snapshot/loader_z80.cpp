@@ -146,7 +146,7 @@ bool LoaderZ80::captureStateToStaging()
 bool LoaderZ80::saveV3FromStaging()
 {
     // Open file for writing
-    FILE* outFile = fopen(_path.c_str(), "wb");
+    FILE* outFile = FileHelper::OpenFile(_path, "wb");
     if (outFile == nullptr)
     {
         MLOGERROR("Failed to open '%s' for writing", _path.c_str());
@@ -478,9 +478,22 @@ void LoaderZ80::commitFromStage()
                 break;
         }
 
-        // Pre-fill whole border with color
+        // Pre-fill whole border with color (visual only, no timing side effects)
+        // Don't call Default_Port_FE_Out here - it triggers UpdateScreen() with stale t-state
+        // Just set the visual state directly like SNA loader does
         screen.FillBorderWithColor(_borderColor);
-        ports.Default_Port_FE_Out(0x00FE, _borderColor, _z80Registers.pc);
+
+        // Keep the machine state in step with the picture. FillBorderWithColor
+        // only paints; pFE is the port latch every consumer reads back, and
+        // border_attr is what a TTD checkpoint captures and the machine-state
+        // hash folds in. Leaving them at their reset value made a checkpoint
+        // record a border the machine never had - a snapshot with a black
+        // border restored as white on seek.
+        EmulatorState& borderState = _context->emulatorState;
+        borderState.pFE = static_cast<uint8_t>((borderState.pFE & 0b1111'1000) |
+                                               (_borderColor & 0b0000'0111));
+        borderState.border_attr = static_cast<uint8_t>(_borderColor & 0b0000'0111);
+
 
         /// endregion </Apply port configuration>
 
@@ -513,8 +526,25 @@ void LoaderZ80::commitFromStage()
         /// endregion </Transfer memory content>
 
         /// region <Transfer Z80 registers>
-        Z80Registers* actualRegisters = static_cast<Z80Registers*>(_context->pCore->GetZ80());
+        Z80* z80 = _context->pCore->GetZ80();
+
+        // Copy registers but preserve timing state (t) from Reset
+        // memcpy would overwrite t to 0, but Reset set it to 3
+        // SNA loader uses individual assignments which preserve t
+        uint32_t preservedT = z80->tt;
+        Z80Registers* actualRegisters = static_cast<Z80Registers*>(z80);
         memcpy(actualRegisters, &_z80Registers, sizeof(Z80Registers));
+        z80->tt = preservedT;  // Restore timing state
+
+        // Detect if CPU was halted when snapshot was taken
+        // If PC points to HALT instruction (0x76), set halted state
+        // This ensures proper INT timing on first frame after load
+        if (memory.DirectReadFromZ80Memory(z80->pc) == 0x76)
+        {
+            z80->halted = 1;
+            z80->halt_cycle = 0;
+            z80->haltpos = 0;
+        }
         /// endregion </Transfer Z80 registers>
 
         // Trigger screen redraw to show snapshot screen immediately

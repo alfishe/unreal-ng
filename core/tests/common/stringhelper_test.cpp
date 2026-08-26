@@ -142,6 +142,66 @@ TEST_F(StringHelper_Test, WideStringToString)
     }
 }
 
+/// @brief StringToWideString / WideStringToString are a real UTF-8 <-> UTF-16/32 codec (used for every
+/// path that crosses to the Win32 wide API). Byte-exact expectations, all platforms: wchar_t is UTF-16 on
+/// Windows (surrogate pairs above U+FFFF) and UTF-32 elsewhere.
+TEST_F(StringHelper_Test, Utf8WideRoundTrip)
+{
+    struct TestCase
+    {
+        std::string utf8;
+        std::u32string codePoints;
+        std::string description;
+    };
+
+    std::vector<TestCase> cases = {
+        {"", U"", "empty"},
+        {"Test", U"Test", "ASCII"},
+        {"C:\\Temp\\file.sna", U"C:\\Temp\\file.sna", "ASCII path"},
+        {"\xC3\xA9", U"\u00E9", "2-byte: e-acute"},
+        {"\xD0\x98\xD0\xB3\xD1\x80\xD1\x8B", U"\u0418\u0433\u0440\u044B", "2-byte: Cyrillic"},
+        {"\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E", U"\u65E5\u672C\u8A9E", "3-byte: CJK"},
+        {"\xE2\x82\xAC", U"\u20AC", "3-byte: euro sign"},
+        {"\xF0\x9F\x99\x82", U"\U0001F642", "4-byte: emoji (surrogate pair on Windows)"},
+        {"//172.16.17.10/Macintosh HD/\xD0\xA1\xD0\xBD\xD0\xB8\xD0\xBC\xD0\xBA\xD0\xB8/\xE6\x97\xA5\xE6\x9C\xAC/\xF0\x9F\x99\x82.sna",
+         U"//172.16.17.10/Macintosh HD/\u0421\u043D\u0438\u043C\u043A\u0438/\u65E5\u672C/\U0001F642.sna", "mixed path"},
+    };
+
+    for (const auto& test : cases)
+    {
+        // Build the expected wide string from code points for this platform's wchar_t width
+        std::wstring expectedWide;
+        for (char32_t cp : test.codePoints)
+        {
+            if (sizeof(wchar_t) == 2 && cp >= 0x10000)
+            {
+                char32_t v = cp - 0x10000;
+                expectedWide.push_back(static_cast<wchar_t>(0xD800 | (v >> 10)));
+                expectedWide.push_back(static_cast<wchar_t>(0xDC00 | (v & 0x3FF)));
+            }
+            else
+            {
+                expectedWide.push_back(static_cast<wchar_t>(cp));
+            }
+        }
+
+        std::wstring wide = StringHelper::StringToWideString(test.utf8);
+        EXPECT_EQ(wide, expectedWide) << "UTF-8 -> wide failed for: " << test.description;
+
+        std::string back = StringHelper::WideStringToString(wide);
+        EXPECT_EQ(back, test.utf8) << "wide -> UTF-8 round trip failed for: " << test.description;
+    }
+
+    // Malformed input must not throw or shift the remaining bytes: each bad byte becomes U+FFFD
+    const std::wstring fffd(1, static_cast<wchar_t>(0xFFFD));
+    EXPECT_EQ(StringHelper::StringToWideString("\xFF"), fffd) << "invalid lead byte";
+    EXPECT_EQ(StringHelper::StringToWideString("\x80"), fffd) << "stray continuation byte";
+    EXPECT_EQ(StringHelper::StringToWideString("\xC0\xAF"), fffd) << "overlong encoding (one sequence -> one U+FFFD)";
+    EXPECT_EQ(StringHelper::StringToWideString("\xE6\x97"), fffd) << "truncated sequence";
+    EXPECT_EQ(StringHelper::StringToWideString("a\xFF" "b"), L"a" + fffd + L"b") << "bad byte between good ones";
+    EXPECT_EQ(StringHelper::WideStringToString(std::wstring(1, static_cast<wchar_t>(0xD800))), "\xEF\xBF\xBD") << "lone surrogate";
+}
+
 TEST_F(StringHelper_Test, ReplaceAll)
 {
     // Test case 1: Simple replacement

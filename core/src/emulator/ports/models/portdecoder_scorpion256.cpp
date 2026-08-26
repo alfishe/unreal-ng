@@ -33,6 +33,7 @@ void PortDecoder_Scorpion256::reset()
     state.pBFFD = 0x00;     // Reset AY register select port
     state.pFFFD = 0x00;     // Reset AY data port
     state.pFE = 0xFF;       // Reset ULA port (border white, no sound)
+    state.border_attr = 0x07;  // Sync border_attr with pFE bits 0-2 (white)
 
     // Set default 128K memory pages
     Memory& memory = *_context->pMemory;
@@ -61,12 +62,45 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
     /// endregion </Override submodule>
 
     uint8_t result = 0xFF;
+    _lastPortDecoded = false;
 
-    if (IsPort_FE(port))
+    // AY #FFFD: A15=1, A14=1, A1=0. The AY-3-8910 does not decode the other
+    // address bits, so mirrored ports (#FF05, #FF00, #C000...) select it on IN
+    // too. Resolve mirrors to the canonical port BEFORE the weak FE (A0-only)
+    // check - otherwise register readback via a mirror reaches the keyboard or
+    // returns 0xFF and TurboSound players cannot detect the second chip
+    // (same order as the OUT dispatch and the Pentagon decode table)
+    // Port trace decode attribution (if-chain decoder: no mask/match table)
+    PortDecodeDisposition disp;
+    disp.decodeRuleIndex = PortTraceRule::kNoTable;
+
+    if ((port & 0xC002) == 0xC000)
+    {
+        result = PeripheralPortIn(0xFFFD);
+        disp.decodedPort = 0xFFFD;
+    }
+    // AY #BFFD: A15=1, A14=0, A1=0
+    else if ((port & 0xC002) == 0x8000)
+    {
+        result = PeripheralPortIn(0xBFFD);
+        disp.decodedPort = 0xBFFD;
+    }
+    else if (IsPort_FE(port))
     {
         // Call default implementation
         result = Default_Port_FE_In(port, pc);
+        _lastPortDecoded = true;
+        disp.decodedPort = 0x00FE;
+        disp.wasHandledInline = true;
     }
+    else
+    {
+        result = PeripheralPortIn(port);
+        // Identity decode: mark decoded only when a device actually responded
+        if (_lastPortDecoded)
+            disp.decodedPort = port;
+    }
+    disp.wasDecoded = _lastPortDecoded;
 
     /// region <Debug logging>
 
@@ -80,7 +114,7 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
     /// endregion </Debug logging>
 
     // Universal handler for breakpoints, tracking, analyzers
-    OnPortInComplete(port, result, pc);
+    OnPortInComplete(port, result, pc, disp);
 
     return result;
 }
@@ -95,31 +129,63 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
     //    port: #7FFD
     //    port: #1FFD
 
+    // Port trace decode attribution (if-chain decoder: no mask/match table)
+    PortDecodeDisposition disp;
+    disp.decodeRuleIndex = PortTraceRule::kNoTable;
+
     bool isPort_7FFD = IsPort_7FFD(port);
     if (isPort_7FFD)
     {
         Port_7FFD(value, pc);
+        disp.decodedPort = 0x7FFD;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
     }
 
     bool isPort_1FFD = IsPort_1FFD(port);
     if (isPort_1FFD)
     {
         Port_1FFD(value, pc);
+        disp.decodedPort = 0x1FFD;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+    }
+
+    // AY #FFFD: A15=1, A14=1, A1=0 (register select / TurboSound chip select)
+    // Mask: 0b1100'0000'0000'0010, Match: 0b1100'0000'0000'0000
+    if ((port & 0xC002) == 0xC000)
+    {
+        _state->pFFFD = value;
+        PeripheralPortOut(0xFFFD, value);
+        disp.decodedPort = 0xFFFD;
+        disp.wasDecoded = true;
+    }
+    // AY #BFFD: A15=1, A14=0, A1=0 (data write)
+    // Mask: 0b1100'0000'0000'0010, Match: 0b1000'0000'0000'0000
+    else if ((port & 0xC002) == 0x8000)
+    {
+        _state->pBFFD = value;
+        PeripheralPortOut(0xBFFD, value);
+        disp.decodedPort = 0xBFFD;
+        disp.wasDecoded = true;
     }
 
     /// region <Debug logging>
 
     // Check if port was not explicitly muted
-    if (!key_exists(_loggingMutePorts, port))
+    if (_logger && _logger->GetLevel() <= LoggerLevel::LogInfo)
     {
-        // Determine RAM/ROM page where code executed from
-        std::string currentMemoryPage = GetPCAddressLocator(pc);
-        MLOGINFO("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
+        if (!key_exists(_loggingMutePorts, port))
+        {
+            // Determine RAM/ROM page where code executed from
+            std::string currentMemoryPage = GetPCAddressLocator(pc);
+            MLOGINFO("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
+        }
     }
     /// endregion </Debug logging>
 
     // Universal handler for breakpoints, tracking, analyzers
-    OnPortOutComplete(port, value, pc);
+    OnPortOutComplete(port, value, pc, disp);
 }
 
 void PortDecoder_Scorpion256::SetRAMPage(uint8_t page)

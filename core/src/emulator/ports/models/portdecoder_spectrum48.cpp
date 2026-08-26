@@ -28,6 +28,7 @@ void PortDecoder_Spectrum48::reset()
     // Explicitly reset port states to ensure consistent reset behavior
     EmulatorState& state = _context->emulatorState;
     state.pFE = 0xFF;       // Reset ULA port (border white, no sound)
+    state.border_attr = 0x07;  // Sync border_attr with pFE bits 0-2 (white)
 
     // Set default 48K memory pages
     Memory& memory = *_context->pMemory;
@@ -48,22 +49,56 @@ uint8_t PortDecoder_Spectrum48::DecodePortIn(uint16_t port, uint16_t pc)
     /// endregion </Override submodule>
 
     uint8_t result = 0xFF;
+    _lastPortDecoded = false;
 
-    if (IsPort_FE(port))
+    // Port trace decode attribution (if-chain decoder: no mask/match table)
+    PortDecodeDisposition disp;
+    disp.decodeRuleIndex = PortTraceRule::kNoTable;
+
+    // AY #FFFD: A15=1, A14=1, A1=0. The AY-3-8910 does not decode the other
+    // address bits, so mirrored ports (#FF05, #FF00, #C000...) select it on IN
+    // too. Resolve mirrors to the canonical port BEFORE the weak FE (A0-only)
+    // check - otherwise register readback via a mirror reaches the keyboard or
+    // returns 0xFF and TurboSound players cannot detect the second chip
+    // (same order as the OUT dispatch and the Pentagon decode table)
+    if ((port & 0xC002) == 0xC000)
+    {
+        result = PeripheralPortIn(0xFFFD);
+        disp.decodedPort = 0xFFFD;
+    }
+    // AY #BFFD: A15=1, A14=0, A1=0
+    else if ((port & 0xC002) == 0x8000)
+    {
+        result = PeripheralPortIn(0xBFFD);
+        disp.decodedPort = 0xBFFD;
+    }
+    else if (IsPort_FE(port))
     {
         // Call default implementation
         result = Default_Port_FE_In(port, pc);
+        _lastPortDecoded = true;
+        disp.decodedPort = 0x00FE;
+        disp.wasHandledInline = true;
+    }
+    else
+    {
+        result = PeripheralPortIn(port);
+        // Identity decode: mark decoded only when a device actually responded,
+        // otherwise the port stays unmapped (decodedPort == 0) in the trace
+        if (_lastPortDecoded)
+            disp.decodedPort = port;
+    }
+    disp.wasDecoded = _lastPortDecoded;
+
+    if (_logger && _logger->GetLevel() <= LoggerLevel::LogWarning)
+    {
+        // Determine RAM/ROM page where code executed from
+        std::string currentMemoryPage = GetPCAddressLocator(pc);
+        MLOGWARNING("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
     }
 
-#ifndef NDEBUG
-    // Determine RAM/ROM page where code executed from
-    std::string currentMemoryPage = GetPCAddressLocator(pc);
-
-    MLOGWARNING("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
-#endif
-
     // Universal handler for breakpoints, tracking, analyzers
-    OnPortInComplete(port, result, pc);
+    OnPortInComplete(port, result, pc, disp);
 
     return result;
 }
@@ -75,19 +110,49 @@ void PortDecoder_Spectrum48::DecodePortOut(uint16_t port, uint8_t value, uint16_
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
     /// endregion </Override submodule>
 
-    if (IsPort_FE(port))
+    // Port trace decode attribution (if-chain decoder: no mask/match table)
+    PortDecodeDisposition disp;
+    disp.decodeRuleIndex = PortTraceRule::kNoTable;
+
+    // AY mirrors must be resolved before the FE (A0-only) check: the AY decodes
+    // A15/A14/A1 only, so an even mirror like #C000 would otherwise be claimed
+    // by the keyboard/border handler and never reach the sound chip
+    // AY #FFFD: A15=1, A14=1, A1=0 (register select / TurboSound chip select)
+    // Mask: 0b1100'0000'0000'0010, Match: 0b1100'0000'0000'0000
+    // Stock 48K has no AY, but TurboSound interfaces use this decode
+    if ((port & 0xC002) == 0xC000)
+    {
+        PeripheralPortOut(0xFFFD, value);
+        disp.decodedPort = 0xFFFD;
+        disp.wasDecoded = true;
+    }
+    // AY #BFFD: A15=1, A14=0, A1=0 (data write)
+    // Mask: 0b1100'0000'0000'0010, Match: 0b1000'0000'0000'0000
+    else if ((port & 0xC002) == 0x8000)
+    {
+        PeripheralPortOut(0xBFFD, value);
+        disp.decodedPort = 0xBFFD;
+        disp.wasDecoded = true;
+    }
+    else if (IsPort_FE(port))
     {
         Port_FE(port, value, pc);
+        disp.decodedPort = 0x00FE;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
     }
     else
     {
-        // Determine RAM/ROM page where code executed from
-        std::string currentMemoryPage = GetPCAddressLocator(pc);
-        LOGWARNING("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
+        if (_logger && _logger->GetLevel() <= LoggerLevel::LogWarning)
+        {
+            // Determine RAM/ROM page where code executed from
+            std::string currentMemoryPage = GetPCAddressLocator(pc);
+            LOGWARNING("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
+        }
     }
 
     // Universal handler for breakpoints, tracking, analyzers
-    OnPortOutComplete(port, value, pc);
+    OnPortOutComplete(port, value, pc, disp);
 }
 
 void PortDecoder_Spectrum48::SetRAMPage(uint8_t page)

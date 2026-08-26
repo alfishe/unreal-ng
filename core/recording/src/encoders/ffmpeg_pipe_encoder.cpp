@@ -912,12 +912,32 @@ std::vector<std::string> FFmpegPipeEncoder::buildFFmpegArgs(const std::string& f
             args.push_back(std::to_string(config.audioBitrate) + "k");
         }
 
-        // Opus only supports 48/24/16/12/8 kHz — resample the 44.1 kHz
-        // emulator audio to 48 kHz on the output side
+        // Output audio rate policy (encoder_config.h): audio-only output
+        // stays at the core's native rate (bit-exact, no resampling); video
+        // containers always carry 48 kHz - the delivery-standard rate.
+        // Opus additionally REQUIRES 48/24/16/12/8 kHz regardless of policy.
+        uint32_t outputAudioRate = config.audioOutputSampleRate;
+        if (outputAudioRate == 0 && _hasVideo)
+            outputAudioRate = 48000;
         if (audioEncoder == "libopus" || audioEncoder == "opus")
+            outputAudioRate = 48000;
+
+        if (outputAudioRate != 0 && outputAudioRate != config.audioSampleRate)
         {
-            args.push_back("-ar:a");
-            args.push_back("48000");
+            // High-quality resample: SoX (soxr, 28-bit precision) when this
+            // ffmpeg build has it; swresample otherwise (always built in,
+            // transparent quality). Both run realtime-easily at these rates.
+            if (FFmpegProbe::isSoxrAvailable(_ffmpegPath))
+            {
+                args.push_back("-af");
+                args.push_back("aresample=resampler=soxr:precision=28:osr=" +
+                               std::to_string(outputAudioRate));
+            }
+            else
+            {
+                args.push_back("-ar:a");
+                args.push_back(std::to_string(outputAudioRate));
+            }
         }
 
         // ffmpeg's built-in opus/vorbis encoders are experimental and refuse

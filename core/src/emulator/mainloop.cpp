@@ -7,11 +7,12 @@
 #include "3rdparty/message-center/eventqueue.h"
 #include "common/modulelogger.h"
 #include "common/timehelper.h"
+#include "emulator/sound/soundmanager.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "emulator.h"
-#include "emulator/monitoring/monitoringmanager.h"
 #include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "stdafx.h"
@@ -29,8 +30,6 @@ MainLoop::MainLoop(EmulatorContext* context)
     _screen = _context->pScreen;
     _soundManager = _context->pSoundManager;
 
-    _moreAudioDataRequested.store(false, std::memory_order_release);
-
     _isRunning = false;
 }
 
@@ -38,12 +37,6 @@ MainLoop::~MainLoop()
 {
     if (_isRunning)
         Stop();
-
-    // Unsubscribe from audio buffer state event(s)
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    Observer* observerInstance = static_cast<Observer*>(this);
-    ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainLoop::handleAudioBufferHalfFull);
-    messageCenter.RemoveObserver(NC_AUDIO_BUFFER_HALF_FULL, observerInstance, callback);
 
     // De-register mainloop from the context (if context still exists)
     if (_context)
@@ -72,17 +65,9 @@ void MainLoop::Run(volatile bool& stopRequested)
 
     _stopRequested = false;
     _isRunning = true;
-
-    // Subscribe to audio buffer state event(s)
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    Observer* observerInstance = static_cast<Observer*>(this);
-
-    // Subscribe to video frame refresh events
-    ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainLoop::handleAudioBufferHalfFull);
-    messageCenter.AddObserver(NC_AUDIO_BUFFER_HALF_FULL, observerInstance, callback);
+    _runThreadId.store(std::this_thread::get_id(), std::memory_order_release);
 
     /// region <Info logging>
-    static std::chrono::milliseconds timeout(20);  // Set timeout for audio buffer refresh wait
     uint64_t lastRun = 0;
     [[maybe_unused]] uint64_t betweenIterations = 0;
     /// endregion </Info logging>
@@ -144,21 +129,52 @@ void MainLoop::Run(volatile bool& stopRequested)
 
         if (!config.turbo_mode)
         {
-            // Normal mode: Wait until audio callback requests more data and buffer is about half-full
-            // That means we're in sync between audio and video frames
+            // Normal mode: absolute-deadline frame pacing.
+            // The frame clock is the timing master: each frame is released at
+            // exactly config.frame_duration_us intervals (Pentagon: 20480us =
+            // 48.83 fps; see CalculateFrameDurationUs). wait_until against an
+            // accumulated deadline self-corrects scheduler wake-up latency.
+            // Fine rate matching against the audio DAC is the DRC controller's
+            // job (SoundManager::updateDrcControl) - the deadline only has to
+            // be approximately right; DRC absorbs the residual continuously.
+            const std::chrono::microseconds frameDuration(config.frame_duration_us);
+            const auto now = std::chrono::steady_clock::now();
+
+            // Emergency refill (audio-sync design 5.3): if the ring is nearly
+            // empty (cold start, debugger stall, disk hitch), skip the sleep
+            // and produce frames back-to-back until occupancy recovers -
+            // DRC's +-0.5% trim is far too slow for bulk refill.
+            // Threshold is rate-aware and deliberately far below the DRC
+            // target: the occupancy sawtooth dips ~1 frame below target every
+            // cycle, and the refill must NEVER fire in steady state (see
+            // SoundManager::EMERGENCY_REFILL_MS)
+            const uint32_t devRate = _context->pAudioDeviceSampleRate.load(std::memory_order_relaxed);
+            const uint32_t refillThresholdFrames = static_cast<uint32_t>(
+                (devRate ? devRate : AUDIO_SAMPLING_RATE) * SoundManager::EMERGENCY_REFILL_MS / 1000.0);
+            const std::atomic<uint32_t>* occCell =
+                _context->pAudioRingOccupancy.load(std::memory_order_acquire);
+            if (occCell && occCell->load(std::memory_order_relaxed) < refillThresholdFrames)
+            {
+                _nextFrameTime = now;  // Re-anchor: refill burst must not distort the cadence after
+                continue;
+            }
+
+            // (Re)anchor after start, pause, debugger stall, or heavy lag -
+            // never try to "catch up" more than one frame via a stale deadline
+            if (_nextFrameTime < now - frameDuration || _nextFrameTime > now + frameDuration)
+            {
+                _nextFrameTime = now;
+            }
+            _nextFrameTime += frameDuration;
+
+            // Interruptible sleep: _cv is notified by Stop()
             std::unique_lock<std::mutex> lock(_audioBufferMutex);
-            auto moreAudioDataRequested = std::ref(_moreAudioDataRequested);
-            _cv.wait_for(lock, timeout, [&moreAudioDataRequested] {
-                return moreAudioDataRequested.get().load(std::memory_order_acquire);
-            });
-            _moreAudioDataRequested.store(false);
-            lock.unlock();
+            _cv.wait_until(lock, _nextFrameTime, [&stopRequested] { return (bool)stopRequested; });
         }
         else
         {
-            // Turbo mode: Run as fast as possible without audio synchronization
-            // Optional: Yield CPU to prevent 100% core usage if desired
-            // std::this_thread::yield();
+            // Turbo mode: Yield CPU time-slice to prevent 100% core usage
+            std::this_thread::yield();
         }
 
         lastRun = startTime;
@@ -169,9 +185,28 @@ void MainLoop::Run(volatile bool& stopRequested)
     _isRunning = false;
 }
 
+bool MainLoop::WaitForPauseConfirmation(uint32_t timeoutMs)
+{
+    // Fast path: not running at all means no frame can be mid-flight
+    if (!_isRunning)
+        return true;
+
+    // Called from the emulation thread itself (e.g. breakpoint handler pausing
+    // mid-frame): no frame can be executing concurrently with the caller, and
+    // waiting here would only stall until the timeout. Return immediately.
+    if (_runThreadId.load(std::memory_order_acquire) == std::this_thread::get_id())
+        return true;
+
+    std::unique_lock<std::mutex> lock(_pauseMutex);
+    return _pauseCV.wait_for(lock, std::chrono::milliseconds(timeoutMs),
+                             [this]() { return _isPausedConfirmed.load(std::memory_order_acquire); });
+}
+
 void MainLoop::Stop()
 {
     _stopRequested = true;
+    _cv.notify_all();
+    _pauseCV.notify_all();
 }
 
 void MainLoop::RunFrame()
@@ -256,6 +291,7 @@ void MainLoop::OnCPUStep()
     _context->pScreen->UpdateScreen();  // Trigger screen update after each CPU command cycle
 
     _context->pBetaDisk->handleStep();
+    _context->pTape->handleStep();  // Process tape audio each step
     _context->pSoundManager->handleStep();
 }
 
@@ -285,6 +321,11 @@ void MainLoop::OnFrameEnd()
     {
         _context->pScreen->RenderFrameBatch();
     }
+
+    // Latch the completed frame into the presentation buffer (tear-free copy
+    // for GUI display and capture). Must happen after rendering is finished
+    // for both batch and per-t-state (ScreenHQ) modes.
+    _context->pScreen->LatchFramebuffer();
 
     // Basic sanity check for context corruption
     if (_context->config.frame == 0 || _context->config.frame > 100000)
@@ -353,37 +394,66 @@ void MainLoop::OnFrameEnd()
     }
 #endif
 
+    // Sync shared memory if enabled (for external viewers like screen-viewer, debuggers, memory dumpers, etc.)
+    // This ensures the memory-mapped region is visible to other processes
+    // Only sync when shared memory feature is actually enabled to avoid overhead
+    if (_context->pMemory && _context->pMemory->IsSharedMemoryEnabled())
+    {
+        try
+        {
+            _context->pMemory->SyncToDisk();
+        }
+        catch (const std::exception& e)
+        {
+            MLOGERROR("Memory::SyncToDisk failed: %s", e.what());
+        }
+    }
+
     // Notify that video frame is composed and ready for rendering
     // Send per-instance frame refresh event with emulator ID for filtering
-    try
+    //
+    // TTD silent-replay suppression (parent TDD §8.2 + Appendix C):
+    // during replay the UI must not redraw per-frame — replay may run
+    // dozens of frames per seek and a redraw storm would dominate seek
+    // latency. The replay engine restores the final frame visually via
+    // Screen::InitFrame after ExitReplayMode.
+    if (!_context->ttdReplayActive)
     {
-        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        std::string emulatorId = _context->pEmulator ? _context->pEmulator->GetId() : "";
-        messageCenter.Post(NC_VIDEO_FRAME_REFRESH,
-                           new EmulatorFramePayload(emulatorId, _context->emulatorState.frame_counter));
+        try
+        {
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            std::string emulatorId = _context->pEmulator ? _context->pEmulator->GetId() : "";
+            messageCenter.Post(NC_VIDEO_FRAME_REFRESH,
+                               new EmulatorFramePayload(emulatorId, _context->emulatorState.frame_counter));
+        }
+        catch (const std::exception& e)
+        {
+            // Log error but don't crash - message center failure shouldn't stop emulation
+            MLOGERROR("MessageCenter post failed: %s", e.what());
+        }
     }
-    catch (const std::exception& e)
-    {
-        // Log error but don't crash - message center failure shouldn't stop emulation
-        MLOGERROR("MessageCenter post failed: %s", e.what());
-    }
-    
+
     // Dispatch frame end event to AnalyzerManager
     if (_context->pDebugManager && _context->pDebugManager->GetAnalyzerManager())
     {
         _context->pDebugManager->GetAnalyzerManager()->dispatchFrameEnd();
     }
 
-    // Dispatch frame end event to MonitoringManager (for real-time monitoring)
-    if (_context->pMonitoringManager && _context->pMonitoringManager->isEnabled())
+    // TTD per-frame checkpoint capture (parent TDD §7.1).
+    // OnFrameBoundary is a no-op when the TTD manager is null, when the
+    // session state is not Recording, or when the timetravel feature flag
+    // is off (the cached bool in Memory gates the dirty hook). Cost when
+    // idle: one predictable branch. Cost when recording: dirty pages get
+    // a 16 KB Intern each, clean pages get a cheap AddRef.
+    if (_context->pTimeTravelManager)
     {
         try
         {
-            _context->pMonitoringManager->onFrameEnd();
+            _context->pTimeTravelManager->OnFrameBoundary();
         }
         catch (const std::exception& e)
         {
-            MLOGERROR("MonitoringManager::onFrameEnd failed: %s", e.what());
+            MLOGERROR("TimeTravelManager::OnFrameBoundary failed: %s", e.what());
         }
     }
 
@@ -395,15 +465,6 @@ void MainLoop::OnFrameEnd()
     }
 }
 
-void MainLoop::handleAudioBufferHalfFull([[maybe_unused]] int id, [[maybe_unused]] Message* message)
-{
-    std::unique_lock<std::mutex> lock(_audioBufferMutex);
-
-    // Set the atomic variable to indicate frame sync
-    _moreAudioDataRequested.store(true, std::memory_order_release);
-    // Notify the main loop
-    _cv.notify_one();
-}
 
 //
 // Proceed with single frame CPU operations

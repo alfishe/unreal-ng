@@ -1,8 +1,10 @@
 #pragma once
 #include "stdafx.h"
 
+#include <memory>
 #include <set>
 #include "emulator/platform.h"
+#include "emulator/ports/portdiagrecorder.h"
 
 
 class ModuleLogger;
@@ -141,11 +143,34 @@ protected:
     // which is just a cached copy of the last written value
     bool _7FFD_Locked = false;
 
+    // Set by DecodePortIn/PeripheralPortIn to indicate whether a real hardware device
+    // actually responded to the port read. When false, the port is unmapped and the
+    // Z80 floating bus logic may apply (prevents floating bus from clobbering
+    // legitimate 0xFF values from devices like WD1793).
+    bool _lastPortDecoded = false;
+
     // Registered port handlers from external peripheral devices
     std::map<uint16_t, PortDevice*> _portDevices;
 
     // Set of ports to mute logging to
     std::set<uint16_t> _loggingMutePorts;
+
+    /// region <Port trace (runtime feature "porttrace")>
+
+    // Cached FeatureManager state (kPortTrace). Written only from the control path
+    // (UpdateFeatureCache), read on the emulator thread in the I/O hooks. When false
+    // the hooks cost a single bool test + never-taken branch and _portTrace is null.
+    bool _portTraceFeatureCache = false;
+
+    // Recorder instance; allocated lazily when the porttrace feature turns on,
+    // released (buffer memory freed) when it turns off
+    std::unique_ptr<PortDiagnosticRecorder> _portTrace;
+
+    // Frame-scoped rolling counters (debugger status panel); updated only while
+    // the porttrace feature is on
+    PortActivitySummary _activitySummary;
+
+    /// endregion </Port trace>
 
     /// endregion </Fields>
 
@@ -166,23 +191,63 @@ public:
     virtual void SetROMPage(uint8_t page) { (void)page; /* Intentionally unused */ };
 
     virtual bool IsFEPort(uint16_t port);
+
+    /// Returns true if the last DecodePortIn call was handled by a real hardware device.
+    /// Z80::in() uses this to decide whether to apply the floating bus override:
+    /// only unmapped ports (no device responded) get the floating bus byte.
+    bool WasLastPortDecoded() const { return _lastPortDecoded; }
+
     uint8_t Default_Port_FE_In(uint16_t port, uint16_t pc);
     void Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc);
 
+    /// region <Port trace (runtime feature "porttrace")>
+
+    /// Re-read the porttrace feature flag from FeatureManager and instantiate or
+    /// release the recorder accordingly. Called from FeatureManager::onFeatureChanged.
+    void UpdateFeatureCache();
+
+    /// Recorder access for transports/tests. nullptr while the feature is off.
+    PortDiagnosticRecorder* getPortTraceRecorder() { return _portTrace.get(); }
+
+    /// Frame-scoped I/O counters (valid while the porttrace feature is on)
+    const PortActivitySummary& getActivitySummary() const { return _activitySummary; }
+
+    /// Model decode table for self-describing trace exports. If-chain decoders
+    /// have no mask/match table and return an empty vector (the default).
+    virtual std::vector<PortTraceDecodeRule> getPortTraceDecodeRules() const { return {}; }
+
+    /// Assemble the session metadata (model name, timing base, decode rules)
+    /// written into every exported trace
+    PortTraceSessionInfo getPortTraceSessionInfo() const;
+
+    /// endregion </Port trace>
+
 protected:
     /// Called by subclasses AFTER hardware I/O completes.
-    /// Handles: breakpoints, port access tracking, analyzer notifications.
-    /// @param port The decoded port address that was accessed
+    /// Handles: breakpoints, port access tracking, port trace capture, analyzer notifications.
+    /// @param port The RAW port address as seen by the Z80 (breakpoints match on raw)
     /// @param result The value read from the port
     /// @param pc Program counter of the IN instruction
-    void OnPortInComplete(uint16_t port, uint8_t result, uint16_t pc);
-    
+    /// @param disp Decode attribution filled by the subclass dispatch (decoded port,
+    ///             rule index, gate/inline flags). Defaults to "unmapped/unknown" for
+    ///             legacy callers that have no decode information.
+    void OnPortInComplete(uint16_t port, uint8_t result, uint16_t pc,
+                          const PortDecodeDisposition& disp = {});
+
     /// Called by subclasses AFTER hardware I/O completes.
-    /// Handles: breakpoints, port access tracking, analyzer notifications.
-    /// @param port The decoded port address that was accessed
+    /// Handles: breakpoints, port access tracking, port trace capture, analyzer notifications.
+    /// @param port The RAW port address as seen by the Z80 (breakpoints match on raw)
     /// @param value The value written to the port
     /// @param pc Program counter of the OUT instruction
-    void OnPortOutComplete(uint16_t port, uint8_t value, uint16_t pc);
+    /// @param disp Decode attribution filled by the subclass dispatch
+    void OnPortOutComplete(uint16_t port, uint8_t value, uint16_t pc,
+                           const PortDecodeDisposition& disp = {});
+
+    /// Build and push one PortTraceEvent. Only called when _portTraceFeatureCache is true.
+    /// Exactly ONE event is recorded per Z80 I/O operation (single-event invariant) —
+    /// inline handlers must never call this directly.
+    void RecordPortTrace(bool isOut, uint16_t rawPort, uint8_t value, uint16_t pc,
+                         const PortDecodeDisposition& disp);
 
     virtual std::string GetPCAddressLocator(uint16_t pc);
     /// endregion </Interface methods>

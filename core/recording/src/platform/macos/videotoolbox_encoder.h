@@ -98,6 +98,7 @@ private:
     // State
     std::string _filename;
     std::string _lastError;
+    double _baseAudioTimestamp = -1.0;
 };
 
 #endif // __APPLE__

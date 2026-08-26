@@ -44,6 +44,12 @@ std::string KeyboardInjection_Integration_test::BootEmulator(const std::string& 
     auto emulator = _manager->CreateEmulator(symbolicId);
     if (!emulator)
         return "";
+
+    // Force deterministic boot: 48K BASIC (RESET=BASIC) regardless of the staged
+    // unreal.ini, which CMake re-copies on every build (RESET=128). Same approach
+    // as EmulatorTestHelper::CreateStandardEmulator.
+    emulator->GetContext()->config.reset_rom = RM_SOS;
+    emulator->Reset();
     
     std::string emulatorId = emulator->GetUUID();
     
@@ -155,20 +161,19 @@ bool KeyboardInjection_Integration_test::WaitForOCRText(const std::string& emula
 // 48K Mode Integration Tests
 // ============================================================================
 
-TEST_F(KeyboardInjection_Integration_test, Boot128K_VerifyMenuScreen)
+TEST_F(KeyboardInjection_Integration_test, Boot_VerifyBASICScreen)
 {
-    // Boot emulator - default config boots to 128K menu
+    // Boot emulator - RESET=BASIC boots straight into 48K BASIC (no 128K menu)
     // Use minimal boot wait (10 frames = 200ms), then poll for text
     std::string emulatorId = BootEmulator("test_128k", 10);
     ASSERT_FALSE(emulatorId.empty()) << "Failed to boot emulator";
     
-    // Poll OCR every 100ms for 128K menu text (max 3 seconds)
-    bool hasMenu = WaitForOCRText(emulatorId, "128", 3000) ||
-                   WaitForOCRText(emulatorId, "BASIC", 500) ||
-                   WaitForOCRText(emulatorId, "Sinclair", 500);
+    // Poll OCR every 100ms for the 48K BASIC copyright line (max 3 seconds)
+    bool hasBasic = WaitForOCRText(emulatorId, "1982", 3000) ||
+                    WaitForOCRText(emulatorId, "Sinclair", 500);
     
     std::string screenText = GetScreenText(emulatorId);
-    EXPECT_TRUE(hasMenu) << "128K menu not found on screen:\n" << screenText;
+    EXPECT_TRUE(hasBasic) << "48K BASIC screen not found:\n" << screenText;
     
     CleanupEmulator(emulatorId);
 }
@@ -180,9 +185,9 @@ TEST_F(KeyboardInjection_Integration_test, DISABLED_TypeNumbers_In48KBASIC)
     std::string emulatorId = BootEmulator("test_type", 10);
     ASSERT_FALSE(emulatorId.empty()) << "Failed to boot emulator";
     
-    // Wait for 128K menu to appear
-    bool menuReady = WaitForOCRText(emulatorId, "128", 3000);
-    ASSERT_TRUE(menuReady) << "128K menu not ready";
+    // Wait for 48K BASIC to boot (RESET=BASIC goes straight there, no 128K menu)
+    bool basicReady = WaitForOCRText(emulatorId, "1982", 3000);
+    ASSERT_TRUE(basicReady) << "48K BASIC not ready. Screen:\n" << GetScreenText(emulatorId);
     
     auto emulator = _manager->GetEmulator(emulatorId);
     auto context = emulator->GetContext();
@@ -191,23 +196,17 @@ TEST_F(KeyboardInjection_Integration_test, DISABLED_TypeNumbers_In48KBASIC)
     
     auto keyMgr = context->pDebugManager->GetKeyboardManager();
     
-    // Press 4 to select "48 BASIC" from 128K menu
-    keyMgr->TapKey("4", 3);
-    
-    // Wait for 48K BASIC to load (poll for copyright text)
-    bool basicReady = WaitForOCRText(emulatorId, "1982", 3000);
-    ASSERT_TRUE(basicReady) << "48K BASIC not ready";
-    
     // Now in 48K BASIC - type numbers (they appear literally)
     keyMgr->TypeText("12345", 3);
     
-    // Wait for sequence to complete
+    // Wait for sequence to complete. The running emulator's mainloop already
+    // pumps keyMgr->OnFrame() every frame — calling it from the test thread too
+    // double-steps the sequence state machine and randomly truncates key holds.
     for (int i = 0; i < 50 && keyMgr->IsSequenceRunning(); i++)
     {
-        keyMgr->OnFrame();
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
-    
+
     // Poll for typed numbers to appear on screen
     bool found = WaitForOCRText(emulatorId, "12345", 2000);
     
@@ -231,9 +230,9 @@ TEST_F(KeyboardInjection_Integration_test, DISABLED_Type48K_PrintHello)
     std::string emulatorId = BootEmulator("test_print", 10);
     ASSERT_FALSE(emulatorId.empty()) << "Failed to boot emulator";
     
-    // Wait for 128K menu to appear, then select 48K BASIC
-    bool menuReady = WaitForOCRText(emulatorId, "128", 3000);
-    ASSERT_TRUE(menuReady) << "128K menu not ready";
+    // Wait for 48K BASIC to boot (RESET=BASIC goes straight there, no 128K menu)
+    bool basicReady = WaitForOCRText(emulatorId, "1982", 3000);
+    ASSERT_TRUE(basicReady) << "48K BASIC not ready. Screen:\n" << GetScreenText(emulatorId);
     
     auto emulator = _manager->GetEmulator(emulatorId);
     auto context = emulator->GetContext();
@@ -243,18 +242,12 @@ TEST_F(KeyboardInjection_Integration_test, DISABLED_Type48K_PrintHello)
     auto keyMgr = context->pDebugManager->GetKeyboardManager();
     const int holdFrames = 3;
     
-    // press 4 to enter 48K BASIC
-    keyMgr->TapKey("4", holdFrames);
-    
-    // Wait for 48K BASIC
-    bool basicReady = WaitForOCRText(emulatorId, "1982", 3000);
-    ASSERT_TRUE(basicReady) << "48K BASIC not ready";
-    
-    // Helper lambda to wait for sequence completion
+    // Helper lambda to wait for sequence completion. The running emulator's
+    // mainloop already pumps keyMgr->OnFrame() every frame — calling it from
+    // the test thread too double-steps the sequence and truncates key holds.
     auto waitSequence = [&keyMgr]() {
         for (int i = 0; i < 50 && keyMgr->IsSequenceRunning(); i++)
         {
-            keyMgr->OnFrame();
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
     };

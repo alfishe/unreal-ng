@@ -8,6 +8,7 @@
 #include "common/sound/filters/filter_decimator.h"
 #include "common/sound/filters/filter_interpolate.h"
 #include "emulator/ports/portdecoder.h"
+#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 
 /// Information:
 /// See:
@@ -74,7 +75,7 @@ enum class AYChipModel : uint8_t
 
 /// endregion </Types>
 
-class SoundChip_AY8910 : public PortDecoder, public PortDevice
+class SoundChip_AY8910 : public PortDecoder, public PortDevice, public ttd::TTDSerializable
 {
     /// region <Constants>
 protected:
@@ -165,6 +166,8 @@ protected:
     /// Lowest frequency = 26.7Hz (1.75MHz / 65536)
     class ToneGenerator
     {
+        friend class SoundChip_AY8910;  ///< TTD serialization access (P1.5)
+
         /// region <Fields>
     protected:
         uint16_t _period;       // Tone Generator channel period (in AY clock cycles)
@@ -232,6 +235,8 @@ protected:
     /// The input to the shift register is bit0 XOR bit3, (bit0 is the output)
     class NoiseGenerator
     {
+        friend class SoundChip_AY8910;  ///< TTD serialization access (P1.5)
+
         /// region <Fields>
     protected:
         uint8_t _period;
@@ -274,6 +279,8 @@ protected:
     /// Lowest frequency = 0.1045 (1.75MHz / 16777216)
     class EnvelopeGenerator
     {
+        friend class SoundChip_AY8910;  ///< TTD serialization access (P1.5)
+
         /// region <Types>
         enum EnvelopeSegmentTypeEnum : uint8_t
         {
@@ -419,7 +426,7 @@ public:
 
     /// region <Methods>
 public:
-    void reset();
+    void reset() override;
     void updateState(bool bypassPrescaler = false);
     void updateMixer();
 
@@ -464,8 +471,8 @@ public:
     /// endregion </Debug access methods>
 
     /// region <PortDevice interface methods>
-    uint8_t portDeviceInMethod(uint16_t port);
-    void portDeviceOutMethod(uint16_t port, uint8_t value);
+    uint8_t portDeviceInMethod(uint16_t port) override;
+    void portDeviceOutMethod(uint16_t port, uint8_t value) override;
     /// endregion </PortDevice interface methods>
 
     /// region <Ports interaction>
@@ -490,6 +497,13 @@ public:
     std::string dumpAY8910EnvelopeGeneratorState();
     std::string dumpAY8910VolumeState(uint8_t channel);
     /// endregion <Debug methods>
+
+public:
+    /// region <TTDSerializable interface (P1.5 - parent TDD 6.4)>
+    size_t TTDStateSize() const override;
+    void   TTDSaveState(uint8_t* dst) const override;
+    void   TTDLoadState(const uint8_t* src) override;
+    /// endregion </TTDSerializable interface>
 };
 
 //

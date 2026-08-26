@@ -7,9 +7,12 @@
 
 #include "3rdparty/simpleini/simpleini.h"
 #include "common/modulelogger.h"
+#include "common/filehelper.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/monitoring/monitoringmanager.h"
+#include "emulator/ports/portdecoder.h"
 #ifdef ENABLE_RECORDING
 #include "recordingmanager.h"
 #endif
@@ -88,7 +91,8 @@ bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
         if (enabled)
         {
             const std::string& id = feature->id;
-            if (id == Features::kBreakpoints || id == Features::kCallTrace || id == Features::kMemoryTracking)
+            if (id == Features::kBreakpoints || id == Features::kCallTrace || id == Features::kMemoryTracking ||
+                id == Features::kTimeTravel)
             {
                 auto* master = findFeature(Features::kDebugMode);
                 if (master && !master->enabled)
@@ -302,7 +306,27 @@ void FeatureManager::setDefaults()
                      Features::kAnalysisSegmentation,  // parent
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryAnalysis});
-
+    registerFeature({Features::kTimeTravel,
+                     Features::kTimeTravelAlias,
+                     Features::kTimeTravelDesc,
+                     false,  // OFF by default - heavy feature, opt-in
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryDebug});
+    registerFeature({Features::kOverscan,
+                     Features::kOverscanAlias,
+                     Features::kOverscanDesc,
+                     false,  // OFF by default - Pentagon only, demo development
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
+    registerFeature({Features::kPortTrace,
+                     Features::kPortTraceAlias,
+                     Features::kPortTraceDesc,
+                     false,  // OFF by default - diagnostic feature, opt-in
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryDebug});
 
     _dirty = false;
 }
@@ -311,7 +335,7 @@ void FeatureManager::setDefaults()
 /// @param path Path to the features.ini file
 void FeatureManager::loadFromFile(const std::string& path)
 {
-    if (!std::filesystem::exists(path))
+    if (!std::filesystem::exists(FileHelper::ToFsPath(path)))
     {
         return;
     }
@@ -437,6 +461,19 @@ void FeatureManager::onFeatureChanged()
         {
             _context->pMonitoringManager->shutdown();
         }
+    }
+
+    // Notify TTD manager of feature changes (for memory deallocation on disable)
+    if (_context && _context->pTimeTravelManager)
+    {
+        _context->pTimeTravelManager->UpdateFeatureCache();
+    }
+
+    // Update port trace recorder cache in PortDecoder (instantiates/releases the
+    // recorder when the porttrace feature is toggled)
+    if (_context && _context->pPortDecoder)
+    {
+        _context->pPortDecoder->UpdateFeatureCache();
     }
 
     if (_dirty)

@@ -96,6 +96,14 @@ VideoRecordingWidget::VideoRecordingWidget(EmulatorContext* context, QWidget* pa
     _statsTimer = new QTimer(this);
     _statsTimer->setInterval(250);
     connect(_statsTimer, &QTimer::timeout, this, &VideoRecordingWidget::onUpdateStats);
+
+    // Rate readout refresh: cheap atomic reads; tracks device reroutes and
+    // live core-rate changes while the widget is visible
+    _rateInfoTimer = new QTimer(this);
+    _rateInfoTimer->setInterval(1000);
+    connect(_rateInfoTimer, &QTimer::timeout, this, &VideoRecordingWidget::updateAudioRateInfo);
+    _rateInfoTimer->start();
+    updateAudioRateInfo();
 }
 
 VideoRecordingWidget::~VideoRecordingWidget()
@@ -419,8 +427,21 @@ void VideoRecordingWidget::createAudioTab()
     _audioQualityCombo = new QComboBox();
     _audioQualityCombo->addItems({"128 kbps", "192 kbps", "256 kbps", "320 kbps"});
     _audioQualityCombo->setCurrentIndex(1);
+    _audioQualityCombo->setToolTip("Bitrate applies to lossy formats (MP3, OGG Vorbis) only;\n"
+                                   "WAV and FLAC are lossless and ignore it");
+    // Bitrate is meaningless for lossless formats: the default selection is
+    // WAV (PCM), so start disabled - the format-change handler below manages
+    // the state from then on
+    _audioQualityLabel->setEnabled(false);
+    _audioQualityCombo->setEnabled(false);
     qualityRow->addWidget(_audioQualityCombo);
     formatLayout->addLayout(qualityRow);
+
+    // Live sample-rate readout: audio-only recordings capture at the CORE
+    // rate (native, no resampling); the device rate is shown for reference
+    _audioRateInfoLabel = new QLabel("Capture rate: —");
+    _audioRateInfoLabel->setStyleSheet("color: gray; font-style: italic;");
+    formatLayout->addWidget(_audioRateInfoLabel);
 
     audioLayout->addWidget(formatGroup);
 
@@ -584,6 +605,39 @@ void VideoRecordingWidget::connectSignals()
     connect(_stopButton, &QPushButton::clicked, this, &VideoRecordingWidget::onStopRecording);
 
     _signalsConnected = true;
+}
+
+void VideoRecordingWidget::updateAudioRateInfo()
+{
+    if (!_audioRateInfoLabel || !isVisible())
+        return;
+
+    validateContext();
+
+    if (!_context || !_context->pSoundManager)
+    {
+        _audioRateInfoLabel->setText("Capture rate: — (no active emulator)");
+        return;
+    }
+
+    const size_t coreRate = _context->pSoundManager->getCoreRate();
+    QString text = QString("Capture rate: %1 Hz (core, native - no resampling)").arg(coreRate);
+
+    if (const AudioDeviceDescriptor* dev = _context->pAudioDeviceDescriptor.load(std::memory_order_acquire))
+    {
+        const uint32_t devRate = dev->sampleRate.load(std::memory_order_relaxed);
+        text += QString(" · Device: %1 @ %2 Hz")
+                    .arg(QString::fromUtf8(dev->deviceName))
+                    .arg(devRate);
+        if (devRate != 0 && devRate != coreRate)
+            text += " (DRC resamples playback)";
+    }
+
+    // The full text can exceed the window width (long device names): show
+    // an elided readout with the complete text in the tooltip
+    _audioRateInfoLabel->setToolTip(text);
+    const int avail = _audioRateInfoLabel->width() > 50 ? _audioRateInfoLabel->width() - 4 : 400;
+    _audioRateInfoLabel->setText(_audioRateInfoLabel->fontMetrics().elidedText(text, Qt::ElideRight, avail));
 }
 
 void VideoRecordingWidget::refreshFromContext()

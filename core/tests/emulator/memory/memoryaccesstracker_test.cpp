@@ -46,11 +46,18 @@ void MemoryAccessTracker_Test::SetUp()
     // Set up basic memory bank configuration similar to a 48K Spectrum
     _memory->DefaultBanksFor48k();
 
+    // Sync feature flags to Memory's internal cache (must be called AFTER enabling features)
+    _memory->UpdateFeatureCache();
+
     // Get the memory access tracker (cast to CUT for direct member access)
     _tracker = static_cast<MemoryAccessTrackerCUT*>(_memory->_memoryAccessTracker);
 
     // Make sure tracker is initialized
     ASSERT_NE(_tracker, nullptr) << "MemoryAccessTracker was not initialized in Memory";
+
+    // Start a memory tracking session - TrackMemoryRead/Write/Execute are gated by
+    // IsMemoryCapturing(), which requires feature flags AND an active capturing session
+    _tracker->StartMemorySession();
 
     // Initialize some test data in memory
     for (uint16_t i = 0; i < 0x100; i++)
@@ -141,6 +148,9 @@ TEST_F(MemoryAccessTracker_Test, BasicMemoryAccessTracking)
     const int NUM_WRITES = 5;
     const int NUM_EXECUTES = 3;
 
+    // Start memory session (required for tracking to work)
+    _tracker->StartMemorySession();
+
     // Reset counters before testing
     _tracker->ResetCounters();
 
@@ -211,6 +221,9 @@ TEST_F(MemoryAccessTracker_Test, PortAccessTracking)
 // Test segment tracking
 TEST_F(MemoryAccessTracker_Test, SegmentTracking)
 {
+    // Start memory session (required for tracking to work)
+    _tracker->StartMemorySession();
+
     // Reset counters
     _tracker->ResetCounters();
 
@@ -326,6 +339,9 @@ TEST_F(MemoryAccessTracker_Test, RegionMonitoring)
 // Test caller tracking
 TEST_F(MemoryAccessTracker_Test, CallerTracking)
 {
+    // Start memory session (required for tracking to work)
+    _tracker->StartMemorySession();
+
     // Reset counters
     _tracker->ResetCounters();
 
@@ -366,6 +382,9 @@ TEST_F(MemoryAccessTracker_Test, CallerTracking)
 // Test data flow tracking
 TEST_F(MemoryAccessTracker_Test, DataFlowTracking)
 {
+    // Start memory session (required for tracking to work)
+    _tracker->StartMemorySession();
+
     // Reset counters
     _tracker->ResetCounters();
 
@@ -456,6 +475,9 @@ TEST_F(MemoryAccessTracker_Test, FeatureFlag_EnableAllocatesBuffers)
     EXPECT_FALSE(_tracker->_z80ReadCounters.empty()) << "Counter vectors should be allocated";
     EXPECT_TRUE(_tracker->_feature_memorytracking_enabled) << "Internal flag should be true";
 
+    // Start memory session (required for tracking to work)
+    _tracker->StartMemorySession();
+
     // Add a monitored region and verify stats collection works
     MonitoringOptions options;
     options.trackCallers = true;
@@ -480,6 +502,9 @@ TEST_F(MemoryAccessTracker_Test, FeatureFlag_DebugModeGatesTracking)
     fm->setFeature(Features::kDebugMode, true);
     fm->setFeature(Features::kMemoryTracking, true);
     _tracker->UpdateFeatureCache();
+
+    // Start memory session (required for tracking to work)
+    _tracker->StartMemorySession();
 
     // Add a monitored region
     MonitoringOptions options;
@@ -533,6 +558,9 @@ TEST_F(MemoryAccessTracker_Test, FeatureFlag_ResetRequiresAllocation)
     fm->setFeature(Features::kMemoryTracking, true);
     _tracker->UpdateFeatureCache();
 
+    // Start memory session (required for tracking to work)
+    _tracker->StartMemorySession();
+
     // Add a region and track some operations
     MonitoringOptions options;
     _tracker->AddMonitoredRegion("ResetTestRegion", 0x7000, 16, options);
@@ -576,6 +604,9 @@ TEST_F(MemoryAccessTracker_Test, FeatureFlag_FullLifecycle)
     fm->setFeature(Features::kDebugMode, true);
     fm->setFeature(Features::kMemoryTracking, true);
     _tracker->UpdateFeatureCache();
+
+    // Start memory session (required for tracking to work)
+    _tracker->StartMemorySession();
 
     // Add region and track operations
     MonitoringOptions options;
@@ -635,6 +666,9 @@ TEST_F(MemoryAccessTracker_Test, FeatureFlag_DisableDeallocatesMemory)
     fm->setFeature(Features::kMemoryTracking, true);
     _tracker->UpdateFeatureCache();
 
+    // Start memory session (required for tracking to work)
+    _tracker->StartMemorySession();
+
     // Perform some tracking to ensure buffers are in use
     _tracker->TrackMemoryRead(0x4000, 0x42, 0x8000);
     _tracker->TrackMemoryWrite(0x4000, 0x55, 0x8000);
@@ -646,6 +680,9 @@ TEST_F(MemoryAccessTracker_Test, FeatureFlag_DisableDeallocatesMemory)
     // Re-enable tracking - should reallocate fresh buffers
     fm->setFeature(Features::kMemoryTracking, true);
     _tracker->UpdateFeatureCache();
+
+    // Restart memory session after re-enable
+    _tracker->StartMemorySession();
 
     // Add new region after reallocation
     MonitoringOptions options;

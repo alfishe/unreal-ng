@@ -267,6 +267,40 @@ void EmulatorTile::handleVideoFrameRefresh(int id, Message* message)
 }
 ```
 
+## Automation Commands
+
+### Single Sync Mode
+Single sync mode synchronizes all tile rendering to a single emulator's frame events, providing smoother visual output for recording and display purposes.
+
+#### CLI
+```
+videowall singlesync on [emulator_id]   # Enable (optional: specify which emulator to sync to)
+videowall singlesync off                # Disable (tiles render independently)
+```
+
+#### WebAPI
+```http
+POST /api/videowall/singlesync
+Content-Type: application/json
+
+{"enable": true, "emulator_id": "optional-uuid"}
+```
+
+#### Python
+```python
+import videowall
+videowall.set_single_sync(True)                    # Sync to first emulator
+videowall.set_single_sync(True, emulator_id="...")  # Sync to specific emulator
+videowall.set_single_sync(False)                   # Independent rendering
+```
+
+#### Lua
+```lua
+videowall.setSingleSync(true)           -- Sync to first emulator
+videowall.setSingleSync(true, "uuid")   -- Sync to specific emulator
+videowall.setSingleSync(false)          -- Independent rendering
+```
+
 ## Dependencies
 
 ### Required Libraries

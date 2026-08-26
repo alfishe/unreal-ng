@@ -48,6 +48,13 @@ public:
     /// @return List of encoder names
     static std::vector<std::string> getAvailableEncoders(const std::string& ffmpegPath = "");
 
+    /// @brief Check if this ffmpeg build includes the SoX resampler (libsoxr).
+    /// Used to pick the highest-quality audio resampler for rate conversion;
+    /// falls back to the always-built-in swresample otherwise.
+    /// @param ffmpegPath Optional explicit ffmpeg path
+    /// @return true if libsoxr is compiled in
+    static bool isSoxrAvailable(const std::string& ffmpegPath = "");
+
     /// @brief Check if a specific encoder is available
     /// @param encoder Encoder name (e.g., "h264_videotoolbox", "libx264")
     /// @param ffmpegPath Optional explicit ffmpeg path

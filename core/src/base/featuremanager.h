@@ -34,7 +34,9 @@ constexpr const char* const kAnalysis = "analysis";
 constexpr const char* const kAnalysisSegmentation = "analysis.segmentation";
 constexpr const char* const kAnalysisClassifiers = "analysis.classifiers";
 constexpr const char* const kAnalysisBehaviorDetection = "analysis.behavior";
-
+constexpr const char* const kTimeTravel = "timetravel";
+constexpr const char* const kOverscan = "overscan";
+constexpr const char* const kPortTrace = "porttrace";
 
 // Feature Aliases
 constexpr const char* const kDebugModeAlias = "dbg";
@@ -52,7 +54,9 @@ constexpr const char* const kAnalysisAlias = "ana";
 constexpr const char* const kAnalysisSegmentationAlias = "seg";
 constexpr const char* const kAnalysisClassifiersAlias = "cls";
 constexpr const char* const kAnalysisBehaviorDetectionAlias = "beh";
-
+constexpr const char* const kTimeTravelAlias = "ttd";
+constexpr const char* const kOverscanAlias = "osc";
+constexpr const char* const kPortTraceAlias = "pt";
 
 // Feature Descriptions
 constexpr const char* const kDebugModeDesc = "Master debug mode, enables/disables all debug features for performance";
@@ -69,6 +73,12 @@ constexpr const char* const kSharedMemoryDesc =
     "Export emulator memory via shared memory for external tool access. Disable for benchmarking/headless usage.";
 constexpr const char* const kOpcodeProfilerDesc =
     "Track Z80 opcode execution stats and trace for debugging and crash forensics.";
+constexpr const char* const kTimeTravelDesc =
+    "Record execution history for rewind and reverse debugging (time-travel debug).";
+constexpr const char* const kOverscanDesc =
+    "Pentagon overscan mode (384x304). Shows invisible border areas for demo development. Pentagon only.";
+constexpr const char* const kPortTraceDesc =
+    "Structured port I/O trace recorder (ring buffer of IN/OUT events for peripheral diagnostics).";
 
 
 // Categories

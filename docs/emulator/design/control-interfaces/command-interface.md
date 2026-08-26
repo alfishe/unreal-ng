@@ -2140,90 +2140,180 @@ Commands to configure emulator instance behavior and performance characteristics
 
 ---
 
-### 8. Logging Control
+### 8. Time-Travel Debugging (TTD)
 
-Commands to configure the module logger for the selected emulator instance. The logger supports per-module enable/disable, per-module log level overrides, and submodule bitmask filtering. All module and level names are served from `ModuleLogger` (single source of truth).
+Record a per-frame checkpoint timeline of the running emulator, then seek backwards to any captured point and replay forward with full determinism. The same surface is also exposed to GDB/LLDB clients via reverse-execution packets (`bc`/`bs`) once the GDB transport lands (see [gdb-protocol.md](./gdb-protocol.md)).
 
-#### 8.1 Logging Command Summary
+**Reference design:** [time-travel-debugging-tdd.md](../../debugger/time-travel-debug/time-travel-debugging-tdd.md) §10.4 — that TDD is the canonical source for command names, argument shapes, and result envelopes. This section mirrors it; if the two disagree, the TDD wins.
 
-| Command | Arguments | Description | Implementation Status |
-| :--- | :--- | :--- | :--- |
-| `logging` | | Display full logger state: global level, per-module enable, level, submodule mask | ✅ Implemented |
-| `logging level <level>` | `trace\|debug\|info\|warning\|error\|none` | Set global log level | ✅ Implemented |
-| `logging module <name>` | `<module-name>` | Show state for a single module (enabled, level, mask) | ✅ Implemented |
-| `logging module <name> <on\|off>` | `<module-name> on\|off` | Enable or disable a specific module | ✅ Implemented |
-| `logging module <name> level <level>` | `<module-name> <level\|inherit>` | Set per-module level override. Use `inherit` to follow global level. | ✅ Implemented |
-| `logging module <name> mask <value>` | `<module-name> <0x0000–0xFFFF>` | Set submodule bitmask (bit per submodule, 0xFFFF = all) | ✅ Implemented |
-| `logging modules` | | List all available module names (API-style lowercase) | ✅ Implemented |
-| `logging levels` | | List all available level names (API-style lowercase) | ✅ Implemented |
+**Feature flag:** `timetravel` (alias `ttd`) registered in `FeatureManager`. Recording, seek, and replay require this flag ON, which auto-enables the master `debugmode` flag (TTD uses the debug memory write path for the dirty-page hook). Status queries are always available, regardless of the flag — they return `{recording: false}` when TTD is off.
 
-#### 8.2 Module Names
+**Implementation status:**
+- Sprint 0 (✅ merged): runtime feature flag, run-control claim token, machine-state hash, capture/seek primitives
+- Phase 1 (in progress): checkpoint subsystem + per-frame capture + peripheral serializers
+- Phase 2: seek engine + silent replay
+- Phase 4: full automation surface (most verbs below ship here, except `status`)
 
-Module names are lowercase identifiers derived from `ModuleLogger::GetModuleApiName()`:
+#### Command Reference
 
-| ID | API Name | Display Name | Submodules |
-| :--- | :--- | :--- | :--- |
-| 1 | `core` | Core | Generic, Config, Files, Mainloop |
-| 2 | `z80` | Z80 | Generic, M1, Calls, Jumps, Interrupts, Bit, Arithmetics, Stack, Registers, I/O |
-| 3 | `memory` | Memory | Generic, ROM, RAM |
-| 4 | `io` | I/O | Generic, In, Out, Keyboard, Tape, Kempston joystick, Kempston mouse |
-| 5 | `disk` | Disk | Generic, Floppy, HDD |
-| 6 | `video` | Video | Generic, ULA, ULA+, Misc., ZX-Next, Profi, ATM, TSConf |
-| 7 | `sound` | Sound | Generic, Beeper, AY, TurboSound, GS, SAA, Covox, PWM |
-| 8 | `dma` | DMA | Generic, Z80DMA, TSConf |
-| 9 | `loader` | Loader | Generic, SNA, Z80, TAP, TZX, SCL, TRD, FDI |
-| 10 | `debug` | Debugger | — |
-| 11 | `disassembler` | Disassembler | — |
-| 12 | `recording` | Recording | Manager, Encoder |
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `ttd start` | `ttd rec` | — | Begin recording from the next frame boundary. Sets a pending flag if invoked mid-frame; the first checkpoint anchors the session at the next `OnFrameEnd`. | 🔮 Phase 1 |
+| `ttd stop` | — | — | Stop capturing new frames. Recorded history is retained until `ttd clear` or session invalidation. | 🔮 Phase 1 |
+| `ttd clear` | — | — | Drop all captured checkpoints, journals, and page-store data. The live emulator state is untouched. | 🔮 Phase 1 |
+| `ttd status` | `ttd info` | — | Report the session. Always available regardless of the `timetravel` feature flag. See "Status fields" below. | ✅ Implemented |
+| `ttd timeline` | — | `[--from N] [--to N] [--limit N]` | Return per-frame summary entries (dirty-page counts, event ticks, bookmark presence) for UI rendering. Pagination via `--from`/`--to` frame indices. | 🔮 Phase 3 (UI) |
+| `ttd seek` | — | `--frame N` *or* `--tstate T` | Seek to an absolute target point. Emulator must be paused (run-control claim enforced). Result envelope: `{ok, reached_frame, reached_tstate, halt_reason}`. | 🔮 Phase 2 |
+| `ttd step-back` | `ttd sb` | `[--unit instruction\|frame] [--count N]` | Relative backward navigation. Default unit is one instruction. | 🔮 Phase 2 |
+| `ttd step-forward` | `ttd sf` | `[--unit instruction\|frame] [--count N]` | Relative forward navigation within recorded history (does not extend the timeline). | 🔮 Phase 2 |
+| `ttd find-last` | `ttd fl` | `--addr <A> --access <write\|read\|execute\|out> [--value V] [--pc-from <A>] [--pc-to <A>] [--phys-page <P>] [--before <T>]` | Reverse search: most recent access matching the query, scanning backward from current position. `--phys-page` pins the query to one physical RAM page — on a banked machine an address alone is ambiguous, since the same Z80 address names different bytes depending on what is paged in. Ignored for `out`, which has no page. Returns `{frame, tstate, pc, value, physpage}` or null if no match. | 🔮 Phase 4 |
+| `ttd bookmark` | `ttd bm` | `<add\|remove\|list> [--at <T>] [--label <text>]` | Manage named bookmarks in the timeline. Bookmarks act as replay barriers (no silent coalescing across them). | 🔮 Phase 3 (UI) |
+| `ttd resume-from-here` | — | — | Truncate future history at the current (detached) position and resume live recording from there. Confirmation required if truncation would drop > N frames. | 🔮 Phase 2 |
+| `ttd position` | — | — | Current `TTDTimePoint` (`frame` + `tInFrame`) and the session end. | ✅ Implemented |
+| `ttd markers` | `ttd barriers` | — | List external-event markers (tape control, disk writes) that act as replay barriers. | ✅ Implemented |
+| `ttd dump` | `ttd save` | `<path>` | Serialize the session to a `.ttd` file for offline analysis with `tools/verification/ttd-analyzer`. | ✅ Implemented |
+| `ttd load` | `ttd open` | `<path>` | Load a `.ttd` session for playback. Replaces whatever session is held; afterwards the session is Idle, so use `ttd seek` to position the emulator. | ✅ Implemented |
 
-#### 8.3 Log Level Names
+**Sessions on disk (`ttd dump` / `ttd load`).**
 
-Level names (lowest to highest priority): `trace`, `debug`, `info`, `warning`, `error`, `none`.
+The file is written and read by the **emulator process**, not by the client
+issuing the command. A relative path is therefore resolved against the
+emulator's working directory, and with a remote emulator the file lives on that
+machine. There is no default location: both verbs require an explicit path.
 
-The special level `inherit` (or numeric `0`) clears a per-module override so the module uses the global level.
+A session only loads into an instance of the **machine model it was recorded
+on**. A checkpoint is raw RAM pages plus a chipset snapshot, so restoring a
+Pentagon recording into a 48K instance would push pages the target does not have
+and read chipset fields that mean something else there — and it would fail
+silently, as a seek that "works" and produces a corrupt machine. `ttd load`
+refuses instead, naming both model ids. Provision a matching instance first
+(`POST /api/v1/emulator/create` takes `model` and `ram_size`, and
+`Emulator::SetPreferredModel()` is applied during `Init()` before any
+model-dependent subsystem starts).
 
-#### 8.4 Implementation Details
+Loading is available on every control surface: CLI (`ttd load <path>`), WebAPI
+(`POST /api/v1/emulator/{id}/ttd/load`), Lua (`ttd_load(path)`), Python
+(`ttd_load(path)`), and the TTD Scrubber's **Load session…** button.
 
-**Data Source**:
-- Module/level dictionaries centralized in `ModuleLogger` class (`modulelogger.h`)
-- Public getter API: `GetModuleName(id)`, `GetModuleApiName(id)`, `GetLevelName(id)`, `GetLevelApiName(id)`
-- Reverse lookups: `ModuleNameToId(name)`, `LevelNameToId(name)`
-- Constants: `GetModuleCount()`, `GetLevelCount()`
+**Halt reasons** (returned in `seek` / `step` / `find-last` result envelopes):
 
-**Logger State**:
-- `LoggerSettings` struct holds: module enable bitmask (`.modules`), submodule masks (`.submodules[MODULE_COUNT]`), per-module levels (`.moduleLevels[MODULE_COUNT]`)
-- Global level via `ModuleLogger::GetLevel()` / `SetLoggingLevel()`
-- Per-module level via `GetModuleLogLevel()` / `SetModuleLogLevel()`
-- Module enable/mask via `SetModuleState(module, enabled, mask)`
+| Value | Meaning |
+| :--- | :--- |
+| `target` | Reached the requested target point exactly. |
+| `external_event` | Stopped at an external-event marker (e.g. user input journal entry) that blocks the interval — surfaced rather than silently skipped. |
+| `out_of_range` | Target is outside the recorded session bounds. |
 
-**Example Usage**:
+#### Session Lifecycle
 
-```bash
-# Show full logging state
-> logging
+A TTD session is **invalidated** (all captured data dropped) by:
 
-# Set global level to debug
-> logging level debug
+| Trigger | Reason |
+| :--- | :--- |
+| `reset` | CPU + peripherals reinitialized; historical state no longer matches live state. |
+| `load snapshot` | RAM and register contents replaced wholesale. |
+| `load tape` / `load disk` | External media mount changes observable behavior going forward. (Disk *reads* are fine; only mounts invalidate.) |
+| CPU speed multiplier change | Changes the meaning of `tInFrame`; v1 invalidates rather than re-normalizing. |
+| Debugger memory write | Live state edit breaks historical determinism. |
+| Disk sector write (TR-DOS) | Phase 1 behavior: invalidate rather than journal. Phase 2 will journal and roll back. |
+| NVRAM write | Same as disk sector write — Phase 1 invalidates; later phases journal. |
 
-# Enable only Z80 module at trace level
-> logging module z80 on
-> logging module z80 level trace
+#### Status fields
 
-# Disable all video submodules except ULA
-> logging module video mask 0x0003
+`ttd status` answers three separate questions, and it is worth knowing which
+field answers which.
 
-# List available modules and levels
-> logging modules
-> logging levels
+**Where did this session come from?** A loaded recording and one captured in
+this process are otherwise indistinguishable from the counters, so this is
+usually the first thing to check when a session is handed to you.
+
+| Field | Meaning |
+|---|---|
+| `loaded_from_file` | True when the timeline came from a `.ttd` rather than live capture |
+| `source_path` | Path it was loaded from; empty for live recordings |
+| `captured_at_unix_ms` | Capture time recorded in the file; 0 for a live recording |
+
+**What machine is it?**
+
+| Field | Meaning |
+|---|---|
+| `model_id` | `eModel` value. A session refuses to load into a different model |
+| `model_ram_pages` | Exclusive RAM page-index **bound**, not a page count — a 48K machine reports 6 because its three pages are numbered 0, 2 and 5 |
+
+**What is inside it?**
+
+| Field | Meaning |
+|---|---|
+| `state` | `idle` / `recording` / `detached` |
+| `session_start_frame`, `current_end_frame` | Timeline extent |
+| `checkpoint_count` | Frames captured |
+| `write_journal_enabled` | Whether writes are being journalled |
+| `write_journal_records`, `write_journal_bytes` | Journal contents and in-memory cost. Normally the largest part of a session; the on-disk section is block-compressed and much smaller |
+| `coverage_index_frames`, `coverage_index_bytes` | Reverse-search index. **Zero frames means reverse search and reverse breakpoints fall back to replaying frames** — correct, but orders of magnitude slower |
+| `page_store_bytes`, `page_store_used_bytes`, `baseline_frames_captured` | COW page store capacity, live bytes and distinct page snapshots |
+| `session_heap_bytes` | Real total heap footprint of the session |
+
+The `ttd status` response includes an `invalidation_reason` field if the most recent invalidation was not user-initiated.
+
+#### Threading & Run-Control
+
+All run-affecting TTD commands (`seek`, `step-back`, `step-forward`, `resume-from-here`, `find-last` during replay) require the calling surface to hold the **run-control claim** on the target emulator instance (Sprint 0 mechanism; see [time-travel decisions](../../../inprogress/2026-07-19-time-travel/decisions.md)). `status`, `timeline`, and `bookmark list` are read-only and never require the claim.
+
+If another surface (e.g. GDB paused at a breakpoint) holds the claim, TTD commands return `E_RUN_CONTROL_BUSY` with the holder's surface label.
+
+#### Worked Examples
+
+**Diagnose a sprite corruption bug:**
+```
+# Pause and arm the recorder
+pause
+ttd start
+resume
+
+# ... reproduce the bug for ~10 seconds, then pause ...
+pause
+
+# Find the most recent write to the sprite attribute table
+ttd find-last --addr 0x5B00 --access write
+# => frame=4823, tstate=14982, pc=0x4A21, value=0x07, physpage=5
+
+# Jump to that exact moment
+ttd seek --frame 4823 --tstate 14982
+
+# Step back one instruction and inspect registers
+ttd step-back --unit instruction
+disasm
+registers
 ```
 
-**Interface Implementations**:
-- CLI: `CLIProcessor::HandleLogging()`
-- WebAPI: `GET/PUT /api/v1/emulator/{id}/logging/...`
-- Python: `emu.logging_state()`, `emu.logging_set_level()`, `emu.logging_set_module()`, etc.
-- Lua: `logging_state()`, `logging_set_level()`, `logging_set_module()`, etc.
+**Frame-compare (raster-effect debugging):**
+```
+# At a glitched frame, jump to the same beam position one frame earlier
+ttd step-back --unit frame
+# Now memory and registers show last frame's state at the same instant
+# Use memory viewer to diff against this frame's state
+```
+
+**Automated regression check (Python):**
+```python
+emu.ttd_start()
+emu.resume()
+time.sleep(30)  # let demo run
+emu.pause()
+result = emu.ttd_find_last(addr=0x5800, access="write")
+assert result is not None, "No write to attribute table detected"
+emu.ttd_seek(frame=result.frame, tstate=result.tstate)
+assert emu.z80.pc == result.pc
+```
 
 ---
+
+### 9. Videowall API
+
+Commands specifically for managing the multi-emulator videowall environment.
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `videowall singlesync <on\|off> [id]` | | `on` or `off`, `[id]` (optional) | Toggles the Single Sync Mode which locks an emulator tile into a synchronous rendering loop for 100% accurate recording without performance drops. | ✅ Implemented |
 
 ## Future Capabilities
 
@@ -2937,64 +3027,6 @@ analyzer raw fdc trdos
 
 # Finish
 analyzer deactivate trdos
-```
-
-#### Memory Region Analyzer (`memory-region`)
-
-The `memory-region` analyzer classifies the Z80 64KB address space into semantic regions based on execution patterns.
-
-**Commands**:
-
-| Command | Arguments | Description | Status |
-|:---|:---|:---|:---|
-| `analyzer activate memory-region` | | Start analysis session | ✅ Implemented |
-| `analyzer deactivate memory-region` | | Stop analysis session | ✅ Implemented |
-| `analyzer memory-region regions` | | List all classified memory regions | ✅ Implemented |
-| `analyzer memory-region region <addr>` | `<address>` | Get region containing address | ✅ Implemented |
-| `analyzer memory-region stats` | | Show segmentation statistics | ✅ Implemented |
-| `analyzer memory-region ports` | | Show I/O port activity | ✅ Implemented |
-
-**Region Types**:
-
-| Type | Description |
-|:---|:---|
-| `UNKNOWN` | Unaccessed memory |
-| `CODE` | Executed but not written (X>0, W=0) |
-| `DATA` | Read/written but not executed |
-| `VARIABLE` | Read AND written (R>0, W>0, X=0) |
-| `SMC` | Self-modifying code (X>0 AND W>0) |
-
-**Memory Tags** (combinable bitmask):
-
-| Tag | Description |
-|:---|:---|
-| `ScreenBitmap` | Main/shadow screen bitmap (0x4000-0x57FF) |
-| `ScreenAttributes` | Screen attributes (0x5800-0x5AFF) |
-| `SystemVariables` | BASIC system variables (0x5B00-0x5CBF) |
-| `MusicPlayerCode` | Code accessing AY/beeper ports |
-| `DiskLoaderCode` | Code accessing FDC ports |
-| `TapeLoaderCode` | Code reading tape port frequently |
-| `SMCProcedure` | Self-modifying code procedure |
-| `ISRCode` | Interrupt service routine |
-
-**Example Usage**:
-```bash
-# Enable features
-feature analysis on
-feature porttracking on
-
-# Start analysis session
-analyzer activate memory-region
-
-# Run emulator for a while...
-
-# Check segmentation
-analyzer memory-region stats
-analyzer memory-region regions
-analyzer memory-region region 0x8000
-
-# Stop session
-analyzer deactivate memory-region
 ```
 
 ### 9. LLM Integration Interfaces (MCP/A2A)

@@ -12,6 +12,9 @@
 #include "emulator/notifications.h"
 #include "wd1793_collector.h"
 #include "iwd1793observer.h"
+#include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (Item 6 markers)
+#include <cstdio>
+#include <cstring>
 
 /// region <EMU_LOG categories>
 EMU_LOG_DEFINE_CATEGORY(log_fdc,     "fdc");
@@ -1303,6 +1306,25 @@ void WD1793::cmdWriteSector(uint8_t value)
         return;
     }
 
+    // Phase 2 Item 6 - record an external-event marker. Disk writes mutate
+    // sector content; the next time the same sector is read back, the bytes
+    // will differ from what a replay-from-checkpoint would produce. The
+    // marker makes SeekTo refuse to cross this point silently.
+    //
+    // Hooked *after* the WP early-return so the marker only fires when the
+    // write actually starts. No-op unless the TTD session is Recording.
+    if (_context && _context->pTimeTravelManager)
+    {
+        char reason[64];
+        std::snprintf(reason, sizeof(reason),
+                      "Write Sector trk=%u sec=%u side=%u",
+                      static_cast<unsigned>(_trackRegister),
+                      static_cast<unsigned>(_sectorRegister),
+                      static_cast<unsigned>(_sideUp));
+        _context->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::DiskWrite, reason);
+    }
+
     // Decode command bits:
     // Bit 0 (a0): 0 = Normal Data Mark (FB), 1 = Deleted Data Mark (F8)
     // Bit 4 (m):  0 = Single sector, 1 = Multiple sectors
@@ -1427,6 +1449,20 @@ void WD1793::cmdReadTrack(uint8_t value)
         _statusRegister |= WDS_NOTFOUND;
         transitionFSM(S_END_COMMAND);
         return;
+    }
+
+    // Phase 2 Item 6 - record a disk-write marker for the format command.
+    // Write Track reformats an entire track, which is heavily destructive
+    // to replay fidelity.
+    if (_context && _context->pTimeTravelManager)
+    {
+        char reason[64];
+        std::snprintf(reason, sizeof(reason),
+                      "Write Track (format) trk=%u side=%u",
+                      static_cast<unsigned>(_trackRegister),
+                      static_cast<unsigned>(_sideUp));
+        _context->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::DiskWrite, reason);
     }
 
     uint8_t* rawTrackData = track->getRawTrackData(_trackRegister, _sideUp);
@@ -2195,7 +2231,13 @@ void WD1793::processWriteSector()
 {
     _bytesToWrite = _sectorSize;
 
-    // Request the first byte from the host by raising DRQ
+    // Request the first byte from the host by raising DRQ.
+    // Reset _drq_served BEFORE raising DRQ: unlike reads (where the FDC supplies
+    // the first byte), a write requires the host to service this DRQ before the
+    // first byte cell passes. Without this reset, the stale _drq_served == true
+    // from startType2Command() makes the first byte cell consume the stale Data
+    // Register value, shifting all written data by one byte.
+    _drq_served = false;
     raiseDrq();
     _statusRegister |= WDS_DRQ;
 
@@ -2634,8 +2676,9 @@ void WD1793::processEndCommand()
         }
         
         // Emit notification if disk is now dirty
+        // _context->pEmulator can be null in headless/unit-test contexts
         DiskImage* diskImage = _selectedDrive ? _selectedDrive->getDiskImage() : nullptr;
-        if (diskImage && diskImage->isDirty())
+        if (diskImage && diskImage->isDirty() && _context && _context->pEmulator)
         {
             // Emit pending write notification
             std::string emulatorId = _context->pEmulator->GetId();
@@ -3173,3 +3216,321 @@ std::string WD1793::dumpIndexStrobeData(bool skipNoTransitions)
 }
 
 /// endregion </Debug methods>
+
+/// region <TTDSerializable (P1.5 — parent TDD §6.4, §4 row 4)>
+//
+// Cursor-packed layout:
+//   Controller proper (143 bytes) + 4×FDD (4 × 27 bytes) = 251 bytes total.
+//
+// Controller layout:
+//    0   1   _commandRegister
+//    1   1   _trackRegister
+//    2   1   _sectorRegister
+//    3   1   _dataRegister
+//    4   1   _statusRegister
+//    5   1   _beta128Register
+//    6   1   _beta128status
+//    7   1   _extStatus
+//    8   1   _drive
+//    9   1   _sideUp
+//   10   1   _lastDecodedCmd (WD_COMMANDS)
+//   11   1   _lastCmdValue
+//   12   1   _state (WDSTATE)
+//   13   1   _state2 (WDSTATE)
+//   14   8   _delayTStates (int64)
+//   22   8   _time (size_t → uint64)
+//   30   8   _lastTime (size_t → uint64)
+//   38   8   _diffTime (int64)
+//   46   1   _loadHead
+//   47   1   _verifySeek
+//   48   1   _steppingMotorRate
+//   49   1   _stepDirectionIn (int8 cast to uint8)
+//   50   8   _stepCounter (size_t → uint64)
+//   58   1   _headLoaded
+//   59   2   _sectorSize (uint16)
+//   61   4   _bytesToRead (int32)
+//   65   4   _bytesToWrite (int32)
+//   69   1   _useDeletedDataMark
+//   70   8   _rawDataBufferIndex (size_t → uint64)
+//   78   2   _crcAccumulator (uint16)
+//   80   8   _crcStartPosition (size_t → uint64)
+//   88   1   _index
+//   89   1   _prevIndex
+//   90   8   _lastIndexPulseStartTime (uint64)
+//   98   8   _indexPulseCounter (size_t → uint64)
+//  106   8   _waitIndexPulseCount (size_t → uint64)
+//  114   8   _motorTimeoutTStates (int64)
+//  122   1   _drq_served
+//  123   1   _lost_data
+//  124   1   _crc_error
+//  125   1   _record_not_found
+//  126   1   _write_fault
+//  127   1   _write_protect
+//  128   1   _seek_error
+//  129   1   _intrq_out
+//  130   1   _drq_out
+//  131   1   _interruptConditions
+//  132   1   _prevReady
+//  133   1   _sleeping
+//  134   8   _wakeTimestamp (uint64)
+//  142   1   _operationFIFO.size() at save (diagnostic; cleared on load)
+//         --- controller subtotal: 143 bytes ---
+//  143  27   FDD[0] (see fdd.cpp kFddStateSize)
+//  170  27   FDD[1]
+//  197  27   FDD[2]
+//  224  27   FDD[3]
+//         --- total: 251 bytes ---
+
+namespace
+{
+inline void put_u8 (uint8_t*& cur, uint8_t v)        { *cur++ = v; }
+inline void put_i8 (uint8_t*& cur, int8_t v)        { *cur++ = static_cast<uint8_t>(v); }
+inline void put_u16(uint8_t*& cur, uint16_t v)      { std::memcpy(cur, &v, 2); cur += 2; }
+inline void put_u64(uint8_t*& cur, uint64_t v)      { std::memcpy(cur, &v, 8); cur += 8; }
+inline void put_i32(uint8_t*& cur, int32_t v)       { std::memcpy(cur, &v, 4); cur += 4; }
+inline void put_i64(uint8_t*& cur, int64_t v)       { std::memcpy(cur, &v, 8); cur += 8; }
+
+inline uint8_t  get_u8 (const uint8_t*& cur)        { return *cur++; }
+inline int8_t   get_i8 (const uint8_t*& cur)        { return static_cast<int8_t>(*cur++); }
+inline uint16_t get_u16(const uint8_t*& cur)        { uint16_t v; std::memcpy(&v, cur, 2); cur += 2; return v; }
+inline uint64_t get_u64(const uint8_t*& cur)        { uint64_t v; std::memcpy(&v, cur, 8); cur += 8; return v; }
+inline int32_t  get_i32(const uint8_t*& cur)        { int32_t v; std::memcpy(&v, cur, 4); cur += 4; return v; }
+inline int64_t  get_i64(const uint8_t*& cur)        { int64_t v; std::memcpy(&v, cur, 8); cur += 8; return v; }
+} // anonymous namespace
+
+static constexpr size_t kControllerStateSize = 143;
+static constexpr size_t kFdcSubsystemStateSize = kControllerStateSize + 4 * 27;  // = 251 (4×FDD @ 27 B each)
+static_assert(kFdcSubsystemStateSize == 251, "FDC subsystem state size drift");
+static_assert(kControllerStateSize == 143, "FDC controller state size drift");
+
+size_t WD1793::TTDStateSize() const
+{
+    return kFdcSubsystemStateSize;
+}
+
+void WD1793::TTDSaveState(uint8_t* dst) const
+{
+    uint8_t* cur = dst;
+
+    // Host-accessible registers
+    put_u8 (cur, _commandRegister);
+    put_u8 (cur, _trackRegister);
+    put_u8 (cur, _sectorRegister);
+    put_u8 (cur, _dataRegister);
+    put_u8 (cur, _statusRegister);
+
+    // Beta128 system register + status
+    put_u8 (cur, _beta128Register);
+    put_u8 (cur, _beta128status);
+    put_u8 (cur, _extStatus);
+
+    // Drive selection (cached from _beta128Register)
+    put_u8 (cur, _drive);
+    put_u8 (cur, _sideUp ? 1 : 0);
+
+    // Decoded command + masked value
+    put_u8 (cur, static_cast<uint8_t>(_lastDecodedCmd));
+    put_u8 (cur, _lastCmdValue);
+
+    // FSM state machine
+    put_u8 (cur, static_cast<uint8_t>(_state));
+    put_u8 (cur, static_cast<uint8_t>(_state2));
+    put_i64(cur, _delayTStates);
+
+    // Timing counters
+    put_u64(cur, static_cast<uint64_t>(_time));
+    put_u64(cur, static_cast<uint64_t>(_lastTime));
+    put_i64(cur, _diffTime);
+
+    // Type1 command state
+    put_u8 (cur, _loadHead      ? 1 : 0);
+    put_u8 (cur, _verifySeek    ? 1 : 0);
+    put_u8 (cur, _steppingMotorRate);
+    put_i8 (cur, _stepDirectionIn ? 1 : 0);
+    put_u64(cur, static_cast<uint64_t>(_stepCounter));
+    put_u8 (cur, _headLoaded    ? 1 : 0);
+
+    // Type2/3 command state
+    put_u16(cur, _sectorSize);
+    put_i32(cur, _bytesToRead);
+    put_i32(cur, _bytesToWrite);
+    put_u8 (cur, _useDeletedDataMark ? 1 : 0);
+    put_u64(cur, static_cast<uint64_t>(_rawDataBufferIndex));
+    put_u16(cur, _crcAccumulator);
+    put_u64(cur, static_cast<uint64_t>(_crcStartPosition));
+
+    // FDD/index-related state (kept on the controller)
+    put_u8 (cur, _index         ? 1 : 0);
+    put_u8 (cur, _prevIndex     ? 1 : 0);
+    put_u64(cur, _lastIndexPulseStartTime);
+    put_u64(cur, static_cast<uint64_t>(_indexPulseCounter));
+    put_u64(cur, static_cast<uint64_t>(_waitIndexPulseCount));
+    put_i64(cur, _motorTimeoutTStates);
+
+    // Error / signal flags
+    put_u8 (cur, _drq_served          ? 1 : 0);
+    put_u8 (cur, _lost_data           ? 1 : 0);
+    put_u8 (cur, _crc_error           ? 1 : 0);
+    put_u8 (cur, _record_not_found    ? 1 : 0);
+    put_u8 (cur, _write_fault         ? 1 : 0);
+    put_u8 (cur, _write_protect       ? 1 : 0);
+    put_u8 (cur, _seek_error          ? 1 : 0);
+    put_u8 (cur, _intrq_out           ? 1 : 0);
+    put_u8 (cur, _drq_out             ? 1 : 0);
+
+    // Force Interrupt state
+    put_u8 (cur, _interruptConditions);
+    put_u8 (cur, _prevReady           ? 1 : 0);
+
+    // Sleep-mode state
+    put_u8 (cur, _sleeping            ? 1 : 0);
+    put_u64(cur, _wakeTimestamp);
+
+    // FIFO depth at save time (diagnostic; not restorable)
+    uint8_t fifoDepth = static_cast<uint8_t>(
+        std::min<size_t>(_operationFIFO.size(), 255u));
+    put_u8 (cur, fifoDepth);
+
+    // --- 4 FDDs ---
+    // The FDDs live in coreState.diskDrives[]. If a slot is null (shouldn't
+    // happen post-WD1793 ctor, but defensive), write zeros of the right size.
+    if (_context)
+    {
+        for (size_t i = 0; i < 4; ++i)
+        {
+            FDD* fdd = _context->coreState.diskDrives[i];
+            if (fdd)
+            {
+                fdd->TTDSaveState(cur);
+            }
+            else
+            {
+                std::memset(cur, 0, 27);
+            }
+            cur += 27;
+        }
+    }
+    else
+    {
+        std::memset(cur, 0, 4 * 27);
+        cur += 4 * 27;
+    }
+}
+
+void WD1793::TTDLoadState(const uint8_t* src)
+{
+    const uint8_t* cur = src;
+
+    // Host-accessible registers
+    _commandRegister = get_u8(cur);
+    _trackRegister   = get_u8(cur);
+    _sectorRegister  = get_u8(cur);
+    _dataRegister    = get_u8(cur);
+    _statusRegister  = get_u8(cur);
+
+    // Beta128
+    _beta128Register = get_u8(cur);
+    _beta128status   = get_u8(cur);
+    _extStatus       = get_u8(cur);
+
+    // Drive selection
+    _drive  = get_u8(cur);
+    _sideUp = get_u8(cur) != 0;
+
+    // Command decode cache
+    _lastDecodedCmd = static_cast<WD_COMMANDS>(get_u8(cur));
+    _lastCmdValue   = get_u8(cur);
+
+    // FSM
+    _state  = static_cast<WDSTATE>(get_u8(cur));
+    _state2 = static_cast<WDSTATE>(get_u8(cur));
+    _delayTStates = get_i64(cur);
+
+    // Timing
+    _time     = static_cast<size_t>(get_u64(cur));
+    _lastTime = static_cast<size_t>(get_u64(cur));
+    _diffTime = get_i64(cur);
+
+    // Type1
+    _loadHead          = get_u8(cur) != 0;
+    _verifySeek        = get_u8(cur) != 0;
+    _steppingMotorRate = get_u8(cur);
+    _stepDirectionIn   = get_i8(cur) != 0;
+    _stepCounter       = static_cast<size_t>(get_u64(cur));
+    _headLoaded        = get_u8(cur) != 0;
+
+    // Type2/3
+    _sectorSize            = get_u16(cur);
+    _bytesToRead           = get_i32(cur);
+    _bytesToWrite          = get_i32(cur);
+    _useDeletedDataMark    = get_u8(cur) != 0;
+    _rawDataBufferIndex    = static_cast<size_t>(get_u64(cur));
+    _crcAccumulator        = get_u16(cur);
+    _crcStartPosition      = static_cast<size_t>(get_u64(cur));
+
+    // FDD/index
+    _index                    = get_u8(cur) != 0;
+    _prevIndex                = get_u8(cur) != 0;
+    _lastIndexPulseStartTime  = get_u64(cur);
+    _indexPulseCounter        = static_cast<size_t>(get_u64(cur));
+    _waitIndexPulseCount      = static_cast<size_t>(get_u64(cur));
+    _motorTimeoutTStates      = get_i64(cur);
+
+    // Flags
+    _drq_served         = get_u8(cur) != 0;
+    _lost_data          = get_u8(cur) != 0;
+    _crc_error          = get_u8(cur) != 0;
+    _record_not_found   = get_u8(cur) != 0;
+    _write_fault        = get_u8(cur) != 0;
+    _write_protect      = get_u8(cur) != 0;
+    _seek_error         = get_u8(cur) != 0;
+    _intrq_out          = get_u8(cur) != 0;
+    _drq_out            = get_u8(cur) != 0;
+
+    // Force Interrupt
+    _interruptConditions = get_u8(cur);
+    _prevReady           = get_u8(cur) != 0;
+
+    // Sleep mode
+    _sleeping      = get_u8(cur) != 0;
+    _wakeTimestamp = get_u64(cur);
+
+    // FIFO: clear on load (closures not restorable — see header doc).
+    (void)get_u8(cur);  // fifoDepth diagnostic — discard
+    std::queue<FSMEvent> emptyQueue;
+    _operationFIFO.swap(emptyQueue);
+
+    // --- 4 FDDs ---
+    if (_context)
+    {
+        for (size_t i = 0; i < 4; ++i)
+        {
+            FDD* fdd = _context->coreState.diskDrives[i];
+            if (fdd)
+            {
+                fdd->TTDLoadState(cur);
+            }
+            // else: skip — no drive to restore into. The 27 bytes are still
+            // consumed by the cursor advancement below.
+            cur += 27;
+        }
+
+        // Re-resolve selected drive from _drive index (defensive bounds check)
+        _selectedDrive = (_drive < 4) ? _context->coreState.diskDrives[_drive] : nullptr;
+    }
+    else
+    {
+        cur += 4 * 27;
+        _selectedDrive = nullptr;
+    }
+
+    // Pointers into disk image data are intentionally not restored
+    // (re-established by the next command setup). Reset them to nullptr so
+    // any stale value from before the restore cannot be dereferenced.
+    _rawDataBuffer    = nullptr;
+    _idamData         = nullptr;
+    _sectorData       = nullptr;
+    _writeTrackTarget = nullptr;
+}
+
+/// endregion </TTDSerializable>

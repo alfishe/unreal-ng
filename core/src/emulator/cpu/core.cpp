@@ -198,6 +198,10 @@ bool Core::Init()
             _context->pRecordingManager = _recordingManager;
             _recordingManager->Init();
 
+            // Recordings must be stamped with the resolved core audio rate
+            // (multirate plan phase 6) - never the 44100 default
+            _recordingManager->SetAudioSampleRate(static_cast<uint32_t>(_sound->getCoreRate()));
+
             result = true;
         }
     }
@@ -221,6 +225,46 @@ bool Core::Init()
 
     /// endregion </HDD>
 
+    /// region <Z80>
+
+    if (result)
+    {
+        result = false;
+
+        // Create main Core core instance (Z80)
+        // Note: Z80 must be created before Video controller so that Screen
+        // can capture the Z80 pointer during construction
+        _z80 = new Z80(_context);
+        if (_z80)
+        {
+            UseFastMemoryInterface();  // Use fast memory interface by default
+
+            result = true;
+        }
+    }
+
+    /// endregion </Z80>
+
+    /// region <ULA Contention>
+
+    if (result)
+    {
+        result = false;
+
+        // Create standalone ULA contention component
+        // Must be created after Z80 (needs cpu pointer) and Memory
+        _ulaContention = new UlaContention();
+        if (_ulaContention)
+        {
+            _ulaContention->SetDependencies(_z80, _memory, _context);
+            _context->pUlaContention = _ulaContention;
+
+            result = true;
+        }
+    }
+
+    /// endregion </ULA Contention>
+
     /// region <Video controller>
 
     if (result)
@@ -240,24 +284,6 @@ bool Core::Init()
 
     /// endregion </Video controller>
 
-    /// region <Z80>
-
-    if (result)
-    {
-        result = false;
-
-        // Create main Core core instance (Z80)
-        _z80 = new Z80(_context);
-        if (_z80)
-        {
-            UseFastMemoryInterface();  // Use fast memory interface by default
-
-            result = true;
-        }
-    }
-
-    /// endregion </Z80>
-
     /// region <Ports decoder>
 
     if (result)
@@ -274,6 +300,11 @@ bool Core::Init()
             if (_portDecoder)
             {
                 _context->pPortDecoder = _portDecoder;
+
+                // Prime the porttrace feature cache: the decoder is created after
+                // FeatureManager loaded features.ini, so a persisted porttrace=on
+                // state would otherwise not take effect until the next toggle
+                _portDecoder->UpdateFeatureCache();
 
                 result = true;
             }
@@ -395,6 +426,13 @@ void Core::Release()
         _memory = nullptr;
     }
 
+    _context->pUlaContention = nullptr;
+    if (_ulaContention != nullptr)
+    {
+        delete _ulaContention;
+        _ulaContention = nullptr;
+    }
+
     if (_z80 != nullptr)
     {
         delete _z80;
@@ -444,6 +482,13 @@ void Core::Reset()
     _betaDisk->reset();          // BetaDisk floppy controller
     _hdd->Reset();               // Reset IDE controller
     _portDecoder->reset();       // Reset peripheral port decoder (sets model-specific port defaults)
+
+    // Apply the ROM mode requested by the RESET= config directive (port of the
+    // original set_mode(conf.reset_rom) performed at the end of m_reset()).
+    // The decoder reset above establishes the model defaults (p7FFD = 0, 128K
+    // ROM selected); the configured mode is layered on top: BASIC -> 48K BASIC,
+    // DOS -> TR-DOS, MENU -> 128K menu, SYS -> service ROM
+    _memory->SetROMMode(_mode);
 #ifdef ENABLE_RECORDING
     if (_recordingManager)
         _recordingManager->Reset();  // Reset recording manager (stops active recording, clears counters)
@@ -569,8 +614,8 @@ void Core::CPUFrameCycle()
         _z80->Z80FrameCycle();
     }
 
-    uint32_t t = _context->pCore->GetZ80()->t;
-    MLOGINFO("tState counter after the frame: %d", t);
+    // uint32_t t = _context->pCore->GetZ80()->t;
+    // MLOGINFO("tState counter after the frame: %d", t);
 
     AdjustFrameCounters();
 }
@@ -592,6 +637,17 @@ void Core::AdjustFrameCounters()
     // Re-adjust Core frame t-state counter and interrupt position
     _z80->t -= scaledFrame;
     _z80->eipos -= scaledFrame;
+
+    // Drop any stale INT request latched near the frame edge. The ULA INT line
+    // is only asserted inside [intstart, intstart+intlen); ProcessInterrupts
+    // clears int_pending via "t >= int_end", but when an instruction (typically
+    // the INT acceptance itself) carries t across the frame boundary that clear
+    // never fires. The stale flag would then deliver a SECOND interrupt in the
+    // new frame as soon as the program executes EI (observed as 1.5-2x music
+    // speedup in EI:HALT-synced IM2 demos, e.g. Insult megademo). Windows that
+    // legitimately wrap (int_end >= frame) are re-armed at the start of the
+    // next Z80FrameCycle, so unconditional clearing here is hardware-correct.
+    _z80->int_pending = false;
 }
 
 void Core::UpdateScreen()
