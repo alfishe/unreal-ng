@@ -55,6 +55,49 @@ Tests are executed using the `core-tests` binary, and benchmarks via `core-bench
 ./cmake-build-release/bin/core-benchmarks --benchmark_filter="*BenchName*"
 ```
 
+## WebAPI Verification Testing
+
+When testing WebAPI changes, follow this sequence to ensure a fresh emulator instance:
+
+```bash
+# 1. Kill any stale emulator instances (only one can bind port 8090)
+pkill -9 unreal-qt 2>/dev/null || true
+sleep 1
+
+# 2. Verify port 8090 is free
+lsof -i :8090 2>/dev/null && echo "WARNING: Port 8090 still in use!" || echo "Port 8090 is free"
+
+# 3. Start the freshly built emulator (macOS path)
+./cmake-build-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt &
+sleep 4
+
+# 4. Verify WebAPI is responding
+curl -s http://localhost:8090/api/v1/emulator | jq .
+
+# 5. Create an emulator instance
+curl -s -X POST "http://localhost:8090/api/v1/emulator/start" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "128k"}' | jq .
+# Save the returned "id" for subsequent calls
+
+# 6. Test your feature (example: symbolic disassembly with labels)
+EMU_ID="<id-from-step-5>"
+curl -s -X POST "http://localhost:8090/api/v1/emulator/$EMU_ID/labels" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "TEST_LABEL", "address": 4, "type": "code"}'
+curl -s "http://localhost:8090/api/v1/emulator/$EMU_ID/disasm?address=0&count=10" | jq '.instructions[]'
+
+# 7. Cleanup when done
+pkill -9 unreal-qt 2>/dev/null || true
+```
+
+**Platform-specific binary paths:**
+- macOS: `./cmake-build-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt`
+- Linux: `./cmake-build-release/bin/unreal-qt`
+- Windows: `./cmake-build-release/bin/unreal-qt.exe`
+
+**Available models:** `PENTAGON`, `48K`, `128k`, `PLUS2`, `PLUS2A`, `PLUS3`, `SCORPION`, `ATM1`, `ATM2`, `ATM3`, `PROFI`
+
 ## Agent Rules & Guidelines
 - **Test Artifacts**: ALL test artifacts and temporary files (e.g. `.wav`, `.trd`, `.sna`) MUST be written to the `scratch/` directory. Do not clutter the project root. Use `TestPathHelper::GetTestScratchPath()` for this.
 - **Naming Conventions**: Do not use underscores in file names or C++ class/struct/method names. Use PascalCase for methods and camelCase for variables/fields. **Exception**: Test files use `*_test.cpp` suffix and test classes use `ClassName_Test` pattern.

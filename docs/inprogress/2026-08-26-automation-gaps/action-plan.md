@@ -19,7 +19,7 @@ Last updated: 2026-08-26
 | 0.1.5 | Expose reg write via Python | DONE | 4bd9e24e | `get_register(name)`, `set_register(name, value)` |
 | 0.2.1 | Expose LabelManager to automation | DONE | 70a8ceb2 | Core filtering API + CLI/WebAPI/Lua/Python bindings complete. See [label-manager.md](../../emulator/design/debugger/label-manager.md) |
 | 0.2.2 | `symbols load` command | POSTPONED | | sjasmplus .sld primary |
-| 0.2.3 | Symbolic disassembly output | TODO | | Disasm should show both labels and raw addresses (e.g. `CALL main ($8000)` not `CALL $8000`) if label can be resolved |
+| 0.2.3 | Symbolic disassembly output | DONE | | `CALL label (#8000)` format for JP/CALL/JR when label exists |
 | 0.2.4 | Symbolic breakpoints `bp label` | DESIGN | | Not clear yet how to handle re-positioning breakpoint when label address changes|
 | 0.3.1 | Add instance ID to NC_EXECUTION_BREAKPOINT | DONE | 3bd53395 | z80.cpp was using SimpleNumberPayload |
 | 0.3.2 | Add instance ID to NC_EMULATOR_STATE_CHANGE | DONE | 3bd53395 | Already implemented |
@@ -135,9 +135,9 @@ Last updated: 2026-08-26
 
 | Phase | Total | Done | WIP | TODO |
 |-------|-------|------|-----|------|
-| Phase 0 | 20 | 14 | 0 | 6 |
+| Phase 0 | 20 | 15 | 0 | 5 |
 | Phase 1 | 14 | 0 | 0 | 14 |
 | Phase 2 | 9 | 0 | 0 | 9 |
 | Phase 3 | 6 | 0 | 0 | 6 |
 | Phase 4 | 11 | 0 | 0 | 11 |
-| **Total** | **60** | **14** | **0** | **46** |
+| **Total** | **60** | **15** | **0** | **45** |
