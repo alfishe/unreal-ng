@@ -1,20 +1,23 @@
 # Unreal-NG Agent Rules
 
 ## Project Structure (What we have and where)
-- **`core/`**: The core emulator engine (CPU, memory, I/O devices, hardware subsystems). This is completely decoupled from any GUI.
-  - **`core/automation/`**: Automation interfaces (CLI, Python, Lua, WebAPI).
-  - **`core/benchmarks/`**: Performance benchmarks using Google Benchmark.
-  - **`core/tests/`**: Unit and integration tests (GTest). This is where all the `core-tests` live to ensure high-fidelity emulation accuracy.
-- **`unreal-qt/`**: The Qt-based desktop UI (Debugger, Memory Viewer, Screen Viewer).
-- **`unreal-screen-viewer/`**: Standalone Screen Viewer application.
-- **`unreal-videowall/`**: Standalone Video Wall application.
-- **`scratch/`**: Git-ignored directory for temporary files, test artifacts, and logs. Do NOT write test artifacts to the project root.
-- **`docs/`**: Project documentation, reference materials, and design specs.
-  - **`docs/inprogress/`**: Active design documents, brainstorming, and research.
-- **`tools/`**: Tooling and utilities for verification, builds, etc.
-- **`testdata/`**: Test fixtures, disk images, and ROMs.
-- **`lib/`**: Third-party dependencies and submodules (e.g., GTest, Google Benchmark).
-- **`poc/`**: Proof of Concept directory for isolated throwaway code, experiments, and non-production research.
+
+| Directory | Description |
+|-----------|-------------|
+| **`core/`** | The core emulator engine (CPU, memory, I/O devices). Decoupled from GUI. |
+| ↳ **`core/automation/`** | Automation interfaces (CLI, Python, Lua, WebAPI). |
+| ↳ **`core/benchmarks/`** | Performance benchmarks using Google Benchmark. |
+| ↳ **`core/tests/`** | Unit and integration tests (GTest) to ensure high-fidelity accuracy. |
+| **`unreal-qt/`** | The Qt-based desktop UI (Debugger, Memory Viewer, Screen Viewer). |
+| **`unreal-screen-viewer/`**| Standalone Screen Viewer application. |
+| **`unreal-videowall/`** | Standalone Video Wall application. |
+| **`scratch/`** | Git-ignored dir for test artifacts and logs. Do NOT write artifacts to root. |
+| **`docs/`** | Project documentation, reference materials, and design specs. |
+| ↳ **`docs/inprogress/`** | Active design documents, brainstorming, and research. |
+| **`tools/`** | Tooling and utilities for verification, builds, etc. |
+| **`testdata/`** | Test fixtures, disk images, and ROMs. |
+| **`lib/`** | Third-party dependencies and submodules (e.g., GTest, Google Benchmark). |
+| **`poc/`** | Proof of Concept directory for isolated throwaway code and experiments. |
 
 ## Building the Project
 We use CMake with Ninja for building:
@@ -47,3 +50,4 @@ Tests are executed using the `core-tests` binary, and benchmarks via `core-bench
 - **Naming Conventions**: Do not use underscores in file names or C++ class/struct/method names unless specified. Use PascalCase for methods and camelCase for variables/fields.
 - **Documentation Rules**: Documentation files must use lowercase with hyphens (kebab-case). Ongoing design and analysis must go into `docs/inprogress/` following specific date-prefixed directory naming rules. See `docs/inprogress/README.md` for details.
 - **Coding Guidelines**: For detailed coding guidelines, see `docs/coding-guidelines.md`.
+- **Cross-Platform & Compatibility**: The codebase MUST be cross-platform (Windows, macOS, Linux) and cross-compiler compatible (gcc, clang, mingw, msvc) with **ZERO warnings** allowed. See `docs/cross-platform-compatibility.md` for environmental constraints.
