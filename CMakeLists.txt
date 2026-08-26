@@ -363,7 +363,6 @@ message(STATUS "====================================================")
 if (BUILD_QT_APPS)
     # Shared resource paths
     set(DATA_PATH "${CMAKE_CURRENT_SOURCE_DIR}/data")
-    set(CONFIG_FILE "${DATA_PATH}/configs/pentagon128k/unreal.ini")
     set(CONFIGS_DIR "${DATA_PATH}/configs")
     set(SUITE_STAGING_DIR "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite")
     
@@ -391,16 +390,15 @@ if (BUILD_QT_APPS)
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
-            COMMAND ${CMAKE_COMMAND} -E copy "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.ini"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/configs"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/rom"
-            COMMAND ${CMAKE_COMMAND} -E copy "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/unreal.ini"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/configs"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/rom"
-            COMMAND ${CMAKE_COMMAND} -E copy "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/unreal.ini"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/configs"
             
             # Copy shared icon to bundles that reference it
             COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/unreal-qt/install/macos/unreal.icns" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.icns"
@@ -467,8 +465,6 @@ if (BUILD_QT_APPS)
                 "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/rom"
-            COMMAND ${CMAKE_COMMAND} -E copy
-                "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/unreal.ini"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/configs"
 
@@ -563,8 +559,6 @@ if (BUILD_QT_APPS)
                 "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/rom"
-            COMMAND ${CMAKE_COMMAND} -E copy
-                "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/unreal.ini"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/configs"
 

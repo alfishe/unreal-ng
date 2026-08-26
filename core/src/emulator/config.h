@@ -78,8 +78,13 @@ public:
     std::string GetScreenshotsFolder();
 
 public:
-	[[nodiscard]] bool LoadConfig();
-	[[nodiscard]] bool LoadConfig(std::string& filename);
+	/// Load the config for a specific platform model. The model config name is
+	/// mandatory and resolves to configs/<modelConfigName>/unreal.ini (searched
+	/// in the executable directory, then in the application resources).
+	[[nodiscard]] bool LoadConfig(const std::string& modelConfigName);
+
+	/// Load a config from an explicit .ini file path (custom config override)
+	[[nodiscard]] bool LoadConfigFile(const std::string& filename);
 	[[nodiscard]] bool ParseConfig(CSimpleIniA& inimanager);
 
 	[[nodiscard]] bool DetermineModel(const char* model, uint32_t ramsize);
@@ -98,6 +103,14 @@ public:
 	 * @return Pointer to the model info, or nullptr if not found
 	 */
 	static const TMemModel* FindModelByShortName(const std::string& shortName);
+
+	/**
+	 * @brief Map a model (+ optional RAM size) to its config folder under configs/
+	 * @param model Machine model
+	 * @param ramSizeKB RAM size in KB; 0 = use the model's default RAM
+	 * @return Config folder name (e.g. "pentagon128k", "spectrum48")
+	 */
+	static std::string GetConfigFolderForModel(MEM_MODEL model, uint32_t ramSizeKB = 0);
 
 	// Helper methods
 protected:
