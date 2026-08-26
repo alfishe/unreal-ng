@@ -1,14 +1,22 @@
 #include "screen.h"
+#include "ulacontention.h"
 
 #include <common/image/imagehelper.h>
 
 #include <cassert>
+#include <cstring>
+#include <fstream>
+#include <iostream>
 
+#include "3rdparty/message-center/messagecenter.h"
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
+#include "common/video/videoutils.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
+#include "emulator/emulator.h"
+#include "emulator/notifications.h"
 #include "stdafx.h"
 
 /// region <Static methods>
@@ -147,6 +155,27 @@ void Screen::InitRaster()
 
     /// region Set current video mode
 
+    // Base video mode per machine model. Without this, every model inherited
+    // the constructor's default mode - ZX-48K/128K ran with the wrong raster
+    // geometry and, critically, with ULA contention state of another machine.
+    // Special modes (ATM, AlCo, Profi, GMX) override below.
+    switch (config.mem_model)
+    {
+        case MM_SPECTRUM48:
+            video.mode = M_ZX48;
+            break;
+        case MM_SPECTRUM128:
+        case MM_PLUS3:
+            video.mode = M_ZX128;
+            break;
+        case MM_PENTAGON:
+            video.mode = M_PENTAGON128K;
+            break;
+        default:
+            // Other models keep their current/legacy mode selection
+            break;
+    }
+
     uint8_t m = EFF7_4BPP | EFF7_HWMC;
 
     // ATM 1
@@ -199,6 +228,16 @@ void Screen::InitRaster()
     }
 
     video.raster = raster[R_256_192];
+
+    // User-forced Pentagon overscan (UI toggle): must survive the per-frame
+    // re-detection - detection would otherwise revert the manual mode to the
+    // model's base mode on the next frame. Guest-programmed AlCo modes (EFF7
+    // bits below) still take priority.
+    if (_overscanForced && config.mem_model == MM_PENTAGON)
+    {
+        video.mode = M_P384;
+        video.raster = raster[R_384_304];
+    }
 
     // ATM 3 AlCo modes
     if (config.mem_model == MM_ATM3 && (state.pEFF7 & m))
@@ -270,7 +309,13 @@ void Screen::InitRaster()
     /// endregion
 
     // Select renderer for the mode
-    if (prevMode != video.mode)
+    // Apply when the detected mode differs from the ACTIVE raster mode (_mode),
+    // not merely from the previous detection result: the constructor defaults
+    // (_mode/_vid.mode) can disagree with the model's base mode, and comparing
+    // detection-to-detection left 48K/128K machines running with the Pentagon
+    // raster and contention disabled.
+    (void)prevMode;
+    if (video.mode != _mode)
     {
         SetVideoMode(video.mode);
 
@@ -322,17 +367,21 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     /// Note!: all timings are in t-states, although raster descriptor has pixels as UOM. So recalculation is required
     const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
 
+    // For M_P384 overscan mode, use Pentagon timing for all calculations
+    // Only the framebuffer size differs - timing must be identical to Pentagon
+    const RasterDescriptor& timingDescriptor = (_mode == M_P384) ? rasterDescriptors[M_PENTAGON128K] : rasterDescriptor;
+
     /// region <Config values>
     _rasterState.configFrameDuration = _context->config.frame;
     /// endregion </Config values>
 
     /// region <Frame timings>
 
-    _rasterState.pixelsPerLine = rasterDescriptor.pixelsPerLine;
+    _rasterState.pixelsPerLine = timingDescriptor.pixelsPerLine;
     _rasterState.tstatesPerLine = _rasterState.pixelsPerLine / _rasterState.pixelsPerTState;
     _rasterState.maxFrameTiming =
         _rasterState.tstatesPerLine *
-        (rasterDescriptor.vSyncLines + rasterDescriptor.vBlankLines + rasterDescriptor.fullFrameHeight);
+        (timingDescriptor.vSyncLines + timingDescriptor.vBlankLines + timingDescriptor.fullFrameHeight);
 
     /// endregion </Frame timings>
 
@@ -341,24 +390,24 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     // Invisible blank area on top
     _rasterState.blankAreaStart = 0;
     _rasterState.blankAreaEnd =
-        _rasterState.tstatesPerLine * (rasterDescriptor.vSyncLines + rasterDescriptor.vBlankLines) - 1;
+        _rasterState.tstatesPerLine * (timingDescriptor.vSyncLines + timingDescriptor.vBlankLines) - 1;
 
     // Top border
     _rasterState.topBorderAreaStart = _rasterState.blankAreaEnd + 1;
     _rasterState.topBorderAreaEnd =
-        _rasterState.topBorderAreaStart + _rasterState.tstatesPerLine * rasterDescriptor.screenOffsetTop - 1;
+        _rasterState.topBorderAreaStart + _rasterState.tstatesPerLine * timingDescriptor.screenOffsetTop - 1;
 
     // Screen + side borders
     _rasterState.screenAreaStart = _rasterState.topBorderAreaEnd + 1;
     _rasterState.screenAreaEnd =
-        _rasterState.screenAreaStart + _rasterState.tstatesPerLine * rasterDescriptor.screenHeight - 1;
+        _rasterState.screenAreaStart + _rasterState.tstatesPerLine * timingDescriptor.screenHeight - 1;
 
     // Bottom border
     _rasterState.bottomBorderAreaStart = _rasterState.screenAreaEnd + 1;
     _rasterState.bottomBorderAreaEnd =
         _rasterState.bottomBorderAreaStart +
         _rasterState.tstatesPerLine *
-            (rasterDescriptor.fullFrameHeight - rasterDescriptor.screenHeight - rasterDescriptor.screenOffsetTop) -
+            (timingDescriptor.fullFrameHeight - timingDescriptor.screenHeight - timingDescriptor.screenOffsetTop) -
         1;
 
     /// endregion </Vertical timings>
@@ -367,20 +416,20 @@ void Screen::SetVideoMode(VideoModeEnum mode)
 
     _rasterState.blankLineAreaStart = 0;
     _rasterState.blankLineAreaEnd =
-        ((rasterDescriptor.hSyncPixels + rasterDescriptor.hBlankPixels) / _rasterState.pixelsPerTState) - 1;
+        ((timingDescriptor.hSyncPixels + timingDescriptor.hBlankPixels) / _rasterState.pixelsPerTState) - 1;
 
     _rasterState.leftBorderAreaStart = _rasterState.blankLineAreaEnd + 1;
     _rasterState.leftBorderAreaEnd =
-        _rasterState.leftBorderAreaStart + (rasterDescriptor.screenOffsetLeft / _rasterState.pixelsPerTState) - 1;
+        _rasterState.leftBorderAreaStart + (timingDescriptor.screenOffsetLeft / _rasterState.pixelsPerTState) - 1;
 
     _rasterState.screenLineAreaStart = _rasterState.leftBorderAreaEnd + 1;
     _rasterState.screenLineAreaEnd =
-        _rasterState.screenLineAreaStart + (rasterDescriptor.screenWidth / _rasterState.pixelsPerTState) - 1;
+        _rasterState.screenLineAreaStart + (timingDescriptor.screenWidth / _rasterState.pixelsPerTState) - 1;
 
     _rasterState.rightBorderAreaStart = _rasterState.screenLineAreaEnd + 1;
     _rasterState.rightBorderAreaEnd =
         _rasterState.rightBorderAreaStart +
-        ((rasterDescriptor.fullFrameWidth - rasterDescriptor.screenOffsetLeft - rasterDescriptor.screenWidth) /
+        ((timingDescriptor.fullFrameWidth - timingDescriptor.screenOffsetLeft - timingDescriptor.screenWidth) /
          _rasterState.pixelsPerTState) -
         1;
 
@@ -397,20 +446,56 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     {
         case M_PENTAGON128K:
         case M_PMC:
+        case M_P16:
+        case M_P384:  // Pentagon overscan - same ULA behavior as standard Pentagon
+        case M_PHR:
             _rasterState.borderUpdateTStates = 1;
             _rasterState.contentionEnabled = false;
+            _rasterState.fetchType = ULA_DISCRETE_LOGIC;
             break;
         case M_ZX48:
         case M_ZX128:
         default:
             _rasterState.borderUpdateTStates = 4;
             _rasterState.contentionEnabled = true;
+            _rasterState.fetchType = ULA_FERRANTI;
             break;
     }
     /// endregion </Model-specific ULA behavior>
 
+    // Push raster timing + contention flag to the standalone ULA contention component
+    if (_context && _context->pUlaContention)
+    {
+        ContentionRaster cr;
+        cr.configFrameDuration = _rasterState.configFrameDuration;
+        cr.screenAreaStart = _rasterState.screenAreaStart;
+        cr.screenAreaEnd = _rasterState.screenAreaEnd;
+        cr.tstatesPerLine = _rasterState.tstatesPerLine;
+        cr.screenLineAreaStart = _rasterState.screenLineAreaStart;
+        cr.screenLineAreaEnd = _rasterState.screenLineAreaEnd;
+        _context->pUlaContention->UpdateRaster(cr);
+        _context->pUlaContention->SetContentionEnabled(_rasterState.contentionEnabled);
+        _context->pUlaContention->SetFetchType((UlaFetchType)_rasterState.fetchType);
+    }
+
     // Allocate framebuffer
     AllocateFramebuffer(_mode);
+
+    // Notify consumers that the video mode changed. JUSTIFICATION: mode
+    // switches are not only UI-driven - guest software switches modes by
+    // port writes (Pentagon AlCo via EFF7, Profi via DFFD, ATM via FF77,
+    // GMX), detected by InitRaster mid-emulation on the emulation thread.
+    // Framebuffer geometry (and, for size-changing switches, the buffer
+    // address) is different afterwards; a GUI consumer with cached
+    // dimensions has CopyPresentedFramebuffer rejecting every copy (dst too
+    // small) and freezes on the last frame. Consumers must re-attach.
+    // Skipped during construction (pEmulator not wired yet).
+    if (_context && _context->pEmulator)
+    {
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        messageCenter.Post(NC_VIDEO_MODE_CHANGED,
+                           new EmulatorFramePayload(_context->pEmulator->GetUUID(), 0));
+    }
 
 #ifdef _DEBUG
     MLOGINFO("%s", DumpRasterState().c_str());
@@ -454,42 +539,6 @@ void Screen::SetBorderColor(uint8_t color)
 
     // Only bits [0:2] contain border color
     _borderColor = color & 0b0000'0111;
-}
-
-/// ULA memory contention delay table for ZX-48K/128K.
-// The ULA stalls the CPU clock when accessing contended memory (0x4000-0x7FFF)
-// during the visible screen area. The delay pattern repeats every 8 t-states
-// within each scanline during the paper area, following this sequence:
-//   t-state offset in line: 0  1  2  3  4  5  6  7  (then repeats)
-//   delay:                   6  5  4  3  2  1  0  0
-// Source: https://faqwiki.zxnet.co.uk/wiki/Contended_memory
-static const uint8_t contentionPattern[8] = {6, 5, 4, 3, 2, 1, 0, 0};
-
-uint8_t Screen::GetContentionDelay() const
-{
-    if (!_rasterState.contentionEnabled)
-        return 0;  // Pentagon: no contention
-
-    uint32_t t = _cpu->t % _rasterState.configFrameDuration;
-
-    // Only contend during the screen (paper) area
-    if (t < _rasterState.screenAreaStart || t > _rasterState.screenAreaEnd)
-        return 0;
-
-    // Calculate position within the scanline
-    uint32_t tInLine = (t - _rasterState.screenAreaStart) % _rasterState.tstatesPerLine;
-
-    // Only contend during the paper portion of the line (not left/right borders)
-    // Paper starts at screenLineAreaStart relative to line start
-    uint32_t paperStart = _rasterState.screenLineAreaStart;
-    uint32_t paperEnd = _rasterState.screenLineAreaEnd;
-
-    if (tInLine < paperStart || tInLine > paperEnd)
-        return 0;
-
-    // Delay is based on the position within the 8-t-state cell
-    uint32_t offsetInCell = (tInLine - paperStart) % 8;
-    return contentionPattern[offsetInCell];
 }
 
 VideoModeEnum Screen::GetVideoMode()
@@ -587,10 +636,48 @@ void Screen::SaveZXSpectrumNativeScreen()
 
 void Screen::AllocateFramebuffer(VideoModeEnum mode)
 {
+    // Apply the configured A/V sync video delay (auto -1 = 2 frames: the
+    // audio path's ring target + HW buffer expressed in frame periods)
+    if (_context)
+    {
+        const int cfg = _context->config.videoPresentDelayFrames;
+        SetPresentDelayFrames(cfg < 0 ? 2 : static_cast<uint8_t>(cfg));
+    }
+
     // Buffer already allocated for the selected video mode
     if (_framebuffer.memoryBuffer != nullptr && _framebuffer.videoMode == mode)
     {
         return;
+    }
+
+    // Same-size mode switch (e.g. M_ZX48 <-> M_ZX128 <-> M_PENTAGON128K, all
+    // 352x288): KEEP the existing buffers. JUSTIFICATION: consumers hold raw
+    // framebuffer pointers without locks (DeviceScreen's live QImage wrap,
+    // videowall tiles); reallocating identical-size buffers frees memory the
+    // GUI thread may be reading mid-paint - a use-after-free with zero upside.
+    // Different-size switches still reallocate (unavoidable) and are covered
+    // by the NC_VIDEO_MODE_CHANGED re-attach.
+    if (_framebuffer.memoryBuffer != nullptr && mode < M_MAX)
+    {
+        const RasterDescriptor& rd = rasterDescriptors[mode];
+        size_t newSize = (size_t)rd.fullFrameWidth * rd.fullFrameHeight * RGBA_SIZE;
+
+        if (newSize != 0 && newSize == _framebuffer.memoryBufferSize)
+        {
+            _framebuffer.videoMode = mode;
+            _framebuffer.width = rd.fullFrameWidth;
+            _framebuffer.height = rd.fullFrameHeight;
+            memset(_framebuffer.memoryBuffer, 0x00, _framebuffer.memoryBufferSize);
+
+            std::lock_guard<std::mutex> lock(_presentMutex);
+            for (size_t i = 0; i < PRESENT_SLOTS; i++)
+            {
+                if (_presentSlots[i])
+                    memset(_presentSlots[i], 0x00, _presentBufferSize);
+            }
+            _presentLatchCounter = 0;
+            return;
+        }
     }
 
     // Deallocate existing framebuffer memory
@@ -602,6 +689,10 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         case M_ZX48:
         case M_ZX128:
         case M_PENTAGON128K:
+        case M_PMC:
+        case M_P16:
+        case M_P384:  // Pentagon 384x304 overscan mode
+        case M_PHR:
             break;
         default:
             MLOGWARNING("AllocateFramebuffer: Unknown video mode");
@@ -624,6 +715,23 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
 
         // Clear the whole framebuffer
         memset(_framebuffer.memoryBuffer, 0x00, _framebuffer.memoryBufferSize);
+
+        // Allocate the matching presentation (latched) buffer.
+        // _presentBufferSize is the authoritative size for cross-thread readers
+        // and changes only together with the buffer, under the mutex - readers
+        // must never trust _framebuffer.memoryBufferSize, which is published
+        // outside the lock during mode switches.
+        {
+            std::lock_guard<std::mutex> lock(_presentMutex);
+            for (size_t i = 0; i < PRESENT_SLOTS; i++)
+            {
+                delete[] _presentSlots[i];
+                _presentSlots[i] = new uint8_t[_framebuffer.memoryBufferSize];
+                memset(_presentSlots[i], 0x00, _framebuffer.memoryBufferSize);
+            }
+            _presentBufferSize = _framebuffer.memoryBufferSize;
+            _presentLatchCounter = 0;
+        }
 
 #ifdef _DEBUG
         MLOGINFO("Framebuffer allocated");
@@ -648,6 +756,95 @@ void Screen::DeallocateFramebuffer()
         _framebuffer.memoryBuffer = nullptr;
         _framebuffer.memoryBufferSize = 0;
     }
+
+    {
+        std::lock_guard<std::mutex> lock(_presentMutex);
+        for (size_t i = 0; i < PRESENT_SLOTS; i++)
+        {
+            delete[] _presentSlots[i];
+            _presentSlots[i] = nullptr;
+        }
+        _presentBufferSize = 0;
+        _presentLatchCounter = 0;
+    }
+}
+
+void Screen::LatchFramebuffer()
+{
+    // Runs on the emulation thread, which is also the only mutator of
+    // _framebuffer - those fields are stable here
+    if (_framebuffer.memoryBuffer == nullptr)
+        return;
+
+    std::lock_guard<std::mutex> lock(_presentMutex);
+    if (_presentSlots[0] && _presentBufferSize == _framebuffer.memoryBufferSize)
+    {
+        uint8_t* slot = _presentSlots[_presentLatchCounter % PRESENT_SLOTS];
+        VideoUtils::CopyFrameBuffer(slot, _framebuffer.memoryBuffer, _presentBufferSize);
+        _presentLatchCounter++;
+
+        _lastLatchTimestampUs.store(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count(),
+            std::memory_order_release);
+    }
+}
+
+void Screen::FlushAndPresentFramebuffer()
+{
+    if (_framebuffer.memoryBuffer == nullptr)
+        return;
+
+    std::lock_guard<std::mutex> lock(_presentMutex);
+    if (_presentSlots[0] == nullptr || _presentBufferSize != _framebuffer.memoryBufferSize)
+        return;
+
+    // Empty the delay line, then make the freshly rendered frame its only
+    // content. With the counter reset, CopyPresentedFramebuffer clamps the
+    // configured delay to what exists (zero) and serves this frame; once
+    // playback resumes the queue refills on its own.
+    _presentLatchCounter = 0;
+    VideoUtils::CopyFrameBuffer(_presentSlots[0], _framebuffer.memoryBuffer, _presentBufferSize);
+    _presentLatchCounter = 1;
+
+    _lastLatchTimestampUs.store(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count(),
+        std::memory_order_release);
+}
+
+bool Screen::CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize)
+{
+    if (dst == nullptr)
+        return false;
+
+    // Size check and copy length must both use _presentBufferSize under the
+    // mutex: _framebuffer.memoryBufferSize is published outside the lock
+    // during mode-switch reallocation, and trusting it here could overread
+    // a present buffer from the previous video mode
+    std::lock_guard<std::mutex> lock(_presentMutex);
+    if (_presentSlots[0] == nullptr || _presentBufferSize == 0 || dstSize < _presentBufferSize)
+        return false;
+    if (_presentLatchCounter == 0)
+    {
+        // Nothing latched yet: serve the zeroed slot (black frame) - callers
+        // treat a false return as "no present buffer", not "not yet"
+        VideoUtils::CopyFrameBuffer(dst, _presentSlots[0], _presentBufferSize);
+        return true;
+    }
+
+    // A/V sync: present the frame latched _presentDelayFrames ago so video
+    // trails by the same constant latency as the audio path. During the
+    // first frames after start/reset the delay is clamped to what exists -
+    // the queue "fills" naturally, exactly the 1-2 frame startup buffering.
+    const uint64_t newest = _presentLatchCounter - 1;
+    uint64_t delay = _presentDelayFrames.load(std::memory_order_acquire);
+    if (delay > newest)
+        delay = newest;
+
+    const uint8_t* slot = _presentSlots[(newest - delay) % PRESENT_SLOTS];
+    VideoUtils::CopyFrameBuffer(dst, slot, _presentBufferSize);
+    return true;
 }
 
 FramebufferDescriptor& Screen::GetFramebufferDescriptor()
@@ -696,6 +893,30 @@ void Screen::GetRGBAPalette16(uint32_t* colors)
 }
 
 /// endregion </Framebuffer related>
+
+/// region <Display viewport>
+
+void Screen::SetDisplayViewport(const DisplayViewport& viewport)
+{
+    _displayViewport = viewport;
+}
+
+const DisplayViewport& Screen::GetDisplayViewport() const
+{
+    return _displayViewport;
+}
+
+uint16_t Screen::GetDisplayWidth() const
+{
+    return _displayViewport.GetDisplayWidth(_framebuffer.width);
+}
+
+uint16_t Screen::GetDisplayHeight() const
+{
+    return _displayViewport.GetDisplayHeight(_framebuffer.height);
+}
+
+/// endregion </Display viewport>
 
 std::string Screen::GetVideoModeName(VideoModeEnum mode)
 {

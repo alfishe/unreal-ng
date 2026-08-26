@@ -2,8 +2,10 @@
 
 #include <QApplication>
 #include <QMessageBox>
+#include <set>
 
 #include "emulator/emulator.h"
+#include "emulator/emulatormanager.h"
 #include "emulator/platform.h"
 #include "emulator/notifications.h"
 // Avoid Qt 'signals' macro conflict with WD1793State::signals member
@@ -20,6 +22,7 @@ MenuManager::MenuManager(MainWindow* mainWindow, QMenuBar* menuBar, QObject* par
     createEditMenu();
     createViewMenu();
     createRunMenu();
+    createMachineMenu();
     createDebugMenu();
     createToolsMenu();
     createHelpMenu();
@@ -217,6 +220,45 @@ void MenuManager::createViewMenu()
     _zoomResetAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
     _zoomResetAction->setStatusTip(tr("Reset zoom to 1x"));
     _zoomResetAction->setEnabled(false);  // TODO: Implement zoom
+
+    _viewMenu->addSeparator();
+
+    // Overscan mode (Pentagon only - 384x304 with extended border)
+    _overscanAction = _viewMenu->addAction(tr("&Overscan Mode"));
+    _overscanAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
+    _overscanAction->setStatusTip(tr("Pentagon overscan mode (384x304) - shows invisible border areas"));
+    _overscanAction->setCheckable(true);
+    _overscanAction->setEnabled(false);  // Enabled only for Pentagon
+    connect(_overscanAction, &QAction::triggered, this, &MenuManager::overscanModeToggled);
+
+    // Viewport submenu (only meaningful in overscan mode)
+    _viewportMenu = _viewMenu->addMenu(tr("Display &Viewport"));
+    _viewportMenu->setStatusTip(tr("Crop framebuffer for display"));
+    _viewportMenu->setEnabled(false);  // Enabled when overscan is active
+
+    _viewportGroup = new QActionGroup(this);
+    _viewportGroup->setExclusive(true);
+
+    _viewportFullOverscanAction = _viewportMenu->addAction(tr("&Full Overscan (384x304)"));
+    _viewportFullOverscanAction->setCheckable(true);
+    _viewportGroup->addAction(_viewportFullOverscanAction);
+    connect(_viewportFullOverscanAction, &QAction::triggered, this, [this]() { emit viewportChanged(0); });
+
+    _viewportSymmetricAction = _viewportMenu->addAction(tr("&Symmetric Horizontal (352x304)"));
+    _viewportSymmetricAction->setCheckable(true);
+    _viewportSymmetricAction->setChecked(true);  // Default viewport
+    _viewportGroup->addAction(_viewportSymmetricAction);
+    connect(_viewportSymmetricAction, &QAction::triggered, this, [this]() { emit viewportChanged(1); });
+
+    _viewportStandardAction = _viewportMenu->addAction(tr("S&tandard (352x288)"));
+    _viewportStandardAction->setCheckable(true);
+    _viewportGroup->addAction(_viewportStandardAction);
+    connect(_viewportStandardAction, &QAction::triggered, this, [this]() { emit viewportChanged(2); });
+
+    _viewportScreenOnlyAction = _viewportMenu->addAction(tr("Screen &Only (256x192)"));
+    _viewportScreenOnlyAction->setCheckable(true);
+    _viewportGroup->addAction(_viewportScreenOnlyAction);
+    connect(_viewportScreenOnlyAction, &QAction::triggered, this, [this]() { emit viewportChanged(3); });
 }
 
 void MenuManager::createRunMenu()
@@ -303,6 +345,158 @@ void MenuManager::createRunMenu()
     _turboModeAction->setStatusTip(tr("Hold Tab for maximum speed (no sync)"));
     _turboModeAction->setCheckable(true);
     connect(_turboModeAction, &QAction::triggered, this, &MenuManager::turboModeToggled);
+}
+
+void MenuManager::createMachineMenu()
+{
+    _machineMenu = _menuBar->addMenu(tr("&Machine"));
+    _machineModelGroup = new QActionGroup(this);
+    _machineModelGroup->setExclusive(true);
+
+    // Get available models from EmulatorManager
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    if (!manager)
+        return;
+
+    std::vector<TMemModel> models = manager->GetAvailableModels();
+    const int ramSizes[] = {48, 128, 256, 512, 1024, 2048, 4096};
+
+    // Only show supported models for now
+    // TODO: Enable other models as they become fully supported
+    std::set<MEM_MODEL> supportedModels = {
+        MM_PENTAGON,      // Pentagon 128K/512K/1024K
+        MM_SPECTRUM48,    // ZX-Spectrum 48K
+        MM_SPECTRUM128    // ZX-Spectrum 128K
+    };
+
+    for (const auto& model : models)
+    {
+        // Skip unsupported models
+        if (supportedModels.find(model.Model) == supportedModels.end())
+            continue;
+
+        QString shortName = QString::fromUtf8(model.ShortName);
+        QString baseName = QString::fromUtf8(model.FullName);
+
+        // Skip models with empty names (shouldn't happen, but guard against it)
+        if (baseName.isEmpty() || shortName.isEmpty())
+        {
+            qWarning() << "MenuManager::createMachineMenu - Skipping model with empty name:"
+                       << "FullName=" << baseName << "ShortName=" << shortName;
+            continue;
+        }
+
+        // Count available RAM sizes for this model
+        int ramCount = 0;
+        for (int ram : ramSizes)
+        {
+            if (model.AvailRAMs & ram)
+                ramCount++;
+        }
+
+        // Skip models with no matching RAM sizes
+        if (ramCount == 0)
+        {
+            qWarning() << "MenuManager::createMachineMenu - Skipping model with no valid RAM sizes:"
+                       << baseName << "AvailRAMs=" << model.AvailRAMs;
+            continue;
+        }
+
+        // If only one RAM option, show just the model name
+        if (ramCount == 1)
+        {
+            QAction* action = _machineMenu->addAction(baseName);
+            action->setCheckable(true);
+            // Store as "MODEL:RAM" for parsing
+            action->setData(QString("%1:%2").arg(shortName).arg(model.defaultRAM));
+            action->setStatusTip(tr("Switch to %1").arg(baseName));
+            _machineModelGroup->addAction(action);
+            _machineModelActions.push_back(action);
+
+            connect(action, &QAction::triggered, this, [this, shortName, ram = model.defaultRAM]() {
+                QString key = QString("%1:%2").arg(shortName).arg(ram);
+                if (key != _currentModelShortName)
+                {
+                    emit machineModelChangeRequested(key);
+                }
+            });
+        }
+        else
+        {
+            // Multiple RAM options - create entry for each
+            for (int ram : ramSizes)
+            {
+                if (!(model.AvailRAMs & ram))
+                    continue;
+
+                QString displayName = QString("%1 %2K").arg(baseName).arg(ram);
+                QAction* action = _machineMenu->addAction(displayName);
+                action->setCheckable(true);
+                action->setData(QString("%1:%2").arg(shortName).arg(ram));
+                action->setStatusTip(tr("Switch to %1 with %2K RAM").arg(baseName).arg(ram));
+                _machineModelGroup->addAction(action);
+                _machineModelActions.push_back(action);
+
+                connect(action, &QAction::triggered, this, [this, shortName, ram]() {
+                    QString key = QString("%1:%2").arg(shortName).arg(ram);
+                    if (key != _currentModelShortName)
+                    {
+                        emit machineModelChangeRequested(key);
+                    }
+                });
+            }
+        }
+    }
+
+    // Set default selection (first entry)
+    if (!_machineModelActions.empty())
+    {
+        _machineModelActions[0]->setChecked(true);
+        _currentModelShortName = _machineModelActions[0]->data().toString();
+    }
+}
+
+void MenuManager::updateMachineModelSelection(std::shared_ptr<Emulator> activeEmulator)
+{
+    if (!activeEmulator)
+        return;
+
+    // Get current model from emulator context
+    EmulatorContext* ctx = activeEmulator->GetContext();
+    if (!ctx)
+        return;
+
+    MEM_MODEL currentModel = ctx->config.mem_model;
+    uint32_t currentRam = ctx->config.ramsize;
+
+    // Find and check the matching action (format: "MODEL:RAM")
+    for (QAction* action : _machineModelActions)
+    {
+        QString data = action->data().toString();
+        QStringList parts = data.split(':');
+        if (parts.size() != 2)
+            continue;
+
+        QString modelName = parts[0];
+        uint32_t ram = parts[1].toUInt();
+
+        // Find model info to get the MEM_MODEL enum
+        EmulatorManager* manager = EmulatorManager::GetInstance();
+        if (manager)
+        {
+            std::vector<TMemModel> models = manager->GetAvailableModels();
+            for (const auto& model : models)
+            {
+                if (QString::fromUtf8(model.ShortName) == modelName &&
+                    model.Model == currentModel && ram == currentRam)
+                {
+                    action->setChecked(true);
+                    _currentModelShortName = data;
+                    return;
+                }
+            }
+        }
+    }
 }
 
 void MenuManager::createDebugMenu()
@@ -408,7 +602,12 @@ void MenuManager::createToolsMenu()
     _recordVideoAction = _toolsMenu->addAction(tr("Record &Video..."));
     _recordVideoAction->setStatusTip(tr("Start/stop video recording"));
     _recordVideoAction->setCheckable(true);
-    _recordVideoAction->setEnabled(false);  // TODO: Implement video recording
+#ifdef ENABLE_RECORDING
+    _recordVideoAction->setEnabled(true);
+    connect(_recordVideoAction, &QAction::triggered, this, &MenuManager::videoRecordingRequested);
+#else
+    _recordVideoAction->setEnabled(false);
+#endif
 }
 
 void MenuManager::createHelpMenu()
@@ -557,6 +756,42 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
     // Debug menu states
     _stepInAction->setEnabled(!isRunning || isPaused);
     _stepOverAction->setEnabled(!isRunning || isPaused);
+
+    // Overscan menu states (Pentagon only)
+    // Only update overscan visibility when there's an active emulator
+    // Skip update when emulator is null (during transitions) to avoid hiding menu incorrectly
+    if (emulatorExists)
+    {
+        EmulatorContext* context = activeEmulator->GetContext();
+        bool isPentagon = (context && context->config.mem_model == MM_PENTAGON);
+        bool isOverscanActive = isPentagon && activeEmulator->IsOverscanMode();
+
+        // Pentagon: show and enable overscan, show viewport when overscan active
+        // Non-Pentagon: hide overscan, hide viewport
+        _overscanAction->setVisible(isPentagon);
+        _overscanAction->setEnabled(isPentagon);
+        _overscanAction->setChecked(isOverscanActive);
+        // Use menuAction() to control submenu visibility in parent menu
+        // (calling setVisible() on QMenu itself can trigger unwanted popup)
+        _viewportMenu->menuAction()->setVisible(isPentagon);
+        _viewportMenu->setEnabled(isOverscanActive);
+    }
+    else
+    {
+        // No emulator: hide Pentagon-only menus
+        _overscanAction->setVisible(false);
+        _overscanAction->setEnabled(false);
+        _viewportMenu->menuAction()->setVisible(false);
+        _viewportMenu->setEnabled(false);
+    }
+
+    // Update machine model selection
+    updateMachineModelSelection(activeEmulator);
+}
+
+void MenuManager::resetViewportSelection()
+{
+    _viewportSymmetricAction->setChecked(true);
 }
 
 void MenuManager::setActiveEmulator(std::shared_ptr<Emulator> emulator)

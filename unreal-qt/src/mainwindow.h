@@ -38,6 +38,9 @@
 
 class AudioSettingsWidget;
 class DockingManager;
+#ifdef ENABLE_RECORDING
+class VideoRecordingWidget;
+#endif
 
 QT_BEGIN_NAMESPACE
 namespace Ui
@@ -63,6 +66,7 @@ private slots:
     void handleStartButton();
     void tryAdoptRemainingEmulator();
     void handleMessageScreenRefresh(int id, Message* message);
+    void handleVideoModeChanged(int id, Message* message);
     void handleFileOpenRequest(int id, Message* message);
     void handleEmulatorStateChanged(int id, Message* message);
     void handleEmulatorInstanceDestroyed(int id, Message* message);
@@ -93,6 +97,13 @@ private slots:
     void handleLogWindowToggled(bool visible);
     void handleIntParametersRequested();
     void handleAudioSettingsRequested();
+    void handleOverscanModeToggled(bool enabled);
+    void handleViewportChanged(int presetIndex);
+    void handleMachineModelChangeRequested(const QString& modelShortName);
+#ifdef ENABLE_RECORDING
+    void handleVideoRecordingRequested();
+    void handleQuickRecord(const QString& presetName);
+#endif
     void updateMenuStates();
 
     // Binding state handler
@@ -196,6 +207,7 @@ private:
     GUIEmulatorContext* _guiContext = nullptr;
     std::shared_ptr<Emulator> _emulator = nullptr;  // TODO: Remove after full binding migration
     uint32_t _lastFrameCount = 0;
+    bool _switchingModel = false;  // True while model switch is in progress (prevents notification handler interference)
 
     QPoint _lastCursorPos;
     QPalette _originalPalette;
@@ -219,4 +231,7 @@ private:
 
     // Audio settings dialog (singleton, toggled via menu)
     QPointer<AudioSettingsWidget> _audioSettingsWidget;
+#ifdef ENABLE_RECORDING
+    QPointer<VideoRecordingWidget> _videoRecordingWidget;
+#endif
 };

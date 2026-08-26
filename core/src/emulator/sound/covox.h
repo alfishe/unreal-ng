@@ -5,6 +5,7 @@
 #include "emulator/sound/audio.h"
 #include "emulator/ports/portdecoder.h"
 #include "common/modulelogger.h"
+#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 
 class EmulatorContext;
 struct blip_t;
@@ -23,7 +24,7 @@ struct blip_t;
 /// preventing hard clipping when both channels on one side are at full amplitude.
 /// Mono COVOX programs (writing only to #FB/RightB) produce centered output
 /// naturally — idle channels stay at midpoint (0x80) and contribute zero.
-class Covox : public PortDevice
+class Covox : public PortDevice, public ttd::TTDSerializable
 {
 public:
     // Port addresses for 4 channels
@@ -64,21 +65,30 @@ protected:
     float _dcAccumL = 0.0f;
     float _dcAccumR = 0.0f;
     static constexpr float DC_COEF = 0.995f;  // ~7 Hz cutoff @ 44.1 kHz
+    float _dcCoefEff = DC_COEF;               // DC_COEF^(44100/fs): same cutoff Hz at every core rate
 
+    // Core output rate (multirate plan phase 6)
+    size_t _sampleRate;
 
 public:
     Covox() = delete;
-    explicit Covox(EmulatorContext* context);
+    explicit Covox(EmulatorContext* context, size_t sampleRate = 44100);
     virtual ~Covox();
 
     // Buffer access for registry
     int16_t* getBuffer() { return _buffer; }
     const int16_t* getBuffer() const { return _buffer; }
 
+    /// Live core-rate change (device reroute with CoreRate=auto)
+    void setSampleRate(size_t sampleRate);
+
     // Frame lifecycle
     void reset();
     void handleFrameStart();
-    void handleFrameEnd();
+    /// @param expectedSamples Exact per-frame sample count from SoundManager's
+    ///        accumulator (0 = compute locally via rounding, legacy behavior).
+    ///        Passing it keeps the covox stream in lockstep with the mixer.
+    void handleFrameEnd(size_t expectedSamples = 0);
 
     // DC removal control (for UI section)
     void setDCRemovalEnabled(bool enabled) { _dcRemovalEnabled = enabled; }
@@ -99,4 +109,19 @@ private:
     /// Compute stereo amplitudes from current DAC values.
     /// Each side sums two channels with 0.5× scaling to prevent clipping.
     void computeStereoAmplitudes(int32_t& outL, int32_t& outR) const;
+
+
+public:
+    /// region <TTDSerializable interface (P1.5 - parent TDD 6.4)>
+    ///
+    /// The Covox/Soundrive is a 4-channel 8-bit DAC. The only machine state is
+    /// the four DAC latches (_dacValue[4]) - everything else is host-side
+    /// audio pipeline (rebuilt by handleFrameStart) or user config (mute,
+    /// DC-removal toggle).
+    ///
+    /// Layout: 4 bytes - _dacValue[0..3] (LeftA, LeftB, RightA, RightB).
+    size_t TTDStateSize() const override;
+    void   TTDSaveState(uint8_t* dst) const override;
+    void   TTDLoadState(const uint8_t* src) override;
+    /// endregion </TTDSerializable interface>
 };

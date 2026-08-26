@@ -4,6 +4,7 @@
 #include <QPointer>
 #include <memory>
 #include <vector>
+#include <3rdparty/message-center/eventqueue.h>
 
 class TileGrid;
 class EmulatorManager;
@@ -63,8 +64,12 @@ public:
     // Async batch creation
     void createEmulatorsAsync(int total);
     void createNextBatch();
+    
+    // Single Emulator Sync Mode
+    void setSingleEmulatorSyncMode(bool enable, const std::string& emulatorId = "");
 
 protected:
+    void closeEvent(QCloseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
@@ -102,6 +107,9 @@ private:
     /// Toggle screen HQ feature for all tiles (Cmd+S)
     void toggleScreenHQForAllTiles();
 
+    /// Open Video Wall recording dialog (Cmd+R / Ctrl+R)
+    void handleVideoRecordingRequested();
+
     // UI Components
     TileGrid* _tileGrid = nullptr;
 
@@ -114,6 +122,9 @@ private:
     // Currently audio-bound tile (only one at a time)
     // Using QPointer to auto-nullify when tile is deleted
     QPointer<EmulatorTile> _audioBoundTile;
+
+    // Recording widget dialog
+    QPointer<QWidget> _recordingWidget;
 
 #ifdef ENABLE_AUTOMATION
     // Automation system (WebAPI, CLI, Python, Lua) - singleton, not owned
@@ -149,8 +160,13 @@ private:
     // Screen HQ toggle state (default: enabled)
     bool _screenHQEnabled = true;
 
+    // Single sync mode state
+    bool _singleSyncMode = false;
+
     // Auto-hide menu bar in fullscreen
     QTimer* _menuAutoHideTimer = nullptr;
     static constexpr int MENU_AUTO_HIDE_DELAY_MS = 2000;
     static constexpr int MENU_TRIGGER_ZONE_HEIGHT = 10;  // pixels from top
+    
+    void handleSingleSyncModeMessage(MessagePayload* payload);
 };

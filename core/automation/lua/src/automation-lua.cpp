@@ -242,6 +242,11 @@ void AutomationLua::threadFunc(AutomationLua* lua)
     );
     
     lua->_luaEmulator = new LuaEmulator();
+    // CRITICAL: Wire the sol::state into LuaEmulator BEFORE registering bindings.
+    // Several bindings (get_registers, mem_read_block, memory_info, disasm, ...)
+    // dereference LuaEmulator::_lua to create result tables; leaving it nullptr
+    // causes a SIGSEGV on the first call.
+    lua->_luaEmulator->setLuaState(lua->_lua);
     lua->_luaEmulator->registerType(*lua->_lua);
     
     // Signal that initialization is complete

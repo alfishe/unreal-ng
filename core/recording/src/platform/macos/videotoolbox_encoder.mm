@@ -13,6 +13,12 @@
 #include <sys/stat.h>
 #include <cstring>
 
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#elif defined(__SSSE3__)
+#include <tmmintrin.h>
+#endif
+
 // ============================================================================
 // Helper: convert string to NSString
 // ============================================================================
@@ -84,6 +90,7 @@ bool VideoToolboxEncoder::Start(const std::string& filename, const EncoderConfig
     _isRecording = true;
     _framesEncoded = 0;
     _audioSamplesEncoded = 0;
+    _baseAudioTimestamp = -1.0;
 
     return true;
 }
@@ -239,7 +246,12 @@ bool VideoToolboxEncoder::initAssetWriter(const std::string& filename, const Enc
         // Audio input
         if (_hasAudio)
         {
-            uint32_t sampleRate = config.audioSampleRate > 0 ? config.audioSampleRate : 44100;
+            // Output audio rate policy (encoder_config.h): video containers
+            // always carry 48 kHz unless explicitly overridden. The INPUT
+            // stays at the core's native rate (the CMAudioFormatDescription
+            // built in initAudioConverter); when they differ AVAssetWriter
+            // converts through Apple's AudioConverter (mastering-grade SRC).
+            uint32_t sampleRate = config.audioOutputSampleRate > 0 ? config.audioOutputSampleRate : 48000;
             uint32_t channels = config.audioChannels > 0 ? config.audioChannels : 2;
             uint32_t audioBitrate = config.audioBitrate > 0 ? config.audioBitrate * 1000 : 192000;
 
@@ -335,7 +347,6 @@ bool VideoToolboxEncoder::initAudioConverter(const EncoderConfig& config)
 
 void VideoToolboxEncoder::OnVideoFrame(const FramebufferDescriptor& framebuffer, double timestampSec)
 {
-    (void)timestampSec;
     if (!_isRecording || !_videoInput || !_pixelBufferAdaptor)
         return;
 
@@ -393,33 +404,79 @@ void VideoToolboxEncoder::OnVideoFrame(const FramebufferDescriptor& framebuffer,
         // The emulator framebuffer is RGBA; the pixel buffer is 32BGRA (the
         // only raw format VideoToolbox accepts everywhere) — swizzle R<->B
         // while copying, replicating pixels for the integer upscale.
-        // Build each output row once, then memcpy it for the repeated rows.
-        for (uint32_t sy = 0; sy < expectedHeight; sy++)
+        if (_scale == 1)
         {
-            const uint8_t* s = src + sy * srcStride;
-            uint8_t* firstRow = dst + static_cast<size_t>(sy) * _scale * dstStride;
-
-            uint8_t* d = firstRow;
-            for (uint32_t sx = 0; sx < expectedWidth; sx++)
+#if defined(__SSSE3__)
+            __m128i mask = _mm_setr_epi8(2, 1, 0, 3,  6, 5, 4, 7,  10, 9, 8, 11,  14, 13, 12, 15);
+#endif
+            for (uint32_t sy = 0; sy < expectedHeight; sy++)
             {
-                for (uint32_t r = 0; r < _scale; r++)
-                {
-                    d[0] = s[2];  // B
-                    d[1] = s[1];  // G
-                    d[2] = s[0];  // R
-                    d[3] = s[3];  // A
-                    d += 4;
-                }
-                s += 4;
-            }
+                const uint8_t* s8 = src + sy * srcStride;
+                uint8_t* d8 = dst + sy * dstStride;
+                uint32_t sx = 0;
 
-            for (uint32_t r = 1; r < _scale; r++)
-                memcpy(firstRow + r * dstStride, firstRow, static_cast<size_t>(_width) * 4);
+#if defined(__ARM_NEON)
+                for (; sx + 15 < expectedWidth; sx += 16)
+                {
+                    uint8x16x4_t rgba = vld4q_u8(s8);
+                    uint8x16x4_t bgra;
+                    bgra.val[0] = rgba.val[2];
+                    bgra.val[1] = rgba.val[1];
+                    bgra.val[2] = rgba.val[0];
+                    bgra.val[3] = rgba.val[3];
+                    vst4q_u8(d8, bgra);
+                    s8 += 64;
+                    d8 += 64;
+                }
+#elif defined(__SSSE3__)
+                for (; sx + 3 < expectedWidth; sx += 4)
+                {
+                    __m128i pixel = _mm_loadu_si128((const __m128i*)s8);
+                    pixel = _mm_shuffle_epi8(pixel, mask);
+                    _mm_storeu_si128((__m128i*)d8, pixel);
+                    s8 += 16;
+                    d8 += 16;
+                }
+#endif
+                const uint32_t* s32 = (const uint32_t*)s8;
+                uint32_t* d32 = (uint32_t*)d8;
+                for (; sx < expectedWidth; sx++)
+                {
+                    uint32_t pixel = *s32++;
+                    *d32++ = (pixel & 0xFF00FF00) | ((pixel & 0x00FF0000) >> 16) | ((pixel & 0x000000FF) << 16);
+                }
+            }
+        }
+        else
+        {
+            // Build each output row once, then memcpy it for the repeated rows.
+            for (uint32_t sy = 0; sy < expectedHeight; sy++)
+            {
+                const uint8_t* s = src + sy * srcStride;
+                uint8_t* firstRow = dst + static_cast<size_t>(sy) * _scale * dstStride;
+
+                uint8_t* d = firstRow;
+                for (uint32_t sx = 0; sx < expectedWidth; sx++)
+                {
+                    for (uint32_t r = 0; r < _scale; r++)
+                    {
+                        d[0] = s[2];  // B
+                        d[1] = s[1];  // G
+                        d[2] = s[0];  // R
+                        d[3] = s[3];  // A
+                        d += 4;
+                    }
+                    s += 4;
+                }
+
+                for (uint32_t r = 1; r < _scale; r++)
+                    memcpy(firstRow + r * dstStride, firstRow, static_cast<size_t>(_width) * 4);
+            }
         }
         CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
 
-        // PTS based on frame count (perfect 50Hz guarantee)
-        CMTime pts = CMTimeMake(static_cast<int64_t>(_framesEncoded), static_cast<int32_t>(_fps));
+        // PTS based on provided timestamp
+        CMTime pts = CMTimeMakeWithSeconds(timestampSec, 1000000);
 
         if (![adaptor appendPixelBuffer:pixelBuffer withPresentationTime:pts])
         {
@@ -486,7 +543,14 @@ void VideoToolboxEncoder::OnAudioSamples(const int16_t* samples, size_t sampleCo
         CMSampleBufferRef sampleBuffer = nullptr;
 
         CMSampleTimingInfo timingInfo = {};
-        timingInfo.presentationTimeStamp = CMTimeMake(static_cast<int64_t>(_audioSamplesEncoded / channels), sampleRate);
+        
+        if (_baseAudioTimestamp < 0.0)
+        {
+            _baseAudioTimestamp = timestampSec;
+        }
+        
+        double currentPts = _baseAudioTimestamp + (static_cast<double>(_audioSamplesEncoded / channels) / sampleRate);
+        timingInfo.presentationTimeStamp = CMTimeMakeWithSeconds(currentPts, 1000000);
 
         size_t sampleSize = dataSize;
         CMSampleBufferCreate(

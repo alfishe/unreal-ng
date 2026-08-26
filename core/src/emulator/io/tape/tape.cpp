@@ -4,8 +4,11 @@
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/soundmanager.h"
+#include "emulator/spectrumconstants.h"
 #include "loaders/tape/loader_tap.h"
 #include "stdafx.h"
+#include <cstring>
+#include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (Item 6 markers)
 
 /// region <Constructors / destructors>
 
@@ -24,13 +27,34 @@ Tape::~Tape() {}
 /// region <Tape control methods>
 void Tape::startTape()
 {
+    // Phase 2 Item 6 - record an external-event marker. Tape playback is
+    // nondeterministic from the emulator's perspective (content arrives via
+    // the host clock, not via CPU-readable state), so SeekTo across a
+    // startTape boundary would silently produce wrong state. The marker is
+    // a replay barrier: SeekTo stops at it and surfaces it to the caller.
+    //
+    // No-op unless the TTD session is Recording - same guard as
+    // RecordInputEvent. The CLI / WebAPI handlers pause the emulator
+    // before calling startTape, so frame_counter and z80.t are stable.
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::TapeControl, "tape play");
+
     _tapeStarted = true;
     _muteEAR = true;
     _lastTapeBit = false;
+    _framesSinceLastRead = 0;
+    _initialErrNr = _context->pMemory->DirectReadFromZ80Memory(SystemVariables48k::ERR_NR);
+    MLOGINFO("Tape started, initial ERR_NR=0x%02X", _initialErrNr);
 }
 
 void Tape::stopTape()
 {
+    // Phase 2 Item 6 - see startTape() for rationale.
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::TapeControl, "tape stop");
+
     _tapeStarted = false;
     _muteEAR = false;
 
@@ -48,6 +72,12 @@ void Tape::stopTape()
 
 void Tape::reset()
 {
+    // Phase 2 Item 6 - distinguish "user-driven rewind" from "system-level
+    // reset". The constructor calls reset() before _context is fully wired;
+    // CLI/WebAPI rewind calls it after pausing the emulator. Recording is
+    // guarded below, so no caller-passed flag is needed.
+    const bool wasStarted = _tapeStarted;
+
     _tapeStarted = false;
     _tapePosition = 0LL;
 
@@ -60,6 +90,13 @@ void Tape::reset()
 
     _currentClockCount = 0;
     _lastTapeBit = false;
+    // Phase 2 Item 6 - only record a rewind marker when reset() actually
+    // changes tape state mid-session. A no-op reset (constructor, system
+    // reset before any session) must not pollute the journal.
+    if (wasStarted && _context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::TapeControl, "tape rewind");
+
 };
 
 /// region <Port events>
@@ -81,6 +118,9 @@ uint8_t Tape::handlePortIn()
 
     if (_tapeStarted)
     {
+        // Reset frame counter - loader is actively reading
+        _framesSinceLastRead = 0;
+
         // Use monotonic counter for tape timing (t_states + t)
         uint64_t clockCount = _context->emulatorState.t_states + cpu.t;
 
@@ -119,7 +159,9 @@ uint8_t Tape::handlePortIn()
 
         // If we just executed instruction at $0562 IN A,($FE)
         // And our PC is currently on $0564 RRA (which has opcode 0x1F)
-        if (cpu.pc == 0x0564 && memory.IsCurrentROM48k() && memory.GetPhysicalAddressForZ80Page(0)[0x0564] == 0x1F)
+        // Check ROM content directly - works for both 48K and 128K modes
+        uint8_t* romBank = memory.GetPhysicalAddressForZ80Page(0);
+        if (cpu.pc == 0x0564 && romBank && romBank[0x0564] == 0x1F)
         {
             LoaderTAP loader(_context);
 
@@ -215,7 +257,8 @@ void Tape::handleStep()
     if (!_tapeStarted)
         return;
 
-    const uint32_t tState = _context->pCore->GetZ80()->t;
+    Z80& cpu = *_context->pCore->GetZ80();
+    const uint32_t tState = cpu.t;
     uint64_t clockCount = _context->emulatorState.t_states + tState;
 
     bool tapeBit = getTapeStreamBit(clockCount);
@@ -234,8 +277,28 @@ void Tape::handleStep()
 
 void Tape::handleFrameEnd()
 {
-    // Fetch absolute timing (unused in this function)
-    [[maybe_unused]] uint64_t clockCount = _context->emulatorState.t_states + _context->pCore->GetZ80()->t;
+    if (!_tapeStarted)
+        return;
+
+    // Check ERR_NR - ROM sets error code on break/error (immediate detection)
+    // System variables are in RAM at same addresses regardless of which ROM is paged
+    uint8_t errNr = _context->pMemory->DirectReadFromZ80Memory(SystemVariables48k::ERR_NR);
+    if (errNr != _initialErrNr)
+    {
+        MLOGINFO("Tape stopped: ERR_NR changed from 0x%02X to 0x%02X", _initialErrNr, errNr);
+        stopTape();
+        return;
+    }
+
+    // Track frames since last tape read (backup detection for load complete)
+    // 128K mode has longer gaps between reads due to ROM switching
+    _framesSinceLastRead++;
+
+    // 150 frames (~3 seconds) without reads = loader exited
+    if (_framesSinceLastRead > 150)
+    {
+        stopTape();
+    }
 }
 
 /// endregion </Emulation events>
@@ -351,7 +414,7 @@ size_t Tape::generateBitstream(TapeBlock& tapeBlock, uint16_t pilotHalfPeriod_tS
 
     // Calculate collection size to fit all edge time intervals
     size_t resultSize = 0;
-    resultSize += (pilotLength_periods * 2);  // Each pilot signal period is encoded as 2 edges
+    resultSize += pilotLength_periods;        // Pilot length is specified in pulses (half-periods), one edge each
     resultSize += 2;                          // Two sync pulses at the end of pilot
     resultSize += (len * 8 * 2);              // Each byte split to bits and each bit encoded as 2 edges
     if (pause_ms > 0)
@@ -363,8 +426,10 @@ size_t Tape::generateBitstream(TapeBlock& tapeBlock, uint16_t pilotHalfPeriod_tS
 
     if (pilotLength_periods > 0)
     {
-        // Required number of pilot half-periods (2 half-periods per period)
-        for (size_t i = 0; i < pilotLength_periods * 2; i++)
+        // Pilot length is specified in pulses (half-periods), matching the TAP
+        // convention (header: 8063-8064 pulses, data: ~3220 pulses). Emitting
+        // 2x here would double the real pilot duration (~10s instead of ~5s).
+        for (size_t i = 0; i < pilotLength_periods; i++)
         {
             tapeBlock.edgePulseTimings.push_back(pilotHalfPeriod_tStates);
 
@@ -391,10 +456,12 @@ size_t Tape::generateBitstream(TapeBlock& tapeBlock, uint16_t pilotHalfPeriod_tS
             bool bit = (tapeBlock.data[i] & bitMask) != 0;
             uint16_t bitEncoded = bit ? oneEncodingHalfPeriod_tStates : zeroEncodingHalfPeriod_tState;
 
-            // Each bit is encoded by two edges
+            // Each bit is encoded by two edges; count both so
+            // totalBitstreamLength equals the sum of edgePulseTimings
             tapeBlock.edgePulseTimings.push_back(bitEncoded);
             tapeBlock.edgePulseTimings.push_back(bitEncoded);
 
+            result += bitEncoded;
             result += bitEncoded;
         }
     }
@@ -456,3 +523,81 @@ bool Tape::getPilotSample(size_t clockCount)
 
     return result;
 }
+
+/// region <TTDSerializable (P1.5 — parent TDD §6.4, §4 row 3)>
+//
+// Cursor-packed layout (41 bytes, alignment-safe via per-field memcpy):
+//
+//   Offset  Size  Field
+//   ------  ----  ----------------------------------------
+//   0        1    _tapeStarted (0/1)
+//   1        8    _tapePosition
+//   9        8    _currentTapeBlockIndex
+//   17       8    _currentPulseIdxInBlock
+//   25       8    _currentOffsetWithinPulse
+//   33       8    _currentClockCount
+//   ------  ---
+//   41 bytes total
+//
+// size_t is serialized as uint64_t (the position indices never approach 2^63;
+// this keeps the format identical on 32-bit and 64-bit hosts).
+
+namespace
+{
+inline void put_u8 (uint8_t*& cur, uint8_t v)   { *cur++ = v; }
+inline void put_u64(uint8_t*& cur, uint64_t v) { std::memcpy(cur, &v, 8); cur += 8; }
+
+inline uint8_t  get_u8 (const uint8_t*& cur)   { return *cur++; }
+inline uint64_t get_u64(const uint8_t*& cur)   { uint64_t v; std::memcpy(&v, cur, 8); cur += 8; return v; }
+} // anonymous namespace
+
+static constexpr size_t kTapeStateSize = 1 + 5 * 8;  // = 41
+static_assert(kTapeStateSize == 41, "Tape state size drift");
+
+size_t Tape::TTDStateSize() const
+{
+    return kTapeStateSize;
+}
+
+void Tape::TTDSaveState(uint8_t* dst) const
+{
+    uint8_t* cur = dst;
+    put_u8 (cur, _tapeStarted ? 1 : 0);
+    put_u64(cur, static_cast<uint64_t>(_tapePosition));
+    put_u64(cur, static_cast<uint64_t>(_currentTapeBlockIndex));
+    put_u64(cur, static_cast<uint64_t>(_currentPulseIdxInBlock));
+    put_u64(cur, static_cast<uint64_t>(_currentOffsetWithinPulse));
+    put_u64(cur, _currentClockCount);
+}
+
+void Tape::TTDLoadState(const uint8_t* src)
+{
+    const uint8_t* cur = src;
+    _tapeStarted              = (get_u8(cur) != 0);
+    _tapePosition             = static_cast<size_t>(get_u64(cur));
+    _currentTapeBlockIndex    = static_cast<size_t>(get_u64(cur));
+    _currentPulseIdxInBlock   = static_cast<size_t>(get_u64(cur));
+    _currentOffsetWithinPulse = static_cast<size_t>(get_u64(cur));
+    _currentClockCount        = get_u64(cur);
+
+    // Recompute the derived _currentTapeBlock pointer from the restored index.
+    // Tape content (_tapeBlocks) is invariant within a session — it is NOT
+    // part of the checkpoint (parent TDD §4 row 3). On restore (always within
+    // the same session), the content vector is unchanged, so the index is
+    // still valid. A bounds check guards against a corrupt/out-of-range index.
+    if (!_tapeBlocks.empty() && _currentTapeBlockIndex < _tapeBlocks.size())
+    {
+        _currentTapeBlock = &_tapeBlocks[_currentTapeBlockIndex];
+    }
+    else
+    {
+        // Content not loaded or index stale — leave the pointer null. This is
+        // the correct state for a tape that isn't actively playing content.
+        _currentTapeBlock = nullptr;
+    }
+
+    // Note: _tapeBlocks, _lpfFilter, _dcFilter, _muteEAR, _context are
+    // intentionally not restored — see the header doc for the exclusion list.
+}
+
+/// endregion </TTDSerializable>

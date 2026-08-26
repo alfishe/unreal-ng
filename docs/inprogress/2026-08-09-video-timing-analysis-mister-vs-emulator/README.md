@@ -20,6 +20,11 @@
 | [07-int-signal-timings.md](07-int-signal-timings.md) | Pentagon mid-line INT, per-model INT positions, `intstart` correction |
 | [08-int-correction-implementation.md](08-int-correction-implementation.md) | Exact code locations, two approaches, calculation formula, test plan |
 | [09-master-reference.md](09-master-reference.md) | Single-page summary: all findings, values, file locations, testing checklist |
+| [16-hc-tstate-timing-model.md](16-hc-tstate-timing-model.md) | HC (pixel clock) to T-state mapping, attribute prefetch pipeline timing |
+| [17-int-response-double-counting-fix.md](17-int-response-double-counting-fix.md) | HandleINT() rd/wd double-counting fix — root cause of the historical 71623/71625 offsets |
+| [18-int-to-paper-geometry.md](18-int-to-paper-geometry.md) | Raster window geometry: why real-Pentagon 17989T INT-to-paper requires `intstart=71635` |
+| [19-io-port-write-tstate-placement.md](19-io-port-write-tstate-placement.md) | IO port write T placement (IORQ at T2): the last 2 px — why `intstart` cannot fine-tune (staircase quantization) |
+| [20-int-self-locking-and-strict-sampling.md](20-int-self-locking-and-strict-sampling.md) | INT self-locking (digital PLL) — why real Pentagon is rock stable; strict acceptance sampling fix (`t > int_start`) for run-to-run ±4 px |
 
 ---
 

@@ -13,16 +13,27 @@ Beeper::Beeper(EmulatorContext* context, size_t clockRate, size_t samplingRate, 
     , _samplingRate(samplingRate)
 {
     // Allocate blip_buf accumulators for left and right channels.
-    // Size must accommodate SAMPLES_PER_FRAME plus a small margin
+    // Size must accommodate the largest possible frame (long-frame machines
+    // like Pentagon produce >SAMPLES_PER_FRAME samples; speed multipliers
+    // scale the frame duration further) plus a small margin
     // for rounding at frame boundaries.
-    _blipL = blip_new(SAMPLES_PER_FRAME + 64);
-    _blipR = blip_new(SAMPLES_PER_FRAME + 64);
+    _blipL = blip_new(MAX_SAMPLES_PER_FRAME + 64);
+    _blipR = blip_new(MAX_SAMPLES_PER_FRAME + 64);
 
     // Set input clock rate → output sample rate conversion.
     // blip_buf will internally compute the fractional ratio and use
     // it to place sinc kernels at sub-sample precision.
     blip_set_rates(_blipL, static_cast<double>(_clockRate), static_cast<double>(_samplingRate));
     blip_set_rates(_blipR, static_cast<double>(_clockRate), static_cast<double>(_samplingRate));
+}
+
+void Beeper::setSampleRate(size_t samplingRate)
+{
+    _samplingRate = samplingRate;
+    blip_set_rates(_blipL, static_cast<double>(_clockRate), static_cast<double>(_samplingRate));
+    blip_set_rates(_blipR, static_cast<double>(_clockRate), static_cast<double>(_samplingRate));
+    blip_clear(_blipL);
+    blip_clear(_blipR);
 }
 
 Beeper::~Beeper()
@@ -114,6 +125,8 @@ void Beeper::handleFrameEnd(uint32_t frameDuration)
         blip_read_samples(_blipL, &_outputBuffer[0], avail, 1 /* stereo stride */);
         blip_read_samples(_blipR, &_outputBuffer[1], avail, 1 /* stereo stride */);
     }
+
+    _lastSamplesRead = avail;
 }
 
 /// endregion </Methods>

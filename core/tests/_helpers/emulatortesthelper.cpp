@@ -33,6 +33,11 @@ Emulator* EmulatorTestHelper::CreateStandardEmulator(const std::string& modelNam
     }
 
     // EmulatorManager already calls Init() during creation
+    // Force deterministic boot: 48K BASIC (RESET=BASIC) regardless of the
+    // staged unreal.ini, which CMake re-copies on every build (RESET=128)
+    emulator->GetContext()->config.reset_rom = RM_SOS;
+    emulator->Reset();
+
     // Return raw pointer (caller must use CleanupEmulator to properly release)
     return emulator.get();
 }

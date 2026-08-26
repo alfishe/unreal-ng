@@ -7,6 +7,7 @@
 #include "common/filehelper.h"
 #include <filesystem>
 #include "emulator/platform.h"
+#include "emulator/sound/audio.h"
 #include "emulator/memory/memory.h"
 #include <cassert>
 #include <array>
@@ -48,12 +49,12 @@ string Config::GetScreenshotsFolder()
 		// Try to create the directory to test if it's writable
 		bool isWritable = false;
 		try {
-			if (!std::filesystem::exists(testPath)) {
-				isWritable = std::filesystem::create_directories(testPath);
+			if (!std::filesystem::exists(FileHelper::ToFsPath(testPath))) {
+				isWritable = std::filesystem::create_directories(FileHelper::ToFsPath(testPath));
 			} else {
 				// Directory exists, check if it's writable by creating a test file
 				std::string testFile = FileHelper::PathCombine(testPath, "/test.tmp");
-				FILE* fp = fopen(testFile.c_str(), "w");
+				FILE* fp = FileHelper::OpenFile(testFile, "w");
 				if (fp) {
 					fclose(fp);
 					remove(testFile.c_str());
@@ -71,17 +72,17 @@ string Config::GetScreenshotsFolder()
 				std::string dirPath = std::string(homeDir) + "/Library/Application Support/UnrealNG/screenshots";
 				// Create the directory if it doesn't exist
 				try {
-					std::filesystem::create_directories(dirPath);
+					std::filesystem::create_directories(FileHelper::ToFsPath(dirPath));
 				} catch (const std::exception&) {
 					// If we can't create the directory, fall back to temporary directory
 					dirPath = "/tmp/UnrealNG/screenshots";
-					std::filesystem::create_directories(dirPath);
+					std::filesystem::create_directories(FileHelper::ToFsPath(dirPath));
 				}
 				screenshotsPath = dirPath;
 			} else {
 				// Fallback to temporary directory if HOME is not available
 				screenshotsPath = "/tmp/UnrealNG/screenshots";
-				std::filesystem::create_directories(screenshotsPath);
+				std::filesystem::create_directories(FileHelper::ToFsPath(screenshotsPath));
 			}
 		} else {
 			// Location is writable, use it
@@ -94,7 +95,7 @@ string Config::GetScreenshotsFolder()
 		
 		// Create the directory if it doesn't exist
 		try {
-			std::filesystem::create_directories(screenshotsPath);
+			std::filesystem::create_directories(FileHelper::ToFsPath(screenshotsPath));
 		} catch (const std::exception&) {
 			// Ignore errors
 		}
@@ -105,70 +106,58 @@ string Config::GetScreenshotsFolder()
 	return screenshotsPath;
 }
 
-bool Config::LoadConfig()
+bool Config::LoadConfig(const std::string& modelConfigName)
 {
-	bool result = false;
-
-	// First try to load config from executable directory
-	std::string path = FileHelper::GetExecutablePath();
-	if (!path.empty())
+	if (modelConfigName.empty())
 	{
-        std::string configPath = FileHelper::PathCombine(path, GetDefaultConfig());
-        std::string absoluteConfigPath = FileHelper::AbsolutePath(configPath);
-
-		if (LoadConfig(absoluteConfigPath))
-		{
-			result = true;
-		}
-		else
-		{
-			// If not found in executable directory, try resources directory (especially for macOS app bundles)
-			std::string resourcesPath = FileHelper::GetResourcesPath();
-			if (!resourcesPath.empty() && resourcesPath != path) // Only try if different from executable path
-			{
-				std::string resourceConfigPath = FileHelper::PathCombine(resourcesPath, GetDefaultConfig());
-				std::string absoluteResourceConfigPath = FileHelper::AbsolutePath(resourceConfigPath);
-
-				if (LoadConfig(absoluteResourceConfigPath))
-				{
-					result = true;
-				}
-				else
-				{
-					MLOGERROR("Config::LoadConfig() - unable to process config file from executable or resources path");
-				}
-			}
-			else
-			{
-				MLOGERROR("Config::LoadConfig() - unable to process config file");
-			}
-		}
-	}
-	else
-	{
-	    std::string error = "Config::LoadConfig() - Unable to determine executable path";
-		MLOGERROR(error);
-		throw std::logic_error(error);
+		MLOGERROR("Config::LoadConfig - model config name is mandatory");
+		return false;
 	}
 
-	return result;
+	// Model config always lives in configs/<modelConfigName>/unreal.ini
+	std::string relativePath = FileHelper::PathCombine("configs", modelConfigName);
+	relativePath = FileHelper::PathCombine(relativePath, GetDefaultConfig());
+
+	// Search order: executable directory, then application resources (macOS app bundle)
+	std::string searchedPaths;
+	for (const std::string& basePath : { FileHelper::GetExecutablePath(), FileHelper::GetResourcesPath() })
+	{
+		if (basePath.empty())
+			continue;
+
+		std::string configPath = FileHelper::AbsolutePath(FileHelper::PathCombine(basePath, relativePath));
+		if (FileHelper::FileExists(configPath))
+		{
+			return LoadConfigFile(configPath);
+		}
+
+		if (!searchedPaths.empty())
+			searchedPaths += ", ";
+		searchedPaths += FileHelper::PrintablePath(configPath);
+	}
+
+	MLOGERROR("Config::LoadConfig - no config for model '%s'; searched: %s",
+	          modelConfigName.c_str(), searchedPaths.c_str());
+	return false;
 }
 
-bool Config::LoadConfig(string& filename)
+bool Config::LoadConfigFile(const std::string& filename)
 {
 	bool result = false;
 
 	if (filename.empty())
 	{
-		MLOGERROR("Config::LoadConfig - Empty config filename provided");
+		MLOGERROR("Config::LoadConfigFile - Empty config filename provided");
 		return result;
 	}
 
 	if (!FileHelper::FileExists(filename))
 	{
-		MLOGERROR("Config::LoadConfig - File '%s' does not exist", FileHelper::PrintablePath(filename).c_str());
+		MLOGERROR("Config::LoadConfigFile - File '%s' does not exist", FileHelper::PrintablePath(filename).c_str());
 		return result;
 	}
+
+	MLOGINFO("Config::LoadConfigFile - Loading config '%s'", FileHelper::PrintablePath(filename).c_str());
 
 	_configFilePath = filename;
 
@@ -180,13 +169,13 @@ bool Config::LoadConfig(string& filename)
 	SI_Error rc = inimanager.LoadFile(_configFilePath.c_str());
 	if (rc == SI_OK)
 	{
-		MLOGDEBUG("Config::LoadConfig - config '%s' successfully loaded to SimpleINI parser", FileHelper::PrintablePath(_configFilePath).c_str());	// FileHelper::PrintablePath is mandatory since Logger works only with 'string' type and formatters
+		MLOGDEBUG("Config::LoadConfigFile - config '%s' successfully loaded to SimpleINI parser", FileHelper::PrintablePath(_configFilePath).c_str());	// FileHelper::PrintablePath is mandatory since Logger works only with 'string' type and formatters
 
 		result = true;
 	}
 	else
 	{
-        MLOGDEBUG("Config::LoadConfig - error during loading config '%s' by SimpleINI", FileHelper::PrintablePath(_configFilePath).c_str());	// FileHelper::PrintablePath is mandatory since Logger works only with 'string' type and formatters
+        MLOGDEBUG("Config::LoadConfigFile - error during loading config '%s' by SimpleINI", FileHelper::PrintablePath(_configFilePath).c_str());	// FileHelper::PrintablePath is mandatory since Logger works only with 'string' type and formatters
 	}
 
 	// Populate configuration fields from config file data
@@ -211,19 +200,34 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	config.ConfirmExit = (uint8_t)inimanager.GetLongValue(misc, "ConfirmExit", 0);
 	config.sleepidle = (uint8_t)inimanager.GetLongValue(misc, "ShareCPU", 0);
 
+	// Map INI 'RESET=' setting to initial ROM bank (ROMModeEnum).
+	// Uses a table lookup to cleanly support aliases across configs (e.g. "128", "MENU", "BASIC128" -> RM_128; "BASIC", "48" -> RM_SOS).
+	// Default: RM_SOS (48K BASIC ROM).
+	struct ResetRomMapping
+	{
+		const char* name;
+		uint8_t mode;
+	};
+
+	static constexpr ResetRomMapping resetMappings[] = {
+		{ "DOS", RM_DOS },
+		{ "MENU", RM_128 },
+		{ "128", RM_128 },       // Introduced in commit 79bd9291 as default for Pentagon/Spectrum128
+		{ "BASIC128", RM_128 },
+		{ "BASIC", RM_SOS },
+		{ "48", RM_SOS },
+		{ "SYS", RM_SYS }
+	};
+
 	config.reset_rom = RM_SOS;
 	CopyStringValue(inimanager.GetValue(misc, "RESET", nullptr, nullptr), line, sizeof line); // What ROM bank to set active during reset
-	if (StringHelper::CompareCaseInsensitive(line, "DOS", 3) == 0)
+	for (const auto& mapping : resetMappings)
 	{
-		config.reset_rom = RM_DOS;
-	}
-	else if (StringHelper::CompareCaseInsensitive(line, "MENU", 4) == 0)
-	{
-		config.reset_rom = RM_128;
-	}
-	else if (StringHelper::CompareCaseInsensitive(line, "SYS", 3) == 0)
-	{
-		config.reset_rom = RM_SYS;
+		if (StringHelper::CompareCaseInsensitive(line, mapping.name, strlen(mapping.name)) == 0)
+		{
+			config.reset_rom = mapping.mode;
+			break;
+		}
 	}
 
 	// MISC::CMOS sub-section
@@ -265,10 +269,11 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 
 	// ULA section (video signal timings)
 	config.intfq = (uint8_t)inimanager.GetLongValue(ula, "int", 50);
-	config.intstart = (unsigned)inimanager.GetLongValue(ula, "instart", 0);
+	config.intstart = (unsigned)inimanager.GetLongValue(ula, "intstart", 0);
 	config.intlen = (unsigned)inimanager.GetLongValue(ula, "intlen", 32);
 	config.t_line = (unsigned)inimanager.GetLongValue(ula, "line", 224);		// CPU cycles per video line
 	config.frame = (unsigned)inimanager.GetLongValue(ula, "frame", 71680);		// ZX48/128: 69888; Pentagon: 71680; ScorpionZS256: 69888;
+	config.frame_duration_us = CalculateFrameDurationUs(config.frame);			// Pentagon: 20480us (48.83 FPS); ZX48/128: 19968us
 	
 	// Speed multiplier: 1x (default), 2x, 4x, 8x, 16x
 		config.speed_multiplier = (uint8_t)inimanager.GetLongValue(ula, "speedmultiplier", 1);
@@ -284,7 +289,9 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	config.even_M1 = (unsigned)inimanager.GetLongValue(ula, "EvenM1", 0);
 	config.floatbus = (unsigned)inimanager.GetLongValue(ula, "FloatBus", 0);
 	config.floatdos = (unsigned)inimanager.GetLongValue(ula, "FloatDOS", 0);
-	config.portff = (unsigned)inimanager.GetLongValue(ula, "PortFF", 0) != 0;	// Enable port FF (reflects current screen color attributes when ULA renders the frame, 0xFF otherwise)
+	// Note: the original UnrealSpeccy "PortFF" option (simplified always-attribute
+	// floating bus model) is intentionally not ported - UlaContention implements the
+	// full architecture-aware floating bus (pixel/attr per fetch phase) instead.
 
 	// Beta128 section
 	config.trdos_present = inimanager.GetLongValue(beta128, "beta128", 1) ? true : false;
@@ -303,6 +310,36 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	// SOUND section
 	config.sound.covoxFB = (int)inimanager.GetLongValue(sound, "CovoxFB", 0);
 	config.sound.covoxDD = (int)inimanager.GetLongValue(sound, "CovoxDD", 0);
+
+	// Core audio rate: auto | 44100 | 48000 | 88200 | 96000 | 176400 | 192000
+	// (multirate plan phase 6). 0 = auto. Unsupported values fall back to auto.
+	{
+		long rate = inimanager.GetLongValue(sound, "CoreRate", 0);  // "auto" parses as 0
+		switch (rate)
+		{
+			case 0:
+			case 44100:
+			case 48000:
+			case 88200:
+			case 96000:
+			case 176400:
+			case 192000:
+				config.sound.coreRate = (unsigned)rate;
+				break;
+			default:
+				MLOGWARNING("Config: unsupported [SOUND] CoreRate=%ld, using auto", rate);
+				config.sound.coreRate = 0;
+				break;
+		}
+	}
+
+	// VIDEO section
+	// A/V sync video delay: auto (-1) = match the audio path latency
+	// (~2 frames); 0 = lowest input latency (audio trails by the ring depth)
+	{
+		long delay = inimanager.GetLongValue(video, "AVSyncDelayFrames", -1);  // "auto" parses as 0 - use -1 default
+		config.videoPresentDelayFrames = (delay >= -1 && delay <= 3) ? (int)delay : -1;
+	}
 
 	// Emulated model
 	CopyStringValue(inimanager.GetValue(misc, "HIMEM", "PENTAGON", nullptr), line, sizeof line);
@@ -381,7 +418,7 @@ bool Config::DetermineModel(const char* model, uint32_t ramsize)
 	return result;
 }
 
-std::vector<TMemModel> Config::GetAvailableModels() const
+std::vector<TMemModel> Config::GetAvailableModels()
 {
 	std::vector<TMemModel> models;
 	for (uint8_t i = 0; i < N_MM_MODELS; i++)
@@ -391,7 +428,7 @@ std::vector<TMemModel> Config::GetAvailableModels() const
 	return models;
 }
 
-const TMemModel* Config::FindModelByShortName(const std::string& shortName) const
+const TMemModel* Config::FindModelByShortName(const std::string& shortName)
 {
 	// Handle empty or invalid input
 	if (shortName.empty())
@@ -411,6 +448,39 @@ const TMemModel* Config::FindModelByShortName(const std::string& shortName) cons
 		}
 	}
 	return nullptr;
+}
+
+std::string Config::GetConfigFolderForModel(MEM_MODEL model, uint32_t ramSizeKB)
+{
+	const TMemModel* info = nullptr;
+	for (uint8_t i = 0; i < N_MM_MODELS; i++)
+	{
+		if (mem_model[i].Model == model)
+		{
+			info = &mem_model[i];
+			break;
+		}
+	}
+
+	uint32_t ram = ramSizeKB ? ramSizeKB : (info ? info->defaultRAM : 128);
+
+	switch (model)
+	{
+		case MM_PENTAGON:    return (ram >= 512) ? "pentagon512k" : "pentagon128k";
+		case MM_SPECTRUM48:  return "spectrum48";
+		case MM_SPECTRUM128: return "spectrum128";
+		case MM_PLUS3:       return "spectrum3";
+		case MM_TSL:         return "ts-conf";
+		default:
+			break;
+	}
+
+	// No dedicated folder yet: derive it from the short name so the
+	// LoadConfig error message tells exactly which folder is expected
+	std::string folder = (info && info->ShortName) ? info->ShortName : "pentagon128k";
+	std::transform(folder.begin(), folder.end(), folder.begin(),
+	               [](unsigned char c) { return (char)std::tolower(c); });
+	return folder;
 }
 
 void Config::CopyStringValue(const char* src, char* dst, size_t dst_len)
@@ -473,7 +543,7 @@ string Config::PrintModelAvailableRAM(uint32_t availRAM)
 	return ss.str();
 }
 
-void Config::ApplyModelTimingDefaults(CONFIG& config)
+void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
 {
     // Save user-specified INI values (if non-default)
     unsigned userIntstart = config.intstart;
@@ -481,13 +551,19 @@ void Config::ApplyModelTimingDefaults(CONFIG& config)
 
     // Apply hardware-accurate defaults per model.
     // Values derived from MiSTer HDL ula.sv INT generation logic:
-    //   Pentagon: INT at vc=239, hc=326 → emulator t-state 71619 (99.9% through frame)
+    //   Pentagon: INT at vc=239, hc=326; converted to our raster geometry (see doc 18):
+    //     paper first pixel at T=17944 (line 80 + 24T, see ScreenZX::CreateTstateLUT),
+    //     real-Pentagon INT-to-paper distance = 17989T (Unreal Speccy conf.paper calibration,
+    //     INT at frame wrap) => intstart = 17944 - 17989 + 71680 = 71635
     //   ZX-48K:   INT at vc=248, hc=4   → emulator t-state 1794  (2.6% through frame)
     //   ZX-128K:  INT at vc=248, hc=8   → emulator t-state 2056  (2.9% through frame)
     switch (config.mem_model)
     {
         case MM_PENTAGON:
-            config.intstart = 71619;
+            // MiSTer vc=239/hc=326 maps to 71619 in our frame, but our raster window places
+            // paper 24T into the line (framebuffer x = T_in_line*2, paper x∈[48,304)).
+            // +16T aligns INT-to-paper to the real-Pentagon 17989T distance. See doc 18.
+            config.intstart = 71635;
             config.intlen   = 32;
             break;
 
@@ -513,6 +589,39 @@ void Config::ApplyModelTimingDefaults(CONFIG& config)
         config.intstart = userIntstart;
     if (userIntlen != 0 && userIntlen != 32)
         config.intlen = userIntlen;
+
+    // Programmatically-requested models also get canonical frame geometry: the
+    // INI in use typically describes a different machine (e.g. the global
+    // Pentagon ini) so its frame/line values must not leak into the requested
+    // model. INI-driven runs (per-model config dirs) pass false and are untouched.
+    if (canonicalGeometry)
+    {
+        switch (config.mem_model)
+        {
+            case MM_SPECTRUM48:
+                config.frame = 69888;   // 224 * 312
+                config.t_line = 224;
+                config.intstart = 1794;
+                config.intlen = 32;
+                break;
+            case MM_SPECTRUM128:
+            case MM_PLUS3:
+                config.frame = 70908;   // 228 * 311
+                config.t_line = 228;
+                config.intstart = 2056;
+                config.intlen = 36;
+                break;
+            case MM_PENTAGON:
+                config.frame = 71680;   // 224 * 320
+                config.t_line = 224;
+                break;
+            default:
+                break;
+        }
+
+        // Invariant: frame_duration_us must be recomputed with config.frame
+        config.frame_duration_us = CalculateFrameDurationUs(config.frame);
+    }
 
     MLOGINFO("ApplyModelTimingDefaults: model=%d intstart=%u intlen=%u frame=%u line=%u",
              config.mem_model, config.intstart, config.intlen, config.frame, config.t_line);

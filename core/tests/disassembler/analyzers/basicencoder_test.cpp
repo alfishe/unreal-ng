@@ -517,17 +517,25 @@ TEST_F(BasicEncoder_Test, StateDetection_PureSOS_48KBASIC)
     // - ROM page 1 (48K BASIC ROM)
     // - No TR-DOS initialization markers
     // - Expected: Basic48K
-    
+
     // Note: Memory banks are already set up for 48K in SetUp()
     // ROM page detection depends on Memory::GetROMPage() implementation
-    
+
+    // Initialize stack area to zeros - heap memory is uninitialized and could
+    // randomly contain values in the DOS trap range ($3D00-$3DFF), causing flaky failures
+    uint16_t sp = 0xFF00;
+    for (int i = 0; i < 32; i++)
+    {
+        _memory->DirectWriteToZ80Memory(sp + i, 0x00);
+    }
+
     // For this unit test, we verify isTRDOSInitialized returns false
     // when RAM stub doesn't contain RET opcode
     bool trdosInit = BasicEncoder::isTRDOSInitialized(_memory);
     EXPECT_FALSE(trdosInit) << "Fresh 48K memory should not have TR-DOS initialized";
-    
+
     // Stack scan should return false with no DOS addresses
-    bool hasDosOnStack = BasicEncoder::stackContainsDOSReturnAddress(_memory, 0xFF00);
+    bool hasDosOnStack = BasicEncoder::stackContainsDOSReturnAddress(_memory, sp);
     EXPECT_FALSE(hasDosOnStack) << "Fresh memory should not have DOS return addresses on stack";
 }
 
@@ -719,9 +727,17 @@ TEST_F(BasicEncoder_Test, StateDetection_TrapRangeBoundaries)
 {
     // Verify trap range detection at boundaries
     using namespace TRDOS::ROMSwitch;
-    
+
     uint16_t sp = 0xFF00;
-    
+
+    // The scan walks up to 16 stack entries (SP..SP+31), not just the first.
+    // Clear the whole window so stale memory left by earlier tests can't
+    // alias into the trap range and break the negative assertions below.
+    for (int i = 0; i < 32; i++)
+    {
+        _memory->DirectWriteToZ80Memory(sp + i, 0x00);
+    }
+
     // Test $3D00 (start of trap range)
     _memory->DirectWriteToZ80Memory(sp, TRAP_START & 0xFF);
     _memory->DirectWriteToZ80Memory(sp + 1, (TRAP_START >> 8) & 0xFF);

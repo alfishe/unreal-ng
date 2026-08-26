@@ -93,6 +93,9 @@ sleep(100)
 
 -- Get current timestamp
 time = os.time()
+
+-- Toggle Videowall Single Sync Mode
+videowall_singlesync(true, "emulator-id")
 ```
 
 ### Emulator Object
@@ -415,6 +418,120 @@ local status = profilers_status_all()
 -- status.calltrace.session_state = "capturing"
 -- status.calltrace.entry_count = 450
 ```
+
+### Time-Travel Debugging
+
+Mirrors the `emu.*` binding style; identical surface to the Python bindings. Full command semantics (arguments, result envelopes, halt reasons, session invalidation rules) live in [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd). All methods require the `timetravel` feature flag to be ON, except `ttd_status` which always works.
+
+**Session lifecycle:**
+
+```lua
+emu.ttd_start()              -- Begin recording at next frame boundary
+emu.ttd_stop()               -- Stop capturing; retain history
+emu.ttd_clear()              -- Drop all captured data; live state untouched
+```
+
+**Status (always available):**
+
+```lua
+local status = emu.ttd_status()
+-- status.state                 = "idle"   -- idle | recording | detached
+--
+-- Provenance: recorded here, or opened from a file?
+-- status.loaded_from_file      = true
+-- status.source_path           = "/sessions/bug-1274.ttd"
+-- status.captured_at_unix_ms   = 1755712345678  -- 0 for a live recording
+--
+-- Machine
+-- status.model_id              = 0
+-- status.model_ram_pages       = 32   -- BOUND, not a count (48K reports 6)
+--
+-- Timeline
+-- status.session_start_frame   = 98
+-- status.current_end_frame     = 397
+-- status.checkpoint_count      = 301
+--
+-- Sections
+-- status.write_journal_enabled = true
+-- status.write_journal_records = 729025
+-- status.write_journal_bytes   = 8748300
+-- status.coverage_index_frames = 300  -- 0 => reverse queries replay instead
+-- status.coverage_index_bytes  = 13926
+--
+-- Memory
+-- status.page_store_bytes      = 40960
+-- status.page_store_used_bytes = 665600
+-- status.session_heap_bytes    = 1043968
+```
+
+**Navigation (require run-control claim; emulator must be paused):**
+
+```lua
+emu.ttd_seek(4823)                          -- Absolute seek to frame
+emu.ttd_seek(4823, 14982)                   -- Intra-frame target (frame, tstate)
+emu.ttd_seek_tstate(14982)                  -- Or seek by absolute t-state
+
+emu.ttd_step_back()                         -- One instruction back
+emu.ttd_step_back{unit = 'frame', count = 2}  -- Two frames back
+emu.ttd_step_forward()                      -- Forward within recorded history
+emu.ttd_step_forward{unit = 'frame'}
+
+emu.ttd_resume_from_here{confirm = true}    -- Truncate future, resume live
+```
+
+Return value for `ttd_seek` / `ttd_step_back` / `ttd_step_forward` (a table):
+
+```lua
+-- { ok = true, reached_frame = 4823, reached_tstate = 14982,
+--   halt_reason = 'target' }   -- 'target' | 'external_event' | 'out_of_range'
+```
+
+**Reverse search:**
+
+```lua
+local r = emu.ttd_find_last(0x5800, 'write')
+-- r is nil if no match, otherwise:
+-- r.frame, r.tstate, r.pc, r.value, r.physpage
+
+-- Full filter set via a table argument:
+local r2 = emu.ttd_find_last{
+    addr    = 0x5800,
+    access  = 'write',         -- 'write' | 'read' | 'execute' | 'out'
+    value   = 0x07,            -- optional exact value match
+    pc_from = 0x4000,          -- optional PC range filter
+    pc_to   = 0x8000,
+    before  = 14982            -- optional: don't search past this absolute tstate
+}
+```
+
+**Timeline (for UI rendering / batch analysis):**
+
+```lua
+local entries = emu.ttd_timeline{from_frame = 0, to_frame = 1000, limit = 500}
+-- List of { frame = N, dirty_pages = K, events = {...}, bookmarks = {...} }
+```
+
+**Bookmarks:**
+
+```lua
+emu.ttd_bookmark_add{at = 14982, label = 'before crash'}
+emu.ttd_bookmark_remove('bm-3')
+for _, bm in ipairs(emu.ttd_bookmark_list()) do
+    print(bm.frame, bm.label)
+end
+```
+
+**Errors** (raised as Lua errors; pcall to catch):
+
+| Error message prefix | Meaning |
+| :--- | :--- |
+| `run-control busy:` | Another surface holds the run-control claim. |
+| `ttd not recording:` | Operation requires an active session. |
+| `ttd out of range:` | Target is outside recorded bounds. |
+| `ttd feature disabled:` | `timetravel` feature flag is off. |
+| `ttd session invalidated:` | Session invalidated by load/reset/etc. |
+
+**Implementation status:** Sprint 0 foundations ✅ merged; Phase 1 will land `ttd_status` only; the rest ship in Phase 2 (navigation) and Phase 4 (reverse search).
 
 ## Usage Examples
 

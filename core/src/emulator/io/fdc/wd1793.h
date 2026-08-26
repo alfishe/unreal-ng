@@ -5,6 +5,7 @@
 #include <queue>
 #include <vector>
 
+#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/fdc.h"
@@ -17,7 +18,7 @@
 class WD1793Collector;
 class IWD1793Observer;
 
-class WD1793 : public PortDecoder, public PortDevice
+class WD1793 : public PortDecoder, public PortDevice, public ttd::TTDSerializable
 {
     friend WD1793Collector;
 
@@ -756,7 +757,7 @@ public:
 
     /// region <Methods>
 public:
-    virtual void reset();
+    virtual void reset() override;
     void internalReset();
 
     void process();
@@ -967,8 +968,8 @@ public:
 
     /// region <PortDevice interface methods>
 public:
-    uint8_t portDeviceInMethod(uint16_t port);
-    void portDeviceOutMethod(uint16_t port, uint8_t value);
+    uint8_t portDeviceInMethod(uint16_t port) override;
+    void portDeviceOutMethod(uint16_t port, uint8_t value) override;
     /// endregion </PortDevice interface methods>
 
     /// region <Ports interaction>
@@ -1000,6 +1001,34 @@ public:
         return result;
     }
     /// endregion </Debug methods>
+
+    /// region <TTDSerializable interface (P1.5 — parent TDD §6.4, §4 row 4)>
+    ///
+    /// Per parent TDD §4 row 4: "FDC internal state (state machine phase,
+    /// track/sector regs, DRQ/INTRQ timers) must be fully serialized".
+    /// Per parent TDD §17 the budget for WD1793 + 4×FDD is ~300 B.
+    ///
+    /// The blob covers the WD1793 controller proper AND the four FDD
+    /// positions, since the controller owns the drives (they live in
+    /// coreState.diskDrives[] but are created by the WD1793 ctor and only
+    /// meaningful in conjunction with the controller state machine).
+    ///
+    /// v1 limitations (per TDD §12.2, accepted for read-only workloads):
+    ///   - `_operationFIFO` closures (std::function<void()>) are not
+    ///     serializable. The FIFO is cleared on load. Frames captured
+    ///     mid-command may produce glitched FSM progression after restore.
+    ///     Read-only workloads (vast majority of demos) idle the FDC between
+    ///     frames, so this is rarely hit. Phase 2 silent-replay-aware restore
+    ///     addresses the remaining cases.
+    ///   - Disk writes invalidate the session entirely (TDD §12.2).
+    ///   - Pointer fields into disk image data (_rawDataBuffer, _idamData,
+    ///     _sectorData, _writeTrackTarget) are not restored; they are
+    ///     re-established by the next command setup. _selectedDrive is
+    ///     re-resolved from the restored _drive index via coreState.
+    size_t TTDStateSize() const override;
+    void   TTDSaveState(uint8_t* dst) const override;
+    void   TTDLoadState(const uint8_t* src) override;
+    /// endregion </TTDSerializable interface>
 };
 
 //

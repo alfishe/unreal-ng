@@ -71,6 +71,13 @@ python->executePython("print('Hello from embedded Python!')");
 
 ## API Reference
 
+### Module Functions
+
+```python
+def videowall_singlesync(enable: bool, emulator_id: str = "") -> bool:
+    """Toggle Videowall Single Sync Mode"""
+```
+
 ### Emulator Class
 
 ```python
@@ -455,6 +462,139 @@ status = emu.profilers_status_all()
 #     'calltrace': {'session_state': 'capturing', 'entry_count': 450}
 # }
 ```
+
+### Time-Travel Debugging
+
+Mirrors the `emu.*` binding style. Full command semantics (arguments, result envelopes, halt reasons, session invalidation rules) live in [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd). All methods require the `timetravel` feature flag to be ON, except `ttd_status` which always works.
+
+**Session lifecycle:**
+
+```python
+emu.ttd_start()             # Begin recording at next frame boundary
+emu.ttd_stop()              # Stop capturing; retain history
+emu.ttd_clear()             # Drop all captured data; live state untouched
+```
+
+**Status (always available):**
+
+```python
+status = emu.ttd_status()
+# {
+#   'ttd_available': True,
+#   'state': 'idle',                  # idle | recording | detached
+#
+#   # Provenance — recorded here, or opened from a file?
+#   'loaded_from_file': True,
+#   'source_path': '/sessions/bug-1274.ttd',
+#   'captured_at_unix_ms': 1755712345678,   # 0 for a live recording
+#
+#   # Machine the session belongs to
+#   'model_id': 0,
+#   'model_ram_pages': 32,            # BOUND, not a count (48K reports 6)
+#
+#   # Timeline
+#   'session_start_frame': 98,
+#   'current_end_frame': 397,
+#   'checkpoint_count': 301,
+#
+#   # Sections
+#   'write_journal_enabled': True,
+#   'write_journal_records': 729025,
+#   'write_journal_bytes': 8748300,   # in memory; on disk it is compressed
+#   'coverage_index_frames': 300,     # 0 => reverse queries fall back to replay
+#   'coverage_index_bytes': 13926,
+#
+#   # Memory
+#   'page_store_bytes': 40960,
+#   'page_store_used_bytes': 665600,
+#   'baseline_frames_captured': 2159,
+#   'session_heap_bytes': 1043968,
+# }
+```
+
+`loaded_from_file` is the field to check first when a session is handed to you:
+a loaded recording and a live one are otherwise indistinguishable from the
+counters. `coverage_index_frames == 0` means reverse search and reverse
+breakpoints will replay frames instead of consulting the index — correct, but
+orders of magnitude slower.
+
+**Navigation (require run-control claim; emulator must be paused):**
+
+```python
+emu.ttd_seek(frame=4823)                    # Absolute seek to frame
+emu.ttd_seek(frame=4823, tstate=14982)      # Intra-frame target
+emu.ttd_seek_tstate(t=14982)                # Or seek by absolute t-state
+
+emu.ttd_step_back()                         # One instruction back
+emu.ttd_step_back(unit='frame', count=2)    # Two frames back
+emu.ttd_step_forward()                      # Forward within recorded history
+emu.ttd_step_forward(unit='frame')
+
+emu.ttd_resume_from_here(confirm=True)      # Truncate future, resume live
+```
+
+Return value for `ttd_seek` / `ttd_step_back` / `ttd_step_forward`:
+
+```python
+{
+    'ok': True,
+    'reached_frame': 4823,
+    'reached_tstate': 14982,
+    'halt_reason': 'target'   # 'target' | 'external_event' | 'out_of_range'
+}
+```
+
+**Reverse search:**
+
+```python
+result = emu.ttd_find_last(addr=0x5800, access='write')
+# result is None if no match, otherwise:
+# {
+#   'frame': 4823,
+#   'tstate': 14982,
+#   'pc': 0x4A21,
+#   'value': 0x07,
+#   'physpage': 5
+# }
+
+# Full filter set:
+result = emu.ttd_find_last(
+    addr=0x5800,
+    access='write',            # 'write' | 'read' | 'execute' | 'out'
+    value=0x07,                # optional exact value match
+    pc_from=0x4000,            # optional PC range filter
+    pc_to=0x8000,
+    before=14982               # optional: don't search past this absolute tstate
+)
+```
+
+**Timeline (for UI rendering / batch analysis):**
+
+```python
+entries = emu.ttd_timeline(from_frame=0, to_frame=1000, limit=500)
+# List of {'frame': N, 'dirty_pages': K, 'events': [...], 'bookmarks': [...]}
+```
+
+**Bookmarks:**
+
+```python
+emu.ttd_bookmark_add(at=14982, label='before crash')
+emu.ttd_bookmark_remove(id='bm-3')
+for bm in emu.ttd_bookmark_list():
+    print(bm['frame'], bm['label'])
+```
+
+**Errors** (raise Python exceptions):
+
+| Exception | Meaning |
+| :--- | :--- |
+| `RunControlBusyError` | Another surface holds the run-control claim. |
+| `TTDNotRecordingError` | Operation requires an active session. |
+| `TTDOutOfRangeError` | Target is outside recorded bounds. |
+| `TTDFeatureDisabledError` | `timetravel` feature flag is off. |
+| `TTDSessionInvalidatedError` | Session invalidated by load/reset/etc. |
+
+**Implementation status:** Sprint 0 foundations ✅ merged; Phase 1 will land `ttd_status` only; the rest ship in Phase 2 (navigation) and Phase 4 (reverse search).
 
 ### Enumerations
 

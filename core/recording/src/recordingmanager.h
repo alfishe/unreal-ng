@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "3rdparty/message-center/eventqueue.h"
+#include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "emulator/sound/soundmanager.h"  // AudioSourceType lives here now
 #include "encoder_base.h"
@@ -41,6 +42,26 @@ struct AudioTrackConfig
     std::string codec = "aac";    // Audio codec for this track
     uint32_t bitrate = 192;       // Bitrate in kbps
     uint32_t sampleRate = 44100;  // Sample rate (Hz)
+};
+
+/// Video resolution and quality profile configuration
+struct RecordingProfile
+{
+    std::string id;              // Profile identifier e.g. "1080p", "4k", "720p", "native_1x", "native_2x"
+    std::string displayName;     // Display title e.g. "Native 1x (Clone Screen Mode)", "Full HD (1920x1080)"
+    uint32_t width = 0;          // Width in pixels (0 = dynamic/native clone resolution)
+    uint32_t height = 0;         // Height in pixels (0 = dynamic/native clone resolution)
+    float scaleMultiplier = 1.0f; // Scale multiplier for dynamic native clone screen modes
+    uint32_t defaultBitrate = 0; // Bitrate in kbps (0 = auto)
+};
+
+/// Collection of standard recording profiles
+class RecordingProfileCollection
+{
+public:
+    static const std::vector<RecordingProfile>& getStandardProfiles();
+    static RecordingProfile getDefaultProfile();
+    static RecordingProfile getProfileById(const std::string& id);
 };
 
 /// endregion </Recording types>
@@ -127,6 +148,14 @@ public:
 
     /// Resume paused recording
     void ResumeRecording();
+
+    /// Explicitly enable/disable recording feature state (used in standalone/Videowall modes)
+    void setFeatureEnabled(bool enabled) { _featureEnabled = enabled; }
+    bool isFeatureEnabled() const { return _featureEnabled; }
+
+    /// Use wall-clock time for video timestamps (used for Video Wall and real-time screen capture)
+    void SetUseRealTimeClock(bool useRealTime) { _useRealTimeClock = useRealTime; }
+    bool GetUseRealTimeClock() const { return _useRealTimeClock; }
 
     /// Check if currently recording
     bool IsRecording() const
@@ -280,6 +309,7 @@ protected:
 
     // Feature flag (cached from FeatureManager)
     bool _featureEnabled = false;
+    bool _useRealTimeClock = false;
 
     // Recording state
     bool _isRecording = false;
@@ -360,9 +390,14 @@ protected:
     // Message center subscription tracking
     bool _isSubscribed = false;
 
+    // Owned logger instance when context is nullptr (e.g. Videowall recording)
+    std::unique_ptr<ModuleLogger> _ownedLogger;
+
     // Emulator instance ID we are currently recording on.
-    // NC_EMULATOR_STATE_CHANGE is a global broadcast with no instance ID in the
-    // payload, so we store our own ID and verify the emulator's actual state
+    // Since Sprint 0 (GDB TDD §6.3), NC_EMULATOR_STATE_CHANGE carries an
+    // EmulatorStateChangePayload with the instance UUID; the legacy
+    // _payloadNumber path is retained for observers that have not been
+    // migrated. We still store our own ID as a belt-and-suspenders check
     // before reacting to a stop notification.
     std::string _recordingEmulatorId;
 
