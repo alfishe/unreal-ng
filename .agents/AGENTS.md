@@ -49,5 +49,5 @@ Tests are executed using the `core-tests` binary, and benchmarks via `core-bench
 - **Test Artifacts**: ALL test artifacts and temporary files (e.g. `.wav`, `.trd`, `.sna`) MUST be written to the `scratch/` directory. Do not clutter the project root. Use `TestPathHelper::GetTestScratchPath()` for this.
 - **Naming Conventions**: Do not use underscores in file names or C++ class/struct/method names unless specified. Use PascalCase for methods and camelCase for variables/fields.
 - **Documentation Rules**: Documentation files must use lowercase with hyphens (kebab-case). Ongoing design and analysis must go into `docs/inprogress/` following specific date-prefixed directory naming rules. See `docs/inprogress/README.md` for details.
-- **Coding Guidelines**: For detailed coding guidelines, see `docs/coding-guidelines.md`.
-- **Cross-Platform & Compatibility**: The codebase MUST be cross-platform (Windows, macOS, Linux) and cross-compiler compatible (gcc, clang, mingw, msvc) with **ZERO warnings** allowed. See `docs/cross-platform-compatibility.md` for environmental constraints.
+- **Coding Guidelines**: For detailed coding guidelines, see `docs/guidelines/coding-guidelines.md`.
+- **Cross-Platform & Compatibility**: The codebase MUST be cross-platform (Windows, macOS, Linux) and cross-compiler compatible (gcc, clang, mingw, msvc) with **ZERO warnings** allowed. See `docs/guidelines/cross-platform-compatibility.md` for environmental constraints.
