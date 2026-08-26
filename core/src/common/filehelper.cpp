@@ -447,7 +447,16 @@ bool FileHelper::IsAbsolutePath(const std::string& path)
         return true;
     return HasDriveLetter(path) && path.size() > 2 && IsSep(path[2]);
 #else
-    return !path.empty() && path[0] == '/';
+    // POSIX (macOS/Linux). Native rule: absolute means '/'-rooted.
+    //
+    // Additionally, '\'-rooted spellings (\opt\unreal, \\server\share, \\?\C:\...)
+    // are classified absolute here as well. This is safe and consistent because
+    // FileHelper's own contract already aliases '\' to '/' on every platform:
+    // NormalizePath() unconditionally rewrites every '\' to the native separator,
+    // so a '\'-rooted string always denotes the same location as its '/'-rooted
+    // normalization — never a cwd-relative POSIX filename that merely starts
+    // with a backslash (such names are not representable through FileHelper).
+    return !path.empty() && (path[0] == '/' || path[0] == '\\');
 #endif
 }
 
