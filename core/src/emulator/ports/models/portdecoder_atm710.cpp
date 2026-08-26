@@ -115,6 +115,13 @@ uint8_t PortDecoder_ATM710::DecodePortIn(uint16_t port, uint16_t pc)
         result = _state->pEFF7;
         _lastPortDecoded = true;
     }
+    // NOTE: the xxF7 window registers have no readback path - ZXMAK2
+    // MemoryAtm710.cs, Xpeccy atm2PortMap and the original io.cpp in1()
+    // all leave xxF7 reads unsubscribed (floating bus / 0xFF). This is
+    // load bearing: the stock TR-DOS 5.04T $3D38 probe (OUT (F7),0 /
+    // IN A,(F7), CP 1E/1F) must fail so that TR-DOS entry from the 128
+    // menu boots classic TR-DOS instead of the sys-BIOS RST 08 launcher.
+
     // Beta128 FDC ports
     else if (IsBeta128Port(decodedPort))
     {
@@ -143,7 +150,27 @@ void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
     // Port #FF77 - ATM control
     else if (IsPort_FF77(port))
     {
-        Port_FF77_Out(port, value, pc);
+        // Hardware write gate = DOSEN || SYSEN (ZXMAK2 MemoryAtm710.cs
+        // BusWritePortXX77_SYS; Xpeccy atm2PortMap gates the f7/77/ff
+        // entries on the dos line; the original io.cpp wraps the whole
+        // ATM710 xx77/xFF7 section in `if (comp.flags & CF_DOSPORTS)`).
+        // CF_DOSPORTS is the active TR-DOS session; ~CPM (aFF77 bit 9
+        // clear) keeps continuous access on outside sessions. PEN (bit 8)
+        // is a mapping-only latch (set_banks `pen=0` -> all windows last
+        // ROM page) and is NOT part of the port gate: with CPM set, code
+        // executing from RAM closes the session (CF_LEAVEDOSRAM), so the
+        // stock TR-DOS 5.04T $3D38 probe (LDIR'd to $5C92) cannot
+        // reprogram the windows - its OUT (F7),0 is ignored, the IN
+        // returns the floating bus and the probe fails, which boots
+        // classic TR-DOS instead of the sys-BIOS launcher.
+        if (IsDosPortsEnabled())
+        {
+            Port_FF77_Out(port, value, pc);
+        }
+        else
+        {
+            MLOGDEBUG("PortDecoder_ATM710: xx77 write to 0x%04X ignored (dos ports disabled)", port);
+        }
     }
     // Port #FFF7 group - bank select
     else
@@ -161,7 +188,15 @@ void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
         }
         else if (IsPort_FFF7(port, windowIndex))
         {
-            Port_FFF7_Out(port, value, windowIndex, pc);
+            // Same DOSEN || SYSEN gate as xx77 above
+            if (IsDosPortsEnabled())
+            {
+                Port_FFF7_Out(port, value, windowIndex, pc);
+            }
+            else
+            {
+                MLOGDEBUG("PortDecoder_ATM710: xFF7 write to 0x%04X ignored (dos ports disabled)", port);
+            }
         }
         // Port #BFFD - AY data
         else if (IsPort_BFFD(port))
@@ -237,6 +272,22 @@ bool PortDecoder_ATM710::IsPort_FFF7(uint16_t port, uint8_t& windowIndex)
 
     windowIndex = (port >> 14) & 0x03;
     return true;
+}
+
+bool PortDecoder_ATM710::IsDosPortsEnabled()
+{
+    // DOSEN || SYSEN hardware gate (ZXMAK2 MemoryAtm710.cs, same shape as
+    // PortDecoder_ATM3::IsManagerEnabled):
+    // - CF_DOSPORTS = active TR-DOS session (the original io.cpp write
+    //   gate `if (comp.flags & CF_DOSPORTS)`). Armed at cold boot by ~CPM
+    //   (UpdateZ80Banks -> CF_TRDOS), for RM_DOS by SetROMMode, re-armed
+    //   on every $3Dxx opcode fetch (Z80Step CF_SETDOSROM) and closed by
+    //   execution from RAM (CF_LEAVEDOSRAM).
+    // - ~CPM (aFF77 bit 9 clear) = SYSEN continuous access: the ports
+    //   answer even outside a session (ZXMAK2's SYSEN forces DOSEN).
+    // PEN (aFF77 bit 8) is deliberately NOT part of the gate - it only
+    // disables the window mapping (all windows -> last ROM page).
+    return ((_state->flags & CF_DOSPORTS) != 0) || ((_state->aFF77 & ATM_AFF77_CPM) == 0);
 }
 
 bool PortDecoder_ATM710::IsPort_EFF7(uint16_t port)

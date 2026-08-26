@@ -80,6 +80,12 @@ public:
     bool IsPort_FFFD(uint16_t port);
     bool IsBeta128Port(uint16_t decodedPort);
 
+    // Manager circuit enable: PEN (aFF77 bit 8) - the persistent hardware
+    // latch gating the xx77/xFF7 port group and the window mapping (the
+    // `pen=0` branch of the original set_banks() forces all windows to the
+    // last ROM page)
+    bool IsDosPortsEnabled();        // DOSEN || SYSEN: CF_DOSPORTS session OR ~CPM (aFF77.9=0)
+
     uint16_t decodePort(uint16_t port);
     /// endregion </Port detection>
 

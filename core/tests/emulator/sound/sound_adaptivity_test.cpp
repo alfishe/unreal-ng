@@ -176,6 +176,51 @@ TEST_F(SoundAdaptivity_Test, Beeper_SampleCountFollowsFrameLength)
     }
 }
 
+TEST_F(SoundAdaptivity_Test, Beeper_TurboSwitchFrame_StaysInLockstepWithAccumulator)
+{
+    // Turbo switches queue the new multiplier (PortDecoder_ATM710::
+    // updateTurboMode / Core::SetSpeedMultiplier write next_z80_frequency_
+    // multiplier); Z80::Z80FrameCycle applies the queue AFTER SoundManager::
+    // handleFrameStart in the MainLoop frame pass. The synth re-clock must
+    // therefore follow the QUEUED value - reading current_... left the beeper
+    // at the old clock for the whole switch frame while handleFrameEnd closed
+    // the blip at the new duration, delivering multiplier-times realtime
+    // samples (the "blip delivered 1761 samples, accumulator expects 880"
+    // warning at x2 turbo)
+    SoundManager* sound = _context->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+
+    EmulatorState& state = _context->emulatorState;
+    _context->config.frame = 69888;             // ZX timing
+    _context->config.frame_duration_us = 19968;
+    const size_t expected = expectedSamplesFromUs(_context->config.frame_duration_us);
+
+    // Settle at x1 (also applies the forced initial re-clock from reset())
+    state.next_z80_frequency_multiplier = 1;
+    sound->handleFrameStart();
+    state.current_z80_frequency_multiplier = 1;  // queue applied by Z80FrameCycle
+    sound->handleFrameEnd();
+
+    // Queue x2 exactly like the ATM710 turbo port write does, then replay
+    // the MainLoop ordering of the switch frame
+    state.next_z80_frequency_multiplier = 2;
+    sound->handleFrameStart();
+    state.current_z80_frequency_multiplier = 2;  // Z80::Z80FrameCycle applies here
+    sound->handleFrameEnd();
+
+    // The switch frame itself must deliver realtime samples, not 2x
+    EXPECT_NEAR(static_cast<double>(sound->getBeeper().getLastSamplesRead()),
+                static_cast<double>(expected), 1.0)
+        << "turbo switch frame: beeper must already run at the queued clock";
+
+    // ...and stay in lockstep on the following frame
+    sound->handleFrameStart();
+    sound->handleFrameEnd();
+    EXPECT_NEAR(static_cast<double>(sound->getBeeper().getLastSamplesRead()),
+                static_cast<double>(expected), 1.0)
+        << "frame after the turbo switch";
+}
+
 /// endregion </Beeper>
 
 /// region <Covox (blip_buf) adaptivity>

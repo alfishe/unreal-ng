@@ -431,19 +431,23 @@ TEST_F(ATMVideoModesSuite_Test, PortFF77_ModeBitsUnchanged_NoRedetection)
     ReinitAs(MM_ATM710);
     auto* pd = _context->pPortDecoder;
 
-    pd->DecodePortOut(0xFF77, 0x23, 0);  // mode 3 (ZX) + INT gate
+    // Write through the SYSEN-open xx77 alias (full low-byte 0x77 decode,
+    // same handler): this bare fixture has no DOS/SYS ROMs, so no CF_DOSPORTS
+    // session can latch - after a #FF77 write latches CPM into aFF77, the
+    // next #FF77 write would be gated out by the DOSEN || SYSEN gate
+    pd->DecodePortOut(0x0077, 0x23, 0);  // mode 3 (ZX) + INT gate
     EXPECT_EQ(_screen->_vid.mode, M_ZX48);
 
     // Sentinel: only InitRaster rewrites _vid.mode
     _screen->_vid.mode = M_ATMTX;
 
     // Same mode bits, different control bits (turbo 0x08): no re-detection
-    pd->DecodePortOut(0xFF77, 0x2B, 0);
+    pd->DecodePortOut(0x0077, 0x2B, 0);
     EXPECT_EQ(_context->emulatorState.pFF77, 0x2B);
     EXPECT_EQ(_screen->_vid.mode, M_ATMTX) << "no video-mode-bit change must not re-detect";
 
     // Mode bits 3 -> 0: re-detection runs and applies EGA
-    pd->DecodePortOut(0xFF77, 0x20, 0);
+    pd->DecodePortOut(0x0077, 0x20, 0);
     EXPECT_EQ(_screen->_vid.mode, M_ATM16);
     EXPECT_EQ(_screen->GetVideoMode(), M_ATM16);
 }
@@ -479,8 +483,10 @@ TEST_F(ATMVideoModesSuite_Test, Port7FFD_ShadowBit_SwitchesRendererPlanes)
     // Reset default pFF77 = 0x00 already encodes mode 0 (EGA): a lone 0x20
     // write changes no mode bits, so no re-detection is triggered. Establish
     // the mode via a real transition (ZX -> EGA), as software does at boot.
-    pd->DecodePortOut(0xFF77, 0x23, 0);
-    pd->DecodePortOut(0xFF77, 0x20, 0);  // EGA
+    // SYSEN-open xx77 alias: no DOS/SYS ROMs in this fixture, so the 2nd
+    // #FF77 write would be gated out (DOSEN || SYSEN)
+    pd->DecodePortOut(0x0077, 0x23, 0);
+    pd->DecodePortOut(0x0077, 0x20, 0);  // EGA
     ASSERT_EQ(_screen->GetVideoMode(), M_ATM16);
 
     auto& fb = _screen->GetFramebufferDescriptor();
@@ -840,8 +846,10 @@ TEST_F(ATMVideoModesSuite_Test, Render_VerticalGeometry_FullFrameBatch_EGA)
 {
     ReinitAs(MM_ATM710);
     auto* pd = _context->pPortDecoder;
-    pd->DecodePortOut(0xFF77, 0x23, 0);
-    pd->DecodePortOut(0xFF77, 0x20, 0);  // EGA
+    // SYSEN-open xx77 alias: no DOS/SYS ROMs in this fixture, so the 2nd
+    // #FF77 write would be gated out (DOSEN || SYSEN)
+    pd->DecodePortOut(0x0077, 0x23, 0);
+    pd->DecodePortOut(0x0077, 0x20, 0);  // EGA
     ASSERT_EQ(_screen->GetVideoMode(), M_ATM16);
 
     memset(_memory->RAMPageAddress(1), 0, 0x4000);

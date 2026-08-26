@@ -342,7 +342,9 @@ TEST_F(PortDecoder_ATM710_Test, FFF7_WindowAndRegisterSetSelection)
 TEST_F(PortDecoder_ATM710_Test, FFF7_MemoryBanks_RAMFromFFF7)
 {
     EmulatorState& state = _context->emulatorState;
-    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN | PortDecoder_ATM710::ATM_AFF77_CPM;  // Manager on, TR-DOS select off
+    // Manager on with ~CPM: the SYSEN half of the DOSEN || SYSEN write gate
+    // keeps the manager ports enabled for direct window writes
+    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
     state.p7FFD = 0x00;
 
     // Window 1 <- RAM page 10: stored 0x20A comes from val 0x40 | (0x3F ^ 0x0A) = 0x75
@@ -359,7 +361,8 @@ TEST_F(PortDecoder_ATM710_Test, FFF7_MemoryBanks_RAMFromFFF7)
 TEST_F(PortDecoder_ATM710_Test, FFF7_MemoryBanks_RAMFrom7FFD)
 {
     EmulatorState& state = _context->emulatorState;
-    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN | PortDecoder_ATM710::ATM_AFF77_CPM;
+    // Manager on with ~CPM: SYSEN keeps the manager ports enabled
+    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
     state.p7FFD = 0x03;  // Low 3 page bits = 3
 
     // Window 3 <- RAM from 7FFD: stored 0x038 comes from val 0xC7.
@@ -372,7 +375,8 @@ TEST_F(PortDecoder_ATM710_Test, FFF7_MemoryBanks_RAMFrom7FFD)
 TEST_F(PortDecoder_ATM710_Test, FFF7_MemoryBanks_ROMTypes)
 {
     EmulatorState& state = _context->emulatorState;
-    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN | PortDecoder_ATM710::ATM_AFF77_CPM;
+    // Manager on with ~CPM: SYSEN keeps the manager ports enabled
+    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
     state.p7FFD = 0x00;
 
     // Window 0 <- ROM from 7FFD (val 0xBF -> stored 0x100)
@@ -411,10 +415,43 @@ TEST_F(PortDecoder_ATM710_Test, FFF7_TRDOSFlag_FromCPMBit)
     EXPECT_TRUE(state.flags & CF_TRDOS);
 }
 
+TEST_F(PortDecoder_ATM710_Test, WriteGate_DOSPORTS_or_SYSEN)
+{
+    // Hardware write gate = DOSEN || SYSEN (ZXMAK2 MemoryAtm710.cs
+    // BusWritePortXFF7_WND; the original io.cpp wraps the whole ATM710
+    // xx77/xFF7 section in `if (comp.flags & CF_DOSPORTS)`): manager-port
+    // writes are ignored while CPM is set and no TR-DOS session is
+    // active. This is what makes the stock TR-DOS 5.04T $3D38 probe
+    // (OUT (F7),0 executed from RAM at $5C92 with CPM set) fail and boot
+    // classic TR-DOS instead of activating the sys-BIOS launcher.
+    EmulatorState& state = _context->emulatorState;
+    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN | PortDecoder_ATM710::ATM_AFF77_CPM;  // Manager on, CPM set
+    state.flags = 0x00;
+    state.p7FFD = 0x00;
+    state.pFFF7[0] = 0x123;
+
+    // No session + CPM set -> write ignored
+    _portDecoder->DecodePortOut(0x00F7, 0x7F, 0x0000);
+    EXPECT_EQ(state.pFFF7[0], 0x123);
+
+    // Active TR-DOS session (CF_DOSPORTS = the DOSEN line) -> write passes
+    state.flags = CF_DOSPORTS;
+    _portDecoder->DecodePortOut(0x00F7, 0x7F, 0x0000);
+    EXPECT_EQ(state.pFFF7[0], 0x200);  // val 0x7F -> RAM from FFF7, page 0
+
+    // ~CPM (SYSEN continuous access) -> write passes without a session
+    state.flags = 0x00;
+    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
+    state.pFFF7[0] = 0x123;
+    _portDecoder->DecodePortOut(0x00F7, 0xBF, 0x0000);
+    EXPECT_EQ(state.pFFF7[0], 0x100);  // val 0xBF -> ROM from 7FFD, page 0
+}
+
 TEST_F(PortDecoder_ATM710_Test, FFF7_RAMPageMask)
 {
     EmulatorState& state = _context->emulatorState;
-    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN | PortDecoder_ATM710::ATM_AFF77_CPM;
+    // Manager on with ~CPM: SYSEN keeps the manager ports enabled
+    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
     state.p7FFD = 0x00;
 
     // 256KB machine: 16 RAM pages -> mask 0x0F
@@ -475,12 +512,15 @@ TEST_F(PortDecoder_ATM710_Test, Turbo_FF77Bit3_EFF7Bit4_MultiplierSelect)
     _portDecoder->reset();
     EXPECT_EQ(state.next_z80_frequency_multiplier, 2);
 
-    // FF77 bit 3 -> 14MHz
-    _portDecoder->DecodePortOut(0xFF77, 0x08, 0x0000);
+    // FF77 bit 3 -> 14MHz. Port 0x0077: the xx77 register latches the
+    // address bus, so writing #FF77 would set CPM (aFF77 bit 9) and close
+    // the DOSEN || SYSEN write gate after the first write outside a
+    // session - #0077 keeps ~CPM active
+    _portDecoder->DecodePortOut(0x0077, 0x08, 0x0000);
     EXPECT_EQ(state.next_z80_frequency_multiplier, 4);
 
     // Turbo off, EFF7.4 clear -> back to 7MHz
-    _portDecoder->DecodePortOut(0xFF77, 0x00, 0x0000);
+    _portDecoder->DecodePortOut(0x0077, 0x00, 0x0000);
     EXPECT_EQ(state.next_z80_frequency_multiplier, 2);
 
     // EFF7 bit 4 locks 3.5MHz while the turbo bit is clear
@@ -488,7 +528,7 @@ TEST_F(PortDecoder_ATM710_Test, Turbo_FF77Bit3_EFF7Bit4_MultiplierSelect)
     EXPECT_EQ(state.next_z80_frequency_multiplier, 1);
 
     // FF77.3 overrides the 3.5MHz lock (turbo has priority)
-    _portDecoder->DecodePortOut(0xFF77, 0x08, 0x0000);
+    _portDecoder->DecodePortOut(0x0077, 0x08, 0x0000);
     EXPECT_EQ(state.next_z80_frequency_multiplier, 4);
 
     // Boot defaults (full sequence: mode-neutral reset + RM_DOS block, as

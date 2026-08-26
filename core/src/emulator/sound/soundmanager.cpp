@@ -368,9 +368,16 @@ void SoundManager::handleFrameStart()
     // mapping at the new CPU clock. Z80::t counts multiplied cycles, so the
     // beeper/covox blip input clocks and the AY PLL increment must scale by
     // the same multiplier - otherwise every synth produces multiplier-times
-    // realtime samples and the ring overfills (hard-resync drops). Applied
-    // at the frame boundary only, matching Z80::Z80FrameCycle
-    const uint8_t frequencyMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
+    // realtime samples and the ring overfills (hard-resync drops).
+    //
+    // Uses the QUEUED multiplier: MainLoop runs this frame start BEFORE
+    // Z80::Z80FrameCycle applies the queue, so next_... is the rate this
+    // frame will actually execute at. Reading current_... here left the
+    // beeper at the old clock for the whole switch frame while
+    // handleFrameEnd() closed the blip at the new duration - exactly one
+    // "blip delivered Nx samples, accumulator expects N" warning per turbo
+    // switch (e.g. 1761 vs 880 at x2)
+    const uint8_t frequencyMultiplier = _context->emulatorState.next_z80_frequency_multiplier;
     if (frequencyMultiplier != _lastFrequencyMultiplier)
     {
         _lastFrequencyMultiplier = frequencyMultiplier;
@@ -476,7 +483,7 @@ void SoundManager::handleFrameEnd()
     // Cross-check blip's internal fractional accumulator against ours. Both
     // are driven by the same clock ratio and stay in lockstep; >1 sample
     // divergence indicates an accumulator reset bug (logged, not asserted -
-    // snapshot load / multiplier changes may legitimately differ for 1 frame)
+    // snapshot load / reset may legitimately differ for 1 frame)
     {
         int blipRead = _beeper->getLastSamplesRead();
         int diff = blipRead - static_cast<int>(samplesThisFrame);
