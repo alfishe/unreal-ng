@@ -301,6 +301,11 @@ bool Core::Init()
             {
                 _context->pPortDecoder = _portDecoder;
 
+                // Prime the porttrace feature cache: the decoder is created after
+                // FeatureManager loaded features.ini, so a persisted porttrace=on
+                // state would otherwise not take effect until the next toggle
+                _portDecoder->UpdateFeatureCache();
+
                 result = true;
             }
             else

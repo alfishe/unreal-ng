@@ -213,48 +213,9 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const s
         return nullptr;
     }
 
-    // Request this model and RAM size for initialization
+    // Request this model and RAM size for initialization. Emulator::Init
+    // resolves the model config itself: configs/<model>/unreal.ini
     emulator->SetPreferredModel(modelInfo->Model, ramSize);
-
-    // Try to find model-specific config in configs subdirectory
-    // Map model+RAM to config folder name
-    std::string configFolder;
-    switch (modelInfo->Model)
-    {
-        case MM_PENTAGON:
-            configFolder = (ramSize == 512) ? "pentagon512k" : "pentagon128k";
-            break;
-        case MM_SPECTRUM48:
-            configFolder = "spectrum48";
-            break;
-        case MM_SPECTRUM128:
-            configFolder = "spectrum128";
-            break;
-        case MM_ATM710:
-            configFolder = "atm710";
-            break;
-        case MM_ATM3:
-            configFolder = "atm3";
-            break;
-        default:
-            // Use default config for unsupported models
-            break;
-    }
-
-    if (!configFolder.empty())
-    {
-        // Look for model-specific config in configs subdirectory
-        std::string resourcesPath = FileHelper::GetResourcesPath();
-        std::string configPath = FileHelper::PathCombine(resourcesPath, "configs");
-        configPath = FileHelper::PathCombine(configPath, configFolder);
-        configPath = FileHelper::PathCombine(configPath, "unreal.ini");
-
-        if (FileHelper::FileExists(configPath))
-        {
-            emulator->SetCustomConfigPath(configPath);
-            LOGINFO("EmulatorManager::CreateEmulatorWithModelAndRAM - Using model-specific config: %s", configPath.c_str());
-        }
-    }
 
     // Initialize the emulator
     if (emulator->Init())

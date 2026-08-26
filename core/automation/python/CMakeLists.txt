@@ -210,15 +210,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         )
     endif()
 
-    # Copy default config file to binary folder after successful compilation
-    SET(CONFIG_FILE ${DATA_PATH}/configs/pentagon512k/unreal.ini)
-    message("CONFIG_FILE: ${CONFIG_FILE}")
     message("Binary: ${CMAKE_BINARY_DIR}/${PROJECT_NAME}")
-    add_custom_command(
-        TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E
-        copy ${CONFIG_FILE} "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/unreal.ini"
-    )
 
     # Copy all ROM files to /rom sub-folder
     add_custom_command(
@@ -255,6 +247,14 @@ else()
         target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_RECORDING)
         target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/recording/src)
     endif()
+
+    # zstd::libzstd is required because core's ttd_compression.h (pulled in
+    # transitively via python_emulator.h -> timetravelmanager.h ->
+    # ttd_codec_page_store.h) #includes <zstd.h>, and this target uses
+    # core/src via raw include paths rather than linking unrealng::core.
+    # zstd::libzstd is an INTERFACE IMPORTED target, so this only propagates
+    # zstd's include directory (same fix as automation_webapi).
+    target_link_libraries(${PROJECT_NAME} PRIVATE zstd::libzstd)
 
     if(PYTHON_USE_STATIC)
         # Link against static Python built from source

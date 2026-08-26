@@ -164,13 +164,12 @@ endif()
 
 # Define data paths
 set(DATA_PATH "${ROOT_DIR}/data")
-set(CONFIG_FILE "${DATA_PATH}/configs/pentagon512k/unreal.ini")
 
 # Copy resources using modern CMake syntax
 add_custom_command(
     TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy
-        "${CONFIG_FILE}" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/unreal.ini"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${DATA_PATH}/configs" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/configs"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
     COMMAND ${CMAKE_COMMAND} -E copy_directory

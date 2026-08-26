@@ -155,6 +155,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
 #include "openapi/openapi_analyzers.inc"
 #include "openapi/openapi_debug.inc"
 #include "openapi/openapi_profiler.inc"
+#include "openapi/openapi_porttrace.inc"
 #include "openapi/openapi_ttd.inc"
 
     spec["paths"] = paths;

@@ -28,6 +28,7 @@
 #include <fstream>
 #include <debugger/ttd/ttd_external_events.h>
 #include "../../../automation.h"
+#include "../bindings/python_porttrace.h"
 
 namespace py = pybind11;
 
@@ -66,7 +67,7 @@ namespace PythonBindings
 
         m.def("emu_select", [](const std::string& id) -> bool {
             auto* mgr = EmulatorManager::GetInstance();
-            return mgr && mgr->SelectEmulator(id);
+            return mgr && mgr->SetSelectedEmulatorId(id);
         }, "Set emulator as currently selected by ID", py::arg("id"));
 
         m.def("videowall_singlesync", [](bool enable, const std::string& emulatorId) -> bool {
@@ -74,7 +75,7 @@ namespace PythonBindings
         }, "Enable or disable Single Emulator Sync Mode for the videowall", py::arg("enable"), py::arg("emulator_id") = "");
 
         // Emulator class bindings
-        py::class_<Emulator>(m, "Emulator")
+        auto emulatorClass = py::class_<Emulator>(m, "Emulator")
             // Lifecycle control
             .def("start", &Emulator::Start, "Start emulator execution")
             .def("start_async", &Emulator::StartAsync, "Start emulator asynchronously")
@@ -1670,5 +1671,8 @@ namespace PythonBindings
                 return d;
             }, "Run backward until any PC matches; returns dict or None",
                py::arg("pcs"));
+
+        // Port trace (PDR) bindings — runtime feature "porttrace"
+        registerPortTraceBindings(emulatorClass);
     }
 }

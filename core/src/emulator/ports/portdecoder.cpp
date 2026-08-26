@@ -2,6 +2,7 @@
 
 #include <cassert>
 
+#include "base/featuremanager.h"
 #include "common/collectionhelper.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
@@ -142,12 +143,26 @@ uint8_t PortDecoder::DecodePortIn(uint16_t addr, [[maybe_unused]] uint16_t pc)
         _memory->_memoryAccessTracker->TrackPortRead(addr, result, callerAddress);
     }
 
+    // Port trace: this legacy path bypasses OnPortInComplete, so a Ghost-Byte double
+    // read through it would otherwise be invisible. Record with viaLegacyBasePath
+    // so both reads of a ghost pair are visible and distinguishable (use case 4.1)
+    if (_portTraceFeatureCache) [[unlikely]]
+    {
+        PortDecodeDisposition disp;
+        disp.decodedPort = addr;  // Legacy path performs no decoding: identity
+        disp.decodeRuleIndex = PortTraceRule::kNoTable;
+        disp.wasDecoded = _lastPortDecoded;
+        disp.viaLegacyBasePath = true;
+        RecordPortTrace(/*isOut=*/false, addr, result, pc, disp);
+    }
+
     return result;
 }
 
 /// Called by subclasses AFTER hardware read completes.
-/// Handles breakpoints, tracking, and future analyzer notifications.
-void PortDecoder::OnPortInComplete(uint16_t port, uint8_t result, uint16_t pc)
+/// Handles breakpoints, tracking, port trace capture, and future analyzer notifications.
+void PortDecoder::OnPortInComplete(uint16_t port, uint8_t result, [[maybe_unused]] uint16_t pc,
+                                   const PortDecodeDisposition& disp)
 {
     // 1. Breakpoint handling
     if (_context->pDebugManager != nullptr)
@@ -173,7 +188,13 @@ void PortDecoder::OnPortInComplete(uint16_t port, uint8_t result, uint16_t pc)
         _memory->_memoryAccessTracker->TrackPortRead(port, result, pc);
     }
 
-    // 3. Future: Analyzer notifications can be added here
+    // 3. Port trace capture (runtime feature "porttrace"; single cached-bool test when off)
+    if (_portTraceFeatureCache) [[unlikely]]
+    {
+        RecordPortTrace(/*isOut=*/false, port, result, pc, disp);
+    }
+
+    // 4. Future: Analyzer notifications can be added here
 }
 
 void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [[maybe_unused]] uint16_t pc)
@@ -210,11 +231,22 @@ void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [
         uint16_t callerAddress = _context->pCore->GetZ80()->m1_pc;
         _memory->_memoryAccessTracker->TrackPortWrite(addr, value, callerAddress);
     }
+
+    // Port trace: legacy path bypasses OnPortOutComplete — see DecodePortIn note
+    if (_portTraceFeatureCache) [[unlikely]]
+    {
+        PortDecodeDisposition disp;
+        disp.decodedPort = addr;  // Legacy path performs no decoding: identity
+        disp.decodeRuleIndex = PortTraceRule::kNoTable;
+        disp.viaLegacyBasePath = true;
+        RecordPortTrace(/*isOut=*/true, addr, value, pc, disp);
+    }
 }
 
 /// Called by subclasses AFTER hardware write completes.
-/// Handles breakpoints, tracking, and future analyzer notifications.
-void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, uint16_t pc)
+/// Handles breakpoints, tracking, port trace capture, and future analyzer notifications.
+void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused]] uint16_t pc,
+                                    const PortDecodeDisposition& disp)
 {
     // 1. Breakpoint handling
     if (_context->pDebugManager != nullptr)
@@ -258,7 +290,116 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, uint16_t pc)
                                           ttd::TTDAccessType::Io);
         }
     }
+
+    // 4. Port trace capture (runtime feature "porttrace"; single cached-bool test when off)
+    if (_portTraceFeatureCache) [[unlikely]]
+    {
+        RecordPortTrace(/*isOut=*/true, port, value, pc, disp);
+    }
 }
+
+/// region <Port trace (runtime feature "porttrace")>
+
+/// Re-read the porttrace feature flag and instantiate/release the recorder.
+/// Called from FeatureManager::onFeatureChanged (control path, never the hot path).
+void PortDecoder::UpdateFeatureCache()
+{
+    FeatureManager* fm = _context ? _context->pFeatureManager : nullptr;
+    bool enabled = fm && fm->isEnabled(Features::kPortTrace);
+
+    if (enabled && !_portTrace)
+    {
+        // Feature turned on: instantiate the recorder lazily (buffer memory is
+        // allocated only now, never while the feature is off)
+        _portTrace = std::make_unique<PortDiagnosticRecorder>();
+        _activitySummary.reset(static_cast<uint32_t>(_state->frame_counter));
+    }
+    else if (!enabled && _portTrace)
+    {
+        // Feature turned off: stop capture and release the buffer memory
+        _portTrace->stop();
+        _portTrace.reset();
+    }
+
+    _portTraceFeatureCache = enabled;
+}
+
+/// Build and push exactly one PortTraceEvent per Z80 I/O operation.
+/// Only reached when the porttrace feature is on (_portTraceFeatureCache).
+void PortDecoder::RecordPortTrace(bool isOut, uint16_t rawPort, uint8_t value, uint16_t pc,
+                                  const PortDecodeDisposition& disp)
+{
+    uint32_t frame = static_cast<uint32_t>(_state->frame_counter);
+
+    // Frame-scoped counters update even without an active capture session
+    _activitySummary.onEvent(frame, isOut, disp);
+
+    if (!_portTrace || !_portTrace->isCapturing())
+        return;
+
+    PortTraceEvent event;
+
+    // Absolute T-state: frame_counter * tStatesPerFrame + t-in-frame.
+    // pCore may be absent in unit-test contexts — degrade to frame-start timestamp.
+    uint32_t tInFrame = (_context->pCore != nullptr) ? _context->pCore->GetZ80()->t : 0;
+    event.timestamp = _state->frame_counter * static_cast<uint64_t>(_context->config.frame) + tInFrame;
+    event.frameNumber = frame;
+    event.rawPort = rawPort;
+    event.decodedPort = disp.decodedPort;
+    event.pc = pc;
+    event.value = value;
+    event.decodeRuleIndex = disp.decodeRuleIndex;
+    event.deviceId = PortDiagnosticRecorder::ResolveDeviceId(disp.decodedPort);
+
+    bool hadHandler = (disp.decodedPort != 0x0000) && key_exists(_portDevices, disp.decodedPort);
+
+    uint8_t flags = 0;
+    if (isOut)
+        flags |= PortTraceFlags::kDirectionOut;
+    if (disp.wasDecoded)
+        flags |= PortTraceFlags::kWasDecoded;
+    if (hadHandler)
+        flags |= PortTraceFlags::kHadHandler;
+    if (disp.wasBeta128Gated)
+        flags |= PortTraceFlags::kBeta128Gated;
+    if (disp.wasHandledInline)
+        flags |= PortTraceFlags::kHandledInline;
+    if (_state->flags & CF_TRDOS)
+        flags |= PortTraceFlags::kCfTrdosActive;
+    if (disp.viaLegacyBasePath)
+        flags |= PortTraceFlags::kViaLegacyBasePath;
+    event.flags = flags;
+
+    _portTrace->record(event);
+}
+
+PortTraceSessionInfo PortDecoder::getPortTraceSessionInfo() const
+{
+    PortTraceSessionInfo info;
+
+    if (_context)
+    {
+        info.emulatorId = _context->emulatorId.toString();
+        info.tStatesPerFrame = _context->config.frame;
+
+        switch (_context->config.mem_model)
+        {
+            case MM_PENTAGON:    info.modelName = "Pentagon"; break;
+            case MM_SPECTRUM48:  info.modelName = "Spectrum48"; break;
+            case MM_SPECTRUM128: info.modelName = "Spectrum128"; break;
+            case MM_PLUS3:       info.modelName = "SpectrumPlus3"; break;
+            case MM_PROFI:       info.modelName = "Profi"; break;
+            case MM_SCORP:       info.modelName = "Scorpion256"; break;
+            default:             info.modelName = "Unknown"; break;
+        }
+    }
+
+    info.decodeRules = getPortTraceDecodeRules();
+
+    return info;
+}
+
+/// endregion </Port trace>
 
 
 /// Keyboard ports:
@@ -366,6 +507,10 @@ std::string PortDecoder::GetPCAddressLocator(uint16_t pc)
 {
     std::string result;
 
+    // Memory may be absent in unit-test contexts
+    if (_memory == nullptr)
+        return result;
+
     if (pc < 0x4000)
     {
         if (_memory->IsBank0ROM())
@@ -400,6 +545,7 @@ bool PortDecoder::RegisterPortHandler(uint16_t port, PortDevice* device)
         if (!key_exists(_portDevices, port))
         {
             _portDevices.insert({port, device});
+            result = true;  // Fix: return true on successful registration
         }
         else
         {
@@ -440,7 +586,8 @@ uint8_t PortDecoder::PeripheralPortIn(uint16_t port)
         // No peripheral to handle this port IN available
 
         // Determine RAM/ROM page where code executed from
-        uint16_t pc = _context->pCore->GetZ80()->m1_pc;  // Use IN command PC, not the next one (z80->pc)
+        // (pCore may be absent in unit-test contexts)
+        uint16_t pc = _context->pCore ? _context->pCore->GetZ80()->m1_pc : 0;  // Use IN command PC, not the next one (z80->pc)
         std::string currentMemoryPage = GetPCAddressLocator(pc);
         MLOGWARNING("[In] [PC:%04X%s] Port: %02X - no peripheral device to handle", pc, currentMemoryPage.c_str(),
                     port);
@@ -468,7 +615,8 @@ void PortDecoder::PeripheralPortOut(uint16_t port, uint8_t value)
         // No peripheral to handle this port OUT available
 
         // Determine RAM/ROM page where code executed from
-        uint16_t pc = _context->pCore->GetZ80()->m1_pc;  // Use OUT command PC, not the next one (z80->pc)
+        // (pCore may be absent in unit-test contexts)
+        uint16_t pc = _context->pCore ? _context->pCore->GetZ80()->m1_pc : 0;  // Use OUT command PC, not the next one (z80->pc)
         std::string currentMemoryPage = GetPCAddressLocator(pc);
         MLOGWARNING("[Out] [PC:%04X%s] Port: %02X; Value: %02X - no peripheral device to handle", pc,
                     currentMemoryPage.c_str(), port, value);

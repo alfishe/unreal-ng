@@ -117,14 +117,16 @@ bool Emulator::Init()
     _config = new Config(_context);
     if (_config != nullptr)
     {
-        // Use custom config path if set, otherwise use default search
+        // Use custom config path if set, otherwise resolve the config from
+        // the selected platform model: configs/<model>/unreal.ini
         if (!_customConfigPath.empty())
         {
-            result = _config->LoadConfig(_customConfigPath);
+            result = _config->LoadConfigFile(_customConfigPath);
         }
         else
         {
-            result = _config->LoadConfig();
+            std::string configFolder = Config::GetConfigFolderForModel(_preferredModel, _preferredRamSize);
+            result = _config->LoadConfig(configFolder);
         }
 
         if (result)

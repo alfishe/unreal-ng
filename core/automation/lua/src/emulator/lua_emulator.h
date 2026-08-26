@@ -3,6 +3,7 @@
 #include <sol/sol.hpp>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include "../bindings/lua_porttrace.h"
 #include <emulator/memory/memory.h>
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/diskimage.h>
@@ -1267,6 +1268,9 @@ public:
             }
             return result;
         });
+
+        // Port trace (PDR) bindings — runtime feature "porttrace"
+        LuaPortTrace::registerBindings(lua, [this]() -> Emulator* { return effectiveEmulator(); });
     }
 
     void setEmulator(Emulator* emulator) { _emulator = emulator; }

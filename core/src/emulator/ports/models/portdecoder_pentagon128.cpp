@@ -79,8 +79,11 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
     /// endregion </Override submodule>
 
     uint8_t result = 0xFF;
-    uint16_t decodedPort = decodePort(port);
-    
+    DecodeResult decoded = decodePortEx(port);
+    uint16_t decodedPort = decoded.port;
+    PortDecodeDisposition disp;
+    disp.decodeRuleIndex = decoded.ruleIndex;
+
     // Reset decoded flag before processing
     _lastPortDecoded = false;
 
@@ -96,6 +99,7 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
     if (IsBeta128Port(decodedPort) && !(_context->emulatorState.flags & CF_TRDOS))
     {
         decodedPort = 0x0000; // FDC not on the bus: leave the port undecoded
+        disp.wasBeta128Gated = true;
     }
 
     if (decodedPort != 0x0000)
@@ -106,10 +110,12 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
                 // FE port must be passed as non-decoded since keyboard handler uses it
                 result = Default_Port_FE_In(port, pc);
                 _lastPortDecoded = true;
+                disp.wasHandledInline = true;
                 break;
             case 0x7FFD:
                 result = _context->emulatorState.p7FFD;
                 _lastPortDecoded = true;
+                disp.wasHandledInline = true;
                 break;
             default:
                 // All ports registered with PortDecoder will be handled
@@ -117,6 +123,8 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
                 break;
         }
     }
+    disp.decodedPort = decodedPort;
+    disp.wasDecoded = _lastPortDecoded;
 
     /// region <Debug logging>
     if (_logger && _logger->GetLevel() <= LoggerLevel::LogInfo)
@@ -138,7 +146,7 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
     // Universal handler must receive the raw port address (as seen by the Z80),
     // not the decoded one - otherwise port breakpoints set on raw addresses never match
     // (e.g. IN A,($00) decodes to $00FE and would bypass a breakpoint on port $00)
-    OnPortInComplete(port, result, pc);
+    OnPortInComplete(port, result, pc, disp);
 
     return result;
 }
@@ -149,24 +157,31 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
     /// endregion </Override submodule>
 
-    uint16_t decodedPort = decodePort(port);
+    DecodeResult decoded = decodePortEx(port);
+    uint16_t decodedPort = decoded.port;
+    PortDecodeDisposition disp;
+    disp.decodeRuleIndex = decoded.ruleIndex;
 
     // Same TR-DOS gate as DecodePortIn: with the FDC off the bus its registers
     // cannot be written - hardware would silently ignore the OUT
     if (IsBeta128Port(decodedPort) && !(_context->emulatorState.flags & CF_TRDOS))
     {
         decodedPort = 0x0000; // FDC not on the bus: drop the write
+        disp.wasBeta128Gated = true;
     }
 
     if (decodedPort != 0x0000)
     {
+        disp.wasDecoded = true;
         switch (decodedPort)
         {
             case 0x00FE:
                 Default_Port_FE_Out(decodedPort, value, pc);
+                disp.wasHandledInline = true;
                 break;
             case 0x7FFD:
                 Port_7FFD_Out(decodedPort, value, pc);
+                disp.wasHandledInline = true;
                 break;
             default:
                 // All ports registered with PortDecoder will be handled
@@ -174,6 +189,7 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
                 break;
         }
     }
+    disp.decodedPort = decodedPort;
 
     /// region <Debug logging>
     if (_logger && _logger->GetLevel() <= LoggerLevel::LogInfo)
@@ -191,7 +207,7 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
     // Universal handler for breakpoints, tracking, analyzers
     // Must receive the raw port address (as seen by the Z80), not the decoded one,
     // so that port breakpoints set on raw addresses match correctly
-    OnPortOutComplete(port, value, pc);
+    OnPortOutComplete(port, value, pc, disp);
 }
 
 /// Actualize port(s) state according selected RAM page
@@ -321,10 +337,15 @@ bool PortDecoder_Pentagon128::IsBeta128Port(uint16_t decodedPort)
 
 uint16_t PortDecoder_Pentagon128::decodePort(uint16_t port)
 {
-    uint16_t result = 0x0000;
+    return decodePortEx(port).port;
+}
 
-    static constexpr PortMatch const portMasksMatches[] =
-    {
+/// Table-based decode with rule attribution: returns both the resolved port and
+/// the index of the mask/match rule that fired (for the port trace recorder)
+// Pentagon decode table. File-scope so decodePortEx() and
+// getPortTraceDecodeRules() share the single authoritative copy.
+static constexpr PortMatch const pentagonPortMasksMatches[] =
+{
         // ------- Mask ------ , ------- Match ------ . - Port -
         { 0b1100'0000'0000'0010, 0b1100'0000'0000'0000, 0xFFFD },   // AY #FFFD         Match value: (0xF000)
         { 0b1100'0000'0000'0010, 0b1000'0000'0000'0000, 0xBFFD },   // AY #BFFD         Match value: (0x8000)
@@ -341,28 +362,30 @@ uint16_t PortDecoder_Pentagon128::decodePort(uint16_t port)
         //{ 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x003F },   // Beta128 #003F    Match value: (131, 0x0083)
         //{ 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x005F },   // Beta128 #005F    Match value: (131, 0x0083)
         //{ 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x007F },   // Beta128 #007F    Match value: (131, 0x0083)
-    };
-    static constexpr size_t const elements = sizeof(portMasksMatches) / sizeof(PortMatch);
+};
+
+DecodeResult PortDecoder_Pentagon128::decodePortEx(uint16_t port)
+{
+    DecodeResult result;
+
+    static constexpr size_t const elements = sizeof(pentagonPortMasksMatches) / sizeof(PortMatch);
 
     /// region <Full resolving>
     bool matchResult;
     for (size_t i = 0; i < elements; i++)
     {
-        const PortMatch& item = portMasksMatches[i];
+        const PortMatch& item = pentagonPortMasksMatches[i];
         matchResult = (port & item.mask) == item.match;
         if (matchResult)
         {
-            result = item.resolvedPort;
+            result.port = item.resolvedPort;
+            result.ruleIndex = static_cast<uint8_t>(i);
             break;
         }
     }
     /// endregion </Full resolving>
 
-    if (result == 0x00FF)
-    {
-    }
-
-    if (result == 0x0000)
+    if (result.port == 0x0000)
     {
         // Simplified resolving for BDI ports 1F, 3F, 5F, 7F
         static constexpr const uint8_t portsMask  = 0b1000'0011;    // 0x83 (131)
@@ -370,11 +393,25 @@ uint16_t PortDecoder_Pentagon128::decodePort(uint16_t port)
         if ((port & portsMask) == portsMatch)
         {
             // result = (port & 0x60) | 0x1F;
-            result = (port & 0b0110'0000) | 0b0001'1111;
+            result.port = (port & 0b0110'0000) | 0b0001'1111;
+            result.ruleIndex = PortTraceRule::kBdiFallback;
         }
     }
 
     return result;
+}
+
+/// Export the decode table for self-describing port traces (the BDI #1F/#3F/#5F/#7F
+/// fallback is positional logic, not a mask rule, and is reported per event via
+/// PortTraceRule::kBdiFallback instead)
+std::vector<PortTraceDecodeRule> PortDecoder_Pentagon128::getPortTraceDecodeRules() const
+{
+    std::vector<PortTraceDecodeRule> rules;
+    for (const PortMatch& item : pentagonPortMasksMatches)
+    {
+        rules.push_back({item.mask, item.match, item.resolvedPort});
+    }
+    return rules;
 }
 
 /// endregion <Helper methods>
