@@ -268,6 +268,21 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getCalltraceProfilerEntries, "/api/v1/emulator/{id}/profiler/calltrace/entries",
                   drogon::Get);
 
+    // Port trace (PDR) control — runtime feature "porttrace" (implementation: api/porttrace_api.cpp)
+    ADD_METHOD_TO(EmulatorAPI::portTraceStart, "/api/v1/emulator/{id}/profiler/porttrace/start", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::portTraceStop, "/api/v1/emulator/{id}/profiler/porttrace/stop", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::portTracePause, "/api/v1/emulator/{id}/profiler/porttrace/pause", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::portTraceResume, "/api/v1/emulator/{id}/profiler/porttrace/resume", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::portTraceClear, "/api/v1/emulator/{id}/profiler/porttrace/clear", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getPortTraceStatus, "/api/v1/emulator/{id}/profiler/porttrace/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getPortTraceEvents, "/api/v1/emulator/{id}/profiler/porttrace/events", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getPortTraceFilter, "/api/v1/emulator/{id}/profiler/porttrace/filter", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::setPortTraceFilter, "/api/v1/emulator/{id}/profiler/porttrace/filter", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::setPortTraceConfig, "/api/v1/emulator/{id}/profiler/porttrace/config", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::savePortTrace, "/api/v1/emulator/{id}/profiler/porttrace/save", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::readPortTraceFile, "/api/v1/emulator/{id}/profiler/porttrace/readfile",
+                  drogon::Post);
+
     // Unified profiler control (all profilers at once)
     ADD_METHOD_TO(EmulatorAPI::unifiedProfilerStart, "/api/v1/emulator/{id}/profiler/start", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::unifiedProfilerStop, "/api/v1/emulator/{id}/profiler/stop", drogon::Post);
@@ -789,6 +804,38 @@ public:
     void getUnifiedProfilerStatus(const drogon::HttpRequestPtr& req,
                                   std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                   const std::string& id) const;
+    // Port trace (PDR) control — runtime feature "porttrace"
+    void portTraceStart(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void portTraceStop(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void portTracePause(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void portTraceResume(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void portTraceClear(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getPortTraceStatus(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
+    void getPortTraceEvents(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
+    void getPortTraceFilter(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
+    void setPortTraceFilter(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
+    void setPortTraceConfig(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
+    void savePortTrace(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void readPortTraceFile(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                           const std::string& id) const;
+
     // endregion Profiler Commands Methods
 
     // region Keyboard Injection Methods (implementation: api/keyboard_api.cpp)

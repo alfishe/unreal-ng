@@ -11,6 +11,7 @@
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/ports/portdecoder.h"
 #ifdef ENABLE_RECORDING
 #include "recordingmanager.h"
 #endif
@@ -283,6 +284,13 @@ void FeatureManager::setDefaults()
                      "",
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryPerformance});
+    registerFeature({Features::kPortTrace,
+                     Features::kPortTraceAlias,
+                     Features::kPortTraceDesc,
+                     false,  // OFF by default - diagnostic feature, opt-in
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryDebug});
 
     _dirty = false;
 }
@@ -409,6 +417,13 @@ void FeatureManager::onFeatureChanged()
     if (_context && _context->pTimeTravelManager)
     {
         _context->pTimeTravelManager->UpdateFeatureCache();
+    }
+
+    // Update port trace recorder cache in PortDecoder (instantiates/releases the
+    // recorder when the porttrace feature is toggled)
+    if (_context && _context->pPortDecoder)
+    {
+        _context->pPortDecoder->UpdateFeatureCache();
     }
 
     if (_dirty)

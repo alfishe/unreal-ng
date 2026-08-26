@@ -30,6 +30,7 @@ set(SOURCES
     src/handlers/lua-handler.cpp
     src/commands/cli-processor-capture.cpp
     src/commands/cli-processor-profiler.cpp
+    src/commands/cli-processor-porttrace.cpp
     src/commands/cli-processor-keyboard.cpp
 )
 
