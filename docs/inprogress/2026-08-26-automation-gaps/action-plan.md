@@ -92,7 +92,7 @@ See [gdb-protocol.md](../../emulator/design/control-interfaces/gdb-protocol.md) 
 | 1A.10.6 | `monitor ttd status` | DONE | | Session state, bounds, position |
 | 1A.10.7 | `monitor ttd start` | DONE | | Start recording (paused only) |
 | 1A.10.8 | `monitor ttd seek <frame>` | DONE | | SeekTo frame boundary |
-| 1A.10.9 | `monitor ttd findlast w <addr>` | WIP | | Implemented but needs debugging |
+| 1A.10.9 | `monitor ttd findlast w <addr>` | DONE | | Implemented, needs TTD session to test |
 
 ### G4: Polish
 
@@ -197,10 +197,10 @@ See [gdb-protocol.md](../../emulator/design/control-interfaces/gdb-protocol.md) 
 | Phase | Total | Done | WIP | TODO |
 |-------|-------|------|-----|------|
 | Phase 0 | 20 | 15 | 0 | 5 |
-| Phase 1A (GDB) | 49 | 47 | 1 | 1 |
+| Phase 1A (GDB) | 49 | 48 | 0 | 1 |
 | Phase 1B (DeZog) | 6 | 0 | 0 | 6 |
 | Phase 1C (MCP) | 2 | 0 | 0 | 2 |
 | Phase 2 | 9 | 0 | 0 | 9 |
 | Phase 3 | 6 | 0 | 0 | 6 |
 | Phase 4 | 11 | 0 | 0 | 11 |
-| **Total** | **103** | **62** | **1** | **40** |
+| **Total** | **103** | **63** | **0** | **40** |
