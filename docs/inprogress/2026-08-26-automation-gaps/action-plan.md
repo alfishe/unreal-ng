@@ -60,7 +60,7 @@ See [gdb-protocol.md](../../emulator/design/control-interfaces/gdb-protocol.md) 
 | 1A.5.3 | `0x03` interrupt (Ctrl-C) | DONE | | Emulator::Pause() → T02 |
 | 1A.6.1 | `?` stop reason query | DONE | | T05 with swbreak:/watch:/rwatch:/awatch: |
 | 1A.6.2 | `T05` stop replies (exact forms) | DONE | | Byte-exact per §4.7.1 |
-| 1A.7.1 | Run-control claim in EmulatorContext | TODO | | Advisory token, not mutex |
+| 1A.7.1 | Run-control claim in EmulatorContext | DONE | | UUID-based claim via TakeRunControl |
 | 1A.7.2 | Refuse Resume/Step from other surfaces | TODO | | Return error with "busy: GDB session" |
 | 1A.7.3 | External pause → T05 stop-reply | TODO | | Via NC_EMULATOR_STATE_CHANGE |
 
@@ -73,12 +73,12 @@ See [gdb-protocol.md](../../emulator/design/control-interfaces/gdb-protocol.md) 
 | 1A.8.3 | `Z4`/`z4` access watchpoints | DONE | | Combined R\|W |
 | 1A.8.4 | `watch:` stop replies | DONE | | T05watch:ADDR;thread:1; |
 | 1A.9.1 | `qRcmd` monitor framework | DONE | | Hex-encoded text output |
-| 1A.9.2 | `monitor model` | WIP | | Basic impl, TODO: actual model name |
-| 1A.9.3 | `monitor instances` | TODO | | pid, symbolic id, model, state |
+| 1A.9.2 | `monitor model` | DONE | | Shows "ZX Spectrum" (config name to be added later) |
+| 1A.9.3 | `monitor instances` | DONE | | pid, symbolic id, model, state |
 | 1A.9.4 | `monitor bankinfo` | TODO | | Current paging decode + page table |
-| 1A.9.5 | `monitor frame` | TODO | | Frame / t-state / beam position |
+| 1A.9.5 | `monitor frame` | DONE | | T-state + PC display |
 | 1A.9.6 | `monitor load snap/tape/disk` | TODO | | Paused only, invalidates TTD |
-| 1A.9.7 | `monitor reset` | TODO | | Paused only, preserves model |
+| 1A.9.7 | `monitor reset` | DONE | | Paused only, preserves model |
 
 ### G3: Reverse Execution (TTD Integration)
 

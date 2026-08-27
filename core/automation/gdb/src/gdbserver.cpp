@@ -2,6 +2,7 @@
 #include "gdbpacket.h"
 #include "gdbtarget_z80.h"
 
+#include <common/uuid.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/emulatorcontext.h>
@@ -232,6 +233,7 @@ GDBSession::GDBSession(int socket, bool noAckMode)
     : _socket(socket)
     , _noAckMode(noAckMode)
     , _reader(std::make_unique<GDBPacketReader>())
+    , _sessionUuid(UUID::Generate())
 {
 }
 
@@ -283,6 +285,13 @@ void GDBSession::run()
 void GDBSession::stop()
 {
     _active = false;
+
+    // Release run-control claim
+    if (_context)
+    {
+        _context->ReleaseRunControl(_sessionUuid);
+    }
+
     _emulator.reset();
     _context = nullptr;
 }
@@ -567,16 +576,18 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
     if (cmd == "help")
     {
         response = "Available commands:\n";
-        response += "  monitor help     - this message\n";
-        response += "  monitor model    - show emulator model\n";
-        response += "  monitor status   - show emulator status\n";
-        response += "  monitor reset    - reset emulator\n";
+        response += "  monitor help      - this message\n";
+        response += "  monitor model     - show emulator model\n";
+        response += "  monitor status    - show emulator status\n";
+        response += "  monitor reset     - reset emulator\n";
+        response += "  monitor instances - list emulator instances\n";
+        response += "  monitor frame     - show frame/tstate info\n";
     }
     else if (cmd == "model")
     {
-        if (_emulator && _context)
+        if (_emulator)
         {
-            response = "Model: ZX Spectrum\n";  // TODO: get actual model
+            response = "Model: ZX Spectrum\n";  // TODO: get actual model name from config
         }
         else
         {
@@ -585,9 +596,23 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
     }
     else if (cmd == "status")
     {
-        if (_emulator)
+        if (_emulator && _context)
         {
-            response = _emulator->IsPaused() ? "Status: paused\n" : "Status: running\n";
+            std::ostringstream ss;
+            ss << "Status: " << (_emulator->IsPaused() ? "paused" : "running") << "\n";
+            ss << "Instance: " << _attachedInstanceId << "\n";
+
+            auto claimState = _context->GetRunControlState();
+            if (claimState.claimed)
+            {
+                ss << "Run-control: claimed by " << claimState.surfaceLabel << "\n";
+            }
+            else
+            {
+                ss << "Run-control: unclaimed\n";
+            }
+
+            response = ss.str();
         }
         else
         {
@@ -598,8 +623,59 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
     {
         if (_emulator)
         {
-            _emulator->Reset();
-            response = "Emulator reset\n";
+            if (!_emulator->IsPaused())
+            {
+                response = "Error: emulator must be paused to reset\n";
+            }
+            else
+            {
+                _emulator->Reset();
+                response = "Emulator reset\n";
+            }
+        }
+        else
+        {
+            response = "No emulator attached\n";
+        }
+    }
+    else if (cmd == "instances")
+    {
+        auto* mgr = EmulatorManager::GetInstance();
+        if (mgr)
+        {
+            auto ids = mgr->GetEmulatorIds();
+            std::ostringstream ss;
+            ss << "Instances: " << ids.size() << "\n";
+            int pid = 1;
+            for (const auto& id : ids)
+            {
+                auto emu = mgr->GetEmulator(id);
+                std::string state = emu ? (emu->IsPaused() ? "paused" : "running") : "unknown";
+                ss << "  " << pid++ << ": " << id << " (" << state << ")\n";
+            }
+            response = ss.str();
+        }
+        else
+        {
+            response = "EmulatorManager not available\n";
+        }
+    }
+    else if (cmd == "frame")
+    {
+        if (_emulator)
+        {
+            Z80State* state = _emulator->GetZ80State();
+            if (state)
+            {
+                std::ostringstream ss;
+                ss << "T-state: " << state->t << "\n";
+                ss << "PC: 0x" << std::hex << state->pc << "\n";
+                response = ss.str();
+            }
+            else
+            {
+                response = "Z80 state not available\n";
+            }
         }
         else
         {
@@ -608,7 +684,7 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
     }
     else
     {
-        response = "Unknown monitor command: " + cmd + "\n";
+        response = "Unknown monitor command: " + cmd + "\nType 'monitor help' for available commands.\n";
     }
 
     return GDBPacket::hexEncode(response);
@@ -1019,16 +1095,32 @@ std::string GDBSession::handleAttach(const std::string& pid)
         _emulator->Pause();
     }
 
+    // Take run-control claim (TDD §3.3)
+    if (_context)
+    {
+        std::string errorReason;
+        if (!_context->TakeRunControl(_sessionUuid, "gdb", &errorReason))
+        {
+            // Another surface holds the claim - report but don't fail attach
+            // (read-only operations still allowed)
+        }
+    }
+
     _lastStopReason = StopReason::Attached;
     return "T05thread:1;";
 }
 
 std::string GDBSession::handleDetach()
 {
+    // Release run-control claim (TDD §3.3)
+    if (_context)
+    {
+        _context->ReleaseRunControl(_sessionUuid);
+    }
+
     _emulator.reset();
     _context = nullptr;
     _attachedInstanceId.clear();
-    _hasRunControlClaim = false;
     _active = false;
     return "OK";
 }

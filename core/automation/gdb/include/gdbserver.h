@@ -9,12 +9,12 @@
 #include <thread>
 #include <unordered_map>
 
+#include <common/uuid.h>
+
 class GDBSession;
 class GDBPacketReader;
 class Emulator;
 class EmulatorContext;
-
-#include <memory>
 
 /// @brief GDB RSP server managing TCP connections and client sessions
 ///
@@ -146,8 +146,8 @@ private:
     std::shared_ptr<Emulator> _emulator;
     EmulatorContext* _context = nullptr;
 
-    // Run-control claim token (TDD §3.3)
-    bool _hasRunControlClaim = false;
+    // Run-control claim (TDD §3.3)
+    UUID _sessionUuid;  // Generated at session start, used for claim ownership
 
     // Stop reason tracking
     enum class StopReason
