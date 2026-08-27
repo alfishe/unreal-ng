@@ -10,6 +10,7 @@
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 
+#include <cctype>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -584,6 +585,7 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
         response += "  monitor instances - list emulator instances\n";
         response += "  monitor frame     - show frame/tstate info\n";
         response += "  monitor bankinfo  - show memory bank info\n";
+        response += "  monitor load <path> - load snap/tape/disk (paused only)\n";
     }
     else if (cmd == "model")
     {
@@ -698,6 +700,57 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
             ss << "  8000-BFFF: RAM page " << std::setw(2) << mem->GetRAMPageForBank2() << "\n";
             ss << "  C000-FFFF: RAM page " << std::setw(2) << mem->GetRAMPageForBank3() << "\n";
             response = ss.str();
+        }
+        else
+        {
+            response = "No emulator attached\n";
+        }
+    }
+    else if (cmd == "load" || cmd.starts_with("load "))
+    {
+        std::string path = cmd.length() > 5 ? cmd.substr(5) : "";
+        if (_emulator)
+        {
+            if (!_emulator->IsPaused())
+            {
+                response = "Error: emulator must be paused to load\n";
+            }
+            else if (path.empty())
+            {
+                response = "Error: path required\n";
+            }
+            else
+            {
+                std::string ext = path.substr(path.find_last_of('.') + 1);
+                for (auto& c : ext) c = static_cast<char>(std::tolower(c));
+
+                bool ok = false;
+                if (ext == "sna" || ext == "z80" || ext == "szx")
+                {
+                    ok = _emulator->LoadSnapshot(path);
+                }
+                else if (ext == "tap" || ext == "tzx")
+                {
+                    ok = _emulator->LoadTape(path);
+                }
+                else if (ext == "trd" || ext == "scl" || ext == "fdi")
+                {
+                    ok = _emulator->LoadDisk(path);
+                }
+                else
+                {
+                    response = "Error: unsupported file type '" + ext + "'\n";
+                }
+
+                if (ok)
+                {
+                    response = "Loaded: " + path + "\n";
+                }
+                else if (response.empty())
+                {
+                    response = "Error: failed to load '" + path + "'\n";
+                }
+            }
         }
         else
         {

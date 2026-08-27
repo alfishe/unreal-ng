@@ -77,7 +77,7 @@ See [gdb-protocol.md](../../emulator/design/control-interfaces/gdb-protocol.md) 
 | 1A.9.3 | `monitor instances` | DONE | 00c977fb | pid, symbolic id, model, state |
 | 1A.9.4 | `monitor bankinfo` | DONE | | Shows ROM/RAM pages for each bank |
 | 1A.9.5 | `monitor frame` | DONE | 00c977fb | T-state + PC display |
-| 1A.9.6 | `monitor load snap/tape/disk` | TODO | | Paused only, invalidates TTD |
+| 1A.9.6 | `monitor load snap/tape/disk` | DONE | | Supports sna/z80/szx/tap/tzx/trd/scl/fdi |
 | 1A.9.7 | `monitor reset` | DONE | 00c977fb | Paused only, preserves model |
 
 ### G3: Reverse Execution (TTD Integration)
@@ -197,10 +197,10 @@ See [gdb-protocol.md](../../emulator/design/control-interfaces/gdb-protocol.md) 
 | Phase | Total | Done | WIP | TODO |
 |-------|-------|------|-----|------|
 | Phase 0 | 20 | 15 | 0 | 5 |
-| Phase 1A (GDB) | 49 | 29 | 0 | 20 |
+| Phase 1A (GDB) | 49 | 30 | 0 | 19 |
 | Phase 1B (DeZog) | 6 | 0 | 0 | 6 |
 | Phase 1C (MCP) | 2 | 0 | 0 | 2 |
 | Phase 2 | 9 | 0 | 0 | 9 |
 | Phase 3 | 6 | 0 | 0 | 6 |
 | Phase 4 | 11 | 0 | 0 | 11 |
-| **Total** | **103** | **44** | **0** | **59** |
+| **Total** | **103** | **45** | **0** | **58** |
