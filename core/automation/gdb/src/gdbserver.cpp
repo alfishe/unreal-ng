@@ -1725,7 +1725,7 @@ void GDBSession::onEmulatorStateChange(int /*id*/, Message* message)
         return;
 
     // Filter by our attached emulator
-    if (payload->emulatorId.ToString() != _attachedEmulatorUuid)
+    if (payload->emulatorId.toString() != _attachedEmulatorUuid)
         return;
 
     // Only interested in pause events while we're waiting for stop
