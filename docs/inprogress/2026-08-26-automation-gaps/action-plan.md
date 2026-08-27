@@ -102,7 +102,7 @@ See [gdb-protocol.md](../../emulator/design/control-interfaces/gdb-protocol.md) 
 | 1A.11.2 | Ephemeral dedicated ports | TODO | | `monitor gdbport <pid>` for legacy clients |
 | 1A.11.3 | Range descriptors for len > 16 | DONE | | Watchpoints set per-address up to 256 |
 | 1A.11.4 | Port breakpoints `monitor bport` | DONE | | `bport in/out <port>`, `bport clear <id>` |
-| 1A.11.5 | Paging pseudo-register writes | TODO | | Route through port decoder |
+| 1A.11.5 | Paging pseudo-register writes | DONE | | p7ffd/p1ffd/pfe via port decoder |
 | 1A.11.6 | Per-client setup docs | DONE | | GDB, IDA Pro, Ghidra, VS Code |
 | 1A.11.7 | Fuzz-lite packet tests | DONE | | GDBPacket encode/decode/RLE/escape |
 | 1A.11.8 | Integration test with pygdbmi | DONE | | gdb/tests/test_gdb_integration.py |
@@ -197,10 +197,10 @@ See [gdb-protocol.md](../../emulator/design/control-interfaces/gdb-protocol.md) 
 | Phase | Total | Done | WIP | TODO |
 |-------|-------|------|-----|------|
 | Phase 0 | 20 | 15 | 0 | 5 |
-| Phase 1A (GDB) | 49 | 44 | 1 | 4 |
+| Phase 1A (GDB) | 49 | 45 | 1 | 3 |
 | Phase 1B (DeZog) | 6 | 0 | 0 | 6 |
 | Phase 1C (MCP) | 2 | 0 | 0 | 2 |
 | Phase 2 | 9 | 0 | 0 | 9 |
 | Phase 3 | 6 | 0 | 0 | 6 |
 | Phase 4 | 11 | 0 | 0 | 11 |
-| **Total** | **103** | **59** | **1** | **43** |
+| **Total** | **103** | **60** | **1** | **42** |
