@@ -10,6 +10,7 @@
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 
@@ -582,6 +583,7 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
         response += "  monitor reset     - reset emulator\n";
         response += "  monitor instances - list emulator instances\n";
         response += "  monitor frame     - show frame/tstate info\n";
+        response += "  monitor bankinfo  - show memory bank info\n";
     }
     else if (cmd == "model")
     {
@@ -676,6 +678,26 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
             {
                 response = "Z80 state not available\n";
             }
+        }
+        else
+        {
+            response = "No emulator attached\n";
+        }
+    }
+    else if (cmd == "bankinfo")
+    {
+        if (_context && _context->pMemory)
+        {
+            Memory* mem = _context->pMemory;
+            std::ostringstream ss;
+            ss << "Memory banks:\n";
+            ss << std::hex << std::setfill('0');
+            ss << "  0000-3FFF: " << (mem->IsBank0ROM() ? "ROM" : "RAM")
+               << " page " << std::setw(2) << (mem->IsBank0ROM() ? mem->GetROMPage() : mem->GetRAMPageForBank0()) << "\n";
+            ss << "  4000-7FFF: RAM page " << std::setw(2) << mem->GetRAMPageForBank1() << "\n";
+            ss << "  8000-BFFF: RAM page " << std::setw(2) << mem->GetRAMPageForBank2() << "\n";
+            ss << "  C000-FFFF: RAM page " << std::setw(2) << mem->GetRAMPageForBank3() << "\n";
+            response = ss.str();
         }
         else
         {

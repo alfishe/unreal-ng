@@ -42,25 +42,25 @@ See [gdb-protocol.md](../../emulator/design/control-interfaces/gdb-protocol.md) 
 
 | ID | Task | Status | Commit | Notes |
 |----|------|--------|--------|-------|
-| 1A.1.1 | Directory structure + CMake | DONE | | `core/automation/gdb/` with ENABLE_GDB_AUTOMATION gate |
-| 1A.1.2 | RSP packet framing | DONE | | `$data#checksum`, ack/nack, escaping, RLE |
-| 1A.1.3 | TCP listener + session thread | DONE | | Port 2000 default, 127.0.0.1 only |
-| 1A.1.4 | `qSupported` handshake | DONE | | Capability negotiation, NoAckMode |
-| 1A.1.5 | `qXfer:features:read:target.xml` | WIP | | Z80 register description, basic XML done; TODO: model-aware features |
-| 1A.1.6 | `qXfer:osdata:read:processes` | TODO | | Instance list for `vAttach` selection |
-| 1A.1.7 | `vAttach` instance binding | TODO | | Takes run-control claim |
-| 1A.2.1 | `g` packet (read all regs) | DONE | | Z80State codec per target.xml order |
-| 1A.2.2 | `G` packet (write all regs) | DONE | | Refused while detached in history |
-| 1A.2.3 | `p`/`P` packets (single reg) | DONE | | Including pseudo-regs (paging latches) |
-| 1A.3.1 | `m` packet (read memory) | DONE | | Z80 view + physical view (0x01XX'XXXX) |
-| 1A.3.2 | `M`/`X` packets (write memory) | DONE | | Refused while detached |
-| 1A.4.1 | `Z0`/`z0` execution breakpoints | DONE | | AddExecutionBreakpoint with owner="gdb" |
-| 1A.5.1 | `c` continue | DONE | | Emulator::Resume(), async stop-reply |
-| 1A.5.2 | `s` single-step | DONE | | RunSingleCPUCycle |
-| 1A.5.3 | `0x03` interrupt (Ctrl-C) | DONE | | Emulator::Pause() → T02 |
-| 1A.6.1 | `?` stop reason query | DONE | | T05 with swbreak:/watch:/rwatch:/awatch: |
-| 1A.6.2 | `T05` stop replies (exact forms) | DONE | | Byte-exact per §4.7.1 |
-| 1A.7.1 | Run-control claim in EmulatorContext | DONE | | UUID-based claim via TakeRunControl |
+| 1A.1.1 | Directory structure + CMake | DONE | dadc9430 | `core/automation/gdb/` with ENABLE_GDB_AUTOMATION gate |
+| 1A.1.2 | RSP packet framing | DONE | dadc9430 | `$data#checksum`, ack/nack, escaping, RLE |
+| 1A.1.3 | TCP listener + session thread | DONE | dadc9430 | Port 2000 default, 127.0.0.1 only |
+| 1A.1.4 | `qSupported` handshake | DONE | dadc9430 | Capability negotiation, NoAckMode |
+| 1A.1.5 | `qXfer:features:read:target.xml` | DONE | 59573a60 | Z80 register description, flat XML |
+| 1A.1.6 | `qXfer:osdata:read:processes` | DONE | 59573a60 | Instance list for `vAttach` selection |
+| 1A.1.7 | `vAttach` instance binding | DONE | 59573a60 | Takes run-control claim via UUID |
+| 1A.2.1 | `g` packet (read all regs) | DONE | 59573a60 | Z80State codec per target.xml order |
+| 1A.2.2 | `G` packet (write all regs) | DONE | 59573a60 | Refused while detached in history |
+| 1A.2.3 | `p`/`P` packets (single reg) | DONE | 59573a60 | Including pseudo-regs (paging latches) |
+| 1A.3.1 | `m` packet (read memory) | DONE | 59573a60 | Z80 view + physical view (0x01XX'XXXX) |
+| 1A.3.2 | `M`/`X` packets (write memory) | DONE | 59573a60 | Refused while detached |
+| 1A.4.1 | `Z0`/`z0` execution breakpoints | DONE | 59573a60 | AddExecutionBreakpoint with owner="gdb" |
+| 1A.5.1 | `c` continue | DONE | 59573a60 | Emulator::Resume(), async stop-reply |
+| 1A.5.2 | `s` single-step | DONE | 59573a60 | RunSingleCPUCycle |
+| 1A.5.3 | `0x03` interrupt (Ctrl-C) | DONE | 59573a60 | Emulator::Pause() → T02 |
+| 1A.6.1 | `?` stop reason query | DONE | 59573a60 | T05 with swbreak:/watch:/rwatch:/awatch: |
+| 1A.6.2 | `T05` stop replies (exact forms) | DONE | 59573a60 | Byte-exact per §4.7.1 |
+| 1A.7.1 | Run-control claim in EmulatorContext | DONE | 00c977fb | UUID-based claim via TakeRunControl |
 | 1A.7.2 | Refuse Resume/Step from other surfaces | TODO | | Return error with "busy: GDB session" |
 | 1A.7.3 | External pause → T05 stop-reply | TODO | | Via NC_EMULATOR_STATE_CHANGE |
 
@@ -68,17 +68,17 @@ See [gdb-protocol.md](../../emulator/design/control-interfaces/gdb-protocol.md) 
 
 | ID | Task | Status | Commit | Notes |
 |----|------|--------|--------|-------|
-| 1A.8.1 | `Z2`/`z2` write watchpoints | DONE | | len ≤ 16 via per-address descriptors |
-| 1A.8.2 | `Z3`/`z3` read watchpoints | DONE | | |
-| 1A.8.3 | `Z4`/`z4` access watchpoints | DONE | | Combined R\|W |
-| 1A.8.4 | `watch:` stop replies | DONE | | T05watch:ADDR;thread:1; |
-| 1A.9.1 | `qRcmd` monitor framework | DONE | | Hex-encoded text output |
-| 1A.9.2 | `monitor model` | DONE | | Shows "ZX Spectrum" (config name to be added later) |
-| 1A.9.3 | `monitor instances` | DONE | | pid, symbolic id, model, state |
-| 1A.9.4 | `monitor bankinfo` | TODO | | Current paging decode + page table |
-| 1A.9.5 | `monitor frame` | DONE | | T-state + PC display |
+| 1A.8.1 | `Z2`/`z2` write watchpoints | DONE | 59573a60 | len ≤ 16 via per-address descriptors |
+| 1A.8.2 | `Z3`/`z3` read watchpoints | DONE | 59573a60 | |
+| 1A.8.3 | `Z4`/`z4` access watchpoints | DONE | 59573a60 | Combined R\|W |
+| 1A.8.4 | `watch:` stop replies | DONE | 59573a60 | T05watch:ADDR;thread:1; |
+| 1A.9.1 | `qRcmd` monitor framework | DONE | 00c977fb | Hex-encoded text output |
+| 1A.9.2 | `monitor model` | DONE | 00c977fb | Shows "ZX Spectrum" (config name to be added later) |
+| 1A.9.3 | `monitor instances` | DONE | 00c977fb | pid, symbolic id, model, state |
+| 1A.9.4 | `monitor bankinfo` | DONE | | Shows ROM/RAM pages for each bank |
+| 1A.9.5 | `monitor frame` | DONE | 00c977fb | T-state + PC display |
 | 1A.9.6 | `monitor load snap/tape/disk` | TODO | | Paused only, invalidates TTD |
-| 1A.9.7 | `monitor reset` | DONE | | Paused only, preserves model |
+| 1A.9.7 | `monitor reset` | DONE | 00c977fb | Paused only, preserves model |
 
 ### G3: Reverse Execution (TTD Integration)
 
@@ -197,10 +197,10 @@ See [gdb-protocol.md](../../emulator/design/control-interfaces/gdb-protocol.md) 
 | Phase | Total | Done | WIP | TODO |
 |-------|-------|------|-----|------|
 | Phase 0 | 20 | 15 | 0 | 5 |
-| Phase 1A (GDB) | 38 | 0 | 0 | 38 |
+| Phase 1A (GDB) | 49 | 29 | 0 | 20 |
 | Phase 1B (DeZog) | 6 | 0 | 0 | 6 |
 | Phase 1C (MCP) | 2 | 0 | 0 | 2 |
 | Phase 2 | 9 | 0 | 0 | 9 |
 | Phase 3 | 6 | 0 | 0 | 6 |
 | Phase 4 | 11 | 0 | 0 | 11 |
-| **Total** | **92** | **15** | **0** | **77** |
+| **Total** | **103** | **44** | **0** | **59** |
