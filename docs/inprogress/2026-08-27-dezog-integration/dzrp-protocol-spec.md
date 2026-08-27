@@ -1,7 +1,12 @@
-# DZRP Protocol Specification
+# DZRP Protocol Specification (v2.2.0)
 
 > **Source:** This document is derived from the official DeZog protocol specification.
 > See [Authoritative References](#authoritative-references) for links to upstream documentation.
+>
+> **DZRP 2.2.0 changes from 2.0.0:**
+> - Sequence number range changed from 1-255 to **1-15** (4 bits)
+> - **NAK bit** (bit 7) added to response sequence byte for unsupported commands
+> - **CMD_GET_SUPPORTED_COMMANDS (24)** added to query capabilities
 
 ## Message Format
 

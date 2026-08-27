@@ -1,31 +1,33 @@
 # DZRP Automation Module Design
 
-## Directory Structure
+## Directory Structure (Actual)
 
 ```
 core/automation/dezog/
 ├── CMakeLists.txt
 ├── include/
-│   ├── dzrp-server.h          # Main server class
-│   ├── dzrp-protocol.h        # Message framing, serialization
-│   ├── dzrp-commands.h        # Command handlers
-│   └── dzrp-types.h           # Protocol constants, enums
-└── src/
-    ├── dzrp-server.cpp
-    ├── dzrp-protocol.cpp
-    └── dzrp-commands.cpp
+│   ├── dzrpserver.h           # Server + IDebugInterface
+│   ├── dzrpprotocol.h         # Message framing, serialization
+│   └── dzrptypes.h            # Protocol constants, enums
+├── src/
+│   ├── dzrpserver.cpp         # Server + command handlers
+│   └── dzrpprotocol.cpp
+└── test/
+    └── test-server.cpp        # Standalone test with mock
 ```
+
+Note: Command handlers are in dzrpserver.cpp, not a separate file.
 
 ## Class Design
 
-### DZRPServer
+### dzrp::Server
 
 ```cpp
-// dzrp-server.h
+// dzrpserver.h
 #pragma once
 
-#include "dzrp-protocol.h"
-#include "dzrp-commands.h"
+#include "dzrpprotocol.h"
+#include "dzrptypes.h"
 #include <atomic>
 #include <thread>
 #include <functional>

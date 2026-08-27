@@ -64,18 +64,18 @@ Implement Debug Adapter Protocol directly in the emulator.
 - Doesn't leverage DeZog's Z80-specific features
 - Would duplicate DeZog's functionality
 
-### Option C: GDB RSP (Current Implementation)
+### Option C: GDB RSP (Future)
 
-Extend existing GDB server for DeZog compatibility.
+Implement GDB Remote Serial Protocol for Ghidra/GDB compatibility.
 
 **Pros:**
-- Already implemented
-- Works with GDB, Ghidra
+- Works with GDB, Ghidra, any GDB frontend
+- Industry-standard protocol
 
 **Cons:**
 - DeZog's GDB support is limited (MAME gdbstub only)
 - Missing Z80-specific features
-- Protocol mismatch issues discovered
+- Not yet implemented (ENABLE_GDB_AUTOMATION is a stub)
 
 ### Recommendation
 
@@ -83,7 +83,7 @@ Extend existing GDB server for DeZog compatibility.
 1. DeZog is the primary Z80 debugger for VS Code
 2. Full feature support including reverse debugging
 3. Simpler than DAP (DZRP is Z80-focused)
-4. Complements existing GDB server (different use cases)
+4. Can share IDebugInterface with future GDB implementation
 
 ## DZRP Protocol Specification
 
@@ -93,12 +93,14 @@ Extend existing GDB server for DeZog compatibility.
 - Binary protocol with length-prefixed messages
 - Little-endian byte order
 
-### Message Format
+### Message Format (DZRP 2.2.0)
 
 ```
 ┌─────────────┬─────────────┬─────────────────────────┐
-│ Length (4B) │ SeqNo (4B)  │ Payload (variable)      │
+│ Length (4B) │ SeqNo (1B)  │ Payload (variable)      │
 └─────────────┴─────────────┴─────────────────────────┘
+
+SeqNo: bits 0-3 = sequence (1-15), bit 7 = NAK flag
 
 Payload:
 ┌─────────────┬─────────────────────────────────────┐
@@ -106,38 +108,36 @@ Payload:
 └─────────────┴─────────────────────────────────────┘
 ```
 
-### Core Commands
+### Core Commands (DZRP 2.2.0)
 
-| Command | Value | Description |
-|---------|-------|-------------|
-| CMD_INIT | 0x01 | Initialize connection |
-| CMD_CLOSE | 0x02 | Close connection |
-| CMD_GET_REGISTERS | 0x03 | Read Z80 registers |
-| CMD_SET_REGISTER | 0x04 | Write single register |
-| CMD_WRITE_BANK | 0x05 | Write memory bank |
-| CMD_CONTINUE | 0x06 | Continue execution |
-| CMD_PAUSE | 0x07 | Pause execution |
-| CMD_ADD_BREAKPOINT | 0x08 | Add breakpoint |
-| CMD_REMOVE_BREAKPOINT | 0x09 | Remove breakpoint |
-| CMD_ADD_WATCHPOINT | 0x0A | Add memory watchpoint |
-| CMD_REMOVE_WATCHPOINT | 0x0B | Remove watchpoint |
-| CMD_READ_MEM | 0x0C | Read memory |
-| CMD_WRITE_MEM | 0x0D | Write memory |
-| CMD_GET_SLOTS | 0x0E | Get memory slot configuration |
-| CMD_READ_STATE | 0x0F | Read emulator state (for reverse debug) |
-| CMD_WRITE_STATE | 0x10 | Restore emulator state |
-| CMD_GET_TBBLUE_REG | 0x11 | ZX Next specific |
-| CMD_GET_SPRITES_PALETTE | 0x12 | ZX Next specific |
-| CMD_GET_SPRITES | 0x13 | ZX Next specific |
-| CMD_GET_SPRITE_PATTERNS | 0x14 | ZX Next specific |
-| CMD_GET_SPRITES_CLIP_WINDOW | 0x15 | ZX Next specific |
-| CMD_SET_BORDER | 0x16 | Set border color |
+| Command | ID | Description |
+|---------|-----|-------------|
+| CMD_INIT | 1 | Initialize connection |
+| CMD_CLOSE | 2 | Close connection |
+| CMD_GET_REGISTERS | 3 | Read Z80 registers + slots |
+| CMD_SET_REGISTER | 4 | Write single register |
+| CMD_WRITE_BANK | 5 | Write memory bank |
+| CMD_CONTINUE | 6 | Continue execution |
+| CMD_PAUSE | 7 | Pause execution |
+| CMD_READ_MEM | 8 | Read memory |
+| CMD_WRITE_MEM | 9 | Write memory |
+| CMD_SET_SLOT | 10 | Configure memory slot |
+| CMD_SET_BORDER | 12 | Set border color |
+| CMD_GET_SUPPORTED_COMMANDS | 24 | Query capabilities |
+| CMD_ADD_BREAKPOINT | 40 | Add breakpoint |
+| CMD_REMOVE_BREAKPOINT | 41 | Remove breakpoint |
+| CMD_ADD_WATCHPOINT | 42 | Add memory watchpoint |
+| CMD_REMOVE_WATCHPOINT | 43 | Remove watchpoint |
+| CMD_READ_STATE | 50 | Read emulator state (reverse debug) |
+| CMD_WRITE_STATE | 51 | Restore emulator state |
+
+Note: CMD_GET_SLOTS was removed in DZRP 2.0.0 - slot info now returned with CMD_GET_REGISTERS.
 
 ### Notification Events
 
-| Event | Value | Description |
-|-------|-------|-------------|
-| NTF_PAUSE | 0x01 | Execution paused (breakpoint hit) |
+| Event | ID | Description |
+|-------|-----|-------------|
+| NTF_PAUSE | 1 | Execution paused (breakpoint hit, manual, watchpoint) |
 
 ## Architecture
 
@@ -149,14 +149,14 @@ Payload:
 │  ┌─────────────────────────────────────────────────────┐    │
 │  │                  Automation Layer                    │    │
 │  │  ┌──────────────┐  ┌──────────────┐  ┌───────────┐  │    │
-│  │  │  GDB Server  │  │ DZRP Server  │  │  Web API  │  │    │
-│  │  │  (port 1234) │  │ (port 12000) │  │           │  │    │
+│  │  │ DZRP Server  │  │  (GDB stub)  │  │  Web API  │  │    │
+│  │  │ (port 12000) │  │   (future)   │  │           │  │    │
 │  │  └──────┬───────┘  └──────┬───────┘  └───────────┘  │    │
 │  │         │                 │                          │    │
 │  │         └────────┬────────┘                          │    │
 │  │                  ▼                                   │    │
 │  │         ┌──────────────────┐                         │    │
-│  │         │  Debug Interface │                         │    │
+│  │         │  IDebugInterface │                         │    │
 │  │         │  (shared logic)  │                         │    │
 │  │         └────────┬─────────┘                         │    │
 │  └──────────────────┼──────────────────────────────────┘    │
@@ -300,15 +300,21 @@ core/automation/dezog/
 
 ### DeZog launch.json
 
+Note: DeZog uses `remoteType: "cspect"` for DZRP connections (CSpect uses the same protocol).
+
+**Important:** CSpect remote defaults disable watchpoints (42/43) and state save/restore (50/51).
+You must explicitly enable them via `supportedCommands` to use WPMEM/assertions and reverse debugging.
+
 ```json
 {
   "type": "dezog",
   "request": "launch",
   "name": "Unreal-NG Debug",
-  "remoteType": "dzrp",
-  "dzrp": {
+  "remoteType": "cspect",
+  "cspect": {
     "hostname": "localhost",
-    "port": 12000
+    "port": 12000,
+    "supportedCommands": "1,2,3,4,5,6,7,8,9,10,12,24,40,41,42,43,50,51"
   },
   "sjasmplus": [{
     "path": "main.sld"
@@ -317,6 +323,9 @@ core/automation/dezog/
   "topOfStack": "stack_top"
 }
 ```
+
+Note: CMD_GET_SUPPORTED_COMMANDS (24) is implemented but DeZog's cspect remote
+doesn't query it - capability negotiation is purely via launch.json config.
 
 ## VS Code DAP Comparison
 
