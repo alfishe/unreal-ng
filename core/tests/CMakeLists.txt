@@ -24,6 +24,9 @@ include(${ROOT_DIR}/cmake/func.cmake)
 # Recording support (audio/video capture)
 option(ENABLE_RECORDING "Enable audio/video recording support" ON)
 
+# GDB automation support (must match root CMakeLists.txt setting)
+option(ENABLE_GDB_AUTOMATION "Enable GDB RSP server automation" OFF)
+
 # Set paths
 set(CORE_DIR ${ROOT_DIR}/core/src)
 set(TESTS_DIR ${ROOT_DIR}/core/tests)
@@ -43,6 +46,11 @@ include_directories(
 # Add recording library include path if enabled
 if (ENABLE_RECORDING)
     include_directories(${ROOT_DIR}/core/recording/src)
+endif()
+
+# Add GDB automation include path if enabled
+if (ENABLE_GDB_AUTOMATION)
+    include_directories(${ROOT_DIR}/core/automation/gdb/include)
 endif()
 
 # MinGW CMake doesn't build gtest - make it explicitly
@@ -87,6 +95,11 @@ EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/CMakeFiles/" FALSE OUTVAR T
 # Exclude recording tests if recording is disabled
 if (NOT ENABLE_RECORDING)
     EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/recording/" FALSE OUTVAR TEST_CPP_FILES)
+endif()
+
+# Exclude GDB tests if GDB automation is disabled
+if (NOT ENABLE_GDB_AUTOMATION)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/gdb/" FALSE OUTVAR TEST_CPP_FILES)
 endif()
 
 set (SOURCES "${CORE_CPP_FILES};${TEST_CPP_FILES};${GOOGLETEST_FILES}")
@@ -141,7 +154,13 @@ if (NOT TARGET ${PROJECT_NAME})
         ${common_libraries}
         core
         $<$<BOOL:${ENABLE_RECORDING}>:recording>
+        $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:automation_gdb>
     )
+
+    # Define ENABLE_GDB_AUTOMATION for compile-time guards
+    if (ENABLE_GDB_AUTOMATION)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_GDB_AUTOMATION)
+    endif()
 
     # Enable CTest for Google Test discovery
     enable_testing()

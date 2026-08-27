@@ -507,7 +507,12 @@ std::string GDBSession::handleQSupported(const std::string& /*params*/)
     caps += "vContSupported+;";
     caps += "multiprocess-;";
 
-    // TODO: Add ReverseStep+;ReverseContinue+ when TTD is enabled
+    // Advertise reverse debugging support when TTD is available
+    if (_context && _context->pTimeTravelManager)
+    {
+        caps += "ReverseStep+;";
+        caps += "ReverseContinue+;";
+    }
 
     return caps;
 }
@@ -1244,6 +1249,17 @@ std::string GDBSession::handleSetBreakpoint(const std::string& params)
     auto addr = GDBPacket::parseHex(params.substr(firstComma + 1,
         secondComma != std::string::npos ? secondComma - firstComma - 1 : std::string::npos));
 
+    // Parse 'kind' (length for watchpoints) - default to 1
+    uint64_t len = 1;
+    if (secondComma != std::string::npos)
+    {
+        auto lenOpt = GDBPacket::parseHex(params.substr(secondComma + 1));
+        if (lenOpt && *lenOpt > 0)
+        {
+            len = *lenOpt;
+        }
+    }
+
     if (!type || !addr)
     {
         return "E01";
@@ -1266,26 +1282,43 @@ std::string GDBSession::handleSetBreakpoint(const std::string& params)
         return "E01";
     }
 
-    uint16_t address = static_cast<uint16_t>(*addr & 0xFFFF);
+    // Limit range size to prevent excessive breakpoints
+    constexpr uint64_t MAX_RANGE = 256;
+    if (len > MAX_RANGE)
+    {
+        len = MAX_RANGE;
+    }
 
     switch (*type)
     {
         case 0:  // SW breakpoint
         case 1:  // HW breakpoint (same for emulator)
-            bpManager->AddExecutionBreakpoint(address, "gdb");
+            bpManager->AddExecutionBreakpoint(static_cast<uint16_t>(*addr & 0xFFFF), "gdb");
             break;
 
-        case 2:  // Write watchpoint
-            bpManager->AddMemWriteBreakpoint(address, "gdb");
+        case 2:  // Write watchpoint (supports ranges)
+            for (uint64_t i = 0; i < len; i++)
+            {
+                uint16_t address = static_cast<uint16_t>((*addr + i) & 0xFFFF);
+                bpManager->AddMemWriteBreakpoint(address, "gdb");
+            }
             break;
 
-        case 3:  // Read watchpoint
-            bpManager->AddMemReadBreakpoint(address, "gdb");
+        case 3:  // Read watchpoint (supports ranges)
+            for (uint64_t i = 0; i < len; i++)
+            {
+                uint16_t address = static_cast<uint16_t>((*addr + i) & 0xFFFF);
+                bpManager->AddMemReadBreakpoint(address, "gdb");
+            }
             break;
 
-        case 4:  // Access watchpoint
-            bpManager->AddMemReadBreakpoint(address, "gdb");
-            bpManager->AddMemWriteBreakpoint(address, "gdb");
+        case 4:  // Access watchpoint (supports ranges)
+            for (uint64_t i = 0; i < len; i++)
+            {
+                uint16_t address = static_cast<uint16_t>((*addr + i) & 0xFFFF);
+                bpManager->AddMemReadBreakpoint(address, "gdb");
+                bpManager->AddMemWriteBreakpoint(address, "gdb");
+            }
             break;
 
         default:
@@ -1310,6 +1343,17 @@ std::string GDBSession::handleRemoveBreakpoint(const std::string& params)
     auto addr = GDBPacket::parseHex(params.substr(firstComma + 1,
         secondComma != std::string::npos ? secondComma - firstComma - 1 : std::string::npos));
 
+    // Parse 'kind' (length for watchpoints) - default to 1
+    uint64_t len = 1;
+    if (secondComma != std::string::npos)
+    {
+        auto lenOpt = GDBPacket::parseHex(params.substr(secondComma + 1));
+        if (lenOpt && *lenOpt > 0)
+        {
+            len = *lenOpt;
+        }
+    }
+
     if (!type || !addr)
     {
         return "E01";
@@ -1332,17 +1376,30 @@ std::string GDBSession::handleRemoveBreakpoint(const std::string& params)
         return "E01";
     }
 
-    uint16_t address = static_cast<uint16_t>(*addr & 0xFFFF);
+    // Limit range size to match set
+    constexpr uint64_t MAX_RANGE = 256;
+    if (len > MAX_RANGE)
+    {
+        len = MAX_RANGE;
+    }
 
     // RemoveBreakpointByAddress removes all breakpoints at that address
     switch (*type)
     {
         case 0:
         case 1:
+            bpManager->RemoveBreakpointByAddress(static_cast<uint16_t>(*addr & 0xFFFF));
+            break;
+
         case 2:
         case 3:
         case 4:
-            bpManager->RemoveBreakpointByAddress(address);
+            // Remove watchpoints for the entire range
+            for (uint64_t i = 0; i < len; i++)
+            {
+                uint16_t address = static_cast<uint16_t>((*addr + i) & 0xFFFF);
+                bpManager->RemoveBreakpointByAddress(address);
+            }
             break;
 
         default:
