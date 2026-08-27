@@ -10,6 +10,7 @@
 #include <unordered_map>
 
 #include <common/uuid.h>
+#include <3rdparty/message-center/eventqueue.h>
 
 class GDBSession;
 class GDBPacketReader;
@@ -71,7 +72,7 @@ private:
 ///
 /// Handles packet I/O, dispatch, and emulator state for one connected client.
 /// Implements run-control claim per TDD §3.3.
-class GDBSession
+class GDBSession : public Observer
 {
 public:
     GDBSession(int socket, bool noAckMode = false);
@@ -134,6 +135,11 @@ private:
     std::string handleAttach(const std::string& pid);
     std::string handleDetach();
 
+    // State change notification callback (Observer interface)
+    void onEmulatorStateChange(int id, Message* message);
+    void subscribeToStateChanges();
+    void unsubscribeFromStateChanges();
+
     int _socket = -1;
     std::atomic<bool> _active{true};
     bool _noAckMode = false;
@@ -148,6 +154,12 @@ private:
 
     // Run-control claim (TDD §3.3)
     UUID _sessionUuid;  // Generated at session start, used for claim ownership
+
+    // Async state change notification (1A.7.3)
+    std::atomic<bool> _waitingForStop{false};    // True when client sent 'c' and we're waiting
+    std::atomic<bool> _externalStopPending{false}; // True when external pause notification received
+    std::string _attachedEmulatorUuid;           // UUID string for notification filtering
+    bool _subscribedToStateChanges = false;
 
     // Stop reason tracking
     enum class StopReason

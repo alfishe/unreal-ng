@@ -61,8 +61,8 @@ See [gdb-protocol.md](../../emulator/design/control-interfaces/gdb-protocol.md) 
 | 1A.6.1 | `?` stop reason query | DONE | 59573a60 | T05 with swbreak:/watch:/rwatch:/awatch: |
 | 1A.6.2 | `T05` stop replies (exact forms) | DONE | 59573a60 | Byte-exact per §4.7.1 |
 | 1A.7.1 | Run-control claim in EmulatorContext | DONE | 00c977fb | UUID-based claim via TakeRunControl |
-| 1A.7.2 | Refuse Resume/Step from other surfaces | TODO | | Return error with "busy: GDB session" |
-| 1A.7.3 | External pause → T05 stop-reply | TODO | | Via NC_EMULATOR_STATE_CHANGE |
+| 1A.7.2 | Refuse Resume/Step from other surfaces | DONE | | CLI and WebAPI check run-control |
+| 1A.7.3 | External pause → T05 stop-reply | DONE | | MessageCenter subscription |
 
 ### G2: Watchpoints + Monitor
 
@@ -197,10 +197,10 @@ See [gdb-protocol.md](../../emulator/design/control-interfaces/gdb-protocol.md) 
 | Phase | Total | Done | WIP | TODO |
 |-------|-------|------|-----|------|
 | Phase 0 | 20 | 15 | 0 | 5 |
-| Phase 1A (GDB) | 49 | 45 | 1 | 3 |
+| Phase 1A (GDB) | 49 | 47 | 1 | 1 |
 | Phase 1B (DeZog) | 6 | 0 | 0 | 6 |
 | Phase 1C (MCP) | 2 | 0 | 0 | 2 |
 | Phase 2 | 9 | 0 | 0 | 9 |
 | Phase 3 | 6 | 0 | 0 | 6 |
 | Phase 4 | 11 | 0 | 0 | 11 |
-| **Total** | **103** | **60** | **1** | **42** |
+| **Total** | **103** | **62** | **1** | **40** |

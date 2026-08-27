@@ -7,11 +7,14 @@
 #include <emulator/emulatormanager.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/memory/memory.h>
+#include <emulator/platform.h>
+#include <emulator/notifications.h>
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/ttd/timetravelmanager.h>
 #include <debugger/ttd/ttd_external_events.h>
 #include <debugger/ttd/ttd_probe.h>
+#include <3rdparty/message-center/messagecenter.h>
 
 #include <cctype>
 #include <iomanip>
@@ -290,6 +293,9 @@ void GDBSession::run()
 void GDBSession::stop()
 {
     _active = false;
+
+    // Unsubscribe from state changes (1A.7.3)
+    unsubscribeFromStateChanges();
 
     // Release run-control claim
     if (_context)
@@ -1421,17 +1427,29 @@ std::string GDBSession::handleContinue()
         return formatStopReply();  // Already running
     }
 
+    _waitingForStop = true;
+    _externalStopPending = false;
     _emulator->Resume();
 
-    // Wait for stop (breakpoint or interrupt)
-    // In a real implementation, we'd async wait for NC_EXECUTION_BREAKPOINT
-    // For now, return immediately - the emulator runs until breakpoint
-    while (_active && !_emulator->IsPaused())
+    // Wait for stop (breakpoint, external pause, or interrupt)
+    while (_active && !_emulator->IsPaused() && !_externalStopPending)
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
-    _lastStopReason = StopReason::Breakpoint;
+    _waitingForStop = false;
+
+    // Determine stop reason
+    if (_externalStopPending)
+    {
+        _externalStopPending = false;
+        _lastStopReason = StopReason::Interrupt;
+    }
+    else
+    {
+        _lastStopReason = StopReason::Breakpoint;
+    }
+
     return formatStopReply();
 }
 
@@ -1630,6 +1648,7 @@ std::string GDBSession::handleAttach(const std::string& pid)
 
     _context = _emulator->GetContext();
     _attachedInstanceId = ids[index];
+    _attachedEmulatorUuid = _emulator->GetId();
 
     // Pause if running
     if (!_emulator->IsPaused())
@@ -1648,12 +1667,18 @@ std::string GDBSession::handleAttach(const std::string& pid)
         }
     }
 
+    // Subscribe to state change notifications (1A.7.3)
+    subscribeToStateChanges();
+
     _lastStopReason = StopReason::Attached;
     return "T05thread:1;";
 }
 
 std::string GDBSession::handleDetach()
 {
+    // Unsubscribe from state changes (1A.7.3)
+    unsubscribeFromStateChanges();
+
     // Release run-control claim (TDD §3.3)
     if (_context)
     {
@@ -1663,6 +1688,50 @@ std::string GDBSession::handleDetach()
     _emulator.reset();
     _context = nullptr;
     _attachedInstanceId.clear();
+    _attachedEmulatorUuid.clear();
     _active = false;
     return "OK";
+}
+
+void GDBSession::subscribeToStateChanges()
+{
+    if (_subscribedToStateChanges)
+        return;
+
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    mc.AddObserver(NC_EMULATOR_STATE_CHANGE, this,
+        static_cast<ObserverCallbackMethod>(&GDBSession::onEmulatorStateChange));
+    _subscribedToStateChanges = true;
+}
+
+void GDBSession::unsubscribeFromStateChanges()
+{
+    if (!_subscribedToStateChanges)
+        return;
+
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    mc.RemoveObserver(NC_EMULATOR_STATE_CHANGE, this,
+        static_cast<ObserverCallbackMethod>(&GDBSession::onEmulatorStateChange));
+    _subscribedToStateChanges = false;
+}
+
+void GDBSession::onEmulatorStateChange(int /*id*/, Message* message)
+{
+    if (!message || !message->obj)
+        return;
+
+    auto* payload = dynamic_cast<EmulatorStateChangePayload*>(message->obj);
+    if (!payload)
+        return;
+
+    // Filter by our attached emulator
+    if (payload->emulatorId.ToString() != _attachedEmulatorUuid)
+        return;
+
+    // Only interested in pause events while we're waiting for stop
+    if (payload->_payloadNumber == StatePaused && _waitingForStop)
+    {
+        _externalStopPending = true;
+        _lastStopReason = StopReason::Interrupt;
+    }
 }

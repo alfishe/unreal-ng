@@ -443,6 +443,17 @@ void CLIProcessor::HandleResume(const ClientSession& session, const std::vector<
         return;
     }
 
+    // Check run-control claim (GDB TDD §3.3 / 1A.7.2)
+    auto* ctx = emulator->GetContext();
+    if (ctx && ctx->IsRunControlClaimed())
+    {
+        auto state = ctx->GetRunControlState();
+        std::stringstream ss;
+        ss << "Error: Run-control held by " << state.surfaceLabel << ". Use that surface to resume.";
+        session.SendResponse(ss.str());
+        return;
+    }
+
     // Resume the emulator - this will trigger MessageCenter notifications
     // that the GUI will respond to (enabling/disabling buttons)
     emulator->Resume();
