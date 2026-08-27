@@ -11,6 +11,7 @@
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/ttd/timetravelmanager.h>
 #include <debugger/ttd/ttd_external_events.h>
+#include <debugger/ttd/ttd_probe.h>
 
 #include <cctype>
 #include <iomanip>
@@ -600,6 +601,9 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
         response += "  monitor ttd start   - start TTD recording\n";
         response += "  monitor ttd stop    - stop TTD recording\n";
         response += "  monitor ttd seek <frame> - seek to frame\n";
+        response += "  monitor ttd findlast <w|r|x> <addr> - find last access\n";
+        response += "  monitor bport <in|out> <port> - set port breakpoint\n";
+        response += "  monitor bport clear <id> - remove port breakpoint\n";
     }
     else if (cmd == "model")
     {
@@ -847,10 +851,143 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
                     response = "Error: invalid frame number\n";
                 }
             }
+            else if (subcmd.starts_with("findlast "))
+            {
+                // findlast <w|r|x> <addr>
+                std::string args = subcmd.substr(9);
+                auto spacePos = args.find(' ');
+                if (spacePos == std::string::npos || args.empty())
+                {
+                    response = "Usage: ttd findlast <w|r|x> <addr>\n";
+                }
+                else
+                {
+                    char accessType = args[0];
+                    std::string addrStr = args.substr(spacePos + 1);
+
+                    ttd::TTDAccessType access;
+                    if (accessType == 'w' || accessType == 'W')
+                        access = ttd::TTDAccessType::Write;
+                    else if (accessType == 'r' || accessType == 'R')
+                        access = ttd::TTDAccessType::Read;
+                    else if (accessType == 'x' || accessType == 'X')
+                        access = ttd::TTDAccessType::Execute;
+                    else
+                    {
+                        response = "Error: access type must be w, r, or x\n";
+                        goto done_ttd;
+                    }
+
+                    auto addrOpt = GDBPacket::parseHex(addrStr);
+                    if (!addrOpt)
+                    {
+                        response = "Error: invalid address\n";
+                        goto done_ttd;
+                    }
+
+                    uint16_t addr = static_cast<uint16_t>(*addrOpt);
+
+                    ttd::TTDSearchQuery query;
+                    query.addrFrom = addr;
+                    query.addrTo = addr;
+                    query.access = access;
+
+                    ttd::TTDExternalEvent marker;
+                    auto result = ttd->FindLastAccess(query, &marker);
+
+                    if (result)
+                    {
+                        std::ostringstream ss;
+                        ss << "Found at frame " << result->time.frame
+                           << ", t=" << result->time.tInFrame;
+                        if (access == ttd::TTDAccessType::Write)
+                            ss << ", value=0x" << std::hex << static_cast<int>(result->value);
+                        ss << ", pc=0x" << std::hex << result->pc << "\n";
+                        response = ss.str();
+                    }
+                    else if (marker.reason[0] != '\0')
+                    {
+                        response = "Blocked by barrier: " + std::string(marker.reason) + "\n";
+                    }
+                    else
+                    {
+                        response = "Not found in recorded history\n";
+                    }
+                }
+                done_ttd:;
+            }
             else
             {
                 response = "Unknown TTD command: " + subcmd + "\n";
             }
+        }
+    }
+    else if (cmd.starts_with("bport "))
+    {
+        std::string args = cmd.substr(6);
+        auto* debugMgr = _context ? _context->pDebugManager : nullptr;
+        auto* bpMgr = debugMgr ? debugMgr->GetBreakpointsManager() : nullptr;
+
+        if (!bpMgr)
+        {
+            response = "Error: breakpoint manager not available\n";
+        }
+        else if (args.starts_with("clear "))
+        {
+            auto idOpt = GDBPacket::parseHex(args.substr(6));
+            if (idOpt)
+            {
+                if (bpMgr->RemoveBreakpointByID(static_cast<uint16_t>(*idOpt)))
+                {
+                    response = "Port breakpoint removed\n";
+                }
+                else
+                {
+                    response = "Error: breakpoint not found\n";
+                }
+            }
+            else
+            {
+                response = "Error: invalid breakpoint ID\n";
+            }
+        }
+        else if (args.starts_with("in ") || args.starts_with("out "))
+        {
+            bool isIn = args.starts_with("in ");
+            std::string portStr = args.substr(isIn ? 3 : 4);
+            auto portOpt = GDBPacket::parseHex(portStr);
+
+            if (portOpt)
+            {
+                uint16_t port = static_cast<uint16_t>(*portOpt);
+                BreakpointDescriptor* bp = new BreakpointDescriptor();
+                bp->type = BRK_IO;
+                bp->ioType = isIn ? BRK_IO_IN : BRK_IO_OUT;
+                bp->z80address = port;
+                bp->owner = "gdb";
+
+                uint16_t id = bpMgr->AddBreakpoint(bp);
+                if (id != BRK_INVALID)
+                {
+                    std::ostringstream ss;
+                    ss << "Port breakpoint set: ID " << id << " on port 0x"
+                       << std::hex << port << " (" << (isIn ? "IN" : "OUT") << ")\n";
+                    response = ss.str();
+                }
+                else
+                {
+                    delete bp;
+                    response = "Error: failed to add breakpoint\n";
+                }
+            }
+            else
+            {
+                response = "Error: invalid port number\n";
+            }
+        }
+        else
+        {
+            response = "Usage: bport <in|out> <port> | bport clear <id>\n";
         }
     }
     else
@@ -881,6 +1018,16 @@ std::string GDBSession::handleWriteRegisters(const std::string& data)
     if (!_emulator || !_emulator->IsPaused())
     {
         return "E0D";  // Must be paused to write
+    }
+
+    // Refuse writes in TTD detached state (read-only historical view)
+    if (_context->pTimeTravelManager)
+    {
+        auto state = _context->pTimeTravelManager->GetSessionInfo().state;
+        if (state == ttd::TTDSessionState::Detached)
+        {
+            return "E0D";  // Read-only in detached state
+        }
     }
 
     if (GDBTargetZ80::deserializeRegisters(_context, data))
@@ -931,6 +1078,16 @@ std::string GDBSession::handleWriteRegister(const std::string& params)
         return "E0D";
     }
 
+    // Refuse writes in TTD detached state
+    if (_context->pTimeTravelManager)
+    {
+        auto state = _context->pTimeTravelManager->GetSessionInfo().state;
+        if (state == ttd::TTDSessionState::Detached)
+        {
+            return "E0D";
+        }
+    }
+
     return GDBTargetZ80::writeRegister(_context, static_cast<int>(*regnum), params.substr(eqPos + 1));
 }
 
@@ -959,11 +1116,35 @@ std::string GDBSession::handleReadMemory(const std::string& params)
     std::string result;
     result.reserve(*len * 2);
 
-    for (size_t i = 0; i < *len; i++)
+    // Check for physical memory access (0x01PPAAAA format)
+    // High byte 0x01 = RAM page access, PP = page number, AAAA = 16KB offset
+    if ((*addr & 0xFF000000) == 0x01000000)
     {
-        uint16_t address = static_cast<uint16_t>((*addr + i) & 0xFFFF);
-        uint8_t byte = memory->DirectReadFromZ80Memory(address);
-        result += GDBPacket::toHex(byte, 2);
+        uint8_t page = static_cast<uint8_t>((*addr >> 16) & 0xFF);
+        uint16_t offset = static_cast<uint16_t>(*addr & 0x3FFF);
+
+        uint8_t* pageAddr = memory->RAMPageAddress(page);
+        if (!pageAddr)
+        {
+            return "E01";  // Invalid page
+        }
+
+        for (size_t i = 0; i < *len; i++)
+        {
+            uint16_t pageOffset = static_cast<uint16_t>((offset + i) & 0x3FFF);
+            uint8_t byte = pageAddr[pageOffset];
+            result += GDBPacket::toHex(byte, 2);
+        }
+    }
+    else
+    {
+        // Standard Z80 address space
+        for (size_t i = 0; i < *len; i++)
+        {
+            uint16_t address = static_cast<uint16_t>((*addr + i) & 0xFFFF);
+            uint8_t byte = memory->DirectReadFromZ80Memory(address);
+            result += GDBPacket::toHex(byte, 2);
+        }
     }
 
     return result;
@@ -998,6 +1179,16 @@ std::string GDBSession::handleWriteMemory(const std::string& params)
         return "E0D";
     }
 
+    // Refuse writes in TTD detached state
+    if (_context->pTimeTravelManager)
+    {
+        auto state = _context->pTimeTravelManager->GetSessionInfo().state;
+        if (state == ttd::TTDSessionState::Detached)
+        {
+            return "E0D";
+        }
+    }
+
     std::string data = params.substr(colonPos + 1);
     Memory* memory = _context->pMemory;
 
@@ -1008,10 +1199,31 @@ std::string GDBSession::handleWriteMemory(const std::string& params)
         return "E01";
     }
 
-    for (size_t i = 0; i < bytes.size(); i++)
+    // Check for physical memory access (0x01PPAAAA format)
+    if ((*addr & 0xFF000000) == 0x01000000)
     {
-        uint16_t address = static_cast<uint16_t>((*addr + i) & 0xFFFF);
-        memory->DirectWriteToZ80Memory(address, bytes[i]);
+        uint8_t page = static_cast<uint8_t>((*addr >> 16) & 0xFF);
+        uint16_t offset = static_cast<uint16_t>(*addr & 0x3FFF);
+
+        uint8_t* pageAddr = memory->RAMPageAddress(page);
+        if (!pageAddr)
+        {
+            return "E01";  // Invalid page
+        }
+
+        for (size_t i = 0; i < bytes.size(); i++)
+        {
+            uint16_t pageOffset = static_cast<uint16_t>((offset + i) & 0x3FFF);
+            pageAddr[pageOffset] = bytes[i];
+        }
+    }
+    else
+    {
+        for (size_t i = 0; i < bytes.size(); i++)
+        {
+            uint16_t address = static_cast<uint16_t>((*addr + i) & 0xFFFF);
+            memory->DirectWriteToZ80Memory(address, bytes[i]);
+        }
     }
 
     return "OK";
