@@ -147,15 +147,17 @@ void GDBServer::stop()
     }
     _acceptThread.reset();
 
-    // Close all sessions
+    // Close all sessions - shutdown first to unblock recv()
     {
         std::lock_guard<std::mutex> lock(_sessionsMutex);
         for (auto& [socket, session] : _sessions)
         {
             session->stop();
 #ifdef _WIN32
+            shutdown(socket, SD_BOTH);
             closesocket(socket);
 #else
+            shutdown(socket, SHUT_RDWR);
             close(socket);
 #endif
         }
@@ -205,20 +207,15 @@ void GDBServer::handleClient(int clientSocket)
     auto session = std::make_unique<GDBSession>(clientSocket);
     session->setAutoAttach(_autoAttach);
 
+    GDBSession* sessionPtr = session.get();
+
     {
         std::lock_guard<std::mutex> lock(_sessionsMutex);
         _sessions[clientSocket] = std::move(session);
     }
 
-    // This blocks until session ends
-    {
-        std::lock_guard<std::mutex> lock(_sessionsMutex);
-        auto it = _sessions.find(clientSocket);
-        if (it != _sessions.end())
-        {
-            it->second->run();
-        }
-    }
+    // Run session WITHOUT holding mutex (allows stop() to work)
+    sessionPtr->run();
 
     // Cleanup
     {
@@ -227,8 +224,10 @@ void GDBServer::handleClient(int clientSocket)
     }
 
 #ifdef _WIN32
+    shutdown(clientSocket, SD_BOTH);
     closesocket(clientSocket);
 #else
+    shutdown(clientSocket, SHUT_RDWR);
     close(clientSocket);
 #endif
 
@@ -283,9 +282,17 @@ void GDBSession::run()
         }
 
         std::string response = handlePacket(packet);
+        // Empty response = unsupported (no reply). Special marker = send empty packet.
         if (!response.empty())
         {
-            sendPacket(response);
+            if (response == "\x7f_EMPTY_")
+            {
+                sendPacket("");  // Send empty packet $#00
+            }
+            else
+            {
+                sendPacket(response);
+            }
         }
     }
 }
@@ -479,11 +486,11 @@ std::string GDBSession::handleQuery(const std::string& packet)
     }
     if (packet == "qC")
     {
-        return "QC1";  // Current thread ID = 1
+        return "QC01";  // Current thread ID = 1 (hex)
     }
     if (packet == "qfThreadInfo")
     {
-        return "m1";  // Thread 1
+        return "m01";  // Thread 1 (hex)
     }
     if (packet == "qsThreadInfo")
     {
@@ -493,10 +500,41 @@ std::string GDBSession::handleQuery(const std::string& packet)
     {
         return "1";  // Attached to existing process
     }
+    if (packet.starts_with("qThreadExtraInfo,"))
+    {
+        // Return hex-encoded description of thread
+        return GDBPacket::hexEncode("Z80 CPU");
+    }
     if (packet.starts_with("qRcmd,"))
     {
         std::string cmd = GDBPacket::hexDecode(packet.substr(6));
         return handleMonitor(cmd);
+    }
+
+    // Trace packets - empty response means "not supported"
+    if (packet == "qTStatus" || packet.starts_with("qTfV") || packet.starts_with("qTsV") ||
+        packet.starts_with("qTfP") || packet.starts_with("qTsP") || packet.starts_with("qTV:") ||
+        packet.starts_with("qTBuffer"))
+    {
+        return "\x7f_EMPTY_";
+    }
+
+    // Symbol lookup
+    if (packet.starts_with("qSymbol"))
+    {
+        return "OK";  // No symbol lookup needed
+    }
+
+    // Section offsets - not applicable for bare metal
+    if (packet == "qOffsets")
+    {
+        return "\x7f_EMPTY_";
+    }
+
+    // Old-style thread queries (qL, qP)
+    if (packet.starts_with("qL") || packet.starts_with("qP"))
+    {
+        return "\x7f_EMPTY_";
     }
 
     return "";  // Unsupported query
@@ -508,6 +546,7 @@ std::string GDBSession::handleQSupported(const std::string& /*params*/)
     caps += "QStartNoAckMode+;";
     caps += "qXfer:features:read+;";
     caps += "qXfer:osdata:read+;";
+    caps += "qXfer:threads:read+;";
     caps += "swbreak+;";
     caps += "hwbreak+;";
     caps += "vContSupported+;";
@@ -558,6 +597,28 @@ std::string GDBSession::handleQXfer(const std::string& params)
         return "l" + xml.str();
     }
 
+    // Provide minimal threads XML to help GDB
+    if (params.starts_with(":threads:read:"))
+    {
+        std::ostringstream xml;
+        xml << "<?xml version=\"1.0\"?>\n";
+        xml << "<threads>\n";
+        xml << "  <thread id=\"01\" core=\"0\" name=\"Z80\"/>\n";
+        xml << "</threads>\n";
+        return "l" + xml.str();
+    }
+
+    // These qXfer types need empty response (not silence) to avoid timeouts
+    if (params.starts_with(":exec-file:read:") ||
+        params.starts_with(":auxv:read:") ||
+        params.starts_with(":libraries:read:") ||
+        params.starts_with(":memory-map:read:") ||
+        params.starts_with(":spu:read:") ||
+        params.starts_with(":siginfo:read:"))
+    {
+        return "\x7f_EMPTY_";  // Not supported, but respond
+    }
+
     return "";
 }
 
@@ -565,7 +626,8 @@ std::string GDBSession::handleVCommand(const std::string& packet)
 {
     if (packet == "vMustReplyEmpty")
     {
-        return "";
+        // GDB spec: must reply with empty packet $#00, not silence
+        return "\x7f_EMPTY_";  // Marker to send empty packet
     }
 
     if (packet.starts_with("vCont?"))
@@ -1480,7 +1542,7 @@ std::string GDBSession::handleInterrupt()
     }
 
     _lastStopReason = StopReason::Interrupt;
-    return "T02thread:1;";  // SIGINT
+    return "T02thread:01;";  // SIGINT
 }
 
 std::string GDBSession::handleBackwardStep()
@@ -1513,7 +1575,7 @@ std::string GDBSession::handleBackwardStep()
     {
         // At beginning of history
         _lastStopReason = StopReason::Step;
-        return "T05replaylog:begin;thread:1;";
+        return "T05replaylog:begin;thread:01;";
     }
 
     _lastStopReason = StopReason::Step;
@@ -1570,7 +1632,7 @@ std::string GDBSession::handleBackwardContinue()
         // No breakpoints to search for - step back one instruction instead
         if (!ttd->StepBackInstruction())
         {
-            return "T05replaylog:begin;thread:1;";
+            return "T05replaylog:begin;thread:01;";
         }
         _lastStopReason = StopReason::Step;
         return formatStopReply();
@@ -1581,40 +1643,41 @@ std::string GDBSession::handleBackwardContinue()
     if (result.matched)
     {
         _lastStopReason = StopReason::Breakpoint;
-        return "T05swbreak:;thread:1;";
+        return "T05swbreak:;thread:01;";
     }
     else if (result.blockingMarker.reason[0] != '\0')
     {
         // Hit a barrier (tape, disk, etc)
         _lastStopReason = StopReason::Step;
-        return "T05replaylog:begin;thread:1;";
+        return "T05replaylog:begin;thread:01;";
     }
     else
     {
         // At beginning of history
         _lastStopReason = StopReason::Step;
-        return "T05replaylog:begin;thread:1;";
+        return "T05replaylog:begin;thread:01;";
     }
 }
 
 std::string GDBSession::formatStopReply()
 {
+    // Thread ID must be hex. Use "01" for thread 1.
     switch (_lastStopReason)
     {
         case StopReason::Breakpoint:
-            return "T05swbreak:;thread:1;";
+            return "T05swbreak:;thread:01;";
 
         case StopReason::Watchpoint:
-            return "T05watch:" + GDBPacket::toHex(_lastWatchAddress, 4) + ";thread:1;";
+            return "T05watch:" + GDBPacket::toHex(_lastWatchAddress, 4) + ";thread:01;";
 
         case StopReason::Interrupt:
-            return "T02thread:1;";
+            return "T02thread:01;";
 
         case StopReason::Step:
         case StopReason::Attached:
         case StopReason::None:
         default:
-            return "T05thread:1;";
+            return "T05thread:01;";
     }
 }
 
@@ -1671,7 +1734,7 @@ std::string GDBSession::handleAttach(const std::string& pid)
     subscribeToStateChanges();
 
     _lastStopReason = StopReason::Attached;
-    return "T05thread:1;";
+    return "T05thread:01;";
 }
 
 std::string GDBSession::handleDetach()
