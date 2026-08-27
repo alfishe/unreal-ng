@@ -84,14 +84,14 @@ See [gdb-protocol.md](../../emulator/design/control-interfaces/gdb-protocol.md) 
 
 | ID | Task | Status | Commit | Notes |
 |----|------|--------|--------|-------|
-| 1A.10.1 | Conditional `ReverseStep+`/`ReverseContinue+` | TODO | | Only when TTD enabled + recording |
-| 1A.10.2 | `bs` backward step | TODO | | TTDManager::StepBackInstruction() |
-| 1A.10.3 | `bc` backward continue | TODO | | FindLastAccess over armed bp/wp |
-| 1A.10.4 | `replaylog:begin` stop reason | TODO | | History exhausted / barrier |
+| 1A.10.1 | Conditional `ReverseStep+`/`ReverseContinue+` | DONE | | Auto-stops recording, enters Detached |
+| 1A.10.2 | `bs` backward step | DONE | | TTDManager::StepBackInstruction() |
+| 1A.10.3 | `bc` backward continue | DONE | | ReverseContinue over armed breakpoints |
+| 1A.10.4 | `replaylog:begin` stop reason | DONE | | T05replaylog:begin;thread:1; |
 | 1A.10.5 | Detached read-only enforcement | TODO | | G/P/M refused with E0D |
-| 1A.10.6 | `monitor ttd status` | TODO | | Session bounds, position, barriers |
-| 1A.10.7 | `monitor ttd start` | TODO | | Arm recording mid-session |
-| 1A.10.8 | `monitor ttd seek <frame>` | TODO | | SeekTo frame boundary |
+| 1A.10.6 | `monitor ttd status` | DONE | | Session state, bounds, position |
+| 1A.10.7 | `monitor ttd start` | DONE | | Start recording (paused only) |
+| 1A.10.8 | `monitor ttd seek <frame>` | DONE | | SeekTo frame boundary |
 | 1A.10.9 | `monitor ttd findlast w <addr>` | TODO | | Reverse search without arming wp |
 
 ### G4: Polish
@@ -197,10 +197,10 @@ See [gdb-protocol.md](../../emulator/design/control-interfaces/gdb-protocol.md) 
 | Phase | Total | Done | WIP | TODO |
 |-------|-------|------|-----|------|
 | Phase 0 | 20 | 15 | 0 | 5 |
-| Phase 1A (GDB) | 49 | 30 | 0 | 19 |
+| Phase 1A (GDB) | 49 | 37 | 0 | 12 |
 | Phase 1B (DeZog) | 6 | 0 | 0 | 6 |
 | Phase 1C (MCP) | 2 | 0 | 0 | 2 |
 | Phase 2 | 9 | 0 | 0 | 9 |
 | Phase 3 | 6 | 0 | 0 | 6 |
 | Phase 4 | 11 | 0 | 0 | 11 |
-| **Total** | **103** | **45** | **0** | **58** |
+| **Total** | **103** | **52** | **0** | **51** |

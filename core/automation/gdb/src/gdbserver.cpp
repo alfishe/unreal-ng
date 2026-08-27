@@ -9,6 +9,8 @@
 #include <emulator/memory/memory.h>
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/ttd_external_events.h>
 
 #include <cctype>
 #include <iomanip>
@@ -410,6 +412,14 @@ std::string GDBSession::handlePacket(const std::string& packet)
         case 'S':
             return handleStep();
 
+        case 'b':
+            // Reverse execution commands
+            if (args == "s")
+                return handleBackwardStep();
+            if (args == "c")
+                return handleBackwardContinue();
+            return "";  // Unknown 'b' command
+
         case 'Z':
             return handleSetBreakpoint(args);
 
@@ -586,6 +596,10 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
         response += "  monitor frame     - show frame/tstate info\n";
         response += "  monitor bankinfo  - show memory bank info\n";
         response += "  monitor load <path> - load snap/tape/disk (paused only)\n";
+        response += "  monitor ttd status  - show TTD session info\n";
+        response += "  monitor ttd start   - start TTD recording\n";
+        response += "  monitor ttd stop    - stop TTD recording\n";
+        response += "  monitor ttd seek <frame> - seek to frame\n";
     }
     else if (cmd == "model")
     {
@@ -755,6 +769,88 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
         else
         {
             response = "No emulator attached\n";
+        }
+    }
+    else if (cmd.starts_with("ttd "))
+    {
+        std::string subcmd = cmd.substr(4);
+        if (!_context || !_context->pTimeTravelManager)
+        {
+            response = "TTD not available\n";
+        }
+        else
+        {
+            auto* ttd = _context->pTimeTravelManager;
+
+            if (subcmd == "status")
+            {
+                auto info = ttd->GetSessionInfo();
+                std::ostringstream ss;
+                ss << "TTD state: " << ttd::TTDSessionStateToString(info.state) << "\n";
+                ss << "Session start frame: " << info.sessionStartFrame << "\n";
+                ss << "Current end frame: " << info.currentEndFrame << "\n";
+                ss << "Checkpoints: " << info.checkpointCount << "\n";
+                ss << "Page store: " << (info.pageStoreUsedBytes / 1024) << " KB used\n";
+
+                auto pos = ttd->CurrentPosition();
+                ss << "Current position: frame " << pos.frame << ", t=" << pos.tInFrame << "\n";
+                response = ss.str();
+            }
+            else if (subcmd == "start")
+            {
+                if (!_emulator->IsPaused())
+                {
+                    response = "Error: emulator must be paused to start TTD\n";
+                }
+                else
+                {
+                    if (ttd->StartRecording())
+                    {
+                        response = "TTD recording started\n";
+                    }
+                    else
+                    {
+                        response = "Error: TTD recording failed to start\n";
+                    }
+                }
+            }
+            else if (subcmd == "stop")
+            {
+                ttd->StopRecording();
+                response = "TTD recording stopped\n";
+            }
+            else if (subcmd.starts_with("seek "))
+            {
+                std::string frameStr = subcmd.substr(5);
+                try
+                {
+                    uint64_t frame = std::stoull(frameStr);
+                    if (!_emulator->IsPaused())
+                    {
+                        _emulator->Pause();
+                    }
+                    ttd::TTDTimePoint target{frame, 0};
+                    ttd::TimeTravelManager::TTDSeekResult result;
+                    if (ttd->SeekTo(target, &result))
+                    {
+                        std::ostringstream ss;
+                        ss << "Seeked to frame " << result.arrivedAt.frame << "\n";
+                        response = ss.str();
+                    }
+                    else
+                    {
+                        response = "Error: seek failed\n";
+                    }
+                }
+                catch (...)
+                {
+                    response = "Error: invalid frame number\n";
+                }
+            }
+            else
+            {
+                response = "Unknown TTD command: " + subcmd + "\n";
+            }
         }
     }
     else
@@ -1102,14 +1198,116 @@ std::string GDBSession::handleInterrupt()
 
 std::string GDBSession::handleBackwardStep()
 {
-    // TODO: TTD integration
-    return "E01";
+    if (!_context || !_context->pTimeTravelManager)
+    {
+        return "E01";  // TTD not available
+    }
+
+    auto* ttd = _context->pTimeTravelManager;
+    auto state = ttd->GetSessionInfo().state;
+
+    if (state == ttd::TTDSessionState::Idle)
+    {
+        return "E01";  // No TTD session active
+    }
+
+    if (!_emulator->IsPaused())
+    {
+        _emulator->Pause();
+    }
+
+    // Stop recording to allow reverse execution (transitions to Detached)
+    if (state == ttd::TTDSessionState::Recording)
+    {
+        ttd->StopRecording();
+    }
+
+    if (!ttd->StepBackInstruction())
+    {
+        // At beginning of history
+        _lastStopReason = StopReason::Step;
+        return "T05replaylog:begin;thread:1;";
+    }
+
+    _lastStopReason = StopReason::Step;
+    return formatStopReply();
 }
 
 std::string GDBSession::handleBackwardContinue()
 {
-    // TODO: TTD integration
-    return "E01";
+    if (!_context || !_context->pTimeTravelManager)
+    {
+        return "E01";  // TTD not available
+    }
+
+    auto* ttd = _context->pTimeTravelManager;
+    auto state = ttd->GetSessionInfo().state;
+
+    if (state == ttd::TTDSessionState::Idle)
+    {
+        return "E01";  // No TTD session active
+    }
+
+    if (!_emulator->IsPaused())
+    {
+        _emulator->Pause();
+    }
+
+    // Stop recording to allow reverse execution
+    if (state == ttd::TTDSessionState::Recording)
+    {
+        ttd->StopRecording();
+    }
+
+    // Gather active execution breakpoints
+    std::vector<uint16_t> breakpoints;
+    auto* debugMgr = _context->pDebugManager;
+    if (debugMgr)
+    {
+        auto* bpMgr = debugMgr->GetBreakpointsManager();
+        if (bpMgr)
+        {
+            const auto& bpMap = bpMgr->GetAllBreakpoints();
+            for (const auto& [id, bp] : bpMap)
+            {
+                if (bp && bp->active && (bp->memoryType & BRK_MEM_EXECUTE))
+                {
+                    breakpoints.push_back(bp->z80address);
+                }
+            }
+        }
+    }
+
+    if (breakpoints.empty())
+    {
+        // No breakpoints to search for - step back one instruction instead
+        if (!ttd->StepBackInstruction())
+        {
+            return "T05replaylog:begin;thread:1;";
+        }
+        _lastStopReason = StopReason::Step;
+        return formatStopReply();
+    }
+
+    auto result = ttd->ReverseContinue(breakpoints);
+
+    if (result.matched)
+    {
+        _lastStopReason = StopReason::Breakpoint;
+        return "T05swbreak:;thread:1;";
+    }
+    else if (result.blockingMarker.reason[0] != '\0')
+    {
+        // Hit a barrier (tape, disk, etc)
+        _lastStopReason = StopReason::Step;
+        return "T05replaylog:begin;thread:1;";
+    }
+    else
+    {
+        // At beginning of history
+        _lastStopReason = StopReason::Step;
+        return "T05replaylog:begin;thread:1;";
+    }
 }
 
 std::string GDBSession::formatStopReply()
