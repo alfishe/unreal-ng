@@ -63,7 +63,7 @@ TEST_F(GDBPacketFuzzTest, InvalidHexInChecksum)
     {
         reader.feed(c);
     }
-    EXPECT_TRUE(reader.isError());
+    EXPECT_TRUE(reader.hasError());
 }
 
 TEST_F(GDBPacketFuzzTest, TruncatedPacket)
@@ -71,7 +71,7 @@ TEST_F(GDBPacketFuzzTest, TruncatedPacket)
     reader.feed('$');
     reader.feed('g');
     EXPECT_FALSE(reader.isComplete());
-    EXPECT_FALSE(reader.isError());
+    EXPECT_FALSE(reader.hasError());
 }
 
 TEST_F(GDBPacketFuzzTest, EmptyData)
@@ -129,7 +129,8 @@ TEST_F(GDBPacketFuzzTest, HighBytesInData)
     reader.feed('\xff');
     reader.feed('\xfe');
     reader.feed('#');
-    std::string hex = GDBPacket::toHex(0xff + 0xfe, 2);
+    // Checksum is 8-bit, so (0xff + 0xfe) & 0xff = 0xfd
+    std::string hex = GDBPacket::toHex((0xff + 0xfe) & 0xff, 2);
     reader.feed(hex[0]);
     reader.feed(hex[1]);
 
