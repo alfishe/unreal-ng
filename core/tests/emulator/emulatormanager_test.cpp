@@ -52,7 +52,7 @@ TEST_F(EmulatorManager_Test, CreateEmulator)
 
     // Verify the emulator has a valid ID
     UUID emulatorId = emulator->GetUUID();
-    ASSERT_TRUE(emulatorId.isNil());
+    ASSERT_FALSE(emulatorId.isNil());
 
     // Verify the emulator can be retrieved
     auto retrieved = _manager->GetEmulator(emulatorId);

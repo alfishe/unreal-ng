@@ -69,13 +69,13 @@ public:
     /// Check if this is a nil (all zeros) UUID
     bool isNil() const
     {
-        bool result = false;
+        bool result = true;
 
         for (uint8_t b : bytes)
         {
             if (b != 0)
             {
-                result = true;
+                result = false;
                 break;
             }
         }
