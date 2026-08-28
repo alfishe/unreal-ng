@@ -154,10 +154,7 @@ void DezogDebugAdapter::onBreakpointMessage(int /*id*/, Message* message)
 
     // Instance filter: a nil payload id means a legacy (untagged) sender → accept;
     // otherwise only events from the emulator this adapter is bound to count.
-    // NOTE: compare against a default-constructed UUID rather than UUID::isNil(),
-    // whose result is inverted (same workaround as EmulatorContext).
-    const bool untagged = (payload->emulatorId == unreal::UUID());
-    if (!untagged && !(payload->emulatorId == emulator->GetUUID()))
+    if (!payload->emulatorId.isNil() && !(payload->emulatorId == emulator->GetUUID()))
         return;
 
     uint16_t breakpointId = static_cast<uint16_t>(payload->_payloadNumber);
