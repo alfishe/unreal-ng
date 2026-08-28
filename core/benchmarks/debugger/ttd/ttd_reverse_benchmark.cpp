@@ -354,3 +354,191 @@ BENCHMARK(BM_TTD_FindLastAccess_Coverage)
     ->Args({200, 0})->Args({200, 1})
     ->Iterations(20)
     ->Unit(benchmark::kMicrosecond);
+
+// ===========================================================================
+// DeZog reverse-debugging: step-by-step full-frame rewind vs ring cache
+// ===========================================================================
+//
+// Scenario (reverse-debugging.md §4/§5): the user rewinds execution one
+// instruction at a time. Worst case for TTD is that each single
+// StepBackInstruction restores the frame-start checkpoint and replays forward
+// to the target t-mark, so walking back through a busy frame re-emulates that
+// frame ~once per instruction.
+//
+// The stock benchmark workload (ROM boot) idles in a HALT loop — ~1 instruction
+// per frame — which is NOT representative. These cases install a busy
+// straight-line program so a frame packs thousands of instructions, matching a
+// game/demo running flat out. All three quantities are measured on the same
+// workload so the comparison is apples-to-apples:
+//
+//   BM_TTD_Busy_StepBack_Single  — one back-step to a late-in-frame t-mark
+//                                  (the "fast-forward from frame start" cost)
+//   BM_TTD_Busy_Rewind_Frame     — rewind ONE full frame step-by-step
+//   BM_TTD_Busy_RingFill_Frame   — replay ONE frame forward once (ring fill)
+//   BM_TTD_Ring_ReadEntry        — read one cached M1 record (array access)
+//
+// instr_per_frame is reported as a counter so §5's memory math uses a measured
+// density, not an assumption.
+
+namespace
+{
+// Busy program at 0x8000: a varied ALU/load/inc loop with no HALT, so it runs
+// continuously and fills each frame with instructions.
+//   8000: INC A            (3C)
+//   8001: ADD A,L          (85)
+//   8002: LD (HL),A        (77)
+//   8003: INC L            (2C)
+//   8004: DEC B            (05)
+//   8005: RLCA             (07)
+//   8006: JP 8000          (C3 00 80)
+const uint8_t kBusyProgram[] = {0x3C, 0x85, 0x77, 0x2C, 0x05, 0x07, 0xC3, 0x00, 0x80};
+constexpr uint16_t kBusyStart = 0x8000;
+
+// Fixed-size CPU-history record the ring would store, per reverse-debugging.md §5.
+struct M1Record
+{
+    uint16_t pc, sp, af, bc, de, hl, ix, iy;
+    uint16_t af2, bc2, de2, hl2;
+    uint8_t  i, r, im, _pad;
+    uint8_t  opcodes[4];
+    uint16_t spContent;
+    uint8_t  slots[4];
+};
+
+// Record a fresh busy session: install the program, point PC at it, run frames.
+void ResetBusyRecording(uint32_t frames)
+{
+    g_fixture.ttd->InvalidateSession("busy benchmark reset");
+    for (uint16_t i = 0; i < sizeof(kBusyProgram); ++i)
+        g_fixture.memory->DirectWriteToZ80Memory(kBusyStart + i, kBusyProgram[i]);
+    Z80State* z80 = g_fixture.emulator->GetZ80State();
+    z80->pc = kBusyStart;
+    z80->sp = 0xFF00;
+
+    g_fixture.ttd->StartRecording();
+    g_fixture.emulator->RunNFrames(static_cast<unsigned>(frames), /*skipBreakpoints=*/true);
+    g_fixture.ttd->StopRecording();
+    PositionAtSessionEnd();
+}
+
+// Instructions recorded in one frame: session end sits on a frame boundary, so
+// the first back-step enters the previous frame F; count further steps until the
+// cursor leaves F.
+uint32_t CountBusyInstrPerFrame()
+{
+    PositionAtSessionEnd();
+    if (!g_fixture.ttd->StepBackInstruction())
+        return 0;
+    const uint64_t F = g_fixture.ttd->CurrentPosition().frame;
+    uint32_t n = 1;
+    for (; n < 500000; ++n)
+    {
+        if (!g_fixture.ttd->StepBackInstruction())
+            break;
+        if (g_fixture.ttd->CurrentPosition().frame < F)
+            break;
+    }
+    PositionAtSessionEnd();
+    return n;
+}
+
+// t-state of the last recorded instruction in frame F-1 (the frame just before
+// session end), for a real mid-frame replay target.
+uint32_t LastTInFrameBeforeEnd(uint64_t& frameOut)
+{
+    PositionAtSessionEnd();
+    g_fixture.ttd->StepBackInstruction();          // land on last instr of previous frame
+    ttd::TTDTimePoint p = g_fixture.ttd->CurrentPosition();
+    frameOut = p.frame;
+    PositionAtSessionEnd();
+    return p.tInFrame;
+}
+} // namespace
+
+static void BM_TTD_Busy_StepBack_Single(benchmark::State& state)
+{
+    if (!EnsureFixture()) { state.SkipWithError("fixture init failed"); return; }
+    ResetBusyRecording(50);
+    const uint32_t instrPerFrame = CountBusyInstrPerFrame();
+
+    for (auto _ : state)
+    {
+        state.PauseTiming();
+        PositionAtSessionEnd();          // late in the frame → worst-case replay distance
+        state.ResumeTiming();
+        g_fixture.ttd->StepBackInstruction();
+    }
+    state.counters["instr_per_frame"] = instrPerFrame;
+    state.SetLabel("one back-step, target late in a busy frame");
+}
+BENCHMARK(BM_TTD_Busy_StepBack_Single)->Iterations(200)->Unit(benchmark::kMillisecond);
+
+// Bounded step-by-step rewind: 500 consecutive back-steps (spanning into the
+// busy frame, replay distance shrinking as t decreases). Reports total and
+// per-step average. A full-frame rewind = instr_per_frame x this per-step cost.
+static void BM_TTD_Busy_Rewind_500(benchmark::State& state)
+{
+    if (!EnsureFixture()) { state.SkipWithError("fixture init failed"); return; }
+    ResetBusyRecording(50);
+    const uint32_t instrPerFrame = CountBusyInstrPerFrame();
+
+    const uint32_t STEPS = 500;
+    for (auto _ : state)
+    {
+        state.PauseTiming();
+        PositionAtSessionEnd();
+        state.ResumeTiming();
+        for (uint32_t i = 0; i < STEPS; ++i)
+            if (!g_fixture.ttd->StepBackInstruction()) break;
+    }
+    state.counters["instr_per_frame"] = instrPerFrame;
+    state.counters["ms_per_step"] = benchmark::Counter(
+        static_cast<double>(STEPS),
+        benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert,
+        benchmark::Counter::kIs1000);
+    state.SetLabel("500 consecutive back-steps (step-by-step rewind)");
+}
+BENCHMARK(BM_TTD_Busy_Rewind_500)->Iterations(20)->Unit(benchmark::kMillisecond);
+
+static void BM_TTD_Busy_RingFill_Frame(benchmark::State& state)
+{
+    if (!EnsureFixture()) { state.SkipWithError("fixture init failed"); return; }
+    ResetBusyRecording(50);
+    const uint32_t instrPerFrame = CountBusyInstrPerFrame();
+
+    uint64_t F = 0;
+    const uint32_t lastT = LastTInFrameBeforeEnd(F);
+    const ttd::TTDTimePoint frameStart{F, 0};
+    const ttd::TTDTimePoint frameEnd{F, lastT};   // last instruction IN the frame (mid-frame → real replay)
+    for (auto _ : state)
+    {
+        state.PauseTiming();
+        g_fixture.ttd->SeekTo(frameStart);
+        state.ResumeTiming();
+        g_fixture.ttd->SeekTo(frameEnd);   // replay the whole busy frame forward == ring fill
+    }
+    state.counters["instr_per_frame"] = instrPerFrame;
+    state.SetLabel("one forward busy-frame replay == ring-cache fill");
+}
+BENCHMARK(BM_TTD_Busy_RingFill_Frame)->Iterations(50)->Unit(benchmark::kMillisecond);
+
+static void BM_TTD_Ring_ReadEntry(benchmark::State& state)
+{
+    // Pure ring read cost: an array of M1 records the size of one busy frame,
+    // read sequentially with a full-record copy (what serving CMD_GET_HISTORY_ENTRY
+    // from a ring would do — no emulation).
+    const size_t n = 8000;
+    std::vector<M1Record> ring(n);
+    for (size_t i = 0; i < n; ++i) { ring[i].pc = static_cast<uint16_t>(i); ring[i].opcodes[0] = 0x3C; }
+
+    size_t idx = 0;
+    for (auto _ : state)
+    {
+        M1Record r = ring[idx % n];      // index + 40-byte copy
+        benchmark::DoNotOptimize(r);
+        ++idx;
+    }
+    state.counters["ring_entries"] = static_cast<double>(n);
+    state.SetLabel("read one cached M1 record (no emulation)");
+}
+BENCHMARK(BM_TTD_Ring_ReadEntry)->Unit(benchmark::kNanosecond);
