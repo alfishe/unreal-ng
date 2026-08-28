@@ -22,6 +22,10 @@
 #include "cli/include/automation-cli.h"
 #endif
 
+#if ENABLE_DEZOG_AUTOMATION
+#include "dezog/include/automation-dezog.h"
+#endif
+
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
@@ -59,6 +63,10 @@ bool Automation::start()
     result &= startCLI();
 #endif
 
+#if ENABLE_DEZOG_AUTOMATION
+    result &= startDezog();
+#endif
+
     return result;
 }
 
@@ -83,6 +91,10 @@ void Automation::stop()
 
 #if ENABLE_CLI_AUTOMATION
     stopCLI();
+#endif
+
+#if ENABLE_DEZOG_AUTOMATION
+    stopDezog();
 #endif
 }
 
@@ -241,6 +253,36 @@ void Automation::stopCLI()
         _cli->stop();
         delete _cli;
         _cli = nullptr;
+    }
+}
+#endif
+
+#if ENABLE_DEZOG_AUTOMATION
+bool Automation::startDezog()
+{
+    bool result = true;
+
+    _dezog = new AutomationDezog();
+
+    if (_dezog)
+    {
+        result = _dezog->start();
+    }
+    else
+    {
+        result = false;
+    }
+
+    return result;
+}
+
+void Automation::stopDezog()
+{
+    if (_dezog)
+    {
+        _dezog->stop();
+        delete _dezog;
+        _dezog = nullptr;
     }
 }
 #endif

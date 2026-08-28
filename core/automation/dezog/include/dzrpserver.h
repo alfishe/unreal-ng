@@ -86,6 +86,10 @@ private:
 
     // Breakpoint tracking (permanent breakpoints only - temp handled by IDebugInterface)
     std::unordered_map<uint16_t, uint16_t> m_breakpoints;  // id -> addr
+
+    // Action to run after the current response has been written to the socket.
+    // Used by CMD_PAUSE so the ACK always precedes the resulting NTF_PAUSE.
+    std::function<void()> m_postResponseAction;
 };
 
 // Debug interface that emulator must implement

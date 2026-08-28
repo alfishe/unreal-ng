@@ -180,11 +180,20 @@ void Server::sessionLoop(int clientSocket)
             auto cmdOpt = Protocol::parseCommand(payload.data(), payload.size());
             if (cmdOpt)
             {
+                m_postResponseAction = nullptr;
                 Response resp = handleCommand(*cmdOpt);
                 auto respData = Protocol::serializeResponse(resp);
 
                 if (!sendAll(clientSocket, respData))
                     return;
+
+                // Deferred side effects (e.g. pause → NTF_PAUSE) run only after the ACK is on the wire
+                if (m_postResponseAction)
+                {
+                    auto action = std::move(m_postResponseAction);
+                    m_postResponseAction = nullptr;
+                    action();
+                }
             }
 
             recvBuffer.erase(recvBuffer.begin(), recvBuffer.begin() + consumed);
@@ -394,7 +403,9 @@ Response Server::handlePause(const Command& cmd)
     Response resp;
     resp.seqNo = cmd.seqNo;
 
-    m_debug->pause();
+    // The debug interface emits NTF_PAUSE synchronously from pause(); defer it
+    // until the ACK has been sent so the wire order is always ACK → NTF_PAUSE.
+    m_postResponseAction = [this]() { m_debug->pause(); };
 
     return resp;
 }

@@ -7,6 +7,7 @@ class AutomationLua;
 class AutomationPython;
 class AutomationWebAPI;
 class AutomationCLI;
+class AutomationDezog;
 
 class Automation
 {
@@ -26,6 +27,10 @@ protected:
 
 #if ENABLE_CLI_AUTOMATION
     AutomationCLI* _cli = nullptr;
+#endif
+
+#if ENABLE_DEZOG_AUTOMATION
+    AutomationDezog* _dezog = nullptr;
 #endif
     bool _stopped = false;
     /// endregion </Fields>
@@ -78,6 +83,10 @@ public:
 #if ENABLE_LUA_AUTOMATION
     AutomationLua* getLua() { return _lua; }
 #endif
+
+#if ENABLE_DEZOG_AUTOMATION
+    AutomationDezog* getDezog() { return _dezog; }
+#endif
     /// endregion </Methods>
 
     /// region <Helper methods>
@@ -86,10 +95,12 @@ protected:
     bool startPython();
     bool startWebAPI();
     bool startCLI();
+    bool startDezog();
 
     void stopLua();
     void stopPython();
     void stopWebAPI();
     void stopCLI();
+    void stopDezog();
     /// endregion </Helper methods>
 };

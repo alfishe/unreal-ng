@@ -4,19 +4,33 @@
 
 ```
 core/automation/dezog/
-├── CMakeLists.txt
+├── CMakeLists.txt             # automation_dezog static lib (+ dezog-test-server mock binary)
 ├── include/
-│   ├── dzrpserver.h           # Server + IDebugInterface
+│   ├── dzrptypes.h            # Protocol constants, enums
 │   ├── dzrpprotocol.h         # Message framing, serialization
-│   └── dzrptypes.h            # Protocol constants, enums
+│   ├── dzrpserver.h           # dzrp::Server + IDebugInterface (transport layer, emulator-agnostic)
+│   ├── dezogdebugadapter.h    # DezogDebugAdapter: IDebugInterface over the real Emulator
+│   └── automation-dezog.h     # AutomationDezog: module lifecycle (start/stop), like AutomationCLI
 ├── src/
+│   ├── dzrpprotocol.cpp
 │   ├── dzrpserver.cpp         # Server + command handlers
-│   └── dzrpprotocol.cpp
+│   ├── dezogdebugadapter.cpp
+│   └── automation-dezog.cpp
 └── test/
-    └── test-server.cpp        # Standalone test with mock
+    ├── test-server.cpp        # Standalone mock server (no emulator dependency)
+    └── emulator-host.cpp      # Headless real-emulator host (dezog-emulator-host [port] [model])
+
+core/tests/automation/dezog/
+├── dezogtestfixture.h         # Live-emulator fixture + RAM test program
+├── dzrpprotocol_test.cpp      # Protocol layer (framing, LE helpers, bitfield)
+├── dezogdebugadapter_test.cpp # Adapter over a live emulator (no sockets)
+└── dzrpserver_test.cpp        # Real TCP session → server → adapter → emulator; AutomationDezog lifecycle
 ```
 
-Note: Command handlers are in dzrpserver.cpp, not a separate file.
+Layering: `dzrpserver.cpp` never touches the emulator - everything goes through
+`IDebugInterface`. `DezogDebugAdapter` is the only file that includes emulator
+headers, which keeps the protocol/server layer buildable standalone (mock
+test server) and lets `core-tests` compile the whole stack in directly.
 
 ## Class Design
 
@@ -416,65 +430,86 @@ DeZog                           Unreal-NG
   |<------- Response ----------------|
 ```
 
-## CMakeLists.txt
+## Build Integration (Actual)
+
+`ENABLE_DEZOG_AUTOMATION` (default `ON`) is declared at every level, exactly
+like the other automation modules, and gated by the master `ENABLE_AUTOMATION`:
+
+| File | What it does |
+|------|--------------|
+| `CMakeLists.txt` (root) | `option(ENABLE_DEZOG_AUTOMATION ... ON)` + status line |
+| `core/automation/CMakeLists.txt` | option, forced OFF when `ENABLE_AUTOMATION=OFF`, `add_subdirectory(dezog)`, links `automation_dezog` (exe + lib branches), include dir, `ENABLE_DEZOG_AUTOMATION` compile definition |
+| `core/automation/dezog/CMakeLists.txt` | `automation_dezog` static lib (`unrealng::automation_dezog`), links `unrealng::core`; `dezog-test-server` mock binary built from the protocol sources only; `dezog-emulator-host` headless real-emulator host |
+| `unreal-qt/CMakeLists.txt` | option + compile definition (must match automation's) |
+| `unreal-videowall/CMakeLists.txt` | option + compile definition |
+| `core/tests/CMakeLists.txt` | compiles the four dezog sources directly into `core-tests` |
 
 ```cmake
-# core/automation/dezog/CMakeLists.txt
-
-add_library(automation-dezog STATIC
-    src/dzrp-server.cpp
-    src/dzrp-protocol.cpp
-    src/dzrp-commands.cpp
+# core/automation/dezog/CMakeLists.txt (excerpt)
+add_library(automation_dezog STATIC
+    src/dzrpprotocol.cpp src/dzrpserver.cpp          # transport layer
+    src/dezogdebugadapter.cpp src/automation-dezog.cpp  # emulator-bound layer
 )
-
-target_include_directories(automation-dezog PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include  # shared debug-interface.h
-)
-
-target_link_libraries(automation-dezog PRIVATE
-    automation-core  # shared IDebugInterface impl
-)
-
-# Unit tests
-if(BUILD_TESTING)
-    add_executable(dezog-protocol-test
-        tests/dzrp-protocol-test.cpp
-    )
-    target_link_libraries(dezog-protocol-test PRIVATE
-        automation-dezog
-        GTest::gtest_main
-    )
-    add_test(NAME DZRPProtocolTest COMMAND dezog-protocol-test)
-endif()
+target_include_directories(automation_dezog PUBLIC include ../cli/include)  # platform-sockets.h
+target_link_libraries(automation_dezog PUBLIC unrealng::core)
 ```
 
-## Integration Points
+Configure with `-DENABLE_DEZOG_AUTOMATION=OFF` to drop the module entirely
+(no server thread, no port, no symbols).
 
-### Emulator Hook
+## Integration Points (Actual)
+
+### Automation singleton
+
+`core/automation/automation.{h,cpp}` owns one `AutomationDezog*` next to the
+Lua/Python/WebAPI/CLI modules:
 
 ```cpp
-// In emulator main loop or debug manager
-
-void EmulatorDebugManager::initialize()
-{
-    // Create shared debug interface
-    m_debugInterface = std::make_unique<EmulatorDebugInterface>(m_z80, m_memory);
-    
-    // Start DZRP server
-    DZRPServer::Config dzrpConfig;
-    dzrpConfig.port = 12000;
-    m_dzrpServer = std::make_unique<DZRPServer>(m_debugInterface.get(), dzrpConfig);
-    m_dzrpServer->start();
-    
-    // Register break handler
-    m_debugInterface->setBreakHandler([this](const BreakEvent& e) {
-        m_dzrpServer->notifyPause(
-            static_cast<DZRPBreakReason>(e.reason),
-            e.address, e.bank, e.message);
-    });
-}
+bool Automation::start()   { ... #if ENABLE_DEZOG_AUTOMATION  result &= startDezog();  #endif ... }
+void Automation::stop()    { ... #if ENABLE_DEZOG_AUTOMATION  stopDezog();  #endif ... }
+AutomationDezog* Automation::getDezog();
 ```
+
+`AutomationDezog::start(port)`:
+- `port == 0` → `UNREAL_DEZOG_PORT` environment variable → `dzrp::DEFAULT_PORT` (12000)
+- creates a `DezogDebugAdapter` (unbound → resolves `EmulatorManager::GetMostRecentEmulator()` per call)
+- creates a `dzrp::Server` bound to `127.0.0.1:<port>` and wires
+  `adapter.setPauseNotifier(server.notifyPause)`
+- returns `false` (and tears down) if the port is busy — the rest of automation keeps running
+
+### DezogDebugAdapter ↔ Emulator
+
+| IDebugInterface | Emulator API |
+|-----------------|--------------|
+| `pause()` | `Emulator::Pause()` (blocks until the Z80 thread parked) then emits `MANUAL` with PC |
+| `resume()` | `Emulator::Resume()` |
+| `getRegisters()/setRegister()` | `Z80State` fields (`alt.*` for shadow set, `r_low` for R) |
+| `readMemory()/writeMemory()` | `Memory::DirectRead/WriteToZ80Memory` (no breakpoint side effects) |
+| `getSlots()/setSlot()` | `GetROMPage/GetRAMPageForBankN`, `SetROMPage/SetRAMPageToBankN`; ROM banks = 8/9 (DeZog ZX128 model), `0xFE/0xFF` aliases accepted |
+| `writeBank()` | `memcpy` into `Memory::RAMPageAddress(bank)` |
+| `addBreakpoint()` | `BreakpointManager::AddExecutionBreakpoint[InPage]` (owner `"dezog"`); temporaries tracked in a set |
+| `addWatchpoint()` | one `AddCombinedMemoryBreakpoint[InPage]` per byte of the range (idempotent per key) |
+| `captureState()/restoreState()` | `Emulator::SaveSnapshot/LoadSnapshot` via a temp `.sna` file |
+| `getMachineType()` | `config.mem_model` (`MM_SPECTRUM48` → ZX48K, everything else → ZX128K) |
+| `setBorder()` | `Screen::SetBorderColor` |
+
+Adding a breakpoint/watchpoint calls `Emulator::DebugOn()` and enables the
+`debugmode` + `breakpoints` features so the instrumented memory interface is
+active.
+
+### Stop notifications
+
+The adapter subscribes (Observer-method, so it can unsubscribe precisely) to
+`NC_EXECUTION_BREAKPOINT`, filters by the emulator UUID in
+`BreakpointTriggeredPayload` (nil id = legacy sender, accepted), classifies the
+hit via the `BreakpointDescriptor::memoryType` (execute → `BREAKPOINT`,
+write-only → `WATCHPOINT_WRITE`, otherwise `WATCHPOINT_READ`) and calls the
+notifier. Exactly one NTF_PAUSE is produced per stop:
+
+- `CMD_PAUSE` → the server defers `pause()` until after the ACK is written, so
+  the wire order is always ACK → NTF_PAUSE.
+- GUI-initiated pauses are **not** forwarded (DeZog only expects a notification
+  in reply to its own CMD_PAUSE / CMD_CONTINUE).
 
 ### GDB Server Refactor
 

@@ -19,6 +19,7 @@ option(ENABLE_PYTHON_AUTOMATION "Enable automation for Python" OFF)
 option(ENABLE_WEBAPI_AUTOMATION "Enable automation for WebAPI" ON)
 option(ENABLE_CLI_AUTOMATION "Enable automation for CLI" ON)
 option(ENABLE_GDB_AUTOMATION "Enable automation for GDB RSP server (GDB TDD G1+)" OFF)
+option(ENABLE_DEZOG_AUTOMATION "Enable automation for DeZog (DZRP) debug server" ON)
 
 # Recording support - follows the root CMakeLists.txt option (single source of truth
 # for the EmulatorContext/Core struct layout). Declared here so a standalone automation
@@ -41,6 +42,7 @@ if (NOT ENABLE_AUTOMATION)
     set(ENABLE_WEBAPI_AUTOMATION OFF)
     set(ENABLE_CLI_AUTOMATION OFF)
     set(ENABLE_GDB_AUTOMATION OFF)
+    set(ENABLE_DEZOG_AUTOMATION OFF)
 endif ()
 
 # Add subdirectories based on automation options
@@ -74,6 +76,12 @@ if (ENABLE_GDB_AUTOMATION)
     # add_subdirectory(gdb)   # Added in G1 (GDB TDD §2)
     message(STATUS "ENABLE_GDB_AUTOMATION=ON but GDB transport not yet implemented (Sprint 0 stub)")
     set(AUTOMATION_GDB_TARGET "")   # Empty until G1 lands
+endif ()
+
+# DeZog (DZRP v2.2.0) debug server transport
+if (ENABLE_DEZOG_AUTOMATION)
+    add_subdirectory(dezog)
+    set(AUTOMATION_DEZOG_TARGET automation_dezog)
 endif ()
 
 set (SOURCES
@@ -120,6 +128,7 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
             $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:automation_python>    # Conditional linking
             $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:automation_webapi>    # Conditional linking
             $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:automation-cli>          # Conditional linking
+            $<$<BOOL:${ENABLE_DEZOG_AUTOMATION}>:automation_dezog>      # Conditional linking
             # ENABLE_GDB_AUTOMATION link target added in G1 (GDB TDD §2)
 
         PUBLIC
@@ -162,6 +171,7 @@ else ()
             $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${AUTOMATION_LUA_TARGET}>
             $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${AUTOMATION_PYTHON_TARGET}>
             $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:${AUTOMATION_WEBAPI_TARGET}>
+            $<$<BOOL:${ENABLE_DEZOG_AUTOMATION}>:${AUTOMATION_DEZOG_TARGET}>
             unrealng::core
     )
 endif ()
@@ -174,6 +184,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
     $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/python/src>
     $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/webapi/src>
     $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/cli/include>
+    $<$<BOOL:${ENABLE_DEZOG_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/dezog/include>
 )
 
 # Add conditional compiler definitions for automation modules
@@ -186,6 +197,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:ENABLE_WEBAPI_AUTOMATION>
     $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:ENABLE_CLI_AUTOMATION>
     $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:ENABLE_GDB_AUTOMATION>
+    $<$<BOOL:${ENABLE_DEZOG_AUTOMATION}>:ENABLE_DEZOG_AUTOMATION>
 )
 
 # <Diagnostics>
@@ -197,6 +209,7 @@ message(STATUS "    ENABLE_PYTHON_AUTOMATION: ${ENABLE_PYTHON_AUTOMATION}")
 message(STATUS "    ENABLE_CLI_AUTOMATION: ${ENABLE_CLI_AUTOMATION}")
 message(STATUS "    ENABLE_WEBAPI_AUTOMATION: ${ENABLE_WEBAPI_AUTOMATION}")
 message(STATUS "    ENABLE_GDB_AUTOMATION: ${ENABLE_GDB_AUTOMATION}")
+message(STATUS "    ENABLE_DEZOG_AUTOMATION: ${ENABLE_DEZOG_AUTOMATION}")
 message(STATUS "Settings:")
 message(STATUS "  PROJECT_NAME:        ${PROJECT_NAME}")
 message(STATUS "  SRC_DIR:             ${SRC_DIR}")

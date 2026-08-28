@@ -6,39 +6,68 @@ Verification tools for the DeZog Remote Protocol implementation.
 
 | File | Description |
 |------|-------------|
-| `dzrp_client.py` | Python DZRP client library |
-| `verify_dzrp_protocol.py` | Protocol verification script |
+| `dzrp_client.py` | Python DZRP client library (DeZog-shaped: tolerates interleaved notifications) |
+| `verify_dzrp_protocol.py` | Protocol verification against the **mock** `dezog-test-server` |
+| `verify_dzrp_emulator.py` | End-to-end verification against a **real emulator** (unreal-qt) |
 
 ## Usage
 
-### Run Test Server
+### Mock server verification (protocol layer only)
 
 ```bash
-# Build and run standalone test server
-cd core/automation/dezog
-mkdir build && cd build
-cmake .. && make
-./dezog-test-server [port]
+# Build (part of the normal tree; also buildable standalone from core/automation/dezog)
+ninja -C cmake-build-release dezog-test-server
+
+./cmake-build-release/bin/dezog-test-server 12345 &
+python3 tools/verification/dezog/verify_dzrp_protocol.py --port 12345
 ```
 
-### Run Verification
+### Real emulator verification (production module)
+
+The DeZog module is started by `Automation::start()` in every host
+(unreal-qt, unreal-videowall, standalone `automation`) when the build has
+`ENABLE_DEZOG_AUTOMATION=ON` (default). Port: `UNREAL_DEZOG_PORT` env var,
+else 12000.
 
 ```bash
-# With default port 12000
-python3 tools/verification/dezog/verify_dzrp_protocol.py
+# Unattended: launch the headless host on a scratch port, verify, stop it
+ninja -C cmake-build-release dezog-emulator-host
+python3 tools/verification/dezog/verify_dzrp_emulator.py --launch --port 12010
 
-# With custom host/port
-python3 tools/verification/dezog/verify_dzrp_protocol.py --host localhost --port 12000
+# Against an already running host on the default port 12000
+# (unreal-qt with an emulator instance started from the UI, or dezog-emulator-host)
+python3 tools/verification/dezog/verify_dzrp_emulator.py
 ```
 
-### Run Unit Tests
+`dezog-emulator-host [port] [model]` (built from `core/automation/dezog/test/emulator-host.cpp`)
+creates one real emulator instance, starts it and exposes it through the
+production `AutomationDezog` module — no GUI, no CLI/WebAPI ports. It is also
+the easiest way to attach the DeZog VS Code extension to a headless emulator.
+Note that unreal-qt only creates an emulator instance when the user starts one
+from the UI; until then a connected DeZog sees machine type `UNKNOWN`.
 
-The protocol unit tests are wired into the main `core-tests` binary:
+The script pauses the running instance, captures its state, installs a small
+Z80 loop at 0x8000, exercises breakpoints / step (temporary BPs) / write
+watchpoints / pause / banking / state round-trip, then restores the captured
+state and resumes — the host emulator is left as it was found.
+
+### Unit / integration tests (GTest)
+
+All DeZog suites are wired into the main `core-tests` binary and run against a
+live emulator instance (no external process, ephemeral ports):
 
 ```bash
-ninja -C cmake-build-release
-./cmake-build-release/bin/core-tests --gtest_filter='DZRPProtocolTest.*'
+ninja -C cmake-build-release core-tests
+./cmake-build-release/bin/core-tests \
+    --gtest_filter='DZRPProtocolTest.*:DezogDebugAdapter_test.*:DZRPServer_test.*:AutomationDezog_test.*'
 ```
+
+| Suite | Covers |
+|-------|--------|
+| `DZRPProtocolTest` | framing, LE helpers, seq masking, oversize/coalesced frames, capability bitfield |
+| `DezogDebugAdapter_test` | registers (16/8-bit, alt, IX/IY halves), memory wrap, slots/ROM aliases, WRITE_BANK, BP owner/temp tracking, WP per-byte expansion + clamping, MANUAL/BREAKPOINT/WATCHPOINT notifications, cross-instance filtering, state round-trip, border |
+| `DZRPServer_test` | real TCP session: INIT, capabilities, unknown cmd → empty ACK, regs/mem/slots/bank/border over the wire, CONTINUE → NTF_PAUSE, temp-BP step + auto-clear, PAUSE ordering (ACK before NTF), watchpoints, READ/WRITE_STATE, reconnect |
+| `AutomationDezog_test` | port resolution (arg / env / default / garbage), start/stop idempotency, client handshake through the module, busy-port failure |
 
 ## Test Coverage
 

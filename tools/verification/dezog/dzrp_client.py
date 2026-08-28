@@ -49,6 +49,9 @@ class DZRPClient:
         self.port = port
         self.sock: Optional[socket.socket] = None
         self.seq_no = 0
+        # Notifications (seq 0) may interleave with responses; like DeZog we
+        # stash them and let wait_notification() consume them in order.
+        self.pending_notifications: list = []
 
     def connect(self) -> bool:
         try:
@@ -82,16 +85,23 @@ class DZRPClient:
             raise RuntimeError(f"Seq mismatch: sent {seq}, got {resp.seq_no}")
         return resp
 
-    def _recv_response(self) -> DZRPResponse:
-        # Read length
+    def _recv_frame(self) -> bytes:
         length_data = self._recv_exact(4)
         length = struct.unpack("<I", length_data)[0]
-        # Read payload
-        data = self._recv_exact(length)
-        seq_nak = data[0]
-        nak = bool(seq_nak & 0x80)
-        seq_no = seq_nak & 0x0F
-        return DZRPResponse(seq_no, nak, data[1:] if len(data) > 1 else b"")
+        return self._recv_exact(length)
+
+    def _recv_response(self) -> DZRPResponse:
+        # Skip (and stash) any notification frames that arrive before the response
+        for _ in range(8):
+            data = self._recv_frame()
+            if data and data[0] == 0:
+                self.pending_notifications.append(data)
+                continue
+            seq_nak = data[0]
+            nak = bool(seq_nak & 0x80)
+            seq_no = seq_nak & 0x0F
+            return DZRPResponse(seq_no, nak, data[1:] if len(data) > 1 else b"")
+        raise RuntimeError("Too many interleaved notifications while waiting for response")
 
     def _recv_exact(self, n: int) -> bytes:
         data = b""
@@ -249,12 +259,16 @@ class DZRPClient:
         resp = self._send_command(DZRPCommand.CMD_WRITE_STATE, state)
         return not resp.nak
 
+    def has_pending_notification(self) -> bool:
+        return len(self.pending_notifications) > 0
+
     def wait_notification(self, timeout: float = 10.0) -> Optional[DZRPPauseNotification]:
         self.sock.settimeout(timeout)
         try:
-            length_data = self._recv_exact(4)
-            length = struct.unpack("<I", length_data)[0]
-            data = self._recv_exact(length)
+            if self.pending_notifications:
+                data = self.pending_notifications.pop(0)
+            else:
+                data = self._recv_frame()
             seq = data[0]
             if seq != 0:  # Not a notification
                 return None

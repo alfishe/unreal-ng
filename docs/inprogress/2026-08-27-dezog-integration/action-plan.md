@@ -115,27 +115,33 @@ CMD_GET_REGISTERS. Banked breakpoints (bank != 0) require paging support.
 
 | Task | Status |
 |------|--------|
-| ENABLE_DEZOG_AUTOMATION option | ☐ |
-| add_subdirectory(dezog) in automation CMakeLists | ☐ |
-| automation.h/cpp start/stop wiring | ☐ |
-| unreal.ini dezog_port config | ☐ |
+| ENABLE_DEZOG_AUTOMATION option (root, core/automation, unreal-qt, unreal-videowall) | ☑ |
+| add_subdirectory(dezog) + link/include/definition in automation CMakeLists | ☑ |
+| automation.h/cpp start/stop wiring (`AutomationDezog`) | ☑ |
+| DezogDebugAdapter (IDebugInterface over the real Emulator) | ☑ |
+| Port config | ☑ `UNREAL_DEZOG_PORT` env var (no ini plumbing exists for CLI/WebAPI ports either) |
 
 ### 4.2 Testing
 
 | Task | Status |
 |------|--------|
-| GTest suite (framing, seq masking, limits, coalescing) | ☑ |
-| Python verifier (all 18 commands + NTF_PAUSE + robustness) | ☑ |
+| GTest: protocol (framing, seq masking, limits, coalescing) | ☑ `DZRPProtocolTest` |
+| GTest: adapter over live emulator (regs, memory, banking, BP/WP, notifications, state, border) | ☑ `DezogDebugAdapter_test` |
+| GTest: real TCP session → server → adapter → emulator | ☑ `DZRPServer_test` |
+| GTest: AutomationDezog lifecycle / port resolution / busy port | ☑ `AutomationDezog_test` |
+| Python verifier vs mock server (all 18 commands + NTF_PAUSE + robustness) | ☑ `verify_dzrp_protocol.py` (34 tests) |
+| Headless real-emulator host for unattended runs / DeZog attach | ☑ `dezog-emulator-host` |
+| Python verifier vs real emulator (`--launch` headless host, 18 steps) | ☑ `verify_dzrp_emulator.py` |
+| Test all breakpoint types (exec, temp/step, write WP, R/W WP) | ☑ |
+| Test memory banking (SET_SLOT, WRITE_BANK, ROM aliases) | ☑ |
 | Manual test with DeZog extension | ☐ |
-| Test all breakpoint types | ☐ |
-| Test memory banking | ☐ |
 
 ### 4.3 Documentation
 
 | Document | Status |
 |----------|--------|
 | User guide | ☐ |
-| launch.json examples (remoteType: cspect) | ☐ |
+| launch.json examples (remoteType: cspect) | ☑ `tools/verification/dezog/README.md` |
 
 ## Limitations (MVP)
 
@@ -143,6 +149,10 @@ CMD_GET_REGISTERS. Banked breakpoints (bank != 0) require paging support.
 - **Banked breakpoints**: Requires emulator paging support (bank byte is bank+1 on wire, 0 = any bank)
 - **Expression evaluator**: Separate track (F13)
 - **supportedCommands required**: DeZog's cspect remote defaults disable WP (42/43) and state (50/51)
+- **Watchpoint direction**: combined R/W watchpoints report `WATCHPOINT_READ` (the breakpoint payload carries no access direction); write-only watchpoints report `WATCHPOINT_WRITE`
+- **GUI pauses**: a pause triggered from the Qt UI is not forwarded as NTF_PAUSE (DeZog would not expect it); pressing pause in VS Code afterwards still yields a MANUAL stop
+- **Single emulator**: the adapter follows `EmulatorManager::GetMostRecentEmulator()`; multi-instance selection is not exposed over DZRP
+- **No instance yet**: unreal-qt opens the DZRP port before the user starts an emulator; until then CMD_INIT reports machine `UNKNOWN` and commands are no-ops (use `dezog-emulator-host` for headless/unattended sessions)
 
 ## Decision Log
 
