@@ -158,6 +158,10 @@ std::vector<uint8_t> Protocol::buildSupportedCommandsBitfield()
     setBit(static_cast<uint8_t>(CommandId::CMD_READ_STATE));
     setBit(static_cast<uint8_t>(CommandId::CMD_WRITE_STATE));
 
+    // Unreal-NG extensions: TTD-backed instruction history (reverse debugging)
+    setBit(static_cast<uint8_t>(CommandId::CMD_GET_HISTORY_INFO));
+    setBit(static_cast<uint8_t>(CommandId::CMD_GET_HISTORY_ENTRY));
+
     return bitfield;
 }
 

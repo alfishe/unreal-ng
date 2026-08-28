@@ -511,6 +511,15 @@ notifier. Exactly one NTF_PAUSE is produced per stop:
 - GUI-initiated pauses are **not** forwarded (DeZog only expects a notification
   in reply to its own CMD_PAUSE / CMD_CONTINUE).
 
+### Session close
+
+When the client goes away (CMD_CLOSE or a dropped socket) the server calls
+`IDebugInterface::onSessionClosed()`. The adapter removes every dezog-owned
+breakpoint and watchpoint (temporaries included), keeps foreign breakpoints
+(CLI / GUI / analyzers) untouched, and resumes the emulator if it was paused.
+DeZog re-sends all breakpoints on the next connect, so nothing is lost and a
+closed VS Code window never leaves the target stuck at a stale breakpoint.
+
 ### GDB Server Refactor
 
 The existing GDB server should be refactored to use IDebugInterface:

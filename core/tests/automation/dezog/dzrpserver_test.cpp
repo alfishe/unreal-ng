@@ -284,7 +284,7 @@ TEST_F(DZRPServer_test, GetRegistersCarriesLiveStateAndSlots)
 
     auto resp = _client.command(dzrp::CommandId::CMD_GET_REGISTERS);
     ASSERT_TRUE(resp.valid);
-    ASSERT_GE(resp.payload.size(), 29u + 1u + 4u);
+    ASSERT_GE(resp.payload.size(), 29u + 4u);  // 29-byte reg block (nslots@28) + 4 slots@29
     EXPECT_EQ(dzrp::Protocol::readU16LE(resp.payload.data() + 0), 0x8000);
     EXPECT_EQ(dzrp::Protocol::readU16LE(resp.payload.data() + 10), 0xBEEF);
     EXPECT_EQ(resp.payload[28], 4);  // slot count
@@ -510,6 +510,150 @@ TEST_F(DZRPServer_test, CloseThenReconnect)
     std::vector<uint8_t> payload = {2, 0, 0, 'X', 0};
     auto resp = second.command(dzrp::CommandId::CMD_INIT, payload);
     EXPECT_TRUE(resp.valid);
+}
+
+TEST_F(DZRPServer_test, ClientDropWhileRunningCleansUpAndReconnects)
+{
+    init();
+    installProgram();
+
+    auto add = _client.command(dzrp::CommandId::CMD_ADD_BREAKPOINT, cat({u16(PROGRAM_JP), {0}, {0}}));
+    ASSERT_TRUE(add.valid);
+    ASSERT_TRUE(_client.command(dzrp::CommandId::CMD_CONTINUE, std::vector<uint8_t>(11, 0)).valid);
+
+    // VS Code window closed / network drop: no CMD_CLOSE, socket just goes away
+    _client.disconnect();
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    // Stale breakpoints are gone and the emulator is not left stuck on the hit
+    EXPECT_EQ(_emulator->GetBreakpointManager()->GetBreakpointsCount(), 0u);
+    EXPECT_FALSE(_emulator->IsPaused());
+
+    // Fresh session works as if nothing happened
+    TestDzrpClient second;
+    ASSERT_TRUE(second.connect(_server->getPort()));
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    std::vector<uint8_t> payload = {2, 0, 0, 'X', 0};
+    ASSERT_TRUE(second.command(dzrp::CommandId::CMD_INIT, payload).valid);
+    ASSERT_TRUE(second.command(dzrp::CommandId::CMD_PAUSE).valid);
+    auto ntf = second.waitNotification();
+    ASSERT_TRUE(ntf.valid);
+    EXPECT_EQ(ntf.reason, static_cast<uint8_t>(dzrp::BreakReason::MANUAL));
+}
+
+TEST_F(DZRPServer_test, CloseCommandResumesAndDropsBreakpoints)
+{
+    init();
+    installProgram();
+    ASSERT_TRUE(_client.command(dzrp::CommandId::CMD_ADD_BREAKPOINT, cat({u16(PROGRAM_JP), {0}, {0}})).valid);
+    ASSERT_TRUE(_emulator->IsPaused());
+
+    ASSERT_TRUE(_client.command(dzrp::CommandId::CMD_CLOSE).valid);
+    _client.disconnect();
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    EXPECT_EQ(_emulator->GetBreakpointManager()->GetBreakpointsCount(), 0u);
+    EXPECT_FALSE(_emulator->IsPaused());
+}
+
+TEST_F(DZRPServer_test, ReadMemFull64KOverWire)
+{
+    init();
+    auto r = _client.command(dzrp::CommandId::CMD_READ_MEM, cat({{0}, u16(0x0000), u16(0xFFFF)}));
+    ASSERT_TRUE(r.valid);
+    ASSERT_EQ(r.payload.size(), 0xFFFFu);
+    EXPECT_EQ(r.payload[0x0038], _emulator->GetMemory()->DirectReadFromZ80Memory(0x0038));
+    EXPECT_EQ(r.payload[0xC000], _emulator->GetMemory()->DirectReadFromZ80Memory(0xC000));
+}
+
+TEST_F(DZRPServer_test, ReadMemZeroLengthOverWire)
+{
+    init();
+    auto r = _client.command(dzrp::CommandId::CMD_READ_MEM, cat({{0}, u16(0x8000), u16(0)}));
+    ASSERT_TRUE(r.valid);
+    EXPECT_TRUE(r.payload.empty());
+}
+
+TEST_F(DZRPServer_test, RapidStepLoopOverWire)
+{
+    init();
+    installProgram();
+    _adapter->setRegister(dzrp::RegisterId::PC, PROGRAM_LOOP);
+
+    uint16_t pc = PROGRAM_LOOP;
+    for (int i = 0; i < 40; ++i)
+    {
+        uint16_t target = (pc == PROGRAM_LOOP) ? PROGRAM_STORE : (pc == PROGRAM_STORE) ? PROGRAM_JP : PROGRAM_LOOP;
+        auto cont = _client.command(dzrp::CommandId::CMD_CONTINUE,
+                                    cat({{1}, u16(target), {0, 0, 0}, {0, 0, 0, 0, 0}}));
+        ASSERT_TRUE(cont.valid) << "step " << i;
+        auto ntf = _client.waitNotification();
+        ASSERT_TRUE(ntf.valid) << "step " << i;
+        ASSERT_EQ(ntf.address, target) << "step " << i;
+        ASSERT_EQ(_client.pendingNotifications(), 0u) << "step " << i;
+        pc = target;
+    }
+    EXPECT_EQ(_adapter->getTemporaryBreakpointCount(), 0u);
+}
+
+TEST_F(DZRPServer_test, HistoryCommandsAdvertisedAndInfo)
+{
+    init();
+    auto caps = _client.command(dzrp::CommandId::CMD_GET_SUPPORTED_COMMANDS);
+    ASSERT_TRUE(caps.valid);
+    auto has = [&](int id) { return (caps.payload[id / 8] >> (id % 8)) & 1; };
+    EXPECT_TRUE(has(0xE0));
+    EXPECT_TRUE(has(0xE1));
+
+    auto info = _client.command(dzrp::CommandId::CMD_GET_HISTORY_INFO);
+    ASSERT_TRUE(info.valid);
+    ASSERT_EQ(info.payload.size(), 4u);
+    EXPECT_EQ(info.payload[0], 1);  // available
+    EXPECT_EQ(info.payload[1], 1);  // recording (started by CMD_INIT)
+}
+
+TEST_F(DZRPServer_test, HistoryEntryWireFormat)
+{
+    init();
+    installProgram();
+    ASSERT_TRUE(_client.command(dzrp::CommandId::CMD_ADD_BREAKPOINT, cat({u16(PROGRAM_JP), {0}, {0}})).valid);
+    ASSERT_TRUE(_client.command(dzrp::CommandId::CMD_CONTINUE, std::vector<uint8_t>(11, 0)).valid);
+    ASSERT_TRUE(_client.waitNotification().valid);
+
+    // index 0 = a recorded instruction in the program; assert the wire shape and
+    // that the opcodes bytes are coherent with a READ_MEM at the entry's PC.
+    auto e = _client.command(dzrp::CommandId::CMD_GET_HISTORY_ENTRY, {0, 0, 0, 0});
+    ASSERT_TRUE(e.valid);
+    // error(1) + reg block(29, nslots@28) + slots(4) + opcodes(4) + sp(2)
+    ASSERT_EQ(e.payload.size(), 1u + 29u + 4u + 4u + 2u);
+    EXPECT_EQ(e.payload[0], 0);
+    uint16_t pc = dzrp::Protocol::readU16LE(e.payload.data() + 1);
+    EXPECT_GE(pc, PROGRAM_START);
+    EXPECT_LE(pc, PROGRAM_JP + 2);
+    EXPECT_EQ(e.payload[1 + 28], 4);  // slot count (nslots @ index 28 of the reg block)
+    const uint8_t* op = e.payload.data() + 1 + 29 + 4;  // after error + reg block + 4 slots
+
+    // Browsing moved the emulator to `pc`; READ_MEM there must match the opcodes
+    auto mem = _client.command(dzrp::CommandId::CMD_READ_MEM, cat({{0}, u16(pc), u16(4)}));
+    ASSERT_TRUE(mem.valid);
+    for (int b = 0; b < 4; ++b)
+        EXPECT_EQ(op[b], mem.payload[b]) << "opcode byte " << b;
+
+    // Out of range → error 1, and a plain GET_REGISTERS afterwards shows the present again
+    auto far = _client.command(dzrp::CommandId::CMD_GET_HISTORY_ENTRY, {0xFF, 0xFF, 0x00, 0x00});
+    ASSERT_TRUE(far.valid);
+    ASSERT_EQ(far.payload.size(), 1u);
+    EXPECT_EQ(far.payload[0], 1);
+
+    auto regs = _client.command(dzrp::CommandId::CMD_GET_REGISTERS);
+    ASSERT_TRUE(regs.valid);
+    EXPECT_EQ(dzrp::Protocol::readU16LE(regs.payload.data()), PROGRAM_JP);
+
+    // Continue after browsing hits the breakpoint again
+    ASSERT_TRUE(_client.command(dzrp::CommandId::CMD_CONTINUE, std::vector<uint8_t>(11, 0)).valid);
+    auto ntf = _client.waitNotification();
+    ASSERT_TRUE(ntf.valid);
+    EXPECT_EQ(ntf.address, PROGRAM_JP);
 }
 
 TEST_F(DZRPServer_test, NotificationWithoutClientDoesNotCrash)

@@ -4,6 +4,8 @@
 #include "base/featuremanager.h"
 #include "common/uuid.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttd_checkpoint.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -14,6 +16,7 @@
 #include "emulator/video/screen.h"
 
 #include <atomic>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -49,6 +52,9 @@ uint8_t memoryTypeFromAccess(dzrp::WatchAccess access)
 
 DezogDebugAdapter::DezogDebugAdapter(std::shared_ptr<Emulator> emulator) : _emulator(std::move(emulator))
 {
+    if (const char* env = std::getenv(HISTORY_ENV_VAR))
+        _historyEnabled = !(env[0] == '0' && env[1] == '\0');
+
     subscribe();
 }
 
@@ -213,6 +219,8 @@ void DezogDebugAdapter::pause()
         emulator->Pause();
     }
 
+    leaveHistory(*emulator);
+
     const Z80State* z80 = emulator->GetZ80State();
     notify(dzrp::BreakReason::MANUAL, z80 ? z80->pc : 0);
 }
@@ -225,6 +233,9 @@ void DezogDebugAdapter::resume()
 
     if (!_temporaryBreakpoints.empty())
         ensureDebugEnabled(*emulator);
+
+    leaveHistory(*emulator);
+    ensureHistoryRecording(*emulator);
 
     emulator->Resume();
 }
@@ -275,6 +286,8 @@ void DezogDebugAdapter::setRegister(dzrp::RegisterId regId, uint16_t value)
     auto emulator = resolveEmulator();
     if (!emulator)
         return;
+
+    leaveHistory(*emulator);
 
     Z80State* z80 = emulator->GetZ80State();
     if (!z80)
@@ -328,6 +341,8 @@ void DezogDebugAdapter::setRegister(dzrp::RegisterId regId, uint16_t value)
             std::cerr << "[DZRP] setRegister: unsupported register id " << static_cast<int>(regId) << "\n";
             break;
     }
+
+    onDebuggerEdit(*emulator, "dezog set register");
 }
 
 /// endregion </Registers>
@@ -360,6 +375,8 @@ void DezogDebugAdapter::writeMemory(uint16_t addr, const std::vector<uint8_t>& d
     if (!emulator)
         return;
 
+    leaveHistory(*emulator);
+
     Memory* memory = emulator->GetMemory();
     if (!memory)
         return;
@@ -368,6 +385,9 @@ void DezogDebugAdapter::writeMemory(uint16_t addr, const std::vector<uint8_t>& d
     {
         memory->DirectWriteToZ80Memory(static_cast<uint16_t>((addr + i) & 0xFFFF), data[i]);
     }
+
+    if (!data.empty())
+        onDebuggerEdit(*emulator, "dezog write memory");
 }
 
 /// endregion </Memory>
@@ -404,6 +424,8 @@ void DezogDebugAdapter::setSlot(uint8_t slot, uint8_t bank)
     if (!emulator)
         return;
 
+    leaveHistory(*emulator);
+
     Memory* memory = emulator->GetMemory();
     if (!memory)
         return;
@@ -421,7 +443,10 @@ void DezogDebugAdapter::setSlot(uint8_t slot, uint8_t bank)
             romPage = bank;
 
         if (romPage < MAX_ROM_PAGES)
+        {
             memory->SetROMPage(romPage, true);
+            onDebuggerEdit(*emulator, "dezog set rom slot");
+        }
         return;
     }
 
@@ -433,8 +458,10 @@ void DezogDebugAdapter::setSlot(uint8_t slot, uint8_t bank)
         case 1: memory->SetRAMPageToBank1(bank); break;
         case 2: memory->SetRAMPageToBank2(bank); break;
         case 3: memory->SetRAMPageToBank3(bank, true); break;
-        default: break;
+        default: return;
     }
+
+    onDebuggerEdit(*emulator, "dezog set slot");
 }
 
 void DezogDebugAdapter::writeBank(uint8_t bank, const std::vector<uint8_t>& data)
@@ -442,6 +469,8 @@ void DezogDebugAdapter::writeBank(uint8_t bank, const std::vector<uint8_t>& data
     auto emulator = resolveEmulator();
     if (!emulator)
         return;
+
+    leaveHistory(*emulator);
 
     Memory* memory = emulator->GetMemory();
     if (!memory || bank >= MAX_RAM_PAGES)
@@ -453,6 +482,9 @@ void DezogDebugAdapter::writeBank(uint8_t bank, const std::vector<uint8_t>& data
 
     size_t len = data.size() < PAGE_SIZE ? data.size() : PAGE_SIZE;
     std::memcpy(page, data.data(), len);
+
+    if (len > 0)
+        onDebuggerEdit(*emulator, "dezog write bank");
 }
 
 /// endregion </Banking>
@@ -651,28 +683,51 @@ size_t DezogDebugAdapter::getWatchpointCount() const
 
 /// region <State>
 
-std::vector<uint8_t> DezogDebugAdapter::captureState() const
+std::vector<uint8_t> DezogDebugAdapter::captureSnapshotBytes(Emulator& emulator) const
 {
-    auto emulator = resolveEmulator();
-    if (!emulator)
-        return {};
-
     std::filesystem::path path = makeSnapshotTempPath();
     std::vector<uint8_t> bytes;
 
-    if (emulator->SaveSnapshot(path.string()))
+    if (emulator.SaveSnapshot(path.string()))
     {
         std::ifstream in(path, std::ios::binary);
         bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
     }
     else
     {
-        std::cerr << "[DZRP] captureState: SaveSnapshot failed\n";
+        std::cerr << "[DZRP] captureSnapshotBytes: SaveSnapshot failed\n";
     }
 
     std::error_code ec;
     std::filesystem::remove(path, ec);
     return bytes;
+}
+
+bool DezogDebugAdapter::restoreSnapshotBytes(Emulator& emulator, const std::vector<uint8_t>& bytes) const
+{
+    if (bytes.empty())
+        return false;
+
+    std::filesystem::path path = makeSnapshotTempPath();
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    }
+    bool ok = emulator.LoadSnapshot(path.string());
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    return ok;
+}
+
+std::vector<uint8_t> DezogDebugAdapter::captureState() const
+{
+    auto emulator = resolveEmulator();
+    if (!emulator)
+        return {};
+
+    const_cast<DezogDebugAdapter*>(this)->leaveHistory(*emulator);
+
+    return captureSnapshotBytes(*emulator);
 }
 
 void DezogDebugAdapter::restoreState(const std::vector<uint8_t>& state)
@@ -681,17 +736,13 @@ void DezogDebugAdapter::restoreState(const std::vector<uint8_t>& state)
     if (!emulator || state.empty())
         return;
 
-    std::filesystem::path path = makeSnapshotTempPath();
-    {
-        std::ofstream out(path, std::ios::binary);
-        out.write(reinterpret_cast<const char*>(state.data()), static_cast<std::streamsize>(state.size()));
-    }
+    leaveHistory(*emulator);
 
-    if (!emulator->LoadSnapshot(path.string()))
+    if (!restoreSnapshotBytes(*emulator, state))
         std::cerr << "[DZRP] restoreState: LoadSnapshot failed\n";
 
-    std::error_code ec;
-    std::filesystem::remove(path, ec);
+    // LoadSnapshot invalidates the TTD session - start a fresh history from here
+    ensureHistoryRecording(*emulator);
 }
 
 /// endregion </State>
@@ -730,3 +781,279 @@ void DezogDebugAdapter::setBorder(uint8_t color)
 }
 
 /// endregion </Machine>
+
+/// region <Session lifecycle>
+
+void DezogDebugAdapter::onSessionOpened()
+{
+    auto emulator = resolveEmulator();
+    if (!emulator)
+        return;
+
+    ensureHistoryRecording(*emulator);
+}
+
+void DezogDebugAdapter::onSessionClosed()
+{
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _temporaryBreakpoints.clear();
+        _watchpoints.clear();
+    }
+
+    auto emulator = resolveEmulator();
+    if (!emulator)
+        return;
+
+    leaveHistory(*emulator);
+
+    if (BreakpointManager* bpManager = emulator->GetBreakpointManager())
+    {
+        // Collect first: removing while iterating the manager's map is unsafe
+        std::vector<uint16_t> owned;
+        for (const auto& [id, desc] : bpManager->GetAllBreakpoints())
+        {
+            if (desc && desc->owner == BREAKPOINT_OWNER)
+                owned.push_back(id);
+        }
+        for (uint16_t id : owned)
+            bpManager->RemoveBreakpointByID(id);
+
+        if (!owned.empty())
+            std::cout << "[DZRP] Session closed: removed " << owned.size() << " dezog breakpoint(s)\n";
+    }
+
+    if (emulator->IsPaused())
+        emulator->Resume();
+}
+
+/// endregion </Session lifecycle>
+
+/// region <Instruction history (TTD)>
+
+namespace
+{
+ttd::TimeTravelManager* ttdManagerOf(Emulator& emulator)
+{
+    EmulatorContext* context = emulator.GetContext();
+    return context ? context->pTimeTravelManager : nullptr;
+}
+}  // namespace
+
+void DezogDebugAdapter::setHistoryEnabled(bool enabled)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _historyEnabled = enabled;
+}
+
+bool DezogDebugAdapter::isHistoryEnabled() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _historyEnabled;
+}
+
+int64_t DezogDebugAdapter::getHistoryCursor() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _historyCursor;
+}
+
+bool DezogDebugAdapter::isHistoryAvailable() const
+{
+    if (!isHistoryEnabled())
+        return false;
+    auto emulator = resolveEmulator();
+    return emulator && ttdManagerOf(*emulator) != nullptr;
+}
+
+bool DezogDebugAdapter::isHistoryRecording() const
+{
+    auto emulator = resolveEmulator();
+    if (!emulator)
+        return false;
+    ttd::TimeTravelManager* mgr = ttdManagerOf(*emulator);
+    return mgr && mgr->IsRecording();
+}
+
+void DezogDebugAdapter::ensureHistoryRecording(Emulator& emulator)
+{
+    if (!isHistoryEnabled())
+        return;
+
+    ttd::TimeTravelManager* mgr = ttdManagerOf(emulator);
+    if (!mgr || mgr->IsRecording())
+        return;
+
+    // Never restart while browsing: StartRecording wipes the timeline
+    if (getHistoryCursor() >= 0)
+        return;
+
+    if (!mgr->StartRecording())
+        std::cerr << "[DZRP] TTD StartRecording failed - instruction history unavailable\n";
+}
+
+void DezogDebugAdapter::onDebuggerEdit(Emulator& emulator, const char* what)
+{
+    if (!isHistoryEnabled())
+        return;
+
+    ttd::TimeTravelManager* mgr = ttdManagerOf(emulator);
+    if (!mgr || !mgr->IsRecording())
+        return;
+
+    // Marker for tooling/consistency, then a fresh baseline so replay starts
+    // from the edited state (a mid-frame checkpoint, exactly like StartRecording
+    // on connect). History before the edit is dropped - same segment semantics
+    // as any other nondeterministic barrier.
+    mgr->RecordExternalEvent(ttd::TTDExternalEventKind::DebuggerEdit, what);
+    mgr->StopRecording();
+    if (!mgr->StartRecording())
+        std::cerr << "[DZRP] TTD restart after debugger edit failed\n";
+}
+
+void DezogDebugAdapter::leaveHistoryIfBrowsing()
+{
+    if (getHistoryCursor() < 0)
+        return;
+    auto emulator = resolveEmulator();
+    if (emulator)
+        leaveHistory(*emulator);
+}
+
+void DezogDebugAdapter::leaveHistory(Emulator& emulator)
+{
+    std::vector<uint8_t> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (_historyCursor < 0)
+            return;
+        snapshot = _presentSnapshot;
+    }
+
+    // Restore the exact present state snapshotted on entry, then start a fresh
+    // recording from there. The pre-stop timeline is dropped: a mid-frame present
+    // is always beyond the last frame-boundary checkpoint, so it cannot be a TTD
+    // seek/ResumeRecordingFrom target. DeZog re-derives history going forward.
+    if (!restoreSnapshotBytes(emulator, snapshot))
+        std::cerr << "[DZRP] leaveHistory: failed to restore present snapshot\n";
+
+    ttd::TimeTravelManager* mgr = ttdManagerOf(emulator);
+    if (mgr)
+    {
+        if (mgr->IsRecording())
+            mgr->StopRecording();
+        if (isHistoryEnabled())
+            mgr->StartRecording();
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _historyCursor = -1;
+        _historyPositions.clear();
+        _presentSnapshot.clear();
+    }
+}
+
+std::optional<dzrp::IDebugInterface::HistoryEntry> DezogDebugAdapter::getHistoryEntry(uint32_t index)
+{
+    if (!isHistoryEnabled())
+        return std::nullopt;
+
+    auto emulator = resolveEmulator();
+    if (!emulator || !emulator->IsPaused())
+        return std::nullopt;
+
+    ttd::TimeTravelManager* mgr = ttdManagerOf(*emulator);
+    if (!mgr || mgr->GetCheckpointCount() == 0)
+        return std::nullopt;
+
+    // Entering history: snapshot the present state (for a robust return trip),
+    // remember its TimePoint, and freeze the timeline.
+    if (getHistoryCursor() < 0)
+    {
+        std::vector<uint8_t> snap = captureSnapshotBytes(*emulator);
+        ttd::TTDTimePoint present = mgr->CurrentPosition();
+        if (mgr->IsRecording())
+            mgr->StopRecording();
+        std::lock_guard<std::mutex> lock(_mutex);
+        _present = {present.frame, present.tInFrame};
+        _presentSnapshot = std::move(snap);
+        _historyPositions.clear();
+        _historyCursor = 0;  // provisional; finalized below (marks "browsing")
+    }
+
+    // Extend the position cache up to `index` by stepping strictly backward in
+    // time, skipping the "absorb" steps that re-land on the current instruction.
+    bool outOfRange = false;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        while (_historyPositions.size() <= index)
+        {
+            ttd::TTDTimePoint from;
+            if (_historyPositions.empty())
+                from = {_present.first, _present.second};
+            else
+                from = {_historyPositions.back().first, _historyPositions.back().second};
+
+            // Start stepping from `from` (cache hits / forward moves may have
+            // left the emulator elsewhere).
+            mgr->SeekTo(from);
+
+            ttd::TTDTimePoint landed = from;
+            bool moved = false;
+            for (int guard = 0; guard < 16; ++guard)  // absorb ≤ 2 in practice
+            {
+                if (!mgr->StepBackInstruction())
+                    break;
+                landed = mgr->CurrentPosition();
+                if (landed < from)
+                {
+                    moved = true;
+                    break;
+                }
+            }
+
+            if (!moved)
+            {
+                outOfRange = true;
+                break;
+            }
+
+            _historyPositions.emplace_back(landed.frame, landed.tInFrame);
+        }
+    }
+
+    if (outOfRange)
+    {
+        // No earlier instruction — restore the present and resume recording.
+        leaveHistory(*emulator);
+        return std::nullopt;
+    }
+
+    // Materialize the requested index.
+    ttd::TTDTimePoint target;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        target = {_historyPositions[index].first, _historyPositions[index].second};
+        _historyCursor = static_cast<int64_t>(index);
+    }
+    mgr->SeekTo(target);
+
+    HistoryEntry entry;
+    entry.regs = getRegisters();
+    entry.slots = getSlots();
+
+    Memory* memory = emulator->GetMemory();
+    if (memory)
+    {
+        for (int i = 0; i < 4; ++i)
+            entry.opcodes[i] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(entry.regs.pc + i));
+        uint16_t lo = memory->DirectReadFromZ80Memory(entry.regs.sp);
+        uint16_t hi = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(entry.regs.sp + 1));
+        entry.spContent = static_cast<uint16_t>(lo | (hi << 8));
+    }
+
+    return entry;
+}
+
+/// endregion </Instruction history (TTD)>

@@ -219,6 +219,91 @@ class EmulatorVerifier:
         self.expect_notification(REASON_MANUAL)
         return not self.client.has_pending_notification()
 
+    def step_rapid_step_loop(self):
+        # 8001 → 8003 → 8006 → 8001 ... exactly one NTF per CMD_CONTINUE, no strays
+        assert self.client.cmd_set_register(0, PROGRAM_LOOP)
+        pc = PROGRAM_LOOP
+        for i in range(30):
+            target = {PROGRAM_LOOP: PROGRAM_STORE, PROGRAM_STORE: PROGRAM_JP, PROGRAM_JP: PROGRAM_LOOP}[pc]
+            assert self.client.cmd_continue_with_temp_bps(target), f"step {i}"
+            self.expect_notification(REASON_BREAKPOINT, target)
+            assert not self.client.has_pending_notification(), f"stray notification at step {i}"
+            pc = target
+        return True
+
+    def step_rom_breakpoint_via_interrupt(self):
+        # EI; loop: JR loop → IM1 interrupt every frame vectors to ROM 0x0038
+        assert self.client.cmd_write_mem(PROGRAM_START, bytes([0xFB, 0x18, 0xFE]))
+        assert self.client.cmd_set_register(0, PROGRAM_START)
+        assert self.client.cmd_set_register(13, 1)  # IM 1
+        bp = self.client.cmd_add_breakpoint(0x0038)
+        assert bp > 0
+        assert self.client.cmd_continue()
+        self.expect_notification(REASON_BREAKPOINT, 0x0038)
+        assert self.client.cmd_remove_breakpoint(bp)
+        self.install_program()  # back to the store/jp loop for the next steps
+        return True
+
+    def step_read_full_64k(self):
+        data = self.client.cmd_read_mem(0x0000, 0xFFFF)
+        return len(data) == 0xFFFF and data[PROGRAM_START:PROGRAM_START + len(PROGRAM)] == PROGRAM
+
+    def step_history_info(self):
+        info = self.client.cmd_get_history_info()
+        return info["available"] and info["recording"]
+
+    def step_history_walk_back(self):
+        # Reverse-debug through several loop iterations. We assert coherence
+        # invariants (opcodes match memory at the entry PC; PCs are in-program;
+        # positions run out eventually) rather than a hard-coded PC-per-index
+        # trace, because the exact instruction each index lands on is a property
+        # of the TTD M1-granular reverse-seek.
+        program_pcs = {PROGRAM_START, PROGRAM_LOOP, PROGRAM_STORE, PROGRAM_JP}
+        self.install_program()
+        bp = self.client.cmd_add_breakpoint(PROGRAM_JP)
+        assert bp > 0
+        for _ in range(4):
+            assert self.client.cmd_continue()
+            self.expect_notification(REASON_BREAKPOINT, PROGRAM_JP)
+        assert self.client.cmd_remove_breakpoint(bp)
+
+        t0 = time.time()
+        entries = []
+        for i in range(10):
+            e = self.client.cmd_get_history_entry(i)
+            assert e is not None, f"entry {i} missing"
+            assert e["pc"] in program_pcs, f"entry {i}: pc {e['pc']:04X} not in program"
+            mem = self.client.cmd_read_mem(e["pc"], 4)  # browsing seeks here
+            assert e["opcodes"] == mem, f"entry {i}: opcodes {e['opcodes'].hex()} != mem {mem.hex()}"
+            entries.append(e)
+        t1 = time.time()
+
+        # Forward within history: index 0 must resolve to the same PC as before (cached)
+        e0 = self.client.cmd_get_history_entry(0)
+        assert e0 is not None and e0["pc"] == entries[0]["pc"]
+        t2 = time.time()
+
+        self.history_ms_per_entry = (t1 - t0) * 1000 / 10
+        print(f"  history: {self.history_ms_per_entry:.1f} ms/entry sequential (incl. a READ_MEM each), "
+              f"forward revisit {(t2 - t1) * 1000:.0f} ms")
+
+        # Reverse walk is coherent and forward-revisit is stable; that is the
+        # invariant we assert. (Total history depth on a live host is large and
+        # not exhausted here.)
+        return e0["opcodes"] == self.client.cmd_read_mem(e0["pc"], 4)
+
+    def step_history_continue_after_browse(self):
+        bp = self.client.cmd_add_breakpoint(PROGRAM_JP)
+        assert bp > 0
+        assert self.client.cmd_continue()  # returns to present first, then runs
+        self.expect_notification(REASON_BREAKPOINT, PROGRAM_JP)
+        assert self.client.cmd_remove_breakpoint(bp)
+        regs = self.client.cmd_get_registers()
+        info = self.client.cmd_get_history_info()
+        return regs["pc"] == PROGRAM_JP and info["recording"] and \
+            self.client.cmd_read_mem(WATCH_TARGET, 1) == b"\x01" and \
+            not self.client.has_pending_notification()
+
     def step_watchpoint_write(self):
         assert self.client.cmd_set_register(0, PROGRAM_START)
         assert self.client.cmd_add_watchpoint(WATCH_TARGET, 1, access=2)
@@ -285,6 +370,12 @@ class EmulatorVerifier:
             ("Execution breakpoint hit", self.step_breakpoint_hit),
             ("Breakpoint re-hit + remove", self.step_breakpoint_rehit),
             ("CMD_CONTINUE temp BPs (step) + auto-clear", self.step_step_over_shape),
+            ("Rapid step loop x30 (one NTF per step)", self.step_rapid_step_loop),
+            ("ROM breakpoint 0x0038 via IM1 interrupt", self.step_rom_breakpoint_via_interrupt),
+            ("CMD_READ_MEM full 64K", self.step_read_full_64k),
+            ("History: CMD_GET_HISTORY_INFO (available + recording)", self.step_history_info),
+            ("History: walk back 10 entries via TTD (+ latency)", self.step_history_walk_back),
+            ("History: continue after browsing", self.step_history_continue_after_browse),
             ("Write watchpoint hit", self.step_watchpoint_write),
             ("CMD_PAUSE while running", self.step_pause_running),
             ("CMD_WRITE_BANK + CMD_SET_SLOT", self.step_banking),

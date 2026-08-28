@@ -27,6 +27,7 @@
 #include <vector>
 
 class Emulator;
+namespace ttd { class TimeTravelManager; }
 
 class DezogDebugAdapter : public dzrp::IDebugInterface, public Observer
 {
@@ -76,6 +77,36 @@ public:
     dzrp::MachineType getMachineType() const override;
     void setBorder(uint8_t color) override;
 
+    // CMD_INIT: starts TTD recording so instruction history is available at the
+    // first stop (no-op when history is disabled via UNREAL_DEZOG_HISTORY=0).
+    void onSessionOpened() override;
+
+    // Drops every dezog-owned breakpoint/watchpoint (temporaries included) and
+    // resumes the emulator if it is paused, so a detached DeZog never leaves the
+    // target stuck or littered with stale breakpoints. Non-dezog breakpoints
+    // (CLI / GUI / analyzers) are preserved.
+    void onSessionClosed() override;
+
+    // --- Instruction history over TTD ---
+    // The emulator is physically moved through recorded history: entry `index`
+    // is served by positioning the emulator at the M1 of the (index+1)-th most
+    // recently executed instruction (StopRecording → ReverseStepInstructions /
+    // StepForwardInstruction relative to the current cursor). While browsing,
+    // getRegisters()/readMemory()/getSlots() reflect that historic state. Any
+    // forward-moving command (resume/pause/register or memory writes/state
+    // restore/session close) first returns to the present (ResumeRecordingFrom).
+    bool isHistoryAvailable() const override;
+    bool isHistoryRecording() const override;
+    std::optional<HistoryEntry> getHistoryEntry(uint32_t index) override;
+
+    // Cursor position: -1 = present, otherwise the history index currently materialized
+    int64_t getHistoryCursor() const;
+    bool isBrowsingHistory() const { return getHistoryCursor() >= 0; }
+    void setHistoryEnabled(bool enabled);
+    bool isHistoryEnabled() const;
+
+    static constexpr const char* HISTORY_ENV_VAR = "UNREAL_DEZOG_HISTORY";
+
     // --- Introspection (tests / diagnostics) ---
     size_t getTemporaryBreakpointCount() const;
     size_t getWatchpointCount() const;
@@ -104,6 +135,15 @@ private:
 
     std::shared_ptr<Emulator> resolveEmulator() const;
     void ensureDebugEnabled(Emulator& emulator);
+
+    // History helpers (all require a paused emulator; called on the control thread)
+    void ensureHistoryRecording(Emulator& emulator);
+    void leaveHistory(Emulator& emulator);
+    void leaveHistoryIfBrowsing();
+    // Out-of-band mutation (register/memory/slot/bank write from the debugger):
+    // TTD reconstructs history by deterministic replay, which such edits break.
+    // Record a DebuggerEdit marker and restart the recording from the edited state.
+    void onDebuggerEdit(Emulator& emulator, const char* what);
     void subscribe();
     void unsubscribe();
     void notify(dzrp::BreakReason reason, uint16_t addr);
@@ -119,4 +159,24 @@ private:
     std::map<WatchKey, std::vector<uint16_t>> _watchpoints;
 
     bool _subscribed = false;
+
+    // History state
+    // Reverse debugging walks the TTD timeline by TimePoint identity, not by
+    // step count: the number of physical StepBackInstruction calls needed to
+    // advance one DeZog index is not constant (a pre-execution breakpoint stop
+    // absorbs one, a mid-instruction manual pause absorbs two), so each DeZog
+    // index is pinned to the distinct (frame,tInFrame) it first resolved to and
+    // re-materialized with SeekTo. _historyPositions[i] = TimePoint of index i.
+    bool _historyEnabled = true;
+    int64_t _historyCursor = -1;                      // -1 = present (live)
+    std::pair<uint64_t, uint32_t> _present{0, 0};     // TimePoint of the present (valid while browsing)
+    std::vector<std::pair<uint64_t, uint32_t>> _historyPositions;
+    // Snapshot of the present captured on entering history. Restoring it is the
+    // robust way back: the present is a mid-frame stop, always beyond the last
+    // frame-boundary checkpoint, so TTD seek/ResumeRecordingFrom cannot target it.
+    std::vector<uint8_t> _presentSnapshot;
+
+    // Snapshot helpers (no history side effects, unlike captureState/restoreState)
+    std::vector<uint8_t> captureSnapshotBytes(Emulator& emulator) const;
+    bool restoreSnapshotBytes(Emulator& emulator, const std::vector<uint8_t>& bytes) const;
 };

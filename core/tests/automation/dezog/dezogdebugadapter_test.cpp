@@ -603,3 +603,448 @@ TEST_F(DezogDebugAdapter_test, SetBorderUpdatesScreen)
 }
 
 /// endregion </State / border>
+
+/// region <Session lifecycle>
+
+TEST_F(DezogDebugAdapter_test, SessionCloseDropsDezogBreakpointsKeepsOthersAndResumes)
+{
+    BreakpointManager* bpManager = _emulator->GetBreakpointManager();
+
+    // Foreign breakpoint (CLI/GUI owner) must survive
+    uint16_t foreign = bpManager->AddExecutionBreakpoint(0x1234);
+    ASSERT_NE(foreign, BRK_INVALID);
+
+    uint16_t bp = _adapter->addBreakpoint(PROGRAM_JP);
+    uint16_t temp = _adapter->addBreakpoint(PROGRAM_STORE, 0, "", true);
+    ASSERT_TRUE(_adapter->addWatchpoint(WATCH_TARGET, 0, 2, dzrp::WatchAccess::WRITE));
+    ASSERT_NE(bp, 0);
+    ASSERT_NE(temp, 0);
+    ASSERT_TRUE(_emulator->IsPaused());
+
+    _adapter->onSessionClosed();
+
+    EXPECT_EQ(bpManager->GetBreakpointById(bp), nullptr);
+    EXPECT_EQ(bpManager->GetBreakpointById(temp), nullptr);
+    EXPECT_NE(bpManager->GetBreakpointById(foreign), nullptr);
+    EXPECT_EQ(bpManager->GetBreakpointsCount(), 1u);
+    EXPECT_EQ(_adapter->getTemporaryBreakpointCount(), 0u);
+    EXPECT_EQ(_adapter->getWatchpointCount(), 0u);
+    EXPECT_FALSE(_emulator->IsPaused());
+
+    bpManager->RemoveBreakpointByID(foreign);
+}
+
+TEST_F(DezogDebugAdapter_test, SessionCloseWhileRunningIsHarmless)
+{
+    _adapter->resume();
+    _adapter->onSessionClosed();
+    EXPECT_FALSE(_emulator->IsPaused());
+    EXPECT_EQ(pendingEvents(), 0u);
+}
+
+/// endregion </Session lifecycle>
+
+/// region <Real-world shapes>
+
+TEST_F(DezogDebugAdapter_test, ROMBreakpointHitViaIM1Interrupt)
+{
+    // EI; loop: JR loop  → maskable interrupt every frame vectors to ROM 0x0038
+    _adapter->writeMemory(PROGRAM_START, {0xFB, 0x18, 0xFE});
+    _adapter->setRegister(dzrp::RegisterId::PC, PROGRAM_START);
+    _adapter->setRegister(dzrp::RegisterId::SP, 0xFF00);
+    _adapter->setRegister(dzrp::RegisterId::IM, 1);
+
+    uint16_t id = _adapter->addBreakpoint(0x0038);
+    ASSERT_NE(id, 0);
+
+    _adapter->resume();
+
+    PauseEvent ev{};
+    ASSERT_TRUE(waitForEvent(ev));
+    EXPECT_EQ(ev.reason, dzrp::BreakReason::BREAKPOINT);
+    EXPECT_EQ(ev.address, 0x0038);
+    EXPECT_EQ(_emulator->GetZ80State()->pc, 0x0038);
+
+    _adapter->removeBreakpoint(id);
+}
+
+TEST_F(DezogDebugAdapter_test, RapidStepLoopNeverLosesOrDuplicatesStops)
+{
+    installProgram();
+    _adapter->setRegister(dzrp::RegisterId::PC, PROGRAM_LOOP);
+
+    // Instruction cycle of the RAM program: 8001 → 8003 → 8006 → 8001 ...
+    const uint16_t next[] = {PROGRAM_STORE, PROGRAM_JP, PROGRAM_LOOP};
+    uint16_t pc = PROGRAM_LOOP;
+
+    for (int i = 0; i < 60; ++i)
+    {
+        uint16_t target = (pc == PROGRAM_LOOP) ? next[0] : (pc == PROGRAM_STORE) ? next[1] : next[2];
+
+        _adapter->clearTemporaryBreakpoints();
+        ASSERT_NE(_adapter->addBreakpoint(target, 0, "", true), 0) << "step " << i;
+        _adapter->resume();
+
+        PauseEvent ev{};
+        ASSERT_TRUE(waitForEvent(ev)) << "step " << i;
+        ASSERT_EQ(ev.address, target) << "step " << i;
+        ASSERT_EQ(_emulator->GetZ80State()->pc, target) << "step " << i;
+        _adapter->clearTemporaryBreakpoints();
+        pc = target;
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    EXPECT_EQ(pendingEvents(), 0u);
+}
+
+TEST_F(DezogDebugAdapter_test, ReadFull64KMatchesMemory)
+{
+    auto all = _adapter->readMemory(0x0000, 0xFFFF);
+    ASSERT_EQ(all.size(), 0xFFFFu);
+
+    Memory* memory = _emulator->GetMemory();
+    for (uint32_t a : {0x0000u, 0x0038u, 0x3FFFu, 0x4000u, 0x8000u, 0xC000u, 0xFFFEu})
+        EXPECT_EQ(all[a], memory->DirectReadFromZ80Memory(static_cast<uint16_t>(a))) << std::hex << a;
+}
+
+/// endregion </Real-world shapes>
+
+/// region <Instruction history (TTD reverse debugging)>
+
+#include "debugger/ttd/timetravelmanager.h"
+
+class DezogHistory_test : public DezogEmulatorFixture
+{
+protected:
+    // Run the RAM loop until the JP breakpoint `hits` times, leaving the
+    // emulator paused at PROGRAM_JP with recorded history behind it.
+    void runToJp(int hits)
+    {
+        uint16_t id = _adapter->addBreakpoint(PROGRAM_JP);
+        ASSERT_NE(id, 0);
+        for (int i = 0; i < hits; ++i)
+        {
+            _adapter->resume();
+            PauseEvent ev{};
+            ASSERT_TRUE(waitForEvent(ev)) << "hit " << i;
+            ASSERT_EQ(ev.address, PROGRAM_JP);
+        }
+        _adapter->removeBreakpoint(id);
+    }
+
+    ttd::TimeTravelManager* ttd() { return _emulator->GetContext()->pTimeTravelManager; }
+};
+
+TEST_F(DezogHistory_test, AvailableButNotRecordingUntilSessionOpens)
+{
+    ASSERT_NE(ttd(), nullptr);
+    EXPECT_TRUE(_adapter->isHistoryAvailable());
+    EXPECT_FALSE(_adapter->isHistoryRecording());
+    EXPECT_EQ(_adapter->getHistoryEntry(0), std::nullopt);  // no timeline yet
+
+    _adapter->onSessionOpened();
+    EXPECT_TRUE(_adapter->isHistoryRecording());
+    EXPECT_TRUE(_emulator->IsPaused());  // starting a recording must not resume a paused target
+}
+
+TEST_F(DezogHistory_test, DisabledViaFlagReportsUnavailable)
+{
+    _adapter->setHistoryEnabled(false);
+    EXPECT_FALSE(_adapter->isHistoryAvailable());
+    _adapter->onSessionOpened();
+    EXPECT_FALSE(_adapter->isHistoryRecording());
+    EXPECT_EQ(_adapter->getHistoryEntry(0), std::nullopt);
+}
+
+// NOTE ON SEMANTICS: DeZog index i is served by physically seeking the TTD
+// engine to a distinct earlier M1 boundary and reading the live state there.
+// The exact instruction index i lands on is a property of TTD's M1-granular
+// reverse-seek (a pre-execution breakpoint has already fetched the current
+// instruction's M1), so these tests assert the *coherence* invariants that
+// actually matter for a debugger, not a hard-coded PC-per-index trace:
+//   - each entry's opcodes/SP-word match memory at that entry's PC/SP
+//   - successive indices move strictly backward in TTD time
+//   - PCs belong to the known instruction set of the recorded program
+//   - out-of-range resyncs to the present
+static bool isProgramPc(uint16_t pc)
+{
+    return pc == 0x8000 || pc == 0x8001 || pc == 0x8003 || pc == 0x8006;
+}
+
+TEST_F(DezogHistory_test, EntriesWalkStrictlyBackThroughRecordedInstructions)
+{
+    _adapter->onSessionOpened();
+    installProgram();
+    runToJp(2);
+
+    int64_t prevGlobal = -1;
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < 6; ++i)
+    {
+        auto e = _adapter->getHistoryEntry(i);
+        ASSERT_TRUE(e.has_value()) << "index " << i;
+        EXPECT_EQ(_adapter->getHistoryCursor(), static_cast<int64_t>(i));
+        EXPECT_EQ(e->slots.size(), 4u);
+        EXPECT_TRUE(isProgramPc(e->regs.pc)) << "index " << i << " pc=" << std::hex << e->regs.pc;
+
+        // Strictly-earlier positions: TTD time must decrease with index
+        int64_t globalT = static_cast<int64_t>(ttd()->CurrentPosition().frame) * 100000 +
+                          ttd()->CurrentPosition().tInFrame;
+        if (prevGlobal >= 0)
+            EXPECT_LT(globalT, prevGlobal) << "index " << i;
+        prevGlobal = globalT;
+        ++count;
+    }
+    EXPECT_EQ(count, 6u);
+
+    // Eventually runs out of recorded history and resyncs to the present
+    for (uint32_t i = 6; i < 64; ++i)
+    {
+        if (!_adapter->getHistoryEntry(i).has_value())
+        {
+            EXPECT_EQ(_adapter->getHistoryCursor(), -1);
+            EXPECT_TRUE(_adapter->isHistoryRecording());
+            EXPECT_EQ(_emulator->GetZ80State()->pc, PROGRAM_JP);
+            return;
+        }
+    }
+    FAIL() << "history never reported end-of-range";
+}
+
+TEST_F(DezogHistory_test, EntryOpcodesAndSpWordAreCoherentWithMemory)
+{
+    _adapter->onSessionOpened();
+    installProgram();
+    runToJp(1);
+
+    for (uint32_t i = 0; i < 4; ++i)
+    {
+        auto e = _adapter->getHistoryEntry(i);
+        ASSERT_TRUE(e.has_value()) << i;
+        // While materialized at this entry, live memory must match the entry payload
+        auto mem = _adapter->readMemory(e->regs.pc, 4);
+        for (int b = 0; b < 4; ++b)
+            EXPECT_EQ(e->opcodes[b], mem[b]) << "index " << i << " byte " << b;
+        auto sp = _adapter->readMemory(e->regs.sp, 2);
+        EXPECT_EQ(e->spContent, static_cast<uint16_t>(sp[0] | (sp[1] << 8))) << "index " << i;
+    }
+}
+
+TEST_F(DezogHistory_test, MemoryReflectsHistoricStateWhileBrowsing)
+{
+    _adapter->onSessionOpened();
+    installProgram();
+    runToJp(1);
+
+    // Present: the store at 8003 has executed at least once
+    EXPECT_EQ(_adapter->readMemory(WATCH_TARGET, 1)[0], 0x01);
+
+    // Walk back to the earliest recorded instruction (the DI at 8000, before the
+    // first store): memory at the watch target must read 0 there.
+    uint32_t lastValid = 0;
+    for (uint32_t i = 0; i < 32; ++i)
+    {
+        auto e = _adapter->getHistoryEntry(i);
+        if (!e.has_value())
+            break;
+        lastValid = i;
+        if (e->regs.pc == PROGRAM_START)  // 8000 DI — before any store executed
+            EXPECT_EQ(_adapter->readMemory(WATCH_TARGET, 1)[0], 0x00) << "at DI";
+    }
+    EXPECT_GT(lastValid, 0u);
+
+    // Back to the present on resume: memory and PC restored, next hit as usual
+    uint16_t id = _adapter->addBreakpoint(PROGRAM_JP);
+    _adapter->resume();
+    EXPECT_EQ(_adapter->getHistoryCursor(), -1);
+    PauseEvent ev{};
+    ASSERT_TRUE(waitForEvent(ev));
+    EXPECT_EQ(ev.address, PROGRAM_JP);
+    EXPECT_EQ(_adapter->readMemory(WATCH_TARGET, 1)[0], 0x01);
+    EXPECT_TRUE(_adapter->isHistoryRecording());
+    _adapter->removeBreakpoint(id);
+}
+
+TEST_F(DezogHistory_test, ForwardWithinHistoryIsCachedAndStable)
+{
+    _adapter->onSessionOpened();
+    installProgram();
+    runToJp(3);
+
+    // Record the PC each index resolves to, walking back...
+    uint16_t pcAt[6];
+    for (uint32_t i = 0; i < 6; ++i)
+    {
+        auto e = _adapter->getHistoryEntry(i);
+        ASSERT_TRUE(e.has_value()) << i;
+        pcAt[i] = e->regs.pc;
+    }
+
+    // ...then jump forward within history: each index must resolve to the SAME
+    // PC it did on the way back (positions are cached by TimePoint).
+    for (int i = 5; i >= 0; --i)
+    {
+        auto e = _adapter->getHistoryEntry(static_cast<uint32_t>(i));
+        ASSERT_TRUE(e.has_value()) << i;
+        EXPECT_EQ(e->regs.pc, pcAt[i]) << "forward revisit of index " << i;
+        EXPECT_EQ(_adapter->getHistoryCursor(), i);
+    }
+}
+
+TEST_F(DezogHistory_test, HistoryContinuesAcrossStops)
+{
+    _adapter->onSessionOpened();
+    installProgram();
+    runToJp(1);
+    ASSERT_TRUE(_adapter->getHistoryEntry(1).has_value());  // browse, then continue
+
+    runToJp(1);  // resume leaves history, recording continues, one more loop
+
+    // History still browsable and coherent after the intervening run
+    uint32_t valid = 0;
+    for (uint32_t i = 0; i < 6; ++i)
+    {
+        auto e = _adapter->getHistoryEntry(i);
+        if (!e.has_value())
+            break;
+        EXPECT_TRUE(isProgramPc(e->regs.pc)) << i;
+        auto mem = _adapter->readMemory(e->regs.pc, 1);
+        EXPECT_EQ(e->opcodes[0], mem[0]) << i;
+        ++valid;
+    }
+    EXPECT_GE(valid, 4u);
+}
+
+TEST_F(DezogHistory_test, RegisterWriteWhileBrowsingReturnsToPresentFirst)
+{
+    _adapter->onSessionOpened();
+    installProgram();
+    runToJp(1);
+
+    ASSERT_TRUE(_adapter->getHistoryEntry(1).has_value());
+    _adapter->setRegister(dzrp::RegisterId::HL, 0xABCD);
+    EXPECT_EQ(_adapter->getHistoryCursor(), -1);
+    EXPECT_EQ(_adapter->getRegisters().pc, PROGRAM_JP);  // present PC, not the historic one
+    EXPECT_EQ(_adapter->getRegisters().hl, 0xABCD);
+    EXPECT_TRUE(_adapter->isHistoryRecording());
+}
+
+TEST_F(DezogHistory_test, StateRestoreRestartsHistory)
+{
+    _adapter->onSessionOpened();
+    installProgram();
+    runToJp(2);
+    auto snapshot = _adapter->captureState();
+    ASSERT_FALSE(snapshot.empty());
+
+    runToJp(1);
+    _adapter->restoreState(snapshot);
+    // Fresh recording segment from the restored state
+    EXPECT_TRUE(_adapter->isHistoryRecording());
+    EXPECT_EQ(_adapter->getHistoryCursor(), -1);
+    // Restored PC is the JP we snapshotted at
+    EXPECT_EQ(_adapter->getRegisters().pc, PROGRAM_JP);
+    // A browse entry (if history already has one) is coherent; resume returns to present
+    auto e = _adapter->getHistoryEntry(0);
+    if (e.has_value())
+        EXPECT_TRUE(isProgramPc(e->regs.pc));
+    _adapter->resume();
+    EXPECT_EQ(_adapter->getHistoryCursor(), -1);
+}
+
+TEST_F(DezogHistory_test, SessionCloseWhileBrowsingReturnsToPresentAndResumes)
+{
+    _adapter->onSessionOpened();
+    installProgram();
+    runToJp(1);
+    ASSERT_TRUE(_adapter->getHistoryEntry(2).has_value());
+
+    _adapter->onSessionClosed();
+    EXPECT_EQ(_adapter->getHistoryCursor(), -1);
+    EXPECT_FALSE(_emulator->IsPaused());
+}
+
+TEST_F(DezogHistory_test, DebuggerEditStartsNewHistorySegment)
+{
+    _adapter->onSessionOpened();
+    installProgram();
+    runToJp(2);
+    ASSERT_TRUE(_adapter->getHistoryEntry(3).has_value());
+
+    // Edit from the debugger (returns to present, restarts recording from the edited state)
+    _adapter->writeMemory(0x8100, {0x00});
+    EXPECT_EQ(_adapter->getHistoryCursor(), -1);
+    EXPECT_TRUE(_adapter->isHistoryRecording());  // fresh segment, still recording
+
+    // History resumes normally after the edit
+    runToJp(1);
+    uint32_t valid = 0;
+    for (uint32_t i = 0; i < 4; ++i)
+    {
+        auto e = _adapter->getHistoryEntry(i);
+        if (!e.has_value())
+            break;
+        EXPECT_TRUE(isProgramPc(e->regs.pc)) << i;
+        ++valid;
+    }
+    EXPECT_GT(valid, 0u);  // fresh segment has the post-edit loop's instructions
+    _adapter->resume();
+}
+
+TEST_F(DezogHistory_test, LatencyReportAfterFreeRun)
+{
+    // Realistic shape: the target ran freely for ~0.5 s (≈25 frames of history)
+    // before the user pauses and starts stepping back.
+    _adapter->onSessionOpened();
+    installProgram();
+    _adapter->resume();
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    _adapter->pause();
+    PauseEvent ev{};
+    ASSERT_TRUE(waitForEvent(ev));
+
+    using clock = std::chrono::steady_clock;
+    auto t0 = clock::now();
+    for (uint32_t i = 0; i < 10; ++i)
+        ASSERT_TRUE(_adapter->getHistoryEntry(i).has_value()) << i;
+    auto t1 = clock::now();
+    ASSERT_TRUE(_adapter->getHistoryEntry(500).has_value());
+    auto t2 = clock::now();
+    ASSERT_TRUE(_adapter->getHistoryEntry(20000).has_value());  // crosses frame checkpoints
+    auto t3 = clock::now();
+    _adapter->resume();
+    _emulator->Pause();
+    auto t4 = clock::now();
+
+    auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+    std::cout << "[history-latency free-run] 10 sequential entries: " << ms(t0, t1) << " ms ("
+              << ms(t0, t1) / 10 << " ms/entry), jump to 500: " << ms(t1, t2)
+              << " ms, jump to 20000: " << ms(t2, t3) << " ms, return to present + resume: " << ms(t3, t4)
+              << " ms\n";
+}
+
+TEST_F(DezogHistory_test, LatencyReport)
+{
+    _adapter->onSessionOpened();
+    installProgram();
+    runToJp(40);  // ~120 instructions of history
+
+    using clock = std::chrono::steady_clock;
+    auto t0 = clock::now();
+    for (uint32_t i = 0; i < 10; ++i)
+        ASSERT_TRUE(_adapter->getHistoryEntry(i).has_value()) << i;  // DeZog "spot" prefetch shape
+    auto t1 = clock::now();
+    ASSERT_TRUE(_adapter->getHistoryEntry(60).has_value());           // deep jump (batched)
+    auto t2 = clock::now();
+    _adapter->resume();
+    _emulator->Pause();
+    auto t3 = clock::now();
+
+    auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+    std::cout << "[history-latency] 10 sequential entries: " << ms(t0, t1) << " ms ("
+              << ms(t0, t1) / 10 << " ms/entry), jump to index 60: " << ms(t1, t2)
+              << " ms, return to present + resume: " << ms(t2, t3) << " ms\n";
+    RecordProperty("ms_per_entry", ms(t0, t1) / 10);
+}
+
+/// endregion </Instruction history (TTD reverse debugging)>

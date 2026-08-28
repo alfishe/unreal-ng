@@ -139,6 +139,10 @@ void Server::acceptLoop()
             }
         }
 
+        m_postResponseAction = nullptr;
+        m_breakpoints.clear();
+        m_debug->onSessionClosed();
+
         std::cout << "[DZRP] Client disconnected\n";
     }
 }
@@ -241,6 +245,10 @@ Response Server::handleCommand(const Command& cmd)
             return handleReadState(cmd);
         case CommandId::CMD_WRITE_STATE:
             return handleWriteState(cmd);
+        case CommandId::CMD_GET_HISTORY_INFO:
+            return handleGetHistoryInfo(cmd);
+        case CommandId::CMD_GET_HISTORY_ENTRY:
+            return handleGetHistoryEntry(cmd);
         default:
             return makeNak(cmd.seqNo);
     }
@@ -295,6 +303,8 @@ Response Server::handleInit(const Command& cmd)
     std::string fullName = m_config.serverName + " v" + m_config.serverVersion;
     Protocol::writeNulString(resp.payload, fullName);
 
+    m_debug->onSessionOpened();
+
     std::cout << "[DZRP] CMD_INIT - handshake complete\n";
     return resp;
 }
@@ -312,13 +322,20 @@ Response Server::handleGetRegisters(const Command& cmd)
     Response resp;
     resp.seqNo = cmd.seqNo;
 
-    auto regs = m_debug->getRegisters();
-    auto slots = m_debug->getSlots();
+    appendRegisters(resp.payload, m_debug->getRegisters(), m_debug->getSlots());
+    return resp;
+}
 
-    // 29 bytes of registers + Nslots + slot data
-    resp.payload.resize(29 + 1 + slots.size());
+void Server::appendRegisters(std::vector<uint8_t>& out, const IDebugInterface::Registers& regs,
+                             const std::vector<uint8_t>& slots)
+{
+    // 29-byte register block (pc..reserved + nslots count at index 28) followed
+    // by `nslots` slot bytes at index 29. No trailing padding: a caller (history)
+    // may append more fields immediately after the slots.
+    size_t base = out.size();
+    out.resize(base + 29 + slots.size());
 
-    uint8_t* p = resp.payload.data();
+    uint8_t* p = out.data() + base;
     Protocol::writeU16LE(p + 0, regs.pc);
     Protocol::writeU16LE(p + 2, regs.sp);
     Protocol::writeU16LE(p + 4, regs.af);
@@ -341,7 +358,48 @@ Response Server::handleGetRegisters(const Command& cmd)
     {
         p[29 + i] = slots[i];
     }
+}
 
+Response Server::handleGetHistoryInfo(const Command& cmd)
+{
+    Response resp;
+    resp.seqNo = cmd.seqNo;
+    resp.payload = {static_cast<uint8_t>(m_debug->isHistoryAvailable() ? 1 : 0),
+                    static_cast<uint8_t>(m_debug->isHistoryRecording() ? 1 : 0), 0, 0};
+    return resp;
+}
+
+Response Server::handleGetHistoryEntry(const Command& cmd)
+{
+    Response resp;
+    resp.seqNo = cmd.seqNo;
+
+    if (!m_debug->isHistoryAvailable())
+    {
+        resp.payload.push_back(static_cast<uint8_t>(HistoryError::NOT_AVAILABLE));
+        return resp;
+    }
+
+    if (cmd.payload.size() < 4)
+    {
+        resp.payload.push_back(static_cast<uint8_t>(HistoryError::OUT_OF_RANGE));
+        return resp;
+    }
+
+    uint32_t index = Protocol::readU32LE(cmd.payload.data());
+    auto entry = m_debug->getHistoryEntry(index);
+    if (!entry)
+    {
+        resp.payload.push_back(static_cast<uint8_t>(HistoryError::OUT_OF_RANGE));
+        return resp;
+    }
+
+    resp.payload.push_back(static_cast<uint8_t>(HistoryError::OK));
+    appendRegisters(resp.payload, entry->regs, entry->slots);
+    resp.payload.insert(resp.payload.end(), entry->opcodes, entry->opcodes + 4);
+    size_t spOffset = resp.payload.size();
+    resp.payload.resize(spOffset + 2);
+    Protocol::writeU16LE(resp.payload.data() + spOffset, entry->spContent);
     return resp;
 }
 

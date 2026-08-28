@@ -132,8 +132,10 @@ CMD_GET_REGISTERS. Banked breakpoints (bank != 0) require paging support.
 | Python verifier vs mock server (all 18 commands + NTF_PAUSE + robustness) | ☑ `verify_dzrp_protocol.py` (34 tests) |
 | Headless real-emulator host for unattended runs / DeZog attach | ☑ `dezog-emulator-host` |
 | Python verifier vs real emulator (`--launch` headless host, 18 steps) | ☑ `verify_dzrp_emulator.py` |
-| Test all breakpoint types (exec, temp/step, write WP, R/W WP) | ☑ |
+| Test all breakpoint types (exec, temp/step, write WP, R/W WP, ROM BP via IM1 interrupt) | ☑ |
 | Test memory banking (SET_SLOT, WRITE_BANK, ROM aliases) | ☑ |
+| Real-world shapes: full 64K READ_MEM, rapid step loop (no lost/duplicate stops), client drop while running, CLOSE cleanup + resume | ☑ |
+| 48K model (machine type 2, 2-slot layout) via `dezog-emulator-host 48K` | ☑ |
 | Manual test with DeZog extension | ☐ |
 
 ### 4.3 Documentation

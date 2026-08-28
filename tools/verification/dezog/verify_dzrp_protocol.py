@@ -60,6 +60,7 @@ class DZRPVerifier:
             # State
             ("CMD_READ_STATE", self.test_read_state),
             ("CMD_WRITE_STATE", self.test_write_state),
+            ("CMD_GET_HISTORY_* (mock: not available)", self.test_history_not_available),
         
             # DeZog compatibility & robustness
             ("Unknown cmd \u2192 empty ACK", self.test_unknown_command_empty_ack),
@@ -254,6 +255,14 @@ class DZRPVerifier:
         if len(state) == 0:
             return False
         return self.client.cmd_write_state(state)
+
+    def test_history_not_available(self) -> bool:
+        # Mock IDebugInterface uses the default (no history) implementation
+        info = self.client.cmd_get_history_info()
+        if info["available"] or info["recording"]:
+            return False
+        resp = self.client._send_command(DZRPCommand.CMD_GET_HISTORY_ENTRY, struct.pack("<I", 0))
+        return not resp.nak and len(resp.payload) == 1 and resp.payload[0] == 2
 
     # --- DeZog compatibility ---
 

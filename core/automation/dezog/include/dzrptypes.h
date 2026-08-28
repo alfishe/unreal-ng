@@ -45,6 +45,27 @@ enum class CommandId : uint8_t
     CMD_REMOVE_WATCHPOINT = 43,
     CMD_READ_STATE = 50,
     CMD_WRITE_STATE = 51,
+
+    // --- Unreal-NG extensions (outside the DZRP 2.x range, gated by CMD_GET_SUPPORTED_COMMANDS) ---
+    // True reverse debugging backed by the TTD engine. DeZog's CpuHistory asks the
+    // remote for one executed-instruction record at a time; index 0 = the most
+    // recently executed instruction, 1 = the one before, ...
+    //
+    // CMD_GET_HISTORY_INFO  (0xE0): no payload
+    //   → available(1) recording(1) reserved(2)
+    // CMD_GET_HISTORY_ENTRY (0xE1): index(4, LE)
+    //   → error(1) [+ CMD_GET_REGISTERS payload + opcodes(4 bytes at PC) + word at (SP)(2)]
+    //   error 0 = ok, 1 = index out of range / no history, 2 = history not available
+    CMD_GET_HISTORY_INFO = 0xE0,
+    CMD_GET_HISTORY_ENTRY = 0xE1,
+};
+
+// Error codes for CMD_GET_HISTORY_ENTRY
+enum class HistoryError : uint8_t
+{
+    OK = 0,
+    OUT_OF_RANGE = 1,
+    NOT_AVAILABLE = 2,
 };
 
 // Notification IDs

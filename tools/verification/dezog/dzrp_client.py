@@ -26,6 +26,9 @@ class DZRPCommand(IntEnum):
     CMD_REMOVE_WATCHPOINT = 43
     CMD_READ_STATE = 50
     CMD_WRITE_STATE = 51
+    # Unreal-NG extensions (TTD-backed instruction history)
+    CMD_GET_HISTORY_INFO = 0xE0
+    CMD_GET_HISTORY_ENTRY = 0xE1
 
 class DZRPNotification(IntEnum):
     NTF_PAUSE = 1
@@ -258,6 +261,35 @@ class DZRPClient:
     def cmd_write_state(self, state: bytes) -> bool:
         resp = self._send_command(DZRPCommand.CMD_WRITE_STATE, state)
         return not resp.nak
+
+    def cmd_get_history_info(self) -> dict:
+        resp = self._send_command(DZRPCommand.CMD_GET_HISTORY_INFO)
+        if resp.nak or len(resp.payload) < 2:
+            return {"available": False, "recording": False}
+        return {"available": resp.payload[0] == 1, "recording": resp.payload[1] == 1}
+
+    def cmd_get_history_entry(self, index: int) -> Optional[dict]:
+        """Returns None when out of range / unavailable, else a register dict plus
+        'opcodes' (4 bytes at PC) and 'sp_content' (word at SP)."""
+        resp = self._send_command(DZRPCommand.CMD_GET_HISTORY_ENTRY, struct.pack("<I", index))
+        if resp.nak or len(resp.payload) < 1 or resp.payload[0] != 0:
+            return None
+        p = resp.payload[1:]
+        if len(p) < 29:
+            return None
+        nslots = p[28]
+        end = 29 + nslots
+        if len(p) < end + 6:
+            return None
+        return {
+            "pc": struct.unpack("<H", p[0:2])[0],
+            "sp": struct.unpack("<H", p[2:4])[0],
+            "af": struct.unpack("<H", p[4:6])[0],
+            "hl": struct.unpack("<H", p[10:12])[0],
+            "slots": list(p[29:end]),
+            "opcodes": bytes(p[end:end + 4]),
+            "sp_content": struct.unpack("<H", p[end + 4:end + 6])[0],
+        }
 
     def has_pending_notification(self) -> bool:
         return len(self.pending_notifications) > 0
