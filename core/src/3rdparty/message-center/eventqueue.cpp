@@ -370,24 +370,46 @@ void EventQueue::Dispatch(int id, Message* message)
     if (message == nullptr)
         return;
 
-    ObserverVectorPtr observers = GetObservers(id);
-
-    if (observers != nullptr)
+    // Hold m_mutexObservers across the whole iteration+invocation.
+    //
+    // Dispatch runs on the MessageCenter worker thread while RemoveObserver()
+    // (and dispose()) run on other threads - typically a GUI object
+    // unsubscribing from its own teardown. Without this lock the worker can be
+    // mid-iteration over the observers vector as another thread erase()s and
+    // delete()s a descriptor (or destroys the observer instance right after
+    // RemoveObserver returns), producing a use-after-free / wild call.
+    //
+    // Locking here makes RemoveObserver block until any in-flight dispatch to
+    // that observer completes, so an object that unsubscribes before it is
+    // destroyed is guaranteed not to receive a call into freed memory.
+    //
+    // Requirement: observer callbacks must NOT synchronously call
+    // Add/RemoveObserver() on this same EventQueue (that would self-deadlock on
+    // this non-recursive mutex). All callbacks in this project marshal to their
+    // own thread (e.g. Qt queued connections) instead, which is the correct
+    // pattern given dispatch happens on the worker thread.
     {
-        for (auto it : *observers)
+        std::lock_guard<std::mutex> lock(m_mutexObservers);
+
+        ObserverVectorPtr observers = GetObservers(id);
+
+        if (observers != nullptr)
         {
-            if (it->callback != nullptr)
+            for (auto it : *observers)
             {
-                (*it->callback)(id, message);
-            }
-            else if (it->callbackMethod != nullptr && it->observerInstance != nullptr)
-            {
-                ObserverCallbackMethod callbackMethod = it->callbackMethod;
-                (it->observerInstance->*callbackMethod)(id, message);
-            }
-            else if (it->callbackFunc != nullptr)
-            {
-                (it->callbackFunc)(id, message);
+                if (it->callback != nullptr)
+                {
+                    (*it->callback)(id, message);
+                }
+                else if (it->callbackMethod != nullptr && it->observerInstance != nullptr)
+                {
+                    ObserverCallbackMethod callbackMethod = it->callbackMethod;
+                    (it->observerInstance->*callbackMethod)(id, message);
+                }
+                else if (it->callbackFunc != nullptr)
+                {
+                    (it->callbackFunc)(id, message);
+                }
             }
         }
     }
