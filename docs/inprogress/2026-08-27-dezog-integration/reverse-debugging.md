@@ -16,6 +16,25 @@ stepping is strictly better than ZEsarUX/zsim, which show present memory.
 Source of truth for the contract: DeZog `src/remotes/cpuhistory.ts`,
 `decodehistinfo.ts` (`DecodeStandardHistoryInfo`), `zesaruxcpuhistory.ts`.
 
+## 1a. DZRP framing (asymmetric — matched to DeZog)
+
+The wire framing is **asymmetric** per direction (verified against DeZog
+`src/remotes/dzrpbuffer/dzrpbufferremote.ts` — `sendDzrpCmd` and `dataReceived`):
+
+- **Command (client → us):** `length(4) = DATA length ONLY` (excludes the seqNo
+  and command bytes), then `seqNo(1) + command(1) + data`. Full frame = 6 + data.
+- **Response (us → client):** `length(4) = seqNo(1) + data` (includes the seqNo),
+  then `seqNo(1) + data`. DeZog reads `length` bytes after the 4-byte header.
+- **Notification (us → client):** `length(4) = seqNo(1) + notifyId(1) + data`.
+
+> **Bug fixed here:** our command parser originally counted the seqNo+command in
+> the command length (like our own client did), so it agreed with itself but
+> **not with real DeZog** — DeZog's data-only length left 2 stray bytes per
+> command, desyncing the stream after `CMD_INIT` and surfacing as DeZog's
+> *"No response received from remote."* `readFramedMessage` now consumes
+> `4 + 2 + dataLen`; responses/notifications were already correct. The Python
+> verifier client frames byte-identically to DeZog, so it faithfully guards this.
+
 ## 2. Protocol extension (implemented)
 
 Two commands outside the DZRP 2.x range, advertised via
@@ -34,27 +53,62 @@ Note: the register block is exactly 29 bytes + `nslots` slot bytes — the DZRP
 follow immediately. (An earlier phantom trailing byte in the shared serializer
 shifted the history payload by one; fixed.)
 
+### History size is server-managed — external buffer sizes are ignored
+
+DeZog (and ZEsarUX-style remotes) carry a `reverseDebugInstructionCount` /
+`cpu-history set-max-size` notion — a fixed client-side ring bound. We have no
+such bound: history is the **whole unbounded TTD session**, and lookup memory is
+the transient per-frame decode cache (§5), both managed automatically. So **any
+client request to set a history/buffer size is accepted and ignored** — we
+respond OK and keep auto-managing. If a future protocol revision adds a
+note/reason field to that response (or to `CMD_GET_HISTORY_INFO`, which today has
+2 reserved bytes available), we advertise "auto-managed; requested size ignored"
+so the client knows not to bother sizing. Stock DZRP does not send a size command
+at all (DeZog's `StepHistoryClass.init()` only stores the count locally), so
+today this is purely a forward-compatibility policy for a custom `CpuHistory`
+client: don't size us; we size ourselves.
+
 ## 3. How it maps onto TTD (implemented)
 
 `DezogDebugAdapter` drives the existing `TimeTravelManager`:
 
 - **CMD_INIT** → `StartRecording()` (unless `UNREAL_DEZOG_HISTORY=0`). Capture
   runs continuously while the target executes.
-- **`getHistoryEntry(index)`** — on first call it snapshots the present state
-  (`.sna` bytes) and `StopRecording()` to freeze the timeline; then it walks the
-  timeline backward one M1 at a time (`StepBackInstruction`), caching the
-  distinct `TTDTimePoint` each DeZog index resolves to. Materialising an index
-  is `SeekTo(cachedTimePoint)` then read regs / opcodes / (SP) / slots. While
-  browsing, `readMemory` returns the historic memory at that point.
+- **`getHistoryEntry(index)`** — served from the **per-frame decode cache** (§5),
+  the winning strategy (see §"Best strategy for DeZog"). On the first call it
+  snapshots the present (`.sna` bytes, for an exact return) and `StopRecording()`
+  to freeze the timeline. It then maps the global DeZog index to `(frame,
+  entry-in-frame)` via `resolveHistoryIndex` — a small `_historySegs` table built
+  lazily from the present backward, one segment per frame, memoizing each frame's
+  visible-entry count. The present frame is *partial* (only instructions with
+  `tInFrame < presentTInFrame` are already-executed history); earlier frames are
+  complete. The record is read straight from `TimeTravelManager::GetFrameCache`
+  (regs / opcodes / SP-word / slots), **O(1)** after a one-time ~ms frame fill —
+  no seek per read.
+- **Memory while browsing** — the emulator stays at the present (the cache serves
+  the registers), so `readMemory` returns **present** memory. This matches
+  DeZog's own model ("the memory you see during reverse debugging is the actual
+  one"). Historic memory is still available on demand via a TTD `SeekTo` if a
+  future consumer needs it.
 - **Return to present** — any forward-moving command (resume, pause, register/
-  memory/slot/bank write, state restore, session close) first restores the
-  snapshot taken on entry and `StartRecording()` again. A snapshot restore is
-  used rather than a TTD seek because the present is a *mid-frame* stop, always
-  beyond the last frame-boundary checkpoint, so `SeekTo`/`ResumeRecordingFrom`
-  cannot target it.
+  memory/slot/bank write, state restore, session close) restores the snapshot
+  taken on entry and `StartRecording()` again. A snapshot restore is used rather
+  than a TTD seek because the present is a *mid-frame* stop, always beyond the
+  last frame-boundary checkpoint, so `SeekTo`/`ResumeRecordingFrom` cannot target
+  it.
 - **Debugger edits** (register/memory/bank writes from DeZog) record a
   `DebuggerEdit` marker and restart recording from the edited state — replay
   cannot reproduce an out-of-band edit, so the pre-edit segment is dropped.
+
+Measured effect of the cache wiring (`DezogHistory_test.LatencyReport*`):
+sequential step-back ~0.54 ms/entry (one frame fill amortized over the run);
+**jump to index 500: 0.74 s → 167 ns**, **jump to index 20000: 17 s → 3.8 ms**
+(same-frame jumps are cache hits; cross-frame jumps pay one ~ms rebuild).
+
+*To change the strategy:* it is localized to `getHistoryEntry` +
+`resolveHistoryIndex` + the `_historySegs` map. Reverting to a seek-per-read
+(historic memory, no cache) is dropping the `GetFrameCache` calls and doing a
+`SeekTo` per entry — the code carries a comment pointing here.
 
 ### Semantics caveat (why index↔instruction is not pinned in tests)
 
@@ -63,7 +117,9 @@ instruction a given index lands on depends on where the stop occurred (a
 pre-execution breakpoint has already fetched the current instruction's M1;
 a mid-frame manual pause is ambiguous by 1–2 M1s). The tests therefore assert
 **coherence invariants** — opcodes match live memory at the entry PC, positions
-move strictly backward, PCs are in-program, out-of-range resyncs to present —
+move strictly backward, PCs are in-program, out-of-range is non-destructive
+(the browsable history survives a bad index; the return to the present happens
+on the next forward command) —
 not a hard-coded PC-per-index trace. This is good enough for DeZog's UI (it
 disassembles the returned opcodes and shows the reverse trace); pinning exact
 DeZog-index semantics is one of the motivations for the ring cache in §5.
@@ -87,9 +143,8 @@ step redundantly re-replays from the frame start.
 
 | Measurement (busy frame, 13,562 instr/frame) | Value |
 |----------------------------------------------|-------|
-| One back-step, average | **1.37 ms** |
-| One back-step, worst case (target late in frame) | 5.24 ms |
-| One full-frame **forward replay** (`SeekTo` frame-start → frame-end) | **0.67 ms** |
+| One back-step, average (`BM_TTD_Busy_Rewind_500`) | **1.37 ms** |
+| One back-step from the browse point (`BM_TTD_Busy_StepBack_Single`) | **5.24 ms** |
 
 What this means for the operations users actually perform:
 
@@ -103,11 +158,11 @@ What this means for the operations users actually perform:
 
 Single steps and the 10-entry prefetch are already fine. The cost only bites
 once an action walks back **many** instructions — reverse-continue over a
-distance, or holding step-back. The key asymmetry: replaying a frame **once**
-forward is **0.67 ms**, yet stepping back through those same instructions pays
-0.67 ms of replay *per step*.
+distance, or holding step-back. The key asymmetry: each back-step re-replays the
+frame from its start, so N steps pay for N replays — which is exactly what the
+frame cache (§5) collapses into a single fill.
 
-## 5. PROPOSAL (not implemented): per-frame CPU/memory/port decode ring
+## 5. Per-frame CPU/memory/port decode cache — IMPLEMENTED in TTD
 
 ### It is a decode cache, not a history limit
 
@@ -119,96 +174,175 @@ throw away TTD's infinite history to imitate ZEsarUX's bounded `cpu-history`).
 Cost scales with *how many distinct frames you are looking at right now*, not
 with how far back the history goes.
 
-### Idea
+### Design (`core/src/debugger/ttd/timetravelframecache.h` + `TimeTravelManager`)
 
-The first time browsing enters a frame, replay that **one frame** forward once
-(the 0.67 ms pass above) and record, per executed M1, a fixed record into an
-array covering the frame:
+The first time browsing needs a frame, `TimeTravelManager::GetFrameCache(frame)`
+replays that **one frame** forward once with an M1 capture hook installed,
+recording per executed instruction a `TTDFrameCacheEntry` (CPU regs in DZRP
+order, 4 opcode bytes at PC, word at SP, slots). The instruction's **memory and
+port writes** are captured in the same replay via the existing
+`RecordMemoryWrite` / `RecordIoWrite` paths (a couple of stores each, guarded so
+they cost nothing outside a build). Subsequent reads of that frame are plain
+array indexing. The cache also pins the index↔instruction mapping exactly (the
+array *is* the M1 sequence), removing the §3 caveat.
 
-```
-struct M1Record {              // CPU/regs/flags — ~40 B
-    uint16_t pc, sp, af, bc, de, hl, ix, iy;   // 16 B
-    uint16_t af2, bc2, de2, hl2;               //  8 B
-    uint8_t  i, r, im, _pad;                   //  4 B
-    uint8_t  opcodes[4];                       //  4 B  (bytes at PC)
-    uint16_t spContent;                        //  2 B  (word at SP)
-    uint8_t  slots[4];                         //  4 B  (bank per slot)
-};
-```
+**Transparency is a verbatim snapshot restore, not a seek-back.** The build
+replay overwrites live state (Z80, RAM, port latches), so `GetFrameCache`
+snapshots the live machine (CPU, chipset, `z80.t`, full model RAM, peripheral
+blobs) before the build and restores it verbatim after — `SaveLiveState` /
+`RestoreLiveState`, mirroring `RestoreCheckpoint`'s ordering including the
+screen-cache resync. A seek-back cannot do this job: replay cannot cross
+external-event markers (their effects are not reproducible), so any recorded
+debugger edit inside the present frame — every soft breakpoint is a WRITE_MEM
+edit — would park the emulator at the marker instead of the present.
 
-Every subsequent `getHistoryEntry` in that frame is then an **array read**.
-Crossing to the previous frame replays that frame once (0.67 ms) to fill its
-ring. This also pins the index↔instruction mapping exactly (the ring *is* the
-M1 sequence), removing the §3 semantics caveat.
+**Hot/cold record split (see layout study below).** The record is the minimal
+fixed **hot** part; the variable per-instruction accesses live in one shared
+**arena** (`TTDFrameCache::accesses`), referenced by `(accessOffset, accessCount)`.
+The arena is a single segment packed **sequentially** during the build — no
+fragmentation, because it is append-only in one pass and `clear()`ed (capacity
+reused) on the next frame build. `AccessesOf(i, count)` returns an entry's
+access span.
 
-**Richer records are cheap (recommended).** Because the ring is filled during a
-replay pass that already re-executes every instruction, capturing each
-instruction's **memory and port accesses (address + value + R/W)** alongside the
-CPU record adds only a handful of bytes and a couple of stores per instruction —
-no extra replay. That gives O(1) reverse answers to "what did this instruction
-read/write / what was at this address / what went to this port at this moment"
-directly from cache, without touching the TTD write/IO journal. Budget ~8–16 B
-per instruction for a small per-instruction access list (most instructions touch
-0–2 bytes + at most one port), i.e. a ~50–56 B record.
+**Pre-reservation sized to the largest possible frame, scaled with CPU speed.**
+A frame is `config.frame` t-states at 1× (e.g. 71680 for Pentagon) and scales
+with `current_z80_frequency_multiplier` — turbo packs proportionally more
+instructions per frame (e.g. 16× at 56 MHz ≈ 287 k instructions/frame, ~16 MB of
+records). The shortest Z80 instruction is `kMinInstructionTStates = 4` (NOP), so
+entries and arena are reserved once to
+`ceil(config.frame × multiplier / 4) + kFrameReserveMargin`. Ceiling division
+plus the margin cover a boundary-straddling instruction (an instruction can
+start just before the frame end and run up to the longest opcode past it) and an
+injected interrupt, so a fill **never** reallocates mid-capture — verified for
+56 MHz (16×) in `TTD_FrameCache_Test.ScalesWithCpuFrequencyMultiplier`. On a
+reused block the reserve is a no-op. `BuildFrameCache` likewise replays the full
+`config.frame × multiplier` t-states, so a turbo frame is captured whole (not
+`1/multiplier` of it).
 
-### Projected performance vs current (from measured numbers)
+> **Known TTD limitation (not a cache issue):** `SeekTo` clamps its target
+> `tInFrame` to the *base* `config.frame`, so seeking to a mid-frame position in
+> a turbo frame lands short. The frame cache stores correct turbo `tInFrame`
+> values and serves records directly (no seek needed), but the "return to a
+> historical mid-frame position" path needs a separate turbo-aware `SeekTo` fix.
 
-The ring changes the cost model from **"per instruction stepped"** to **"per
-distinct frame entered"**: the first reverse step into a frame pays one
-0.67 ms fill, then every step, prefetch entry, or reverse-continue check inside
-that frame is a 0.80 ns array read.
+**Lifecycle — replay-scope only (as required):** built only when the session is
+**not Recording** (Detached / Idle-with-history); a call while Recording returns
+`nullptr`. **Freed, memory released,** the moment the session leaves the browse
+scope — `ClearFrameCache()` is called from `StartRecording`,
+`ResumeRecordingFrom`, and `InvalidateSession` (every path back to the live
+present). The block itself is reused across frame crossings within a browse
+scope (clear + refill), so it allocates at most once. It never exists during
+live forward recording, and lives in TTD, not the DeZog module.
 
-| Realistic action (within one frame) | Current (measured) | Ring cache (projected) |
-|--------------------------------------|--------------------|------------------------|
-| First reverse step into a frame | 1.37 ms | **0.67 ms** (fill) |
-| Each further step in that frame | 1.37 ms | **0.80 ns** |
-| 10-entry stop prefetch | ~14 ms | **0.67 ms** (fill) + ~8 ns |
-| Step back ~100 in the frame | ~140 ms | **0.67 ms** + ~80 ns |
-| Reverse-continue scanning ~1,000 | ~1.4 s | **0.67 ms** + ~0.8 µs |
-| Reverse-continue across the frame (~13k) | ~18 s | **0.67 ms** + ~11 µs |
+### Measured performance — cached lookup vs replay baseline
 
-`BM_TTD_Ring_ReadEntry` measured a full 40-byte record read at **0.80 ns**; the
-fill (`BM_TTD_Busy_RingFill_Frame`, one forward frame replay) at **0.67 ms**.
-The win grows with how far an action reaches inside the frame: negligible for a
-single step, decisive for reverse-continue and scrubbing (seconds → sub-ms).
+Apples-to-apples, same busy workload (13,562 instr/frame), same manager, from
+`ttd_reverse_benchmark.cpp` (`BM_TTD_FrameCache_*`):
 
-(Deep random *jumps* to a far index are a separate matter and don't need the
-ring at all: the current adapter naively single-steps to reach a far index; a
-direct `SeekTo(targetFrame)` — ~one frame replay, up to a full I-frame interval
-— reaches any point in ~ms. Fixing the adapter's cache-fill to seek instead of
-single-step is worth doing regardless of the ring.)
+| Operation | Measured |
+|-----------|----------|
+| Baseline — one entry via `StepBackInstruction` (replay per read) | **5.48 ms** |
+| Cached — one entry via `GetFrameCache` index (post-fill) | **42 ns** |
+| First-touch fill (`GetFrameCache`, one frame replay) | **4.83 ms** |
+| Cache footprint (13,562 entries + write arena) | **1.075 MB** |
+
+**Cached lookup is ~130,000× faster than the replay baseline** (42 ns vs
+5.48 ms) after a one-time ~4.8 ms fill. The cost model changes from *per
+instruction reached* to *per distinct frame entered*:
+
+| Realistic action within one frame | Replay baseline | Frame cache |
+|-----------------------------------|-----------------|-------------|
+| First entry into a frame | 5.48 ms | **4.83 ms** (fill) |
+| Each further entry in that frame | 5.48 ms | **42 ns** |
+| 10-entry stop prefetch | ~55 ms | 4.83 ms + ~0.4 µs |
+| Reverse-continue scanning ~1,000 | ~5.5 s | 4.83 ms + ~42 µs |
+| Scan the whole frame (~13.5k) | ~74 s | **~4.9 ms** |
+
+### Record layout study — why hot/cold split
+
+`BM_TTD_Layout_HotLookup` materializes the **same** captured frame into three
+candidate layouts and random-reads the CPU/history fields (the DeZog
+`getHistoryEntry` path) at three working-set sizes. Working set = the base frame
+**tiled** to model a windowed cache holding that many browsed frames — so all
+layouts hold the same number of cached instructions and differ only in bytes.
+
+- **Fat AoS** — inline memory/port arrays in the record (76 B).
+- **Split** — minimal record (56 B) + referenced shared access arena. *(chosen)*
+- **CpuOnly** — minimal record (48 B), accesses dropped (lower bound).
+
+| Working set | Fat AoS (76 B) | Split (56 B) | CpuOnly (48 B) |
+|-------------|----------------|--------------|----------------|
+| 1 frame (~0.7–1.0 MB, fits L2) | 2.13 ns | 2.11 ns | 2.12 ns |
+| 8 frames (~5–8 MB, exceeds L2) | 3.76 ns | **2.82 ns** | 2.58 ns |
+| 32 frames (~20–31 MB, exceeds L3) | 10.5 ns | **8.99 ns** | 8.80 ns |
+| Memory @ 32 frames | 31.5 MB | **23.2 MB** | 19.9 MB |
+
+**Conclusions:**
+1. At a cache-fitting working set (one frame, <L2) record size is **invisible** —
+   all three are ~2.1 ns. Measuring only there (the initial mistake) hides the
+   real trade-off.
+2. At realistic large working sets (browsing across many frames / a windowed
+   cache) random lookup **misses to L3/RAM**, so the smaller record wins:
+   **Split is 14–25 % faster than Fat** and uses **~26 % less memory**.
+3. **CpuOnly** is marginally faster/smaller than Split but throws away the
+   mem/port data. Split keeps it at near-CpuOnly cost — the right balance of
+   *reasonable memory, fast lookup, minimal allocations* (records + one arena =
+   two amortized allocations, reused across builds).
+
+#### Why not push it further — a *tiny* hot record (just `{tInFrame, pc}`)?
+
+Tempting on small-cache CPUs: keep only a couple of fields hot and move the
+whole CPU state into a referenced extension. `BM_TTD_Layout_HotLookup` (which=3,
+`TinyHot`) and `BM_TTD_Layout_PcScan` measure it, and it cuts both ways:
+
+| Access pattern | Split (full CPU hot, 56 B) | TinyHot ({tInFrame,pc} + cold ext) |
+|----------------|----------------------------|------------------------------------|
+| Full-state lookup, 8 frames (`getHistoryEntry`) | **2.67 ns** | 3.07 ns |
+| Full-state lookup, 32 frames | **9.26 ns** | 10.4 ns |
+| PC-only scan, 8 frames (`reverse-continue`) | 63 µs | **23 µs** |
+| PC-only scan, 32 frames | 450 µs | **92 µs** |
+
+- **Full-state lookup is ~15 % slower** with TinyHot: the field you always need
+  (CPU state) now costs a *second* cache miss (hot → cold), for no memory saving.
+- **Single-field scans are 3–6× faster** with TinyHot: the scan streams only the
+  ~10 B hot array instead of a 56 B stride — and the win grows on smaller caches.
+
+**Conclusion:** DeZog's dominant path is full-state `getHistoryEntry`, so the CPU
+state belongs in the hot record — TinyHot would be a net loss there. Split is the
+right default. A tiny record only wins for scan-dominated work (reverse-continue),
+and the better answer for that is an *additional* parallel scan index
+(`{tInFrame, pc}` array) layered on top of the full record, not moving the CPU
+state out of the hot path. Not built now; noted as an option if reverse-continue
+latency ever dominates.
 
 ### Memory cost
 
-Per-instruction record ~40 B (CPU only) to ~50–56 B (with the memory/port
-access list). At the measured 13,562 instr/frame:
+Real footprint **1.075 MB for a busy 13,562-instruction frame** (records +
+write arena; ~56 B fixed record + a few bytes of arena per writing instruction).
+Typical (non-tight-loop) code runs fewer instructions per frame, so this is an
+upper-ish bound. The footprint is bounded by the **browse window** — one frame
+in the current single-frame implementation — **not** by history depth, which
+remains the full (unbounded) TTD session. A windowed variant (last _W_ browsed
+frames) would cost _W_ × ~1.1 MB and is a trivial extension if back-and-forth
+scrubbing across frame boundaries warrants it.
 
-- **One frame:** 13,562 × 40 B ≈ **0.54 MB** (CPU only); ≈ **0.68–0.76 MB** with
-  accesses. Typical (non-tight-loop) code runs fewer instr/frame, so this is an
-  upper-ish bound.
-- **On-demand single frame** (fill on enter, discard on frame cross): **~0.5–0.8 MB**
-  steady — negligible next to the TTD page store, which is already several MB
-  over tens of recorded frames.
-- **Windowed** (keep the last _W_ browsed frames for smooth back-and-forth
-  scrubbing): _W_ × ~0.6 MB — e.g. 8 frames ≈ **~5 MB**.
+### Status / next
 
-Either way the ring's footprint is bounded by the browse window (1 to a few
-frames), **not** by history depth, which remains the full TTD session.
-
-### Recommended sequence (when we act on this)
-
-1. **Baseline is committed** — the `BM_TTD_Busy_*` / `BM_TTD_Ring_ReadEntry`
-   cases above are the reproducible baseline. Any ring implementation is
-   measured against them (latency + peak RSS via the session heap counters).
-2. Implement the **on-demand single-frame decode ring** in `TimeTravelManager`:
-   fill it during the existing replay pass (capturing CPU + memory/port
-   accesses), have the DeZog adapter read records instead of re-seeking.
-   Expected: within-frame stepping/reverse-continue drops from ~1.37 ms *per
-   instruction reached* to a one-time **0.67 ms** frame fill + **0.80 ns/entry**
-   (reverse-continue over a subroutine: ~1.4 s → sub-ms); cost ~0.5–0.8 MB per
-   browsed frame.
-3. Add a small **windowed** cache (a few MB) only if back-and-forth scrubbing
-   across frame boundaries feels laggy.
-
-Do **not** implement before an implementation is measured against step 1's
-baseline.
+- **Implemented in TTD:** `timetravelframecache.h` (`TTDFrameCacheEntry` split
+  record + `TTDFrameCache` arena) and `GetFrameCache` / `ClearFrameCache` /
+  `GetFrameCacheBytes` / `GetCachedFrame` in `TimeTravelManager`; CPU +
+  memory/port-write capture; frame-length-scaled pre-reservation; replay-scope
+  lifecycle with block reuse. Tests: `TTD_FrameCache_Test` (8 — cached entries
+  match live replay, mem/port capture via the arena, position transparency,
+  freed on StartRecording/Invalidate). Benchmarks: `BM_TTD_FrameCache_*`
+  (cached-vs-replay), `BM_TTD_Layout_HotLookup` (layout study).
+- **Wired into DeZog:** `DezogDebugAdapter::getHistoryEntry` now serves records
+  from `GetFrameCache` via `resolveHistoryIndex` (global index → (frame, entry)),
+  turning the per-read win into DeZog latency — measured jump-to-500 0.74 s →
+  167 ns, jump-to-20000 17 s → 3.8 ms. Tests: `DezogHistory_test.*` (15) updated
+  for the cache-backed semantics (present memory during browse, per DeZog's
+  model). The index↔instruction mapping is now exact (the cache is the M1
+  sequence), so the §3 "semantics caveat" no longer applies to cached reads.
+- Read **values** (mem/port reads) can be captured in the same build pass and
+  appended to the arena with `TTDAccessKind::MemRead` / `PortRead` if a consumer
+  needs them; writes are captured today.

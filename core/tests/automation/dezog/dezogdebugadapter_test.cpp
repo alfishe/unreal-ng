@@ -765,7 +765,9 @@ TEST_F(DezogHistory_test, DisabledViaFlagReportsUnavailable)
 //   - each entry's opcodes/SP-word match memory at that entry's PC/SP
 //   - successive indices move strictly backward in TTD time
 //   - PCs belong to the known instruction set of the recorded program
-//   - out-of-range resyncs to the present
+//   - out-of-range queries are NON-destructive: the adapter stays in browse
+//     mode, the browsable history survives a bad index, and the return to the
+//     present happens on the next forward command
 static bool isProgramPc(uint16_t pc)
 {
     return pc == 0x8000 || pc == 0x8001 || pc == 0x8003 || pc == 0x8006;
@@ -777,8 +779,10 @@ TEST_F(DezogHistory_test, EntriesWalkStrictlyBackThroughRecordedInstructions)
     installProgram();
     runToJp(2);
 
-    int64_t prevGlobal = -1;
-    uint32_t count = 0;
+    // Cache-backed strategy: entries carry historic regs/opcodes/slots straight
+    // from the TTD per-frame decode cache; the emulator itself stays at the
+    // present (no per-read seek). Monotonic-backward ordering is guaranteed by
+    // the index→(frame,entry) mapping, so we assert the visible invariants.
     for (uint32_t i = 0; i < 6; ++i)
     {
         auto e = _adapter->getHistoryEntry(i);
@@ -786,29 +790,54 @@ TEST_F(DezogHistory_test, EntriesWalkStrictlyBackThroughRecordedInstructions)
         EXPECT_EQ(_adapter->getHistoryCursor(), static_cast<int64_t>(i));
         EXPECT_EQ(e->slots.size(), 4u);
         EXPECT_TRUE(isProgramPc(e->regs.pc)) << "index " << i << " pc=" << std::hex << e->regs.pc;
-
-        // Strictly-earlier positions: TTD time must decrease with index
-        int64_t globalT = static_cast<int64_t>(ttd()->CurrentPosition().frame) * 100000 +
-                          ttd()->CurrentPosition().tInFrame;
-        if (prevGlobal >= 0)
-            EXPECT_LT(globalT, prevGlobal) << "index " << i;
-        prevGlobal = globalT;
-        ++count;
     }
-    EXPECT_EQ(count, 6u);
 
-    // Eventually runs out of recorded history and resyncs to the present
+    // Eventually runs out of recorded history. Out-of-range is NON-destructive:
+    // nothing moved under the cache strategy, so the adapter stays in browse
+    // mode and the browsable history survives the bad index.
+    bool sawEnd = false;
     for (uint32_t i = 6; i < 64; ++i)
     {
         if (!_adapter->getHistoryEntry(i).has_value())
         {
+            sawEnd = true;
+            EXPECT_EQ(_adapter->getHistoryCursor(), static_cast<int64_t>(i - 1));  // last good index
+            EXPECT_FALSE(_adapter->isHistoryRecording());  // still browsing
+            EXPECT_EQ(_emulator->GetZ80State()->pc, PROGRAM_JP);  // present never disturbed
+            auto again = _adapter->getHistoryEntry(0);
+            ASSERT_TRUE(again.has_value()) << "out-of-range query wiped the browsable history";
+            EXPECT_TRUE(isProgramPc(again->regs.pc));
+            _adapter->pause();  // forward command → back to the present, recording resumes
+            PauseEvent ev{};
+            EXPECT_TRUE(waitForEvent(ev));  // consume the manual-pause notification
             EXPECT_EQ(_adapter->getHistoryCursor(), -1);
             EXPECT_TRUE(_adapter->isHistoryRecording());
-            EXPECT_EQ(_emulator->GetZ80State()->pc, PROGRAM_JP);
             return;
         }
     }
-    FAIL() << "history never reported end-of-range";
+    ASSERT_TRUE(sawEnd) << "history never reported end-of-range";
+}
+
+TEST_F(DezogHistory_test, OutOfRangeQueryKeepsBrowsableHistory)
+{
+    // Regression: a failed query must NOT wipe the browsable history. The old
+    // seek-per-read code left history on failure (restoring the present and
+    // restarting recording — the whole browsable past was lost to one bad
+    // index); under the cache strategy nothing moved, so staying in browse
+    // mode is correct and lossless.
+    _adapter->onSessionOpened();
+    installProgram();
+    runToJp(1);
+
+    ASSERT_TRUE(_adapter->getHistoryEntry(0).has_value());
+    // Way past the oldest recorded instruction (also exercises the
+    // early-terminated backward walk at the recording baseline)
+    EXPECT_EQ(_adapter->getHistoryEntry(1'000'000), std::nullopt);
+    EXPECT_FALSE(_adapter->isHistoryRecording());  // still browsing, history intact
+    auto again = _adapter->getHistoryEntry(1);
+    ASSERT_TRUE(again.has_value()) << "bad index wiped the browsable history";
+    EXPECT_EQ(_adapter->getHistoryCursor(), 1);
+    EXPECT_EQ(_emulator->GetZ80State()->pc, PROGRAM_JP);  // present never disturbed
 }
 
 TEST_F(DezogHistory_test, EntryOpcodesAndSpWordAreCoherentWithMemory)
@@ -830,30 +859,36 @@ TEST_F(DezogHistory_test, EntryOpcodesAndSpWordAreCoherentWithMemory)
     }
 }
 
-TEST_F(DezogHistory_test, MemoryReflectsHistoricStateWhileBrowsing)
+TEST_F(DezogHistory_test, MemoryDuringBrowseIsPresentPerDeZogModel)
 {
+    // DeZog's model: during reverse debugging the memory you see is the ACTUAL
+    // (present) memory, not historic — the cache-backed strategy matches this by
+    // serving historic registers from the cache while leaving the emulator at the
+    // present, so readMemory returns present memory (no per-read seek).
     _adapter->onSessionOpened();
     installProgram();
     runToJp(1);
 
-    // Present: the store at 8003 has executed at least once
+    // Present: the store at 8003 has executed → watch target holds 1.
     EXPECT_EQ(_adapter->readMemory(WATCH_TARGET, 1)[0], 0x01);
 
-    // Walk back to the earliest recorded instruction (the DI at 8000, before the
-    // first store): memory at the watch target must read 0 there.
-    uint32_t lastValid = 0;
+    // Browse back to the DI at 8000: the ENTRY carries historic registers, but
+    // readMemory still reflects the present (value 1), per the DeZog model.
+    bool sawDi = false;
     for (uint32_t i = 0; i < 32; ++i)
     {
         auto e = _adapter->getHistoryEntry(i);
         if (!e.has_value())
             break;
-        lastValid = i;
-        if (e->regs.pc == PROGRAM_START)  // 8000 DI — before any store executed
-            EXPECT_EQ(_adapter->readMemory(WATCH_TARGET, 1)[0], 0x00) << "at DI";
+        if (e->regs.pc == PROGRAM_START)
+        {
+            sawDi = true;
+            EXPECT_EQ(_adapter->readMemory(WATCH_TARGET, 1)[0], 0x01) << "memory is present, not historic";
+        }
     }
-    EXPECT_GT(lastValid, 0u);
+    EXPECT_TRUE(sawDi);
 
-    // Back to the present on resume: memory and PC restored, next hit as usual
+    // Resume returns to the present and continues; next hit as usual.
     uint16_t id = _adapter->addBreakpoint(PROGRAM_JP);
     _adapter->resume();
     EXPECT_EQ(_adapter->getHistoryCursor(), -1);

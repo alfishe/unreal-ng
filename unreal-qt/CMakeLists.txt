@@ -343,8 +343,7 @@ if (INCLUDE_AUTOMATION)
         Qt6::Multimedia
         QHexView
 
-        unrealng::automation # This brings in core as PUBLIC dependency
-        $<$<BOOL:${INCLUDE_RECORDING}>:unrealng::recording>
+        unrealng::automation # This brings in core (and recording) as PUBLIC dependency
         ${CMAKE_DL_LIBS}
         Threads::Threads
     )
@@ -361,8 +360,7 @@ else ()
         Qt6::Multimedia
         QHexView
 
-        unrealng::core  # Keep this when automation is disabled
-        $<$<BOOL:${INCLUDE_RECORDING}>:unrealng::recording>
+        unrealng::core  # Keep this when automation is disabled (brings recording as PUBLIC dep)
         Threads::Threads
     )
 endif ()

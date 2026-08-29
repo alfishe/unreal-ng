@@ -144,26 +144,40 @@ class EmulatorVerifier:
         return self.client.connect()
 
     def step_init(self):
-        # The host may open the DZRP port before its first emulator instance
-        # exists (machine reported as UNKNOWN until then) - poll like a user
-        # would retry "attach" in VS Code.
+        # Replicates DeZog's cspect onConnect() EXACTLY (DeZog
+        # src/remotes/dzrp/dzrpremote.ts onConnect + dzrpbufferremote.ts
+        # sendDzrpCmdInit), so this check fails iff real DeZog would fail to
+        # attach:
+        #   - CMD_INIT with DZRP_VERSION=[2,0,0] + a program name
+        #   - error byte (resp[0]) must be 0
+        #   - version: DZRP_VERSION[0] == resp.major and DZRP_VERSION[1] <= resp.minor
+        #   - machineType (resp[4]) must be a known enum {16K,48K,128K,ZXNEXT},
+        #     else DeZog throws "Unknown machine type"
+        DZRP_VERSION = (2, 0, 0)
+        VALID_MACHINES = (1, 2, 3, 4)  # ZX16K, ZX48K, ZX128K, ZXNEXT
         started = time.time()
         deadline = started + self.instance_timeout
         resp = {}
         while True:
-            resp = self.client.cmd_init(version=(2, 0, 0), name="DeZog")
+            resp = self.client.cmd_init(version=DZRP_VERSION, name="DeZog")
             self.machine = resp.get("machine")
-            if resp.get("error") == 0 and self.machine in (MACHINE_ZX48K, MACHINE_ZX128K):
-                print(f"  emulator instance visible after {time.time() - started:.1f}s "
-                      f"(machine={self.machine}, server='{resp.get('name', '')}')")
+            major, minor = resp.get("version", (0, 0, 0))[0], resp.get("version", (0, 0, 0))[1]
+            version_ok = (DZRP_VERSION[0] == major) and (DZRP_VERSION[1] <= minor)
+            if resp.get("error") == 0 and version_ok and self.machine in VALID_MACHINES:
+                print(f"  DeZog onConnect OK after {time.time() - started:.1f}s "
+                      f"(DZRP {major}.{minor}, machine={self.machine}, "
+                      f"program='{resp.get('name', '')}')")
                 break
             if time.time() >= deadline:
-                print(f"  no emulator instance after {self.instance_timeout:.0f}s "
-                      f"(last CMD_INIT: {resp})")
+                print(f"  onConnect would FAIL after {self.instance_timeout:.0f}s "
+                      f"(error={resp.get('error')}, version=({major}.{minor}), machine={self.machine})")
                 break
             time.sleep(0.5)
-        return resp.get("error") == 0 and self.machine in (MACHINE_ZX48K, MACHINE_ZX128K) \
-            and "Unreal" in resp.get("name", "")
+        major, minor = resp.get("version", (0, 0, 0))[0], resp.get("version", (0, 0, 0))[1]
+        return (resp.get("error") == 0
+                and DZRP_VERSION[0] == major and DZRP_VERSION[1] <= minor
+                and self.machine in VALID_MACHINES
+                and len(resp.get("name", "")) > 0)
 
     def step_pause(self):
         # Emulator may be running or already paused - either way one MANUAL notification
@@ -273,7 +287,7 @@ class EmulatorVerifier:
             e = self.client.cmd_get_history_entry(i)
             assert e is not None, f"entry {i} missing"
             assert e["pc"] in program_pcs, f"entry {i}: pc {e['pc']:04X} not in program"
-            mem = self.client.cmd_read_mem(e["pc"], 4)  # browsing seeks here
+            mem = self.client.cmd_read_mem(e["pc"], 4)  # present mem at historic PC (static program: must match)
             assert e["opcodes"] == mem, f"entry {i}: opcodes {e['opcodes'].hex()} != mem {mem.hex()}"
             entries.append(e)
         t1 = time.time()
@@ -291,6 +305,63 @@ class EmulatorVerifier:
         # invariant we assert. (Total history depth on a live host is large and
         # not exhausted here.)
         return e0["opcodes"] == self.client.cmd_read_mem(e0["pc"], 4)
+
+    def step_history_deep_and_crossframe(self):
+        # Accumulate a LOT of history (free-run ~0.4 s so many frames record),
+        # then exercise the cache-backed reverse-debugging path at depth: deep
+        # index jumps (cross-frame cache rebuilds), a contiguous reverse scan,
+        # forward-revisit stability, and clean out-of-range + session survival.
+        assert self.client.cmd_continue()
+        time.sleep(0.4)
+        assert self.client.cmd_pause()
+        self.expect_notification(REASON_MANUAL)
+
+        info = self.client.cmd_get_history_info()
+        assert info["available"] and info["recording"]
+
+        def coherent(e, tag):
+            assert e is not None, f"{tag}: entry missing"
+            mem = self.client.cmd_read_mem(e["pc"], 4)
+            assert e["opcodes"] == mem, f"{tag}: opcodes {e['opcodes'].hex()} != mem {mem.hex()} @0x{e['pc']:04X}"
+            assert len(e["slots"]) in (2, 4), f"{tag}: slot count {len(e['slots'])}"
+            return e
+
+        # Contiguous reverse scan (reverse-continue shape): 200 entries, all valid.
+        t0 = time.time()
+        first = [coherent(self.client.cmd_get_history_entry(i), f"scan[{i}]") for i in range(200)]
+        t_scan = (time.time() - t0) * 1000 / 200
+
+        # Deep jumps across frames (the headline cache path). 50000 is ~7
+        # frames back on a 0.4 s free-run (~140K instructions recorded) — a
+        # genuinely multi-frame reverse-continue distance, with ample margin
+        # against slower machines (worst case ~93K instructions recorded).
+        deep_idxs = [500, 2000, 8000, 50_000]
+        t1 = time.time()
+        deep = {i: coherent(self.client.cmd_get_history_entry(i), f"deep[{i}]") for i in deep_idxs}
+        t_deep = (time.time() - t1) * 1000 / len(deep_idxs)
+
+        # Forward-revisit stability: re-fetching an earlier index yields the same PC.
+        r0 = self.client.cmd_get_history_entry(0)
+        assert r0 is not None and r0["pc"] == first[0]["pc"], "forward revisit changed pc"
+
+        # Out-of-range far beyond history: clean None — and NON-destructive:
+        # the browsable history must survive a bad index (still browsing,
+        # recording paused), then a forward command returns to the present
+        # and recording resumes.
+        assert self.client.cmd_get_history_entry(50_000_000) is None, "huge index should be out of range"
+        assert not self.client.cmd_get_history_info()["recording"], "failed query must stay in browse mode"
+        re_entry = self.client.cmd_get_history_entry(100)
+        assert re_entry is not None and "pc" in re_entry, "bad index must not wipe the browsable history"
+        regs = self.client.cmd_get_registers()
+        assert "pc" in regs
+        assert self.client.cmd_continue()
+        assert self.client.cmd_pause()
+        self.expect_notification(REASON_MANUAL)
+        assert self.client.cmd_get_history_info()["recording"], "resume must restart recording"
+
+        print(f"  reverse-debug: scan {t_scan:.3f} ms/entry, deep-jump {t_deep:.2f} ms/jump "
+              f"(indices {deep_idxs})")
+        return True
 
     def step_history_continue_after_browse(self):
         bp = self.client.cmd_add_breakpoint(PROGRAM_JP)
@@ -334,6 +405,52 @@ class EmulatorVerifier:
     def step_border(self):
         return self.client.cmd_set_border(2)
 
+    def step_ports(self):
+        # DeZog reads ports for custom dumps (cspectremote.ts sendDzrpCmdReadPort):
+        # the response must be EXACTLY one data byte. We used to ACK empty here,
+        # which surfaces as `undefined` values in DeZog's variables view.
+        value = self.client.cmd_read_port(0xFE)
+        if value is None:
+            return False
+        ok_write = self.client.cmd_write_port(0xFE, 0x02)
+        again = self.client.cmd_read_port(0xFE)
+        return ok_write and again is not None
+
+    def step_dezog_real_flow(self):
+        # Byte-exact replay of a real CSpect-remote session start (VS Code
+        # "stop on start"): breakpoint setup, registers fetch, the disassembly
+        # and stack memory reads (incl. the 0x8000-byte dumps DeZog's
+        # disassembler requests), continue + pause + NTF, and enough commands
+        # to roll the sequence number past 15. DeZog serializes its command
+        # queue (dzrpbufferremote.ts receivedMsg): ONE unanswered or mis-seq'd
+        # command freezes the whole session - this step must stay airtight.
+        c = self.client
+        bp = c.cmd_add_breakpoint(0x8000, 0, "")
+        if bp == 0:
+            return False
+        regs = c.cmd_get_registers()
+        if "pc" not in regs or "sp" not in regs:
+            return False
+        pc, sp = regs["pc"], regs["sp"]
+        if len(c.cmd_read_mem(pc, 0x40)) != 0x40:          # disassembly window
+            return False
+        if len(c.cmd_read_mem(sp, 0x40)) != 0x40:          # stack fetch
+            return False
+        if len(c.cmd_read_mem(0x0000, 0x8000)) != 0x8000:  # big disasm dump
+            return False
+        assert c.cmd_continue()
+        assert c.cmd_pause()
+        self.expect_notification(REASON_MANUAL)
+        if c.has_pending_notification():
+            return False
+        # Sequence-number rollover: DZRP seq is 1..15; a server that echoes or
+        # resets it wrongly breaks DeZog after the 15th command.
+        for _ in range(16):
+            if "pc" not in c.cmd_get_registers():
+                return False
+        return c.cmd_remove_breakpoint(bp)
+
+
     def step_unknown_command(self):
         resp = self.client._send_raw_command(99, b"")
         return not resp.nak and len(resp.payload) == 0
@@ -375,11 +492,14 @@ class EmulatorVerifier:
             ("CMD_READ_MEM full 64K", self.step_read_full_64k),
             ("History: CMD_GET_HISTORY_INFO (available + recording)", self.step_history_info),
             ("History: walk back 10 entries via TTD (+ latency)", self.step_history_walk_back),
+            ("History: deep + cross-frame reverse debugging", self.step_history_deep_and_crossframe),
             ("History: continue after browsing", self.step_history_continue_after_browse),
             ("Write watchpoint hit", self.step_watchpoint_write),
             ("CMD_PAUSE while running", self.step_pause_running),
             ("CMD_WRITE_BANK + CMD_SET_SLOT", self.step_banking),
             ("CMD_SET_BORDER", self.step_border),
+            ("CMD_READ_PORT/WRITE_PORT (custom dumps)", self.step_ports),
+            ("DeZog real-flow replay (bp/regs/disasm/stack/NTF/seq-rollover)", self.step_dezog_real_flow),
             ("Unknown cmd -> empty ACK", self.step_unknown_command),
             ("CMD_READ_STATE/WRITE_STATE round-trip", self.step_state_roundtrip),
             ("Restore original state + CONTINUE", self.step_restore_original),

@@ -77,6 +77,11 @@ public:
     dzrp::MachineType getMachineType() const override;
     void setBorder(uint8_t color) override;
 
+    uint8_t readPort(uint16_t port) const override;
+    void writePort(uint16_t port, uint8_t value) override;
+
+    bool waitForTarget(uint32_t timeoutMs) const override;
+
     // CMD_INIT: starts TTD recording so instruction history is available at the
     // first stop (no-op when history is disabled via UNREAL_DEZOG_HISTORY=0).
     void onSessionOpened() override;
@@ -88,13 +93,16 @@ public:
     void onSessionClosed() override;
 
     // --- Instruction history over TTD ---
-    // The emulator is physically moved through recorded history: entry `index`
-    // is served by positioning the emulator at the M1 of the (index+1)-th most
-    // recently executed instruction (StopRecording → ReverseStepInstructions /
-    // StepForwardInstruction relative to the current cursor). While browsing,
-    // getRegisters()/readMemory()/getSlots() reflect that historic state. Any
-    // forward-moving command (resume/pause/register or memory writes/state
-    // restore/session close) first returns to the present (ResumeRecordingFrom).
+    // Entries are served from the TTD per-frame decode cache
+    // (TimeTravelManager::GetFrameCache): a DeZog index is mapped to
+    // (frame, entry-in-frame) via lazily-built frame segments, and the decoded
+    // record (registers, slots, opcodes at PC, word at SP) is read straight
+    // from the cache. The emulator itself stays at the present while browsing
+    // (DeZog's model: the history UI renders from entry-carried data;
+    // getRegisters()/readMemory()/getSlots() during a browse reflect the
+    // present state). Any forward-moving command (resume/pause/register or
+    // memory writes/state restore/session close) first returns to the present
+    // by restoring the snapshot taken on history entry.
     bool isHistoryAvailable() const override;
     bool isHistoryRecording() const override;
     std::optional<HistoryEntry> getHistoryEntry(uint32_t index) override;
@@ -160,21 +168,42 @@ private:
 
     bool _subscribed = false;
 
-    // History state
-    // Reverse debugging walks the TTD timeline by TimePoint identity, not by
-    // step count: the number of physical StepBackInstruction calls needed to
-    // advance one DeZog index is not constant (a pre-execution breakpoint stop
-    // absorbs one, a mid-instruction manual pause absorbs two), so each DeZog
-    // index is pinned to the distinct (frame,tInFrame) it first resolved to and
-    // re-materialized with SeekTo. _historyPositions[i] = TimePoint of index i.
+    // History state.
+    //
+    // STRATEGY (see docs/inprogress/2026-08-27-dezog-integration/reverse-debugging.md
+    // §5 "Best strategy for DeZog"): a DeZog history index is served from the TTD
+    // per-frame decode cache (TimeTravelManager::GetFrameCache), not by a live
+    // seek per read. Instructions are grouped by frame; we map a global DeZog
+    // index → (frame, entry-in-frame) via `_historySegs` (built lazily from the
+    // present backward) and read the decoded record straight from the cache.
+    // This is O(1) per entry after a one-time ~ms frame fill, vs a ~ms replay
+    // per read for the old TimePoint-seek approach.
+    //
+    // TO CHANGE THE STRATEGY: everything lives in getHistoryEntry() + the
+    // `_historySegs` mapping below. To go back to seek-per-read, drop the cache
+    // calls and SeekTo each entry's TimePoint (see git history / the doc §3).
+    struct HistoryFrameSeg
+    {
+        uint64_t frame;       // timeline frame this segment covers
+        uint32_t count;       // DeZog-visible entries in this frame
+        uint64_t cumBefore;   // total visible entries in more-recent frames
+        bool     isPresent;   // present (partial) frame: only entries before the stop count
+    };
+
     bool _historyEnabled = true;
-    int64_t _historyCursor = -1;                      // -1 = present (live)
+    int64_t _historyCursor = -1;                      // -1 = present (live), else last index served
     std::pair<uint64_t, uint32_t> _present{0, 0};     // TimePoint of the present (valid while browsing)
-    std::vector<std::pair<uint64_t, uint32_t>> _historyPositions;
+    std::vector<HistoryFrameSeg> _historySegs;        // index→frame map, built backward from present
     // Snapshot of the present captured on entering history. Restoring it is the
     // robust way back: the present is a mid-frame stop, always beyond the last
     // frame-boundary checkpoint, so TTD seek/ResumeRecordingFrom cannot target it.
     std::vector<uint8_t> _presentSnapshot;
+
+    // Resolve a global DeZog history index to (frame, entryIndexInFrame),
+    // extending _historySegs backward as needed. Returns false when the index is
+    // beyond recorded history. Requires the timeline frozen (StopRecording).
+    bool resolveHistoryIndex(Emulator& emulator, uint32_t index, uint64_t& frameOut,
+                             uint32_t& entryIdxOut);
 
     // Snapshot helpers (no history side effects, unlike captureState/restoreState)
     std::vector<uint8_t> captureSnapshotBytes(Emulator& emulator) const;

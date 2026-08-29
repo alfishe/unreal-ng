@@ -205,8 +205,59 @@ void Server::sessionLoop(int clientSocket)
     }
 }
 
+namespace
+{
+// One-line trace per command. The stall diagnosis story: DeZog serializes its
+// command queue (dzrpbufferremote.ts receivedMsg), so a single unanswered
+// command freezes the whole session with no client-side hint. These logs make
+// the last-received command visible in the host console.
+const char* commandName(CommandId id)
+{
+    using CI = CommandId;
+    switch (id)
+    {
+        case CI::CMD_INIT: return "INIT";
+        case CI::CMD_CLOSE: return "CLOSE";
+        case CI::CMD_GET_REGISTERS: return "GET_REGISTERS";
+        case CI::CMD_SET_REGISTER: return "SET_REGISTER";
+        case CI::CMD_WRITE_BANK: return "WRITE_BANK";
+        case CI::CMD_CONTINUE: return "CONTINUE";
+        case CI::CMD_PAUSE: return "PAUSE";
+        case CI::CMD_READ_MEM: return "READ_MEM";
+        case CI::CMD_WRITE_MEM: return "WRITE_MEM";
+        case CI::CMD_SET_SLOT: return "SET_SLOT";
+        case CI::CMD_SET_BORDER: return "SET_BORDER";
+        case CI::CMD_READ_PORT: return "READ_PORT";
+        case CI::CMD_WRITE_PORT: return "WRITE_PORT";
+        case CI::CMD_INTERRUPT_ON_OFF: return "INTERRUPT_ON_OFF";
+        case CI::CMD_EXEC_ASM: return "EXEC_ASM";
+        case CI::CMD_ADD_BREAKPOINT: return "ADD_BREAKPOINT";
+        case CI::CMD_REMOVE_BREAKPOINT: return "REMOVE_BREAKPOINT";
+        case CI::CMD_ADD_WATCHPOINT: return "ADD_WATCHPOINT";
+        case CI::CMD_REMOVE_WATCHPOINT: return "REMOVE_WATCHPOINT";
+        case CI::CMD_READ_STATE: return "READ_STATE";
+        case CI::CMD_WRITE_STATE: return "WRITE_STATE";
+        case CI::CMD_GET_HISTORY_INFO: return "GET_HISTORY_INFO";
+        case CI::CMD_GET_HISTORY_ENTRY: return "GET_HISTORY_ENTRY";
+        default: return nullptr;
+    }
+}
+
+void logCommand(const Command& cmd)
+{
+    const char* name = commandName(cmd.cmdId);
+    if (name)
+        std::cout << "[DZRP] cmd " << name << " seq=" << static_cast<int>(cmd.seqNo) << "\n";
+    else
+        std::cout << "[DZRP] cmd 0x" << std::hex << static_cast<int>(cmd.cmdId) << std::dec
+                  << " (unknown) seq=" << static_cast<int>(cmd.seqNo) << "\n";
+}
+}  // namespace
+
 Response Server::handleCommand(const Command& cmd)
 {
+    logCommand(cmd);
+
     switch (cmd.cmdId)
     {
         case CommandId::CMD_INIT:
@@ -241,6 +292,10 @@ Response Server::handleCommand(const Command& cmd)
             return handleWriteBank(cmd);
         case CommandId::CMD_SET_BORDER:
             return handleSetBorder(cmd);
+        case CommandId::CMD_READ_PORT:
+            return handleReadPort(cmd);
+        case CommandId::CMD_WRITE_PORT:
+            return handleWritePort(cmd);
         case CommandId::CMD_READ_STATE:
             return handleReadState(cmd);
         case CommandId::CMD_WRITE_STATE:
@@ -290,6 +345,20 @@ Response Server::handleInit(const Command& cmd)
 
     // Parse client version and name from payload
     // payload: version(3) + name(nul-terminated)
+
+    // DeZog can connect while the host UI is still creating the emulator
+    // (observed with unreal-qt: DZRP server listens before the GUI emulator
+    // exists). Waiting briefly keeps INIT answering with a real machine type;
+    // otherwise DeZog aborts with "Unknown machine type 0 received" or, worse,
+    // attaches to nothing and every later command silently returns defaults.
+    if (!m_debug->waitForTarget(TARGET_WAIT_MS))
+    {
+        // error(1), no version/machine/name: DeZog reports
+        // "Remote returned an error code: 1" and ends the session cleanly.
+        resp.payload.push_back(1);
+        std::cerr << "[DZRP] CMD_INIT - no emulator target, returning error\n";
+        return resp;
+    }
 
     // Build response: error(1) + version(3) + machine(1) + name(nul)
     resp.payload.push_back(0);  // No error
@@ -636,6 +705,38 @@ Response Server::handleSetBorder(const Command& cmd)
     {
         uint8_t color = cmd.payload[0] & 0x07;
         m_debug->setBorder(color);
+    }
+
+    return resp;
+}
+
+Response Server::handleReadPort(const Command& cmd)
+{
+    // DeZog (cspectremote.ts sendDzrpCmdReadPort): payload = port(2),
+    // response = exactly one data byte (data[0] is the value).
+    Response resp;
+    resp.seqNo = cmd.seqNo;
+
+    if (cmd.payload.size() >= 2)
+    {
+        uint16_t port = Protocol::readU16LE(cmd.payload.data());
+        resp.payload.push_back(m_debug->readPort(port));
+    }
+
+    return resp;
+}
+
+Response Server::handleWritePort(const Command& cmd)
+{
+    // DeZog (cspectremote.ts sendDzrpCmdWritePort): payload = port(2) + value(1),
+    // response = empty.
+    Response resp;
+    resp.seqNo = cmd.seqNo;
+
+    if (cmd.payload.size() >= 3)
+    {
+        uint16_t port = Protocol::readU16LE(cmd.payload.data());
+        m_debug->writePort(port, cmd.payload[2]);
     }
 
     return resp;

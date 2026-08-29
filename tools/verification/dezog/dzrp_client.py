@@ -19,6 +19,8 @@ class DZRPCommand(IntEnum):
     CMD_WRITE_MEM = 9
     CMD_SET_SLOT = 10
     CMD_SET_BORDER = 12
+    CMD_READ_PORT = 20
+    CMD_WRITE_PORT = 21
     CMD_GET_SUPPORTED_COMMANDS = 24
     CMD_ADD_BREAKPOINT = 40
     CMD_REMOVE_BREAKPOINT = 41
@@ -47,6 +49,10 @@ class DZRPPauseNotification:
     message: str
 
 class DZRPClient:
+    # Frames carry at least one seq byte; the server rejects >1MB command
+    # payloads, so anything beyond this generous cap is wire corruption.
+    MAX_FRAME_LEN = 16 * 1024 * 1024
+
     def __init__(self, host: str = "localhost", port: int = 12000):
         self.host = host
         self.port = port
@@ -77,9 +83,10 @@ class DZRPClient:
 
     def _send_command(self, cmd_id: int, payload: bytes = b"") -> DZRPResponse:
         seq = self._next_seq()
-        # Build command: length(4) + seq(1) + cmd(1) + payload
-        msg_len = len(payload)
-        data = struct.pack("<I", msg_len + 2) + bytes([seq, cmd_id]) + payload
+        # DZRP COMMAND framing exactly as DeZog's dzrpbufferremote.ts sends it:
+        #   length(4) = DATA length ONLY (excludes the seqNo and command bytes)
+        #   then seqNo(1) + command(1) + data
+        data = struct.pack("<I", len(payload)) + bytes([seq, cmd_id]) + payload
         self.sock.sendall(data)
         resp = self._recv_response()
         # DeZog treats a mismatched seq as fatal ("Received wrong SeqNo"),
@@ -91,6 +98,8 @@ class DZRPClient:
     def _recv_frame(self) -> bytes:
         length_data = self._recv_exact(4)
         length = struct.unpack("<I", length_data)[0]
+        if length == 0 or length > self.MAX_FRAME_LEN:
+            raise RuntimeError(f"Invalid frame length {length} (wire corruption?)")
         return self._recv_exact(length)
 
     def _recv_response(self) -> DZRPResponse:
@@ -239,6 +248,21 @@ class DZRPClient:
     def cmd_set_border(self, color: int) -> bool:
         resp = self._send_command(DZRPCommand.CMD_SET_BORDER, bytes([color]))
         return not resp.nak
+
+    def cmd_read_port(self, port: int) -> Optional[int]:
+        """CMD_READ_PORT per DeZog cspectremote.ts: port(2) -> exactly one data
+        byte. Returns None when the server violates the contract (e.g. an empty
+        ACK from an unimplemented handler) - DeZog would read `undefined` there."""
+        resp = self._send_command(DZRPCommand.CMD_READ_PORT, struct.pack("<H", port))
+        if resp.nak or len(resp.payload) != 1:
+            return None
+        return resp.payload[0]
+
+    def cmd_write_port(self, port: int, value: int) -> bool:
+        """CMD_WRITE_PORT per DeZog cspectremote.ts: port(2) + value(1) -> empty ACK."""
+        resp = self._send_command(DZRPCommand.CMD_WRITE_PORT,
+                                  struct.pack("<H", port) + bytes([value & 0xFF]))
+        return not resp.nak and len(resp.payload) == 0
 
     def cmd_get_supported_commands(self) -> set:
         resp = self._send_command(DZRPCommand.CMD_GET_SUPPORTED_COMMANDS)

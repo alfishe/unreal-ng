@@ -269,8 +269,7 @@ if (INCLUDE_AUTOMATION)
     target_link_libraries(${PROJECT_NAME} PRIVATE
         ${common_libraries}
         Qt6::Widgets
-        unrealng::automation
-        $<$<BOOL:${ENABLE_RECORDING}>:unrealng::recording>
+        unrealng::automation  # brings core (and recording) in as PUBLIC deps
         ${CMAKE_DL_LIBS}
         Threads::Threads
     )
@@ -284,8 +283,7 @@ else ()
     target_link_libraries(${PROJECT_NAME} PRIVATE
         ${common_libraries}
         Qt6::Widgets
-        unrealng::core
-        $<$<BOOL:${ENABLE_RECORDING}>:unrealng::recording>
+        unrealng::core  # brings recording in as a PUBLIC dependency
         Threads::Threads
     )
 endif ()

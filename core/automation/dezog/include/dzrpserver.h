@@ -70,6 +70,11 @@ public:
     // Border
     virtual void setBorder(uint8_t color) = 0;
 
+    // Port I/O (DeZog custom dumps read ports for the variables view:
+    // CMD_READ_PORT must answer with exactly one data byte)
+    virtual uint8_t readPort(uint16_t port) const = 0;
+    virtual void writePort(uint16_t port, uint8_t value) = 0;
+
     // Session lifecycle
     // onSessionOpened: CMD_INIT received (start history recording, etc.)
     // onSessionClosed: client disconnected (CMD_CLOSE or socket drop). Implementations
@@ -77,6 +82,13 @@ public:
     // again - DeZog re-sends all breakpoints on the next connect.
     virtual void onSessionOpened() {}
     virtual void onSessionClosed() {}
+
+    // Blocks up to timeoutMs for a debug target to exist (the host UI may
+    // still be creating its emulator when DeZog connects). Returns false when
+    // no target appeared. The default never blocks; real adapters poll their
+    // emulator source. Used by CMD_INIT to fail cleanly instead of reporting
+    // machine type UNKNOWN(0) (DeZog: "Unknown machine type 0 received").
+    virtual bool waitForTarget(uint32_t /*timeoutMs*/) const { return true; }
 
     // --- Instruction history (true reverse debugging, Unreal-NG extension) ---
     // One record per executed instruction, index 0 = most recently executed.
@@ -125,6 +137,10 @@ private:
     void sessionLoop(int clientSocket);
     Response handleCommand(const Command& cmd);
 
+    // CMD_INIT: how long to wait for a debug target before answering with
+    // an error (covers the host UI creating its emulator after DeZog connects)
+    static constexpr uint32_t TARGET_WAIT_MS = 2000;
+
     // Command handlers
     Response handleInit(const Command& cmd);
     Response handleClose(const Command& cmd);
@@ -142,6 +158,8 @@ private:
     Response handleSetSlot(const Command& cmd);
     Response handleWriteBank(const Command& cmd);
     Response handleSetBorder(const Command& cmd);
+    Response handleReadPort(const Command& cmd);
+    Response handleWritePort(const Command& cmd);
     Response handleReadState(const Command& cmd);
     Response handleWriteState(const Command& cmd);
     Response handleGetHistoryInfo(const Command& cmd);

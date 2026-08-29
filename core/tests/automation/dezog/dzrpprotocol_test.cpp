@@ -163,14 +163,18 @@ TEST_F(DZRPProtocolTest, SerializeNotification)
 
 TEST_F(DZRPProtocolTest, ReadFramedMessageComplete)
 {
-    // length=3, then 3 bytes of payload
-    uint8_t data[] = {0x03, 0x00, 0x00, 0x00, 0xAA, 0xBB, 0xCC};
+    // DZRP command framing: length = DATA length only. dataLen=1, then
+    // seqNo + cmd + 1 data byte = 3 bytes follow → full frame = 4 + 3 = 7.
+    //   [len=1][seq=0x05][cmd=0x03][data=0xAA]
+    uint8_t data[] = {0x01, 0x00, 0x00, 0x00, 0x05, 0x03, 0xAA};
     std::vector<uint8_t> payload;
 
     size_t consumed = Protocol::readFramedMessage(data, 7, payload);
     EXPECT_EQ(consumed, 7u);
-    ASSERT_EQ(payload.size(), 3u);
-    EXPECT_EQ(payload[0], 0xAA);
+    ASSERT_EQ(payload.size(), 3u);  // seqNo + cmd + data
+    EXPECT_EQ(payload[0], 0x05);    // seqNo
+    EXPECT_EQ(payload[1], 0x03);    // cmd
+    EXPECT_EQ(payload[2], 0xAA);    // data
 }
 
 TEST_F(DZRPProtocolTest, ReadFramedMessageIncomplete)
@@ -236,15 +240,16 @@ TEST_F(DZRPProtocolTest, ResponseRoundTrip)
 
     auto serialized = Protocol::serializeResponse(original);
 
-    // Parse back (skip length prefix)
-    std::vector<uint8_t> payload;
-    size_t consumed = Protocol::readFramedMessage(serialized.data(), serialized.size(), payload);
-    EXPECT_EQ(consumed, serialized.size());
-
-    // Verify
-    EXPECT_EQ(payload[0] & 0x0F, original.seqNo);
-    EXPECT_EQ(payload[0] & 0x80, 0);  // Not NAK
-    EXPECT_EQ(payload.size() - 1, original.payload.size());
+    // Response framing (as DeZog parses it): length(4) = seqNo(1) + data, then
+    // that many body bytes. (readFramedMessage is NOT used here — it parses the
+    // command framing, whose length excludes seqNo.)
+    ASSERT_EQ(serialized.size(), 4u + 1u + original.payload.size());
+    uint32_t length = Protocol::readU32LE(serialized.data());
+    EXPECT_EQ(length, 1u + original.payload.size());  // seqNo + data
+    EXPECT_EQ(serialized[4] & 0x0F, original.seqNo);
+    EXPECT_EQ(serialized[4] & 0x80, 0);  // not NAK
+    for (size_t i = 0; i < original.payload.size(); ++i)
+        EXPECT_EQ(serialized[5 + i], original.payload[i]);
 }
 
 // --- Sequence number masking ---
@@ -272,20 +277,23 @@ TEST_F(DZRPProtocolTest, ReadFramedMessageOversizedRejected)
 
 TEST_F(DZRPProtocolTest, ReadFramedMessageCoalesced)
 {
-    // Two frames in one buffer: the first call must consume exactly frame 1
-    // so the caller can re-invoke on the remainder for frame 2 (sessionLoop
-    // relies on this for TCP coalescing)
-    uint8_t data[] = {0x02, 0x00, 0x00, 0x00, 0xAA, 0xBB,
-                      0x01, 0x00, 0x00, 0x00, 0xCC};
+    // Two command frames in one buffer (command length = data-only):
+    //   frame 1: [len=1][seq=0xAA][cmd=0xBB][data=0x11]  → 7 bytes
+    //   frame 2: [len=0][seq=0xCC][cmd=0xDD]             → 6 bytes
+    // sessionLoop relies on the first call consuming exactly frame 1.
+    uint8_t data[] = {0x01, 0x00, 0x00, 0x00, 0xAA, 0xBB, 0x11,
+                      0x00, 0x00, 0x00, 0x00, 0xCC, 0xDD};
     std::vector<uint8_t> payload;
 
     size_t consumed = Protocol::readFramedMessage(data, sizeof(data), payload);
-    ASSERT_EQ(consumed, 6u);
-    ASSERT_EQ(payload.size(), 2u);
+    ASSERT_EQ(consumed, 7u);
+    ASSERT_EQ(payload.size(), 3u);  // seq + cmd + data
     EXPECT_EQ(payload[0], 0xAA);
+    EXPECT_EQ(payload[2], 0x11);
 
     consumed = Protocol::readFramedMessage(data + consumed, sizeof(data) - consumed, payload);
-    ASSERT_EQ(consumed, 5u);
-    ASSERT_EQ(payload.size(), 1u);
+    ASSERT_EQ(consumed, 6u);
+    ASSERT_EQ(payload.size(), 2u);  // seq + cmd, no data
     EXPECT_EQ(payload[0], 0xCC);
+    EXPECT_EQ(payload[1], 0xDD);
 }

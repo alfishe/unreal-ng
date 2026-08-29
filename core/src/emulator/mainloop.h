@@ -54,6 +54,12 @@ public:
     void Run(volatile bool& exit);
     void Stop();
 
+    /// @brief CPU core access for debugger/automation port I/O.
+    /// @note Callers from control threads must only use it while the
+    ///       emulation thread is parked (paused) - same discipline as direct
+    ///       memory access via Emulator::GetMemory().
+    Core* GetCPU() const { return _cpu; }
+
     /// @brief Returns true when the emulation thread has actually parked in the pause loop
     /// (Emulator::Pause() only sets a flag; the current frame still finishes executing)
     bool IsPauseConfirmed() const { return _isPausedConfirmed.load(std::memory_order_acquire); }

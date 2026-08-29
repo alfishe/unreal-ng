@@ -90,7 +90,7 @@ public:
     {
         uint8_t seq = nextSeq();
         std::vector<uint8_t> frame(4);
-        dzrp::Protocol::writeU32LE(frame.data(), static_cast<uint32_t>(payload.size() + 2));
+        dzrp::Protocol::writeU32LE(frame.data(), static_cast<uint32_t>(payload.size()));
         frame.push_back(seq);
         frame.push_back(static_cast<uint8_t>(cmd));
         frame.insert(frame.end(), payload.begin(), payload.end());
@@ -255,7 +255,7 @@ TEST_F(DZRPServer_test, SupportedCommandsBitfield)
     ASSERT_TRUE(resp.valid);
     ASSERT_EQ(resp.payload.size(), 32u);
     auto has = [&](int id) { return (resp.payload[id / 8] >> (id % 8)) & 1; };
-    for (int id : {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 24, 40, 41, 42, 43, 50, 51})
+    for (int id : {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 20, 21, 24, 40, 41, 42, 43, 50, 51})
         EXPECT_TRUE(has(id)) << "command " << id;
 }
 
@@ -345,6 +345,31 @@ TEST_F(DZRPServer_test, SetBorderOverWire)
     auto resp = _client.command(dzrp::CommandId::CMD_SET_BORDER, {6});
     ASSERT_TRUE(resp.valid);
     EXPECT_EQ(_emulator->GetContext()->pScreen->GetBorderColor(), 6);
+}
+
+TEST_F(DZRPServer_test, PortRoundTripOverWire)
+{
+    // DeZog's cspectremote.ts sendDzrpCmdReadPort takes data[0] as the value:
+    // the response must be EXACTLY one byte. An empty ACK (the old behavior
+    // for unimplemented commands) would surface as `undefined` in DeZog's
+    // custom-dump variables view.
+    init();
+    auto rd = _client.command(dzrp::CommandId::CMD_READ_PORT, u16(0xFE));
+    ASSERT_TRUE(rd.valid);
+    EXPECT_FALSE(rd.nak);
+    ASSERT_EQ(rd.payload.size(), 1u);
+
+    auto wr = _client.command(dzrp::CommandId::CMD_WRITE_PORT, cat({u16(0xFE), {0x02}}));
+    ASSERT_TRUE(wr.valid);
+    EXPECT_TRUE(wr.payload.empty());
+
+    auto rd2 = _client.command(dzrp::CommandId::CMD_READ_PORT, u16(0xFE));
+    ASSERT_TRUE(rd2.valid);
+    ASSERT_EQ(rd2.payload.size(), 1u);
+
+    // Session survives
+    auto regs = _client.command(dzrp::CommandId::CMD_GET_REGISTERS);
+    EXPECT_TRUE(regs.valid);
 }
 
 /// endregion </Registers / memory over the wire>

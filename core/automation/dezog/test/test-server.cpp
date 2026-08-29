@@ -154,6 +154,20 @@ public:
         return m_slots;
     }
 
+    uint8_t readPort(uint16_t port) const override
+    {
+        // Mock port bus: echo the low byte of the port number so the
+        // Python verifier can assert an exact round-trip value.
+        std::cout << "[Mock] Read port 0x" << std::hex << port << std::dec << "\n";
+        return static_cast<uint8_t>(port & 0xFF);
+    }
+
+    void writePort(uint16_t port, uint8_t value) override
+    {
+        std::cout << "[Mock] Write port 0x" << std::hex << port << std::dec
+                  << " = " << static_cast<int>(value) << "\n";
+    }
+
     void setSlot(uint8_t slot, uint8_t bank) override
     {
         std::cout << "[Mock] Set slot " << static_cast<int>(slot)

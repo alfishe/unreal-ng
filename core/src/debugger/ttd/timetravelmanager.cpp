@@ -164,6 +164,9 @@ bool TimeTravelManager::StartRecording()
     if (_state == TTDSessionState::Recording)
         return true;  // Idempotent
 
+    // Leaving the replay/browse scope for live recording: free the decode cache.
+    ClearFrameCache();
+
     // Fresh session — clear any stale auto-pause signal from a previous
     // Detached window.
     _autoPauseRequested.store(false, std::memory_order_release);
@@ -340,6 +343,8 @@ void TimeTravelManager::StopRecording()
 
 void TimeTravelManager::InvalidateSession(const char* reason)
 {
+    ClearFrameCache();
+
     if (_timeline.empty() && _state == TTDSessionState::Idle)
         return;  // Nothing to invalidate
 
@@ -1082,70 +1087,54 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     RestorePeripheral(_context->pBetaDisk, cp.fdcState);
 
     // --- Step 5: Screen (TDD §8.1 step 2e) ---
-    //
-    // The screen renderer caches three pieces of derived state that the
-    // RestoreChipsetState field-copy above does NOT update:
-    //
-    //   1. _activeScreenMemoryOffset — points to bank 5 (normal) or bank 7
-    //      (shadow) depending on bit 3 of p7FFD. The port decoder's
-    //      Port_7FFD_Out keeps this in sync on every real port write by
-    //      calling SetActiveScreen(); RestoreCheckpoint bypasses the
-    //      decoder, so we must do it explicitly. Without this call the
-    //      renderer reads pixels from whichever bank was active when the
-    //      PREVIOUS frame ran — typically garbage after a seek.
-    //
-    //   2. _borderColor — derived from bits 0-2 of pFE. Same situation:
-    //      the field copy restores pFE in emulatorState but the cached
-    //      screen field is stale until SetBorderColor runs.
-    //
-    //   3. The BORDER PIXELS IN THE FRAMEBUFFER. RenderOnlyMainScreen only
-    //      repaints the inner 256x192 screen area; the border around it is
-    //      painted separately — either by per-t-state Draw() calls during
-    //      normal MainLoop execution, or by an explicit FillBorderWithColor
-    //      call. When the emulator is paused (as it is here, post-seek),
-    //      MainLoop doesn't run, so the framebuffer border keeps whatever
-    //      pixels were left by the previous render. Without an explicit
-    //      FillBorderWithColor, seeking to a frame whose border color
-    //      differs from the live pre-seek state shows STALE BORDER PIXELS.
-    //      (User-visible bug: recorded a demo with black border, seeked to
-    //      a frame, got a white border from a prior render.)
-    //
-    // After re-syncing the cached fields, InitFrame resets the renderer's
-    // frame-local counters so the next rendered frame starts from a clean
-    // state matching the restored beam position. RenderOnlyMainScreen then
-    // rebuilds the inner 256x192 RGBA pixels in one batch from the freshly-
-    // restored screen memory, and FillBorderWithColor repaints the border
-    // with the restored pFE bits 0-2. The snapshot loader (loader_z80.cpp)
-    // uses the same pattern for the same reason.
-    if (_context->pScreen)
-    {
-        // Sync active screen bank from restored p7FFD bit 3.
-        const uint8_t p7FFD = _context->emulatorState.p7FFD;
-        const SpectrumScreenEnum screen = (p7FFD & 0b0000'1000)
-                                            ? SCREEN_SHADOW   // bit 3 set → bank 7
-                                            : SCREEN_NORMAL;  // bit 3 clear → bank 5
-        _context->pScreen->SetActiveScreen(screen);
-
-        // Sync border color from restored pFE bits 0-2.
-        const uint8_t borderColor = _context->emulatorState.pFE & 0b0000'0111;
-        _context->pScreen->SetBorderColor(borderColor);
-
-        _context->pScreen->InitFrame();
-        _context->pScreen->RenderOnlyMainScreen();
-
-        // Repaint the framebuffer border to match the restored border color.
-        // RenderOnlyMainScreen above only touches the inner 256x192 screen
-        // area; without this call the border pixels keep whatever the
-        // previous render left there, producing visible artifacts when the
-        // restored border color differs from the live pre-seek color.
-        // FillBorderWithColor also re-calls SetBorderColor internally, but
-        // we set it explicitly above for clarity and to keep the cached
-        // field correct even if a future FillBorderWithColor impl forgets.
-        _context->pScreen->FillBorderWithColor(borderColor);
-
-    }
+    // The screen renderer caches derived state (active screen bank from
+    // p7FFD, border color from pFE, framebuffer pixels) that the field
+    // copies above do NOT update — the restore bypassed the port decoder.
+    // ResyncScreenCaches re-derives all of it (the snapshot loader,
+    // loader_z80.cpp, uses the same pattern for the same reason).
+    ResyncScreenCaches();
 
     // t_states and frame_counter were already restored by RestoreChipsetState.
+}
+
+void TimeTravelManager::ResyncScreenCaches()
+{
+    if (!_context || !_context->pScreen)
+        return;
+
+    // 1. Sync the active screen bank from p7FFD bit 3 (bank 7 shadow vs
+    //    bank 5 normal). Without this the renderer reads pixels from
+    //    whichever bank was active when the previous frame ran — typically
+    //    garbage after a restore that changed the paging latch.
+    const uint8_t p7FFD = _context->emulatorState.p7FFD;
+    const SpectrumScreenEnum screen = (p7FFD & 0b0000'1000)
+                                        ? SCREEN_SHADOW   // bit 3 set → bank 7
+                                        : SCREEN_NORMAL;  // bit 3 clear → bank 5
+    _context->pScreen->SetActiveScreen(screen);
+
+    // 2. Sync the border color from pFE bits 0-2. Set explicitly for
+    //    clarity and to keep the cached field correct even if a future
+    //    FillBorderWithColor implementation forgets to.
+    const uint8_t borderColor = _context->emulatorState.pFE & 0b0000'0111;
+    _context->pScreen->SetBorderColor(borderColor);
+
+    // 3. InitFrame resets the renderer's frame-local counters so the next
+    //    rendered frame starts from a clean state matching the restored
+    //    beam position; RenderOnlyMainScreen then rebuilds the inner
+    //    256x192 RGBA pixels in one batch from the freshly-restored screen
+    //    memory.
+    _context->pScreen->InitFrame();
+    _context->pScreen->RenderOnlyMainScreen();
+
+    // 4. Repaint the framebuffer border to match the restored border color.
+    //    RenderOnlyMainScreen above only touches the inner 256x192 screen
+    //    area; without this call the border pixels keep whatever the
+    //    previous render left there, producing visible artifacts when the
+    //    restored border color differs from the live pre-restore color.
+    //    (User-visible bug this prevents: recorded a demo with a black
+    //    border, restored to a frame, got a white border from a prior
+    //    render.)
+    _context->pScreen->FillBorderWithColor(borderColor);
 }
 
 void TimeTravelManager::RestoreRamPages(const std::vector<TTDPageRef>& ramPages)
@@ -1794,6 +1783,9 @@ bool TimeTravelManager::StepForwardFrame()
 
 bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
 {
+    // Returning to live recording ends the browse scope: free the decode cache.
+    ClearFrameCache();
+
     // ------------------------------------------------------------------
     // Validate preconditions. Same shape as SeekTo — the truncation rule
     // is meaningless without a recorded timeline to truncate.
@@ -2735,6 +2727,15 @@ void TimeTravelManager::SetEnableCoverageIndex(bool enable)
 void TimeTravelManager::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t newVal,
                                           uint16_t m1pc, uint8_t physPage)
 {
+    // Per-frame decode-cache capture (during a build replay only): attach the
+    // write to the instruction currently being captured. Cheap — a couple of
+    // stores, and only while the cache is being filled.
+    if (_frameCaptureActive && _capturingCache && !_capturingCache->entries.empty())
+    {
+        _capturingCache->accesses.push_back({addr, newVal, TTDAccessKind::MemWrite});
+        _capturingCache->entries.back().accessCount++;
+    }
+
     // Only journal during active recording. During replay (seek / probe),
     // writes are reproducing recorded state — re-journaling would corrupt
     // the ring with duplicate records (TDD §9.3).
@@ -2772,6 +2773,13 @@ void TimeTravelManager::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t
 
 void TimeTravelManager::RecordIoWrite(uint16_t port, uint8_t value, uint16_t m1pc)
 {
+    // Per-frame decode-cache capture (build replay only).
+    if (_frameCaptureActive && _capturingCache && !_capturingCache->entries.empty())
+    {
+        _capturingCache->accesses.push_back({port, value, TTDAccessKind::PortWrite});
+        _capturingCache->entries.back().accessCount++;
+    }
+
     if (_state != TTDSessionState::Recording)
         return;
     if (!_enableWriteJournal)
@@ -3698,6 +3706,244 @@ TimeTravelManager::ReverseContinue(const std::vector<uint16_t>& breakpoints)
              static_cast<unsigned long long>(result.arrivedAt.frame),
              static_cast<unsigned>(result.arrivedAt.tInFrame));
     return result;
+}
+
+// ===========================================================================
+// Per-frame decode cache (reverse-browsing accelerator)
+// ===========================================================================
+
+void TimeTravelManager::ClearFrameCache()
+{
+    _frameCache.reset();          // frees the entries vector
+    _capturingCache = nullptr;
+    _frameCaptureActive = false;
+}
+
+void TimeTravelManager::CaptureM1(uint16_t pc)
+{
+    if (!_capturingCache || !_context)
+        return;
+
+    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    if (!z80 || !_memory)
+        return;
+
+    TTDFrameCacheEntry e;
+    e.tInFrame = z80->t;
+    e.pc  = pc;
+    e.sp  = z80->sp;
+    e.af  = z80->af;
+    e.bc  = z80->bc;
+    e.de  = z80->de;
+    e.hl  = z80->hl;
+    e.ix  = z80->ix;
+    e.iy  = z80->iy;
+    e.af2 = z80->alt.af;
+    e.bc2 = z80->alt.bc;
+    e.de2 = z80->alt.de;
+    e.hl2 = z80->alt.hl;
+    e.i   = z80->i;
+    e.r   = z80->r_low;
+    e.im  = z80->im;
+
+    for (int i = 0; i < 4; ++i)
+        e.opcodes[i] = _memory->DirectReadFromZ80Memory(static_cast<uint16_t>(pc + i));
+    uint16_t lo = _memory->DirectReadFromZ80Memory(z80->sp);
+    uint16_t hi = _memory->DirectReadFromZ80Memory(static_cast<uint16_t>(z80->sp + 1));
+    e.spContent = static_cast<uint16_t>(lo | (hi << 8));
+
+    // 128K-style 4-slot view (ROM page + RAM banks 1..3). The DZRP layer maps
+    // these to DeZog's model; a 48K machine still reports 4 here harmlessly.
+    e.slotCount = 4;
+    e.slots[0] = static_cast<uint8_t>(_memory->GetROMPage());
+    e.slots[1] = static_cast<uint8_t>(_memory->GetRAMPageForBank1());
+    e.slots[2] = static_cast<uint8_t>(_memory->GetRAMPageForBank2());
+    e.slots[3] = static_cast<uint8_t>(_memory->GetRAMPageForBank3());
+
+    // Accesses of this instruction pack contiguously into the shared arena,
+    // starting at the current arena end. The write hooks below append and bump
+    // accessCount until the next M1 begins a new entry.
+    e.accessOffset = static_cast<uint32_t>(_capturingCache->accesses.size());
+    e.accessCount = 0;
+
+    _capturingCache->entries.push_back(e);
+}
+
+void TimeTravelManager::BuildFrameCache(uint64_t frame, TTDFrameCache& out)
+{
+    out.frame = frame;
+    out.entries.clear();
+    out.accesses.clear();
+
+    Emulator* emu = _context ? _context->pEmulator : nullptr;
+    Z80* z80 = (_context && _context->pCore) ? _context->pCore->GetZ80() : nullptr;
+    if (!emu || !z80)
+        return;
+
+    const uint32_t frameT = _context->config.frame;
+
+    // Upper bound on instructions in a frame. A frame is config.frame t-states
+    // at 1x, and scales with the CPU frequency multiplier (turbo runs more
+    // instructions per frame). The shortest Z80 instruction is
+    // kMinInstructionTStates long, so at most (frameT * multiplier) / that many
+    // instructions — hence records — fit in the largest frame. Reserve once so
+    // the fill never reallocates mid-capture; on a reused cache block these are
+    // no-ops (capacity retained). The arena is one pre-allocated segment packed
+    // sequentially each build — no fragmentation to manage.
+    const uint32_t mult = _context->emulatorState.current_z80_frequency_multiplier;
+    const size_t frameTStates = static_cast<size_t>(frameT) * (mult ? mult : 1);
+    // Ceiling division (an instruction can straddle the frame boundary) + margin.
+    const size_t maxInstrPerFrame =
+        (frameTStates + kMinInstructionTStates - 1) / kMinInstructionTStates + kFrameReserveMargin;
+    out.entries.reserve(maxInstrPerFrame);
+    out.accesses.reserve(maxInstrPerFrame);  // ~≤1 write/instruction typical; grows if exceeded
+
+    // Restore the start of the target frame (Detached).
+    if (!SeekToInternal(TTDTimePoint{frame, 0}, nullptr))
+        return;
+
+    // Install the M1 capture hook for the duration of the replay only.
+    auto prevHook = z80->m1TraceHook;
+    _capturingCache = &out;
+    _frameCaptureActive = true;
+    z80->m1TraceHook = [this](uint16_t pc) { CaptureM1(pc); };
+
+    // Replay the whole frame forward. A frame is frameT t-states at 1x and
+    // scales with the CPU frequency multiplier (turbo runs more instructions
+    // per frame — e.g. 16x at 56 MHz), so run the full scaled frame length,
+    // otherwise a turbo frame would be captured only 1/multiplier of the way.
+    emu->RunTStates(static_cast<unsigned>(frameT) * (mult ? mult : 1), /*skipBreakpoints=*/true);
+
+    z80->m1TraceHook = prevHook;
+    _frameCaptureActive = false;
+    _capturingCache = nullptr;
+}
+
+void TimeTravelManager::SaveLiveState(LiveStateSnapshot& out)
+{
+    Z80* z80 = (_context && _context->pCore) ? _context->pCore->GetZ80() : nullptr;
+    if (z80)
+        out.cpu = CaptureCpuState(*static_cast<Z80State*>(z80));
+    out.chipset = CaptureChipsetState(_context->emulatorState);
+    // z80.t (the per-frame t-state counter) is host-side and deliberately
+    // NOT part of TTDCpuState — SeekToInternal syncs it manually after
+    // restores too.
+    out.z80TInFrame = z80 ? z80->t : 0;
+
+    // Peripherals — the same TTDSerializable blobs the checkpoints carry.
+    CapturePeripheral(_context->pSoundManager ? _context->pSoundManager->getTurboSound() : nullptr,
+                      out.ay);
+    CapturePeripheral(_context->pTape, out.tape);
+    CapturePeripheral(_context->pSoundManager ? _context->pSoundManager->getCovox() : nullptr,
+                      out.covox);
+    CapturePeripheral(_context->pBetaDisk, out.fdc);
+
+    // Full RAM copy (model pages only — e.g. 128 KB on a 128K model). The
+    // build replay overwrites live RAM with historic content as it runs, so
+    // only a verbatim copy restores the caller's memory exactly.
+    if (_memory)
+    {
+        const size_t pageBytes = 4 * TTDCodecPageStore::kPageSize;  // 16 KB
+        out.ram.resize(static_cast<size_t>(_modelRamPages) * pageBytes);
+        for (uint16_t p = 0; p < _modelRamPages; ++p)
+        {
+            const uint8_t* pageData = _memory->RAMPageAddress(p);
+            if (pageData)
+                std::memcpy(&out.ram[static_cast<size_t>(p) * pageBytes], pageData, pageBytes);
+        }
+    }
+    else
+    {
+        out.ram.clear();
+    }
+}
+
+void TimeTravelManager::RestoreLiveState(const LiveStateSnapshot& snap)
+{
+    Z80* z80 = (_context && _context->pCore) ? _context->pCore->GetZ80() : nullptr;
+
+    // Mirror RestoreCheckpoint's ordering (TDD §8.1): CPU, chipset, bank
+    // rebuild, RAM, peripherals, screen resync.
+    if (z80)
+        RestoreCpuState(snap.cpu, static_cast<Z80State*>(z80));
+    RestoreChipsetState(snap.chipset, &_context->emulatorState);
+    if (z80)
+        z80->t = snap.z80TInFrame;
+    if (_memory)
+        _memory->UpdateZ80Banks();
+
+    if (!snap.ram.empty() && _memory)
+    {
+        const size_t pageBytes = 4 * TTDCodecPageStore::kPageSize;  // 16 KB
+        const uint16_t pages = static_cast<uint16_t>(std::min<size_t>(
+            _modelRamPages, snap.ram.size() / pageBytes));
+        for (uint16_t p = 0; p < pages; ++p)
+        {
+            uint8_t* pageData = _memory->RAMPageAddress(p);
+            if (pageData)
+                std::memcpy(pageData, &snap.ram[static_cast<size_t>(p) * pageBytes], pageBytes);
+        }
+        // Live RAM was rewritten behind the materialized-RAM cache.
+        _ramCache.valid = false;
+    }
+
+    if (_context->pSoundManager)
+        RestorePeripheral(_context->pSoundManager->getTurboSound(), snap.ay);
+    RestorePeripheral(_context->pTape, snap.tape);
+    if (_context->pSoundManager)
+        RestorePeripheral(_context->pSoundManager->getCovox(), snap.covox);
+    RestorePeripheral(_context->pBetaDisk, snap.fdc);
+
+    ResyncScreenCaches();
+}
+
+const TTDFrameCache* TimeTravelManager::GetFrameCache(uint64_t frame)
+{
+    // Never build a cache during live recording — the accelerator is a
+    // replay-scope facility only.
+    if (_state == TTDSessionState::Recording)
+        return nullptr;
+    if (_timeline.empty())
+        return nullptr;
+    if (frame > _timeline.back().time.frame)
+        return nullptr;
+
+    if (_frameCache && _frameCache->frame == frame)
+        return _frameCache.get();
+
+    if (!_context || !_context->pEmulator)
+        return nullptr;
+
+    // Reuse the existing cache block across frame crossings: BuildFrameCache
+    // clear()s the vectors and reuses their capacity, so the pre-allocated
+    // records + arena segments are allocated at most once for the browse scope.
+    if (!_frameCache)
+        _frameCache = std::make_unique<TTDFrameCache>();
+
+    // Remember where the caller was, then make the build replay transparent
+    // via an EXACT snapshot restore. The previous mechanism — SeekToInternal
+    // back to the caller's position — replays from the nearest checkpoint,
+    // and replay CANNOT cross external-event markers (their effects are not
+    // reproducible): any recorded debugger edit inside the present frame
+    // (soft breakpoints are WRITE_MEM edits) parked the emulator at the
+    // marker instead of the present. A verbatim snapshot/restore is
+    // marker-proof and exact.
+    SaveLiveState(_liveSnapshot);
+
+    EnterReplayMode();
+    BuildFrameCache(frame, *_frameCache);
+    RestoreLiveState(_liveSnapshot);
+    ExitReplayMode();
+
+    if (_frameCache->entries.empty())
+    {
+        // Nothing recorded in that frame. Keep the block (capacity retained) but
+        // mark it unmatched so a later call rebuilds rather than returning empty.
+        _frameCache->frame = UINT64_MAX;
+        return nullptr;
+    }
+
+    return _frameCache.get();
 }
 
 } // namespace ttd

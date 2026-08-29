@@ -4,9 +4,10 @@
 // Used by tools/verification/dezog/verify_dzrp_emulator.py --launch and handy
 // for attaching the DeZog VS Code extension to a scripted, headless emulator.
 //
-// Usage: dezog-emulator-host [port] [model]
-//   port   DZRP listen port (default: UNREAL_DEZOG_PORT env or 12000)
-//   model  emulator model short name (default: PENTAGON)
+// Usage: dezog-emulator-host [port] [model] [snapshot.sna]
+//   port      DZRP listen port (default: UNREAL_DEZOG_PORT env or 12000)
+//   model     emulator model short name (default: PENTAGON)
+//   snapshot  optional .sna/.z80 to load so DeZog attaches to running code
 
 #include "automation-dezog.h"
 
@@ -37,11 +38,14 @@ int main(int argc, char* argv[])
 {
     uint16_t port = 0;  // 0 → AutomationDezog::resolvePort (env / default)
     std::string model = "PENTAGON";
+    std::string snapshot;  // optional .sna/.z80 to load (for a DeZog attach target)
 
     if (argc > 1)
         port = static_cast<uint16_t>(std::atoi(argv[1]));
     if (argc > 2)
         model = argv[2];
+    if (argc > 3)
+        snapshot = argv[3];
 
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
@@ -63,6 +67,16 @@ int main(int argc, char* argv[])
     // Deterministic boot into 48K BASIC ROM regardless of the staged unreal.ini
     emulator->GetContext()->config.reset_rom = RM_SOS;
     emulator->Reset();
+
+    // Optionally load a program snapshot so DeZog attaches to running code.
+    if (!snapshot.empty())
+    {
+        if (emulator->LoadSnapshot(snapshot))
+            std::cout << "dezog-emulator-host: loaded snapshot '" << snapshot << "'\n";
+        else
+            std::cerr << "dezog-emulator-host: FAILED to load snapshot '" << snapshot << "'\n";
+    }
+
     emulator->StartAsync();
 
     for (int i = 0; i < 100 && emulator->GetState() != StateRun; ++i)

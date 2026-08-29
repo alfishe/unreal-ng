@@ -10,6 +10,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/mainloop.h"
 #include "emulator/memory/memory.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
@@ -17,6 +18,7 @@
 
 #include <atomic>
 #include <cstdlib>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -450,8 +452,7 @@ void DezogDebugAdapter::setSlot(uint8_t slot, uint8_t bank)
         return;
     }
 
-    if (bank >= MAX_RAM_PAGES)
-        return;
+    // bank is uint8_t, so every value is < MAX_RAM_PAGES (256); no check needed.
 
     switch (slot)
     {
@@ -472,8 +473,10 @@ void DezogDebugAdapter::writeBank(uint8_t bank, const std::vector<uint8_t>& data
 
     leaveHistory(*emulator);
 
+    // Note: bank is uint8_t (< MAX_RAM_PAGES == 256); Memory::RAMPageAddress
+    // bounds-checks internally and returns nullptr for out-of-range pages.
     Memory* memory = emulator->GetMemory();
-    if (!memory || bank >= MAX_RAM_PAGES)
+    if (!memory)
         return;
 
     uint8_t* page = memory->RAMPageAddress(bank);
@@ -780,6 +783,50 @@ void DezogDebugAdapter::setBorder(uint8_t color)
         context->pScreen->SetBorderColor(static_cast<uint8_t>(color & 0x07));
 }
 
+uint8_t DezogDebugAdapter::readPort(uint16_t port) const
+{
+    auto emulator = resolveEmulator();
+    if (!emulator)
+        return 0;
+
+    MainLoop* mainLoop = emulator->GetMainLoop();
+    if (!mainLoop || !mainLoop->GetCPU())
+        return 0;
+
+    Ports* ports = mainLoop->GetCPU()->GetPorts();
+    return ports ? ports->In(port) : 0;
+}
+
+void DezogDebugAdapter::writePort(uint16_t port, uint8_t value)
+{
+    auto emulator = resolveEmulator();
+    if (!emulator)
+        return;
+
+    MainLoop* mainLoop = emulator->GetMainLoop();
+    if (!mainLoop || !mainLoop->GetCPU())
+        return;
+
+    if (Ports* ports = mainLoop->GetCPU()->GetPorts())
+        ports->Out(port, value);
+}
+
+bool DezogDebugAdapter::waitForTarget(uint32_t timeoutMs) const
+{
+    // DeZog may connect while the host UI (unreal-qt) is still creating its
+    // emulator. Poll briefly so CMD_INIT can report a real machine type
+    // instead of UNKNOWN(0), which DeZog rejects ("Unknown machine type 0").
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(timeoutMs);
+    while (!resolveEmulator())
+    {
+        if (std::chrono::steady_clock::now() >= deadline)
+            return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    return true;
+}
+
 /// endregion </Machine>
 
 /// region <Session lifecycle>
@@ -789,6 +836,15 @@ void DezogDebugAdapter::onSessionOpened()
     auto emulator = resolveEmulator();
     if (!emulator)
         return;
+
+    // Attaching a debugger stops the target: DeZog (with startAutomatically=false)
+    // assumes the machine is already paused after CMD_INIT and sends a
+    // "stop on start" without pausing it itself, so the registers/call-stack
+    // panels only populate if we hand it a stopped CPU. Pause with broadcast=true
+    // so the host UI (e.g. unreal-qt) reflects the paused state and does not
+    // immediately resume it.
+    if (!emulator->IsPaused())
+        emulator->Pause(true);
 
     ensureHistoryRecording(*emulator);
 }
@@ -949,13 +1005,105 @@ void DezogDebugAdapter::leaveHistory(Emulator& emulator)
     {
         std::lock_guard<std::mutex> lock(_mutex);
         _historyCursor = -1;
-        _historyPositions.clear();
+        _historySegs.clear();
         _presentSnapshot.clear();
     }
 }
 
+// Map a global DeZog history index → (frame, entry-in-frame). Extends
+// _historySegs backward from the present one frame at a time, memoizing each
+// frame's visible-entry count so a frame is only decoded once for counting.
+// Control-thread only (browsing happens while paused).
+bool DezogDebugAdapter::resolveHistoryIndex(Emulator& emulator, uint32_t index, uint64_t& frameOut,
+                                            uint32_t& entryIdxOut)
+{
+    ttd::TimeTravelManager* mgr = ttdManagerOf(emulator);
+    if (!mgr)
+        return false;
+
+    const uint64_t presentFrame = _present.first;
+    const uint32_t presentTInFrame = _present.second;
+    // Frames below the recording baseline have no checkpoints (every
+    // seek/build for them fails), so the walk can stop there instead of
+    // probing each empty frame down to 0.
+    const uint64_t earliestFrame = mgr->GetEarliestRecordedFrame();
+
+    // Extend segments until `index` is covered or history is exhausted.
+    for (;;)
+    {
+        if (!_historySegs.empty())
+        {
+            const HistoryFrameSeg& last = _historySegs.back();
+            if (index < last.cumBefore + last.count)
+                break;  // covered by an existing segment
+            if (last.frame == 0 || last.frame <= earliestFrame)
+                return false;  // no earlier frame — index is past the oldest instruction
+        }
+
+        uint64_t nextFrame;
+        uint64_t cumBefore;
+        bool isPresent;
+        if (_historySegs.empty())
+        {
+            nextFrame = presentFrame;
+            cumBefore = 0;
+            isPresent = true;
+        }
+        else
+        {
+            nextFrame = _historySegs.back().frame - 1;
+            cumBefore = _historySegs.back().cumBefore + _historySegs.back().count;
+            isPresent = false;
+        }
+
+        const ttd::TTDFrameCache* c = mgr->GetFrameCache(nextFrame);
+        uint32_t count = 0;
+        if (c)
+        {
+            if (isPresent)
+            {
+                // Present frame is partial: only instructions executed *before*
+                // the stop are history. Entries ascend by tInFrame, so count the
+                // leading run with tInFrame < presentTInFrame.
+                for (const auto& e : c->entries)
+                {
+                    if (e.tInFrame < presentTInFrame)
+                        ++count;
+                    else
+                        break;
+                }
+            }
+            else
+            {
+                count = static_cast<uint32_t>(c->entries.size());
+            }
+        }
+        _historySegs.push_back({nextFrame, count, cumBefore, isPresent});
+    }
+
+    for (const HistoryFrameSeg& seg : _historySegs)
+    {
+        if (seg.count != 0 && index >= seg.cumBefore && index < seg.cumBefore + seg.count)
+        {
+            const uint32_t localOffset = static_cast<uint32_t>(index - seg.cumBefore);
+            // Within a frame, entries ascend by tInFrame while the DeZog index
+            // counts *backward*, so the most recent visible entry (largest
+            // tInFrame, which is index seg.count-1 of the visible run) is offset 0.
+            entryIdxOut = seg.count - 1 - localOffset;
+            frameOut = seg.frame;
+            return true;
+        }
+    }
+    return false;
+}
+
 std::optional<dzrp::IDebugInterface::HistoryEntry> DezogDebugAdapter::getHistoryEntry(uint32_t index)
 {
+    // STRATEGY: serve each entry from the TTD per-frame decode cache
+    // (TimeTravelManager::GetFrameCache) — O(1) after a one-time ~ms frame fill.
+    // See docs/inprogress/2026-08-27-dezog-integration/reverse-debugging.md §5
+    // ("Best strategy for DeZog"). To revert to seek-per-read, replace the
+    // resolveHistoryIndex + GetFrameCache block with a SeekTo per index (doc §3).
     if (!isHistoryEnabled())
         return std::nullopt;
 
@@ -967,8 +1115,8 @@ std::optional<dzrp::IDebugInterface::HistoryEntry> DezogDebugAdapter::getHistory
     if (!mgr || mgr->GetCheckpointCount() == 0)
         return std::nullopt;
 
-    // Entering history: snapshot the present state (for a robust return trip),
-    // remember its TimePoint, and freeze the timeline.
+    // Entering history: snapshot the present state (for an exact return trip),
+    // remember its TimePoint, and freeze the timeline so GetFrameCache can build.
     if (getHistoryCursor() < 0)
     {
         std::vector<uint8_t> snap = captureSnapshotBytes(*emulator);
@@ -978,81 +1126,46 @@ std::optional<dzrp::IDebugInterface::HistoryEntry> DezogDebugAdapter::getHistory
         std::lock_guard<std::mutex> lock(_mutex);
         _present = {present.frame, present.tInFrame};
         _presentSnapshot = std::move(snap);
-        _historyPositions.clear();
+        _historySegs.clear();
         _historyCursor = 0;  // provisional; finalized below (marks "browsing")
     }
 
-    // Extend the position cache up to `index` by stepping strictly backward in
-    // time, skipping the "absorb" steps that re-land on the current instruction.
-    bool outOfRange = false;
+    uint64_t frame = 0;
+    uint32_t entryIdx = 0;
+    if (!resolveHistoryIndex(*emulator, index, frame, entryIdx))
     {
-        std::lock_guard<std::mutex> lock(_mutex);
-        while (_historyPositions.size() <= index)
-        {
-            ttd::TTDTimePoint from;
-            if (_historyPositions.empty())
-                from = {_present.first, _present.second};
-            else
-                from = {_historyPositions.back().first, _historyPositions.back().second};
-
-            // Start stepping from `from` (cache hits / forward moves may have
-            // left the emulator elsewhere).
-            mgr->SeekTo(from);
-
-            ttd::TTDTimePoint landed = from;
-            bool moved = false;
-            for (int guard = 0; guard < 16; ++guard)  // absorb ≤ 2 in practice
-            {
-                if (!mgr->StepBackInstruction())
-                    break;
-                landed = mgr->CurrentPosition();
-                if (landed < from)
-                {
-                    moved = true;
-                    break;
-                }
-            }
-
-            if (!moved)
-            {
-                outOfRange = true;
-                break;
-            }
-
-            _historyPositions.emplace_back(landed.frame, landed.tInFrame);
-        }
-    }
-
-    if (outOfRange)
-    {
-        // No earlier instruction — restore the present and resume recording.
-        leaveHistory(*emulator);
+        // Past the oldest recorded instruction. NON-destructive: under the
+        // cache strategy nothing was moved, so the browsable history, the
+        // memoized segments and the present snapshot all stay valid — a
+        // follow-up in-range query must still succeed. The return to the
+        // present (and the recording restart) happens on the next forward
+        // command (pause/resume/step/register-write) via leaveHistory.
         return std::nullopt;
     }
 
-    // Materialize the requested index.
-    ttd::TTDTimePoint target;
+    const ttd::TTDFrameCache* c = mgr->GetFrameCache(frame);
+    if (!c || entryIdx >= c->entries.size())
     {
-        std::lock_guard<std::mutex> lock(_mutex);
-        target = {_historyPositions[index].first, _historyPositions[index].second};
-        _historyCursor = static_cast<int64_t>(index);
+        // Segment/cache disagreement — treat like out-of-range (non-destructive).
+        return std::nullopt;
     }
-    mgr->SeekTo(target);
+    const ttd::TTDFrameCacheEntry& e = c->entries[entryIdx];
 
     HistoryEntry entry;
-    entry.regs = getRegisters();
-    entry.slots = getSlots();
+    entry.regs.pc = e.pc;   entry.regs.sp = e.sp;
+    entry.regs.af = e.af;   entry.regs.bc = e.bc;   entry.regs.de = e.de;   entry.regs.hl = e.hl;
+    entry.regs.ix = e.ix;   entry.regs.iy = e.iy;
+    entry.regs.af2 = e.af2; entry.regs.bc2 = e.bc2; entry.regs.de2 = e.de2; entry.regs.hl2 = e.hl2;
+    entry.regs.r = e.r;     entry.regs.i = e.i;     entry.regs.im = e.im;
+    entry.slots.assign(e.slots, e.slots + e.slotCount);
+    for (int i = 0; i < 4; ++i)
+        entry.opcodes[i] = e.opcodes[i];
+    entry.spContent = e.spContent;
 
-    Memory* memory = emulator->GetMemory();
-    if (memory)
     {
-        for (int i = 0; i < 4; ++i)
-            entry.opcodes[i] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(entry.regs.pc + i));
-        uint16_t lo = memory->DirectReadFromZ80Memory(entry.regs.sp);
-        uint16_t hi = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(entry.regs.sp + 1));
-        entry.spContent = static_cast<uint16_t>(lo | (hi << 8));
+        std::lock_guard<std::mutex> lock(_mutex);
+        _historyCursor = static_cast<int64_t>(index);
     }
-
     return entry;
 }
 

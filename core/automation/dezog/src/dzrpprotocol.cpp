@@ -71,17 +71,25 @@ size_t Protocol::readFramedMessage(const uint8_t* data, size_t len,
     if (len < 4)
         return 0;
 
-    uint32_t payloadLen = readU32LE(data);
+    // DZRP COMMAND framing (client → server), per DeZog dzrpbufferremote.ts:
+    //   [length(4) = DATA length only][seqNo(1)][command(1)][data(length)]
+    // The length field does NOT count the seqNo and command bytes, so the full
+    // frame after the 4-byte header is 2 + length bytes. (Responses use a
+    // different convention — length includes the seqNo — handled in
+    // serializeResponse; readFramedMessage is only used to parse commands.)
+    uint32_t dataLen = readU32LE(data);
 
     // Sanity check
-    if (payloadLen > 1024 * 1024)
+    if (dataLen > 1024 * 1024)
         return 0;
 
-    if (len < 4 + payloadLen)
+    const size_t total = 4 + 2 + static_cast<size_t>(dataLen);  // header + seqNo + cmd + data
+    if (len < total)
         return 0;
 
-    outPayload.assign(data + 4, data + 4 + payloadLen);
-    return 4 + payloadLen;
+    // Return seqNo + command + data for parseCommand().
+    outPayload.assign(data + 4, data + total);
+    return total;
 }
 
 uint16_t Protocol::readU16LE(const uint8_t* data)
@@ -155,6 +163,8 @@ std::vector<uint8_t> Protocol::buildSupportedCommandsBitfield()
     setBit(static_cast<uint8_t>(CommandId::CMD_SET_SLOT));
     setBit(static_cast<uint8_t>(CommandId::CMD_WRITE_BANK));
     setBit(static_cast<uint8_t>(CommandId::CMD_SET_BORDER));
+    setBit(static_cast<uint8_t>(CommandId::CMD_READ_PORT));
+    setBit(static_cast<uint8_t>(CommandId::CMD_WRITE_PORT));
     setBit(static_cast<uint8_t>(CommandId::CMD_READ_STATE));
     setBit(static_cast<uint8_t>(CommandId::CMD_WRITE_STATE));
 

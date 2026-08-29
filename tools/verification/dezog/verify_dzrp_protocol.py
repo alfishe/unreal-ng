@@ -289,7 +289,7 @@ class DZRPVerifier:
         """One command delivered byte-by-byte: server must buffer partial frames."""
         seq = self.client._next_seq()
         self.client.seq_no = (self.client.seq_no - 1) % 15 or 15
-        msg = struct.pack("<I", 2) + bytes([seq, int(DZRPCommand.CMD_GET_REGISTERS)])
+        msg = struct.pack("<I", 0) + bytes([seq, int(DZRPCommand.CMD_GET_REGISTERS)])  # length=0 data bytes
         for b in msg:
             self.client.sock.sendall(bytes([b]))
             time.sleep(0.002)
@@ -300,8 +300,8 @@ class DZRPVerifier:
         """Two commands in a single TCP segment: both responses must come back."""
         s1 = self.client._next_seq()
         s2 = self.client._next_seq()
-        m1 = struct.pack("<I", 2) + bytes([s1, int(DZRPCommand.CMD_PAUSE)])
-        m2 = struct.pack("<I", 2) + bytes([s2, int(DZRPCommand.CMD_PAUSE)])
+        m1 = struct.pack("<I", 0) + bytes([s1, int(DZRPCommand.CMD_PAUSE)])
+        m2 = struct.pack("<I", 0) + bytes([s2, int(DZRPCommand.CMD_PAUSE)])
         self.client.sock.sendall(m1 + m2)
         r1 = self.client._recv_response()
         r2 = self.client._recv_response()

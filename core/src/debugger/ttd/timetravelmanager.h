@@ -43,6 +43,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <vector>
 #include <string>
@@ -56,6 +57,7 @@
 #include "ttd_probe.h"
 #include "ttd_codec_page_store.h"
 #include "ttd_coverage_index.h"
+#include "timetravelframecache.h"
 
 // Forward declarations — we don't pull emulator headers into this header.
 // (EmulatorContext, Memory, Z80State, EmulatorState are all classes/structs
@@ -824,6 +826,45 @@ public:
     /// @brief Read-only accessor for the write journal (for serialization
     /// and tests).
     inline const TTDWriteJournal* GetWriteJournal() const { return _writeJournal.get(); }
+
+    // -----------------------------------------------------------------------
+    // Per-frame decode cache (reverse-browsing accelerator, §5 of the DeZog
+    // reverse-debugging design). Populated only during a replay pass; freed on
+    // leaving the replay/browse scope. See timetravelframecache.h.
+    // -----------------------------------------------------------------------
+
+    /// @brief Get the decode cache for `frame`, building it on demand.
+    ///
+    /// The first call for a frame replays that frame once (Detached) with an
+    /// instruction-capture hook, filling the cache; subsequent calls for the
+    /// same frame return it directly. The emulator state and position are
+    /// left unchanged: the live machine state is snapshotted before the
+    /// build replay and restored verbatim after (exact and marker-safe —
+    /// a seek-back cannot cross external-event markers).
+    ///
+    /// @return the cache, or nullptr if unavailable (Recording state, empty
+    ///         timeline, or the frame is out of recorded range).
+    ///
+    /// Pre: emulator paused, state is Detached or Idle-with-history (NOT
+    ///      Recording — call StopRecording first). Control thread only.
+    const TTDFrameCache* GetFrameCache(uint64_t frame);
+
+    /// @brief Free the per-frame cache and release its memory. Called on any
+    /// transition back to the present (StartRecording / ResumeRecordingFrom /
+    /// InvalidateSession) and available to callers leaving the browse scope.
+    void ClearFrameCache();
+
+    /// @brief Heap footprint of the currently-held frame cache (0 if none).
+    inline size_t GetFrameCacheBytes() const
+    {
+        return _frameCache ? _frameCache->Bytes() : 0;
+    }
+
+    /// @brief Frame number currently cached, or UINT64_MAX if none.
+    inline uint64_t GetCachedFrame() const
+    {
+        return _frameCache ? _frameCache->frame : UINT64_MAX;
+    }
     
     // -----------------------------------------------------------------------
     // Test/diagnostic accessors
@@ -831,6 +872,17 @@ public:
     
     /// @brief Number of checkpoints currently in the timeline.
     inline size_t GetCheckpointCount() const { return _timeline.size(); }
+    
+    /// @brief Earliest frame covered by the timeline (0 when empty).
+    ///
+    /// Frames below this have no checkpoints: seeks/builds targeting them
+    /// always fail, so callers walking backward (e.g. the DeZog history
+    /// index resolver) can stop here instead of probing every frame down
+    /// to 0.
+    inline uint64_t GetEarliestRecordedFrame() const
+    {
+        return _timeline.empty() ? 0 : _timeline.front().time.frame;
+    }
     
     /// @brief Read-only access to a timeline entry (bounds-checked).
     /// Returns nullptr if idx is out of range.
@@ -1004,6 +1056,67 @@ private:
     EmulatorContext* _context;
     Memory*          _memory = nullptr;
     TTDDirtyTracker* _dirtyTracker = nullptr;
+
+    // -----------------------------------------------------------------------
+    // Per-frame decode cache
+    // -----------------------------------------------------------------------
+    /// Shortest Z80 instruction length in t-states (e.g. NOP = 4). Bounds the
+    /// number of instructions — hence records — a single frame can hold.
+    static constexpr uint32_t kMinInstructionTStates = 4;
+
+    /// Safety margin (in records) added to the reserved frame capacity. An
+    /// instruction can start just before the frame boundary and run up to the
+    /// longest Z80 opcode past it, so the true instruction count is a ceiling,
+    /// not a floor; this margin plus ceiling-division guarantees the fill never
+    /// reallocates even at that boundary edge (and across an injected interrupt).
+    static constexpr uint32_t kFrameReserveMargin = 8;
+
+    std::unique_ptr<TTDFrameCache> _frameCache;
+    /// While true, the memory/port write hooks append accesses to the
+    /// instruction currently being captured (set only during a build replay).
+    bool _frameCaptureActive = false;
+    /// Cache currently being filled (valid only while _frameCaptureActive).
+    TTDFrameCache* _capturingCache = nullptr;
+
+    /// @brief Replay `frame` once and fill `out` with one record per M1.
+    void BuildFrameCache(uint64_t frame, TTDFrameCache& out);
+    /// @brief M1 hook body: snapshot CPU/opcodes/sp/slots into a new entry.
+    void CaptureM1(uint16_t pc);
+
+    /// @brief Exact live machine state: everything a frame-cache build's
+    /// replay can disturb. GetFrameCache captures this before building and
+    /// restores it verbatim after, so the caller's position and memory stay
+    /// intact even when external-event markers block a replay-based restore
+    /// (their effects are not reproducible).
+    struct LiveStateSnapshot
+    {
+        TTDCpuState     cpu{};
+        TTDChipsetState chipset{};
+        uint32_t        z80TInFrame = 0;   ///< z80.t (host-side, not in TTDCpuState)
+        std::vector<uint8_t> ram;          ///< model RAM, _modelRamPages × 16 KB
+        std::vector<uint8_t> ay;           ///< peripheral blobs (empty = absent)
+        std::vector<uint8_t> tape;
+        std::vector<uint8_t> covox;
+        std::vector<uint8_t> fdc;
+    };
+
+    /// Reused across builds; vector capacities are retained, so the sizable
+    /// part (the RAM copy, ≤ ~1 MB) is allocated at most once per browse.
+    LiveStateSnapshot _liveSnapshot;
+
+    /// @brief Capture the live machine state into `out` (pure copies; no
+    /// timeline or dirty-tracker effects).
+    void SaveLiveState(LiveStateSnapshot& out);
+
+    /// @brief Restore a SaveLiveState snapshot verbatim, mirroring
+    /// RestoreCheckpoint's ordering: CPU → chipset → bank rebuild → RAM →
+    /// peripherals → screen resync.
+    void RestoreLiveState(const LiveStateSnapshot& snap);
+
+    /// @brief Re-derive the screen renderer's cached state (active screen
+    /// bank, border color, framebuffer) from emulatorState after a restore
+    /// that bypassed the port decoder (TDD §8.1 step 2e).
+    void ResyncScreenCaches();
 
     // -----------------------------------------------------------------------
     // State

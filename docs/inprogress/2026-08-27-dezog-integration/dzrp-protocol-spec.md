@@ -81,6 +81,8 @@ Same as Response but SeqNo = 0.
 | 5 | CMD_WRITE_BANK | Write memory bank |
 | 10 | CMD_SET_SLOT | Configure memory slot |
 | 12 | CMD_SET_BORDER | Set border color |
+| 20 | CMD_READ_PORT | Read I/O port (DeZog custom dumps) |
+| 21 | CMD_WRITE_PORT | Write I/O port |
 | 50 | CMD_READ_STATE | Capture emulator state |
 | 51 | CMD_WRITE_STATE | Restore emulator state |
 
@@ -120,6 +122,16 @@ Same as Response but SeqNo = 0.
 | 2 | 3 | major.minor.patch | Our DZRP version |
 | 5 | 1 | 0-4 | Machine: 0=UNK, 1=ZX16K, 2=ZX48K, 3=ZX128K, 4=ZXNEXT |
 | 6 | N | string + NUL | Our name (e.g., "Unreal-NG v1.0.0") |
+
+On error=1 the response is just `[seqNo][1]` — DeZog reports "Remote returned
+an error code: 1" and closes the session. Used when no emulator target exists
+(and none appears within a 2 s grace window): answering with machine=0 would
+make DeZog throw "Unknown machine type 0 received" while a session bound to
+nothing silently serves default (all-zero) data for every later command.
+
+**Machine type numbers must match DeZog's `DzrpMachineType` exactly**
+(`ZX16K=1, ZX48K=2, ZX128K=3, ZXNEXT=4` — dzrpremote.ts). DeZog builds its
+whole memory model (long addresses, bank/slot math) from this byte.
 
 ### CMD_GET_REGISTERS (3)
 
@@ -282,6 +294,25 @@ Register IDs:
 
 Bit N = 1 means CMD N is supported.
 
+### CMD_READ_PORT (20)
+
+**Command:** `port(2, LE)` — DeZog sends this for custom dumps
+(`port: 0x...` entries in launch.json, rendered in the variables view).
+
+**Response:** exactly **one** data byte (the value). DeZog reads `data[0]`
+verbatim (`cspectremote.ts sendDzrpCmdReadPort`); an empty ACK yields
+`undefined` in the UI.
+
+### CMD_WRITE_PORT (21)
+
+**Command:** `port(2, LE) + value(1)`.
+
+**Response:** empty (ACK only).
+
+Both commands run the real port bus (`Ports::In/Out`) and therefore observe
+the same latches/banking the CPU sees. Callers must keep the
+paused-while-debugging discipline (same as direct memory access).
+
 ### NTF_PAUSE (1)
 
 **Notification:**
@@ -344,3 +375,43 @@ Key changes from prior versions:
 - v2.0.0: Added long addresses (bank info), memory model in CMD_INIT
 - v1.6.0: Added CMD_CLOSE
 - v1.3.0: Split into "simple" and "normal" modes
+
+### Unreal-NG Extensions (not part of upstream DZRP)
+
+Beyond upstream DZRP v2.2.0, this server implements two extension commands for
+TTD-backed instruction history (reverse debugging): `CMD_GET_HISTORY_INFO`
+(0xE0) and `CMD_GET_HISTORY_ENTRY` (0xE1). Upstream DeZog does not send these
+(its history feature is zsim-local); they are exercised by our Python
+verification tooling. Wire format, semantics and measured performance are
+specified in [reverse-debugging.md](reverse-debugging.md) §2–§5. They answer
+with a normal ACK (never the NAK bit), so a stock DeZog session is unaffected.
+An `OUT_OF_RANGE` reply to 0xE1 is **non-destructive**: the browsable history
+stays intact and in-range indices keep answering — only a forward command
+(pause/resume/step/register-write) returns the target to the present.
+
+## Real-DeZog compatibility notes (verified against DeZog sources)
+
+Verified against `dzrpbufferremote.ts` / `cspectremote.ts` / `dzrpremote.ts`
+(the only TCP transport in DeZog is CSpectRemote — plain `remoteType: "cspect"
+pointed at our port):
+
+- **Command queue is serialized**: DeZog sends one command at a time and only
+  sends the next after the previous response (`receivedMsg` shifts the queue).
+  A single unanswered command therefore freezes the whole session with no
+  client-side error — the server logs every received command (`[DZRP] cmd ...`)
+  precisely so the last one is visible when diagnosing a stall.
+- **The `continue` promise has no timeout**: after CMD_CONTINUE DeZog waits for
+  NTF_PAUSE indefinitely. A lost NTF = permanently stuck "fetching registers,
+  stack" UI.
+- **CMD_READ_MEM/CMD_WRITE_MEM payloads start with a reserved flags byte**
+  (`[0, addrLo, addrHi, sizeLo, sizeHi]`); a size of 0x10000 is never sent —
+  DeZog splits it into two 0x8000 reads.
+- **Strings are NUL-terminated ASCII** in both directions (breakpoint
+  conditions, INIT names, NTF reason text).
+- **NTF_PAUSE layout**: `[seq=0][ntfId=1][reason][addrLo][addrHi][bank]
+  [reasonString NUL]` with reason values matching `BREAK_REASON_NUMBER`
+  (0=none, 1=manual, 2=breakpoint, 3/4=watchpoint r/w).
+- **Not sent by the CSpect remote**: CMD_SET_BREAKPOINTS(13),
+  CMD_RESTORE_MEM(14) (both throw "not implemented" in cspectremote.ts), and
+  the ZX Next sprite commands. CMD_EXEC_ASM(22) is used by unit-test/revEng
+  flows only and stays unimplemented (empty ACK).
