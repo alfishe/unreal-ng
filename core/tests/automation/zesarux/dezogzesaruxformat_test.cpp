@@ -5,13 +5,13 @@
 // (trailing space!), the 7-char disassembly prefix, uppercase contiguous
 // read-memory hex and the extended-stack classification lines.
 
-#include "zrcptestclient.h"
+#include "dezogzesaruxtestfixture.h"
 
 #include <string>
 
 /// region <Registers line>
 
-TEST_F(ZrcpEmulatorFixture, RegistersLineIsByteExact)
+TEST_F(DezogZesaruxFixture, RegistersLineIsByteExact)
 {
     // All registers set over the wire with decimal values, exactly like DeZog
     EXPECT_EQ(_client.command("set-register PC=4660"), "");    // 0x1234
@@ -39,14 +39,14 @@ TEST_F(ZrcpEmulatorFixture, RegistersLineIsByteExact)
               "MEMPTR=0000 IM1 IFF-- VPS: 50 MMU=80010005000200008001000500020000");
 }
 
-TEST_F(ZrcpEmulatorFixture, MemoryPagesGolden)
+TEST_F(DezogZesaruxFixture, MemoryPagesGolden)
 {
     // 128K with RM_SOS: ROM1, RAM 5, RAM 2, RAM 0 - each token followed by a
     // space; DeZog counts tokens via split(' ').length - 1
     EXPECT_EQ(_client.command("get-memory-pages"), "RO1 RA5 RA2 RA0 ");
 }
 
-TEST_F(ZrcpEmulatorFixture, MachineString128K)
+TEST_F(DezogZesaruxFixture, MachineString128K)
 {
     EXPECT_EQ(_client.command("get-current-machine"), "ZX Spectrum 128K");
 }
@@ -55,7 +55,7 @@ TEST_F(ZrcpEmulatorFixture, MachineString128K)
 
 /// region <Memory hex>
 
-TEST_F(ZrcpEmulatorFixture, MemoryRoundTripIsUppercaseContiguousHex)
+TEST_F(DezogZesaruxFixture, MemoryRoundTripIsUppercaseContiguousHex)
 {
     EXPECT_EQ(_client.command("write-memory-raw 36864 DEADBEEF"), "");
     EXPECT_EQ(_client.command("read-memory 36864 4"), "DEADBEEF");
@@ -66,7 +66,7 @@ TEST_F(ZrcpEmulatorFixture, MemoryRoundTripIsUppercaseContiguousHex)
 
 /// region <Disassembly lines>
 
-TEST_F(ZrcpEmulatorFixture, DisassemblyPrefixAndUpperMnemonics)
+TEST_F(DezogZesaruxFixture, DisassemblyPrefixAndUpperMnemonics)
 {
     installProgram();
 
@@ -88,7 +88,7 @@ TEST_F(ZrcpEmulatorFixture, DisassemblyPrefixAndUpperMnemonics)
 
 /// region <Step output>
 
-TEST_F(ZrcpEmulatorFixture, StepOutputIncludesRegistersWithTstates)
+TEST_F(DezogZesaruxFixture, StepOutputIncludesRegistersWithTstates)
 {
     initSession();
     installProgram();
@@ -112,7 +112,7 @@ TEST_F(ZrcpEmulatorFixture, StepOutputIncludesRegistersWithTstates)
 
 /// region <cpu-history line>
 
-TEST_F(ZrcpEmulatorFixture, HistoryLineShapeAndFields)
+TEST_F(DezogZesaruxFixture, HistoryLineShapeAndFields)
 {
     initSession();
     installProgram();
@@ -178,7 +178,7 @@ TEST_F(ZrcpEmulatorFixture, HistoryLineShapeAndFields)
 
 /// region <extended-stack lines>
 
-TEST_F(ZrcpEmulatorFixture, ExtendedStackClassificationLines)
+TEST_F(DezogZesaruxFixture, ExtendedStackClassificationLines)
 {
     initSession();
     installProgram();

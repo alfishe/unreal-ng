@@ -1,14 +1,15 @@
 #pragma once
 
-// Shared fixtures for the ZEsarUX ZRCP server tests.
+// Shared fixtures for the DeZog ZEsarUX debug adapter tests (the zrcp::
+// Server surface DeZog connects to).
 //
-// TestZrcpClient is a minimal blocking line client that talks the ZRCP text
+// TestDezogZesaruxClient is a minimal blocking line client that talks the ZRCP text
 // protocol exactly like DeZog's ZesaruxSocket: commands are '\n'-terminated
 // lines and every response is consumed up to the "command...> " prompt. Like
 // DeZog, the prompt must sit on a line of its own (preceded by '\n') - an
 // answer is otherwise incomplete and DeZog times out.
 //
-// ZrcpEmulatorFixture boots the server on an ephemeral port next to the live
+// DezogZesaruxFixture boots the server on an ephemeral port next to the live
 // emulator from DezogEmulatorFixture, with the production pause-notifier
 // wiring (adapter stop events -> server run-waiter).
 
@@ -21,10 +22,10 @@
 #include <string>
 #include <vector>
 
-class TestZrcpClient
+class TestDezogZesaruxClient
 {
 public:
-    ~TestZrcpClient() { disconnect(); }
+    ~TestDezogZesaruxClient() { disconnect(); }
 
     bool connect(uint16_t port)
     {
@@ -184,7 +185,7 @@ private:
     std::string _buffer;
 };
 
-class ZrcpEmulatorFixture : public DezogEmulatorFixture
+class DezogZesaruxFixture : public DezogEmulatorFixture
 {
 protected:
     void SetUp() override
@@ -233,5 +234,5 @@ protected:
     }
 
     std::unique_ptr<zrcp::Server> _server;
-    TestZrcpClient _client;
+    TestDezogZesaruxClient _client;
 };

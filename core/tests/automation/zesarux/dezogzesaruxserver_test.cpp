@@ -3,7 +3,7 @@
 // run via blank line, breakpoints with conditions/pass counts, watchpoints,
 // history and the quit sequence).
 
-#include "zrcptestclient.h"
+#include "dezogzesaruxtestfixture.h"
 
 #include "automation-zesarux.h"
 
@@ -14,7 +14,7 @@
 
 /// region <Handshake / basics>
 
-TEST_F(ZrcpEmulatorFixture, VersionAndUnknownCommand)
+TEST_F(DezogZesaruxFixture, VersionAndUnknownCommand)
 {
     EXPECT_EQ(_client.command("get-version"), "12.1");
     const std::string about = _client.command("about");
@@ -26,7 +26,7 @@ TEST_F(ZrcpEmulatorFixture, VersionAndUnknownCommand)
     EXPECT_EQ(_client.command("get-version"), "12.1");
 }
 
-TEST_F(ZrcpEmulatorFixture, FullInitSequenceIncluding100Disables)
+TEST_F(DezogZesaruxFixture, FullInitSequenceIncluding100Disables)
 {
     // The exact command stream DeZog sends on connect (order included)
     EXPECT_EQ(_client.command("close-all-menus"), "");
@@ -71,7 +71,7 @@ TEST_F(ZrcpEmulatorFixture, FullInitSequenceIncluding100Disables)
     EXPECT_EQ(_client.command("blank"), "Unknown command");
 }
 
-TEST_F(ZrcpEmulatorFixture, ExecutionCommandsRequireCpuStepMode)
+TEST_F(DezogZesaruxFixture, ExecutionCommandsRequireCpuStepMode)
 {
     EXPECT_EQ(_client.command("cpu-step"), "Error. You must first enter cpu-step mode");
     EXPECT_EQ(_client.command("cpu-step-over"), "Error. You must first enter cpu-step mode");
@@ -85,7 +85,7 @@ TEST_F(ZrcpEmulatorFixture, ExecutionCommandsRequireCpuStepMode)
 
 /// region <cpu-step / cpu-step-over>
 
-TEST_F(ZrcpEmulatorFixture, CpuStepAdvancesPc)
+TEST_F(DezogZesaruxFixture, CpuStepAdvancesPc)
 {
     initSession();
     installProgram();
@@ -98,7 +98,7 @@ TEST_F(ZrcpEmulatorFixture, CpuStepAdvancesPc)
     EXPECT_EQ(_adapter->getRegisters().pc, 0x8003u);
 }
 
-TEST_F(ZrcpEmulatorFixture, CpuStepOverCallRunsUntilAfterIt)
+TEST_F(DezogZesaruxFixture, CpuStepOverCallRunsUntilAfterIt)
 {
     initSession();
 
@@ -114,7 +114,7 @@ TEST_F(ZrcpEmulatorFixture, CpuStepOverCallRunsUntilAfterIt)
     EXPECT_EQ(_adapter->getRegisters().pc, 0x8003u);
 }
 
-TEST_F(ZrcpEmulatorFixture, CpuStepOverNonCallIsSingleStep)
+TEST_F(DezogZesaruxFixture, CpuStepOverNonCallIsSingleStep)
 {
     initSession();
     installProgram();
@@ -129,7 +129,7 @@ TEST_F(ZrcpEmulatorFixture, CpuStepOverNonCallIsSingleStep)
 
 /// region <run: breakpoints / conditions / pass counts>
 
-TEST_F(ZrcpEmulatorFixture, RunStopsOnBreakpointAndEchoesCondition)
+TEST_F(DezogZesaruxFixture, RunStopsOnBreakpointAndEchoesCondition)
 {
     initSession();
     installProgram();
@@ -155,7 +155,7 @@ TEST_F(ZrcpEmulatorFixture, RunStopsOnBreakpointAndEchoesCondition)
     EXPECT_EQ(_emulator->GetBreakpointManager()->GetBreakpointsCount(), 0u);
 }
 
-TEST_F(ZrcpEmulatorFixture, RunBreakpointConditionFalseSilentlyResumes)
+TEST_F(DezogZesaruxFixture, RunBreakpointConditionFalseSilentlyResumes)
 {
     initSession();
     installProgram();
@@ -182,7 +182,7 @@ TEST_F(ZrcpEmulatorFixture, RunBreakpointConditionFalseSilentlyResumes)
     EXPECT_TRUE(_emulator->IsPaused());
 }
 
-TEST_F(ZrcpEmulatorFixture, RunBreakpointConditionTrueStops)
+TEST_F(DezogZesaruxFixture, RunBreakpointConditionTrueStops)
 {
     initSession();
     installProgram();
@@ -197,7 +197,7 @@ TEST_F(ZrcpEmulatorFixture, RunBreakpointConditionTrueStops)
     EXPECT_EQ(_adapter->getRegisters().pc, 0x8001u);
 }
 
-TEST_F(ZrcpEmulatorFixture, PassCountSkipsFirstHits)
+TEST_F(DezogZesaruxFixture, PassCountSkipsFirstHits)
 {
     initSession();
     installProgram();
@@ -213,7 +213,7 @@ TEST_F(ZrcpEmulatorFixture, PassCountSkipsFirstHits)
     EXPECT_FALSE(_client.readUntilPrompt().empty());
 }
 
-TEST_F(ZrcpEmulatorFixture, DisableBreakpointKeepsRunning)
+TEST_F(DezogZesaruxFixture, DisableBreakpointKeepsRunning)
 {
     initSession();
     installProgram();
@@ -237,7 +237,7 @@ TEST_F(ZrcpEmulatorFixture, DisableBreakpointKeepsRunning)
 
 /// region <Watchpoints>
 
-TEST_F(ZrcpEmulatorFixture, WatchpointFiresOnWrite)
+TEST_F(DezogZesaruxFixture, WatchpointFiresOnWrite)
 {
     initSession();
     installProgram();
@@ -263,7 +263,7 @@ TEST_F(ZrcpEmulatorFixture, WatchpointFiresOnWrite)
 
 /// region <memory dump>
 
-TEST_F(ZrcpEmulatorFixture, ReadMemoryFullAddressSpace)
+TEST_F(DezogZesaruxFixture, ReadMemoryFullAddressSpace)
 {
     initSession();
     installProgram();
@@ -293,7 +293,7 @@ TEST_F(ZrcpEmulatorFixture, ReadMemoryFullAddressSpace)
 
 /// region <history>
 
-TEST_F(ZrcpEmulatorFixture, HistoryIndexesAndErrors)
+TEST_F(DezogZesaruxFixture, HistoryIndexesAndErrors)
 {
     initSession();
     installProgram();
@@ -321,7 +321,7 @@ TEST_F(ZrcpEmulatorFixture, HistoryIndexesAndErrors)
 // never walk past the latest stop. Browse cycles must be non-destructive:
 // instructions stepped BEFORE a browse stay browsable after
 // browse -> step -> browse cycles.
-TEST_F(ZrcpEmulatorFixture, HistorySurvivesBrowseAndStepCycles)
+TEST_F(DezogZesaruxFixture, HistorySurvivesBrowseAndStepCycles)
 {
     initSession();
     installProgram();
@@ -351,7 +351,7 @@ TEST_F(ZrcpEmulatorFixture, HistorySurvivesBrowseAndStepCycles)
 
 /// region <Quit / session lifecycle>
 
-TEST_F(ZrcpEmulatorFixture, QuitSequenceEndsSessionAndCleansUp)
+TEST_F(DezogZesaruxFixture, QuitSequenceEndsSessionAndCleansUp)
 {
     initSession();
     installProgram();
@@ -384,7 +384,7 @@ TEST_F(ZrcpEmulatorFixture, QuitSequenceEndsSessionAndCleansUp)
     EXPECT_EQ(_client.command("get-version"), "12.1");
 }
 
-TEST_F(ZrcpEmulatorFixture, ClientDropWhileRunningCleansUp)
+TEST_F(DezogZesaruxFixture, ClientDropWhileRunningCleansUp)
 {
     initSession();
     installProgram();
@@ -479,7 +479,7 @@ TEST_F(AutomationZesarux_test, StartStopLifecycle)
     EXPECT_TRUE(module.start(port));
 
     // A client can connect, see the banner and quit
-    TestZrcpClient client;
+    TestDezogZesaruxClient client;
     ASSERT_TRUE(client.connect(port));
     EXPECT_NE(client.readUntilPrompt().find("Welcome"), std::string::npos);
     EXPECT_EQ(client.command("get-version"), zrcp::SERVER_VERSION);
