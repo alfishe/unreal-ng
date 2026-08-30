@@ -75,6 +75,18 @@ public:
     virtual uint8_t readPort(uint16_t port) const = 0;
     virtual void writePort(uint16_t port, uint8_t value) = 0;
 
+    // --- ZRCP (ZEsarUX protocol) transport capabilities ---
+    // Used by the zesarux module's ZRCP server; safe defaults keep other
+    // transports working. Executes exactly one instruction. Call only while
+    // paused; returns false when the step could not be executed (no emulator
+    // or not paused).
+    virtual bool stepOnce() { return false; }
+
+    // Disassembles the instruction at addr (operand placeholders resolved).
+    // Stores the instruction length in *lenOut when non-null. Empty string =
+    // disassembler unavailable.
+    virtual std::string disassembleInstruction(uint16_t /*addr*/, uint8_t* /*lenOut*/) { return {}; }
+
     // Session lifecycle
     // onSessionOpened: CMD_INIT received (start history recording, etc.)
     // onSessionClosed: client disconnected (CMD_CLOSE or socket drop). Implementations

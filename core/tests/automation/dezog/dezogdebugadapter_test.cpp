@@ -789,6 +789,12 @@ TEST_F(DezogHistory_test, EntriesWalkStrictlyBackThroughRecordedInstructions)
         ASSERT_TRUE(e.has_value()) << "index " << i;
         EXPECT_EQ(_adapter->getHistoryCursor(), static_cast<int64_t>(i));
         EXPECT_EQ(e->slots.size(), 4u);
+        // dzrp slot encoding like getSlots(): slot 0 = ROM (8/9), then RAM banks.
+        // The TTD cache stores the raw ROM page - getHistoryEntry normalizes.
+        EXPECT_TRUE(e->slots[0] == DezogDebugAdapter::ROM_BANK_BASE ||
+                    e->slots[0] == DezogDebugAdapter::ROM_BANK_BASE + 1);
+        EXPECT_EQ(e->slots[1], 5);
+        EXPECT_EQ(e->slots[2], 2);
         EXPECT_TRUE(isProgramPc(e->regs.pc)) << "index " << i << " pc=" << std::hex << e->regs.pc;
     }
 

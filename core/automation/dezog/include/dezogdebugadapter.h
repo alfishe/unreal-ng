@@ -80,6 +80,10 @@ public:
     uint8_t readPort(uint16_t port) const override;
     void writePort(uint16_t port, uint8_t value) override;
 
+    // --- ZRCP transport capabilities ---
+    bool stepOnce() override;
+    std::string disassembleInstruction(uint16_t addr, uint8_t* lenOut) override;
+
     bool waitForTarget(uint32_t timeoutMs) const override;
 
     // CMD_INIT: starts TTD recording so instruction history is available at the

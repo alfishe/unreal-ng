@@ -26,6 +26,10 @@
 #include "dezog/include/automation-dezog.h"
 #endif
 
+#if ENABLE_ZESARUX_AUTOMATION
+#include "zesarux/include/automation-zesarux.h"
+#endif
+
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
@@ -67,6 +71,10 @@ bool Automation::start()
     result &= startDezog();
 #endif
 
+#if ENABLE_ZESARUX_AUTOMATION
+    result &= startZesarux();
+#endif
+
     return result;
 }
 
@@ -95,6 +103,10 @@ void Automation::stop()
 
 #if ENABLE_DEZOG_AUTOMATION
     stopDezog();
+#endif
+
+#if ENABLE_ZESARUX_AUTOMATION
+    stopZesarux();
 #endif
 }
 
@@ -283,6 +295,36 @@ void Automation::stopDezog()
         _dezog->stop();
         delete _dezog;
         _dezog = nullptr;
+    }
+}
+#endif
+
+#if ENABLE_ZESARUX_AUTOMATION
+bool Automation::startZesarux()
+{
+    bool result = true;
+
+    _zesarux = new AutomationZesarux();
+
+    if (_zesarux)
+    {
+        result = _zesarux->start();
+    }
+    else
+    {
+        result = false;
+    }
+
+    return result;
+}
+
+void Automation::stopZesarux()
+{
+    if (_zesarux)
+    {
+        _zesarux->stop();
+        delete _zesarux;
+        _zesarux = nullptr;
     }
 }
 #endif

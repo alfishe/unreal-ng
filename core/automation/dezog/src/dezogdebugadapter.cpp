@@ -4,6 +4,8 @@
 #include "base/featuremanager.h"
 #include "common/uuid.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/debugmanager.h"
+#include "debugger/disassembler/z80disasm.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttd_checkpoint.h"
 #include "emulator/cpu/z80.h"
@@ -393,6 +395,61 @@ void DezogDebugAdapter::writeMemory(uint16_t addr, const std::vector<uint8_t>& d
 }
 
 /// endregion </Memory>
+
+/// region <ZRCP capabilities>
+
+bool DezogDebugAdapter::stepOnce()
+{
+    auto emulator = resolveEmulator();
+    if (!emulator || !emulator->IsPaused())
+        return false;
+
+    leaveHistory(*emulator);
+    ensureHistoryRecording(*emulator);
+
+    // Single instruction from the control thread - the same call the CLI 'stepin' uses
+    emulator->RunSingleCPUCycle(false);
+
+    return true;
+}
+
+std::string DezogDebugAdapter::disassembleInstruction(uint16_t addr, uint8_t* lenOut)
+{
+    auto emulator = resolveEmulator();
+    if (!emulator)
+    {
+        if (lenOut)
+            *lenOut = 1;
+        return {};
+    }
+
+    ensureDebugEnabled(*emulator);
+
+    DebugManager* debugManager = emulator->GetDebugManager();
+    if (!debugManager || !debugManager->GetDisassembler())
+    {
+        if (lenOut)
+            *lenOut = 1;
+        return {};
+    }
+
+    Z80Disassembler* disassembler = debugManager->GetDisassembler().get();
+
+    std::vector<uint8_t> buffer = readMemory(addr, static_cast<uint16_t>(Z80Disassembler::MAX_INSTRUCTION_LENGTH));
+
+    uint8_t len = 0;
+    DecodedInstruction decoded;
+    std::string text = disassembler->disassembleSingleCommand(buffer, addr, &len, &decoded);
+
+    // Safe default when the decoder could not determine the length
+    if (len == 0)
+        len = 1;
+    if (lenOut)
+        *lenOut = len;
+    return text;
+}
+
+/// endregion </ZRCP capabilities>
 
 /// region <Banking>
 
@@ -1157,7 +1214,14 @@ std::optional<dzrp::IDebugInterface::HistoryEntry> DezogDebugAdapter::getHistory
     entry.regs.ix = e.ix;   entry.regs.iy = e.iy;
     entry.regs.af2 = e.af2; entry.regs.bc2 = e.bc2; entry.regs.de2 = e.de2; entry.regs.hl2 = e.hl2;
     entry.regs.r = e.r;     entry.regs.i = e.i;     entry.regs.im = e.im;
-    entry.slots.assign(e.slots, e.slots + e.slotCount);
+    // The TTD cache stores raw slots (slot 0 = ROM page 0/1); clients get the
+    // same dzrp encoding getSlots() returns (ROM_BANK_BASE + page for slot 0),
+    // so history entries decode identically to live register responses.
+    if (getMachineType() == dzrp::MachineType::ZX48K)
+        entry.slots = {0, 1};
+    else
+        entry.slots = {static_cast<uint8_t>(ROM_BANK_BASE + (e.slots[0] & 0x01)),
+                       e.slots[1], e.slots[2], e.slots[3]};
     for (int i = 0; i < 4; ++i)
         entry.opcodes[i] = e.opcodes[i];
     entry.spContent = e.spContent;
