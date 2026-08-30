@@ -808,7 +808,7 @@ TEST_F(DezogHistory_test, EntriesWalkStrictlyBackThroughRecordedInstructions)
         {
             sawEnd = true;
             EXPECT_EQ(_adapter->getHistoryCursor(), static_cast<int64_t>(i - 1));  // last good index
-            EXPECT_FALSE(_adapter->isHistoryRecording());  // still browsing
+            EXPECT_TRUE(_adapter->isHistoryRecording());  // browse is read-only: capture continues
             EXPECT_EQ(_emulator->GetZ80State()->pc, PROGRAM_JP);  // present never disturbed
             auto again = _adapter->getHistoryEntry(0);
             ASSERT_TRUE(again.has_value()) << "out-of-range query wiped the browsable history";
@@ -839,7 +839,7 @@ TEST_F(DezogHistory_test, OutOfRangeQueryKeepsBrowsableHistory)
     // Way past the oldest recorded instruction (also exercises the
     // early-terminated backward walk at the recording baseline)
     EXPECT_EQ(_adapter->getHistoryEntry(1'000'000), std::nullopt);
-    EXPECT_FALSE(_adapter->isHistoryRecording());  // still browsing, history intact
+    EXPECT_TRUE(_adapter->isHistoryRecording());  // browse is read-only: capture continues, history intact
     auto again = _adapter->getHistoryEntry(1);
     ASSERT_TRUE(again.has_value()) << "bad index wiped the browsable history";
     EXPECT_EQ(_adapter->getHistoryCursor(), 1);
@@ -954,6 +954,240 @@ TEST_F(DezogHistory_test, HistoryContinuesAcrossStops)
         ++valid;
     }
     EXPECT_GE(valid, 4u);
+}
+
+// §6 regression (the reported "Break: Reached end of instruction history"):
+// DeZog spot-fetches history at EVERY stop, and every forward command used to
+// restart recording via StartRecording - wiping the timeline on each
+// browse/stop cycle, so reverse-continue could never walk past the latest
+// stop. Under the DebuggerLive mode browse is read-only and recording never
+// stops: instructions recorded BEFORE a browse must still resolve AFTER the
+// browse/continue cycles.
+TEST_F(DezogHistory_test, HistorySurvivesBrowseAndStopCycles)
+{
+    _adapter->onSessionOpened();
+    installProgram();
+    runToJp(3);  // ~9 recorded instructions before any browse
+
+    ASSERT_TRUE(_adapter->getHistoryEntry(8).has_value());  // deep pre-browse entry
+    EXPECT_TRUE(ttd()->IsDebuggerLive());
+    EXPECT_TRUE(ttd()->IsRecording());  // browsing must not stop the capture
+    const size_t checkpointsBefore = ttd()->GetCheckpointCount();
+
+    // The DeZog stop pattern repeated: spot-fetch -> forward command -> stop
+    // -> spot-fetch (each runToJp hit resumes, i.e. leaves the browse).
+    for (int cycle = 0; cycle < 3; ++cycle)
+    {
+        ASSERT_TRUE(_adapter->getHistoryEntry(0).has_value()) << cycle;
+        EXPECT_TRUE(ttd()->IsRecording()) << cycle;
+        runToJp(1);
+        ASSERT_TRUE(_adapter->getHistoryEntry(0).has_value()) << cycle;
+    }
+
+    // The timeline only grew, and pre-browse instructions are still browsable
+    // (with the old wipe, only the ~3 post-wipe steps survived and index 8/10
+    // returned out-of-range).
+    EXPECT_GE(ttd()->GetCheckpointCount(), checkpointsBefore);
+    for (uint32_t i : {0u, 8u, 10u})
+    {
+        auto e = _adapter->getHistoryEntry(i);
+        ASSERT_TRUE(e.has_value()) << i;
+        EXPECT_TRUE(isProgramPc(e->regs.pc)) << i;
+    }
+    _adapter->resume();
+}
+
+// Live-app regression (found via the ZRCP verifier against a WebAPI-created
+// instance that had booted and free-run BASIC before the session attached):
+// with REAL pre-session ROM frames (BASIC + interrupts) behind the baseline,
+// the browsable history after installProgram + breakpoint runs must decode
+// ONLY genuinely executed instructions. Mid-instruction PCs (operand-fetch
+// addresses like 0x8002/0x8004/0x8005) or stale pre-edit ROM PCs in the walk
+// mean a checkpoint/replay inconsistency - not extra history.
+TEST_F(DezogHistory_test, HistoryStaysCoherentAfterPreSessionFreeRun)
+{
+    // Pre-session execution: real ROM frames + interrupts, like a WebAPI/GUI
+    // instance that booted and ran before DeZog attached
+    _emulator->Resume();
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    _emulator->Pause();
+
+    _adapter->onSessionOpened();  // parks wherever BASIC is (ROM, IFF on)
+    installProgram();             // edits -> fresh baseline at PC=8000
+    runToJp(3);
+
+    std::vector<uint16_t> seen;
+    for (uint32_t i = 0; i < 4096; ++i)
+    {
+        auto e = _adapter->getHistoryEntry(i);
+        if (!e.has_value())
+            break;
+        seen.push_back(e->regs.pc);
+    }
+    ASSERT_GT(seen.size(), 6u) << "no browsable history after pre-session run";
+    for (uint32_t k = 0; k < seen.size(); ++k)
+        EXPECT_TRUE(isProgramPc(seen[k])) << "index " << k << " pc=" << std::hex << seen[k];
+    _adapter->resume();
+}
+
+// Same regression shape as above, but on the paged 128K model: the live
+// repro came from a WebAPI-created '128k' instance, where banked memory
+// exercises a different page-store/checkpoint path than the 48K fixture.
+TEST_F(DezogHistory_test, HistoryStaysCoherentAfterPreSessionFreeRun128K)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    ASSERT_NE(manager, nullptr);
+    auto emulator = manager->CreateEmulatorWithModel("dezog-test-128k", "128k", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    emulator->Reset();
+    emulator->StartAsync();
+    for (int i = 0; i < 50 && emulator->GetState() != StateRun; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    ASSERT_EQ(emulator->GetState(), StateRun);
+
+    DezogDebugAdapter adapter(emulator);
+    adapter.setPauseNotifier([this](dzrp::BreakReason, uint16_t, uint8_t) {});
+
+    // Pre-session execution: real ROM frames + interrupts on the paged model
+    emulator->Resume();
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    emulator->Pause();
+
+    adapter.onSessionOpened();
+    adapter.writeMemory(PROGRAM_START, {0xF3, 0x3E, 0x01, 0x32, 0x00, 0x90, 0xC3, 0x01, 0x80});
+    adapter.writeMemory(WATCH_TARGET, {0x00});
+    adapter.setRegister(dzrp::RegisterId::PC, PROGRAM_START);
+
+    uint16_t id = adapter.addBreakpoint(PROGRAM_JP);
+    ASSERT_NE(id, 0);
+    for (int hit = 0; hit < 3; ++hit)
+    {
+        adapter.resume();
+        // No event helper on this inline adapter - poll the parked state
+        for (int i = 0; i < 300 && !emulator->IsPaused(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        ASSERT_TRUE(emulator->IsPaused()) << "hit " << hit;
+        ASSERT_EQ(emulator->GetZ80State()->pc, PROGRAM_JP) << "hit " << hit;
+    }
+    adapter.removeBreakpoint(id);
+
+    std::vector<uint16_t> seen;
+    for (uint32_t i = 0; i < 4096; ++i)
+    {
+        auto e = adapter.getHistoryEntry(i);
+        if (!e.has_value())
+            break;
+        seen.push_back(e->regs.pc);
+    }
+    ASSERT_GT(seen.size(), 6u) << "no browsable history after pre-session run (128k)";
+    for (uint32_t k = 0; k < seen.size(); ++k)
+        EXPECT_TRUE(isProgramPc(seen[k])) << "index " << k << " pc=" << std::hex << seen[k];
+
+    adapter.onSessionClosed();
+    std::string emuId = emulator->GetId();
+    emulator.reset();
+    manager->RemoveEmulator(emuId);
+}
+
+// Live-app regression (§6): a DeZog run that crosses a real frame boundary
+// followed by a DEEP walk forces BuildFrameCache on EARLIER frames - down to
+// the baseline, which StartRecording captured mid-frame while paused (the
+// "checkpoint N = start of frame N" invariant does not hold for it). A
+// subsequent run must still re-hit a nearby breakpoint instantly and the
+// walked history must decode only genuinely executed instructions: no
+// mid-instruction PCs (NOP-sled phantoms through zeroed memory) and no
+// stale pre-edit PCs.
+TEST_F(DezogHistory_test, DeepBrowseAcrossFrameBoundaryThenResumeStaysCoherent)
+{
+    _emulator->Resume();
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    _emulator->Pause();
+
+    _adapter->onSessionOpened();
+    installProgram();  // edits -> fresh baseline at PC=8000, mid-frame
+
+    // Free-run the 3-instruction loop across ~2 frame boundaries (bp-driven
+    // runs are over in a few dozen t-states and stay inside one frame), then
+    // park mid-loop like a DeZog stop would.
+    _adapter->resume();
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    _adapter->pause();
+    PauseEvent manual{};
+    ASSERT_TRUE(waitForEvent(manual));  // consume the manual-pause notification
+    ASSERT_TRUE(isProgramPc(_emulator->GetZ80State()->pc));
+
+    // Deep walk: past the pause point's frame into earlier frames, reaching
+    // the mid-frame baseline. Every decoded entry must be a real M1 of the
+    // loop - operand addresses (8002/8004/8005) or pre-edit PCs mean the
+    // baseline-frame replay diverged from what actually executed.
+    std::vector<uint16_t> seen;
+    for (uint32_t i = 0; i < 6000; ++i)
+    {
+        auto e = _adapter->getHistoryEntry(i);
+        if (!e.has_value())
+            break;
+        seen.push_back(e->regs.pc);
+    }
+    ASSERT_GT(seen.size(), 100u) << "walk did not reach deep history";
+    EXPECT_TRUE(_adapter->isHistoryRecording());
+    for (uint32_t k = 0; k < seen.size(); ++k)
+        EXPECT_TRUE(isProgramPc(seen[k])) << "index " << k << " pc=" << std::hex << seen[k];
+    EXPECT_EQ(_adapter->getHistoryCursor(), static_cast<int64_t>(seen.size() - 1));
+
+    // Resume after the deep browse: the machine never moved, so a breakpoint
+    // three instructions away must re-hit immediately (the live bug free-ran
+    // ~1.1s through zeroed RAM and BASIC before stumbling back into 8006).
+    uint16_t id = _adapter->addBreakpoint(PROGRAM_JP);
+    ASSERT_NE(id, 0);
+    const auto t0 = std::chrono::steady_clock::now();
+    _adapter->resume();
+    PauseEvent hit{};
+    ASSERT_TRUE(waitForEvent(hit, std::chrono::seconds(5))) << "breakpoint did not re-hit";
+    const auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - t0)
+                        .count();
+    EXPECT_EQ(hit.address, PROGRAM_JP);
+    EXPECT_LT(dt, 500) << "re-hit took " << dt << "ms - machine resumed in a corrupted state";
+    _adapter->removeBreakpoint(id);
+}
+
+// §6 gap guard: if the emulator runs while recording is stopped (e.g.
+// resumed from the host GUI), the unrecorded frames are unreplayable (no
+// checkpoints, no journaled writes), so re-establishing live history must
+// REFUSE the non-destructive resume and fall back to a fresh session.
+TEST_F(DezogHistory_test, UnrecordedGapFallsBackToFreshSession)
+{
+    _adapter->onSessionOpened();
+    installProgram();
+    runToJp(2);
+
+    // runToJp executes only a handful of instructions inside ONE frame (just
+    // the baseline checkpoint); free-run while recording is still active to
+    // cross frame boundaries and accrue a multi-checkpoint timeline.
+    _emulator->Resume();
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    _emulator->Pause();
+
+    const size_t checkpointsBefore = ttd()->GetCheckpointCount();
+    EXPECT_GT(checkpointsBefore, 1u);
+
+    // Host-side resume (adapter not involved - it would auto-restart capture)
+    ttd::TimeTravelManager* mgr = ttd();
+    mgr->StopRecording();
+    _emulator->Resume();
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    _emulator->Pause();
+
+    // A real gap accrued: the present advanced past the recorded end
+    EXPECT_GT(mgr->CurrentPosition().frame, mgr->SessionEndPosition().frame);
+
+    // The next debugger-session command re-establishes live history by
+    // starting fresh (baseline only) instead of appending across the gap.
+    _adapter->onSessionOpened();
+    EXPECT_TRUE(mgr->IsRecording());
+    EXPECT_TRUE(mgr->IsDebuggerLive());
+    EXPECT_LT(mgr->GetCheckpointCount(), checkpointsBefore);
+    _adapter->resume();
 }
 
 TEST_F(DezogHistory_test, RegisterWriteWhileBrowsingReturnsToPresentFirst)

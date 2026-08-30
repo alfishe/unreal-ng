@@ -89,6 +89,25 @@ enum class TTDSessionState : uint8_t
 /// Keep in sync with the enum order above.
 const char* TTDSessionStateToString(TTDSessionState state);
 
+/// @brief Recording mode: which surface owns the session lifecycle.
+///
+/// Session (default) — the classic record/browse/seek/resume/.ttd flow
+/// used by the scrubber, WebAPI and CLI: StartRecording wipes and
+/// re-baselines, GetFrameCache is replay-scope only (never while
+/// Recording).
+///
+/// DebuggerLive — entered by debugger sessions (DeZog DZRP/ZRCP via the
+/// shared adapter): recording is continuous across browse cycles, and
+/// GetFrameCache may build while Recording when the emulator is paused
+/// (mode-scoped invariant relaxation; SeekTo/StepBack stay forbidden
+/// while Recording). See docs/inprogress/2026-08-27-dezog-integration/
+/// reverse-debugging.md §6.
+enum class TTDRecordMode : uint8_t
+{
+    Session      = 0,  ///< Classic .ttd session (scrubber/WebAPI/CLI).
+    DebuggerLive = 1,  ///< Always-recording live history for debuggers.
+};
+
 /// @brief Lightweight session summary returned by GetSessionInfo().
 /// Matches the shape automation clients (WebAPI/Lua/CLI) consume per TDD §10.4.
 struct TTDSessionInfo
@@ -196,6 +215,26 @@ public:
 
     inline bool IsRecording() const { return _state == TTDSessionState::Recording; }
     inline TTDSessionState GetState() const { return _state; }
+    inline TTDRecordMode GetRecordMode() const { return _recordMode; }
+    inline bool IsDebuggerLive() const { return _recordMode == TTDRecordMode::DebuggerLive; }
+
+    /// @brief Enter DebuggerLive mode (debugger session live history).
+    ///
+    /// Adopts whatever recording state exists instead of wiping:
+    ///  - already Recording (a Session-mode start hijacked by an attach):
+    ///    keep the timeline, just switch the mode flag;
+    ///  - Idle with history and no unrecorded gap: ResumeRecordingLive()
+    ///    (append after the recorded end);
+    ///  - Idle empty or gapped: fresh StartRecording-style baseline.
+    ///
+    /// @return true when recording is active in DebuggerLive mode on
+    ///         return.
+    bool BeginDebuggerLiveHistory();
+
+    /// @brief Leave DebuggerLive mode. Recording stops, the timeline is
+    ///        KEPT as normal Idle-with-history for the scrubber/.ttd
+    ///        flows. Idempotent (no-op when not in DebuggerLive).
+    void EndDebuggerLiveHistory();
 
     TTDSessionInfo GetSessionInfo() const;
 
@@ -598,16 +637,22 @@ public:
     /// across browse/resume cycles (StartRecording would wipe it).
     ///
     /// Valid only when the live machine never left the present (no seek/
-    /// scrub): the current position must be >= SessionEndPosition(). A mid-
-    /// frame present is fine — unlike ResumeRecordingFrom there is no target
-    /// to hit and nothing to truncate; the partial frame simply continues
-    /// where it paused (the emulator state is continuous across the browse).
+    /// scrub) AND no unrecorded gap exists: the current position must be
+    /// in the SAME frame as the recorded end (timeline.back()). A
+    /// mid-frame present in that frame is fine — unlike
+    /// ResumeRecordingFrom there is no target to hit and nothing to
+    /// truncate; the partial frame simply continues where it paused (the
+    /// emulator state is continuous across the browse). A frame gap means
+    /// the emulator ran while recording was stopped; those frames have no
+    /// checkpoints and no journaled writes, so replaying across the gap
+    /// would silently produce wrong state — refuse and let the caller fall
+    /// back to StartRecording.
     ///
     /// @return true on success (or already Recording — idempotent). False
     ///         (with a logged warning) if state is Detached (use
     ///         ResumeRecordingFrom), the timeline is empty (caller should
-    ///         StartRecording), or the present is behind the recorded end
-    ///         (sorted-invariant guard).
+    ///         StartRecording), or a frame gap was detected
+    ///         (sorted-invariant/unrecordable-gap guard).
     bool ResumeRecordingLive();
 
     // -----------------------------------------------------------------------
@@ -1144,6 +1189,9 @@ private:
     // State
     // -----------------------------------------------------------------------
     TTDSessionState _state = TTDSessionState::Idle;
+
+    /// Recording mode (Session vs DebuggerLive). See TTDRecordMode.
+    TTDRecordMode _recordMode = TTDRecordMode::Session;
 
     /// The recorded timeline. Appended only on the emulator thread.
     std::vector<TTDCheckpoint> _timeline;

@@ -101,12 +101,12 @@ public:
     // (TimeTravelManager::GetFrameCache): a DeZog index is mapped to
     // (frame, entry-in-frame) via lazily-built frame segments, and the decoded
     // record (registers, slots, opcodes at PC, word at SP) is read straight
-    // from the cache. The emulator itself stays at the present while browsing
-    // (DeZog's model: the history UI renders from entry-carried data;
-    // getRegisters()/readMemory()/getSlots() during a browse reflect the
-    // present state). Any forward-moving command (resume/pause/register or
-    // memory writes/state restore/session close) first returns to the present
-    // by restoring the snapshot taken on history entry.
+    // from the cache. Browsing is read-only under the TTD DebuggerLive mode
+    // (recording never stops for a browse; the cache builds while paused), so
+    // the emulator stays at the present (DeZog's model: the history UI renders
+    // from entry-carried data; getRegisters()/readMemory()/getSlots() during a
+    // browse reflect the present state) and history accumulates across
+    // stop/browse/continue cycles. See reverse-debugging.md §6.
     bool isHistoryAvailable() const override;
     bool isHistoryRecording() const override;
     std::optional<HistoryEntry> getHistoryEntry(uint32_t index) override;
@@ -154,7 +154,12 @@ private:
     void leaveHistoryIfBrowsing();
     // Out-of-band mutation (register/memory/slot/bank write from the debugger):
     // TTD reconstructs history by deterministic replay, which such edits break.
-    // Record a DebuggerEdit marker and restart the recording from the edited state.
+    // Both modes: record the marker, then restart recording from the edited
+    // state (history before the edit is dropped). Marker-only handling was
+    // tried for DebuggerLive and is UNSOUND - replay re-executes from the last
+    // checkpoint, so everything between it and the marker would decode as
+    // fabricated execution that never ran (§6.4). Journaling debugger writes
+    // into the TTD log is the Phase-3 fix that removes the wipe.
     void onDebuggerEdit(Emulator& emulator, const char* what);
     void subscribe();
     void unsubscribe();
@@ -198,14 +203,11 @@ private:
     int64_t _historyCursor = -1;                      // -1 = present (live), else last index served
     std::pair<uint64_t, uint32_t> _present{0, 0};     // TimePoint of the present (valid while browsing)
     std::vector<HistoryFrameSeg> _historySegs;        // index→frame map, built backward from present
-    // Snapshot of the present captured on entering history. Restoring it is the
-    // robust way back: the present is a mid-frame stop, always beyond the last
-    // frame-boundary checkpoint, so TTD seek/ResumeRecordingFrom cannot target it.
-    std::vector<uint8_t> _presentSnapshot;
 
     // Resolve a global DeZog history index to (frame, entryIndexInFrame),
     // extending _historySegs backward as needed. Returns false when the index is
-    // beyond recorded history. Requires the timeline frozen (StopRecording).
+    // beyond recorded history. Requires the DebuggerLive mode (paused cache
+    // builds while recording; reverse-debugging.md §6).
     bool resolveHistoryIndex(Emulator& emulator, uint32_t index, uint64_t& frameOut,
                              uint32_t& entryIdxOut);
 

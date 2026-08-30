@@ -356,11 +356,13 @@ scrubbing across frame boundaries warrants it.
 
 ## 6. Live history: non-destructive browse/resume (design — 2026-08-30)
 
-Status: **design agreed, NOT yet implemented.** Fixes the reported failure:
-with DeZog attached, Reverse-Step / Reverse-Continue always ends in
-*"Break: Reached end of instruction history."* Reproduced live twice (ZRCP,
-DeZog 3.7.4 flow); the fix lives in the shared `DezogDebugAdapter` + TTD
-engine, so both transports benefit.
+Status: **design agreed, NOT yet implemented.** Post-review decision
+(2026-08-30): implemented as a **separate DebuggerLive recording mode**
+(6.3) — the existing session mode stays byte-identical. Fixes the reported
+failure: with DeZog attached, Reverse-Step / Reverse-Continue always ends
+in *"Break: Reached end of instruction history."* Reproduced live twice
+(ZRCP, DeZog 3.7.4 flow); the fix lives in the shared `DezogDebugAdapter` +
+TTD engine, so both transports benefit.
 
 ### 6.1 Two reverse-debugging models — do not conflate them
 
@@ -397,11 +399,30 @@ browse-exit; reverse-continue immediately hits "end of instruction history".
 Secondary contributor: recording starts at session open while the emulator
 is paused, so the first stop's history is near-empty (accepted — see 6.3.3).
 
-### 6.3 Design
+### 6.3 Design — decision (2026-08-30, post-review): a separate DebuggerLive mode
 
-**No separate "live mode"** — the existing state machine already models
-live/paused/detached; a parallel mode would duplicate transitions and
-invariants for no capability gain. The missing piece is one transition:
+The live-history capability is implemented as a **recording mode on
+`TimeTravelManager`, separate from the existing session mode**, not as bare
+new transitions on the shared state machine:
+
+- `TTDRecordMode::Session` (default) — today's semantics byte-identical:
+  `StartRecording` wipe+baseline, scrub/seek/Detached,
+  `ResumeRecordingFrom` truncate+rewrite, `.ttd` save/load. WebAPI, CLI and
+  the scrubber keep this mode; nothing they call changes behavior.
+- `TTDRecordMode::DebuggerLive` (new) — entered by debug sessions (DZRP
+  `CMD_INIT` / ZRCP session open via the adapter). Recording is continuous
+  for the session's lifetime, browsing never stops it, and the only
+  invariant relaxed is **mode-scoped**: `GetFrameCache` may build while
+  Recording **when the emulator is paused** — safe because the emulator
+  thread is parked and the build already round-trips live state internally
+  (`SaveLiveState` → build → `RestoreLiveState`, §5). `SeekTo`/
+  `StepBack` stay forbidden while Recording, so the scrubbing-corruption
+  defenses all hold. Leaving the mode (`EndDebuggerLiveHistory`) stops
+  recording and **keeps the timeline**, handing a normal Idle-with-history
+  to the scrubber/`.ttd` flows.
+
+The transition both modes share — the actual bug fix, history must survive
+a browse cycle without a stop/resume dance — is still the append-resume:
 
 | From | Call | To | Timeline |
 |------|------|----|----------|
@@ -411,14 +432,59 @@ invariants for no capability gain. The missing piece is one transition:
 | Idle (history) | `SeekTo` / `StepBack` | Detached | kept (unchanged) |
 | Detached | `ResumeRecordingFrom(T)` | Recording | truncated after T; future rewritten (unchanged — the "return forward forgets and rewrites" semantics) |
 
-#### 6.3.1 Engine primitive: `TimeTravelManager::ResumeRecordingLive()`
+#### 6.3.1 Engine primitives
 
-`Idle`-with-history → `Recording`, **appending** after `timeline.back()`:
-no wipe, no baseline capture, `ClearFrameCache()` (leaving browse scope,
-§5 lifecycle), feature stewardship as in `StartRecording` (re-enable
-`kDebugMode`/`kTimeTravel` if another surface released them).
+New API on `TimeTravelManager`:
 
-Guards (return false + `MLOGWARNING`, caller falls back to `StartRecording`):
+- **`BeginDebuggerLiveHistory()`** — enter DebuggerLive. If already
+  Recording (Session start hijacked by an attach): keep the timeline and
+  switch the mode flag. If Idle-with-history and no gap: append-resume via
+  `ResumeRecordingLive`. If Idle-empty or gapped: fresh start (baseline,
+  like `StartRecording`). Feature stewardship as in `StartRecording`.
+- **`EndDebuggerLiveHistory()`** — Recording → Idle, timeline **kept**,
+  mode → Session; the scrubber and `.ttd` save can then take over.
+- **`IsDebuggerLive()`**.
+- **`ResumeRecordingLive()`** — `Idle`-with-history → `Recording`,
+  **appending** after `timeline.back()`: no wipe, no baseline capture,
+  `ClearFrameCache()`, feature stewardship as in `StartRecording`. This is
+  the shared transition from the table above (also usable in Session mode
+  by future callers); in DebuggerLive it is mostly a `Begin…` building
+  block.
+- Debugger edits keep the **existing marker + restart path in both
+  modes** — no `RecordDebuggerEdit` API shipped. A marker-only handling
+  (marker + `ClearFrameCache()`, wipe-free) was implemented for
+  DebuggerLive and **reverted after live testing proved it unsound**:
+  replay re-executes from the last checkpoint, and an out-of-band edit
+  (registers/PC/memory) is invisible to the write journal, so every
+  entry decoded between that checkpoint and the marker is *fabricated
+  execution that never ran* (the regression run decoded ROM PCs that
+  were never executed). A mid-frame baseline checkpoint cannot fix this
+  either — `CaptureNow` always stamps `tInFrame == 0`, so it would
+  collide with the frame's existing boundary checkpoint at the same
+  time coordinate. The only sound Phase-1 semantics is restarting the
+  recording at the edited state; Phase 3 journals debugger writes to
+  remove the wipe.
+- `GetFrameCache` gains the mode-scoped exemption: allowed while
+  Recording **iff** `_recordMode == DebuggerLive` and the emulator is
+  paused;
+  otherwise unchanged (replay-scope only). `OnFrameBoundary` clears the
+  frame cache unconditionally (cheap, and it kills same-frame staleness
+  when a paused-build is followed by a resume — in Session mode nothing
+  changes because browse scopes never cross a live boundary).
+- **The cache build must be state-transparent**: `BuildFrameCache`
+  replays through `SeekToInternal`, which transitions the session to
+  `Detached` (TDD §4.2). `GetFrameCache` now saves/restores `_state`
+  around the build — a cache build is a facility, not a state
+  transition. Without this, every browse stranded the manager in
+  `Detached` while the capture wiring was still live:
+  `BeginDebuggerLiveHistory` then refused (Detached guard) and history
+  silently died at the first browse — found by the §6 regression suite
+  (`HistorySurvivesBrowseAndStopCycles`), invisible before because the
+  old `leaveHistory` force-called `StartRecording`, which has no
+  Detached check.
+
+Guards on `ResumeRecordingLive` (return false + `MLOGWARNING`, caller
+falls back to a fresh start):
 
 - already `Recording` → return true (idempotent);
 - `Detached` → false (the scrubber owns the machine; it uses
@@ -435,31 +501,40 @@ Guards (return false + `MLOGWARNING`, caller falls back to `StartRecording`):
   must wipe (fall back to `StartRecording`), which is exactly today's
   behavior, so the guard can only ever *preserve* correctness.
 
-#### 6.3.2 Adapter: browse becomes purely read-only
+#### 6.3.2 Adapter: browse is read-only, recording never stops
 
-`GetFrameCache` already round-trips live state internally
-(`SaveLiveState` → build → `RestoreLiveState`), so browsing never moves the
-machine and **the SNA snapshot/restore pair is unnecessary** — deleted along
-with `_presentSnapshot`. Changes:
+In DebuggerLive the adapter's browse becomes trivially read-only — the SNA
+snapshot/restore pair and `_presentSnapshot` are deleted; `_present`
+(the `TTDTimePoint`) stays for the partial-frame counting in
+`resolveHistoryIndex`. Changes:
 
-- `getHistoryEntry` entry block: remember the present `TTDTimePoint`, set
-  `_historyStoppedRecording = mgr->IsRecording()`, then `StopRecording()`.
-  No `captureSnapshotBytes`.
-- `leaveHistory` ownership rules:
-  - browse's own state bookkeeping (`_historyCursor = -1`, clear
-    `_historySegs`) always;
-  - **another surface moved the machine** (`mgr->GetState() == Detached` or
-    `CurrentPosition().frame < _present.frame`): do **not** touch recording —
-    the scrubber flow will `ResumeRecordingFrom` itself;
-  - otherwise, if `_historyStoppedRecording` → `ResumeRecordingLive()`;
-  - if recording was already off when browse was entered (e.g. stopped from
-    the UI), it stays off — browse only undoes what it did;
-  - fallback: resume-live refused (gap guard) → `StartRecording()`.
-- `ensureHistoryRecording` (called from the adapter's init/continue/restore/
-  session-open paths): when the timeline is non-empty, prefer
-  `ResumeRecordingLive()`; only `StartRecording()` when it refuses. WebAPI
-  and the CLI keep calling `StartRecording` directly — they own the machine
-  at that moment and a wipe is their documented semantic.
+- `ensureHistoryRecording` (init/continue/restore/session-open paths) →
+  `BeginDebuggerLiveHistory()` when history is enabled; a no-op when
+  already in the mode.
+- `getHistoryEntry` entry block: remember the present `TTDTimePoint` and
+  browse — **no `StopRecording`, no snapshot**; `GetFrameCache` builds
+  under the paused exemption. Requires the mode (else nullopt =
+  history-not-available).
+- `leaveHistory`: drop browse bookkeeping (`_historyCursor = -1`, clear
+  `_historySegs`) + `ClearFrameCache()` — recording was never stopped, so
+  there is nothing to restart. Cache clear is mandatory here: a re-pause
+  in the *same* frame before any boundary must not observe the stale
+  partial build (the engine's boundary-clear only fires at the next
+  frame).
+- `onDebuggerEdit` stays the marker + restart path **in both modes**
+  (6.3.1): the marker lands, recording restarts from the edited state,
+  and pre-edit history is dropped. DeZog breakpoints are native
+  breakpoint objects, not memory edits, so toggling them never triggers
+  it.
+- `onSessionClosed` → `EndDebuggerLiveHistory()` (timeline kept for the
+  scrubber) + the existing resume.
+- If another surface moved the machine mid-browse (`Detached` or
+  `CurrentPosition().frame < _present.frame`): drop bookkeeping only and
+  do **not** touch recording — that surface owns the machine and will
+  `ResumeRecordingFrom` itself.
+- WebAPI and the CLI keep calling `StartRecording` directly (Session
+  mode); while DebuggerLive is active they are refused with a warning —
+  explicit `EndDebuggerLiveHistory` first, no implicit mode switch.
 
 #### 6.3.3 Recording start policy — decision (2026-08-30): debug sessions only
 
@@ -477,9 +552,12 @@ feature flag (rollout complexity for a policy we do not want as default).
 - **Debugger edit during browse** (register/memory/slot write): the
   out-of-band edit is invisible to the write journal, so any cached decode
   of the edited partial frame after the edit would diverge from what
-  executes. Phase 1 keeps it conservative: invalidate the browse
-  bookkeeping and fall back to `StartRecording()` (fresh baseline — same as
-  the current non-browse edit path; pre-edit history is dropped). Phase 3
+  executes. Phase 1 keeps it conservative — return to the present, record
+  the marker, then `StopRecording()` + `StartRecording()` (fresh baseline;
+  pre-edit history is dropped) — and this now holds in **both** modes: the
+  marker-only variant shipped for DebuggerLive during implementation was
+  reverted after the regression suite decoded fabricated instructions
+  (ROM PCs that never executed) from post-edit replay (6.3.1). Phase 3
   journals debugger writes to keep pre-edit history (below). Note DeZog's
   breakpoints are native `CMD_ADD_BREAKPOINT` objects, *not* memory edits —
   toggling breakpoints never triggers this.
@@ -493,12 +571,12 @@ feature flag (rollout complexity for a policy we do not want as default).
 
 ### 6.5 Phases
 
-- **Phase 1 (this fix):** `ResumeRecordingLive` + read-only adapter browse +
-  tests — GTest regression (step ×N → browse (`cpu-history get 0`) → step
-  forward → assert the pre-browse entries still resolve; with the bug the
-  timeline is wiped and they return out-of-range), verifier step, live
-  DeZog 3.7.4 run of the exact reported flow (attach → run → stop →
-  reverse-continue walks back).
+- **Phase 1 (this fix):** DebuggerLive mode — engine API (6.3.1) + adapter
+  rework (6.3.2) + tests — GTest regression (step ×N → browse
+  (`cpu-history get 0`) → step forward → assert the pre-browse entries
+  still resolve; with the bug the timeline is wiped and they return
+  out-of-range), verifier step, live DeZog 3.7.4 run of the exact reported
+  flow (attach → run → stop → reverse-continue walks back).
 - **Phase 2 (decision only, no engine work):** recording start stays
   debug-session-scoped — 6.3.3.
 - **Phase 3 (deferred, in priority order):** journal debugger writes
@@ -509,17 +587,19 @@ feature flag (rollout complexity for a policy we do not want as default).
   during *paused* Recording (removes the stop/resume dance entirely);
   trim-oldest policy honoring `set-max-size` hints instead of ignoring them.
 
-### 6.6 Alternatives considered and rejected
+### 6.6 Alternatives considered
 
-- **A separate always-recording "live mode"** — duplicates the state
-  machine; the models in 6.1 differ only in *who moves the machine*, which
-  the existing states already express.
+- **Bare new transitions, no mode** (the pre-review §6 draft) — rejected
+  post-review (2026-08-30): it would relax `GetFrameCache`'s replay-scope
+  invariant and re-shape `StartRecording` semantics for *every* consumer
+  (scubber, WebAPI, CLI) to serve debuggers. The DebuggerLive mode isolates
+  the relaxation to the surface that needs it and leaves Session semantics
+  byte-identical.
 - **Always-on auto-record** — see 6.3.3.
-- **Relaxing `GetFrameCache` to allow Recording now** — safe-looking (the
-  emulator is parked while paused) but it weakens the §5 replay-scope
-  invariant that three existing defenses rely on; the stop/resume dance is
-  cheap (two control calls at a stop) — revisit in Phase 3 with a pause-only
-  exemption if measurements demand it.
-- **Keeping the SNA snapshot for the return trip** — unnecessary once browse
-  is read-only; it exists only because the old flow had no non-destructive
-  resume.
+- **Relaxing `GetFrameCache` for all Recording states** — the scrubbing-
+  corruption defenses rely on Recording ⇒ no replay-scope builds; the
+  mode exemption is pause-gated exactly so a running emulator can never
+  enter a build.
+- **Keeping the SNA snapshot for the return trip** — unnecessary once
+  browse is read-only; it existed only because the old flow had no
+  non-destructive resume.

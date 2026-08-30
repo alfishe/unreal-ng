@@ -886,6 +886,15 @@ bool DezogDebugAdapter::waitForTarget(uint32_t timeoutMs) const
 
 /// endregion </Machine>
 
+namespace
+{
+ttd::TimeTravelManager* ttdManagerOf(Emulator& emulator)
+{
+    EmulatorContext* context = emulator.GetContext();
+    return context ? context->pTimeTravelManager : nullptr;
+}
+}  // namespace
+
 /// region <Session lifecycle>
 
 void DezogDebugAdapter::onSessionOpened()
@@ -920,6 +929,11 @@ void DezogDebugAdapter::onSessionClosed()
 
     leaveHistory(*emulator);
 
+    // End the live-history mode: recording stops, the timeline is kept for
+    // the scrubber/.ttd flows (§6.3.1).
+    if (ttd::TimeTravelManager* mgr = ttdManagerOf(*emulator))
+        mgr->EndDebuggerLiveHistory();
+
     if (BreakpointManager* bpManager = emulator->GetBreakpointManager())
     {
         // Collect first: removing while iterating the manager's map is unsafe
@@ -943,15 +957,6 @@ void DezogDebugAdapter::onSessionClosed()
 /// endregion </Session lifecycle>
 
 /// region <Instruction history (TTD)>
-
-namespace
-{
-ttd::TimeTravelManager* ttdManagerOf(Emulator& emulator)
-{
-    EmulatorContext* context = emulator.GetContext();
-    return context ? context->pTimeTravelManager : nullptr;
-}
-}  // namespace
 
 void DezogDebugAdapter::setHistoryEnabled(bool enabled)
 {
@@ -994,15 +999,15 @@ void DezogDebugAdapter::ensureHistoryRecording(Emulator& emulator)
         return;
 
     ttd::TimeTravelManager* mgr = ttdManagerOf(emulator);
-    if (!mgr || mgr->IsRecording())
+    if (!mgr)
         return;
 
-    // Never restart while browsing: StartRecording wipes the timeline
-    if (getHistoryCursor() >= 0)
-        return;
-
-    if (!mgr->StartRecording())
-        std::cerr << "[DZRP] TTD StartRecording failed - instruction history unavailable\n";
+    // Debug sessions record via the TTD DebuggerLive mode: continuous
+    // capture that survives browse cycles. A plain StartRecording here
+    // would wipe the timeline on every browse exit (reverse-debugging.md
+    // §6.2). Idempotent - safe to call while browsing.
+    if (!mgr->BeginDebuggerLiveHistory())
+        std::cerr << "[DZRP] TTD BeginDebuggerLiveHistory failed - instruction history unavailable\n";
 }
 
 void DezogDebugAdapter::onDebuggerEdit(Emulator& emulator, const char* what)
@@ -1015,9 +1020,18 @@ void DezogDebugAdapter::onDebuggerEdit(Emulator& emulator, const char* what)
         return;
 
     // Marker for tooling/consistency, then a fresh baseline so replay starts
-    // from the edited state (a mid-frame checkpoint, exactly like StartRecording
-    // on connect). History before the edit is dropped - same segment semantics
-    // as any other nondeterministic barrier.
+    // from the edited state (a mid-frame checkpoint, exactly like
+    // StartRecording on connect). History before the edit is dropped - same
+    // segment semantics as any other nondeterministic barrier.
+    //
+    // NOTE (§6.4): this applies in DebuggerLive too. A marker-only handling
+    // was tried and is UNSOUND: replay re-executes from the last checkpoint,
+    // so after an out-of-band edit (registers/PC/memory) everything between
+    // that checkpoint and the marker decodes as fabricated execution that
+    // never ran. Restarting at the edited state is the only correct Phase-1
+    // semantics; journaling debugger writes (§6.5 Phase 3) will remove the
+    // wipe. DeZog breakpoints are native objects, NOT memory edits - they
+    // never trigger this.
     mgr->RecordExternalEvent(ttd::TTDExternalEventKind::DebuggerEdit, what);
     mgr->StopRecording();
     if (!mgr->StartRecording())
@@ -1035,35 +1049,35 @@ void DezogDebugAdapter::leaveHistoryIfBrowsing()
 
 void DezogDebugAdapter::leaveHistory(Emulator& emulator)
 {
-    std::vector<uint8_t> snapshot;
+    uint64_t presentFrame = 0;
     {
         std::lock_guard<std::mutex> lock(_mutex);
         if (_historyCursor < 0)
             return;
-        snapshot = _presentSnapshot;
+        presentFrame = _present.first;
     }
 
-    // Restore the exact present state snapshotted on entry, then start a fresh
-    // recording from there. The pre-stop timeline is dropped: a mid-frame present
-    // is always beyond the last frame-boundary checkpoint, so it cannot be a TTD
-    // seek/ResumeRecordingFrom target. DeZog re-derives history going forward.
-    if (!restoreSnapshotBytes(emulator, snapshot))
-        std::cerr << "[DZRP] leaveHistory: failed to restore present snapshot\n";
-
     ttd::TimeTravelManager* mgr = ttdManagerOf(emulator);
-    if (mgr)
+
+    // Browsing is read-only under DebuggerLive: the machine never moved and
+    // recording never stopped, so there is nothing to restore or restart -
+    // only a stale same-frame partial build must go, because a re-pause in
+    // this frame before the next boundary must not observe it (the engine
+    // clears the cache on the boundary itself).
+    //
+    // If another surface took over the machine mid-browse (Detached scrub /
+    // reset), drop only our bookkeeping and leave recording alone - that
+    // surface owns the machine now.
+    if (mgr && mgr->GetState() != ttd::TTDSessionState::Detached &&
+        mgr->CurrentPosition().frame >= presentFrame)
     {
-        if (mgr->IsRecording())
-            mgr->StopRecording();
-        if (isHistoryEnabled())
-            mgr->StartRecording();
+        mgr->ClearFrameCache();
     }
 
     {
         std::lock_guard<std::mutex> lock(_mutex);
         _historyCursor = -1;
         _historySegs.clear();
-        _presentSnapshot.clear();
     }
 }
 
@@ -1172,17 +1186,17 @@ std::optional<dzrp::IDebugInterface::HistoryEntry> DezogDebugAdapter::getHistory
     if (!mgr || mgr->GetCheckpointCount() == 0)
         return std::nullopt;
 
-    // Entering history: snapshot the present state (for an exact return trip),
-    // remember its TimePoint, and freeze the timeline so GetFrameCache can build.
+    // Entering history: remember the present TimePoint (partial-frame
+    // counting in resolveHistoryIndex). Browse is read-only under the
+    // DebuggerLive mode - recording never stops; GetFrameCache builds under
+    // the paused exemption. No snapshot, no restore (§6.3.2).
     if (getHistoryCursor() < 0)
     {
-        std::vector<uint8_t> snap = captureSnapshotBytes(*emulator);
+        if (!mgr->IsDebuggerLive())
+            return std::nullopt;  // history requires the live-history mode
         ttd::TTDTimePoint present = mgr->CurrentPosition();
-        if (mgr->IsRecording())
-            mgr->StopRecording();
         std::lock_guard<std::mutex> lock(_mutex);
         _present = {present.frame, present.tInFrame};
-        _presentSnapshot = std::move(snap);
         _historySegs.clear();
         _historyCursor = 0;  // provisional; finalized below (marks "browsing")
     }
@@ -1192,11 +1206,10 @@ std::optional<dzrp::IDebugInterface::HistoryEntry> DezogDebugAdapter::getHistory
     if (!resolveHistoryIndex(*emulator, index, frame, entryIdx))
     {
         // Past the oldest recorded instruction. NON-destructive: under the
-        // cache strategy nothing was moved, so the browsable history, the
-        // memoized segments and the present snapshot all stay valid — a
-        // follow-up in-range query must still succeed. The return to the
-        // present (and the recording restart) happens on the next forward
-        // command (pause/resume/step/register-write) via leaveHistory.
+        // cache strategy nothing was moved, so the browsable history and the
+        // memoized segments stay valid - a follow-up in-range query must
+        // still succeed. The browse ends on the next forward command via
+        // leaveHistory.
         return std::nullopt;
     }
 

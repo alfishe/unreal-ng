@@ -315,6 +315,38 @@ TEST_F(ZrcpEmulatorFixture, HistoryIndexesAndErrors)
     EXPECT_EQ(_client.command("get-version"), "12.1");
 }
 
+// §6 regression (the reported "Break: Reached end of instruction history"):
+// DeZog spot-fetches history at every stop, and every forward command used
+// to wipe the timeline via the browse/leave restart - reverse-continue could
+// never walk past the latest stop. Browse cycles must be non-destructive:
+// instructions stepped BEFORE a browse stay browsable after
+// browse -> step -> browse cycles.
+TEST_F(ZrcpEmulatorFixture, HistorySurvivesBrowseAndStepCycles)
+{
+    initSession();
+    installProgram();
+
+    // Enough instructions for a deep index (DeZog's reverse-continue walks
+    // far back; 12 steps = 12 recorded instructions)
+    for (int i = 0; i < 12; ++i)
+        ASSERT_FALSE(_client.command("cpu-step").empty());
+
+    const std::string deep = _client.command("cpu-history get 8");
+    EXPECT_EQ(deep.substr(0, 3), "PC=");
+
+    // The DeZog stop pattern repeated: spot-fetch -> forward step -> spot-fetch
+    for (int cycle = 0; cycle < 3; ++cycle)
+    {
+        EXPECT_EQ(_client.command("cpu-history get 0").substr(0, 3), "PC=");
+        ASSERT_FALSE(_client.command("cpu-step").empty());
+        EXPECT_EQ(_client.command("cpu-history get 0").substr(0, 3), "PC=");
+    }
+
+    // Pre-browse instructions are still browsable: with the old wipe only the
+    // handful of post-wipe steps survived and index 10 was out of range.
+    EXPECT_EQ(_client.command("cpu-history get 10").substr(0, 3), "PC=");
+}
+
 /// endregion </history>
 
 /// region <Quit / session lifecycle>

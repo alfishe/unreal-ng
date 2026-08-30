@@ -341,6 +341,52 @@ void TimeTravelManager::StopRecording()
         emu->Resume(false);
 }
 
+bool TimeTravelManager::BeginDebuggerLiveHistory()
+{
+    if (_state == TTDSessionState::Detached)
+    {
+        MLOGWARNING("TimeTravelManager::BeginDebuggerLiveHistory — refused: session is Detached "
+                    "(return to the present or ResumeRecordingFrom first)");
+        return false;
+    }
+
+    if (_recordMode == TTDRecordMode::DebuggerLive && _state == TTDSessionState::Recording)
+        return true;  // Already live-debugging.
+
+    const bool wasRecording = _state == TTDSessionState::Recording;
+
+    // Adopt an existing live recording; otherwise append to retained
+    // history when it is continuable (ResumeRecordingLive refuses on an
+    // unrecorded gap), else fall back to a fresh StartRecording baseline —
+    // a gapped/empty timeline is unreachable from the present anyway.
+    bool ok = wasRecording || (!_timeline.empty() && ResumeRecordingLive());
+    if (!ok)
+    {
+        ok = StartRecording();
+        if (!ok)
+            return false;
+    }
+
+    _recordMode = TTDRecordMode::DebuggerLive;
+    MLOGINFO("TimeTravelManager::BeginDebuggerLiveHistory — live history active "
+             "(adopted existing recording: %s, timeline: %zu checkpoints)",
+             wasRecording ? "yes" : "no", _timeline.size());
+    return true;
+}
+
+void TimeTravelManager::EndDebuggerLiveHistory()
+{
+    if (_recordMode != TTDRecordMode::DebuggerLive)
+        return;  // Idempotent
+
+    _recordMode = TTDRecordMode::Session;
+    // Keeps the timeline: StopRecording transitions Recording → Idle with
+    // history retained, so the scrubber and .ttd flows can take over.
+    StopRecording();
+    MLOGINFO("TimeTravelManager::EndDebuggerLiveHistory — timeline retained with %zu checkpoints",
+             _timeline.size());
+}
+
 void TimeTravelManager::InvalidateSession(const char* reason)
 {
     ClearFrameCache();
@@ -539,6 +585,13 @@ void TimeTravelManager::OnFrameBoundary()
     // ------------------------------------------------------------------
     if (_state == TTDSessionState::Recording)
     {
+        // A DebuggerLive paused-browse build is invalidated the moment
+        // execution advances past the frame it decoded — entries for the
+        // cached frame would be incomplete. In Session mode this is a
+        // harmless no-op: browse scopes never cross a live boundary (the
+        // cache only exists while not Recording).
+        ClearFrameCache();
+
         if (!_memory || !_dirtyTracker)
             return;  // Defensive — should not happen if StartRecording succeeded
 
@@ -1881,6 +1934,96 @@ bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
              preTimelineSize, _timeline.size(),
              preJournalSize, _inputJournal.Size(),
              preMarkerCount, _externalEvents.Size());
+
+    return true;
+}
+
+bool TimeTravelManager::ResumeRecordingLive()
+{
+    // Leaving the browse scope: free the decode cache.
+    ClearFrameCache();
+
+    if (!_context)
+    {
+        MLOGWARNING("TimeTravelManager::ResumeRecordingLive — null _context");
+        return false;
+    }
+
+    if (_state == TTDSessionState::Recording)
+        return true;  // Idempotent
+
+    if (_state == TTDSessionState::Detached)
+    {
+        MLOGWARNING("TimeTravelManager::ResumeRecordingLive — refused: session is Detached "
+                    "(use ResumeRecordingFrom to continue from a historical point)");
+        return false;
+    }
+
+    if (_timeline.empty())
+    {
+        MLOGWARNING("TimeTravelManager::ResumeRecordingLive — timeline is empty "
+                    "(StartRecording begins a fresh session)");
+        return false;
+    }
+
+    // No-unrecorded-gap guard: the present must still be inside the frame
+    // the recording ended in. If the emulator ran while recording was
+    // stopped, those frames have no checkpoints and no journaled writes —
+    // replaying across the gap from the older checkpoint would silently
+    // produce wrong state, so the caller must wipe and StartRecording
+    // instead (exactly the pre-DebuggerLive behavior).
+    const TTDTimePoint present = CurrentPosition();
+    const TTDTimePoint recordedEnd = _timeline.back().time;
+    if (present.frame != recordedEnd.frame)
+    {
+        MLOGWARNING("TimeTravelManager::ResumeRecordingLive — refused: present frame %llu is %s "
+                    "the recorded end frame %llu (unrecorded gap; StartRecording instead)",
+                    static_cast<unsigned long long>(present.frame),
+                    present.frame < recordedEnd.frame ? "before" : "past",
+                    static_cast<unsigned long long>(recordedEnd.frame));
+        return false;
+    }
+
+    // Feature stewardship as in StartRecording: re-enable capture flags if
+    // another surface released them while recording was stopped. Flipping
+    // kDebugMode swaps the memory interface, so pause if running
+    // (defensive; the debugger browse/leave flow calls this while paused).
+    Emulator* emu = _context->pEmulator;
+    const bool wasRunning = emu && emu->IsRunning() && !emu->IsPaused();
+    if (wasRunning)
+    {
+        emu->Pause(false);
+        emu->WaitForPauseConfirmation(1000);
+    }
+
+    FeatureManager* fm = _context->pFeatureManager;
+    if (fm)
+    {
+        if (!fm->isEnabled(Features::kTimeTravel))
+        {
+            fm->setFeature(Features::kTimeTravel, true);
+            _toggledTimeTravelOn = true;
+        }
+        if (!fm->isEnabled(Features::kDebugMode))
+        {
+            fm->setFeature(Features::kDebugMode, true);
+            _toggledDebugModeOn = true;
+        }
+    }
+
+    _state = TTDSessionState::Recording;
+    _context->ttdCoverageActive = _enableCoverageIndex;
+
+    MLOGINFO("TimeTravelManager::ResumeRecordingLive — resumed at (frame=%llu, tInFrame=%u); "
+             "timeline keeps %zu checkpoints, appending after (frame=%llu, tInFrame=%u)",
+             static_cast<unsigned long long>(present.frame),
+             static_cast<unsigned>(present.tInFrame),
+             _timeline.size(),
+             static_cast<unsigned long long>(recordedEnd.frame),
+             static_cast<unsigned>(recordedEnd.tInFrame));
+
+    if (wasRunning && emu)
+        emu->Resume(false);
 
     return true;
 }
@@ -3900,9 +4043,17 @@ void TimeTravelManager::RestoreLiveState(const LiveStateSnapshot& snap)
 const TTDFrameCache* TimeTravelManager::GetFrameCache(uint64_t frame)
 {
     // Never build a cache during live recording — the accelerator is a
-    // replay-scope facility only.
-    if (_state == TTDSessionState::Recording)
+    // replay-scope facility only. Exception: DebuggerLive while the
+    // emulator is paused (reverse-debugging.md §6) — the emulator thread is
+    // parked, the build replays under EnterReplayMode (journaling muted) and
+    // round-trips live state exactly, so debugger history browsing must not
+    // stop the recording to look at it.
+    if (_state == TTDSessionState::Recording &&
+        !(_recordMode == TTDRecordMode::DebuggerLive && _context && _context->pEmulator &&
+          _context->pEmulator->IsPaused()))
+    {
         return nullptr;
+    }
     if (_timeline.empty())
         return nullptr;
     if (frame > _timeline.back().time.frame)
@@ -3928,12 +4079,25 @@ const TTDFrameCache* TimeTravelManager::GetFrameCache(uint64_t frame)
     // (soft breakpoints are WRITE_MEM edits) parked the emulator at the
     // marker instead of the present. A verbatim snapshot/restore is
     // marker-proof and exact.
+    //
+    // The build replays through SeekToInternal, which transitions the
+    // session to Detached (TDD §4.2). A cache build is a transparent
+    // facility, NOT a state transition: restore the caller's session state
+    // so a DebuggerLive browse (Recording while paused, §6) keeps recording,
+    // and a Session-mode browse stays Detached exactly as before. Without
+    // this restore every browse stranded the manager in Detached while the
+    // capture was still live — BeginDebuggerLiveHistory then refused and
+    // history silently died at the first browse.
+    const TTDSessionState stateBeforeBuild = _state;
+
     SaveLiveState(_liveSnapshot);
 
     EnterReplayMode();
     BuildFrameCache(frame, *_frameCache);
     RestoreLiveState(_liveSnapshot);
     ExitReplayMode();
+
+    _state = stateBeforeBuild;
 
     if (_frameCache->entries.empty())
     {
