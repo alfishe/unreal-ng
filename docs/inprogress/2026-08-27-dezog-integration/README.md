@@ -8,10 +8,14 @@ VS Code debugging support for Unreal-NG ZX Spectrum emulator via DeZog extension
 |----------|-------------|
 | [design.md](design.md) | High-level architecture and approach |
 | [dzrp-protocol-spec.md](dzrp-protocol-spec.md) | DZRP v2.2.0 byte-level specification |
+| [zrcp-server.md](zrcp-server.md) | ZEsarUX ZRCP text-protocol server (wire reference) |
 | [module-design.md](module-design.md) | C++ class design and integration |
 | [verification-plan.md](verification-plan.md) | Unit, integration, and E2E test plan |
 | [action-plan.md](action-plan.md) | Implementation phases and task tracking |
 | [protocol-comparison.md](protocol-comparison.md) | DZRP vs DAP vs GDB comparison |
+| [dezog-workflows.md](dezog-workflows.md) | DeZog usage workflows |
+| [reverse-debugging.md](reverse-debugging.md) | Reverse debugging (CpuHistory/TTD) design incl. §6 live-history non-destructive browse/resume (agreed 2026-08-30, not yet implemented) |
+| [test-project/](test-project/) | Ready-made minimal VS Code DeZog ⇄ unreal-ng project (ZRCP), validated with DeZog 3.7.4 |
 
 ## Quick Reference
 
@@ -21,6 +25,7 @@ VS Code debugging support for Unreal-NG ZX Spectrum emulator via DeZog extension
 | Port | 12000 |
 | Mode | NORMAL_MODE (use ADD/REMOVE_BREAKPOINT) |
 | Machine | ZX48K=2, ZX128K=3 |
+| ZRCP | ZEsarUX text protocol on port 10000 — validated end-to-end with DeZog 3.7.4 ([zrcp-server.md](zrcp-server.md), [test-project/](test-project/)) |
 
 ## Commands to Implement
 

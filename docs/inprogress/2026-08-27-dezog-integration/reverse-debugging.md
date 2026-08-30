@@ -1,7 +1,11 @@
 # DeZog Reverse Debugging over DZRP (TTD-backed)
 
 Status: **implemented (proof-of-concept), on by default**. The intra-frame
-ring-cache in §5 is a **proposal only — NOT implemented**.
+ring-cache in §5 is a **proposal only — NOT implemented**. §6 is the agreed
+design (2026-08-30) for non-destructive live history across browse cycles —
+once implemented it supersedes §3's snapshot+restart return path. The adapter
+covered here is shared by the DZRP and ZRCP servers, so §6 applies to both
+transports (the reported failure came through ZRCP).
 
 ## 1. What DeZog needs
 
@@ -95,7 +99,10 @@ client: don't size us; we size ourselves.
   taken on entry and `StartRecording()` again. A snapshot restore is used rather
   than a TTD seek because the present is a *mid-frame* stop, always beyond the
   last frame-boundary checkpoint, so `SeekTo`/`ResumeRecordingFrom` cannot target
-  it.
+  it. **Superseded by §6 once implemented:** browse becomes read-only (no
+  snapshot, no restore) and the return appends to the timeline instead of
+  wiping it. This bullet documents the shipped proof-of-concept behavior that
+  causes the history loss §6 fixes.
 - **Debugger edits** (register/memory/bank writes from DeZog) record a
   `DebuggerEdit` marker and restart recording from the edited state — replay
   cannot reproduce an out-of-band edit, so the pre-edit segment is dropped.
@@ -346,3 +353,173 @@ scrubbing across frame boundaries warrants it.
 - Read **values** (mem/port reads) can be captured in the same build pass and
   appended to the arena with `TTDAccessKind::MemRead` / `PortRead` if a consumer
   needs them; writes are captured today.
+
+## 6. Live history: non-destructive browse/resume (design — 2026-08-30)
+
+Status: **design agreed, NOT yet implemented.** Fixes the reported failure:
+with DeZog attached, Reverse-Step / Reverse-Continue always ends in
+*"Break: Reached end of instruction history."* Reproduced live twice (ZRCP,
+DeZog 3.7.4 flow); the fix lives in the shared `DezogDebugAdapter` + TTD
+engine, so both transports benefit.
+
+### 6.1 Two reverse-debugging models — do not conflate them
+
+1. **Read-only history browsing** — what DeZog actually does. Its
+   `ZesaruxCpuHistory` (verified in the installed 3.7.4 bundle) fetches
+   `cpu-history get 0,1,2…` (index 0 = most recent) and renders the trace
+   **client-side**; the emulator never moves. At every stop DeZog
+   spot-fetches a few entries, and `continue` from a browsed position first
+   walks its local array forward, only then resumes the machine. The server
+   needs to *serve entries* and *keep recording* — no seek, no truncate, no
+   rewrite.
+2. **True time travel** — unreal-qt scrubber, WebAPI TTD endpoints, a future
+   DZRP reverse-step. The machine genuinely moves back (Detached), and
+   resuming from the past **forgets the recorded future and rewrites it**.
+   These semantics already exist: `SeekTo` + `ResumeRecordingFrom(T)` seeks
+   back, truncates the timeline after `T`, releases page refs, drops journal
+   future, and resumes recording. Nothing in §6 changes them.
+
+### 6.2 Root cause
+
+The state machine has no *Idle-with-history → Recording* transition that
+keeps the timeline, and browse **requires** leaving Recording
+(`GetFrameCache` is replay-scope-only, §5):
+
+1. DeZog's stop-time spot fetch issues `cpu-history get …` at **every** stop
+   → `getHistoryEntry` enters browse → `StopRecording()` (timeline frozen,
+   kept).
+2. The next forward command → `leaveHistory` → restores the SNA snapshot and
+   calls `StartRecording()` → **`_timeline.clear()` — the entire past is
+   dropped, every single stop.**
+
+So history at any stop contains only what executed since the previous
+browse-exit; reverse-continue immediately hits "end of instruction history".
+Secondary contributor: recording starts at session open while the emulator
+is paused, so the first stop's history is near-empty (accepted — see 6.3.3).
+
+### 6.3 Design
+
+**No separate "live mode"** — the existing state machine already models
+live/paused/detached; a parallel mode would duplicate transitions and
+invariants for no capability gain. The missing piece is one transition:
+
+| From | Call | To | Timeline |
+|------|------|----|----------|
+| any | `StartRecording` | Recording | wiped; fresh baseline (unchanged) |
+| Recording | `StopRecording` | Idle | kept for browse (unchanged) |
+| **Idle (history)** | **`ResumeRecordingLive` (new)** | **Recording** | **kept; appends after the recorded end** |
+| Idle (history) | `SeekTo` / `StepBack` | Detached | kept (unchanged) |
+| Detached | `ResumeRecordingFrom(T)` | Recording | truncated after T; future rewritten (unchanged — the "return forward forgets and rewrites" semantics) |
+
+#### 6.3.1 Engine primitive: `TimeTravelManager::ResumeRecordingLive()`
+
+`Idle`-with-history → `Recording`, **appending** after `timeline.back()`:
+no wipe, no baseline capture, `ClearFrameCache()` (leaving browse scope,
+§5 lifecycle), feature stewardship as in `StartRecording` (re-enable
+`kDebugMode`/`kTimeTravel` if another surface released them).
+
+Guards (return false + `MLOGWARNING`, caller falls back to `StartRecording`):
+
+- already `Recording` → return true (idempotent);
+- `Detached` → false (the scrubber owns the machine; it uses
+  `ResumeRecordingFrom`);
+- empty timeline → false (nothing to append to; caller starts fresh);
+- **no unrecorded gap**: `CurrentPosition().frame ==
+  timeline.back().frame`. A mid-frame present in the *same* frame as the
+  recorded end is fine — the partial frame simply continues where it
+  paused. This is tighter than the first draft ("present ≥
+  `SessionEndPosition()`"): if the emulator ran while recording was stopped
+  (e.g. resumed from the GUI during a browse), the gap frames have **no
+  checkpoints and no journaled writes** — replaying across such a gap from
+  the older checkpoint would silently produce wrong state. Gapped resumes
+  must wipe (fall back to `StartRecording`), which is exactly today's
+  behavior, so the guard can only ever *preserve* correctness.
+
+#### 6.3.2 Adapter: browse becomes purely read-only
+
+`GetFrameCache` already round-trips live state internally
+(`SaveLiveState` → build → `RestoreLiveState`), so browsing never moves the
+machine and **the SNA snapshot/restore pair is unnecessary** — deleted along
+with `_presentSnapshot`. Changes:
+
+- `getHistoryEntry` entry block: remember the present `TTDTimePoint`, set
+  `_historyStoppedRecording = mgr->IsRecording()`, then `StopRecording()`.
+  No `captureSnapshotBytes`.
+- `leaveHistory` ownership rules:
+  - browse's own state bookkeeping (`_historyCursor = -1`, clear
+    `_historySegs`) always;
+  - **another surface moved the machine** (`mgr->GetState() == Detached` or
+    `CurrentPosition().frame < _present.frame`): do **not** touch recording —
+    the scrubber flow will `ResumeRecordingFrom` itself;
+  - otherwise, if `_historyStoppedRecording` → `ResumeRecordingLive()`;
+  - if recording was already off when browse was entered (e.g. stopped from
+    the UI), it stays off — browse only undoes what it did;
+  - fallback: resume-live refused (gap guard) → `StartRecording()`.
+- `ensureHistoryRecording` (called from the adapter's init/continue/restore/
+  session-open paths): when the timeline is non-empty, prefer
+  `ResumeRecordingLive()`; only `StartRecording()` when it refuses. WebAPI
+  and the CLI keep calling `StartRecording` directly — they own the machine
+  at that moment and a wipe is their documented semantic.
+
+#### 6.3.3 Recording start policy — decision (2026-08-30): debug sessions only
+
+Recording auto-starts when a debug session attaches (DZRP `CMD_INIT`, ZRCP
+session open — the existing `ensureHistoryRecording` wiring). Pre-attach
+execution is unrecorded **by design**: it matches DeZog itself, which sends
+`cpu-history clear` at init (our clear stays a no-op, §2; server-side
+pre-open history would simply never be asked for). Rejected alternatives:
+always-on auto-record at emulator creation (forces the `kDebugMode` write
+path and ~1 KB/frame heap onto gaming/headless runs) and a features.ini
+feature flag (rollout complexity for a policy we do not want as default).
+
+### 6.4 Edge rules
+
+- **Debugger edit during browse** (register/memory/slot write): the
+  out-of-band edit is invisible to the write journal, so any cached decode
+  of the edited partial frame after the edit would diverge from what
+  executes. Phase 1 keeps it conservative: invalidate the browse
+  bookkeeping and fall back to `StartRecording()` (fresh baseline — same as
+  the current non-browse edit path; pre-edit history is dropped). Phase 3
+  journals debugger writes to keep pre-edit history (below). Note DeZog's
+  breakpoints are native `CMD_ADD_BREAKPOINT` objects, *not* memory edits —
+  toggling breakpoints never triggers this.
+- **Unrecorded gap**: covered by the 6.3.1 guard — wipe and restart, never
+  replay across a gap.
+- **Emulator paused vs running**: browse and leave are control-thread-only
+  while paused (existing invariant); forward commands leave history *before*
+  resuming, so frames only ever advance with recording already on.
+- **Growth**: unbounded by design (§5); debug-session-scoped start bounds it
+  to session length; DeZog `set-max-size` requests stay ignored (§2).
+
+### 6.5 Phases
+
+- **Phase 1 (this fix):** `ResumeRecordingLive` + read-only adapter browse +
+  tests — GTest regression (step ×N → browse (`cpu-history get 0`) → step
+  forward → assert the pre-browse entries still resolve; with the bug the
+  timeline is wiped and they return out-of-range), verifier step, live
+  DeZog 3.7.4 run of the exact reported flow (attach → run → stop →
+  reverse-continue walks back).
+- **Phase 2 (decision only, no engine work):** recording start stays
+  debug-session-scoped — 6.3.3.
+- **Phase 3 (deferred, in priority order):** journal debugger writes
+  (edits keep pre-edit history); intra-frame present addressing via journal
+  replay (makes the trailing partial frame a legal `SeekTo`/
+  `ResumeRecordingFrom` target — removes the mid-frame-unrepresentable
+  limitation everywhere, enables true DZRP reverse-step); frame-cache build
+  during *paused* Recording (removes the stop/resume dance entirely);
+  trim-oldest policy honoring `set-max-size` hints instead of ignoring them.
+
+### 6.6 Alternatives considered and rejected
+
+- **A separate always-recording "live mode"** — duplicates the state
+  machine; the models in 6.1 differ only in *who moves the machine*, which
+  the existing states already express.
+- **Always-on auto-record** — see 6.3.3.
+- **Relaxing `GetFrameCache` to allow Recording now** — safe-looking (the
+  emulator is parked while paused) but it weakens the §5 replay-scope
+  invariant that three existing defenses rely on; the stop/resume dance is
+  cheap (two control calls at a stop) — revisit in Phase 3 with a pause-only
+  exemption if measurements demand it.
+- **Keeping the SNA snapshot for the return trip** — unnecessary once browse
+  is read-only; it exists only because the old flow had no non-destructive
+  resume.

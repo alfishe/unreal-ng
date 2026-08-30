@@ -588,6 +588,28 @@ public:
     ///         Idle, the timeline is empty, or `from` is out of bounds.
     bool ResumeRecordingFrom(const TTDTimePoint& from);
 
+    /// @brief Resume live recording from the CURRENT position, keeping history.
+    ///
+    /// The non-destructive counterpart to StartRecording for the
+    /// browse-while-paused flow (debugger history views): StopRecording keeps
+    /// the timeline for browsing, and this transitions Idle → Recording again
+    /// WITHOUT clearing anything, so the next OnFrameBoundary appends strictly
+    /// after the existing timeline end and the recorded history keeps growing
+    /// across browse/resume cycles (StartRecording would wipe it).
+    ///
+    /// Valid only when the live machine never left the present (no seek/
+    /// scrub): the current position must be >= SessionEndPosition(). A mid-
+    /// frame present is fine — unlike ResumeRecordingFrom there is no target
+    /// to hit and nothing to truncate; the partial frame simply continues
+    /// where it paused (the emulator state is continuous across the browse).
+    ///
+    /// @return true on success (or already Recording — idempotent). False
+    ///         (with a logged warning) if state is Detached (use
+    ///         ResumeRecordingFrom), the timeline is empty (caller should
+    ///         StartRecording), or the present is behind the recorded end
+    ///         (sorted-invariant guard).
+    bool ResumeRecordingLive();
+
     // -----------------------------------------------------------------------
     // Phase 4: Reverse search (parent TDD §9 + §10.4)
     // -----------------------------------------------------------------------
