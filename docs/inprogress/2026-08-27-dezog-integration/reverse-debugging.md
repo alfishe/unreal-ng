@@ -457,8 +457,10 @@ New API on `TimeTravelManager`:
   replay re-executes from the last checkpoint, and an out-of-band edit
   (registers/PC/memory) is invisible to the write journal, so every
   entry decoded between that checkpoint and the marker is *fabricated
-  execution that never ran* (the regression run decoded ROM PCs that
-  were never executed). A mid-frame baseline checkpoint cannot fix this
+  execution that never ran* (the original regression observation — ROM
+  PCs — was later traced to a probe-side number-format artifact, §6.7,
+  but the journal-visibility argument alone proves the fabrication). A
+  mid-frame baseline checkpoint cannot fix this
   either — `CaptureNow` always stamps `tInFrame == 0`, so it would
   collide with the frame's existing boundary checkpoint at the same
   time coordinate. The only sound Phase-1 semantics is restarting the
@@ -556,8 +558,9 @@ feature flag (rollout complexity for a policy we do not want as default).
   the marker, then `StopRecording()` + `StartRecording()` (fresh baseline;
   pre-edit history is dropped) — and this now holds in **both** modes: the
   marker-only variant shipped for DebuggerLive during implementation was
-  reverted after the regression suite decoded fabricated instructions
-  (ROM PCs that never executed) from post-edit replay (6.3.1). Phase 3
+  reverted: replay after an out-of-band edit fabricates entries
+  (journal-visibility argument, 6.3.1; the ROM-PC observation cited at
+  the time was a probe artifact, §6.7). Phase 3
   journals debugger writes to keep pre-edit history (below). Note DeZog's
   breakpoints are native `CMD_ADD_BREAKPOINT` objects, *not* memory edits —
   toggling breakpoints never triggers this.
@@ -584,7 +587,9 @@ feature flag (rollout complexity for a policy we do not want as default).
   replay (makes the trailing partial frame a legal `SeekTo`/
   `ResumeRecordingFrom` target — removes the mid-frame-unrepresentable
   limitation everywhere, enables true DZRP reverse-step); frame-cache build
-  during *paused* Recording (removes the stop/resume dance entirely);
+  during *paused* Recording (removes the stop/resume dance entirely —
+  landed ahead of schedule as the mode-gated paused-build exemption,
+  6.3.1);
   trim-oldest policy honoring `set-max-size` hints instead of ignoring them.
 
 ### 6.6 Alternatives considered
@@ -603,3 +608,42 @@ feature flag (rollout complexity for a policy we do not want as default).
 - **Keeping the SNA snapshot for the return trip** — unnecessary once
   browse is read-only; it existed only because the old flow had no
   non-destructive resume.
+
+### 6.7 Live validation outcome (2026-08-30)
+
+The reported live anomaly — "history goes chaotic on the run after a
+browse, 128k WebAPI instances only" — was investigated to root cause
+and closed as **no product defect**. Chain of evidence:
+
+- Symptom (probe rounds 4–6): the cycle-0 walk showed the test program
+  "executing at ROM PCs 0x1F40–0x1F46" with program opcodes; the run
+  after the browse free-ran ~1.15 s of chaos (289k entries, NOP sled,
+  ROM IM1 register signatures) before the breakpoint fired.
+- All in-process GTests (48K and 128K, browse+resume cycles, deep browse
+  across frame boundaries) passed — the divergence had to be in the
+  command stream, not the engine.
+- Discriminating probe (raw `/ttd/status`, pre-edit register dump): the
+  deepest walk entry matched the **pre-edit machine state
+  register-for-register** except PC/SP — and PC=0x1F40 = **decimal**
+  8000, SP=0xFF00 = decimal 65280.
+- Root cause: the probe sent `set-register PC=8000` /
+  `write-memory-raw 8000 …` *intending hex*. ZRCP plain numbers are
+  **decimal** (ZEsarUX `parse_string_to_number` semantics — what DeZog
+  itself sends; `zrcp-server.md` documents `<addrDec>`; the verifier
+  uses `set-register PC=4660` for 0x1234). The server obeyed: program
+  written and executed at 0x1F40, while the breakpoint `08006h`
+  (h-suffix → hex) sat at 0x8006, reached only after the `JP #8001`
+  landed in zeroed RAM. The "chaos" was real execution of a mistargeted
+  program; the "stale byte-identical entries across cycles" were one
+  continuous appended session (correct DebuggerLive semantics).
+- Clean re-run with decimal values: 4-entry coherent history (R=f1→f4,
+  AF 1d74→0174 at the real `LD A,1`), post-browse re-hit in 18 ms,
+  7 entries appended across the browse, machine state and ROM
+  untouched, `state=recording` throughout.
+
+Lesson for probes and future test clients: ZRCP plain digits are
+**decimal**; use decimal or an explicit `h`/`#`/`0x` form for hex. The
+"fabricated ROM PCs" observation cited when reverting the marker-only
+edit handling (6.3.1/6.4) predates this discovery and was the same
+artifact; the journal-visibility argument independently justifies that
+revert.
