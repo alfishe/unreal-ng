@@ -58,8 +58,12 @@ void Tape::stopTape()
     _tapeStarted = false;
     _muteEAR = false;
 
-    // Reset all tape-related fields and free up blocks memory
+    // Reset all tape-related fields and free up blocks memory.
+    // This is the tape-control stop: the image is invalidated (design §9.4),
+    // so the loaded-path key must be dropped as well or EnsureImageLoaded()
+    // would wrongly consider the (now empty) image fresh.
     _tapeBlocks = std::vector<TapeBlock>();
+    _imageLoadedPath.clear();
     _currentTapeBlock = nullptr;
     _currentTapeBlockIndex = UINT64_MAX;
     _currentPulseIdxInBlock = 0;
@@ -67,6 +71,97 @@ void Tape::stopTape()
 
     _currentClockCount = 0;
     _lastTapeBit = false;
+}
+
+void Tape::stopPlayback()
+{
+    // Watchdog / natural end-of-tape stop. Unlike stopTape() this is NOT a
+    // tape-control command: the image and the consumption cursor survive, so
+    // a later load (or trap) continues from where the tape stopped — matching
+    // a real cassette that keeps rolling.
+
+    // Phase 2 Item 6 - same replay fencing as stopTape(): the playback region
+    // itself is wall-clock driven (nondeterministic), so a stop boundary must
+    // remain a SeekTo barrier.
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::TapeControl, "tape stop");
+
+    // Partially played block counts as consumed (design §9.4): advance the
+    // cursor past the in-flight block. A block pointer already null means
+    // playback sat exactly between two blocks — the cursor is already synced.
+    if (_currentTapeBlock != nullptr && _currentTapeBlockIndex != UINT64_MAX)
+        _currentTapeBlockIndex++;
+
+    _tapeStarted = false;
+    _muteEAR = false;
+    _currentTapeBlock = nullptr;
+    _currentPulseIdxInBlock = 0;
+    _currentOffsetWithinPulse = 0;
+    _lastTapeBit = false;
+}
+
+bool Tape::EnsureImageLoaded()
+{
+    const std::string& path = _context->coreState.tapeFilePath;
+
+    // Idempotent and path-keyed (design §9.4): an unchanged path (including
+    // the empty "no tape selected" path) never re-parses over live blocks.
+    if (_imageLoadedPath == path)
+        return !_tapeBlocks.empty();
+
+    if (path.empty())
+        return false;
+
+    LoaderTAP loader(_context);
+    _tapeBlocks = loader.loadTAP(path);
+    _imageLoadedPath = path;
+
+    // Fresh image: consumption cursor at the first block, playback state reset.
+    _currentTapeBlock = nullptr;
+    _currentTapeBlockIndex = UINT64_MAX;
+    _currentPulseIdxInBlock = 0;
+    _currentOffsetWithinPulse = 0;
+
+    MLOGINFO("Tape image loaded: '%s', blocks: %zu", path.c_str(), _tapeBlocks.size());
+
+    return !_tapeBlocks.empty();
+}
+
+size_t Tape::GetConsumptionCursor() const
+{
+    return _currentTapeBlockIndex == UINT64_MAX ? 0 : _currentTapeBlockIndex;
+}
+
+void Tape::ConsumeBlock(size_t index)
+{
+    // Trap consumption path: block `index` was delivered in full. The sentinel
+    // (nothing consumed yet) and the block itself both advance past `index`;
+    // an already-advanced cursor is left untouched (idempotent no-op).
+    if (_currentTapeBlockIndex == UINT64_MAX || _currentTapeBlockIndex <= index)
+        _currentTapeBlockIndex = index + 1;
+}
+
+void Tape::StartPlaybackAtCursor()
+{
+    if (_tapeBlocks.empty())
+        return;
+
+    // Signal fallback begins exactly at the consumption cursor — where a real
+    // tape head would be after the blocks already consumed. At end-of-tape the
+    // cursor equals size: nothing left to play, leave the tape stopped (the
+    // ROM loader then waits in its pilot loop, as with a tape that ran out).
+    if (GetConsumptionCursor() >= _tapeBlocks.size())
+        return;
+
+    if (_currentTapeBlockIndex == UINT64_MAX)
+        _currentTapeBlockIndex = 0;
+
+    // Force (re)generation of the bitstream for the cursor block on the next
+    // handleFrameStart() / getTapeStreamBit() pass.
+    _currentTapeBlock = nullptr;
+
+    startTape();
 }
 /// endregion </Tape control methods>
 
@@ -83,6 +178,7 @@ void Tape::reset()
 
     // Tape input bitstream related
     _tapeBlocks = std::vector<TapeBlock>();
+    _imageLoadedPath.clear();
     _currentTapeBlock = nullptr;
     _currentTapeBlockIndex = UINT64_MAX;
     _currentPulseIdxInBlock = 0;
@@ -163,25 +259,14 @@ uint8_t Tape::handlePortIn()
         uint8_t* romBank = memory.GetPhysicalAddressForZ80Page(0);
         if (cpu.pc == 0x0564 && romBank && romBank[0x0564] == 0x1F)
         {
-            LoaderTAP loader(_context);
-
-            if (_context->coreState.tapeFilePath.empty())
-            {
-                //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/ELITE_ATOSSOFT.tap");
-                //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/ELITE_NICOLAS_RODIONOV.tap");
-                //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/traffic_lights.tap");
-                //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/action.tap");
-                //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/IntTest+.tap");
-                //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/earshaver.tap");
-                //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/lphp.tap");
-                _tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/AYtest_v0.2.tap");
-            }
-            else
-            {
-                _tapeBlocks = loader.loadTAP(_context->coreState.tapeFilePath);
-            }
-
-            startTape();
+            // Auto-start: the ROM loader is polling EAR with no playback active.
+            // Load the image (idempotent, path-keyed) and start signal playback
+            // from the consumption cursor — exactly where the fast-load trap left
+            // off when it declined, so fallback is seamless (design §9.4).
+            // With no tape file selected the correct behavior is "nothing to
+            // load" — the previous hardcoded dev-tree demo file is gone.
+            if (EnsureImageLoaded())
+                StartPlaybackAtCursor();
         }
     }
 
@@ -233,10 +318,14 @@ void Tape::handleFrameStart()
                 // Generating bit-stream related data
                 generateBitstreamForStandardBlock(*_currentTapeBlock);
 
-                // Clear bit-stream data from previous block
-                TapeBlock& previousBlock = _tapeBlocks[_currentTapeBlockIndex - 1];
-                previousBlock.totalBitstreamLength = 0;
-                previousBlock.edgePulseTimings = std::vector<uint32_t>();
+                // Clear bit-stream data from previous block (guard: the cursor
+                // may legitimately sit at block 0, e.g. after StartPlaybackAtCursor)
+                if (_currentTapeBlockIndex > 0)
+                {
+                    TapeBlock& previousBlock = _tapeBlocks[_currentTapeBlockIndex - 1];
+                    previousBlock.totalBitstreamLength = 0;
+                    previousBlock.edgePulseTimings = std::vector<uint32_t>();
+                }
             }
             else
             {
@@ -247,7 +336,7 @@ void Tape::handleFrameStart()
         else if (_currentTapeBlockIndex == UINT64_MAX)
         {
             // We've depleted all available blocks
-            stopTape();
+            stopPlayback();
         }
     }
 }
@@ -286,7 +375,7 @@ void Tape::handleFrameEnd()
     if (errNr != _initialErrNr)
     {
         MLOGINFO("Tape stopped: ERR_NR changed from 0x%02X to 0x%02X", _initialErrNr, errNr);
-        stopTape();
+        stopPlayback();
         return;
     }
 
@@ -297,7 +386,7 @@ void Tape::handleFrameEnd()
     // 150 frames (~3 seconds) without reads = loader exited
     if (_framesSinceLastRead > 150)
     {
-        stopTape();
+        stopPlayback();
     }
 }
 
@@ -342,7 +431,9 @@ bool Tape::getTapeStreamBit(uint64_t clockCount)
 
             if (_currentTapeBlockIndex >= _tapeBlocks.size())
             {
-                stopTape();
+                // Natural end of tape: stop playback, keep the image (cursor
+                // sits at end-of-tape; a rewind or new insert restarts it).
+                stopPlayback();
                 break;
             }
             continue;
@@ -374,7 +465,8 @@ bool Tape::getTapeStreamBit(uint64_t clockCount)
 
                 if (_currentTapeBlockIndex >= _tapeBlocks.size())
                 {
-                    stopTape();
+                    // Natural end of tape: stop playback, keep the image.
+                    stopPlayback();
                     break;
                 }
             }

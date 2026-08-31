@@ -283,3 +283,19 @@ namespace MenuItems
 } // namespace MenuItems
 
 } // namespace Editor128K
+
+/// @brief Entry points of the standard SOS (48K-compatible) ROM used by emulator traps.
+///
+/// These addresses are only meaningful when the bank mapped at Z80 $0000-$3FFF actually
+/// carries the 48K-compatible ROM image (SOS ROM, or ROM1 of the 128K pair). The fast
+/// tape loading trap byte-verifies the mapped bank before using them — see
+/// docs/inprogress/2026-08-30-fast-tape-loading/design.md (§6.1).
+namespace ROMAddresses
+{
+/// LD-BYTES — ROM tape load/verify routine at $0556.
+/// Entry: A = expected block flag ($00 header / $FF data), Fc: 1 = LOAD, 0 = VERIFY
+/// (sole discriminator), IX = destination, DE = byte count (17 for headers).
+/// SAVE never enters here (SA-BYTES at $04C2); both routines share the border-restore
+/// return SA/LD-RET at $053F.
+constexpr uint16_t LD_BYTES = 0x0556;
+} // namespace ROMAddresses

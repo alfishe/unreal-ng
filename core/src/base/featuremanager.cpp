@@ -291,6 +291,13 @@ void FeatureManager::setDefaults()
                      "",
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryDebug});
+    registerFeature({Features::kFastTape,
+                     Features::kFastTapeAlias,
+                     Features::kFastTapeDesc,
+                     true,  // ON by default - instant loads are the expected behavior
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
 
     _dirty = false;
 }

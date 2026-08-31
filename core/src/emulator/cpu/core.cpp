@@ -6,6 +6,7 @@
 
 #include "common/modulelogger.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/tape/tapefastload.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/videocontroller.h"
 #include "emulator/video/zx/screenzx.h"
@@ -145,6 +146,24 @@ bool Core::Init()
     }
 
     /// endregion </Tape>
+
+    /// region <Fast tape loading>
+
+    if (result)
+    {
+        result = false;
+
+        // Instantiate fast tape loading trap (wraps the LD-BYTES ROM entry)
+        _tapeFastLoad = new TapeFastLoad(_context, *_tape);
+        if (_tapeFastLoad)
+        {
+            _context->pTapeFastLoad = _tapeFastLoad;
+
+            result = true;
+        }
+    }
+
+    /// endregion </Fast tape loading>
 
     /// region <BetaDisk128 Interface>
 
@@ -397,6 +416,13 @@ void Core::Release()
 
         delete _betaDisk;
         _betaDisk = nullptr;
+    }
+
+    _context->pTapeFastLoad = nullptr;
+    if (_tapeFastLoad != nullptr)
+    {
+        delete _tapeFastLoad;
+        _tapeFastLoad = nullptr;
     }
 
     _context->pTape = nullptr;

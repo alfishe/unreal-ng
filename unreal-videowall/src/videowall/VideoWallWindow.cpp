@@ -219,6 +219,12 @@ void VideoWallWindow::createMenus()
     screenHQAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S));
     connect(screenHQAction, &QAction::triggered, this, &VideoWallWindow::toggleScreenHQForAllTiles);
 
+    // Fast tape loading (LD-BYTES trap) — same wall-wide toggle pattern as
+    // Screen HQ: flips the 'fasttape' runtime feature on every tile
+    QAction* fastTapeAction = viewMenu->addAction(tr("Toggle &Fast Tape Loading"));
+    fastTapeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_T));
+    connect(fastTapeAction, &QAction::triggered, this, &VideoWallWindow::toggleFastTapeForAllTiles);
+
 #ifdef ENABLE_RECORDING
     // Tools menu
     QMenu* toolsMenu = menuBar()->addMenu(tr("&Tools"));
@@ -362,6 +368,9 @@ void VideoWallWindow::addEmulatorTile()
 
             // Enable screen HQ by default for better quality
             featureManager->setFeature(Features::kScreenHQ, _screenHQEnabled);
+
+            // Apply the wall-wide fast tape loading state to the new tile
+            featureManager->setFeature(Features::kFastTape, _fastTapeEnabled);
         }
 
         emulator->StartAsync();
@@ -1192,6 +1201,32 @@ void VideoWallWindow::toggleScreenHQForAllTiles()
     }
 
     qDebug() << "Screen HQ" << (_screenHQEnabled ? "enabled" : "disabled") << "for" << successCount << "/"
+             << tiles.size() << "tiles";
+}
+
+void VideoWallWindow::toggleFastTapeForAllTiles()
+{
+    // Toggle fast tape loading state
+    _fastTapeEnabled = !_fastTapeEnabled;
+
+    // Apply to all existing tiles
+    const auto& tiles = _tileGrid->tiles();
+    int successCount = 0;
+
+    for (auto* tile : tiles)
+    {
+        if (tile && tile->emulator())
+        {
+            auto* featureManager = tile->emulator()->GetFeatureManager();
+            if (featureManager)
+            {
+                featureManager->setFeature(Features::kFastTape, _fastTapeEnabled);
+                successCount++;
+            }
+        }
+    }
+
+    qDebug() << "Fast tape loading" << (_fastTapeEnabled ? "enabled" : "disabled") << "for" << successCount << "/"
              << tiles.size() << "tiles";
 }
 

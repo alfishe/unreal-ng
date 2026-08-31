@@ -1,5 +1,7 @@
 #include "mainwindow.h"
 
+#include "base/featuremanager.h"
+
 #include <algorithm>
 #include <chrono>
 
@@ -171,6 +173,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::resetRequested, this, &MainWindow::resetEmulator);
     connect(_menuManager, &MenuManager::speedMultiplierChanged, this, &MainWindow::handleSpeedMultiplierChanged);
     connect(_menuManager, &MenuManager::turboModeToggled, this, &MainWindow::handleTurboModeToggled);
+    connect(_menuManager, &MenuManager::tapeTrapsToggled, this, &MainWindow::handleTapeTrapsToggled);
     connect(_menuManager, &MenuManager::stepInRequested, this, &MainWindow::handleStepIn);
     connect(_menuManager, &MenuManager::stepOverRequested, this, &MainWindow::handleStepOver);
     connect(_menuManager, &MenuManager::debugModeToggled, this, &MainWindow::handleDebugModeToggled);
@@ -2020,6 +2023,23 @@ void MainWindow::handleTurboModeToggled(bool enabled)
                 core->DisableTurboMode();
                 qDebug() << "Turbo mode disabled";
             }
+        }
+    }
+}
+
+void MainWindow::handleTapeTrapsToggled(bool enabled)
+{
+    if (_emulator)
+    {
+        EmulatorContext* context = _emulator->GetContext();
+        FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
+        if (featureManager)
+        {
+            // Live toggle: the trap arm state is evaluated lazily on every
+            // LD-BYTES invocation (design §6.1), so a feature write takes
+            // effect on the next ROM loader call — no reset or pause needed
+            featureManager->setFeature(Features::kFastTape, enabled);
+            qDebug() << "Fast tape loading" << (enabled ? "enabled" : "disabled");
         }
     }
 }

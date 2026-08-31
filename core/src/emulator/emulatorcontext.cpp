@@ -24,6 +24,7 @@ EmulatorContext::EmulatorContext(LoggerLevel level)
     pMemory = nullptr;
     pPortDecoder = nullptr;
     pTape = nullptr;
+    pTapeFastLoad = nullptr;
     pBetaDisk = nullptr;
     pScreen = nullptr;
     pAudioManagerObj = nullptr;

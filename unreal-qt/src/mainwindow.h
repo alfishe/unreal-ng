@@ -90,6 +90,7 @@ private slots:
     void handleStopEmulator();
     void handleSpeedMultiplierChanged(int multiplier);
     void handleTurboModeToggled(bool enabled);
+    void handleTapeTrapsToggled(bool enabled);
     void handleStepIn();
     void handleStepOver();
     void handleDebugModeToggled(bool enabled);

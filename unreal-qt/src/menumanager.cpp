@@ -4,6 +4,7 @@
 #include <QMessageBox>
 #include <set>
 
+#include "base/featuremanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/platform.h"
@@ -454,6 +455,18 @@ void MenuManager::createMachineMenu()
         _machineModelActions[0]->setChecked(true);
         _currentModelShortName = _machineModelActions[0]->data().toString();
     }
+
+    _machineMenu->addSeparator();
+
+    // Fast tape loading trap (LD-BYTES $0556 hook — design:
+    // docs/inprogress/2026-08-30-fast-tape-loading). When on, vanilla ROM
+    // tape blocks load instantly; custom loaders fall back to full signal
+    // emulation. Checked state mirrors the runtime 'fasttape' feature of the
+    // active instance (synced in updateMenuStates).
+    _tapeTrapsAction = _machineMenu->addAction(tr("&Fast Tape Loading"));
+    _tapeTrapsAction->setStatusTip(tr("Serve vanilla ROM tape loads instantly (custom loaders use signal emulation)"));
+    _tapeTrapsAction->setCheckable(true);
+    connect(_tapeTrapsAction, &QAction::triggered, this, &MenuManager::tapeTrapsToggled);
 }
 
 void MenuManager::updateMachineModelSelection(std::shared_ptr<Emulator> activeEmulator)
@@ -799,6 +812,17 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         _overscanAction->setEnabled(false);
         _viewportMenu->menuAction()->setVisible(false);
         _viewportMenu->setEnabled(false);
+    }
+
+    // Machine menu - fast tape loading toggle mirrors the runtime 'fasttape'
+    // feature (the trap re-reads it on every LD-BYTES invocation, so only the
+    // menu state needs syncing)
+    _tapeTrapsAction->setEnabled(emulatorExists);
+    if (emulatorExists)
+    {
+        EmulatorContext* context = activeEmulator->GetContext();
+        FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
+        _tapeTrapsAction->setChecked(featureManager && featureManager->isEnabled(Features::kFastTape));
     }
 
     // Update machine model selection

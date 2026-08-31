@@ -2125,7 +2125,7 @@ Commands to configure emulator instance behavior and performance characteristics
 
 | Setting | Type | Default | Valid Values | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `fast_tape` | Boolean | `off` | `on`, `off` | Fast tape loading mode |
+| `fast_tape` | Boolean | `on` | `on`, `off` | Fast tape loading mode (backed by the `fasttape` runtime feature) |
 | `fast_disk` | Boolean | `off` | `on`, `off` | Fast disk access mode |
 | `turbo_fdc` | Boolean | `off` | `on`, `off` | Turbo FDC operations |
 | `max_cpu_speed` | Integer/String | `1` | `1`, `2`, `4`, `8`, `16`, `unlimited` | CPU speed multiplier |

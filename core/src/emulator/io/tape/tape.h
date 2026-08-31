@@ -133,8 +133,17 @@ protected:
     // Tape input bitstream related
     std::vector<TapeBlock> _tapeBlocks; // Tape representation as parsed TapeBlock vector
 
+    // Path the live _tapeBlocks were parsed from ("" = no image loaded). Key for
+    // EnsureImageLoaded() idempotency: only a path change (new insert) re-parses.
+    std::string _imageLoadedPath;
+
     TapeBlock* _currentTapeBlock;       // Shortcut to current block object
-    size_t _currentTapeBlockIndex;      // Index of current TapeBlock
+    // Consumption cursor: index of the NEXT block to deliver to the CPU, by signal
+    // playback or by the fast-loading trap (single source of truth — design §9.4).
+    // UINT64_MAX is the "nothing consumed yet / not started" sentinel. During signal
+    // playback of block k the field holds k (the in-flight block); a watchdog stop
+    // mid-block advances it past k (partially played counts as consumed).
+    size_t _currentTapeBlockIndex;
     size_t _currentPulseIdxInBlock;     // Index in TapeBlock::edgePulseTimings vector
     size_t _currentOffsetWithinPulse;   // How many pulses already processed within single TapeBlock::edgePulseTimings vector element
     uint64_t _currentClockCount;        // Store clock count for next iteration
@@ -158,7 +167,42 @@ public:
     void reset();
     void startTape();
     void stopTape();
+
+    /// Stop playback WITHOUT invalidating the image: the consumption cursor
+    /// advances past a partially played block (design §9.4 — a real tape keeps
+    /// rolling; the ROM loader resynchronizes on the next pilot tone, never
+    /// mid-block). Used by the load-completion watchdogs and natural end-of-tape.
+    /// Tape-control commands (stop / eject / rewind / new insert) keep using
+    /// stopTape() / reset(), which drop the image as well.
+    void stopPlayback();
     /// endregion </Tape control methods>
+
+    /// region <Image and consumption cursor interface (fast tape loading)>
+public:
+    /// Lazily parse coreState.tapeFilePath into _tapeBlocks. Idempotent and
+    /// path-keyed: re-parses only when the path differs from the one the live
+    /// blocks came from (never re-parses over live blocks — that would reset the
+    /// consumption cursor and dangle _currentTapeBlock). Returns true when blocks
+    /// are available.
+    bool EnsureImageLoaded();
+
+    /// Index of the next block to deliver (signal or trap). The UINT64_MAX
+    /// sentinel maps to 0 for external observers.
+    size_t GetConsumptionCursor() const;
+
+    /// Advance the consumption cursor past block `index` (trap consumption path).
+    void ConsumeBlock(size_t index);
+
+    /// Start signal playback honoring the consumption cursor (signal fallback
+    /// path). No-op without blocks; a cursor at end-of-tape leaves the tape off.
+    void StartPlaybackAtCursor();
+
+    /// Direct read access to the parsed blocks (UI / trap component / tests).
+    const std::vector<TapeBlock>& GetBlocks() const { return _tapeBlocks; };
+
+    /// Whether signal playback is currently active.
+    bool IsPlaying() const { return _tapeStarted; };
+    /// endregion </Image and consumption cursor interface>
 
     /// region <Port events>
 public:
@@ -232,6 +276,8 @@ public:
 
     using Tape::getPilotSample;
 
+    using Tape::stopPlayback;
+
     // Cursor fields — exposed so integration tests can set the playback
     // position to known values without depending on the ROM LOAD routine
     // (which would make the test hostage to ROM timing). Used by
@@ -239,6 +285,8 @@ public:
     // serialized tape cursor blob.
     using Tape::_tapeStarted;
     using Tape::_tapePosition;
+    using Tape::_tapeBlocks;
+    using Tape::_imageLoadedPath;
     using Tape::_currentTapeBlockIndex;
     using Tape::_currentPulseIdxInBlock;
     using Tape::_currentOffsetWithinPulse;

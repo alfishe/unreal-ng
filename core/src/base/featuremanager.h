@@ -32,6 +32,7 @@ constexpr const char* const kOpcodeProfiler = "opcodeprofiler";
 constexpr const char* const kTimeTravel = "timetravel";
 constexpr const char* const kOverscan = "overscan";
 constexpr const char* const kPortTrace = "porttrace";
+constexpr const char* const kFastTape = "fasttape";
 
 // Feature Aliases
 constexpr const char* const kDebugModeAlias = "dbg";
@@ -47,6 +48,7 @@ constexpr const char* const kOpcodeProfilerAlias = "op";
 constexpr const char* const kTimeTravelAlias = "ttd";
 constexpr const char* const kOverscanAlias = "osc";
 constexpr const char* const kPortTraceAlias = "pt";
+constexpr const char* const kFastTapeAlias = "ftape";
 
 // Feature Descriptions
 constexpr const char* const kDebugModeDesc = "Master debug mode, enables/disables all debug features for performance";
@@ -69,6 +71,8 @@ constexpr const char* const kOverscanDesc =
     "Pentagon overscan mode (384x304). Shows invisible border areas for demo development. Pentagon only.";
 constexpr const char* const kPortTraceDesc =
     "Structured port I/O trace recorder (ring buffer of IN/OUT events for peripheral diagnostics).";
+constexpr const char* const kFastTapeDesc =
+    "Fast tape loading: serve vanilla ROM tape loads instantly via the LD-BYTES trap. Custom loaders fall back to signal emulation.";
 
 // Categories
 constexpr const char* const kCategoryDebug = "debug";

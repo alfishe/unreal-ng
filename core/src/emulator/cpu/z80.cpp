@@ -11,8 +11,10 @@
 #include "emulator/cpu/op_noprefix.h"
 #include "emulator/cpu/opcode_profiler.h"
 #include "emulator/emulator.h"
+#include "emulator/io/tape/tapefastload.h"
 #include "emulator/notifications.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/spectrumconstants.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/ulacontention.h"
 #include "stdafx.h"
@@ -271,6 +273,22 @@ void Z80::Z80Step(bool skipBreakpoints)
                 // Wait until emulator resumed externally (by debugger or scripting engine)
                 emulator.WaitWhilePaused();
             }
+        }
+    }
+
+    // Fast tape loading trap (design: docs/inprogress/2026-08-30-fast-tape-loading).
+    // A ROM LD-BYTES ($0556) invocation is replaced wholesale when armed: the
+    // block payload is copied straight from the tape image and the routine's
+    // documented exit state is emulated. Any decline is fully inert — the CPU
+    // just proceeds into the real ROM code. Runs after breakpoint dispatch so
+    // user breakpoints at $0556 keep firing, and outside the debug-mode guard
+    // so the trap is active in both debug and release sessions.
+    if (pc == ROMAddresses::LD_BYTES && _context->pTapeFastLoad != nullptr)
+    {
+        if (_context->pTapeFastLoad->HandleLDBytesTrap(*this))
+        {
+            // Trap consumed the invocation — the routine never executes
+            return;
         }
     }
 

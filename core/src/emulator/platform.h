@@ -403,7 +403,6 @@ struct CONFIG
 
 	uint8_t lockmouse;
 	uint8_t detect_video;
-	uint8_t tape_traps;
 	uint8_t ulaplus;
 	uint8_t tape_autostart;
 	SSHOT_FORMAT scrshot;
