@@ -3,10 +3,15 @@
 
 #include "../emulator_api.h"
 
+#include <base/featuremanager.h>
 #include <drogon/HttpResponse.h>
 #include <drogon/utils/Utilities.h>
+#include <cstdint>
+#include <cstdio>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/io/tape/tapecatalog.h>
+#include <emulator/io/tape/tape.h>
 #include <emulator/io/fdc/wd1793.h>
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/fdc/fdd.h>
@@ -39,6 +44,161 @@ namespace v1
 
 // Helper to add CORS headers (already exists in emulator_api.cpp, declaring here for consistency)
 extern void addCorsHeaders(HttpResponsePtr& resp);
+
+/// region <Tape snapshot helpers (tape-manager design §7.2)>
+
+static const char* tapePlaybackStateName(TapePlaybackState state)
+{
+    switch (state)
+    {
+        case TapePlaybackState::Idle:
+            return "idle";
+        case TapePlaybackState::Playing:
+            return "playing";
+        case TapePlaybackState::Paused:
+            return "paused";
+        case TapePlaybackState::Ended:
+            return "ended";
+        default:
+            break;
+    }
+    return "unknown";
+}
+
+/// jsoncpp-safe size_t -> JSON number
+static Json::Value jsonSize(size_t value)
+{
+    return Json::Value(static_cast<Json::UInt64>(value));
+}
+
+/// One catalog block as JSON (design §7.2 `blocks[]` element)
+static Json::Value blockDescriptorJson(const TapeBlockDescriptor& descriptor, const TapeFastLoadPlan& plan)
+{
+    Json::Value block;
+    block["index"] = jsonSize(descriptor.index);
+    block["kind"] = getTapeBlockKindName(descriptor.kind);
+
+    if (descriptor.kind == TapeBlockKindEnum::Header || descriptor.kind == TapeBlockKindEnum::Data ||
+        descriptor.kind == TapeBlockKindEnum::Custom)
+    {
+        block["headerless"] = descriptor.headerless;
+    }
+
+    if (descriptor.headerValid)
+    {
+        block["name"] = descriptor.name;
+        block["type"] = getTapeBlockTypeName(descriptor.headerType);
+        block["declared_length"] = descriptor.declaredLength;
+        block["param1"] = descriptor.param1;
+        block["param2"] = descriptor.param2;
+    }
+
+    if (descriptor.pairedDataIndex != SIZE_MAX)
+        block["paired_data_index"] = jsonSize(descriptor.pairedDataIndex);
+    if (descriptor.pairedHeaderIndex != SIZE_MAX)
+        block["paired_header_index"] = jsonSize(descriptor.pairedHeaderIndex);
+    if (!descriptor.groupLabel.empty())
+        block["group"] = descriptor.groupLabel;
+
+    Json::Value& speed = block["speed"];
+    speed["profile"] = getTapeSpeedProfileName(descriptor.timing.profile);
+    if (descriptor.baudEstimate > 0)
+        speed["baud"] = descriptor.baudEstimate;
+    if (descriptor.timing.profile == TapeSpeedProfileEnum::Custom)
+    {
+        // Full turbo timing — exactly what generateBitstream() would consume
+        speed["pilot_pulses"] = descriptor.timing.pilotPulses;
+        speed["pilot_half"] = descriptor.timing.pilotHalfPeriod;
+        speed["sync1"] = descriptor.timing.sync1;
+        speed["sync2"] = descriptor.timing.sync2;
+        speed["zero_half"] = descriptor.timing.zeroHalfPeriod;
+        speed["one_half"] = descriptor.timing.oneHalfPeriod;
+        speed["pause_ms"] = descriptor.timing.pauseMs;
+        speed["bits_in_last_byte"] = descriptor.timing.bitsInLastByte;
+    }
+
+    block["checksum_valid"] = descriptor.checksumValid;
+    block["checksum_applicable"] = descriptor.rawSize > 0;
+    block["seconds"] = descriptor.estimatedSeconds;
+    if (descriptor.rawSize > 0)
+        block["raw_size"] = jsonSize(descriptor.rawSize);
+    block["playable"] = descriptor.playable;
+
+    if (descriptor.kind != TapeBlockKindEnum::Control && plan.perBlock.size() > descriptor.index)
+    {
+        block["fast_load"] = plan.perBlock[descriptor.index] == FastLoadRejectEnum::None
+                                 ? "yes"
+                                 : getFastLoadRejectName(plan.perBlock[descriptor.index]);
+    }
+
+    return block;
+}
+
+/// Full GET /tape snapshot (design §7.2). Calls EnsureImageLoaded()
+/// (idempotent, path-keyed) — handlers invoke this under the pause bracket.
+static Json::Value buildTapeSnapshot(EmulatorContext* context)
+{
+    Json::Value ret;
+    Tape* tape = context->pTape;
+    const std::string& path = context->coreState.tapeFilePath;
+
+    const bool loaded = !path.empty() && tape->EnsureImageLoaded();
+    ret["status"] = loaded ? "loaded" : (path.empty() ? "empty" : "error");
+    ret["file"] = path;
+    if (!loaded)
+    {
+        ret["state"] = "idle";
+        return ret;
+    }
+
+    const std::vector<TapeBlockDescriptor>& catalog = tape->GetBlockCatalog();
+    const TapeFastLoadPlan& plan = tape->GetFastLoadPlan();
+
+    ret["format"] = tape->GetLoadedFormatId();
+    ret["state"] = tapePlaybackStateName(tape->GetPlaybackState());
+
+    std::optional<TapePosition> position = tape->GetPosition();
+    if (position.has_value())
+    {
+        Json::Value& pos = ret["position"];
+        pos["block"] = jsonSize(position->blockIndex);
+        pos["pulse"] = jsonSize(position->pulseIndex);
+        pos["seconds_into_block"] = position->secondsIntoBlock;
+        pos["block_total_seconds"] = position->blockTotalSeconds;
+    }
+
+    ret["cursor"] = jsonSize(tape->GetConsumptionCursor());
+    ret["block_count"] = jsonSize(catalog.size());
+    ret["total_seconds"] = plan.totalSeconds;
+
+    FeatureManager* featureManager = context->pFeatureManager;
+    ret["fast_tape"] = featureManager && featureManager->isEnabled(Features::kFastTape);
+
+    Json::Value& fastLoad = ret["fast_load"];
+    fastLoad["verdict"] = getFastLoadVerdictName(plan.verdict);
+    fastLoad["horizon"] = jsonSize(plan.stickinessHorizon);
+    fastLoad["eligible_blocks"] = jsonSize(plan.eligibleBlocks);
+    fastLoad["accelerated_seconds"] = plan.acceleratedSeconds;
+    fastLoad["total_seconds"] = plan.totalSeconds;
+    if (plan.firstRejectIndex != SIZE_MAX)
+    {
+        fastLoad["first_reject"]["index"] = jsonSize(plan.firstRejectIndex);
+        fastLoad["first_reject"]["reason"] = getFastLoadRejectName(plan.firstRejectReason);
+    }
+    fastLoad["advisory"] = true;  // the plan never gates the runtime trap (§5.8)
+    fastLoad["summary"] = plan.summary;
+
+    Json::Value& blocks = ret["blocks"];
+    blocks = Json::arrayValue;
+    for (const TapeBlockDescriptor& descriptor : catalog)
+    {
+        blocks.append(blockDescriptorJson(descriptor, plan));
+    }
+
+    return ret;
+}
+
+/// endregion </Tape snapshot helpers>
 
 /// @brief POST /api/v1/emulator/:id/tape/load
 /// @brief Load tape image
@@ -184,17 +344,31 @@ void EmulatorAPI::playTape(const HttpRequestPtr& req,
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     
-    context->pTape->startTape();
+    // Parse-once (idempotent); paused -> resume the frozen position IN PLACE
+    // (FR-6), otherwise start at the consumption cursor
+    bool played = context->pTape->EnsureImageLoaded();
+    bool resumed = false;
+    if (played) {
+        if (context->pTape->GetPlaybackState() == TapePlaybackState::Paused) {
+            context->pTape->ResumePlaybackFromPause();
+            resumed = true;
+        } else {
+            context->pTape->StartPlaybackAtCursor();
+        }
+    }
     
     if (wasRunning) {
         emulator->Resume();
     }
     
     Json::Value ret;
-    ret["status"] = "success";
-    ret["message"] = "Tape playback started";
+    ret["status"] = played ? "success" : "error";
+    ret["message"] = !played    ? "Tape image has no loadable blocks"
+                     : resumed ? "Tape playback resumed (in place)"
+                               : "Tape playback started";
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
+    resp->setStatusCode(played ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
     addCorsHeaders(resp);
     callback(resp);
 }
@@ -294,7 +468,9 @@ void EmulatorAPI::rewindTape(const HttpRequestPtr& req,
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     
-    context->pTape->reset();
+    // Rewind keeps the image and catalog (FR-5) — unlike stop/eject
+    context->pTape->EnsureImageLoaded();
+    context->pTape->RewindToStart();
     
     if (wasRunning) {
         emulator->Resume();
@@ -302,17 +478,18 @@ void EmulatorAPI::rewindTape(const HttpRequestPtr& req,
     
     Json::Value ret;
     ret["status"] = "success";
-    ret["message"] = "Tape rewound to beginning";
+    ret["message"] = "Tape rewound to beginning (image kept)";
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);
 }
 
-/// @brief GET /api/v1/emulator/:id/tape/info
-void EmulatorAPI::getTapeInfo(const HttpRequestPtr& req,
-                              std::function<void(const HttpResponsePtr&)>&& callback,
-                              const std::string& id) const
+/// @brief GET /api/v1/emulator/:id/tape
+/// Full tape snapshot: state, position, cursor, fast-load plan, catalog (design §7.2)
+void EmulatorAPI::getTape(const HttpRequestPtr& req,
+                          std::function<void(const HttpResponsePtr&)>&& callback,
+                          const std::string& id) const
 {
     auto manager = EmulatorManager::GetInstance();
     auto emulator = manager->GetEmulator(id);
@@ -330,21 +507,278 @@ void EmulatorAPI::getTapeInfo(const HttpRequestPtr& req,
     }
     
     auto context = emulator->GetContext();
-    Json::Value ret;
-    
     if (!context || !context->pTape) {
-        ret["status"] = "unavailable";
-        ret["message"] = "Tape subsystem not available";
-    } else {
-        std::string tapePath = context->coreState.tapeFilePath;
-        bool isLoaded = !tapePath.empty();
+        Json::Value error;
+        error["error"] = "Not Available";
+        error["message"] = "Tape subsystem not available";
         
-        ret["status"] = isLoaded ? "loaded" : "empty";
-        ret["file"] = tapePath;
-        // Note: _tapeStarted is protected in Tape class, cannot access directly
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    // Thread-safe snapshot: the first EnsureImageLoaded() mutates tape state
+    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
+    if (wasRunning) {
+        emulator->Pause();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    
+    Json::Value ret = buildTapeSnapshot(context);
+    
+    if (wasRunning) {
+        emulator->Resume();
     }
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/:id/tape/info — alias of GET /tape (kept for compatibility)
+void EmulatorAPI::getTapeInfo(const HttpRequestPtr& req,
+                              std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id) const
+{
+    getTape(req, std::move(callback), id);
+}
+
+/// @brief GET /api/v1/emulator/:id/tape/blocks/:index
+/// One catalog descriptor plus a 64-byte hex preview of the raw payload
+void EmulatorAPI::getTapeBlock(const HttpRequestPtr& req,
+                               std::function<void(const HttpResponsePtr&)>&& callback,
+                               const std::string& id,
+                               const std::string& index) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+    
+    if (!emulator) {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    size_t blockIndex = 0;
+    try {
+        blockIndex = static_cast<size_t>(std::stoul(index));
+    } catch (const std::exception&) {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid block index: " + index;
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    auto context = emulator->GetContext();
+    if (!context || !context->pTape) {
+        Json::Value error;
+        error["error"] = "Not Available";
+        error["message"] = "Tape subsystem not available";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
+    if (wasRunning) {
+        emulator->Pause();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    
+    Json::Value ret;
+    HttpStatusCode code = HttpStatusCode::k200OK;
+    
+    if (!context->pTape->EnsureImageLoaded() || blockIndex >= context->pTape->GetBlockCatalog().size() ||
+        blockIndex >= context->pTape->GetBlocks().size()) {
+        ret["error"] = "Not Found";
+        ret["message"] = "Block index " + std::to_string(blockIndex) + " out of range";
+        code = HttpStatusCode::k404NotFound;
+    } else {
+        ret = blockDescriptorJson(context->pTape->GetBlockCatalog()[blockIndex], context->pTape->GetFastLoadPlan());
+        
+        // First 64 bytes of the raw payload (flag + payload + checksum) as hex
+        const std::vector<uint8_t>& data = context->pTape->GetBlocks()[blockIndex].data;
+        const size_t previewLength = data.size() < 64 ? data.size() : 64;
+        std::string hex;
+        hex.reserve(previewLength * 2);
+        char byte[3];
+        for (size_t i = 0; i < previewLength; i++) {
+            snprintf(byte, sizeof(byte), "%02x", data[i]);
+            hex += byte;
+        }
+        ret["payload_bytes"] = jsonSize(data.size());
+        ret["preview_hex"] = hex;
+    }
+    
+    if (wasRunning) {
+        emulator->Resume();
+    }
+    
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    resp->setStatusCode(code);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/:id/tape/seek — body { "block": 9 }
+void EmulatorAPI::seekTape(const HttpRequestPtr& req,
+                           std::function<void(const HttpResponsePtr&)>&& callback,
+                           const std::string& id) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+    
+    if (!emulator) {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("block")) {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Missing 'block' parameter in request body";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    const size_t blockIndex = static_cast<size_t>((*json)["block"].asUInt64());
+    
+    auto context = emulator->GetContext();
+    if (!context || !context->pTape) {
+        Json::Value error;
+        error["error"] = "Not Available";
+        error["message"] = "Tape subsystem not available";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
+    if (wasRunning) {
+        emulator->Pause();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    
+    Json::Value ret;
+    HttpStatusCode code = HttpStatusCode::k200OK;
+    
+    if (!context->pTape->EnsureImageLoaded() || !context->pTape->SeekToBlock(blockIndex)) {
+        ret["status"] = "error";
+        ret["message"] = "Block index " + std::to_string(blockIndex) + " out of range";
+        code = HttpStatusCode::k400BadRequest;
+    } else {
+        // Resulting position — the leading fields of the full snapshot
+        Json::Value snapshot = buildTapeSnapshot(context);
+        ret["status"] = "success";
+        ret["message"] = "Seeked to block " + std::to_string(blockIndex);
+        ret["state"] = snapshot["state"];
+        ret["position"] = snapshot["position"];
+        ret["cursor"] = snapshot["cursor"];
+    }
+    
+    if (wasRunning) {
+        emulator->Resume();
+    }
+    
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    resp->setStatusCode(code);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/:id/tape/pause — manual pause; play resumes in place
+void EmulatorAPI::pauseTape(const HttpRequestPtr& req,
+                            std::function<void(const HttpResponsePtr&)>&& callback,
+                            const std::string& id) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+    
+    if (!emulator) {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    auto context = emulator->GetContext();
+    if (!context || !context->pTape) {
+        Json::Value error;
+        error["error"] = "Not Available";
+        error["message"] = "Tape subsystem not available";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
+    if (wasRunning) {
+        emulator->Pause();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    
+    Json::Value ret;
+    HttpStatusCode code = HttpStatusCode::k200OK;
+    const TapePlaybackState state = context->pTape->GetPlaybackState();
+    
+    if (state == TapePlaybackState::Paused) {
+        ret["status"] = "success";
+        ret["message"] = "Tape already paused";
+    } else if (state != TapePlaybackState::Playing) {
+        ret["status"] = "error";
+        ret["message"] = "Tape is not playing";
+        code = HttpStatusCode::k400BadRequest;
+    } else {
+        context->pTape->pausePlayback();
+        ret["status"] = "success";
+        ret["message"] = "Tape paused (play resumes in place)";
+    }
+    
+    if (wasRunning) {
+        emulator->Resume();
+    }
+    
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    resp->setStatusCode(code);
     addCorsHeaders(resp);
     callback(resp);
 }

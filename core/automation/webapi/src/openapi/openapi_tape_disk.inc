@@ -53,6 +53,50 @@
     paths["/api/v1/emulator/{id}/tape/info"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/tape/info"]["get"]["responses"]["200"]["description"] = "Tape status information";
 
+    // Tape snapshot and seek endpoints (tape-manager design §7.2)
+    paths["/api/v1/emulator/{id}/tape"]["get"]["summary"] = "Full tape snapshot: state, position, fast-load plan and block catalog";
+    paths["/api/v1/emulator/{id}/tape"]["get"]["tags"].append("Tape Control");
+    paths["/api/v1/emulator/{id}/tape"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/tape"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/tape"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/tape"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/tape"]["get"]["responses"]["200"]["description"] = "Tape snapshot (loaded/empty, playback state, position, fast_load plan, blocks catalog)";
+
+    paths["/api/v1/emulator/{id}/tape/pause"]["post"]["summary"] = "Pause tape playback (play after it resumes in place)";
+    paths["/api/v1/emulator/{id}/tape/pause"]["post"]["tags"].append("Tape Control");
+    paths["/api/v1/emulator/{id}/tape/pause"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/tape/pause"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/tape/pause"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/tape/pause"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/tape/pause"]["post"]["responses"]["200"]["description"] = "Tape paused";
+    paths["/api/v1/emulator/{id}/tape/pause"]["post"]["responses"]["400"]["description"] = "Tape is not playing";
+
+    paths["/api/v1/emulator/{id}/tape/seek"]["post"]["summary"] = "Seek tape to a block index (forward or backward; never starts playback)";
+    paths["/api/v1/emulator/{id}/tape/seek"]["post"]["tags"].append("Tape Control");
+    paths["/api/v1/emulator/{id}/tape/seek"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/tape/seek"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/tape/seek"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/tape/seek"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/tape/seek"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["block"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/tape/seek"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["block"]["description"] = "Zero-based block index";
+    paths["/api/v1/emulator/{id}/tape/seek"]["post"]["responses"]["200"]["description"] = "Seeked; resulting position returned";
+    paths["/api/v1/emulator/{id}/tape/seek"]["post"]["responses"]["400"]["description"] = "Block index out of range";
+
+    paths["/api/v1/emulator/{id}/tape/blocks/{index}"]["get"]["summary"] = "Get one tape block descriptor with a payload preview";
+    paths["/api/v1/emulator/{id}/tape/blocks/{index}"]["get"]["tags"].append("Tape Control");
+    paths["/api/v1/emulator/{id}/tape/blocks/{index}"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/tape/blocks/{index}"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/tape/blocks/{index}"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/tape/blocks/{index}"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/tape/blocks/{index}"]["get"]["parameters"][1]["name"] = "index";
+    paths["/api/v1/emulator/{id}/tape/blocks/{index}"]["get"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/tape/blocks/{index}"]["get"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/tape/blocks/{index}"]["get"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/tape/blocks/{index}"]["get"]["responses"]["200"]["description"] = "Block descriptor (kind, header fields, speed profile, checksum) + 64-byte hex preview";
+    paths["/api/v1/emulator/{id}/tape/blocks/{index}"]["get"]["responses"]["404"]["description"] = "Block index out of range";
+
     // Disk control endpoints
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["summary"] = "Insert disk image";
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["tags"].append("Disk Control");
