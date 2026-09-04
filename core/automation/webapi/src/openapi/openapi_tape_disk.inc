@@ -97,6 +97,69 @@
     paths["/api/v1/emulator/{id}/tape/blocks/{index}"]["get"]["responses"]["200"]["description"] = "Block descriptor (kind, header fields, speed profile, checksum) + 64-byte hex preview";
     paths["/api/v1/emulator/{id}/tape/blocks/{index}"]["get"]["responses"]["404"]["description"] = "Block index out of range";
 
+    // Tape audio bridge endpoints (tape-audio-bridge design §7.2)
+    paths["/api/v1/emulator/{id}/tape/render"]["post"]["summary"] = "Render tape image (or inserted tape) to WAV/FLAC audio";
+    paths["/api/v1/emulator/{id}/tape/render"]["post"]["tags"].append("Tape Control");
+    paths["/api/v1/emulator/{id}/tape/render"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/tape/render"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/tape/render"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/tape/render"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/tape/render"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["sourcePath"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/tape/render"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["sourcePath"]["description"] = "Tape image to render (.tap, .tzx, ...); omit to render the inserted tape";
+    paths["/api/v1/emulator/{id}/tape/render"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["blocks"]["description"] = "\"all\" (default) or [first, last] catalog indices";
+    paths["/api/v1/emulator/{id}/tape/render"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["format"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/tape/render"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["format"]["description"] = "\"wav\" or \"flac\"; must match the outputPath extension that picks the encoder";
+    paths["/api/v1/emulator/{id}/tape/render"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["sampleRate"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/tape/render"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["amplitude"]["type"] = "number";
+    paths["/api/v1/emulator/{id}/tape/render"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["invertLevel"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/tape/render"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["outputPath"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/tape/render"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["outputPath"]["description"] = "Output .wav or .flac (.flac requires ffmpeg); required";
+    paths["/api/v1/emulator/{id}/tape/render"]["post"]["responses"]["200"]["description"] =
+        "Render result: blocks_rendered, first/last block, duration_sec, samples_written, encoder, warnings";
+    paths["/api/v1/emulator/{id}/tape/render"]["post"]["responses"]["400"]["description"] =
+        "Bad body, unknown source, out-of-range blocks, or render/encoder failure";
+
+    paths["/api/v1/emulator/{id}/tape/import"]["post"]["summary"] = "Import WAV/FLAC/MP3 audio as a .tzx/.tap tape image";
+    paths["/api/v1/emulator/{id}/tape/import"]["post"]["tags"].append("Tape Control");
+    paths["/api/v1/emulator/{id}/tape/import"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/tape/import"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/tape/import"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/tape/import"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/tape/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["sourcePath"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/tape/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["sourcePath"]["description"] = "Audio file to import (.wav, .flac, .mp3); required";
+    paths["/api/v1/emulator/{id}/tape/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["outputPath"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/tape/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["outputPath"]["description"] = "Output .tzx (exact pulses) or .tap (ROM-standard content only); required";
+    paths["/api/v1/emulator/{id}/tape/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["target"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/tape/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["target"]["description"] = "\"auto\" (default), \"tzx\" or \"tap\"; must match the outputPath extension";
+    paths["/api/v1/emulator/{id}/tape/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["hysteresis"]["type"] = "number";
+    paths["/api/v1/emulator/{id}/tape/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["hysteresis"]["description"] = "Schmitt band, 0.05-0.45 of signal range (default 0.2)";
+    paths["/api/v1/emulator/{id}/tape/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["insert"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/tape/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["insert"]["description"] = "Insert the saved image into this instance (default false)";
+    paths["/api/v1/emulator/{id}/tape/import"]["post"]["responses"]["200"]["description"] =
+        "Import result: decoder, blocks_recognized, kind_counts, blocks_written, catalog preview, warnings";
+    paths["/api/v1/emulator/{id}/tape/import"]["post"]["responses"]["400"]["description"] =
+        "Bad body, decode failure, or .tap gate refusal (tap_refusal_reason names the .tzx alternative)";
+
     // Disk control endpoints
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["summary"] = "Insert disk image";
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["tags"].append("Disk Control");
