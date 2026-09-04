@@ -72,7 +72,17 @@ TEST_F(Disassembler_Opcode_Test, TestAllNoPrefixOpCodes)
         if (op.flags & OF_MBYTE)
         {
             referenceResult = StringHelper::ReplaceAll(referenceResult, string(":1"), string("%s"));
-            referenceResult = StringHelper::Format(referenceResult, StringHelper::ToHexWithPrefix(command[1], "#", true));
+            if (op.flags & OF_RELJUMP)
+            {
+                // Symbolic disassembly: relative jumps render the resolved absolute
+                // target — instructionAddr(0) + fullCommandLen + (int8_t)offset
+                uint16_t target = static_cast<uint16_t>(command.size() + static_cast<int8_t>(command.back()));
+                referenceResult = StringHelper::Format(referenceResult, StringHelper::ToHexWithPrefix(target, "#", true));
+            }
+            else
+            {
+                referenceResult = StringHelper::Format(referenceResult, StringHelper::ToHexWithPrefix(command[1], "#", true));
+            }
         }
         else if (op.flags & OF_MWORD)
         {
@@ -153,8 +163,14 @@ TEST_F(Disassembler_Opcode_Test, TestAllEDOpCodes)
             size_t pos;
             if ((pos = referenceResult.find(":1")) != std::string::npos)
             {
-                char hexByte[5];
-                snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
+                // Symbolic disassembly: relative jumps render the resolved absolute
+                // target — instructionAddr(0) + fullCommandLen + (int8_t)offset
+                char hexByte[7];
+                if (op.flags & OF_RELJUMP)
+                    snprintf(hexByte, sizeof(hexByte), "#%04X",
+                             static_cast<uint16_t>(command.size() + static_cast<int8_t>(val))); // uppercase
+                else
+                    snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
                 referenceResult.replace(pos, 2, hexByte);
             }
         }
@@ -303,8 +319,14 @@ TEST_F(Disassembler_Opcode_Test, TestAllDDOpCodes)
             size_t pos;
             if ((pos = referenceResult.find(":1")) != std::string::npos)
             {
-                char hexByte[5];
-                snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
+                // Symbolic disassembly: relative jumps render the resolved absolute
+                // target — instructionAddr(0) + fullCommandLen + (int8_t)offset
+                char hexByte[7];
+                if (op.flags & OF_RELJUMP)
+                    snprintf(hexByte, sizeof(hexByte), "#%04X",
+                             static_cast<uint16_t>(command.size() + static_cast<int8_t>(val))); // uppercase
+                else
+                    snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
                 referenceResult.replace(pos, 2, hexByte);
             }
         }
@@ -486,8 +508,14 @@ TEST_F(Disassembler_Opcode_Test, TestAllFDOpCodes)
             size_t pos;
             if ((pos = referenceResult.find(":1")) != std::string::npos)
             {
-                char hexByte[5];
-                snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
+                // Symbolic disassembly: relative jumps render the resolved absolute
+                // target — instructionAddr(0) + fullCommandLen + (int8_t)offset
+                char hexByte[7];
+                if (op.flags & OF_RELJUMP)
+                    snprintf(hexByte, sizeof(hexByte), "#%04X",
+                             static_cast<uint16_t>(command.size() + static_cast<int8_t>(val))); // uppercase
+                else
+                    snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
                 referenceResult.replace(pos, 2, hexByte);
             }
         }

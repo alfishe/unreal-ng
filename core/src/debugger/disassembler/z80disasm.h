@@ -16,13 +16,15 @@ class Memory;
 /// region <Types>
 
 /// Represents opcode dictionary data record from disassembler decoding tables
+/// Defaults keep `DecodedInstruction` default-constructions deterministic — garbage
+/// flags once made formatOperandString flip `ld a,#EF` to `#FFEF` between runs
 struct OpCode
 {
-    uint32_t flags;
-    uint8_t t;				// T-states for unconditional operations
-    uint8_t met_t;          // T-states for conditional operation when condition met
-    uint8_t notmet_t;       // T-states for conditional operation when condition not met
-    const char* mnem;		// mnemonic
+    uint32_t flags = 0;      // OF_NONE — the flag constants are declared below the struct
+    uint8_t t = 0;				// T-states for unconditional operations
+    uint8_t met_t = 0;       // T-states for conditional operation when condition met
+    uint8_t notmet_t = 0;    // T-states for conditional operation when condition not met
+    const char* mnem = "";	// mnemonic
 };
 
 /// All information about single Z80 command after decoding and operand fetching

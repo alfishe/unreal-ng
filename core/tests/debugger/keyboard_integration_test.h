@@ -18,7 +18,8 @@ protected:
     /// Boot emulator and run frames until stable
     std::string BootEmulator(const std::string& symbolicId, int bootFrames = 1000);
 
-    /// Run N frames on the emulator (waits for frame counter)
+    /// Run N frames on the emulator (realtime wall-clock wait — the emulator
+    /// thread drives its own frame processing, including keyboard sequences)
     void RunFrames(const std::string& emulatorId, int frameCount);
 
     /// Get screen text via OCR

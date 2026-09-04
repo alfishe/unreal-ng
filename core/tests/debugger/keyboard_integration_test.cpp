@@ -76,23 +76,14 @@ void KeyboardInjection_Integration_test::RunFrames(const std::string& emulatorId
     if (!emulator)
         return;
     
-    auto context = emulator->GetContext();
-    if (!context || !context->pDebugManager)
-        return;
-    
-    auto keyMgr = context->pDebugManager->GetKeyboardManager();
-    
-    // The emulator runs in realtime at ~50Hz (20ms per frame)
-    // We need to both wait for time to pass AND call OnFrame for keyboard processing
-    int msPerFrame = 20;
-    
+    // The emulator runs in realtime at ~50Hz (20ms per frame) and its mainloop
+    // pumps the keyboard manager's OnFrame() on its own thread — RunFrames
+    // only needs to let that much wall time pass.
+    constexpr int msPerFrame = 20;
+
     for (int i = 0; i < frameCount; i++)
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(msPerFrame));
-        if (keyMgr)
-        {
-            keyMgr->OnFrame();
-        }
     }
 }
 
@@ -114,12 +105,13 @@ void KeyboardInjection_Integration_test::TypeAndWait(const std::string& emulator
     // Type the text
     context->pDebugManager->GetKeyboardManager()->TypeText(text, framesPerChar);
     
-    // Wait for sequence to complete
-    int maxFrames = text.length() * framesPerChar * 10; // generous estimate
-    for (int i = 0; i < maxFrames && context->pDebugManager->GetKeyboardManager()->IsSequenceRunning(); i++)
+    // Wait for sequence to complete. The running emulator's mainloop already
+    // pumps keyMgr->OnFrame() every frame — calling it from the test thread too
+    // double-steps the sequence state machine and randomly truncates key holds.
+    int maxMs = static_cast<int>(text.length()) * framesPerChar * 10 * 20; // generous: 10x frames at 20ms each
+    for (int waitedMs = 0; waitedMs < maxMs && context->pDebugManager->GetKeyboardManager()->IsSequenceRunning(); waitedMs += 20)
     {
-        context->pDebugManager->GetKeyboardManager()->OnFrame();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     
     // Extra frames for screen update
@@ -293,21 +285,24 @@ TEST_F(KeyboardInjection_Integration_test, TapKey_SingleCharacter)
     // Tap a single key
     context->pDebugManager->GetKeyboardManager()->TapKey("a", 3);
     
-    // Wait for sequence to complete
+    // Wait for sequence to complete. The running emulator's mainloop already
+    // pumps keyMgr->OnFrame() every frame — calling it from the test thread too
+    // double-steps the sequence state machine and randomly truncates key holds.
     for (int i = 0; i < 50 && context->pDebugManager->GetKeyboardManager()->IsSequenceRunning(); i++)
     {
-        context->pDebugManager->GetKeyboardManager()->OnFrame();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     
     RunFrames(emulatorId, 100);
     
-    // Get screen text and verify 'a' or 'A' appears
+    // Get screen text and verify the tap registered. In 48K BASIC K-mode
+    // (fresh line, K cursor) letter keys produce keywords: 'a' types NEW and
+    // the cursor flips to L. Assert the keyword — the letter itself never
+    // reaches the screen in this mode.
     std::string screenText = GetScreenText(emulatorId);
-    
-    bool hasA = (screenText.find('a') != std::string::npos) || 
-                (screenText.find('A') != std::string::npos);
-    EXPECT_TRUE(hasA) << "Tapped key 'a' not found on screen:\n" << screenText;
+
+    bool hasNew = screenText.find("NEW") != std::string::npos;
+    EXPECT_TRUE(hasNew) << "Tapped key 'a' did not produce the NEW keyword on screen:\n" << screenText;
     
     CleanupEmulator(emulatorId);
 }
@@ -325,20 +320,20 @@ TEST_F(KeyboardInjection_Integration_test, TapCombo_CapsShiftKey)
     // Type lowercase 'a', then CAPS+a (should produce uppercase A in keyword mode)
     context->pDebugManager->GetKeyboardManager()->TapKey("a", 3);
     
+    // Let the emulator thread drive the sequence (its mainloop pumps OnFrame)
     for (int i = 0; i < 30 && context->pDebugManager->GetKeyboardManager()->IsSequenceRunning(); i++)
     {
-        context->pDebugManager->GetKeyboardManager()->OnFrame();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     
     // Now try combo (CAPS + A)
     std::vector<std::string> combo = {"cs", "a"};
     context->pDebugManager->GetKeyboardManager()->TapCombo(combo, 3);
     
+    // Let the emulator thread drive the sequence (its mainloop pumps OnFrame)
     for (int i = 0; i < 30 && context->pDebugManager->GetKeyboardManager()->IsSequenceRunning(); i++)
     {
-        context->pDebugManager->GetKeyboardManager()->OnFrame();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     
     RunFrames(emulatorId, 100);
@@ -368,11 +363,12 @@ TEST_F(KeyboardInjection_Integration_test, ExecuteMacro_EMode)
     bool result = context->pDebugManager->GetKeyboardManager()->ExecuteNamedSequence("e_mode");
     EXPECT_TRUE(result) << "e_mode macro not found";
     
-    // Wait for sequence to complete
+    // Wait for sequence to complete. The running emulator's mainloop already
+    // pumps keyMgr->OnFrame() every frame — calling it from the test thread too
+    // double-steps the sequence state machine and randomly truncates key holds.
     for (int i = 0; i < 100 && context->pDebugManager->GetKeyboardManager()->IsSequenceRunning(); i++)
     {
-        context->pDebugManager->GetKeyboardManager()->OnFrame();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     
     // E-mode should be entered (cursor changes to E)
@@ -404,16 +400,19 @@ TEST_F(KeyboardInjection_Integration_test, SequenceCompletes_NoHangingState)
     // Queue several operations
     keyMgr->TapKey("h", 2);
     
-    // Process until done
-    int frameCount = 0;
-    while (keyMgr->IsSequenceRunning() && frameCount < 1000)
+    // Process until done. The running emulator's mainloop already pumps
+    // keyMgr->OnFrame() every frame — the test thread must only wait, never
+    // pump too, or the sequence state machine double-steps and truncates key
+    // holds. Wall time stands in for the frame count (1 frame = 20 ms at 50 Hz).
+    int elapsedMs = 0;
+    while (keyMgr->IsSequenceRunning() && elapsedMs < 2000)
     {
-        keyMgr->OnFrame();
-        frameCount++;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        elapsedMs += 5;
     }
-    
-    EXPECT_FALSE(keyMgr->IsSequenceRunning()) << "Sequence did not complete after " << frameCount << " frames";
-    EXPECT_LT(frameCount, 100) << "Sequence took too long to complete";
+
+    EXPECT_FALSE(keyMgr->IsSequenceRunning()) << "Sequence did not complete after " << elapsedMs << " ms";
+    EXPECT_LT(elapsedMs, 1000) << "Sequence took too long to complete";
     
     CleanupEmulator(emulatorId);
 }
@@ -433,24 +432,27 @@ TEST_F(KeyboardInjection_Integration_test, MultipleSequences_ExecuteInOrder)
     // Type multiple characters one after another
     keyMgr->TapKey("a", 2);
     
-    // Wait for first to complete before starting second
-    while (keyMgr->IsSequenceRunning())
+    // Wait for first to complete before starting second. The running
+    // emulator's mainloop already pumps keyMgr->OnFrame() every frame —
+    // calling it from the test thread too double-steps the sequence state
+    // machine and randomly truncates key holds.
+    for (int i = 0; i < 50 && keyMgr->IsSequenceRunning(); i++)
     {
-        keyMgr->OnFrame();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     
     keyMgr->TapKey("b", 2);
     
-    while (keyMgr->IsSequenceRunning())
+    for (int i = 0; i < 50 && keyMgr->IsSequenceRunning(); i++)
     {
-        keyMgr->OnFrame();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     
     keyMgr->TapKey("c", 2);
     
-    while (keyMgr->IsSequenceRunning())
+    for (int i = 0; i < 50 && keyMgr->IsSequenceRunning(); i++)
     {
-        keyMgr->OnFrame();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     
     RunFrames(emulatorId, 100);
@@ -485,10 +487,11 @@ TEST_F(KeyboardInjection_Integration_test, AbortSequence_StopsImmediately)
     keyMgr->TypeText("THIS IS A VERY LONG TEXT THAT WOULD TAKE MANY FRAMES", 5);
     EXPECT_TRUE(keyMgr->IsSequenceRunning());
     
-    // Process a few frames
+    // Let the emulator thread advance the sequence for ~10 frames (its
+    // mainloop pumps OnFrame() every frame — never call it from the test thread)
     for (int i = 0; i < 10; i++)
     {
-        keyMgr->OnFrame();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     
     // Should still be running
