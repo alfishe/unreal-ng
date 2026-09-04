@@ -259,6 +259,11 @@ private:
     void HandleTapePause(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context);
     void HandleTapeInfo(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context);
 
+    // Tape audio bridge (tape-audio-bridge design §7.1): pure file conversions,
+    // no emulator state — no emulator needs to be selected for these two
+    void HandleTapeRender(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleTapeImport(const ClientSession& session, const std::vector<std::string>& args);
+
     // Disk control command handlers
     void HandleDisk(const ClientSession& session, const std::vector<std::string>& args);
     void ShowDiskHelp(const ClientSession& session);
