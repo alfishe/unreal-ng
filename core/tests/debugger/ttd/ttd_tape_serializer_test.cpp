@@ -27,15 +27,18 @@
 
 namespace
 {
-/// Build a 41-byte tape-state buffer with known non-trivial field values.
+/// Build a 42-byte tape-state buffer with known non-trivial field values.
 /// Layout must match the cursor-packed format in tape.cpp.
 std::vector<uint8_t> CraftKnownTapeBuffer()
 {
-    std::vector<uint8_t> buf(41, 0);
+    std::vector<uint8_t> buf(42, 0);
     uint8_t* cur = buf.data();
 
     // _tapeStarted = 1
     *cur++ = 1;
+
+    // _playbackFrozen = 0 (design §11: second byte)
+    *cur++ = 0;
 
     // Helper to put a uint64 little-endian-agnostic via memcpy.
     auto put64 = [](uint8_t*& c, uint64_t v) { std::memcpy(c, &v, 8); c += 8; };
@@ -76,10 +79,10 @@ protected:
     }
 };
 
-TEST_F(TTD_Tape_Serializer_Test, TTDStateSize_IsStable_41Bytes)
+TEST_F(TTD_Tape_Serializer_Test, TTDStateSize_IsStable_42Bytes)
 {
-    EXPECT_EQ(_tapeA->TTDStateSize(), 41u);
-    EXPECT_EQ(_tapeB->TTDStateSize(), 41u);
+    EXPECT_EQ(_tapeA->TTDStateSize(), 42u);
+    EXPECT_EQ(_tapeB->TTDStateSize(), 42u);
 }
 
 TEST_F(TTD_Tape_Serializer_Test, RoundTrip_DefaultState_IsByteIdentical)
@@ -182,8 +185,8 @@ TEST(TTD_Tape_ManagerIntegration_Test, CaptureNow_PopulatesTapeStateBlob)
     const ttd::TTDCheckpoint* cp = context->pTimeTravelManager->GetCheckpoint(0);
     ASSERT_NE(cp, nullptr);
 
-    EXPECT_EQ(cp->tapeState.size(), 41u)
-        << "tapeState blob must contain the Tape position payload (41 bytes)";
+    EXPECT_EQ(cp->tapeState.size(), 42u)
+        << "tapeState blob must contain the Tape position payload (42 bytes)";
 
     emulator.Stop();
     emulator.Release();

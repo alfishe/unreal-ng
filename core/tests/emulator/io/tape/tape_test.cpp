@@ -97,6 +97,36 @@ TEST_F(Tape_Test, generateBitstream)
     // endregion </Debug print>
 }
 
+/// A1 (tape-manager design §5.2): period parameters are u32 — a TZX $11
+/// turbo half-period above 65535 T-states must survive into edgePulseTimings
+/// untruncated (edgePulseTimings is vector<uint32_t>; the old u16 signature
+/// silently narrowed it).
+TEST_F(Tape_Test, generateBitstreamAcceptsU32Periods)
+{
+    TapeCUT tape(_context);
+
+    constexpr uint32_t BIG_PILOT_HALF = 70000;
+    constexpr uint32_t BIG_ONE_HALF = 66000;
+
+    TapeBlock tapeBlock;
+    tapeBlock.type = TapeBlockFlagEnum::TAP_BLOCK_FLAG_DATA;
+    tapeBlock.data = { 0xFF };  // one byte of ones: 8 x 2 edges
+
+    size_t result = tape.generateBitstream(tapeBlock, BIG_PILOT_HALF, 667, 735, 855,
+                                           BIG_ONE_HALF, /*pilotLength_pulses=*/2, /*pause_ms=*/0);
+
+    // 2 pilot edges at 70000 + sync 667/735 + 16 edges at 66000
+    constexpr size_t expected = 2 * 70000 + 667 + 735 + 16 * 66000;
+    EXPECT_EQ(result, expected);
+    EXPECT_EQ(tapeBlock.totalBitstreamLength, expected);
+
+    // No truncation anywhere: first pilot edge and first data edge carry the
+    // full u32 values (a u16 path would emit 70000-65536=4464 / 66000-65536=464)
+    ASSERT_GE(tapeBlock.edgePulseTimings.size(), 5u);
+    EXPECT_EQ(tapeBlock.edgePulseTimings[0], 70000u);
+    EXPECT_EQ(tapeBlock.edgePulseTimings[4], 66000u);
+}
+
 TEST_F(Tape_Test, getPilotSample)
 {
     // Pilot tone uses 2168 T-states half-period per ZX Spectrum tape specification

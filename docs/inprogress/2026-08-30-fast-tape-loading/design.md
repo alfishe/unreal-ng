@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Status** | r3 — implemented; control plane migrated to the feature system |
-| **Revision** | r0 2026-08-30 initial draft · r1 2026-08-30 post-review: entry contract fixed (`Fc`: 1=LOAD / 0=VERIFY; SAVE is SA-BYTES `$04C2`), LD-FLAG/LD-VERIFY labeling corrected, 128K ROM note verified, image-load idempotency + partial-block cursor semantics defined, differential-test exclusions made concrete · r2 2026-08-30 post-implementation: IFF1 exit corrected to **preserved** (SA/LD-RET `$053F` listing added — its `EI` at `$054F` is the caller-observable exit), lazy arm state replaces the cached `_armed`/`UpdateArmState()` design, consumption cursor is the pre-existing `_currentTapeBlockIndex` (TTD blob **unchanged**), `EnsureImageLoaded()` records **no** external-event marker, exact success exit `A=$00`/`F=$BF` documented, coverage-sample item recorded as a v1 deviation · r3 2026-08-30 feature-system migration: the switch is now the runtime FeatureManager feature **`fasttape`** (alias `ftape`, category performance, default **on**) — `CONFIG.tape_traps` and the `[MISC] TapeTraps` ini key are **removed**; CLI `setting fast_tape`, WebAPI `settings.fast_tape` and the Qt Machine menu toggle all drive `FeatureManager::setFeature` — one control plane, same idiom as `sound`/`screenhq` |
+| **Status** | r4 — implemented; custom-loader pause/resume lifecycle (insult.tap fix) |
+| **Revision** | r0 2026-08-30 initial draft · r1 2026-08-30 post-review: entry contract fixed (`Fc`: 1=LOAD / 0=VERIFY; SAVE is SA-BYTES `$04C2`), LD-FLAG/LD-VERIFY labeling corrected, 128K ROM note verified, image-load idempotency + partial-block cursor semantics defined, differential-test exclusions made concrete · r2 2026-08-30 post-implementation: IFF1 exit corrected to **preserved** (SA/LD-RET `$053F` listing added — its `EI` at `$054F` is the caller-observable exit), lazy arm state replaces the cached `_armed`/`UpdateArmState()` design, consumption cursor is the pre-existing `_currentTapeBlockIndex` (TTD blob **unchanged**), `EnsureImageLoaded()` records **no** external-event marker, exact success exit `A=$00`/`F=$BF` documented, coverage-sample item recorded as a v1 deviation · r3 2026-08-30 feature-system migration: the switch is now the runtime FeatureManager feature **`fasttape`** (alias `ftape`, category performance, default **on**) — `CONFIG.tape_traps` and the `[MISC] TapeTraps` ini key are **removed**; CLI `setting fast_tape`, WebAPI `settings.fast_tape` and the Qt Machine menu toggle all drive `FeatureManager::setFeature` — one control plane, same idiom as `sound`/`screenhq` · r4 2026-08-31 custom-loader lifecycle: the 150-frame read-gap watchdog now **pauses** playback (freeze-in-place, in-flight block NOT consumed) instead of terminal-stopping — §9.5; loader-agnostic resume/first-start via **sustained EAR polling** (`TAPE_EAR_POLL_RESUME_THRESHOLD = 256` non-joystick ULA reads within one frame, joystick rows `$EF`/`$F7` excluded); mid-block resume preserves bitstream position + edge state (deliberately **not** `startTape()`, which resets `_lastTapeBit`); terminal `stopPlayback()` semantics unchanged; TTD `TapeControl` markers recorded on pause/resume |
 | **Date** | 2026-08-30 |
 | **Feature** | Switchable fast tape loading via ROM loader hooks |
 | **Affects** | `core/src/emulator/cpu/{z80,core}.{h,cpp}`, `core/src/emulator/io/tape/`, `core/src/base/featuremanager.*`, `core/automation/cli/src/commands/cli-processor-settings.cpp`, `core/automation/webapi/src/api/settings_api.cpp`, `unreal-qt/src/{menumanager,mainwindow}.{h,cpp}`, `core/tests/emulator/io/tape/` |
@@ -29,8 +29,8 @@
 |---|---|
 | `core/src/emulator/io/tape/tape.h/.cpp` | `Tape` class: owns parsed `TapeBlock` vector, playback cursor, EAR bitstream generation (`generateBitstream`), port-IN dispatch, TTD cursor serialization |
 | `core/src/loaders/tape/loader_tap.h/.cpp` | `LoaderTAP`: parses `.tap` files into `std::vector<TapeBlock>`; block validity via XOR checksum (`isBlockValid`) |
-| `Tape::handlePortIn()` | **Auto-start hack**: when tape is not playing and `cpu.pc == 0x0564` (the `RRA` after `IN A,($FE)` at `$0562` inside the ROM loader loop), lazily loads the TAP file and calls `startTape()` |
-| `Tape::handleFrameEnd()` | Load-completion watchdogs: `ERR_NR` change and 150-frames-without-EAR-read both stop the tape |
+| `Tape::handlePortIn()` | **Auto-start hack**: when tape is not playing and `cpu.pc == 0x0564` (the `RRA` after `IN A,($FE)` at `$0562` inside the ROM loader loop), lazily loads the TAP file and calls `startTape()`. (r4) also counts sustained EAR polls → `ResumePlaybackAfterPoll()` (§9.5) — takes the port address to exclude joystick rows |
+| `Tape::handleFrameEnd()` | Load-completion watchdogs: `ERR_NR` change **stops** the tape; the 150-frames-without-EAR-read watchdog **pauses** it (r4 — freeze in place, §9.5; it used to terminal-stop, consuming the in-flight block) |
 | ~~`CONFIG.tape_traps`~~ (`platform.h`) | **Historical (r0–r2)**: heritage flag, read/written by CLI (`fast_tape`) and WebAPI settings; dormant until r2 wired it into the trap. **Removed in r3** — superseded by the `fasttape` feature (§10) |
 
 Tape playback is bit-accurate: pilot/sync/data pulses are expanded into `edgePulseTimings` and delivered through the EAR bit on port `#FE` reads, so the real ROM `LD-BYTES` routine decodes them at real speed (minutes for large programs).
@@ -318,11 +318,41 @@ void   StartPlaybackAtCursor();      // signal fallback: startTape() honoring th
 Rules:
 
 - (r2) the consumption cursor is the **pre-existing `_currentTapeBlockIndex`** — no new field. It is the single source of truth: signal playback advances it as blocks finish playing; the trap advances it via `ConsumeBlock()` as blocks are consumed directly. `UINT64_MAX` is the "nothing consumed" sentinel; `GetConsumptionCursor()` normalizes it to `0`.
-- **A partially-played block counts as consumed.** The `ERR_NR` / 150-frame watchdogs (`tape.cpp:283-298`) can stop playback mid-block; on any stop with the cursor inside a block, the cursor advances past that block. Rationale: a real tape keeps rolling during a failed load — on retry the ROM resynchronizes on the *next* pilot tone, never mid-block. Tested in §12.1-8.
+- **A partially-played block counts as consumed — on terminal stop.** The `ERR_NR` / 150-frame watchdogs (`tape.cpp:283-298`) can stop playback mid-block; on any stop with the cursor inside a block, the cursor advances past that block. Rationale: a real tape keeps rolling during a failed load — on retry the ROM resynchronizes on the *next* pilot tone, never mid-block. Tested in §12.1-8. (r4 refinement) the read-gap watchdog no longer stops but **pauses** — a pause freezes the head mid-block and consumes nothing (§9.5); the partial-block-consumed rule applies to terminal stops (end-of-tape, `ERR_NR`, tape-control commands) only.
 - `startTape()` initializes the playback position **from the cursor** (default 0 on a fresh image) instead of hardcoded block 0 — this is what makes mid-tape fallback seamless: if the header was fast-loaded and the data block declines (rows 7-8), signal playback begins at the data block, exactly where a real tape head would be.
 - `EnsureImageLoaded()` replaces the inline `LoaderTAP` code in `handlePortIn()`. The **hardcoded fallback test file** (`AYtest_v0.2.tap` relative path, `tape.cpp:170-177`) is removed — with no tape file selected the correct behavior is "nothing to load", not a dev-tree path lookup.
 - **`EnsureImageLoaded()` is idempotent and path-keyed**: it re-parses only when `coreState.tapeFilePath` differs from `_imageLoadedPath` (the path the live `_tapeBlocks` came from). The current `0x0564` hack re-runs `loadTAP` on every firing while the tape is stopped — safe today only because `startTape()` immediately follows; the refactored helper must never re-parse over live blocks (that would reset the consumption cursor and dangle `_currentTapeBlock`). Only tape-control commands (stop / eject / rewind / new insert) invalidate the image.
 - TTD serialization (r2): **no format change** — `_currentTapeBlockIndex` was already part of the cursor-packed serialization blob (offset 9 of the serialized fields), so trap consumption restores with checkpoints out of the box (§12.2-5). The playback-position fields remain as-is.
+
+### 9.5 Read-gap watchdog freeze + sustained-poll resume (r4 — custom loaders)
+
+Root cause found on a real 128K demo (`insult.tap`, custom stacked loader): after the BASIC stub and stage-1 blob load via the ROM path, the demo banks in its **own RAM-resident loader** that reads blocks with private `IN A,($FE)` edge loops. Two compounding defects killed it:
+
+1. **The 150-frame read-gap watchdog terminal-stopped during the loader's read-free processing gap** (decompression between blocks): `stopPlayback()` consumed the in-flight block, permanently losing tape data — the loader then polled a dead EAR line forever. Toggling fasttape changed nothing (defect 2 below).
+2. **Signal playback auto-start existed only at the ROM anchor** (`pc == $0564`): a RAM-resident loader never executes that address, so playback could never (re)engage for it.
+
+Real-deck semantics fix — a tape head keeps rolling under the loader; what varies is whether the loader *reads* it:
+
+```cpp
+// Tape additions (r4)
+static constexpr uint16_t TAPE_EAR_POLL_RESUME_THRESHOLD = 256; // per frame
+
+void pausePlayback();            // watchdog: freeze head in place, consume NOTHING
+void ResumePlaybackAfterPoll();  // sustained-poll resume / loader-agnostic first-start
+uint8_t handlePortIn(uint16_t port);  // now takes the port (joystick-row exclusion)
+```
+
+Rules:
+
+- **Pause freezes mid-block.** `_currentTapeBlock`, `_currentOffsetWithinPulse` and `_lastTapeBit` survive untouched; the consumption cursor does **not** advance (contrast §9.4 terminal-stop rule). `_currentClockCount = 0` re-seeds the frozen partial pulse so it completes with correct duration on resume.
+- **Resume is loader-agnostic — sustained EAR polling.** `handlePortIn` counts non-joystick ULA reads per frame (`_earPollsThisFrame`, reset in `handleFrameStart()`); on reaching exactly `TAPE_EAR_POLL_RESUME_THRESHOLD` (256) it calls `ResumePlaybackAfterPoll()`. Editor/ROM keyboard scanning reads ~8 half-rows per frame — three orders below the threshold, so typing can never trip it; custom loader `IN A,($FE)` loops poll thousands of times per frame.
+- **Joystick rows are excluded** (`IsJoystickPollPort`: high byte `$EF`/`$F7` — Sinclair 1/2 rows): a game polling the joystick in a menu is not loading. Keyboard rows count — insult's loader reads the combined EAR+SPACE abort port `$7FFE`.
+- **Mid-block resume is not `startTape()`.** `startTape()` resets `_lastTapeBit`, which would inject a spurious edge into the loader's edge detector. `ResumePlaybackAfterPoll()` sets `_tapeStarted` directly at the frozen position: the loader sees one continuous signal. If nothing is frozen in flight (fresh start, or the trap consumed past the frozen position while paused), it falls back to `StartPlaybackAtCursor()` at the (possibly advanced) cursor.
+- **Trap interplay (§6.2 row 5)**: a paused tape is not playing (`_tapeStarted == false`), so the trap may serve blocks while playback is frozen — cursor and frozen head can diverge; the fallback above reconciles on the next sustained poll.
+- **Terminal stops are unchanged.** End-of-tape, the `ERR_NR` watchdog and tape-control commands still call `stopPlayback()` (§9.4 partial-block rule intact; §12.1-8 untouched).
+- **TTD**: pause/resume record `TTDExternalEventKind::TapeControl` markers (`"tape pause"`/`"tape play"`) — signal playback is wall-clock-driven, so it keeps the same replay-barrier treatment as `startTape()`/`stopTape()`. No serialization format change (all fields already existed).
+
+Verified end-to-end on the real demo: probe run with the fix shows the cursor progressing through all 26 blocks with no stuck states, pause/resume cycling at each loader processing gap.
 
 ## 10. Configuration and control surfaces
 
@@ -373,6 +403,8 @@ Tiny TAP images are synthesized in-test (header+data pair builder helper with co
 3. **Custom-loader fallback** — TAP with headerless data block (flag `$FF` only, no header pair, or custom flag `$3C`): assert trap declined and playback engaged (auto-start fired), load completes via signal path.
 4. **Multi-part hybrid** — TAP with a vanilla header/data pair followed by a custom-flag block: first pair fast-loads, second declines → playback starts at block 2.
 5. **TTD round-trip** (r2: implemented as `TapeLoading_Integration_Test.TTDRoundTripAcrossFastLoad`) — record a session across a fast load; `SeekTo({frame, 0})` on both sides of the trap boundary. Checkpoints turned out to be **periodic keyframes, not per-frame** (9 checkpoints over ~108 frames), so checkpoint-index ≠ frame; the state oracle is therefore a *double crossing*: hash the after-load landing (registers + port latches + counters + full RAM digest via `ttd::CaptureSnapshot`), seek back and forth, and require bit-identical reproduction. Also asserts the tape cursor restores with the subsystem blob (0 pre-load, 2 post-load) and that every seek reports `haltReason == Target` — the trap path emits no external-event markers (§11).
+6. **Watchdog pause + sustained-poll resume** (r4: implemented as `TapeLoading_Integration_Test.WatchdogPauseFreezesAndSustainedPollResumes`) — the insult.tap lifecycle shape: signal path (fasttape off), program pair + long tail blocks; after the load a typed DI'd delay loop (no port reads — with interrupts on, the ROM ISR keyboard scan would keep the watchdog fed ~8 reads/frame) trips the 150-frame watchdog. Asserts: pause froze the cursor at the in-flight block (not past it); 350 editor frames neither resume nor drift the cursor; a typed `IN A,($FE)` poll loop (thousands of reads/frame) resumes playback mid-block with the cursor unmoved, and the tail blocks then play through. Fixture discipline learned the hard way: `BasicEncoder` injects keystrokes via `LAST_K`, which only the editor input loop consumes — typing that lands while the DI'd loop still runs is silently swallowed, so the frozen-window must outlast the delay loop before the next command is typed.
+7. **Sustained-poll first-start without the ROM anchor** (r4: implemented as `TapeLoading_Integration_Test.SustainedPollStartsPlaybackWithoutRomAnchor`) — pure custom loader (no `LD-BYTES` call ever): typing/keyboard scanning never starts playback; the poll loop alone starts it at the consumption cursor. Guards the loader-agnostic entry path of §9.5.
 
 ### 12.3 Manual verification
 

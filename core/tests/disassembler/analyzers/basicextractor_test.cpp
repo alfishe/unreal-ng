@@ -127,6 +127,155 @@ TEST_F(BasicExtractorTest, ExtractBasic_AcrossFile)
     EXPECT_NE(result.find("LOAD \"ACROSSLK\" CODE"), std::string::npos);
 }
 
+TEST_F(BasicExtractorTest, ExtractBasic_TapProgramBlock_DizzyX)
+{
+    // r8 regression for the Tape Manager block popup: the FIRST data block of
+    // a stock BASIC game TAP is the program body (flag $FF + body + checksum).
+    // DIZZY_X_ALEX_S carries a real-world protected listing: line 0 is a huge
+    // REM stuffed with machine code, line 1 holds the cracker credit string.
+    std::string filePath = TestPathHelper::GetTestDataPath("loaders/tap/DIZZY_X_ALEX_S__MAX_IWAMOTO.tap");
+
+    ASSERT_TRUE(FileHelper::FileExists(filePath)) << "Test file not found: " << filePath;
+
+    size_t fileSize = FileHelper::GetFileSize(filePath);
+    std::vector<uint8_t> buffer(fileSize);
+    FileHelper::ReadFileToBuffer(filePath, buffer.data(), fileSize);
+    ASSERT_GE(fileSize, 23u);
+
+    // Walk the TAP framing to block 1: [u16 len][bytes] twice
+    auto blockLengthAt = [](const std::vector<uint8_t>& bytes, size_t offset) -> size_t
+    {
+        return offset + 2 <= bytes.size() ? static_cast<size_t>(bytes[offset] | (bytes[offset + 1] << 8)) : 0;
+    };
+    const size_t block0Length = blockLengthAt(buffer, 0);
+    const size_t block1Offset = 2 + block0Length;
+    const size_t block1Length = blockLengthAt(buffer, block1Offset);
+    ASSERT_EQ(block0Length, 19u) << "block 0 should be the 19-byte Program header";
+    ASSERT_GT(block1Length, 3u) << "block 1 should be the framed program body";
+
+    // Strip the $FF flag and the trailing checksum — exactly what the popup feeds in
+    const uint8_t* body = buffer.data() + block1Offset + 2 + 1;
+    const size_t bodySize = block1Length - 2;
+
+    BasicExtractor extractor;
+    std::string result = extractor.extractBasic(const_cast<uint8_t*>(body), bodySize);
+
+    // Line 0 opens the listing (REM token 0xEA renders as " REM ")
+    EXPECT_EQ(result.compare(0, 5, "0 REM"), 0) << "listing should open with the line-0 REM";
+    // Line 1 survives the embedded-binary line 0 intact
+    EXPECT_NE(result.find("VIKTOR VIKTOROVICH TEL. 65-00-83"), std::string::npos);
+}
+
+TEST_F(BasicExtractorTest, ExtractBasicLines_StructureAndVarsArea)
+{
+    // r9 structured walk: two program lines plus a 6-byte variables tail.
+    // The vars area starts with a var-name byte (single-letter vars are
+    // 0x80+code, e.g. 0xC1 = A), which the walk sees as a "line number" far
+    // above the 9999 editor limit — that marks the end of the program proper.
+    std::vector<uint8_t> data = {
+        0x00, 0x0A, 0x09, 0x00,                     // line 10, length 9
+        0xF5, 0x22, 'H', 'E', 'L', 'L', 'O', 0x22, 0x0D,
+        0x00, 0x14, 0x0D, 0x00,                     // line 20, length 13
+        0xF1, 0x20, 'A', '=', '1', '0', 0x0E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0D,
+        0xC1, 'B', 0x00, 0x00, 0x00, 0x00           // variables area (var A...)
+    };
+
+    BasicExtractor extractor;
+    const BasicListing listing = extractor.extractBasicLines(data.data(), data.size());
+
+    ASSERT_EQ(listing.lines.size(), 3u);
+
+    // Program lines keep their header offsets and the token spacing rules
+    EXPECT_EQ(listing.lines[0].lineNumber, 10u);
+    EXPECT_EQ(listing.lines[0].startOffset, 0u);
+    EXPECT_EQ(listing.lines[0].endOffset, 13u);
+    EXPECT_FALSE(listing.lines[0].leadingSpace);  // PRINT token absorbs the separator
+    EXPECT_FALSE(listing.lines[0].variablesArea);
+    EXPECT_EQ(listing.lines[0].text, " PRINT \"HELLO\"");
+
+    EXPECT_EQ(listing.lines[1].lineNumber, 20u);
+    EXPECT_EQ(listing.lines[1].startOffset, 13u);
+    EXPECT_EQ(listing.lines[1].endOffset, 30u);
+    EXPECT_EQ(listing.lines[1].text, " LET  A=10");
+    EXPECT_FALSE(listing.lines[1].variablesArea);
+
+    // The vars pseudo-line is flagged and delimits the program
+    EXPECT_EQ(listing.lines[2].lineNumber, 0xC142u);
+    EXPECT_EQ(listing.lines[2].startOffset, 30u);
+    EXPECT_TRUE(listing.lines[2].variablesArea);
+    EXPECT_EQ(listing.programEndOffset, 30u);
+    EXPECT_EQ(listing.variablesBytes, 6u);
+
+    // Legacy output is exactly the join of the structured lines
+    EXPECT_EQ(extractor.extractBasic(data.data(), data.size()),
+              "10 PRINT \"HELLO\"\n20 LET  A=10\n49474 \n");
+}
+
+TEST_F(BasicExtractorTest, ExtractBasicLines_TapProgramBlock_DizzyX)
+{
+    // r9 real-file companion of the r8 legacy regression: the protected
+    // listing (line-0 REM + line-1 credit) must parse structurally, the
+    // variables tail must be delimited, and the legacy text output must
+    // stay exactly the join of the structured lines
+    std::string filePath = TestPathHelper::GetTestDataPath("loaders/tap/DIZZY_X_ALEX_S__MAX_IWAMOTO.tap");
+
+    ASSERT_TRUE(FileHelper::FileExists(filePath)) << "Test file not found: " << filePath;
+
+    size_t fileSize = FileHelper::GetFileSize(filePath);
+    std::vector<uint8_t> buffer(fileSize);
+    FileHelper::ReadFileToBuffer(filePath, buffer.data(), fileSize);
+    ASSERT_GE(fileSize, 23u);
+
+    auto blockLengthAt = [](const std::vector<uint8_t>& bytes, size_t offset) -> size_t
+    {
+        return offset + 2 <= bytes.size() ? static_cast<size_t>(bytes[offset] | (bytes[offset + 1] << 8)) : 0;
+    };
+    const size_t block0Length = blockLengthAt(buffer, 0);
+    const size_t block1Offset = 2 + block0Length;
+    const size_t block1Length = blockLengthAt(buffer, block1Offset);
+    ASSERT_EQ(block0Length, 19u) << "block 0 should be the 19-byte Program header";
+    ASSERT_GT(block1Length, 3u) << "block 1 should be the framed program body";
+
+    const uint8_t* body = buffer.data() + block1Offset + 2 + 1;
+    const size_t bodySize = block1Length - 2;
+
+    BasicExtractor extractor;
+    const BasicListing listing = extractor.extractBasicLines(const_cast<uint8_t*>(body), bodySize);
+
+    ASSERT_GE(listing.lines.size(), 3u) << "line 0, line 1 and the vars tail must parse";
+
+    // Line 0: the machine-code-carrying REM opens the listing
+    EXPECT_EQ(listing.lines[0].lineNumber, 0u);
+    EXPECT_FALSE(listing.lines[0].variablesArea);
+    EXPECT_EQ(listing.lines[0].text.compare(0, 4, " REM"), 0);
+
+    // Line 1: the credit line survives intact
+    EXPECT_EQ(listing.lines[1].lineNumber, 1u);
+    EXPECT_FALSE(listing.lines[1].variablesArea);
+    EXPECT_NE(listing.lines[1].text.find("VIKTOR VIKTOROVICH TEL. 65-00-83"), std::string::npos);
+
+    // The first variables-area pseudo-line directly follows the program
+    ASSERT_TRUE(listing.lines[2].variablesArea) << "the vars tail starts at line index 2";
+    EXPECT_GT(listing.lines[2].lineNumber, BasicExtractor::MaxLineNumber);
+    EXPECT_EQ(listing.programEndOffset, listing.lines[2].startOffset);
+    EXPECT_GE(listing.variablesBytes, 4u);
+    EXPECT_EQ(listing.programEndOffset + listing.variablesBytes, bodySize);
+
+    // Invariant on the real file: legacy output == join of the structured walk
+    std::string joined;
+    for (const BasicLine& line : listing.lines)
+    {
+        joined += std::to_string(line.lineNumber);
+        if (line.leadingSpace)
+        {
+            joined += " ";
+        }
+        joined += line.text;
+        joined += "\n";
+    }
+    EXPECT_EQ(joined, extractor.extractBasic(const_cast<uint8_t*>(body), bodySize));
+}
+
 TEST_F(BasicExtractorTest, ExtractBasic_FromMemory)
 {
     EmulatorContext* context = new EmulatorContext(LoggerLevel::LogError);

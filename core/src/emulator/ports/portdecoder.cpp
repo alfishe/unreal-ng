@@ -444,7 +444,7 @@ uint8_t PortDecoder::Default_Port_FE_In(uint16_t port, [[maybe_unused]] uint16_t
     static const uint8_t invMaskEAR = 0b1011'1111;
 
     result &= invMaskEAR;
-    uint8_t inputEARSignal = _tape->handlePortIn() & maskEAR;
+    uint8_t inputEARSignal = _tape->handlePortIn(port) & maskEAR;
     result |= inputEARSignal;
 
     return result;

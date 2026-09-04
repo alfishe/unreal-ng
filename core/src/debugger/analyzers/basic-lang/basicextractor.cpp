@@ -1,16 +1,18 @@
 #include "basicextractor.h"
 
 #include <sstream>
+#include <utility>
 
-std::string BasicExtractor::extractBasic(uint8_t* data, size_t len)
+BasicListing BasicExtractor::extractBasicLines(uint8_t* data, size_t len)
 {
+    BasicListing listing;
     if (!data || len == 0)
     {
-        return "";
+        return listing;
     }
 
-    std::stringstream ss;
     size_t offset = 0;
+    bool pastProgram = false;
 
     // Iterate through the buffer, parsing line by line
     while (offset < len)
@@ -19,8 +21,11 @@ std::string BasicExtractor::extractBasic(uint8_t* data, size_t len)
         if (offset + 4 > len)
             break;
 
+        BasicLine line;
+        line.startOffset = offset;
+
         // 1. Parse Line Number (Big Endian)
-        uint16_t lineNumber = (data[offset] << 8) | data[offset + 1];
+        line.lineNumber = static_cast<uint16_t>((data[offset] << 8) | data[offset + 1]);
         offset += 2;
 
         // 2. Parse Line Length (Little Endian)
@@ -36,8 +41,17 @@ std::string BasicExtractor::extractBasic(uint8_t* data, size_t len)
             lineEnd = len;
         }
 
-        // Format line number
-        ss << lineNumber;
+        // A "line number" beyond the editor limit is not a line at all: the
+        // variables area a SAVE'd program carries after the listing starts
+        // with a var-name byte (single-letter vars 0xA1+, multi-letter names
+        // 0x41+), which decodes as a huge number. Mark the program end here.
+        if (!pastProgram && line.lineNumber > MaxLineNumber)
+        {
+            pastProgram = true;
+            line.variablesArea = true;
+            listing.programEndOffset = line.startOffset;
+            listing.variablesBytes = len - line.startOffset;
+        }
 
         // Determine if we need a separator space
         bool needsSpace = true;
@@ -61,11 +75,9 @@ std::string BasicExtractor::extractBasic(uint8_t* data, size_t len)
                 needsSpace = false;
             }
         }
+        line.leadingSpace = needsSpace;
 
-        if (needsSpace)
-        {
-            ss << " ";
-        }
+        std::stringstream textStream;
 
         // Process line data (starts at current offset, which is past header)
         for (size_t i = offset; i < lineEnd; ++i)
@@ -86,18 +98,18 @@ std::string BasicExtractor::extractBasic(uint8_t* data, size_t len)
                 // Array size is implicit, but let's assume it covers 0xA3 to 0xFF.
                 if (tokenIndex < sizeof(BasicTokens) / sizeof(BasicTokens[0]))
                 {
-                    ss << BasicTokens[tokenIndex];
+                    textStream << BasicTokens[tokenIndex];
                 }
                 else
                 {
                     // Fallback for unknown token?
-                    ss << "?";
+                    textStream << "?";
                 }
             }
             else if (byte >= 0x20 && byte <= 0x7E)  // Printable ASCII
             {
-                ss << (char)byte;
-                
+                textStream << (char)byte;
+
                 // If this is a closing quote and next byte is a token, add a space
                 // This handles cases like: LOAD "filename"CODE where CODE is a token
                 if (byte == 0x22 && i + 1 < lineEnd)  // 0x22 = quote character
@@ -105,7 +117,7 @@ std::string BasicExtractor::extractBasic(uint8_t* data, size_t len)
                     uint8_t nextByte = data[i + 1];
                     if (nextByte >= 0xA3 && nextByte != 0x0D)  // Next is a token
                     {
-                        ss << " ";
+                        textStream << " ";
                     }
                 }
             }
@@ -122,9 +134,37 @@ std::string BasicExtractor::extractBasic(uint8_t* data, size_t len)
             // Ignore other control codes for simple text extraction
         }
 
-        ss << '\n';
+        line.text = textStream.str();
+        line.endOffset = lineEnd;
 
+        listing.lines.push_back(std::move(line));
         offset = lineEnd;
+    }
+
+    if (!pastProgram)
+    {
+        listing.programEndOffset = len;
+        listing.variablesBytes = 0;
+    }
+
+    return listing;
+}
+
+std::string BasicExtractor::extractBasic(uint8_t* data, size_t len)
+{
+    // Plain-text join of the structured walk — byte-identical to the
+    // historical single-pass output (the tests pin this format)
+    const BasicListing listing = extractBasicLines(data, len);
+
+    std::stringstream ss;
+    for (const BasicLine& line : listing.lines)
+    {
+        ss << line.lineNumber;
+        if (line.leadingSpace)
+        {
+            ss << " ";
+        }
+        ss << line.text << '\n';
     }
 
     return ss.str();

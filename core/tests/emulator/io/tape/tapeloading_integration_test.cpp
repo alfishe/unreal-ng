@@ -424,6 +424,181 @@ TEST_F(TapeLoading_Integration_Test, MultiPartHybrid)
     MessageCenter::DisposeDefaultMessageCenter();
 }
 
+/// §12.2-6: Read-gap watchdog pause + sustained-poll resume — the custom
+/// multi-stage loader lifecycle (insult.tap shape). Signal playback engaged,
+/// the program stops reading EAR while it processes: the watchdog must FREEZE
+/// the head in place (in-flight block NOT consumed — the old terminal stop
+/// lost it and left the loader polling a dead line forever), keyboard
+/// scanning in the editor must NOT resume playback, and the loader's own
+/// poll loop must resume mid-block with the cursor unmoved.
+TEST_F(TapeLoading_Integration_Test, WatchdogPauseFreezesAndSustainedPollResumes)
+{
+    MessageCenter::DisposeDefaultMessageCenter();
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("Pentagon", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+
+    // Pure signal path: fasttape off
+    ASSERT_TRUE(context->pFeatureManager->setFeature(Features::kFastTape, false));
+
+    // Program pair + two large tail blocks: 4 KiB payload each plays for
+    // ~1200 frames, so the 150-frame watchdog pauses MID-BLOCK, never at
+    // end-of-tape
+    std::vector<std::vector<uint8_t>> blocks = MakeProgramTAP();
+    blocks.push_back(MakeTAPBlock(0xFF, std::vector<uint8_t>(4096, 0xA5)));
+    blocks.push_back(MakeTAPBlock(0xFF, std::vector<uint8_t>(4096, 0x5A)));
+    context->coreState.tapeFilePath = WriteTAPFile("watchdog-pause.tap", blocks);
+
+    auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(context->pMainLoop);
+    for (int i = 0; i < 100; i++)
+        mainLoop->RunFrame();
+
+    // Signal-load the program pair; the tape keeps rolling into block 2
+    auto load = BasicEncoder::runCommand(emulator, "LOAD \"\"");
+    ASSERT_TRUE(load.success) << load.message;
+
+    int frames = 0;
+    for (; frames < 1500; frames++)
+    {
+        mainLoop->RunFrame();
+        if (ProgramLoaded(context->pMemory))
+            break;
+    }
+    ASSERT_LT(frames, 1500) << "Signal load did not complete";
+    ASSERT_TRUE(context->pTape->IsPlaying()) << "Tape must still be rolling past the loaded pair";
+
+    // A silent processing phase — a DI'd delay loop with NO port reads at
+    // all (with interrupts on, the ROM ISR keyboard-scan would read the ULA
+    // port ~8x/frame and keep the watchdog fed; real loaders DI exactly like
+    // this during read-free processing phases). 16 x 65536 DEC-HL iterations
+    // is ~380 frames, comfortably past the 150-frame watchdog; then EI / RET.
+    //   30000: DI / LD B,$10 / LD HL,0 / DEC HL / LD A,H / OR L / JR NZ /
+    //   30011: DJNZ $30003 / EI / RET  (HL inner: LD BC would clobber B)
+    auto delay = BasicEncoder::runCommand(emulator,
+        "POKE 30000,243:POKE 30001,6:POKE 30002,16:POKE 30003,33:POKE 30004,0:POKE 30005,0:POKE 30006,43:POKE 30007,124:POKE 30008,181:"
+        "POKE 30009,32:POKE 30010,251:POKE 30011,16:POKE 30012,246:POKE 30013,251:POKE 30014,201:RANDOMIZE USR 30000");
+    ASSERT_TRUE(delay.success) << delay.message;
+
+    // Watchdog pauses mid-block while the loop runs. Capture the frozen cursor.
+    size_t cursorAtPause = 0;
+    bool paused = false;
+    for (int i = 0; i < 600; i++)
+    {
+        mainLoop->RunFrame();
+        if (!context->pTape->IsPlaying())
+        {
+            paused = true;
+            cursorAtPause = context->pTape->GetConsumptionCursor();
+            break;
+        }
+    }
+    ASSERT_TRUE(paused) << "Watchdog did not pause playback";
+    ASSERT_EQ(cursorAtPause, 2u) << "Pause must freeze MID-BLOCK (cursor = in-flight block), not consume it";
+
+    // Editor keyboard scanning (~8 half-row reads/frame) must never reach the
+    // sustained-poll threshold: playback stays paused, cursor stays frozen.
+    // The window must ALSO outlast the delay loop (~390 frames from USR start;
+    // pause lands at ~151): typing is injected via LAST_K and only the editor
+    // input loop consumes it — keystrokes landing while the DI'd loop still
+    // runs are swallowed and corrupt the next command line
+    for (int i = 0; i < 350; i++)
+        mainLoop->RunFrame();
+    EXPECT_FALSE(context->pTape->IsPlaying()) << "Keyboard scan must not trip the sustained-poll threshold";
+    EXPECT_EQ(context->pTape->GetConsumptionCursor(), cursorAtPause) << "Frozen cursor must not drift while paused";
+
+    // The loader's own poll loop (typed, not hand-set): LD A,0 / IN A,($FE) /
+    // JR $-4 at 31000 — polls $00FE thousands of times per frame
+    auto poke = BasicEncoder::runCommand(emulator,
+        "POKE 31000,62:POKE 31001,0:POKE 31002,219:POKE 31003,254:POKE 31004,24:POKE 31005,252:RANDOMIZE USR 31000");
+    ASSERT_TRUE(poke.success) << poke.message;
+
+    // Settle frames for ENTER: tokenize + parse + POKE chain takes ~7 frames;
+    // the POKEs must land (guards the fixture — a swallowed keystroke corrupts
+    // the line and silently skips the loop)
+    for (int i = 0; i < 15; i++)
+        mainLoop->RunFrame();
+
+    EXPECT_EQ(context->pMemory->DirectReadFromZ80Memory(31000), 62)   // LD A,0
+        << "Poll loop POKEs did not execute — command line corrupted";
+    EXPECT_EQ(context->pMemory->DirectReadFromZ80Memory(31002), 219); // IN A,($FE)
+    EXPECT_EQ(context->pMemory->DirectReadFromZ80Memory(31004), 24);  // JR NZ
+
+    // Sustained polling resumes within a frame — MID-BLOCK: cursor unmoved
+    bool resumed = false;
+    for (int i = 0; i < 30; i++)
+    {
+        mainLoop->RunFrame();
+        if (context->pTape->IsPlaying())
+        {
+            resumed = true;
+            break;
+        }
+    }
+    ASSERT_TRUE(resumed) << "Sustained EAR polling must resume paused playback";
+    EXPECT_EQ(context->pTape->GetConsumptionCursor(), cursorAtPause)
+        << "Resume continues the frozen block in place, not from the next block";
+
+    // And the tape makes progress again through the tail blocks
+    bool progressed = false;
+    for (int i = 0; i < 2500; i++)
+    {
+        mainLoop->RunFrame();
+        if (context->pTape->GetConsumptionCursor() > cursorAtPause)
+        {
+            progressed = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(progressed) << "Playback must roll past the frozen block after resume";
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+    MessageCenter::DisposeDefaultMessageCenter();
+}
+
+/// §12.2-7: A pure custom loader (no ROM LD-BYTES call at all) starts signal
+/// playback purely by sustained EAR polling — the ROM $0562/$0564 auto-start
+/// anchor is never executed. Guards the loader-agnostic entry path.
+TEST_F(TapeLoading_Integration_Test, SustainedPollStartsPlaybackWithoutRomAnchor)
+{
+    MessageCenter::DisposeDefaultMessageCenter();
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("Pentagon", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+
+    // fasttape ON (default): irrelevant here — the trap never fires because
+    // the program never enters $0556. It only matters that no ROM loader poll
+    // ever runs.
+    context->coreState.tapeFilePath = WriteTAPFile("poll-start.tap",
+        { MakeTAPBlock(0xFF, { 0xDE, 0xAD, 0xBE, 0xEF, 0x12, 0x34, 0x56, 0x78 }) });
+
+    auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(context->pMainLoop);
+    for (int i = 0; i < 100; i++)
+        mainLoop->RunFrame();
+
+    // Sanity: typing in the editor (keyboard scanning) never starts playback
+    auto poke = BasicEncoder::runCommand(emulator,
+        "POKE 30000,62:POKE 30001,0:POKE 30002,219:POKE 30003,254:POKE 30004,24:POKE 30005,252:RANDOMIZE USR 30000");
+    ASSERT_TRUE(poke.success) << poke.message;
+    EXPECT_FALSE(context->pTape->IsPlaying()) << "Typing/keyboard scan must not start playback";
+
+    // The poll loop starts playback from the consumption cursor (block 0)
+    bool started = false;
+    for (int i = 0; i < 30; i++)
+    {
+        mainLoop->RunFrame();
+        if (context->pTape->IsPlaying())
+        {
+            started = true;
+            break;
+        }
+    }
+    ASSERT_TRUE(started) << "Sustained EAR polling must start playback without the ROM anchor";
+    EXPECT_EQ(context->pTape->GetConsumptionCursor(), 0u);
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+    MessageCenter::DisposeDefaultMessageCenter();
+}
+
 /// §12.2-5: TTD round-trip across a fast load — record a session that crosses
 /// the trap, then SeekTo on both sides of the load boundary. Three contracts:
 ///   1. Restored state matches the recorded checkpoints (architectural hash).

@@ -8,6 +8,12 @@
 
 /// region <Constructors / destructors>
 
+LoaderTAP::LoaderTAP()
+{
+    _context = nullptr;
+    _logger = nullptr;
+}
+
 LoaderTAP::LoaderTAP(EmulatorContext* context)
 {
     _context = context;
@@ -19,6 +25,129 @@ LoaderTAP::~LoaderTAP()
 }
 
 /// endregion </Constructors / destructors>
+
+// Registration lives in TapeLoaderRegistry::Instance() (loader_tape.cpp):
+// a registrar flag here is invisible to other translation units, so the
+// static linker drops this object from binaries that never name LoaderTAP.
+
+/// region <LoaderTapeBase contract>
+
+const TapeFormatInfo& LoaderTAP::Format() const
+{
+    static const TapeFormatInfo format =
+    {
+        "tap",
+        "TAP (raw ZX blocks)",
+        { "tap", "spc", "sta", "ltp", "zxt" },
+        &LoaderTAP::Probe
+    };
+
+    return format;
+}
+
+int LoaderTAP::Probe(std::span<const uint8_t> bytes)
+{
+    // Walk the [u16 len][len bytes] framing to EOF. Clean landing = high
+    // score; early overrun = 0 unless at least one complete block landed
+    // first. A TZX file fails immediately: its lead bytes read as a huge
+    // length that never lands ("ZXTape!" -> 0x585A = 22622).
+    if (bytes.empty())
+    {
+        return 0;
+    }
+
+    size_t offset = 0;
+    size_t completeBlocks = 0;
+    bool truncated = false;
+
+    while (offset + 2 <= bytes.size())
+    {
+        uint16_t length = static_cast<uint16_t>(bytes[offset] | (bytes[offset + 1] << 8));
+        offset += 2;
+
+        if (length == 0)
+        {
+            continue;  // zero-length block: legal framing, contributes nothing
+        }
+
+        if (offset + length > bytes.size())
+        {
+            truncated = true;  // length prefix may still end at EOF — not a clean landing
+            break;
+        }
+
+        offset += length;
+        completeBlocks++;
+    }
+
+    if (!truncated && offset == bytes.size() && completeBlocks > 0)
+    {
+        return 100;
+    }
+
+    return completeBlocks > 0 ? 25 : 0;
+}
+
+TapeImage LoaderTAP::Load(std::span<const uint8_t> bytes, const std::string& sourceName)
+{
+    TapeImage image;
+    image.formatId = "tap";
+
+    size_t offset = 0;
+    size_t index = 0;
+
+    while (offset + 2 <= bytes.size())
+    {
+        uint16_t length = static_cast<uint16_t>(bytes[offset] | (bytes[offset + 1] << 8));
+        offset += 2;
+
+        if (length == 0)
+        {
+            continue;  // zero-length block: skip, keep scanning
+        }
+
+        if (offset + length > bytes.size())
+        {
+            // Truncated final block: keep the complete prefix, warn — the
+            // image is degraded but usable (Warnings), not unrecoverable
+            image.parseWarnings.push_back("Truncated final block: " +
+                                          std::to_string(bytes.size() - offset) + " of " +
+                                          std::to_string(length) + " bytes present; dropped");
+            offset = bytes.size();  // consumed: stop scanning
+            break;
+        }
+
+        TapeBlock block;
+        block.blockIndex = index;
+        block.data.assign(bytes.begin() + offset, bytes.begin() + offset + length);
+        block.type = static_cast<TapeBlockFlagEnum>(block.data[0]);
+
+        image.blocks.push_back(std::move(block));
+        offset += length;
+        index++;
+    }
+
+    if (offset < bytes.size())
+    {
+        // Dangling tail bytes: an incomplete length prefix — warn, not fatal
+        image.parseWarnings.push_back("Dangling tail: " + std::to_string(bytes.size() - offset) +
+                                      " trailing byte(s) after the last block");
+    }
+
+    if (image.blocks.empty())
+    {
+        image.status = TapeLoadStatus::Malformed;
+        image.errorText = "No complete TAP blocks found in '" + sourceName + "'";
+    }
+    else if (!image.parseWarnings.empty())
+    {
+        image.status = TapeLoadStatus::Warnings;
+    }
+
+    return image;
+}
+
+/// endregion </LoaderTapeBase contract>
 
 /// region <Methods>
 

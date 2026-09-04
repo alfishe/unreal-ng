@@ -3,6 +3,8 @@
 #include "stdafx.h"
 
 #include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
+#include "emulator/io/tape/tapetypes.h"      // tape vocabulary types (design §5.1a leaf header)
+#include "emulator/io/tape/tapecatalog.h"    // TapeFastLoadPlan (§5.8) — leaf, no cycle
 #include "emulator/platform.h"
 #include "common/sound/filters/filter_dc.h"
 #include "common/sound/filters/filter_lpf.h"
@@ -22,77 +24,59 @@ constexpr uint16_t ZERO_ENCODE_HALF_PERIOD = 855;       // Zeroes encoded as two
 constexpr uint16_t ONE_ENCODE_HALF_PERIOD = 1710;       // One encoded as two 1710 t-states half-periods
 constexpr uint16_t TAPE_PAUSE_BETWEEN_BLOCKS = 1000;    // 1000ms
 
+// Sustained EAR-polling resume threshold (reads per frame). A loader's
+// pilot/data poll loop reads the ULA port ~1000+ times per frame; the ROM
+// keyboard scan reads the 8 half-row ports ~8 times per frame. 256 sits
+// safely between the two, so a RAM-resident custom loader resumes paused
+// playback within one frame of polling, while keyboard and menu activity
+// can never reach it. Tight game loops polling the two Sinclair-joystick
+// rows are excluded by port — see Tape::IsJoystickPollPort.
+constexpr uint16_t TAPE_EAR_POLL_RESUME_THRESHOLD = 256;
+
 /// endregion </Constants>
 
-/// region <Types>
+/// region </Types — moved>
 
-enum ZXTapeBlockTypeEnum : uint8_t
+// ZXTapeBlockTypeEnum, TapeBlockFlagEnum and TapeBlock moved to tapetypes.h
+// (design §5.1a — the pure-data leaf that breaks the tape.h <-> tapecatalog.h
+// include cycle). They remain visible here unchanged: same names, same global
+// namespace, now simply declared one header down the dependency chain. TapeBlock
+// gained `std::optional<TapeTimingProfile> timing` there — nullopt preserves
+// today's ROM-standard encoding for every existing TAP image and test.
+
+/// endregion </Types — moved>
+
+/// region <Playback state and position (design §6.1)>
+
+/// Coarse playback state for every control plane. `Paused` is the frozen
+/// position the read-gap watchdog / manual pause leaves behind (in-flight
+/// block and pulse cursor survive); `Ended` is the natural end-of-tape stop
+/// (image and cursor survive, the cursor sits past the last block).
+enum class TapePlaybackState : uint8_t
 {
-    TAP_BLOCK_PROGRAM = 0,          // Block contains BASIC program
-    TAP_BLOCK_NUM_ARRAY,            // Block contains numeric array
-    TAP_BLOCK_CHAR_ARRAY,           // Block contains symbolic array
-    TAP_BLOCK_CODE                  // Block contains code
+    Idle,
+    Playing,
+    Paused,
+    Ended
 };
 
-inline const char* getTapeBlockTypeName(ZXTapeBlockTypeEnum value)
+/// Point-in-time playback position. `blockIndex` is the in-flight block
+/// (Playing/Paused) or the next-up one (Idle); equal to the block count it
+/// means end-of-tape (Ended). Zeroed pulse fields unless a block is in
+/// flight.
+struct TapePosition
 {
-    static const char* names[] =
-    {
-        "Program",
-        "Numeric array",
-        "Symbolic array",
-        "Code"
-    };
-
-    return names[value];
+    size_t blockIndex = 0;          // in-flight (Playing/Paused) or next-up (Idle/Ended) block
+    size_t pulseIndex = 0;          // index into edgePulseTimings
+    size_t offsetWithinPulse = 0;   // T-states consumed inside current pulse
+    double secondsIntoBlock = 0.0;  // derived: elapsed pulse durations / 3.5 MHz
+    double blockTotalSeconds = 0.0; // from catalog descriptor
 };
 
-enum TapeBlockFlagEnum : uint8_t
-{
-    TAP_BLOCK_FLAG_HEADER = 0x00,
-    TAP_BLOCK_FLAG_DATA = 0xFF
-};
-
-inline const char* getTapeBlockFlagEnumName(TapeBlockFlagEnum value)
-{
-    const char* header = "Header";
-    const char* data = "Data";
-    const char* unknown = "<Unknown value";
-
-    const char* result;
-    switch (value)
-    {
-        case 0x00:
-            result = header;
-            break;
-        case 0xFF:
-            result = data;
-            break;
-        default:
-            result = unknown;
-            break;
-    }
-
-    return result;
-};
-
-struct TapeBlock
-{
-    // ID of the block itself
-    size_t blockIndex;
-
-    TapeBlockFlagEnum type;                 // Header or data block
-
-    std::vector<uint8_t> data;              // Raw data
-
-    size_t totalBitstreamLength = 0;        // How long in t-states current block will be played
-    std::vector<uint32_t> edgePulseTimings; // Block data encoded to pulse edge series
-};
-
-/// endregion <Types>
+/// endregion </Playback state and position>
 
 /// A 'pulse' here is either a mark or a space, so 2 pulses makes a complete square wave cycle.
-/// Pilot tone: before each block is a sequence of 8063 (header) or 3223 (data) pulses, each of length 2168 T-states.
+/// Pilot tone: before each block is a sequence of 8064 (header) or 3220 (data) pulses, each of length 2168 T-states.
 /// Sync pulses: the pilot tone is followed by two sync pulses of 667 and 735 T-states respectively
 /// A '0' bit is encoded as 2 pulses of 855 T-states each.
 /// A '1' bit is encoded as 2 pulses of 1710 T-states each (ie. twice the length of a '0')
@@ -103,9 +87,9 @@ struct TapeBlock
 /// Tape signal is frequency-modulation encoded
 /// Signal types:
 /// 1. Pilot tone - 807Hz (2168 high + 2168 low Z80 t-states @3.5MHz). Pilot Freq = 3500000 / (2168 + 2168) = 808Hz
-///    Pilot tone duration:
-///       - 8063 periods () - for the header
-///       - 3223 periods () - for data block
+///    Pilot tone duration (PILOT_DURATION_HEADER / PILOT_DURATION_DATA — pulses, one edge each):
+///       - 8064 pulses - for the header
+///       - 3220 pulses - for data block
 /// 2. Synchronization signal - asymmetrical: 667 t-states high (190.6 uS) and 735 t-states low (210 uS)
 /// 3. Data: 0-encoding - 2047Hz (855 high + 855 low t-states). Zero encoding Freq = 3500000 / (855 + 855) = 2047Hz
 /// 4. Data: 1-encoding - 1023Hz (1710 high + 1710 low t-states). One encoding Freq = 3500000 / (1710 + 1710) = 1023Hz
@@ -126,6 +110,13 @@ protected:
     EmulatorContext* _context;
 
     bool _tapeStarted = false;
+
+    // Frozen-position flag (design §6.1): set by pausePlayback(), cleared by
+    // every state-changing control (start/stop/seek/rewind/new image). Makes
+    // Paused queryable — the freeze was implicit in a live _currentTapeBlock
+    // before, invisible to GetPlaybackState().
+    bool _playbackFrozen = false;
+
     size_t _tapePosition = 0;
 
     bool _muteEAR = false;              // Mute EAR output when active tape loading is done (prevent noise clicks)
@@ -133,9 +124,24 @@ protected:
     // Tape input bitstream related
     std::vector<TapeBlock> _tapeBlocks; // Tape representation as parsed TapeBlock vector
 
+    // Per-block catalog derived from _tapeBlocks (design §5.6): same
+    // indexing, same invalidation point — all three die together on
+    // stopTape()/reset()/new insert. Built once per image load inside
+    // EnsureImageLoaded(), never per frame.
+    std::vector<TapeBlockDescriptor> _catalog;
+
+    // Whole-image turbo verdict computed beside the catalog (design §5.8).
+    // Advisory only — never gates the runtime trap (honesty contract).
+    TapeFastLoadPlan _fastLoadPlan;
+
     // Path the live _tapeBlocks were parsed from ("" = no image loaded). Key for
     // EnsureImageLoaded() idempotency: only a path change (new insert) re-parses.
     std::string _imageLoadedPath;
+
+    // Format id of the loader that produced the live blocks ("tap"/"tzx"/...).
+    // Set beside _imageLoadedPath, cleared with it — surfaces report the format
+    // the content probe actually selected, not the extension (design §7).
+    std::string _imageFormatId;
 
     TapeBlock* _currentTapeBlock;       // Shortcut to current block object
     // Consumption cursor: index of the NEXT block to deliver to the CPU, by signal
@@ -152,6 +158,11 @@ protected:
 
     uint8_t _initialErrNr = 0;          // ERR_NR value when tape started (to detect change)
     uint32_t _framesSinceLastRead = 0;  // Frames since last tape IN read (to detect loader exit)
+
+    // Non-keyboard-row ULA port reads since the current frame started. Drives
+    // the sustained EAR-polling resume (loader-agnostic signal auto-start);
+    // reset every handleFrameStart().
+    uint32_t _earPollsThisFrame = 0;
 
     /// endregion </Fields>
 
@@ -175,6 +186,23 @@ public:
     /// Tape-control commands (stop / eject / rewind / new insert) keep using
     /// stopTape() / reset(), which drop the image as well.
     void stopPlayback();
+
+    /// Pause playback WITHOUT consuming anything: freeze the head exactly
+    /// where it is — the in-flight block, its pulse position and the last EAR
+    /// level all survive, so a later ResumePlaybackAfterPoll() continues the
+    /// bitstream mid-block (like un-pausing a real deck). Used by the read-gap
+    /// watchdog when a multi-stage loader stops polling while it processes
+    /// (decompression, bank switching) — the terminal stopPlayback() would
+    /// consume the partially heard block and lose it.
+    void pausePlayback();
+
+    /// Resume (or first-start) signal playback triggered by sustained EAR
+    /// polling from ANY code — RAM-resident custom loaders never reach the ROM
+    /// $0562/$0564 anchor, so the read-gap pause must be recoverable for them.
+    /// With a frozen mid-block position it un-pauses in place (level
+    /// continuity preserved); otherwise it positions at the consumption
+    /// cursor like StartPlaybackAtCursor().
+    void ResumePlaybackAfterPoll();
     /// endregion </Tape control methods>
 
     /// region <Image and consumption cursor interface (fast tape loading)>
@@ -200,13 +228,56 @@ public:
     /// Direct read access to the parsed blocks (UI / trap component / tests).
     const std::vector<TapeBlock>& GetBlocks() const { return _tapeBlocks; };
 
+    /// Per-block catalog, coherent with GetBlocks() (same indexing, same
+    /// invalidation). Empty until an image is loaded (FR-2).
+    const std::vector<TapeBlockDescriptor>& GetBlockCatalog() const { return _catalog; };
+
+    /// Whole-image fast-load pre-analysis (design §5.8), coherent with
+    /// GetBlockCatalog(). Default-constructed (Empty verdict) until an image
+    /// loads. Advisory: the runtime trap matrix remains the sole authority.
+    const TapeFastLoadPlan& GetFastLoadPlan() const { return _fastLoadPlan; };
+
+    /// Registry format id of the loaded image ("tap"/"tzx"/...), empty when
+    /// none — the id of the loader the content probe selected (design §7).
+    const std::string& GetLoadedFormatId() const { return _imageFormatId; };
+
     /// Whether signal playback is currently active.
     bool IsPlaying() const { return _tapeStarted; };
     /// endregion </Image and consumption cursor interface>
 
+    /// region <Playback state, position and seek (design §6)>
+public:
+    /// Coarse playback state (FR-3). `Idle` when no image is loaded.
+    TapePlaybackState GetPlaybackState() const;
+
+    /// Position snapshot (FR-3): the in-flight block (with its pulse cursor
+    /// and elapsed signal time) while Playing/Paused, otherwise the next-up
+    /// block. nullopt: no image loaded.
+    std::optional<TapePosition> GetPosition() const;
+
+    /// Position the tape so the next delivery (signal or trap) starts at
+    /// block `index`'s pilot tone (FR-4). Forward and backward, including
+    /// already-consumed blocks; never starts playback (seek arms, play
+    /// delivers). False: no image / out of range. Seeking the current index
+    /// is a legal "restart this block" call.
+    bool SeekToBlock(size_t index);
+
+    /// Rewind = seek to block 0, image and catalog kept (FR-5) — unlike
+    /// legacy reset(), which dropped the image as well.
+    void RewindToStart();
+
+    /// Manual un-pause of a frozen position (FR-6): continues the bitstream
+    /// mid-block, level continuity preserved. No-op unless actually paused —
+    /// callers pick StartPlaybackAtCursor() for the not-paused case.
+    void ResumePlaybackFromPause();
+    /// endregion </Playback state, position and seek>
+
     /// region <Port events>
 public:
-    uint8_t handlePortIn();
+    /// @param port  Full 16-bit port address of the IN (any even port reaches
+    ///              the ULA). Used to exclude the Sinclair-joystick rows from
+    ///              the sustained-polling resume counter.
+    uint8_t handlePortIn(uint16_t port);
     void handlePortOut(uint8_t value);
     /// endregion </Port events>
 
@@ -221,16 +292,25 @@ public:
 protected:
     bool getTapeStreamBit(uint64_t clockCount);
 
+    /// Whether the port's high byte selects one of the two Sinclair-joystick
+    /// rows ($EF = stick 1 / $F7 = stick 2). Games poll those in tight loops,
+    /// so they must not accumulate toward the sustained-polling resume
+    /// threshold. Keyboard half-row scans never reach the threshold by count
+    /// (~8 reads/frame), and loaders deliberately polling other rows (e.g.
+    /// $7FFE — the space row, combined EAR + abort-key read) stay counted.
+    static bool IsJoystickPollPort(uint16_t port);
+
     bool generateBitstreamForStandardBlock(TapeBlock& tapeBlock);
 
     size_t generateBitstream(TapeBlock& tapeBlock,
-                             uint16_t pilotHalfPeriod_tStates,
-                             uint16_t synchro1_tStates,
-                             uint16_t synchro2_tStates,
-                             uint16_t zeroEncodingHalfPeriod_tState,
-                             uint16_t oneEncodingHalfPeriod_tStates,
-                             size_t pilotLength_periods,
-                             size_t pause_ms);
+                             uint32_t pilotHalfPeriod_tStates,
+                             uint32_t synchro1_tStates,
+                             uint32_t synchro2_tStates,
+                             uint32_t zeroEncodingHalfPeriod_tState,
+                             uint32_t oneEncodingHalfPeriod_tStates,
+                             size_t pilotLength_pulses,
+                             size_t pause_ms,
+                             uint8_t bitsInLastByte = 8);
 
     // FIXME: just experimentation method
     bool getPilotSample(size_t clockCount);
@@ -244,8 +324,8 @@ public:
     /// content. Tape content (_tapeBlocks) is invariant within a session —
     /// tape-control commands (load/stop/rewind) invalidate the session (§4.2).
     ///
-    /// Serialized fields (41 bytes, cursor-packed):
-    ///   _tapeStarted, _tapePosition, _currentTapeBlockIndex,
+    /// Serialized fields (42 bytes, cursor-packed):
+    ///   _tapeStarted, _playbackFrozen, _tapePosition, _currentTapeBlockIndex,
     ///   _currentPulseIdxInBlock, _currentOffsetWithinPulse, _currentClockCount.
     ///
     /// Excluded:
@@ -273,6 +353,7 @@ public:
 
     using Tape::handlePortIn;
     using Tape::generateBitstream;
+    using Tape::generateBitstreamForStandardBlock;
 
     using Tape::getPilotSample;
 
