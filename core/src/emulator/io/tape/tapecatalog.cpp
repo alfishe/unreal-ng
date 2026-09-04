@@ -240,7 +240,7 @@ double TapeCatalogParser::EstimateByteBlockSeconds(const TapeBlockDescriptor& de
     uint32_t pauseMs = profile.pauseMs;
     if (profile.profile == TapeSpeedProfileEnum::StandardRom && pauseMs == 0)
         pauseMs = ROM_PAUSE_MS;
-        total += static_cast<uint64_t>(pauseMs) * (CPU_CLOCK_HZ / 1000);
+    total += static_cast<uint64_t>(pauseMs) * (CPU_CLOCK_HZ / 1000);
 
     return static_cast<double>(total) / CPU_CLOCK_HZ;
 }
