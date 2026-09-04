@@ -54,6 +54,7 @@ signals:
     void openSnapshotRequested();
     void openTapeRequested();
     void openDiskRequested();
+    void importAudioTapeRequested();  // tape-audio-bridge §7.3: WAV/FLAC/MP3 → .tzx/.tap
     void saveSnapshotRequested();
     void saveSnapshotZ80Requested();
     
@@ -131,6 +132,7 @@ private:
     QAction* _openSnapshotAction;
     QAction* _openTapeAction;
     QAction* _openDiskAction;
+    QAction* _importAudioTapeAction;
     QMenu* _saveSnapshotMenu;
     QAction* _saveSnapshotSNAAction;
     QAction* _saveSnapshotZ80Action;

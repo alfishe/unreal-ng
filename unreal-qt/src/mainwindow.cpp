@@ -50,6 +50,7 @@
 #define signals Q_SIGNALS
 #include "loaders/disk/loader_scl.h"
 #include "loaders/disk/loader_trd.h"
+#include "tape/tapeimportaudiodialog.h"  // tape-audio-bridge §7.3
 #include "ui_mainwindow.h"
 
 // region <Constructors / destructors>
@@ -167,6 +168,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::openSnapshotRequested, this, &MainWindow::openFileDialog);
     connect(_menuManager, &MenuManager::openTapeRequested, this, &MainWindow::openFileDialog);
     connect(_menuManager, &MenuManager::openDiskRequested, this, &MainWindow::openFileDialog);
+    connect(_menuManager, &MenuManager::importAudioTapeRequested, this, &MainWindow::handleImportAudioTapeRequested);
     connect(_menuManager, &MenuManager::saveSnapshotRequested, this, &MainWindow::saveFileDialog);
     connect(_menuManager, &MenuManager::saveSnapshotZ80Requested, this, &MainWindow::saveFileDialogZ80);
     connect(_menuManager, &MenuManager::saveDiskRequested, this, &MainWindow::saveDiskDialog);
@@ -2110,6 +2112,27 @@ void MainWindow::handleTapeManagerToggled(bool visible)
     {
         tapeManagerWindow->setVisible(visible);
     }
+}
+
+void MainWindow::handleImportAudioTapeRequested()
+{
+    // tape-audio-bridge §7.3: audio → tape recognition; "Insert into emulator"
+    // rides the same LoadTape path as File → Open Tape
+    TapeImportAudioDialog dialog(this);
+    connect(&dialog, &TapeImportAudioDialog::insertRequested, this, [this](const QString& path) {
+        if (_emulator)
+        {
+            if (!_emulator->LoadTape(path.toStdString()))
+            {
+                qWarning() << "Failed to load tape:" << path;
+            }
+        }
+        else
+        {
+            qWarning() << "Cannot load tape - emulator not running:" << path;
+        }
+    });
+    dialog.exec();
 }
 
 void MainWindow::handleIntParametersRequested()

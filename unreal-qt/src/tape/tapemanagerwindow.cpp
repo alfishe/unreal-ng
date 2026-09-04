@@ -22,6 +22,7 @@
 
 #include "emulator/emulatorbinding.h"
 #include "tape/tapeblockdialog.h"
+#include "tape/tapeexportaudiodialog.h"
 
 namespace
 {
@@ -136,6 +137,25 @@ void TapeManagerWindow::buildUi()
         }
     });
 
+    // tape-audio-bridge §7.3: offline render of the inserted image (or the
+    // selected block range) to WAV/FLAC — a file conversion, no playback state
+    _exportAudioButton = new QToolButton(this);
+    _exportAudioButton->setIcon(style()->standardIcon(QStyle::SP_DialogSaveButton));
+    _exportAudioButton->setText(tr("Export to audio…"));
+    _exportAudioButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    _exportAudioButton->setToolTip(tr("Render the inserted tape (or the selected block range) to a WAV/FLAC file"));
+    connect(_exportAudioButton, &QToolButton::clicked, this, [this]() {
+        const QModelIndex current = _table->currentIndex();
+        if (current.isValid())
+        {
+            openExportAudioDialog(static_cast<size_t>(current.row()), static_cast<size_t>(current.row()));
+        }
+        else
+        {
+            openExportAudioDialog(SIZE_MAX, SIZE_MAX);
+        }
+    });
+
     _blockCountLabel = new QLabel(this);
 
     toolbarRow->addWidget(_playButton);
@@ -144,6 +164,7 @@ void TapeManagerWindow::buildUi()
     toolbarRow->addWidget(_rewindButton);
     toolbarRow->addWidget(_prevBlockButton);
     toolbarRow->addWidget(_nextBlockButton);
+    toolbarRow->addWidget(_exportAudioButton);
     toolbarRow->addStretch(1);
     toolbarRow->addWidget(_blockCountLabel);
 
@@ -347,6 +368,8 @@ void TapeManagerWindow::onTableContextMenu(const QPoint& pos)
     QMenu menu(this);
     QAction* rewindAction = menu.addAction(tr("Rewind to block %1").arg(index.row()));
     QAction* detailsAction = menu.addAction(tr("Details…"));
+    menu.addSeparator();
+    QAction* exportAction = menu.addAction(tr("Export to audio…"));
     QAction* chosen = menu.exec(_table->viewport()->mapToGlobal(pos));
     if (chosen == rewindAction)
     {
@@ -355,6 +378,10 @@ void TapeManagerWindow::onTableContextMenu(const QPoint& pos)
     else if (chosen == detailsAction)
     {
         openBlockDialog(index.row());
+    }
+    else if (chosen == exportAction)
+    {
+        openExportAudioDialog(static_cast<size_t>(index.row()), static_cast<size_t>(index.row()));
     }
 }
 
@@ -380,6 +407,20 @@ void TapeManagerWindow::openBlockDialog(int row)
     }
 
     TapeBlockDialog dialog(*descriptor, pairedHeader, payload, this);
+    dialog.exec();
+}
+
+void TapeManagerWindow::openExportAudioDialog(size_t firstBlock, size_t lastBlock)
+{
+    // §7.3: the source is the inserted image itself — the path the snapshot
+    // carries, reloaded headlessly by the renderer (no emulator state touched)
+    const bool hasImage = _hasGenerationSnapshot && _catalogValid && _catalogSize > 0;
+    if (!hasImage || _lastSnapshot.filePath.isEmpty())
+    {
+        return;
+    }
+
+    TapeExportAudioDialog dialog(_lastSnapshot.filePath, _catalogSize, firstBlock, lastBlock, this);
     dialog.exec();
 }
 
@@ -533,6 +574,7 @@ void TapeManagerWindow::updateToolbarEnabledState()
     _rewindButton->setEnabled(hasImage);
     _prevBlockButton->setEnabled(hasImage && current > 0);
     _nextBlockButton->setEnabled(hasImage && current + 1 < _catalogSize);
+    _exportAudioButton->setEnabled(hasImage);
 }
 
 void TapeManagerWindow::updateWindowTitle()

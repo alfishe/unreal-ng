@@ -98,6 +98,7 @@ private slots:
     void handleDebuggerToggled(bool visible);
     void handleLogWindowToggled(bool visible);
     void handleTapeManagerToggled(bool visible);
+    void handleImportAudioTapeRequested();  // tape-audio-bridge §7.3
     void handleIntParametersRequested();
     void handleAudioSettingsRequested();
     void handleOverscanModeToggled(bool enabled);

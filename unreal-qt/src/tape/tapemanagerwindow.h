@@ -64,6 +64,7 @@ private:
     void updateDetails();
     void updateWindowTitle();
     void openBlockDialog(int row);
+    void openExportAudioDialog(size_t firstBlock, size_t lastBlock);  // SIZE_MAX pair = whole tape (§7.3)
 
     EmulatorBinding* _binding = nullptr;  // central state binding (not owned)
 
@@ -74,6 +75,7 @@ private:
     QToolButton* _rewindButton = nullptr;
     QToolButton* _prevBlockButton = nullptr;  // r10: seek one block back
     QToolButton* _nextBlockButton = nullptr;  // r10: seek one block forward
+    QToolButton* _exportAudioButton = nullptr;  // tape-audio-bridge §7.3: render to WAV/FLAC
     QLabel* _blockCountLabel = nullptr;
     QLabel* _badgeLabel = nullptr;
     QProgressBar* _progressBar = nullptr;

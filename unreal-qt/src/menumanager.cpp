@@ -106,6 +106,12 @@ void MenuManager::createFileMenu()
     _openDiskAction->setStatusTip(tr("Load a disk image (.trd, .scl, .fdi)"));
     connect(_openDiskAction, &QAction::triggered, this, &MenuManager::openDiskRequested);
 
+    // Import audio → tape image (tape-audio-bridge §7.3): recognize a
+    // WAV/FLAC/MP3 recording back into a .tzx/.tap image
+    _importAudioTapeAction = _fileMenu->addAction(tr("Import &Audio to Tape..."));
+    _importAudioTapeAction->setStatusTip(tr("Recognize a WAV/FLAC/MP3 recording into a .tzx/.tap tape image"));
+    connect(_importAudioTapeAction, &QAction::triggered, this, &MenuManager::importAudioTapeRequested);
+
     _fileMenu->addSeparator();
 
     // Save Snapshot submenu
