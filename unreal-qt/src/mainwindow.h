@@ -25,6 +25,7 @@
 #include "emulator/soundmanager.h"
 #include "logviewer/logwindow.h"
 #include "menumanager.h"
+#include "tape/tapemanagerwindow.h"
 #include "ui/intparametersdialog.h"
 #include "ui_mainwindow.h"
 #include "widgets/devicescreen.h"
@@ -96,6 +97,7 @@ private slots:
     void handleDebugModeToggled(bool enabled);
     void handleDebuggerToggled(bool visible);
     void handleLogWindowToggled(bool visible);
+    void handleTapeManagerToggled(bool visible);
     void handleIntParametersRequested();
     void handleAudioSettingsRequested();
     void handleOverscanModeToggled(bool enabled);
@@ -192,6 +194,7 @@ private:
     Ui::MainWindow* ui = nullptr;
     DebuggerWindow* debuggerWindow = nullptr;
     LogWindow* logWindow = nullptr;
+    TapeManagerWindow* tapeManagerWindow = nullptr;
     DeviceScreen* deviceScreen = nullptr;
     QPushButton* startButton = nullptr;
     QMutex lockMutex;

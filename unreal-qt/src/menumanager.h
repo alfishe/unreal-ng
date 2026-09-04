@@ -39,6 +39,10 @@ public:
     // Reset viewport selection to default (Full Overscan)
     void resetViewportSelection();
 
+    // Sync the Tape Manager check state from the window's own close box
+    // (setChecked does not re-emit triggered)
+    void setTapeManagerChecked(bool checked);
+
     // Observer callback for emulator state changes
     void handleEmulatorStateChanged(int id, Message* message);
     void handleEmulatorInstanceCreated(int id, Message* message);
@@ -77,6 +81,7 @@ signals:
     // View signals
     void debuggerToggled(bool visible);
     void logWindowToggled(bool visible);
+    void tapeManagerToggled(bool visible);
     void fullScreenToggled();
     void overscanModeToggled(bool enabled);
     void viewportChanged(int presetIndex);
@@ -142,6 +147,7 @@ private:
     // View Menu Actions
     QAction* _debuggerAction;
     QAction* _logWindowAction;
+    QAction* _tapeManagerAction;
     QAction* _fullScreenAction;
     QAction* _zoomInAction;
     QAction* _zoomOutAction;

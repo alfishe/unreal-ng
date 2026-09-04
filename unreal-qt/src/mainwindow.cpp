@@ -153,6 +153,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _dockingManager->addDockableWindow(debuggerWindow, Qt::LeftEdge);
     _dockingManager->addDockableWindow(logWindow, Qt::RightEdge);
 
+    // Instantiate tape manager window (design §9.4): one instance per app
+    // session, hidden by default — View → Tape Manager (Ctrl+3) shows it
+    tapeManagerWindow = new TapeManagerWindow();
+    tapeManagerWindow->setBinding(m_binding);
+    _dockingManager->addDockableWindow(tapeManagerWindow, Qt::BottomEdge);
+
     // Create and configure menu system
     _menuManager = new MenuManager(this, ui->menubar, this);
 
@@ -179,6 +185,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::debugModeToggled, this, &MainWindow::handleDebugModeToggled);
     connect(_menuManager, &MenuManager::debuggerToggled, this, &MainWindow::handleDebuggerToggled);
     connect(_menuManager, &MenuManager::logWindowToggled, this, &MainWindow::handleLogWindowToggled);
+    connect(_menuManager, &MenuManager::tapeManagerToggled, this, &MainWindow::handleTapeManagerToggled);
+    // Keep the menu check state in sync when the window closes via its own close box
+    connect(tapeManagerWindow, &TapeManagerWindow::visibilityChanged, _menuManager, &MenuManager::setTapeManagerChecked);
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
     connect(_menuManager, &MenuManager::intParametersRequested, this, &MainWindow::handleIntParametersRequested);
     connect(_menuManager, &MenuManager::audioSettingsRequested, this, &MainWindow::handleAudioSettingsRequested);
@@ -2092,6 +2101,14 @@ void MainWindow::handleLogWindowToggled(bool visible)
     if (logWindow)
     {
         logWindow->setVisible(visible);
+    }
+}
+
+void MainWindow::handleTapeManagerToggled(bool visible)
+{
+    if (tapeManagerWindow)
+    {
+        tapeManagerWindow->setVisible(visible);
     }
 }
 

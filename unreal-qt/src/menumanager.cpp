@@ -262,6 +262,16 @@ void MenuManager::createViewMenu()
     connect(_viewportScreenOnlyAction, &QAction::triggered, this, [this]() { emit viewportChanged(3); });
 }
 
+void MenuManager::setTapeManagerChecked(bool checked)
+{
+    // Sync from the TapeManagerWindow's own close box; setChecked never
+    // re-emits triggered, so this cannot recurse into the toggle handler
+    if (_tapeManagerAction)
+    {
+        _tapeManagerAction->setChecked(checked);
+    }
+}
+
 void MenuManager::createRunMenu()
 {
     _runMenu = _menuBar->addMenu(tr("&Run"));
@@ -602,6 +612,17 @@ void MenuManager::createToolsMenu()
     _audioSettingsAction = _toolsMenu->addAction(tr("&Audio Settings..."));
     _audioSettingsAction->setStatusTip(tr("Configure audio DSP: punch, FIR filter, room simulation"));
     connect(_audioSettingsAction, &QAction::triggered, this, &MenuManager::audioSettingsRequested);
+
+    _toolsMenu->addSeparator();
+
+    // Tape Manager Window (design §9.2 — checkable show/hide, hidden until
+    // first opened; lives in Tools beside the other auxiliary windows, r7)
+    _tapeManagerAction = _toolsMenu->addAction(tr("Tape &Manager"));
+    _tapeManagerAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_3));
+    _tapeManagerAction->setStatusTip(tr("Show/hide tape manager window"));
+    _tapeManagerAction->setCheckable(true);
+    _tapeManagerAction->setChecked(false);
+    connect(_tapeManagerAction, &QAction::triggered, this, &MenuManager::tapeManagerToggled);
 
     _toolsMenu->addSeparator();
 
