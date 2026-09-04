@@ -1,5 +1,6 @@
 #include "pch.h"
 
+#include <algorithm>
 #include <gtest/gtest.h>
 
 #include "loaders/tape/loader_tap.h"
