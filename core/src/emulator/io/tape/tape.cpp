@@ -5,6 +5,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/tape/tapecatalog.h"
+#include "emulator/io/tape/tapepulsegen.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/spectrumconstants.h"
 #include "loaders/tape/loader_tape.h"
@@ -909,79 +910,16 @@ size_t Tape::generateBitstream(TapeBlock& tapeBlock, uint32_t pilotHalfPeriod_tS
                                uint32_t oneEncodingHalfPeriod_tStates, size_t pilotLength_pulses, size_t pause_ms,
                                uint8_t bitsInLastByte)
 {
-    size_t result = 0;
-    size_t len = tapeBlock.data.size();
+    // Signal half-periods come from the shared pure generator (tapepulsegen —
+    // tape-audio-bridge design §4.3); the engine-side addition is the pause
+    // hold-edge the playback cursor semantics rely on (1 ms == 3500 T-states).
+    uint64_t signalTotal = TapePulseGen::GenerateHalfPeriods(tapeBlock.data,
+                                                             pilotHalfPeriod_tStates, synchro1_tStates, synchro2_tStates,
+                                                             zeroEncodingHalfPeriod_tState, oneEncodingHalfPeriod_tStates,
+                                                             pilotLength_pulses, bitsInLastByte,
+                                                             tapeBlock.edgePulseTimings);
 
-    if (bitsInLastByte == 0 || bitsInLastByte > 8)
-    {
-        bitsInLastByte = 8;  // defensive: TZX $11/$14 field is 1-8
-    }
-
-    // Calculate collection size to fit all edge time intervals
-    size_t resultSize = 0;
-    resultSize += pilotLength_pulses;         // Pilot length is specified in pulses (half-periods), one edge each
-    resultSize += 2;                          // Two sync pulses at the end of pilot
-    resultSize += (len == 0) ? 0 : ((len - 1) * 8 * 2 + bitsInLastByte * 2);  // Last byte may carry fewer than 8 bits (TZX $11/$14)
-    if (pause_ms > 0)
-        resultSize += 1;  // Pause is just a marker so single edge is sufficient
-
-    tapeBlock.edgePulseTimings.reserve(resultSize);
-
-    /// region <Pilot tone + sync>
-
-    if (pilotLength_pulses > 0)
-    {
-        // Pilot length is specified in pulses (half-periods), matching the TAP
-        // convention (header: 8063-8064 pulses, data: ~3220 pulses). Emitting
-        // 2x here would double the real pilot duration (~10s instead of ~5s).
-        for (size_t i = 0; i < pilotLength_pulses; i++)
-        {
-            tapeBlock.edgePulseTimings.push_back(pilotHalfPeriod_tStates);
-
-            result += pilotHalfPeriod_tStates;
-        }
-
-        // Sync pulses at the end of pilot
-        tapeBlock.edgePulseTimings.push_back(synchro1_tStates);
-        tapeBlock.edgePulseTimings.push_back(synchro2_tStates);
-
-        result += synchro1_tStates;
-        result += synchro2_tStates;
-    }
-
-    /// endregion </Pilot tone + sync>
-
-    /// region <Data paramBytes>
-
-    for (size_t i = 0; i < len; i++)
-    {
-        // TZX $11/$14: only the first `bitsInLastByte` bits of the final byte
-        // are part of the signal (MSB first)
-        bool lastByte = (i == len - 1);
-        uint8_t bitsInThisByte = lastByte ? bitsInLastByte : 8;
-
-        // Extract bits from input data byte and add correspondent bit encoding length to image array
-        for (uint8_t bitIndex = 0; bitIndex < bitsInThisByte; bitIndex++)
-        {
-            uint8_t bitMask = static_cast<uint8_t>(0x80 >> bitIndex);
-            bool bit = (tapeBlock.data[i] & bitMask) != 0;
-            // u32 (A1): TZX $11 turbo half-periods exceed u16 — edgePulseTimings
-            // is vector<uint32_t>, so nothing may narrow on the way in
-            uint32_t bitEncoded = bit ? oneEncodingHalfPeriod_tStates : zeroEncodingHalfPeriod_tState;
-
-            // Each bit is encoded by two edges; count both so
-            // totalBitstreamLength equals the sum of edgePulseTimings
-            tapeBlock.edgePulseTimings.push_back(bitEncoded);
-            tapeBlock.edgePulseTimings.push_back(bitEncoded);
-
-            result += bitEncoded;
-            result += bitEncoded;
-        }
-    }
-
-    /// endregion </Data paramBytes>
-
-    /// region <Pause>
+    size_t result = static_cast<size_t>(signalTotal);
 
     if (pause_ms)
     {
@@ -991,8 +929,6 @@ size_t Tape::generateBitstream(TapeBlock& tapeBlock, uint32_t pilotHalfPeriod_tS
 
         result += pauseDuration;
     }
-
-    /// endregion </Pause>
 
     tapeBlock.totalBitstreamLength = result;
 
