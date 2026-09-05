@@ -60,6 +60,32 @@ enum class TapePlaybackState : uint8_t
     Ended
 };
 
+/// Stable wire name of a playback state for the machine surfaces (CLI,
+/// WebAPI, Lua, Python — design §6.3). Lowercase, one word per state.
+inline const char* getTapePlaybackStateName(TapePlaybackState value)
+{
+    const char* result;
+    switch (value)
+    {
+        case TapePlaybackState::Idle:
+            result = "idle";
+            break;
+        case TapePlaybackState::Playing:
+            result = "playing";
+            break;
+        case TapePlaybackState::Paused:
+            result = "paused";
+            break;
+        case TapePlaybackState::Ended:
+            result = "ended";
+            break;
+        default:
+            result = "unknown";
+            break;
+    }
+    return result;
+}
+
 /// Point-in-time playback position. `blockIndex` is the in-flight block
 /// (Playing/Paused) or the next-up one (Idle); equal to the block count it
 /// means end-of-tape (Ended). Zeroed pulse fields unless a block is in

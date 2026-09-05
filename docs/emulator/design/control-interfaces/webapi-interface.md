@@ -76,7 +76,7 @@ The WebAPI implements the same command semantics as other interfaces (CLI, Pytho
 **Request**:
 ```http
 GET /api/v1/emulators HTTP/1.1
-Host: localhost:8080
+Host: localhost:8090
 Accept: application/json
 ```
 
@@ -807,6 +807,101 @@ curl -X POST http://localhost:8090/api/v1/emulator/{id}/keyboard/macro \
 | `delay_frames` | number | No | 2 | Frames between characters |
 | `tokenized` | boolean | No | false | Enable K-mode token for first char |
 
+## Tape Control
+
+Full tape transport, inspection and the offline audio bridge — one-to-one with the CLI `tape` commands ([command-interface.md §10](./command-interface.md#10-tape-control-commands)), the Lua `tape_*` functions and the Python `tape_*` methods. All endpoints are scoped under `/api/v1/emulator/{id}/tape`.
+
+| Method | Endpoint | Body | Description |
+|:-------|:---------|:-----|:------------|
+| `POST` | `/tape/load` | `{"path": "..."}` | Load tape image (.tap/.tzx/.csw/…) |
+| `POST` | `/tape/eject` | — | Stop playback, drop image and catalog |
+| `POST` | `/tape/play` | — | Start at consumption cursor; resumes in place when paused |
+| `POST` | `/tape/pause` | — | Freeze mid-block; next play resumes exactly there (idempotent when already paused; 400 when not playing) |
+| `POST` | `/tape/stop` | — | Terminal stop: invalidates the loaded image |
+| `POST` | `/tape/rewind` | — | Rewind to block 0, image kept |
+| `POST` | `/tape/seek` | `{"block": N}` | Position the head at catalog block N |
+| `GET` | `/tape` | — | Full snapshot: status, file, format, state, position, cursor, fast/turbo flags, fast-load plan, `blocks[]` catalog |
+| `GET` | `/tape/info` | — | Alias of `GET /tape` |
+| `GET` | `/tape/blocks/{index}` | — | One catalog descriptor + `payload_bytes` and a 64-byte `preview_hex` |
+| `POST` | `/tape/render` | see below | Render a tape image to WAV/FLAC audio |
+| `POST` | `/tape/import` | see below | Import WAV/FLAC/MP3 as a .tzx/.tap image |
+
+Playback `state` is one of `"idle"`, `"playing"`, `"paused"`, `"ended"` — identical strings across CLI, WebAPI, Lua and Python.
+
+**`GET /tape` response shape** (trimmed):
+
+```json
+{
+  "status": "loaded",
+  "file": "/path/to/game.tap",
+  "format": "tap",
+  "state": "playing",
+  "position": {"block": 4, "pulse": 1234, "seconds_into_block": 1.2, "block_total_seconds": 4.5},
+  "cursor": 5,
+  "block_count": 12,
+  "total_seconds": 355.8,
+  "fast_tape": true,
+  "turbo_tape": true,
+  "fast_load": {"verdict": "...", "eligible_blocks": 12, "accelerated_seconds": 340.0,
+                "total_seconds": 355.8, "advisory": true, "summary": "..."},
+  "blocks": [ {"index": 0, "kind": "header", "name": "...", "type": "Program",
+                "seconds": 2.1, "playable": true, "fast_load": "yes", ...}, ... ]
+}
+```
+
+**`POST /tape/render` request body:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `sourcePath` | string | No | inserted tape | Tape image to render; omitted renders the instance's tape (same catalog indices as `GET /tape`) |
+| `blocks` | `"all"` or `[first]` or `[first, last]` | No | `"all"` | Catalog-index block selection |
+| `format` | `"wav"` \| `"flac"` | No | from extension | Must agree with the `outputPath` extension |
+| `sampleRate` | number | No | 44100 | 8000-192000 Hz |
+| `amplitude` | number | No | 0.8 | 0.01-1.0 full-scale fraction |
+| `invertLevel` | boolean | No | false | Invert signal polarity |
+| `outputPath` | string | Yes | - | Must end in `.wav` or `.flac` (FLAC requires ffmpeg on the host) |
+
+Pure file conversion — never touches emulator state. Success returns `blocks_rendered`, `duration_sec`, `samples_written`, `sample_rate`, `encoder`, `output_path`, `warnings[]`.
+
+**`POST /tape/import` request body:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `sourcePath` | string | Yes | - | WAV/FLAC/MP3 recording |
+| `outputPath` | string | Yes | - | Must end in `.tzx` or `.tap` |
+| `target` | `"auto"` \| `"tzx"` \| `"tap"` | No | `"auto"` | Must match the `outputPath` extension |
+| `hysteresis` | number | No | 0.2 | Schmitt band 0.05-0.45 of signal range (lower = tighter noise rejection) |
+| `insert` | boolean | No | false | Load the produced image into the instance (same path as `/tape/load`) |
+
+Decode + pulse extraction + recognition run headlessly. Success returns `decoder`, `sample_rate`, `samples_decoded`, `signal_edges`, `blocks_recognized`, `kind_counts`, `blocks[]`, `blocks_written`, `output_path`, `inserted`, `warnings[]`. A `.tap` save refusal keeps all recognition stats and surfaces `tap_refusal_reason` (re-target `.tzx` without re-importing).
+
+**cURL examples:**
+
+```bash
+# Load and play
+curl -X POST http://localhost:8090/api/v1/emulator/$ID/tape/load \
+     -H "Content-Type: application/json" -d '{"path": "/path/to/game.tap"}'
+curl -X POST http://localhost:8090/api/v1/emulator/$ID/tape/play
+
+# Inspect
+curl -s http://localhost:8090/api/v1/emulator/$ID/tape | jq .
+curl -s http://localhost:8090/api/v1/emulator/$ID/tape/blocks/0 | jq .
+
+# Seek + pause/resume
+curl -X POST http://localhost:8090/api/v1/emulator/$ID/tape/seek \
+     -H "Content-Type: application/json" -d '{"block": 4}'
+curl -X POST http://localhost:8090/api/v1/emulator/$ID/tape/pause
+curl -X POST http://localhost:8090/api/v1/emulator/$ID/tape/play
+
+# Audio bridge
+curl -X POST http://localhost:8090/api/v1/emulator/$ID/tape/render \
+     -H "Content-Type: application/json" \
+     -d '{"sourcePath": "game.tzx", "blocks": [2, 5], "sampleRate": 48000, "outputPath": "game.wav"}'
+curl -X POST http://localhost:8090/api/v1/emulator/$ID/tape/import \
+     -H "Content-Type: application/json" \
+     -d '{"sourcePath": "recording.wav", "target": "tzx", "outputPath": "imported.tzx"}'
+```
+
 ## Planned Endpoints (Not Yet Implemented)
 
 ### Disassembly
@@ -816,8 +911,7 @@ GET /api/v1/emulator/{id}/disassemble?address=0x8000&count=10
 
 ### Media Operations (Implemented Separately)
 ```
-POST /api/v1/emulator/{id}/tape/load    ✅ Implemented
-POST /api/v1/emulator/{id}/tape/eject   ✅ Implemented
+POST /api/v1/emulator/{id}/tape/*         ✅ Implemented — see [Tape Control](#tape-control)
 POST /api/v1/emulator/{id}/disk/{drive}/insert  ✅ Implemented
 POST /api/v1/emulator/{id}/disk/{drive}/eject   ✅ Implemented
 ```
@@ -979,19 +1073,19 @@ X-API-Key: <api-key>
 ### JavaScript (Fetch API)
 ```javascript
 // List emulators
-const response = await fetch('http://localhost:8080/api/v1/emulators');
+const response = await fetch('http://localhost:8090/api/v1/emulators');
 const data = await response.json();
 console.log(data.emulators);
 
 // Pause emulator
-await fetch('http://localhost:8080/api/v1/emulators/550e8400-.../pause', {
+await fetch('http://localhost:8090/api/v1/emulators/550e8400-.../pause', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: '{}'
 });
 
 // Get registers
-const regs = await fetch('http://localhost:8080/api/v1/emulators/550e8400-.../registers');
+const regs = await fetch('http://localhost:8090/api/v1/emulators/550e8400-.../registers');
 console.log(await regs.json());
 ```
 
@@ -999,7 +1093,7 @@ console.log(await regs.json());
 ```python
 import requests
 
-base_url = 'http://localhost:8080/api/v1'
+base_url = 'http://localhost:8090/api/v1'
 
 # List emulators
 r = requests.get(f'{base_url}/emulators')
@@ -1017,13 +1111,13 @@ print(f"State: {status['state']}")
 ### cURL
 ```bash
 # List emulators
-curl http://localhost:8080/api/v1/emulators
+curl http://localhost:8090/api/v1/emulators
 
 # Pause emulator
-curl -X POST http://localhost:8080/api/v1/emulators/550e8400-.../pause
+curl -X POST http://localhost:8090/api/v1/emulators/550e8400-.../pause
 
 # Create emulator
-curl -X POST http://localhost:8080/api/v1/emulators \
+curl -X POST http://localhost:8090/api/v1/emulators \
   -H "Content-Type: application/json" \
   -d '{"symbolic_id":"test","config":{"model":"spectrum128"}}'
 ```

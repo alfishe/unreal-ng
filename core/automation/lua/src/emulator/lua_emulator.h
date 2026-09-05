@@ -8,6 +8,8 @@
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/tape/tape.h>
+#include <tapeaudio/tapeaudioimporter.h>
+#include <tapeaudio/tapeaudiorenderer.h>
 #include <emulator/cpu/z80.h>
 #include <emulator/video/screen.h>
 #include <emulator/sound/soundmanager.h>
@@ -20,8 +22,11 @@
 #include <debugger/ttd/timetravelmanager.h>
 #include <debugger/ttd/ttd_external_events.h>
 #include <debugger/ttd/ttd_probe.h>
+#include <chrono>
 #include <fstream>
+#include <optional>
 #include <string>
+#include <thread>
 
 class LuaEmulator
 {
@@ -46,6 +51,36 @@ protected:
         }
         return nullptr;
     }
+
+    /// Pause() -> op -> Resume() bracket shared by the mutating tape
+    /// bindings (same contract as the CLI/WebAPI handlers, design §7.1):
+    /// pause only when actually running, resume exactly then. RAII so an
+    /// early return can never leave the emulator parked.
+    class EmulatorPauseBracket
+    {
+    public:
+        explicit EmulatorPauseBracket(Emulator* emulator)
+            : _emulator(emulator), _wasRunning(emulator && emulator->IsRunning() && !emulator->IsPaused())
+        {
+            if (_wasRunning)
+            {
+                _emulator->Pause();
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));  // Give emulator time to pause
+            }
+        }
+
+        ~EmulatorPauseBracket()
+        {
+            if (_wasRunning)
+            {
+                _emulator->Resume();
+            }
+        }
+
+    private:
+        Emulator* _emulator;
+        bool _wasRunning;
+    };
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -382,31 +417,34 @@ public:
         });
 
         // Feature management (using correct FeatureManager API)
+        // Same listFeatures() enumeration the CLI `feature` table and the
+        // WebAPI /features endpoint use — keyed by feature id, so scripts
+        // keep working as new features (fasttape, turbotape, …) register
         lua.set_function("feature_list", [this]() -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table features = lua_view.create_table();
-            if (_emulator) {
-                FeatureManager* fm = _emulator->GetFeatureManager();
+            Emulator* emulator = effectiveEmulator();
+            if (emulator) {
+                FeatureManager* fm = emulator->GetFeatureManager();
                 if (fm) {
-                    features["sound"] = fm->isEnabled("sound");
-                    features["sharedmemory"] = fm->isEnabled("sharedmemory");
-                    features["calltrace"] = fm->isEnabled("calltrace");
-                    features["breakpoints"] = fm->isEnabled("breakpoints");
-                    features["memorytracking"] = fm->isEnabled("memorytracking");
+                    for (const FeatureManager::FeatureInfo& feature : fm->listFeatures())
+                        features[feature.id] = feature.enabled;
                 }
             }
             return features;
         });
 
         lua.set_function("feature_get", [this](const std::string& name) -> bool {
-            if (!_emulator) return false;
-            FeatureManager* fm = _emulator->GetFeatureManager();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            FeatureManager* fm = emulator->GetFeatureManager();
             return fm ? fm->isEnabled(name) : false;
         });
 
         lua.set_function("feature_set", [this](const std::string& name, bool enabled) -> bool {
-            if (!_emulator) return false;
-            FeatureManager* fm = _emulator->GetFeatureManager();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            FeatureManager* fm = emulator->GetFeatureManager();
             return fm ? fm->setFeature(name, enabled) : false;
         });
 
@@ -535,35 +573,49 @@ public:
 
         // Tape operations
         lua.set_function("tape_load", [this](const std::string& path) -> bool {
-            if (!_emulator) return false;
-            return _emulator->LoadTape(path);
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            return emulator->LoadTape(path);
         });
 
         lua.set_function("tape_is_inserted", [this]() -> bool {
-            if (!_emulator) return false;
-            auto* ctx = _emulator->GetContext();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            auto* ctx = emulator->GetContext();
             return ctx && ctx->pTape && !ctx->coreState.tapeFilePath.empty();
         });
 
         lua.set_function("tape_get_path", [this]() -> std::string {
-            if (!_emulator) return "";
-            auto* ctx = _emulator->GetContext();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return "";
+            auto* ctx = emulator->GetContext();
             return ctx ? ctx->coreState.tapeFilePath : "";
         });
 
         lua.set_function("tape_play", [this]() -> bool {
-            if (!_emulator) return false;
-            auto* ctx = _emulator->GetContext();
-            if (ctx && ctx->pTape) {
-                ctx->pTape->startTape();
-                return true;
-            }
-            return false;
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            auto* ctx = emulator->GetContext();
+            if (!ctx || !ctx->pTape) return false;
+
+            EmulatorPauseBracket bracket(emulator);
+
+            // Parse-once (idempotent); paused -> resume the frozen position
+            // in place, otherwise start at the consumption cursor — the same
+            // semantics as `tape play` / POST /tape/play
+            if (!ctx->pTape->EnsureImageLoaded())
+                return false;
+            if (ctx->pTape->GetPlaybackState() == TapePlaybackState::Paused)
+                ctx->pTape->ResumePlaybackFromPause();
+            else
+                ctx->pTape->StartPlaybackAtCursor();
+            return true;
         });
 
         lua.set_function("tape_stop", [this]() -> bool {
-            if (!_emulator) return false;
-            auto* ctx = _emulator->GetContext();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            auto* ctx = emulator->GetContext();
             if (ctx && ctx->pTape) {
                 ctx->pTape->stopTape();
                 return true;
@@ -572,24 +624,261 @@ public:
         });
 
         lua.set_function("tape_rewind", [this]() -> bool {
-            if (!_emulator) return false;
-            auto* ctx = _emulator->GetContext();
-            if (ctx && ctx->pTape) {
-                ctx->pTape->reset();
-                return true;
-            }
-            return false;
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            auto* ctx = emulator->GetContext();
+            if (!ctx || !ctx->pTape) return false;
+
+            EmulatorPauseBracket bracket(emulator);
+
+            // Rewind keeps the image and catalog — unlike stop/eject
+            // (same semantics as `tape rewind` / POST /tape/rewind)
+            ctx->pTape->EnsureImageLoaded();
+            ctx->pTape->RewindToStart();
+            return true;
         });
 
         lua.set_function("tape_eject", [this]() -> bool {
-            if (!_emulator) return false;
-            auto* ctx = _emulator->GetContext();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            auto* ctx = emulator->GetContext();
             if (ctx && ctx->pTape) {
                 ctx->pTape->reset();
                 ctx->coreState.tapeFilePath = "";
                 return true;
             }
             return false;
+        });
+
+        lua.set_function("tape_pause", [this]() -> bool {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            auto* ctx = emulator->GetContext();
+            if (!ctx || !ctx->pTape) return false;
+
+            EmulatorPauseBracket bracket(emulator);
+
+            const TapePlaybackState state = ctx->pTape->GetPlaybackState();
+            if (state == TapePlaybackState::Paused)
+                return true;  // idempotent, mirrors "Tape already paused"
+            if (state != TapePlaybackState::Playing)
+                return false;
+            ctx->pTape->pausePlayback();  // play resumes in place afterwards
+            return true;
+        });
+
+        lua.set_function("tape_seek", [this](int blockIndex) -> bool {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator || blockIndex < 0) return false;
+            auto* ctx = emulator->GetContext();
+            if (!ctx || !ctx->pTape) return false;
+
+            EmulatorPauseBracket bracket(emulator);
+
+            if (!ctx->pTape->EnsureImageLoaded())
+                return false;
+            return ctx->pTape->SeekToBlock(static_cast<size_t>(blockIndex));
+        });
+
+        lua.set_function("tape_pos", [this]() -> sol::optional<sol::table> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::nullopt;
+            auto* ctx = emulator->GetContext();
+            if (!ctx || !ctx->pTape || !ctx->pTape->EnsureImageLoaded()) return sol::nullopt;
+
+            EmulatorPauseBracket bracket(emulator);
+
+            sol::state_view lua_view(*_lua);
+            sol::table pos = lua_view.create_table();
+            pos["state"] = getTapePlaybackStateName(ctx->pTape->GetPlaybackState());
+
+            std::optional<TapePosition> position = ctx->pTape->GetPosition();
+            if (position.has_value())
+            {
+                pos["block"] = position->blockIndex;
+                pos["pulse"] = position->pulseIndex;
+                pos["seconds_into_block"] = position->secondsIntoBlock;
+                pos["block_total_seconds"] = position->blockTotalSeconds;
+            }
+
+            pos["cursor"] = ctx->pTape->GetConsumptionCursor();
+            pos["block_count"] = ctx->pTape->GetBlockCatalog().size();
+            return pos;
+        });
+
+        lua.set_function("tape_blocks", [this]() -> sol::optional<sol::table> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::nullopt;
+            auto* ctx = emulator->GetContext();
+            if (!ctx || !ctx->pTape || !ctx->pTape->EnsureImageLoaded()) return sol::nullopt;
+
+            EmulatorPauseBracket bracket(emulator);
+
+            const std::vector<TapeBlockDescriptor>& catalog = ctx->pTape->GetBlockCatalog();
+            const TapeFastLoadPlan& plan = ctx->pTape->GetFastLoadPlan();
+
+            sol::state_view lua_view(*_lua);
+            sol::table blocks = lua_view.create_table(static_cast<int>(catalog.size()));
+            size_t arrayIndex = 1;
+            for (const TapeBlockDescriptor& descriptor : catalog)
+            {
+                sol::table block = lua_view.create_table();
+                block["index"] = descriptor.index;
+                block["kind"] = getTapeBlockKindName(descriptor.kind);
+
+                if (descriptor.kind == TapeBlockKindEnum::Header || descriptor.kind == TapeBlockKindEnum::Data ||
+                    descriptor.kind == TapeBlockKindEnum::Custom)
+                {
+                    block["headerless"] = descriptor.headerless;
+                }
+
+                if (descriptor.headerValid)
+                {
+                    block["name"] = descriptor.name;
+                    block["type"] = getTapeBlockTypeName(descriptor.headerType);
+                    block["declared_length"] = descriptor.declaredLength;
+                    block["param1"] = descriptor.param1;
+                    block["param2"] = descriptor.param2;
+                }
+
+                if (descriptor.pairedDataIndex != SIZE_MAX)
+                    block["paired_data_index"] = descriptor.pairedDataIndex;
+                if (descriptor.pairedHeaderIndex != SIZE_MAX)
+                    block["paired_header_index"] = descriptor.pairedHeaderIndex;
+
+                sol::table speed = lua_view.create_table();
+                speed["profile"] = getTapeSpeedProfileName(descriptor.timing.profile);
+                if (descriptor.baudEstimate > 0)
+                    speed["baud"] = descriptor.baudEstimate;
+                block["speed"] = speed;
+
+                block["checksum_valid"] = descriptor.checksumValid;
+                block["checksum_applicable"] = descriptor.rawSize > 0;
+                block["seconds"] = descriptor.estimatedSeconds;
+                if (descriptor.rawSize > 0)
+                    block["raw_size"] = descriptor.rawSize;
+                block["playable"] = descriptor.playable;
+
+                if (descriptor.kind != TapeBlockKindEnum::Control && plan.perBlock.size() > descriptor.index)
+                {
+                    block["fast_load"] = plan.perBlock[descriptor.index] == FastLoadRejectEnum::None
+                                             ? "yes"
+                                             : getFastLoadRejectName(plan.perBlock[descriptor.index]);
+                }
+
+                blocks[arrayIndex++] = block;
+            }
+            return blocks;
+        });
+
+        lua.set_function("tape_info", [this]() -> sol::optional<sol::table> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::nullopt;
+            auto* ctx = emulator->GetContext();
+            if (!ctx || !ctx->pTape) return sol::nullopt;
+
+            EmulatorPauseBracket bracket(emulator);
+
+            const std::string& path = ctx->coreState.tapeFilePath;
+            const bool loaded = !path.empty() && ctx->pTape->EnsureImageLoaded();
+
+            sol::state_view lua_view(*_lua);
+            sol::table info = lua_view.create_table();
+            info["status"] = loaded ? "loaded" : (path.empty() ? "empty" : "error");
+            info["file"] = path;
+            info["state"] = loaded ? getTapePlaybackStateName(ctx->pTape->GetPlaybackState()) : "idle";
+            if (!loaded) return info;
+
+            const TapeFastLoadPlan& plan = ctx->pTape->GetFastLoadPlan();
+            info["format"] = ctx->pTape->GetLoadedFormatId();
+            info["cursor"] = ctx->pTape->GetConsumptionCursor();
+            info["block_count"] = ctx->pTape->GetBlockCatalog().size();
+            info["total_seconds"] = plan.totalSeconds;
+
+            FeatureManager* fm = emulator->GetFeatureManager();
+            info["fast_tape"] = fm && fm->isEnabled(Features::kFastTape);
+            info["turbo_tape"] = fm && fm->isEnabled(Features::kTurboTape);
+
+            sol::table fastLoad = lua_view.create_table();
+            fastLoad["verdict"] = getFastLoadVerdictName(plan.verdict);
+            fastLoad["eligible_blocks"] = plan.eligibleBlocks;
+            fastLoad["accelerated_seconds"] = plan.acceleratedSeconds;
+            fastLoad["total_seconds"] = plan.totalSeconds;
+            fastLoad["summary"] = plan.summary;
+            info["fast_load"] = fastLoad;
+            return info;
+        });
+
+        // Tape audio bridge: pure path-to-path conversions through the same
+        // engine as `tape render` / POST /tape/render — no emulator state involved
+        lua.set_function("tape_render",
+            [this](const std::string& source, const std::string& output, sol::optional<sol::table> options) -> sol::table {
+            TapeRenderRequest request;
+            request.sourcePath = source;
+            request.outputPath = output;
+            if (options.has_value())
+            {
+                sol::optional<size_t> firstBlock = options.value()["first_block"];
+                sol::optional<size_t> lastBlock = options.value()["last_block"];
+                sol::optional<uint32_t> sampleRate = options.value()["sample_rate"];
+                sol::optional<double> amplitude = options.value()["amplitude"];
+                sol::optional<bool> invertLevel = options.value()["invert_level"];
+                if (firstBlock.has_value()) request.firstBlock = firstBlock.value();
+                if (lastBlock.has_value()) request.lastBlock = lastBlock.value();
+                if (sampleRate.has_value()) request.sampleRate = sampleRate.value();
+                if (amplitude.has_value()) request.amplitude = amplitude.value();
+                if (invertLevel.has_value()) request.invertLevel = invertLevel.value();
+            }
+
+            TapeRenderResult result = RenderTapeToAudio(request);
+
+            sol::state_view lua_view(*_lua);
+            sol::table ret = lua_view.create_table();
+            ret["ok"] = result.ok;
+            ret["error"] = result.errorText;
+            ret["duration_sec"] = result.durationSec;
+            ret["samples"] = result.samplesWritten;
+            ret["blocks"] = result.blocksRendered;
+            ret["encoder"] = result.encoderUsed;
+            sol::table warnings = lua_view.create_table();
+            int warningIndex = 1;
+            for (const std::string& warning : result.warnings)
+                warnings[warningIndex++] = warning;
+            ret["warnings"] = warnings;
+            return ret;
+        });
+
+        // Same engine as `tape import` / POST /tape/import: decode + extract
+        // + recognize, then an extension-dispatched save (.tzx exact, .tap gated)
+        lua.set_function("tape_import",
+            [this](const std::string& source, const std::string& output, sol::optional<double> hysteresis) -> sol::table {
+            TapeImportRequest request;
+            request.sourcePath = source;
+            if (hysteresis.has_value())
+                request.hysteresis = hysteresis.value();
+
+            TapeImportResult imported = ImportAudioToTape(request);
+            TapeSaveResult saved;
+            if (imported.ok)
+                saved = SaveTapeImage(imported.image, output);
+
+            sol::state_view lua_view(*_lua);
+            sol::table ret = lua_view.create_table();
+            ret["ok"] = imported.ok && saved.ok;
+            ret["error"] = !imported.ok ? imported.errorText : saved.errorText;
+            ret["decoder"] = imported.decoderUsed;
+            ret["sample_rate"] = imported.sampleRate;
+            ret["samples_decoded"] = imported.samplesDecoded;
+            ret["signal_edges"] = imported.signalEdges;
+            ret["blocks_recognized"] = imported.blocksRecognized;
+            ret["blocks_written"] = saved.blocksWritten;
+            ret["output_path"] = output;
+            sol::table warnings = lua_view.create_table();
+            int warningIndex = 1;
+            for (const std::string& warning : imported.warnings)
+                warnings[warningIndex++] = warning;
+            ret["warnings"] = warnings;
+            return ret;
         });
 
         // Snapshot operations

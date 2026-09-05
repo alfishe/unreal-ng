@@ -139,6 +139,72 @@ class Emulator:
         """Get breakpoint manager"""
 ```
 
+### Tape Operations
+
+`Emulator` methods mirroring the CLI `tape` commands and the WebAPI `/tape/*` endpoints one-to-one (same names, states and catalog indices).
+
+```python
+emu = Emulator()
+emu.init()
+
+# Load / eject
+emu.tape_load("/path/to/game.tap")   # .tap/.tzx/.csw
+emu.tape_eject()
+
+# Transport (same semantics as `tape play|pause|stop|rewind|seek`)
+emu.tape_play()    # start at consumption cursor; resumes in place when paused
+emu.tape_pause()   # freeze mid-block (idempotent); False when not playing
+emu.tape_stop()    # terminal stop: invalidates the loaded image
+emu.tape_rewind()  # rewind to block 0, image kept
+emu.tape_seek(4)   # position head at catalog block 4
+
+# Inspection
+emu.tape_is_inserted()
+emu.tape_get_path()
+emu.tape_pos()     # None without a tape, else dict
+                  # {"state": "playing", "block": 4, "pulse": 1234,
+                  #  "seconds_into_block": 1.2, "block_total_seconds": 4.5,
+                  #  "cursor": 5, "block_count": 12}
+emu.tape_blocks()  # None without a tape, else list of dicts
+                  # {"index", "kind", "name", "type", "declared_length",
+                  #  "param1", "param2", "speed": {"profile", "baud"},
+                  #  "checksum_valid", "checksum_applicable", "seconds",
+                  #  "raw_size", "playable", "fast_load"}
+emu.tape_info()    # None without a tape subsystem, else dict
+                  # {"status", "file", "format", "state", "cursor",
+                  #  "block_count", "total_seconds", "fast_tape",
+                  #  "turbo_tape", "fast_load": {...}}
+
+# Audio bridge (pure file conversions, no emulator state touched)
+emu.tape_render("game.tzx", "out.wav")            # whole tape, 44100 Hz
+emu.tape_render("game.tzx", "out.flac",
+                options={"first_block": 2, "last_block": 5,
+                         "sample_rate": 48000, "amplitude": 0.8,
+                         "invert_level": False})
+# -> {"ok", "error", "duration_sec", "samples", "blocks",
+#     "encoder", "warnings"}
+
+emu.tape_import("recording.wav", "imported.tzx")  # hysteresis defaults to 0.2
+emu.tape_import("recording.wav", "imported.tap", 0.25)
+# -> {"ok", "error", "decoder", "sample_rate", "samples_decoded",
+#     "signal_edges", "blocks_recognized", "blocks_written",
+#     "output_path", "warnings"}
+```
+
+Playback `state` is one of `"idle"`, `"playing"`, `"paused"`, `"ended"` — identical strings across CLI, WebAPI, Lua and Python.
+
+### Feature Management
+
+`feature_list()` enumerates every registered runtime feature dynamically (the same list the CLI `feature` table and the WebAPI `/features` endpoint return), keyed by feature id:
+
+```python
+features = emu.feature_list()
+# {"sound": True, "fasttape": True, "turbotape": True, "calltrace": False, ...}
+
+emu.feature_set("fasttape", False)     # same switch as `setting fast_tape off`
+print(emu.feature_get("turbotape"))    # True
+```
+
 ### Z80 CPU Class
 
 ```python

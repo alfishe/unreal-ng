@@ -18,7 +18,7 @@
    ┌────────┐    ┌─────────┐    ┌────────┐    ┌─────────┐
    │  CLI   │    │ WebAPI  │    │  Lua   │    │ Python  │
    │ telnet │    │ Drogon  │    │  sol2  │    │pybind11 │
-   │ :3333  │    │ :8090   │    │embedded│    │embedded │
+   │ :8765  │    │ :8090   │    │embedded│    │embedded │
    └────────┘    └─────────┘    └────────┘    └─────────┘
 ```
 
@@ -63,7 +63,7 @@ Interactive interfaces for direct user interaction.
 
 | Module | Port | Purpose | Users |
 |--------|------|---------|-------|
-| CLI/telnet | 3333 | Interactive debugging | Developers |
+| CLI/telnet | 8765 | Interactive debugging | Developers |
 | WebAPI/REST | 8090 | HTTP automation | Scripts, CI |
 | WebSocket | 8090 | Real-time events | Web UIs |
 

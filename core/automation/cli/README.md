@@ -5,9 +5,9 @@ Command-line interface for controlling the emulator via TCP socket. Provides a s
 ## Connection
 
 ```bash
-# Default port: 3333
-telnet localhost 3333
-nc localhost 3333
+# Default port: 8765
+telnet localhost 8765
+nc localhost 8765
 ```
 
 ## Command Reference

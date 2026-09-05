@@ -103,7 +103,7 @@ Last updated: 2026-08-26
 | 4.2.2 | `version` command | TODO | | |
 | 4.3.1 | CLI atomicity (low priority) | TODO | | WebAPI has /batch |
 | 4.4.1 | Merge CLI/automation docs | TODO | | |
-| 4.4.2 | Fix port discrepancy | TODO | | 8765 vs 3333 |
+| 4.4.2 | Fix port discrepancy | DONE | 2026-09-05 | docs unified on 8765 |
 
 ## Status Legend
 

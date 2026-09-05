@@ -15,8 +15,8 @@ graph TB
     end
     
     subgraph "Transport Layer"
-        TCLI[TCP CLI Server :3333]
-        WEB[HTTP + WebSocket :8080]
+        TCLI[TCP CLI Server :8765]
+        WEB[HTTP + WebSocket :8090]
         EMB[Embedded Interpreters]
     end
     
@@ -46,11 +46,11 @@ graph TB
 
 ### Connection
 ```bash
-# Connect via telnet (port 3333)
-telnet localhost 3333
+# Connect via telnet (port 8765)
+telnet localhost 8765
 
 # Or use netcat
-nc localhost 3333
+nc localhost 8765
 ```
 
 ### Command Reference
@@ -128,7 +128,23 @@ symbols info            # Show symbol count
 open <file>             # Auto-detect and load file
 snapshot save <file>    # Save snapshot (.sna/.z80)
 snapshot info           # Current snapshot status
-tape load/eject/play    # Tape control
+
+# Tape transport (see command-interface.md §10 for the full tables)
+tape load <file>        # Load tape image (.tap/.tzx/.csw)
+tape eject              # Eject: stop playback, drop image and catalog
+tape play               # Start at cursor; resume in place when paused
+tape pause              # Freeze mid-block; next play resumes there
+tape stop               # Terminal stop (invalidates the image)
+tape rewind             # Rewind to block 0 (image kept)
+tape seek <index>       # Position head at catalog block <index>
+tape pos                # One-line playback position
+tape blocks             # Block catalog table
+tape info               # Detailed tape status (format, plan, features)
+
+# Tape audio bridge (pure file conversions, no emulator state)
+tape render <img> [--blocks N|N-M] [--rate N] [--amp X] [--invert] -o out.wav|out.flac
+tape import <snd> [--target auto|tzx|tap] [--hysteresis X] -o out.tzx|out.tap
+
 disk insert/eject       # Disk control
 disk catalog            # List TR-DOS directory
 ```
@@ -152,7 +168,7 @@ videowall singlesync off        # Disable single sync mode (independent tile ren
 
 ### Base URL
 ```
-http://localhost:8080/api
+http://localhost:8090/api
 ```
 
 ### OpenAPI/Swagger
@@ -215,6 +231,24 @@ Interactive documentation available at `/api/swagger`
 | POST | `/emulators/{id}/open` | Load file |
 | POST | `/emulators/{id}/snapshot/save` | Save snapshot |
 | GET | `/emulators/{id}/snapshot/info` | Snapshot status |
+
+#### Tape Control
+Full parity with the CLI `tape` commands, the Lua `tape_*` functions and the Python `tape_*` methods (identical states and catalog indices). Scopes under `/api/v1/emulator/{id}/tape` — see [webapi-interface.md § Tape Control](../emulator/design/control-interfaces/webapi-interface.md#tape-control).
+
+| Method | Endpoint | Description |
+|:-------|:---------|:------------|
+| POST | `/api/v1/emulator/{id}/tape/load` | Load tape image (body `path`) |
+| POST | `/api/v1/emulator/{id}/tape/eject` | Eject: drop image and catalog |
+| POST | `/api/v1/emulator/{id}/tape/play` | Start / resume in place |
+| POST | `/api/v1/emulator/{id}/tape/pause` | Freeze mid-block |
+| POST | `/api/v1/emulator/{id}/tape/stop` | Terminal stop |
+| POST | `/api/v1/emulator/{id}/tape/rewind` | Rewind to block 0 (image kept) |
+| POST | `/api/v1/emulator/{id}/tape/seek` | Seek to block (body `block`) |
+| GET | `/api/v1/emulator/{id}/tape` | Full snapshot: state, position, plan, blocks |
+| GET | `/api/v1/emulator/{id}/tape/info` | Alias of `GET /tape` |
+| GET | `/api/v1/emulator/{id}/tape/blocks/{index}` | Block descriptor + hex preview |
+| POST | `/api/v1/emulator/{id}/tape/render` | Tape image → WAV/FLAC |
+| POST | `/api/v1/emulator/{id}/tape/import` | WAV/FLAC/MP3 → .tzx/.tap |
 
 #### VideoWall Control
 | Method | Endpoint | Description |
@@ -295,6 +329,26 @@ end
 - `sound` - AY chip control
 - `disk` - Disk operations
 - `videowall` - VideoWall control
+- `tape_*` / `feature_*` globals - Full tape transport, audio bridge and feature toggles (same surface as the CLI `tape` / `feature` commands)
+
+### Tape Control
+```lua
+-- Same names, states and catalog indices as `tape` / POST /tape/*
+tape_load("/path/to/game.tap")
+tape_seek(4)
+tape_play()
+local pos = tape_pos()      -- {state="playing", block=4, ...}
+local blocks = tape_blocks() -- array of per-block tables
+print(tape_info().total_seconds)
+
+-- Fast/turbo tape toggles (same switch as `setting fast_tape/turbo_tape`)
+feature_set("fasttape", true)
+feature_set("turbotape", true)
+
+-- Offline audio bridge (pure file conversions)
+tape_render("game.tzx", "out.wav", {first_block=2, last_block=5})
+tape_import("recording.wav", "imported.tzx")
+```
 
 ### VideoWall Control
 ```lua
@@ -345,6 +399,27 @@ def training_step(action):
 - Async event loop support (planned)
 - Virtual environment package management (planned)
 
+### Tape Control
+```python
+import emu
+
+# Same names, states and catalog indices as `tape` / POST /tape/*
+emu.tape_load("/path/to/game.tap")
+emu.tape_seek(4)
+emu.tape_play()
+pos = emu.tape_pos()       # {"state": "playing", "block": 4, ...}
+blocks = emu.tape_blocks() # list of per-block dicts
+print(emu.tape_info()["total_seconds"])
+
+# Fast/turbo tape toggles (same switch as `setting fast_tape/turbo_tape`)
+emu.feature_set("fasttape", True)
+emu.feature_set("turbotape", True)
+
+# Offline audio bridge (pure file conversions)
+emu.tape_render("game.tzx", "out.wav", options={"first_block": 2, "last_block": 5})
+emu.tape_import("recording.wav", "imported.tzx")
+```
+
 ### VideoWall Control
 ```python
 import videowall
@@ -374,6 +449,9 @@ videowall.set_single_sync(False)
 | Breakpoints | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Labels/Symbols | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Load/Save | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Tape Transport (load/play/pause/seek/…) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Tape Inspection (pos/blocks/info) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Tape Audio Bridge (render/import) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Feature Toggle | ✅ | ✅ | ✅ | ✅ | 🔶 |
 | VideoWall Control | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Keyboard Input | ❌ | ✅ | ✅ | ✅ | ❌ |

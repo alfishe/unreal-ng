@@ -2096,6 +2096,7 @@ Commands to configure emulator instance behavior and performance characteristics
 | `setting list` | `settings` | | Display all emulator settings with their current values | ✅ Implemented |
 | `setting <name> <value>` | `set` | `<setting-name> <value>` | Change a specific setting value | ✅ Implemented |
 | `setting fast_tape <on\|off>` | | `on` or `off` | Enable/disable fast tape loading. When enabled, tape operations execute at maximum speed without audio emulation, significantly reducing loading times. | ✅ Implemented |
+| `setting turbo_tape <on\|off>` | | `on` or `off` | Enable/disable turbo tape loading (feature `turbotape`). While a tape signal plays out, the emulator runs at warp speed — custom loaders included. Composes with `fast_tape`: trapped blocks load instantly, the remaining signal path runs at warp. | ✅ Implemented |
 | `setting fast_disk <on\|off>` | | `on` or `off` | Enable/disable fast disk loading. When enabled, FDD operations bypass timing delays for near-instant disk access. | 🔮 Planned |
 | `setting turbo_fdc <on\|off>` | | `on` or `off` | Enable/disable turbo FDC mode. Accelerates WD1793 FDC operations for faster disk I/O. | 🔮 Planned |
 | `setting max_cpu_speed <value>` | | `<multiplier>` or `unlimited` | Set maximum CPU speed multiplier. Values: `1` (3.5MHz), `2` (7MHz), `4` (14MHz), `8` (28MHz), `16` (56MHz), or `unlimited`. Affects execution speed for loading and intensive operations. | 🔮 Planned |
@@ -2107,7 +2108,8 @@ Commands to configure emulator instance behavior and performance characteristics
 **Setting Categories**:
 
 1. **I/O Acceleration Settings**:
-   - `fast_tape`: Bypasses audio emulation and timing for tape operations
+   - `fast_tape`: Bypasses audio emulation and timing for tape operations (feature `fasttape`)
+   - `turbo_tape`: Warps emulation speed while a tape signal path plays out, custom loaders included (feature `turbotape`)
    - `fast_disk`: Accelerates FDD seek times and data transfer
    - `turbo_fdc`: Removes WD1793 command delays
 
@@ -2126,6 +2128,7 @@ Commands to configure emulator instance behavior and performance characteristics
 | Setting | Type | Default | Valid Values | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `fast_tape` | Boolean | `on` | `on`, `off` | Fast tape loading mode (backed by the `fasttape` runtime feature) |
+| `turbo_tape` | Boolean | `on` | `on`, `off` | Turbo tape loading mode (backed by the `turbotape` runtime feature) |
 | `fast_disk` | Boolean | `off` | `on`, `off` | Fast disk access mode |
 | `turbo_fdc` | Boolean | `off` | `on`, `off` | Turbo FDC operations |
 | `max_cpu_speed` | Integer/String | `1` | `1`, `2`, `4`, `8`, `16`, `unlimited` | CPU speed multiplier |
@@ -2356,6 +2359,46 @@ Commands specifically for managing the multi-emulator videowall environment.
 | :--- | :--- | :--- | :--- | :--- |
 | `videowall singlesync <on\|off> [id]` | | `on` or `off`, `[id]` (optional) | Toggles the Single Sync Mode which locks an emulator tile into a synchronous rendering loop for 100% accurate recording without performance drops. | ✅ Implemented |
 
+### 10. Tape Control Commands
+
+Full tape transport, inspection and the offline audio bridge. Playback subcommands operate on the selected emulator instance; `render`/`import` are pure path-to-path conversions that never touch emulator state. The identical surface is exposed by the WebAPI (`/tape/*` endpoints), Lua (`tape_*` functions) and Python (`tape_*` methods) — see [webapi-interface.md](./webapi-interface.md), [lua-interface.md](./lua-interface.md) and [python-interface.md](./python-interface.md).
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `tape load <file>` | | `<filename>` | Load tape image (.tap, .tzx, .csw, …) into the virtual tape deck. | ✅ Implemented |
+| `tape eject` | | | Eject the tape: playback stops, image and block catalog are dropped. | ✅ Implemented |
+| `tape play` | | | Start playback at the consumption cursor, or resume in place after `tape pause`. | ✅ Implemented |
+| `tape pause` | | | Freeze playback mid-block; the next `tape play` resumes exactly there. Idempotent when already paused; error when not playing. | ✅ Implemented |
+| `tape stop` | | | Terminal stop: playback stops and the loaded image is invalidated. | ✅ Implemented |
+| `tape rewind` | | | Rewind to block 0 keeping the image and block catalog loaded. | ✅ Implemented |
+| `tape seek <index>` | | `<block-index>` | Position the tape head at catalog block `<index>` (the same indices `tape blocks` shows). | ✅ Implemented |
+| `tape pos` | | | One-line playback position: state, block, elapsed seconds, consumption cursor. | ✅ Implemented |
+| `tape blocks` | | | Block catalog table: index, kind, name, size, duration, fast-load eligibility. | ✅ Implemented |
+| `tape info` | | | Detailed status: format, position, block count, total duration, fast/turbo tape feature state, fast-load plan summary. | ✅ Implemented |
+| `tape render <image> [opts] -o <out>` | | `--blocks N\|N-M`, `--rate N`, `--amp X`, `--invert` | Render a tape image to WAV/FLAC audio with the engine's own pulse timing (`.wav` native, `.flac` via ffmpeg). | ✅ Implemented |
+| `tape import <audio> [opts] -o <out>` | | `--target auto\|tzx\|tap`, `--hysteresis X` | Import WAV/FLAC/MP3 as a .tzx/.tap image (decode + pulse extraction + recognition; `.tap` saves are gated to ROM-standard content). | ✅ Implemented |
+
+**Playback state machine**: `idle` → `playing` → (`paused` → `playing`) → `ended`. The lowercase state strings are identical across all four surfaces (`tape pos`, GET `/tape`, `tape_pos()` in Lua and Python).
+
+**Feature cross-references** (see also §7 settings):
+- `setting fast_tape on|off` (feature `fasttape`): ROM loader trap — eligible header/data pairs load instantly.
+- `setting turbo_tape on|off` (feature `turbotape`): while a tape signal path plays out, the emulator runs at warp speed, custom loaders included. The two compose: trapped blocks load instantly, the remaining signal path runs at warp.
+
+**Examples**:
+
+```
+tape load /path/to/game.tap
+tape blocks
+tape seek 4
+tape play
+tape pos
+tape pause
+tape play
+tape rewind
+tape render game.tzx --blocks 2-5 --rate 48000 -o game.wav
+tape import recording.wav --target tzx -o imported.tzx
+```
+
 ## Future Capabilities
 
 The following commands and interfaces are planned for future implementation. This section documents the roadmap for expanding the ECI to support more advanced debugging, analysis, and automation workflows.
@@ -2501,15 +2544,11 @@ key tap enter
 
 Enhanced control over peripheral media devices.
 
+> [!NOTE]
+> All tape transport, inspection and audio-bridge commands are **implemented** — see [§10. Tape Control Commands](#10-tape-control-commands).
+
 | Command | Arguments | Description | Status |
 | :--- | :--- | :--- | :--- |
-| `tape load <file>` | `<filename>` | Insert tape file (.tap, .tzx, .csw) into virtual tape drive. | 🔧 Partially implemented via `open` |
-| `tape eject` | | Eject current tape. | 🔮 Planned |
-| `tape play` | | Start tape playback (if paused). | 🔮 Planned |
-| `tape stop` | | Stop tape playback. | 🔮 Planned |
-| `tape rewind` | | Rewind tape to beginning. | 🔮 Planned |
-| `tape position <block>` | `<block-number>` | Seek to specific tape block. | 🔮 Planned |
-| `tape info` | | Show tape information (format, blocks, current position). | 🔮 Planned |
 | `disk insert <drive> <file>` | `<A\|B\|C\|D> <filename>` | Insert disk image into specified drive. Supports .trd, .scl, .fdi, .udi formats. | 🔧 Partially implemented via `open` |
 | `disk eject <drive>` | `<A\|B\|C\|D>` | Eject disk from drive. | 🔮 Planned |
 | `disk info <drive>` | `<A\|B\|C\|D>` | Show disk information (format, tracks, sectors, files). | 🔮 Planned |
@@ -3644,7 +3683,7 @@ Lua called from Python
 
 ```bash
 # Execute Python code via REST
-curl -X POST http://localhost:8080/api/v1/python/exec \
+curl -X POST http://localhost:8090/api/v1/python/exec \
   -H "Content-Type: application/json" \
   -d '{"code": "print(\"Hello from WebAPI\")"}'
 
@@ -3652,15 +3691,15 @@ curl -X POST http://localhost:8080/api/v1/python/exec \
 # {"success": true, "result": "Hello from WebAPI\n", "executionTime": 0.012}
 
 # Load Python file
-curl -X POST http://localhost:8080/api/v1/python/file \
+curl -X POST http://localhost:8090/api/v1/python/file \
   -H "Content-Type: application/json" \
   -d '{"path": "/path/to/test.py"}'
 
 # Get status
-curl http://localhost:8080/api/v1/python/status
+curl http://localhost:8090/api/v1/python/status
 
 # Stop execution
-curl -X POST http://localhost:8080/api/v1/python/stop
+curl -X POST http://localhost:8090/api/v1/python/stop
 ```
 
 ### 7.5 Security Considerations

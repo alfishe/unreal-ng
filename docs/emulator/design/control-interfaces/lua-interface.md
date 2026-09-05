@@ -98,6 +98,76 @@ time = os.time()
 videowall_singlesync(true, "emulator-id")
 ```
 
+### Tape Operations
+
+Global functions mirroring the CLI `tape` commands and the WebAPI `/tape/*` endpoints one-to-one (same names, states and catalog indices).
+
+```lua
+-- Load / eject
+local ok = tape_load("/path/to/game.tap")   -- Load tape image (.tap/.tzx/.csw)
+local ok = tape_eject()                     -- Stop playback, drop image and catalog
+
+-- Transport (same semantics as `tape play|pause|stop|rewind|seek`)
+tape_play()      -- start at consumption cursor; resumes in place when paused
+tape_pause()     -- freeze mid-block (idempotent); false when not playing
+tape_stop()      -- terminal stop: invalidates the loaded image
+tape_rewind()    -- rewind to block 0, image kept
+tape_seek(4)     -- position head at catalog block 4
+
+-- Inspection
+local inserted = tape_is_inserted()
+local path     = tape_get_path()
+local pos      = tape_pos()      -- nil without a tape, else
+                                 -- {state="playing", block=4, pulse=1234,
+                                 --  seconds_into_block=1.2,
+                                 --  block_total_seconds=4.5,
+                                 --  cursor=5, block_count=12}
+local blocks   = tape_blocks()   -- nil without a tape, else array of tables
+                                 -- {index, kind, name, type, declared_length,
+                                 --  param1, param2, paired_header_index,
+                                 --  paired_data_index,
+                                 --  speed={profile, baud}, checksum_valid,
+                                 --  checksum_applicable, seconds, raw_size,
+                                 --  playable, fast_load="yes"|"<reason>"}
+local info     = tape_info()     -- nil without a tape subsystem, else
+                                 -- {status, file, format, state, cursor,
+                                 --  block_count, total_seconds, fast_tape,
+                                 --  turbo_tape, fast_load={verdict,
+                                 --  eligible_blocks, accelerated_seconds,
+                                 --  total_seconds, summary}}
+
+-- Audio bridge (pure file conversions, no emulator state touched)
+local result = tape_render("game.tzx", "out.wav")  -- whole tape, 44100 Hz
+local result = tape_render("game.tzx", "out.flac", {
+    first_block = 2, last_block = 5, sample_rate = 48000,
+    amplitude = 0.8, invert_level = false })
+-- result = {ok, error, duration_sec, samples, blocks, encoder, warnings}
+
+local result = tape_import("recording.wav", "imported.tzx")   -- hysteresis optional
+local result = tape_import("recording.wav", "imported.tap", 0.25)
+-- result = {ok, error, decoder, sample_rate, samples_decoded,
+--          signal_edges, blocks_recognized, blocks_written,
+--          output_path, warnings}
+```
+
+Playback `state` is one of `"idle"`, `"playing"`, `"paused"`, `"ended"` — identical strings across CLI, WebAPI, Lua and Python.
+
+### Feature Management
+
+`feature_list()` enumerates every registered runtime feature dynamically (the same list the CLI `feature` table and the WebAPI `/features` endpoint return), keyed by feature id:
+
+```lua
+local features = feature_list()
+-- { sound = true, fasttape = true, turbotape = true, calltrace = false, ... }
+
+if features.turbotape == nil then
+    print("turbo tape not available in this build")
+end
+
+feature_set("fasttape", false)     -- same switch as `setting fast_tape off`
+print(feature_get("turbotape"))    -- true
+```
+
 ### Emulator Object
 
 ```lua
