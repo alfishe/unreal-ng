@@ -328,6 +328,13 @@ MainWindow::~MainWindow()
         delete logWindow;
     }
 
+    if (tapeManagerWindow != nullptr)
+    {
+        _dockingManager->removeDockableWindow(tapeManagerWindow);
+        tapeManagerWindow->hide();
+        delete tapeManagerWindow;
+    }
+
     if (deviceScreen != nullptr)
         delete deviceScreen;
 
@@ -435,6 +442,17 @@ void MainWindow::closeEvent(QCloseEvent* event)
         logWindow->hide();
         delete logWindow;
         logWindow = nullptr;
+    }
+
+    // Close Tape Manager: it is a parentless top-level, so it must be
+    // destroyed here or it keeps the application alive after the main
+    // window closes (quitOnLastWindowClosed still sees it open)
+    if (tapeManagerWindow)
+    {
+        _dockingManager->removeDockableWindow(tapeManagerWindow);
+        tapeManagerWindow->hide();
+        delete tapeManagerWindow;
+        tapeManagerWindow = nullptr;
     }
 
     // Shutdown device screen
