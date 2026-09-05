@@ -31,7 +31,7 @@ public:
         ColKind,         // Header / Data / Custom / Tone / Pulse / Control
         ColHeader,       // "YES" (paired header) / "no" (headerless) / "—"
         ColSpeed,        // "Std 1365 bps" / "Turbo 3465 bps" / "Pulse"
-        ColFast,         // "⚡" trap-shaped / "·" signal path
+        ColFast,         // "⚡" trap-served / "⏩" signal at warp / "·" signal real-time
         ColName,         // header-interpreted name (or the paired header's — r8)
         ColType,         // Program / Code / arrays (or the paired header's — r8)
         ColLength,       // rawSize
@@ -54,6 +54,11 @@ public:
     /// gets the "▸" play-head marker, bold text and a highlight background.
     void UpdatePosition(TapePlaybackState state, const std::optional<TapePosition>& position, size_t cursor);
 
+    /// Turbo-tape feature toggle (per-tick): flips the FAST column's signal
+    /// path rows between "⏩" (warp) and "·" (real-time). No-op repaint when
+    /// unchanged; survives Rebuild() until the next call.
+    void SetTurboTapeEnabled(bool enabled);
+
     /// Descriptor backing `row` (nullptr when out of range) — details-pane input.
     const TapeBlockDescriptor* descriptorAt(int row) const;
 
@@ -71,6 +76,7 @@ private:
 
     std::vector<TapeBlockDescriptor> _catalog;
     TapeFastLoadPlan _plan;
+    bool _turboTapeEnabled = false;
     TapePlaybackState _state = TapePlaybackState::Idle;
     std::optional<TapePosition> _position;
     size_t _cursor = 0;

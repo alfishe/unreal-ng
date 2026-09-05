@@ -178,6 +178,7 @@ static Json::Value buildTapeSnapshot(EmulatorContext* context)
 
     FeatureManager* featureManager = context->pFeatureManager;
     ret["fast_tape"] = featureManager && featureManager->isEnabled(Features::kFastTape);
+    ret["turbo_tape"] = featureManager && featureManager->isEnabled(Features::kTurboTape);
 
     Json::Value& fastLoad = ret["fast_load"];
     fastLoad["verdict"] = getFastLoadVerdictName(plan.verdict);

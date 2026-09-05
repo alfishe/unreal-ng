@@ -36,6 +36,7 @@ struct TapeUiSnapshot
     std::optional<TapePosition> position;     // nullopt: no image loaded
     size_t cursor = 0;                        // next block to deliver (signal or trap)
     bool fastTapeEnabled = false;             // kFastTape feature toggle (advisory badge)
+    bool turboTapeEnabled = false;            // kTurboTape feature toggle (FAST column warp marker)
 
     // ---- generation-scoped fields (valid when catalogChanged) ----
     uint64_t catalogGeneration = 0;           // bump on image (re)load / image drop

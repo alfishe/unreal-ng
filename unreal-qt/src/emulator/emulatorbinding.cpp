@@ -437,6 +437,7 @@ bool EmulatorBinding::produceTapeSnapshot(TapeUiSnapshot& out)
     out.position = tape->GetPosition();
     out.cursor = tape->GetConsumptionCursor();
     out.fastTapeEnabled = context->pFeatureManager && context->pFeatureManager->isEnabled(Features::kFastTape);
+    out.turboTapeEnabled = context->pFeatureManager && context->pFeatureManager->isEnabled(Features::kTurboTape);
 
     if (generationChanged)
     {

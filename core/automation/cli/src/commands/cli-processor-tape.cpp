@@ -617,6 +617,9 @@ void CLIProcessor::HandleTapeInfo(const ClientSession& session, std::shared_ptr<
     ss << "Fast tape: " << (context->pFeatureManager && context->pFeatureManager->isEnabled(Features::kFastTape)
                                 ? "on"
                                 : "off") << NEWLINE;
+    ss << "Turbo tape: " << (context->pFeatureManager && context->pFeatureManager->isEnabled(Features::kTurboTape)
+                                ? "on"
+                                : "off") << NEWLINE;
     ss << plan.summary << NEWLINE;
 
     session.SendResponse(ss.str());

@@ -483,6 +483,17 @@ void MenuManager::createMachineMenu()
     _tapeTrapsAction->setStatusTip(tr("Serve vanilla ROM tape loads instantly (custom loaders use signal emulation)"));
     _tapeTrapsAction->setCheckable(true);
     connect(_tapeTrapsAction, &QAction::triggered, this, &MenuManager::tapeTrapsToggled);
+
+    // Turbo tape loading (design: docs/inprogress/2026-09-04-turbo-tape-loading).
+    // While the tape signal path plays, the machine runs unthrottled (turbo
+    // mode) so blocks the trap cannot serve — headerless, custom-timed, pulse
+    // streams — still load at warp speed. Warp ends with the read-gap
+    // watchdog, end-of-tape or any stop. Checked state mirrors the runtime
+    // 'turbotape' feature (synced in updateMenuStates).
+    _turboTapeAction = _machineMenu->addAction(tr("Tur&bo Tape Loading"));
+    _turboTapeAction->setStatusTip(tr("Run at warp speed while a tape signal is playing (custom loaders included)"));
+    _turboTapeAction->setCheckable(true);
+    connect(_turboTapeAction, &QAction::triggered, this, &MenuManager::turboTapeToggled);
 }
 
 void MenuManager::updateMachineModelSelection(std::shared_ptr<Emulator> activeEmulator)
@@ -850,6 +861,7 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         EmulatorContext* context = activeEmulator->GetContext();
         FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
         _tapeTrapsAction->setChecked(featureManager && featureManager->isEnabled(Features::kFastTape));
+        _turboTapeAction->setChecked(featureManager && featureManager->isEnabled(Features::kTurboTape));
     }
 
     // Update machine model selection

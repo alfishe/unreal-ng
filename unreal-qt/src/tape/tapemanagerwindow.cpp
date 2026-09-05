@@ -343,6 +343,7 @@ void TapeManagerWindow::rebuildFromSnapshot(const TapeUiSnapshot& snapshot)
             _blockCountLabel->setText(tr("0 blocks"));
         }
     }
+    _model->SetTurboTapeEnabled(snapshot.turboTapeEnabled);
     _model->UpdatePosition(snapshot.state, snapshot.position, snapshot.cursor);
 }
 
@@ -492,6 +493,12 @@ void TapeManagerWindow::updateBadge()
     if (!snapshot.fastTapeEnabled)
     {
         text += tr(" · trap disabled (Machine → Fast tape loading)");
+    }
+    // Turbo tape warps the signal path the plan counted as real-time, so the
+    // verdict line alone would understate the acceleration (hybrid loads)
+    if (snapshot.turboTapeEnabled)
+    {
+        text += tr(" · ⏩ turbo tape: signal path at warp");
     }
 
     _badgeLabel->setText(text);

@@ -47,6 +47,7 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
 
         ss << "I/O Acceleration:" << NEWLINE;
         ss << "  fast_tape     = " << (featureManager && featureManager->isEnabled(Features::kFastTape) ? "on" : "off") << "  (Fast tape loading)" << NEWLINE;
+        ss << "  turbo_tape    = " << (featureManager && featureManager->isEnabled(Features::kTurboTape) ? "on" : "off") << "  (Turbo tape loading)" << NEWLINE;
         ss << "  fast_disk     = " << (config.wd93_nodelay ? "on" : "off") << "  (Fast disk I/O - no WD1793 delays)"
            << NEWLINE;
         ss << NEWLINE;
@@ -90,6 +91,7 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
 
         ss << "I/O Acceleration:" << NEWLINE;
         ss << "  fast_tape     = " << (featureManager && featureManager->isEnabled(Features::kFastTape) ? "on" : "off") << "  (Fast tape loading)" << NEWLINE;
+        ss << "  turbo_tape    = " << (featureManager && featureManager->isEnabled(Features::kTurboTape) ? "on" : "off") << "  (Turbo tape loading)" << NEWLINE;
         ss << "  fast_disk     = " << (config.wd93_nodelay ? "on" : "off") << "  (Fast disk I/O - no WD1793 delays)"
            << NEWLINE;
         ss << NEWLINE;
@@ -127,6 +129,11 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         {
             ss << "fast_tape = " << (featureManager && featureManager->isEnabled(Features::kFastTape) ? "on" : "off") << NEWLINE;
             ss << "Description: Fast tape loading (bypasses audio emulation)" << NEWLINE;
+        }
+        else if (settingName == "turbo_tape")
+        {
+            ss << "turbo_tape = " << (featureManager && featureManager->isEnabled(Features::kTurboTape) ? "on" : "off") << NEWLINE;
+            ss << "Description: Turbo tape loading (warp speed while a tape signal plays, custom loaders included)" << NEWLINE;
         }
         else if (settingName == "fast_disk")
         {
@@ -231,6 +238,18 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         {
             ss << "Setting changed: fast_tape = " << (boolValue ? "on" : "off") << NEWLINE;
             ss << "Fast tape loading is now " << (boolValue ? "enabled" : "disabled") << NEWLINE;
+        }
+        else
+        {
+            ss << "Error: FeatureManager not available for this emulator" << NEWLINE;
+        }
+    }
+    else if (settingName == "turbo_tape")
+    {
+        if (featureManager && featureManager->setFeature(Features::kTurboTape, boolValue))
+        {
+            ss << "Setting changed: turbo_tape = " << (boolValue ? "on" : "off") << NEWLINE;
+            ss << "Turbo tape loading is now " << (boolValue ? "enabled" : "disabled") << NEWLINE;
         }
         else
         {

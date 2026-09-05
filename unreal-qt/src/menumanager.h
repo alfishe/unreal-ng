@@ -90,6 +90,7 @@ signals:
     // Machine signals
     void machineModelChangeRequested(const QString& modelShortName);
     void tapeTrapsToggled(bool enabled);
+    void turboTapeToggled(bool enabled);
 
     // Tools signals
     void intParametersRequested();
@@ -184,6 +185,7 @@ private:
     std::vector<QAction*> _machineModelActions;
     QString _currentModelShortName;
     QAction* _tapeTrapsAction;
+    QAction* _turboTapeAction;
 
     // Debug Menu Actions
     QAction* _debugModeAction;

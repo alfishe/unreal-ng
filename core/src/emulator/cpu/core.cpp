@@ -7,6 +7,7 @@
 #include "common/modulelogger.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/tape/tapefastload.h"
+#include "emulator/io/tape/tapeturbocontroller.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/videocontroller.h"
 #include "emulator/video/zx/screenzx.h"
@@ -164,6 +165,25 @@ bool Core::Init()
     }
 
     /// endregion </Fast tape loading>
+
+    /// region <Turbo tape loading>
+
+    if (result)
+    {
+        result = false;
+
+        // Instantiate turbo tape loading controller (auto-warp while the
+        // signal path plays — design 2026-09-04-turbo-tape-loading §6.1)
+        _tapeTurboController = new TapeTurboController(_context, *_tape);
+        if (_tapeTurboController)
+        {
+            _context->pTapeTurboController = _tapeTurboController;
+
+            result = true;
+        }
+    }
+
+    /// endregion </Turbo tape loading>
 
     /// region <BetaDisk128 Interface>
 
@@ -423,6 +443,13 @@ void Core::Release()
     {
         delete _tapeFastLoad;
         _tapeFastLoad = nullptr;
+    }
+
+    _context->pTapeTurboController = nullptr;
+    if (_tapeTurboController != nullptr)
+    {
+        delete _tapeTurboController;
+        _tapeTurboController = nullptr;
     }
 
     _context->pTape = nullptr;

@@ -15,6 +15,7 @@
 #include "emulator.h"
 #include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/tape/tapeturbocontroller.h"
 #include "stdafx.h"
 
 MainLoop::MainLoop(EmulatorContext* context)
@@ -356,6 +357,21 @@ void MainLoop::OnFrameEnd()
         catch (const std::exception& e)
         {
             MLOGERROR("Tape::handleFrameEnd failed: %s", e.what());
+        }
+    }
+
+    // Turbo tape loading (design 2026-09-04-turbo-tape-loading §6.1): tick
+    // right after the tape's own frame end so watchdog freezes and natural
+    // end-of-tape are observed in the same frame they happen
+    if (_context->pTapeTurboController)
+    {
+        try
+        {
+            _context->pTapeTurboController->handleFrameEnd();
+        }
+        catch (const std::exception& e)
+        {
+            MLOGERROR("TapeTurboController::handleFrameEnd failed: %s", e.what());
         }
     }
     if (_context->pBetaDisk)

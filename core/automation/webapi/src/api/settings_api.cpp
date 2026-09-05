@@ -65,6 +65,7 @@ void EmulatorAPI::getSettings(const HttpRequestPtr& req, std::function<void(cons
     FeatureManager* featureManager = context->pFeatureManager;
     Json::Value io_accel(Json::objectValue);
     io_accel["fast_tape"] = featureManager && featureManager->isEnabled(Features::kFastTape);
+    io_accel["turbo_tape"] = featureManager && featureManager->isEnabled(Features::kTurboTape);
     io_accel["fast_disk"] = config.wd93_nodelay;
     settings["io_acceleration"] = io_accel;
 
@@ -126,6 +127,13 @@ void EmulatorAPI::getSetting(const HttpRequestPtr& req, std::function<void(const
         ret["name"] = "fast_tape";
         ret["value"] = featureManager && featureManager->isEnabled(Features::kFastTape);
         ret["description"] = "Fast tape loading (bypasses audio emulation)";
+    }
+    else if (name == "turbo_tape")
+    {
+        FeatureManager* featureManager = context->pFeatureManager;
+        ret["name"] = "turbo_tape";
+        ret["value"] = featureManager && featureManager->isEnabled(Features::kTurboTape);
+        ret["description"] = "Turbo tape loading (warp speed while a tape signal plays, custom loaders included)";
     }
     else if (name == "fast_disk")
     {
@@ -231,6 +239,17 @@ void EmulatorAPI::setSetting(const HttpRequestPtr& req, std::function<void(const
         ret["name"] = "fast_tape";
         ret["value"] = boolValue;
         ret["message"] = std::string("Fast tape loading is now ") + (boolValue ? "enabled" : "disabled");
+    }
+    else if (name == "turbo_tape")
+    {
+        FeatureManager* featureManager = context->pFeatureManager;
+        if (featureManager)
+        {
+            featureManager->setFeature(Features::kTurboTape, boolValue);
+        }
+        ret["name"] = "turbo_tape";
+        ret["value"] = boolValue;
+        ret["message"] = std::string("Turbo tape loading is now ") + (boolValue ? "enabled" : "disabled");
     }
     else if (name == "fast_disk")
     {

@@ -43,6 +43,19 @@ QString RejectPhrase(FastLoadRejectEnum reason)
     }
 }
 
+/// Second FAST-column tooltip line for signal-path rows while the turbo-tape
+/// feature is engaged (empty for trap-served rows — the trap never plays
+/// them — and for unplayable blocks, which no speed can deliver).
+QString TurboTapePhrase(FastLoadRejectEnum reason, bool turboTapeEnabled)
+{
+    if (!turboTapeEnabled || reason == FastLoadRejectEnum::None ||
+        reason == FastLoadRejectEnum::Unplayable)
+    {
+        return QString();
+    }
+    return QStringLiteral("\nTurbo tape: yes — signal path, plays out at warp");
+}
+
 QString KindDisplay(TapeBlockKindEnum kind)
 {
     switch (kind)
@@ -127,6 +140,23 @@ bool TapeBlockTableModel::isConsumedRow(int row) const
     // The cursor IS the in-flight block during signal playback; everything
     // strictly below it was delivered (signal or fast-load trap).
     return row >= 0 && static_cast<size_t>(row) < _cursor && row != inFlightRow();
+}
+
+void TapeBlockTableModel::SetTurboTapeEnabled(bool enabled)
+{
+    if (_turboTapeEnabled == enabled)
+    {
+        return;
+    }
+    _turboTapeEnabled = enabled;
+
+    // Only the FAST column reacts to the toggle (display glyph + tooltip)
+    if (_catalog.empty())
+    {
+        return;
+    }
+    emit dataChanged(index(0, ColFast), index(static_cast<int>(_catalog.size()) - 1, ColFast),
+                     { Qt::DisplayRole, Qt::ToolTipRole });
 }
 
 void TapeBlockTableModel::Rebuild(std::vector<TapeBlockDescriptor> catalog, const TapeFastLoadPlan& plan)
@@ -278,7 +308,8 @@ QVariant TapeBlockTableModel::data(const QModelIndex& index, int role) const
                     {
                         return QVariant();
                     }
-                    return QStringLiteral("Fast load: ") + RejectPhrase(reject.value());
+                    return QStringLiteral("Fast load: ") + RejectPhrase(reject.value()) +
+                           TurboTapePhrase(reject.value(), _turboTapeEnabled);
                 }
                 case ColHeader:
                 {
@@ -366,7 +397,19 @@ QVariant TapeBlockTableModel::data(const QModelIndex& index, int role) const
                     {
                         return QVariant();
                     }
-                    return (reject.value() == FastLoadRejectEnum::None) ? QStringLiteral("⚡") : QStringLiteral("·");
+                    if (reject.value() == FastLoadRejectEnum::None)
+                    {
+                        return QStringLiteral("⚡");
+                    }
+                    // Signal-path block: with turbo tape engaged it plays out
+                    // at warp instead of real-time — its own marker, distinct
+                    // from the trap's instant serve. Unplayable blocks never
+                    // reach the signal path at any speed.
+                    if (_turboTapeEnabled && reject.value() != FastLoadRejectEnum::Unplayable)
+                    {
+                        return QStringLiteral("⏩");
+                    }
+                    return QStringLiteral("·");
                 }
                 case ColName:
                 {

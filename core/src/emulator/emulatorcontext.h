@@ -25,6 +25,7 @@ class PortDecoder;
 class Screen;
 class UlaContention;
 class TapeFastLoad;
+class TapeTurboController;
 class SoundManager;
 #ifdef ENABLE_RECORDING
 class RecordingManager;
@@ -90,6 +91,9 @@ public:
 
     // Fast tape loading trap (LD-BYTES $0556 hook) instance
     TapeFastLoad* pTapeFastLoad = nullptr;
+
+    // Turbo tape loading controller (auto-warp while the signal path plays)
+    TapeTurboController* pTapeTurboController = nullptr;
 
     // BDI - Beta Disk Interface controller instance
     WD1793* pBetaDisk = nullptr;
