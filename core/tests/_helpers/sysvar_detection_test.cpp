@@ -166,7 +166,7 @@ TEST_F(SysVarDetection_Test, FRAMES_Increments)
     std::cout << "[INFO] FRAMES: " << frames1 << " -> " << frames2 << " (delta: " << delta << ")\n";
 }
 
-/// Overall performance test - boot and verify using only sysvars
+/// Overall test - boot and verify using only sysvars, check frame count not wall time
 TEST_F(SysVarDetection_Test, FastBoot_SysVarOnly)
 {
     if (!_emulator)
@@ -174,11 +174,11 @@ TEST_F(SysVarDetection_Test, FastBoot_SysVarOnly)
         GTEST_SKIP() << "Emulator initialization failed";
     }
 
-    auto t0 = std::chrono::steady_clock::now();
-
     // Boot using only sysvar detection (no OCR)
-    bool ready = EmulatorTestHelper::RunUntilBASICReady(_emulator, 500);
-    ASSERT_TRUE(ready) << "BASIC not ready, ERR_NR=0x" << std::hex
+    // 48K BASIC boot should complete in ~80-120 emulator frames
+    int framesRun = 0;
+    bool ready = EmulatorTestHelper::RunUntilBASICReady(_emulator, 200, &framesRun);
+    ASSERT_TRUE(ready) << "BASIC not ready within 200 frames, ERR_NR=0x" << std::hex
                        << (int)EmulatorTestHelper::ReadSysVar(_emulator, SystemVariables48k::ERR_NR);
 
     // Verify various sysvars (ERR_NR=0x00 = "OK", PROG typically at 0x5CCB)
@@ -186,11 +186,9 @@ TEST_F(SysVarDetection_Test, FastBoot_SysVarOnly)
     EXPECT_GE(EmulatorTestHelper::ReadSysVar16(_emulator, SystemVariables48k::PROG), 0x5C00);
     EXPECT_GE(EmulatorTestHelper::ReadSysVar16(_emulator, SystemVariables48k::VARS), 0x5C00);
 
-    auto t1 = std::chrono::steady_clock::now();
-    auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+    // Quality check: boot should complete in under 150 emulator frames (deterministic)
+    // This catches regressions without being wall-clock dependent
+    EXPECT_LT(framesRun, 150) << "Boot took " << framesRun << " frames - possible regression";
 
-    std::cout << "[INFO] Full boot + sysvar verification: " << totalMs << " ms\n";
-
-    // Should complete in under 100ms (excluding test setup)
-    EXPECT_LT(totalMs, 100) << "SysVar-only boot should be fast";
+    std::cout << "[INFO] Boot completed in " << framesRun << " emulator frames (turbo mode)\n";
 }

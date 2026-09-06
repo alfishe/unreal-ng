@@ -82,7 +82,8 @@ public:
     static bool IsBASICReady(Emulator* emulator);
 
     /// Run until BASIC is ready (no error state)
-    static bool RunUntilBASICReady(Emulator* emulator, int maxFrames);
+    /// @param framesRun Optional output: actual frames run before ready (for quality checks)
+    static bool RunUntilBASICReady(Emulator* emulator, int maxFrames, int* framesRun = nullptr);
 
     /// Read system variable from memory
     static uint8_t ReadSysVar(Emulator* emulator, uint16_t address);

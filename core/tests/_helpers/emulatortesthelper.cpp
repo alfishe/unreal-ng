@@ -233,19 +233,23 @@ bool EmulatorTestHelper::IsBASICReady(Emulator* emulator)
     return errNr == 0x00 && prog >= 0x5C00;
 }
 
-bool EmulatorTestHelper::RunUntilBASICReady(Emulator* emulator, int maxFrames)
+bool EmulatorTestHelper::RunUntilBASICReady(Emulator* emulator, int maxFrames, int* framesRun)
 {
     if (!emulator)
         return false;
 
     for (int i = 0; i < maxFrames; i++)
     {
-        emulator->RunFrame(true);
-        // Check every 5 frames (very fast check - just one memory read)
+        emulator->RunFrame(true);  // true = turbo mode (no frame rate limiting)
+        // Check every 5 frames (very fast check - just two memory reads)
         if ((i + 1) % 5 == 0 && IsBASICReady(emulator))
         {
+            if (framesRun)
+                *framesRun = i + 1;
             return true;
         }
     }
+    if (framesRun)
+        *framesRun = maxFrames;
     return false;
 }
