@@ -126,13 +126,27 @@ void Scroller_Boot_Test::BootAndRunScroller(bool via128KMenu)
     Memory* memory = _context->pMemory;
     std::string emulatorId = _emulator->GetId();
     auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(_context->pMainLoop);
+    std::string screen;
 
     // STEP 1: ROM init
+    _emulator->EnableTurboMode(false);
     for (int i = 0; i < 100; i++)
     {
         mainLoop->RunFrame();
+        if ((i + 1) % 10 == 0)
+        {
+            screen = ScreenOCR::ocrScreen(emulatorId);
+            if (via128KMenu ? screen.find("BASIC") != std::string::npos
+                            : (screen.find("1982") != std::string::npos || screen.find("Sinclair") != std::string::npos))
+            {
+                break;
+            }
+        }
     }
-    std::string screen = ScreenOCR::ocrScreen(emulatorId);
+    if (screen.empty())
+    {
+        screen = ScreenOCR::ocrScreen(emulatorId);
+    }
     std::cout << "[STEP 1] Screen after ROM init:\n" << FirstScreenLines(screen, 6) << "\n";
     if (via128KMenu)
     {
@@ -182,8 +196,19 @@ void Scroller_Boot_Test::BootAndRunScroller(bool via128KMenu)
     for (int i = 0; i < 200; i++)
     {
         mainLoop->RunFrame();
+        if ((i + 1) % 10 == 0)
+        {
+            screen = ScreenOCR::ocrScreen(emulatorId);
+            if (screen.find("A>") != std::string::npos)
+            {
+                break;
+            }
+        }
     }
-    screen = ScreenOCR::ocrScreen(emulatorId);
+    if (screen.empty())
+    {
+        screen = ScreenOCR::ocrScreen(emulatorId);
+    }
     std::cout << "[STEP 3] Screen after TR-DOS entry"
               << (via128KMenu ? " (128K menu path)" : " (48K USR 15616)") << ":\n"
               << FirstScreenLines(screen, 6) << "\n";
@@ -389,8 +414,19 @@ void Scroller_Boot_Test::BootAndRunScroller(bool via128KMenu)
     for (int i = 0; i < 100; i++)
     {
         mainLoop->RunFrame();
+        if ((i + 1) % 10 == 0)
+        {
+            screen = ScreenOCR::ocrScreen(emulatorId);
+            if (screen.find("A>") != std::string::npos)
+            {
+                break;
+            }
+        }
     }
-    screen = ScreenOCR::ocrScreen(emulatorId);
+    if (screen.empty())
+    {
+        screen = ScreenOCR::ocrScreen(emulatorId);
+    }
     std::cout << "[STEP 5a] Screen after CAT:\n" << screen << "\n";
 
     // STEP 5b: RUN the BASIC loader from TR-DOS (uppercase - TR-DOS command line is uppercase-oriented)
@@ -416,9 +452,7 @@ void Scroller_Boot_Test::BootAndRunScroller(bool via128KMenu)
         if (dep != lastDepack)
         {
             lastDepack = dep;
-            screen = ScreenOCR::ocrScreen(emulatorId);
-            std::cout << "[STEP 6] depack hits=" << dep << " screen: "
-                      << FirstScreenLines(screen, 2) << std::flush;
+            std::cout << "[STEP 6] depack hits=" << dep << std::endl;
         }
     }
 

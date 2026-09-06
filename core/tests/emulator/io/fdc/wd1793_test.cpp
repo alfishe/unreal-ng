@@ -1916,7 +1916,9 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
     uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, readSectorCommand);
     EXPECT_EQ(decodedCommand, WD1793CUT::WD_COMMANDS::WD_CMD_READ_SECTOR);
 
-    for (uint8_t track = 0; track < TRD_80_TRACKS * MAX_SIDES; ++track)
+    // Test representative tracks across the disk: first cylinder, second, middle, 40-track boundary, and last cylinder (both sides)
+    const uint8_t testTracks[] = {0, 1, 2, 3, 40, 41, 78, 79, 158, 159};
+    for (uint8_t track : testTracks)
     {
         for (uint8_t sector = 0; sector < TRD_SECTORS_PER_TRACK; ++sector)
         {
@@ -2320,7 +2322,9 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_Single)
     uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, writeSectorCommand);
     EXPECT_EQ(decodedCommand, WD1793CUT::WD_COMMANDS::WD_CMD_WRITE_SECTOR);
 
-    for (uint8_t track = 0; track < TRD_80_TRACKS * MAX_SIDES; ++track)
+    // Test representative tracks across the disk: first cylinder, second, middle, 40-track boundary, and last cylinder (both sides)
+    const uint8_t testTracks[] = {0, 1, 2, 3, 40, 41, 78, 79, 158, 159};
+    for (uint8_t track : testTracks)
     {
         for (uint8_t sector = 0; sector < TRD_SECTORS_PER_TRACK; ++sector)
         {

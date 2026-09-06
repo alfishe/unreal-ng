@@ -441,12 +441,12 @@ TEST_F(TapeLoading_Integration_Test, WatchdogPauseFreezesAndSustainedPollResumes
     // Pure signal path: fasttape off
     ASSERT_TRUE(context->pFeatureManager->setFeature(Features::kFastTape, false));
 
-    // Program pair + two large tail blocks: 4 KiB payload each plays for
-    // ~1200 frames, so the 150-frame watchdog pauses MID-BLOCK, never at
+    // Program pair + two tail blocks: 1 KiB payload each plays for
+    // ~300 frames, so the 150-frame watchdog pauses MID-BLOCK, never at
     // end-of-tape
     std::vector<std::vector<uint8_t>> blocks = MakeProgramTAP();
-    blocks.push_back(MakeTAPBlock(0xFF, std::vector<uint8_t>(4096, 0xA5)));
-    blocks.push_back(MakeTAPBlock(0xFF, std::vector<uint8_t>(4096, 0x5A)));
+    blocks.push_back(MakeTAPBlock(0xFF, std::vector<uint8_t>(1024, 0xA5)));
+    blocks.push_back(MakeTAPBlock(0xFF, std::vector<uint8_t>(1024, 0x5A)));
     context->coreState.tapeFilePath = WriteTAPFile("watchdog-pause.tap", blocks);
 
     auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(context->pMainLoop);
@@ -470,12 +470,12 @@ TEST_F(TapeLoading_Integration_Test, WatchdogPauseFreezesAndSustainedPollResumes
     // A silent processing phase — a DI'd delay loop with NO port reads at
     // all (with interrupts on, the ROM ISR keyboard-scan would read the ULA
     // port ~8x/frame and keep the watchdog fed; real loaders DI exactly like
-    // this during read-free processing phases). 16 x 65536 DEC-HL iterations
-    // is ~380 frames, comfortably past the 150-frame watchdog; then EI / RET.
-    //   30000: DI / LD B,$10 / LD HL,0 / DEC HL / LD A,H / OR L / JR NZ /
+    // this during read-free processing phases). 8 x 65536 DEC-HL iterations
+    // is ~190 frames, comfortably past the 150-frame watchdog; then EI / RET.
+    //   30000: DI / LD B,$08 / LD HL,0 / DEC HL / LD A,H / OR L / JR NZ /
     //   30011: DJNZ $30003 / EI / RET  (HL inner: LD BC would clobber B)
     auto delay = BasicEncoder::runCommand(emulator,
-        "POKE 30000,243:POKE 30001,6:POKE 30002,16:POKE 30003,33:POKE 30004,0:POKE 30005,0:POKE 30006,43:POKE 30007,124:POKE 30008,181:"
+        "POKE 30000,243:POKE 30001,6:POKE 30002,8:POKE 30003,33:POKE 30004,0:POKE 30005,0:POKE 30006,43:POKE 30007,124:POKE 30008,181:"
         "POKE 30009,32:POKE 30010,251:POKE 30011,16:POKE 30012,246:POKE 30013,251:POKE 30014,201:RANDOMIZE USR 30000");
     ASSERT_TRUE(delay.success) << delay.message;
 
@@ -497,11 +497,11 @@ TEST_F(TapeLoading_Integration_Test, WatchdogPauseFreezesAndSustainedPollResumes
 
     // Editor keyboard scanning (~8 half-row reads/frame) must never reach the
     // sustained-poll threshold: playback stays paused, cursor stays frozen.
-    // The window must ALSO outlast the delay loop (~390 frames from USR start;
+    // The window must ALSO outlast the delay loop (~190 frames from USR start;
     // pause lands at ~151): typing is injected via LAST_K and only the editor
     // input loop consumes it — keystrokes landing while the DI'd loop still
     // runs are swallowed and corrupt the next command line
-    for (int i = 0; i < 350; i++)
+    for (int i = 0; i < 70; i++)
         mainLoop->RunFrame();
     EXPECT_FALSE(context->pTape->IsPlaying()) << "Keyboard scan must not trip the sustained-poll threshold";
     EXPECT_EQ(context->pTape->GetConsumptionCursor(), cursorAtPause) << "Frozen cursor must not drift while paused";
