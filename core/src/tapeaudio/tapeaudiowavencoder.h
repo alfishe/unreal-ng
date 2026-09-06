@@ -4,7 +4,7 @@
 
 #include "3rdparty/tinywav/tinywav.h"
 #include "encoder_base.h"
-#include "encoder_config.h"
+#include "encoderconfig.h"
 
 #include <string>
 

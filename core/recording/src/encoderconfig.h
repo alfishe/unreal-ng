@@ -8,7 +8,8 @@
 enum class VideoCaptureRegion
 {
     MainScreen,  ///< 256×192 - ZX Spectrum main display area only (no border)
-    FullFrame    ///< Full framebuffer including border (size varies by model)
+    FullFrame,   ///< Full framebuffer including border (size varies by model)
+    Viewport     ///< Match current display viewport (for Pentagon overscan modes)
 };
 
 /// @brief Configuration for encoder initialization

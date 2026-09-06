@@ -339,18 +339,42 @@ TEST(NativeDSDConverterTest, PunchDoesNotBreakModulator)
 /// region <DSDEncoder end-to-end>
 
 #include "encoders/dsd/dsd_encoder.h"
-#include "encoder_config.h"
+#include "encoderconfig.h"
 
 #include <chrono>
 #include <memory>
 #include <thread>
+
+#if defined(_WIN32)
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
+namespace
+{
+/// Per-process-unique temp directory base: parallel GTest shards run several
+/// instances of this binary at once and the fixtures below remove the whole
+/// directory on teardown, so a shared name lets one shard delete another's
+/// output files mid-test.
+std::filesystem::path DsdTestTempDir(const char* name)
+{
+#if defined(_WIN32)
+    const int pid = _getpid();
+#else
+    const int pid = getpid();
+#endif
+    return std::filesystem::temp_directory_path()
+         / (std::string(name) + "_" + std::to_string(pid));
+}
+}  // namespace
 
 class DSDEncoderE2ETest : public ::testing::Test
 {
 protected:
     void SetUp() override
     {
-        _tempDir = std::filesystem::temp_directory_path() / "dsd_encoder_e2e_test";
+        _tempDir = DsdTestTempDir("dsd_encoder_e2e_test");
         std::filesystem::create_directories(_tempDir);
     }
 
@@ -505,7 +529,7 @@ class DSFWriterTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        _tempDir = std::filesystem::temp_directory_path() / "dsf_writer_test";
+        _tempDir = DsdTestTempDir("dsf_writer_test");
         std::filesystem::create_directories(_tempDir);
     }
 
