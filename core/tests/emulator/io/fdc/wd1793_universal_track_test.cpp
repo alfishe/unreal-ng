@@ -337,16 +337,24 @@ TEST_F(WD1793_UniversalTrack_Test, ReadSector_Multi_StopsAtFirstMissingNumber)
 /// Record Not Found - the chip keeps searching for the absent ID
 TEST_F(WD1793_UniversalTrack_Test, ReadSector_Multi_MissingNumberInsideTrack_ReturnsRNF)
 {
-    DiskImage image(1, 1, Spec::plus3());  // sectors 1..9, number 3 left out
+    DiskImage image(1, 1, Spec::plus3());  // sectors 1..9, number 3 removed below
     DiskImage::Track* track = image.getTrack(0);
     for (uint8_t s = 0; s < 9; s++)
     {
-        if (s == 2)
-        {
-            continue;  // skip sector number 3 - a gap inside the track
-        }
         std::vector<uint8_t> data(512, static_cast<uint8_t>(0xA0 + s));
         track->writeSectorData(s, data.data(), data.size());
+    }
+
+    // Remove the ID of sector number 3 - a genuine gap inside the track
+    // (the ibm() format pre-fills every data field, so the entry itself must go)
+    auto& sectors = track->sectors();
+    for (auto it = sectors.begin(); it != sectors.end(); ++it)
+    {
+        if (it->number() == 3)
+        {
+            sectors.erase(it);
+            break;
+        }
     }
 
     WD1793CUT fdc(_context);
