@@ -697,7 +697,9 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
     // after the raster compare (MiSTer ula.sv: INT <= 1 on the next edge) and the CPU
     // samples INT only at end-of-instruction edges - an instruction boundary landing
     // exactly at int_start still sees INT inactive. Inclusive ">=" accepts 1T early,
-    // which shifts interrupt-locked raster effects by one locked state (doc 20).
+    // which shifts interrupt-locked raster effects by one T-state.
+    // Note: HALT quantizes INT detection to 4T boundaries; fine 2-pixel adjustments
+    // are handled in ScreenZX::SetBorderColor. See: docs/timing/pentagon-border-timing.md
     if (!int_occurred && cpu.t > int_start)
     {
         int_occurred = true;

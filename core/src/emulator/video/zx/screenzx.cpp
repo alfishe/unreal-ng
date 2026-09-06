@@ -650,30 +650,30 @@ bool ScreenZX::IsOnScreenByTiming(uint32_t tstate)
 
 /// region <Screen class methods override>
 
-/// Set border color with Pentagon-specific 1 T-state delay.
-/// Pentagon ULA has a 1 T-state pipeline delay before the border color change
-/// becomes visible. Without this compensation, border effects appear 2 pixels
-/// ahead of paper content, visible in demos like "Across The Edge" by Demarche.
+/// @brief Set border color with Pentagon-specific 1T delay compensation
+/// @param color Border color (bits 0-2 used)
+/// @see docs/timing/pentagon-border-timing.md for full timing analysis
 void ScreenZX::SetBorderColor(uint8_t color)
 {
     // Flush pending pixels with the OLD border color
     UpdateScreen();
 
-    // Pentagon-class models: render one additional T-state (2 pixels) with the OLD color.
-    // This compensates for the ULA pipeline delay - the new color takes effect
-    // 1 T-state after the CPU OUT instruction, matching real hardware behavior.
+    // Pentagon-class ULAs: render one additional T-state (2 pixels) with the OLD color.
+    // INT timing is quantized to 4T due to HALT instruction, but border effects need
+    // 1T precision. This compensates for the 2-pixel border-ahead-of-paper offset
+    // visible in demos like "Across The Edge" by Demarche.
+    // See: docs/timing/pentagon-border-timing.md
     if (_mode == M_PENTAGON128K || _mode == M_PMC || _mode == M_P16 ||
         _mode == M_P384 || _mode == M_PHR)
     {
-        uint32_t currentT = GetCurrentTstate();
-        if (currentT + 1 < _rasterState.maxFrameTiming)
+        uint32_t nextT = _prevTstate + 1;
+        if (nextT < _rasterState.maxFrameTiming)
         {
-            DrawPeriod(currentT, currentT + 1);
-            _prevTstate = currentT + 1;
+            Draw(nextT);  // Render T+1 with OLD color
+            _prevTstate = nextT;
         }
     }
 
-    // Now set the new border color
     _borderColor = color & 0b0000'0111;
 }
 
