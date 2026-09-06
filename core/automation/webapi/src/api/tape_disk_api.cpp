@@ -1712,23 +1712,27 @@ void EmulatorAPI::getDiskSector(const HttpRequestPtr& req,
     
     // Address Mark info
     Json::Value addrMark;
-    addrMark["id_mark"] = StringHelper::ToHex(rawSector->address_record.id_address_mark);
-    addrMark["cylinder"] = rawSector->address_record.cylinder;
-    addrMark["head"] = rawSector->address_record.head;
-    addrMark["sector"] = rawSector->address_record.sector;
-    addrMark["sector_size"] = rawSector->address_record.sector_size;
-    addrMark["crc"] = StringHelper::ToHex(rawSector->address_record.id_crc);
-    addrMark["crc_valid"] = rawSector->address_record.isCRCValid();
+    addrMark["id_mark"] = StringHelper::ToHex(rawSector->id->id_address_mark);
+    addrMark["cylinder"] = rawSector->id->cylinder;
+    addrMark["head"] = rawSector->id->head;
+    addrMark["sector"] = rawSector->id->sector;
+    addrMark["sector_size"] = rawSector->id->sector_size;
+    addrMark["crc"] = StringHelper::ToHex(rawSector->id->id_crc);
+    addrMark["crc_valid"] = rawSector->isIDCRCValid();
+    addrMark["offset"] = static_cast<int>(rawSector->idamOffset);
     ret["address_mark"] = addrMark;
     
     // Data info
-    ret["data_mark"] = StringHelper::ToHex(rawSector->data_address_mark);
-    ret["data_crc"] = StringHelper::ToHex(rawSector->data_crc);
+    ret["has_data"] = rawSector->hasData;
+    ret["data_size"] = rawSector->dataSize;
+    ret["data_mark"] = StringHelper::ToHex(rawSector->dataAddressMark());
+    ret["data_crc"] = StringHelper::ToHex(rawSector->dataCRC());
     ret["data_crc_valid"] = rawSector->isDataCRCValid();
+    ret["deleted"] = rawSector->deleted;
     
     // Hex dump of first 64 bytes
     std::string hexDump;
-    for (int i = 0; i < 64 && i < 256; i++) {
+    for (int i = 0; rawSector->hasData && i < 64 && i < rawSector->dataSize; i++) {
         if (i > 0 && i % 16 == 0) hexDump += "\n";
         else if (i > 0) hexDump += " ";
         hexDump += StringHelper::ToHex(rawSector->data[i]);
@@ -1839,12 +1843,18 @@ void EmulatorAPI::getDiskSectorRaw(const HttpRequestPtr& req,
     ret["cylinder"] = cylinder;
     ret["side"] = side;
     ret["sector"] = sector;
-    ret["raw_size"] = static_cast<int>(sizeof(DiskImage::RawSectorBytes));
+    // Raw stream bytes from the ID address mark (A1 A1 A1 FE) through the data CRC
+    const size_t syncLen = (track->encoding() == DiskImage::Encoding::MFM) ? 3 : 0;
+    const size_t rawStart = rawSector->idamOffset - syncLen;
+    const size_t rawEnd = rawSector->hasData ? (rawSector->dataOffset + rawSector->dataSize + 2) : (rawSector->idamOffset + 7);
+    const size_t rawLen = (rawEnd > rawStart && rawEnd <= track->rawSize()) ? rawEnd - rawStart : 0;
+    ret["raw_offset"] = static_cast<int>(rawStart);
+    ret["raw_size"] = static_cast<int>(rawLen);
+    ret["data_size"] = rawSector->dataSize;
+    ret["has_data"] = rawSector->hasData;
     
-    // Full raw sector as base64
-    std::string raw64 = drogon::utils::base64Encode(
-        reinterpret_cast<const unsigned char*>(rawSector), 
-        sizeof(DiskImage::RawSectorBytes));
+    // Raw sector bytes as base64
+    std::string raw64 = drogon::utils::base64Encode(track->rawData() + rawStart, rawLen);
     ret["raw_base64"] = raw64;
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
@@ -1931,25 +1941,27 @@ void EmulatorAPI::getDiskTrack(const HttpRequestPtr& req,
     ret["drive"] = drive;
     ret["cylinder"] = cylinder;
     ret["side"] = side;
-    ret["raw_size"] = 6250;
+    ret["raw_size"] = static_cast<int>(track->rawSize());
+    ret["encoding"] = (track->encoding() == DiskImage::Encoding::MFM) ? "MFM" : "FM";
+    ret["sector_count"] = static_cast<int>(track->sectorCount());
     ret["sectors"] = Json::arrayValue;
     
-    for (int i = 0; i < 16; i++) {
-        auto* rawSector = track->getSector(i);
+    // Sectors in physical (stream) order - any count, any numbering, any size
+    for (size_t i = 0; i < track->sectorCount(); i++) {
+        auto* rawSector = track->getRawSector(i);
         Json::Value sec;
-        sec["index"] = i;
-        sec["logical_number"] = i + 1;
-        
-        if (rawSector) {
-            sec["id_cyl"] = rawSector->address_record.cylinder;
-            sec["id_head"] = rawSector->address_record.head;
-            sec["id_sector"] = rawSector->address_record.sector;
-            sec["id_crc_valid"] = rawSector->address_record.isCRCValid();
-            sec["data_crc_valid"] = rawSector->isDataCRCValid();
-        } else {
-            sec["error"] = "sector not indexed";
-        }
-        
+        sec["index"] = static_cast<int>(i);
+        sec["logical_number"] = rawSector->id->sector;
+        sec["id_cyl"] = rawSector->id->cylinder;
+        sec["id_head"] = rawSector->id->head;
+        sec["id_sector"] = rawSector->id->sector;
+        sec["id_size_code"] = rawSector->id->sector_size;
+        sec["id_offset"] = static_cast<int>(rawSector->idamOffset);
+        sec["id_crc_valid"] = rawSector->isIDCRCValid();
+        sec["has_data"] = rawSector->hasData;
+        sec["data_size"] = rawSector->dataSize;
+        sec["data_crc_valid"] = rawSector->isDataCRCValid();
+        sec["deleted"] = rawSector->deleted;
         ret["sectors"].append(sec);
     }
     
@@ -2037,13 +2049,13 @@ void EmulatorAPI::getDiskTrackRaw(const HttpRequestPtr& req,
     ret["drive"] = drive;
     ret["cylinder"] = cylinder;
     ret["side"] = side;
-    ret["raw_size"] = 6250;
+    ret["raw_size"] = static_cast<int>(track->rawSize());
+    ret["encoding"] = (track->encoding() == DiskImage::Encoding::MFM) ? "MFM" : "FM";
     
-    // RawTrack is 6250 bytes (16 sectors * 388 bytes + 42 byte end gap)
-    std::string raw64 = drogon::utils::base64Encode(
-        reinterpret_cast<const unsigned char*>(track), 
-        DiskImage::RawTrack::RAW_TRACK_SIZE);
+    // Raw track stream (variable length: 6250 nominal MFM, 3125 FM, 6208..6464 for real drives)
+    std::string raw64 = drogon::utils::base64Encode(track->rawData(), track->rawSize());
     ret["raw_base64"] = raw64;
+    ret["clock_bitmap_base64"] = drogon::utils::base64Encode(track->clockBitmap().data(), track->clockBitmap().size());
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
@@ -2111,7 +2123,7 @@ void EmulatorAPI::getDiskImage(const HttpRequestPtr& req,
     uint8_t cylinders = diskImage->getCylinders();
     uint8_t sides = diskImage->getSides();
     size_t totalTracks = cylinders * sides;
-    size_t trackSize = DiskImage::RawTrack::RAW_TRACK_SIZE;
+    size_t trackSize = DiskImage::RawTrack::RAW_TRACK_SIZE;  // Nominal; the dump keeps each track's real length
     size_t imageSize = totalTracks * trackSize;
     
     // Collect all track data
@@ -2122,8 +2134,8 @@ void EmulatorAPI::getDiskImage(const HttpRequestPtr& req,
         for (uint8_t side = 0; side < sides; side++) {
             auto* track = diskImage->getTrackForCylinderAndSide(cyl, side);
             if (track) {
-                const uint8_t* trackData = reinterpret_cast<const uint8_t*>(track);
-                imageData.insert(imageData.end(), trackData, trackData + trackSize);
+                const uint8_t* trackData = track->rawData();
+                imageData.insert(imageData.end(), trackData, trackData + track->rawSize());
             } else {
                 // Fill with zeros if track doesn't exist
                 imageData.insert(imageData.end(), trackSize, 0);

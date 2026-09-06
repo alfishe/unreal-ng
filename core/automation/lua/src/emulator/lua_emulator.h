@@ -1339,8 +1339,11 @@ public:
             info["cylinders"] = disk->getCylinders();
             info["sides"] = disk->getSides();
             info["tracks"] = disk->getCylinders() * disk->getSides();
-            info["sectors_per_track"] = 16;
-            info["sector_size"] = 256;
+            // Geometry of track 0 side 0 (tracks may differ on non-TR-DOS images)
+            auto* track0 = disk->getTrackForCylinderAndSide(0, 0);
+            info["sectors_per_track"] = track0 ? static_cast<int>(track0->sectorCount()) : 0;
+            info["sector_size"] = (track0 && track0->sectorCount() > 0) ? static_cast<int>(track0->getRawSector(0)->dataSize) : 0;
+            info["track_size"] = track0 ? static_cast<int>(track0->rawSize()) : 0;
             return info;
         });
 
@@ -1356,9 +1359,9 @@ public:
             if (!disk) return data;
             auto* track = disk->getTrackForCylinderAndSide(cyl, side);
             if (!track) return data;
-            auto* sec = track->getSector(sector);
-            if (!sec) return data;
-            for (int i = 0; i < 256; i++) {
+            auto* sec = track->getSector(static_cast<uint8_t>(sector));  // Sector number = sector + 1
+            if (!sec || !sec->hasData) return data;
+            for (int i = 0; i < sec->dataSize; i++) {
                 data[i + 1] = sec->data[i];  // Lua tables start at 1
             }
             return data;

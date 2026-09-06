@@ -1193,8 +1193,11 @@ namespace PythonBindings
                 info["cylinders"] = disk->getCylinders();
                 info["sides"] = disk->getSides();
                 info["tracks"] = disk->getCylinders() * disk->getSides();
-                info["sectors_per_track"] = 16;
-                info["sector_size"] = 256;
+                // Geometry of track 0 side 0 (tracks may differ on non-TR-DOS images)
+                auto* track0 = disk->getTrackForCylinderAndSide(0, 0);
+                info["sectors_per_track"] = track0 ? static_cast<int>(track0->sectorCount()) : 0;
+                info["sector_size"] = (track0 && track0->sectorCount() > 0) ? static_cast<int>(track0->getRawSector(0)->dataSize) : 0;
+                info["track_size"] = track0 ? static_cast<int>(track0->rawSize()) : 0;
                 return info;
             }, "Get disk geometry info", py::arg("drive"))
             .def("disk_read_sector", [](Emulator& self, int drive, int cyl, int side, int sector) -> py::bytes {
@@ -1206,10 +1209,10 @@ namespace PythonBindings
                 if (!disk) return py::bytes();
                 auto* track = disk->getTrackForCylinderAndSide(cyl, side);
                 if (!track) return py::bytes();
-                auto* sec = track->getSector(sector);
-                if (!sec) return py::bytes();
-                return py::bytes(reinterpret_cast<char*>(sec->data), 256);
-            }, "Read sector data (256 bytes)", py::arg("drive"), py::arg("cyl"), py::arg("side"), py::arg("sector"))
+                auto* sec = track->getSector(static_cast<uint8_t>(sector));  // Sector number = sector + 1
+                if (!sec || !sec->hasData) return py::bytes();
+                return py::bytes(reinterpret_cast<char*>(sec->data), sec->dataSize);
+            }, "Read sector data (128..1024 bytes depending on the sector's ID field)", py::arg("drive"), py::arg("cyl"), py::arg("side"), py::arg("sector"))
             .def("disk_read_sector_hex", [](Emulator& self, int drive, int track, int sector) -> std::string {
                 auto* ctx = self.GetContext();
                 if (!ctx || drive < 0 || drive > 3) return "";
