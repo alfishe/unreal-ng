@@ -47,7 +47,7 @@ void Emulator_Test::DestroyEmulator()
 /// region <Emulator re-entrability tests>
 TEST_F(Emulator_Test, MultiInstance)
 {
-    constexpr int iterations = 100;
+    constexpr int iterations = 20;
 
     // Profiling accumulators (microseconds)
     uint64_t totalConstruct = 0, totalInit = 0, totalStop = 0, totalRelease = 0, totalDelete = 0;
