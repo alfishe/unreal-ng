@@ -927,8 +927,13 @@ cmake --build . --config Release --target core-tests
 ### Running Tests
 
 ```bash
-# Run all tests
+# Run all tests (sequential)
 ./core-tests
+
+# Run all tests in parallel (~3x faster, 37s -> 12s)
+cmake --build build --target test-parallel
+# Or directly:
+./scripts/run-tests-parallel.sh ./build/bin/core-tests
 
 # Run specific test
 ./core-tests --gtest_filter="Memory_Test.*"
@@ -939,6 +944,26 @@ cmake --build . --config Release --target core-tests
 # List all tests
 ./core-tests --gtest_list_tests
 ```
+
+### Parallel Test Execution
+
+The `test-parallel` CMake target uses GTest sharding to run tests across 4 parallel processes, achieving ~3x speedup on multi-core systems:
+
+```bash
+# Via CMake (recommended)
+cmake --build build --target test-parallel
+
+# Manual sharding (useful for CI)
+for i in 0 1 2 3; do
+  GTEST_TOTAL_SHARDS=4 GTEST_SHARD_INDEX=$i ./build/bin/core-tests &
+done
+wait
+```
+
+**Note:** Tests must be isolated (no shared global state) for parallel execution. If a test fails only in parallel, check for:
+- Static/global variables modified between tests
+- Singleton state not reset in TearDown
+- File system conflicts (temp files with fixed names)
 
 ### Filtering Tests
 
