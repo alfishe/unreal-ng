@@ -15,7 +15,7 @@ PortDecoder_Scorpion256::PortDecoder_Scorpion256(EmulatorContext* context) : Por
 
 PortDecoder_Scorpion256::~PortDecoder_Scorpion256()
 {
-    LOGDEBUG("PortDecoder_Scorpion256::~PortDecoder_Scorpion256()");
+    MLOGDEBUG("PortDecoder_Scorpion256::~PortDecoder_Scorpion256()");
 }
 /// endregion </Constructors / Destructors>
 

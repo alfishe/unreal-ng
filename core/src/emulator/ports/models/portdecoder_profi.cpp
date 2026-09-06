@@ -1,6 +1,6 @@
 #include "stdafx.h"
 
-#include "common/logger.h"
+#include "common/modulelogger.h"
 
 #include "portdecoder_profi.h"
 
@@ -13,7 +13,7 @@ PortDecoder_Profi::PortDecoder_Profi(EmulatorContext* context) : PortDecoder(con
 
 PortDecoder_Profi::~PortDecoder_Profi()
 {
-    LOGDEBUG("PortDecoder_Profi::~PortDecoder_Profi()");
+    MLOGDEBUG("PortDecoder_Profi::~PortDecoder_Profi()");
 }
 /// endregion </Constructors / Destructors>
 
@@ -243,7 +243,7 @@ void PortDecoder_Profi::Port_7FFD(uint8_t value, [[maybe_unused]] uint16_t pc)
     SpectrumScreenEnum screen = screenNumber ? SCREEN_SHADOW : SCREEN_NORMAL;
     _screen->SetActiveScreen(screen);
 
-    LOGDEBUG(memory.DumpMemoryBankInfo());
+    MLOGDEBUG(memory.DumpMemoryBankInfo());
 }
 
 /// Port #DFFD (Memory) handler

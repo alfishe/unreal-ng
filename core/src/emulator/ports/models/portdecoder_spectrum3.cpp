@@ -15,7 +15,7 @@ PortDecoder_Spectrum3::PortDecoder_Spectrum3(EmulatorContext* context) : PortDec
 
 PortDecoder_Spectrum3::~PortDecoder_Spectrum3()
 {
-    LOGDEBUG("PortDecoder_Spectrum3::~PortDecoder_Spectrum3()");
+    MLOGDEBUG("PortDecoder_Spectrum3::~PortDecoder_Spectrum3()");
 }
 /// endregion </Constructors / Destructors>
 
