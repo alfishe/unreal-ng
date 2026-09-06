@@ -257,8 +257,12 @@ TEST_F(TimeTravelManager_Test, OnFrameBoundary_DirtyFrame_InternsOnlyDirtyPages)
     ASSERT_NE(page0, nullptr);
     // Write distinct bytes across all 4 sub-pages so each InternXor produces
     // a real delta and allocates a new slot.
+    // Use XOR with existing value to guarantee a change regardless of prior content.
     for (uint32_t s = 0; s < 4; ++s)
-        page0[s * ttd::TTDCodecPageStore::kPageSize] = static_cast<uint8_t>(0xA0 + s);
+    {
+        size_t offset = s * ttd::TTDCodecPageStore::kPageSize;
+        page0[offset] ^= 0xFF;  // Flip all bits - guaranteed different from baseline
+    }
 
     ttd::TTDDirtyTracker* tracker = _memory->GetTTDDirtyTracker();
     ASSERT_NE(tracker, nullptr);
@@ -288,12 +292,16 @@ TEST_F(TimeTravelManager_Test, OnFrameBoundary_MultipleDirtyPages_InternsAll)
 
     // See DirtyFrame_InternsOnlyDirtyPages for why we must modify bytes:
     // the v2 codec dedups identical content back to the source slot.
+    // Use XOR to guarantee a change regardless of prior RAM content.
     for (uint16_t p : {0, 1, 2})
     {
         uint8_t* page = _memory->RAMPageAddress(p);
         ASSERT_NE(page, nullptr);
         for (uint32_t s = 0; s < 4; ++s)
-            page[s * ttd::TTDCodecPageStore::kPageSize] = static_cast<uint8_t>(0xB0 + p * 4 + s);
+        {
+            size_t offset = s * ttd::TTDCodecPageStore::kPageSize;
+            page[offset] ^= 0xFF;  // Flip all bits - guaranteed different from baseline
+        }
     }
 
     ttd::TTDDirtyTracker* tracker = _memory->GetTTDDirtyTracker();
