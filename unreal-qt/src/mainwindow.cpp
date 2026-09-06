@@ -169,9 +169,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     // Connect menu signals to handlers
     connect(_menuManager, &MenuManager::openFileRequested, this, &MainWindow::openFileDialog);
-    connect(_menuManager, &MenuManager::openSnapshotRequested, this, &MainWindow::openFileDialog);
-    connect(_menuManager, &MenuManager::openTapeRequested, this, &MainWindow::openFileDialog);
-    connect(_menuManager, &MenuManager::openDiskRequested, this, &MainWindow::openFileDialog);
+    connect(_menuManager, &MenuManager::openSnapshotRequested, this, &MainWindow::openSnapshotDialog);
+    connect(_menuManager, &MenuManager::openTapeRequested, this, &MainWindow::openTapeDialog);
+    connect(_menuManager, &MenuManager::openDiskRequested, this, &MainWindow::openDiskDialog);
     connect(_menuManager, &MenuManager::importAudioTapeRequested, this, &MainWindow::handleImportAudioTapeRequested);
     connect(_menuManager, &MenuManager::saveSnapshotRequested, this, &MainWindow::saveFileDialog);
     connect(_menuManager, &MenuManager::saveSnapshotZ80Requested, this, &MainWindow::saveFileDialogZ80);
@@ -1581,6 +1581,44 @@ void MainWindow::openFileDialog()
         this, tr("Open File"), _lastDirectory,
         tr("All Supported Files (*.sna *.z80 *.tap *.tzx *.trd *.scl *.fdi *.udi *.dsk *.td0 *.mgt *.img);;Snapshots (*.sna "
            "*.z80);;Tapes (*.tap *.tzx);;Disks (*.trd *.scl *.fdi *.udi *.dsk *.td0 *.mgt *.img);;All Files (*)"));
+
+    if (!filePath.isEmpty())
+    {
+        loadFile(filePath);
+    }
+}
+
+void MainWindow::openSnapshotDialog()
+{
+    QString filePath = QFileDialog::getOpenFileName(
+        this, tr("Open Snapshot"), _lastDirectory,
+        tr("Snapshot Files (*.sna *.SNA *.z80 *.Z80 *.szx *.SZX);;SNA Snapshots (*.sna *.SNA);;Z80 Snapshots (*.z80 *.Z80);;SZX Snapshots (*.szx *.SZX);;All Files (*)"));
+
+    if (!filePath.isEmpty())
+    {
+        loadFile(filePath);
+    }
+}
+
+void MainWindow::openTapeDialog()
+{
+    QString filePath = QFileDialog::getOpenFileName(
+        this, tr("Open Tape"), _lastDirectory,
+        tr("Tape Files (*.tap *.TAP *.tzx *.TZX *.csw *.CSW *.wav *.WAV);;TAP Tapes (*.tap *.TAP);;TZX Tapes (*.tzx *.TZX);;CSW Tapes (*.csw *.CSW);;WAV Audio (*.wav *.WAV);;All Files (*)"));
+
+    if (!filePath.isEmpty())
+    {
+        loadFile(filePath);
+    }
+}
+
+void MainWindow::openDiskDialog()
+{
+    QString filePath = QFileDialog::getOpenFileName(
+        this, tr("Open Disk"), _lastDirectory,
+        tr("Disk Images (*.trd *.TRD *.scl *.SCL *.fdi *.FDI *.udi *.UDI *.dsk *.DSK *.td0 *.TD0 *.mgt *.MGT *.img *.IMG);;"
+           "TRD Images (*.trd *.TRD);;SCL Images (*.scl *.SCL);;FDI Images (*.fdi *.FDI);;UDI Images (*.udi *.UDI);;"
+           "DSK Images (*.dsk *.DSK);;TD0 Images (*.td0 *.TD0);;MGT Images (*.mgt *.MGT *.img *.IMG);;All Files (*)"));
 
     if (!filePath.isEmpty())
     {

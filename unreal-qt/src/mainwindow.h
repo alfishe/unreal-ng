@@ -74,6 +74,9 @@ private slots:
     void handleEmulatorInstanceCreated(int id, Message* message);
     void handleEmulatorSelectionChanged(int id, Message* message);
     void openFileDialog();
+    void openSnapshotDialog();
+    void openTapeDialog();
+    void openDiskDialog();
     void openSpecificFile(const QString& filepath);
     void loadFile(const QString& filePath);
     void saveFileDialog();
