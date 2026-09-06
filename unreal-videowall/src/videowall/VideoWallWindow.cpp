@@ -912,6 +912,12 @@ void VideoWallWindow::createNextBatch()
     {
         _batchTimer->stop();
         qDebug() << "Async creation complete:" << _tileGrid->tiles().size() << "emulators created";
+
+        // Bind audio to first tile to establish sync source for frame refresh
+        if (!_tileGrid->tiles().empty())
+        {
+            bindAudioToTile(_tileGrid->tiles().front());
+        }
         return;
     }
 
