@@ -101,11 +101,11 @@ TEST_F(LoaderSCL_Test, load)
     EXPECT_EQ(diskImage->getSides(), 2) << "Unexpected number of sides";
 
     // Verify catalog entries
-    TRDCatalog* catalog = (TRDCatalog*)diskImage->getTrack(0)->getRawSector(0)->data;
+    TRDCatalog* catalog = (TRDCatalog*)diskImage->getTrack(0)->getSector(0)->data;
     ASSERT_NE(catalog, nullptr) << "Catalog not found in sector 0";
 
     // Verify volume info
-    TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)diskImage->getTrack(0)->getRawSector(TRD_VOLUME_SECTOR)->data;
+    TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)diskImage->getTrack(0)->getSector(TRD_VOLUME_SECTOR)->data;
     ASSERT_NE(volumeInfo, nullptr) << "Volume info not found in sector " << TRD_VOLUME_SECTOR;
     EXPECT_EQ(volumeInfo->trDOSSignature, TRD_SIGNATURE) << "Invalid TR-DOS signature";
     EXPECT_EQ(volumeInfo->diskType, DS_80) << "Unexpected disk type";
@@ -155,7 +155,7 @@ TEST_F(LoaderSCL_Test, load)
             DiskImage::Track* fileTrack = diskImage->getTrack(currentTrack);
             ASSERT_NE(fileTrack, nullptr) << "File track not found for track " << currentTrack;
 
-            uint8_t* sectorData = fileTrack->getRawSector(currentSector)->data;
+            uint8_t* sectorData = fileTrack->getSector(static_cast<uint8_t>(currentSector))->data;
             ASSERT_NE(sectorData, nullptr)
                 << "File sector data not found for track " << currentTrack << ", sector " << currentSector;
 
@@ -238,7 +238,7 @@ TEST_F(LoaderSCL_Test, addFile)
     EXPECT_EQ(1, volumeInfo->firstFreeSector);
 
     // Verify file descriptor in catalog
-    TRDOSDirectoryEntry* catalogEntry = (TRDOSDirectoryEntry*)track->getRawSector(0)->data;
+    TRDOSDirectoryEntry* catalogEntry = (TRDOSDirectoryEntry*)track->getSector(0)->data;
     EXPECT_STREQ("TESTFILE", catalogEntry->Name);
     EXPECT_EQ(0, catalogEntry->Type);
     EXPECT_EQ(1, catalogEntry->StartTrack);
@@ -248,7 +248,7 @@ TEST_F(LoaderSCL_Test, addFile)
 
     // Verify file data was written
     DiskImage::Track* fileDataTrack = diskImage.getTrack(catalogEntry->StartTrack);
-    DiskImage::RawSectorBytes* fileDataSector = fileDataTrack->getSector(catalogEntry->StartSector);
+    DiskImage::Sector* fileDataSector = fileDataTrack->getSector(catalogEntry->StartSector);
     for (int i = 0; i < 256; i++)
     {
         EXPECT_EQ(0xAA, fileDataSector->data[i])

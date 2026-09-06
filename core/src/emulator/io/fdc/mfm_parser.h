@@ -32,9 +32,9 @@ constexpr uint8_t INDEX_AM = 0xFC;   ///< Index Address Mark
 constexpr uint8_t GAP_BYTE = 0x4E;   ///< Gap fill byte
 constexpr uint8_t SYNC_ZERO = 0x00;  ///< Sync zero byte
 
-// Track geometry
-constexpr size_t RAW_TRACK_SIZE = 6250;   ///< Bytes per track at 250kbps
-constexpr size_t SECTORS_PER_TRACK = 16;  ///< TR-DOS sectors per track
+// Track geometry (nominal values; the parser itself is size-agnostic)
+constexpr size_t RAW_TRACK_SIZE = MAX_TRACK_LEN;   ///< Bytes per track at 250kbps (nominal MFM)
+constexpr size_t SECTORS_PER_TRACK = 16;           ///< TR-DOS sectors per track (validation default)
 
 // IDAM record size (excluding sync bytes)
 constexpr size_t IDAM_SIZE = 7;        ///< FE + C + H + S + N + CRC(2)
@@ -99,25 +99,27 @@ struct SectorParseResult
 /// Result of parsing an entire track from MFM data
 struct TrackParseResult
 {
-    size_t sectorsFound = 0;             ///< Number of IDAMs found
+    size_t expectedSectors = MFM::SECTORS_PER_TRACK;  ///< Sector numbers 1..expectedSectors are validated
+    size_t sectorsFound = 0;             ///< Number of IDAMs found (with numbers in 1..expectedSectors)
     size_t validSectors = 0;             ///< Number of fully valid sectors
-    SectorParseResult sectors[16] = {};  ///< Per-sector results (index = sector-1)
+    std::vector<SectorParseResult> sectors = std::vector<SectorParseResult>(MFM::SECTORS_PER_TRACK);  ///< Per-sector results (index = sector-1)
+    std::vector<SectorParseResult> allSectors;  ///< Every IDAM found, in physical order (any sector number)
     std::vector<std::string> errors;     ///< Critical errors
     std::vector<std::string> warnings;   ///< Non-critical issues
 
-    /// Check if track is fully compliant (all 16 sectors valid)
+    /// Check if track is fully compliant (all expected sectors valid)
     bool isCompliant() const
     {
-        return validSectors == 16;
+        return validSectors == expectedSectors;
     }
 
     /// Generate human-readable summary
     std::string dump() const
     {
         std::stringstream ss;
-        ss << "Track Parse Result: " << sectorsFound << "/16 sectors found, " << validSectors << " valid\n";
+        ss << "Track Parse Result: " << sectorsFound << "/" << expectedSectors << " sectors found, " << validSectors << " valid\n";
 
-        for (size_t i = 0; i < 16; i++)
+        for (size_t i = 0; i < sectors.size(); i++)
         {
             const auto& s = sectors[i];
             ss << "  Sector " << (i + 1) << ": ";
@@ -151,12 +153,16 @@ class MFMParser
 {
 public:
     /// Parse raw track data and validate all sectors
-    /// @param rawData Pointer to raw track data (6250 bytes)
-    /// @param trackSize Size of track data
+    /// @param rawData Pointer to raw track data
+    /// @param trackSize Size of track data (any length, 6250 nominal MFM)
+    /// @param expectedSectors Sector numbers 1..expectedSectors are reported as missing when absent (16 for TR-DOS)
     /// @return Parse result with per-sector details
-    static TrackParseResult parseTrack(const uint8_t* rawData, size_t trackSize = MFM::RAW_TRACK_SIZE)
+    static TrackParseResult parseTrack(const uint8_t* rawData, size_t trackSize = MFM::RAW_TRACK_SIZE,
+                                       size_t expectedSectors = MFM::SECTORS_PER_TRACK)
     {
         TrackParseResult result;
+        result.expectedSectors = expectedSectors;
+        result.sectors.assign(expectedSectors, SectorParseResult());
 
         if (!rawData || trackSize < 100)
         {
@@ -176,7 +182,12 @@ public:
                     // Found IDAM - parse sector
                     SectorParseResult sector = parseSector(rawData, pos, trackSize);
 
-                    if (sector.found && sector.sectorNo >= 1 && sector.sectorNo <= 16)
+                    if (sector.found)
+                    {
+                        result.allSectors.push_back(sector);
+                    }
+
+                    if (sector.found && sector.sectorNo >= 1 && sector.sectorNo <= expectedSectors)
                     {
                         uint8_t idx = sector.sectorNo - 1;
 
@@ -199,7 +210,7 @@ public:
         }
 
         // Check for missing sectors
-        for (size_t i = 0; i < 16; i++)
+        for (size_t i = 0; i < expectedSectors; i++)
         {
             if (!result.sectors[i].found)
             {
@@ -239,10 +250,10 @@ private:
         result.head = data[idamPos + 2];
         result.sectorNo = data[idamPos + 3];
         result.sizeCode = data[idamPos + 4];
-        result.idamCrcExpected = (data[idamPos + 5] << 8) | data[idamPos + 6];
+        result.idamCrcExpected = (data[idamPos + 5] << 8) | data[idamPos + 6];  // On-disk order: high byte first
 
-        // Validate IDAM CRC (includes FE byte)
-        result.idamCrcCalculated = CRCHelper::crcWD1793(const_cast<uint8_t*>(&data[idamPos]), 5);
+        // Validate IDAM CRC (includes FE byte). crcWD1793 returns the value byte-swapped, undo that for comparison
+        result.idamCrcCalculated = CRCHelper::_byteswap_ushort(CRCHelper::crcWD1793(const_cast<uint8_t*>(&data[idamPos]), 5));
         result.idamCrcValid = (result.idamCrcExpected == result.idamCrcCalculated);
 
         if (!result.idamCrcValid)
@@ -271,8 +282,8 @@ private:
                     if (result.dataOffset + dataSize + 2 <= trackSize)
                     {
                         // CRC covers DAM byte + data
-                        result.dataCrcCalculated =
-                            CRCHelper::crcWD1793(const_cast<uint8_t*>(&data[dpos + 3]), 1 + dataSize);
+                        result.dataCrcCalculated = CRCHelper::_byteswap_ushort(
+                            CRCHelper::crcWD1793(const_cast<uint8_t*>(&data[dpos + 3]), 1 + dataSize));
                         size_t crcPos = result.dataOffset + dataSize;
                         result.dataCrcExpected = (data[crcPos] << 8) | data[crcPos + 1];
                         result.dataCrcValid = (result.dataCrcExpected == result.dataCrcCalculated);
@@ -347,7 +358,7 @@ public:
             std::stringstream ss;
             ss << "=== MFM Track Validation Report ===\n";
             ss << "Status: " << (passed ? "PASSED" : "FAILED") << "\n";
-            ss << "Sectors: " << parseResult.validSectors << "/16 valid\n\n";
+            ss << "Sectors: " << parseResult.validSectors << "/" << parseResult.expectedSectors << " valid\n\n";
 
             if (issues.empty())
             {
@@ -390,10 +401,11 @@ public:
     };
 
     /// Validate a track with full diagnostics
-    static ValidationResult validate(const uint8_t* rawData, size_t trackSize = MFM::RAW_TRACK_SIZE)
+    static ValidationResult validate(const uint8_t* rawData, size_t trackSize = MFM::RAW_TRACK_SIZE,
+                                     size_t expectedSectors = MFM::SECTORS_PER_TRACK)
     {
         ValidationResult result;
-        result.parseResult = MFMParser::parseTrack(rawData, trackSize);
+        result.parseResult = MFMParser::parseTrack(rawData, trackSize, expectedSectors);
 
         // Triage issues from parse result
         triageParseResult(result);
@@ -413,7 +425,7 @@ private:
     {
         const auto& pr = result.parseResult;
 
-        for (size_t i = 0; i < 16; i++)
+        for (size_t i = 0; i < pr.sectors.size(); i++)
         {
             const auto& s = pr.sectors[i];
             int sectorNo = i + 1;
@@ -424,7 +436,7 @@ private:
                     {Severity::Error, "SECTOR_NOT_FOUND",
                      "Sector " + std::to_string(sectorNo) + " not found in track data",
                      "The ID Address Mark (A1 A1 A1 FE) sequence for this sector was not detected",
-                     "Check if Write Track wrote all 16 sectors. Verify sector number field in format routine."});
+                     "Check if Write Track wrote all expected sectors. Verify sector number field in format routine."});
             }
             else
             {
@@ -497,7 +509,7 @@ private:
         const auto& pr = result.parseResult;
         std::vector<std::pair<size_t, int>> sectorOffsets;  // (offset, sectorNo)
 
-        for (size_t i = 0; i < 16; i++)
+        for (size_t i = 0; i < pr.sectors.size(); i++)
         {
             if (pr.sectors[i].found)
             {

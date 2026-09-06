@@ -47,6 +47,7 @@ constexpr char const* NC_FDD_DISK_INSERTED = "FDD_DISK_INSERT";                 
 constexpr char const* NC_FDD_DISK_EJECTED = "FDD_DISK_EJECT";                   // Disk image ejected (payload: FDDDiskPayload)
 constexpr char const* NC_FDD_DISK_PENDING_WRITE = "FDD_DISK_PENDING_WRITE";     // Disk has unsaved changes (payload: FDDDiskPayload)
 constexpr char const* NC_FDD_DISK_WRITTEN = "FDD_DISK_WRITTEN";                 // Disk saved, dirty flag cleared (payload: FDDDiskPayload)
+constexpr char const* NC_FDD_DISK_SAVE_RETARGETED = "FDD_DISK_SAVE_RETARGETED"; // Original format refused the image, saved losslessly as UDI instead (payload: FDDDiskPayload, _reason set)
 
 constexpr char const* NC_FILE_OPEN_REQUEST = "FILE_OPEN_REQUEST";               // File open request from emulator
 

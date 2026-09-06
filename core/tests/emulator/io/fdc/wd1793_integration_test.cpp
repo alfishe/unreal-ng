@@ -155,7 +155,7 @@ TEST_F(DISABLED_WD1793_Integration_Test, TRDOS_SectorInterleave)
     std::set<uint8_t> foundSectors;
     for (int i = 0; i < 16; i++)
     {
-        uint8_t sectorNumber = track->sectors[i].address_record.sector;
+        uint8_t sectorNumber = track->getRawSector(i)->number();
         EXPECT_GE(sectorNumber, 1) << "Sector number should be >= 1";
         EXPECT_LE(sectorNumber, 16) << "Sector number should be <= 16";
         foundSectors.insert(sectorNumber);
