@@ -381,6 +381,12 @@ void VideoWallWindow::addEmulatorTile()
         connect(tile, &EmulatorTile::tileClicked, this, &VideoWallWindow::onTileClicked);
 
         _tileGrid->addTile(tile);
+
+        // Establish sync source on first tile (enables frame refresh without requiring user click)
+        if (_tileGrid->tiles().size() == 1)
+        {
+            bindAudioToTile(tile);
+        }
     }
 }
 
@@ -1344,11 +1350,14 @@ void VideoWallWindow::unbindAudioFromTile()
         qDebug() << "Audio unbound from tile (Sound & SoundHQ disabled):" << QString::fromStdString(emulator->GetUUID().toString());
     }
 
-    // In non-singlesync mode, if we unbind, we lose the sync source.
-    // We could fallback to the first tile if needed, but for now we'll just clear it.
-    if (!_singleSyncMode)
+    // Keep frame refresh running even when audio is unbound - fall back to first tile
+    if (!_singleSyncMode && !_tileGrid->tiles().empty())
     {
-        _tileGrid->setSyncEmulatorId("");
+        auto* firstTile = _tileGrid->tiles().front();
+        if (firstTile && firstTile->emulator())
+        {
+            _tileGrid->setSyncEmulatorId(firstTile->emulator()->GetUUID().toString());
+        }
     }
 }
 void VideoWallWindow::handleSingleSyncModeMessage(MessagePayload* payload)
