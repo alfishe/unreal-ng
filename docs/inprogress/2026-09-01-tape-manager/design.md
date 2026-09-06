@@ -874,7 +874,7 @@ the same rule ([tzx-loader-design.md](tzx-loader-design.md) §9).
 | ProfilePlaysThroughGenerateBitstream | `TapeBlock` with Custom timing plays identical bytes into a mock bit consumer as ROM profile does for the same data |
 | PulseStreamBlockPlaysPrecomputedPulses | loader-supplied `edgePulseTimings` replayed verbatim (pulse-for-pulse equality) |
 
-**`LoaderTZX_Test`** (extend the existing fixture `core/tests/loaders/loader_tzx_test.cpp`; synthetic hand-built TZX byte streams — no external fixtures needed at unit level):
+**`LoaderTZX_Test`** (extend the existing fixture `core/tests/loaders/tape/loader_tzx_test.cpp`; synthetic hand-built TZX byte streams — no external fixtures needed at unit level):
 
 | Case | Verifies |
 |---|---|
@@ -889,7 +889,7 @@ the same rule ([tzx-loader-design.md](tzx-loader-design.md) §9).
 | MetadataExtraction | $30/$32 title, $33 hardware note, $21 group labels attached to following descriptors |
 | UnknownBlockTypeSkips | unknown ID with correct length header → skipped+logged, parse continues |
 
-**`LoaderCSW_Test`** (new fixture file `core/tests/loaders/loader_csw_test.cpp`, alongside the existing loader tests; synthetic v1-RLE and v2-zlib streams):
+**`LoaderCSW_Test`** (new fixture file `core/tests/loaders/tape/loader_csw_test.cpp`, alongside the existing loader tests; synthetic v1-RLE and v2-zlib streams):
 
 | Case | Verifies |
 |---|---|
@@ -914,7 +914,7 @@ the same rule ([tzx-loader-design.md](tzx-loader-design.md) §9).
 | VerdictIsFormatAgnostic | same block sequence tagged `formatId` tap/tzx/csw → identical plan |
 | AcceleratedSecondsIsPrefixOnly | mixed image: accelerated == sum of durations over `[0, horizon)`, not over all eligible blocks |
 
-**`TapeLoaderRegistry_Test`** (new, `core/tests/loaders/loader_tape_registry_test.cpp`):
+**`TapeLoaderRegistry_Test`** (new, `core/tests/loaders/tape/loader_tape_registry_test.cpp`):
 
 | Case | Verifies |
 |---|---|

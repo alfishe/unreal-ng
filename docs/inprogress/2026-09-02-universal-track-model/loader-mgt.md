@@ -1,7 +1,7 @@
 # Loader: MGT / IMG (DISCiPLE, +D, SAM Coupé raw dumps)
 
 > Part of [2026-09-02-universal-track-model](README.md). Status: **implemented**
-> (`core/src/loaders/disk/loader_mgt.{h,cpp}`, tests `core/tests/loaders/loader_mgt_test.cpp`).
+> (`core/src/loaders/disk/loader_mgt.{h,cpp}`, tests `core/tests/loaders/disk/loader_mgt_test.cpp`).
 > Not a Beta-disk format; supported because the geometry (10 × 512) is exactly the kind of track the model must
 > hold, and +D/DISCiPLE ROM emulation may follow.
 

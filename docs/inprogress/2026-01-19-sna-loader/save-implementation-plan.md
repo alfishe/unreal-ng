@@ -169,7 +169,7 @@ cmake --build build-standalone --target core-tests
 ./build-standalone/bin/core-tests --gtest_filter="LoaderSNA*"
 ```
 
-**New test cases to add in** [loader_sna_test.cpp](core/tests/loaders/loader_sna_test.cpp):
+**New test cases to add in** [loader_sna_test.cpp](core/tests/loaders/snapshot/loader_sna_test.cpp):
 
 | Test Name | Description |
 |-----------|-------------|

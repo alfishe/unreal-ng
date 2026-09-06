@@ -400,7 +400,7 @@ TEST_F(DiskImage_Test, DirtyPropagation)
 
 ### 5.2 Unit Tests - TRD Save
 
-**File**: `core/tests/loaders/loader_trd_test.cpp`
+**File**: `core/tests/loaders/disk/loader_trd_test.cpp`
 
 ```cpp
 // Round-trip test: load → modify → save → reload → verify
@@ -442,7 +442,7 @@ TEST_F(LoaderTRD_Test, SaveAndReload)
 
 ### 5.3 Unit Tests - SCL Save
 
-**File**: `core/tests/loaders/loader_scl_test.cpp`
+**File**: `core/tests/loaders/disk/loader_scl_test.cpp`
 
 ```cpp
 // Test SCL save with verification
@@ -626,8 +626,8 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
 | `unreal-qt/src/mainwindow.h` | Add saveDisk* slots |
 | `unreal-qt/src/mainwindow.cpp` | Implement save disk dialogs, connect signals |
 | `core/tests/emulator/io/fdc/diskimage_test.cpp` | Add dirty tracking tests |
-| `core/tests/loaders/loader_trd_test.cpp` | Add save/reload tests |
-| `core/tests/loaders/loader_scl_test.cpp` | Add save/reload tests |
+| `core/tests/loaders/disk/loader_trd_test.cpp` | Add save/reload tests |
+| `core/tests/loaders/disk/loader_scl_test.cpp` | Add save/reload tests |
 
 ## 7. Verification Plan
 

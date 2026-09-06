@@ -1,7 +1,7 @@
 # Loader: Hobeta (`$`-files, single TR-DOS file container)
 
 > Part of [2026-09-02-universal-track-model](README.md). Status: **implemented**
-> (`core/src/loaders/disk/loader_hobeta.{h,cpp}`, tests `core/tests/loaders/loader_hobeta_test.cpp`).
+> (`core/src/loaders/disk/loader_hobeta.{h,cpp}`, tests `core/tests/loaders/disk/loader_hobeta_test.cpp`).
 > Not a disk image: a single TR-DOS file with a 17-byte header. Loading means "inject this file into a (new or
 > existing) TR-DOS disk", exactly what `LoaderSCL::addFile()` already does for SCL entries.
 

@@ -1,7 +1,7 @@
 # Loader: FDI (Full Disk Image, UKV Spectrum Debugger)
 
 > Part of [2026-09-02-universal-track-model](README.md). Fixtures: `testdata/loaders/fdi/VORON1.FDI`, `VORON2.FDI`.
-> **Status: implemented** (`core/src/loaders/disk/loader_fdi.{h,cpp}`, `core/tests/loaders/loader_fdi_test.cpp`,
+> **Status: implemented** (`core/src/loaders/disk/loader_fdi.{h,cpp}`, `core/tests/loaders/disk/loader_fdi_test.cpp`,
 > wired into `Emulator::LoadDisk` and the Qt Save path).
 
 ## 0. Findings (verified against the fixtures)

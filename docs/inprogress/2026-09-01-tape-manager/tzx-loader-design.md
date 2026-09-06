@@ -437,7 +437,7 @@ Real-world validation files (not committed): a handful of freely redistributable
 
 ## 10. Test Inventory
 
-### 10.1 Unit — `LoaderTZX_Test` (extends `core/tests/loaders/loader_tzx_test.cpp`)
+### 10.1 Unit — `LoaderTZX_Test` (extends `core/tests/loaders/tape/loader_tzx_test.cpp`)
 
 | Case | Fixture | Asserts |
 |---|---|---|

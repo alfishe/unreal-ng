@@ -3,7 +3,7 @@
 """
 DSK / EDSK fixture generator (Amstrad CPC / ZX Spectrum +3 disk images)
 
-Generates the two synthetic disk images used by core/tests/loaders/loader_dsk_test.cpp:
+Generates the two synthetic disk images used by core/tests/loaders/disk/loader_dsk_test.cpp:
 
   plus3-blank.dsk      Standard ("MV - CPC") layout. A freshly formatted +3DOS disk: 40 tracks, 1 side,
                        9 x 512-byte sectors numbered 1..9, GAP#3 0x2A, filler 0xE5. Track 0 sector 1 carries a

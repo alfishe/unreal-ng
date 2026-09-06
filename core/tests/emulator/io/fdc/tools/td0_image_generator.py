@@ -3,7 +3,7 @@
 """
 Teledisk TD0 fixture generator (python3, standard library only).
 
-Writes the fixtures used by core/tests/loaders/loader_td0_test.cpp:
+Writes the fixtures used by core/tests/loaders/disk/loader_td0_test.cpp:
 
   testdata/loaders/td0/trdos-sample.td0      "TD" (uncompressed), 80 cylinders x 2 sides, 16 x 256 per track,
                                              TR-DOS volume sector at cylinder 0 / sector 9, every data block

@@ -2,7 +2,7 @@
 
 > Part of [2026-09-02-universal-track-model](README.md). Fixtures: `testdata/loaders/udi/Zvezdnoe Nasledie.udi`,
 > `beta128-empty.udi`. **Status: implemented** (`core/src/loaders/disk/loader_udi.{h,cpp}`,
-> `core/tests/loaders/loader_udi_test.cpp`, wired into `Emulator::LoadDisk` and the Qt Save / Save as .udi menu).
+> `core/tests/loaders/disk/loader_udi_test.cpp`, wired into `Emulator::LoadDisk` and the Qt Save / Save as .udi menu).
 > UDI is the lossless native format for the model.
 
 ## 0. Findings while implementing (verified against the fixtures)

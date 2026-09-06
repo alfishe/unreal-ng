@@ -5,7 +5,7 @@
 ## Phase 1 — Core model (this work item) — **done 2026-09-02**
 
 All steps below are implemented; new test files: `core/tests/emulator/io/fdc/mfm_parser_test.cpp`,
-`core/tests/emulator/io/fdc/wd1793_universal_track_test.cpp`, `core/tests/loaders/loader_roundtrip_test.cpp`.
+`core/tests/emulator/io/fdc/wd1793_universal_track_test.cpp`, `core/tests/loaders/disk/loader_roundtrip_test.cpp`.
 A latent bug was fixed on the way: WRITE TRACK emitted the two CRC bytes in swapped order (and `mfm_parser.h`
 compensated), so a track formatted by the emulated CPU disagreed with a loader-formatted one; both now use the
 on-disk order (true CRC high byte first).

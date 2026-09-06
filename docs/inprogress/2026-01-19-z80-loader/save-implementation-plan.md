@@ -103,7 +103,7 @@ cmake --build build-standalone --target core-tests
 ./build-standalone/bin/core-tests --gtest_filter="LoaderZ80*"
 ```
 
-**New test cases to add in** [loader_z80_test.cpp](core/tests/loaders/loader_z80_test.cpp):
+**New test cases to add in** [loader_z80_test.cpp](core/tests/loaders/snapshot/loader_z80_test.cpp):
 
 | Test Name | Description |
 |-----------|-------------|
