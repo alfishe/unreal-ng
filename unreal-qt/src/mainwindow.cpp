@@ -57,6 +57,32 @@
 #include "common/stringhelper.h"
 #include "ui_mainwindow.h"
 
+namespace
+{
+// File extension definitions (lowercase only - helper adds uppercase)
+const QStringList kSnapshotExts = {"sna", "z80", "szx"};
+const QStringList kTapeExts = {"tap", "tzx", "csw", "wav"};
+const QStringList kDiskExts = {"trd", "scl", "fdi", "udi", "dsk", "td0", "mgt", "img"};
+
+// Build filter pattern with both cases: "*.ext *.EXT"
+QString buildExtPattern(const QStringList& exts)
+{
+    QStringList patterns;
+    for (const QString& ext : exts)
+    {
+        patterns << QString("*.%1").arg(ext.toLower());
+        patterns << QString("*.%1").arg(ext.toUpper());
+    }
+    return patterns.join(" ");
+}
+
+// Build a complete filter group: "Label (*.ext *.EXT ...)"
+QString buildFilterGroup(const QString& label, const QStringList& exts)
+{
+    return QString("%1 (%2)").arg(label, buildExtPattern(exts));
+}
+}  // namespace
+
 // region <Constructors / destructors>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWindow)
@@ -1577,10 +1603,14 @@ void MainWindow::openSpecificFile(const QString& filepath)
 
 void MainWindow::openFileDialog()
 {
-    QString filePath = QFileDialog::getOpenFileName(
-        this, tr("Open File"), _lastDirectory,
-        tr("All Supported Files (*.sna *.z80 *.tap *.tzx *.trd *.scl *.fdi *.udi *.dsk *.td0 *.mgt *.img);;Snapshots (*.sna "
-           "*.z80);;Tapes (*.tap *.tzx);;Disks (*.trd *.scl *.fdi *.udi *.dsk *.td0 *.mgt *.img);;All Files (*)"));
+    QStringList allExts = kSnapshotExts + kTapeExts + kDiskExts;
+    QString filter = buildFilterGroup(tr("All Supported Files"), allExts) + ";;" +
+                     buildFilterGroup(tr("Snapshots"), kSnapshotExts) + ";;" +
+                     buildFilterGroup(tr("Tapes"), kTapeExts) + ";;" +
+                     buildFilterGroup(tr("Disks"), kDiskExts) + ";;" +
+                     tr("All Files (*)");
+
+    QString filePath = QFileDialog::getOpenFileName(this, tr("Open File"), _lastDirectory, filter);
 
     if (!filePath.isEmpty())
     {
@@ -1590,9 +1620,13 @@ void MainWindow::openFileDialog()
 
 void MainWindow::openSnapshotDialog()
 {
-    QString filePath = QFileDialog::getOpenFileName(
-        this, tr("Open Snapshot"), _lastDirectory,
-        tr("Snapshot Files (*.sna *.SNA *.z80 *.Z80 *.szx *.SZX);;SNA Snapshots (*.sna *.SNA);;Z80 Snapshots (*.z80 *.Z80);;SZX Snapshots (*.szx *.SZX);;All Files (*)"));
+    QString filter = buildFilterGroup(tr("Snapshot Files"), kSnapshotExts) + ";;" +
+                     buildFilterGroup(tr("SNA Snapshots"), {"sna"}) + ";;" +
+                     buildFilterGroup(tr("Z80 Snapshots"), {"z80"}) + ";;" +
+                     buildFilterGroup(tr("SZX Snapshots"), {"szx"}) + ";;" +
+                     tr("All Files (*)");
+
+    QString filePath = QFileDialog::getOpenFileName(this, tr("Open Snapshot"), _lastDirectory, filter);
 
     if (!filePath.isEmpty())
     {
@@ -1602,9 +1636,14 @@ void MainWindow::openSnapshotDialog()
 
 void MainWindow::openTapeDialog()
 {
-    QString filePath = QFileDialog::getOpenFileName(
-        this, tr("Open Tape"), _lastDirectory,
-        tr("Tape Files (*.tap *.TAP *.tzx *.TZX *.csw *.CSW *.wav *.WAV);;TAP Tapes (*.tap *.TAP);;TZX Tapes (*.tzx *.TZX);;CSW Tapes (*.csw *.CSW);;WAV Audio (*.wav *.WAV);;All Files (*)"));
+    QString filter = buildFilterGroup(tr("Tape Files"), kTapeExts) + ";;" +
+                     buildFilterGroup(tr("TAP Tapes"), {"tap"}) + ";;" +
+                     buildFilterGroup(tr("TZX Tapes"), {"tzx"}) + ";;" +
+                     buildFilterGroup(tr("CSW Tapes"), {"csw"}) + ";;" +
+                     buildFilterGroup(tr("WAV Audio"), {"wav"}) + ";;" +
+                     tr("All Files (*)");
+
+    QString filePath = QFileDialog::getOpenFileName(this, tr("Open Tape"), _lastDirectory, filter);
 
     if (!filePath.isEmpty())
     {
@@ -1614,11 +1653,17 @@ void MainWindow::openTapeDialog()
 
 void MainWindow::openDiskDialog()
 {
-    QString filePath = QFileDialog::getOpenFileName(
-        this, tr("Open Disk"), _lastDirectory,
-        tr("Disk Images (*.trd *.TRD *.scl *.SCL *.fdi *.FDI *.udi *.UDI *.dsk *.DSK *.td0 *.TD0 *.mgt *.MGT *.img *.IMG);;"
-           "TRD Images (*.trd *.TRD);;SCL Images (*.scl *.SCL);;FDI Images (*.fdi *.FDI);;UDI Images (*.udi *.UDI);;"
-           "DSK Images (*.dsk *.DSK);;TD0 Images (*.td0 *.TD0);;MGT Images (*.mgt *.MGT *.img *.IMG);;All Files (*)"));
+    QString filter = buildFilterGroup(tr("Disk Images"), kDiskExts) + ";;" +
+                     buildFilterGroup(tr("TRD Images"), {"trd"}) + ";;" +
+                     buildFilterGroup(tr("SCL Images"), {"scl"}) + ";;" +
+                     buildFilterGroup(tr("FDI Images"), {"fdi"}) + ";;" +
+                     buildFilterGroup(tr("UDI Images"), {"udi"}) + ";;" +
+                     buildFilterGroup(tr("DSK Images"), {"dsk"}) + ";;" +
+                     buildFilterGroup(tr("TD0 Images"), {"td0"}) + ";;" +
+                     buildFilterGroup(tr("MGT Images"), {"mgt", "img"}) + ";;" +
+                     tr("All Files (*)");
+
+    QString filePath = QFileDialog::getOpenFileName(this, tr("Open Disk"), _lastDirectory, filter);
 
     if (!filePath.isEmpty())
     {
