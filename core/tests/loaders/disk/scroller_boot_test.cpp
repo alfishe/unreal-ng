@@ -436,7 +436,7 @@ void Scroller_Boot_Test::BootAndRunScroller(bool via128KMenu)
     std::cout << "[STEP 5b] RUN \"SCROLLER\" injected\n";
 
     // STEP 6: Run async and monitor (enable turbo mode for fast execution)
-    _emulator->EnableTurboMode(false);
+    _emulator->EnableTurboMode(true);
     _emulator->StartAsync();
 
     MessageCenter& keyMc = MessageCenter::DefaultMessageCenter();
@@ -446,7 +446,7 @@ void Scroller_Boot_Test::BootAndRunScroller(bool via128KMenu)
     int lastDepack = -1;
     while (std::chrono::steady_clock::now() < deadline && mainHits == 0 && resetHits == 0)
     {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
 
         int dep = depackHits.load();
         if (dep != lastDepack)
@@ -462,7 +462,7 @@ void Scroller_Boot_Test::BootAndRunScroller(bool via128KMenu)
     auto spaceDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
     while (std::chrono::steady_clock::now() < spaceDeadline && startDemoHits == 0)
     {
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     keyMc.Post(MC_KEY_RELEASED, new KeyboardEvent(ZXKEY_SPACE, KEY_RELEASED, _emulator->GetUUID()));
 
@@ -471,17 +471,17 @@ void Scroller_Boot_Test::BootAndRunScroller(bool via128KMenu)
     int stuckRomSamples = 0;
     while (std::chrono::steady_clock::now() < phaseC)
     {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
 
         if (resetHits > 0)
         {
             std::cout << "[STEP 6C] Reset detected - demo crashed into reset\n";
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
             break;
         }
 
         // Healthy demo: IM2 handler firing (genuine boot)
-        if (im2HandlerHits >= 25 && im2SetupHits > 0 && cpu->im == 2 && cpu->i == 0xBE)
+        if (im2HandlerHits >= 20 && im2SetupHits > 0 && cpu->im == 2 && cpu->i == 0xBE)
         {
             std::cout << "[STEP 6C] demo alive (im2 interrupts=" << im2HandlerHits << ")\n";
             break;

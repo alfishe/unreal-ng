@@ -182,11 +182,23 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
     auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(_context->pMainLoop);
 
     // STEP 1: ROM init
+    std::string screen;
     for (int i = 0; i < 100; i++)
     {
         mainLoop->RunFrame();
+        if ((i + 1) % 5 == 0)
+        {
+            screen = ScreenOCR::ocrScreen(emulatorId);
+            if (screen.find("1982") != std::string::npos || screen.find("Sinclair") != std::string::npos)
+            {
+                break;
+            }
+        }
     }
-    std::string screen = ScreenOCR::ocrScreen(emulatorId);
+    if (screen.empty())
+    {
+        screen = ScreenOCR::ocrScreen(emulatorId);
+    }
     std::cout << "[STEP 1] Screen after ROM init:\n" << FirstLines(screen, 4) << "\n";
     ASSERT_TRUE(screen.find("1982") != std::string::npos || screen.find("Sinclair") != std::string::npos)
         << "48K BASIC expected. Got:\n"
@@ -215,8 +227,19 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
     for (int i = 0; i < 100; i++)
     {
         mainLoop->RunFrame();
+        if ((i + 1) % 5 == 0)
+        {
+            screen = ScreenOCR::ocrScreen(emulatorId);
+            if (screen.find("A>") != std::string::npos)
+            {
+                break;
+            }
+        }
     }
-    screen = ScreenOCR::ocrScreen(emulatorId);
+    if (screen.empty())
+    {
+        screen = ScreenOCR::ocrScreen(emulatorId);
+    }
     std::cout << "[STEP 3] Screen after TR-DOS entry:\n" << FirstLines(screen, 6) << "\n";
     ASSERT_TRUE(screen.find("A>") != std::string::npos) << "TR-DOS prompt expected. Got:\n" << screen;
 
@@ -324,7 +347,7 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
         trace.clear();
     }
     std::string catScreen = runTrdosCommand("CAT", 600, [&](int f, std::string& lastOcr) {
-        if (f >= 50 && f % 25 == 0)
+        if (f >= 20 && f % 5 == 0)
         {
             lastOcr = ScreenOCR::ocrScreen(emulatorId);
             if (lastOcr.find("BLOK") != std::string::npos && lastOcr.find("A>") != std::string::npos)

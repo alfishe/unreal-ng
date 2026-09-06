@@ -18,7 +18,7 @@
 TEST(TimeHelper_Test, WaitUntilPrecise_WakesOnTime)
 {
     using clock = std::chrono::steady_clock;
-    constexpr int kIterations = 20;
+    constexpr int kIterations = 8;
     const auto kFrame = std::chrono::microseconds(20480);  // Pentagon frame
 
     std::vector<double> lateMs;

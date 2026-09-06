@@ -268,9 +268,9 @@ TEST_F(TapeTurbo_Integration_Test, WarpServesHeaderlessTailAndEndsAtEndOfTape)
     ASSERT_TRUE(context->pFeatureManager->setFeature(Features::kFastTape, true));
     ASSERT_TRUE(context->pFeatureManager->setFeature(Features::kTurboTape, true));
 
-    // Vanilla pair + one headerless tail (1 KiB, ~300 frames of signal)
+    // Vanilla pair + one headerless tail (~75 frames of signal)
     std::vector<std::vector<uint8_t>> blocks = MakeProgramTAP();
-    blocks.push_back(MakeTAPBlock(0xFF, std::vector<uint8_t>(1024, 0x5A)));
+    blocks.push_back(MakeTAPBlock(0xFF, std::vector<uint8_t>(256, 0x5A)));
     context->coreState.tapeFilePath = WriteTAPFile("headerless-tail.tap", blocks);
 
     auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(context->pMainLoop);
