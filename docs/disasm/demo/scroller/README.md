@@ -21,6 +21,7 @@
 | [`scroller-loader.bas`](docs/disasm/demo/scroller/scroller-loader.bas) | Annotated original Sinclair BASIC loader script (`SCROLLER.B`) with token decoding and line analysis. |
 | [`scroller-loader-fixed.bas`](docs/disasm/demo/scroller/scroller-loader-fixed.bas) | Annotated patched dual-mode Sinclair BASIC loader script with detailed line breakdown. |
 | [`scroller_fixed.$B`](docs/disasm/demo/scroller/scroller_fixed.$B) | Standalone Hobeta format binary of the patched BASIC loader (366 bytes, ready for TR-DOS import). |
+| [`scroller_fixed.bin`](docs/disasm/demo/scroller/scroller_fixed.bin) | Raw tokenized Sinclair BASIC memory block (`$00`–`$015D`, 349 bytes). |
 | [`scroller-dispatcher.asm`](docs/disasm/demo/scroller/scroller-dispatcher.asm) | Annotated Z80 disassembly of `SCROLL00.C` (`$6200`–`$62B1`): Entry point, depack table dispatcher, and embedded MegaLZ decruncher. |
 | [`scroller-menu.asm`](docs/disasm/demo/scroller/scroller-menu.asm) | Annotated Z80 disassembly of the Covox menu (`$9B6B`), keyboard scanner, `STARTDEMO` routine (`$9CD6`), and IM2 audio engine (`$BF02`/`$BFBF`). |
 
@@ -57,6 +58,15 @@ python3 docs/disasm/demo/scroller/patch_scroller_trd.py
   - **Sinclair 128K Editor**: `POKE VAL "23388", VAL "20"` primes `BANK_M` (`$5B5C`). The `$5B00` SWAP trampoline reasserts Page 4 across ROM flips so `SCROLL12` loads into Page 4.
   - **48K BASIC / TR-DOS Boot**: `OUT VAL "32765", VAL "20"` writes directly to the hardware port latch on machines without the 128K editor hook.
 - **Output**: [`scroller_fixed.trd`](docs/disasm/demo/scroller/scroller_fixed.trd) runs out-of-the-box in any emulator under any reset configuration (`RESET=128`, `RESET=BASIC`, `RESET=DOS`).
+
+> [!NOTE]
+> **How to Launch from TR-DOS**:
+> The disk image does not contain an auto-executing `boot.B` file (the main file is named `SCROLLER.B`). When TR-DOS boots or is selected from the 128K menu, it displays the TR-DOS banner (`* TR-DOS Ver 5.04T *` / `BETA 128`) and waits at the `A>` prompt.
+> Type:
+> ```basic
+> RUN "SCROLLER"
+> ```
+> To launch immediately without typing or disk delays, use [`scroller_by_demarche.sna`](docs/disasm/demo/scroller/scroller_by_demarche.sna).
 
 ---
 

@@ -713,6 +713,114 @@ TEST_F(Scroller_Boot_Test, BootScrollerDemoTRD_Via128KMenu)
     BootAndRunScroller(true);
 }
 
+// Verifies that the clean 128K .SNA snapshot generated from scroller_by_demarche.trd
+// bypasses all loader/SWAP issues, starts into the menu, accepts SPACE, and runs
+// the full demo engine with 50Hz IM2 interrupt handling.
+TEST_F(Scroller_Boot_Test, RunGeneratedScrollerSNA)
+{
+    if (!_emulator)
+    {
+        GTEST_SKIP() << "Emulator initialization failed";
+    }
+
+    std::string snaPath = "docs/disasm/demo/scroller/scroller_by_demarche.sna";
+    if (!FileHelper::FileExists(snaPath))
+    {
+        std::string pyScript = "docs/disasm/demo/scroller/make_scroller_sna.py";
+        if (FileHelper::FileExists(pyScript))
+        {
+            int ret = system(("python3 " + pyScript + " -o " + snaPath).c_str());
+            (void)ret;
+        }
+    }
+    ASSERT_TRUE(FileHelper::FileExists(snaPath)) << "SNA snapshot not found at: " << snaPath;
+
+    // Load the 128K snapshot directly into the emulator
+    ASSERT_TRUE(_emulator->LoadSnapshot(snaPath)) << "Failed to load SNA: " << snaPath;
+
+    Z80* cpu = _context->pCore->GetZ80();
+    ASSERT_NE(cpu, nullptr);
+    EXPECT_EQ(cpu->pc, 0x9B6B) << "Initial PC must be Covox menu entry ($9B6B)";
+    EXPECT_EQ(cpu->sp, 0x6200) << "Initial SP must be $6200";
+
+    // Set up breakpoints to track runtime progression
+    BreakpointManager* bpMgr = _context->pDebugManager->GetBreakpointsManager();
+    ASSERT_NE(bpMgr, nullptr);
+    EmulatorTestHelper::EnableDebugFeatures(_emulator);
+
+    std::atomic<int> menuHits{0};
+    std::atomic<int> startDemoHits{0};
+    std::atomic<int> demoEntryHits{0};
+    std::atomic<int> im2SetupHits{0};
+    std::atomic<int> im2HandlerHits{0};
+    std::atomic<int> resetHits{0};
+
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    auto handler = [&](int id, Message* msg)
+    {
+        (void)id;
+        (void)msg;
+        uint16_t pc = cpu->pc;
+        if (pc == 0x0000) resetHits++;
+        else if (pc == 0x9B6B) menuHits++;
+        else if (pc == 0x9CD6) startDemoHits++;
+        else if (pc == 0x8000) demoEntryHits++;
+        else if (pc == 0xBF02) im2SetupHits++;
+        else if (pc == 0xBFBF) im2HandlerHits++;
+
+        _emulator->Resume();
+    };
+    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
+
+    bpMgr->AddExecutionBreakpoint(0x0000, "scroller_sna");
+    bpMgr->AddExecutionBreakpoint(0x9B6B, "scroller_sna");
+    bpMgr->AddExecutionBreakpoint(0x9CD6, "scroller_sna");
+    bpMgr->AddExecutionBreakpoint(0x8000, "scroller_sna");
+    bpMgr->AddExecutionBreakpoint(0xBF02, "scroller_sna");
+    bpMgr->AddExecutionBreakpoint(0xBFBF, "scroller_sna");
+
+    _emulator->EnableTurboMode(true);
+    _emulator->StartAsync();
+
+    // Step 1: Wait for menu to execute ($9B6B reached)
+    auto menuDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < menuDeadline && menuHits == 0 && resetHits == 0)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    EXPECT_GT(menuHits.load(), 0) << "Menu entry $9B6B was not executed";
+    EXPECT_EQ(resetHits.load(), 0) << "Emulator crashed into reset before menu";
+
+    // Step 2: Press SPACE to launch demo from menu
+    messageCenter.Post(MC_KEY_PRESSED, new KeyboardEvent(ZXKEY_SPACE, KEY_PRESSED, _emulator->GetUUID()));
+    auto spaceDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+    while (std::chrono::steady_clock::now() < spaceDeadline && startDemoHits == 0)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    messageCenter.Post(MC_KEY_RELEASED, new KeyboardEvent(ZXKEY_SPACE, KEY_RELEASED, _emulator->GetUUID()));
+
+    // Step 3: Verify the demo starts, sets up IM2, and interrupt handler fires
+    auto runDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (std::chrono::steady_clock::now() < runDeadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        if (resetHits > 0) break;
+        if (im2HandlerHits >= 20 && im2SetupHits > 0 && cpu->im == 2 && cpu->i == 0xBE)
+        {
+            break;
+        }
+    }
+    _emulator->Stop();
+
+    EXPECT_EQ(resetHits.load(), 0) << "Demo crashed into ROM reset";
+    EXPECT_GE(startDemoHits.load(), 1) << "STARTDEMO ($9CD6) was never entered";
+    EXPECT_GE(demoEntryHits.load(), 1) << "DEMO_ENTRY ($8000) was never reached";
+    EXPECT_GE(im2SetupHits.load(), 1) << "IM2INI ($BF02) was never called";
+    EXPECT_TRUE(cpu->im == 2 && cpu->i == 0xBE) << "CPU not in IM2 mode with I=$BE";
+    EXPECT_GE(im2HandlerHits.load(), 20) << "50Hz IM2 interrupt handler at $BFBF failed to run";
+}
+
 void Scroller_Boot_Test::RealtimeGuiFlow(const char* label)
 {
     if (!_emulator)
