@@ -754,10 +754,36 @@ void Emulator::Start()
         return;
     }
 
-    // Set running state (may already be set by StartAsync() - that's OK)
+    // StartAsync() raises the running flag on the caller thread before the
+    // worker is spawned; the synchronous Start() path relies on this method
+    // to raise it. The exchange() serves both roles and additionally reports
+    // whether a Stop() already claimed the emulator (CAS true->false) between
+    // StartAsync() returning and this point.
+    const bool previouslyRunning = _isRunning.exchange(true, std::memory_order_acq_rel);
+    if (!previouslyRunning && _stopRequested)
+    {
+        // Stop() won the start race: it has already claimed the running flag
+        // and is joining this thread. Hand the flag back and exit instead of
+        // clearing the stop request below - that would erase the only thing
+        // MainLoop::Run() checks, leaving the loop unkillable and the joining
+        // Stop() blocked in join() forever (seen as Emulator_Test hangs).
+        _isRunning.store(false, std::memory_order_release);
+        MLOGINFO("Emulator::Start() aborted - Stop() was requested during startup");
+        return;
+    }
+
+    // Set running state (running flag is already true - see exchange above)
     _isPaused = false;
-    _isRunning = true;
     _stopRequested = false;
+
+    // A Stop() may have landed anywhere between the exchange above and the
+    // stop-request clear. If it did, the running flag is false again - honour
+    // it instead of entering MainLoop::Run() with a cleared stop request.
+    if (!_isRunning.load(std::memory_order_acquire))
+    {
+        MLOGINFO("Emulator::Start() aborted - Stop() raced the startup sequence");
+        return;
+    }
 
     // Broadcast notification - Emulator started (instance-tagged per GDB TDD §6.3)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
