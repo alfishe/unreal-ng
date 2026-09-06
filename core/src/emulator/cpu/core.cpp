@@ -383,19 +383,7 @@ void Core::Release()
 {
     // Unregister itself from context
     _context->pCore = nullptr;
-
     _context->pPortDecoder = nullptr;
-    if (_portDecoder != nullptr)
-    {
-        delete _portDecoder;
-        _portDecoder = nullptr;
-    }
-
-    if (_ports != nullptr)
-    {
-        delete _ports;
-        _ports = nullptr;
-    }
 
     _context->pSoundManager = nullptr;
     if (_sound != nullptr)
@@ -490,6 +478,22 @@ void Core::Release()
     {
         delete _z80;
         _z80 = nullptr;
+    }
+
+    // The PortDecoder must outlive every device that registered port handlers: the devices keep
+    // their own PortDecoder pointer and their detachFromPorts() (SoundManager, WD1793, ...) calls
+    // UnregisterPortHandler(), which mutates the decoder's handler map. Deleting it earlier made
+    // those calls a heap-use-after-free on every emulator teardown.
+    if (_portDecoder != nullptr)
+    {
+        delete _portDecoder;
+        _portDecoder = nullptr;
+    }
+
+    if (_ports != nullptr)
+    {
+        delete _ports;
+        _ports = nullptr;
     }
 }
 /// endregion </Initialization>

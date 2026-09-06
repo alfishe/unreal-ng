@@ -31,6 +31,15 @@ void Disassembler_Opcode_Test::TearDown()
 
 /// endregion </Setup / TearDown>
 
+/// @brief Expected operand text for an OF_RELJUMP operand (JR family; DJNZ is not flagged OF_RELJUMP): the resolved
+/// target address, i.e. instructionAddr + full instruction length + signed 8-bit offset (see
+/// Z80Disassembler::formatOperandString). All tests below disassemble at instructionAddr = 0.
+static std::string RelativeJumpTarget(size_t commandLen, uint8_t offset)
+{
+    uint16_t target = (uint16_t)(0 + commandLen + (int8_t)offset);
+    return StringHelper::ToHexWithPrefix(target, "#", true);
+}
+
 TEST_F(Disassembler_Opcode_Test, TestAllNoPrefixOpCodes)
 {
     for (unsigned opcode = 0; opcode < 256; opcode++)
@@ -72,17 +81,9 @@ TEST_F(Disassembler_Opcode_Test, TestAllNoPrefixOpCodes)
         if (op.flags & OF_MBYTE)
         {
             referenceResult = StringHelper::ReplaceAll(referenceResult, string(":1"), string("%s"));
-            if (op.flags & OF_RELJUMP)
-            {
-                // Symbolic disassembly: relative jumps render the resolved absolute
-                // target — instructionAddr(0) + fullCommandLen + (int8_t)offset
-                uint16_t target = static_cast<uint16_t>(command.size() + static_cast<int8_t>(command.back()));
-                referenceResult = StringHelper::Format(referenceResult, StringHelper::ToHexWithPrefix(target, "#", true));
-            }
-            else
-            {
-                referenceResult = StringHelper::Format(referenceResult, StringHelper::ToHexWithPrefix(command[1], "#", true));
-            }
+            std::string operand = (op.flags & OF_RELJUMP) ? RelativeJumpTarget(command.size(), command[1])
+                                                          : StringHelper::ToHexWithPrefix(command[1], "#", true);
+            referenceResult = StringHelper::Format(referenceResult, operand);
         }
         else if (op.flags & OF_MWORD)
         {
@@ -163,15 +164,16 @@ TEST_F(Disassembler_Opcode_Test, TestAllEDOpCodes)
             size_t pos;
             if ((pos = referenceResult.find(":1")) != std::string::npos)
             {
-                // Symbolic disassembly: relative jumps render the resolved absolute
-                // target — instructionAddr(0) + fullCommandLen + (int8_t)offset
-                char hexByte[7];
                 if (op.flags & OF_RELJUMP)
-                    snprintf(hexByte, sizeof(hexByte), "#%04X",
-                             static_cast<uint16_t>(command.size() + static_cast<int8_t>(val))); // uppercase
+                {
+                    referenceResult.replace(pos, 2, RelativeJumpTarget(command.size(), val));
+                }
                 else
+                {
+                    char hexByte[5];
                     snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
-                referenceResult.replace(pos, 2, hexByte);
+                    referenceResult.replace(pos, 2, hexByte);
+                }
             }
         }
 
@@ -319,15 +321,16 @@ TEST_F(Disassembler_Opcode_Test, TestAllDDOpCodes)
             size_t pos;
             if ((pos = referenceResult.find(":1")) != std::string::npos)
             {
-                // Symbolic disassembly: relative jumps render the resolved absolute
-                // target — instructionAddr(0) + fullCommandLen + (int8_t)offset
-                char hexByte[7];
                 if (op.flags & OF_RELJUMP)
-                    snprintf(hexByte, sizeof(hexByte), "#%04X",
-                             static_cast<uint16_t>(command.size() + static_cast<int8_t>(val))); // uppercase
+                {
+                    referenceResult.replace(pos, 2, RelativeJumpTarget(command.size(), val));
+                }
                 else
+                {
+                    char hexByte[5];
                     snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
-                referenceResult.replace(pos, 2, hexByte);
+                    referenceResult.replace(pos, 2, hexByte);
+                }
             }
         }
 
@@ -508,15 +511,16 @@ TEST_F(Disassembler_Opcode_Test, TestAllFDOpCodes)
             size_t pos;
             if ((pos = referenceResult.find(":1")) != std::string::npos)
             {
-                // Symbolic disassembly: relative jumps render the resolved absolute
-                // target — instructionAddr(0) + fullCommandLen + (int8_t)offset
-                char hexByte[7];
                 if (op.flags & OF_RELJUMP)
-                    snprintf(hexByte, sizeof(hexByte), "#%04X",
-                             static_cast<uint16_t>(command.size() + static_cast<int8_t>(val))); // uppercase
+                {
+                    referenceResult.replace(pos, 2, RelativeJumpTarget(command.size(), val));
+                }
                 else
+                {
+                    char hexByte[5];
                     snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
-                referenceResult.replace(pos, 2, hexByte);
+                    referenceResult.replace(pos, 2, hexByte);
+                }
             }
         }
 

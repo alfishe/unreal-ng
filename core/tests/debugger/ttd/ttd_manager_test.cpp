@@ -334,7 +334,9 @@ TEST_F(TimeTravelManager_Test, Checkpoint_Records_FrameCounter)
     const ttd::TTDCheckpoint* cp1 = _ttd->GetCheckpoint(1);
     ASSERT_NE(cp1, nullptr);
     EXPECT_EQ(cp1->time.frame, frameAtStart + 5);
-    EXPECT_GT(cp1->time.frame, cp0->time.frame);
+    // cp0 is dangling here: _timeline is a std::vector and OnFrameBoundary() appended to it,
+    // so compare against the value captured before the mutation.
+    EXPECT_GT(cp1->time.frame, frameAtStart);
 }
 
 TEST_F(TimeTravelManager_Test, Checkpoint_StoresCpuState)

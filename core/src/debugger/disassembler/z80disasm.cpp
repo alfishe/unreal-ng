@@ -2535,7 +2535,7 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const std::vector<uint8_t>
     if (hasRelativeJump)
     {
         result.relJumpOffset = result.operandBytes[0];
-        result.relJumpAddr = (instructionAddr + result.relJumpOffset + 2) & 0xFFFF;
+        result.relJumpAddr = (instructionAddr + result.fullCommandLen + result.relJumpOffset) & 0xFFFF;  // relative to the byte after the whole instruction (3 bytes when DD/FD-prefixed)
         result.jumpAddr = result.relJumpAddr;
     }
     /// endregion </Actualize values according flags>

@@ -35,7 +35,7 @@ struct DecodedInstruction
 
     /// region <Raw data>
 
-    OpCode opcode;
+    OpCode opcode{};   // value-initialized: OpCode has no default member initializers, flags must not be indeterminate
     std::vector<uint8_t> instructionBytes;
     std::vector<uint8_t> operandBytes;
 
