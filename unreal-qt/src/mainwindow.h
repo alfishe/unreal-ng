@@ -81,6 +81,7 @@ private slots:
     void saveDiskDialog();
     void saveDiskAsTRDDialog();
     void saveDiskAsSCLDialog();
+    void saveDiskAsUDIDialog();
     void resetEmulator();
     void handleFullScreenShortcut();
 

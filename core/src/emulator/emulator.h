@@ -222,6 +222,24 @@ public:
     bool LoadTape(const std::string& path);
     bool LoadDisk(const std::string& path);
 
+    /// Result of SaveDisk()
+    struct DiskSaveResult
+    {
+        bool saved = false;          // Image is on disk (at savedPath)
+        bool retargeted = false;     // The requested format refused the image; it was written as UDI instead
+        std::string savedPath;       // Path actually written
+        std::string reason;          // Refusal reason / error message
+    };
+
+    /// Save the disk image in drive `drive` (0..3).
+    /// @param path   Target file; empty = the image's own file path. The extension selects the format
+    ///               (trd, scl, fdi, udi; anything else = trd).
+    /// @param allowRetarget  When the selected format refuses the image (TRD / SCL hold only 16 x 256-byte
+    ///               TR-DOS tracks, FDI drops FM / non-nominal tracks with a warning but does not refuse),
+    ///               save losslessly to `<path without extension>.udi` instead, keep the original file untouched
+    ///               and post NC_FDD_DISK_SAVE_RETARGETED with the reason.
+    DiskSaveResult SaveDisk(uint8_t drive = 0, const std::string& path = std::string(), bool allowRetarget = true);
+
     // Controlled emulator behavior
     void RunSingleCPUCycle(bool skipBreakpoints = true);
     void RunNCPUCycles(unsigned cycles, bool skipBreakpoints = false);

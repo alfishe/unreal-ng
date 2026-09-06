@@ -2245,12 +2245,11 @@ void WD1793::processReadSector()
     _bytesToRead = _sectorSize;
 
     // If multiple sectors requested - register a follow-up operation in FIFO.
-    // Per datasheet the command continues until the sector register exceeds the sectors on the track;
-    // the follow-up then fails with Record Not Found, which terminates the command.
+    // Per datasheet the command continues until the sector register exceeds the last sector
+    // number on the track and then terminates cleanly (see the lambda below for details).
     if (_commandRegister & CMD_MULTIPLE)
     {
         // Register one more READ_SECTOR operation. Lambda will be executed just before FSM state switch.
-        // When the incremented sector number does not exist the callback sets RNF and processReadSector terminates.
         FSMEvent readSector(WDSTATE::S_READ_SECTOR, [this]() {
             // Increase sector number for reading
             this->_sectorRegister += 1;
@@ -2269,12 +2268,37 @@ void WD1793::processReadSector()
                 this->_bytesToRead = sector->dataSize;
                 this->_rotationalDelayTStates = this->rotationalDelayToData(*track, *sector);
             }
+            else if (track)
+            {
+                uint8_t maxSectorNumber = 0;
+                for (const auto& s : track->sectors())
+                {
+                    if (s.number() > maxSectorNumber)
+                    {
+                        maxSectorNumber = s.number();
+                    }
+                }
+
+                if (this->_sectorRegister > maxSectorNumber)
+                {
+                    // Multiple-sector read ran past the last sector number on the track - per datasheet
+                    // the command terminates at the end of the track: clean INTRQ, no Record Not Found.
+                    // TR-DOS 5.04T relies on this - its COPY machinery skips sectors with a multi-read
+                    // that polls only INTRQ and treats RNF as a disk error.
+                    this->_multiSectorOverrun = true;
+                }
+                else
+                {
+                    // Genuine gap inside the track: the chip keeps searching for the missing ID
+                    // and reports Record Not Found, same as for the initial sector search
+                    this->_statusRegister |= WDS_NOTFOUND;
+                }
+                this->_rawDataBuffer = nullptr;
+            }
             else
             {
-                // Incremented sector number does not exist - the multiple-sector read ran past the
-                // last sector on the track. Per datasheet the command ends there (clean INTRQ,
-                // no Record Not Found - RNF applies only to the initial sector search)
-                this->_multiSectorOverrun = true;
+                // No track under the head - nothing can be found
+                this->_statusRegister |= WDS_NOTFOUND;
                 this->_rawDataBuffer = nullptr;
             }
         });
@@ -2386,7 +2410,6 @@ void WD1793::processWriteSector()
     if (_commandRegister & CMD_MULTIPLE)
     {
         // Register one more WRITE_SECTOR operation. Lambda will be executed just before FSM state switch.
-        // When the incremented sector number does not exist the callback sets RNF and processWriteSector terminates.
         FSMEvent writeSector(WDSTATE::S_WRITE_SECTOR, [this]() {
             // Increase sector number for writing
             this->_sectorRegister += 1;
@@ -2405,11 +2428,35 @@ void WD1793::processWriteSector()
                 this->_bytesToWrite = sector->dataSize;
                 this->_rotationalDelayTStates = this->rotationalDelayToData(*track, *sector);
             }
+            else if (track)
+            {
+                uint8_t maxSectorNumber = 0;
+                for (const auto& s : track->sectors())
+                {
+                    if (s.number() > maxSectorNumber)
+                    {
+                        maxSectorNumber = s.number();
+                    }
+                }
+
+                if (this->_sectorRegister > maxSectorNumber)
+                {
+                    // Multiple-sector write ran past the last sector number on the track - per datasheet
+                    // the command terminates at the end of the track: clean INTRQ, no Record Not Found
+                    // (same end-of-track termination as the read path)
+                    this->_multiSectorOverrun = true;
+                }
+                else
+                {
+                    // Genuine gap inside the track: Record Not Found, same as for the read path
+                    this->_statusRegister |= WDS_NOTFOUND;
+                }
+                this->_rawDataBuffer = nullptr;
+            }
             else
             {
-                // Incremented sector number does not exist - the multiple-sector write ran past the
-                // last sector on the track and the command completes there (clean INTRQ, no RNF)
-                this->_multiSectorOverrun = true;
+                // No track under the head - nothing can be found
+                this->_statusRegister |= WDS_NOTFOUND;
                 this->_rawDataBuffer = nullptr;
             }
         });

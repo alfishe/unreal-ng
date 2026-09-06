@@ -134,7 +134,7 @@ void MenuManager::createFileMenu()
     // Save Disk (to original path)
     _saveDiskAction = _saveDiskMenu->addAction(tr("Save Disk"));
     _saveDiskAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
-    _saveDiskAction->setStatusTip(tr("Save disk image to original path (TRD format only)"));
+    _saveDiskAction->setStatusTip(tr("Save disk image to its original file (TRD / SCL / UDI); non TR-DOS content is re-targeted to UDI"));
     connect(_saveDiskAction, &QAction::triggered, this, &MenuManager::saveDiskRequested);
     
     // Save as TRD
@@ -146,6 +146,11 @@ void MenuManager::createFileMenu()
     _saveDiskSCLAction = _saveDiskMenu->addAction(tr("Save as .scl..."));
     _saveDiskSCLAction->setStatusTip(tr("Save disk image in SCL format"));
     connect(_saveDiskSCLAction, &QAction::triggered, this, &MenuManager::saveDiskAsSCLRequested);
+
+    // Save as UDI (lossless raw track image)
+    _saveDiskUDIAction = _saveDiskMenu->addAction(tr("Save as .udi..."));
+    _saveDiskUDIAction->setStatusTip(tr("Save disk image in UDI format (lossless: keeps any track layout)"));
+    connect(_saveDiskUDIAction, &QAction::triggered, this, &MenuManager::saveDiskAsUDIRequested);
 
     _fileMenu->addSeparator();
 
@@ -800,6 +805,7 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         // Save As options always available when disk is loaded
         _saveDiskTRDAction->setEnabled(true);
         _saveDiskSCLAction->setEnabled(true);
+        _saveDiskUDIAction->setEnabled(true);
     }
     else
     {

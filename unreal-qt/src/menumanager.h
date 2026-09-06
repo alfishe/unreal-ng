@@ -62,6 +62,7 @@ signals:
     void saveDiskRequested();       // Save to original path
     void saveDiskAsTRDRequested();  // Save As TRD
     void saveDiskAsSCLRequested();  // Save As SCL
+    void saveDiskAsUDIRequested();  // Save As UDI (lossless)
 
     // Emulator control signals
     void startRequested();
@@ -141,6 +142,7 @@ private:
     QAction* _saveDiskAction;       // Save (to original path)
     QAction* _saveDiskTRDAction;    // Save as TRD
     QAction* _saveDiskSCLAction;    // Save as SCL
+    QAction* _saveDiskUDIAction;    // Save as UDI
     QAction* _recentFilesAction;
     QAction* _exitAction;
 

@@ -306,7 +306,9 @@ TEST_F(WD1793_UniversalTrack_Test, ReadSector_IdOnly_ReturnsRNF)
     EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_NOTFOUND);
 }
 
-/// W5: multi-sector read walks consecutive numbers and ends with RNF when the next number is absent
+/// W5: multi-sector read walks consecutive numbers; running past the last sector number on the track
+/// ends the command cleanly (datasheet end-of-track termination, no RNF). TR-DOS 5.04T COPY
+/// skip-reads rely on this behaviour.
 TEST_F(WD1793_UniversalTrack_Test, ReadSector_Multi_StopsAtFirstMissingNumber)
 {
     DiskImage image(1, 1, Spec::plus3());  // sectors 1..9
@@ -328,7 +330,36 @@ TEST_F(WD1793_UniversalTrack_Test, ReadSector_Multi_StopsAtFirstMissingNumber)
     EXPECT_EQ(read[0], 0xA6);
     EXPECT_EQ(read[512], 0xA7);
     EXPECT_EQ(read[1024], 0xA8);
-    EXPECT_TRUE(fdc._statusRegister & WD1793::WDS_NOTFOUND) << "sector 10 does not exist";
+    EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_NOTFOUND) << "past-end overrun terminates cleanly, no RNF";
+}
+
+/// W5: a missing sector number inside the track (a gap below the last number) is a genuine
+/// Record Not Found - the chip keeps searching for the absent ID
+TEST_F(WD1793_UniversalTrack_Test, ReadSector_Multi_MissingNumberInsideTrack_ReturnsRNF)
+{
+    DiskImage image(1, 1, Spec::plus3());  // sectors 1..9, number 3 left out
+    DiskImage::Track* track = image.getTrack(0);
+    for (uint8_t s = 0; s < 9; s++)
+    {
+        if (s == 2)
+        {
+            continue;  // skip sector number 3 - a gap inside the track
+        }
+        std::vector<uint8_t> data(512, static_cast<uint8_t>(0xA0 + s));
+        track->writeSectorData(s, data.data(), data.size());
+    }
+
+    WD1793CUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc._sectorRegister = 1;
+    issue(fdc, 0x80 | WD1793::CMD_MULTIPLE);
+
+    std::vector<uint8_t> read = runReadUntilIdle(fdc, 1000);
+
+    ASSERT_EQ(read.size(), 2u * 512u) << "sectors 1, 2";
+    EXPECT_EQ(read[0], 0xA0);
+    EXPECT_EQ(read[512], 0xA1);
+    EXPECT_TRUE(fdc._statusRegister & WD1793::WDS_NOTFOUND) << "sector 3 is a gap inside the track";
 }
 
 /// Cylinder in the ID field must match the track register (datasheet), otherwise RNF

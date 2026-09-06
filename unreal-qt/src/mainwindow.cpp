@@ -50,7 +50,11 @@
 #define signals Q_SIGNALS
 #include "loaders/disk/loader_scl.h"
 #include "loaders/disk/loader_trd.h"
+#include "loaders/disk/loader_fdi.h"
+#include "loaders/disk/loader_udi.h"
 #include "tape/tapeimportaudiodialog.h"  // tape-audio-bridge §7.3
+#include "common/filehelper.h"
+#include "common/stringhelper.h"
 #include "ui_mainwindow.h"
 
 // region <Constructors / destructors>
@@ -174,6 +178,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::saveDiskRequested, this, &MainWindow::saveDiskDialog);
     connect(_menuManager, &MenuManager::saveDiskAsTRDRequested, this, &MainWindow::saveDiskAsTRDDialog);
     connect(_menuManager, &MenuManager::saveDiskAsSCLRequested, this, &MainWindow::saveDiskAsSCLDialog);
+    connect(_menuManager, &MenuManager::saveDiskAsUDIRequested, this, &MainWindow::saveDiskAsUDIDialog);
     connect(_menuManager, &MenuManager::startRequested, this, &MainWindow::handleStartEmulator);
     connect(_menuManager, &MenuManager::pauseRequested, this, &MainWindow::handlePauseEmulator);
     connect(_menuManager, &MenuManager::resumeRequested, this, &MainWindow::handleResumeEmulator);
@@ -1574,8 +1579,8 @@ void MainWindow::openFileDialog()
 {
     QString filePath = QFileDialog::getOpenFileName(
         this, tr("Open File"), _lastDirectory,
-        tr("All Supported Files (*.sna *.z80 *.tap *.tzx *.trd *.scl *.fdi *.td0 *.udi);;Snapshots (*.sna "
-           "*.z80);;Tapes (*.tap *.tzx);;Disks (*.trd *.scl *.fdi *.td0 *.udi);;All Files (*)"));
+        tr("All Supported Files (*.sna *.z80 *.tap *.tzx *.trd *.scl *.fdi *.udi *.dsk *.td0 *.mgt *.img);;Snapshots (*.sna "
+           "*.z80);;Tapes (*.tap *.tzx);;Disks (*.trd *.scl *.fdi *.udi *.dsk *.td0 *.mgt *.img);;All Files (*)"));
 
     if (!filePath.isEmpty())
     {
@@ -1788,20 +1793,82 @@ void MainWindow::saveDiskDialog()
         return;
     }
 
-    // Save using TRD format (preserves all TR-DOS metadata)
-    LoaderTRD loader(context, originalPath);
-    loader.setImage(diskImage);
-    bool result = loader.writeImage();
+    // Save in the format of the original file. TRD and SCL hold only 16 x 256-byte TR-DOS tracks and refuse
+    // anything else; in that case Emulator::SaveDisk writes a lossless UDI next to the original instead.
+    Emulator::DiskSaveResult result = _emulator->SaveDisk(drive->getDriveId(), originalPath, true);
 
-    if (result)
+    if (result.saved && !result.retargeted)
     {
-        qDebug() << "Disk saved successfully:" << QString::fromStdString(originalPath);
+        qDebug() << "Disk saved successfully:" << QString::fromStdString(result.savedPath);
+        return;
+    }
+
+    if (result.saved && result.retargeted)
+    {
+        qDebug() << "Disk re-targeted to UDI:" << QString::fromStdString(result.savedPath);
+        QMessageBox::information(this, tr("Saved as UDI"),
+                                 tr("%1\n\nThe original file was left untouched and the disk was saved losslessly as:\n%2")
+                                     .arg(QString::fromStdString(result.reason), QString::fromStdString(result.savedPath)));
+        return;
+    }
+
+    qDebug() << "Failed to save disk:" << QString::fromStdString(originalPath);
+    QString detail = result.reason.empty() ? QString() : "\n" + QString::fromStdString(result.reason);
+    QMessageBox::warning(this, tr("Save Failed"),
+                         tr("Failed to save disk to:\n%1%2").arg(QString::fromStdString(originalPath), detail));
+}
+
+void MainWindow::saveDiskAsUDIDialog()
+{
+    if (!_emulator)
+    {
+        qDebug() << "No emulator running, cannot save disk";
+        return;
+    }
+
+    EmulatorContext* context = _emulator->GetContext();
+    if (!context || !context->pBetaDisk)
+    {
+        QMessageBox::warning(this, tr("Save Failed"), tr("No Beta Disk interface available."));
+        return;
+    }
+
+    FDD* drive = context->pBetaDisk->getDrive();
+    DiskImage* diskImage = drive ? drive->getDiskImage() : nullptr;
+    if (!diskImage)
+    {
+        QMessageBox::warning(this, tr("Save Failed"), tr("No disk image loaded in the current drive."));
+        return;
+    }
+
+    QString filePath = QFileDialog::getSaveFileName(this, tr("Save Disk Image as UDI"), _lastSaveDirectory + "/disk.udi",
+                                                    tr("UDI Disk Images (*.udi);;All Files (*)"));
+    if (filePath.isEmpty())
+    {
+        return;
+    }
+
+    if (!filePath.toLower().endsWith(".udi"))
+    {
+        filePath += ".udi";
+    }
+
+    QFileInfo fileInfo(filePath);
+    _lastSaveDirectory = fileInfo.absolutePath();
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+    settings.setValue("LastSaveDirectory", _lastSaveDirectory);
+
+    std::string file = filePath.toStdString();
+    LoaderUDI loader(context, file);
+    loader.setImage(diskImage);
+    if (loader.writeImage())
+    {
+        qDebug() << "Disk saved as UDI successfully:" << filePath;
     }
     else
     {
-        qDebug() << "Failed to save disk:" << QString::fromStdString(originalPath);
-        QMessageBox::warning(this, tr("Save Failed"),
-                             tr("Failed to save disk to:\n%1").arg(QString::fromStdString(originalPath)));
+        QString detail = loader.lastWarnings().empty() ? QString() : "\n" + QString::fromStdString(loader.lastWarnings()[0]);
+        QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save disk to:\n%1%2").arg(filePath, detail));
     }
 }
 
