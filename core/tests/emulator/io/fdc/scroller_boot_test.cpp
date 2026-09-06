@@ -12,6 +12,7 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
+#include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "debugger/analyzers/basic-lang/basicencoder.h"
 #include "debugger/analyzers/rom-print/screenocr.h"
@@ -148,6 +149,10 @@ void Scroller_Boot_Test::BootAndRunScroller(bool via128KMenu)
 
     // STEP 2: Insert the demo disk
     std::string trdPath = TestPathHelper::GetTestDataPath("sound/covox/scroller_by_demarche.trd");
+    if (!FileHelper::FileExists(trdPath))
+    {
+        GTEST_SKIP() << "Test fixture not available: " << trdPath;
+    }
     LoaderTRD trdLoader(_context, trdPath);
     ASSERT_TRUE(trdLoader.loadImage()) << "TRD not loaded: " << trdPath;
 
