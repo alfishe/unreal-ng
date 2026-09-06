@@ -27,6 +27,7 @@
 #include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "loaders/snapshot/loader_sna.h"
+#include "loaders/tape/loader_tape.h"
 
 /// region <Constructors / Destructors>
 
@@ -1668,6 +1669,21 @@ bool Emulator::LoadDisk(const std::string& path)
     }
 
     return result;
+}
+
+std::vector<std::string> Emulator::SupportedSnapshotExtensions()
+{
+    return {"sna", "z80", "szx"};
+}
+
+std::vector<std::string> Emulator::SupportedTapeExtensions()
+{
+    return TapeLoaderRegistry::Instance().SupportedExtensions();
+}
+
+std::vector<std::string> Emulator::SupportedDiskExtensions()
+{
+    return {"trd", "scl", "fdi", "udi", "dsk", "td0", "mgt", "img"};
 }
 
 Emulator::DiskSaveResult Emulator::SaveDisk(uint8_t drive, const std::string& path, bool allowRetarget)

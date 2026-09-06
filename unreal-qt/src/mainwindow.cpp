@@ -59,10 +59,14 @@
 
 namespace
 {
-// File extension definitions (lowercase only - helper adds uppercase)
-const QStringList kSnapshotExts = {"sna", "z80", "szx"};
-const QStringList kTapeExts = {"tap", "tzx", "csw", "wav"};
-const QStringList kDiskExts = {"trd", "scl", "fdi", "udi", "dsk", "td0", "mgt", "img"};
+// Convert std::vector<std::string> to QStringList
+QStringList toQStringList(const std::vector<std::string>& v)
+{
+    QStringList result;
+    for (const auto& s : v)
+        result << QString::fromStdString(s);
+    return result;
+}
 
 // Build filter pattern with both cases: "*.ext *.EXT"
 QString buildExtPattern(const QStringList& exts)
@@ -1603,11 +1607,15 @@ void MainWindow::openSpecificFile(const QString& filepath)
 
 void MainWindow::openFileDialog()
 {
-    QStringList allExts = kSnapshotExts + kTapeExts + kDiskExts;
+    QStringList snapshotExts = toQStringList(Emulator::SupportedSnapshotExtensions());
+    QStringList tapeExts = toQStringList(Emulator::SupportedTapeExtensions());
+    QStringList diskExts = toQStringList(Emulator::SupportedDiskExtensions());
+    QStringList allExts = snapshotExts + tapeExts + diskExts;
+
     QString filter = buildFilterGroup(tr("All Supported Files"), allExts) + ";;" +
-                     buildFilterGroup(tr("Snapshots"), kSnapshotExts) + ";;" +
-                     buildFilterGroup(tr("Tapes"), kTapeExts) + ";;" +
-                     buildFilterGroup(tr("Disks"), kDiskExts) + ";;" +
+                     buildFilterGroup(tr("Snapshots"), snapshotExts) + ";;" +
+                     buildFilterGroup(tr("Tapes"), tapeExts) + ";;" +
+                     buildFilterGroup(tr("Disks"), diskExts) + ";;" +
                      tr("All Files (*)");
 
     QString filePath = QFileDialog::getOpenFileName(this, tr("Open File"), _lastDirectory, filter);
@@ -1620,7 +1628,8 @@ void MainWindow::openFileDialog()
 
 void MainWindow::openSnapshotDialog()
 {
-    QString filter = buildFilterGroup(tr("Snapshot Files"), kSnapshotExts) + ";;" +
+    QStringList exts = toQStringList(Emulator::SupportedSnapshotExtensions());
+    QString filter = buildFilterGroup(tr("Snapshot Files"), exts) + ";;" +
                      buildFilterGroup(tr("SNA Snapshots"), {"sna"}) + ";;" +
                      buildFilterGroup(tr("Z80 Snapshots"), {"z80"}) + ";;" +
                      buildFilterGroup(tr("SZX Snapshots"), {"szx"}) + ";;" +
@@ -1636,7 +1645,8 @@ void MainWindow::openSnapshotDialog()
 
 void MainWindow::openTapeDialog()
 {
-    QString filter = buildFilterGroup(tr("Tape Files"), kTapeExts) + ";;" +
+    QStringList exts = toQStringList(Emulator::SupportedTapeExtensions());
+    QString filter = buildFilterGroup(tr("Tape Files"), exts) + ";;" +
                      buildFilterGroup(tr("TAP Tapes"), {"tap"}) + ";;" +
                      buildFilterGroup(tr("TZX Tapes"), {"tzx"}) + ";;" +
                      buildFilterGroup(tr("CSW Tapes"), {"csw"}) + ";;" +
@@ -1653,7 +1663,8 @@ void MainWindow::openTapeDialog()
 
 void MainWindow::openDiskDialog()
 {
-    QString filter = buildFilterGroup(tr("Disk Images"), kDiskExts) + ";;" +
+    QStringList exts = toQStringList(Emulator::SupportedDiskExtensions());
+    QString filter = buildFilterGroup(tr("Disk Images"), exts) + ";;" +
                      buildFilterGroup(tr("TRD Images"), {"trd"}) + ";;" +
                      buildFilterGroup(tr("SCL Images"), {"scl"}) + ";;" +
                      buildFilterGroup(tr("FDI Images"), {"fdi"}) + ";;" +

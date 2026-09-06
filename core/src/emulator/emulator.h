@@ -240,6 +240,11 @@ public:
     ///               and post NC_FDD_DISK_SAVE_RETARGETED with the reason.
     DiskSaveResult SaveDisk(uint8_t drive = 0, const std::string& path = std::string(), bool allowRetarget = true);
 
+    // Supported file extensions (for UI file dialogs)
+    static std::vector<std::string> SupportedSnapshotExtensions();
+    static std::vector<std::string> SupportedTapeExtensions();
+    static std::vector<std::string> SupportedDiskExtensions();
+
     // Controlled emulator behavior
     void RunSingleCPUCycle(bool skipBreakpoints = true);
     void RunNCPUCycles(unsigned cycles, bool skipBreakpoints = false);
