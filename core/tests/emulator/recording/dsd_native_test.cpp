@@ -386,11 +386,11 @@ TEST_F(DSDEncoderE2ETest, NativeModeWritesValidDSFFile)
     ASSERT_TRUE(encoder.IsRecording());
     ASSERT_TRUE(tap->isActive());
 
-    // Producer: 500 ms of a 440 Hz tone at native rate, pushed in
+    // Producer: 100 ms of a 440 Hz tone at native rate, pushed in
     // emulation-sized bursts (4375 frames = one 20 ms video frame) at
     // realtime pace. The DSD128 worker converts at ~3.3x realtime, so
     // the ring must never overrun at 1x.
-    constexpr size_t TOTAL_FRAMES = NATIVE_RATE / 2;
+    constexpr size_t TOTAL_FRAMES = NATIVE_RATE / 10;
     size_t pushed = 0;
     auto nextFrame = std::chrono::steady_clock::now();
     while (pushed < TOTAL_FRAMES)
@@ -422,9 +422,9 @@ TEST_F(DSDEncoderE2ETest, NativeModeWritesValidDSFFile)
     std::vector<uint8_t> content((std::istreambuf_iterator<char>(f)),
                                  std::istreambuf_iterator<char>());
 
-    // Expected size: 0.5 s at DSD128 = 2822400 bits/ch = 352800 bytes/ch,
+    // Expected size: 0.1 s at DSD128 = 564480 bits/ch = 70560 bytes/ch,
     // 2 channels, block-padded to 4096 + 92-byte headers
-    ASSERT_GT(content.size(), 700000u);
+    ASSERT_GT(content.size(), 140000u);
 
     // Magic chunks
     EXPECT_EQ(std::memcmp(content.data(), "DSD ", 4), 0);

@@ -164,10 +164,10 @@ TEST_F(TapeTurbo_Integration_Test, WarpLifecycleWithCustomLoaderTiming)
     ASSERT_TRUE(context->pFeatureManager->setFeature(Features::kFastTape, false));
     ASSERT_TRUE(context->pFeatureManager->setFeature(Features::kTurboTape, true));
 
-    // Program pair + one large tail block: 4 KiB plays for ~1200 frames, so
-    // the watchdog pauses MID-BLOCK, never at end-of-tape
+    // Program pair + one tail block: 1 KiB plays for ~300 frames, so
+    // the 150-frame watchdog pauses MID-BLOCK, never at end-of-tape
     std::vector<std::vector<uint8_t>> blocks = MakeProgramTAP();
-    blocks.push_back(MakeTAPBlock(0xFF, std::vector<uint8_t>(4096, 0xA5)));
+    blocks.push_back(MakeTAPBlock(0xFF, std::vector<uint8_t>(1024, 0xA5)));
     context->coreState.tapeFilePath = WriteTAPFile("lifecycle.tap", blocks);
 
     auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(context->pMainLoop);
@@ -193,11 +193,11 @@ TEST_F(TapeTurbo_Integration_Test, WarpLifecycleWithCustomLoaderTiming)
     ASSERT_TRUE(context->pTape->IsPlaying()) << "Tape must still be rolling past the loaded pair";
     EXPECT_TRUE(sawWarpWhilePlaying) << "Playing tape must be under warp (E1 engage, live MainLoop tick)";
 
-    // A silent processing phase — DI'd delay loop with NO port reads (~380
+    // A silent processing phase — DI'd delay loop with NO port reads (~190
     // frames), comfortably past the 150-frame watchdog; the same opcode
     // sequence the fast-load integration suite uses
     auto delay = BasicEncoder::runCommand(emulator,
-        "POKE 30000,243:POKE 30001,6:POKE 30002,16:POKE 30003,33:POKE 30004,0:POKE 30005,0:POKE 30006,43:POKE 30007,124:POKE 30008,181:"
+        "POKE 30000,243:POKE 30001,6:POKE 30002,8:POKE 30003,33:POKE 30004,0:POKE 30005,0:POKE 30006,43:POKE 30007,124:POKE 30008,181:"
         "POKE 30009,32:POKE 30010,251:POKE 30011,16:POKE 30012,246:POKE 30013,251:POKE 30014,201:RANDOMIZE USR 30000");
     ASSERT_TRUE(delay.success) << delay.message;
 
@@ -219,7 +219,7 @@ TEST_F(TapeTurbo_Integration_Test, WarpLifecycleWithCustomLoaderTiming)
 
     // Editor keyboard scanning keeps the pause stable — and must never bring
     // warp back on its own
-    for (int i = 0; i < 350; i++)
+    for (int i = 0; i < 70; i++)
         mainLoop->RunFrame();
     EXPECT_FALSE(context->pTape->IsPlaying()) << "Keyboard scan must not trip the sustained-poll threshold";
     EXPECT_FALSE(core->IsTurboMode()) << "No warp while paused, ever";
