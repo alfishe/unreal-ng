@@ -57,7 +57,8 @@ python3 docs/disasm/demo/scroller/patch_scroller_trd.py
 - **Dual-Mode Operation**:
   - **Sinclair 128K Editor**: `POKE VAL "23388", VAL "20"` primes `BANK_M` (`$5B5C`). The `$5B00` SWAP trampoline reasserts Page 4 across ROM flips so `SCROLL12` loads into Page 4.
   - **48K BASIC / TR-DOS Boot**: `OUT VAL "32765", VAL "20"` writes directly to the hardware port latch on machines without the 128K editor hook.
-- **Output**: [`scroller_fixed.trd`](docs/disasm/demo/scroller/scroller_fixed.trd) runs out-of-the-box in any emulator under any reset configuration (`RESET=128`, `RESET=BASIC`, `RESET=DOS`).
+  - **Catalog Parameter 2**: Both `param 1` (length) and `param 2` (program length without variables) in catalog entry 0 are updated to 349 bytes so that Sinclair BASIC allocates `VARS` after Line 90 rather than corrupting it.
+- **Output**: [`scroller_fixed.trd`](docs/disasm/demo/scroller/scroller_fixed.trd) runs out-of-the-box in any emulator under any reset configuration (`RESET=128`, `RESET=BASIC`, `RESET=DOS`). Verified by automated test `Scroller_Boot_Test.BootScrollerFixedTRD_Via128KMenu` in [`scroller_boot_test.cpp`](core/tests/loaders/disk/scroller_boot_test.cpp).
 
 > [!NOTE]
 > **How to Launch from TR-DOS**:
@@ -93,7 +94,7 @@ Total compressed data across all files: ~31.5 KB, expanding into ~80 KB across a
 
 ```mermaid
 flowchart TD
-    A["TR-DOS: RUN 'SCROLLER'"] --> B["SCROLLER.B Line 10: CLEAR 24575"]
+    A["TR-DOS: RUN 'SCROLLER'"] --> B["SCROLLER.B Line 10: INK/PAPER/BORDER 0, CLEAR 25088"]
     B --> C["Line 20: LOAD 'SCROLL00' CODE @ $6200"]
     C --> D["Line 30: LOAD 'SCROLL15' CODE @ $8000"]
     D --> E["Line 40: USR 25094 (Depack SCROLL15 &rarr; $62B2)<br/>LOAD 'SCROLL10' CODE @ $8000"]

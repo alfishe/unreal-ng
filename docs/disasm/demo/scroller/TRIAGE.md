@@ -218,7 +218,12 @@ REM Patched Line 80 (349 bytes total, boots under all menus and models):
 #### Why This Works Universally
 1. **Under Sinclair 128K Editor**: `POKE VAL "23388", VAL "20"` sets system variable `BANK_M` (`$5B5C` / 23388). When the statement ends at the colon (`:`), the editor's `$5B00` SWAP routine toggles bit 4 across ROM switches while keeping RAM Page 4 mapped in bits 0–2. TR-DOS loads all 48 sectors of `SCROLL12` directly into Page 4.
 2. **Under 48K BASIC / Native TR-DOS Boot**: `OUT VAL "32765", VAL "20"` directly writes to hardware port `#7FFD` on the bus. (In 48K mode, the 128K editor is never initialized, so `POKE` alone would not trigger an `OUT`).
-3. **Artifact**: Use [`patch_scroller_trd.py`](docs/disasm/demo/scroller/patch_scroller_trd.py) to generate [`scroller_fixed.trd`](docs/disasm/demo/scroller/scroller_fixed.trd).
+3. **TR-DOS Catalog Parameter 2 Synchronization**:
+   In TR-DOS catalog entry 0 for `SCROLLER.B`:
+   - Bytes 9–10 (`param 1`): Total program length.
+   - Bytes 11–12 (`param 2`): Program length without variables.
+   When expanding Line 80 from 333 to 349 bytes, **both** `param 1` and `param 2` must be updated to 349. If `param 2` remains at 333, Sinclair BASIC sets `VARS` (`$5C4B`) at `PROG + 333` (in the middle of Line 90), corrupting Line 90 into variable tokens (`0x80 0x0D...`) and throwing `C Nonsense in BASIC, 90:1`.
+4. **Artifact**: Use [`patch_scroller_trd.py`](docs/disasm/demo/scroller/patch_scroller_trd.py) to generate [`scroller_fixed.trd`](docs/disasm/demo/scroller/scroller_fixed.trd), [`scroller_fixed.$B`](docs/disasm/demo/scroller/scroller_fixed.$B), and [`scroller_fixed.bin`](docs/disasm/demo/scroller/scroller_fixed.bin).
 
 ### Option 2: Standalone 128K SNA Snapshot (`scroller_by_demarche.sna`)
 For zero-friction playback and regression testing, [`make_scroller_sna.py`](docs/disasm/demo/scroller/make_scroller_sna.py) pre-decrunches all 7 parts directly into their designated 128K RAM banks and outputs a standard 131,103-byte `.sna` snapshot.
@@ -252,7 +257,9 @@ memory.DirectWriteToZ80Memory(0x5B5C, value);  // REJECTED: Violates hardware fi
 The reproduction and validation scenarios are codified in:
 - [`core/tests/loaders/disk/scroller_boot_test.cpp`](core/tests/loaders/disk/scroller_boot_test.cpp)
   - `Scroller_Boot_Test.BootScrollerDemoTRD`: 48K/Clean TR-DOS boot path (passes).
-  - `Scroller_Boot_Test.BootScrollerDemoTRD_Via128KMenu`: 128K menu path reproducing the `$5B00` desync crash.
+  - `Scroller_Boot_Test.BootScrollerDemoTRD_Via128KMenu`: 128K menu path reproducing the authentic `$5B00` desync failure.
+  - `Scroller_Boot_Test.BootScrollerFixedTRD_Via128KMenu`: 128K menu path loading `scroller_fixed.trd`, verifying all 7 TR-DOS loads, all 6 MegaLZ unpacks, `#7FFD` port switches, Covox menu entry (`$9B6B`), Space trigger (`$9CD6`), and 50Hz IM2 audio execution.
+  - `Scroller_Boot_Test.RunGeneratedScrollerSNA`: Automated validation of the clean 128K `.SNA` snapshot.
   - `Scroller_Boot_Test.DISABLED_RealtimeGuiFlow_NoPerturbation`: Full passive realtime bus trace pin-pointing the exact instruction sequence.
 
 ---

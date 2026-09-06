@@ -4,7 +4,7 @@ REM Complete annotated source code and token-level breakdown
 REM ==============================================================================
 
 REM Original BASIC Listing (333 bytes, fails on 128K Sinclair menu):
-10 CLEAR VAL "24575": POKE VAL "23624",VAL "0": OUT VAL "254",VAL "0": RANDOMIZE USR VAL "25088"
+10 INK NOT PI: PAPER NOT PI: BORDER NOT PI: CLEAR VAL "25088"
 20 RANDOMIZE USR VAL "15619": REM : LOAD "SCROLL00" CODE
 30 RANDOMIZE USR VAL "15619": REM : LOAD "SCROLL15" CODE
 40 RANDOMIZE USR VAL "25094": RANDOMIZE USR VAL "15619": REM : LOAD "SCROLL10" CODE
@@ -24,17 +24,17 @@ REM ============================================================================
 REM ------------------------------------------------------------------------------
 REM Line 10: System Initialization & Memory Clamping
 REM ------------------------------------------------------------------------------
-REM - CLEAR VAL "24575" ($5FFF):
-REM     Sets RAMTOP to $5FFF (24,575). This protects all memory from $6000 upwards
-REM     from being overwritten by BASIC variables, arrays, or stack frames.
-REM     The machine code modules will reside at $6200, $8000, and $C000.
-REM - POKE VAL "23624", VAL "0":
-REM     System variable BORDCR ($5C48, 23624). Setting this to 0 ensures border
-REM     and attribute operations default to black.
-REM - OUT VAL "254", VAL "0":
-REM     Direct hardware I/O write to port #FE: Sets border color immediately to 0 (Black).
-REM - RANDOMIZE USR VAL "25088":
-REM     Dummy pre-call to $6200 to clear any pending registers or initialize runtime.
+REM - INK NOT PI:
+REM     Sets INK color to 0 (black). In Sinclair BASIC, NOT PI evaluates to 0
+REM     without the 6-byte inline numeric float encoding, saving memory.
+REM - PAPER NOT PI:
+REM     Sets PAPER color to 0 (black).
+REM - BORDER NOT PI:
+REM     Sets border color to 0 (black).
+REM - CLEAR VAL "25088" ($61FF):
+REM     Sets RAMTOP to $61FF (25,088 - 1). This clears all variables and protects
+REM     all memory from $6200 upwards from BASIC variables and stack manipulation.
+REM     The depack dispatcher SCROLL00 is loaded at $6200 in Line 20.
 
 REM ------------------------------------------------------------------------------
 REM Lines 20–30: Loading the Core Dispatcher and First Payload

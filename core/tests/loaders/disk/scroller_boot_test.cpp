@@ -84,7 +84,7 @@ protected:
     /// via128KMenu=true reproduces the user-reported path:
     ///   RESET=128 -> 128K service menu -> TR-DOS (menu index 4) -> RUN "SCROLLER"
     /// via128KMenu=false uses plain 48K BASIC + RANDOMIZE USR 15616.
-    void BootAndRunScroller(bool via128KMenu);
+    void BootAndRunScroller(bool via128KMenu, const std::string& customTrdPath = "");
 
     /// Realtime GUI-flow repro: same menu path, but none of the harness
     /// perturbations (no breakpoints, no CAT). Records which side of the
@@ -112,7 +112,7 @@ static std::string FirstScreenLines(const std::string& screen, size_t lines)
     return result;
 }
 
-void Scroller_Boot_Test::BootAndRunScroller(bool via128KMenu)
+void Scroller_Boot_Test::BootAndRunScroller(bool via128KMenu, const std::string& customTrdPath)
 {
     if (!_emulator)
     {
@@ -162,7 +162,9 @@ void Scroller_Boot_Test::BootAndRunScroller(bool via128KMenu)
     }
 
     // STEP 2: Insert the demo disk
-    std::string trdPath = TestPathHelper::GetTestDataPath("sound/covox/scroller_by_demarche.trd");
+    std::string trdPath = customTrdPath.empty()
+                              ? TestPathHelper::GetTestDataPath("sound/covox/scroller_by_demarche.trd")
+                              : customTrdPath;
     if (!FileHelper::FileExists(trdPath))
     {
         GTEST_SKIP() << "Test fixture not available: " << trdPath;
@@ -488,7 +490,7 @@ void Scroller_Boot_Test::BootAndRunScroller(bool via128KMenu)
         }
 
         // Authentic failure on 128K menu path: page 4 is empty, NOP slide occurred
-        if (via128KMenu && startDemoHits > 0 && !(cpu->im == 2 && cpu->i == 0xBE))
+        if (via128KMenu && customTrdPath.empty() && startDemoHits > 0 && !(cpu->im == 2 && cpu->i == 0xBE))
         {
             if (++stuckRomSamples >= 10)
             {
@@ -607,7 +609,7 @@ void Scroller_Boot_Test::BootAndRunScroller(bool via128KMenu)
     {
         std::cout << "  caller " << std::hex << kv.first << std::dec << " : " << kv.second << "\n";
     }
-    if (via128KMenu)
+    if (via128KMenu && customTrdPath.empty())
     {
         // Authentic stock-ROM outcome: the editor SWAP hook reverts the OUT 32765,20
         // page selection (stale BANK_M, neither ROM half syncs it), so the demo dies.
@@ -711,6 +713,24 @@ TEST_F(Scroller_Boot_Test, BootScrollerDemoTRD_Via128KMenu)
     _context->config.reset_rom = RM_128;
     _emulator->Reset();
     BootAndRunScroller(true);
+}
+
+// Verifies that the patched dual-mode loader in scroller_fixed.trd allows the demo
+// to boot and run cleanly even when starting from the 128K Sinclair service menu.
+TEST_F(Scroller_Boot_Test, BootScrollerFixedTRD_Via128KMenu)
+{
+    if (!_emulator)
+    {
+        GTEST_SKIP() << "Emulator initialization failed";
+    }
+    std::string fixedTrdPath = (TestPathHelper::FindProjectRoot() / "docs/disasm/demo/scroller/scroller_fixed.trd").string();
+    if (!FileHelper::FileExists(fixedTrdPath))
+    {
+        GTEST_SKIP() << "Fixed TRD not found: " << fixedTrdPath;
+    }
+    _context->config.reset_rom = RM_128;
+    _emulator->Reset();
+    BootAndRunScroller(true, fixedTrdPath);
 }
 
 // Verifies that the clean 128K .SNA snapshot generated from scroller_by_demarche.trd

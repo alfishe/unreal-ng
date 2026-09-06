@@ -3,7 +3,7 @@ REM "Scroller by Demarche" (1996) — Patched TR-DOS BASIC Loader (SCROLLER.B)
 REM Complete annotated source code and dual-mode token-level breakdown
 REM ==============================================================================
 
-10 CLEAR VAL "24575": POKE VAL "23624",VAL "0": OUT VAL "254",VAL "0": RANDOMIZE USR VAL "25088"
+10 INK NOT PI: PAPER NOT PI: BORDER NOT PI: CLEAR VAL "25088"
 20 RANDOMIZE USR VAL "15619": REM : LOAD "SCROLL00" CODE
 30 RANDOMIZE USR VAL "15619": REM : LOAD "SCROLL15" CODE
 40 RANDOMIZE USR VAL "25094": RANDOMIZE USR VAL "15619": REM : LOAD "SCROLL10" CODE
@@ -20,14 +20,17 @@ REM ============================================================================
 REM ------------------------------------------------------------------------------
 REM Line 10: System Initialization & Memory Protection
 REM ------------------------------------------------------------------------------
-REM - CLEAR VAL "24575" ($5FFF):
-REM     Protects memory from $6000 upwards from BASIC variables and stack.
-REM - POKE VAL "23624", VAL "0":
-REM     BORDCR ($5C48) set to black.
-REM - OUT VAL "254", VAL "0":
-REM     Direct hardware I/O to port #FE: border set to black immediately.
-REM - RANDOMIZE USR VAL "25088":
-REM     Initial entry to $6200.
+REM - INK NOT PI:
+REM     Sets INK color to 0 (black). In Sinclair BASIC, NOT PI evaluates to 0
+REM     without the 6-byte inline numeric float encoding, saving memory.
+REM - PAPER NOT PI:
+REM     Sets PAPER color to 0 (black).
+REM - BORDER NOT PI:
+REM     Sets border color to 0 (black).
+REM - CLEAR VAL "25088" ($61FF):
+REM     Sets RAMTOP to $61FF (25,088 - 1). This clears all variables and protects
+REM     all memory from $6200 upwards from BASIC variables and stack manipulation.
+REM     The depack dispatcher SCROLL00 is loaded at $6200 in Line 20.
 
 REM ------------------------------------------------------------------------------
 REM Lines 20–70: Streaming Decrunch Pipeline

@@ -129,6 +129,11 @@ public:
     /// Regenerates TstateCoordLUT after base class updates raster state
     void SetVideoMode(VideoModeEnum mode) override;
 
+    /// @brief Set border color with Pentagon-specific 1 T-state delay
+    /// Pentagon ULA has 1 T-state pipeline delay before border color takes effect.
+    /// This aligns border effects with paper content in demos like "Across The Edge".
+    void SetBorderColor(uint8_t color) override;
+
     void UpdateScreen() override;
 
     /// @brief Optimized Draw using pre-computed LUT

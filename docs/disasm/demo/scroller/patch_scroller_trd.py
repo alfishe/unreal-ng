@@ -68,7 +68,7 @@ def patch_trd(input_path: str, output_path: str) -> None:
     line_body = bas[l80_pos + 4 : l80_pos + 4 + l80_len]
 
     target = b'\xdf\xb0"32765",\xb0"20":'
-    replacement = b'\xda\xb0"23388",\xb0"20":\xdf\xb0"32765",\xb0"20":'
+    replacement = b'\xf4\xb0"23388",\xb0"20":\xdf\xb0"32765",\xb0"20":'
 
     if target not in line_body:
         print("Error: Target OUT sequence not found in Line 80.", file=sys.stderr)
@@ -89,16 +89,47 @@ def patch_trd(input_path: str, output_path: str) -> None:
     # Update BASIC program data on disk
     data[bas_offset : bas_offset + new_bas_len] = new_bas
 
-    # Update catalog entry 0 length
+    # Update catalog entry 0 length (both param1 and param2 must equal new_bas_len)
     data[9] = new_bas_len & 0xFF
     data[10] = (new_bas_len >> 8) & 0xFF
+    data[11] = new_bas_len & 0xFF
+    data[12] = (new_bas_len >> 8) & 0xFF
 
-    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+    out_dir = os.path.dirname(os.path.abspath(output_path))
+    os.makedirs(out_dir, exist_ok=True)
     with open(output_path, "wb") as f_out:
         f_out.write(data)
 
+    # Also export raw binary token stream (.bin)
+    bin_path = os.path.join(out_dir, "scroller_fixed.bin")
+    with open(bin_path, "wb") as f_bin:
+        f_bin.write(new_bas)
+
+    # Also export Hobeta file ($B)
+    sec_count = (new_bas_len + 255) // 256
+    hobeta_hdr = bytearray(17)
+    hobeta_hdr[0:8] = b"SCROLLER"
+    hobeta_hdr[8] = ord("B")
+    hobeta_hdr[9] = new_bas_len & 0xFF
+    hobeta_hdr[10] = (new_bas_len >> 8) & 0xFF
+    hobeta_hdr[11] = new_bas_len & 0xFF
+    hobeta_hdr[12] = (new_bas_len >> 8) & 0xFF
+    hobeta_hdr[13] = 0
+    hobeta_hdr[14] = sec_count & 0xFF
+    csum = 0
+    for i in range(15):
+        csum = (csum + hobeta_hdr[i] * 257 + i) & 0xFFFF
+    hobeta_hdr[15] = csum & 0xFF
+    hobeta_hdr[16] = (csum >> 8) & 0xFF
+
+    hobeta_path = os.path.join(out_dir, "scroller_fixed.$B")
+    with open(hobeta_path, "wb") as f_hob:
+        f_hob.write(hobeta_hdr + new_bas)
+
     print(f"Successfully patched TRD: {output_path}")
     print(f"  SCROLLER.B length: {bas_len} -> {new_bas_len} bytes")
+    print(f"  Exported binary: {bin_path} ({len(new_bas)} bytes)")
+    print(f"  Exported Hobeta: {hobeta_path} ({len(hobeta_hdr) + len(new_bas)} bytes)")
     print("  Line 80 fix applied: POKE VAL \"23388\",VAL \"20\": OUT VAL \"32765\",VAL \"20\":")
 
 def main():
