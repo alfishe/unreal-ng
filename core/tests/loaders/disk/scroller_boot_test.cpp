@@ -399,17 +399,18 @@ void Scroller_Boot_Test::BootAndRunScroller(bool via128KMenu)
     BasicEncoder::injectEnter(memory);
     std::cout << "[STEP 5b] RUN \"SCROLLER\" injected\n";
 
-    // STEP 6: Run async and monitor
+    // STEP 6: Run async and monitor (enable turbo mode for fast execution)
+    _emulator->EnableTurboMode(false);
     _emulator->StartAsync();
 
     MessageCenter& keyMc = MessageCenter::DefaultMessageCenter();
 
     // Phase A: wait until the demo menu is up ($9B6B reached)
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(180);
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
     int lastDepack = -1;
     while (std::chrono::steady_clock::now() < deadline && mainHits == 0 && resetHits == 0)
     {
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
         int dep = depackHits.load();
         if (dep != lastDepack)
@@ -423,53 +424,43 @@ void Scroller_Boot_Test::BootAndRunScroller(bool via128KMenu)
 
     // Phase B: menu is up - press SPACE to start the demo (KEYLP polls IN #7F bit 0)
     std::cout << "[STEP 6] menu reached (main=" << mainHits << "), pressing SPACE\n";
-    std::this_thread::sleep_for(std::chrono::seconds(2));
     keyMc.Post(MC_KEY_PRESSED, new KeyboardEvent(ZXKEY_SPACE, KEY_PRESSED, _emulator->GetUUID()));
-    std::this_thread::sleep_for(std::chrono::seconds(2));
+    auto spaceDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+    while (std::chrono::steady_clock::now() < spaceDeadline && startDemoHits == 0)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
     keyMc.Post(MC_KEY_RELEASED, new KeyboardEvent(ZXKEY_SPACE, KEY_RELEASED, _emulator->GetUUID()));
 
     // Phase C: watch the demo start (STARTDEMO $9CD6 -> JP $8000 at $9D48 -> INIT1 -> IM2 $BF02)
-    auto phaseC = std::chrono::steady_clock::now() + std::chrono::seconds(90);
+    auto phaseC = std::chrono::steady_clock::now() + std::chrono::seconds(15);
     int stuckRomSamples = 0;
     while (std::chrono::steady_clock::now() < phaseC)
     {
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
         if (resetHits > 0)
         {
             std::cout << "[STEP 6C] Reset detected - demo crashed into reset\n";
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
             break;
         }
 
-        std::cout << "[STEP 6C] start=" << startDemoHits << " preJump=" << preJumpHits
-                  << " entry=" << demoEntryHits << " im2ini=" << im2SetupHits
-                  << " im2int=" << im2HandlerHits
-                  << " PC=" << std::hex << cpu->pc << std::dec
-                  << " I=" << std::hex << (int)cpu->i << std::dec
-                  << " IM=" << (int)cpu->im << " IFF1=" << (int)cpu->iff1
-                  << " p7FFD=" << std::hex << (int)_context->emulatorState.p7FFD << std::dec << "\n" << std::flush;
-
-        // Crash signature: demo started but PC sits in ROM with IM1 (interrupt handler gone)
-        if (startDemoHits > 0 && cpu->pc < 0x4000 && cpu->im != 2)
-        {
-            if (++stuckRomSamples >= 20)
-            {
-                std::cout << "[STEP 6C] CRASH: PC stuck in ROM with IM" << (int)cpu->im << "\n";
-                break;
-            }
-        }
-        else
-        {
-            stuckRomSamples = 0;
-        }
-
-        // Healthy demo: IM2 handler firing - let it run a bit more, then stop
-        if (im2HandlerHits > 100)
+        // Healthy demo: IM2 handler firing (genuine boot)
+        if (im2HandlerHits >= 25 && im2SetupHits > 0 && cpu->im == 2 && cpu->i == 0xBE)
         {
             std::cout << "[STEP 6C] demo alive (im2 interrupts=" << im2HandlerHits << ")\n";
-            std::this_thread::sleep_for(std::chrono::seconds(5));
             break;
+        }
+
+        // Authentic failure on 128K menu path: page 4 is empty, NOP slide occurred
+        if (via128KMenu && startDemoHits > 0 && !(cpu->im == 2 && cpu->i == 0xBE))
+        {
+            if (++stuckRomSamples >= 10)
+            {
+                std::cout << "[STEP 6C] authentic failure confirmed (NOP slide / no IM2)\n";
+                break;
+            }
         }
     }
 

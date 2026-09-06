@@ -15,11 +15,13 @@ protected:
     void SetUp() override;
     void TearDown() override;
 
-    /// Boot emulator and run frames until stable
-    std::string BootEmulator(const std::string& symbolicId, int bootFrames = 1000);
+    /// Boot emulator in turbo mode and wait for bootFrames to elapse.
+    /// Turbo mode removes frame rate limiting - emulator runs at host CPU speed.
+    /// Use small bootFrames and follow with WaitForOCRText() for ready detection.
+    std::string BootEmulator(const std::string& symbolicId, int bootFrames = 10);
 
-    /// Run N frames on the emulator (realtime wall-clock wait — the emulator
-    /// thread drives its own frame processing, including keyboard sequences)
+    /// Run N frames on the emulator using frame_counter polling (turbo mode).
+    /// The emulator thread drives its own frame processing including keyboard sequences.
     void RunFrames(const std::string& emulatorId, int frameCount);
 
     /// Get screen text via OCR
@@ -31,8 +33,9 @@ protected:
     /// Clean up emulator
     void CleanupEmulator(const std::string& emulatorId);
 
-    /// Wait for specific text to appear on screen via OCR polling
-    bool WaitForOCRText(const std::string& emulatorId, const std::string& searchText, int timeoutMs = 1000);
+    /// Wait for specific text to appear on screen via OCR polling (every 10 frames).
+    /// @param maxFrames Maximum virtual frames to wait (turbo mode frame_counter polling)
+    bool WaitForOCRText(const std::string& emulatorId, const std::string& searchText, int maxFrames = 200);
 
     /// Wait for ROM execution to reach a specific address (uses breakpoint)
     /// @return true if address hit within timeout
