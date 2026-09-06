@@ -1,5 +1,6 @@
 #include "disassembler_opcode_test.h"
 
+#include <cstdlib>
 #include <vector>
 #include "common/dumphelper.h"
 #include "common/stringhelper.h"
@@ -8,6 +9,12 @@
 
 void Disassembler_Opcode_Test::SetUp()
 {
+    // Re-seed rand() per test: the operand bytes below come from rand() and
+    // each expected string is derived from those same bytes, so without a
+    // per-test reset the exercised values would silently depend on how many
+    // rand() calls earlier tests consumed
+    std::srand(42);
+
     _context = new EmulatorContext();
     _debugManager = new DebugManager(_context);
     // Instantiate emulator with all peripherals, but no configuration loaded

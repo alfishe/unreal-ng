@@ -884,13 +884,16 @@ TEST_F(Scroller_Boot_Test, DISABLED_RunGeneratedScrollerSNA)
         GTEST_SKIP() << "Emulator initialization failed";
     }
 
-    std::string snaPath = "docs/disasm/demo/scroller/scroller_by_demarche.sna";
+    // Absolute, cwd-independent paths: the test-parallel CMake target runs with
+    // WORKING_DIRECTORY pointing at the build bin dir, where relative "docs/..."
+    // paths never resolve and the silent-regeneration fallback below would fail
+    std::string snaPath = (TestPathHelper::FindProjectRoot() / "docs/disasm/demo/scroller/scroller_by_demarche.sna").string();
     if (!FileHelper::FileExists(snaPath))
     {
-        std::string pyScript = "docs/disasm/demo/scroller/make_scroller_sna.py";
+        std::string pyScript = (TestPathHelper::FindProjectRoot() / "docs/disasm/demo/scroller/make_scroller_sna.py").string();
         if (FileHelper::FileExists(pyScript))
         {
-            int ret = system(("python3 " + pyScript + " -o " + snaPath).c_str());
+            int ret = system(("python3 \"" + pyScript + "\" -o \"" + snaPath + "\"").c_str());
             (void)ret;
         }
     }

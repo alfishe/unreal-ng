@@ -117,9 +117,17 @@ TEST_F(Emulator_Test, MultiInstanceRun)
             std::cout << "Starting emulator " << i << std::endl;
             emulator->StartAsync();  // Use StartAsync instead of Start to avoid blocking
             
-            // Allow the thread to begin execution
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            
+            // Wait (bounded) for the worker thread to actually reach the
+            // mainloop. GetState()==StateRun is set by the worker AFTER its
+            // startup flag handling, so a Stop() issued afterwards is
+            // guaranteed to be honoured - unlike IsRunning(), which
+            // StartAsync() raises before the worker even starts
+            auto runDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (emulator->GetState() != StateRun && std::chrono::steady_clock::now() < runDeadline)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+
             if (!emulator->IsRunning()) {
                 std::cout << "Emulator " << i << " failed to start" << std::endl;
                 continue;
@@ -290,8 +298,7 @@ TEST(Emulator_PathShapes_Test, LoadAndSaveSnapshot_NonAsciiUtf8Path)
     const std::string utf8Copy = "\xD0\x9A\xD0\xBE\xD0\xBF\xD0\xB8\xD1\x8F.sna";                                                                    // Копия.sna
 
     std::error_code ec;
-    const fs::path dir = fs::temp_directory_path(ec) / u8path(utf8Dir);
-    ASSERT_FALSE(ec) << "temp_directory_path failed";
+    const fs::path dir = fs::path(TestPathHelper::GetUniqueTestScratchPath(utf8Dir));
     fs::create_directories(dir, ec);
     ASSERT_FALSE(ec) << "create_directories failed for " << u8str(dir);
     fs::copy_file(u8path(local), dir / u8path(utf8Name), fs::copy_options::overwrite_existing, ec);

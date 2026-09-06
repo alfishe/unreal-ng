@@ -380,7 +380,7 @@ TEST_F(LoaderSNA_Test, determineOutputFormat_48kMode)
     _context->emulatorState.p7FFD = 0x20;  // Lock bit set
     _context->pPortDecoder->LockPaging();
     
-    std::string tempPath = "/tmp/test_determine_48k.sna";
+    std::string tempPath = TestPathHelper::GetUniqueTestScratchPath("test_determine_48k.sna");
     LoaderSNACUT loader(_context, tempPath);
     
     SNA_MODE mode = loader.determineOutputFormat();
@@ -393,7 +393,7 @@ TEST_F(LoaderSNA_Test, determineOutputFormat_128kMode)
     _context->emulatorState.p7FFD = 0x00;  // No lock bit
     _context->pPortDecoder->UnlockPaging();
     
-    std::string tempPath = "/tmp/test_determine_128k.sna";
+    std::string tempPath = TestPathHelper::GetUniqueTestScratchPath("test_determine_128k.sna");
     LoaderSNACUT loader(_context, tempPath);
     
     SNA_MODE mode = loader.determineOutputFormat();
@@ -406,7 +406,7 @@ TEST_F(LoaderSNA_Test, isPageEmpty_AllZeros)
     Memory& memory = *_context->pMemory;
     memset(memory.RAMPageAddress(0), 0, PAGE_SIZE);
     
-    std::string tempPath = "/tmp/test_empty_page.sna";
+    std::string tempPath = TestPathHelper::GetUniqueTestScratchPath("test_empty_page.sna");
     LoaderSNACUT loader(_context, tempPath);
     
     // Page 0 should now be empty after explicit zeroing
@@ -416,7 +416,7 @@ TEST_F(LoaderSNA_Test, isPageEmpty_AllZeros)
 
 TEST_F(LoaderSNA_Test, isPageEmpty_Randomized)
 {
-    std::string tempPath = "/tmp/test_randomized_page.sna";
+    std::string tempPath = TestPathHelper::GetUniqueTestScratchPath("test_randomized_page.sna");
     LoaderSNACUT loader(_context, tempPath);
     
     // Page 5 should NOT be empty (randomized during init)
@@ -433,7 +433,7 @@ TEST_F(LoaderSNA_Test, save48kBasic)
     _context->emulatorState.p7FFD = 0x20;
     _context->pPortDecoder->LockPaging();
     
-    std::string tempPath = "/tmp/test_save_48k.sna";
+    std::string tempPath = TestPathHelper::GetUniqueTestScratchPath("test_save_48k.sna");
     LoaderSNACUT loader(_context, tempPath);
     
     bool result = loader.save();
@@ -459,7 +459,7 @@ TEST_F(LoaderSNA_Test, save128kBasic)
     _context->emulatorState.p7FFD = 0x00;
     _context->pPortDecoder->UnlockPaging();
     
-    std::string tempPath = "/tmp/test_save_128k.sna";
+    std::string tempPath = TestPathHelper::GetUniqueTestScratchPath("test_save_128k.sna");
     LoaderSNACUT loader(_context, tempPath);
     
     bool result = loader.save();
@@ -495,7 +495,7 @@ TEST_F(LoaderSNA_Test, saveAndLoadRoundtrip48k)
     z80.sp = 0xFF00;
     z80.im = 1;
     
-    std::string tempPath = "/tmp/test_roundtrip_48k.sna";
+    std::string tempPath = TestPathHelper::GetUniqueTestScratchPath("test_roundtrip_48k.sna");
     
     // Save
     {
@@ -534,7 +534,7 @@ TEST_F(LoaderSNA_Test, save48kFileSizeExact)
     _context->emulatorState.p7FFD = 0x20;
     _context->pPortDecoder->LockPaging();
     
-    std::string tempPath = "/tmp/test_size_48k.sna";
+    std::string tempPath = TestPathHelper::GetUniqueTestScratchPath("test_size_48k.sna");
     LoaderSNACUT loader(_context, tempPath);
     
     bool result = loader.save();
@@ -559,7 +559,7 @@ TEST_F(LoaderSNA_Test, save128kFileSizeExact)
     _context->emulatorState.p7FFD = 0x00;
     _context->pPortDecoder->UnlockPaging();
     
-    std::string tempPath = "/tmp/test_size_128k.sna";
+    std::string tempPath = TestPathHelper::GetUniqueTestScratchPath("test_size_128k.sna");
     LoaderSNACUT loader(_context, tempPath);
     
     bool result = loader.save();
