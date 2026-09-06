@@ -128,7 +128,6 @@ symbols info            # Show symbol count
 open <file>             # Auto-detect and load file
 snapshot save <file>    # Save snapshot (.sna/.z80)
 snapshot info           # Current snapshot status
-
 # Tape transport (see command-interface.md §10 for the full tables)
 tape load <file>        # Load tape image (.tap/.tzx/.csw)
 tape eject              # Eject: stop playback, drop image and catalog
@@ -148,6 +147,22 @@ tape import <snd> [--target auto|tzx|tap] [--hysteresis X] -o out.tzx|out.tap
 disk insert/eject       # Disk control
 disk catalog            # List TR-DOS directory
 ```
+
+#### Disk Operations
+```
+disk insert <drive> <file>      # Insert disk image (A-D or 0-3)
+disk eject <drive>              # Eject disk
+disk create <drive> [model]     # Create blank disk (trdos80, trdos40, plusd)
+disk catalog <drive>            # List TR-DOS directory
+disk info <drive>               # Drive and geometry info
+disk sector <drive> <cyl> <side> <sec>   # Read sector (logical number)
+disk track <drive> <cyl> <side>          # Track summary with sectors
+```
+
+Track output includes:
+- `raw_size`: actual track length in bytes (6250 nominal MFM, 3125 FM, variable for real-drive dumps)
+- `encoding`: MFM or FM (single density)
+- Sector list with ID fields (C/H/R/N), CRC status, deleted-data marks
 
 #### Features & Settings
 ```
@@ -249,6 +264,46 @@ Full parity with the CLI `tape` commands, the Lua `tape_*` functions and the Pyt
 | GET | `/api/v1/emulator/{id}/tape/blocks/{index}` | Block descriptor + hex preview |
 | POST | `/api/v1/emulator/{id}/tape/render` | Tape image → WAV/FLAC |
 | POST | `/api/v1/emulator/{id}/tape/import` | WAV/FLAC/MP3 → .tzx/.tap |
+
+#### Disk Operations
+| Method | Endpoint | Description |
+|:-------|:---------|:------------|
+| GET | `/api/v1/emulator/{id}/disk` | List all drives |
+| GET | `/api/v1/emulator/{id}/disk/{drive}` | Drive info (A-D or 0-3) |
+| POST | `/api/v1/emulator/{id}/disk/{drive}/insert` | Insert disk image |
+| POST | `/api/v1/emulator/{id}/disk/{drive}/create` | Create blank disk |
+| POST | `/api/v1/emulator/{id}/disk/{drive}/eject` | Eject disk |
+| GET | `/api/v1/emulator/{id}/disk/{drive}/info` | Disk geometry and catalog |
+| GET | `/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}` | Read sector (parsed) |
+| GET | `/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}/raw` | Read sector (raw bytes) |
+| GET | `/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}` | Track summary |
+| GET | `/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}/raw` | Raw track bytes |
+| GET | `/api/v1/emulator/{id}/disk/{drive}/image` | Whole image dump |
+
+**Track response fields** (universal track model):
+```json
+{
+  "raw_size": 6250,           // Track length in bytes (variable: 3125 FM, 6208-6464 real drives)
+  "encoding": "MFM",          // "MFM" or "FM" (single density)
+  "sector_count": 16,
+  "sectors": [{
+    "id_cyl": 0, "id_head": 0, "id_sector": 1, "id_size_code": 1,
+    "id_crc_valid": true,
+    "has_data": true, "data_size": 256, "data_crc_valid": true,
+    "deleted": false
+  }]
+}
+```
+
+**Raw track response** (`/track/{cyl}/{side}/raw`):
+```json
+{
+  "raw_size": 6250,
+  "encoding": "MFM",
+  "raw_base64": "...",            // Track stream from index pulse
+  "clock_bitmap_base64": "..."    // Bit i=1 marks sync byte (A1/C2 address marks)
+}
+```
 
 #### VideoWall Control
 | Method | Endpoint | Description |
