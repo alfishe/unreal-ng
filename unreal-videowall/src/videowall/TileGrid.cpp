@@ -1,7 +1,9 @@
 #include "videowall/TileGrid.h"
 
 #include <emulatormanager.h>
+#include <emulator/emulatorcontext.h>
 #include <emulator/notifications.h>
+#include <emulator/video/screen.h>
 #include <3rdparty/message-center/messagecenter.h>
 
 #include <QPainter>
@@ -317,12 +319,29 @@ void TileGrid::compositeSingleSyncFrame()
     auto emulator = _tiles.front()->emulator();
     if (!emulator) return;
 
-    auto fb = emulator->GetFramebuffer();
-    if (!fb.memoryBuffer || fb.width <= 0 || fb.height <= 0) return;
+    // Get screen for tear-free copy from latched framebuffer
+    EmulatorContext* ctx = emulator->GetContext();
+    Screen* screen = ctx ? ctx->pScreen : nullptr;
+    if (!screen) return;
 
-    // 1. Create a QImage wrapping the raw framebuffer
-    // Format_RGBA8888 assumes 32 bits per pixel.
-    QImage rawImage(static_cast<const unsigned char*>(fb.memoryBuffer), fb.width, fb.height, fb.width * 4, QImage::Format_RGBA8888);
+    auto& desc = screen->GetFramebufferDescriptor();
+    if (desc.width == 0 || desc.height == 0) return;
+
+    // Allocate or resize backing buffer if needed
+    if (_latchedFrame.width() != static_cast<int>(desc.width) ||
+        _latchedFrame.height() != static_cast<int>(desc.height))
+    {
+        _latchedFrame = QImage(desc.width, desc.height, QImage::Format_RGBA8888);
+    }
+
+    // Copy from the frame-end latched snapshot (tear-free)
+    if (!screen->CopyPresentedFramebuffer(_latchedFrame.bits(),
+                                          static_cast<size_t>(_latchedFrame.sizeInBytes())))
+    {
+        return;
+    }
+
+    QImage& rawImage = _latchedFrame;
     
     // 2. Extract the 256x192 active area
     QImage activeArea = rawImage.copy(48, 48, 256, 192);

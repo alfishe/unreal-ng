@@ -94,6 +94,7 @@ private:
     std::function<void(int, Message*)> _videoFrameCallback;
     
     QImage _compositeImage;
+    QImage _latchedFrame;  // Tear-free backing store for single sync mode
     int _currentCols = 0;
     int _currentRows = 0;
 };
