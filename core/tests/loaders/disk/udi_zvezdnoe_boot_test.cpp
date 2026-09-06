@@ -99,6 +99,7 @@ struct PortEvent
     uint16_t port;
     uint16_t pc;
     uint8_t value;
+    int frame;
 };
 
 /// Outcome of one traced LOAD phase
@@ -211,7 +212,7 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
     // STEP 3: enter TR-DOS
     auto trdosEntry = BasicEncoder::runCommand(_emulator, "RANDOMIZE USR 15616");
     ASSERT_TRUE(trdosEntry.success) << trdosEntry.message;
-    for (int i = 0; i < 200; i++)
+    for (int i = 0; i < 100; i++)
     {
         mainLoop->RunFrame();
     }
@@ -225,11 +226,14 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
     Z80* cpu = _context->pCore->GetZ80();
     ASSERT_NE(cpu, nullptr);
 
+    int currentFrame = 0;
+    int lastDiskIoFrame = 0;
+    int diskIoEvents = 0;
     std::mutex traceMutex;
     std::vector<PortEvent> trace;    // OUT events
     std::vector<PortEvent> ins;      // IN events, only after CMD 0x9C
     bool captureIns = false;
-    cpu->busTraceHook = [cpu, &traceMutex, &trace, &ins, &captureIns](char type, uint16_t port, uint8_t value)
+    cpu->busTraceHook = [cpu, &traceMutex, &trace, &ins, &captureIns, &currentFrame, &lastDiskIoFrame, &diskIoEvents](char type, uint16_t port, uint8_t value)
     {
         uint16_t low = static_cast<uint16_t>(port & 0x00FF);
         if (low != 0x1F && low != 0x3F && low != 0x5F && low != 0x7F && low != 0xFF)
@@ -239,7 +243,12 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
         std::lock_guard<std::mutex> lock(traceMutex);
         if (type == 'O')
         {
-            trace.push_back({cpu->t, 'O', low, cpu->m1_pc, value});
+            trace.push_back({cpu->t, 'O', low, cpu->m1_pc, value, currentFrame});
+            if (low != 0xFF)
+            {
+                lastDiskIoFrame = currentFrame;
+                diskIoEvents++;
+            }
             if (low == 0x1F && value == 0x9C)
             {
                 captureIns = true;
@@ -247,7 +256,7 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
         }
         else if (type == 'I' && captureIns && ins.size() < 250000)
         {
-            ins.push_back({cpu->t, 'I', low, cpu->m1_pc, value});
+            ins.push_back({cpu->t, 'I', low, cpu->m1_pc, value, currentFrame});
         }
     };
 
@@ -283,9 +292,11 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
         std::cout << "--- end trace ---\n";
     };
 
-    // Helper: inject a TR-DOS command and run until screen stabilizes into one of the markers
-    auto runTrdosCommand = [&](const std::string& command, int maxFrames) -> std::string
+    auto runTrdosCommand = [&](const std::string& command, int maxFrames,
+                               std::function<bool(int framesInCmd, std::string& lastOcr)> isDone = nullptr) -> std::string
     {
+        diskIoEvents = 0;
+        lastDiskIoFrame = 0;
         auto result = BasicEncoder::injectToTRDOS(memory, command);
         EXPECT_TRUE(result.success) << result.message;
         BasicEncoder::injectEnter(memory);
@@ -293,17 +304,18 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
         for (int i = 0; i < maxFrames; i++)
         {
             mainLoop->RunFrame();
-            if (i % 25 == 24)
+            currentFrame++;
+            int framesInCmd = i + 1;
+            if (isDone && isDone(framesInCmd, last))
             {
-                last = ScreenOCR::ocrScreen(emulatorId);
-                if (last.find("Retry") != std::string::npos || last.find("Abort") != std::string::npos ||
-                    last.find("0 OK") != std::string::npos || last.find("0  OK") != std::string::npos)
-                {
-                    break;
-                }
+                break;
             }
         }
-        return ScreenOCR::ocrScreen(emulatorId);
+        if (last.empty())
+        {
+            last = ScreenOCR::ocrScreen(emulatorId);
+        }
+        return last;
     };
 
     // STEP 5: CAT (control - must work per user report)
@@ -311,7 +323,17 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
         std::lock_guard<std::mutex> lock(traceMutex);
         trace.clear();
     }
-    std::string catScreen = runTrdosCommand("CAT", 600);
+    std::string catScreen = runTrdosCommand("CAT", 600, [&](int f, std::string& lastOcr) {
+        if (f >= 50 && f % 25 == 0)
+        {
+            lastOcr = ScreenOCR::ocrScreen(emulatorId);
+            if (lastOcr.find("BLOK") != std::string::npos && lastOcr.find("A>") != std::string::npos)
+            {
+                return true;
+            }
+        }
+        return false;
+    });
     std::cout << "[STEP 5] CAT screen:\n" << catScreen << "\n";
     bool catOk = catScreen.find("BLOK") != std::string::npos;
     dumpTrace("CAT");
@@ -406,11 +428,9 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
 
     // STEP 6: LOAD "boot" - 1 sector of BASIC at logical track 14 sector 10. The program
     // auto-runs (line 60) and starts the game's own loader.
-    // Enable WD1793 FSM logging to see the FDC-side outcome of every command.
-    _context->pModuleLogger->TurnOnLoggingForModule(PlatformModulesEnum::MODULE_DISK,
-                                                    PlatformDiskSubmodulesEnum::SUBMODULE_DISK_FDC);
-    _context->pModuleLogger->SetLoggingLevel(LoggerLevel::LogInfo);
-    std::string bootScreen = runTrdosCommand("LOAD \"boot\"", 800);
+    std::string bootScreen = runTrdosCommand("LOAD \"boot\"", 400, [&](int f, std::string&) {
+        return diskIoEvents > 20 && lastDiskIoFrame > 0 && (currentFrame - lastDiskIoFrame >= 25);
+    });
     std::cout << "[STEP 6] LOAD \"boot\" screen:\n" << FirstLines(bootScreen, 8) << "\n";
     bool bootOk = bootScreen.find("Retry") == std::string::npos && bootScreen.find("Abort") == std::string::npos;
     std::cout << "[STEP 6] LOAD \"boot\" -> " << (bootOk ? "no error prompt" : "ERROR prompt") << "\n";
@@ -419,7 +439,7 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
     EXPECT_EQ(bootPhase.rnfStatusReads, 0) << "READ SECTOR must not report Record Not Found";
 
     // Back to TR-DOS prompt before the next command
-    for (int i = 0; i < 50; i++)
+    for (int i = 0; i < 20; i++)
     {
         mainLoop->RunFrame();
     }
@@ -427,7 +447,19 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
     // STEP 7: LOAD "BLOK" - 3 consecutive sectors of BASIC at logical track 0 sectors 10..12.
     // The game's loader skips sectors with a multi-sector READ (0x9C) that runs to the end of
     // the track - the exact command that used to fail with RNF.
-    std::string blokScreen = runTrdosCommand("LOAD \"BLOK\"", 3000);
+    std::string blokScreen = runTrdosCommand("LOAD \"BLOK\"", 900, [&](int f, std::string& lastOcr) {
+        if (!captureIns || lastDiskIoFrame == 0 || (currentFrame - lastDiskIoFrame < 25))
+        {
+            return false;
+        }
+        if (f % 25 == 0)
+        {
+            lastOcr = ScreenOCR::ocrScreen(emulatorId);
+            bool hasGfx = lastOcr.find("??????") != std::string::npos;
+            return hasGfx;
+        }
+        return false;
+    });
     std::cout << "[STEP 7] LOAD \"BLOK\" screen:\n" << FirstLines(blokScreen, 8) << "\n";
     bool blokOk = blokScreen.find("Retry") == std::string::npos && blokScreen.find("Abort") == std::string::npos;
     std::cout << "[STEP 7] LOAD \"BLOK\" -> " << (blokOk ? "no error prompt" : "ERROR prompt") << "\n";
