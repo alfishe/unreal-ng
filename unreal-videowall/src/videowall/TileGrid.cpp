@@ -10,8 +10,7 @@
 #include <QImage>
 #include <QPaintEvent>
 #include <QResizeEvent>
-#include <future>
-#include <thread>
+#include <algorithm>
 #include <cstring>
 #include "videowall/EmulatorTile.h"
 #include "videowall/TileLayoutManager.h"
@@ -351,52 +350,45 @@ void TileGrid::compositeSingleSyncFrame()
     
     if (scaledTile.isNull()) return;
 
-    // 4. Multithreaded Blit to Composite Buffer
+    // 4. Blit to Composite Buffer
+    // Every tile shows the identical image, so build the first band of tiles once,
+    // then replicate that band down the grid with full-scanline copies.
+    // (Serial on purpose: the whole composite is ~14 MB/frame of memcpy — spawning
+    // a thread per tile costs far more than the copies themselves.)
     int cols = (_explicitCols > 0) ? _explicitCols : ((width() + TILE_WIDTH - 1) / TILE_WIDTH);
     int rows = (_explicitRows > 0) ? _explicitRows : ((height() + TILE_HEIGHT - 1) / TILE_HEIGHT);
 
-    // Ensure we don't exceed the number of tiles we actually have, though in single sync mode
-    // we want to fill the whole grid. Wait, the layout might have fewer tiles if they aren't generated?
-    // Actually, filling the whole calculated rows*cols is safer for the background.
-    
     int tileByteWidth = TILE_WIDTH * 4;
-    
-    std::vector<std::future<void>> futures;
-    for (int r = 0; r < rows; ++r)
+    int compWidth = _compositeImage.width();
+    int compHeight = _compositeImage.height();
+    qsizetype compStride = _compositeImage.bytesPerLine();
+    uchar* compBits = _compositeImage.bits();
+
+    // First band: replicate the scaled tile across all columns, scanline by scanline
+    int bandHeight = std::min(TILE_HEIGHT, compHeight);
+    for (int y = 0; y < bandHeight; ++y)
     {
+        uchar* destLine = compBits + y * compStride;
+        const uchar* srcLine = scaledTile.constScanLine(y);
         for (int c = 0; c < cols; ++c)
         {
-            futures.push_back(std::async(std::launch::async, [this, r, c, &scaledTile, tileByteWidth]() {
-                int startX = c * TILE_WIDTH;
-                int startY = r * TILE_HEIGHT;
-                
-                // Copy row by row
-                for (int y = 0; y < TILE_HEIGHT; ++y)
-                {
-                    int destY = startY + y;
-                    if (destY >= _compositeImage.height()) break; // Clip vertically
-                    
-                    uchar* destLine = _compositeImage.scanLine(destY) + (startX * 4);
-                    const uchar* srcLine = scaledTile.constScanLine(y);
-                    
-                    int bytesToCopy = tileByteWidth;
-                    // Clip horizontally if needed
-                    if (startX + TILE_WIDTH > _compositeImage.width()) {
-                        bytesToCopy = (_compositeImage.width() - startX) * 4;
-                    }
-                    
-                    if (bytesToCopy > 0) {
-                        // libc memcpy on macOS is SIMD optimized (Neon)
-                        std::memcpy(destLine, srcLine, bytesToCopy);
-                    }
-                }
-            }));
+            int startX = c * TILE_WIDTH;
+            if (startX >= compWidth) break;
+            int bytesToCopy = std::min(tileByteWidth, (compWidth - startX) * 4);
+            std::memcpy(destLine + startX * 4, srcLine, bytesToCopy);
         }
     }
-    
-    // Wait for all blits to finish
-    for (auto& f : futures) {
-        f.wait();
+
+    // Remaining rows: copy the first band wholesale, one full scanline at a time
+    for (int r = 1; r < rows; ++r)
+    {
+        int startY = r * TILE_HEIGHT;
+        for (int y = 0; y < bandHeight; ++y)
+        {
+            int destY = startY + y;
+            if (destY >= compHeight) return;
+            std::memcpy(compBits + destY * compStride, compBits + y * compStride, compStride);
+        }
     }
 }
 
