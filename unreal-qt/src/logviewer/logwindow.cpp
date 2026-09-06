@@ -1,4 +1,5 @@
 #include <QFileDialog>
+#include <QStandardPaths>
 #include "logwindow.h"
 #include "ui_logwindow.h"
 
@@ -106,7 +107,7 @@ void LogWindow::handleClearButtonClick()
 
 void LogWindow::handleSaveButtonClick()
 {
-    QString defaultSavePath = "/Users/dev/Downloads";
+    QString defaultSavePath = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
     QString defaultFileName = "unreal_ng_log.txt";
     QString filePath = QFileDialog::getSaveFileName(nullptr, "Save File", defaultSavePath + QDir::separator() + defaultFileName, "Text Files (*.txt)");
 

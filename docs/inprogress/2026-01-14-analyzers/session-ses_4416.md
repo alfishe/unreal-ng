@@ -528,7 +528,7 @@ Next step is drafting the design doc for the higher-level analyzers.
 
 1. **Fixed broken relative paths** in `docs/analysis/capture/analysis-core-architecture.md`
    - Converted `file://../../core/src/...` → `../../../core/src/...` (22 links fixed)
-   - Removed external absolute paths (`file:///Users/dev/.gemini/...`)
+   - Removed external absolute paths (Gemini knowledge-artifact file:// links)
 
 2. **Created comprehensive architectural design document** at `docs/analysis/capture/memorycounters.md` (~1190 lines)
    - Documents `MemoryAccessTracker` and `CallTraceBuffer` classes
@@ -6954,7 +6954,7 @@ We were expanding the **Storage Architecture Options** section in `block-segment
 
 ```
 Project: unreal-ng (ZX Spectrum emulator)
-Location: /Volumes/TB4-4Tb/Projects/Test/unreal-ng
+Location: .
 
 ## Context
 
