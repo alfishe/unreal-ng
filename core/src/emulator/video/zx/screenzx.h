@@ -265,6 +265,9 @@ public:
     using ScreenZX::_tstateLUT;
     using ScreenZX::CreateTstateLUT;
 
+    // Border timing testing (Pentagon 1T delay)
+    using Screen::_prevTstate;
+
     // Snapshot helpers - optimized vs original for benchmarking
     using ScreenZX::FillBorderWithColor;
     using ScreenZX::FillBorderWithColor_Optimized;
