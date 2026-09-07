@@ -827,30 +827,51 @@ def render_dashboard(
             f"Duration: {format_duration(session_duration)}"
         )
 
-    # VideoWall Analytics Card (if videowall or multiple emulators)
-    has_vw = bool(sample.videowall and (sample.videowall.is_videowall or sample.videowall.tile_count > 0))
-    if has_vw and sample.videowall and term_lines >= 22:
+    # Analytics Card - VideoWall tiles or Emulator instances
+    if sample.videowall and term_lines >= 22:
         vw = sample.videowall
+        is_videowall = vw.is_videowall
         lines.append(divider)
-        lines.append(f"{colors.BOLD}{colors.MAGENTA}VIDEOWALL GRID & TILE ANALYTICS:{colors.RESET}")
-        lines.append(
-            f"  🔲 {colors.BOLD}Active Tiles / Emulators:{colors.RESET}  {colors.CYAN}{vw.tile_count:3d} tiles{colors.RESET} "
-            f"| Total Tile CPU: {colors.color_pct(vw.emulation_single_core_pct)} "
-            f"({vw.emulation_system_pct:.2f}% system)"
-        )
-        lines.append(
-            f"  ⚡ {colors.BOLD}Avg Load per Tile:{colors.RESET}         {colors.GREEN}{vw.avg_per_tile_pct:6.2f}%{colors.RESET} "
-            f"{colors.DIM}(min: {vw.min_tile_pct:.2f}%, max: {vw.max_tile_pct:.2f}%){colors.RESET}"
-        )
-        lines.append(
-            f"  🖥️  {colors.BOLD}Grid & UI Rendering Load:{colors.RESET}   {colors.YELLOW}{vw.rendering_single_core_pct:6.2f}%{colors.RESET} "
-            f"| Services / Automation: {vw.services_single_core_pct:.2f}%"
-        )
-        lines.append(
-            f"  🚀 {colors.BOLD}Capacity Forecast:{colors.RESET}         "
-            f"~{colors.BOLD}{vw.estimated_max_tiles}{colors.RESET} sustainable 50 FPS tiles on {sample.num_cores} cores "
-            f"{colors.DIM}(85% CPU ceiling){colors.RESET}"
-        )
+        if is_videowall:
+            lines.append(f"{colors.BOLD}{colors.MAGENTA}VIDEOWALL GRID & TILE ANALYTICS:{colors.RESET}")
+            lines.append(
+                f"  🔲 {colors.BOLD}Active Tiles:{colors.RESET}              {colors.CYAN}{vw.tile_count:3d} tiles{colors.RESET} "
+                f"| Total Tile CPU: {colors.color_pct(vw.emulation_single_core_pct)} "
+                f"({vw.emulation_system_pct:.2f}% system)"
+            )
+            lines.append(
+                f"  ⚡ {colors.BOLD}Avg Load per Tile:{colors.RESET}         {colors.GREEN}{vw.avg_per_tile_pct:6.2f}%{colors.RESET} "
+                f"{colors.DIM}(min: {vw.min_tile_pct:.2f}%, max: {vw.max_tile_pct:.2f}%){colors.RESET}"
+            )
+            lines.append(
+                f"  🖥️  {colors.BOLD}Grid & UI Rendering Load:{colors.RESET}   {colors.YELLOW}{vw.rendering_single_core_pct:6.2f}%{colors.RESET} "
+                f"| Services / Automation: {vw.services_single_core_pct:.2f}%"
+            )
+            lines.append(
+                f"  🚀 {colors.BOLD}Capacity Forecast:{colors.RESET}         "
+                f"~{colors.BOLD}{vw.estimated_max_tiles}{colors.RESET} sustainable 50 FPS tiles on {sample.num_cores} cores "
+                f"{colors.DIM}(85% CPU ceiling){colors.RESET}"
+            )
+        else:
+            lines.append(f"{colors.BOLD}{colors.MAGENTA}EMULATOR ANALYTICS:{colors.RESET}")
+            lines.append(
+                f"  🎮 {colors.BOLD}Active Instances:{colors.RESET}          {colors.CYAN}{vw.tile_count:3d}{colors.RESET} "
+                f"| Total Emulation CPU: {colors.color_pct(vw.emulation_single_core_pct)} "
+                f"({vw.emulation_system_pct:.2f}% system)"
+            )
+            lines.append(
+                f"  ⚡ {colors.BOLD}Avg Load per Instance:{colors.RESET}     {colors.GREEN}{vw.avg_per_tile_pct:6.2f}%{colors.RESET} "
+                f"{colors.DIM}(min: {vw.min_tile_pct:.2f}%, max: {vw.max_tile_pct:.2f}%){colors.RESET}"
+            )
+            lines.append(
+                f"  🖥️  {colors.BOLD}UI & Rendering Load:{colors.RESET}       {colors.YELLOW}{vw.rendering_single_core_pct:6.2f}%{colors.RESET} "
+                f"| Services / Automation: {vw.services_single_core_pct:.2f}%"
+            )
+            lines.append(
+                f"  🚀 {colors.BOLD}Capacity Forecast:{colors.RESET}         "
+                f"~{colors.BOLD}{vw.estimated_max_tiles}{colors.RESET} sustainable 50 FPS instances on {sample.num_cores} cores "
+                f"{colors.DIM}(85% CPU ceiling){colors.RESET}"
+            )
 
     # Memory & Process Health
     if term_lines >= 16:
@@ -878,9 +899,9 @@ def render_dashboard(
         f"{colors.DIM}({active_count} active, showing {min(effective_top_threads, len(sample.threads))}){colors.RESET}"
     )
 
-    max_name_len = max(8, min(20, width - 56))
+    max_name_len = max(8, min(24, width - 60))
     lines.append(
-        f"  {colors.DIM}{'TID':>8}  {'Role':<8} {'Thread Name':<{max_name_len}} {'1-Core %':>10} {'System %':>10} {'Total CPU':>11}  {'State'}{colors.RESET}"
+        f"  {colors.DIM}{'TID':>8}  {'Role':<11} {'Thread Name':<{max_name_len}} {'1-Core %':>10} {'System %':>10} {'Total CPU':>11}  {'State'}{colors.RESET}"
     )
     lines.append(f"  {colors.DIM}{'─' * (width - 4)}{colors.RESET}")
 
@@ -922,7 +943,7 @@ def render_dashboard(
             cat_tag = f"[{th.category}]"
             th_name = th.name if len(th.name) <= max_name_len else th.name[:max(3, max_name_len - 3)] + "..."
             lines.append(
-                f"  {th.tid:8d}  {colors.CYAN}{cat_tag:<8}{colors.RESET} "
+                f"  {th.tid:8d}  {colors.CYAN}{cat_tag:<11}{colors.RESET}"
                 f"{colors.BOLD}{th_name:<{max_name_len}}{colors.RESET} "
                 f"{colors.color_pct(th.single_core_pct):>10} "
                 f"{th.system_pct:9.2f}% "
@@ -1081,7 +1102,7 @@ Output Mode Examples:
     parser.add_argument("-c", "--count", type=int, default=0, help="Number of samples to collect before exit (0 = infinite)")
     parser.add_argument("-1", "--once", action="store_true", help="Take a single sample and exit (snapshot mode)")
     parser.add_argument("-t", "--top", type=int, default=15, help="Number of active threads to display (default: 15)")
-    parser.add_argument("--show-all-threads", action="store_true", help="Display all threads including 0%% idle threads")
+    parser.add_argument("--hide-idle", action="store_true", help="Hide threads with 0%% CPU (show only active)")
     parser.add_argument("--wait", action="store_true", help="Wait for target process if not currently running")
     parser.add_argument("--no-color", action="store_true", help="Disable ANSI color codes")
     parser.add_argument("--json", action="store_true", help="Output results in JSON format")
@@ -1296,7 +1317,7 @@ def main() -> int:
                     dashboard = render_dashboard(
                         sample=sample,
                         top_threads=args.top,
-                        show_all_threads=args.show_all_threads,
+                        show_all_threads=not args.hide_idle,
                         group_threads=args.group_threads,
                         colors=colors,
                         history=history,
