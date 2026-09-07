@@ -380,9 +380,9 @@ bool LoaderTRD::writeImage(const std::string& path)
              TRDFile* descriptor = (TRDFile*)descriptorData;
 
              // Filename byte 0 can be any (Bit 7 set for deleted file)
-             // Filename (bytes 1-8) should contain printable chars (32-127)
+             // Filename (bytes 1-7) should contain printable chars (32-127)
              // or be padded with spaces (32)
-             for (int i = 1; i <= 8; i++)
+             for (int i = 1; i < 8; i++)
              {
                  uint8_t chr = descriptor->name[i];
                  if (chr != 32 && (chr < 32 || chr > 127))
