@@ -68,7 +68,7 @@ private:
     void updateStatusBar();
     
     Emulator* _emulator;
-    std::function<void(int, Message*)> m_breakpointCallback;  // Store the observer callback for cleanup
+    uint64_t m_breakpointObserverId = 0;  // Store the observer ID for cleanup
     QMutex m_mutex;  // For thread-safe access to the dialog
     QVBoxLayout* _mainLayout = nullptr;
     QTableWidget* _breakpointTable = nullptr;

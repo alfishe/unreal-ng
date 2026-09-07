@@ -340,32 +340,22 @@ TEST(NativeDSDConverterTest, PunchDoesNotBreakModulator)
 
 #include "encoders/dsd/dsd_encoder.h"
 #include "encoderconfig.h"
+#include "_helpers/testpathhelper.h"
 
 #include <chrono>
 #include <memory>
 #include <thread>
 
-#if defined(_WIN32)
-#include <process.h>
-#else
-#include <unistd.h>
-#endif
-
 namespace
 {
-/// Per-process-unique temp directory base: parallel GTest shards run several
+/// Per-process-unique scratch directory: parallel GTest shards run several
 /// instances of this binary at once and the fixtures below remove the whole
 /// directory on teardown, so a shared name lets one shard delete another's
-/// output files mid-test.
+/// output files mid-test. Artifacts stay under <project>/scratch/ per
+/// AGENTS.md, never in the OS temp directory.
 std::filesystem::path DsdTestTempDir(const char* name)
 {
-#if defined(_WIN32)
-    const int pid = _getpid();
-#else
-    const int pid = getpid();
-#endif
-    return std::filesystem::temp_directory_path()
-         / (std::string(name) + "_" + std::to_string(pid));
+    return std::filesystem::path(TestPathHelper::GetUniqueTestScratchPath(name));
 }
 }  // namespace
 

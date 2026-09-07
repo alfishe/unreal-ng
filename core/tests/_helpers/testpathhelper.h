@@ -3,9 +3,23 @@
 #include <filesystem>
 #include <stdexcept>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 #ifdef __APPLE__
 #include <limits.h>
 #include <mach-o/dyld.h>
+#endif
+
+#ifndef _WIN32
+#include <unistd.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -21,6 +35,14 @@ public:
     /// @return The filesystem path to the directory containing the executable.
     static fs::path GetExecutableDir()
     {
+#ifdef _WIN32
+        char path[MAX_PATH];
+        DWORD length = GetModuleFileNameA(nullptr, path, MAX_PATH);
+        if (length > 0 && length < MAX_PATH)
+        {
+            return fs::path(path).parent_path();
+        }
+#endif
 #ifdef __APPLE__
         char path[PATH_MAX];
         uint32_t size = sizeof(path);
@@ -62,6 +84,12 @@ public:
         {
             current = fs::absolute(current);
         }
+
+        // Strip "." and ".." segments: some launchers (IDE runners, PowerShell's
+        // Process.Start) exec the test binary via a "./"-containing path, and
+        // _NSGetExecutablePath echoes it verbatim - without normalization every
+        // derived fixture path would carry a stray "/./" segment
+        current = current.lexically_normal();
 
         int depth = 0;
         const int maxDepth = 15;  // Increased depth to handle deep build directories
@@ -143,5 +171,25 @@ public:
             fs::create_directories(fullPath.parent_path(), ec);
         }
         return fullPath.string();
+    }
+
+    /// @brief Get a scratch path unique to this process, keeping the extension.
+    ///
+    /// Inserts the PID into the filename stem ("test.tzx" -> "test_29987.tzx"):
+    /// parallel GTest shards run several copies of the test binary concurrently,
+    /// and fixtures that create and tear down files or whole directories must not
+    /// share names across processes - a shared name lets one shard delete
+    /// another's files mid-test. The extension is preserved because loaders and
+    /// managers dispatch on it. Always keep test artifacts under scratch/
+    /// (AGENTS.md), never in the OS temp directory.
+    static std::string GetUniqueTestScratchPath(const std::string& leafName)
+    {
+#ifdef _WIN32
+        const DWORD pid = GetCurrentProcessId();
+#else
+        const pid_t pid = getpid();
+#endif
+        const fs::path leaf(leafName);
+        return GetTestScratchPath(leaf.stem().string() + "_" + std::to_string(pid) + leaf.extension().string());
     }
 };

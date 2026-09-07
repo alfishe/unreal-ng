@@ -1171,6 +1171,9 @@ public:
     using WD1793::prolongFDDMotorRotation;
     using WD1793::readDataRegister;
     using WD1793::resetTime;
+    // Non-const overload: the composed status value a CPU port read returns
+    // (refreshes live Type I/IV bits such as TRK00 from the selected drive)
+    using WD1793::getStatusRegister;
     using WD1793::startFDDMotor;
     using WD1793::stopFDDMotor;
     using WD1793::writeDataRegister;

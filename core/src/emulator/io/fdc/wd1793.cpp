@@ -1701,7 +1701,11 @@ void WD1793::cmdForceInterrupt(uint8_t value)
         // Per datasheet: "If the Force Interrupt command is received when there is not a current
         // command under execution, the Busy Status bit is reset and the rest of the status bits
         // are updated or cleared. In this case, Status reflects the Type I commands."
-        _statusRegister &= ~(WDS_CRCERR | WDS_SEEKERR | WDS_HEADLOADED | WDS_NOTRDY);
+        // WDS_TRK00 and WDS_WRITEPROTECTED are cleared before their conditional re-set as well:
+        // a one-way set leaves a stale track-0 / write-protect bit in the cached register after
+        // the head has been moved away from track 0 (FDD tracks start at a randomized position).
+        _statusRegister &=
+            ~(WDS_CRCERR | WDS_SEEKERR | WDS_HEADLOADED | WDS_NOTRDY | WDS_WRITEPROTECTED | WDS_TRK00);
         _statusRegister |= !_selectedDrive->isDiskInserted() ? WDS_NOTRDY : 0x00;
         _statusRegister |= _selectedDrive->isWriteProtect() ? WDS_WRITEPROTECTED : 0x00;
 

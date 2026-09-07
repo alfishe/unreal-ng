@@ -165,6 +165,8 @@ TEST_F(LoaderTRD_Test, validateTRDOSImage)
     uint8_t* volumeSector = track0->getDataForSector(8);  // Volume sector is sector 9 (index 8)
     ASSERT_NE(volumeSector, nullptr) << "Volume sector not found";
 
+    delete diskImage;
+
     /// endregion </Prepare test>
 }
 

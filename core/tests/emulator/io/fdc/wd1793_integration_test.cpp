@@ -349,7 +349,7 @@ TEST_F(DISABLED_WD1793_Integration_Test, TRDOS_FORMAT_FullOperation)
         }
         _emulator->Resume();
     };
-    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
+    uint64_t handlerId = messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
 
     // Use page-specific breakpoint for TR-DOS ROM (page 1 on Pentagon)
     // Only need $1EDD to bypass format-type prompt
@@ -537,7 +537,7 @@ TEST_F(DISABLED_WD1793_Integration_Test, TRDOS_FORMAT_FullOperation)
     _emulator->Stop();
 
     // Cleanup breakpoints
-    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
+    messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
     bpMgr->RemoveBreakpointByID(bp1);
 
     // Final screen

@@ -59,8 +59,13 @@ std::string KeyboardInjection_Integration_test::BootEmulator(const std::string& 
     // Start async
     emulator->StartAsync();
 
-    // Wait for startup (emulator needs a moment to start its thread)
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    // Wait for the emulator thread to reach RUN state. A fixed 50ms sleep
+    // caused false "not started" bail-outs on CPU-starved parallel runners.
+    auto runDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (emulator->GetState() != StateRun && std::chrono::steady_clock::now() < runDeadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
 
     if (emulator->GetState() != StateRun)
         return "";
@@ -70,8 +75,13 @@ std::string KeyboardInjection_Integration_test::BootEmulator(const std::string& 
     // a fraction of the original wait time. Use frame count polling instead.
     auto ctx = emulator->GetContext();
     uint64_t targetFrame = ctx->emulatorState.frame_counter + bootFrames;
+    auto frameDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
     while (ctx->emulatorState.frame_counter < targetFrame)
     {
+        // Bounded wait: if the emulator thread stalled or died, fall through
+        // and let the screen-content assertions report the failure
+        if (std::chrono::steady_clock::now() >= frameDeadline)
+            break;
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
@@ -87,8 +97,12 @@ void KeyboardInjection_Integration_test::RunFrames(const std::string& emulatorId
     // In turbo mode, poll frame count instead of waiting wall-clock time
     auto ctx = emulator->GetContext();
     uint64_t targetFrame = ctx->emulatorState.frame_counter + frameCount;
+    auto frameDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
     while (ctx->emulatorState.frame_counter < targetFrame)
     {
+        // Bounded wait (see StartEmulatorAndBoot): never hang on a dead emulator thread
+        if (std::chrono::steady_clock::now() >= frameDeadline)
+            break;
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }

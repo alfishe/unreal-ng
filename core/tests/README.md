@@ -930,7 +930,7 @@ cmake --build . --config Release --target core-tests
 # Run all tests (sequential)
 ./core-tests
 
-# Run all tests in parallel (~3x faster, 37s -> 12s)
+# Run all tests in parallel (auto-scaled to your CPU, 37s -> ~6s on 16P+4E)
 cmake --build build --target test-parallel
 # Or directly:
 ./scripts/run-tests-parallel.sh ./build/bin/core-tests
@@ -947,23 +947,36 @@ cmake --build build --target test-parallel
 
 ### Parallel Test Execution
 
-The `test-parallel` CMake target uses GTest sharding to run tests across 4 parallel processes, achieving ~3x speedup on multi-core systems:
+The `test-parallel` CMake target uses GTest sharding to run tests across N parallel processes, where N auto-detects from the CPU topology:
+
+- **Apple Silicon**: P cores count fully, E cores at ~1/3 weight (`sysctl hw.perflevel0/1.logicalcpu`), e.g. 16P + 4E -> 17 shards
+- **Linux**: `nproc`, capped by the cgroup v2 CPU quota (containers/CI safe)
+- **Windows**: logical processor count (`NUMBER_OF_PROCESSORS`)
+
+Override when needed:
+
+```bash
+./scripts/run-tests-parallel.sh ./build/bin/core-tests 8   # explicit shard count
+TEST_SHARDS=8 ./scripts/run-tests-parallel.sh              # via environment
+```
+
+Measured wall time (2176 tests, 16P + 4E machine): 4 shards = 12.0s, 8 = 7.2s, 12 = 6.3s, 16 = 5.9s, 17 (auto) = 6.0s, 20 = 5.6s.
 
 ```bash
 # Via CMake (recommended)
 cmake --build build --target test-parallel
 
-# Manual sharding (useful for CI)
+# Manual sharding (useful for CI; replace 4 with the runner's core count)
 for i in 0 1 2 3; do
   GTEST_TOTAL_SHARDS=4 GTEST_SHARD_INDEX=$i ./build/bin/core-tests &
 done
 wait
 ```
 
-**Note:** Tests must be isolated (no shared global state) for parallel execution. If a test fails only in parallel, check for:
+**Note:** Tests must be isolated for parallel execution - and that includes isolation across the parallel shard *processes*, not just between tests in one process. Every file a test writes must live under `<project>/scratch/` with a per-process unique name - use `TestPathHelper::GetUniqueTestScratchPath("name.ext")`, which inserts the PID into the filename stem while preserving the extension - never in the OS temp directory or a hardcoded path like `C:\Temp`, because a fixture `TearDown` doing `remove_all` on a fixed shared directory deletes another shard's files mid-test. If a test fails only in parallel, check for:
 - Static/global variables modified between tests
 - Singleton state not reset in TearDown
-- File system conflicts (temp files with fixed names)
+- File system conflicts (scratch files/directories with fixed names shared across processes)
 
 ### Filtering Tests
 
