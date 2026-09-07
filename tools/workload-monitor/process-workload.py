@@ -904,18 +904,15 @@ def render_dashboard(
             return (CATEGORY_PRIORITIES[t.category], t.tid)
         return (DEFAULT_PRIORITY, t.tid)
 
+    # Sort all threads by priority (stable by TID within each priority group)
     all_threads = sorted(sample.threads, key=thread_sort_key)
-    active = [t for t in all_threads if t.single_core_pct > 0.0]
-    idle = [t for t in all_threads if t.single_core_pct == 0.0]
 
     if show_all_threads:
-        displayed_threads = (active + idle)[:effective_top_threads]
+        displayed_threads = all_threads[:effective_top_threads]
     else:
-        # Show all active threads first, then fill remaining slots with idle threads
+        # Filter to active threads only, but maintain priority order
+        active = [t for t in all_threads if t.single_core_pct > 0.0]
         displayed_threads = active[:effective_top_threads]
-        remaining_slots = effective_top_threads - len(displayed_threads)
-        if remaining_slots > 0:
-            displayed_threads.extend(idle[:remaining_slots])
 
     if not displayed_threads:
         lines.append(f"  {colors.DIM}(no thread activity recorded in this sample window){colors.RESET}")
