@@ -24,7 +24,7 @@
 #include <emulator/platform.h>
 #include <gtest/gtest.h>
 
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 #include "loaders/disk/loader_trd.h"
 #include "pch.h"
 #include "stdafx.h"
