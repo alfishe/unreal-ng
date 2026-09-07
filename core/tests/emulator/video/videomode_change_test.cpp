@@ -190,7 +190,7 @@ TEST_F(VideoModeChange_Test, ModeChange_PostsNotificationWithEmulatorId)
         }
         received.fetch_add(1);
     };
-    messageCenter.AddObserver(NC_VIDEO_MODE_CHANGED, handler);
+    uint64_t handlerId = messageCenter.AddObserver(NC_VIDEO_MODE_CHANGED, handler);
 
     ASSERT_TRUE(_emulator->SetOverscanMode(true));
 
@@ -202,7 +202,7 @@ TEST_F(VideoModeChange_Test, ModeChange_PostsNotificationWithEmulatorId)
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
-    messageCenter.RemoveObserver(NC_VIDEO_MODE_CHANGED, handler);
+    messageCenter.RemoveObserverById(NC_VIDEO_MODE_CHANGED, handlerId);
 
     EXPECT_GE(received.load(), 1) << "SetVideoMode must post NC_VIDEO_MODE_CHANGED";
     EXPECT_TRUE(idMatches.load()) << "Payload must carry the posting emulator's ID";

@@ -11,7 +11,10 @@
 #include "emulator/cpu/op_noprefix.h"
 #include "emulator/cpu/opcode_profiler.h"
 #include "emulator/emulator.h"
+#include "emulator/io/tape/tapefastload.h"
+#include "emulator/notifications.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/spectrumconstants.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/ulacontention.h"
 #include "stdafx.h"
@@ -261,14 +264,31 @@ void Z80::Z80Step(bool skipBreakpoints)
                 // Pause emulator (single source of truth)
                 emulator.Pause();
 
-                // Broadcast notification - breakpoint triggered
+                // Broadcast notification - breakpoint triggered (instance-tagged)
                 MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-                SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+                BreakpointTriggeredPayload* payload =
+                    new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, pc);
                 messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
                 // Wait until emulator resumed externally (by debugger or scripting engine)
                 emulator.WaitWhilePaused();
             }
+        }
+    }
+
+    // Fast tape loading trap (design: docs/inprogress/2026-08-30-fast-tape-loading).
+    // A ROM LD-BYTES ($0556) invocation is replaced wholesale when armed: the
+    // block payload is copied straight from the tape image and the routine's
+    // documented exit state is emulated. Any decline is fully inert — the CPU
+    // just proceeds into the real ROM code. Runs after breakpoint dispatch so
+    // user breakpoints at $0556 keep firing, and outside the debug-mode guard
+    // so the trap is active in both debug and release sessions.
+    if (pc == ROMAddresses::LD_BYTES && _context->pTapeFastLoad != nullptr)
+    {
+        if (_context->pTapeFastLoad->HandleLDBytesTrap(*this))
+        {
+            // Trap consumed the invocation — the routine never executes
+            return;
         }
     }
 
@@ -677,7 +697,9 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
     // after the raster compare (MiSTer ula.sv: INT <= 1 on the next edge) and the CPU
     // samples INT only at end-of-instruction edges - an instruction boundary landing
     // exactly at int_start still sees INT inactive. Inclusive ">=" accepts 1T early,
-    // which shifts interrupt-locked raster effects by one locked state (doc 20).
+    // which shifts interrupt-locked raster effects by one T-state.
+    // Note: HALT quantizes INT detection to 4T boundaries; fine 2-pixel adjustments
+    // are handled in ScreenZX::SetBorderColor. See: docs/timing/pentagon-border-timing.md
     if (!int_occurred && cpu.t > int_start)
     {
         int_occurred = true;
@@ -957,3 +979,102 @@ void Z80::UpdateFeatureCache()
 }
 
 /// endregion </Feature Cache>
+
+/// region <Register Access API>
+
+// Static register metadata table
+static const Z80::RegisterInfo s_registers[] = {
+    // 8-bit main registers
+    {"A", false, false, [](const Z80State* s) -> uint16_t { return s->a; }, [](Z80State* s, uint16_t v) { s->a = static_cast<uint8_t>(v); }},
+    {"B", false, false, [](const Z80State* s) -> uint16_t { return s->b; }, [](Z80State* s, uint16_t v) { s->b = static_cast<uint8_t>(v); }},
+    {"C", false, false, [](const Z80State* s) -> uint16_t { return s->c; }, [](Z80State* s, uint16_t v) { s->c = static_cast<uint8_t>(v); }},
+    {"D", false, false, [](const Z80State* s) -> uint16_t { return s->d; }, [](Z80State* s, uint16_t v) { s->d = static_cast<uint8_t>(v); }},
+    {"E", false, false, [](const Z80State* s) -> uint16_t { return s->e; }, [](Z80State* s, uint16_t v) { s->e = static_cast<uint8_t>(v); }},
+    {"H", false, false, [](const Z80State* s) -> uint16_t { return s->h; }, [](Z80State* s, uint16_t v) { s->h = static_cast<uint8_t>(v); }},
+    {"L", false, false, [](const Z80State* s) -> uint16_t { return s->l; }, [](Z80State* s, uint16_t v) { s->l = static_cast<uint8_t>(v); }},
+    {"F", false, false, [](const Z80State* s) -> uint16_t { return s->f; }, [](Z80State* s, uint16_t v) { s->f = static_cast<uint8_t>(v); }},
+    {"I", false, false, [](const Z80State* s) -> uint16_t { return s->i; }, [](Z80State* s, uint16_t v) { s->i = static_cast<uint8_t>(v); }},
+    {"R", false, false, [](const Z80State* s) -> uint16_t { return s->r_low; }, [](Z80State* s, uint16_t v) { s->r_low = static_cast<uint8_t>(v); }},
+    // 8-bit alternate registers
+    {"A'", false, true, [](const Z80State* s) -> uint16_t { return s->alt.a; }, [](Z80State* s, uint16_t v) { s->alt.a = static_cast<uint8_t>(v); }},
+    {"B'", false, true, [](const Z80State* s) -> uint16_t { return s->alt.b; }, [](Z80State* s, uint16_t v) { s->alt.b = static_cast<uint8_t>(v); }},
+    {"C'", false, true, [](const Z80State* s) -> uint16_t { return s->alt.c; }, [](Z80State* s, uint16_t v) { s->alt.c = static_cast<uint8_t>(v); }},
+    {"D'", false, true, [](const Z80State* s) -> uint16_t { return s->alt.d; }, [](Z80State* s, uint16_t v) { s->alt.d = static_cast<uint8_t>(v); }},
+    {"E'", false, true, [](const Z80State* s) -> uint16_t { return s->alt.e; }, [](Z80State* s, uint16_t v) { s->alt.e = static_cast<uint8_t>(v); }},
+    {"H'", false, true, [](const Z80State* s) -> uint16_t { return s->alt.h; }, [](Z80State* s, uint16_t v) { s->alt.h = static_cast<uint8_t>(v); }},
+    {"L'", false, true, [](const Z80State* s) -> uint16_t { return s->alt.l; }, [](Z80State* s, uint16_t v) { s->alt.l = static_cast<uint8_t>(v); }},
+    {"F'", false, true, [](const Z80State* s) -> uint16_t { return s->alt.f; }, [](Z80State* s, uint16_t v) { s->alt.f = static_cast<uint8_t>(v); }},
+    // 8-bit index register halves
+    {"IXH", false, false, [](const Z80State* s) -> uint16_t { return s->xh; }, [](Z80State* s, uint16_t v) { s->xh = static_cast<uint8_t>(v); }},
+    {"IXL", false, false, [](const Z80State* s) -> uint16_t { return s->xl; }, [](Z80State* s, uint16_t v) { s->xl = static_cast<uint8_t>(v); }},
+    {"IYH", false, false, [](const Z80State* s) -> uint16_t { return s->yh; }, [](Z80State* s, uint16_t v) { s->yh = static_cast<uint8_t>(v); }},
+    {"IYL", false, false, [](const Z80State* s) -> uint16_t { return s->yl; }, [](Z80State* s, uint16_t v) { s->yl = static_cast<uint8_t>(v); }},
+    // 16-bit main registers
+    {"AF", true, false, [](const Z80State* s) -> uint16_t { return s->af; }, [](Z80State* s, uint16_t v) { s->af = v; }},
+    {"BC", true, false, [](const Z80State* s) -> uint16_t { return s->bc; }, [](Z80State* s, uint16_t v) { s->bc = v; }},
+    {"DE", true, false, [](const Z80State* s) -> uint16_t { return s->de; }, [](Z80State* s, uint16_t v) { s->de = v; }},
+    {"HL", true, false, [](const Z80State* s) -> uint16_t { return s->hl; }, [](Z80State* s, uint16_t v) { s->hl = v; }},
+    {"IX", true, false, [](const Z80State* s) -> uint16_t { return s->ix; }, [](Z80State* s, uint16_t v) { s->ix = v; }},
+    {"IY", true, false, [](const Z80State* s) -> uint16_t { return s->iy; }, [](Z80State* s, uint16_t v) { s->iy = v; }},
+    {"SP", true, false, [](const Z80State* s) -> uint16_t { return s->sp; }, [](Z80State* s, uint16_t v) { s->sp = v; }},
+    {"PC", true, false, [](const Z80State* s) -> uint16_t { return s->pc; }, [](Z80State* s, uint16_t v) { s->pc = v; }},
+    {"IR", true, false, [](const Z80State* s) -> uint16_t { return s->ir_; }, [](Z80State* s, uint16_t v) { s->ir_ = v; }},
+    // 16-bit alternate registers
+    {"AF'", true, true, [](const Z80State* s) -> uint16_t { return s->alt.af; }, [](Z80State* s, uint16_t v) { s->alt.af = v; }},
+    {"BC'", true, true, [](const Z80State* s) -> uint16_t { return s->alt.bc; }, [](Z80State* s, uint16_t v) { s->alt.bc = v; }},
+    {"DE'", true, true, [](const Z80State* s) -> uint16_t { return s->alt.de; }, [](Z80State* s, uint16_t v) { s->alt.de = v; }},
+    {"HL'", true, true, [](const Z80State* s) -> uint16_t { return s->alt.hl; }, [](Z80State* s, uint16_t v) { s->alt.hl = v; }},
+};
+
+static constexpr size_t s_registerCount = sizeof(s_registers) / sizeof(s_registers[0]);
+
+const Z80::RegisterInfo* Z80::GetRegisterInfo()
+{
+    return s_registers;
+}
+
+size_t Z80::GetRegisterCount()
+{
+    return s_registerCount;
+}
+
+const Z80::RegisterInfo* Z80::FindRegister(const std::string& name)
+{
+    std::string normalized = name;
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), ::toupper);
+
+    for (size_t i = 0; i < s_registerCount; i++)
+    {
+        if (normalized == s_registers[i].name)
+            return &s_registers[i];
+    }
+
+    // Handle aliases
+    if (normalized == "XH") return FindRegister("IXH");
+    if (normalized == "XL") return FindRegister("IXL");
+    if (normalized == "YH") return FindRegister("IYH");
+    if (normalized == "YL") return FindRegister("IYL");
+
+    return nullptr;
+}
+
+bool Z80::GetRegisterValue(Z80State* state, const std::string& name, uint16_t& value, bool& is16bit)
+{
+    const RegisterInfo* info = FindRegister(name);
+    if (!info) return false;
+
+    value = info->getter(state);
+    is16bit = info->is16bit;
+    return true;
+}
+
+bool Z80::SetRegisterValue(Z80State* state, const std::string& name, uint16_t value)
+{
+    const RegisterInfo* info = FindRegister(name);
+    if (!info) return false;
+
+    info->setter(state, value);
+    return true;
+}
+
+/// endregion </Register Access API>

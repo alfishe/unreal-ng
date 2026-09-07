@@ -24,7 +24,7 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"

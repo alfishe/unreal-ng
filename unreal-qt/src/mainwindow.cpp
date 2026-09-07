@@ -1,5 +1,7 @@
 #include "mainwindow.h"
 
+#include "base/featuremanager.h"
+
 #include <algorithm>
 #include <chrono>
 
@@ -46,7 +48,42 @@
 #define signals Q_SIGNALS
 #include "loaders/disk/loader_scl.h"
 #include "loaders/disk/loader_trd.h"
+#include "loaders/disk/loader_fdi.h"
+#include "loaders/disk/loader_udi.h"
+#include "tape/tapeimportaudiodialog.h"  // tape-audio-bridge §7.3
+#include "common/filehelper.h"
+#include "common/stringhelper.h"
 #include "ui_mainwindow.h"
+
+namespace
+{
+// Convert std::vector<std::string> to QStringList
+QStringList toQStringList(const std::vector<std::string>& v)
+{
+    QStringList result;
+    for (const auto& s : v)
+        result << QString::fromStdString(s);
+    return result;
+}
+
+// Build filter pattern with both cases: "*.ext *.EXT"
+QString buildExtPattern(const QStringList& exts)
+{
+    QStringList patterns;
+    for (const QString& ext : exts)
+    {
+        patterns << QString("*.%1").arg(ext.toLower());
+        patterns << QString("*.%1").arg(ext.toUpper());
+    }
+    return patterns.join(" ");
+}
+
+// Build a complete filter group: "Label (*.ext *.EXT ...)"
+QString buildFilterGroup(const QString& label, const QStringList& exts)
+{
+    return QString("%1 (%2)").arg(label, buildExtPattern(exts));
+}
+}  // namespace
 
 // region <Constructors / destructors>
 
@@ -150,19 +187,27 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _dockingManager->addDockableWindow(debuggerWindow, Qt::LeftEdge);
     _dockingManager->addDockableWindow(logWindow, Qt::RightEdge);
 
+    // Instantiate tape manager window (design §9.4): one instance per app
+    // session, hidden by default — View → Tape Manager (Ctrl+3) shows it
+    tapeManagerWindow = new TapeManagerWindow();
+    tapeManagerWindow->setBinding(m_binding);
+    _dockingManager->addDockableWindow(tapeManagerWindow, Qt::BottomEdge);
+
     // Create and configure menu system
     _menuManager = new MenuManager(this, ui->menubar, this);
 
     // Connect menu signals to handlers
     connect(_menuManager, &MenuManager::openFileRequested, this, &MainWindow::openFileDialog);
-    connect(_menuManager, &MenuManager::openSnapshotRequested, this, &MainWindow::openFileDialog);
-    connect(_menuManager, &MenuManager::openTapeRequested, this, &MainWindow::openFileDialog);
-    connect(_menuManager, &MenuManager::openDiskRequested, this, &MainWindow::openFileDialog);
+    connect(_menuManager, &MenuManager::openSnapshotRequested, this, &MainWindow::openSnapshotDialog);
+    connect(_menuManager, &MenuManager::openTapeRequested, this, &MainWindow::openTapeDialog);
+    connect(_menuManager, &MenuManager::openDiskRequested, this, &MainWindow::openDiskDialog);
+    connect(_menuManager, &MenuManager::importAudioTapeRequested, this, &MainWindow::handleImportAudioTapeRequested);
     connect(_menuManager, &MenuManager::saveSnapshotRequested, this, &MainWindow::saveFileDialog);
     connect(_menuManager, &MenuManager::saveSnapshotZ80Requested, this, &MainWindow::saveFileDialogZ80);
     connect(_menuManager, &MenuManager::saveDiskRequested, this, &MainWindow::saveDiskDialog);
     connect(_menuManager, &MenuManager::saveDiskAsTRDRequested, this, &MainWindow::saveDiskAsTRDDialog);
     connect(_menuManager, &MenuManager::saveDiskAsSCLRequested, this, &MainWindow::saveDiskAsSCLDialog);
+    connect(_menuManager, &MenuManager::saveDiskAsUDIRequested, this, &MainWindow::saveDiskAsUDIDialog);
     connect(_menuManager, &MenuManager::startRequested, this, &MainWindow::handleStartEmulator);
     connect(_menuManager, &MenuManager::pauseRequested, this, &MainWindow::handlePauseEmulator);
     connect(_menuManager, &MenuManager::resumeRequested, this, &MainWindow::handleResumeEmulator);
@@ -170,11 +215,16 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::resetRequested, this, &MainWindow::resetEmulator);
     connect(_menuManager, &MenuManager::speedMultiplierChanged, this, &MainWindow::handleSpeedMultiplierChanged);
     connect(_menuManager, &MenuManager::turboModeToggled, this, &MainWindow::handleTurboModeToggled);
+    connect(_menuManager, &MenuManager::tapeTrapsToggled, this, &MainWindow::handleTapeTrapsToggled);
+    connect(_menuManager, &MenuManager::turboTapeToggled, this, &MainWindow::handleTurboTapeToggled);
     connect(_menuManager, &MenuManager::stepInRequested, this, &MainWindow::handleStepIn);
     connect(_menuManager, &MenuManager::stepOverRequested, this, &MainWindow::handleStepOver);
     connect(_menuManager, &MenuManager::debugModeToggled, this, &MainWindow::handleDebugModeToggled);
     connect(_menuManager, &MenuManager::debuggerToggled, this, &MainWindow::handleDebuggerToggled);
     connect(_menuManager, &MenuManager::logWindowToggled, this, &MainWindow::handleLogWindowToggled);
+    connect(_menuManager, &MenuManager::tapeManagerToggled, this, &MainWindow::handleTapeManagerToggled);
+    // Keep the menu check state in sync when the window closes via its own close box
+    connect(tapeManagerWindow, &TapeManagerWindow::visibilityChanged, _menuManager, &MenuManager::setTapeManagerChecked);
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
     connect(_menuManager, &MenuManager::intParametersRequested, this, &MainWindow::handleIntParametersRequested);
     connect(_menuManager, &MenuManager::audioSettingsRequested, this, &MainWindow::handleAudioSettingsRequested);
@@ -312,6 +362,13 @@ MainWindow::~MainWindow()
         delete logWindow;
     }
 
+    if (tapeManagerWindow != nullptr)
+    {
+        _dockingManager->removeDockableWindow(tapeManagerWindow);
+        tapeManagerWindow->hide();
+        delete tapeManagerWindow;
+    }
+
     if (deviceScreen != nullptr)
         delete deviceScreen;
 
@@ -417,6 +474,17 @@ void MainWindow::closeEvent(QCloseEvent* event)
         logWindow->hide();
         delete logWindow;
         logWindow = nullptr;
+    }
+
+    // Close Tape Manager: it is a parentless top-level, so it must be
+    // destroyed here or it keeps the application alive after the main
+    // window closes (quitOnLastWindowClosed still sees it open)
+    if (tapeManagerWindow)
+    {
+        _dockingManager->removeDockableWindow(tapeManagerWindow);
+        tapeManagerWindow->hide();
+        delete tapeManagerWindow;
+        tapeManagerWindow = nullptr;
     }
 
     // Shutdown device screen
@@ -1563,10 +1631,74 @@ void MainWindow::openSpecificFile(const QString& filepath)
 
 void MainWindow::openFileDialog()
 {
-    QString filePath = QFileDialog::getOpenFileName(
-        this, tr("Open File"), _lastDirectory,
-        tr("All Supported Files (*.sna *.z80 *.tap *.tzx *.trd *.scl *.fdi *.td0 *.udi);;Snapshots (*.sna "
-           "*.z80);;Tapes (*.tap *.tzx);;Disks (*.trd *.scl *.fdi *.td0 *.udi);;All Files (*)"));
+    QStringList snapshotExts = toQStringList(Emulator::SupportedSnapshotExtensions());
+    QStringList tapeExts = toQStringList(Emulator::SupportedTapeExtensions());
+    QStringList diskExts = toQStringList(Emulator::SupportedDiskExtensions());
+    QStringList allExts = snapshotExts + tapeExts + diskExts;
+
+    QString filter = buildFilterGroup(tr("All Supported Files"), allExts) + ";;" +
+                     buildFilterGroup(tr("Snapshots"), snapshotExts) + ";;" +
+                     buildFilterGroup(tr("Tapes"), tapeExts) + ";;" +
+                     buildFilterGroup(tr("Disks"), diskExts) + ";;" +
+                     tr("All Files (*)");
+
+    QString filePath = QFileDialog::getOpenFileName(this, tr("Open File"), _lastDirectory, filter);
+
+    if (!filePath.isEmpty())
+    {
+        loadFile(filePath);
+    }
+}
+
+void MainWindow::openSnapshotDialog()
+{
+    QStringList exts = toQStringList(Emulator::SupportedSnapshotExtensions());
+    QString filter = buildFilterGroup(tr("Snapshot Files"), exts) + ";;" +
+                     buildFilterGroup(tr("SNA Snapshots"), {"sna"}) + ";;" +
+                     buildFilterGroup(tr("Z80 Snapshots"), {"z80"}) + ";;" +
+                     buildFilterGroup(tr("SZX Snapshots"), {"szx"}) + ";;" +
+                     tr("All Files (*)");
+
+    QString filePath = QFileDialog::getOpenFileName(this, tr("Open Snapshot"), _lastDirectory, filter);
+
+    if (!filePath.isEmpty())
+    {
+        loadFile(filePath);
+    }
+}
+
+void MainWindow::openTapeDialog()
+{
+    QStringList exts = toQStringList(Emulator::SupportedTapeExtensions());
+    QString filter = buildFilterGroup(tr("Tape Files"), exts) + ";;" +
+                     buildFilterGroup(tr("TAP Tapes"), {"tap"}) + ";;" +
+                     buildFilterGroup(tr("TZX Tapes"), {"tzx"}) + ";;" +
+                     buildFilterGroup(tr("CSW Tapes"), {"csw"}) + ";;" +
+                     buildFilterGroup(tr("WAV Audio"), {"wav"}) + ";;" +
+                     tr("All Files (*)");
+
+    QString filePath = QFileDialog::getOpenFileName(this, tr("Open Tape"), _lastDirectory, filter);
+
+    if (!filePath.isEmpty())
+    {
+        loadFile(filePath);
+    }
+}
+
+void MainWindow::openDiskDialog()
+{
+    QStringList exts = toQStringList(Emulator::SupportedDiskExtensions());
+    QString filter = buildFilterGroup(tr("Disk Images"), exts) + ";;" +
+                     buildFilterGroup(tr("TRD Images"), {"trd"}) + ";;" +
+                     buildFilterGroup(tr("SCL Images"), {"scl"}) + ";;" +
+                     buildFilterGroup(tr("FDI Images"), {"fdi"}) + ";;" +
+                     buildFilterGroup(tr("UDI Images"), {"udi"}) + ";;" +
+                     buildFilterGroup(tr("DSK Images"), {"dsk"}) + ";;" +
+                     buildFilterGroup(tr("TD0 Images"), {"td0"}) + ";;" +
+                     buildFilterGroup(tr("MGT Images"), {"mgt", "img"}) + ";;" +
+                     tr("All Files (*)");
+
+    QString filePath = QFileDialog::getOpenFileName(this, tr("Open Disk"), _lastDirectory, filter);
 
     if (!filePath.isEmpty())
     {
@@ -1779,20 +1911,82 @@ void MainWindow::saveDiskDialog()
         return;
     }
 
-    // Save using TRD format (preserves all TR-DOS metadata)
-    LoaderTRD loader(context, originalPath);
-    loader.setImage(diskImage);
-    bool result = loader.writeImage();
+    // Save in the format of the original file. TRD and SCL hold only 16 x 256-byte TR-DOS tracks and refuse
+    // anything else; in that case Emulator::SaveDisk writes a lossless UDI next to the original instead.
+    Emulator::DiskSaveResult result = _emulator->SaveDisk(drive->getDriveId(), originalPath, true);
 
-    if (result)
+    if (result.saved && !result.retargeted)
     {
-        qDebug() << "Disk saved successfully:" << QString::fromStdString(originalPath);
+        qDebug() << "Disk saved successfully:" << QString::fromStdString(result.savedPath);
+        return;
+    }
+
+    if (result.saved && result.retargeted)
+    {
+        qDebug() << "Disk re-targeted to UDI:" << QString::fromStdString(result.savedPath);
+        QMessageBox::information(this, tr("Saved as UDI"),
+                                 tr("%1\n\nThe original file was left untouched and the disk was saved losslessly as:\n%2")
+                                     .arg(QString::fromStdString(result.reason), QString::fromStdString(result.savedPath)));
+        return;
+    }
+
+    qDebug() << "Failed to save disk:" << QString::fromStdString(originalPath);
+    QString detail = result.reason.empty() ? QString() : "\n" + QString::fromStdString(result.reason);
+    QMessageBox::warning(this, tr("Save Failed"),
+                         tr("Failed to save disk to:\n%1%2").arg(QString::fromStdString(originalPath), detail));
+}
+
+void MainWindow::saveDiskAsUDIDialog()
+{
+    if (!_emulator)
+    {
+        qDebug() << "No emulator running, cannot save disk";
+        return;
+    }
+
+    EmulatorContext* context = _emulator->GetContext();
+    if (!context || !context->pBetaDisk)
+    {
+        QMessageBox::warning(this, tr("Save Failed"), tr("No Beta Disk interface available."));
+        return;
+    }
+
+    FDD* drive = context->pBetaDisk->getDrive();
+    DiskImage* diskImage = drive ? drive->getDiskImage() : nullptr;
+    if (!diskImage)
+    {
+        QMessageBox::warning(this, tr("Save Failed"), tr("No disk image loaded in the current drive."));
+        return;
+    }
+
+    QString filePath = QFileDialog::getSaveFileName(this, tr("Save Disk Image as UDI"), _lastSaveDirectory + "/disk.udi",
+                                                    tr("UDI Disk Images (*.udi);;All Files (*)"));
+    if (filePath.isEmpty())
+    {
+        return;
+    }
+
+    if (!filePath.toLower().endsWith(".udi"))
+    {
+        filePath += ".udi";
+    }
+
+    QFileInfo fileInfo(filePath);
+    _lastSaveDirectory = fileInfo.absolutePath();
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+    settings.setValue("LastSaveDirectory", _lastSaveDirectory);
+
+    std::string file = filePath.toStdString();
+    LoaderUDI loader(context, file);
+    loader.setImage(diskImage);
+    if (loader.writeImage())
+    {
+        qDebug() << "Disk saved as UDI successfully:" << filePath;
     }
     else
     {
-        qDebug() << "Failed to save disk:" << QString::fromStdString(originalPath);
-        QMessageBox::warning(this, tr("Save Failed"),
-                             tr("Failed to save disk to:\n%1").arg(QString::fromStdString(originalPath)));
+        QString detail = loader.lastWarnings().empty() ? QString() : "\n" + QString::fromStdString(loader.lastWarnings()[0]);
+        QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save disk to:\n%1%2").arg(filePath, detail));
     }
 }
 
@@ -2048,6 +2242,40 @@ void MainWindow::handleTurboModeToggled(bool enabled)
     }
 }
 
+void MainWindow::handleTapeTrapsToggled(bool enabled)
+{
+    if (_emulator)
+    {
+        EmulatorContext* context = _emulator->GetContext();
+        FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
+        if (featureManager)
+        {
+            // Live toggle: the trap arm state is evaluated lazily on every
+            // LD-BYTES invocation (design §6.1), so a feature write takes
+            // effect on the next ROM loader call — no reset or pause needed
+            featureManager->setFeature(Features::kFastTape, enabled);
+            qDebug() << "Fast tape loading" << (enabled ? "enabled" : "disabled");
+        }
+    }
+}
+
+void MainWindow::handleTurboTapeToggled(bool enabled)
+{
+    if (_emulator)
+    {
+        EmulatorContext* context = _emulator->GetContext();
+        FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
+        if (featureManager)
+        {
+            // Live toggle: the controller evaluates the feature every frame
+            // (design §6.1 E4), so a feature write takes effect at the next
+            // frame boundary — engaged warp also stands down the same way
+            featureManager->setFeature(Features::kTurboTape, enabled);
+            qDebug() << "Turbo tape loading" << (enabled ? "enabled" : "disabled");
+        }
+    }
+}
+
 void MainWindow::handleStepIn()
 {
     if (_emulator)
@@ -2097,6 +2325,35 @@ void MainWindow::handleLogWindowToggled(bool visible)
     {
         logWindow->setVisible(visible);
     }
+}
+
+void MainWindow::handleTapeManagerToggled(bool visible)
+{
+    if (tapeManagerWindow)
+    {
+        tapeManagerWindow->setVisible(visible);
+    }
+}
+
+void MainWindow::handleImportAudioTapeRequested()
+{
+    // tape-audio-bridge §7.3: audio → tape recognition; "Insert into emulator"
+    // rides the same LoadTape path as File → Open Tape
+    TapeImportAudioDialog dialog(this);
+    connect(&dialog, &TapeImportAudioDialog::insertRequested, this, [this](const QString& path) {
+        if (_emulator)
+        {
+            if (!_emulator->LoadTape(path.toStdString()))
+            {
+                qWarning() << "Failed to load tape:" << path;
+            }
+        }
+        else
+        {
+            qWarning() << "Cannot load tape - emulator not running:" << path;
+        }
+    });
+    dialog.exec();
 }
 
 void MainWindow::handleIntParametersRequested()

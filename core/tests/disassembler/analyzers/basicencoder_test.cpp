@@ -639,21 +639,19 @@ TEST_F(BasicEncoder_Test, StateDetection_StackNoDOSAddress_PureBASIC)
 {
     // Scenario: Stack with only BASIC ROM addresses, no TR-DOS
     uint16_t sp = 0xFF00;
-    
-    // Simulate pure BASIC call stack:
-    // SP+0: $1234 (some BASIC ROM address)
-    // SP+2: $0A3B (another BASIC address)
-    // SP+4: $5678 (RAM address - program)
-    
-    _memory->DirectWriteToZ80Memory(sp + 0, 0x34);
-    _memory->DirectWriteToZ80Memory(sp + 1, 0x12);
-    
-    _memory->DirectWriteToZ80Memory(sp + 2, 0x3B);
-    _memory->DirectWriteToZ80Memory(sp + 3, 0x0A);
-    
-    _memory->DirectWriteToZ80Memory(sp + 4, 0x78);
-    _memory->DirectWriteToZ80Memory(sp + 5, 0x56);
-    
+
+    // The scan walks up to 16 stack entries, and page-7 RAM ($C000-$FFFF,
+    // including this stack area) is randomized at power-on. Fill the whole
+    // window with plausible non-DOS addresses so no random word can alias
+    // into the trap range ($3D00-$3DFF) and flake the negative assertion.
+    const uint16_t basicAddrs[] = { 0x1234, 0x0A3B, 0x5678 };
+    for (int i = 0; i < 16; i++)
+    {
+        uint16_t addr = basicAddrs[i % 3];
+        _memory->DirectWriteToZ80Memory(sp + i * 2, addr & 0xFF);
+        _memory->DirectWriteToZ80Memory(sp + i * 2 + 1, (addr >> 8) & 0xFF);
+    }
+
     bool hasDosAddr = BasicEncoder::stackContainsDOSReturnAddress(_memory, sp);
     EXPECT_FALSE(hasDosAddr) << "Pure BASIC stack should not detect DOS return address";
 }

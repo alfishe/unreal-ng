@@ -326,12 +326,9 @@ Started emulator instance: emu-pentagon-87654321-dcba-4321-8765-987654321fed
 
 # List all instances
 > list
-┌─────────────────────────────────────┬────────────┬─────────────────────┐
-│ Instance ID                         │ Model      │ Status              │
-├─────────────────────────────────────┼────────────┼─────────────────────┤
-│ emu-12345678-abcd-1234-5678-123456789abc │ 48K        │ Paused              │
-│ emu-pentagon-87654321-dcba-4321-8765-987654321fed │ Pentagon  │ Paused              │
-└─────────────────────────────────────┴────────────┴─────────────────────┘
+Emulators (2):
+  [1] emu-12345678  48K       Paused
+  [2] emu-pentagon  Pentagon  Paused
 
 # Select and work with specific instance
 > select emu-pentagon-87654321-dcba-4321-8765-987654321fed
@@ -777,6 +774,50 @@ bpgroup show loader
 - Port breakpoints: minimal overhead (~1%)
 - Recommend <100 active breakpoints for real-time debugging
 - Disable unused breakpoints rather than deleting for faster re-enabling
+
+#### 4.4 Labels & Symbol Management
+
+Labels provide symbolic names for memory addresses, enabling human-readable debugging. The LabelManager supports bank-aware addressing, multiple symbol file formats, and filtering capabilities.
+
+| Command | Aliases | Arguments | Description |
+| :--- | :--- | :--- | :--- |
+| `label <name>` | | `<label-name>` | Get label by name. Returns address, bank, type, module, and comment. |
+| `label add <name> <addr>` | | `<name> <address> [options]` | Add a label at `<address>`. Options: `--type <code\|data\|const>`, `--module <name>`, `--bank <n>`, `--comment <text>`. |
+| `label remove <name>` | | `<label-name>` | Remove label by name. |
+| `label toggle <name>` | | `<label-name>` | Toggle label active state (active labels appear in disassembly). |
+| `labels` | | `[filters]` | List all labels with optional filters: `--module <name>`, `--type <type>`, `--bank <n>`, `--from <addr>`, `--to <addr>`, `--active`. |
+| `symbols load <file>` | | `<path>` | Load symbols from file. Auto-detects format: `.sld` (sjasmplus), `.sym`, `.map`. Appends to existing labels. |
+| `symbols save <file>` | | `<path>` | Save all symbols to file in SLD format. |
+| `symbols clear` | | | Clear all labels from memory. |
+| `symbols info` | | | Display label count and loaded symbol file info. |
+
+**Label Structure**:
+- `name`: Unique symbolic identifier
+- `address`: Z80 address (0x0000-0xFFFF)
+- `bank`: Physical memory bank (or UINT16_MAX for unbanked)
+- `bankType`: RAM or ROM designation
+- `bankOffset`: Offset within physical page
+- `type`: Label category (code, data, const, string, etc.)
+- `module`: Module/source file association
+- `comment`: Documentation text
+- `active`: Whether label appears in disassembly output
+
+**Symbol File Formats**:
+- **SLD** (sjasmplus): Primary format with full bank/module support
+- **SYM**: Simple `address label` pairs
+- **MAP**: Section-based symbol tables
+
+**Filtering API** (for automation):
+```cpp
+LabelFilter filter;
+filter.module = "main";         // Exact module match
+filter.bank = 5;                // Bank number
+filter.type = "code";           // Label type
+filter.addressFrom = 0x8000;    // Address range start
+filter.addressTo = 0x9FFF;      // Address range end
+filter.activeOnly = true;       // Active labels only
+auto labels = labelMgr->GetLabels(filter);
+```
 
 ### 5. Feature Management & Configuration
 
@@ -2055,6 +2096,7 @@ Commands to configure emulator instance behavior and performance characteristics
 | `setting list` | `settings` | | Display all emulator settings with their current values | ✅ Implemented |
 | `setting <name> <value>` | `set` | `<setting-name> <value>` | Change a specific setting value | ✅ Implemented |
 | `setting fast_tape <on\|off>` | | `on` or `off` | Enable/disable fast tape loading. When enabled, tape operations execute at maximum speed without audio emulation, significantly reducing loading times. | ✅ Implemented |
+| `setting turbo_tape <on\|off>` | | `on` or `off` | Enable/disable turbo tape loading (feature `turbotape`). While a tape signal plays out, the emulator runs at warp speed — custom loaders included. Composes with `fast_tape`: trapped blocks load instantly, the remaining signal path runs at warp. | ✅ Implemented |
 | `setting fast_disk <on\|off>` | | `on` or `off` | Enable/disable fast disk loading. When enabled, FDD operations bypass timing delays for near-instant disk access. | 🔮 Planned |
 | `setting turbo_fdc <on\|off>` | | `on` or `off` | Enable/disable turbo FDC mode. Accelerates WD1793 FDC operations for faster disk I/O. | 🔮 Planned |
 | `setting max_cpu_speed <value>` | | `<multiplier>` or `unlimited` | Set maximum CPU speed multiplier. Values: `1` (3.5MHz), `2` (7MHz), `4` (14MHz), `8` (28MHz), `16` (56MHz), or `unlimited`. Affects execution speed for loading and intensive operations. | 🔮 Planned |
@@ -2066,7 +2108,8 @@ Commands to configure emulator instance behavior and performance characteristics
 **Setting Categories**:
 
 1. **I/O Acceleration Settings**:
-   - `fast_tape`: Bypasses audio emulation and timing for tape operations
+   - `fast_tape`: Bypasses audio emulation and timing for tape operations (feature `fasttape`)
+   - `turbo_tape`: Warps emulation speed while a tape signal path plays out, custom loaders included (feature `turbotape`)
    - `fast_disk`: Accelerates FDD seek times and data transfer
    - `turbo_fdc`: Removes WD1793 command delays
 
@@ -2084,7 +2127,8 @@ Commands to configure emulator instance behavior and performance characteristics
 
 | Setting | Type | Default | Valid Values | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `fast_tape` | Boolean | `off` | `on`, `off` | Fast tape loading mode |
+| `fast_tape` | Boolean | `on` | `on`, `off` | Fast tape loading mode (backed by the `fasttape` runtime feature) |
+| `turbo_tape` | Boolean | `on` | `on`, `off` | Turbo tape loading mode (backed by the `turbotape` runtime feature) |
 | `fast_disk` | Boolean | `off` | `on`, `off` | Fast disk access mode |
 | `turbo_fdc` | Boolean | `off` | `on`, `off` | Turbo FDC operations |
 | `max_cpu_speed` | Integer/String | `1` | `1`, `2`, `4`, `8`, `16`, `unlimited` | CPU speed multiplier |
@@ -2315,6 +2359,46 @@ Commands specifically for managing the multi-emulator videowall environment.
 | :--- | :--- | :--- | :--- | :--- |
 | `videowall singlesync <on\|off> [id]` | | `on` or `off`, `[id]` (optional) | Toggles the Single Sync Mode which locks an emulator tile into a synchronous rendering loop for 100% accurate recording without performance drops. | ✅ Implemented |
 
+### 10. Tape Control Commands
+
+Full tape transport, inspection and the offline audio bridge. Playback subcommands operate on the selected emulator instance; `render`/`import` are pure path-to-path conversions that never touch emulator state. The identical surface is exposed by the WebAPI (`/tape/*` endpoints), Lua (`tape_*` functions) and Python (`tape_*` methods) — see [webapi-interface.md](./webapi-interface.md), [lua-interface.md](./lua-interface.md) and [python-interface.md](./python-interface.md).
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `tape load <file>` | | `<filename>` | Load tape image (.tap, .tzx, .csw, …) into the virtual tape deck. | ✅ Implemented |
+| `tape eject` | | | Eject the tape: playback stops, image and block catalog are dropped. | ✅ Implemented |
+| `tape play` | | | Start playback at the consumption cursor, or resume in place after `tape pause`. | ✅ Implemented |
+| `tape pause` | | | Freeze playback mid-block; the next `tape play` resumes exactly there. Idempotent when already paused; error when not playing. | ✅ Implemented |
+| `tape stop` | | | Terminal stop: playback stops and the loaded image is invalidated. | ✅ Implemented |
+| `tape rewind` | | | Rewind to block 0 keeping the image and block catalog loaded. | ✅ Implemented |
+| `tape seek <index>` | | `<block-index>` | Position the tape head at catalog block `<index>` (the same indices `tape blocks` shows). | ✅ Implemented |
+| `tape pos` | | | One-line playback position: state, block, elapsed seconds, consumption cursor. | ✅ Implemented |
+| `tape blocks` | | | Block catalog table: index, kind, name, size, duration, fast-load eligibility. | ✅ Implemented |
+| `tape info` | | | Detailed status: format, position, block count, total duration, fast/turbo tape feature state, fast-load plan summary. | ✅ Implemented |
+| `tape render <image> [opts] -o <out>` | | `--blocks N\|N-M`, `--rate N`, `--amp X`, `--invert` | Render a tape image to WAV/FLAC audio with the engine's own pulse timing (`.wav` native, `.flac` via ffmpeg). | ✅ Implemented |
+| `tape import <audio> [opts] -o <out>` | | `--target auto\|tzx\|tap`, `--hysteresis X` | Import WAV/FLAC/MP3 as a .tzx/.tap image (decode + pulse extraction + recognition; `.tap` saves are gated to ROM-standard content). | ✅ Implemented |
+
+**Playback state machine**: `idle` → `playing` → (`paused` → `playing`) → `ended`. The lowercase state strings are identical across all four surfaces (`tape pos`, GET `/tape`, `tape_pos()` in Lua and Python).
+
+**Feature cross-references** (see also §7 settings):
+- `setting fast_tape on|off` (feature `fasttape`): ROM loader trap — eligible header/data pairs load instantly.
+- `setting turbo_tape on|off` (feature `turbotape`): while a tape signal path plays out, the emulator runs at warp speed, custom loaders included. The two compose: trapped blocks load instantly, the remaining signal path runs at warp.
+
+**Examples**:
+
+```
+tape load /path/to/game.tap
+tape blocks
+tape seek 4
+tape play
+tape pos
+tape pause
+tape play
+tape rewind
+tape render game.tzx --blocks 2-5 --rate 48000 -o game.wav
+tape import recording.wav --target tzx -o imported.tzx
+```
+
 ## Future Capabilities
 
 The following commands and interfaces are planned for future implementation. This section documents the roadmap for expanding the ECI to support more advanced debugging, analysis, and automation workflows.
@@ -2460,15 +2544,11 @@ key tap enter
 
 Enhanced control over peripheral media devices.
 
+> [!NOTE]
+> All tape transport, inspection and audio-bridge commands are **implemented** — see [§10. Tape Control Commands](#10-tape-control-commands).
+
 | Command | Arguments | Description | Status |
 | :--- | :--- | :--- | :--- |
-| `tape load <file>` | `<filename>` | Insert tape file (.tap, .tzx, .csw) into virtual tape drive. | 🔧 Partially implemented via `open` |
-| `tape eject` | | Eject current tape. | 🔮 Planned |
-| `tape play` | | Start tape playback (if paused). | 🔮 Planned |
-| `tape stop` | | Stop tape playback. | 🔮 Planned |
-| `tape rewind` | | Rewind tape to beginning. | 🔮 Planned |
-| `tape position <block>` | `<block-number>` | Seek to specific tape block. | 🔮 Planned |
-| `tape info` | | Show tape information (format, blocks, current position). | 🔮 Planned |
 | `disk insert <drive> <file>` | `<A\|B\|C\|D> <filename>` | Insert disk image into specified drive. Supports .trd, .scl, .fdi, .udi formats. | 🔧 Partially implemented via `open` |
 | `disk eject <drive>` | `<A\|B\|C\|D>` | Eject disk from drive. | 🔮 Planned |
 | `disk info <drive>` | `<A\|B\|C\|D>` | Show disk information (format, tracks, sectors, files). | 🔮 Planned |
@@ -3603,7 +3683,7 @@ Lua called from Python
 
 ```bash
 # Execute Python code via REST
-curl -X POST http://localhost:8080/api/v1/python/exec \
+curl -X POST http://localhost:8090/api/v1/python/exec \
   -H "Content-Type: application/json" \
   -d '{"code": "print(\"Hello from WebAPI\")"}'
 
@@ -3611,15 +3691,15 @@ curl -X POST http://localhost:8080/api/v1/python/exec \
 # {"success": true, "result": "Hello from WebAPI\n", "executionTime": 0.012}
 
 # Load Python file
-curl -X POST http://localhost:8080/api/v1/python/file \
+curl -X POST http://localhost:8090/api/v1/python/file \
   -H "Content-Type: application/json" \
   -d '{"path": "/path/to/test.py"}'
 
 # Get status
-curl http://localhost:8080/api/v1/python/status
+curl http://localhost:8090/api/v1/python/status
 
 # Stop execution
-curl -X POST http://localhost:8080/api/v1/python/stop
+curl -X POST http://localhost:8090/api/v1/python/stop
 ```
 
 ### 7.5 Security Considerations

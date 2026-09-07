@@ -178,7 +178,7 @@ _context->emulatorState.p7FFD = _ext128Header.port_7FFD;
 
 - Z80 Loader: `docs/inprogress/2026-01-19-z80-loader/COMPLETE.md`
 - SNA Format: World of Spectrum archives
-- Existing tests: `core/tests/loaders/loader_sna_test.cpp`
+- Existing tests: `core/tests/loaders/snapshot/loader_sna_test.cpp`
 
 ## Notes
 

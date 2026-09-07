@@ -11,7 +11,7 @@
 #include <deque>
 
 #include "encoder_base.h"
-#include "encoder_config.h"
+#include "encoderconfig.h"
 #include "common/subprocess.h"
 #include "common/named_pipe.h"
 

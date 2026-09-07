@@ -112,9 +112,12 @@ void MemoryAccessTracker::UpdateFeatureCache()
         _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
         _feature_calltrace_enabled = debugMode && fm->isEnabled(Features::kCallTrace);
 
-        LOGDEBUG("MemoryAccessTracker::UpdateFeatureCache - memoryTracking: %s (was %s), callTrace: %s (was %s)",
-                _feature_memorytracking_enabled ? "ON" : "OFF", wasTrackingEnabled ? "ON" : "OFF",
-                _feature_calltrace_enabled ? "ON" : "OFF", wasCalltraceEnabled ? "ON" : "OFF");
+        if (wasTrackingEnabled != _feature_memorytracking_enabled || wasCalltraceEnabled != _feature_calltrace_enabled)
+        {
+            LOGDEBUG("MemoryAccessTracker::UpdateFeatureCache - memoryTracking: %s (was %s), callTrace: %s (was %s)",
+                    _feature_memorytracking_enabled ? "ON" : "OFF", wasTrackingEnabled ? "ON" : "OFF",
+                    _feature_calltrace_enabled ? "ON" : "OFF", wasCalltraceEnabled ? "ON" : "OFF");
+        }
 
         // Lazy allocation: allocate counters only when tracking is first enabled
         if (_feature_memorytracking_enabled && !_isAllocated.load(std::memory_order_acquire))

@@ -380,6 +380,27 @@ void SoundManager::handleStep()
     if (!_feature_sound_enabled)
         return;
 
+    // Turbo render decimation companion (turbo tape design r4): with turbo
+    // engaged and audio not requested, per-step analog device work (TurboSound
+    // AY mixing) feeds only handleFrameEnd synthesis - which is skipped in
+    // this mode - so the samples would be computed and discarded. Skipping is
+    // unobservable to the program: the AY register file is written by
+    // PortDecoder on OUT, handleStep only advances analog generators (tone /
+    // envelope phase, mixer levels). Recording keeps the full path so DSD
+    // native-rate capture and recorded audio stay intact.
+    {
+        const CONFIG& config = _context->config;
+        if (config.turbo_mode && !config.turbo_mode_audio)
+        {
+            bool recording = false;
+#ifdef ENABLE_RECORDING
+            recording = _context->pRecordingManager && _context->pRecordingManager->IsRecording();
+#endif
+            if (!recording)
+                return;
+        }
+    }
+
     _turboSound->handleStep();
 }
 

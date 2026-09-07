@@ -1,0 +1,606 @@
+        org 25000
+        di
+        ld hl,#C000
+        ld de,#C001
+        ld bc,#3FFF
+        ld (hl),0
+        ldir
+        call 3435
+        ld a,2
+        call 5633
+        ld hl,(23606)
+        push hl
+        ld hl,AAFNT-256
+        ld (23606),hl
+        ld b,160
+        ld a," "
+        rst #10
+        djnz $-3
+        pop hl
+        ld (23606),hl
+        ld hl,#5800
+        ld de,#5801
+        ld bc,#2FF
+        ld (hl),#1
+        ldir
+        xor a
+        out (#FE),a
+        call RSTINS
+        call FORMAT
+        call RESET
+        ld d,0
+        call POSIT
+
+        ld de,0
+        ld hl,#E000
+        call WR_SEC
+
+        ld de,#0008
+        ld hl,SEC9
+        call WR_SEC
+        ld a,2
+        jr z,$+4
+        out (#FE),a
+        ld iy,#5C3A
+        ei
+        ret
+W_ADR   dw #5800
+CHK     db 2            ;FULL
+TRKLEN  equ #1866       ;LEN OF TRK
+S_IMAGE equ #C000       ;ADDRES FOR TRK IMAGE
+
+;................
+F_INFO
+        db 2
+        dw DOSTAB
+        db #59-2       ;LEN in TRK FROM CURRENT TRK
+        dw OURTAB
+        db 164-2-#59
+        dw DOSTAB
+        db #FF        ;END OF TAB
+
+DOSTAB
+        db 1,1
+        db 2,1
+        db 3,1
+        db 4,1
+        db 5,1
+        db 6,1
+        db 7,1
+        db 8,1
+        db 9,1
+        db #A,1
+        db #B,1
+        db #C,1
+        db #D,1
+        db #E,1
+        db #F,1
+        db #10,1
+        db #FF
+OURTAB
+        db #70,#03
+        db #71,#03
+        db #72,#03
+        db #73,#03
+        db #74,#03
+        db #FF        ;END OT TAB
+TRKBUF  ds #80,0
+FORMAT  ld a,8          ;ld de,0000
+        rst #10
+        db #1F
+        call WAITFF
+        ld d,#10
+        call POSIT
+        ld d,0
+        call POSIT
+                                ;!!!!!!!!!!!!!!
+                                ;!!!!!!!!!!!!!!
+        ld de,#0000             ;START TRK FOR FORMAT
+        call POSIT              ;!!!!!!!!!!!!!!
+                                ;!!!!!!!!!!!!!!
+
+        ld iy,F_INFO
+FORMLO  ld a,(iy+00)
+        cp #FF
+        jp nz,NOEND
+        ld iy,#5C3A
+        ei
+        ret
+
+NOEND   ld hl,TRKBUF
+        ld (TRKADR+1),hl
+        ld hl,S_IMAGE
+        call IMAGE
+        call FORMAS
+        push de
+        ld de,3
+        add iy,de
+        pop de
+        jp FORMLO
+
+FORMAS  ld b,(iy+00)
+FORLOP  push bc
+        ld a,7
+        call FORMIND
+AGAIFR  call MAKETRK
+        ld hl,S_IMAGE
+        call WR_TRK
+        call FROM1F
+        jr nz,BADFORM
+        ld a,3
+        call FORMIND
+        ld a,(CHK)
+        or a
+        jr z,NOCHEK
+        call CHK_TR
+        jr nz,BADFORM
+NOCHEK  ld a,#1+#40
+        call FORMIND
+        inc d
+        call POSIT
+        pop bc
+        djnz FORLOP
+        ret
+BADFORM ld a,2
+        call FORMIND
+        jp AGAIFR
+
+MAKETRK ld hl,TRKBUF
+MAKELOP ld a,(hl)
+        cp #FF
+        ret z
+        ld c,a
+        inc hl
+        ld b,(hl)
+        inc hl
+        ld a,d
+        srl a
+        ld (bc),a
+        inc bc
+        ld a,d          ;SIDE
+        and 1
+        ld (bc),a
+        jr MAKELOP
+
+FORMIND push hl
+        push de
+        ld hl,(W_ADR)
+        ld e,d
+        ld d,0
+        add hl,de
+        ld (hl),a
+        pop de
+        pop hl
+        ret
+WR_TRK  di
+        ld a,#F0
+        rst #10
+        db #1F
+        jp WR_DATA
+
+RD_TRK  di
+        ld a,#E0
+        rst #10
+        db #1F
+        jp RD_DATA
+
+IMAGE   di
+        ld a,(iy+01)
+        ld lx,a
+        ld a,(iy+02)
+        ld hx,a
+        push de
+        push hl
+        push ix
+        pop hl
+        ld de,OURTAB
+        or a
+        sbc hl,de
+        pop hl
+        pop de
+        ld a,54
+        jr nz,$+4
+        ld a,34
+        ld (BLINK+1),a
+        ld b,80         ;N80
+        ld a,#4E
+        call PUTBT
+        xor a
+        ld b,12         ;N12
+        call PUTBT
+        ld a,#F6
+        ld b,3
+        call PUTBT
+        ld a,#FC
+        ld b,1
+        call PUTBT
+        ld a,#4E
+        ld b,22         ;12
+        call PUTBT
+        ld e,(ix+00)    ;NUBER OF SECTORS
+        jr IMGLP_
+IMGLOP  ld e,(ix+00)    ;NUBER OF SECTORS
+        ld a,#4E
+BLINK   ld b,30         ;12
+        call PUTBT
+IMGLP_  xor a
+        ld b,12         ;MIN=10
+        call PUTBT
+        ld a,#F5        ;INIT CRC,SAVE A1
+        ld b,3          ;ONLY 3
+        call PUTBT
+        ld (hl),#FE     ;ADRESS MARKER (FE)
+        inc hl
+        ld a,d          ;TRACK
+        srl a
+        ld (hl),a
+        push de
+        ex de,hl
+TRKADR  ld hl,TRKBUF
+        ld (hl),e
+        inc hl
+        ld (hl),d
+        inc hl
+        ld (TRKADR+1),hl
+        ex de,hl
+        pop de
+        inc hl
+        ld a,d          ;SIDE
+        and 1
+        ld (hl),a
+        inc hl
+        ld (hl),e       ;SEC
+        inc hl
+        ld a,(ix+01)
+        ld (hl),a       ;SIZE
+        inc hl
+        ld (hl),#F7     ;SAVE CRC
+        inc hl
+        ld a,#4E        ;SECOND SPACE
+        ld b,22         ;MIN=10 ;20     ;25
+        call PUTBT
+        xor a           ;
+        ld b,12         ;NORM=12;MIN=11
+        call PUTBT
+        ld a,#F5        ;INIT CRC,SAVE A1
+        ld b,3          ;ONLY 3
+        call PUTBT
+        ld (hl),#FB     ;ADR LABEL OF DATA
+        inc hl
+        ld a,(ix+01)    ;DATA
+        call SIZE
+        ld (hl),#F7     ;SAVE CRC
+        inc hl
+        inc ix
+        inc ix
+        ld a,(ix+00)
+        cp #FF
+        jp nz,IMGLOP
+        push hl
+        ld hl,(TRKADR+1)
+        ld (hl),#FF
+        pop hl
+RETLOP  ld (hl),#4E
+        inc hl
+        push hl
+        push de
+        ex de,hl
+        ld hl,S_IMAGE+TRKLEN
+        sbc hl,de
+        pop de
+        pop hl
+        jr nc,RETLOP
+        ret
+
+
+
+
+;ETLOP  ld (hl),#4E
+        inc hl
+        push hl
+        push de
+        ex de,hl
+        ld hl,S_IMAGE+TRKLEN
+        or a
+        sbc hl,de
+        ld b,h
+        ld c,l
+        ld h,d
+        ld l,e
+        inc de
+        ld (hl),#4E
+        ldir
+        pop de
+        pop hl
+        ret
+PUTBT   ld (hl),a
+        inc hl
+        djnz PUTBT
+        ret
+
+SIZE    push bc
+        push de
+        push hl
+        add a,a
+        ld l,a
+        ld h,0
+        ld de,SIZTAB
+        add hl,de
+        ld c,(hl)
+        inc hl
+        ld b,(hl)
+        pop hl
+        ld de,TRKINFO
+SIZLOP  ld a,(de)
+        ld (hl),a
+        inc de
+        inc hl
+        dec bc
+        ld a,b
+        or c
+        jr nz,SIZLOP
+        pop de
+        pop bc
+        ret
+
+SIZTAB  defw 128
+        defw 256
+        defw 512
+        defw 1024
+CHKTR   cp 1
+        jr z,HEAD_CH
+CHK_TR  ld a,(iy+01)
+        ld lx,a
+        ld a,(iy+02)
+        ld hx,a
+CHKLOP  ld a,(ix+00)
+        push ix
+        rst #10
+        db #5F
+        ld a,#80
+        rst #10
+        db #1F
+        ld hl,0
+        call RD_DATA
+        call FROM1F
+        pop ix
+        and #7F
+        ret nz
+        inc ix
+        inc ix
+        ld a,(ix+00)
+        cp #FF
+        ret z
+        jr CHKLOP
+HEAD_CH ld a,(iy+01)
+        ld lx,a
+        ld a,(iy+02)
+        ld hx,a
+        xor a
+        ld (NOSECT+1),a
+CHKLOP1 ld a,(ix+00)
+        ret z
+        push ix
+        call LD_INF
+        pop ix
+        or a
+        ret nz
+        ld a,(SCAN_B)
+        cp (ix+00)
+        jr nz,NOSECT
+        xor a
+        ld (NOSECT+1),a
+        inc ix
+        inc ix
+        jr CHKLOP1
+NOSECT  ld a,0
+        inc a
+        ld (NOSECT+1),a
+        cp #20
+        jp nz,CHKLOP1
+        or a
+        ret
+TRKINFO ds 40,"*ZX-FORMAT No.8 (c)XL DESIGN Inc. "
+
+POSIT   call CALCFF
+        ld a,d
+        srl a
+        rst #10
+        db #7F
+SPEED   ld a,#18
+        rst #10
+        db #1F
+        jp WAITFF
+
+RES_VG  xor a
+        rst #10
+        db #FF
+        ld a,(DRIVE)
+        or #3C
+        rst #10
+        db #FF
+        ret
+
+RESTORE ld a,#08
+        rst #10
+        db #1F
+        call FROM1F
+        and #80
+        ret z
+        ld a,1
+        rst #10
+        db #3F
+        ld a,8
+        rst #10
+        db #1F
+WT_RES  call FROM1F
+        and #80
+        jr nz,WT_RES
+        ld a,#D0
+        rst #10
+        db #1F
+        ret
+
+LOGPOS  push de
+        call CALCFF
+        srl d
+RELL    call LD_INF
+        jr nz,RELL
+        ld a,(SCAN_B)
+        cp d
+        pop de
+        rst #10
+        db #3F
+        ret z
+        call POSIT
+        jr LOGPOS
+
+LD_INF  push hl
+        push bc
+LD_ERR  xor a
+        ld hl,SCAN_B
+        push hl
+        ld b,6
+CLRINF  ld (hl),a
+        inc hl
+        djnz CLRINF
+        pop hl
+        ld a,#C0
+        rst #10
+        db #1F
+        call RD_DATA
+        call FROM1F
+        bit 7,a
+        jr nz,RESTVG
+        and #7F
+        pop bc
+        pop hl
+        ret
+RESTVG  call RESTORE
+        jr LD_ERR
+
+RESET   ld a,82
+        rst #10
+        db #3F
+        call CALCFF
+        ld a,8
+        rst #10
+        db #1F
+        jr WAITFF
+
+FROM1F  push hl
+        push de
+        push bc
+        ld (LASTSP+1),sp
+        ld a,#C3
+        ld hl,SYSRET
+        ld (#5CC2),a
+        ld (#5CC3),hl
+        ld d,#01
+        ld ix,#3F33
+        call TODOS
+SYSRET  ld a,b
+LASTSP  ld sp,#0000
+        pop bc
+        pop de
+        pop hl
+        di
+        ret
+WAITFF  ld ix,#3EF5
+        call TODOS
+        di
+        ret
+RD_DATA ld ix,#3FE5
+        jr CONTRD
+WR_DATA ld ix,#3FCA
+CONTRD  ld c,#7F
+        jr TODOS
+CALCFF  ld a,(DRIVE)
+        or #3C
+        bit 0,d
+        jr z,TOSYS
+        res 4,a
+TOSYS   rst #10
+        db #FF
+        ret
+RSTINS  ld hl,RSTADR
+        ld (#5C51),hl
+        ret
+RSTADR  dw RSTCOM
+RSTCOM  pop hl
+        pop hl
+        exx
+        ex (sp),hl
+        ld c,(hl)
+        inc hl
+        ex (sp),hl
+TOPORT  ld ix,#2A53
+TODOS   push ix
+        jp #3D2F
+BRKCHK  ld a,#FE
+        in a,(#FE)
+        and #1
+        jr nz,GOODBR
+        ld a,#7F
+        in a,(#FE)
+        and #1
+        jr z,BADBR
+GOODBR  xor a
+        ret
+BADBR   ld a,2
+        or a
+        ret
+TO5F    ld c,#5F
+        jr TOPORT
+TO1F    ld c,#1F
+        jr TOPORT
+DRIVE   db 0
+SCAN_B  ds 6,0
+AAFNT   ds 4,#AA,#55
+
+SEC9    ;IMAGE OF SYS-SECTOR
+        ds 225,0
+        db 09,00       ;FREE TR/SEC
+        db #16
+        db #00  ;FILES NUM
+        dw 2544
+        db #10
+        db 0,0
+        ds 9,#20
+        db 0
+        db 0    ;DEL-FILES
+        db "ZX-FORMAT "
+        db "8"+#80
+
+
+;WRITE ONE SECTOR
+WR_SEC  di
+        call LOGPOS
+        jr nz,WR_SEC
+
+WRITLP  ld hy,#3
+WRITLP1 ld ly,#3
+REWRTR
+        call BRKCHK     ;CHECK ON BREAK
+        ret nz
+        push hl
+        ld a,e
+        inc a
+        call TO5F
+        ld a,#A0       ;WR COM
+        call TO1F
+        call WR_DATA
+        call FROM1F
+        or a
+        pop hl
+        ret z
+        dec ly
+        jr nz,REWRTR
+        call RESET
+        call LOGPOS
+        ret nz          ;DISK ABSENT
+        dec hy
+        jr nz,WRITLP1
+        inc a
+        ret
+

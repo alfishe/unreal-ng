@@ -79,7 +79,7 @@ TEST_F(WD1793_Integration_Test, Integration_TRDOS_Format_ViaBasicCommand)
 ## Build & Run
 
 ```bash
-cd /Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/tests
+cd core/tests
 cmake --build cmake-build-release
 ./cmake-build-release/core-tests --gtest_filter="*TRDOS_Format*"
 ```
