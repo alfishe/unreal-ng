@@ -500,14 +500,15 @@ TEST_F(StringHelper_Test, Format)
         EXPECT_EQ(reference, result) << "Test case 6b failed";
     }
 
-    // Test with string modifications
+    // Test with multiple string arguments
     {
-        std::string format = "Original: [%s], Modified: [%s], Ptr: [%s]";
-        std::string mutable_str = "initial";
-        const char* ptr = "pointer";
-        
-        std::string result = StringHelper::Format(format, mutable_str, (mutable_str += "_modified"), ptr);
-        std::string reference = "Original: [initial], Modified: [initial_modified], Ptr: [pointer]";
+        std::string format = "First: [%s], Second: [%s], Third: [%s]";
+        std::string first = "alpha";
+        std::string second = "beta";
+        const char* third = "gamma";
+
+        std::string result = StringHelper::Format(format, first, second, third);
+        std::string reference = "First: [alpha], Second: [beta], Third: [gamma]";
         EXPECT_EQ(reference, result) << "Test case 6c failed";
     }
 
