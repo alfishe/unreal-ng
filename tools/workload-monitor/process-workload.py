@@ -27,6 +27,8 @@ import json
 import os
 import platform
 import re
+import shutil
+import signal
 import sys
 import time
 from dataclasses import asdict, dataclass, field
@@ -40,6 +42,100 @@ except ImportError:
     HAS_PSUTIL = False
 
 DEFAULT_TARGET_NAMES = ["unreal-videowall", "unreal-videowal", "unreal-qt", "unreal-screen-viewer"]
+
+_terminal_resized = False
+
+
+def _handle_sigwinch(signum: Any, frame: Any) -> None:
+    global _terminal_resized
+    _terminal_resized = True
+
+
+def setup_signal_handlers() -> None:
+    if hasattr(signal, "SIGWINCH"):
+        try:
+            signal.signal(signal.SIGWINCH, _handle_sigwinch)
+        except Exception:
+            pass
+
+
+def enable_windows_vt() -> None:
+    """Enables Virtual Terminal Processing (ANSI escape sequences) on Windows console handles."""
+    if platform.system() == "Windows":
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            h_out = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+            if h_out and h_out != -1:
+                mode = ctypes.c_ulong()
+                if kernel32.GetConsoleMode(h_out, ctypes.byref(mode)):
+                    kernel32.SetConsoleMode(h_out, mode.value | 0x0004)  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        except Exception:
+            try:
+                os.system('')  # Fallback for Windows 10 ANSI support
+            except Exception:
+                pass
+
+
+class TerminalScreenManager:
+    """
+    Manages ANSI terminal alternate screen buffer, cursor visibility, and clean teardown.
+    Switches to alternate screen buffer (\033[?1049h) so terminal scrollback history is preserved.
+    """
+    def __init__(self, enabled: bool):
+        self.enabled = enabled
+        self._in_alt_screen = False
+
+    def enter(self) -> None:
+        if not self.enabled:
+            return
+        enable_windows_vt()
+        setup_signal_handlers()
+        # Switch to alternate screen buffer and hide cursor
+        sys.stdout.write("\033[?1049h\033[?25l")
+        sys.stdout.flush()
+        self._in_alt_screen = True
+
+    def leave(self) -> None:
+        if not self.enabled or not self._in_alt_screen:
+            return
+        # Show cursor and leave alternate screen buffer
+        sys.stdout.write("\033[?25h\033[?1049l")
+        sys.stdout.flush()
+        self._in_alt_screen = False
+
+    def __enter__(self) -> "TerminalScreenManager":
+        self.enter()
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.leave()
+
+
+def draw_terminal_screen(content: str, term_columns: int, term_lines: int, force_clear: bool = False) -> None:
+    """
+    Draws dashboard in-place at cursor position (1,1).
+    Appends \\033[K (erase to end of line) to prevent residual characters from previous ticks.
+    Appends \\033[J (erase to bottom of screen) to clear leftover rows.
+    """
+    lines = content.splitlines()
+    lines = lines[:max(1, term_lines - 1)]
+
+    out_parts: List[str] = []
+    if force_clear:
+        out_parts.append("\033[2J\033[H")
+    else:
+        out_parts.append("\033[H")
+
+    for line in lines:
+        out_parts.append(line + "\033[K\n")
+
+    out_parts.append("\033[J")
+
+    sys.stdout.write("".join(out_parts))
+    sys.stdout.flush()
+
+
 
 
 # -----------------------------------------------------------------------------
@@ -98,9 +194,10 @@ class ProcessSample:
 def categorize_thread(name: str, pid: int, tid: int, proc_name: str = "", single_core_pct: float = 0.0) -> str:
     name_lower = name.lower()
     proc_lower = proc_name.lower()
+    is_videowall = "videowall" in proc_lower
 
     if name_lower.startswith("emulator") or "emulator-" in name_lower:
-        return "Tile"
+        return "Tile" if is_videowall else "Emulator"
     if "drogon" in name_lower or "audio" in name_lower or "sound" in name_lower or "logger" in name_lower or "lua" in name_lower or "dbus" in name_lower or "gmain" in name_lower or "gdbus" in name_lower or "dconf" in name_lower:
         return "Service"
     if "pool" in name_lower or "thread" in name_lower:
@@ -112,10 +209,10 @@ def categorize_thread(name: str, pid: int, tid: int, proc_name: str = "", single
 
     # On Linux, thread names exceeding 15 chars (e.g. 'emulator-xxxxxxxxxxxx') inherit the parent process comm.
     # In unreal-videowall / unreal-qt, worker threads running emulation have the process comm name.
-    is_unreal = "videowall" in proc_lower or "unreal" in proc_lower
+    is_unreal = is_videowall or "unreal" in proc_lower
     if is_unreal and (name_lower == proc_lower or name_lower.startswith(proc_lower[:10])):
-        if single_core_pct >= 2.0 or "videowall" in proc_lower and single_core_pct >= 0.5:
-            return "Tile"
+        if single_core_pct >= 2.0 or is_videowall and single_core_pct >= 0.5:
+            return "Tile" if is_videowall else "Emulator"
         return "Worker"
 
     return "Other"
@@ -126,7 +223,7 @@ def compute_videowall_metrics(
     threads: List[ThreadSample],
     num_cores: int
 ) -> Optional[VideoWallMetrics]:
-    emulator_threads = [t for t in threads if t.category == "Tile" or t.name.lower().startswith("emulator")]
+    emulator_threads = [t for t in threads if t.category in ("Tile", "Emulator") or t.name.lower().startswith("emulator")]
     is_vw = "videowall" in proc_name.lower() or len(emulator_threads) >= 2
 
     tile_count = len(emulator_threads)
@@ -348,6 +445,54 @@ class PsutilCollector(BaseCollector):
         super().__init__(pid, num_cores)
         self.proc = psutil.Process(pid)
         self._name = self.proc.name()
+        self._get_thread_description = self._init_thread_description_api()
+
+    def _init_thread_description_api(self):
+        """Initialize GetThreadDescription API on Windows 10 1607+."""
+        if platform.system() != "Windows":
+            return None
+        try:
+            import ctypes
+            from ctypes import wintypes
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            GetThreadDescription = kernel32.GetThreadDescription
+            GetThreadDescription.argtypes = [wintypes.HANDLE, ctypes.POINTER(ctypes.c_wchar_p)]
+            GetThreadDescription.restype = wintypes.LONG
+            LocalFree = kernel32.LocalFree
+            LocalFree.argtypes = [wintypes.HANDLE]
+            LocalFree.restype = wintypes.HANDLE
+            OpenThread = kernel32.OpenThread
+            OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            OpenThread.restype = wintypes.HANDLE
+            CloseHandle = kernel32.CloseHandle
+            CloseHandle.argtypes = [wintypes.HANDLE]
+            CloseHandle.restype = wintypes.BOOL
+            return (GetThreadDescription, LocalFree, OpenThread, CloseHandle, ctypes)
+        except Exception:
+            return None
+
+    def _get_win_thread_name(self, tid: int) -> Optional[str]:
+        """Get thread name on Windows using GetThreadDescription API."""
+        if self._get_thread_description is None:
+            return None
+        GetThreadDescription, LocalFree, OpenThread, CloseHandle, ctypes = self._get_thread_description
+        THREAD_QUERY_LIMITED_INFORMATION = 0x0800
+        try:
+            h_thread = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, False, tid)
+            if not h_thread:
+                return None
+            try:
+                desc_ptr = ctypes.c_wchar_p()
+                hr = GetThreadDescription(h_thread, ctypes.byref(desc_ptr))
+                if hr >= 0 and desc_ptr.value:
+                    name = desc_ptr.value
+                    LocalFree(ctypes.cast(desc_ptr, ctypes.c_void_p))
+                    return name if name else None
+                return None
+            finally:
+                CloseHandle(h_thread)
+        except Exception:
+            return None
 
     def process_name(self) -> str:
         return self._name
@@ -392,7 +537,7 @@ class PsutilCollector(BaseCollector):
                     th_cpu_time = max((th.user_time + th.system_time) - prev_time, 0.0)
                     th_single_core = (th_cpu_time / elapsed) * 100.0
                     th_sys = th_single_core / self.num_cores
-                    th_name = f"thread-{th.id}"
+                    th_name = self._get_win_thread_name(th.id) or f"thread-{th.id}"
                     cat = categorize_thread(th_name, self.pid, th.id, self._name, th_single_core)
                     thread_samples.append(ThreadSample(
                         tid=th.id,
@@ -605,10 +750,12 @@ def render_dashboard(
     group_threads: bool,
     colors: Colors,
     history: List[float],
-    start_time: float
+    start_time: float,
+    term_width: int = 78,
+    term_lines: int = 24
 ) -> str:
     lines: List[str] = []
-    width = 78
+    width = max(40, min(term_width - 1, 100))
     divider = "─" * width
 
     # History metrics
@@ -622,21 +769,31 @@ def render_dashboard(
     app_type = "VIDEOWALL" if (sample.videowall and sample.videowall.is_videowall) else sample.name.upper()
     lines.append(f"{colors.BOLD}{colors.CYAN}┌{'─' * (width - 2)}┐{colors.RESET}")
     title = f" TRUE WORKLOAD PROFILER :: {app_type} (PID {sample.pid}) "
+    if len(title) > width - 4:
+        title = title[:max(5, width - 7)] + "... "
     lines.append(f"{colors.BOLD}{colors.CYAN}│{colors.WHITE}{title.center(width - 2)}{colors.CYAN}│{colors.RESET}")
     lines.append(f"{colors.BOLD}{colors.CYAN}└{'─' * (width - 2)}┘{colors.RESET}")
 
-    lines.append(
-        f" Host: {colors.BOLD}{platform.node()}{colors.RESET} | "
-        f"OS: {platform.system()} {platform.release()} | "
-        f"Logical Cores: {colors.BOLD}{sample.num_cores}{colors.RESET} | "
-        f"Time: {now_str}"
-    )
+    if width >= 75:
+        lines.append(
+            f" Host: {colors.BOLD}{platform.node()}{colors.RESET} | "
+            f"OS: {platform.system()} {platform.release()} | "
+            f"Logical Cores: {colors.BOLD}{sample.num_cores}{colors.RESET} | "
+            f"Time: {now_str}"
+        )
+    else:
+        lines.append(
+            f" Host: {colors.BOLD}{platform.node()}{colors.RESET} | "
+            f"Cores: {colors.BOLD}{sample.num_cores}{colors.RESET} | "
+            f"Time: {now_str}"
+        )
     lines.append(divider)
 
     # Core comparison callout
     lines.append(f"{colors.BOLD}CPU WORKLOAD BREAKDOWN:{colors.RESET}")
-    single_bar = make_bar(sample.single_core_pct, 100.0, 20)
-    sys_bar = make_bar(sample.system_pct, 100.0, 20)
+    bar_len = max(8, min(20, width - 58))
+    single_bar = make_bar(sample.single_core_pct, 100.0, bar_len)
+    sys_bar = make_bar(sample.system_pct, 100.0, bar_len)
 
     lines.append(
         f"  ▶ {colors.BOLD}Single-Core Load:{colors.RESET}     "
@@ -646,32 +803,35 @@ def render_dashboard(
     lines.append(
         f"  ▶ {colors.BOLD}All-Cores Equivalent:{colors.RESET} "
         f"{colors.color_pct(sample.system_pct)} {sys_bar} "
-        f"{colors.DIM}(normalized across all {sample.num_cores} cores){colors.RESET}"
+        f"{colors.DIM}(normalized across {sample.num_cores} cores){colors.RESET}"
     )
     lines.append(
         f"  ▶ {colors.BOLD}Cores Saturated:{colors.RESET}      "
         f"{colors.CYAN}{sample.cores_equivalent:5.2f} core(s){colors.RESET} "
-        f"{colors.DIM}| Sample interval: {sample.elapsed_seconds:.2f}s | CPU Time: {sample.cpu_time_consumed:.3f}s{colors.RESET}"
+        f"{colors.DIM}| Interval: {sample.elapsed_seconds:.2f}s | CPU Time: {sample.cpu_time_consumed:.3f}s{colors.RESET}"
     )
 
-    lines.append(
-        f"  ▶ {colors.BOLD}CPU Mode Splits:{colors.RESET}      "
-        f"User: {colors.CYAN}{sample.user_time_consumed:.3f}s{colors.RESET} | "
-        f"Kernel/System: {colors.YELLOW}{sample.system_time_consumed:.3f}s{colors.RESET}"
-    )
-    lines.append(
-        f"  ▶ {colors.BOLD}Session Statistics:{colors.RESET}   "
-        f"Avg: {colors.color_pct(avg_single)} | "
-        f"Min: {colors.color_pct(min_single)} | "
-        f"Max: {colors.color_pct(max_single)} | "
-        f"Duration: {format_duration(session_duration)}"
-    )
+    if term_lines >= 18:
+        lines.append(
+            f"  ▶ {colors.BOLD}CPU Mode Splits:{colors.RESET}      "
+            f"User: {colors.CYAN}{sample.user_time_consumed:.3f}s{colors.RESET} | "
+            f"Kernel/System: {colors.YELLOW}{sample.system_time_consumed:.3f}s{colors.RESET}"
+        )
 
-    lines.append(divider)
+    if term_lines >= 20:
+        lines.append(
+            f"  ▶ {colors.BOLD}Session Statistics:{colors.RESET}   "
+            f"Avg: {colors.color_pct(avg_single)} | "
+            f"Min: {colors.color_pct(min_single)} | "
+            f"Max: {colors.color_pct(max_single)} | "
+            f"Duration: {format_duration(session_duration)}"
+        )
 
     # VideoWall Analytics Card (if videowall or multiple emulators)
-    if sample.videowall and (sample.videowall.is_videowall or sample.videowall.tile_count > 0):
+    has_vw = bool(sample.videowall and (sample.videowall.is_videowall or sample.videowall.tile_count > 0))
+    if has_vw and sample.videowall and term_lines >= 22:
         vw = sample.videowall
+        lines.append(divider)
         lines.append(f"{colors.BOLD}{colors.MAGENTA}VIDEOWALL GRID & TILE ANALYTICS:{colors.RESET}")
         lines.append(
             f"  🔲 {colors.BOLD}Active Tiles / Emulators:{colors.RESET}  {colors.CYAN}{vw.tile_count:3d} tiles{colors.RESET} "
@@ -691,40 +851,47 @@ def render_dashboard(
             f"~{colors.BOLD}{vw.estimated_max_tiles}{colors.RESET} sustainable 50 FPS tiles on {sample.num_cores} cores "
             f"{colors.DIM}(85% CPU ceiling){colors.RESET}"
         )
-        lines.append(divider)
 
     # Memory & Process Health
-    lines.append(f"{colors.BOLD}MEMORY & PROCESS HEALTH:{colors.RESET}")
-    lines.append(
-        f"  • Resident Memory (RSS): {colors.BOLD}{sample.rss_mb:8.2f} MB{colors.RESET}   "
-        f"• Virtual Memory (VMS): {sample.vms_mb:8.2f} MB"
-    )
-    active_threads = sum(1 for t in sample.threads if t.single_core_pct > 0.05)
-    lines.append(
-        f"  • Total Threads:         {colors.BOLD}{sample.thread_count:5d}{colors.RESET}      "
-        f"• Active Threads (>0%):  {colors.BOLD}{active_threads:5d}{colors.RESET}"
-    )
+    if term_lines >= 16:
+        lines.append(divider)
+        lines.append(f"{colors.BOLD}MEMORY & PROCESS HEALTH:{colors.RESET}")
+        lines.append(
+            f"  • Resident Memory (RSS): {colors.BOLD}{sample.rss_mb:8.2f} MB{colors.RESET}   "
+            f"• Virtual Memory (VMS): {sample.vms_mb:8.2f} MB"
+        )
+        active_threads = sum(1 for t in sample.threads if t.single_core_pct > 0.05)
+        lines.append(
+            f"  • Total Threads:         {colors.BOLD}{sample.thread_count:5d}{colors.RESET}      "
+            f"• Active Threads (>0%):  {colors.BOLD}{active_threads:5d}{colors.RESET}"
+        )
 
     lines.append(divider)
+
+    # Calculate dynamic thread allocation based on remaining terminal height
+    overhead_lines = len(lines) + 6
+    max_thread_rows = max(1, term_lines - overhead_lines)
+    effective_top_threads = min(top_threads, max_thread_rows)
 
     # Thread table
     lines.append(
         f"{colors.BOLD}THREAD BREAKDOWN (sorted by CPU load):{colors.RESET} "
-        f"{colors.DIM}(Top {top_threads} active threads){colors.RESET}"
+        f"{colors.DIM}(Top {effective_top_threads} active threads){colors.RESET}"
     )
+
+    max_name_len = max(8, min(20, width - 56))
     lines.append(
-        f"  {colors.DIM}{'TID':>8}  {'Role':<8} {'Thread Name':<20} {'1-Core %':>10} {'System %':>10} {'Total CPU':>11}  {'State'}{colors.RESET}"
+        f"  {colors.DIM}{'TID':>8}  {'Role':<8} {'Thread Name':<{max_name_len}} {'1-Core %':>10} {'System %':>10} {'Total CPU':>11}  {'State'}{colors.RESET}"
     )
-    lines.append(f"  {colors.DIM}{'─' * 74}{colors.RESET}")
+    lines.append(f"  {colors.DIM}{'─' * (width - 4)}{colors.RESET}")
 
     displayed_threads = sample.threads if show_all_threads else [t for t in sample.threads if t.single_core_pct > 0.01 or show_all_threads]
     if not displayed_threads and sample.threads:
-        displayed_threads = sample.threads[:top_threads]
+        displayed_threads = sample.threads[:effective_top_threads]
     else:
-        displayed_threads = displayed_threads[:top_threads]
+        displayed_threads = displayed_threads[:effective_top_threads]
 
     if group_threads or (sample.videowall and sample.videowall.is_videowall):
-        # Sort by category then CPU %
         cat_order = {"Tile": 0, "UI": 1, "Worker": 2, "Service": 3, "Other": 4}
         displayed_threads.sort(key=lambda t: (cat_order.get(t.category, 5), -t.single_core_pct))
 
@@ -734,10 +901,10 @@ def render_dashboard(
         for th in displayed_threads:
             st_color = colors.GREEN if th.state == "R" else colors.DIM
             cat_tag = f"[{th.category}]"
-            th_name = th.name if len(th.name) <= 20 else th.name[:17] + "..."
+            th_name = th.name if len(th.name) <= max_name_len else th.name[:max(3, max_name_len - 3)] + "..."
             lines.append(
                 f"  {th.tid:8d}  {colors.CYAN}{cat_tag:<8}{colors.RESET} "
-                f"{colors.BOLD}{th_name:<20}{colors.RESET} "
+                f"{colors.BOLD}{th_name:<{max_name_len}}{colors.RESET} "
                 f"{colors.color_pct(th.single_core_pct):>10} "
                 f"{th.system_pct:9.2f}% "
                 f"{format_duration(th.total_cpu_seconds):>11}  "
@@ -757,46 +924,59 @@ def render_multi_process_dashboard(
     samples: List[ProcessSample],
     colors: Colors,
     num_cores: int,
-    elapsed: float
+    elapsed: float,
+    term_width: int = 78,
+    term_lines: int = 24
 ) -> str:
     lines: List[str] = []
-    width = 78
+    width = max(40, min(term_width - 1, 100))
     divider = "─" * width
 
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines.append(f"{colors.BOLD}{colors.CYAN}┌{'─' * (width - 2)}┐{colors.RESET}")
     title = f" UNREAL-NG ECOSYSTEM WORKLOAD OVERVIEW (MULTI-PROCESS) "
+    if len(title) > width - 4:
+        title = title[:max(5, width - 7)] + "... "
     lines.append(f"{colors.BOLD}{colors.CYAN}│{colors.WHITE}{title.center(width - 2)}{colors.CYAN}│{colors.RESET}")
     lines.append(f"{colors.BOLD}{colors.CYAN}└{'─' * (width - 2)}┘{colors.RESET}")
 
-    lines.append(
-        f" Host: {colors.BOLD}{platform.node()}{colors.RESET} | "
-        f"Logical Cores: {colors.BOLD}{num_cores}{colors.RESET} | "
-        f"Active Unreal Processes: {colors.BOLD}{len(samples)}{colors.RESET} | "
-        f"Time: {now_str}"
-    )
+    if width >= 75:
+        lines.append(
+            f" Host: {colors.BOLD}{platform.node()}{colors.RESET} | "
+            f"Logical Cores: {colors.BOLD}{num_cores}{colors.RESET} | "
+            f"Active Unreal Processes: {colors.BOLD}{len(samples)}{colors.RESET} | "
+            f"Time: {now_str}"
+        )
+    else:
+        lines.append(
+            f" Host: {colors.BOLD}{platform.node()}{colors.RESET} | "
+            f"Cores: {colors.BOLD}{num_cores}{colors.RESET} | "
+            f"Procs: {colors.BOLD}{len(samples)}{colors.RESET}"
+        )
     lines.append(divider)
 
+    max_proc_len = max(8, min(18, width - 62))
+
     lines.append(
-        f"  {colors.DIM}{'PID':>8}  {'Process':<18} {'Role/Type':<12} {'Tiles':>6} {'1-Core %':>10} {'System %':>10} {'RSS (MB)':>10}{colors.RESET}"
+        f"  {colors.DIM}{'PID':>8}  {'Process':<{max_proc_len}} {'Role/Type':<12} {'Tiles':>6} {'1-Core %':>10} {'System %':>10} {'RSS (MB)':>10}{colors.RESET}"
     )
-    lines.append(f"  {colors.DIM}{'─' * 74}{colors.RESET}")
+    lines.append(f"  {colors.DIM}{'─' * (width - 4)}{colors.RESET}")
 
-    tot_single = 0.0
-    tot_system = 0.0
-    tot_tiles = 0
-    tot_rss = 0.0
+    fixed_bottom_lines = 7
+    available_proc_rows = max(1, term_lines - len(lines) - fixed_bottom_lines)
+    displayed_samples = samples[:available_proc_rows]
 
-    for s in samples:
-        tot_single += s.single_core_pct
-        tot_system += s.system_pct
-        tot_rss += s.rss_mb
+    tot_single = sum(s.single_core_pct for s in samples)
+    tot_system = sum(s.system_pct for s in samples)
+    tot_rss = sum(s.rss_mb for s in samples)
+    tot_tiles = sum(s.videowall.tile_count if s.videowall else 1 for s in samples)
+
+    for s in displayed_samples:
         tiles = s.videowall.tile_count if s.videowall else 1
-        tot_tiles += tiles
-
         role = "VideoWall" if ("videowal" in s.name.lower() or (s.videowall and s.videowall.is_videowall)) else "Emulator"
+        p_name = s.name if len(s.name) <= max_proc_len else s.name[:max(3, max_proc_len - 3)] + "..."
         lines.append(
-            f"  {s.pid:8d}  {colors.BOLD}{s.name:<18}{colors.RESET} "
+            f"  {s.pid:8d}  {colors.BOLD}{p_name:<{max_proc_len}}{colors.RESET} "
             f"{role:<12} "
             f"{tiles:6d} "
             f"{colors.color_pct(s.single_core_pct):>10} "
@@ -804,9 +984,13 @@ def render_multi_process_dashboard(
             f"{s.rss_mb:9.1f}M"
         )
 
-    lines.append(f"  {colors.DIM}{'─' * 74}{colors.RESET}")
+    if len(samples) > len(displayed_samples):
+        hidden_count = len(samples) - len(displayed_samples)
+        lines.append(f"  {colors.DIM}... ({hidden_count} more process(es) omitted to fit window){colors.RESET}")
+
+    lines.append(f"  {colors.DIM}{'─' * (width - 4)}{colors.RESET}")
     lines.append(
-        f"  {colors.BOLD}{'TOTAL CONCURRENT WORKLOAD:':<40} {tot_tiles:6d} "
+        f"  {colors.BOLD}{'TOTAL CONCURRENT WORKLOAD:':<{max_proc_len + 23}} {tot_tiles:6d} "
         f"{colors.color_pct(tot_single):>10} "
         f"{tot_system:9.2f}% "
         f"{tot_rss:9.1f}M{colors.RESET}"
@@ -823,6 +1007,7 @@ def render_multi_process_dashboard(
     lines.append(f"{colors.DIM}(Press Ctrl+C to stop){colors.RESET}")
 
     return "\n".join(lines)
+
 
 
 # -----------------------------------------------------------------------------
@@ -928,47 +1113,63 @@ def run_multi_mode(args: argparse.Namespace, num_cores: int, colors: Colors) -> 
     """Monitors all active Unreal-NG processes in parallel."""
     is_terminal = sys.stdout.isatty() and not args.json and not args.once
     sample_num = 0
+    last_term_size: Optional[Tuple[int, int]] = None
 
-    try:
-        while True:
-            procs = find_all_unreal_processes()
-            if not procs:
-                if not args.wait:
-                    print("Error: No running Unreal-NG processes found (unreal-qt, unreal-videowall, etc.)", file=sys.stderr)
-                    return 1
-                print("Waiting for Unreal-NG processes to launch...", file=sys.stderr)
-                time.sleep(1.0)
-                continue
+    with TerminalScreenManager(enabled=is_terminal):
+        try:
+            while True:
+                procs = find_all_unreal_processes()
+                if not procs:
+                    if not args.wait:
+                        if not is_terminal:
+                            print("Error: No running Unreal-NG processes found (unreal-qt, unreal-videowall, etc.)", file=sys.stderr)
+                        return 1
+                    time.sleep(1.0)
+                    continue
 
-            # Sample each collector
-            collectors = [create_collector(pid, num_cores) for pid, _ in procs]
-            # Parallel sampling via interval sleep
-            t1 = time.time()
-            samples: List[ProcessSample] = []
-            for col in collectors:
-                s = col.sample(args.interval / max(len(collectors), 1))
-                if s:
-                    samples.append(s)
-            t2 = time.time()
+                # Sample each collector
+                collectors = [create_collector(pid, num_cores) for pid, _ in procs]
+                # Parallel sampling via interval sleep
+                t1 = time.time()
+                samples: List[ProcessSample] = []
+                for col in collectors:
+                    s = col.sample(args.interval / max(len(collectors), 1))
+                    if s:
+                        samples.append(s)
+                t2 = time.time()
 
-            sample_num += 1
+                sample_num += 1
 
-            if args.json:
-                data = [asdict(s) for s in samples]
-                print(json.dumps(data, indent=2 if args.once else None))
-            else:
-                out = render_multi_process_dashboard(samples, colors, num_cores, t2 - t1)
-                if is_terminal:
-                    sys.stdout.write("\033[2J\033[H")
-                print(out)
-                sys.stdout.flush()
+                if args.json:
+                    data = [asdict(s) for s in samples]
+                    print(json.dumps(data, indent=2 if args.once else None))
+                else:
+                    curr_term_size = shutil.get_terminal_size((80, 24))
+                    global _terminal_resized
+                    size_changed = (curr_term_size != last_term_size) or _terminal_resized
+                    if size_changed:
+                        _terminal_resized = False
+                        last_term_size = curr_term_size
 
-            if args.count > 0 and sample_num >= args.count:
-                break
+                    term_columns, term_lines = curr_term_size
+                    out = render_multi_process_dashboard(
+                        samples, colors, num_cores, t2 - t1,
+                        term_width=term_columns, term_lines=term_lines
+                    )
+                    if is_terminal:
+                        draw_terminal_screen(out, term_columns, term_lines, force_clear=size_changed)
+                    else:
+                        print(out)
+                        sys.stdout.flush()
 
-    except KeyboardInterrupt:
-        if not args.json:
-            print("\nMonitoring stopped by user.")
+                if args.count > 0 and sample_num >= args.count:
+                    break
+
+        except KeyboardInterrupt:
+            pass
+
+    if is_terminal and not args.json:
+        print("Monitoring stopped by user.")
 
     return 0
 
@@ -1040,63 +1241,74 @@ def main() -> int:
     sample_num = 0
 
     is_terminal = sys.stdout.isatty() and not args.json and not args.once
+    last_term_size: Optional[Tuple[int, int]] = None
 
-    try:
-        while True:
-            if not collector.is_alive():
-                if not args.json:
-                    print(f"\n{colors.YELLOW}Process {target_pid} ({collector.process_name()}) terminated.{colors.RESET}")
-                break
+    with TerminalScreenManager(enabled=is_terminal):
+        try:
+            while True:
+                if not collector.is_alive():
+                    break
 
-            sample = collector.sample(args.interval)
-            if sample is None:
-                if not args.json:
-                    print(f"\n{colors.YELLOW}Process {target_pid} terminated during sampling.{colors.RESET}")
-                break
+                sample = collector.sample(args.interval)
+                if sample is None:
+                    break
 
-            sample_num += 1
-            history.append(sample.single_core_pct)
+                sample_num += 1
+                history.append(sample.single_core_pct)
 
-            if args.csv:
-                append_csv_row(args.csv, sample)
+                if args.csv:
+                    append_csv_row(args.csv, sample)
 
-            if args.json:
-                data = asdict(sample)
-                data["threads"] = [asdict(t) for t in sample.threads]
-                if sample.videowall:
-                    data["videowall"] = asdict(sample.videowall)
-                print(json.dumps(data, indent=2 if args.once else None))
-            else:
-                dashboard = render_dashboard(
-                    sample=sample,
-                    top_threads=args.top,
-                    show_all_threads=args.show_all_threads,
-                    group_threads=args.group_threads,
-                    colors=colors,
-                    history=history,
-                    start_time=start_time
-                )
+                if args.json:
+                    data = asdict(sample)
+                    data["threads"] = [asdict(t) for t in sample.threads]
+                    if sample.videowall:
+                        data["videowall"] = asdict(sample.videowall)
+                    print(json.dumps(data, indent=2 if args.once else None))
+                else:
+                    curr_term_size = shutil.get_terminal_size((80, 24))
+                    global _terminal_resized
+                    size_changed = (curr_term_size != last_term_size) or _terminal_resized
+                    if size_changed:
+                        _terminal_resized = False
+                        last_term_size = curr_term_size
 
-                if is_terminal:
-                    sys.stdout.write("\033[2J\033[H")
-                print(dashboard)
-                sys.stdout.flush()
+                    term_columns, term_lines = curr_term_size
+                    dashboard = render_dashboard(
+                        sample=sample,
+                        top_threads=args.top,
+                        show_all_threads=args.show_all_threads,
+                        group_threads=args.group_threads,
+                        colors=colors,
+                        history=history,
+                        start_time=start_time,
+                        term_width=term_columns,
+                        term_lines=term_lines
+                    )
 
-            if args.count > 0 and sample_num >= args.count:
-                break
+                    if is_terminal:
+                        draw_terminal_screen(dashboard, term_columns, term_lines, force_clear=size_changed)
+                    else:
+                        print(dashboard)
+                        sys.stdout.flush()
 
-    except KeyboardInterrupt:
-        if not args.json:
-            print("\nMonitoring stopped by user.")
+                if args.count > 0 and sample_num >= args.count:
+                    break
+
+        except KeyboardInterrupt:
+            pass
 
     # Print summary if ran multiple samples interactively
-    if not args.json and len(history) > 1:
-        avg_pct = sum(history) / len(history)
-        min_pct = min(history)
-        max_pct = max(history)
-        print(f"\n{colors.BOLD}Session Summary ({len(history)} samples over {time.time() - start_time:.1f}s):{colors.RESET}")
-        print(f"  • Single-Core CPU %: Avg={avg_pct:.2f}%, Min={min_pct:.2f}%, Max={max_pct:.2f}%")
-        print(f"  • System All-Cores %: Avg={avg_pct/num_cores:.2f}%, Min={min_pct/num_cores:.2f}%, Max={max_pct/num_cores:.2f}%")
+    if not args.json:
+        if not collector.is_alive():
+            print(f"\n{colors.YELLOW}Process {target_pid} ({collector.process_name()}) terminated.{colors.RESET}")
+        if len(history) > 1:
+            avg_pct = sum(history) / len(history)
+            min_pct = min(history)
+            max_pct = max(history)
+            print(f"\n{colors.BOLD}Session Summary ({len(history)} samples over {time.time() - start_time:.1f}s):{colors.RESET}")
+            print(f"  • Single-Core CPU %: Avg={avg_pct:.2f}%, Min={min_pct:.2f}%, Max={max_pct:.2f}%")
+            print(f"  • System All-Cores %: Avg={avg_pct/num_cores:.2f}%, Min={min_pct/num_cores:.2f}%, Max={max_pct/num_cores:.2f}%")
 
     return 0
 

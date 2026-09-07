@@ -3,6 +3,7 @@
 #include <chrono>
 #include <vector>
 
+#include "common/threadhelper.h"
 #include "encoderconfig.h"
 #include "emulator/sound/native_audio_tap.h"
 
@@ -102,7 +103,10 @@ bool DSDEncoder::Start(const std::string& filename, const EncoderConfig& config)
     {
         _workerStop = false;
         _nativeTap->activate();
-        _nativeWorker = std::thread(&DSDEncoder::nativeWorkerMain, this);
+        _nativeWorker = std::thread([this]() {
+            ThreadHelper::setThreadName("dsd-encoder");
+            nativeWorkerMain();
+        });
     }
 
     return true;
