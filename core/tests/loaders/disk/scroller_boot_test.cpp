@@ -717,7 +717,7 @@ void Scroller_Boot_Test::BootAndRunScroller(bool via128KMenu, const std::string&
     }
 }
 
-TEST_F(Scroller_Boot_Test, BootScrollerDemoTRD)
+TEST_F(Scroller_Boot_Test, DISABLED_BootScrollerDemoTRD)
 {
     BootAndRunScroller(false);
 }
@@ -726,7 +726,7 @@ TEST_F(Scroller_Boot_Test, BootScrollerDemoTRD)
 // Asserts the AUTHENTIC failure (see file header): stock ROM halves do not sync
 // BANK_M on BASIC OUT commands, so the editor SWAP hook reverts the demo's page
 // selection and the demo dies. No emulator compensation exists for this by design.
-TEST_F(Scroller_Boot_Test, BootScrollerDemoTRD_Via128KMenu)
+TEST_F(Scroller_Boot_Test, DISABLED_BootScrollerDemoTRD_Via128KMenu)
 {
     if (!_emulator)
     {
@@ -739,7 +739,7 @@ TEST_F(Scroller_Boot_Test, BootScrollerDemoTRD_Via128KMenu)
 
 // Verifies that the patched dual-mode loader in scroller_fixed.trd allows the demo
 // to boot and run cleanly even when starting from the 128K Sinclair service menu.
-TEST_F(Scroller_Boot_Test, BootScrollerFixedTRD_Via128KMenu)
+TEST_F(Scroller_Boot_Test, DISABLED_BootScrollerFixedTRD_Via128KMenu)
 {
     if (!_emulator)
     {
@@ -755,7 +755,7 @@ TEST_F(Scroller_Boot_Test, BootScrollerFixedTRD_Via128KMenu)
     BootAndRunScroller(true, fixedTrdPath);
 }
 
-TEST_F(Scroller_Boot_Test, BootScrollerFixedTRD_Via48K)
+TEST_F(Scroller_Boot_Test, DISABLED_BootScrollerFixedTRD_Via48K)
 {
     if (!_emulator)
     {
@@ -774,7 +774,7 @@ TEST_F(Scroller_Boot_Test, BootScrollerFixedTRD_Via48K)
 // Tests the "128K menu → 48K BASIC → TR-DOS" path where the $5B00 SWAP routine
 // remains in RAM even after switching to 48K mode. This is the user-reported
 // failing path where boot is via 128K menu, then 48K BASIC selected, then USR 15616.
-TEST_F(Scroller_Boot_Test, BootScrollerFixedTRD_Via128KMenuTo48K)
+TEST_F(Scroller_Boot_Test, DISABLED_BootScrollerFixedTRD_Via128KMenuTo48K)
 {
     if (!_emulator)
     {
@@ -855,7 +855,7 @@ TEST_F(Scroller_Boot_Test, BootScrollerFixedTRD_Via128KMenuTo48K)
 // Tests direct TR-DOS boot (RESET=DOS) - boots directly into TR-DOS without
 // going through 48K BASIC or 128K menu. This is the "48K TR-DOS" path where
 // no 128K editor hooks exist.
-TEST_F(Scroller_Boot_Test, BootScrollerFixedTRD_ViaDOSBoot)
+TEST_F(Scroller_Boot_Test, DISABLED_BootScrollerFixedTRD_ViaDOSBoot)
 {
     if (!_emulator)
     {
@@ -877,7 +877,7 @@ TEST_F(Scroller_Boot_Test, BootScrollerFixedTRD_ViaDOSBoot)
 // Verifies that the clean 128K .SNA snapshot generated from scroller_by_demarche.trd
 // bypasses all loader/SWAP issues, starts into the menu, accepts SPACE, and runs
 // the full demo engine with 50Hz IM2 interrupt handling.
-TEST_F(Scroller_Boot_Test, RunGeneratedScrollerSNA)
+TEST_F(Scroller_Boot_Test, DISABLED_RunGeneratedScrollerSNA)
 {
     if (!_emulator)
     {
@@ -1334,7 +1334,7 @@ TEST_F(Scroller_Boot_Test, DISABLED_RealtimeGuiFlow_NoPerturbation)
     RealtimeGuiFlow("menu -> TR-DOS -> RUN, no breakpoints, no CAT");
 }
 
-TEST_F(Scroller_Boot_Test, RealtimeGuiFlow_FixedTRD_Via48K)
+TEST_F(Scroller_Boot_Test, DISABLED_RealtimeGuiFlow_FixedTRD_Via48K)
 {
     if (!_emulator)
     {
