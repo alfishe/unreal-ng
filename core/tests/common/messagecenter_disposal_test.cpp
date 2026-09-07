@@ -31,6 +31,9 @@ TEST_F(MessageCenterDisposal_Test, DisposesPendingMessagePayloads)
     // Get MessageCenter without starting worker thread
     MessageCenter& mc = MessageCenter::DefaultMessageCenter(false);
 
+    // Register the topic so messages are actually queued
+    mc.RegisterTopic("TEST_TOPIC");
+
     // Post several messages with payloads (async=true queues them)
     for (int i = 0; i < 10; i++)
     {
@@ -72,18 +75,21 @@ TEST_F(MessageCenterDisposal_Test, DisposesMessagesAndPayloadsWithMixedOwnership
 {
     MessageCenter& mc = MessageCenter::DefaultMessageCenter(false);
 
+    // Register a topic first so messages are actually queued
+    mc.RegisterTopic("TOPIC");
+
     // Post messages with cleanupPayload=true (default)
     mc.Post("TOPIC", new SimpleNumberPayload(1), true);
     mc.Post("TOPIC", new SimpleNumberPayload(2), true);
 
     // Post message with cleanupPayload=false (caller retains ownership)
     SimpleNumberPayload* retained = new SimpleNumberPayload(3);
-    mc.Post("TOPIC", retained, true);  // Note: This creates a copy internally
+    mc.Post("TOPIC", retained, false);  // Caller retains ownership
 
-    // Dispose
+    // Dispose - should only clean up payloads with cleanupPayload=true
     MessageCenter::DisposeDefaultMessageCenter();
 
-    // Clean up our retained payload
+    // Clean up our retained payload (was NOT deleted by dispose)
     delete retained;
 }
 
@@ -91,6 +97,9 @@ TEST_F(MessageCenterDisposal_Test, DisposesWhileWorkerThreadRunning)
 {
     // Start MessageCenter with worker thread
     MessageCenter& mc = MessageCenter::DefaultMessageCenter(true);
+
+    // Register topic so messages are queued
+    mc.RegisterTopic("ASYNC_TOPIC");
 
     // Post messages
     for (int i = 0; i < 5; i++)
