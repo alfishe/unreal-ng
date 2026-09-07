@@ -13,6 +13,7 @@
 #include <string>
 
 #include "base/featuremanager.h"
+#include "emulator/io/porttracker.h"
 #include "common/autoresetevent.h"
 #include "common/uuid.h"
 #include "corestate.h"
@@ -95,6 +96,7 @@ protected:
     DebugManager* _debugManager = nullptr;
     BreakpointManager* _breakpointManager = nullptr;
     FeatureManager* _featureManager = nullptr;  // Feature toggle manager
+    PortTracker* _portTracker = nullptr;        // Port I/O tracking for analysis
 
     // Control flow
     volatile bool _stopRequested = false;

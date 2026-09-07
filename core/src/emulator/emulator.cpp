@@ -55,6 +55,10 @@ Emulator::Emulator(const std::string& symbolicId, LoggerLevel level)
         _featureManager = new FeatureManager(_context);
         _context->pFeatureManager = _featureManager;
 
+        // Create PortTracker and assign to context
+        _portTracker = new PortTracker(_context);
+        _context->pPortTracker = _portTracker;
+
         MLOGDEBUG("Emulator::Emulator(symbolicId='%s', level=%d) - Instance created with UUID: %s", symbolicId.c_str(),
                   level, _emulatorId.c_str());
         MLOGDEBUG("Emulator::Init - context created");
@@ -70,8 +74,16 @@ Emulator::~Emulator()
 {
     MLOGDEBUG("Emulator::~Emulator()");
 
-    // Clean up FeatureManager BEFORE Release(), because Release() deletes _context.
-    // Accessing _context->pFeatureManager after Release() is a use-after-free.
+    // Clean up FeatureManager and PortTracker BEFORE Release(), because Release() deletes _context.
+    // Accessing _context->pFeatureManager or pPortTracker after Release() is a use-after-free.
+    if (_portTracker)
+    {
+        if (_context)
+            _context->pPortTracker = nullptr;
+        delete _portTracker;
+        _portTracker = nullptr;
+    }
+
     if (_featureManager)
     {
         if (_context)
