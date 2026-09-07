@@ -6,6 +6,7 @@
 #include <QDebug>
 #include <QDir>
 #include <common/filehelper.h>
+#include <common/threadhelper.h>
 
 int fontID = -1;
 
@@ -71,6 +72,8 @@ void unregisterFonts()
 
 int main(int argc, char *argv[])
 {
+    ThreadHelper::setThreadName("qt-main");
+
     auto crashHandler = std::unique_ptr<CrashHandler>(CrashHandler::create());
     crashHandler->install();
 

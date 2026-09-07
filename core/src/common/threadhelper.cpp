@@ -18,19 +18,17 @@ void ThreadHelper::setThreadName(const char* name)
     #include <pthread.h>
 	pthread_setname_np(pthread_self(), name);
 #endif
-#if defined _WIN32 && defined MSVC
+#if defined _WIN32 && defined _MSC_VER
     static auto setThreadDescription = reinterpret_cast<HRESULT(WINAPI*)(HANDLE, PCWSTR)>(
         GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription"));
     if (setThreadDescription != nullptr)
     {
-	    wchar_t wname[128];
-	    size_t retval;
-        mbstowcs_s(&retval, wname, threadName, len);
+        wchar_t wname[128];
+        size_t retval;
+        mbstowcs_s(&retval, wname, sizeof(wname) / sizeof(wname[0]), name, len);
         setThreadDescription(GetCurrentThread(), wname);
     }
-#endif
-
-#if defined _WIN32 && defined __GNUC__
+#elif defined _WIN32 && defined __GNUC__
     static auto setThreadDescription = reinterpret_cast<HRESULT(WINAPI*)(HANDLE, PCWSTR)>(
             reinterpret_cast<void*>(GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription")));
     if (setThreadDescription != nullptr)

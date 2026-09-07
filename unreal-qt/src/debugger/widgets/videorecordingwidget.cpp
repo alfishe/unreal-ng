@@ -22,6 +22,7 @@
 #include <thread>
 #include <vector>
 
+#include "common/threadhelper.h"
 #include "encoders/gif_encoder.h"
 #include "encoders/ffmpeg_pipe_encoder.h"
 #include "encoders/dsd/dsd_encoder.h"
@@ -702,6 +703,7 @@ void VideoRecordingWidget::startAsyncDetection()
     // Run all detection in background thread - dialog is already open
     QPointer<VideoRecordingWidget> self(this);
     std::thread([self]() {
+        ThreadHelper::setThreadName("video-detect");
         // Detect native encoder (NVENC, VideoToolbox)
         bool nativeAvailable = PlatformEncoderFactory::isNativeAvailable();
         std::string nativeName;
@@ -1472,6 +1474,7 @@ void VideoRecordingWidget::onStopRecording()
     QPointer<VideoRecordingWidget> self(this);
 
     std::thread([self, rm, emulatorHolder]() {
+        ThreadHelper::setThreadName("rec-stop");
         // emulatorHolder keeps the Emulator alive during StopRecording
         if (emulatorHolder)
             rm->StopRecording();
