@@ -1,6 +1,7 @@
 #include "testclient.h"
 
 #include "shell/shell.h"
+#include "common/threadhelper.h"
 #include "emulator/emulator.h"
 #include "3rdparty/message-center/messagecenter.h"
 #include <iostream>
@@ -250,6 +251,7 @@ void runAsShell()
 
     std::thread t([]()
     {
+      ThreadHelper::setThreadName("testclient");
       cout << "Client thread started" << endl;
 
       client.Start();
