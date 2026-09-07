@@ -36,10 +36,39 @@ struct NumericValue
 
 class Memory;
 
+/// One decoded listing line (r9 structured extraction for the Tape Manager
+/// popup listing). `text` follows the same token and spacing rules as
+/// extractBasic; `leadingSpace` records whether the number-to-text separator
+/// was emitted for this line.
+struct BasicLine
+{
+    std::uint16_t lineNumber = 0;    // as stored in the header (big-endian in the body)
+    std::size_t startOffset = 0;     // byte offset of the line header within the source buffer
+    std::size_t endOffset = 0;       // one past the last byte consumed for this line
+    bool leadingSpace = true;   // raw first byte did not absorb the separator
+    bool variablesArea = false; // number > MaxLineNumber → saved-program vars tail
+    std::string text;           // detokenized statement text (no number, no newline)
+};
+
+/// Result of the structured walk. A SAVE'd BASIC program carries its
+/// variables area after the listing; var-name bytes (single-letter vars are
+/// 0xA1+, multi-letter names 0x41+) decode as huge "line numbers" (e.g.
+/// 0xEE00 = 60928), which is how the tail is detected and delimited.
+struct BasicListing
+{
+    std::vector<BasicLine> lines;  // includes the trailing variables-area line when present
+    size_t programEndOffset = 0;   // offset where the program proper ends (buffer end when no vars)
+    size_t variablesBytes = 0;     // bytes from programEndOffset to the buffer end
+};
+
 struct BasicExtractor
 {
     /// region <Constants>
 public:
+    /// Highest line number the ZX editor accepts — anything above is not a
+    /// line number but the variables-area tail of a SAVE'd program
+    static constexpr std::uint16_t MaxLineNumber = 9999;
+
     /// ZX Spectrum 48/128 BASIC Tokens
     /// @see http://fileformats.archiveteam.org/wiki/Sinclair_BASIC_tokenized_file
     static constexpr const char* BasicTokens[] = {
@@ -141,6 +170,12 @@ public:
 
 public:
     std::string extractBasic(uint8_t* data, size_t len);
+
+    /// Structured variant of extractBasic: one BasicLine per [number|len|text]
+    /// header, with the variables-area tail detected and delimited. The
+    /// extractBasic output is exactly the join of `lines`
+    /// (number + separator + text + '\n').
+    BasicListing extractBasicLines(uint8_t* data, size_t len);
 
     /// Extracts BASIC program from the provided Memory instance using system variables PROG and VARS
     /// @param memory Pointer to the emulator memory instance

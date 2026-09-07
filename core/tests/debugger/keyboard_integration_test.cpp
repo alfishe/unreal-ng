@@ -50,23 +50,41 @@ std::string KeyboardInjection_Integration_test::BootEmulator(const std::string& 
     // as EmulatorTestHelper::CreateStandardEmulator.
     emulator->GetContext()->config.reset_rom = RM_SOS;
     emulator->Reset();
-    
+
+    // Enable turbo mode for fast test execution - emulator runs as fast as possible
+    emulator->EnableTurboMode(false);
+
     std::string emulatorId = emulator->GetUUID();
-    
+
     // Start async
     emulator->StartAsync();
-    
-    // Wait for startup (emulator needs a moment to start its thread)
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    
+
+    // Wait for the emulator thread to reach RUN state. A fixed 50ms sleep
+    // caused false "not started" bail-outs on CPU-starved parallel runners.
+    auto runDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (emulator->GetState() != StateRun && std::chrono::steady_clock::now() < runDeadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
     if (emulator->GetState() != StateRun)
         return "";
-    
-    // Wait for boot - the emulator runs at ~50Hz, so bootFrames at 20ms each
-    // But the emulator runs in realtime, so we just wait appropriate time
-    int msToWait = bootFrames * 20; // 20ms per frame at 50Hz
-    std::this_thread::sleep_for(std::chrono::milliseconds(msToWait));
-    
+
+    // In turbo mode, the emulator runs many frames per wall-clock second.
+    // A typical machine can do 500-2000 frames/sec in turbo, so we only need
+    // a fraction of the original wait time. Use frame count polling instead.
+    auto ctx = emulator->GetContext();
+    uint64_t targetFrame = ctx->emulatorState.frame_counter + bootFrames;
+    auto frameDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    while (ctx->emulatorState.frame_counter < targetFrame)
+    {
+        // Bounded wait: if the emulator thread stalled or died, fall through
+        // and let the screen-content assertions report the failure
+        if (std::chrono::steady_clock::now() >= frameDeadline)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
     return emulatorId;
 }
 
@@ -75,24 +93,17 @@ void KeyboardInjection_Integration_test::RunFrames(const std::string& emulatorId
     auto emulator = _manager->GetEmulator(emulatorId);
     if (!emulator)
         return;
-    
-    auto context = emulator->GetContext();
-    if (!context || !context->pDebugManager)
-        return;
-    
-    auto keyMgr = context->pDebugManager->GetKeyboardManager();
-    
-    // The emulator runs in realtime at ~50Hz (20ms per frame)
-    // We need to both wait for time to pass AND call OnFrame for keyboard processing
-    int msPerFrame = 20;
-    
-    for (int i = 0; i < frameCount; i++)
+
+    // In turbo mode, poll frame count instead of waiting wall-clock time
+    auto ctx = emulator->GetContext();
+    uint64_t targetFrame = ctx->emulatorState.frame_counter + frameCount;
+    auto frameDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    while (ctx->emulatorState.frame_counter < targetFrame)
     {
-        std::this_thread::sleep_for(std::chrono::milliseconds(msPerFrame));
-        if (keyMgr)
-        {
-            keyMgr->OnFrame();
-        }
+        // Bounded wait (see StartEmulatorAndBoot): never hang on a dead emulator thread
+        if (std::chrono::steady_clock::now() >= frameDeadline)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
 
@@ -114,12 +125,13 @@ void KeyboardInjection_Integration_test::TypeAndWait(const std::string& emulator
     // Type the text
     context->pDebugManager->GetKeyboardManager()->TypeText(text, framesPerChar);
     
-    // Wait for sequence to complete
-    int maxFrames = text.length() * framesPerChar * 10; // generous estimate
-    for (int i = 0; i < maxFrames && context->pDebugManager->GetKeyboardManager()->IsSequenceRunning(); i++)
+    // Wait for sequence to complete. The running emulator's mainloop already
+    // pumps keyMgr->OnFrame() every frame — calling it from the test thread too
+    // double-steps the sequence state machine and randomly truncates key holds.
+    int maxMs = static_cast<int>(text.length()) * framesPerChar * 10 * 20; // generous: 10x frames at 20ms each
+    for (int waitedMs = 0; waitedMs < maxMs && context->pDebugManager->GetKeyboardManager()->IsSequenceRunning(); waitedMs += 20)
     {
-        context->pDebugManager->GetKeyboardManager()->OnFrame();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     
     // Extra frames for screen update
@@ -132,25 +144,36 @@ void KeyboardInjection_Integration_test::CleanupEmulator(const std::string& emul
     if (emulator)
     {
         emulator->Stop();
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     _manager->RemoveEmulator(emulatorId);
 }
 
-bool KeyboardInjection_Integration_test::WaitForOCRText(const std::string& emulatorId, 
-                                                         const std::string& searchText, 
-                                                         int maxWaitMs)
+bool KeyboardInjection_Integration_test::WaitForOCRText(const std::string& emulatorId,
+                                                         const std::string& searchText,
+                                                         int maxFrames)
 {
-    int waited = 0;
-    while (waited < maxWaitMs)
+    auto emulator = _manager->GetEmulator(emulatorId);
+    if (!emulator)
+        return false;
+
+    auto ctx = emulator->GetContext();
+    uint64_t startFrame = ctx->emulatorState.frame_counter;
+
+    // Poll every 10 frames (in turbo mode this is ~5-20ms wall time)
+    while (ctx->emulatorState.frame_counter - startFrame < static_cast<uint64_t>(maxFrames))
     {
         std::string screenText = GetScreenText(emulatorId);
         if (screenText.find(searchText) != std::string::npos)
         {
             return true;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        waited += 100;
+        // Wait 10 frames before next OCR check
+        uint64_t targetFrame = ctx->emulatorState.frame_counter + 10;
+        while (ctx->emulatorState.frame_counter < targetFrame)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
     }
     return false;
 }
@@ -169,8 +192,8 @@ TEST_F(KeyboardInjection_Integration_test, Boot_VerifyBASICScreen)
     ASSERT_FALSE(emulatorId.empty()) << "Failed to boot emulator";
     
     // Poll OCR every 100ms for the 48K BASIC copyright line (max 3 seconds)
-    bool hasBasic = WaitForOCRText(emulatorId, "1982", 3000) ||
-                    WaitForOCRText(emulatorId, "Sinclair", 500);
+    bool hasBasic = WaitForOCRText(emulatorId, "1982", 200) ||
+                    WaitForOCRText(emulatorId, "Sinclair", 50);
     
     std::string screenText = GetScreenText(emulatorId);
     EXPECT_TRUE(hasBasic) << "48K BASIC screen not found:\n" << screenText;
@@ -186,7 +209,7 @@ TEST_F(KeyboardInjection_Integration_test, DISABLED_TypeNumbers_In48KBASIC)
     ASSERT_FALSE(emulatorId.empty()) << "Failed to boot emulator";
     
     // Wait for 48K BASIC to boot (RESET=BASIC goes straight there, no 128K menu)
-    bool basicReady = WaitForOCRText(emulatorId, "1982", 3000);
+    bool basicReady = WaitForOCRText(emulatorId, "1982", 200);
     ASSERT_TRUE(basicReady) << "48K BASIC not ready. Screen:\n" << GetScreenText(emulatorId);
     
     auto emulator = _manager->GetEmulator(emulatorId);
@@ -204,11 +227,11 @@ TEST_F(KeyboardInjection_Integration_test, DISABLED_TypeNumbers_In48KBASIC)
     // double-steps the sequence state machine and randomly truncates key holds.
     for (int i = 0; i < 50 && keyMgr->IsSequenceRunning(); i++)
     {
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
 
     // Poll for typed numbers to appear on screen
-    bool found = WaitForOCRText(emulatorId, "12345", 2000);
+    bool found = WaitForOCRText(emulatorId, "12345", 150);
     
     std::string screenText = GetScreenText(emulatorId);
     EXPECT_TRUE(found) << "Typed numbers '12345' not found on screen:\n" << screenText;
@@ -231,7 +254,7 @@ TEST_F(KeyboardInjection_Integration_test, DISABLED_Type48K_PrintHello)
     ASSERT_FALSE(emulatorId.empty()) << "Failed to boot emulator";
     
     // Wait for 48K BASIC to boot (RESET=BASIC goes straight there, no 128K menu)
-    bool basicReady = WaitForOCRText(emulatorId, "1982", 3000);
+    bool basicReady = WaitForOCRText(emulatorId, "1982", 200);
     ASSERT_TRUE(basicReady) << "48K BASIC not ready. Screen:\n" << GetScreenText(emulatorId);
     
     auto emulator = _manager->GetEmulator(emulatorId);
@@ -248,7 +271,7 @@ TEST_F(KeyboardInjection_Integration_test, DISABLED_Type48K_PrintHello)
     auto waitSequence = [&keyMgr]() {
         for (int i = 0; i < 50 && keyMgr->IsSequenceRunning(); i++)
         {
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
     };
     
@@ -273,8 +296,8 @@ TEST_F(KeyboardInjection_Integration_test, DISABLED_Type48K_PrintHello)
     waitSequence();
     
     // Poll for result - look for PRINT or hello on screen
-    bool found = WaitForOCRText(emulatorId, "PRINT", 2000) ||
-                 WaitForOCRText(emulatorId, "hello", 500);
+    bool found = WaitForOCRText(emulatorId, "PRINT", 150) ||
+                 WaitForOCRText(emulatorId, "hello", 50);
     
     std::string screenText = GetScreenText(emulatorId);
     EXPECT_TRUE(found) << "PRINT \"hello\" not found on screen:\n" << screenText;
@@ -284,9 +307,12 @@ TEST_F(KeyboardInjection_Integration_test, DISABLED_Type48K_PrintHello)
 
 TEST_F(KeyboardInjection_Integration_test, TapKey_SingleCharacter)
 {
-    std::string emulatorId = BootEmulator("test_tap", 2000);
+    std::string emulatorId = BootEmulator("test_tap", 10);
     ASSERT_FALSE(emulatorId.empty()) << "Failed to boot emulator";
-    
+
+    // Wait for BASIC to be ready
+    ASSERT_TRUE(WaitForOCRText(emulatorId, "1982", 200)) << "48K BASIC not ready";
+
     auto emulator = _manager->GetEmulator(emulatorId);
     auto context = emulator->GetContext();
     ASSERT_NE(context, nullptr);
@@ -295,30 +321,34 @@ TEST_F(KeyboardInjection_Integration_test, TapKey_SingleCharacter)
     // Tap a single key
     context->pDebugManager->GetKeyboardManager()->TapKey("a", 3);
     
-    // Wait for sequence to complete
+    // Wait for sequence to complete. The running emulator's mainloop already
+    // pumps keyMgr->OnFrame() every frame — calling it from the test thread too
+    // double-steps the sequence state machine and randomly truncates key holds.
     for (int i = 0; i < 50 && context->pDebugManager->GetKeyboardManager()->IsSequenceRunning(); i++)
     {
-        context->pDebugManager->GetKeyboardManager()->OnFrame();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     
-    RunFrames(emulatorId, 100);
-    
-    // Get screen text and verify 'a' or 'A' appears
+    // Verify the tap registered. In 48K BASIC K-mode
+    // (fresh line, K cursor) letter keys produce keywords: 'a' types NEW and
+    // the cursor flips to L. Assert the keyword — the letter itself never
+    // reaches the screen in this mode. Poll for it instead of waiting a
+    // fixed frame count.
+    bool hasNew = WaitForOCRText(emulatorId, "NEW", 150);
+
     std::string screenText = GetScreenText(emulatorId);
-    
-    bool hasA = (screenText.find('a') != std::string::npos) || 
-                (screenText.find('A') != std::string::npos);
-    EXPECT_TRUE(hasA) << "Tapped key 'a' not found on screen:\n" << screenText;
+    EXPECT_TRUE(hasNew) << "Tapped key 'a' did not produce the NEW keyword on screen:\n" << screenText;
     
     CleanupEmulator(emulatorId);
 }
 
 TEST_F(KeyboardInjection_Integration_test, TapCombo_CapsShiftKey)
 {
-    std::string emulatorId = BootEmulator("test_combo", 2000);
+    std::string emulatorId = BootEmulator("test_combo", 10);
     ASSERT_FALSE(emulatorId.empty()) << "Failed to boot emulator";
-    
+
+    ASSERT_TRUE(WaitForOCRText(emulatorId, "1982", 200)) << "48K BASIC not ready";
+
     auto emulator = _manager->GetEmulator(emulatorId);
     auto context = emulator->GetContext();
     ASSERT_NE(context, nullptr);
@@ -327,25 +357,24 @@ TEST_F(KeyboardInjection_Integration_test, TapCombo_CapsShiftKey)
     // Type lowercase 'a', then CAPS+a (should produce uppercase A in keyword mode)
     context->pDebugManager->GetKeyboardManager()->TapKey("a", 3);
     
+    // Let the emulator thread drive the sequence (its mainloop pumps OnFrame)
     for (int i = 0; i < 30 && context->pDebugManager->GetKeyboardManager()->IsSequenceRunning(); i++)
     {
-        context->pDebugManager->GetKeyboardManager()->OnFrame();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     
     // Now try combo (CAPS + A)
     std::vector<std::string> combo = {"cs", "a"};
     context->pDebugManager->GetKeyboardManager()->TapCombo(combo, 3);
     
+    // Let the emulator thread drive the sequence (its mainloop pumps OnFrame)
     for (int i = 0; i < 30 && context->pDebugManager->GetKeyboardManager()->IsSequenceRunning(); i++)
     {
-        context->pDebugManager->GetKeyboardManager()->OnFrame();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     
-    RunFrames(emulatorId, 100);
-    
-    // Just verify no crash and screen is readable
+    // Just verify no crash and screen is readable - the boot poll above already
+    // proved the screen renders, no fixed frame wait needed
     std::string screenText = GetScreenText(emulatorId);
     EXPECT_FALSE(screenText.empty()) << "Screen should have content";
     
@@ -358,8 +387,10 @@ TEST_F(KeyboardInjection_Integration_test, TapCombo_CapsShiftKey)
 
 TEST_F(KeyboardInjection_Integration_test, ExecuteMacro_EMode)
 {
-    std::string emulatorId = BootEmulator("test_emode", 2000);
+    std::string emulatorId = BootEmulator("test_emode", 10);
     ASSERT_FALSE(emulatorId.empty()) << "Failed to boot emulator";
+
+    ASSERT_TRUE(WaitForOCRText(emulatorId, "1982", 200)) << "48K BASIC not ready";
     
     auto emulator = _manager->GetEmulator(emulatorId);
     auto context = emulator->GetContext();
@@ -370,17 +401,16 @@ TEST_F(KeyboardInjection_Integration_test, ExecuteMacro_EMode)
     bool result = context->pDebugManager->GetKeyboardManager()->ExecuteNamedSequence("e_mode");
     EXPECT_TRUE(result) << "e_mode macro not found";
     
-    // Wait for sequence to complete
+    // Wait for sequence to complete. The running emulator's mainloop already
+    // pumps keyMgr->OnFrame() every frame — calling it from the test thread too
+    // double-steps the sequence state machine and randomly truncates key holds.
     for (int i = 0; i < 100 && context->pDebugManager->GetKeyboardManager()->IsSequenceRunning(); i++)
     {
-        context->pDebugManager->GetKeyboardManager()->OnFrame();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     
-    // E-mode should be entered (cursor changes to E)
-    // Just verify no crash
-    RunFrames(emulatorId, 50);
-    
+    // E-mode should be entered (cursor changes to E). Just verify no crash -
+    // the boot poll above already proved the screen renders
     std::string screenText = GetScreenText(emulatorId);
     EXPECT_FALSE(screenText.empty());
     
@@ -393,9 +423,11 @@ TEST_F(KeyboardInjection_Integration_test, ExecuteMacro_EMode)
 
 TEST_F(KeyboardInjection_Integration_test, SequenceCompletes_NoHangingState)
 {
-    std::string emulatorId = BootEmulator("test_seq", 1000);
+    std::string emulatorId = BootEmulator("test_seq", 10);
     ASSERT_FALSE(emulatorId.empty()) << "Failed to boot emulator";
-    
+
+    ASSERT_TRUE(WaitForOCRText(emulatorId, "1982", 200)) << "48K BASIC not ready";
+
     auto emulator = _manager->GetEmulator(emulatorId);
     auto context = emulator->GetContext();
     ASSERT_NE(context, nullptr);
@@ -406,25 +438,30 @@ TEST_F(KeyboardInjection_Integration_test, SequenceCompletes_NoHangingState)
     // Queue several operations
     keyMgr->TapKey("h", 2);
     
-    // Process until done
-    int frameCount = 0;
-    while (keyMgr->IsSequenceRunning() && frameCount < 1000)
+    // Process until done. The running emulator's mainloop already pumps
+    // keyMgr->OnFrame() every frame — the test thread must only wait, never
+    // pump too, or the sequence state machine double-steps and truncates key
+    // holds. Wall time stands in for the frame count (1 frame = 20 ms at 50 Hz).
+    int elapsedMs = 0;
+    while (keyMgr->IsSequenceRunning() && elapsedMs < 2000)
     {
-        keyMgr->OnFrame();
-        frameCount++;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        elapsedMs += 5;
     }
-    
-    EXPECT_FALSE(keyMgr->IsSequenceRunning()) << "Sequence did not complete after " << frameCount << " frames";
-    EXPECT_LT(frameCount, 100) << "Sequence took too long to complete";
+
+    EXPECT_FALSE(keyMgr->IsSequenceRunning()) << "Sequence did not complete after " << elapsedMs << " ms";
+    EXPECT_LT(elapsedMs, 1000) << "Sequence took too long to complete";
     
     CleanupEmulator(emulatorId);
 }
 
 TEST_F(KeyboardInjection_Integration_test, MultipleSequences_ExecuteInOrder)
 {
-    std::string emulatorId = BootEmulator("test_multi", 2000);
+    std::string emulatorId = BootEmulator("test_multi", 10);
     ASSERT_FALSE(emulatorId.empty()) << "Failed to boot emulator";
-    
+
+    ASSERT_TRUE(WaitForOCRText(emulatorId, "1982", 200)) << "48K BASIC not ready";
+
     auto emulator = _manager->GetEmulator(emulatorId);
     auto context = emulator->GetContext();
     ASSERT_NE(context, nullptr);
@@ -435,29 +472,31 @@ TEST_F(KeyboardInjection_Integration_test, MultipleSequences_ExecuteInOrder)
     // Type multiple characters one after another
     keyMgr->TapKey("a", 2);
     
-    // Wait for first to complete before starting second
-    while (keyMgr->IsSequenceRunning())
+    // Wait for first to complete before starting second. The running
+    // emulator's mainloop already pumps keyMgr->OnFrame() every frame —
+    // calling it from the test thread too double-steps the sequence state
+    // machine and randomly truncates key holds.
+    for (int i = 0; i < 50 && keyMgr->IsSequenceRunning(); i++)
     {
-        keyMgr->OnFrame();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     
     keyMgr->TapKey("b", 2);
     
-    while (keyMgr->IsSequenceRunning())
+    for (int i = 0; i < 50 && keyMgr->IsSequenceRunning(); i++)
     {
-        keyMgr->OnFrame();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     
     keyMgr->TapKey("c", 2);
     
-    while (keyMgr->IsSequenceRunning())
+    for (int i = 0; i < 50 && keyMgr->IsSequenceRunning(); i++)
     {
-        keyMgr->OnFrame();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     
-    RunFrames(emulatorId, 100);
-    
-    // Verify all three characters appeared
+    // Verify all three characters appeared - the boot poll above already
+    // proved the screen renders, no fixed frame wait needed
     std::string screenText = GetScreenText(emulatorId);
     
     // In BASIC, lowercase letters are entered, check for any of them
@@ -473,9 +512,11 @@ TEST_F(KeyboardInjection_Integration_test, MultipleSequences_ExecuteInOrder)
 
 TEST_F(KeyboardInjection_Integration_test, AbortSequence_StopsImmediately)
 {
-    std::string emulatorId = BootEmulator("test_abort", 1000);
+    std::string emulatorId = BootEmulator("test_abort", 10);
     ASSERT_FALSE(emulatorId.empty()) << "Failed to boot emulator";
-    
+
+    ASSERT_TRUE(WaitForOCRText(emulatorId, "1982", 200)) << "48K BASIC not ready";
+
     auto emulator = _manager->GetEmulator(emulatorId);
     auto context = emulator->GetContext();
     ASSERT_NE(context, nullptr);
@@ -487,10 +528,11 @@ TEST_F(KeyboardInjection_Integration_test, AbortSequence_StopsImmediately)
     keyMgr->TypeText("THIS IS A VERY LONG TEXT THAT WOULD TAKE MANY FRAMES", 5);
     EXPECT_TRUE(keyMgr->IsSequenceRunning());
     
-    // Process a few frames
+    // Let the emulator thread advance the sequence for ~10 frames (its
+    // mainloop pumps OnFrame() every frame — never call it from the test thread)
     for (int i = 0; i < 10; i++)
     {
-        keyMgr->OnFrame();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     
     // Should still be running

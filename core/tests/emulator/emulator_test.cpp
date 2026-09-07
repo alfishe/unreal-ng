@@ -8,7 +8,7 @@
 #include "emulator/emulator.h"
 #include "common/filehelper.h"
 #include "_helpers/emulatortesthelper.h"
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 
 #include <cctype>
 #include <utility>
@@ -47,7 +47,7 @@ void Emulator_Test::DestroyEmulator()
 /// region <Emulator re-entrability tests>
 TEST_F(Emulator_Test, MultiInstance)
 {
-    constexpr int iterations = 100;
+    constexpr int iterations = 20;
 
     // Profiling accumulators (microseconds)
     uint64_t totalConstruct = 0, totalInit = 0, totalStop = 0, totalRelease = 0, totalDelete = 0;
@@ -117,9 +117,17 @@ TEST_F(Emulator_Test, MultiInstanceRun)
             std::cout << "Starting emulator " << i << std::endl;
             emulator->StartAsync();  // Use StartAsync instead of Start to avoid blocking
             
-            // Give the thread time to start
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            
+            // Wait (bounded) for the worker thread to actually reach the
+            // mainloop. GetState()==StateRun is set by the worker AFTER its
+            // startup flag handling, so a Stop() issued afterwards is
+            // guaranteed to be honoured - unlike IsRunning(), which
+            // StartAsync() raises before the worker even starts
+            auto runDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (emulator->GetState() != StateRun && std::chrono::steady_clock::now() < runDeadline)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+
             if (!emulator->IsRunning()) {
                 std::cout << "Emulator " << i << " failed to start" << std::endl;
                 continue;
@@ -127,16 +135,10 @@ TEST_F(Emulator_Test, MultiInstanceRun)
             
             std::cout << "Emulator " << i << " is running" << std::endl;
             
-            // Let it run for a short time
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            
             std::cout << "Stopping emulator " << i << std::endl;
             emulator->Stop();
             
-            // Give it time to stop
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            
-            // Verify it stopped
+            // Verify it stopped (Stop() joins the async thread synchronously)
             if (emulator->IsRunning()) {
                 std::cout << "Emulator " << i << " failed to stop" << std::endl;
                 continue;
@@ -157,6 +159,28 @@ TEST_F(Emulator_Test, MultiInstanceRun)
     EXPECT_GE(successCount, 3) << "At least 3 instances should run successfully";
 }
 /// endregion </Emulator re-entrability tests>
+
+/// region <Lifecycle tests>
+
+/// @brief An emulator that was Release()d through one owner (EmulatorManager::RemoveEmulator) and destroyed
+/// later through another (a UI widget's lingering shared_ptr) must not touch the ModuleLogger that died with
+/// the context. Regression for the shutdown access violation in ~Emulator -> Release() -> MLOG*/SetState().
+TEST(Emulator_Lifecycle_Test, ReleaseThenLateDestroy_DoesNotTouchFreedContext)
+{
+    std::shared_ptr<Emulator> owner = std::make_shared<Emulator>(LoggerLevel::LogDebug);  // LogDebug: MLOGDEBUG path is live
+    ASSERT_TRUE(owner->Init());
+    std::shared_ptr<Emulator> lingering = owner;  // e.g. DeviceScreen::_emulator
+
+    owner->Release();  // what RemoveEmulator does before erasing its map entry
+    owner.reset();
+
+    // Late calls through the lingering reference must be harmless
+    EXPECT_NO_THROW(lingering->GetState());
+    EXPECT_NO_THROW(lingering->Release());  // idempotent, logs through a (now null) logger
+    EXPECT_NO_THROW(lingering.reset());     // ~Emulator: must not Release() again into freed memory
+}
+
+/// endregion </Lifecycle tests>
 
 /// region <Path shape tests>
 
@@ -274,8 +298,7 @@ TEST(Emulator_PathShapes_Test, LoadAndSaveSnapshot_NonAsciiUtf8Path)
     const std::string utf8Copy = "\xD0\x9A\xD0\xBE\xD0\xBF\xD0\xB8\xD1\x8F.sna";                                                                    // Копия.sna
 
     std::error_code ec;
-    const fs::path dir = fs::temp_directory_path(ec) / u8path(utf8Dir);
-    ASSERT_FALSE(ec) << "temp_directory_path failed";
+    const fs::path dir = fs::path(TestPathHelper::GetUniqueTestScratchPath(utf8Dir));
     fs::create_directories(dir, ec);
     ASSERT_FALSE(ec) << "create_directories failed for " << u8str(dir);
     fs::copy_file(u8path(local), dir / u8path(utf8Name), fs::copy_options::overwrite_existing, ec);

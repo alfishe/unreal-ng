@@ -378,123 +378,14 @@ static void registerEmulatorBindings()
 
     main.def("emulator_manager_list", []() { return EmulatorManager::GetInstance()->GetEmulatorIds(); });
 
-    // Register Emulator class
-    py::class_<Emulator, std::shared_ptr<Emulator>>(main, "Emulator")
-        .def("init", &Emulator::Init)
-        .def("get_uuid", &Emulator::GetUUID)
-        .def("is_running", &Emulator::IsRunning)
-        .def("get_pc",
-             [](Emulator& emu) {
-                 auto* s = emu.GetZ80State();
-                 return s ? s->pc : 0;
-             })
-        .def("get_sp",
-             [](Emulator& emu) {
-                 auto* s = emu.GetZ80State();
-                 return s ? s->sp : 0;
-             })
-        .def("get_af",
-             [](Emulator& emu) {
-                 auto* s = emu.GetZ80State();
-                 return s ? s->af : 0;
-             })
-        .def("read_memory", [](Emulator& emu, uint16_t addr) { return emu.GetMemory()->DirectReadFromZ80Memory(addr); })
-        .def("get_breakpoint_manager", &Emulator::GetBreakpointManager, py::return_value_policy::reference)
-        // Frame stepping methods
-        .def("run_frame", [](Emulator& emu, bool skipBP) { emu.RunFrame(skipBP); },
-             py::arg("skip_breakpoints") = true)
-        .def("run_frames", [](Emulator& emu, unsigned count, bool skipBP) { emu.RunNFrames(count, skipBP); },
-             py::arg("count"), py::arg("skip_breakpoints") = true)
-        // Atomic stepping methods
-        .def("run_tstates", [](Emulator& emu, unsigned tstates, bool skipBP) { emu.RunTStates(tstates, skipBP); },
-             py::arg("tstates"), py::arg("skip_breakpoints") = true)
-        .def("run_to_scanline", [](Emulator& emu, unsigned scanline, bool skipBP) { emu.RunUntilScanline(scanline, skipBP); },
-             py::arg("scanline"), py::arg("skip_breakpoints") = true)
-        .def("run_scanlines", [](Emulator& emu, unsigned count, bool skipBP) { emu.RunNScanlines(count, skipBP); },
-             py::arg("count"), py::arg("skip_breakpoints") = true)
-        .def("run_to_pixel", [](Emulator& emu, bool skipBP) { emu.RunUntilNextScreenPixel(skipBP); },
-             py::arg("skip_breakpoints") = true)
-        .def("run_to_interrupt", [](Emulator& emu, bool skipBP) { emu.RunUntilInterrupt(skipBP); },
-             py::arg("skip_breakpoints") = true)
-        .def("run_until_condition", [](Emulator& emu, py::function predicate, unsigned maxTStates) {
-                 emu.RunUntilCondition([&predicate](const Z80State& state) -> bool {
-                     return predicate(state.pc, state.af, state.bc, state.de, state.hl).cast<bool>();
-                 }, maxTStates);
-             },
-             py::arg("predicate"), py::arg("max_tstates") = 0)
-        // Logging control
-        .def("logging_state", [](Emulator& emu) -> py::dict {
-            py::dict result;
-            auto* ctx = emu.GetContext();
-            if (!ctx || !ctx->pModuleLogger) return result;
-            ModuleLogger* logger = ctx->pModuleLogger;
-            const LoggerSettings& settings = logger->GetSettings();
-
-            result["global_level"] = ModuleLogger::GetLevelApiName(static_cast<int>(logger->GetLevel()));
-            py::list modules;
-            for (int m = 1; m < MODULE_COUNT; m++) {
-                const char* name = ModuleLogger::GetModuleApiName(m);
-                if (!name) continue;
-                py::dict mod;
-                mod["name"] = name;
-                mod["enabled"] = (settings.modules & (1u << m)) != 0;
-                uint8_t rawLvl = settings.moduleLevels[m];
-                mod["level"] = (rawLvl == 0) ? "inherit" : ModuleLogger::GetLevelApiName(rawLvl);
-                char maskBuf[8];
-                snprintf(maskBuf, sizeof(maskBuf), "0x%04X", settings.submodules[m]);
-                mod["submodule_mask"] = maskBuf;
-                modules.append(mod);
-            }
-            result["modules"] = modules;
-            return result;
-        })
-        .def("logging_set_level", [](Emulator& emu, const std::string& level) -> bool {
-            auto* ctx = emu.GetContext();
-            if (!ctx || !ctx->pModuleLogger) return false;
-            int id = ModuleLogger::LevelNameToId(level.c_str());
-            if (id < 0) return false;
-            ctx->pModuleLogger->SetLoggingLevel(static_cast<LoggerLevel>(id));
-            return true;
-        }, py::arg("level"))
-        .def("logging_set_module", [](Emulator& emu, const std::string& name, bool enabled) -> bool {
-            auto* ctx = emu.GetContext();
-            if (!ctx || !ctx->pModuleLogger) return false;
-            int id = ModuleLogger::ModuleNameToId(name.c_str());
-            if (id < 0) return false;
-            uint16_t mask = ctx->pModuleLogger->GetSettings().submodules[id];
-            ctx->pModuleLogger->SetModuleState(static_cast<PlatformModulesEnum>(id), enabled, mask);
-            return true;
-        }, py::arg("name"), py::arg("enabled"))
-        .def("logging_set_module_level", [](Emulator& emu, const std::string& name, const std::string& level) -> bool {
-            auto* ctx = emu.GetContext();
-            if (!ctx || !ctx->pModuleLogger) return false;
-            int modId = ModuleLogger::ModuleNameToId(name.c_str());
-            if (modId < 0) return false;
-            if (level == "inherit" || level == "0") {
-                ctx->pModuleLogger->SetModuleLogLevel(static_cast<PlatformModulesEnum>(modId), static_cast<LoggerLevel>(0));
-                return true;
-            }
-            int lvlId = ModuleLogger::LevelNameToId(level.c_str());
-            if (lvlId < 0) return false;
-            ctx->pModuleLogger->SetModuleLogLevel(static_cast<PlatformModulesEnum>(modId), static_cast<LoggerLevel>(lvlId));
-            return true;
-        }, py::arg("name"), py::arg("level"))
-        .def("logging_modules", [](Emulator& emu) -> py::list {
-            py::list result;
-            for (int m = 1; m < MODULE_COUNT; m++) {
-                const char* name = ModuleLogger::GetModuleApiName(m);
-                if (name) result.append(name);
-            }
-            return result;
-        })
-        .def("logging_levels", [](Emulator& emu) -> py::list {
-            py::list result;
-            for (int i = 0; i < ModuleLogger::GetLevelCount(); i++) {
-                const char* name = ModuleLogger::GetLevelApiName(i);
-                if (name) result.append(name);
-            }
-            return result;
-        });
+    // Alias the unreal_emulator module's Emulator class into __main__ instead
+    // of registering a second pybind11 type for the same C++ class: pybind11
+    // refuses duplicate type registration across modules ("type is already
+    // registered"), which used to break `import unreal_emulator` in the live
+    // app. The module binding is the single source of truth and includes the
+    // legacy methods (init/get_uuid/read_memory/get_breakpoint_manager/
+    // run_until_condition).
+    main.attr("Emulator") = py::module_::import("unreal_emulator").attr("Emulator");
 
     // Register BreakpointManager
     py::class_<BreakpointManager>(main, "BreakpointManager")

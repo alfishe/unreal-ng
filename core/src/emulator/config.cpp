@@ -560,9 +560,11 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
     switch (config.mem_model)
     {
         case MM_PENTAGON:
-            // MiSTer vc=239/hc=326 maps to 71619 in our frame, but our raster window places
-            // paper 24T into the line (framebuffer x = T_in_line*2, paper x∈[48,304)).
-            // +16T aligns INT-to-paper to the real-Pentagon 17989T distance. See doc 18.
+            // INT fires at intstart+1 due to strict `>` check. Paper starts at T=17944.
+            // Target: 17989T INT-to-paper distance (real Pentagon calibration).
+            // Calculation: (71680 - (71635+1)) + 17944 = 17989T
+            // Note: INT is quantized to 4T due to HALT; the 2-pixel fine adjustment
+            // is handled in ScreenZX::SetBorderColor. See: docs/timing/pentagon-border-timing.md
             config.intstart = 71635;
             config.intlen   = 32;
             break;

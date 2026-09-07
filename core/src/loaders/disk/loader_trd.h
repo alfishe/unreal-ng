@@ -3,6 +3,7 @@
 #include "stdafx.h"
 
 #include <string>
+#include <vector>
 #include <emulator/emulatorcontext.h>
 #include "emulator/io/fdc/diskimage.h"
 #include "emulator/io/fdc/trdos.h"
@@ -34,6 +35,7 @@ protected:
     std::string _filepath;
 
     DiskImage* _diskImage = nullptr;
+    std::vector<std::string> _warnings;
     /// endregion </Fields>
 
     /// region <Properties>
@@ -53,6 +55,13 @@ public:
     bool loadImage();
     bool writeImage();
     bool writeImage(const std::string& path);  // Save As - write to specified path
+
+    /// Diagnostics collected by the last loadImage / writeImage call (e.g. why a save was refused)
+    const std::vector<std::string>& lastWarnings() const { return _warnings; }
+
+    /// TRD can only hold 16 x 256-byte sectors numbered 1..16 per track.
+    /// @param reason Filled with a human readable explanation when the image does not qualify
+    static bool isTrdosGeometry(DiskImage* diskImage, std::string* reason = nullptr);
 
     // TR-DOS image specific method. Can be moved closer to generic TR-DOS functionality
     bool format(DiskImage* diskImage);

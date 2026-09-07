@@ -25,7 +25,7 @@
 
 #include <gtest/gtest.h>
 
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 
 #include <cstdint>
 #include <cstring>

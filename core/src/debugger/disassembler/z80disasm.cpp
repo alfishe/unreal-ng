@@ -72,7 +72,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_MBYTE,  7, 0, 0, "ld c,:1" },                              // 0x0E
     { OF_NONE,   4, 0, 0, "rrca" },                                 // 0x0F
     
-    { OF_DJNZ | OF_CONDITION | OF_MBYTE, 0, 13, 8, "djnz :1" },     // 0x10
+    { OF_DJNZ | OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 13, 8, "djnz :1" },     // 0x10
     { OF_MWORD, 10, 0, 0, "ld de,:2" },                             // 0x11
     { OF_INDIRECT | OF_MWORD,  7, 0, 0, "ld (de),:2" },             // 0x12
     { OF_NONE,   6, 0, 0, "inc de" },                               // 0x13
@@ -629,7 +629,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_MBYTE, 11, 0, 0, "ld c,:1" },                               // 0x0E
     { OF_NONE,  8, 0, 0, "rrca" },                                   // 0x0F
 
-    { OF_DJNZ | OF_CONDITION | OF_MBYTE, 0, 17, 12, "djnz :1" },     // 0x10
+    { OF_DJNZ | OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 17, 12, "djnz :1" },     // 0x10
     { OF_MWORD, 14, 0, 0, "ld de,:2" },                              // 0x11
     { OF_INDIRECT, 11, 0, 0, "ld (de),a" },                          // 0x12
     { OF_NONE, 10, 0, 0, "inc de" },                                 // 0x13
@@ -1187,7 +1187,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_MBYTE, 11, 0, 0, "ld c,:1" },                               // 0x0E
     { OF_NONE,  8, 0, 0, "rrca" },                                   // 0x0F
 
-    { OF_DJNZ | OF_CONDITION | OF_MBYTE, 0, 17, 12, "djnz :1" },     // 0x10
+    { OF_DJNZ | OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 17, 12, "djnz :1" },     // 0x10
     { OF_NONE, 14, 0, 0, "ld de,:2" },                               // 0x11
     { OF_INDIRECT, 11, 0, 0, "ld (de),:2" },                         // 0x12
     { OF_NONE, 10, 0, 0, "inc de" },                                 // 0x13
@@ -2535,7 +2535,7 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const std::vector<uint8_t>
     if (hasRelativeJump)
     {
         result.relJumpOffset = result.operandBytes[0];
-        result.relJumpAddr = (instructionAddr + result.relJumpOffset + 2) & 0xFFFF;
+        result.relJumpAddr = (instructionAddr + result.fullCommandLen + result.relJumpOffset) & 0xFFFF;  // relative to the byte after the whole instruction (3 bytes when DD/FD-prefixed)
         result.jumpAddr = result.relJumpAddr;
     }
     /// endregion </Actualize values according flags>
@@ -2805,12 +2805,25 @@ std::vector<uint8_t> Z80Disassembler::parseOperands(std::string& mnemonic, uint8
 /// @param mnemonic  The mnemonic string containing operand placeholders (e.g., "ld a,:1").
 /// @param values    The operand values to substitute into the mnemonic (order matches placeholders).
 /// @return          The formatted mnemonic string with operands replaced by their hex values.
+///                  For addresses (JP, CALL, JR, memory ops), includes label if available: "label (#ADDR)"
 std::string Z80Disassembler::formatOperandString(const DecodedInstruction& decoded, const std::string& mnemonic,
                                                  std::vector<uint16_t>& values)
 {
     static const char* HEX_PREFIX = "#";
     std::string result;
-    result.reserve(mnemonic.size() + 8 * values.size());  // Preallocate for efficiency
+    result.reserve(mnemonic.size() + 16 * values.size());  // Extra space for potential labels
+
+    // Get LabelManager for symbolic resolution
+    LabelManager* labelManager = nullptr;
+    if (_context && _context->pDebugManager)
+    {
+        labelManager = _context->pDebugManager->GetLabelManager();
+    }
+
+    // Check if this instruction targets an address (for label lookup)
+    const uint32_t flags = decoded.opcode.flags;
+    const bool isAddressOperand = (flags & (OF_JUMP | OF_CALL | OF_MEMADR)) != 0;
+    const bool isRelativeJump = (flags & OF_RELJUMP) != 0;
 
     size_t i = 0;    // Index into values
     size_t pos = 0;  // Current position in mnemonic
@@ -2842,23 +2855,78 @@ std::string Z80Disassembler::formatOperandString(const DecodedInstruction& decod
 
                 // Format operand value
                 std::string operand;
+                uint16_t targetAddr = values[i];
+
                 switch (operandSize)
                 {
                     case 1:
-                        // For relative jumps, format as signed
-                        if (decoded.hasRelativeJump)
-                            operand = StringHelper::ToHexWithPrefix((int8_t)(values[i]), HEX_PREFIX);
+                        // For relative jumps, format as signed offset but also resolve the target address
+                        if (isRelativeJump)
+                        {
+                            // Calculate actual target address: instruction addr + instruction length + signed offset
+                            // Relative jumps are 2 bytes (opcode + offset), so target = addr + 2 + offset
+                            int8_t offset = static_cast<int8_t>(values[i]);
+                            targetAddr = decoded.instructionAddr + decoded.fullCommandLen + offset;
+
+                            // Try to resolve label for target address
+                            std::string labelName;
+                            if (labelManager)
+                            {
+                                auto label = labelManager->GetLabelByZ80Address(targetAddr);
+                                if (label && !label->name.empty())
+                                {
+                                    labelName = label->name;
+                                }
+                            }
+
+                            // Format with or without label
+                            std::string hexAddr = StringHelper::ToHexWithPrefix(targetAddr, HEX_PREFIX);
+                            for (char& c : hexAddr) c = toupper(c);
+
+                            if (!labelName.empty())
+                            {
+                                operand = labelName + " (" + hexAddr + ")";
+                            }
+                            else
+                            {
+                                operand = hexAddr;
+                            }
+                        }
                         else
+                        {
                             operand = StringHelper::ToHexWithPrefix((uint8_t)(values[i]), HEX_PREFIX);
+                            for (char& c : operand) c = toupper(c);
+                        }
                         break;
+
                     case 2:
-                        operand = StringHelper::ToHexWithPrefix(values[i], HEX_PREFIX);
+                        {
+                            // Try to resolve label for address operands (JP, CALL, memory ops)
+                            std::string labelName;
+                            if (isAddressOperand && labelManager)
+                            {
+                                auto label = labelManager->GetLabelByZ80Address(targetAddr);
+                                if (label && !label->name.empty())
+                                {
+                                    labelName = label->name;
+                                }
+                            }
+
+                            // Format with or without label
+                            std::string hexAddr = StringHelper::ToHexWithPrefix(targetAddr, HEX_PREFIX);
+                            for (char& c : hexAddr) c = toupper(c);
+
+                            if (!labelName.empty())
+                            {
+                                operand = labelName + " (" + hexAddr + ")";
+                            }
+                            else
+                            {
+                                operand = hexAddr;
+                            }
+                        }
                         break;
                 }
-
-                // Uppercase the operand and append
-                for (char& c : operand)
-                    c = toupper(c);
 
                 result += operand;
                 pos += 2;  // Skip ":N"

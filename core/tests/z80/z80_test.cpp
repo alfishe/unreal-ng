@@ -795,3 +795,135 @@ TEST_F(Z80_Test, Block_CPDR_Interrupted_Flags_Set)
 }
 
 /// endregion </Interrupted Block Instruction Tests>
+
+/// region <Register Access API Tests>
+
+TEST_F(Z80_Test, RegisterAPI_GetRegisterCount)
+{
+    size_t count = Z80::GetRegisterCount();
+    EXPECT_GT(count, 30) << "Should have at least 30 registers";
+}
+
+TEST_F(Z80_Test, RegisterAPI_FindRegister_Valid)
+{
+    const Z80::RegisterInfo* info = Z80::FindRegister("A");
+    ASSERT_NE(info, nullptr);
+    EXPECT_STREQ(info->name, "A");
+    EXPECT_FALSE(info->is16bit);
+    EXPECT_FALSE(info->isAlternate);
+
+    info = Z80::FindRegister("HL");
+    ASSERT_NE(info, nullptr);
+    EXPECT_STREQ(info->name, "HL");
+    EXPECT_TRUE(info->is16bit);
+    EXPECT_FALSE(info->isAlternate);
+
+    info = Z80::FindRegister("BC'");
+    ASSERT_NE(info, nullptr);
+    EXPECT_STREQ(info->name, "BC'");
+    EXPECT_TRUE(info->is16bit);
+    EXPECT_TRUE(info->isAlternate);
+}
+
+TEST_F(Z80_Test, RegisterAPI_FindRegister_CaseInsensitive)
+{
+    const Z80::RegisterInfo* info1 = Z80::FindRegister("a");
+    const Z80::RegisterInfo* info2 = Z80::FindRegister("A");
+    const Z80::RegisterInfo* info3 = Z80::FindRegister("hl");
+    const Z80::RegisterInfo* info4 = Z80::FindRegister("HL");
+
+    ASSERT_NE(info1, nullptr);
+    ASSERT_NE(info2, nullptr);
+    EXPECT_EQ(info1, info2);
+
+    ASSERT_NE(info3, nullptr);
+    ASSERT_NE(info4, nullptr);
+    EXPECT_EQ(info3, info4);
+}
+
+TEST_F(Z80_Test, RegisterAPI_FindRegister_Aliases)
+{
+    const Z80::RegisterInfo* xh = Z80::FindRegister("XH");
+    const Z80::RegisterInfo* ixh = Z80::FindRegister("IXH");
+    ASSERT_NE(xh, nullptr);
+    ASSERT_NE(ixh, nullptr);
+    EXPECT_EQ(xh, ixh);
+}
+
+TEST_F(Z80_Test, RegisterAPI_FindRegister_Invalid)
+{
+    const Z80::RegisterInfo* info = Z80::FindRegister("INVALID");
+    EXPECT_EQ(info, nullptr);
+
+    info = Z80::FindRegister("");
+    EXPECT_EQ(info, nullptr);
+}
+
+TEST_F(Z80_Test, RegisterAPI_GetSetValue_8bit)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    ResetCPUAndMemory();
+
+    // Set A to 0x42
+    EXPECT_TRUE(Z80::SetRegisterValue(&z80, "A", 0x42));
+    EXPECT_EQ(z80.a, 0x42);
+
+    // Get A
+    uint16_t value;
+    bool is16bit;
+    EXPECT_TRUE(Z80::GetRegisterValue(&z80, "A", value, is16bit));
+    EXPECT_EQ(value, 0x42);
+    EXPECT_FALSE(is16bit);
+
+    // Test truncation for 8-bit registers
+    Z80::SetRegisterValue(&z80, "B", 0x1234);
+    EXPECT_EQ(z80.b, 0x34);
+}
+
+TEST_F(Z80_Test, RegisterAPI_GetSetValue_16bit)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    ResetCPUAndMemory();
+
+    // Set HL to 0x1234
+    EXPECT_TRUE(Z80::SetRegisterValue(&z80, "HL", 0x1234));
+    EXPECT_EQ(z80.hl, 0x1234);
+    EXPECT_EQ(z80.h, 0x12);
+    EXPECT_EQ(z80.l, 0x34);
+
+    // Get HL
+    uint16_t value;
+    bool is16bit;
+    EXPECT_TRUE(Z80::GetRegisterValue(&z80, "HL", value, is16bit));
+    EXPECT_EQ(value, 0x1234);
+    EXPECT_TRUE(is16bit);
+}
+
+TEST_F(Z80_Test, RegisterAPI_GetSetValue_Alternate)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    ResetCPUAndMemory();
+
+    // Set BC'
+    EXPECT_TRUE(Z80::SetRegisterValue(&z80, "BC'", 0xABCD));
+    EXPECT_EQ(z80.alt.bc, 0xABCD);
+
+    // Get BC'
+    uint16_t value;
+    bool is16bit;
+    EXPECT_TRUE(Z80::GetRegisterValue(&z80, "BC'", value, is16bit));
+    EXPECT_EQ(value, 0xABCD);
+    EXPECT_TRUE(is16bit);
+}
+
+TEST_F(Z80_Test, RegisterAPI_GetSetValue_Invalid)
+{
+    Z80& z80 = *_cpu->GetZ80();
+
+    uint16_t value;
+    bool is16bit;
+    EXPECT_FALSE(Z80::GetRegisterValue(&z80, "INVALID", value, is16bit));
+    EXPECT_FALSE(Z80::SetRegisterValue(&z80, "INVALID", 0x1234));
+}
+
+/// endregion </Register Access API Tests>

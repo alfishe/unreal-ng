@@ -611,18 +611,18 @@ bool AnalyzerManager::isEnabled() const
 
 void AnalyzerManager::removeAllBreakpointsForAnalyzer(const std::string& analyzerId)
 {
-    auto it = _analyzerBreakpoints.find(analyzerId);
-    if (it == _analyzerBreakpoints.end())
+    // Extract the node from the map first - this way releaseBreakpoint()'s
+    // modification of _analyzerBreakpoints won't affect our iteration
+    auto node = _analyzerBreakpoints.extract(analyzerId);
+    if (node.empty())
     {
         return;
     }
 
-    for (BreakpointId bpId : it->second)
+    for (BreakpointId bpId : node.mapped())
     {
         releaseBreakpoint(bpId);
     }
-
-    _analyzerBreakpoints.erase(it);
 }
 
 void AnalyzerManager::removeAllSubscriptionsForAnalyzer(const std::string& analyzerId)

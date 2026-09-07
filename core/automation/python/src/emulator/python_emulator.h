@@ -10,6 +10,9 @@
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/porttracker.h>
+#include <emulator/io/tape/tape.h>
+#include <tapeaudio/tapeaudioimporter.h>
+#include <tapeaudio/tapeaudiorenderer.h>
 #include <emulator/video/screen.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
@@ -17,6 +20,7 @@
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <debugger/labels/labelmanager.h>
 #include <debugger/analyzers/analyzermanager.h>
 #include <debugger/analyzers/trdos/trdosanalyzer.h>
 #include <debugger/analyzers/memory-region/memoryregionanalyzer.h>
@@ -27,7 +31,10 @@
 #include <debugger/ttd/timetravelmanager.h>
 #include <debugger/ttd/ttd_probe.h>
 
+#include <chrono>
 #include <fstream>
+#include <optional>
+#include <thread>
 #include <debugger/ttd/ttd_external_events.h>
 #include "../../../automation.h"
 #include "../bindings/python_porttrace.h"
@@ -38,6 +45,36 @@ namespace py = pybind11;
 /// Provides comprehensive emulator control matching CLI and WebAPI interfaces
 namespace PythonBindings
 {
+    /// Pause() -> op -> Resume() bracket shared by the mutating tape
+    /// bindings (same contract as the CLI/WebAPI handlers, design §7.1):
+    /// pause only when actually running, resume exactly then. RAII so an
+    /// early return can never leave the emulator parked.
+    class EmulatorPauseBracket
+    {
+    public:
+        explicit EmulatorPauseBracket(Emulator* emulator)
+            : _emulator(emulator), _wasRunning(emulator && emulator->IsRunning() && !emulator->IsPaused())
+        {
+            if (_wasRunning)
+            {
+                _emulator->Pause();
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));  // Give emulator time to pause
+            }
+        }
+
+        ~EmulatorPauseBracket()
+        {
+            if (_wasRunning)
+            {
+                _emulator->Resume();
+            }
+        }
+
+    private:
+        Emulator* _emulator;
+        bool _wasRunning;
+    };
+
     /// @brief Register all emulator bindings with the Python module
     /// @param m The pybind11 module to register bindings with
     inline void registerEmulatorBindings(py::module_& m)
@@ -85,6 +122,23 @@ namespace PythonBindings
             .def("pause", [](Emulator& self) { self.Pause(true); }, "Pause emulator")
             .def("resume", [](Emulator& self) { self.Resume(true); }, "Resume emulator")
             .def("reset", &Emulator::Reset, "Reset emulator")
+
+            // Legacy __main__-compatible aliases: the startup registration in
+            // automation-python.cpp aliases this class into __main__ (instead
+            // of registering a second pybind11 type for the same C++ class),
+            // so every legacy method must live on this binding
+            .def("init", &Emulator::Init, "Initialize emulator")
+            .def("get_uuid", &Emulator::GetUUID, "Get emulator UUID (legacy alias of get_id)")
+            .def("read_memory", [](Emulator& self, uint16_t address) {
+                return self.GetMemory()->DirectReadFromZ80Memory(address);
+            }, "Read a byte from Z80 memory (legacy alias of mem_read)", py::arg("address"))
+            .def("get_breakpoint_manager", &Emulator::GetBreakpointManager, "Get the breakpoint manager",
+                 py::return_value_policy::reference)
+            .def("run_until_condition", [](Emulator& self, py::function predicate, unsigned maxTStates) {
+                self.RunUntilCondition([&predicate](const Z80State& state) -> bool {
+                    return predicate(state.pc, state.af, state.bc, state.de, state.hl).cast<bool>();
+                }, maxTStates);
+            }, "Run until the Python predicate returns True", py::arg("predicate"), py::arg("max_tstates") = 0)
             
             // State queries
             .def("is_running", &Emulator::IsRunning, "Check if emulator is running")
@@ -157,7 +211,23 @@ namespace PythonBindings
                 }
                 return regs;
             }, "Get all registers as dictionary")
-            
+            .def("get_register", [](Emulator& self, const std::string& name) -> py::object {
+                Z80State* z80 = self.GetZ80State();
+                if (!z80)
+                    return py::none();
+                uint16_t value = 0;
+                bool is16bit = false;
+                if (!Z80::GetRegisterValue(z80, name, value, is16bit))
+                    return py::none();
+                return py::cast(value);
+            }, "Get register value by name", py::arg("name"))
+            .def("set_register", [](Emulator& self, const std::string& name, uint16_t value) -> bool {
+                Z80State* z80 = self.GetZ80State();
+                if (!z80)
+                    return false;
+                return Z80::SetRegisterValue(z80, name, value);
+            }, "Set register value by name", py::arg("name"), py::arg("value"))
+
             // Memory access (isExecution=false for data reads)
             .def("mem_read", [](Emulator& self, uint16_t addr) -> uint8_t {
                 Memory* mem = self.GetMemory();
@@ -306,11 +376,11 @@ namespace PythonBindings
                 py::dict features;
                 FeatureManager* fm = self.GetFeatureManager();
                 if (fm) {
-                    features["sound"] = fm->isEnabled("sound");
-                    features["sharedmemory"] = fm->isEnabled("sharedmemory");
-                    features["calltrace"] = fm->isEnabled("calltrace");
-                    features["breakpoints"] = fm->isEnabled("breakpoints");
-                    features["memorytracking"] = fm->isEnabled("memorytracking");
+                    // Same listFeatures() enumeration the CLI `feature` table
+                    // and the WebAPI /features endpoint use — keyed by feature
+                    // id, so scripts keep working as new features register
+                    for (const FeatureManager::FeatureInfo& feature : fm->listFeatures())
+                        features[feature.id.c_str()] = feature.enabled;
                 }
                 return features;
             }, "List all features and states")
@@ -372,7 +442,32 @@ namespace PythonBindings
                 self.RunNCPUCycles(count, skipBreakpoints);
             }, "Execute N CPU instructions", py::arg("count"), py::arg("skip_breakpoints") = false)
             .def("stepover", &Emulator::StepOver, "Step over call instructions")
-            
+
+            // Frame stepping
+            .def("run_frame", [](Emulator& self, bool skipBreakpoints) {
+                self.RunFrame(skipBreakpoints);
+            }, "Execute one frame", py::arg("skip_breakpoints") = true)
+            .def("run_frames", [](Emulator& self, unsigned count, bool skipBreakpoints) {
+                self.RunNFrames(count, skipBreakpoints);
+            }, "Execute N frames", py::arg("count"), py::arg("skip_breakpoints") = true)
+
+            // T-state and scanline stepping
+            .def("run_tstates", [](Emulator& self, unsigned count, bool skipBreakpoints) {
+                self.RunTStates(count, skipBreakpoints);
+            }, "Execute N T-states", py::arg("count"), py::arg("skip_breakpoints") = true)
+            .def("run_to_scanline", [](Emulator& self, unsigned scanline, bool skipBreakpoints) {
+                self.RunUntilScanline(scanline, skipBreakpoints);
+            }, "Run until specific scanline", py::arg("scanline"), py::arg("skip_breakpoints") = true)
+            .def("run_scanlines", [](Emulator& self, unsigned count, bool skipBreakpoints) {
+                self.RunNScanlines(count, skipBreakpoints);
+            }, "Run N scanlines", py::arg("count"), py::arg("skip_breakpoints") = true)
+            .def("run_to_pixel", [](Emulator& self, bool skipBreakpoints) {
+                self.RunUntilNextScreenPixel(skipBreakpoints);
+            }, "Run until next screen pixel", py::arg("skip_breakpoints") = true)
+            .def("run_to_interrupt", [](Emulator& self, bool skipBreakpoints) {
+                self.RunUntilInterrupt(skipBreakpoints);
+            }, "Run until next interrupt", py::arg("skip_breakpoints") = true)
+
             // Tape operations
             .def("tape_load", &Emulator::LoadTape, "Load tape file", py::arg("path"))
             .def("tape_is_inserted", [](Emulator& self) -> bool {
@@ -385,12 +480,21 @@ namespace PythonBindings
             }, "Get tape file path")
             .def("tape_play", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();
-                if (ctx && ctx->pTape) {
-                    ctx->pTape->startTape();
-                    return true;
-                }
-                return false;
-            }, "Start tape playback")
+                if (!ctx || !ctx->pTape) return false;
+
+                EmulatorPauseBracket bracket(&self);
+
+                // Parse-once (idempotent); paused -> resume the frozen position
+                // in place, otherwise start at the consumption cursor — the same
+                // semantics as `tape play` / POST /tape/play
+                if (!ctx->pTape->EnsureImageLoaded())
+                    return false;
+                if (ctx->pTape->GetPlaybackState() == TapePlaybackState::Paused)
+                    ctx->pTape->ResumePlaybackFromPause();
+                else
+                    ctx->pTape->StartPlaybackAtCursor();
+                return true;
+            }, "Start (or resume in place) tape playback")
             .def("tape_stop", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();
                 if (ctx && ctx->pTape) {
@@ -401,12 +505,16 @@ namespace PythonBindings
             }, "Stop tape playback")
             .def("tape_rewind", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();
-                if (ctx && ctx->pTape) {
-                    ctx->pTape->reset();
-                    return true;
-                }
-                return false;
-            }, "Rewind tape to beginning")
+                if (!ctx || !ctx->pTape) return false;
+
+                EmulatorPauseBracket bracket(&self);
+
+                // Rewind keeps the image and catalog — unlike stop/eject
+                // (same semantics as `tape rewind` / POST /tape/rewind)
+                ctx->pTape->EnsureImageLoaded();
+                ctx->pTape->RewindToStart();
+                return true;
+            }, "Rewind tape to beginning (image kept)")
             .def("tape_eject", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();
                 if (ctx && ctx->pTape) {
@@ -416,6 +524,204 @@ namespace PythonBindings
                 }
                 return false;
             }, "Eject tape")
+            .def("tape_pause", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTape) return false;
+
+                EmulatorPauseBracket bracket(&self);
+
+                const TapePlaybackState state = ctx->pTape->GetPlaybackState();
+                if (state == TapePlaybackState::Paused)
+                    return true;  // idempotent, mirrors "Tape already paused"
+                if (state != TapePlaybackState::Playing)
+                    return false;
+                ctx->pTape->pausePlayback();  // play resumes in place afterwards
+                return true;
+            }, "Pause tape playback; the next tape_play resumes in place")
+            .def("tape_seek", [](Emulator& self, int blockIndex) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTape || blockIndex < 0) return false;
+
+                EmulatorPauseBracket bracket(&self);
+
+                if (!ctx->pTape->EnsureImageLoaded())
+                    return false;
+                return ctx->pTape->SeekToBlock(static_cast<size_t>(blockIndex));
+            }, "Position the tape at block <block_index>", py::arg("block_index"))
+            .def("tape_pos", [](Emulator& self) -> py::object {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTape || !ctx->pTape->EnsureImageLoaded()) return py::none();
+
+                EmulatorPauseBracket bracket(&self);
+
+                py::dict pos;
+                pos["state"] = getTapePlaybackStateName(ctx->pTape->GetPlaybackState());
+
+                std::optional<TapePosition> position = ctx->pTape->GetPosition();
+                if (position.has_value())
+                {
+                    pos["block"] = position->blockIndex;
+                    pos["pulse"] = position->pulseIndex;
+                    pos["seconds_into_block"] = position->secondsIntoBlock;
+                    pos["block_total_seconds"] = position->blockTotalSeconds;
+                }
+
+                pos["cursor"] = ctx->pTape->GetConsumptionCursor();
+                pos["block_count"] = ctx->pTape->GetBlockCatalog().size();
+                return pos;
+            }, "One-line playback position (dict) or None when no tape is loaded")
+            .def("tape_blocks", [](Emulator& self) -> py::object {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTape || !ctx->pTape->EnsureImageLoaded()) return py::none();
+
+                EmulatorPauseBracket bracket(&self);
+
+                const std::vector<TapeBlockDescriptor>& catalog = ctx->pTape->GetBlockCatalog();
+                const TapeFastLoadPlan& plan = ctx->pTape->GetFastLoadPlan();
+
+                py::list blocks;
+                for (const TapeBlockDescriptor& descriptor : catalog)
+                {
+                    py::dict block;
+                    block["index"] = descriptor.index;
+                    block["kind"] = getTapeBlockKindName(descriptor.kind);
+
+                    if (descriptor.kind == TapeBlockKindEnum::Header || descriptor.kind == TapeBlockKindEnum::Data ||
+                        descriptor.kind == TapeBlockKindEnum::Custom)
+                    {
+                        block["headerless"] = descriptor.headerless;
+                    }
+
+                    if (descriptor.headerValid)
+                    {
+                        block["name"] = descriptor.name;
+                        block["type"] = getTapeBlockTypeName(descriptor.headerType);
+                        block["declared_length"] = descriptor.declaredLength;
+                        block["param1"] = descriptor.param1;
+                        block["param2"] = descriptor.param2;
+                    }
+
+                    if (descriptor.pairedDataIndex != SIZE_MAX)
+                        block["paired_data_index"] = descriptor.pairedDataIndex;
+                    if (descriptor.pairedHeaderIndex != SIZE_MAX)
+                        block["paired_header_index"] = descriptor.pairedHeaderIndex;
+
+                    py::dict speed;
+                    speed["profile"] = getTapeSpeedProfileName(descriptor.timing.profile);
+                    if (descriptor.baudEstimate > 0)
+                        speed["baud"] = descriptor.baudEstimate;
+                    block["speed"] = speed;
+
+                    block["checksum_valid"] = descriptor.checksumValid;
+                    block["checksum_applicable"] = descriptor.rawSize > 0;
+                    block["seconds"] = descriptor.estimatedSeconds;
+                    if (descriptor.rawSize > 0)
+                        block["raw_size"] = descriptor.rawSize;
+                    block["playable"] = descriptor.playable;
+
+                    if (descriptor.kind != TapeBlockKindEnum::Control && plan.perBlock.size() > descriptor.index)
+                    {
+                        block["fast_load"] = plan.perBlock[descriptor.index] == FastLoadRejectEnum::None
+                                                 ? "yes"
+                                                 : getFastLoadRejectName(plan.perBlock[descriptor.index]);
+                    }
+
+                    blocks.append(block);
+                }
+                return blocks;
+            }, "Block catalog as a list of dicts (mirrors GET /tape blocks[]) or None")
+            .def("tape_info", [](Emulator& self) -> py::object {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTape) return py::none();
+
+                EmulatorPauseBracket bracket(&self);
+
+                const std::string& path = ctx->coreState.tapeFilePath;
+                const bool loaded = !path.empty() && ctx->pTape->EnsureImageLoaded();
+
+                py::dict info;
+                info["status"] = loaded ? "loaded" : (path.empty() ? "empty" : "error");
+                info["file"] = path;
+                info["state"] = loaded ? getTapePlaybackStateName(ctx->pTape->GetPlaybackState()) : "idle";
+                if (!loaded) return info;
+
+                const TapeFastLoadPlan& plan = ctx->pTape->GetFastLoadPlan();
+                info["format"] = ctx->pTape->GetLoadedFormatId();
+                info["cursor"] = ctx->pTape->GetConsumptionCursor();
+                info["block_count"] = ctx->pTape->GetBlockCatalog().size();
+                info["total_seconds"] = plan.totalSeconds;
+
+                FeatureManager* fm = self.GetFeatureManager();
+                info["fast_tape"] = fm && fm->isEnabled(Features::kFastTape);
+                info["turbo_tape"] = fm && fm->isEnabled(Features::kTurboTape);
+
+                py::dict fastLoad;
+                fastLoad["verdict"] = getFastLoadVerdictName(plan.verdict);
+                fastLoad["eligible_blocks"] = plan.eligibleBlocks;
+                fastLoad["accelerated_seconds"] = plan.acceleratedSeconds;
+                fastLoad["total_seconds"] = plan.totalSeconds;
+                fastLoad["summary"] = plan.summary;
+                info["fast_load"] = fastLoad;
+                return info;
+            }, "Detailed tape status (dict, mirrors GET /tape) or None")
+            // Tape audio bridge: pure path-to-path conversions through the same
+            // engine as `tape render` / POST /tape/render — no emulator state involved
+            .def("tape_render", [](Emulator&, const std::string& source, const std::string& output, py::dict options) -> py::dict {
+                TapeRenderRequest request;
+                request.sourcePath = source;
+                request.outputPath = output;
+                if (options.contains("first_block")) request.firstBlock = options["first_block"].cast<size_t>();
+                if (options.contains("last_block")) request.lastBlock = options["last_block"].cast<size_t>();
+                if (options.contains("sample_rate")) request.sampleRate = options["sample_rate"].cast<uint32_t>();
+                if (options.contains("amplitude")) request.amplitude = options["amplitude"].cast<double>();
+                if (options.contains("invert_level")) request.invertLevel = options["invert_level"].cast<bool>();
+
+                TapeRenderResult result = RenderTapeToAudio(request);
+
+                py::dict ret;
+                ret["ok"] = result.ok;
+                ret["error"] = result.errorText;
+                ret["duration_sec"] = result.durationSec;
+                ret["samples"] = result.samplesWritten;
+                ret["blocks"] = result.blocksRendered;
+                ret["encoder"] = result.encoderUsed;
+                py::list warnings;
+                for (const std::string& warning : result.warnings)
+                    warnings.append(warning);
+                ret["warnings"] = warnings;
+                return ret;
+            }, "Render a tape image to WAV/FLAC audio (pure file conversion)",
+               py::arg("source"), py::arg("output"), py::arg("options") = py::dict())
+            // Same engine as `tape import` / POST /tape/import: decode + extract
+            // + recognize, then an extension-dispatched save (.tzx exact, .tap gated)
+            .def("tape_import", [](Emulator&, const std::string& source, const std::string& output, py::object hysteresis) -> py::dict {
+                TapeImportRequest request;
+                request.sourcePath = source;
+                if (!hysteresis.is_none())
+                    request.hysteresis = hysteresis.cast<double>();
+
+                TapeImportResult imported = ImportAudioToTape(request);
+                TapeSaveResult saved;
+                if (imported.ok)
+                    saved = SaveTapeImage(imported.image, output);
+
+                py::dict ret;
+                ret["ok"] = imported.ok && saved.ok;
+                ret["error"] = !imported.ok ? imported.errorText : saved.errorText;
+                ret["decoder"] = imported.decoderUsed;
+                ret["sample_rate"] = imported.sampleRate;
+                ret["samples_decoded"] = imported.samplesDecoded;
+                ret["signal_edges"] = imported.signalEdges;
+                ret["blocks_recognized"] = imported.blocksRecognized;
+                ret["blocks_written"] = saved.blocksWritten;
+                ret["output_path"] = output;
+                py::list warnings;
+                for (const std::string& warning : imported.warnings)
+                    warnings.append(warning);
+                ret["warnings"] = warnings;
+                return ret;
+            }, "Import WAV/FLAC/MP3 audio as a .tzx/.tap image",
+               py::arg("source"), py::arg("output"), py::arg("hysteresis") = py::none())
             
             // Snapshot operations
             .def("snapshot_load", &Emulator::LoadSnapshot, "Load snapshot file", py::arg("path"))
@@ -520,7 +826,110 @@ namespace PythonBindings
                     if (bpm) bpm->ClearLastTriggeredBreakpoint();
                 }
             }, "Clear last triggered breakpoint tracking")
-            
+
+            // Labels/Symbols
+            .def("label_get", [](Emulator& self, const std::string& name) -> py::object {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return py::none();
+                LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+                auto label = lm ? lm->GetLabelByName(name) : nullptr;
+                if (!label) return py::none();
+                py::dict result;
+                result["name"] = label->name;
+                result["address"] = label->address;
+                if (label->bank != UINT16_MAX) {
+                    result["bank"] = label->bank;
+                    result["bankType"] = label->isROM() ? "rom" : "ram";
+                }
+                result["type"] = label->type;
+                result["module"] = label->module;
+                result["comment"] = label->comment;
+                result["active"] = label->active;
+                return result;
+            }, "Get label by name", py::arg("name"))
+            .def("label_at", [](Emulator& self, uint16_t address) -> py::object {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return py::none();
+                LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+                auto label = lm ? lm->GetLabelByZ80Address(address) : nullptr;
+                if (!label) return py::none();
+                py::dict result;
+                result["name"] = label->name;
+                result["address"] = label->address;
+                if (label->bank != UINT16_MAX) {
+                    result["bank"] = label->bank;
+                    result["bankType"] = label->isROM() ? "rom" : "ram";
+                }
+                result["type"] = label->type;
+                result["module"] = label->module;
+                result["active"] = label->active;
+                return result;
+            }, "Get label at address", py::arg("address"))
+            .def("label_add", [](Emulator& self, const std::string& name, uint16_t address,
+                                 const std::string& type, const std::string& module,
+                                 const std::string& comment) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return false;
+                LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+                return lm && lm->AddLabel(name, address, UINT16_MAX, UINT16_MAX, type, module, comment);
+            }, "Add a label", py::arg("name"), py::arg("address"),
+               py::arg("type") = "", py::arg("module") = "", py::arg("comment") = "")
+            .def("label_remove", [](Emulator& self, const std::string& name) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return false;
+                LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+                return lm && lm->RemoveLabel(name);
+            }, "Remove label by name", py::arg("name"))
+            .def("label_count", [](Emulator& self) -> size_t {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return 0;
+                LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+                return lm ? lm->GetLabelCount() : 0;
+            }, "Get label count")
+            .def("labels_list", [](Emulator& self, const std::string& module,
+                                   const std::string& type) -> py::list {
+                py::list result;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return result;
+                LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+                if (!lm) return result;
+
+                LabelManager::LabelFilter filter;
+                if (!module.empty()) filter.module = module;
+                if (!type.empty()) filter.type = type;
+
+                auto labels = lm->GetLabels(filter);
+                for (const auto& label : labels) {
+                    py::dict lbl;
+                    lbl["name"] = label->name;
+                    lbl["address"] = label->address;
+                    if (label->bank != UINT16_MAX) lbl["bank"] = label->bank;
+                    lbl["type"] = label->type;
+                    lbl["module"] = label->module;
+                    lbl["active"] = label->active;
+                    result.append(lbl);
+                }
+                return result;
+            }, "List labels with optional filter", py::arg("module") = "", py::arg("type") = "")
+            .def("labels_clear", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return;
+                LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+                if (lm) lm->ClearAllLabels();
+            }, "Clear all labels")
+            .def("symbols_load", [](Emulator& self, const std::string& path) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return false;
+                LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+                return lm && lm->LoadLabels(path);
+            }, "Load symbols from file", py::arg("path"))
+            .def("symbols_save", [](Emulator& self, const std::string& path) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return false;
+                LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+                return lm && lm->SaveLabels(path);
+            }, "Save symbols to file", py::arg("path"))
+
             // Disassembly
             .def("disasm", [](Emulator& self, int address, int count) -> py::list {
                 py::list result;
@@ -786,8 +1195,11 @@ namespace PythonBindings
                 info["cylinders"] = disk->getCylinders();
                 info["sides"] = disk->getSides();
                 info["tracks"] = disk->getCylinders() * disk->getSides();
-                info["sectors_per_track"] = 16;
-                info["sector_size"] = 256;
+                // Geometry of track 0 side 0 (tracks may differ on non-TR-DOS images)
+                auto* track0 = disk->getTrackForCylinderAndSide(0, 0);
+                info["sectors_per_track"] = track0 ? static_cast<int>(track0->sectorCount()) : 0;
+                info["sector_size"] = (track0 && track0->sectorCount() > 0) ? static_cast<int>(track0->getRawSector(0)->dataSize) : 0;
+                info["track_size"] = track0 ? static_cast<int>(track0->rawSize()) : 0;
                 return info;
             }, "Get disk geometry info", py::arg("drive"))
             .def("disk_read_sector", [](Emulator& self, int drive, int cyl, int side, int sector) -> py::bytes {
@@ -799,10 +1211,10 @@ namespace PythonBindings
                 if (!disk) return py::bytes();
                 auto* track = disk->getTrackForCylinderAndSide(cyl, side);
                 if (!track) return py::bytes();
-                auto* sec = track->getSector(sector);
-                if (!sec) return py::bytes();
-                return py::bytes(reinterpret_cast<char*>(sec->data), 256);
-            }, "Read sector data (256 bytes)", py::arg("drive"), py::arg("cyl"), py::arg("side"), py::arg("sector"))
+                auto* sec = track->getSector(static_cast<uint8_t>(sector));  // Sector number = sector + 1
+                if (!sec || !sec->hasData) return py::bytes();
+                return py::bytes(reinterpret_cast<char*>(sec->data), sec->dataSize);
+            }, "Read sector data (128..1024 bytes depending on the sector's ID field)", py::arg("drive"), py::arg("cyl"), py::arg("side"), py::arg("sector"))
             .def("disk_read_sector_hex", [](Emulator& self, int drive, int track, int sector) -> std::string {
                 auto* ctx = self.GetContext();
                 if (!ctx || drive < 0 || drive > 3) return "";

@@ -44,6 +44,8 @@
 #include <string>
 #include <vector>
 
+#include "_helpers/testpathhelper.h"
+
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
 #include "debugger/ttd/machine_state_hash.h"
@@ -648,8 +650,8 @@ TEST_F(TTD_Seek_Exhaustive_RoundTrip_Test, DiskFile_WriteAndRead_PreservesAllRef
     const auto refsBefore = CaptureReferences();
     ASSERT_EQ(refsBefore.size(), kRecordedFrames + 1);
 
-    // Write to a temp .ttd file.
-    const std::string tmpPath = "/tmp/ttd_seek_exhaustive_session.ttd";
+    // Write to a scratch .ttd file.
+    const std::string tmpPath = TestPathHelper::GetUniqueTestScratchPath("ttd_seek_exhaustive_session.ttd");
     {
         std::ofstream out(tmpPath, std::ios::binary | std::ios::trunc);
         ASSERT_TRUE(out.good());
@@ -689,6 +691,11 @@ TEST_F(TTD_Seek_Exhaustive_RoundTrip_Test, DiskFile_WriteAndRead_PreservesAllRef
         EXPECT_EQ(HashScreen(), refsAfter[i].vramHash)
             << "PostDiskFile cp " << i << ": vramHash drift";
     }
+
+    // Clean up the scratch session file (its name is PID-unique, so without
+    // this removal sessions would accumulate in scratch/ run over run)
+    std::error_code removeEc;
+    std::filesystem::remove(tmpPath, removeEc);
 }
 
 // ===========================================================================
