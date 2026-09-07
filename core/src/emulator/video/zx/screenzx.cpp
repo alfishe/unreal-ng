@@ -650,6 +650,33 @@ bool ScreenZX::IsOnScreenByTiming(uint32_t tstate)
 
 /// region <Screen class methods override>
 
+/// @brief Set border color with Pentagon-specific 1T delay compensation
+/// @param color Border color (bits 0-2 used)
+/// @see docs/timing/pentagon-border-timing.md for full timing analysis
+void ScreenZX::SetBorderColor(uint8_t color)
+{
+    // Flush pending pixels with the OLD border color
+    UpdateScreen();
+
+    // Pentagon-class ULAs: render one additional T-state (2 pixels) with the OLD color.
+    // INT timing is quantized to 4T due to HALT instruction, but border effects need
+    // 1T precision. This compensates for the 2-pixel border-ahead-of-paper offset
+    // visible in demos like "Across The Edge" by Demarche.
+    // See: docs/timing/pentagon-border-timing.md
+    if (_mode == M_PENTAGON128K || _mode == M_PMC || _mode == M_P16 ||
+        _mode == M_P384 || _mode == M_PHR)
+    {
+        uint32_t nextT = _prevTstate + 1;
+        if (nextT < _rasterState.maxFrameTiming)
+        {
+            Draw(nextT);  // Render T+1 with OLD color
+            _prevTstate = nextT;
+        }
+    }
+
+    _borderColor = color & 0b0000'0111;
+}
+
 /// Emulate ULA video signal generator
 /// Note: ULA is drawing 2 pixels per t-state @ 3.5MHz
 /// See: http://www.zxdesign.info/vidparam.shtml

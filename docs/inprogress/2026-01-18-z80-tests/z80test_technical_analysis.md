@@ -136,7 +136,7 @@ The 163 tests are broadly organized to cover the entire Z80 instruction set. Eac
 - **CPI, CPD, CPIR, CPDR**: Block memory compares.
 - **INI, IND, INIR, INDR**: Block Input.
 - **OUTI, OUTD, OTIR, OTDR**: Block Output.
-- **Complexity**: These tests are the primary reason for `AllFlags` failures. They modify the hidden flags $XF/YF$ based on $(A + L)$ or $(A + L + Carry)$, and the $P/V$ bit reflects the [BC](file:///Volumes/TB4-4Tb/Projects/emulators/github/Zero-Emulator/Ziggy/Speccy/Z80.cs#1191-1206) counter.
+- **Complexity**: These tests are the primary reason for `AllFlags` failures. They modify the hidden flags $XF/YF$ based on $(A + L)$ or $(A + L + Carry)$, and the $P/V$ bit reflects the BC counter (Zero-Emulator source, `Ziggy/Speccy/Z80.cs:1191-1206`).
 
 ### Group 6: Bit Manipulation (Tests 126-146)
 - **BIT N, register**: Verifies bit testing. **CRITICAL**: The hidden flags XF/YF are copied from the internal register `Q` (or the opcode's high byte).

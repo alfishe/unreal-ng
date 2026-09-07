@@ -2,8 +2,8 @@
 
 **Date:** 2026-08-09
 **Scope:** Pentagon / ZX-Spectrum 48K / ZX-Spectrum 128K video timing comparison
-**Reference HDL:** `/Volumes/TB4-4Tb/Projects/mister/cores/ZX-Spectrum_MISTer`
-**Reference core:** `/Volumes/TB4-4Tb/Projects/Test/unreal-ng/core`
+**Reference HDL:** MiSTer ZX-Spectrum core (local clone), `cores/ZX-Spectrum_MISTer`
+**Reference core:** `core`
 
 ---
 

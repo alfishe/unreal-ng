@@ -39,6 +39,10 @@ public:
     // Reset viewport selection to default (Full Overscan)
     void resetViewportSelection();
 
+    // Sync the Tape Manager check state from the window's own close box
+    // (setChecked does not re-emit triggered)
+    void setTapeManagerChecked(bool checked);
+
     // Observer callback for emulator state changes
     void handleEmulatorStateChanged(int id, Message* message);
     void handleEmulatorInstanceCreated(int id, Message* message);
@@ -50,6 +54,7 @@ signals:
     void openSnapshotRequested();
     void openTapeRequested();
     void openDiskRequested();
+    void importAudioTapeRequested();  // tape-audio-bridge §7.3: WAV/FLAC/MP3 → .tzx/.tap
     void saveSnapshotRequested();
     void saveSnapshotZ80Requested();
     
@@ -57,6 +62,7 @@ signals:
     void saveDiskRequested();       // Save to original path
     void saveDiskAsTRDRequested();  // Save As TRD
     void saveDiskAsSCLRequested();  // Save As SCL
+    void saveDiskAsUDIRequested();  // Save As UDI (lossless)
 
     // Emulator control signals
     void startRequested();
@@ -77,12 +83,15 @@ signals:
     // View signals
     void debuggerToggled(bool visible);
     void logWindowToggled(bool visible);
+    void tapeManagerToggled(bool visible);
     void fullScreenToggled();
     void overscanModeToggled(bool enabled);
     void viewportChanged(int presetIndex);
 
     // Machine signals
     void machineModelChangeRequested(const QString& modelShortName);
+    void tapeTrapsToggled(bool enabled);
+    void turboTapeToggled(bool enabled);
 
     // Tools signals
     void intParametersRequested();
@@ -125,6 +134,7 @@ private:
     QAction* _openSnapshotAction;
     QAction* _openTapeAction;
     QAction* _openDiskAction;
+    QAction* _importAudioTapeAction;
     QMenu* _saveSnapshotMenu;
     QAction* _saveSnapshotSNAAction;
     QAction* _saveSnapshotZ80Action;
@@ -132,6 +142,7 @@ private:
     QAction* _saveDiskAction;       // Save (to original path)
     QAction* _saveDiskTRDAction;    // Save as TRD
     QAction* _saveDiskSCLAction;    // Save as SCL
+    QAction* _saveDiskUDIAction;    // Save as UDI
     QAction* _recentFilesAction;
     QAction* _exitAction;
 
@@ -141,6 +152,7 @@ private:
     // View Menu Actions
     QAction* _debuggerAction;
     QAction* _logWindowAction;
+    QAction* _tapeManagerAction;
     QAction* _fullScreenAction;
     QAction* _zoomInAction;
     QAction* _zoomOutAction;
@@ -174,6 +186,8 @@ private:
     QActionGroup* _machineModelGroup;
     std::vector<QAction*> _machineModelActions;
     QString _currentModelShortName;
+    QAction* _tapeTrapsAction;
+    QAction* _turboTapeAction;
 
     // Debug Menu Actions
     QAction* _debugModeAction;

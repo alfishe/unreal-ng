@@ -8,6 +8,7 @@
 #include "debugger/labels/labelmanager.h"
 #include "emulator/emulatorcontext.h"
 #include "pch.h"
+#include "_helpers/testpathhelper.h"
 
 void LabelManager_test::SetUp()
 {
@@ -182,7 +183,7 @@ TEST_F(LabelManager_test, ClearAllLabels)
 TEST_F(LabelManager_test, ParseMapFile)
 {
     // Save test map file to disk
-    std::string tempFilePath = (std::filesystem::temp_directory_path() / "test_map_file.map").string();
+    std::string tempFilePath = TestPathHelper::GetUniqueTestScratchPath("test_map_file.map");
     {
         std::ofstream outFile(tempFilePath);
         outFile << _testMapFile.str();
@@ -212,7 +213,7 @@ TEST_F(LabelManager_test, ParseMapFile)
 TEST_F(LabelManager_test, ParseSymFile)
 {
     // Save test sym file to disk
-    std::string tempFilePath = (std::filesystem::temp_directory_path() / "test_sym_file.sym").string();
+    std::string tempFilePath = TestPathHelper::GetUniqueTestScratchPath("test_sym_file.sym");
     {
         std::ofstream outFile(tempFilePath);
         outFile << _testSymFile.str();
@@ -242,7 +243,7 @@ TEST_F(LabelManager_test, ParseSymFile)
 TEST_F(LabelManager_test, AutoDetectFileFormat)
 {
     // Test with .map extension
-    std::string mapFilePath = (std::filesystem::temp_directory_path() / "test_file.map").string();
+    std::string mapFilePath = TestPathHelper::GetUniqueTestScratchPath("test_file.map");
     {
         std::ofstream outFile(mapFilePath);
         outFile << _testMapFile.str();
@@ -257,7 +258,7 @@ TEST_F(LabelManager_test, AutoDetectFileFormat)
     _labelManager->ClearAllLabels();
 
     // Test with .sym extension
-    std::string symFilePath = (std::filesystem::temp_directory_path() / "test_file.sym").string();
+    std::string symFilePath = TestPathHelper::GetUniqueTestScratchPath("test_file.sym");
     {
         std::ofstream outFile(symFilePath);
         outFile << _testSymFile.str();
@@ -279,7 +280,7 @@ TEST_F(LabelManager_test, SaveLabels)
     _labelManager->AddLabel("LABEL3", 0x3000, 0x00, 0x3000, "bss", "module2", "Test label 3");
 
     // Save to a file
-    std::string tempFilePath = (std::filesystem::temp_directory_path() / "saved_labels.sym").string();
+    std::string tempFilePath = TestPathHelper::GetUniqueTestScratchPath("saved_labels.sym");
     bool result = _labelManager->SaveLabels(tempFilePath);
     EXPECT_TRUE(result);
 

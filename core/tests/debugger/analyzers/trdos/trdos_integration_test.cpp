@@ -316,7 +316,7 @@ TEST_F(TRDOSIntegration_test, AnalyzerBreakpointIsSilent)
         (void)id;
         (void)message;
     };
-    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
+    uint64_t handlerId = messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
     
     // Manually trigger the breakpoint hit path
     if (_z80)
@@ -331,7 +331,7 @@ TEST_F(TRDOSIntegration_test, AnalyzerBreakpointIsSilent)
     // Brief wait for any async notifications
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     
-    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
+    messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
     
     // Analyzer should have captured events
     EXPECT_GT(_analyzer->getEventCount(), 0) << "Analyzer should capture event";

@@ -743,7 +743,7 @@ TEST(ThrottlerIntegration_Test, EgressRatePattern)
 /// like the strategy's ShouldExecute sugar - identical pass/reject patterns on the same ticks.
 TEST(ThrottlerIntegration_Test, PhasesMatchSugarEndToEnd)
 {
-    const uint64_t intervalTicks[] = {0, 5, 16, 16, 20, 32, 31, 47, 48, 100};
+    const uint64_t intervalTicks[] = {0, 5, 16, 16, 20, 31, 32, 47, 48, 100};  // non-decreasing: Observe() asserts on a backwards tick
     int throttlerCalls = 0;
     auto throttler = MakeThrottler(MinInterval(16), [&throttlerCalls] { ++throttlerCalls; });
     MinInterval sugar(16);

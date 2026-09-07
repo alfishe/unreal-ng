@@ -4,6 +4,12 @@
 - All source and header files should be strictly lowercase.
 - Do NOT use underscores in filenames (e.g., use `testpathhelper.h` instead of `test_path_helper.h`).
 
+## Paths in Documentation and Scripts
+- Reference repository files **relative to the repository root only** — never with machine-specific absolute paths (documentation, Python, and code comments alike).
+- Python scripts must compute the root at runtime (`REPO_ROOT = Path(__file__).resolve().parents[N]`) instead of hardcoding it — this works from any working directory.
+- In GUI code use platform APIs (e.g., `QStandardPaths::writableLocation()`) instead of hardcoded user directories.
+- To detect and repair leaks, run `python3 tools/fix-absolute-paths.py` (dry run over tracked markdown by default; add `--ext py --apply` to widen and write). Supports `--root` to also strip historical mount points of this checkout.
+
 ## C++ Conventions
 - **Methods/Functions**: Use `PascalCase` (e.g., `GetExecutableDir()`).
 - **Variables/Fields**: Use `camelCase` (e.g., `framebufferDigest`, `tStates`).

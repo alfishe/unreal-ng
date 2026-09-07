@@ -377,50 +377,14 @@ static void registerEmulatorBindings()
 
     main.def("emulator_manager_list", []() { return EmulatorManager::GetInstance()->GetEmulatorIds(); });
 
-    // Register Emulator class
-    py::class_<Emulator, std::shared_ptr<Emulator>>(main, "Emulator")
-        .def("init", &Emulator::Init)
-        .def("get_uuid", &Emulator::GetUUID)
-        .def("is_running", &Emulator::IsRunning)
-        .def("get_pc",
-             [](Emulator& emu) {
-                 auto* s = emu.GetZ80State();
-                 return s ? s->pc : 0;
-             })
-        .def("get_sp",
-             [](Emulator& emu) {
-                 auto* s = emu.GetZ80State();
-                 return s ? s->sp : 0;
-             })
-        .def("get_af",
-             [](Emulator& emu) {
-                 auto* s = emu.GetZ80State();
-                 return s ? s->af : 0;
-             })
-        .def("read_memory", [](Emulator& emu, uint16_t addr) { return emu.GetMemory()->DirectReadFromZ80Memory(addr); })
-        .def("get_breakpoint_manager", &Emulator::GetBreakpointManager, py::return_value_policy::reference)
-        // Frame stepping methods
-        .def("run_frame", [](Emulator& emu, bool skipBP) { emu.RunFrame(skipBP); },
-             py::arg("skip_breakpoints") = true)
-        .def("run_frames", [](Emulator& emu, unsigned count, bool skipBP) { emu.RunNFrames(count, skipBP); },
-             py::arg("count"), py::arg("skip_breakpoints") = true)
-        // Atomic stepping methods
-        .def("run_tstates", [](Emulator& emu, unsigned tstates, bool skipBP) { emu.RunTStates(tstates, skipBP); },
-             py::arg("tstates"), py::arg("skip_breakpoints") = true)
-        .def("run_to_scanline", [](Emulator& emu, unsigned scanline, bool skipBP) { emu.RunUntilScanline(scanline, skipBP); },
-             py::arg("scanline"), py::arg("skip_breakpoints") = true)
-        .def("run_scanlines", [](Emulator& emu, unsigned count, bool skipBP) { emu.RunNScanlines(count, skipBP); },
-             py::arg("count"), py::arg("skip_breakpoints") = true)
-        .def("run_to_pixel", [](Emulator& emu, bool skipBP) { emu.RunUntilNextScreenPixel(skipBP); },
-             py::arg("skip_breakpoints") = true)
-        .def("run_to_interrupt", [](Emulator& emu, bool skipBP) { emu.RunUntilInterrupt(skipBP); },
-             py::arg("skip_breakpoints") = true)
-        .def("run_until_condition", [](Emulator& emu, py::function predicate, unsigned maxTStates) {
-                 emu.RunUntilCondition([&predicate](const Z80State& state) -> bool {
-                     return predicate(state.pc, state.af, state.bc, state.de, state.hl).cast<bool>();
-                 }, maxTStates);
-             },
-             py::arg("predicate"), py::arg("max_tstates") = 0);
+    // Alias the unreal_emulator module's Emulator class into __main__ instead
+    // of registering a second pybind11 type for the same C++ class: pybind11
+    // refuses duplicate type registration across modules ("type is already
+    // registered"), which used to break `import unreal_emulator` in the live
+    // app. The module binding is the single source of truth and includes the
+    // legacy methods (init/get_uuid/read_memory/get_breakpoint_manager/
+    // run_until_condition).
+    main.attr("Emulator") = py::module_::import("unreal_emulator").attr("Emulator");
 
     // Register BreakpointManager
     py::class_<BreakpointManager>(main, "BreakpointManager")

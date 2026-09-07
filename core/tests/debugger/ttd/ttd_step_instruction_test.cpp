@@ -20,6 +20,7 @@
 #endif
 
 #include "base/featuremanager.h"
+#include "_helpers/testpathhelper.h"
 #include "common/modulelogger.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/emulator.h"
@@ -157,8 +158,7 @@ TEST_F(TTD_StepInstruction_Test, SerializeSession_RoundTrip_PreservesJournal)
     ASSERT_GT(journalSizeBefore, 0u);
 
     // Serialize
-    const std::string tmpfile =
-        (std::filesystem::temp_directory_path() / "ttd_step_instruction_test.bin").string();
+    const std::string tmpfile = TestPathHelper::GetUniqueTestScratchPath("ttd_step_instruction_test.bin");
 
     {
         std::ofstream out(tmpfile, std::ios::binary);

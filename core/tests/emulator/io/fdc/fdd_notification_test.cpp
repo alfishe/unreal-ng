@@ -181,17 +181,23 @@ protected:
         }
     }
     
+    static bool WaitForCondition(const std::function<bool()>& condition, int timeoutMs = 200)
+    {
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            if (condition())
+                return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return condition();
+    }
+
     void SetUp() override
     {
         // Clear captured events before each test
         g_insertedDisks.clear();
         g_ejectedDisks.clear();
-    }
-    
-    void TearDown() override
-    {
-        // Allow async message dispatch to complete
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 };
 
@@ -204,9 +210,7 @@ TEST_F(FDDNotificationTest, InsertDiskSendsNotificationWithFullContext)
     image.setFilePath(testPath);
     
     fdd.insertDisk(&image);
-    
-    // Allow async message dispatch
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    ASSERT_TRUE(WaitForCondition([]() { return !g_insertedDisks.empty(); }));
     
     ASSERT_EQ(g_insertedDisks.size(), 1);
     EXPECT_EQ(g_insertedDisks[0].diskPath, testPath);
@@ -222,13 +226,11 @@ TEST_F(FDDNotificationTest, EjectDiskSendsNotificationWithFullContext)
     image.setFilePath(testPath);
     
     fdd.insertDisk(&image);
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    ASSERT_TRUE(WaitForCondition([]() { return !g_insertedDisks.empty(); }));
     g_insertedDisks.clear();  // Clear the insertion notification
     
     fdd.ejectDisk();
-    
-    // Allow async message dispatch
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    ASSERT_TRUE(WaitForCondition([]() { return !g_ejectedDisks.empty(); }));
     
     ASSERT_EQ(g_ejectedDisks.size(), 1);
     EXPECT_EQ(g_ejectedDisks[0].diskPath, testPath);
@@ -241,9 +243,7 @@ TEST_F(FDDNotificationTest, InsertNullDoesNotSendNotification)
     FDD fdd(&ctx);
     
     fdd.insertDisk(nullptr);
-    
-    // Allow async message dispatch
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
     
     EXPECT_TRUE(g_insertedDisks.empty());
 }
@@ -258,20 +258,20 @@ TEST_F(FDDNotificationTest, MultipleInsertEjectCycles)
     
     // Insert disk 1
     fdd.insertDisk(&image1);
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    ASSERT_TRUE(WaitForCondition([]() { return g_insertedDisks.size() == 1; }));
     
     // Eject disk 1
     fdd.ejectDisk();
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    ASSERT_TRUE(WaitForCondition([]() { return g_ejectedDisks.size() == 1; }));
     
     // Re-insert same disk with different path (simulating disk swap)
     image1.setFilePath("/disk2.trd");
     fdd.insertDisk(&image1);
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    ASSERT_TRUE(WaitForCondition([]() { return g_insertedDisks.size() == 2; }));
     
     // Eject again
     fdd.ejectDisk();
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    ASSERT_TRUE(WaitForCondition([]() { return g_ejectedDisks.size() == 2; }));
     
     // Should have 2 insertions and 2 ejections
     ASSERT_EQ(g_insertedDisks.size(), 2);
@@ -291,9 +291,7 @@ TEST_F(FDDNotificationTest, InsertWithEmptyPath)
     // Don't set path - should be empty
     
     fdd.insertDisk(&image);
-    
-    // Allow async message dispatch
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    ASSERT_TRUE(WaitForCondition([]() { return !g_insertedDisks.empty(); }));
     
     ASSERT_EQ(g_insertedDisks.size(), 1);
     EXPECT_TRUE(g_insertedDisks[0].diskPath.empty());
@@ -307,9 +305,7 @@ TEST_F(FDDNotificationTest, PayloadContainsDriveId)
     image.setFilePath("/test.trd");
     
     fdd.insertDisk(&image);
-    
-    // Allow async message dispatch
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    ASSERT_TRUE(WaitForCondition([]() { return !g_insertedDisks.empty(); }));
     
     ASSERT_EQ(g_insertedDisks.size(), 1);
     // Drive ID should be 0 for default FDD

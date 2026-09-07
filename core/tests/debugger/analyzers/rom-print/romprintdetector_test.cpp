@@ -323,6 +323,10 @@ TEST_F(ROMPrintDetector_test, IntegrationTest_BasicEncoderExecution)
     for (int i = 0; i < 100; i++)
     {
         mainLoop->RunFrame();
+        if ((i + 1) % 5 == 0 && detectorPtr->getFullHistory().find("Second line") != std::string::npos)
+        {
+            break;
+        }
     }
     
     // Use OCR to verify the PRINT output is on screen

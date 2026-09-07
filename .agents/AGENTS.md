@@ -42,8 +42,13 @@ ninja -C cmake-build-release
 ## Running Tests & Benchmarks
 Tests are executed using the `core-tests` binary, and benchmarks via `core-benchmarks`:
 ```bash
-# Run all tests
+# Run all tests (sequential, ~37s)
 ./cmake-build-release/bin/core-tests
+
+# Run all tests in parallel (~12s, 3x faster)
+cmake --build cmake-build-release --target test-parallel
+# Or use the script directly:
+./scripts/run-tests-parallel.sh ./cmake-build-release/bin/core-tests
 
 # Run specific tests
 ./cmake-build-release/bin/core-tests --gtest_filter="*TestName*"
@@ -53,6 +58,20 @@ Tests are executed using the `core-tests` binary, and benchmarks via `core-bench
 
 # Run specific benchmarks
 ./cmake-build-release/bin/core-benchmarks --benchmark_filter="*BenchName*"
+```
+
+### Parallel Test Execution (GTest Sharding)
+The `test-parallel` CMake target uses GTest's built-in sharding to split tests across 4 processes:
+- **Sequential:** ~37s at 76% CPU
+- **Parallel (4-way):** ~12s at 250% CPU
+- **Speedup:** ~3x on 4+ core machines
+
+Manual sharding (useful for CI pipelines):
+```bash
+for i in 0 1 2 3; do
+  GTEST_TOTAL_SHARDS=4 GTEST_SHARD_INDEX=$i ./cmake-build-release/bin/core-tests &
+done
+wait
 ```
 
 ## WebAPI Verification Testing

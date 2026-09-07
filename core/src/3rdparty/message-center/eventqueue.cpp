@@ -63,7 +63,7 @@ void EventQueue::dispose()
     }
 }
 
-int EventQueue::AddObserver(const std::string& topic, ObserverCallback callback)
+uint64_t EventQueue::AddObserver(const std::string& topic, ObserverCallback callback)
 {
     ObserverDescriptor* observer = new ObserverDescriptor();
     observer->callback = callback;
@@ -88,7 +88,7 @@ int EventQueue::AddObserver(const std::string& topic, ObserverCallback callback)
 // ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&TestObservers_ClassMethod_class::ObserverTestMethod);
 //
 // queue.AddObserver(topic, observerInstance, callback);
-int EventQueue::AddObserver(const std::string& topic, Observer* instance, ObserverCallbackMethod callback)
+uint64_t EventQueue::AddObserver(const std::string& topic, Observer* instance, ObserverCallbackMethod callback)
 {
     ObserverDescriptor* observer = new ObserverDescriptor();
     observer->callbackMethod = callback;
@@ -97,29 +97,35 @@ int EventQueue::AddObserver(const std::string& topic, Observer* instance, Observ
     return AddObserver(topic, observer);
 }
 
-int EventQueue::AddObserver(const std::string& topic, ObserverCallbackFunc callback)
+uint64_t EventQueue::AddObserver(const std::string& topic, ObserverCallbackFunc callback)
 {
     ObserverDescriptor* observer = new ObserverDescriptor();
     observer->callbackFunc = callback;
     return AddObserver(topic, observer);
 }
 
-int EventQueue::AddObserver(const std::string& topic, ObserverDescriptor* observer)
+uint64_t EventQueue::AddObserver(const std::string& topic, ObserverDescriptor* observer)
 {
     // Register Topic (or get TopicID if already registered)
-    int result = RegisterTopic(topic);
+    int topicId = RegisterTopic(topic);
 
-    if (result >= 0)
+    if (topicId < 0)
+        return 0;  // Invalid topic
+
+    // Assign unique observer ID
+    uint64_t observerId = m_nextObserverId.fetch_add(1, std::memory_order_relaxed);
+    observer->observerId = observerId;
+
     {
         // Lock parallel threads to access (active till return from method and lock destruction)
         std::lock_guard<std::mutex> lock(m_mutexObservers);
 
-        ObserverVectorPtr observers = GetObservers(result);
+        ObserverVectorPtr observers = GetObservers(topicId);
         if (observers == nullptr)
         {
             // Observers list not created yet - create vector and register it in topic-observers map collection
             observers = new ObserversVector();
-            m_topicObservers.insert( {result, observers });
+            m_topicObservers.insert( {topicId, observers });
         }
 
         if (observers != nullptr)
@@ -128,103 +134,122 @@ int EventQueue::AddObserver(const std::string& topic, ObserverDescriptor* observ
         }
     }
 
-    return result;
+    return observerId;
 }
 
 void EventQueue::RemoveObserver(const std::string& topic, ObserverCallback callback)
 {
     int result = ResolveTopic(topic);
 
-    // Lock parallel threads to access (active till return from method and lock destruction)
-    std::lock_guard<std::mutex> lock(m_mutexObservers);
-
-    ObserverVectorPtr observers = GetObservers(result);
-    if (observers != nullptr)
     {
-        ObserversVector::const_iterator it;
-        for (it = observers->begin(); it != observers->end(); )
+        // Lock parallel threads to access (active till return from method and lock destruction)
+        std::lock_guard<std::mutex> lock(m_mutexObservers);
+
+        ObserverVectorPtr observers = GetObservers(result);
+        if (observers != nullptr)
         {
-            ObserverDescriptor* observer = *it;
-
-            if (observer->callback == callback)
+            ObserversVector::const_iterator it;
+            for (it = observers->begin(); it != observers->end(); )
             {
-                // Erase current element and get next iterator value
-                it = observers->erase(it);
+                ObserverDescriptor* observer = *it;
 
-                // Destroy descriptor object
-                delete observer;
-            }
-            else
-            {
-                it++;
+                if (observer->callback == callback)
+                {
+                    // Erase current element and get next iterator value
+                    it = observers->erase(it);
+
+                    // Destroy descriptor object
+                    delete observer;
+                }
+                else
+                {
+                    it++;
+                }
             }
         }
     }
+
+    // In-flight dispatches may still be invoking this observer's handler from
+    // a pre-removal snapshot - wait for them (see WaitForDispatchesToComplete)
+    WaitForDispatchesToComplete();
 }
 
 void EventQueue::RemoveObserver(const std::string& topic, Observer* instance, ObserverCallbackMethod callback)
 {
     int result = ResolveTopic(topic);
 
-    // Lock parallel threads to access (active till return from method and lock destruction)
-    std::lock_guard<std::mutex> lock(m_mutexObservers);
-
-    ObserverVectorPtr observers = GetObservers(result);
-    if (observers != nullptr)
     {
-        ObserversVector::const_iterator it;
-        for (it = observers->begin(); it != observers->end(); )
+        // Lock parallel threads to access (active till return from method and lock destruction)
+        std::lock_guard<std::mutex> lock(m_mutexObservers);
+
+        ObserverVectorPtr observers = GetObservers(result);
+        if (observers != nullptr)
         {
-            ObserverDescriptor* observer = *it;
-
-            if (observer->observerInstance == instance && observer->callbackMethod == callback)
+            ObserversVector::const_iterator it;
+            for (it = observers->begin(); it != observers->end(); )
             {
-                // Erase current element and get next iterator value
-                it = observers->erase(it);
+                ObserverDescriptor* observer = *it;
 
-                // Destroy descriptor object
-                delete observer;
-            }
-            else
-            {
-                it++;
+                if (observer->observerInstance == instance && observer->callbackMethod == callback)
+                {
+                    // Erase current element and get next iterator value
+                    it = observers->erase(it);
+
+                    // Destroy descriptor object
+                    delete observer;
+                }
+                else
+                {
+                    it++;
+                }
             }
         }
     }
+
+    // In-flight dispatches may still be invoking this observer's handler from
+    // a pre-removal snapshot - wait for them (see WaitForDispatchesToComplete)
+    WaitForDispatchesToComplete();
 }
 
-void EventQueue::RemoveObserver(const std::string& topic, ObserverCallbackFunc callback)
+void EventQueue::RemoveObserverById(const std::string& topic, uint64_t observerId)
 {
-    int result = ResolveTopic(topic);
+    if (observerId == 0)
+        return;  // Invalid ID
 
-    // Lock parallel threads to access (active till return from method and lock destruction)
-    std::lock_guard<std::mutex> lock(m_mutexObservers);
+    int topicId = ResolveTopic(topic);
 
-    ObserverVectorPtr observers = GetObservers(result);
-    if (observers != nullptr)
     {
-        auto callbackTargetAddr = mc_lambda_display::getTargetAddress(callback);
+        // Lock parallel threads to access (active till return from method and lock destruction)
+        std::lock_guard<std::mutex> lock(m_mutexObservers);
 
-        ObserversVector::const_iterator it;
-        for (it = observers->begin(); it != observers->end(); )
+        ObserverVectorPtr observers = GetObservers(topicId);
+        if (observers != nullptr)
         {
-            ObserverDescriptor* observer = *it;
-            auto curTargetAddr = mc_lambda_display::getTargetAddress(observer->callbackFunc);
-
-            if (curTargetAddr == callbackTargetAddr)
+            ObserversVector::const_iterator it;
+            for (it = observers->begin(); it != observers->end(); )
             {
-                // Erase current element and get next iterator value
-                it = observers->erase(it);
+                ObserverDescriptor* observer = *it;
 
-                // Destroy descriptor object
-                delete observer;
-            }
-            else
-            {
-                it++;
+                if (observer->observerId == observerId)
+                {
+                    // Erase current element and get next iterator value
+                    it = observers->erase(it);
+
+                    // Destroy descriptor object
+                    delete observer;
+                    break;  // IDs are unique, no need to continue
+                }
+                else
+                {
+                    it++;
+                }
             }
         }
     }
+
+    // In-flight dispatches may still be invoking this observer's handler from
+    // a pre-removal snapshot - wait for them (see WaitForDispatchesToComplete)
+    WaitForDispatchesToComplete();
 }
 
 int EventQueue::ResolveTopic(const char* topic)
@@ -242,6 +267,10 @@ int EventQueue::ResolveTopic(const std::string& topic)
 
     if (topic.length() > 0)
     {
+        // The registry is mutated by RegisterTopic() from any thread while
+        // Post() resolves topics from the dispatching path - guard the access
+        std::lock_guard<std::mutex> lock(m_mutexTopics);
+
         if (mc::key_exists(m_topicsResolveMap, topic))
         {
             result = m_topicsResolveMap[topic];
@@ -265,6 +294,9 @@ int EventQueue::RegisterTopic(const std::string& topic)
 
     if (topic.length() > 0)
     {
+        // The registry is read by ResolveTopic() from any thread - guard the access
+        std::lock_guard<std::mutex> lock(m_mutexTopics);
+
         if (mc::key_exists(m_topicsResolveMap, topic))
         {
             // Already registered. Returning it's ID
@@ -296,6 +328,9 @@ std::string EventQueue::GetTopicByID(int id)
 {
     std::string result;
 
+    // The registry is mutated by RegisterTopic() from any thread - guard the access
+    std::lock_guard<std::mutex> lock(m_mutexTopics);
+
     if (id > 0 && static_cast<unsigned>(id) < MAX_TOPICS)
     {
         result = m_topics[id];
@@ -306,6 +341,8 @@ std::string EventQueue::GetTopicByID(int id)
 
 void EventQueue::ClearTopics()
 {
+    std::lock_guard<std::mutex> lock(m_mutexTopics);
+
     m_topicsResolveMap.clear();
     for (auto& topic : m_topics)
     {
@@ -370,49 +407,53 @@ void EventQueue::Dispatch(int id, Message* message)
     if (message == nullptr)
         return;
 
-    // Hold m_mutexObservers across the whole iteration+invocation.
-    //
-    // Dispatch runs on the MessageCenter worker thread while RemoveObserver()
-    // (and dispose()) run on other threads - typically a GUI object
-    // unsubscribing from its own teardown. Without this lock the worker can be
-    // mid-iteration over the observers vector as another thread erase()s and
-    // delete()s a descriptor (or destroys the observer instance right after
-    // RemoveObserver returns), producing a use-after-free / wild call.
-    //
-    // Locking here makes RemoveObserver block until any in-flight dispatch to
-    // that observer completes, so an object that unsubscribes before it is
-    // destroyed is guaranteed not to receive a call into freed memory.
-    //
-    // Requirement: observer callbacks must NOT synchronously call
-    // Add/RemoveObserver() on this same EventQueue (that would self-deadlock on
-    // this non-recursive mutex). All callbacks in this project marshal to their
-    // own thread (e.g. Qt queued connections) instead, which is the correct
-    // pattern given dispatch happens on the worker thread.
+    // Snapshot the observer descriptors under m_mutexObservers and register
+    // this dispatch as active before releasing the lock: AddObserver() and
+    // RemoveObserver() mutate the very same topic vectors (and erase + delete
+    // the descriptors) under that mutex, so iterating the live storage from
+    // the worker thread raced with removals and crashed on freed descriptors
+    // (segfaults observed in parallel sharded test runs). Copying descriptor
+    // VALUES also keeps a snapshot invocation valid after the originals are
+    // deleted. The lock is deliberately NOT held while handlers run, so
+    // handlers may freely call AddObserver()/RemoveObserver()/Post().
+    std::vector<ObserverDescriptor> observersSnapshot;
     {
         std::lock_guard<std::mutex> lock(m_mutexObservers);
 
         ObserverVectorPtr observers = GetObservers(id);
-
         if (observers != nullptr)
         {
-            for (auto it : *observers)
+            observersSnapshot.reserve(observers->size());
+            for (const ObserverDescriptor* observer : *observers)
             {
-                if (it->callback != nullptr)
+                if (observer != nullptr)
                 {
-                    (*it->callback)(id, message);
-                }
-                else if (it->callbackMethod != nullptr && it->observerInstance != nullptr)
-                {
-                    ObserverCallbackMethod callbackMethod = it->callbackMethod;
-                    (it->observerInstance->*callbackMethod)(id, message);
-                }
-                else if (it->callbackFunc != nullptr)
-                {
-                    (it->callbackFunc)(id, message);
+                    observersSnapshot.push_back(*observer);
                 }
             }
         }
+
+        MarkDispatchActive();
     }
+
+    for (const ObserverDescriptor& observer : observersSnapshot)
+    {
+        if (observer.callback != nullptr)
+        {
+            (*observer.callback)(id, message);
+        }
+        else if (observer.callbackMethod != nullptr && observer.observerInstance != nullptr)
+        {
+            ObserverCallbackMethod callbackMethod = observer.callbackMethod;
+            (observer.observerInstance->*callbackMethod)(id, message);
+        }
+        else if (observer.callbackFunc != nullptr)
+        {
+            (observer.callbackFunc)(id, message);
+        }
+    }
+
+    MarkDispatchComplete();
 
     // Cleanup message when delivered
     if (message)
@@ -424,6 +465,53 @@ void EventQueue::Dispatch(int id, Message* message)
 
         delete message;
     }
+}
+
+namespace
+{
+    // Set on a thread currently inside Dispatch()'s invocation loop; removals
+    // issued from a handler must not wait for their own dispatch to complete
+    thread_local bool tl_inDispatch = false;
+}
+
+void EventQueue::MarkDispatchActive()
+{
+    {
+        std::lock_guard<std::mutex> lock(m_mutexDispatches);
+        m_activeDispatches++;
+    }
+
+    tl_inDispatch = true;
+}
+
+void EventQueue::MarkDispatchComplete()
+{
+    tl_inDispatch = false;
+
+    std::lock_guard<std::mutex> lock(m_mutexDispatches);
+    m_activeDispatches--;
+    if (m_activeDispatches == 0)
+    {
+        m_cvDispatches.notify_all();
+    }
+}
+
+void EventQueue::WaitForDispatchesToComplete()
+{
+    // RemoveObserver() contract: once it returns, no removed handler is
+    // running and none will start later - Dispatch() takes its snapshot under
+    // the observers mutex, so any dispatch that already snapshotted the
+    // removed descriptor is still mid-invocation here. Callers rely on this
+    // to destroy handler state (stack locals, observer instances) right
+    // after removal.
+    if (tl_inDispatch)
+    {
+        // A handler removing an observer must not wait for its own dispatch
+        return;
+    }
+
+    std::unique_lock<std::mutex> lock(m_mutexDispatches);
+    m_cvDispatches.wait(lock, [this]() { return m_activeDispatches == 0; });
 }
 
 #ifdef _DEBUG

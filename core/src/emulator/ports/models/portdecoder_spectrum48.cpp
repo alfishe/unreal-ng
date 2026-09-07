@@ -4,6 +4,7 @@
 
 #include "portdecoder_spectrum48.h"
 
+#include "common/collectionhelper.h"
 #include "common/stringhelper.h"
 #include <map>
 #include <vector>
@@ -143,12 +144,9 @@ void PortDecoder_Spectrum48::DecodePortOut(uint16_t port, uint8_t value, uint16_
     }
     else
     {
-        if (_logger && _logger->GetLevel() <= LoggerLevel::LogWarning)
-        {
-            // Determine RAM/ROM page where code executed from
-            std::string currentMemoryPage = GetPCAddressLocator(pc);
-            LOGWARNING("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
-        }
+        // Determine RAM/ROM page where code executed from
+        std::string currentMemoryPage = GetPCAddressLocator(pc);
+        MLOGWARNING("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
     }
 
     // Universal handler for breakpoints, tracking, analyzers
@@ -202,7 +200,14 @@ void PortDecoder_Spectrum48::Port_FE(uint16_t port, uint8_t value, uint16_t pc)
 
     _screen->SetBorderColor(borderColor);
 
-    LOGDEBUG(DumpPortValue(0xFE, port, value, pc, Dump_FE_value(value).c_str()));
+    // Treat all FE ports as one for logging purposes
+    if ((port & 0x00FE) == 0x00FE)
+        port = 0x00FE;
+
+    if (!key_exists(_loggingMutePorts, port))
+    {
+        MLOGDEBUG(DumpPortValue(0xFE, port, value, pc, Dump_FE_value(value).c_str()));
+    }
 }
 
 /// endregion </Port handlers>
