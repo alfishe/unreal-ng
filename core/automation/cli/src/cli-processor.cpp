@@ -89,6 +89,8 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"stepin", &CLIProcessor::HandleStepIn},      // Always one instruction
                         {"steps", &CLIProcessor::HandleSteps},        // Execute 1...N instructions
                         {"stepover", &CLIProcessor::HandleStepOver},  // Execute instruction, skip calls
+                        {"stepout", &CLIProcessor::HandleStepOut},      // Run until current subroutine returns
+                        {"skip_until", &CLIProcessor::HandleSkipUntil},  // Fast-forward until PC reaches target
                         {"run_tstates", &CLIProcessor::HandleRunTStates},        // Run N t-states
                         {"run_to_scanline", &CLIProcessor::HandleRunToScanline}, // Run to scanline N
                         {"run_scanlines", &CLIProcessor::HandleRunNScanlines},   // Run N scanlines
@@ -98,6 +100,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"run_frames", &CLIProcessor::HandleRunFrames},             // Run N frames
                         {"run_ncycles", &CLIProcessor::HandleRunNCycles},           // Run N CPU cycles
                         {"memory", &CLIProcessor::HandleMemory},
+                        {"find", &CLIProcessor::HandleFind},  // Search Z80 memory for a byte pattern
                         {"registers", &CLIProcessor::HandleRegisters},
                         {"debugmode", &CLIProcessor::HandleDebugMode},
 
@@ -129,6 +132,20 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"label", &CLIProcessor::HandleLabel},    // Single label operations
                         {"labels", &CLIProcessor::HandleLabels},  // List/filter labels
                         {"symbols", &CLIProcessor::HandleSymbols}, // Load/save symbol files
+
+                        // Assembler and source-listing commands
+                        {"assemble", &CLIProcessor::HandleAssemble},  // Assemble Z80 text into memory
+                        {"asm", &CLIProcessor::HandleAssemble},      // Alias for assemble
+                        {"listing", &CLIProcessor::HandleListing},    // Source-listing navigation
+
+                        // Analysis commands (screen digest, beam, frame cost, analyzers)
+                        {"digest", &CLIProcessor::HandleDigest},              // Screen area digest (change detection)
+                        {"beam", &CLIProcessor::HandleBeam},                  // Raster beam position/zone
+                        {"frame_cost", &CLIProcessor::HandleFrameCost},      // Halt/active frame cost stats
+                        {"coverage", &CLIProcessor::HandleCoverage},          // Code coverage control/queries
+                        {"aylog", &CLIProcessor::HandleAyLog},                // AY register-write logging
+                        {"audiocapture", &CLIProcessor::HandleAudioCapture},  // Buffered stereo capture
+                        {"videorecord", &CLIProcessor::HandleVideoRecord},    // Video recording control
 
                         // BASIC commands
                         {"basic", &CLIProcessor::HandleBasic},
@@ -537,7 +554,10 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  stepin        - Execute single CPU instruction (alias for step)" << NEWLINE;
     oss << "  steps <count> - Execute 1 to N CPU instructions" << NEWLINE;
     oss << "  stepover      - Execute instruction, skip calls and subroutines" << NEWLINE;
+    oss << "  stepout       - Run until the current subroutine returns" << NEWLINE;
+    oss << "  skip_until <pc> [max_tstates] - Fast-forward until PC reaches target" << NEWLINE;
     oss << "  memory <addr> - View memory at address" << NEWLINE;
+    oss << "  find <hex-pattern> [--from N] [--to N] [--align 1|2] [--max N] - Search memory" << NEWLINE;
     oss << "  registers     - Show CPU registers" << NEWLINE;
     oss << NEWLINE;
     oss << "Breakpoint commands:" << NEWLINE;
@@ -584,6 +604,23 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  calltrace [latest [N]] - Show latest N call trace events" << NEWLINE;
     oss << "  calltrace stats        - Show call trace buffer statistics" << NEWLINE;
     oss << "  calltrace save [file]  - Save call trace to file" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Assembler and Source Listings:" << NEWLINE;
+    oss << "  assemble <addr> <code...> [--write] - Assemble Z80 text (no write by default)" << NEWLINE;
+    oss << "  listing load <path>    - Load a source listing (.lis)" << NEWLINE;
+    oss << "  listing info           - Show listing statistics" << NEWLINE;
+    oss << "  listing source [addr]  - Show source line for address (default: PC)" << NEWLINE;
+    oss << "  listing stepline       - Step to the next source line" << NEWLINE;
+    oss << "  listing runtoline <n>  - Run until source line n" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Analysis (digest, beam, frame cost, coverage, capture):" << NEWLINE;
+    oss << "  digest [<start> <end>|--banks p1,p2] [--no-border] - Screen digest" << NEWLINE;
+    oss << "  beam                   - Raster beam position and zone" << NEWLINE;
+    oss << "  frame_cost             - Halt/active cost of the last frame + averages" << NEWLINE;
+    oss << "  coverage start|stop|clear|status|gaps [args] - Code coverage" << NEWLINE;
+    oss << "  aylog start [cap]|stop|clear|status|dump [N]  - AY register-write log" << NEWLINE;
+    oss << "  audiocapture start <s>|stop|clear|status|result|save <wav> - Audio" << NEWLINE;
+    oss << "  videorecord start|stop|pause|resume|status [opts]      - Video" << NEWLINE;
     oss << NEWLINE;
     oss << "BASIC Program Tools:" << NEWLINE;
     oss << "  basic                  - Show BASIC command help" << NEWLINE;

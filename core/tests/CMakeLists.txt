@@ -89,6 +89,18 @@ if (NOT ENABLE_RECORDING)
     EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/recording/" FALSE OUTVAR TEST_CPP_FILES)
 endif()
 
+# MCP automation tests exercise the drogon-free MCP sources (dispatcher, tools,
+# router, resources, target resolver), which depend on jsoncpp only. They are
+# compiled into the test binary when the vendored jsoncpp_static target exists —
+# i.e. when the unified build added core/automation (WebAPI + MCP enabled)
+# before this directory. Otherwise the tests/automation folder is excluded.
+if (TARGET jsoncpp_static)
+    set(MCP_TESTS_AVAILABLE TRUE)
+else()
+    set(MCP_TESTS_AVAILABLE FALSE)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/automation/" FALSE OUTVAR TEST_CPP_FILES)
+endif()
+
 set (SOURCES "${CORE_CPP_FILES};${TEST_CPP_FILES};${GOOGLETEST_FILES}")
 message("TESTS:${TEST_CPP_FILES}")
 message("SOURCES:${SOURCES}")
@@ -109,6 +121,25 @@ if (NOT TARGET ${PROJECT_NAME})
 
     # Enable test wrappers in code
     target_compile_definitions(${PROJECT_NAME} PRIVATE _CODE_UNDER_TEST)
+
+    # MCP automation: compile the drogon-free MCP sources into the test binary.
+    # Drogon appears only in automation-mcp.cpp / webapi-client.cpp, which are
+    # deliberately NOT listed here; the sources below need jsoncpp only.
+    if (MCP_TESTS_AVAILABLE)
+        target_sources(${PROJECT_NAME} PRIVATE
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-dispatcher.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-tools.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-router.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-resources.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-symbols.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-analysis.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-media.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/target-resolver.cpp
+        )
+        target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/automation/mcp/src)
+        # Plain signature (no keyword) to match the existing target_link_libraries call below
+        target_link_libraries(${PROJECT_NAME} jsoncpp_static)
+    endif()
 
     # 'pch.h' is our precompiled header
     #target_precompile_headers(${PROJECT_NAME} PRIVATE ${TESTS_DIR}/pch.h)

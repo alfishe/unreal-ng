@@ -662,6 +662,69 @@ for bm in emu.ttd_bookmark_list():
 
 **Implementation status:** Sprint 0 foundations ✅ merged; Phase 1 will land `ttd_status` only; the rest ship in Phase 2 (navigation) and Phase 4 (reverse search).
 
+### Analysis, Capture & Assembly
+
+> **Status**: ✅ Implemented (2026-09)
+
+Analysis, capture and assembly methods mirroring the WebAPI endpoints of the
+same names (see [command-interface.md](./command-interface.md)). All methods
+return a dict; on failure the dict carries an `error` string.
+
+```python
+# Stepping helpers
+emu.step_out()                       # run until the current subroutine returns
+emu.skip_until(0x8000)               # fast-forward until PC == target (breakpoints skipped)
+emu.skip_until("0x8000", max_tstates=70000000)  # optional explicit t-state budget
+
+# Memory search
+emu.mem_find("AF 3C")                # hex pattern as string (spaces optional)
+emu.mem_find(0xAF3C)                 # or as a number
+emu.mem_find("AF 3C", start=0x8000, end=0xFFFF, alignment=2, max=32)
+
+# Screen state
+emu.screen_digest()                  # digest screen area (0x4000-0x5AFF), border folded in
+emu.screen_digest(0x4000, 0x5AFF, include_border=False)  # explicit range
+emu.beam_position()                  # { "frame": N, "scanline": N, "tstate": N, "zone": "..." }
+emu.frame_cost()                     # per-frame halt/run cost accounting
+
+# Coverage analyzer
+emu.coverage_start()                 # start clean; keep=True retains old data
+emu.coverage_stop()
+emu.coverage_status(max_ranges=100)  # executed count + first ranges
+emu.coverage_gaps()                  # executed ranges and gaps (start=0x4000, end=0xFFFF)
+
+# AY register log
+emu.ay_log_start()                   # default capacity; capacity=8192 to override
+emu.ay_log_stop()
+emu.ay_log_status()
+emu.ay_log_dump(count=32)            # last N entries (offset=... for pagination)
+
+# Audio capture
+emu.audio_capture_start(2.5)         # capture 2.5 s of stereo audio (default 1.0)
+emu.audio_capture_status()
+emu.audio_capture_result()           # sample stats + per-channel peak/RMS
+emu.audio_capture_result("out.wav")  # additionally export a 16-bit WAV file
+
+# Video recording (requires a build with ENABLE_RECORDING)
+emu.video_record("start", {"format": "gif", "fps": 50, "scale": 2})  # opts dict optional
+emu.video_record("stop")             # also "pause" / "resume"
+emu.video_record_status()             # recording state + live stats (frames, duration, fps)
+
+# Assembler
+emu.assemble("ld a,2\nout (254),a", 0x8000)              # assemble, listing only
+emu.assemble("ld a,2\nout (254),a", "0x8000", write=True)  # + write bytes to RAM
+
+# Label resolution
+emu.label_resolve("main_loop")       # by name
+emu.label_resolve(0x8100)            # by address: exact, aliases, nearest below/above
+
+# Source listings
+emu.listing_load("game.lst")
+emu.listing_source_at()              # source line at PC; emu.listing_source_at(0x8100)
+emu.listing_step_line()              # run until the source line changes (~2 s budget)
+emu.listing_run_to_line(120)         # run to first code byte of line 120 (~10 s budget)
+```
+
 ### Enumerations
 
 ```python

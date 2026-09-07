@@ -28,6 +28,22 @@
 #include <debugger/keyboard/debugkeyboardmanager.h>
 #include <debugger/ttd/timetravelmanager.h>
 #include <debugger/ttd/ttd_probe.h>
+#include <debugger/analyzers/audiocapture/audiocaptureanalyzer.h>
+#include <debugger/analyzers/aylog/ayloganalyzer.h>
+#include <debugger/analyzers/coverage/coverageanalyzer.h>
+#include <debugger/assembler/z80textassembler.h>
+#include <debugger/listing/listingparser.h>
+#include <emulator/platform.h>
+#include <emulator/video/screendigest.h>
+#ifdef ENABLE_RECORDING
+#include "recordingmanager.h"
+#include <atomic>
+#include <ctime>
+#include <filesystem>
+#endif
+#include <3rdparty/tinywav/tinywav.h>
+#include <cctype>
+#include <cmath>
 
 #include <chrono>
 #include <fstream>
@@ -2083,6 +2099,1060 @@ namespace PythonBindings
                 return d;
             }, "Run backward until any PC matches; returns dict or None",
                py::arg("pcs"));
+
+        // ================================================================
+        // Phase-2 analysis capabilities — parity with WebAPI/MCP/CLI/Lua:
+        // step out, skip until, memory find, screen digest, beam, frame cost,
+        // coverage, AY log, audio capture, assembler, label resolve, listings.
+        // ================================================================
+
+        emulatorClass.def("step_out", [](Emulator& self) -> py::dict {
+            py::dict d;
+            try
+            {
+                self.StepOut();
+                Z80State* z80 = self.GetZ80State();
+                if (z80)
+                {
+                    d["pc"] = z80->pc;
+                    d["sp"] = z80->sp;
+                }
+                d["ok"] = true;
+            }
+            catch (const std::exception& e)
+            {
+                d["ok"] = false;
+                d["error"] = e.what();
+            }
+            return d;
+        }, "Step out of the current subroutine (emulation ends paused)")
+
+        .def("skip_until", [](Emulator& self, py::object pcValue, unsigned maxTStates) -> py::dict {
+            py::dict d;
+            uint32_t target32 = 0;
+            if (py::isinstance<std::string>(pcValue))
+            {
+                try { target32 = static_cast<uint32_t>(std::stoul(pcValue.cast<std::string>(), nullptr, 0)); }
+                catch (...) { d["error"] = "invalid pc"; return d; }
+            }
+            else
+            {
+                target32 = static_cast<uint32_t>(pcValue.cast<long>());
+            }
+
+            if (target32 > 0xFFFF) { d["error"] = "pc out of 16-bit range"; return d; }
+            const uint16_t target = static_cast<uint16_t>(target32);
+
+            // Safety budget: default 100 frames of emulated time, hard cap 200 s
+            EmulatorContext* context = self.GetContext();
+            if (maxTStates == 0 && context)
+                maxTStates = context->config.frame * 100;
+            if (maxTStates == 0)
+                maxTStates = 6988800;
+            if (maxTStates > 700000000u)
+                maxTStates = 700000000u;
+
+            self.RunUntilCondition([target](const Z80State& state) { return state.pc == target; }, maxTStates);
+
+            Z80State* z80 = self.GetZ80State();
+            d["hit"] = z80 && z80->pc == target;
+            d["max_tstates"] = maxTStates;
+            if (z80)
+            {
+                d["pc"] = z80->pc;
+                d["sp"] = z80->sp;
+            }
+            return d;
+        }, "Fast-forward until PC reaches the target (breakpoints skipped)",
+           py::arg("pc"), py::arg("max_tstates") = 0)
+
+        .def("mem_find",
+             [](Emulator& self, py::object patternValue, unsigned start, unsigned end, unsigned alignment,
+                unsigned max) -> py::dict {
+            py::dict d;
+            Memory* memory = self.GetMemory();
+            if (!memory) { d["error"] = "memory not available"; return d; }
+
+            std::vector<uint8_t> pattern;
+            if (py::isinstance<std::string>(patternValue))
+            {
+                std::string digits;
+                for (char c : patternValue.cast<std::string>())
+                {
+                    if (c == ' ' || c == ':')
+                        continue;
+                    if (!std::isxdigit(static_cast<unsigned char>(c)))
+                    {
+                        d["error"] = "invalid hex pattern";
+                        return d;
+                    }
+                    digits += static_cast<char>(std::toupper(c));
+                }
+                if (digits.empty() || digits.size() % 2 != 0)
+                {
+                    d["error"] = "invalid hex pattern";
+                    return d;
+                }
+                for (size_t i = 0; i < digits.size(); i += 2)
+                    pattern.push_back(static_cast<uint8_t>(std::stoul(digits.substr(i, 2), nullptr, 16)));
+            }
+            else if (py::isinstance<py::sequence>(patternValue))
+            {
+                for (auto item : patternValue)
+                    pattern.push_back(static_cast<uint8_t>(item.cast<int>() & 0xFF));
+            }
+
+            if (pattern.empty() || pattern.size() > 64)
+            {
+                d["error"] = "pattern must be 1..64 bytes";
+                return d;
+            }
+            if (start > end || end > 0xFFFF || (alignment != 1 && alignment != 2))
+            {
+                d["error"] = "invalid range or alignment";
+                return d;
+            }
+
+            py::list matches;
+            size_t found = 0;
+            bool truncated = false;
+            const size_t searchLimit = static_cast<size_t>(end) - pattern.size() + 1;
+
+            for (size_t position = start; position <= searchLimit; position += alignment)
+            {
+                if (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position)) != pattern[0])
+                    continue;
+
+                bool matched = true;
+                for (size_t i = 1; i < pattern.size(); i++)
+                {
+                    if (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position + i)) != pattern[i])
+                    {
+                        matched = false;
+                        break;
+                    }
+                }
+                if (!matched)
+                    continue;
+
+                if (found >= max)
+                {
+                    truncated = true;
+                    break;
+                }
+
+                py::dict match;
+                match["address"] = static_cast<unsigned>(position);
+                py::list contextBytes;
+                const size_t contextStart = position > 4 ? position - 4 : 0;
+                for (size_t i = 0; i < pattern.size() + 4; i++)
+                {
+                    const size_t address = contextStart + i;
+                    if (address > 0xFFFF)
+                        break;
+                    contextBytes.append(memory->DirectReadFromZ80Memory(static_cast<uint16_t>(address)));
+                }
+                match["context"] = contextBytes;
+                matches.append(match);
+                found++;
+            }
+
+            d["matches"] = matches;
+            d["count"] = found;
+            d["truncated"] = truncated;
+            return d;
+        }, "Search Z80 memory for a byte pattern (hex string or byte sequence)",
+           py::arg("pattern"), py::arg("start") = 0, py::arg("end") = 0xFFFF, py::arg("alignment") = 1,
+           py::arg("max") = 64)
+
+        .def("screen_digest",
+             [](Emulator& self, py::object startValue, py::object endValue, bool includeBorder) -> py::dict {
+            py::dict d;
+            EmulatorContext* context = self.GetContext();
+            if (!context || !context->pMemory || !context->pScreen)
+            {
+                d["error"] = "context not initialized";
+                return d;
+            }
+
+            const CONFIG& config = context->config;
+            EmulatorState& state = context->emulatorState;
+            Memory* memory = context->pMemory;
+
+            const bool is128K = (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PENTAGON ||
+                                 config.mem_model == MM_PLUS3);
+
+            const uint64_t previousDigest = state.last_screen_digest;
+            uint64_t combined = ScreenDigest::kInitialValue;
+
+            if (!startValue.is_none() || !endValue.is_none())
+            {
+                const uint16_t start = startValue.is_none() ? 0x4000 : startValue.cast<uint16_t>();
+                const uint16_t end = endValue.is_none() ? 0x7FFF : endValue.cast<uint16_t>();
+                if (start > end)
+                {
+                    d["error"] = "start must be <= end";
+                    return d;
+                }
+
+                const uint64_t rangeDigest = ScreenDigest::DigestZ80Range(memory, start, end);
+                for (int shift = 0; shift < 64; shift += 8)
+                    combined = ScreenDigest::MixValue(combined, static_cast<uint8_t>((rangeDigest >> shift) & 0xFF));
+
+                d["range_start"] = start;
+                d["range_end"] = end;
+                d["range_digest"] = rangeDigest;
+            }
+            else
+            {
+                std::vector<uint16_t> banks{ScreenDigest::kScreen0RAMPage};
+                if (is128K)
+                    banks.push_back(ScreenDigest::kScreen1RAMPage);
+
+                py::dict perBank;
+                for (uint16_t page : banks)
+                {
+                    const uint64_t digest = ScreenDigest::DigestRAMPage(memory, page);
+                    for (int shift = 0; shift < 64; shift += 8)
+                        combined = ScreenDigest::MixValue(combined, static_cast<uint8_t>((digest >> shift) & 0xFF));
+                    perBank[py::int_(page)] = digest;
+                }
+                d["banks"] = perBank;
+            }
+
+            if (includeBorder)
+            {
+                const uint8_t borderColor = context->pScreen->GetBorderColor();
+                combined = ScreenDigest::MixValue(combined, borderColor);
+                d["border_color"] = borderColor;
+            }
+
+            const uint64_t previousFrame = state.last_screen_digest_frame;
+            state.last_screen_digest = combined;
+            state.last_screen_digest_frame = state.frame_counter;
+
+            d["combined"] = combined;
+            d["frame"] = static_cast<uint64_t>(state.frame_counter);
+            d["algorithm"] = "fnv1a-64";
+            d["changed"] = combined != previousDigest;
+            d["previous_digest"] = previousDigest;
+            if (previousFrame != 0)
+                d["previous_digest_frame"] = static_cast<uint64_t>(previousFrame);
+            return d;
+        }, "Screen-area FNV-1a-64 digest (change detection without pixel transfer)",
+           py::arg("start") = py::none(), py::arg("end") = py::none(), py::arg("include_border") = true)
+
+        .def("beam_position", [](Emulator& self) -> py::dict {
+            py::dict d;
+            EmulatorContext* context = self.GetContext();
+            if (!context || !context->pScreen)
+            {
+                d["error"] = "context not initialized";
+                return d;
+            }
+
+            const CONFIG& config = context->config;
+            Screen* screen = context->pScreen;
+            if (config.t_line == 0 || config.frame == 0)
+            {
+                d["error"] = "machine timing not initialized";
+                return d;
+            }
+
+            Z80* cpu = context->pCore ? context->pCore->GetZ80() : nullptr;
+            const uint32_t tstate = cpu ? static_cast<uint32_t>(cpu->t) : screen->GetCurrentTstate();
+            const uint32_t tInFrame = tstate % config.frame;
+
+            const VideoModeEnum mode = screen->GetVideoMode();
+            const RasterDescriptor& rd = screen->rasterDescriptors[mode];
+            const RasterState& rs = screen->GetRasterState();
+
+            const bool rasterValid = rs.tstatesPerLine != 0;
+            const uint32_t tstatesPerLine = rasterValid ? rs.tstatesPerLine : config.t_line;
+            const uint32_t line = tInFrame / tstatesPerLine;
+            const uint32_t dotInLine = tInFrame % tstatesPerLine;
+
+            std::string vZone = "beyond_raster";
+            if (rasterValid)
+            {
+                if (tInFrame <= rs.blankAreaEnd)
+                    vZone = (line < rd.vSyncLines) ? "vsync" : "vblank";
+                else if (tInFrame <= rs.topBorderAreaEnd)
+                    vZone = "top_border";
+                else if (tInFrame <= rs.screenAreaEnd)
+                    vZone = "screen";
+                else if (tInFrame <= rs.bottomBorderAreaEnd)
+                    vZone = "bottom_border";
+            }
+
+            std::string hZone = "-";
+            if (vZone == "screen")
+            {
+                if (dotInLine <= rs.blankLineAreaEnd)
+                    hZone = "hblank";
+                else if (dotInLine <= rs.leftBorderAreaEnd)
+                    hZone = "left_border";
+                else if (dotInLine <= rs.screenLineAreaEnd)
+                    hZone = "paper";
+                else if (dotInLine <= rs.rightBorderAreaEnd)
+                    hZone = "right_border";
+                else
+                    hZone = "beyond_line";
+            }
+
+            std::string zone = vZone;
+            if (vZone == "screen")
+                zone = (hZone == "paper") ? "paper" : (hZone == "hblank" ? "hblank" : "border");
+
+            d["tstate"] = tstate;
+            d["tstate_in_frame"] = tInFrame;
+            d["frame"] = static_cast<uint64_t>(context->emulatorState.frame_counter);
+            d["line"] = line;
+            d["dot_in_line"] = dotInLine;
+            d["beam_x"] = dotInLine * rs.pixelsPerTState;
+            d["beam_y"] = line;
+            d["zone"] = zone;
+            d["vertical_zone"] = vZone;
+            d["horizontal_zone"] = hZone;
+            d["in_paper"] = zone == "paper";
+            return d;
+        }, "Raster beam position and zone at the current t-state")
+
+        .def("frame_cost", [](Emulator& self) -> py::dict {
+            py::dict d;
+            EmulatorContext* context = self.GetContext();
+            if (!context) { d["error"] = "no context"; return d; }
+
+            const CONFIG& config = context->config;
+            const EmulatorState& state = context->emulatorState;
+
+            const uint64_t frameBudget = static_cast<uint64_t>(config.frame) * state.current_z80_frequency_multiplier;
+            const uint64_t lastHalted = state.tstates_halted_last;
+            const uint64_t lastActive = frameBudget > lastHalted ? frameBudget - lastHalted : 0;
+
+            py::dict last;
+            last["tstates_total"] = frameBudget;
+            last["tstates_halted"] = lastHalted;
+            last["tstates_active"] = lastActive;
+            last["halted_percent"] = frameBudget ? lastHalted * 100.0 / frameBudget : 0.0;
+            d["last"] = last;
+
+            py::dict average;
+            average["frames"] = static_cast<uint64_t>(state.frame_cost_frames);
+            average["tstates_total"] = static_cast<uint64_t>(state.tstates_frame_total);
+            average["tstates_halted"] = static_cast<uint64_t>(state.tstates_halted_total);
+            average["tstates_active"] = static_cast<uint64_t>(state.tstates_frame_total - state.tstates_halted_total);
+            d["average"] = average;
+            return d;
+        }, "Halt/active cost of the last frame plus session averages")
+
+        .def("coverage_start", [](Emulator& self, bool keep) -> py::dict {
+            py::dict d;
+            auto* context = self.GetContext();
+            AnalyzerManager* manager = context && context->pDebugManager ?
+                                           context->pDebugManager->GetAnalyzerManager() : nullptr;
+            CoverageAnalyzer* coverage = manager ? manager->getAnalyzer<CoverageAnalyzer>("coverage") : nullptr;
+            if (!coverage || !manager) { d["error"] = "coverage analyzer not available"; return d; }
+
+            if (!keep)
+                coverage->clear();
+            d["success"] = manager->activate("coverage");
+            d["recording"] = coverage->isRecording();
+            return d;
+        }, "Start a coverage session", py::arg("keep") = false)
+
+        .def("coverage_stop", [](Emulator& self) -> py::dict {
+            py::dict d;
+            auto* context = self.GetContext();
+            AnalyzerManager* manager = context && context->pDebugManager ?
+                                           context->pDebugManager->GetAnalyzerManager() : nullptr;
+            if (!manager) { d["error"] = "analyzer manager not available"; return d; }
+
+            d["success"] = manager->deactivate("coverage");
+            return d;
+        }, "Stop the coverage session (data kept for queries)")
+
+        .def("coverage_status", [](Emulator& self, unsigned maxRanges) -> py::dict {
+            py::dict d;
+            auto* context = self.GetContext();
+            AnalyzerManager* manager = context && context->pDebugManager ?
+                                           context->pDebugManager->GetAnalyzerManager() : nullptr;
+            CoverageAnalyzer* coverage = manager ? manager->getAnalyzer<CoverageAnalyzer>("coverage") : nullptr;
+            if (!coverage || !manager) { d["error"] = "coverage analyzer not available"; return d; }
+
+            const size_t executedCount = coverage->getExecutedCount();
+            d["active"] = manager->isActive("coverage");
+            d["recording"] = coverage->isRecording();
+            d["executed_count"] = executedCount;
+            d["coverage_percent"] = executedCount * 100.0 / 65536.0;
+            d["instructions"] = static_cast<uint64_t>(coverage->getInstructionCount());
+
+            py::list ranges;
+            for (const auto& range : coverage->getExecutedRanges(maxRanges))
+            {
+                py::dict item;
+                item["start"] = range.first;
+                item["end"] = range.second;
+                ranges.append(item);
+            }
+            d["ranges"] = ranges;
+            return d;
+        }, "Coverage summary with executed ranges", py::arg("max_ranges") = 100)
+
+        .def("coverage_gaps", [](Emulator& self, uint16_t start, uint16_t end, unsigned max) -> py::dict {
+            py::dict d;
+            auto* context = self.GetContext();
+            AnalyzerManager* manager = context && context->pDebugManager ?
+                                           context->pDebugManager->GetAnalyzerManager() : nullptr;
+            CoverageAnalyzer* coverage = manager ? manager->getAnalyzer<CoverageAnalyzer>("coverage") : nullptr;
+            if (!coverage || !manager) { d["error"] = "coverage analyzer not available"; return d; }
+
+            py::list gaps;
+            for (const auto& gap : coverage->getGaps(start, end, max))
+            {
+                py::dict item;
+                item["start"] = gap.first;
+                item["end"] = gap.second;
+                gaps.append(item);
+            }
+            d["gaps"] = gaps;
+            d["count"] = py::len(gaps);
+            return d;
+        }, "Unexecuted address gaps within [start, end]",
+           py::arg("start") = 0x4000, py::arg("end") = 0xFFFF, py::arg("max") = 100)
+
+        .def("ay_log_start", [](Emulator& self, unsigned capacity) -> py::dict {
+            py::dict d;
+            auto* context = self.GetContext();
+            AnalyzerManager* manager = context && context->pDebugManager ?
+                                           context->pDebugManager->GetAnalyzerManager() : nullptr;
+            AYLogAnalyzer* aylog = manager ? manager->getAnalyzer<AYLogAnalyzer>("aylog") : nullptr;
+            if (!aylog || !manager) { d["error"] = "AY log analyzer not available"; return d; }
+
+            d["success"] = manager->activate("aylog");
+            aylog->setCapacity(capacity);
+            d["capacity"] = static_cast<uint64_t>(aylog->getCapacity());
+            return d;
+        }, "Start AY register-write logging", py::arg("capacity") = 4096)
+
+        .def("ay_log_stop", [](Emulator& self) -> py::dict {
+            py::dict d;
+            auto* context = self.GetContext();
+            AnalyzerManager* manager = context && context->pDebugManager ?
+                                           context->pDebugManager->GetAnalyzerManager() : nullptr;
+            if (!manager) { d["error"] = "analyzer manager not available"; return d; }
+
+            d["success"] = manager->deactivate("aylog");
+            return d;
+        }, "Stop AY logging (records kept for queries)")
+
+        .def("ay_log_status", [](Emulator& self) -> py::dict {
+            py::dict d;
+            auto* context = self.GetContext();
+            AnalyzerManager* manager = context && context->pDebugManager ?
+                                           context->pDebugManager->GetAnalyzerManager() : nullptr;
+            AYLogAnalyzer* aylog = manager ? manager->getAnalyzer<AYLogAnalyzer>("aylog") : nullptr;
+            if (!aylog || !manager) { d["error"] = "AY log analyzer not available"; return d; }
+
+            d["active"] = manager->isActive("aylog");
+            d["recording"] = aylog->isRecording();
+            d["entry_count"] = static_cast<uint64_t>(aylog->getEntryCount());
+            d["capacity"] = static_cast<uint64_t>(aylog->getCapacity());
+            d["dropped"] = static_cast<uint64_t>(aylog->getDroppedCount());
+            return d;
+        }, "AY log session status")
+
+        .def("ay_log_dump", [](Emulator& self, unsigned count, py::object offsetValue) -> py::dict {
+            py::dict d;
+            auto* context = self.GetContext();
+            AnalyzerManager* manager = context && context->pDebugManager ?
+                                           context->pDebugManager->GetAnalyzerManager() : nullptr;
+            AYLogAnalyzer* aylog = manager ? manager->getAnalyzer<AYLogAnalyzer>("aylog") : nullptr;
+            if (!aylog || !manager) { d["error"] = "AY log analyzer not available"; return d; }
+
+            const size_t total = aylog->getEntryCount();
+            const size_t offset = offsetValue.is_none() ?
+                                      (total > count ? total - count : 0) :
+                                      offsetValue.cast<size_t>();
+
+            py::list records;
+            for (const auto& record : aylog->getEntries(offset, count))
+            {
+                py::dict item;
+                item["frame"] = static_cast<uint64_t>(record.frame);
+                item["tacts"] = record.tacts;
+                item["pc"] = record.pc;
+                item["port"] = record.port;
+                item["chip"] = record.chip;
+                item["reg"] = record.reg;
+                item["value"] = record.value;
+                item["type"] = record.port == 0xFFFD ? (record.value > 0x0F ? "switch" : "select") : "write";
+                records.append(item);
+            }
+            d["records"] = records;
+            d["total"] = static_cast<uint64_t>(total);
+            return d;
+        }, "Dump AY log records (latest by default)",
+           py::arg("count") = 20, py::arg("offset") = py::none())
+
+        .def("audio_capture_start", [](Emulator& self, double seconds) -> py::dict {
+            py::dict d;
+            auto* context = self.GetContext();
+            if (!context || !context->pDebugManager) { d["error"] = "debug manager not available"; return d; }
+
+            if (seconds < 0.01 || seconds > 30.0)
+            {
+                d["error"] = "seconds must be within [0.01, 30.0]";
+                return d;
+            }
+
+            AnalyzerManager* manager = context->pDebugManager->GetAnalyzerManager();
+            AudioCaptureAnalyzer* capture =
+                manager ? manager->getAnalyzer<AudioCaptureAnalyzer>("audiocapture") : nullptr;
+            if (!capture || !manager) { d["error"] = "audio capture analyzer not available"; return d; }
+
+            const size_t rate = context->pSoundManager ? context->pSoundManager->getCoreRate() : 44100;
+            const size_t target = static_cast<size_t>(seconds * static_cast<double>(rate)) * 2;
+
+            manager->activate("audiocapture");
+            capture->startCapture(target);
+
+            d["armed"] = capture->isCaptureArmed();
+            d["target_samples"] = static_cast<uint64_t>(target);
+            d["sample_rate"] = static_cast<uint64_t>(rate);
+            return d;
+        }, "Arm a buffered stereo capture", py::arg("seconds") = 1.0)
+
+        .def("audio_capture_status", [](Emulator& self) -> py::dict {
+            py::dict d;
+            auto* context = self.GetContext();
+            AnalyzerManager* manager = context && context->pDebugManager ?
+                                           context->pDebugManager->GetAnalyzerManager() : nullptr;
+            AudioCaptureAnalyzer* capture =
+                manager ? manager->getAnalyzer<AudioCaptureAnalyzer>("audiocapture") : nullptr;
+            if (!capture || !manager) { d["error"] = "audio capture analyzer not available"; return d; }
+
+            d["armed"] = capture->isCaptureArmed();
+            d["complete"] = capture->isCaptureComplete();
+            d["captured_samples"] = static_cast<uint64_t>(capture->getCapturedSamples());
+            d["target_samples"] = static_cast<uint64_t>(capture->getTargetSamples());
+            return d;
+        }, "Audio capture progress")
+
+        .def("audio_capture_result", [](Emulator& self, py::object pathValue) -> py::dict {
+            py::dict d;
+            auto* context = self.GetContext();
+            if (!context || !context->pDebugManager) { d["error"] = "debug manager not available"; return d; }
+
+            AnalyzerManager* manager = context->pDebugManager->GetAnalyzerManager();
+            AudioCaptureAnalyzer* capture =
+                manager ? manager->getAnalyzer<AudioCaptureAnalyzer>("audiocapture") : nullptr;
+            if (!capture || !manager) { d["error"] = "audio capture analyzer not available"; return d; }
+
+            const auto& buffer = capture->getBuffer();
+            const size_t frames = buffer.size() / 2;
+            if (frames == 0)
+            {
+                d["error"] = "no captured audio — call audio_capture_start first";
+                return d;
+            }
+
+            const size_t rate = context->pSoundManager ? context->pSoundManager->getCoreRate() : 44100;
+
+            double peak[2] = {0.0, 0.0};
+            double sumSquares[2] = {0.0, 0.0};
+            for (size_t frame = 0; frame < frames; frame++)
+            {
+                for (int channel = 0; channel < 2; channel++)
+                {
+                    const double normalized = static_cast<double>(buffer[frame * 2 + channel]) / 32768.0;
+                    const double magnitude = std::fabs(normalized);
+                    if (magnitude > peak[channel])
+                        peak[channel] = magnitude;
+                    sumSquares[channel] += normalized * normalized;
+                }
+            }
+
+            d["frames"] = static_cast<uint64_t>(frames);
+            d["sample_rate"] = static_cast<uint64_t>(rate);
+            d["duration_seconds"] = static_cast<double>(frames) / rate;
+            d["complete"] = capture->isCaptureComplete();
+            d["left_peak"] = peak[0];
+            d["left_rms"] = std::sqrt(sumSquares[0] / frames);
+            d["right_peak"] = peak[1];
+            d["right_rms"] = std::sqrt(sumSquares[1] / frames);
+
+            if (!pathValue.is_none())
+            {
+                const std::string path = pathValue.cast<std::string>();
+                TinyWav wav{};
+                if (tinywav_open_write(&wav, 2, static_cast<int32_t>(rate), TW_INT16, TW_INTERLEAVED,
+                                       path.c_str()) == 0)
+                {
+                    tinywav_write_i(&wav, const_cast<void*>(static_cast<const void*>(buffer.data())),
+                                    static_cast<int>(frames));
+                    tinywav_close_write(&wav);
+                    d["saved"] = path;
+                }
+                else
+                {
+                    d["save_error"] = "failed to open wav";
+                }
+            }
+            return d;
+        }, "Capture stats (peak/RMS per channel) with optional WAV export",
+           py::arg("path") = py::none())
+
+        .def("video_record", [](Emulator& self, const std::string& action, py::object optsValue) -> py::dict {
+#ifdef ENABLE_RECORDING
+            py::dict d;
+            auto* context = self.GetContext();
+            RecordingManager* rm = context ? context->pRecordingManager : nullptr;
+            if (!rm) { d["error"] = "recording manager not available"; return d; }
+
+            if (action == "start")
+            {
+                if (rm->IsRecording() || rm->IsPaused())
+                {
+                    d["error"] = "a recording is already active — stop it first";
+                    return d;
+                }
+
+                std::string format = "gif";
+                std::string filename;
+                float fps = 50.0f;
+                int scale = 1;
+                std::string region = "full";
+                if (py::isinstance<py::dict>(optsValue))
+                {
+                    py::dict opts = optsValue;
+                    if (opts.contains("format") && py::isinstance<std::string>(opts["format"]))
+                        format = opts["format"].cast<std::string>();
+                    if (opts.contains("filename") && py::isinstance<std::string>(opts["filename"]))
+                        filename = opts["filename"].cast<std::string>();
+                    if (opts.contains("fps"))
+                        fps = opts["fps"].cast<float>();
+                    if (opts.contains("scale"))
+                        scale = opts["scale"].cast<int>();
+                    if (opts.contains("region") && py::isinstance<std::string>(opts["region"]))
+                        region = opts["region"].cast<std::string>();
+                }
+
+                std::string extension = format;
+                if (format == "h264" || format == "h265" || format == "hevc" || format == "vp9")
+                    extension = "mp4";
+                else if (format == "rawvideo")
+                    extension = "avi";
+
+                if (filename.empty())
+                {
+                    std::filesystem::path dir = std::filesystem::temp_directory_path() / "unreal-python";
+                    std::error_code ec;
+                    std::filesystem::create_directories(dir, ec);
+                    static std::atomic<unsigned> counter{0};
+                    const long long stamp =
+                        static_cast<long long>(std::time(nullptr)) * 1000 + (counter++ % 1000);
+                    filename = (dir / ("video-" + std::to_string(stamp) + "." + extension)).string();
+                }
+
+                if (fps < 1.0f) fps = 1.0f;
+                if (fps > 100.0f) fps = 100.0f;
+                rm->SetVideoFrameRate(fps);
+
+                if (scale < 1) scale = 1;
+                if (scale > 4) scale = 4;
+                rm->SetScaleFactor(static_cast<uint32_t>(scale));
+
+                rm->SetCaptureRegion((region == "screen" || region == "main")
+                                         ? VideoCaptureRegion::MainScreen
+                                         : VideoCaptureRegion::FullFrame);
+
+                FeatureManager* fm = context->pFeatureManager;
+                const bool featureWasOff = fm && !fm->isEnabled(Features::kRecording);
+                if (featureWasOff) fm->setFeature(Features::kRecording, true);
+
+                const bool wasRunning = self.IsRunning() && !self.IsPaused();
+                if (wasRunning) self.Pause();
+
+                const bool started = rm->StartRecording(filename, format, "");
+
+                if (wasRunning) self.Resume();
+
+                if (!started)
+                {
+                    if (featureWasOff) fm->setFeature(Features::kRecording, false);
+                    d["error"] = "recording start failed";
+                    d["message"] = rm->GetLastRecordingError();
+                    return d;
+                }
+
+                d["recording"] = true;
+                d["format"] = format;
+                d["fps"] = fps;
+                d["scale"] = scale;
+                d["region"] = region;
+                d["feature_auto_enabled"] = featureWasOff;
+                d["output"] = filename;
+                return d;
+            }
+
+            if (action == "stop")
+            {
+                if (!rm->IsRecording() && !rm->IsPaused())
+                {
+                    d["error"] = "no active recording to stop";
+                    return d;
+                }
+                rm->StopRecording();
+            }
+            else if (action == "pause")
+            {
+                if (!rm->IsRecording())
+                {
+                    d["error"] = "no active recording to pause";
+                    return d;
+                }
+                rm->PauseRecording();
+            }
+            else if (action == "resume")
+            {
+                if (!rm->IsPaused())
+                {
+                    d["error"] = "recording is not paused";
+                    return d;
+                }
+                rm->ResumeRecording();
+            }
+            else
+            {
+                d["error"] = "unknown action '" + action + "' (expected start|stop|pause|resume)";
+                return d;
+            }
+
+            const RecordingManager::RecordingStats stats = rm->GetStats();
+            d["recording"] = rm->IsRecording();
+            d["paused"] = rm->IsPaused();
+            d["frames_recorded"] = static_cast<uint64_t>(stats.framesRecorded);
+            d["recorded_duration"] = stats.recordedDuration;
+            d["emulated_duration"] = stats.emulatedDuration;
+            d["output_file_size"] = static_cast<uint64_t>(stats.outputFileSize);
+            d["average_frame_time_ms"] = stats.averageFrameTime;
+            d["recent_fps"] = stats.recentFps;
+            d["output"] = rm->GetOutputFilename();
+            return d;
+#else
+            (void)self;
+            (void)action;
+            (void)optsValue;
+            py::dict d;
+            d["error"] = "recording support is disabled in this build (ENABLE_RECORDING=OFF)";
+            return d;
+#endif
+        }, "Video recording control (action=start|stop|pause|resume)",
+           py::arg("action"), py::arg("opts") = py::none())
+
+        .def("video_record_status", [](Emulator& self) -> py::dict {
+#ifdef ENABLE_RECORDING
+            py::dict d;
+            auto* context = self.GetContext();
+            RecordingManager* rm = context ? context->pRecordingManager : nullptr;
+            if (!rm) { d["error"] = "recording manager not available"; return d; }
+
+            d["recording"] = rm->IsRecording();
+            d["paused"] = rm->IsPaused();
+            d["feature_enabled"] = rm->isFeatureEnabled();
+            d["realtime_capable"] = rm->IsRealtimeCapable();
+            if (!rm->GetLastRecordingError().empty())
+                d["last_error"] = rm->GetLastRecordingError();
+
+            const RecordingManager::RecordingStats stats = rm->GetStats();
+            d["frames_recorded"] = static_cast<uint64_t>(stats.framesRecorded);
+            d["recorded_duration"] = stats.recordedDuration;
+            d["emulated_duration"] = stats.emulatedDuration;
+            d["output_file_size"] = static_cast<uint64_t>(stats.outputFileSize);
+            d["average_frame_time_ms"] = stats.averageFrameTime;
+            d["recent_fps"] = stats.recentFps;
+            d["output"] = rm->GetOutputFilename();
+            return d;
+#else
+            (void)self;
+            py::dict d;
+            d["error"] = "recording support is disabled in this build (ENABLE_RECORDING=OFF)";
+            return d;
+#endif
+        }, "Current recording state and live statistics")
+
+        .def("assemble", [](Emulator& self, const std::string& code, py::object addressValue, bool write) -> py::dict {
+            py::dict d;
+            uint16_t address = 0;
+            if (py::isinstance<std::string>(addressValue))
+            {
+                try { address = static_cast<uint16_t>(std::stoul(addressValue.cast<std::string>(), nullptr, 0)); }
+                catch (...) { d["error"] = "invalid address"; return d; }
+            }
+            else
+            {
+                address = static_cast<uint16_t>(addressValue.cast<long>() & 0xFFFF);
+            }
+
+            Z80TextAssembler assembler;
+            AsmResult asmResult = assembler.Assemble(code, address);
+
+            d["ok"] = asmResult.ok;
+            if (!asmResult.ok)
+            {
+                d["error"] = asmResult.error.message;
+                d["error_line"] = asmResult.error.line;
+                return d;
+            }
+
+            if (write)
+            {
+                Memory* memory = self.GetMemory();
+                if (memory)
+                {
+                    uint32_t addr = asmResult.startAddress;
+                    for (uint8_t b : asmResult.bytes)
+                        memory->MemoryWriteFast(static_cast<uint16_t>((addr++) & 0xFFFF), b);
+                    d["written"] = true;
+                }
+            }
+
+            d["address"] = asmResult.startAddress;
+            d["end_address"] = asmResult.endAddress;
+            d["bytes"] = asmResult.bytes;
+
+            if (!asmResult.symbols.empty())
+            {
+                py::dict symbols;
+                for (const auto& sym : asmResult.symbols)
+                    symbols[sym.first.c_str()] = sym.second;
+                d["symbols"] = symbols;
+            }
+            return d;
+        }, "Assemble Z80 source text; optionally write the bytes into RAM",
+           py::arg("code"), py::arg("address"), py::arg("write") = false)
+
+        .def("label_resolve", [](Emulator& self, py::object queryValue) -> py::dict {
+            py::dict d;
+            auto* ctx = self.GetContext();
+            LabelManager* labelMgr = ctx && ctx->pDebugManager ? ctx->pDebugManager->GetLabelManager() : nullptr;
+            if (!labelMgr) { d["error"] = "label manager not available"; return d; }
+
+            std::string query;
+            if (py::isinstance<std::string>(queryValue))
+                query = queryValue.cast<std::string>();
+            else
+                query = std::to_string(queryValue.cast<long>());
+
+            // Name direction
+            auto label = labelMgr->GetLabelByName(query);
+            if (label)
+            {
+                d["found"] = true;
+                d["query"] = "name";
+                d["address"] = label->address;
+                d["name"] = label->name;
+                if (!label->type.empty())
+                    d["type"] = label->type;
+                return d;
+            }
+
+            // Address direction: 0x / $ / decimal
+            uint16_t address = 0;
+            bool isAddress = false;
+            try
+            {
+                if (query.rfind("0x", 0) == 0 || query.rfind("0X", 0) == 0)
+                {
+                    address = static_cast<uint16_t>(std::stoul(query.substr(2), nullptr, 16));
+                    isAddress = true;
+                }
+                else if (query[0] == '$')
+                {
+                    address = static_cast<uint16_t>(std::stoul(query.substr(1), nullptr, 16));
+                    isAddress = true;
+                }
+                else if (!query.empty() && query.find_first_not_of("0123456789") == std::string::npos)
+                {
+                    address = static_cast<uint16_t>(std::stoul(query));
+                    isAddress = true;
+                }
+            }
+            catch (...)
+            {
+            }
+
+            if (!isAddress)
+            {
+                d["found"] = false;
+                d["query"] = "name";
+                if (labelMgr->GetLabelCount() == 0)
+                    d["hint"] = "no labels loaded — symbols_load first";
+                return d;
+            }
+
+            d["query"] = "address";
+            d["address"] = address;
+
+            auto exact = labelMgr->GetLabelByZ80Address(address);
+            d["found"] = exact != nullptr;
+            if (exact)
+                d["name"] = exact->name;
+
+            auto atAddress = labelMgr->GetAllLabelsAtAddress(address);
+            if (!atAddress.empty())
+            {
+                py::list aliases;
+                for (const auto& l : atAddress)
+                {
+                    py::dict item;
+                    item["name"] = l->name;
+                    item["address"] = l->address;
+                    aliases.append(item);
+                }
+                d["aliases"] = aliases;
+            }
+
+            const Label* bestBelow = nullptr;
+            const Label* bestAbove = nullptr;
+            for (const auto& l : labelMgr->GetAllLabels())
+            {
+                if (l->address < address && (!bestBelow || l->address > bestBelow->address))
+                    bestBelow = l.get();
+                else if (l->address > address && (!bestAbove || l->address < bestAbove->address))
+                    bestAbove = l.get();
+            }
+            if (bestBelow)
+            {
+                d["nearest_below"] = bestBelow->name;
+                d["nearest_below_address"] = bestBelow->address;
+            }
+            if (bestAbove)
+            {
+                d["nearest_above"] = bestAbove->name;
+                d["nearest_above_address"] = bestAbove->address;
+            }
+            return d;
+        }, "Resolve a label name to its address, or an address to label(s)", py::arg("query"))
+
+        .def("listing_load", [](Emulator& self, const std::string& path) -> py::dict {
+            py::dict d;
+            auto* ctx = self.GetContext();
+            ListingParser* parser = ctx && ctx->pDebugManager ? ctx->pDebugManager->GetListingParser() : nullptr;
+            if (!parser) { d["error"] = "listing parser not available"; return d; }
+
+            d["ok"] = parser->LoadListing(path);
+            if (d["ok"].cast<bool>())
+            {
+                d["lines"] = static_cast<uint64_t>(parser->GetLineCount());
+                d["code_lines"] = static_cast<uint64_t>(parser->GetCodeLineCount());
+                d["total_bytes"] = static_cast<uint64_t>(parser->GetTotalBytes());
+                d["min_address"] = parser->GetMinAddress();
+                d["max_address"] = parser->GetMaxAddress();
+            }
+            return d;
+        }, "Load a sjasmplus .lst source listing", py::arg("path"))
+
+        .def("listing_source_at", [](Emulator& self, py::object addressValue) -> py::dict {
+            py::dict d;
+            auto* ctx = self.GetContext();
+            ListingParser* parser = ctx && ctx->pDebugManager ? ctx->pDebugManager->GetListingParser() : nullptr;
+            if (!parser) { d["error"] = "listing parser not available"; return d; }
+            if (!parser->IsLoaded()) { d["error"] = "no listing loaded"; return d; }
+
+            Z80State* z80 = self.GetZ80State();
+            if (!z80) { d["error"] = "Z80 state not available"; return d; }
+
+            const uint16_t address = addressValue.is_none() ? z80->pc : addressValue.cast<uint16_t>();
+            const ListingLine* line = parser->FindLineByAddress(address);
+            d["found"] = line != nullptr;
+            if (line)
+            {
+                d["line"] = line->lineNumber;
+                d["source"] = line->source;
+                d["has_code"] = line->hasCode;
+                if (line->hasCode)
+                {
+                    d["address"] = line->addressStart;
+                    d["address_end"] = line->addressEnd;
+                }
+            }
+            return d;
+        }, "Source line for an address (default: PC)", py::arg("address") = py::none())
+
+        .def("listing_step_line", [](Emulator& self) -> py::dict {
+            py::dict d;
+            auto* ctx = self.GetContext();
+            if (!ctx || !ctx->pDebugManager) { d["error"] = "debug manager not available"; return d; }
+            ListingParser* parser = ctx->pDebugManager->GetListingParser();
+            if (!parser) { d["error"] = "listing parser not available"; return d; }
+            if (!parser->IsLoaded()) { d["error"] = "no listing loaded"; return d; }
+
+            Z80State* z80 = self.GetZ80State();
+            if (!z80) { d["error"] = "Z80 state not available"; return d; }
+
+            const ListingLine* startLine = parser->FindLineByAddress(z80->pc);
+            const int startLineNumber = startLine ? startLine->lineNumber : -1;
+
+            const unsigned maxTStates = ctx->config.frame * 100;
+            self.RunUntilCondition(
+                [parser, startLineNumber](const Z80State& state) {
+                    const ListingLine* line = parser->FindLineByAddress(state.pc);
+                    return line != nullptr && line->lineNumber != startLineNumber;
+                },
+                maxTStates);
+
+            z80 = self.GetZ80State();
+            const ListingLine* endLine = z80 ? parser->FindLineByAddress(z80->pc) : nullptr;
+            d["line_changed"] = endLine != nullptr && endLine->lineNumber != startLineNumber;
+            if (z80)
+                d["pc"] = z80->pc;
+            if (endLine)
+            {
+                d["line"] = endLine->lineNumber;
+                d["source"] = endLine->source;
+            }
+            return d;
+        }, "Step to the next source line")
+
+        .def("listing_run_to_line", [](Emulator& self, int lineNumber) -> py::dict {
+            py::dict d;
+            auto* ctx = self.GetContext();
+            if (!ctx || !ctx->pDebugManager) { d["error"] = "debug manager not available"; return d; }
+            ListingParser* parser = ctx->pDebugManager->GetListingParser();
+            if (!parser) { d["error"] = "listing parser not available"; return d; }
+            if (!parser->IsLoaded()) { d["error"] = "no listing loaded"; return d; }
+
+            Z80State* z80 = self.GetZ80State();
+            if (!z80) { d["error"] = "Z80 state not available"; return d; }
+
+            const ListingLine* target = parser->FindNextCodeLine(lineNumber);
+            if (!target)
+            {
+                d["error"] = "no code line at or after line " + std::to_string(lineNumber);
+                return d;
+            }
+
+            const uint16_t targetAddress = target->addressStart;
+            const bool alreadyAt = z80->pc == targetAddress;
+            if (!alreadyAt)
+            {
+                const unsigned maxTStates = ctx->config.frame * 500;
+                self.RunUntilCondition(
+                    [targetAddress](const Z80State& state) { return state.pc == targetAddress; }, maxTStates);
+            }
+
+            z80 = self.GetZ80State();
+            const bool reached = z80 && z80->pc == targetAddress;
+            d["reached"] = reached;
+            d["already_at"] = alreadyAt;
+            if (z80)
+                d["pc"] = z80->pc;
+            d["line"] = target->lineNumber;
+            d["source"] = target->source;
+            return d;
+        }, "Run until PC reaches the first code byte of a listing line", py::arg("line"));
 
         // Port trace (PDR) bindings — runtime feature "porttrace"
         registerPortTraceBindings(emulatorClass);

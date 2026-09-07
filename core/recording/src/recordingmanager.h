@@ -169,6 +169,12 @@ public:
         return _isPaused;
     }
 
+    /// Output file of the current (or last) recording session (empty before the first start)
+    const std::string& GetOutputFilename() const
+    {
+        return _outputFilename;
+    }
+
     /// Check if encoder can keep up with realtime
     bool IsRealtimeCapable() const
     {

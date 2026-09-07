@@ -7,6 +7,7 @@ class AutomationLua;
 class AutomationPython;
 class AutomationWebAPI;
 class AutomationCLI;
+class AutomationMCP;
 
 class Automation
 {
@@ -26,6 +27,10 @@ protected:
 
 #if ENABLE_CLI_AUTOMATION
     AutomationCLI* _cli = nullptr;
+#endif
+
+#if ENABLE_MCP_AUTOMATION
+    AutomationMCP* _mcp = nullptr;
 #endif
     bool _stopped = false;
     /// endregion </Fields>
@@ -86,10 +91,12 @@ protected:
     bool startPython();
     bool startWebAPI();
     bool startCLI();
+    bool startMCP();
 
     void stopLua();
     void stopPython();
     void stopWebAPI();
     void stopCLI();
+    void stopMCP();
     /// endregion </Helper methods>
 };

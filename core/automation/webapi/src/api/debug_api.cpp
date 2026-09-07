@@ -14,6 +14,8 @@
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
+#include <debugger/listing/listingparser.h>
+#include <debugger/assembler/z80textassembler.h>
 #include <base/featuremanager.h>
 #include <common/dumphelper.h>
 #include <json/json.h>
@@ -180,6 +182,164 @@ void EmulatorAPI::stepOver(const HttpRequestPtr& req, std::function<void(const H
         error["error"] = "Step over failed";
         error["message"] = e.what();
         
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+}
+
+/// @brief POST /api/v1/emulator/{id}/stepout
+/// @brief Step out of the current subroutine (SP-tracking: runs until a RET-family
+/// @brief instruction at/above the entry stack level, then executes it)
+void EmulatorAPI::stepOut(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                          const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    try
+    {
+        emulator->StepOut();
+
+        Z80State* z80 = emulator->GetZ80State();
+
+        Json::Value ret;
+        ret["status"] = "success";
+        ret["message"] = "Step out completed";
+        if (z80)
+        {
+            ret["pc"] = z80->pc;
+            ret["sp"] = z80->sp;
+        }
+        ret["state"] = stateToString(emulator->GetState());
+
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+    catch (const std::exception& e)
+    {
+        Json::Value error;
+        error["error"] = "Step out failed";
+        error["message"] = e.what();
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+}
+
+/// @brief POST /api/v1/emulator/{id}/skip_until
+/// @brief Fast-forward execution until PC reaches the target address (or the
+/// @brief t-state budget is exhausted). Breakpoints are skipped for the walk —
+/// @brief same no-trap rule as step out. Frames rendered during the skip are
+/// @brief not captured by the recording subsystem (raw CPU stepping path).
+/// @brief Request body: {"pc": "0x8000" | 32768, "max_tstates": 70000000}
+void EmulatorAPI::skipUntil(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                            const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    try
+    {
+        auto json = req->getJsonObject();
+        if (!json || !json->isMember("pc"))
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "Request body must contain 'pc' field (hex string or integer)";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+
+        // Target address: accept "0x8000" / "8000" strings and plain integers
+        uint32_t target32 = 0;
+        const Json::Value& pcValue = (*json)["pc"];
+        if (pcValue.isString())
+        {
+            target32 = static_cast<uint32_t>(std::stoul(pcValue.asString(), nullptr, 0));
+        }
+        else if (pcValue.isNumeric())
+        {
+            target32 = pcValue.asUInt();
+        }
+        else
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "'pc' must be a hex string or integer";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+
+        if (target32 > 0xFFFF)
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "'pc' is out of the 16-bit address range";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        const uint16_t target = static_cast<uint16_t>(target32);
+
+        // Safety budget: default 100 frames of emulated time (~2 s), hard cap 200 s
+        EmulatorContext* context = emulator->GetContext();
+        unsigned maxTStates = json->isMember("max_tstates") ? (*json)["max_tstates"].asUInt() : 0;
+        if (maxTStates == 0 && context)
+        {
+            maxTStates = context->config.frame * 100;
+        }
+        if (maxTStates == 0)
+        {
+            maxTStates = 6988800;  // Fallback if config is unavailable
+        }
+        if (maxTStates > 700000000u)
+        {
+            maxTStates = 700000000u;
+        }
+
+        emulator->RunUntilCondition([target](const Z80State& state) { return state.pc == target; }, maxTStates);
+
+        Z80State* z80 = emulator->GetZ80State();
+        const bool hit = z80 && z80->pc == target;
+
+        Json::Value ret;
+        ret["status"] = "success";
+        ret["hit"] = hit;
+        ret["message"] = hit ? "Reached target address" : "T-state budget exhausted before reaching target";
+        ret["max_tstates"] = maxTStates;
+        if (z80)
+        {
+            ret["pc"] = z80->pc;
+            ret["sp"] = z80->sp;
+        }
+        ret["state"] = stateToString(emulator->GetState());
+
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+    catch (const std::exception& e)
+    {
+        Json::Value error;
+        error["error"] = "Skip until failed";
+        error["message"] = e.what();
+
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
         addCorsHeaders(resp);
@@ -2643,7 +2803,795 @@ void EmulatorAPI::saveSymbols(const HttpRequestPtr& req, std::function<void(cons
     }
 }
 
+/// Helper: serialize a Label to JSON (same field shape as GET /labels/{name})
+static Json::Value labelToJson(const Label& label)
+{
+    Json::Value json;
+    json["name"] = label.name;
+    json["address"] = label.address;
+    if (label.bank != UINT16_MAX)
+    {
+        json["bank"] = label.bank;
+        json["bankType"] = label.isROM() ? "rom" : "ram";
+    }
+    if (!label.type.empty())
+        json["type"] = label.type;
+    if (!label.module.empty())
+        json["module"] = label.module;
+    if (!label.comment.empty())
+        json["comment"] = label.comment;
+    json["active"] = label.active;
+    return json;
+}
+
+/// @brief GET /api/v1/emulator/{id}/labels/resolve?name=LABEL or ?address=0x8000
+/// @brief Resolve a label by name (exact) or by Z80 address (exact + aliases + nearest context).
+/// @brief Address queries always return 200: found=false plus nearest_below/nearest_above context
+void EmulatorAPI::resolveLabel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                               const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Debug manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    if (!labelMgr)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Label manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    std::string name = req->getParameter("name");
+    std::string addressStr = req->getParameter("address");
+
+    // Exactly one of name / address is required
+    if (name.empty() == addressStr.empty())
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Provide exactly one query parameter: name or address";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Resolve by name — exact match only
+    if (!name.empty())
+    {
+        auto label = labelMgr->GetLabelByName(name);
+        if (!label)
+        {
+            Json::Value error;
+            error["error"] = "Not Found";
+            error["message"] = "Label not found: " + name;
+            if (labelMgr->GetLabelCount() == 0)
+                error["hint"] = "No labels loaded - POST /api/v1/emulator/{id}/symbols/load first";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k404NotFound);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+
+        Json::Value ret;
+        ret["query"] = "name";
+        ret["name"] = name;
+        ret["found"] = true;
+        ret["label"] = labelToJson(*label);
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Resolve by address (supports 0x prefix, $ prefix, or decimal)
+    uint16_t address = 0;
+    try
+    {
+        if (addressStr.substr(0, 2) == "0x" || addressStr.substr(0, 2) == "0X")
+        {
+            address = static_cast<uint16_t>(std::stoul(addressStr.substr(2), nullptr, 16));
+        }
+        else if (addressStr[0] == '$')
+        {
+            address = static_cast<uint16_t>(std::stoul(addressStr.substr(1), nullptr, 16));
+        }
+        else
+        {
+            address = static_cast<uint16_t>(std::stoul(addressStr));
+        }
+    }
+    catch (...)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid address format";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Json::Value ret;
+    ret["query"] = "address";
+    ret["address"] = address;
+    char hexStr[8];
+    snprintf(hexStr, sizeof(hexStr), "0x%04X", address);
+    ret["address_hex"] = hexStr;
+
+    auto exact = labelMgr->GetLabelByZ80Address(address);
+    ret["found"] = exact != nullptr;
+    if (exact)
+        ret["label"] = labelToJson(*exact);
+
+    // Aliases — all labels sharing the address
+    auto atAddress = labelMgr->GetAllLabelsAtAddress(address);
+    if (!atAddress.empty())
+    {
+        Json::Value aliases(Json::arrayValue);
+        for (const auto& l : atAddress)
+            aliases.append(labelToJson(*l));
+        ret["all_at_address"] = aliases;
+    }
+
+    // Nearest labels around the address — context for disassembly annotation
+    const Label* bestBelow = nullptr;
+    const Label* bestAbove = nullptr;
+    for (const auto& l : labelMgr->GetAllLabels())
+    {
+        if (l->address < address && (!bestBelow || l->address > bestBelow->address))
+            bestBelow = l.get();
+        else if (l->address > address && (!bestAbove || l->address < bestAbove->address))
+            bestAbove = l.get();
+    }
+    if (bestBelow)
+    {
+        Json::Value below;
+        below["name"] = bestBelow->name;
+        below["address"] = bestBelow->address;
+        below["distance"] = address - bestBelow->address;
+        ret["nearest_below"] = below;
+    }
+    if (bestAbove)
+    {
+        Json::Value above;
+        above["name"] = bestAbove->name;
+        above["address"] = bestAbove->address;
+        above["distance"] = bestAbove->address - address;
+        ret["nearest_above"] = above;
+    }
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// Helper: serialize a ListingLine to JSON
+static Json::Value listingLineToJson(const ListingLine& line)
+{
+    Json::Value json;
+    json["line"] = line.lineNumber;
+    json["has_code"] = line.hasCode;
+    if (line.hasCode)
+    {
+        json["address"] = line.addressStart;
+        json["address_end"] = line.addressEnd;
+        json["size"] = static_cast<Json::UInt64>(line.bytes.size());
+    }
+    json["source"] = line.source;
+    return json;
+}
+
 // endregion Labels/Symbols
+
+// region Source Listing
+
+/// @brief POST /api/v1/emulator/{id}/listing/load
+/// @brief Load a sjasmplus .lst listing. Body: {path: "game.lst", clear?: true}
+void EmulatorAPI::loadListing(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Debug manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    ListingParser* parser = ctx->pDebugManager->GetListingParser();
+    if (!parser)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Listing parser not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("path"))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Required: path";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    std::string path = (*json)["path"].asString();
+    if (parser->LoadListing(path))
+    {
+        Json::Value ret;
+        ret["status"] = "success";
+        ret["path"] = path;
+        ret["lines"] = static_cast<Json::UInt64>(parser->GetLineCount());
+        ret["code_lines"] = static_cast<Json::UInt64>(parser->GetCodeLineCount());
+        ret["total_bytes"] = static_cast<Json::UInt64>(parser->GetTotalBytes());
+        ret["min_address"] = parser->GetMinAddress();
+        ret["max_address"] = parser->GetMaxAddress();
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+    else
+    {
+        Json::Value error;
+        error["error"] = "Failed";
+        error["message"] = "Failed to load listing from: " + path;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+}
+
+/// @brief GET /api/v1/emulator/{id}/listing/source_at?address=0x8000&context=5
+/// @brief Source line covering an address, with N lines of context above/below
+void EmulatorAPI::listingSourceAt(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Debug manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    ListingParser* parser = ctx->pDebugManager->GetListingParser();
+    if (!parser)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Listing parser not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    if (!parser->IsLoaded())
+    {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = "No listing loaded";
+        error["hint"] = "POST /api/v1/emulator/{id}/listing/load first";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Parse address (supports 0x prefix, $ prefix, or decimal)
+    std::string addressStr = req->getParameter("address");
+    if (addressStr.empty())
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Required: address query parameter";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    uint16_t address = 0;
+    try
+    {
+        if (addressStr.substr(0, 2) == "0x" || addressStr.substr(0, 2) == "0X")
+        {
+            address = static_cast<uint16_t>(std::stoul(addressStr.substr(2), nullptr, 16));
+        }
+        else if (addressStr[0] == '$')
+        {
+            address = static_cast<uint16_t>(std::stoul(addressStr.substr(1), nullptr, 16));
+        }
+        else
+        {
+            address = static_cast<uint16_t>(std::stoul(addressStr));
+        }
+    }
+    catch (...)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid address format";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    const ListingLine* line = parser->FindLineByAddress(address);
+    if (!line)
+    {
+        char rangeHint[64];
+        snprintf(rangeHint, sizeof(rangeHint), "Covered code range: 0x%04X-0x%04X", parser->GetMinAddress(), parser->GetMaxAddress());
+
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Address not covered by loaded listing";
+        error["hint"] = rangeHint;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Context lines around the hit
+    int context = 5;
+    std::string contextParam = req->getParameter("context");
+    if (!contextParam.empty())
+    {
+        try { context = std::stoi(contextParam); } catch (...) { context = 5; }
+    }
+    if (context < 0) context = 0;
+    if (context > 50) context = 50;
+
+    int from = line->lineNumber - context;
+    int to = line->lineNumber + context;
+
+    Json::Value contextLines(Json::arrayValue);
+    for (const auto& l : parser->GetLines())
+    {
+        if (l.lineNumber >= from && l.lineNumber <= to)
+            contextLines.append(listingLineToJson(l));
+    }
+
+    Json::Value ret;
+    ret["address"] = address;
+    char hexStr[8];
+    snprintf(hexStr, sizeof(hexStr), "0x%04X", address);
+    ret["address_hex"] = hexStr;
+    ret["found"] = true;
+    ret["line"] = listingLineToJson(*line);
+    ret["context"] = contextLines;
+    ret["context_from"] = from;
+    ret["context_to"] = to;
+    ret["source_path"] = parser->GetSourcePath();
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/listing/step_line
+/// @brief Execute until PC reaches a different listing source line.
+/// @brief Body: {max_tstates?: N} — 0/absent = ~2 s of emulated time
+void EmulatorAPI::stepLine(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                           const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Debug manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    ListingParser* parser = ctx->pDebugManager->GetListingParser();
+    if (!parser)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Listing parser not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    if (!parser->IsLoaded())
+    {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = "No listing loaded";
+        error["hint"] = "POST /api/v1/emulator/{id}/listing/load first";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Z80State* z80 = emulator->GetZ80State();
+    if (!z80)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Z80 state not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    const ListingLine* startLine = parser->FindLineByAddress(z80->pc);
+    int startLineNumber = startLine ? startLine->lineNumber : -1;
+
+    auto json = req->getJsonObject();
+    unsigned maxTStates = json && json->isMember("max_tstates") ? (*json)["max_tstates"].asUInt() : 0;
+    if (maxTStates == 0)
+        maxTStates = ctx->config.frame * 100;  // ~2 s of emulated time
+
+    // Stop on the first instruction whose listing line differs from the starting line.
+    // When the current PC is not covered, stop on the first covered line instead.
+    emulator->RunUntilCondition(
+        [parser, startLineNumber](const Z80State& state) {
+            const ListingLine* line = parser->FindLineByAddress(state.pc);
+            return line != nullptr && line->lineNumber != startLineNumber;
+        },
+        maxTStates);
+
+    z80 = emulator->GetZ80State();
+    const ListingLine* endLine = z80 ? parser->FindLineByAddress(z80->pc) : nullptr;
+    bool lineChanged = endLine != nullptr && endLine->lineNumber != startLineNumber;
+
+    Json::Value ret;
+    ret["status"] = "success";
+    ret["message"] = lineChanged ? "Stepped to a different source line" : "Stopped without reaching a different source line";
+    if (z80)
+    {
+        ret["pc"] = z80->pc;
+        ret["sp"] = z80->sp;
+    }
+    ret["state"] = stateToString(emulator->GetState());
+    ret["line_changed"] = lineChanged;
+    if (startLine)
+        ret["from_line"] = listingLineToJson(*startLine);
+    if (endLine)
+        ret["to_line"] = listingLineToJson(*endLine);
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/listing/run_to_line
+/// @brief Run until PC reaches the first code byte of a listing line (at/after the given number).
+/// @brief Body: {line: N, max_tstates?: M} — 0/absent = ~10 s of emulated time
+void EmulatorAPI::runToLine(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                            const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Debug manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    ListingParser* parser = ctx->pDebugManager->GetListingParser();
+    if (!parser)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Listing parser not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    if (!parser->IsLoaded())
+    {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = "No listing loaded";
+        error["hint"] = "POST /api/v1/emulator/{id}/listing/load first";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("line"))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Required: line";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    int lineNumber = (*json)["line"].asInt();
+    const ListingLine* target = parser->FindNextCodeLine(lineNumber);
+    if (!target)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "No code line at or after line " + std::to_string(lineNumber) + " in loaded listing";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Z80State* z80 = emulator->GetZ80State();
+    if (!z80)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Z80 state not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    unsigned maxTStates = json->isMember("max_tstates") ? (*json)["max_tstates"].asUInt() : 0;
+    if (maxTStates == 0)
+        maxTStates = ctx->config.frame * 500;  // ~10 s of emulated time
+
+    const uint16_t targetAddress = target->addressStart;
+    bool alreadyAt = z80->pc == targetAddress;
+
+    if (!alreadyAt)
+    {
+        emulator->RunUntilCondition(
+            [targetAddress](const Z80State& state) { return state.pc == targetAddress; },
+            maxTStates);
+    }
+
+    z80 = emulator->GetZ80State();
+    bool reached = z80 && z80->pc == targetAddress;
+
+    Json::Value ret;
+    ret["status"] = reached ? "success" : "timeout";
+    ret["message"] = alreadyAt ? "Already at target line" : (reached ? "Reached target line" : "Safety limit reached before target line");
+    if (z80)
+    {
+        ret["pc"] = z80->pc;
+        ret["sp"] = z80->sp;
+    }
+    ret["state"] = stateToString(emulator->GetState());
+    ret["reached"] = reached;
+    ret["already_at"] = alreadyAt;
+    ret["target_line"] = listingLineToJson(*target);
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+// endregion Source Listing
+
+// region Assembler
+
+/// @brief POST /api/v1/emulator/{id}/assemble
+/// @brief Assemble Z80 source text. Body: {code: "...", address: 0x8000 | "0x8000", write?: false}
+void EmulatorAPI::assembleCode(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                               const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("code") || !json->isMember("address"))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Required: code, address";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    std::string code = (*json)["code"].asString();
+
+    // Address accepts JSON number or string (0x / $ / decimal)
+    uint16_t address = 0;
+    if ((*json)["address"].isString())
+    {
+        std::string addressStr = (*json)["address"].asString();
+        try
+        {
+            if (addressStr.substr(0, 2) == "0x" || addressStr.substr(0, 2) == "0X")
+                address = static_cast<uint16_t>(std::stoul(addressStr.substr(2), nullptr, 16));
+            else if (addressStr[0] == '$')
+                address = static_cast<uint16_t>(std::stoul(addressStr.substr(1), nullptr, 16));
+            else
+                address = static_cast<uint16_t>(std::stoul(addressStr, nullptr, 0));
+        }
+        catch (...)
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "Invalid address format";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+    }
+    else
+    {
+        address = static_cast<uint16_t>((*json)["address"].asUInt() & 0xFFFF);
+    }
+
+    bool write = json->isMember("write") && (*json)["write"].asBool();
+
+    Z80TextAssembler assembler;
+    AsmResult result = assembler.Assemble(code, address);
+
+    if (!result.ok)
+    {
+        Json::Value error;
+        error["error"] = "Assembly failed";
+        error["message"] = result.error.message;
+        error["line"] = result.error.line;
+        error["source_line"] = result.error.sourceLine;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Optional: write the emitted bytes into emulator RAM
+    if (write)
+    {
+        Memory* mem = emulator->GetMemory();
+        if (!mem)
+        {
+            Json::Value error;
+            error["error"] = "Internal Error";
+            error["message"] = "Memory not available";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+
+        uint32_t addr = result.startAddress;
+        for (uint8_t b : result.bytes)
+            mem->MemoryWriteFast(static_cast<uint16_t>((addr++) & 0xFFFF), b);
+    }
+
+    Json::Value ret;
+    ret["status"] = "success";
+    ret["address"] = result.startAddress;
+    ret["end_address"] = result.endAddress;
+    ret["size"] = static_cast<Json::UInt64>(result.bytes.size());
+
+    Json::Value bytesArr(Json::arrayValue);
+    for (uint8_t b : result.bytes)
+        bytesArr.append(b);
+    ret["bytes"] = bytesArr;
+
+    Json::Value listing(Json::arrayValue);
+    for (const auto& line : result.lines)
+    {
+        Json::Value entry;
+        entry["address"] = line.address;
+        if (!line.label.empty())
+            entry["label"] = line.label;
+        if (!line.source.empty())
+            entry["source"] = line.source;
+        if (!line.bytes.empty())
+        {
+            Json::Value lineBytes(Json::arrayValue);
+            for (uint8_t b : line.bytes)
+                lineBytes.append(b);
+            entry["bytes"] = lineBytes;
+        }
+        listing.append(entry);
+    }
+    ret["listing"] = listing;
+
+    Json::Value symbols(Json::objectValue);
+    for (const auto& sym : result.symbols)
+        symbols[sym.first] = sym.second;
+    ret["symbols"] = symbols;
+
+    if (write)
+        ret["written"] = true;
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+// endregion Assembler
 
 } // namespace v1
 } // namespace api

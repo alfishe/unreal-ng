@@ -8,6 +8,7 @@
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/tape/tapefastload.h"
 #include "emulator/io/tape/tapeturbocontroller.h"
+#include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/videocontroller.h"
 #include "emulator/video/zx/screenzx.h"
@@ -693,6 +694,27 @@ void Core::AdjustFrameCounters()
 
     // Update frame stats
     _state->frame_counter++;
+
+    // Calltrace hot-buffer tick: hot (tight-loop) events are evicted back to
+    // the cold buffer once they have not been seen for hot_timeout_frames.
+    // Readers (profiler entries / GetAll) only see the cold buffer, so without
+    // this frame-boundary flush a live capturing session would keep looping
+    // events permanently invisible
+    if (_memory != nullptr)
+    {
+        MemoryAccessTracker& tracker = _memory->GetAccessTracker();
+        if (tracker.IsCalltraceCapturing())
+        {
+            tracker.GetCallTraceBuffer()->FlushHotBuffer(_state->frame_counter);
+        }
+    }
+
+    // Frame cost rollup for the completed frame: active = budget - halted
+    _state->tstates_halted_last = _state->tstates_halted_current;
+    _state->tstates_halted_total += _state->tstates_halted_current;
+    _state->tstates_frame_total += scaledFrame;
+    _state->frame_cost_frames++;
+    _state->tstates_halted_current = 0;
 
     // Re-adjust Core frame t-state counter and interrupt position
     _z80->t -= scaledFrame;

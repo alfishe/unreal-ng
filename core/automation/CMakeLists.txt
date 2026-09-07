@@ -19,6 +19,7 @@ option(ENABLE_PYTHON_AUTOMATION "Enable automation for Python" OFF)
 option(ENABLE_WEBAPI_AUTOMATION "Enable automation for WebAPI" ON)
 option(ENABLE_CLI_AUTOMATION "Enable automation for CLI" ON)
 option(ENABLE_GDB_AUTOMATION "Enable automation for GDB RSP server (GDB TDD G1+)" OFF)
+option(ENABLE_MCP_AUTOMATION "Enable automation for the MCP server (Model Context Protocol)" ON)
 
 # Recording support - follows the root CMakeLists.txt option (single source of truth
 # for the EmulatorContext/Core struct layout). Declared here so a standalone automation
@@ -41,6 +42,7 @@ if (NOT ENABLE_AUTOMATION)
     set(ENABLE_WEBAPI_AUTOMATION OFF)
     set(ENABLE_CLI_AUTOMATION OFF)
     set(ENABLE_GDB_AUTOMATION OFF)
+    set(ENABLE_MCP_AUTOMATION OFF)
 endif ()
 
 # Add subdirectories based on automation options
@@ -60,6 +62,18 @@ if (ENABLE_WEBAPI_AUTOMATION)
     if (ENABLE_WEBAPI_AUTOMATION)
         set(AUTOMATION_WEBAPI_TARGET automation_webapi)
     endif ()
+endif ()
+
+# MCP server automation. Requires WebAPI: smart/router tools orchestrate the
+# emulator through loopback WebAPI calls, and the drogon/jsoncpp_static
+# targets only exist once the webapi subtree has been added.
+if (ENABLE_MCP_AUTOMATION AND NOT ENABLE_WEBAPI_AUTOMATION)
+    message(STATUS "ENABLE_MCP_AUTOMATION=ON but WebAPI is disabled — MCP automation disabled")
+    set(ENABLE_MCP_AUTOMATION OFF)
+endif ()
+if (ENABLE_MCP_AUTOMATION)
+    add_subdirectory(mcp)
+    set(AUTOMATION_MCP_TARGET automation_mcp)
 endif ()
 
 if (ENABLE_CLI_AUTOMATION)
@@ -120,6 +134,7 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
             $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:automation_python>    # Conditional linking
             $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:automation_webapi>    # Conditional linking
             $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:automation-cli>          # Conditional linking
+            $<$<BOOL:${ENABLE_MCP_AUTOMATION}>:${AUTOMATION_MCP_TARGET}>  # Conditional linking
             # ENABLE_GDB_AUTOMATION link target added in G1 (GDB TDD §2)
 
         PUBLIC
@@ -162,6 +177,7 @@ else ()
             $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${AUTOMATION_LUA_TARGET}>
             $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${AUTOMATION_PYTHON_TARGET}>
             $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:${AUTOMATION_WEBAPI_TARGET}>
+            $<$<BOOL:${ENABLE_MCP_AUTOMATION}>:${AUTOMATION_MCP_TARGET}>
             unrealng::core
     )
 endif ()
@@ -174,6 +190,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
     $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/python/src>
     $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/webapi/src>
     $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/cli/include>
+    $<$<BOOL:${ENABLE_MCP_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/mcp/src>
 )
 
 # Add conditional compiler definitions for automation modules
@@ -186,6 +203,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:ENABLE_WEBAPI_AUTOMATION>
     $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:ENABLE_CLI_AUTOMATION>
     $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:ENABLE_GDB_AUTOMATION>
+    $<$<BOOL:${ENABLE_MCP_AUTOMATION}>:ENABLE_MCP_AUTOMATION>
 )
 
 # <Diagnostics>
@@ -197,6 +215,7 @@ message(STATUS "    ENABLE_PYTHON_AUTOMATION: ${ENABLE_PYTHON_AUTOMATION}")
 message(STATUS "    ENABLE_CLI_AUTOMATION: ${ENABLE_CLI_AUTOMATION}")
 message(STATUS "    ENABLE_WEBAPI_AUTOMATION: ${ENABLE_WEBAPI_AUTOMATION}")
 message(STATUS "    ENABLE_GDB_AUTOMATION: ${ENABLE_GDB_AUTOMATION}")
+message(STATUS "    ENABLE_MCP_AUTOMATION: ${ENABLE_MCP_AUTOMATION}")
 message(STATUS "Settings:")
 message(STATUS "  PROJECT_NAME:        ${PROJECT_NAME}")
 message(STATUS "  SRC_DIR:             ${SRC_DIR}")

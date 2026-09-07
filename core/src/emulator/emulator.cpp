@@ -2709,6 +2709,94 @@ void Emulator::StepOver()
     // No blocking wait - UI stays responsive
 }
 
+/// region <Step out helpers>
+
+/// RET-family opcode detection: RET, RET cc, RETN/RETI (incl. undocumented ED aliases)
+static bool IsReturnInstruction(uint16_t address, Memory* memory)
+{
+    if (!memory)
+    {
+        return false;
+    }
+
+    uint8_t opcode = memory->DirectReadFromZ80Memory(address);
+    if (opcode == 0xC9) // RET
+    {
+        return true;
+    }
+    if ((opcode & 0xC7) == 0xC0) // RET cc (C0 C8 D0 D8 E0 E8 F0 F8)
+    {
+        return true;
+    }
+    if (opcode == 0xED)
+    {
+        switch (memory->DirectReadFromZ80Memory(address + 1))
+        {
+            case 0x45: // RETN
+            case 0x55: // RETI (undocumented alias)
+            case 0x5D: // RETI
+            case 0x65: // RETN (undocumented alias)
+            case 0x6D: // RETI (undocumented alias)
+            case 0x75: // RETN (undocumented alias)
+            case 0x7D: // RETI (undocumented alias)
+                return true;
+            default:
+                return false;
+        }
+    }
+    return false;
+}
+
+/// endregion </Step out helpers>
+
+void Emulator::StepOut()
+{
+    // Early exit if not initialized
+    if (!_initialized || !_core)
+    {
+        MLOGERROR("Emulator::StepOut() - not initialized");
+        return;
+    }
+
+    Z80State* z80 = GetZ80State();
+    Memory* memory = GetMemory();
+    if (!z80 || !memory)
+    {
+        MLOGERROR("Emulator::StepOut() - required components not available");
+        return;
+    }
+
+    // Step out = SP-tracking walk: run until a RET-family instruction sits at
+    // or above the entry stack level, then execute it to land in the caller.
+    // All steps skip breakpoints so debugger breakpoints inside the callee
+    // cannot trap the walk.
+    const uint16_t entrySP = z80->sp;
+
+    // Fast path: standing on a return instruction — execute it directly
+    if (IsReturnInstruction(z80->pc, memory))
+    {
+        RunSingleCPUCycle(true);
+        return;
+    }
+
+    // Generous ceiling: deep call chains still return within ~2 s of emulated time
+    const unsigned safetyLimit = _context->config.frame * 100;
+
+    RunUntilCondition(
+        [entrySP, memory](const Z80State& state) {
+            return state.sp >= entrySP && IsReturnInstruction(state.pc, memory);
+        },
+        safetyLimit);
+
+    // If the walk parked on the return instruction — execute it to land in the caller.
+    // On a safety-limit stop the emulator stays paused at the current position.
+    Z80State* current = GetZ80State();
+    if (current && current->sp >= entrySP && IsReturnInstruction(current->pc, memory))
+    {
+        RunSingleCPUCycle(true);
+    }
+}
+
 /// Load ROM file (up to 64 banks to ROM area)
 /// \param path File path to ROM file
 bool Emulator::LoadROM(std::string path)

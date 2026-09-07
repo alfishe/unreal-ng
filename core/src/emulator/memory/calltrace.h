@@ -163,6 +163,7 @@ public:
 
     void LogEvent(const Z80ControlFlowEvent& event, uint64_t current_frame);
     void FlushHotBuffer(uint64_t current_frame);
+    void FlushAllHotToCold();
     void Reset();
     size_t ColdSize() const;
     size_t ColdCapacity() const;

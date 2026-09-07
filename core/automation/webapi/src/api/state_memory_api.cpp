@@ -598,6 +598,236 @@ void EmulatorAPI::writeMemory(const HttpRequestPtr& req, std::function<void(cons
     callback(resp);
 }
 
+namespace
+{
+
+/// Parses a hex byte pattern with optional spaces, commas and 0x prefixes ("AF 32 0E", "af320e")
+std::vector<uint8_t> ParseHexPattern(const std::string& text)
+{
+    std::vector<uint8_t> bytes;
+    std::string digits;
+    for (char c : text)
+    {
+        if (std::isspace(static_cast<unsigned char>(c)) || c == ',' || c == ':')
+        {
+            continue;
+        }
+        if ((c == 'x' || c == 'X') && !digits.empty() && digits.back() == '0')
+        {
+            digits.pop_back(); // Strip 0x prefix
+            continue;
+        }
+        if (!std::isxdigit(static_cast<unsigned char>(c)))
+        {
+            return {}; // Malformed character → whole pattern invalid
+        }
+        digits += c;
+        if (digits.size() == 2)
+        {
+            bytes.push_back(static_cast<uint8_t>(std::stoul(digits, nullptr, 16)));
+            digits.clear();
+        }
+    }
+    if (!digits.empty())
+    {
+        return {}; // Trailing nibble
+    }
+    return bytes;
+}
+
+} // namespace
+
+/// @brief POST /api/v1/emulator/{id}/memory/find
+/// @brief Search Z80 memory for a byte pattern
+/// @brief Request body: {"pattern_hex": "AF 32 0E" | "pattern": [175, 50, 14],
+/// @brief                  "start": 0, "end": 65535, "max": 64, "alignment": 1}
+void EmulatorAPI::findMemory(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                             const std::string& id) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Memory* memory = emulator->GetMemory();
+    if (!memory)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Memory not available";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto body = req->getJsonObject();
+    if (!body || (!body->isMember("pattern_hex") && !body->isMember("pattern")))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Request must contain 'pattern_hex' (hex string) or 'pattern' (byte array)";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Build the search pattern (hex string or byte array)
+    std::vector<uint8_t> pattern;
+    if (body->isMember("pattern_hex"))
+    {
+        pattern = ParseHexPattern((*body)["pattern_hex"].asString());
+        if (pattern.empty())
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "Invalid 'pattern_hex' — expected hex bytes like \"AF 32 0E\" or \"af320e\"";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+    }
+    else
+    {
+        const Json::Value& array = (*body)["pattern"];
+        if (!array.isArray() || array.size() == 0)
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "'pattern' must be a non-empty byte array";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        for (Json::ArrayIndex i = 0; i < array.size(); i++)
+        {
+            pattern.push_back(static_cast<uint8_t>(array[i].asUInt()));
+        }
+    }
+
+    if (pattern.size() > 64)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Pattern longer than 64 bytes";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Range and limits (end inclusive)
+    const unsigned start = body->isMember("start") ? (*body)["start"].asUInt() : 0u;
+    const unsigned end = body->isMember("end") ? (*body)["end"].asUInt() : 65535u;
+    const unsigned max = body->isMember("max") ? (*body)["max"].asUInt() : 64u;
+    const unsigned alignment = body->isMember("alignment") ? (*body)["alignment"].asUInt() : 1u;
+
+    if (start > 0xFFFF || end > 0xFFFF || start > end)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid 'start'/'end' range";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    if (alignment != 1 && alignment != 2)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "'alignment' must be 1 or 2";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Scan the CPU view of memory; the first pattern byte gates the inner loop
+    const size_t searchLimit = end - pattern.size() + 1;
+    Json::Value matches(Json::arrayValue);
+    bool truncated = false;
+    size_t found = 0;
+
+    for (size_t position = start; position <= searchLimit; position += alignment)
+    {
+        if (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position)) != pattern[0])
+        {
+            continue;
+        }
+
+        bool matched = true;
+        for (size_t i = 1; i < pattern.size(); i++)
+        {
+            if (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position + i)) != pattern[i])
+            {
+                matched = false;
+                break;
+            }
+        }
+        if (!matched)
+        {
+            continue;
+        }
+
+        if (found >= max)
+        {
+            truncated = true;
+            break;
+        }
+
+        Json::Value match;
+        match["address"] = StringHelper::Format("0x%04X", position);
+        Json::Value context(Json::arrayValue);
+        for (size_t i = 0; i < pattern.size() + 4; i++)
+        {
+            context.append(memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position + i)));
+        }
+        match["context"] = context;
+        matches.append(match);
+        found++;
+    }
+
+    Json::Value ret;
+    ret["success"] = true;
+    ret["count"] = static_cast<Json::UInt>(found);
+    ret["matches"] = matches;
+    ret["truncated"] = truncated;
+    ret["range"] = StringHelper::Format("0x%04X-0x%04X", start, end);
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
 /// @brief GET /api/v1/emulator/{id}/memory/page/{type}/{page}
 /// @brief Read from specific RAM/ROM page
 void EmulatorAPI::readPage(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
