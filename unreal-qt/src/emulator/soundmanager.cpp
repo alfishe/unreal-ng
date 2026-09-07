@@ -17,6 +17,7 @@
 #endif
 #include <QDebug>
 
+#include <common/threadhelper.h>
 #include <emulator/sound/soundmanager.h>
 #include <common/timehelper.h>
 #include <cstring>
@@ -187,6 +188,13 @@ void AppSoundManager::stop()
 ///                   samples: one for the left, one for the right. The channel count is defined by the device config.
 void AppSoundManager::audioDataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount)
 {
+    thread_local bool s_threadNamed = false;
+    if (!s_threadNamed)
+    {
+        ThreadHelper::setThreadName("miniaudio");
+        s_threadNamed = true;
+    }
+
     AppSoundManager* obj = (AppSoundManager*)pDevice->pUserData;
 
     if (obj)
