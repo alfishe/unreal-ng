@@ -27,6 +27,11 @@
 static constexpr size_t const Z80_FREQUENCY = 3.5 * 1'000'000;
 static constexpr size_t const TSTATES_IN_MS = Z80_FREQUENCY / 1000;
 
+/// Fixed seed for the randomized FSM property tests: an unseeded random_device
+/// made any failure unrepeatable. The seeded sequence still sweeps the full
+/// delay/state space, just reproducibly.
+static constexpr std::mt19937::result_type const FSM_RANDOM_SEED = 0x9E371517;
+
 class WD1793_Test : public ::testing::Test
 {
 protected:
@@ -860,8 +865,7 @@ TEST_F(WD1793_Test, FSM_DelayRegister)
     WD1793CUT fdc(_context);
 
     /// region <Set up random numbers generator>
-    std::random_device rd;
-    std::mt19937 generator(rd());
+    std::mt19937 generator(FSM_RANDOM_SEED);
 
     // Define random numbers range
     std::uniform_int_distribution<size_t> delayDistribution(1, 10'000'000);
@@ -897,8 +901,7 @@ TEST_F(WD1793_Test, FSM_DelayCounters)
     WD1793CUT fdc(_context);
 
     /// region <Set up random numbers generator>
-    std::random_device rd;
-    std::mt19937 generator(rd());
+    std::mt19937 generator(FSM_RANDOM_SEED);
 
     std::uniform_int_distribution<size_t> delayDistribution(1, 10'000);
     // MSVC: uniform_int_distribution doesn't allow uint8_t, use unsigned int instead
@@ -3160,7 +3163,12 @@ TEST_F(WD1793_Test, ForceInterrupt_Terminate)
         bool isBusy = fdc._statusRegister & WD1793::WDS_BUSY;
         bool isCRCError = fdc._statusRegister & WD1793::WDS_CRCERR;
         bool isSeekError = fdc._statusRegister & WD1793::WDS_SEEKERR;
-        bool isTrack0 = (fdc._statusRegister & WD1793::WDS_TRK00);
+        // Per datasheet, interrupting an active command leaves the cached status bits unchanged,
+        // so TRK00 must be read the way CPU code reads it: through the status-read composition,
+        // which refreshes live Type I bits from the drive. Comparing the raw cached bit against
+        // live drive state is invalid - the FDD starts at a randomized track, so a stale TRK00
+        // (set while the head was once at track 0) made this check fail ~1/81 runs.
+        bool isTrack0 = fdc.getStatusRegister() & WD1793::WDS_TRK00;
         bool DRQ = fdc._beta128status & DRQ;
         bool INTRQ = fdc._beta128status & INTRQ;
 
