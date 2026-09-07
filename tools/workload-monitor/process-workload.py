@@ -874,9 +874,10 @@ def render_dashboard(
     effective_top_threads = min(top_threads, max_thread_rows)
 
     # Thread table
+    active_count = sum(1 for t in sample.threads if t.single_core_pct > 0.0)
     lines.append(
-        f"{colors.BOLD}THREAD BREAKDOWN (sorted by CPU load):{colors.RESET} "
-        f"{colors.DIM}(Top {effective_top_threads} active threads){colors.RESET}"
+        f"{colors.BOLD}THREAD BREAKDOWN (by TID):{colors.RESET} "
+        f"{colors.DIM}({active_count} active, showing {min(effective_top_threads, len(sample.threads))}){colors.RESET}"
     )
 
     max_name_len = max(8, min(20, width - 56))
@@ -885,15 +886,18 @@ def render_dashboard(
     )
     lines.append(f"  {colors.DIM}{'─' * (width - 4)}{colors.RESET}")
 
-    displayed_threads = sample.threads if show_all_threads else [t for t in sample.threads if t.single_core_pct > 0.01 or show_all_threads]
-    if not displayed_threads and sample.threads:
-        displayed_threads = sample.threads[:effective_top_threads]
+    # Always include threads with any CPU activity; filter zero-activity threads unless show_all_threads
+    if show_all_threads:
+        displayed_threads = list(sample.threads)
     else:
-        displayed_threads = displayed_threads[:effective_top_threads]
+        # Include all threads with measurable activity (>0%), then fill remaining slots with idle threads
+        active = [t for t in sample.threads if t.single_core_pct > 0.0]
+        idle = [t for t in sample.threads if t.single_core_pct == 0.0]
+        displayed_threads = active + idle
 
-    if group_threads or (sample.videowall and sample.videowall.is_videowall):
-        cat_order = {"Tile": 0, "UI": 1, "Worker": 2, "Service": 3, "Other": 4}
-        displayed_threads.sort(key=lambda t: (cat_order.get(t.category, 5), -t.single_core_pct))
+    # Sort by thread ID for stable display (prevents jumping)
+    displayed_threads.sort(key=lambda t: t.tid)
+    displayed_threads = displayed_threads[:effective_top_threads]
 
     if not displayed_threads:
         lines.append(f"  {colors.DIM}(no thread activity recorded in this sample window){colors.RESET}")
