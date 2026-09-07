@@ -9,6 +9,7 @@
 #endif
 
 #include <common/filehelper.h>
+#include <common/threadhelper.h>
 
 #include <QApplication>
 #include "crashhandler/crashhandler.h"
@@ -40,6 +41,8 @@ static void clearMacOSSavedState()
 
 int main(int argc, char* argv[])
 {
+    ThreadHelper::setThreadName("vwall-main");
+
     auto crashHandler = std::unique_ptr<CrashHandler>(CrashHandler::create());
     crashHandler->install();
 

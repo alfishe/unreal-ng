@@ -9,6 +9,7 @@
 #include <thread>
 #include <vector>
 
+#include "common/threadhelper.h"
 #include "emulator_api.h"        // Triggers auto-registration for API handlers
 #include "emulator_websocket.h"  // Triggers auto-registration for WebSocket handlers
 #include "hello_world_api.h"     // Triggers auto-registration for API handlers
@@ -184,44 +185,7 @@ void AutomationWebAPI::stop()
 
 void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
 {
-    /// region <Make thread named for easy reading in debuggers>
-    const char* threadName = "automation_webapi";
-
-#ifdef __APPLE__
-#include <pthread.h>
-    pthread_setname_np(threadName);
-#endif
-#ifdef __linux__
-#include <pthread.h>
-    pthread_setname_np(pthread_self(), threadName);
-#endif
-#if defined _WIN32 && defined MSVC
-    static auto setThreadDescription = reinterpret_cast<HRESULT(WINAPI*)(HANDLE, PCWSTR)>(
-        GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription"));
-    if (setThreadDescription != nullptr)
-    {
-        wchar_t wname[24];
-        size_t retval;
-        mbstate_t conversion;
-        mbstowcs_s(&retval, wname, threadName, sizeof(threadName) / sizeof(threadName[0]), &conversion);
-        setThreadDescription(GetCurrentThread(), wname);
-    }
-#endif
-
-#if defined _WIN32 && defined __GNUC__
-    static auto setThreadDescription = reinterpret_cast<HRESULT(WINAPI*)(HANDLE, PCWSTR)>(
-        GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription"));
-    if (setThreadDescription != nullptr)
-    {
-        wchar_t wname[24];
-        size_t retval;
-        mbstate_t conversion;
-        mbsrtowcs_s(&retval, wname, (size_t)(sizeof(wname) / sizeof(wname[0])), &threadName,
-                    (size_t)(sizeof(threadName) / sizeof(threadName[0])), &conversion);
-        setThreadDescription(GetCurrentThread(), wname);
-    }
-#endif
-    /// endregion </Make thread named for easy reading in debuggers>
+    ThreadHelper::setThreadName("automation-webapi");
 
     // CRITICAL: Check port availability BEFORE drogon initialization
     // This prevents drogon from calling exit() on bind failure
