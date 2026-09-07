@@ -878,7 +878,7 @@ void MainWindow::keyPressEvent(QKeyEvent* event)
 {
     event->accept();
 
-    qDebug() << "MainWindow : keyPressEvent , key : " << event->text();
+    // qDebug() << "MainWindow : keyPressEvent , key : " << event->text();
 }
 
 void MainWindow::mousePressEvent(QMouseEvent* event)
@@ -914,8 +914,8 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
             QString hexScanCode = QString("0x%1").arg(keyEvent->nativeScanCode(), 4, 16, QLatin1Char('0'));
             QString hexVirtualKey = QString("0x%1").arg(keyEvent->nativeVirtualKey(), 4, 16, QLatin1Char('0'));
 
-            qDebug() << "MainWindow : eventFilter - keyPress, scan: " << hexScanCode << "virt: " << hexVirtualKey
-                     << " key: " << keyName << " " << keyEvent->text();
+            // qDebug() << "MainWindow : eventFilter - keyPress, scan: " << hexScanCode << "virt: " << hexVirtualKey
+            //          << " key: " << keyName << " " << keyEvent->text();
 
             /*
             if (keyEvent->key() == Qt::Key_F1)
@@ -940,8 +940,8 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
             QString hexScanCode = QString("0x%1").arg(keyEvent->nativeScanCode(), 4, 16, QLatin1Char('0'));
             QString hexVirtualKey = QString("0x%1").arg(keyEvent->nativeVirtualKey(), 4, 16, QLatin1Char('0'));
 
-            qDebug() << "MainWindow : eventFilter - keyRelease, scan: " << hexScanCode << "virt: " << hexVirtualKey
-                     << " key: " << keyName << " " << keyEvent->text();
+            // qDebug() << "MainWindow : eventFilter - keyRelease, scan: " << hexScanCode << "virt: " << hexVirtualKey
+            //          << " key: " << keyName << " " << keyEvent->text();
 
             deviceScreen->handleExternalKeyRelease(keyEvent);
         }

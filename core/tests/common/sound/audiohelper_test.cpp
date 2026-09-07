@@ -108,19 +108,17 @@ TEST_F(AudioHelper_Test, convertInt16ToFloat)
 
 TEST_F(AudioHelper_Test, filterDCRejectionMono)
 {
-    // Input data samples in mono format
-    const int16_t inputSamples[] =
+    // Input data samples in mono format (mutable for in-place filter)
+    int16_t inputSamples[] =
     {
             0, 1000, 0, 0, 0, 0, 0, 0, 0
     };
-
 
     const int16_t referenceOutput[] =
     {
         0, 995, -9, -9, -9, -9, -9, -9, -9
     };
 
-    constexpr size_t inputArraySizeInBytes = sizeof(inputSamples);
     constexpr size_t inputArrayLength = sizeof(inputSamples) / sizeof(inputSamples[0]);
     constexpr size_t inputArrayLengthInSamples = inputArrayLength;
 
@@ -130,7 +128,7 @@ TEST_F(AudioHelper_Test, filterDCRejectionMono)
     std::cout << DumpHelper::HexDumpBuffer(inputSamples, inputArrayLength, 1);
 
     // Apply DC filter
-    AudioHelper::filterDCRejectionMono((int16_t*)inputSamples, inputArrayLengthInSamples);
+    AudioHelper::filterDCRejectionMono(inputSamples, inputArrayLengthInSamples);
 
     std::cout << std::endl;
     std::cout << "Output:" << std::endl;
@@ -146,8 +144,8 @@ TEST_F(AudioHelper_Test, filterDCRejectionMono)
 
 TEST_F(AudioHelper_Test, filterDCRejectionStereoInterleaved)
 {
-    // Input data samples in stereo interleaved format (L + R)
-    const int16_t inputSamples[] =
+    // Input data samples in stereo interleaved format (L + R) (mutable for in-place filter)
+    int16_t inputSamples[] =
     {
           0,     0,
         1000, 1000,
@@ -173,7 +171,6 @@ TEST_F(AudioHelper_Test, filterDCRejectionStereoInterleaved)
          -9,  -9
     };
 
-    constexpr size_t inputArraySizeInBytes = sizeof(inputSamples);
     constexpr size_t inputArrayLength = sizeof(inputSamples) / sizeof(inputSamples[0]);
     constexpr size_t inputArrayLengthInSamples = inputArrayLength / 2;  // Since we store interleaved stereo
 
@@ -183,7 +180,7 @@ TEST_F(AudioHelper_Test, filterDCRejectionStereoInterleaved)
     std::cout << DumpHelper::HexDumpBuffer(inputSamples, inputArrayLength, 2);
 
     // Apply DC filter
-    AudioHelper::filterDCRejectionStereoInterleaved((int16_t*)inputSamples, inputArrayLengthInSamples);
+    AudioHelper::filterDCRejectionStereoInterleaved(inputSamples, inputArrayLengthInSamples);
 
     std::cout << std::endl;
     std::cout << "Output:" << std::endl;

@@ -106,19 +106,17 @@ DebugVisualizationWindow::DebugVisualizationWindow(Emulator* emulator, QWidget* 
 
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
 
-        // Create and store lambda functions for observers
-        _stateChangeObserver = [this](int id, Message* message) { this->handleEmulatorStateChanged(id, message); };
+        // Register observers and store their IDs for cleanup
+        _stateChangeObserverId = messageCenter.AddObserver(NC_EMULATOR_STATE_CHANGE,
+            [this](int id, Message* message) { this->handleEmulatorStateChanged(id, message); });
 
-        _cpuStepObserver = [this](int id, Message* message) { this->handleCPUStepMessage(id, message); };
+        _cpuStepObserverId = messageCenter.AddObserver(NC_EXECUTION_CPU_STEP,
+            [this](int id, Message* message) { this->handleCPUStepMessage(id, message); });
 
-        _frameRefreshObserver = [this](int id, Message* message) {
-            _frameDirty.store(true, std::memory_order_relaxed);
-        };
-
-        // Register the observers
-        messageCenter.AddObserver(NC_EMULATOR_STATE_CHANGE, _stateChangeObserver);
-        messageCenter.AddObserver(NC_EXECUTION_CPU_STEP, _cpuStepObserver);
-        messageCenter.AddObserver(NC_VIDEO_FRAME_REFRESH, _frameRefreshObserver);
+        _frameRefreshObserverId = messageCenter.AddObserver(NC_VIDEO_FRAME_REFRESH,
+            [this](int id, Message* message) {
+                _frameDirty.store(true, std::memory_order_relaxed);
+            });
     }
 
     setWindowTitle("Debug Visualization");
@@ -127,22 +125,22 @@ DebugVisualizationWindow::DebugVisualizationWindow(Emulator* emulator, QWidget* 
 
 DebugVisualizationWindow::~DebugVisualizationWindow()
 {
-    // Unsubscribe from MessageCenter using the stored observer functions
+    // Unsubscribe from MessageCenter using the stored observer IDs
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
 
-    if (_stateChangeObserver)
+    if (_stateChangeObserverId != 0)
     {
-        messageCenter.RemoveObserver(NC_EMULATOR_STATE_CHANGE, _stateChangeObserver);
+        messageCenter.RemoveObserverById(NC_EMULATOR_STATE_CHANGE, _stateChangeObserverId);
     }
 
-    if (_cpuStepObserver)
+    if (_cpuStepObserverId != 0)
     {
-        messageCenter.RemoveObserver(NC_EXECUTION_CPU_STEP, _cpuStepObserver);
+        messageCenter.RemoveObserverById(NC_EXECUTION_CPU_STEP, _cpuStepObserverId);
     }
 
-    if (_frameRefreshObserver)
+    if (_frameRefreshObserverId != 0)
     {
-        messageCenter.RemoveObserver(NC_VIDEO_FRAME_REFRESH, _frameRefreshObserver);
+        messageCenter.RemoveObserverById(NC_VIDEO_FRAME_REFRESH, _frameRefreshObserverId);
     }
 
     delete ui;
@@ -155,37 +153,38 @@ void DebugVisualizationWindow::setEmulator(Emulator* emulator)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
 
     // Unsubscribe existing observers
-    if (_stateChangeObserver)
+    if (_stateChangeObserverId != 0)
     {
-        messageCenter.RemoveObserver(NC_EMULATOR_STATE_CHANGE, _stateChangeObserver);
+        messageCenter.RemoveObserverById(NC_EMULATOR_STATE_CHANGE, _stateChangeObserverId);
+        _stateChangeObserverId = 0;
     }
 
-    if (_cpuStepObserver)
+    if (_cpuStepObserverId != 0)
     {
-        messageCenter.RemoveObserver(NC_EXECUTION_CPU_STEP, _cpuStepObserver);
+        messageCenter.RemoveObserverById(NC_EXECUTION_CPU_STEP, _cpuStepObserverId);
+        _cpuStepObserverId = 0;
     }
 
-    if (_frameRefreshObserver)
+    if (_frameRefreshObserverId != 0)
     {
-        messageCenter.RemoveObserver(NC_VIDEO_FRAME_REFRESH, _frameRefreshObserver);
+        messageCenter.RemoveObserverById(NC_VIDEO_FRAME_REFRESH, _frameRefreshObserverId);
+        _frameRefreshObserverId = 0;
     }
 
     // Subscribe to new emulator events
     if (_emulator)
     {
-        // Create and store lambda functions for observers
-        _stateChangeObserver = [this](int id, Message* message) { this->handleEmulatorStateChanged(id, message); };
+        // Register observers and store their IDs for cleanup
+        _stateChangeObserverId = messageCenter.AddObserver(NC_EMULATOR_STATE_CHANGE,
+            [this](int id, Message* message) { this->handleEmulatorStateChanged(id, message); });
 
-        _cpuStepObserver = [this](int id, Message* message) { this->handleCPUStepMessage(id, message); };
+        _cpuStepObserverId = messageCenter.AddObserver(NC_EXECUTION_CPU_STEP,
+            [this](int id, Message* message) { this->handleCPUStepMessage(id, message); });
 
-        _frameRefreshObserver = [this](int id, Message* message) {
-            _frameDirty.store(true, std::memory_order_relaxed);
-        };
-
-        // Register the observers
-        messageCenter.AddObserver(NC_EMULATOR_STATE_CHANGE, _stateChangeObserver);
-        messageCenter.AddObserver(NC_EXECUTION_CPU_STEP, _cpuStepObserver);
-        messageCenter.AddObserver(NC_VIDEO_FRAME_REFRESH, _frameRefreshObserver);
+        _frameRefreshObserverId = messageCenter.AddObserver(NC_VIDEO_FRAME_REFRESH,
+            [this](int id, Message* message) {
+                _frameDirty.store(true, std::memory_order_relaxed);
+            });
 
         // Update widgets with new emulator
         if (_memoryWidget)
@@ -304,22 +303,22 @@ void DebugVisualizationWindow::prepareForShutdown()
     // Remove MessageCenter observers to prevent cross-thread dispatches during destruction
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
 
-    if (_stateChangeObserver)
+    if (_stateChangeObserverId != 0)
     {
-        messageCenter.RemoveObserver(NC_EMULATOR_STATE_CHANGE, _stateChangeObserver);
-        _stateChangeObserver = nullptr;
+        messageCenter.RemoveObserverById(NC_EMULATOR_STATE_CHANGE, _stateChangeObserverId);
+        _stateChangeObserverId = 0;
     }
 
-    if (_cpuStepObserver)
+    if (_cpuStepObserverId != 0)
     {
-        messageCenter.RemoveObserver(NC_EXECUTION_CPU_STEP, _cpuStepObserver);
-        _cpuStepObserver = nullptr;
+        messageCenter.RemoveObserverById(NC_EXECUTION_CPU_STEP, _cpuStepObserverId);
+        _cpuStepObserverId = 0;
     }
 
-    if (_frameRefreshObserver)
+    if (_frameRefreshObserverId != 0)
     {
-        messageCenter.RemoveObserver(NC_VIDEO_FRAME_REFRESH, _frameRefreshObserver);
-        _frameRefreshObserver = nullptr;
+        messageCenter.RemoveObserverById(NC_VIDEO_FRAME_REFRESH, _frameRefreshObserverId);
+        _frameRefreshObserverId = 0;
     }
 
     // Null out emulator reference to prevent any stale access

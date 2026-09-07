@@ -74,10 +74,10 @@ private:
     FloppyDiskWidget* _floppyDiskWidget = nullptr;
 
 
-    // Store lambda functions for MessageCenter observers
-    std::function<void(int, Message*)> _stateChangeObserver;
-    std::function<void(int, Message*)> _cpuStepObserver;
-    std::function<void(int, Message*)> _frameRefreshObserver;
+    // Store observer IDs for MessageCenter cleanup
+    uint64_t _stateChangeObserverId = 0;
+    uint64_t _cpuStepObserverId = 0;
+    uint64_t _frameRefreshObserverId = 0;
 
     // Flag to prevent recursive signal handling during sync
     bool _updatingCheckboxes = false;
