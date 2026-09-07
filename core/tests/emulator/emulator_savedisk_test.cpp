@@ -1,7 +1,11 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 #include <common/filehelper.h>
@@ -108,19 +112,32 @@ TEST_F(EmulatorSaveDisk_Test, Save_Trd_RefusedByGeometry_RetargetsToUdi)
     image->getTrackForCylinderAndSide(10, 0)->formatTrack(10, 0, DiskImage::TrackFormatSpec::plus3());
 
     // Observe the re-target notification
-    int notifications = 0;
+    std::atomic<int> notifications{0};
     std::string notifiedPath, notifiedReason;
+    std::mutex notifyMutex;
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     ObserverCallbackFunc callback = [&](int, Message* message)
     {
         auto* payload = dynamic_cast<FDDDiskPayload*>(message->obj);
-        if (payload) { notifications++; notifiedPath = payload->_diskPath; notifiedReason = payload->_reason; }
+        if (payload) {
+            std::lock_guard<std::mutex> lock(notifyMutex);
+            notifications++;
+            notifiedPath = payload->_diskPath;
+            notifiedReason = payload->_reason;
+        }
     };
-    messageCenter.AddObserver(NC_FDD_DISK_SAVE_RETARGETED, callback);
+    uint64_t callbackId = messageCenter.AddObserver(NC_FDD_DISK_SAVE_RETARGETED, callback);
 
     Emulator::DiskSaveResult result = _emulator->SaveDisk(0);
 
-    messageCenter.RemoveObserver(NC_FDD_DISK_SAVE_RETARGETED, callback);
+    // Wait for async notification to be delivered (MessageCenter dispatches asynchronously)
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
+    while (notifications.load() == 0 && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    messageCenter.RemoveObserverById(NC_FDD_DISK_SAVE_RETARGETED, callbackId);
 
     EXPECT_TRUE(result.saved) << result.reason;
     EXPECT_TRUE(result.retargeted);
@@ -137,9 +154,12 @@ TEST_F(EmulatorSaveDisk_Test, Save_Trd_RefusedByGeometry_RetargetsToUdi)
     EXPECT_EQ(back.getImage()->getTrackForCylinderAndSide(10, 0)->sectorCount(), 9u);
     delete back.getImage();
 
-    EXPECT_EQ(notifications, 1);
-    EXPECT_EQ(notifiedPath, udi);
-    EXPECT_FALSE(notifiedReason.empty());
+    EXPECT_EQ(notifications.load(), 1);
+    {
+        std::lock_guard<std::mutex> lock(notifyMutex);
+        EXPECT_EQ(notifiedPath, udi);
+        EXPECT_FALSE(notifiedReason.empty());
+    }
 
     // Retarget disabled: plain failure, nothing written
     removeFile(udi);
