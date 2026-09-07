@@ -218,37 +218,37 @@ void TileGrid::setSyncEmulatorId(const std::string& emulatorId)
 
 void TileGrid::subscribeToNotifications()
 {
-    _videoFrameCallback = [this](int id, Message* message) {
-        if (message && message->obj) {
-            auto* payload = dynamic_cast<EmulatorFramePayload*>(message->obj);
-            if (payload && payload->_emulatorId.toString() == _syncEmulatorId) {
-                // Drop frame if UI is still rendering the previous one (prevents event queue flooding)
-                bool expected = false;
-                if (_isRepaintPending.compare_exchange_strong(expected, true)) {
-                    
-                    if (_singleSyncMode) {
-                        // --- Perform SIMD / Multithreaded compositing on the emulator thread ---
-                        compositeSingleSyncFrame();
-                    }
+    _videoFrameObserverId = MessageCenter::DefaultMessageCenter().AddObserver(NC_VIDEO_FRAME_REFRESH,
+        [this](int id, Message* message) {
+            if (message && message->obj) {
+                auto* payload = dynamic_cast<EmulatorFramePayload*>(message->obj);
+                if (payload && payload->_emulatorId.toString() == _syncEmulatorId) {
+                    // Drop frame if UI is still rendering the previous one (prevents event queue flooding)
+                    bool expected = false;
+                    if (_isRepaintPending.compare_exchange_strong(expected, true)) {
 
-                    QMetaObject::invokeMethod(this, [this]() {
-                        // In single sync mode, repaintAllTiles just calls this->update() to draw the composite image
-                        repaintAllTiles();
-                        _isRepaintPending = false;
-                    }, Qt::QueuedConnection);
+                        if (_singleSyncMode) {
+                            // --- Perform SIMD / Multithreaded compositing on the emulator thread ---
+                            compositeSingleSyncFrame();
+                        }
+
+                        QMetaObject::invokeMethod(this, [this]() {
+                            // In single sync mode, repaintAllTiles just calls this->update() to draw the composite image
+                            repaintAllTiles();
+                            _isRepaintPending = false;
+                        }, Qt::QueuedConnection);
+                    }
                 }
             }
-        }
-    };
-    MessageCenter::DefaultMessageCenter().AddObserver(NC_VIDEO_FRAME_REFRESH, _videoFrameCallback);
+        });
 }
 
 void TileGrid::unsubscribeFromNotifications()
 {
-    if (_videoFrameCallback)
+    if (_videoFrameObserverId != 0)
     {
-        MessageCenter::DefaultMessageCenter().RemoveObserver(NC_VIDEO_FRAME_REFRESH, _videoFrameCallback);
-        _videoFrameCallback = nullptr;
+        MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_VIDEO_FRAME_REFRESH, _videoFrameObserverId);
+        _videoFrameObserverId = 0;
     }
 }
 

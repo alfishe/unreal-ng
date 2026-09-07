@@ -31,6 +31,11 @@ void EventQueue::dispose()
         {
             if (it != nullptr)
             {
+                // Delete payload if ownership was transferred to the message
+                if (it->cleanupPayload && it->obj != nullptr)
+                {
+                    delete it->obj;
+                }
                 delete it;
             }
         }
@@ -56,6 +61,7 @@ void EventQueue::dispose()
                 }
 
                 it.second->clear();
+                delete it.second;  // Free the vector itself
             }
         }
 
@@ -369,7 +375,15 @@ void EventQueue::Post(int id, MessagePayload* obj, bool autoCleanupPayload)
 void EventQueue::Post(std::string topic, MessagePayload* obj, bool autoCleanupPayload)
 {
     int id = ResolveTopic(topic);
-    Post(id, obj, autoCleanupPayload);
+    if (id >= 0)
+    {
+        Post(id, obj, autoCleanupPayload);
+    }
+    else if (autoCleanupPayload && obj != nullptr)
+    {
+        // Topic not registered - clean up payload to prevent leak
+        delete obj;
+    }
 }
 
 // Lookup for observer list for topic with <id>
