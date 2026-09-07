@@ -5,8 +5,14 @@
 #include <filesystem>
 
 #include "3rdparty/gif/gif.h"
-#include "encoder_config.h"
+#include "encoderconfig.h"
 #include "emulator/video/screen.h"
+
+#if defined(_WIN32)
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 
 /// @brief Test fixture for GIF encoder tests
 class GIFEncoderTest : public ::testing::Test
@@ -14,8 +20,17 @@ class GIFEncoderTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        // Create temp directory for test outputs
-        _tempDir = std::filesystem::temp_directory_path() / "gif_encoder_test";
+        // Per-process-unique temp directory: parallel GTest shards run several
+        // instances of this binary at once and TearDown removes the whole
+        // directory, so a shared name lets one shard delete another's files
+        // mid-test (seen as intermittent encoder.Start() failures).
+#if defined(_WIN32)
+        const int pid = _getpid();
+#else
+        const int pid = getpid();
+#endif
+        _tempDir = std::filesystem::temp_directory_path()
+                 / ("gif_encoder_test_" + std::to_string(pid));
         std::filesystem::create_directories(_tempDir);
     }
 

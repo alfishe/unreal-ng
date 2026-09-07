@@ -59,7 +59,7 @@ Created [test_api_basic.py](tools/verification/webapi/src/test_api_basic.py) wit
 
 ```bash
 # Run tests
-cd /Volumes/TB4-4Tb/Projects/Test/unreal-ng/tools/verification/webapi
+cd tools/verification/webapi
 pytest src/test_api_basic.py -v
 ```
 

@@ -22,15 +22,18 @@ import json
 import urllib.request
 import urllib.error
 
-sys.path.insert(0, "/Users/dev/Projects/Test/unreal-ng/tools/verification/webapi/src")
-sys.path.insert(0, "/Users/dev/Projects/Test/unreal-ng/tools/verification/ttd-scrubber/src")
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+sys.path.insert(0, str(REPO_ROOT / "tools/verification/webapi/src"))
+sys.path.insert(0, str(REPO_ROOT / "tools/verification/ttd-scrubber/src"))
 
 from api_client import UnrealApiClient
 
 BASE = "http://localhost:8090"
 c = UnrealApiClient(base_url=BASE)
 
-DEMO_PATH = "/Users/dev/Projects/Test/unreal-ng/data/testsnapshots/z80/Binary Love I.z80"
+DEMO_PATH = str(REPO_ROOT / "data/testsnapshots/z80/Binary Love I.z80")
 
 
 def http(method, path, body=None):

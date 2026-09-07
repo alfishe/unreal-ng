@@ -54,7 +54,7 @@ def build_pattern(project_root: Path) -> re.Pattern:
     Build regex pattern to match absolute file:// URLs pointing to project.
 
     Matches patterns like:
-        file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/
+        file:///path/to/projects/unreal-ng/
         file:///home/user/projects/unreal-ng/
         file:///C:/Projects/unreal-ng/
     """

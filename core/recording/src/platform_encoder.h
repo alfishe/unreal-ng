@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "encoder_base.h"
-#include "encoder_config.h"
+#include "encoderconfig.h"
 
 /// @brief Platform-native encoder factory
 ///

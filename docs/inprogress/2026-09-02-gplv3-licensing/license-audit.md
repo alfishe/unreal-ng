@@ -1,6 +1,6 @@
 # unreal-ng — GPL v3 license audit
 
-Repository: `/Users/dev/Projects/Local GitLab/unreal` (branch master, HEAD 878b4786, working tree clean apart from an untracked docs folder).
+Repository: local GitLab mirror of `unreal` (branch master, HEAD 878b4786, working tree clean apart from an untracked docs folder).
 Scope: everything that is not the project's own code. Build output dirs (`build/`, `cmake-build-*/`, `.cache/`, `.ccache/`, `Testing/`, `*/CMakeFiles/`) were excluded. No files in the repo were added or modified.
 
 All paths below are relative to the repo root unless absolute.

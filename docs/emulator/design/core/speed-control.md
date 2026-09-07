@@ -70,6 +70,17 @@ void MainLoop::Run(volatile bool& stopRequested)
 
 **Frame Rate**: Unlimited (100s-1000s FPS, depends on host CPU)
 
+**Render decimation** (2026-09-05, turbo tape design r4): in turbo mode without
+audio and without active recording, only 1 of every `MainLoop::TURBO_RENDER_DECIMATION`
+(50) frames performs rendering work (contingent per-t-state rendering — including
+border-OUT-driven entries — framebuffer latch and frame-refresh notification); the
+rendered frame keeps full ScreenHQ fidelity from t=0. Per-step analog synth whose
+output turbo already discards (TurboSound AY mixing) is skipped too. Machine timing
+per frame is unchanged; every other mode is unaffected. Measured: core frame cost
+818 → 137 µs (~146x ceiling), live tape load ~85x end-to-end (after the 48K port-FE
+static-logger debug line was aligned with the gated `MLOGDEBUG` path — design r5) — see
+`docs/inprogress/2026-09-04-turbo-tape-loading/design.md` r4–r5.
+
 **Audio Options**:
 - `turbo_mode_audio = false`: No audio generation (silent)
 - `turbo_mode_audio = true`: Audio generation continues (high pitch)

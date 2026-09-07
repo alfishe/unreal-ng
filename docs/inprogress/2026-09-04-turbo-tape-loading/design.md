@@ -281,3 +281,32 @@ Hybrid loads (trap serves the ROM-standard prefix, warp carries the custom-loade
 - Badge suffix in the Tape Manager (` · ⏩ turbo tape: signal path at warp` when on): the plan's verdict line counts the signal path as real-time, which would understate a hybrid load.
 - OQ-4 scope note: this marks the *feature toggle*, not the `_autoTurboActive` runtime engagement — the live `turboActive` field/badge remains open.
 
+### r4 — Turbo render decimation: host-side warp cost cut ~6x (2026-09-05)
+
+**Problem**: turbo rendered every frame (ScreenHQ per-t-state `Draw`) and mixed AY audio per CPU step even though turbo-no-audio discards the result — profiling a DIZZY warp (`sample`, 8 s) showed `SoundChip_TurboSound::handleStep` ≈ 40 % of the emulator thread, border-OUT-driven rendering ≈ 14 % (`Port_FE → SetBorderColor → UpdateScreen → DrawPeriod` — a render entry the MainLoop gate alone cannot see), port debug logging ≈ 11 %.
+
+**Mechanism** (all gates strictly `turbo_mode && !recording`, every other mode byte-identical):
+
+- `MainLoop::OnFrameStart` computes `_renderThisFrame`: true unless turbo, recording, or a 1-in-`TURBO_RENDER_DECIMATION` (= 50) frame. It gates `OnCPUStep`'s `UpdateScreen`, `OnFrameEnd`'s `RenderFrameBatch`/`LatchFramebuffer`/`NC_VIDEO_FRAME_REFRESH` post; a rendered frame after skipped ones gets `ResetPrevTstate()` so it renders complete from t=0.
+- `MainLoop::RunFrame` sets `Screen::SetTurboRenderSkip(!_renderThisFrame)` strictly around `ExecuteCPUFrameCycle` — `Screen::DrawPeriod` then early-outs for **all** contingent render entries, including `SetBorderColor`'s internal `UpdateScreen` (border-striping loaders reach it thousands of times per frame). Cleared before frame end, so batch render, latch and manual debug stepping while paused are untouched.
+- `SoundManager::handleStep` skips `TurboSound::handleStep` when `turbo_mode && !turbo_mode_audio && !recording`: the samples fed only `handleFrameEnd` synthesis, which turbo already skips — they were computed and discarded. Unobservable to the program: the AY register file is written by `PortDecoder` on OUT; `handleStep` only advances analog generators (envelope/tone phase freezes — one inaudible phase discontinuity on resume). Recording keeps the full path (DSD native-rate tap).
+- `MLOGDEBUG` now also checks module/submodule bits in its guard (`IsLoggingEnabledForLogLevel` public): muted modules (e.g. `EmulatorManager`'s automation-instance disable) no longer pay debug-string construction per hot-path call.
+
+**Invariants kept**: machine timing per frame identical (§3.1) — CPU, tape, FDC, TTD `OnFrameBoundary`, analyzers and keyboard still see every frame; the one rendered frame is full ScreenHQ fidelity (per-t-state border + multicolor latching from t=0); recording renders and captures every frame; normal-mode frame cost unchanged (831 → 828 µs measured).
+
+**Numbers** (`turbo_frame_benchmark`, 48K idle frame, per-frame cost amortized): turbo 818 µs → **137 µs** (render decimation −235 µs; AY-per-step skip −446 µs) → **≈146x core ceiling**. Live gate (§9.4 methodology, DIZZY_X CHEFRANOV, 48K): whole 355.84 s tape **~12 s (r2) → 8.3 s wall end-to-end ≈ 43x** (signal path ~43x); GUI preview updates ~50x/s during warp (1 latch per 50 frames) instead of hundreds.
+
+**Tests**: `TurboRenderDecimation_Test` (core/tests/emulator/turbo_render_decimation_test.cpp) — cadence is exactly `TURBO_RENDER_DECIMATION` frames between latches; the boundary frame is **pixel-identical** to the same frame of a normal-speed run (proves rendering stays a pure observer of machine state); turbo disengage restores per-frame rendering. Suite 1959/1959, zero warnings.
+
+**Follow-up found, not fixed here** (pre-existing, affects all modes): the Qt app runs with port debug logging effectively enabled — one short session wrote a **219 MB** log; under warp it costs roughly a quarter of each loader frame (border OUTs per frame are log-formatted and written synchronously). The benchmark excludes it (`MLOGDEBUG` compiled out under `_CODE_UNDER_BENCHMARK`), which is why core numbers (146x) outrank the live gate (43x). *(r4 attributed this to module-bit config — wrong; root cause found and fixed in r5.)*
+
+### r5 — Warp logging eliminated: rogue static-logger LOGDEBUG in the 48K port decoder (2026-09-06)
+
+**Problem**: the r4 live gate still trailed the core ceiling (43x vs ≈146x). r4 attributed the gap to "app port-module logging config" — that attribution was wrong: `EmulatorManager` mutes module logging for every instance it creates (`TurnOffLoggingForAll()`), and the GUI configures its own instance down to `LogInfo` + Core/Loader modules. Module logging was never the source.
+
+**Root cause**: `PortDecoder_Spectrum48::Port_FE` logged through the static `Logger` family (`LOGDEBUG`, `common/logger.h`) — which has **no gating at all**: no level check, no module bits, no `_loggingMutePorts`, only a global `g_mute` that nothing sets. Every border OUT of a striping loader formatted a full `DumpPortValue` string (2× `StringHelper::Format`) plus a timestamped `fprintf` to stdout — 1,887,596 lines / **219 MB** for one DIZZY session. Every other decoder (base `PortDecoder`, spectrum3, scorpion256, pentagon128, spectrum128) already used `MLOGDEBUG` behind the per-port mute check; spectrum48 was the lone leftover, so even the GUI's `MuteLoggingForPort(0x00FE)` was a no-op against it. Unit tests and benchmarks define `_CODE_UNDER_TEST`, which compiles `LOGDEBUG` out — why core numbers never saw this cost.
+
+**Fix**: `Port_FE` now canonicalizes FE-class aliases (`(port & 0x00FE) == 0x00FE → 0x00FE`) and logs via `MLOGDEBUG` behind `key_exists(_loggingMutePorts, port)` — identical shape to the base decoder. Debuggability is preserved: enabling Debug for the I/O module still traces port FE writes.
+
+**Numbers**: live gate (§9.4 methodology) 8.29 s → **4.19 s wall ≈ 84.9x end-to-end** for the whole 355.84 s tape, clean `ended` at cursor 6; app session log 219 MB → 9.4 KB with zero `[Out]` debug lines. Suite 1959/1959, zero warnings.
+

@@ -9,6 +9,7 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/platform.h"
 #include "emulator/notifications.h"
+#include "recordingmanager.h"
 // Avoid Qt 'signals' macro conflict with WD1793State::signals member
 #undef signals
 #include "emulator/io/fdc/wd1793.h"
@@ -839,15 +840,21 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         bool isPentagon = (context && context->config.mem_model == MM_PENTAGON);
         bool isOverscanActive = isPentagon && activeEmulator->IsOverscanMode();
 
+        // Lock overscan/viewport controls during recording to prevent mid-recording
+        // resolution changes (viewport is captured at recording start)
+        bool isRecording = context && context->pRecordingManager &&
+                           context->pRecordingManager->IsRecording();
+
         // Pentagon: show and enable overscan, show viewport when overscan active
         // Non-Pentagon: hide overscan, hide viewport
+        // Recording: show but disable overscan/viewport to prevent changes
         _overscanAction->setVisible(isPentagon);
-        _overscanAction->setEnabled(isPentagon);
+        _overscanAction->setEnabled(isPentagon && !isRecording);
         _overscanAction->setChecked(isOverscanActive);
         // Use menuAction() to control submenu visibility in parent menu
         // (calling setVisible() on QMenu itself can trigger unwanted popup)
         _viewportMenu->menuAction()->setVisible(isPentagon);
-        _viewportMenu->setEnabled(isOverscanActive);
+        _viewportMenu->setEnabled(isOverscanActive && !isRecording);
     }
     else
     {

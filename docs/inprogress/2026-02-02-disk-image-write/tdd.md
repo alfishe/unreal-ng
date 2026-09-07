@@ -634,7 +634,7 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
 ### 7.1 Automated Tests
 ```bash
 # Run all core tests
-cd /Volumes/TB4-4Tb/Projects/Test/unreal-ng
+cd .
 cmake --build cmake-build-debug --target core-tests
 ./cmake-build-debug/unreal-qt/tests/core-tests --gtest_filter="*DiskImage*:*LoaderTRD*:*LoaderSCL*"
 ```

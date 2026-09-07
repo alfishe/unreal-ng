@@ -17,9 +17,14 @@
 | [`make_scroller_sna.py`](docs/disasm/demo/scroller/make_scroller_sna.py) | Standalone Python utility that extracts and decrunches all TRD files into a clean 128K `.sna` snapshot. |
 | [`scroller_by_demarche.sna`](docs/disasm/demo/scroller/scroller_by_demarche.sna) | Pre-generated, verified 128K snapshot that launches directly into the Covox menu (`$9B6B`). |
 | [`patch_scroller_trd.py`](docs/disasm/demo/scroller/patch_scroller_trd.py) | Python tool that patches `SCROLLER.B` on the TRD disk image with the dual-mode fix. |
+| [`patch_scroller_trd_v2.py`](docs/disasm/demo/scroller/patch_scroller_trd_v2.py) | Enhanced patcher that adds paging lock detection plus dual-mode fix. |
 | [`scroller_fixed.trd`](docs/disasm/demo/scroller/scroller_fixed.trd) | Patched TR-DOS disk image with the dual-mode Line 80 fix; boots across all emulators and configurations. |
+| [`scroller_fixed_v2.trd`](docs/disasm/demo/scroller/scroller_fixed_v2.trd) | Enhanced patch with paging lock detection — displays error message if 128K→48K path is used. |
+| [`paging_test.asm`](docs/disasm/demo/scroller/paging_test.asm) | Annotated Z80 source for the 60-byte paging lock detection routine. |
+| [`paging_test.bin`](docs/disasm/demo/scroller/paging_test.bin) | Assembled paging test machine code (60 bytes, ORG `$5CD0`). |
 | [`scroller-loader.bas`](docs/disasm/demo/scroller/scroller-loader.bas) | Annotated original Sinclair BASIC loader script (`SCROLLER.B`) with token decoding and line analysis. |
 | [`scroller-loader-fixed.bas`](docs/disasm/demo/scroller/scroller-loader-fixed.bas) | Annotated patched dual-mode Sinclair BASIC loader script with detailed line breakdown. |
+| [`scroller-loader-fixed-v2.bas`](docs/disasm/demo/scroller/scroller-loader-fixed-v2.bas) | Enhanced v2 loader with paging lock detection (Lines 11-13) and dual-mode fix. |
 | [`scroller_fixed.$B`](docs/disasm/demo/scroller/scroller_fixed.$B) | Standalone Hobeta format binary of the patched BASIC loader (366 bytes, ready for TR-DOS import). |
 | [`scroller_fixed.bin`](docs/disasm/demo/scroller/scroller_fixed.bin) | Raw tokenized Sinclair BASIC memory block (`$00`–`$015D`, 349 bytes). |
 | [`scroller-dispatcher.asm`](docs/disasm/demo/scroller/scroller-dispatcher.asm) | Annotated Z80 disassembly of `SCROLL00.C` (`$6200`–`$62B1`): Entry point, depack table dispatcher, and embedded MegaLZ decruncher. |
@@ -41,9 +46,11 @@ python3 docs/disasm/demo/scroller/make_scroller_sna.py --entry demo -o docs/disa
 
 ---
 
-## 3. Patched TRD Disk Image Generator (`patch_scroller_trd.py`)
+## 3. Patched TRD Disk Image Generators
 
-For users and emulators that require a standard TR-DOS diskette image rather than a `.sna` snapshot, [`patch_scroller_trd.py`](docs/disasm/demo/scroller/patch_scroller_trd.py) applies the universal dual-mode fix directly to `SCROLLER.B` on disk:
+For users and emulators that require a standard TR-DOS diskette image rather than a `.sna` snapshot, two patching tools are available:
+
+### Basic Dual-Mode Fix (`patch_scroller_trd.py`)
 
 ```bash
 # Generate patched TRD (docs/disasm/demo/scroller/scroller_fixed.trd):
@@ -57,8 +64,23 @@ python3 docs/disasm/demo/scroller/patch_scroller_trd.py
 - **Dual-Mode Operation**:
   - **Sinclair 128K Editor**: `POKE VAL "23388", VAL "20"` primes `BANK_M` (`$5B5C`). The `$5B00` SWAP trampoline reasserts Page 4 across ROM flips so `SCROLL12` loads into Page 4.
   - **48K BASIC / TR-DOS Boot**: `OUT VAL "32765", VAL "20"` writes directly to the hardware port latch on machines without the 128K editor hook.
-  - **Catalog Parameter 2**: Both `param 1` (length) and `param 2` (program length without variables) in catalog entry 0 are updated to 349 bytes so that Sinclair BASIC allocates `VARS` after Line 90 rather than corrupting it.
-- **Output**: [`scroller_fixed.trd`](docs/disasm/demo/scroller/scroller_fixed.trd) runs out-of-the-box in any emulator under any reset configuration (`RESET=128`, `RESET=BASIC`, `RESET=DOS`). Verified by automated test `Scroller_Boot_Test.BootScrollerFixedTRD_Via128KMenu` in [`scroller_boot_test.cpp`](core/tests/loaders/disk/scroller_boot_test.cpp).
+- **Output**: [`scroller_fixed.trd`](docs/disasm/demo/scroller/scroller_fixed.trd) runs out-of-the-box under `RESET=128`, `RESET=BASIC`, or `RESET=DOS` configurations.
+
+### Enhanced Patch with Paging Lock Detection (`patch_scroller_trd_v2.py`)
+
+```bash
+# Generate enhanced TRD (docs/disasm/demo/scroller/scroller_fixed_v2.trd):
+python3 docs/disasm/demo/scroller/patch_scroller_trd_v2.py
+```
+
+- **Additional Lines 11-13**: Runtime detection of the paging lock condition
+  - 60-byte machine code routine writes `$DEADBEEF` signature to `$C000`
+  - Attempts page switch and checks if signature is still visible
+  - If locked, displays `PAGING LOCKED! Use RESET=BASIC` and stops gracefully
+- **Use Case**: When the demo might be run from the 128K menu → 48K path, this version provides a clear error message instead of a mysterious crash
+- **Output**: [`scroller_fixed_v2.trd`](docs/disasm/demo/scroller/scroller_fixed_v2.trd) (1019 bytes BASIC, 4 sectors)
+
+Both versions verified by automated tests in [`scroller_boot_test.cpp`](core/tests/loaders/disk/scroller_boot_test.cpp).
 
 > [!NOTE]
 > **How to Launch from TR-DOS**:
@@ -68,6 +90,9 @@ python3 docs/disasm/demo/scroller/patch_scroller_trd.py
 > RUN "SCROLLER"
 > ```
 > To launch immediately without typing or disk delays, use [`scroller_by_demarche.sna`](docs/disasm/demo/scroller/scroller_by_demarche.sna).
+
+> [!WARNING]
+> **Do NOT use "48 BASIC" from the 128K menu**: Selecting "48 BASIC" from the Sinclair 128K boot menu locks paging permanently (bit 5 of port `#7FFD`). The demo requires page switching and will fail. Use `RESET=BASIC` or `RESET=DOS` boot configuration instead.
 
 ---
 
@@ -133,6 +158,31 @@ In line 80:
 
 ### Why It Worked on Authentic Hardware in 1996
 Soviet Pentagon 128 machines booted natively into **TR-DOS** (`RESET=DOS`) or **48K BASIC** (`RESET=BASIC`), never entering the Sinclair 128K editor. Without the 128K editor running, the `$5B00` SWAP routine was never installed in RAM, no statement hook existed, and port `#7FFD` remained stable on Page 4 throughout the transfer.
+
+### The 128K Menu → 48K Mode Limitation
+When selecting "48 BASIC" from the Sinclair 128K boot menu, the ROM intentionally sets bit 5 of port `#7FFD`, **permanently locking paging** until the next hardware reset. This is authentic Sinclair 128K hardware behavior — not an emulator bug.
+
+With paging locked:
+- All `OUT #7FFD` commands are silently ignored by the hardware
+- The demo cannot switch RAM pages to load `SCROLL12` into Page 4
+- The demo will crash or display garbage
+
+**This path cannot work** for any software requiring page switching. The solution is to boot directly into TR-DOS or 48K BASIC (`RESET=DOS` or `RESET=BASIC`), bypassing the 128K menu entirely.
+
+### Paging Lock Detection (scroller_fixed_v2.trd)
+The enhanced patch [`scroller_fixed_v2.trd`](docs/disasm/demo/scroller/scroller_fixed_v2.trd) adds runtime detection of the paging lock condition. Before any loading begins, Lines 11-13 execute a 60-byte machine code test that:
+
+1. Writes a 4-byte signature (`$DEADBEEF`) to `$C000`
+2. Attempts to switch to RAM Page 1
+3. Checks if the signature is still visible (indicating paging is blocked)
+4. Restores Page 0 and returns the result
+
+If paging is locked, the loader displays:
+```
+PAGING LOCKED!
+Use RESET=BASIC
+```
+and stops, rather than crashing mysteriously.
 
 ### The Universal Dual-Mode Software Fix
 In `scroller_fixed.trd`, Line 80 is patched to:

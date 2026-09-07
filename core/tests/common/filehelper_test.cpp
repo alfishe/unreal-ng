@@ -490,9 +490,9 @@ TEST_F(FileHelper_Test, AbsolutePath_TildeExpansion)
 ///   - Admin shares:         //localhost/c$/temp/file.txt
 ///
 /// Local Paths:
-///   - Windows drive:        C:\Users\dev\file.ext or C:/Users/dev/file.ext
+///   - Windows drive:        C:\Users\user\file.ext or C:/Users/user/file.ext
 ///   - Unix absolute:        /home/user/file.ext
-///   - Mixed separators:     C:\Users/dev\file.ext
+///   - Mixed separators:     C:\Users\user\file.ext
 ///
 /// On Windows: All paths normalized to backslashes (required for UNC)
 /// On Unix/macOS: All paths normalized to forward slashes

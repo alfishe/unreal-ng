@@ -10,7 +10,9 @@
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator.h"
+#include "emulator/emulatorcontext.h"
 #include "emulator/io/keyboard/keyboard.h"
+#include "emulator/video/screen.h"
 #include "keyboard/keyboardmanager.h"
 
 EmulatorTile::EmulatorTile(std::shared_ptr<Emulator> emulator, QWidget* parent) : QWidget(parent), _emulator(emulator)
@@ -313,39 +315,47 @@ void EmulatorTile::setSynchronousMode(bool enable)
 
 QImage EmulatorTile::convertFramebuffer()
 {
-    // TODO: OPTIMIZATION OPPORTUNITIES (defer to Phase 6 or when scaling to 100+ tiles)
-    // 1. Async framebuffer copy: Use std::async to parallel-copy from multiple emulators
-    // 2. Local buffer: memcpy to tile-local buffer for thread safety and no tearing
-    // 3. MessageCenter notifications: Replace QTimer with NC_VIDEO_FRAME_REFRESH events
-    // 4. Batch updates: Coordinate all tiles to repaint together in single window update
-    // Current: Zero-copy direct read (fast, simple, works well for current scale)
-
-    // Default: black image if no emulator
-    QImage image(TILE_WIDTH, TILE_HEIGHT, QImage::Format_RGBA8888);
-    image.fill(Qt::black);
-
     if (!_emulator)
     {
-        return image;
+        QImage black(TILE_WIDTH, TILE_HEIGHT, QImage::Format_RGBA8888);
+        black.fill(Qt::black);
+        return black;
     }
 
-    // Get framebuffer from emulator
-    FramebufferDescriptor framebufferDesc = _emulator->GetFramebuffer();
-
-    if (framebufferDesc.memoryBuffer && framebufferDesc.width > 0 && framebufferDesc.height > 0)
+    // Get screen for tear-free copy from latched framebuffer
+    EmulatorContext* ctx = _emulator->GetContext();
+    Screen* screen = ctx ? ctx->pScreen : nullptr;
+    if (!screen)
     {
-        // The framebuffer is larger than 256x192 - it includes borders
-        // For ZX48: framebuffer is 352x288, screen is 256x192 at offset (48, 48)
-        // We need to use the correct stride (bytes per line in the full framebuffer)
-
-        int bytesPerPixel = 4;  // RGBA8888
-        int stride = framebufferDesc.width * bytesPerPixel;
-
-        // Create QImage from the full framebuffer data with proper stride
-        // Qt will handle extracting the correct region when we use devicePixelsRect in paintEvent
-        image = QImage(static_cast<const unsigned char*>(framebufferDesc.memoryBuffer), framebufferDesc.width,
-                       framebufferDesc.height, stride, QImage::Format_RGBA8888);
+        QImage black(TILE_WIDTH, TILE_HEIGHT, QImage::Format_RGBA8888);
+        black.fill(Qt::black);
+        return black;
     }
 
-    return image;
+    auto& desc = screen->GetFramebufferDescriptor();
+    if (desc.width == 0 || desc.height == 0)
+    {
+        QImage black(TILE_WIDTH, TILE_HEIGHT, QImage::Format_RGBA8888);
+        black.fill(Qt::black);
+        return black;
+    }
+
+    // Allocate or resize backing buffer if needed
+    if (_latchedFrame.width() != static_cast<int>(desc.width) ||
+        _latchedFrame.height() != static_cast<int>(desc.height))
+    {
+        _latchedFrame = QImage(desc.width, desc.height, QImage::Format_RGBA8888);
+    }
+
+    // Copy from the frame-end latched snapshot (tear-free) instead of the live
+    // framebuffer which the emulation thread overwrites concurrently
+    if (!screen->CopyPresentedFramebuffer(_latchedFrame.bits(),
+                                          static_cast<size_t>(_latchedFrame.sizeInBytes())))
+    {
+        QImage black(TILE_WIDTH, TILE_HEIGHT, QImage::Format_RGBA8888);
+        black.fill(Qt::black);
+        return black;
+    }
+
+    return _latchedFrame;
 }
