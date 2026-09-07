@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """
 True Process Workload & Thread Profiler for Unreal-NG
+Supports unreal-qt, unreal-videowall, and unreal-screen-viewer.
 
-Calculates and displays the true real-time workload of a single process (such as
-unreal-qt, unreal-screen-viewer, or unreal-videowall).
+Calculates and displays the true real-time workload of single or multi-instance
+Unreal-NG processes, with specialized analytics for VideoWall tile grids.
 
-Highlights both:
+Highlights:
 1. Single-Core Equivalent % (where 100% = 1 full CPU core saturated)
 2. All-Cores / System Monitor % (normalized across all logical cores, matching
    system monitors like GNOME Resources, KDE System Monitor, or Task Manager)
+3. VideoWall Tile Analytics: Count active emulator tiles, per-tile CPU consumption,
+   grid rendering overhead, and sustainable tile capacity forecast.
+4. Multi-Process Overview: Monitor all Unreal-NG processes concurrently.
 
 Zero external dependencies required on Linux (uses /proc filesystem directly).
 Supports psutil on Windows, macOS, and Linux when available.
@@ -35,7 +39,7 @@ try:
 except ImportError:
     HAS_PSUTIL = False
 
-DEFAULT_TARGET_NAMES = ["unreal-qt", "unreal-screen-viewer", "unreal-videowall"]
+DEFAULT_TARGET_NAMES = ["unreal-videowall", "unreal-videowal", "unreal-qt", "unreal-screen-viewer"]
 
 
 # -----------------------------------------------------------------------------
@@ -50,6 +54,21 @@ class ThreadSample:
     system_pct: float
     total_cpu_seconds: float
     state: str = "S"
+    category: str = "Other"  # "Tile", "UI", "Service", "Worker"
+
+
+@dataclass
+class VideoWallMetrics:
+    is_videowall: bool
+    tile_count: int
+    emulation_single_core_pct: float
+    emulation_system_pct: float
+    avg_per_tile_pct: float
+    min_tile_pct: float
+    max_tile_pct: float
+    rendering_single_core_pct: float
+    services_single_core_pct: float
+    estimated_max_tiles: int
 
 
 @dataclass
@@ -69,6 +88,81 @@ class ProcessSample:
     thread_count: int
     num_cores: int
     threads: List[ThreadSample] = field(default_factory=list)
+    videowall: Optional[VideoWallMetrics] = None
+
+
+# -----------------------------------------------------------------------------
+# Thread Categorization & VideoWall Analytics
+# -----------------------------------------------------------------------------
+
+def categorize_thread(name: str, pid: int, tid: int, proc_name: str = "", single_core_pct: float = 0.0) -> str:
+    name_lower = name.lower()
+    proc_lower = proc_name.lower()
+
+    if name_lower.startswith("emulator") or "emulator-" in name_lower:
+        return "Tile"
+    if "drogon" in name_lower or "audio" in name_lower or "sound" in name_lower or "logger" in name_lower or "lua" in name_lower or "dbus" in name_lower or "gmain" in name_lower or "gdbus" in name_lower or "dconf" in name_lower:
+        return "Service"
+    if "pool" in name_lower or "thread" in name_lower:
+        return "Worker"
+    if "xcb" in name_lower:
+        return "UI"
+    if tid == pid:
+        return "UI"
+
+    # On Linux, thread names exceeding 15 chars (e.g. 'emulator-xxxxxxxxxxxx') inherit the parent process comm.
+    # In unreal-videowall / unreal-qt, worker threads running emulation have the process comm name.
+    is_unreal = "videowall" in proc_lower or "unreal" in proc_lower
+    if is_unreal and (name_lower == proc_lower or name_lower.startswith(proc_lower[:10])):
+        if single_core_pct >= 2.0 or "videowall" in proc_lower and single_core_pct >= 0.5:
+            return "Tile"
+        return "Worker"
+
+    return "Other"
+
+
+def compute_videowall_metrics(
+    proc_name: str,
+    threads: List[ThreadSample],
+    num_cores: int
+) -> Optional[VideoWallMetrics]:
+    emulator_threads = [t for t in threads if t.category == "Tile" or t.name.lower().startswith("emulator")]
+    is_vw = "videowall" in proc_name.lower() or len(emulator_threads) >= 2
+
+    tile_count = len(emulator_threads)
+    if tile_count == 0 and not is_vw:
+        return None
+
+    emu_cpu = sum(t.single_core_pct for t in emulator_threads)
+    emu_sys = emu_cpu / num_cores
+    avg_tile = (emu_cpu / tile_count) if tile_count > 0 else 0.0
+    min_tile = min((t.single_core_pct for t in emulator_threads), default=0.0)
+    max_tile = max((t.single_core_pct for t in emulator_threads), default=0.0)
+
+    rendering_threads = [t for t in threads if t.category in ("UI", "Worker") and t not in emulator_threads]
+    rendering_cpu = sum(t.single_core_pct for t in rendering_threads)
+
+    service_threads = [t for t in threads if t.category == "Service"]
+    service_cpu = sum(t.single_core_pct for t in service_threads)
+
+    # Capacity forecast: Assume 85% of total multi-core headroom can be used safely
+    # (leaving 15% for OS scheduler, compositor, audio DAC interrupts)
+    effective_avg = avg_tile if avg_tile > 0.5 else 6.0  # default ~6% per Pentagon tile
+    available_core_pct = max((num_cores * 100.0 * 0.85) - max(rendering_cpu, 5.0), 0.0)
+    estimated_max = int(available_core_pct / effective_avg)
+
+    return VideoWallMetrics(
+        is_videowall=is_vw,
+        tile_count=tile_count,
+        emulation_single_core_pct=emu_cpu,
+        emulation_system_pct=emu_sys,
+        avg_per_tile_pct=avg_tile,
+        min_tile_pct=min_tile,
+        max_tile_pct=max_tile,
+        rendering_single_core_pct=rendering_cpu,
+        services_single_core_pct=service_cpu,
+        estimated_max_tiles=estimated_max,
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -113,32 +207,13 @@ class LinuxProcCollector(BaseCollector):
         return os.path.exists(f"/proc/{self.pid}")
 
     def _get_proc_times_and_mem(self) -> Optional[Tuple[int, int, int, int, int]]:
-        """Returns (utime_ticks, stime_ticks, rss_bytes, vms_bytes, num_threads)"""
         try:
             with open(f"/proc/{self.pid}/stat", "r", encoding="utf-8") as f:
                 content = f.read()
-            # comm is inside parentheses and can contain spaces/parentheses
             r_idx = content.rfind(")")
             if r_idx == -1:
                 return None
             fields = content[r_idx + 2:].split()
-            # fields:
-            # 0: state
-            # 1: ppid
-            # 2: pgrp
-            # 3: session
-            # 4: tty_nr
-            # 5: tpgid
-            # 6: flags
-            # 7: minflt
-            # 8: cminflt
-            # 9: majflt
-            # 10: cmajflt
-            # 11: utime (field 13 in 0-indexed overall stat)
-            # 12: stime (field 14 in 0-indexed overall stat)
-            # 17: num_threads (field 19)
-            # 20: vsize (field 22)
-            # 21: rss in pages (field 23)
             utime = int(fields[11])
             stime = int(fields[12])
             num_threads = int(fields[17])
@@ -150,7 +225,6 @@ class LinuxProcCollector(BaseCollector):
             return None
 
     def _get_threads(self) -> Dict[int, Tuple[str, int, int, str]]:
-        """Returns dict of tid -> (comm, utime_ticks, stime_ticks, state)"""
         res: Dict[int, Tuple[str, int, int, str]] = {}
         task_dir = f"/proc/{self.pid}/task"
         if not os.path.isdir(task_dir):
@@ -232,6 +306,7 @@ class LinuxProcCollector(BaseCollector):
             th_single_core = (th_cpu_time / elapsed) * 100.0
             th_sys = th_single_core / self.num_cores
             total_sec = (u2_th + s2_th) / self.clock_ticks
+            category = categorize_thread(comm, self.pid, tid, self._name, th_single_core)
 
             thread_samples.append(ThreadSample(
                 tid=tid,
@@ -239,10 +314,12 @@ class LinuxProcCollector(BaseCollector):
                 single_core_pct=th_single_core,
                 system_pct=th_sys,
                 total_cpu_seconds=total_sec,
-                state=state
+                state=state,
+                category=category
             ))
 
         thread_samples.sort(key=lambda t: t.single_core_pct, reverse=True)
+        vw_metrics = compute_videowall_metrics(self._name, thread_samples, self.num_cores)
 
         return ProcessSample(
             pid=self.pid,
@@ -259,7 +336,8 @@ class LinuxProcCollector(BaseCollector):
             vms_mb=vms_bytes / (1024.0 * 1024.0),
             thread_count=num_threads,
             num_cores=self.num_cores,
-            threads=thread_samples
+            threads=thread_samples,
+            videowall=vw_metrics
         )
 
 
@@ -284,7 +362,6 @@ class PsutilCollector(BaseCollector):
         try:
             t1 = time.time()
             cpu1 = self.proc.cpu_times()
-            # Thread times if available
             threads_before = {}
             try:
                 for th in self.proc.threads():
@@ -308,7 +385,6 @@ class PsutilCollector(BaseCollector):
             system_pct = single_core_pct / self.num_cores
             cores_equivalent = single_core_pct / 100.0
 
-            # Threads
             thread_samples: List[ThreadSample] = []
             try:
                 for th in self.proc.threads():
@@ -316,18 +392,22 @@ class PsutilCollector(BaseCollector):
                     th_cpu_time = max((th.user_time + th.system_time) - prev_time, 0.0)
                     th_single_core = (th_cpu_time / elapsed) * 100.0
                     th_sys = th_single_core / self.num_cores
+                    th_name = f"thread-{th.id}"
+                    cat = categorize_thread(th_name, self.pid, th.id, self._name, th_single_core)
                     thread_samples.append(ThreadSample(
                         tid=th.id,
-                        name=f"thread-{th.id}",
+                        name=th_name,
                         single_core_pct=th_single_core,
                         system_pct=th_sys,
                         total_cpu_seconds=th.user_time + th.system_time,
-                        state="R" if th_single_core > 0.1 else "S"
+                        state="R" if th_single_core > 0.1 else "S",
+                        category=cat
                     ))
             except Exception:
                 pass
 
             thread_samples.sort(key=lambda t: t.single_core_pct, reverse=True)
+            vw_metrics = compute_videowall_metrics(self._name, thread_samples, self.num_cores)
 
             return ProcessSample(
                 pid=self.pid,
@@ -344,14 +424,14 @@ class PsutilCollector(BaseCollector):
                 vms_mb=mem.vms / (1024.0 * 1024.0),
                 thread_count=num_threads,
                 num_cores=self.num_cores,
-                threads=thread_samples
+                threads=thread_samples,
+                videowall=vw_metrics
             )
         except Exception:
             return None
 
 
 def create_collector(pid: int, num_cores: int) -> BaseCollector:
-    # On Linux, LinuxProcCollector is native, reads accurate thread names from /proc, and has no dependencies
     if platform.system() == "Linux" and os.path.isdir(f"/proc/{pid}"):
         return LinuxProcCollector(pid, num_cores)
 
@@ -368,25 +448,24 @@ def create_collector(pid: int, num_cores: int) -> BaseCollector:
 
 
 # -----------------------------------------------------------------------------
-# Process Discovery
+# Process Discovery & Multi-Process Scanning
 # -----------------------------------------------------------------------------
 
 def find_processes_by_name(pattern: str) -> List[Tuple[int, str]]:
     matches: List[Tuple[int, str]] = []
 
-    # Try psutil first if present
     if HAS_PSUTIL:
         try:
             for p in psutil.process_iter(["pid", "name", "cmdline"]):
                 name = p.info.get("name") or ""
-                cmdline = " ".join(p.info.get("cmdline") or [])
-                if re.search(pattern, name, re.IGNORECASE) or re.search(pattern, cmdline, re.IGNORECASE):
-                    matches.append((p.info["pid"], name))
+                cmdline = p.info.get("cmdline") or []
+                exe_base = os.path.basename(cmdline[0]) if cmdline else ""
+                if re.search(pattern, name, re.IGNORECASE) or (exe_base and re.search(pattern, exe_base, re.IGNORECASE)):
+                    matches.append((p.info["pid"], name or exe_base))
             return matches
         except Exception:
             pass
 
-    # Linux /proc scan
     if platform.system() == "Linux" and os.path.isdir("/proc"):
         for entry in os.listdir("/proc"):
             if not entry.isdigit():
@@ -399,20 +478,22 @@ def find_processes_by_name(pattern: str) -> List[Tuple[int, str]]:
                     with open(comm_path, "r", encoding="utf-8") as f:
                         comm = f.read().strip()
 
-                cmdline = ""
+                exe_base = ""
                 cmdline_path = f"/proc/{pid}/cmdline"
                 if os.path.exists(cmdline_path):
                     with open(cmdline_path, "rb") as f:
-                        cmdline = f.read().replace(b"\x00", b" ").decode("utf-8", "replace").strip()
+                        raw = f.read()
+                        if raw:
+                            first_arg = raw.split(b"\x00")[0].decode("utf-8", "replace")
+                            exe_base = os.path.basename(first_arg)
 
-                target_str = f"{comm} {cmdline}"
-                if re.search(pattern, target_str, re.IGNORECASE):
-                    matches.append((pid, comm if comm else f"pid-{pid}"))
+                # Match against process comm or executable basename, NOT arbitrary command-line arguments
+                if re.search(pattern, comm, re.IGNORECASE) or (exe_base and re.search(pattern, exe_base, re.IGNORECASE)):
+                    matches.append((pid, comm if comm else exe_base))
             except Exception:
                 continue
         return matches
 
-    # macOS / Unix fallback using 'ps'
     if platform.system() in ("Darwin", "FreeBSD"):
         try:
             import subprocess
@@ -421,13 +502,13 @@ def find_processes_by_name(pattern: str) -> List[Tuple[int, str]]:
                 parts = line.strip().split(None, 1)
                 if len(parts) == 2:
                     p_pid, p_cmd = int(parts[0]), parts[1]
-                    if re.search(pattern, p_cmd, re.IGNORECASE):
-                        matches.append((p_pid, os.path.basename(p_cmd.split()[0])))
+                    exe_name = os.path.basename(p_cmd.split()[0])
+                    if re.search(pattern, exe_name, re.IGNORECASE):
+                        matches.append((p_pid, exe_name))
             return matches
         except Exception:
             pass
 
-    # Windows fallback using 'tasklist'
     if platform.system() == "Windows":
         try:
             import subprocess
@@ -444,6 +525,16 @@ def find_processes_by_name(pattern: str) -> List[Tuple[int, str]]:
     return matches
 
 
+def find_all_unreal_processes() -> List[Tuple[int, str]]:
+    """Discovers all running Unreal-NG related processes (unreal-qt, unreal-videowall, unreal-screen-viewer)."""
+    found: Dict[int, str] = {}
+    for name in DEFAULT_TARGET_NAMES:
+        for pid, p_name in find_processes_by_name(re.escape(name)):
+            found[pid] = p_name
+    # Return sorted by PID
+    return sorted(found.items(), key=lambda x: x[0])
+
+
 def auto_detect_target(preferred_name: Optional[str] = None) -> Optional[Tuple[int, str]]:
     candidates = [preferred_name] if preferred_name else DEFAULT_TARGET_NAMES
 
@@ -452,10 +543,8 @@ def auto_detect_target(preferred_name: Optional[str] = None) -> Optional[Tuple[i
             continue
         found = find_processes_by_name(f"^{re.escape(cand)}(\\.exe)?$")
         if not found:
-            # Partial match
             found = find_processes_by_name(re.escape(cand))
         if found:
-            # Sort by PID descending (most recent first)
             found.sort(key=lambda x: x[0], reverse=True)
             return found[0]
 
@@ -513,6 +602,7 @@ def render_dashboard(
     sample: ProcessSample,
     top_threads: int,
     show_all_threads: bool,
+    group_threads: bool,
     colors: Colors,
     history: List[float],
     start_time: float
@@ -529,8 +619,9 @@ def render_dashboard(
 
     # Header
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    app_type = "VIDEOWALL" if (sample.videowall and sample.videowall.is_videowall) else sample.name.upper()
     lines.append(f"{colors.BOLD}{colors.CYAN}┌{'─' * (width - 2)}┐{colors.RESET}")
-    title = f" TRUE WORKLOAD PROFILER :: {sample.name.upper()} (PID {sample.pid}) "
+    title = f" TRUE WORKLOAD PROFILER :: {app_type} (PID {sample.pid}) "
     lines.append(f"{colors.BOLD}{colors.CYAN}│{colors.WHITE}{title.center(width - 2)}{colors.CYAN}│{colors.RESET}")
     lines.append(f"{colors.BOLD}{colors.CYAN}└{'─' * (width - 2)}┘{colors.RESET}")
 
@@ -578,6 +669,30 @@ def render_dashboard(
 
     lines.append(divider)
 
+    # VideoWall Analytics Card (if videowall or multiple emulators)
+    if sample.videowall and (sample.videowall.is_videowall or sample.videowall.tile_count > 0):
+        vw = sample.videowall
+        lines.append(f"{colors.BOLD}{colors.MAGENTA}VIDEOWALL GRID & TILE ANALYTICS:{colors.RESET}")
+        lines.append(
+            f"  🔲 {colors.BOLD}Active Tiles / Emulators:{colors.RESET}  {colors.CYAN}{vw.tile_count:3d} tiles{colors.RESET} "
+            f"| Total Tile CPU: {colors.color_pct(vw.emulation_single_core_pct)} "
+            f"({vw.emulation_system_pct:.2f}% system)"
+        )
+        lines.append(
+            f"  ⚡ {colors.BOLD}Avg Load per Tile:{colors.RESET}         {colors.GREEN}{vw.avg_per_tile_pct:6.2f}%{colors.RESET} "
+            f"{colors.DIM}(min: {vw.min_tile_pct:.2f}%, max: {vw.max_tile_pct:.2f}%){colors.RESET}"
+        )
+        lines.append(
+            f"  🖥️  {colors.BOLD}Grid & UI Rendering Load:{colors.RESET}   {colors.YELLOW}{vw.rendering_single_core_pct:6.2f}%{colors.RESET} "
+            f"| Services / Automation: {vw.services_single_core_pct:.2f}%"
+        )
+        lines.append(
+            f"  🚀 {colors.BOLD}Capacity Forecast:{colors.RESET}         "
+            f"~{colors.BOLD}{vw.estimated_max_tiles}{colors.RESET} sustainable 50 FPS tiles on {sample.num_cores} cores "
+            f"{colors.DIM}(85% CPU ceiling){colors.RESET}"
+        )
+        lines.append(divider)
+
     # Memory & Process Health
     lines.append(f"{colors.BOLD}MEMORY & PROCESS HEALTH:{colors.RESET}")
     lines.append(
@@ -598,7 +713,7 @@ def render_dashboard(
         f"{colors.DIM}(Top {top_threads} active threads){colors.RESET}"
     )
     lines.append(
-        f"  {colors.DIM}{'TID':>8}  {'Thread Name / Role':<24} {'1-Core %':>10} {'System %':>10} {'Total CPU':>11}  {'State'}{colors.RESET}"
+        f"  {colors.DIM}{'TID':>8}  {'Role':<8} {'Thread Name':<20} {'1-Core %':>10} {'System %':>10} {'Total CPU':>11}  {'State'}{colors.RESET}"
     )
     lines.append(f"  {colors.DIM}{'─' * 74}{colors.RESET}")
 
@@ -608,14 +723,21 @@ def render_dashboard(
     else:
         displayed_threads = displayed_threads[:top_threads]
 
+    if group_threads or (sample.videowall and sample.videowall.is_videowall):
+        # Sort by category then CPU %
+        cat_order = {"Tile": 0, "UI": 1, "Worker": 2, "Service": 3, "Other": 4}
+        displayed_threads.sort(key=lambda t: (cat_order.get(t.category, 5), -t.single_core_pct))
+
     if not displayed_threads:
         lines.append(f"  {colors.DIM}(no thread activity recorded in this sample window){colors.RESET}")
     else:
         for th in displayed_threads:
             st_color = colors.GREEN if th.state == "R" else colors.DIM
-            th_name = th.name if len(th.name) <= 24 else th.name[:21] + "..."
+            cat_tag = f"[{th.category}]"
+            th_name = th.name if len(th.name) <= 20 else th.name[:17] + "..."
             lines.append(
-                f"  {th.tid:8d}  {colors.BOLD}{th_name:<24}{colors.RESET} "
+                f"  {th.tid:8d}  {colors.CYAN}{cat_tag:<8}{colors.RESET} "
+                f"{colors.BOLD}{th_name:<20}{colors.RESET} "
                 f"{colors.color_pct(th.single_core_pct):>10} "
                 f"{th.system_pct:9.2f}% "
                 f"{format_duration(th.total_cpu_seconds):>11}  "
@@ -624,9 +746,81 @@ def render_dashboard(
 
     lines.append(divider)
     lines.append(
-        f"{colors.DIM}Note: 'Resources' and Task Manager show 'System %'. "
+        f"{colors.DIM}Note: 'Resources' shows 'System %'. "
         f"True single-thread workload is '1-Core %'. (Ctrl+C to stop){colors.RESET}"
     )
+
+    return "\n".join(lines)
+
+
+def render_multi_process_dashboard(
+    samples: List[ProcessSample],
+    colors: Colors,
+    num_cores: int,
+    elapsed: float
+) -> str:
+    lines: List[str] = []
+    width = 78
+    divider = "─" * width
+
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    lines.append(f"{colors.BOLD}{colors.CYAN}┌{'─' * (width - 2)}┐{colors.RESET}")
+    title = f" UNREAL-NG ECOSYSTEM WORKLOAD OVERVIEW (MULTI-PROCESS) "
+    lines.append(f"{colors.BOLD}{colors.CYAN}│{colors.WHITE}{title.center(width - 2)}{colors.CYAN}│{colors.RESET}")
+    lines.append(f"{colors.BOLD}{colors.CYAN}└{'─' * (width - 2)}┘{colors.RESET}")
+
+    lines.append(
+        f" Host: {colors.BOLD}{platform.node()}{colors.RESET} | "
+        f"Logical Cores: {colors.BOLD}{num_cores}{colors.RESET} | "
+        f"Active Unreal Processes: {colors.BOLD}{len(samples)}{colors.RESET} | "
+        f"Time: {now_str}"
+    )
+    lines.append(divider)
+
+    lines.append(
+        f"  {colors.DIM}{'PID':>8}  {'Process':<18} {'Role/Type':<12} {'Tiles':>6} {'1-Core %':>10} {'System %':>10} {'RSS (MB)':>10}{colors.RESET}"
+    )
+    lines.append(f"  {colors.DIM}{'─' * 74}{colors.RESET}")
+
+    tot_single = 0.0
+    tot_system = 0.0
+    tot_tiles = 0
+    tot_rss = 0.0
+
+    for s in samples:
+        tot_single += s.single_core_pct
+        tot_system += s.system_pct
+        tot_rss += s.rss_mb
+        tiles = s.videowall.tile_count if s.videowall else 1
+        tot_tiles += tiles
+
+        role = "VideoWall" if ("videowal" in s.name.lower() or (s.videowall and s.videowall.is_videowall)) else "Emulator"
+        lines.append(
+            f"  {s.pid:8d}  {colors.BOLD}{s.name:<18}{colors.RESET} "
+            f"{role:<12} "
+            f"{tiles:6d} "
+            f"{colors.color_pct(s.single_core_pct):>10} "
+            f"{s.system_pct:9.2f}% "
+            f"{s.rss_mb:9.1f}M"
+        )
+
+    lines.append(f"  {colors.DIM}{'─' * 74}{colors.RESET}")
+    lines.append(
+        f"  {colors.BOLD}{'TOTAL CONCURRENT WORKLOAD:':<40} {tot_tiles:6d} "
+        f"{colors.color_pct(tot_single):>10} "
+        f"{tot_system:9.2f}% "
+        f"{tot_rss:9.1f}M{colors.RESET}"
+    )
+    lines.append(divider)
+
+    saturated_cores = tot_single / 100.0
+    headroom = max(100.0 - tot_system, 0.0)
+    lines.append(
+        f"  ▶ {colors.BOLD}Cores Saturated:{colors.RESET} {colors.CYAN}{saturated_cores:.2f} of {num_cores} cores{colors.RESET} "
+        f"| System Headroom: {colors.GREEN}{headroom:.1f}%{colors.RESET}"
+    )
+    lines.append(divider)
+    lines.append(f"{colors.DIM}(Press Ctrl+C to stop){colors.RESET}")
 
     return "\n".join(lines)
 
@@ -637,23 +831,35 @@ def render_dashboard(
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Cross-platform True Process Workload & Thread Profiler for Unreal-NG",
+        description="Cross-platform True Process Workload & Thread Profiler for Unreal-NG (unreal-qt, unreal-videowall, unreal-screen-viewer)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  # Auto-detect running unreal-qt and monitor interactively
+Target Selection Examples:
+  # Auto-detect running Unreal process (unreal-qt or unreal-videowall)
   %(prog)s
 
-  # Monitor specific PID with 0.5s interval
-  %(prog)s --pid 12345 --interval 0.5
+  # Specifically target unreal-videowall
+  %(prog)s --videowall
+  %(prog)s -W
 
-  # Monitor by process name
-  %(prog)s --name unreal-screen-viewer
+  # Specifically target unreal-qt
+  %(prog)s --qt
+  %(prog)s -Q
 
+  # Specifically target unreal-screen-viewer
+  %(prog)s --screen-viewer
+
+  # Monitor ALL running Unreal processes simultaneously
+  %(prog)s --all
+
+  # Target specific PID with 0.5s interval and thread grouping
+  %(prog)s --pid 12345 --interval 0.5 --group-threads
+
+Output Mode Examples:
   # Take a single snapshot over 2 seconds and exit (for scripts/CI)
   %(prog)s --once --interval 2.0
 
-  # Output JSON for automated performance benchmarks
+  # Output JSON (includes videowall tile metrics)
   %(prog)s --json --once
 
   # Log timeseries metrics to a CSV file
@@ -661,7 +867,12 @@ Examples:
 """
     )
     parser.add_argument("-p", "--pid", type=int, default=None, help="Target process PID (default: auto-detect)")
-    parser.add_argument("-n", "--name", type=str, default=None, help="Target process name regex (default: unreal-qt)")
+    parser.add_argument("-n", "--name", type=str, default=None, help="Target process name regex")
+    parser.add_argument("-W", "--videowall", action="store_true", help="Shortcut: target unreal-videowall")
+    parser.add_argument("-Q", "--qt", action="store_true", help="Shortcut: target unreal-qt")
+    parser.add_argument("-S", "--screen-viewer", action="store_true", help="Shortcut: target unreal-screen-viewer")
+    parser.add_argument("-A", "--all", "--multi", dest="multi_mode", action="store_true", help="Monitor all active Unreal-NG processes simultaneously")
+    parser.add_argument("-g", "--group-threads", action="store_true", help="Group threads by role (Tile, UI, Service, Worker)")
     parser.add_argument("-i", "--interval", type=float, default=1.0, help="Sampling interval in seconds (default: 1.0)")
     parser.add_argument("-c", "--count", type=int, default=0, help="Number of samples to collect before exit (0 = infinite)")
     parser.add_argument("-1", "--once", action="store_true", help="Take a single sample and exit (snapshot mode)")
@@ -671,7 +882,7 @@ Examples:
     parser.add_argument("--no-color", action="store_true", help="Disable ANSI color codes")
     parser.add_argument("--json", action="store_true", help="Output results in JSON format")
     parser.add_argument("--csv", type=str, default=None, help="Save timeseries metrics to specified CSV file")
-    parser.add_argument("--version", action="version", version="process-workload.py 1.0.0")
+    parser.add_argument("--version", action="version", version="process-workload.py 1.1.0")
     return parser.parse_args()
 
 
@@ -682,11 +893,17 @@ def write_csv_header(csv_path: str) -> None:
             writer.writerow([
                 "timestamp", "pid", "name", "elapsed_s", "cpu_time_s",
                 "single_core_pct", "system_pct", "cores_equivalent",
-                "rss_mb", "vms_mb", "threads_count"
+                "rss_mb", "vms_mb", "threads_count", "tiles_count",
+                "avg_tile_cpu_pct", "rendering_cpu_pct"
             ])
 
 
 def append_csv_row(csv_path: str, sample: ProcessSample) -> None:
+    vw = sample.videowall
+    tiles = vw.tile_count if vw else 1
+    avg_tile = vw.avg_per_tile_pct if vw else sample.single_core_pct
+    rend = vw.rendering_single_core_pct if vw else 0.0
+
     with open(csv_path, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow([
@@ -700,8 +917,60 @@ def append_csv_row(csv_path: str, sample: ProcessSample) -> None:
             f"{sample.cores_equivalent:.3f}",
             f"{sample.rss_mb:.2f}",
             f"{sample.vms_mb:.2f}",
-            sample.thread_count
+            sample.thread_count,
+            tiles,
+            f"{avg_tile:.2f}",
+            f"{rend:.2f}"
         ])
+
+
+def run_multi_mode(args: argparse.Namespace, num_cores: int, colors: Colors) -> int:
+    """Monitors all active Unreal-NG processes in parallel."""
+    is_terminal = sys.stdout.isatty() and not args.json and not args.once
+    sample_num = 0
+
+    try:
+        while True:
+            procs = find_all_unreal_processes()
+            if not procs:
+                if not args.wait:
+                    print("Error: No running Unreal-NG processes found (unreal-qt, unreal-videowall, etc.)", file=sys.stderr)
+                    return 1
+                print("Waiting for Unreal-NG processes to launch...", file=sys.stderr)
+                time.sleep(1.0)
+                continue
+
+            # Sample each collector
+            collectors = [create_collector(pid, num_cores) for pid, _ in procs]
+            # Parallel sampling via interval sleep
+            t1 = time.time()
+            samples: List[ProcessSample] = []
+            for col in collectors:
+                s = col.sample(args.interval / max(len(collectors), 1))
+                if s:
+                    samples.append(s)
+            t2 = time.time()
+
+            sample_num += 1
+
+            if args.json:
+                data = [asdict(s) for s in samples]
+                print(json.dumps(data, indent=2 if args.once else None))
+            else:
+                out = render_multi_process_dashboard(samples, colors, num_cores, t2 - t1)
+                if is_terminal:
+                    sys.stdout.write("\033[2J\033[H")
+                print(out)
+                sys.stdout.flush()
+
+            if args.count > 0 and sample_num >= args.count:
+                break
+
+    except KeyboardInterrupt:
+        if not args.json:
+            print("\nMonitoring stopped by user.")
+
+    return 0
 
 
 def main() -> int:
@@ -714,28 +983,39 @@ def main() -> int:
     if args.once:
         args.count = 1
 
-    # Detect cores
     num_cores = os.cpu_count() or 1
+    colors = Colors(enabled=sys.stdout.isatty() and not args.no_color and not args.json)
 
-    # Target resolution
-    target_pid = args.pid
+    # Multi-process mode
+    if args.multi_mode:
+        return run_multi_mode(args, num_cores, colors)
+
+    # Shortcut flags resolution
     target_name = args.name
+    if args.videowall:
+        target_name = "unreal-videowall"
+    elif args.qt:
+        target_name = "unreal-qt"
+    elif args.screen_viewer:
+        target_name = "unreal-screen-viewer"
+
+    target_pid = args.pid
 
     if target_pid is None:
         while True:
             detected = auto_detect_target(target_name)
             if detected:
-                target_pid, target_name = detected
+                target_pid, detected_name = detected
                 break
             if not args.wait:
-                name_msg = f"matching '{target_name}'" if target_name else "from known candidates (unreal-qt, etc.)"
+                name_msg = f"matching '{target_name}'" if target_name else "from known candidates (unreal-qt, unreal-videowall, etc.)"
                 print(
                     f"Error: No active Unreal-NG process found {name_msg}.\n"
-                    f"Provide --pid <PID>, start unreal-qt, or pass --wait to wait for launch.",
+                    f"Provide --pid <PID>, start the application, or pass --wait to wait for launch.",
                     file=sys.stderr
                 )
                 return 1
-            print(f"Waiting for process {target_name or 'unreal-qt'} to launch...", file=sys.stderr)
+            print(f"Waiting for process {target_name or 'Unreal-NG'} to launch...", file=sys.stderr)
             time.sleep(1.0)
 
     try:
@@ -747,8 +1027,6 @@ def main() -> int:
     if not collector.is_alive():
         print(f"Error: Process with PID {target_pid} is not running or accessible.", file=sys.stderr)
         return 1
-
-    colors = Colors(enabled=sys.stdout.isatty() and not args.no_color and not args.json)
 
     if args.csv:
         try:
@@ -785,19 +1063,21 @@ def main() -> int:
             if args.json:
                 data = asdict(sample)
                 data["threads"] = [asdict(t) for t in sample.threads]
+                if sample.videowall:
+                    data["videowall"] = asdict(sample.videowall)
                 print(json.dumps(data, indent=2 if args.once else None))
             else:
                 dashboard = render_dashboard(
                     sample=sample,
                     top_threads=args.top,
                     show_all_threads=args.show_all_threads,
+                    group_threads=args.group_threads,
                     colors=colors,
                     history=history,
                     start_time=start_time
                 )
 
                 if is_terminal:
-                    # Clear screen and move cursor to top-left
                     sys.stdout.write("\033[2J\033[H")
                 print(dashboard)
                 sys.stdout.flush()
