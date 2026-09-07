@@ -14,6 +14,8 @@
 #include <thread>
 #include <vector>
 
+#include "common/threadhelper.h"
+
 // Use the platform-agnostic functions from platform_sockets.h
 
 using namespace std::string_literals;
@@ -218,6 +220,7 @@ void AutomationCLI::stop()
 
 void AutomationCLI::run()
 {
+    ThreadHelper::setThreadName("cli-server");
     std::cout << "CLI server thread starting..." << std::endl;
 
     // Initialize socket
@@ -404,6 +407,8 @@ std::unique_ptr<CLIProcessor> AutomationCLI::createProcessor()
 
 void AutomationCLI::handleClientConnection(SOCKET clientSocket)
 {
+    ThreadHelper::setThreadName("cli-client");
+
     // Buffer to store the current line of input
     std::string lineBuffer;
     const std::string prompt = "> ";
