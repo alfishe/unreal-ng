@@ -55,6 +55,11 @@ void DeviceScreen::detach()
     _frameSource = nullptr;
     _latchedFrame = QImage();
 
+    // Drop our ownership share: a detached screen must not keep a Release()d emulator alive until
+    // ~MainWindow (it was the last shared_ptr holder and destroyed the instance long after
+    // EmulatorManager::RemoveEmulator - crash on shutdown)
+    _emulator.reset();
+
     // Trigger immediate repaint to show default background when detached
     update();
 }
@@ -151,12 +156,12 @@ void DeviceScreen::keyPressEvent(QKeyEvent* event)
             messageCenter.Post(MC_KEY_PRESSED, keyEvent);
         }
 
-        QString message = QString("DeviceScreen : keyPressEvent, key : 0x%1 (%2), mods: 0x%3, zxKey: 0x%4")
-                              .arg(event->key(), 2, 16)
-                              .arg(event->key())
-                              .arg((int)event->modifiers(), 2, 16)
-                              .arg(zxKey, 2, 16);
-        qDebug() << message;
+        // QString message = QString("DeviceScreen : keyPressEvent, key : 0x%1 (%2), mods: 0x%3, zxKey: 0x%4")
+        //                       .arg(event->key(), 2, 16)
+        //                       .arg(event->key())
+        //                       .arg((int)event->modifiers(), 2, 16)
+        //                       .arg(zxKey, 2, 16);
+        // qDebug() << message;
     }
 }
 
@@ -191,12 +196,12 @@ void DeviceScreen::keyReleaseEvent(QKeyEvent* event)
             messageCenter.Post(MC_KEY_RELEASED, keyEvent);
         }
 
-        QString message = QString("DeviceScreen : keyReleaseEvent, key : 0x%1 (%2), mods: 0x%3, zxKey: 0x%4")
-                              .arg(event->key(), 2, 16)
-                              .arg(event->key())
-                              .arg((int)event->modifiers(), 2, 16)
-                              .arg(zxKey, 2, 16);
-        qDebug() << message;
+        // QString message = QString("DeviceScreen : keyReleaseEvent, key : 0x%1 (%2), mods: 0x%3, zxKey: 0x%4")
+        //                       .arg(event->key(), 2, 16)
+        //                       .arg(event->key())
+        //                       .arg((int)event->modifiers(), 2, 16)
+        //                       .arg(zxKey, 2, 16);
+        // qDebug() << message;
     }
 }
 

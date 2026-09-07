@@ -1,5 +1,6 @@
 #include "disassembler_opcode_test.h"
 
+#include <cstdlib>
 #include <vector>
 #include "common/dumphelper.h"
 #include "common/stringhelper.h"
@@ -8,6 +9,12 @@
 
 void Disassembler_Opcode_Test::SetUp()
 {
+    // Re-seed rand() per test: the operand bytes below come from rand() and
+    // each expected string is derived from those same bytes, so without a
+    // per-test reset the exercised values would silently depend on how many
+    // rand() calls earlier tests consumed
+    std::srand(42);
+
     _context = new EmulatorContext();
     _debugManager = new DebugManager(_context);
     // Instantiate emulator with all peripherals, but no configuration loaded
@@ -30,6 +37,15 @@ void Disassembler_Opcode_Test::TearDown()
 }
 
 /// endregion </Setup / TearDown>
+
+/// @brief Expected operand text for an OF_RELJUMP operand (JR family; DJNZ is not flagged OF_RELJUMP): the resolved
+/// target address, i.e. instructionAddr + full instruction length + signed 8-bit offset (see
+/// Z80Disassembler::formatOperandString). All tests below disassemble at instructionAddr = 0.
+static std::string RelativeJumpTarget(size_t commandLen, uint8_t offset)
+{
+    uint16_t target = (uint16_t)(0 + commandLen + (int8_t)offset);
+    return StringHelper::ToHexWithPrefix(target, "#", true);
+}
 
 TEST_F(Disassembler_Opcode_Test, TestAllNoPrefixOpCodes)
 {
@@ -72,7 +88,9 @@ TEST_F(Disassembler_Opcode_Test, TestAllNoPrefixOpCodes)
         if (op.flags & OF_MBYTE)
         {
             referenceResult = StringHelper::ReplaceAll(referenceResult, string(":1"), string("%s"));
-            referenceResult = StringHelper::Format(referenceResult, StringHelper::ToHexWithPrefix(command[1], "#", true));
+            std::string operand = (op.flags & OF_RELJUMP) ? RelativeJumpTarget(command.size(), command[1])
+                                                          : StringHelper::ToHexWithPrefix(command[1], "#", true);
+            referenceResult = StringHelper::Format(referenceResult, operand);
         }
         else if (op.flags & OF_MWORD)
         {
@@ -153,9 +171,16 @@ TEST_F(Disassembler_Opcode_Test, TestAllEDOpCodes)
             size_t pos;
             if ((pos = referenceResult.find(":1")) != std::string::npos)
             {
-                char hexByte[5];
-                snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
-                referenceResult.replace(pos, 2, hexByte);
+                if (op.flags & OF_RELJUMP)
+                {
+                    referenceResult.replace(pos, 2, RelativeJumpTarget(command.size(), val));
+                }
+                else
+                {
+                    char hexByte[5];
+                    snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
+                    referenceResult.replace(pos, 2, hexByte);
+                }
             }
         }
 
@@ -303,9 +328,16 @@ TEST_F(Disassembler_Opcode_Test, TestAllDDOpCodes)
             size_t pos;
             if ((pos = referenceResult.find(":1")) != std::string::npos)
             {
-                char hexByte[5];
-                snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
-                referenceResult.replace(pos, 2, hexByte);
+                if (op.flags & OF_RELJUMP)
+                {
+                    referenceResult.replace(pos, 2, RelativeJumpTarget(command.size(), val));
+                }
+                else
+                {
+                    char hexByte[5];
+                    snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
+                    referenceResult.replace(pos, 2, hexByte);
+                }
             }
         }
 
@@ -486,9 +518,16 @@ TEST_F(Disassembler_Opcode_Test, TestAllFDOpCodes)
             size_t pos;
             if ((pos = referenceResult.find(":1")) != std::string::npos)
             {
-                char hexByte[5];
-                snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
-                referenceResult.replace(pos, 2, hexByte);
+                if (op.flags & OF_RELJUMP)
+                {
+                    referenceResult.replace(pos, 2, RelativeJumpTarget(command.size(), val));
+                }
+                else
+                {
+                    char hexByte[5];
+                    snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
+                    referenceResult.replace(pos, 2, hexByte);
+                }
             }
         }
 

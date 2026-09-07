@@ -1,0 +1,92 @@
+BASIC   phase #5D3B
+        db 00,00        ;START LINE
+        dw ENDBADL-$-2
+        db "ZX-FORMAT 8 (c)XL-DESIGN Inc."
+        db #0D,#FD              ;***
+        db #21                  ;***
+X01
+        exx
+        xor d
+        xor h
+        db #ED,#20              ;***
+        xor e
+        xor l
+        exx
+        xor lx
+        retn
+        db #0E                  ;***
+
+        db #DD,#FD,#DD,#22      ;***
+RET01   pop bc
+        pop ix
+        pop iy
+        exx
+        ld d,lx
+        ld e,hx
+        exx
+
+XLOP1   ld a,r
+        ld i,a
+RLP     sli a
+        jp nc,RLP
+        reti
+        db #0E                  ;***
+
+JP01    pop hl  ;de
+        reti
+        db #0E                  ;***
+
+
+X00     xor (hl)
+        db #ED,#10
+        xor hx
+        reti
+        db #0E                  ;***
+
+X02     xor c
+        db #ED,#13      ;***
+        xor b
+        xor ly
+        db #ED,#4E      ;***
+        xor d
+        xor (ix+00)
+        db #ED,#1E      ;***
+        xor (iy+00)
+        xor e
+        db #ED,#7E      ;***
+        xor hy
+        xor l
+        db #ED,#18      ;***
+        xor h
+        jp #3D2F
+
+        db #DD,#2A      ;***
+RET00   ex de,hl
+        pop hl  ;hl
+        ret
+        db #0E                  ;***
+NEWIY   inc iy
+        ld a,i
+        xor c
+        ld e,a
+        xor b
+        db #ED,#3E      ;***
+        ld r,a
+        xor (iy+02)
+        ld d,a
+        jr RETIY
+
+        db "LED :08.07.98"
+        db #0E                  ;***
+
+X03     dec bc
+        db #ED,#22      ;***
+        ld a,c
+        db #ED,#13      ;***
+        or b
+        db #ED,#33      ;***
+        ret z
+        inc d
+        exx
+        dec d
+        ld hl,#0-SP_END+STEKLP

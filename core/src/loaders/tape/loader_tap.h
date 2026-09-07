@@ -1,7 +1,8 @@
 #pragma once
 
 #include "stdafx.h"
-#include "emulator/io/tape/tape.h"
+#include "emulator/io/tape/tapetypes.h"
+#include "loaders/tape/loader_tape.h"
 
 /// region <Documentation>
 
@@ -48,61 +49,12 @@
 
 /// endregion </ZX-Spectrum tape timings>
 
-/// endregion </Documentation
-
-/// region <Types>
-
-/// region <TAP parsing structures>
-
-struct ZXTapeProgramParams
-{
-    uint16_t autostartLine;
-    uint16_t programLength;
-};
-
-struct ZXTapeArrayParams
-{
-    uint8_t reserved;
-    uint8_t varName;
-    uint16_t reserved1 = 0x8000;
-};
-
-struct ZXTapeBytesParams
-{
-    uint16_t startAddress;
-    uint16_t reserved;
-};
-
-struct ZXTapeHeader
-{
-    union
-    {
-        ZXTapeBlockTypeEnum headerType;
-        uint8_t uHeaderType;
-    };
-
-    char filename[10];
-    uint16_t dataLength;
-
-    union
-    {
-        uint8_t paramBytes[4];
-        ZXTapeProgramParams programParams;
-        ZXTapeArrayParams arrayParams;
-        ZXTapeBytesParams codeParams;
-    };
-
-    uint8_t checksum;
-};
-
-/// endregion </TAP parsing structures>
-
-/// endregion </Types>
+/// endregion </Documentation>
 
 class EmulatorContext;
 class ModuleLogger;
 
-class LoaderTAP
+class LoaderTAP : public LoaderTapeBase
 {
     /// region <Fields>
 protected:
@@ -112,12 +64,30 @@ protected:
 
     /// region <Constructors / destructors>
 public:
+    /// Context-free construction for the loader registry (design §5.3): the
+    /// contract is pure data in, TapeImage out — anomalies travel through
+    /// TapeImage::status / parseWarnings, not a logger.
+    LoaderTAP();
+
+    /// Legacy context-bound construction (existing tests and CUT wrapper).
     LoaderTAP(EmulatorContext* context);
     virtual ~LoaderTAP();
     /// endregion </Constructors / destructors>
 
+    /// region <LoaderTapeBase contract>
+public:
+    TapeImage Load(std::span<const uint8_t> bytes, const std::string& sourceName) override;
+    const TapeFormatInfo& Format() const override;
+    /// endregion </LoaderTapeBase contract>
+
     /// region <Methods>
 public:
+    /// Structural content probe (design §5.3): walks the [u16 len] framing
+    /// to EOF. Clean landing = 100, at least one complete block before an
+    /// overrun = 25, nothing complete = 0. Doubles as the Warajevo `.tap`
+    /// discriminator (different framing behind the same extension).
+    static int Probe(std::span<const uint8_t> bytes);
+
     std::vector<TapeBlock> loadTAP(std::string filePath);
     /// endregion </Methods>
 

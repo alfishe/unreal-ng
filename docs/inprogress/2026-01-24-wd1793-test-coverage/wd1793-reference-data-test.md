@@ -103,7 +103,7 @@ namespace TRDOSDiskReference {
 ### Automated Tests
 Run the new test file:
 ```bash
-cd /Volumes/TB4-4Tb/Projects/Test/unreal-ng
+cd .
 cmake --build build --target core-tests -j8
 ./build/bin/core-tests --gtest_filter="*ReferenceData*"
 ```

@@ -12,7 +12,9 @@ from extract_z80tests import extract_tests, TESTS_ASM
 from z80test_generator import vec_to_bytes, Z80TestIterator, VEC_SIZE
 from z80_reference import execute_test, has_executor
 
-HARNESS_PATH = "/Volumes/TB4-4Tb/Projects/Test/unreal-ng/testdata/z80/z80-reference/z80_harness"
+from pathlib import Path
+
+HARNESS_PATH = str(Path(__file__).resolve().parents[5] / "testdata/z80/z80-reference/z80_harness")
 
 def run_harness(vectors: list) -> list:
     """Run test vectors through z80_harness and get F outputs."""

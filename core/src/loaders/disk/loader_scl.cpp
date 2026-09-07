@@ -1,6 +1,7 @@
 #include "loader_scl.h"
 
 #include "common/filehelper.h"
+#include "common/stringhelper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/notifications.h"
@@ -47,33 +48,44 @@ bool LoaderSCL::writeImage(const std::string& path)
         return result;
     }
 
+    _warnings.clear();
+
     // Read TR-DOS catalog to get file list
     DiskImage::Track* track0 = _diskImage->getTrackForCylinderAndSide(0, 0);
     if (!track0)
     {
+        _warnings.push_back("SCL save refused: track 0 is missing");
         return result;
     }
 
-    DiskImage::RawSectorBytes* volumeSector = track0->getSector(TRD_VOLUME_SECTOR);
-    if (!volumeSector)
+    // Track 0 must carry the TR-DOS catalog (sectors 1..8) and the volume sector (9) as 256-byte sectors
+    for (uint8_t sectorNo = 0; sectorNo <= TRD_VOLUME_SECTOR; sectorNo++)
     {
+        DiskImage::Sector* sector = track0->getSector(sectorNo);
+        if (!sector || !sector->hasData || sector->dataSize != TRD_SECTORS_SIZE_BYTES)
+        {
+            _warnings.push_back(StringHelper::Format("SCL save refused: track 0 sector %d is not a 256-byte TR-DOS sector", sectorNo + 1));
+            return result;
+        }
+    }
+
+    DiskImage::Sector* volumeSector = track0->getSector(TRD_VOLUME_SECTOR);
+    TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)volumeSector->data;
+
+    if (volumeInfo->trDOSSignature != TRD_SIGNATURE)
+    {
+        _warnings.push_back("SCL save refused: no TR-DOS signature in the volume sector");
         return result;
     }
 
-    TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)volumeSector->data;
-    uint8_t fileCount = volumeInfo->fileCount;
-
+    uint8_t fileCount = volumeInfo->fileCount;   // Includes deleted entries
     if (fileCount > TRD_MAX_FILES)
     {
-        // Invalid file count
+        _warnings.push_back("SCL save refused: invalid file count in the volume sector");
         return result;
     }
 
-    // Calculate total size: header + descriptors + all file data + CRC
-    size_t headerSize = 8 + 1;  // "SINCLAIR" + file count
-    size_t descriptorsSize = fileCount * sizeof(TRDOSDirectoryEntryBase);
-
-    // Calculate total file data size by reading all descriptors
+    // Walk the catalog: export non-deleted files only; sectors not owned by an exported file are not stored
     size_t totalDataSize = 0;
     std::vector<TRDOSDirectoryEntry> fileDescriptors;
     fileDescriptors.reserve(fileCount);
@@ -83,16 +95,49 @@ bool LoaderSCL::writeImage(const std::string& path)
         uint8_t sectorNo = i / 16;  // 16 file descriptors per sector
         uint8_t entryNo = i % 16;
 
-        DiskImage::RawSectorBytes* catalogSector = track0->getRawSector(sectorNo);
-        if (!catalogSector)
+        DiskImage::Sector* catalogSector = track0->getSector(sectorNo);
+        TRDOSDirectoryEntry* entry = (TRDOSDirectoryEntry*)(catalogSector->data + entryNo * sizeof(TRDOSDirectoryEntry));
+
+        uint8_t marker = static_cast<uint8_t>(entry->Name[0]);
+        if (marker == 0x00)
         {
-            return result;
+            break;      // End of catalog
+        }
+        if (marker == 0x01)
+        {
+            continue;   // Deleted file
         }
 
-        TRDOSDirectoryEntry* entry = (TRDOSDirectoryEntry*)(catalogSector->data + entryNo * sizeof(TRDOSDirectoryEntry));
+        // Validate the sector chain before committing to export this file
+        bool chainValid = true;
+        uint16_t locator = entry->StartTrack * TRD_SECTORS_PER_TRACK + entry->StartSector;
+        for (size_t n = 0; n < entry->SizeInSectors; n++, locator++)
+        {
+            DiskImage::Track* fileTrack = _diskImage->getTrack(static_cast<uint8_t>(locator / TRD_SECTORS_PER_TRACK));
+            DiskImage::Sector* fileSector = fileTrack ? fileTrack->getSector(locator % TRD_SECTORS_PER_TRACK) : nullptr;
+            if (!fileSector || !fileSector->hasData || fileSector->dataSize != TRD_SECTORS_SIZE_BYTES)
+            {
+                chainValid = false;
+                break;
+            }
+        }
+
+        if (!chainValid)
+        {
+            std::string name(entry->Name, 8);
+            _warnings.push_back(StringHelper::Format("SCL save: file '%s' skipped - its sector chain points outside the TR-DOS geometry", name.c_str()));
+            continue;
+        }
+
         fileDescriptors.push_back(*entry);
         totalDataSize += entry->SizeInSectors * TRD_SECTORS_SIZE_BYTES;
     }
+
+    uint8_t exportedCount = static_cast<uint8_t>(fileDescriptors.size());
+
+    // Calculate total size: header + descriptors + all file data + CRC
+    size_t headerSize = 8 + 1;  // "SINCLAIR" + file count
+    size_t descriptorsSize = exportedCount * sizeof(TRDOSDirectoryEntryBase);
 
     size_t totalSize = headerSize + descriptorsSize + totalDataSize + 4;  // +4 for CRC
 
@@ -104,8 +149,8 @@ bool LoaderSCL::writeImage(const std::string& path)
     std::memcpy(buffer.data() + offset, "SINCLAIR", 8);
     offset += 8;
 
-    // Write file count
-    buffer[offset++] = fileCount;
+    // Write exported (non-deleted) file count
+    buffer[offset++] = exportedCount;
 
     // Write file descriptors (14 bytes each - without start sector/track)
     for (const auto& desc : fileDescriptors)
@@ -130,7 +175,7 @@ bool LoaderSCL::writeImage(const std::string& path)
                 return result;
             }
 
-            DiskImage::RawSectorBytes* fileSector = fileTrack->getSector(fileSectorNo);
+            DiskImage::Sector* fileSector = fileTrack->getSector(fileSectorNo);
             if (!fileSector)
             {
                 return result;
@@ -268,7 +313,7 @@ bool LoaderSCL::addFile(TRDOSDirectoryEntryBase* fileDescriptor, uint8_t* fileDa
     bool result = false;
 
     DiskImage::Track* track = _diskImage->getTrack(0);
-    DiskImage::RawSectorBytes* systemSector = track->getSector(TRD_VOLUME_SECTOR);
+    DiskImage::Sector* systemSector = track->getSector(TRD_VOLUME_SECTOR);
     TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)systemSector->data;
 
     if (volumeInfo != nullptr && volumeInfo->fileCount < TRD_MAX_FILES)
@@ -282,7 +327,7 @@ bool LoaderSCL::addFile(TRDOSDirectoryEntryBase* fileDescriptor, uint8_t* fileDa
         {
             /// region <Create new file descriptor>
             uint8_t dirSectorNo = ((catalogOffset / TRD_SECTORS_SIZE_BYTES) & 0x0F);
-            DiskImage::RawSectorBytes* dirSector = track->getRawSector(dirSectorNo);
+            DiskImage::Sector* dirSector = track->getSector(dirSectorNo);
 
             TRDOSDirectoryEntry* dstFileDescriptor = (TRDOSDirectoryEntry*)(dirSector->data + (catalogOffset & 0x00FF));
             memcpy(dstFileDescriptor, fileDescriptor, sizeof(TRDOSDirectoryEntryBase));
@@ -315,7 +360,7 @@ bool LoaderSCL::addFile(TRDOSDirectoryEntryBase* fileDescriptor, uint8_t* fileDa
                 uint8_t fileSectorNo = (fileSectorLocator % TRD_SECTORS_PER_TRACK);
 
                 DiskImage::Track* fileTrack = _diskImage->getTrack(fileTrackNo);
-                DiskImage::RawSectorBytes* fileSector = fileTrack->getSector(fileSectorNo);
+                DiskImage::Sector* fileSector = fileTrack->getSector(fileSectorNo);
 
                 uint8_t* srcSectorData = fileData + i * TRD_SECTORS_SIZE_BYTES;
                 uint8_t* dstSectorData = fileSector->data;

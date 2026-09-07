@@ -391,6 +391,7 @@ if (BUILD_QT_APPS)
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/configs"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/core/automation/webapi/resources/html" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/html"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/rom"
@@ -467,6 +468,8 @@ if (BUILD_QT_APPS)
                 "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/configs"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_SOURCE_DIR}/core/automation/webapi/resources/html" "${SUITE_STAGING_DIR}/resources/html"
 
             # Create ZIP archive (change to parent dir to avoid nested paths)
             COMMAND ${CMAKE_COMMAND} -E chdir "${CMAKE_BINARY_DIR}/packages"
@@ -561,6 +564,8 @@ if (BUILD_QT_APPS)
                 "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/configs"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_SOURCE_DIR}/core/automation/webapi/resources/html" "${SUITE_STAGING_DIR}/resources/html"
 
             # Create tarball
             COMMAND ${CMAKE_COMMAND} -E tar "cfz"

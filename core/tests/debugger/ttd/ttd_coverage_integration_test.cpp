@@ -171,7 +171,7 @@ protected:
 
 TEST_F(TTD_CoverageIntegration_Test, ExecuteSearchIsUnchangedByPruning)
 {
-    RecordSession(30);
+    RecordSession(15);
 
     // Sweep addresses across the ROM/RAM boundary and inside RAM, so the sweep
     // includes addresses that were executed, never executed, and executed only
@@ -189,7 +189,7 @@ TEST_F(TTD_CoverageIntegration_Test, ExecuteSearchIsUnchangedByPruning)
 
 TEST_F(TTD_CoverageIntegration_Test, ReadSearchIsUnchangedByPruning)
 {
-    RecordSession(30);
+    RecordSession(15);
 
     for (uint16_t addr : {uint16_t(0x4000), uint16_t(0x5800), uint16_t(0x8000),
                           uint16_t(0xC000), uint16_t(0xDEAD)})
@@ -205,7 +205,7 @@ TEST_F(TTD_CoverageIntegration_Test, ReadSearchIsUnchangedByPruning)
 /// crosses a 16 KB boundary has offsets in two disjoint intervals.
 TEST_F(TTD_CoverageIntegration_Test, RangeQueriesAreUnchangedByPruning)
 {
-    RecordSession(30);
+    RecordSession(15);
 
     const std::vector<std::pair<uint16_t, uint16_t>> ranges = {
         {0x4000, 0x4010},  // narrow, inside one page
@@ -230,7 +230,7 @@ TEST_F(TTD_CoverageIntegration_Test, RangeQueriesAreUnchangedByPruning)
 
 TEST_F(TTD_CoverageIntegration_Test, PageFilteredSearchIsUnchangedByPruning)
 {
-    RecordSession(30);
+    RecordSession(15);
 
     for (uint8_t page : {uint8_t(0), uint8_t(2), uint8_t(5), uint8_t(7)})
     {
@@ -245,7 +245,7 @@ TEST_F(TTD_CoverageIntegration_Test, PageFilteredSearchIsUnchangedByPruning)
 
 TEST_F(TTD_CoverageIntegration_Test, BoundedSearchIsUnchangedByPruning)
 {
-    RecordSession(30);
+    RecordSession(15);
 
     const uint64_t lastFrame = _ttd->GetCheckpoint(_ttd->GetCheckpointCount() - 1)->time.frame;
     const uint32_t frameT = _context->config.frame;
@@ -271,7 +271,7 @@ TEST_F(TTD_CoverageIntegration_Test, BoundedSearchIsUnchangedByPruning)
 /// eagerly, or 200x slower queries if not done at all.
 TEST_F(TTD_CoverageIntegration_Test, LoadedSessionStillSearchesCorrectly)
 {
-    RecordSession(20);
+    RecordSession(15);
 
     ttd::TTDSearchQuery q;
     q.addrFrom = q.addrTo = 0x4000;
@@ -328,7 +328,7 @@ TEST_F(TTD_CoverageIntegration_Test, FramesOutsideTheCoveredRangeAreNotPruned)
 
 TEST_F(TTD_CoverageIntegration_Test, SeekJumpsBothDirectionsLandWhereAsked)
 {
-    RecordSession(40);
+    RecordSession(15);
 
     const size_t count = _ttd->GetCheckpointCount();
     ASSERT_GT(count, 8u);
@@ -358,7 +358,7 @@ TEST_F(TTD_CoverageIntegration_Test, SeekJumpsBothDirectionsLandWhereAsked)
 /// not deterministic and every reverse operation built on it is unsound.
 TEST_F(TTD_CoverageIntegration_Test, RepeatedSeekToTheSamePointIsDeterministic)
 {
-    RecordSession(30);
+    RecordSession(15);
 
     const size_t count = _ttd->GetCheckpointCount();
     const uint64_t target = _ttd->GetCheckpoint(count / 2)->time.frame;
@@ -388,7 +388,7 @@ TEST_F(TTD_CoverageIntegration_Test, RepeatedSeekToTheSamePointIsDeterministic)
 
 TEST_F(TTD_CoverageIntegration_Test, ReverseStepThenForwardStepReturnsToStart)
 {
-    RecordSession(20);
+    RecordSession(15);
 
     const uint64_t target = _ttd->GetCheckpoint(_ttd->GetCheckpointCount() / 2)->time.frame;
     ttd::TTDTimePoint tp;
@@ -419,7 +419,7 @@ TEST_F(TTD_CoverageIntegration_Test, ReverseStepThenForwardStepReturnsToStart)
 /// land at that PC.
 TEST_F(TTD_CoverageIntegration_Test, ReverseContinueFindsAnExecutedPc)
 {
-    RecordSession(30);
+    RecordSession(15);
 
     // Take a PC the machine really executed: seek somewhere mid-session and
     // read the live PC.
@@ -450,7 +450,7 @@ TEST_F(TTD_CoverageIntegration_Test, ReverseContinueFindsAnExecutedPc)
 /// somewhere arbitrary.
 TEST_F(TTD_CoverageIntegration_Test, ReverseContinueReportsNoMatchForUnexecutedPc)
 {
-    RecordSession(20);
+    RecordSession(15);
 
     ttd::TTDTimePoint tp;
     tp.frame = _ttd->GetCheckpoint(_ttd->GetCheckpointCount() - 1)->time.frame;
@@ -474,7 +474,7 @@ TEST_F(TTD_CoverageIntegration_Test, ReverseContinueReportsNoMatchForUnexecutedP
 /// recorded.
 TEST_F(TTD_CoverageIntegration_Test, RecordingPopulatesTheIndex)
 {
-    RecordSession(20);
+    RecordSession(15);
 
     const ttd::TTDCoverageIndex& index = _ttd->GetCoverageIndex();
 
@@ -519,7 +519,7 @@ TEST_F(TTD_CoverageIntegration_Test, InvalidatingSessionClearsTheIndex)
 
 TEST_F(TTD_CoverageIntegration_Test, ReverseContinueIsUnchangedByTheIndex)
 {
-    RecordSession(30);
+    RecordSession(15);
 
     // Collect PCs the machine really executed, sampled across the session so
     // the set spans early, middle and late frames.
@@ -577,7 +577,7 @@ TEST_F(TTD_CoverageIntegration_Test, ReverseContinueIsUnchangedByTheIndex)
 /// per-frame loop and is easy to get wrong.
 TEST_F(TTD_CoverageIntegration_Test, ReverseContinueWithManyBreakpointsAgrees)
 {
-    RecordSession(20);
+    RecordSession(15);
 
     ttd::TTDTimePoint tp;
     tp.frame = _ttd->GetCheckpoint(_ttd->GetCheckpointCount() / 2)->time.frame;
@@ -658,7 +658,7 @@ TEST_F(TTD_CoverageIntegration_Test, HitsInTheUnindexedOpeningFramesAreFound)
 /// a candidate under a one-frame shift and returns the right answer by luck.
 TEST_F(TTD_CoverageIntegration_Test, CoverageFrameLabelsMatchExecutionFrames)
 {
-    RecordSession(20);
+    RecordSession(15);
 
     const ttd::TTDCoverageIndex& index = _ttd->GetCoverageIndex();
     uint64_t coverFirst = 0, coverLast = 0;

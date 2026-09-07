@@ -15,8 +15,8 @@ graph TB
     end
     
     subgraph "Transport Layer"
-        TCLI[TCP CLI Server :3333]
-        WEB[HTTP + WebSocket :8080]
+        TCLI[TCP CLI Server :8765]
+        WEB[HTTP + WebSocket :8090]
         EMB[Embedded Interpreters]
     end
     
@@ -46,11 +46,11 @@ graph TB
 
 ### Connection
 ```bash
-# Connect via telnet (port 3333)
-telnet localhost 3333
+# Connect via telnet (port 8765)
+telnet localhost 8765
 
 # Or use netcat
-nc localhost 3333
+nc localhost 8765
 ```
 
 ### Command Reference
@@ -76,11 +76,22 @@ reset                   # Hardware reset
 step / stepin           # Execute one instruction
 stepover                # Step over CALL/RST
 steps <N>               # Execute N instructions
+run_frame               # Run one video frame
+run_frames <N>          # Run N video frames
+run_tstates <N>         # Run N T-states (1 = ULA step / 2 pixels)
+run_to_scanline <N>     # Run until scanline N boundary
+run_scanlines <N>       # Run N scanlines
+run_to_pixel            # Run to next screen pixel
+run_to_interrupt        # Run until next interrupt
 ```
 
 #### State Inspection
 ```
-registers               # Show Z80 registers
+registers               # Show all Z80 registers
+reg <name>              # Get single register by name
+reg get <name>          # Get single register (alias)
+reg <name> <value>      # Set register value
+reg set <name> <value>  # Set register (alias)
 memory <addr> [len]     # Hex dump memory
 state memory            # Bank mapping info
 state screen            # Video state
@@ -99,15 +110,59 @@ bpclear [id|all]        # Remove breakpoints
 bpon / bpoff            # Toggle breakpoints
 ```
 
+#### Labels & Symbols
+```
+label <name>            # Get label by name
+label add <name> <addr> # Add label (--type, --module, --comment options)
+label remove <name>     # Remove label
+label toggle <name>     # Toggle active state
+labels                  # List all labels (--module, --type, --from, --to filters)
+symbols load <file>     # Load symbol file (.sld/.sym/.map)
+symbols save <file>     # Save symbols to file
+symbols clear           # Clear all symbols
+symbols info            # Show symbol count
+```
+
 #### Media Operations
 ```
 open <file>             # Auto-detect and load file
 snapshot save <file>    # Save snapshot (.sna/.z80)
 snapshot info           # Current snapshot status
-tape load/eject/play    # Tape control
+# Tape transport (see command-interface.md §10 for the full tables)
+tape load <file>        # Load tape image (.tap/.tzx/.csw)
+tape eject              # Eject: stop playback, drop image and catalog
+tape play               # Start at cursor; resume in place when paused
+tape pause              # Freeze mid-block; next play resumes there
+tape stop               # Terminal stop (invalidates the image)
+tape rewind             # Rewind to block 0 (image kept)
+tape seek <index>       # Position head at catalog block <index>
+tape pos                # One-line playback position
+tape blocks             # Block catalog table
+tape info               # Detailed tape status (format, plan, features)
+
+# Tape audio bridge (pure file conversions, no emulator state)
+tape render <img> [--blocks N|N-M] [--rate N] [--amp X] [--invert] -o out.wav|out.flac
+tape import <snd> [--target auto|tzx|tap] [--hysteresis X] -o out.tzx|out.tap
+
 disk insert/eject       # Disk control
 disk catalog            # List TR-DOS directory
 ```
+
+#### Disk Operations
+```
+disk insert <drive> <file>      # Insert disk image (A-D or 0-3)
+disk eject <drive>              # Eject disk
+disk create <drive> [model]     # Create blank disk (trdos80, trdos40, plusd)
+disk catalog <drive>            # List TR-DOS directory
+disk info <drive>               # Drive and geometry info
+disk sector <drive> <cyl> <side> <sec>   # Read sector (logical number)
+disk track <drive> <cyl> <side>          # Track summary with sectors
+```
+
+Track output includes:
+- `raw_size`: actual track length in bytes (6250 nominal MFM, 3125 FM, variable for real-drive dumps)
+- `encoding`: MFM or FM (single density)
+- Sector list with ID fields (C/H/R/N), CRC status, deleted-data marks
 
 #### Features & Settings
 ```
@@ -128,7 +183,7 @@ videowall singlesync off        # Disable single sync mode (independent tile ren
 
 ### Base URL
 ```
-http://localhost:8080/api
+http://localhost:8090/api
 ```
 
 ### OpenAPI/Swagger
@@ -155,13 +210,35 @@ Interactive documentation available at `/api/swagger`
 | POST | `/api/v1/emulator/{id}/pause` | Pause |
 | POST | `/api/v1/emulator/{id}/resume` | Resume |
 | POST | `/api/v1/emulator/{id}/reset` | Reset |
+| POST | `/api/v1/emulator/{id}/step` | Step one instruction |
+| POST | `/api/v1/emulator/{id}/run_frame` | Run one frame |
+| POST | `/api/v1/emulator/{id}/run_frames` | Run N frames |
+| POST | `/api/v1/emulator/{id}/run_tstates` | Run N T-states |
+| POST | `/api/v1/emulator/{id}/run_to_scanline` | Run to scanline N |
+| POST | `/api/v1/emulator/{id}/run_scanlines` | Run N scanlines |
+| POST | `/api/v1/emulator/{id}/run_to_pixel` | Run to next pixel |
+| POST | `/api/v1/emulator/{id}/run_to_interrupt` | Run to interrupt |
 
 #### State & Memory
 | Method | Endpoint | Description |
 |:-------|:---------|:------------|
-| GET | `/emulators/{id}/registers` | CPU registers |
-| GET | `/emulators/{id}/memory?addr=&len=` | Memory dump |
-| PUT | `/emulators/{id}/memory` | Poke memory |
+| GET | `/api/v1/emulator/{id}/registers` | All CPU registers |
+| GET | `/api/v1/emulator/{id}/registers/{name}` | Single register |
+| PUT | `/api/v1/emulator/{id}/registers/{name}` | Set register |
+| GET | `/api/v1/emulator/{id}/memory?addr=&len=` | Memory dump |
+| PUT | `/api/v1/emulator/{id}/memory` | Poke memory |
+
+#### Labels & Symbols
+| Method | Endpoint | Description |
+|:-------|:---------|:------------|
+| GET | `/api/v1/emulator/{id}/labels` | List labels (query: module, type, bank, from, to, active) |
+| POST | `/api/v1/emulator/{id}/labels` | Add label |
+| DELETE | `/api/v1/emulator/{id}/labels` | Clear all labels |
+| GET | `/api/v1/emulator/{id}/labels/{name}` | Get label by name |
+| DELETE | `/api/v1/emulator/{id}/labels/{name}` | Remove label |
+| PUT | `/api/v1/emulator/{id}/labels/{name}` | Update label |
+| POST | `/api/v1/emulator/{id}/symbols/load` | Load symbol file |
+| POST | `/api/v1/emulator/{id}/symbols/save` | Save symbols to file |
 
 #### Files & Snapshots
 | Method | Endpoint | Description |
@@ -169,6 +246,64 @@ Interactive documentation available at `/api/swagger`
 | POST | `/emulators/{id}/open` | Load file |
 | POST | `/emulators/{id}/snapshot/save` | Save snapshot |
 | GET | `/emulators/{id}/snapshot/info` | Snapshot status |
+
+#### Tape Control
+Full parity with the CLI `tape` commands, the Lua `tape_*` functions and the Python `tape_*` methods (identical states and catalog indices). Scopes under `/api/v1/emulator/{id}/tape` — see [webapi-interface.md § Tape Control](../emulator/design/control-interfaces/webapi-interface.md#tape-control).
+
+| Method | Endpoint | Description |
+|:-------|:---------|:------------|
+| POST | `/api/v1/emulator/{id}/tape/load` | Load tape image (body `path`) |
+| POST | `/api/v1/emulator/{id}/tape/eject` | Eject: drop image and catalog |
+| POST | `/api/v1/emulator/{id}/tape/play` | Start / resume in place |
+| POST | `/api/v1/emulator/{id}/tape/pause` | Freeze mid-block |
+| POST | `/api/v1/emulator/{id}/tape/stop` | Terminal stop |
+| POST | `/api/v1/emulator/{id}/tape/rewind` | Rewind to block 0 (image kept) |
+| POST | `/api/v1/emulator/{id}/tape/seek` | Seek to block (body `block`) |
+| GET | `/api/v1/emulator/{id}/tape` | Full snapshot: state, position, plan, blocks |
+| GET | `/api/v1/emulator/{id}/tape/info` | Alias of `GET /tape` |
+| GET | `/api/v1/emulator/{id}/tape/blocks/{index}` | Block descriptor + hex preview |
+| POST | `/api/v1/emulator/{id}/tape/render` | Tape image → WAV/FLAC |
+| POST | `/api/v1/emulator/{id}/tape/import` | WAV/FLAC/MP3 → .tzx/.tap |
+
+#### Disk Operations
+| Method | Endpoint | Description |
+|:-------|:---------|:------------|
+| GET | `/api/v1/emulator/{id}/disk` | List all drives |
+| GET | `/api/v1/emulator/{id}/disk/{drive}` | Drive info (A-D or 0-3) |
+| POST | `/api/v1/emulator/{id}/disk/{drive}/insert` | Insert disk image |
+| POST | `/api/v1/emulator/{id}/disk/{drive}/create` | Create blank disk |
+| POST | `/api/v1/emulator/{id}/disk/{drive}/eject` | Eject disk |
+| GET | `/api/v1/emulator/{id}/disk/{drive}/info` | Disk geometry and catalog |
+| GET | `/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}` | Read sector (parsed) |
+| GET | `/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}/raw` | Read sector (raw bytes) |
+| GET | `/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}` | Track summary |
+| GET | `/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}/raw` | Raw track bytes |
+| GET | `/api/v1/emulator/{id}/disk/{drive}/image` | Whole image dump |
+
+**Track response fields** (universal track model):
+```json
+{
+  "raw_size": 6250,           // Track length in bytes (variable: 3125 FM, 6208-6464 real drives)
+  "encoding": "MFM",          // "MFM" or "FM" (single density)
+  "sector_count": 16,
+  "sectors": [{
+    "id_cyl": 0, "id_head": 0, "id_sector": 1, "id_size_code": 1,
+    "id_crc_valid": true,
+    "has_data": true, "data_size": 256, "data_crc_valid": true,
+    "deleted": false
+  }]
+}
+```
+
+**Raw track response** (`/track/{cyl}/{side}/raw`):
+```json
+{
+  "raw_size": 6250,
+  "encoding": "MFM",
+  "raw_base64": "...",            // Track stream from index pulse
+  "clock_bitmap_base64": "..."    // Bit i=1 marks sync byte (A1/C2 address marks)
+}
+```
 
 #### VideoWall Control
 | Method | Endpoint | Description |
@@ -249,6 +384,26 @@ end
 - `sound` - AY chip control
 - `disk` - Disk operations
 - `videowall` - VideoWall control
+- `tape_*` / `feature_*` globals - Full tape transport, audio bridge and feature toggles (same surface as the CLI `tape` / `feature` commands)
+
+### Tape Control
+```lua
+-- Same names, states and catalog indices as `tape` / POST /tape/*
+tape_load("/path/to/game.tap")
+tape_seek(4)
+tape_play()
+local pos = tape_pos()      -- {state="playing", block=4, ...}
+local blocks = tape_blocks() -- array of per-block tables
+print(tape_info().total_seconds)
+
+-- Fast/turbo tape toggles (same switch as `setting fast_tape/turbo_tape`)
+feature_set("fasttape", true)
+feature_set("turbotape", true)
+
+-- Offline audio bridge (pure file conversions)
+tape_render("game.tzx", "out.wav", {first_block=2, last_block=5})
+tape_import("recording.wav", "imported.tzx")
+```
 
 ### VideoWall Control
 ```lua
@@ -299,6 +454,27 @@ def training_step(action):
 - Async event loop support (planned)
 - Virtual environment package management (planned)
 
+### Tape Control
+```python
+import emu
+
+# Same names, states and catalog indices as `tape` / POST /tape/*
+emu.tape_load("/path/to/game.tap")
+emu.tape_seek(4)
+emu.tape_play()
+pos = emu.tape_pos()       # {"state": "playing", "block": 4, ...}
+blocks = emu.tape_blocks() # list of per-block dicts
+print(emu.tape_info()["total_seconds"])
+
+# Fast/turbo tape toggles (same switch as `setting fast_tape/turbo_tape`)
+emu.feature_set("fasttape", True)
+emu.feature_set("turbotape", True)
+
+# Offline audio bridge (pure file conversions)
+emu.tape_render("game.tzx", "out.wav", options={"first_block": 2, "last_block": 5})
+emu.tape_import("recording.wav", "imported.tzx")
+```
+
 ### VideoWall Control
 ```python
 import videowall
@@ -326,7 +502,11 @@ videowall.set_single_sync(False)
 | Registers | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Memory R/W | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Breakpoints | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Labels/Symbols | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Load/Save | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Tape Transport (load/play/pause/seek/…) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Tape Inspection (pos/blocks/info) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Tape Audio Bridge (render/import) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Feature Toggle | ✅ | ✅ | ✅ | ✅ | 🔶 |
 | VideoWall Control | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Keyboard Input | ❌ | ✅ | ✅ | ✅ | ❌ |

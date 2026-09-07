@@ -137,7 +137,7 @@ snapshot save <file> [--force]    # Format from extension (.sna)
 
 ## Files Modified
 - [loader_sna.cpp](core/src/loaders/snapshot/loader_sna.cpp) - Added defensive programming, validation, and save()
-- [loader_sna_test.cpp](core/tests/loaders/loader_sna_test.cpp) - 29 tests including 5 save tests
+- [loader_sna_test.cpp](core/tests/loaders/snapshot/loader_sna_test.cpp) - 29 tests including 5 save tests
 - [emulator.cpp](core/src/emulator/emulator.cpp) - Added SaveSnapshot()
 - [menumanager.cpp](unreal-qt/src/menumanager.cpp) - Save submenu and state management
 - [mainwindow.cpp](unreal-qt/src/mainwindow.cpp) - Save file dialog with persistence

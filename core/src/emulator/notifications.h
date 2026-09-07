@@ -148,6 +148,7 @@ public:
     unreal::UUID _emulatorId;           // UUID of the emulator instance
     uint8_t _driveId;           // Drive index (0=A, 1=B, 2=C, 3=D)
     std::string _diskPath;      // Full path to disk image file
+    std::string _reason;        // NC_FDD_DISK_SAVE_RETARGETED: why the original format refused the image
 
 public:
     FDDDiskPayload(const unreal::UUID& emulatorId, uint8_t driveId, const std::string& diskPath)
@@ -164,6 +165,16 @@ public:
         , _emulatorId(emulatorId.empty() ? unreal::UUID() : unreal::UUID(emulatorId))
         , _driveId(driveId)
         , _diskPath(diskPath)
+    {
+    }
+
+    /// Retargeted save: the original format refused the image, it was saved as diskPath (UDI) instead
+    FDDDiskPayload(const std::string& emulatorId, uint8_t driveId, const std::string& diskPath, const std::string& reason)
+        : MessagePayload()
+        , _emulatorId(emulatorId.empty() ? unreal::UUID() : unreal::UUID(emulatorId))
+        , _driveId(driveId)
+        , _diskPath(diskPath)
+        , _reason(reason)
     {
     }
     

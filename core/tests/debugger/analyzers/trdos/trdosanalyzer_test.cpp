@@ -337,14 +337,14 @@ TEST_F(TRDOSAnalyzer_test, SilentDispatch)
         notifications++;
         (void)id; (void)msg;
     };
-    mc.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
+    uint64_t handlerId = mc.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
     
     // Dispatch breakpoint hit (simulating what Z80::Z80Step would do)
     // First get a valid breakpoint ID
     BreakpointId bpId = 1;  // Simulated ID
     _manager->dispatchBreakpointHit(0x3D00, bpId, _z80);
     
-    mc.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
+    mc.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
     
     // Analyzer should have received the callback
     EXPECT_GE(_analyzer->getEventCount(), 1);

@@ -1020,6 +1020,16 @@ void Screen::DrawScreenBorder(uint32_t n)
 /// \param borderColor
 void Screen::DrawPeriod(uint32_t fromTstate, uint32_t toTstate)
 {
+    // Turbo render decimation: hard skip for the CPU cycle of a decimated
+    // turbo frame (MainLoop::RunFrame sets/clears the flag around
+    // ExecuteCPUFrameCycle). Gates ALL DrawPeriod entries in one place -
+    // including Screen::SetBorderColor's own UpdateScreen call, which border
+    // striping loaders hit thousands of times per frame.
+    if (_turboRenderSkip)
+    {
+        return;
+    }
+
     // =============================================================================
     // SCREENHQ OPTIMIZATION BYPASS
     // =============================================================================

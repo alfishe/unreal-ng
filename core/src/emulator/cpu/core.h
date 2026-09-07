@@ -22,6 +22,8 @@ class MessageCenter;
 class Z80;
 class PortDecoder;
 class WD1793;
+class TapeFastLoad;
+class TapeTurboController;
 
 class Core
 {
@@ -51,6 +53,8 @@ protected:
     ROM* _rom = nullptr;
     Keyboard* _keyboard = nullptr;
     Tape* _tape = nullptr;
+    TapeFastLoad* _tapeFastLoad = nullptr;
+    TapeTurboController* _tapeTurboController = nullptr;
     // VG93* _betaDisk = nullptr;
     WD1793* _betaDisk = nullptr;
     SoundManager* _sound = nullptr;

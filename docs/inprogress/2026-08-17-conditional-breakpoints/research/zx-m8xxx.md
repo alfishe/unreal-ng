@@ -1,6 +1,6 @@
 # ZX-M8XXX (local project) — Breakpoint System Notes
 
-Source: `/Volumes/TB4-4Tb/Projects/emulators/github/ZX-M8XXX` (the user's own JS/web ZX Spectrum emulator).
+Source: the user's own ZX-M8XXX project (JS/web ZX Spectrum emulator, local repository clone).
 The "Screen Region Breakpoints" / "Tape & Disk Triggers" screenshots that could not be matched to any public emulator are from this project's help page (`ui/help-content.html`, section `help-breakpoints`).
 
 ## Feature set (from help + `core/spectrum.js`)

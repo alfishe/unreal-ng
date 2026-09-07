@@ -42,7 +42,8 @@ BreakpointDialog::BreakpointDialog(Emulator* emulator, QWidget* parent) : QDialo
     updateStatusBar();
 
     // Subscribe to breakpoint change notifications with thread safety
-    m_breakpointCallback = [this](int code, Message* message) {
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    m_breakpointObserverId = messageCenter.AddObserver(NC_BREAKPOINT_CHANGED, [this](int code, Message* message) {
         // Use mutex to ensure thread-safe access to the dialog
         QMutexLocker locker(&m_mutex);
 
@@ -54,10 +55,7 @@ BreakpointDialog::BreakpointDialog(Emulator* emulator, QWidget* parent) : QDialo
             // Use QMetaObject::invokeMethod to ensure we're on the GUI thread
             QMetaObject::invokeMethod(this, "refreshBreakpointList", Qt::QueuedConnection);
         }
-    };
-
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    messageCenter.AddObserver(NC_BREAKPOINT_CHANGED, m_breakpointCallback);
+    });
 
     // Restore dialog geometry
     QSettings settings;
@@ -82,10 +80,10 @@ BreakpointDialog::~BreakpointDialog()
 {
     // Unsubscribe from breakpoint change notifications
     QMutexLocker locker(&m_mutex);
-    if (_emulator)
+    if (m_breakpointObserverId != 0)
     {
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        messageCenter.RemoveObserver(NC_BREAKPOINT_CHANGED, m_breakpointCallback);
+        messageCenter.RemoveObserverById(NC_BREAKPOINT_CHANGED, m_breakpointObserverId);
     }
 
     // Save dialog geometry

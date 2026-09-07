@@ -18,8 +18,11 @@ import json
 import urllib.request
 import urllib.error
 
-sys.path.insert(0, "/Users/dev/Projects/Test/unreal-ng/tools/verification/webapi/src")
-sys.path.insert(0, "/Users/dev/Projects/Test/unreal-ng/tools/verification/ttd-scrubber/src")
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+sys.path.insert(0, str(REPO_ROOT / "tools/verification/webapi/src"))
+sys.path.insert(0, str(REPO_ROOT / "tools/verification/ttd-scrubber/src"))
 
 from api_client import UnrealApiClient
 

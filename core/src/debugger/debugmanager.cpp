@@ -34,6 +34,11 @@ DebugManager::DebugManager(EmulatorContext* context)
 
 DebugManager::~DebugManager()
 {
+    // AnalyzerManager::~AnalyzerManager() deactivates every analyzer, which releases their
+    // breakpoints through BreakpointManager - so it must go before _breakpoints is deleted
+    // (as a unique_ptr member it would otherwise be destroyed after this body has run).
+    _analyzerManager.reset();
+
     if (_keyboardManager)
     {
         delete _keyboardManager;
