@@ -22,8 +22,10 @@ struct blip_t;
 /// Stereo mixing: Left = (LeftA + LeftB) * 128, Right = (RightA + RightB) * 128
 /// The ×128 scaling (instead of ×256) provides 0.5× headroom per channel-pair,
 /// preventing hard clipping when both channels on one side are at full amplitude.
-/// Mono COVOX programs (writing only to #FB/RightB) produce centered output
-/// naturally — idle channels stay at midpoint (0x80) and contribute zero.
+///
+/// Mono COVOX compatibility: When only #FB (RightB) is written (other channels
+/// at midpoint), the output is automatically centered — RightB goes to both
+/// speakers. This matches the behavior of simple single-DAC Covox hardware.
 class Covox : public PortDevice, public ttd::TTDSerializable
 {
 public:

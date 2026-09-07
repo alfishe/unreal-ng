@@ -8,6 +8,33 @@
 
 #include "common/filehelper.h"
 #include "pch.h"
+#include "_helpers/testpathhelper.h"
+
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+
+namespace
+{
+/// Per-process-unique scratch directory: parallel GTest shards run several
+/// copies of this binary concurrently, and these tests create and rm -rf the
+/// whole directory - a shared name lets one shard delete another's files
+/// mid-test (seen as intermittent mkdir/touch failures). All artifacts live
+/// under <project>/scratch/ per AGENTS.md, never in the OS temp directory.
+std::string FileHelperTestDir(const std::string& leafName = "filehelper_test")
+{
+    return TestPathHelper::GetUniqueTestScratchPath(leafName);
+}
+
+/// Swap backslashes for forward slashes (Windows variant-path tests derive
+/// their forward-slash and mixed-separator inputs from the scratch dir).
+std::string ToForwardSlashes(const std::string& path)
+{
+    std::string result = path;
+    std::replace(result.begin(), result.end(), '\\', '/');
+    return result;
+}
+} // namespace
 
 /// region <SetUp / TearDown>
 
@@ -197,7 +224,7 @@ TEST_F(FileHelper_Test, AbsolutePath_ExistingPath)
 {
 #if defined _WIN32
     // Windows-specific test paths
-    std::string tempDir = "C:\\Temp\\filehelper_test";
+    std::string tempDir = FileHelperTestDir();
     std::string tempFile = tempDir + "\\test.txt";
 
     // Create test directory and file
@@ -219,8 +246,9 @@ TEST_F(FileHelper_Test, AbsolutePath_ExistingPath)
         ~CwdRestorer() { SetCurrentDirectoryA(saved.c_str()); }
     } cwdRestorer;
 
-    std::string relPath = ".\\filehelper_test\\test.txt";
-    SetCurrentDirectory("C:\\Temp");
+    const std::string dirLeaf = std::filesystem::path(tempDir).filename().string();
+    std::string relPath = ".\\" + dirLeaf + "\\test.txt";
+    SetCurrentDirectoryA(std::filesystem::path(tempDir).parent_path().string().c_str());
     result = FileHelper::AbsolutePath(relPath);
     ASSERT_FALSE(result.empty());
     ASSERT_EQ(result, PlatformPath(tempFile));
@@ -236,13 +264,13 @@ TEST_F(FileHelper_Test, AbsolutePath_ExistingPath)
     ASSERT_EQ(ret, 0);
 #else
     // Unix-specific test paths
-    std::string tempDir = "/tmp/filehelper_test";
+    std::string tempDir = FileHelperTestDir();
     std::string tempFile = tempDir + "/test.txt";
 
     // Create test directory and file
-    int ret = system(("mkdir -p " + tempDir).c_str());
+    int ret = system(("mkdir -p \"" + tempDir + "\"").c_str());
     ASSERT_EQ(ret, 0);
-    ret = system(("touch " + tempFile).c_str());
+    ret = system(("touch \"" + tempFile + "\"").c_str());
     ASSERT_EQ(ret, 0);
 
     // Test absolute path resolution
@@ -268,8 +296,9 @@ TEST_F(FileHelper_Test, AbsolutePath_ExistingPath)
         ~CwdRestorer() { if (!saved.empty()) { int r = chdir(saved.c_str()); (void)r; } }
     } cwdRestorer;
 
-    std::string relPath = "./filehelper_test/test.txt";
-    ret = chdir("/tmp");
+    const std::string dirLeaf = std::filesystem::path(tempDir).filename().string();
+    std::string relPath = "./" + dirLeaf + "/test.txt";
+    ret = chdir(std::filesystem::path(tempDir).parent_path().string().c_str());
     ASSERT_EQ(ret, 0);
     result = FileHelper::AbsolutePath(relPath);
     ASSERT_FALSE(result.empty());
@@ -278,7 +307,7 @@ TEST_F(FileHelper_Test, AbsolutePath_ExistingPath)
 
     // Test with symbolic links
     std::string linkPath = tempDir + "/link.txt";
-    ret = system(("ln -s " + tempFile + " " + linkPath).c_str());
+    ret = system(("ln -s \"" + tempFile + "\" \"" + linkPath + "\"").c_str());
     ASSERT_EQ(ret, 0);
     result = FileHelper::AbsolutePath(linkPath);
     ASSERT_FALSE(result.empty());
@@ -286,7 +315,7 @@ TEST_F(FileHelper_Test, AbsolutePath_ExistingPath)
     ASSERT_EQ(PlatformPath(result), PlatformPath(tempFile));
 
     // Cleanup
-    ret = system(("rm -rf " + tempDir).c_str());
+    ret = system(("rm -rf \"" + tempDir + "\"").c_str());
     ASSERT_EQ(ret, 0);
 #endif
 }
@@ -295,7 +324,7 @@ TEST_F(FileHelper_Test, AbsolutePath_NonExistentPath)
 {
 #if defined _WIN32
     // Windows-specific test paths
-    std::string tempDir = "C:\\Temp\\filehelper_test";
+    std::string tempDir = FileHelperTestDir();
     std::string nonExistentFile = tempDir + "\\nonexistent.txt";
 
     // Create test directory
@@ -318,7 +347,7 @@ TEST_F(FileHelper_Test, AbsolutePath_NonExistentPath)
     ASSERT_EQ(ret, 0);
 #else
     // Unix-specific test paths
-    std::string tempDir = "/tmp/filehelper_test";
+    std::string tempDir = FileHelperTestDir();
     std::string nonExistentFile = tempDir + "/nonexistent.txt";
 
     int ret = system(("rm -rf " + tempDir).c_str());
@@ -357,7 +386,7 @@ TEST_F(FileHelper_Test, AbsolutePath_PathNormalization)
 {
 #if defined _WIN32
     // Windows-specific path normalization
-    std::string tempDir = "C:\\Temp\\filehelper_test";
+    std::string tempDir = FileHelperTestDir();
     std::string mixedSepPath = tempDir + "/test.txt";
 
     // Create test directory
@@ -376,8 +405,11 @@ TEST_F(FileHelper_Test, AbsolutePath_PathNormalization)
     result = FileHelper::AbsolutePath(shortPath);
     ASSERT_FALSE(result.empty());
 
-    // Test case sensitivity handling
-    std::string mixedCasePath = "C:\\Temp\\FILEHELPER_TEST\\test.txt";
+    // Test case sensitivity handling (Windows paths match case-insensitively)
+    std::string upperDir = tempDir;
+    std::transform(upperDir.begin(), upperDir.end(), upperDir.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    std::string mixedCasePath = upperDir + "\\test.txt";
     result = FileHelper::AbsolutePath(mixedCasePath);
     ASSERT_FALSE(result.empty());
     ASSERT_EQ(result, PlatformPath(tempDir + "\\test.txt"));
@@ -387,7 +419,7 @@ TEST_F(FileHelper_Test, AbsolutePath_PathNormalization)
     ASSERT_EQ(ret, 0);
 #else
     // Unix-specific path normalization
-    std::string tempDir = "/tmp/filehelper_test";
+    std::string tempDir = FileHelperTestDir();
     std::string tempFile = tempDir + "/test.txt";
 
     int ret = system(("rm -rf " + tempDir).c_str());
@@ -490,9 +522,9 @@ TEST_F(FileHelper_Test, AbsolutePath_TildeExpansion)
 ///   - Admin shares:         //localhost/c$/temp/file.txt
 ///
 /// Local Paths:
-///   - Windows drive:        C:\Users\dev\file.ext or C:/Users/dev/file.ext
+///   - Windows drive:        C:\Users\user\file.ext or C:/Users/user/file.ext
 ///   - Unix absolute:        /home/user/file.ext
-///   - Mixed separators:     C:\Users/dev\file.ext
+///   - Mixed separators:     C:\Users\user\file.ext
 ///
 /// On Windows: All paths normalized to backslashes (required for UNC)
 /// On Unix/macOS: All paths normalized to forward slashes
@@ -655,8 +687,8 @@ TEST_F(FileHelper_Test, AbsolutePath_UNCPaths)
 TEST_F(FileHelper_Test, FileExists_PathNormalization)
 {
 #ifdef _WIN32
-    // Create a test file in temp directory
-    std::string tempDir = "C:\\Temp\\filehelper_unc_test";
+    // Create a test file in the per-process scratch directory
+    std::string tempDir = FileHelperTestDir("filehelper_unc_test");
     std::string tempFile = tempDir + "\\test_file.txt";
 
     // Create test directory and file
@@ -666,11 +698,11 @@ TEST_F(FileHelper_Test, FileExists_PathNormalization)
     if (FileHelper::FileExists(tempFile))
     {
         // Test with forward slashes
-        std::string forwardSlashPath = "C:/Temp/filehelper_unc_test/test_file.txt";
+        std::string forwardSlashPath = ToForwardSlashes(tempFile);
         EXPECT_TRUE(FileHelper::FileExists(forwardSlashPath)) << "FileExists should work with forward slashes: " << forwardSlashPath;
 
         // Test with mixed slashes
-        std::string mixedPath = "C:/Temp\\filehelper_unc_test/test_file.txt";
+        std::string mixedPath = ToForwardSlashes(tempDir) + "\\" + std::filesystem::path(tempFile).filename().string();
         EXPECT_TRUE(FileHelper::FileExists(mixedPath)) << "FileExists should work with mixed slashes: " << mixedPath;
 
         // Cleanup
@@ -681,23 +713,25 @@ TEST_F(FileHelper_Test, FileExists_PathNormalization)
         std::cout << "Skipping FileExists_PathNormalization: could not create test file" << std::endl;
     }
 #else
-    // Create a test file in temp directory
-    std::string tempDir = "/tmp/filehelper_unc_test";
+    // Create a test file in the per-process scratch directory
+    std::string tempDir = FileHelperTestDir("filehelper_unc_test");
     std::string tempFile = tempDir + "/test_file.txt";
 
     // Create test directory and file
-    int ret = system(("mkdir -p " + tempDir).c_str());
-    ret = system(("touch " + tempFile).c_str());
+    int ret = system(("mkdir -p \"" + tempDir + "\"").c_str());
+    ret = system(("touch \"" + tempFile + "\"").c_str());
     (void)ret;
 
     if (FileHelper::FileExists(tempFile))
     {
-        // Test with backslashes (should be normalized to forward slashes)
-        std::string backslashPath = "/tmp\\filehelper_unc_test\\test_file.txt";
+        // Test with backslashes (should be normalized to forward slashes);
+        // the leading slash stays - a rooted path must remain recognizable
+        std::string backslashPath = tempFile;
+        std::replace(backslashPath.begin() + 1, backslashPath.end(), '/', '\\');
         EXPECT_TRUE(FileHelper::FileExists(backslashPath)) << "FileExists should work with backslashes on Unix: " << backslashPath;
 
         // Cleanup
-        system(("rm -rf " + tempDir).c_str());
+        system(("rm -rf \"" + tempDir + "\"").c_str());
     }
     else
     {
@@ -724,7 +758,7 @@ TEST_F(FileHelper_Test, FileExists_PathNormalization)
 TEST_F(FileHelper_Test, FolderExists_PathNormalization)
 {
 #ifdef _WIN32
-    std::string tempDir = "C:\\Temp\\filehelper_folder_test";
+    std::string tempDir = FileHelperTestDir("filehelper_folder_test");
 
     // Create test directory
     int ret = system(("mkdir \"" + tempDir + "\" 2>nul").c_str());
@@ -733,15 +767,16 @@ TEST_F(FileHelper_Test, FolderExists_PathNormalization)
     if (FileHelper::FolderExists(tempDir))
     {
         // Test with forward slashes
-        std::string forwardSlashPath = "C:/Temp/filehelper_folder_test";
+        std::string forwardSlashPath = ToForwardSlashes(tempDir);
         EXPECT_TRUE(FileHelper::FolderExists(forwardSlashPath)) << "FolderExists should work with forward slashes: " << forwardSlashPath;
 
         // Test with mixed slashes
-        std::string mixedPath = "C:/Temp\\filehelper_folder_test";
+        std::string mixedPath = forwardSlashPath;
+        mixedPath[mixedPath.rfind('/')] = '\\';
         EXPECT_TRUE(FileHelper::FolderExists(mixedPath)) << "FolderExists should work with mixed slashes: " << mixedPath;
 
         // Test with trailing slash
-        std::string trailingSlash = "C:/Temp/filehelper_folder_test/";
+        std::string trailingSlash = forwardSlashPath + "/";
         EXPECT_TRUE(FileHelper::FolderExists(trailingSlash)) << "FolderExists should work with trailing slash: " << trailingSlash;
 
         // Cleanup
@@ -752,20 +787,22 @@ TEST_F(FileHelper_Test, FolderExists_PathNormalization)
         std::cout << "Skipping FolderExists_PathNormalization: could not create test folder" << std::endl;
     }
 #else
-    std::string tempDir = "/tmp/filehelper_folder_test";
+    std::string tempDir = FileHelperTestDir("filehelper_folder_test");
 
     // Create test directory
-    int ret = system(("mkdir -p " + tempDir).c_str());
+    int ret = system(("mkdir -p \"" + tempDir + "\"").c_str());
     (void)ret;
 
     if (FileHelper::FolderExists(tempDir))
     {
-        // Test with backslashes (should be normalized to forward slashes)
-        std::string backslashPath = "/tmp\\filehelper_folder_test";
+        // Test with backslashes (should be normalized to forward slashes);
+        // the leading slash stays - a rooted path must remain recognizable
+        std::string backslashPath = tempDir;
+        std::replace(backslashPath.begin() + 1, backslashPath.end(), '/', '\\');
         EXPECT_TRUE(FileHelper::FolderExists(backslashPath)) << "FolderExists should work with backslashes on Unix: " << backslashPath;
 
         // Cleanup
-        system(("rm -rf " + tempDir).c_str());
+        system(("rm -rf \"" + tempDir + "\"").c_str());
     }
     else
     {
@@ -791,7 +828,7 @@ TEST_F(FileHelper_Test, FolderExists_PathNormalization)
 TEST_F(FileHelper_Test, GetFileSize_PathNormalization)
 {
 #ifdef _WIN32
-    std::string tempDir = "C:\\Temp\\filehelper_size_test";
+    std::string tempDir = FileHelperTestDir("filehelper_size_test");
     std::string tempFile = tempDir + "\\size_test.txt";
     const std::string testContent = "Hello, World!";
 
@@ -807,12 +844,12 @@ TEST_F(FileHelper_Test, GetFileSize_PathNormalization)
         EXPECT_GT(expectedSize, 0u) << "File should have content";
 
         // Test with forward slashes
-        std::string forwardSlashPath = "C:/Temp/filehelper_size_test/size_test.txt";
+        std::string forwardSlashPath = ToForwardSlashes(tempFile);
         size_t sizeForward = FileHelper::GetFileSize(forwardSlashPath);
         EXPECT_EQ(sizeForward, expectedSize) << "GetFileSize should work with forward slashes";
 
         // Test with mixed slashes
-        std::string mixedPath = "C:/Temp\\filehelper_size_test/size_test.txt";
+        std::string mixedPath = ToForwardSlashes(tempDir) + "\\" + std::filesystem::path(tempFile).filename().string();
         size_t sizeMixed = FileHelper::GetFileSize(mixedPath);
         EXPECT_EQ(sizeMixed, expectedSize) << "GetFileSize should work with mixed slashes";
 
@@ -824,12 +861,12 @@ TEST_F(FileHelper_Test, GetFileSize_PathNormalization)
         std::cout << "Skipping GetFileSize_PathNormalization: could not create test file" << std::endl;
     }
 #else
-    std::string tempDir = "/tmp/filehelper_size_test";
+    std::string tempDir = FileHelperTestDir("filehelper_size_test");
     std::string tempFile = tempDir + "/size_test.txt";
 
     // Create test directory and file
-    int ret = system(("mkdir -p " + tempDir).c_str());
-    ret = system(("echo 'Hello, World!' > " + tempFile).c_str());
+    int ret = system(("mkdir -p \"" + tempDir + "\"").c_str());
+    ret = system(("echo 'Hello, World!' > \"" + tempFile + "\"").c_str());
     (void)ret;
 
     if (FileHelper::FileExists(tempFile))
@@ -837,13 +874,14 @@ TEST_F(FileHelper_Test, GetFileSize_PathNormalization)
         size_t expectedSize = FileHelper::GetFileSize(tempFile);
         EXPECT_GT(expectedSize, 0u) << "File should have content";
 
-        // Test with backslashes
-        std::string backslashPath = "/tmp\\filehelper_size_test\\size_test.txt";
+        // Test with backslashes (leading slash stays - a rooted path must remain recognizable)
+        std::string backslashPath = tempFile;
+        std::replace(backslashPath.begin() + 1, backslashPath.end(), '/', '\\');
         size_t sizeBackslash = FileHelper::GetFileSize(backslashPath);
         EXPECT_EQ(sizeBackslash, expectedSize) << "GetFileSize should work with backslashes on Unix";
 
         // Cleanup
-        system(("rm -rf " + tempDir).c_str());
+        system(("rm -rf \"" + tempDir + "\"").c_str());
     }
     else
     {
@@ -870,7 +908,7 @@ TEST_F(FileHelper_Test, GetFileSize_PathNormalization)
 TEST_F(FileHelper_Test, OpenFile_PathNormalization)
 {
 #ifdef _WIN32
-    std::string tempDir = "C:\\Temp\\filehelper_open_test";
+    std::string tempDir = FileHelperTestDir("filehelper_open_test");
     std::string tempFile = tempDir + "\\open_test.txt";
 
     // Create test directory and file
@@ -881,19 +919,19 @@ TEST_F(FileHelper_Test, OpenFile_PathNormalization)
     if (FileHelper::FileExists(tempFile))
     {
         // Test OpenExistingFile with forward slashes
-        std::string forwardSlashPath = "C:/Temp/filehelper_open_test/open_test.txt";
+        std::string forwardSlashPath = ToForwardSlashes(tempFile);
         FILE* file = FileHelper::OpenExistingFile(forwardSlashPath, "r");
         EXPECT_NE(file, nullptr) << "OpenExistingFile should work with forward slashes: " << forwardSlashPath;
         if (file) fclose(file);
 
         // Test OpenExistingFile with mixed slashes
-        std::string mixedPath = "C:/Temp\\filehelper_open_test/open_test.txt";
+        std::string mixedPath = ToForwardSlashes(tempDir) + "\\" + std::filesystem::path(tempFile).filename().string();
         file = FileHelper::OpenExistingFile(mixedPath, "r");
         EXPECT_NE(file, nullptr) << "OpenExistingFile should work with mixed slashes: " << mixedPath;
         if (file) fclose(file);
 
         // Test OpenFile (for writing) with forward slashes
-        std::string newFilePath = "C:/Temp/filehelper_open_test/new_file.txt";
+        std::string newFilePath = ToForwardSlashes(tempDir) + "/new_file.txt";
         file = FileHelper::OpenFile(newFilePath, "w");
         EXPECT_NE(file, nullptr) << "OpenFile should work with forward slashes: " << newFilePath;
         if (file)
@@ -911,24 +949,26 @@ TEST_F(FileHelper_Test, OpenFile_PathNormalization)
         std::cout << "Skipping OpenFile_PathNormalization: could not create test file" << std::endl;
     }
 #else
-    std::string tempDir = "/tmp/filehelper_open_test";
+    std::string tempDir = FileHelperTestDir("filehelper_open_test");
     std::string tempFile = tempDir + "/open_test.txt";
 
     // Create test directory and file
-    int ret = system(("mkdir -p " + tempDir).c_str());
-    ret = system(("touch " + tempFile).c_str());
+    int ret = system(("mkdir -p \"" + tempDir + "\"").c_str());
+    ret = system(("touch \"" + tempFile + "\"").c_str());
     (void)ret;
 
     if (FileHelper::FileExists(tempFile))
     {
-        // Test OpenExistingFile with backslashes
-        std::string backslashPath = "/tmp\\filehelper_open_test\\open_test.txt";
+        // Test OpenExistingFile with backslashes (leading slash stays - a rooted
+        // path must remain recognizable)
+        std::string backslashPath = tempFile;
+        std::replace(backslashPath.begin() + 1, backslashPath.end(), '/', '\\');
         FILE* file = FileHelper::OpenExistingFile(backslashPath, "r");
         EXPECT_NE(file, nullptr) << "OpenExistingFile should work with backslashes on Unix: " << backslashPath;
         if (file) fclose(file);
 
         // Cleanup
-        system(("rm -rf " + tempDir).c_str());
+        system(("rm -rf \"" + tempDir + "\"").c_str());
     }
     else
     {

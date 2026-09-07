@@ -12,12 +12,15 @@
 
 #pragma once
 
+#include <chrono>
+
 #include <QMutex>
 #include <QObject>
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
+#include "tape/tapeuisnapshot.h"
 
 class EmulatorBinding : public QObject, public Observer
 {
@@ -154,6 +157,24 @@ public:
      */
     uint16_t pc() const;
 
+    // =========================================================================
+    // Tape transport commands (design §9.3 — window commands go through here,
+    // never straight to Tape*; each one runs inside the established
+    // Pause() -> op -> Resume() bracket, mirroring the CLI/WebAPI handlers)
+    // =========================================================================
+
+    void tapePlay();               // parse-once, then resume-in-place or start at cursor
+    void tapePause();              // freeze the head in place (no-op unless Playing)
+    void tapeStop();               // stop playback and drop the image (control-plane semantics)
+    void tapeRewind();             // seek to block 0, image and catalog kept
+    void tapeSeekToBlock(size_t index);  // double-click / context-menu rewind (FR-10): seek arms, play delivers
+
+    /// Copy of one parsed block's raw data (flag + payload + checksum for
+    /// framed blocks; empty for pulse/control entries). Returns false when no
+    /// image is loaded or the index is out of range. Feeds the block-content
+    /// popup (r7).
+    bool tapeGetBlockData(size_t index, std::vector<uint8_t>& out);
+
 signals:
     // =========================================================================
     // Signals (Connect to these from child windows)
@@ -213,6 +234,16 @@ signals:
      */
     void cpuStepComplete();
 
+    /**
+     * @brief Emitted with a coalesced tape state snapshot (≤ 10 Hz, plus
+     *        immediate on tape-state or catalog-generation change).
+     *
+     * @what Produced on the emulator thread in the frame-end hook (plain POD
+     *       reads of Tape fields), delivered to the UI thread queued. The
+     *        catalog copy rides only when catalogGeneration changed.
+     */
+    void tapeStateChanged(const TapeUiSnapshot& snapshot);
+
 private slots:
     /**
      * @brief Receives MessageCenter callbacks (called from background thread).
@@ -226,6 +257,18 @@ private:
     void cacheEmulatorState();
     void subscribeToMessageCenter();
     void unsubscribeFromMessageCenter();
+
+    /// Builds the next TapeUiSnapshot on the emulator thread (frame-end hook).
+    /// Returns false when the coalescer suppressed this tick.
+    bool produceTapeSnapshot(TapeUiSnapshot& out);
+
+    // Tape snapshot bookkeeping — accessed ONLY from the MessageCenter callback
+    // (emulator thread): no locks needed by construction (design §10).
+    std::string m_tapeImagePath;              // last path seen by the producer
+    std::string m_tapeImageFormatId;          // last loaded format id ("" after image drop)
+    uint64_t m_tapeCatalogGeneration = 0;
+    TapePlaybackState m_lastTapeState = TapePlaybackState::Idle;
+    std::chrono::steady_clock::time_point m_lastTapeSnapshotTime{};
 
     Emulator* m_emulator = nullptr;
     EmulatorStateEnum m_state = StateUnknown;

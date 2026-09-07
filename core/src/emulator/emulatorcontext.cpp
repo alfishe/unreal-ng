@@ -24,6 +24,8 @@ EmulatorContext::EmulatorContext(LoggerLevel level)
     pMemory = nullptr;
     pPortDecoder = nullptr;
     pTape = nullptr;
+    pTapeFastLoad = nullptr;
+    pTapeTurboController = nullptr;
     pBetaDisk = nullptr;
     pScreen = nullptr;
     pAudioManagerObj = nullptr;
@@ -76,26 +78,16 @@ EmulatorContext::~EmulatorContext()
 // mechanism only — enforcement at the call sites lands in Phase 2 / G1.
 //
 // Note on UUID semantics: a default-constructed UUID is all-zero (the "nil"
-// UUID) and is used here as the sentinel meaning "unclaimed". We compare
-// against a default-constructed UUID instead of relying on UUID::isNil() because
-// the latter has inverted semantics in the current implementation.
+// UUID) and is used here as the sentinel meaning "unclaimed". UUID::isNil()
+// reports exactly that (an earlier revision returned the inverted result; the
+// workarounds were migrated back to isNil() when it was fixed).
 //
-namespace
-{
-// Sentinel nil UUID used to mark an unclaimed run-control slot.
-const UUID& kNilUUID()
-{
-    static const UUID nilUuid;
-    return nilUuid;
-}
-} // namespace
-
 bool EmulatorContext::TakeRunControl(const UUID& owner, const std::string& surfaceLabel,
                                      std::string* errorReason)
 {
     // A nil owner UUID is a programming error — surfaces must call UUID::Generate()
     // once at startup and reuse the value.
-    if (owner == kNilUUID())
+    if (owner.isNil())
     {
         if (errorReason)
         {
@@ -107,7 +99,7 @@ bool EmulatorContext::TakeRunControl(const UUID& owner, const std::string& surfa
     std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
 
     const UUID& current = _runControlClaim.owner;
-    if (current == kNilUUID())
+    if (current.isNil())
     {
         // Unclaimed — take it.
         _runControlClaim.owner = owner;
@@ -140,7 +132,7 @@ void EmulatorContext::ReleaseRunControl(const UUID& owner)
     // silently ignored — surfaces can release unconditionally at shutdown.
     if (_runControlClaim.owner == owner)
     {
-        _runControlClaim.owner = kNilUUID();
+        _runControlClaim.owner.clear();
         _runControlClaim.surfaceLabel.clear();
     }
 }
@@ -149,13 +141,13 @@ bool EmulatorContext::HasRunControl(const UUID& owner) const
 {
     std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
     // Must be both currently claimed AND held by this specific owner.
-    return !(_runControlClaim.owner == kNilUUID()) && _runControlClaim.owner == owner;
+    return !_runControlClaim.owner.isNil() && _runControlClaim.owner == owner;
 }
 
 bool EmulatorContext::IsRunControlClaimed() const
 {
     std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
-    return !(_runControlClaim.owner == kNilUUID());
+    return !_runControlClaim.owner.isNil();
 }
 
 EmulatorContext::RunControlState EmulatorContext::GetRunControlState() const
@@ -163,7 +155,7 @@ EmulatorContext::RunControlState EmulatorContext::GetRunControlState() const
     std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
 
     RunControlState state;
-    const bool claimed = !(_runControlClaim.owner == kNilUUID());
+    const bool claimed = !_runControlClaim.owner.isNil();
     state.claimed = claimed;
     if (claimed)
     {

@@ -3,15 +3,25 @@
 
 #include "../emulator_api.h"
 
+#include <base/featuremanager.h>
 #include <drogon/HttpResponse.h>
 #include <drogon/utils/Utilities.h>
+#include <cctype>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <map>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/io/tape/tapecatalog.h>
+#include <emulator/io/tape/tape.h>
 #include <emulator/io/fdc/wd1793.h>
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/fdc/fdd.h>
 #include <common/stringhelper.h>
 #include <json/json.h>
+#include <tapeaudio/tapeaudioimporter.h>
+#include <tapeaudio/tapeaudiorenderer.h>
 
 using namespace drogon;
 using namespace api::v1;
@@ -39,6 +49,162 @@ namespace v1
 
 // Helper to add CORS headers (already exists in emulator_api.cpp, declaring here for consistency)
 extern void addCorsHeaders(HttpResponsePtr& resp);
+
+/// region <Tape snapshot helpers (tape-manager design §7.2)>
+
+static const char* tapePlaybackStateName(TapePlaybackState state)
+{
+    switch (state)
+    {
+        case TapePlaybackState::Idle:
+            return "idle";
+        case TapePlaybackState::Playing:
+            return "playing";
+        case TapePlaybackState::Paused:
+            return "paused";
+        case TapePlaybackState::Ended:
+            return "ended";
+        default:
+            break;
+    }
+    return "unknown";
+}
+
+/// jsoncpp-safe size_t -> JSON number
+static Json::Value jsonSize(size_t value)
+{
+    return Json::Value(static_cast<Json::UInt64>(value));
+}
+
+/// One catalog block as JSON (design §7.2 `blocks[]` element)
+static Json::Value blockDescriptorJson(const TapeBlockDescriptor& descriptor, const TapeFastLoadPlan& plan)
+{
+    Json::Value block;
+    block["index"] = jsonSize(descriptor.index);
+    block["kind"] = getTapeBlockKindName(descriptor.kind);
+
+    if (descriptor.kind == TapeBlockKindEnum::Header || descriptor.kind == TapeBlockKindEnum::Data ||
+        descriptor.kind == TapeBlockKindEnum::Custom)
+    {
+        block["headerless"] = descriptor.headerless;
+    }
+
+    if (descriptor.headerValid)
+    {
+        block["name"] = descriptor.name;
+        block["type"] = getTapeBlockTypeName(descriptor.headerType);
+        block["declared_length"] = descriptor.declaredLength;
+        block["param1"] = descriptor.param1;
+        block["param2"] = descriptor.param2;
+    }
+
+    if (descriptor.pairedDataIndex != SIZE_MAX)
+        block["paired_data_index"] = jsonSize(descriptor.pairedDataIndex);
+    if (descriptor.pairedHeaderIndex != SIZE_MAX)
+        block["paired_header_index"] = jsonSize(descriptor.pairedHeaderIndex);
+    if (!descriptor.groupLabel.empty())
+        block["group"] = descriptor.groupLabel;
+
+    Json::Value& speed = block["speed"];
+    speed["profile"] = getTapeSpeedProfileName(descriptor.timing.profile);
+    if (descriptor.baudEstimate > 0)
+        speed["baud"] = descriptor.baudEstimate;
+    if (descriptor.timing.profile == TapeSpeedProfileEnum::Custom)
+    {
+        // Full turbo timing — exactly what generateBitstream() would consume
+        speed["pilot_pulses"] = descriptor.timing.pilotPulses;
+        speed["pilot_half"] = descriptor.timing.pilotHalfPeriod;
+        speed["sync1"] = descriptor.timing.sync1;
+        speed["sync2"] = descriptor.timing.sync2;
+        speed["zero_half"] = descriptor.timing.zeroHalfPeriod;
+        speed["one_half"] = descriptor.timing.oneHalfPeriod;
+        speed["pause_ms"] = descriptor.timing.pauseMs;
+        speed["bits_in_last_byte"] = descriptor.timing.bitsInLastByte;
+    }
+
+    block["checksum_valid"] = descriptor.checksumValid;
+    block["checksum_applicable"] = descriptor.rawSize > 0;
+    block["seconds"] = descriptor.estimatedSeconds;
+    if (descriptor.rawSize > 0)
+        block["raw_size"] = jsonSize(descriptor.rawSize);
+    block["playable"] = descriptor.playable;
+
+    if (descriptor.kind != TapeBlockKindEnum::Control && plan.perBlock.size() > descriptor.index)
+    {
+        block["fast_load"] = plan.perBlock[descriptor.index] == FastLoadRejectEnum::None
+                                 ? "yes"
+                                 : getFastLoadRejectName(plan.perBlock[descriptor.index]);
+    }
+
+    return block;
+}
+
+/// Full GET /tape snapshot (design §7.2). Calls EnsureImageLoaded()
+/// (idempotent, path-keyed) — handlers invoke this under the pause bracket.
+static Json::Value buildTapeSnapshot(EmulatorContext* context)
+{
+    Json::Value ret;
+    Tape* tape = context->pTape;
+    const std::string& path = context->coreState.tapeFilePath;
+
+    const bool loaded = !path.empty() && tape->EnsureImageLoaded();
+    ret["status"] = loaded ? "loaded" : (path.empty() ? "empty" : "error");
+    ret["file"] = path;
+    if (!loaded)
+    {
+        ret["state"] = "idle";
+        return ret;
+    }
+
+    const std::vector<TapeBlockDescriptor>& catalog = tape->GetBlockCatalog();
+    const TapeFastLoadPlan& plan = tape->GetFastLoadPlan();
+
+    ret["format"] = tape->GetLoadedFormatId();
+    ret["state"] = tapePlaybackStateName(tape->GetPlaybackState());
+
+    std::optional<TapePosition> position = tape->GetPosition();
+    if (position.has_value())
+    {
+        Json::Value& pos = ret["position"];
+        pos["block"] = jsonSize(position->blockIndex);
+        pos["pulse"] = jsonSize(position->pulseIndex);
+        pos["seconds_into_block"] = position->secondsIntoBlock;
+        pos["block_total_seconds"] = position->blockTotalSeconds;
+    }
+
+    ret["cursor"] = jsonSize(tape->GetConsumptionCursor());
+    ret["block_count"] = jsonSize(catalog.size());
+    ret["total_seconds"] = plan.totalSeconds;
+
+    FeatureManager* featureManager = context->pFeatureManager;
+    ret["fast_tape"] = featureManager && featureManager->isEnabled(Features::kFastTape);
+    ret["turbo_tape"] = featureManager && featureManager->isEnabled(Features::kTurboTape);
+
+    Json::Value& fastLoad = ret["fast_load"];
+    fastLoad["verdict"] = getFastLoadVerdictName(plan.verdict);
+    fastLoad["horizon"] = jsonSize(plan.stickinessHorizon);
+    fastLoad["eligible_blocks"] = jsonSize(plan.eligibleBlocks);
+    fastLoad["accelerated_seconds"] = plan.acceleratedSeconds;
+    fastLoad["total_seconds"] = plan.totalSeconds;
+    if (plan.firstRejectIndex != SIZE_MAX)
+    {
+        fastLoad["first_reject"]["index"] = jsonSize(plan.firstRejectIndex);
+        fastLoad["first_reject"]["reason"] = getFastLoadRejectName(plan.firstRejectReason);
+    }
+    fastLoad["advisory"] = true;  // the plan never gates the runtime trap (§5.8)
+    fastLoad["summary"] = plan.summary;
+
+    Json::Value& blocks = ret["blocks"];
+    blocks = Json::arrayValue;
+    for (const TapeBlockDescriptor& descriptor : catalog)
+    {
+        blocks.append(blockDescriptorJson(descriptor, plan));
+    }
+
+    return ret;
+}
+
+/// endregion </Tape snapshot helpers>
 
 /// @brief POST /api/v1/emulator/:id/tape/load
 /// @brief Load tape image
@@ -184,17 +350,31 @@ void EmulatorAPI::playTape(const HttpRequestPtr& req,
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     
-    context->pTape->startTape();
+    // Parse-once (idempotent); paused -> resume the frozen position IN PLACE
+    // (FR-6), otherwise start at the consumption cursor
+    bool played = context->pTape->EnsureImageLoaded();
+    bool resumed = false;
+    if (played) {
+        if (context->pTape->GetPlaybackState() == TapePlaybackState::Paused) {
+            context->pTape->ResumePlaybackFromPause();
+            resumed = true;
+        } else {
+            context->pTape->StartPlaybackAtCursor();
+        }
+    }
     
     if (wasRunning) {
         emulator->Resume();
     }
     
     Json::Value ret;
-    ret["status"] = "success";
-    ret["message"] = "Tape playback started";
+    ret["status"] = played ? "success" : "error";
+    ret["message"] = !played    ? "Tape image has no loadable blocks"
+                     : resumed ? "Tape playback resumed (in place)"
+                               : "Tape playback started";
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
+    resp->setStatusCode(played ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
     addCorsHeaders(resp);
     callback(resp);
 }
@@ -294,7 +474,9 @@ void EmulatorAPI::rewindTape(const HttpRequestPtr& req,
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     
-    context->pTape->reset();
+    // Rewind keeps the image and catalog (FR-5) — unlike stop/eject
+    context->pTape->EnsureImageLoaded();
+    context->pTape->RewindToStart();
     
     if (wasRunning) {
         emulator->Resume();
@@ -302,17 +484,18 @@ void EmulatorAPI::rewindTape(const HttpRequestPtr& req,
     
     Json::Value ret;
     ret["status"] = "success";
-    ret["message"] = "Tape rewound to beginning";
+    ret["message"] = "Tape rewound to beginning (image kept)";
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);
 }
 
-/// @brief GET /api/v1/emulator/:id/tape/info
-void EmulatorAPI::getTapeInfo(const HttpRequestPtr& req,
-                              std::function<void(const HttpResponsePtr&)>&& callback,
-                              const std::string& id) const
+/// @brief GET /api/v1/emulator/:id/tape
+/// Full tape snapshot: state, position, cursor, fast-load plan, catalog (design §7.2)
+void EmulatorAPI::getTape(const HttpRequestPtr& req,
+                          std::function<void(const HttpResponsePtr&)>&& callback,
+                          const std::string& id) const
 {
     auto manager = EmulatorManager::GetInstance();
     auto emulator = manager->GetEmulator(id);
@@ -330,24 +513,694 @@ void EmulatorAPI::getTapeInfo(const HttpRequestPtr& req,
     }
     
     auto context = emulator->GetContext();
-    Json::Value ret;
-    
     if (!context || !context->pTape) {
-        ret["status"] = "unavailable";
-        ret["message"] = "Tape subsystem not available";
-    } else {
-        std::string tapePath = context->coreState.tapeFilePath;
-        bool isLoaded = !tapePath.empty();
+        Json::Value error;
+        error["error"] = "Not Available";
+        error["message"] = "Tape subsystem not available";
         
-        ret["status"] = isLoaded ? "loaded" : "empty";
-        ret["file"] = tapePath;
-        // Note: _tapeStarted is protected in Tape class, cannot access directly
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    // Thread-safe snapshot: the first EnsureImageLoaded() mutates tape state
+    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
+    if (wasRunning) {
+        emulator->Pause();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    
+    Json::Value ret = buildTapeSnapshot(context);
+    
+    if (wasRunning) {
+        emulator->Resume();
     }
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);
 }
+
+/// @brief GET /api/v1/emulator/:id/tape/info — alias of GET /tape (kept for compatibility)
+void EmulatorAPI::getTapeInfo(const HttpRequestPtr& req,
+                              std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id) const
+{
+    getTape(req, std::move(callback), id);
+}
+
+/// @brief GET /api/v1/emulator/:id/tape/blocks/:index
+/// One catalog descriptor plus a 64-byte hex preview of the raw payload
+void EmulatorAPI::getTapeBlock(const HttpRequestPtr& req,
+                               std::function<void(const HttpResponsePtr&)>&& callback,
+                               const std::string& id,
+                               const std::string& index) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+    
+    if (!emulator) {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    size_t blockIndex = 0;
+    try {
+        blockIndex = static_cast<size_t>(std::stoul(index));
+    } catch (const std::exception&) {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid block index: " + index;
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    auto context = emulator->GetContext();
+    if (!context || !context->pTape) {
+        Json::Value error;
+        error["error"] = "Not Available";
+        error["message"] = "Tape subsystem not available";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
+    if (wasRunning) {
+        emulator->Pause();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    
+    Json::Value ret;
+    HttpStatusCode code = HttpStatusCode::k200OK;
+    
+    if (!context->pTape->EnsureImageLoaded() || blockIndex >= context->pTape->GetBlockCatalog().size() ||
+        blockIndex >= context->pTape->GetBlocks().size()) {
+        ret["error"] = "Not Found";
+        ret["message"] = "Block index " + std::to_string(blockIndex) + " out of range";
+        code = HttpStatusCode::k404NotFound;
+    } else {
+        ret = blockDescriptorJson(context->pTape->GetBlockCatalog()[blockIndex], context->pTape->GetFastLoadPlan());
+        
+        // First 64 bytes of the raw payload (flag + payload + checksum) as hex
+        const std::vector<uint8_t>& data = context->pTape->GetBlocks()[blockIndex].data;
+        const size_t previewLength = data.size() < 64 ? data.size() : 64;
+        std::string hex;
+        hex.reserve(previewLength * 2);
+        char byte[3];
+        for (size_t i = 0; i < previewLength; i++) {
+            snprintf(byte, sizeof(byte), "%02x", data[i]);
+            hex += byte;
+        }
+        ret["payload_bytes"] = jsonSize(data.size());
+        ret["preview_hex"] = hex;
+    }
+    
+    if (wasRunning) {
+        emulator->Resume();
+    }
+    
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    resp->setStatusCode(code);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/:id/tape/seek — body { "block": 9 }
+void EmulatorAPI::seekTape(const HttpRequestPtr& req,
+                           std::function<void(const HttpResponsePtr&)>&& callback,
+                           const std::string& id) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+    
+    if (!emulator) {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("block")) {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Missing 'block' parameter in request body";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    const size_t blockIndex = static_cast<size_t>((*json)["block"].asUInt64());
+    
+    auto context = emulator->GetContext();
+    if (!context || !context->pTape) {
+        Json::Value error;
+        error["error"] = "Not Available";
+        error["message"] = "Tape subsystem not available";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
+    if (wasRunning) {
+        emulator->Pause();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    
+    Json::Value ret;
+    HttpStatusCode code = HttpStatusCode::k200OK;
+    
+    if (!context->pTape->EnsureImageLoaded() || !context->pTape->SeekToBlock(blockIndex)) {
+        ret["status"] = "error";
+        ret["message"] = "Block index " + std::to_string(blockIndex) + " out of range";
+        code = HttpStatusCode::k400BadRequest;
+    } else {
+        // Resulting position — the leading fields of the full snapshot
+        Json::Value snapshot = buildTapeSnapshot(context);
+        ret["status"] = "success";
+        ret["message"] = "Seeked to block " + std::to_string(blockIndex);
+        ret["state"] = snapshot["state"];
+        ret["position"] = snapshot["position"];
+        ret["cursor"] = snapshot["cursor"];
+    }
+    
+    if (wasRunning) {
+        emulator->Resume();
+    }
+    
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    resp->setStatusCode(code);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/:id/tape/pause — manual pause; play resumes in place
+void EmulatorAPI::pauseTape(const HttpRequestPtr& req,
+                            std::function<void(const HttpResponsePtr&)>&& callback,
+                            const std::string& id) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+    
+    if (!emulator) {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    auto context = emulator->GetContext();
+    if (!context || !context->pTape) {
+        Json::Value error;
+        error["error"] = "Not Available";
+        error["message"] = "Tape subsystem not available";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
+    if (wasRunning) {
+        emulator->Pause();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    
+    Json::Value ret;
+    HttpStatusCode code = HttpStatusCode::k200OK;
+    const TapePlaybackState state = context->pTape->GetPlaybackState();
+    
+    if (state == TapePlaybackState::Paused) {
+        ret["status"] = "success";
+        ret["message"] = "Tape already paused";
+    } else if (state != TapePlaybackState::Playing) {
+        ret["status"] = "error";
+        ret["message"] = "Tape is not playing";
+        code = HttpStatusCode::k400BadRequest;
+    } else {
+        context->pTape->pausePlayback();
+        ret["status"] = "success";
+        ret["message"] = "Tape paused (play resumes in place)";
+    }
+    
+    if (wasRunning) {
+        emulator->Resume();
+    }
+    
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    resp->setStatusCode(code);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// region <Tape audio bridge (tape-audio-bridge design §7.2)>
+
+/// Case-insensitive ".ext" suffix check for output-path validation
+static bool hasPathExtension(const std::string& path, const char* extension)
+{
+    const size_t length = std::strlen(extension);
+    if (path.size() < length)
+        return false;
+    for (size_t i = 0; i < length; i++)
+    {
+        if (std::tolower(static_cast<unsigned char>(path[path.size() - length + i])) !=
+            std::tolower(static_cast<unsigned char>(extension[i])))
+            return false;
+    }
+    return true;
+}
+
+/// @brief POST /api/v1/emulator/:id/tape/render — tape image -> WAV/FLAC
+/// Body: { "sourcePath"?: "...", "blocks"?: "all" | [first] | [first, last],
+///         "format"?: "wav"|"flac", "sampleRate"?: 44100, "amplitude"?: 0.8,
+///         "invertLevel"?: false, "outputPath": "..." }
+/// Omitted sourcePath renders the instance's inserted tape (same catalog
+/// indices as GET /tape). Pure file conversion — never touches emulator state.
+void EmulatorAPI::renderTapeAudio(const HttpRequestPtr& req,
+                                  std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+
+    if (!emulator) {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto json = req->getJsonObject();
+    if (!json) {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Missing JSON request body";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Source: explicit path, or the instance's inserted tape (design §7.2)
+    TapeRenderRequest request;
+    if (json->isMember("sourcePath") && !(*json)["sourcePath"].asString().empty()) {
+        request.sourcePath = (*json)["sourcePath"].asString();
+    } else {
+        auto context = emulator->GetContext();
+        request.sourcePath = context ? context->coreState.tapeFilePath : "";
+        if (request.sourcePath.empty()) {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "No 'sourcePath' given and no tape inserted";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+    }
+
+    // Block selection: catalog indices, "all" or [first] or [first, last]
+    if (json->isMember("blocks")) {
+        const Json::Value& blocks = (*json)["blocks"];
+        if (blocks.isString() && blocks.asString() == "all") {
+            // whole tape — request defaults
+        } else if (blocks.isArray() && blocks.size() >= 1 && blocks.size() <= 2) {
+            request.firstBlock = static_cast<size_t>(blocks[static_cast<Json::ArrayIndex>(0)].asUInt64());
+            request.lastBlock = blocks.size() == 2 ? static_cast<size_t>(blocks[1].asUInt64())
+                                                   : request.firstBlock;
+            if (request.lastBlock < request.firstBlock) {
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = "'blocks' range ends before it starts";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                addCorsHeaders(resp);
+                callback(resp);
+                return;
+            }
+        } else {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "'blocks' must be \"all\" or [first, last] catalog indices";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+    }
+
+    if (json->isMember("sampleRate")) {
+        request.sampleRate = static_cast<uint32_t>((*json)["sampleRate"].asUInt64());
+        if (request.sampleRate < 8000 || request.sampleRate > 192000) {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "'sampleRate' must be 8000-192000 Hz";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+    }
+    if (json->isMember("amplitude")) {
+        request.amplitude = (*json)["amplitude"].asDouble();
+        if (request.amplitude < 0.01 || request.amplitude > 1.0) {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "'amplitude' must be 0.01-1.0";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+    }
+    if (json->isMember("invertLevel"))
+        request.invertLevel = (*json)["invertLevel"].asBool();
+
+    if (!json->isMember("outputPath") || (*json)["outputPath"].asString().empty()) {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Missing 'outputPath' parameter in request body";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    request.outputPath = (*json)["outputPath"].asString();
+
+    const bool wavOutput = hasPathExtension(request.outputPath, ".wav");
+    const bool flacOutput = hasPathExtension(request.outputPath, ".flac");
+    if (!wavOutput && !flacOutput) {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "'outputPath' must end in .wav or .flac";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Optional explicit format — must agree with the extension that picks
+    // the encoder (tinywav for .wav, ffmpeg for .flac)
+    if (json->isMember("format")) {
+        const std::string format = (*json)["format"].asString();
+        if (format != "wav" && format != "flac") {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "'format' must be \"wav\" or \"flac\"";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        if ((format == "wav") != wavOutput) {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "'format' contradicts the 'outputPath' extension";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+    }
+
+    const TapeRenderResult result = RenderTapeToAudio(request);
+
+    if (!result.ok) {
+        Json::Value error;
+        error["error"] = "Render Failed";
+        error["message"] = result.errorText;
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Json::Value ret;
+    ret["status"] = "success";
+    ret["source"] = request.sourcePath;
+    ret["blocks_rendered"] = jsonSize(result.blocksRendered);
+    ret["first_block"] = jsonSize(request.firstBlock);
+    ret["last_block"] = jsonSize(request.firstBlock + result.blocksRendered - (result.blocksRendered ? 1 : 0));
+    ret["duration_sec"] = result.durationSec;
+    ret["samples_written"] = jsonSize(result.samplesWritten);
+    ret["sample_rate"] = static_cast<Json::UInt64>(request.sampleRate);
+    ret["encoder"] = result.encoderUsed;
+    ret["output_path"] = request.outputPath;
+    ret["warnings"] = Json::arrayValue;
+    for (const std::string& warning : result.warnings)
+        ret["warnings"].append(warning);
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    resp->setStatusCode(HttpStatusCode::k200OK);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/:id/tape/import — WAV/FLAC/MP3 -> .tzx/.tap
+/// Body: { "sourcePath": "...", "outputPath": "...", "target"?: "auto"|"tzx"|"tap",
+///         "hysteresis"?: 0.2, "insert"?: false }
+/// The .tap gate refusal surfaces as tap_refusal_reason with the recognition
+/// stats kept, so the client can re-target .tzx without re-importing (§7.2).
+void EmulatorAPI::importTapeAudio(const HttpRequestPtr& req,
+                                  std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+
+    if (!emulator) {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("sourcePath") || (*json)["sourcePath"].asString().empty()) {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Missing 'sourcePath' parameter in request body";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    if (!json->isMember("outputPath") || (*json)["outputPath"].asString().empty()) {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Missing 'outputPath' parameter in request body";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    const std::string outputPath = (*json)["outputPath"].asString();
+
+    std::string target = "auto";
+    if (json->isMember("target"))
+        target = (*json)["target"].asString();
+    if (target != "auto" && target != "tzx" && target != "tap") {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "'target' must be auto, tzx or tap";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    const bool tapOutput = hasPathExtension(outputPath, ".tap");
+    if (!tapOutput && !hasPathExtension(outputPath, ".tzx")) {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "'outputPath' must end in .tzx or .tap";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    if ((target == "tzx" && tapOutput) || (target == "tap" && !tapOutput)) {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "'target' contradicts the 'outputPath' extension";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    TapeImportRequest importRequest;
+    importRequest.sourcePath = (*json)["sourcePath"].asString();
+
+    if (json->isMember("hysteresis")) {
+        importRequest.hysteresis = (*json)["hysteresis"].asDouble();
+        if (importRequest.hysteresis < 0.05 || importRequest.hysteresis > 0.45) {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "'hysteresis' must be 0.05-0.45";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+    }
+
+    const bool insertRequested = json->isMember("insert") && (*json)["insert"].asBool();
+
+    const TapeImportResult imported = ImportAudioToTape(importRequest);
+
+    if (!imported.ok) {
+        Json::Value error;
+        error["error"] = "Import Failed";
+        error["message"] = imported.errorText;
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    const TapeSaveResult saved = SaveTapeImage(imported.image, outputPath);
+
+    // Recognition stats + catalog preview — same vocabulary as GET /tape;
+    // empty fast-load plan means the per-block fast_load field is omitted
+    const TapeFastLoadPlan previewPlan;
+    Json::Value kindCounts(Json::objectValue);
+    Json::Value blocksArray = Json::arrayValue;
+    for (const TapeBlockDescriptor& descriptor : imported.image.descriptors) {
+        blocksArray.append(blockDescriptorJson(descriptor, previewPlan));
+        const char* kindName = getTapeBlockKindName(descriptor.kind);
+        kindCounts[kindName] = kindCounts[kindName].asUInt64() + 1;
+    }
+
+    Json::Value ret;
+    ret["decoder"] = imported.decoderUsed;
+    ret["sample_rate"] = static_cast<Json::UInt64>(imported.sampleRate);
+    ret["samples_decoded"] = jsonSize(imported.samplesDecoded);
+    ret["signal_edges"] = jsonSize(imported.signalEdges);
+    ret["blocks_recognized"] = jsonSize(imported.blocksRecognized);
+    ret["kind_counts"] = kindCounts;
+    ret["blocks"] = blocksArray;
+    ret["warnings"] = Json::arrayValue;
+    for (const std::string& warning : imported.warnings)
+        ret["warnings"].append(warning);
+
+    if (!saved.ok) {
+        // The .tap gate refused — keep the stats so the client can re-target
+        // .tzx from the same import (design §7.2)
+        ret["status"] = "error";
+        ret["error"] = "Save Refused";
+        ret["message"] = saved.errorText;
+        ret["tap_refusal_reason"] = saved.errorText;
+
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // insert: swap the instance's tape through the same path /tape/load uses
+    bool inserted = false;
+    if (insertRequested)
+        inserted = emulator->LoadTape(outputPath);
+
+    ret["status"] = "success";
+    ret["message"] = "Imported " + std::to_string(imported.blocksRecognized) + " block(s), saved " +
+                     std::to_string(saved.blocksWritten) + " -> " + outputPath;
+    ret["blocks_written"] = jsonSize(saved.blocksWritten);
+    ret["output_path"] = outputPath;
+    ret["inserted"] = inserted;
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    resp->setStatusCode(HttpStatusCode::k200OK);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// endregion </Tape audio bridge>
 
 /// @brief POST /api/v1/emulator/:id/disk/:drive/insert
 void EmulatorAPI::insertDisk(const HttpRequestPtr& req,
@@ -859,23 +1712,27 @@ void EmulatorAPI::getDiskSector(const HttpRequestPtr& req,
     
     // Address Mark info
     Json::Value addrMark;
-    addrMark["id_mark"] = StringHelper::ToHex(rawSector->address_record.id_address_mark);
-    addrMark["cylinder"] = rawSector->address_record.cylinder;
-    addrMark["head"] = rawSector->address_record.head;
-    addrMark["sector"] = rawSector->address_record.sector;
-    addrMark["sector_size"] = rawSector->address_record.sector_size;
-    addrMark["crc"] = StringHelper::ToHex(rawSector->address_record.id_crc);
-    addrMark["crc_valid"] = rawSector->address_record.isCRCValid();
+    addrMark["id_mark"] = StringHelper::ToHex(rawSector->id->id_address_mark);
+    addrMark["cylinder"] = rawSector->id->cylinder;
+    addrMark["head"] = rawSector->id->head;
+    addrMark["sector"] = rawSector->id->sector;
+    addrMark["sector_size"] = rawSector->id->sector_size;
+    addrMark["crc"] = StringHelper::ToHex(rawSector->id->id_crc);
+    addrMark["crc_valid"] = rawSector->isIDCRCValid();
+    addrMark["offset"] = static_cast<int>(rawSector->idamOffset);
     ret["address_mark"] = addrMark;
     
     // Data info
-    ret["data_mark"] = StringHelper::ToHex(rawSector->data_address_mark);
-    ret["data_crc"] = StringHelper::ToHex(rawSector->data_crc);
+    ret["has_data"] = rawSector->hasData;
+    ret["data_size"] = rawSector->dataSize;
+    ret["data_mark"] = StringHelper::ToHex(rawSector->dataAddressMark());
+    ret["data_crc"] = StringHelper::ToHex(rawSector->dataCRC());
     ret["data_crc_valid"] = rawSector->isDataCRCValid();
+    ret["deleted"] = rawSector->deleted;
     
     // Hex dump of first 64 bytes
     std::string hexDump;
-    for (int i = 0; i < 64 && i < 256; i++) {
+    for (int i = 0; rawSector->hasData && i < 64 && i < rawSector->dataSize; i++) {
         if (i > 0 && i % 16 == 0) hexDump += "\n";
         else if (i > 0) hexDump += " ";
         hexDump += StringHelper::ToHex(rawSector->data[i]);
@@ -986,12 +1843,18 @@ void EmulatorAPI::getDiskSectorRaw(const HttpRequestPtr& req,
     ret["cylinder"] = cylinder;
     ret["side"] = side;
     ret["sector"] = sector;
-    ret["raw_size"] = static_cast<int>(sizeof(DiskImage::RawSectorBytes));
+    // Raw stream bytes from the ID address mark (A1 A1 A1 FE) through the data CRC
+    const size_t syncLen = (track->encoding() == DiskImage::Encoding::MFM) ? 3 : 0;
+    const size_t rawStart = rawSector->idamOffset - syncLen;
+    const size_t rawEnd = rawSector->hasData ? (rawSector->dataOffset + rawSector->dataSize + 2) : (rawSector->idamOffset + 7);
+    const size_t rawLen = (rawEnd > rawStart && rawEnd <= track->rawSize()) ? rawEnd - rawStart : 0;
+    ret["raw_offset"] = static_cast<int>(rawStart);
+    ret["raw_size"] = static_cast<int>(rawLen);
+    ret["data_size"] = rawSector->dataSize;
+    ret["has_data"] = rawSector->hasData;
     
-    // Full raw sector as base64
-    std::string raw64 = drogon::utils::base64Encode(
-        reinterpret_cast<const unsigned char*>(rawSector), 
-        sizeof(DiskImage::RawSectorBytes));
+    // Raw sector bytes as base64
+    std::string raw64 = drogon::utils::base64Encode(track->rawData() + rawStart, rawLen);
     ret["raw_base64"] = raw64;
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
@@ -1078,25 +1941,27 @@ void EmulatorAPI::getDiskTrack(const HttpRequestPtr& req,
     ret["drive"] = drive;
     ret["cylinder"] = cylinder;
     ret["side"] = side;
-    ret["raw_size"] = 6250;
+    ret["raw_size"] = static_cast<int>(track->rawSize());
+    ret["encoding"] = (track->encoding() == DiskImage::Encoding::MFM) ? "MFM" : "FM";
+    ret["sector_count"] = static_cast<int>(track->sectorCount());
     ret["sectors"] = Json::arrayValue;
     
-    for (int i = 0; i < 16; i++) {
-        auto* rawSector = track->getSector(i);
+    // Sectors in physical (stream) order - any count, any numbering, any size
+    for (size_t i = 0; i < track->sectorCount(); i++) {
+        auto* rawSector = track->getRawSector(i);
         Json::Value sec;
-        sec["index"] = i;
-        sec["logical_number"] = i + 1;
-        
-        if (rawSector) {
-            sec["id_cyl"] = rawSector->address_record.cylinder;
-            sec["id_head"] = rawSector->address_record.head;
-            sec["id_sector"] = rawSector->address_record.sector;
-            sec["id_crc_valid"] = rawSector->address_record.isCRCValid();
-            sec["data_crc_valid"] = rawSector->isDataCRCValid();
-        } else {
-            sec["error"] = "sector not indexed";
-        }
-        
+        sec["index"] = static_cast<int>(i);
+        sec["logical_number"] = rawSector->id->sector;
+        sec["id_cyl"] = rawSector->id->cylinder;
+        sec["id_head"] = rawSector->id->head;
+        sec["id_sector"] = rawSector->id->sector;
+        sec["id_size_code"] = rawSector->id->sector_size;
+        sec["id_offset"] = static_cast<int>(rawSector->idamOffset);
+        sec["id_crc_valid"] = rawSector->isIDCRCValid();
+        sec["has_data"] = rawSector->hasData;
+        sec["data_size"] = rawSector->dataSize;
+        sec["data_crc_valid"] = rawSector->isDataCRCValid();
+        sec["deleted"] = rawSector->deleted;
         ret["sectors"].append(sec);
     }
     
@@ -1184,13 +2049,13 @@ void EmulatorAPI::getDiskTrackRaw(const HttpRequestPtr& req,
     ret["drive"] = drive;
     ret["cylinder"] = cylinder;
     ret["side"] = side;
-    ret["raw_size"] = 6250;
+    ret["raw_size"] = static_cast<int>(track->rawSize());
+    ret["encoding"] = (track->encoding() == DiskImage::Encoding::MFM) ? "MFM" : "FM";
     
-    // RawTrack is 6250 bytes (16 sectors * 388 bytes + 42 byte end gap)
-    std::string raw64 = drogon::utils::base64Encode(
-        reinterpret_cast<const unsigned char*>(track), 
-        DiskImage::RawTrack::RAW_TRACK_SIZE);
+    // Raw track stream (variable length: 6250 nominal MFM, 3125 FM, 6208..6464 for real drives)
+    std::string raw64 = drogon::utils::base64Encode(track->rawData(), track->rawSize());
     ret["raw_base64"] = raw64;
+    ret["clock_bitmap_base64"] = drogon::utils::base64Encode(track->clockBitmap().data(), track->clockBitmap().size());
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
@@ -1258,7 +2123,7 @@ void EmulatorAPI::getDiskImage(const HttpRequestPtr& req,
     uint8_t cylinders = diskImage->getCylinders();
     uint8_t sides = diskImage->getSides();
     size_t totalTracks = cylinders * sides;
-    size_t trackSize = DiskImage::RawTrack::RAW_TRACK_SIZE;
+    size_t trackSize = DiskImage::RawTrack::RAW_TRACK_SIZE;  // Nominal; the dump keeps each track's real length
     size_t imageSize = totalTracks * trackSize;
     
     // Collect all track data
@@ -1269,8 +2134,8 @@ void EmulatorAPI::getDiskImage(const HttpRequestPtr& req,
         for (uint8_t side = 0; side < sides; side++) {
             auto* track = diskImage->getTrackForCylinderAndSide(cyl, side);
             if (track) {
-                const uint8_t* trackData = reinterpret_cast<const uint8_t*>(track);
-                imageData.insert(imageData.end(), trackData, trackData + trackSize);
+                const uint8_t* trackData = track->rawData();
+                imageData.insert(imageData.end(), trackData, trackData + track->rawSize());
             } else {
                 // Fill with zeros if track doesn't exist
                 imageData.insert(imageData.end(), trackSize, 0);

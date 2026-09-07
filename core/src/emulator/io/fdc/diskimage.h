@@ -4,10 +4,11 @@
 
 #include "common/dumphelper.h"
 #include "emulator/io/fdc/fdc.h"
-#include "emulator/io/fdc/mfm_parser.h"
 #include "trdos.h"
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
+#include <vector>
 
 // @see http://www.bitsavers.org/components/westernDigital/FD179X-01_Data_Sheet_Oct1979.pdf
 // | Data in DR (Hex) | FD179X Interpretation in FM (DDEN = 1) | FD179X Interpretation in MFM (DDEN = 0) | Notes                                  |
@@ -22,10 +23,29 @@
 // | FE               | Write FE with clock = C7, preset CRC    | Write FE in MFM                        | ID Address Mark (sector header)        |
 // | FF               | Write FF with clock = FF                | Write FF in MFM                        | Filler/Gap byte                        |
 
+/// Universal track model.
+///
+/// A track is a variable-length byte stream (what READ TRACK returns / WRITE TRACK accepts, offset 0 == index pulse)
+/// plus one bit per byte telling whether that byte was written with a missing-clock pattern (A1 / C2 in MFM,
+/// C7 / D7 clocks in FM). Sector structure is never stored - it is derived from the stream by Track::reindex(),
+/// which produces a list of Sector index entries (views) in physical order.
+///
+/// This allows any layout the WD1793 can produce: any sector count, 128..1024 byte sectors, mixed sizes,
+/// duplicate / missing sector numbers, ID-only sectors, wrong CRCs, deleted data marks, non-standard gaps,
+/// track lengths from 3125 (FM) to 6464 (fast drive) bytes and above.
+///
+/// See docs/inprogress/2026-09-02-universal-track-model/track-model-design.md
 class DiskImage
 {
     /// region <Types>
 public:
+    /// Recording method of a track
+    enum class Encoding : uint8_t
+    {
+        MFM = 0,  // Double density, 250 Kbps, A1/C2 sync marks
+        FM = 1    // Single density, 125 Kbps, C7/D7 clock marks
+    };
+
     // WD1793 supports only those sector sizes: 128, 256, 512, 1024
     enum SectorSizeEnum : uint8_t // Log2(<sector size>) - 7
     {
@@ -36,597 +56,894 @@ public:
     };
 
 #pragma pack(push, 1)
-    /// This record is used by WD1793 to verify head positioning
-    /// Used by READ_ADDRESS and READ_TRACK commands
+    /// ID field as it lies in the track stream: FE C H R N CRC(2). Overlay type - never allocated on its own
+    /// except by tests. Used by READ_ADDRESS and READ_TRACK commands and by the sector index.
     struct AddressMarkRecord // sizeof() = 7 bytes
     {
         uint8_t id_address_mark = 0xFE;
         uint8_t cylinder = 0x00;
         uint8_t head = 0x00;
         uint8_t sector = 0x00;
-        uint8_t sector_size = SectorSizeEnum::SECTOR_SIZE_256;  // 0x01 - sector size 256 bytes. The only option for TR-DOS
-        uint16_t id_crc = 0xFFFF;
+        uint8_t sector_size = SectorSizeEnum::SECTOR_SIZE_256;  // 0x01 - sector size 256 bytes (TR-DOS default)
+        uint16_t id_crc = 0xFFFF;                                // Stored in on-disk byte order (high byte first)
 
         /// region <Methods>
     public:
-        /// Resets AddressMarkRecord to it's default state
+        /// Resets AddressMarkRecord to its default state
         void reset()
         {
             id_address_mark = 0xFE;
             cylinder = 0x00;
             head = 0x00;
             sector = 0x00;
-            sector_size = SectorSizeEnum::SECTOR_SIZE_256;  // 0x01 - sector size 256 bytes. The only option for TR-DOS
+            sector_size = SectorSizeEnum::SECTOR_SIZE_256;
             id_crc = 0xFFFF;
 
-            // Total size verification (compile-time check)
             static_assert(sizeof(AddressMarkRecord) == 7, "AddressMarkRecord size mismatch! Check padding/alignment");
         }
 
-        /// CRC is calculated for all AddressMarkRecord fields starting from id_address_mark byte
+        /// Sector size in bytes encoded by this ID (WD1793 masks N to 2 bits)
+        uint16_t getSectorSize() const { return static_cast<uint16_t>(128u << (sector_size & 0x03)); }
+
+        /// CRC is calculated for all AddressMarkRecord fields starting from id_address_mark byte (MFM: preset after A1 A1 A1)
         void recalculateCRC()
         {
-            uint16_t crc = CRCHelper::crcWD1793(&id_address_mark, 5);
-            id_crc = crc;
+            id_crc = CRCHelper::crcWD1793(&id_address_mark, 5);
         }
 
-        /// Check if CRC valid
+        /// FM variant: CRC preset to 0xFFFF, no A1 preamble
+        void recalculateCRCFM()
+        {
+            id_crc = CRCHelper::crcWD1793FM(&id_address_mark, 5);
+        }
+
+        /// Check if CRC valid (MFM)
         bool isCRCValid()
         {
-            uint16_t crc = CRCHelper::crcWD1793(&id_address_mark, 5);
+            return CRCHelper::crcWD1793(&id_address_mark, 5) == id_crc;
+        }
 
-            bool result = crc == id_crc;
-
-            return result;
+        /// Check if CRC valid (FM)
+        bool isCRCValidFM()
+        {
+            return CRCHelper::crcWD1793FM(&id_address_mark, 5) == id_crc;
         }
         /// endregion </Methods>
     };
+#pragma pack(pop)
 
-    /// Each sector on disk represented by this structure.
-    /// It represents modified IBM System 34 format layout from WD1793 datasheet
-    struct RawSectorBytes // sizeof() = 388 bytes
+    /// Data-driven description of a track layout used by Track::formatTrack()
+    struct TrackFormatSpec
     {
-        // Sector start gap
-        uint8_t gap0[10] = { 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E };
-        uint8_t sync0[12] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }; // Must be exactly 12 bytes of zeroes
+        Encoding encoding = Encoding::MFM;
+        size_t trackLength = MAX_TRACK_LEN;          // Bytes per revolution (6250 MFM / 3125 FM nominal)
+        uint8_t sizeCode = SectorSizeEnum::SECTOR_SIZE_256;  // Applies to every sector unless sectorSizeCodes is set
+        std::vector<uint8_t> sectorNumbers;          // Physical order == interleave. Empty => 1..16
+        std::vector<uint8_t> sectorSizeCodes;        // Optional per-sector N override (mixed sizes)
+        std::vector<uint8_t> sectorCylinders;        // Optional per-sector C override (copy protection)
+        std::vector<uint8_t> sectorHeads;            // Optional per-sector H override
+        std::vector<uint8_t> idOnly;                 // Optional per-sector flag: 1 => ID field without data field
+        bool indexMark = false;                      // Write C2 C2 C2 FC (MFM) / FC (FM) at the index
+        uint8_t gapIndex = 80;                       // Gap 4a before the index mark (only when indexMark)
+        uint8_t gapPostIndex = 50;                   // Gap 1 after the index mark (only when indexMark)
+        uint8_t gapPreID = 10;                       // 4E bytes before each ID sync (legacy gap0)
+        uint8_t syncLength = 12;                     // 00 bytes before A1 A1 A1 / before FM marks (legacy sync0/sync1)
+        uint8_t gapPostID = 22;                      // 4E bytes between ID CRC and data sync (legacy gap1)
+        uint8_t gapPostData = 60;                    // 4E bytes after data CRC (legacy gap2)
+        uint8_t gapFill = 0x4E;                      // FM formats use 0xFF
+        uint8_t dataFill = 0x00;
+        uint8_t dataMark = 0xFB;
 
-        // Index block
-        uint8_t f5_token0[3] = { 0xA1, 0xA1, 0xA1 }; // Clock transitions between bits 4 and 5 missing (Written by putting 0xF5 into Data Register during WRITE TRACK command by WD1793)
-        AddressMarkRecord address_record;
-
-        // Gap between blocks
-        uint8_t gap1[22] = { 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E };
-        uint8_t sync1[12] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }; // Must be exactly 12 bytes of zeroes
-
-        // Data block
-        uint8_t f5_token1[3] = { 0xA1, 0xA1, 0xA1 }; // Clock transitions between bits 4 and 5 missing (Written by putting 0xF5 into Data Register during WRITE TRACK command by WD1793)
-        uint8_t data_address_mark = 0xFB;
-        uint8_t data[256] = {};
-        uint16_t data_crc = 0xFFFF;
-
-        // Sector end gap
-        uint8_t gap2[60] =
+        /// Exact legacy TR-DOS layout: 16 x (10+12+3+7+22+12+3+1+256+2+60 = 388) = 6208 + 42 bytes end gap = 6250
+        /// @param order Sector numbers in physical order (1-based, e.g. TR-DOS 1:2 interleave). nullptr => 1..16
+        /// @param count Number of entries in order
+        static TrackFormatSpec trdos(const uint8_t* order = nullptr, size_t count = 16)
         {
-            0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E,
-            0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E,
-            0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E,
-            0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E,
-            0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E,
-            0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E
-        };
-
-        /// region <Methods>
-    public:
-        void reset()
-        {
-            // 1. Sector start gap (22 bytes total)
-            std::fill_n(gap0,   sizeof(gap0),   0x4E);              // 10 bytes
-            std::fill_n(sync0,  sizeof(sync0),  0x00);              // 12 bytes
-
-            // 2. Index / Address Mark Block (16 bytes total)
-            std::fill_n(f5_token0, sizeof(f5_token0), 0xA1);        // 3 bytes
-            address_record.reset();                                 // 7 bytes
-
-            // 3. Gap between blocks (34 bytes total)
-            std::fill_n(gap1,   sizeof(gap1),   0x4E);              // 22 bytes
-            std::fill_n(sync1,  sizeof(sync1),  0x00);              // 12 bytes
-
-            // 4. Data block (262 bytes total)
-            std::fill_n(f5_token1, sizeof(f5_token1), 0xA1);        // 3 bytes
-            data_address_mark = 0xFB;                               // 1 byte
-            std::fill_n(data, sizeof(data), 0x00);                  // 256 bytes
-            data_crc = 0xFFFF;                                      // 2 bytes
-
-            // 5. Sector end gap (60 bytes)
-            std::fill_n(gap2, sizeof(gap2), 0x4E);                  // 60 bytes
-
-            // Total size verification (compile-time check)
-            static_assert(sizeof(RawSectorBytes) == 388, "RawSectorBytes size mismatch! Check padding/alignment");
+            TrackFormatSpec spec;
+            spec.sectorNumbers.resize(count);
+            for (size_t i = 0; i < count; i++)
+            {
+                spec.sectorNumbers[i] = order ? order[i] : static_cast<uint8_t>(i + 1);
+            }
+            return spec;
         }
 
-        /// CRC is calculated for all sector data AND data_address_mark
+        /// Generic IBM System 34 style MFM layout with index mark
+        static TrackFormatSpec ibm(uint8_t sectors, uint8_t sizeCode, uint8_t firstSector = 1, uint8_t gap3 = 0x2A,
+                                   uint8_t filler = 0xE5)
+        {
+            TrackFormatSpec spec;
+            spec.sizeCode = sizeCode;
+            spec.indexMark = true;
+            spec.gapPreID = 0;         // gap3 already precedes the next sector
+            spec.gapPostID = 22;
+            spec.gapPostData = gap3;
+            spec.dataFill = filler;
+            spec.sectorNumbers.resize(sectors);
+            for (uint8_t i = 0; i < sectors; i++)
+            {
+                spec.sectorNumbers[i] = static_cast<uint8_t>(firstSector + i);
+            }
+            return spec;
+        }
+
+        /// ZX Spectrum +3 / +3DOS: 9 x 512, sectors 1..9, gap3 42, filler E5
+        static TrackFormatSpec plus3() { return ibm(9, SectorSizeEnum::SECTOR_SIZE_512, 1, 0x2A, 0xE5); }
+
+        /// DISCiPLE / +D (MGT): 10 x 512, sectors 1..10
+        static TrackFormatSpec plusD() { return ibm(10, SectorSizeEnum::SECTOR_SIZE_512, 1, 0x18, 0x00); }
+
+        /// IBM 3740 style single density for 5.25"/3.5" drives at 125 Kbps: 16 x 128, FM, 3125 bytes
+        static TrackFormatSpec ibm3740()
+        {
+            TrackFormatSpec spec = ibm(16, SectorSizeEnum::SECTOR_SIZE_128, 1, 27, 0xE5);
+            spec.encoding = Encoding::FM;
+            spec.trackLength = NOMINAL_TRACK_LEN_FM;
+            spec.gapFill = 0xFF;
+            spec.syncLength = 6;
+            spec.gapIndex = 40;
+            spec.gapPostIndex = 26;
+            spec.gapPostID = 11;
+            return spec;
+        }
+
+        size_t sectorCount() const { return sectorNumbers.size(); }
+
+        uint8_t sizeCodeFor(size_t i) const
+        {
+            return (i < sectorSizeCodes.size()) ? sectorSizeCodes[i] : sizeCode;
+        }
+
+        bool isIdOnly(size_t i) const { return i < idOnly.size() && idOnly[i] != 0; }
+
+        /// Number of stream bytes one sector occupies with this spec
+        size_t bytesPerSector(size_t i) const
+        {
+            const size_t marks = (encoding == Encoding::MFM) ? 3 : 0;  // A1 A1 A1 preamble
+            size_t bytes = gapPreID + syncLength + marks + 7;           // ID field
+            if (!isIdOnly(i))
+            {
+                bytes += gapPostID + syncLength + marks + 1 + (128u << (sizeCodeFor(i) & 0x03)) + 2;
+            }
+            bytes += gapPostData;
+            return bytes;
+        }
+
+        size_t indexMarkBytes() const
+        {
+            if (!indexMark) return 0;
+            const size_t marks = (encoding == Encoding::MFM) ? 3 : 0;
+            return gapIndex + syncLength + marks + 1 + gapPostIndex;
+        }
+
+        size_t totalBytes() const
+        {
+            size_t bytes = indexMarkBytes();
+            for (size_t i = 0; i < sectorNumbers.size(); i++)
+            {
+                bytes += bytesPerSector(i);
+            }
+            return bytes;
+        }
+
+        /// True when the whole layout fits into trackLength
+        bool fits() const { return totalBytes() <= trackLength; }
+    };
+
+    /// Index entry + view over one sector inside the raw track stream.
+    /// Never owns data: pointers reference the RawTrack buffer and stay valid until the track is
+    /// resized / re-formatted / re-loaded.
+    struct Sector
+    {
+        static constexpr uint32_t NO_OFFSET = 0xFFFFFFFFu;
+
+        // Position in the stream
+        uint32_t idamOffset = NO_OFFSET;  // Offset of the 0xFE byte (A1 A1 A1 precede it in MFM)
+        uint32_t damOffset = NO_OFFSET;   // Offset of the DAM byte (F8..FB) or NO_OFFSET
+        uint32_t dataOffset = NO_OFFSET;  // Offset of the first data byte
+        uint16_t dataSize = 0;            // 128 << (N & 3)
+
+        // Views
+        AddressMarkRecord* id = nullptr;  // Overlay at idamOffset
+        uint8_t* data = nullptr;          // nullptr when there is no data field
+
+        // Derived status
+        bool hasData = false;
+        bool deleted = false;             // DAM == 0xF8
+        bool idCrcValid = false;
+        bool dataCrcValid = false;
+        bool dirty = false;               // Set by Track::writeSectorData and WD1793 WRITE SECTOR
+        Encoding encoding = Encoding::MFM;
+
+        /// region <ID field accessors>
+        uint8_t cylinder() const { return id ? id->cylinder : 0; }
+        uint8_t head() const { return id ? id->head : 0; }
+        uint8_t number() const { return id ? id->sector : 0; }
+        uint8_t sizeCode() const { return id ? id->sector_size : 0; }
+        /// endregion </ID field accessors>
+
+        /// region <Data field accessors>
+        uint8_t dataAddressMark() const { return hasData ? *(data - 1) : 0; }
+
+        void setDataAddressMark(uint8_t dam)
+        {
+            if (hasData)
+            {
+                *(data - 1) = dam;
+                deleted = (dam == 0xF8);
+            }
+        }
+
+        /// Data CRC as stored in the stream (same in-memory representation as CRCHelper::crcWD1793 returns)
+        uint16_t dataCRC() const
+        {
+            uint16_t crc = 0xFFFF;
+            if (hasData)
+            {
+                std::memcpy(&crc, data + dataSize, sizeof(crc));
+            }
+            return crc;
+        }
+
+        void setDataCRC(uint16_t crc)
+        {
+            if (hasData)
+            {
+                std::memcpy(data + dataSize, &crc, sizeof(crc));
+                dataCrcValid = isDataCRCValid();
+            }
+        }
+
+        uint16_t computeDataCRC() const
+        {
+            if (!hasData) return 0xFFFF;
+            uint8_t* start = data - 1;  // CRC covers DAM + data
+            const uint16_t len = static_cast<uint16_t>(dataSize + 1);
+            return (encoding == Encoding::MFM) ? CRCHelper::crcWD1793(start, len) : CRCHelper::crcWD1793FM(start, len);
+        }
+
+        /// CRC is calculated for data_address_mark AND all sector data
         void recalculateDataCRC()
         {
-            uint16_t crc = CRCHelper::crcWD1793(&data_address_mark, sizeof(data) + sizeof(data_address_mark));
-            data_crc = crc;
+            if (!hasData) return;
+            uint16_t crc = computeDataCRC();
+            std::memcpy(data + dataSize, &crc, sizeof(crc));
+            dataCrcValid = true;
         }
 
-        /// Check if CRC valid
+        /// Check if data CRC valid
         bool isDataCRCValid()
         {
-            uint16_t crc = CRCHelper::crcWD1793(&data_address_mark, sizeof(data) + sizeof(data_address_mark));
-
-            bool result = crc == data_crc;
-
+            if (!hasData) return false;
+            bool result = computeDataCRC() == dataCRC();
+            dataCrcValid = result;
             return result;
         }
 
-        /// endregion </Methods>
+        void recalculateIDCRC()
+        {
+            if (!id) return;
+            if (encoding == Encoding::MFM) id->recalculateCRC(); else id->recalculateCRCFM();
+            idCrcValid = true;
+        }
+
+        bool isIDCRCValid()
+        {
+            if (!id) return false;
+            bool result = (encoding == Encoding::MFM) ? id->isCRCValid() : id->isCRCValidFM();
+            idCrcValid = result;
+            return result;
+        }
+        /// endregion </Data field accessors>
     };
 
-    /// Contains only raw track information as on disk. No additional indexes
+    /// Raw track storage: variable-length byte stream + clock-mark bitmap + optional weak-bit bitmap.
+    /// Contains no structural information about sectors.
     struct RawTrack
     {
         /// region <Constants>
     public:
-        /// 200ms per disk revolution, 4us per bit => 32 us per byte. So 200000 / 32 = 6250 bytes per track.
-        /// TR-DOS allows track size in a range [6208...6464] bytes
-        static constexpr const size_t RAW_TRACK_SIZE = 6250;
-        static constexpr const size_t SECTORS_PER_TRACK = 16;                              // TR-DOS uses 16 sectors layout
-        static constexpr const size_t RAW_SECTOR_BYTES = sizeof(RawSectorBytes);           // 388 bytes expected
-        static constexpr const size_t TRACK_BITMAP_SIZE_BYTES = (RAW_TRACK_SIZE + 7) / 8;  // 782 bytes expected
-        static constexpr const size_t TRACK_END_GAP_BYTES = RAW_TRACK_SIZE - (RAW_SECTOR_BYTES * SECTORS_PER_TRACK); // 42 bytes expected
+        /// 200ms per disk revolution, 4us per bit => 32 us per byte. So 200000 / 32 = 6250 bytes per track (MFM nominal).
+        /// Real drives / images use 6208...6464 bytes; FM tracks are 3125 bytes nominal.
+        static constexpr const size_t RAW_TRACK_SIZE = MAX_TRACK_LEN;              // Nominal MFM length (compat name)
+        static constexpr const size_t DEFAULT_TRACK_SIZE_MFM = MAX_TRACK_LEN;
+        static constexpr const size_t DEFAULT_TRACK_SIZE_FM = NOMINAL_TRACK_LEN_FM;
+        static constexpr const size_t MIN_TRACK_SIZE = 64;
+        static constexpr const size_t MAX_TRACK_SIZE = 12500;
+        static constexpr const size_t SECTORS_PER_TRACK = 16;                       // TR-DOS default (formatting only)
+        static constexpr const size_t MAX_SECTORS_PER_TRACK = 255;
+        static constexpr const size_t DAM_SEARCH_WINDOW_MFM = 43;                   // Bytes after ID CRC (datasheet)
+        static constexpr const size_t DAM_SEARCH_WINDOW_FM = 30;
+        static constexpr const size_t TRACK_BITMAP_SIZE_BYTES = (RAW_TRACK_SIZE + 7) / 8;  // Bitmap size for the nominal track
         /// endregion </Constants>
 
-        // Fields
-        RawSectorBytes sectors[SECTORS_PER_TRACK] = {};
-        uint8_t endGap[TRACK_END_GAP_BYTES] = {};
+        /// region <Fields>
+    protected:
+        std::vector<uint8_t> _raw;        // Byte stream, offset 0 == index pulse
+        std::vector<uint8_t> _clock;      // (rawSize + 7) / 8 bytes; bit i = byte i carries a missing-clock mark
+        std::vector<uint8_t> _weak;       // Empty, or (rawSize + 7) / 8 bytes; bit i = byte i is weak / unreliable
+        Encoding _encoding = Encoding::MFM;
+        /// endregion </Fields>
 
         /// region <Constructors / destructors>
     public:
-        RawTrack()
-        {
-            reset();
-        }
-        ~RawTrack() = default;  // Note: do not make it virtual since vtable will add overhead to sizeof()
+        RawTrack() { allocateRaw(DEFAULT_TRACK_SIZE_MFM, Encoding::MFM, 0x4E); }
+
+        // No user-declared destructor: the implicit move operations must stay available so that moving a Track
+        // moves the heap buffers (and keeps Sector pointers valid) instead of copying them.
+        RawTrack(const RawTrack&) = default;
+        RawTrack& operator=(const RawTrack&) = default;
+        RawTrack(RawTrack&&) noexcept = default;
+        RawTrack& operator=(RawTrack&&) noexcept = default;
         /// endregion </Constructors / destructors>
-
-        /// region <Methods>
-    public:
-        void reset()
-        {
-            // 1. Reset all sectors (16 sectors × 388 bytes = 6208 bytes)
-            for (auto& sector : sectors)
-            {
-                sector.reset(); // Calls RawSectorBytes::reset() we implemented earlier
-            }
-
-            // 2. Reset end gap (42 bytes)
-            std::fill_n(endGap, sizeof(endGap), 0x4E);
-
-            // Compile-time size verification
-            static_assert(sizeof(sectors) == 16 * 388, "Sectors array size mismatch");
-            static_assert(sizeof(endGap) == 42, "End gap size mismatch");
-            static_assert(sizeof(RawTrack) == 6250, "RawTrack size mismatch");
-        }
-
-
-        void formatTrack(uint8_t cylinder, uint8_t side)
-        {
-            for (uint8_t sector = 0; sector < SECTORS_PER_TRACK; sector++)
-            {
-                sectors[sector] = RawSectorBytes(); // Re-initialize raw sector data using it's default constructor
-
-                // Set proper addressing
-                AddressMarkRecord& markRecord = sectors[sector].address_record;
-                markRecord.cylinder = cylinder;
-                markRecord.head = side;
-            }
-        }
-        /// endregion </Methods>
-    };
-
-    /// Holds RawTrack data + meta information about disk imperfections
-    struct FullTrack : public RawTrack
-    {
-        uint8_t clockMarksBitmap[TRACK_BITMAP_SIZE_BYTES] = {};
-        uint8_t badBytesBitmap[TRACK_BITMAP_SIZE_BYTES] {};
-    };
-
-    /// Track information with all additional indexes
-    struct Track : public FullTrack
-    {
-        /// region <Constants>
-
-        // Default interleave table (1:1 mapping)
-        static constexpr uint8_t DEFAULT_INTERLEAVE[SECTORS_PER_TRACK] = { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F };
-        /// region </Constants>
-
-        /// region <Fields>
-    public:
-        uint8_t sectorInterleaveTable[SECTORS_PER_TRACK] = { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F };
-        RawSectorBytes* sectorsOrderedRef[SECTORS_PER_TRACK] = {};
-        AddressMarkRecord* sectorIDsOrderedRef[SECTORS_PER_TRACK] = {};
-        DiskImage* _diskImage = nullptr;
 
         /// region <Properties>
     public:
-        DiskImage* getDiskImage() const
+        Encoding encoding() const { return _encoding; }
+        size_t rawSize() const { return _raw.size(); }
+        uint8_t* rawData() { return _raw.data(); }
+        const uint8_t* rawData() const { return _raw.data(); }
+
+        const std::vector<uint8_t>& clockBitmap() const { return _clock; }
+        std::vector<uint8_t>& clockBitmap() { return _clock; }
+
+        bool clockMark(size_t offset) const
         {
-            return _diskImage;
+            return offset < _raw.size() && (_clock[offset >> 3] & (1u << (offset & 7))) != 0;
         }
+
+        void setClockMark(size_t offset, bool on)
+        {
+            if (offset >= _raw.size()) return;
+            uint8_t& byte = _clock[offset >> 3];
+            const uint8_t mask = static_cast<uint8_t>(1u << (offset & 7));
+            if (on) byte |= mask; else byte &= static_cast<uint8_t>(~mask);
+        }
+
+        bool hasClockMarks() const
+        {
+            for (uint8_t b : _clock) if (b) return true;
+            return false;
+        }
+
+        bool hasWeakBits() const { return !_weak.empty(); }
+
+        bool weakByte(size_t offset) const
+        {
+            return !_weak.empty() && offset < _raw.size() && (_weak[offset >> 3] & (1u << (offset & 7))) != 0;
+        }
+
+        void setWeakByte(size_t offset, bool on)
+        {
+            if (offset >= _raw.size()) return;
+            if (_weak.empty()) _weak.assign(_clock.size(), 0);
+            uint8_t& byte = _weak[offset >> 3];
+            const uint8_t mask = static_cast<uint8_t>(1u << (offset & 7));
+            if (on) byte |= mask; else byte &= static_cast<uint8_t>(~mask);
+        }
+
+        const std::vector<uint8_t>& weakBitmap() const { return _weak; }
+        /// endregion </Properties>
+
+        /// region <Helper methods>
+    protected:
+        static size_t clampTrackSize(size_t size)
+        {
+            return std::min(std::max(size, MIN_TRACK_SIZE), MAX_TRACK_SIZE);
+        }
+
+        /// (Re)allocate the stream. Clears bitmaps. Does not touch the index (RawTrack has none).
+        void allocateRaw(size_t size, Encoding enc, uint8_t fill)
+        {
+            size = clampTrackSize(size);
+            _raw.assign(size, fill);
+            _clock.assign((size + 7) / 8, 0);
+            _weak.clear();
+            _encoding = enc;
+        }
+        /// endregion </Helper methods>
+    };
+
+    /// Kept for source compatibility: the clock/weak bitmaps now live in RawTrack
+    using FullTrack = RawTrack;
+
+    /// Track = raw stream + sector index + change tracking
+    struct Track : public RawTrack
+    {
+        /// region <Fields>
+    public:
+        DiskImage* _diskImage = nullptr;
+
+    protected:
+        std::vector<Sector> _sectors;         // Physical (stream) order
+        uint32_t _indexMarkOffset = Sector::NO_OFFSET;
+        uint8_t _cylinder = 0;                // Physical position of this track inside the image
+        uint8_t _side = 0;
+
+        friend class DiskImage;
+        /// endregion </Fields>
+
+        /// region <Properties>
+    public:
+        DiskImage* getDiskImage() const { return _diskImage; }
+        uint8_t cylinder() const { return _cylinder; }
+        uint8_t side() const { return _side; }
         /// endregion </Properties>
 
         /// region <Change Tracking>
     protected:
         bool _dirty = false;
         bool _rawTrackDirty = false;  // For WRITE_TRACK operations (MFM layout changes)
-        uint16_t _sectorDirtyBitmap = 0;  // Bit N = sector N is dirty (16 sectors = 16 bits)
-        
+
         /// Marks track as dirty - protected, called by sector write accessors
         void markDirty();
-        
+
         /// Marks track as dirty due to raw MFM write - called by WD1793 WRITE_TRACK
         void markRawTrackDirty();
-        
-        // Grant WD1793 friend access for WRITE_TRACK
+
+        // Grant WD1793 friend access for WRITE_TRACK / WRITE_SECTOR
         friend class WD1793;
-        
+
     public:
         /// Check if track has been modified (sector or raw level)
         bool isDirty() const { return _dirty; }
-        
+
         /// Check if raw MFM data was written (WRITE_TRACK operation)
         bool isRawTrackDirty() const { return _rawTrackDirty; }
-        
+
         /// Check if specific sector is dirty
-        /// @param sectorNo Sector number (0-15)
+        /// @param sectorNo Logical sector index (0-based, ID number - 1)
         bool isSectorDirty(uint8_t sectorNo) const
         {
-            sectorNo &= 0x0F;
-            return (_sectorDirtyBitmap & (1 << sectorNo)) != 0;
+            const Sector* sector = findSector(static_cast<uint8_t>(sectorNo + 1));
+            return sector != nullptr && sector->dirty;
         }
-        
+
         /// Check if any sector in track is marked dirty
         bool hasAnySectorDirty() const
         {
-            return _sectorDirtyBitmap != 0;
+            for (const Sector& sector : _sectors) if (sector.dirty) return true;
+            return false;
         }
-        
+
         /// Mark specific sector as dirty (with content-change detection)
-        /// @param sectorNo Sector number (0-15)
+        /// @param sectorNo Logical sector index (0-based, ID number - 1)
         /// @param newData New data to compare against current sector data
         /// @param len Length of data to compare
         void markSectorDirtyIfChanged(uint8_t sectorNo, const uint8_t* newData, size_t len)
         {
-            sectorNo &= 0x0F;
-            RawSectorBytes* sector = getSector(sectorNo);
-            if (sector && len <= sizeof(sector->data))
+            Sector* sector = getSector(sectorNo);
+            if (sector && sector->hasData && len <= sector->dataSize)
             {
-                // Only mark dirty if content actually changed
                 if (std::memcmp(sector->data, newData, len) != 0)
                 {
-                    _sectorDirtyBitmap |= (1 << sectorNo);
-                    markDirty();  // Propagate to track and disk image
+                    sector->dirty = true;
+                    markDirty();
                 }
             }
         }
-        
-        /// Write sector data with content-change detection
-        /// @param sectorNo Sector number (0-15)
+
+        /// Write sector data with content-change detection. Recalculates the data CRC.
+        /// @param sectorNo Logical sector index (0-based, ID number - 1)
         /// @param src Source data buffer
-        /// @param len Length of data to copy (max 256)
+        /// @param len Length of data to copy (clamped to the sector size)
         void writeSectorData(uint8_t sectorNo, const uint8_t* src, size_t len)
         {
-            sectorNo &= 0x0F;
-            RawSectorBytes* sector = getSector(sectorNo);
-            if (sector)
+            Sector* sector = getSector(sectorNo);
+            if (sector && sector->hasData)
             {
-                if (len > sizeof(sector->data)) len = sizeof(sector->data);
-                
-                // Only mark dirty if content actually changed
+                if (len > sector->dataSize) len = sector->dataSize;
+
                 if (std::memcmp(sector->data, src, len) != 0)
                 {
                     std::memcpy(sector->data, src, len);
-                    _sectorDirtyBitmap |= (1 << sectorNo);
-                    markDirty();  // Propagate to track and disk image
+                    sector->recalculateDataCRC();
+                    sector->dirty = true;
+                    markDirty();
                 }
             }
         }
-        
+
         /// Clear dirty flags for track and all sectors (called after save)
         void markClean()
         {
             _dirty = false;
             _rawTrackDirty = false;
-            _sectorDirtyBitmap = 0;
+            for (Sector& sector : _sectors) sector.dirty = false;
         }
         /// endregion </Change Tracking>
-        /// endregion </Fields>
 
-        /// region <Properties>
+        /// region <Sector index>
     public:
-        /// Gets a reference to the raw sector data
-        /// 
-        /// @param sector The sector number (0-15) to retrieve
-        /// @return Pointer to RawSectorBytes structure containing the sector data
-        /// 
-        /// @note The sector number is masked with 0x0F to ensure it's in the range [0..15]
-        /// @note The returned pointer points directly to the internal sector data array
-        /// @warning The returned pointer should not be used to modify the sector structure directly
-        /// 
-        /// @see RawSectorBytes
-        /// @see SECTORS_PER_TRACK
-        RawSectorBytes* getRawSector(uint8_t sector)
+        size_t sectorCount() const { return _sectors.size(); }
+        const std::vector<Sector>& sectors() const { return _sectors; }
+        std::vector<Sector>& sectors() { return _sectors; }
+        uint32_t indexMarkOffset() const { return _indexMarkOffset; }
+
+        /// Sector by physical (stream) index
+        Sector* getRawSector(size_t physicalIndex)
         {
-            // Ensure sector number is in range [0..15]
-            sector &= 0x0F;
-
-            RawSectorBytes* result = &sectors[sector];
-
-            return result;
+            return physicalIndex < _sectors.size() ? &_sectors[physicalIndex] : nullptr;
         }
 
-        /// Gets a reference to the sector data
-        /// 
-        /// @param sectorNo The sector number (0-15) to retrieve
-        /// @return Pointer to RawSectorBytes structure containing the sector data
-        /// 
-        /// @note The sector number is masked with 0x0F to ensure it's in the range [0..15]
-        /// @note The returned pointer points directly to the internal sector data array
-        /// @warning The returned pointer should not be used to modify the sector structure directly
-        /// 
-        /// @see RawSectorBytes
-        /// @see SECTORS_PER_TRACK
-        RawSectorBytes* getSector(uint8_t sectorNo)
+        const Sector* getRawSector(size_t physicalIndex) const
         {
-            sectorNo &= 0x0F;
-
-            RawSectorBytes* result = sectorsOrderedRef[sectorNo];
-
-            return result;
+            return physicalIndex < _sectors.size() ? &_sectors[physicalIndex] : nullptr;
         }
+
+        /// First sector (in stream order) whose ID field carries the given sector number
+        Sector* findSector(uint8_t number)
+        {
+            for (Sector& sector : _sectors) if (sector.number() == number) return &sector;
+            return nullptr;
+        }
+
+        const Sector* findSector(uint8_t number) const
+        {
+            for (const Sector& sector : _sectors) if (sector.number() == number) return &sector;
+            return nullptr;
+        }
+
+        /// Next sector with the given number after stream offset fromOffset (wrapping around the index)
+        Sector* findSector(uint8_t number, size_t fromOffset)
+        {
+            return findSector(-1, -1, number, fromOffset);
+        }
+
+        /// Rotational search as performed by a WD1793 Type II command:
+        /// the first ID field after fromOffset (wrapping) whose C / H / R fields match.
+        /// @param cyl  Cylinder to match, or -1 for any
+        /// @param side Head to match, or -1 for any (side compare flag not set)
+        /// @param number Sector number to match
+        /// @param fromOffset Current head position (stream offset)
+        Sector* findSector(int cyl, int side, uint8_t number, size_t fromOffset)
+        {
+            const size_t count = _sectors.size();
+            if (count == 0) return nullptr;
+
+            size_t start = 0;
+            while (start < count && _sectors[start].idamOffset < fromOffset) start++;
+
+            for (size_t n = 0; n < count; n++)
+            {
+                Sector& sector = _sectors[(start + n) % count];
+                if (sector.number() != number) continue;
+                if (cyl >= 0 && sector.cylinder() != static_cast<uint8_t>(cyl)) continue;
+                if (side >= 0 && sector.head() != static_cast<uint8_t>(side)) continue;
+                return &sector;
+            }
+
+            return nullptr;
+        }
+
+        /// Next ID field physically under the head after fromOffset (wrapping). Used by READ ADDRESS.
+        Sector* nextSector(size_t fromOffset)
+        {
+            const size_t count = _sectors.size();
+            if (count == 0) return nullptr;
+
+            for (size_t i = 0; i < count; i++)
+            {
+                if (_sectors[i].idamOffset >= fromOffset) return &_sectors[i];
+            }
+            return &_sectors[0];
+        }
+
+        /// Number of stream bytes from fromOffset to the ID field of sector (wrapping)
+        size_t bytesUntil(const Sector& sector, size_t fromOffset) const
+        {
+            const size_t len = _raw.size();
+            if (len == 0) return 0;
+            fromOffset %= len;
+            return (sector.idamOffset >= fromOffset) ? sector.idamOffset - fromOffset
+                                                     : len - fromOffset + sector.idamOffset;
+        }
+
+        /// region <Compatibility accessors (0-based logical index == ID number - 1)>
+
+        /// Sector whose ID field number is sectorNo + 1, nullptr when absent
+        Sector* getSector(uint8_t sectorNo) { return findSector(static_cast<uint8_t>(sectorNo + 1)); }
 
         AddressMarkRecord* getIDForSector(uint8_t sectorNo)
         {
-            // Ensure sector number is in range [0..15]
-            sectorNo &= 0x0F;
-
-            AddressMarkRecord* result = sectorIDsOrderedRef[sectorNo];
-
-            return result;
+            Sector* sector = getSector(sectorNo);
+            return sector ? sector->id : nullptr;
         }
 
-        /// Returns pointer to sector data
-        /// @param sectorNo (Sector numeration starts from 1)
-        /// @return Sector
+        /// Returns pointer to sector data, nullptr when the sector is absent or has no data field
         uint8_t* getDataForSector(uint8_t sectorNo)
         {
-            // Ensure sector number is in range [0..15]
-            sectorNo &= 0x0F;
-
-            // Check if sector reference exists (may be null after reindexFromMFM fails)
-            if (!sectorsOrderedRef[sectorNo])
-            {
-                return nullptr;
-            }
-            
-            uint8_t* result = sectorsOrderedRef[sectorNo]->data;
-
-            return result;
+            Sector* sector = getSector(sectorNo);
+            return (sector && sector->hasData) ? sector->data : nullptr;
         }
 
-        uint16_t getCRCForSector(uint8_t sectorNo)
-        {
-            uint16_t result = sectorsOrderedRef[sectorNo]->data_crc;
-
-            return result;
-        }
-
-        void setCRCForSector(uint8_t sectorNo, uint16_t crc)
-        {
-            sectorsOrderedRef[sectorNo]->data_crc = crc;
-        }
-
-        void calculateDataCRCForSector(uint8_t sectorNo)
-        {
-            sectorsOrderedRef[sectorNo]->recalculateDataCRC();
-        }
-
-        uint8_t* getCRCForSectorAddress(uint8_t sectorNo)
-        {
-            uint8_t* result = (uint8_t*)&sectorsOrderedRef[sectorNo]->data_crc;
-
-            return result;
-        }
-
-        /// Returns pointer to raw track data
-        /// @param cylinder Cylinder number
-        /// @param side Side number (0 or 1)
-        /// @return Pointer to raw track data if track exists, nullptr otherwise
-        /// @note The pointer points directly to the track's raw data buffer
-        /// @warning The returned pointer should not be used to modify the track data directly
-        uint8_t* getRawTrackData(uint8_t cylinder, uint8_t side)
-        {
-            if (!Track::isTrackValid(cylinder, side))
-            {
-                return nullptr;
-            }
-
-            size_t trackIndex = Track::calculateTrackIndex(cylinder, side);
-            Track* track = getDiskImage()->getTrack(trackIndex);
-            if (!track)
-            {
-                return nullptr;
-            }
-            return reinterpret_cast<uint8_t*>(track);
-        }
-        /// endregion </Properties>
+        /// Deprecated aliases - the index is always rebuilt from the stream
+        void reindexSectors() { reindex(); }
+        void reindexFromIDAM() { reindex(); }
+        /// endregion </Compatibility accessors>
+        /// endregion </Sector index>
 
         /// region <Constructors / destructors>
     public:
         Track() = default;
-        Track(DiskImage* diskImage)
-            : _diskImage(diskImage)
-        {
-            // Apply default interleaving and do re-index
-            reset();
-        }
-        ~Track() = default;
+        Track(DiskImage* diskImage) : _diskImage(diskImage) { reset(); }
 
         Track(const Track&) = delete;
-        /*
-        {
-            std::cout << "Track COPY @" << this << " from @" << &other << "\n";
-            // Check if sector buffers are being copied
-        }
-        */
+        Track& operator=(const Track&) = delete;
 
-        Track(Track&& other) = default;
-        /*
-        {
-            std::cout << "Track MOVE @" << this << " from @" << &other << "\n";
-        }
-        */
+        // Moving keeps the heap buffers, so Sector pointers into _raw stay valid
+        Track(Track&& other) noexcept = default;
+        Track& operator=(Track&& other) noexcept = default;
         /// endregion </Constructors / destructors>
 
         /// region <Methods>
     public:
         /// Validates if track number is within valid range
-        /// @param cylinder Cylinder number
-        /// @param side Side number (0 or 1)
-        /// @return True if track is valid, false otherwise
         static bool isTrackValid(uint8_t cylinder, uint8_t side)
         {
             return (cylinder <= MAX_CYLINDERS) && (side <= MAX_SIDES);
         }
 
-        /// Calculates track index based on cylinder and side
-        /// @param cylinder Cylinder number
-        /// @param side Side number (0 or 1)
-        /// @return Track index
+        /// Calculates track index based on cylinder and side (double sided layout)
         static size_t calculateTrackIndex(uint8_t cylinder, uint8_t side)
         {
             return cylinder * 2 + side;
         }
 
+        /// Blank TR-DOS formatted track (sectors 1..16 in physical order) at this track's physical position
         void reset()
         {
-            // Reset all sectors content
-            for (RawSectorBytes& sector: sectors)
-            {
-                sector.reset();
-            }
-
-            // Re-apply default interleave (1:1)
-            applyInterleaveTable(DEFAULT_INTERLEAVE);
-
-            // Restore indexes
-            reindexSectors();
+            formatTrack(_cylinder, _side);
+            markClean();
         }
 
-        void applyInterleaveTable(const uint8_t (&interleaveTable)[16])
+        /// region <Storage>
+
+        /// Reallocate the stream (gap filled), clear bitmaps and index
+        void resizeRaw(size_t newSize, Encoding enc = Encoding::MFM, uint8_t fill = 0x4E)
         {
-            // Copy interleave sector pattern used during formatting into track index to simplify sector lookups
-            std::copy(std::begin(interleaveTable), std::end(interleaveTable), std::begin(sectorInterleaveTable));
-
-            // Interleave table contains sector numerations starting from 1. We need numeration to be started from 0. So decreasing by 1.
-            std::transform(std::begin(sectorInterleaveTable), std::end(sectorInterleaveTable), std::begin(sectorInterleaveTable), [](uint8_t element)
-            {
-                return element - 1;
-            });
-
-            // Trigger sector lookup table re-indexing
-            reindexSectors();
+            allocateRaw(newSize, enc, fill);
+            reindex();
         }
 
-        /// Reindex sector access information using current interleave table
-        void reindexSectors()
+        /// Replace the stream with a copy of data (clock bitmap cleared - call setClockBitmap afterwards)
+        void setRaw(const uint8_t* data, size_t len, Encoding enc = Encoding::MFM)
         {
-            for (uint8_t i = 0; i < SECTORS_PER_TRACK; i++)
-            {
-                uint8_t sectorIdx = sectorInterleaveTable[i];
-                RawSectorBytes* sectorRef = getRawSector(sectorIdx);
-
-                sectorsOrderedRef[i] = sectorRef;                       // Store sector reference
-                sectorIDsOrderedRef[i] = &sectorRef->address_record;    // Store ID record reference
-            }
+            allocateRaw(len, enc, 0x4E);
+            std::memcpy(_raw.data(), data, std::min(len, _raw.size()));
+            reindex();
         }
-        
-        /// Reindex sector access by reading IDAM sector numbers from each physical sector
-        /// Called after Write Track to rebuild sector mapping based on what was actually written
-        /// This handles TR-DOS's 1:2 interleave pattern correctly
-        void reindexFromIDAM()
+
+        /// Replace the clock bitmap (bit i == byte i carries a missing-clock mark) and rebuild the index
+        void setClockBitmap(const uint8_t* bitmap, size_t len)
         {
-            // Clear existing references
-            for (uint8_t i = 0; i < SECTORS_PER_TRACK; i++)
+            std::fill(_clock.begin(), _clock.end(), 0);
+            std::memcpy(_clock.data(), bitmap, std::min(len, _clock.size()));
+            reindex();
+        }
+        /// endregion </Storage>
+
+        /// region <Formatting>
+
+        /// Low-level format with the default TR-DOS layout (16 x 256, sector numbers 1..16 in physical order)
+        void formatTrack(uint8_t cylinder, uint8_t side)
+        {
+            formatTrack(cylinder, side, TrackFormatSpec::trdos());
+        }
+
+        /// Low-level format according to spec. All sector data is filled with spec.dataFill, all CRCs are valid,
+        /// every sync / address mark byte gets its clock mark, index is rebuilt.
+        void formatTrack(uint8_t cylinder, uint8_t side, const TrackFormatSpec& spec)
+        {
+            const bool mfm = (spec.encoding == Encoding::MFM);
+            allocateRaw(spec.trackLength, spec.encoding, spec.gapFill);
+            const size_t len = _raw.size();
+            size_t pos = 0;
+
+            auto put = [&](uint8_t value, bool clock)
             {
-                sectorsOrderedRef[i] = nullptr;
-                sectorIDsOrderedRef[i] = nullptr;
-            }
-            
-            // Scan all 16 physical sectors and map by their IDAM sector number
-            for (uint8_t physIdx = 0; physIdx < SECTORS_PER_TRACK; physIdx++)
-            {
-                RawSectorBytes* sectorRef = &sectors[physIdx];
-                uint8_t sectorNo = sectorRef->address_record.sector;
-                
-                // TR-DOS uses sector numbers 1-16
-                if (sectorNo >= 1 && sectorNo <= 16)
+                if (pos < len)
                 {
-                    uint8_t logicalIdx = sectorNo - 1;  // Convert to 0-based index
-                    sectorsOrderedRef[logicalIdx] = sectorRef;
-                    sectorIDsOrderedRef[logicalIdx] = &sectorRef->address_record;
+                    _raw[pos] = value;
+                    setClockMark(pos, clock);
+                    pos++;
                 }
-            }
-        }
-        
-        /// Reindex sector access by parsing raw MFM data
-        /// Called after Write Track to rebuild sector metadata from MFM stream
-        /// @return Validation result with detailed diagnostics
-        MFMValidator::ValidationResult reindexFromMFM()
-        {
-            // Get raw track data pointer
-            const uint8_t* rawData = reinterpret_cast<const uint8_t*>(static_cast<RawTrack*>(this));
-            
-            // Validate the track using MFM parser
-            auto result = MFMValidator::validate(rawData, RAW_TRACK_SIZE);
-            
-            // Clear existing references
-            for (uint8_t i = 0; i < SECTORS_PER_TRACK; i++)
+            };
+            auto fill = [&](size_t count, uint8_t value)
             {
-                sectorsOrderedRef[i] = nullptr;
-                sectorIDsOrderedRef[i] = nullptr;
-            }
-            
-            // Rebuild references from parsed sectors
-            for (size_t i = 0; i < 16; i++)
+                for (size_t i = 0; i < count; i++) put(value, false);
+            };
+            auto putCRC = [&](size_t start)
             {
-                const auto& parsed = result.parseResult.sectors[i];
-                if (parsed.found && parsed.sectorNo >= 1 && parsed.sectorNo <= 16)
+                const uint16_t crcLen = static_cast<uint16_t>(pos - start);
+                // crcWD1793 returns the CRC byte-swapped, so that storing it as a little-endian uint16_t yields the
+                // on-disk order (true high byte first). Emit the same order byte by byte.
+                uint16_t crc = mfm ? CRCHelper::crcWD1793(&_raw[start], crcLen) : CRCHelper::crcWD1793FM(&_raw[start], crcLen);
+                put(static_cast<uint8_t>(crc & 0xFF), false);  // True CRC high byte
+                put(static_cast<uint8_t>(crc >> 8), false);    // True CRC low byte
+            };
+            auto putSyncAndMarks = [&](uint8_t mark)
+            {
+                fill(spec.syncLength, 0x00);
+                if (mfm)
                 {
-                    uint8_t idx = parsed.sectorNo - 1;
-                    
-                    // Calculate the raw sector position from IDAM offset
-                    // IDAM is at offset + 3 (after A1 A1 A1), and RawSectorBytes starts 22 bytes before sync
-                    if (parsed.idamOffset >= 25)
+                    put(0xA1, true); put(0xA1, true); put(0xA1, true);
+                    put(mark, false);
+                }
+                else
+                {
+                    put(mark, true);  // FM marks are recognised by their clock pattern
+                }
+            };
+
+            if (spec.indexMark)
+            {
+                fill(spec.gapIndex, spec.gapFill);
+                fill(spec.syncLength, 0x00);
+                if (mfm)
+                {
+                    put(0xC2, true); put(0xC2, true); put(0xC2, true);
+                    put(0xFC, false);
+                }
+                else
+                {
+                    put(0xFC, true);
+                }
+                fill(spec.gapPostIndex, spec.gapFill);
+            }
+
+            for (size_t i = 0; i < spec.sectorNumbers.size(); i++)
+            {
+                const uint8_t sizeCode = spec.sizeCodeFor(i);
+                const uint8_t c = (i < spec.sectorCylinders.size()) ? spec.sectorCylinders[i] : cylinder;
+                const uint8_t h = (i < spec.sectorHeads.size()) ? spec.sectorHeads[i] : side;
+
+                fill(spec.gapPreID, spec.gapFill);
+                putSyncAndMarks(0xFE);
+                const size_t idStart = pos - 1;
+                put(c, false);
+                put(h, false);
+                put(spec.sectorNumbers[i], false);
+                put(sizeCode, false);
+                putCRC(idStart);
+
+                if (!spec.isIdOnly(i))
+                {
+                    fill(spec.gapPostID, spec.gapFill);
+                    putSyncAndMarks(spec.dataMark);
+                    const size_t damStart = pos - 1;
+                    fill(128u << (sizeCode & 0x03), spec.dataFill);
+                    putCRC(damStart);
+                }
+
+                fill(spec.gapPostData, spec.gapFill);
+            }
+
+            reindex();
+        }
+
+        /// Re-format as a blank TR-DOS track with the given physical sector order (1-based sector numbers)
+        void applyInterleaveTable(const uint8_t* order, size_t count)
+        {
+            formatTrack(_cylinder, _side, TrackFormatSpec::trdos(order, count));
+        }
+
+        template <size_t N>
+        void applyInterleaveTable(const uint8_t (&order)[N])
+        {
+            applyInterleaveTable(order, N);
+        }
+        /// endregion </Formatting>
+
+        /// region <Scanner>
+
+        /// Rebuild the sector index from the stream.
+        /// MFM: sync = A1 A1 A1 carrying clock marks (plain byte match when the track has no clock information),
+        ///      mark byte follows: FE = ID field, F8..FB = data field, C2 C2 C2 FC = index mark.
+        /// FM:  mark = FE / F8..FB / FC byte carrying a clock mark (fallback: preceded by two 0x00 bytes).
+        /// Duplicates are kept, nothing is sorted. Data fields must start within the datasheet window after the ID CRC
+        /// and must fit entirely before the end of the stream, otherwise the sector is indexed as ID-only.
+        void reindex()
+        {
+            _sectors.clear();
+            _indexMarkOffset = Sector::NO_OFFSET;
+
+            const size_t len = _raw.size();
+            const bool mfm = (_encoding == Encoding::MFM);
+            const bool useClock = hasClockMarks();
+            const size_t window = mfm ? DAM_SEARCH_WINDOW_MFM : DAM_SEARCH_WINDOW_FM;
+
+            // Sync detector: returns true when a mark byte sits at markPos
+            auto isMarkAt = [&](size_t markPos) -> bool
+            {
+                if (markPos >= len) return false;
+                if (mfm)
+                {
+                    if (markPos < 3) return false;
+                    const size_t s = markPos - 3;
+                    const bool a1 = _raw[s] == 0xA1 && _raw[s + 1] == 0xA1 && _raw[s + 2] == 0xA1;
+                    if (!a1) return false;
+                    return !useClock || (clockMark(s) && clockMark(s + 1) && clockMark(s + 2));
+                }
+                else
+                {
+                    if (useClock) return clockMark(markPos);
+                    return markPos >= 2 && _raw[markPos - 1] == 0x00 && _raw[markPos - 2] == 0x00;
+                }
+            };
+            auto isIndexMarkAt = [&](size_t markPos) -> bool
+            {
+                if (markPos >= len || _raw[markPos] != 0xFC) return false;
+                if (mfm)
+                {
+                    if (markPos < 3) return false;
+                    const size_t s = markPos - 3;
+                    const bool c2 = _raw[s] == 0xC2 && _raw[s + 1] == 0xC2 && _raw[s + 2] == 0xC2;
+                    if (!c2) return false;
+                    return !useClock || (clockMark(s) && clockMark(s + 1) && clockMark(s + 2));
+                }
+                return isMarkAt(markPos);
+            };
+
+            size_t pos = mfm ? 3 : 0;
+            while (pos < len && _sectors.size() < MAX_SECTORS_PER_TRACK)
+            {
+                const uint8_t byte = _raw[pos];
+
+                if (byte == 0xFC && _indexMarkOffset == Sector::NO_OFFSET && isIndexMarkAt(pos))
+                {
+                    _indexMarkOffset = static_cast<uint32_t>(pos);
+                    pos++;
+                    continue;
+                }
+
+                if (byte != 0xFE || !isMarkAt(pos))
+                {
+                    pos++;
+                    continue;
+                }
+
+                // ID field: FE C H R N CRC(2) must be complete
+                if (pos + 7 > len) break;
+
+                Sector sector;
+                sector.encoding = _encoding;
+                sector.idamOffset = static_cast<uint32_t>(pos);
+                sector.id = reinterpret_cast<AddressMarkRecord*>(&_raw[pos]);
+                sector.idCrcValid = mfm ? sector.id->isCRCValid() : sector.id->isCRCValidFM();
+                sector.dataSize = sector.id->getSectorSize();
+
+                // Data field: DAM must be found within the datasheet window after the ID CRC
+                const size_t idEnd = pos + 7;
+                const size_t lastDamPos = idEnd + window;
+                size_t resume = idEnd;
+
+                for (size_t dam = idEnd; dam <= lastDamPos && dam < len; dam++)
+                {
+                    const uint8_t mark = _raw[dam];
+                    if (mark < 0xF8 || mark > 0xFB || !isMarkAt(dam)) continue;
+
+                    const size_t dataStart = dam + 1;
+                    if (dataStart + sector.dataSize + 2 <= len)
                     {
-                        size_t sectorStart = parsed.idamOffset - 25;  // Back to sector start (gap0 + sync0 + f5_token0)
-                        RawSectorBytes* sectorRef = reinterpret_cast<RawSectorBytes*>(
-                            const_cast<uint8_t*>(rawData + sectorStart));
-                        
-                        sectorsOrderedRef[idx] = sectorRef;
-                        sectorIDsOrderedRef[idx] = &sectorRef->address_record;
+                        sector.hasData = true;
+                        sector.damOffset = static_cast<uint32_t>(dam);
+                        sector.dataOffset = static_cast<uint32_t>(dataStart);
+                        sector.data = &_raw[dataStart];
+                        sector.deleted = (mark == 0xF8);
+                        sector.dataCrcValid = sector.isDataCRCValid();
+                        if (!useClock) resume = dataStart + sector.dataSize + 2;  // Do not scan inside data without clock info
                     }
+                    break;
                 }
+
+                _sectors.push_back(sector);
+                pos = resume;
             }
-            
-            return result;
         }
+        /// endregion </Scanner>
         /// endregion </Methods>
     };
-
-#pragma pack(pop)
     /// endregion </Types>
 
     /// region <Fields>
@@ -638,10 +955,10 @@ protected:
 
     uint8_t _cylinders;
     uint8_t _sides;
-    
+
     /// Marks disk image as dirty - protected, called by Track
     void markDirty() { _dirty = true; }
-    
+
     // Grant Track friend access for dirty propagation
     friend struct Track;
     /// endregion </Fields>
@@ -650,7 +967,7 @@ protected:
 public:
     /// Check if disk image has been modified
     bool isDirty() const { return _dirty; }
-    
+
     /// Recompute dirty state from all tracks
     bool computeDirtyState() const
     {
@@ -660,7 +977,7 @@ public:
         }
         return false;
     }
-    
+
     /// Clear dirty flags for disk and all tracks (called after save)
     void markClean()
     {
@@ -683,30 +1000,17 @@ public:
     void setLoaded(bool loaded) { _loaded = loaded; }
 
     /// Gets a reference to a specific track using physical cylinder and side coordinates
-    /// 
+    ///
     /// @param cylinder The physical cylinder number (0-79 for 80-track disks)
     /// @param side     The physical side number (0 or 1)
     /// @return Pointer to the Track object if it exists, nullptr otherwise
-    /// 
-    /// @note This method converts physical cylinder/side coordinates to a logical track number:
-    ///       - Track number = (cylinder * sides) + side
-    /// @note For example, on a double-sided disk:
-    ///       - Cylinder 0, Side 0 = Track 0
-    ///       - Cylinder 0, Side 1 = Track 1
-    ///       - Cylinder 1, Side 0 = Track 2
-    /// @note Maximum cylinder number is MAX_CYLINDERS - 1 (usually 79)
-    /// @warning Returns nullptr if:
-    ///         - Cylinder number is out of bounds (≥ MAX_CYLINDERS)
-    ///         - Side number is invalid (≠ 0 or 1)
-    ///         - Logical track number is out of bounds
-    /// 
-    /// @see getTrack
-    /// @see Track
+    ///
+    /// @note Track number = (cylinder * sides) + side
     Track* getTrackForCylinderAndSide(uint8_t cylinder, uint8_t side)
     {
         Track* result = nullptr;
 
-        if (cylinder < MAX_CYLINDERS && side < 2)
+        if (cylinder < _cylinders && side < _sides)
         {
             size_t trackNumber = cylinder * _sides + side;
             result = getTrack(trackNumber);
@@ -716,20 +1020,9 @@ public:
     }
 
     /// Gets a reference to a specific track on the disk
-    /// 
-    /// @param track The track number to retrieve (logical track number)
+    ///
+    /// @param track The logical track number (0 .. cylinders * sides - 1)
     /// @return Pointer to the Track object if it exists, nullptr otherwise
-    /// 
-    /// @note Track numbers are logical and range from 0 to (cylinders * sides - 1)
-    /// @note For example, on a double-sided disk with 80 cylinders:
-    ///       - Track 0 = Head 0, Cylinder 0
-    ///       - Track 1 = Head 1, Cylinder 0
-    ///       - Track 2 = Head 0, Cylinder 1
-    ///       - Track 159 = Head 1, Cylinder 79
-    /// @warning Returns nullptr if the track number is out of bounds
-    /// 
-    /// @see getTrackForCylinderAndSide
-    /// @see Track
     Track* getTrack(uint8_t track)
     {
         Track* result = nullptr;
@@ -745,22 +1038,25 @@ public:
 
     /// region <Constructors / destructors>
 public:
+    /// Blank image with every track formatted as an empty TR-DOS track (16 x 256, sectors 1..16)
     DiskImage(uint8_t cylinders, uint8_t sides)
     {
         _cylinders = cylinders > MAX_CYLINDERS ? MAX_CYLINDERS : cylinders;
         _sides = sides > 2 ? 2 : sides;
 
-        // Allocate memory for disk image with selected characteristics
         allocateMemory(_cylinders, _sides);
-        
-        // Initialize tracks with DiskImage pointer
-        for (Track& track : _tracks)
-        {
-            track._diskImage = this;
-        }
-        
-        reset();
     }
+
+    /// Blank image with every track formatted according to spec
+    DiskImage(uint8_t cylinders, uint8_t sides, const TrackFormatSpec& spec)
+    {
+        _cylinders = cylinders > MAX_CYLINDERS ? MAX_CYLINDERS : cylinders;
+        _sides = sides > 2 ? 2 : sides;
+
+        allocateMemory(_cylinders, _sides);
+        formatAll(spec);
+    }
+
     DiskImage() = delete;
 
     virtual ~DiskImage()
@@ -770,6 +1066,18 @@ public:
     /// endregion </Constructors / destructors>
 
     /// region <Helper methods>
+public:
+    /// Low-level format of every track with the given layout (data cleared, dirty flags cleared)
+    void formatAll(const TrackFormatSpec& spec)
+    {
+        for (Track& track : _tracks)
+        {
+            track.formatTrack(track._cylinder, track._side, spec);
+            track.markClean();
+        }
+        _dirty = false;
+    }
+
 protected:
     void reset()
     {
@@ -777,7 +1085,7 @@ protected:
         {
             track.reset();
         }
-
+        _dirty = false;
     }
     bool allocateMemory(uint8_t cylinders, uint8_t sides);
     void releaseMemory();
@@ -787,10 +1095,15 @@ protected:
   public:
     std::string DumpSectorHex(uint8_t trackNo, uint8_t sectorNo)
     {
-        Track* track = getTrack(trackNo);
-        RawSectorBytes* sector = track->getRawSector(sectorNo);
+        std::string result;
 
-        std::string result = DumpHelper::HexDumpBuffer(sector->data, TRD_SECTORS_SIZE_BYTES);
+        Track* track = getTrack(trackNo);
+        Sector* sector = track ? track->getSector(sectorNo) : nullptr;
+
+        if (sector && sector->hasData)
+        {
+            result = DumpHelper::HexDumpBuffer(sector->data, sector->dataSize);
+        }
 
         return result;
     }

@@ -344,28 +344,28 @@ void CLIProcessor::HandleDiskSector(const ClientSession& session, EmulatorContex
         return;
     }
 
-    if (sector >= DiskImage::RawTrack::SECTORS_PER_TRACK)
+    // Sector is addressed by its ID number (sector + 1), whatever the physical interleave
+    DiskImage::Sector* rawSector = track->getSector(static_cast<uint8_t>(sector));
+    if (!rawSector)
     {
         session.SendResponse(std::string("Error: Sector not found") + NEWLINE);
         return;
     }
-
-    DiskImage::RawSectorBytes* rawSector = track->getRawSector(sector);
-    if (!rawSector)
+    if (!rawSector->hasData)
     {
-        session.SendResponse(std::string("Error: Sector data unavailable") + NEWLINE);
+        session.SendResponse(std::string("Error: Sector has no data field") + NEWLINE);
         return;
     }
 
     std::stringstream ss;
-    ss << "Sector " << (sector + 1) << " @ Track " << cylinder << "/" << side << ":" << NEWLINE;
-    ss << "  Address Mark: C=" << (int)rawSector->address_record.cylinder
-       << " H=" << (int)rawSector->address_record.head << " R=" << (int)rawSector->address_record.sector
-       << " N=" << (int)rawSector->address_record.sector_size << NEWLINE;
-    ss << "  ID CRC: " << StringHelper::ToHex(rawSector->address_record.id_crc)
-       << (rawSector->address_record.isCRCValid() ? " (OK)" : " (BAD)") << NEWLINE;
-    ss << "  Data CRC: " << StringHelper::ToHex(rawSector->data_crc)
-       << (rawSector->isDataCRCValid() ? " (OK)" : " (BAD)") << NEWLINE;
+    ss << "Sector " << (sector + 1) << " @ Track " << cylinder << "/" << side << " (" << rawSector->dataSize << " bytes):" << NEWLINE;
+    ss << "  Address Mark: C=" << (int)rawSector->id->cylinder
+       << " H=" << (int)rawSector->id->head << " R=" << (int)rawSector->id->sector
+       << " N=" << (int)rawSector->id->sector_size << NEWLINE;
+    ss << "  ID CRC: " << StringHelper::ToHex(rawSector->id->id_crc)
+       << (rawSector->isIDCRCValid() ? " (OK)" : " (BAD)") << NEWLINE;
+    ss << "  Data CRC: " << StringHelper::ToHex(rawSector->dataCRC())
+       << (rawSector->isDataCRCValid() ? " (OK)" : " (BAD)") << (rawSector->deleted ? "  [deleted data mark]" : "") << NEWLINE;
     ss << "  Data:" << NEWLINE;
 
     // Hex dump (first 128 bytes)
@@ -432,21 +432,25 @@ void CLIProcessor::HandleDiskTrack(const ClientSession& session, EmulatorContext
     }
 
     std::stringstream ss;
-    ss << "Track " << cylinder << "/" << side << " (" << DiskImage::RawTrack::SECTORS_PER_TRACK
-       << " sectors):" << NEWLINE;
-    ss << "  Sec  C   H   R   N   ID-CRC  Data-CRC" << NEWLINE;
-    ss << "  ---  --  --  --  --  ------  --------" << NEWLINE;
+    ss << "Track " << cylinder << "/" << side << " (" << track->sectorCount() << " sectors, "
+       << track->rawSize() << " bytes " << (track->encoding() == DiskImage::Encoding::MFM ? "MFM" : "FM") << "):" << NEWLINE;
+    ss << "  Pos  C   H   R   N   Size  ID-CRC  Data-CRC  Offset" << NEWLINE;
+    ss << "  ---  --  --  --  --  ----  ------  --------  ------" << NEWLINE;
 
-    for (int i = 0; i < DiskImage::RawTrack::SECTORS_PER_TRACK; i++)
+    // Physical (stream) order - the sector number column shows the interleave
+    for (size_t i = 0; i < track->sectorCount(); i++)
     {
-        DiskImage::RawSectorBytes* sec = track->getRawSector(i);
+        DiskImage::Sector* sec = track->getRawSector(i);
         if (sec)
         {
-            ss << "  " << std::setw(3) << (i + 1) << "  " << std::setw(2) << (int)sec->address_record.cylinder << "  "
-               << std::setw(2) << (int)sec->address_record.head << "  " << std::setw(2)
-               << (int)sec->address_record.sector << "  " << std::setw(2) << (int)sec->address_record.sector_size
-               << "  " << (sec->address_record.isCRCValid() ? "OK    " : "BAD   ") << "  "
-               << (sec->isDataCRCValid() ? "OK" : "BAD") << NEWLINE;
+            ss << "  " << std::setw(3) << (i + 1) << "  " << std::setw(2) << (int)sec->id->cylinder << "  "
+               << std::setw(2) << (int)sec->id->head << "  " << std::setw(2)
+               << (int)sec->id->sector << "  " << std::setw(2) << (int)sec->id->sector_size
+               << "  " << std::setw(4) << (sec->hasData ? (int)sec->dataSize : 0)
+               << "  " << (sec->isIDCRCValid() ? "OK    " : "BAD   ") << "  "
+               << (!sec->hasData ? "NONE  " : (sec->isDataCRCValid() ? "OK    " : "BAD   "))
+               << (sec->deleted ? " DEL" : "    ")
+               << "  " << std::setw(6) << sec->idamOffset << NEWLINE;
         }
     }
 
@@ -485,14 +489,14 @@ void CLIProcessor::HandleDiskSysinfo(const ClientSession& session, EmulatorConte
 
     // Read sector 9 (0-indexed: 8) from track 0, side 0
     DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(0, 0);
-    if (!track || DiskImage::RawTrack::SECTORS_PER_TRACK < 9)
+    if (!track)
     {
         session.SendResponse(std::string("Error: Cannot read system sector") + NEWLINE);
         return;
     }
 
-    DiskImage::RawSectorBytes* sector = track->getRawSector(8);
-    if (!sector)
+    DiskImage::Sector* sector = track->getSector(8);  // Sector number 9
+    if (!sector || !sector->hasData || sector->dataSize != TRD_SECTORS_SIZE_BYTES)
     {
         session.SendResponse(std::string("Error: System sector unavailable") + NEWLINE);
         return;
@@ -592,8 +596,8 @@ void CLIProcessor::HandleDiskCatalog(const ClientSession& session, EmulatorConte
     // Read sectors 1-8 (0-indexed: 0-7) for directory entries
     for (int secNum = 0; secNum < 8; secNum++)
     {
-        DiskImage::RawSectorBytes* sector = track->getRawSector(secNum);
-        if (!sector)
+        DiskImage::Sector* sector = track->getSector(static_cast<uint8_t>(secNum));  // Sector number secNum + 1
+        if (!sector || !sector->hasData || sector->dataSize != TRD_SECTORS_SIZE_BYTES)
             continue;
 
         const uint8_t* data = sector->data;

@@ -549,4 +549,4 @@ core/tests/z80/
 1. **z80test-1.2a Source:** `testdata/z80/z80test-1.2a/src/`
 2. **Original Author:** [Patrik Rak](https://github.com/raxoft)
 3. **ZEXALL:** Related Z80 exerciser (different approach)
-4. **Zero-Emulator:** Reference implementation at `/Volumes/TB4-4Tb/Projects/emulators/github/Zero-Emulator/`
+4. **Zero-Emulator:** reference implementation, local clone of the upstream Zero-Emulator repository

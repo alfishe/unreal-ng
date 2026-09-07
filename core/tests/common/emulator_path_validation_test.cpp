@@ -1,4 +1,4 @@
-#include <_helpers/test_path_helper.h>
+#include <_helpers/testpathhelper.h>
 #include <common/filehelper.h>
 #include <emulator/emulator.h>
 #include <gtest/gtest.h>
@@ -62,7 +62,7 @@ TEST_F(EmulatorPathValidationTest, LoadTape_NonexistentFile_ReturnsFalse)
 TEST_F(EmulatorPathValidationTest, LoadTape_InvalidExtension_ReturnsFalse)
 {
     // Given: a file with wrong extension (.wav instead of .tap/.tzx)
-    std::string wrongExt = "/tmp/test.wav";
+    std::string wrongExt = TestPathHelper::GetUniqueTestScratchPath("test.wav");
     std::ofstream out(wrongExt, std::ios::binary);
     out << "AUDIO DATA";
     out.close();
@@ -80,7 +80,7 @@ TEST_F(EmulatorPathValidationTest, LoadTape_InvalidExtension_ReturnsFalse)
 TEST_F(EmulatorPathValidationTest, LoadTape_TZXFormat_ReturnsTrue)
 {
     // Given: a valid .tzx file
-    std::string tzxFile = "/tmp/test.tzx";
+    std::string tzxFile = TestPathHelper::GetUniqueTestScratchPath("test.tzx");
     std::ofstream out(tzxFile, std::ios::binary);
     out << "TZX DATA";
     out.close();
@@ -98,7 +98,7 @@ TEST_F(EmulatorPathValidationTest, LoadTape_TZXFormat_ReturnsTrue)
 TEST_F(EmulatorPathValidationTest, LoadTape_RelativePath_ResolvesAndLoads)
 {
     // Given: a relative path to tape file
-    std::string relativePath = "test_relative.tap";
+    std::string relativePath = TestPathHelper::GetTestScratchPath("test_relative.tap");
     std::ofstream out(relativePath, std::ios::binary);
     out << "TAPE DATA";
     out.close();
@@ -147,7 +147,7 @@ TEST_F(EmulatorPathValidationTest, LoadDisk_NonexistentFile_ReturnsFalse)
 TEST_F(EmulatorPathValidationTest, LoadDisk_InvalidExtension_ReturnsFalse)
 {
     // Given: a file with wrong extension (.iso instead of .trd/.scl)
-    std::string wrongExt = "/tmp/test.iso";
+    std::string wrongExt = TestPathHelper::GetUniqueTestScratchPath("test.iso");
     std::ofstream out(wrongExt, std::ios::binary);
     out << "ISO DATA";
     out.close();
@@ -165,7 +165,7 @@ TEST_F(EmulatorPathValidationTest, LoadDisk_InvalidExtension_ReturnsFalse)
 TEST_F(EmulatorPathValidationTest, LoadDisk_SCLFormat_Succeeds)
 {
     // Given: a valid .scl file
-    std::string sclFile = "/tmp/test.scl";
+    std::string sclFile = TestPathHelper::GetUniqueTestScratchPath("test.scl");
     std::ofstream out(sclFile, std::ios::binary);
     out << "SCL DATA";
     out.close();
@@ -183,7 +183,7 @@ TEST_F(EmulatorPathValidationTest, LoadDisk_SCLFormat_Succeeds)
 TEST_F(EmulatorPathValidationTest, LoadDisk_FDIFormat_Accepted)
 {
     // Given: a valid .fdi file
-    std::string fdiFile = "/tmp/test.fdi";
+    std::string fdiFile = TestPathHelper::GetUniqueTestScratchPath("test.fdi");
     std::ofstream out(fdiFile, std::ios::binary);
     out << "FDI DATA";
     out.close();
@@ -201,7 +201,7 @@ TEST_F(EmulatorPathValidationTest, LoadDisk_FDIFormat_Accepted)
 TEST_F(EmulatorPathValidationTest, LoadDisk_UDIFormat_Accepted)
 {
     // Given: a valid .udi file
-    std::string udiFile = "/tmp/test.udi";
+    std::string udiFile = TestPathHelper::GetUniqueTestScratchPath("test.udi");
     std::ofstream out(udiFile, std::ios::binary);
     out << "UDI DATA";
     out.close();

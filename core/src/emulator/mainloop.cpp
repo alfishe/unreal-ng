@@ -15,6 +15,7 @@
 #include "emulator.h"
 #include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/tape/tapeturbocontroller.h"
 #include "stdafx.h"
 
 MainLoop::MainLoop(EmulatorContext* context)
@@ -66,6 +67,14 @@ void MainLoop::Run(volatile bool& stopRequested)
     _stopRequested = false;
     _isRunning = true;
     _runThreadId.store(std::this_thread::get_id(), std::memory_order_release);
+
+#ifdef _WIN32
+    // The emulation thread is the audio producer: a frame pre-empted by GUI /
+    // background work lands its audio late and eats the ring trough. Above
+    // normal (not time-critical) keeps it ahead of ordinary threads without
+    // starving the audio device thread, which miniaudio already runs under MMCSS.
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+#endif
 
     /// region <Info logging>
     uint64_t lastRun = 0;
@@ -167,9 +176,14 @@ void MainLoop::Run(volatile bool& stopRequested)
             }
             _nextFrameTime += frameDuration;
 
-            // Interruptible sleep: _cv is notified by Stop()
-            std::unique_lock<std::mutex> lock(_audioBufferMutex);
-            _cv.wait_until(lock, _nextFrameTime, [&stopRequested] { return (bool)stopRequested; });
+            // Precise, interruptible sleep (polls the stop flag every few ms).
+            // Must NOT be std::condition_variable::wait_until: on Windows it
+            // wakes 1 ms (MSVC) to 10-17 ms (MinGW) late, which consumed the
+            // whole audio ring trough (DRC_TARGET_MS - 1 frame ~ 19.5 ms)
+            // against WASAPI's 10 ms pulls and caused steady underruns
+            // ("ring errors ... dequeue=N" growing) - see
+            // TimeHelper::WaitUntilPrecise and SoundAdaptivity.AVLatencyBudget
+            TimeHelper::WaitUntilPrecise(_nextFrameTime, [&stopRequested] { return (bool)stopRequested; });
         }
         else
         {
@@ -204,8 +218,7 @@ bool MainLoop::WaitForPauseConfirmation(uint32_t timeoutMs)
 
 void MainLoop::Stop()
 {
-    _stopRequested = true;
-    _cv.notify_all();
+    _stopRequested = true;  // Frame wait polls this flag (TimeHelper::WaitUntilPrecise, <= 4 ms)
     _pauseCV.notify_all();
 }
 
@@ -237,7 +250,17 @@ void MainLoop::RunFrame()
 
     // Execute CPU cycles for single video frame
 
+    // Turbo render decimation: suspend contingent rendering for the CPU cycle
+    // of a skipped frame. The screen-side flag covers ALL DrawPeriod entries
+    // in one place - including Screen::SetBorderColor's own UpdateScreen call,
+    // which border-striping loaders reach thousands of times per frame. It is
+    // cleared again before frame end, so batch render, framebuffer latch and
+    // any manual debug stepping while paused are never affected.
+    _screen->SetTurboRenderSkip(!_renderThisFrame);
+
     ExecuteCPUFrameCycle();
+
+    _screen->SetTurboRenderSkip(false);
 
     /// region <Frame end handlers>
 
@@ -267,7 +290,34 @@ void MainLoop::OnFrameStart()
     _context->pTape->handleFrameStart();
     _soundManager->handleFrameStart();
     _screen->InitFrame();
-    
+
+    /// region <Turbo render decimation>
+    // In turbo mode the GUI only needs a preview cadence: 49 of every 50
+    // frames skip rendering entirely (per-t-state DrawPeriod work, batch
+    // render, framebuffer latch, frame-refresh notification). The one
+    // rendered frame keeps full ScreenHQ fidelity - border and multicolor
+    // effects inside it are drawn per t-state exactly as at normal speed.
+    // Machine timing is untouched: CPU, tape, FDC, TTD and analyzers still
+    // process every frame (turbo tape design §3.1 invariance). Recording
+    // forces a render every frame so captured video is never decimated.
+    {
+        const CONFIG& config = _context->config;
+        bool recording = false;
+#ifdef ENABLE_RECORDING
+        recording = _context->pRecordingManager && _context->pRecordingManager->IsRecording();
+#endif
+        _renderThisFrame = !config.turbo_mode || recording ||
+                           (_state->frame_counter % TURBO_RENDER_DECIMATION == 0);
+
+        // A rendered frame after skipped ones starts with a stale _prevTstate
+        // (InitFrame does not reset it). DrawPeriod would self-heal through
+        // the wrap-adjust + bounds check but lose the frame's first t-states;
+        // resetting the tracker makes the rendered frame complete from t=0.
+        if (_renderThisFrame && !_lastFrameRendered)
+            _screen->ResetPrevTstate();
+    }
+    /// endregion </Turbo render decimation>
+
     // Dispatch frame start event to AnalyzerManager
     if (_context->pDebugManager && _context->pDebugManager->GetAnalyzerManager())
     {
@@ -288,7 +338,12 @@ void MainLoop::OnCPUStep()
         return;
     }
 
-    _context->pScreen->UpdateScreen();  // Trigger screen update after each CPU command cycle
+    // Turbo render decimation: skipped frames bypass contingent rendering.
+    // Everything below still runs on every CPU step in every mode.
+    if (_renderThisFrame)
+    {
+        _context->pScreen->UpdateScreen();  // Trigger screen update after each CPU command cycle
+    }
 
     _context->pBetaDisk->handleStep();
     _context->pTape->handleStep();  // Process tape audio each step
@@ -317,15 +372,20 @@ void MainLoop::OnFrameEnd()
     //
     // See: docs/inprogress/2026-01-11-performance-optimizations/phase-4-5-execution-log.md
     // =========================================================================
-    if (!_context->pScreen->IsScreenHQEnabled())
+    // Turbo render decimation: skipped frames render nothing and keep the
+    // previously latched framebuffer for display (decimated preview).
+    if (_renderThisFrame)
     {
-        _context->pScreen->RenderFrameBatch();
-    }
+        if (!_context->pScreen->IsScreenHQEnabled())
+        {
+            _context->pScreen->RenderFrameBatch();
+        }
 
-    // Latch the completed frame into the presentation buffer (tear-free copy
-    // for GUI display and capture). Must happen after rendering is finished
-    // for both batch and per-t-state (ScreenHQ) modes.
-    _context->pScreen->LatchFramebuffer();
+        // Latch the completed frame into the presentation buffer (tear-free copy
+        // for GUI display and capture). Must happen after rendering is finished
+        // for both batch and per-t-state (ScreenHQ) modes.
+        _context->pScreen->LatchFramebuffer();
+    }
 
     // Basic sanity check for context corruption
     if (_context->config.frame == 0 || _context->config.frame > 100000)
@@ -344,6 +404,21 @@ void MainLoop::OnFrameEnd()
         catch (const std::exception& e)
         {
             MLOGERROR("Tape::handleFrameEnd failed: %s", e.what());
+        }
+    }
+
+    // Turbo tape loading (design 2026-09-04-turbo-tape-loading §6.1): tick
+    // right after the tape's own frame end so watchdog freezes and natural
+    // end-of-tape are observed in the same frame they happen
+    if (_context->pTapeTurboController)
+    {
+        try
+        {
+            _context->pTapeTurboController->handleFrameEnd();
+        }
+        catch (const std::exception& e)
+        {
+            MLOGERROR("TapeTurboController::handleFrameEnd failed: %s", e.what());
         }
     }
     if (_context->pBetaDisk)
@@ -417,7 +492,7 @@ void MainLoop::OnFrameEnd()
     // dozens of frames per seek and a redraw storm would dominate seek
     // latency. The replay engine restores the final frame visually via
     // Screen::InitFrame after ExitReplayMode.
-    if (!_context->ttdReplayActive)
+    if (_renderThisFrame && !_context->ttdReplayActive)
     {
         try
         {
@@ -463,6 +538,8 @@ void MainLoop::OnFrameEnd()
     {
         _context->pDebugManager->GetKeyboardManager()->OnFrame();
     }
+
+    _lastFrameRendered = _renderThisFrame;
 }
 
 

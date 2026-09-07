@@ -110,7 +110,7 @@ Bytes 18-19: SPlo, SPhi (stack pointer)
 ## Test Commands
 
 ```bash
-cd /Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/tests/z80/z80test
+cd core/tests/z80/z80test
 
 # Quick status check
 python3 -c "
@@ -141,7 +141,7 @@ for t in tests:
     if t.get('name') == 'ALO A,(HL)':
         run_test(t, verbose=True)
         
-cd /Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/tests/z80/z80test && python3 << 'EOF'
+cd core/tests/z80/z80test && python3 << 'EOF'
 from extract_z80tests import extract_tests, TESTS_ASM
 from z80test_generator import run_test
 tests = extract_tests(TESTS_ASM)
@@ -227,9 +227,9 @@ FAILING TESTS:
   LD (XY),R                                exp=0x322904D3 got=0x7B04B1B3
   LD A,R                                   exp=0x7A32E3F5 got=0xDEDE7754
 
-cd /Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/tests/z80/z80test && python3 z80test_generator.py --v
+cd core/tests/z80/z80test && python3 z80test_generator.py --v
 erify 2>&1 | tail -30
-Parsing /Volumes/TB4-4Tb/Projects/Test/unreal-ng/testdata/z80/z80test-1.2a/src/tests.asm...
+Parsing testdata/z80/z80test-1.2a/src/tests.asm...
 Found 163 complete tests
 
 Verifying test iteration counts...
@@ -241,7 +241,7 @@ Passed: 163, Failed: 0
 
 ## External Reference
 
-The emulator at `/Volumes/TB4-4Tb/Projects/emulators/github/z80/z80.c` claims to pass all zexdoc and zexall tests. It contains a clean, minimal Z80 implementation that could be used as a reference for correct flag behavior.
+The verified z80 emulator (upstream source tree, `z80.c`) claims to pass all zexdoc and zexall tests. It contains a clean, minimal Z80 implementation that could be used as a reference for correct flag behavior.
 
 ## Next Steps
 

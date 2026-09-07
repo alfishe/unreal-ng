@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QWidget>
+#include <QImage>
 #include <memory>
 #include <3rdparty/message-center/eventqueue.h>
 
@@ -80,6 +81,9 @@ private:
     
     
     QTimer* _blinkTimer = nullptr;  // Timer for blink effect
+
+    // Tear-free rendering: owned backing store filled via CopyPresentedFramebuffer
+    QImage _latchedFrame;
 
     // Tile size from TileLayoutManager.h: TILE_WIDTH x TILE_HEIGHT
 };

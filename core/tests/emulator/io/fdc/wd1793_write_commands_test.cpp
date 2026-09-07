@@ -8,7 +8,7 @@
 #include <iostream>
 #include <vector>
 
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 #include "_helpers/testtiminghelper.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
@@ -88,223 +88,220 @@ protected:
 
 /// endregion </Test types>
 
-/// region <reindexFromIDAM Tests>
+/// region <reindex Tests>
+/// The sector index is rebuilt from the raw stream (ID fields in physical order); sector numbers come from the
+/// ID fields themselves, so any interleave, gaps in numbering or duplicates are represented faithfully.
 
-/// Test sector mapping with sequential sector numbers (1-16)
-TEST_F(WD1793_WriteCommands_Test, ReindexFromIDAM_Sequential_Sectors)
+namespace
 {
-    DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
-    DiskImage::Track* track = diskImage.getTrackForCylinderAndSide(0, 0);
-    ASSERT_NE(track, nullptr);
-
-    // Set up sectors with sequential numbering: sector N at position N-1
-    for (uint8_t i = 0; i < 16; i++)
+    /// Rewrite the sector number in the ID field of the physical sector at position physIdx and fix its CRC
+    void setPhysicalSectorNumber(DiskImage::Track* track, size_t physIdx, uint8_t number)
     {
-        track->sectors[i].address_record.sector = i + 1;  // Sectors 1-16
-    }
-
-    // Perform reindexing
-    track->reindexFromIDAM();
-
-    // Verify each sectorsOrderedRef points to the correct sector
-    for (uint8_t i = 0; i < 16; i++)
-    {
-        ASSERT_NE(track->sectorsOrderedRef[i], nullptr) << "sectorsOrderedRef[" << (int)i << "] is null";
-        EXPECT_EQ(&track->sectors[i], track->sectorsOrderedRef[i])
-            << "sectorsOrderedRef[" << (int)i << "] should point to sectors[" << (int)i << "]";
+        DiskImage::Sector* sector = track->getRawSector(physIdx);
+        ASSERT_NE(sector, nullptr);
+        sector->id->sector = number;
+        sector->id->recalculateCRC();
     }
 }
 
-/// Test sector mapping with TR-DOS 1:2 interleave pattern
-TEST_F(WD1793_WriteCommands_Test, ReindexFromIDAM_TR_DOS_Interleave)
+/// Sequential sector numbers (1-16): logical index == physical index
+TEST_F(WD1793_WriteCommands_Test, Reindex_Sequential_Sectors)
 {
     DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
     DiskImage::Track* track = diskImage.getTrackForCylinderAndSide(0, 0);
     ASSERT_NE(track, nullptr);
 
-    // TR-DOS 1:2 interleave: 1,9,2,10,3,11,4,12,5,13,6,14,7,15,8,16
+    for (uint8_t i = 0; i < 16; i++)
+    {
+        setPhysicalSectorNumber(track, i, i + 1);
+    }
+
+    track->reindex();
+
+    ASSERT_EQ(track->sectorCount(), 16u);
+    for (uint8_t i = 0; i < 16; i++)
+    {
+        ASSERT_NE(track->getSector(i), nullptr) << "getSector(" << (int)i << ") is null";
+        EXPECT_EQ(track->getRawSector(i), track->getSector(i))
+            << "getSector(" << (int)i << ") should point to physical sector " << (int)i;
+    }
+}
+
+/// TR-DOS 1:2 interleave pattern
+TEST_F(WD1793_WriteCommands_Test, Reindex_TR_DOS_Interleave)
+{
+    DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
+    DiskImage::Track* track = diskImage.getTrackForCylinderAndSide(0, 0);
+    ASSERT_NE(track, nullptr);
+
     const uint8_t trdosPattern[16] = {1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15, 8, 16};
 
     for (uint8_t physIdx = 0; physIdx < 16; physIdx++)
     {
-        track->sectors[physIdx].address_record.sector = trdosPattern[physIdx];
+        setPhysicalSectorNumber(track, physIdx, trdosPattern[physIdx]);
     }
 
-    // Perform reindexing
-    track->reindexFromIDAM();
+    track->reindex();
 
-    // Verify sector 9 (at physical position 1) maps to sectorsOrderedRef[8]
-    ASSERT_NE(track->sectorsOrderedRef[8], nullptr);
-    EXPECT_EQ(&track->sectors[1], track->sectorsOrderedRef[8])
-        << "Sector 9 at physical position 1 should be at sectorsOrderedRef[8]";
+    ASSERT_NE(track->getSector(8), nullptr);
+    EXPECT_EQ(track->getRawSector(1), track->getSector(8)) << "Sector 9 at physical position 1 should be getSector(8)";
 
-    // Verify sector 1 (at physical position 0) maps to sectorsOrderedRef[0]
-    ASSERT_NE(track->sectorsOrderedRef[0], nullptr);
-    EXPECT_EQ(&track->sectors[0], track->sectorsOrderedRef[0])
-        << "Sector 1 at physical position 0 should be at sectorsOrderedRef[0]";
+    ASSERT_NE(track->getSector(0), nullptr);
+    EXPECT_EQ(track->getRawSector(0), track->getSector(0)) << "Sector 1 at physical position 0 should be getSector(0)";
 
-    // Verify all references are set correctly
     for (uint8_t physIdx = 0; physIdx < 16; physIdx++)
     {
         uint8_t logicalIdx = trdosPattern[physIdx] - 1;
-        EXPECT_EQ(&track->sectors[physIdx], track->sectorsOrderedRef[logicalIdx])
+        EXPECT_EQ(track->getRawSector(physIdx), track->getSector(logicalIdx))
             << "Physical sector " << (int)physIdx << " (IDAM sector " << (int)trdosPattern[physIdx]
-            << ") should be at sectorsOrderedRef[" << (int)logicalIdx << "]";
+            << ") should be getSector(" << (int)logicalIdx << ")";
     }
 }
 
-/// Test sector mapping with reverse order (16,15,...,1)
-TEST_F(WD1793_WriteCommands_Test, ReindexFromIDAM_Reverse_Order)
+/// Reverse order (16,15,...,1)
+TEST_F(WD1793_WriteCommands_Test, Reindex_Reverse_Order)
 {
     DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
     DiskImage::Track* track = diskImage.getTrackForCylinderAndSide(0, 0);
     ASSERT_NE(track, nullptr);
 
-    // Reverse order: sector 16 at position 0, sector 15 at position 1, etc.
     for (uint8_t i = 0; i < 16; i++)
     {
-        track->sectors[i].address_record.sector = 16 - i;
+        setPhysicalSectorNumber(track, i, 16 - i);
     }
 
-    // Perform reindexing
-    track->reindexFromIDAM();
+    track->reindex();
 
-    // Verify mappings
     for (uint8_t i = 0; i < 16; i++)
     {
-        uint8_t logicalIdx = 16 - i - 1;  // 0-based: sector 16 -> index 15, sector 1 -> index 0
-        ASSERT_NE(track->sectorsOrderedRef[logicalIdx], nullptr);
-        EXPECT_EQ(&track->sectors[i], track->sectorsOrderedRef[logicalIdx])
-            << "Physical position " << (int)i << " should map to sectorsOrderedRef[" << (int)logicalIdx << "]";
+        uint8_t logicalIdx = 16 - i - 1;
+        ASSERT_NE(track->getSector(logicalIdx), nullptr);
+        EXPECT_EQ(track->getRawSector(i), track->getSector(logicalIdx))
+            << "Physical position " << (int)i << " should map to getSector(" << (int)logicalIdx << ")";
     }
 }
 
-/// Test that sector number 0 (invalid) leaves reference as nullptr
-TEST_F(WD1793_WriteCommands_Test, ReindexFromIDAM_Invalid_SectorNo_Zero)
+/// Sector number 0 is a legal ID value but is not TR-DOS sector 6: getSector(5) is null, findSector(0) works
+TEST_F(WD1793_WriteCommands_Test, Reindex_SectorNo_Zero)
 {
     DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
     DiskImage::Track* track = diskImage.getTrackForCylinderAndSide(0, 0);
     ASSERT_NE(track, nullptr);
 
-    // Set all sectors to valid numbers except position 5
     for (uint8_t i = 0; i < 16; i++)
     {
-        track->sectors[i].address_record.sector = i + 1;
+        setPhysicalSectorNumber(track, i, i + 1);
     }
-    track->sectors[5].address_record.sector = 0;  // Invalid
+    setPhysicalSectorNumber(track, 5, 0);
 
-    // Perform reindexing
-    track->reindexFromIDAM();
+    track->reindex();
 
-    // Verify sector 6 (at position 5) reference is still nullptr after reindex
-    // (because its IDAM says sector 0 which is invalid)
-    // But actually sectorsOrderedRef[5] should be nullptr because no sector claims to be sector 6
-    EXPECT_EQ(track->sectorsOrderedRef[5], nullptr) << "sectorsOrderedRef[5] should be nullptr (no sector 6)";
+    EXPECT_EQ(track->sectorCount(), 16u) << "the ID field is still indexed";
+    EXPECT_EQ(track->getSector(5), nullptr) << "getSector(5) should be nullptr (no sector 6)";
+    EXPECT_EQ(track->findSector(0), track->getRawSector(5));
 
-    // All others should be valid
     for (uint8_t i = 0; i < 16; i++)
     {
         if (i != 5)
         {
-            EXPECT_NE(track->sectorsOrderedRef[i], nullptr)
-                << "sectorsOrderedRef[" << (int)i << "] should not be nullptr";
+            EXPECT_NE(track->getSector(i), nullptr) << "getSector(" << (int)i << ") should not be nullptr";
         }
     }
 }
 
-/// Test that sector number 17+ (invalid) leaves reference as nullptr
-TEST_F(WD1793_WriteCommands_Test, ReindexFromIDAM_Invalid_SectorNo_17)
+/// Sector number 17 is outside TR-DOS numbering but still a valid sector
+TEST_F(WD1793_WriteCommands_Test, Reindex_SectorNo_17)
 {
     DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
     DiskImage::Track* track = diskImage.getTrackForCylinderAndSide(0, 0);
     ASSERT_NE(track, nullptr);
 
-    // Set all sectors to valid numbers except position 7
     for (uint8_t i = 0; i < 16; i++)
     {
-        track->sectors[i].address_record.sector = i + 1;
+        setPhysicalSectorNumber(track, i, i + 1);
     }
-    track->sectors[7].address_record.sector = 17;  // Invalid (out of range)
+    setPhysicalSectorNumber(track, 7, 17);
 
-    // Perform reindexing
-    track->reindexFromIDAM();
+    track->reindex();
 
-    // Sector 8 (index 7) should be nullptr because no valid sector claims it
-    EXPECT_EQ(track->sectorsOrderedRef[7], nullptr)
-        << "sectorsOrderedRef[7] should be nullptr (sector at position 7 has invalid IDAM)";
+    EXPECT_EQ(track->getSector(7), nullptr) << "getSector(7) should be nullptr (no sector 8 on the track)";
+    ASSERT_NE(track->getSector(16), nullptr) << "sector 17 is addressable";
+    EXPECT_EQ(track->getSector(16), track->getRawSector(7));
 }
 
-/// Test that duplicate sector numbers result in last one "winning"
-TEST_F(WD1793_WriteCommands_Test, ReindexFromIDAM_Duplicate_SectorNo)
+/// Duplicate sector numbers: all kept, first in stream order wins for findSector, rotational lookup reaches the rest
+TEST_F(WD1793_WriteCommands_Test, Reindex_Duplicate_SectorNo)
 {
     DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
     DiskImage::Track* track = diskImage.getTrackForCylinderAndSide(0, 0);
     ASSERT_NE(track, nullptr);
 
-    // All sectors claim to be sector 5
     for (uint8_t i = 0; i < 16; i++)
     {
-        track->sectors[i].address_record.sector = 5;
+        setPhysicalSectorNumber(track, i, 5);
     }
 
-    // Perform reindexing
-    track->reindexFromIDAM();
+    track->reindex();
 
-    // Only sectorsOrderedRef[4] should be non-null (sector 5 = index 4)
-    // The last physical sector (15) wins
-    EXPECT_NE(track->sectorsOrderedRef[4], nullptr);
-    EXPECT_EQ(&track->sectors[15], track->sectorsOrderedRef[4])
-        << "Last physical sector claiming sector 5 should win";
+    ASSERT_EQ(track->sectorCount(), 16u);
+    EXPECT_EQ(track->getSector(4), track->getRawSector(0)) << "First physical sector claiming sector 5 is returned";
 
-    // All others should be nullptr
+    // Rotational search from the middle of the track returns the next duplicate
+    size_t middle = track->getRawSector(8)->idamOffset;
+    EXPECT_EQ(track->findSector(5, middle), track->getRawSector(8));
+    EXPECT_EQ(track->findSector(5, middle + 1), track->getRawSector(9));
+
     for (uint8_t i = 0; i < 16; i++)
     {
         if (i != 4)
         {
-            EXPECT_EQ(track->sectorsOrderedRef[i], nullptr)
-                << "sectorsOrderedRef[" << (int)i << "] should be nullptr";
+            EXPECT_EQ(track->getSector(i), nullptr) << "getSector(" << (int)i << ") should be nullptr";
         }
     }
 }
 
-/// Test partial valid sectors (only half have valid sector numbers)
-TEST_F(WD1793_WriteCommands_Test, ReindexFromIDAM_Partial_Valid)
+/// Only half of the sectors carry TR-DOS numbers
+TEST_F(WD1793_WriteCommands_Test, Reindex_Partial_Valid)
 {
     DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
     DiskImage::Track* track = diskImage.getTrackForCylinderAndSide(0, 0);
     ASSERT_NE(track, nullptr);
 
-    // First 8 sectors valid (1-8), rest invalid (0)
     for (uint8_t i = 0; i < 16; i++)
     {
-        if (i < 8)
-        {
-            track->sectors[i].address_record.sector = i + 1;
-        }
-        else
-        {
-            track->sectors[i].address_record.sector = 0;  // Invalid
-        }
+        setPhysicalSectorNumber(track, i, (i < 8) ? (i + 1) : 0);
     }
 
-    // Perform reindexing
-    track->reindexFromIDAM();
+    track->reindex();
 
-    // Verify first 8 are mapped
     for (uint8_t i = 0; i < 8; i++)
     {
-        EXPECT_NE(track->sectorsOrderedRef[i], nullptr)
-            << "sectorsOrderedRef[" << (int)i << "] should be non-null";
+        EXPECT_NE(track->getSector(i), nullptr) << "getSector(" << (int)i << ") should be non-null";
     }
-
-    // Verify last 8 are nullptr
     for (uint8_t i = 8; i < 16; i++)
     {
-        EXPECT_EQ(track->sectorsOrderedRef[i], nullptr) << "sectorsOrderedRef[" << (int)i << "] should be nullptr";
+        EXPECT_EQ(track->getSector(i), nullptr) << "getSector(" << (int)i << ") should be nullptr";
     }
 }
 
-/// endregion </reindexFromIDAM Tests>
+/// A sector whose ID field was wiped out of the stream disappears from the index entirely
+TEST_F(WD1793_WriteCommands_Test, Reindex_ErasedIdField)
+{
+    DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
+    DiskImage::Track* track = diskImage.getTrackForCylinderAndSide(0, 0);
+    ASSERT_NE(track, nullptr);
+
+    DiskImage::Sector* victim = track->getSector(3);
+    ASSERT_NE(victim, nullptr);
+    std::memset(track->rawData() + victim->idamOffset - 3, 0x4E, 10);  // A1 A1 A1 FE C H R N CRC -> gap
+
+    track->reindex();
+
+    EXPECT_EQ(track->sectorCount(), 15u);
+    EXPECT_EQ(track->getSector(3), nullptr);
+}
+
+/// endregion </reindex Tests>
 
 /// region <processWriteTrack Tests>
 
@@ -422,7 +419,6 @@ TEST_F(WD1793_WriteCommands_Test, WriteSector_Stops_At_SectorSize)
     // Format track first so sectors are readable
     DiskImage::Track* track = diskImage.getTrackForCylinderAndSide(0, 0);
     track->formatTrack(0, 0);
-    track->reindexSectors();
 
     fdc.getDrive()->insertDisk(&diskImage);
 
@@ -475,7 +471,6 @@ TEST_F(WD1793_WriteCommands_Test, DISABLED_WriteSector_Buffer_Alignment)
     // Format track first
     DiskImage::Track* track = diskImage.getTrackForCylinderAndSide(0, 0);
     track->formatTrack(0, 0);
-    track->reindexSectors();
 
     fdc.getDrive()->insertDisk(&diskImage);
 
@@ -515,9 +510,8 @@ TEST_F(WD1793_WriteCommands_Test, DISABLED_WriteSector_Buffer_Alignment)
     // Verify we wrote all 256 bytes
     EXPECT_EQ(bytesWritten, 256) << "Should have written 256 bytes";
     
-    // Verify data was written to correct sector using direct sector access
-    // Note: Use sectors array directly since reindexSectors uses default 1:1 mapping
-    uint8_t* sectorData = track->sectors[targetSector - 1].data;
+    // Verify data was written to the correct sector (physical position == sector number - 1 for the 1:1 layout)
+    uint8_t* sectorData = track->getRawSector(targetSector - 1)->data;
 
     EXPECT_EQ(sectorData[0], 0xAA) << "First byte should be 0xAA";
     EXPECT_EQ(sectorData[255], static_cast<uint8_t>(0xAA + 255)) << "Last byte should match pattern";

@@ -120,7 +120,7 @@ def test_trdos_format(self, api_client, pentagon_emulator):
 
 ```bash
 # Build automation modules
-cd /Volumes/TB4-4Tb/Projects/Test/unreal-ng
+cd .
 cmake --build build --target automation-webapi automation-lua
 
 # Run WebAPI tests

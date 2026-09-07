@@ -194,7 +194,7 @@ uint64_t TRDOSTestHelper::directFormatDisk(uint8_t diskType, uint64_t maxCycles)
         std::cout << "[BREAKPOINT] Hit at PC=0x" << std::hex << _z80->pc << std::dec << "\n";
         // Note: Do NOT resume here - let the test loop handle it
     };
-    mc.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
+    uint64_t handlerId = mc.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
     std::cout << "[STEP 5] MessageCenter observer registered ✓\n";
     
     // ========================================================================
@@ -235,7 +235,7 @@ uint64_t TRDOSTestHelper::directFormatDisk(uint8_t diskType, uint64_t maxCycles)
     std::cout << "[STEP 6] Emulator paused (alternate detection): " << (_emulator->IsPaused() ? "YES" : "NO") << "\n";
     
     // Cleanup: remove observer and breakpoint
-    mc.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
+    mc.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
     bpManager->RemoveBreakpointByID(bpId);
     
     // ========================================================================

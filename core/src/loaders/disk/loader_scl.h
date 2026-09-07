@@ -2,6 +2,9 @@
 
 #include <stdafx.h>
 
+#include <string>
+#include <vector>
+
 #include "loaders/disk/loader_trd.h"
 
 #if defined(_MSC_VER)
@@ -49,6 +52,7 @@ protected:
     std::string _filepath;
 
     DiskImage* _diskImage = nullptr;
+    std::vector<std::string> _warnings;
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -69,6 +73,9 @@ public:
     bool writeImage(const std::string& path);  // Save As - write to specified path
     DiskImage* getImage();
     void setImage(DiskImage* diskImage);
+
+    /// Diagnostics collected by the last writeImage call (refusal reason, skipped files)
+    const std::vector<std::string>& lastWarnings() const { return _warnings; }
     /// endregion </Basic methods>
 
     /// region <Helper methods>

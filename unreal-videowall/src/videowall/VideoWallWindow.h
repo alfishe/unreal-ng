@@ -107,6 +107,9 @@ private:
     /// Toggle screen HQ feature for all tiles (Cmd+S)
     void toggleScreenHQForAllTiles();
 
+    /// Toggle fast tape loading feature for all tiles (Ctrl+T)
+    void toggleFastTapeForAllTiles();
+
     /// Open Video Wall recording dialog (Cmd+R / Ctrl+R)
     void handleVideoRecordingRequested();
 
@@ -159,6 +162,9 @@ private:
 
     // Screen HQ toggle state (default: enabled)
     bool _screenHQEnabled = true;
+
+    // Fast tape loading toggle state (default: enabled — mirrors the feature default)
+    bool _fastTapeEnabled = true;
 
     // Single sync mode state
     bool _singleSyncMode = false;

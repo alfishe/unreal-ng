@@ -82,7 +82,7 @@ Line 219: "PC register is zero" (was incorrectly "not zero")
 |------|-------------|
 | `core/src/emulator/memory/memory.h` | Added BANK_INVALID sentinel |
 | `core/src/loaders/snapshot/loader_z80.cpp` | Bounds checking, validation |
-| `core/tests/loaders/loader_z80_test.cpp` | 14 test cases |
+| `core/tests/loaders/snapshot/loader_z80_test.cpp` | 14 test cases |
 
 ## Test Fixtures
 

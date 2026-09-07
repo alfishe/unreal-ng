@@ -137,7 +137,7 @@ TEST_F(BreakpointManager_test, executionBreakpoint)
         breakpointTriggered.store(true);
         emulator->Resume();  // Resume via Emulator (single source of truth)
     };
-    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
+    uint64_t handlerId = messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
 
     /// endregion </Initialize>
 
@@ -157,7 +157,7 @@ TEST_F(BreakpointManager_test, executionBreakpoint)
     }
 
     // Remove observer BEFORE checking result to prevent callback accessing invalid memory
-    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
+    messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
 
     if (!breakpointTriggered.load())
     {
@@ -219,7 +219,7 @@ TEST_F(BreakpointManager_test, memoryReadBreakpoint)
         breakpointTriggered.store(true);
         emulator->Resume();  // Resume via Emulator (single source of truth)
     };
-    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
+    uint64_t handlerId = messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
 
     /// endregion </Initialize>
 
@@ -240,7 +240,7 @@ TEST_F(BreakpointManager_test, memoryReadBreakpoint)
     }
 
     // Remove observer BEFORE checking result to prevent callback accessing invalid memory
-    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
+    messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
 
     if (!breakpointTriggered.load())
     {
@@ -302,7 +302,7 @@ TEST_F(BreakpointManager_test, memoryWriteBreakpoint)
         breakpointTriggered.store(true);
         emulator->Resume();  // Resume via Emulator (single source of truth)
     };
-    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
+    uint64_t handlerId = messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
 
     /// endregion </Initialize>
 
@@ -323,7 +323,7 @@ TEST_F(BreakpointManager_test, memoryWriteBreakpoint)
     }
 
     // Remove observer BEFORE checking result to prevent callback accessing invalid memory
-    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
+    messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
 
     if (!breakpointTriggered.load())
     {
@@ -379,7 +379,7 @@ TEST_F(BreakpointManager_test, portInBreakpoint)
         breakpointTriggered.store(true);
         emulator->Resume();  // Resume via Emulator (single source of truth)
     };
-    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
+    uint64_t handlerId = messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
 
     /// endregion </Initialize>
 
@@ -405,7 +405,7 @@ TEST_F(BreakpointManager_test, portInBreakpoint)
     }
 
     // Remove observer BEFORE checking result to prevent callback accessing invalid memory
-    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
+    messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
 
     if (!breakpointTriggered.load())
     {
@@ -455,7 +455,7 @@ TEST_F(BreakpointManager_test, portOutBreakpoint)
         breakpointTriggered.store(true);
         emulator->Resume();  // Resume via Emulator (single source of truth)
     };
-    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
+    uint64_t handlerId = messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
 
     /// endregion </Initialize>
 
@@ -476,7 +476,7 @@ TEST_F(BreakpointManager_test, portOutBreakpoint)
     }
 
     // Remove observer BEFORE checking result to prevent callback accessing invalid memory
-    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
+    messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
 
     if (!breakpointTriggered.load())
     {
@@ -1141,7 +1141,7 @@ TEST_F(BreakpointManager_test, ROMPagingBeforeBreakpointDispatch)
         breakpointTriggered.store(true);
         emulator->Resume();
     };
-    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
+    uint64_t handlerId = messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
 
     /// endregion </Initialize>
 
@@ -1172,7 +1172,7 @@ TEST_F(BreakpointManager_test, ROMPagingBeforeBreakpointDispatch)
     }
 
     // Remove observer before checking result
-    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
+    messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
 
     // THE CRITICAL ASSERTION:
     // If Hazard #144 is NOT fixed: breakpoint won't fire (ROM paging after dispatch)

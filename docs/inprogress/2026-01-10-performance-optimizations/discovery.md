@@ -329,5 +329,5 @@ Before implementing fixes, the following requirements should be clarified:
 - [Feature Management System](docs/emulator/design/core/feature-management.md)
 - [FeatureManager implementation](core/src/base/featuremanager.cpp)
 - [MainLoop (GIF debug code)](core/src/emulator/mainloop.cpp)
-- [Videowall profiler analysis KI](file:///Users/dev/.gemini/antigravity/knowledge/unreal_ng_system_architecture/artifacts/verification/videowall_profiler_analysis_2026_01.md)
+- Videowall profiler analysis KI (external Gemini knowledge artifact — not in repo, absolute path removed)
 

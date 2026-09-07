@@ -63,7 +63,7 @@ Add a new non-blocking dialog to the unreal-qt UI for configuring Z80 interrupt 
 
 1. **Build the updated unreal-qt application:**
    ```bash
-   cd /Volumes/TB4-4Tb/Projects/Test/unreal-ng/build-unified
+   cd build-unified
    cmake --build . --target unreal-qt
    ```
 

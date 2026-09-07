@@ -378,6 +378,17 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
                     _videoHeight = rd.screenHeight;
                 }
             }
+            else if (_captureRegion == VideoCaptureRegion::Viewport)
+            {
+                // Capture viewport at recording start (locked for duration)
+                const DisplayViewport& vp = _context->pScreen->GetDisplayViewport();
+                _viewportCropLeft = vp.cropLeft;
+                _viewportCropRight = vp.cropRight;
+                _viewportCropTop = vp.cropTop;
+                _viewportCropBottom = vp.cropBottom;
+                _videoWidth = vp.GetDisplayWidth(fb.width);
+                _videoHeight = vp.GetDisplayHeight(fb.height);
+            }
         }
         else
         {
@@ -389,8 +400,13 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
 
     if (_videoEnabled)
     {
+        const char* regionStr = "full frame";
+        if (_captureRegion == VideoCaptureRegion::MainScreen)
+            regionStr = "screen only";
+        else if (_captureRegion == VideoCaptureRegion::Viewport)
+            regionStr = "viewport";
         MLOGINFO("  Resolution: %ux%u @ %.2f fps (%s, scale %ux)", _videoWidth, _videoHeight, _videoFrameRate,
-                 _captureRegion == VideoCaptureRegion::MainScreen ? "screen only" : "full frame", _scaleFactor);
+                 regionStr, _scaleFactor);
     }
     MLOGINFO("  Audio: %u Hz, %u channels", _audioSampleRate, _audioChannels);
 
@@ -715,7 +731,7 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
         }
     }
 
-    // Crop to the main screen area (no border) when requested
+    // Crop framebuffer when requested (MainScreen or Viewport modes)
     const FramebufferDescriptor* toEncode = &framebuffer;
     FramebufferDescriptor cropped;
     if (_captureRegion == VideoCaptureRegion::MainScreen && _context->pScreen && framebuffer.memoryBuffer)
@@ -739,6 +755,35 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
             cropped.videoMode = framebuffer.videoMode;
             cropped.width = rd.screenWidth;
             cropped.height = rd.screenHeight;
+            cropped.memoryBuffer = _cropBuffer.data();
+            cropped.memoryBufferSize = _cropBuffer.size();
+            toEncode = &cropped;
+        }
+    }
+    else if (_captureRegion == VideoCaptureRegion::Viewport && framebuffer.memoryBuffer)
+    {
+        // Use viewport crop offsets captured at recording start
+        uint16_t croppedWidth = framebuffer.width - _viewportCropLeft - _viewportCropRight;
+        uint16_t croppedHeight = framebuffer.height - _viewportCropTop - _viewportCropBottom;
+
+        if (croppedWidth > 0 && croppedHeight > 0 &&
+            _viewportCropLeft + croppedWidth <= framebuffer.width &&
+            _viewportCropTop + croppedHeight <= framebuffer.height)
+        {
+            size_t rowBytes = static_cast<size_t>(croppedWidth) * 4;
+            _cropBuffer.resize(rowBytes * croppedHeight);
+
+            const uint8_t* src = framebuffer.memoryBuffer +
+                (static_cast<size_t>(_viewportCropTop) * framebuffer.width + _viewportCropLeft) * 4;
+            for (uint16_t y = 0; y < croppedHeight; y++)
+            {
+                memcpy(_cropBuffer.data() + y * rowBytes, src, rowBytes);
+                src += static_cast<size_t>(framebuffer.width) * 4;
+            }
+
+            cropped.videoMode = framebuffer.videoMode;
+            cropped.width = croppedWidth;
+            cropped.height = croppedHeight;
             cropped.memoryBuffer = _cropBuffer.data();
             cropped.memoryBufferSize = _cropBuffer.size();
             toEncode = &cropped;

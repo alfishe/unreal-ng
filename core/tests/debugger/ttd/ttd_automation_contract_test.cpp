@@ -33,6 +33,8 @@
 #endif
 #include <vector>
 
+#include "_helpers/testpathhelper.h"
+
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -415,9 +417,8 @@ TEST_F(TTD_Automation_Contract_Test, Dump_SerializeSession_RoundTrip)
     const size_t checkpointCount = _ttd->GetCheckpointCount();
     ASSERT_GT(checkpointCount, 0u);
 
-    // Serialize to a temp file
-    const std::string tmpfile =
-        (std::filesystem::temp_directory_path() / "ttd_contract_dump.bin").string();
+    // Serialize to a scratch file
+    const std::string tmpfile = TestPathHelper::GetUniqueTestScratchPath("ttd_contract_dump.bin");
 
     {
         std::ofstream out(tmpfile, std::ios::binary);

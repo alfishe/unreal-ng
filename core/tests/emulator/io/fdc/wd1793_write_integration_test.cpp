@@ -6,7 +6,7 @@
 #include <cstring>
 #include <iostream>
 
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 #include "_helpers/testtiminghelper.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
@@ -186,37 +186,31 @@ TEST_F(WD1793_WriteIntegration_Test, WriteTrack_Stops_At_6250_Bytes)
     EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_BUSY) << "BUSY should be cleared";
 }
 
-/// Test Format → MFM Reindex → Read sector sequence
-/// Simplified test - verify reindexFromIDAM is called after format
+/// Test Format → reindex → sector lookup sequence
+/// The index is rebuilt from the stream: a TR-DOS 1:2 interleave written to the track is found by sector number
 TEST_F(WD1793_WriteIntegration_Test, Format_MFMReindex_Read)
 {
-    // Pre-create disk with formatted track to test reindexing
     DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
     DiskImage::Track* track = diskImage.getTrackForCylinderAndSide(0, 0);
     ASSERT_NE(track, nullptr);
     
-    // Set up sectors with TR-DOS 1:2 interleave pattern directly
+    // Lay the track out with the TR-DOS 1:2 interleave pattern (physical order of sector numbers)
     const uint8_t trdosPattern[16] = {1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15, 8, 16};
-    
-    for (uint8_t physIdx = 0; physIdx < 16; physIdx++)
-    {
-        track->sectors[physIdx].address_record.sector = trdosPattern[physIdx];
-        track->sectors[physIdx].address_record.cylinder = 0;
-        track->sectors[physIdx].address_record.head = 0;
-    }
+    track->formatTrack(0, 0, DiskImage::TrackFormatSpec::trdos(trdosPattern, 16));
 
-    // Call reindexFromIDAM to rebuild sector mapping
-    track->reindexFromIDAM();
+    // Rebuild sector mapping from the stream
+    track->reindex();
+    ASSERT_EQ(track->sectorCount(), 16u);
 
-    // Verify sector 9 (which is at physical position 1 in TR-DOS pattern) is accessible at index 8
-    ASSERT_NE(track->sectorsOrderedRef[8], nullptr) << "Sector 9 should be mapped at index 8";
-    EXPECT_EQ(track->sectorsOrderedRef[8]->address_record.sector, 9) 
-        << "sectorsOrderedRef[8] should point to sector 9 (at physical position 1)";
+    // Sector 9 sits at physical position 1 and is found by its number
+    ASSERT_NE(track->getSector(8), nullptr) << "Sector 9 should be mapped at index 8";
+    EXPECT_EQ(track->getSector(8)->number(), 9);
+    EXPECT_EQ(track->getSector(8), track->getRawSector(1)) << "getSector(8) should point to sector 9 (at physical position 1)";
     
-    // Verify sector 1 at index 0
-    ASSERT_NE(track->sectorsOrderedRef[0], nullptr) << "Sector 1 should be mapped at index 0";
-    EXPECT_EQ(track->sectorsOrderedRef[0]->address_record.sector, 1)
-        << "sectorsOrderedRef[0] should point to sector 1";
+    // Sector 1 at physical position 0
+    ASSERT_NE(track->getSector(0), nullptr) << "Sector 1 should be mapped at index 0";
+    EXPECT_EQ(track->getSector(0)->number(), 1);
+    EXPECT_EQ(track->getSector(0), track->getRawSector(0));
 }
 
 /// Test that max track size (6250 bytes) matches simulated index pulse timing
@@ -282,8 +276,7 @@ TEST_F(WD1793_WriteIntegration_Test, WriteSector_Then_ReadSector)
     
     // Pre-format track so sector structure exists
     DiskImage::Track* track = diskImage.getTrackForCylinderAndSide(0, 0);
-    track->formatTrack(0, 0);
-    track->reindexSectors();  // Standard 1:1 mapping
+    track->formatTrack(0, 0);  // Standard 1:1 layout, index rebuilt from the stream
     
     fdc.getDrive()->insertDisk(&diskImage);
 
@@ -341,7 +334,6 @@ TEST_F(WD1793_WriteIntegration_Test, WriteSector_Buffer_Alignment)
     // Pre-format track
     DiskImage::Track* track = diskImage.getTrackForCylinderAndSide(0, 0);
     track->formatTrack(0, 0);
-    track->reindexSectors();
     
     fdc.getDrive()->insertDisk(&diskImage);
 
