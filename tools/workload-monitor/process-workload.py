@@ -868,15 +868,13 @@ def render_dashboard(
 
     lines.append(divider)
 
-    # Calculate dynamic thread allocation based on remaining terminal height
-    overhead_lines = len(lines) + 6
-    max_thread_rows = max(1, term_lines - overhead_lines)
-    effective_top_threads = min(top_threads, max_thread_rows)
+    # Use requested top_threads directly (terminal height limiting was too aggressive)
+    effective_top_threads = top_threads
 
     # Thread table
     active_count = sum(1 for t in sample.threads if t.single_core_pct > 0.0)
     lines.append(
-        f"{colors.BOLD}THREAD BREAKDOWN (by TID):{colors.RESET} "
+        f"{colors.BOLD}THREAD BREAKDOWN:{colors.RESET} "
         f"{colors.DIM}({active_count} active, showing {min(effective_top_threads, len(sample.threads))}){colors.RESET}"
     )
 
@@ -886,18 +884,38 @@ def render_dashboard(
     )
     lines.append(f"  {colors.DIM}{'─' * (width - 4)}{colors.RESET}")
 
-    # Always include threads with any CPU activity; filter zero-activity threads unless show_all_threads
-    if show_all_threads:
-        displayed_threads = list(sample.threads)
-    else:
-        # Include all threads with measurable activity (>0%), then fill remaining slots with idle threads
-        active = [t for t in sample.threads if t.single_core_pct > 0.0]
-        idle = [t for t in sample.threads if t.single_core_pct == 0.0]
-        displayed_threads = active + idle
+    # Sort threads by importance: main > automation/service > audio > message > emulator > pooled > other
+    THREAD_PRIORITY_PATTERNS = [
+        (0, ("main",)),                              # Main thread
+        (1, ("automation", "cli-")),                 # Automation/CLI services
+        (2, ("miniaudio", "audio")),                 # Audio
+        (3, ("message",)),                           # Message center
+        (5, ("pooled",)),                            # Pooled workers (lower than emulator)
+    ]
+    CATEGORY_PRIORITIES = {"Emulator": 4, "Tile": 4}
+    DEFAULT_PRIORITY = 6
 
-    # Sort by thread ID for stable display (prevents jumping)
-    displayed_threads.sort(key=lambda t: t.tid)
-    displayed_threads = displayed_threads[:effective_top_threads]
+    def thread_sort_key(t: ThreadSample) -> tuple:
+        name_lower = t.name.lower()
+        for priority, patterns in THREAD_PRIORITY_PATTERNS:
+            if any(p in name_lower for p in patterns):
+                return (priority, t.tid)
+        if t.category in CATEGORY_PRIORITIES:
+            return (CATEGORY_PRIORITIES[t.category], t.tid)
+        return (DEFAULT_PRIORITY, t.tid)
+
+    all_threads = sorted(sample.threads, key=thread_sort_key)
+    active = [t for t in all_threads if t.single_core_pct > 0.0]
+    idle = [t for t in all_threads if t.single_core_pct == 0.0]
+
+    if show_all_threads:
+        displayed_threads = (active + idle)[:effective_top_threads]
+    else:
+        # Show all active threads first, then fill remaining slots with idle threads
+        displayed_threads = active[:effective_top_threads]
+        remaining_slots = effective_top_threads - len(displayed_threads)
+        if remaining_slots > 0:
+            displayed_threads.extend(idle[:remaining_slots])
 
     if not displayed_threads:
         lines.append(f"  {colors.DIM}(no thread activity recorded in this sample window){colors.RESET}")
