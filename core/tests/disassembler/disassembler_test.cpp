@@ -237,7 +237,7 @@ TEST_F(Disassembler_Test, disassembleSingleCommand)
         { 0x01, 0xEF, 0xBE },         // ld bc,#BEEF
         { 0xCB, 0x2F },               // sra a
         { 0xFD, 0x36, 0xBA, 0x13 },   // ld (iy+#BA),#13
-        { 0x38, 0x35 },               // jr c,#35
+        { 0x38, 0x35 },               // jr c,#0037 (relative jumps show the target: 0 + 2 + 0x35)
     };
 
     std::vector<std::string> referenceValues =
@@ -246,7 +246,7 @@ TEST_F(Disassembler_Test, disassembleSingleCommand)
         "ld bc,#BEEF",
         "sra a",
         "ld (iy+#BA),#13",
-        "jr c,#35",
+        "jr c,#0037",
     };
 
     int i = 0;

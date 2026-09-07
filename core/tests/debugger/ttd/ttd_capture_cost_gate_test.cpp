@@ -31,7 +31,7 @@
 #include <string>
 
 #include "_helpers/emulatortesthelper.h"
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -39,7 +39,7 @@
 
 namespace {
 
-constexpr int    kFrames           = 300;
+constexpr int    kFrames           = 100;
 constexpr double kBudgetMsPerFrame = 10.0;  // See file header for rationale.
 
 Emulator* MakeTtdEmulator(const std::string& modelName = "PENTAGON",

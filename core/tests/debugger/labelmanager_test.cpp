@@ -307,3 +307,160 @@ TEST_F(LabelManager_test, SaveLabels)
     // Clean up
     std::filesystem::remove(tempFilePath);
 }
+
+// ============================================================================
+// Filtering API Tests
+// ============================================================================
+
+TEST_F(LabelManager_test, GetAllLabelsAtAddress)
+{
+    // Add multiple labels at the same address (different banks)
+    _labelManager->AddLabel("bank0_routine", 0xC000, 0, 0x0000, "code", "BANKS");
+    _labelManager->AddLabel("bank5_routine", 0xC000, 5, 0x0000, "code", "BANKS");
+    _labelManager->AddLabel("other_label", 0x8000, UINT16_MAX, UINT16_MAX, "code", "MAIN");
+
+    auto labels = _labelManager->GetAllLabelsAtAddress(0xC000);
+    EXPECT_EQ(labels.size(), 2);
+
+    labels = _labelManager->GetAllLabelsAtAddress(0x8000);
+    EXPECT_EQ(labels.size(), 1);
+
+    labels = _labelManager->GetAllLabelsAtAddress(0x9000);
+    EXPECT_EQ(labels.size(), 0);
+}
+
+TEST_F(LabelManager_test, GetLabelsByModule)
+{
+    _labelManager->AddLabel("main", 0x8000, UINT16_MAX, UINT16_MAX, "code", "MAIN");
+    _labelManager->AddLabel("init", 0x8050, UINT16_MAX, UINT16_MAX, "code", "MAIN");
+    _labelManager->AddLabel("draw_sprite", 0x9000, UINT16_MAX, UINT16_MAX, "code", "GFX");
+    _labelManager->AddLabel("sprite_data", 0x9100, UINT16_MAX, UINT16_MAX, "data", "GFX");
+    _labelManager->AddLabel("play_sound", 0xA000, UINT16_MAX, UINT16_MAX, "code", "SOUND");
+
+    auto mainLabels = _labelManager->GetLabelsByModule("MAIN");
+    EXPECT_EQ(mainLabels.size(), 2);
+
+    auto gfxLabels = _labelManager->GetLabelsByModule("GFX");
+    EXPECT_EQ(gfxLabels.size(), 2);
+
+    auto soundLabels = _labelManager->GetLabelsByModule("SOUND");
+    EXPECT_EQ(soundLabels.size(), 1);
+
+    auto emptyLabels = _labelManager->GetLabelsByModule("NONEXISTENT");
+    EXPECT_EQ(emptyLabels.size(), 0);
+}
+
+TEST_F(LabelManager_test, GetLabelsByBank)
+{
+    _labelManager->AddLabel("bank0_code", 0xC000, 0, 0x0000, "code", "BANKS");
+    _labelManager->AddLabel("bank0_data", 0xC100, 0, 0x0100, "data", "BANKS");
+    _labelManager->AddLabel("bank5_code", 0xC000, 5, 0x0000, "code", "BANKS");
+    _labelManager->AddLabel("rom_routine", 0x0D6B, 0, 0x0D6B, "code", "ROM");
+    // Set ROM type for rom_routine
+    auto romLabel = _labelManager->GetLabelByName("rom_routine");
+    romLabel->setBankTypeROM();
+
+    // Get all labels in bank 0 (both RAM and ROM)
+    auto bank0Labels = _labelManager->GetLabelsByBank(0);
+    EXPECT_EQ(bank0Labels.size(), 3);
+
+    // Get only RAM labels in bank 0
+    auto bank0RamLabels = _labelManager->GetLabelsByBank(0, BANK_RAM);
+    EXPECT_EQ(bank0RamLabels.size(), 2);
+
+    // Get only ROM labels in bank 0
+    auto bank0RomLabels = _labelManager->GetLabelsByBank(0, BANK_ROM);
+    EXPECT_EQ(bank0RomLabels.size(), 1);
+
+    auto bank5Labels = _labelManager->GetLabelsByBank(5);
+    EXPECT_EQ(bank5Labels.size(), 1);
+}
+
+TEST_F(LabelManager_test, GetLabelsByType)
+{
+    _labelManager->AddLabel("main", 0x8000, UINT16_MAX, UINT16_MAX, "code", "MAIN");
+    _labelManager->AddLabel("loop", 0x8050, UINT16_MAX, UINT16_MAX, "code", "MAIN");
+    _labelManager->AddLabel("score", 0x5C00, UINT16_MAX, UINT16_MAX, "data", "VARS");
+    _labelManager->AddLabel("lives", 0x5C03, UINT16_MAX, UINT16_MAX, "data", "VARS");
+    _labelManager->AddLabel("MAX_LIVES", 0x5C10, UINT16_MAX, UINT16_MAX, "const", "VARS");
+
+    auto codeLabels = _labelManager->GetLabelsByType("code");
+    EXPECT_EQ(codeLabels.size(), 2);
+
+    auto dataLabels = _labelManager->GetLabelsByType("data");
+    EXPECT_EQ(dataLabels.size(), 2);
+
+    auto constLabels = _labelManager->GetLabelsByType("const");
+    EXPECT_EQ(constLabels.size(), 1);
+}
+
+TEST_F(LabelManager_test, GetLabelsInRange)
+{
+    _labelManager->AddLabel("early", 0x4000, UINT16_MAX, UINT16_MAX, "code", "TEST");
+    _labelManager->AddLabel("start", 0x8000, UINT16_MAX, UINT16_MAX, "code", "TEST");
+    _labelManager->AddLabel("middle", 0x8500, UINT16_MAX, UINT16_MAX, "code", "TEST");
+    _labelManager->AddLabel("end", 0x9000, UINT16_MAX, UINT16_MAX, "code", "TEST");
+    _labelManager->AddLabel("late", 0xC000, UINT16_MAX, UINT16_MAX, "code", "TEST");
+
+    auto rangeLabels = _labelManager->GetLabelsInRange(0x8000, 0x9000);
+    EXPECT_EQ(rangeLabels.size(), 3);
+
+    rangeLabels = _labelManager->GetLabelsInRange(0x8000, 0x8000);
+    EXPECT_EQ(rangeLabels.size(), 1);
+
+    rangeLabels = _labelManager->GetLabelsInRange(0xA000, 0xB000);
+    EXPECT_EQ(rangeLabels.size(), 0);
+}
+
+TEST_F(LabelManager_test, GetLabelsWithCombinedFilter)
+{
+    _labelManager->AddLabel("main", 0x8000, UINT16_MAX, UINT16_MAX, "code", "MAIN");
+    _labelManager->AddLabel("init", 0x8050, UINT16_MAX, UINT16_MAX, "code", "MAIN");
+    _labelManager->AddLabel("draw", 0x9000, UINT16_MAX, UINT16_MAX, "code", "GFX");
+    _labelManager->AddLabel("sprite_data", 0x9100, UINT16_MAX, UINT16_MAX, "data", "GFX");
+    _labelManager->AddLabel("inactive_label", 0x9200, UINT16_MAX, UINT16_MAX, "code", "GFX");
+    auto inactive = _labelManager->GetLabelByName("inactive_label");
+    inactive->active = false;
+
+    // Filter by module
+    LabelManager::LabelFilter filter;
+    filter.module = "GFX";
+    auto results = _labelManager->GetLabels(filter);
+    EXPECT_EQ(results.size(), 3);
+
+    // Filter by module and type
+    filter.type = "code";
+    results = _labelManager->GetLabels(filter);
+    EXPECT_EQ(results.size(), 2);
+
+    // Filter by module, type, and active only
+    filter.activeOnly = true;
+    results = _labelManager->GetLabels(filter);
+    EXPECT_EQ(results.size(), 1);
+    EXPECT_EQ(results[0]->name, "draw");
+
+    // Filter by address range
+    LabelManager::LabelFilter rangeFilter;
+    rangeFilter.addressFrom = 0x8000;
+    rangeFilter.addressTo = 0x8100;
+    results = _labelManager->GetLabels(rangeFilter);
+    EXPECT_EQ(results.size(), 2);
+}
+
+TEST_F(LabelManager_test, GetLabelsFilterByBank)
+{
+    _labelManager->AddLabel("bank0", 0xC000, 0, 0x0000, "code", "BANKS");
+    _labelManager->AddLabel("bank5", 0xC000, 5, 0x0000, "code", "BANKS");
+    _labelManager->AddLabel("anybank", 0x8000, UINT16_MAX, UINT16_MAX, "code", "MAIN");
+
+    LabelManager::LabelFilter filter;
+    filter.bank = 0;
+    auto results = _labelManager->GetLabels(filter);
+    EXPECT_EQ(results.size(), 1);
+    EXPECT_EQ(results[0]->name, "bank0");
+
+    filter.bank = 5;
+    results = _labelManager->GetLabels(filter);
+    EXPECT_EQ(results.size(), 1);
+    EXPECT_EQ(results[0]->name, "bank5");
+}

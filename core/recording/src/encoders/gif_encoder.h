@@ -3,7 +3,7 @@
 #include <string>
 
 #include "encoder_base.h"
-#include "encoder_config.h"
+#include "encoderconfig.h"
 #include "3rdparty/gif/gif.h"
 
 /// @brief GIF Animation Encoder

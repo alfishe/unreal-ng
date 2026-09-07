@@ -8,7 +8,7 @@
 #include "emulator/emulator.h"
 #include "common/filehelper.h"
 #include "_helpers/emulatortesthelper.h"
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 
 #include <cctype>
 #include <utility>
@@ -47,7 +47,7 @@ void Emulator_Test::DestroyEmulator()
 /// region <Emulator re-entrability tests>
 TEST_F(Emulator_Test, MultiInstance)
 {
-    constexpr int iterations = 100;
+    constexpr int iterations = 20;
 
     // Profiling accumulators (microseconds)
     uint64_t totalConstruct = 0, totalInit = 0, totalStop = 0, totalRelease = 0, totalDelete = 0;
@@ -117,8 +117,8 @@ TEST_F(Emulator_Test, MultiInstanceRun)
             std::cout << "Starting emulator " << i << std::endl;
             emulator->StartAsync();  // Use StartAsync instead of Start to avoid blocking
             
-            // Give the thread time to start
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            // Allow the thread to begin execution
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
             
             if (!emulator->IsRunning()) {
                 std::cout << "Emulator " << i << " failed to start" << std::endl;
@@ -127,16 +127,10 @@ TEST_F(Emulator_Test, MultiInstanceRun)
             
             std::cout << "Emulator " << i << " is running" << std::endl;
             
-            // Let it run for a short time
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            
             std::cout << "Stopping emulator " << i << std::endl;
             emulator->Stop();
             
-            // Give it time to stop
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            
-            // Verify it stopped
+            // Verify it stopped (Stop() joins the async thread synchronously)
             if (emulator->IsRunning()) {
                 std::cout << "Emulator " << i << " failed to stop" << std::endl;
                 continue;

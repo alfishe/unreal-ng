@@ -664,9 +664,15 @@ protected:
     int32_t _bytesToRead = 0;           // How many more bytes to read from the disk
     int32_t _bytesToWrite = 0;          // How many more bytes to write to the disk
     bool _useDeletedDataMark = false;   // True = write F8 (Deleted Data Mark), False = write FB (Normal Data Mark)
+    bool _multiSectorOverrun = false;   // True when a multiple-sector continuation ran past the last sector on the track - the command ends cleanly there (no Record Not Found)
     size_t _rawDataBufferIndex = 0;      // Current position in raw data buffer for track read/write
     uint16_t _crcAccumulator = 0xFFFF;   // CRC accumulator for track formatting operations
     DiskImage::Track* _writeTrackTarget = nullptr;  // Track being written by Write Track command (for reindexing)
+    DiskImage::Sector* _currentSector = nullptr;    // Sector matched by the last ID search (Type II / READ ADDRESS)
+    size_t _writeTrackLength = DiskImage::RawTrack::RAW_TRACK_SIZE;  // Length of the track being written (WRITE TRACK)
+    DiskImage::Encoding _writeTrackEncoding = DiskImage::Encoding::MFM;  // Density the track is being written with
+    size_t _tstatesPerByte = WD93_TSTATES_PER_FDC_BYTE;  // Byte cell of the track in use (112 T MFM 6250, 224 T FM 3125)
+    size_t _rotationalDelayTStates = 0;             // Byte cells between the head and the data field of the matched sector
     size_t _crcStartPosition = 0;        // Start position for CRC calculation (set on F5 sync byte)
 
     // FDD state
@@ -837,6 +843,46 @@ protected:
     void processStep();
     void processVerify();
     void processSearchID();
+
+    /// Density selected by the host through Beta-128 port #FF bit 6 (0 = MFM / double, 1 = FM / single)
+    bool isDoubleDensity() const { return (_beta128Register & BETA_CMD_DENSITY) == 0; }
+    DiskImage::Encoding controllerEncoding() const
+    {
+        return isDoubleDensity() ? DiskImage::Encoding::MFM : DiskImage::Encoding::FM;
+    }
+
+    /// Byte cell duration for the given track: one revolution (200 ms) spread over its bytes.
+    /// 6250-byte MFM track => 112 T-states (32 us), 3125-byte FM track => 224 T-states (64 us).
+    size_t byteCellTStates(const DiskImage::Track& track) const
+    {
+        const size_t bytes = track.rawSize() ? track.rawSize() : MAX_TRACK_LEN;
+        return DISK_ROTATION_PERIOD_TSTATES / bytes;
+    }
+
+    /// T-states until the data field of sector passes under the head (rotational latency of a Type II command)
+    size_t rotationalDelayToData(const DiskImage::Track& track, const DiskImage::Sector& sector) const
+    {
+        const size_t head = headByteOffset(track);
+        const size_t bytes = track.bytesUntil(sector, head) + (sector.hasData ? (sector.dataOffset - sector.idamOffset) : 0);
+        return bytes * byteCellTStates(track);
+    }
+
+    /// Head position on the track (stream offset) derived from the disk rotation phase
+    /// @param track Track under the head (its rawSize() defines the bytes per revolution)
+    size_t headByteOffset(const DiskImage::Track& track) const
+    {
+        const size_t phase = _time % DISK_ROTATION_PERIOD_TSTATES;  // T-states since the last index pulse
+        return static_cast<size_t>((static_cast<uint64_t>(phase) * track.rawSize()) / DISK_ROTATION_PERIOD_TSTATES);
+    }
+
+    /// Locate the sector a Type II command (READ / WRITE SECTOR) addresses on the given track:
+    /// cylinder must equal the track register, side must match when the side-compare flag is set,
+    /// sector number must equal the sector register. Search starts at the current head position.
+    /// @return Matched sector with a data field, or nullptr (Record Not Found / CRC error flags set)
+    DiskImage::Sector* locateSectorForType2(DiskImage::Track* track, uint8_t cylinder, uint8_t sectorNo);
+
+    /// True when the current track carries a sector with the given number (multi-sector continuation check)
+    bool hasSectorOnCurrentTrack(uint8_t sectorNo);
     void processReadSector();
     void processReadTrack();
     void processWriteTrack();
@@ -1145,6 +1191,14 @@ public:
     using WD1793::_rawDataBuffer;
     using WD1793::_rawDataBufferIndex;
     using WD1793::_crcStartPosition;
+    using WD1793::_writeTrackLength;
+    using WD1793::_currentSector;
+    using WD1793::_sectorSize;
+    using WD1793::_tstatesPerByte;
+    using WD1793::_rotationalDelayTStates;
+    using WD1793::headByteOffset;
+    using WD1793::controllerEncoding;
+    using WD1793::byteCellTStates;
     using WD1793::processWriteTrack;
     
     // Read Track / Wait Index regression test fields and methods

@@ -88,7 +88,12 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
             result = new PortDecoder_ATM3(context);
             break;
         default:
-            LOGERROR("PortDecoder::GetPortDecoderForModel - Unknown model: %d", model);
+            // Static method - no _logger member, so MLOGERROR is not available here.
+            // Route through the context's module logger with the same gating.
+            if (context && context->pModuleLogger)
+                context->pModuleLogger->Error(PlatformModulesEnum::MODULE_IO,
+                                              PlatformIOSubmodulesEnum::SUBMODULE_IO_GENERIC,
+                                              "PortDecoder::GetPortDecoderForModel - Unknown model: %d", model);
             throw std::logic_error(
                 StringHelper::Format("PortDecoder::GetPortDecoderForModel - unknown model %d", model));
             break;
@@ -450,7 +455,7 @@ uint8_t PortDecoder::Default_Port_FE_In(uint16_t port, [[maybe_unused]] uint16_t
     static const uint8_t invMaskEAR = 0b1011'1111;
 
     result &= invMaskEAR;
-    uint8_t inputEARSignal = _tape->handlePortIn() & maskEAR;
+    uint8_t inputEARSignal = _tape->handlePortIn(port) & maskEAR;
     result |= inputEARSignal;
 
     return result;

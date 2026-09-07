@@ -33,6 +33,10 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
 
     CONFIG& config = context->config;
 
+    // fast_tape is backed by the runtime 'fasttape' feature (the sole control
+    // plane of the fast-load mechanism) — same switch as 'feature fasttape on|off'
+    FeatureManager* featureManager = context->pFeatureManager;
+
     // If no arguments, show all settings (list)
     if (args.empty())
     {
@@ -42,7 +46,8 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         ss << NEWLINE;
 
         ss << "I/O Acceleration:" << NEWLINE;
-        ss << "  fast_tape     = " << (config.tape_traps ? "on" : "off") << "  (Fast tape loading)" << NEWLINE;
+        ss << "  fast_tape     = " << (featureManager && featureManager->isEnabled(Features::kFastTape) ? "on" : "off") << "  (Fast tape loading)" << NEWLINE;
+        ss << "  turbo_tape    = " << (featureManager && featureManager->isEnabled(Features::kTurboTape) ? "on" : "off") << "  (Turbo tape loading)" << NEWLINE;
         ss << "  fast_disk     = " << (config.wd93_nodelay ? "on" : "off") << "  (Fast disk I/O - no WD1793 delays)"
            << NEWLINE;
         ss << NEWLINE;
@@ -85,7 +90,8 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         ss << NEWLINE;
 
         ss << "I/O Acceleration:" << NEWLINE;
-        ss << "  fast_tape     = " << (config.tape_traps ? "on" : "off") << "  (Fast tape loading)" << NEWLINE;
+        ss << "  fast_tape     = " << (featureManager && featureManager->isEnabled(Features::kFastTape) ? "on" : "off") << "  (Fast tape loading)" << NEWLINE;
+        ss << "  turbo_tape    = " << (featureManager && featureManager->isEnabled(Features::kTurboTape) ? "on" : "off") << "  (Turbo tape loading)" << NEWLINE;
         ss << "  fast_disk     = " << (config.wd93_nodelay ? "on" : "off") << "  (Fast disk I/O - no WD1793 delays)"
            << NEWLINE;
         ss << NEWLINE;
@@ -121,8 +127,13 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
 
         if (settingName == "fast_tape")
         {
-            ss << "fast_tape = " << (config.tape_traps ? "on" : "off") << NEWLINE;
+            ss << "fast_tape = " << (featureManager && featureManager->isEnabled(Features::kFastTape) ? "on" : "off") << NEWLINE;
             ss << "Description: Fast tape loading (bypasses audio emulation)" << NEWLINE;
+        }
+        else if (settingName == "turbo_tape")
+        {
+            ss << "turbo_tape = " << (featureManager && featureManager->isEnabled(Features::kTurboTape) ? "on" : "off") << NEWLINE;
+            ss << "Description: Turbo tape loading (warp speed while a tape signal plays, custom loaders included)" << NEWLINE;
         }
         else if (settingName == "fast_disk")
         {
@@ -223,9 +234,27 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
 
     if (settingName == "fast_tape")
     {
-        config.tape_traps = boolValue ? 1 : 0;
-        ss << "Setting changed: fast_tape = " << (boolValue ? "on" : "off") << NEWLINE;
-        ss << "Fast tape loading is now " << (boolValue ? "enabled" : "disabled") << NEWLINE;
+        if (featureManager && featureManager->setFeature(Features::kFastTape, boolValue))
+        {
+            ss << "Setting changed: fast_tape = " << (boolValue ? "on" : "off") << NEWLINE;
+            ss << "Fast tape loading is now " << (boolValue ? "enabled" : "disabled") << NEWLINE;
+        }
+        else
+        {
+            ss << "Error: FeatureManager not available for this emulator" << NEWLINE;
+        }
+    }
+    else if (settingName == "turbo_tape")
+    {
+        if (featureManager && featureManager->setFeature(Features::kTurboTape, boolValue))
+        {
+            ss << "Setting changed: turbo_tape = " << (boolValue ? "on" : "off") << NEWLINE;
+            ss << "Turbo tape loading is now " << (boolValue ? "enabled" : "disabled") << NEWLINE;
+        }
+        else
+        {
+            ss << "Error: FeatureManager not available for this emulator" << NEWLINE;
+        }
     }
     else if (settingName == "fast_disk")
     {

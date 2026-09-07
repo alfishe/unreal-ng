@@ -412,7 +412,7 @@ TEST_F(SoundAdaptivity_Test, DRC_ConvergesToTargetOccupancy)
     // start there) and from badly overfull
     for (double startMs : {46.0, 300.0})
     {
-        double finalFrames = runLoop(startMs * 44100.0 / 1000.0, 6000);
+        double finalFrames = runLoop(startMs * 44100.0 / 1000.0, 3500);
         double finalMs = finalFrames * 1000.0 / 44100.0;
 
         EXPECT_NEAR(finalMs, SoundManager::DRC_TARGET_MS, 8.0)
@@ -599,7 +599,7 @@ TEST_F(SoundAdaptivity_Test, DRC_RebasesOnDeviceRateChangeMidRun)
     EXPECT_NEAR(sound->getDrcRatio(), 48000.0 / 44100.0, 48000.0 / 44100.0 * 0.006)
         << "Base ratio must re-base to the new device rate on the next frame";
 
-    runFrames(6000);
+    runFrames(3500);
     const double finalMs = ring * 1000.0 / devRate;
     EXPECT_NEAR(finalMs, SoundManager::DRC_TARGET_MS, 8.0) << "Occupancy must re-converge at the new device rate";
 

@@ -129,6 +129,8 @@ public:
     /// Regenerates TstateCoordLUT after base class updates raster state
     void SetVideoMode(VideoModeEnum mode) override;
 
+    void SetBorderColor(uint8_t color) override;
+
     void UpdateScreen() override;
 
     /// @brief Optimized Draw using pre-computed LUT
@@ -266,6 +268,9 @@ public:
     using ScreenZX::_screenLineOffsets;
     using ScreenZX::_tstateLUT;
     using ScreenZX::CreateTstateLUT;
+
+    // Border timing testing (Pentagon 1T delay)
+    using Screen::_prevTstate;
 
     // Snapshot helpers - optimized vs original for benchmarking
     using ScreenZX::FillBorderWithColor;

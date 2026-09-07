@@ -433,6 +433,8 @@ protected:
     uint32_t _prevTstate = 0;  // Previous Draw call t-state value (since emulation is not concurrent as in hardware -
                                // we need to know what time period to replay)
 
+bool _turboRenderSkip = false;  // Turbo render decimation: set only for the CPU cycle of a skipped turbo frame
+
     /// region <Obsolete>
     DrawCallback _currentDrawCallback;
     DrawCallback _nullCallback;
@@ -538,6 +540,15 @@ public:
     /// Must be called after AdjustFrameCounters() wraps z80.t to prevent
     /// DrawPeriod from seeing fromTstate > toTstate across the frame boundary
     void ResetPrevTstate() { _prevTstate = 0; }
+
+    /// @brief Suspend contingent per-t-state rendering for the current CPU
+    /// frame cycle (turbo render decimation - see MainLoop::RunFrame).
+    /// While set, DrawPeriod returns immediately; _prevTstate tracking in
+    /// UpdateScreen callers still advances, so the beam position stays fresh.
+    /// Must only be set for the duration of a skipped turbo frame's CPU cycle
+    /// - never across frame boundaries, so manual debug stepping and the
+    /// frame-end batch/latch paths are never affected.
+    void SetTurboRenderSkip(bool skip) { _turboRenderSkip = skip; }
 
     /// @brief Get the t-state at which the first paper pixel starts in a frame
     /// Uses the same coordinate mapping as TransformTstateToZXCoords:

@@ -432,7 +432,8 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/rom" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/testrom" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/configs" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/configs"
-        
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/core/automation/webapi/resources/html" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/html"
+
         # 4. Deploy Qt frameworks
         COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app" -always-overwrite
         
@@ -466,6 +467,8 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/rom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/testrom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/configs" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/configs"
+        # WebAPI HTML resources (404 page, index, etc.)
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/core/automation/webapi/resources/html" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/html"
     )
 endif()
 
@@ -489,6 +492,7 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/fonts" "${CMAKE_BINARY_DIR}/packages/UnrealNG/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/rom" "${CMAKE_BINARY_DIR}/packages/UnrealNG/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/configs" "${CMAKE_BINARY_DIR}/packages/UnrealNG/configs"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/resources/html" "${CMAKE_BINARY_DIR}/packages/UnrealNG/resources/html"
         # Create the final zip package
         COMMAND ${CMAKE_COMMAND} -E tar "cf" "${CMAKE_BINARY_DIR}/packages/UnrealNG-Windows.zip" "--format=zip" "--" "${CMAKE_BINARY_DIR}/packages/UnrealNG"
         COMMENT "Creating Windows package in ${CMAKE_BINARY_DIR}/packages"
@@ -510,7 +514,8 @@ if(UNIX AND NOT APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/fonts" "${CMAKE_BINARY_DIR}/packages/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/rom" "${CMAKE_BINARY_DIR}/packages/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/configs" "${CMAKE_BINARY_DIR}/packages/configs"
-        COMMAND ${CMAKE_COMMAND} -E tar "cfz" "${CMAKE_BINARY_DIR}/packages/UnrealNG-Linux.tar.gz" "--" "${CMAKE_BINARY_DIR}/packages/unreal-qt" "${CMAKE_BINARY_DIR}/packages/fonts" "${CMAKE_BINARY_DIR}/packages/rom" "${CMAKE_BINARY_DIR}/packages/configs"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/resources/html" "${CMAKE_BINARY_DIR}/packages/resources/html"
+        COMMAND ${CMAKE_COMMAND} -E tar "cfz" "${CMAKE_BINARY_DIR}/packages/UnrealNG-Linux.tar.gz" "--" "${CMAKE_BINARY_DIR}/packages/unreal-qt" "${CMAKE_BINARY_DIR}/packages/fonts" "${CMAKE_BINARY_DIR}/packages/rom" "${CMAKE_BINARY_DIR}/packages/configs" "${CMAKE_BINARY_DIR}/packages/resources"
         DEPENDS ${PROJECT_NAME}
         COMMENT "Creating Linux package in ${CMAKE_BINARY_DIR}/packages"
     )

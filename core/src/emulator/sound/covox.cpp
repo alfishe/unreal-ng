@@ -201,13 +201,6 @@ void Covox::portDeviceOutMethod(uint16_t port, uint8_t value)
 
 void Covox::computeStereoAmplitudes(int32_t& outL, int32_t& outR) const
 {
-    // Always use stereo mixing formula — no mono heuristic.
-    // Hardware sums two channels per side through resistors.
-    //
-    // For mono COVOX (only RightB written), LeftA/LeftB/RightA stay at 0x80
-    // (midpoint), so their contribution is zero and the mix naturally produces
-    // RightB on both sides when using the default mono routing.
-    //
     // Each channel: (value - 128) gives signed range [-128, +127].
     // Sum of two channels: [-256, +254].
     // Multiply by 128 (half of 256): gives [-32768, +32512] — fits int16
@@ -217,8 +210,22 @@ void Covox::computeStereoAmplitudes(int32_t& outL, int32_t& outR) const
     int32_t ra = _channelMute[2] ? 0 : (static_cast<int32_t>(_dacValue[2]) - 128);
     int32_t rb = _channelMute[3] ? 0 : (static_cast<int32_t>(_dacValue[3]) - 128);
 
-    outL = (la + lb) * 128;
-    outR = (ra + rb) * 128;
+    // Mono FB COVOX compatibility: RightB (#FB) is the standard mono Covox port.
+    // When only FB is used (la/lb/ra at midpoint), mix rb into both channels
+    // for centered mono output. Full Soundrive uses all 4 channels for true stereo.
+    bool monoMode = (la == 0 && lb == 0 && ra == 0);
+    if (monoMode)
+    {
+        // Mono: RightB goes to both speakers
+        outL = rb * 128;
+        outR = rb * 128;
+    }
+    else
+    {
+        // Stereo Soundrive: L = LeftA + LeftB, R = RightA + RightB
+        outL = (la + lb) * 128;
+        outR = (ra + rb) * 128;
+    }
 }
 
 /// endregion </Helper methods>

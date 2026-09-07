@@ -6,6 +6,8 @@
 
 #include "common/modulelogger.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/tape/tapefastload.h"
+#include "emulator/io/tape/tapeturbocontroller.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/videocontroller.h"
 #include "emulator/video/zx/screenzx.h"
@@ -145,6 +147,43 @@ bool Core::Init()
     }
 
     /// endregion </Tape>
+
+    /// region <Fast tape loading>
+
+    if (result)
+    {
+        result = false;
+
+        // Instantiate fast tape loading trap (wraps the LD-BYTES ROM entry)
+        _tapeFastLoad = new TapeFastLoad(_context, *_tape);
+        if (_tapeFastLoad)
+        {
+            _context->pTapeFastLoad = _tapeFastLoad;
+
+            result = true;
+        }
+    }
+
+    /// endregion </Fast tape loading>
+
+    /// region <Turbo tape loading>
+
+    if (result)
+    {
+        result = false;
+
+        // Instantiate turbo tape loading controller (auto-warp while the
+        // signal path plays — design 2026-09-04-turbo-tape-loading §6.1)
+        _tapeTurboController = new TapeTurboController(_context, *_tape);
+        if (_tapeTurboController)
+        {
+            _context->pTapeTurboController = _tapeTurboController;
+
+            result = true;
+        }
+    }
+
+    /// endregion </Turbo tape loading>
 
     /// region <BetaDisk128 Interface>
 
@@ -344,19 +383,7 @@ void Core::Release()
 {
     // Unregister itself from context
     _context->pCore = nullptr;
-
     _context->pPortDecoder = nullptr;
-    if (_portDecoder != nullptr)
-    {
-        delete _portDecoder;
-        _portDecoder = nullptr;
-    }
-
-    if (_ports != nullptr)
-    {
-        delete _ports;
-        _ports = nullptr;
-    }
 
     _context->pSoundManager = nullptr;
     if (_sound != nullptr)
@@ -399,6 +426,20 @@ void Core::Release()
         _betaDisk = nullptr;
     }
 
+    _context->pTapeFastLoad = nullptr;
+    if (_tapeFastLoad != nullptr)
+    {
+        delete _tapeFastLoad;
+        _tapeFastLoad = nullptr;
+    }
+
+    _context->pTapeTurboController = nullptr;
+    if (_tapeTurboController != nullptr)
+    {
+        delete _tapeTurboController;
+        _tapeTurboController = nullptr;
+    }
+
     _context->pTape = nullptr;
     if (_tape != nullptr)
     {
@@ -437,6 +478,22 @@ void Core::Release()
     {
         delete _z80;
         _z80 = nullptr;
+    }
+
+    // The PortDecoder must outlive every device that registered port handlers: the devices keep
+    // their own PortDecoder pointer and their detachFromPorts() (SoundManager, WD1793, ...) calls
+    // UnregisterPortHandler(), which mutates the decoder's handler map. Deleting it earlier made
+    // those calls a heap-use-after-free on every emulator teardown.
+    if (_portDecoder != nullptr)
+    {
+        delete _portDecoder;
+        _portDecoder = nullptr;
+    }
+
+    if (_ports != nullptr)
+    {
+        delete _ports;
+        _ports = nullptr;
     }
 }
 /// endregion </Initialization>

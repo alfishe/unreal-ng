@@ -73,6 +73,7 @@ htmlcov/
 **/.cursorindexingignore
 
 # Temporary files
+/scratch/
 *.user
 *.tmp
 *.bak
@@ -106,3 +107,4 @@ htmlcov/
 # and the loaded-session benchmarks all read. Regenerate with
 # tools/verification/ttd-analyzer/scripts/record_fixtures.py.
 !testdata/ttd/*.ttd
+features.ini

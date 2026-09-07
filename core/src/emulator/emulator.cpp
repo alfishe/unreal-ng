@@ -1,6 +1,11 @@
 #include "emulator.h"
 
 #include <loaders/disk/loader_scl.h>
+#include <loaders/disk/loader_dsk.h>
+#include <loaders/disk/loader_mgt.h>
+#include <loaders/disk/loader_td0.h>
+#include <loaders/disk/loader_fdi.h>
+#include <loaders/disk/loader_udi.h>
 #include <loaders/disk/loader_trd.h>
 #include <loaders/snapshot/loader_z80.h>
 
@@ -22,6 +27,7 @@
 #include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "loaders/snapshot/loader_sna.h"
+#include "loaders/tape/loader_tape.h"
 
 /// region <Constructors / Destructors>
 
@@ -1327,8 +1333,9 @@ bool Emulator::LoadDisk(const std::string& path)
                 _context->coreState.diskDrives[0]->insertDisk(diskImage);
             }
             
-            // Store file path for API queries
+            // Store file path for API queries and for "Save" back to the same file
             _context->coreState.diskFilePaths[0] = resolvedPath;
+            diskImage->setFilePath(resolvedPath);
 
             /// endregion </Load new disk image and mount it>
             
@@ -1370,13 +1377,457 @@ bool Emulator::LoadDisk(const std::string& path)
                 _context->coreState.diskDrives[0]->insertDisk(diskImage);
             }
             
-            // Store file path for API queries
+            // Store file path for API queries and for "Save" back to the same file
             _context->coreState.diskFilePaths[0] = resolvedPath;
+            diskImage->setFilePath(resolvedPath);
             
             /// endregion </Load new disk image and mount it>
             
             result = true;  // Successfully loaded SCL disk
         }
+    }
+
+    if (ext == "udi")
+    {
+        LoaderUDI loader(_context, resolvedPath);
+        if (loader.loadImage())
+        {
+            for (const std::string& warning : loader.lastWarnings())
+            {
+                MLOGWARNING("LoadDisk(UDI): %s", warning.c_str());
+            }
+
+            // FIXME: use active drive, not fixed A:
+
+            /// region <Free memory from previous disk image>
+            if (_context->pBetaDisk)
+            {
+                _context->pBetaDisk->ejectDisk();
+            }
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->ejectDisk();
+            }
+
+            DiskImage* diskImage = _context->coreState.diskImages[0];
+
+            if (diskImage != nullptr)
+            {
+                delete diskImage;
+            }
+            /// endregion </ree memory from previous disk image>
+
+            /// region <Load new disk image and mount it>
+            diskImage = loader.getImage();
+            _context->coreState.diskImages[0] = diskImage;
+
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->insertDisk(diskImage);
+            }
+            
+            // Store file path for API queries and for "Save" back to the same file
+            _context->coreState.diskFilePaths[0] = resolvedPath;
+            diskImage->setFilePath(resolvedPath);
+            
+            /// endregion </Load new disk image and mount it>
+            
+            result = true;  // Successfully loaded UDI disk
+        }
+        else
+        {
+            for (const std::string& warning : loader.lastWarnings())
+            {
+                MLOGERROR("LoadDisk(UDI): %s", warning.c_str());
+            }
+        }
+    }
+
+    if (ext == "fdi")
+    {
+        LoaderFDI loader(_context, resolvedPath);
+        if (loader.loadImage())
+        {
+            for (const std::string& warning : loader.lastWarnings())
+            {
+                MLOGWARNING("LoadDisk(FDI): %s", warning.c_str());
+            }
+
+            // FIXME: use active drive, not fixed A:
+
+            /// region <Free memory from previous disk image>
+            if (_context->pBetaDisk)
+            {
+                _context->pBetaDisk->ejectDisk();
+            }
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->ejectDisk();
+            }
+
+            DiskImage* diskImage = _context->coreState.diskImages[0];
+
+            if (diskImage != nullptr)
+            {
+                delete diskImage;
+            }
+            /// endregion </ree memory from previous disk image>
+
+            /// region <Load new disk image and mount it>
+            diskImage = loader.getImage();
+            _context->coreState.diskImages[0] = diskImage;
+
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->insertDisk(diskImage);
+            }
+            
+            // Store file path for API queries and for "Save" back to the same file
+            _context->coreState.diskFilePaths[0] = resolvedPath;
+            diskImage->setFilePath(resolvedPath);
+            
+            /// endregion </Load new disk image and mount it>
+            
+            result = true;  // Successfully loaded FDI disk
+        }
+        else
+        {
+            for (const std::string& warning : loader.lastWarnings())
+            {
+                MLOGERROR("LoadDisk(FDI): %s", warning.c_str());
+            }
+        }
+    }
+
+    if (ext == "dsk")
+    {
+        LoaderDSK loader(_context, resolvedPath);
+        if (loader.loadImage())
+        {
+            for (const std::string& warning : loader.lastWarnings())
+            {
+                MLOGWARNING("LoadDisk(DSK): %s", warning.c_str());
+            }
+
+            // FIXME: use active drive, not fixed A:
+
+            /// region <Free memory from previous disk image>
+            if (_context->pBetaDisk)
+            {
+                _context->pBetaDisk->ejectDisk();
+            }
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->ejectDisk();
+            }
+
+            DiskImage* diskImage = _context->coreState.diskImages[0];
+
+            if (diskImage != nullptr)
+            {
+                delete diskImage;
+            }
+            /// endregion </ree memory from previous disk image>
+
+            /// region <Load new disk image and mount it>
+            diskImage = loader.getImage();
+            _context->coreState.diskImages[0] = diskImage;
+
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->insertDisk(diskImage);
+            }
+            
+            // Store file path for API queries and for "Save" back to the same file
+            _context->coreState.diskFilePaths[0] = resolvedPath;
+            diskImage->setFilePath(resolvedPath);
+            
+            /// endregion </Load new disk image and mount it>
+            
+            result = true;  // Successfully loaded DSK disk
+        }
+        else
+        {
+            for (const std::string& warning : loader.lastWarnings())
+            {
+                MLOGERROR("LoadDisk(DSK): %s", warning.c_str());
+            }
+        }
+    }
+
+    if (ext == "td0")
+    {
+        LoaderTD0 loader(_context, resolvedPath);
+        if (loader.loadImage())
+        {
+            for (const std::string& warning : loader.lastWarnings())
+            {
+                MLOGWARNING("LoadDisk(TD0): %s", warning.c_str());
+            }
+
+            // FIXME: use active drive, not fixed A:
+
+            /// region <Free memory from previous disk image>
+            if (_context->pBetaDisk)
+            {
+                _context->pBetaDisk->ejectDisk();
+            }
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->ejectDisk();
+            }
+
+            DiskImage* diskImage = _context->coreState.diskImages[0];
+
+            if (diskImage != nullptr)
+            {
+                delete diskImage;
+            }
+            /// endregion </ree memory from previous disk image>
+
+            /// region <Load new disk image and mount it>
+            diskImage = loader.getImage();
+            _context->coreState.diskImages[0] = diskImage;
+
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->insertDisk(diskImage);
+            }
+            
+            // Store file path for API queries and for "Save" back to the same file
+            _context->coreState.diskFilePaths[0] = resolvedPath;
+            diskImage->setFilePath(resolvedPath);
+            
+            /// endregion </Load new disk image and mount it>
+            
+            result = true;  // Successfully loaded TD0 disk
+        }
+        else
+        {
+            for (const std::string& warning : loader.lastWarnings())
+            {
+                MLOGERROR("LoadDisk(TD0): %s", warning.c_str());
+            }
+        }
+    }
+
+    if (ext == "mgt" || ext == "img")
+    {
+        LoaderMGT loader(_context, resolvedPath);
+        if (loader.loadImage())
+        {
+            for (const std::string& warning : loader.lastWarnings())
+            {
+                MLOGWARNING("LoadDisk(MGT): %s", warning.c_str());
+            }
+
+            // FIXME: use active drive, not fixed A:
+
+            /// region <Free memory from previous disk image>
+            if (_context->pBetaDisk)
+            {
+                _context->pBetaDisk->ejectDisk();
+            }
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->ejectDisk();
+            }
+
+            DiskImage* diskImage = _context->coreState.diskImages[0];
+
+            if (diskImage != nullptr)
+            {
+                delete diskImage;
+            }
+            /// endregion </ree memory from previous disk image>
+
+            /// region <Load new disk image and mount it>
+            diskImage = loader.getImage();
+            _context->coreState.diskImages[0] = diskImage;
+
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->insertDisk(diskImage);
+            }
+            
+            // Store file path for API queries and for "Save" back to the same file
+            _context->coreState.diskFilePaths[0] = resolvedPath;
+            diskImage->setFilePath(resolvedPath);
+            
+            /// endregion </Load new disk image and mount it>
+            
+            result = true;  // Successfully loaded MGT/IMG disk
+        }
+        else
+        {
+            for (const std::string& warning : loader.lastWarnings())
+            {
+                MLOGERROR("LoadDisk(MGT): %s", warning.c_str());
+            }
+        }
+    }
+
+    if (wasRunning)
+    {
+        Resume();
+    }
+
+    return result;
+}
+
+std::vector<std::string> Emulator::SupportedSnapshotExtensions()
+{
+    return {"sna", "z80", "szx"};
+}
+
+std::vector<std::string> Emulator::SupportedTapeExtensions()
+{
+    return TapeLoaderRegistry::Instance().SupportedExtensions();
+}
+
+std::vector<std::string> Emulator::SupportedDiskExtensions()
+{
+    return {"trd", "scl", "fdi", "udi", "dsk", "td0", "mgt", "img"};
+}
+
+Emulator::DiskSaveResult Emulator::SaveDisk(uint8_t drive, const std::string& path, bool allowRetarget)
+{
+    DiskSaveResult result;
+
+    if (drive >= 4 || !_context)
+    {
+        result.reason = "Invalid drive";
+        return result;
+    }
+
+    FDD* fdd = _context->coreState.diskDrives[drive];
+    DiskImage* diskImage = fdd ? fdd->getDiskImage() : nullptr;
+    if (!diskImage)
+    {
+        result.reason = "No disk image in the drive";
+        return result;
+    }
+
+    std::string target = path.empty() ? diskImage->getFilePath() : path;
+    if (target.empty())
+    {
+        target = _context->coreState.diskFilePaths[drive];
+    }
+    if (target.empty())
+    {
+        result.reason = "No file path for the disk image (use Save As)";
+        return result;
+    }
+
+    // Pause emulator while the loaders walk the image
+    bool wasRunning = false;
+    if (!IsPaused())
+    {
+        Pause();
+        wasRunning = true;
+    }
+
+    std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(target));
+    std::vector<std::string> warnings;
+    bool saved = false;
+
+    if (ext == "udi")
+    {
+        LoaderUDI loader(_context, target);
+        loader.setImage(diskImage);
+        saved = loader.writeImage();
+        warnings = loader.lastWarnings();
+    }
+    else if (ext == "fdi")
+    {
+        LoaderFDI loader(_context, target);
+        loader.setImage(diskImage);
+        saved = loader.writeImage();
+        warnings = loader.lastWarnings();
+    }
+    else if (ext == "dsk")
+    {
+        LoaderDSK loader(_context, target);
+        loader.setImage(diskImage);
+        saved = loader.writeImage();
+        warnings = loader.lastWarnings();
+    }
+    else if (ext == "td0")
+    {
+        LoaderTD0 loader(_context, target);
+        loader.setImage(diskImage);
+        saved = loader.writeImage();
+        warnings = loader.lastWarnings();
+    }
+    else if (ext == "mgt" || ext == "img")
+    {
+        LoaderMGT loader(_context, target);
+        loader.setImage(diskImage);
+        saved = loader.writeImage();
+        warnings = loader.lastWarnings();
+    }
+    else if (ext == "scl")
+    {
+        LoaderSCL loader(_context, target);
+        loader.setImage(diskImage);
+        saved = loader.writeImage();
+        warnings = loader.lastWarnings();
+    }
+    else
+    {
+        LoaderTRD loader(_context, target);
+        loader.setImage(diskImage);
+        saved = loader.writeImage();
+        warnings = loader.lastWarnings();
+    }
+
+    if (saved)
+    {
+        result.saved = true;
+        result.savedPath = target;
+        if (!warnings.empty()) result.reason = warnings[0];
+        _context->coreState.diskFilePaths[drive] = target;
+    }
+    else if (allowRetarget && ext != "udi")
+    {
+        // Strict format refused (non TR-DOS geometry on some track): keep the original untouched, save as UDI
+        std::string reason = warnings.empty() ? "the image no longer fits the original format" : warnings[0];
+        std::string udiPath = target;
+        size_t dot = udiPath.find_last_of('.');
+        size_t slash = udiPath.find_last_of("/\\");
+        if (dot != std::string::npos && (slash == std::string::npos || dot > slash))
+        {
+            udiPath.erase(dot);
+        }
+        udiPath += ".udi";
+
+        LoaderUDI udi(_context, udiPath);
+        udi.setImage(diskImage);
+        if (udi.writeImage())
+        {
+            result.saved = true;
+            result.retargeted = true;
+            result.savedPath = udiPath;
+            result.reason = reason;
+            _context->coreState.diskFilePaths[drive] = udiPath;
+
+            MLOGWARNING("SaveDisk: %s - saved losslessly as '%s'", reason.c_str(), udiPath.c_str());
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            messageCenter.Post(NC_FDD_DISK_SAVE_RETARGETED, new FDDDiskPayload(GetId(), drive, udiPath, reason), true);
+        }
+        else
+        {
+            result.reason = udi.lastWarnings().empty() ? reason : udi.lastWarnings()[0];
+        }
+    }
+    else
+    {
+        result.reason = warnings.empty() ? "Save failed" : warnings[0];
+    }
+
+    if (!result.saved)
+    {
+        MLOGERROR("SaveDisk: %s", result.reason.c_str());
     }
 
     if (wasRunning)

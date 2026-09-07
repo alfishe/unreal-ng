@@ -3,13 +3,13 @@
 ## Scope
 
 Unit tests for:
-- `WD1793::cmdWriteSector()` / [processWriteSector()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/io/fdc/wd1793.cpp#2075-2114) / [processWriteByte()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/io/fdc/wd1793.cpp#2115-2184)
-- `WD1793::cmdWriteTrack()` / [processWriteTrack()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/io/fdc/wd1793.cpp#2192-2362) (F5, F6, F7 handling)
+- `WD1793::cmdWriteSector()` / [processWriteSector()](core/src/emulator/io/fdc/wd1793.cpp#2075-2114) / [processWriteByte()](core/src/emulator/io/fdc/wd1793.cpp#2115-2184)
+- `WD1793::cmdWriteTrack()` / [processWriteTrack()](core/src/emulator/io/fdc/wd1793.cpp#2192-2362) (F5, F6, F7 handling)
 - `RawTrack::reindexFromIDAM()`
 
 ---
 
-## 1. [reindexFromIDAM()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/io/fdc/diskimage.h#469-496) Tests
+## 1. [reindexFromIDAM()](core/src/emulator/io/fdc/diskimage.h#469-496) Tests
 
 ### Positive Cases
 
@@ -32,7 +32,7 @@ Unit tests for:
 
 ---
 
-## 2. [processWriteTrack()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/io/fdc/wd1793.cpp#2192-2362) Tests
+## 2. [processWriteTrack()](core/src/emulator/io/fdc/wd1793.cpp#2192-2362) Tests
 
 ### Positive Cases - MFM Control Bytes
 
@@ -68,7 +68,7 @@ Unit tests for:
 
 ---
 
-## 3. [processWriteSector()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/io/fdc/wd1793.cpp#2075-2114) / [processWriteByte()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/io/fdc/wd1793.cpp#2115-2184) Tests
+## 3. [processWriteSector()](core/src/emulator/io/fdc/wd1793.cpp#2075-2114) / [processWriteByte()](core/src/emulator/io/fdc/wd1793.cpp#2115-2184) Tests
 
 ### Positive Cases
 
@@ -102,9 +102,9 @@ Unit tests for:
 
 | Test | Description | Expected |
 |------|-------------|----------|
-| **IDAM_CRC_Valid** | After F7 following FE+IDAM | [MFMParser](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/io/fdc/mfm_parser.h#126-253) validates CRC |
-| **Data_CRC_Valid** | After F7 following FB+256 bytes | [MFMParser](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/io/fdc/mfm_parser.h#126-253) validates CRC |
-| **CRC_ByteOrder** | Check HIGH-LOW byte order | Matches [crcWD1793()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/io/fdc/fdc.h#195-236) output |
+| **IDAM_CRC_Valid** | After F7 following FE+IDAM | [MFMParser](core/src/emulator/io/fdc/mfm_parser.h#126-253) validates CRC |
+| **Data_CRC_Valid** | After F7 following FB+256 bytes | [MFMParser](core/src/emulator/io/fdc/mfm_parser.h#126-253) validates CRC |
+| **CRC_ByteOrder** | Check HIGH-LOW byte order | Matches [crcWD1793()](core/src/emulator/io/fdc/fdc.h#195-236) output |
 | **CRC_Start_After_A1** | F5 presets CRC, includes all after | CRC covers FE through sector_size |
 
 ---
@@ -123,8 +123,8 @@ Unit tests for:
 ## Test Implementation Notes
 
 ### Mock/Stub Requirements
-- [FDD](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/io/fdc/fdd.cpp#11-44) with configurable disk insertion, write-protect
-- [DiskImage](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/io/fdc/diskimage.h#644-645) with raw track access
+- [FDD](core/src/emulator/io/fdc/fdd.cpp#11-44) with configurable disk insertion, write-protect
+- [DiskImage](core/src/emulator/io/fdc/diskimage.h#644-645) with raw track access
 - Clock/timing simulation for DRQ timeout tests
 
 ### Assertions to Use

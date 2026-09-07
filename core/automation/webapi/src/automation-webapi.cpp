@@ -89,7 +89,9 @@ static std::string loadHtmlFile(const std::string& filename)
 {
     // Try multiple possible locations for the HTML resources
     std::vector<std::string> searchPaths = {
-        // Development/Build paths
+        // Development/Build paths (cmake-build-*/bin/ -> source)
+        "../../core/automation/webapi/resources/html/",  // From bin/ to source (typical cmake build)
+        "../../../core/automation/webapi/resources/html/", // From nested bin/
         "./resources/html/",                         // In current directory (from bin when running)
         "../resources/html/",                        // One level up (from bin to build root)
         "./core/automation/webapi/resources/html/",  // Development/build from project root
@@ -303,6 +305,24 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
     notFoundResp->setStatusCode(drogon::HttpStatusCode::k404NotFound);
 
     app.setCustom404Page(notFoundResp);
+
+    // Swagger UI documentation page
+    // Served at /api/v1/docs - loads embedded Swagger UI bundle from resources
+    std::string swaggerHtml = loadHtmlFile("docs.html");
+    app.registerHandler(
+        "/api/v1/docs",
+        [swaggerHtml](const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+            auto resp = drogon::HttpResponse::newHttpResponse();
+            resp->setBody(swaggerHtml);
+            resp->setContentTypeCode(drogon::ContentType::CT_TEXT_HTML);
+            resp->addHeader("Cache-Control", "public, max-age=86400");
+            resp->setExpiredTime(86400);  // Cache for 24 hours
+            callback(resp);
+        },
+        {drogon::Get});
+
+    LOG_INFO << "Swagger UI Documentation: http://localhost:8090/api/v1/docs";
 
     // Create a writable log directory in the user's home folder
     std::string logPath;

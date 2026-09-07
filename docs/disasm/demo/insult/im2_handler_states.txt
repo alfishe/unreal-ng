@@ -1,0 +1,188 @@
+# Insult Demo IM2 Interrupt Handler - Self-Modifying Code States
+# ================================================================
+#
+# The handler at 0xF4F4 uses SMC to switch behavior during disk loading.
+# The JR instruction at 0xF4F6 is modified:
+#   - Default state: JR #08 (jumps to 0xF500 = main_loader)
+#   - Transfer state: JR #28 (jumps to 0xF520 = track setup continuation)
+#
+# SMC locations that modify the handler:
+#   0xF51F: LD (#F4F6),#18  ; Restore default (after sector setup)
+#   0xF559: LD (#F4F6),#28  ; Enter transfer mode (during sector read)
+#   0xF565: LD (#F4F6),#18  ; Restore default (after sector read)
+
+# ==================== STATE 1: Default Mode (JR #08) ====================
+# Active when: NOT during sector data transfer
+# Purpose: Normal interrupt handling, jumps to main loader entry
+#
+# Memory at 0xF4F6: 18 08 (JR +8)
+# Destination: 0xF4F6 + 2 + 0x08 = 0xF500 (main_loader)
+
+IM2_handler_STATE1:                     ; DEFAULT MODE
+0xF4F4: 08           ex af,af'          ; Save current AF to alternate
+0xF4F5: b8           cp b               ; Compare A' with B (sets flags)
+0xF4F6: 18 08        jr +8              ; → 0xF500 (main_loader)
+                                        ; === CONTROL TRANSFERS TO main_loader ===
+
+# Effective behavior in STATE 1:
+# 1. Save AF to alternate set
+# 2. Compare A' with B (result ignored, just sets flags)
+# 3. Jump to main_loader (0xF500)
+# 4. main_loader does:
+#    - EXX to alternate registers
+#    - Calls depack_routine (0xF5F5)
+#    - Calls AY sound update (0x5E15)
+#    - Checks if loading done (HL=0xFFFF)
+#    - If done: exits loader
+#    - If not done: continues sector setup
+#
+# This is the "idle" interrupt handler - does decompression work
+# between sector reads.
+
+
+# ==================== STATE 2: Transfer Mode (JR #28) ====================
+# Active when: CPU is inside TR-DOS ROM executing INI loop at 0x3FE5
+# Purpose: Re-enter loading code to handle interrupt during sector transfer
+#
+# Memory at 0xF4F6: 18 28 (JR +40)
+# Destination: 0xF4F6 + 2 + 0x28 = 0xF520
+#
+# *** CRITICAL: OVERLAPPING CODE TECHNIQUE ***
+#
+# Memory layout at 0xF51D-0xF522 (from disassembly):
+#   Address: F51D F51E F51F F520 F521 F522
+#   Bytes:   3E   18   32   F6   F4   7A
+#            |    |    +----+----+    |
+#            |    |    ld (#F4F6),a   ld a,d
+#            +----+
+#            ld a,#18
+#
+# Normal execution from 0xF51D:
+#   0xF51D: 3E 18        ld a,#18         ; A = 0x18
+#   0xF51F: 32 F6 F4     ld (#F4F6),a     ; Store 0x18 to SMC
+#   0xF522: 7A           ld a,d           ; Continue with track
+#
+# When jumping to 0xF520 (STATE 2):
+#   0xF520: F6 F4        or #F4           ; A = A | 0xF4 (corrupts A!)
+#   0xF522: 7A           ld a,d           ; Overwrites A with track
+#
+# The OR #F4 is an artifact of overlapping code but is immediately
+# overwritten by LD A,D, so it has no effect. Execution continues
+# from 0xF522 (ld a,d) onward.
+
+IM2_handler_STATE2:                     ; TRANSFER MODE  
+0xF4F4: 08           ex af,af'          ; Save current AF to alternate
+0xF4F5: b8           cp b               ; Compare A' with B (sets flags)
+0xF4F6: 18 28        jr +40             ; → 0xF520 (overlapping code)
+
+# Execution path from 0xF520:
+#   0xF520: F6 F4        or #F4           ; (garbage, ignored)
+#   0xF522: 7A           ld a,d           ; Get track (overwrites garbage)
+#   0xF523: CB 3F        srl a            ; Calculate cylinder
+#   0xF525: CD E0 F5     call trdos_seek  ; Seek to track
+#   ... continues with sector setup and reading ...
+# 0xF524: CB 3F       srl a             ; Calculate physical track
+# 0xF526: CD E0 F5    call trdos_seek   ; Seek to track
+# ... continues with sector reading ...
+
+# Effective behavior in STATE 2:
+# 1. Save AF to alternate set
+# 2. Compare A' with B (for status checking)
+# 3. Jump to 0xF520 - RE-ENTERS the loading code mid-flow!
+# 4. At 0xF520, A (from A') is written to JR offset - dynamic SMC!
+# 5. Track seek and sector read continues
+#
+# CRITICAL: This does NOT return via RETI/RET from interrupt!
+# Instead, execution continues in the loader code, eventually
+# calling trdos_wait_fdc again which enters TR-DOS ROM.
+#
+# The CP B at 0xF4F5 sets flags based on comparing A' with B.
+# A' contains the transfer_state value (set at 0xF4F8 in unused path).
+
+
+# ==================== STATE 3: Fallthrough Path (JR not taken) ====================
+# This path is reached when JR condition is not met (never in normal operation)
+# The JR instruction is unconditional (opcode 18), so this path is dead code
+# unless the opcode itself is modified.
+#
+# For completeness, here's what follows the JR:
+
+IM2_handler_FALLTHROUGH:                ; DEAD CODE PATH (JR is unconditional)
+0xF4F4: 08           ex af,af'          ; Save current AF to alternate
+0xF4F5: b8           cp b               ; Compare A' with B
+0xF4F6: 18 xx        jr +xx             ; (unconditional - always taken)
+0xF4F8: 32 69 F5     ld (#F569),a       ; Store A to transfer_state
+0xF4FB: 08           ex af,af'          ; Restore AF from alternate
+0xF4FC: FB           ei                 ; Re-enable interrupts
+0xF4FD: C3 2F 3D     jp #3D2F           ; Jump to TRDOS_ENTRY
+                                        ; (standard exit to TR-DOS ROM)
+
+# This fallthrough code is reachable if the JR becomes a NOP or
+# if the offset is modified to skip only partially. It appears
+# to be vestigial or used during initialization.
+
+
+# ==================== Control Flow Summary ====================
+#
+# NORMAL OPERATION (between sectors):
+#   Interrupt fires → IM2_handler → JR #08 → main_loader
+#   → depack_routine → AY_update → check_done → return to caller
+#
+# DURING SECTOR TRANSFER (inside TR-DOS INI loop):
+#   Interrupt fires → IM2_handler → JR #28 → 0xF520 (track setup)
+#   → trdos_seek → trdos_set_sector → read_sector → trdos_wait_fdc
+#   → (enters TR-DOS ROM, cycle repeats)
+#
+# KEY INSIGHT:
+# When STATE 2 is active, the interrupt handler does NOT return
+# normally. Instead, it jumps into the loader code and continues
+# execution there. This is a cooperative multitasking design where
+# interrupts drive the loading state machine forward.
+#
+# The B register is used by TR-DOS INI loop as byte counter (256→0).
+# If an interrupt fires and re-enters the loader via STATE 2, the
+# current INI loop iteration may be abandoned, leaving B > 0.
+# The check at 0xF56F detects this and retries the sector.
+
+
+# ==================== SMC Modification Points ====================
+
+# 0xF51F: LD (#F4F6),#18
+#   Context: After initial sector setup
+#   Effect: Restores default JR offset
+#   When: Entry to .continue_loading
+
+# 0xF559: LD (#F4F6),#28  
+#   Context: Just before calling trdos_wait_fdc for sector read
+#   Effect: Enables transfer mode - interrupt will re-enter loader
+#   When: Sector read in progress, CPU about to enter TR-DOS ROM
+
+# 0xF565: LD (#F4F6),#18
+#   Context: After sector read completes
+#   Effect: Restores default mode
+#   When: After trdos_wait_fdc returns
+
+
+# ==================== Register Usage During Transfer ====================
+#
+# When entering STATE 2 (transfer mode):
+#   A' = transfer_state flag (0x01 = active)
+#   B  = remaining bytes (from TR-DOS INI loop counter)
+#   C  = port number (0x7F for FDC data)
+#   HL = destination address for sector data
+#   DE = track/sector info
+#
+# The CP B instruction compares A' (0x01) with B (INI counter).
+# This sets flags indicating how many bytes remain:
+#   - If B=0: Z flag set, all bytes transferred
+#   - If B>1: comparison shows bytes remaining
+#
+# At 0xF520, the value in A (from A') is written to the JR offset.
+# Since A' = 0x01, this would set JR +1... but wait, that's not #18 or #28!
+#
+# CORRECTION: Looking more carefully at 0xF51F:
+#   0xF51F: 3E 18        ld a,#18
+#   0xF521: 32 F6 F4     ld (#F4F6),a
+#
+# So A=#18 is loaded first, then stored. The SMC at 0xF520 uses
+# whatever A value exists at that point from the code flow.

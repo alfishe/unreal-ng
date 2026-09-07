@@ -13,7 +13,9 @@ import re
 import sys
 
 # Path to tests.asm
-TESTS_ASM = "/Volumes/TB4-4Tb/Projects/Test/unreal-ng/testdata/z80/z80test-1.2a/src/tests.asm"
+from pathlib import Path
+
+TESTS_ASM = str(Path(__file__).resolve().parents[5] / "testdata/z80/z80test-1.2a/src/tests.asm")
 
 def parse_hex(s):
     """Parse a hex value like 0x1234 or just 1234"""

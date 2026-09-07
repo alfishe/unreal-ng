@@ -25,6 +25,7 @@
 #include "emulator/soundmanager.h"
 #include "logviewer/logwindow.h"
 #include "menumanager.h"
+#include "tape/tapemanagerwindow.h"
 #include "ui/intparametersdialog.h"
 #include "ui_mainwindow.h"
 #include "widgets/devicescreen.h"
@@ -73,6 +74,9 @@ private slots:
     void handleEmulatorInstanceCreated(int id, Message* message);
     void handleEmulatorSelectionChanged(int id, Message* message);
     void openFileDialog();
+    void openSnapshotDialog();
+    void openTapeDialog();
+    void openDiskDialog();
     void openSpecificFile(const QString& filepath);
     void loadFile(const QString& filePath);
     void saveFileDialog();
@@ -80,6 +84,7 @@ private slots:
     void saveDiskDialog();
     void saveDiskAsTRDDialog();
     void saveDiskAsSCLDialog();
+    void saveDiskAsUDIDialog();
     void resetEmulator();
     void handleFullScreenShortcut();
 
@@ -90,11 +95,15 @@ private slots:
     void handleStopEmulator();
     void handleSpeedMultiplierChanged(int multiplier);
     void handleTurboModeToggled(bool enabled);
+    void handleTapeTrapsToggled(bool enabled);
+    void handleTurboTapeToggled(bool enabled);
     void handleStepIn();
     void handleStepOver();
     void handleDebugModeToggled(bool enabled);
     void handleDebuggerToggled(bool visible);
     void handleLogWindowToggled(bool visible);
+    void handleTapeManagerToggled(bool visible);
+    void handleImportAudioTapeRequested();  // tape-audio-bridge §7.3
     void handleIntParametersRequested();
     void handleAudioSettingsRequested();
     void handleOverscanModeToggled(bool enabled);
@@ -182,6 +191,7 @@ private:
     Ui::MainWindow* ui = nullptr;
     DebuggerWindow* debuggerWindow = nullptr;
     LogWindow* logWindow = nullptr;
+    TapeManagerWindow* tapeManagerWindow = nullptr;
     DeviceScreen* deviceScreen = nullptr;
     QPushButton* startButton = nullptr;
     QMutex lockMutex;

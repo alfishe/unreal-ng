@@ -291,6 +291,22 @@ void FeatureManager::setDefaults()
                      "",
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryDebug});
+    registerFeature({Features::kFastTape,
+                     Features::kFastTapeAlias,
+                     Features::kFastTapeDesc,
+                     true,  // ON by default - instant loads are the expected behavior
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
+
+    registerFeature({Features::kTurboTape,
+                     Features::kTurboTapeAlias,
+                     Features::kTurboTapeDesc,
+                     true,  // ON by default - the trap stays instant for vanilla blocks; warp picks up
+                            // every signal-path block and ends itself (read-gap watchdog / end-of-tape)
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
 
     _dirty = false;
 }
