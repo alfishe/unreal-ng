@@ -33,7 +33,7 @@ uint32_t AudioHelper::detectBaseFrequencyFFT(AudioSamplesArray samples, [[maybe_
 
     ComplexArray1D pcmInput(samples.begin(), samples.end());
     ComplexArray1D fftOutput;
-    fftOutput.reserve(N);
+    fftOutput.resize(N);  // simple_fft::FFT writes fftOutput[0..N) via operator[]: storage must be sized, not just reserved
 
     /// region <Perform the FFT>
 

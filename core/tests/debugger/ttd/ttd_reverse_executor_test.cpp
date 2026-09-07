@@ -20,6 +20,7 @@
 #endif
 
 #include "base/featuremanager.h"
+#include "_helpers/testpathhelper.h"
 #include "common/modulelogger.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttd_probe.h"
@@ -502,9 +503,8 @@ TEST_F(TTD_Reverse_Executor_Test, SerializationRoundTrip_AfterReverseOp_Preserve
     ASSERT_TRUE(_ttd->ReverseStepInstructions(8));
     const ttd::TTDTimePoint posBeforeDump = _ttd->CurrentPosition();
 
-    // Serialize to a temp file, deserialize into a fresh manager state.
-    const std::string tmpl =
-        (std::filesystem::temp_directory_path() / "ttd_reverse_serialize.bin").string();
+    // Serialize to a scratch file, deserialize into a fresh manager state.
+    const std::string tmpl = TestPathHelper::GetUniqueTestScratchPath("ttd_reverse_serialize.bin");
 
     {
         std::ofstream out(tmpl, std::ios::binary);

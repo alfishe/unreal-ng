@@ -175,7 +175,7 @@ curl http://localhost:8080/api/emulators/{uuid}/analyzers/trdos/events
 - `core/tests/debugger/analyzers/trdos/trdos_integration_test.cpp` - Complete rewrite (20 tests)
 
 ### 3. Artifacts
-- `/Users/dev/.gemini/antigravity/brain/.../walkthrough.md` - Work summary
+- External Gemini work summary (`walkthrough.md` — not in repo, absolute path removed)
 
 ---
 

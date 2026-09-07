@@ -45,6 +45,8 @@
 #endif
 #include <vector>
 
+#include "_helpers/testpathhelper.h"
+
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
 #include "debugger/ttd/machine_state_hash.h"
@@ -305,9 +307,8 @@ TEST_F(TTD_Thinning_Test, EveryPointReachable_AfterSerializationRoundTrip)
     auto refsBefore = CaptureReferences();
     ASSERT_GT(refsBefore.size(), 1u);
 
-    // Serialize to a temp file.
-    const std::string tmpfile =
-        (std::filesystem::temp_directory_path() / "ttd_thinning_serialize.bin").string();
+    // Serialize to a scratch file.
+    const std::string tmpfile = TestPathHelper::GetUniqueTestScratchPath("ttd_thinning_serialize.bin");
 
     {
         std::ofstream out(tmpfile, std::ios::binary);

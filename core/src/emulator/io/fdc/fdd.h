@@ -122,6 +122,7 @@ public:
 
     bool isDiskInserted() { return _diskInserted; }
     DiskImage* getDiskImage() { return _diskImage; }
+    uint8_t getDriveId() const { return _driveID; }
     /// endregion </Properties>
 
     /// region <Constructors / destructors>

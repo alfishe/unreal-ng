@@ -442,6 +442,14 @@ TEST_F(LzmaTest, PackUnrealQtSrcFolder)
     
     for (const auto& entry : fs::recursive_directory_iterator(srcPath))
     {
+        // Skip 3rdparty vendor libraries and build artifacts to keep test fast
+        std::string pathStr = entry.path().string();
+        if (pathStr.find("/3rdparty/") != std::string::npos ||
+            pathStr.find("/CMakeFiles/") != std::string::npos)
+        {
+            continue;
+        }
+
         if (entry.is_directory())
         {
             dirCount++;
@@ -506,7 +514,7 @@ TEST_F(LzmaTest, PackUnrealQtSrcFolder)
 
     _CLzmaEncProps props;
     LzmaEncProps_Init(&props);
-    props.level = 9;
+    props.level = 1;
     props.dictSize = 1 << 20;
     props.numThreads = std::thread::hardware_concurrency();
 
@@ -578,6 +586,14 @@ TEST_F(LzmaTest, PackCoreSrcFolder)
     
     for (const auto& entry : fs::recursive_directory_iterator(srcPath))
     {
+        // Skip 3rdparty vendor libraries and build artifacts to keep test fast and focused on core
+        std::string pathStr = entry.path().string();
+        if (pathStr.find("/3rdparty/") != std::string::npos ||
+            pathStr.find("/CMakeFiles/") != std::string::npos)
+        {
+            continue;
+        }
+
         if (entry.is_directory())
         {
             dirCount++;
@@ -640,10 +656,10 @@ TEST_F(LzmaTest, PackCoreSrcFolder)
     
     std::cout << "Combined data size: " << combinedData.size() << " bytes" << std::endl;
 
-    // Set up custom compression properties
+    // Set up compression properties: use fast level 1 for unit test
     _CLzmaEncProps props;
     LzmaEncProps_Init(&props);
-    props.level = 9;
+    props.level = 1;
     props.dictSize = 1 << 20;
     props.numThreads = std::thread::hardware_concurrency();
 

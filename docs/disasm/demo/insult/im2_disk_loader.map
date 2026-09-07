@@ -1,0 +1,52 @@
+; Insult Demo IM2 Disk Loader Symbol Map
+; Generated from im2_disk_loader_FINAL.txt
+; Range: F4F4 - F700
+
+; Memory Variables & Constants
+3D2F TRDOS_ENTRY
+F4F6 SMC_jump
+F508 loader_status
+F569 transfer_state
+F667 depack_flag
+F66E text_ptr
+F6D1 depack_flag2
+F694 work_buffer
+F69C loading_text
+
+; IM2 Interrupt Handler
+F4F4 IM2_handler
+
+; Main Disk Loader
+F500 main_loader
+F50A main_loader.check_done
+F512 main_loader.exit_loader
+F51D main_loader.continue_loading
+F530 main_loader.sector_loop
+F546 main_loader.read_sector
+F577 main_loader.check_status
+F585 main_loader.next_sector
+F59B main_loader.continue_next
+F5A2 main_loader.inc_sector
+
+; TRDOS ROM Call Wrappers
+F5A6 trdos_call
+F5AE fdc_read_status
+F5C1 fdc_read_status.return
+F5C6 trdos_set_track
+F5CE trdos_set_sector
+F5DD trdos_set_sector.return
+F5E0 trdos_seek
+F5E5 trdos_set_side
+F5ED trdos_wait_fdc
+
+; Depack/Decode Routine
+F5F5 depack_routine
+F5FD depack_routine.rotate_loop
+F666 depack_routine.finish_depack
+F66D depack_routine.extra_work
+F677 depack_routine.skip_text
+F68B depack_routine.gfx_loop
+
+; Embedded Text & Data
+F6F8 text_end_marker
+F6F9 final_padding

@@ -22,14 +22,16 @@ void DebugKeyboardManager_test::TearDown()
 {
     if (_context)
     {
+        // The manager caches the Keyboard pointer and resets the keyboard in its destructor,
+        // so it must be destroyed before the Keyboard (reverse of SetUp order).
+        delete _keyboardManager;
+        _keyboardManager = nullptr;
+
         if (_context->pKeyboard)
         {
             delete _context->pKeyboard;
             _context->pKeyboard = nullptr;
         }
-        
-        delete _keyboardManager;
-        _keyboardManager = nullptr;
         
         delete _context;
         _context = nullptr;

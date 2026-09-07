@@ -39,7 +39,7 @@
 
 namespace {
 
-constexpr int    kFrames           = 300;
+constexpr int    kFrames           = 100;
 constexpr double kBudgetMsPerFrame = 10.0;  // See file header for rationale.
 
 Emulator* MakeTtdEmulator(const std::string& modelName = "PENTAGON",

@@ -98,8 +98,8 @@ case Z80_128K:
 - `core/src/emulator/ports/portdecoder.cpp` - API implementation
 
 ### Test Files
-- `core/tests/loaders/loader_z80_test.cpp` - State-independent tests (5 new)
-- `core/tests/loaders/loader_z80_fuzzing_test.h` - Fuzzing test suite (10 tests)
+- `core/tests/loaders/snapshot/loader_z80_test.cpp` - State-independent tests (5 new)
+- `core/tests/loaders/snapshot/loader_z80_fuzzing_test.h` - Fuzzing test suite (10 tests)
 - `testdata/loaders/z80/invalid/*` - Synthetic invalid test files
 
 ### Test Data Fixes

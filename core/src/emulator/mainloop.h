@@ -41,6 +41,25 @@ protected:
     // audio ring to its watermark and causes visible rubber-banding when the
     // catch-up frames arrive). Zero-initialized = resync on first frame.
     std::chrono::steady_clock::time_point _nextFrameTime{};
+
+    /// region <Turbo render decimation>
+public:
+    /// While turbo mode is active (and no recording is in progress) only 1 of
+    /// every TURBO_RENDER_DECIMATION frames performs rendering work. Public so
+    /// tests can align their expectations with the cadence.
+    static constexpr uint64_t TURBO_RENDER_DECIMATION = 50;
+
+protected:
+    /// Computed once per frame in OnFrameStart; gates per-frame rendering work
+    /// only (contingent UpdateScreen, batch render, framebuffer latch and the
+    /// frame-refresh notification). Machine-time work (CPU, tape, FDC, TTD,
+    /// analyzers, keyboard) always runs, keeping turbo timing invariant.
+    bool _renderThisFrame = true;
+    /// True while the previous frame rendered. A rendered frame that follows
+    /// one or more skipped frames needs Screen::ResetPrevTstate() so DrawPeriod
+    /// starts the beam at t=0 instead of a stale end-of-frame position.
+    bool _lastFrameRendered = true;
+    /// endregion </Turbo render decimation>
     /// endregion </Fields>
 
     /// region <Constructors / destructors>

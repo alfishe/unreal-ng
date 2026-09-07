@@ -72,7 +72,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_MBYTE,  7, 0, 0, "ld c,:1" },                              // 0x0E
     { OF_NONE,   4, 0, 0, "rrca" },                                 // 0x0F
     
-    { OF_DJNZ | OF_CONDITION | OF_MBYTE, 0, 13, 8, "djnz :1" },     // 0x10
+    { OF_DJNZ | OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 13, 8, "djnz :1" },     // 0x10
     { OF_MWORD, 10, 0, 0, "ld de,:2" },                             // 0x11
     { OF_INDIRECT | OF_MWORD,  7, 0, 0, "ld (de),:2" },             // 0x12
     { OF_NONE,   6, 0, 0, "inc de" },                               // 0x13
@@ -629,7 +629,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_MBYTE, 11, 0, 0, "ld c,:1" },                               // 0x0E
     { OF_NONE,  8, 0, 0, "rrca" },                                   // 0x0F
 
-    { OF_DJNZ | OF_CONDITION | OF_MBYTE, 0, 17, 12, "djnz :1" },     // 0x10
+    { OF_DJNZ | OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 17, 12, "djnz :1" },     // 0x10
     { OF_MWORD, 14, 0, 0, "ld de,:2" },                              // 0x11
     { OF_INDIRECT, 11, 0, 0, "ld (de),a" },                          // 0x12
     { OF_NONE, 10, 0, 0, "inc de" },                                 // 0x13
@@ -1187,7 +1187,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_MBYTE, 11, 0, 0, "ld c,:1" },                               // 0x0E
     { OF_NONE,  8, 0, 0, "rrca" },                                   // 0x0F
 
-    { OF_DJNZ | OF_CONDITION | OF_MBYTE, 0, 17, 12, "djnz :1" },     // 0x10
+    { OF_DJNZ | OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 17, 12, "djnz :1" },     // 0x10
     { OF_NONE, 14, 0, 0, "ld de,:2" },                               // 0x11
     { OF_INDIRECT, 11, 0, 0, "ld (de),:2" },                         // 0x12
     { OF_NONE, 10, 0, 0, "inc de" },                                 // 0x13
@@ -2535,7 +2535,7 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const std::vector<uint8_t>
     if (hasRelativeJump)
     {
         result.relJumpOffset = result.operandBytes[0];
-        result.relJumpAddr = (instructionAddr + result.relJumpOffset + 2) & 0xFFFF;
+        result.relJumpAddr = (instructionAddr + result.fullCommandLen + result.relJumpOffset) & 0xFFFF;  // relative to the byte after the whole instruction (3 bytes when DD/FD-prefixed)
         result.jumpAddr = result.relJumpAddr;
     }
     /// endregion </Actualize values according flags>

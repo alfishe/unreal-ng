@@ -11,11 +11,18 @@
 
 // Write all Debug / Info logs if not under unit testing / benchmarking
 // Short-circuit evaluation: arguments only evaluated when logging is enabled at that level
-#define MLOGDEBUG(format, ...)                                          \
-    do                                                                  \
-    {                                                                   \
-        if (_logger && _logger->GetLevel() <= LoggerLevel::LogDebug)    \
-            _logger->Debug(_MODULE, _SUBMODULE, format, ##__VA_ARGS__); \
+// The module/submodule bit check moved INTO the guard so that expensive debug
+// string arguments (e.g. per-port-out dump formatting in PortDecoder) are not
+// constructed when the module is muted - Debug() performs the same check only
+// AFTER the caller has already built its arguments (profiled 2026-09-05:
+// border-striping loaders pay two StringHelper::Format calls per OUT even with
+// the module muted by EmulatorManager's automation-instance disable).
+#define MLOGDEBUG(format, ...)                                                                  \
+    do                                                                                          \
+    {                                                                                           \
+        if (_logger && _logger->GetLevel() <= LoggerLevel::LogDebug &&                          \
+            _logger->IsLoggingEnabledForLogLevel(_MODULE, _SUBMODULE, LoggerLevel::LogDebug))   \
+            _logger->Debug(_MODULE, _SUBMODULE, format, ##__VA_ARGS__);                         \
     } while (0)
 #define MLOGINFO(format, ...)                                          \
     do                                                                 \
@@ -325,6 +332,12 @@ public:
 
     void EmptyLine();
 
+    /// @brief Check whether this module/submodule would actually emit at the
+    /// given level - lets hot-path MLOGDEBUG call sites skip construction of
+    /// expensive debug string arguments when the module is muted
+    /// (pure query: no locking, no side effects)
+    bool IsLoggingEnabledForLogLevel(PlatformModulesEnum module, uint16_t submodule, LoggerLevel level);
+
     void LogMessage(LoggerLevel level, PlatformModulesEnum module, uint16_t submodule, const std::string fmt, ...);
     void LogMessage(LoggerLevel level, PlatformModulesEnum module, uint16_t submodule, const char* fmt, ...);
 
@@ -337,7 +350,6 @@ public:
     /// region <Helper methods>
 protected:
     bool IsLoggingEnabled(PlatformModulesEnum module, uint16_t submodule);
-    bool IsLoggingEnabledForLogLevel(PlatformModulesEnum module, uint16_t submodule, LoggerLevel level);
 
     bool GetSubmoduleNameCollection(uint16_t module, const char*** submoduleNames, size_t* submoduleNamesSize);
     const char* GetSubmoduleName(PlatformModulesEnum module, uint16_t submodule);

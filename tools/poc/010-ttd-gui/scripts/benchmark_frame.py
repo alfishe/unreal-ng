@@ -17,10 +17,12 @@ import sys
 import time
 import urllib.request
 import urllib.error
+from pathlib import Path
 
 BASE = "http://localhost:8090"
 API = BASE + "/api/v1"
-UNREAL_QT = "/Users/dev/Projects/Test/unreal-ng/cmake-build-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt"
+REPO_ROOT = Path(__file__).resolve().parents[4]
+UNREAL_QT = str(REPO_ROOT / "cmake-build-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt")
 
 
 def http(method, path, body=None, timeout=30):
@@ -148,7 +150,7 @@ def benchmark_mode(iid, mode_name, frames, ttd_mode=None):
 def main():
     parser = argparse.ArgumentParser(description="Benchmark emulator frame performance")
     parser.add_argument("--frames", type=int, default=500, help="Frames per benchmark")
-    parser.add_argument("--snapshot", default="/Users/dev/Projects/Test/unreal-ng/testdata/loaders/sna/action.sna")
+    parser.add_argument("--snapshot", default=str(REPO_ROOT / "testdata/loaders/sna/action.sna"))
     parser.add_argument("--model", default="128k", help="Emulator model")
     args = parser.parse_args()
 

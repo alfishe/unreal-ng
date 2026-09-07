@@ -11,8 +11,10 @@
 #include "emulator/cpu/op_noprefix.h"
 #include "emulator/cpu/opcode_profiler.h"
 #include "emulator/emulator.h"
+#include "emulator/io/tape/tapefastload.h"
 #include "emulator/notifications.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/spectrumconstants.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/ulacontention.h"
 #include "stdafx.h"
@@ -271,6 +273,22 @@ void Z80::Z80Step(bool skipBreakpoints)
                 // Wait until emulator resumed externally (by debugger or scripting engine)
                 emulator.WaitWhilePaused();
             }
+        }
+    }
+
+    // Fast tape loading trap (design: docs/inprogress/2026-08-30-fast-tape-loading).
+    // A ROM LD-BYTES ($0556) invocation is replaced wholesale when armed: the
+    // block payload is copied straight from the tape image and the routine's
+    // documented exit state is emulated. Any decline is fully inert — the CPU
+    // just proceeds into the real ROM code. Runs after breakpoint dispatch so
+    // user breakpoints at $0556 keep firing, and outside the debug-mode guard
+    // so the trap is active in both debug and release sessions.
+    if (pc == ROMAddresses::LD_BYTES && _context->pTapeFastLoad != nullptr)
+    {
+        if (_context->pTapeFastLoad->HandleLDBytesTrap(*this))
+        {
+            // Trap consumed the invocation — the routine never executes
+            return;
         }
     }
 
@@ -679,7 +697,9 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
     // after the raster compare (MiSTer ula.sv: INT <= 1 on the next edge) and the CPU
     // samples INT only at end-of-instruction edges - an instruction boundary landing
     // exactly at int_start still sees INT inactive. Inclusive ">=" accepts 1T early,
-    // which shifts interrupt-locked raster effects by one locked state (doc 20).
+    // which shifts interrupt-locked raster effects by one T-state.
+    // Note: HALT quantizes INT detection to 4T boundaries; fine 2-pixel adjustments
+    // are handled in ScreenZX::SetBorderColor. See: docs/timing/pentagon-border-timing.md
     if (!int_occurred && cpu.t > int_start)
     {
         int_occurred = true;

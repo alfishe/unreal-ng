@@ -6,7 +6,7 @@
 #include <string>
 
 #include "encoder_base.h"
-#include "encoder_config.h"
+#include "encoderconfig.h"
 
 /// @brief macOS VideoToolbox Encoder — Native hardware-accelerated encoding
 ///

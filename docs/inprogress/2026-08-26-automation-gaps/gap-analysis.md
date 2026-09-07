@@ -120,7 +120,7 @@ Bank-aware breakpoints exist but no single notation (`5:3FFF`, `ROM:1234`, `main
 
 | Issue | Location |
 |-------|----------|
-| Port 8765 vs 3333 | cli/README.md vs docs/features/automation.md |
+| Port 8765 vs 3333 | cli/README.md vs docs/features/automation.md — resolved 2026-09-05: all docs unified on 8765 |
 | Command count mismatch | ~10 listed vs ~70 actual |
 | Feature matrix false positives | Checkmarks for missing features |
 

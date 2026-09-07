@@ -140,7 +140,7 @@ uint8_t bb = static_cast<uint8_t>(b < 0 ? 0 : (b > 255 ? 255 : b));
 **Method**: Extract frame from recording to PNG and compare pixel values.
 
 ```bash
-ffmpeg -y -i /Users/dev/Movies/recording.mp4 -vf "select=eq(n\,0)" -vframes 1 -update 1 /tmp/frame.png
+ffmpeg -y -i recording.mp4 -vf "select=eq(n\,0)" -vframes 1 -update 1 frame.png
 ```
 
 ```python

@@ -12,6 +12,7 @@
 #include <emulator/emulatorcontext.h>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testpathhelper.h"
 
 #include <filesystem>
 
@@ -125,7 +126,7 @@ TEST(TimeTravelFeature_Test, RoundTripsThroughFeaturesIni)
     ASSERT_NE(fm, nullptr);
 
     namespace fs = std::filesystem;
-    const fs::path tmp = fs::temp_directory_path() / "unreal-ng-ttd-feature-test.ini";
+    const fs::path tmp = fs::path(TestPathHelper::GetUniqueTestScratchPath("unreal-ng-ttd-feature-test.ini"));
 
     // Set known state, save
     ASSERT_TRUE(fm->setFeature(Features::kTimeTravel, true));

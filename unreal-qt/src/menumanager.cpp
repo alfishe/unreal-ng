@@ -4,10 +4,12 @@
 #include <QMessageBox>
 #include <set>
 
+#include "base/featuremanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/platform.h"
 #include "emulator/notifications.h"
+#include "recordingmanager.h"
 // Avoid Qt 'signals' macro conflict with WD1793State::signals member
 #undef signals
 #include "emulator/io/fdc/wd1793.h"
@@ -105,6 +107,12 @@ void MenuManager::createFileMenu()
     _openDiskAction->setStatusTip(tr("Load a disk image (.trd, .scl, .fdi)"));
     connect(_openDiskAction, &QAction::triggered, this, &MenuManager::openDiskRequested);
 
+    // Import audio → tape image (tape-audio-bridge §7.3): recognize a
+    // WAV/FLAC/MP3 recording back into a .tzx/.tap image
+    _importAudioTapeAction = _fileMenu->addAction(tr("Import &Audio to Tape..."));
+    _importAudioTapeAction->setStatusTip(tr("Recognize a WAV/FLAC/MP3 recording into a .tzx/.tap tape image"));
+    connect(_importAudioTapeAction, &QAction::triggered, this, &MenuManager::importAudioTapeRequested);
+
     _fileMenu->addSeparator();
 
     // Save Snapshot submenu
@@ -127,7 +135,7 @@ void MenuManager::createFileMenu()
     // Save Disk (to original path)
     _saveDiskAction = _saveDiskMenu->addAction(tr("Save Disk"));
     _saveDiskAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
-    _saveDiskAction->setStatusTip(tr("Save disk image to original path (TRD format only)"));
+    _saveDiskAction->setStatusTip(tr("Save disk image to its original file (TRD / SCL / UDI); non TR-DOS content is re-targeted to UDI"));
     connect(_saveDiskAction, &QAction::triggered, this, &MenuManager::saveDiskRequested);
     
     // Save as TRD
@@ -139,6 +147,11 @@ void MenuManager::createFileMenu()
     _saveDiskSCLAction = _saveDiskMenu->addAction(tr("Save as .scl..."));
     _saveDiskSCLAction->setStatusTip(tr("Save disk image in SCL format"));
     connect(_saveDiskSCLAction, &QAction::triggered, this, &MenuManager::saveDiskAsSCLRequested);
+
+    // Save as UDI (lossless raw track image)
+    _saveDiskUDIAction = _saveDiskMenu->addAction(tr("Save as .udi..."));
+    _saveDiskUDIAction->setStatusTip(tr("Save disk image in UDI format (lossless: keeps any track layout)"));
+    connect(_saveDiskUDIAction, &QAction::triggered, this, &MenuManager::saveDiskAsUDIRequested);
 
     _fileMenu->addSeparator();
 
@@ -259,6 +272,16 @@ void MenuManager::createViewMenu()
     _viewportScreenOnlyAction->setCheckable(true);
     _viewportGroup->addAction(_viewportScreenOnlyAction);
     connect(_viewportScreenOnlyAction, &QAction::triggered, this, [this]() { emit viewportChanged(3); });
+}
+
+void MenuManager::setTapeManagerChecked(bool checked)
+{
+    // Sync from the TapeManagerWindow's own close box; setChecked never
+    // re-emits triggered, so this cannot recurse into the toggle handler
+    if (_tapeManagerAction)
+    {
+        _tapeManagerAction->setChecked(checked);
+    }
 }
 
 void MenuManager::createRunMenu()
@@ -454,6 +477,29 @@ void MenuManager::createMachineMenu()
         _machineModelActions[0]->setChecked(true);
         _currentModelShortName = _machineModelActions[0]->data().toString();
     }
+
+    _machineMenu->addSeparator();
+
+    // Fast tape loading trap (LD-BYTES $0556 hook — design:
+    // docs/inprogress/2026-08-30-fast-tape-loading). When on, vanilla ROM
+    // tape blocks load instantly; custom loaders fall back to full signal
+    // emulation. Checked state mirrors the runtime 'fasttape' feature of the
+    // active instance (synced in updateMenuStates).
+    _tapeTrapsAction = _machineMenu->addAction(tr("&Fast Tape Loading"));
+    _tapeTrapsAction->setStatusTip(tr("Serve vanilla ROM tape loads instantly (custom loaders use signal emulation)"));
+    _tapeTrapsAction->setCheckable(true);
+    connect(_tapeTrapsAction, &QAction::triggered, this, &MenuManager::tapeTrapsToggled);
+
+    // Turbo tape loading (design: docs/inprogress/2026-09-04-turbo-tape-loading).
+    // While the tape signal path plays, the machine runs unthrottled (turbo
+    // mode) so blocks the trap cannot serve — headerless, custom-timed, pulse
+    // streams — still load at warp speed. Warp ends with the read-gap
+    // watchdog, end-of-tape or any stop. Checked state mirrors the runtime
+    // 'turbotape' feature (synced in updateMenuStates).
+    _turboTapeAction = _machineMenu->addAction(tr("Tur&bo Tape Loading"));
+    _turboTapeAction->setStatusTip(tr("Run at warp speed while a tape signal is playing (custom loaders included)"));
+    _turboTapeAction->setCheckable(true);
+    connect(_turboTapeAction, &QAction::triggered, this, &MenuManager::turboTapeToggled);
 }
 
 void MenuManager::updateMachineModelSelection(std::shared_ptr<Emulator> activeEmulator)
@@ -589,6 +635,17 @@ void MenuManager::createToolsMenu()
     _audioSettingsAction = _toolsMenu->addAction(tr("&Audio Settings..."));
     _audioSettingsAction->setStatusTip(tr("Configure audio DSP: punch, FIR filter, room simulation"));
     connect(_audioSettingsAction, &QAction::triggered, this, &MenuManager::audioSettingsRequested);
+
+    _toolsMenu->addSeparator();
+
+    // Tape Manager Window (design §9.2 — checkable show/hide, hidden until
+    // first opened; lives in Tools beside the other auxiliary windows, r7)
+    _tapeManagerAction = _toolsMenu->addAction(tr("Tape &Manager"));
+    _tapeManagerAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_3));
+    _tapeManagerAction->setStatusTip(tr("Show/hide tape manager window"));
+    _tapeManagerAction->setCheckable(true);
+    _tapeManagerAction->setChecked(false);
+    connect(_tapeManagerAction, &QAction::triggered, this, &MenuManager::tapeManagerToggled);
 
     _toolsMenu->addSeparator();
 
@@ -749,6 +806,7 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         // Save As options always available when disk is loaded
         _saveDiskTRDAction->setEnabled(true);
         _saveDiskSCLAction->setEnabled(true);
+        _saveDiskUDIAction->setEnabled(true);
     }
     else
     {
@@ -782,15 +840,21 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         bool isPentagon = (context && context->config.mem_model == MM_PENTAGON);
         bool isOverscanActive = isPentagon && activeEmulator->IsOverscanMode();
 
+        // Lock overscan/viewport controls during recording to prevent mid-recording
+        // resolution changes (viewport is captured at recording start)
+        bool isRecording = context && context->pRecordingManager &&
+                           context->pRecordingManager->IsRecording();
+
         // Pentagon: show and enable overscan, show viewport when overscan active
         // Non-Pentagon: hide overscan, hide viewport
+        // Recording: show but disable overscan/viewport to prevent changes
         _overscanAction->setVisible(isPentagon);
-        _overscanAction->setEnabled(isPentagon);
+        _overscanAction->setEnabled(isPentagon && !isRecording);
         _overscanAction->setChecked(isOverscanActive);
         // Use menuAction() to control submenu visibility in parent menu
         // (calling setVisible() on QMenu itself can trigger unwanted popup)
         _viewportMenu->menuAction()->setVisible(isPentagon);
-        _viewportMenu->setEnabled(isOverscanActive);
+        _viewportMenu->setEnabled(isOverscanActive && !isRecording);
     }
     else
     {
@@ -799,6 +863,18 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         _overscanAction->setEnabled(false);
         _viewportMenu->menuAction()->setVisible(false);
         _viewportMenu->setEnabled(false);
+    }
+
+    // Machine menu - fast tape loading toggle mirrors the runtime 'fasttape'
+    // feature (the trap re-reads it on every LD-BYTES invocation, so only the
+    // menu state needs syncing)
+    _tapeTrapsAction->setEnabled(emulatorExists);
+    if (emulatorExists)
+    {
+        EmulatorContext* context = activeEmulator->GetContext();
+        FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
+        _tapeTrapsAction->setChecked(featureManager && featureManager->isEnabled(Features::kFastTape));
+        _turboTapeAction->setChecked(featureManager && featureManager->isEnabled(Features::kTurboTape));
     }
 
     // Update machine model selection
