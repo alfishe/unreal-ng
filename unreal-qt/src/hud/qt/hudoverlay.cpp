@@ -321,8 +321,10 @@ void HudOverlay::renderTileFrameToPixmap(QPixmap& pixmap, const HudTileFrameStyl
     if (frame.shadowColor != 0 && frame.shadowBlur > 0.0f)
     {
         int spread = static_cast<int>(std::max(1.0f, 2.0f * uiScale));
+        // The tile body ends 2 * spread above the pixmap bottom; stop the shadow one
+        // spread short so it extends only `spread` below the tile
         QPainterPath shadowPath;
-        shadowPath.addRoundedRect(rect.adjusted(spread, spread, -spread, 0), radius, radius);
+        shadowPath.addRoundedRect(rect.adjusted(spread, spread, -spread, -spread), radius, radius);
         p.fillPath(shadowPath, QColor::fromRgba(frame.shadowColor));
     }
 
