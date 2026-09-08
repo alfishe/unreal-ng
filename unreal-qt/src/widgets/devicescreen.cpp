@@ -34,7 +34,8 @@ void DeviceScreen::init(uint16_t width, uint16_t height, void* buffer)
 {
     detach();
 
-    ratio = static_cast<float>(width) / static_cast<float>(height);
+    // Note: the widget's aspect ratio is fixed (352x288) regardless of the framebuffer size;
+    // larger (overscan) framebuffers are scaled into the same frame
 
     devicePixelsRect = QRectF(0.0, 0.0, width, height);
     devicePixels = new QImage(static_cast<const unsigned char*>(buffer), width, height, QImage::Format_RGBA8888);
