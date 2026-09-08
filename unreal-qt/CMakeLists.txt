@@ -261,7 +261,20 @@ message("UI_HEADERS:${UI_HEADERS}")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 # Create the executable
-add_executable(${PROJECT_NAME} ${CPP_FILES} ${UI_HEADERS})
+# macOS bundle icon: registered as a bundle resource so CMake places it in
+# Contents/Resources at build time (matches MACOSX_BUNDLE_ICON_FILE below).
+set(APP_ICON_MACOS "")
+if (APPLE)
+    set(APP_ICON_MACOS "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/unreal.icns")
+    set_source_files_properties(${APP_ICON_MACOS} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+endif ()
+
+add_executable(${PROJECT_NAME} ${CPP_FILES} ${UI_HEADERS} ${APP_ICON_MACOS})
+
+# Application icon as a Qt resource (window / taskbar icon on Windows and Linux).
+# AUTORCC is off, so the .qrc is compiled explicitly.
+qt6_add_resources(APP_ICON_RESOURCES "${CMAKE_CURRENT_SOURCE_DIR}/resources/appicon.qrc")
+target_sources(${PROJECT_NAME} PRIVATE ${APP_ICON_RESOURCES})
 
 
 # Set common target properties
@@ -459,16 +472,17 @@ if(APPLE)
         MACOSX_BUNDLE_COPYRIGHT "Copyright © 2025 UnrealNG Team"
     )
     
-    # Copy the icon file and required resources to the bundle
+    # Copy required resources to the bundle (the icon is a bundle source, see add_executable)
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources"
-        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/unreal.icns" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/fonts" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/rom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/testrom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/configs" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/configs"
         # WebAPI HTML resources (404 page, index, etc.)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/core/automation/webapi/resources/html" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/html"
+        # Bump the bundle mtime so Finder/Dock drop their cached icon for this path
+        COMMAND touch "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}>"
     )
 endif()
 
@@ -499,7 +513,7 @@ if(WIN32)
     )
     
     # Add Windows RC file for icon and version information
-    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/src/install/windows/app.rc.in"
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/install/windows/app.rc.in"
                    "${CMAKE_CURRENT_BINARY_DIR}/app.rc" @ONLY)
     target_sources(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/app.rc")
 endif()
@@ -515,11 +529,13 @@ if(UNIX AND NOT APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/rom" "${CMAKE_BINARY_DIR}/packages/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/configs" "${CMAKE_BINARY_DIR}/packages/configs"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/resources/html" "${CMAKE_BINARY_DIR}/packages/resources/html"
-        COMMAND ${CMAKE_COMMAND} -E tar "cfz" "${CMAKE_BINARY_DIR}/packages/UnrealNG-Linux.tar.gz" "--" "${CMAKE_BINARY_DIR}/packages/unreal-qt" "${CMAKE_BINARY_DIR}/packages/fonts" "${CMAKE_BINARY_DIR}/packages/rom" "${CMAKE_BINARY_DIR}/packages/configs" "${CMAKE_BINARY_DIR}/packages/resources"
+        # Desktop integration files in XDG layout (copy share/ into ~/.local/share or /usr/share)
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/install/linux/unrealng.desktop" "${CMAKE_BINARY_DIR}/packages/share/applications/unrealng.desktop"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/install/linux/icons" "${CMAKE_BINARY_DIR}/packages/share/icons"
+        COMMAND ${CMAKE_COMMAND} -E tar "cfz" "${CMAKE_BINARY_DIR}/packages/UnrealNG-Linux.tar.gz" "--" "${CMAKE_BINARY_DIR}/packages/unreal-qt" "${CMAKE_BINARY_DIR}/packages/fonts" "${CMAKE_BINARY_DIR}/packages/rom" "${CMAKE_BINARY_DIR}/packages/configs" "${CMAKE_BINARY_DIR}/packages/resources" "${CMAKE_BINARY_DIR}/packages/share"
         DEPENDS ${PROJECT_NAME}
         COMMENT "Creating Linux package in ${CMAKE_BINARY_DIR}/packages"
     )
-    # No desktop integration for simple packaging
 endif()
 
 # Add a general packaging target that builds the appropriate package for the current platform

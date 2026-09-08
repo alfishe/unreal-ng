@@ -3,12 +3,31 @@
 
 #include <QApplication>
 #include <QFontDatabase>
+#include <QIcon>
 #include <QDebug>
 #include <QDir>
 #include <common/filehelper.h>
 #include <common/threadhelper.h>
 
 int fontID = -1;
+
+/// Install the application icon from the bundled Qt resource.
+/// Used for the window / taskbar icon on Windows and Linux. On macOS the Dock
+/// shows the bundle's .icns natively and QApplication::setWindowIcon would
+/// replace it with a low-resolution pixmap, so it is skipped there.
+static void setApplicationIcon(QApplication& app)
+{
+#ifndef Q_OS_MACOS
+    QIcon icon;
+    for (int size : {16, 32, 48, 64, 128, 256, 512, 1024})
+    {
+        icon.addFile(QStringLiteral(":/icons/app/appicon_%1.png").arg(size), QSize(size, size));
+    }
+    app.setWindowIcon(icon);
+#else
+    Q_UNUSED(app);
+#endif
+}
 
 void registerFonts(QApplication& app)
 {
@@ -81,6 +100,7 @@ int main(int argc, char *argv[])
 
     // Load non-system fonts before any GUI rendered
     registerFonts(app);
+    setApplicationIcon(app);
 
     // Instantiate main application window
     MainWindow window;
