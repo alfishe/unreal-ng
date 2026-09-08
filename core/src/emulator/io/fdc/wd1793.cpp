@@ -281,6 +281,44 @@ void WD1793::processBeta128(uint8_t value)
 
         _beta128Register = value;
     }
+
+    notifyFDDStateChanged();
+}
+
+/// Current floppy state (selected drive, head position, registers, motor, media)
+FDDStateInfo WD1793::getFDDState()
+{
+    FDDStateInfo state;
+    state.driveId = _drive;
+    state.side = _sideUp ? 1 : 0;
+    state.sector = _sectorRegister;
+    state.busy = (_statusRegister & WDS_BUSY) != 0;
+    if (_selectedDrive)
+    {
+        state.track = static_cast<uint8_t>(_selectedDrive->getTrack());
+        state.motorOn = _selectedDrive->getMotor();
+        state.diskInserted = _selectedDrive->isDiskInserted();
+        state.writeProtected = _selectedDrive->isWriteProtect();
+    }
+    return state;
+}
+
+/// Publish the FDD state to UI consumers (status bar) when it differs from the last published one
+void WD1793::notifyFDDStateChanged()
+{
+    if (!_selectedDrive)
+        return;
+
+    const FDDStateInfo state = getFDDState();
+    if (_fddStatePublished && state == _publishedFddState)
+        return;
+
+    _publishedFddState = state;
+    _fddStatePublished = true;
+
+    std::string emulatorId = (_context && _context->pEmulator) ? _context->pEmulator->GetId() : "";
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_FDD_STATE_CHANGED, new FDDStatePayload(emulatorId, state), true);
 }
 
 /// Handle motor start/stop events as well as timeouts
@@ -497,6 +535,7 @@ void WD1793::prolongFDDMotorRotation()
 void WD1793::startFDDMotor()
 {
     _selectedDrive->setMotor(true);
+    notifyFDDStateChanged();
 
     double milliseconds = ((double)_time * 1000.0) / Z80_FREQUENCY;
     MLOGINFO("FDD motor started: %.2f ms (T-states: %llu)", milliseconds, _time);
@@ -507,6 +546,7 @@ void WD1793::stopFDDMotor()
 {
     _selectedDrive->setMotor(false);
     _motorTimeoutTStates = 0;
+    notifyFDDStateChanged();
 
     // Reset index pulse counter and related state when motor is stopped
     _index = false;
@@ -2016,6 +2056,7 @@ void WD1793::processStep()
     {
         _trackRegister = 0;
         _selectedDrive->setTrack(0);
+        notifyFDDStateChanged();
         type1CommandVerify();
         return;
     }
@@ -2023,6 +2064,7 @@ void WD1793::processStep()
     if (_lastDecodedCmd == WD_CMD_SEEK && _trackRegister == _dataRegister)
     {
         _selectedDrive->setTrack(_trackRegister);
+        notifyFDDStateChanged();
         type1CommandVerify();
         return;
     }
@@ -2042,6 +2084,7 @@ void WD1793::processStep()
     uint8_t fddTrack = _selectedDrive->getTrack();
     fddTrack += stepCorrection;
     _selectedDrive->setTrack(fddTrack);
+    notifyFDDStateChanged();
 
     /// endregion </Make head step>
 
@@ -2785,6 +2828,7 @@ void WD1793::processReadCRC()
         if (_currentSector)
         {
             _sectorRegister = _currentSector->cylinder();
+            notifyFDDStateChanged();
             if (!_currentSector->idCrcValid)
             {
                 _statusRegister |= WDS_CRCERR;
@@ -3147,6 +3191,7 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
                 _sectorRegister = 16;
             }
             MLOGINFO(StringHelper::Format("  #5F - Set sector: 0x%02X", _sectorRegister).c_str());
+            notifyFDDStateChanged();
             break;
         case PORT_7F:  // Write to Data Register
             // Write and mark that Data Register was accessed (for Type 2 and Type 3 operations)

@@ -632,6 +632,21 @@ protected:
     uint8_t _drive = 0;    // Currently selected drive index [0..3]
     bool _sideUp = false;  // False - bottom side. True - top side
 
+    /// Last FDD state published with NC_FDD_STATE_CHANGED (dedups the notification stream)
+    FDDStateInfo _publishedFddState;
+    bool _fddStatePublished = false;
+
+    /// Post NC_FDD_STATE_CHANGED (drive, side, track, sector, motor...) if anything changed
+    /// since the last post. Called at every mutation point; cheap when nothing changed.
+    void notifyFDDStateChanged();
+
+public:
+    /// Current floppy state for UI consumers. Read once when a UI binds to the emulator;
+    /// every later change arrives via NC_FDD_STATE_CHANGED (FDDStatePayload)
+    FDDStateInfo getFDDState();
+
+protected:
+
     // WD1793 state getters - moved to public section
     WD_COMMANDS _lastDecodedCmd = WD_CMD_RESTORE;  // Last command executed (decoded)
     uint8_t _lastCmdValue = 0x00;                  // Last command parameters (already masked)
@@ -1104,6 +1119,10 @@ public:
 
     using WD1793::_drive;
     using WD1793::_sideUp;
+    using WD1793::_publishedFddState;
+    using WD1793::_fddStatePublished;
+    using WD1793::processBeta128;
+    using WD1793::notifyFDDStateChanged;
 
     using WD1793::_delayTStates;
     using WD1793::_state;
