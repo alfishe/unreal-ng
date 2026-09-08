@@ -69,6 +69,10 @@ public:
         update();  // Trigger repaint with new viewport
     }
 
+    /// Copy of the currently presented frame (viewport-cropped), for screenshots.
+    /// Null image when no framebuffer is attached.
+    QImage grabFramebuffer();
+
     void clearDisplayViewport()
     {
         _hasViewport = false;

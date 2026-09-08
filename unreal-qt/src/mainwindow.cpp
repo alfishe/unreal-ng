@@ -1,6 +1,8 @@
 #include "mainwindow.h"
 
 #include <QWindow>
+#include <QClipboard>
+#include <QGuiApplication>
 
 #include "emulator/mainloop.h"
 
@@ -114,12 +116,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Store original palette
     _originalPalette = palette();
 
-    // Register fullscreen on/off shortcut
-    _fullScreenShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F), this);
-    _fullScreenShortcut->setKey(Qt::CTRL | Qt::Key_F);
-    _fullScreenShortcut->setContext(Qt::ApplicationShortcut);
-    connect(_fullScreenShortcut, &QShortcut::activated, this, &MainWindow::handleFullScreenShortcut);
-
     // Put emulator screen into resizable content frame
     QFrame* contentFrame = ui->contentFrame;
     deviceScreen = new DeviceScreen(contentFrame);
@@ -169,11 +165,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Instantiate Logger window
     logWindow = new LogWindow();
 
-    // Instantiate debugger window
+    // Instantiate debugger window. Hidden at start: Debug -> Debugger Window shows it,
+    // and debug instrumentation is enabled only while it is visible
     debuggerWindow = new DebuggerWindow();
     debuggerWindow->setBinding(m_binding);  // Connect to central binding
     debuggerWindow->reset();
-    debuggerWindow->show();
+    connect(debuggerWindow, &DebuggerWindow::visibilityChanged, this, &MainWindow::handleDebuggerVisibilityChanged);
 
     // Connect debugger screen refresh signal (for speed control stepping)
     // Handle it the same way as MessageCenter refresh (see line 1459)
@@ -220,13 +217,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::turboTapeToggled, this, &MainWindow::handleTurboTapeToggled);
     connect(_menuManager, &MenuManager::stepInRequested, this, &MainWindow::handleStepIn);
     connect(_menuManager, &MenuManager::stepOverRequested, this, &MainWindow::handleStepOver);
-    connect(_menuManager, &MenuManager::debugModeToggled, this, &MainWindow::handleDebugModeToggled);
     connect(_menuManager, &MenuManager::debuggerToggled, this, &MainWindow::handleDebuggerToggled);
     connect(_menuManager, &MenuManager::logWindowToggled, this, &MainWindow::handleLogWindowToggled);
     connect(_menuManager, &MenuManager::tapeManagerToggled, this, &MainWindow::handleTapeManagerToggled);
     // Keep the menu check state in sync when the window closes via its own close box
     connect(tapeManagerWindow, &TapeManagerWindow::visibilityChanged, _menuManager, &MenuManager::setTapeManagerChecked);
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
+    connect(_menuManager, &MenuManager::scaleRequested, this, &MainWindow::handleScaleRequested);
+    connect(_menuManager, &MenuManager::screenshotRequested, this, &MainWindow::handleScreenshotRequested);
     connect(_menuManager, &MenuManager::intParametersRequested, this, &MainWindow::handleIntParametersRequested);
     connect(_menuManager, &MenuManager::audioSettingsRequested, this, &MainWindow::handleAudioSettingsRequested);
     connect(_menuManager, &MenuManager::overscanModeToggled, this, &MainWindow::handleOverscanModeToggled);
@@ -250,8 +248,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::statusBarToggled, this, &MainWindow::handleStatusBarToggled);
     _statusBarManager->restoreSettings();
 
-    // Bring application windows to foreground
-    debuggerWindow->raise();
+    // Bring application window to foreground
     this->raise();
 
     // Enable Drag'n'Drop
@@ -1024,10 +1021,20 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
             break;
     }
 
-    // return false;
-
-    // Forward the key event to QShortcut
-    QApplication::sendEvent(_fullScreenShortcut, event);
+    // The emulator screen consumes key presses (ShortcutOverride accepted), so the
+    // View -> Full Screen shortcut is matched here when it reaches us as a plain key
+    // press; when the shortcut map handles it instead, the press never arrives here
+    if (event->type() == QEvent::KeyPress && _menuManager)
+    {
+        auto* keyEvent = static_cast<QKeyEvent*>(event);
+        QAction* fullScreen = _menuManager->fullScreenAction();
+        if (fullScreen && !keyEvent->isAutoRepeat() &&
+            QKeySequence(static_cast<int>(keyEvent->modifiers().toInt() | keyEvent->key())) == fullScreen->shortcut())
+        {
+            fullScreen->trigger();
+            return true;
+        }
+    }
 
     return QMainWindow::eventFilter(watched, event);
 }
@@ -2356,28 +2363,38 @@ void MainWindow::handleStepOver()
     }
 }
 
-void MainWindow::handleDebugModeToggled(bool enabled)
-{
-    if (_emulator)
-    {
-        if (enabled)
-        {
-            _emulator->DebugOn();
-            qDebug() << "Debug mode enabled";
-        }
-        else
-        {
-            _emulator->DebugOff();
-            qDebug() << "Debug mode disabled";
-        }
-    }
-}
-
 void MainWindow::handleDebuggerToggled(bool visible)
 {
     if (debuggerWindow)
     {
-        debuggerWindow->setVisible(visible);
+        debuggerWindow->setVisible(visible);  // showEvent / hideEvent -> handleDebuggerVisibilityChanged
+        if (visible)
+        {
+            debuggerWindow->raise();
+            debuggerWindow->activateWindow();
+        }
+    }
+}
+
+void MainWindow::handleDebuggerVisibilityChanged(bool visible)
+{
+    // Covers the menu toggle, the window's close box and docking-driven hides
+    if (_menuManager)
+        _menuManager->setDebuggerChecked(visible);
+
+    // Debug features cost speed (debug memory interface on every access, breakpoint
+    // dispatch per instruction): only pay for them while the debugger is on screen
+    applyDebugInstrumentation(visible);
+}
+
+void MainWindow::applyDebugInstrumentation(bool enabled)
+{
+    if (_emulator)
+    {
+        if (enabled)
+            _emulator->DebugOn();
+        else
+            _emulator->DebugOff();
     }
 }
 
@@ -2783,6 +2800,46 @@ void MainWindow::handleStatusBarToggled(bool visible)
         _statusBarManager->setVisibleByUser(visible);
         _statusBarManager->saveSettings();
     }
+}
+
+void MainWindow::handleScaleRequested(int scale)
+{
+    // Leave full screen / maximized first so the resize can take effect
+    if (isFullScreen())
+        handleFullScreenShortcut();
+    if (isMaximized())
+        showNormal();
+    fitWindowToScreen(scale);
+}
+
+void MainWindow::handleScreenshotRequested()
+{
+    if (!deviceScreen)
+        return;
+
+    const QImage frame = deviceScreen->grabFramebuffer();
+    if (frame.isNull())
+    {
+        statusBar()->showMessage(tr("Screenshot: no emulator screen to capture"), 3000);
+        return;
+    }
+
+    // Clipboard (PNG-capable image data on every platform via QClipboard::setImage)
+    QGuiApplication::clipboard()->setImage(frame);
+
+    // PNG file in the user's Pictures folder
+    QString directory = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+    if (directory.isEmpty())
+        directory = QDir::homePath();
+    directory += QStringLiteral("/UnrealNG");
+    QDir().mkpath(directory);
+    const QString path = QStringLiteral("%1/unrealng-%2.png")
+                             .arg(directory, QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss")));
+
+    if (frame.save(path, "PNG"))
+        statusBar()->showMessage(tr("Screenshot copied to clipboard and saved to %1").arg(path), 5000);
+    else
+        statusBar()->showMessage(tr("Screenshot copied to clipboard (could not write %1)").arg(path), 5000);
 }
 
 void MainWindow::handleToolBarToggled(bool visible)
@@ -3308,6 +3365,9 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
 
     // 7. UI state
     updateMenuStates();
+
+    // Debug instrumentation follows the debugger window: on only while it is visible
+    applyDebugInstrumentation(debuggerWindow && debuggerWindow->isVisible());
 
     // Turbo render cap for this emulator: the display refresh rate we are on
     if (MainLoop* mainLoop = _emulator->GetMainLoop())

@@ -4,6 +4,8 @@
 #include <QApplication>
 #include <QFontDatabase>
 #include <QIcon>
+
+#include "common/macosplatform.h"
 #include <QDebug>
 #include <QDir>
 #include <common/filehelper.h>
@@ -96,6 +98,9 @@ int main(int argc, char *argv[])
     auto crashHandler = std::unique_ptr<CrashHandler>(CrashHandler::create());
     crashHandler->install();
 
+#ifdef Q_OS_MACOS
+    MacOSPlatform::disableAutomaticFullScreenMenuItem();  // Before any menu bar exists
+#endif
     QApplication app(argc, argv);
 
     // Load non-system fonts before any GUI rendered

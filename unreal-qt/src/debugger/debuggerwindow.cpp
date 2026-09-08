@@ -450,6 +450,18 @@ void DebuggerWindow::onBindingStateChanged(EmulatorStateEnum state)
     emit stateChangedForChildren(state);
 }
 
+void DebuggerWindow::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    emit visibilityChanged(true);
+}
+
+void DebuggerWindow::hideEvent(QHideEvent* event)
+{
+    QWidget::hideEvent(event);
+    emit visibilityChanged(false);
+}
+
 void DebuggerWindow::onBindingReady()
 {
     qDebug() << "DebuggerWindow::onBindingReady()";
@@ -611,8 +623,11 @@ void DebuggerWindow::loadState()
     DebugManager& dbgManager = *_emulator->GetDebugManager();
     BreakpointManager& brkManager = *_emulator->GetBreakpointManager();
 
+    // Note: debug instrumentation (DebugOn) is NOT switched on here. MainWindow
+    // enables it only while this window is visible, so a hidden debugger costs
+    // the emulator nothing (fast memory interface, no breakpoint dispatch).
+
     /// <Test>
-    _emulator->DebugOn();
     // brkManager.AddExecutionBreakpoint(0x272E);  // ROM128K::$272E - MENU_MOVE_UP
     // brkManager.AddExecutionBreakpoint(0x2731);  // ROM128K::$2731 - MENU_MOVE_DOWN
 

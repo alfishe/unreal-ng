@@ -101,10 +101,12 @@ private slots:
     void handleTurboTapeToggled(bool enabled);
     void handleStepIn();
     void handleStepOver();
-    void handleDebugModeToggled(bool enabled);
     void handleToolBarToggled(bool visible);
+    void handleScaleRequested(int scale);
+    void handleScreenshotRequested();
     void handleStatusBarToggled(bool visible);
     void handleDebuggerToggled(bool visible);
+    void handleDebuggerVisibilityChanged(bool visible);
     void handleLogWindowToggled(bool visible);
     void handleTapeManagerToggled(bool visible);
     void handleImportAudioTapeRequested();  // tape-audio-bridge §7.3
@@ -159,6 +161,10 @@ protected:
     /// Resize the window so the emulator screen is shown at an integer scale of its
     /// native (viewport) size, plus menu / toolbar / status bar chrome
     void fitWindowToScreen(int scale);
+
+    /// Switch the emulator's debug instrumentation (debug memory interface, breakpoint
+    /// dispatch) on or off - it follows the debugger window's visibility
+    void applyDebugInstrumentation(bool enabled);
 
     /// Query the refresh rate of the display this window is on and hand it to the
     /// emulator as the upper bound for turbo-mode rendering (re-run on screen change)
@@ -237,7 +243,6 @@ private:
     QPoint _lastCursorPos;
     QPalette _originalPalette;
 
-    QShortcut* _fullScreenShortcut = nullptr;
     bool _inHandler = false;
     bool _initialFitDone = false;  // Window sized to the screen once, on first show
     DisplayRefreshInfo _displayRefresh;  // Last queried refresh characteristics of our display

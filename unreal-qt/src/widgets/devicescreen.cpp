@@ -126,6 +126,32 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
     }
 }
 
+QImage DeviceScreen::grabFramebuffer()
+{
+    QImage frame;
+    if (_frameSource && !_latchedFrame.isNull() &&
+        _frameSource(_latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes())))
+    {
+        frame = _latchedFrame;  // Tear-free latched frame (shared bits; copied below)
+    }
+    else if (devicePixels != nullptr)
+    {
+        frame = *devicePixels;  // Legacy live buffer
+    }
+    if (frame.isNull())
+        return QImage();
+
+    QRect crop = frame.rect();
+    if (_hasViewport)
+    {
+        crop = QRect(_displayViewport.cropLeft, _displayViewport.cropTop,
+                     frame.width() - _displayViewport.cropLeft - _displayViewport.cropRight,
+                     frame.height() - _displayViewport.cropTop - _displayViewport.cropBottom);
+    }
+    // Deep copy in a format every clipboard / PNG writer accepts
+    return frame.copy(crop).convertToFormat(QImage::Format_ARGB32);
+}
+
 void DeviceScreen::keyPressEvent(QKeyEvent* event)
 {
     event->accept();
