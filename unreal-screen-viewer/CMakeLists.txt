@@ -145,6 +145,11 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 # Create the executable
 add_executable(${PROJECT_NAME} ${SOURCES})
 
+# Application icon (shared with unreal-qt) as a Qt resource: window / taskbar
+# icon on Windows and Linux. AUTORCC is off, so the .qrc is compiled explicitly.
+qt6_add_resources(APP_ICON_RESOURCES "${ROOT_DIR}/unreal-qt/resources/appicon.qrc")
+target_sources(${PROJECT_NAME} PRIVATE ${APP_ICON_RESOURCES})
+
 # Set common target properties
 target_include_directories(${PROJECT_NAME} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
@@ -267,6 +272,11 @@ if(WIN32)
     # Include the shared Windows Qt deployment module
     include(${ROOT_DIR}/cmake/WinDeployQt.cmake)
     setup_windows_qt_deployment(${PROJECT_NAME})
+
+    # Windows RC file for the executable icon (shared with unreal-qt) and version information
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/install/windows/app.rc.in"
+                   "${CMAKE_CURRENT_BINARY_DIR}/app.rc" @ONLY)
+    target_sources(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/app.rc")
     
     # Create a custom target for Windows packaging
     add_custom_target(package_screen_viewer_windows
