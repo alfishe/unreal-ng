@@ -1,5 +1,9 @@
 #include "mainwindow.h"
 
+#include <QWindow>
+
+#include "emulator/mainloop.h"
+
 #include "base/featuremanager.h"
 
 #include <algorithm>
@@ -425,7 +429,24 @@ void MainWindow::showEvent(QShowEvent* event)
     {
         _initialFitDone = true;
         QTimer::singleShot(0, this, [this]() { fitWindowToScreen(2); });
+
+        // Turbo render cap follows the display we are on (and moves with the window)
+        applyDisplayRefreshRate();
+        if (QWindow* handle = windowHandle())
+            connect(handle, &QWindow::screenChanged, this, [this](QScreen*) { applyDisplayRefreshRate(); });
     }
+}
+
+void MainWindow::applyDisplayRefreshRate()
+{
+    _displayRefresh = DisplayRefreshRate::query(screen());
+    if (_emulator)
+    {
+        if (MainLoop* mainLoop = _emulator->GetMainLoop())
+            mainLoop->SetTurboRenderMaxFps(_displayRefresh.renderCapHz());
+    }
+    qDebug() << "Display refresh:" << _displayRefresh.currentHz << "Hz, cap" << _displayRefresh.renderCapHz()
+             << "Hz, VRR" << _displayRefresh.variable << "(" << _displayRefresh.source << ")";
 }
 
 void MainWindow::fitWindowToScreen(int scale)
@@ -3287,6 +3308,10 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
 
     // 7. UI state
     updateMenuStates();
+
+    // Turbo render cap for this emulator: the display refresh rate we are on
+    if (MainLoop* mainLoop = _emulator->GetMainLoop())
+        mainLoop->SetTurboRenderMaxFps(_displayRefresh.renderCapHz());
 
     // 8. Update audio settings widget if open
     if (_audioSettingsWidget)

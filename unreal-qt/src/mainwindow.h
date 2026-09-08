@@ -24,6 +24,7 @@
 #include "emulator/soundmanager.h"
 #include "logviewer/logwindow.h"
 #include "menumanager.h"
+#include "common/displayrefreshrate.h"
 #include "statusbarmanager.h"
 #include "toolbarmanager.h"
 #include "tape/tapemanagerwindow.h"
@@ -158,6 +159,10 @@ protected:
     /// Resize the window so the emulator screen is shown at an integer scale of its
     /// native (viewport) size, plus menu / toolbar / status bar chrome
     void fitWindowToScreen(int scale);
+
+    /// Query the refresh rate of the display this window is on and hand it to the
+    /// emulator as the upper bound for turbo-mode rendering (re-run on screen change)
+    void applyDisplayRefreshRate();
     void adjust(QEvent* event, const QPoint& delta = QPoint{});
 
 private:
@@ -235,6 +240,7 @@ private:
     QShortcut* _fullScreenShortcut = nullptr;
     bool _inHandler = false;
     bool _initialFitDone = false;  // Window sized to the screen once, on first show
+    DisplayRefreshInfo _displayRefresh;  // Last queried refresh characteristics of our display
 
     // Stores window geometry before going fullscreen / maximized
     QRect _normalGeometry;

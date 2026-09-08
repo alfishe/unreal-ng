@@ -10,6 +10,8 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/mainloop.h"
+#include "common/displayrefreshrate.h"
 #include "emulator/io/tape/tape.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
@@ -376,6 +378,24 @@ void StatusBarManager::updateFpsToolTip(std::shared_ptr<Emulator> emulator)
             if (turbo && targetFps > 0.0)
                 measured += tr(" (turbo, x%1)").arg(_measuredFps / targetFps, 0, 'f', 1);
             lines << measured;
+        }
+        if (turbo)
+        {
+            // Rendering is decimated in turbo (adaptive, kept within [target, 2 x target))
+            if (MainLoop* mainLoop = emulator->GetMainLoop())
+            {
+                const uint64_t n = mainLoop->GetTurboRenderDecimation();
+                lines << tr("Rendering every %1th frame (~%2 FPS)")
+                             .arg(n)
+                             .arg(n > 0 ? _measuredFps / static_cast<double>(n) : 0.0, 0, 'f', 1);
+                const DisplayRefreshInfo display = DisplayRefreshRate::query(_statusBar->screen());
+                QString cap = tr("Render cap: %1 Hz").arg(mainLoop->GetTurboRenderMaxFps(), 0, 'f', 0);
+                if (display.variable)
+                    cap += tr(" (display VRR %1-%2 Hz)").arg(display.minHz, 0, 'f', 0).arg(display.maxHz, 0, 'f', 0);
+                else if (display.currentHz > 0.0)
+                    cap += tr(" (display %1 Hz)").arg(display.currentHz, 0, 'f', 0);
+                lines << cap;
+            }
         }
         else
         {
