@@ -17,6 +17,7 @@
 #include "emulator/io/fdc/wd1793.h"
 #include "loaders/disk/loader_trd.h"
 #include "loaders/disk/loader_udi.h"
+#include "3rdparty/message-center/messagecenter.h"
 
 /// FDI loader tests (docs/inprogress/2026-09-02-universal-track-model/loader-fdi.md, section 4)
 
@@ -43,6 +44,10 @@ protected:
 
     void TearDown() override
     {
+        // Clean up MessageCenter FIRST to dispose pending messages and observers
+        // before destroying the objects they reference
+        MessageCenter::DisposeDefaultMessageCenter();
+
         if (_context)
         {
             if (_context->pCore)
