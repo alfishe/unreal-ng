@@ -390,6 +390,7 @@ void DeviceScreenGL::setTemporalBlendingEnabled(bool enabled)
 void DeviceScreenGL::setTemporalHistorySize(int frames)
 {
     _frameHistory.setHistorySize(frames);
+    update();
 }
 
 int DeviceScreenGL::temporalHistorySize() const
@@ -404,6 +405,7 @@ void DeviceScreenGL::setTemporalWeightMode(int mode)
         _frameHistory.setEqualWeights();
     else
         _frameHistory.setExponentialWeights(0.5f);
+    update();
 }
 
 void DeviceScreenGL::resizeGL(int w, int h)

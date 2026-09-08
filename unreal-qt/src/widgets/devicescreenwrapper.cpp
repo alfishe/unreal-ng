@@ -50,6 +50,8 @@ void DeviceScreenWrapper::init(uint16_t width, uint16_t height, void* buffer)
         _gpu->init(width, height, buffer);
     else if (_software)
         _software->init(width, height, buffer);
+
+    emit screenInitialized();
 }
 
 void DeviceScreenWrapper::detach()

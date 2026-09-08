@@ -20,6 +20,10 @@ class DeviceScreenWrapper : public QObject
     Q_OBJECT
 
 public:
+signals:
+    void screenInitialized();
+
+public:
     /// @brief Create wrapper with auto-detection (GPU if available, else software)
     explicit DeviceScreenWrapper(QWidget* parent = nullptr);
 
