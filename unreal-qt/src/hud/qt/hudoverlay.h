@@ -61,6 +61,7 @@ private slots:
     void onAnimationTick();
 
 private:
+    static QRect tileDirtyBounds(const QRect& rect, float uiScale);
     void drawWholeTileFrame(QPainter& painter, const QRect& rect, const HudTileFrameStyle& frame, float uiScale);
     void drawAugmentation(QPainter& painter, const HudElement& el, const HudSurface& surface, const HudTheme& theme, float uiScale);
     void drawIndicator(QPainter& painter, const HudElement& el, const QRect& rect, float pulseAlpha, const HudTheme& theme, float uiScale);
