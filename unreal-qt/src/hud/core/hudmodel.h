@@ -97,7 +97,7 @@ public:
     // --- Housekeeping & Limits ---
 
     /// @brief Expire elapsed toasts against the provided time point
-    void expire(HudClock::time_point now);
+    bool expire(HudClock::time_point now);  // Returns true if any elements expired
 
     /// @brief Configure visible and queued toast limits
     void setLimits(size_t visibleToasts, size_t queuedToasts);

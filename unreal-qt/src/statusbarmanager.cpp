@@ -366,47 +366,30 @@ void StatusBarManager::updateFpsToolTip(std::shared_ptr<Emulator> emulator)
     QString text;
     if (!context)
     {
-        text = tr("Emulated frames per second\nNo emulator");
+        text = tr("No emulator");
     }
     else
     {
-        // Target rate follows the machine timing (t-states per frame at the base CPU clock)
         const unsigned frameUs = context->config.frame_duration_us;
         const double targetFps = frameUs > 0 ? 1000000.0 / frameUs : 0.0;
         const bool turbo = emulator->IsTurboMode();
 
         QStringList lines;
-        lines << tr("Model: %1").arg(_modelName.isEmpty() ? tr("unknown") : _modelName);
+        lines << (_modelName.isEmpty() ? tr("Unknown model") : _modelName);
         lines << tr("Target: %1 FPS").arg(targetFps, 0, 'f', 2);
+
         if (_measuredFps > 0.0)
         {
-            QString measured = tr("Emulated: %1 FPS").arg(_measuredFps, 0, 'f', 2);
+            QString actual = tr("Actual: %1 FPS").arg(_measuredFps, 0, 'f', 2);
             if (turbo && targetFps > 0.0)
-                measured += tr(" (turbo, x%1)").arg(_measuredFps / targetFps, 0, 'f', 1);
-            lines << measured;
-        }
-        if (turbo)
-        {
-            // Rendering is decimated in turbo (adaptive, kept within [target, 2 x target))
-            if (MainLoop* mainLoop = emulator->GetMainLoop())
-            {
-                const uint64_t n = mainLoop->GetTurboRenderDecimation();
-                lines << tr("Rendering every %1th frame (~%2 FPS)")
-                             .arg(n)
-                             .arg(n > 0 ? _measuredFps / static_cast<double>(n) : 0.0, 0, 'f', 1);
-                const DisplayRefreshInfo display = DisplayRefreshRate::query(_statusBar->screen());
-                QString cap = tr("Render cap: %1 Hz").arg(mainLoop->GetTurboRenderMaxFps(), 0, 'f', 0);
-                if (display.variable)
-                    cap += tr(" (display VRR %1-%2 Hz)").arg(display.minHz, 0, 'f', 0).arg(display.maxHz, 0, 'f', 0);
-                else if (display.currentHz > 0.0)
-                    cap += tr(" (display %1 Hz)").arg(display.currentHz, 0, 'f', 0);
-                lines << cap;
-            }
+                actual += tr(" (x%1)").arg(_measuredFps / targetFps, 0, 'f', 1);
+            lines << actual;
         }
         else
         {
-            lines << (turbo ? tr("Emulated: measuring (turbo)") : tr("Emulated: --"));
+            lines << tr("Actual: --");
         }
+
         text = lines.join(QLatin1Char('\n'));
     }
 

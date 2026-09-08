@@ -176,6 +176,11 @@ void HudModel::setIndicator(const std::string& key, HudState state, std::string 
 
     if (it != _indicators.end())
     {
+        // Check if visible content changed (skip publish if unchanged)
+        bool changed = (it->state != state) || (it->value != value) || (it->monospace != monospace);
+        if (!label.empty() && it->title != label) changed = true;
+        if (!icon.empty() && it->icon != icon) changed = true;
+
         it->state = state;
         it->value = std::move(value);
         it->created = HudClock::now();
@@ -189,6 +194,8 @@ void HudModel::setIndicator(const std::string& key, HudState state, std::string 
         {
             it->icon = icon;
         }
+
+        if (changed) publishLocked();
     }
     else
     {
@@ -209,9 +216,8 @@ void HudModel::setIndicator(const std::string& key, HudState state, std::string 
         el.state = state;
         el.zIndex = 100; // indicators float above picture augmentations
         _indicators.push_back(std::move(el));
+        publishLocked();
     }
-
-    publishLocked();
 }
 
 void HudModel::setIndicatorAt(const std::string& key, HudTilePosition position, HudState state, std::string value,
@@ -228,6 +234,12 @@ void HudModel::setIndicatorAt(const std::string& key, HudTilePosition position, 
 
     if (it != _indicators.end())
     {
+        // Check if visible content changed (skip publish if unchanged)
+        bool changed = (it->state != state) || (it->value != value) ||
+                       (it->position != position) || (it->monospace != monospace);
+        if (!label.empty() && it->title != label) changed = true;
+        if (!icon.empty() && it->icon != icon) changed = true;
+
         it->state = state;
         it->value = std::move(value);
         it->position = position;
@@ -239,6 +251,8 @@ void HudModel::setIndicatorAt(const std::string& key, HudTilePosition position, 
             it->title = std::move(label);
         if (!icon.empty())
             it->icon = icon;
+
+        if (changed) publishLocked();
     }
     else
     {
@@ -259,9 +273,8 @@ void HudModel::setIndicatorAt(const std::string& key, HudTilePosition position, 
         el.state = state;
         el.zIndex = 100;
         _indicators.push_back(std::move(el));
+        publishLocked();
     }
-
-    publishLocked();
 }
 
 void HudModel::clearIndicator(const std::string& key)
@@ -487,11 +500,11 @@ uint64_t HudModel::generation() const
     return _generation.load(std::memory_order_acquire);
 }
 
-void HudModel::expire(HudClock::time_point now)
+bool HudModel::expire(HudClock::time_point now)
 {
     std::lock_guard<std::mutex> lock(_mutex);
     if (!_enabled.load(std::memory_order_relaxed))
-        return;
+        return false;
 
     bool changed = false;
     auto it = std::remove_if(_toasts.begin(), _toasts.end(), [&](const HudElement& el) {
@@ -525,6 +538,8 @@ void HudModel::expire(HudClock::time_point now)
     {
         publishLocked();
     }
+
+    return changed;
 }
 
 void HudModel::setLimits(size_t visibleToasts, size_t queuedToasts)

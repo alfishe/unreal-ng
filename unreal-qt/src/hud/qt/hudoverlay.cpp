@@ -170,17 +170,24 @@ void HudOverlay::onModelChanged()
 
 void HudOverlay::onAnimationTick()
 {
-    if (_model)
+    if (!_model)
+        return;
+
+    size_t expiredCount = _model->expire(HudClock::now());
+    auto snap = _model->snapshot();
+
+    if (!snap || snap->elements.empty())
     {
-        _model->expire(HudClock::now());
-        auto snap = _model->snapshot();
-        if (!snap || snap->elements.empty())
-        {
-            _hasActiveAnimations = false;
-            _animTimer->stop();
-        }
+        _hasActiveAnimations = false;
+        _animTimer->stop();
+        if (expiredCount > 0)
+            update();  // Only repaint if something was removed
+        return;
     }
-    update();
+
+    // Only repaint if elements expired (visual change)
+    if (expiredCount > 0)
+        update();
 }
 
 QImage HudOverlay::getImageFromBuffer(const std::shared_ptr<const HudImageBuffer>& buf)
