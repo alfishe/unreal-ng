@@ -104,6 +104,12 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
         );
     }
 
+    // Destination is always the full widget - clip to dirty region for efficiency.
+    // Using event->rect() as destination would squeeze the entire source into
+    // a partial rectangle when sibling widgets (HUD overlay) trigger partial repaints.
+    QRect destRect = rect();
+    painter.setClipRect(event->rect());
+
     // Tear-free path: pull the latched full-frame snapshot into our owned
     // backing image (SIMD copy under the screen's present mutex, ~40us),
     // then draw without holding any lock. The legacy path below reads the
@@ -114,15 +120,14 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
 #if QT_VERSION >= QT_VERSION_CHECK(5, 13, 0)
         painter.setRenderHint(QPainter::LosslessImageRendering);
 #endif
-        painter.drawImage(event->rect(), _latchedFrame, sourceRect);
+        painter.drawImage(destRect, _latchedFrame, sourceRect);
     }
     else if (devicePixels != nullptr)
     {
 #if QT_VERSION >= QT_VERSION_CHECK(5, 13, 0)
         painter.setRenderHint(QPainter::LosslessImageRendering);
 #endif
-        // Render the ZX Spectrum screen directly into the event rect
-        painter.drawImage(event->rect(), *devicePixels, sourceRect);
+        painter.drawImage(destRect, *devicePixels, sourceRect);
     }
 }
 

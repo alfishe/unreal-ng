@@ -148,15 +148,29 @@ void HudOverlay::onModelChanged()
         {
             _animTimer->stop();
         }
-        update();
+        // Invalidate only the last known element bounds
+        if (!_lastIndicatorBounds.isEmpty())
+            update(_lastIndicatorBounds);
+        if (!_lastToastBounds.isEmpty())
+            update(_lastToastBounds);
+        if (_lastIndicatorBounds.isEmpty() && _lastToastBounds.isEmpty())
+            update();
         return;
     }
 
     auto snap = _model->snapshot();
     bool hasAnimations = false;
-    if (snap && !snap->elements.empty())
+    if (snap)
     {
-        hasAnimations = true;
+        for (const auto& el : snap->elements)
+        {
+            // Only toasts and elements with TTL need animation timer
+            if (el.kind == HudKind::Toast || el.ttl.count() > 0)
+            {
+                hasAnimations = true;
+                break;
+            }
+        }
     }
 
     _hasActiveAnimations = hasAnimations;
@@ -164,8 +178,18 @@ void HudOverlay::onModelChanged()
     {
         _animTimer->start();
     }
+    else if (!_hasActiveAnimations && _animTimer && _animTimer->isActive())
+    {
+        _animTimer->stop();  // Stop timer when no animations needed
+    }
 
-    update();
+    // Targeted update: only invalidate regions with elements
+    if (!_lastIndicatorBounds.isEmpty())
+        update(_lastIndicatorBounds);
+    if (!_lastToastBounds.isEmpty())
+        update(_lastToastBounds);
+    if (_lastIndicatorBounds.isEmpty() && _lastToastBounds.isEmpty())
+        update();  // First paint - need full update
 }
 
 void HudOverlay::onAnimationTick()
@@ -181,13 +205,24 @@ void HudOverlay::onAnimationTick()
         _hasActiveAnimations = false;
         _animTimer->stop();
         if (expiredCount > 0)
-            update();  // Only repaint if something was removed
+        {
+            // Targeted update: only invalidate regions with elements
+            if (!_lastIndicatorBounds.isEmpty())
+                update(_lastIndicatorBounds);
+            if (!_lastToastBounds.isEmpty())
+                update(_lastToastBounds);
+        }
         return;
     }
 
     // Only repaint if elements expired (visual change)
     if (expiredCount > 0)
-        update();
+    {
+        if (!_lastIndicatorBounds.isEmpty())
+            update(_lastIndicatorBounds);
+        if (!_lastToastBounds.isEmpty())
+            update(_lastToastBounds);
+    }
 }
 
 QImage HudOverlay::getImageFromBuffer(const std::shared_ptr<const HudImageBuffer>& buf)
@@ -321,7 +356,7 @@ void HudOverlay::drawWholeTileFrame(QPainter& painter, const QRect& rect, const 
     painter.drawPixmap(rect.left() - spread, rect.top(), cached);
 }
 
-void HudOverlay::paintEvent(QPaintEvent*)
+void HudOverlay::paintEvent(QPaintEvent* event)
 {
     if (!_model || !_model->isEnabled())
         return;
@@ -330,10 +365,16 @@ void HudOverlay::paintEvent(QPaintEvent*)
     if (!snap || snap->elements.empty())
         return;
 
+    // Get dirty region - only repaint what's needed
+    const QRect dirtyRect = event ? event->rect() : rect();
+
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::TextAntialiasing, true);
     painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+
+    // Clip to dirty region for early termination
+    painter.setClipRect(dirtyRect);
 
     HudSurface surface;
     surface.outputRect = HudRect{0, 0, width(), height()};
@@ -470,6 +511,7 @@ void HudOverlay::paintEvent(QPaintEvent*)
                 break;
         }
 
+        QRect indicatorBounds;
         for (const auto& prep : prepared)
         {
             QRect indRect;
@@ -484,8 +526,20 @@ void HudOverlay::paintEvent(QPaintEvent*)
                 indRect = QRect(currentX, currentY, prep.width, boxHeight);
                 currentX += prep.width + gap;
             }
+
+            // Skip if outside dirty region
+            if (!dirtyRect.intersects(indRect))
+                continue;
+
             drawIndicator(painter, *prep.element, indRect, pulseAlpha, theme, uiScale);
+
+            // Track bounds for targeted updates
+            if (indicatorBounds.isEmpty())
+                indicatorBounds = indRect;
+            else
+                indicatorBounds = indicatorBounds.united(indRect);
         }
+        _lastIndicatorBounds = indicatorBounds;
     }
 
     // 3. Draw transient toasts with predefined display positions
@@ -546,6 +600,7 @@ void HudOverlay::paintEvent(QPaintEvent*)
         int currentY = startY;
         int currentX = startX;
 
+        QRect toastBounds;
         for (const auto* toast : toasts)
         {
             auto elapsed = now - toast->created;
@@ -569,10 +624,25 @@ void HudOverlay::paintEvent(QPaintEvent*)
             }
 
             QRect toastRect(currentX, currentY + static_cast<int>(slideY), toastWidth, toastHeight);
+
+            // Skip if outside dirty region
+            if (!dirtyRect.intersects(toastRect))
+            {
+                currentY += stepY;
+                continue;
+            }
+
             drawToast(painter, *toast, toastRect, opacity, scale, theme, uiScale);
+
+            // Track bounds for targeted updates
+            if (toastBounds.isEmpty())
+                toastBounds = toastRect;
+            else
+                toastBounds = toastBounds.united(toastRect);
 
             currentY += stepY;
         }
+        _lastToastBounds = toastBounds;
     }
 }
 

@@ -83,6 +83,10 @@ private:
     // Cache of converted QImages by buffer pointer
     std::unordered_map<const HudImageBuffer*, QImage> _imageCache;
 
+    // Dirty region tracking - last known bounds of rendered elements
+    QRect _lastIndicatorBounds;
+    QRect _lastToastBounds;
+
     // LRU cache for pre-rendered tile frame backgrounds
     struct TileFrameCacheKey
     {
