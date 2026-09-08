@@ -39,15 +39,15 @@ RegistersWidget::~RegistersWidget()
 
 ///
 /// \brief RegistersWidget::setZ80State set actual values for Z80 registers from Core state
-/// \param state
+/// \param state Live pointer into the bound emulator's Z80, or nullptr to detach.
+///
+/// The pointer is owned by the emulator and dies with it, so the caller must pass
+/// nullptr on unbind and a fresh pointer for every newly bound emulator; refresh()
+/// otherwise dereferences freed memory after a Stop / Start cycle.
 ///
 void RegistersWidget::setZ80State(Z80State* state)
 {
-    if (state != nullptr)
-    {
-        m_z80Registers = static_cast<Z80Registers*>(state);
-        //memcpy(&m_z80Registers, static_cast<Z80Registers*>(state), sizeof(Z80Registers));
-    }
+    m_z80Registers = static_cast<Z80Registers*>(state);
 }
 
 // Helper methods

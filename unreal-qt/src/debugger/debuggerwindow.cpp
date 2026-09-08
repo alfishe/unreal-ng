@@ -454,6 +454,11 @@ void DebuggerWindow::onBindingReady()
 {
     qDebug() << "DebuggerWindow::onBindingReady()";
 
+    // Point the registers widget at the *bound* emulator's Z80 before it refreshes.
+    // Its cached pointer may still belong to a previous, already destroyed emulator
+    // (ready fires on the new emulator's first pause, before any CPU step refresh).
+    ui->registersWidget->setZ80State(_emulator ? _emulator->GetZ80State() : nullptr);
+
     // Dispatch to children via signal (widgets are connected to readyForChildren)
     emit readyForChildren();
 }
@@ -471,6 +476,7 @@ void DebuggerWindow::onBindingNotReady()
 
 void DebuggerWindow::reset()
 {
+    ui->registersWidget->setZ80State(nullptr);  // Detach from the (possibly destroyed) emulator
     ui->registersWidget->reset();
     ui->hexView->reset();
 
