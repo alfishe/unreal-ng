@@ -4,6 +4,8 @@
 #include "base/featuremanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/notifications.h"
+#include "emulator/platform.h"
 #include "emulator/sound/audio.h"
 #include "emulator/video/screen.h"
 #include "encoders/gif_encoder.h"
@@ -601,6 +603,10 @@ bool RecordingManager::StartRecordingWithEncoder(const std::string& filename, st
     if (_context && _context->pEmulator)
         _recordingEmulatorId = _context->pEmulator->GetId();
 
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_RECORDING_STATE,
+        new RecordingStatePayload(_recordingEmulatorId, true, _outputFilename));
+
     MLOGINFO("RecordingManager::StartRecordingWithEncoder - Recording started successfully");
     return true;
 }
@@ -619,6 +625,9 @@ void RecordingManager::StopRecording()
     // accepting new frames BEFORE finalizing (closing) the encoders
     std::lock_guard<std::mutex> lock(_captureMutex);
 
+    std::string stoppedEmuId = _recordingEmulatorId;
+    std::string savedPath = _outputFilename;
+
     _isRecording = false;
     _isPaused = false;
     _recordingEmulatorId.clear();
@@ -635,6 +644,10 @@ void RecordingManager::StopRecording()
 
     // Finalize encoder and close output file
     FinalizeEncoder();
+
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_RECORDING_STATE,
+        new RecordingStatePayload(stoppedEmuId, false, savedPath));
 
     MLOGINFO("RecordingManager::StopRecording - Recording stopped, output saved to '%s'", _outputFilename.c_str());
 }

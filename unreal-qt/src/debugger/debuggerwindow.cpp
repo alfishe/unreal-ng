@@ -1068,6 +1068,7 @@ void DebuggerWindow::stepOut()
         bpDesc->memoryType = BRK_MEM_EXECUTE;
         bpDesc->z80address = returnAddress;
         bpDesc->note = STEP_OUT_NOTE;
+        bpDesc->hidden = true;
 
         // Add the breakpoint
         _stepOutBreakpointID = breakpointManager->AddBreakpoint(bpDesc);

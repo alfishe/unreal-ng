@@ -11,6 +11,7 @@
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/videocontroller.h"
 #include "emulator/video/zx/screenzx.h"
+#include "3rdparty/message-center/messagecenter.h"
 #include "stdafx.h"
 
 // Instantiate Core tables as static (only one instance per process)
@@ -511,10 +512,6 @@ void Core::UseDebugMemoryInterface()
 
 void Core::Reset()
 {
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    int topicID = messageCenter.RegisterTopic(NC_SYSTEM_RESET);
-    messageCenter.Post(topicID, new SimpleTextPayload("Core reset started"));
-
     // Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM)
     _mode = static_cast<ROMModeEnum>(_config->reset_rom);
 
@@ -551,6 +548,12 @@ void Core::Reset()
         _recordingManager->Reset();  // Reset recording manager (stops active recording, clears counters)
 #endif
 
+    // Single NC_SYSTEM_RESET notification per reset, posted only after the reset completes:
+    // observers (HUD reset toast, FPS re-arm) must see exactly one event. An earlier
+    // 'started' + 'finished' pair here surfaced as duplicate notifications on snapshot
+    // load, where the loader's core.Reset() is the only reset that runs.
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    int topicID = messageCenter.RegisterTopic(NC_SYSTEM_RESET);
     messageCenter.Post(topicID, new SimpleTextPayload("Core reset finished"));
 }
 
@@ -604,6 +607,11 @@ void Core::SetSpeedMultiplier(uint8_t multiplier)
     _state->next_z80_frequency_multiplier = multiplier;
 
     MLOGINFO("Core::SetSpeedMultiplier - Speed multiplier queued to %dx (will apply at next frame)", multiplier);
+
+    // Notify consumers (HUD speed indicator, status bar)
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_SPEED_CHANGED,
+        new SpeedChangedPayload(_context->emulatorId, multiplier, _context->config.turbo_mode));
 }
 
 uint8_t Core::GetSpeedMultiplier() const
@@ -632,6 +640,11 @@ void Core::EnableTurboMode(bool withAudio)
 
     MLOGINFO("Core::EnableTurboMode - Turbo mode enabled (audio generation: %s, audible: MUTED)",
              withAudio ? "ON" : "OFF");
+
+    // Notify consumers (HUD speed indicator, status bar)
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_SPEED_CHANGED,
+        new SpeedChangedPayload(_context->emulatorId, _state->current_z80_frequency_multiplier, true));
 }
 
 //
@@ -649,6 +662,11 @@ void Core::DisableTurboMode()
     }
 
     MLOGINFO("Core::DisableTurboMode - Turbo mode disabled, audio unmuted");
+
+    // Notify consumers (HUD speed indicator, status bar)
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_SPEED_CHANGED,
+        new SpeedChangedPayload(_context->emulatorId, _state->current_z80_frequency_multiplier, false));
 }
 
 //

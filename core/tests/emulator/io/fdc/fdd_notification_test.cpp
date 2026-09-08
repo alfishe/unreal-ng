@@ -243,9 +243,18 @@ TEST_F(FDDNotificationTest, InsertNullDoesNotSendNotification)
     FDD fdd(&ctx);
     
     fdd.insertDisk(nullptr);
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
     
     EXPECT_TRUE(g_insertedDisks.empty());
+}
+
+TEST_F(FDDNotificationTest, EjectWhenNoDiskInsertedDoesNotSendNotification)
+{
+    EmulatorContext ctx;
+    FDD fdd(&ctx);
+    
+    fdd.ejectDisk();
+    
+    EXPECT_TRUE(g_ejectedDisks.empty());
 }
 
 TEST_F(FDDNotificationTest, MultipleInsertEjectCycles)

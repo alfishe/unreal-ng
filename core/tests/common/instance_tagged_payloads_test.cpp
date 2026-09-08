@@ -94,6 +94,19 @@ TEST(InstanceTaggedPayloads_Test, BreakpointPayload_AcceptsStringUuid)
     EXPECT_EQ(p.address, 0x0001u);
 }
 
+TEST(InstanceTaggedPayloads_Test, BreakpointPayload_CarriesHiddenFlag)
+{
+    const UUID id = UUID::Generate();
+    BreakpointTriggeredPayload p1(id, 10, 0x1000, false);
+    EXPECT_FALSE(p1.hidden);
+
+    BreakpointTriggeredPayload p2(id, 11, 0x2000, true);
+    EXPECT_TRUE(p2.hidden);
+
+    BreakpointTriggeredPayload p3(id.toString(), 12, 0x3000, true);
+    EXPECT_TRUE(p3.hidden);
+}
+
 /// endregion </BreakpointTriggeredPayload unit tests>
 
 /// region <MessageCenter round-trip>

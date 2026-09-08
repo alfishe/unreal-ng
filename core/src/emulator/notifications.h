@@ -271,17 +271,122 @@ class BreakpointTriggeredPayload : public SimpleNumberPayload
 public:
     unreal::UUID emulatorId;
     uint16_t    address;   // Z80 address that triggered (0 if unknown / N/A)
+    bool        hidden{false};
 
-    BreakpointTriggeredPayload(const unreal::UUID& id, uint32_t breakpointId, uint16_t addr)
-        : SimpleNumberPayload(breakpointId), emulatorId(id), address(addr) {}
+    BreakpointTriggeredPayload(const unreal::UUID& id, uint32_t breakpointId, uint16_t addr, bool isHidden = false)
+        : SimpleNumberPayload(breakpointId), emulatorId(id), address(addr), hidden(isHidden) {}
 
-    BreakpointTriggeredPayload(const std::string& id, uint32_t breakpointId, uint16_t addr)
+    BreakpointTriggeredPayload(const std::string& id, uint32_t breakpointId, uint16_t addr, bool isHidden = false)
         : SimpleNumberPayload(breakpointId)
         , emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id))
         , address(addr)
+        , hidden(isHidden)
     {}
 
     virtual ~BreakpointTriggeredPayload() = default;
+};
+
+/// Payload for NC_FEATURE_CHANGED.
+/// Posted by FeatureManager::onFeatureChanged() AFTER all UpdateFeatureCache()
+/// calls are complete, so every consumer sees consistent cached state.
+/// Informational: caches are already up to date when this fires.
+class FeatureChangedPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::string featureId;   // Canonical feature ID (e.g. "hud", "sound", "timetravel")
+    bool enabled;
+
+    FeatureChangedPayload(const unreal::UUID& id, std::string feature, bool on)
+        : MessagePayload(), emulatorId(id), featureId(std::move(feature)), enabled(on) {}
+
+    FeatureChangedPayload(const std::string& id, std::string feature, bool on)
+        : MessagePayload()
+        , emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id))
+        , featureId(std::move(feature))
+        , enabled(on)
+    {}
+
+    virtual ~FeatureChangedPayload() = default;
+};
+
+/// Payload for NC_SPEED_CHANGED.
+/// Posted by Core::SetSpeedMultiplier / EnableTurboMode / DisableTurboMode
+/// after state is committed.
+class SpeedChangedPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    uint8_t multiplier;   // 1, 2, 4, 8, 16
+    bool turboMode;       // true = max-speed mode active
+
+    SpeedChangedPayload(const unreal::UUID& id, uint8_t mult, bool isTurbo)
+        : MessagePayload(), emulatorId(id), multiplier(mult), turboMode(isTurbo) {}
+
+    SpeedChangedPayload(const std::string& id, uint8_t mult, bool isTurbo)
+        : MessagePayload()
+        , emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id))
+        , multiplier(mult)
+        , turboMode(isTurbo)
+    {}
+
+    virtual ~SpeedChangedPayload() = default;
+};
+
+/// Payload for NC_FILE_LOADED.
+/// Posted by Emulator::LoadSnapshot / LoadTape / LoadDisk after the loader
+/// returns. Carries the result so consumers can show success or failure toasts.
+class FileLoadedPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::string kind;     // "snapshot", "tape", "disk"
+    std::string path;     // full path of the file
+    bool ok;              // false = load failed
+
+    FileLoadedPayload(const unreal::UUID& id, std::string fileKind, std::string filePath, bool success)
+        : MessagePayload()
+        , emulatorId(id)
+        , kind(std::move(fileKind))
+        , path(std::move(filePath))
+        , ok(success)
+    {}
+
+    FileLoadedPayload(const std::string& id, std::string fileKind, std::string filePath, bool success)
+        : MessagePayload()
+        , emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id))
+        , kind(std::move(fileKind))
+        , path(std::move(filePath))
+        , ok(success)
+    {}
+
+    virtual ~FileLoadedPayload() = default;
+};
+
+/// Payload for NC_RECORDING_STATE.
+/// Posted by RecordingManager on start / stop.
+class RecordingStatePayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    bool recording;       // true = started, false = stopped
+    std::string path;     // output file path (meaningful on stop)
+
+    RecordingStatePayload(const unreal::UUID& id, bool isRecording, std::string filePath = {})
+        : MessagePayload()
+        , emulatorId(id)
+        , recording(isRecording)
+        , path(std::move(filePath))
+    {}
+
+    RecordingStatePayload(const std::string& id, bool isRecording, std::string filePath = {})
+        : MessagePayload()
+        , emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id))
+        , recording(isRecording)
+        , path(std::move(filePath))
+    {}
+
+    virtual ~RecordingStatePayload() = default;
 };
 
 /// endregion </Instance-tagged payloads (GDB TDD §6.3 prerequisite)>

@@ -220,6 +220,7 @@ message("DATA_PATH: ${DATA_PATH}")
 # Set include paths for compiler
 include_directories(
     ${SOURCE_DIR}/
+    ${SOURCE_DIR}/hud/core
     ${SOURCE_DIR}/3rdparty/QHexView-5.0
 )
 
@@ -561,6 +562,35 @@ add_custom_target(package_all
     DEPENDS ${PROJECT_NAME}
     COMMENT "Creating package for current platform in ${CMAKE_BINARY_DIR}/packages"
 )
+
+# ========================================
+# hud-core-tests: Dedicated Qt-free test suite (verifies detachment)
+# ========================================
+if (TESTS)
+    file(GLOB_RECURSE HUD_TEST_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/hud/*.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/hud/core/*.cpp"
+    )
+    add_executable(hud-core-tests ${HUD_TEST_SOURCES})
+    set_target_properties(hud-core-tests PROPERTIES
+        AUTOMOC OFF
+        AUTOUIC OFF
+        AUTORCC OFF
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+    )
+    target_include_directories(hud-core-tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/hud/core"
+        "${ROOT_DIR}/core/src"
+        "${ROOT_DIR}/core/src/common"
+        "${ROOT_DIR}/core/src/emulator"
+        "${ROOT_DIR}/core/tests"
+    )
+    target_link_libraries(hud-core-tests PRIVATE
+        unrealng::core
+        gtest_main
+    )
+endif()
 
 # <Diagnostics>
 message(STATUS "<unreal-qt diagnostics>")

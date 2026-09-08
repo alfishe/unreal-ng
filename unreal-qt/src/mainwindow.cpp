@@ -42,6 +42,8 @@
 #include "emulator/sound/soundmanager.h"
 #include "emulator/soundmanager.h"
 #include "debugger/widgets/audiosettingswidget.h"
+#include "hud/qt/hudoverlay.h"
+#include "hud/core/hudmodel.h"
 #ifdef ENABLE_RECORDING
 #include "debugger/widgets/videorecordingwidget.h"
 #include "debugger/widgets/recordingpresets.h"
@@ -119,6 +121,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Put emulator screen into resizable content frame
     QFrame* contentFrame = ui->contentFrame;
     deviceScreen = new DeviceScreen(contentFrame);
+    _hudOverlay = new HudOverlay(deviceScreen);
+    _hudOverlay->setVisible(false);
     
     // NOTE: We do NOT use a layout manager for contentFrame. 
     // DeviceScreen relies on shrinking itself to maintain aspect ratio, which fights Qt layouts.
@@ -246,6 +250,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Create the status bar (device LEDs + FPS)
     _statusBarManager = new StatusBarManager(this, _menuManager, this);
     connect(_menuManager, &MenuManager::statusBarToggled, this, &MainWindow::handleStatusBarToggled);
+    connect(_menuManager, &MenuManager::hudOverlayToggled, this, &MainWindow::handleHudOverlayToggled);
     _statusBarManager->restoreSettings();
 
     // Bring application window to foreground
@@ -2802,6 +2807,19 @@ void MainWindow::handleStatusBarToggled(bool visible)
     }
 }
 
+void MainWindow::handleHudOverlayToggled(bool visible)
+{
+    if (_emulator && _emulator->GetFeatureManager())
+    {
+        _emulator->GetFeatureManager()->setFeature(Features::kHud, visible);
+    }
+    if (_hudOverlay)
+    {
+        _hudOverlay->setVisible(visible);
+    }
+}
+
+
 void MainWindow::handleScaleRequested(int scale)
 {
     // Leave full screen / maximized first so the resize can take effect
@@ -3379,6 +3397,24 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
         _audioSettingsWidget->setContext(_emulator->GetContext());
     }
 
+    // 9. HUD Overlay binding
+    if (_hudOverlay)
+    {
+        _hudModel = std::make_shared<HudModel>(_emulator->GetContext());
+        _hudOverlay->setModel(_hudModel);
+        bool hudEnabled = false;
+        if (_emulator->GetContext() && _emulator->GetContext()->pFeatureManager)
+        {
+            hudEnabled = _emulator->GetContext()->pFeatureManager->isEnabled(Features::kHud);
+        }
+        if (_menuManager)
+        {
+            _menuManager->setHudOverlayChecked(hudEnabled);
+        }
+        _hudOverlay->setVisible(hudEnabled);
+        _hudOverlay->syncGeometryWithParent();
+    }
+
     qDebug() << "MainWindow::adoptEmulator() - Successfully adopted emulator"
              << QString::fromStdString(_emulator->GetId());
 }
@@ -3414,7 +3450,12 @@ void MainWindow::unbindFromEmulator()
         debuggerWindow->setEmulator(nullptr);
     }
 
-    // 4. Device screen
+    // 4. Device screen & HUD overlay
+    if (_hudOverlay)
+    {
+        _hudOverlay->setModel(nullptr);
+    }
+    _hudModel.reset();
     deviceScreen->detach();
 
     // 5. Audio settings widget

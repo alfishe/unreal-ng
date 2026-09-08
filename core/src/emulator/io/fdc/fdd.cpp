@@ -82,6 +82,11 @@ void FDD::insertDisk(DiskImage* diskImage)
 
 void FDD::ejectDisk()
 {
+    if (!_diskInserted && !_diskImage)
+    {
+        return;
+    }
+
     // Capture path before clearing pointer
     std::string path;
     if (_diskImage)

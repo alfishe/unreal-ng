@@ -7,12 +7,17 @@
 #include "common/timehelper.h"
 #include "emulator/emulator.h"
 #include "common/filehelper.h"
-#include "_helpers/emulatortesthelper.h"
-#include "_helpers/testpathhelper.h"
-
+#include <atomic>
 #include <cctype>
 #include <utility>
 #include <vector>
+
+#include "_helpers/emulatortesthelper.h"
+#include "_helpers/testpathhelper.h"
+#include "_helpers/testtiminghelper.h"
+#include "emulator/notifications.h"
+#include "emulator/platform.h"
+#include "3rdparty/message-center/messagecenter.h"
 
 /// region <SetUp / TearDown>
 
@@ -336,4 +341,95 @@ TEST(Emulator_PathShapes_Test, LoadAndSaveSnapshot_NonAsciiUtf8Path)
 }
 
 /// endregion </Path shape tests>
+
+/// region <File loaded notifications>
+
+TEST_F(Emulator_Test, FailedLoadsPostNotificationWithOkFalse)
+{
+    Emulator* emu = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emu, nullptr);
+
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+
+    std::atomic<int> receivedCount{0};
+    std::string capturedKind;
+    bool capturedOk = true;
+
+    uint64_t obsId = mc.AddObserver(NC_FILE_LOADED, [&](int, Message* msg) {
+        if (!msg) return;
+        auto* payload = dynamic_cast<FileLoadedPayload*>(msg->obj);
+        if (payload && payload->emulatorId == emu->GetContext()->emulatorId)
+        {
+            capturedKind = payload->kind;
+            capturedOk = payload->ok;
+            receivedCount.fetch_add(1);
+        }
+    });
+
+    // Attempt nonexistent snapshot load
+    EXPECT_FALSE(emu->LoadSnapshot("/nonexistent/path/test.sna"));
+    EXPECT_TRUE(WaitForCondition([&] { return receivedCount.load() >= 1; }));
+    EXPECT_EQ(receivedCount.load(), 1);
+    EXPECT_EQ(capturedKind, "snapshot");
+    EXPECT_FALSE(capturedOk);
+
+    // Attempt nonexistent tape load
+    EXPECT_FALSE(emu->LoadTape("/nonexistent/path/test.tap"));
+    EXPECT_TRUE(WaitForCondition([&] { return receivedCount.load() >= 2; }));
+    EXPECT_EQ(receivedCount.load(), 2);
+    EXPECT_EQ(capturedKind, "tape");
+    EXPECT_FALSE(capturedOk);
+
+    // Attempt nonexistent disk load
+    EXPECT_FALSE(emu->LoadDisk("/nonexistent/path/test.trd"));
+    EXPECT_TRUE(WaitForCondition([&] { return receivedCount.load() >= 3; }));
+    EXPECT_EQ(receivedCount.load(), 3);
+    EXPECT_EQ(capturedKind, "disk");
+    EXPECT_FALSE(capturedOk);
+
+    mc.RemoveObserverById(NC_FILE_LOADED, obsId);
+    EmulatorTestHelper::CleanupEmulator(emu);
+}
+
+TEST_F(Emulator_Test, LoadSnapshot_EmitsSingleResetNotification)
+{
+    Emulator* emu = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emu, nullptr);
+
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+
+    std::atomic<int> resetCount{0};
+    uint64_t obsId = mc.AddObserver(NC_SYSTEM_RESET, [&](int, Message* msg) {
+        if (!msg) return;
+        resetCount.fetch_add(1);
+    });
+
+    // Ensure all prior messages from emulator creation/boot are processed (FIFO barrier)
+    std::atomic<bool> synced{false};
+    uint64_t syncObsId = mc.AddObserver("TEST_DRAIN_BARRIER", [&](int, Message*) {
+        synced.store(true);
+    });
+    mc.Post("TEST_DRAIN_BARRIER", new SimpleTextPayload("drain"));
+    EXPECT_TRUE(WaitForCondition([&] { return synced.load(); }));
+    mc.RemoveObserverById("TEST_DRAIN_BARRIER", syncObsId);
+
+    // 1. Loading SNA snapshot must emit exactly one NC_SYSTEM_RESET notification
+    resetCount.store(0);
+    const std::string snaPath = TestPathHelper::GetTestDataPath("loaders/sna/multifix.sna");
+    EXPECT_TRUE(emu->LoadSnapshot(snaPath));
+    EXPECT_TRUE(WaitForCondition([&] { return resetCount.load() == 1; }));
+    EXPECT_EQ(resetCount.load(), 1);
+
+    // 2. Loading Z80 snapshot must emit exactly one NC_SYSTEM_RESET notification
+    resetCount.store(0);
+    const std::string z80Path = TestPathHelper::GetTestDataPath("loaders/z80/BBG128.z80");
+    EXPECT_TRUE(emu->LoadSnapshot(z80Path));
+    EXPECT_TRUE(WaitForCondition([&] { return resetCount.load() == 1; }));
+    EXPECT_EQ(resetCount.load(), 1);
+
+    mc.RemoveObserverById(NC_SYSTEM_RESET, obsId);
+    EmulatorTestHelper::CleanupEmulator(emu);
+}
+
+/// endregion </File loaded notifications>
 

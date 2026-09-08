@@ -40,6 +40,8 @@
 #endif  // ENABLE_AUTOMATION
 
 class AudioSettingsWidget;
+class HudOverlay;
+class HudModel;
 #ifdef ENABLE_RECORDING
 class VideoRecordingWidget;
 #endif
@@ -105,6 +107,7 @@ private slots:
     void handleScaleRequested(int scale);
     void handleScreenshotRequested();
     void handleStatusBarToggled(bool visible);
+    void handleHudOverlayToggled(bool visible);
     void handleDebuggerToggled(bool visible);
     void handleDebuggerVisibilityChanged(bool visible);
     void handleLogWindowToggled(bool visible);
@@ -224,6 +227,8 @@ private:
     LogWindow* logWindow = nullptr;
     TapeManagerWindow* tapeManagerWindow = nullptr;
     DeviceScreen* deviceScreen = nullptr;
+    HudOverlay* _hudOverlay = nullptr;
+    std::shared_ptr<HudModel> _hudModel;
     QMutex lockMutex;
     QMutex _audioMutex;              // Protects audio operations from race conditions
     bool _audioInitialized = false;  // Tracks if audio device is initialized

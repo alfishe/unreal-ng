@@ -213,6 +213,14 @@ void MenuManager::createViewMenu()
     _statusBarAction->setChecked(true);
     connect(_statusBarAction, &QAction::triggered, this, &MenuManager::statusBarToggled);
 
+    // HUD overlay (on-screen toasts, indicators, picture augmentation)
+    _hudOverlayAction = _viewMenu->addAction(tr("&HUD Overlay"));
+    _hudOverlayAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_H));
+    _hudOverlayAction->setStatusTip(tr("Show/hide on-screen HUD overlay (toasts, indicators)"));
+    _hudOverlayAction->setCheckable(true);
+    _hudOverlayAction->setChecked(false);
+    connect(_hudOverlayAction, &QAction::triggered, this, &MenuManager::hudOverlayToggled);
+
     // Full Screen
     // Single full-screen entry: Cmd+F on macOS, Ctrl+F elsewhere (Qt::CTRL maps to Cmd
     // on macOS). Cocoa's own "Enter Full Screen" View-menu item is suppressed in main().
@@ -297,6 +305,14 @@ void MenuManager::setStatusBarChecked(bool checked)
     if (_statusBarAction)
     {
         _statusBarAction->setChecked(checked);
+    }
+}
+
+void MenuManager::setHudOverlayChecked(bool checked)
+{
+    if (_hudOverlayAction)
+    {
+        _hudOverlayAction->setChecked(checked);
     }
 }
 
@@ -754,7 +770,7 @@ void MenuManager::createHelpMenu()
                                  "Ctrl+B - Toggle Breakpoint\n\n"
 
                                  "View:\n"
-                                 "F11 - Full Screen\n"
+                                 "Ctrl+F - Full Screen\n"
                                  "Ctrl+1 - Toggle Debugger\n"
                                  "Ctrl+2 - Toggle Log Window");
     });
@@ -904,6 +920,14 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
         _tapeTrapsAction->setChecked(featureManager && featureManager->isEnabled(Features::kFastTape));
         _turboTapeAction->setChecked(featureManager && featureManager->isEnabled(Features::kTurboTape));
+        if (_hudOverlayAction)
+        {
+            _hudOverlayAction->setChecked(featureManager && featureManager->isEnabled(Features::kHud));
+        }
+    }
+    else if (_hudOverlayAction)
+    {
+        _hudOverlayAction->setChecked(false);
     }
 
     // Update machine model selection

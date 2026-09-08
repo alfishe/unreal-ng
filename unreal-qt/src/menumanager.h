@@ -47,9 +47,10 @@ public:
     // (setChecked does not re-emit triggered)
     void setDebuggerChecked(bool checked);
 
-    // Sync the View -> Toolbar / Status Bar check state (setChecked does not re-emit triggered)
+    // Sync the View -> Toolbar / Status Bar / HUD check state (setChecked does not re-emit triggered)
     void setToolBarChecked(bool checked);
     void setStatusBarChecked(bool checked);
+    void setHudOverlayChecked(bool checked);
 
     // Actions shared with the transport toolbar (ToolBarManager). Their visible /
     // enabled / checked state is maintained by updateMenuStates()
@@ -98,6 +99,7 @@ signals:
     // View signals
     void toolBarToggled(bool visible);
     void statusBarToggled(bool visible);
+    void hudOverlayToggled(bool visible);
     void debuggerToggled(bool visible);
     void logWindowToggled(bool visible);
     void tapeManagerToggled(bool visible);
@@ -171,6 +173,7 @@ private:
     // View Menu Actions
     QAction* _toolBarAction;
     QAction* _statusBarAction;
+    QAction* _hudOverlayAction = nullptr;
     QAction* _debuggerAction;
     QAction* _logWindowAction;
     QAction* _tapeManagerAction;
