@@ -358,6 +358,15 @@ void HudOverlay::drawWholeTileFrame(QPainter& painter, const QRect& rect, const 
 
 void HudOverlay::paintEvent(QPaintEvent* event)
 {
+    Q_UNUSED(event);
+
+    // Always clear the full widget to transparent - prevents ghost artifacts
+    // when elements are removed or repositioned
+    QPainter painter(this);
+    painter.setCompositionMode(QPainter::CompositionMode_Source);
+    painter.fillRect(rect(), Qt::transparent);
+    painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+
     if (!_model || !_model->isEnabled())
         return;
 
@@ -365,16 +374,9 @@ void HudOverlay::paintEvent(QPaintEvent* event)
     if (!snap || snap->elements.empty())
         return;
 
-    // Get dirty region - only repaint what's needed
-    const QRect dirtyRect = event ? event->rect() : rect();
-
-    QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::TextAntialiasing, true);
     painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-
-    // Clip to dirty region for early termination
-    painter.setClipRect(dirtyRect);
 
     HudSurface surface;
     surface.outputRect = HudRect{0, 0, width(), height()};
@@ -527,10 +529,6 @@ void HudOverlay::paintEvent(QPaintEvent* event)
                 currentX += prep.width + gap;
             }
 
-            // Skip if outside dirty region
-            if (!dirtyRect.intersects(indRect))
-                continue;
-
             drawIndicator(painter, *prep.element, indRect, pulseAlpha, theme, uiScale);
 
             // Track bounds for targeted updates
@@ -624,13 +622,6 @@ void HudOverlay::paintEvent(QPaintEvent* event)
             }
 
             QRect toastRect(currentX, currentY + static_cast<int>(slideY), toastWidth, toastHeight);
-
-            // Skip if outside dirty region
-            if (!dirtyRect.intersects(toastRect))
-            {
-                currentY += stepY;
-                continue;
-            }
 
             drawToast(painter, *toast, toastRect, opacity, scale, theme, uiScale);
 

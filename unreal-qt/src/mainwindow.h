@@ -30,7 +30,7 @@
 #include "tape/tapemanagerwindow.h"
 #include "ui/intparametersdialog.h"
 #include "ui_mainwindow.h"
-#include "widgets/devicescreen.h"
+#include "widgets/devicescreenwrapper.h"
 
 #ifdef ENABLE_AUTOMATION
 // Avoid name conflicts between Python and Qt "slot"
@@ -40,7 +40,7 @@
 #endif  // ENABLE_AUTOMATION
 
 class AudioSettingsWidget;
-class HudOverlay;
+class HudOverlayWrapper;
 class HudModel;
 #ifdef ENABLE_RECORDING
 class VideoRecordingWidget;
@@ -108,6 +108,10 @@ private slots:
     void handleScreenshotRequested();
     void handleStatusBarToggled(bool visible);
     void handleHudOverlayToggled(bool visible);
+    void handleGpuAccelerationToggled(bool enabled);
+    void handleCrtEffectsToggled(bool enabled);
+    void handleCrtProfileChanged(int profileIndex);
+    void handleTemporalBlendingToggled(bool enabled);
     void handleDebuggerToggled(bool visible);
     void handleDebuggerVisibilityChanged(bool visible);
     void handleLogWindowToggled(bool visible);
@@ -115,6 +119,7 @@ private slots:
     void handleImportAudioTapeRequested();  // tape-audio-bridge §7.3
     void handleIntParametersRequested();
     void handleAudioSettingsRequested();
+    void handleTemporalEffectsRequested();
     void handleOverscanModeToggled(bool enabled);
     void handleViewportChanged(int presetIndex);
     void handleMachineModelChangeRequested(const QString& modelShortName);
@@ -226,8 +231,8 @@ private:
     DebuggerWindow* debuggerWindow = nullptr;
     LogWindow* logWindow = nullptr;
     TapeManagerWindow* tapeManagerWindow = nullptr;
-    DeviceScreen* deviceScreen = nullptr;
-    HudOverlay* _hudOverlay = nullptr;
+    DeviceScreenWrapper* _screenWrapper = nullptr;
+    HudOverlayWrapper* _hudWrapper = nullptr;
     std::shared_ptr<HudModel> _hudModel;
     QMutex lockMutex;
     QMutex _audioMutex;              // Protects audio operations from race conditions

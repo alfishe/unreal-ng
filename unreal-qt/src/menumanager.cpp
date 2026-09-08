@@ -1,8 +1,11 @@
 #include "menumanager.h"
 
+#include <QActionGroup>
 #include <QApplication>
 #include <QMessageBox>
 #include <set>
+
+#include "widgets/crtprofiles.h"
 
 #include "base/featuremanager.h"
 #include "emulator/emulator.h"
@@ -221,6 +224,39 @@ void MenuManager::createViewMenu()
     _hudOverlayAction->setChecked(false);
     connect(_hudOverlayAction, &QAction::triggered, this, &MenuManager::hudOverlayToggled);
 
+    _viewMenu->addSeparator();
+
+    // GPU acceleration toggle
+    _gpuAccelerationAction = _viewMenu->addAction(tr("&GPU Acceleration"));
+    _gpuAccelerationAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_G));
+    _gpuAccelerationAction->setStatusTip(tr("Use GPU for display rendering (faster scaling, enables CRT effects)"));
+    _gpuAccelerationAction->setCheckable(true);
+    _gpuAccelerationAction->setChecked(false);
+    connect(_gpuAccelerationAction, &QAction::triggered, this, &MenuManager::gpuAccelerationToggled);
+
+    // CRT effects (scanlines, curvature - GPU only)
+    _crtEffectsAction = _viewMenu->addAction(tr("C&RT Effects"));
+    _crtEffectsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
+    _crtEffectsAction->setStatusTip(tr("Toggle CRT display effects (scanlines, curvature) - requires GPU acceleration"));
+    _crtEffectsAction->setCheckable(true);
+    _crtEffectsAction->setChecked(false);
+    _crtEffectsAction->setEnabled(false);  // Disabled until GPU is enabled
+    connect(_crtEffectsAction, &QAction::triggered, this, &MenuManager::crtEffectsToggled);
+
+    // CRT profile submenu
+    _crtProfileMenu = _viewMenu->addMenu(tr("CRT &Profile"));
+    _crtProfileMenu->setEnabled(false);
+    _crtProfileGroup = new QActionGroup(this);
+    populateCrtProfileMenu();
+
+    // Temporal blending (gigascreen flicker smoothing) - works for both GPU and software
+    _temporalBlendingAction = _viewMenu->addAction(tr("&Temporal Blending"));
+    _temporalBlendingAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_T));
+    _temporalBlendingAction->setStatusTip(tr("Smooth gigascreen flicker by blending multiple frames"));
+    _temporalBlendingAction->setCheckable(true);
+    _temporalBlendingAction->setChecked(false);
+    connect(_temporalBlendingAction, &QAction::triggered, this, &MenuManager::temporalBlendingToggled);
+
     // Full Screen
     // Single full-screen entry: Cmd+F on macOS, Ctrl+F elsewhere (Qt::CTRL maps to Cmd
     // on macOS). Cocoa's own "Enter Full Screen" View-menu item is suppressed in main().
@@ -313,6 +349,148 @@ void MenuManager::setHudOverlayChecked(bool checked)
     if (_hudOverlayAction)
     {
         _hudOverlayAction->setChecked(checked);
+    }
+}
+
+void MenuManager::setGpuAccelerationChecked(bool checked)
+{
+    if (_gpuAccelerationAction)
+    {
+        _gpuAccelerationAction->setChecked(checked);
+    }
+}
+
+void MenuManager::setGpuAccelerationAvailable(bool available)
+{
+    if (_gpuAccelerationAction)
+    {
+        _gpuAccelerationAction->setEnabled(available);
+        if (!available)
+        {
+            _gpuAccelerationAction->setStatusTip(tr("GPU acceleration not available on this system"));
+        }
+    }
+}
+
+void MenuManager::setCrtEffectsChecked(bool checked)
+{
+    if (_crtEffectsAction)
+    {
+        _crtEffectsAction->setChecked(checked);
+    }
+}
+
+void MenuManager::setCrtEffectsEnabled(bool enabled)
+{
+    if (_crtEffectsAction)
+    {
+        _crtEffectsAction->setEnabled(enabled);
+        if (!enabled)
+        {
+            _crtEffectsAction->setStatusTip(tr("CRT effects require GPU acceleration"));
+        }
+        else
+        {
+            _crtEffectsAction->setStatusTip(tr("Toggle CRT display effects (scanlines, curvature)"));
+        }
+    }
+    if (_crtProfileMenu)
+    {
+        _crtProfileMenu->setEnabled(enabled);
+    }
+    // Temporal blending toggle in View menu (for quick toggle, separate from Tools dialog)
+    if (_temporalBlendingAction)
+    {
+        _temporalBlendingAction->setStatusTip(tr("Smooth gigascreen flicker by blending multiple frames"));
+    }
+}
+
+void MenuManager::setTemporalBlendingChecked(bool checked)
+{
+    if (_temporalBlendingAction)
+    {
+        _temporalBlendingAction->setChecked(checked);
+    }
+}
+
+void MenuManager::setTemporalBlendingEnabled(bool enabled)
+{
+    if (_temporalBlendingAction)
+    {
+        _temporalBlendingAction->setEnabled(enabled);
+    }
+}
+
+void MenuManager::setCrtProfile(int profileIndex)
+{
+    if (_crtProfileGroup)
+    {
+        QList<QAction*> actions = _crtProfileGroup->actions();
+        if (profileIndex >= 0 && profileIndex < actions.size())
+        {
+            actions[profileIndex]->setChecked(true);
+        }
+    }
+}
+
+void MenuManager::populateCrtProfileMenu()
+{
+    if (!_crtProfileMenu || !_crtProfileGroup)
+        return;
+
+    _crtProfileMenu->clear();
+
+    // Add built-in profiles
+    auto profiles = CRTProfileParams::AllProfiles();
+    int index = 0;
+    for (CRTProfile profile : profiles)
+    {
+        QString name = CRTProfileParams::ProfileName(profile);
+        QString desc = CRTProfileParams::ProfileDescription(profile);
+
+        QAction* action = _crtProfileMenu->addAction(name);
+        action->setCheckable(true);
+        action->setStatusTip(desc);
+        action->setData(index);
+        _crtProfileGroup->addAction(action);
+
+        connect(action, &QAction::triggered, this, [this, index]() {
+            emit crtProfileChanged(index);
+        });
+
+        if (profile == CRTProfile::None)
+            action->setChecked(true);
+
+        index++;
+    }
+
+    // Add separator and custom shaders section
+    _crtProfileMenu->addSeparator();
+
+    // Scan for custom shaders
+    CRTShaderManager::instance().scanShaderDirectory();
+    auto customShaders = CRTShaderManager::instance().availableShaders();
+
+    if (!customShaders.empty())
+    {
+        for (const QString& shaderName : customShaders)
+        {
+            QAction* action = _crtProfileMenu->addAction(shaderName + " (custom)");
+            action->setCheckable(true);
+            action->setStatusTip(tr("Custom shader: %1").arg(shaderName));
+            action->setData(-1);  // Custom shader marker
+            action->setProperty("shaderName", shaderName);
+            _crtProfileGroup->addAction(action);
+
+            connect(action, &QAction::triggered, this, [this, shaderName]() {
+                emit crtProfileChanged(-1);  // -1 = custom, use property
+            });
+        }
+    }
+    else
+    {
+        QAction* placeholder = _crtProfileMenu->addAction(tr("(No custom shaders)"));
+        placeholder->setEnabled(false);
     }
 }
 
@@ -679,6 +857,11 @@ void MenuManager::createToolsMenu()
     _audioSettingsAction = _toolsMenu->addAction(tr("&Audio Settings..."));
     _audioSettingsAction->setStatusTip(tr("Configure audio DSP: punch, FIR filter, room simulation"));
     connect(_audioSettingsAction, &QAction::triggered, this, &MenuManager::audioSettingsRequested);
+
+    // Temporal Effects Settings (works for both GPU and software rendering)
+    _temporalEffectsAction = _toolsMenu->addAction(tr("&Temporal Effects..."));
+    _temporalEffectsAction->setStatusTip(tr("Configure frame blending for gigascreen smoothing"));
+    connect(_temporalEffectsAction, &QAction::triggered, this, &MenuManager::temporalEffectsRequested);
 
     _toolsMenu->addSeparator();
 

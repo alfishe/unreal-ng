@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "emulator/video/screen.h"  // For DisplayViewport
+#include "framehistory.h"
 
 class Emulator;  // Forward declaration
 
@@ -65,6 +66,9 @@ public:
         _displayViewport = viewport;
         _hasViewport = true;
 
+        // Flush temporal cache - old frames had different geometry
+        _frameHistory.clear();
+
         // Aspect ratio is fixed (see sizeHint) - only the source rectangle changes
         update();  // Trigger repaint with new viewport
     }
@@ -76,8 +80,20 @@ public:
     void clearDisplayViewport()
     {
         _hasViewport = false;
+
+        // Flush temporal cache - geometry changed
+        _frameHistory.clear();
+
         update();
     }
+
+    // Temporal blending (gigascreen flicker smoothing)
+    void setTemporalBlendingEnabled(bool enabled);
+    bool temporalBlendingEnabled() const { return _temporalEnabled; }
+    void setTemporalHistorySize(int frames);
+    int temporalHistorySize() const { return _frameHistory.historySize(); }
+    void setTemporalWeightMode(int mode);
+    int temporalWeightMode() const { return _temporalWeightMode; }
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -106,6 +122,12 @@ private:
     // Viewport cropping for overscan mode
     DisplayViewport _displayViewport;
     bool _hasViewport = false;
+
+    // Temporal blending
+    FrameHistory _frameHistory;
+    QImage _blendedFrame;
+    bool _temporalEnabled = false;
+    int _temporalWeightMode = 0;
 };
 
 #endif  // DEVICESCREEN_H

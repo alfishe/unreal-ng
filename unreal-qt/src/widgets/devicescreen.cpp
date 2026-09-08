@@ -56,6 +56,9 @@ void DeviceScreen::detach()
     _frameSource = nullptr;
     _latchedFrame = QImage();
 
+    // Clear temporal history
+    _frameHistory.clear();
+
     // Drop our ownership share: a detached screen must not keep a Release()d emulator alive until
     // ~MainWindow (it was the last shared_ptr holder and destroyed the instance long after
     // EmulatorManager::RemoveEmulator - crash on shutdown)
@@ -110,6 +113,9 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
     QRect destRect = rect();
     painter.setClipRect(event->rect());
 
+    // Determine which image to draw
+    QImage* drawImage = nullptr;
+
     // Tear-free path: pull the latched full-frame snapshot into our owned
     // backing image (SIMD copy under the screen's present mutex, ~40us),
     // then draw without holding any lock. The legacy path below reads the
@@ -117,18 +123,67 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
     if (_frameSource && !_latchedFrame.isNull() &&
         _frameSource(_latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes())))
     {
-#if QT_VERSION >= QT_VERSION_CHECK(5, 13, 0)
-        painter.setRenderHint(QPainter::LosslessImageRendering);
-#endif
-        painter.drawImage(destRect, _latchedFrame, sourceRect);
+        drawImage = &_latchedFrame;
     }
     else if (devicePixels != nullptr)
     {
-#if QT_VERSION >= QT_VERSION_CHECK(5, 13, 0)
-        painter.setRenderHint(QPainter::LosslessImageRendering);
-#endif
-        painter.drawImage(destRect, *devicePixels, sourceRect);
+        drawImage = devicePixels;
     }
+
+    if (!drawImage)
+        return;
+
+    // Temporal blending: push frame to history and use blended result
+    if (_temporalEnabled)
+    {
+        int srcWidth = drawImage->width();
+        int srcHeight = drawImage->height();
+
+        // Initialize or re-initialize frame history if dimensions changed
+        if (_frameHistory.width() != srcWidth || _frameHistory.height() != srcHeight)
+        {
+            _frameHistory.init(srcWidth, srcHeight, _frameHistory.historySize());
+            _blendedFrame = QImage(srcWidth, srcHeight, QImage::Format_RGBA8888);
+        }
+
+        _frameHistory.pushFrame(drawImage->bits(), drawImage->sizeInBytes());
+
+        if (_frameHistory.hasMinimumHistory())
+        {
+            _frameHistory.getBlendedFrame(_blendedFrame.bits(), _blendedFrame.sizeInBytes());
+            drawImage = &_blendedFrame;
+        }
+    }
+
+#if QT_VERSION >= QT_VERSION_CHECK(5, 13, 0)
+    painter.setRenderHint(QPainter::LosslessImageRendering);
+#endif
+    painter.drawImage(destRect, *drawImage, sourceRect);
+}
+
+void DeviceScreen::setTemporalBlendingEnabled(bool enabled)
+{
+    _temporalEnabled = enabled;
+    _frameHistory.setBlendingEnabled(enabled);
+
+    // Frame history will be initialized lazily in paintEvent() with actual frame dimensions
+    // This handles overscan mode where framebuffer size differs from native display size
+
+    update();
+}
+
+void DeviceScreen::setTemporalHistorySize(int frames)
+{
+    _frameHistory.setHistorySize(frames);
+}
+
+void DeviceScreen::setTemporalWeightMode(int mode)
+{
+    _temporalWeightMode = mode;
+    if (mode == 0)
+        _frameHistory.setEqualWeights();
+    else
+        _frameHistory.setExponentialWeights(0.5f);
 }
 
 QImage DeviceScreen::grabFramebuffer()

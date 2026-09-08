@@ -190,6 +190,8 @@ find_package(Qt6 COMPONENTS Gui REQUIRED)
 find_package(Qt6 COMPONENTS Multimedia REQUIRED)
 find_package(Qt6 COMPONENTS Widgets REQUIRED)
 find_package(Qt6 COMPONENTS Svg REQUIRED)  # Toolbar icons (SVG icon engine must be deployed)
+find_package(Qt6 COMPONENTS OpenGL REQUIRED)
+find_package(Qt6 COMPONENTS OpenGLWidgets REQUIRED)
 
 # Enable CTest for test discovery (inherited from core/tests)
 enable_testing()
@@ -368,6 +370,8 @@ if (INCLUDE_AUTOMATION)
         Qt6::Widgets
         Qt6::Multimedia
         Qt6::Svg
+        Qt6::OpenGL
+        Qt6::OpenGLWidgets
         QHexView
 
         unrealng::automation # This brings in core as PUBLIC dependency
@@ -387,6 +391,8 @@ else ()
         Qt6::Widgets
         Qt6::Multimedia
         Qt6::Svg
+        Qt6::OpenGL
+        Qt6::OpenGLWidgets
         QHexView
 
         unrealng::core  # Keep this when automation is disabled
