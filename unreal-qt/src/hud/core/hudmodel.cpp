@@ -455,7 +455,14 @@ void HudModel::expire(HudClock::time_point now)
     }
 
     auto itInd = std::remove_if(_indicators.begin(), _indicators.end(), [&](const HudElement& el) {
-        return el.ttl.count() > 0 && (now - el.created) >= el.ttl;
+        bool expired = el.ttl.count() > 0 && (now - el.created) >= el.ttl;
+        // Reset exec state when pause indicator expires
+        if (expired && el.id == "ind/pause")
+        {
+            _execState = ExecState::Idle;
+            _execStateExpiry = {};
+        }
+        return expired;
     });
 
     if (itInd != _indicators.end())
@@ -810,15 +817,16 @@ void HudModel::onEmulatorState(int, Message* message)
     uint32_t state = p->_payloadNumber;
     if (state == StatePaused)
     {
-        setIndicator("pause", HudState::Active, "PAUSE");
+        setExecState(ExecState::Paused);
     }
     else if (state == StateRun || state == StateResumed)
     {
-        setIndicator("pause", HudState::Active, "EXECUTE", "", "", HudTiming::IndicatorExecuteTimeout);
+        if (canTransitionTo(ExecState::Execute))
+            setExecState(ExecState::Execute, HudTiming::IndicatorExecuteTimeout);
     }
     else if (state == StateStopped)
     {
-        clearIndicator("pause");
+        setExecState(ExecState::Idle);
         HudToastRequest req;
         req.title = "Emulator stopped";
         req.priority = HudPriority::Normal;
@@ -873,7 +881,7 @@ void HudModel::onBreakpoint(int, Message* message)
     req.coalesceCount = false;
     notify(req);
 
-    setIndicator("pause", HudState::Active, "BREAKPOINT");
+    setExecState(ExecState::Breakpoint);
 }
 
 void HudModel::onCpuStep(int, Message* message)
@@ -895,35 +903,18 @@ void HudModel::onCpuStep(int, Message* message)
 
     if (isPaused)
     {
-        setIndicator("pause", HudState::Active, "PAUSE");
+        setExecState(ExecState::Paused);
     }
     else
     {
-        setIndicator("pause", HudState::Active, "EXECUTE", "", "", HudTiming::IndicatorExecuteTimeout);
+        if (canTransitionTo(ExecState::Execute))
+            setExecState(ExecState::Execute, HudTiming::IndicatorExecuteTimeout);
     }
 }
 
 void HudModel::onSystemReset(int, Message*)
 {
-    // If a snapshot was just loaded, suppress standalone reset toast to group into a single tile event
-    {
-        std::lock_guard<std::mutex> lock(_mutex);
-        for (const auto& t : _toasts)
-        {
-            if (t.dedupKey == "system-reset" && t.title.find("Snapshot") != std::string::npos)
-            {
-                return;
-            }
-        }
-    }
-
-    HudToastRequest req;
-    req.title = "Reset";
-    req.priority = HudPriority::Low;
-    req.ttl = HudTiming::ToastSystemReset;
-    req.dedupKey = "system-reset";
-    req.coalesceCount = false;
-    notify(req);
+    setExecState(ExecState::Reset, HudTiming::ToastSystemReset);
 }
 
 void HudModel::onSpeedChanged(int, Message* message)
@@ -1040,17 +1031,44 @@ void HudModel::onFileLoaded(int, Message* message)
             req.ttl = HudTiming::ToastFileLoadFailed;
         }
 
-        // Clean up any standalone "Reset" toasts in case of non-deduped entries
-        {
-            std::lock_guard<std::mutex> lock(_mutex);
-            auto it = std::remove_if(_toasts.begin(), _toasts.end(), [](const HudElement& e) {
-                return e.title == "Reset" && e.dedupKey != "system-reset";
-            });
-            if (it != _toasts.end())
-            {
-                _toasts.erase(it, _toasts.end());
-            }
-        }
     }
     notify(req);
+}
+
+// --- Execution State Machine ---
+
+void HudModel::setExecState(ExecState state, std::chrono::milliseconds ttl)
+{
+    _execState = state;
+    if (ttl.count() > 0)
+        _execStateExpiry = std::chrono::steady_clock::now() + ttl;
+    else
+        _execStateExpiry = std::chrono::steady_clock::time_point{};
+
+    static const char* labels[] = {"", "PAUSE", "EXECUTE", "RESET", "BREAKPOINT"};
+    const char* label = labels[static_cast<int>(state)];
+
+    if (state == ExecState::Idle)
+    {
+        clearIndicator("pause");
+    }
+    else
+    {
+        setIndicator("pause", HudState::Active, label, "", "", ttl);
+    }
+}
+
+bool HudModel::canTransitionTo(ExecState newState) const
+{
+    // Timed states (Reset, Execute) block lower-priority transitions until expired
+    if (_execStateExpiry != std::chrono::steady_clock::time_point{})
+    {
+        if (std::chrono::steady_clock::now() < _execStateExpiry)
+        {
+            // Reset blocks Execute; Breakpoint always wins
+            if (_execState == ExecState::Reset && newState == ExecState::Execute)
+                return false;
+        }
+    }
+    return true;
 }

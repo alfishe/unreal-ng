@@ -175,4 +175,12 @@ private:
 
     uint64_t _featureObserverId = 0;
     std::vector<std::pair<std::string, uint64_t>> _eventObserverIds;
+
+    // Execution state machine for pause/execute/reset indicator
+    enum class ExecState : uint8_t { Idle, Paused, Execute, Reset, Breakpoint };
+    ExecState _execState{ExecState::Idle};
+    std::chrono::steady_clock::time_point _execStateExpiry{};
+
+    void setExecState(ExecState state, std::chrono::milliseconds ttl = std::chrono::milliseconds(0));
+    bool canTransitionTo(ExecState newState) const;
 };

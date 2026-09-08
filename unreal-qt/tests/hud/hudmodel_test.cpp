@@ -1210,53 +1210,95 @@ TEST_F(HudModel_Test, EventMapping_SnapshotLoaded_GroupsResetAndSnapshotIntoSing
     MessageCenter& mc = MessageCenter::DefaultMessageCenter();
 
     // 1. Snapshot loading causes a core reset first (posting NC_SYSTEM_RESET)
+    // Reset now shows as indicator, not toast
     mc.Post(NC_SYSTEM_RESET, new SimpleTextPayload("Core reset started"));
 
     EXPECT_TRUE(WaitForCondition([&] {
         auto s = model.snapshot();
-        return !s->elements.empty() && s->elements[0].title == "Reset";
+        for (const auto& e : s->elements)
+        {
+            if (e.id == "ind/pause" && e.value == "RESET")
+                return true;
+        }
+        return false;
     }));
-
-    auto snap = model.snapshot();
-    ASSERT_EQ(snap->elements.size(), 1u);
-    EXPECT_EQ(snap->elements[0].title, "Reset");
 
     // 2. Snapshot load completes, posting NC_FILE_LOADED with kind "snapshot"
     mc.Post(NC_FILE_LOADED, new FileLoadedPayload(_id, "snapshot", "/games/jetsetwilly.sna", true));
 
     EXPECT_TRUE(WaitForCondition([&] {
         auto s = model.snapshot();
-        return !s->elements.empty() && s->elements[0].title == "Snapshot Loaded";
+        for (const auto& e : s->elements)
+        {
+            if (e.kind == HudKind::Toast && e.title == "Snapshot Loaded")
+                return true;
+        }
+        return false;
     }));
 
-    // Must be grouped into a single tile event, not multiple stacked toasts
-    snap = model.snapshot();
+    // Must be single toast (Snapshot Loaded) plus the RESET indicator
+    auto snap = model.snapshot();
     size_t toastCount = 0;
     for (const auto& el : snap->elements)
     {
         if (el.kind == HudKind::Toast)
+        {
             ++toastCount;
-    }
-    ASSERT_EQ(toastCount, 1u);
-    EXPECT_EQ(snap->elements[0].title, "Snapshot Loaded");
-    EXPECT_EQ(snap->elements[0].body, "jetsetwilly.sna");
-    EXPECT_EQ(snap->elements[0].icon, "file");
-    EXPECT_EQ(snap->elements[0].coalesced, 0u); // no x2 badge
-
-    // 3. Even if a delayed/out-of-order NC_SYSTEM_RESET arrives afterwards,
-    // it must not overwrite the Snapshot Loaded notification or spawn an extra toast
-    mc.Post(NC_SYSTEM_RESET, new SimpleTextPayload("Core reset trailing"));
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-
-    snap = model.snapshot();
-    toastCount = 0;
-    for (const auto& el : snap->elements)
-    {
-        if (el.kind == HudKind::Toast)
-            ++toastCount;
+            EXPECT_EQ(el.title, "Snapshot Loaded");
+            EXPECT_EQ(el.body, "jetsetwilly.sna");
+            EXPECT_EQ(el.icon, "file");
+            EXPECT_EQ(el.coalesced, 0u);
+        }
     }
     EXPECT_EQ(toastCount, 1u);
-    EXPECT_EQ(snap->elements[0].title, "Snapshot Loaded");
+}
+
+TEST_F(HudModel_Test, ExecState_ResetBlocksExecuteTransition)
+{
+    HudModel model(nullptr);
+    model.onFeatureChanged(true);
+
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+
+    // 1. Reset fires - should show RESET indicator
+    mc.Post(NC_SYSTEM_RESET, new SimpleTextPayload("Reset"));
+
+    EXPECT_TRUE(WaitForCondition([&] {
+        auto s = model.snapshot();
+        for (const auto& e : s->elements)
+        {
+            if (e.id == "ind/pause" && e.value == "RESET")
+                return true;
+        }
+        return false;
+    }));
+
+    // 2. State change to running fires immediately after - RESET must block EXECUTE
+    mc.Post(NC_EMULATOR_STATE_CHANGE, new EmulatorStateChangePayload(_id, StateRun));
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+    auto snap = model.snapshot();
+    auto it = std::find_if(snap->elements.begin(), snap->elements.end(), [](const HudElement& e) {
+        return e.id == "ind/pause";
+    });
+    ASSERT_NE(it, snap->elements.end());
+    EXPECT_EQ(it->value, "RESET"); // Must still be RESET, not EXECUTE
+
+    // 3. After RESET TTL expires, EXECUTE can take over
+    model.expire(HudClock::now() + HudTiming::ToastSystemReset + std::chrono::milliseconds(100));
+
+    // Post another state change
+    mc.Post(NC_EMULATOR_STATE_CHANGE, new EmulatorStateChangePayload(_id, StateRun));
+
+    EXPECT_TRUE(WaitForCondition([&] {
+        auto s = model.snapshot();
+        for (const auto& e : s->elements)
+        {
+            if (e.id == "ind/pause" && e.value == "EXECUTE")
+                return true;
+        }
+        return false;
+    }));
 }
 
 
