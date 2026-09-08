@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QWidget>
+#include <QPointer>
 #include <QImage>
 #include <functional>
 #include <memory>
@@ -114,7 +115,7 @@ public:
     int temporalWeightMode() const;
 
 private:
-    QWidget* _widget = nullptr;
+    QPointer<QWidget> _widget;  // Guarded: the parent may destroy the widget before the wrapper
     DeviceScreen* _software = nullptr;
     DeviceScreenGL* _gpu = nullptr;
     bool _useGPU = false;

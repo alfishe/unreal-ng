@@ -17,7 +17,12 @@ HudOverlayWrapper::HudOverlayWrapper(QWidget* parent, bool useGPU)
 
 HudOverlayWrapper::~HudOverlayWrapper()
 {
-    // Widgets owned by Qt parent
+    // Destroy the overlay widget explicitly: it is parented to the screen widget, and the
+    // wrapper is replaced at runtime (GPU <-> software switch) without the parent going away
+    delete _widget;
+    _widget = nullptr;
+    _gpu = nullptr;
+    _software = nullptr;
 }
 
 void HudOverlayWrapper::setModel(std::shared_ptr<HudModel> model)
