@@ -1,7 +1,10 @@
 #include "beeper.h"
 
 #include "3rdparty/blip_buf/blip_buf.h"
+#include "3rdparty/message-center/messagecenter.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/notifications.h"
+#include "emulator/platform.h"
 #include "emulator/sound/soundmanager.h"
 
 /// region <Constructors / destructors>
@@ -60,8 +63,8 @@ void Beeper::reset()
 
 void Beeper::handleFrameStart()
 {
-    // Nothing to do — blip_buf accumulates deltas across the frame.
-    // The output buffer will be filled in handleFrameEnd().
+    // Reset activity tracking for the new frame
+    _frameHadActivity = false;
 }
 
 void Beeper::handlePortOut(uint8_t value, uint32_t frameTState)
@@ -89,6 +92,7 @@ void Beeper::handlePortOut(uint8_t value, uint32_t frameTState)
         // at sub-sample precision, producing alias-free output.
         blip_add_delta(_blipL, frameTState, delta);
         blip_add_delta(_blipR, frameTState, delta);
+        _frameHadActivity = true;
     }
 }
 
@@ -141,6 +145,14 @@ void Beeper::handleFrameEnd(uint32_t frameDuration)
     }
 
     _lastSamplesRead = avail;
+
+    // Post notification on activity state change
+    if (_frameHadActivity != _wasActive)
+    {
+        _wasActive = _frameHadActivity;
+        MessageCenter::DefaultMessageCenter().Post(
+            NC_AUDIO_ACTIVITY, new AudioActivityPayload(_context->emulatorId, AudioSource::Beeper, _wasActive));
+    }
 }
 
 /// endregion </Methods>

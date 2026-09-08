@@ -2,12 +2,15 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 #include "3rdparty/blip_buf/blip_buf.h"
+#include "3rdparty/message-center/messagecenter.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/cpu/core.h"
-#include <cstring>
+#include "emulator/notifications.h"
+#include "emulator/platform.h"
 
 /// region <Constructors / destructors>
 
@@ -70,8 +73,8 @@ void Covox::reset()
 
 void Covox::handleFrameStart()
 {
-    // Nothing to do — blip_buf accumulates deltas across the frame.
-    // The buffer will be filled in handleFrameEnd().
+    // Reset activity tracking for the new frame
+    _frameHadActivity = false;
 }
 
 void Covox::handleFrameEnd(size_t expectedSamples)
@@ -127,6 +130,14 @@ void Covox::handleFrameEnd(size_t expectedSamples)
             _buffer[i * 2 + 1] = static_cast<int16_t>(std::clamp(r - _dcAccumR, -32768.0f, 32767.0f));
         }
     }
+
+    // Post notification on activity state change
+    if (_frameHadActivity != _wasActive)
+    {
+        _wasActive = _frameHadActivity;
+        MessageCenter::DefaultMessageCenter().Post(
+            NC_AUDIO_ACTIVITY, new AudioActivityPayload(_context->emulatorId, AudioSource::Covox, _wasActive));
+    }
 }
 
 /// endregion </Frame lifecycle>
@@ -180,9 +191,15 @@ void Covox::portDeviceOutMethod(uint16_t port, uint8_t value)
     if (!_synthesisSuppressed)
     {
         if (deltaL != 0)
+        {
             blip_add_delta(_blipL, currentTState, deltaL);
+            _frameHadActivity = true;
+        }
         if (deltaR != 0)
+        {
             blip_add_delta(_blipR, currentTState, deltaR);
+            _frameHadActivity = true;
+        }
     }
 
     // Update tracked state

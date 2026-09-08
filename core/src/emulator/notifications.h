@@ -478,4 +478,30 @@ public:
     virtual ~ScreenPagePayload() = default;
 };
 
+/// Audio source types for NC_AUDIO_ACTIVITY
+enum class AudioSource : uint8_t
+{
+    Beeper = 0,
+    Covox = 1
+};
+
+/// Payload for NC_AUDIO_ACTIVITY.
+/// Posted by audio sources when activity state changes.
+class AudioActivityPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    AudioSource source;   // Which audio source
+    bool active;          // true = started producing sound, false = went silent
+
+    AudioActivityPayload(const unreal::UUID& id, AudioSource src, bool isActive)
+        : MessagePayload()
+        , emulatorId(id)
+        , source(src)
+        , active(isActive)
+    {}
+
+    virtual ~AudioActivityPayload() = default;
+};
+
 /// endregion </Instance-tagged payloads (GDB TDD §6.3 prerequisite)>

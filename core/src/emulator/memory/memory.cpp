@@ -890,8 +890,8 @@ void Memory::SetROMPage(uint16_t page, bool updatePorts)
     if (updatePorts)
         _context->pPortDecoder->SetROMPage(page);
 
-    // Post notification on change
-    if (page != prevPage && _context)
+    // Post notification on change (throttled to max 20/sec for HUD)
+    if (page != prevPage && _context && _romNotifyThrottle.ShouldExecute(SteadyClockMs{}()))
     {
         MessageCenter::DefaultMessageCenter().Post(
             NC_ROM_PAGE_CHANGED, new ROMPagePayload(_context->emulatorId, static_cast<uint8_t>(page), static_cast<uint8_t>(prevPage)));
@@ -1009,8 +1009,8 @@ void Memory::SetRAMPageToBank3(uint16_t page, bool updatePorts)
     if (updatePorts)
         _context->pPortDecoder->SetRAMPage(page);
 
-    // Post notification on change (prevPage != 0xFF means it was previously set)
-    if (prevPage != 0xFF && page != prevPage && _context)
+    // Post notification on change (throttled to max 20/sec for HUD)
+    if (prevPage != 0xFF && page != prevPage && _context && _ramNotifyThrottle.ShouldExecute(SteadyClockMs{}()))
     {
         MessageCenter::DefaultMessageCenter().Post(
             NC_MEMORY_PAGE_CHANGED, new MemoryPagePayload(_context->emulatorId, 3, static_cast<uint8_t>(page), prevPage));

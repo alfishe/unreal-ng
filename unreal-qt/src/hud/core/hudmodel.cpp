@@ -658,6 +658,7 @@ void HudModel::subscribeObservers()
     add(NC_MEMORY_PAGE_CHANGED, [this](int id, Message* msg) { onMemoryPageChanged(id, msg); });
     add(NC_ROM_PAGE_CHANGED, [this](int id, Message* msg) { onRomPageChanged(id, msg); });
     add(NC_SCREEN_PAGE_CHANGED, [this](int id, Message* msg) { onScreenPageChanged(id, msg); });
+    add(NC_AUDIO_ACTIVITY, [this](int id, Message* msg) { onAudioActivity(id, msg); });
 }
 
 void HudModel::unsubscribeObservers()
@@ -1209,6 +1210,27 @@ void HudModel::onScreenPageChanged(int, Message* message)
 
     setIndicatorAt("scr", HudTilePosition::TopLeft, HudState::Active, buf, "", "screen",
                    HudTiming::IndicatorMemoryPageTimeout, true);
+}
+
+void HudModel::onAudioActivity(int, Message* message)
+{
+    if (!message)
+        return;
+    auto* p = dynamic_cast<AudioActivityPayload*>(message->obj);
+    if (!p || !matchesInstance(p->emulatorId))
+        return;
+
+    const char* key = (p->source == AudioSource::Beeper) ? "beeper" : "covox";
+    const char* label = (p->source == AudioSource::Beeper) ? "BEEP" : "COVOX";
+    const char* icon = (p->source == AudioSource::Beeper) ? "speaker" : "covox";
+
+    if (p->active)
+    {
+        // Show indicator with 1s cooldown - stays visible after audio stops
+        setIndicatorAt(key, HudTilePosition::TopLeft, HudState::Active, label, "", icon,
+                       std::chrono::milliseconds(1000), true);
+    }
+    // When inactive: let the TTL handle fadeout (no immediate clear)
 }
 
 // --- Execution State Machine ---

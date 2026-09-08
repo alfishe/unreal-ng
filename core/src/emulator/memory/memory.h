@@ -1,4 +1,5 @@
 #pragma once
+#include "common/throttler.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
 #include "stdafx.h"
@@ -132,6 +133,10 @@ protected:
     bool _feature_breakpoints_enabled = false;
     bool _feature_sharedmemory_enabled = false;
     bool _feature_ttd_enabled = false;  // mirrors Features::kTimeTravel, cached for the write hot path
+
+    // Notification throttling (HUD indicators don't need >20 updates/sec)
+    MinInterval _ramNotifyThrottle{50};  // 50ms = max 20 notifications/sec
+    MinInterval _romNotifyThrottle{50};
 
     bool _isPage0ROM48k;
     bool _isPage0ROM128k;

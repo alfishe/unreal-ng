@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <mutex>
 
+#include "common/throttler.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
 #include "stdafx.h"
@@ -446,6 +447,8 @@ protected:
     uint8_t _activeScreen;
     uint8_t* _activeScreenMemoryOffset;
     uint8_t _borderColor;
+
+    MinInterval _screenNotifyThrottle{50};  // 50ms = max 20 notifications/sec
 
     VideoModeEnum _mode;
     RasterState _rasterState;

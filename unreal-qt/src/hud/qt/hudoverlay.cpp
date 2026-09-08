@@ -968,6 +968,46 @@ void HudOverlay::drawIcon(QPainter& painter, const QString& iconName, const QRec
         lineY += monitor.height() / 4;
         painter.drawLine(monitor.left() + 3, lineY, monitor.center().x(), lineY);
     }
+    else if (iconName == "speaker")
+    {
+        // Speaker/beeper icon: speaker cone shape
+        int cx = r.center().x();
+        int cy = r.center().y();
+        int h = r.height() - 4;
+        int w = r.width() - 4;
+        // Speaker body (trapezoid)
+        QPainterPath speaker;
+        speaker.moveTo(cx - w / 3, cy - h / 4);
+        speaker.lineTo(cx - w / 3, cy + h / 4);
+        speaker.lineTo(cx + w / 3, cy + h / 2);
+        speaker.lineTo(cx + w / 3, cy - h / 2);
+        speaker.closeSubpath();
+        painter.drawPath(speaker);
+        // Sound waves
+        int waveX = cx + w / 3 + 3;
+        painter.drawArc(QRect(waveX, cy - h / 4, 4, h / 2), -60 * 16, 120 * 16);
+    }
+    else if (iconName == "covox")
+    {
+        // DAC/Covox icon: audio waveform shape
+        int cx = r.center().x();
+        int cy = r.center().y();
+        int w = r.width() - 6;
+        int h = r.height() - 6;
+        // Draw stepped waveform
+        QPainterPath wave;
+        wave.moveTo(cx - w / 2, cy);
+        wave.lineTo(cx - w / 3, cy);
+        wave.lineTo(cx - w / 3, cy - h / 3);
+        wave.lineTo(cx - w / 6, cy - h / 3);
+        wave.lineTo(cx - w / 6, cy + h / 3);
+        wave.lineTo(cx + w / 6, cy + h / 3);
+        wave.lineTo(cx + w / 6, cy - h / 4);
+        wave.lineTo(cx + w / 3, cy - h / 4);
+        wave.lineTo(cx + w / 3, cy);
+        wave.lineTo(cx + w / 2, cy);
+        painter.drawPath(wave);
+    }
     else
     {
         // Generic document file shape

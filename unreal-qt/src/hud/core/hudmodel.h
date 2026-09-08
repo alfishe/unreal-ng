@@ -151,6 +151,7 @@ private:
     void onMemoryPageChanged(int id, Message* message);
     void onRomPageChanged(int id, Message* message);
     void onScreenPageChanged(int id, Message* message);
+    void onAudioActivity(int id, Message* message);
 
     bool matchesInstance(const unreal::UUID& id) const;
 

@@ -64,6 +64,10 @@ protected:
     int16_t* _outputBuffer = nullptr;
     int _lastSamplesRead = 0;  // Samples delivered on last handleFrameEnd
 
+    // Activity tracking for HUD notification
+    bool _frameHadActivity = false;    // Any delta added this frame
+    bool _wasActive = false;           // Activity state at last frame end
+
     // Clock rate and sample rate (passed at construction)
     size_t _clockRate;
     size_t _samplingRate;

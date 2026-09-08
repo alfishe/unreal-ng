@@ -58,6 +58,7 @@ constexpr char const* NC_RECORDING_STATE = "RECORDING_STATE";                   
 constexpr char const* NC_MEMORY_PAGE_CHANGED = "MEMORY_PAGE_CHANGED";           // RAM bank mapping changed (payload: MemoryPagePayload). Posted by Memory on bank switch.
 constexpr char const* NC_ROM_PAGE_CHANGED = "ROM_PAGE_CHANGED";                 // ROM selection changed (payload: ROMPagePayload). Posted by Memory on ROM switch.
 constexpr char const* NC_SCREEN_PAGE_CHANGED = "SCREEN_PAGE_CHANGED";           // Active screen changed: page 5 (normal) or page 7 (shadow) (payload: ScreenPagePayload). Posted by Screen.
+constexpr char const* NC_AUDIO_ACTIVITY = "AUDIO_ACTIVITY";                     // Audio source activity changed (payload: AudioActivityPayload). Posted by sound sources per-frame when activity state changes.
 
 constexpr char const* NC_FILE_OPEN_REQUEST = "FILE_OPEN_REQUEST";               // File open request from emulator
 
