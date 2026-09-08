@@ -10,7 +10,6 @@
 #include <QMoveEvent>
 #include <QMutex>
 #include <QPointer>
-#include <QPushButton>
 #include <QResizeEvent>
 #include <QSettings>
 #include <QTimer>
@@ -25,6 +24,8 @@
 #include "emulator/soundmanager.h"
 #include "logviewer/logwindow.h"
 #include "menumanager.h"
+#include "statusbarmanager.h"
+#include "toolbarmanager.h"
 #include "tape/tapemanagerwindow.h"
 #include "ui/intparametersdialog.h"
 #include "ui_mainwindow.h"
@@ -64,7 +65,7 @@ public:
 
     // region <Slots>
 private slots:
-    void handleStartButton();
+    void toggleEmulatorStartStop();
     void tryAdoptRemainingEmulator();
     void handleMessageScreenRefresh(int id, Message* message);
     void handleVideoModeChanged(int id, Message* message);
@@ -100,6 +101,8 @@ private slots:
     void handleStepIn();
     void handleStepOver();
     void handleDebugModeToggled(bool enabled);
+    void handleToolBarToggled(bool visible);
+    void handleStatusBarToggled(bool visible);
     void handleDebuggerToggled(bool visible);
     void handleLogWindowToggled(bool visible);
     void handleTapeManagerToggled(bool visible);
@@ -109,6 +112,10 @@ private slots:
     void handleOverscanModeToggled(bool enabled);
     void handleViewportChanged(int presetIndex);
     void handleMachineModelChangeRequested(const QString& modelShortName);
+
+    // Toolbar (transport) handlers
+    void handleStartOrResumeRequested();
+    void handleRestartRequested();
 #ifdef ENABLE_RECORDING
     void handleVideoRecordingRequested();
     void handleQuickRecord(const QString& presetName);
@@ -147,6 +154,10 @@ protected:
     }
 
     void arrangeWindows();
+
+    /// Resize the window so the emulator screen is shown at an integer scale of its
+    /// native (viewport) size, plus menu / toolbar / status bar chrome
+    void fitWindowToScreen(int scale);
     void adjust(QEvent* event, const QPoint& delta = QPoint{});
 
 private:
@@ -202,7 +213,6 @@ private:
     LogWindow* logWindow = nullptr;
     TapeManagerWindow* tapeManagerWindow = nullptr;
     DeviceScreen* deviceScreen = nullptr;
-    QPushButton* startButton = nullptr;
     QMutex lockMutex;
     QMutex _audioMutex;              // Protects audio operations from race conditions
     bool _audioInitialized = false;  // Tracks if audio device is initialized
@@ -224,6 +234,7 @@ private:
 
     QShortcut* _fullScreenShortcut = nullptr;
     bool _inHandler = false;
+    bool _initialFitDone = false;  // Window sized to the screen once, on first show
 
     // Stores window geometry before going fullscreen / maximized
     QRect _normalGeometry;
@@ -238,6 +249,8 @@ private:
 
     DockingManager* _dockingManager = nullptr;
     MenuManager* _menuManager = nullptr;
+    ToolBarManager* _toolBarManager = nullptr;
+    StatusBarManager* _statusBarManager = nullptr;
 
     // Audio settings dialog (singleton, toggled via menu)
     QPointer<AudioSettingsWidget> _audioSettingsWidget;

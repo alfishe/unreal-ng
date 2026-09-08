@@ -43,6 +43,18 @@ public:
     // (setChecked does not re-emit triggered)
     void setTapeManagerChecked(bool checked);
 
+    // Sync the View -> Toolbar / Status Bar check state (setChecked does not re-emit triggered)
+    void setToolBarChecked(bool checked);
+    void setStatusBarChecked(bool checked);
+
+    // Actions shared with the transport toolbar (ToolBarManager). Their visible /
+    // enabled / checked state is maintained by updateMenuStates()
+    QAction* fullScreenAction() const { return _fullScreenAction; }
+    QAction* overscanAction() const { return _overscanAction; }  // Pentagon only (hidden otherwise)
+#ifdef ENABLE_RECORDING
+    QAction* videoRecordingAction() const { return _videoRecordingAction; }
+#endif
+
     // Observer callback for emulator state changes
     void handleEmulatorStateChanged(int id, Message* message);
     void handleEmulatorInstanceCreated(int id, Message* message);
@@ -81,6 +93,8 @@ signals:
     void debugModeToggled(bool enabled);
 
     // View signals
+    void toolBarToggled(bool visible);
+    void statusBarToggled(bool visible);
     void debuggerToggled(bool visible);
     void logWindowToggled(bool visible);
     void tapeManagerToggled(bool visible);
@@ -150,6 +164,8 @@ private:
     QAction* _preferencesAction;
 
     // View Menu Actions
+    QAction* _toolBarAction;
+    QAction* _statusBarAction;
     QAction* _debuggerAction;
     QAction* _logWindowAction;
     QAction* _tapeManagerAction;

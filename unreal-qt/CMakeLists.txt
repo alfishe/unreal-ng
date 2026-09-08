@@ -186,6 +186,7 @@ find_package(Qt6 REQUIRED)
 find_package(Qt6 COMPONENTS Gui REQUIRED)
 find_package(Qt6 COMPONENTS Multimedia REQUIRED)
 find_package(Qt6 COMPONENTS Widgets REQUIRED)
+find_package(Qt6 COMPONENTS Svg REQUIRED)  # Toolbar icons (SVG icon engine must be deployed)
 
 # Enable CTest for test discovery (inherited from core/tests)
 enable_testing()
@@ -276,6 +277,10 @@ add_executable(${PROJECT_NAME} ${CPP_FILES} ${UI_HEADERS} ${APP_ICON_MACOS})
 qt6_add_resources(APP_ICON_RESOURCES "${CMAKE_CURRENT_SOURCE_DIR}/resources/appicon.qrc")
 target_sources(${PROJECT_NAME} PRIVATE ${APP_ICON_RESOURCES})
 
+# Toolbar / status bar icons (monochrome SVGs, tinted at runtime to follow the platform theme)
+qt6_add_resources(UI_ICON_RESOURCES "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons.qrc")
+target_sources(${PROJECT_NAME} PRIVATE ${UI_ICON_RESOURCES})
+
 
 # Set common target properties
 target_include_directories(${PROJECT_NAME} PRIVATE
@@ -352,6 +357,7 @@ if (INCLUDE_AUTOMATION)
         ${common_libraries}
         Qt6::Widgets
         Qt6::Multimedia
+        Qt6::Svg
         QHexView
 
         unrealng::automation # This brings in core as PUBLIC dependency
@@ -370,6 +376,7 @@ else ()
         ${common_libraries}
         Qt6::Widgets
         Qt6::Multimedia
+        Qt6::Svg
         QHexView
 
         unrealng::core  # Keep this when automation is disabled

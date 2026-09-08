@@ -205,6 +205,22 @@ void MenuManager::createViewMenu()
 
     _viewMenu->addSeparator();
 
+    // Toolbar (transport toolbar under the menu bar)
+    _toolBarAction = _viewMenu->addAction(tr("&Toolbar"));
+    _toolBarAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_T));
+    _toolBarAction->setStatusTip(tr("Show/hide toolbar"));
+    _toolBarAction->setCheckable(true);
+    _toolBarAction->setChecked(true);
+    connect(_toolBarAction, &QAction::triggered, this, &MenuManager::toolBarToggled);
+
+    // Status bar (device LEDs and FPS at the bottom of the window)
+    _statusBarAction = _viewMenu->addAction(tr("&Status Bar"));
+    _statusBarAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Slash));
+    _statusBarAction->setStatusTip(tr("Show/hide status bar"));
+    _statusBarAction->setCheckable(true);
+    _statusBarAction->setChecked(true);
+    connect(_statusBarAction, &QAction::triggered, this, &MenuManager::statusBarToggled);
+
     // Full Screen
     _fullScreenAction = _viewMenu->addAction(tr("&Full Screen"));
 #ifdef Q_OS_MAC
@@ -272,6 +288,22 @@ void MenuManager::createViewMenu()
     _viewportScreenOnlyAction->setCheckable(true);
     _viewportGroup->addAction(_viewportScreenOnlyAction);
     connect(_viewportScreenOnlyAction, &QAction::triggered, this, [this]() { emit viewportChanged(3); });
+}
+
+void MenuManager::setToolBarChecked(bool checked)
+{
+    if (_toolBarAction)
+    {
+        _toolBarAction->setChecked(checked);
+    }
+}
+
+void MenuManager::setStatusBarChecked(bool checked)
+{
+    if (_statusBarAction)
+    {
+        _statusBarAction->setChecked(checked);
+    }
 }
 
 void MenuManager::setTapeManagerChecked(bool checked)
