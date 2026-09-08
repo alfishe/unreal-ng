@@ -2,6 +2,8 @@
 
 #include <QWidget>
 #include <QTimer>
+#include <QPixmap>
+#include <list>
 #include <memory>
 #include <unordered_map>
 
@@ -80,4 +82,49 @@ private:
 
     // Cache of converted QImages by buffer pointer
     std::unordered_map<const HudImageBuffer*, QImage> _imageCache;
+
+    // LRU cache for pre-rendered tile frame backgrounds
+    struct TileFrameCacheKey
+    {
+        int width;
+        int height;
+        uint32_t backgroundColor;
+        uint32_t backgroundGradientEnd;
+        uint32_t borderColor;
+        uint32_t shadowColor;
+        float borderRadius;
+        float borderWidth;
+        float shadowBlur;
+        bool glassEffect;
+
+        bool operator==(const TileFrameCacheKey& other) const
+        {
+            return width == other.width && height == other.height &&
+                   backgroundColor == other.backgroundColor &&
+                   backgroundGradientEnd == other.backgroundGradientEnd &&
+                   borderColor == other.borderColor && shadowColor == other.shadowColor &&
+                   borderRadius == other.borderRadius && borderWidth == other.borderWidth &&
+                   shadowBlur == other.shadowBlur && glassEffect == other.glassEffect;
+        }
+    };
+
+    struct TileFrameCacheKeyHash
+    {
+        size_t operator()(const TileFrameCacheKey& k) const
+        {
+            size_t h = std::hash<int>{}(k.width);
+            h ^= std::hash<int>{}(k.height) << 1;
+            h ^= std::hash<uint32_t>{}(k.backgroundColor) << 2;
+            h ^= std::hash<uint32_t>{}(k.borderColor) << 3;
+            h ^= std::hash<uint32_t>{}(k.shadowColor) << 4;
+            return h;
+        }
+    };
+
+    static constexpr size_t kTileFrameCacheMaxSize = 32;
+    std::list<TileFrameCacheKey> _tileFrameLruOrder;
+    std::unordered_map<TileFrameCacheKey, std::pair<QPixmap, std::list<TileFrameCacheKey>::iterator>, TileFrameCacheKeyHash> _tileFrameCache;
+
+    QPixmap getCachedTileFrame(const QSize& size, const HudTileFrameStyle& frame, float uiScale);
+    void renderTileFrameToPixmap(QPixmap& pixmap, const HudTileFrameStyle& frame, float uiScale);
 };

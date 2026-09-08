@@ -213,8 +213,51 @@ QImage HudOverlay::getImageFromBuffer(const std::shared_ptr<const HudImageBuffer
     return copy;
 }
 
-void HudOverlay::drawWholeTileFrame(QPainter& painter, const QRect& rect, const HudTileFrameStyle& frame, float uiScale)
+QPixmap HudOverlay::getCachedTileFrame(const QSize& size, const HudTileFrameStyle& frame, float uiScale)
 {
+    TileFrameCacheKey key{
+        size.width(), size.height(),
+        frame.backgroundColor, frame.backgroundGradientEnd,
+        frame.borderColor, frame.shadowColor,
+        frame.borderRadius * uiScale, frame.borderWidth * uiScale,
+        frame.shadowBlur * uiScale, frame.glassEffect
+    };
+
+    auto it = _tileFrameCache.find(key);
+    if (it != _tileFrameCache.end())
+    {
+        // Move to front of LRU list
+        _tileFrameLruOrder.erase(it->second.second);
+        _tileFrameLruOrder.push_front(key);
+        it->second.second = _tileFrameLruOrder.begin();
+        return it->second.first;
+    }
+
+    // Render new pixmap
+    QPixmap pixmap(size);
+    pixmap.fill(Qt::transparent);
+    renderTileFrameToPixmap(pixmap, frame, uiScale);
+
+    // Evict oldest if at capacity
+    if (_tileFrameCache.size() >= kTileFrameCacheMaxSize)
+    {
+        auto& oldest = _tileFrameLruOrder.back();
+        _tileFrameCache.erase(oldest);
+        _tileFrameLruOrder.pop_back();
+    }
+
+    // Insert into cache
+    _tileFrameLruOrder.push_front(key);
+    _tileFrameCache[key] = {pixmap, _tileFrameLruOrder.begin()};
+    return pixmap;
+}
+
+void HudOverlay::renderTileFrameToPixmap(QPixmap& pixmap, const HudTileFrameStyle& frame, float uiScale)
+{
+    QPainter p(&pixmap);
+    p.setRenderHint(QPainter::Antialiasing, true);
+
+    QRect rect = pixmap.rect();
     float radius = frame.borderRadius * uiScale;
     float bWidth = std::max(1.0f, frame.borderWidth * uiScale);
 
@@ -223,46 +266,59 @@ void HudOverlay::drawWholeTileFrame(QPainter& painter, const QRect& rect, const 
     {
         int spread = static_cast<int>(std::max(1.0f, 2.0f * uiScale));
         QPainterPath shadowPath;
-        shadowPath.addRoundedRect(rect.adjusted(-spread, spread / 2, spread, spread * 2), radius + spread, radius + spread);
-        painter.fillPath(shadowPath, QColor::fromRgba(frame.shadowColor));
+        shadowPath.addRoundedRect(rect.adjusted(spread, spread, -spread, 0), radius, radius);
+        p.fillPath(shadowPath, QColor::fromRgba(frame.shadowColor));
     }
 
+    // Inset rect to leave room for shadow
+    int inset = static_cast<int>(std::max(1.0f, 2.0f * uiScale));
+    QRect innerRect = rect.adjusted(inset, 0, -inset, -inset * 2);
+
     QPainterPath path;
-    path.addRoundedRect(rect, radius, radius);
+    path.addRoundedRect(innerRect, radius, radius);
 
     // Background fill (solid or linear gradient)
     if (frame.backgroundGradientEnd != 0 && frame.backgroundGradientEnd != frame.backgroundColor)
     {
-        QLinearGradient grad(rect.topLeft(), rect.bottomLeft());
+        QLinearGradient grad(innerRect.topLeft(), innerRect.bottomLeft());
         grad.setColorAt(0.0, QColor::fromRgba(frame.backgroundColor));
         grad.setColorAt(1.0, QColor::fromRgba(frame.backgroundGradientEnd));
-        painter.fillPath(path, grad);
+        p.fillPath(path, grad);
     }
     else
     {
-        painter.fillPath(path, QColor::fromRgba(frame.backgroundColor));
+        p.fillPath(path, QColor::fromRgba(frame.backgroundColor));
     }
 
     // Border stroke
     if (frame.borderColor != 0 && bWidth > 0.0f)
     {
-        painter.strokePath(path, QPen(QColor::fromRgba(frame.borderColor), bWidth));
+        p.strokePath(path, QPen(QColor::fromRgba(frame.borderColor), bWidth));
     }
 
     // Specular glass highlight at top
     if (frame.glassEffect && radius > 0.0f)
     {
-        painter.save();
-        painter.setClipPath(path);
+        p.save();
+        p.setClipPath(path);
         int hlHeight = std::max(2, static_cast<int>(2.5f * uiScale));
-        QRect hlRect(rect.left(), rect.top(), rect.width(), hlHeight);
+        QRect hlRect(innerRect.left(), innerRect.top(), innerRect.width(), hlHeight);
         QLinearGradient hlGrad(hlRect.topLeft(), hlRect.topRight());
         hlGrad.setColorAt(0.0, QColor(255, 255, 255, 0));
         hlGrad.setColorAt(0.5, QColor(255, 255, 255, 55));
         hlGrad.setColorAt(1.0, QColor(255, 255, 255, 0));
-        painter.fillRect(hlRect, hlGrad);
-        painter.restore();
+        p.fillRect(hlRect, hlGrad);
+        p.restore();
     }
+}
+
+void HudOverlay::drawWholeTileFrame(QPainter& painter, const QRect& rect, const HudTileFrameStyle& frame, float uiScale)
+{
+    // Use cached pre-rendered pixmap
+    int spread = static_cast<int>(std::max(1.0f, 2.0f * uiScale));
+    QSize cacheSize(rect.width() + spread * 2, rect.height() + spread * 3);
+    QPixmap cached = getCachedTileFrame(cacheSize, frame, uiScale);
+    painter.drawPixmap(rect.left() - spread, rect.top(), cached);
 }
 
 void HudOverlay::paintEvent(QPaintEvent*)
