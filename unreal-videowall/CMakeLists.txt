@@ -3,6 +3,9 @@ cmake_minimum_required(VERSION 3.16.0)
 message(">> unreal-videowall CMakeLists.txt")
 
 # Project named 'unreal-videowall' on C++
+# Minimum macOS version (must precede project(); shared with the root build)
+include(${CMAKE_CURRENT_LIST_DIR}/../cmake/MacOSDeploymentTarget.cmake)
+
 project(unreal-videowall LANGUAGES CXX)
 
 # Define automation options - use defaults if not already set by parent CMakeLists.txt

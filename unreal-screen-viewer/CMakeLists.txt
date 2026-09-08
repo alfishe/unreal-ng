@@ -3,6 +3,9 @@ cmake_minimum_required(VERSION 3.16.0)
 message(">> unreal-screen-viewer CMakeLists.txt")
 
 # Project named 'unreal-screen-viewer' on C++
+# Minimum macOS version (must precede project(); shared with the root build)
+include(${CMAKE_CURRENT_LIST_DIR}/../cmake/MacOSDeploymentTarget.cmake)
+
 project(unreal-screen-viewer LANGUAGES CXX)
 
 # C++ standard is inherited from root CMakeLists.txt (C++20)

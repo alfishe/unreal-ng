@@ -29,6 +29,9 @@ option(ENABLE_GDB_AUTOMATION "Enable GDB RSP server automation (GDB TDD G1+)" OF
 # struct layout (EmulatorContext) across all compilation units
 option(ENABLE_RECORDING "Enable audio/video recording support" ON)
 
+# Minimum macOS version (must precede project())
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/MacOSDeploymentTarget.cmake)
+
 project(unreal)
 
 # Validate toolchain/dependency compatibility (MSVC+vcpkg OR MinGW+pacman)

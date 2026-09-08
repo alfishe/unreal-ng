@@ -3,6 +3,9 @@ cmake_minimum_required(VERSION 3.16.0)
 message(">> unreal-qt CMakeLists.txt")
 
 # Project named 'unreal-qt' on C++
+# Minimum macOS version (must precede project(); shared with the root build)
+include(${CMAKE_CURRENT_LIST_DIR}/../cmake/MacOSDeploymentTarget.cmake)
+
 project(unreal-qt LANGUAGES CXX)
 
 # Automation options follow the root CMakeLists.txt (single source of truth).
