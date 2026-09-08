@@ -3,6 +3,7 @@
 #include <QCursor>
 #include <algorithm>
 #include <QDateTime>
+#include <QFont>
 #include <QFrame>
 #include <QSettings>
 #include <QToolTip>
@@ -69,6 +70,11 @@ StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuMana
 
     _fps = new QLabel(QStringLiteral("-- FPS"), _statusBar);
     _fps->setToolTip(tr("Emulated frames per second"));
+    QFont fpsFont("Consolas", _fps->font().pointSize());
+    fpsFont.setStyleHint(QFont::Monospace);
+    _fps->setFont(fpsFont);
+    // Font ascenders render higher than icon visual center - adjust with stylesheet padding
+    _fps->setStyleSheet("padding-top: 1px;");
 
     // Order as in the new-gui mockup: tape, square (HDD), round (floppy), sound
     _statusBar->addPermanentWidget(_tape);

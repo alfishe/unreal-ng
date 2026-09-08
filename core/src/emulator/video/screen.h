@@ -274,45 +274,50 @@ struct DisplayViewport
 };
 
 /// Preset viewports for M_P384 overscan mode
-/// Derived from raster descriptor differences: M_P384 (384x304) vs M_PENTAGON128K (352x288)
+/// M_P384 framebuffer layout (from raster descriptor screenOffsetLeft=48):
+///   Left border: 48px, Paper: 256px, Right border: 80px = 384px total
+///   Top border: 56px, Paper: 192px, Bottom border: 56px = 304px total
+/// Extra pixels vs Pentagon (352x288): 32 on right, 8 top + 8 bottom
 namespace ViewportPresets
 {
-    // Base dimensions from raster descriptors
+    // Raster descriptor values
+    static constexpr uint16_t SCREEN_OFFSET_LEFT = 48;   // Paper starts at x=48
+    static constexpr uint16_t SCREEN_OFFSET_TOP = 56;    // Paper starts at y=56
+    static constexpr uint16_t SCREEN_WIDTH = 256;
+    static constexpr uint16_t SCREEN_HEIGHT = 192;
     static constexpr uint16_t P384_WIDTH = 384;
     static constexpr uint16_t P384_HEIGHT = 304;
     static constexpr uint16_t PENTAGON_WIDTH = 352;
     static constexpr uint16_t PENTAGON_HEIGHT = 288;
-    static constexpr uint16_t SCREEN_WIDTH = 256;
-    static constexpr uint16_t SCREEN_HEIGHT = 192;
 
-    // Extra pixels in overscan mode (symmetric distribution)
-    static constexpr uint16_t EXTRA_WIDTH = P384_WIDTH - PENTAGON_WIDTH;   // 32
-    static constexpr uint16_t EXTRA_HEIGHT = P384_HEIGHT - PENTAGON_HEIGHT; // 16
+    // Derived: right/bottom borders
+    static constexpr uint16_t RIGHT_BORDER = P384_WIDTH - SCREEN_OFFSET_LEFT - SCREEN_WIDTH;   // 80
+    static constexpr uint16_t BOTTOM_BORDER = P384_HEIGHT - SCREEN_OFFSET_TOP - SCREEN_HEIGHT; // 56
 
     // Full overscan (384x304) - show everything including extra border areas
     constexpr DisplayViewport FULL_OVERSCAN = {0, 0, 0, 0};
 
-    // Symmetric horizontal (352x304) - crop to Pentagon width, full vertical
+    // Symmetric horizontal (352x304) - crop right border to match left (48px each)
     constexpr DisplayViewport SYMMETRIC_HORIZONTAL = {
-        static_cast<uint16_t>(EXTRA_WIDTH / 2),  // cropLeft: 16
-        static_cast<uint16_t>(EXTRA_WIDTH / 2),  // cropRight: 16
+        0,
+        static_cast<uint16_t>(RIGHT_BORDER - SCREEN_OFFSET_LEFT),  // 80 - 48 = 32
         0, 0
     };
 
-    // Standard (352x288) - match standard Pentagon display, centered
+    // Standard (352x288) - match standard Pentagon display (48px borders all around)
     constexpr DisplayViewport STANDARD = {
-        static_cast<uint16_t>(EXTRA_WIDTH / 2),   // cropLeft: 16
-        static_cast<uint16_t>(EXTRA_WIDTH / 2),   // cropRight: 16
-        static_cast<uint16_t>(EXTRA_HEIGHT / 2),  // cropTop: 8
-        static_cast<uint16_t>(EXTRA_HEIGHT / 2)   // cropBottom: 8
+        0,
+        static_cast<uint16_t>(RIGHT_BORDER - SCREEN_OFFSET_LEFT),  // 32
+        static_cast<uint16_t>(SCREEN_OFFSET_TOP - 48),             // 56 - 48 = 8
+        static_cast<uint16_t>(BOTTOM_BORDER - 48)                  // 56 - 48 = 8
     };
 
-    // Screen only (256x192) - paper area only, centered
+    // Screen only (256x192) - paper area only
     constexpr DisplayViewport SCREEN_ONLY = {
-        static_cast<uint16_t>((P384_WIDTH - SCREEN_WIDTH) / 2),    // cropLeft: 64
-        static_cast<uint16_t>((P384_WIDTH - SCREEN_WIDTH) / 2),    // cropRight: 64
-        static_cast<uint16_t>((P384_HEIGHT - SCREEN_HEIGHT) / 2),  // cropTop: 56
-        static_cast<uint16_t>((P384_HEIGHT - SCREEN_HEIGHT) / 2)   // cropBottom: 56
+        SCREEN_OFFSET_LEFT,  // 48
+        RIGHT_BORDER,        // 80
+        SCREEN_OFFSET_TOP,   // 56
+        BOTTOM_BORDER        // 56
     };
 }
 
