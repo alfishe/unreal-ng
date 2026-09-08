@@ -677,11 +677,10 @@ void MenuManager::createToolsMenu()
 
     _toolsMenu->addSeparator();
 
-    // Screenshot of the emulator framebuffer: PNG file + clipboard
-    // (Ctrl+Shift+S is Save Disk, so F12 here)
+    // Screenshot of the emulator framebuffer to clipboard
     _screenshotAction = _toolsMenu->addAction(tr("Take &Screenshot"));
     _screenshotAction->setShortcut(QKeySequence(Qt::Key_F12));
-    _screenshotAction->setStatusTip(tr("Save the emulator screen as PNG and copy it to the clipboard"));
+    _screenshotAction->setStatusTip(tr("Copy the emulator screen to the clipboard"));
     connect(_screenshotAction, &QAction::triggered, this, &MenuManager::screenshotRequested);
 
 #ifdef ENABLE_RECORDING
