@@ -1771,6 +1771,9 @@ void MainWindow::loadFile(const QString& filePath)
                 bool result = _emulator->LoadSnapshot(file);
                 if (!result)
                     qWarning() << "Failed to load snapshot:" << filePath;
+                else if (_statusBarManager)
+                    _statusBarManager->resetFpsMeasurement();  // Snapshot replaces the frame counter
+                _lastFrameCount = 0;
             }
             else
             {
@@ -2177,6 +2180,8 @@ void MainWindow::resetEmulator()
         // Reset handles pause/resume internally to avoid race conditions
         _emulator->Reset();
         _lastFrameCount = 0;
+        if (_statusBarManager)
+            _statusBarManager->resetFpsMeasurement();  // Frame counter restarts from 0
 
         // Update menu states
         updateMenuStates();

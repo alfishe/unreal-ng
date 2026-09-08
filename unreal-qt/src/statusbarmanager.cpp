@@ -27,6 +27,18 @@ namespace
 {
 constexpr const char* kSettingsKey = "View/StatusBarVisible";
 constexpr int kPollIntervalMs = 200;
+constexpr int kFpsSampleIntervalMs = 1000;  // Readout update cadence
+constexpr size_t kFpsWindowSamples = 5;     // Average over the last ~4 s of samples
+constexpr double kMaxNormalFps = 50.1;      // Cap outside turbo mode: highest real rate is 50.08 Hz (69888 T at 3.5 MHz)
+}
+
+void StatusBarManager::notifyFrameRendered(uint32_t emulatorFrameCounter)
+{
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(_frameSampleMutex);
+    _latestFrame.counter = emulatorFrameCounter;
+    _latestFrame.time = now;
+    _haveLatestFrame = true;
 }
 
 StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuManager, QObject* parent)
@@ -75,6 +87,9 @@ StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuMana
                               static_cast<ObserverCallbackMethod>(&StatusBarManager::handleFDDDiskInserted));
     messageCenter.AddObserver(NC_FDD_DISK_EJECTED, observerInstance,
                               static_cast<ObserverCallbackMethod>(&StatusBarManager::handleFDDDiskEjected));
+    // Core reset restarts the frame counter from 0: re-arm the FPS measurement
+    messageCenter.AddObserver(NC_SYSTEM_RESET, observerInstance,
+                              static_cast<ObserverCallbackMethod>(&StatusBarManager::handleSystemReset));
 
     _pollTimer.setInterval(kPollIntervalMs);
     connect(&_pollTimer, &QTimer::timeout, this, &StatusBarManager::refresh);
@@ -94,6 +109,27 @@ StatusBarManager::~StatusBarManager()
                                  static_cast<ObserverCallbackMethod>(&StatusBarManager::handleFDDDiskInserted));
     messageCenter.RemoveObserver(NC_FDD_DISK_EJECTED, observerInstance,
                                  static_cast<ObserverCallbackMethod>(&StatusBarManager::handleFDDDiskEjected));
+    messageCenter.RemoveObserver(NC_SYSTEM_RESET, observerInstance,
+                                 static_cast<ObserverCallbackMethod>(&StatusBarManager::handleSystemReset));
+}
+
+void StatusBarManager::handleSystemReset(int id, Message* message)
+{
+    Q_UNUSED(id);
+    Q_UNUSED(message);  // SimpleTextPayload, no emulator id: re-arming is harmless for any instance
+    QMetaObject::invokeMethod(this, "resetFpsMeasurement", Qt::QueuedConnection);
+}
+
+void StatusBarManager::resetFpsMeasurement()
+{
+    {
+        std::lock_guard<std::mutex> lock(_frameSampleMutex);
+        _latestFrame = FrameSample{};
+        _haveLatestFrame = false;
+    }
+    _fpsWindow.clear();
+    _measuredFps = 0.0;
+    _fps->setText(QStringLiteral("-- FPS"));
 }
 
 void StatusBarManager::handleFDDDiskInserted(int id, Message* message)
@@ -195,11 +231,8 @@ void StatusBarManager::setActiveEmulator(std::shared_ptr<Emulator> emulator)
         return;
 
     _emulator = emulator;
-    _frameCounter.store(0, std::memory_order_relaxed);
-    _lastFrameCounter = 0;
-    _haveFrameSample = false;
+    resetFpsMeasurement();
     _lastFpsSampleMs = QDateTime::currentMSecsSinceEpoch();
-    _fps->setText(QStringLiteral("-- FPS"));
 
     // Rebind the floppy LED: drop the previous emulator's cache and read the new one's
     // state once; every later change arrives via NC_FDD_STATE_CHANGED
@@ -258,27 +291,63 @@ void StatusBarManager::refresh()
     _hdd->setActive(false);  // HDD is a stub in the core
     _sound->setActive(soundOn);
 
-    // FPS: average over the last ~1 s of rendered frames
+    // FPS: once per second take the latest frame-aligned sample and measure the rate
+    // between the oldest sample in the window and this one. Both ends are frame
+    // arrival times, so the quotient is exact for the frames in between (no timer
+    // quantisation); the window smooths message-delivery jitter.
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    const qint64 elapsed = now - _lastFpsSampleMs;
-    if (elapsed >= 1000)
+    if (now - _lastFpsSampleMs >= kFpsSampleIntervalMs)
     {
-        const uint32_t frames = _frameCounter.load(std::memory_order_relaxed);
-        const uint32_t delta = _haveFrameSample ? frames - _lastFrameCounter : 0;
-        _lastFrameCounter = frames;
-        _haveFrameSample = true;
         _lastFpsSampleMs = now;
 
-        if (emulator && emulator->IsRunning() && !emulator->IsPaused() && delta > 0)
+        FrameSample latest;
+        bool haveLatest = false;
         {
-            _measuredFps = delta * 1000.0 / elapsed;
-            _fps->setText(QStringLiteral("%1 FPS").arg(_measuredFps, 0, 'f', 1));
+            std::lock_guard<std::mutex> lock(_frameSampleMutex);
+            latest = _latestFrame;
+            haveLatest = _haveLatestFrame;
         }
+
+        const bool running = emulator && emulator->IsRunning() && !emulator->IsPaused();
+        const bool turbo = running && emulator->IsTurboMode();
+        if (!running || !haveLatest)
+        {
+            _fpsWindow.clear();
+        }
+        else if (_fpsWindow.empty() || latest.counter != _fpsWindow.back().counter)
+        {
+            // A counter that went backwards means the frame sequence restarted (reset,
+            // snapshot load, seek): the window must not straddle the discontinuity
+            if (!_fpsWindow.empty() && latest.counter < _fpsWindow.back().counter)
+                _fpsWindow.clear();
+            _fpsWindow.push_back(latest);
+            while (_fpsWindow.size() > kFpsWindowSamples)
+                _fpsWindow.pop_front();
+        }
+
+        _measuredFps = 0.0;
+        if (_fpsWindow.size() >= 2)
+        {
+            const FrameSample& first = _fpsWindow.front();
+            const FrameSample& last = _fpsWindow.back();
+            const double seconds = std::chrono::duration<double>(last.time - first.time).count();
+            const uint32_t frames = last.counter - first.counter;
+            if (seconds > 0.0 && frames > 0)
+                _measuredFps = frames / seconds;
+        }
+
+        // Outside turbo the machine cannot legitimately exceed ~50 Hz; anything above is
+        // a counter jump that slipped through (e.g. a forward jump on snapshot load)
+        if (!turbo && _measuredFps > kMaxNormalFps)
+        {
+            _fpsWindow.clear();
+            _measuredFps = kMaxNormalFps;
+        }
+
+        if (_measuredFps > 0.0)
+            _fps->setText(QStringLiteral("%1 FPS").arg(_measuredFps, 0, 'f', 2));
         else
-        {
-            _measuredFps = 0.0;
             _fps->setText(QStringLiteral("-- FPS"));
-        }
     }
     updateFpsToolTip(emulator);
 }
@@ -303,7 +372,7 @@ void StatusBarManager::updateFpsToolTip(std::shared_ptr<Emulator> emulator)
         lines << tr("Target: %1 FPS").arg(targetFps, 0, 'f', 2);
         if (_measuredFps > 0.0)
         {
-            QString measured = tr("Emulated: %1 FPS").arg(_measuredFps, 0, 'f', 1);
+            QString measured = tr("Emulated: %1 FPS").arg(_measuredFps, 0, 'f', 2);
             if (turbo && targetFps > 0.0)
                 measured += tr(" (turbo, x%1)").arg(_measuredFps / targetFps, 0, 'f', 1);
             lines << measured;

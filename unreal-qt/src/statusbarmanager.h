@@ -4,8 +4,10 @@
 #include <QObject>
 #include <QStatusBar>
 #include <QTimer>
-#include <atomic>
+#include <chrono>
+#include <deque>
 #include <memory>
+#include <mutex>
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/notifications.h"
@@ -38,17 +40,22 @@ public:
     void handleFDDStateChanged(int id, Message* message);  // NC_FDD_STATE_CHANGED
     void handleFDDDiskInserted(int id, Message* message);  // NC_FDD_DISK_INSERTED
     void handleFDDDiskEjected(int id, Message* message);   // NC_FDD_DISK_EJECTED
+    void handleSystemReset(int id, Message* message);      // NC_SYSTEM_RESET
+
+    /// Drop the FPS measurement window; call whenever the emulator's frame counter is
+    /// discontinuous (reset, snapshot load, time-travel seek) so a jump is not read as speed
+    Q_INVOKABLE void resetFpsMeasurement();
 
     /// The emulator whose devices are shown (nullptr when none is adopted)
     void setActiveEmulator(std::shared_ptr<Emulator> emulator);
 
     /// Called on every frame refresh event (any thread) with the emulator's own frame
-    /// counter, so the FPS readout reports emulated frames per second - in turbo mode
-    /// that is far above the ~50 refreshes per second the screen actually repaints
-    void notifyFrameRendered(uint32_t emulatorFrameCounter)
-    {
-        _frameCounter.store(emulatorFrameCounter, std::memory_order_relaxed);
-    }
+    /// counter. The counter is timestamped here, at arrival, so the FPS readout divides
+    /// a frame delta by the time between those two frames rather than by a GUI timer
+    /// interval - an integer frame count over an unrelated ~1 s window can only show
+    /// 48.0 or 49.0, never the 48.83 Hz a Pentagon actually runs at. In turbo mode the
+    /// counter is the emulated frame count, so the readout is the true emulated rate.
+    void notifyFrameRendered(uint32_t emulatorFrameCounter);
 
     // User preference (View -> Status bar). Persisted in QSettings.
     void setVisibleByUser(bool visible);
@@ -87,9 +94,17 @@ private:
 
     QString _modelName;          // Full machine model name of the active emulator
     double _measuredFps = 0.0;   // Last measured emulated frames per second
-    std::atomic<uint32_t> _frameCounter{0};  // Latest emulator frame counter seen
-    uint32_t _lastFrameCounter = 0;
-    bool _haveFrameSample = false;
+
+    /// Frame-aligned sample: emulator frame counter and its arrival time
+    struct FrameSample
+    {
+        uint32_t counter = 0;
+        std::chrono::steady_clock::time_point time;
+    };
+    std::mutex _frameSampleMutex;
+    FrameSample _latestFrame;            // Written by notifyFrameRendered (emulator thread)
+    bool _haveLatestFrame = false;
+    std::deque<FrameSample> _fpsWindow;  // One sample per ~1 s, oldest first (GUI thread)
     qint64 _lastFpsSampleMs = 0;
 
     bool _visibleByUser = true;
