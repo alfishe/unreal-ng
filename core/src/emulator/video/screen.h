@@ -274,20 +274,46 @@ struct DisplayViewport
 };
 
 /// Preset viewports for M_P384 overscan mode
+/// Derived from raster descriptor differences: M_P384 (384x304) vs M_PENTAGON128K (352x288)
 namespace ViewportPresets
 {
+    // Base dimensions from raster descriptors
+    static constexpr uint16_t P384_WIDTH = 384;
+    static constexpr uint16_t P384_HEIGHT = 304;
+    static constexpr uint16_t PENTAGON_WIDTH = 352;
+    static constexpr uint16_t PENTAGON_HEIGHT = 288;
+    static constexpr uint16_t SCREEN_WIDTH = 256;
+    static constexpr uint16_t SCREEN_HEIGHT = 192;
+
+    // Extra pixels in overscan mode (symmetric distribution)
+    static constexpr uint16_t EXTRA_WIDTH = P384_WIDTH - PENTAGON_WIDTH;   // 32
+    static constexpr uint16_t EXTRA_HEIGHT = P384_HEIGHT - PENTAGON_HEIGHT; // 16
+
     // Full overscan (384x304) - show everything including extra border areas
     constexpr DisplayViewport FULL_OVERSCAN = {0, 0, 0, 0};
 
-    // Symmetric horizontal (352x304) - equal 48px left/right borders, full vertical
-    // Crops 32px from right to match 48px left border
-    constexpr DisplayViewport SYMMETRIC_HORIZONTAL = {0, 32, 0, 0};
+    // Symmetric horizontal (352x304) - crop to Pentagon width, full vertical
+    constexpr DisplayViewport SYMMETRIC_HORIZONTAL = {
+        static_cast<uint16_t>(EXTRA_WIDTH / 2),  // cropLeft: 16
+        static_cast<uint16_t>(EXTRA_WIDTH / 2),  // cropRight: 16
+        0, 0
+    };
 
-    // Standard (352x288) - match standard Pentagon display (48px borders, no overscan)
-    constexpr DisplayViewport STANDARD = {0, 32, 16, 0};
+    // Standard (352x288) - match standard Pentagon display, centered
+    constexpr DisplayViewport STANDARD = {
+        static_cast<uint16_t>(EXTRA_WIDTH / 2),   // cropLeft: 16
+        static_cast<uint16_t>(EXTRA_WIDTH / 2),   // cropRight: 16
+        static_cast<uint16_t>(EXTRA_HEIGHT / 2),  // cropTop: 8
+        static_cast<uint16_t>(EXTRA_HEIGHT / 2)   // cropBottom: 8
+    };
 
-    // Screen only (256x192) - paper area only
-    constexpr DisplayViewport SCREEN_ONLY = {48, 80, 64, 48};
+    // Screen only (256x192) - paper area only, centered
+    constexpr DisplayViewport SCREEN_ONLY = {
+        static_cast<uint16_t>((P384_WIDTH - SCREEN_WIDTH) / 2),    // cropLeft: 64
+        static_cast<uint16_t>((P384_WIDTH - SCREEN_WIDTH) / 2),    // cropRight: 64
+        static_cast<uint16_t>((P384_HEIGHT - SCREEN_HEIGHT) / 2),  // cropTop: 56
+        static_cast<uint16_t>((P384_HEIGHT - SCREEN_HEIGHT) / 2)   // cropBottom: 56
+    };
 }
 
 /// endregion </Structures>
