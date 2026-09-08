@@ -1097,33 +1097,24 @@ void HudModel::onMemoryPageChanged(int, Message* message)
     if (!p || !matchesInstance(p->emulatorId))
         return;
 
-    auto now = std::chrono::steady_clock::now();
-    auto sinceLastChange = now - _ramActivity.lastChange;
+    // Track cross-frame oscillation
+    _ramCrossFrame.recordPage(p->page);
 
     char buf[24];
-    if (sinceLastChange < kRapidSwitchThreshold && _ramActivity.lastPage != 0xFF)
+    if (p->switchCount > 1 && p->minPage != p->maxPage)
     {
-        // Rapid switching - track range and show activity pattern
-        _ramActivity.minPage = std::min(_ramActivity.minPage, p->page);
-        _ramActivity.maxPage = std::max(_ramActivity.maxPage, p->page);
-        _ramActivity.switchCount++;
-
-        if (_ramActivity.minPage == _ramActivity.maxPage)
-            snprintf(buf, sizeof(buf), "RAM %d", p->page);
-        else
-            snprintf(buf, sizeof(buf), "RAM %d↔%d", _ramActivity.minPage, _ramActivity.maxPage);
+        // Rapid switching within single frame (detected by emitter)
+        snprintf(buf, sizeof(buf), "RAM %d↔%d", p->minPage, p->maxPage);
+    }
+    else if (_ramCrossFrame.isOscillating())
+    {
+        // Slow oscillation across frames (detected by HUD)
+        snprintf(buf, sizeof(buf), "RAM %d↔%d", _ramCrossFrame.minPage, _ramCrossFrame.maxPage);
     }
     else
     {
-        // New activity burst - reset tracking
-        _ramActivity.minPage = p->page;
-        _ramActivity.maxPage = p->page;
-        _ramActivity.switchCount = 1;
         snprintf(buf, sizeof(buf), "RAM %d", p->page);
     }
-
-    _ramActivity.lastChange = now;
-    _ramActivity.lastPage = p->page;
 
     setIndicatorAt("mem", HudTilePosition::TopLeft, HudState::Active, buf, "", "ram",
                    HudTiming::IndicatorMemoryPageTimeout, true);
@@ -1137,33 +1128,24 @@ void HudModel::onRomPageChanged(int, Message* message)
     if (!p || !matchesInstance(p->emulatorId))
         return;
 
-    auto now = std::chrono::steady_clock::now();
-    auto sinceLastChange = now - _romActivity.lastChange;
+    // Track cross-frame oscillation
+    _romCrossFrame.recordPage(p->page);
 
     char buf[24];
-    if (sinceLastChange < kRapidSwitchThreshold && _romActivity.lastPage != 0xFF)
+    if (p->switchCount > 1 && p->minPage != p->maxPage)
     {
-        // Rapid switching - track range
-        _romActivity.minPage = std::min(_romActivity.minPage, p->page);
-        _romActivity.maxPage = std::max(_romActivity.maxPage, p->page);
-        _romActivity.switchCount++;
-
-        if (_romActivity.minPage == _romActivity.maxPage)
-            snprintf(buf, sizeof(buf), "ROM %d", p->page);
-        else
-            snprintf(buf, sizeof(buf), "ROM %d↔%d", _romActivity.minPage, _romActivity.maxPage);
+        // Rapid switching within single frame
+        snprintf(buf, sizeof(buf), "ROM %d↔%d", p->minPage, p->maxPage);
+    }
+    else if (_romCrossFrame.isOscillating())
+    {
+        // Slow oscillation across frames
+        snprintf(buf, sizeof(buf), "ROM %d↔%d", _romCrossFrame.minPage, _romCrossFrame.maxPage);
     }
     else
     {
-        // New activity burst
-        _romActivity.minPage = p->page;
-        _romActivity.maxPage = p->page;
-        _romActivity.switchCount = 1;
         snprintf(buf, sizeof(buf), "ROM %d", p->page);
     }
-
-    _romActivity.lastChange = now;
-    _romActivity.lastPage = p->page;
 
     setIndicatorAt("rom", HudTilePosition::TopLeft, HudState::Active, buf, "", "rom",
                    HudTiming::IndicatorMemoryPageTimeout, true);
@@ -1177,36 +1159,22 @@ void HudModel::onScreenPageChanged(int, Message* message)
     if (!p || !matchesInstance(p->emulatorId))
         return;
 
-    auto now = std::chrono::steady_clock::now();
-    auto sinceLastChange = now - _screenActivity.lastChange;
+    // Convert screen index to RAM page number
+    uint8_t page = (p->screen == 0) ? HudTiming::ScreenNormalPage : HudTiming::ScreenShadowPage;
+
+    // Track cross-frame oscillation
+    _screenCrossFrame.recordPage(page);
 
     char buf[24];
-    // Screen 0 = page 5 (normal), Screen 1 = page 7 (shadow)
-    uint8_t page = (p->screen == 0) ? 5 : 7;
-
-    if (sinceLastChange < kRapidSwitchThreshold && _screenActivity.lastPage != 0xFF)
+    if (p->switchCount > 1 || _screenCrossFrame.isOscillating())
     {
-        // Rapid switching
-        _screenActivity.minPage = std::min(_screenActivity.minPage, page);
-        _screenActivity.maxPage = std::max(_screenActivity.maxPage, page);
-        _screenActivity.switchCount++;
-
-        if (_screenActivity.minPage == _screenActivity.maxPage)
-            snprintf(buf, sizeof(buf), "SCR %d", page);
-        else
-            snprintf(buf, sizeof(buf), "SCR %d↔%d", _screenActivity.minPage, _screenActivity.maxPage);
+        // Rapid switching (within frame) or slow oscillation (across frames)
+        snprintf(buf, sizeof(buf), "SCR %d↔%d", HudTiming::ScreenNormalPage, HudTiming::ScreenShadowPage);
     }
     else
     {
-        // New activity burst
-        _screenActivity.minPage = page;
-        _screenActivity.maxPage = page;
-        _screenActivity.switchCount = 1;
         snprintf(buf, sizeof(buf), "SCR %d", page);
     }
-
-    _screenActivity.lastChange = now;
-    _screenActivity.lastPage = page;
 
     setIndicatorAt("scr", HudTilePosition::TopLeft, HudState::Active, buf, "", "screen",
                    HudTiming::IndicatorMemoryPageTimeout, true);

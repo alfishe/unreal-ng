@@ -42,6 +42,15 @@ namespace HudTiming
     // --- Indicator Durations & Timeouts ---
     inline constexpr std::chrono::milliseconds IndicatorExecuteTimeout{1500};
     inline constexpr std::chrono::milliseconds IndicatorMemoryPageTimeout{1200};
+
+    // --- Cross-frame oscillation detection ---
+    // Number of frames to track oscillation patterns (25 frames ≈ 500ms at 50fps)
+    inline constexpr uint8_t CrossFrameOscillationWindow = 25;
+
+    // --- ZX Spectrum screen memory pages ---
+    // Normal screen uses RAM page 5, shadow screen uses RAM page 7
+    inline constexpr uint8_t ScreenNormalPage = 5;
+    inline constexpr uint8_t ScreenShadowPage = 7;
 } // namespace HudTiming
 
 /// @brief Default limits for toast and indicator queues

@@ -146,8 +146,8 @@ void Beeper::handleFrameEnd(uint32_t frameDuration)
 
     _lastSamplesRead = avail;
 
-    // Post notification on activity state change
-    if (_frameHadActivity != _wasActive)
+    // Post notification while active (to refresh HUD TTL) or on state change
+    if (_frameHadActivity || _frameHadActivity != _wasActive)
     {
         _wasActive = _frameHadActivity;
         MessageCenter::DefaultMessageCenter().Post(

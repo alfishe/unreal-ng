@@ -291,6 +291,8 @@ void MainLoop::OnFrameStart()
 
     _context->pTape->handleFrameStart();
     _soundManager->handleFrameStart();
+    _context->pMemory->handleFrameStart();
+    _screen->handleFrameStart();
     _screen->InitFrame();
 
     /// region <Turbo render decimation>
@@ -453,6 +455,10 @@ void MainLoop::OnFrameEnd()
             }
         }
     }
+
+    // HUD notifications: emit once per frame (zero overhead when HUD disabled)
+    _context->pMemory->handleFrameEnd();
+    _screen->handleFrameEnd();
 
 #ifdef ENABLE_RECORDING
     // Capture video frame for recording (if recording is active)

@@ -2,7 +2,6 @@
 #include <algorithm>
 #include <mutex>
 
-#include "common/throttler.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
 #include "stdafx.h"
@@ -448,7 +447,9 @@ protected:
     uint8_t* _activeScreenMemoryOffset;
     uint8_t _borderColor;
 
-    MinInterval _screenNotifyThrottle{50};  // 50ms = max 20 notifications/sec
+    // Frame-level screen switch tracking (zero overhead when HUD disabled)
+    bool _feature_hud_enabled = false;
+    uint8_t _screenSwitchCount = 0;
 
     VideoModeEnum _mode;
     RasterState _rasterState;
@@ -498,6 +499,12 @@ public:
     virtual void InitRaster();
     virtual void InitMemoryCounters();
     /// endregion </Initialization>
+
+    /// region <Frame lifecycle>
+public:
+    void handleFrameStart();
+    void handleFrameEnd();
+    /// endregion </Frame lifecycle>
 
 public:
     virtual void SetVideoMode(VideoModeEnum mode);

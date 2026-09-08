@@ -524,13 +524,10 @@ void Screen::SetActiveScreen(SpectrumScreenEnum screen)
             break;
     }
 
-    // Post notification on change (throttled to max 20/sec for HUD)
-    uint8_t prevScreen = _activeScreen;
-    if (static_cast<uint8_t>(screen) != prevScreen && _screenNotifyThrottle.ShouldExecute(SteadyClockMs{}()))
+    // Record screen switch for frame-end notification (zero overhead if HUD disabled)
+    if (static_cast<uint8_t>(screen) != _activeScreen && _feature_hud_enabled)
     {
-        MessageCenter::DefaultMessageCenter().Post(
-            NC_SCREEN_PAGE_CHANGED, new ScreenPagePayload(_context->emulatorId,
-                static_cast<uint8_t>(screen), prevScreen));
+        if (_screenSwitchCount < 255) ++_screenSwitchCount;
     }
 
     _activeScreen = screen;
@@ -607,6 +604,7 @@ void Screen::UpdateFeatureCache()
     if (_context && _context->pFeatureManager)
     {
         _feature_screenhq_enabled = _context->pFeatureManager->isEnabled(Features::kScreenHQ);
+        _feature_hud_enabled = _context->pFeatureManager->isEnabled(Features::kHud);
     }
 }
 
@@ -1398,3 +1396,31 @@ void Screen::DumpRasterState(char* buffer, size_t len)
 #endif  // _DEBUG
 
 /// endregion </Debug methods>
+
+/// region <Frame lifecycle>
+
+void Screen::handleFrameStart()
+{
+    // Zero overhead when HUD is disabled
+    if (!_feature_hud_enabled)
+        return;
+
+    _screenSwitchCount = 0;
+}
+
+void Screen::handleFrameEnd()
+{
+    // Zero overhead when HUD is disabled
+    if (!_feature_hud_enabled || !_context)
+        return;
+
+    // Emit screen notification if any switches occurred this frame
+    if (_screenSwitchCount > 0)
+    {
+        MessageCenter::DefaultMessageCenter().Post(
+            NC_SCREEN_PAGE_CHANGED,
+            new ScreenPagePayload(_context->emulatorId, _activeScreen, _screenSwitchCount));
+    }
+}
+
+/// endregion </Frame lifecycle>

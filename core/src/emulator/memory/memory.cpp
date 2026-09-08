@@ -890,11 +890,10 @@ void Memory::SetROMPage(uint16_t page, bool updatePorts)
     if (updatePorts)
         _context->pPortDecoder->SetROMPage(page);
 
-    // Post notification on change (throttled to max 20/sec for HUD)
-    if (page != prevPage && _context && _romNotifyThrottle.ShouldExecute(SteadyClockMs{}()))
+    // Record ROM page switch for frame-end notification (zero overhead if HUD disabled)
+    if (page != prevPage && _feature_hud_enabled)
     {
-        MessageCenter::DefaultMessageCenter().Post(
-            NC_ROM_PAGE_CHANGED, new ROMPagePayload(_context->emulatorId, static_cast<uint8_t>(page), static_cast<uint8_t>(prevPage)));
+        _romSwitchTracker.recordSwitch(static_cast<uint8_t>(page));
     }
 
     /// region <Debug info>
@@ -1009,11 +1008,10 @@ void Memory::SetRAMPageToBank3(uint16_t page, bool updatePorts)
     if (updatePorts)
         _context->pPortDecoder->SetRAMPage(page);
 
-    // Post notification on change (throttled to max 20/sec for HUD)
-    if (prevPage != 0xFF && page != prevPage && _context && _ramNotifyThrottle.ShouldExecute(SteadyClockMs{}()))
+    // Record RAM page switch for frame-end notification (zero overhead if HUD disabled)
+    if (prevPage != 0xFF && page != prevPage && _feature_hud_enabled)
     {
-        MessageCenter::DefaultMessageCenter().Post(
-            NC_MEMORY_PAGE_CHANGED, new MemoryPagePayload(_context->emulatorId, 3, static_cast<uint8_t>(page), prevPage));
+        _ramSwitchTracker.recordSwitch(static_cast<uint8_t>(page));
     }
 }
 
@@ -1695,6 +1693,7 @@ void Memory::UpdateFeatureCache()
         _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
         _feature_breakpoints_enabled = debugMode && fm->isEnabled(Features::kBreakpoints);
         _feature_ttd_enabled = debugMode && fm->isEnabled(Features::kTimeTravel);
+        _feature_hud_enabled = fm->isEnabled(Features::kHud);
 
         // Handle sharedmemory feature - can be toggled at runtime
         bool sharedMemoryRequested = fm->isEnabled(Features::kSharedMemory);
@@ -1841,3 +1840,51 @@ void Memory::UpdateFeatureCache()
         _feature_sharedmemory_enabled = false;
     }
 }
+
+/// region <Frame lifecycle>
+
+void Memory::handleFrameStart()
+{
+    // Zero overhead when HUD is disabled
+    if (!_feature_hud_enabled)
+        return;
+
+    // Initialize trackers with current page values
+    _ramSwitchTracker.reset(static_cast<uint8_t>(GetRAMPageForBank3()));
+    _romSwitchTracker.reset(static_cast<uint8_t>(GetROMPage()));
+}
+
+void Memory::handleFrameEnd()
+{
+    // Zero overhead when HUD is disabled
+    if (!_feature_hud_enabled || !_context)
+        return;
+
+    // Emit RAM notification if any switches occurred this frame
+    if (_ramSwitchTracker.hadActivity())
+    {
+        MessageCenter::DefaultMessageCenter().Post(
+            NC_MEMORY_PAGE_CHANGED,
+            new MemoryPagePayload(
+                _context->emulatorId, 3,
+                _ramSwitchTracker.currentPage,
+                _ramSwitchTracker.minPage,
+                _ramSwitchTracker.maxPage,
+                _ramSwitchTracker.switchCount));
+    }
+
+    // Emit ROM notification if any switches occurred this frame
+    if (_romSwitchTracker.hadActivity())
+    {
+        MessageCenter::DefaultMessageCenter().Post(
+            NC_ROM_PAGE_CHANGED,
+            new ROMPagePayload(
+                _context->emulatorId,
+                _romSwitchTracker.currentPage,
+                _romSwitchTracker.minPage,
+                _romSwitchTracker.maxPage,
+                _romSwitchTracker.switchCount));
+    }
+}
+
+/// endregion </Frame lifecycle>

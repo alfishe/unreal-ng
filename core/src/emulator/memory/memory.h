@@ -1,5 +1,4 @@
 #pragma once
-#include "common/throttler.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
 #include "stdafx.h"
@@ -133,10 +132,28 @@ protected:
     bool _feature_breakpoints_enabled = false;
     bool _feature_sharedmemory_enabled = false;
     bool _feature_ttd_enabled = false;  // mirrors Features::kTimeTravel, cached for the write hot path
+    bool _feature_hud_enabled = false;  // mirrors Features::kHUD, zero overhead when disabled
 
-    // Notification throttling (HUD indicators don't need >20 updates/sec)
-    MinInterval _ramNotifyThrottle{50};  // 50ms = max 20 notifications/sec
-    MinInterval _romNotifyThrottle{50};
+    // Frame-level page switch tracking (emit once per frame at frame end)
+    struct PageSwitchTracker
+    {
+        uint8_t minPage = 0xFF;
+        uint8_t maxPage = 0;
+        uint8_t currentPage = 0;
+        uint8_t switchCount = 0;
+
+        void reset(uint8_t page) { minPage = maxPage = currentPage = page; switchCount = 0; }
+        void recordSwitch(uint8_t page)
+        {
+            if (page < minPage) minPage = page;
+            if (page > maxPage) maxPage = page;
+            currentPage = page;
+            if (switchCount < 255) ++switchCount;
+        }
+        bool hadActivity() const { return switchCount > 0; }
+    };
+    PageSwitchTracker _ramSwitchTracker;
+    PageSwitchTracker _romSwitchTracker;
 
     bool _isPage0ROM48k;
     bool _isPage0ROM128k;
@@ -246,6 +263,12 @@ public:
     // Update feature cache (call when features change at runtime)
     void UpdateFeatureCache();
     /// endregion </Initialization>
+
+    /// region <Frame lifecycle>
+public:
+    void handleFrameStart();
+    void handleFrameEnd();
+    /// endregion </Frame lifecycle>
 
     /// region <Emulation memory interface methods>
 public:

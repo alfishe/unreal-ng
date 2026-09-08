@@ -193,17 +193,37 @@ private:
     void setExecState(ExecState state, std::chrono::milliseconds ttl = std::chrono::milliseconds(0));
     bool canTransitionTo(ExecState newState) const;
 
-    // Memory page rapid-switch detection
-    struct PageActivityState
+    // Cross-frame page oscillation detection
+    struct CrossFrameTracker
     {
-        std::chrono::steady_clock::time_point lastChange{};
         uint8_t minPage = 0xFF;
         uint8_t maxPage = 0;
         uint8_t lastPage = 0xFF;
-        int switchCount = 0;
+        uint8_t framesSinceChange = 0;
+
+        void reset() { minPage = maxPage = lastPage = 0xFF; framesSinceChange = 0; }
+        void recordPage(uint8_t page)
+        {
+            if (lastPage == 0xFF || framesSinceChange > HudTiming::CrossFrameOscillationWindow)
+            {
+                minPage = maxPage = page;
+                framesSinceChange = 0;
+            }
+            else if (page != lastPage)
+            {
+                if (page < minPage) minPage = page;
+                if (page > maxPage) maxPage = page;
+                framesSinceChange = 0;
+            }
+            else
+            {
+                if (framesSinceChange < 255) ++framesSinceChange;
+            }
+            lastPage = page;
+        }
+        bool isOscillating() const { return minPage != maxPage && framesSinceChange <= HudTiming::CrossFrameOscillationWindow; }
     };
-    PageActivityState _ramActivity;
-    PageActivityState _romActivity;
-    PageActivityState _screenActivity;
-    static constexpr std::chrono::milliseconds kRapidSwitchThreshold{80};
+    CrossFrameTracker _ramCrossFrame;
+    CrossFrameTracker _romCrossFrame;
+    CrossFrameTracker _screenCrossFrame;
 };

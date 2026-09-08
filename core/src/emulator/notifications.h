@@ -420,59 +420,68 @@ public:
 };
 
 /// Payload for NC_MEMORY_PAGE_CHANGED.
-/// Posted by port decoders when RAM bank mapping changes.
+/// Posted once per frame at frame end with accumulated switch info.
 class MemoryPagePayload : public MessagePayload
 {
 public:
     unreal::UUID emulatorId;
     uint8_t bank;         // CPU address space bank index (0-3: 0000-3FFF, 4000-7FFF, 8000-BFFF, C000-FFFF)
-    uint8_t page;         // Physical RAM page mapped to this bank
-    uint8_t prevPage;     // Previous physical RAM page
+    uint8_t page;         // Current physical RAM page mapped to this bank
+    uint8_t minPage;      // Minimum page seen this frame (for rapid-switch display)
+    uint8_t maxPage;      // Maximum page seen this frame
+    uint8_t switchCount;  // Number of switches this frame (0 = no change)
 
-    MemoryPagePayload(const unreal::UUID& id, uint8_t bankIndex, uint8_t newPage, uint8_t oldPage)
+    MemoryPagePayload(const unreal::UUID& id, uint8_t bankIndex, uint8_t curPage,
+                      uint8_t minP, uint8_t maxP, uint8_t count)
         : MessagePayload()
         , emulatorId(id)
         , bank(bankIndex)
-        , page(newPage)
-        , prevPage(oldPage)
+        , page(curPage)
+        , minPage(minP)
+        , maxPage(maxP)
+        , switchCount(count)
     {}
 
     virtual ~MemoryPagePayload() = default;
 };
 
 /// Payload for NC_ROM_PAGE_CHANGED.
-/// Posted by port decoders when ROM selection changes.
+/// Posted once per frame at frame end with accumulated switch info.
 class ROMPagePayload : public MessagePayload
 {
 public:
     unreal::UUID emulatorId;
-    uint8_t page;         // New ROM page index
-    uint8_t prevPage;     // Previous ROM page index
+    uint8_t page;         // Current ROM page index
+    uint8_t minPage;      // Minimum page seen this frame
+    uint8_t maxPage;      // Maximum page seen this frame
+    uint8_t switchCount;  // Number of switches this frame (0 = no change)
 
-    ROMPagePayload(const unreal::UUID& id, uint8_t newPage, uint8_t oldPage)
+    ROMPagePayload(const unreal::UUID& id, uint8_t curPage, uint8_t minP, uint8_t maxP, uint8_t count)
         : MessagePayload()
         , emulatorId(id)
-        , page(newPage)
-        , prevPage(oldPage)
+        , page(curPage)
+        , minPage(minP)
+        , maxPage(maxP)
+        , switchCount(count)
     {}
 
     virtual ~ROMPagePayload() = default;
 };
 
 /// Payload for NC_SCREEN_PAGE_CHANGED.
-/// Posted by Screen when active screen switches between page 5 (normal) and page 7 (shadow).
+/// Posted once per frame at frame end with accumulated switch info.
 class ScreenPagePayload : public MessagePayload
 {
 public:
     unreal::UUID emulatorId;
-    uint8_t screen;       // 0 = normal (page 5), 1 = shadow (page 7)
-    uint8_t prevScreen;   // Previous screen
+    uint8_t screen;       // Current screen (0 = normal/page 5, 1 = shadow/page 7)
+    uint8_t switchCount;  // Number of switches this frame (0 = no change)
 
-    ScreenPagePayload(const unreal::UUID& id, uint8_t newScreen, uint8_t oldScreen)
+    ScreenPagePayload(const unreal::UUID& id, uint8_t curScreen, uint8_t count)
         : MessagePayload()
         , emulatorId(id)
-        , screen(newScreen)
-        , prevScreen(oldScreen)
+        , screen(curScreen)
+        , switchCount(count)
     {}
 
     virtual ~ScreenPagePayload() = default;
