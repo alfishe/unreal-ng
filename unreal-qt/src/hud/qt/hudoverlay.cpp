@@ -894,6 +894,80 @@ void HudOverlay::drawIcon(QPainter& painter, const QString& iconName, const QRec
         painter.setBrush(color);
         painter.drawEllipse(circle);
     }
+    else if (iconName == "ram")
+    {
+        // Memory chip icon: rectangle with pins and memory grid, vertically centered
+        int chipH = r.height() - 4;
+        int chipW = r.width() - 8;  // Leave room for pins
+        QRect chip(r.left() + 4, r.center().y() - chipH / 2, chipW, chipH);
+        painter.drawRoundedRect(chip, 2, 2);
+        // Draw pins on sides
+        int pinLen = 3;
+        int pinCount = 3;
+        int pinStep = chip.height() / (pinCount + 1);
+        for (int i = 1; i <= pinCount; ++i)
+        {
+            int y = chip.top() + i * pinStep;
+            painter.drawLine(chip.left() - pinLen, y, chip.left(), y);
+            painter.drawLine(chip.right(), y, chip.right() + pinLen, y);
+        }
+        // Draw memory grid inside (2x2)
+        int gridSize = std::min(6, chip.width() / 2);
+        int gridX = chip.center().x() - gridSize / 2;
+        int gridY = chip.center().y() - gridSize / 2;
+        painter.drawRect(QRect(gridX, gridY, gridSize, gridSize));
+        painter.drawLine(gridX + gridSize / 2, gridY, gridX + gridSize / 2, gridY + gridSize);
+        painter.drawLine(gridX, gridY + gridSize / 2, gridX + gridSize, gridY + gridSize / 2);
+    }
+    else if (iconName == "rom")
+    {
+        // ROM chip icon: rectangle with notch and pins, vertically centered
+        int chipH = r.height() - 4;
+        int chipW = r.width() - 8;
+        QRect chip(r.left() + 4, r.center().y() - chipH / 2, chipW, chipH);
+        // Draw chip body with notch at top
+        QPainterPath chipPath;
+        int notchR = std::min(3, chip.width() / 4);
+        chipPath.moveTo(chip.left() + 2, chip.top());
+        chipPath.lineTo(chip.center().x() - notchR, chip.top());
+        chipPath.arcTo(chip.center().x() - notchR, chip.top() - notchR / 2, notchR * 2, notchR, 180, -180);
+        chipPath.lineTo(chip.right() - 2, chip.top());
+        chipPath.lineTo(chip.right(), chip.top() + 2);
+        chipPath.lineTo(chip.right(), chip.bottom() - 2);
+        chipPath.lineTo(chip.right() - 2, chip.bottom());
+        chipPath.lineTo(chip.left() + 2, chip.bottom());
+        chipPath.lineTo(chip.left(), chip.bottom() - 2);
+        chipPath.lineTo(chip.left(), chip.top() + 2);
+        chipPath.closeSubpath();
+        painter.drawPath(chipPath);
+        // Draw pins on sides
+        int pinLen = 3;
+        int pinCount = 3;
+        int pinStep = chip.height() / (pinCount + 1);
+        for (int i = 1; i <= pinCount; ++i)
+        {
+            int y = chip.top() + i * pinStep;
+            painter.drawLine(chip.left() - pinLen, y, chip.left(), y);
+            painter.drawLine(chip.right(), y, chip.right() + pinLen, y);
+        }
+    }
+    else if (iconName == "screen")
+    {
+        // Monitor/screen icon
+        QRect monitor = r.adjusted(2, 3, -2, -5);
+        painter.drawRoundedRect(monitor, 2, 2);
+        // Stand
+        int standW = monitor.width() / 3;
+        int standH = 3;
+        painter.drawLine(monitor.center().x(), monitor.bottom(), monitor.center().x(), monitor.bottom() + standH);
+        painter.drawLine(monitor.center().x() - standW / 2, r.bottom() - 1,
+                         monitor.center().x() + standW / 2, r.bottom() - 1);
+        // Screen content lines
+        int lineY = monitor.top() + monitor.height() / 3;
+        painter.drawLine(monitor.left() + 3, lineY, monitor.right() - 3, lineY);
+        lineY += monitor.height() / 4;
+        painter.drawLine(monitor.left() + 3, lineY, monitor.center().x(), lineY);
+    }
     else
     {
         // Generic document file shape

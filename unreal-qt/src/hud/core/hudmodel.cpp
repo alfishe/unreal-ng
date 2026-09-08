@@ -214,6 +214,56 @@ void HudModel::setIndicator(const std::string& key, HudState state, std::string 
     publishLocked();
 }
 
+void HudModel::setIndicatorAt(const std::string& key, HudTilePosition position, HudState state, std::string value,
+                              std::string label, const std::string& icon, std::chrono::milliseconds ttl, bool monospace)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (!_enabled.load(std::memory_order_relaxed))
+        return;
+
+    std::string id = "ind/" + key;
+    auto it = std::find_if(_indicators.begin(), _indicators.end(), [&](const HudElement& el) {
+        return el.id == id;
+    });
+
+    if (it != _indicators.end())
+    {
+        it->state = state;
+        it->value = std::move(value);
+        it->position = position;
+        it->anchor = HudTilePositionToAnchor(position);
+        it->created = HudClock::now();
+        it->ttl = ttl;
+        it->monospace = monospace;
+        if (!label.empty())
+            it->title = std::move(label);
+        if (!icon.empty())
+            it->icon = icon;
+    }
+    else
+    {
+        HudElement el;
+        el.id = id;
+        el.kind = HudKind::Indicator;
+        el.position = position;
+        el.anchor = HudTilePositionToAnchor(position);
+        el.priority = HudPriority::Normal;
+        el.created = HudClock::now();
+        el.ttl = ttl;
+        el.enter = HudAnimation::Fade;
+        el.exit = HudAnimation::Fade;
+        el.title = std::move(label);
+        el.value = std::move(value);
+        el.icon = icon;
+        el.monospace = monospace;
+        el.state = state;
+        el.zIndex = 100;
+        _indicators.push_back(std::move(el));
+    }
+
+    publishLocked();
+}
+
 void HudModel::clearIndicator(const std::string& key)
 {
     std::lock_guard<std::mutex> lock(_mutex);
@@ -605,6 +655,9 @@ void HudModel::subscribeObservers()
     add(NC_SPEED_CHANGED, [this](int id, Message* msg) { onSpeedChanged(id, msg); });
     add(NC_RECORDING_STATE, [this](int id, Message* msg) { onRecording(id, msg); });
     add(NC_FILE_LOADED, [this](int id, Message* msg) { onFileLoaded(id, msg); });
+    add(NC_MEMORY_PAGE_CHANGED, [this](int id, Message* msg) { onMemoryPageChanged(id, msg); });
+    add(NC_ROM_PAGE_CHANGED, [this](int id, Message* msg) { onRomPageChanged(id, msg); });
+    add(NC_SCREEN_PAGE_CHANGED, [this](int id, Message* msg) { onScreenPageChanged(id, msg); });
 }
 
 void HudModel::unsubscribeObservers()
@@ -1033,6 +1086,129 @@ void HudModel::onFileLoaded(int, Message* message)
 
     }
     notify(req);
+}
+
+void HudModel::onMemoryPageChanged(int, Message* message)
+{
+    if (!message)
+        return;
+    auto* p = dynamic_cast<MemoryPagePayload*>(message->obj);
+    if (!p || !matchesInstance(p->emulatorId))
+        return;
+
+    auto now = std::chrono::steady_clock::now();
+    auto sinceLastChange = now - _ramActivity.lastChange;
+
+    char buf[24];
+    if (sinceLastChange < kRapidSwitchThreshold && _ramActivity.lastPage != 0xFF)
+    {
+        // Rapid switching - track range and show activity pattern
+        _ramActivity.minPage = std::min(_ramActivity.minPage, p->page);
+        _ramActivity.maxPage = std::max(_ramActivity.maxPage, p->page);
+        _ramActivity.switchCount++;
+
+        if (_ramActivity.minPage == _ramActivity.maxPage)
+            snprintf(buf, sizeof(buf), "RAM %d", p->page);
+        else
+            snprintf(buf, sizeof(buf), "RAM %d↔%d", _ramActivity.minPage, _ramActivity.maxPage);
+    }
+    else
+    {
+        // New activity burst - reset tracking
+        _ramActivity.minPage = p->page;
+        _ramActivity.maxPage = p->page;
+        _ramActivity.switchCount = 1;
+        snprintf(buf, sizeof(buf), "RAM %d", p->page);
+    }
+
+    _ramActivity.lastChange = now;
+    _ramActivity.lastPage = p->page;
+
+    setIndicatorAt("mem", HudTilePosition::TopLeft, HudState::Active, buf, "", "ram",
+                   HudTiming::IndicatorMemoryPageTimeout, true);
+}
+
+void HudModel::onRomPageChanged(int, Message* message)
+{
+    if (!message)
+        return;
+    auto* p = dynamic_cast<ROMPagePayload*>(message->obj);
+    if (!p || !matchesInstance(p->emulatorId))
+        return;
+
+    auto now = std::chrono::steady_clock::now();
+    auto sinceLastChange = now - _romActivity.lastChange;
+
+    char buf[24];
+    if (sinceLastChange < kRapidSwitchThreshold && _romActivity.lastPage != 0xFF)
+    {
+        // Rapid switching - track range
+        _romActivity.minPage = std::min(_romActivity.minPage, p->page);
+        _romActivity.maxPage = std::max(_romActivity.maxPage, p->page);
+        _romActivity.switchCount++;
+
+        if (_romActivity.minPage == _romActivity.maxPage)
+            snprintf(buf, sizeof(buf), "ROM %d", p->page);
+        else
+            snprintf(buf, sizeof(buf), "ROM %d↔%d", _romActivity.minPage, _romActivity.maxPage);
+    }
+    else
+    {
+        // New activity burst
+        _romActivity.minPage = p->page;
+        _romActivity.maxPage = p->page;
+        _romActivity.switchCount = 1;
+        snprintf(buf, sizeof(buf), "ROM %d", p->page);
+    }
+
+    _romActivity.lastChange = now;
+    _romActivity.lastPage = p->page;
+
+    setIndicatorAt("rom", HudTilePosition::TopLeft, HudState::Active, buf, "", "rom",
+                   HudTiming::IndicatorMemoryPageTimeout, true);
+}
+
+void HudModel::onScreenPageChanged(int, Message* message)
+{
+    if (!message)
+        return;
+    auto* p = dynamic_cast<ScreenPagePayload*>(message->obj);
+    if (!p || !matchesInstance(p->emulatorId))
+        return;
+
+    auto now = std::chrono::steady_clock::now();
+    auto sinceLastChange = now - _screenActivity.lastChange;
+
+    char buf[24];
+    // Screen 0 = page 5 (normal), Screen 1 = page 7 (shadow)
+    uint8_t page = (p->screen == 0) ? 5 : 7;
+
+    if (sinceLastChange < kRapidSwitchThreshold && _screenActivity.lastPage != 0xFF)
+    {
+        // Rapid switching
+        _screenActivity.minPage = std::min(_screenActivity.minPage, page);
+        _screenActivity.maxPage = std::max(_screenActivity.maxPage, page);
+        _screenActivity.switchCount++;
+
+        if (_screenActivity.minPage == _screenActivity.maxPage)
+            snprintf(buf, sizeof(buf), "SCR %d", page);
+        else
+            snprintf(buf, sizeof(buf), "SCR %d↔%d", _screenActivity.minPage, _screenActivity.maxPage);
+    }
+    else
+    {
+        // New activity burst
+        _screenActivity.minPage = page;
+        _screenActivity.maxPage = page;
+        _screenActivity.switchCount = 1;
+        snprintf(buf, sizeof(buf), "SCR %d", page);
+    }
+
+    _screenActivity.lastChange = now;
+    _screenActivity.lastPage = page;
+
+    setIndicatorAt("scr", HudTilePosition::TopLeft, HudState::Active, buf, "", "screen",
+                   HudTiming::IndicatorMemoryPageTimeout, true);
 }
 
 // --- Execution State Machine ---

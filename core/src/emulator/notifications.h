@@ -419,4 +419,63 @@ public:
     virtual ~RecordingStatePayload() = default;
 };
 
+/// Payload for NC_MEMORY_PAGE_CHANGED.
+/// Posted by port decoders when RAM bank mapping changes.
+class MemoryPagePayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    uint8_t bank;         // CPU address space bank index (0-3: 0000-3FFF, 4000-7FFF, 8000-BFFF, C000-FFFF)
+    uint8_t page;         // Physical RAM page mapped to this bank
+    uint8_t prevPage;     // Previous physical RAM page
+
+    MemoryPagePayload(const unreal::UUID& id, uint8_t bankIndex, uint8_t newPage, uint8_t oldPage)
+        : MessagePayload()
+        , emulatorId(id)
+        , bank(bankIndex)
+        , page(newPage)
+        , prevPage(oldPage)
+    {}
+
+    virtual ~MemoryPagePayload() = default;
+};
+
+/// Payload for NC_ROM_PAGE_CHANGED.
+/// Posted by port decoders when ROM selection changes.
+class ROMPagePayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    uint8_t page;         // New ROM page index
+    uint8_t prevPage;     // Previous ROM page index
+
+    ROMPagePayload(const unreal::UUID& id, uint8_t newPage, uint8_t oldPage)
+        : MessagePayload()
+        , emulatorId(id)
+        , page(newPage)
+        , prevPage(oldPage)
+    {}
+
+    virtual ~ROMPagePayload() = default;
+};
+
+/// Payload for NC_SCREEN_PAGE_CHANGED.
+/// Posted by Screen when active screen switches between page 5 (normal) and page 7 (shadow).
+class ScreenPagePayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    uint8_t screen;       // 0 = normal (page 5), 1 = shadow (page 7)
+    uint8_t prevScreen;   // Previous screen
+
+    ScreenPagePayload(const unreal::UUID& id, uint8_t newScreen, uint8_t oldScreen)
+        : MessagePayload()
+        , emulatorId(id)
+        , screen(newScreen)
+        , prevScreen(oldScreen)
+    {}
+
+    virtual ~ScreenPagePayload() = default;
+};
+
 /// endregion </Instance-tagged payloads (GDB TDD §6.3 prerequisite)>

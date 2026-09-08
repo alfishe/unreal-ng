@@ -524,6 +524,15 @@ void Screen::SetActiveScreen(SpectrumScreenEnum screen)
             break;
     }
 
+    // Post notification on change
+    uint8_t prevScreen = _activeScreen;
+    if (static_cast<uint8_t>(screen) != prevScreen)
+    {
+        MessageCenter::DefaultMessageCenter().Post(
+            NC_SCREEN_PAGE_CHANGED, new ScreenPagePayload(_context->emulatorId,
+                static_cast<uint8_t>(screen), static_cast<uint8_t>(prevScreen)));
+    }
+
     _activeScreen = screen;
     _activeScreenMemoryOffset = activeScreenMemoryOffset;
 }

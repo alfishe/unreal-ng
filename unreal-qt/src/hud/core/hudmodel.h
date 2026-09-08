@@ -47,10 +47,15 @@ public:
     /// @brief Dismiss a toast notification by element ID
     void dismiss(const std::string& id);
 
-    /// @brief Set or update a persistent or expiring indicator
+    /// @brief Set or update a persistent or expiring indicator (default position)
     void setIndicator(const std::string& key, HudState state, std::string value = {}, std::string label = {},
                       const std::string& icon = {}, std::chrono::milliseconds ttl = std::chrono::milliseconds(0),
                       bool monospace = false);
+
+    /// @brief Set or update an indicator at a specific position
+    void setIndicatorAt(const std::string& key, HudTilePosition position, HudState state, std::string value = {},
+                        std::string label = {}, const std::string& icon = {},
+                        std::chrono::milliseconds ttl = std::chrono::milliseconds(0), bool monospace = false);
 
     /// @brief Remove a persistent indicator
     void clearIndicator(const std::string& key);
@@ -143,6 +148,9 @@ private:
     void onSpeedChanged(int id, Message* message);
     void onRecording(int id, Message* message);
     void onFileLoaded(int id, Message* message);
+    void onMemoryPageChanged(int id, Message* message);
+    void onRomPageChanged(int id, Message* message);
+    void onScreenPageChanged(int id, Message* message);
 
     bool matchesInstance(const unreal::UUID& id) const;
 
@@ -183,4 +191,18 @@ private:
 
     void setExecState(ExecState state, std::chrono::milliseconds ttl = std::chrono::milliseconds(0));
     bool canTransitionTo(ExecState newState) const;
+
+    // Memory page rapid-switch detection
+    struct PageActivityState
+    {
+        std::chrono::steady_clock::time_point lastChange{};
+        uint8_t minPage = 0xFF;
+        uint8_t maxPage = 0;
+        uint8_t lastPage = 0xFF;
+        int switchCount = 0;
+    };
+    PageActivityState _ramActivity;
+    PageActivityState _romActivity;
+    PageActivityState _screenActivity;
+    static constexpr std::chrono::milliseconds kRapidSwitchThreshold{80};
 };

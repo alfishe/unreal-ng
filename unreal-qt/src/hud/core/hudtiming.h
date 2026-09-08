@@ -41,6 +41,7 @@ namespace HudTiming
 
     // --- Indicator Durations & Timeouts ---
     inline constexpr std::chrono::milliseconds IndicatorExecuteTimeout{1500};
+    inline constexpr std::chrono::milliseconds IndicatorMemoryPageTimeout{1200};
 } // namespace HudTiming
 
 /// @brief Default limits for toast and indicator queues

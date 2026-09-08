@@ -5,6 +5,7 @@
 #include <mutex>
 #include <thread>
 
+#include "3rdparty/message-center/messagecenter.h"
 #include "base/featuremanager.h"
 #include "common/bithelper.h"
 #include "common/modulelogger.h"
@@ -871,6 +872,9 @@ void Memory::SetROMPage(uint16_t page, bool updatePorts)
     }
     /// endregion </Sanity check>
 
+    // Track previous page for change notification
+    uint16_t prevPage = GetROMPage();
+
     // Set access pointers
     uint8_t* romBankHostAddress = ROMPageHostAddress(page);
 
@@ -885,6 +889,13 @@ void Memory::SetROMPage(uint16_t page, bool updatePorts)
     // Update ports information if requested
     if (updatePorts)
         _context->pPortDecoder->SetROMPage(page);
+
+    // Post notification on change
+    if (page != prevPage && _context)
+    {
+        MessageCenter::DefaultMessageCenter().Post(
+            NC_ROM_PAGE_CHANGED, new ROMPagePayload(_context->emulatorId, static_cast<uint8_t>(page), static_cast<uint8_t>(prevPage)));
+    }
 
     /// region <Debug info>
     MLOGDEBUG("ROM page %d activated. pc: 0x%04X", page, _context->pCore->GetZ80()->pc);
@@ -982,6 +993,9 @@ void Memory::SetRAMPageToBank3(uint16_t page, bool updatePorts)
     }
     /// endregion </Sanity check>
 
+    // Track previous page for change notification
+    uint8_t prevPage = _bank_ram_page_cache[3];
+
     _bank_mode[3] = BANK_RAM;
     _bank_write[3] = _bank_read[3] = RAMPageAddress(page);
     _bank_ram_page_cache[3] = static_cast<uint8_t>(page & 0xFF);
@@ -994,6 +1008,13 @@ void Memory::SetRAMPageToBank3(uint16_t page, bool updatePorts)
 
     if (updatePorts)
         _context->pPortDecoder->SetRAMPage(page);
+
+    // Post notification on change (prevPage != 0xFF means it was previously set)
+    if (prevPage != 0xFF && page != prevPage && _context)
+    {
+        MessageCenter::DefaultMessageCenter().Post(
+            NC_MEMORY_PAGE_CHANGED, new MemoryPagePayload(_context->emulatorId, 3, static_cast<uint8_t>(page), prevPage));
+    }
 }
 
 bool Memory::IsBank0ROM()
