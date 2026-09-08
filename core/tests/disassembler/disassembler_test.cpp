@@ -553,7 +553,9 @@ TEST_F(Disassembler_Test, prefixChainsAndTruncatedInput)
     // Truncated instructions render unknown operands instead of leaking the ':N' template
     EXPECT_EQ(_disasm->disassembleSingleCommand({0xCD, 0x34}, 0), "call ??");
     EXPECT_EQ(_disasm->disassembleSingleCommand({0xCD}, 0), "call ??");
-    EXPECT_EQ(_disasm->disassembleSingleCommand({0xDD, 0x36, 0x05}, 0), "ld (ix+??),??");
+    // "?\?" is an escaped literal '?' - it keeps the expected text exactly "ld (ix+??),??"
+    // while preventing the "??)" sequence from being read as a trigraph (-Wtrigraphs)
+    EXPECT_EQ(_disasm->disassembleSingleCommand({0xDD, 0x36, 0x05}, 0), "ld (ix+?\?),??");
 
     // Pure prefix run never reaches an opcode - partial as well
     EXPECT_TRUE(_disasm->decodeInstruction({0xDD, 0xDD, 0xDD, 0xDD}, 0).isTruncated);

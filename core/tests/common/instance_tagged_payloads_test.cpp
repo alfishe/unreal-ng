@@ -17,6 +17,8 @@
 
 #include <emulator/emulator.h>  // EmulatorStateEnum (StateRun, StatePaused, ...)
 #include <emulator/notifications.h>
+
+#include "_helpers/testwaithelper.h"
 #include <emulator/platform.h>
 #include <3rdparty/message-center/messagecenter.h>
 
@@ -173,11 +175,13 @@ TEST(InstanceTaggedPayloads_Test, LegacyObserverStillReceivesStateViaPayloadNumb
     mc.Post(NC_EMULATOR_STATE_CHANGE, new EmulatorStateChangePayload(id, StateRun));
     mc.Post(NC_EMULATOR_STATE_CHANGE, new EmulatorStateChangePayload(id, StatePaused));
 
-    // MessageCenter dispatches async; let it drain.
-    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    // MessageCenter dispatches async; wait for both deliveries rather than
+    // guessing a drain interval.
+    const bool delivered = TestWait::For([&obs] { return obs.hits.load() >= 2; });
 
     mc.RemoveObserver(NC_EMULATOR_STATE_CHANGE, obsPtr, cb);
 
+    ASSERT_TRUE(delivered) << "both state-change events must reach the observer";
     EXPECT_EQ(obs.hits.load(), 2);
     EXPECT_EQ(obs.lastState.load(), static_cast<uint32_t>(StatePaused));
 }
@@ -201,9 +205,12 @@ TEST(InstanceTaggedPayloads_Test, InstanceFilteringObserverIgnoresOtherInstances
     // Event from our instance — must be received.
     mc.Post(NC_EMULATOR_STATE_CHANGE, new EmulatorStateChangePayload(mine, StatePaused));
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    // Both events must be dispatched: one accepted, one filtered out.
+    const bool delivered =
+        TestWait::For([&obs] { return obs.hits.load() >= 1 && obs.filteredMisses.load() >= 1; });
     mc.RemoveObserver(NC_EMULATOR_STATE_CHANGE, obsPtr, cb);
 
+    ASSERT_TRUE(delivered) << "both events must be dispatched before asserting";
     EXPECT_EQ(obs.hits.load(), 1) << "Only events from our instance must be accepted";
     EXPECT_EQ(obs.filteredMisses.load(), 1) << "Other-instance event must be filtered";
     EXPECT_EQ(obs.lastState.load(), static_cast<uint32_t>(StatePaused));
@@ -242,9 +249,10 @@ TEST(InstanceTaggedPayloads_Test, BreakpointPayloadRoundTripsThroughMessageCente
 
     mc.Post(NC_EXECUTION_BREAKPOINT, new BreakpointTriggeredPayload(mine, 7, 0x4242));
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    const bool delivered = TestWait::For([&obs] { return obs.hits.load() >= 1; });
     mc.RemoveObserver(NC_EXECUTION_BREAKPOINT, obsPtr, cb);
 
+    ASSERT_TRUE(delivered) << "breakpoint payload must reach the observer";
     EXPECT_EQ(obs.hits.load(), 1);
     EXPECT_EQ(obs.lastBpId.load(), 7u);
     EXPECT_EQ(obs.lastAddr.load(), 0x4242u);

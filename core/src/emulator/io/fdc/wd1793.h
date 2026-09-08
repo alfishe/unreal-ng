@@ -24,6 +24,20 @@ class WD1793 : public PortDecoder, public PortDevice, public ttd::TTDSerializabl
 
     /// region <Types>
 public:
+    /// Diff-gate cache for NC_FDC_STATE_CHANGED — the display-relevant tuple that was
+    /// posted last. An aggregate of plain values so comparison stays trivial.
+    struct FdcNotifyCache
+    {
+        uint8_t driveId = 0;
+        uint8_t side = 0;
+        uint8_t trackRegister = 0;
+        uint8_t sectorRegister = 0;
+        uint8_t physicalTrack = 0;
+        bool busy = false;
+        bool drq = false;
+        bool motorOn = false;
+    };
+
     /// region <WD1793 / VG93 commands>
     enum WD_COMMANDS : uint8_t
     {
@@ -726,6 +740,11 @@ protected:
     bool _sleeping = true;        // Start in sleep mode (wake on first port access)
     uint64_t _wakeTimestamp = 0;  // T-state when last port access occurred
 
+    // Diff-gate cache for NC_FDC_STATE_CHANGED (see notifyFdcStateChanged) — holds the
+    // last posted visible-state tuple so unchanged snapshots are not re-posted
+    FdcNotifyCache _lastNotifiedFdcState;
+    bool _fdcNotifyCacheValid = false;
+
     /// endregion </Fields>
 
     /// region <Properties>
@@ -768,6 +787,18 @@ public:
     {
         return _beta128status;
     }
+    uint8_t getSelectedDriveIndex() const
+    {
+        return _drive;
+    }
+    bool getSideUp() const
+    {
+        return _sideUp;
+    }
+
+    // Stateless command byte decoder - public so FDCStatePayload consumers can map
+    // the raw _command snapshot byte to a WD_COMMANDS value
+    static WD_COMMANDS decodeWD93Command(uint8_t value);
     /// endregion </Properties>
 
     /// region <Constructors / destructors>
@@ -811,6 +842,10 @@ protected:
     {
         return _sleeping;
     }
+
+    // Post NC_FDC_STATE_CHANGED (FDCStatePayload) when any display-relevant value
+    // changed since the last post. Diff-gated: unchanged snapshots post nothing.
+    void notifyFdcStateChanged();
     /// endregion </Helper methods>
 
     /// region <Command handling
@@ -819,7 +854,6 @@ protected:
     static bool isType2Command(uint8_t command);
     static bool isType3Command(uint8_t command);
     static bool isType4Command(uint8_t command);
-    static WD_COMMANDS decodeWD93Command(uint8_t value);
     static uint8_t getWD93CommandValue(WD1793::WD_COMMANDS command, uint8_t value);
     void processWD93Command(uint8_t value);
 
