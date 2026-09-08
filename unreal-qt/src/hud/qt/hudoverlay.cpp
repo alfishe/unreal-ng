@@ -360,12 +360,9 @@ void HudOverlay::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event);
 
-    // Always clear the full widget to transparent - prevents ghost artifacts
-    // when elements are removed or repositioned
+    // Clear to transparent before drawing HUD elements
     QPainter painter(this);
-    painter.setCompositionMode(QPainter::CompositionMode_Source);
     painter.fillRect(rect(), Qt::transparent);
-    painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
 
     if (!_model || !_model->isEnabled())
         return;
