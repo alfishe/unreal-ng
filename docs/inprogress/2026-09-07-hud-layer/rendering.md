@@ -68,10 +68,22 @@ Used when the picture is presented through a GPU surface (the planned CRT pass o
 
 ## 3. Rasterization cache
 
-- Key: `(elementKind, content hash, em size, DPR, theme id)`. Value: premultiplied ARGB image in device pixels plus its alpha row summary.
-- Panels are rasterized once per size class (rounded rectangle + border) and reused; text is rasterized per string. Glyph-level caching is left to the platform text engine (Qt's glyph cache) on Path A and to the atlas on Path C; Path B rasterizes strings through the same client text engine into cache entries.
-- Bounded LRU (default 64 entries / 16 MB); eviction is size-based. Toasts with a counter ("Disk written x3") change content and re-rasterize only their text line.
-- Invalidation: theme change, DPR change (window moved between displays — `QWindow::screenChanged`, already wired for the refresh-rate helper), em change (output height changed by more than one device pixel of em).
+Two-tier cache with strict aliasing prevention:
+
+| Tier | Contents | Key | Eviction | Budget |
+|------|----------|-----|----------|--------|
+| **Panel shapes** | Rounded rectangles per size class (width bucket × height bucket × corner radius × theme × DPR) | `(widthBucket, heightBucket, radius, themeId, dpr)` — width/height buckets are `round(emSize * 2)` so panels within ½ em share shapes | 8 entries | ~200 KB at 4K |
+| **Text runs** | Premultiplied ARGB bitmaps per string content | `(contentHash, fontSizePx, themeId, dpr)` — `contentHash` is `std::hash` of the rendered string; `fontSizePx` is integer device pixels | 32 entries LRU | ~2 MB at 4K |
+
+**Total budget:** ~2.5 MB at 4K DPR 1, ~4 MB at Retina 5K DPR 2.
+
+**Aliasing prevention rules:**
+- **DPR in key:** DPR is part of every cache key — a Retina entry is never served to a 1x display.
+- **Integer device pixel font size:** Font size in the key is the final integer device-pixel size (after rounding), not the em multiplier — two slightly different output heights that round to the same px size share entries correctly; different px sizes never collide.
+- **Snapping buckets:** Width/height buckets snap to half-em increments so resize jitter does not thrash the cache, but visually distinct sizes receive distinct entries.
+- **Theme invalidation:** Theme ID is part of the key — switching modern ↔ retro invalidates all cached entries.
+- **Content-based text caching:** `std::hash` of the string content, not the element ID — identical text on two different toasts shares the entry. Toasts with a counter ("Disk written x3") change content and re-rasterize only their text line.
+- **Invalidation events:** Theme change, DPR change (window moved between displays — `QWindow::screenChanged`), or em change (output height changed by more than one device pixel of em).
 
 ## 4. HiDPI
 
@@ -106,4 +118,4 @@ Used when the picture is presented through a GPU surface (the planned CRT pass o
 | Overlay repaint time (Path A) | `QElapsedTimer` around `paintEvent`, logged via module logger at debug level | < 0.3 ms at 4K, 2 toasts + 6 indicators |
 | Blend kernel throughput (Path B) | benchmark in `core/benchmarks` over 1920x1080 and 3840x2160 surfaces, all tiers | NEON / AVX2 >= 4x scalar |
 | Emulated frame delivery with HUD animating | existing FPS readout and present-latency stat, compare HUD on / off | no change beyond noise |
-| Memory | cache size counter exposed in dev stats | < 16 MB default |
+| Memory | cache size counter exposed in dev stats | < 4 MB (~2.5 MB typical at 4K) |

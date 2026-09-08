@@ -108,7 +108,7 @@ New ids in `core/src/emulator/platform.h` (the only core changes in r1):
 | Id | Payload | Emitted by | Purpose |
 |----|---------|------------|---------|
 | `NC_FEATURE_CHANGED` | `FeatureChangedPayload { emulatorId, featureId, enabled }` | `FeatureManager::onFeatureChanged` | lets app-side consumers (the HUD model, later menus) follow feature toggles from any channel |
-| `NC_SPEED_CHANGED` | `SpeedChangedPayload { emulatorId, multiplier, turbo }` | `Core::EnableTurboMode / DisableTurboMode`, `Emulator::SetSpeedMultiplier` | speed indicator (also useful to the status bar) |
+| `NC_SPEED_CHANGED` | `SpeedChangedPayload { emulatorId, multiplier, turboMode }` | `Core::EnableTurboMode / DisableTurboMode`, `Emulator::SetSpeedMultiplier` | speed indicator (also useful to the status bar) |
 | `NC_FILE_LOADED` | `FileLoadedPayload { emulatorId, kind, path, ok }` | snapshot / tape / disk loaders in `Emulator` | file toasts for both UI and automation loads |
 | `NC_RECORDING_STATE` | `RecordingStatePayload { emulatorId, recording, path }` | recording manager | REC indicator, stop toast |
 | `NC_HUD_CHANGED` (*later*, when the model is hosted by core) | `HudChangedPayload { emulatorId, generation }` | `HudModel::publish` | wake presenters in other clients |
@@ -135,15 +135,19 @@ Event → element mapping (defaults, theme independent):
 | File loaded | toast, icon file | "Loaded" / file name | Normal, 3 s |
 | Load failed | toast | "Load failed" / file name | High, 5 s |
 
-## 4. Presenter (`unreal-qt/src/hud/`: Qt-free layout / animation / compositor interface, plus the Qt overlay)
+## 4. Presenter (`unreal-qt/src/hud/core/`: Qt-free layout / animation / compositor interface, plus the Qt overlay in `unreal-qt/src/hud/qt/`)
 
 ```cpp
+struct HudPoint   { int x = 0, y = 0; };
+struct HudRect    { int x = 0, y = 0, w = 0, h = 0; };
+struct HudMargins { int left = 0, top = 0, right = 0, bottom = 0; };
+
 struct HudSurface
 {
-    QRect  outputRect;   // device pixels; QRect or the client's rect type
-    QRect  imageRect;    // where the picture sits inside outputRect
-    qreal  dpr;
-    QMargins safeInsets;
+    HudRect    outputRect;   // device pixels
+    HudRect    imageRect;    // where the picture sits inside outputRect
+    int        dpr{1};       // device pixel ratio (integer — fractional DPR rounds up)
+    HudMargins safeInsets;   // device pixels
 };
 
 class HudPresenter
