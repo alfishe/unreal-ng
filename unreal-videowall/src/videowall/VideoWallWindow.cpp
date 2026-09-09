@@ -354,11 +354,53 @@ void VideoWallWindow::createDefaultPresets()
 
 void VideoWallWindow::addEmulatorTile()
 {
+    // GPU mode: use TileGridWrapper
+    if (_useGPU && _tileGridWrapper)
+    {
+        std::shared_ptr<Emulator> emulator = _emulatorManager->CreateEmulator("Pentagon", LoggerLevel::LogError);
+        if (emulator)
+        {
+            emulator->DebugOff();
+
+            auto* featureManager = emulator->GetFeatureManager();
+            if (featureManager)
+            {
+                featureManager->setFeature(Features::kSoundGeneration, false);
+                featureManager->setFeature(Features::kSoundHQ, false);
+                featureManager->setFeature(Features::kScreenHQ, _screenHQEnabled);
+                featureManager->setFeature(Features::kFastTape, _fastTapeEnabled);
+            }
+
+            emulator->StartAsync();
+            _tileGridWrapper->addEmulator(emulator);
+
+            // Establish sync source on first tile
+            if (_tileGridWrapper->emulatorCount() == 1 && _soundManager)
+            {
+                if (auto* fm = emulator->GetFeatureManager())
+                {
+                    fm->setFeature(Features::kSoundGeneration, true);
+                    fm->setFeature(Features::kSoundHQ, true);
+                }
+                emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback,
+                                           _soundManager->occupancyCell(), _soundManager->deviceDescriptor());
+                emulator->SetAudioDeviceSampleRate(_soundManager->deviceSampleRate());
+                _soundManager->setActiveContext(emulator->GetContext());
+                _audioBoundIndex = 0;
+            }
+        }
+        return;
+    }
+
+    // CPU mode: use TileGrid
+    if (!_tileGrid)
+        return;
+
     if (_singleSyncMode && !_tileGrid->tiles().empty() && _tileGrid->tiles().front()->emulator())
     {
         auto primaryEmulator = _tileGrid->tiles().front()->emulator();
         EmulatorTile* tile = new EmulatorTile(primaryEmulator, this);
-        tile->setSynchronousMode(true); // Ensure new tile doesn't run its own refresh loops
+        tile->setSynchronousMode(true);
         connect(tile, &EmulatorTile::tileClicked, this, &VideoWallWindow::onTileClicked);
         _tileGrid->addTile(tile);
         return;
@@ -370,31 +412,21 @@ void VideoWallWindow::addEmulatorTile()
     {
         emulator->DebugOff();
 
-        // Disable sound for all videowall instances (saves ~17% CPU)
-        // Sound can be enabled later for a focused/active tile
         auto* featureManager = emulator->GetFeatureManager();
         if (featureManager)
         {
             featureManager->setFeature(Features::kSoundGeneration, false);
             featureManager->setFeature(Features::kSoundHQ, false);
-
-            // Enable screen HQ by default for better quality
             featureManager->setFeature(Features::kScreenHQ, _screenHQEnabled);
-
-            // Apply the wall-wide fast tape loading state to the new tile
             featureManager->setFeature(Features::kFastTape, _fastTapeEnabled);
         }
 
         emulator->StartAsync();
 
         EmulatorTile* tile = new EmulatorTile(emulator, this);
-
-        // Connect tile click signal for audio binding (only on user click, not Qt auto-focus)
         connect(tile, &EmulatorTile::tileClicked, this, &VideoWallWindow::onTileClicked);
-
         _tileGrid->addTile(tile);
 
-        // Establish sync source on first tile (enables frame refresh without requiring user click)
         if (_tileGrid->tiles().size() == 1)
         {
             bindAudioToTile(tile);
