@@ -74,7 +74,15 @@ void TileGridGL::addEmulator(std::shared_ptr<Emulator> emulator)
     state.latchedFrame = QImage(FB_WIDTH, FB_HEIGHT, QImage::Format_RGBA8888);
     state.latchedFrame.fill(Qt::black);
 
+    bool wasEmpty = _emulators.empty();
     _emulators.push_back(std::move(state));
+
+    // Subscribe to frame notifications on first emulator
+    if (wasEmpty && _videoFrameObserverId == 0)
+    {
+        subscribeToNotifications();
+    }
+
     updateLayout();
     update();
 }

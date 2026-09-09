@@ -6,6 +6,7 @@
 #include <vector>
 #include <3rdparty/message-center/eventqueue.h>
 
+class Emulator;
 class TileGrid;
 class TileGridWrapper;
 class EmulatorManager;
@@ -116,6 +117,13 @@ private:
 
     /// Handle GPU acceleration toggle from menu
     void handleGpuAccelerationToggled(bool enabled);
+
+    // Helper methods for GPU/CPU mode abstraction
+    int tileCount() const;
+    std::vector<std::string> allEmulatorIds() const;
+    std::shared_ptr<Emulator> emulatorAt(int index) const;
+    void setGridFullscreenMode(bool fullscreen);
+    void clearGrid();
 
     // UI Components
     TileGrid* _tileGrid = nullptr;  // CPU mode grid (used when _useGPU == false)
