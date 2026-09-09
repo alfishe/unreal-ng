@@ -140,6 +140,22 @@ void TileGridGL::clearAllEmulators()
     update();
 }
 
+void TileGridGL::detachAllEmulators()
+{
+    // Just release references without stopping/removing emulators
+    makeCurrent();
+    for (auto& tile : _emulators)
+    {
+        delete tile.texture;
+        tile.texture = nullptr;
+    }
+    doneCurrent();
+
+    _emulators.clear();
+    _focusedIndex = -1;
+    update();
+}
+
 std::shared_ptr<Emulator> TileGridGL::emulatorAt(int index) const
 {
     if (index >= 0 && index < static_cast<int>(_emulators.size()))

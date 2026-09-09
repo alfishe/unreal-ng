@@ -48,6 +48,9 @@ public:
     /// Clear all emulators
     void clearAllEmulators();
 
+    /// Release references without destroying emulators (for mode switching)
+    void detachAllEmulators();
+
     /// Get emulator count
     int emulatorCount() const;
 

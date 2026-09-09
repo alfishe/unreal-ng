@@ -159,6 +159,14 @@ void TileGridWrapper::clearAllEmulators()
         _cpuGrid->clearAllTiles();
 }
 
+void TileGridWrapper::detachAllEmulators()
+{
+    if (_useGPU && _gpuGrid)
+        _gpuGrid->detachAllEmulators();
+    else if (_cpuGrid)
+        _cpuGrid->detachAllTiles();
+}
+
 int TileGridWrapper::emulatorCount() const
 {
     if (_useGPU && _gpuGrid)

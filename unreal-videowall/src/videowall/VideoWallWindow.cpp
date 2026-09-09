@@ -21,6 +21,13 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCoreApplication>
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QKeyEvent>
 #include <QMenuBar>
 #include <QMouseEvent>
@@ -49,6 +56,40 @@ VideoWallWindow::VideoWallWindow(QWidget* parent) : QMainWindow(parent)
             if (message && message->obj) {
                 handleSingleSyncModeMessage(message->obj);
             }
+        });
+
+    MessageCenter::DefaultMessageCenter().AddObserver(NC_EMULATOR_INSTANCE_CREATED,
+        [this](int topic, Message* message) {
+            if (!message || !message->obj) return;
+            auto* textPayload = dynamic_cast<SimpleTextPayload*>(message->obj);
+            if (!textPayload) return;
+            std::string emuId = textPayload->_payloadText;
+            QMetaObject::invokeMethod(this, [this, emuId]() {
+                auto emulator = _emulatorManager->GetEmulator(emuId);
+                if (!emulator) return;
+                for (const auto& existingId : allEmulatorIds()) {
+                    if (existingId == emuId) return;
+                }
+                if (_useGPU && _tileGridWrapper) {
+                    _tileGridWrapper->addEmulator(emulator);
+                } else if (_tileGrid) {
+                    EmulatorTile* tile = new EmulatorTile(emulator, this);
+                    connect(tile, &EmulatorTile::tileClicked, this, &VideoWallWindow::onTileClicked);
+                    _tileGrid->addTile(tile);
+                    if (_tileGrid->tiles().size() == 1) {
+                        bindAudioToTile(tile);
+                    }
+                }
+                publishStatus();
+            }, Qt::QueuedConnection);
+        });
+
+    MessageCenter::DefaultMessageCenter().AddObserver(NC_EMULATOR_INSTANCE_DESTROYED,
+        [this](int topic, Message* message) {
+            if (!message || !message->obj) return;
+            QMetaObject::invokeMethod(this, [this]() {
+                publishStatus();
+            }, Qt::QueuedConnection);
         });
 
 #ifdef ENABLE_AUTOMATION
@@ -116,6 +157,8 @@ VideoWallWindow::~VideoWallWindow()
             delete _soundManager;
             _soundManager = nullptr;
         }
+
+        ipc::ShmClose(_statusShm);
     }
     catch (const std::exception& e)
     {
@@ -181,6 +224,7 @@ void VideoWallWindow::initializeAfterEventLoopStart()
 
     // Now safe to create menus - the window is fully initialized
     createMenus();
+    publishStatus();
 }
 
 void VideoWallWindow::createMenus()
@@ -389,6 +433,7 @@ void VideoWallWindow::addEmulatorTile()
                 _audioBoundIndex = 0;
             }
         }
+        publishStatus();
         return;
     }
 
@@ -403,6 +448,7 @@ void VideoWallWindow::addEmulatorTile()
         tile->setSynchronousMode(true);
         connect(tile, &EmulatorTile::tileClicked, this, &VideoWallWindow::onTileClicked);
         _tileGrid->addTile(tile);
+        publishStatus();
         return;
     }
 
@@ -432,6 +478,7 @@ void VideoWallWindow::addEmulatorTile()
             bindAudioToTile(tile);
         }
     }
+    publishStatus();
 }
 
 void VideoWallWindow::removeEmulatorTile(int index)
@@ -469,6 +516,7 @@ void VideoWallWindow::removeEmulatorTile(int index)
     }
 
     qDebug() << "Removed tile at index" << index;
+    publishStatus();
 }
 
 void VideoWallWindow::removeLastTile()
@@ -504,6 +552,7 @@ void VideoWallWindow::removeLastTile()
     }
 
     qDebug() << "Removed last tile:" << QString::fromStdString(emulator->GetUUID());
+    publishStatus();
 }
 
 void VideoWallWindow::clearAllTiles()
@@ -1489,16 +1538,16 @@ void VideoWallWindow::handleGpuAccelerationToggled(bool enabled)
         }
     }
 
-    // Destroy old grid
+    // Detach emulators from old grid (keep them running)
     if (_useGPU && _tileGridWrapper)
     {
-        _tileGridWrapper->clearAllEmulators();
+        _tileGridWrapper->detachAllEmulators();
         delete _tileGridWrapper;
         _tileGridWrapper = nullptr;
     }
     else if (_tileGrid)
     {
-        _tileGrid->clearAllTiles();
+        _tileGrid->detachAllTiles();
         delete _tileGrid;
         _tileGrid = nullptr;
     }
@@ -1717,4 +1766,61 @@ void VideoWallWindow::clearGrid()
         _tileGridWrapper->clearAllEmulators();
     else if (_tileGrid)
         _tileGrid->clearAllTiles();
+    publishStatus();
+}
+
+void VideoWallWindow::publishStatus() const
+{
+    if (!_statusShm.data)
+    {
+        ipc::ShmCreate(_statusShm, "unreal_videowall_status", 1024);
+        if (!_statusShm.data)
+            return;
+    }
+
+    int count = tileCount();
+    auto layout = TileLayoutManager::calculateLayout(count);
+
+    uint32_t flags = 0;
+    if (_useGPU) flags |= 1;
+    if (_isFullscreen) flags |= 2;
+    if (_singleSyncMode) flags |= 4;
+
+    QJsonObject jsonRoot;
+    QJsonArray emuIdsArray;
+    for (const auto& id : allEmulatorIds())
+    {
+        emuIdsArray.append(QString::fromStdString(id));
+    }
+    jsonRoot["emulator_ids"] = emuIdsArray;
+
+    QByteArray jsonBytes = QJsonDocument(jsonRoot).toJson(QJsonDocument::Compact);
+    uint32_t jsonLen = std::min(static_cast<uint32_t>(jsonBytes.size()), static_cast<uint32_t>(1024 - 40));
+
+    uint8_t* dest = static_cast<uint8_t*>(_statusShm.data);
+    std::memset(dest, 0, 1024);
+
+    // Magic "VWST"
+    dest[0] = 'V'; dest[1] = 'W'; dest[2] = 'S'; dest[3] = 'T';
+
+    uint32_t version = 1;
+    uint32_t pid = static_cast<uint32_t>(QCoreApplication::applicationPid());
+    double ts = QDateTime::currentMSecsSinceEpoch() / 1000.0;
+    uint32_t uTileCount = static_cast<uint32_t>(count);
+    uint32_t uCols = static_cast<uint32_t>(layout.cols);
+    uint32_t uRows = static_cast<uint32_t>(layout.rows);
+
+    std::memcpy(dest + 4, &version, sizeof(version));
+    std::memcpy(dest + 8, &pid, sizeof(pid));
+    std::memcpy(dest + 12, &ts, sizeof(ts));
+    std::memcpy(dest + 20, &uTileCount, sizeof(uTileCount));
+    std::memcpy(dest + 24, &uCols, sizeof(uCols));
+    std::memcpy(dest + 28, &uRows, sizeof(uRows));
+    std::memcpy(dest + 32, &flags, sizeof(flags));
+    std::memcpy(dest + 36, &jsonLen, sizeof(jsonLen));
+
+    if (jsonLen > 0)
+    {
+        std::memcpy(dest + 40, jsonBytes.constData(), jsonLen);
+    }
 }

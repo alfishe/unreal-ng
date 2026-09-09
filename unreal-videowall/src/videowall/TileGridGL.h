@@ -33,6 +33,7 @@ public:
 
     /// Clear all emulators
     void clearAllEmulators();
+    void detachAllEmulators();  // Release references without destroying emulators
 
     /// Get emulator count
     int emulatorCount() const { return static_cast<int>(_emulators.size()); }

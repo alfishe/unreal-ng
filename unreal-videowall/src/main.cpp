@@ -108,10 +108,23 @@ int main(int argc, char* argv[])
     // platform integration time to fully initialize fonts before any menu
     // text rendering occurs.
 
+    bool useGpu = false;
+    for (int i = 1; i < argc; ++i)
+    {
+        if (std::string(argv[i]) == "--gpu")
+        {
+            useGpu = true;
+        }
+    }
+
     VideoWallWindow* window = nullptr;
 
-    QTimer::singleShot(0, [&window]() {
+    QTimer::singleShot(0, [useGpu, &window]() {
         window = new VideoWallWindow();
+        if (useGpu)
+        {
+            window->handleGpuAccelerationToggled(true);
+        }
         window->show();
     });
 

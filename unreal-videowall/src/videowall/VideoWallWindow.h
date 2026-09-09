@@ -5,6 +5,7 @@
 #include <memory>
 #include <vector>
 #include <3rdparty/message-center/eventqueue.h>
+#include <common/shmhelper.h>
 
 class Emulator;
 class TileGrid;
@@ -70,6 +71,9 @@ public:
     // Single Emulator Sync Mode
     void setSingleEmulatorSyncMode(bool enable, const std::string& emulatorId = "");
 
+    /// Handle GPU acceleration toggle
+    void handleGpuAccelerationToggled(bool enabled);
+
 protected:
     void closeEvent(QCloseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
@@ -115,15 +119,13 @@ private:
     /// Open Video Wall recording dialog (Cmd+R / Ctrl+R)
     void handleVideoRecordingRequested();
 
-    /// Handle GPU acceleration toggle from menu
-    void handleGpuAccelerationToggled(bool enabled);
-
     // Helper methods for GPU/CPU mode abstraction
     int tileCount() const;
     std::vector<std::string> allEmulatorIds() const;
     std::shared_ptr<Emulator> emulatorAt(int index) const;
     void setGridFullscreenMode(bool fullscreen);
     void clearGrid();
+    void publishStatus() const;
 
     // UI Components
     TileGrid* _tileGrid = nullptr;  // CPU mode grid (used when _useGPU == false)
@@ -143,6 +145,9 @@ private:
     // GPU acceleration state
     bool _useGPU = false;
     QAction* _gpuAccelerationAction = nullptr;
+
+    // Shared Memory status handle (zero disk I/O publisher)
+    mutable ipc::ShmHandle _statusShm;
 
     // Recording widget dialog
     QPointer<QWidget> _recordingWidget;
