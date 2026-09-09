@@ -169,13 +169,19 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
             _crtFrame = QImage(outWidth, outHeight, QImage::Format_RGBA8888);
         }
 
+        // Get source dimensions for scale-aware effects
+        QRect srcRect = sourceRect.toRect();
+        int srcWidth = srcRect.width();
+        int srcHeight = srcRect.height();
+
         // Scale source to output size first - use nearest-neighbor for crisp pixels
-        QImage scaled = drawImage->copy(sourceRect.toRect()).scaled(
+        QImage scaled = drawImage->copy(srcRect).scaled(
             outWidth, outHeight, Qt::IgnoreAspectRatio, Qt::FastTransformation);
         scaled = scaled.convertToFormat(QImage::Format_RGBA8888);
 
-        // Apply CRT filter at output resolution for fine scanlines
-        _crtFilter->apply(scaled.bits(), _crtFrame.bits(), outWidth, outHeight, _crtParams);
+        // Apply CRT filter at output resolution with source dimensions for scale-aware effects
+        _crtFilter->apply(scaled.bits(), _crtFrame.bits(), outWidth, outHeight,
+                          srcWidth, srcHeight, _crtParams);
 
         // Draw directly - already at output size
 #if QT_VERSION >= QT_VERSION_CHECK(5, 13, 0)

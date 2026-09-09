@@ -146,17 +146,45 @@ void main() {
         color *= mix(1.0, scanline, scanlineWeight);
     }
 
-    // Phosphor mask
-    vec2 pixelPos = uv * outputSize;
-    float pitch = maskDotPitch;
-    if (pitch < 1.0) pitch = max(1.0, outputSize.x / 640.0);  // Auto dot pitch
+    // Phosphor mask - resolution-adaptive with smooth transition
+    float pixelScale = outputSize.x / texSize.x;
 
-    if (maskType == 1) {
-        color *= apertureGrille(pixelPos, pitch);
-    } else if (maskType == 2) {
-        color *= shadowMask(pixelPos, pitch);
-    } else if (maskType == 3) {
-        color *= slotMask(pixelPos, pitch);
+    // At low resolution, skip pattern but compensate for all visual effects
+    // High resolution (>= 3x): full mask pattern
+    // Low resolution (< 3x): uniform darkening to match average mask brightness
+    float scaleFade = smoothstep(2.5, 3.5, pixelScale);
+
+    if (maskType > 0 && maskStrength > 0.001) {
+        // Average mask brightness: aperture grille ~= 1 - 0.55*s
+        float avgMaskEffect = 1.0 - maskStrength * 0.55;
+
+        if (scaleFade > 0.01) {
+            // Apply patterned mask at sufficient resolution
+            vec2 pixelPos = uv * outputSize;
+            float pitch = maskDotPitch;
+            if (pitch < 1.0) pitch = max(2.0, outputSize.x / 640.0);
+
+            vec3 mask = vec3(1.0);
+            if (maskType == 1) {
+                mask = apertureGrille(pixelPos, pitch);
+            } else if (maskType == 2) {
+                mask = shadowMask(pixelPos, pitch);
+            } else if (maskType == 3) {
+                mask = slotMask(pixelPos, pitch);
+            }
+
+            // Blend between uniform darkening and patterned mask
+            vec3 patternedResult = color * mask;
+            vec3 uniformResult = color * avgMaskEffect;
+            color = mix(uniformResult, patternedResult, scaleFade);
+        } else {
+            // Below threshold: uniform darkening only
+            color *= avgMaskEffect;
+        }
+    } else if (maskStrength > 0.001 && scaleFade < 0.5) {
+        // No mask type but has strength - still apply compensation
+        float avgMaskEffect = 1.0 - maskStrength * 0.55;
+        color *= avgMaskEffect;
     }
 
     // Color adjustments

@@ -38,21 +38,21 @@ void CRTFilter::updateGammaTable(float gamma)
 
 void CRTFilter::apply(uint8_t* pixels, int width, int height, const CRTProfileParams& params)
 {
+    // Legacy API without source dimensions - assume 1:1 scale (mask won't be applied)
     if (!pixels || width <= 0 || height <= 0)
         return;
 
     if (params.profile == CRTProfile::None)
         return;
 
-    // Apply effects in order
     if (params.gamma != 1.0f)
         applyGamma(pixels, width, height, params.gamma);
 
     if (params.scanlineWeight > 0.001f)
         applyScanlines(pixels, width, height, params.scanlineWeight);
 
-    if (params.maskStrength > 0.001f && params.maskType != CRTMaskType::None)
-        applyPhosphorMask(pixels, width, height, params.maskType, params.maskStrength);
+    // Mask requires scale >= 2.0, skip when source dimensions unknown
+    // (pixelScale = 1.0 means no scaling info available)
 
     if (std::abs(params.saturation - 1.0f) > 0.001f)
         applySaturation(pixels, width, height, params.saturation);
@@ -71,6 +71,65 @@ void CRTFilter::apply(const uint8_t* src, uint8_t* dst, int width, int height, c
     apply(dst, width, height, params);
 }
 
+void CRTFilter::apply(const uint8_t* src, uint8_t* dst, int outWidth, int outHeight,
+                      int srcWidth, int srcHeight, const CRTProfileParams& params)
+{
+    if (!src || !dst || outWidth <= 0 || outHeight <= 0)
+        return;
+
+    if (params.profile == CRTProfile::None)
+        return;
+
+    size_t size = static_cast<size_t>(outWidth) * outHeight * 4;
+    std::memcpy(dst, src, size);
+
+    // Calculate pixel scale for resolution-aware effects
+    float pixelScale = static_cast<float>(outWidth) / static_cast<float>(srcWidth);
+
+    if (params.gamma != 1.0f)
+        applyGamma(dst, outWidth, outHeight, params.gamma);
+
+    if (params.scanlineWeight > 0.001f)
+        applyScanlines(dst, outWidth, outHeight, params.scanlineWeight, srcHeight);
+
+    // Phosphor mask - resolution-adaptive with smooth transition (matches GPU shader)
+    // GPU blends: uniform + (patterned - uniform) * scaleFade
+    if (params.maskStrength > 0.001f && params.maskType != CRTMaskType::None)
+    {
+        // Average mask brightness
+        float avgMaskEffect = 1.0f - params.maskStrength * 0.55f;
+
+        // Smoothstep transition: 0 at 2.5x, 1 at 3.5x
+        float t = std::clamp((pixelScale - 2.5f) / 1.0f, 0.0f, 1.0f);
+        float scaleFade = t * t * (3.0f - 2.0f * t);
+
+        if (scaleFade > 0.99f)
+        {
+            // Full pattern at high resolution
+            applyPhosphorMaskFull(dst, outWidth, outHeight, params.maskType, params.maskStrength);
+        }
+        else if (scaleFade > 0.01f)
+        {
+            // Transition zone: blend between uniform and patterned
+            // For each pixel: result = uniform + (patterned - uniform) * fade
+            //                       = original * (avgMaskEffect + (mask - avgMaskEffect) * fade)
+            applyPhosphorMaskBlended(dst, outWidth, outHeight, params.maskType,
+                                     params.maskStrength, avgMaskEffect, scaleFade);
+        }
+        else
+        {
+            // Below threshold: uniform darkening only
+            applyBrightnessContrast(dst, outWidth, outHeight, avgMaskEffect, 1.0f);
+        }
+    }
+
+    if (std::abs(params.saturation - 1.0f) > 0.001f)
+        applySaturation(dst, outWidth, outHeight, params.saturation);
+
+    if (std::abs(params.brightness - 1.0f) > 0.001f || std::abs(params.contrast - 1.0f) > 0.001f)
+        applyBrightnessContrast(dst, outWidth, outHeight, params.brightness, params.contrast);
+}
+
 QImage CRTFilter::apply(const QImage& source, const CRTProfileParams& params)
 {
     if (source.isNull())
@@ -85,85 +144,82 @@ QImage CRTFilter::apply(const QImage& source, const CRTProfileParams& params)
 // Scanlines
 // ============================================================================
 
-void CRTFilter::applyScanlines(uint8_t* pixels, int width, int height, float weight)
+void CRTFilter::applyScanlines(uint8_t* pixels, int width, int height, float weight, int srcHeight)
 {
 #if HAS_NEON
-    applyScanlines_neon(pixels, width, height, weight);
+    applyScanlines_neon(pixels, width, height, weight, srcHeight);
 #elif HAS_SSE2
-    applyScanlines_sse2(pixels, width, height, weight);
+    applyScanlines_sse2(pixels, width, height, weight, srcHeight);
 #else
-    applyScanlines_scalar(pixels, width, height, weight);
+    applyScanlines_scalar(pixels, width, height, weight, srcHeight);
 #endif
 }
 
-void CRTFilter::applyScanlines_scalar(uint8_t* pixels, int width, int height, float weight)
+void CRTFilter::applyScanlines_scalar(uint8_t* pixels, int width, int height, float weight, int srcHeight)
 {
-    // Simple alternating scanlines: darken every other line
-    // Matches GPU visual appearance better than sine wave at typical scales
-    float darkFactor = 1.0f - weight;
-    int darkFactorFixed = static_cast<int>(darkFactor * 256);
+    // Sine-wave scanlines matching GPU shader:
+    // scanline = sin(scanY * PI / (outputSize.y / texSize.y)) * 0.5 + 0.5
+    // = sin(y * PI / scale) where scale = height / srcHeight
+    constexpr float PI = 3.14159265f;
 
-    for (int y = 1; y < height; y += 2)
+    // Scale factor: how many output lines per source line
+    float scale = (srcHeight > 0) ? static_cast<float>(height) / static_cast<float>(srcHeight) : 1.0f;
+
+    for (int y = 0; y < height; ++y)
     {
+        // Sine wave aligned to source pixel boundaries
+        float scanline = std::sin(static_cast<float>(y) * PI / scale) * 0.5f + 0.5f;
+        float factor = 1.0f - weight * (1.0f - scanline);
+        int factorFixed = static_cast<int>(factor * 256);
+
         uint8_t* row = pixels + y * width * 4;
         for (int x = 0; x < width; ++x)
         {
-            row[0] = static_cast<uint8_t>((row[0] * darkFactorFixed) >> 8);
-            row[1] = static_cast<uint8_t>((row[1] * darkFactorFixed) >> 8);
-            row[2] = static_cast<uint8_t>((row[2] * darkFactorFixed) >> 8);
+            row[0] = static_cast<uint8_t>((row[0] * factorFixed) >> 8);
+            row[1] = static_cast<uint8_t>((row[1] * factorFixed) >> 8);
+            row[2] = static_cast<uint8_t>((row[2] * factorFixed) >> 8);
             row += 4;
         }
     }
 }
 
 #if HAS_NEON
-void CRTFilter::applyScanlines_neon(uint8_t* pixels, int width, int height, float weight)
+void CRTFilter::applyScanlines_neon(uint8_t* pixels, int width, int height, float weight, int srcHeight)
 {
-    float darkFactor = 1.0f - weight;
-    uint16_t darkFactorFixed = static_cast<uint16_t>(darkFactor * 256);
-    uint16x8_t vfactor = vdupq_n_u16(darkFactorFixed);
+    constexpr float PI = 3.14159265f;
+    float scale = (srcHeight > 0) ? static_cast<float>(height) / static_cast<float>(srcHeight) : 1.0f;
 
-    for (int y = 1; y < height; y += 2)
+    for (int y = 0; y < height; ++y)
     {
+        float scanline = std::sin(static_cast<float>(y) * PI / scale) * 0.5f + 0.5f;
+        float factor = 1.0f - weight * (1.0f - scanline);
+        uint16_t factorFixed = static_cast<uint16_t>(factor * 256);
+        uint16x8_t vfactor = vdupq_n_u16(factorFixed);
+
         uint8_t* row = pixels + y * width * 4;
         int x = 0;
 
-        // Process 4 pixels (16 bytes) at a time
         for (; x + 4 <= width; x += 4)
         {
             uint8x16_t src = vld1q_u8(row);
-
             uint8x8_t lo = vget_low_u8(src);
             uint8x8_t hi = vget_high_u8(src);
-
-            uint16x8_t lo16 = vmovl_u8(lo);
-            uint16x8_t hi16 = vmovl_u8(hi);
-
-            lo16 = vmulq_u16(lo16, vfactor);
-            hi16 = vmulq_u16(hi16, vfactor);
-
-            lo16 = vshrq_n_u16(lo16, 8);
-            hi16 = vshrq_n_u16(hi16, 8);
-
-            uint8x8_t lo_result = vmovn_u16(lo16);
-            uint8x8_t hi_result = vmovn_u16(hi16);
-
+            uint16x8_t lo16 = vmulq_u16(vmovl_u8(lo), vfactor);
+            uint16x8_t hi16 = vmulq_u16(vmovl_u8(hi), vfactor);
+            uint8x8_t lo_result = vmovn_u16(vshrq_n_u16(lo16, 8));
+            uint8x8_t hi_result = vmovn_u16(vshrq_n_u16(hi16, 8));
             uint8x16_t result = vcombine_u8(lo_result, hi_result);
-
-            // Preserve alpha channel
             uint8x16_t mask = {0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255};
             result = vbslq_u8(mask, src, result);
-
             vst1q_u8(row, result);
             row += 16;
         }
 
-        // Scalar remainder
         for (; x < width; ++x)
         {
-            row[0] = static_cast<uint8_t>((row[0] * darkFactorFixed) >> 8);
-            row[1] = static_cast<uint8_t>((row[1] * darkFactorFixed) >> 8);
-            row[2] = static_cast<uint8_t>((row[2] * darkFactorFixed) >> 8);
+            row[0] = static_cast<uint8_t>((row[0] * factorFixed) >> 8);
+            row[1] = static_cast<uint8_t>((row[1] * factorFixed) >> 8);
+            row[2] = static_cast<uint8_t>((row[2] * factorFixed) >> 8);
             row += 4;
         }
     }
@@ -171,45 +227,41 @@ void CRTFilter::applyScanlines_neon(uint8_t* pixels, int width, int height, floa
 #endif
 
 #if HAS_SSE2
-void CRTFilter::applyScanlines_sse2(uint8_t* pixels, int width, int height, float weight)
+void CRTFilter::applyScanlines_sse2(uint8_t* pixels, int width, int height, float weight, int srcHeight)
 {
-    float darkFactor = 1.0f - weight;
-    int darkFactorFixed = static_cast<int>(darkFactor * 256);
-    __m128i vfactor = _mm_set1_epi16(static_cast<short>(darkFactorFixed));
+    constexpr float PI = 3.14159265f;
+    float scale = (srcHeight > 0) ? static_cast<float>(height) / static_cast<float>(srcHeight) : 1.0f;
     __m128i zero = _mm_setzero_si128();
     __m128i alphaMask = _mm_set_epi8(-1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0);
 
-    for (int y = 1; y < height; y += 2)
+    for (int y = 0; y < height; ++y)
     {
+        float scanline = std::sin(static_cast<float>(y) * PI / scale) * 0.5f + 0.5f;
+        float factor = 1.0f - weight * (1.0f - scanline);
+        int factorFixed = static_cast<int>(factor * 256);
+        __m128i vfactor = _mm_set1_epi16(static_cast<short>(factorFixed));
+
         uint8_t* row = pixels + y * width * 4;
         int x = 0;
 
-        // Process 4 pixels (16 bytes) at a time
         for (; x + 4 <= width; x += 4)
         {
             __m128i src = _mm_loadu_si128(reinterpret_cast<__m128i*>(row));
-
             __m128i lo = _mm_unpacklo_epi8(src, zero);
             __m128i hi = _mm_unpackhi_epi8(src, zero);
-
-            lo = _mm_mullo_epi16(lo, vfactor);
-            hi = _mm_mullo_epi16(hi, vfactor);
-            lo = _mm_srli_epi16(lo, 8);
-            hi = _mm_srli_epi16(hi, 8);
-
+            lo = _mm_srli_epi16(_mm_mullo_epi16(lo, vfactor), 8);
+            hi = _mm_srli_epi16(_mm_mullo_epi16(hi, vfactor), 8);
             __m128i result = _mm_packus_epi16(lo, hi);
             result = _mm_or_si128(_mm_and_si128(src, alphaMask), _mm_andnot_si128(alphaMask, result));
-
             _mm_storeu_si128(reinterpret_cast<__m128i*>(row), result);
             row += 16;
         }
 
-        // Scalar remainder
         for (; x < width; ++x)
         {
-            row[0] = static_cast<uint8_t>((row[0] * darkFactorFixed) >> 8);
-            row[1] = static_cast<uint8_t>((row[1] * darkFactorFixed) >> 8);
-            row[2] = static_cast<uint8_t>((row[2] * darkFactorFixed) >> 8);
+            row[0] = static_cast<uint8_t>((row[0] * factorFixed) >> 8);
+            row[1] = static_cast<uint8_t>((row[1] * factorFixed) >> 8);
+            row[2] = static_cast<uint8_t>((row[2] * factorFixed) >> 8);
             row += 4;
         }
     }
@@ -217,93 +269,31 @@ void CRTFilter::applyScanlines_sse2(uint8_t* pixels, int width, int height, floa
 #endif
 
 // ============================================================================
-// Phosphor Mask
+// Phosphor Mask - Full strength (for high resolution)
 // ============================================================================
 
-void CRTFilter::applyPhosphorMask(uint8_t* pixels, int width, int height, CRTMaskType maskType, float strength)
+static inline void computeApertureMask(float x, float pitch, float strength, float& rMask, float& gMask, float& bMask)
 {
-#if HAS_NEON
-    applyPhosphorMask_neon(pixels, width, height, maskType, strength);
-#elif HAS_SSE2
-    applyPhosphorMask_sse2(pixels, width, height, maskType, strength);
-#else
-    applyPhosphorMask_scalar(pixels, width, height, maskType, strength);
-#endif
+    float period = pitch * 3.0f;
+    float stripe = std::fmod(x, period) / pitch;
+    float dim = 1.0f - 0.8f * strength;  // GPU: mix(1.0, 0.2, s) = 1 - 0.8*s
+
+    if (stripe < 1.0f) { rMask = 1.0f; gMask = dim; bMask = dim; }
+    else if (stripe < 2.0f) { rMask = dim; gMask = 1.0f; bMask = dim; }
+    else { rMask = dim; gMask = dim; bMask = 1.0f; }
 }
 
-void CRTFilter::applyPhosphorMask_scalar(uint8_t* pixels, int width, int height, CRTMaskType maskType, float strength)
+void CRTFilter::applyPhosphorMaskFull(uint8_t* pixels, int width, int height, CRTMaskType maskType, float strength)
 {
-    // Aperture grille: vertical RGB stripes
-    // Shadow mask: 2x2 RGB pattern
-    // Slot mask: 3x2 RGB pattern
-
-    float invStrength = 1.0f - strength;
+    float pitch = std::max(2.0f, static_cast<float>(width) / 640.0f);
 
     for (int y = 0; y < height; ++y)
     {
         uint8_t* row = pixels + y * width * 4;
-
         for (int x = 0; x < width; ++x)
         {
             float rMask = 1.0f, gMask = 1.0f, bMask = 1.0f;
-
-            switch (maskType)
-            {
-                case CRTMaskType::Aperture:
-                {
-                    // Vertical RGB stripes (3-pixel period)
-                    int phase = x % 3;
-                    if (phase == 0) { rMask = 1.0f; gMask = invStrength; bMask = invStrength; }
-                    else if (phase == 1) { rMask = invStrength; gMask = 1.0f; bMask = invStrength; }
-                    else { rMask = invStrength; gMask = invStrength; bMask = 1.0f; }
-                    break;
-                }
-                case CRTMaskType::ShadowMask:
-                {
-                    // 2x2 RGB dot pattern
-                    int px = x % 3;
-                    int py = y % 2;
-                    if (py == 0)
-                    {
-                        if (px == 0) { rMask = 1.0f; gMask = invStrength; bMask = invStrength; }
-                        else if (px == 1) { rMask = invStrength; gMask = 1.0f; bMask = invStrength; }
-                        else { rMask = invStrength; gMask = invStrength; bMask = 1.0f; }
-                    }
-                    else
-                    {
-                        // Offset by 1.5 pixels
-                        px = (x + 1) % 3;
-                        if (px == 0) { rMask = invStrength; gMask = invStrength; bMask = 1.0f; }
-                        else if (px == 1) { rMask = 1.0f; gMask = invStrength; bMask = invStrength; }
-                        else { rMask = invStrength; gMask = 1.0f; bMask = invStrength; }
-                    }
-                    break;
-                }
-                case CRTMaskType::SlotMask:
-                {
-                    // Slot mask: 3x3 pattern with slots
-                    int px = x % 6;
-                    int py = y % 2;
-                    float slot = ((px / 2) == 1) ? invStrength * 0.5f : 1.0f;
-                    int phase = px % 3;
-                    if (py == 0)
-                    {
-                        if (phase == 0) { rMask = slot; gMask = invStrength; bMask = invStrength; }
-                        else if (phase == 1) { rMask = invStrength; gMask = slot; bMask = invStrength; }
-                        else { rMask = invStrength; gMask = invStrength; bMask = slot; }
-                    }
-                    else
-                    {
-                        phase = (px + 1) % 3;
-                        if (phase == 0) { rMask = invStrength; gMask = invStrength; bMask = slot; }
-                        else if (phase == 1) { rMask = slot; gMask = invStrength; bMask = invStrength; }
-                        else { rMask = invStrength; gMask = slot; bMask = invStrength; }
-                    }
-                    break;
-                }
-                default:
-                    break;
-            }
+            computeApertureMask(static_cast<float>(x), pitch, strength, rMask, gMask, bMask);
 
             row[0] = static_cast<uint8_t>(row[0] * rMask);
             row[1] = static_cast<uint8_t>(row[1] * gMask);
@@ -313,22 +303,37 @@ void CRTFilter::applyPhosphorMask_scalar(uint8_t* pixels, int width, int height,
     }
 }
 
-#if HAS_NEON
-void CRTFilter::applyPhosphorMask_neon(uint8_t* pixels, int width, int height, CRTMaskType maskType, float strength)
-{
-    // For aperture grille, we can process 3 pixels at a time (12 bytes RGB, 16 with alpha)
-    // But pattern alignment is tricky - use scalar for now with NEON color multiply
-    applyPhosphorMask_scalar(pixels, width, height, maskType, strength);
-}
-#endif
+// ============================================================================
+// Phosphor Mask - Blended (for transition zone)
+// GPU does: uniform + (patterned - uniform) * fade
+// Which is: pixel * (avgMaskEffect + (mask - avgMaskEffect) * fade)
+// ============================================================================
 
-#if HAS_SSE2
-void CRTFilter::applyPhosphorMask_sse2(uint8_t* pixels, int width, int height, CRTMaskType maskType, float strength)
+void CRTFilter::applyPhosphorMaskBlended(uint8_t* pixels, int width, int height, CRTMaskType maskType,
+                                          float strength, float avgMaskEffect, float scaleFade)
 {
-    // Pattern-aligned SIMD is complex - use scalar for correctness
-    applyPhosphorMask_scalar(pixels, width, height, maskType, strength);
+    float pitch = std::max(2.0f, static_cast<float>(width) / 640.0f);
+
+    for (int y = 0; y < height; ++y)
+    {
+        uint8_t* row = pixels + y * width * 4;
+        for (int x = 0; x < width; ++x)
+        {
+            float rMask = 1.0f, gMask = 1.0f, bMask = 1.0f;
+            computeApertureMask(static_cast<float>(x), pitch, strength, rMask, gMask, bMask);
+
+            // Blend: avgMaskEffect + (mask - avgMaskEffect) * fade
+            rMask = avgMaskEffect + (rMask - avgMaskEffect) * scaleFade;
+            gMask = avgMaskEffect + (gMask - avgMaskEffect) * scaleFade;
+            bMask = avgMaskEffect + (bMask - avgMaskEffect) * scaleFade;
+
+            row[0] = static_cast<uint8_t>(row[0] * rMask);
+            row[1] = static_cast<uint8_t>(row[1] * gMask);
+            row[2] = static_cast<uint8_t>(row[2] * bMask);
+            row += 4;
+        }
+    }
 }
-#endif
 
 // ============================================================================
 // Brightness / Contrast
