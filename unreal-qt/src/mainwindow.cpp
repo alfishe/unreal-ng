@@ -2835,22 +2835,9 @@ void MainWindow::handleScreenshotRequested()
         return;
     }
 
-    // Clipboard (PNG-capable image data on every platform via QClipboard::setImage)
+    // Copy to clipboard as PNG
     QGuiApplication::clipboard()->setImage(frame);
-
-    // PNG file in the user's Pictures folder
-    QString directory = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
-    if (directory.isEmpty())
-        directory = QDir::homePath();
-    directory += QStringLiteral("/UnrealNG");
-    QDir().mkpath(directory);
-    const QString path = QStringLiteral("%1/unrealng-%2.png")
-                             .arg(directory, QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss")));
-
-    if (frame.save(path, "PNG"))
-        statusBar()->showMessage(tr("Screenshot copied to clipboard and saved to %1").arg(path), 5000);
-    else
-        statusBar()->showMessage(tr("Screenshot copied to clipboard (could not write %1)").arg(path), 5000);
+    statusBar()->showMessage(tr("Screenshot copied to clipboard"), 3000);
 }
 
 void MainWindow::handleToolBarToggled(bool visible)

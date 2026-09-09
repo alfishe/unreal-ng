@@ -276,20 +276,51 @@ struct DisplayViewport
 };
 
 /// Preset viewports for M_P384 overscan mode
+/// M_P384 framebuffer layout (from raster descriptor screenOffsetLeft=48):
+///   Left border: 48px, Paper: 256px, Right border: 80px = 384px total
+///   Top border: 56px, Paper: 192px, Bottom border: 56px = 304px total
+/// Extra pixels vs Pentagon (352x288): 32 on right, 8 top + 8 bottom
 namespace ViewportPresets
 {
+    // Raster descriptor values
+    static constexpr uint16_t SCREEN_OFFSET_LEFT = 48;   // Paper starts at x=48
+    static constexpr uint16_t SCREEN_OFFSET_TOP = 56;    // Paper starts at y=56
+    static constexpr uint16_t SCREEN_WIDTH = 256;
+    static constexpr uint16_t SCREEN_HEIGHT = 192;
+    static constexpr uint16_t P384_WIDTH = 384;
+    static constexpr uint16_t P384_HEIGHT = 304;
+    static constexpr uint16_t PENTAGON_WIDTH = 352;
+    static constexpr uint16_t PENTAGON_HEIGHT = 288;
+
+    // Derived: right/bottom borders
+    static constexpr uint16_t RIGHT_BORDER = P384_WIDTH - SCREEN_OFFSET_LEFT - SCREEN_WIDTH;   // 80
+    static constexpr uint16_t BOTTOM_BORDER = P384_HEIGHT - SCREEN_OFFSET_TOP - SCREEN_HEIGHT; // 56
+
     // Full overscan (384x304) - show everything including extra border areas
     constexpr DisplayViewport FULL_OVERSCAN = {0, 0, 0, 0};
 
-    // Symmetric horizontal (352x304) - equal 48px left/right borders, full vertical
-    // Crops 32px from right to match 48px left border
-    constexpr DisplayViewport SYMMETRIC_HORIZONTAL = {0, 32, 0, 0};
+    // Symmetric horizontal (352x304) - crop right border to match left (48px each)
+    constexpr DisplayViewport SYMMETRIC_HORIZONTAL = {
+        0,
+        static_cast<uint16_t>(RIGHT_BORDER - SCREEN_OFFSET_LEFT),  // 80 - 48 = 32
+        0, 0
+    };
 
-    // Standard (352x288) - match standard Pentagon display (48px borders, no overscan)
-    constexpr DisplayViewport STANDARD = {0, 32, 16, 0};
+    // Standard (352x288) - match standard Pentagon display (48px borders all around)
+    constexpr DisplayViewport STANDARD = {
+        0,
+        static_cast<uint16_t>(RIGHT_BORDER - SCREEN_OFFSET_LEFT),  // 32
+        static_cast<uint16_t>(SCREEN_OFFSET_TOP - 48),             // 56 - 48 = 8
+        static_cast<uint16_t>(BOTTOM_BORDER - 48)                  // 56 - 48 = 8
+    };
 
     // Screen only (256x192) - paper area only
-    constexpr DisplayViewport SCREEN_ONLY = {48, 80, 64, 48};
+    constexpr DisplayViewport SCREEN_ONLY = {
+        SCREEN_OFFSET_LEFT,  // 48
+        RIGHT_BORDER,        // 80
+        SCREEN_OFFSET_TOP,   // 56
+        BOTTOM_BORDER        // 56
+    };
 }
 
 /// endregion </Structures>

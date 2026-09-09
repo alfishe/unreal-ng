@@ -202,6 +202,36 @@ public:
     }
 };
 
+/// Snapshot of WD1793 visible state for NC_FDC_STATE_CHANGED.
+/// Posted by the FDC only when one of the display-relevant fields changes.
+/// Always a complete snapshot — observers never need to merge deltas.
+class FDCStatePayload : public MessagePayload
+{
+public:
+    unreal::UUID _emulatorId;      // Owning emulator instance (nil if unknown)
+    uint8_t _driveId = 0;          // Selected drive index [0..3] (0 = A)
+    uint8_t _side = 0;             // 0 = bottom, 1 = top
+    uint8_t _trackRegister = 0;    // WD1793 track register value
+    uint8_t _sectorRegister = 0;   // WD1793 sector register value
+    uint8_t _physicalTrack = 0;    // FDD head position (actual cylinder)
+    uint8_t _command = 0;          // Last command byte (with flag bits)
+    uint8_t _status = 0;           // Status register snapshot
+    bool _busy = false;            // WDS_BUSY
+    bool _drq = false;             // DRQ output
+    bool _motorOn = false;         // Selected drive motor state
+    bool _diskInserted = false;    // Selected drive has a disk
+
+    FDCStatePayload() = default;
+    explicit FDCStatePayload(const unreal::UUID& emulatorId) : _emulatorId(emulatorId) {}
+    virtual ~FDCStatePayload() = default;
+
+    // Helper to get drive letter from drive ID
+    char getDriveLetter() const
+    {
+        return static_cast<char>('A' + (_driveId & 0x03));
+    }
+};
+
 /// Payload for requesting single sync mode in videowall
 /// Example: messageCenter.Post(NC_VIDEOWALL_SINGLE_SYNC_MODE, new VideowallSyncModePayload(emulatorId, true));
 class VideowallSyncModePayload : public MessagePayload
