@@ -7,6 +7,7 @@
 #include <3rdparty/message-center/eventqueue.h>
 
 class TileGrid;
+class TileGridWrapper;
 class EmulatorManager;
 #ifdef ENABLE_AUTOMATION
 class Automation;
@@ -113,8 +114,12 @@ private:
     /// Open Video Wall recording dialog (Cmd+R / Ctrl+R)
     void handleVideoRecordingRequested();
 
+    /// Handle GPU acceleration toggle from menu
+    void handleGpuAccelerationToggled(bool enabled);
+
     // UI Components
-    TileGrid* _tileGrid = nullptr;
+    TileGrid* _tileGrid = nullptr;  // CPU mode grid (used when _useGPU == false)
+    TileGridWrapper* _tileGridWrapper = nullptr;  // Wrapper for GPU mode
 
     // Emulator management (singleton, not owned)
     EmulatorManager* _emulatorManager = nullptr;
@@ -123,8 +128,13 @@ private:
     AppSoundManager* _soundManager = nullptr;
 
     // Currently audio-bound tile (only one at a time)
-    // Using QPointer to auto-nullify when tile is deleted
+    // Using QPointer to auto-nullify when tile is deleted (CPU mode only)
     QPointer<EmulatorTile> _audioBoundTile;
+    int _audioBoundIndex = -1;  // GPU mode: index of audio-bound emulator
+
+    // GPU acceleration state
+    bool _useGPU = false;
+    QAction* _gpuAccelerationAction = nullptr;
 
     // Recording widget dialog
     QPointer<QWidget> _recordingWidget;

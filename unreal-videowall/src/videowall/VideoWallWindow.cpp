@@ -35,6 +35,7 @@
 #include "emulator/soundmanager.h"
 #include "videowall/EmulatorTile.h"
 #include "videowall/TileGrid.h"
+#include "videowall/TileGridWrapper.h"
 
 VideoWallWindow::VideoWallWindow(QWidget* parent) : QMainWindow(parent)
 {
@@ -212,6 +213,17 @@ void VideoWallWindow::createMenus()
     fullscreenAction->setCheckable(true);
     fullscreenAction->setChecked(false);
     connect(fullscreenAction, &QAction::triggered, this, &VideoWallWindow::toggleFullscreenMode);
+
+    viewMenu->addSeparator();
+
+    // GPU acceleration toggle
+    _gpuAccelerationAction = viewMenu->addAction(tr("&GPU Acceleration"));
+    _gpuAccelerationAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_G));
+    _gpuAccelerationAction->setStatusTip(tr("Use GPU for display rendering (single surface for all tiles)"));
+    _gpuAccelerationAction->setCheckable(true);
+    _gpuAccelerationAction->setChecked(false);
+    _gpuAccelerationAction->setEnabled(TileGridWrapper::isGPUAvailable());
+    connect(_gpuAccelerationAction, &QAction::triggered, this, &VideoWallWindow::handleGpuAccelerationToggled);
 
     viewMenu->addSeparator();
 
@@ -1445,4 +1457,214 @@ void VideoWallWindow::setSingleEmulatorSyncMode(bool enable, const std::string& 
         _tileGrid->setSingleSyncMode(false);
         VideowallRecorder::instance().setSynchronousMode(false);
     }
+}
+
+void VideoWallWindow::handleGpuAccelerationToggled(bool enabled)
+{
+    if (enabled == _useGPU)
+        return;
+
+    if (enabled && !TileGridWrapper::isGPUAvailable())
+    {
+        _gpuAccelerationAction->setChecked(false);
+        return;
+    }
+
+    // Save current state
+    std::vector<std::string> emulatorIds;
+    int audioBoundIndex = -1;
+    bool singleSyncMode = _singleSyncMode;
+    std::string syncEmulatorId;
+
+    if (_useGPU && _tileGridWrapper)
+    {
+        emulatorIds = _tileGridWrapper->emulatorIds();
+        audioBoundIndex = _audioBoundIndex;
+    }
+    else if (_tileGrid)
+    {
+        for (EmulatorTile* tile : _tileGrid->tiles())
+        {
+            if (tile && tile->emulator())
+                emulatorIds.push_back(tile->emulator()->GetUUID().toString());
+        }
+        // Find audio bound index
+        if (_audioBoundTile)
+        {
+            int idx = 0;
+            for (EmulatorTile* tile : _tileGrid->tiles())
+            {
+                if (tile == _audioBoundTile)
+                {
+                    audioBoundIndex = idx;
+                    break;
+                }
+                ++idx;
+            }
+        }
+    }
+
+    // Destroy old grid
+    if (_useGPU && _tileGridWrapper)
+    {
+        _tileGridWrapper->clearAllEmulators();
+        delete _tileGridWrapper;
+        _tileGridWrapper = nullptr;
+    }
+    else if (_tileGrid)
+    {
+        _tileGrid->clearAllTiles();
+        delete _tileGrid;
+        _tileGrid = nullptr;
+    }
+
+    _useGPU = enabled;
+
+    // Create new grid
+    if (_useGPU)
+    {
+        _tileGridWrapper = new TileGridWrapper(this, true);
+        setCentralWidget(_tileGridWrapper->widget());
+
+        // Connect signals
+        connect(_tileGridWrapper, &TileGridWrapper::tileClicked, this, [this](int index) {
+            // Handle tile click in GPU mode - bind audio to emulator
+            if (index < 0 || !_soundManager)
+                return;
+
+            auto emulator = _tileGridWrapper->emulatorAt(index);
+            if (!emulator)
+                return;
+
+            // Toggle behavior: if clicking already-bound tile, unbind
+            if (_audioBoundIndex == index)
+            {
+                // Unbind current
+                emulator->ClearAudioCallback();
+                if (auto* fm = emulator->GetFeatureManager())
+                {
+                    fm->setFeature(Features::kSoundGeneration, false);
+                    fm->setFeature(Features::kSoundHQ, false);
+                }
+                _audioBoundIndex = -1;
+                qDebug() << "Audio unbound from tile" << index;
+                return;
+            }
+
+            // Unbind from previous
+            if (_audioBoundIndex >= 0)
+            {
+                auto prevEmulator = _tileGridWrapper->emulatorAt(_audioBoundIndex);
+                if (prevEmulator)
+                {
+                    prevEmulator->ClearAudioCallback();
+                    if (auto* fm = prevEmulator->GetFeatureManager())
+                    {
+                        fm->setFeature(Features::kSoundGeneration, false);
+                        fm->setFeature(Features::kSoundHQ, false);
+                    }
+                }
+            }
+
+            // Bind to new
+            if (auto* fm = emulator->GetFeatureManager())
+            {
+                fm->setFeature(Features::kSoundGeneration, true);
+                fm->setFeature(Features::kSoundHQ, true);
+            }
+            emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback,
+                                       _soundManager->occupancyCell(), _soundManager->deviceDescriptor());
+            emulator->SetAudioDeviceSampleRate(_soundManager->deviceSampleRate());
+            _soundManager->setActiveContext(emulator->GetContext());
+
+            _audioBoundIndex = index;
+            _tileGridWrapper->setFocusedIndex(index);
+            qDebug() << "Audio bound to tile" << index;
+        });
+
+        connect(_tileGridWrapper, &TileGridWrapper::fileDropped, this, [this](int index, const QString& filePath) {
+            auto emulator = _tileGridWrapper->emulatorAt(index);
+            if (!emulator)
+                return;
+
+            QString ext = filePath.right(4).toLower();
+            bool success = false;
+
+            if (ext == ".sna" || ext == ".z80")
+                success = emulator->LoadSnapshot(filePath.toStdString());
+            else if (ext == ".scl" || ext == ".trd")
+                success = emulator->LoadDisk(filePath.toStdString());
+            else if (ext == ".tap" || ext == ".tzx")
+                success = emulator->LoadTape(filePath.toStdString());
+
+            qDebug() << (success ? "Loaded" : "Failed to load") << filePath << "on tile" << index;
+        });
+
+        // Re-add emulators
+        for (const auto& id : emulatorIds)
+        {
+            auto emulator = _emulatorManager->GetEmulator(id);
+            if (emulator)
+                _tileGridWrapper->addEmulator(emulator);
+        }
+
+        // Restore audio binding
+        if (audioBoundIndex >= 0 && audioBoundIndex < _tileGridWrapper->emulatorCount())
+        {
+            auto emulator = _tileGridWrapper->emulatorAt(audioBoundIndex);
+            if (emulator && _soundManager)
+            {
+                if (auto* fm = emulator->GetFeatureManager())
+                {
+                    fm->setFeature(Features::kSoundGeneration, true);
+                    fm->setFeature(Features::kSoundHQ, true);
+                }
+                emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback,
+                                           _soundManager->occupancyCell(), _soundManager->deviceDescriptor());
+                emulator->SetAudioDeviceSampleRate(_soundManager->deviceSampleRate());
+                _soundManager->setActiveContext(emulator->GetContext());
+                _audioBoundIndex = audioBoundIndex;
+            }
+        }
+
+        qInfo() << "Switched to GPU rendering";
+    }
+    else
+    {
+        _tileGrid = new TileGrid(this);
+        setCentralWidget(_tileGrid);
+
+        _tileGrid->setAutoFillBackground(true);
+        QPalette pal = _tileGrid->palette();
+        pal.setColor(QPalette::Window, Qt::black);
+        _tileGrid->setPalette(pal);
+
+        _tileGrid->installEventFilter(this);
+
+        // Re-add emulators
+        for (const auto& id : emulatorIds)
+        {
+            auto emulator = _emulatorManager->GetEmulator(id);
+            if (emulator)
+            {
+                EmulatorTile* tile = new EmulatorTile(emulator, _tileGrid);
+                connect(tile, &EmulatorTile::tileClicked, this, &VideoWallWindow::onTileClicked);
+                _tileGrid->addTile(tile);
+            }
+        }
+
+        // Restore audio binding
+        if (audioBoundIndex >= 0)
+        {
+            const auto& tiles = _tileGrid->tiles();
+            if (audioBoundIndex < static_cast<int>(tiles.size()))
+            {
+                bindAudioToTile(tiles[audioBoundIndex]);
+            }
+        }
+
+        qInfo() << "Switched to software rendering";
+    }
+
+    _gpuAccelerationAction->setChecked(_useGPU);
 }
