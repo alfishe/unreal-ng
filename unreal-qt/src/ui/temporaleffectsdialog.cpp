@@ -5,6 +5,7 @@
 #include <QGroupBox>
 #include <QDialogButtonBox>
 #include <QPushButton>
+#include <QSignalBlocker>
 
 #include "widgets/devicescreenwrapper.h"
 
@@ -31,8 +32,12 @@ TemporalEffectsDialog::TemporalEffectsDialog(DeviceScreenWrapper* screenWrapper,
     depthLayout->addWidget(new QLabel(tr("Frame History:")));
     _historySizeSlider = new QSlider(Qt::Horizontal);
     _historySizeSlider->setRange(2, 5);
+    _historySizeSlider->setSingleStep(1);
+    _historySizeSlider->setPageStep(1);
+    _historySizeSlider->setTracking(true);
     _historySizeSlider->setTickPosition(QSlider::TicksBelow);
     _historySizeSlider->setTickInterval(1);
+    _historySizeSlider->setMinimumWidth(100);
     _historySizeSlider->setToolTip(tr("Number of frames to blend (2-5). More frames = smoother but more ghosting."));
     depthLayout->addWidget(_historySizeSlider);
     _historySizeLabel = new QLabel("2");
@@ -91,6 +96,9 @@ TemporalEffectsDialog::TemporalEffectsDialog(DeviceScreenWrapper* screenWrapper,
     // Initialize from current screen state
     updateFromScreen();
 
+    // Rebind when screen/emulator changes
+    connect(_screenWrapper, &DeviceScreenWrapper::screenInitialized, this, &TemporalEffectsDialog::updateFromScreen);
+
     // Initial UI state
     onWeightModeChanged(_weightModeCombo->currentIndex());
 }
@@ -103,6 +111,11 @@ void TemporalEffectsDialog::updateFromScreen()
     bool enabled = _screenWrapper->temporalBlendingEnabled();
     int historySize = _screenWrapper->temporalHistorySize();
     int weightMode = _screenWrapper->temporalWeightMode();
+
+    // Block signals to prevent feedback loops
+    QSignalBlocker checkBlocker(_enabledCheck);
+    QSignalBlocker sliderBlocker(_historySizeSlider);
+    QSignalBlocker comboBlocker(_weightModeCombo);
 
     _enabledCheck->setChecked(enabled);
     _historySizeSlider->setValue(historySize);

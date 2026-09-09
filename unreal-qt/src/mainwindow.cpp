@@ -119,6 +119,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Store original palette
     _originalPalette = palette();
 
+    // Register fullscreen shortcut with application-wide context
+    // (works even when menu bar is hidden in fullscreen mode)
+    auto* fullScreenShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F), this);
+    fullScreenShortcut->setContext(Qt::ApplicationShortcut);
+    connect(fullScreenShortcut, &QShortcut::activated, this, &MainWindow::handleFullScreenShortcut);
+
     // Put emulator screen into resizable content frame
     // Wrapper auto-selects GPU or software backend
     QFrame* contentFrame = ui->contentFrame;
@@ -1550,10 +1556,16 @@ void MainWindow::handleFullScreenShortcutLinux()
 
         showFullScreen();
 
-        // Step 4: Unlock docking after transition
+        // Step 4: Unlock docking and restore focus after transition
         QTimer::singleShot(100, this, [this]() {
             if (_dockingManager)
                 _dockingManager->setSnappingLocked(false);
+
+            // Ensure keyboard focus for Ctrl+F to work
+            activateWindow();
+            raise();
+            if (_screenWrapper)
+                _screenWrapper->widget()->setFocus();
         });
     }
 }
@@ -2858,6 +2870,10 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
         _menuManager->setGpuAccelerationChecked(false);
         return;
     }
+
+    // Close dialogs that hold raw pointers to _screenWrapper
+    for (auto* dialog : findChildren<TemporalEffectsDialog*>())
+        dialog->close();
 
     QFrame* contentFrame = ui->contentFrame;
 

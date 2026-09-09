@@ -41,7 +41,14 @@ DeviceScreenWrapper::DeviceScreenWrapper(QWidget* parent, bool useGPU)
 
 DeviceScreenWrapper::~DeviceScreenWrapper()
 {
-    // Widgets are owned by Qt parent, but we should clean up
+    // The screen widget is parented to the content frame, so Qt would only destroy it
+    // together with the frame. When the wrapper is replaced at runtime (GPU <-> software
+    // switch) the orphaned widget would otherwise stay alive and visible at its old
+    // geometry, leaving a stale copy of the screen behind after every resize.
+    delete _widget;
+    _widget = nullptr;
+    _gpu = nullptr;
+    _software = nullptr;
 }
 
 void DeviceScreenWrapper::init(uint16_t width, uint16_t height, void* buffer)
@@ -50,6 +57,8 @@ void DeviceScreenWrapper::init(uint16_t width, uint16_t height, void* buffer)
         _gpu->init(width, height, buffer);
     else if (_software)
         _software->init(width, height, buffer);
+
+    emit screenInitialized();
 }
 
 void DeviceScreenWrapper::detach()

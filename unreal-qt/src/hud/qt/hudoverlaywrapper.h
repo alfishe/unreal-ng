@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QWidget>
+#include <QPointer>
 #include <memory>
 
 #include "hudmodel.h"
@@ -68,7 +69,7 @@ public:
     bool isGPUAccelerated() const { return _useGPU; }
 
 private:
-    QWidget* _widget = nullptr;
+    QPointer<QWidget> _widget;  // Guarded: the parent may destroy the widget before the wrapper
     HudOverlay* _software = nullptr;
     HudOverlayGL* _gpu = nullptr;
     bool _useGPU = false;

@@ -16,6 +16,9 @@ class TemporalEffectsDialog : public QDialog
 public:
     explicit TemporalEffectsDialog(DeviceScreenWrapper* screenWrapper, QWidget* parent = nullptr);
 
+public slots:
+    void updateFromScreen();
+
 private slots:
     void onEnabledChanged(bool enabled);
     void onHistorySizeChanged(int value);
@@ -23,7 +26,6 @@ private slots:
     void onDecayChanged(double value);
 
 private:
-    void updateFromScreen();
     void applySettings();
 
     DeviceScreenWrapper* _screenWrapper;

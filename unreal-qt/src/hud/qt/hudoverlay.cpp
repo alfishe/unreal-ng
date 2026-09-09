@@ -215,13 +215,34 @@ void HudOverlay::onAnimationTick()
         return;
     }
 
-    // Only repaint if elements expired (visual change)
-    if (expiredCount > 0)
+    // Repaint when elements expired, or while a toast is in its enter/exit animation
+    // (opacity / slide change every tick, and the slide moves the tile - and its shadow -
+    // outside the bounds recorded at the previous paint)
+    bool toastAnimating = false;
+    auto now = HudClock::now();
+    for (const auto& el : snap->elements)
+    {
+        if (el.kind != HudKind::Toast)
+            continue;
+        auto elapsed = now - el.created;
+        if (elapsed < HudTiming::AnimEnter || (el.ttl.count() > 0 && elapsed > (el.ttl - HudTiming::AnimExit)))
+        {
+            toastAnimating = true;
+            break;
+        }
+    }
+
+    if (expiredCount > 0 || toastAnimating)
     {
         if (!_lastIndicatorBounds.isEmpty())
             update(_lastIndicatorBounds);
         if (!_lastToastBounds.isEmpty())
-            update(_lastToastBounds);
+        {
+            // Slide animations move toasts by up to 0.75em vertically between paints
+            float uiScale = snap->scaleFactor > 0.0f ? snap->scaleFactor : _scaleFactor;
+            int slide = static_cast<int>(16.0f * uiScale) + 1;
+            update(_lastToastBounds.adjusted(0, -slide, 0, slide));
+        }
     }
 }
 
@@ -300,8 +321,10 @@ void HudOverlay::renderTileFrameToPixmap(QPixmap& pixmap, const HudTileFrameStyl
     if (frame.shadowColor != 0 && frame.shadowBlur > 0.0f)
     {
         int spread = static_cast<int>(std::max(1.0f, 2.0f * uiScale));
+        // The tile body ends 2 * spread above the pixmap bottom; stop the shadow one
+        // spread short so it extends only `spread` below the tile
         QPainterPath shadowPath;
-        shadowPath.addRoundedRect(rect.adjusted(spread, spread, -spread, 0), radius, radius);
+        shadowPath.addRoundedRect(rect.adjusted(spread, spread, -spread, -spread), radius, radius);
         p.fillPath(shadowPath, QColor::fromRgba(frame.shadowColor));
     }
 
@@ -347,6 +370,15 @@ void HudOverlay::renderTileFrameToPixmap(QPixmap& pixmap, const HudTileFrameStyl
     }
 }
 
+QRect HudOverlay::tileDirtyBounds(const QRect& rect, float uiScale)
+{
+    // Must match drawWholeTileFrame: the cached frame pixmap overhangs the tile rect by
+    // `spread` on the left/right and 3 * `spread` below (drop shadow). One extra pixel on
+    // every side covers antialiased edges.
+    int spread = static_cast<int>(std::max(1.0f, 2.0f * uiScale));
+    return rect.adjusted(-spread - 1, -1, spread + 1, spread * 3 + 1);
+}
+
 void HudOverlay::drawWholeTileFrame(QPainter& painter, const QRect& rect, const HudTileFrameStyle& frame, float uiScale)
 {
     // Use cached pre-rendered pixmap
@@ -360,12 +392,9 @@ void HudOverlay::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event);
 
-    // Always clear the full widget to transparent - prevents ghost artifacts
-    // when elements are removed or repositioned
+    // Clear to transparent before drawing HUD elements
     QPainter painter(this);
-    painter.setCompositionMode(QPainter::CompositionMode_Source);
     painter.fillRect(rect(), Qt::transparent);
-    painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
 
     if (!_model || !_model->isEnabled())
         return;
@@ -531,13 +560,14 @@ void HudOverlay::paintEvent(QPaintEvent* event)
 
             drawIndicator(painter, *prep.element, indRect, pulseAlpha, theme, uiScale);
 
-            // Track bounds for targeted updates
-            if (indicatorBounds.isEmpty())
-                indicatorBounds = indRect;
-            else
-                indicatorBounds = indicatorBounds.united(indRect);
+            // Track bounds (including frame shadow) for targeted updates
+            indicatorBounds = indicatorBounds.united(tileDirtyBounds(indRect, uiScale));
         }
         _lastIndicatorBounds = indicatorBounds;
+    }
+    else
+    {
+        _lastIndicatorBounds = QRect();
     }
 
     // 3. Draw transient toasts with predefined display positions
@@ -625,15 +655,16 @@ void HudOverlay::paintEvent(QPaintEvent* event)
 
             drawToast(painter, *toast, toastRect, opacity, scale, theme, uiScale);
 
-            // Track bounds for targeted updates
-            if (toastBounds.isEmpty())
-                toastBounds = toastRect;
-            else
-                toastBounds = toastBounds.united(toastRect);
+            // Track bounds (including frame shadow) for targeted updates
+            toastBounds = toastBounds.united(tileDirtyBounds(toastRect, uiScale));
 
             currentY += stepY;
         }
         _lastToastBounds = toastBounds;
+    }
+    else
+    {
+        _lastToastBounds = QRect();
     }
 }
 

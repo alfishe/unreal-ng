@@ -389,6 +389,8 @@ void DeviceScreen::resizeEvent(QResizeEvent* event)
     resize(newWidth, newHeight);
 
     QWidget::resizeEvent(event);
+
+    update();
 }
 
 void DeviceScreen::prepareForShutdown()
