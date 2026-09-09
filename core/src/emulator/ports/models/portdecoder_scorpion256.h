@@ -39,7 +39,8 @@ public:
     bool IsPort_FE(uint16_t port);
     bool IsPort_7FFD(uint16_t port);
     bool IsPort_1FFD(uint16_t port);
-    /// endregion <Helper methods>
+    bool IsPort_7EFD(uint16_t port);  // ProfROM window latch (#7FFD pattern with A8 low)
+    /// endregion </Helper methods>
 
 protected:
     void Port_7FFD(uint8_t value, uint16_t pc);

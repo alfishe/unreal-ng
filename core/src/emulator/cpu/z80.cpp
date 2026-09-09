@@ -125,6 +125,7 @@ void Z80::Reset()
     int_pending = false;   // No interrupts pending
     int_gate = true;       // Allow external interrupts
     nmi_in_progress = false;  // Clear NMI flag
+    _nmi_pending_count = 0;   // No NMI requested
 
     tt = 0;  // Scaled to CPU frequency multiplier cycle count
     t = 0;   // Reset cycle counter for deterministic state
@@ -615,7 +616,14 @@ void Z80::out(uint16_t port, uint8_t val)
         busTraceHook('O', port, val);
 }
 
-void Z80::retn() {}
+void Z80::retn()
+{
+    // Called by the ED45 RETN handler after iff1 = iff2: leaving the NMI handler
+    // ends the NMI session. Checking nmi_in_progress (not just restoring IFF1)
+    // keeps a plain RET executed deep inside an NMI handler from silently
+    // ending it - only RETN does that, per the Z80 interrupt architecture
+    nmi_in_progress = false;
+}
 
 /// endregion </Z80 lifecycle>
 
@@ -651,7 +659,12 @@ void Z80::RequestMaskedInterrupt()
 ///
 /// Simulate Z80 NMI pin signal raising
 ///
-void Z80::RequestNonMaskedInterrupt() {}
+void Z80::RequestNonMaskedInterrupt()
+{
+    // Coalesce: the pin is level-less in the model - one pending bit regardless
+    // of how many times the host pressed the magic button before the boundary
+    _nmi_pending_count = 1;
+}
 
 ///
 /// See: http://www.z80.info/interrup.htm
@@ -664,32 +677,47 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
     VideoControl& video = _context->pScreen->_vid;
     bool intHandled = false;
 
-    // NMI processing
+    // NMI processing (accepted at the instruction boundary, priority over INT).
+    // Requested via RequestNonMaskedInterrupt(); on Scorpion models the MNI
+    // "magic button" orchestration (Emulator::RequestMNI) pages the Shadow
+    // Monitor BEFORE requesting, so only the architecture-defined CPU dance
+    // lives here. The model-specific block from the original UnrealSpeccy
+    // (ATM3 bank switching / Scorpion pc>0x4000 guard) moved to that layer -
+    // the MNI latch already owns the ROM selection.
     if (_nmi_pending_count > 0)
     {
-        /* move to ports logic
-        if (config.mem_model == MM_ATM3)
-        {
-            _nmi_pending_count = 0;
-            cpu.nmi_in_progress = true;
+        _nmi_pending_count = 0;
+        cpu.nmi_in_progress = true;
 
-            SetBanks();
-            HandleNMI(RM_NOCHANGE);
-            return;
-        }
-        else if (config.mem_model == MM_PROFSCORP || config.mem_model == MM_SCORP)
-        {
-            _nmi_pending_count--;
-            if (cpu.pc > 0x4000)
-            {
-                HandleNMI(RM_DOS);
-                _nmi_pending_count = 0;
-            }
-        }
-        else
-            _nmi_pending_count = 0;
-         */
-    }  // end if (nmi_pending)
+        // If CPU halted - unblock it by moving PC forward (return lands past the HALT)
+        if (DirectRead(cpu.pc) == 0x76)
+            cpu.pc++;
+
+        // NMI timing per Z80 manual: 11T (M1=5T restart fetch, M2=3T push PCH, M3=3T push PCL).
+        // The accept IS the cycle for this iteration: ProcessInterrupts returns true and
+        // the caller skips Z80Step (same contract as the INT acceptance below).
+        IncrementCPUCyclesCounter(11);
+
+        // Push return address (raw write: both stack cycles are included in the 11T above)
+        uint16_t sp = cpu.sp;
+        (_memory->*MemIf->MemoryWrite)(--sp, cpu.pch);
+        (_memory->*MemIf->MemoryWrite)(--sp, cpu.pcl);
+        cpu.sp = sp;
+
+        // Restart at the NMI vector #0066
+        cpu.pc = 0x0066;
+        cpu.memptr = 0x0066;
+        cpu.halted = 0;
+
+        // IFF2 keeps a copy of IFF1 for RETN; maskable interrupts disabled in the handler
+        cpu.iff2 = cpu.iff1;
+        cpu.iff1 = 0;
+        cpu.int_pending = false;
+
+        video.memcyc_lcmd = 0;  // new command, start accumulate number of busy memcycles
+
+        return true;  // NMI accepted: skip Z80Step this iteration
+    }
 
     // Generate INT
     // TODO: move INT forming logic to Screen class since in reality it's formed by ULA / frame counters

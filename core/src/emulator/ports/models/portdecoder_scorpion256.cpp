@@ -6,6 +6,33 @@
 
 #include "common/collectionhelper.h"
 
+#include <cstdint>
+
+/// Beta128 register select is wired to A7-A0 only: IN A,(#1F) drives A onto
+/// A15-A8 and TR-DOS's OUT (#nnFF),A system-port writes carry data-dependent
+/// bits in the high byte, so the FDC must match on the LOW address byte and
+/// dispatch through the canonical #001F/#003F/#005F/#007F/#00FF device keys -
+/// the same normalization the Pentagon decode table performs before handing
+/// a port to PeripheralPortIn/Out()
+/// \param port Raw 16-bit port address from the Z80 bus
+/// \param canonicalPort Out: registered device key for the matched register
+/// \return True when the low byte selects a Beta128 register
+static bool TryBeta128MirrorPort(uint16_t port, uint16_t& canonicalPort)
+{
+    switch (port & 0x00FF)
+    {
+        case 0x001F:
+        case 0x003F:
+        case 0x005F:
+        case 0x007F:
+        case 0x00FF:
+            canonicalPort = static_cast<uint16_t>(port & 0x00FF);
+            return true;
+        default:
+            return false;
+    }
+}
+
 /// region <Constructors / Destructors>
 
 PortDecoder_Scorpion256::PortDecoder_Scorpion256(EmulatorContext* context) : PortDecoder(context)
@@ -30,10 +57,12 @@ void PortDecoder_Scorpion256::reset()
     // Explicitly reset port states to ensure consistent reset behavior
     EmulatorState& state = _context->emulatorState;
     state.p7FFD = 0x00;     // Reset port 0x7FFD to default (Screen 0, RAM bank 0, SOS ROM, paging enabled)
+    state.p1FFD = 0x00;     // Reset port 0x1FFD (no RAM at #0000, Shadow Monitor off, extended bank bits clear)
+    state.p7EFD = 0x00;     // Reset ProfROM window latch (quadrant 0; inert until the ProfROM task wires it)
     state.pBFFD = 0x00;     // Reset AY register select port
     state.pFFFD = 0x00;     // Reset AY data port
-    state.pFE = 0xFF;       // Reset ULA port (border white, no sound)
-    state.border_attr = 0x07;  // Sync border_attr with pFE bits 0-2 (white)
+    state.pFE = 0xF8;       // Reset ULA port (border black, no sound; keys released)
+    state.border_attr = 0x00;  // Sync border_attr with pFE bits 0-2 (black)
 
     // Set default 128K memory pages
     Memory& memory = *_context->pMemory;
@@ -42,8 +71,10 @@ void PortDecoder_Scorpion256::reset()
     memory.SetRAMPageToBank2(2);
     memory.SetRAMPageToBank3(0);
 
-    // Set default border color to white
-    _screen->SetBorderColor(COLOR_WHITE);
+    // Set default border color to black: the Scorpion power-on latch value is 0 and
+    // v2.9x ROMs never write #FF during boot, so the machine shows a black border
+    // until software sets one (hardware-reference 6, MISTer-verified)
+    _screen->SetBorderColor(COLOR_BLACK);
 
     // Reset memory paging lock latch
     _7FFD_Locked = false;
@@ -74,6 +105,10 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
     PortDecodeDisposition disp;
     disp.decodeRuleIndex = PortTraceRule::kNoTable;
 
+    // Resolve Beta128 mirrors once: the FDC decodes A7-A0 only
+    uint16_t beta128Port = 0;
+    const bool isBeta128 = TryBeta128MirrorPort(port, beta128Port);
+
     if ((port & 0xC002) == 0xC000)
     {
         result = PeripheralPortIn(0xFFFD);
@@ -93,12 +128,43 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
         disp.decodedPort = 0x00FE;
         disp.wasHandledInline = true;
     }
+    else if (IsPort_1FFD(port))
+    {
+        // Write-only memory register: the register itself never drives the
+        // bus, reads return #FF (hardware-reference 4.3) - marked decoded so
+        // the access is attributed instead of hitting the unmapped-port path
+        result = 0xFF;
+        _lastPortDecoded = true;
+        disp.decodedPort = 0x1FFD;
+        disp.wasHandledInline = true;
+    }
+    else if (_context->config.mem_model == MM_PROFSCORP && IsPort_7EFD(port))
+    {
+        // Write-only ProfROM window latch (#7FFD pattern with A8 low): open
+        // bus on read
+        result = 0xFF;
+        _lastPortDecoded = true;
+        disp.decodedPort = 0x7EFD;
+        disp.wasHandledInline = true;
+    }
+    else if (isBeta128 && !(_state->flags & CF_TRDOS) && !(_state->p1FFD & 0x02))
+    {
+        // Beta128 FDC off the bus: with no TR-DOS session and the Shadow
+        // Monitor unpaged, #1F/#3F/#5F/#7F/#FF stay undecoded so Z80::in()
+        // serves the floating bus. While the monitor is paged (#1FFD bit1)
+        // the FDC keeps answering - it is polled right after unpaging the
+        // monitor (hardware-reference 12.3, MISTer bug 2)
+        disp.wasBeta128Gated = true;
+    }
     else
     {
-        result = PeripheralPortIn(port);
+        // Beta128 mirrors dispatch through the canonical registered device
+        // key; everything else keeps its identity (Covox etc.)
+        const uint16_t dispatchPort = isBeta128 ? beta128Port : port;
+        result = PeripheralPortIn(dispatchPort);
         // Identity decode: mark decoded only when a device actually responded
         if (_lastPortDecoded)
-            disp.decodedPort = port;
+            disp.decodedPort = dispatchPort;
     }
     disp.wasDecoded = _lastPortDecoded;
 
@@ -125,35 +191,60 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
     /// endregion </Override submodule>
 
-    //    ZX Spectrum 128 +2A/+2B/+3
-    //    port: #7FFD
-    //    port: #1FFD
+    //    Scorpion ZS256
+    //    port: #7FFD, #1FFD - memory registers
+    //    port: #7EFD        - ProfROM window latch (MM_PROFSCORP)
+    //    port: #FE           - ULA (keyboard, border, beeper, tape)
+    //    port: #xxFF         - border latch (while the FDC system port is off the bus)
+
+    EmulatorState& state = *_state;
 
     // Port trace decode attribution (if-chain decoder: no mask/match table)
     PortDecodeDisposition disp;
     disp.decodeRuleIndex = PortTraceRule::kNoTable;
 
-    bool isPort_7FFD = IsPort_7FFD(port);
-    if (isPort_7FFD)
+    // Resolve Beta128 mirrors once: the FDC decodes A7-A0 only
+    uint16_t beta128Port = 0;
+    const bool isBeta128 = TryBeta128MirrorPort(port, beta128Port);
+
+    // The ProfROM window latch must be checked first: its pattern is a subset
+    // of the #7FFD decode (the base-machine GAL equation ignores A8), so on a
+    // ProfROM machine the window write must not fall through to the memory
+    // register. On the base model #7EFD stays a plain #7FFD mirror
+    if (_context->config.mem_model == MM_PROFSCORP && IsPort_7EFD(port))
+    {
+        // Write-only latch - inert for images <= 256 KB until the read-strobe
+        // state machine lands (Task 7)
+        state.p7EFD = value;
+        disp.decodedPort = 0x7EFD;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+    }
+    else if (IsPort_7FFD(port))
     {
         Port_7FFD(value, pc);
         disp.decodedPort = 0x7FFD;
         disp.wasDecoded = true;
         disp.wasHandledInline = true;
     }
-
-    bool isPort_1FFD = IsPort_1FFD(port);
-    if (isPort_1FFD)
+    else if (IsPort_1FFD(port))
     {
         Port_1FFD(value, pc);
         disp.decodedPort = 0x1FFD;
         disp.wasDecoded = true;
         disp.wasHandledInline = true;
     }
+    else if (IsPort_FE(port))
+    {
+        Default_Port_FE_Out(port, value, pc);
+        disp.decodedPort = 0x00FE;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+    }
 
     // AY #FFFD: A15=1, A14=1, A1=0 (register select / TurboSound chip select)
     // Mask: 0b1100'0000'0000'0010, Match: 0b1100'0000'0000'0000
-    if ((port & 0xC002) == 0xC000)
+    else if ((port & 0xC002) == 0xC000)
     {
         _state->pFFFD = value;
         PeripheralPortOut(0xFFFD, value);
@@ -167,6 +258,49 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
         _state->pBFFD = value;
         PeripheralPortOut(0xBFFD, value);
         disp.decodedPort = 0xBFFD;
+        disp.wasDecoded = true;
+    }
+
+    // Beta128 FDC ports are on the bus only while a TR-DOS session is open or
+    // the Shadow Monitor is paged (#1FFD bit1 - the monitor talks to the FDC
+    // with the session closed, hardware-reference 12.3)
+    else if (isBeta128 && ((state.flags & CF_TRDOS) || (state.p1FFD & 0x02)))
+    {
+        // Mirrors (e.g. OUT (#3CFF),A drive-select with A on A15-A8) dispatch
+        // through the canonical device key - raw addresses miss the exact-key
+        // peripheral map and used to fall through to the border arm below
+        PeripheralPortOut(beta128Port, value);
+        disp.decodedPort = beta128Port;
+        disp.wasDecoded = true;
+    }
+
+    // Border port: match the LOW BYTE only - OUT (#FF),A puts A on lines
+    // A15-A8, so the decoder sees #nnFF for whatever A holds and an exact
+    // 16-bit compare would miss every such write. No collision with the arms
+    // above: #FFFD/#7FFD/#1FFD end in #FD, both AY masks need A1=0, the #FE
+    // pattern needs A0=0
+    else if ((port & 0x00FF) == 0x00FF)
+    {
+        // Reached only when the gating arm above left the FDC system port
+        // undecoded; inside a session the byte goes to the FDC instead
+        state.border_attr = value & 0b111;
+        _screen->SetBorderColor(value & 0b111);
+        disp.decodedPort = 0x00FF;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+        disp.wasBeta128Gated = isBeta128;  // trace attribution: FDC off the bus
+    }
+
+    // Gated FDC writes without a border collision: hardware ignores them
+    else if (isBeta128)
+    {
+        disp.wasBeta128Gated = true;
+    }
+
+    // Everything else: registered peripherals (Covox etc.)
+    else
+    {
+        PeripheralPortOut(port, value);
         disp.wasDecoded = true;
     }
 
@@ -190,12 +324,47 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
 
 void PortDecoder_Scorpion256::SetRAMPage(uint8_t page)
 {
-    (void)page;
+    // Debugger-forced page: translate back into the latch pair and reapply,
+    // so the debug view and the latch state stay coherent (design 5)
+    EmulatorState& state = *_state;
+
+    state.p7FFD = static_cast<uint8_t>((state.p7FFD & ~0b111) | (page & 0b111));
+    state.p1FFD = static_cast<uint8_t>((state.p1FFD & ~0x10) | ((page & 0x08) ? 0x10 : 0));
+    state.p1FFD = static_cast<uint8_t>((state.p1FFD & ~0xC0) | ((page & 0x30) << 2));
+
+    _context->pMemory->UpdateZ80Banks();
 }
 
 void PortDecoder_Scorpion256::SetROMPage(uint8_t page)
 {
-    (void)page;
+    // Debugger-forced ROM page: set the select bits the #0000 priority chain
+    // reads (CF_TRDOS / #1FFD bit1 / #7FFD bit4) for the role the page belongs
+    // to, then reapply through the single translation point
+    Memory& memory = *_context->pMemory;
+    EmulatorState& state = *_state;
+
+    if (page == static_cast<uint8_t>(memory.GetROMPageFromAddress(memory.base_sys_rom)))
+    {
+        state.p1FFD |= 0x02;      // Shadow Monitor
+    }
+    else if (page == static_cast<uint8_t>(memory.GetROMPageFromAddress(memory.base_dos_rom)))
+    {
+        state.flags |= CF_TRDOS;  // open a TR-DOS session
+    }
+    else if (page == static_cast<uint8_t>(memory.GetROMPageFromAddress(memory.base_sos_rom)))
+    {
+        state.p1FFD &= static_cast<uint8_t>(~0x02);
+        state.flags &= ~CF_TRDOS;
+        state.p7FFD |= 0x10;      // ROM1: 48K BASIC
+    }
+    else
+    {
+        state.p1FFD &= static_cast<uint8_t>(~0x02);
+        state.flags &= ~CF_TRDOS;
+        state.p7FFD &= static_cast<uint8_t>(~0x10);  // ROM0: BASIC 128
+    }
+
+    memory.UpdateZ80Banks();
 }
 
 /// endregion </Interface methods>
@@ -257,7 +426,25 @@ bool PortDecoder_Scorpion256::IsPort_1FFD(uint16_t port)
 
     return result;
 }
-/// endregion <Helper methods>
+
+bool PortDecoder_Scorpion256::IsPort_7EFD(uint16_t port)
+{
+    //    Scorpion ZS256 ProfROM
+    //    port: #7EFD
+    //    Full match:    01111110 11111101
+    //    Match pattern: 01x1xxxx 0x1xx101 (A8 low separates it from #7FFD)
+    static const uint16_t port_7EFD_full    = 0b0111'1110'1111'1101;
+    static const uint16_t port_7EFD_mask    = 0b1101'0001'0010'0111;
+    static const uint16_t port_7EFD_match   = 0b0101'0000'0010'0101;
+
+    // Compile-time check
+    static_assert((port_7EFD_full & port_7EFD_mask) == port_7EFD_match && "Mask pattern incorrect");
+
+    bool result = (port & port_7EFD_mask) == port_7EFD_match;
+
+    return result;
+}
+/// endregion </Helper methods>
 
 /// Port #7FFD (Memory) handler
 /// \param value
@@ -281,22 +468,24 @@ void PortDecoder_Scorpion256::Port_7FFD(uint8_t value, uint16_t pc)
     static const uint16_t port = 0x7FFD;
     Memory& memory = *_context->pMemory;
 
-    uint8_t bankRAM = value & 0b00000111;
-    uint8_t screenNumber = (value & 0b00001000) >> 3;  // 0 = Normal (Bank 5), 1 = Shadow (Bank 7)
-    bool isROM0 = value & 0b00010000;
-    bool isPagingDisabled = value & 0b00100000;
-
-    // Disabling latch is kept until reset
+    // The disabling latch is kept until reset. Once D5 has been written the
+    // whole port is frozen (screen bit included), but the locking write itself
+    // applies: latch first, then derive the lock bit. All bank math — the
+    // #7FFD low bits plus the #1FFD D4/D6/D7 extensions and the #0000 priority
+    // chain — lives in Memory::UpdateScorpionBanks() behind the single
+    // UpdateZ80Banks() call (design §3/§5), so the latch that snapshots and
+    // the debugger read back is exactly the byte that was written
     if (!_7FFD_Locked)
     {
-        memory.SetRAMPageToBank3(bankRAM);
-        memory.SetROMMode(isROM0 ? RM_128 : RM_SOS);
+        _state->p7FFD = value;
+        memory.UpdateZ80Banks();
 
-        _7FFD_Locked = isPagingDisabled;
+        uint8_t screenNumber = (value & 0b00001000) >> 3;  // 0 = Normal (Bank 5), 1 = Shadow (Bank 7)
+        SpectrumScreenEnum screen = screenNumber ? SCREEN_SHADOW : SCREEN_NORMAL;
+        _screen->SetActiveScreen(screen);
+
+        _7FFD_Locked = value & 0b00100000;
     }
-
-    SpectrumScreenEnum screen = screenNumber ? SCREEN_SHADOW : SCREEN_NORMAL;
-    _screen->SetActiveScreen(screen);
 
     MLOGDEBUG(memory.DumpMemoryBankInfo());
 
@@ -316,6 +505,35 @@ void PortDecoder_Scorpion256::Port_7FFD(uint8_t value, uint16_t pc)
 /// \param value
 void PortDecoder_Scorpion256::Port_1FFD(uint8_t value, uint16_t pc)
 {
-    (void)value;
-    (void)pc;
+    /// region <Override submodule>
+    static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
+    /// endregion </Override submodule>
+
+    //  Port: #1FFD
+    //  Bits:
+    //      D0     RAM bank 0 at #0000 (priority over every ROM select)
+    //      D1     Shadow Monitor (service ROM) at #0000
+    //      D2     RS-232 output line - no memory effect (HW ref. 12.9)
+    //      D4     RAM bank bit 3 at #C000
+    //      D6-D7  RAM bank bits 5:4 at #C000 (1 MB machines)
+    //  Not gated by the #7FFD lock latch - the hardware register is independent
+
+    static const uint16_t port = 0x1FFD;
+    Memory& memory = *_context->pMemory;
+
+    _state->p1FFD = value;
+    memory.UpdateZ80Banks();
+
+    MLOGDEBUG(memory.DumpMemoryBankInfo());
+
+    /// region <Debug logging>
+
+    // Check if port was not explicitly muted
+    if (!key_exists(_loggingMutePorts, port))
+    {
+        MLOGDEBUG(DumpPortValue(0x1FFD, port, value, pc));
+        MLOGDEBUG(memory.DumpMemoryBankInfo());
+    }
+
+    /// endregion </Debug logging>
 }

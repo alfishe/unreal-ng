@@ -102,6 +102,8 @@ public:
             "pause", sol::resolve<void(bool)>(&Emulator::Pause),
             "resume", sol::resolve<void(bool)>(&Emulator::Resume),
             "reset", &Emulator::Reset,
+            "request_nmi", &Emulator::RequestNMI,
+            "request_mni", &Emulator::RequestMNI,
             
             // State queries
             "is_running", &Emulator::IsRunning,

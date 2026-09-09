@@ -200,6 +200,12 @@ public:
     uint8_t Default_Port_FE_In(uint16_t port, uint16_t pc);
     void Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc);
 
+    /// Whether a decoded port value belongs to the Beta128 FDC register set
+    /// (#1F status/cmd, #3F track, #5F sector, #7F data, #FF system). The port
+    /// set is identical on every Beta-128 machine, so the predicate lives on
+    /// the base class and is shared by the model decoders for session gating
+    bool IsBeta128Port(uint16_t decodedPort);
+
     /// region <Port trace (runtime feature "porttrace")>
 
     /// Re-read the porttrace feature flag from FeatureManager and instantiate or

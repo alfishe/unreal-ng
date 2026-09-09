@@ -120,6 +120,9 @@ namespace PythonBindings
             .def("pause", [](Emulator& self) { self.Pause(true); }, "Pause emulator")
             .def("resume", [](Emulator& self) { self.Resume(true); }, "Resume emulator")
             .def("reset", &Emulator::Reset, "Reset emulator")
+            .def("request_nmi", &Emulator::RequestNMI, "Pulse the Z80 NMI line (vector #0066)")
+            .def("request_mni", &Emulator::RequestMNI,
+                 "Scorpion magic button: page the Shadow Monitor, then NMI (plain NMI on other models)")
 
             // Legacy __main__-compatible aliases: the startup registration in
             // automation-python.cpp aliases this class into __main__ (instead

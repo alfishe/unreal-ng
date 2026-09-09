@@ -203,6 +203,16 @@ public:
 
     // Emulator control cycle
     void Reset();
+
+    /// Pulse the Z80 NMI line - accepted at the next instruction boundary
+    /// (11T, PC pushed, vector #0066, IFF2<-IFF1). Safe to call while running.
+    void RequestNMI();
+
+    /// Scorpion "magic button": page the Shadow Monitor at #0000 (#1FFD bit 1)
+    /// and pulse NMI, so the handler at #0066 executes monitor code. Non-Scorpion
+    /// models fall back to a plain NMI. Safe to call while running.
+    void RequestMNI();
+
     void Start();
     void StartAsync();
     void Pause(bool broadcast = true);   // broadcast=false for internal operations (won't trigger UI updates)

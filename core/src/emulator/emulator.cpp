@@ -745,6 +745,51 @@ void Emulator::Reset()
     }
 }
 
+void Emulator::RequestNMI()
+{
+    // Mutating CPU state from a host thread (WebAPI / GUI) while the frame loop
+    // runs would race the Z80 thread - use the same pause guard as Reset()
+    bool wasRunning = _isRunning && !_isPaused;
+    if (wasRunning)
+    {
+        Pause(false);
+        WaitForPauseConfirmation();
+    }
+
+    _core->GetZ80()->RequestNonMaskedInterrupt();
+
+    if (wasRunning)
+        Resume(false);
+}
+
+void Emulator::RequestMNI()
+{
+    bool wasRunning = _isRunning && !_isPaused;
+    if (wasRunning)
+    {
+        Pause(false);
+        WaitForPauseConfirmation();
+    }
+
+    CONFIG& config = _context->config;
+    EmulatorState& state = _context->emulatorState;
+
+    // The magic button: latch the Shadow Monitor into #0000 BEFORE the NMI lands
+    // so the #0066 handler executes monitor code (hardware: the button wires the
+    // monitor enable and the NMI line to the same physical press). On non-Scorpion
+    // models the latch does not exist - plain NMI semantics.
+    if (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP)
+    {
+        state.p1FFD |= 0x02;
+        _context->pMemory->UpdateZ80Banks();
+    }
+
+    _core->GetZ80()->RequestNonMaskedInterrupt();
+
+    if (wasRunning)
+        Resume(false);
+}
+
 void Emulator::Start()
 {
     // Skip if not initialized

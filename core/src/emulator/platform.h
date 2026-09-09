@@ -236,7 +236,8 @@ const uint16_t PAGE_SIZE = 0x4000U;		// Spectrum memory page size is 16Kb (0x400
 const uint16_t MAX_RAM_PAGES = 256;     // 4Mb RAM
 const uint16_t MAX_CACHE_PAGES = 2;     // 32K cache
 const uint16_t MAX_MISC_PAGES = 1;      // trash page (to accomodate ROM writes and other garbage write operations)
-const uint16_t MAX_ROM_PAGES = 64;      // 1Mb
+const uint16_t MAX_ROM_PAGES = 128;     // 2Mb (ProfROM quadrant ladder)
+const uint16_t ROM_QUADRANT_PAGES = 4;  // 64Kb ProfROM quadrant
 
 // TS-conf specific settings
 #define TS_CACHE_SIZE 512

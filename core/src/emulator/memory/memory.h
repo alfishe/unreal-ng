@@ -261,6 +261,18 @@ public:
     void SetROMMode(ROMModeEnum mode);
 
     void UpdateZ80Banks();
+
+    /// Scorpion ZS 256 latch-to-bank translation (design §3);
+    /// UpdateZ80Banks() dispatches here for MM_SCORP / MM_PROFSCORP before
+    /// the generic body
+    void UpdateScorpionBanks();
+
+    /// RAM bank mask from config.ramsize (KB): 256 KB → 0x0F, 1024 KB → 0x3F
+    uint8_t GetRamMask() const;
+
+    /// Repoint the four ROM role pointers at a ProfROM quadrant (design §4.2)
+    void ResolveScorpionRomBases(uint8_t quadrant);
+
     void SetROMPage(uint16_t page, bool updatePorts = false);
     void SetRAMPageToBank0(uint16_t page, bool updatePorts = false);
     void SetRAMPageToBank1(uint16_t page);
