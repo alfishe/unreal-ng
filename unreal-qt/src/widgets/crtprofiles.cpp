@@ -8,7 +8,17 @@
 
 CRTProfileParams CRTProfileParams::None()
 {
-    return CRTProfileParams{};
+    CRTProfileParams p;
+    p.profile = CRTProfile::None;
+    // Explicitly neutral values - no processing
+    p.gamma = 1.0f;
+    p.brightness = 1.0f;
+    p.contrast = 1.0f;
+    p.saturation = 1.0f;
+    p.scanlineWeight = 0.0f;
+    p.maskStrength = 0.0f;
+    p.maskType = CRTMaskType::None;
+    return p;
 }
 
 CRTProfileParams CRTProfileParams::Basic()
@@ -20,6 +30,7 @@ CRTProfileParams CRTProfileParams::Basic()
     p.scanlineAdaptive = false;  // Fixed scanlines on source resolution
     p.bloomStrength = 0.1f;
     p.bloomRadius = 1.5f;
+    p.gamma = 1.0f;  // Neutral gamma for CPU/GPU parity
     return p;
 }
 
@@ -31,11 +42,13 @@ CRTProfileParams CRTProfileParams::Aperture()
     p.cornerRadius = 0.02f;
     p.scanlineWeight = 0.25f;
     p.scanlineAdaptive = true;
+    p.maskType = CRTMaskType::Aperture;
     p.maskStrength = 0.5f;
     p.maskDotPitch = 0.0f;  // Auto-calculate from resolution
     p.bloomStrength = 0.15f;
     p.bloomRadius = 2.0f;
     p.saturation = 1.1f;
+    p.gamma = 1.0f;  // Neutral for CPU/GPU parity
     return p;
 }
 
@@ -47,12 +60,13 @@ CRTProfileParams CRTProfileParams::ShadowMask()
     p.cornerRadius = 0.03f;
     p.scanlineWeight = 0.2f;
     p.scanlineAdaptive = true;
+    p.maskType = CRTMaskType::ShadowMask;
     p.maskStrength = 0.6f;
     p.maskDotPitch = 0.0f;
     p.bloomStrength = 0.12f;
     p.bloomRadius = 1.8f;
     p.saturation = 1.05f;
-    p.gamma = 2.4f;
+    p.gamma = 1.0f;  // Neutral for CPU/GPU parity
     return p;
 }
 
@@ -64,12 +78,14 @@ CRTProfileParams CRTProfileParams::SlotMask()
     p.cornerRadius = 0.025f;
     p.scanlineWeight = 0.35f;
     p.scanlineAdaptive = true;
+    p.maskType = CRTMaskType::SlotMask;
     p.maskStrength = 0.55f;
     p.maskDotPitch = 0.0f;
     p.bloomStrength = 0.18f;
     p.bloomRadius = 2.2f;
     p.saturation = 1.15f;
     p.brightness = 1.1f;
+    p.gamma = 1.0f;  // Neutral for CPU/GPU parity
     return p;
 }
 
@@ -87,7 +103,8 @@ CRTProfileParams CRTProfileParams::Megatron()
     p.scanlineWeight = 0.0f;
     p.scanlineAdaptive = true;
 
-    // Phosphor mask simulates real CRT at target resolution
+    // Phosphor mask simulates real CRT at target resolution (aperture grille style)
+    p.maskType = CRTMaskType::Aperture;
     p.maskStrength = 0.7f;
     p.maskDotPitch = 0.0f;  // Auto: calculates from output resolution
 
@@ -99,7 +116,7 @@ CRTProfileParams CRTProfileParams::Megatron()
     p.saturation = 1.2f;
     p.brightness = 1.05f;
     p.contrast = 1.1f;
-    p.gamma = 2.4f;
+    p.gamma = 1.0f;  // Neutral for CPU/GPU parity
 
     // Slight persistence for motion
     p.persistence = 0.1f;

@@ -1,4 +1,5 @@
 #include "devicescreen.h"
+#include "crtfilter.h"
 
 #include <QDebug>
 #include <QKeyEvent>
@@ -155,6 +156,35 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
         }
     }
 
+    // CRT effects: apply SIMD-accelerated filter at OUTPUT resolution
+    // Effects like scanlines need output-resolution precision for fine lines
+    if (_crtEnabled && _crtFilter && _crtParams.profile != CRTProfile::None)
+    {
+        int outWidth = destRect.width();
+        int outHeight = destRect.height();
+
+        // Reinitialize CRT buffer if output size changed
+        if (_crtFrame.width() != outWidth || _crtFrame.height() != outHeight)
+        {
+            _crtFrame = QImage(outWidth, outHeight, QImage::Format_RGBA8888);
+        }
+
+        // Scale source to output size first - use nearest-neighbor for crisp pixels
+        QImage scaled = drawImage->copy(sourceRect.toRect()).scaled(
+            outWidth, outHeight, Qt::IgnoreAspectRatio, Qt::FastTransformation);
+        scaled = scaled.convertToFormat(QImage::Format_RGBA8888);
+
+        // Apply CRT filter at output resolution for fine scanlines
+        _crtFilter->apply(scaled.bits(), _crtFrame.bits(), outWidth, outHeight, _crtParams);
+
+        // Draw directly - already at output size
+#if QT_VERSION >= QT_VERSION_CHECK(5, 13, 0)
+        painter.setRenderHint(QPainter::LosslessImageRendering);
+#endif
+        painter.drawImage(destRect, _crtFrame);
+        return;
+    }
+
 #if QT_VERSION >= QT_VERSION_CHECK(5, 13, 0)
     painter.setRenderHint(QPainter::LosslessImageRendering);
 #endif
@@ -184,6 +214,47 @@ void DeviceScreen::setTemporalWeightMode(int mode)
         _frameHistory.setEqualWeights();
     else
         _frameHistory.setExponentialWeights(0.5f);
+}
+
+void DeviceScreen::setCRTEffectsEnabled(bool enabled)
+{
+    _crtEnabled = enabled;
+
+    if (enabled && !_crtFilter)
+    {
+        _crtFilter = std::make_unique<CRTFilter>();
+    }
+
+    // Don't auto-select profile - respect current profile selection
+    // If profile is None, no effects will be applied even if enabled
+
+    update();
+}
+
+void DeviceScreen::setCRTProfile(CRTProfile profile)
+{
+    _crtParams = CRTProfileParams::FromProfile(profile);
+    _crtEnabled = (profile != CRTProfile::None);
+
+    if (_crtEnabled && !_crtFilter)
+    {
+        _crtFilter = std::make_unique<CRTFilter>();
+    }
+
+    update();
+}
+
+void DeviceScreen::setCRTProfile(const CRTProfileParams& params)
+{
+    _crtParams = params;
+    _crtEnabled = (params.profile != CRTProfile::None);
+
+    if (_crtEnabled && !_crtFilter)
+    {
+        _crtFilter = std::make_unique<CRTFilter>();
+    }
+
+    update();
 }
 
 QImage DeviceScreen::grabFramebuffer()

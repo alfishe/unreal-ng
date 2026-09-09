@@ -263,7 +263,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     bool gpuAvailable = DeviceScreenWrapper::isGPUAvailable();
     _menuManager->setGpuAccelerationAvailable(gpuAvailable);
     _menuManager->setGpuAccelerationChecked(_screenWrapper->isGPUAccelerated());
-    _menuManager->setCrtEffectsEnabled(_screenWrapper->isGPUAccelerated());
+    _menuManager->setCrtEffectsEnabled(true);
 
     _statusBarManager->restoreSettings();
 
@@ -2864,6 +2864,7 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
     // Save current state
     bool hudVisible = _hudWrapper ? _hudWrapper->isVisible() : false;
     bool crtEnabled = _screenWrapper->crtEffectsEnabled();
+    CRTProfileParams crtParams = _screenWrapper->crtParams();
     bool hasViewport = _screenWrapper->hasViewport();
     DisplayViewport savedViewport = _screenWrapper->displayViewport();
     bool temporalEnabled = _screenWrapper->temporalBlendingEnabled();
@@ -2886,9 +2887,11 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
     // Restore state
     _hudWrapper->setVisible(hudVisible);
     _hudWrapper->setModel(_hudModel);
-    if (_screenWrapper->isGPUAccelerated())
+
+    // Restore CRT effects (works for both GPU and software modes)
+    if (crtEnabled)
     {
-        _screenWrapper->setCRTEffectsEnabled(crtEnabled);
+        _screenWrapper->setCRTProfile(crtParams);
     }
 
     // Re-attach to emulator if one is running
@@ -2921,7 +2924,7 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
 
     // Update menu state
     _menuManager->setGpuAccelerationChecked(_screenWrapper->isGPUAccelerated());
-    _menuManager->setCrtEffectsEnabled(_screenWrapper->isGPUAccelerated());
+    _menuManager->setCrtEffectsEnabled(true);
     _menuManager->setCrtEffectsChecked(_screenWrapper->crtEffectsEnabled());
 
     // Show, resize and center the new widget

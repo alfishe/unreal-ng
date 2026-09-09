@@ -385,23 +385,11 @@ void MenuManager::setCrtEffectsEnabled(bool enabled)
     if (_crtEffectsAction)
     {
         _crtEffectsAction->setEnabled(enabled);
-        if (!enabled)
-        {
-            _crtEffectsAction->setStatusTip(tr("CRT effects require GPU acceleration"));
-        }
-        else
-        {
-            _crtEffectsAction->setStatusTip(tr("Toggle CRT display effects (scanlines, curvature)"));
-        }
+        _crtEffectsAction->setStatusTip(tr("Toggle CRT display effects (scanlines, phosphor mask) - GPU or SIMD accelerated"));
     }
     if (_crtProfileMenu)
     {
         _crtProfileMenu->setEnabled(enabled);
-    }
-    // Temporal blending toggle in View menu (for quick toggle, separate from Tools dialog)
-    if (_temporalBlendingAction)
-    {
-        _temporalBlendingAction->setStatusTip(tr("Smooth gigascreen flicker by blending multiple frames"));
     }
 }
 

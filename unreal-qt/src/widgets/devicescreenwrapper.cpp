@@ -151,13 +151,16 @@ void DeviceScreenWrapper::setCRTEffectsEnabled(bool enabled)
 {
     if (_useGPU && _gpu)
         _gpu->setCRTEffectsEnabled(enabled);
-    // No-op for software renderer
+    else if (_software)
+        _software->setCRTEffectsEnabled(enabled);
 }
 
 bool DeviceScreenWrapper::crtEffectsEnabled() const
 {
     if (_useGPU && _gpu)
         return _gpu->crtEffectsEnabled();
+    else if (_software)
+        return _software->crtEffectsEnabled();
     return false;
 }
 
@@ -165,18 +168,24 @@ void DeviceScreenWrapper::setCRTProfile(CRTProfile profile)
 {
     if (_useGPU && _gpu)
         _gpu->setCRTProfile(profile);
+    else if (_software)
+        _software->setCRTProfile(profile);
 }
 
 void DeviceScreenWrapper::setCRTProfile(const CRTProfileParams& params)
 {
     if (_useGPU && _gpu)
         _gpu->setCRTProfile(params);
+    else if (_software)
+        _software->setCRTProfile(params);
 }
 
 CRTProfile DeviceScreenWrapper::crtProfile() const
 {
     if (_useGPU && _gpu)
         return _gpu->crtProfile();
+    else if (_software)
+        return _software->crtProfile();
     return CRTProfile::None;
 }
 
@@ -184,6 +193,8 @@ CRTProfileParams DeviceScreenWrapper::crtParams() const
 {
     if (_useGPU && _gpu)
         return _gpu->crtParams();
+    else if (_software)
+        return _software->crtParams();
     return CRTProfileParams::None();
 }
 

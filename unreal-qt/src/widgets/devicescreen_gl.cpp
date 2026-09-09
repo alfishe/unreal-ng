@@ -320,10 +320,7 @@ void DeviceScreenGL::initializeGL()
 void DeviceScreenGL::setCRTEffectsEnabled(bool enabled)
 {
     _crtEnabled = enabled;
-    if (enabled && _crtParams.profile == CRTProfile::None)
-    {
-        _crtParams = CRTProfileParams::Basic();
-    }
+    // Don't auto-select profile - respect current profile selection
     update();
 }
 

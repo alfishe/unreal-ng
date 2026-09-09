@@ -14,6 +14,15 @@ enum class CRTProfile
     Megatron        // Sony Megatron-style adaptive phosphor simulation
 };
 
+/// @brief Phosphor mask types for CRT simulation
+enum class CRTMaskType
+{
+    None,           // No mask
+    Aperture,       // Vertical RGB stripes (Trinitron-style)
+    ShadowMask,     // Traditional delta/dot triad
+    SlotMask        // Slotted RGB pattern
+};
+
 /// @brief CRT profile parameters
 struct CRTProfileParams
 {
@@ -30,6 +39,7 @@ struct CRTProfileParams
     bool scanlineAdaptive = true;    // Scale scanlines with resolution
 
     // Phosphor mask
+    CRTMaskType maskType = CRTMaskType::None;  // Type of phosphor mask pattern
     float maskStrength = 0.0f;       // Phosphor mask visibility (0 = none, 1 = full)
     float maskDotPitch = 0.0f;       // Dot pitch in output pixels (0 = auto from resolution)
 

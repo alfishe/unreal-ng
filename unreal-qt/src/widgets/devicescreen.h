@@ -5,9 +5,13 @@
 #include <QWidget>
 #include <functional>
 #include <memory>
+#include <cstdint>
 
 #include "emulator/video/screen.h"  // For DisplayViewport
 #include "framehistory.h"
+#include "crtprofiles.h"
+
+class CRTFilter;
 
 class Emulator;  // Forward declaration
 
@@ -95,6 +99,14 @@ public:
     void setTemporalWeightMode(int mode);
     int temporalWeightMode() const { return _temporalWeightMode; }
 
+    // CRT effects (SIMD-accelerated)
+    void setCRTEffectsEnabled(bool enabled);
+    bool crtEffectsEnabled() const { return _crtEnabled; }
+    void setCRTProfile(CRTProfile profile);
+    void setCRTProfile(const CRTProfileParams& params);
+    CRTProfile crtProfile() const { return _crtParams.profile; }
+    const CRTProfileParams& crtParams() const { return _crtParams; }
+
 protected:
     void paintEvent(QPaintEvent* event) override;
 
@@ -128,6 +140,12 @@ private:
     QImage _blendedFrame;
     bool _temporalEnabled = false;
     int _temporalWeightMode = 0;
+
+    // CRT effects
+    std::unique_ptr<CRTFilter> _crtFilter;
+    QImage _crtFrame;
+    bool _crtEnabled = false;
+    CRTProfileParams _crtParams;
 };
 
 #endif  // DEVICESCREEN_H
