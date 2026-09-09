@@ -12,6 +12,7 @@
 class Emulator;
 class DeviceScreen;
 class DeviceScreenGL;
+class DeviceScreenGLWindow;
 
 /// @brief Unified wrapper for DeviceScreen implementations.
 /// Automatically selects GPU or software backend based on platform capabilities.
@@ -117,7 +118,7 @@ public:
 private:
     QPointer<QWidget> _widget;  // Guarded: the parent may destroy the widget before the wrapper
     DeviceScreen* _software = nullptr;
-    DeviceScreenGL* _gpu = nullptr;
+    DeviceScreenGLWindow* _gpuWindow = nullptr;  // QOpenGLWindow for tear-free vsync
     bool _useGPU = false;
 
     // Track viewport state for getters
