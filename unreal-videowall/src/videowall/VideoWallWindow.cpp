@@ -965,35 +965,50 @@ void VideoWallWindow::resizeGridIntelligently(QSize screenSize)
     int tilesWide = layout.cols;
     int tilesHigh = layout.rows;
     int targetTotal = layout.totalTiles;
-    int currentTotal = _tileGrid->tiles().size();
+    int currentTotal = tileCount();
 
     qDebug() << "Smart resize: current" << currentTotal << "tiles, target" << targetTotal << "tiles for" << screenSize;
 
-    // Set grid dimensions for proper layout
+    // GPU mode: simpler path
+    if (_useGPU && _tileGridWrapper)
+    {
+        _tileGridWrapper->setGridDimensions(tilesWide, tilesHigh);
+
+        if (targetTotal > currentTotal)
+        {
+            for (int i = 0; i < targetTotal - currentTotal; i++)
+                addEmulatorTile();
+        }
+        else if (targetTotal < currentTotal)
+        {
+            for (int i = 0; i < currentTotal - targetTotal; i++)
+                _tileGridWrapper->removeLastEmulator();
+        }
+        return;
+    }
+
+    // CPU mode
+    if (!_tileGrid)
+        return;
+
     _tileGrid->setGridDimensions(tilesWide, tilesHigh);
 
     // In single sync mode: do NOT touch the single emulator instance or unbind audio!
-    // Just adjust the number of visual tile widgets matching the new layout size.
     if (_singleSyncMode)
     {
         if (targetTotal > currentTotal)
         {
-            int tilesToAdd = targetTotal - currentTotal;
-            for (int i = 0; i < tilesToAdd; i++)
-            {
+            for (int i = 0; i < targetTotal - currentTotal; i++)
                 addEmulatorTile();
-            }
         }
         else if (targetTotal < currentTotal)
         {
-            int tilesToRemove = currentTotal - targetTotal;
-            for (int i = 0; i < tilesToRemove; i++)
+            for (int i = 0; i < currentTotal - targetTotal; i++)
             {
                 const auto& tiles = _tileGrid->tiles();
                 if (!tiles.empty())
                 {
                     EmulatorTile* tile = tiles.back();
-                    // Clear tile's emulator pointer so removeTile doesn't stop primaryEmulator
                     tile->setEmulator(nullptr);
                     _tileGrid->removeTile(tile, true);
                 }
@@ -1005,85 +1020,51 @@ void VideoWallWindow::resizeGridIntelligently(QSize screenSize)
 
     if (targetTotal > currentTotal)
     {
-        // Need MORE tiles - add them
-        int tilesToAdd = targetTotal - currentTotal;
-        qDebug() << "Adding" << tilesToAdd << "tiles to reach" << targetTotal;
-
-        for (int i = 0; i < tilesToAdd; i++)
-        {
+        qDebug() << "Adding" << (targetTotal - currentTotal) << "tiles to reach" << targetTotal;
+        for (int i = 0; i < targetTotal - currentTotal; i++)
             addEmulatorTile();
-        }
     }
     else if (targetTotal < currentTotal)
     {
-        // Need FEWER tiles - remove excess from the end
         int tilesToRemove = currentTotal - targetTotal;
         qDebug() << "Removing" << tilesToRemove << "excess tiles";
 
-        auto tiles = _tileGrid->tiles();  // Get copy of vector
+        auto tiles = _tileGrid->tiles();
 
-        // Pre-stop all excess emulator threads before releasing any.
-        // On Windows, Release() of one emulator while another's thread is still
-        // running can cause an access violation inside the running thread.
+        // Pre-stop all excess emulator threads
         for (int i = 0; i < tilesToRemove; i++)
         {
             int idx = static_cast<int>(tiles.size()) - 1 - i;
-            if (idx >= 0)
-            {
-                EmulatorTile* tile = tiles[idx];
-                if (tile && tile->emulator())
-                {
-                    _emulatorManager->StopEmulator(tile->emulator()->GetUUID());
-                }
-            }
+            if (idx >= 0 && tiles[idx] && tiles[idx]->emulator())
+                _emulatorManager->StopEmulator(tiles[idx]->emulator()->GetUUID());
         }
 
         for (int i = 0; i < tilesToRemove; i++)
         {
-            // Remove from the end (newest tiles first)
             int lastIndex = tiles.size() - 1;
             if (lastIndex >= 0)
             {
                 EmulatorTile* tile = tiles[lastIndex];
                 if (tile)
                 {
-                    // If removing the audio-bound tile, unbind audio first to prevent
-                    // dangling pointer and fix audio sync (empty ring buffer causes
-                    // NC_AUDIO_BUFFER_HALF_FULL spam, making remaining emulators run too fast)
                     if (tile == _audioBoundTile)
-                    {
                         unbindAudioFromTile();
-                    }
 
-                    // Get emulator ID before clearing the reference
                     std::string emulatorId;
                     if (tile->emulator())
-                    {
                         emulatorId = tile->emulator()->GetUUID();
-                    }
 
-                    // CRITICAL: Clear tile's shared_ptr reference FIRST
                     tile->prepareForDeletion();
 
-                    // Destroy emulator via manager (now safe - tile no longer holds reference)
                     if (!emulatorId.empty())
-                    {
                         _emulatorManager->RemoveEmulator(emulatorId);
-                    }
 
-                    // Remove from grid (this deletes the tile)
-                    _tileGrid->removeTile(tile, true);  // skipLayout during batch
-
-                    // Update our copy
+                    _tileGrid->removeTile(tile, true);
                     tiles = _tileGrid->tiles();
-
-                    qDebug() << "Removed excess tile:" << QString::fromStdString(emulatorId);
                 }
             }
         }
 
-        // If audio was unbound (removed tile was audio-bound), rebind to first remaining tile
-        // to restore proper audio pacing for all emulators
         if (!_audioBoundTile && !tiles.empty())
         {
             bindAudioToTile(tiles.front());
@@ -1092,7 +1073,6 @@ void VideoWallWindow::resizeGridIntelligently(QSize screenSize)
     }
     else
     {
-        // Same number of tiles - just update layout
         qDebug() << "Tile count unchanged, updating layout only";
         _tileGrid->updateLayout();
     }
@@ -1105,17 +1085,36 @@ void VideoWallWindow::restoreSavedEmulators()
     if (_savedEmulatorIds.empty())
     {
         resizeGridIntelligently(size());
-        qDebug() << "No saved emulators - resized grid to fit window:" << _tileGrid->tiles().size() << "tiles";
+        qDebug() << "No saved emulators - resized grid to fit window:" << tileCount() << "tiles";
         return;
     }
 
-    // Build set of saved UUIDs for fast lookup
-    std::unordered_set<std::string> savedIds(_savedEmulatorIds.begin(), _savedEmulatorIds.end());
+    // GPU mode: remove emulators not in saved set
+    if (_useGPU && _tileGridWrapper)
+    {
+        std::unordered_set<std::string> savedIds(_savedEmulatorIds.begin(), _savedEmulatorIds.end());
+        auto currentIds = _tileGridWrapper->emulatorIds();
+        int removed = 0;
 
-    // Get current tiles
+        for (const auto& id : currentIds)
+        {
+            if (savedIds.find(id) == savedIds.end())
+            {
+                _tileGridWrapper->removeEmulator(id);
+                removed++;
+            }
+        }
+        qDebug() << "Restored" << _savedEmulatorIds.size() << "emulators, removed" << removed << "excessive";
+        return;
+    }
+
+    // CPU mode
+    if (!_tileGrid)
+        return;
+
+    std::unordered_set<std::string> savedIds(_savedEmulatorIds.begin(), _savedEmulatorIds.end());
     auto currentTiles = _tileGrid->tiles();
 
-    // Find tiles to remove (those NOT in saved set)
     std::vector<EmulatorTile*> tilesToRemove;
     for (auto* tile : currentTiles)
     {
@@ -1123,59 +1122,36 @@ void VideoWallWindow::restoreSavedEmulators()
             continue;
         std::string uuid = tile->emulator()->GetUUID();
         if (savedIds.find(uuid) == savedIds.end())
-        {
             tilesToRemove.push_back(tile);
-        }
     }
 
-    // Pre-stop all excess emulator threads before releasing any.
-    // On Windows, Release() of one emulator while another's thread is still
-    // running can cause an access violation inside the running thread.
     for (EmulatorTile* tile : tilesToRemove)
     {
         if (tile && tile->emulator())
-        {
             _emulatorManager->StopEmulator(tile->emulator()->GetUUID());
-        }
     }
 
-    // Remove excessive tiles in reverse order (newest first)
     for (auto it = tilesToRemove.rbegin(); it != tilesToRemove.rend(); ++it)
     {
         EmulatorTile* tile = *it;
         if (!tile)
             continue;
 
-        // Unbind audio if removing the audio-bound tile
         if (tile == _audioBoundTile)
-        {
             unbindAudioFromTile();
-        }
 
-        // Get emulator ID before clearing the reference
         std::string uuid;
         if (tile->emulator())
-        {
             uuid = tile->emulator()->GetUUID();
-        }
 
-        qDebug() << "Removing excessive emulator:" << QString::fromStdString(uuid);
-
-        // CRITICAL: Clear tile's shared_ptr reference FIRST
         tile->prepareForDeletion();
 
-        // Destroy emulator via manager (now safe - tile no longer holds reference)
         if (!uuid.empty())
-        {
             _emulatorManager->RemoveEmulator(uuid);
-        }
 
-        // Remove from grid (this schedules tile for deletion via deleteLater)
-        _tileGrid->removeTile(tile, true);  // skipLayout during batch
-        // NOTE: Do NOT delete tile here - removeTile already calls deleteLater()
+        _tileGrid->removeTile(tile, true);
     }
 
-    // If audio was unbound, rebind to first remaining tile
     const auto& remainingTiles = _tileGrid->tiles();
     if (!_audioBoundTile && !remainingTiles.empty())
     {
@@ -1189,15 +1165,15 @@ void VideoWallWindow::restoreSavedEmulators()
 void VideoWallWindow::setSoundForAllTiles(bool enabled)
 {
     // Set sound feature for ALL emulator instances in the grid
-    // This is called when entering/exiting fullscreen or bulk toggling
-    const auto& tiles = _tileGrid->tiles();
+    int count = tileCount();
     int successCount = 0;
 
-    for (auto* tile : tiles)
+    for (int i = 0; i < count; i++)
     {
-        if (tile && tile->emulator())
+        auto emulator = emulatorAt(i);
+        if (emulator)
         {
-            auto* featureManager = tile->emulator()->GetFeatureManager();
+            auto* featureManager = emulator->GetFeatureManager();
             if (featureManager)
             {
                 featureManager->setFeature(Features::kSoundGeneration, enabled);
@@ -1207,7 +1183,7 @@ void VideoWallWindow::setSoundForAllTiles(bool enabled)
         }
     }
 
-    qDebug() << "Sound and SoundHQ" << (enabled ? "enabled" : "disabled") << "for" << successCount << "/" << tiles.size()
+    qDebug() << "Sound and SoundHQ" << (enabled ? "enabled" : "disabled") << "for" << successCount << "/" << count
              << "tiles";
 }
 

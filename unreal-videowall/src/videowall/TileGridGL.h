@@ -87,6 +87,7 @@ protected:
 private:
     void updateLayout();
     void updateTextures();
+    QRect calculateTileRect(int index) const;
     void subscribeToNotifications();
     void unsubscribeFromNotifications();
 

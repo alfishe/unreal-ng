@@ -8,6 +8,7 @@
 #include <QKeyEvent>
 #include <QMimeData>
 #include <QOpenGLContext>
+#include <QOpenGLPixelTransferOptions>
 #include <QPainter>
 #include <QUrl>
 #include <cmath>
@@ -70,7 +71,7 @@ void TileGridGL::addEmulator(std::shared_ptr<Emulator> emulator)
 
     TileState state;
     state.emulator = emulator;
-    state.emulatorId = emulator->GetUUID().toString();
+    state.emulatorId = emulator->GetId();  // Must match what mainloop.cpp posts
     state.latchedFrame = QImage(FB_WIDTH, FB_HEIGHT, QImage::Format_RGBA8888);
     state.latchedFrame.fill(Qt::black);
 
@@ -195,15 +196,67 @@ void TileGridGL::setFocusedIndex(int index)
     }
 }
 
+QRect TileGridGL::calculateTileRect(int index) const
+{
+    if (index < 0 || index >= static_cast<int>(_emulators.size()) || _currentCols <= 0 || _currentRows <= 0)
+        return QRect();
+
+    int winW = width();
+    int winH = height();
+    if (winW <= 0 || winH <= 0)
+        return QRect();
+
+    int col = index % _currentCols;
+    int row = index / _currentCols;
+
+    float cellW = static_cast<float>(winW) / static_cast<float>(_currentCols);
+    float cellH = static_cast<float>(winH) / static_cast<float>(_currentRows);
+
+    float cellLeft = col * cellW;
+    float cellTop = row * cellH;
+
+    // ZX Spectrum active resolution 256x192 has 4:3 aspect ratio
+    constexpr float targetRatio = 4.0f / 3.0f;
+    float cellRatio = cellW / cellH;
+
+    float tileW, tileH;
+    if (cellRatio > targetRatio)
+    {
+        // Cell is wider than 4:3 -> pillarbox
+        tileH = cellH;
+        tileW = cellH * targetRatio;
+    }
+    else
+    {
+        // Cell is taller than 4:3 -> letterbox
+        tileW = cellW;
+        tileH = cellW / targetRatio;
+    }
+
+    float tileLeft = cellLeft + (cellW - tileW) * 0.5f;
+    float tileTop = cellTop + (cellH - tileH) * 0.5f;
+
+    return QRect(static_cast<int>(tileLeft), static_cast<int>(tileTop),
+                 static_cast<int>(tileW), static_cast<int>(tileH));
+}
+
 int TileGridGL::emulatorIndexAt(const QPoint& pos) const
 {
-    if (_emulators.empty() || _currentCols == 0)
+    if (_emulators.empty() || _currentCols <= 0 || _currentRows <= 0)
         return -1;
 
-    int col = pos.x() / TILE_WIDTH;
-    int row = pos.y() / TILE_HEIGHT;
-    int index = row * _currentCols + col;
+    int winW = width();
+    int winH = height();
+    if (winW <= 0 || winH <= 0)
+        return -1;
 
+    int col = pos.x() * _currentCols / winW;
+    int row = pos.y() * _currentRows / winH;
+
+    if (col < 0 || col >= _currentCols || row < 0 || row >= _currentRows)
+        return -1;
+
+    int index = row * _currentCols + col;
     if (index >= 0 && index < static_cast<int>(_emulators.size()))
         return index;
     return -1;
@@ -216,9 +269,18 @@ void TileGridGL::initializeGL()
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 
     _shader = new QOpenGLShaderProgram();
-    _shader->addShaderFromSourceCode(QOpenGLShader::Vertex, TILE_VERTEX_SHADER);
-    _shader->addShaderFromSourceCode(QOpenGLShader::Fragment, TILE_FRAGMENT_SHADER);
-    _shader->link();
+    if (!_shader->addShaderFromSourceCode(QOpenGLShader::Vertex, TILE_VERTEX_SHADER))
+    {
+        qWarning() << "TileGridGL vertex shader error:" << _shader->log();
+    }
+    if (!_shader->addShaderFromSourceCode(QOpenGLShader::Fragment, TILE_FRAGMENT_SHADER))
+    {
+        qWarning() << "TileGridGL fragment shader error:" << _shader->log();
+    }
+    if (!_shader->link())
+    {
+        qWarning() << "TileGridGL shader link error:" << _shader->log();
+    }
 }
 
 void TileGridGL::resizeGL(int w, int h)
@@ -280,23 +342,21 @@ void TileGridGL::updateTextures()
         if (!tile.texture)
         {
             tile.texture = new QOpenGLTexture(QOpenGLTexture::Target2D);
+            tile.texture->create();
+            tile.texture->setSize(static_cast<int>(desc.width), static_cast<int>(desc.height));
+            tile.texture->setFormat(QOpenGLTexture::RGBA8_UNorm);
+            tile.texture->setMipLevels(1);
+            tile.texture->allocateStorage(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8);
             tile.texture->setMinificationFilter(QOpenGLTexture::Nearest);
             tile.texture->setMagnificationFilter(QOpenGLTexture::Nearest);
             tile.texture->setWrapMode(QOpenGLTexture::ClampToEdge);
         }
 
-        if (!tile.texture->isCreated())
-        {
-            tile.texture->setData(tile.latchedFrame.flipped(Qt::Vertical));
-        }
-        else
-        {
-            tile.texture->bind();
-            QImage flipped = tile.latchedFrame.flipped(Qt::Vertical);
-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
-                flipped.width(), flipped.height(),
-                GL_RGBA, GL_UNSIGNED_BYTE, flipped.constBits());
-        }
+        tile.texture->bind();
+        QOpenGLPixelTransferOptions transfer;
+        transfer.setAlignment(1);
+        transfer.setRowLength(static_cast<int>(tile.latchedFrame.bytesPerLine() / 4));
+        tile.texture->setData(0, QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, tile.latchedFrame.constBits(), &transfer);
 
         tile.needsUpdate = false;
     }
@@ -306,74 +366,130 @@ void TileGridGL::paintGL()
 {
     glClear(GL_COLOR_BUFFER_BIT);
 
-    if (_emulators.empty() || _currentCols == 0)
+    if (_emulators.empty() || _currentCols <= 0 || _currentRows <= 0)
         return;
 
     updateTextures();
 
-    _shader->bind();
-
     float winW = static_cast<float>(width());
     float winH = static_cast<float>(height());
+    if (winW <= 0.0f || winH <= 0.0f)
+        return;
 
-    int index = 0;
-    for (int row = 0; row < _currentRows && index < static_cast<int>(_emulators.size()); ++row)
+    if (_shader && _shader->isLinked())
     {
-        for (int col = 0; col < _currentCols && index < static_cast<int>(_emulators.size()); ++col, ++index)
+        _shader->bind();
+        _shader->setUniformValue("tileTexture", 0);
+
+        int posAttr = _shader->attributeLocation("position");
+        int texAttr = _shader->attributeLocation("texCoord");
+
+        _shader->enableAttributeArray(posAttr);
+        _shader->enableAttributeArray(texAttr);
+
+        constexpr float targetRatio = 4.0f / 3.0f;
+        float cellNDC_W = 2.0f / static_cast<float>(_currentCols);
+        float cellNDC_H = 2.0f / static_cast<float>(_currentRows);
+
+        float cellPixelW = winW / static_cast<float>(_currentCols);
+        float cellPixelH = winH / static_cast<float>(_currentRows);
+        float cellRatio = cellPixelW / cellPixelH;
+
+        float scaleX = 1.0f;
+        float scaleY = 1.0f;
+        if (cellRatio > targetRatio)
         {
-            auto& tile = _emulators[index];
-            if (!tile.texture || !tile.texture->isCreated())
-                continue;
-
-            float x0 = (col * TILE_WIDTH) / winW * 2.0f - 1.0f;
-            float y0 = 1.0f - (row * TILE_HEIGHT) / winH * 2.0f;
-            float x1 = ((col + 1) * TILE_WIDTH) / winW * 2.0f - 1.0f;
-            float y1 = 1.0f - ((row + 1) * TILE_HEIGHT) / winH * 2.0f;
-
-            // Extract 256x192 from 352x288 framebuffer
-            float srcX0 = 48.0f / FB_WIDTH;
-            float srcY0 = 48.0f / FB_HEIGHT;
-            float srcX1 = (48.0f + 256.0f) / FB_WIDTH;
-            float srcY1 = (48.0f + 192.0f) / FB_HEIGHT;
-
-            tile.texture->bind();
-
-            glBegin(GL_QUADS);
-            glTexCoord2f(srcX0, srcY0); glVertex2f(x0, y0);
-            glTexCoord2f(srcX1, srcY0); glVertex2f(x1, y0);
-            glTexCoord2f(srcX1, srcY1); glVertex2f(x1, y1);
-            glTexCoord2f(srcX0, srcY1); glVertex2f(x0, y1);
-            glEnd();
+            // Cell is wider than 4:3 -> pillarbox
+            scaleX = targetRatio / cellRatio;
         }
+        else
+        {
+            // Cell is taller than 4:3 -> letterbox
+            scaleY = cellRatio / targetRatio;
+        }
+
+        float quadHalfW = (cellNDC_W * 0.5f) * scaleX;
+        float quadHalfH = (cellNDC_H * 0.5f) * scaleY;
+
+        // Extract 256x192 active screen area from 352x288 framebuffer
+        float srcX0 = 48.0f / FB_WIDTH;
+        float srcY0 = 48.0f / FB_HEIGHT;
+        float srcX1 = (48.0f + 256.0f) / FB_WIDTH;
+        float srcY1 = (48.0f + 192.0f) / FB_HEIGHT;
+
+        int index = 0;
+        for (int row = 0; row < _currentRows && index < static_cast<int>(_emulators.size()); ++row)
+        {
+            for (int col = 0; col < _currentCols && index < static_cast<int>(_emulators.size()); ++col, ++index)
+            {
+                auto& tile = _emulators[index];
+                if (!tile.texture || !tile.texture->isCreated())
+                    continue;
+
+                float cellCenterX = -1.0f + (col + 0.5f) * cellNDC_W;
+                float cellCenterY = 1.0f - (row + 0.5f) * cellNDC_H;
+
+                float x0 = cellCenterX - quadHalfW;
+                float x1 = cellCenterX + quadHalfW;
+                float y0 = cellCenterY + quadHalfH; // Top in NDC
+                float y1 = cellCenterY - quadHalfH; // Bottom in NDC
+
+                GLfloat vertices[] = {
+                    x0, y0,
+                    x1, y0,
+                    x1, y1,
+                    x0, y1
+                };
+
+                GLfloat texCoords[] = {
+                    srcX0, srcY0,
+                    srcX1, srcY0,
+                    srcX1, srcY1,
+                    srcX0, srcY1
+                };
+
+                glActiveTexture(GL_TEXTURE0);
+                tile.texture->bind();
+
+                _shader->setAttributeArray(posAttr, GL_FLOAT, vertices, 2);
+                _shader->setAttributeArray(texAttr, GL_FLOAT, texCoords, 2);
+
+                glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+            }
+        }
+
+        _shader->disableAttributeArray(posAttr);
+        _shader->disableAttributeArray(texAttr);
+        _shader->release();
     }
 
-    _shader->release();
-
-    // Draw focus border using QPainter overlay
+    // Draw focus and drag-and-drop hover borders using QPainter overlay
     if (_focusedIndex >= 0 && _focusedIndex < static_cast<int>(_emulators.size()))
     {
-        QPainter painter(this);
-        painter.setRenderHint(QPainter::Antialiasing, false);
+        QRect tileRect = calculateTileRect(_focusedIndex);
+        if (!tileRect.isEmpty())
+        {
+            QPainter painter(this);
+            painter.setRenderHint(QPainter::Antialiasing, false);
 
-        int col = _focusedIndex % _currentCols;
-        int row = _focusedIndex / _currentCols;
-        QRect tileRect(col * TILE_WIDTH, row * TILE_HEIGHT, TILE_WIDTH, TILE_HEIGHT);
-
-        QPen pen(QColor(120, 160, 255), 2);
-        painter.setPen(pen);
-        painter.drawRect(tileRect.adjusted(1, 1, -2, -2));
+            QPen pen(QColor(120, 160, 255), 2);
+            painter.setPen(pen);
+            painter.drawRect(tileRect.adjusted(1, 1, -2, -2));
+        }
     }
 
     if (_dragHoverIndex >= 0 && _dragHoverIndex < static_cast<int>(_emulators.size()))
     {
-        QPainter painter(this);
-        int col = _dragHoverIndex % _currentCols;
-        int row = _dragHoverIndex / _currentCols;
-        QRect tileRect(col * TILE_WIDTH, row * TILE_HEIGHT, TILE_WIDTH, TILE_HEIGHT);
+        QRect tileRect = calculateTileRect(_dragHoverIndex);
+        if (!tileRect.isEmpty())
+        {
+            QPainter painter(this);
+            painter.setRenderHint(QPainter::Antialiasing, false);
 
-        QPen pen(QColor(80, 120, 255), 5);
-        painter.setPen(pen);
-        painter.drawRect(tileRect.adjusted(2, 2, -4, -4));
+            QPen pen(QColor(80, 120, 255), 5);
+            painter.setPen(pen);
+            painter.drawRect(tileRect.adjusted(2, 2, -4, -4));
+        }
     }
 }
 
@@ -502,35 +618,29 @@ void TileGridGL::subscribeToNotifications()
                 {
                     std::string frameEmulatorId = payload->_emulatorId.toString();
 
-                    if (_singleSyncMode)
-                    {
-                        if (frameEmulatorId == _syncEmulatorId)
+                    QMetaObject::invokeMethod(this, [this, frameEmulatorId]() {
+                        if (_singleSyncMode)
                         {
-                            bool expected = false;
-                            if (_isRepaintPending.compare_exchange_strong(expected, true))
+                            if (frameEmulatorId == _syncEmulatorId)
                             {
                                 for (auto& tile : _emulators)
                                     tile.needsUpdate = true;
-
-                                QMetaObject::invokeMethod(this, [this]() {
-                                    update();
-                                    _isRepaintPending = false;
-                                }, Qt::QueuedConnection);
+                                update();
                             }
                         }
-                    }
-                    else
-                    {
-                        for (auto& tile : _emulators)
+                        else
                         {
-                            if (tile.emulatorId == frameEmulatorId)
+                            for (auto& tile : _emulators)
                             {
-                                tile.needsUpdate = true;
-                                QMetaObject::invokeMethod(this, "update", Qt::QueuedConnection);
-                                break;
+                                if (tile.emulatorId == frameEmulatorId)
+                                {
+                                    tile.needsUpdate = true;
+                                    update();
+                                    break;
+                                }
                             }
                         }
-                    }
+                    }, Qt::QueuedConnection);
                 }
             }
         });
