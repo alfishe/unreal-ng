@@ -36,6 +36,11 @@ public:
     static constexpr int kNativeWidth = 352;
     static constexpr int kNativeHeight = 288;
 
+signals:
+    void fileDropped(const QString& filePath);
+    void dragEntered();
+    void dragLeft();
+
 public slots:
     void refresh();
     void handleExternalKeyPress(QKeyEvent* event);
@@ -74,6 +79,7 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
+    bool event(QEvent* event) override;
 
 private:
     void updateTexture();

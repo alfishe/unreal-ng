@@ -24,6 +24,12 @@ DeviceScreenWrapper::DeviceScreenWrapper(QWidget* parent, bool useGPU)
             _widget->setMinimumSize(352, 288);
             _widget->setFocusPolicy(Qt::StrongFocus);
             _useGPU = true;
+
+            // Forward drag/drop signals from GPU window
+            connect(_gpuWindow, &DeviceScreenGLWindow::fileDropped, this, &DeviceScreenWrapper::fileDropped);
+            connect(_gpuWindow, &DeviceScreenGLWindow::dragEntered, this, &DeviceScreenWrapper::dragEntered);
+            connect(_gpuWindow, &DeviceScreenGLWindow::dragLeft, this, &DeviceScreenWrapper::dragLeft);
+
             qInfo() << "DeviceScreenWrapper: Using GPU-accelerated rendering (QOpenGLWindow)";
         }
         catch (...)

@@ -129,6 +129,20 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Wrapper auto-selects GPU or software backend
     QFrame* contentFrame = ui->contentFrame;
     _screenWrapper = new DeviceScreenWrapper(contentFrame);
+
+    // Forward drag/drop from GPU window to main window
+    connect(_screenWrapper, &DeviceScreenWrapper::dragEntered, this, [this]() {
+        ui->contentFrame->setStyleSheet("border: 1px solid red;");
+    });
+    connect(_screenWrapper, &DeviceScreenWrapper::dragLeft, this, [this]() {
+        ui->contentFrame->setStyleSheet("border: none;");
+    });
+    connect(_screenWrapper, &DeviceScreenWrapper::fileDropped, this, [this](const QString& filePath) {
+        qDebug() << "File dropped via GPU window:" << filePath;
+        loadFile(filePath);
+        ui->contentFrame->setStyleSheet("border: none;");
+    });
+
     _hudWrapper = new HudOverlayWrapper(_screenWrapper->widget(), _screenWrapper->isGPUAccelerated());
     _hudWrapper->setVisible(false);
     

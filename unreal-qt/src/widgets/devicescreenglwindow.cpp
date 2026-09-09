@@ -1,10 +1,15 @@
 #include "devicescreenglwindow.h"
 
 #include <QDebug>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QEvent>
 #include <QKeyEvent>
+#include <QMimeData>
 #include <QOpenGLContext>
 #include <QOpenGLPixelTransferOptions>
 #include <QSurfaceFormat>
+#include <QUrl>
 #include <cmath>
 #include <cstring>
 
@@ -600,6 +605,49 @@ void DeviceScreenGLWindow::keyReleaseEvent(QKeyEvent* event)
 void DeviceScreenGLWindow::mousePressEvent(QMouseEvent* event)
 {
     Q_UNUSED(event);
+}
+
+bool DeviceScreenGLWindow::event(QEvent* event)
+{
+    switch (event->type())
+    {
+        case QEvent::DragEnter:
+        {
+            QDragEnterEvent* dragEvent = static_cast<QDragEnterEvent*>(event);
+            if (dragEvent->mimeData()->hasUrls())
+            {
+                dragEvent->acceptProposedAction();
+                emit dragEntered();
+                return true;
+            }
+            break;
+        }
+        case QEvent::DragLeave:
+            emit dragLeft();
+            return true;
+
+        case QEvent::Drop:
+        {
+            QDropEvent* dropEvent = static_cast<QDropEvent*>(event);
+            const QMimeData* mimeData = dropEvent->mimeData();
+            if (mimeData->hasUrls())
+            {
+                QList<QUrl> urls = mimeData->urls();
+                if (!urls.isEmpty())
+                {
+                    QString filePath = urls.first().toLocalFile();
+                    qDebug() << "DeviceScreenGLWindow: File dropped:" << filePath;
+                    emit fileDropped(filePath);
+                }
+                emit dragLeft();
+                return true;
+            }
+            break;
+        }
+        default:
+            break;
+    }
+    return QOpenGLWindow::event(event);
 }
 
 void DeviceScreenGLWindow::handleExternalKeyPress(QKeyEvent* event)

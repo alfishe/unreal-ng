@@ -21,9 +21,13 @@ class DeviceScreenWrapper : public QObject
 {
     Q_OBJECT
 
-public:
 signals:
     void screenInitialized();
+    void fileDropped(const QString& filePath);
+    void dragEntered();
+    void dragLeft();
+
+public:
 
 public:
     /// @brief Create wrapper with auto-detection (GPU if available, else software)
