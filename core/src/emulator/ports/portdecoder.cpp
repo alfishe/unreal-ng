@@ -77,6 +77,9 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
             result = new PortDecoder_Profi(context);
             break;
         case MM_SCORP:
+        case MM_PROFSCORP:
+            // ProfROM variant shares the decoder: it branches on
+            // mem_model == MM_PROFSCORP for the #7EFD window latch arm
             result = new PortDecoder_Scorpion256(context);
             break;
         default:
@@ -395,6 +398,7 @@ PortTraceSessionInfo PortDecoder::getPortTraceSessionInfo() const
             case MM_PLUS3:       info.modelName = "SpectrumPlus3"; break;
             case MM_PROFI:       info.modelName = "Profi"; break;
             case MM_SCORP:       info.modelName = "Scorpion256"; break;
+            case MM_PROFSCORP:   info.modelName = "Scorpion256Prof"; break;
             default:             info.modelName = "Unknown"; break;
         }
     }
