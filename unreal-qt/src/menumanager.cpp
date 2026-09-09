@@ -224,8 +224,8 @@ void MenuManager::createViewMenu()
     // Full Screen
     // Single full-screen entry: Cmd+F on macOS, Ctrl+F elsewhere (Qt::CTRL maps to Cmd
     // on macOS). Cocoa's own "Enter Full Screen" View-menu item is suppressed in main().
-    _fullScreenAction = _viewMenu->addAction(tr("&Full Screen"));
-    _fullScreenAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_F));
+    _fullScreenAction = _viewMenu->addAction(tr("&Full Screen\tCtrl+F"));
+    // Shortcut is handled by app-wide QShortcut in MainWindow (works when menu hidden)
     _fullScreenAction->setStatusTip(tr("Toggle full screen mode"));
     _fullScreenAction->setCheckable(true);
     connect(_fullScreenAction, &QAction::triggered, this, &MenuManager::fullScreenToggled);

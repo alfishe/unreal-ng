@@ -118,6 +118,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Store original palette
     _originalPalette = palette();
 
+    // Register fullscreen shortcut with application-wide context
+    // (works even when menu bar is hidden in fullscreen mode)
+    auto* fullScreenShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F), this);
+    fullScreenShortcut->setContext(Qt::ApplicationShortcut);
+    connect(fullScreenShortcut, &QShortcut::activated, this, &MainWindow::handleFullScreenShortcut);
+
     // Put emulator screen into resizable content frame
     QFrame* contentFrame = ui->contentFrame;
     deviceScreen = new DeviceScreen(contentFrame);
