@@ -1398,6 +1398,115 @@ TEST_F(FileHelper_Test, OpenNonexistentFileThrowsWithPath)
 
 ---
 
+## Integration Tests with ROM Boot
+
+When writing tests that require the emulator to boot through ROM initialization (e.g., TR-DOS, BASIC, 128K menu), follow these patterns for fast, reliable tests.
+
+### Key Principles
+
+1. **Use `StartAsync()`, not `Start()`**: `Start()` blocks forever on the main loop. Use `StartAsync()` for background execution.
+2. **Enable turbo mode**: `EnableTurboMode()` removes frame rate limiting for maximum speed.
+3. **Pause before stepping**: `RunNFrames()` is a debug stepping function - it pauses the emulator. Pause explicitly before using it.
+4. **Run in batches**: Instead of `RunNFrames(1)` in a loop, use `RunNFrames(10)` or larger batches for efficiency.
+5. **Use `GTEST_SKIP()` for ROM dependencies**: Tests may skip if required ROMs are not available.
+
+### Example: TR-DOS Integration Test
+
+```cpp
+class BasicEncoder_Integration_Test : public ::testing::Test
+{
+protected:
+    Emulator* _emulator = nullptr;
+
+    void SetUp() override
+    {
+        MessageCenter::DisposeDefaultMessageCenter();
+
+        // Pentagon model includes TR-DOS ROM and Beta128 FDC
+        _emulator = new Emulator(LoggerLevel::LogError);
+        if (!_emulator || !_emulator->Init())
+        {
+            delete _emulator;
+            _emulator = nullptr;
+            GTEST_SKIP() << "Failed to initialize emulator";
+        }
+    }
+
+    void TearDown() override
+    {
+        if (_emulator)
+        {
+            if (_emulator->IsRunning())
+                _emulator->Stop();
+            delete _emulator;
+            _emulator = nullptr;
+        }
+        MessageCenter::DisposeDefaultMessageCenter();
+    }
+
+    /// Wait for TR-DOS prompt (polls state every 10 frames)
+    bool waitForTRDOSPrompt(int maxFrames = 500)
+    {
+        for (int i = 0; i < maxFrames; i += 10)
+        {
+            _emulator->RunNFrames(10);
+            auto state = BasicEncoder::detectState(_emulator->GetMemory());
+            if (state == BasicEncoder::BasicState::TRDOS_Active)
+                return true;
+        }
+        return false;
+    }
+};
+
+TEST_F(BasicEncoder_Integration_Test, TRDOSCommandPreservesState)
+{
+    ASSERT_NE(_emulator, nullptr);
+
+    // Start async with turbo mode - critical for speed
+    _emulator->StartAsync();
+    _emulator->EnableTurboMode();
+    ASSERT_TRUE(_emulator->IsRunning());
+
+    // Pause for stepping (RunNFrames is a debug function)
+    _emulator->Pause();
+
+    // Boot through ROM init (100 frames typically sufficient)
+    _emulator->RunNFrames(100);
+
+    // Activate TR-DOS via flag + ROM switch
+    _emulator->GetContext()->emulatorState.flags |= CF_TRDOS;
+    _emulator->GetMemory()->SetROMDOS(true);
+
+    // Wait for TR-DOS to initialize (skip if ROM not available)
+    if (!waitForTRDOSPrompt(200))
+    {
+        GTEST_SKIP() << "TR-DOS did not initialize (may lack ROM)";
+    }
+
+    // ... perform test assertions ...
+}
+```
+
+### Performance Tips
+
+| Pattern | Speed |
+|---------|-------|
+| `Start()` (blocking) | **HANGS** - never use |
+| `StartAsync()` without turbo | ~50 FPS (real-time) |
+| `StartAsync()` + `EnableTurboMode()` | **1000+ FPS** |
+| `RunNFrames(1)` in loop | Slow (pause/resume overhead per frame) |
+| `RunNFrames(10)` batches | **10x faster** |
+
+### Common Pitfalls
+
+1. **Using `Start()` instead of `StartAsync()`**: Test hangs forever
+2. **Forgetting `EnableTurboMode()`**: Test takes 20+ seconds instead of 28ms
+3. **Calling `RunNFrames()` without `Pause()`**: Works but confusing state
+4. **Single-frame loops**: 10x slower than batched execution
+5. **Not checking ROM availability**: Tests fail instead of skip on minimal setups
+
+---
+
 ## References
 
 - [Google Test Documentation](https://google.github.io/googletest/)

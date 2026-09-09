@@ -1199,6 +1199,10 @@ BasicEncoder::InjectionResult BasicEncoder::runCommand(Emulator* emulator, const
     {
         if (result.state == BasicState::TRDOS_Active)
         {
+            // RunNFrames() leaves emulator paused (it's a debug stepping function).
+            // For automation, we need to restore the original running state after injection.
+            bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
+
             // Trigger screen refresh once more before ENTER, ensures buffer is definitely synchronized
             // and visible to the ROM's keyboard loop.
             injectKeypress(memory, 0x09);  // Cursor right
@@ -1207,6 +1211,12 @@ BasicEncoder::InjectionResult BasicEncoder::runCommand(Emulator* emulator, const
             // For TR-DOS, we prefer physical events to ensure the ROM's keyboard loop
             // correctly picks up the command.
             injectEnterPhysical(emulator);
+
+            // Restore running state if emulator was running before injection
+            if (wasRunning)
+            {
+                emulator->Resume(false);  // Resume without broadcasting
+            }
         }
         else
         {
