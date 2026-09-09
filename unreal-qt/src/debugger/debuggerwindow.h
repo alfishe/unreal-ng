@@ -108,7 +108,15 @@ signals:
     /// to DeviceScreen::refresh().
     void screenRefreshRequested();
 
+    /// @brief Emitted when the window is shown or hidden (menu toggle, close box,
+    /// docking). MainWindow keeps the Debug menu in sync and switches the
+    /// emulator's debug instrumentation on only while the window is visible.
+    void visibilityChanged(bool visible);
+
 protected:
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
+
     // Constants for breakpoint management
     static constexpr const char* TEMP_BREAKPOINT_GROUP = "TemporaryBreakpoints";  // Group for all temporary breakpoints
     static constexpr const char* STEP_OVER_NOTE = "StepOver";                     // Note for step over breakpoints

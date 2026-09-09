@@ -48,6 +48,9 @@ constexpr char const* NC_FDD_DISK_EJECTED = "FDD_DISK_EJECT";                   
 constexpr char const* NC_FDD_DISK_PENDING_WRITE = "FDD_DISK_PENDING_WRITE";     // Disk has unsaved changes (payload: FDDDiskPayload)
 constexpr char const* NC_FDD_DISK_WRITTEN = "FDD_DISK_WRITTEN";                 // Disk saved, dirty flag cleared (payload: FDDDiskPayload)
 constexpr char const* NC_FDD_DISK_SAVE_RETARGETED = "FDD_DISK_SAVE_RETARGETED"; // Original format refused the image, saved losslessly as UDI instead (payload: FDDDiskPayload, _reason set)
+constexpr char const* NC_FDD_STATE_CHANGED = "FDD_STATE_CHANGED";               // FDC/FDD state changed: selected drive, side, track, sector, motor (payload: FDDStatePayload). Posted only on change - UIs cache it, no polling
+
+constexpr char const* NC_FDC_STATE_CHANGED = "FDC_STATE_CHANGE"; // WD1793 visible state changed: drive/side/track/sector/command/motor (payload: FDCStatePayload). Diff-gated — posted only when the observed tuple actually changes
 
 constexpr char const* NC_FILE_OPEN_REQUEST = "FILE_OPEN_REQUEST";               // File open request from emulator
 
