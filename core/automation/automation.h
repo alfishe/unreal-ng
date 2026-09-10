@@ -8,6 +8,8 @@ class AutomationPython;
 class AutomationWebAPI;
 class AutomationCLI;
 class AutomationGDB;
+class AutomationDezog;
+class AutomationZesarux;
 
 class Automation
 {
@@ -31,6 +33,14 @@ protected:
 
 #if ENABLE_GDB_AUTOMATION
     AutomationGDB* _gdb = nullptr;
+#endif
+
+#if ENABLE_DEZOG_AUTOMATION
+    AutomationDezog* _dezog = nullptr;
+#endif
+
+#if ENABLE_ZESARUX_AUTOMATION
+    AutomationZesarux* _zesarux = nullptr;
 #endif
     bool _stopped = false;
     /// endregion </Fields>
@@ -83,6 +93,14 @@ public:
 #if ENABLE_LUA_AUTOMATION
     AutomationLua* getLua() { return _lua; }
 #endif
+
+#if ENABLE_DEZOG_AUTOMATION
+    AutomationDezog* getDezog() { return _dezog; }
+#endif
+
+#if ENABLE_ZESARUX_AUTOMATION
+    AutomationZesarux* getZesarux() { return _zesarux; }
+#endif
     /// endregion </Methods>
 
     /// region <Helper methods>
@@ -92,11 +110,15 @@ protected:
     bool startWebAPI();
     bool startCLI();
     bool startGDB();
+    bool startDezog();
+    bool startZesarux();
 
     void stopLua();
     void stopPython();
     void stopWebAPI();
     void stopCLI();
     void stopGDB();
+    void stopDezog();
+    void stopZesarux();
     /// endregion </Helper methods>
 };

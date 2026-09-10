@@ -41,6 +41,9 @@ include_directories(
     ${CORE_DIR}
     ${GOOGLETEST_DIR}/googletest                                  # To serve src/gtest-internal-inl.h include
     ${GOOGLETEST_DIR}/googletest/include
+    ${ROOT_DIR}/core/automation/dezog/include                     # DZRP protocol / adapter unit tests
+    ${ROOT_DIR}/core/automation/zesarux/include                   # ZRCP (ZEsarUX text protocol) unit tests
+    ${ROOT_DIR}/core/automation/cli/include                       # platform-sockets.h (header-only) for dzrpserver.cpp
 )
 
 # Add recording library include path if enabled
@@ -101,6 +104,40 @@ endif()
 if (NOT ENABLE_GDB_AUTOMATION)
     EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/gdb/" FALSE OUTVAR TEST_CPP_FILES)
 endif()
+
+# DZRP (DeZog) unit tests: the suite files are globbed in via TEST_CPP_FILES.
+# The protocol layer, TCP server and the emulator-bound debug adapter are
+# compiled in directly (core sources are already part of this binary), so no
+# linking of the automation_dezog library is required. Follows the same
+# ENABLE_DEZOG_AUTOMATION option as the rest of the tree.
+option(ENABLE_DEZOG_AUTOMATION "Enable DeZog (DZRP) debug server automation" ON)
+if (ENABLE_DEZOG_AUTOMATION)
+    list(APPEND TEST_CPP_FILES
+        ${ROOT_DIR}/core/automation/dezog/src/dzrpprotocol.cpp
+        ${ROOT_DIR}/core/automation/dezog/src/dzrpserver.cpp
+        ${ROOT_DIR}/core/automation/dezog/src/dezogdebugadapter.cpp
+        ${ROOT_DIR}/core/automation/dezog/src/automation-dezog.cpp
+    )
+else ()
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/automation/dezog/" FALSE OUTVAR TEST_CPP_FILES)
+endif ()
+
+# ZEsarUX ZRCP unit tests: same pattern as the DZRP block above (sources
+# compiled in directly; suite files arrive via TEST_CPP_FILES glob). Depends
+# on automation_dezog (second DezogDebugAdapter instance).
+if (NOT ENABLE_DEZOG_AUTOMATION)
+    set(ENABLE_ZESARUX_AUTOMATION OFF)
+endif ()
+option(ENABLE_ZESARUX_AUTOMATION "Enable ZEsarUX (ZRCP) debug server automation" ${ENABLE_ZESARUX_AUTOMATION})
+if (ENABLE_ZESARUX_AUTOMATION)
+    list(APPEND TEST_CPP_FILES
+        ${ROOT_DIR}/core/automation/zesarux/src/zrcpserver.cpp
+        ${ROOT_DIR}/core/automation/zesarux/src/zesaruxcondition.cpp
+        ${ROOT_DIR}/core/automation/zesarux/src/automation-zesarux.cpp
+    )
+else ()
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/automation/zesarux/" FALSE OUTVAR TEST_CPP_FILES)
+endif ()
 
 set (SOURCES "${CORE_CPP_FILES};${TEST_CPP_FILES};${GOOGLETEST_FILES}")
 message("TESTS:${TEST_CPP_FILES}")
