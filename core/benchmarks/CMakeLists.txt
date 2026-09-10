@@ -103,12 +103,12 @@ else()
     # So skip /src/core dependency build
 endif()
 
-# Compile benchmarks into executable
+# Compile benchmarks into executable (EXCLUDE_FROM_ALL so benchmarks are opt-in and not built by default)
 if (WIN32 AND MINGW)
     # For MinGW, compile benchmark sources directly into the executable
-    add_executable(${PROJECT_NAME} ${SOURCES} ${BENCHMARK_FILES})
+    add_executable(${PROJECT_NAME} EXCLUDE_FROM_ALL ${SOURCES} ${BENCHMARK_FILES})
 else()
-    add_executable(${PROJECT_NAME} ${SOURCES})
+    add_executable(${PROJECT_NAME} EXCLUDE_FROM_ALL ${SOURCES})
 endif()
 
 # Enable benchmark wrappers in code
