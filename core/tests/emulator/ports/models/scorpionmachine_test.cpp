@@ -135,3 +135,29 @@ TEST_F(ScorpionMachine_Test, TurboComposesWithHostSpeedMultiplier)
 }
 
 /// endregion <Hardware turbo (hardware-reference 13)>
+
+/// @brief The strobe applies the turbo IMMEDIATELY, mid-frame: the frame
+///        length doubles for the frame in progress and the in-frame position is
+///        rescaled so the raster instant is preserved. This is what lets the
+///        service monitor's IN (#7FFD) + INT-bounded count loop detect the
+///        7 MHz clock (profrom-service-monitor-turbo.md)
+TEST_F(ScorpionMachine_Test, TurboStrobeAppliesMidFrame)
+{
+    EmulatorState& state = _context->emulatorState;
+    Z80* z80 = _core->GetZ80();
+
+    z80->Z80FrameCycle();  // settle: 1x, geometry derived
+    z80->t = 1000;
+    EXPECT_EQ(state.current_z80_frequency_multiplier, 1);
+
+    _context->pPortDecoder->DecodePortIn(0x7FFD, 0x8000);  // the turbo-on strobe
+
+    EXPECT_EQ(state.current_z80_frequency_multiplier, 2) << "applied at the strobe, not at the frame boundary";
+    EXPECT_EQ(state.hw_turbo_shift_applied, 1);
+    EXPECT_EQ(z80->t, 2000u) << "in-frame position rescaled to the 2x T-domain (same raster instant)";
+
+    _context->pPortDecoder->DecodePortIn(0x1FFD, 0x8000);  // the turbo-off strobe
+
+    EXPECT_EQ(state.current_z80_frequency_multiplier, 1);
+    EXPECT_EQ(z80->t, 1000u);
+}

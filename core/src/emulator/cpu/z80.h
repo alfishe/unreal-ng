@@ -409,6 +409,24 @@ public:
     /// are always derived from the applied value.
     void ApplyQueuedFrequencyMultiplier();
 
+    /// Apply a HARDWARE turbo change immediately, mid-frame (model port decoders
+    /// call this right after flipping EmulatorState::hw_turbo_shift). Hardware
+    /// switches the clock on the next cycle, and firmware relies on it: the
+    /// Scorpion ProfROM monitor strobes IN (#7FFD) and immediately runs an
+    /// INT-bounded count loop to detect the 7 MHz clock - deferring the switch
+    /// to the frame boundary made that test always fail. Rescales the in-frame
+    /// T-state position so the raster/INT instant is preserved, then refreshes
+    /// the frame geometry the running Z80FrameCycle loop reads
+    void ApplyHardwareTurboNow();
+
+    /// (Re)derive the scaled frame length and INT window from the current
+    /// multiplier; read by Z80FrameCycle every iteration
+    void RecomputeFrameTiming();
+
+    uint32_t _frameLimit = 0;   // config.frame * multiplier
+    unsigned _intStart = 0;     // config.intstart * multiplier
+    unsigned _intEnd = 0;       // (config.intstart + intlen) * multiplier
+
     // Trigger updates
 public:
     void RequestMaskedInterrupt();

@@ -134,10 +134,20 @@ Before this rule the audio path scaled by the effective multiplier, so a Scorpio
 7 MHz pushed 40 ms of audio into every 20 ms frame; the Qt ring overfilled once per
 frame and hard-resynced every few frames (121–140 ms dropped each time).
 
-**Known gap:** the strobe is applied at the frame boundary, not mid-frame. Scorpion
-firmware that strobes and immediately measures speed (ProfROM monitor `#0261`/`#2C1F`)
-sees the old clock for the rest of that frame — see
-`docs/inprogress/2026-09-07-scorpion-zs256-clone/profrom-nmi-gaps-and-findings.md` §8.4.
+**Timing of the switch.** A hardware strobe is applied **immediately, mid-frame**
+(`Z80::ApplyHardwareTurboNow`, called by the model decoder right after it flips
+`hw_turbo_shift`): the in-frame position `t` (and `eipos`/`haltpos`) is rescaled to the
+new T-domain so the raster instant is preserved, the multiplier/frequency/
+`hw_turbo_shift_applied` are updated, and `Z80::RecomputeFrameTiming()` refreshes the
+frame length and INT window that `Z80FrameCycle` now reads from members on every
+iteration. Host speed changes still apply at the frame boundary. Firmware depends on
+the immediate switch: the Scorpion service monitors strobe `IN (#7FFD)` and at once time
+an INT-bounded count loop (~96 917 T) to detect the 7 MHz clock; with the switch
+deferred to the frame boundary that test always saw 3.5 MHz, left the "Computer speed"
+menu item disabled and the flip-flop stuck on. Regression:
+`ScorpionTurboDetect_Test` boots the real ProfROM v4.01 and base v2.9x images, presses
+the magic button at 8 frame phases and requires the firmware's own detection flag
+(`#E02D`/`#DFF8` = `#C0`) — 8/8 on both since the fix.
 
 ## Configuration
 

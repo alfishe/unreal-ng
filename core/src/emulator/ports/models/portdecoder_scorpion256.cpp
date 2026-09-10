@@ -6,6 +6,8 @@
 
 #include "common/collectionhelper.h"
 #include "emulator/video/ulacontention.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 
 #include <cstdint>
 
@@ -124,6 +126,15 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
         default:
             break;
     }
+
+    // The flip-flop switches the clock on the next cycle. Apply it NOW: the
+    // ProfROM / base service monitors strobe and immediately time an
+    // INT-bounded count loop (#2C1F) to detect the 7 MHz hardware - with the
+    // switch deferred to the frame boundary that test always saw 3.5 MHz,
+    // left the "Computer speed" menu item disabled and the flip-flop stuck on
+    // (profrom-service-monitor-turbo.md, profrom-nmi-gaps-and-findings.md 8.4)
+    if ((port & 0xC023) == 0x4021 || (port & 0xC023) == 0x0021)
+        _context->pCore->GetZ80()->ApplyHardwareTurboNow();
 
     // AY #FFFD: A15=1, A14=1, A1=0. The AY-3-8910 does not decode the other
     // address bits, so mirrored ports (#FF05, #FF00, #C000...) select it on IN

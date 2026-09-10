@@ -393,6 +393,48 @@ void Z80::ApplyQueuedFrequencyMultiplier()
     }
 }
 
+void Z80::RecomputeFrameTiming()
+{
+    const CONFIG& config = _context->config;
+    const EmulatorState& state = _context->emulatorState;
+
+    _frameLimit = config.frame * state.current_z80_frequency_multiplier;
+    _intStart = config.intstart * state.current_z80_frequency_multiplier;
+    _intEnd = (config.intstart + config.intlen) * state.current_z80_frequency_multiplier;
+}
+
+void Z80::ApplyHardwareTurboNow()
+{
+    Z80& cpu = *this;
+    EmulatorState& state = _context->emulatorState;
+
+    uint8_t desiredMultiplier = static_cast<uint8_t>(state.next_z80_frequency_multiplier << state.hw_turbo_shift);
+    uint8_t oldMultiplier = state.current_z80_frequency_multiplier;
+    if (desiredMultiplier == oldMultiplier || oldMultiplier == 0)
+        return;
+
+    // Preserve the raster instant: the in-frame position is expressed in
+    // scaled T-states, so it must be rescaled together with the multiplier
+    // (the same instant is 2x further into a 2x longer frame). eipos/haltpos
+    // are frame positions too
+    auto rescale = [&](uint32_t v) { return static_cast<uint32_t>(static_cast<uint64_t>(v) * desiredMultiplier / oldMultiplier); };
+    cpu.t = rescale(cpu.t);
+    if (cpu.eipos >= 0)
+        cpu.eipos = static_cast<int32_t>(rescale(static_cast<uint32_t>(cpu.eipos)));
+    cpu.haltpos = static_cast<uint16_t>(rescale(cpu.haltpos));
+
+    state.current_z80_frequency_multiplier = desiredMultiplier;
+    state.current_z80_frequency = state.base_z80_frequency * desiredMultiplier;
+    state.hw_turbo_shift_applied = state.hw_turbo_shift;
+    cpu.rate = 256;
+
+    // The running Z80FrameCycle loop reads these every iteration
+    RecomputeFrameTiming();
+
+    MLOGINFO("Z80::ApplyHardwareTurboNow - hardware turbo applied mid-frame: %dx -> %dx (%.2f MHz) at t=%u",
+             oldMultiplier, desiredMultiplier, state.current_z80_frequency / 1'000'000.0, cpu.t);
+}
+
 /// Execute number of cpu cycles equivalent to full frame screen render
 void Z80::Z80FrameCycle()
 {
@@ -400,35 +442,33 @@ void Z80::Z80FrameCycle()
     [[maybe_unused]] Z80& cpu = *this;
     [[maybe_unused]] EmulatorState& state = _context->emulatorState;
 
-    // Apply queued speed multiplier change at frame boundary (if any)
-    // This prevents mid-frame timing inconsistencies
+    // Apply queued HOST speed multiplier change at the frame boundary (if any).
+    // Hardware turbo strobes are applied immediately by ApplyHardwareTurboNow
     ApplyQueuedFrequencyMultiplier();
 
-    // Scale frame duration by speed multiplier
-    uint32_t frameLimit = config.frame * state.current_z80_frequency_multiplier;
+    // Scaled frame length and INT window - members, so a mid-frame hardware
+    // turbo switch (ApplyHardwareTurboNow) is picked up by the loop below
+    RecomputeFrameTiming();
 
-    // Video Interrupt position calculation - scale by multiplier for Z80 timing
     bool int_occurred = false;
-    unsigned int_start = config.intstart * state.current_z80_frequency_multiplier;
-    unsigned int_end = (config.intstart + config.intlen) * state.current_z80_frequency_multiplier;
 
     cpu.haltpos = 0;
 
     // INT interrupt handling lasts for more than 1 frame
-    if (int_end >= frameLimit)
+    if (_intEnd >= _frameLimit)
     {
-        int_end -= frameLimit;
+        _intEnd -= _frameLimit;
         cpu.int_pending = true;
         int_occurred = true;
     }
 
     // Cover whole frame (control by effective t-states)
-    while (cpu.t < frameLimit)
+    while (cpu.t < _frameLimit)
     {
         // Handle interrupts if arrived
         // Returns true if INT was handled - in that case, skip Z80Step for this iteration
         // because INT entry IS the "instruction" that consumes this cycle
-        bool intHandled = ProcessInterrupts(int_occurred, int_start, int_end);
+        bool intHandled = ProcessInterrupts(int_occurred, _intStart, _intEnd);
 
         if (!intHandled)
         {
