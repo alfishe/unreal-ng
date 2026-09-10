@@ -145,6 +145,11 @@ public:
     static std::string FormatWithThousandsDelimiter(int64_t n);
     static std::string FormatWithCustomThousandsDelimiter(int64_t n, char delimiter = ',');
 
+    /// @brief Format frequency in Hz to a human-readable MHz string
+    /// @param frequencyHz Frequency in Hz (e.g., 3500000 for 3.5 MHz)
+    /// @return Formatted string like "3.5 MHz", "7.0 MHz", "14.0 MHz"
+    static std::string FormatFrequencyMHz(uint32_t frequencyHz);
+
     /// Format any integer number to bit quads
     /// int8  => b'0110'1111
     /// int16 => b'0110'1111'0000'1111

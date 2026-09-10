@@ -8,6 +8,7 @@
 #include <QSettings>
 #include <QToolTip>
 
+#include "common/stringhelper.h"
 #include "emulator/corestate.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -69,8 +70,8 @@ StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuMana
     separator->setFrameShadow(QFrame::Plain);
     separator->setFixedHeight(13);
 
-    _cpuFreq = new QLabel(QStringLiteral("3.5"), _statusBar);
-    _cpuFreq->setToolTip(tr("CPU frequency (MHz)"));
+    _cpuFreq = new QLabel(QStringLiteral("3.5 MHz"), _statusBar);
+    _cpuFreq->setToolTip(tr("CPU frequency"));
     QFont cpuFont("Consolas", _cpuFreq->font().pointSize());
     cpuFont.setStyleHint(QFont::Monospace);
     _cpuFreq->setFont(cpuFont);
@@ -168,16 +169,18 @@ void StatusBarManager::handleCPUFreqChanged(int id, Message* message)
     if (!payload || payload->_emulatorId.toString() != emulator->GetId())
         return;
 
-    const uint8_t mult = payload->_freqMultiplier;
-    QMetaObject::invokeMethod(this, [this, mult]() {
-        QString freqText;
-        switch (mult)
-        {
-            case FREQ_7MHZ:  freqText = QStringLiteral("7.0"); break;
-            case FREQ_14MHZ: freqText = QStringLiteral("14.0"); break;
-            default:        freqText = QStringLiteral("3.5"); break;
-        }
-        _cpuFreq->setText(freqText);
+    const uint32_t freqHz = payload->_frequencyHz;
+    QMetaObject::invokeMethod(this, [this, freqHz]() {
+        const std::string freqStr = StringHelper::FormatFrequencyMHz(freqHz);
+        _cpuFreq->setText(QString::fromStdString(freqStr));
+
+        // Color coding: normal for 3.5MHz, orange for 7MHz, dark red for 14MHz+
+        if (freqHz >= 14'000'000)
+            _cpuFreq->setStyleSheet("color: #B22222; padding-top: 1px;");
+        else if (freqHz >= 7'000'000)
+            _cpuFreq->setStyleSheet("color: #FF8C00; padding-top: 1px;");
+        else
+            _cpuFreq->setStyleSheet("padding-top: 1px;");
     }, Qt::QueuedConnection);
 }
 
@@ -340,22 +343,25 @@ void StatusBarManager::refresh()
     _hdd->setActive(false);  // HDD is a stub in the core
     _sound->setActive(soundOn);
 
-    // CPU frequency display
+    // CPU frequency display from actual EmulatorState value with color coding
     if (context)
     {
-        const uint8_t mult = context->coreState.baseFreqMultiplier;
-        QString freqText;
-        switch (mult)
-        {
-            case FREQ_7MHZ:  freqText = QStringLiteral("7.0"); break;
-            case FREQ_14MHZ: freqText = QStringLiteral("14.0"); break;
-            default:        freqText = QStringLiteral("3.5"); break;
-        }
-        _cpuFreq->setText(freqText);
+        const uint32_t freqHz = context->emulatorState.current_z80_frequency;
+        const std::string freqStr = StringHelper::FormatFrequencyMHz(freqHz);
+        _cpuFreq->setText(QString::fromStdString(freqStr));
+
+        // Color coding: normal for 3.5MHz, orange for 7MHz, dark red for 14MHz+
+        if (freqHz >= 14'000'000)
+            _cpuFreq->setStyleSheet("color: #B22222; padding-top: 1px;");  // Dark red
+        else if (freqHz >= 7'000'000)
+            _cpuFreq->setStyleSheet("color: #FF8C00; padding-top: 1px;");  // Orange
+        else
+            _cpuFreq->setStyleSheet("padding-top: 1px;");  // Default color
     }
     else
     {
-        _cpuFreq->setText(QStringLiteral("--"));
+        _cpuFreq->setText(QStringLiteral("-- MHz"));
+        _cpuFreq->setStyleSheet("padding-top: 1px;");
     }
 
     // FPS: once per second take the latest frame-aligned sample and measure the rate

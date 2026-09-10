@@ -232,17 +232,19 @@ public:
     }
 };
 
-/// NC_CPU_FREQ_CHANGED payload: emulator instance and new CPU frequency multiplier
+/// NC_CPU_FREQ_CHANGED payload: emulator instance and new CPU frequency
 class CPUFreqPayload : public MessagePayload
 {
 public:
     unreal::UUID _emulatorId;
-    uint8_t _freqMultiplier;  // 1=3.5MHz, 2=7MHz, 4=14MHz
+    uint32_t _frequencyHz;     // Actual frequency in Hz (e.g., 3500000, 7000000, 14000000)
+    uint8_t _freqMultiplier;   // Multiplier relative to base (1, 2, 4, etc.)
 
 public:
-    CPUFreqPayload(const std::string& emulatorId, uint8_t freqMultiplier)
+    CPUFreqPayload(const std::string& emulatorId, uint32_t frequencyHz, uint8_t freqMultiplier)
         : MessagePayload()
         , _emulatorId(emulatorId.empty() ? unreal::UUID() : unreal::UUID(emulatorId))
+        , _frequencyHz(frequencyHz)
         , _freqMultiplier(freqMultiplier)
     {
     }

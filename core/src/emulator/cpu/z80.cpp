@@ -420,7 +420,10 @@ void Z80::Z80FrameCycle()
         // Notify observers of CPU frequency change
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
         std::string emulatorId = _context->pEmulator ? _context->pEmulator->GetId() : "";
-        messageCenter.Post(NC_CPU_FREQ_CHANGED, new CPUFreqPayload(emulatorId, state.current_z80_frequency_multiplier));
+        messageCenter.Post(NC_CPU_FREQ_CHANGED,
+                           new CPUFreqPayload(emulatorId,
+                                              state.current_z80_frequency,
+                                              state.current_z80_frequency_multiplier));
     }
 
     // Scale frame duration by speed multiplier
