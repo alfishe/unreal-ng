@@ -412,3 +412,43 @@ TEST_F(Memory_Test, ROMSwitching_RoundTrip)
 }
 
 /// endregion </ROM Switching Tests>
+
+/// region <GetRAMPageForBank Tests>
+
+// Test GetRAMPageForBank returns cached value for RAM banks
+TEST_F(Memory_Test, GetRAMPageForBank_UsesCache)
+{
+    // Set up default 48k-like memory layout
+    _memory->DefaultBanksFor48k();
+
+    // Bank 0 is ROM, should return MEMORY_UNMAPPABLE
+    EXPECT_EQ(_memory->GetRAMPageForBank(0), MEMORY_UNMAPPABLE);
+
+    // Bank 1 (0x4000-0x7FFF) should be RAM page 5 by default
+    EXPECT_EQ(_memory->GetRAMPageForBank(1), 5);
+
+    // Bank 2 (0x8000-0xBFFF) should be RAM page 2 by default
+    EXPECT_EQ(_memory->GetRAMPageForBank(2), 2);
+
+    // Bank 3 (0xC000-0xFFFF) should be RAM page 0 by default
+    EXPECT_EQ(_memory->GetRAMPageForBank(3), 0);
+}
+
+// Test GetRAMPageForBank updates correctly when bank is changed
+TEST_F(Memory_Test, GetRAMPageForBank_UpdatesOnBankChange)
+{
+    _memory->DefaultBanksFor48k();
+
+    // Initially bank 3 = page 0
+    EXPECT_EQ(_memory->GetRAMPageForBank(3), 0);
+
+    // Change bank 3 to page 7
+    _memory->SetRAMPageToBank3(7);
+    EXPECT_EQ(_memory->GetRAMPageForBank(3), 7);
+
+    // Change bank 1 to page 3
+    _memory->SetRAMPageToBank1(3);
+    EXPECT_EQ(_memory->GetRAMPageForBank(1), 3);
+}
+
+/// endregion </GetRAMPageForBank Tests>
