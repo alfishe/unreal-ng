@@ -118,15 +118,14 @@ These features were identified as gaps in the capability docs but are now implem
 
 ### Medium-Term
 
-4. **Memory watchpoints** — requires DebugManager extension for read/write traps
-5. **Auto-reload symbols** — QFileSystemWatcher integration in AutomationMCP
-6. **FFT audio** — integrate kissfft (header-only) into audio capture
+4. **Auto-reload symbols** — QFileSystemWatcher integration in AutomationMCP
+5. **FFT audio** — integrate kissfft (header-only) into audio capture
 
 ### Long-Term
 
-7. **gRPC transport** — architectural change, defer until HTTP bottleneck proven
-8. **MP4/WebM** — ffmpeg subprocess or libav linkage, significant build complexity
-9. **Semantic diffing** — research project, low practical demand
+6. **gRPC transport** — architectural change, defer until HTTP bottleneck proven
+7. **MP4/WebM** — ffmpeg subprocess or libav linkage, significant build complexity
+8. **Semantic diffing** — research project, low practical demand
 
 ---
 
@@ -166,7 +165,23 @@ curl -X POST http://localhost:8092/mcp \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
     "name":"inspect_state",
-    "arguments":{"category":"cpu"}
+    "arguments":{"aspects":["registers","disasm"]}
+  }}'
+
+# Get ROM signatures (identify loaded ROMs)
+curl -X POST http://localhost:8092/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{
+    "name":"inspect_state",
+    "arguments":{"aspects":["rom"]}
+  }}'
+
+# Set port breakpoint (e.g., AY register writes)
+curl -X POST http://localhost:8092/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{
+    "name":"control_execution",
+    "arguments":{"action":"bp_add","type":"port_out","address":49149}
   }}'
 ```
 
