@@ -12,7 +12,7 @@
 #include "common/timehelper.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
-#include "debugger/ttd/ttd_dirty_tracker.h"
+#include "debugger/ttd/ttddirtytracker.h"
 #include "debugger/ttd/timetravelmanager.h"  // Phase 4 — RecordMemoryWrite hot-path call
 #include "emulator/emulator.h"
 #include "emulator/memory/memoryaccesstracker.h"

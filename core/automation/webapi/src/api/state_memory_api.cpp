@@ -567,7 +567,7 @@ void EmulatorAPI::writeMemory(const HttpRequestPtr& req, std::function<void(cons
 
     // Thread safety: DirectWriteToZ80Memory now mirrors MemoryWriteDebug's
     // call to TTDDirtyTracker::MarkDirty when TTD is enabled. The dirty
-    // bitmap is documented as emulator-thread-only (ttd_dirty_tracker.h),
+    // bitmap is documented as emulator-thread-only (ttddirtytracker.h),
     // so we must pause the Z80 thread before writing when recording is
     // active. The cost is one paused frame boundary (~20 ms worst case);
     // a no-op when no session is recording.

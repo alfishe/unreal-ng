@@ -11,7 +11,7 @@
 
 #include <common/filehelper.h>
 #include <common/stringhelper.h>
-#include <debugger/ttd/ttd_checkpoint.h>
+#include <debugger/ttd/ttdcheckpoint.h>
 #include <debugger/ttd/timetravelmanager.h>
 #include <emulator/cpu/z80.h>
 #include <emulator/cpu/core.h>
@@ -398,8 +398,15 @@ DivergenceFrame TTDDivergenceHarness::CaptureCurrentFrame()
     // live Z80State / EmulatorState. Hashing these raw bytes matches
     // ExtractHashesFromTimeline's hash of the stored checkpoint, so the
     // two are directly comparable.
-    const TTDCpuState     cpu     = CaptureCpuState(*static_cast<const Z80State*>(z80));
-    const TTDChipsetState chipset = CaptureChipsetState(_context->emulatorState);
+    const TTDCpuState cpu = CaptureCpuState(*static_cast<const Z80State*>(z80));
+    TTDChipsetState chipset = CaptureChipsetState(_context->emulatorState);
+
+    // CaptureNow() sets videoMode from Screen after CaptureChipsetState,
+    // so we must do the same here to match the checkpoint's hash.
+    if (_context->pScreen)
+    {
+        chipset.videoMode = static_cast<uint8_t>(_context->pScreen->GetVideoMode());
+    }
 
     uint64_t composite = HashBytes(reinterpret_cast<const uint8_t*>(&cpu), sizeof(TTDCpuState));
     composite = HashCombine(composite,

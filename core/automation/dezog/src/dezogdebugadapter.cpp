@@ -7,7 +7,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/ttd/timetravelmanager.h"
-#include "debugger/ttd/ttd_checkpoint.h"
+#include "debugger/ttd/ttdcheckpoint.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"

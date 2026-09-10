@@ -2,7 +2,7 @@
 
 #include "stdafx.h"
 
-#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
+#include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 #include "emulator/io/tape/tapetypes.h"      // tape vocabulary types (design §5.1a leaf header)
 #include "emulator/io/tape/tapecatalog.h"    // TapeFastLoadPlan (§5.8) — leaf, no cycle
 #include "emulator/platform.h"
