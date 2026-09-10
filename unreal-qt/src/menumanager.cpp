@@ -187,14 +187,6 @@ void MenuManager::createViewMenu()
 {
     _viewMenu = _menuBar->addMenu(tr("&View"));
 
-    // Debugger Window
-    _debuggerAction = _viewMenu->addAction(tr("&Debugger"));
-    _debuggerAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1));
-    _debuggerAction->setStatusTip(tr("Show/hide debugger window"));
-    _debuggerAction->setCheckable(true);
-    _debuggerAction->setChecked(true);
-    connect(_debuggerAction, &QAction::triggered, this, &MenuManager::debuggerToggled);
-
     // Log Window
     _logWindowAction = _viewMenu->addAction(tr("&Log Window"));
     _logWindowAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_2));
@@ -205,34 +197,44 @@ void MenuManager::createViewMenu()
 
     _viewMenu->addSeparator();
 
+    // Toolbar (transport toolbar under the menu bar)
+    _toolBarAction = _viewMenu->addAction(tr("&Toolbar"));
+    _toolBarAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_T));
+    _toolBarAction->setStatusTip(tr("Show/hide toolbar"));
+    _toolBarAction->setCheckable(true);
+    _toolBarAction->setChecked(true);
+    connect(_toolBarAction, &QAction::triggered, this, &MenuManager::toolBarToggled);
+
+    // Status bar (device LEDs and FPS at the bottom of the window)
+    _statusBarAction = _viewMenu->addAction(tr("&Status Bar"));
+    _statusBarAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Slash));
+    _statusBarAction->setStatusTip(tr("Show/hide status bar"));
+    _statusBarAction->setCheckable(true);
+    _statusBarAction->setChecked(true);
+    connect(_statusBarAction, &QAction::triggered, this, &MenuManager::statusBarToggled);
+
     // Full Screen
+    // Single full-screen entry: Cmd+F on macOS, Ctrl+F elsewhere (Qt::CTRL maps to Cmd
+    // on macOS). Cocoa's own "Enter Full Screen" View-menu item is suppressed in main().
     _fullScreenAction = _viewMenu->addAction(tr("&Full Screen"));
-#ifdef Q_OS_MAC
-    _fullScreenAction->setShortcut(QKeySequence(Qt::CTRL | Qt::META | Qt::Key_F));
-#else
-    _fullScreenAction->setShortcut(QKeySequence(Qt::Key_F11));
-#endif
+    _fullScreenAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_F));
     _fullScreenAction->setStatusTip(tr("Toggle full screen mode"));
     _fullScreenAction->setCheckable(true);
     connect(_fullScreenAction, &QAction::triggered, this, &MenuManager::fullScreenToggled);
 
     _viewMenu->addSeparator();
 
-    // Zoom controls
-    _zoomInAction = _viewMenu->addAction(tr("Zoom &In"));
-    _zoomInAction->setShortcut(QKeySequence::ZoomIn);
-    _zoomInAction->setStatusTip(tr("Zoom in (2x)"));
-    _zoomInAction->setEnabled(false);  // TODO: Implement zoom
-
-    _zoomOutAction = _viewMenu->addAction(tr("Zoom &Out"));
-    _zoomOutAction->setShortcut(QKeySequence::ZoomOut);
-    _zoomOutAction->setStatusTip(tr("Zoom out (0.5x)"));
-    _zoomOutAction->setEnabled(false);  // TODO: Implement zoom
-
-    _zoomResetAction = _viewMenu->addAction(tr("&Reset Zoom"));
-    _zoomResetAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
-    _zoomResetAction->setStatusTip(tr("Reset zoom to 1x"));
-    _zoomResetAction->setEnabled(false);  // TODO: Implement zoom
+    // Fixed scale presets: resize the window so the emulator screen (352x288 frame,
+    // the same frame in overscan mode) is shown at an integer scale plus the chrome
+    _scaleMenu = _viewMenu->addMenu(tr("&Scale"));
+    for (int scale = 1; scale <= 4; ++scale)
+    {
+        QAction* action = _scaleMenu->addAction(tr("%1x (%2x%3)").arg(scale).arg(352 * scale).arg(288 * scale));
+        action->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | (Qt::Key_0 + scale)));
+        action->setStatusTip(tr("Resize the window to show the screen at %1x").arg(scale));
+        connect(action, &QAction::triggered, this, [this, scale]() { emit scaleRequested(scale); });
+        _scaleActions.push_back(action);
+    }
 
     _viewMenu->addSeparator();
 
@@ -272,6 +274,30 @@ void MenuManager::createViewMenu()
     _viewportScreenOnlyAction->setCheckable(true);
     _viewportGroup->addAction(_viewportScreenOnlyAction);
     connect(_viewportScreenOnlyAction, &QAction::triggered, this, [this]() { emit viewportChanged(3); });
+}
+
+void MenuManager::setDebuggerChecked(bool checked)
+{
+    if (_debuggerAction)
+    {
+        _debuggerAction->setChecked(checked);
+    }
+}
+
+void MenuManager::setToolBarChecked(bool checked)
+{
+    if (_toolBarAction)
+    {
+        _toolBarAction->setChecked(checked);
+    }
+}
+
+void MenuManager::setStatusBarChecked(bool checked)
+{
+    if (_statusBarAction)
+    {
+        _statusBarAction->setChecked(checked);
+    }
 }
 
 void MenuManager::setTapeManagerChecked(bool checked)
@@ -549,12 +575,14 @@ void MenuManager::createDebugMenu()
 {
     _debugMenu = _menuBar->addMenu(tr("&Debug"));
 
-    // Debug Mode
-    _debugModeAction = _debugMenu->addAction(tr("Debug &Mode"));
-    _debugModeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
-    _debugModeAction->setStatusTip(tr("Enable debug mode (slower, instrumented)"));
-    _debugModeAction->setCheckable(true);
-    connect(_debugModeAction, &QAction::triggered, this, &MenuManager::debugModeToggled);
+    // Debugger window. Hidden at start; while hidden the emulator runs without
+    // debug instrumentation (see MainWindow::handleDebuggerVisibilityChanged)
+    _debuggerAction = _debugMenu->addAction(tr("&Debugger Window"));
+    _debuggerAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1));
+    _debuggerAction->setStatusTip(tr("Show/hide the debugger window (debug features are active only while it is shown)"));
+    _debuggerAction->setCheckable(true);
+    _debuggerAction->setChecked(false);
+    connect(_debuggerAction, &QAction::triggered, this, &MenuManager::debuggerToggled);
 
     _debugMenu->addSeparator();
 
@@ -649,11 +677,11 @@ void MenuManager::createToolsMenu()
 
     _toolsMenu->addSeparator();
 
-    // Screenshot
+    // Screenshot of the emulator framebuffer to clipboard
     _screenshotAction = _toolsMenu->addAction(tr("Take &Screenshot"));
-    _screenshotAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
-    _screenshotAction->setStatusTip(tr("Save screenshot to file"));
-    _screenshotAction->setEnabled(false);  // TODO: Implement screenshot
+    _screenshotAction->setShortcut(QKeySequence(Qt::Key_F12));
+    _screenshotAction->setStatusTip(tr("Copy the emulator screen to the clipboard"));
+    connect(_screenshotAction, &QAction::triggered, this, &MenuManager::screenshotRequested);
 
     // Record Video
     _recordVideoAction = _toolsMenu->addAction(tr("Record &Video..."));

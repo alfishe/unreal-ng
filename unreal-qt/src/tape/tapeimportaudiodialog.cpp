@@ -18,6 +18,7 @@
 #include <QTableView>
 #include <QVBoxLayout>
 
+#include "common/threadhelper.h"
 #include "loaders/tape/writer_tap.h"  // TapArchiveWriter::IsExportable (TAP gate)
 
 TapeImportAudioDialog::TapeImportAudioDialog(QWidget* parent) : QDialog(parent)
@@ -158,6 +159,7 @@ void TapeImportAudioDialog::onPreview()
     _model->Rebuild({}, TapeFastLoadPlan{});
 
     _worker = std::thread([this, request]() {
+        ThreadHelper::setThreadName("tape-import");
         _result = ImportAudioToTape(request);
         QMetaObject::invokeMethod(this, [this]() { onPreviewFinished(); }, Qt::QueuedConnection);
     });

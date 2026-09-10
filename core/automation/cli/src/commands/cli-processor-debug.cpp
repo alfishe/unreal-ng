@@ -34,6 +34,17 @@ void CLIProcessor::HandleStepIn(const ClientSession& session, const std::vector<
         return;
     }
 
+    // Check run-control claim (GDB TDD §3.3 / 1A.7.2)
+    auto* ctx = emulator->GetContext();
+    if (ctx && ctx->IsRunControlClaimed())
+    {
+        auto state = ctx->GetRunControlState();
+        std::stringstream ss;
+        ss << "Error: Run-control held by " << state.surfaceLabel << ". Use that surface to step.";
+        session.SendResponse(ss.str());
+        return;
+    }
+
     // Parse step count argument
     int stepCount = 1;  // stepin always executes one instruction
     // Note: stepin ignores any count parameter - it always steps one instruction
@@ -188,6 +199,17 @@ void CLIProcessor::HandleStepOver(const ClientSession& session, const std::vecto
     if (!emulator->IsPaused())
     {
         session.SendResponse("Emulator must be paused before stepping. Use 'pause' command first.");
+        return;
+    }
+
+    // Check run-control claim (GDB TDD §3.3 / 1A.7.2)
+    auto* ctx = emulator->GetContext();
+    if (ctx && ctx->IsRunControlClaimed())
+    {
+        auto state = ctx->GetRunControlState();
+        std::stringstream ss;
+        ss << "Error: Run-control held by " << state.surfaceLabel << ". Use that surface to step.";
+        session.SendResponse(ss.str());
         return;
     }
 
@@ -409,6 +431,17 @@ void CLIProcessor::HandleSteps(const ClientSession& session, const std::vector<s
     if (!emulator->IsPaused())
     {
         session.SendResponse("Emulator must be paused before stepping. Use 'pause' command first.");
+        return;
+    }
+
+    // Check run-control claim (GDB TDD §3.3 / 1A.7.2)
+    auto* ctx = emulator->GetContext();
+    if (ctx && ctx->IsRunControlClaimed())
+    {
+        auto state = ctx->GetRunControlState();
+        std::stringstream ss;
+        ss << "Error: Run-control held by " << state.surfaceLabel << ". Use that surface to step.";
+        session.SendResponse(ss.str());
         return;
     }
 

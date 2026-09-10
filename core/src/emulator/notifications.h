@@ -110,6 +110,50 @@ public:
     virtual ~EmulatorFramePayload() = default;
 };
 
+/// Snapshot of the floppy subsystem as seen by the UI (status bar LED / tooltip).
+/// Produced by WD1793::getFDDState() (initial read when a UI binds to an emulator)
+/// and carried by FDDStatePayload / NC_FDD_STATE_CHANGED on every change afterwards,
+/// so consumers cache it and never poll the controller.
+struct FDDStateInfo
+{
+    uint8_t driveId = 0;        // Selected drive (0=A, 1=B, 2=C, 3=D)
+    uint8_t track = 0;          // Physical head position (cylinder) of the selected drive
+    uint8_t side = 0;           // Selected side / head (0=bottom, 1=top)
+    uint8_t sector = 0;         // WD1793 sector register
+    bool motorOn = false;       // Spindle motor running
+    bool busy = false;          // Command in progress
+    bool diskInserted = false;  // Image mounted in the selected drive
+    bool writeProtected = false;
+
+    bool operator==(const FDDStateInfo& o) const
+    {
+        return driveId == o.driveId && track == o.track && side == o.side && sector == o.sector &&
+               motorOn == o.motorOn && busy == o.busy && diskInserted == o.diskInserted &&
+               writeProtected == o.writeProtected;
+    }
+    bool operator!=(const FDDStateInfo& o) const { return !(*this == o); }
+
+    char getDriveLetter() const { return static_cast<char>('A' + (driveId & 0x03)); }
+};
+
+/// NC_FDD_STATE_CHANGED payload: the emulator instance plus its current FDDStateInfo
+class FDDStatePayload : public MessagePayload
+{
+public:
+    unreal::UUID _emulatorId;  // UUID of the emulator instance
+    FDDStateInfo _state;
+
+public:
+    FDDStatePayload(const std::string& emulatorId, const FDDStateInfo& state)
+        : MessagePayload()
+        , _emulatorId(emulatorId.empty() ? unreal::UUID() : unreal::UUID(emulatorId))
+        , _state(state)
+    {
+    }
+
+    virtual ~FDDStatePayload() = default;
+};
+
 /// Payload for FDD disk insert/eject notifications
 /// Contains emulator ID, drive number, and disk image path
 /// Example: messageCenter.Post(NC_FDD_DISK_INSERTED, new FDDDiskPayload(emulatorId, driveId, path));
@@ -151,6 +195,36 @@ public:
     
     virtual ~FDDDiskPayload() = default;
     
+    // Helper to get drive letter from drive ID
+    char getDriveLetter() const
+    {
+        return static_cast<char>('A' + (_driveId & 0x03));
+    }
+};
+
+/// Snapshot of WD1793 visible state for NC_FDC_STATE_CHANGED.
+/// Posted by the FDC only when one of the display-relevant fields changes.
+/// Always a complete snapshot — observers never need to merge deltas.
+class FDCStatePayload : public MessagePayload
+{
+public:
+    unreal::UUID _emulatorId;      // Owning emulator instance (nil if unknown)
+    uint8_t _driveId = 0;          // Selected drive index [0..3] (0 = A)
+    uint8_t _side = 0;             // 0 = bottom, 1 = top
+    uint8_t _trackRegister = 0;    // WD1793 track register value
+    uint8_t _sectorRegister = 0;   // WD1793 sector register value
+    uint8_t _physicalTrack = 0;    // FDD head position (actual cylinder)
+    uint8_t _command = 0;          // Last command byte (with flag bits)
+    uint8_t _status = 0;           // Status register snapshot
+    bool _busy = false;            // WDS_BUSY
+    bool _drq = false;             // DRQ output
+    bool _motorOn = false;         // Selected drive motor state
+    bool _diskInserted = false;    // Selected drive has a disk
+
+    FDCStatePayload() = default;
+    explicit FDCStatePayload(const unreal::UUID& emulatorId) : _emulatorId(emulatorId) {}
+    virtual ~FDCStatePayload() = default;
+
     // Helper to get drive letter from drive ID
     char getDriveLetter() const
     {

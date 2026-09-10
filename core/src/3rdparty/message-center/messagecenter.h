@@ -11,7 +11,7 @@ class MessageCenter : public EventQueue
 protected:
     static MessageCenter* m_instance;
     std::mutex m_mutexThreads;
-    std::thread* m_thread;
+    std::thread* m_thread = nullptr;
 
     std::atomic<bool> m_started;
     std::atomic<bool> m_requestStop;
