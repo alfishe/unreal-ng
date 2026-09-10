@@ -558,6 +558,10 @@ public:
     virtual uint8_t GetBorderColor();
     virtual uint32_t GetCurrentTstate();
 
+    /// @brief Read-only access to the calculated raster zone boundaries
+    /// (t-state ranges for blank/border/screen areas, vertical and horizontal)
+    const RasterState& GetRasterState() const { return _rasterState; }
+
     /// Test observability: raster timing of the active mode. _rasterState is
     /// refreshed by SetVideoMode, i.e. after InitRaster applied a mode change.
     uint32_t GetMaxFrameTiming() const { return _rasterState.maxFrameTiming; }

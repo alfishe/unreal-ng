@@ -785,6 +785,30 @@ struct EmulatorState
 
     /// endregion </Counters>
 
+    /// region <Frame cost accounting (WebAPI GET /frame_cost)>
+
+    // Work-vs-idle accounting. tstates_halted_current is incremented from the
+    // halted branch of Z80::Z80Step on the emulation thread; the rollup runs in
+    // Core::AdjustFrameCounters at the frame boundary. Readers (WebAPI) get
+    // approximate values without locks — totals are monotonic and the
+    // per-frame fields are advisory.
+    uint32_t tstates_halted_current = 0;  // Halted t-states accumulated in the in-flight frame
+    uint32_t tstates_halted_last = 0;     // Halted t-states in the last completed frame
+    uint64_t tstates_halted_total = 0;    // Cumulative halted (idle) t-states
+    uint64_t tstates_frame_total = 0;     // Cumulative frame t-states (active + halted)
+    uint64_t frame_cost_frames = 0;       // Completed frames accounted
+
+    /// endregion </Frame cost accounting>
+
+    /// region <Screen digest change tracking (WebAPI GET /state/screen/digest)>
+
+    // Poll-driven change detection: updated by the digest endpoint on every
+    // read. changed == (combined digest differs from last_screen_digest).
+    uint64_t last_screen_digest = 0;       // Combined digest returned by the previous poll
+    uint64_t last_screen_digest_frame = 0; // Frame counter at that poll
+
+    /// endregion </Screen digest change tracking>
+
     /// region <Runtime CPU parameters>
 
     // Example:

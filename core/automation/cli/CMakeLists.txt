@@ -32,6 +32,7 @@ set(SOURCES
     src/commands/cli-processor-profiler.cpp
     src/commands/cli-processor-porttrace.cpp
     src/commands/cli-processor-keyboard.cpp
+    src/commands/cli-processor-analysis.cpp
 )
 
 # Create the library

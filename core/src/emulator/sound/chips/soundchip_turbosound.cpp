@@ -235,7 +235,26 @@ void SoundChip_TurboSound::portDeviceOutMethod(uint16_t port, uint8_t value)
             _currentChip->writeCurrentRegister(value);
             break;
         default:
-            break;
+            return;  // Not an AY port — no tap
+    }
+
+    // Automation tap (MCP M7j): fires after the write so `chip` identifies the
+    // chip that received it (chip-switch commands report the newly active chip)
+    if (_logSink) [[unlikely]]
+    {
+        AYLogRecord record;
+        record.port = port;
+        record.value = value;
+        record.chip = (_currentChip == _chip1) ? 1 : 0;
+        record.reg = (port == PORT_BFFD) ? _currentChip->getCurrentRegister() : value;
+        if (_context && _context->pCore)
+        {
+            const Z80* z80 = _context->pCore->GetZ80();
+            record.pc = z80->m1_pc;     // PC of the OUT instruction, not the next one
+            record.tacts = z80->t;      // T-states within the current frame
+            record.frame = _context->emulatorState.frame_counter;
+        }
+        _logSink(_logSinkContext, record);
     }
 }
 /// endregion </PortDevice interface methods>
