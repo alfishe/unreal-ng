@@ -229,10 +229,11 @@ namespace PythonBindings
                 return Z80::SetRegisterValue(z80, name, value);
             }, "Set register value by name", py::arg("name"), py::arg("value"))
 
-            // Memory access (isExecution=false for data reads)
+            // Memory access: direct (non-mutating) reads so inspecting
+            // memory never drives the ProfROM quadrant machine
             .def("mem_read", [](Emulator& self, uint16_t addr) -> uint8_t {
                 Memory* mem = self.GetMemory();
-                return mem ? mem->MemoryReadFast(addr, false) : 0;
+                return mem ? mem->DirectReadFromZ80Memory(addr) : 0;
             }, "Read byte from memory")
             .def("mem_write", [](Emulator& self, uint16_t addr, uint8_t value) {
                 Memory* mem = self.GetMemory();
@@ -241,7 +242,7 @@ namespace PythonBindings
             .def("mem_read_word", [](Emulator& self, uint16_t addr) -> uint16_t {
                 Memory* mem = self.GetMemory();
                 if (!mem) return 0;
-                return mem->MemoryReadFast(addr, false) | (mem->MemoryReadFast(addr + 1, false) << 8);
+                return mem->DirectReadFromZ80Memory(addr) | (mem->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + 1)) << 8);
             }, "Read 16-bit word from memory")
             .def("mem_write_word", [](Emulator& self, uint16_t addr, uint16_t value) {
                 Memory* mem = self.GetMemory();
@@ -255,7 +256,7 @@ namespace PythonBindings
                 std::string data;
                 data.reserve(len);
                 for (uint16_t i = 0; i < len; i++) {
-                    data.push_back(static_cast<char>(mem->MemoryReadFast(addr + i, false)));
+                    data.push_back(static_cast<char>(mem->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + i))));
                 }
                 return py::bytes(data);
             }, "Read block of bytes from memory", py::arg("addr"), py::arg("len"))
@@ -949,8 +950,10 @@ namespace PythonBindings
                 
                 for (int i = 0; i < count; ++i) {
                     std::vector<uint8_t> buffer;
+                    // Direct (non-mutating) reads: disassembly must not strobe
+                    // the ProfROM quadrant machine on #0000-#0003
                     for (int j = 0; j < 4; ++j) {
-                        buffer.push_back(memory->MemoryReadFast(static_cast<uint16_t>(addr + j), false));
+                        buffer.push_back(memory->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + j)));
                     }
                     
                     uint8_t cmdLen = 0;

@@ -425,6 +425,12 @@ types:
         type: u1
       - id: plsy256
         type: u1
+      - id: profrom_bank
+        type: u1
+        doc: Scorpion ProfROM quadrant (read-strobe state machine). Not reproducible from port latches - depends on the whole read history.
+      - id: profrom_reserved
+        size: 7
+        doc: Packing pad keeping the struct fully packed (must be zero).
       - id: wd_shadow
         size: 4
         doc: 2F, 4F, 6F, 8F WD1793 shadow registers.

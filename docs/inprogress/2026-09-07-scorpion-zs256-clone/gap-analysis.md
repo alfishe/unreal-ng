@@ -25,12 +25,12 @@ Legend: ✅ matches spec · ⚠️ partial/incorrect · ❌ missing.
 
 | Requirement | Current state | Verdict |
 |---|---|---|
-| Load 64 KB bundle, map logical pages | `rom.cpp:180-193` assigns `page0→base_sys_rom`, `page1→base_dos_rom`, `page2→base_128_rom`, `page3→base_sos_rom` — but the signature-validated `scorpion.rom` (`07c190ae…`, matches `rom.cpp:48`) is **BASIC128/48K/Service/TR-DOS** order (hardware-reference §5.1 byte-level verification) → **all four ROM roles scrambled** | ✅ **fixed 2026-09-08** (uncommitted): now `page0→base_128_rom, page1→base_sos_rom, page2→base_sys_rom, page3→base_dos_rom`, guarded by `scorpionrommapping_test.cpp` |
+| Load 64 KB bundle, map logical pages | `rom.cpp:180-193` assigns `page0→base_sys_rom`, `page1→base_dos_rom`, `page2→base_128_rom`, `page3→base_sos_rom` — but the signature-validated `scorpion.rom` (`07c190ae…`, matches `rom.cpp:48`) is **BASIC128/48K/Service/TR-DOS** order (hardware-reference §5.1 byte-level verification) → **all four ROM roles scrambled** | ✅ **fixed 2026-09-08** (commit `3f49622c`): now `page0→base_128_rom, page1→base_sos_rom, page2→base_sys_rom, page3→base_dos_rom`, guarded by `scorpionrommapping_test.cpp` |
 | `MM_SCORP` size validation | none (only `MM_PROFSCORP` checked) | ⚠️ |
 | ProfROM sizes 128/256 KB accepted | `rom.cpp:280-287` — checks `loadedBanks ∈ {4,8,16}` (uses `LOGERROR`, not `MLOGERROR`) | ✅ for 64-256 KB; the shipped 512 KB `scorp_prof401.rom` is rejected |
 | ProfROM state fields | `EmulatorState::profrom_bank` (`platform.h:877`) and `TEMP::profrom_mask` (`platform.h:665`) survive from the original `COMPUTER`/`TEMP` structs, never written or read | ⚠️ present, dormant — reuse them (HW §12 item 11) |
 | ProfROM quadrant state machine (`switch_table`) | **absent** — no `profrom_bank`, no `CF_PROFROM` producer, no `set_scorp_profrom` port | ❌ |
-| Read strobe hook (`#0000-#0003` while service ROM active) | absent (was also dormant in original UnrealSpeccy) | ❌ |
+| Read strobe hook (`#0100-#010F` while service ROM active) | absent (was also dormant in original UnrealSpeccy) | ❌ |
 | Extended ROM 512 KB-2 MB | `MAX_ROM_PAGES = 64` (1 MB) in `platform.h:244`; no `#7EFD` handling anywhere (`p7EFD` field survives in `EmulatorState`, `platform.h:809`) | ❌ |
 | `MAX_ROM_PAGES` consumers that hard-code 64 | `tools/python/emulator_discovery.py:37`, `tools/python/monitor_mmap_file.py:73` (mmap layout — will silently misread after the bump); `loader_z80.h:169` staging array (grows automatically); `labelmanager.cpp:576`, `memory.cpp:1117` (comments) | ⚠️ audit list for Task 2 |
 | ROM-set mode for 4 base pages | `use_romset` path exists | ✅ |
@@ -53,7 +53,7 @@ Legend: ✅ matches spec · ⚠️ partial/incorrect · ❌ missing.
 
 | Requirement | Current state | Verdict |
 |---|---|---|
-| `#7FFD` full semantics | `portdecoder_scorpion256.cpp` — 3-bit bank, ROM0/1, screen, lock | ⚠️ 128K-subset. **D4 polarity fixed 2026-09-08** (uncommitted): the arm read `SetROMMode(bit4 ? RM_128 : RM_SOS)`, which selected the wrong ROM *and* wrote the complement of D4 into `state.p7FFD` (`SetROMMode` rewrites that bit), corrupting the latch snapshots/TTD/debugger read back. Task 3 rewrites this body — **preserve the corrected polarity**: D4 clear → `RM_128`, D4 set → `RM_SOS`. The RAM-bank bits are still never latched into `p7FFD` (Task 3) |
+| `#7FFD` full semantics | `portdecoder_scorpion256.cpp` — 3-bit bank, ROM0/1, screen, lock | ⚠️ 128K-subset. **D4 polarity fixed 2026-09-08** (commit `3f49622c`): the arm read `SetROMMode(bit4 ? RM_128 : RM_SOS)`, which selected the wrong ROM *and* wrote the complement of D4 into `state.p7FFD` (`SetROMMode` rewrites that bit), corrupting the latch snapshots/TTD/debugger read back. Task 3 rewrites this body — **preserve the corrected polarity**: D4 clear → `RM_128`, D4 set → `RM_SOS`. The RAM-bank bits are still never latched into `p7FFD` (Task 3) |
 | `#1FFD` write handler | **empty stub** (`:317-321` — `(void)value; (void)pc;`) | ❌ |
 | `#1FFD` read returns `#FF` | `DecodePortIn` has no arm — falls into generic `PeripheralPortIn` (warn + `0xFF`) | ⚠️ value correct, path noisy (logs a "no peripheral" warning on every read) |
 | `#7FFD` reads fall through to unattached | no arm → same fall-through | ⚠️ same |

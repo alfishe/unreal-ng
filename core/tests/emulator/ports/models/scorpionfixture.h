@@ -66,7 +66,7 @@ protected:
     std::string _romPath;
 
     // Machine shape - change via RebuildWithModel() / LoadSyntheticRom() from a test body
-    MEM_MODEL _model = MM_SCORP;   // MM_PROFSCORP dispatch lands with the ProfROM task
+    MEM_MODEL _model = MM_SCORP;   // switch to MM_PROFSCORP for the quadrant-ladder tests
     uint32_t _ramSizeKB = RAM_256;
     uint16_t _romQuadrants = 1;
 
@@ -162,10 +162,9 @@ protected:
 private:
     bool BuildMachine()
     {
-        if (_model != MM_SCORP)
+        if (_model != MM_SCORP && _model != MM_PROFSCORP)
         {
-            // PortDecoder dispatch for MM_PROFSCORP is added by the ProfROM task;
-            // GetPortDecoderForModel() would throw for it today
+            // The synthetic Scorpion machines only come in the base and ProfROM variants
             return false;
         }
 

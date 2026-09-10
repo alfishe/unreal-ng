@@ -416,8 +416,10 @@ void MenuManager::createMachineMenu()
         MM_PENTAGON,      // Pentagon 128K/512K/1024K
         MM_SPECTRUM48,    // ZX-Spectrum 48K
         MM_SPECTRUM128,   // ZX-Spectrum 128K
-        MM_SCORP          // Scorpion ZS-256 (base ROM bundle; design:
+        MM_SCORP,         // Scorpion ZS-256 (base ROM bundle; design:
                           // docs/inprogress/2026-09-07-scorpion-zs256-clone)
+        MM_PROFSCORP      // Scorpion ZS-256 + ProfROM 4.01 (512 KB scorp_prof401.rom,
+                          // quadrant switching + #7EFD window; same design doc)
     };
 
     for (const auto& model : models)

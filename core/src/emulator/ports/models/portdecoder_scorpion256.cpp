@@ -5,6 +5,7 @@
 #include "portdecoder_scorpion256.h"
 
 #include "common/collectionhelper.h"
+#include "emulator/video/ulacontention.h"
 
 #include <cstdint>
 
@@ -58,7 +59,8 @@ void PortDecoder_Scorpion256::reset()
     EmulatorState& state = _context->emulatorState;
     state.p7FFD = 0x00;     // Reset port 0x7FFD to default (Screen 0, RAM bank 0, SOS ROM, paging enabled)
     state.p1FFD = 0x00;     // Reset port 0x1FFD (no RAM at #0000, Shadow Monitor off, extended bank bits clear)
-    state.p7EFD = 0x00;     // Reset ProfROM window latch (quadrant 0; inert until the ProfROM task wires it)
+    state.p7EFD = 0x00;     // Reset ProfROM window latch
+    state.profrom_bank = 0x00;  // ProfROM quadrant 0 at power-on (design §4.2)
     state.pBFFD = 0x00;     // Reset AY register select port
     state.pFFFD = 0x00;     // Reset AY data port
     state.pFE = 0xF8;       // Reset ULA port (border black, no sound; keys released)
@@ -166,6 +168,17 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
         if (_lastPortDecoded)
             disp.decodedPort = dispatchPort;
     }
+
+    // Scorpion floating bus (programmer's manual, port #FF): a read from ANY
+    // non-existent port returns the attribute byte of the screen cell being
+    // fetched right now - the attribute latch keeps driving the data bus.
+    // Border/blanking reads return #FF. The ProfROM monitor times its raster
+    // waits on this stream, so it must be live for both even and odd ports
+    // (unlike the ZX-model floating-bus fallback in Z80::in which only serves
+    // odd ports behind the FloatBus config toggle)
+    if (!_lastPortDecoded && _context->pUlaContention)
+        result = _context->pUlaContention->GetFloatingBusAttribute();
+
     disp.wasDecoded = _lastPortDecoded;
 
     /// region <Debug logging>
@@ -213,9 +226,13 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
     // register. On the base model #7EFD stays a plain #7FFD mirror
     if (_context->config.mem_model == MM_PROFSCORP && IsPort_7EFD(port))
     {
-        // Write-only latch - inert for images <= 256 KB until the read-strobe
-        // state machine lands (Task 7)
-        state.p7EFD = value;
+        // Window select (design §4.2): the latch is stored verbatim, then the
+        // quadrant's window bits above the GAL state are refreshed and the ROM
+        // bases rebuilt - inert for images <= 256 KB (window mask 0)
+        Memory& memory = *_context->pMemory;
+        memory.GetScorpionRomWindow().OnWindowPortWrite(state, _context->temporary, value);
+        memory.UpdateZ80Banks();
+
         disp.decodedPort = 0x7EFD;
         disp.wasDecoded = true;
         disp.wasHandledInline = true;

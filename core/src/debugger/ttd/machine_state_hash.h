@@ -105,6 +105,7 @@ struct MachineStateSnapshot
     uint8_t gmx_magic_shift = 0;
     uint8_t p00 = 0;            // Quorum
     uint8_t p80FD = 0;          // Quorum
+    uint8_t profrom_bank = 0;   // Scorpion ProfROM quadrant (read-strobe state machine)
     uint8_t border_attr = 0;    // Last border color written
 
     // ---- Counters (frame-aligned) ----

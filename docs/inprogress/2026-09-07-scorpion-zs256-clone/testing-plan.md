@@ -255,15 +255,15 @@ Pure-logic tests (no context) plus fixture-backed ones:
 - **`#7EFD` select:** 1 MB image, `OUT (#7EFD),10h` → effective quadrant 4 → base = ROM
   page 16; state machine low bits still walk inside the window.
 - **2 MB extension bit:** debug/API bit reaches quadrants 16-31 (pages 64-127); default 0.
-- **`MM_SCORP` inertness:** reads of `#0000-#0003` never remap; `CF_PROFROM` never set.
-- **Reset-vector boot goldens** (from the shipped `scorp_prof401.rom` headers + the
-  verified table — hardware-reference §5.2): the 4-read reset walk starting from Q0
-  (`F3 C3 D1 08` with quadrant-switched operand bytes) ends in Q0; from Q1
-  (`F3 C3 03 01`) ends in Q1 — self-stabilizing boot vectors, asserted as `OnRomRead`
-  sequences.
-- **Any-read requirement:** operand (non-M1) reads drive the machine — a dedicated case
-  feeds the 4-read reset sequence and asserts the operand bytes are fetched from the
-  *post-switch* quadrant (mid-instruction remap, design §4.3).
+- **`MM_SCORP` inertness:** reads of `#0100-#010F` never remap; `CF_PROFROM` never set.
+- **Hold-row transparency golden:** reads of `#0100-#0103` (the `S=0` row) leave the
+  machine in its current quadrant — asserted as `OnRomRead` sequences from every
+  starting quadrant (this is what keeps the plane-ID read of `#0101` side-effect
+  free).
+- **Any-read requirement:** every CPU read of the block (M1 fetch and operand alike)
+  drives the machine — a dedicated case reads `#0104-#0107` through all four A0/A1
+  offsets and asserts identical transitions plus post-switch operand bytes
+  (mid-instruction remap, design §4.3).
 - **Reset:** quadrant 0, window 0 after `Reset()` / ROM reload.
 - **State residency:** after every transition `EmulatorState::profrom_bank == Quadrant()`;
   `ScorpionRomWindow` holds no quadrant of its own (design principle 5).
@@ -395,6 +395,8 @@ Available real assets (in-repo): `data/rom/scorpion.rom` (64K, signature-validat
 
 ### E2E-1 — Cold boot to BASIC 128
 
+> **Executed 2026-09-08 — PASS.** See [verification/e2e-base-rom.md](verification/e2e-base-rom.md).
+
 - **Preconditions:** `scorpion.rom` configured for the SCORPION instance.
 - **Procedure:** harness preamble → run ~2 s (≈120 frames) → `GET /emulator/$EMU_ID`
   (timing fields) → screenshot API → memory read of sysvars (`#5C00` area).
@@ -403,6 +405,9 @@ Available real assets (in-repo): `data/rom/scorpion.rom` (64K, signature-validat
   `ERR_NR`-class sysvars show BASIC ready; border black at power-on.
 
 ### E2E-2 — Boot menu → TR-DOS session with a real disk
+
+> **Executed 2026-09-08 — PASS (all 4 criteria).** A Beta128 mirror-port decode bug
+> was found and fixed live during this run. See [verification/e2e-base-rom.md](verification/e2e-base-rom.md).
 
 - **Preconditions:** SCORPION instance; `Satisfaction.trd` inserted (config or disk API).
 - **Procedure:** boot to menu → keyboard event selecting the TR-DOS/menu entry (or run
@@ -416,6 +421,8 @@ Available real assets (in-repo): `data/rom/scorpion.rom` (64K, signature-validat
 
 ### E2E-3 — MNI button
 
+> **Executed 2026-09-08 — PASS.** See [verification/e2e-base-rom.md](verification/e2e-base-rom.md).
+
 - **Procedure:** in BASIC, write a signature into `#C000` area (bank via `#1FFD`) →
   `POST /api/v1/emulator/$EMU_ID/nmi {"magic": true}` → screenshot (Shadow Monitor) →
   memory/state inspection (`p1FFD & 2`, `#0000` = service window) → exit via the
@@ -424,6 +431,10 @@ Available real assets (in-repo): `data/rom/scorpion.rom` (64K, signature-validat
   after exit, BASIC resumes with the `#C000` signature intact.
 
 ### E2E-4 — ProfROM quadrant switching (real 512K image)
+
+> **Executed 2026-09-09 — PASS** (quadrant transitions observed via a debugger-driven
+> probe routine instead of keyboard menu navigation; Q0-stable across 3 cold
+> restarts). See [verification/e2e-profrom-quadrants.md](verification/e2e-profrom-quadrants.md).
 
 - **Preconditions:** `PROFSCORP` model; ROM image = `scorp_prof401.rom` (512 KB, 8
   quadrants), selected via the config ROM path (INI key `PROFROM` — gap-analysis §1);
@@ -455,6 +466,9 @@ Available real assets (in-repo): `data/rom/scorpion.rom` (64K, signature-validat
   saved; SNA save attempt returns the documented error.
 
 ### E2E-7 — 1024 KB RAM configuration
+
+> **Executed 2026-09-09 — PASS** (1024 KB reachability + 256 KB clamp, on the
+> PROFSCORP variant). See [verification/e2e-profrom-instantiation.md](verification/e2e-profrom-instantiation.md).
 
 - **Procedure:** SCORPION with `"ram_size": 1024` in the `POST /emulator/start` body
   (supported via `CreateEmulatorWithModelAndRAM`) → OUT-script selects banks 16,

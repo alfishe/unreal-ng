@@ -1,6 +1,9 @@
 # Scorpion ZS-256 Clone — Complete Implementation
 
-Directory status: **design + planning phase, reviewed** (no code changes yet).
+Directory status: **implementation in progress** — Tasks 0-7 done (Tasks 0-6 + defect
+fixes committed in `3f49622c`, the PROFSCORP instantiation fix in `535b8238`, Task 7
+in the working tree), Tasks 8-11 outstanding. See *Execution status* below and the
+[verification/](verification/) E2E records.
 Review pass 2026-09-08: every file/line claim was re-verified against the working tree,
 factual errors corrected, and the two open design questions resolved by primary-source
 research — see *Decisions log* below.
@@ -48,6 +51,7 @@ significant — is missing.
 | [design.md](design.md) | Target architecture: module changes, paging/ROM/TR-DOS state machines, port decode, MNI flow, snapshot formats, with diagrams |
 | [implementation-plan.md](implementation-plan.md) | The executable plan: ordered tasks, files, steps with checkboxes, acceptance criteria, commit points |
 | [testing-plan.md](testing-plan.md) | Unit, integration, regression and boot-verification strategy; quality gates |
+| [verification/](verification/) | Live E2E execution records (transferred from `scratch/`): [e2e-base-rom.md](verification/e2e-base-rom.md) (E2E-1/2/3, Tasks 0-6), [e2e-profrom-instantiation.md](verification/e2e-profrom-instantiation.md) (PROFSCORP smoke + E2E-7), [e2e-profrom-quadrants.md](verification/e2e-profrom-quadrants.md) (E2E-4, Task 7). Raw transcripts/artifacts stay in `scratch/e2e*` |
 
 ## Scope decisions (agreed defaults)
 
@@ -80,8 +84,8 @@ significant — is missing.
 | Variant | ROM size | Quadrants | Selection mechanism | Model |
 |---------|----------|-----------|---------------------|-------|
 | Minimal | 64 KB | 1 | none (fixed) | `MM_SCORP` |
-| ProfROM | 128 KB | 2 | read `#0000-#0003` state machine | `MM_PROFSCORP` |
-| ProfROM | 256 KB | 4 | read `#0000-#0003` state machine | `MM_PROFSCORP` |
+| ProfROM | 128 KB | 2 | read `#0100-#010F` state machine | `MM_PROFSCORP` |
+| ProfROM | 256 KB | 4 | read `#0100-#010F` state machine | `MM_PROFSCORP` |
 | Extended | 512 KB - 2 MB | 8-32 | `#7EFD` bits 4-5 direct select (+ state machine low bits) | `MM_PROFSCORP` |
 
 Each 64 KB quadrant internally contains the standard 4-page set
@@ -89,8 +93,9 @@ Each 64 KB quadrant internally contains the standard 4-page set
 non-boot quadrants and are paged by the ROM's own software through the same window.
 
 Shipped images (`data/rom/`): `scorpion.rom` 64 KB, `scorp295.rom` 64 KB,
-`scorp_prof401.rom` **512 KB** (the real extended image; currently rejected by the
-loader — hardware-reference §5.4).
+`scorp_prof401.rom` **512 KB** (the real extended image; loads and validates as
+8 quadrants since Task 2's validation matrix — see
+[verification/e2e-profrom-instantiation.md](verification/e2e-profrom-instantiation.md)).
 
 ## Decisions log (2026-09-08)
 
@@ -108,10 +113,10 @@ Also found in this pass (parallel review session, verified against the ROM bytes
 BASIC128 / 48K / Service / TR-DOS — a pre-existing loader bug, fixed in Task 2
 (hardware-reference §5.1).
 
-### Code defects fixed (2026-09-08, uncommitted)
+### Code defects fixed (2026-09-08; committed in `3f49622c`)
 
 Three bugs that exist independently of the Scorpion feature work were fixed directly.
-They are **not** the 11-task plan; every task below is still outstanding.
+They are **not** the 11-task plan.
 
 | Fix | File | Effect |
 |---|---|---|
@@ -168,5 +173,13 @@ clean-baseline requirement for Task 0.
 | Implementation plan | done |
 | Testing plan | done |
 | Review + research pass (facts re-verified, decisions logged) | done 2026-09-08 |
-| Standalone code defects fixed (see below) | done 2026-09-08, **uncommitted** |
-| Code changes | not started — commit/branch the in-flight HUD work first, then start at [implementation-plan.md](implementation-plan.md) Task 0 |
+| Standalone code defects fixed | done 2026-09-08, committed in `3f49622c` |
+| Tasks 0-6 (baseline harness, config/timing, ROM space, paging, port decoder, TR-DOS, NMI/MNI) | done 2026-09-08, commit `3f49622c`; live E2E-1/2/3 — [verification/e2e-base-rom.md](verification/e2e-base-rom.md) |
+| PROFSCORP instantiation fix | done 2026-09-09, commit `535b8238`; smoke + E2E-7 (1024 KB / 256 KB RAM) — [verification/e2e-profrom-instantiation.md](verification/e2e-profrom-instantiation.md) |
+| Task 7 (ProfROM quadrant state machine + `#7EFD` window) | done 2026-09-09, **uncommitted**; live E2E-4 — [verification/e2e-profrom-quadrants.md](verification/e2e-profrom-quadrants.md) |
+| Tasks 8-11 (ROM-disk ladder, `.z80` hw=10 snapshots, tooling polish, final QA) | not started |
+
+Known incidental defect (outside this plan's scope, filed during Task 7 E2E):
+WebAPI `DELETE /emulator/{id}` on the instance adopted by the Qt main window can
+SIGSEGV in `MenuManager::updateMenuStates` — details in
+[verification/e2e-profrom-quadrants.md](verification/e2e-profrom-quadrants.md).

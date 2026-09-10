@@ -660,7 +660,8 @@ struct TEMP
 		int64_t tape_started;
 	} led;
 
-	uint8_t profrom_mask;
+	uint8_t profrom_mask;         // Scorpion ProfROM: GAL state-machine bits by image size (64K=0, 128K=1, 256K+=3)
+	uint8_t profrom_window_mask;  // Scorpion ProfROM: #7EFD[5:4] select bits by image size (<=256K=0, 512K=1, 1M/2M=3)
 	uint8_t comp_pal_changed;
 
 	uint8_t vidblock, sndblock, inputblock, frameskip;

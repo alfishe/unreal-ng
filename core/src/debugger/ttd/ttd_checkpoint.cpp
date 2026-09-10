@@ -181,6 +181,7 @@ TTDChipsetState CaptureChipsetState(const EmulatorState& src)
     dst.p4F = src.p4F;
     dst.p5F = src.p5F;
     dst.pLSY256 = src.pLSY256;
+    dst.profrom_bank = src.profrom_bank;
     static_assert(sizeof(dst.wd_shadow) == sizeof(src.wd_shadow),
                   "wd_shadow size mismatch");
     std::memcpy(dst.wd_shadow, src.wd_shadow, sizeof(dst.wd_shadow));
@@ -248,6 +249,7 @@ void RestoreChipsetState(const TTDChipsetState& src, EmulatorState* dst)
     dst->p4F = src.p4F;
     dst->p5F = src.p5F;
     dst->pLSY256 = src.pLSY256;
+    dst->profrom_bank = src.profrom_bank;
     std::memcpy(dst->wd_shadow, src.wd_shadow, sizeof(dst->wd_shadow));
 
     // Video / palette

@@ -66,7 +66,7 @@ flowchart LR
     PD --> AY
     PD -->|border| SCR
     MEM --> PR --> ROM
-    Z80 -->|fetch/read #0000-#0003| PR
+    Z80 -->|read #0100-#010F (svc paged)| PR
     Z80 -->|trap #3Dxx / NMI #0066| MEM
     Z80 -->|bank pointers| MEM
     SCR -->|bank5/7 pointer| MEM

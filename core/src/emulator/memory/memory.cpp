@@ -174,6 +174,20 @@ MemoryInterface* Memory::GetDebugMemoryInterface()
 /// \return Byte read from Z80 memory
 uint8_t Memory::MemoryReadFast(uint16_t addr, [[maybe_unused]] bool isExecution)
 {
+    // ProfROM read strobe (design §4.3): while the Service ROM is paged at #0000,
+    // any CPU read of the #0100-#010F block advances the quadrant state machine
+    // BEFORE the byte is fetched - operand bytes therefore come from the
+    // post-switch quadrant (mid-instruction remap, hardware-reference §12.4).
+    // The block matches the GAL decode exactly (S = A3:A2, A0/A1 unwired) - the
+    // same (addr & 0xFFF0) == 0x0100 window ZXMAK2 subscribes. Debugger-side
+    // reads (DirectRead/MapZ80AddressToPhysicalAddress) never pass here and so
+    // never advance the machine. Cost when inactive: one cached-bool test
+    if (_scorpProfromActive && (addr & 0xFFF0) == 0x0100) [[unlikely]]
+    {
+        if (_scorpionRomWindow.OnRomRead(_context->emulatorState, _context->temporary, addr))
+            UpdateZ80Banks();
+    }
+
     // Determine CPU bank (from address bits 14 and 15)
     uint8_t bank = (addr >> 14) & 0b0000'0011;
     uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
@@ -190,6 +204,15 @@ uint8_t Memory::MemoryReadFast(uint16_t addr, [[maybe_unused]] bool isExecution)
 /// \return Byte read from Z80 memory
 uint8_t Memory::MemoryReadDebug(uint16_t addr, [[maybe_unused]] bool isExecution)
 {
+    // ProfROM read strobe (design §4.3) - same #0100-#010F gate and semantics as
+    // MemoryReadFast: single-stepping must drive the quadrant machine exactly
+    // like free-running execution, or breakpoints would desynchronise it
+    if (_scorpProfromActive && (addr & 0xFFF0) == 0x0100) [[unlikely]]
+    {
+        if (_scorpionRomWindow.OnRomRead(_context->emulatorState, _context->temporary, addr))
+            UpdateZ80Banks();
+    }
+
     /// region <MemoryReadFast functionality>
 
     // Determine CPU bank (from address bits 14 and 15)
@@ -933,7 +956,8 @@ void Memory::UpdateScorpionBanks()
 
     // --- ProfROM variant bookkeeping: the read-strobe window is active while
     // the Shadow Monitor is paged at #0000 (design §3) ---
-    if (config.mem_model == MM_PROFSCORP && _bank_read[0] == base_sys_rom)
+    _scorpProfromActive = config.mem_model == MM_PROFSCORP && _bank_read[0] == base_sys_rom;
+    if (_scorpProfromActive)
         state.flags |= CF_PROFROM;
 }
 
@@ -965,6 +989,16 @@ void Memory::ResolveScorpionRomBases(uint8_t quadrant)
     base_sos_rom = ROMPageHostAddress(static_cast<uint8_t>(basePage + 1));
     base_sys_rom = ROMPageHostAddress(static_cast<uint8_t>(basePage + 2));
     base_dos_rom = ROMPageHostAddress(static_cast<uint8_t>(basePage + 3));
+}
+
+/// ROM loader completion hook (design §4.2): derive the ProfROM image geometry
+/// masks (state-machine bits + #7EFD window select) from the validated bank
+/// count. Quadrant state itself is untouched - it stays 0 (power-on) unless a
+/// snapshot or TTD restore writes it
+void Memory::OnRomLoaded(uint16_t imageBanks)
+{
+    if (_context->config.mem_model == MM_PROFSCORP)
+        _scorpionRomWindow.Configure(_context->temporary, imageBanks);
 }
 
 /// Set ROM page

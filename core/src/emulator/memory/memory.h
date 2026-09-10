@@ -1,5 +1,6 @@
 #pragma once
 #include "emulator/emulatorcontext.h"
+#include "emulator/memory/scorpionromwindow.h"
 #include "emulator/platform.h"
 #include "stdafx.h"
 
@@ -138,6 +139,12 @@ protected:
     bool _isPage0ROMDOS;
     bool _isPge0ROMService;
 
+    // Scorpion ProfROM quadrant window (design §4.2): stateless policy object,
+    // quadrant state itself lives in EmulatorState / TEMP. The cached gate
+    // below feeds the read-strobe fast-path check in MemoryReadFast/Debug
+    ScorpionRomWindow _scorpionRomWindow;
+    bool _scorpProfromActive = false;  // MM_PROFSCORP && service ROM paged at #0000
+
 public:
     // Base addresses for memory classes
     inline uint8_t* RAMBase()
@@ -272,6 +279,16 @@ public:
 
     /// Repoint the four ROM role pointers at a ProfROM quadrant (design §4.2)
     void ResolveScorpionRomBases(uint8_t quadrant);
+
+    /// ROM loader completion hook (design §4.2): derives the ProfROM image
+    /// geometry masks from the validated bank count. No-op on other models
+    void OnRomLoaded(uint16_t imageBanks);
+
+    /// ProfROM quadrant window (owned policy object; state lives in EmulatorState/TEMP)
+    ScorpionRomWindow& GetScorpionRomWindow()
+    {
+        return _scorpionRomWindow;
+    };
 
     void SetROMPage(uint16_t page, bool updatePorts = false);
     void SetRAMPageToBank0(uint16_t page, bool updatePorts = false);

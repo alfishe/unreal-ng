@@ -271,6 +271,7 @@ bool ROM::LoadROM()
         if (result)
         {
             _ROMBanksLoaded = 4;
+            memory.OnRomLoaded(4);  // ProfROM geometry hook (no-op on other models)
         }
 	}
 	else
@@ -383,6 +384,10 @@ bool ROM::LoadROM()
 
 			if (result)
 			{
+				// ProfROM image geometry for the quadrant window (design §4.2);
+				// no-op on every other model
+				memory.OnRomLoaded(_ROMBanksLoaded);
+
 				MLOGDEBUG("ROM successully loaded from file '%s'", romname.c_str());
 			}
 		}

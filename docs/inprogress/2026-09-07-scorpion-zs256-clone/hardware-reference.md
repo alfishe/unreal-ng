@@ -196,7 +196,7 @@ the Sinclair copyright string (48K BASIC); page2 has **no reset vector** (starts
 > **Loader bug found by this verification:** `rom.cpp` (`MM_SCORP`/`MM_PROFSCORP`
 > cases) assigns the pointers Service-first (`page0→base_sys_rom`,
 > `page1→base_dos_rom`, …), which scrambles all four roles for every bundle above —
-> including the signature-validated `scorpion.rom`. **Fixed 2026-09-08** (uncommitted)
+> including the signature-validated `scorpion.rom`. **Fixed 2026-09-08** (commit `3f49622c`)
 > to `page0→base_128_rom`, `page1→base_sos_rom`, `page2→base_sys_rom`,
 > `page3→base_dos_rom` — the same order the original UnrealSpeccy `set_scorp_profrom()`
 > uses inside every ProfROM quadrant.
@@ -211,51 +211,70 @@ ProfROM (Vladimir Kladov, v3.x-4.x) replaces the 64 KB ROM with a **multiple of 
 software (commanders, editors, assemblers, games — the "ROM-disk" content).
 
 **Selection mechanism (hardware GAL, software-visible contract):** while the Service
-ROM window is paged at `#0000`, **any read of addresses `#0000-#0003`** advances a
-quadrant state machine. The verified transition table (original UnrealSpeccy
-`set_scorp_profrom()`):
+ROM window is paged at `#0000`, **any CPU read of the `#0100-#010F` block** clocks a
+quadrant state machine — row selector `S = A3:A2` (the read of `#0100+4*S` applies row
+`S`), `A0/A1` are not bonded on the GAL so all four addresses of a group are equivalent.
+The transition table, byte-identical across all four independent sources:
 
 ```
-          read #0000  read #0001  read #0002  read #0003
-from Q0:     Q0          Q1          Q2          Q3
-from Q1:     Q3          Q3          Q3          Q2
-from Q2:     Q2          Q2          Q0          Q1
-from Q3:     Q1          Q0          Q1          Q0
+            S=0 #0100-03   S=1 #0104-07   S=2 #0108-0B   S=3 #010C-0F
+from Q0:        Q0              Q3              Q2              Q1
+from Q1:        Q1              Q3              Q2              Q0
+from Q2:        Q2              Q3              Q0              Q1
+from Q3:        Q3              Q2              Q1              Q0
 ```
+
+| Source | Representation |
+|---|---|
+| Original UnrealSpeccy | `set_scorp_profrom()` `switch_table` = `{0,1,2,3, 3,3,3,2, 2,2,0,1, 1,0,1,0}`, strobed by reads of `#0100/#0104/#0108/#010C` while `CF_PROFROM` |
+| ZXMAK2 | `s_profPlaneMap` indexed `(addr & 0x0C) | plane`, subscribed for `RdMem` **and** `RdMemM1` with mask `(addr & 0xFFF0) == 0x0100`, gated on `SYSEN`, remapped before the read completes |
+| Xpeccy | `ZSLays[(adr & 0x000C) >> 2][prt2 & 3]`, gate `(adr & 0xFFF3) == 0x0100 && (p1FFD & 2)` (data reads only, `!m1`) |
+| Scorpion 256 Turbo+ GAL decode | `RDR-`-clocked plane latches `P1/P0`, `T` term requires the service page + the `#01xx` address pattern, `A0/A1` unwired (`materials/Scorpion256TPlus_GAL_decoded.md` §3) |
+
+The historical `set_scorp_profrom(read_address)` parameter is the *selector index*
+0-3 (which of the four strobe groups fired), not a literal address — the four
+references above agree on the block, and the emulator passes the raw address so
+`S` comes from `A3:A2` (M1 fetches included, matching the GAL's `RDR-` clock and
+ZXMAK2's subscription; Xpeccy's `!m1` is a data-reads-only simplification).
 
 Notes grounded in the table's design:
 
-- Reading `#0000` from Q0 is a **no-op** — the reset fetch (`F3` DI … `C3 00 01` JP) of
-  a quadrant-0 boot stays in Q0. This is what makes the scheme transparent to normal
-  execution.
-- The ProfROM service software walks this graph deliberately to expose other quadrants'
-  ROM-disk contents.
+- The `S=0` row is a **hold**: the monitor reads its plane ID from `#0101`
+  (byte value `>> 2` = plane number) without switching, and ordinary execution
+  fetching the block is inert — which makes the scheme transparent to normal
+  execution and to the reset fetch itself (the `#0000-#0003` reset path never
+  clocks the machine).
+- The ProfROM service software walks this graph deliberately to expose other
+  quadrants' ROM-disk contents: the shipped image's ROM-disk switcher at `#E4B5`
+  executes `LD L,(HL)` with `HL = #010C` (484 strobes observed in a single
+  session), and each non-zero quadrant carries a `#0111` stub
+  (`LD BC,#1FFD / LD A,2 / OUT (C),A / LD HL,#010C / LD L,(HL) / XOR A / OUT (C),A /
+  JP 0`) that re-enters quadrant 0 through reads of `#0108` (Q2) / `#010C` (Q1, Q3).
 - `profrom_mask` = {0 → 64 KB (no switching), 1 → 128 KB (Q0-Q1), 3 → 256 KB (Q0-Q3)}.
 - The switching only occurs for the **ProfROM variant** (`MM_PROFSCORP`); the base
   machine never switches (`CF_PROFROM` never set).
-- On reset, quadrant 0 is selected (boot always comes from the image's first 64 KB).
+- On reset, quadrant 0 is selected (boot always comes from the image's first 64 KB;
+  ZXMAK2 does the same in `ResetState`).
 - **The quadrant is a byte of machine state, not a derived value.** In the original
   UnrealSpeccy it lives in `COMPUTER::profrom_bank` and is written only by
-  `set_scorp_profrom()` as `switch_table[read_addr*4 + profrom_bank] & profrom_mask`; the
+  `set_scorp_profrom()` as `switch_table[selector*4 + profrom_bank] & profrom_mask`; the
   new value depends on the *previous* value, i.e. on the whole read history. No
   combination of port latches reproduces it, so every state serializer that must
   reproduce execution (TTD checkpoints, divergence hashes) has to carry the byte
   itself. This codebase still has the field (`EmulatorState::profrom_bank`,
   `TEMP::profrom_mask`), unused until now (§12 item 11).
 
-**Verified against the shipped 512 KB image (`scorp_prof401.rom`, 8 quadrants):**
+**Verified against the shipped image (`scorp_prof401.rom`) and the GAL decode:**
 
-- The image's own code performs the strobe protocol: **15 sites read `#0000-#0003`
-  directly** (`LD A,(nn)` / `LD HL,(nn)` encodings), concentrated in the service pages
-  (5 of 6 sites inside quadrant 0's Service page) — the ProfROM software walks the
-  graph exactly as described.
-- Quadrant headers double as strobe opcodes: Q0/Q4 begin `F3 C3 D1 08`, the other
-  quadrants `F3 C3 03 01`. Walking the verified table over the four reset-fetch reads:
-  starting from Q0 ends in Q0; from Q1 ends in Q1 (self-stabilizing boot vectors);
-  Q2 and Q3 cross-route to each other's entry points.
-- The 4-byte reset fetch (opcode + opcode + two operand bytes) only stays coherent if
-  **every read** (not only M1 fetches) drives the machine — see §12.4 — and operand
-  bytes are fetched from the *post-switch* quadrant (mid-instruction remap).
+- Every quadrant's Service page carries the 16-byte ID block at `#0100`:
+  quadrant 0 = `E5 02 …`, others = `01 06 / 01 0A / 01 0E …` — each page's `#0101`
+  byte shifted right twice equals its plane number, readable without switching
+  because `#0100-#0103` is the hold row.
+- The strobed read returns the **post-switch** quadrant's byte — ZXMAK2 subscribes
+  the gate *before* the memory device "to handle memory switches before read",
+  and the GAL clocks on `RDR-` (the read strobe itself), so operand bytes of the
+  very instruction performing the switch already come from the new plane
+  (mid-instruction remap, §12.4).
 
 ### 5.3 Extended ROM-disk — up to 2 MB via direct window select
 
