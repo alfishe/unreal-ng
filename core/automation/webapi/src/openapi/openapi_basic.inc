@@ -3,6 +3,8 @@
     paths["/api/v1/emulator/{id}/basic/run"]["post"]["tags"].append("BASIC Control");
     paths["/api/v1/emulator/{id}/basic/run"]["post"]["description"] =
         "Inject a command into BASIC edit buffer AND execute it via simulated ENTER key. "
+        "This is a BASIC keystroke injector - it does NOT start or resume emulator execution "
+        "(use /resume or /start for that). "
         "If no command specified, executes RUN. "
         "Automatically handles 128K menu navigation if needed. "
         "Returns error if TR-DOS is active or not in BASIC editor.";

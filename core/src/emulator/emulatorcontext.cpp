@@ -24,6 +24,8 @@ EmulatorContext::EmulatorContext(LoggerLevel level)
     pMemory = nullptr;
     pPortDecoder = nullptr;
     pTape = nullptr;
+    pTapeFastLoad = nullptr;
+    pTapeTurboController = nullptr;
     pBetaDisk = nullptr;
     pScreen = nullptr;
     pAudioManagerObj = nullptr;
@@ -67,3 +69,100 @@ EmulatorContext::~EmulatorContext()
     }
 }
 /// endregion </Constructors / destructors>
+
+/// region <Run-control claim (GDB TDD §3.3 / parent TDD §7.2)>
+//
+// Advisory owner token. Pause and read-only queries are always allowed; while a
+// surface holds the claim with the target paused, other surfaces' run-affecting
+// operations (Resume/Step/Seek/state-writes) are refused. Sprint 0 ships the
+// mechanism only — enforcement at the call sites lands in Phase 2 / G1.
+//
+// Note on UUID semantics: a default-constructed UUID is all-zero (the "nil"
+// UUID) and is used here as the sentinel meaning "unclaimed". UUID::isNil()
+// reports exactly that (an earlier revision returned the inverted result; the
+// workarounds were migrated back to isNil() when it was fixed).
+//
+bool EmulatorContext::TakeRunControl(const UUID& owner, const std::string& surfaceLabel,
+                                     std::string* errorReason)
+{
+    // A nil owner UUID is a programming error — surfaces must call UUID::Generate()
+    // once at startup and reuse the value.
+    if (owner.isNil())
+    {
+        if (errorReason)
+        {
+            *errorReason = "TakeRunControl: nil owner UUID is not allowed";
+        }
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
+
+    const UUID& current = _runControlClaim.owner;
+    if (current.isNil())
+    {
+        // Unclaimed — take it.
+        _runControlClaim.owner = owner;
+        _runControlClaim.surfaceLabel = surfaceLabel;
+        return true;
+    }
+
+    if (current == owner)
+    {
+        // Idempotent re-claim by the same owner. Refresh label in case the surface
+        // wants to re-tag itself, but do not fail.
+        _runControlClaim.surfaceLabel = surfaceLabel;
+        return true;
+    }
+
+    // Held by someone else.
+    if (errorReason)
+    {
+        *errorReason = "Run-control claim held by another surface ('" +
+                       _runControlClaim.surfaceLabel + "')";
+    }
+    return false;
+}
+
+void EmulatorContext::ReleaseRunControl(const UUID& owner)
+{
+    std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
+
+    // Defensive: only the current holder may release. Mismatched releases are
+    // silently ignored — surfaces can release unconditionally at shutdown.
+    if (_runControlClaim.owner == owner)
+    {
+        _runControlClaim.owner.clear();
+        _runControlClaim.surfaceLabel.clear();
+    }
+}
+
+bool EmulatorContext::HasRunControl(const UUID& owner) const
+{
+    std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
+    // Must be both currently claimed AND held by this specific owner.
+    return !_runControlClaim.owner.isNil() && _runControlClaim.owner == owner;
+}
+
+bool EmulatorContext::IsRunControlClaimed() const
+{
+    std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
+    return !_runControlClaim.owner.isNil();
+}
+
+EmulatorContext::RunControlState EmulatorContext::GetRunControlState() const
+{
+    std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
+
+    RunControlState state;
+    const bool claimed = !_runControlClaim.owner.isNil();
+    state.claimed = claimed;
+    if (claimed)
+    {
+        state.surfaceLabel = _runControlClaim.surfaceLabel;
+        state.ownerUuid = _runControlClaim.owner.toString();
+    }
+    return state;
+}
+
+/// endregion </Run-control claim>

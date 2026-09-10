@@ -155,6 +155,20 @@ private:
     float _transBoost = 0.2f;   // Paula default; use 0.1 for AY
     float _attack = 0.3f;       // Envelope attack speed
     float _release = 0.998f;    // ~11ms @ 44.1kHz; use 0.9995 (~45ms) for AY
+    // Rate-derived effective coefficients (audio-multirate plan C.1-C.4).
+    // Presets/API store 44.1kHz-referenced values; deriveRateCoefficients()
+    // maps them to the actual rate via coeff^(44100/fs) - the exact
+    // time-constant transformation, bit-identical at 44.1kHz.
+    float _attackEff = 0.3f;
+    float _releaseEff = 0.998f;
+    float _roomLpCoefEff = 0.7f;
+    // First-difference normalization: diff gain scales with fs (2*sin(pi*f/fs));
+    // without this the punch tilt shrinks linearly and the transient boost
+    // QUADRATICALLY with rising sample rate (plan C.1)
+    float _diffNorm = 1.0f;
+
+    void deriveRateCoefficients();
+
     float _prevOutL = 0, _prevOutR = 0;  // Previous samples for diff calculation
     float _envL = 0, _envR = 0;          // Envelope follower state
     /// endregion </Punch state>
@@ -170,7 +184,7 @@ private:
     int _roomDelay = 0;         // Delay in samples (3ms * sampleRate)
     float _roomLpCoef = 0.0f;   // One-pole LP coefficient (~0.7 for 10kHz)
 
-    static constexpr int MAX_DELAY = 512;  // ~11ms @ 44.1kHz
+    static constexpr int MAX_DELAY = 1024;  // 0.003s x 192kHz = 576; was 512 (overflowed at >=176.4kHz)
     std::array<float, MAX_DELAY> _delayL{};  // Left channel delay line
     std::array<float, MAX_DELAY> _delayR{};  // Right channel delay line
     int _delayIdx = 0;                       // Current position in delay line

@@ -1,7 +1,9 @@
 #include "videowall/TileGrid.h"
 
 #include <emulatormanager.h>
+#include <emulator/emulatorcontext.h>
 #include <emulator/notifications.h>
+#include <emulator/video/screen.h>
 #include <3rdparty/message-center/messagecenter.h>
 
 #include <QPainter>
@@ -9,8 +11,7 @@
 #include <QImage>
 #include <QPaintEvent>
 #include <QResizeEvent>
-#include <future>
-#include <thread>
+#include <algorithm>
 #include <cstring>
 #include "videowall/EmulatorTile.h"
 #include "videowall/TileLayoutManager.h"
@@ -269,37 +270,37 @@ void TileGrid::setCrtScanlinesEnabled(bool enable)
 
 void TileGrid::subscribeToNotifications()
 {
-    _videoFrameCallback = [this](int id, Message* message) {
-        if (message && message->obj) {
-            auto* payload = dynamic_cast<EmulatorFramePayload*>(message->obj);
-            if (payload && payload->_emulatorId.toString() == _syncEmulatorId) {
-                // Drop frame if UI is still rendering the previous one (prevents event queue flooding)
-                bool expected = false;
-                if (_isRepaintPending.compare_exchange_strong(expected, true)) {
-                    
-                    if (_singleSyncMode) {
-                        // --- Perform SIMD / Multithreaded compositing on the emulator thread ---
-                        compositeSingleSyncFrame();
-                    }
+    _videoFrameObserverId = MessageCenter::DefaultMessageCenter().AddObserver(NC_VIDEO_FRAME_REFRESH,
+        [this](int id, Message* message) {
+            if (message && message->obj) {
+                auto* payload = dynamic_cast<EmulatorFramePayload*>(message->obj);
+                if (payload && payload->_emulatorId.toString() == _syncEmulatorId) {
+                    // Drop frame if UI is still rendering the previous one (prevents event queue flooding)
+                    bool expected = false;
+                    if (_isRepaintPending.compare_exchange_strong(expected, true)) {
 
-                    QMetaObject::invokeMethod(this, [this]() {
-                        // In single sync mode, repaintAllTiles just calls this->update() to draw the composite image
-                        repaintAllTiles();
-                        _isRepaintPending = false;
-                    }, Qt::QueuedConnection);
+                        if (_singleSyncMode) {
+                            // --- Perform SIMD / Multithreaded compositing on the emulator thread ---
+                            compositeSingleSyncFrame();
+                        }
+
+                        QMetaObject::invokeMethod(this, [this]() {
+                            // In single sync mode, repaintAllTiles just calls this->update() to draw the composite image
+                            repaintAllTiles();
+                            _isRepaintPending = false;
+                        }, Qt::QueuedConnection);
+                    }
                 }
             }
-        }
-    };
-    MessageCenter::DefaultMessageCenter().AddObserver(NC_VIDEO_FRAME_REFRESH, _videoFrameCallback);
+        });
 }
 
 void TileGrid::unsubscribeFromNotifications()
 {
-    if (_videoFrameCallback)
+    if (_videoFrameObserverId != 0)
     {
-        MessageCenter::DefaultMessageCenter().RemoveObserver(NC_VIDEO_FRAME_REFRESH, _videoFrameCallback);
-        _videoFrameCallback = nullptr;
+        MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_VIDEO_FRAME_REFRESH, _videoFrameObserverId);
+        _videoFrameObserverId = 0;
     }
 }
 
@@ -369,12 +370,29 @@ void TileGrid::compositeSingleSyncFrame()
     auto emulator = _tiles.front()->emulator();
     if (!emulator) return;
 
-    auto fb = emulator->GetFramebuffer();
-    if (!fb.memoryBuffer || fb.width <= 0 || fb.height <= 0) return;
+    // Get screen for tear-free copy from latched framebuffer
+    EmulatorContext* ctx = emulator->GetContext();
+    Screen* screen = ctx ? ctx->pScreen : nullptr;
+    if (!screen) return;
 
-    // 1. Create a QImage wrapping the raw framebuffer
-    // Format_RGBA8888 assumes 32 bits per pixel.
-    QImage rawImage(static_cast<const unsigned char*>(fb.memoryBuffer), fb.width, fb.height, fb.width * 4, QImage::Format_RGBA8888);
+    auto& desc = screen->GetFramebufferDescriptor();
+    if (desc.width == 0 || desc.height == 0) return;
+
+    // Allocate or resize backing buffer if needed
+    if (_latchedFrame.width() != static_cast<int>(desc.width) ||
+        _latchedFrame.height() != static_cast<int>(desc.height))
+    {
+        _latchedFrame = QImage(desc.width, desc.height, QImage::Format_RGBA8888);
+    }
+
+    // Copy from the frame-end latched snapshot (tear-free)
+    if (!screen->CopyPresentedFramebuffer(_latchedFrame.bits(),
+                                          static_cast<size_t>(_latchedFrame.sizeInBytes())))
+    {
+        return;
+    }
+
+    QImage& rawImage = _latchedFrame;
     
     // 2. Extract the 256x192 active area
     QImage activeArea = rawImage.copy(48, 48, 256, 192);
@@ -395,53 +413,45 @@ void TileGrid::compositeSingleSyncFrame()
     
     if (scaledTile.isNull()) return;
 
-    // 4. Multithreaded Blit to Composite Buffer
+    // 4. Blit to Composite Buffer
+    // Every tile shows the identical image, so build the first band of tiles once,
+    // then replicate that band down the grid with full-scanline copies.
+    // (Serial on purpose: the whole composite is ~14 MB/frame of memcpy — spawning
+    // a thread per tile costs far more than the copies themselves.)
     int cols = (_explicitCols > 0) ? _explicitCols : ((width() + TILE_WIDTH - 1) / TILE_WIDTH);
     int rows = (_explicitRows > 0) ? _explicitRows : ((height() + TILE_HEIGHT - 1) / TILE_HEIGHT);
 
-    // Ensure we don't exceed the number of tiles we actually have, though in single sync mode
-    // we want to fill the whole grid. Wait, the layout might have fewer tiles if they aren't generated?
-    // Actually, filling the whole calculated rows*cols is safer for the background.
-    
     int tileByteWidth = TILE_WIDTH * 4;
-    
-    std::vector<std::future<void>> futures;
-    for (int r = 0; r < rows; ++r)
+    int compWidth = _compositeImage.width();
+    int compHeight = _compositeImage.height();
+    qsizetype compStride = _compositeImage.bytesPerLine();
+    uchar* compBits = _compositeImage.bits();
+
+    // First band: replicate the scaled tile across all columns, scanline by scanline
+    int bandHeight = std::min(TILE_HEIGHT, compHeight);
+    for (int y = 0; y < bandHeight; ++y)
     {
+        uchar* destLine = compBits + y * compStride;
+        const uchar* srcLine = scaledTile.constScanLine(y);
         for (int c = 0; c < cols; ++c)
         {
-            futures.push_back(std::async(std::launch::async, [this, r, c, &scaledTile, tileByteWidth]() {
-                int startX = c * TILE_WIDTH;
-                int startY = r * TILE_HEIGHT;
-                
-                // Copy row by row
-                for (int y = 0; y < TILE_HEIGHT; ++y)
-                {
-                    int destY = startY + y;
-                    if (destY >= _compositeImage.height()) break; // Clip vertically
-                    
-                    uchar* destLine = _compositeImage.scanLine(destY) + (startX * 4);
-                    const uchar* srcLine = scaledTile.constScanLine(y);
-                    
-                    int bytesToCopy = tileByteWidth;
-                    // Clip horizontally if needed
-                    if (startX + TILE_WIDTH > _compositeImage.width()) {
-                        bytesToCopy = (_compositeImage.width() - startX) * 4;
-                    }
-                    
-                    if (bytesToCopy > 0) {
-                        // libc memcpy on macOS is SIMD optimized (Neon)
-                        std::memcpy(destLine, srcLine, bytesToCopy);
-                    }
-                }
-            }));
+            int startX = c * TILE_WIDTH;
+            if (startX >= compWidth) break;
+            int bytesToCopy = std::min(tileByteWidth, (compWidth - startX) * 4);
+            std::memcpy(destLine + startX * 4, srcLine, bytesToCopy);
         }
     }
-    
-    // Wait for all blit threads to complete
-    for (auto& f : futures)
+
+    // Remaining rows: copy the first band wholesale, one full scanline at a time
+    for (int r = 1; r < rows; ++r)
     {
-        f.wait();
+        int startY = r * TILE_HEIGHT;
+        for (int y = 0; y < bandHeight; ++y)
+        {
+            int destY = startY + y;
+            if (destY >= compHeight) return;
+            std::memcpy(compBits + destY * compStride, compBits + y * compStride, compStride);
+        }
     }
 }
 

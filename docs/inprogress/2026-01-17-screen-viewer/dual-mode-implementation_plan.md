@@ -102,7 +102,7 @@ Since this is a Qt GUI feature, manual testing is required:
 
 1. **Build the application:**
    ```bash
-   cd /Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-screen-viewer
+   cd unreal-screen-viewer
    mkdir -p cmake-build-debug && cd cmake-build-debug
    cmake -DCMAKE_BUILD_TYPE=Debug ..
    make -j8

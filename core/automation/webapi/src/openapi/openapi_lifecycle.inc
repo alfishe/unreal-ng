@@ -125,3 +125,39 @@
     paths["/api/v1/emulator/{id}/reset"]["post"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/reset"]["post"]["responses"]["200"]["description"] = "Emulator reset";
 
+    // POST /api/v1/emulator/{id}/model - Switch machine model
+    paths["/api/v1/emulator/{id}/model"]["post"]["summary"] = "Switch machine model";
+    paths["/api/v1/emulator/{id}/model"]["post"]["description"] =
+        "Switch the emulator to a different ZX Spectrum machine model. "
+        "This stops and destroys the current emulator, creates a new one with the requested model, "
+        "and starts it. The new emulator will have a different ID.";
+    paths["/api/v1/emulator/{id}/model"]["post"]["tags"].append("Emulator Control");
+    paths["/api/v1/emulator/{id}/model"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/model"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/model"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/model"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/model"]["post"]["parameters"][0]["description"] = "Current emulator ID";
+    paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["required"] = true;
+    paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["required"][0] = "model";
+    paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["model"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["model"]["description"] = "Model short name (e.g., 'PENTAGON', '48K', '128K', 'SCORPION')";
+    paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["ram_size"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["ram_size"]["description"] = "Optional RAM size in KB";
+    paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["description"] = "Model switched successfully";
+    paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["status"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["old_emulator_id"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["new_emulator_id"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["model"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["400"]["description"] = "Invalid model name or missing 'model' field";
+    paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["404"]["description"] = "Emulator not found";
+

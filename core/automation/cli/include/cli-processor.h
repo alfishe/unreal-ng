@@ -130,6 +130,11 @@ private:
     void HandleDisasm(const ClientSession& session, const std::vector<std::string>& args);
     void HandleDisasmPage(const ClientSession& session, const std::vector<std::string>& args);
 
+    // Label/symbol management
+    void HandleLabel(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleLabels(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleSymbols(const ClientSession& session, const std::vector<std::string>& args);
+
     // Interpreter control command handlers (Python)
     void HandlePython(const ClientSession& session, const std::vector<std::string>& args);
     void executePythonCode(const ClientSession& session, const std::string& code);
@@ -166,6 +171,10 @@ private:
     void HandleProfilerMemory(const ClientSession& session, const std::vector<std::string>& args);
     void HandleProfilerCalltrace(const ClientSession& session, const std::vector<std::string>& args);
     void HandleProfilerAll(const ClientSession& session, const std::vector<std::string>& args);
+
+    // Port trace command handlers (runtime feature "porttrace")
+    void HandlePortTrace(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowPortTraceHelp(const ClientSession& session);
 
 
     // Settings command handlers
@@ -204,6 +213,9 @@ private:
     void HandleKeyList(const ClientSession& session);
     void HandleKeyClear(const ClientSession& session, EmulatorContext* context);
 
+    // Videowall commands
+    void HandleVideowall(const ClientSession& session, const std::vector<std::string>& args);
+
     // Instance management command handlers
     void HandleStart(const ClientSession& session, const std::vector<std::string>& args);
     void HandleStop(const ClientSession& session, const std::vector<std::string>& args);
@@ -240,7 +252,17 @@ private:
     void HandleTapePlay(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context);
     void HandleTapeStop(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context);
     void HandleTapeRewind(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context);
-    void HandleTapeInfo(const ClientSession& session, EmulatorContext* context);
+    void HandleTapeSeek(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context,
+                        const std::vector<std::string>& args);
+    void HandleTapePos(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context);
+    void HandleTapeBlocks(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context);
+    void HandleTapePause(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context);
+    void HandleTapeInfo(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context);
+
+    // Tape audio bridge (tape-audio-bridge design §7.1): pure file conversions,
+    // no emulator state — no emulator needs to be selected for these two
+    void HandleTapeRender(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleTapeImport(const ClientSession& session, const std::vector<std::string>& args);
 
     // Disk control command handlers
     void HandleDisk(const ClientSession& session, const std::vector<std::string>& args);
@@ -276,6 +298,33 @@ private:
     void HandleCaptureOCR(const ClientSession& session, std::shared_ptr<Emulator> emulator);
     void HandleCaptureScreen(const ClientSession& session, std::shared_ptr<Emulator> emulator,
                               const std::vector<std::string>& args);
+
+    // TTD (Time-Travel Debug) command handlers
+    void HandleTTD(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowTTDHelp(const ClientSession& session);
+    void HandleTTDStatus(const ClientSession& session, EmulatorContext* context);
+    void HandleTTDStart(const ClientSession& session, EmulatorContext* context,
+                         const std::vector<std::string>& args);
+    void HandleTTDStop(const ClientSession& session, EmulatorContext* context);
+    void HandleTTDInvalidate(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleTTDSeek(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleTTDStepBack(const ClientSession& session, EmulatorContext* context);
+    void HandleTTDStepForward(const ClientSession& session, EmulatorContext* context);
+    void HandleTTDResume(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleTTDPosition(const ClientSession& session, EmulatorContext* context);
+    void HandleTTDMarkers(const ClientSession& session, EmulatorContext* context);
+    void HandleTTDDump(const ClientSession& session, EmulatorContext* context,
+                       const std::vector<std::string>& args);
+    void HandleTTDLoad(const ClientSession& session, EmulatorContext* context,
+                       const std::vector<std::string>& args);
+    void HandleTTDFindLast(const ClientSession& session, EmulatorContext* context,
+                           const std::vector<std::string>& args);
+    void HandleTTDStepInstruction(const ClientSession& session, EmulatorContext* context,
+                                   const std::vector<std::string>& args);
+    void HandleTTDReverseStep(const ClientSession& session, EmulatorContext* context,
+                              const std::vector<std::string>& args);
+    void HandleTTDReverseContinue(const ClientSession& session, EmulatorContext* context,
+                                   const std::vector<std::string>& args);
 
     // Command map
     std::unordered_map<std::string, CommandHandler> _commandHandlers;

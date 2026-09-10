@@ -9,6 +9,7 @@
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/modulelogger.h"
+#include "common/filehelper.h"
 #include "emulator/emulatorcontext.h"
 #include "stdafx.h"
 
@@ -159,6 +160,114 @@ size_t LabelManager::GetLabelCount() const
     return _labelsByName.size();
 }
 
+std::vector<std::shared_ptr<Label>> LabelManager::GetAllLabelsAtAddress(uint16_t address) const
+{
+    std::vector<std::shared_ptr<Label>> result;
+    for (const auto& pair : _labelsByName)
+    {
+        if (pair.second->address == address)
+            result.push_back(pair.second);
+    }
+    return result;
+}
+
+std::vector<std::shared_ptr<Label>> LabelManager::GetLabelsByModule(const std::string& module) const
+{
+    std::vector<std::shared_ptr<Label>> result;
+    for (const auto& pair : _labelsByName)
+    {
+        if (pair.second->module == module)
+            result.push_back(pair.second);
+    }
+    return result;
+}
+
+std::vector<std::shared_ptr<Label>> LabelManager::GetLabelsByBank(uint16_t bank,
+    std::optional<MemoryBankModeEnum> bankType) const
+{
+    std::vector<std::shared_ptr<Label>> result;
+    for (const auto& pair : _labelsByName)
+    {
+        if (pair.second->bank == bank)
+        {
+            if (!bankType.has_value() || pair.second->bankType == bankType.value())
+                result.push_back(pair.second);
+        }
+    }
+    return result;
+}
+
+std::vector<std::shared_ptr<Label>> LabelManager::GetLabelsByType(const std::string& type) const
+{
+    std::vector<std::shared_ptr<Label>> result;
+    for (const auto& pair : _labelsByName)
+    {
+        if (pair.second->type == type)
+            result.push_back(pair.second);
+    }
+    return result;
+}
+
+std::vector<std::shared_ptr<Label>> LabelManager::GetLabelsInRange(uint16_t fromAddr, uint16_t toAddr) const
+{
+    std::vector<std::shared_ptr<Label>> result;
+    for (const auto& pair : _labelsByName)
+    {
+        uint16_t addr = pair.second->address;
+        if (addr >= fromAddr && addr <= toAddr)
+            result.push_back(pair.second);
+    }
+    return result;
+}
+
+/// @brief Get labels matching filter criteria
+/// @param filter Combined filter with optional constraints
+/// @return Vector of matching labels
+///
+/// Filter criteria (all optional, unset = match any):
+/// - activeOnly: if true, skip inactive labels
+/// - module: exact match on module name
+/// - bank: exact match on bank number
+/// - bankType: exact match on RAM/ROM type
+/// - type: exact match on label type (code/data/const)
+/// - addressFrom/addressTo: inclusive address range
+///
+/// Performance: O(n) linear scan. Acceptable for typical label counts (100-2000).
+/// For 10,000+ labels, consider adding secondary indices (_labelsByModule, etc.)
+std::vector<std::shared_ptr<Label>> LabelManager::GetLabels(const LabelFilter& filter) const
+{
+    std::vector<std::shared_ptr<Label>> result;
+    for (const auto& pair : _labelsByName)
+    {
+        const auto& label = pair.second;
+
+        // Early-continue on first mismatch for efficiency
+        if (filter.activeOnly && !label->active)
+            continue;
+
+        if (filter.module.has_value() && label->module != filter.module.value())
+            continue;
+
+        if (filter.bank.has_value() && label->bank != filter.bank.value())
+            continue;
+
+        if (filter.bankType.has_value() && label->bankType != filter.bankType.value())
+            continue;
+
+        if (filter.type.has_value() && label->type != filter.type.value())
+            continue;
+
+        if (filter.addressFrom.has_value() && label->address < filter.addressFrom.value())
+            continue;
+
+        if (filter.addressTo.has_value() && label->address > filter.addressTo.value())
+            continue;
+
+        result.push_back(label);
+    }
+    return result;
+}
+
 bool LabelManager::UpdateLabel(const Label& updatedLabel)
 {
     auto it = _labelsByName.find(updatedLabel.name);
@@ -214,7 +323,7 @@ bool LabelManager::LoadLabels(const std::string& path)
         return false;
     }
 
-    std::ifstream file(path);
+    std::ifstream file(FileHelper::ToFsPath(path));
     if (!file.is_open())
     {
         LOGERROR("Failed to open label file: %s", path.c_str());
@@ -256,7 +365,7 @@ bool LabelManager::LoadLabels(const std::string& path)
 // @return false if the file could not be opened or parsed
 bool LabelManager::LoadMapFile(const std::string& path)
 {
-    std::ifstream file(path);
+    std::ifstream file(FileHelper::ToFsPath(path));
     if (!file.is_open())
     {
         return false;
@@ -271,7 +380,7 @@ bool LabelManager::LoadMapFile(const std::string& path)
 // @return false if the file could not be opened or parsed
 bool LabelManager::LoadSymFile(const std::string& path)
 {
-    std::ifstream file(path);
+    std::ifstream file(FileHelper::ToFsPath(path));
     if (!file.is_open())
     {
         return false;
@@ -287,7 +396,7 @@ bool LabelManager::LoadSymFile(const std::string& path)
 // @return false if the file could not be written
 bool LabelManager::SaveLabels(const std::string& path, FileFormat format) const
 {
-    std::ofstream file(path);
+    std::ofstream file(FileHelper::ToFsPath(path));
     if (!file.is_open())
     {
         return false;
@@ -339,7 +448,7 @@ bool LabelManager::SaveLabels(const std::string& path, FileFormat format) const
 // @return FileFormat Detected file format or FileFormat::UNKNOWN if format cannot be determined
 LabelManager::FileFormat LabelManager::DetectFileFormat(const std::string& path) const
 {
-    std::string ext = std::filesystem::path(path).extension().string();
+    std::string ext = FileHelper::ToFsPath(path).extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
     if (ext == ".map")
@@ -354,7 +463,7 @@ LabelManager::FileFormat LabelManager::DetectFileFormat(const std::string& path)
         return FileFormat::Z88DK;
 
     // Try to detect by content
-    std::ifstream file(path);
+    std::ifstream file(FileHelper::ToFsPath(path));
     if (file.is_open())
     {
         std::string line;

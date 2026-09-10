@@ -26,6 +26,12 @@ include(${ROOT_DIR}/cmake/func.cmake)
 
 option(PYTHON_USE_STATIC "Build and link Python statically" ON)
 
+# Recording support - follows the root CMakeLists.txt option (single source of truth
+# for the EmulatorContext/Core struct layout). Declared here so a standalone python
+# build defaults the same way as the root project; option() never overrides an
+# existing root-level cache entry.
+option(ENABLE_RECORDING "Enable audio/video recording support" ON)
+
 if(PYTHON_USE_STATIC)
     message(STATUS "[automation_python] Building static Python from source")
     
@@ -204,15 +210,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         )
     endif()
 
-    # Copy default config file to binary folder after successful compilation
-    SET(CONFIG_FILE ${DATA_PATH}/configs/pentagon512k/unreal.ini)
-    message("CONFIG_FILE: ${CONFIG_FILE}")
     message("Binary: ${CMAKE_BINARY_DIR}/${PROJECT_NAME}")
-    add_custom_command(
-        TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E
-        copy ${CONFIG_FILE} "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/unreal.ini"
-    )
 
     # Copy all ROM files to /rom sub-folder
     add_custom_command(
@@ -238,6 +236,25 @@ else()
         ${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE_DIR}
         ${ROOT_DIR}/core/src
     )
+
+    # Core layout consistency (prevents ODR violation):
+    # ENABLE_RECORDING changes the layout of core classes (EmulatorContext, Core).
+    # This target compiles core headers directly without linking unrealng::core,
+    # so it does not inherit the PUBLIC define from core/src/CMakeLists.txt.
+    # The recording/src include is required for recordingmanager.h pulled in by
+    # emulator/cpu/core.h when recording is enabled.
+    if (ENABLE_RECORDING)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_RECORDING)
+        target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/recording/src)
+    endif()
+
+    # zstd::libzstd is required because core's ttd_compression.h (pulled in
+    # transitively via python_emulator.h -> timetravelmanager.h ->
+    # ttd_codec_page_store.h) #includes <zstd.h>, and this target uses
+    # core/src via raw include paths rather than linking unrealng::core.
+    # zstd::libzstd is an INTERFACE IMPORTED target, so this only propagates
+    # zstd's include directory (same fix as automation_webapi).
+    target_link_libraries(${PROJECT_NAME} PRIVATE zstd::libzstd)
 
     if(PYTHON_USE_STATIC)
         # Link against static Python built from source

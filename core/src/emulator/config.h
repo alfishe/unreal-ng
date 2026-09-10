@@ -42,9 +42,9 @@ private:
     static constexpr const char* romset_sys = "sys";
 
 
-	const struct TMemModel mem_model[N_MM_MODELS] =
+	static constexpr TMemModel mem_model[N_MM_MODELS] =
 	{
-		{ "Pentagon", "PENTAGON",                MM_PENTAGON, 128,  RAM_128 | RAM_256 | RAM_512 | RAM_1024 },
+		{ "Pentagon", "PENTAGON",                MM_PENTAGON, 128,  RAM_128 | RAM_512 | RAM_1024 },
         { "ZX-Spectrum 48k", "48K",              MM_SPECTRUM48, 48, RAM_48 },
         { "ZX-Spectrum 128k", "128k",            MM_SPECTRUM128, 128, RAM_128 },
         { "ZX-Spectrum +3", "PLUS3",             MM_PLUS3, 128,  RAM_128 },
@@ -78,26 +78,39 @@ public:
     std::string GetScreenshotsFolder();
 
 public:
-	[[nodiscard]] bool LoadConfig();
-	[[nodiscard]] bool LoadConfig(std::string& filename);
+	/// Load the config for a specific platform model. The model config name is
+	/// mandatory and resolves to configs/<modelConfigName>/unreal.ini (searched
+	/// in the executable directory, then in the application resources).
+	[[nodiscard]] bool LoadConfig(const std::string& modelConfigName);
+
+	/// Load a config from an explicit .ini file path (custom config override)
+	[[nodiscard]] bool LoadConfigFile(const std::string& filename);
 	[[nodiscard]] bool ParseConfig(CSimpleIniA& inimanager);
 
 	[[nodiscard]] bool DetermineModel(const char* model, uint32_t ramsize);
 
-	// Model enumeration methods
+	// Model enumeration methods (static - no Config instance required)
 public:
 	/**
 	 * @brief Get a list of all available emulator models
 	 * @return Vector of model information structures
 	 */
-	std::vector<TMemModel> GetAvailableModels() const;
+	static std::vector<TMemModel> GetAvailableModels();
 
 	/**
 	 * @brief Find a model by its short name (case-insensitive)
 	 * @param shortName The short name to search for (e.g., "PENTAGON", "48K")
 	 * @return Pointer to the model info, or nullptr if not found
 	 */
-	const TMemModel* FindModelByShortName(const std::string& shortName) const;
+	static const TMemModel* FindModelByShortName(const std::string& shortName);
+
+	/**
+	 * @brief Map a model (+ optional RAM size) to its config folder under configs/
+	 * @param model Machine model
+	 * @param ramSizeKB RAM size in KB; 0 = use the model's default RAM
+	 * @return Config folder name (e.g. "pentagon128k", "spectrum48")
+	 */
+	static std::string GetConfigFolderForModel(MEM_MODEL model, uint32_t ramSizeKB = 0);
 
 	// Helper methods
 protected:
@@ -110,5 +123,5 @@ public:
     /// \brief Apply hardware-accurate INT position and duration defaults based on selected model.
     /// Called after DetermineModel() to ensure correct timing even if INI has wrong/missing values.
     /// User-specified non-default INI values (intstart != 13, intlen != 32) are preserved as overrides.
-    void ApplyModelTimingDefaults(CONFIG& config);
+    void ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry = false);
 };

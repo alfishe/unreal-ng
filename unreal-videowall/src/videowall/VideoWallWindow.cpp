@@ -157,6 +157,15 @@ void VideoWallWindow::initializeAfterEventLoopStart()
 
     // Initialize sound manager for audio binding to focused tile
     _soundManager = new AppSoundManager();
+
+    // Device reroute (hotplug / OS default-output change) at a different
+    // native rate: republish to the audio-bound tile's emulator so its DRC
+    // resampler re-bases the core->device ratio
+    connect(_soundManager, &AppSoundManager::deviceReinitialized, this, [this](uint32_t sampleRate) {
+        if (_audioBoundTile && _audioBoundTile->emulator())
+            _audioBoundTile->emulator()->SetAudioDeviceSampleRate(sampleRate);
+    });
+
     if (_soundManager->init())
     {
         _soundManager->start();
@@ -249,6 +258,12 @@ void VideoWallWindow::createMenus()
         _crtScanlinesEnabled = checked;
         toggleCrtScanlines();
     });
+
+    // Fast tape loading (LD-BYTES trap) — same wall-wide toggle pattern as
+    // Screen HQ: flips the 'fasttape' runtime feature on every tile
+    QAction* fastTapeAction = viewMenu->addAction(tr("Toggle &Fast Tape Loading"));
+    fastTapeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_T));
+    connect(fastTapeAction, &QAction::triggered, this, &VideoWallWindow::toggleFastTapeForAllTiles);
 
 #ifdef ENABLE_RECORDING
     // Tools menu
@@ -393,6 +408,9 @@ void VideoWallWindow::addEmulatorTile()
 
             // Enable screen HQ by default for better quality
             featureManager->setFeature(Features::kScreenHQ, _screenHQEnabled);
+
+            // Apply the wall-wide fast tape loading state to the new tile
+            featureManager->setFeature(Features::kFastTape, _fastTapeEnabled);
         }
 
         emulator->StartAsync();
@@ -403,12 +421,11 @@ void VideoWallWindow::addEmulatorTile()
         connect(tile, &EmulatorTile::tileClicked, this, &VideoWallWindow::onTileClicked);
 
         _tileGrid->addTile(tile);
-        
-        // Default to the first emulator driving the audio
+
+        // Establish sync source on first tile (enables frame refresh without requiring user click)
         if (_tileGrid->tiles().size() == 1)
         {
             bindAudioToTile(tile);
-            tile->setFocus();
         }
     }
 }
@@ -941,6 +958,12 @@ void VideoWallWindow::createNextBatch()
     {
         _batchTimer->stop();
         qDebug() << "Async creation complete:" << _tileGrid->tiles().size() << "emulators created";
+
+        // Bind audio to first tile to establish sync source for frame refresh
+        if (!_tileGrid->tiles().empty())
+        {
+            bindAudioToTile(_tileGrid->tiles().front());
+        }
         return;
     }
 
@@ -1235,6 +1258,32 @@ void VideoWallWindow::toggleScreenHQForAllTiles()
              << tiles.size() << "tiles";
 }
 
+void VideoWallWindow::toggleFastTapeForAllTiles()
+{
+    // Toggle fast tape loading state
+    _fastTapeEnabled = !_fastTapeEnabled;
+
+    // Apply to all existing tiles
+    const auto& tiles = _tileGrid->tiles();
+    int successCount = 0;
+
+    for (auto* tile : tiles)
+    {
+        if (tile && tile->emulator())
+        {
+            auto* featureManager = tile->emulator()->GetFeatureManager();
+            if (featureManager)
+            {
+                featureManager->setFeature(Features::kFastTape, _fastTapeEnabled);
+                successCount++;
+            }
+        }
+    }
+
+    qDebug() << "Fast tape loading" << (_fastTapeEnabled ? "enabled" : "disabled") << "for" << successCount << "/"
+             << tiles.size() << "tiles";
+}
+
 void VideoWallWindow::toggleCrtPhosphor()
 {
     if (_tileGrid)
@@ -1307,7 +1356,9 @@ void VideoWallWindow::bindAudioToTile(EmulatorTile* tile)
     }
 
     // Bind audio callback to new emulator
-    emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback);
+    emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback, _soundManager->occupancyCell(),
+                               _soundManager->deviceDescriptor());
+    emulator->SetAudioDeviceSampleRate(_soundManager->deviceSampleRate());
     _soundManager->setActiveContext(emulator->GetContext());
 
     _audioBoundTile = tile;
@@ -1377,11 +1428,14 @@ void VideoWallWindow::unbindAudioFromTile()
         qDebug() << "Audio unbound from tile (Sound & SoundHQ disabled):" << QString::fromStdString(emulator->GetUUID().toString());
     }
 
-    // In non-singlesync mode, if we unbind, we lose the sync source.
-    // We could fallback to the first tile if needed, but for now we'll just clear it.
-    if (!_singleSyncMode)
+    // Keep frame refresh running even when audio is unbound - fall back to first tile
+    if (!_singleSyncMode && !_tileGrid->tiles().empty())
     {
-        _tileGrid->setSyncEmulatorId("");
+        auto* firstTile = _tileGrid->tiles().front();
+        if (firstTile && firstTile->emulator())
+        {
+            _tileGrid->setSyncEmulatorId(firstTile->emulator()->GetUUID().toString());
+        }
     }
 }
 void VideoWallWindow::handleSingleSyncModeMessage(MessagePayload* payload)

@@ -59,3 +59,15 @@ The rest is similar to *nix:
     cmake --build . --config Release
 
 /src /tests /benchmarks can be built separately same way
+
+## License
+
+unreal-ng is free software: you can redistribute it and/or modify it under the terms of the
+GNU General Public License as published by the Free Software Foundation, either version 3 of the License,
+or (at your option) any later version. See [LICENSE](LICENSE).
+
+Copyright (C) 2020-2026 Ilia Sharin. Portions derived from UnrealSpeccy, Copyright (C) SMT, Alone Coder, deathsoft.
+
+Third-party components and their licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+ROM images (`data/rom/`) and test fixtures (`testdata/`) are not covered by the GPL; see
+[data/rom/README-ROMS.md](data/rom/README-ROMS.md) and [testdata/NOTICE.md](testdata/NOTICE.md).

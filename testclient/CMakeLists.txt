@@ -113,5 +113,5 @@ add_custom_command(
         COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/bin"
         COMMAND ${CMAKE_COMMAND} -E copy_directory ${DATA_PATH}/rom "${CMAKE_BINARY_DIR}/bin/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory ${DATA_PATH}/testrom "${CMAKE_BINARY_DIR}/bin/rom"
-        COMMAND ${CMAKE_COMMAND} -E copy ${DATA_PATH}/configs/pentagon128k/unreal.ini "${CMAKE_BINARY_DIR}/bin/unreal.ini"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${DATA_PATH}/configs "${CMAKE_BINARY_DIR}/bin/configs"
 )

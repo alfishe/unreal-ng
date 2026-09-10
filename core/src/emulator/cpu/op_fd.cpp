@@ -173,6 +173,9 @@ Z80OPCODE opy_34(Z80 *cpu) { // inc (iy+nn)
     uint16_t pc = cpu->pc;
     int8_t displacement = cpu->rd(pc++, true);
 
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+
     cputact(5);
 
     uint8_t value = cpu->rd(cpu->iy + displacement);
@@ -188,6 +191,9 @@ Z80OPCODE opy_34(Z80 *cpu) { // inc (iy+nn)
 Z80OPCODE opy_35(Z80 *cpu) { // dec (iy+nn)
     uint16_t pc = cpu->pc;
     int8_t displacement = cpu->rd(pc++, true);
+
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
@@ -205,6 +211,9 @@ Z80OPCODE opy_36(Z80 *cpu) { // ld (iy+nn),nn
     uint16_t pc = cpu->pc;
 
     int8_t displacement = cpu->rd(pc++, true);
+
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
     uint8_t value = cpu->rd(pc++, true);
 
     cputact(2);
@@ -255,6 +264,9 @@ Z80OPCODE opy_46(Z80 *cpu) { // ld b,(iy+nn)
 
     int8_t displacement = cpu->rd(pc++, true);
 
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+
     cputact(5);
 
     cpu->b = cpu->rd(cpu->iy + displacement);
@@ -275,6 +287,9 @@ Z80OPCODE opy_4E(Z80 *cpu) { // ld c,(iy+nn)
 
    int8_t displacement = cpu->rd(pc++, true);
 
+   // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+   cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+
    cputact(5);
 
    cpu->c = cpu->rd(cpu->iy + displacement);
@@ -294,6 +309,9 @@ Z80OPCODE opy_56(Z80 *cpu) { // ld d,(iy+nn)
     uint16_t pc = cpu->pc;
     int8_t displacement = cpu->rd(pc++, true);
 
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+
     cputact(5);
 
     cpu->d = cpu->rd(cpu->iy + displacement);
@@ -312,6 +330,9 @@ Z80OPCODE opy_5D(Z80 *cpu) { // ld e,yl
 Z80OPCODE opy_5E(Z80 *cpu) { // ld e,(iy+nn)
     uint16_t pc = cpu->pc;
     int8_t displacement = cpu->rd(pc++, true);
+
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
@@ -343,6 +364,9 @@ Z80OPCODE opy_65(Z80 *cpu) { // ld yh,yl
 Z80OPCODE opy_66(Z80 *cpu) { // ld h,(iy+nn)
     uint16_t pc = cpu->pc;
     int8_t displacement = cpu->rd(pc++, true);
+
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
@@ -379,6 +403,9 @@ Z80OPCODE opy_6E(Z80 *cpu) { // ld l,(iy+nn)
     uint16_t pc = cpu->pc;
     int8_t displacement = cpu->rd(pc++, true);
 
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+
     cputact(5);
 
     cpu->l = cpu->rd(cpu->iy + displacement);
@@ -394,6 +421,9 @@ Z80OPCODE opy_70(Z80 *cpu) { // ld (iy+nn),b
     uint16_t pc = cpu->pc;
     int8_t displacement = cpu->rd(pc++, true);
 
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+
     cputact(5);
 
     cpu->wd(cpu->iy + displacement, cpu->b);
@@ -404,6 +434,9 @@ Z80OPCODE opy_70(Z80 *cpu) { // ld (iy+nn),b
 Z80OPCODE opy_71(Z80 *cpu) { // ld (iy+nn),c
     uint16_t pc = cpu->pc;
     int8_t displacement = cpu->rd(pc++, true);
+
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
@@ -416,6 +449,9 @@ Z80OPCODE opy_72(Z80 *cpu) { // ld (iy+nn),d
     uint16_t pc = cpu->pc;
     int8_t displacement = cpu->rd(pc++, true);
 
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+
     cputact(5);
 
     cpu->wd(cpu->iy + displacement, cpu->d);
@@ -426,6 +462,9 @@ Z80OPCODE opy_72(Z80 *cpu) { // ld (iy+nn),d
 Z80OPCODE opy_73(Z80 *cpu) { // ld (iy+nn),e
     uint16_t pc = cpu->pc;
     int8_t displacement = cpu->rd(pc++, true);
+
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
@@ -438,6 +477,9 @@ Z80OPCODE opy_74(Z80 *cpu) { // ld (iy+nn),h
     uint16_t pc = cpu->pc;
     int8_t displacement = cpu->rd(pc++, true);
 
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+
     cputact(5);
 
     cpu->wd(cpu->iy + displacement, cpu->h);
@@ -449,6 +491,9 @@ Z80OPCODE opy_75(Z80 *cpu) { // ld (iy+nn),l
     uint16_t pc = cpu->pc;
     int8_t displacement = cpu->rd(pc++, true);
 
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+
     cputact(5);
 
     cpu->wd(cpu->iy + displacement, cpu->l);
@@ -459,6 +504,9 @@ Z80OPCODE opy_75(Z80 *cpu) { // ld (iy+nn),l
 Z80OPCODE opy_77(Z80 *cpu) { // ld (iy+nn),a
     uint16_t pc = cpu->pc;
     int8_t displacement = cpu->rd(pc++, true);
+
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
@@ -479,6 +527,9 @@ Z80OPCODE opy_7E(Z80 *cpu) { // ld a,(iy+nn)
     uint16_t pc = cpu->pc;
     int8_t displacement = cpu->rd(pc++, true);
 
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+
     cputact(5);
 
     cpu->a = cpu->rd(cpu->iy + displacement);
@@ -497,6 +548,9 @@ Z80OPCODE opy_85(Z80 *cpu) { // add a,yl
 Z80OPCODE opy_86(Z80 *cpu) { // add a,(iy+nn)
     uint16_t pc = cpu->pc;
     int8_t displacement = cpu->rd(pc++, true);
+
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
@@ -517,6 +571,9 @@ Z80OPCODE opy_8E(Z80 *cpu) { // adc a,(iy+nn)
     uint16_t pc = cpu->pc;
     int8_t displacement = cpu->rd(pc++, true);
 
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+
     cputact(5);
 
     adc8(cpu, cpu->rd(cpu->iy + displacement));
@@ -535,6 +592,9 @@ Z80OPCODE opy_95(Z80 *cpu) { // sub yl
 Z80OPCODE opy_96(Z80 *cpu) { // sub (iy+nn)
     uint16_t pc = cpu->pc;
     int8_t displacement = cpu->rd(pc++, true);
+
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
@@ -555,6 +615,9 @@ Z80OPCODE opy_9E(Z80 *cpu) { // sbc a,(iy+nn)
     uint16_t pc = cpu->pc;
     int8_t displacement = cpu->rd(pc++, true);
 
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+
     cputact(5);
 
     sbc8(cpu, cpu->rd(cpu->iy + displacement));
@@ -573,6 +636,9 @@ Z80OPCODE opy_A5(Z80 *cpu) { // and yl
 Z80OPCODE opy_A6(Z80 *cpu) { // and (iy+nn)
     uint16_t pc = cpu->pc;
     int8_t displacement = cpu->rd(pc++, true);
+
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
@@ -593,6 +659,9 @@ Z80OPCODE opy_AE(Z80 *cpu) { // xor (iy+nn)
     uint16_t pc = cpu->pc;
     int8_t displacement = cpu->rd(pc++, true);
 
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+
     cputact(5);
 
     xor8(cpu, cpu->rd(cpu->iy + displacement));
@@ -612,6 +681,9 @@ Z80OPCODE opy_B6(Z80 *cpu) { // or (iy+nn)
     uint16_t pc = cpu->pc;
     int8_t displacement = cpu->rd(pc++, true);
 
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+
     cputact(5);
 
     or8(cpu, cpu->rd(cpu->iy + displacement));
@@ -630,6 +702,9 @@ Z80OPCODE opy_BD(Z80 *cpu) { // cp yl
 Z80OPCODE opy_BE(Z80 *cpu) { // cp (iy+nn)
     uint16_t pc = cpu->pc;
     int8_t displacement = cpu->rd(pc++, true);
+
+    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
+    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
@@ -653,8 +728,9 @@ Z80OPCODE opy_E3(Z80 *cpu) { // ex (sp),iy
     uint16_t value = cpu->rd(sp) + 0x100 * cpu->rd(sp + 1);
     cputact(1);
 
-    cpu->wd(sp, cpu->yl);
+    // Real Z80 write order: high byte (SP+1) first, then low (SP) - FUSE-verified
     cpu->wd(sp + 1, cpu->yh);
+    cpu->wd(sp, cpu->yl);
 
     cpu->memptr = value;
 

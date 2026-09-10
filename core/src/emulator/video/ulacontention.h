@@ -87,6 +87,32 @@ public:
     /// Not inline because it accesses Z80 members.
     uint8_t GetContentionDelay() const;
 
+    /// Is this Z80 address in contended memory on the current model?
+    /// 48K/128K: 0x4000-0x7FFF (page 5 behind the ULA).
+    /// 128K additionally: 0xC000-0xFFFF when an odd RAM page (1/3/5/7) is
+    /// mapped into bank 3 - those pages share the ULA's memory bus.
+    /// Always false when contention is disabled (Pentagon etc.).
+    ///
+    /// HOT PATH: called from Z80::rd()/wd() on every memory access. Fully
+    /// inline, touches only member fields (the bank-3 page parity is cached
+    /// by SetBank3ContendedPage from Memory::SetRAMPageToBank3 - a cold path
+    /// hit only on port 7FFD writes). Pentagon exits on the first branch.
+    inline bool IsAddressContended(uint16_t addr) const
+    {
+        if (!_contentionEnabled)
+            return false;
+        if ((addr & 0xC000) == 0x4000)
+            return true;
+        return (addr & 0xC000) == 0xC000 && _bank3Contended;
+    }
+
+    /// Cache update: called by Memory::SetRAMPageToBank3 with the mapped
+    /// page's parity (odd RAM pages are contended on 128K)
+    void SetBank3ContendedPage(bool contended) { _bank3Contended = contended; }
+
+    /// Raster timing snapshot (test/diagnostic access)
+    const ContentionRaster& GetRaster() const { return _raster; }
+
     /// IO port contention delay. Follows the Contended_I/O rules
     /// (different for 48K vs 128K).
     uint8_t GetIOContentionDelay(uint16_t port) const;
@@ -108,6 +134,7 @@ private:
     EmulatorContext* _context = nullptr;
 
     bool _contentionEnabled = false;
+    bool _bank3Contended = false;  // 128K: odd RAM page mapped at 0xC000 (default page 0 = false)
     UlaFetchType _fetchType = ULA_FERRANTI;
 
     ContentionRaster _raster;

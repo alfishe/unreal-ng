@@ -195,10 +195,34 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
     // Number of instructions to disassemble
     static constexpr size_t INSTRUCTIONS_TO_DISASSEMBLE = 20;
 
-    Memory& memory = *getMemory();
+    // Every getter below is documented to return null when the emulator, its
+    // context or the debug manager is not available, and this runs on the GUI
+    // thread in response to state-change signals — including the ones a TTD
+    // seek emits while the machine is being rebuilt. Dereferencing them
+    // unchecked crashed here: getDisassembler() hands back an empty unique_ptr,
+    // *it binds a null reference, and the member call lands in
+    // Z80Disassembler::decodeInstruction with this == nullptr.
+    //
+    // Bailing out is safe: another refresh follows once the emulator settles.
+    Emulator* emulator = getEmulator();
+    Memory* memoryPtr = getMemory();
     Z80Registers* registers = getZ80Registers();
-    Z80Disassembler& disassembler = *getDisassembler();
-    LabelManager* labelManager = getEmulator()->GetDebugManager()->GetLabelManager();
+    std::unique_ptr<Z80Disassembler>& disassemblerPtr = getDisassembler();
+
+    if (!emulator || !memoryPtr || !registers || !disassemblerPtr)
+    {
+        return;
+    }
+
+    DebugManager* debugManager = emulator->GetDebugManager();
+    if (!debugManager)
+    {
+        return;
+    }
+
+    Memory& memory = *memoryPtr;
+    Z80Disassembler& disassembler = *disassemblerPtr;
+    LabelManager* labelManager = debugManager->GetLabelManager();
 
     // Clear the address map before generating new disassembly
     m_addressMap.clear();
@@ -266,46 +290,14 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
             }
         }
 
-        // Check for labels in operands
+        // Check for labels at the effective address of indexed (IX/IY+d) instructions.
+        // Label information for jump/call targets and absolute memory operands is already embedded
+        // into the mnemonic by Z80Disassembler::formatOperandString as 'label (#ADDR)'
         std::string labelInfo;
-        if (decoded.hasJump || decoded.hasRelativeJump)
+        if (decoded.hasDisplacement && decoded.hasRuntime)
         {
-            uint16_t targetAddr = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
             std::shared_ptr<Label> targetLabel =
-                labelManager ? labelManager->GetLabelByZ80Address(targetAddr) : nullptr;
-            if (targetLabel)
-            {
-                // Add label name in parentheses after the address
-                std::string addrStr = StringHelper::ToUpper(StringHelper::ToHexWithPrefix(targetAddr, ""));
-                size_t pos = command.find(addrStr);
-                if (pos != std::string::npos)
-                {
-                    command.insert(pos + addrStr.length(), StringHelper::Format(" (%s)", targetLabel->name.c_str()));
-                }
-            }
-        }
-        else if (decoded.hasWordOperand)
-        {
-            // Check for labels in word operands (e.g., LD HL,addr)
-            std::shared_ptr<Label> targetLabel =
-                labelManager ? labelManager->GetLabelByZ80Address(decoded.wordOperand) : nullptr;
-            if (targetLabel)
-            {
-                // Add label name in parentheses after the address
-                std::string addrStr = StringHelper::ToUpper(StringHelper::ToHexWithPrefix(decoded.wordOperand, ""));
-                size_t pos = command.find(addrStr);
-                if (pos != std::string::npos)
-                {
-                    command.insert(pos + addrStr.length(), StringHelper::Format(" (%s)", targetLabel->name.c_str()));
-                }
-            }
-        }
-        else if (decoded.hasDisplacement)
-        {
-            // Check for labels in indexed addressing (e.g., LD (IX+disp),A)
-            uint16_t targetAddr = (pc + decoded.displacement) & 0xFFFF;
-            std::shared_ptr<Label> targetLabel =
-                labelManager ? labelManager->GetLabelByZ80Address(targetAddr) : nullptr;
+                labelManager ? labelManager->GetLabelByZ80Address(decoded.displacementAddr) : nullptr;
             if (targetLabel)
             {
                 labelInfo = StringHelper::Format(" ; %s", targetLabel->name.c_str());

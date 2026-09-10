@@ -7,13 +7,18 @@
 #include "3rdparty/message-center/eventqueue.h"
 #include "common/modulelogger.h"
 #include "common/timehelper.h"
+#include "emulator/sound/soundmanager.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "emulator.h"
 #include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/tape/tapeturbocontroller.h"
 #include "stdafx.h"
+
+#include <cmath>
 
 MainLoop::MainLoop(EmulatorContext* context)
 {
@@ -28,8 +33,6 @@ MainLoop::MainLoop(EmulatorContext* context)
     _screen = _context->pScreen;
     _soundManager = _context->pSoundManager;
 
-    _moreAudioDataRequested.store(false, std::memory_order_release);
-
     _isRunning = false;
 }
 
@@ -37,12 +40,6 @@ MainLoop::~MainLoop()
 {
     if (_isRunning)
         Stop();
-
-    // Unsubscribe from audio buffer state event(s)
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    Observer* observerInstance = static_cast<Observer*>(this);
-    ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainLoop::handleAudioBufferHalfFull);
-    messageCenter.RemoveObserver(NC_AUDIO_BUFFER_HALF_FULL, observerInstance, callback);
 
     // De-register mainloop from the context (if context still exists)
     if (_context)
@@ -71,17 +68,17 @@ void MainLoop::Run(volatile bool& stopRequested)
 
     _stopRequested = false;
     _isRunning = true;
+    _runThreadId.store(std::this_thread::get_id(), std::memory_order_release);
 
-    // Subscribe to audio buffer state event(s)
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    Observer* observerInstance = static_cast<Observer*>(this);
-
-    // Subscribe to video frame refresh events
-    ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainLoop::handleAudioBufferHalfFull);
-    messageCenter.AddObserver(NC_AUDIO_BUFFER_HALF_FULL, observerInstance, callback);
+#ifdef _WIN32
+    // The emulation thread is the audio producer: a frame pre-empted by GUI /
+    // background work lands its audio late and eats the ring trough. Above
+    // normal (not time-critical) keeps it ahead of ordinary threads without
+    // starving the audio device thread, which miniaudio already runs under MMCSS.
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+#endif
 
     /// region <Info logging>
-    static std::chrono::milliseconds timeout(20);  // Set timeout for audio buffer refresh wait
     uint64_t lastRun = 0;
     [[maybe_unused]] uint64_t betweenIterations = 0;
     /// endregion </Info logging>
@@ -143,14 +140,52 @@ void MainLoop::Run(volatile bool& stopRequested)
 
         if (!config.turbo_mode)
         {
-            // Normal mode: Wait until audio callback requests more data and buffer is about half-full
-            // That means we're in sync between audio and video frames
-            std::unique_lock<std::mutex> lock(_audioBufferMutex);
-            _cv.wait_for(lock, timeout, [this, &stopRequested] {
-                return _moreAudioDataRequested.load(std::memory_order_acquire) || stopRequested;
-            });
-            _moreAudioDataRequested.store(false);
-            lock.unlock();
+            // Normal mode: absolute-deadline frame pacing.
+            // The frame clock is the timing master: each frame is released at
+            // exactly config.frame_duration_us intervals (Pentagon: 20480us =
+            // 48.83 fps; see CalculateFrameDurationUs). wait_until against an
+            // accumulated deadline self-corrects scheduler wake-up latency.
+            // Fine rate matching against the audio DAC is the DRC controller's
+            // job (SoundManager::updateDrcControl) - the deadline only has to
+            // be approximately right; DRC absorbs the residual continuously.
+            const std::chrono::microseconds frameDuration(config.frame_duration_us);
+            const auto now = std::chrono::steady_clock::now();
+
+            // Emergency refill (audio-sync design 5.3): if the ring is nearly
+            // empty (cold start, debugger stall, disk hitch), skip the sleep
+            // and produce frames back-to-back until occupancy recovers -
+            // DRC's +-0.5% trim is far too slow for bulk refill.
+            // Threshold is rate-aware and deliberately far below the DRC
+            // target: the occupancy sawtooth dips ~1 frame below target every
+            // cycle, and the refill must NEVER fire in steady state (see
+            // SoundManager::EMERGENCY_REFILL_MS)
+            const uint32_t devRate = _context->pAudioDeviceSampleRate.load(std::memory_order_relaxed);
+            const uint32_t refillThresholdFrames = static_cast<uint32_t>(
+                (devRate ? devRate : AUDIO_SAMPLING_RATE) * SoundManager::EMERGENCY_REFILL_MS / 1000.0);
+            const std::atomic<uint32_t>* occCell =
+                _context->pAudioRingOccupancy.load(std::memory_order_acquire);
+            if (occCell && occCell->load(std::memory_order_relaxed) < refillThresholdFrames)
+            {
+                _nextFrameTime = now;  // Re-anchor: refill burst must not distort the cadence after
+                continue;
+            }
+
+            // (Re)anchor after start, pause, debugger stall, or heavy lag -
+            // never try to "catch up" more than one frame via a stale deadline
+            if (_nextFrameTime < now - frameDuration || _nextFrameTime > now + frameDuration)
+            {
+                _nextFrameTime = now;
+            }
+            _nextFrameTime += frameDuration;
+
+            // Precise, interruptible sleep (polls the stop flag every few ms).
+            // Must NOT be std::condition_variable::wait_until: on Windows it
+            // wakes 1 ms (MSVC) to 10-17 ms (MinGW) late, which consumed the
+            // whole audio ring trough (DRC_TARGET_MS - 1 frame ~ 19.5 ms)
+            // against WASAPI's 10 ms pulls and caused steady underruns
+            // ("ring errors ... dequeue=N" growing) - see
+            // TimeHelper::WaitUntilPrecise and SoundAdaptivity.AVLatencyBudget
+            TimeHelper::WaitUntilPrecise(_nextFrameTime, [&stopRequested] { return (bool)stopRequested; });
         }
         else
         {
@@ -166,11 +201,26 @@ void MainLoop::Run(volatile bool& stopRequested)
     _isRunning = false;
 }
 
+bool MainLoop::WaitForPauseConfirmation(uint32_t timeoutMs)
+{
+    // Fast path: not running at all means no frame can be mid-flight
+    if (!_isRunning)
+        return true;
+
+    // Called from the emulation thread itself (e.g. breakpoint handler pausing
+    // mid-frame): no frame can be executing concurrently with the caller, and
+    // waiting here would only stall until the timeout. Return immediately.
+    if (_runThreadId.load(std::memory_order_acquire) == std::this_thread::get_id())
+        return true;
+
+    std::unique_lock<std::mutex> lock(_pauseMutex);
+    return _pauseCV.wait_for(lock, std::chrono::milliseconds(timeoutMs),
+                             [this]() { return _isPausedConfirmed.load(std::memory_order_acquire); });
+}
+
 void MainLoop::Stop()
 {
-    _stopRequested = true;
-    _moreAudioDataRequested.store(true, std::memory_order_release);
-    _cv.notify_all();
+    _stopRequested = true;  // Frame wait polls this flag (TimeHelper::WaitUntilPrecise, <= 4 ms)
     _pauseCV.notify_all();
 }
 
@@ -202,7 +252,17 @@ void MainLoop::RunFrame()
 
     // Execute CPU cycles for single video frame
 
+    // Turbo render decimation: suspend contingent rendering for the CPU cycle
+    // of a skipped frame. The screen-side flag covers ALL DrawPeriod entries
+    // in one place - including Screen::SetBorderColor's own UpdateScreen call,
+    // which border-striping loaders reach thousands of times per frame. It is
+    // cleared again before frame end, so batch render, framebuffer latch and
+    // any manual debug stepping while paused are never affected.
+    _screen->SetTurboRenderSkip(!_renderThisFrame);
+
     ExecuteCPUFrameCycle();
+
+    _screen->SetTurboRenderSkip(false);
 
     /// region <Frame end handlers>
 
@@ -232,7 +292,35 @@ void MainLoop::OnFrameStart()
     _context->pTape->handleFrameStart();
     _soundManager->handleFrameStart();
     _screen->InitFrame();
-    
+
+    /// region <Turbo render decimation>
+    // In turbo mode the GUI only needs a preview cadence: 49 of every 50
+    // frames skip rendering entirely (per-t-state DrawPeriod work, batch
+    // render, framebuffer latch, frame-refresh notification). The one
+    // rendered frame keeps full ScreenHQ fidelity - border and multicolor
+    // effects inside it are drawn per t-state exactly as at normal speed.
+    // Machine timing is untouched: CPU, tape, FDC, TTD and analyzers still
+    // process every frame (turbo tape design §3.1 invariance). Recording
+    // forces a render every frame so captured video is never decimated.
+    {
+        const CONFIG& config = _context->config;
+        bool recording = false;
+#ifdef ENABLE_RECORDING
+        recording = _context->pRecordingManager && _context->pRecordingManager->IsRecording();
+#endif
+        UpdateTurboRenderDecimation(config.turbo_mode, config);
+        _renderThisFrame = !config.turbo_mode || recording ||
+                           (_state->frame_counter % _turboRenderDecimation == 0);
+
+        // A rendered frame after skipped ones starts with a stale _prevTstate
+        // (InitFrame does not reset it). DrawPeriod would self-heal through
+        // the wrap-adjust + bounds check but lose the frame's first t-states;
+        // resetting the tracker makes the rendered frame complete from t=0.
+        if (_renderThisFrame && !_lastFrameRendered)
+            _screen->ResetPrevTstate();
+    }
+    /// endregion </Turbo render decimation>
+
     // Dispatch frame start event to AnalyzerManager
     if (_context->pDebugManager && _context->pDebugManager->GetAnalyzerManager())
     {
@@ -253,9 +341,15 @@ void MainLoop::OnCPUStep()
         return;
     }
 
-    _context->pScreen->UpdateScreen();  // Trigger screen update after each CPU command cycle
+    // Turbo render decimation: skipped frames bypass contingent rendering.
+    // Everything below still runs on every CPU step in every mode.
+    if (_renderThisFrame)
+    {
+        _context->pScreen->UpdateScreen();  // Trigger screen update after each CPU command cycle
+    }
 
     _context->pBetaDisk->handleStep();
+    _context->pTape->handleStep();  // Process tape audio each step
     _context->pSoundManager->handleStep();
 }
 
@@ -281,9 +375,19 @@ void MainLoop::OnFrameEnd()
     //
     // See: docs/inprogress/2026-01-11-performance-optimizations/phase-4-5-execution-log.md
     // =========================================================================
-    if (!_context->pScreen->IsScreenHQEnabled())
+    // Turbo render decimation: skipped frames render nothing and keep the
+    // previously latched framebuffer for display (decimated preview).
+    if (_renderThisFrame)
     {
-        _context->pScreen->RenderFrameBatch();
+        if (!_context->pScreen->IsScreenHQEnabled())
+        {
+            _context->pScreen->RenderFrameBatch();
+        }
+
+        // Latch the completed frame into the presentation buffer (tear-free copy
+        // for GUI display and capture). Must happen after rendering is finished
+        // for both batch and per-t-state (ScreenHQ) modes.
+        _context->pScreen->LatchFramebuffer();
     }
 
     // Basic sanity check for context corruption
@@ -303,6 +407,21 @@ void MainLoop::OnFrameEnd()
         catch (const std::exception& e)
         {
             MLOGERROR("Tape::handleFrameEnd failed: %s", e.what());
+        }
+    }
+
+    // Turbo tape loading (design 2026-09-04-turbo-tape-loading §6.1): tick
+    // right after the tape's own frame end so watchdog freezes and natural
+    // end-of-tape are observed in the same frame they happen
+    if (_context->pTapeTurboController)
+    {
+        try
+        {
+            _context->pTapeTurboController->handleFrameEnd();
+        }
+        catch (const std::exception& e)
+        {
+            MLOGERROR("TapeTurboController::handleFrameEnd failed: %s", e.what());
         }
     }
     if (_context->pBetaDisk)
@@ -370,63 +489,62 @@ void MainLoop::OnFrameEnd()
 
     // Notify that video frame is composed and ready for rendering
     // Send per-instance frame refresh event with emulator ID for filtering
-    try
+    //
+    // TTD silent-replay suppression (parent TDD §8.2 + Appendix C):
+    // during replay the UI must not redraw per-frame — replay may run
+    // dozens of frames per seek and a redraw storm would dominate seek
+    // latency. The replay engine restores the final frame visually via
+    // Screen::InitFrame after ExitReplayMode.
+    if (_renderThisFrame && !_context->ttdReplayActive)
     {
-        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        std::string emulatorId = _context->pEmulator ? _context->pEmulator->GetId() : "";
-        messageCenter.Post(NC_VIDEO_FRAME_REFRESH,
-                           new EmulatorFramePayload(emulatorId, _context->emulatorState.frame_counter));
+        try
+        {
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            std::string emulatorId = _context->pEmulator ? _context->pEmulator->GetId() : "";
+            messageCenter.Post(NC_VIDEO_FRAME_REFRESH,
+                               new EmulatorFramePayload(emulatorId, _context->emulatorState.frame_counter));
+        }
+        catch (const std::exception& e)
+        {
+            // Log error but don't crash - message center failure shouldn't stop emulation
+            MLOGERROR("MessageCenter post failed: %s", e.what());
+        }
     }
-    catch (const std::exception& e)
-    {
-        // Log error but don't crash - message center failure shouldn't stop emulation
-        MLOGERROR("MessageCenter post failed: %s", e.what());
-    }
-    
+
     // Dispatch frame end event to AnalyzerManager
     if (_context->pDebugManager && _context->pDebugManager->GetAnalyzerManager())
     {
         _context->pDebugManager->GetAnalyzerManager()->dispatchFrameEnd();
     }
-    
+
+    // TTD per-frame checkpoint capture (parent TDD §7.1).
+    // OnFrameBoundary is a no-op when the TTD manager is null, when the
+    // session state is not Recording, or when the timetravel feature flag
+    // is off (the cached bool in Memory gates the dirty hook). Cost when
+    // idle: one predictable branch. Cost when recording: dirty pages get
+    // a 16 KB Intern each, clean pages get a cheap AddRef.
+    if (_context->pTimeTravelManager)
+    {
+        try
+        {
+            _context->pTimeTravelManager->OnFrameBoundary();
+        }
+        catch (const std::exception& e)
+        {
+            MLOGERROR("TimeTravelManager::OnFrameBoundary failed: %s", e.what());
+        }
+    }
+
     // Process keyboard injection sequences (for automation)
     // This is called each frame to advance any queued key sequences (tap/release timing)
     if (_context->pDebugManager && _context->pDebugManager->GetKeyboardManager())
     {
         _context->pDebugManager->GetKeyboardManager()->OnFrame();
     }
+
+    _lastFrameRendered = _renderThisFrame;
 }
 
-/// @brief Handles audio buffer low-watermark notifications (NC_AUDIO_BUFFER_HALF_FULL) to pace frame execution.
-///
-/// @details
-/// **Synchronization Mechanism**:
-/// When miniaudio's output buffer drops below its low-watermark threshold (~2 frames remaining),
-/// the audio device callback posts an NC_AUDIO_BUFFER_HALF_FULL notification. This method receives
-/// that event, marks `_moreAudioDataRequested` as true, and unblocks the main execution loop via `_cv`.
-///
-/// @param id Event topic identifier (NC_AUDIO_BUFFER_HALF_FULL)
-/// @param message Message pointer optionally containing a TargetContextPayload
-void MainLoop::handleAudioBufferHalfFull([[maybe_unused]] int id, Message* message)
-{
-    // Filter targeted events: receivers MUST filter by emulator UUID if target is specified.
-    if (message && message->obj)
-    {
-        auto* payload = dynamic_cast<TargetContextPayload*>(message->obj);
-        if (payload && !payload->targetEmulatorId.isNil() && payload->targetEmulatorId != _context->emulatorId)
-        {
-            // Event is targeted to a different emulator instance - ignore
-            return;
-        }
-    }
-
-    std::unique_lock<std::mutex> lock(_audioBufferMutex);
-
-    // Set the atomic variable to indicate frame sync
-    _moreAudioDataRequested.store(true, std::memory_order_release);
-    // Notify the main loop
-    _cv.notify_one();
-}
 
 //
 // Proceed with single frame CPU operations
@@ -435,3 +553,62 @@ void MainLoop::ExecuteCPUFrameCycle()
 {
     _cpu->CPUFrameCycle();
 }
+
+/// region <Turbo render decimation>
+
+uint64_t MainLoop::ComputeTurboRenderDecimation(double measuredFps, double targetFps, double maxRenderFps)
+{
+    if (!(measuredFps > 0.0) || !(targetFps > 0.0))
+        return TURBO_RENDER_DECIMATION;
+
+    double n;
+    if (maxRenderFps > targetFps)
+        n = std::ceil(measuredFps / maxRenderFps);  // rendered <= display rate, > display rate / 2
+    else
+        n = std::floor(measuredFps / targetFps);    // rendered in [target, 2 x target)
+
+    if (n < 1.0)
+        return 1;
+    if (n >= static_cast<double>(TURBO_RENDER_DECIMATION_MAX))
+        return TURBO_RENDER_DECIMATION_MAX;
+    return static_cast<uint64_t>(n);
+}
+
+void MainLoop::UpdateTurboRenderDecimation(bool turboMode, const CONFIG& config)
+{
+    if (!turboMode || !_turboRenderAdaptive)
+    {
+        // Leaving turbo (or adaptive off): back to the fixed default, drop the sample window
+        _turboRateSampling = false;
+        _turboMeasuredFps = 0.0;
+        _turboRenderDecimation = TURBO_RENDER_DECIMATION;
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const uint32_t frame = _state->frame_counter;
+
+    // (Re)start the sample window: first turbo frame, or the counter went backwards (reset)
+    if (!_turboRateSampling || frame < _turboRateSampleFrame)
+    {
+        _turboRateSampling = true;
+        _turboRateSampleTime = now;
+        _turboRateSampleFrame = frame;
+        return;
+    }
+
+    const double seconds = std::chrono::duration<double>(now - _turboRateSampleTime).count();
+    if (seconds < TURBO_RATE_SAMPLE_SECONDS)
+        return;
+
+    const uint32_t frames = frame - _turboRateSampleFrame;
+    _turboMeasuredFps = frames / seconds;
+
+    const double targetFps = config.frame_duration_us > 0 ? 1000000.0 / config.frame_duration_us : 0.0;
+    _turboRenderDecimation = ComputeTurboRenderDecimation(_turboMeasuredFps, targetFps, _turboRenderMaxFps);
+
+    _turboRateSampleTime = now;
+    _turboRateSampleFrame = frame;
+}
+
+/// endregion </Turbo render decimation>

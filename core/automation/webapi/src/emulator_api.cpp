@@ -104,9 +104,11 @@ void EmulatorAPI::rootRedirect(const HttpRequestPtr& req, std::function<void(con
 // Note: CORS preflight (OPTIONS) is now handled globally via registerSyncAdvice
 // in automation-webapi.cpp and main.cpp
 
-/// @brief Helper method to get emulator by ID (UUID) or index (numeric)
-/// This does NOT auto-select; it returns nullptr if the specific ID/index is not found
-std::shared_ptr<Emulator> EmulatorAPI::getEmulatorByIdOrIndex(const std::string& idOrIndex) const
+/// @brief Helper function to resolve an emulator by ID (UUID) or 0-based index.
+/// Free function — callable from any handler in api::v1 (e.g. ttd_api.cpp,
+/// state_audio_api.cpp) without going through an EmulatorAPI instance.
+/// This does NOT auto-select; it returns nullptr if the specific ID/index is not found.
+std::shared_ptr<Emulator> getEmulatorByIdOrIndex(const std::string& idOrIndex)
 {
     auto manager = EmulatorManager::GetInstance();
 

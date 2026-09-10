@@ -23,6 +23,7 @@ uint8_t UlaContention::GetContentionDelay() const
     return ComputeContentionDelay(_cpu->t);
 }
 
+
 uint8_t UlaContention::ComputeContentionDelay(uint32_t t) const
 {
     // The ULA only contends memory during the visible "paper" rendering area.

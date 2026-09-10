@@ -6,6 +6,8 @@
 
 #include "common/modulelogger.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/tape/tapefastload.h"
+#include "emulator/io/tape/tapeturbocontroller.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/videocontroller.h"
 #include "emulator/video/zx/screenzx.h"
@@ -146,6 +148,43 @@ bool Core::Init()
 
     /// endregion </Tape>
 
+    /// region <Fast tape loading>
+
+    if (result)
+    {
+        result = false;
+
+        // Instantiate fast tape loading trap (wraps the LD-BYTES ROM entry)
+        _tapeFastLoad = new TapeFastLoad(_context, *_tape);
+        if (_tapeFastLoad)
+        {
+            _context->pTapeFastLoad = _tapeFastLoad;
+
+            result = true;
+        }
+    }
+
+    /// endregion </Fast tape loading>
+
+    /// region <Turbo tape loading>
+
+    if (result)
+    {
+        result = false;
+
+        // Instantiate turbo tape loading controller (auto-warp while the
+        // signal path plays — design 2026-09-04-turbo-tape-loading §6.1)
+        _tapeTurboController = new TapeTurboController(_context, *_tape);
+        if (_tapeTurboController)
+        {
+            _context->pTapeTurboController = _tapeTurboController;
+
+            result = true;
+        }
+    }
+
+    /// endregion </Turbo tape loading>
+
     /// region <BetaDisk128 Interface>
 
     if (result)
@@ -197,6 +236,10 @@ bool Core::Init()
         {
             _context->pRecordingManager = _recordingManager;
             _recordingManager->Init();
+
+            // Recordings must be stamped with the resolved core audio rate
+            // (multirate plan phase 6) - never the 44100 default
+            _recordingManager->SetAudioSampleRate(static_cast<uint32_t>(_sound->getCoreRate()));
 
             result = true;
         }
@@ -297,6 +340,11 @@ bool Core::Init()
             {
                 _context->pPortDecoder = _portDecoder;
 
+                // Prime the porttrace feature cache: the decoder is created after
+                // FeatureManager loaded features.ini, so a persisted porttrace=on
+                // state would otherwise not take effect until the next toggle
+                _portDecoder->UpdateFeatureCache();
+
                 result = true;
             }
             else
@@ -335,19 +383,7 @@ void Core::Release()
 {
     // Unregister itself from context
     _context->pCore = nullptr;
-
     _context->pPortDecoder = nullptr;
-    if (_portDecoder != nullptr)
-    {
-        delete _portDecoder;
-        _portDecoder = nullptr;
-    }
-
-    if (_ports != nullptr)
-    {
-        delete _ports;
-        _ports = nullptr;
-    }
 
     _context->pSoundManager = nullptr;
     if (_sound != nullptr)
@@ -390,6 +426,20 @@ void Core::Release()
         _betaDisk = nullptr;
     }
 
+    _context->pTapeFastLoad = nullptr;
+    if (_tapeFastLoad != nullptr)
+    {
+        delete _tapeFastLoad;
+        _tapeFastLoad = nullptr;
+    }
+
+    _context->pTapeTurboController = nullptr;
+    if (_tapeTurboController != nullptr)
+    {
+        delete _tapeTurboController;
+        _tapeTurboController = nullptr;
+    }
+
     _context->pTape = nullptr;
     if (_tape != nullptr)
     {
@@ -428,6 +478,22 @@ void Core::Release()
     {
         delete _z80;
         _z80 = nullptr;
+    }
+
+    // The PortDecoder must outlive every device that registered port handlers: the devices keep
+    // their own PortDecoder pointer and their detachFromPorts() (SoundManager, WD1793, ...) calls
+    // UnregisterPortHandler(), which mutates the decoder's handler map. Deleting it earlier made
+    // those calls a heap-use-after-free on every emulator teardown.
+    if (_portDecoder != nullptr)
+    {
+        delete _portDecoder;
+        _portDecoder = nullptr;
+    }
+
+    if (_ports != nullptr)
+    {
+        delete _ports;
+        _ports = nullptr;
     }
 }
 /// endregion </Initialization>
@@ -473,6 +539,13 @@ void Core::Reset()
     _betaDisk->reset();          // BetaDisk floppy controller
     _hdd->Reset();               // Reset IDE controller
     _portDecoder->reset();       // Reset peripheral port decoder (sets model-specific port defaults)
+
+    // Apply the ROM mode requested by the RESET= config directive (port of the
+    // original set_mode(conf.reset_rom) performed at the end of m_reset()).
+    // The decoder reset above establishes the model defaults (p7FFD = 0, 128K
+    // ROM selected); the configured mode is layered on top: BASIC -> 48K BASIC,
+    // DOS -> TR-DOS, MENU -> 128K menu, SYS -> service ROM
+    _memory->SetROMMode(_mode);
 #ifdef ENABLE_RECORDING
     if (_recordingManager)
         _recordingManager->Reset();  // Reset recording manager (stops active recording, clears counters)
@@ -549,9 +622,12 @@ void Core::EnableTurboMode(bool withAudio)
 
     // Always mute audible output in turbo mode to avoid chipmunk sounds
     // Audio generation may still occur if withAudio=true (for recording)
+    // Drop to the low-quality DSP path as well: HQ is pure CPU cost at turbo speed.
+    // The user's soundhq setting is not modified - it comes back when turbo ends.
     if (_context->pSoundManager)
     {
         _context->pSoundManager->mute();
+        _context->pSoundManager->setTurboLowQualityOverride(true);
     }
 
     MLOGINFO("Core::EnableTurboMode - Turbo mode enabled (audio generation: %s, audible: MUTED)",
@@ -565,10 +641,11 @@ void Core::DisableTurboMode()
 {
     _context->config.turbo_mode = false;
 
-    // Restore audible output
+    // Restore audible output and the previous DSP quality
     if (_context->pSoundManager)
     {
         _context->pSoundManager->unmute();
+        _context->pSoundManager->setTurboLowQualityOverride(false);
     }
 
     MLOGINFO("Core::DisableTurboMode - Turbo mode disabled, audio unmuted");
@@ -598,8 +675,8 @@ void Core::CPUFrameCycle()
         _z80->Z80FrameCycle();
     }
 
-    uint32_t t = _context->pCore->GetZ80()->t;
-    MLOGINFO("tState counter after the frame: %d", t);
+    // uint32_t t = _context->pCore->GetZ80()->t;
+    // MLOGINFO("tState counter after the frame: %d", t);
 
     AdjustFrameCounters();
 
@@ -624,6 +701,17 @@ void Core::AdjustFrameCounters()
     // Re-adjust Core frame t-state counter and interrupt position
     _z80->t -= scaledFrame;
     _z80->eipos -= scaledFrame;
+
+    // Drop any stale INT request latched near the frame edge. The ULA INT line
+    // is only asserted inside [intstart, intstart+intlen); ProcessInterrupts
+    // clears int_pending via "t >= int_end", but when an instruction (typically
+    // the INT acceptance itself) carries t across the frame boundary that clear
+    // never fires. The stale flag would then deliver a SECOND interrupt in the
+    // new frame as soon as the program executes EI (observed as 1.5-2x music
+    // speedup in EI:HALT-synced IM2 demos, e.g. Insult megademo). Windows that
+    // legitimately wrap (int_end >= frame) are re-armed at the start of the
+    // next Z80FrameCycle, so unconditional clearing here is hardware-correct.
+    _z80->int_pending = false;
 }
 
 void Core::UpdateScreen()

@@ -107,6 +107,27 @@ typedef std::unordered_map<uint16_t, BreakpointDescriptor*> BreakpointMapByPort;
 typedef std::map<uint16_t, BreakpointDescriptor*> BreakpointMapByID;
 typedef std::map<uint8_t, BreakpointMapByAddress> BreakpointMapByBank;
 
+/// Hot-path state for fast breakpoint checks
+/// Read by emulation thread without locks; written only by BreakpointManager under mutex.
+/// Address filter bits: bit 0 = exec, bit 1 = read, bit 2 = write
+constexpr uint8_t BRK_FILTER_EXEC  = 0x01;
+constexpr uint8_t BRK_FILTER_READ  = 0x02;
+constexpr uint8_t BRK_FILTER_WRITE = 0x04;
+
+struct BreakpointHotState
+{
+    uint8_t hasExec = 0;     // 1 if any execute breakpoint exists
+    uint8_t hasRead = 0;     // 1 if any read breakpoint exists
+    uint8_t hasWrite = 0;    // 1 if any write breakpoint exists
+    uint8_t hasPortIn = 0;   // 1 if any port-in breakpoint exists
+    uint8_t hasPortOut = 0;  // 1 if any port-out breakpoint exists
+    uint8_t _padding[3] = {0, 0, 0};
+
+    // 64KB address filter: each byte has bits for exec/read/write at that Z80 address.
+    // A set bit means "maybe a breakpoint here" - filter may over-approximate.
+    uint8_t addressFlags[0x10000] = {};
+};
+
 /// endregion </Types>
 
 class BreakpointManager
@@ -134,9 +155,12 @@ protected:
     // Incremental counter to generate new breakpoint IDs
     // Note: no breakpoint IDs reuse allowed
     uint16_t _breakpointIDSeq = 0;
-    
+
     // Last triggered breakpoint ID (for automation API queries)
     uint16_t _lastTriggeredBreakpointID = BRK_INVALID;
+
+    // Hot-path state for fast breakpoint checks (Phase 0 optimization)
+    BreakpointHotState _hotState;
     /// endregion </Fields>
 
     // region <Constructors / destructors>
@@ -176,6 +200,9 @@ public:
     
     /// Get structured info about the last triggered breakpoint
     BreakpointStatusInfo GetLastTriggeredBreakpointInfo() const;
+
+    /// Get read-only pointer to hot-path state (for emulation thread fast checks)
+    const BreakpointHotState* GetHotState() const { return &_hotState; }
     /// endregion </Management methods>
 
     /// region <Management assistance methods>
@@ -258,6 +285,10 @@ protected:
     BreakpointDescriptor* FindAddressBreakpoint(uint16_t address, const MemoryPageDescriptor& pageInfo);
     BreakpointDescriptor* FindPortBreakpoint(uint16_t port);
 
+    /// Rebuild hot-path filter state from current breakpoint set.
+    /// Called after every mutation (add/remove/activate/deactivate).
+    void RebuildFilters();
+
     // endregion </Helper methods>
 };
 
@@ -278,12 +309,14 @@ public:
     using BreakpointManager::_breakpointMapByPort;
     using BreakpointManager::_breakpointMapByID;
     using BreakpointManager::_breakpointIDSeq;
+    using BreakpointManager::_hotState;
 
     using BreakpointManager::GenerateNewBreakpointID;
     using BreakpointManager::AddMemoryBreakpoint;
     using BreakpointManager::AddPortBreakpoint;
     using BreakpointManager::FindAddressBreakpoint;
     using BreakpointManager::FindPortBreakpoint;
+    using BreakpointManager::RebuildFilters;
 };
 
 #endif // _CODE_UNDER_TEST

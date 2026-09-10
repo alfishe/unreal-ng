@@ -121,11 +121,27 @@ All interfaces (where applicable) support these command categories:
 5. **Feature Management** - Runtime feature toggles
    - `feature` (list/enable/disable subsystems)
 
+### Time-Travel Debugging (TTD)
+
+6. **Time-Travel Debugging** - Per-frame checkpoint recording, backward seek, reverse search
+   - `ttd start` / `ttd stop` / `ttd clear` — session lifecycle
+   - `ttd status` — always-available state query (lands Phase 1)
+   - `ttd timeline` — per-frame summary entries for UI rendering
+   - `ttd seek` — absolute seek to a frame / t-state
+   - `ttd step-back` / `ttd step-forward` — relative navigation
+   - `ttd find-last` — reverse watchpoint (last write/read/execute matching a query)
+   - `ttd bookmark` — named markers; act as replay barriers
+   - `ttd resume-from-here` — truncate future and resume live recording
+   - **GDB surface**: reverse-exec packets `bc` / `bs` + `monitor ttd` commands (see [gdb-protocol.md](./gdb-protocol.md))
+   - **Best for**: post-mortem crash forensics ("who corrupted this byte?"), raster-effect frame-compare, automated regression checks
+   - Reference design: [time-travel-debugging-tdd.md](../debugger/time-travel-debug/time-travel-debugging-tdd.md)
+   - Implementation status: Sprint 0 foundations ✅ merged; Phase 1 checkpoint core in progress; most verbs ship in Phase 2–4
+
 ### Planned Commands (Future)
 
-6. **Snapshot Management** - Save/load state
-7. **Input Injection** - Keyboard, joystick automation
-8. **Content Analyzers & Extractors** - Intelligent content analysis
+7. **Snapshot Management** - Save/load state
+8. **Input Injection** - Keyboard, joystick automation
+9. **Content Analyzers & Extractors** - Intelligent content analysis
    - ✅ BASIC Extractor (implemented)
    - Music detector & ripper
    - Sprite ripper
@@ -133,17 +149,17 @@ All interfaces (where applicable) support these command categories:
    - Compressor/packer detector
    - Tape/disk loader detector
    - Graphics effects detector
-9. **LLM Integration (MCP/A2A)** - AI-assisted debugging and automation
+10. **LLM Integration (MCP/A2A)** - AI-assisted debugging and automation
    - Model Context Protocol for LLM queries
    - Agent-to-Agent protocol for autonomous agents
    - Natural language debugging
    - Automated testing and analysis
-10. **Media Operations** - Tape/disk control
-11. **Audio/Video Capture** - Recording and export
-12. **Scripting Integration** - Script execution
-13. **Disassembly** - Code analysis ✅
-14. **Performance Profiling** - CPU hotspots
-15. **Network & Multi-Emulator** - Multi-instance coordination
+11. **Media Operations** - Tape/disk control
+12. **Audio/Video Capture** - Recording and export
+13. **Scripting Integration** - Script execution
+14. **Disassembly** - Code analysis ✅
+15. **Performance Profiling** - CPU hotspots
+16. **Network & Multi-Emulator** - Multi-instance coordination
 
 See [command-interface.md](./command-interface.md) for complete details.
 
@@ -184,7 +200,7 @@ See [command-interface.md](./command-interface.md) for complete details.
 - 🔮 **Loader Detector** - Custom tape/disk routines
 - 🔮 **Graphics Effects Detector** - Multicolor, gigascreen
 - 🔮 Performance profiling
-- 🔮 History rewind/replay
+- 🔮 **Time-Travel Debugging UI** - timeline widget, scrubbing, frame-compare (engine lands in 2026 H2; see [time-travel TDD](../debugger/time-travel-debug/time-travel-debugging-tdd.md))
 
 **Planned - Phase 4 (Q3-Q4 2026)**:
 - 🔮 Universal Debug Bridge (UDB) Protocol
@@ -230,7 +246,7 @@ See [command-interface.md](./command-interface.md) for complete details.
 - Natural language debugging capabilities
 - Automated testing with AI agents
 - **Extensible Analyzer System** - Python/Lua custom analyzers
-- Time-travel debugging
+- **Time-Travel Debugging** - reverse search (`FindLastAccess`), GDB reverse execution (`bc`/`bs`); see the [time-travel implementation plan](../debugger/time-travel-debug/implementation-plan.md)
 - Multi-agent collaboration features
 
 ### 2027+ - Future Expansion
@@ -333,6 +349,6 @@ For questions, issues, or contributions related to control interfaces:
 
 ---
 
-**Last Updated**: January 3, 2026  
-**Documentation Version**: 1.0  
+**Last Updated**: July 2026 (added Time-Travel Debugging surface)
+**Documentation Version**: 1.1
 **Project Status**: Active Development

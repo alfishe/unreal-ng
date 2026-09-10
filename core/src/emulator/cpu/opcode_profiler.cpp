@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "debugger/disassembler/z80disasm.h"
+#include "common/filehelper.h"
 #include "emulator/emulatorcontext.h"
 
 /// region <Constructors / Destructors>
@@ -333,7 +334,7 @@ std::vector<OpcodeTraceEntry> OpcodeProfiler::GetRecentTrace(size_t count) const
 
 bool OpcodeProfiler::SaveToFile(const std::string& path) const
 {
-    std::ofstream out(path);
+    std::ofstream out(FileHelper::ToFsPath(path));
     if (!out.is_open())
         return false;
 

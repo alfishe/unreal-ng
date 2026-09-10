@@ -1,20 +1,27 @@
 #include "screenocr.h"
 
+// Static member definitions
+std::unordered_map<uint64_t, char> ScreenOCR::_fontHashTable;
+bool ScreenOCR::_fontHashTableInitialized = false;
+
 std::string ScreenOCR::ocrScreen(const std::string& emulatorId)
 {
     auto manager = EmulatorManager::GetInstance();
     auto emulator = manager->GetEmulator(emulatorId);
-    
+
     if (!emulator)
         return "";
-    
+
     Memory* memory = emulator->GetMemory();
     if (!memory)
         return "";
-    
+
+    // Ensure hash table is ready
+    initFontHashTable();
+
     std::string result;
     result.reserve(ROWS * (COLS + 1));  // +1 for newlines
-    
+
     for (int row = 0; row < ROWS; row++)
     {
         for (int col = 0; col < COLS; col++)
@@ -23,12 +30,52 @@ std::string ScreenOCR::ocrScreen(const std::string& emulatorId)
         }
         result += '\n';
     }
-    
+
     return result;
+}
+
+bool ScreenOCR::containsText(const std::string& emulatorId, const std::string& searchText)
+{
+    if (searchText.empty())
+        return true;
+
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(emulatorId);
+    if (!emulator)
+        return false;
+
+    Memory* memory = emulator->GetMemory();
+    if (!memory)
+        return false;
+
+    initFontHashTable();
+
+    // Search each row for the text using a sliding window
+    size_t searchLen = searchText.length();
+
+    for (int row = 0; row < ROWS; row++)
+    {
+        // Build this row's text on-demand
+        for (int startCol = 0; startCol <= COLS - static_cast<int>(searchLen); startCol++)
+        {
+            bool match = true;
+            for (size_t i = 0; i < searchLen && match; i++)
+            {
+                char c = ocrCell(memory, row, startCol + static_cast<int>(i));
+                if (c != searchText[i])
+                    match = false;
+            }
+            if (match)
+                return true;
+        }
+    }
+
+    return false;
 }
 
 char ScreenOCR::ocrCell(Memory* memory, int row, int col)
 {
+    initFontHashTable();  // Ensure initialized for direct ocrCell calls
     uint8_t bitmap[8];
     extractCellBitmap(memory, row, col, bitmap);
     return matchFont(bitmap);
@@ -36,15 +83,8 @@ char ScreenOCR::ocrCell(Memory* memory, int row, int col)
 
 uint16_t ScreenOCR::getScreenAddr(int charRow, int charCol, int pixelLine)
 {
-    // ZX Spectrum screen address formula:
-    // The screen is divided into 3 "thirds" (0-7, 8-15, 16-23 rows)
-    // Within each third, lines are interleaved
-    //
-    // Address = 0x4000 + ((y & 0xC0) << 5) + ((y & 7) << 8) + ((y & 0x38) << 2) + x
-    // where y = charRow * 8 + pixelLine, x = charCol
-    
     int y = charRow * 8 + pixelLine;
-    return SCREEN_BASE + 
+    return SCREEN_BASE +
            ((y & 0xC0) << 5) +   // Third select (0, 0x800, 0x1000)
            ((y & 7) << 8) +      // Pixel line within char
            ((y & 0x38) << 2) +   // Char row within third
@@ -60,36 +100,46 @@ void ScreenOCR::extractCellBitmap(Memory* memory, int row, int col, uint8_t* out
     }
 }
 
-char ScreenOCR::matchFont(const uint8_t* bitmap8bytes)
+uint64_t ScreenOCR::hashBitmap(const uint8_t* bitmap)
 {
-    // Compare against all 96 characters in ROM font (0x20-0x7F)
+    // Pack 8 bytes into a 64-bit value for fast lookup
+    return (static_cast<uint64_t>(bitmap[0]) << 56) |
+           (static_cast<uint64_t>(bitmap[1]) << 48) |
+           (static_cast<uint64_t>(bitmap[2]) << 40) |
+           (static_cast<uint64_t>(bitmap[3]) << 32) |
+           (static_cast<uint64_t>(bitmap[4]) << 24) |
+           (static_cast<uint64_t>(bitmap[5]) << 16) |
+           (static_cast<uint64_t>(bitmap[6]) << 8) |
+           static_cast<uint64_t>(bitmap[7]);
+}
+
+void ScreenOCR::initFontHashTable()
+{
+    if (_fontHashTableInitialized)
+        return;
+
+    _fontHashTable.reserve(128);  // 96 characters + some slack
+
+    // Add all ROM font characters to hash table
     for (int charCode = 0; charCode < 96; charCode++)
     {
-        bool match = true;
-        for (int i = 0; i < 8; i++)
-        {
-            if (bitmap8bytes[i] != ZXSpectrum::FONT_BITMAP[charCode][i])
-            {
-                match = false;
-                break;
-            }
-        }
-        if (match)
-        {
-            return static_cast<char>(0x20 + charCode);
-        }
+        uint64_t hash = hashBitmap(ZXSpectrum::FONT_BITMAP[charCode]);
+        _fontHashTable[hash] = static_cast<char>(0x20 + charCode);
     }
-    
-    // No match - check for empty cell (all zeros = space)
-    bool allZero = true;
-    for (int i = 0; i < 8; i++)
-    {
-        if (bitmap8bytes[i] != 0)
-        {
-            allZero = false;
-            break;
-        }
-    }
-    
-    return allZero ? ' ' : '?';
+
+    // Add empty cell (all zeros) -> space
+    _fontHashTable[0] = ' ';
+
+    _fontHashTableInitialized = true;
+}
+
+char ScreenOCR::matchFont(const uint8_t* bitmap8bytes)
+{
+    // O(1) hash lookup instead of O(96) linear search
+    uint64_t hash = hashBitmap(bitmap8bytes);
+    auto it = _fontHashTable.find(hash);
+    if (it != _fontHashTable.end())
+        return it->second;
+
+    return '?';  // No match
 }

@@ -1,5 +1,6 @@
 #include "disassembler_opcode_test.h"
 
+#include <cstdlib>
 #include <vector>
 #include "common/dumphelper.h"
 #include "common/stringhelper.h"
@@ -8,6 +9,12 @@
 
 void Disassembler_Opcode_Test::SetUp()
 {
+    // Re-seed rand() per test: the operand bytes below come from rand() and
+    // each expected string is derived from those same bytes, so without a
+    // per-test reset the exercised values would silently depend on how many
+    // rand() calls earlier tests consumed
+    std::srand(42);
+
     _context = new EmulatorContext();
     _debugManager = new DebugManager(_context);
     // Instantiate emulator with all peripherals, but no configuration loaded
@@ -30,6 +37,26 @@ void Disassembler_Opcode_Test::TearDown()
 }
 
 /// endregion </Setup / TearDown>
+
+/// @brief Expected operand text for an OF_RELJUMP operand (JR family; DJNZ is not flagged OF_RELJUMP): the resolved
+/// target address, i.e. instructionAddr + full instruction length + signed 8-bit offset (see
+/// Z80Disassembler::formatOperandString). All tests below disassemble at instructionAddr = 0.
+static std::string RelativeJumpTarget(size_t commandLen, uint8_t offset)
+{
+    uint16_t target = (uint16_t)(0 + commandLen + (int8_t)offset);
+    return StringHelper::ToHexWithPrefix(target, "#", true);
+}
+
+/// @brief Expected operand text for an OF_DISP operand (IX/IY+d): the signed displacement with
+/// its sign folded into the template's literal '+', e.g. "(ix+#06)" / "(iy-#46)"
+/// (see Z80Disassembler::formatOperandString)
+static std::string SignedDisplacement(uint8_t displacement)
+{
+    int8_t signedValue = static_cast<int8_t>(displacement);
+    uint8_t magnitude = signedValue < 0 ? static_cast<uint8_t>(-static_cast<int>(signedValue))
+                                        : static_cast<uint8_t>(signedValue);
+    return (signedValue < 0 ? "-" : "+") + StringHelper::ToHexWithPrefix(magnitude, "#", true);
+}
 
 TEST_F(Disassembler_Opcode_Test, TestAllNoPrefixOpCodes)
 {
@@ -72,7 +99,9 @@ TEST_F(Disassembler_Opcode_Test, TestAllNoPrefixOpCodes)
         if (op.flags & OF_MBYTE)
         {
             referenceResult = StringHelper::ReplaceAll(referenceResult, string(":1"), string("%s"));
-            referenceResult = StringHelper::Format(referenceResult, StringHelper::ToHexWithPrefix(command[1], "#", true));
+            std::string operand = (op.flags & OF_RELJUMP) ? RelativeJumpTarget(command.size(), command[1])
+                                                          : StringHelper::ToHexWithPrefix(command[1], "#", true);
+            referenceResult = StringHelper::Format(referenceResult, operand);
         }
         else if (op.flags & OF_MWORD)
         {
@@ -121,11 +150,9 @@ TEST_F(Disassembler_Opcode_Test, TestAllEDOpCodes)
             command.push_back(val);
 
             size_t pos;
-            if ((pos = referenceResult.find(":1")) != std::string::npos)
+            if ((pos = referenceResult.find("+:1")) != std::string::npos)
             {
-                char hexByte[5];
-                snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
-                referenceResult.replace(pos, 2, hexByte);
+                referenceResult.replace(pos, 3, SignedDisplacement(val));
             }
         }
 
@@ -153,9 +180,16 @@ TEST_F(Disassembler_Opcode_Test, TestAllEDOpCodes)
             size_t pos;
             if ((pos = referenceResult.find(":1")) != std::string::npos)
             {
-                char hexByte[5];
-                snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
-                referenceResult.replace(pos, 2, hexByte);
+                if (op.flags & OF_RELJUMP)
+                {
+                    referenceResult.replace(pos, 2, RelativeJumpTarget(command.size(), val));
+                }
+                else
+                {
+                    char hexByte[5];
+                    snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
+                    referenceResult.replace(pos, 2, hexByte);
+                }
             }
         }
 
@@ -272,11 +306,9 @@ TEST_F(Disassembler_Opcode_Test, TestAllDDOpCodes)
             command.push_back(val);
 
             size_t pos;
-            if ((pos = referenceResult.find(":1")) != std::string::npos)
+            if ((pos = referenceResult.find("+:1")) != std::string::npos)
             {
-                char hexByte[5];
-                snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
-                referenceResult.replace(pos, 2, hexByte);
+                referenceResult.replace(pos, 3, SignedDisplacement(val));
             }
         }
 
@@ -303,9 +335,16 @@ TEST_F(Disassembler_Opcode_Test, TestAllDDOpCodes)
             size_t pos;
             if ((pos = referenceResult.find(":1")) != std::string::npos)
             {
-                char hexByte[5];
-                snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
-                referenceResult.replace(pos, 2, hexByte);
+                if (op.flags & OF_RELJUMP)
+                {
+                    referenceResult.replace(pos, 2, RelativeJumpTarget(command.size(), val));
+                }
+                else
+                {
+                    char hexByte[5];
+                    snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
+                    referenceResult.replace(pos, 2, hexByte);
+                }
             }
         }
 
@@ -378,19 +417,19 @@ TEST_F(Disassembler_Opcode_Test, TestAllDDCBOpCodes)
                 {
                     if (registerName.empty())
                     {
-                        referenceResult = StringHelper::Format("%s (ix+#%02X)", operation, displacement);
+                        referenceResult = StringHelper::Format("%s (ix%s)", operation, SignedDisplacement(displacement).c_str());
                     }
                     else
                     {
                         referenceResult =
-                            StringHelper::Format("%s (ix+#%02X),%s", operation, displacement, registerName);
+                            StringHelper::Format("%s (ix%s),%s", operation, SignedDisplacement(displacement).c_str(), registerName);
                     }
                 }
                 break;
 
                 case 8: case 9: case 10: case 11: case 12: case 13: case 14: case 15: // BIT operations
                 {
-                    referenceResult = StringHelper::Format("%s %d,(ix+#%02X)", operation, bitNumber, displacement);
+                    referenceResult = StringHelper::Format("%s %d,(ix%s)", operation, bitNumber, SignedDisplacement(displacement).c_str());
                 }
                 break;
 
@@ -399,11 +438,11 @@ TEST_F(Disassembler_Opcode_Test, TestAllDDCBOpCodes)
                 {
                     if (registerName.empty())
                     {
-                        referenceResult = StringHelper::Format("%s %d,(ix+#%02X)", operation, bitNumber, displacement);
+                        referenceResult = StringHelper::Format("%s %d,(ix%s)", operation, bitNumber, SignedDisplacement(displacement).c_str());
                     }
                     else
                     {
-                        referenceResult = StringHelper::Format("%s %d,(ix+#%02X),%s", operation, bitNumber, displacement, registerName);
+                        referenceResult = StringHelper::Format("%s %d,(ix%s),%s", operation, bitNumber, SignedDisplacement(displacement).c_str(), registerName);
                     }
                 }
                 break;
@@ -455,11 +494,9 @@ TEST_F(Disassembler_Opcode_Test, TestAllFDOpCodes)
             command.push_back(val);
 
             size_t pos;
-            if ((pos = referenceResult.find(":1")) != std::string::npos)
+            if ((pos = referenceResult.find("+:1")) != std::string::npos)
             {
-                char hexByte[5];
-                snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
-                referenceResult.replace(pos, 2, hexByte);
+                referenceResult.replace(pos, 3, SignedDisplacement(val));
             }
         }
 
@@ -486,9 +523,16 @@ TEST_F(Disassembler_Opcode_Test, TestAllFDOpCodes)
             size_t pos;
             if ((pos = referenceResult.find(":1")) != std::string::npos)
             {
-                char hexByte[5];
-                snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
-                referenceResult.replace(pos, 2, hexByte);
+                if (op.flags & OF_RELJUMP)
+                {
+                    referenceResult.replace(pos, 2, RelativeJumpTarget(command.size(), val));
+                }
+                else
+                {
+                    char hexByte[5];
+                    snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
+                    referenceResult.replace(pos, 2, hexByte);
+                }
             }
         }
 
@@ -561,19 +605,19 @@ TEST_F(Disassembler_Opcode_Test, TestAllFDCBOpCodes)
                 {
                     if (registerName.empty())
                     {
-                        referenceResult = StringHelper::Format("%s (iy+#%02X)", operation, displacement);
+                        referenceResult = StringHelper::Format("%s (iy%s)", operation, SignedDisplacement(displacement).c_str());
                     }
                     else
                     {
                         referenceResult =
-                            StringHelper::Format("%s (iy+#%02X),%s", operation, displacement, registerName);
+                            StringHelper::Format("%s (iy%s),%s", operation, SignedDisplacement(displacement).c_str(), registerName);
                     }
                 }
                 break;
 
                 case 8: case 9: case 10: case 11: case 12: case 13: case 14: case 15: // BIT operations
                 {
-                    referenceResult = StringHelper::Format("%s %d,(iy+#%02X)", operation, bitNumber, displacement);
+                    referenceResult = StringHelper::Format("%s %d,(iy%s)", operation, bitNumber, SignedDisplacement(displacement).c_str());
                 }
                 break;
 
@@ -582,11 +626,11 @@ TEST_F(Disassembler_Opcode_Test, TestAllFDCBOpCodes)
                 {
                     if (registerName.empty())
                     {
-                        referenceResult = StringHelper::Format("%s %d,(iy+#%02X)", operation, bitNumber, displacement);
+                        referenceResult = StringHelper::Format("%s %d,(iy%s)", operation, bitNumber, SignedDisplacement(displacement).c_str());
                     }
                     else
                     {
-                        referenceResult = StringHelper::Format("%s %d,(iy+#%02X),%s", operation, bitNumber, displacement, registerName);
+                        referenceResult = StringHelper::Format("%s %d,(iy%s),%s", operation, bitNumber, SignedDisplacement(displacement).c_str(), registerName);
                     }
                 }
                 break;

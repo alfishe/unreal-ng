@@ -52,7 +52,7 @@ TEST_F(EmulatorManager_Test, CreateEmulator)
 
     // Verify the emulator has a valid ID
     UUID emulatorId = emulator->GetUUID();
-    ASSERT_TRUE(emulatorId.isNil());
+    ASSERT_FALSE(emulatorId.isNil());
 
     // Verify the emulator can be retrieved
     auto retrieved = _manager->GetEmulator(emulatorId);
@@ -119,8 +119,12 @@ TEST_F(EmulatorManager_Test, EmulatorInstanceLifecycle)
     // Start the emulator asynchronously using the built-in method
     emulator->StartAsync();
 
-    // Give the emulator time to start (simple synchronization - see design notes above)
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // Wait for the emulator to transition to running state (1s budget: the
+    // original 100ms cap could trip on a CPU-starved parallel shard runner)
+    for (int i = 0; i < 500 && emulator->GetState() != StateRun; ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
 
     // Verify the emulator transitioned to a running state
     int currentState = emulator->GetState();
@@ -139,25 +143,28 @@ TEST_F(EmulatorManager_Test, EmulatorInstanceLifecycle)
         // Pause the emulator
         emulator->Pause();
 
-        // Give time for pause to take effect
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        // Wait for pause to take effect (1s budget - see StartAsync note)
+        for (int i = 0; i < 500 && !emulator->IsPaused(); ++i)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
 
         EXPECT_TRUE(emulator->IsPaused()) << "Emulator should be paused";
 
         // Resume the emulator
         emulator->Resume();
 
-        // Give time for resume to take effect
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        // Wait for resume to take effect (1s budget - see StartAsync note)
+        for (int i = 0; i < 500 && emulator->IsPaused(); ++i)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
 
         EXPECT_FALSE(emulator->IsPaused()) << "Emulator should not be paused after resume";
     }
 
-    // Stop the emulator
+    // Stop the emulator (synchronously joins the mainloop thread)
     emulator->Stop();
-
-    // Give time for stop
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     // Verify the emulator is now stopped
     int stopState = emulator->GetState();

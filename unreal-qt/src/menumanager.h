@@ -6,9 +6,11 @@
 #include <QMenuBar>
 #include <QObject>
 #include <memory>
+#include <vector>
 
 class Emulator;
 class MainWindow;
+struct TMemModel;
 
 #include "3rdparty/message-center/messagecenter.h"
 
@@ -28,8 +30,34 @@ public:
     // Queries emulator directly - no state duplication!
     void updateMenuStates(std::shared_ptr<Emulator> activeEmulator);
 
+    // Update machine model selection based on active emulator's model
+    void updateMachineModelSelection(std::shared_ptr<Emulator> activeEmulator);
+
     // Set the current active emulator instance
     void setActiveEmulator(std::shared_ptr<Emulator> emulator);
+
+    // Reset viewport selection to default (Full Overscan)
+    void resetViewportSelection();
+
+    // Sync the Tape Manager check state from the window's own close box
+    // (setChecked does not re-emit triggered)
+    void setTapeManagerChecked(bool checked);
+
+    // Sync the Debug -> Debugger Window check state from the window's own show / hide
+    // (setChecked does not re-emit triggered)
+    void setDebuggerChecked(bool checked);
+
+    // Sync the View -> Toolbar / Status Bar check state (setChecked does not re-emit triggered)
+    void setToolBarChecked(bool checked);
+    void setStatusBarChecked(bool checked);
+
+    // Actions shared with the transport toolbar (ToolBarManager). Their visible /
+    // enabled / checked state is maintained by updateMenuStates()
+    QAction* fullScreenAction() const { return _fullScreenAction; }
+    QAction* overscanAction() const { return _overscanAction; }  // Pentagon only (hidden otherwise)
+#ifdef ENABLE_RECORDING
+    QAction* videoRecordingAction() const { return _videoRecordingAction; }
+#endif
 
     // Observer callback for emulator state changes
     void handleEmulatorStateChanged(int id, Message* message);
@@ -42,6 +70,7 @@ signals:
     void openSnapshotRequested();
     void openTapeRequested();
     void openDiskRequested();
+    void importAudioTapeRequested();  // tape-audio-bridge §7.3: WAV/FLAC/MP3 → .tzx/.tap
     void saveSnapshotRequested();
     void saveSnapshotZ80Requested();
     
@@ -49,6 +78,7 @@ signals:
     void saveDiskRequested();       // Save to original path
     void saveDiskAsTRDRequested();  // Save As TRD
     void saveDiskAsSCLRequested();  // Save As SCL
+    void saveDiskAsUDIRequested();  // Save As UDI (lossless)
 
     // Emulator control signals
     void startRequested();
@@ -64,16 +94,27 @@ signals:
     // Debug signals
     void stepInRequested();
     void stepOverRequested();
-    void debugModeToggled(bool enabled);
 
     // View signals
+    void toolBarToggled(bool visible);
+    void statusBarToggled(bool visible);
     void debuggerToggled(bool visible);
     void logWindowToggled(bool visible);
+    void tapeManagerToggled(bool visible);
     void fullScreenToggled();
+    void scaleRequested(int scale);  // View -> Scale -> Nx
+    void overscanModeToggled(bool enabled);
+    void viewportChanged(int presetIndex);
+
+    // Machine signals
+    void machineModelChangeRequested(const QString& modelShortName);
+    void tapeTrapsToggled(bool enabled);
+    void turboTapeToggled(bool enabled);
 
     // Tools signals
     void intParametersRequested();
     void audioSettingsRequested();
+    void screenshotRequested();
 #ifdef ENABLE_RECORDING
     void videoRecordingRequested();
     void quickRecordRequested(const QString& presetName);
@@ -84,6 +125,7 @@ private:
     void createEditMenu();
     void createViewMenu();
     void createRunMenu();
+    void createMachineMenu();
     void createDebugMenu();
     void createToolsMenu();
     void createHelpMenu();
@@ -101,6 +143,7 @@ private:
     QMenu* _editMenu;
     QMenu* _viewMenu;
     QMenu* _runMenu;
+    QMenu* _machineMenu;
     QMenu* _debugMenu;
     QMenu* _toolsMenu;
     QMenu* _helpMenu;
@@ -110,6 +153,7 @@ private:
     QAction* _openSnapshotAction;
     QAction* _openTapeAction;
     QAction* _openDiskAction;
+    QAction* _importAudioTapeAction;
     QMenu* _saveSnapshotMenu;
     QAction* _saveSnapshotSNAAction;
     QAction* _saveSnapshotZ80Action;
@@ -117,6 +161,7 @@ private:
     QAction* _saveDiskAction;       // Save (to original path)
     QAction* _saveDiskTRDAction;    // Save as TRD
     QAction* _saveDiskSCLAction;    // Save as SCL
+    QAction* _saveDiskUDIAction;    // Save as UDI
     QAction* _recentFilesAction;
     QAction* _exitAction;
 
@@ -124,12 +169,23 @@ private:
     QAction* _preferencesAction;
 
     // View Menu Actions
+    QAction* _toolBarAction;
+    QAction* _statusBarAction;
     QAction* _debuggerAction;
     QAction* _logWindowAction;
+    QAction* _tapeManagerAction;
     QAction* _fullScreenAction;
-    QAction* _zoomInAction;
-    QAction* _zoomOutAction;
-    QAction* _zoomResetAction;
+    QMenu* _scaleMenu = nullptr;
+    std::vector<QAction*> _scaleActions;
+
+    // Overscan Menu Actions (Pentagon only)
+    QAction* _overscanAction;
+    QMenu* _viewportMenu;
+    QActionGroup* _viewportGroup;
+    QAction* _viewportFullOverscanAction;
+    QAction* _viewportSymmetricAction;
+    QAction* _viewportStandardAction;
+    QAction* _viewportScreenOnlyAction;
 
     // Run Menu Actions
     QAction* _startAction;
@@ -146,8 +202,14 @@ private:
     QAction* _speed16xAction;
     QAction* _turboModeAction;
 
+    // Machine Menu Actions
+    QActionGroup* _machineModelGroup;
+    std::vector<QAction*> _machineModelActions;
+    QString _currentModelShortName;
+    QAction* _tapeTrapsAction;
+    QAction* _turboTapeAction;
+
     // Debug Menu Actions
-    QAction* _debugModeAction;
     QAction* _stepInAction;
     QAction* _stepOverAction;
     QAction* _stepOutAction;

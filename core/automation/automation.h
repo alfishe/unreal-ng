@@ -31,7 +31,6 @@ protected:
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
-private:
     // Private constructor for singleton pattern
     Automation() = default;
     
@@ -63,9 +62,14 @@ public:
 public:
     bool start();
     void stop();
+    
+    // Videowall
+    bool SetVideowallSingleSyncMode(bool enable, const std::string& emulatorId = "");
 
     // Meyer's Singleton accessor - returns reference, automatic lifetime
     static Automation& GetInstance();
+    
+    std::string getEmulatorIdOrFirst(const std::string& providedId);
     
 #if ENABLE_PYTHON_AUTOMATION
     AutomationPython* getPython() { return _python; }

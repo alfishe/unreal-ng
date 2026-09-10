@@ -88,7 +88,7 @@ core/
 │
 └── tests/
     ├── _helpers/                          # Test helper utilities (note underscore prefix)
-    │   ├── test_path_helper.h
+    │   ├── testpathhelper.h
     │   ├── testtiminghelper.h
     │   └── testtiminghelper.cpp
     ├── common/                            # Mirrors core/src/common/
@@ -140,7 +140,7 @@ core/
 | Test Implementation | `<component>_test.cpp` | `memory_test.cpp` |
 | Test Header | `<component>_test.h` | `memory_test.h` |
 | Test Helper Implementation | `<helper>.cpp` | `testtiminghelper.cpp` |
-| Test Helper Header | `<helper>.h` | `test_path_helper.h` |
+| Test Helper Header | `<helper>.h` | `testpathhelper.h` |
 
 ---
 
@@ -395,7 +395,7 @@ When you need to test non-public members and no CUT class exists:
 Provides reliable test data path resolution across different execution environments.
 
 ```cpp
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 
 TEST_F(LoaderTest, LoadFile)
 {
@@ -452,6 +452,66 @@ TEST_F(FDC_Test, Timing)
     size_t ms = TestTimingHelper::convertTStatesToMs(clk);
 }
 ```
+
+### EmulatorTestHelper
+
+Provides managed emulator lifecycle and fast state detection for integration tests.
+
+```cpp
+#include "_helpers/emulatortesthelper.h"
+
+class MyIntegration_Test : public ::testing::Test
+{
+protected:
+    Emulator* _emulator = nullptr;
+
+    void SetUp() override
+    {
+        // Create emulator with specific model (uses EmulatorManager)
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
+    }
+
+    void TearDown() override
+    {
+        EmulatorTestHelper::CleanupEmulator(_emulator);
+        _emulator = nullptr;
+    }
+};
+
+TEST_F(MyIntegration_Test, BootToBASIC)
+{
+    // Fast boot detection via system variables (no OCR needed)
+    bool ready = EmulatorTestHelper::RunUntilBASICReady(_emulator, 200);
+    ASSERT_TRUE(ready);
+    
+    // Read system variables directly
+    uint8_t errNr = EmulatorTestHelper::ReadSysVar(_emulator, SystemVariables48k::ERR_NR);
+    EXPECT_EQ(errNr, 0x00);  // 0x00 = "OK" state
+}
+```
+
+#### Key Methods
+
+| Method | Description |
+|--------|-------------|
+| `CreateStandardEmulator(model, logLevel)` | Create emulator via EmulatorManager |
+| `CreateDebugEmulator(features, model, logLevel)` | Create with debug features enabled |
+| `CleanupEmulator(emulator)` | Proper cleanup via EmulatorManager |
+| `RunFramesFast(emulator, count)` | Run N frames in turbo mode |
+| `RunUntilBASICReady(emulator, maxFrames)` | Poll until BASIC ready (ERR_NR=0, PROG set) |
+| `IsBASICReady(emulator)` | Instant check: ERR_NR=0 AND PROG≥0x5C00 |
+| `ReadSysVar(emulator, address)` | Read 8-bit system variable |
+| `ReadSysVar16(emulator, address)` | Read 16-bit system variable |
+| `SetupExecutionBreakpoint(emulator, addr, callback)` | ROM breakpoint with callback |
+
+#### Performance: SysVar vs OCR
+
+System variable detection is >10,000x faster than OCR for state checking:
+- **SysVar check**: <1 μs (2 memory reads)
+- **OCR check**: ~70 μs (full screen scan)
+- **Boot detection**: SysVar fires ~40 frames earlier (no screen print wait)
+
+Use `IsBASICReady()` and `ReadSysVar()` instead of OCR polling for fast integration tests.
 
 ### Custom Assertion Macros
 
@@ -594,7 +654,7 @@ Test data files are stored in the project's `testdata/` directory (at project ro
 ### Accessing Test Data
 
 ```cpp
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 
 // Get absolute path to test data
 std::string path = TestPathHelper::GetTestDataPath("loaders/sna/test.sna");
@@ -867,8 +927,13 @@ cmake --build . --config Release --target core-tests
 ### Running Tests
 
 ```bash
-# Run all tests
+# Run all tests (sequential)
 ./core-tests
+
+# Run all tests in parallel (auto-scaled to your CPU, 37s -> ~6s on 16P+4E)
+cmake --build build --target test-parallel
+# Or directly:
+./scripts/run-tests-parallel.sh ./build/bin/core-tests
 
 # Run specific test
 ./core-tests --gtest_filter="Memory_Test.*"
@@ -879,6 +944,39 @@ cmake --build . --config Release --target core-tests
 # List all tests
 ./core-tests --gtest_list_tests
 ```
+
+### Parallel Test Execution
+
+The `test-parallel` CMake target uses GTest sharding to run tests across N parallel processes, where N auto-detects from the CPU topology:
+
+- **Apple Silicon**: P cores count fully, E cores at ~1/3 weight (`sysctl hw.perflevel0/1.logicalcpu`), e.g. 16P + 4E -> 17 shards
+- **Linux**: `nproc`, capped by the cgroup v2 CPU quota (containers/CI safe)
+- **Windows**: logical processor count (`NUMBER_OF_PROCESSORS`)
+
+Override when needed:
+
+```bash
+./scripts/run-tests-parallel.sh ./build/bin/core-tests 8   # explicit shard count
+TEST_SHARDS=8 ./scripts/run-tests-parallel.sh              # via environment
+```
+
+Measured wall time (2176 tests, 16P + 4E machine): 4 shards = 12.0s, 8 = 7.2s, 12 = 6.3s, 16 = 5.9s, 17 (auto) = 6.0s, 20 = 5.6s.
+
+```bash
+# Via CMake (recommended)
+cmake --build build --target test-parallel
+
+# Manual sharding (useful for CI; replace 4 with the runner's core count)
+for i in 0 1 2 3; do
+  GTEST_TOTAL_SHARDS=4 GTEST_SHARD_INDEX=$i ./build/bin/core-tests &
+done
+wait
+```
+
+**Note:** Tests must be isolated for parallel execution - and that includes isolation across the parallel shard *processes*, not just between tests in one process. Every file a test writes must live under `<project>/scratch/` with a per-process unique name - use `TestPathHelper::GetUniqueTestScratchPath("name.ext")`, which inserts the PID into the filename stem while preserving the extension - never in the OS temp directory or a hardcoded path like `C:\Temp`, because a fixture `TearDown` doing `remove_all` on a fixed shared directory deletes another shard's files mid-test. If a test fails only in parallel, check for:
+- Static/global variables modified between tests
+- Singleton state not reset in TearDown
+- File system conflicts (scratch files/directories with fixed names shared across processes)
 
 ### Filtering Tests
 
@@ -1297,6 +1395,115 @@ TEST_F(FileHelper_Test, OpenNonexistentFileThrowsWithPath)
 | **Meaningful assertions** | Verifies expected behavior, not just "no crash" |
 | **Good failure messages** | Clear what went wrong when it fails |
 | **Clean setup/teardown** | No leaked resources |
+
+---
+
+## Integration Tests with ROM Boot
+
+When writing tests that require the emulator to boot through ROM initialization (e.g., TR-DOS, BASIC, 128K menu), follow these patterns for fast, reliable tests.
+
+### Key Principles
+
+1. **Use `StartAsync()`, not `Start()`**: `Start()` blocks forever on the main loop. Use `StartAsync()` for background execution.
+2. **Enable turbo mode**: `EnableTurboMode()` removes frame rate limiting for maximum speed.
+3. **Pause before stepping**: `RunNFrames()` is a debug stepping function - it pauses the emulator. Pause explicitly before using it.
+4. **Run in batches**: Instead of `RunNFrames(1)` in a loop, use `RunNFrames(10)` or larger batches for efficiency.
+5. **Use `GTEST_SKIP()` for ROM dependencies**: Tests may skip if required ROMs are not available.
+
+### Example: TR-DOS Integration Test
+
+```cpp
+class BasicEncoder_Integration_Test : public ::testing::Test
+{
+protected:
+    Emulator* _emulator = nullptr;
+
+    void SetUp() override
+    {
+        MessageCenter::DisposeDefaultMessageCenter();
+
+        // Pentagon model includes TR-DOS ROM and Beta128 FDC
+        _emulator = new Emulator(LoggerLevel::LogError);
+        if (!_emulator || !_emulator->Init())
+        {
+            delete _emulator;
+            _emulator = nullptr;
+            GTEST_SKIP() << "Failed to initialize emulator";
+        }
+    }
+
+    void TearDown() override
+    {
+        if (_emulator)
+        {
+            if (_emulator->IsRunning())
+                _emulator->Stop();
+            delete _emulator;
+            _emulator = nullptr;
+        }
+        MessageCenter::DisposeDefaultMessageCenter();
+    }
+
+    /// Wait for TR-DOS prompt (polls state every 10 frames)
+    bool waitForTRDOSPrompt(int maxFrames = 500)
+    {
+        for (int i = 0; i < maxFrames; i += 10)
+        {
+            _emulator->RunNFrames(10);
+            auto state = BasicEncoder::detectState(_emulator->GetMemory());
+            if (state == BasicEncoder::BasicState::TRDOS_Active)
+                return true;
+        }
+        return false;
+    }
+};
+
+TEST_F(BasicEncoder_Integration_Test, TRDOSCommandPreservesState)
+{
+    ASSERT_NE(_emulator, nullptr);
+
+    // Start async with turbo mode - critical for speed
+    _emulator->StartAsync();
+    _emulator->EnableTurboMode();
+    ASSERT_TRUE(_emulator->IsRunning());
+
+    // Pause for stepping (RunNFrames is a debug function)
+    _emulator->Pause();
+
+    // Boot through ROM init (100 frames typically sufficient)
+    _emulator->RunNFrames(100);
+
+    // Activate TR-DOS via flag + ROM switch
+    _emulator->GetContext()->emulatorState.flags |= CF_TRDOS;
+    _emulator->GetMemory()->SetROMDOS(true);
+
+    // Wait for TR-DOS to initialize (skip if ROM not available)
+    if (!waitForTRDOSPrompt(200))
+    {
+        GTEST_SKIP() << "TR-DOS did not initialize (may lack ROM)";
+    }
+
+    // ... perform test assertions ...
+}
+```
+
+### Performance Tips
+
+| Pattern | Speed |
+|---------|-------|
+| `Start()` (blocking) | **HANGS** - never use |
+| `StartAsync()` without turbo | ~50 FPS (real-time) |
+| `StartAsync()` + `EnableTurboMode()` | **1000+ FPS** |
+| `RunNFrames(1)` in loop | Slow (pause/resume overhead per frame) |
+| `RunNFrames(10)` batches | **10x faster** |
+
+### Common Pitfalls
+
+1. **Using `Start()` instead of `StartAsync()`**: Test hangs forever
+2. **Forgetting `EnableTurboMode()`**: Test takes 20+ seconds instead of 28ms
+3. **Calling `RunNFrames()` without `Pause()`**: Works but confusing state
+4. **Single-frame loops**: 10x slower than batched execution
+5. **Not checking ROM availability**: Tests fail instead of skip on minimal setups
 
 ---
 

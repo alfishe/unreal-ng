@@ -11,6 +11,7 @@
 #include <sstream>
 
 #include "cli-processor.h"
+#include "automation.h"
 
 // HandleStatus - lines 495-543
 void CLIProcessor::HandleStatus(const ClientSession& session, const std::vector<std::string>& args)
@@ -61,6 +62,42 @@ void CLIProcessor::HandleStatus(const ClientSession& session, const std::vector<
     }
 
     session.SendResponse(status);
+}
+
+void CLIProcessor::HandleVideowall(const ClientSession& session, const std::vector<std::string>& args)
+{
+    if (args.empty())
+    {
+        session.SendResponse(std::string("Usage: videowall singlesync <on|off> [emulator_id]") + NEWLINE);
+        return;
+    }
+
+    std::string subcmd = args[0];
+    if (subcmd == "singlesync")
+    {
+        if (args.size() < 2)
+        {
+            session.SendResponse(std::string("Usage: videowall singlesync <on|off> [emulator_id]") + NEWLINE);
+            return;
+        }
+
+        std::string mode = args[1];
+        bool enable = (mode == "on" || mode == "1" || mode == "true");
+        std::string targetId = args.size() > 2 ? args[2] : "";
+
+        if (Automation::GetInstance().SetVideowallSingleSyncMode(enable, targetId))
+        {
+            session.SendResponse(std::string("Videowall single sync mode ") + (enable ? "enabled" : "disabled") + NEWLINE);
+        }
+        else
+        {
+            session.SendResponse(std::string("Failed to set videowall single sync mode.") + NEWLINE);
+        }
+    }
+    else
+    {
+        session.SendResponse(std::string("Unknown videowall command: ") + subcmd + NEWLINE);
+    }
 }
 
 // HandleList - lines 545-613

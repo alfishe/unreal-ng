@@ -4,6 +4,7 @@
 #include "base/featuremanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/sound/audio.h"
 #include "emulator/video/screen.h"
 #include "encoders/gif_encoder.h"
 #include "encoders/ffmpeg_pipe_encoder.h"
@@ -236,8 +237,11 @@ void RecordingManager::onEmulatorStateChange(int /*id*/, Message* message)
         {
             // NC_EMULATOR_STATE_CHANGE is a global broadcast — every emulator
             // instance posts it and every RecordingManager receives it.
-            // The payload carries only the state number, NOT the emulator ID.
-            // We must verify this is OUR emulator being destroyed before stopping.
+            // Since Sprint 0 (GDB TDD §6.3) the payload is an
+            // EmulatorStateChangePayload that also carries the instance UUID,
+            // but we verify our own emulator's state directly here because the
+            // legacy code path used only _payloadNumber and the explicit check
+            // remains robust to any unmigrated poster.
             bool ourDestroying = false;
             if (_context && _context->pEmulator)
             {
@@ -374,6 +378,17 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
                     _videoHeight = rd.screenHeight;
                 }
             }
+            else if (_captureRegion == VideoCaptureRegion::Viewport)
+            {
+                // Capture viewport at recording start (locked for duration)
+                const DisplayViewport& vp = _context->pScreen->GetDisplayViewport();
+                _viewportCropLeft = vp.cropLeft;
+                _viewportCropRight = vp.cropRight;
+                _viewportCropTop = vp.cropTop;
+                _viewportCropBottom = vp.cropBottom;
+                _videoWidth = vp.GetDisplayWidth(fb.width);
+                _videoHeight = vp.GetDisplayHeight(fb.height);
+            }
         }
         else
         {
@@ -385,8 +400,13 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
 
     if (_videoEnabled)
     {
+        const char* regionStr = "full frame";
+        if (_captureRegion == VideoCaptureRegion::MainScreen)
+            regionStr = "screen only";
+        else if (_captureRegion == VideoCaptureRegion::Viewport)
+            regionStr = "viewport";
         MLOGINFO("  Resolution: %ux%u @ %.2f fps (%s, scale %ux)", _videoWidth, _videoHeight, _videoFrameRate,
-                 _captureRegion == VideoCaptureRegion::MainScreen ? "screen only" : "full frame", _scaleFactor);
+                 regionStr, _scaleFactor);
     }
     MLOGINFO("  Audio: %u Hz, %u channels", _audioSampleRate, _audioChannels);
 
@@ -663,6 +683,14 @@ void RecordingManager::ResumeRecording()
 
 void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
 {
+    // TTD silent-replay suppression (parent TDD §8.2 + Appendix C).
+    // Recording must not capture frames traversed during replay — those
+    // frames are historical, not user-visible output. The replay engine
+    // may run many frames per seek; capturing them would corrupt the
+    // recording's timeline and burn encoder resources.
+    if (_context && _context->ttdReplayActive)
+        return;
+
     // Cheap unlocked pre-check (the mainloop calls this every frame)
     if (!IsRecording())
     {
@@ -688,10 +716,22 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
     }
     else
     {
-        timestamp = static_cast<double>(_emulatedFrameCount) / _videoFrameRate;
+        // Calculate timestamp from actual T-states per frame, not hardcoded frame rate
+        // This ensures audio/video sync regardless of which machine model is emulated
+        // (Pentagon runs at ~48.83 fps, not 50 fps like ZX Spectrum 48K/128K)
+        uint32_t tstatesPerFrame = _context->config.frame;
+        if (tstatesPerFrame > 0)
+        {
+            double frameDurationSec = static_cast<double>(tstatesPerFrame) / static_cast<double>(CPU_CLOCK_RATE);
+            timestamp = static_cast<double>(_emulatedFrameCount) * frameDurationSec;
+        }
+        else
+        {
+            timestamp = static_cast<double>(_emulatedFrameCount) / _videoFrameRate;
+        }
     }
 
-    // Crop to the main screen area (no border) when requested
+    // Crop framebuffer when requested (MainScreen or Viewport modes)
     const FramebufferDescriptor* toEncode = &framebuffer;
     FramebufferDescriptor cropped;
     if (_captureRegion == VideoCaptureRegion::MainScreen && _context->pScreen && framebuffer.memoryBuffer)
@@ -715,6 +755,35 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
             cropped.videoMode = framebuffer.videoMode;
             cropped.width = rd.screenWidth;
             cropped.height = rd.screenHeight;
+            cropped.memoryBuffer = _cropBuffer.data();
+            cropped.memoryBufferSize = _cropBuffer.size();
+            toEncode = &cropped;
+        }
+    }
+    else if (_captureRegion == VideoCaptureRegion::Viewport && framebuffer.memoryBuffer)
+    {
+        // Use viewport crop offsets captured at recording start
+        uint16_t croppedWidth = framebuffer.width - _viewportCropLeft - _viewportCropRight;
+        uint16_t croppedHeight = framebuffer.height - _viewportCropTop - _viewportCropBottom;
+
+        if (croppedWidth > 0 && croppedHeight > 0 &&
+            _viewportCropLeft + croppedWidth <= framebuffer.width &&
+            _viewportCropTop + croppedHeight <= framebuffer.height)
+        {
+            size_t rowBytes = static_cast<size_t>(croppedWidth) * 4;
+            _cropBuffer.resize(rowBytes * croppedHeight);
+
+            const uint8_t* src = framebuffer.memoryBuffer +
+                (static_cast<size_t>(_viewportCropTop) * framebuffer.width + _viewportCropLeft) * 4;
+            for (uint16_t y = 0; y < croppedHeight; y++)
+            {
+                memcpy(_cropBuffer.data() + y * rowBytes, src, rowBytes);
+                src += static_cast<size_t>(framebuffer.width) * 4;
+            }
+
+            cropped.videoMode = framebuffer.videoMode;
+            cropped.width = croppedWidth;
+            cropped.height = croppedHeight;
             cropped.memoryBuffer = _cropBuffer.data();
             cropped.memoryBufferSize = _cropBuffer.size();
             toEncode = &cropped;

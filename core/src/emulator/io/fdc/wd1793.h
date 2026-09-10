@@ -5,6 +5,7 @@
 #include <queue>
 #include <vector>
 
+#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/fdc.h"
@@ -17,12 +18,26 @@
 class WD1793Collector;
 class IWD1793Observer;
 
-class WD1793 : public PortDecoder, public PortDevice
+class WD1793 : public PortDecoder, public PortDevice, public ttd::TTDSerializable
 {
     friend WD1793Collector;
 
     /// region <Types>
 public:
+    /// Diff-gate cache for NC_FDC_STATE_CHANGED — the display-relevant tuple that was
+    /// posted last. An aggregate of plain values so comparison stays trivial.
+    struct FdcNotifyCache
+    {
+        uint8_t driveId = 0;
+        uint8_t side = 0;
+        uint8_t trackRegister = 0;
+        uint8_t sectorRegister = 0;
+        uint8_t physicalTrack = 0;
+        bool busy = false;
+        bool drq = false;
+        bool motorOn = false;
+    };
+
     /// region <WD1793 / VG93 commands>
     enum WD_COMMANDS : uint8_t
     {
@@ -631,6 +646,21 @@ protected:
     uint8_t _drive = 0;    // Currently selected drive index [0..3]
     bool _sideUp = false;  // False - bottom side. True - top side
 
+    /// Last FDD state published with NC_FDD_STATE_CHANGED (dedups the notification stream)
+    FDDStateInfo _publishedFddState;
+    bool _fddStatePublished = false;
+
+    /// Post NC_FDD_STATE_CHANGED (drive, side, track, sector, motor...) if anything changed
+    /// since the last post. Called at every mutation point; cheap when nothing changed.
+    void notifyFDDStateChanged();
+
+public:
+    /// Current floppy state for UI consumers. Read once when a UI binds to the emulator;
+    /// every later change arrives via NC_FDD_STATE_CHANGED (FDDStatePayload)
+    FDDStateInfo getFDDState();
+
+protected:
+
     // WD1793 state getters - moved to public section
     WD_COMMANDS _lastDecodedCmd = WD_CMD_RESTORE;  // Last command executed (decoded)
     uint8_t _lastCmdValue = 0x00;                  // Last command parameters (already masked)
@@ -663,9 +693,15 @@ protected:
     int32_t _bytesToRead = 0;           // How many more bytes to read from the disk
     int32_t _bytesToWrite = 0;          // How many more bytes to write to the disk
     bool _useDeletedDataMark = false;   // True = write F8 (Deleted Data Mark), False = write FB (Normal Data Mark)
+    bool _multiSectorOverrun = false;   // True when a multiple-sector continuation ran past the last sector on the track - the command ends cleanly there (no Record Not Found)
     size_t _rawDataBufferIndex = 0;      // Current position in raw data buffer for track read/write
     uint16_t _crcAccumulator = 0xFFFF;   // CRC accumulator for track formatting operations
     DiskImage::Track* _writeTrackTarget = nullptr;  // Track being written by Write Track command (for reindexing)
+    DiskImage::Sector* _currentSector = nullptr;    // Sector matched by the last ID search (Type II / READ ADDRESS)
+    size_t _writeTrackLength = DiskImage::RawTrack::RAW_TRACK_SIZE;  // Length of the track being written (WRITE TRACK)
+    DiskImage::Encoding _writeTrackEncoding = DiskImage::Encoding::MFM;  // Density the track is being written with
+    size_t _tstatesPerByte = WD93_TSTATES_PER_FDC_BYTE;  // Byte cell of the track in use (112 T MFM 6250, 224 T FM 3125)
+    size_t _rotationalDelayTStates = 0;             // Byte cells between the head and the data field of the matched sector
     size_t _crcStartPosition = 0;        // Start position for CRC calculation (set on F5 sync byte)
 
     // FDD state
@@ -703,6 +739,11 @@ protected:
     // Sleep mode state - reduces CPU overhead when FDD is idle
     bool _sleeping = true;        // Start in sleep mode (wake on first port access)
     uint64_t _wakeTimestamp = 0;  // T-state when last port access occurred
+
+    // Diff-gate cache for NC_FDC_STATE_CHANGED (see notifyFdcStateChanged) — holds the
+    // last posted visible-state tuple so unchanged snapshots are not re-posted
+    FdcNotifyCache _lastNotifiedFdcState;
+    bool _fdcNotifyCacheValid = false;
 
     /// endregion </Fields>
 
@@ -746,6 +787,18 @@ public:
     {
         return _beta128status;
     }
+    uint8_t getSelectedDriveIndex() const
+    {
+        return _drive;
+    }
+    bool getSideUp() const
+    {
+        return _sideUp;
+    }
+
+    // Stateless command byte decoder - public so FDCStatePayload consumers can map
+    // the raw _command snapshot byte to a WD_COMMANDS value
+    static WD_COMMANDS decodeWD93Command(uint8_t value);
     /// endregion </Properties>
 
     /// region <Constructors / destructors>
@@ -756,7 +809,7 @@ public:
 
     /// region <Methods>
 public:
-    virtual void reset();
+    virtual void reset() override;
     void internalReset();
 
     void process();
@@ -789,6 +842,10 @@ protected:
     {
         return _sleeping;
     }
+
+    // Post NC_FDC_STATE_CHANGED (FDCStatePayload) when any display-relevant value
+    // changed since the last post. Diff-gated: unchanged snapshots post nothing.
+    void notifyFdcStateChanged();
     /// endregion </Helper methods>
 
     /// region <Command handling
@@ -797,7 +854,6 @@ protected:
     static bool isType2Command(uint8_t command);
     static bool isType3Command(uint8_t command);
     static bool isType4Command(uint8_t command);
-    static WD_COMMANDS decodeWD93Command(uint8_t value);
     static uint8_t getWD93CommandValue(WD1793::WD_COMMANDS command, uint8_t value);
     void processWD93Command(uint8_t value);
 
@@ -836,6 +892,46 @@ protected:
     void processStep();
     void processVerify();
     void processSearchID();
+
+    /// Density selected by the host through Beta-128 port #FF bit 6 (0 = MFM / double, 1 = FM / single)
+    bool isDoubleDensity() const { return (_beta128Register & BETA_CMD_DENSITY) == 0; }
+    DiskImage::Encoding controllerEncoding() const
+    {
+        return isDoubleDensity() ? DiskImage::Encoding::MFM : DiskImage::Encoding::FM;
+    }
+
+    /// Byte cell duration for the given track: one revolution (200 ms) spread over its bytes.
+    /// 6250-byte MFM track => 112 T-states (32 us), 3125-byte FM track => 224 T-states (64 us).
+    size_t byteCellTStates(const DiskImage::Track& track) const
+    {
+        const size_t bytes = track.rawSize() ? track.rawSize() : MAX_TRACK_LEN;
+        return DISK_ROTATION_PERIOD_TSTATES / bytes;
+    }
+
+    /// T-states until the data field of sector passes under the head (rotational latency of a Type II command)
+    size_t rotationalDelayToData(const DiskImage::Track& track, const DiskImage::Sector& sector) const
+    {
+        const size_t head = headByteOffset(track);
+        const size_t bytes = track.bytesUntil(sector, head) + (sector.hasData ? (sector.dataOffset - sector.idamOffset) : 0);
+        return bytes * byteCellTStates(track);
+    }
+
+    /// Head position on the track (stream offset) derived from the disk rotation phase
+    /// @param track Track under the head (its rawSize() defines the bytes per revolution)
+    size_t headByteOffset(const DiskImage::Track& track) const
+    {
+        const size_t phase = _time % DISK_ROTATION_PERIOD_TSTATES;  // T-states since the last index pulse
+        return static_cast<size_t>((static_cast<uint64_t>(phase) * track.rawSize()) / DISK_ROTATION_PERIOD_TSTATES);
+    }
+
+    /// Locate the sector a Type II command (READ / WRITE SECTOR) addresses on the given track:
+    /// cylinder must equal the track register, side must match when the side-compare flag is set,
+    /// sector number must equal the sector register. Search starts at the current head position.
+    /// @return Matched sector with a data field, or nullptr (Record Not Found / CRC error flags set)
+    DiskImage::Sector* locateSectorForType2(DiskImage::Track* track, uint8_t cylinder, uint8_t sectorNo);
+
+    /// True when the current track carries a sector with the given number (multi-sector continuation check)
+    bool hasSectorOnCurrentTrack(uint8_t sectorNo);
     void processReadSector();
     void processReadTrack();
     void processWriteTrack();
@@ -967,8 +1063,8 @@ public:
 
     /// region <PortDevice interface methods>
 public:
-    uint8_t portDeviceInMethod(uint16_t port);
-    void portDeviceOutMethod(uint16_t port, uint8_t value);
+    uint8_t portDeviceInMethod(uint16_t port) override;
+    void portDeviceOutMethod(uint16_t port, uint8_t value) override;
     /// endregion </PortDevice interface methods>
 
     /// region <Ports interaction>
@@ -1000,6 +1096,34 @@ public:
         return result;
     }
     /// endregion </Debug methods>
+
+    /// region <TTDSerializable interface (P1.5 — parent TDD §6.4, §4 row 4)>
+    ///
+    /// Per parent TDD §4 row 4: "FDC internal state (state machine phase,
+    /// track/sector regs, DRQ/INTRQ timers) must be fully serialized".
+    /// Per parent TDD §17 the budget for WD1793 + 4×FDD is ~300 B.
+    ///
+    /// The blob covers the WD1793 controller proper AND the four FDD
+    /// positions, since the controller owns the drives (they live in
+    /// coreState.diskDrives[] but are created by the WD1793 ctor and only
+    /// meaningful in conjunction with the controller state machine).
+    ///
+    /// v1 limitations (per TDD §12.2, accepted for read-only workloads):
+    ///   - `_operationFIFO` closures (std::function<void()>) are not
+    ///     serializable. The FIFO is cleared on load. Frames captured
+    ///     mid-command may produce glitched FSM progression after restore.
+    ///     Read-only workloads (vast majority of demos) idle the FDC between
+    ///     frames, so this is rarely hit. Phase 2 silent-replay-aware restore
+    ///     addresses the remaining cases.
+    ///   - Disk writes invalidate the session entirely (TDD §12.2).
+    ///   - Pointer fields into disk image data (_rawDataBuffer, _idamData,
+    ///     _sectorData, _writeTrackTarget) are not restored; they are
+    ///     re-established by the next command setup. _selectedDrive is
+    ///     re-resolved from the restored _drive index via coreState.
+    size_t TTDStateSize() const override;
+    void   TTDSaveState(uint8_t* dst) const override;
+    void   TTDLoadState(const uint8_t* src) override;
+    /// endregion </TTDSerializable interface>
 };
 
 //
@@ -1029,6 +1153,10 @@ public:
 
     using WD1793::_drive;
     using WD1793::_sideUp;
+    using WD1793::_publishedFddState;
+    using WD1793::_fddStatePublished;
+    using WD1793::processBeta128;
+    using WD1793::notifyFDDStateChanged;
 
     using WD1793::_delayTStates;
     using WD1793::_state;
@@ -1096,6 +1224,9 @@ public:
     using WD1793::prolongFDDMotorRotation;
     using WD1793::readDataRegister;
     using WD1793::resetTime;
+    // Non-const overload: the composed status value a CPU port read returns
+    // (refreshes live Type I/IV bits such as TRK00 from the selected drive)
+    using WD1793::getStatusRegister;
     using WD1793::startFDDMotor;
     using WD1793::stopFDDMotor;
     using WD1793::writeDataRegister;
@@ -1116,6 +1247,14 @@ public:
     using WD1793::_rawDataBuffer;
     using WD1793::_rawDataBufferIndex;
     using WD1793::_crcStartPosition;
+    using WD1793::_writeTrackLength;
+    using WD1793::_currentSector;
+    using WD1793::_sectorSize;
+    using WD1793::_tstatesPerByte;
+    using WD1793::_rotationalDelayTStates;
+    using WD1793::headByteOffset;
+    using WD1793::controllerEncoding;
+    using WD1793::byteCellTStates;
     using WD1793::processWriteTrack;
     
     // Read Track / Wait Index regression test fields and methods

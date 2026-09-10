@@ -4,8 +4,10 @@
 #include "cli-processor.h"
 
 #include <common/dumphelper.h>
+#include <debugger/ttd/timetravelmanager.h>  // TimeTravelManager (Item 6 markers)
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/emulatorcontext.h>
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memoryaccesstracker.h>
 #include <emulator/platform.h>
@@ -51,6 +53,16 @@ void CLIProcessor::HandleMemory(const ClientSession& session, const std::vector<
     }
     else if (subcommand == "write")
     {
+        // Phase 2 Item 6 — record a debugger-edit marker before the write
+        // executes. One marker per CLI invocation, regardless of byte count:
+        // the user issued one `memory write` command, so the timeline sees
+        // one barrier. The marker is no-op unless a TTD session is Recording.
+        // See parent TDD §5.1.
+        EmulatorContext* ctx = emulator->GetContext();
+        if (ctx && ctx->pTimeTravelManager)
+            ctx->pTimeTravelManager->RecordExternalEvent(
+                ttd::TTDExternalEventKind::DebuggerEdit, "CLI memory write");
+
         HandleMemoryWrite(session, memory, args);
     }
     else if (subcommand == "dump")
@@ -980,6 +992,136 @@ void CLIProcessor::HandleRegisters(const ClientSession& session, const std::vect
     if (!z80State)
     {
         session.SendResponse("Error: Unable to access Z80 state.");
+        return;
+    }
+
+    // Helper to show register help
+    auto showRegisterHelp = [&session]() {
+        std::stringstream ss;
+        ss << "Usage:" << NEWLINE;
+        ss << "  reg                      - Show all registers" << NEWLINE;
+        ss << "  reg <name>               - Get single register" << NEWLINE;
+        ss << "  reg get <name>           - Get single register" << NEWLINE;
+        ss << "  reg <name> <value>       - Set register" << NEWLINE;
+        ss << "  reg set <name> <value>   - Set register" << NEWLINE;
+        ss << NEWLINE;
+        ss << "8-bit registers:  A, B, C, D, E, H, L, F, I, R" << NEWLINE;
+        ss << "                  A', B', C', D', E', H', L', F' (alternate)" << NEWLINE;
+        ss << "                  IXH, IXL, IYH, IYL" << NEWLINE;
+        ss << "16-bit registers: AF, BC, DE, HL, IX, IY, SP, PC, IR" << NEWLINE;
+        ss << "                  AF', BC', DE', HL' (alternate)" << NEWLINE;
+        ss << NEWLINE;
+        ss << "Examples:" << NEWLINE;
+        ss << "  reg A            - Get A register" << NEWLINE;
+        ss << "  reg HL           - Get HL register pair" << NEWLINE;
+        ss << "  reg A 0x7F       - Set A to 0x7F" << NEWLINE;
+        ss << "  reg set HL 0x4000 - Set HL to 0x4000" << NEWLINE;
+        session.SendResponse(ss.str());
+    };
+
+    // Parse arguments
+    if (!args.empty())
+    {
+        std::string firstArg = args[0];
+        std::transform(firstArg.begin(), firstArg.end(), firstArg.begin(), ::toupper);
+
+        // reg get <name>
+        if (firstArg == "GET")
+        {
+            if (args.size() < 2)
+            {
+                showRegisterHelp();
+                return;
+            }
+            std::string regName = args[1];
+            std::transform(regName.begin(), regName.end(), regName.begin(), ::toupper);
+
+            uint16_t value;
+            bool is16bit;
+            if (Z80::GetRegisterValue(z80State,regName, value, is16bit))
+            {
+                std::stringstream ss;
+                ss << regName << " = 0x" << std::hex << std::uppercase << std::setfill('0');
+                ss << std::setw(is16bit ? 4 : 2) << value;
+                ss << " (" << std::dec << value << ")" << NEWLINE;
+                session.SendResponse(ss.str());
+            }
+            else
+            {
+                session.SendResponse("Error: Unknown register '" + regName + "'" + NEWLINE);
+            }
+            return;
+        }
+
+        // reg set <name> <value>
+        if (firstArg == "SET")
+        {
+            if (args.size() < 3)
+            {
+                showRegisterHelp();
+                return;
+            }
+            std::string regName = args[1];
+            std::transform(regName.begin(), regName.end(), regName.begin(), ::toupper);
+
+            uint16_t value = 0;
+            if (!ParseAddress(args[2], value, 0xFFFF))
+            {
+                session.SendResponse("Error: Invalid value '" + args[2] + "'" + NEWLINE);
+                return;
+            }
+
+            const Z80::RegisterInfo* regInfo = Z80::FindRegister(regName);
+            if (regInfo && Z80::SetRegisterValue(z80State, regName, value))
+            {
+                std::stringstream ss;
+                ss << "Set " << regName << " = 0x" << std::hex << std::uppercase << std::setfill('0');
+                ss << std::setw(regInfo->is16bit ? 4 : 2) << value << NEWLINE;
+                session.SendResponse(ss.str());
+            }
+            else
+            {
+                session.SendResponse("Error: Unknown register '" + regName + "'" + NEWLINE);
+            }
+            return;
+        }
+
+        // Check if first arg is a register name
+        uint16_t regValue;
+        bool is16bit;
+        if (Z80::GetRegisterValue(z80State,firstArg, regValue, is16bit))
+        {
+            // reg <name> <value> - set register
+            if (args.size() >= 2)
+            {
+                uint16_t value = 0;
+                if (!ParseAddress(args[1], value, 0xFFFF))
+                {
+                    session.SendResponse("Error: Invalid value '" + args[1] + "'" + NEWLINE);
+                    return;
+                }
+
+                if (Z80::SetRegisterValue(z80State,firstArg, value))
+                {
+                    std::stringstream ss;
+                    ss << "Set " << firstArg << " = 0x" << std::hex << std::uppercase << std::setfill('0');
+                    ss << std::setw(is16bit ? 4 : 2) << value << NEWLINE;
+                    session.SendResponse(ss.str());
+                }
+                return;
+            }
+
+            // reg <name> - get single register
+            std::stringstream ss;
+            ss << firstArg << " = 0x" << std::hex << std::uppercase << std::setfill('0');
+            ss << std::setw(is16bit ? 4 : 2) << regValue;
+            ss << " (" << std::dec << regValue << ")" << NEWLINE;
+            session.SendResponse(ss.str());
+            return;
+        }
+
+        // Unknown first argument
+        session.SendResponse("Error: Unknown register or command '" + args[0] + "'" + NEWLINE);
         return;
     }
 

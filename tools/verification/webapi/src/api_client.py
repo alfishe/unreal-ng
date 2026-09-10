@@ -414,3 +414,127 @@ class UnrealApiClient:
         """POST /api/v1/lua/stop"""
         resp = self.session.post(self._url("/api/v1/lua/stop"))
         return self._handle_response(resp)
+
+    # --- TTD (Time-Travel Debug) ---
+    # Mirrors core/automation/webapi/src/api/ttd_api.cpp.
+    # All endpoints take an emulator id; the engine returns JSON.
+
+    def ttd_status(self, emulator_id):
+        """GET /api/v1/emulator/{id}/ttd/status
+
+        Returns: state (idle|recording|detached), session_start_frame,
+                 current_end_frame, checkpoint_count, page_store_bytes,
+                 page_store_used_bytes, baseline_frames_captured,
+                 ttd_available.
+        """
+        resp = self.session.get(self._url(f"/api/v1/emulator/{emulator_id}/ttd/status"))
+        return self._handle_response(resp)
+
+    def ttd_start(self, emulator_id, enable_write_journal: bool = True):
+        """POST /api/v1/emulator/{id}/ttd/start
+
+        Args:
+            emulator_id: Emulator instance ID.
+            enable_write_journal: If True (default), enables the 256MB write
+                journal for reverse-search (FindLast). Set to False for lighter
+                memory footprint during gaming/demo playback.
+        """
+        data = {"enable_write_journal": enable_write_journal}
+        resp = self.session.post(
+            self._url(f"/api/v1/emulator/{emulator_id}/ttd/start"),
+            json=data
+        )
+        return self._handle_response(resp)
+
+    def ttd_stop(self, emulator_id):
+        """POST /api/v1/emulator/{id}/ttd/stop"""
+        resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/ttd/stop"))
+        return self._handle_response(resp)
+
+    def ttd_invalidate(self, emulator_id, reason="WebAPI invalidate"):
+        """POST /api/v1/emulator/{id}/ttd/invalidate"""
+        data = {"reason": reason}
+        resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/ttd/invalidate"), json=data)
+        return self._handle_response(resp)
+
+    def ttd_dump(self, emulator_id, path):
+        """POST /api/v1/emulator/{id}/ttd/dump - write the session to a file.
+
+        NOTE: the file is written by the EMULATOR process, so `path` is resolved
+        on the emulator's machine and against its working directory. Pass an
+        absolute path unless you know where that is.
+
+        Returns: ok (bool), path (str), bytes (int).
+        """
+        data = {"path": str(path)}
+        resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/ttd/dump"), json=data)
+        return self._handle_response(resp)
+
+    def ttd_load(self, emulator_id, path):
+        """POST /api/v1/emulator/{id}/ttd/load - load a .ttd session for playback.
+
+        Like ttd_dump, the file is opened by the EMULATOR process, so `path` is
+        resolved on its machine.
+
+        A session only restores into an instance of the model it was recorded
+        on; a mismatch comes back as ok=False with an error naming both model
+        ids. On success the session is Idle - use ttd_seek() to position the
+        emulator inside the loaded timeline.
+
+        Returns: ok, path, checkpoint_count, session_start_frame,
+                 current_end_frame, state.
+        """
+        data = {"path": str(path)}
+        resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/ttd/load"), json=data)
+        return self._handle_response(resp)
+
+    def ttd_seek(self, emulator_id, frame, tinframe=0):
+        """POST /api/v1/emulator/{id}/ttd/seek
+
+        Returns: reached (bool), arrived_at {frame, tinframe},
+                 halt_reason (target|external_event|out_of_range),
+                 and blocking_marker {frame,tinframe,kind,reason} if
+                 halt_reason == external_event.
+        """
+        data = {"frame": int(frame), "tinframe": int(tinframe)}
+        resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/ttd/seek"), json=data)
+        return self._handle_response(resp)
+
+    def ttd_step_back(self, emulator_id):
+        """POST /api/v1/emulator/{id}/ttd/step-back"""
+        resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/ttd/step-back"))
+        return self._handle_response(resp)
+
+    def ttd_step_forward(self, emulator_id):
+        """POST /api/v1/emulator/{id}/ttd/step-forward"""
+        resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/ttd/step-forward"))
+        return self._handle_response(resp)
+
+    def ttd_resume(self, emulator_id, frame=None, tinframe=None):
+        """POST /api/v1/emulator/{id}/ttd/resume
+
+        If frame is None, resumes from the current position.
+        """
+        data = {}
+        if frame is not None:
+            data["frame"] = int(frame)
+        if tinframe is not None:
+            data["tinframe"] = int(tinframe)
+        resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/ttd/resume"), json=data)
+        return self._handle_response(resp)
+
+    def ttd_position(self, emulator_id):
+        """GET /api/v1/emulator/{id}/ttd/position
+
+        Returns: current {frame, tinframe}, session_end {frame, tinframe}, state.
+        """
+        resp = self.session.get(self._url(f"/api/v1/emulator/{emulator_id}/ttd/position"))
+        return self._handle_response(resp)
+
+    def ttd_markers(self, emulator_id):
+        """GET /api/v1/emulator/{id}/ttd/markers
+
+        Returns: count, markers [ {frame, tinframe, kind, reason}, ... ].
+        """
+        resp = self.session.get(self._url(f"/api/v1/emulator/{emulator_id}/ttd/markers"))
+        return self._handle_response(resp)

@@ -12,6 +12,7 @@
 #include <debugger/analyzers/basic-lang/basicencoder.h>
 #include <common/stringhelper.h>
 #include <json/json.h>
+#include "automation.h"
 
 using namespace drogon;
 using namespace api::v1;
@@ -457,6 +458,39 @@ void EmulatorAPI::basicMode(const HttpRequestPtr& req,
     }
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+void EmulatorAPI::setVideowallSingleSyncMode(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback) const
+{
+    std::shared_ptr<Json::Value> json = req->getJsonObject();
+    if (!json)
+    {
+        Json::Value error;
+        error["error"] = "Invalid JSON body";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    bool enable = json->get("enable", false).asBool();
+    std::string emulatorId = json->get("emulator_id", "").asString();
+
+    bool success = Automation::GetInstance().SetVideowallSingleSyncMode(enable, emulatorId);
+
+    Json::Value response;
+    response["success"] = success;
+
+    auto resp = HttpResponse::newHttpJsonResponse(response);
+    if (!success) {
+        resp->setStatusCode(k500InternalServerError);
+    } else {
+        resp->setStatusCode(k200OK);
+    }
+    
     addCorsHeaders(resp);
     callback(resp);
 }

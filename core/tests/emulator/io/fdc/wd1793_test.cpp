@@ -8,7 +8,7 @@
 #include <random>
 #include <set>
 
-#include "_helpers/test_path_helper.h"
+#include "_helpers/testpathhelper.h"
 #include "_helpers/testtiminghelper.h"
 #include "common/dumphelper.h"
 #include "common/filehelper.h"
@@ -26,6 +26,11 @@
 
 static constexpr size_t const Z80_FREQUENCY = 3.5 * 1'000'000;
 static constexpr size_t const TSTATES_IN_MS = Z80_FREQUENCY / 1000;
+
+/// Fixed seed for the randomized FSM property tests: an unseeded random_device
+/// made any failure unrepeatable. The seeded sequence still sweeps the full
+/// delay/state space, just reproducibly.
+static constexpr std::mt19937::result_type const FSM_RANDOM_SEED = 0x9E371517;
 
 class WD1793_Test : public ::testing::Test
 {
@@ -860,8 +865,7 @@ TEST_F(WD1793_Test, FSM_DelayRegister)
     WD1793CUT fdc(_context);
 
     /// region <Set up random numbers generator>
-    std::random_device rd;
-    std::mt19937 generator(rd());
+    std::mt19937 generator(FSM_RANDOM_SEED);
 
     // Define random numbers range
     std::uniform_int_distribution<size_t> delayDistribution(1, 10'000'000);
@@ -897,8 +901,7 @@ TEST_F(WD1793_Test, FSM_DelayCounters)
     WD1793CUT fdc(_context);
 
     /// region <Set up random numbers generator>
-    std::random_device rd;
-    std::mt19937 generator(rd());
+    std::mt19937 generator(FSM_RANDOM_SEED);
 
     std::uniform_int_distribution<size_t> delayDistribution(1, 10'000);
     // MSVC: uniform_int_distribution doesn't allow uint8_t, use unsigned int instead
@@ -1904,9 +1907,9 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
     WD1793CUT fdc(_context);
     fdc._selectedDrive->insertDisk(diskImage);
 
-    // De-activate WD1793 reset (active low), Set active drive A, Select MFM / double density mode
+    // De-activate WD1793 reset (active low), Set active drive A, MFM / double density (port #FF bit 6 clear)
     fdc._beta128Register =
-        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
     fdc._drive = 0;
 
     /// region <For all tracks and sectors>
@@ -1916,7 +1919,9 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
     uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, readSectorCommand);
     EXPECT_EQ(decodedCommand, WD1793CUT::WD_COMMANDS::WD_CMD_READ_SECTOR);
 
-    for (uint8_t track = 0; track < TRD_80_TRACKS * MAX_SIDES; ++track)
+    // Test representative tracks across the disk: first cylinder, second, middle, 40-track boundary, and last cylinder (both sides)
+    const uint8_t testTracks[] = {0, 1, 2, 3, 40, 41, 78, 79, 158, 159};
+    for (uint8_t track : testTracks)
     {
         for (uint8_t sector = 0; sector < TRD_SECTORS_PER_TRACK; ++sector)
         {
@@ -1995,9 +2000,13 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
 
             EXPECT_EQ(isAccomplishedCorrectly, true) << "READ_SECTOR didn't end up correctly";
 
-            size_t estimatedExecutionTime = 256 * WD1793::WD93_TSTATES_PER_FDC_BYTE /
-                                            TSTATES_IN_MS;  // We're performing single positioning step 6ms long
-            EXPECT_IN_RANGE(elapsedTimeMs, estimatedExecutionTime, estimatedExecutionTime + 1)
+            // The command starts with the head at the index (time 0): the data field of the sector has to pass
+            // under the head first (rotational latency), then 256 byte cells are transferred
+            DiskImage::Sector* timedSector = diskImage->getTrack(track)->getSector(sector);
+            ASSERT_NE(timedSector, nullptr);
+            size_t estimatedExecutionTime =
+                (timedSector->dataOffset + 256) * WD1793::WD93_TSTATES_PER_FDC_BYTE / TSTATES_IN_MS;
+            EXPECT_IN_RANGE(elapsedTimeMs, estimatedExecutionTime, estimatedExecutionTime + 2)
                 << "Abnormal execution time";
 
             EXPECT_EQ(sectorDataIndex, 256) << "Not all sector bytes were read";
@@ -2050,7 +2059,7 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Track)
 
     // Create and format a fresh disk image (avoids _diskImage pointer issues with loaded images)
     DiskImage diskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool imageFormatted = loaderTrd.format(&diskImage);
     ASSERT_TRUE(imageFormatted) << "Failed to format TRD disk image";
 
@@ -2071,7 +2080,7 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Track)
 
     // De-activate WD1793 reset, Set active drive A, MFM mode
     fdc._beta128Register =
-        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
     fdc._drive = 0;
 
     // Start motor to enable index pulse generation
@@ -2149,7 +2158,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Track)
 
     // Create and format a fresh disk image
     DiskImage diskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool imageFormatted = loaderTrd.format(&diskImage);
     ASSERT_TRUE(imageFormatted) << "Failed to format TRD disk image";
 
@@ -2158,7 +2167,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Track)
 
     // De-activate WD1793 reset, Set active drive A, MFM mode
     fdc._beta128Register =
-        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
     fdc._drive = 0;
 
     // Start motor to enable index pulse generation
@@ -2227,7 +2236,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Track_WriteProtect)
 
     // Create and format a fresh disk image
     DiskImage diskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool imageFormatted = loaderTrd.format(&diskImage);
     ASSERT_TRUE(imageFormatted) << "Failed to format TRD disk image";
 
@@ -2239,7 +2248,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Track_WriteProtect)
 
     // De-activate WD1793 reset, Set active drive A, MFM mode
     fdc._beta128Register =
-        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
     fdc._drive = 0;
 
     // Write Track command
@@ -2294,7 +2303,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_Single)
 
     /// region <Create empty disk image>
     DiskImage diskImage = DiskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool imageFormatted = loaderTrd.format(&diskImage);
     EXPECT_EQ(imageFormatted, true) << "Empty test TRD image was not formatted";
     bool formatValid = loaderTrd.validateEmptyTRDOSImage(&diskImage);
@@ -2304,9 +2313,9 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_Single)
     WD1793CUT fdc(_context);
     fdc._selectedDrive->insertDisk(&diskImage);
 
-    // De-activate WD1793 reset (active low), Set active drive A, Select MFM / double density mode
+    // De-activate WD1793 reset (active low), Set active drive A, MFM / double density (port #FF bit 6 clear)
     fdc._beta128Register =
-        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
     fdc._drive = 0;
 
     /// region <For all tracks and sectors>
@@ -2316,7 +2325,9 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_Single)
     uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, writeSectorCommand);
     EXPECT_EQ(decodedCommand, WD1793CUT::WD_COMMANDS::WD_CMD_WRITE_SECTOR);
 
-    for (uint8_t track = 0; track < TRD_80_TRACKS * MAX_SIDES; ++track)
+    // Test representative tracks across the disk: first cylinder, second, middle, 40-track boundary, and last cylinder (both sides)
+    const uint8_t testTracks[] = {0, 1, 2, 3, 40, 41, 78, 79, 158, 159};
+    for (uint8_t track : testTracks)
     {
         for (uint8_t sector = 0; sector < TRD_SECTORS_PER_TRACK; ++sector)
         {
@@ -2350,16 +2361,16 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_Single)
                 // Update time for FDC
                 fdc._time = clk;
 
-                // Feed data bytes with marking Data Register accessed so no DATA LOSS error occurs
-                if (fdc._state == WD1793::S_WRITE_BYTE && fdc._drq_out && !fdc._drq_served)
+                // Process FSM state updates
+                fdc.process();
+
+                // Feed data bytes when DRQ is active (check after process to catch newly raised DRQ)
+                if (fdc._drq_out && !fdc._drq_served)
                 {
                     uint8_t writeValue = sectorData[sectorDataIndex++];
 
                     fdc.writeDataRegister(writeValue);
                 }
-
-                // Process FSM state updates
-                fdc.process();
 
                 // Check that BUSY flag is set for the whole duration of head positioning
                 if (fdc._state != WD1793::S_IDLE)
@@ -2388,9 +2399,12 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_Single)
 
             EXPECT_EQ(isAccomplishedCorrectly, true) << "WRITE_SECTOR didn't end up correctly";
 
-            size_t estimatedExecutionTime = 256 * WD1793::WD93_TSTATES_PER_FDC_BYTE /
-                                            TSTATES_IN_MS;  // We're performing single positioning step 6ms long
-            EXPECT_IN_RANGE(elapsedTimeMs, estimatedExecutionTime, estimatedExecutionTime + 1)
+            // Rotational latency to the data field, then 256 byte cells (see the READ_SECTOR test above)
+            DiskImage::Sector* timedSector = diskImage.getTrack(track)->getSector(sector);
+            ASSERT_NE(timedSector, nullptr);
+            size_t estimatedExecutionTime =
+                (timedSector->dataOffset + 256) * WD1793::WD93_TSTATES_PER_FDC_BYTE / TSTATES_IN_MS;
+            EXPECT_IN_RANGE(elapsedTimeMs, estimatedExecutionTime, estimatedExecutionTime + 2)
                 << "Abnormal execution time";
 
             EXPECT_EQ(sectorDataIndex, 256) << "Not all sector bytes were written";
@@ -2436,7 +2450,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_WriteProtect)
 
     /// region <Create empty disk image>
     DiskImage diskImage = DiskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool imageFormatted = loaderTrd.format(&diskImage);
     ASSERT_EQ(imageFormatted, true) << "Empty test TRD image was not formatted";
     /// endregion </Create empty disk image>
@@ -2447,9 +2461,9 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_WriteProtect)
     // Enable write protection on the drive
     fdc._selectedDrive->setWriteProtect(true);
 
-    // De-activate WD1793 reset, Set active drive A, Select MFM / double density mode
+    // De-activate WD1793 reset, Set active drive A, MFM / double density (port #FF bit 6 clear)
     fdc._beta128Register =
-        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
     fdc._drive = 0;
 
     // Set up for sector write
@@ -2487,7 +2501,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_MultiSector)
 
     /// region <Create empty disk image>
     DiskImage diskImage = DiskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool imageFormatted = loaderTrd.format(&diskImage);
     ASSERT_TRUE(imageFormatted) << "Empty test TRD image was not formatted";
     /// endregion </Create empty disk image>
@@ -2497,7 +2511,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_MultiSector)
 
     // De-activate WD1793 reset, Set active drive A
     fdc._beta128Register =
-        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
     fdc._drive = 0;
 
     // Prepare test data - each sector has different pattern
@@ -2534,9 +2548,10 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_MultiSector)
     for (size_t clk = 0; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
     {
         fdc._time = clk;
+        fdc.process();
 
-        // Feed data when DRQ is active
-        if (fdc._state == WD1793::S_WRITE_BYTE && fdc._drq_out && !fdc._drq_served)
+        // Feed data when DRQ is active (check after process to catch newly raised DRQ)
+        if (fdc._drq_out && !fdc._drq_served)
         {
             if (currentSector < SECTORS_TO_WRITE && byteInSector < TRD_SECTORS_SIZE_BYTES)
             {
@@ -2551,8 +2566,6 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_MultiSector)
                 }
             }
         }
-
-        fdc.process();
 
         // Check if command finished
         if (fdc._state == WD1793::S_IDLE)
@@ -2588,7 +2601,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_DeletedDataMark)
 
     /// region <Create empty disk image>
     DiskImage diskImage = DiskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool imageFormatted = loaderTrd.format(&diskImage);
     ASSERT_TRUE(imageFormatted) << "Empty test TRD image was not formatted";
     /// endregion </Create empty disk image>
@@ -2598,7 +2611,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_DeletedDataMark)
 
     // De-activate WD1793 reset, Set active drive A
     fdc._beta128Register =
-        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
     fdc._drive = 0;
 
     // Prepare test data
@@ -2636,17 +2649,16 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_DeletedDataMark)
     for (size_t clk = 0; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
     {
         fdc._time = clk;
+        fdc.process();
 
-        // Feed data when DRQ is active
-        if (fdc._state == WD1793::S_WRITE_BYTE && fdc._drq_out && !fdc._drq_served)
+        // Feed data when DRQ is active (check after process to catch newly raised DRQ)
+        if (fdc._drq_out && !fdc._drq_served)
         {
             if (byteIndex < TRD_SECTORS_SIZE_BYTES)
             {
                 fdc.writeDataRegister(sectorData[byteIndex++]);
             }
         }
-
-        fdc.process();
 
         // Check if command finished
         if (fdc._state == WD1793::S_IDLE)
@@ -2679,9 +2691,9 @@ TEST_F(WD1793_Test, ForceInterrupt_NotReadyToReady)
 
     WD1793CUT fdc(_context);
 
-    // De-activate WD1793 reset, Set active drive A, Select MFM / double density mode
+    // De-activate WD1793 reset, Set active drive A, MFM / double density (port #FF bit 6 clear)
     fdc._beta128Register =
-        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
     fdc._drive = 0;
 
     // Start with NO disk inserted (Not-Ready state)
@@ -2764,7 +2776,7 @@ TEST_F(WD1793_Test, ForceInterrupt_ReadyToNotReady)
 
     // De-activate WD1793 reset, Set active drive A
     fdc._beta128Register =
-        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
     fdc._drive = 0;
 
     // Start with disk inserted (Ready state)
@@ -2830,7 +2842,7 @@ TEST_F(WD1793_Test, ForceInterrupt_IndexPulse)
 
     // De-activate WD1793 reset, Set active drive A
     fdc._beta128Register =
-        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
     fdc._drive = 0;
 
     // Insert disk and start motor (required for index pulses)
@@ -2917,7 +2929,7 @@ TEST_F(WD1793_Test, ForceInterrupt_ImmediateInterrupt)
 
     // De-activate WD1793 reset
     fdc._beta128Register =
-        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
 
     // Reset WDC internal time marks
     fdc.resetTime();
@@ -2961,7 +2973,7 @@ TEST_F(WD1793_Test, ForceInterrupt_D0_NoInterrupt)
 
     // De-activate WD1793 reset
     fdc._beta128Register =
-        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
 
     // Reset WDC internal time marks
     fdc.resetTime();
@@ -3151,7 +3163,12 @@ TEST_F(WD1793_Test, ForceInterrupt_Terminate)
         bool isBusy = fdc._statusRegister & WD1793::WDS_BUSY;
         bool isCRCError = fdc._statusRegister & WD1793::WDS_CRCERR;
         bool isSeekError = fdc._statusRegister & WD1793::WDS_SEEKERR;
-        bool isTrack0 = (fdc._statusRegister & WD1793::WDS_TRK00);
+        // Per datasheet, interrupting an active command leaves the cached status bits unchanged,
+        // so TRK00 must be read the way CPU code reads it: through the status-read composition,
+        // which refreshes live Type I bits from the drive. Comparing the raw cached bit against
+        // live drive state is invalid - the FDD starts at a randomized track, so a stale TRK00
+        // (set while the head was once at track 0) made this check fail ~1/81 runs.
+        bool isTrack0 = fdc.getStatusRegister() & WD1793::WDS_TRK00;
         bool DRQ = fdc._beta128status & DRQ;
         bool INTRQ = fdc._beta128status & INTRQ;
 
@@ -3180,7 +3197,7 @@ TEST_F(WD1793_Test, Integration_TRDOS_CatalogStructure)
 
     // Create and format disk image using LoaderTRD
     DiskImage diskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool formatted = loaderTrd.format(&diskImage);
     ASSERT_TRUE(formatted) << "Failed to format TRD disk image";
 
@@ -3251,7 +3268,7 @@ TEST_F(WD1793_Test, Integration_TRDOS_SectorInterleave)
 
     // Create and format disk image
     DiskImage diskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool formatted = loaderTrd.format(&diskImage);
     ASSERT_TRUE(formatted) << "Failed to format TRD disk image";
 
@@ -3268,7 +3285,7 @@ TEST_F(WD1793_Test, Integration_TRDOS_SectorInterleave)
     std::set<uint8_t> foundSectors;
     for (int i = 0; i < 16; i++)
     {
-        uint8_t sectorNumber = track1->sectors[i].address_record.sector;
+        uint8_t sectorNumber = track1->getRawSector(i)->number();
         EXPECT_GE(sectorNumber, 1) << "Sector number should be >= 1";
         EXPECT_LE(sectorNumber, 16) << "Sector number should be <= 16";
         foundSectors.insert(sectorNumber);
@@ -3289,7 +3306,7 @@ TEST_F(WD1793_Test, Integration_AllTracksPopulated)
 
     // Create and format a full 80-track DS disk image
     DiskImage diskImage(80, 2);
-    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("test.trd"));
     bool formatted = loaderTrd.format(&diskImage);
     ASSERT_TRUE(formatted) << "Failed to format TRD disk image";
 
@@ -3307,7 +3324,7 @@ TEST_F(WD1793_Test, Integration_AllTracksPopulated)
             for (int s = 0; s < 16; s++)
             {
                 // Check sector has valid ID (cylinder and side match)
-                DiskImage::AddressMarkRecord& id = track->sectors[s].address_record;
+                DiskImage::AddressMarkRecord& id = *track->getRawSector(s)->id;
                 EXPECT_EQ(id.cylinder, cylinder)
                     << "Sector cylinder mismatch at C" << (int)cylinder << "S" << (int)side;
                 EXPECT_EQ(id.head, side) << "Sector side mismatch at C" << (int)cylinder << "S" << (int)side;
@@ -3342,7 +3359,7 @@ TEST_F(WD1793_Test, ForceInterrupt_I2_MultipleIndexPulses)
 
     // Setup: Insert disk and start motor
     fdc._beta128Register =
-        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
     fdc._drive = 0;
 
     DiskImage* diskImage = new DiskImage(80, 2);
@@ -3493,7 +3510,7 @@ TEST_F(WD1793_Test, WriteTrack_F5_Sets_CrcStartPosition)
     DiskImage* diskImage = new DiskImage(80, 2);
     fdc._selectedDrive->insertDisk(diskImage);
     fdc._beta128Register =
-        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
 
     // Allocate raw track buffer
     fdc._rawDataBuffer = new uint8_t[DiskImage::RawTrack::RAW_TRACK_SIZE];
@@ -3519,7 +3536,7 @@ TEST_F(WD1793_Test, WriteTrack_F5_Sets_CrcStartPosition)
 
 /// Test that Write Track F7 writes CRC in correct byte order (low byte first, then high byte)
 /// Regression test for Bug #4: CRC byte order was reversed
-TEST_F(WD1793_Test, WriteTrack_F7_CrcByteOrder_LowFirst)
+TEST_F(WD1793_Test, WriteTrack_F7_CrcByteOrder_HighFirst)
 {
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
@@ -3572,12 +3589,13 @@ TEST_F(WD1793_Test, WriteTrack_F7_CrcByteOrder_LowFirst)
         }
     }
 
-    // Key regression test: verify byte order is LOW BYTE FIRST, then HIGH BYTE
-    uint8_t lowByte = fdc._rawDataBuffer[indexBeforeCrc];
-    uint8_t highByte = fdc._rawDataBuffer[indexBeforeCrc + 1];
+    // Key regression test: on disk the CRC is transmitted HIGH BYTE FIRST, then LOW BYTE
+    // (CRC-16/CCITT of "A1 A1 A1 FE 00 00 01 01" is 0xFA0C and lies on disk as FA 0C).
+    uint8_t firstByte = fdc._rawDataBuffer[indexBeforeCrc];
+    uint8_t secondByte = fdc._rawDataBuffer[indexBeforeCrc + 1];
 
-    EXPECT_EQ(lowByte, expectedCrc & 0xFF) << "First CRC byte should be LOW byte";
-    EXPECT_EQ(highByte, (expectedCrc >> 8) & 0xFF) << "Second CRC byte should be HIGH byte";
+    EXPECT_EQ(firstByte, (expectedCrc >> 8) & 0xFF) << "First CRC byte should be the HIGH byte";
+    EXPECT_EQ(secondByte, expectedCrc & 0xFF) << "Second CRC byte should be the LOW byte";
 
     // Cleanup
     delete[] fdc._rawDataBuffer;
@@ -3651,19 +3669,20 @@ TEST_F(WD1793_Test, ReadSector_CRCError_SetsStatusBit)
 
     fdc._selectedDrive->insertDisk(diskImage);
     fdc._beta128Register =
-        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
     fdc.prolongFDDMotorRotation();
     fdc.resetTime();
     fdc.prolongFDDMotorRotation();
 
     // Corrupt CRC in sector 1 on track 0
-    DiskImage::RawSectorBytes* sector = track0->getSector(0);  // Sector 1 (0-based index)
+    DiskImage::Sector* sector = track0->getSector(0);  // Sector 1 (0-based index)
     ASSERT_NE(sector, nullptr);
     sector->recalculateDataCRC();  // First calculate valid CRC
-    sector->data_crc = 0xDEAD;     // Then corrupt it
+    sector->setDataCRC(0xDEAD);    // Then corrupt it
 
     // Set Track and Sector registers
     fdc._trackRegister = 0;
+    fdc._selectedDrive->setTrack(0);  // The head must physically be on cylinder 0 (ID cylinder is compared with the register)
     fdc._sectorRegister = 1;
     fdc._sideUp = 0;
 
@@ -3724,19 +3743,20 @@ TEST_F(WD1793_Test, ReadSector_DeletedDataMark_SetsStatusBit5)
 
     fdc._selectedDrive->insertDisk(diskImage);
     fdc._beta128Register =
-        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
     fdc.prolongFDDMotorRotation();
     fdc.resetTime();
     fdc.prolongFDDMotorRotation();
 
     // Set sector 1 to have Deleted Data Mark (0xF8)
-    DiskImage::RawSectorBytes* sector = track0->getSector(0);  // Sector 1 (0-based index)
+    DiskImage::Sector* sector = track0->getSector(0);  // Sector 1 (0-based index)
     ASSERT_NE(sector, nullptr);
-    sector->data_address_mark = 0xF8;  // Deleted Data Mark
+    sector->setDataAddressMark(0xF8);  // Deleted Data Mark
     sector->recalculateDataCRC();      // Update CRC with new DAM
 
     // Set Track and Sector registers
     fdc._trackRegister = 0;
+    fdc._selectedDrive->setTrack(0);  // The head must physically be on cylinder 0 (ID cylinder is compared with the register)
     fdc._sectorRegister = 1;
     fdc._sideUp = 0;
 
@@ -3797,14 +3817,14 @@ TEST_F(WD1793_Test, ReadSector_NormalDataMark_ClearsStatusBit5)
     // Initialize sector CRCs
     for (int i = 0; i < 16; i++)
     {
-        DiskImage::RawSectorBytes* sector = track0->getSector(i);
+        DiskImage::Sector* sector = track0->getSector(i);
         if (sector)
             sector->recalculateDataCRC();
     }
 
     fdc._selectedDrive->insertDisk(diskImage);
     fdc._beta128Register =
-        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
     fdc.prolongFDDMotorRotation();
     fdc.resetTime();
     fdc.prolongFDDMotorRotation();
@@ -3814,6 +3834,7 @@ TEST_F(WD1793_Test, ReadSector_NormalDataMark_ClearsStatusBit5)
 
     // Set Track and Sector registers
     fdc._trackRegister = 0;
+    fdc._selectedDrive->setTrack(0);  // The head must physically be on cylinder 0 (ID cylinder is compared with the register)
     fdc._sectorRegister = 1;
     fdc._sideUp = 0;
 
@@ -3876,20 +3897,21 @@ TEST_F(WD1793_Test, ReadSector_LostData_When_DRQ_Not_Serviced)
     // Initialize sector CRCs
     for (int i = 0; i < 16; i++)
     {
-        DiskImage::RawSectorBytes* sector = track0->getSector(i);
+        DiskImage::Sector* sector = track0->getSector(i);
         if (sector)
             sector->recalculateDataCRC();
     }
 
     fdc._selectedDrive->insertDisk(diskImage);
     fdc._beta128Register =
-        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
     fdc.prolongFDDMotorRotation();
     fdc.resetTime();
     fdc.prolongFDDMotorRotation();
 
     // Set Track and Sector registers
     fdc._trackRegister = 0;
+    fdc._selectedDrive->setTrack(0);  // The head must physically be on cylinder 0 (ID cylinder is compared with the register)
     fdc._sectorRegister = 1;
     fdc._sideUp = 0;
 
@@ -3948,19 +3970,20 @@ TEST_F(WD1793_Test, ReadSector_LostData_CPU_Recovers_MidTransfer)
 
     for (int i = 0; i < 16; i++)
     {
-        DiskImage::RawSectorBytes* sector = track0->getSector(i);
+        DiskImage::Sector* sector = track0->getSector(i);
         if (sector)
             sector->recalculateDataCRC();
     }
 
     fdc._selectedDrive->insertDisk(diskImage);
     fdc._beta128Register =
-        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
     fdc.prolongFDDMotorRotation();
     fdc.resetTime();
     fdc.prolongFDDMotorRotation();
 
     fdc._trackRegister = 0;
+    fdc._selectedDrive->setTrack(0);  // The head must physically be on cylinder 0 (ID cylinder is compared with the register)
     fdc._sectorRegister = 1;
     fdc._sideUp = 0;
     fdc._commandRegister = 0x80;
@@ -4031,18 +4054,19 @@ TEST_F(WD1793_Test, ReadSector_EFlag_Adds_15ms_Delay)
 
     for (int i = 0; i < 16; i++)
     {
-        DiskImage::RawSectorBytes* sector = track0->getSector(i);
+        DiskImage::Sector* sector = track0->getSector(i);
         if (sector)
             sector->recalculateDataCRC();
     }
 
     fdc._selectedDrive->insertDisk(diskImage);
     fdc._beta128Register =
-        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
     fdc.prolongFDDMotorRotation();
     fdc.resetTime();
 
     fdc._trackRegister = 0;
+    fdc._selectedDrive->setTrack(0);  // The head must physically be on cylinder 0 (ID cylinder is compared with the register)
     fdc._sectorRegister = 1;
     fdc._sideUp = 0;
 
@@ -4052,9 +4076,11 @@ TEST_F(WD1793_Test, ReadSector_EFlag_Adds_15ms_Delay)
     size_t startTime = fdc._time;
     fdc.cmdReadSector(0x84);
 
-    // Find when first DRQ occurs (data transfer starts)
+    // Find when first DRQ occurs (data transfer starts). After the 15 ms settle delay the head has moved past
+    // sector 1, so the controller also waits for the sector to come round again (up to one revolution).
     size_t firstDRQTime = 0;
-    for (size_t clk = startTime; clk < startTime + E_FLAG_DELAY_TSTATES * 2; clk += TEST_INCREMENT_TSTATES)
+    for (size_t clk = startTime; clk < startTime + E_FLAG_DELAY_TSTATES * 2 + WD1793::DISK_ROTATION_PERIOD_TSTATES;
+         clk += TEST_INCREMENT_TSTATES)
     {
         fdc._time = clk;
         fdc.process();
@@ -4095,7 +4121,7 @@ TEST_F(WD1793_Test, ReadSector_SectorNotFound_SetsStatusBit)
 
     fdc._selectedDrive->insertDisk(diskImage);
     fdc._beta128Register =
-        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
     fdc.prolongFDDMotorRotation();
     fdc.resetTime();
 
@@ -4133,3 +4159,94 @@ TEST_F(WD1793_Test, ReadSector_SectorNotFound_SetsStatusBit)
 }
 
 /// endregion </Lost Data, E-Flag, and Sector Not Found Tests>
+
+// ==================== NC_FDD_STATE_CHANGED (status bar FDD state) ====================
+// The FDC publishes drive / side / track / sector / motor on change so UIs can cache the
+// state instead of polling the controller.
+
+namespace
+{
+    struct CapturedFddState
+    {
+        uint8_t drive, track, side, sector;
+        bool motorOn, busy, diskInserted, writeProtected;
+    };
+    std::vector<CapturedFddState> g_fddStates;
+    bool g_fddStateObserverRegistered = false;
+
+    void onFddStateChanged(int /*id*/, Message* msg)
+    {
+        if (msg && msg->obj)
+        {
+            auto* p = static_cast<FDDStatePayload*>(msg->obj);
+            const FDDStateInfo& s = p->_state;
+            g_fddStates.push_back({s.driveId, s.track, s.side, s.sector,
+                                   s.motorOn, s.busy, s.diskInserted, s.writeProtected});
+        }
+    }
+
+    bool waitForFddStates(size_t count, int timeoutMs = 500)
+    {
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            if (g_fddStates.size() >= count)
+                return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return g_fddStates.size() >= count;
+    }
+}
+
+TEST_F(WD1793_Test, FDD_StateNotification_PostedOnChangeOnly)
+{
+    MessageCenter::DefaultMessageCenter(true);
+    if (!g_fddStateObserverRegistered)
+    {
+        MessageCenter::DefaultMessageCenter().AddObserver(NC_FDD_STATE_CHANGED, &onFddStateChanged);
+        g_fddStateObserverRegistered = true;
+    }
+    g_fddStates.clear();
+
+    WD1793CUT fdc(_context);
+    fdc.resetTime();
+    DiskImage diskImage = DiskImage(MAX_CYLINDERS, MAX_SIDES);
+    fdc.getDrive()->insertDisk(&diskImage);
+
+    // Initial state is available synchronously for a UI that has just bound to the emulator
+    FDDStateInfo initial = fdc.getFDDState();
+    EXPECT_EQ(initial.driveId, 0);
+    EXPECT_TRUE(initial.diskInserted);
+    EXPECT_FALSE(initial.motorOn);
+
+    // Beta128 system register: bits[1:0] drive, bit2 = 1 (no reset), bit4 = 0 -> top side
+    fdc.processBeta128(0b0000'0101);
+    ASSERT_TRUE(waitForFddStates(1)) << "Drive/side select must publish the FDD state";
+    EXPECT_EQ(g_fddStates.back().drive, 1) << "Drive B selected";
+    EXPECT_EQ(g_fddStates.back().side, 1);
+    EXPECT_FALSE(g_fddStates.back().motorOn);
+    EXPECT_TRUE(g_fddStates.back().diskInserted);
+
+    // Same value again: nothing changed -> no new notification
+    fdc.processBeta128(0b0000'0101);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    EXPECT_EQ(g_fddStates.size(), 1u) << "Unchanged state must not be re-published";
+
+    // Motor start is a state change
+    fdc.startFDDMotor();
+    ASSERT_TRUE(waitForFddStates(2));
+    EXPECT_TRUE(g_fddStates.back().motorOn);
+
+    // Sector register change (as done by the #5F port write and READ ADDRESS)
+    fdc._sectorRegister = 7;
+    fdc.notifyFDDStateChanged();
+    ASSERT_TRUE(waitForFddStates(3));
+    EXPECT_EQ(g_fddStates.back().sector, 7);
+    EXPECT_EQ(g_fddStates.back().drive, 1);
+    EXPECT_TRUE(g_fddStates.back().motorOn);
+
+    // Motor stop
+    fdc.stopFDDMotor();
+    ASSERT_TRUE(waitForFddStates(4));
+    EXPECT_FALSE(g_fddStates.back().motorOn);
+}

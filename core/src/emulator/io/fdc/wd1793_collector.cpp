@@ -3,6 +3,7 @@
 #include <iomanip>
 #include <sstream>
 #include "common/stringhelper.h"
+#include "common/filehelper.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
 #include "emulator/io/fdc/wd1793.h"
@@ -558,7 +559,7 @@ void WD1793Collector::recordCommandEnd(WD1793& wd1793)
 /// @param filename Path to the output file
 void WD1793Collector::dumpCollectedCommandInfo(const std::string& filename)
 {
-    std::ofstream outFile(filename);
+    std::ofstream outFile(FileHelper::ToFsPath(filename));
     if (!outFile.is_open())
     {
         return;

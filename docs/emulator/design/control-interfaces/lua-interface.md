@@ -98,6 +98,76 @@ time = os.time()
 videowall_singlesync(true, "emulator-id")
 ```
 
+### Tape Operations
+
+Global functions mirroring the CLI `tape` commands and the WebAPI `/tape/*` endpoints one-to-one (same names, states and catalog indices).
+
+```lua
+-- Load / eject
+local ok = tape_load("/path/to/game.tap")   -- Load tape image (.tap/.tzx/.csw)
+local ok = tape_eject()                     -- Stop playback, drop image and catalog
+
+-- Transport (same semantics as `tape play|pause|stop|rewind|seek`)
+tape_play()      -- start at consumption cursor; resumes in place when paused
+tape_pause()     -- freeze mid-block (idempotent); false when not playing
+tape_stop()      -- terminal stop: invalidates the loaded image
+tape_rewind()    -- rewind to block 0, image kept
+tape_seek(4)     -- position head at catalog block 4
+
+-- Inspection
+local inserted = tape_is_inserted()
+local path     = tape_get_path()
+local pos      = tape_pos()      -- nil without a tape, else
+                                 -- {state="playing", block=4, pulse=1234,
+                                 --  seconds_into_block=1.2,
+                                 --  block_total_seconds=4.5,
+                                 --  cursor=5, block_count=12}
+local blocks   = tape_blocks()   -- nil without a tape, else array of tables
+                                 -- {index, kind, name, type, declared_length,
+                                 --  param1, param2, paired_header_index,
+                                 --  paired_data_index,
+                                 --  speed={profile, baud}, checksum_valid,
+                                 --  checksum_applicable, seconds, raw_size,
+                                 --  playable, fast_load="yes"|"<reason>"}
+local info     = tape_info()     -- nil without a tape subsystem, else
+                                 -- {status, file, format, state, cursor,
+                                 --  block_count, total_seconds, fast_tape,
+                                 --  turbo_tape, fast_load={verdict,
+                                 --  eligible_blocks, accelerated_seconds,
+                                 --  total_seconds, summary}}
+
+-- Audio bridge (pure file conversions, no emulator state touched)
+local result = tape_render("game.tzx", "out.wav")  -- whole tape, 44100 Hz
+local result = tape_render("game.tzx", "out.flac", {
+    first_block = 2, last_block = 5, sample_rate = 48000,
+    amplitude = 0.8, invert_level = false })
+-- result = {ok, error, duration_sec, samples, blocks, encoder, warnings}
+
+local result = tape_import("recording.wav", "imported.tzx")   -- hysteresis optional
+local result = tape_import("recording.wav", "imported.tap", 0.25)
+-- result = {ok, error, decoder, sample_rate, samples_decoded,
+--          signal_edges, blocks_recognized, blocks_written,
+--          output_path, warnings}
+```
+
+Playback `state` is one of `"idle"`, `"playing"`, `"paused"`, `"ended"` — identical strings across CLI, WebAPI, Lua and Python.
+
+### Feature Management
+
+`feature_list()` enumerates every registered runtime feature dynamically (the same list the CLI `feature` table and the WebAPI `/features` endpoint return), keyed by feature id:
+
+```lua
+local features = feature_list()
+-- { sound = true, fasttape = true, turbotape = true, calltrace = false, ... }
+
+if features.turbotape == nil then
+    print("turbo tape not available in this build")
+end
+
+feature_set("fasttape", false)     -- same switch as `setting fast_tape off`
+print(feature_get("turbotape"))    -- true
+```
+
 ### Emulator Object
 
 ```lua
@@ -296,7 +366,9 @@ local lines = disasm()                   -- Disassemble from PC (default 10 line
 local lines = disasm(0x8000, 20)         -- Disassemble from address, count
 local lines = disasm_page("rom", 2, 0, 20)   -- Disassemble physical ROM page (e.g., TR-DOS)
 local lines = disasm_page("ram", 5, 0x100, 10)  -- Disassemble physical RAM page
--- Returns: table with entries: {offset, bytes, mnemonic, size, target (if jump)}
+-- Returns: table with entries: {offset, bytes, mnemonic, size, label,
+--          target/targetLabel (jumps and calls), displacement/effectiveAddress/effectiveAddressLabel (IX/IY+d)}
+-- Mnemonics print both label and address when a label exists at the target: 'call TEST_ROUTINE (#8010)'
 
 -- Debug Mode (via feature manager)
 emu:feature_set("debugmode", true)   -- Enable debug mode
@@ -418,6 +490,120 @@ local status = profilers_status_all()
 -- status.calltrace.session_state = "capturing"
 -- status.calltrace.entry_count = 450
 ```
+
+### Time-Travel Debugging
+
+Mirrors the `emu.*` binding style; identical surface to the Python bindings. Full command semantics (arguments, result envelopes, halt reasons, session invalidation rules) live in [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd). All methods require the `timetravel` feature flag to be ON, except `ttd_status` which always works.
+
+**Session lifecycle:**
+
+```lua
+emu.ttd_start()              -- Begin recording at next frame boundary
+emu.ttd_stop()               -- Stop capturing; retain history
+emu.ttd_clear()              -- Drop all captured data; live state untouched
+```
+
+**Status (always available):**
+
+```lua
+local status = emu.ttd_status()
+-- status.state                 = "idle"   -- idle | recording | detached
+--
+-- Provenance: recorded here, or opened from a file?
+-- status.loaded_from_file      = true
+-- status.source_path           = "/sessions/bug-1274.ttd"
+-- status.captured_at_unix_ms   = 1755712345678  -- 0 for a live recording
+--
+-- Machine
+-- status.model_id              = 0
+-- status.model_ram_pages       = 32   -- BOUND, not a count (48K reports 6)
+--
+-- Timeline
+-- status.session_start_frame   = 98
+-- status.current_end_frame     = 397
+-- status.checkpoint_count      = 301
+--
+-- Sections
+-- status.write_journal_enabled = true
+-- status.write_journal_records = 729025
+-- status.write_journal_bytes   = 8748300
+-- status.coverage_index_frames = 300  -- 0 => reverse queries replay instead
+-- status.coverage_index_bytes  = 13926
+--
+-- Memory
+-- status.page_store_bytes      = 40960
+-- status.page_store_used_bytes = 665600
+-- status.session_heap_bytes    = 1043968
+```
+
+**Navigation (require run-control claim; emulator must be paused):**
+
+```lua
+emu.ttd_seek(4823)                          -- Absolute seek to frame
+emu.ttd_seek(4823, 14982)                   -- Intra-frame target (frame, tstate)
+emu.ttd_seek_tstate(14982)                  -- Or seek by absolute t-state
+
+emu.ttd_step_back()                         -- One instruction back
+emu.ttd_step_back{unit = 'frame', count = 2}  -- Two frames back
+emu.ttd_step_forward()                      -- Forward within recorded history
+emu.ttd_step_forward{unit = 'frame'}
+
+emu.ttd_resume_from_here{confirm = true}    -- Truncate future, resume live
+```
+
+Return value for `ttd_seek` / `ttd_step_back` / `ttd_step_forward` (a table):
+
+```lua
+-- { ok = true, reached_frame = 4823, reached_tstate = 14982,
+--   halt_reason = 'target' }   -- 'target' | 'external_event' | 'out_of_range'
+```
+
+**Reverse search:**
+
+```lua
+local r = emu.ttd_find_last(0x5800, 'write')
+-- r is nil if no match, otherwise:
+-- r.frame, r.tstate, r.pc, r.value, r.physpage
+
+-- Full filter set via a table argument:
+local r2 = emu.ttd_find_last{
+    addr    = 0x5800,
+    access  = 'write',         -- 'write' | 'read' | 'execute' | 'out'
+    value   = 0x07,            -- optional exact value match
+    pc_from = 0x4000,          -- optional PC range filter
+    pc_to   = 0x8000,
+    before  = 14982            -- optional: don't search past this absolute tstate
+}
+```
+
+**Timeline (for UI rendering / batch analysis):**
+
+```lua
+local entries = emu.ttd_timeline{from_frame = 0, to_frame = 1000, limit = 500}
+-- List of { frame = N, dirty_pages = K, events = {...}, bookmarks = {...} }
+```
+
+**Bookmarks:**
+
+```lua
+emu.ttd_bookmark_add{at = 14982, label = 'before crash'}
+emu.ttd_bookmark_remove('bm-3')
+for _, bm in ipairs(emu.ttd_bookmark_list()) do
+    print(bm.frame, bm.label)
+end
+```
+
+**Errors** (raised as Lua errors; pcall to catch):
+
+| Error message prefix | Meaning |
+| :--- | :--- |
+| `run-control busy:` | Another surface holds the run-control claim. |
+| `ttd not recording:` | Operation requires an active session. |
+| `ttd out of range:` | Target is outside recorded bounds. |
+| `ttd feature disabled:` | `timetravel` feature flag is off. |
+| `ttd session invalidated:` | Session invalidated by load/reset/etc. |
+
+**Implementation status:** Sprint 0 foundations ✅ merged; Phase 1 will land `ttd_status` only; the rest ship in Phase 2 (navigation) and Phase 4 (reverse search).
 
 ## Usage Examples
 

@@ -49,6 +49,7 @@ endif()
 if (WIN32 AND NOT MSVC)
     set (GOOGLETEST_FILES
         ${GOOGLETEST_DIR}/googletest/src/gtest.cc
+        ${GOOGLETEST_DIR}/googletest/src/gtest-assertion-result.cc
         ${GOOGLETEST_DIR}/googletest/src/gtest-death-test.cc
         ${GOOGLETEST_DIR}/googletest/src/gtest-filepath.cc
         ${GOOGLETEST_DIR}/googletest/src/gtest-matchers.cc
@@ -69,8 +70,8 @@ endif (WIN32 AND NOT MSVC)
 if (CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
     # We're being built directly, so build core first
     add_subdirectory(${CORE_DIR} core)
-    # Build recording library if enabled
-    if (ENABLE_RECORDING)
+    # Build recording library if enabled (core/src already adds it - guard against duplicate target)
+    if (ENABLE_RECORDING AND NOT TARGET unrealng::recording)
         add_subdirectory(${ROOT_DIR}/core/recording recording)
     endif()
 else()
@@ -147,15 +148,37 @@ if (NOT TARGET ${PROJECT_NAME})
     include(GoogleTest)
     gtest_discover_tests(${PROJECT_NAME})
 
+    # Parallel test execution target
+    # Uses GTest sharding; shard count auto-detects from the logical CPU
+    # count (~3x on 4 cores, ~7x on 16P+4E Apple Silicon)
+    # Usage: cmake --build build --target test-parallel
+    if(UNIX)
+        add_custom_target(test-parallel
+            COMMAND ${ROOT_DIR}/scripts/run-tests-parallel.sh $<TARGET_FILE:${PROJECT_NAME}>
+            DEPENDS ${PROJECT_NAME}
+            WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}
+            COMMENT "Running tests with auto-detected GTest sharding"
+            VERBATIM
+        )
+    elseif(WIN32)
+        add_custom_target(test-parallel
+            COMMAND powershell -ExecutionPolicy Bypass -File ${ROOT_DIR}/scripts/run-tests-parallel.ps1 -Binary $<TARGET_FILE:${PROJECT_NAME}>
+            DEPENDS ${PROJECT_NAME}
+            WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}
+            COMMENT "Running tests with auto-detected GTest sharding"
+            VERBATIM
+        )
+    endif()
+
     # Define data paths
     set(DATA_PATH "${ROOT_DIR}/data")
-    set(CONFIG_FILE "${DATA_PATH}/configs/pentagon512k/unreal.ini")
 
     # Copy resources using modern CMake syntax
+    # Configs are deployed ONLY under configs/<model>/ - never as a flat unreal.ini
     add_custom_command(
         TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy
-            "${CONFIG_FILE}" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/unreal.ini"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${DATA_PATH}/configs" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/configs"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory

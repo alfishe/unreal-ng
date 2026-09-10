@@ -2,12 +2,153 @@
 
 | | |
 |---|---|
-| **Status** | Draft for review (estimates; to be replaced by measured numbers from `ttd_capture_benchmark`) |
-| **Version** | 1.0 |
-| **Last updated** | 2026-07-19 |
+| **Status** | Measured — section 1a carries current numbers; the estimate tables below are kept for comparison |
+| **Version** | 1.1 |
+| **Last updated** | 2026-08-20 |
 | **Parent TDD** | [time-travel-debugging-tdd.md](./time-travel-debugging-tdd.md) §6–§9, §14 |
 
 This document quantifies what TTD costs — CPU during capture, CPU during playback/search, and memory — and specifies **which parts can be switched off at runtime** when their capability isn't needed. All figures are engineering estimates for the reference workload; the Phase-1 benchmark suite replaces them with measurements, and this document is the ledger those measurements get written back into.
+
+---
+
+## 1a. Measured figures (2026-08-20)
+
+Release build, `core-benchmarks`, Apple Silicon. These supersede the estimates in
+section 2 where they overlap; the estimates are kept so the two can be compared.
+
+### Frame cost
+
+| Benchmark | Time/frame | Delta vs no-TTD |
+|---|---|---|
+| `BM_Frame_NoTTD` | 915 µs | baseline |
+| `BM_Frame_TTD_HooksOnly` | 989 µs | +74 µs (hooks only, no capture) |
+| `BM_Frame_TTD_Gaming` | 1117 µs | +202 µs |
+| `BM_Frame_TTD_Development` (journal on) | 1115 µs | +200 µs, 2.28 M journal records |
+
+The write journal is essentially free relative to capture: Development and
+Gaming are within noise of each other despite the journal recording 2.28 M
+records over the run.
+
+### Capture cost scales with dirty pages, not with installed RAM
+
+`BM_TTD_OnFrameBoundary/<dirty pages>`:
+
+| Dirty pages | Time |
+|---|---|
+| 0 | 10.1 µs |
+| 1 | 60.1 µs |
+| 4 | 246 µs |
+| 16 | 863 µs |
+| 64 | 1502 µs |
+
+An idle frame costs ~10 µs. This is what makes the page-index bound safe to
+widen for models with non-contiguous page numbers (TDD 6.2a): pages inside the
+bound that hold nothing cost a never-touched ref, not a capture.
+
+### Full-RAM operations (I-frame worst case)
+
+| RAM | Hash | Full capture |
+|---|---|---|
+| 48 KB | 61.9 µs | 63.6 µs |
+| 128 KB | 166 µs | 173 µs |
+| 512 KB | 665 µs | 676 µs |
+| 1024 KB | 1340 µs | — |
+| 4096 KB | 5387 µs | — |
+
+Throughput is flat at ~750 MB/s, so a 4 MB machine's I-frame costs ~5.4 ms.
+With `kKeyFrameInterval = 50` that is one frame in fifty, i.e. ~108 µs/frame
+amortized — acceptable, but the largest single argument for the lazy-baseline
+optimization the TDD defers.
+
+### Memory interface
+
+| Interface | Sequential writes | Random writes |
+|---|---|---|
+| Fast | 41.9 µs | 33.1 µs |
+| Debug | 33.1 µs | 33.6 µs |
+| TTD-lite | 172.4 µs | 172.1 µs |
+
+Reads are unaffected across all three (~31 µs).
+
+### Coverage index collection
+
+| Collected | Frame time (Gaming) | Increment |
+|---|---|---|
+| Nothing | 1127 µs | — |
+| Writes | 1155 µs | +28 µs |
+| + execution | 1286 µs | +131 µs |
+| + reads | 1368 µs | +82 µs |
+
+**+241 µs/frame** total — 1.2% of the 20 ms real-time frame budget, within the
+<5% goal, though a 21% increase on the emulator's own frame time. Execution
+dominates because it is the only collector running per instruction.
+
+What it buys: reverse search over 200 frames of history drops from 197 ms to
+2.5 ms, and stops growing with session length. Details and the differential
+correctness suite in `docs/inprogress/2026-08-20-ttd-reverse-search-index/`.
+
+### File size, by section
+
+Real 300-frame recordings (`testdata/ttd/`), after journal block compression:
+
+| Recording | File | Write journal | Page store | GB/hour |
+|---|---|---|---|---|
+| Dizzy Y (game) | 0.52 MB | 32 KB (14.7x) | 137 KB | 0.31 |
+| 7threality | 1.06 MB | 0.08 MB (8.6x) | — | 0.64 |
+| idle (after reset) | 0.73 MB | 0.25 MB (8.0x) | — | 0.44 |
+| across-the-edge | **3.49 MB** | 2.48 MB (3.4x) | 650 KB | **2.09** |
+
+The write journal dominates, not the page store: before compression it was 89%
+of the heaviest file (8.36 MB of 9.37 MB) against 648 KB for the entire page
+store. Storing it as zstd-compressed columnar blocks brought the total from
+5.6 GB/hour to 2.1 GB/hour on that workload. The page store itself has always
+been modest — 2.2 KB/frame, ~390 MB/hour at worst — because XOR-delta plus
+zstd-1 lands a dirty sub-page in ~63 bytes.
+
+Journal compression ratio varies by workload (3.4x–14.7x) far more than the
+page store's does, because it depends on how clustered the written addresses
+are.
+
+### Reverse breakpoints
+
+`BM_TTD_Reverse_Continue_Bp`, with and without the coverage index:
+
+| Breakpoints | Bulk M1 enumeration | Index-guided | Speed-up |
+|---|---|---|---|
+| 1 | 168 ms | **1.15 ms** | 146x |
+| 10 | 68 ms | **3.06 ms** | 22x |
+| 100 | 76 ms | 65 ms | 1.2x |
+
+The index stops helping as the breakpoint set grows: it is keyed by
+offset-within-page, so each breakpoint aliases four Z80 addresses and nearly
+every frame becomes a candidate. This degrades gracefully rather than falling
+off a cliff — enumerating N frames one at a time costs about the same replay
+work as one bulk pass, differing only by N checkpoint restores. An explicit
+bail-out to the bulk path was measured and made it worse (97 ms), because the
+fruitless per-frame work is then paid twice.
+
+### Loaded sessions
+
+The coverage index travels inside the `.ttd`, so a session loaded from disk
+queries at live speed. Measured by loading a real recording and running the same
+query with the loaded index enabled and disabled:
+
+| Operation | Without index | With index |
+|---|---|---|
+| `FindLastAccess` | 447 ms | **0.41 ms** |
+| `ReverseContinue` | 754 ms | **8.28 ms** |
+
+The section costs 8–17 KB per 300 frames (~8 MB/hour, 0.4–2.2% of the file).
+Rebuilding it by replay instead would cost ~1.05 ms/frame — about 32 s for ten
+minutes of history.
+
+### Reverse search
+
+Measured separately; see
+`docs/inprogress/2026-08-20-ttd-reverse-search-index/`. Summary: a frame replay
+costs 1.3 ms, a typical backward search scans 111-215 frames, and a per-frame
+sparse coverage index would replace that with ~12 KB of decompression at a cost
+of ~307 B/frame (54 MB/hour).
 
 ---
 

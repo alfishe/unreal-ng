@@ -1,0 +1,370 @@
+DRVS
+
+;READ SECTORS
+READ_TR
+RD_SEC  di
+        call LOGPOS
+        ret nz          ;NODISK
+READLP  ld hy,#3
+READLP1 ld ly,#3
+RERDTR  call BRKCHK     ;CHECK ON BREAK
+        ret nz
+        push hl
+        push bc
+        ld a,e
+        inc a
+        call TO5F
+        ld a,#80        ;RD COM
+        call TO1F
+        call RD_DATA
+        call FROM1F
+        pop bc
+        or a
+        jr z,GOODRD
+        pop hl
+        dec ly
+        jr nz,RERDTR
+        call RESET
+        call LOGPOS
+        ret nz          ;DISK ABSENT
+        dec hy
+        jr nz,READLP1
+        inc a           ;DISK ERROR
+        ret
+GOODRD  pop af
+        inc e
+        ld a,e
+        cp #10          ;;;;
+        jr nz,NOSRDT
+        ld e,0
+        inc d           ;;;;
+        call POSIT
+NOSRDT  djnz READLP
+        xor a
+        ret
+
+RZFDLP  call POSIT
+        jr RZFD1
+RD_ZF   di
+        call LOGPOS
+        jp nz,ERRL      ;NODISK
+RZFD1   ld hy,#3
+RZFDLP1 ld ly,#3
+RZFDTR  call BRKCHK     ;CHECK ON BREAK
+        jp nz,ERRL      ;NODISK
+        push hl
+        push bc
+        ld a,e
+        or #70
+        call TO5F
+        ld a,#80       ;RD COM
+        call TO1F
+        call RD_DATA
+        call FROM1F
+        pop bc
+        or a
+        jr z,GOODZF
+        pop hl
+        dec ly
+        jr nz,RZFDTR
+        call RESET
+        call LOGPOS
+        jp nz,ERRL      ;NODISK
+        dec hy
+        jr nz,RZFDLP1
+        inc a           ;DISK ERROR
+        jp ERRL
+GOODZF  pop af
+        inc e
+        ld a,e
+        cp #5           ;;;;
+        jr nz,ZFSRDT
+        ld e,0
+        inc d           ;;;;
+        call POSIT
+ZFSRDT  djnz RZFD1
+        xor a
+        ret
+
+;WRITE SECTORS
+WR_SEC  di
+        call LOGPOS
+        ret nz          ;NODISK
+WRITLP  ld hy,#3
+WRITLP1 ld ly,#3
+REWRTR  ld a,(WRP)      ;CHECK ON WRITE PROTECT
+        or a
+        ld a,3          ;;;;;
+        ret nz
+        call BRKCHK     ;CHECK ON BREAK
+        ret nz
+        push hl
+        push bc
+        ld a,e
+        inc a
+        call TO5F
+        ld a,#A0        ;WR COM
+        call TO1F
+        call WR_DATA
+        call FROM1F
+        pop bc
+        or a
+        jr z,GOODWR
+        pop hl
+        dec ly
+        jr nz,REWRTR
+        call RESET
+        call LOGPOS
+        ret nz          ;DISK ABSENT
+        dec hy
+        jr nz,WRITLP1
+        inc a
+        ret
+GOODWR  pop af
+        inc e
+        ld a,e
+        cp #10          ;;;;;
+        jr nz,NOSWRT
+        ld e,0
+        inc d
+        call POSIT
+NOSWRT  djnz WRITLP
+        xor a
+        ret
+
+CHECKTR                 ;CHECKING LEN OF TRK
+        di
+        ld a,(LTRK)
+        ld d,24
+        cp 43
+        jr c,$+4
+        ld d,62
+        cp 81
+        jr c,$+4
+        ld d,100
+        call LOGPOS
+        jr nz,$-3
+;       ld a,4
+;       out (#FE),a
+CHEERR  ld hl,0
+        ld a,#E0
+        call TO1F
+        call RD_DATA
+        call FROM1F
+        and #7F
+        jr z,CHEERR
+        ld a,h
+        cp #17
+        ret z
+        ld a,1
+        pop hl
+        call JPFASER
+        dw ERRL-$-2
+
+;RESET VG 93
+RES_VG  push af
+        xor a
+        call TOFF
+        ld a,(DRIVE)
+        and #3
+        or #3C
+        call TOFF
+        pop af
+        ret
+
+;********************
+;LOW LEVEL FOR DRIVER
+;********************
+BRKCHK  ld a,#FE
+        in a,(#FE)
+        and #1
+        jr nz,GOODBR
+        ld a,#7F
+        in a,(#FE)
+        and #1
+        jr z,BADBR
+GOODBR  xor a
+        ret
+BADBR   ld a,2
+        or a
+        ret
+POSIT   call CALCFF
+        ld a,d
+        srl a
+        call TO7F
+        ld a,(DRIVE)
+        and %1100
+        rrca
+        rrca
+        or #18
+        call TO1F
+        jp WAITFF
+
+;**************************
+;LOGIC POSITION ;
+;EXIT: z-ALL GOOD,nz-ERRORS
+;      D0-NODISK
+;      D3-BAD FORMAT
+;**************************
+LOGPOS  ld a,(DRIVE)
+        and #3
+        ld c,a
+        ld a,(LASTDR)
+        or c
+        call TOFF
+STRMOT  ld a,#8         ;RESTORE MOTOR
+        call TO1F
+        call FROM1F
+        bit 7,a
+        jr nz,STRMOT
+        and #40         ;TAKE WRITE PROTECT
+        ld (WRP),a
+        ld a,%11010000  ;BREAK HEAD
+        call TO1F
+        call SORSET     ;set NEW BRK ON #5CC2
+        dw NODSK
+        push de
+        push bc
+        ld (NODSK+1),sp
+        ld ix,#3DB2     ;FIND INDEX(IF FINDED THEN ret,
+        call TODOS      ;ELSE BREAKED ON #5CC2
+        di
+        pop bc
+        pop de
+RELOG   push de         ;ALL RIGHT (DISK NOT ABSENT)
+        call CALCFF
+        srl d
+RELL    call LD_INF     ;READ INFO
+        bit 7,a
+        jr nz,FREED
+        or a
+        jr nz,RELL
+        ld a,(SCAN_B)   ;COMPARE TRK
+        call TO3F
+        cp d
+        pop de
+        jr z,TRKOK      ;POSIT IF FALSE
+        call POSIT
+        jr RELOG
+TRKOK   ld a,(SCAN_B+1) ;or COMPARE SIDE
+        ld c,a
+        ld a,d
+        and 1
+        cp c
+        ret z
+        call CALCFF
+        xor a
+        ret
+FREED   pop de          ;DISK NOT FORMATTED
+        ld a,1          ;;
+        or a
+        ret
+
+;*************************************************
+;LOAD HEADER
+;ON EXIT ;D0-D6=REGISTER #1F
+;        ;D7-z=SECTROR FOUNDED ;nz=SEC NOT FOUNDED
+;*************************************************
+LD_INF  push hl         ;SCAN SECTOR
+        push bc
+LD_ERR  ld hl,SCAN_B
+        ld (hl),#FF
+        ld a,#C0        ;READ ADRESS
+        call TO1F      ;
+        call RD_DATA
+        call FROM1F
+        and #7F
+        ld c,a
+        ld a,(SCAN_B)
+        and #80
+        or c
+        pop bc
+        pop hl
+        ret
+
+BADPR   pop bc,hl
+        ld a,#10
+        or a
+        ret
+
+RESET   ld a,82         ;RESET DRIVE TO 0 TRK
+        call TO3F
+        call CALCFF
+        ld a,8
+        call TO1F
+        jr WAITFF
+
+
+SORSET  ld a,#C3        ;SETTING NEW ADRESS ON #5CC2
+        ld (#5CC2),a    ;ADRESS TAKEN FROM (sp)
+        ex (sp),hl
+        ld a,(hl)
+        ld (#5CC3),a
+        inc hl
+        ld a,(hl)
+        ld (#5CC4),a
+        inc hl
+        ex (sp),hl
+        ret
+
+WAITFF  ld ix,#3EF5
+        call TODOS
+        di
+        ret
+RD_DATA ld ix,#3FE5
+        ld c,#7F
+        jr TODOS
+WR_DATA ld ix,#3FCA
+        ld c,#7F
+        jr TODOS
+CALCFF  ld a,(DRIVE)
+        and #3
+        or #3C
+        bit 0,d
+        jr z,TOSYS
+        res 4,a
+TOSYS   call TOFF
+        and #3C
+        ld (LASTDR),a
+        ret
+
+TOFF    ld c,#FF
+        jr TOPORT
+TO7F    ld c,#7F
+        jr TOPORT
+TO3F    ld c,#3F
+        jr TOPORT
+TO5F    ld c,#5F
+        jr TOPORT
+TO1F    ld c,#1F
+TOPORT  ld ix,#2A53
+TODOS   push ix
+        jp #3D2F
+DRVE
+
+DRIVE   db 0            ;DRIVE NUMBER
+LTRK    db #F3
+FROM1F  push hl,de,bc   ;TAKE 1F
+        ld (LASTSP+1),sp
+        ld ix,SYSRET
+        call SORSET
+        dw SYSRET
+        ld d,#01
+        ld ix,#3F33
+        call TODOS
+SYSRET  ld a,b
+LASTSP  ld sp,#0000
+        pop bc,de,hl
+        di
+        ret
+NODSK   ld sp,0         ;BREAKPOINT FOR NODISK
+        di
+        pop bc
+        pop de
+        ld a,7          ;NODISK
+        or a
+        ret
+SCAN_B  ds 6,0          ;FOR SCANER
+WRP     db 0            ;WRITE PROTECT
+LASTDR  db #2C
+

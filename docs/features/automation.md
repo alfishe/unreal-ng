@@ -1,0 +1,550 @@
+# Automation & Control Interface
+
+> CLI, WebAPI, Lua, Python - Multiple paths to programmatic control
+
+## Architecture Overview
+
+```mermaid
+graph TB
+    subgraph "External Tools"
+        CLI[CLI/Telnet Client]
+        HTTP[REST Client]
+        WS[Websocket Client]
+        PY[Python Script]
+        LUA[Lua Script]
+    end
+    
+    subgraph "Transport Layer"
+        TCLI[TCP CLI Server :8765]
+        WEB[HTTP + WebSocket :8090]
+        EMB[Embedded Interpreters]
+    end
+    
+    subgraph "Unreal-NG Core"
+        ECI[Emulator Control Interface]
+        EM[EmulatorManager]
+        EMU[Emulator Instances]
+    end
+    
+    CLI --> TCLI
+    HTTP --> WEB
+    WS --> WEB
+    PY --> EMB
+    LUA --> EMB
+    
+    TCLI --> ECI
+    WEB --> ECI
+    EMB --> ECI
+    
+    ECI --> EM
+    EM --> EMU
+```
+
+---
+
+## Command Line Interface (CLI)
+
+### Connection
+```bash
+# Connect via telnet (port 8765)
+telnet localhost 8765
+
+# Or use netcat
+nc localhost 8765
+```
+
+### Command Reference
+
+#### Lifecycle Management
+```
+list                    # List all emulator instances
+create [model]          # Create new instance
+start                   # Start selected instance
+stop / remove           # Destroy instance
+select <uuid>           # Set active instance
+status                  # Show all instances status
+models                  # List supported models and RAM configurations
+```
+
+Supported models: `48K`, `128K`, `PENTAGON` (128/256/512/1024K), `PLUS3`, `SCORPION`, `PROFI`, `KAY`, `ATM710`, `ATM450`, `ATM3`, `TSL`, `PHOENIX`
+
+#### Execution Control
+```
+pause                   # Pause emulation
+resume                  # Resume emulation
+reset                   # Hardware reset
+step / stepin           # Execute one instruction
+stepover                # Step over CALL/RST
+steps <N>               # Execute N instructions
+run_frame               # Run one video frame
+run_frames <N>          # Run N video frames
+run_tstates <N>         # Run N T-states (1 = ULA step / 2 pixels)
+run_to_scanline <N>     # Run until scanline N boundary
+run_scanlines <N>       # Run N scanlines
+run_to_pixel            # Run to next screen pixel
+run_to_interrupt        # Run until next interrupt
+```
+
+#### State Inspection
+```
+registers               # Show all Z80 registers
+reg <name>              # Get single register by name
+reg get <name>          # Get single register (alias)
+reg <name> <value>      # Set register value
+reg set <name> <value>  # Set register (alias)
+memory <addr> [len]     # Hex dump memory
+state memory            # Bank mapping info
+state screen            # Video state
+state audio             # Sound chip state
+state ports             # I/O port state
+state sysvars           # ZX-Spectrum system variables
+```
+
+#### Breakpoints
+```
+bp <addr>               # Set execution breakpoint
+wp <addr> <r|w|rw>      # Set memory watchpoint
+bport <port> <in|out>   # Set I/O breakpoint
+bplist                  # List all breakpoints
+bpclear [id|all]        # Remove breakpoints
+bpon / bpoff            # Toggle breakpoints
+```
+
+#### Labels & Symbols
+```
+label <name>            # Get label by name
+label add <name> <addr> # Add label (--type, --module, --comment options)
+label remove <name>     # Remove label
+label toggle <name>     # Toggle active state
+labels                  # List all labels (--module, --type, --from, --to filters)
+symbols load <file>     # Load symbol file (.sld/.sym/.map)
+symbols save <file>     # Save symbols to file
+symbols clear           # Clear all symbols
+symbols info            # Show symbol count
+```
+
+#### Media Operations
+```
+open <file>             # Auto-detect and load file
+snapshot save <file>    # Save snapshot (.sna/.z80)
+snapshot info           # Current snapshot status
+# Tape transport (see command-interface.md §10 for the full tables)
+tape load <file>        # Load tape image (.tap/.tzx/.csw)
+tape eject              # Eject: stop playback, drop image and catalog
+tape play               # Start at cursor; resume in place when paused
+tape pause              # Freeze mid-block; next play resumes there
+tape stop               # Terminal stop (invalidates the image)
+tape rewind             # Rewind to block 0 (image kept)
+tape seek <index>       # Position head at catalog block <index>
+tape pos                # One-line playback position
+tape blocks             # Block catalog table
+tape info               # Detailed tape status (format, plan, features)
+
+# Tape audio bridge (pure file conversions, no emulator state)
+tape render <img> [--blocks N|N-M] [--rate N] [--amp X] [--invert] -o out.wav|out.flac
+tape import <snd> [--target auto|tzx|tap] [--hysteresis X] -o out.tzx|out.tap
+
+disk insert/eject       # Disk control
+disk catalog            # List TR-DOS directory
+```
+
+#### Disk Operations
+```
+disk insert <drive> <file>      # Insert disk image (A-D or 0-3)
+disk eject <drive>              # Eject disk
+disk create <drive> [model]     # Create blank disk (trdos80, trdos40, plusd)
+disk catalog <drive>            # List TR-DOS directory
+disk info <drive>               # Drive and geometry info
+disk sector <drive> <cyl> <side> <sec>   # Read sector (logical number)
+disk track <drive> <cyl> <side>          # Track summary with sectors
+```
+
+Track output includes:
+- `raw_size`: actual track length in bytes (6250 nominal MFM, 3125 FM, variable for real-drive dumps)
+- `encoding`: MFM or FM (single density)
+- Sector list with ID fields (C/H/R/N), CRC status, deleted-data marks
+
+#### Features & Settings
+```
+feature list            # List all toggleable features
+feature <name> on/off   # Toggle feature
+setting <name> [value]  # Query or set configuration
+```
+
+#### VideoWall Control
+```
+videowall singlesync on [id]    # Enable single sync mode (sync all tiles to one emulator)
+videowall singlesync off        # Disable single sync mode (independent tile rendering)
+```
+
+---
+
+## WebAPI (REST)
+
+### Base URL
+```
+http://localhost:8090/api
+```
+
+### OpenAPI/Swagger
+Interactive documentation available at `/api/swagger`
+
+### Endpoints
+
+#### Emulator Management
+| Method | Endpoint | Description |
+|:-------|:---------|:------------|
+| GET | `/api/v1/emulator` | List all instances |
+| GET | `/api/v1/emulator/models` | List available machine models |
+| POST | `/api/v1/emulator/create` | Create new instance |
+| POST | `/api/v1/emulator/start` | Create and start instance |
+| DELETE | `/api/v1/emulator/{id}` | Destroy instance |
+| GET | `/api/v1/emulator/{id}` | Instance details |
+| POST | `/api/v1/emulator/{id}/model` | Switch machine model |
+
+#### Execution Control
+| Method | Endpoint | Description |
+|:-------|:---------|:------------|
+| POST | `/api/v1/emulator/{id}/start` | Start |
+| POST | `/api/v1/emulator/{id}/stop` | Stop |
+| POST | `/api/v1/emulator/{id}/pause` | Pause |
+| POST | `/api/v1/emulator/{id}/resume` | Resume |
+| POST | `/api/v1/emulator/{id}/reset` | Reset |
+| POST | `/api/v1/emulator/{id}/step` | Step one instruction |
+| POST | `/api/v1/emulator/{id}/run_frame` | Run one frame |
+| POST | `/api/v1/emulator/{id}/run_frames` | Run N frames |
+| POST | `/api/v1/emulator/{id}/run_tstates` | Run N T-states |
+| POST | `/api/v1/emulator/{id}/run_to_scanline` | Run to scanline N |
+| POST | `/api/v1/emulator/{id}/run_scanlines` | Run N scanlines |
+| POST | `/api/v1/emulator/{id}/run_to_pixel` | Run to next pixel |
+| POST | `/api/v1/emulator/{id}/run_to_interrupt` | Run to interrupt |
+
+#### State & Memory
+| Method | Endpoint | Description |
+|:-------|:---------|:------------|
+| GET | `/api/v1/emulator/{id}/registers` | All CPU registers |
+| GET | `/api/v1/emulator/{id}/registers/{name}` | Single register |
+| PUT | `/api/v1/emulator/{id}/registers/{name}` | Set register |
+| GET | `/api/v1/emulator/{id}/memory?addr=&len=` | Memory dump |
+| PUT | `/api/v1/emulator/{id}/memory` | Poke memory |
+
+#### Labels & Symbols
+| Method | Endpoint | Description |
+|:-------|:---------|:------------|
+| GET | `/api/v1/emulator/{id}/labels` | List labels (query: module, type, bank, from, to, active) |
+| POST | `/api/v1/emulator/{id}/labels` | Add label |
+| DELETE | `/api/v1/emulator/{id}/labels` | Clear all labels |
+| GET | `/api/v1/emulator/{id}/labels/{name}` | Get label by name |
+| DELETE | `/api/v1/emulator/{id}/labels/{name}` | Remove label |
+| PUT | `/api/v1/emulator/{id}/labels/{name}` | Update label |
+| POST | `/api/v1/emulator/{id}/symbols/load` | Load symbol file |
+| POST | `/api/v1/emulator/{id}/symbols/save` | Save symbols to file |
+
+#### Files & Snapshots
+| Method | Endpoint | Description |
+|:-------|:---------|:------------|
+| POST | `/emulators/{id}/open` | Load file |
+| POST | `/emulators/{id}/snapshot/save` | Save snapshot |
+| GET | `/emulators/{id}/snapshot/info` | Snapshot status |
+
+#### Tape Control
+Full parity with the CLI `tape` commands, the Lua `tape_*` functions and the Python `tape_*` methods (identical states and catalog indices). Scopes under `/api/v1/emulator/{id}/tape` — see [webapi-interface.md § Tape Control](../emulator/design/control-interfaces/webapi-interface.md#tape-control).
+
+| Method | Endpoint | Description |
+|:-------|:---------|:------------|
+| POST | `/api/v1/emulator/{id}/tape/load` | Load tape image (body `path`) |
+| POST | `/api/v1/emulator/{id}/tape/eject` | Eject: drop image and catalog |
+| POST | `/api/v1/emulator/{id}/tape/play` | Start / resume in place |
+| POST | `/api/v1/emulator/{id}/tape/pause` | Freeze mid-block |
+| POST | `/api/v1/emulator/{id}/tape/stop` | Terminal stop |
+| POST | `/api/v1/emulator/{id}/tape/rewind` | Rewind to block 0 (image kept) |
+| POST | `/api/v1/emulator/{id}/tape/seek` | Seek to block (body `block`) |
+| GET | `/api/v1/emulator/{id}/tape` | Full snapshot: state, position, plan, blocks |
+| GET | `/api/v1/emulator/{id}/tape/info` | Alias of `GET /tape` |
+| GET | `/api/v1/emulator/{id}/tape/blocks/{index}` | Block descriptor + hex preview |
+| POST | `/api/v1/emulator/{id}/tape/render` | Tape image → WAV/FLAC |
+| POST | `/api/v1/emulator/{id}/tape/import` | WAV/FLAC/MP3 → .tzx/.tap |
+
+#### Disk Operations
+| Method | Endpoint | Description |
+|:-------|:---------|:------------|
+| GET | `/api/v1/emulator/{id}/disk` | List all drives |
+| GET | `/api/v1/emulator/{id}/disk/{drive}` | Drive info (A-D or 0-3) |
+| POST | `/api/v1/emulator/{id}/disk/{drive}/insert` | Insert disk image |
+| POST | `/api/v1/emulator/{id}/disk/{drive}/create` | Create blank disk |
+| POST | `/api/v1/emulator/{id}/disk/{drive}/eject` | Eject disk |
+| GET | `/api/v1/emulator/{id}/disk/{drive}/info` | Disk geometry and catalog |
+| GET | `/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}` | Read sector (parsed) |
+| GET | `/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}/raw` | Read sector (raw bytes) |
+| GET | `/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}` | Track summary |
+| GET | `/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}/raw` | Raw track bytes |
+| GET | `/api/v1/emulator/{id}/disk/{drive}/image` | Whole image dump |
+
+**Track response fields** (universal track model):
+```json
+{
+  "raw_size": 6250,           // Track length in bytes (variable: 3125 FM, 6208-6464 real drives)
+  "encoding": "MFM",          // "MFM" or "FM" (single density)
+  "sector_count": 16,
+  "sectors": [{
+    "id_cyl": 0, "id_head": 0, "id_sector": 1, "id_size_code": 1,
+    "id_crc_valid": true,
+    "has_data": true, "data_size": 256, "data_crc_valid": true,
+    "deleted": false
+  }]
+}
+```
+
+**Raw track response** (`/track/{cyl}/{side}/raw`):
+```json
+{
+  "raw_size": 6250,
+  "encoding": "MFM",
+  "raw_base64": "...",            // Track stream from index pulse
+  "clock_bitmap_base64": "..."    // Bit i=1 marks sync byte (A1/C2 address marks)
+}
+```
+
+#### VideoWall Control
+| Method | Endpoint | Description |
+|:-------|:---------|:------------|
+| POST | `/videowall/singlesync` | Set single sync mode |
+
+**Request body:**
+```json
+{
+  "enable": true,
+  "emulator_id": "optional-uuid"
+}
+```
+
+#### Machine Model Switching
+Switch between ZX Spectrum models at runtime:
+```bash
+# Get available models
+curl http://localhost:8090/api/v1/emulator/models
+
+# Switch to Spectrum 48K
+curl -X POST http://localhost:8090/api/v1/emulator/{id}/model \
+  -H "Content-Type: application/json" \
+  -d '{"model": "48K"}'
+
+# Switch to Pentagon 512K
+curl -X POST http://localhost:8090/api/v1/emulator/{id}/model \
+  -H "Content-Type: application/json" \
+  -d '{"model": "PENTAGON", "ram_size": 512}'
+```
+
+**Note**: Model switching destroys the current emulator instance and creates a new one. The response includes both old and new emulator IDs.
+
+#### Command Batching
+For VideoWall and bulk operations:
+```json
+POST /batch
+{
+  "commands": [
+    {"id": "uuid1", "action": "open", "file": "game1.z80"},
+    {"id": "uuid2", "action": "open", "file": "game2.z80"},
+    {"id": "uuid3", "action": "reset"}
+  ]
+}
+```
+
+---
+
+## Lua Scripting
+
+### Embedded Lua 5.4.7
+Scripts run in-process with direct access to emulator API.
+
+### Example: Simple Game Bot
+```lua
+-- Wait for specific memory value
+function waitForLives(targetLives)
+    while emu.peek(0x5C00) ~= targetLives do
+        emu.step()
+    end
+end
+
+-- Auto-fire script
+function autofire()
+    while true do
+        emu.keyDown("z")    -- Fire
+        emu.runFrames(2)
+        emu.keyUp("z")
+        emu.runFrames(5)
+    end
+end
+```
+
+### API Objects
+- `emu` - Emulator control (step, run, pause, reset)
+- `memory` - Memory access (peek, poke, dump)
+- `cpu` - Register access
+- `sound` - AY chip control
+- `disk` - Disk operations
+- `videowall` - VideoWall control
+- `tape_*` / `feature_*` globals - Full tape transport, audio bridge and feature toggles (same surface as the CLI `tape` / `feature` commands)
+
+### Tape Control
+```lua
+-- Same names, states and catalog indices as `tape` / POST /tape/*
+tape_load("/path/to/game.tap")
+tape_seek(4)
+tape_play()
+local pos = tape_pos()      -- {state="playing", block=4, ...}
+local blocks = tape_blocks() -- array of per-block tables
+print(tape_info().total_seconds)
+
+-- Fast/turbo tape toggles (same switch as `setting fast_tape/turbo_tape`)
+feature_set("fasttape", true)
+feature_set("turbotape", true)
+
+-- Offline audio bridge (pure file conversions)
+tape_render("game.tzx", "out.wav", {first_block=2, last_block=5})
+tape_import("recording.wav", "imported.tzx")
+```
+
+### VideoWall Control
+```lua
+-- Enable single sync mode (all tiles sync to first emulator)
+videowall.setSingleSync(true)
+
+-- Enable single sync to specific emulator
+videowall.setSingleSync(true, "emulator-uuid")
+
+-- Disable single sync mode
+videowall.setSingleSync(false)
+```
+
+---
+
+## Python Integration
+
+### Embedded Python 3
+Full Python interpreter with pybind11 bindings.
+
+### Example: AI Training Loop
+```python
+import emu
+
+def get_reward():
+    """Calculate reward from game state"""
+    score = emu.peek16(SCORE_ADDR)
+    lives = emu.peek(LIVES_ADDR)
+    return score * 10 + lives * 100
+
+def training_step(action):
+    # Take action
+    emu.set_joystick(action)
+    
+    # Run one frame
+    emu.run_frames(1)
+    
+    # Get observation
+    screen = emu.get_screen_buffer()  # numpy array
+    reward = get_reward()
+    done = emu.peek(LIVES_ADDR) == 0
+    
+    return screen, reward, done
+```
+
+### Advanced Features
+- NumPy integration for screen buffer access
+- Async event loop support (planned)
+- Virtual environment package management (planned)
+
+### Tape Control
+```python
+import emu
+
+# Same names, states and catalog indices as `tape` / POST /tape/*
+emu.tape_load("/path/to/game.tap")
+emu.tape_seek(4)
+emu.tape_play()
+pos = emu.tape_pos()       # {"state": "playing", "block": 4, ...}
+blocks = emu.tape_blocks() # list of per-block dicts
+print(emu.tape_info()["total_seconds"])
+
+# Fast/turbo tape toggles (same switch as `setting fast_tape/turbo_tape`)
+emu.feature_set("fasttape", True)
+emu.feature_set("turbotape", True)
+
+# Offline audio bridge (pure file conversions)
+emu.tape_render("game.tzx", "out.wav", options={"first_block": 2, "last_block": 5})
+emu.tape_import("recording.wav", "imported.tzx")
+```
+
+### VideoWall Control
+```python
+import videowall
+
+# Enable single sync mode (all tiles sync to first emulator)
+videowall.set_single_sync(True)
+
+# Enable single sync to specific emulator
+videowall.set_single_sync(True, emulator_id="uuid-string")
+
+# Disable single sync mode
+videowall.set_single_sync(False)
+```
+
+---
+
+## Feature Parity Matrix
+
+| Feature | CLI | WebAPI | Lua | Python | Qt Menu |
+|:--------|:---:|:------:|:---:|:------:|:-------:|
+| Create/Destroy | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Model Switch | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Pause/Resume | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Step/Run | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Registers | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Memory R/W | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Breakpoints | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Labels/Symbols | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Load/Save | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Tape Transport (load/play/pause/seek/…) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Tape Inspection (pos/blocks/info) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Tape Audio Bridge (render/import) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Feature Toggle | ✅ | ✅ | ✅ | ✅ | 🔶 |
+| VideoWall Control | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Keyboard Input | ❌ | ✅ | ✅ | ✅ | ❌ |
+| Screen Buffer | ❌ | ✅ | ✅ | ✅ | ❌ |
+| Event Callbacks | ❌ | 🔶 | 🔶 | 🔶 | ❌ |
+
+---
+
+## Planned: Advanced AI Agent API
+
+### Perception (Sensing)
+```python
+emu.get_screen_buffer()           # Screen as numpy array
+emu.peek(addr) / emu.peek_range() # Memory access
+emu.get_registers()               # Full CPU state
+emu.find_in_memory(pattern)       # Pattern search
+```
+
+### Action (Affecting)
+```python
+emu.press_key(key) / emu.release_key(key)
+emu.set_joystick(direction, fire)
+emu.poke(addr, value)
+emu.save_state(slot) / emu.load_state(slot)
+```
+
+### Control
+```python
+emu.run_frames(n) / emu.run_tstates(n)
+emu.pause() / emu.resume()
+emu.reset()
+await emu.wait_for_interrupt()
+await emu.wait_for_mem_write(addr)
+await emu.wait_for_raster_pos(line, tstate)
+```
+
+---
+
+## See Also
+- [Debugging](debugging.md) - Breakpoint details
+- [ECI Command Surface](../emulator/design/control-interfaces/) - Full specification

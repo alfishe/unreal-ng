@@ -13,6 +13,7 @@
 #include <sstream>
 #include <thread>
 
+#include "common/threadhelper.h"
 #include "emulator/python_emulator.h"
 
 
@@ -377,50 +378,14 @@ static void registerEmulatorBindings()
 
     main.def("emulator_manager_list", []() { return EmulatorManager::GetInstance()->GetEmulatorIds(); });
 
-    // Register Emulator class
-    py::class_<Emulator, std::shared_ptr<Emulator>>(main, "Emulator")
-        .def("init", &Emulator::Init)
-        .def("get_uuid", &Emulator::GetUUID)
-        .def("is_running", &Emulator::IsRunning)
-        .def("get_pc",
-             [](Emulator& emu) {
-                 auto* s = emu.GetZ80State();
-                 return s ? s->pc : 0;
-             })
-        .def("get_sp",
-             [](Emulator& emu) {
-                 auto* s = emu.GetZ80State();
-                 return s ? s->sp : 0;
-             })
-        .def("get_af",
-             [](Emulator& emu) {
-                 auto* s = emu.GetZ80State();
-                 return s ? s->af : 0;
-             })
-        .def("read_memory", [](Emulator& emu, uint16_t addr) { return emu.GetMemory()->DirectReadFromZ80Memory(addr); })
-        .def("get_breakpoint_manager", &Emulator::GetBreakpointManager, py::return_value_policy::reference)
-        // Frame stepping methods
-        .def("run_frame", [](Emulator& emu, bool skipBP) { emu.RunFrame(skipBP); },
-             py::arg("skip_breakpoints") = true)
-        .def("run_frames", [](Emulator& emu, unsigned count, bool skipBP) { emu.RunNFrames(count, skipBP); },
-             py::arg("count"), py::arg("skip_breakpoints") = true)
-        // Atomic stepping methods
-        .def("run_tstates", [](Emulator& emu, unsigned tstates, bool skipBP) { emu.RunTStates(tstates, skipBP); },
-             py::arg("tstates"), py::arg("skip_breakpoints") = true)
-        .def("run_to_scanline", [](Emulator& emu, unsigned scanline, bool skipBP) { emu.RunUntilScanline(scanline, skipBP); },
-             py::arg("scanline"), py::arg("skip_breakpoints") = true)
-        .def("run_scanlines", [](Emulator& emu, unsigned count, bool skipBP) { emu.RunNScanlines(count, skipBP); },
-             py::arg("count"), py::arg("skip_breakpoints") = true)
-        .def("run_to_pixel", [](Emulator& emu, bool skipBP) { emu.RunUntilNextScreenPixel(skipBP); },
-             py::arg("skip_breakpoints") = true)
-        .def("run_to_interrupt", [](Emulator& emu, bool skipBP) { emu.RunUntilInterrupt(skipBP); },
-             py::arg("skip_breakpoints") = true)
-        .def("run_until_condition", [](Emulator& emu, py::function predicate, unsigned maxTStates) {
-                 emu.RunUntilCondition([&predicate](const Z80State& state) -> bool {
-                     return predicate(state.pc, state.af, state.bc, state.de, state.hl).cast<bool>();
-                 }, maxTStates);
-             },
-             py::arg("predicate"), py::arg("max_tstates") = 0);
+    // Alias the unreal_emulator module's Emulator class into __main__ instead
+    // of registering a second pybind11 type for the same C++ class: pybind11
+    // refuses duplicate type registration across modules ("type is already
+    // registered"), which used to break `import unreal_emulator` in the live
+    // app. The module binding is the single source of truth and includes the
+    // legacy methods (init/get_uuid/read_memory/get_breakpoint_manager/
+    // run_until_condition).
+    main.attr("Emulator") = py::module_::import("unreal_emulator").attr("Emulator");
 
     // Register BreakpointManager
     py::class_<BreakpointManager>(main, "BreakpointManager")
@@ -430,44 +395,7 @@ static void registerEmulatorBindings()
 
 void AutomationPython::threadFunc(AutomationPython* python)
 {
-    /// region <Make thread named for easy reading in debuggers>
-    const char* threadName = "automation_python";
-
-#ifdef __APPLE__
-#include <pthread.h>
-
-    pthread_setname_np(threadName);
-#endif
-#ifdef __linux__
-#include <pthread.h>
-    pthread_setname_np(pthread_self(), threadName);
-#endif
-#if defined _WIN32 && defined MSVC
-    static auto setThreadDescription = reinterpret_cast<HRESULT(WINAPI*)(HANDLE, PCWSTR)>(
-        GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription"));
-    if (setThreadDescription != nullptr)
-    {
-        wchar_t wname[24];
-        size_t retval;
-        mbstowcs_s(&retval, wname, threadName, sizeof(threadName) / sizeof(threadName[0]));
-        setThreadDescription(GetCurrentThread(), wname);
-    }
-#endif
-
-#if defined _WIN32 && defined __GNUC__
-    static auto setThreadDescription = reinterpret_cast<HRESULT(WINAPI*)(HANDLE, PCWSTR)>(
-        GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription"));
-    if (setThreadDescription != nullptr)
-    {
-        wchar_t wname[24];
-        size_t retval;
-        mbstate_t conversion;
-        mbsrtowcs_s(&retval, wname, (size_t)(sizeof(wname) / sizeof(wname[0])), &threadName,
-                    (size_t)(sizeof(threadName) / sizeof(threadName[0])), &conversion);
-        setThreadDescription(GetCurrentThread(), wname);
-    }
-#endif
-    /// endregion </Make thread named for easy reading in debuggers>
+    ThreadHelper::setThreadName("automation-python");
 
     using namespace std::chrono_literals;
 

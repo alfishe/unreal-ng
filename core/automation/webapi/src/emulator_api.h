@@ -53,6 +53,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::pauseEmulator, "/api/v1/emulator/{id}/pause", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::resumeEmulator, "/api/v1/emulator/{id}/resume", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::resetEmulator, "/api/v1/emulator/{id}/reset", drogon::Post);
+
+    // Switch machine model (stops current emulator, creates new one with different model)
+    ADD_METHOD_TO(EmulatorAPI::switchModel, "/api/v1/emulator/{id}/model", drogon::Post);
     // endregion Lifecycle Management
 
     // region Tape/Disk/Snapshot Control (implementation: api/tape_disk_api.cpp and api/snapshot_api.cpp)
@@ -60,9 +63,15 @@ public:
     ADD_METHOD_TO(EmulatorAPI::loadTape, "/api/v1/emulator/{id}/tape/load", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::ejectTape, "/api/v1/emulator/{id}/tape/eject", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::playTape, "/api/v1/emulator/{id}/tape/play", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::pauseTape, "/api/v1/emulator/{id}/tape/pause", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::stopTape, "/api/v1/emulator/{id}/tape/stop", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::rewindTape, "/api/v1/emulator/{id}/tape/rewind", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::seekTape, "/api/v1/emulator/{id}/tape/seek", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getTape, "/api/v1/emulator/{id}/tape", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getTapeInfo, "/api/v1/emulator/{id}/tape/info", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getTapeBlock, "/api/v1/emulator/{id}/tape/blocks/{index}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::renderTapeAudio, "/api/v1/emulator/{id}/tape/render", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::importTapeAudio, "/api/v1/emulator/{id}/tape/import", drogon::Post);
 
     // Disk control
     ADD_METHOD_TO(EmulatorAPI::insertDisk, "/api/v1/emulator/{id}/disk/{drive}/insert", drogon::Post);
@@ -219,6 +228,7 @@ public:
     // Memory inspection and manipulation
     // NOTE: Route order matters! More specific routes must come BEFORE wildcard routes
     ADD_METHOD_TO(EmulatorAPI::getRegisters, "/api/v1/emulator/{id}/registers", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::setRegister, "/api/v1/emulator/{id}/registers/{name}", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::getMemoryInfo, "/api/v1/emulator/{id}/memory/info", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getMemoryPage, "/api/v1/emulator/{id}/memory/{type}/{page}/{offset}", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::putMemoryPage, "/api/v1/emulator/{id}/memory/{type}/{page}/{offset}", drogon::Put);
@@ -265,6 +275,21 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getCalltraceProfilerEntries, "/api/v1/emulator/{id}/profiler/calltrace/entries",
                   drogon::Get);
 
+    // Port trace (PDR) control — runtime feature "porttrace" (implementation: api/porttrace_api.cpp)
+    ADD_METHOD_TO(EmulatorAPI::portTraceStart, "/api/v1/emulator/{id}/profiler/porttrace/start", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::portTraceStop, "/api/v1/emulator/{id}/profiler/porttrace/stop", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::portTracePause, "/api/v1/emulator/{id}/profiler/porttrace/pause", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::portTraceResume, "/api/v1/emulator/{id}/profiler/porttrace/resume", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::portTraceClear, "/api/v1/emulator/{id}/profiler/porttrace/clear", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getPortTraceStatus, "/api/v1/emulator/{id}/profiler/porttrace/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getPortTraceEvents, "/api/v1/emulator/{id}/profiler/porttrace/events", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getPortTraceFilter, "/api/v1/emulator/{id}/profiler/porttrace/filter", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::setPortTraceFilter, "/api/v1/emulator/{id}/profiler/porttrace/filter", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::setPortTraceConfig, "/api/v1/emulator/{id}/profiler/porttrace/config", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::savePortTrace, "/api/v1/emulator/{id}/profiler/porttrace/save", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::readPortTraceFile, "/api/v1/emulator/{id}/profiler/porttrace/readfile",
+                  drogon::Post);
+
     // Unified profiler control (all profilers at once)
     ADD_METHOD_TO(EmulatorAPI::unifiedProfilerStart, "/api/v1/emulator/{id}/profiler/start", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::unifiedProfilerStop, "/api/v1/emulator/{id}/profiler/stop", drogon::Post);
@@ -277,6 +302,10 @@ public:
     // region Keyboard Injection (implementation: api/keyboard_api.cpp)
     // Key operations
     ADD_METHOD_TO(EmulatorAPI::keyTap, "/api/v1/emulator/{id}/keyboard/tap", drogon::Post);
+    
+    // Videowall API
+    ADD_METHOD_TO(EmulatorAPI::setVideowallSingleSyncMode, "/api/v1/videowall/singlesync", drogon::Post);
+
     ADD_METHOD_TO(EmulatorAPI::keyPress, "/api/v1/emulator/{id}/keyboard/press", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::keyRelease, "/api/v1/emulator/{id}/keyboard/release", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::keyCombo, "/api/v1/emulator/{id}/keyboard/combo", drogon::Post);
@@ -287,7 +316,41 @@ public:
     ADD_METHOD_TO(EmulatorAPI::keyStatus, "/api/v1/emulator/{id}/keyboard/status", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::keyList, "/api/v1/emulator/{id}/keyboard/keys", drogon::Get);
     // endregion Keyboard Injection
+
+    // region TTD (Time-Travel Debug) (implementation: api/ttd_api.cpp)
+    // Full TTD automation surface (Phase 2 complete). Per parent TDD §10.4.
+    ADD_METHOD_TO(EmulatorAPI::getTTDStatus, "/api/v1/emulator/{id}/ttd/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::startTTD, "/api/v1/emulator/{id}/ttd/start", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::stopTTD, "/api/v1/emulator/{id}/ttd/stop", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::invalidateTTD, "/api/v1/emulator/{id}/ttd/invalidate", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::seekTTD, "/api/v1/emulator/{id}/ttd/seek", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::stepBackTTD, "/api/v1/emulator/{id}/ttd/step-back", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::stepForwardTTD, "/api/v1/emulator/{id}/ttd/step-forward", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::resumeTTD, "/api/v1/emulator/{id}/ttd/resume", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getTTDPosition, "/api/v1/emulator/{id}/ttd/position", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getTTDMarkers, "/api/v1/emulator/{id}/ttd/markers", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::dumpTTD, "/api/v1/emulator/{id}/ttd/dump", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::loadTTD, "/api/v1/emulator/{id}/ttd/load", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::findLastTTD, "/api/v1/emulator/{id}/ttd/find-last", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::stepInstructionTTD, "/api/v1/emulator/{id}/ttd/step-instruction", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::reverseStepTTD, "/api/v1/emulator/{id}/ttd/reverse-step", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::reverseContinueTTD, "/api/v1/emulator/{id}/ttd/reverse-continue", drogon::Post);
+    // endregion TTD
+
+    // region Labels/Symbols (implementation: api/debug_api.cpp)
+    ADD_METHOD_TO(EmulatorAPI::getLabels, "/api/v1/emulator/{id}/labels", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::addLabel, "/api/v1/emulator/{id}/labels", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::clearLabels, "/api/v1/emulator/{id}/labels", drogon::Delete);
+    ADD_METHOD_TO(EmulatorAPI::getLabel, "/api/v1/emulator/{id}/labels/{name}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::removeLabel, "/api/v1/emulator/{id}/labels/{name}", drogon::Delete);
+    ADD_METHOD_TO(EmulatorAPI::updateLabel, "/api/v1/emulator/{id}/labels/{name}", drogon::Put);
+    ADD_METHOD_TO(EmulatorAPI::loadSymbols, "/api/v1/emulator/{id}/symbols/load", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::saveSymbols, "/api/v1/emulator/{id}/symbols/save", drogon::Post);
+    // endregion Labels/Symbols
     METHOD_LIST_END
+
+    // Videowall API
+    void setVideowallSingleSyncMode(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
 
     // region Root and OpenAPI Methods (implementation: emulator_api.cpp)
     // Root redirect
@@ -343,6 +406,9 @@ public:
 
     void resetEmulator(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
+    void switchModel(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // endregion Lifecycle Management Methods
 
     // region Tape/Disk/Snapshot Control Methods (implementation: api/tape_disk_api.cpp and api/snapshot_api.cpp)
@@ -353,12 +419,27 @@ public:
                    const std::string& id) const;
     void playTape(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                   const std::string& id) const;
+    void pauseTape(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                   const std::string& id) const;
     void stopTape(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                   const std::string& id) const;
     void rewindTape(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                     const std::string& id) const;
+    void seekTape(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& id) const;
+    void getTape(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                 const std::string& id) const;
     void getTapeInfo(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                      const std::string& id) const;
+    void getTapeBlock(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id, const std::string& index) const;
+
+    // Tape audio bridge (tape-audio-bridge design §7.2) — pure file
+    // conversions; the instance scope is a surface convention only
+    void renderTapeAudio(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void importTapeAudio(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
     void insertDisk(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                     const std::string& id, const std::string& drive) const;
@@ -643,6 +724,8 @@ public:
     // Memory inspection and manipulation
     void getRegisters(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                       const std::string& id) const;
+    void setRegister(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id, const std::string& name) const;
     void getMemory(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                    const std::string& id, const std::string& addrStr) const;
     void putMemory(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
@@ -667,6 +750,24 @@ public:
                    const std::string& id) const;
     void getDisasmPage(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
+    // Labels/Symbols
+    void getLabels(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                   const std::string& id) const;
+    void addLabel(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& id) const;
+    void getLabel(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& id, const std::string& name) const;
+    void removeLabel(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id, const std::string& name) const;
+    void updateLabel(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id, const std::string& name) const;
+    void clearLabels(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) const;
+    void loadSymbols(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) const;
+    void saveSymbols(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) const;
     // endregion Debug Commands Methods
 
     // region Profiler Commands Methods (implementation: api/profiler_api.cpp)
@@ -756,6 +857,38 @@ public:
     void getUnifiedProfilerStatus(const drogon::HttpRequestPtr& req,
                                   std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                   const std::string& id) const;
+    // Port trace (PDR) control — runtime feature "porttrace"
+    void portTraceStart(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void portTraceStop(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void portTracePause(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void portTraceResume(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void portTraceClear(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getPortTraceStatus(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
+    void getPortTraceEvents(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
+    void getPortTraceFilter(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
+    void setPortTraceFilter(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
+    void setPortTraceConfig(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
+    void savePortTrace(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void readPortTraceFile(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                           const std::string& id) const;
+
     // endregion Profiler Commands Methods
 
     // region Keyboard Injection Methods (implementation: api/keyboard_api.cpp)
@@ -781,13 +914,44 @@ public:
                  const std::string& id) const;
     // endregion Keyboard Injection Methods
 
+    // region TTD Methods (implementation: api/ttd_api.cpp)
+    // Per parent TDD §10.4. Full surface available after Phase 2 completion.
+    void getTTDStatus(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void startTTD(const drogon::HttpRequestPtr& req,
+                  std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void stopTTD(const drogon::HttpRequestPtr& req,
+                 std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void invalidateTTD(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void seekTTD(const drogon::HttpRequestPtr& req,
+                 std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void stepBackTTD(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void stepForwardTTD(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void resumeTTD(const drogon::HttpRequestPtr& req,
+                   std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getTTDPosition(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getTTDMarkers(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void dumpTTD(const drogon::HttpRequestPtr& req,
+                 std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void loadTTD(const drogon::HttpRequestPtr& req,
+                 std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void findLastTTD(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void stepInstructionTTD(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void reverseStepTTD(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void reverseContinueTTD(const drogon::HttpRequestPtr& req,
+                              std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    // endregion TTD Methods
+
     // region Helper Methods (implementation: emulator_api.cpp)
 private:
-    // Get emulator by ID (UUID) or index (numeric)
-    // @param idOrIndex Either a UUID string or numeric index (0-based)
-    // @return Shared pointer to emulator, or nullptr if not found
-    std::shared_ptr<Emulator> getEmulatorByIdOrIndex(const std::string& idOrIndex) const;
-
     // Get emulator using global selection priority, then stateless fallback
     // First checks globally selected emulator, then falls back to stateless behavior
     // @return Shared pointer to emulator, or nullptr if no emulator can be selected
@@ -804,5 +968,15 @@ private:
                               std::function<std::string(std::shared_ptr<Emulator>)> action) const;
     // endregion Helper Methods
 };
+
+// -----------------------------------------------------------------------
+// Free-function helpers (declared in api::v1; implemented in emulator_api.cpp)
+// Available to any handler in the api::v1 namespace — usable from
+// ttd_api.cpp, state_audio_api.cpp, etc. without an EmulatorAPI instance.
+// -----------------------------------------------------------------------
+/// Resolve an emulator by ID (UUID) or numeric index.
+/// Does NOT auto-select; returns nullptr if not found.
+std::shared_ptr<Emulator> getEmulatorByIdOrIndex(const std::string& idOrIndex);
+
 }  // namespace v1
 }  // namespace api

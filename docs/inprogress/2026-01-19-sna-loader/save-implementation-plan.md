@@ -164,12 +164,12 @@ Implement:
 
 **Run core-tests for SNA loader:**
 ```bash
-cd /Volumes/TB4-4Tb/Projects/Test/unreal-ng
+cd .
 cmake --build build-standalone --target core-tests
 ./build-standalone/bin/core-tests --gtest_filter="LoaderSNA*"
 ```
 
-**New test cases to add in** [loader_sna_test.cpp](core/tests/loaders/loader_sna_test.cpp):
+**New test cases to add in** [loader_sna_test.cpp](core/tests/loaders/snapshot/loader_sna_test.cpp):
 
 | Test Name | Description |
 |-----------|-------------|
@@ -187,7 +187,7 @@ cmake --build build-standalone --target core-tests
 
 **Run Python WebAPI tests:**
 ```bash
-cd /Volumes/TB4-4Tb/Projects/Test/unreal-ng/tools/verification/webapi
+cd tools/verification/webapi
 python3 -m pytest src/ -k snapshot -v
 ```
 

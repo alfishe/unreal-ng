@@ -7,10 +7,14 @@
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "emulator/cpu/op_noprefix.h"
 #include "emulator/cpu/opcode_profiler.h"
 #include "emulator/emulator.h"
+#include "emulator/io/tape/tapefastload.h"
+#include "emulator/notifications.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/spectrumconstants.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/ulacontention.h"
 #include "stdafx.h"
@@ -174,21 +178,47 @@ void Z80::Z80Step(bool skipBreakpoints)
     // (e.g., TR-DOS ROM at $1EDD) can match the correct memory page.
     // Previously this was after breakpoint dispatch, causing page-specific breakpoints to fail.
 
-    // Execution address is within range [0x3D00 .. 0x3DFF] => Beta Disk Interface (TR-DOS) ROM must be activated
-    if (!(state.flags & CF_TRDOS) && (cpu.pch == 0x3D))
+    // TR-DOS ROM session tracking (port of the original UnrealSpeccy step() logic).
+    // Session flags are (re)armed by Memory::UpdateZ80Banks() on every paging change:
+    // - CF_SETDOSROM: armed while the 48K ROM slot is selected (p7FFD bit 4) with
+    //   Beta128 present. First opcode fetch in $3Dxx activates the TR-DOS session:
+    //   bank0 switches to the DOS ROM (bit 4 set) or service ROM (bit 4 clear).
+    // - CF_LEAVEDOSADR (Pentagon/Profi): active while in a TR-DOS session; closes it
+    //   once PC leaves the ROM area (pc >= $4000), restoring the regular
+    //   128K/48K ROM selected by p7FFD bit 4.
+    // - CF_LEAVEDOSRAM (other models): closes the session once code executes from a
+    //   RAM-mapped bank instead.
+    if (state.flags & CF_SETDOSROM)
     {
-        state.flags |= CF_TRDOS;
+        if (cpu.pch == 0x3D)  // Execution enters $3D00-$3DFF => activate TR-DOS ROM
+        {
+            state.flags |= CF_TRDOS;
 
-        // Apply ROM page changes
-        memory.UpdateZ80Banks();
+            // Apply ROM page changes
+            memory.UpdateZ80Banks();
+        }
     }
-    else if ((state.flags & CF_TRDOS) &&
-             (cpu.pch >= 0x40))  // When execution leaves ROM area (>= 0x4000) - DOS must be disabled
+    else if (state.flags & CF_LEAVEDOSADR)
     {
-        state.flags &= ~CF_TRDOS;
+        if (cpu.pch & 0xC0)  // PC > $3FFF closes TR-DOS
+        {
+            state.flags &= ~CF_TRDOS;
 
-        // Apply ROM page changes
-        memory.UpdateZ80Banks();
+            // Apply ROM page changes
+            memory.UpdateZ80Banks();
+        }
+    }
+    else if (state.flags & CF_LEAVEDOSRAM)
+    {
+        // Execution code from RAM address - disables TR-DOS ROM
+        uint8_t bank = (cpu.pc >> 14) & 3;
+        if (memory.GetMemoryBankMode(bank) == MemoryBankModeEnum::BANK_RAM)
+        {
+            state.flags &= ~CF_TRDOS;
+
+            // Apply ROM page changes
+            memory.UpdateZ80Banks();
+        }
     }
 
     /// endregion  </Ports logic>
@@ -234,9 +264,10 @@ void Z80::Z80Step(bool skipBreakpoints)
                 // Pause emulator (single source of truth)
                 emulator.Pause();
 
-                // Broadcast notification - breakpoint triggered
+                // Broadcast notification - breakpoint triggered (instance-tagged)
                 MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-                SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+                BreakpointTriggeredPayload* payload =
+                    new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, pc);
                 messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
                 // Wait until emulator resumed externally (by debugger or scripting engine)
@@ -245,42 +276,21 @@ void Z80::Z80Step(bool skipBreakpoints)
         }
     }
 
-    /* TODO: move to Ports class
-    if (state.flags & CF_SETDOSROM)
+    // Fast tape loading trap (design: docs/inprogress/2026-08-30-fast-tape-loading).
+    // A ROM LD-BYTES ($0556) invocation is replaced wholesale when armed: the
+    // block payload is copied straight from the tape image and the routine's
+    // documented exit state is emulated. Any decline is fully inert — the CPU
+    // just proceeds into the real ROM code. Runs after breakpoint dispatch so
+    // user breakpoints at $0556 keep firing, and outside the debug-mode guard
+    // so the trap is active in both debug and release sessions.
+    if (pc == ROMAddresses::LD_BYTES && _context->pTapeFastLoad != nullptr)
     {
-        if (cpu.pch == 0x3D)
+        if (_context->pTapeFastLoad->HandleLDBytesTrap(*this))
         {
-            state.flags |= CF_TRDOS;  // !!! add here TS memconf behaviour !!!
-            SetBanks();
+            // Trap consumed the invocation — the routine never executes
+            return;
         }
     }
-    else if (state.flags & CF_LEAVEDOSADR)
-    {
-        if (cpu.pch & 0xC0) // PC > 3FFF closes TR-DOS
-        {
-            state.flags &= ~CF_TRDOS;
-            SetBanks();
-        }
-
-        //if (config.trdos_traps)
-        //	state.wd.trdos_traps();
-    }
-    else if (state.flags & CF_LEAVEDOSRAM)
-    {
-        // Execution code from RAM address - disables TR-DOS ROM
-        uint8_t bank = (cpu.pc >> 14) & 3;
-        if (memory.GetMemoryBankMode(bank) == MemoryBankModeEnum::BANK_RAM)
-        {
-            state.flags &= ~CF_TRDOS;
-            SetBanks();
-        }
-
-        // WD93 logic
-        //if (config.trdos_traps)
-        //	state.wd.trdos_traps();
-    }
-     */
-    /// endregion  </Ports logic>
 
     if (cpu.vm1 && cpu.halted)
     {
@@ -428,7 +438,42 @@ uint8_t Z80::m1_cycle()
 
     // Record PC for current opcode (prefixes should not alter original PC)
     if (prefix == 0x0000)
+    {
         m1_pc = cpu.pc;
+
+        if (m1TraceHook)
+            m1TraceHook(m1_pc);
+
+        // Per-frame execution coverage for reverse search. One predictable
+        // branch on a plain bool when recording is off, which is the common
+        // case; the page lookup and the append only happen while a session is
+        // actually capturing. This is the only record that a frame executed a
+        // given address - instruction fetches are not journalled - so without
+        // it a reverse breakpoint has no choice but to replay every frame.
+        if (_context->ttdCoverageActive && _context->pTimeTravelManager != nullptr)
+        {
+            _context->pTimeTravelManager->RecordExecutedCoverage(
+                _memory->GetPhysPageForZ80Address(m1_pc), m1_pc);
+        }
+
+        // Phase 4 - access probe for Execute access type (TDD 9.2).
+        // Fires once per instruction at the M1 (instruction fetch) cycle.
+        if (_context->ttdProbe.IsArmed())
+        {
+            // Resolve the bank the opcode was fetched from, so a reverse
+            // breakpoint can distinguish "PC 0xC000 in page 3" from the same
+            // address reached with a different page banked in. Code executing
+            // from ROM reports kPhysPageNone.
+            const uint8_t execPhysPage = _memory->GetPhysPageForZ80Address(m1_pc);
+            if (_context->ttdProbe.Matches(m1_pc, ttd::TTDAccessType::Execute, 0, m1_pc, execPhysPage))
+            {
+                const auto& st = _context->emulatorState;
+                const ttd::TTDTimePoint tp{st.frame_counter, t};
+                _context->ttdProbe.RecordHit(tp, m1_pc, /*value=*/0, execPhysPage,
+                                              ttd::TTDAccessType::Execute);
+            }
+        }
+    }
 
     // Z80 CPU M1 cycle logic
     r_low = ((r_low + 1) & 0x7f) | (r_low & 0x80);  // Keep memory refresh register ticking
@@ -451,12 +496,13 @@ uint8_t Z80::m1_cycle()
 /// \return
 uint8_t Z80::rd(uint16_t addr, bool isExecution)
 {
-    // ULA memory contention: if accessing contended memory (0x4000-0x7FFF)
-    // during screen rendering on ZX-48K/128K, the CPU is stalled.
-    if (!isExecution && addr >= 0x4000 && addr <= 0x7FFF)
+    // ULA memory contention: accessing contended memory (0x4000-0x7FFF; on
+    // 128K also 0xC000+ with an odd page mapped) during screen rendering on
+    // ZX-48K/128K stalls the CPU.
+    if (!isExecution)
     {
         UlaContention* ula = _context->pUlaContention;
-        if (ula)
+        if (ula && ula->IsAddressContended(addr))
         {
             uint8_t delay = ula->GetContentionDelay();
             if (delay > 0)
@@ -466,7 +512,12 @@ uint8_t Z80::rd(uint16_t addr, bool isExecution)
 
     IncrementCPUCyclesCounter(3);
 
-    return (_memory->*MemIf->MemoryRead)(addr, isExecution);
+    uint8_t value = (_memory->*MemIf->MemoryRead)(addr, isExecution);
+
+    if (busTraceHook)
+        busTraceHook('R', addr, value);
+
+    return value;
 }
 
 /// Dispatching memory write method. Used directly from Z80 microcode (CPULogic and opcode)
@@ -475,12 +526,12 @@ uint8_t Z80::rd(uint16_t addr, bool isExecution)
 /// \param val
 void Z80::wd(uint16_t addr, uint8_t val)
 {
-    // ULA memory contention: if accessing contended memory (0x4000-0x7FFF)
-    // during screen rendering on ZX-48K/128K, the CPU is stalled.
-    if (addr >= 0x4000 && addr <= 0x7FFF)
+    // ULA memory contention: accessing contended memory (0x4000-0x7FFF; on
+    // 128K also 0xC000+ with an odd page mapped) during screen rendering on
+    // ZX-48K/128K stalls the CPU.
     {
         UlaContention* ula = _context->pUlaContention;
-        if (ula)
+        if (ula && ula->IsAddressContended(addr))
         {
             uint8_t delay = ula->GetContentionDelay();
             if (delay > 0)
@@ -491,6 +542,9 @@ void Z80::wd(uint16_t addr, uint8_t val)
     IncrementCPUCyclesCounter(3);
 
     (_memory->*MemIf->MemoryWrite)(addr, val);
+
+    if (busTraceHook)
+        busTraceHook('W', addr, val);
 }
 
 uint8_t Z80::in(uint16_t port)
@@ -512,6 +566,9 @@ uint8_t Z80::in(uint16_t port)
 
     // Let model-specific decoder to process port input
     uint8_t result = portDecoder.DecodePortIn(port, m1_pc);
+
+    if (busTraceHook)
+        busTraceHook('I', port, result);
 
     // Floating bus: if no hardware device decoded the port, the ULA returns
     // the video byte currently on the data bus.
@@ -553,6 +610,9 @@ void Z80::out(uint16_t port, uint8_t val)
 
     // Let model-specific decoder to process port output
     portDecoder.DecodePortOut(port, val, m1_pc);
+
+    if (busTraceHook)
+        busTraceHook('O', port, val);
 }
 
 void Z80::retn() {}
@@ -633,7 +693,14 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
 
     // Generate INT
     // TODO: move INT forming logic to Screen class since in reality it's formed by ULA / frame counters
-    if (!int_occurred && cpu.t >= int_start)
+    // Strict sampling (cpu.t > int_start): the ULA registers the INT signal one clock
+    // after the raster compare (MiSTer ula.sv: INT <= 1 on the next edge) and the CPU
+    // samples INT only at end-of-instruction edges - an instruction boundary landing
+    // exactly at int_start still sees INT inactive. Inclusive ">=" accepts 1T early,
+    // which shifts interrupt-locked raster effects by one T-state.
+    // Note: HALT quantizes INT detection to 4T boundaries; fine 2-pixel adjustments
+    // are handled in ScreenZX::SetBorderColor. See: docs/timing/pentagon-border-timing.md
+    if (!int_occurred && cpu.t > int_start)
     {
         int_occurred = true;
         cpu.int_pending = true;
@@ -693,8 +760,11 @@ void Z80::HandleINT(uint8_t vector)
     else
     {
         // IM2
+        // Raw memory access without T-state accounting: the vector fetch time
+        // is already included in interruptDuration below (rd() would add +3T per byte)
         uint16_t vectorAddress = vector + cpu.i * 0x100;
-        interruptHandlerAddress = rd(vectorAddress) + 0x100 * rd(vectorAddress + 1);
+        interruptHandlerAddress = (_memory->*MemIf->MemoryRead)(vectorAddress, false) +
+                                  0x100 * (_memory->*MemIf->MemoryRead)(vectorAddress + 1, false);
     }
     /// endregion </Determine interrupt handler address>
 
@@ -726,9 +796,12 @@ void Z80::HandleINT(uint8_t vector)
     /// endregion </Calculate INT duration>
 
     // Push return address to stack
+    // Raw memory access without T-state accounting: both stack write cycles
+    // are already included in interruptDuration above (wd() would add +3T per byte).
+    // Same approach as the original Unreal Speccy handle_int (MemIf->wm() without t increment)
     uint16_t sp = cpu.sp;
-    wd(--sp, cpu.pch);
-    wd(--sp, cpu.pcl);
+    (_memory->*MemIf->MemoryWrite)(--sp, cpu.pch);
+    (_memory->*MemIf->MemoryWrite)(--sp, cpu.pcl);
     cpu.sp = sp;
 
     // Jump to interrupt handler
@@ -906,3 +979,102 @@ void Z80::UpdateFeatureCache()
 }
 
 /// endregion </Feature Cache>
+
+/// region <Register Access API>
+
+// Static register metadata table
+static const Z80::RegisterInfo s_registers[] = {
+    // 8-bit main registers
+    {"A", false, false, [](const Z80State* s) -> uint16_t { return s->a; }, [](Z80State* s, uint16_t v) { s->a = static_cast<uint8_t>(v); }},
+    {"B", false, false, [](const Z80State* s) -> uint16_t { return s->b; }, [](Z80State* s, uint16_t v) { s->b = static_cast<uint8_t>(v); }},
+    {"C", false, false, [](const Z80State* s) -> uint16_t { return s->c; }, [](Z80State* s, uint16_t v) { s->c = static_cast<uint8_t>(v); }},
+    {"D", false, false, [](const Z80State* s) -> uint16_t { return s->d; }, [](Z80State* s, uint16_t v) { s->d = static_cast<uint8_t>(v); }},
+    {"E", false, false, [](const Z80State* s) -> uint16_t { return s->e; }, [](Z80State* s, uint16_t v) { s->e = static_cast<uint8_t>(v); }},
+    {"H", false, false, [](const Z80State* s) -> uint16_t { return s->h; }, [](Z80State* s, uint16_t v) { s->h = static_cast<uint8_t>(v); }},
+    {"L", false, false, [](const Z80State* s) -> uint16_t { return s->l; }, [](Z80State* s, uint16_t v) { s->l = static_cast<uint8_t>(v); }},
+    {"F", false, false, [](const Z80State* s) -> uint16_t { return s->f; }, [](Z80State* s, uint16_t v) { s->f = static_cast<uint8_t>(v); }},
+    {"I", false, false, [](const Z80State* s) -> uint16_t { return s->i; }, [](Z80State* s, uint16_t v) { s->i = static_cast<uint8_t>(v); }},
+    {"R", false, false, [](const Z80State* s) -> uint16_t { return s->r_low; }, [](Z80State* s, uint16_t v) { s->r_low = static_cast<uint8_t>(v); }},
+    // 8-bit alternate registers
+    {"A'", false, true, [](const Z80State* s) -> uint16_t { return s->alt.a; }, [](Z80State* s, uint16_t v) { s->alt.a = static_cast<uint8_t>(v); }},
+    {"B'", false, true, [](const Z80State* s) -> uint16_t { return s->alt.b; }, [](Z80State* s, uint16_t v) { s->alt.b = static_cast<uint8_t>(v); }},
+    {"C'", false, true, [](const Z80State* s) -> uint16_t { return s->alt.c; }, [](Z80State* s, uint16_t v) { s->alt.c = static_cast<uint8_t>(v); }},
+    {"D'", false, true, [](const Z80State* s) -> uint16_t { return s->alt.d; }, [](Z80State* s, uint16_t v) { s->alt.d = static_cast<uint8_t>(v); }},
+    {"E'", false, true, [](const Z80State* s) -> uint16_t { return s->alt.e; }, [](Z80State* s, uint16_t v) { s->alt.e = static_cast<uint8_t>(v); }},
+    {"H'", false, true, [](const Z80State* s) -> uint16_t { return s->alt.h; }, [](Z80State* s, uint16_t v) { s->alt.h = static_cast<uint8_t>(v); }},
+    {"L'", false, true, [](const Z80State* s) -> uint16_t { return s->alt.l; }, [](Z80State* s, uint16_t v) { s->alt.l = static_cast<uint8_t>(v); }},
+    {"F'", false, true, [](const Z80State* s) -> uint16_t { return s->alt.f; }, [](Z80State* s, uint16_t v) { s->alt.f = static_cast<uint8_t>(v); }},
+    // 8-bit index register halves
+    {"IXH", false, false, [](const Z80State* s) -> uint16_t { return s->xh; }, [](Z80State* s, uint16_t v) { s->xh = static_cast<uint8_t>(v); }},
+    {"IXL", false, false, [](const Z80State* s) -> uint16_t { return s->xl; }, [](Z80State* s, uint16_t v) { s->xl = static_cast<uint8_t>(v); }},
+    {"IYH", false, false, [](const Z80State* s) -> uint16_t { return s->yh; }, [](Z80State* s, uint16_t v) { s->yh = static_cast<uint8_t>(v); }},
+    {"IYL", false, false, [](const Z80State* s) -> uint16_t { return s->yl; }, [](Z80State* s, uint16_t v) { s->yl = static_cast<uint8_t>(v); }},
+    // 16-bit main registers
+    {"AF", true, false, [](const Z80State* s) -> uint16_t { return s->af; }, [](Z80State* s, uint16_t v) { s->af = v; }},
+    {"BC", true, false, [](const Z80State* s) -> uint16_t { return s->bc; }, [](Z80State* s, uint16_t v) { s->bc = v; }},
+    {"DE", true, false, [](const Z80State* s) -> uint16_t { return s->de; }, [](Z80State* s, uint16_t v) { s->de = v; }},
+    {"HL", true, false, [](const Z80State* s) -> uint16_t { return s->hl; }, [](Z80State* s, uint16_t v) { s->hl = v; }},
+    {"IX", true, false, [](const Z80State* s) -> uint16_t { return s->ix; }, [](Z80State* s, uint16_t v) { s->ix = v; }},
+    {"IY", true, false, [](const Z80State* s) -> uint16_t { return s->iy; }, [](Z80State* s, uint16_t v) { s->iy = v; }},
+    {"SP", true, false, [](const Z80State* s) -> uint16_t { return s->sp; }, [](Z80State* s, uint16_t v) { s->sp = v; }},
+    {"PC", true, false, [](const Z80State* s) -> uint16_t { return s->pc; }, [](Z80State* s, uint16_t v) { s->pc = v; }},
+    {"IR", true, false, [](const Z80State* s) -> uint16_t { return s->ir_; }, [](Z80State* s, uint16_t v) { s->ir_ = v; }},
+    // 16-bit alternate registers
+    {"AF'", true, true, [](const Z80State* s) -> uint16_t { return s->alt.af; }, [](Z80State* s, uint16_t v) { s->alt.af = v; }},
+    {"BC'", true, true, [](const Z80State* s) -> uint16_t { return s->alt.bc; }, [](Z80State* s, uint16_t v) { s->alt.bc = v; }},
+    {"DE'", true, true, [](const Z80State* s) -> uint16_t { return s->alt.de; }, [](Z80State* s, uint16_t v) { s->alt.de = v; }},
+    {"HL'", true, true, [](const Z80State* s) -> uint16_t { return s->alt.hl; }, [](Z80State* s, uint16_t v) { s->alt.hl = v; }},
+};
+
+static constexpr size_t s_registerCount = sizeof(s_registers) / sizeof(s_registers[0]);
+
+const Z80::RegisterInfo* Z80::GetRegisterInfo()
+{
+    return s_registers;
+}
+
+size_t Z80::GetRegisterCount()
+{
+    return s_registerCount;
+}
+
+const Z80::RegisterInfo* Z80::FindRegister(const std::string& name)
+{
+    std::string normalized = name;
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), ::toupper);
+
+    for (size_t i = 0; i < s_registerCount; i++)
+    {
+        if (normalized == s_registers[i].name)
+            return &s_registers[i];
+    }
+
+    // Handle aliases
+    if (normalized == "XH") return FindRegister("IXH");
+    if (normalized == "XL") return FindRegister("IXL");
+    if (normalized == "YH") return FindRegister("IYH");
+    if (normalized == "YL") return FindRegister("IYL");
+
+    return nullptr;
+}
+
+bool Z80::GetRegisterValue(Z80State* state, const std::string& name, uint16_t& value, bool& is16bit)
+{
+    const RegisterInfo* info = FindRegister(name);
+    if (!info) return false;
+
+    value = info->getter(state);
+    is16bit = info->is16bit;
+    return true;
+}
+
+bool Z80::SetRegisterValue(Z80State* state, const std::string& name, uint16_t value)
+{
+    const RegisterInfo* info = FindRegister(name);
+    if (!info) return false;
+
+    info->setter(state, value);
+    return true;
+}
+
+/// endregion </Register Access API>

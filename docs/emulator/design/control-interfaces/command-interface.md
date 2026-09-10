@@ -326,12 +326,9 @@ Started emulator instance: emu-pentagon-87654321-dcba-4321-8765-987654321fed
 
 # List all instances
 > list
-┌─────────────────────────────────────┬────────────┬─────────────────────┐
-│ Instance ID                         │ Model      │ Status              │
-├─────────────────────────────────────┼────────────┼─────────────────────┤
-│ emu-12345678-abcd-1234-5678-123456789abc │ 48K        │ Paused              │
-│ emu-pentagon-87654321-dcba-4321-8765-987654321fed │ Pentagon  │ Paused              │
-└─────────────────────────────────────┴────────────┴─────────────────────┘
+Emulators (2):
+  [1] emu-12345678  48K       Paused
+  [2] emu-pentagon  Pentagon  Paused
 
 # Select and work with specific instance
 > select emu-pentagon-87654321-dcba-4321-8765-987654321fed
@@ -777,6 +774,50 @@ bpgroup show loader
 - Port breakpoints: minimal overhead (~1%)
 - Recommend <100 active breakpoints for real-time debugging
 - Disable unused breakpoints rather than deleting for faster re-enabling
+
+#### 4.4 Labels & Symbol Management
+
+Labels provide symbolic names for memory addresses, enabling human-readable debugging. The LabelManager supports bank-aware addressing, multiple symbol file formats, and filtering capabilities.
+
+| Command | Aliases | Arguments | Description |
+| :--- | :--- | :--- | :--- |
+| `label <name>` | | `<label-name>` | Get label by name. Returns address, bank, type, module, and comment. |
+| `label add <name> <addr>` | | `<name> <address> [options]` | Add a label at `<address>`. Options: `--type <code\|data\|const>`, `--module <name>`, `--bank <n>`, `--comment <text>`. |
+| `label remove <name>` | | `<label-name>` | Remove label by name. |
+| `label toggle <name>` | | `<label-name>` | Toggle label active state (active labels appear in disassembly). |
+| `labels` | | `[filters]` | List all labels with optional filters: `--module <name>`, `--type <type>`, `--bank <n>`, `--from <addr>`, `--to <addr>`, `--active`. |
+| `symbols load <file>` | | `<path>` | Load symbols from file. Auto-detects format: `.sld` (sjasmplus), `.sym`, `.map`. Appends to existing labels. |
+| `symbols save <file>` | | `<path>` | Save all symbols to file in SLD format. |
+| `symbols clear` | | | Clear all labels from memory. |
+| `symbols info` | | | Display label count and loaded symbol file info. |
+
+**Label Structure**:
+- `name`: Unique symbolic identifier
+- `address`: Z80 address (0x0000-0xFFFF)
+- `bank`: Physical memory bank (or UINT16_MAX for unbanked)
+- `bankType`: RAM or ROM designation
+- `bankOffset`: Offset within physical page
+- `type`: Label category (code, data, const, string, etc.)
+- `module`: Module/source file association
+- `comment`: Documentation text
+- `active`: Whether label appears in disassembly output
+
+**Symbol File Formats**:
+- **SLD** (sjasmplus): Primary format with full bank/module support
+- **SYM**: Simple `address label` pairs
+- **MAP**: Section-based symbol tables
+
+**Filtering API** (for automation):
+```cpp
+LabelFilter filter;
+filter.module = "main";         // Exact module match
+filter.bank = 5;                // Bank number
+filter.type = "code";           // Label type
+filter.addressFrom = 0x8000;    // Address range start
+filter.addressTo = 0x9FFF;      // Address range end
+filter.activeOnly = true;       // Active labels only
+auto labels = labelMgr->GetLabels(filter);
+```
 
 ### 5. Feature Management & Configuration
 
@@ -2055,6 +2096,7 @@ Commands to configure emulator instance behavior and performance characteristics
 | `setting list` | `settings` | | Display all emulator settings with their current values | ✅ Implemented |
 | `setting <name> <value>` | `set` | `<setting-name> <value>` | Change a specific setting value | ✅ Implemented |
 | `setting fast_tape <on\|off>` | | `on` or `off` | Enable/disable fast tape loading. When enabled, tape operations execute at maximum speed without audio emulation, significantly reducing loading times. | ✅ Implemented |
+| `setting turbo_tape <on\|off>` | | `on` or `off` | Enable/disable turbo tape loading (feature `turbotape`). While a tape signal plays out, the emulator runs at warp speed — custom loaders included. Composes with `fast_tape`: trapped blocks load instantly, the remaining signal path runs at warp. | ✅ Implemented |
 | `setting fast_disk <on\|off>` | | `on` or `off` | Enable/disable fast disk loading. When enabled, FDD operations bypass timing delays for near-instant disk access. | 🔮 Planned |
 | `setting turbo_fdc <on\|off>` | | `on` or `off` | Enable/disable turbo FDC mode. Accelerates WD1793 FDC operations for faster disk I/O. | 🔮 Planned |
 | `setting max_cpu_speed <value>` | | `<multiplier>` or `unlimited` | Set maximum CPU speed multiplier. Values: `1` (3.5MHz), `2` (7MHz), `4` (14MHz), `8` (28MHz), `16` (56MHz), or `unlimited`. Affects execution speed for loading and intensive operations. | 🔮 Planned |
@@ -2066,7 +2108,8 @@ Commands to configure emulator instance behavior and performance characteristics
 **Setting Categories**:
 
 1. **I/O Acceleration Settings**:
-   - `fast_tape`: Bypasses audio emulation and timing for tape operations
+   - `fast_tape`: Bypasses audio emulation and timing for tape operations (feature `fasttape`)
+   - `turbo_tape`: Warps emulation speed while a tape signal path plays out, custom loaders included (feature `turbotape`)
    - `fast_disk`: Accelerates FDD seek times and data transfer
    - `turbo_fdc`: Removes WD1793 command delays
 
@@ -2084,7 +2127,8 @@ Commands to configure emulator instance behavior and performance characteristics
 
 | Setting | Type | Default | Valid Values | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `fast_tape` | Boolean | `off` | `on`, `off` | Fast tape loading mode |
+| `fast_tape` | Boolean | `on` | `on`, `off` | Fast tape loading mode (backed by the `fasttape` runtime feature) |
+| `turbo_tape` | Boolean | `on` | `on`, `off` | Turbo tape loading mode (backed by the `turbotape` runtime feature) |
 | `fast_disk` | Boolean | `off` | `on`, `off` | Fast disk access mode |
 | `turbo_fdc` | Boolean | `off` | `on`, `off` | Turbo FDC operations |
 | `max_cpu_speed` | Integer/String | `1` | `1`, `2`, `4`, `8`, `16`, `unlimited` | CPU speed multiplier |
@@ -2140,13 +2184,220 @@ Commands to configure emulator instance behavior and performance characteristics
 
 ---
 
-### 8. Videowall API
+### 8. Time-Travel Debugging (TTD)
+
+Record a per-frame checkpoint timeline of the running emulator, then seek backwards to any captured point and replay forward with full determinism. The same surface is also exposed to GDB/LLDB clients via reverse-execution packets (`bc`/`bs`) once the GDB transport lands (see [gdb-protocol.md](./gdb-protocol.md)).
+
+**Reference design:** [time-travel-debugging-tdd.md](../../debugger/time-travel-debug/time-travel-debugging-tdd.md) §10.4 — that TDD is the canonical source for command names, argument shapes, and result envelopes. This section mirrors it; if the two disagree, the TDD wins.
+
+**Feature flag:** `timetravel` (alias `ttd`) registered in `FeatureManager`. Recording, seek, and replay require this flag ON, which auto-enables the master `debugmode` flag (TTD uses the debug memory write path for the dirty-page hook). Status queries are always available, regardless of the flag — they return `{recording: false}` when TTD is off.
+
+**Implementation status:**
+- Sprint 0 (✅ merged): runtime feature flag, run-control claim token, machine-state hash, capture/seek primitives
+- Phase 1 (in progress): checkpoint subsystem + per-frame capture + peripheral serializers
+- Phase 2: seek engine + silent replay
+- Phase 4: full automation surface (most verbs below ship here, except `status`)
+
+#### Command Reference
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `ttd start` | `ttd rec` | — | Begin recording from the next frame boundary. Sets a pending flag if invoked mid-frame; the first checkpoint anchors the session at the next `OnFrameEnd`. | 🔮 Phase 1 |
+| `ttd stop` | — | — | Stop capturing new frames. Recorded history is retained until `ttd clear` or session invalidation. | 🔮 Phase 1 |
+| `ttd clear` | — | — | Drop all captured checkpoints, journals, and page-store data. The live emulator state is untouched. | 🔮 Phase 1 |
+| `ttd status` | `ttd info` | — | Report the session. Always available regardless of the `timetravel` feature flag. See "Status fields" below. | ✅ Implemented |
+| `ttd timeline` | — | `[--from N] [--to N] [--limit N]` | Return per-frame summary entries (dirty-page counts, event ticks, bookmark presence) for UI rendering. Pagination via `--from`/`--to` frame indices. | 🔮 Phase 3 (UI) |
+| `ttd seek` | — | `--frame N` *or* `--tstate T` | Seek to an absolute target point. Emulator must be paused (run-control claim enforced). Result envelope: `{ok, reached_frame, reached_tstate, halt_reason}`. | 🔮 Phase 2 |
+| `ttd step-back` | `ttd sb` | `[--unit instruction\|frame] [--count N]` | Relative backward navigation. Default unit is one instruction. | 🔮 Phase 2 |
+| `ttd step-forward` | `ttd sf` | `[--unit instruction\|frame] [--count N]` | Relative forward navigation within recorded history (does not extend the timeline). | 🔮 Phase 2 |
+| `ttd find-last` | `ttd fl` | `--addr <A> --access <write\|read\|execute\|out> [--value V] [--pc-from <A>] [--pc-to <A>] [--phys-page <P>] [--before <T>]` | Reverse search: most recent access matching the query, scanning backward from current position. `--phys-page` pins the query to one physical RAM page — on a banked machine an address alone is ambiguous, since the same Z80 address names different bytes depending on what is paged in. Ignored for `out`, which has no page. Returns `{frame, tstate, pc, value, physpage}` or null if no match. | 🔮 Phase 4 |
+| `ttd bookmark` | `ttd bm` | `<add\|remove\|list> [--at <T>] [--label <text>]` | Manage named bookmarks in the timeline. Bookmarks act as replay barriers (no silent coalescing across them). | 🔮 Phase 3 (UI) |
+| `ttd resume-from-here` | — | — | Truncate future history at the current (detached) position and resume live recording from there. Confirmation required if truncation would drop > N frames. | 🔮 Phase 2 |
+| `ttd position` | — | — | Current `TTDTimePoint` (`frame` + `tInFrame`) and the session end. | ✅ Implemented |
+| `ttd markers` | `ttd barriers` | — | List external-event markers (tape control, disk writes) that act as replay barriers. | ✅ Implemented |
+| `ttd dump` | `ttd save` | `<path>` | Serialize the session to a `.ttd` file for offline analysis with `tools/verification/ttd-analyzer`. | ✅ Implemented |
+| `ttd load` | `ttd open` | `<path>` | Load a `.ttd` session for playback. Replaces whatever session is held; afterwards the session is Idle, so use `ttd seek` to position the emulator. | ✅ Implemented |
+
+**Sessions on disk (`ttd dump` / `ttd load`).**
+
+The file is written and read by the **emulator process**, not by the client
+issuing the command. A relative path is therefore resolved against the
+emulator's working directory, and with a remote emulator the file lives on that
+machine. There is no default location: both verbs require an explicit path.
+
+A session only loads into an instance of the **machine model it was recorded
+on**. A checkpoint is raw RAM pages plus a chipset snapshot, so restoring a
+Pentagon recording into a 48K instance would push pages the target does not have
+and read chipset fields that mean something else there — and it would fail
+silently, as a seek that "works" and produces a corrupt machine. `ttd load`
+refuses instead, naming both model ids. Provision a matching instance first
+(`POST /api/v1/emulator/create` takes `model` and `ram_size`, and
+`Emulator::SetPreferredModel()` is applied during `Init()` before any
+model-dependent subsystem starts).
+
+Loading is available on every control surface: CLI (`ttd load <path>`), WebAPI
+(`POST /api/v1/emulator/{id}/ttd/load`), Lua (`ttd_load(path)`), Python
+(`ttd_load(path)`), and the TTD Scrubber's **Load session…** button.
+
+**Halt reasons** (returned in `seek` / `step` / `find-last` result envelopes):
+
+| Value | Meaning |
+| :--- | :--- |
+| `target` | Reached the requested target point exactly. |
+| `external_event` | Stopped at an external-event marker (e.g. user input journal entry) that blocks the interval — surfaced rather than silently skipped. |
+| `out_of_range` | Target is outside the recorded session bounds. |
+
+#### Session Lifecycle
+
+A TTD session is **invalidated** (all captured data dropped) by:
+
+| Trigger | Reason |
+| :--- | :--- |
+| `reset` | CPU + peripherals reinitialized; historical state no longer matches live state. |
+| `load snapshot` | RAM and register contents replaced wholesale. |
+| `load tape` / `load disk` | External media mount changes observable behavior going forward. (Disk *reads* are fine; only mounts invalidate.) |
+| CPU speed multiplier change | Changes the meaning of `tInFrame`; v1 invalidates rather than re-normalizing. |
+| Debugger memory write | Live state edit breaks historical determinism. |
+| Disk sector write (TR-DOS) | Phase 1 behavior: invalidate rather than journal. Phase 2 will journal and roll back. |
+| NVRAM write | Same as disk sector write — Phase 1 invalidates; later phases journal. |
+
+#### Status fields
+
+`ttd status` answers three separate questions, and it is worth knowing which
+field answers which.
+
+**Where did this session come from?** A loaded recording and one captured in
+this process are otherwise indistinguishable from the counters, so this is
+usually the first thing to check when a session is handed to you.
+
+| Field | Meaning |
+|---|---|
+| `loaded_from_file` | True when the timeline came from a `.ttd` rather than live capture |
+| `source_path` | Path it was loaded from; empty for live recordings |
+| `captured_at_unix_ms` | Capture time recorded in the file; 0 for a live recording |
+
+**What machine is it?**
+
+| Field | Meaning |
+|---|---|
+| `model_id` | `eModel` value. A session refuses to load into a different model |
+| `model_ram_pages` | Exclusive RAM page-index **bound**, not a page count — a 48K machine reports 6 because its three pages are numbered 0, 2 and 5 |
+
+**What is inside it?**
+
+| Field | Meaning |
+|---|---|
+| `state` | `idle` / `recording` / `detached` |
+| `session_start_frame`, `current_end_frame` | Timeline extent |
+| `checkpoint_count` | Frames captured |
+| `write_journal_enabled` | Whether writes are being journalled |
+| `write_journal_records`, `write_journal_bytes` | Journal contents and in-memory cost. Normally the largest part of a session; the on-disk section is block-compressed and much smaller |
+| `coverage_index_frames`, `coverage_index_bytes` | Reverse-search index. **Zero frames means reverse search and reverse breakpoints fall back to replaying frames** — correct, but orders of magnitude slower |
+| `page_store_bytes`, `page_store_used_bytes`, `baseline_frames_captured` | COW page store capacity, live bytes and distinct page snapshots |
+| `session_heap_bytes` | Real total heap footprint of the session |
+
+The `ttd status` response includes an `invalidation_reason` field if the most recent invalidation was not user-initiated.
+
+#### Threading & Run-Control
+
+All run-affecting TTD commands (`seek`, `step-back`, `step-forward`, `resume-from-here`, `find-last` during replay) require the calling surface to hold the **run-control claim** on the target emulator instance (Sprint 0 mechanism; see [time-travel decisions](../../../inprogress/2026-07-19-time-travel/decisions.md)). `status`, `timeline`, and `bookmark list` are read-only and never require the claim.
+
+If another surface (e.g. GDB paused at a breakpoint) holds the claim, TTD commands return `E_RUN_CONTROL_BUSY` with the holder's surface label.
+
+#### Worked Examples
+
+**Diagnose a sprite corruption bug:**
+```
+# Pause and arm the recorder
+pause
+ttd start
+resume
+
+# ... reproduce the bug for ~10 seconds, then pause ...
+pause
+
+# Find the most recent write to the sprite attribute table
+ttd find-last --addr 0x5B00 --access write
+# => frame=4823, tstate=14982, pc=0x4A21, value=0x07, physpage=5
+
+# Jump to that exact moment
+ttd seek --frame 4823 --tstate 14982
+
+# Step back one instruction and inspect registers
+ttd step-back --unit instruction
+disasm
+registers
+```
+
+**Frame-compare (raster-effect debugging):**
+```
+# At a glitched frame, jump to the same beam position one frame earlier
+ttd step-back --unit frame
+# Now memory and registers show last frame's state at the same instant
+# Use memory viewer to diff against this frame's state
+```
+
+**Automated regression check (Python):**
+```python
+emu.ttd_start()
+emu.resume()
+time.sleep(30)  # let demo run
+emu.pause()
+result = emu.ttd_find_last(addr=0x5800, access="write")
+assert result is not None, "No write to attribute table detected"
+emu.ttd_seek(frame=result.frame, tstate=result.tstate)
+assert emu.z80.pc == result.pc
+```
+
+---
+
+### 9. Videowall API
 
 Commands specifically for managing the multi-emulator videowall environment.
 
 | Command | Aliases | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- | :--- |
 | `videowall singlesync <on\|off> [id]` | | `on` or `off`, `[id]` (optional) | Toggles the Single Sync Mode which locks an emulator tile into a synchronous rendering loop for 100% accurate recording without performance drops. | ✅ Implemented |
+
+### 10. Tape Control Commands
+
+Full tape transport, inspection and the offline audio bridge. Playback subcommands operate on the selected emulator instance; `render`/`import` are pure path-to-path conversions that never touch emulator state. The identical surface is exposed by the WebAPI (`/tape/*` endpoints), Lua (`tape_*` functions) and Python (`tape_*` methods) — see [webapi-interface.md](./webapi-interface.md), [lua-interface.md](./lua-interface.md) and [python-interface.md](./python-interface.md).
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `tape load <file>` | | `<filename>` | Load tape image (.tap, .tzx, .csw, …) into the virtual tape deck. | ✅ Implemented |
+| `tape eject` | | | Eject the tape: playback stops, image and block catalog are dropped. | ✅ Implemented |
+| `tape play` | | | Start playback at the consumption cursor, or resume in place after `tape pause`. | ✅ Implemented |
+| `tape pause` | | | Freeze playback mid-block; the next `tape play` resumes exactly there. Idempotent when already paused; error when not playing. | ✅ Implemented |
+| `tape stop` | | | Terminal stop: playback stops and the loaded image is invalidated. | ✅ Implemented |
+| `tape rewind` | | | Rewind to block 0 keeping the image and block catalog loaded. | ✅ Implemented |
+| `tape seek <index>` | | `<block-index>` | Position the tape head at catalog block `<index>` (the same indices `tape blocks` shows). | ✅ Implemented |
+| `tape pos` | | | One-line playback position: state, block, elapsed seconds, consumption cursor. | ✅ Implemented |
+| `tape blocks` | | | Block catalog table: index, kind, name, size, duration, fast-load eligibility. | ✅ Implemented |
+| `tape info` | | | Detailed status: format, position, block count, total duration, fast/turbo tape feature state, fast-load plan summary. | ✅ Implemented |
+| `tape render <image> [opts] -o <out>` | | `--blocks N\|N-M`, `--rate N`, `--amp X`, `--invert` | Render a tape image to WAV/FLAC audio with the engine's own pulse timing (`.wav` native, `.flac` via ffmpeg). | ✅ Implemented |
+| `tape import <audio> [opts] -o <out>` | | `--target auto\|tzx\|tap`, `--hysteresis X` | Import WAV/FLAC/MP3 as a .tzx/.tap image (decode + pulse extraction + recognition; `.tap` saves are gated to ROM-standard content). | ✅ Implemented |
+
+**Playback state machine**: `idle` → `playing` → (`paused` → `playing`) → `ended`. The lowercase state strings are identical across all four surfaces (`tape pos`, GET `/tape`, `tape_pos()` in Lua and Python).
+
+**Feature cross-references** (see also §7 settings):
+- `setting fast_tape on|off` (feature `fasttape`): ROM loader trap — eligible header/data pairs load instantly.
+- `setting turbo_tape on|off` (feature `turbotape`): while a tape signal path plays out, the emulator runs at warp speed, custom loaders included. The two compose: trapped blocks load instantly, the remaining signal path runs at warp.
+
+**Examples**:
+
+```
+tape load /path/to/game.tap
+tape blocks
+tape seek 4
+tape play
+tape pos
+tape pause
+tape play
+tape rewind
+tape render game.tzx --blocks 2-5 --rate 48000 -o game.wav
+tape import recording.wav --target tzx -o imported.tzx
+```
 
 ## Future Capabilities
 
@@ -2293,15 +2544,11 @@ key tap enter
 
 Enhanced control over peripheral media devices.
 
+> [!NOTE]
+> All tape transport, inspection and audio-bridge commands are **implemented** — see [§10. Tape Control Commands](#10-tape-control-commands).
+
 | Command | Arguments | Description | Status |
 | :--- | :--- | :--- | :--- |
-| `tape load <file>` | `<filename>` | Insert tape file (.tap, .tzx, .csw) into virtual tape drive. | 🔧 Partially implemented via `open` |
-| `tape eject` | | Eject current tape. | 🔮 Planned |
-| `tape play` | | Start tape playback (if paused). | 🔮 Planned |
-| `tape stop` | | Stop tape playback. | 🔮 Planned |
-| `tape rewind` | | Rewind tape to beginning. | 🔮 Planned |
-| `tape position <block>` | `<block-number>` | Seek to specific tape block. | 🔮 Planned |
-| `tape info` | | Show tape information (format, blocks, current position). | 🔮 Planned |
 | `disk insert <drive> <file>` | `<A\|B\|C\|D> <filename>` | Insert disk image into specified drive. Supports .trd, .scl, .fdi, .udi formats. | 🔧 Partially implemented via `open` |
 | `disk eject <drive>` | `<A\|B\|C\|D>` | Eject disk from drive. | 🔮 Planned |
 | `disk info <drive>` | `<A\|B\|C\|D>` | Show disk information (format, tracks, sectors, files). | 🔮 Planned |
@@ -2360,9 +2607,15 @@ for addr in range(0x0000, 0x4000):
 
 ### 7. Disassembly & Reverse Engineering
 
-Enhanced code analysis and disassembly features. The core disassembler (`Z80Disassembler`) is fully implemented and needs to be exposed via automation interfaces.
+Enhanced code analysis and disassembly features. The core disassembler (`Z80Disassembler`) is fully implemented and exposed via all automation interfaces (WebAPI, Lua, Python, CLI).
 
 **Implementation**: `core/src/debugger/disassembler/z80disasm.h/cpp`
+
+Key decoding properties shared by all interfaces:
+- **Signed displacements**: IX/IY indexed operands are rendered with the sign folded into the template (`(ix-#05)`), and the effective address (`IX+d`) is reported when runtime registers are available
+- **Relative targets**: JR/DJNZ targets are computed as `instruction address + instruction length + signed 8-bit offset` (wrapping at 0x0000/0xFFFF)
+- **Labels**: when a label exists for a jump/call/memory target, the mnemonic prints **both** the label and the address: `call TEST_ROUTINE (#8010)`; `ld (TEST_DATA (#8020)),hl` for absolute memory operands. 16-bit immediates (`ld hl,nn`) are not addresses by definition, but a label at exactly that value is shown too (`ld hl,TEST_DATA (#8020)`) - the operand keeps its immediate semantics (no `target`)
+- **Indirect jumps**: `jp (hl)`/`jp (ix)`/`jp (iy)` targets are only resolved at runtime (static views omit the target)
 
 #### 7.1 Disassembly Commands
 
@@ -2375,20 +2628,22 @@ Enhanced code analysis and disassembly features. The core disassembler (`Z80Disa
 
 **Example Output**:
 ```
-0x3683: CB 7F       BIT 7,A
-0x3685: 28 03       JR Z,0x368A
-0x3687: CD 00 10    CALL 0x1000
-0x368A: C9          RET
+0x3683: CB 7F       bit 7,a
+0x3685: 28 03       jr z,LOOP_EXIT (#368A)
+0x3687: CD 00 10    call INIT_ROUTINE (#1000)
+0x368A: C9          ret
 ```
 
 **WebAPI Endpoints**:
 ```
 GET /api/v1/emulator/{id}/disasm?address=0x3683&count=10
-GET /api/v1/emulator/{id}/disasm?from=0x3683&to=0x3700
 GET /api/v1/emulator/{id}/disasm/page?type=rom&page=2&offset=0&count=20
 ```
 
-**WebAPI Response**:
+> [!NOTE]
+> A range form (`?from=&to=`) is not implemented; use `address` + `count` instead.
+
+**WebAPI Response** (field reference in [webapi-interface.md](./webapi-interface.md#disassembly-response)):
 ```json
 {
   "address": 13955,
@@ -2397,13 +2652,13 @@ GET /api/v1/emulator/{id}/disasm/page?type=rom&page=2&offset=0&count=20
     {
       "address": 13955,
       "bytes": "CB7F",
-      "mnemonic": "BIT 7,A",
+      "mnemonic": "bit 7,a",
       "size": 2
     },
     {
       "address": 13957,
       "bytes": "2803",
-      "mnemonic": "JR Z,0x368A",
+      "mnemonic": "jr z,#368A",
       "size": 2,
       "target": 13962
     }
@@ -2425,7 +2680,8 @@ lines = emu.disasm_page(type="rom", page=2, offset=0, count=20)
 # Disassemble from physical RAM page
 lines = emu.disasm_page(type="ram", page=5, offset=0x100, count=10)
 
-# Returns list of dicts with: address/offset, bytes, mnemonic, size, target (if branch)
+# Returns list of dicts with: address/offset, bytes, mnemonic, size,
+# label, target/targetLabel (branches), displacement/effectiveAddress/effectiveAddressLabel (indexed ops)
 ```
 
 **Lua Binding**:
@@ -2438,7 +2694,8 @@ local lines = emu:disasm(0x3683, 10)  -- address, count
 local lines = disasm_page("rom", 2, 0, 20)  -- type, page, offset, count
 local lines = disasm_page("ram", 5, 0x100, 10)
 
--- Each entry: {address/offset, bytes, mnemonic, size, target}
+-- Each entry: {address/offset, bytes, mnemonic, size, label,
+--              target/targetLabel (branches), displacement/effectiveAddress/effectiveAddressLabel (indexed ops)}
 ```
 
 **CLI Commands**:
@@ -3436,7 +3693,7 @@ Lua called from Python
 
 ```bash
 # Execute Python code via REST
-curl -X POST http://localhost:8080/api/v1/python/exec \
+curl -X POST http://localhost:8090/api/v1/python/exec \
   -H "Content-Type: application/json" \
   -d '{"code": "print(\"Hello from WebAPI\")"}'
 
@@ -3444,15 +3701,15 @@ curl -X POST http://localhost:8080/api/v1/python/exec \
 # {"success": true, "result": "Hello from WebAPI\n", "executionTime": 0.012}
 
 # Load Python file
-curl -X POST http://localhost:8080/api/v1/python/file \
+curl -X POST http://localhost:8090/api/v1/python/file \
   -H "Content-Type: application/json" \
   -d '{"path": "/path/to/test.py"}'
 
 # Get status
-curl http://localhost:8080/api/v1/python/status
+curl http://localhost:8090/api/v1/python/status
 
 # Stop execution
-curl -X POST http://localhost:8080/api/v1/python/stop
+curl -X POST http://localhost:8090/api/v1/python/stop
 ```
 
 ### 7.5 Security Considerations

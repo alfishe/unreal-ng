@@ -13,6 +13,7 @@
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/disassembler/z80disasm.h>
+#include <debugger/labels/labelmanager.h>
 #include <base/featuremanager.h>
 #include <common/dumphelper.h>
 #include <json/json.h>
@@ -465,7 +466,7 @@ void EmulatorAPI::runFrame(const HttpRequestPtr& req, std::function<void(const H
 
 /// @brief POST /api/v1/emulator/{id}/run_frames
 /// @brief Run N complete video frames
-/// @brief Request body: {"count": N}
+/// @brief Request body: {"count": N} (alias "frames" also accepted; other keys are rejected with 400)
 void EmulatorAPI::runFrames(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                             const std::string& id) const
 {
@@ -475,7 +476,34 @@ void EmulatorAPI::runFrames(const HttpRequestPtr& req, std::function<void(const 
     try
     {
         auto json = req->getJsonObject();
-        unsigned count = json && json->isMember("count") ? (*json)["count"].asUInt() : 1;
+        unsigned count = 1;
+        if (json)
+        {
+            // Accept both "count" (documented) and "frames" (common guess) keys
+            if (json->isMember("count"))
+            {
+                count = (*json)["count"].asUInt();
+            }
+            else if (json->isMember("frames"))
+            {
+                count = (*json)["frames"].asUInt();
+            }
+            else if (!json->getMemberNames().empty())
+            {
+                // Body present but neither key found - reject instead of silently running 1 frame
+                // (silent default caused "blank screen" confusion: users passed a mistyped key,
+                // only 1 frame ran, and the loaded program had not redrawn the screen yet)
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = "Missing 'count' parameter. Expected body: {\"count\": N} (alias: \"frames\")";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                addCorsHeaders(resp);
+                callback(resp);
+                return;
+            }
+        }
         if (count < 1) count = 1;
         if (count > 10000) count = 10000; // Safety limit
         
@@ -944,11 +972,23 @@ void EmulatorAPI::getBreakpointStatus(const HttpRequestPtr& req, std::function<v
     }
     
     BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-    
+    if (!bpm)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Breakpoint manager not available";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     Json::Value ret;
     ret["is_paused"] = emulator->IsPaused();
-    ret["breakpoints_count"] = bpm ? static_cast<Json::UInt>(bpm->GetBreakpointsCount()) : 0u;
-    
+    ret["breakpoints_count"] = static_cast<Json::UInt>(bpm->GetBreakpointsCount());
+
     // Last triggered breakpoint info (using centralized method)
     auto bpInfo = bpm->GetLastTriggeredBreakpointInfo();
     if (bpInfo.valid)
@@ -1054,7 +1094,80 @@ void EmulatorAPI::getRegisters(const HttpRequestPtr& req, std::function<void(con
     flags["n"] = (f & 0x02) ? 1 : 0;
     flags["c"] = (f & 0x01) ? 1 : 0;
     ret["flags"] = flags;
-    
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief PUT /api/v1/emulator/{id}/registers/{name}
+/// @brief Set a CPU register value
+/// @brief Request body: {"value": 0x1234} or {"value": 4660}
+void EmulatorAPI::setRegister(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id, const std::string& name) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    Z80State* z80 = emulator->GetZ80State();
+    if (!z80)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "CPU state not available";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Parse request body
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("value"))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Missing 'value' field in request body";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    uint16_t value = static_cast<uint16_t>((*json)["value"].asUInt());
+
+    // Use centralized register API
+    const Z80::RegisterInfo* regInfo = Z80::FindRegister(name);
+    if (!regInfo)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Unknown register: " + name;
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Z80::SetRegisterValue(z80, name, value);
+
+    // Read back to confirm
+    uint16_t readBack;
+    bool is16bit;
+    Z80::GetRegisterValue(z80, name, readBack, is16bit);
+
+    Json::Value ret;
+    ret["status"] = "success";
+    ret["register"] = regInfo->name;
+    ret["value"] = readBack;
+    ret["is16bit"] = regInfo->is16bit;
+
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);
@@ -1816,6 +1929,7 @@ void EmulatorAPI::getDisasm(const HttpRequestPtr& req, std::function<void(const 
     }
     
     Z80Disassembler* disasm = dbg->GetDisassembler().get();
+    LabelManager* labelMgr = dbg->GetLabelManager();
     
     // Parse query parameters
     std::string addrParam = req->getParameter("address");
@@ -1860,7 +1974,7 @@ void EmulatorAPI::getDisasm(const HttpRequestPtr& req, std::function<void(const 
         
         uint8_t cmdLen = 0;
         DecodedInstruction decoded;
-        std::string mnemonic = disasm->disassembleSingleCommand(buffer, currentAddr, &cmdLen, &decoded);
+        std::string mnemonic = disasm->disassembleSingleCommandWithRuntime(buffer, currentAddr, &cmdLen, z80, memory, &decoded);
         
         if (cmdLen == 0) cmdLen = 1;  // Safety: at least advance by 1
         
@@ -1879,13 +1993,44 @@ void EmulatorAPI::getDisasm(const HttpRequestPtr& req, std::function<void(const 
         instr["mnemonic"] = mnemonic;
         instr["size"] = cmdLen;
         
-        // Add target address for jumps/calls
+        // Label at the instruction address itself (e.g. jump destination marker)
+        if (labelMgr)
+        {
+            auto label = labelMgr->GetLabelByZ80Address(currentAddr);
+            if (label && !label->name.empty())
+                instr["label"] = label->name;
+        }
+        
+        // Add target address for jumps/calls. Indirect targets (JP (HL), JP (IX)) are only
+        // known at runtime - the field is omitted when the target could not be resolved
         if (decoded.hasJump || decoded.hasRelativeJump)
         {
-            if (decoded.hasRelativeJump)
-                instr["target"] = decoded.relJumpAddr;
-            else
-                instr["target"] = decoded.jumpAddr;
+            uint16_t target = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
+            if (!decoded.hasIndirect || decoded.hasRuntime)
+            {
+                instr["target"] = target;
+                
+                if (labelMgr)
+                {
+                    auto targetLabel = labelMgr->GetLabelByZ80Address(target);
+                    if (targetLabel && !targetLabel->name.empty())
+                        instr["targetLabel"] = targetLabel->name;
+                }
+            }
+        }
+        
+        // Effective memory address for indexed (IX/IY+d) instructions - requires runtime registers
+        if (decoded.hasDisplacement && decoded.hasRuntime)
+        {
+            instr["displacement"] = decoded.displacement;
+            instr["effectiveAddress"] = decoded.displacementAddr;
+            
+            if (labelMgr)
+            {
+                auto effectiveLabel = labelMgr->GetLabelByZ80Address(decoded.displacementAddr);
+                if (effectiveLabel && !effectiveLabel->name.empty())
+                    instr["effectiveAddressLabel"] = effectiveLabel->name;
+            }
         }
         
         ret["instructions"].append(instr);
@@ -1925,6 +2070,7 @@ void EmulatorAPI::getDisasmPage(const HttpRequestPtr& req, std::function<void(co
     }
     
     Z80Disassembler* disasm = dbg->GetDisassembler().get();
+    LabelManager* labelMgr = dbg->GetLabelManager();
     
     // Parse query parameters
     std::string typeParam = req->getParameter("type");
@@ -2023,11 +2169,29 @@ void EmulatorAPI::getDisasmPage(const HttpRequestPtr& req, std::function<void(co
         instr["mnemonic"] = mnemonic;
         instr["size"] = cmdLen;
         
+        // Label at the instruction offset itself (e.g. jump destination marker)
+        if (labelMgr)
+        {
+            auto label = labelMgr->GetLabelByZ80Address(currentOffset);
+            if (label && !label->name.empty())
+                instr["label"] = label->name;
+        }
+        
+        // Target address for jumps/calls. Static view has no runtime registers, so indirect
+        // targets (JP (HL), JP (IX)) can not be resolved and the field is omitted
         if (decoded.hasJump || decoded.hasRelativeJump) {
-            if (decoded.hasRelativeJump)
-                instr["target"] = decoded.relJumpAddr;
-            else
-                instr["target"] = decoded.jumpAddr;
+            uint16_t target = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
+            if (!decoded.hasIndirect)
+            {
+                instr["target"] = target;
+                
+                if (labelMgr)
+                {
+                    auto targetLabel = labelMgr->GetLabelByZ80Address(target);
+                    if (targetLabel && !targetLabel->name.empty())
+                        instr["targetLabel"] = targetLabel->name;
+                }
+            }
         }
         
         ret["instructions"].append(instr);
@@ -2038,6 +2202,499 @@ void EmulatorAPI::getDisasmPage(const HttpRequestPtr& req, std::function<void(co
     addCorsHeaders(resp);
     callback(resp);
 }
+
+// region Labels/Symbols
+
+/// @brief GET /api/v1/emulator/{id}/labels
+/// @brief List labels with optional filtering via query params: module, bank, type, from, to, active
+void EmulatorAPI::getLabels(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                            const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Debug manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    if (!labelMgr)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Label manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Build filter from query params
+    LabelManager::LabelFilter filter;
+    auto params = req->getParameters();
+
+    if (params.count("module"))
+        filter.module = params.at("module");
+    if (params.count("type"))
+        filter.type = params.at("type");
+    if (params.count("bank"))
+        filter.bank = static_cast<uint16_t>(std::stoul(params.at("bank")));
+    if (params.count("from"))
+        filter.addressFrom = static_cast<uint16_t>(std::stoul(params.at("from"), nullptr, 0));
+    if (params.count("to"))
+        filter.addressTo = static_cast<uint16_t>(std::stoul(params.at("to"), nullptr, 0));
+    if (params.count("active") && params.at("active") == "true")
+        filter.activeOnly = true;
+
+    auto labels = labelMgr->GetLabels(filter);
+
+    Json::Value ret;
+    Json::Value labelsArray(Json::arrayValue);
+
+    for (const auto& label : labels)
+    {
+        Json::Value obj;
+        obj["name"] = label->name;
+        obj["address"] = label->address;
+        if (label->bank != UINT16_MAX)
+        {
+            obj["bank"] = label->bank;
+            obj["bankType"] = label->isROM() ? "rom" : "ram";
+        }
+        if (!label->type.empty())
+            obj["type"] = label->type;
+        if (!label->module.empty())
+            obj["module"] = label->module;
+        if (!label->comment.empty())
+            obj["comment"] = label->comment;
+        obj["active"] = label->active;
+        labelsArray.append(obj);
+    }
+
+    ret["count"] = static_cast<unsigned>(labels.size());
+    ret["total"] = static_cast<unsigned>(labelMgr->GetLabelCount());
+    ret["labels"] = labelsArray;
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/labels
+/// @brief Add a label. Body: {name, address, bank?, bankType?, type?, module?, comment?}
+void EmulatorAPI::addLabel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                           const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Debug manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    if (!labelMgr)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Label manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("name") || !json->isMember("address"))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Required: name, address";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    std::string name = (*json)["name"].asString();
+    uint16_t address = static_cast<uint16_t>((*json)["address"].asUInt());
+    uint16_t bank = json->isMember("bank") ? static_cast<uint16_t>((*json)["bank"].asUInt()) : UINT16_MAX;
+    uint16_t bankOffset = UINT16_MAX;
+    std::string type = json->isMember("type") ? (*json)["type"].asString() : "";
+    std::string module = json->isMember("module") ? (*json)["module"].asString() : "";
+    std::string comment = json->isMember("comment") ? (*json)["comment"].asString() : "";
+
+    if (labelMgr->AddLabel(name, address, bank, bankOffset, type, module, comment))
+    {
+        Json::Value ret;
+        ret["status"] = "success";
+        ret["name"] = name;
+        ret["address"] = address;
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+    else
+    {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = "Label already exists or invalid parameters";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+}
+
+/// @brief GET /api/v1/emulator/{id}/labels/{name}
+void EmulatorAPI::getLabel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                           const std::string& id, const std::string& name) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Debug manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    auto label = labelMgr ? labelMgr->GetLabelByName(name) : nullptr;
+
+    if (!label)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Label not found: " + name;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Json::Value ret;
+    ret["name"] = label->name;
+    ret["address"] = label->address;
+    if (label->bank != UINT16_MAX)
+    {
+        ret["bank"] = label->bank;
+        ret["bankType"] = label->isROM() ? "rom" : "ram";
+    }
+    if (!label->type.empty())
+        ret["type"] = label->type;
+    if (!label->module.empty())
+        ret["module"] = label->module;
+    if (!label->comment.empty())
+        ret["comment"] = label->comment;
+    ret["active"] = label->active;
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief DELETE /api/v1/emulator/{id}/labels/{name}
+void EmulatorAPI::removeLabel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id, const std::string& name) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Debug manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    if (labelMgr && labelMgr->RemoveLabel(name))
+    {
+        Json::Value ret;
+        ret["status"] = "success";
+        ret["message"] = "Label removed: " + name;
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+    else
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Label not found: " + name;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+}
+
+/// @brief PUT /api/v1/emulator/{id}/labels/{name}
+/// @brief Update label properties (active, comment, type, module)
+void EmulatorAPI::updateLabel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id, const std::string& name) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Debug manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    auto label = labelMgr ? labelMgr->GetLabelByName(name) : nullptr;
+
+    if (!label)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Label not found: " + name;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto json = req->getJsonObject();
+    if (json)
+    {
+        if (json->isMember("active"))
+            label->active = (*json)["active"].asBool();
+        if (json->isMember("comment"))
+            label->comment = (*json)["comment"].asString();
+        if (json->isMember("type"))
+            label->type = (*json)["type"].asString();
+        if (json->isMember("module"))
+            label->module = (*json)["module"].asString();
+    }
+
+    Json::Value ret;
+    ret["status"] = "success";
+    ret["name"] = label->name;
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief DELETE /api/v1/emulator/{id}/labels
+void EmulatorAPI::clearLabels(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Debug manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    if (labelMgr)
+        labelMgr->ClearAllLabels();
+
+    Json::Value ret;
+    ret["status"] = "success";
+    ret["message"] = "All labels cleared";
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/symbols/load
+/// @brief Load symbols from file. Body: {path: "symbols.sld"}
+void EmulatorAPI::loadSymbols(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Debug manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    if (!labelMgr)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Label manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("path"))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Required: path";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    std::string path = (*json)["path"].asString();
+    if (labelMgr->LoadLabels(path))
+    {
+        Json::Value ret;
+        ret["status"] = "success";
+        ret["count"] = static_cast<unsigned>(labelMgr->GetLabelCount());
+        ret["path"] = path;
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+    else
+    {
+        Json::Value error;
+        error["error"] = "Failed";
+        error["message"] = "Failed to load symbols from: " + path;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+}
+
+/// @brief POST /api/v1/emulator/{id}/symbols/save
+/// @brief Save symbols to file. Body: {path: "symbols.sld"}
+void EmulatorAPI::saveSymbols(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Debug manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    if (!labelMgr)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Label manager not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("path"))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Required: path";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    std::string path = (*json)["path"].asString();
+    if (labelMgr->SaveLabels(path))
+    {
+        Json::Value ret;
+        ret["status"] = "success";
+        ret["count"] = static_cast<unsigned>(labelMgr->GetLabelCount());
+        ret["path"] = path;
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+    else
+    {
+        Json::Value error;
+        error["error"] = "Failed";
+        error["message"] = "Failed to save symbols to: " + path;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+}
+
+// endregion Labels/Symbols
 
 } // namespace v1
 } // namespace api

@@ -19,9 +19,10 @@ namespace api
 namespace v1
 {
 
-// Helper functions declared in emulator_api.cpp
+// Helper functions declared in emulator_api.h / emulator_api.cpp.
 extern void addCorsHeaders(HttpResponsePtr& resp);
-extern std::shared_ptr<Emulator> getEmulatorByIdOrIndex(const std::string& idOrIndex);
+// getEmulatorByIdOrIndex is a free function in api::v1 (emulator_api.h) —
+// visible here without an EmulatorAPI instance.
 
 /// @brief GET /api/v1/emulator/{id}/state/audio/ay
 void EmulatorAPI::getStateAudioAY(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,

@@ -1,0 +1,337 @@
+# IM2 Disk Loader - Complete Disassembly
+# Total instructions: 244
+# Range: 0xF4F4 - 0xF700
+#
+# Entry: 0xF4F4 (IM2 interrupt handler)
+# Main loader: 0xF500
+# Depack routine: 0xF5F5
+# TRDOS gateway calls: 0xF5A6, 0xF5C6, 0xF5CE, 0xF5E0, 0xF5E5, 0xF5ED
+# Embedded text: 0xF69C
+#
+
+# ==================== Memory Variables & Constants ====================
+# TRDOS_ENTRY       EQU 0x3D2F    ; TRDOS ROM gateway entry point
+# SMC_jump          EQU 0xF4F6    ; Self-modifying jump instruction
+# loader_status     EQU 0xF508    ; Loader status/error code
+# transfer_state    EQU 0xF569    ; Sector transfer state flag
+# depack_flag       EQU 0xF667    ; Depack routine state
+# text_ptr          EQU 0xF66E    ; Text data pointer (word)
+# depack_flag2      EQU 0xF6D1    ; Additional depack flag
+# work_buffer       EQU 0xF694    ; 64-byte rotating work buffer
+# loading_text      EQU 0xF69C    ; Loading screen text data
+
+# ==================== IM2 Interrupt Handler ====================
+IM2_handler:                        ; 0xF4F4
+0xF4F4: 08           ex af,af'      ; Save AF
+0xF4F5: b8           cp b           ; Check loading state
+0xF4F6: 1808         jr #08         ; Self-modifying: skip or continue (SMC_jump)
+0xF4F8: 3269f5       ld (transfer_state),a   ; Store state
+0xF4FB: 08           ex af,af'      ; Restore AF
+0xF4FC: fb           ei             ; Re-enable interrupts
+0xF4FD: c32f3d       jp TRDOS_ENTRY ; Exit to TRDOS
+
+# ==================== Main Disk Loader ====================
+main_loader:                        ; 0xF500
+0xF500: d9           exx            ; Switch to alternate registers
+0xF501: cdf5f5       call depack_routine
+0xF504: cd155e       call #5E15     ; Update AY sound
+0xF507: 3e00         ld a,#00
+0xF509: d9           exx            ; Back to main registers
+
+.check_done:                        ; 0xF50A - Check if all data loaded
+0xF50A: 7c           ld a,h         ; Check HL = 0xFFFF?
+0xF50B: 3c           inc a
+0xF50C: 2006         jr nz,.continue_loading
+0xF50E: 7d           ld a,l
+0xF50F: 3c           inc a
+0xF510: 2002         jr nz,.continue_loading
+
+.exit_loader:                       ; 0xF512 - Done loading!
+0xF512: 33           inc sp         ; Pop return address
+0xF513: 33           inc sp
+0xF514: af           xor a
+0xF515: 3208f5       ld (loader_status),a   ; Clear loading flag
+0xF518: 08           ex af,af'
+0xF519: fb           ei
+0xF51A: c32f3d       jp TRDOS_ENTRY ; Exit to TRDOS
+
+.continue_loading:                  ; 0xF51D - Continue with sector setup
+0xF51D: 3e18         ld a,#18
+0xF51F: 32f6f4       ld (SMC_jump),a   ; Restore handler jump
+0xF522: 7a           ld a,d         ; Get track
+0xF523: cb3f         srl a          ; Shift right
+0xF525: cde0f5       call trdos_seek
+0xF528: 3e18         ld a,#18
+0xF52A: cda6f5       call trdos_call
+0xF52D: cdedf5       call trdos_wait_fdc
+
+.sector_loop:                       ; 0xF530 - Main sector read loop
+0xF530: 7a           ld a,d         ; Track again
+0xF531: cb3f         srl a
+0xF533: cdc6f5       call trdos_set_track
+0xF536: cb42         bit 0,d        ; Check side
+0xF538: 3e2c         ld a,#2C       ; Side 0
+0xF53A: 2002         jr nz,.side1
+0xF53C: 3e3c         ld a,#3C       ; Side 1
+.side1:
+0xF53E: cde5f5       call trdos_set_side
+0xF541: 7b           ld a,e         ; Get sector
+0xF542: 3c           inc a
+0xF543: cdcef5       call trdos_set_sector
+
+.read_sector:                       ; 0xF546 - Read single sector
+0xF546: e5           push hl        ; Save destination
+0xF547: 3e84         ld a,#84       ; Read sector command
+0xF549: 0e01         ld c,#01       ; Count = 1
+0xF54B: cda6f5       call trdos_call
+0xF54E: c5           push bc
+0xF54F: 017f00       ld bc,#007F    ; 127 bytes
+0xF552: 3e01         ld a,#01
+0xF554: 3269f5       ld (transfer_state),a   ; Mark loading active
+0xF557: 3e28         ld a,#28
+0xF559: 32f6f4       ld (SMC_jump),a   ; Modify handler!
+0xF55C: af           xor a
+0xF55D: 08           ex af,af'
+0xF55E: cdedf5       call trdos_wait_fdc
+0xF561: 08           ex af,af'
+0xF562: c5           push bc
+0xF563: 3e18         ld a,#18
+0xF565: 32f6f4       ld (SMC_jump),a   ; Restore handler
+0xF568: 3e01         ld a,#01
+0xF56A: a7           and a
+0xF56B: ccf4f4       call z,IM2_handler   ; Recursive interrupt call
+0xF56E: c1           pop bc
+0xF56F: 78           ld a,b
+0xF570: c1           pop bc
+0xF571: a7           and a
+0xF572: 2803         jr z,.check_status
+0xF574: e1           pop hl
+0xF575: 18cf         jr .continue_loading
+
+.check_status:                      ; 0xF577 - Check FDC status
+0xF577: cdaef5       call fdc_read_status
+0xF57A: e608         and #08        ; Check error bit
+0xF57C: 2807         jr z,.next_sector
+0xF57E: 3e02         ld a,#02       ; Error code
+0xF580: 3208f5       ld (loader_status),a   ; Store error
+0xF583: 18ef         jr .exit_loader
+
+.next_sector:                       ; 0xF585 - Advance to next sector
+0xF585: f1           pop af
+0xF586: 7b           ld a,e         ; Current sector
+0xF587: 81           add a,c        ; Add sectors per track
+0xF588: cb67         bit 4,a        ; Check overflow
+0xF58A: 2816         jr z,.inc_sector
+0xF58C: af           xor a          ; Reset sector
+0xF58D: 5f           ld e,a
+0xF58E: 14           inc d          ; Next track
+0xF58F: cb42         bit 0,d        ; Check side bit
+0xF591: 2008         jr nz,.continue_next
+0xF593: 3e58         ld a,#58       ; Seek command
+0xF595: cda6f5       call trdos_call
+0xF598: cdedf5       call trdos_wait_fdc
+.continue_next:
+0xF59B: 78           ld a,b         ; Remaining bytes
+0xF59C: 91           sub c
+0xF59D: 47           ld b,a
+0xF59E: c8           ret z          ; Done if zero
+0xF59F: c330f5       jp.sector_loop
+
+.inc_sector:                        ; 0xF5A2
+0xF5A2: 1c           inc e          ; Next sector
+0xF5A3: 109c         djnz .read_sector
+0xF5A5: c9           ret
+
+# ==================== TRDOS ROM Call Wrappers ====================
+trdos_call:                         ; 0xF5A6 - Generic TRDOS call wrapper
+0xF5A6: e5           push hl
+0xF5A7: 21c32f       ld hl,#2FC3    ; Return address
+0xF5AA: e3           ex (sp),hl     ; Swap with stack
+0xF5AB: c32f3d       jp TRDOS_ENTRY ; Jump to TRDOS gateway
+
+fdc_read_status:                    ; 0xF5AE - Read FDC status
+0xF5AE: c5           push bc
+0xF5AF: e5           push hl
+0xF5B0: 21c1f5       ld hl,.return
+0xF5B3: e5           push hl
+0xF5B4: 21ec3f       ld hl,#3FEC    ; TRDOS routine
+0xF5B7: e5           push hl
+0xF5B8: 0e1f         ld c,#1F       ; Port #1F (FDC status)
+0xF5BA: 21feff       ld hl,#FFFE
+0xF5BD: fb           ei
+0xF5BE: c32f3d       jp TRDOS_ENTRY
+
+.return:                            ; 0xF5C1
+0xF5C1: 2b           dec hl
+0xF5C2: 7e           ld a,(hl)      ; Get status byte
+0xF5C3: e1           pop hl
+0xF5C4: c1           pop bc
+0xF5C5: c9           ret
+
+trdos_set_track:                    ; 0xF5C6 - Set track
+0xF5C6: e5           push hl
+0xF5C7: 213a1e       ld hl,#1E3A    ; TRDOS set track routine
+0xF5CA: e3           ex (sp),hl
+0xF5CB: c32f3d       jp TRDOS_ENTRY
+
+trdos_set_sector:                   ; 0xF5CE - Set sector
+0xF5CE: c5           push bc
+0xF5CF: 0e5f         ld c,#5F       ; Port 0x5F (sector)
+0xF5D1: e5           push hl
+0xF5D2: 21ddf5       ld hl,.return
+0xF5D5: e5           push hl
+0xF5D6: 21532a       ld hl,#2A53    ; TRDOS routine
+0xF5D9: e5           push hl
+0xF5DA: c32f3d       jp TRDOS_ENTRY
+
+.return:                            ; 0xF5DD
+0xF5DD: e1           pop hl
+0xF5DE: c1           pop bc
+0xF5DF: c9           ret
+
+trdos_seek:                         ; 0xF5E0 - Track seek
+0xF5E0: c5           push bc
+0xF5E1: 0e7f         ld c,#7F       ; Port 0x7F (track)
+0xF5E3: 18ec         jr trdos_set_sector+3   ; Jump to common code
+
+trdos_set_side:                     ; 0xF5E5 - Set disk side
+0xF5E5: e5           push hl
+0xF5E6: 21f31f       ld hl,#1FF3    ; TRDOS set side routine
+0xF5E9: e3           ex (sp),hl
+0xF5EA: c32f3d       jp TRDOS_ENTRY
+
+trdos_wait_fdc:                     ; 0xF5ED - Wait for FDC
+0xF5ED: e5           push hl
+0xF5EE: 21e53f       ld hl,#3FE5    ; TRDOS wait routine
+0xF5F1: e3           ex (sp),hl
+0xF5F2: c32f3d       jp TRDOS_ENTRY
+
+# ==================== Depack/Decode Routine ====================
+depack_routine:                     ; 0xF5F5 - Decompress sector data
+0xF5F5: 21ff50       ld hl,#50FF    ; Source pointer
+0xF5F8: 1194f6       ld de,work_buffer
+0xF5FB: 0608         ld b,#08       ; 8 bits
+
+.rotate_loop:                       ; 0xF5FD - Bit rotation loop
+0xF5FD: 7d           ld a,l
+0xF5FE: eb           ex de,hl
+0xF5FF: cb06         rlc (hl)       ; Rotate source byte
+0xF601: 23           inc hl
+0xF602: eb           ex de,hl
+0xF603: cb16         rl (hl)        ; Rotate through carry
+0xF605: 2d           dec l
+0xF606: cb16         rl (hl)
+0xF608: 2d           dec l
+0xF609: cb16         rl (hl)
+0xF60B: 2d           dec l
+0xF60C: cb16         rl (hl)
+0xF60E: 2d           dec l
+0xF60F: cb16         rl (hl)
+0xF611: 2d           dec l
+0xF612: cb16         rl (hl)
+0xF614: 2d           dec l
+0xF615: cb16         rl (hl)
+0xF617: 2d           dec l
+0xF618: cb16         rl (hl)
+0xF61A: 2d           dec l
+0xF61B: cb16         rl (hl)
+0xF61D: 2d           dec l
+0xF61E: cb16         rl (hl)
+0xF620: 2d           dec l
+0xF621: cb16         rl (hl)
+0xF623: 2d           dec l
+0xF624: cb16         rl (hl)
+0xF626: 2d           dec l
+0xF627: cb16         rl (hl)
+0xF629: 2d           dec l
+0xF62A: cb16         rl (hl)
+0xF62C: 2d           dec l
+0xF62D: cb16         rl (hl)
+0xF62F: 2d           dec l
+0xF630: cb16         rl (hl)
+0xF632: 2d           dec l
+0xF633: cb16         rl (hl)
+0xF635: 2d           dec l
+0xF636: cb16         rl (hl)
+0xF638: 2d           dec l
+0xF639: cb16         rl (hl)
+0xF63B: 2d           dec l
+0xF63C: cb16         rl (hl)
+0xF63E: 2d           dec l
+0xF63F: cb16         rl (hl)
+0xF641: 2d           dec l
+0xF642: cb16         rl (hl)
+0xF644: 2d           dec l
+0xF645: cb16         rl (hl)
+0xF647: 2d           dec l
+0xF648: cb16         rl (hl)
+0xF64A: 2d           dec l
+0xF64B: cb16         rl (hl)
+0xF64D: 2d           dec l
+0xF64E: cb16         rl (hl)
+0xF650: 2d           dec l
+0xF651: cb16         rl (hl)
+0xF653: 2d           dec l
+0xF654: cb16         rl (hl)
+0xF656: 2d           dec l
+0xF657: cb16         rl (hl)
+0xF659: 2d           dec l
+0xF65A: cb16         rl (hl)
+0xF65C: 2d           dec l
+0xF65D: cb16         rl (hl)
+0xF65F: 2d           dec l
+0xF660: cb16         rl (hl)
+0xF662: 6f           ld l,a         ; Restore L
+0xF663: 24           inc h          ; Next page
+0xF664: 1097         djnz .rotate_loop
+
+.finish_depack:                     ; 0xF666
+0xF666: 3e01         ld a,#01
+0xF668: 0f           rrca
+0xF669: 3267f6       ld (depack_flag),a
+0xF66C: d0           ret nc
+
+.extra_work:                        ; 0xF66D
+0xF66D: 21d1f6       ld hl,depack_flag2
+0xF670: cb7e         bit 7,(hl)     ; Check flag
+0xF672: 2803         jr z,.skip_text
+0xF674: 219cf6       ld hl,loading_text
+.skip_text:
+0xF677: 7e           ld a,(hl)
+0xF678: 23           inc hl
+0xF679: 226ef6       ld (text_ptr),hl
+0xF67C: 6f           ld l,a
+0xF67D: 2600         ld h,#00
+0xF67F: 29           add hl,hl      ; * 2
+0xF680: 29           add hl,hl      ; * 4
+0xF681: 29           add hl,hl      ; * 8
+0xF682: 3e3c         ld a,#3C
+0xF684: 84           add a,h
+0xF685: 67           ld h,a
+0xF686: 0608         ld b,#08
+0xF688: 1194f6       ld de,work_buffer
+
+.gfx_loop:                          ; 0xF68B
+0xF68B: 7e           ld a,(hl)
+0xF68C: 0f           rrca
+0xF68D: b6           or (hl)
+0xF68E: 122c13       ld (de),#132C
+0xF691: 10f8         djnz .gfx_loop
+0xF693: c9           ret
+
+# ==================== Embedded Text & Data ====================
+
+work_buffer:                        ; 0xF694 - 64-byte rotating buffer
+0xF694: DS   8,0x00                 ; Padding
+
+loading_text:                       ; 0xF69C - Loading screen text
+0xF69C: DB   "> OF <INSULT> MEGADEMO...                                LOADING AND DECRUNCHING PART <INTRO"
+
+text_end_marker:                    ; 0xF6F8
+0xF6F8: DB   0xFF                   ; End marker
+
+final_padding:                      ; 0xF6F9
+0xF6F9: DS   7,0x00                 ; Final padding
+
+# Total: 244 instructions + embedded text/data
+# Loader ends at 0xF700

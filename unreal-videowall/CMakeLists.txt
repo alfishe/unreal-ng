@@ -3,6 +3,9 @@ cmake_minimum_required(VERSION 3.16.0)
 message(">> unreal-videowall CMakeLists.txt")
 
 # Project named 'unreal-videowall' on C++
+# Minimum macOS version (must precede project(); shared with the root build)
+include(${CMAKE_CURRENT_LIST_DIR}/../cmake/MacOSDeploymentTarget.cmake)
+
 project(unreal-videowall LANGUAGES CXX)
 
 # Define automation options - use defaults if not already set by parent CMakeLists.txt
@@ -204,7 +207,20 @@ message("CPP_FILES:${CPP_FILES}")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 # Create the executable
-add_executable(${PROJECT_NAME} ${CPP_FILES})
+# macOS bundle icon: registered as a bundle resource so CMake places it in
+# Contents/Resources at build time (matches MACOSX_BUNDLE_ICON_FILE below).
+set(APP_ICON_MACOS "")
+if (APPLE)
+    set(APP_ICON_MACOS "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/videowall.icns")
+    set_source_files_properties(${APP_ICON_MACOS} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+endif ()
+
+add_executable(${PROJECT_NAME} ${CPP_FILES} ${APP_ICON_MACOS})
+
+# Application icon as a Qt resource (window / taskbar icon on Windows and Linux).
+# AUTORCC is off, so the .qrc is compiled explicitly.
+qt6_add_resources(APP_ICON_RESOURCES "${CMAKE_CURRENT_SOURCE_DIR}/resources/appicon.qrc")
+target_sources(${PROJECT_NAME} PRIVATE ${APP_ICON_RESOURCES})
 
 # Set common target properties
 target_include_directories(${PROJECT_NAME} PRIVATE
@@ -249,7 +265,9 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 # Link all dependencies
 if (APPLE)
     target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)
-    set(common_libraries iconv)
+    # CoreAudio: direct AudioObject property listener for device nominal
+    # sample-rate changes (AppSoundManager nominal-rate watch)
+    set(common_libraries iconv "-framework CoreAudio")
     find_package(Threads REQUIRED)
 elseif (UNIX AND NOT APPLE)
     set(common_libraries -static-libstdc++)
@@ -304,15 +322,14 @@ message(STATUS "</unreal-videowall diagnostics>")
 
 # Define data paths
 set(DATA_PATH "${ROOT_DIR}/data")
-set(CONFIG_FILE "${DATA_PATH}/configs/pentagon512k/unreal.ini")
 
 # Copy all required resources using modern CMake syntax
 add_custom_command(
     TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${DATA_PATH}/fonts" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/fonts"
-    COMMAND ${CMAKE_COMMAND} -E copy
-        "${CONFIG_FILE}" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/unreal.ini"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${DATA_PATH}/configs" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/configs"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -384,21 +401,22 @@ if(APPLE)
         MACOSX_BUNDLE_BUNDLE_NAME "UnrealNG Video Wall"
         MACOSX_BUNDLE_BUNDLE_VERSION "${PACKAGE_VERSION}"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PACKAGE_VERSION}"
-        MACOSX_BUNDLE_ICON_FILE "unreal.icns"
+        MACOSX_BUNDLE_ICON_FILE "videowall.icns"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.unrealng.videowall"
         MACOSX_BUNDLE_COPYRIGHT "Copyright © 2025 UnrealNG Team"
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/Info.plist"
     )
     
-    # Copy resources to bundle
+    # Copy resources to bundle (the icon is a bundle source, see add_executable)
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources"
-        COMMAND ${CMAKE_COMMAND} -E copy "${ROOT_DIR}/unreal-qt/install/macos/unreal.icns" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/fonts" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/rom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/testrom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
-        COMMAND ${CMAKE_COMMAND} -E copy "${ROOT_DIR}/data/configs/pentagon512k/unreal.ini" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/unreal.ini"
-        COMMENT "Copying icon and resources to Video Wall app bundle"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/configs" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/configs"
+        # Bump the bundle mtime so Finder/Dock drop their cached icon for this path
+        COMMAND touch "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}>"
+        COMMENT "Copying resources to Video Wall app bundle"
     )
 endif()
 
@@ -407,6 +425,11 @@ if(WIN32)
     # Include the shared Windows Qt deployment module
     include(${ROOT_DIR}/cmake/WinDeployQt.cmake)
     setup_windows_qt_deployment(${PROJECT_NAME})
+
+    # Windows RC file for the executable icon and version information
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/install/windows/app.rc.in"
+                   "${CMAKE_CURRENT_BINARY_DIR}/app.rc" @ONLY)
+    target_sources(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/app.rc")
     
     # Create a custom target for Windows packaging
     add_custom_target(package_videowall_windows
@@ -415,7 +438,7 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/${PROJECT_NAME}.exe" "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall/"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/fonts" "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/rom" "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall/rom"
-        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/unreal.ini" "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall/unreal.ini"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/configs" "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall/configs"
         COMMAND ${CMAKE_COMMAND} -E tar "cf" "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall-Windows.zip" "--format=zip" "--" "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall"
         DEPENDS ${PROJECT_NAME}
         COMMENT "Creating Windows package for Video Wall in ${CMAKE_BINARY_DIR}/packages"
@@ -431,7 +454,10 @@ if(UNIX AND NOT APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/unreal-videowall" "${CMAKE_BINARY_DIR}/packages/unreal-videowall/"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/fonts" "${CMAKE_BINARY_DIR}/packages/unreal-videowall/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/rom" "${CMAKE_BINARY_DIR}/packages/unreal-videowall/rom"
-        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/unreal.ini" "${CMAKE_BINARY_DIR}/packages/unreal-videowall/unreal.ini"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/configs" "${CMAKE_BINARY_DIR}/packages/unreal-videowall/configs"
+        # Desktop integration files in XDG layout (copy share/ into ~/.local/share or /usr/share)
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/install/linux/unrealng-videowall.desktop" "${CMAKE_BINARY_DIR}/packages/unreal-videowall/share/applications/unrealng-videowall.desktop"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/install/linux/icons" "${CMAKE_BINARY_DIR}/packages/unreal-videowall/share/icons"
         COMMAND ${CMAKE_COMMAND} -E tar "cfz" "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall-Linux.tar.gz" "--" "${CMAKE_BINARY_DIR}/packages/unreal-videowall"
         DEPENDS ${PROJECT_NAME}
         COMMENT "Creating Linux package for Video Wall in ${CMAKE_BINARY_DIR}/packages"

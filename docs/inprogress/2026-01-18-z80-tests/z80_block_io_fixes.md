@@ -20,7 +20,7 @@ Two different flag implementations were required:
 
 | Instruction Type | Implementation Style | Reference |
 |-----------------|---------------------|-----------|
-| Single-iteration (INI, IND, OUTI, OUTD) | Xpeccy-style | [Xpeccy emulator](file:///Volumes/TB4-4Tb/Projects/emulators/github/Xpeccy/src/libxpeccy/cpu/Z80/z80ed.c) |
+| Single-iteration (INI, IND, OUTI, OUTD) | Xpeccy-style | Xpeccy emulator, upstream `src/libxpeccy/cpu/Z80/z80ed.c` |
 | Repeating (INIR, INDR, OTIR, OTDR) | David Banks full | [hoglet67/Z80Decoder](https://github.com/hoglet67/Z80Decoder/wiki/Undocumented-Flags) |
 
 ---
@@ -107,7 +107,7 @@ if (b_out) {  // B != 0 (will repeat)
 
 | File | Functions Modified |
 |------|-------------------|
-| [op_ed.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/cpu/op_ed.cpp) | `ope_A2` (INI), `ope_A3` (OUTI), `ope_AA` (IND), `ope_AB` (OUTD), `ope_B2` (INIR), `ope_B3` (OTIR), `ope_BA` (INDR), `ope_BB` (OTDR) |
+| [op_ed.cpp](core/src/emulator/cpu/op_ed.cpp) | `ope_A2` (INI), `ope_A3` (OUTI), `ope_AA` (IND), `ope_AB` (OUTD), `ope_B2` (INIR), `ope_B3` (OTIR), `ope_BA` (INDR), `ope_BB` (OTDR) |
 
 ---
 
@@ -142,7 +142,7 @@ OTDR  ✅ PASS
 ## References
 
 1. **David Banks Z80 Decoder Wiki**: https://github.com/hoglet67/Z80Decoder/wiki/Undocumented-Flags
-2. **Xpeccy Emulator**: `/Volumes/TB4-4Tb/Projects/emulators/github/Xpeccy/src/libxpeccy/cpu/Z80/z80ed.c`
-3. **Verified z80 Emulator**: `/Volumes/TB4-4Tb/Projects/emulators/github/z80/z80.c`
+2. **Xpeccy Emulator**: upstream source tree, `src/libxpeccy/cpu/Z80/z80ed.c`
+3. **Verified z80 Emulator**: upstream source tree, `z80.c`
 4. **z80tests Suite**: Mark Woodmass Z80 verification tests
 5. **Z80 Block Flags Test v5.0**: Ped7g comprehensive block instruction test

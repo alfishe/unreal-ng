@@ -33,6 +33,11 @@ Emulator* EmulatorTestHelper::CreateStandardEmulator(const std::string& modelNam
     }
 
     // EmulatorManager already calls Init() during creation
+    // Force deterministic boot: 48K BASIC (RESET=BASIC) regardless of the
+    // staged unreal.ini, which CMake re-copies on every build (RESET=128)
+    emulator->GetContext()->config.reset_rom = RM_SOS;
+    emulator->Reset();
+
     // Return raw pointer (caller must use CleanupEmulator to properly release)
     return emulator.get();
 }
@@ -172,4 +177,79 @@ void EmulatorTestHelper::OnBreakpointHit(uint32_t bpId, Z80* cpu, Memory* memory
             cpu->pc = retAddr;
         }
     }
+}
+
+void EmulatorTestHelper::RunFramesFast(Emulator* emulator, int frameCount)
+{
+    if (!emulator)
+        return;
+
+    emulator->RunNFrames(static_cast<unsigned>(frameCount), true);
+}
+
+int EmulatorTestHelper::RunUntil(Emulator* emulator,
+                                  std::function<bool()> condition,
+                                  int maxFrames,
+                                  int checkInterval)
+{
+    if (!emulator)
+        return 0;
+
+    for (int i = 0; i < maxFrames; i++)
+    {
+        emulator->RunFrame(true);
+        if ((i + 1) % checkInterval == 0 && condition())
+        {
+            return i + 1;
+        }
+    }
+    return maxFrames;
+}
+
+uint8_t EmulatorTestHelper::ReadSysVar(Emulator* emulator, uint16_t address)
+{
+    if (!emulator)
+        return 0;
+    return emulator->GetContext()->pMemory->DirectReadFromZ80Memory(address);
+}
+
+uint16_t EmulatorTestHelper::ReadSysVar16(Emulator* emulator, uint16_t address)
+{
+    if (!emulator)
+        return 0;
+    Memory* mem = emulator->GetContext()->pMemory;
+    return mem->DirectReadFromZ80Memory(address) |
+           (mem->DirectReadFromZ80Memory(address + 1) << 8);
+}
+
+bool EmulatorTestHelper::IsBASICReady(Emulator* emulator)
+{
+    // Check multiple conditions to ensure BASIC is truly ready:
+    // 1. ERR_NR == 0x00 (error code 1 = "OK")
+    // 2. PROG pointer is set (BASIC program area initialized, typically 0x5CCB)
+    // This avoids false positives during early ROM initialization.
+    uint8_t errNr = ReadSysVar(emulator, SystemVariables48k::ERR_NR);
+    uint16_t prog = ReadSysVar16(emulator, SystemVariables48k::PROG);
+    return errNr == 0x00 && prog >= 0x5C00;
+}
+
+bool EmulatorTestHelper::RunUntilBASICReady(Emulator* emulator, int maxFrames, int* framesRun)
+{
+    if (!emulator)
+        return false;
+
+    for (int i = 0; i < maxFrames; i++)
+    {
+        emulator->RunFrame(true);  // true = turbo mode (no frame rate limiting)
+        // Check every 5 frames (very fast check - just two memory reads)
+        if ((i + 1) % 5 == 0 && IsBASICReady(emulator))
+        {
+            if (framesRun)
+                *framesRun = i + 1;
+            return true;
+        }
+    }
+    if (framesRun)
+        *framesRun = maxFrames;
+    return false;
 }

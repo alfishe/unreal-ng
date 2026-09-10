@@ -1,11 +1,17 @@
 #include "tape.h"
 
+#include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/tape/tapecatalog.h"
+#include "emulator/io/tape/tapepulsegen.h"
 #include "emulator/sound/soundmanager.h"
-#include "loaders/tape/loader_tap.h"
+#include "emulator/spectrumconstants.h"
+#include "loaders/tape/loader_tape.h"
 #include "stdafx.h"
+#include <cstring>
+#include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (Item 6 markers)
 
 /// region <Constructors / destructors>
 
@@ -24,18 +30,48 @@ Tape::~Tape() {}
 /// region <Tape control methods>
 void Tape::startTape()
 {
+    // Phase 2 Item 6 - record an external-event marker. Tape playback is
+    // nondeterministic from the emulator's perspective (content arrives via
+    // the host clock, not via CPU-readable state), so SeekTo across a
+    // startTape boundary would silently produce wrong state. The marker is
+    // a replay barrier: SeekTo stops at it and surfaces it to the caller.
+    //
+    // No-op unless the TTD session is Recording - same guard as
+    // RecordInputEvent. The CLI / WebAPI handlers pause the emulator
+    // before calling startTape, so frame_counter and z80.t are stable.
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::TapeControl, "tape play");
+
+    _playbackFrozen = false;
     _tapeStarted = true;
     _muteEAR = true;
     _lastTapeBit = false;
+    _framesSinceLastRead = 0;
+    _initialErrNr = _context->pMemory->DirectReadFromZ80Memory(SystemVariables48k::ERR_NR);
+    MLOGINFO("Tape started, initial ERR_NR=0x%02X", _initialErrNr);
 }
 
 void Tape::stopTape()
 {
+    // Phase 2 Item 6 - see startTape() for rationale.
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::TapeControl, "tape stop");
+
     _tapeStarted = false;
+    _playbackFrozen = false;
     _muteEAR = false;
 
-    // Reset all tape-related fields and free up blocks memory
+    // Reset all tape-related fields and free up blocks memory.
+    // This is the tape-control stop: the image is invalidated (design §9.4),
+    // so the loaded-path key must be dropped as well or EnsureImageLoaded()
+    // would wrongly consider the (now empty) image fresh.
     _tapeBlocks = std::vector<TapeBlock>();
+    _catalog.clear();
+    _fastLoadPlan = TapeFastLoadPlan();
+    _imageLoadedPath.clear();
+    _imageFormatId.clear();
     _currentTapeBlock = nullptr;
     _currentTapeBlockIndex = UINT64_MAX;
     _currentPulseIdxInBlock = 0;
@@ -44,15 +80,418 @@ void Tape::stopTape()
     _currentClockCount = 0;
     _lastTapeBit = false;
 }
+
+void Tape::stopPlayback()
+{
+    // Watchdog / natural end-of-tape stop. Unlike stopTape() this is NOT a
+    // tape-control command: the image and the consumption cursor survive, so
+    // a later load (or trap) continues from where the tape stopped — matching
+    // a real cassette that keeps rolling.
+
+    // Phase 2 Item 6 - same replay fencing as stopTape(): the playback region
+    // itself is wall-clock driven (nondeterministic), so a stop boundary must
+    // remain a SeekTo barrier.
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::TapeControl, "tape stop");
+
+    // Partially played block counts as consumed (design §9.4): advance the
+    // cursor past the in-flight block. A block pointer already null means
+    // playback sat exactly between two blocks — the cursor is already synced.
+    if (_currentTapeBlock != nullptr && _currentTapeBlockIndex != UINT64_MAX)
+        _currentTapeBlockIndex++;
+
+    _tapeStarted = false;
+    _playbackFrozen = false;
+    _muteEAR = false;
+    _currentTapeBlock = nullptr;
+    _currentPulseIdxInBlock = 0;
+    _currentOffsetWithinPulse = 0;
+    _lastTapeBit = false;
+}
+
+void Tape::pausePlayback()
+{
+    // Freeze the head in place: everything positional survives (in-flight
+    // block, pulse indices, last EAR level) so ResumePlaybackAfterPoll()
+    // continues the bitstream mid-block — un-pausing a real deck. Only the
+    // playback driver stops. Terminal stopPlayback() is deliberately NOT
+    // used here: it consumes the partially heard block, which loses data for
+    // a loader that merely stopped listening while it processes.
+
+    // Same replay fencing as stopPlayback(): a pause boundary is still a
+    // wall-clock-driven playback boundary for SeekTo.
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::TapeControl, "tape pause");
+
+    MLOGINFO("Tape paused at block %zu, pulse %zu (read-gap watchdog)",
+             GetConsumptionCursor(), _currentOffsetWithinPulse);
+
+    _tapeStarted = false;
+    _muteEAR = false;
+    _playbackFrozen = true;
+
+    // Re-seed the clock on resume: a delta spanning the pause would otherwise
+    // be consumed as one giant pulse. 0 is the "re-seed on next read" marker
+    // honored by getTapeStreamBit().
+    _currentClockCount = 0;
+}
+
+void Tape::ResumePlaybackAfterPoll()
+{
+    // Sustained EAR polling from arbitrary code (custom loaders live in RAM
+    // and never hit the ROM $0562/$0564 auto-start anchor). Two cases:
+    //
+    // 1. Frozen mid-block position still valid (paused by the read-gap
+    //    watchdog, trap has not consumed past it): un-pause IN PLACE. The
+    //    stream continues mid-block with level continuity — startTape() is
+    //    not used because it resets _lastTapeBit, which would inject a
+    //    spurious edge into the stream a mid-block loader is decoding.
+    // 2. No usable position (never started / trap consumed past the frozen
+    //    block): position at the consumption cursor like a fresh signal start.
+    const size_t cursor = GetConsumptionCursor();
+    const bool frozenInFlight = _currentTapeBlock != nullptr &&
+                                _currentTapeBlockIndex != UINT64_MAX &&
+                                _currentTapeBlockIndex >= cursor &&
+                                _currentTapeBlockIndex < _tapeBlocks.size();
+
+    if (!frozenInFlight)
+    {
+        StartPlaybackAtCursor();
+        return;
+    }
+
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::TapeControl, "tape play");
+
+    // Same flag set as startTape(), but position and last level survive
+    _playbackFrozen = false;
+    _tapeStarted = true;
+    _muteEAR = true;
+    _framesSinceLastRead = 0;
+    _initialErrNr = _context->pMemory->DirectReadFromZ80Memory(SystemVariables48k::ERR_NR);
+
+    MLOGINFO("Tape resumed at block %zu, pulse %zu (sustained EAR polling)",
+             _currentTapeBlockIndex, _currentOffsetWithinPulse);
+}
+
+/// Read a whole tape file into memory. The unified loader contract is
+/// buffer-based (design §5.3), so the one filesystem touch lives here, at the
+/// caller — loaders never see paths.
+static bool ReadTapeFile(const std::string& path, std::vector<uint8_t>& bytes)
+{
+    FILE* file = FileHelper::OpenExistingFile(path);
+    if (file == nullptr)
+    {
+        return false;
+    }
+
+    size_t size = FileHelper::GetFileSize(file);
+    if (size == 0)
+    {
+        FileHelper::CloseFile(file);
+        return false;
+    }
+
+    bytes.resize(size);
+    size_t read = FileHelper::ReadFileToBuffer(file, bytes.data(), size);
+    FileHelper::CloseFile(file);
+
+    return read == size;
+}
+
+bool Tape::EnsureImageLoaded()
+{
+    const std::string& path = _context->coreState.tapeFilePath;
+
+    // Idempotent and path-keyed (design §9.4): an unchanged path (including
+    // the empty "no tape selected" path) never re-parses over live blocks.
+    if (_imageLoadedPath == path)
+        return !_tapeBlocks.empty();
+
+    if (path.empty())
+        return false;
+
+    // Unified loader contract (design §5.3/§5.6): read the file once, select
+    // the loader by content probe (extension as tie-breaker), decode to a
+    // TapeImage, then derive catalog and (later) fast-load plan beside the
+    // blocks — one source of truth, one invalidation point.
+    std::vector<uint8_t> bytes;
+    if (!ReadTapeFile(path, bytes))
+    {
+        _imageLoadedPath = path;  // do not retry the same unreadable path every call
+        _tapeBlocks.clear();
+        _catalog.clear();
+        _fastLoadPlan = TapeFastLoadPlan();
+        _imageFormatId.clear();
+        MLOGERROR("Tape image unreadable: '%s'", path.c_str());
+        return false;
+    }
+
+    LoaderTapeBase* loader = TapeLoaderRegistry::Instance().Select(bytes, path);
+    if (loader == nullptr)
+    {
+        _imageLoadedPath = path;
+        _tapeBlocks.clear();
+        _catalog.clear();
+        _fastLoadPlan = TapeFastLoadPlan();
+        _imageFormatId.clear();
+        MLOGERROR("No tape loader claims '%s' (unknown or unsupported format)", path.c_str());
+        return false;
+    }
+
+    TapeImage image = loader->Load(bytes, path);
+
+    // Usability must be captured BEFORE the blocks move out of the image —
+    // IsUsable() consults image.blocks, which the move empties (the check
+    // used to sit below the move and fired a misleading empty-text error on
+    // every successful load).
+    const bool imageUsable = image.IsUsable();
+
+    // Catalog derivation and fast-load eligibility run before the blocks
+    // move out of the image (design §5.5/§5.8) — both pure, both once per load.
+    // The plan runs over the FILLED catalog: loader-supplied descriptors are
+    // partial by contract, and analyzing them directly classified checksums
+    // and durations that were never derived (live smoke-test catch).
+    _catalog = TapeCatalogParser::Build(image);
+    _fastLoadPlan = TapeFastLoadEligibility::Analyze(_catalog, image.controlFlowLinearized);
+    _tapeBlocks = std::move(image.blocks);
+    _imageLoadedPath = path;
+    _imageFormatId = loader->Format().id;
+
+    for (const std::string& warning : image.parseWarnings)
+    {
+        MLOGWARNING("Tape '%s': %s", path.c_str(), warning.c_str());
+    }
+
+    if (!imageUsable)
+    {
+        MLOGERROR("Tape '%s' not loadable (%s): %s", path.c_str(), loader->Format().id.c_str(),
+                  image.errorText.c_str());
+    }
+
+    // Fresh image: consumption cursor at the first block, playback state reset.
+    _playbackFrozen = false;
+    _currentTapeBlock = nullptr;
+    _currentTapeBlockIndex = UINT64_MAX;
+    _currentPulseIdxInBlock = 0;
+    _currentOffsetWithinPulse = 0;
+
+    MLOGINFO("Tape image loaded: '%s', format: %s, blocks: %zu", path.c_str(),
+             loader->Format().id.c_str(), _tapeBlocks.size());
+
+    return !_tapeBlocks.empty();
+}
+
+size_t Tape::GetConsumptionCursor() const
+{
+    return _currentTapeBlockIndex == UINT64_MAX ? 0 : _currentTapeBlockIndex;
+}
+
+void Tape::ConsumeBlock(size_t index)
+{
+    // Trap consumption path: block `index` was delivered in full. The sentinel
+    // (nothing consumed yet) and the block itself both advance past `index`;
+    // an already-advanced cursor is left untouched (idempotent no-op).
+    if (_currentTapeBlockIndex == UINT64_MAX || _currentTapeBlockIndex <= index)
+        _currentTapeBlockIndex = index + 1;
+}
+
+void Tape::StartPlaybackAtCursor()
+{
+    if (_tapeBlocks.empty())
+        return;
+
+    // Signal fallback begins exactly at the consumption cursor — where a real
+    // tape head would be after the blocks already consumed. At end-of-tape the
+    // cursor equals size: nothing left to play, leave the tape stopped (the
+    // ROM loader then waits in its pilot loop, as with a tape that ran out).
+    if (GetConsumptionCursor() >= _tapeBlocks.size())
+        return;
+
+    if (_currentTapeBlockIndex == UINT64_MAX)
+        _currentTapeBlockIndex = 0;
+
+    // Force (re)generation of the bitstream for the cursor block on the next
+    // handleFrameStart() / getTapeStreamBit() pass.
+    _currentTapeBlock = nullptr;
+
+    startTape();
+}
 /// endregion </Tape control methods>
+
+/// region <Playback state, position and seek (design §6)>
+
+TapePlaybackState Tape::GetPlaybackState() const
+{
+    // State machine §6.3: no image (eject reset everything) reads as Idle —
+    // Ended is only meaningful with an image whose cursor ran past the end.
+    if (_tapeBlocks.empty())
+        return TapePlaybackState::Idle;
+
+    if (_tapeStarted)
+        return TapePlaybackState::Playing;
+
+    if (_playbackFrozen)
+        return TapePlaybackState::Paused;
+
+    // Natural end of tape (§6.1): the stopPlayback() the end of the stream
+    // leaves behind parks the cursor past the last block.
+    if (GetConsumptionCursor() >= _tapeBlocks.size())
+        return TapePlaybackState::Ended;
+
+    return TapePlaybackState::Idle;
+}
+
+std::optional<TapePosition> Tape::GetPosition() const
+{
+    if (_tapeBlocks.empty())
+        return std::nullopt;
+
+    TapePosition position;
+
+    // Field-naming note: the engine keeps the edgePulseTimings vector index in
+    // _currentOffsetWithinPulse and the intra-pulse T-state count in
+    // _currentPulseIdxInBlock (getTapeStreamBit() is the source of truth).
+    const bool inFlight = _currentTapeBlock != nullptr && _currentTapeBlockIndex != UINT64_MAX &&
+                          _currentTapeBlockIndex < _tapeBlocks.size();
+    if (inFlight)
+    {
+        position.blockIndex = _currentTapeBlockIndex;
+        position.pulseIndex = std::min(_currentOffsetWithinPulse, _currentTapeBlock->edgePulseTimings.size());
+        position.offsetWithinPulse = _currentPulseIdxInBlock;
+
+        // Elapsed signal time: fully consumed pulses plus the partial one
+        uint64_t elapsedTStates = position.offsetWithinPulse;
+        for (size_t i = 0; i < position.pulseIndex; i++)
+        {
+            elapsedTStates += _currentTapeBlock->edgePulseTimings[i];
+        }
+        position.secondsIntoBlock = static_cast<double>(elapsedTStates) / 3500000.0;
+    }
+    else
+    {
+        // Next-up block; == block count only in the Ended state
+        position.blockIndex = std::min(GetConsumptionCursor(), _tapeBlocks.size());
+    }
+
+    if (position.blockIndex < _catalog.size())
+    {
+        position.blockTotalSeconds = _catalog[position.blockIndex].estimatedSeconds;
+    }
+
+    return position;
+}
+
+bool Tape::SeekToBlock(size_t index)
+{
+    if (index >= _tapeBlocks.size())
+    {
+        return false;
+    }
+
+    // TTD (design §11): seek is a position-changing tape-control command —
+    // same invalidation class as rewind. The marker carries the target.
+    if (_context && _context->pTimeTravelManager)
+    {
+        char reason[32];
+        snprintf(reason, sizeof(reason), "tape seek %zu", index);
+        _context->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::TapeControl, reason);
+    }
+
+    // Abandon, never consume (design §6.2): unlike stopPlayback(), the partial
+    // in-flight block is dropped by redefining the cursor — and a paused
+    // freeze is discarded with it (it pointed into a block the user just
+    // left). Seek never starts playback: it arms, the next play/trap request
+    // delivers from the new cursor.
+    _tapeStarted = false;
+    _muteEAR = false;
+    _playbackFrozen = false;
+    _currentTapeBlock = nullptr;
+    _currentPulseIdxInBlock = 0;
+    _currentOffsetWithinPulse = 0;
+    _currentClockCount = 0;
+    _lastTapeBit = false;
+
+    _currentTapeBlockIndex = index;
+
+    MLOGINFO("Tape seek: block %zu of %zu", index, _tapeBlocks.size());
+    return true;
+}
+
+void Tape::RewindToStart()
+{
+    // == SeekToBlock(0), image and catalog kept (FR-5) — unlike legacy
+    // reset(), which dropped the image as well. No-op without an image.
+    if (_tapeBlocks.empty())
+        return;
+
+    SeekToBlock(0);
+}
+
+void Tape::ResumePlaybackFromPause()
+{
+    // Manual un-pause of a frozen position (FR-6): the read-gap watchdog's
+    // pausePlayback() freeze, released by user intent rather than by
+    // sustained EAR polling. No-op unless actually paused — the caller
+    // (CLI `tape play`, WebAPI play) picks StartPlaybackAtCursor() otherwise.
+    if (!_playbackFrozen)
+        return;
+
+    const size_t cursor = GetConsumptionCursor();
+    const bool frozenInFlight = _currentTapeBlock != nullptr &&
+                                _currentTapeBlockIndex != UINT64_MAX &&
+                                _currentTapeBlockIndex >= cursor &&
+                                _currentTapeBlockIndex < _tapeBlocks.size();
+
+    _playbackFrozen = false;
+
+    if (!frozenInFlight)
+    {
+        // Frozen position no longer usable (e.g. the trap consumed past it):
+        // fall back to a fresh start at the cursor
+        StartPlaybackAtCursor();
+        return;
+    }
+
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::TapeControl, "tape resume");
+
+    // Same flags startTape() sets; position and last EAR level survive, so
+    // the bitstream continues mid-block without a spurious edge
+    _tapeStarted = true;
+    _muteEAR = true;
+    _framesSinceLastRead = 0;
+    _initialErrNr = _context->pMemory->DirectReadFromZ80Memory(SystemVariables48k::ERR_NR);
+
+    MLOGINFO("Tape resumed at block %zu, pulse %zu (manual)",
+             _currentTapeBlockIndex, _currentOffsetWithinPulse);
+}
+
+/// endregion </Playback state, position and seek>
 
 void Tape::reset()
 {
+    // Phase 2 Item 6 - distinguish "user-driven rewind" from "system-level
+    // reset". The constructor calls reset() before _context is fully wired;
+    // CLI/WebAPI rewind calls it after pausing the emulator. Recording is
+    // guarded below, so no caller-passed flag is needed.
+    const bool wasStarted = _tapeStarted;
+
     _tapeStarted = false;
+    _playbackFrozen = false;
     _tapePosition = 0LL;
 
     // Tape input bitstream related
     _tapeBlocks = std::vector<TapeBlock>();
+    _catalog.clear();
+    _fastLoadPlan = TapeFastLoadPlan();
+    _imageLoadedPath.clear();
+    _imageFormatId.clear();
     _currentTapeBlock = nullptr;
     _currentTapeBlockIndex = UINT64_MAX;
     _currentPulseIdxInBlock = 0;
@@ -60,11 +499,18 @@ void Tape::reset()
 
     _currentClockCount = 0;
     _lastTapeBit = false;
+    // Phase 2 Item 6 - only record a rewind marker when reset() actually
+    // changes tape state mid-session. A no-op reset (constructor, system
+    // reset before any session) must not pollute the journal.
+    if (wasStarted && _context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::TapeControl, "tape rewind");
+
 };
 
 /// region <Port events>
 
-uint8_t Tape::handlePortIn()
+uint8_t Tape::handlePortIn(uint16_t port)
 {
     uint8_t result = 0;
 
@@ -81,6 +527,9 @@ uint8_t Tape::handlePortIn()
 
     if (_tapeStarted)
     {
+        // Reset frame counter - loader is actively reading
+        _framesSinceLastRead = 0;
+
         // Use monotonic counter for tape timing (t_states + t)
         uint64_t clockCount = _context->emulatorState.t_states + cpu.t;
 
@@ -89,6 +538,29 @@ uint8_t Tape::handlePortIn()
     }
     else
     {
+        /// region <Sustained EAR-polling resume>
+
+        // A loader polling EAR from RAM (custom loaders never reach the ROM
+        // $0562/$0564 anchor below) — or re-polling after the read-gap
+        // watchdog paused playback mid-tape. Sinclair-joystick polls never
+        // accumulate; keyboard scans never reach the threshold by count; a
+        // loader's tight poll loop (any port, incl. combined EAR+key rows
+        // like $7FFE) crosses the threshold within a single frame.
+        if (!IsJoystickPollPort(port))
+        {
+            _earPollsThisFrame++;
+
+            if (_earPollsThisFrame == TAPE_EAR_POLL_RESUME_THRESHOLD)
+            {
+                // Load the image if needed (idempotent, path-keyed) and take
+                // up playback — frozen position, else the consumption cursor
+                if (EnsureImageLoaded())
+                    ResumePlaybackAfterPoll();
+            }
+        }
+
+        /// endregion </Sustained EAR-polling resume>
+
         /// region <Imitate analogue noise>
         static uint16_t counter = 0;
         [[maybe_unused]] static uint8_t prevValue = 0;
@@ -119,27 +591,21 @@ uint8_t Tape::handlePortIn()
 
         // If we just executed instruction at $0562 IN A,($FE)
         // And our PC is currently on $0564 RRA (which has opcode 0x1F)
-        if (cpu.pc == 0x0564 && memory.IsCurrentROM48k() && memory.GetPhysicalAddressForZ80Page(0)[0x0564] == 0x1F)
+        // Check ROM content directly - works for both 48K and 128K modes
+        uint8_t* romBank = memory.GetPhysicalAddressForZ80Page(0);
+        if (cpu.pc == 0x0564 && romBank && romBank[0x0564] == 0x1F)
         {
-            LoaderTAP loader(_context);
-
-            if (_context->coreState.tapeFilePath.empty())
-            {
-                //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/ELITE_ATOSSOFT.tap");
-                //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/ELITE_NICOLAS_RODIONOV.tap");
-                //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/traffic_lights.tap");
-                //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/action.tap");
-                //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/IntTest+.tap");
-                //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/earshaver.tap");
-                //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/lphp.tap");
-                _tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/AYtest_v0.2.tap");
-            }
-            else
-            {
-                _tapeBlocks = loader.loadTAP(_context->coreState.tapeFilePath);
-            }
-
-            startTape();
+            // Auto-start: the ROM loader is polling EAR with no playback active.
+            // Load the image (idempotent, path-keyed) and start signal playback
+            // from the consumption cursor — exactly where the fast-load trap left
+            // off when it declined, so fallback is seamless (design §9.4).
+            // With no tape file selected the correct behavior is "nothing to
+            // load" — the previous hardcoded dev-tree demo file is gone.
+            //
+            // Frame-accurate instant path; RAM-resident loaders use the
+            // sustained-polling resume above instead.
+            if (EnsureImageLoaded())
+                StartPlaybackAtCursor();
         }
     }
 
@@ -161,6 +627,9 @@ void Tape::handlePortOut([[maybe_unused]] uint8_t value)
 /// If we have previous tape block played, then we can generate bitstream for the next block
 void Tape::handleFrameStart()
 {
+    // Sustained-polling counter is per-frame
+    _earPollsThisFrame = 0;
+
     // Use monotonic counter for tape timing (t_states + t)
     uint64_t clockCount = _context->emulatorState.t_states + _context->pCore->GetZ80()->t;
 
@@ -191,10 +660,18 @@ void Tape::handleFrameStart()
                 // Generating bit-stream related data
                 generateBitstreamForStandardBlock(*_currentTapeBlock);
 
-                // Clear bit-stream data from previous block
-                TapeBlock& previousBlock = _tapeBlocks[_currentTapeBlockIndex - 1];
-                previousBlock.totalBitstreamLength = 0;
-                previousBlock.edgePulseTimings = std::vector<uint32_t>();
+                // Clear bit-stream data from previous block (guard: the cursor
+                // may legitimately sit at block 0, e.g. after StartPlaybackAtCursor).
+                // Byte-payload blocks only: loader-supplied pulse trains
+                // (representation 3) ARE the block's content — wiping them
+                // would make re-play and seeking past them impossible.
+                if (_currentTapeBlockIndex > 0 &&
+                    !_tapeBlocks[_currentTapeBlockIndex - 1].data.empty())
+                {
+                    TapeBlock& previousBlock = _tapeBlocks[_currentTapeBlockIndex - 1];
+                    previousBlock.totalBitstreamLength = 0;
+                    previousBlock.edgePulseTimings = std::vector<uint32_t>();
+                }
             }
             else
             {
@@ -205,7 +682,7 @@ void Tape::handleFrameStart()
         else if (_currentTapeBlockIndex == UINT64_MAX)
         {
             // We've depleted all available blocks
-            stopTape();
+            stopPlayback();
         }
     }
 }
@@ -215,7 +692,8 @@ void Tape::handleStep()
     if (!_tapeStarted)
         return;
 
-    const uint32_t tState = _context->pCore->GetZ80()->t;
+    Z80& cpu = *_context->pCore->GetZ80();
+    const uint32_t tState = cpu.t;
     uint64_t clockCount = _context->emulatorState.t_states + tState;
 
     bool tapeBit = getTapeStreamBit(clockCount);
@@ -234,13 +712,59 @@ void Tape::handleStep()
 
 void Tape::handleFrameEnd()
 {
-    // Fetch absolute timing (unused in this function)
-    [[maybe_unused]] uint64_t clockCount = _context->emulatorState.t_states + _context->pCore->GetZ80()->t;
+    if (!_tapeStarted)
+        return;
+
+    // Check ERR_NR - ROM sets error code on break/error (immediate detection)
+    // System variables are in RAM at same addresses regardless of which ROM is paged
+    uint8_t errNr = _context->pMemory->DirectReadFromZ80Memory(SystemVariables48k::ERR_NR);
+    if (errNr != _initialErrNr)
+    {
+        MLOGINFO("Tape stopped: ERR_NR changed from 0x%02X to 0x%02X", _initialErrNr, errNr);
+        stopPlayback();
+        return;
+    }
+
+    // Track frames since last tape read (backup detection for load complete)
+    // 128K mode has longer gaps between reads due to ROM switching
+    _framesSinceLastRead++;
+
+    // ~3 seconds without reads. A terminal stop would consume the partially
+    // heard block — lethal for a multi-stage loader that merely paused
+    // reading while processing (decompression, bank setup). Freeze instead;
+    // the sustained-polling resume (handlePortIn) un-pauses it mid-block the
+    // moment the loader polls EAR again. ROM flows that genuinely finished
+    // (back in the editor) stay paused silently — cursor and image survive
+    // exactly as with the previous stop semantics.
+    if (_framesSinceLastRead > 150)
+    {
+        pausePlayback();
+    }
 }
 
 /// endregion </Emulation events>
 
 /// region <Helper methods>
+
+bool Tape::IsJoystickPollPort(uint16_t port)
+{
+    // The two Sinclair-joystick row selectors (stick 1 = $EFFE, stick 2 =
+    // $F7FE). Games poll these in tight loops during menus and
+    // gameplay; bit 6 still carries EAR (merged by the port decoder), but
+    // such reads must never accumulate toward the loader-polling resume
+    // threshold. All other ports count: loaders deliberately poll keyboard
+    // rows too (e.g. $7FFE — space row, combined EAR + abort-key reads),
+    // and the ROM keyboard scan's ~8 reads/frame can never reach the
+    // threshold on its own.
+    switch (port >> 8)
+    {
+        case 0xEF:
+        case 0xF7:
+            return true;
+        default:
+            return false;
+    }
+}
 
 bool Tape::getTapeStreamBit(uint64_t clockCount)
 {
@@ -261,7 +785,10 @@ bool Tape::getTapeStreamBit(uint64_t clockCount)
 
     while (deltaTime > 0 && _currentTapeBlockIndex < _tapeBlocks.size())
     {
-        if (_currentTapeBlock == nullptr)
+        // Regenerate also when the in-flight block's edges were dropped
+        // (TTD restore recomputes the block pointer but not the derived edge
+        // data; a pause spanning a seek can land on a cleared block)
+        if (_currentTapeBlock == nullptr || _currentTapeBlock->edgePulseTimings.empty())
         {
             _currentTapeBlock = &_tapeBlocks[_currentTapeBlockIndex];
             generateBitstreamForStandardBlock(*_currentTapeBlock);
@@ -279,7 +806,9 @@ bool Tape::getTapeStreamBit(uint64_t clockCount)
 
             if (_currentTapeBlockIndex >= _tapeBlocks.size())
             {
-                stopTape();
+                // Natural end of tape: stop playback, keep the image (cursor
+                // sits at end-of-tape; a rewind or new insert restarts it).
+                stopPlayback();
                 break;
             }
             continue;
@@ -311,7 +840,8 @@ bool Tape::getTapeStreamBit(uint64_t clockCount)
 
                 if (_currentTapeBlockIndex >= _tapeBlocks.size())
                 {
-                    stopTape();
+                    // Natural end of tape: stop playback, keep the image.
+                    stopPlayback();
                     break;
                 }
             }
@@ -328,11 +858,44 @@ bool Tape::generateBitstreamForStandardBlock(TapeBlock& tapeBlock)
 {
     bool result = false;
 
-    bool isHeader = tapeBlock.type == TAP_BLOCK_FLAG_HEADER;
+    // Representation 3 (design §5.7) and empty control markers: no byte
+    // payload means generateBitstream() must not run — for pulse blocks it
+    // would append a second, wrong encoding on top of the loader-supplied
+    // train, for empty control entries it would emit a spurious pilot+pause.
+    if (tapeBlock.data.empty())
+    {
+        return !tapeBlock.edgePulseTimings.empty();
+    }
 
-    size_t totalBlockDuration =
-        generateBitstream(tapeBlock, PILOT_TONE_HALF_PERIOD, PILOT_SYNCHRO_1, PILOT_SYNCHRO_2, ZERO_ENCODE_HALF_PERIOD,
-                          ONE_ENCODE_HALF_PERIOD, isHeader ? PILOT_DURATION_HEADER : PILOT_DURATION_DATA, 1000);
+    size_t totalBlockDuration = 0;
+
+    if (tapeBlock.timing.has_value())
+    {
+        // Representation 2 (design §5.7): byte payload with a Custom profile —
+        // TZX $11 turbo / $14 pure data. The profile mirrors this function's
+        // parameters 1:1, so generation is a straight pass-through. A zero
+        // pilotPulses ($14) skips pilot+sync entirely, exactly like the engine
+        // path below.
+        const TapeTimingProfile& profile = *tapeBlock.timing;
+        totalBlockDuration = generateBitstream(tapeBlock,
+                                               profile.pilotHalfPeriod,
+                                               profile.sync1,
+                                               profile.sync2,
+                                               profile.zeroHalfPeriod,
+                                               profile.oneHalfPeriod,
+                                               profile.pilotPulses,
+                                               profile.pauseMs,
+                                               profile.bitsInLastByte);
+    }
+    else
+    {
+        // Representation 1: ROM-standard encoding — TAP and TZX $10
+        bool isHeader = tapeBlock.type == TAP_BLOCK_FLAG_HEADER;
+
+        totalBlockDuration =
+            generateBitstream(tapeBlock, PILOT_TONE_HALF_PERIOD, PILOT_SYNCHRO_1, PILOT_SYNCHRO_2, ZERO_ENCODE_HALF_PERIOD,
+                              ONE_ENCODE_HALF_PERIOD, isHeader ? PILOT_DURATION_HEADER : PILOT_DURATION_DATA, 1000);
+    }
 
     if (totalBlockDuration > 0)
     {
@@ -342,66 +905,21 @@ bool Tape::generateBitstreamForStandardBlock(TapeBlock& tapeBlock)
     return result;
 }
 
-size_t Tape::generateBitstream(TapeBlock& tapeBlock, uint16_t pilotHalfPeriod_tStates, uint16_t synchro1_tStates,
-                               uint16_t synchro2_tStates, uint16_t zeroEncodingHalfPeriod_tState,
-                               uint16_t oneEncodingHalfPeriod_tStates, size_t pilotLength_periods, size_t pause_ms)
+size_t Tape::generateBitstream(TapeBlock& tapeBlock, uint32_t pilotHalfPeriod_tStates, uint32_t synchro1_tStates,
+                               uint32_t synchro2_tStates, uint32_t zeroEncodingHalfPeriod_tState,
+                               uint32_t oneEncodingHalfPeriod_tStates, size_t pilotLength_pulses, size_t pause_ms,
+                               uint8_t bitsInLastByte)
 {
-    size_t result = 0;
-    size_t len = tapeBlock.data.size();
+    // Signal half-periods come from the shared pure generator (tapepulsegen —
+    // tape-audio-bridge design §4.3); the engine-side addition is the pause
+    // hold-edge the playback cursor semantics rely on (1 ms == 3500 T-states).
+    uint64_t signalTotal = TapePulseGen::GenerateHalfPeriods(tapeBlock.data,
+                                                             pilotHalfPeriod_tStates, synchro1_tStates, synchro2_tStates,
+                                                             zeroEncodingHalfPeriod_tState, oneEncodingHalfPeriod_tStates,
+                                                             pilotLength_pulses, bitsInLastByte,
+                                                             tapeBlock.edgePulseTimings);
 
-    // Calculate collection size to fit all edge time intervals
-    size_t resultSize = 0;
-    resultSize += (pilotLength_periods * 2);  // Each pilot signal period is encoded as 2 edges
-    resultSize += 2;                          // Two sync pulses at the end of pilot
-    resultSize += (len * 8 * 2);              // Each byte split to bits and each bit encoded as 2 edges
-    if (pause_ms > 0)
-        resultSize += 1;  // Pause is just a marker so single edge is sufficient
-
-    tapeBlock.edgePulseTimings.reserve(resultSize);
-
-    /// region <Pilot tone + sync>
-
-    if (pilotLength_periods > 0)
-    {
-        // Required number of pilot half-periods (2 half-periods per period)
-        for (size_t i = 0; i < pilotLength_periods * 2; i++)
-        {
-            tapeBlock.edgePulseTimings.push_back(pilotHalfPeriod_tStates);
-
-            result += pilotHalfPeriod_tStates;
-        }
-
-        // Sync pulses at the end of pilot
-        tapeBlock.edgePulseTimings.push_back(synchro1_tStates);
-        tapeBlock.edgePulseTimings.push_back(synchro2_tStates);
-
-        result += synchro1_tStates;
-        result += synchro2_tStates;
-    }
-
-    /// endregion </Pilot tone + sync>
-
-    /// region <Data paramBytes>
-
-    for (size_t i = 0; i < len; i++)
-    {
-        // Extract bits from input data byte and add correspondent bit encoding length to image array
-        for (uint8_t bitMask = 0x80; bitMask != 0; bitMask >>= 1)
-        {
-            bool bit = (tapeBlock.data[i] & bitMask) != 0;
-            uint16_t bitEncoded = bit ? oneEncodingHalfPeriod_tStates : zeroEncodingHalfPeriod_tState;
-
-            // Each bit is encoded by two edges
-            tapeBlock.edgePulseTimings.push_back(bitEncoded);
-            tapeBlock.edgePulseTimings.push_back(bitEncoded);
-
-            result += bitEncoded;
-        }
-    }
-
-    /// endregion </Data paramBytes>
-
-    /// region <Pause>
+    size_t result = static_cast<size_t>(signalTotal);
 
     if (pause_ms)
     {
@@ -411,8 +929,6 @@ size_t Tape::generateBitstream(TapeBlock& tapeBlock, uint16_t pilotHalfPeriod_tS
 
         result += pauseDuration;
     }
-
-    /// endregion </Pause>
 
     tapeBlock.totalBitstreamLength = result;
 
@@ -456,3 +972,83 @@ bool Tape::getPilotSample(size_t clockCount)
 
     return result;
 }
+
+/// region <TTDSerializable (P1.5 — parent TDD §6.4, §4 row 3)>
+//
+// Cursor-packed layout (41 bytes, alignment-safe via per-field memcpy):
+//
+//   Offset  Size  Field
+//   ------  ----  ----------------------------------------
+//   0        1    _tapeStarted (0/1)
+//   1        8    _tapePosition
+//   9        8    _currentTapeBlockIndex
+//   17       8    _currentPulseIdxInBlock
+//   25       8    _currentOffsetWithinPulse
+//   33       8    _currentClockCount
+//   ------  ---
+//   41 bytes total
+//
+// size_t is serialized as uint64_t (the position indices never approach 2^63;
+// this keeps the format identical on 32-bit and 64-bit hosts).
+
+namespace
+{
+inline void put_u8 (uint8_t*& cur, uint8_t v)   { *cur++ = v; }
+inline void put_u64(uint8_t*& cur, uint64_t v) { std::memcpy(cur, &v, 8); cur += 8; }
+
+inline uint8_t  get_u8 (const uint8_t*& cur)   { return *cur++; }
+inline uint64_t get_u64(const uint8_t*& cur)   { uint64_t v; std::memcpy(&v, cur, 8); cur += 8; return v; }
+} // anonymous namespace
+
+static constexpr size_t kTapeStateSize = 2 + 5 * 8;  // = 42 (design §11: + _playbackFrozen)
+static_assert(kTapeStateSize == 42, "Tape state size drift");
+
+size_t Tape::TTDStateSize() const
+{
+    return kTapeStateSize;
+}
+
+void Tape::TTDSaveState(uint8_t* dst) const
+{
+    uint8_t* cur = dst;
+    put_u8 (cur, _tapeStarted ? 1 : 0);
+    put_u8 (cur, _playbackFrozen ? 1 : 0);
+    put_u64(cur, static_cast<uint64_t>(_tapePosition));
+    put_u64(cur, static_cast<uint64_t>(_currentTapeBlockIndex));
+    put_u64(cur, static_cast<uint64_t>(_currentPulseIdxInBlock));
+    put_u64(cur, static_cast<uint64_t>(_currentOffsetWithinPulse));
+    put_u64(cur, _currentClockCount);
+}
+
+void Tape::TTDLoadState(const uint8_t* src)
+{
+    const uint8_t* cur = src;
+    _tapeStarted              = (get_u8(cur) != 0);
+    _playbackFrozen           = (get_u8(cur) != 0);
+    _tapePosition             = static_cast<size_t>(get_u64(cur));
+    _currentTapeBlockIndex    = static_cast<size_t>(get_u64(cur));
+    _currentPulseIdxInBlock   = static_cast<size_t>(get_u64(cur));
+    _currentOffsetWithinPulse = static_cast<size_t>(get_u64(cur));
+    _currentClockCount        = get_u64(cur);
+
+    // Recompute the derived _currentTapeBlock pointer from the restored index.
+    // Tape content (_tapeBlocks) is invariant within a session — it is NOT
+    // part of the checkpoint (parent TDD §4 row 3). On restore (always within
+    // the same session), the content vector is unchanged, so the index is
+    // still valid. A bounds check guards against a corrupt/out-of-range index.
+    if (!_tapeBlocks.empty() && _currentTapeBlockIndex < _tapeBlocks.size())
+    {
+        _currentTapeBlock = &_tapeBlocks[_currentTapeBlockIndex];
+    }
+    else
+    {
+        // Content not loaded or index stale — leave the pointer null. This is
+        // the correct state for a tape that isn't actively playing content.
+        _currentTapeBlock = nullptr;
+    }
+
+    // Note: _tapeBlocks, _lpfFilter, _dcFilter, _muteEAR, _context are
+    // intentionally not restored — see the header doc for the exclusion list.
+}
+
+/// endregion </TTDSerializable>

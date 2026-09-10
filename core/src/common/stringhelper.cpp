@@ -103,27 +103,121 @@ int StringHelper::CompareCaseInsensitive(const char* str1, const char* str2, siz
     return result;
 }
 
+/// UTF-8 -> wide. wchar_t is UTF-16 on Windows (surrogate pairs for U+10000..U+10FFFF) and UTF-32 elsewhere.
+/// Malformed input bytes are mapped to U+FFFD so the conversion is total and never throws.
 std::wstring StringHelper::StringToWideString(const std::string& str)
 {
-    size_t len = str.length();
-    std::wstring result = std::wstring(len, 0);
+    std::wstring result;
+    result.reserve(str.size());
 
-    // Generic cross-platform conversion
-    std::copy(str.begin(), str.end(), result.begin());
+    const unsigned char* s = reinterpret_cast<const unsigned char*>(str.data());
+    const size_t n = str.size();
+    size_t i = 0;
+
+    while (i < n)
+    {
+        uint32_t cp;
+        size_t extra;
+        unsigned char c = s[i];
+
+        if (c < 0x80)            { cp = c;        extra = 0; }
+        else if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; extra = 1; }
+        else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; extra = 2; }
+        else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; extra = 3; }
+        else                     { cp = 0xFFFD;   extra = 0; }  // stray continuation / invalid lead byte
+
+        // Consume the continuation bytes that are actually present ("maximal subpart" rule: a truncated or
+        // broken sequence becomes exactly one U+FFFD and decoding resumes at the first non-continuation byte)
+        size_t got = 0;
+        while (got < extra && i + 1 + got < n && (s[i + 1 + got] & 0xC0) == 0x80)
+        {
+            cp = (cp << 6) | (s[i + 1 + got] & 0x3F);
+            got++;
+        }
+
+        if (got != extra)
+        {
+            cp = 0xFFFD;
+            extra = got;
+        }
+        else if ((extra == 1 && cp < 0x80) || (extra == 2 && cp < 0x800) || (extra == 3 && cp < 0x10000) ||
+                 cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF))
+        {
+            cp = 0xFFFD;  // overlong form, out of range or encoded surrogate
+        }
+
+        i += 1 + extra;
+
+        if (sizeof(wchar_t) == 2 && cp >= 0x10000)
+        {
+            cp -= 0x10000;
+            result.push_back(static_cast<wchar_t>(0xD800 | (cp >> 10)));
+            result.push_back(static_cast<wchar_t>(0xDC00 | (cp & 0x3FF)));
+        }
+        else
+        {
+            result.push_back(static_cast<wchar_t>(cp));
+        }
+    }
 
     return result;
 }
 
+/// Wide -> UTF-8 (inverse of StringToWideString). Unpaired surrogates become U+FFFD.
 std::string StringHelper::WideStringToString(const std::wstring& wstr)
 {
-    string result;
-    result.reserve(wstr.size());
+    std::string result;
+    result.reserve(wstr.size() * 3);
 
-    // Explicit conversion with static_cast to acknowledge potential truncation
-    // Note: This simple conversion only works correctly for ASCII characters.
-    // For full Unicode support, use platform-specific APIs or a library like ICU.
-    std::transform(wstr.begin(), wstr.end(), std::back_inserter(result),
-                   [](wchar_t wc) { return static_cast<char>(wc); });
+    const size_t n = wstr.size();
+    for (size_t i = 0; i < n; i++)
+    {
+        uint32_t cp = static_cast<uint32_t>(wstr[i]);
+        if (sizeof(wchar_t) == 2 && cp >= 0xD800 && cp <= 0xDBFF)
+        {
+            // High surrogate - must be followed by a low surrogate
+            if (i + 1 < n && static_cast<uint32_t>(wstr[i + 1]) >= 0xDC00 && static_cast<uint32_t>(wstr[i + 1]) <= 0xDFFF)
+            {
+                cp = 0x10000 + ((cp - 0xD800) << 10) + (static_cast<uint32_t>(wstr[i + 1]) - 0xDC00);
+                i++;
+            }
+            else
+            {
+                cp = 0xFFFD;
+            }
+        }
+        else if (cp >= 0xD800 && cp <= 0xDFFF)
+        {
+            cp = 0xFFFD;  // lone low surrogate (or encoded surrogate on UTF-32 platforms)
+        }
+        else if (cp > 0x10FFFF)
+        {
+            cp = 0xFFFD;
+        }
+
+        if (cp < 0x80)
+        {
+            result.push_back(static_cast<char>(cp));
+        }
+        else if (cp < 0x800)
+        {
+            result.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+            result.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        }
+        else if (cp < 0x10000)
+        {
+            result.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+            result.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            result.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        }
+        else
+        {
+            result.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+            result.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+            result.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            result.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        }
+    }
 
     return result;
 }

@@ -1,27 +1,24 @@
 #include "filter_unreal.h"
 
+#include "fir_designer.h"
+
 /// region <Constructors / destructors>
 
-/// Initialize helper array in constructor
+/// Design the FIR and helper arrays for the default 44100 Hz output rate
 UnrealFilter::UnrealFilter()
 {
-    double sum = 0.0;
+    _systemClockRate = 3'500'000;
+    _audioChipClockRate = 1'750'000;
+    s1_l = s1_r = s2_l = s2_r = 0;
 
-    // Calculate discrete time step response.
-    // Step response is obtained by summing the impulse response values.
-    // See: https://en.wikipedia.org/wiki/Step_response
-    // See: https://lpsa.swarthmore.edu/Transient/TransInputs/TransStep.html
-    for (size_t i = 0; i < FILTER_ARRAY_SIZE; i++)
-    {
-        _stepResponseCoefficients[i] = (size_t)(sum * 0x10000);
-        sum += _oversamplingFIRCoefficients[i];
-    }
+    designForRate(44100);
 }
 
 /// endregion <Constructors / destructors>
 
 /// region <Methods>
 /// Applies timing parameters to following interpolation / decimation calculations
+/// Redesigns the oversampling FIR when the output sample rate changes
 /// @param systemClockRate System / Z80 clock speed (in Hz)
 /// @param audioChipClockRate  AY / other chip clock speed (in Hz)
 /// @param outputSampleRate Output audio sample rate (in Hz)
@@ -29,7 +26,32 @@ void UnrealFilter::setTimings(size_t systemClockRate, size_t audioChipClockRate,
 {
     _systemClockRate = systemClockRate;
     _audioChipClockRate = audioChipClockRate;
+
+    if (outputSampleRate != _outputSampleRate)
+    {
+        designForRate(outputSampleRate);
+    }
+}
+
+/// (Re)design the 128-tap Hamming windowed-sinc lowpass (fc = CUTOFF_HZ
+/// absolute, fs = outputSampleRate x 64) and rebuild the step-response table
+void UnrealFilter::designForRate(size_t outputSampleRate)
+{
     _outputSampleRate = outputSampleRate;
+
+    const double fs = static_cast<double>(outputSampleRate) * OVERSAMPLING_FACTOR;
+    auto h = FirDesigner::hamming(FILTER_ARRAY_SIZE, CUTOFF_HZ, fs);
+
+    // Discrete time step response = cumulative sum of the impulse response.
+    // See: https://en.wikipedia.org/wiki/Step_response
+    // See: https://lpsa.swarthmore.edu/Transient/TransInputs/TransStep.html
+    double sum = 0.0;
+    for (size_t i = 0; i < FILTER_ARRAY_SIZE; i++)
+    {
+        _oversamplingFIRCoefficients[i] = h[i];
+        _stepResponseCoefficients[i] = (size_t)(sum * 0x10000);
+        sum += h[i];
+    }
 }
 
 /// Interpolate samples between outputs using oversampling and FIR-based interpolation curve

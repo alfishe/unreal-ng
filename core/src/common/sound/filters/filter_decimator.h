@@ -1,57 +1,74 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <vector>
+
+#include "fir_designer.h"
 
 /// Polyphase FIR decimator for AY native clock rendering
-/// Decimates from PSG_CLOCK_RATE/8 (218.75 kHz) to 44.1 kHz
-/// Uses fractional phase accumulator for non-integer ratio (~4.96:1)
+/// Decimates from PSG_CLOCK_RATE/8 (218.75 kHz) to the core output rate
+/// Uses fractional phase accumulator for non-integer ratios (~4.96:1 at 44.1k)
 ///
-/// Design: 96-tap FIR lowpass, Fc=20kHz @ 218.75kHz, Kaiser window (beta=5)
+/// The anti-alias FIR is designed at construction (FirDesigner, Kaiser
+/// windowed-sinc): coefficients depend only on the cutoff because the input
+/// side is fixed at 218.75 kHz — changing the output rate changes only the
+/// phase step. At (44100, Reference) the design is bit-identical to the
+/// historically shipped MATLAB table (asserted by fir_designer_test.cpp).
 class FilterDecimator
 {
 public:
-    static constexpr size_t FIR_TAPS = 96;
+    /// Reference: 96-tap Kaiser beta=5 (~56 dB stopband) — the shipped character
+    /// HighFidelity: 192-tap Kaiser beta=9 (~90 dB stopband)
+    enum class Quality
+    {
+        Reference,
+        HighFidelity
+    };
+
     static constexpr double INPUT_RATE = 218750.0;
-    static constexpr double OUTPUT_RATE = 44100.0;
-    static constexpr double SAMPLES_PER_OUTPUT = INPUT_RATE / OUTPUT_RATE;  // ~4.96
+    static constexpr size_t MAX_TAPS = 192;
 
 private:
-    double _buffer[FIR_TAPS];
+    std::vector<double> _coeffs;
+    size_t _taps;
+    double _samplesPerOutput;
+
+    double _buffer[MAX_TAPS];
     size_t _bufferIndex;
     double _phase;
-
-    // 96-tap lowpass, Fc=20kHz @ Fs=218.75kHz, Kaiser beta=5
-    static constexpr double FIR_COEFFS[FIR_TAPS] = {
-         2.052603086353451149e-04,  3.210251422678139137e-04,  3.437220785102240109e-04,  2.109182111510678919e-04,
-        -8.813007722059908102e-05, -4.870812384487524906e-04, -8.458617388491266806e-04, -9.899287167638743268e-04,
-        -7.779213535741368686e-04, -1.752127463883414616e-04,  6.977284471930135209e-04,  1.570219993981382964e-03,
-         2.091556053222377084e-03,  1.953639329633998986e-03,  1.027983115324567712e-03, -5.359199887113940504e-04,
-        -2.300145079851742807e-03, -3.640391776539313954e-03, -3.945303735737179344e-03, -2.855862974611067008e-03,
-        -4.599512339460455341e-04,  2.642683488913957334e-03,  5.456686481103634884e-03,  6.880934400135874096e-03,
-         6.096971819493468385e-03,  2.929874713795616644e-03, -1.957650331064132720e-03, -7.140749659778805429e-03,
-        -1.079993258728825789e-02, -1.130107842741509723e-02, -7.818418433736594106e-03, -7.870218846449325567e-04,
-         8.004251012786215216e-03,  1.577440165148706955e-02,  1.952116805334440375e-02,  1.701080481789962739e-02,
-         7.695582406293094944e-03, -6.749873188107499179e-03, -2.250139455088128945e-02, -3.433154299241062551e-02,
-        -3.689163058992080135e-02, -2.621237878612778932e-02, -1.007910885111672206e-03,  3.661206987612355968e-02,
-         8.127633587913619950e-02,  1.253609490622179801e-01,  1.606540571497764303e-01,  1.802624694847022313e-01,
-         1.802624694847022313e-01,  1.606540571497764303e-01,  1.253609490622179801e-01,  8.127633587913619950e-02,
-         3.661206987612355968e-02, -1.007910885111672206e-03, -2.621237878612778932e-02, -3.689163058992080135e-02,
-        -3.433154299241062551e-02, -2.250139455088128945e-02, -6.749873188107499179e-03,  7.695582406293094944e-03,
-         1.701080481789962739e-02,  1.952116805334440375e-02,  1.577440165148706955e-02,  8.004251012786215216e-03,
-        -7.870218846449325567e-04, -7.818418433736594106e-03, -1.130107842741509723e-02, -1.079993258728825789e-02,
-        -7.140749659778805429e-03, -1.957650331064132720e-03,  2.929874713795616644e-03,  6.096971819493468385e-03,
-         6.880934400135874096e-03,  5.456686481103634884e-03,  2.642683488913957334e-03, -4.599512339460455341e-04,
-        -2.855862974611067008e-03, -3.945303735737179344e-03, -3.640391776539313954e-03, -2.300145079851742807e-03,
-        -5.359199887113940504e-04,  1.027983115324567712e-03,  1.953639329633998986e-03,  2.091556053222377084e-03,
-         1.570219993981382964e-03,  6.977284471930135209e-04, -1.752127463883414616e-04, -7.779213535741368686e-04,
-        -9.899287167638743268e-04, -8.458617388491266806e-04, -4.870812384487524906e-04, -8.813007722059908102e-05,
-         2.109182111510678919e-04,  3.437220785102240109e-04,  3.210251422678139137e-04,  2.052603086353451149e-04
-    };
 
 public:
     FilterDecimator()
     {
+        configure(44100.0);
+    }
+
+    /// Design the anti-alias FIR and set the phase step for outputRate.
+    /// Default cutoff is 20 kHz at every rate (identical tonal character).
+    /// extendedBandwidth opens the passband for archival capture at high
+    /// rates: 40 kHz at >=88.2k output, 80 kHz at >=176.4k.
+    void configure(double outputRate, Quality quality = Quality::Reference, bool extendedBandwidth = false)
+    {
+        double fc = 20000.0;
+        if (extendedBandwidth)
+        {
+            if (outputRate >= 176400.0)
+                fc = 80000.0;
+            else if (outputRate >= 88200.0)
+                fc = 40000.0;
+        }
+        // Nyquist guard for sub-44.1k rates; never triggers at supported rates,
+        // so the (44100, Reference) design stays bit-identical to the shipped table
+        if (fc >= outputRate / 2.0)
+            fc = 0.45 * outputRate;
+
+        _taps = (quality == Quality::HighFidelity) ? 192 : 96;
+        const double beta = (quality == Quality::HighFidelity) ? 9.0 : 5.0;
+        _coeffs = FirDesigner::kaiser(_taps, fc, INPUT_RATE, beta);
+        _samplesPerOutput = INPUT_RATE / outputRate;
+
         reset();
     }
 
@@ -62,31 +79,35 @@ public:
         _phase = 0.0;
     }
 
+    size_t taps() const { return _taps; }
+    double samplesPerOutput() const { return _samplesPerOutput; }
+    const std::vector<double>& coefficients() const { return _coeffs; }
+
     /// Feed one input sample at generator rate (218.75 kHz)
     void feedSample(double sample)
     {
         _buffer[_bufferIndex] = sample;
-        _bufferIndex = (_bufferIndex + 1) % FIR_TAPS;
+        _bufferIndex = (_bufferIndex + 1) % MAX_TAPS;
         _phase += 1.0;
     }
 
     /// Check if enough samples for one output (fractional)
     bool hasOutput() const
     {
-        return _phase >= SAMPLES_PER_OUTPUT;
+        return _phase >= _samplesPerOutput;
     }
 
     /// Get output sample (call only when hasOutput() is true)
     double getOutput()
     {
-        _phase -= SAMPLES_PER_OUTPUT;
+        _phase -= _samplesPerOutput;
 
         double sum = 0.0;
         size_t idx = _bufferIndex;
-        for (size_t i = 0; i < FIR_TAPS; i++)
+        for (size_t i = 0; i < _taps; i++)
         {
-            idx = (idx == 0) ? FIR_TAPS - 1 : idx - 1;
-            sum += _buffer[idx] * FIR_COEFFS[i];
+            idx = (idx == 0) ? MAX_TAPS - 1 : idx - 1;
+            sum += _buffer[idx] * _coeffs[i];
         }
         return sum;
     }

@@ -114,9 +114,10 @@ private:
     bool _singleSyncMode = false;
     std::string _syncEmulatorId;
     std::atomic<bool> _isRepaintPending {false};
-    std::function<void(int, Message*)> _videoFrameCallback;
+    uint64_t _videoFrameObserverId = 0;
     
     QImage _compositeImage;
+    QImage _latchedFrame;  // Tear-free backing store for single sync mode
     int _currentCols = 0;
     int _currentRows = 0;
 };

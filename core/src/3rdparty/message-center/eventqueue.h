@@ -32,6 +32,7 @@ typedef void (Observer::* ObserverCallbackMethod)(int id, Message* message);    
 typedef std::function<void(int id, Message* message)> ObserverCallbackFunc;     // For lambda usage
 struct ObserverDescriptor
 {
+    uint64_t observerId;                    // Unique ID for reliable removal (lambdas can't be compared by address)
     ObserverCallback* callback;
     ObserverCallbackMethod callbackMethod;  // Uses Observer::_some_method(int id, Message* messsage) callback signature. Requires observerInstance to be defined.
     ObserverCallbackFunc callbackFunc;
@@ -94,38 +95,9 @@ public:
     std::string _payloadText;
 
 public:
-    SimpleTextPayload(const std::string& text) : MessagePayload() { _payloadText = text; };
-    SimpleTextPayload(const char* text) : MessagePayload() { _payloadText = std::string(text); };
+    SimpleTextPayload(const std::string& text) : MessagePayload(), _payloadText(text) {}
+    SimpleTextPayload(const char* text) : MessagePayload(), _payloadText(text) {}
     virtual ~SimpleTextPayload() = default;
-};
-
-/// Allows to pass 32 bit numbers in MessageCenter message
-/// Example: messageCenter.Post(topic, new SimpleNumberPayload(0x12345678);
-class SimpleNumberPayload : public MessagePayload
-{
-public:
-    uint32_t _payloadNumber;
-
-public:
-    SimpleNumberPayload(uint32_t value) : MessagePayload() { _payloadNumber = value; };
-    virtual ~SimpleNumberPayload() = default;
-};
-
-
-/// Allows to transfer uint8_t data blocks (as std::vector<uint8_t> in MessageCenter message
-/// std::move for parameter is mandatory since we don't want double copy for all content
-/// Warning: payloads longer than 10k are not recommended. Copy constructors to transfer large data blocks will be slow.
-/// Example:
-///   std::vector<uint8_t> payload = { 0x00, 0x01, 0x02, 0x03 };
-///   messageCenter.Post(topic, new SimpleByteDataPayload(std::move(payload)));
-class SimpleByteDataPayload : public MessagePayload
-{
-public:
-    std::vector<uint8_t> _payloadByteVector;
-
-public:
-    SimpleByteDataPayload(const std::vector<uint8_t>&& payload) : MessagePayload() { _payloadByteVector = payload; };
-    virtual ~SimpleByteDataPayload()  = default;
 };
 
 
@@ -137,6 +109,22 @@ protected:
     std::atomic<bool> m_initialized;
     std::mutex m_mutexObservers;
 
+    // Guards the topic registry (m_topics, m_topicsResolveMap, m_topicMax):
+    // RegisterTopic() mutates it from any thread while Post() and
+    // RemoveObserver() resolve topics concurrently, so an unguarded registry
+    // is a data race
+    std::mutex m_mutexTopics;
+
+    // In-flight Dispatch() invocations and the CV to wait for them.
+    // RemoveObserver() waits until this counter reaches zero, so that no
+    // removed handler is still running (nor starts later from an older
+    // snapshot) once RemoveObserver() returns - callers routinely destroy
+    // the handler's state (stack locals, observer instances) right after
+    // unregistering it
+    int m_activeDispatches = 0;
+    std::mutex m_mutexDispatches;
+    std::condition_variable m_cvDispatches;
+
     std::mutex m_mutexMessages;
     std::condition_variable m_cvEvents;
 
@@ -144,11 +132,14 @@ protected:
 protected:
     std::string m_topics[MAX_TOPICS];
     TopicResolveMap m_topicsResolveMap;
-    unsigned m_topicMax = 0;
+    int m_topicMax = 0;
 
     TopicObserversMap m_topicObservers;
 
     MessageQueue m_messageQueue;
+
+    // Observer ID counter (monotonically increasing, never reused)
+    std::atomic<uint64_t> m_nextObserverId{1};
 
 // Class methods
 public:
@@ -164,14 +155,14 @@ public:
 
 // Public methods
 public:
-    int AddObserver(const std::string& topic, ObserverCallback callback);
-    int AddObserver(const std::string& topic, Observer* instance, ObserverCallbackMethod callback);
-    int AddObserver(const std::string& topic, ObserverCallbackFunc callback);
-    int AddObserver(const std::string& topic, ObserverDescriptor* observer);
+    uint64_t AddObserver(const std::string& topic, ObserverCallback callback);
+    uint64_t AddObserver(const std::string& topic, Observer* instance, ObserverCallbackMethod callback);
+    uint64_t AddObserver(const std::string& topic, ObserverCallbackFunc callback);
+    uint64_t AddObserver(const std::string& topic, ObserverDescriptor* observer);
 
     void RemoveObserver(const std::string& topic, ObserverCallback callback);
     void RemoveObserver(const std::string& topic, Observer* instance, ObserverCallbackMethod callback);
-    void RemoveObserver(const std::string& topic, ObserverCallbackFunc callback);
+    void RemoveObserverById(const std::string& topic, uint64_t observerId);
     void RemoveObserver(const std::string& topic, ObserverDescriptor* observer);
 
     int ResolveTopic(const char* topic);
@@ -181,12 +172,17 @@ public:
     std::string GetTopicByID(int id);
     void ClearTopics();
 
-    void Post(int id, MessagePayload* obj = nullptr, bool autoCleanupPayload = true);
-    void Post(std::string topic, MessagePayload* obj = nullptr, bool autoCleanupPayload = true);
+    void Post(int id, MessagePayload* obj = nullptr, bool autoCleanupPayload = false);
+    void Post(std::string topic, MessagePayload* obj = nullptr, bool autoCleanupPayload = false);
 
 protected:
     Message* GetQueueMessage();
     void Dispatch(int id, Message* message);
+
+    // Dispatch / removal synchronization helpers (see m_activeDispatches)
+    void MarkDispatchActive();
+    void MarkDispatchComplete();
+    void WaitForDispatchesToComplete();
 
     ObserverVectorPtr GetObservers(int id);
 

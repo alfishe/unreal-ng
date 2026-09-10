@@ -1,6 +1,11 @@
 #include "emulator.h"
 
 #include <loaders/disk/loader_scl.h>
+#include <loaders/disk/loader_dsk.h>
+#include <loaders/disk/loader_mgt.h>
+#include <loaders/disk/loader_td0.h>
+#include <loaders/disk/loader_fdi.h>
+#include <loaders/disk/loader_udi.h>
 #include <loaders/disk/loader_trd.h>
 #include <loaders/snapshot/loader_z80.h>
 
@@ -18,8 +23,11 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
+#include "debugger/ttd/timetravelmanager.h"
+#include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "loaders/snapshot/loader_sna.h"
+#include "loaders/tape/loader_tape.h"
 
 /// region <Constructors / Destructors>
 
@@ -27,7 +35,7 @@ Emulator::Emulator(LoggerLevel level) : Emulator("", level) {}
 
 Emulator::Emulator(const std::string& symbolicId, LoggerLevel level)
 {
-    _uuid = UUID::Generate(); // Generate new unique UUID
+    _uuid = unreal::UUID::Generate(); // Generate new unique UUID
     _emulatorId = _uuid.toString();
     _symbolicId = symbolicId;
     _createdAt = std::chrono::system_clock::now();
@@ -94,6 +102,7 @@ bool Emulator::Init()
 
     bool result = false;
 
+
     // Lock mutex until exiting current scope
     std::lock_guard<std::mutex> lock(_mutexInitialization);
 
@@ -114,11 +123,34 @@ bool Emulator::Init()
     _config = new Config(_context);
     if (_config != nullptr)
     {
-        result = _config->LoadConfig();
+        // Use custom config path if set, otherwise resolve the config from
+        // the selected platform model: configs/<model>/unreal.ini
+        if (!_customConfigPath.empty())
+        {
+            result = _config->LoadConfigFile(_customConfigPath);
+        }
+        else
+        {
+            std::string configFolder = Config::GetConfigFolderForModel(_preferredModel, _preferredRamSize);
+            result = _config->LoadConfig(configFolder);
+        }
 
         if (result)
         {
             MLOGDEBUG("Emulator::Init - Config file successfully loaded");
+
+            // Apply the programmatically-requested model (if any) now - before
+            // any model-dependent subsystem (ROMs, port decoder, screen) reads
+            // the config. Overrides the INI's HIMEM/RamSize selection and gets
+            // canonical frame geometry for the model.
+            if (_hasPreferredModel)
+            {
+                _context->config.mem_model = _preferredModel;
+                _context->config.ramsize = _preferredRamSize;
+                _config->ApplyModelTimingDefaults(_context->config, true /* canonicalGeometry */);
+                MLOGINFO("Emulator::Init - Applied preferred model %d (INI HIMEM overridden)",
+                         (int)_preferredModel);
+            }
         }
         else
         {
@@ -226,6 +258,25 @@ bool Emulator::Init()
         }
     }
 
+    // Create TTD manager (per parent TDD §10.2). Always constructed; the
+    // per-frame capture cost is gated by the cached _feature_ttd_enabled
+    // bool in Memory (no work when timetravel feature is off). The manager
+    // also exposes GetState() == Idle until StartRecording() is called.
+    if (result)
+    {
+        ttd::TimeTravelManager* ttdManager = new ttd::TimeTravelManager(_context);
+        if (ttdManager != nullptr)
+        {
+            _context->pTimeTravelManager = ttdManager;
+            MLOGDEBUG("Emulator::Init - TTD manager created");
+        }
+        else
+        {
+            MLOGWARNING("Emulator::Init - TTD manager creation failed (non-fatal)");
+        }
+        // TTD manager creation is non-fatal — emulator works without it.
+    }
+
     /// region <Sanity checks>
 
     if (!_context)
@@ -302,6 +353,7 @@ bool Emulator::Init()
 
     /// endregion </Sanity checks>
 
+
     // Reset CPU and set-up all ports / ROM and RAM pages
     if (result)
     {
@@ -317,7 +369,7 @@ bool Emulator::Init()
         {
             _featureManager->onFeatureChanged();
         }
-        
+
         // Ensure SoundManager feature cache is definitely synced (belt-and-suspenders)
         // This guards against race conditions during async start
         if (_context->pSoundManager)
@@ -391,6 +443,14 @@ void Emulator::ReleaseNoGuard()
         _context->pDebugManager = nullptr;
     }
 
+    // Release TTD manager. The manager's destructor releases all page-store
+    // refs held by the timeline before the page store itself goes away.
+    if (_context->pTimeTravelManager)
+    {
+        delete _context->pTimeTravelManager;
+        _context->pTimeTravelManager = nullptr;
+    }
+
     // Stop and release main loop
     if (_mainloop != nullptr)
     {
@@ -450,6 +510,13 @@ void Emulator::ReleaseNoGuard()
         delete _context;
         _context = nullptr;
     }
+
+    // The ModuleLogger is owned by the context we just deleted: every MLOG* call on this object from now on
+    // (destructor, a late SetState(), GetState() from a lingering UI reference) must see a null logger, not a
+    // dangling one. Observed as an access violation in ~Emulator when the frontend dropped its last
+    // shared_ptr<Emulator> AFTER EmulatorManager::RemoveEmulator had already Release()d the instance.
+    _logger = nullptr;
+    _initialized.store(false, std::memory_order_release);
 }
 
 /// endregion </Initialization>
@@ -511,6 +578,12 @@ void Emulator::SetSpeed(BaseFrequency_t speed)
 
 void Emulator::SetSpeedMultiplier(uint8_t multiplier)
 {
+    // TTD v1 (P1.6): speed change invalidates the recording because frame
+    // timing is part of the determinism contract (parent TDD §4.2 + §5 row 13).
+    // Simpler to invalidate than to model; revisit if it proves annoying.
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->InvalidateSession("speed-multiplier-change");
+
     _core->SetSpeedMultiplier(multiplier);
 }
 
@@ -566,13 +639,43 @@ FramebufferDescriptor Emulator::GetFramebuffer()
     return _context->pScreen->GetFramebufferDescriptor();
 }
 
-void Emulator::SetAudioCallback(void* obj, AudioCallback callback)
+void Emulator::SetAudioCallback(void* obj, AudioCallback callback, const std::atomic<uint32_t>* occupancyFrames,
+                                const AudioDeviceDescriptor* deviceDescriptor)
 {
     // Use memory_order_release to ensure all previous writes are visible to the emulator thread
     _context->pAudioManagerObj.store(obj, std::memory_order_release);
     _context->pAudioCallback.store(callback, std::memory_order_release);
+    _context->pAudioRingOccupancy.store(occupancyFrames, std::memory_order_release);
+    _context->pAudioDeviceDescriptor.store(deviceDescriptor, std::memory_order_release);
 
     MLOGINFO("Emulator::SetAudioCallback() - Audio callback set: obj=%p, callback=%p", obj, (void*)callback);
+}
+
+void Emulator::SetAudioDeviceSampleRate(uint32_t rate)
+{
+    _context->pAudioDeviceSampleRate.store(rate, std::memory_order_release);
+
+    // Device (re)established: restart DRC tracking from the fresh occupancy
+    // instead of stale pre-reroute EMA/integrator state
+    if (_context->pSoundManager)
+    {
+        _context->pSoundManager->resetDrcController();
+    }
+
+    // CoreRate=auto: a device-rate CHANGE (hotplug / reroute at a different
+    // native rate) requests a full pipeline re-rate - every digital filter
+    // re-derives for the new core rate at the next frame boundary on the
+    // emulation thread (SoundManager::handleFrameStart applies it there;
+    // deferred while a recording is in progress).
+    if (rate != 0 && _context->config.sound.coreRate == 0 && _context->pSoundManager)
+    {
+        _context->pSoundManager->requestCoreRate(rate);
+    }
+}
+
+const AudioDeviceDescriptor* Emulator::GetAudioDeviceDescriptor() const
+{
+    return _context->pAudioDeviceDescriptor.load(std::memory_order_acquire);
 }
 
 void Emulator::ClearAudioCallback()
@@ -580,6 +683,9 @@ void Emulator::ClearAudioCallback()
     // Use memory_order_release to ensure the nullptr writes are visible to the emulator thread
     _context->pAudioManagerObj.store(nullptr, std::memory_order_release);
     _context->pAudioCallback.store(nullptr, std::memory_order_release);
+    _context->pAudioRingOccupancy.store(nullptr, std::memory_order_release);
+    _context->pAudioDeviceSampleRate.store(0, std::memory_order_release);
+    _context->pAudioDeviceDescriptor.store(nullptr, std::memory_order_release);
 
     MLOGINFO("Emulator::ClearAudioCallback() - Audio callback cleared for emulator %s", _emulatorId.c_str());
 }
@@ -604,7 +710,32 @@ void Emulator::Reset()
         sleep_ms(20);
     }
 
-    // Now perform reset while paused (safe, no race condition)
+    // TTD: Reset must NEVER touch the recorded timeline. The recorded
+    // history is the user's property — they should be able to replay it
+    // at any time, regardless of live emulator state.
+    //
+    // If recording is active, we must STOP it first. Otherwise _core->Reset()
+    // would teleport frame_counter back to 0, and the next OnFrameBoundary
+    // would append a checkpoint at frame 0 to a timeline that already has
+    // checkpoints at higher frame numbers — breaking the sorted invariant
+    // and corrupting every future seek.
+    //
+    // StopRecording() transitions Recording → Idle while retaining the
+    // timeline. The user can seek, replay, or resume from any captured
+    // point. After _core->Reset() runs, the live emulator is at frame 0
+    // with fresh state, but the timeline is untouched.
+    //
+    // See parent TDD §4.2 (StopRecording retains history) and §5.1
+    // (markers are for nondeterministic INPUT events, not for state
+    // teleports that happen AFTER recording stops).
+    if (_context && _context->pTimeTravelManager
+        && _context->pTimeTravelManager->IsRecording())
+    {
+        _context->pTimeTravelManager->StopRecording();
+    }
+
+    // Now perform reset while paused (safe, no race condition).
+    // The live emulator state is teleported; the TTD timeline is not.
     _core->Reset();
 
     // Resume if it was running before
@@ -623,14 +754,40 @@ void Emulator::Start()
         return;
     }
 
-    // Set running state (may already be set by StartAsync() - that's OK)
+    // StartAsync() raises the running flag on the caller thread before the
+    // worker is spawned; the synchronous Start() path relies on this method
+    // to raise it. The exchange() serves both roles and additionally reports
+    // whether a Stop() already claimed the emulator (CAS true->false) between
+    // StartAsync() returning and this point.
+    const bool previouslyRunning = _isRunning.exchange(true, std::memory_order_acq_rel);
+    if (!previouslyRunning && _stopRequested)
+    {
+        // Stop() won the start race: it has already claimed the running flag
+        // and is joining this thread. Hand the flag back and exit instead of
+        // clearing the stop request below - that would erase the only thing
+        // MainLoop::Run() checks, leaving the loop unkillable and the joining
+        // Stop() blocked in join() forever (seen as Emulator_Test hangs).
+        _isRunning.store(false, std::memory_order_release);
+        MLOGINFO("Emulator::Start() aborted - Stop() was requested during startup");
+        return;
+    }
+
+    // Set running state (running flag is already true - see exchange above)
     _isPaused = false;
-    _isRunning = true;
     _stopRequested = false;
 
-    // Broadcast notification - Emulator started
+    // A Stop() may have landed anywhere between the exchange above and the
+    // stop-request clear. If it did, the running flag is false again - honour
+    // it instead of entering MainLoop::Run() with a cleared stop request.
+    if (!_isRunning.load(std::memory_order_acquire))
+    {
+        MLOGINFO("Emulator::Start() aborted - Stop() raced the startup sequence");
+        return;
+    }
+
+    // Broadcast notification - Emulator started (instance-tagged per GDB TDD §6.3)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    SimpleNumberPayload* payload = new SimpleNumberPayload(StateRun);
+    EmulatorStateChangePayload* payload = new EmulatorStateChangePayload(GetId(), StateRun);
     messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
 
     // Update state
@@ -707,6 +864,20 @@ void Emulator::Pause(bool broadcast)
     // leading to a crash when RemoveEmulator() destroys memory while thread is still running.
     // MainLoop::Run() will detect this via Emulator::IsPaused() check.
 
+    // Wait until the emulation thread actually parks in MainLoop's pause loop.
+    // Setting the flag alone is not enough: MainLoop only checks the pause flag
+    // between frames, so the in-flight frame keeps executing Z80 instructions
+    // (and writing to memory) after this method would otherwise have returned.
+    // Callers (tests, shared-memory migration, snapshot loading) rely on Pause()
+    // meaning "no more emulated writes". WaitForPauseConfirmation returns
+    // immediately when called from the emulation thread itself (breakpoint
+    // handlers pause mid-frame) and may time out legitimately when execution
+    // is already blocked inside a frame - proceed anyway in those cases.
+    if (_mainloop && _isRunning)
+    {
+        _mainloop->WaitForPauseConfirmation(500);
+    }
+
     // Update state and broadcast only if requested
     // broadcast=false is used for internal operations like shared memory migration
     // where we don't want to trigger UI updates during the brief pause
@@ -714,9 +885,9 @@ void Emulator::Pause(bool broadcast)
     {
         SetState(StatePaused);
 
-        // Broadcast notification - Emulator execution paused
+        // Broadcast notification - Emulator execution paused (instance-tagged per GDB TDD §6.3)
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        SimpleNumberPayload* payload = new SimpleNumberPayload(StatePaused);
+        EmulatorStateChangePayload* payload = new EmulatorStateChangePayload(GetId(), StatePaused);
         messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
     }
 }
@@ -765,9 +936,9 @@ void Emulator::Resume(bool broadcast)
     {
         SetState(StateResumed);
 
-        // Broadcast notification - Emulator execution resumed
+        // Broadcast notification - Emulator execution resumed (instance-tagged per GDB TDD §6.3)
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        SimpleNumberPayload* payload = new SimpleNumberPayload(StateResumed);
+        EmulatorStateChangePayload* payload = new EmulatorStateChangePayload(GetId(), StateResumed);
         messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
     }
 }
@@ -792,6 +963,31 @@ void Emulator::WaitWhilePaused()
             break;
         }
     }
+}
+
+/// @brief Block until the Z80 thread observes the pause flag and parks.
+///
+/// Emulator::Pause() is asynchronous — it sets _isPaused and returns. The
+/// Z80 thread notices at the top of the next frame iteration and signals
+/// _isPausedConfirmed via MainLoop's _pauseCV. This method wraps that CV
+/// wait so callers that mutate emulator state right after Pause() (e.g.
+/// TTD seek/step-back/step-forward via WebAPI) don't race with the
+/// in-flight frame loop overwriting their freshly written state.
+///
+/// Returns true on confirmation, false on timeout. On timeout the caller
+/// should proceed anyway — the mutation is still correct, just slightly
+/// racy, and the alternative (blocking forever) is worse.
+///
+/// When the emulator is not running async (tests, synchronous mode), the
+/// Z80 thread doesn't exist, _isPausedConfirmed never flips, and this
+/// method correctly times out. Callers should not interpret timeout as
+/// failure in those configurations.
+bool Emulator::WaitForPauseConfirmation(uint32_t timeout_ms)
+{
+    if (!_mainloop)
+        return false;
+
+    return _mainloop->WaitForPauseConfirmation(timeout_ms);
 }
 
 void Emulator::Stop()
@@ -832,9 +1028,9 @@ void Emulator::Stop()
     _stopRequested = false;
     _isPaused = false;
 
-    // Broadcast notification - Emulator stopped
+    // Broadcast notification - Emulator stopped (instance-tagged per GDB TDD §6.3)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    SimpleNumberPayload* payload = new SimpleNumberPayload(StateStopped);
+    EmulatorStateChangePayload* payload = new EmulatorStateChangePayload(GetId(), StateStopped);
     messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
 }
 
@@ -864,7 +1060,7 @@ bool Emulator::LoadSnapshot(const std::string& path)
     std::string absolutePath = FileHelper::AbsolutePath(path);
     if (!FileHelper::FileExists(absolutePath))
     {
-        MLOGERROR("Snapshot file not found: {}", absolutePath.c_str());
+        MLOGERROR("Snapshot file not found: '%s'", absolutePath.c_str());
         return false;
     }
 
@@ -876,12 +1072,28 @@ bool Emulator::LoadSnapshot(const std::string& path)
         return false;
     }
 
+    // TTD v1 (P1.6): snapshot load teleports full machine state (parent TDD §4.2).
+    // Drop the session before the loader runs.
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->InvalidateSession("snapshot-load");
+
     // Pause execution
     bool wasRunning = false;
     if (!IsPaused())
     {
         Pause();
         wasRunning = true;
+    }
+
+    // Pause() only sets a flag - the emulation thread finishes its current frame before
+    // parking in MainLoop's pause loop. Wait for confirmation so the loader never resets
+    // CPU/memory/screen state while a frame is still executing (this race can corrupt the
+    // framebuffer when a WebAPI 'pause' is immediately followed by 'snapshot/load').
+    // The wait may time out legitimately when paused inside a frame (breakpoint) or in
+    // synchronous test mode - proceed anyway in those cases.
+    if (_mainloop && IsRunning())
+    {
+        _mainloop->WaitForPauseConfirmation(250);
     }
 
     if (ext == "sna")
@@ -928,7 +1140,6 @@ bool Emulator::LoadSnapshot(const std::string& path)
     // Resume execution
     if (wasRunning)
     {
-        // TODO: uncomment for the release
         Resume();
     }
 
@@ -1055,6 +1266,12 @@ bool Emulator::LoadTape(const std::string& path)
         return false;
     }
 
+    // TTD v1 (P1.6): tape insertion is a session-invalidating event in v1
+    // (parent TDD §4.2 + §5 row 3 — tape *insertion/start/stop* commands
+    // invalidate; only playback position is checkpointed).
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->InvalidateSession("tape-load");
+
     // Store validated path
     _context->coreState.tapeFilePath = resolvedPath;
 
@@ -1090,6 +1307,11 @@ bool Emulator::LoadDisk(const std::string& path)
 
     // Validate extension
     std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(resolvedPath));
+
+    // TTD v1 (P1.6): disk image swap teleports FDC + media state
+    // (parent TDD §4.2 + §12.2). Drop the session before the loader runs.
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->InvalidateSession("disk-load");
 
     // Pause emulator while swapping disk image to prevent data race with emulator thread
     bool wasRunning = false;
@@ -1133,8 +1355,9 @@ bool Emulator::LoadDisk(const std::string& path)
                 _context->coreState.diskDrives[0]->insertDisk(diskImage);
             }
             
-            // Store file path for API queries
+            // Store file path for API queries and for "Save" back to the same file
             _context->coreState.diskFilePaths[0] = resolvedPath;
+            diskImage->setFilePath(resolvedPath);
 
             /// endregion </Load new disk image and mount it>
             
@@ -1176,13 +1399,457 @@ bool Emulator::LoadDisk(const std::string& path)
                 _context->coreState.diskDrives[0]->insertDisk(diskImage);
             }
             
-            // Store file path for API queries
+            // Store file path for API queries and for "Save" back to the same file
             _context->coreState.diskFilePaths[0] = resolvedPath;
+            diskImage->setFilePath(resolvedPath);
             
             /// endregion </Load new disk image and mount it>
             
             result = true;  // Successfully loaded SCL disk
         }
+    }
+
+    if (ext == "udi")
+    {
+        LoaderUDI loader(_context, resolvedPath);
+        if (loader.loadImage())
+        {
+            for (const std::string& warning : loader.lastWarnings())
+            {
+                MLOGWARNING("LoadDisk(UDI): %s", warning.c_str());
+            }
+
+            // FIXME: use active drive, not fixed A:
+
+            /// region <Free memory from previous disk image>
+            if (_context->pBetaDisk)
+            {
+                _context->pBetaDisk->ejectDisk();
+            }
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->ejectDisk();
+            }
+
+            DiskImage* diskImage = _context->coreState.diskImages[0];
+
+            if (diskImage != nullptr)
+            {
+                delete diskImage;
+            }
+            /// endregion </ree memory from previous disk image>
+
+            /// region <Load new disk image and mount it>
+            diskImage = loader.getImage();
+            _context->coreState.diskImages[0] = diskImage;
+
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->insertDisk(diskImage);
+            }
+            
+            // Store file path for API queries and for "Save" back to the same file
+            _context->coreState.diskFilePaths[0] = resolvedPath;
+            diskImage->setFilePath(resolvedPath);
+            
+            /// endregion </Load new disk image and mount it>
+            
+            result = true;  // Successfully loaded UDI disk
+        }
+        else
+        {
+            for (const std::string& warning : loader.lastWarnings())
+            {
+                MLOGERROR("LoadDisk(UDI): %s", warning.c_str());
+            }
+        }
+    }
+
+    if (ext == "fdi")
+    {
+        LoaderFDI loader(_context, resolvedPath);
+        if (loader.loadImage())
+        {
+            for (const std::string& warning : loader.lastWarnings())
+            {
+                MLOGWARNING("LoadDisk(FDI): %s", warning.c_str());
+            }
+
+            // FIXME: use active drive, not fixed A:
+
+            /// region <Free memory from previous disk image>
+            if (_context->pBetaDisk)
+            {
+                _context->pBetaDisk->ejectDisk();
+            }
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->ejectDisk();
+            }
+
+            DiskImage* diskImage = _context->coreState.diskImages[0];
+
+            if (diskImage != nullptr)
+            {
+                delete diskImage;
+            }
+            /// endregion </ree memory from previous disk image>
+
+            /// region <Load new disk image and mount it>
+            diskImage = loader.getImage();
+            _context->coreState.diskImages[0] = diskImage;
+
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->insertDisk(diskImage);
+            }
+            
+            // Store file path for API queries and for "Save" back to the same file
+            _context->coreState.diskFilePaths[0] = resolvedPath;
+            diskImage->setFilePath(resolvedPath);
+            
+            /// endregion </Load new disk image and mount it>
+            
+            result = true;  // Successfully loaded FDI disk
+        }
+        else
+        {
+            for (const std::string& warning : loader.lastWarnings())
+            {
+                MLOGERROR("LoadDisk(FDI): %s", warning.c_str());
+            }
+        }
+    }
+
+    if (ext == "dsk")
+    {
+        LoaderDSK loader(_context, resolvedPath);
+        if (loader.loadImage())
+        {
+            for (const std::string& warning : loader.lastWarnings())
+            {
+                MLOGWARNING("LoadDisk(DSK): %s", warning.c_str());
+            }
+
+            // FIXME: use active drive, not fixed A:
+
+            /// region <Free memory from previous disk image>
+            if (_context->pBetaDisk)
+            {
+                _context->pBetaDisk->ejectDisk();
+            }
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->ejectDisk();
+            }
+
+            DiskImage* diskImage = _context->coreState.diskImages[0];
+
+            if (diskImage != nullptr)
+            {
+                delete diskImage;
+            }
+            /// endregion </ree memory from previous disk image>
+
+            /// region <Load new disk image and mount it>
+            diskImage = loader.getImage();
+            _context->coreState.diskImages[0] = diskImage;
+
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->insertDisk(diskImage);
+            }
+            
+            // Store file path for API queries and for "Save" back to the same file
+            _context->coreState.diskFilePaths[0] = resolvedPath;
+            diskImage->setFilePath(resolvedPath);
+            
+            /// endregion </Load new disk image and mount it>
+            
+            result = true;  // Successfully loaded DSK disk
+        }
+        else
+        {
+            for (const std::string& warning : loader.lastWarnings())
+            {
+                MLOGERROR("LoadDisk(DSK): %s", warning.c_str());
+            }
+        }
+    }
+
+    if (ext == "td0")
+    {
+        LoaderTD0 loader(_context, resolvedPath);
+        if (loader.loadImage())
+        {
+            for (const std::string& warning : loader.lastWarnings())
+            {
+                MLOGWARNING("LoadDisk(TD0): %s", warning.c_str());
+            }
+
+            // FIXME: use active drive, not fixed A:
+
+            /// region <Free memory from previous disk image>
+            if (_context->pBetaDisk)
+            {
+                _context->pBetaDisk->ejectDisk();
+            }
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->ejectDisk();
+            }
+
+            DiskImage* diskImage = _context->coreState.diskImages[0];
+
+            if (diskImage != nullptr)
+            {
+                delete diskImage;
+            }
+            /// endregion </ree memory from previous disk image>
+
+            /// region <Load new disk image and mount it>
+            diskImage = loader.getImage();
+            _context->coreState.diskImages[0] = diskImage;
+
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->insertDisk(diskImage);
+            }
+            
+            // Store file path for API queries and for "Save" back to the same file
+            _context->coreState.diskFilePaths[0] = resolvedPath;
+            diskImage->setFilePath(resolvedPath);
+            
+            /// endregion </Load new disk image and mount it>
+            
+            result = true;  // Successfully loaded TD0 disk
+        }
+        else
+        {
+            for (const std::string& warning : loader.lastWarnings())
+            {
+                MLOGERROR("LoadDisk(TD0): %s", warning.c_str());
+            }
+        }
+    }
+
+    if (ext == "mgt" || ext == "img")
+    {
+        LoaderMGT loader(_context, resolvedPath);
+        if (loader.loadImage())
+        {
+            for (const std::string& warning : loader.lastWarnings())
+            {
+                MLOGWARNING("LoadDisk(MGT): %s", warning.c_str());
+            }
+
+            // FIXME: use active drive, not fixed A:
+
+            /// region <Free memory from previous disk image>
+            if (_context->pBetaDisk)
+            {
+                _context->pBetaDisk->ejectDisk();
+            }
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->ejectDisk();
+            }
+
+            DiskImage* diskImage = _context->coreState.diskImages[0];
+
+            if (diskImage != nullptr)
+            {
+                delete diskImage;
+            }
+            /// endregion </ree memory from previous disk image>
+
+            /// region <Load new disk image and mount it>
+            diskImage = loader.getImage();
+            _context->coreState.diskImages[0] = diskImage;
+
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->insertDisk(diskImage);
+            }
+            
+            // Store file path for API queries and for "Save" back to the same file
+            _context->coreState.diskFilePaths[0] = resolvedPath;
+            diskImage->setFilePath(resolvedPath);
+            
+            /// endregion </Load new disk image and mount it>
+            
+            result = true;  // Successfully loaded MGT/IMG disk
+        }
+        else
+        {
+            for (const std::string& warning : loader.lastWarnings())
+            {
+                MLOGERROR("LoadDisk(MGT): %s", warning.c_str());
+            }
+        }
+    }
+
+    if (wasRunning)
+    {
+        Resume();
+    }
+
+    return result;
+}
+
+std::vector<std::string> Emulator::SupportedSnapshotExtensions()
+{
+    return {"sna", "z80", "szx"};
+}
+
+std::vector<std::string> Emulator::SupportedTapeExtensions()
+{
+    return TapeLoaderRegistry::Instance().SupportedExtensions();
+}
+
+std::vector<std::string> Emulator::SupportedDiskExtensions()
+{
+    return {"trd", "scl", "fdi", "udi", "dsk", "td0", "mgt", "img"};
+}
+
+Emulator::DiskSaveResult Emulator::SaveDisk(uint8_t drive, const std::string& path, bool allowRetarget)
+{
+    DiskSaveResult result;
+
+    if (drive >= 4 || !_context)
+    {
+        result.reason = "Invalid drive";
+        return result;
+    }
+
+    FDD* fdd = _context->coreState.diskDrives[drive];
+    DiskImage* diskImage = fdd ? fdd->getDiskImage() : nullptr;
+    if (!diskImage)
+    {
+        result.reason = "No disk image in the drive";
+        return result;
+    }
+
+    std::string target = path.empty() ? diskImage->getFilePath() : path;
+    if (target.empty())
+    {
+        target = _context->coreState.diskFilePaths[drive];
+    }
+    if (target.empty())
+    {
+        result.reason = "No file path for the disk image (use Save As)";
+        return result;
+    }
+
+    // Pause emulator while the loaders walk the image
+    bool wasRunning = false;
+    if (!IsPaused())
+    {
+        Pause();
+        wasRunning = true;
+    }
+
+    std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(target));
+    std::vector<std::string> warnings;
+    bool saved = false;
+
+    if (ext == "udi")
+    {
+        LoaderUDI loader(_context, target);
+        loader.setImage(diskImage);
+        saved = loader.writeImage();
+        warnings = loader.lastWarnings();
+    }
+    else if (ext == "fdi")
+    {
+        LoaderFDI loader(_context, target);
+        loader.setImage(diskImage);
+        saved = loader.writeImage();
+        warnings = loader.lastWarnings();
+    }
+    else if (ext == "dsk")
+    {
+        LoaderDSK loader(_context, target);
+        loader.setImage(diskImage);
+        saved = loader.writeImage();
+        warnings = loader.lastWarnings();
+    }
+    else if (ext == "td0")
+    {
+        LoaderTD0 loader(_context, target);
+        loader.setImage(diskImage);
+        saved = loader.writeImage();
+        warnings = loader.lastWarnings();
+    }
+    else if (ext == "mgt" || ext == "img")
+    {
+        LoaderMGT loader(_context, target);
+        loader.setImage(diskImage);
+        saved = loader.writeImage();
+        warnings = loader.lastWarnings();
+    }
+    else if (ext == "scl")
+    {
+        LoaderSCL loader(_context, target);
+        loader.setImage(diskImage);
+        saved = loader.writeImage();
+        warnings = loader.lastWarnings();
+    }
+    else
+    {
+        LoaderTRD loader(_context, target);
+        loader.setImage(diskImage);
+        saved = loader.writeImage();
+        warnings = loader.lastWarnings();
+    }
+
+    if (saved)
+    {
+        result.saved = true;
+        result.savedPath = target;
+        if (!warnings.empty()) result.reason = warnings[0];
+        _context->coreState.diskFilePaths[drive] = target;
+    }
+    else if (allowRetarget && ext != "udi")
+    {
+        // Strict format refused (non TR-DOS geometry on some track): keep the original untouched, save as UDI
+        std::string reason = warnings.empty() ? "the image no longer fits the original format" : warnings[0];
+        std::string udiPath = target;
+        size_t dot = udiPath.find_last_of('.');
+        size_t slash = udiPath.find_last_of("/\\");
+        if (dot != std::string::npos && (slash == std::string::npos || dot > slash))
+        {
+            udiPath.erase(dot);
+        }
+        udiPath += ".udi";
+
+        LoaderUDI udi(_context, udiPath);
+        udi.setImage(diskImage);
+        if (udi.writeImage())
+        {
+            result.saved = true;
+            result.retargeted = true;
+            result.savedPath = udiPath;
+            result.reason = reason;
+            _context->coreState.diskFilePaths[drive] = udiPath;
+
+            MLOGWARNING("SaveDisk: %s - saved losslessly as '%s'", reason.c_str(), udiPath.c_str());
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            messageCenter.Post(NC_FDD_DISK_SAVE_RETARGETED, new FDDDiskPayload(GetId(), drive, udiPath, reason), true);
+        }
+        else
+        {
+            result.reason = udi.lastWarnings().empty() ? reason : udi.lastWarnings()[0];
+        }
+    }
+    else
+    {
+        result.reason = warnings.empty() ? "Save failed" : warnings[0];
+    }
+
+    if (!result.saved)
+    {
+        MLOGERROR("SaveDisk: %s", result.reason.c_str());
     }
 
     if (wasRunning)
@@ -1327,6 +1994,11 @@ void Emulator::RunFrame(bool skipBreakpoints)
     if (IsRunning() && !IsPaused())
     {
         Pause();  // Broadcast pause so debugger UI updates
+
+        // Wait for the emulation thread to park - otherwise we would step the Z80
+        // concurrently with the frame MainLoop is still finishing
+        if (_mainloop)
+            _mainloop->WaitForPauseConfirmation(250);
     }
 
     const CONFIG& config = _context->config;
@@ -1434,6 +2106,11 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
     if (IsRunning() && !IsPaused())
     {
         Pause();  // Broadcast pause so debugger UI updates
+
+        // Wait for the emulation thread to park - otherwise we would step the Z80
+        // concurrently with the frame MainLoop is still finishing
+        if (_mainloop)
+            _mainloop->WaitForPauseConfirmation(250);
     }
 
     const CONFIG& config = _context->config;
@@ -1531,6 +2208,14 @@ void Emulator::RunTStates(unsigned tStates, bool skipBreakpoints)
             if (targetT >= frameLimit)
             {
                 targetT -= frameLimit;
+            }
+            else
+            {
+                // targetT was within the frame that just ended — the
+                // overshooting instruction already executed past it. Stop
+                // to avoid running an entire extra frame (which would
+                // inflate frame_counter and corrupt TTD probe records).
+                break;
             }
         }
     }
@@ -2056,6 +2741,12 @@ bool Emulator::LoadROM(std::string path)
 {
     Pause();
 
+    // TTD v1 (P1.6): ROM reload changes immutable code/data backing every
+    // checkpoint relies on (parent TDD §4.2 — "ROM reload" is listed
+    // explicitly as a session invalidator).
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->InvalidateSession("rom-reload");
+
     ROM& rom = *_core->GetROM();
 
     bool result = rom.LoadROM(path, _memory->ROMBase(), MAX_ROM_PAGES);
@@ -2081,6 +2772,76 @@ void Emulator::DebugOff()
     _z80->isDebugMode = false;
 }
 
+// region <Video mode>
+
+bool Emulator::SetOverscanMode(bool enable)
+{
+    if (!_context || !_context->pScreen)
+        return false;
+
+    Screen* screen = _context->pScreen;
+    VideoModeEnum currentMode = screen->GetVideoMode();
+
+    // Only Pentagon supports overscan
+    if (currentMode != M_PENTAGON128K && currentMode != M_P384)
+    {
+        return false;  // ZX48/128 have no overscan
+    }
+
+    VideoModeEnum newMode = enable ? M_P384 : M_PENTAGON128K;
+
+    if (newMode != currentMode)
+    {
+        // Pause emulation while changing video mode to avoid framebuffer access during reallocation
+        bool wasRunning = IsRunning() && !IsPaused();
+        if (wasRunning)
+        {
+            Pause(false);
+        }
+
+        // Record the user's intent FIRST: InitRaster re-detects the video mode
+        // from config/ports every frame and would revert a bare SetVideoMode
+        // back to the model's base mode on the next frame
+        screen->SetOverscanForced(enable);
+        screen->SetVideoMode(newMode);
+
+        if (wasRunning)
+        {
+            Resume(false);
+        }
+
+        return true;
+    }
+    return false;
+}
+
+bool Emulator::IsOverscanMode() const
+{
+    if (!_context || !_context->pScreen)
+        return false;
+
+    return _context->pScreen->IsOverscanMode();
+}
+
+void Emulator::SetDisplayViewport(const DisplayViewport& viewport)
+{
+    if (_context && _context->pScreen)
+    {
+        _context->pScreen->SetDisplayViewport(viewport);
+    }
+}
+
+const DisplayViewport& Emulator::GetDisplayViewport() const
+{
+    static DisplayViewport defaultViewport;
+    if (!_context || !_context->pScreen)
+        return defaultViewport;
+
+    return _context->pScreen->GetDisplayViewport();
+}
+
+// endregion </Video mode>
+
 Z80State* Emulator::GetZ80State()
 {
     return static_cast<Z80State*>(_z80);
@@ -2092,7 +2853,7 @@ Z80State* Emulator::GetZ80State()
 
 // Identity and state methods
 
-UUID Emulator::GetUUID() const
+unreal::UUID Emulator::GetUUID() const
 {
     return _uuid;
 }

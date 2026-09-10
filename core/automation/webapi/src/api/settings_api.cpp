@@ -4,6 +4,7 @@
 #include "../emulator_api.h"
 
 #include <drogon/HttpResponse.h>
+#include <base/featuremanager.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <json/json.h>
@@ -59,9 +60,12 @@ void EmulatorAPI::getSettings(const HttpRequestPtr& req, std::function<void(cons
     Json::Value ret;
     Json::Value settings(Json::objectValue);
 
-    // I/O Acceleration settings
+    // I/O Acceleration settings (fast_tape is backed by the runtime 'fasttape'
+    // feature — the sole control plane of the fast-load mechanism)
+    FeatureManager* featureManager = context->pFeatureManager;
     Json::Value io_accel(Json::objectValue);
-    io_accel["fast_tape"] = config.tape_traps != 0;
+    io_accel["fast_tape"] = featureManager && featureManager->isEnabled(Features::kFastTape);
+    io_accel["turbo_tape"] = featureManager && featureManager->isEnabled(Features::kTurboTape);
     io_accel["fast_disk"] = config.wd93_nodelay;
     settings["io_acceleration"] = io_accel;
 
@@ -119,9 +123,17 @@ void EmulatorAPI::getSetting(const HttpRequestPtr& req, std::function<void(const
 
     if (name == "fast_tape")
     {
+        FeatureManager* featureManager = context->pFeatureManager;
         ret["name"] = "fast_tape";
-        ret["value"] = config.tape_traps != 0;
+        ret["value"] = featureManager && featureManager->isEnabled(Features::kFastTape);
         ret["description"] = "Fast tape loading (bypasses audio emulation)";
+    }
+    else if (name == "turbo_tape")
+    {
+        FeatureManager* featureManager = context->pFeatureManager;
+        ret["name"] = "turbo_tape";
+        ret["value"] = featureManager && featureManager->isEnabled(Features::kTurboTape);
+        ret["description"] = "Turbo tape loading (warp speed while a tape signal plays, custom loaders included)";
     }
     else if (name == "fast_disk")
     {
@@ -217,10 +229,27 @@ void EmulatorAPI::setSetting(const HttpRequestPtr& req, std::function<void(const
 
     if (name == "fast_tape")
     {
-        config.tape_traps = boolValue ? 1 : 0;
+        // Same switch as the generic feature API ('fasttape') — keeps the
+        // settings endpoint and the feature endpoint in lockstep
+        FeatureManager* featureManager = context->pFeatureManager;
+        if (featureManager)
+        {
+            featureManager->setFeature(Features::kFastTape, boolValue);
+        }
         ret["name"] = "fast_tape";
         ret["value"] = boolValue;
         ret["message"] = std::string("Fast tape loading is now ") + (boolValue ? "enabled" : "disabled");
+    }
+    else if (name == "turbo_tape")
+    {
+        FeatureManager* featureManager = context->pFeatureManager;
+        if (featureManager)
+        {
+            featureManager->setFeature(Features::kTurboTape, boolValue);
+        }
+        ret["name"] = "turbo_tape";
+        ret["value"] = boolValue;
+        ret["message"] = std::string("Turbo tape loading is now ") + (boolValue ? "enabled" : "disabled");
     }
     else if (name == "fast_disk")
     {

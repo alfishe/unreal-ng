@@ -51,6 +51,7 @@ protected:
     // blip_buf accumulators (one per stereo channel)
     blip_t* _blipL = nullptr;
     blip_t* _blipR = nullptr;
+    bool _synthesisSuppressed = false;
 
     // Last amplitudes written to blip_buf (tracked independently for Port #FE OUT vs Tape IN)
     int32_t _lastPortFEAmplitude = DAC_LEVEL_00;
@@ -61,6 +62,7 @@ protected:
 
     // Output buffer — points into SoundManager's beeper AudioFrameDescriptor
     int16_t* _outputBuffer = nullptr;
+    int _lastSamplesRead = 0;  // Samples delivered on last handleFrameEnd
 
     // Clock rate and sample rate (passed at construction)
     size_t _clockRate;
@@ -78,6 +80,10 @@ public:
 public:
     void reset();
 
+    /// Live core-rate change (device reroute with CoreRate=auto): re-point
+    /// the blip_buf resampler at the new output rate and clear pending deltas
+    void setSampleRate(size_t samplingRate);
+
     /// Called at the start of each video frame.
     void handleFrameStart();
 
@@ -86,6 +92,13 @@ public:
     /// @param value  Full port #FE byte (bits 3-4 = MIC/EAR)
     /// @param frameTState  T-state counter within the current frame
     void handlePortOut(uint8_t value, uint32_t frameTState);
+
+    /// Turbo mode (audio muted, frame-end synthesis skipped): keep tracking the
+    /// port #FE / tape levels so the next edge after turbo is correct, but do not
+    /// push band-limited deltas into the blip buffers. Clearing the flag drops
+    /// whatever accumulated so no stale step is emitted when synthesis resumes.
+    void setSynthesisSuppressed(bool suppressed);
+    bool isSynthesisSuppressed() const { return _synthesisSuppressed; }
 
     /// Called when tape playback sends audio through the beeper circuit.
     /// Accepts a raw amplitude (already filtered by tape) and inserts
@@ -99,6 +112,10 @@ public:
     /// into the output buffer.
     /// @param frameDuration  Total T-states in this frame (config.frame * speed_multiplier)
     void handleFrameEnd(uint32_t frameDuration);
+
+    /// Number of samples blip_buf delivered on the last handleFrameEnd -
+    /// cross-checked by SoundManager against its exact sample accumulator
+    int getLastSamplesRead() const { return _lastSamplesRead; }
     /// endregion</Methods>
 
     /// region <Helper methods>

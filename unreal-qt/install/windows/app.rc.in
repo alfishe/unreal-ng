@@ -1,4 +1,4 @@
-IDI_ICON1 ICON DISCARDABLE "@CMAKE_CURRENT_SOURCE_DIR@/src/install/windows/unreal.ico"
+IDI_ICON1 ICON DISCARDABLE "@CMAKE_CURRENT_SOURCE_DIR@/install/windows/unreal.ico"
 
 #include <windows.h>
 

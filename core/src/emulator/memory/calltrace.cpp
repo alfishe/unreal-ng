@@ -5,6 +5,7 @@
 #include <optional>
 
 #include "common/stringhelper.h"
+#include "common/filehelper.h"
 
 // @file calltrace.cpp
 // @brief Implements the CallTraceBuffer for Z80 control flow event tracing.
@@ -321,7 +322,7 @@ std::vector<Z80ControlFlowEvent> CallTraceBuffer::GetAll() const
 bool CallTraceBuffer::SaveToFile(const std::string& filename) const
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    std::ofstream out(filename);
+    std::ofstream out(FileHelper::ToFsPath(filename));
     if (!out)
         return false;
     out << "calltrace:" << std::endl;

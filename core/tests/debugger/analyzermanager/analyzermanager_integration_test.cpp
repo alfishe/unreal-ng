@@ -153,7 +153,7 @@ TEST_F(AnalyzerManagerIntegration_test, AnalyzerBreakpointIsSilent)
         (void)id;
         (void)message;
     };
-    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
+    uint64_t handlerId = messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
     
     // Execute a few CPU cycles (enough to hit 0x0000 and continue)
     _emulator->RunNCPUCycles(10, false);
@@ -162,7 +162,7 @@ TEST_F(AnalyzerManagerIntegration_test, AnalyzerBreakpointIsSilent)
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     
     // Remove observer
-    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
+    messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
     
     // CRITICAL ASSERTIONS:
     // 1. Analyzer callback SHOULD have been triggered
@@ -203,7 +203,7 @@ TEST_F(AnalyzerManagerIntegration_test, InteractiveBreakpointTriggersMessageCent
         (void)id;
         (void)message;
     };
-    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
+    uint64_t handlerId = messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
     
     // Execute CPU cycles
     _emulator->RunNCPUCycles(10, false);
@@ -213,11 +213,11 @@ TEST_F(AnalyzerManagerIntegration_test, InteractiveBreakpointTriggersMessageCent
     while (!breakpointHit.load() && 
            std::chrono::steady_clock::now() - start < std::chrono::milliseconds(200))
     {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(std::chrono::microseconds(250));
     }
     
     // Remove observer
-    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
+    messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
     
     // CRITICAL ASSERTION:
     // Interactive breakpoint SHOULD trigger MessageCenter notification
@@ -258,7 +258,7 @@ TEST_F(AnalyzerManagerIntegration_test, MixedBreakpointsBehavior)
         (void)id;
         (void)message;
     };
-    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
+    uint64_t handlerId = messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
     
     // Execute enough cycles to hit the analyzer breakpoint at 0x0000
     _emulator->RunNCPUCycles(10, false);
@@ -267,7 +267,7 @@ TEST_F(AnalyzerManagerIntegration_test, MixedBreakpointsBehavior)
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     
     // Remove observer
-    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
+    messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
     
     // ASSERTIONS:
     // 1. Analyzer callback should have fired for 0x0000
@@ -431,7 +431,7 @@ TEST_F(AnalyzerManagerIntegration_test, PageSpecificAnalyzerBreakpointIsSilent)
         (void)id;
         (void)message;
     };
-    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
+    uint64_t handlerId = messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
     
     // Execute a few cycles at 0x0000 (ROM page 0)
     uint8_t testCode[] = { 0x00, 0x00, 0x76 };  // NOP, NOP, HALT
@@ -439,7 +439,7 @@ TEST_F(AnalyzerManagerIntegration_test, PageSpecificAnalyzerBreakpointIsSilent)
     _emulator->RunNCPUCycles(5, false);
     
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
+    messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
     
     // Page-specific analyzer breakpoint should be silent
     EXPECT_EQ(messageCenterNotifications.load(), 0) 

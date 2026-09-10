@@ -107,6 +107,9 @@ private:
     /// Toggle screen HQ feature for all tiles (Cmd+S)
     void toggleScreenHQForAllTiles();
 
+    /// Toggle fast tape loading feature for all tiles (Ctrl+T)
+    void toggleFastTapeForAllTiles();
+
     /// Toggle CRT Phosphor (temporal blur) effect
     void toggleCrtPhosphor();
 
@@ -171,6 +174,9 @@ private:
 
     // Screen HQ toggle state (default: enabled)
     bool _screenHQEnabled = true;
+
+    // Fast tape loading toggle state (default: enabled — mirrors the feature default)
+    bool _fastTapeEnabled = true;
 
     // CRT effects state
     bool _crtPhosphorEnabled = false;

@@ -1,6 +1,7 @@
 #include "loader_trd.h"
 
 #include "common/filehelper.h"
+#include "common/stringhelper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/notifications.h"
@@ -62,12 +63,73 @@ bool LoaderTRD::writeImage()
     return writeImage(_filepath);
 }
 
+bool LoaderTRD::isTrdosGeometry(DiskImage* diskImage, std::string* reason)
+{
+    if (!diskImage)
+    {
+        if (reason) *reason = "Disk image is not set";
+        return false;
+    }
+
+    const size_t trackCount = static_cast<size_t>(diskImage->getCylinders()) * diskImage->getSides();
+    for (size_t trackNo = 0; trackNo < trackCount; trackNo++)
+    {
+        DiskImage::Track* track = diskImage->getTrack(static_cast<uint8_t>(trackNo));
+        if (!track)
+        {
+            if (reason) *reason = StringHelper::Format("Track %zu is missing", trackNo);
+            return false;
+        }
+
+        if (track->sectorCount() != TRD_SECTORS_PER_TRACK)
+        {
+            if (reason)
+                *reason = StringHelper::Format("Track %zu (cylinder %d side %d) has %zu sectors, TRD requires exactly %zu",
+                                               trackNo, track->cylinder(), track->side(), track->sectorCount(),
+                                               (size_t)TRD_SECTORS_PER_TRACK);
+            return false;
+        }
+
+        for (uint8_t sectorNo = 1; sectorNo <= TRD_SECTORS_PER_TRACK; sectorNo++)
+        {
+            DiskImage::Sector* sector = track->findSector(sectorNo);
+            if (!sector || !sector->hasData)
+            {
+                if (reason)
+                    *reason = StringHelper::Format("Track %zu (cylinder %d side %d): sector %d is missing or has no data field",
+                                                   trackNo, track->cylinder(), track->side(), sectorNo);
+                return false;
+            }
+
+            if (sector->dataSize != TRD_SECTORS_SIZE_BYTES)
+            {
+                if (reason)
+                    *reason = StringHelper::Format("Track %zu (cylinder %d side %d): sector %d is %d bytes, TRD holds only 256-byte sectors",
+                                                   trackNo, track->cylinder(), track->side(), sectorNo, sector->dataSize);
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
 bool LoaderTRD::writeImage(const std::string& path)
 {
     bool result = false;
+    _warnings.clear();
 
     if (_diskImage && !path.empty())
     {
+        // TRD is a dump of 16 x 256-byte sectors per track - refuse anything else instead of truncating / padding.
+        // The caller re-targets the save to a lossless format (UDI) in that case.
+        std::string reason;
+        if (!isTrdosGeometry(_diskImage, &reason))
+        {
+            _warnings.push_back("TRD save refused: " + reason);
+            return false;
+        }
+
         FILE* file = FileHelper::OpenFile(path, "wb");
 
         if (file)
@@ -77,9 +139,9 @@ bool LoaderTRD::writeImage(const std::string& path)
             {
                 DiskImage::Track *track = _diskImage->getTrack(tracks);
 
-                for (size_t sectors = 0; sectors < TRD_SECTORS_PER_TRACK; sectors++)
+                for (uint8_t sectors = 0; sectors < TRD_SECTORS_PER_TRACK; sectors++)
                 {
-                    uint8_t *sectorData = track->getDataForSector(sectors);
+                    uint8_t *sectorData = track->getDataForSector(sectors);  // By sector number (sectors + 1)
                     [[maybe_unused]] bool saveResult = FileHelper::SaveBufferToFile(file, sectorData, TRD_SECTORS_SIZE_BYTES);
                 }
             }
@@ -165,37 +227,16 @@ bool LoaderTRD::writeImage(const std::string& path)
     }
     /// endregion </Get preferred interleave pattern from config>
 
-    // Initialize all tracks
+    // Initialize all tracks: low-level format with the selected interleave (physical sector order),
+    // valid ID / data CRCs, zero-filled data, clock marks on every A1 sync byte
     for (uint8_t cylinder = 0; cylinder < cylinders; cylinder++)
     {
         for (uint8_t side = 0; side < sides; side++)
         {
-            /// region <Step 1: position to the track (cylinder+side) within disk image data>
             DiskImage::Track& track = *diskImage->getTrackForCylinderAndSide(cylinder, side);
-            /// endregion </Step 1: position to the track (cylinder+side) within disk image data>
 
-            /// region <Step 2: Fully re-initialize low-level formatting by applying default object state>
-            track.reset();
-
-            // Apply the interleaving sector pattern used during formatting and re-index sector information
-            track.applyInterleaveTable(INTERLEAVE_PATTERNS[interleavePatternIndex]);
-
-            /// endregion </Step 2: Fully re-initialize low-level formatting by applying default object state>
-
-            /// region <Step 3: format the track on logical level (put valid ID records to each sector)>
-            for (uint8_t sector = 0; sector < TRD_SECTORS_PER_TRACK; sector++)
-            {
-                [[maybe_unused]] uint8_t sectorNumber = INTERLEAVE_PATTERNS[interleavePatternIndex][sector];
-
-                // Populate sector ID information and recalculate ID CRC
-                DiskImage::AddressMarkRecord& markRecord = *track.getIDForSector(sector);
-                markRecord.cylinder = cylinder;
-                markRecord.head = side;         // Fix: head should be the current side
-                markRecord.sector = sector + 1;
-                markRecord.sector_size = 0x01;  // Default TR-DOS: 1 => 256 bytes sector
-                markRecord.recalculateCRC();
-            }
-            /// endregion </Step 3: format the track on logical level (put valid ID records to each sector)>
+            track.formatTrack(cylinder, side,
+                              DiskImage::TrackFormatSpec::trdos(INTERLEAVE_PATTERNS[interleavePatternIndex], TRD_SECTORS_PER_TRACK));
 
             result = true;
         }
@@ -339,9 +380,9 @@ bool LoaderTRD::writeImage(const std::string& path)
              TRDFile* descriptor = (TRDFile*)descriptorData;
 
              // Filename byte 0 can be any (Bit 7 set for deleted file)
-             // Filename (bytes 1-8) should contain printable chars (32-127)
+             // Filename (bytes 1-7) should contain printable chars (32-127)
              // or be padded with spaces (32)
-             for (int i = 1; i <= 8; i++)
+             for (int i = 1; i < 8; i++)
              {
                  uint8_t chr = descriptor->name[i];
                  if (chr != 32 && (chr < 32 || chr > 127))
@@ -593,7 +634,12 @@ bool LoaderTRD::transferSectorData(DiskImage* diskImage, uint8_t* buffer, size_t
             size_t offset = trackNo * TRD_TRACK_SIZE + sectorNo * TRD_SECTOR_SIZE;
             uint8_t* srcSector = buffer + offset;
 
-            DiskImage::RawSectorBytes* dstSectorObj = track.getRawSector(sectorNo);
+            // Sectors are addressed by their ID number (sectorNo + 1), independent of the physical interleave
+            DiskImage::Sector* dstSectorObj = track.getSector(sectorNo);
+            if (!dstSectorObj || !dstSectorObj->hasData || dstSectorObj->dataSize != TRD_SECTOR_SIZE)
+            {
+                continue;
+            }
             uint8_t* dstSector = dstSectorObj->data;
 
             // Transfer sector data
@@ -604,13 +650,19 @@ bool LoaderTRD::transferSectorData(DiskImage* diskImage, uint8_t* buffer, size_t
         }
     }
 
+    result = true;
+
     return result;
 }
 
 void LoaderTRD::populateEmptyVolumeInfo(DiskImage* diskImage, TRDDiskType diskType)
 {
     DiskImage::Track* track = diskImage->getTrack(0);
-    DiskImage::RawSectorBytes* sector = track->getSector(TRD_VOLUME_SECTOR);
+    DiskImage::Sector* sector = track->getSector(TRD_VOLUME_SECTOR);
+    if (!sector || !sector->hasData)
+    {
+        return;
+    }
     TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)sector->data;
 
     uint16_t freeSectorCount = getFreeSectorCountForDiskType(diskType);

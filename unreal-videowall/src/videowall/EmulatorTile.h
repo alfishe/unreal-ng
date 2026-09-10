@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QWidget>
+#include <QImage>
 #include <memory>
 #include <string>
 #include <deque>
@@ -96,6 +97,9 @@ private:
     bool _isPrimarySyncTile = false;
     
     QTimer* _blinkTimer = nullptr;  // Timer for blink effect
+
+    // Tear-free rendering: owned backing store filled via CopyPresentedFramebuffer
+    QImage _latchedFrame;
 
     // CRT effects state
     bool _crtPhosphorEnabled = false;

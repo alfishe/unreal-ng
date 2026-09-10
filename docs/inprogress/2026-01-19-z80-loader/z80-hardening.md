@@ -16,7 +16,7 @@
 |------|---------|
 | `core/src/emulator/memory/memory.h` | Added `BANK_INVALID = 0xFF` sentinel |
 | `core/src/loaders/snapshot/loader_z80.cpp` | Bounds checking, page validation, min size validation |
-| `core/tests/loaders/loader_z80_test.cpp` | Added 14 test cases |
+| `core/tests/loaders/snapshot/loader_z80_test.cpp` | Added 14 test cases |
 
 ## Test Coverage
 - [x] v1 snapshot validation and loading (prelim.z80)

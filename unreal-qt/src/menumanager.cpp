@@ -2,10 +2,14 @@
 
 #include <QApplication>
 #include <QMessageBox>
+#include <set>
 
+#include "base/featuremanager.h"
 #include "emulator/emulator.h"
+#include "emulator/emulatormanager.h"
 #include "emulator/platform.h"
 #include "emulator/notifications.h"
+#include "recordingmanager.h"
 // Avoid Qt 'signals' macro conflict with WD1793State::signals member
 #undef signals
 #include "emulator/io/fdc/wd1793.h"
@@ -20,6 +24,7 @@ MenuManager::MenuManager(MainWindow* mainWindow, QMenuBar* menuBar, QObject* par
     createEditMenu();
     createViewMenu();
     createRunMenu();
+    createMachineMenu();
     createDebugMenu();
     createToolsMenu();
     createHelpMenu();
@@ -102,6 +107,12 @@ void MenuManager::createFileMenu()
     _openDiskAction->setStatusTip(tr("Load a disk image (.trd, .scl, .fdi)"));
     connect(_openDiskAction, &QAction::triggered, this, &MenuManager::openDiskRequested);
 
+    // Import audio → tape image (tape-audio-bridge §7.3): recognize a
+    // WAV/FLAC/MP3 recording back into a .tzx/.tap image
+    _importAudioTapeAction = _fileMenu->addAction(tr("Import &Audio to Tape..."));
+    _importAudioTapeAction->setStatusTip(tr("Recognize a WAV/FLAC/MP3 recording into a .tzx/.tap tape image"));
+    connect(_importAudioTapeAction, &QAction::triggered, this, &MenuManager::importAudioTapeRequested);
+
     _fileMenu->addSeparator();
 
     // Save Snapshot submenu
@@ -124,7 +135,7 @@ void MenuManager::createFileMenu()
     // Save Disk (to original path)
     _saveDiskAction = _saveDiskMenu->addAction(tr("Save Disk"));
     _saveDiskAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
-    _saveDiskAction->setStatusTip(tr("Save disk image to original path (TRD format only)"));
+    _saveDiskAction->setStatusTip(tr("Save disk image to its original file (TRD / SCL / UDI); non TR-DOS content is re-targeted to UDI"));
     connect(_saveDiskAction, &QAction::triggered, this, &MenuManager::saveDiskRequested);
     
     // Save as TRD
@@ -136,6 +147,11 @@ void MenuManager::createFileMenu()
     _saveDiskSCLAction = _saveDiskMenu->addAction(tr("Save as .scl..."));
     _saveDiskSCLAction->setStatusTip(tr("Save disk image in SCL format"));
     connect(_saveDiskSCLAction, &QAction::triggered, this, &MenuManager::saveDiskAsSCLRequested);
+
+    // Save as UDI (lossless raw track image)
+    _saveDiskUDIAction = _saveDiskMenu->addAction(tr("Save as .udi..."));
+    _saveDiskUDIAction->setStatusTip(tr("Save disk image in UDI format (lossless: keeps any track layout)"));
+    connect(_saveDiskUDIAction, &QAction::triggered, this, &MenuManager::saveDiskAsUDIRequested);
 
     _fileMenu->addSeparator();
 
@@ -171,14 +187,6 @@ void MenuManager::createViewMenu()
 {
     _viewMenu = _menuBar->addMenu(tr("&View"));
 
-    // Debugger Window
-    _debuggerAction = _viewMenu->addAction(tr("&Debugger"));
-    _debuggerAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1));
-    _debuggerAction->setStatusTip(tr("Show/hide debugger window"));
-    _debuggerAction->setCheckable(true);
-    _debuggerAction->setChecked(true);
-    connect(_debuggerAction, &QAction::triggered, this, &MenuManager::debuggerToggled);
-
     // Log Window
     _logWindowAction = _viewMenu->addAction(tr("&Log Window"));
     _logWindowAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_2));
@@ -189,34 +197,117 @@ void MenuManager::createViewMenu()
 
     _viewMenu->addSeparator();
 
+    // Toolbar (transport toolbar under the menu bar)
+    _toolBarAction = _viewMenu->addAction(tr("&Toolbar"));
+    _toolBarAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_T));
+    _toolBarAction->setStatusTip(tr("Show/hide toolbar"));
+    _toolBarAction->setCheckable(true);
+    _toolBarAction->setChecked(true);
+    connect(_toolBarAction, &QAction::triggered, this, &MenuManager::toolBarToggled);
+
+    // Status bar (device LEDs and FPS at the bottom of the window)
+    _statusBarAction = _viewMenu->addAction(tr("&Status Bar"));
+    _statusBarAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Slash));
+    _statusBarAction->setStatusTip(tr("Show/hide status bar"));
+    _statusBarAction->setCheckable(true);
+    _statusBarAction->setChecked(true);
+    connect(_statusBarAction, &QAction::triggered, this, &MenuManager::statusBarToggled);
+
     // Full Screen
+    // Single full-screen entry: Cmd+F on macOS, Ctrl+F elsewhere (Qt::CTRL maps to Cmd
+    // on macOS). Cocoa's own "Enter Full Screen" View-menu item is suppressed in main().
     _fullScreenAction = _viewMenu->addAction(tr("&Full Screen"));
-#ifdef Q_OS_MAC
-    _fullScreenAction->setShortcut(QKeySequence(Qt::CTRL | Qt::META | Qt::Key_F));
-#else
-    _fullScreenAction->setShortcut(QKeySequence(Qt::Key_F11));
-#endif
+    _fullScreenAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_F));
     _fullScreenAction->setStatusTip(tr("Toggle full screen mode"));
     _fullScreenAction->setCheckable(true);
     connect(_fullScreenAction, &QAction::triggered, this, &MenuManager::fullScreenToggled);
 
     _viewMenu->addSeparator();
 
-    // Zoom controls
-    _zoomInAction = _viewMenu->addAction(tr("Zoom &In"));
-    _zoomInAction->setShortcut(QKeySequence::ZoomIn);
-    _zoomInAction->setStatusTip(tr("Zoom in (2x)"));
-    _zoomInAction->setEnabled(false);  // TODO: Implement zoom
+    // Fixed scale presets: resize the window so the emulator screen (352x288 frame,
+    // the same frame in overscan mode) is shown at an integer scale plus the chrome
+    _scaleMenu = _viewMenu->addMenu(tr("&Scale"));
+    for (int scale = 1; scale <= 4; ++scale)
+    {
+        QAction* action = _scaleMenu->addAction(tr("%1x (%2x%3)").arg(scale).arg(352 * scale).arg(288 * scale));
+        action->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | (Qt::Key_0 + scale)));
+        action->setStatusTip(tr("Resize the window to show the screen at %1x").arg(scale));
+        connect(action, &QAction::triggered, this, [this, scale]() { emit scaleRequested(scale); });
+        _scaleActions.push_back(action);
+    }
 
-    _zoomOutAction = _viewMenu->addAction(tr("Zoom &Out"));
-    _zoomOutAction->setShortcut(QKeySequence::ZoomOut);
-    _zoomOutAction->setStatusTip(tr("Zoom out (0.5x)"));
-    _zoomOutAction->setEnabled(false);  // TODO: Implement zoom
+    _viewMenu->addSeparator();
 
-    _zoomResetAction = _viewMenu->addAction(tr("&Reset Zoom"));
-    _zoomResetAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
-    _zoomResetAction->setStatusTip(tr("Reset zoom to 1x"));
-    _zoomResetAction->setEnabled(false);  // TODO: Implement zoom
+    // Overscan mode (Pentagon only - 384x304 with extended border)
+    _overscanAction = _viewMenu->addAction(tr("&Overscan Mode"));
+    _overscanAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
+    _overscanAction->setStatusTip(tr("Pentagon overscan mode (384x304) - shows invisible border areas"));
+    _overscanAction->setCheckable(true);
+    _overscanAction->setEnabled(false);  // Enabled only for Pentagon
+    connect(_overscanAction, &QAction::triggered, this, &MenuManager::overscanModeToggled);
+
+    // Viewport submenu (only meaningful in overscan mode)
+    _viewportMenu = _viewMenu->addMenu(tr("Display &Viewport"));
+    _viewportMenu->setStatusTip(tr("Crop framebuffer for display"));
+    _viewportMenu->setEnabled(false);  // Enabled when overscan is active
+
+    _viewportGroup = new QActionGroup(this);
+    _viewportGroup->setExclusive(true);
+
+    _viewportFullOverscanAction = _viewportMenu->addAction(tr("&Full Overscan (384x304)"));
+    _viewportFullOverscanAction->setCheckable(true);
+    _viewportGroup->addAction(_viewportFullOverscanAction);
+    connect(_viewportFullOverscanAction, &QAction::triggered, this, [this]() { emit viewportChanged(0); });
+
+    _viewportSymmetricAction = _viewportMenu->addAction(tr("&Symmetric Horizontal (352x304)"));
+    _viewportSymmetricAction->setCheckable(true);
+    _viewportSymmetricAction->setChecked(true);  // Default viewport
+    _viewportGroup->addAction(_viewportSymmetricAction);
+    connect(_viewportSymmetricAction, &QAction::triggered, this, [this]() { emit viewportChanged(1); });
+
+    _viewportStandardAction = _viewportMenu->addAction(tr("S&tandard (352x288)"));
+    _viewportStandardAction->setCheckable(true);
+    _viewportGroup->addAction(_viewportStandardAction);
+    connect(_viewportStandardAction, &QAction::triggered, this, [this]() { emit viewportChanged(2); });
+
+    _viewportScreenOnlyAction = _viewportMenu->addAction(tr("Screen &Only (256x192)"));
+    _viewportScreenOnlyAction->setCheckable(true);
+    _viewportGroup->addAction(_viewportScreenOnlyAction);
+    connect(_viewportScreenOnlyAction, &QAction::triggered, this, [this]() { emit viewportChanged(3); });
+}
+
+void MenuManager::setDebuggerChecked(bool checked)
+{
+    if (_debuggerAction)
+    {
+        _debuggerAction->setChecked(checked);
+    }
+}
+
+void MenuManager::setToolBarChecked(bool checked)
+{
+    if (_toolBarAction)
+    {
+        _toolBarAction->setChecked(checked);
+    }
+}
+
+void MenuManager::setStatusBarChecked(bool checked)
+{
+    if (_statusBarAction)
+    {
+        _statusBarAction->setChecked(checked);
+    }
+}
+
+void MenuManager::setTapeManagerChecked(bool checked)
+{
+    // Sync from the TapeManagerWindow's own close box; setChecked never
+    // re-emits triggered, so this cannot recurse into the toggle handler
+    if (_tapeManagerAction)
+    {
+        _tapeManagerAction->setChecked(checked);
+    }
 }
 
 void MenuManager::createRunMenu()
@@ -305,16 +396,193 @@ void MenuManager::createRunMenu()
     connect(_turboModeAction, &QAction::triggered, this, &MenuManager::turboModeToggled);
 }
 
+void MenuManager::createMachineMenu()
+{
+    _machineMenu = _menuBar->addMenu(tr("&Machine"));
+    _machineModelGroup = new QActionGroup(this);
+    _machineModelGroup->setExclusive(true);
+
+    // Get available models from EmulatorManager
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    if (!manager)
+        return;
+
+    std::vector<TMemModel> models = manager->GetAvailableModels();
+    const int ramSizes[] = {48, 128, 256, 512, 1024, 2048, 4096};
+
+    // Only show supported models for now
+    // TODO: Enable other models as they become fully supported
+    std::set<MEM_MODEL> supportedModels = {
+        MM_PENTAGON,      // Pentagon 128K/512K/1024K
+        MM_SPECTRUM48,    // ZX-Spectrum 48K
+        MM_SPECTRUM128    // ZX-Spectrum 128K
+    };
+
+    for (const auto& model : models)
+    {
+        // Skip unsupported models
+        if (supportedModels.find(model.Model) == supportedModels.end())
+            continue;
+
+        QString shortName = QString::fromUtf8(model.ShortName);
+        QString baseName = QString::fromUtf8(model.FullName);
+
+        // Skip models with empty names (shouldn't happen, but guard against it)
+        if (baseName.isEmpty() || shortName.isEmpty())
+        {
+            qWarning() << "MenuManager::createMachineMenu - Skipping model with empty name:"
+                       << "FullName=" << baseName << "ShortName=" << shortName;
+            continue;
+        }
+
+        // Count available RAM sizes for this model
+        int ramCount = 0;
+        for (int ram : ramSizes)
+        {
+            if (model.AvailRAMs & ram)
+                ramCount++;
+        }
+
+        // Skip models with no matching RAM sizes
+        if (ramCount == 0)
+        {
+            qWarning() << "MenuManager::createMachineMenu - Skipping model with no valid RAM sizes:"
+                       << baseName << "AvailRAMs=" << model.AvailRAMs;
+            continue;
+        }
+
+        // If only one RAM option, show just the model name
+        if (ramCount == 1)
+        {
+            QAction* action = _machineMenu->addAction(baseName);
+            action->setCheckable(true);
+            // Store as "MODEL:RAM" for parsing
+            action->setData(QString("%1:%2").arg(shortName).arg(model.defaultRAM));
+            action->setStatusTip(tr("Switch to %1").arg(baseName));
+            _machineModelGroup->addAction(action);
+            _machineModelActions.push_back(action);
+
+            connect(action, &QAction::triggered, this, [this, shortName, ram = model.defaultRAM]() {
+                QString key = QString("%1:%2").arg(shortName).arg(ram);
+                if (key != _currentModelShortName)
+                {
+                    emit machineModelChangeRequested(key);
+                }
+            });
+        }
+        else
+        {
+            // Multiple RAM options - create entry for each
+            for (int ram : ramSizes)
+            {
+                if (!(model.AvailRAMs & ram))
+                    continue;
+
+                QString displayName = QString("%1 %2K").arg(baseName).arg(ram);
+                QAction* action = _machineMenu->addAction(displayName);
+                action->setCheckable(true);
+                action->setData(QString("%1:%2").arg(shortName).arg(ram));
+                action->setStatusTip(tr("Switch to %1 with %2K RAM").arg(baseName).arg(ram));
+                _machineModelGroup->addAction(action);
+                _machineModelActions.push_back(action);
+
+                connect(action, &QAction::triggered, this, [this, shortName, ram]() {
+                    QString key = QString("%1:%2").arg(shortName).arg(ram);
+                    if (key != _currentModelShortName)
+                    {
+                        emit machineModelChangeRequested(key);
+                    }
+                });
+            }
+        }
+    }
+
+    // Set default selection (first entry)
+    if (!_machineModelActions.empty())
+    {
+        _machineModelActions[0]->setChecked(true);
+        _currentModelShortName = _machineModelActions[0]->data().toString();
+    }
+
+    _machineMenu->addSeparator();
+
+    // Fast tape loading trap (LD-BYTES $0556 hook — design:
+    // docs/inprogress/2026-08-30-fast-tape-loading). When on, vanilla ROM
+    // tape blocks load instantly; custom loaders fall back to full signal
+    // emulation. Checked state mirrors the runtime 'fasttape' feature of the
+    // active instance (synced in updateMenuStates).
+    _tapeTrapsAction = _machineMenu->addAction(tr("&Fast Tape Loading"));
+    _tapeTrapsAction->setStatusTip(tr("Serve vanilla ROM tape loads instantly (custom loaders use signal emulation)"));
+    _tapeTrapsAction->setCheckable(true);
+    connect(_tapeTrapsAction, &QAction::triggered, this, &MenuManager::tapeTrapsToggled);
+
+    // Turbo tape loading (design: docs/inprogress/2026-09-04-turbo-tape-loading).
+    // While the tape signal path plays, the machine runs unthrottled (turbo
+    // mode) so blocks the trap cannot serve — headerless, custom-timed, pulse
+    // streams — still load at warp speed. Warp ends with the read-gap
+    // watchdog, end-of-tape or any stop. Checked state mirrors the runtime
+    // 'turbotape' feature (synced in updateMenuStates).
+    _turboTapeAction = _machineMenu->addAction(tr("Tur&bo Tape Loading"));
+    _turboTapeAction->setStatusTip(tr("Run at warp speed while a tape signal is playing (custom loaders included)"));
+    _turboTapeAction->setCheckable(true);
+    connect(_turboTapeAction, &QAction::triggered, this, &MenuManager::turboTapeToggled);
+}
+
+void MenuManager::updateMachineModelSelection(std::shared_ptr<Emulator> activeEmulator)
+{
+    if (!activeEmulator)
+        return;
+
+    // Get current model from emulator context
+    EmulatorContext* ctx = activeEmulator->GetContext();
+    if (!ctx)
+        return;
+
+    MEM_MODEL currentModel = ctx->config.mem_model;
+    uint32_t currentRam = ctx->config.ramsize;
+
+    // Find and check the matching action (format: "MODEL:RAM")
+    for (QAction* action : _machineModelActions)
+    {
+        QString data = action->data().toString();
+        QStringList parts = data.split(':');
+        if (parts.size() != 2)
+            continue;
+
+        QString modelName = parts[0];
+        uint32_t ram = parts[1].toUInt();
+
+        // Find model info to get the MEM_MODEL enum
+        EmulatorManager* manager = EmulatorManager::GetInstance();
+        if (manager)
+        {
+            std::vector<TMemModel> models = manager->GetAvailableModels();
+            for (const auto& model : models)
+            {
+                if (QString::fromUtf8(model.ShortName) == modelName &&
+                    model.Model == currentModel && ram == currentRam)
+                {
+                    action->setChecked(true);
+                    _currentModelShortName = data;
+                    return;
+                }
+            }
+        }
+    }
+}
+
 void MenuManager::createDebugMenu()
 {
     _debugMenu = _menuBar->addMenu(tr("&Debug"));
 
-    // Debug Mode
-    _debugModeAction = _debugMenu->addAction(tr("Debug &Mode"));
-    _debugModeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
-    _debugModeAction->setStatusTip(tr("Enable debug mode (slower, instrumented)"));
-    _debugModeAction->setCheckable(true);
-    connect(_debugModeAction, &QAction::triggered, this, &MenuManager::debugModeToggled);
+    // Debugger window. Hidden at start; while hidden the emulator runs without
+    // debug instrumentation (see MainWindow::handleDebuggerVisibilityChanged)
+    _debuggerAction = _debugMenu->addAction(tr("&Debugger Window"));
+    _debuggerAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1));
+    _debuggerAction->setStatusTip(tr("Show/hide the debugger window (debug features are active only while it is shown)"));
+    _debuggerAction->setCheckable(true);
+    _debuggerAction->setChecked(false);
+    connect(_debuggerAction, &QAction::triggered, this, &MenuManager::debuggerToggled);
 
     _debugMenu->addSeparator();
 
@@ -398,11 +666,22 @@ void MenuManager::createToolsMenu()
 
     _toolsMenu->addSeparator();
 
-    // Screenshot
+    // Tape Manager Window (design §9.2 — checkable show/hide, hidden until
+    // first opened; lives in Tools beside the other auxiliary windows, r7)
+    _tapeManagerAction = _toolsMenu->addAction(tr("Tape &Manager"));
+    _tapeManagerAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_3));
+    _tapeManagerAction->setStatusTip(tr("Show/hide tape manager window"));
+    _tapeManagerAction->setCheckable(true);
+    _tapeManagerAction->setChecked(false);
+    connect(_tapeManagerAction, &QAction::triggered, this, &MenuManager::tapeManagerToggled);
+
+    _toolsMenu->addSeparator();
+
+    // Screenshot of the emulator framebuffer to clipboard
     _screenshotAction = _toolsMenu->addAction(tr("Take &Screenshot"));
-    _screenshotAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
-    _screenshotAction->setStatusTip(tr("Save screenshot to file"));
-    _screenshotAction->setEnabled(false);  // TODO: Implement screenshot
+    _screenshotAction->setShortcut(QKeySequence(Qt::Key_F12));
+    _screenshotAction->setStatusTip(tr("Copy the emulator screen to the clipboard"));
+    connect(_screenshotAction, &QAction::triggered, this, &MenuManager::screenshotRequested);
 
 #ifdef ENABLE_RECORDING
     // Recording (dialog toggle)
@@ -555,6 +834,7 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         // Save As options always available when disk is loaded
         _saveDiskTRDAction->setEnabled(true);
         _saveDiskSCLAction->setEnabled(true);
+        _saveDiskUDIAction->setEnabled(true);
     }
     else
     {
@@ -578,6 +858,60 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
     // Debug menu states
     _stepInAction->setEnabled(!isRunning || isPaused);
     _stepOverAction->setEnabled(!isRunning || isPaused);
+
+    // Overscan menu states (Pentagon only)
+    // Only update overscan visibility when there's an active emulator
+    // Skip update when emulator is null (during transitions) to avoid hiding menu incorrectly
+    if (emulatorExists)
+    {
+        EmulatorContext* context = activeEmulator->GetContext();
+        bool isPentagon = (context && context->config.mem_model == MM_PENTAGON);
+        bool isOverscanActive = isPentagon && activeEmulator->IsOverscanMode();
+
+        // Lock overscan/viewport controls during recording to prevent mid-recording
+        // resolution changes (viewport is captured at recording start)
+        bool isRecording = context && context->pRecordingManager &&
+                           context->pRecordingManager->IsRecording();
+
+        // Pentagon: show and enable overscan, show viewport when overscan active
+        // Non-Pentagon: hide overscan, hide viewport
+        // Recording: show but disable overscan/viewport to prevent changes
+        _overscanAction->setVisible(isPentagon);
+        _overscanAction->setEnabled(isPentagon && !isRecording);
+        _overscanAction->setChecked(isOverscanActive);
+        // Use menuAction() to control submenu visibility in parent menu
+        // (calling setVisible() on QMenu itself can trigger unwanted popup)
+        _viewportMenu->menuAction()->setVisible(isPentagon);
+        _viewportMenu->setEnabled(isOverscanActive && !isRecording);
+    }
+    else
+    {
+        // No emulator: hide Pentagon-only menus
+        _overscanAction->setVisible(false);
+        _overscanAction->setEnabled(false);
+        _viewportMenu->menuAction()->setVisible(false);
+        _viewportMenu->setEnabled(false);
+    }
+
+    // Machine menu - fast tape loading toggle mirrors the runtime 'fasttape'
+    // feature (the trap re-reads it on every LD-BYTES invocation, so only the
+    // menu state needs syncing)
+    _tapeTrapsAction->setEnabled(emulatorExists);
+    if (emulatorExists)
+    {
+        EmulatorContext* context = activeEmulator->GetContext();
+        FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
+        _tapeTrapsAction->setChecked(featureManager && featureManager->isEnabled(Features::kFastTape));
+        _turboTapeAction->setChecked(featureManager && featureManager->isEnabled(Features::kTurboTape));
+    }
+
+    // Update machine model selection
+    updateMachineModelSelection(activeEmulator);
+}
+
+void MenuManager::resetViewportSelection()
+{
+    _viewportSymmetricAction->setChecked(true);
 }
 
 void MenuManager::setActiveEmulator(std::shared_ptr<Emulator> emulator)

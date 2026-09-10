@@ -50,6 +50,24 @@ jobs:
           # Based on your previous script, source is in 'unreal-qt' folder
           cd unreal-qt
           
-          # Use Ninja (installed in your image) for faster builds
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+          # Use Ninja (installed in your image) for faster builds.
+          # TESTS=ON pulls in core/tests (where the TTD divergence corpus
+          # and capture-cost CI gate live — see core/tests/debugger/ttd/).
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DTESTS=ON
           cmake --build build --parallel
+
+      - name: Run TTD regression tests
+        # Phase 2 Item 7 (parent TDD §15.1) — gate the TTD engine on every
+        # commit. Two suites:
+        #   * TTD_Divergence_Corpus_Test — capture/restore round-trip on
+        #     Dizzy Y (idle) and AccuracyCoinZX (self-modifying code).
+        #   * TTD_Capture_Cost_Gate_Test — per-frame capture cost must stay
+        #     under a generous budget; catches O(n^2) regressions.
+        # Both are deterministic and complete in <5s on the CI runner.
+        run: |
+          cd unreal-qt
+          ./build/bin/core-tests \
+            --gtest_filter='TTD_Divergence_Corpus_Test.*:TTD_Capture_Cost_Gate_Test.*' \
+            --gtest_color=no

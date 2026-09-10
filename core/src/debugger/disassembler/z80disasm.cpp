@@ -72,9 +72,9 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_MBYTE,  7, 0, 0, "ld c,:1" },                              // 0x0E
     { OF_NONE,   4, 0, 0, "rrca" },                                 // 0x0F
     
-    { OF_DJNZ | OF_CONDITION | OF_MBYTE, 0, 13, 8, "djnz :1" },     // 0x10
+    { OF_DJNZ | OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 13, 8, "djnz :1" },     // 0x10
     { OF_MWORD, 10, 0, 0, "ld de,:2" },                             // 0x11
-    { OF_INDIRECT | OF_MWORD,  7, 0, 0, "ld (de),:2" },             // 0x12
+    { OF_INDIRECT,  7, 0, 0, "ld (de),a" },                        // 0x12
     { OF_NONE,   6, 0, 0, "inc de" },                               // 0x13
     { OF_NONE,   4, 0, 0, "inc d" },                                // 0x14
     { OF_NONE,   4, 0, 0, "dec d" },                                // 0x15
@@ -91,7 +91,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
 
     { OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 12, 7, "jr nz,:1" }, // 0x20
     { OF_MWORD, 10, 0, 0, "ld hl,:2" },                             // 0x21
-    { OF_MWORD, 16, 0, 0, "ld (:2),hl" },                           // 0x22
+    { OF_MWORD | OF_MEMADR, 16, 0, 0, "ld (:2),hl" },               // 0x22
     { OF_NONE,   6, 0, 0, "inc hl" },                               // 0x23
     { OF_NONE,   4, 0, 0, "inc h" },                                // 0x24
     { OF_NONE,   4, 0, 0, "dec h" },                                // 0x25
@@ -99,7 +99,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE,   4, 0, 0, "daa" },                                  // 0x27
     { OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 12, 7, "jr z,:1" },  // 0x28
     { OF_NONE,  11, 0, 0, "add hl,hl" },                            // 0x29
-    { OF_MWORD, 16, 0, 0, "ld hl,(:2)" },                           // 0x2A
+    { OF_MWORD | OF_MEMADR, 16, 0, 0, "ld hl,(:2)" },               // 0x2A
     { OF_NONE,   6, 0, 0, "dec hl" },                               // 0x2B
     { OF_NONE,   4, 0, 0, "inc l" },                                // 0x2C
     { OF_NONE,   4, 0, 0, "dec l" },                                // 0x2D
@@ -108,7 +108,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
 
     { OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 12, 7, "jr nc,:1" }, // 0x30
     { OF_MWORD, 10, 0, 0, "ld sp,:2" },                             // 0x31
-    { OF_MWORD, 13, 0, 0, "ld (:2),a" },                            // 0x32
+    { OF_MWORD | OF_MEMADR, 13, 0, 0, "ld (:2),a" },                // 0x32
     { OF_NONE,   6, 0, 0, "inc sp" },                               // 0x33
     { OF_INDIRECT,  11, 0, 0, "inc (hl)" },                         // 0x34
     { OF_INDIRECT,  11, 0, 0, "dec (hl)" },                         // 0x35
@@ -116,7 +116,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE,   4, 0, 0, "scf" },                                  // 0x37
     { OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 12, 7, "jr c,:1" },  // 0x38
     { OF_NONE,  11, 0, 0, "add hl,sp" },                            // 0x39
-    { OF_MWORD, 13, 0, 0, "ld a,(:2)" },                            // 0x3A
+    { OF_MWORD | OF_MEMADR, 13, 0, 0, "ld a,(:2)" },                // 0x3A
     { OF_NONE,   6, 0, 0, "dec sp" },                               // 0x3B
     { OF_NONE,   4, 0, 0, "inc a" },                                // 0x3C
     { OF_NONE,   4, 0, 0, "dec a" },                                // 0x3D
@@ -262,11 +262,11 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_RET | OF_CONDITION,  0, 11, 5, "ret nz" },                 // 0xC0
     { OF_NONE, 10, 0, 0, "pop bc" },                                // 0xC1
     { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 10, 10, "jp nz,:2" },   // 0xC2
-    { OF_MWORD | OF_JUMP, 10, 0, 0, "jp.:2" },                      // 0xC3
+    { OF_MWORD | OF_JUMP, 10, 0, 0, "jp :2" },                      // 0xC3
     { OF_CALL | OF_CONDITION | OF_MWORD, 0, 17, 10, "call nz,:2" }, // 0xC4
     { OF_NONE, 11, 0, 0, "push bc" },                               // 0xC5
     { OF_MBYTE,  7, 0, 0, "add a,:1" },                             // 0xC6
-    { OF_RST | OF_JUMP, 11, 0, 0, "rst #00" },                      // 0xC7
+    { OF_RST, 11, 0, 0, "rst #00" },                                // 0xC7
     { OF_RET | OF_CONDITION, 0, 11, 5, "ret z" },                   // 0xC8
     { OF_RET, 10, 0, 0, "ret" },                                    // 0xC9
     { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 10, 10, "jp z,:2" },    // 0xCA
@@ -304,7 +304,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_JUMP | OF_INDIRECT, 4, 0, 0, "jp (hl)" },                  // 0xE9
     { OF_JUMP | OF_CONDITION | OF_MWORD,  0, 10, 10, "jp pe,:2" },  // 0xEA
     { OF_NONE, 4, 0, 0, "ex de,hl" },                               // 0xEB
-    { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 17, 10, "call pe,:2" }, // 0xEC
+    { OF_CALL | OF_CONDITION | OF_MWORD, 0, 17, 10, "call pe,:2" }, // 0xEC
     { OF_PREFIX, 4, 0, 0, "#ED" },                                  // 0xED - Prefix
     { OF_MBYTE,  7, 0, 0, "xor :1" },                               // 0xEE
     { OF_RST, 11, 0, 0, "rst #28" },                                // 0xEF
@@ -313,7 +313,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE, 10, 0, 0, "pop af" },                                // 0xF1
     { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 10, 10, "jp p,:2" },    // 0xF2
     { OF_NONE,  4, 0, 0, "di" },                                    // 0xF3
-    { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 17, 10, "call p,:2" },  // 0xF4
+    { OF_CALL | OF_CONDITION | OF_MWORD, 0, 17, 10, "call p,:2" },  // 0xF4
     { OF_NONE, 11, 0, 0, "push af" },                               // 0xF5
     { OF_MBYTE,  7, 0, 0, "or :1" },                                // 0xF6
     { OF_RST, 11, 0, 0, "rst #30" },                                // 0xF7
@@ -614,7 +614,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
 {
     { OF_NONE,  8, 0, 0, "nop" },                                    // 0x00
     { OF_MWORD, 14, 0, 0, "ld bc,:2" },                              // 0x01
-    { OF_NONE, 11, 0, 0, "ld (bc),a" },                              // 0x02
+    { OF_INDIRECT, 11, 0, 0, "ld (bc),a" },                          // 0x02
     { OF_NONE, 10, 0, 0, "inc bc" },                                 // 0x03
     { OF_NONE,  8, 0, 0, "inc b" },                                  // 0x04
     { OF_NONE,  8, 0, 0, "dec b" },                                  // 0x05
@@ -629,7 +629,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_MBYTE, 11, 0, 0, "ld c,:1" },                               // 0x0E
     { OF_NONE,  8, 0, 0, "rrca" },                                   // 0x0F
 
-    { OF_DJNZ | OF_CONDITION | OF_MBYTE, 0, 17, 12, "djnz :1" },     // 0x10
+    { OF_DJNZ | OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 17, 12, "djnz :1" },     // 0x10
     { OF_MWORD, 14, 0, 0, "ld de,:2" },                              // 0x11
     { OF_INDIRECT, 11, 0, 0, "ld (de),a" },                          // 0x12
     { OF_NONE, 10, 0, 0, "inc de" },                                 // 0x13
@@ -648,7 +648,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
 
     { OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 16, 11, "jr nz,:1" }, // 0x20
     { OF_MWORD, 18, 0, 0, "ld ix,:2" },                              // 0x21
-    { OF_MWORD, 24, 0, 0, "ld (:2),ix" },                            // 0x22
+    { OF_MWORD | OF_MEMADR, 24, 0, 0, "ld (:2),ix" },                // 0x22
     { OF_NONE, 14, 0, 0, "inc ix" },                                 // 0x23
     { OF_NONE,  8, 0, 0, "inc hx" },                                 // 0x24
     { OF_NONE,  8, 0, 0, "dec hx" },                                 // 0x25
@@ -656,7 +656,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_NONE,  8, 0, 0, "daa" },                                    // 0x27
     { OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 16, 11, "jr z,:1" },  // 0x28
     { OF_NONE, 15, 0, 0, "add ix,ix" },                              // 0x29
-    { OF_MWORD, 20, 0, 0, "ld ix,(:2)" },                            // 0x2A
+    { OF_MWORD | OF_MEMADR, 20, 0, 0, "ld ix,(:2)" },                // 0x2A
     { OF_NONE, 14, 0, 0, "dec ix" },                                 // 0x2B
     { OF_NONE,  8, 0, 0, "inc lx" },                                 // 0x2C
     { OF_NONE,  8, 0, 0, "dec lx" },                                 // 0x2D
@@ -665,7 +665,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
 
     { OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 16, 11, "jr nc,:1" }, // 0x30
     { OF_MWORD, 11, 0, 0, "ld sp,:2" },                              // 0x31
-    { OF_MWORD, 17, 0, 0, "ld (:2),a" },                             // 0x32
+    { OF_MWORD | OF_MEMADR, 17, 0, 0, "ld (:2),a" },                 // 0x32
     { OF_NONE, 10, 0, 0, "inc sp" },                                 // 0x33
     { OF_DISP, 19, 0, 0, "inc (ix+:1)" },                            // 0x34
     { OF_DISP, 19, 0, 0, "dec (ix+:1)" },                            // 0x35
@@ -673,7 +673,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_NONE,  8, 0, 0, "scf" },                                    // 0x37
     { OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 16, 11, "jr c,:1" },  // 0x38
     { OF_NONE, 15, 0, 0, "add ix,sp" },                              // 0x39
-    { OF_MWORD, 17, 0, 0, "ld a,(:2)" },                             // 0x3A
+    { OF_MWORD | OF_MEMADR, 17, 0, 0, "ld a,(:2)" },                 // 0x3A
     { OF_NONE, 10, 0, 0, "dec sp" },                                 // 0x3B
     { OF_NONE,  8, 0, 0, "inc a" },                                  // 0x3C
     { OF_NONE,  8, 0, 0, "dec a" },                                  // 0x3D
@@ -854,7 +854,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_NONE, 14, 0, 0, "pop ix" },                                 // 0xE1
     { OF_JUMP | OF_CONDITION | OF_MWORD,  0, 14, 14, "jp po,:2" },   // 0xE2
     { OF_INDIRECT, 23, 0, 0, "ex (sp),ix" },                         // 0xE3
-    { OF_JUMP | OF_CONDITION | OF_MWORD,  0, 21, 14, "call po,:2" }, // 0xE4
+    { OF_CALL | OF_CONDITION | OF_MWORD,  0, 21, 14, "call po,:2" }, // 0xE4
     { OF_NONE, 15, 0, 0, "push ix" },                                // 0xE5
     { OF_MBYTE,  8, 0, 0, "and :1" },                                // 0xE6
     { OF_RST, 15, 0, 0, "rst #20" },                                 // 0xE7
@@ -879,7 +879,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_NONE, 10, 0, 0, "ld sp,ix" },                               // 0xF9
     { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 14, 14, "jp m,:2"},      // 0xFA
     { OF_NONE,  8, 0, 0, "ei" },                                     // 0xFB
-    { OF_CALL | OF_MWORD,  0, 21, 15, "call m,:2" },                 // 0xFC
+    { OF_CALL | OF_CONDITION | OF_MWORD,  0, 21, 15, "call m,:2" }, // 0xFC
     { OF_PREFIX,  8, 0, 0, "#FD" },                                  // 0xFD - Prefix
     { OF_MBYTE, 11, 0, 0, "cp :1" },                                 // 0xFE
     { OF_RST, 15, 0, 0, "rst #38" },                                 // 0xFF
@@ -962,7 +962,7 @@ OpCode Z80Disassembler::edOpcodes[256] =
     { OF_NONE, 12, 0, 0, "in b,(c)" },                      // 0x40
     { OF_NONE, 12, 0, 0, "out (c),b" },                     // 0x41
     { OF_NONE, 15, 0, 0, "sbc hl,bc" },                     // 0x42
-    { OF_MWORD, 20, 0, 0, "ld (:2),bc" },                   // 0x43
+    { OF_MWORD | OF_MEMADR, 20, 0, 0, "ld (:2),bc" },       // 0x43
     { OF_NONE,  8, 0, 0, "neg" },                           // 0x44
     { OF_RET, 14, 0, 0, "retn" },                           // 0x45
     { OF_NONE,  8, 0, 0, "im 0" },                          // 0x46
@@ -970,7 +970,7 @@ OpCode Z80Disassembler::edOpcodes[256] =
     { OF_NONE, 12, 0, 0, "in c,(c)" },                      // 0x48
     { OF_NONE, 12, 0, 0, "out (c),c" },                     // 0x49
     { OF_NONE, 15, 0, 0, "adc hl,bc" },                     // 0x4A
-    { OF_MWORD, 20, 0, 0, "ld bc,(:2)" },                   // 0x4B
+    { OF_MWORD | OF_MEMADR, 20, 0, 0, "ld bc,(:2)" },       // 0x4B
     { OF_NONE,  8, 0, 0, "neg *" },                         // 0x4C
     { OF_RET, 14, 0, 0, "reti" },                           // 0x4D
     { OF_NONE,  8, 0, 0, "im 0 *" },                        // 0x4E
@@ -979,7 +979,7 @@ OpCode Z80Disassembler::edOpcodes[256] =
     { OF_NONE, 12, 0, 0, "in d,(c)" },                      // 0x50
     { OF_NONE, 12, 0, 0, "out (c),d" },                     // 0x51
     { OF_NONE, 15, 0, 0, "sbc hl,de" },                     // 0x52
-    { OF_MWORD, 20, 0, 0, "ld (:2),de" },                   // 0x53
+    { OF_MWORD | OF_MEMADR, 20, 0, 0, "ld (:2),de" },       // 0x53
     { OF_NONE,  8, 0, 0, "neg *" },                         // 0x54
     { OF_RET, 14, 0, 0, "retn *" },                         // 0x55
     { OF_NONE,  8, 0, 0, "im 1" },                          // 0x56
@@ -987,7 +987,7 @@ OpCode Z80Disassembler::edOpcodes[256] =
     { OF_NONE, 12, 0, 0, "in e,(c)" },                      // 0x58
     { OF_NONE, 12, 0, 0, "out (c),e" },                     // 0x59
     { OF_NONE, 12, 0, 0, "adc hl,de" },                     // 0x5A
-    { OF_MWORD, 20, 0, 0, "ld de,(:2)" },                   // 0x5B
+    { OF_MWORD | OF_MEMADR, 20, 0, 0, "ld de,(:2)" },       // 0x5B
     { OF_NONE,  8, 0, 0, "neg *" },                         // 0x5C
     { OF_RET, 14, 0, 0, "reti *" },                         // 0x5D
     { OF_NONE,  8, 0, 0, "im 2" },                          // 0x5E
@@ -996,7 +996,7 @@ OpCode Z80Disassembler::edOpcodes[256] =
     { OF_NONE, 12, 0, 0, "in h,(c)" },                      // 0x60
     { OF_NONE, 12, 0, 0, "out (c),h" },                     // 0x61
     { OF_NONE, 15, 0, 0, "sbc hl,hl" },                     // 0x62
-    { OF_MWORD, 20, 0, 0, "ld (:2),hl" },                   // 0x63
+    { OF_MWORD | OF_MEMADR, 20, 0, 0, "ld (:2),hl" },       // 0x63
     { OF_NONE,  8, 0, 0, "neg *" },                         // 0x64
     { OF_RET, 14, 0, 0, "retn *" },                         // 0x65
     { OF_NONE,  8, 0, 0, "im 0 *" },                        // 0x66
@@ -1004,7 +1004,7 @@ OpCode Z80Disassembler::edOpcodes[256] =
     { OF_NONE, 12, 0, 0, "in l,(c)" },                      // 0x68
     { OF_NONE, 12, 0, 0, "out (c),l" },                     // 0x69
     { OF_NONE, 15, 0, 0, "adc hl,hl" },                     // 0x6A
-    { OF_MWORD, 20, 0, 0, "ld hl,(:2)" },                   // 0x6B
+    { OF_MWORD | OF_MEMADR, 20, 0, 0, "ld hl,(:2)" },       // 0x6B
     { OF_NONE,  8, 0, 0, "neg *" },                         // 0x6C
     { OF_RET, 14, 0, 0, "reti *" },                         // 0x6D
     { OF_NONE,  8, 0, 0, "im 0 *" },                        // 0x6E
@@ -1013,7 +1013,7 @@ OpCode Z80Disassembler::edOpcodes[256] =
     { OF_NONE, 12, 0, 0, "in (c) *" },                      // 0x70
     { OF_NONE, 12, 0, 0, "out (c),0" },                     // 0x71
     { OF_NONE, 15, 0, 0, "sbc hl,sp" },                     // 0x72
-    { OF_MWORD, 20, 0, 0, "ld (:2),sp" },                   // 0x73
+    { OF_MWORD | OF_MEMADR, 20, 0, 0, "ld (:2),sp" },       // 0x73
     { OF_NONE,  8, 0, 0, "neg *" },                         // 0x74
     { OF_RET, 14, 0, 0, "retn *" },                         // 0x75
     { OF_NONE,  8, 0, 0, "im 1 *" },                        // 0x76
@@ -1021,7 +1021,7 @@ OpCode Z80Disassembler::edOpcodes[256] =
     { OF_NONE, 12, 0, 0, "in a,(c)" },                      // 0x78
     { OF_NONE, 12, 0, 0, "out (c),a" },                     // 0x79
     { OF_NONE, 15, 0, 0, "adc hl,sp" },                     // 0x7A
-    { OF_MWORD, 20, 0, 0, "ld sp,(:2)" },                   // 0x7B
+    { OF_MWORD | OF_MEMADR, 20, 0, 0, "ld sp,(:2)" },       // 0x7B
     { OF_NONE,  8, 0, 0, "neg *" },                         // 0x7C
     { OF_RET, 14, 0, 0, "reti *" },                         // 0x7D
     { OF_NONE,  8, 0, 0, "im 2 *" },                        // 0x7E
@@ -1172,7 +1172,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
 {
     { OF_NONE,  8, 0, 0, "nop" },                                    // 0x00
     { OF_MWORD, 14, 0, 0, "ld bc,:2" },                              // 0x01
-    { OF_NONE, 11, 0, 0, "ld bc,(a)" },                              // 0x02
+    { OF_INDIRECT, 11, 0, 0, "ld (bc),a" },                          // 0x02
     { OF_NONE, 10, 0, 0, "inc bc" },                                 // 0x03
     { OF_NONE,  8, 0, 0, "inc b" },                                  // 0x04
     { OF_NONE,  8, 0, 0, "dec b" },                                  // 0x05
@@ -1187,9 +1187,9 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_MBYTE, 11, 0, 0, "ld c,:1" },                               // 0x0E
     { OF_NONE,  8, 0, 0, "rrca" },                                   // 0x0F
 
-    { OF_DJNZ | OF_CONDITION | OF_MBYTE, 0, 17, 12, "djnz :1" },     // 0x10
-    { OF_NONE, 14, 0, 0, "ld de,:2" },                               // 0x11
-    { OF_INDIRECT, 11, 0, 0, "ld (de),:2" },                         // 0x12
+    { OF_DJNZ | OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 17, 12, "djnz :1" },     // 0x10
+    { OF_MWORD, 14, 0, 0, "ld de,:2" },                              // 0x11
+    { OF_INDIRECT, 11, 0, 0, "ld (de),a" },                         // 0x12
     { OF_NONE, 10, 0, 0, "inc de" },                                 // 0x13
     { OF_NONE,  8, 0, 0, "inc d" },                                  // 0x14
     { OF_NONE,  8, 0, 0, "dec d" },                                  // 0x15
@@ -1206,15 +1206,15 @@ OpCode Z80Disassembler::fdOpcodes[256]
 
     { OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 16, 11, "jr nz,:1" }, // 0x20
     { OF_MWORD, 18, 0, 0, "ld iy,:2" },                              // 0x21
-    { OF_MWORD, 24, 0, 0, "ld (:2),iy" },                            // 0x22
-    { OF_NONE, 14, 0, 0, "inc ix" },                                 // 0x23
+    { OF_MWORD | OF_MEMADR, 24, 0, 0, "ld (:2),iy" },                // 0x22
+    { OF_NONE, 14, 0, 0, "inc iy" },                                 // 0x23
     { OF_NONE,  8, 0, 0, "inc hy" },                                 // 0x24
     { OF_NONE,  8, 0, 0, "dec hy" },                                 // 0x25
     { OF_MBYTE, 11, 0, 0, "ld hy,:1" },                              // 0x26
     { OF_NONE,  8, 0, 0, "daa" },                                    // 0x27
     { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 16, 11, "jr z,:1" },  // 0x28
     { OF_NONE, 15, 0, 0, "add iy,iy" },                              // 0x29
-    { OF_MWORD, 20, 0, 0, "ld iy,(:2)" },                            // 0x2A
+    { OF_MWORD | OF_MEMADR, 20, 0, 0, "ld iy,(:2)" },                            // 0x2A
     { OF_NONE, 14, 0, 0, "dec iy" },                                 // 0x2B
     { OF_NONE,  8, 0, 0, "inc ly" },                                 // 0x2C
     { OF_NONE,  8, 0, 0, "dec ly" },                                 // 0x2D
@@ -1223,7 +1223,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
 
     { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 16, 11, "jr nc,:1" }, // 0x30
     { OF_MWORD, 11, 0, 0, "ld sp,:2" },                              // 0x31
-    { OF_MWORD, 17, 0, 0, "ld (:2),a" },                             // 0x32
+    { OF_MWORD | OF_MEMADR, 17, 0, 0, "ld (:2),a" },                             // 0x32
     { OF_NONE, 10, 0, 0, "inc sp" },                                 // 0x33
     { OF_DISP, 19, 0, 0, "inc (iy+:1)" },                            // 0x34
     { OF_DISP, 19, 0, 0, "dec (iy+:1)" },                            // 0x35
@@ -1231,7 +1231,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_NONE,  8, 0, 0, "scf" },                                    // 0x37
     { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 16, 11, "jr c,:1" },  // 0x38
     { OF_NONE, 15, 0, 0, "add iy,sp" },                              // 0x39
-    { OF_MWORD, 17, 0, 0, "ld a,(:2)" },                             // 0x3A
+    { OF_MWORD | OF_MEMADR, 17, 0, 0, "ld a,(:2)" },                             // 0x3A
     { OF_NONE, 10, 0, 0, "dec sp" },                                 // 0x3B
     { OF_NONE,  8, 0, 0, "inc a" },                                  // 0x3C
     { OF_NONE,  8, 0, 0, "dec a" },                                  // 0x3D
@@ -1251,8 +1251,8 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_NONE,  8, 0, 0, "ld c,d" },                                 // 0x4A
     { OF_NONE,  8, 0, 0, "ld c,e" },                                 // 0x4B
     { OF_NONE,  8, 0, 0, "ld c,hy" },                                // 0x4C
-    { OF_NONE,  8, 0, 0, "lc c,ly" },                                // 0x4D
-    { OF_DISP, 19, 0, 0, "lc c,(iy+:1)" },                           // 0x4E
+    { OF_NONE,  8, 0, 0, "ld c,ly" },                                // 0x4D
+    { OF_DISP, 19, 0, 0, "ld c,(iy+:1)" },                           // 0x4E
     { OF_NONE,  8, 0, 0, "ld c,a" },                                 // 0x4F
 
     { OF_NONE,  8, 0, 0, "ld d,b" },                                 // 0x50
@@ -1377,7 +1377,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_RET | OF_CONDITION,  0, 15, 9, "ret nz" },                  // 0xC0
     { OF_NONE, 14, 0, 0, "pop bc" },                                 // 0xC1
     { OF_JUMP | OF_CONDITION | OF_MWORD,  0, 14, 14, "jp nz,:2" },   // 0xC2
-    { OF_JUMP | OF_MWORD, 14, 0, 0, "jp.:2" },                       // 0xC3
+    { OF_JUMP | OF_MWORD, 14, 0, 0, "jp :2" },                       // 0xC3
     { OF_CALL | OF_CONDITION |  OF_MWORD, 0, 21, 14, "call nz,:2" }, // 0xC4
     { OF_NONE, 15, 0, 0, "push bc" },                                // 0xC5
     { OF_MBYTE,  11, 0, 0, "add a,:1" },                             // 0xC6
@@ -1411,7 +1411,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_RET | OF_CONDITION,  0, 15, 9, "ret po" },                  // 0xE0
     { OF_NONE, 14, 0, 0, "pop iy" },                                 // 0xE1
     { OF_JUMP | OF_CONDITION | OF_MWORD,  0, 14, 14, "jp po,:2" },   // 0xE2
-    { OF_NONE, 23, 0, 0, "ex (sp),iy" },                             // 0xE3
+    { OF_INDIRECT, 23, 0, 0, "ex (sp),iy" },                         // 0xE3
     { OF_CALL | OF_CONDITION | OF_MWORD,  0, 21, 14, "call po,:2" }, // 0xE4
     { OF_NONE, 15, 0, 0, "push iy" },                                // 0xE5
     { OF_MBYTE,  8, 0, 0, "and :1" },                                // 0xE6
@@ -1435,9 +1435,9 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_RST, 15, 0, 0, "rst #30" },                                 // 0xF7
     { OF_RET | OF_CONDITION,  0, 15, 9, "ret m" },                   // 0xF8
     { OF_NONE, 10, 0, 0, "ld sp,iy" },                               // 0xF9
-    { OF_CONDITION | OF_MWORD, 0, 14, 14, "jp m,:2" },               // 0xFA
+    { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 14, 14, "jp m,:2" },    // 0xFA
     { OF_NONE,  8, 0, 0, "ei" },                                     // 0xFB
-    { OF_CALL | OF_MWORD,  0, 21, 15, "call m,:2" },                 // 0xFC
+    { OF_CALL | OF_CONDITION | OF_MWORD,  0, 21, 15, "call m,:2" }, // 0xFC
     { OF_PREFIX,  8, 0, 0, "#FD" },                                  // 0xFD - Prefix
     { OF_MBYTE, 11, 0, 0, "cp :1" },                                 // 0xFE
     { OF_RST, 15, 0, 0, "rst #38" },                                 // 0xFF
@@ -2049,7 +2049,7 @@ std::string Z80Disassembler::disassembleSingleCommandWithRuntime(const std::vect
         }
 
         // Look up and set a label for this instruction if available
-        if (_context->pDebugManager)
+        if (_context && _context->pDebugManager)
         {
             auto labelManager = _context->pDebugManager->GetLabelManager();
             if (labelManager)
@@ -2262,19 +2262,30 @@ std::string Z80Disassembler::getRuntimeHints(DecodedInstruction& decoded)
     // Only show jump targets if they're not already shown in the annotation
     if (decoded.hasJump && !(decoded.hasCondition && !decoded.annotation.empty()))
     {
-        result += StringHelper::Format("Jump to: #%04X", decoded.jumpAddr);
+        if (decoded.isRst)
+        {
+            result += StringHelper::Format("Calling RST: $%02X", decoded.jumpAddr);
+        }
+        else if (decoded.opcode.flags & OF_CALL)
+        {
+            result += StringHelper::Format("Calling: $%04X", decoded.jumpAddr);
+        }
+        else
+        {
+            result += StringHelper::Format("Jump to: $%04X", decoded.jumpAddr);
+        }
     }
     else if (decoded.hasRelativeJump && !(decoded.hasCondition && !decoded.annotation.empty()))
     {
-        result += StringHelper::Format("Jump to: #%04X", decoded.relJumpAddr);
+        result += StringHelper::Format("Jump to: $%04X", decoded.relJumpAddr);
     }
     else if (decoded.hasDisplacement)
     {
-        result += StringHelper::Format("Index addr: #%04X", decoded.displacementAddr);
+        result += StringHelper::Format("Index addr: $%04X", decoded.displacementAddr);
     }
     else if (decoded.hasReturn)
     {
-        result += StringHelper::Format("Return to: #%04X", decoded.returnAddr);
+        result += StringHelper::Format("Return to: $%04X", decoded.returnAddr);
     }
 
     return result;
@@ -2360,10 +2371,13 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const std::vector<uint8_t>
     result.instructionAddr = instructionAddr;
 
     int pos = 0;
+    const int bufferLimit = static_cast<int>(buffer.size());
     uint16_t prefix = 0x0000;
     uint8_t command = 0x00;
     OpCode opcode;
     uint8_t operandsLen = 0;
+    uint8_t fetchedOperands = 0;
+    bool truncated = false;  // Input buffer ended before the instruction was complete
     uint8_t displacement = 0x00;
     [[maybe_unused]] uint8_t jumpOffset = 0x00;
     [[maybe_unused]] uint16_t wordOperand = 0x0000;
@@ -2380,7 +2394,9 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const std::vector<uint8_t>
     bool hasByteArgument = false;
     bool hasWordArgument = false;
 
-    // Fetch longest possible prefixed command
+    // Fetch longest possible prefixed command.
+    // The pos < bufferLimit condition stops runs of prefix bytes (e.g. data 'DD DD DD DD')
+    // from reading past the end of the input buffer
     do
     {
         uint8_t fetchByte = buffer[pos++];
@@ -2397,16 +2413,19 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const std::vector<uint8_t>
         hasByteArgument = opcode.flags & OF_MBYTE;
         hasWordArgument = opcode.flags & OF_MWORD;
 
-        // Update effective prefix (for prefix chains like DD FD FD DD DD ...)
+        // Update effective prefix. On a real Z80 a repeated or substituted index prefix
+        // (DD DD, DD FD) leaves the last prefix in effect, while DD CB / FD CB form the
+        // special DDCB / FDCB instruction layout: <prefix> <displacement> <opcode>
         if (isPrefix)
         {
-            if (prefix == 0x0000)  // No prefix
+            if ((prefix == 0x00DD || prefix == 0x00FD) && fetchByte == 0xCB)
             {
-                prefix = fetchByte;
+                prefix = prefix == 0x00DD ? 0xDDCB : 0xFDCB;
             }
             else
             {
-                prefix = (static_cast<uint16_t>(prefix) << 8) | (fetchByte & 0x00FF);
+                // Repeated or substituted prefix - the last prefix byte wins
+                prefix = fetchByte;
             }
 
             continue;
@@ -2421,15 +2440,19 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const std::vector<uint8_t>
                 case 0x0000:
                     result.command = fetchByte;
                     operandsLen = hasOperands(opcode);
-                    if (operandsLen > 0)
+                    fetchedOperands = 0;
+                    for (uint8_t i = 0; i < operandsLen && pos < bufferLimit; i++)
                     {
-                        for (int i = 0; i < operandsLen; i++)
-                        {
-                            uint8_t curByte = buffer[pos++];
-                            result.instructionBytes.push_back(curByte);
-                            result.operandBytes.push_back(curByte);
-                        }
+                        uint8_t curByte = buffer[pos++];
+                        result.instructionBytes.push_back(curByte);
+                        result.operandBytes.push_back(curByte);
+                        fetchedOperands++;
                     }
+                    if (fetchedOperands < operandsLen)
+                    {
+                        truncated = true;
+                    }
+                    operandsLen = fetchedOperands;  // Truncated input yields fewer operand bytes
                     break;
                 case 0x00CB:
                 case 0x00DD:
@@ -2440,30 +2463,43 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const std::vector<uint8_t>
                     result.opcode = opcode;
 
                     operandsLen = hasOperands(opcode);
-                    if (operandsLen > 0)
+                    fetchedOperands = 0;
+                    for (uint8_t i = 0; i < operandsLen && pos < bufferLimit; i++)
                     {
-                        for (int i = 0; i < operandsLen; i++)
-                        {
-                            uint8_t curByte = buffer[pos++];
-                            result.instructionBytes.push_back(curByte);
-                            result.operandBytes.push_back(curByte);
-                        }
+                        uint8_t curByte = buffer[pos++];
+                        result.instructionBytes.push_back(curByte);
+                        result.operandBytes.push_back(curByte);
+                        fetchedOperands++;
                     }
+                    if (fetchedOperands < operandsLen)
+                    {
+                        truncated = true;
+                    }
+                    operandsLen = fetchedOperands;  // Truncated input yields fewer operand bytes
                     break;
                 case 0xDDCB:
                 case 0xFDCB:
                     // DDCB and FDCB prefixes use another pattern <prefix> <displacement> <opcode>. No operands.
                     // DD CB <dd> E1 - set 4,(ix+dd),c
+                    result.prefix = prefix;
                     operandsLen = 1;  // DDCB and FDCB prefixed instructions are always have just single displacement
+                    fetchedOperands = 1;
                     displacement = fetchByte;
                     result.hasDisplacement = hasDisplacement;
                     result.displacement = displacement;
                     result.operandBytes.push_back(displacement);
 
-                    command = buffer[pos++];
+                    if (pos < bufferLimit)
+                    {
+                        command = buffer[pos++];
+                        result.instructionBytes.push_back(command);
+                    }
+                    else
+                    {
+                        truncated = true;  // Displacement present, opcode byte missing
+                    }
                     result.command = command;
                     opcode = getOpcode(prefix, command);
-                    result.instructionBytes.push_back(command);
 
                     break;
             }
@@ -2471,13 +2507,18 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const std::vector<uint8_t>
             commandDecoded = true;
             break;
         }
-
-        pos++;
     }
-    while (!commandDecoded);
+    while (!commandDecoded && pos < bufferLimit);
+
+    // A run of prefix bytes that never reached an opcode is truncated input as well
+    if (!commandDecoded)
+    {
+        truncated = true;
+    }
 
     // Apply operands to mnemonic
     result.isValid = true;
+    result.isTruncated = truncated;  // Partial decode: lengths are real, missing operand values are unknown
     result.fullCommandLen = result.instructionBytes.size();
     result.operandsLen = operandsLen;
     result.opcode = opcode;
@@ -2513,44 +2554,60 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const std::vector<uint8_t>
     result.opcode.notmet_t = opcode.notmet_t;
 
     /// region <Actualize values according flags>
-    if (hasByteArgument)
+    if (hasByteArgument && !result.operandBytes.empty())
     {
         result.byteOperand = result.operandBytes[0];
     }
 
-    if (hasWordArgument)
+    if (hasWordArgument && result.operandBytes.size() >= 2)
     {
         uint8_t loByte = result.operandBytes[0];
         uint8_t hiByte = result.operandBytes[1];
-        result.wordOperand = (hiByte << 8) | loByte;
+        result.wordOperand = static_cast<uint16_t>((hiByte << 8) | loByte);
     }
 
-    // Populate information for jumps / calls (both conditional and unconditional)
-    if (hasJump)
+    // Indexed (IX/IY+d) instructions always carry the signed displacement as the first operand byte.
+    // It must be resolved regardless of runtime availability - previously the value was taken from
+    // byteOperand which is only populated for OF_MBYTE opcodes, leaving displacement zeroed for
+    // instructions like 'ld b,(ix+d)' or all DDCB/FDCB operations
+    if (hasDisplacement && !result.operandBytes.empty())
+    {
+        result.displacement = static_cast<int8_t>(result.operandBytes[0]);
+    }
+
+    // Populate information for jumps / calls (both conditional and unconditional).
+    // Indirect jumps (JP (HL) / JP (IX) / JP (IY)) have no address operand - their
+    // target is resolved from the pointer register at runtime below.
+    // Note: CALL opcodes carry OF_CALL without OF_JUMP, so both flags must be checked
+    const bool hasCall = (opcode.flags & OF_CALL) != 0;
+    if ((hasJump || hasCall) && !hasIndirect)
     {
         result.jumpAddr = result.wordOperand;
     }
 
-    // Relative jumps (both conditional and unconditional)
-    if (hasRelativeJump)
+    // RST instructions encode the target page-0 address in the opcode itself (bits 3-5)
+    if ((opcode.flags & OF_RST) != 0)
     {
-        result.relJumpOffset = result.operandBytes[0];
-        result.relJumpAddr = (instructionAddr + result.relJumpOffset + 2) & 0xFFFF;
+        result.jumpAddr = static_cast<uint16_t>(result.command & 0x38);
+    }
+
+    // Relative jumps (both conditional and unconditional)
+    if (hasRelativeJump && !result.operandBytes.empty())
+    {
+        result.relJumpOffset = static_cast<int8_t>(result.operandBytes[0]);
+        result.relJumpAddr = (instructionAddr + result.fullCommandLen + result.relJumpOffset) & 0xFFFF;  // relative to the byte after the whole instruction (3 bytes when DD/FD-prefixed)
         result.jumpAddr = result.relJumpAddr;
     }
     /// endregion </Actualize values according flags>
 
     // Populate runtime information if available
-    if (registers != nullptr && memory != nullptr)
+    if (registers != nullptr)
     {
         result.hasRuntime = true;
 
-        // Populate runtime information for displacement operation
+        // Effective address for indexed operations: IX/IY + signed displacement [-128..+127]
         if (hasDisplacement)
         {
-            // Displacement is signed 8-bit integer [-128..+127]
-            result.displacement = (int8_t)result.byteOperand;
-
             uint16_t baseAddr = 0x0000;
 
             // All commands with DD and DDCB prefixes are IX-indexed operations
@@ -2559,24 +2616,37 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const std::vector<uint8_t>
                 baseAddr = registers->ix;
             }
 
-            // All commands with FD and FDCB prefixes are IX-indexed operations
+            // All commands with FD and FDCB prefixes are IY-indexed operations
             if (result.prefix == 0x00FD || result.prefix == 0xFDCB)
             {
                 baseAddr = registers->iy;
             }
 
-            result.displacementAddr = baseAddr + result.displacement;
+            result.displacementAddr = static_cast<uint16_t>(baseAddr + result.displacement);
+        }
+        // Indirect jumps resolve through the pointer register (JP (HL) / JP (IX) / JP (IY))
+        else if (hasJump && hasIndirect)
+        {
+            if (result.prefix == 0x00DD || result.prefix == 0xDDCB)
+            {
+                result.jumpAddr = registers->ix;
+            }
+            else if (result.prefix == 0x00FD || result.prefix == 0xFDCB)
+            {
+                result.jumpAddr = registers->iy;
+            }
+            else
+            {
+                result.jumpAddr = registers->hl;
+            }
         }
         // Populate runtime information for returns - requires access to stack memory
-        else if (hasReturn)
+        else if (hasReturn && memory != nullptr)
         {
-            if (memory != nullptr && registers != nullptr)
-            {
-                uint16_t sp = registers->sp;
-                uint8_t loRet = memory->DirectReadFromZ80Memory(sp++);
-                uint16_t hiRet = memory->DirectReadFromZ80Memory(sp);
-                result.returnAddr = (hiRet << 8) | loRet;
-            }
+            uint16_t sp = registers->sp;
+            uint8_t loRet = memory->DirectReadFromZ80Memory(sp++);
+            uint16_t hiRet = memory->DirectReadFromZ80Memory(sp);
+            result.returnAddr = static_cast<uint16_t>((hiRet << 8) | loRet);
         }
     }
 
@@ -2617,17 +2687,10 @@ OpCode Z80Disassembler::getOpcode(uint16_t prefix, uint8_t fetchByte)
             opcode = fdcbOpcodes[fetchByte];
             break;
         default:
-#ifdef _DEBUG
-            {
-                std::string prefixValue = StringHelper::FormatBinary(prefix);
-                std::string message = StringHelper::Format("Unknown prefix: 0x%04X (%s), Instruction: 0x%02X", prefix, prefixValue.c_str(), fetchByte);
-                throw std::logic_error(message);
-            }
-#else
-            // Unknown prefix - fall back to interpreting as unprefixed opcode
-            // This can happen during exit when memory state may be inconsistent
+            // Unknown prefix (e.g. a 'DD DD' prefix chain coming from data bytes) -
+            // fall back to interpreting the byte as an unprefixed opcode.
+            // This can also happen during exit when memory state may be inconsistent
             opcode = noprefixOpcodes[fetchByte];
-#endif
             break;
     }
 
@@ -2675,6 +2738,26 @@ uint8_t Z80Disassembler::hasOperands(OpCode& opcode)
     return result;
 }
 
+
+/// @brief Truncated input: the operand bytes never arrived, so replace the ':1' / ':2' placeholders
+/// with '??' instead of leaking the mnemonic template (e.g. "call :2") into the output
+static std::string ReplaceOperandPlaceholders(std::string mnemonic)
+{
+    size_t pos = mnemonic.find(':');
+    while (pos != std::string::npos && pos + 1 < mnemonic.size())
+    {
+        if (mnemonic[pos + 1] == '1' || mnemonic[pos + 1] == '2')
+        {
+            mnemonic.replace(pos, 2, "??");
+        }
+        else
+        {
+            pos++;
+        }
+        pos = mnemonic.find(':', pos);
+    }
+    return mnemonic;
+}
 std::string Z80Disassembler::formatMnemonic(const DecodedInstruction& decoded)
 {
     std::string result;
@@ -2683,7 +2766,7 @@ std::string Z80Disassembler::formatMnemonic(const DecodedInstruction& decoded)
 
     if (decoded.operandBytes.size() == 0)
     {
-        result = decoded.opcode.mnem;
+        result = decoded.isTruncated ? ReplaceOperandPlaceholders(decoded.opcode.mnem) : decoded.opcode.mnem;
         return result;
     }
 
@@ -2701,7 +2784,9 @@ std::string Z80Disassembler::formatMnemonic(const DecodedInstruction& decoded)
         /// region <Sanity check>
         if (operandBytesNeeded != decoded.operandBytes.size() || operandBytesNeeded != decoded.operandsLen)
         {
-            throw std::logic_error("Z80Disassembler::formatMnemonic - unmatched required and supplied operand bytes");
+            // Truncated input (instruction fetch ran past the end of the buffer) - never throw,
+            // render the mnemonic with unknown operands ("call ??") so consumers survive partial data
+            return ReplaceOperandPlaceholders(mnemonic);
         }
         /// endregion </Sanity check>
 
@@ -2805,12 +2890,25 @@ std::vector<uint8_t> Z80Disassembler::parseOperands(std::string& mnemonic, uint8
 /// @param mnemonic  The mnemonic string containing operand placeholders (e.g., "ld a,:1").
 /// @param values    The operand values to substitute into the mnemonic (order matches placeholders).
 /// @return          The formatted mnemonic string with operands replaced by their hex values.
+///                  For addresses (JP, CALL, JR, memory ops), includes label if available: "label (#ADDR)"
 std::string Z80Disassembler::formatOperandString(const DecodedInstruction& decoded, const std::string& mnemonic,
                                                  std::vector<uint16_t>& values)
 {
     static const char* HEX_PREFIX = "#";
     std::string result;
-    result.reserve(mnemonic.size() + 8 * values.size());  // Preallocate for efficiency
+    result.reserve(mnemonic.size() + 16 * values.size());  // Extra space for potential labels
+
+    // Get LabelManager for symbolic resolution
+    LabelManager* labelManager = nullptr;
+    if (_context && _context->pDebugManager)
+    {
+        labelManager = _context->pDebugManager->GetLabelManager();
+    }
+
+    // Check if this instruction targets an address (for label lookup)
+    const uint32_t flags = decoded.opcode.flags;
+    const bool isRelativeJump = (flags & OF_RELJUMP) != 0;
+    const bool isDisplacementOperand = (flags & OF_DISP) != 0;
 
     size_t i = 0;    // Index into values
     size_t pos = 0;  // Current position in mnemonic
@@ -2842,23 +2940,103 @@ std::string Z80Disassembler::formatOperandString(const DecodedInstruction& decod
 
                 // Format operand value
                 std::string operand;
+                uint16_t targetAddr = values[i];
+
                 switch (operandSize)
                 {
                     case 1:
-                        // For relative jumps, format as signed
-                        if (decoded.hasRelativeJump)
-                            operand = StringHelper::ToHexWithPrefix((int8_t)(values[i]), HEX_PREFIX);
+                        // For relative jumps, format as signed offset but also resolve the target address
+                        if (isRelativeJump)
+                        {
+                            // Calculate actual target address: instruction addr + instruction length + signed offset
+                            // Relative jumps are 2 bytes (opcode + offset), so target = addr + 2 + offset
+                            int8_t offset = static_cast<int8_t>(values[i]);
+                            targetAddr = decoded.instructionAddr + decoded.fullCommandLen + offset;
+
+                            // Try to resolve label for target address
+                            std::string labelName;
+                            if (labelManager)
+                            {
+                                auto label = labelManager->GetLabelByZ80Address(targetAddr);
+                                if (label && !label->name.empty())
+                                {
+                                    labelName = label->name;
+                                }
+                            }
+
+                            // Format with or without label
+                            std::string hexAddr = StringHelper::ToHexWithPrefix(targetAddr, HEX_PREFIX);
+                            for (char& c : hexAddr) c = toupper(c);
+
+                            if (!labelName.empty())
+                            {
+                                operand = labelName + " (" + hexAddr + ")";
+                            }
+                            else
+                            {
+                                operand = hexAddr;
+                            }
+                        }
+                        else if (isDisplacementOperand && i == 0)
+                        {
+                            // IX/IY displacement is a signed 8-bit value [-128..+127]. The mnemonic template
+                            // contains a literal '+' right before the placeholder (e.g. "(ix+:1)"), so for
+                            // negative displacements the sign is folded into that literal: "(ix-#46)"
+                            int8_t displacement = static_cast<int8_t>(values[i]);
+                            bool signFolded = false;
+                            if (displacement < 0 && !result.empty() && result.back() == '+')
+                            {
+                                result.back() = '-';
+                                signFolded = true;
+                            }
+
+                            uint8_t magnitude = displacement < 0
+                                                    ? static_cast<uint8_t>(-static_cast<int>(displacement))
+                                                    : static_cast<uint8_t>(displacement);
+                            operand = StringHelper::ToUpper(StringHelper::ToHexWithPrefix(magnitude, HEX_PREFIX));
+                            if (displacement < 0 && !signFolded)
+                            {
+                                operand = "-" + operand;
+                            }
+                        }
                         else
-                            operand = StringHelper::ToHexWithPrefix((uint8_t)(values[i]), HEX_PREFIX);
+                        {
+                            operand = StringHelper::ToUpper(StringHelper::ToHexWithPrefix((uint8_t)(values[i]), HEX_PREFIX));
+                        }
                         break;
+
                     case 2:
-                        operand = StringHelper::ToHexWithPrefix(values[i], HEX_PREFIX);
+                        {
+                            // Resolve a label for the 16-bit operand. Address operands (JP, CALL, (nn))
+                            // are addresses by definition. A 16-bit immediate (LD rr,nn) is not
+                            // necessarily one - but when a label exists at exactly that value it is
+                            // almost certainly a pointer/table base, so the label is shown there too.
+                            // The operand keeps its immediate semantics otherwise (no jump target, etc.)
+                            std::string labelName;
+                            if (labelManager)
+                            {
+                                auto label = labelManager->GetLabelByZ80Address(targetAddr);
+                                if (label && !label->name.empty())
+                                {
+                                    labelName = label->name;
+                                }
+                            }
+
+                            // Format with or without label
+                            std::string hexAddr = StringHelper::ToHexWithPrefix(targetAddr, HEX_PREFIX);
+                            for (char& c : hexAddr) c = toupper(c);
+
+                            if (!labelName.empty())
+                            {
+                                operand = labelName + " (" + hexAddr + ")";
+                            }
+                            else
+                            {
+                                operand = hexAddr;
+                            }
+                        }
                         break;
                 }
-
-                // Uppercase the operand and append
-                for (char& c : operand)
-                    c = toupper(c);
 
                 result += operand;
                 pos += 2;  // Skip ":N"

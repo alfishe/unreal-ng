@@ -3,7 +3,8 @@
 #include <chrono>
 #include <vector>
 
-#include "encoder_config.h"
+#include "common/threadhelper.h"
+#include "encoderconfig.h"
 #include "emulator/sound/native_audio_tap.h"
 
 DSDEncoder::DSDEncoder()
@@ -102,7 +103,10 @@ bool DSDEncoder::Start(const std::string& filename, const EncoderConfig& config)
     {
         _workerStop = false;
         _nativeTap->activate();
-        _nativeWorker = std::thread(&DSDEncoder::nativeWorkerMain, this);
+        _nativeWorker = std::thread([this]() {
+            ThreadHelper::setThreadName("dsd-encoder");
+            nativeWorkerMain();
+        });
     }
 
     return true;
@@ -199,9 +203,15 @@ void DSDEncoder::OnAudioSamples(const int16_t* samples, size_t sampleCount, doub
     if (!_isRecording || !_converter || !_writer)
         return;
 
+    // EncoderBase contract: sampleCount is the TOTAL interleaved sample count,
+    // while PCMToDSDConverter::Process() takes sample FRAMES (per channel) and
+    // reads frames * channels int16 values. Convert, or Process() over-reads
+    // the input buffer by a factor of _channels (heap-buffer-overflow).
+    const size_t frameCount = sampleCount / _channels;
+
     // Convert PCM to DSD
     std::vector<uint8_t> dsdData;
-    _converter->Process(samples, sampleCount, dsdData);
+    _converter->Process(samples, frameCount, dsdData);
 
     // Write to file
     if (!_writer->Write(dsdData))
@@ -210,7 +220,7 @@ void DSDEncoder::OnAudioSamples(const int16_t* samples, size_t sampleCount, doub
         // Don't stop recording, just log error
     }
 
-    _samplesEncoded += sampleCount;
+    _samplesEncoded += frameCount;  // frames, consistent with the native path
 }
 
 std::string DSDEncoder::GetDisplayName() const

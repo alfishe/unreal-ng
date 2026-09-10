@@ -5,6 +5,7 @@
 #include "emulator/memory/memory.h"
 #include "emulator/spectrumconstants.h"
 #include "emulator/emulator.h"
+#include "emulator/emulatormanager.h"
 
 void BasicEncoder_Test::SetUp()
 {
@@ -517,17 +518,25 @@ TEST_F(BasicEncoder_Test, StateDetection_PureSOS_48KBASIC)
     // - ROM page 1 (48K BASIC ROM)
     // - No TR-DOS initialization markers
     // - Expected: Basic48K
-    
+
     // Note: Memory banks are already set up for 48K in SetUp()
     // ROM page detection depends on Memory::GetROMPage() implementation
-    
+
+    // Initialize stack area to zeros - heap memory is uninitialized and could
+    // randomly contain values in the DOS trap range ($3D00-$3DFF), causing flaky failures
+    uint16_t sp = 0xFF00;
+    for (int i = 0; i < 32; i++)
+    {
+        _memory->DirectWriteToZ80Memory(sp + i, 0x00);
+    }
+
     // For this unit test, we verify isTRDOSInitialized returns false
     // when RAM stub doesn't contain RET opcode
     bool trdosInit = BasicEncoder::isTRDOSInitialized(_memory);
     EXPECT_FALSE(trdosInit) << "Fresh 48K memory should not have TR-DOS initialized";
-    
+
     // Stack scan should return false with no DOS addresses
-    bool hasDosOnStack = BasicEncoder::stackContainsDOSReturnAddress(_memory, 0xFF00);
+    bool hasDosOnStack = BasicEncoder::stackContainsDOSReturnAddress(_memory, sp);
     EXPECT_FALSE(hasDosOnStack) << "Fresh memory should not have DOS return addresses on stack";
 }
 
@@ -631,21 +640,19 @@ TEST_F(BasicEncoder_Test, StateDetection_StackNoDOSAddress_PureBASIC)
 {
     // Scenario: Stack with only BASIC ROM addresses, no TR-DOS
     uint16_t sp = 0xFF00;
-    
-    // Simulate pure BASIC call stack:
-    // SP+0: $1234 (some BASIC ROM address)
-    // SP+2: $0A3B (another BASIC address)
-    // SP+4: $5678 (RAM address - program)
-    
-    _memory->DirectWriteToZ80Memory(sp + 0, 0x34);
-    _memory->DirectWriteToZ80Memory(sp + 1, 0x12);
-    
-    _memory->DirectWriteToZ80Memory(sp + 2, 0x3B);
-    _memory->DirectWriteToZ80Memory(sp + 3, 0x0A);
-    
-    _memory->DirectWriteToZ80Memory(sp + 4, 0x78);
-    _memory->DirectWriteToZ80Memory(sp + 5, 0x56);
-    
+
+    // The scan walks up to 16 stack entries, and page-7 RAM ($C000-$FFFF,
+    // including this stack area) is randomized at power-on. Fill the whole
+    // window with plausible non-DOS addresses so no random word can alias
+    // into the trap range ($3D00-$3DFF) and flake the negative assertion.
+    const uint16_t basicAddrs[] = { 0x1234, 0x0A3B, 0x5678 };
+    for (int i = 0; i < 16; i++)
+    {
+        uint16_t addr = basicAddrs[i % 3];
+        _memory->DirectWriteToZ80Memory(sp + i * 2, addr & 0xFF);
+        _memory->DirectWriteToZ80Memory(sp + i * 2 + 1, (addr >> 8) & 0xFF);
+    }
+
     bool hasDosAddr = BasicEncoder::stackContainsDOSReturnAddress(_memory, sp);
     EXPECT_FALSE(hasDosAddr) << "Pure BASIC stack should not detect DOS return address";
 }
@@ -719,9 +726,17 @@ TEST_F(BasicEncoder_Test, StateDetection_TrapRangeBoundaries)
 {
     // Verify trap range detection at boundaries
     using namespace TRDOS::ROMSwitch;
-    
+
     uint16_t sp = 0xFF00;
-    
+
+    // The scan walks up to 16 stack entries (SP..SP+31), not just the first.
+    // Clear the whole window so stale memory left by earlier tests can't
+    // alias into the trap range and break the negative assertions below.
+    for (int i = 0; i < 32; i++)
+    {
+        _memory->DirectWriteToZ80Memory(sp + i, 0x00);
+    }
+
     // Test $3D00 (start of trap range)
     _memory->DirectWriteToZ80Memory(sp, TRAP_START & 0xFF);
     _memory->DirectWriteToZ80Memory(sp + 1, (TRAP_START >> 8) & 0xFF);
@@ -881,4 +896,91 @@ TEST_F(BasicEncoder_Test, StateDetection_IsStackSane_InvalidSP)
 }
 
 /// endregion </ROM State Detection Tests>
+
+/// region <TR-DOS Auto-Resume Tests>
+
+/// Test fixture for integration tests that need a full emulator with TR-DOS
+class BasicEncoder_Integration_Test : public ::testing::Test
+{
+protected:
+    Emulator* _emulator = nullptr;
+    std::string _emulatorUUID;
+
+    void SetUp() override
+    {
+        // Ensure MessageCenter is in a clean state
+        MessageCenter::DisposeDefaultMessageCenter();
+
+        // Create Pentagon emulator directly - NO forced 48K reset
+        auto emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel(
+            "trdos-test", "PENTAGON", LoggerLevel::LogError);
+
+        if (!emulator)
+        {
+            GTEST_SKIP() << "Failed to create emulator";
+        }
+
+        _emulator = emulator.get();
+        _emulatorUUID = _emulator->GetUUID();
+    }
+
+    void TearDown() override
+    {
+        if (_emulator)
+        {
+            if (_emulator->IsRunning())
+                _emulator->Stop();
+
+            EmulatorManager::GetInstance()->RemoveEmulator(_emulatorUUID);
+            _emulator = nullptr;
+        }
+
+        // Clean up MessageCenter state
+        MessageCenter::DisposeDefaultMessageCenter();
+    }
+
+    /// Activate TR-DOS and wait for prompt
+    bool activateTRDOS()
+    {
+        _emulator->GetContext()->emulatorState.flags |= CF_TRDOS;
+        _emulator->GetMemory()->SetROMDOS(true);
+
+        // Run frames until TR-DOS detected
+        for (int i = 0; i < 300; i += 10)
+        {
+            _emulator->RunNFrames(10);
+            if (BasicEncoder::detectState(_emulator->GetMemory()) == BasicEncoder::BasicState::TRDOS_Active)
+                return true;
+        }
+        return false;
+    }
+};
+
+/// Test that runCommand() auto-resumes after TR-DOS injection
+/// This verifies the fix for "BasicEncoder TR-DOS injection leaves emulator paused"
+TEST_F(BasicEncoder_Integration_Test, TRDOSRunCommand_AutoResumes)
+{
+    ASSERT_NE(_emulator, nullptr);
+
+    // Start async with turbo mode
+    _emulator->StartAsync();
+    _emulator->EnableTurboMode();
+    _emulator->Pause();
+
+    // Activate TR-DOS
+    ASSERT_TRUE(activateTRDOS()) << "TR-DOS did not initialize";
+
+    // Resume to running state
+    _emulator->Resume();
+    ASSERT_FALSE(_emulator->IsPaused());
+
+    // Call runCommand - this was leaving emulator paused (the bug)
+    BasicEncoder::runCommand(_emulator, "LIST");
+
+    // Verify emulator is still running (not stuck paused)
+    EXPECT_TRUE(_emulator->IsRunning());
+    EXPECT_FALSE(_emulator->IsPaused()) << "runCommand should auto-resume, not leave paused";
+}
+
+/// endregion </TR-DOS Auto-Resume Tests>
 

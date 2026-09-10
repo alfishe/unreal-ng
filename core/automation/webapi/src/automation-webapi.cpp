@@ -9,6 +9,7 @@
 #include <thread>
 #include <vector>
 
+#include "common/threadhelper.h"
 #include "emulator_api.h"        // Triggers auto-registration for API handlers
 #include "emulator_websocket.h"  // Triggers auto-registration for WebSocket handlers
 #include "hello_world_api.h"     // Triggers auto-registration for API handlers
@@ -89,7 +90,9 @@ static std::string loadHtmlFile(const std::string& filename)
 {
     // Try multiple possible locations for the HTML resources
     std::vector<std::string> searchPaths = {
-        // Development/Build paths
+        // Development/Build paths (cmake-build-*/bin/ -> source)
+        "../../core/automation/webapi/resources/html/",  // From bin/ to source (typical cmake build)
+        "../../../core/automation/webapi/resources/html/", // From nested bin/
         "./resources/html/",                         // In current directory (from bin when running)
         "../resources/html/",                        // One level up (from bin to build root)
         "./core/automation/webapi/resources/html/",  // Development/build from project root
@@ -182,44 +185,7 @@ void AutomationWebAPI::stop()
 
 void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
 {
-    /// region <Make thread named for easy reading in debuggers>
-    const char* threadName = "automation_webapi";
-
-#ifdef __APPLE__
-#include <pthread.h>
-    pthread_setname_np(threadName);
-#endif
-#ifdef __linux__
-#include <pthread.h>
-    pthread_setname_np(pthread_self(), threadName);
-#endif
-#if defined _WIN32 && defined MSVC
-    static auto setThreadDescription = reinterpret_cast<HRESULT(WINAPI*)(HANDLE, PCWSTR)>(
-        GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription"));
-    if (setThreadDescription != nullptr)
-    {
-        wchar_t wname[24];
-        size_t retval;
-        mbstate_t conversion;
-        mbstowcs_s(&retval, wname, threadName, sizeof(threadName) / sizeof(threadName[0]), &conversion);
-        setThreadDescription(GetCurrentThread(), wname);
-    }
-#endif
-
-#if defined _WIN32 && defined __GNUC__
-    static auto setThreadDescription = reinterpret_cast<HRESULT(WINAPI*)(HANDLE, PCWSTR)>(
-        GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription"));
-    if (setThreadDescription != nullptr)
-    {
-        wchar_t wname[24];
-        size_t retval;
-        mbstate_t conversion;
-        mbsrtowcs_s(&retval, wname, (size_t)(sizeof(wname) / sizeof(wname[0])), &threadName,
-                    (size_t)(sizeof(threadName) / sizeof(threadName[0])), &conversion);
-        setThreadDescription(GetCurrentThread(), wname);
-    }
-#endif
-    /// endregion </Make thread named for easy reading in debuggers>
+    ThreadHelper::setThreadName("automation-webapi");
 
     // CRITICAL: Check port availability BEFORE drogon initialization
     // This prevents drogon from calling exit() on bind failure
@@ -303,6 +269,24 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
     notFoundResp->setStatusCode(drogon::HttpStatusCode::k404NotFound);
 
     app.setCustom404Page(notFoundResp);
+
+    // Swagger UI documentation page
+    // Served at /api/v1/docs - loads embedded Swagger UI bundle from resources
+    std::string swaggerHtml = loadHtmlFile("docs.html");
+    app.registerHandler(
+        "/api/v1/docs",
+        [swaggerHtml](const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+            auto resp = drogon::HttpResponse::newHttpResponse();
+            resp->setBody(swaggerHtml);
+            resp->setContentTypeCode(drogon::ContentType::CT_TEXT_HTML);
+            resp->addHeader("Cache-Control", "public, max-age=86400");
+            resp->setExpiredTime(86400);  // Cache for 24 hours
+            callback(resp);
+        },
+        {drogon::Get});
+
+    LOG_INFO << "Swagger UI Documentation: http://localhost:8090/api/v1/docs";
 
     // Create a writable log directory in the user's home folder
     std::string logPath;

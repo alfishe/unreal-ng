@@ -13,16 +13,27 @@ Beeper::Beeper(EmulatorContext* context, size_t clockRate, size_t samplingRate, 
     , _samplingRate(samplingRate)
 {
     // Allocate blip_buf accumulators for left and right channels.
-    // Size must accommodate SAMPLES_PER_FRAME plus a small margin
+    // Size must accommodate the largest possible frame (long-frame machines
+    // like Pentagon produce >SAMPLES_PER_FRAME samples; speed multipliers
+    // scale the frame duration further) plus a small margin
     // for rounding at frame boundaries.
-    _blipL = blip_new(SAMPLES_PER_FRAME + 64);
-    _blipR = blip_new(SAMPLES_PER_FRAME + 64);
+    _blipL = blip_new(MAX_SAMPLES_PER_FRAME + 64);
+    _blipR = blip_new(MAX_SAMPLES_PER_FRAME + 64);
 
     // Set input clock rate → output sample rate conversion.
     // blip_buf will internally compute the fractional ratio and use
     // it to place sinc kernels at sub-sample precision.
     blip_set_rates(_blipL, static_cast<double>(_clockRate), static_cast<double>(_samplingRate));
     blip_set_rates(_blipR, static_cast<double>(_clockRate), static_cast<double>(_samplingRate));
+}
+
+void Beeper::setSampleRate(size_t samplingRate)
+{
+    _samplingRate = samplingRate;
+    blip_set_rates(_blipL, static_cast<double>(_clockRate), static_cast<double>(_samplingRate));
+    blip_set_rates(_blipR, static_cast<double>(_clockRate), static_cast<double>(_samplingRate));
+    blip_clear(_blipL);
+    blip_clear(_blipR);
 }
 
 Beeper::~Beeper()
@@ -71,7 +82,7 @@ void Beeper::handlePortOut(uint8_t value, uint32_t frameTState)
     int32_t delta = newAmplitude - _lastPortFEAmplitude;
     _lastPortFEAmplitude = newAmplitude;
 
-    if (delta != 0)
+    if (delta != 0 && !_synthesisSuppressed)
     {
         // Insert a band-limited step at the exact T-state position.
         // blip_buf will convolve this with a windowed sinc kernel
@@ -88,10 +99,24 @@ void Beeper::handleTapeAudio(int32_t amplitude, uint32_t frameTState)
     int32_t delta = amplitude - _lastTapeAmplitude;
     _lastTapeAmplitude = amplitude;
 
-    if (delta != 0)
+    if (delta != 0 && !_synthesisSuppressed)
     {
         blip_add_delta(_blipL, frameTState, delta);
         blip_add_delta(_blipR, frameTState, delta);
+    }
+}
+
+void Beeper::setSynthesisSuppressed(bool suppressed)
+{
+    if (_synthesisSuppressed == suppressed)
+        return;
+    _synthesisSuppressed = suppressed;
+    if (!suppressed)
+    {
+        // Resume from silence at the current level: discard deltas accumulated before
+        // suppression that were never consumed by a frame end
+        if (_blipL) blip_clear(_blipL);
+        if (_blipR) blip_clear(_blipR);
     }
 }
 
@@ -114,6 +139,8 @@ void Beeper::handleFrameEnd(uint32_t frameDuration)
         blip_read_samples(_blipL, &_outputBuffer[0], avail, 1 /* stereo stride */);
         blip_read_samples(_blipR, &_outputBuffer[1], avail, 1 /* stereo stride */);
     }
+
+    _lastSamplesRead = avail;
 }
 
 /// endregion </Methods>

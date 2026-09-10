@@ -139,6 +139,72 @@ class Emulator:
         """Get breakpoint manager"""
 ```
 
+### Tape Operations
+
+`Emulator` methods mirroring the CLI `tape` commands and the WebAPI `/tape/*` endpoints one-to-one (same names, states and catalog indices).
+
+```python
+emu = Emulator()
+emu.init()
+
+# Load / eject
+emu.tape_load("/path/to/game.tap")   # .tap/.tzx/.csw
+emu.tape_eject()
+
+# Transport (same semantics as `tape play|pause|stop|rewind|seek`)
+emu.tape_play()    # start at consumption cursor; resumes in place when paused
+emu.tape_pause()   # freeze mid-block (idempotent); False when not playing
+emu.tape_stop()    # terminal stop: invalidates the loaded image
+emu.tape_rewind()  # rewind to block 0, image kept
+emu.tape_seek(4)   # position head at catalog block 4
+
+# Inspection
+emu.tape_is_inserted()
+emu.tape_get_path()
+emu.tape_pos()     # None without a tape, else dict
+                  # {"state": "playing", "block": 4, "pulse": 1234,
+                  #  "seconds_into_block": 1.2, "block_total_seconds": 4.5,
+                  #  "cursor": 5, "block_count": 12}
+emu.tape_blocks()  # None without a tape, else list of dicts
+                  # {"index", "kind", "name", "type", "declared_length",
+                  #  "param1", "param2", "speed": {"profile", "baud"},
+                  #  "checksum_valid", "checksum_applicable", "seconds",
+                  #  "raw_size", "playable", "fast_load"}
+emu.tape_info()    # None without a tape subsystem, else dict
+                  # {"status", "file", "format", "state", "cursor",
+                  #  "block_count", "total_seconds", "fast_tape",
+                  #  "turbo_tape", "fast_load": {...}}
+
+# Audio bridge (pure file conversions, no emulator state touched)
+emu.tape_render("game.tzx", "out.wav")            # whole tape, 44100 Hz
+emu.tape_render("game.tzx", "out.flac",
+                options={"first_block": 2, "last_block": 5,
+                         "sample_rate": 48000, "amplitude": 0.8,
+                         "invert_level": False})
+# -> {"ok", "error", "duration_sec", "samples", "blocks",
+#     "encoder", "warnings"}
+
+emu.tape_import("recording.wav", "imported.tzx")  # hysteresis defaults to 0.2
+emu.tape_import("recording.wav", "imported.tap", 0.25)
+# -> {"ok", "error", "decoder", "sample_rate", "samples_decoded",
+#     "signal_edges", "blocks_recognized", "blocks_written",
+#     "output_path", "warnings"}
+```
+
+Playback `state` is one of `"idle"`, `"playing"`, `"paused"`, `"ended"` — identical strings across CLI, WebAPI, Lua and Python.
+
+### Feature Management
+
+`feature_list()` enumerates every registered runtime feature dynamically (the same list the CLI `feature` table and the WebAPI `/features` endpoint return), keyed by feature id:
+
+```python
+features = emu.feature_list()
+# {"sound": True, "fasttape": True, "turbotape": True, "calltrace": False, ...}
+
+emu.feature_set("fasttape", False)     # same switch as `setting fast_tape off`
+print(emu.feature_get("turbotape"))    # True
+```
+
 ### Z80 CPU Class
 
 ```python
@@ -348,7 +414,9 @@ emu.disasm()                                    # Disassemble from PC (default 1
 emu.disasm(address=0x8000, count=20)           # Disassemble from address
 emu.disasm_page("rom", 2, offset=0, count=20)  # Disassemble physical ROM page (e.g., TR-DOS)
 emu.disasm_page("ram", 5, offset=0x100, count=10)  # Disassemble physical RAM page
-# Returns: list of dicts with keys: address/offset, bytes, mnemonic, size, target (if jump)
+# Returns: list of dicts with keys: address/offset, bytes, mnemonic, size, label,
+#          target/targetLabel (jumps and calls), displacement/effectiveAddress/effectiveAddressLabel (IX/IY+d)
+# Mnemonics print both label and address when a label exists at the target: 'call TEST_ROUTINE (#8010)'
 ```
 
 ### Opcode Profiler
@@ -462,6 +530,139 @@ status = emu.profilers_status_all()
 #     'calltrace': {'session_state': 'capturing', 'entry_count': 450}
 # }
 ```
+
+### Time-Travel Debugging
+
+Mirrors the `emu.*` binding style. Full command semantics (arguments, result envelopes, halt reasons, session invalidation rules) live in [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd). All methods require the `timetravel` feature flag to be ON, except `ttd_status` which always works.
+
+**Session lifecycle:**
+
+```python
+emu.ttd_start()             # Begin recording at next frame boundary
+emu.ttd_stop()              # Stop capturing; retain history
+emu.ttd_clear()             # Drop all captured data; live state untouched
+```
+
+**Status (always available):**
+
+```python
+status = emu.ttd_status()
+# {
+#   'ttd_available': True,
+#   'state': 'idle',                  # idle | recording | detached
+#
+#   # Provenance — recorded here, or opened from a file?
+#   'loaded_from_file': True,
+#   'source_path': '/sessions/bug-1274.ttd',
+#   'captured_at_unix_ms': 1755712345678,   # 0 for a live recording
+#
+#   # Machine the session belongs to
+#   'model_id': 0,
+#   'model_ram_pages': 32,            # BOUND, not a count (48K reports 6)
+#
+#   # Timeline
+#   'session_start_frame': 98,
+#   'current_end_frame': 397,
+#   'checkpoint_count': 301,
+#
+#   # Sections
+#   'write_journal_enabled': True,
+#   'write_journal_records': 729025,
+#   'write_journal_bytes': 8748300,   # in memory; on disk it is compressed
+#   'coverage_index_frames': 300,     # 0 => reverse queries fall back to replay
+#   'coverage_index_bytes': 13926,
+#
+#   # Memory
+#   'page_store_bytes': 40960,
+#   'page_store_used_bytes': 665600,
+#   'baseline_frames_captured': 2159,
+#   'session_heap_bytes': 1043968,
+# }
+```
+
+`loaded_from_file` is the field to check first when a session is handed to you:
+a loaded recording and a live one are otherwise indistinguishable from the
+counters. `coverage_index_frames == 0` means reverse search and reverse
+breakpoints will replay frames instead of consulting the index — correct, but
+orders of magnitude slower.
+
+**Navigation (require run-control claim; emulator must be paused):**
+
+```python
+emu.ttd_seek(frame=4823)                    # Absolute seek to frame
+emu.ttd_seek(frame=4823, tstate=14982)      # Intra-frame target
+emu.ttd_seek_tstate(t=14982)                # Or seek by absolute t-state
+
+emu.ttd_step_back()                         # One instruction back
+emu.ttd_step_back(unit='frame', count=2)    # Two frames back
+emu.ttd_step_forward()                      # Forward within recorded history
+emu.ttd_step_forward(unit='frame')
+
+emu.ttd_resume_from_here(confirm=True)      # Truncate future, resume live
+```
+
+Return value for `ttd_seek` / `ttd_step_back` / `ttd_step_forward`:
+
+```python
+{
+    'ok': True,
+    'reached_frame': 4823,
+    'reached_tstate': 14982,
+    'halt_reason': 'target'   # 'target' | 'external_event' | 'out_of_range'
+}
+```
+
+**Reverse search:**
+
+```python
+result = emu.ttd_find_last(addr=0x5800, access='write')
+# result is None if no match, otherwise:
+# {
+#   'frame': 4823,
+#   'tstate': 14982,
+#   'pc': 0x4A21,
+#   'value': 0x07,
+#   'physpage': 5
+# }
+
+# Full filter set:
+result = emu.ttd_find_last(
+    addr=0x5800,
+    access='write',            # 'write' | 'read' | 'execute' | 'out'
+    value=0x07,                # optional exact value match
+    pc_from=0x4000,            # optional PC range filter
+    pc_to=0x8000,
+    before=14982               # optional: don't search past this absolute tstate
+)
+```
+
+**Timeline (for UI rendering / batch analysis):**
+
+```python
+entries = emu.ttd_timeline(from_frame=0, to_frame=1000, limit=500)
+# List of {'frame': N, 'dirty_pages': K, 'events': [...], 'bookmarks': [...]}
+```
+
+**Bookmarks:**
+
+```python
+emu.ttd_bookmark_add(at=14982, label='before crash')
+emu.ttd_bookmark_remove(id='bm-3')
+for bm in emu.ttd_bookmark_list():
+    print(bm['frame'], bm['label'])
+```
+
+**Errors** (raise Python exceptions):
+
+| Exception | Meaning |
+| :--- | :--- |
+| `RunControlBusyError` | Another surface holds the run-control claim. |
+| `TTDNotRecordingError` | Operation requires an active session. |
+| `TTDOutOfRangeError` | Target is outside recorded bounds. |
+| `TTDFeatureDisabledError` | `timetravel` feature flag is off. |
+| `TTDSessionInvalidatedError` | Session invalidated by load/reset/etc. |
+
+**Implementation status:** Sprint 0 foundations ✅ merged; Phase 1 will land `ttd_status` only; the rest ship in Phase 2 (navigation) and Phase 4 (reverse search).
 
 ### Enumerations
 

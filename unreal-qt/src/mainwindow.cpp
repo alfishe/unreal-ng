@@ -1,5 +1,16 @@
 #include "mainwindow.h"
 
+#include <QWindow>
+#include <QClipboard>
+#include <QGuiApplication>
+
+#include "emulator/mainloop.h"
+
+#include "base/featuremanager.h"
+
+#include <algorithm>
+#include <chrono>
+
 #include <stdio.h>
 #include <webapi/src/automation-webapi.h>
 
@@ -36,6 +47,7 @@
 #include "debugger/widgets/recordingpresets.h"
 #endif
 #include "base/featuremanager.h"
+#include "emulator/video/screen.h"  // For DisplayViewport, ViewportPresets
 // Avoid Qt 'signals' macro conflict with WD1793State::signals member
 #undef signals
 #include "emulator/io/fdc/fdd.h"
@@ -44,7 +56,42 @@
 #define signals Q_SIGNALS
 #include "loaders/disk/loader_scl.h"
 #include "loaders/disk/loader_trd.h"
+#include "loaders/disk/loader_fdi.h"
+#include "loaders/disk/loader_udi.h"
+#include "tape/tapeimportaudiodialog.h"  // tape-audio-bridge §7.3
+#include "common/filehelper.h"
+#include "common/stringhelper.h"
 #include "ui_mainwindow.h"
+
+namespace
+{
+// Convert std::vector<std::string> to QStringList
+QStringList toQStringList(const std::vector<std::string>& v)
+{
+    QStringList result;
+    for (const auto& s : v)
+        result << QString::fromStdString(s);
+    return result;
+}
+
+// Build filter pattern with both cases: "*.ext *.EXT"
+QString buildExtPattern(const QStringList& exts)
+{
+    QStringList patterns;
+    for (const QString& ext : exts)
+    {
+        patterns << QString("*.%1").arg(ext.toLower());
+        patterns << QString("*.%1").arg(ext.toUpper());
+    }
+    return patterns.join(" ");
+}
+
+// Build a complete filter group: "Label (*.ext *.EXT ...)"
+QString buildFilterGroup(const QString& label, const QStringList& exts)
+{
+    return QString("%1 (%2)").arg(label, buildExtPattern(exts));
+}
+}  // namespace
 
 // region <Constructors / destructors>
 
@@ -65,16 +112,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     // Instantiate all child widgets (UI form auto-generated)
     ui->setupUi(this);
-    startButton = ui->startEmulator;
 
     // Store original palette
     _originalPalette = palette();
-
-    // Register fullscreen on/off shortcut
-    _fullScreenShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F), this);
-    _fullScreenShortcut->setKey(Qt::CTRL | Qt::Key_F);
-    _fullScreenShortcut->setContext(Qt::ApplicationShortcut);
-    connect(_fullScreenShortcut, &QShortcut::activated, this, &MainWindow::handleFullScreenShortcut);
 
     // Put emulator screen into resizable content frame
     QFrame* contentFrame = ui->contentFrame;
@@ -90,9 +130,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
         deviceScreen->setSizePolicy(dp);
     */
 
-    // Connect button release signal to appropriate event handling slot
-    connect(startButton, SIGNAL(released()), this, SLOT(handleStartButton()));
-
     // Create bridge between GUI and emulator
     _emulatorManager = EmulatorManager::GetInstance();
 
@@ -102,6 +139,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     // Init audio subsystem (initialize once, keep running)
     _soundManager = new AppSoundManager();
+
+    // Device reroute (hotplug / OS default-output change) at a different
+    // native rate: republish so the emulator's DRC resampler re-bases its
+    // core->device ratio - no emulator or sound-stack restart needed
+    connect(_soundManager, &AppSoundManager::deviceReinitialized, this, [this](uint32_t sampleRate) {
+        if (_emulator)
+            _emulator->SetAudioDeviceSampleRate(sampleRate);
+    });
+
     {
         QMutexLocker locker(&_audioMutex);
         if (_soundManager->init())
@@ -119,11 +165,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Instantiate Logger window
     logWindow = new LogWindow();
 
-    // Instantiate debugger window
+    // Instantiate debugger window. Hidden at start: Debug -> Debugger Window shows it,
+    // and debug instrumentation is enabled only while it is visible
     debuggerWindow = new DebuggerWindow();
     debuggerWindow->setBinding(m_binding);  // Connect to central binding
     debuggerWindow->reset();
-    debuggerWindow->show();
+    connect(debuggerWindow, &DebuggerWindow::visibilityChanged, this, &MainWindow::handleDebuggerVisibilityChanged);
 
     // Connect debugger screen refresh signal (for speed control stepping)
     // Handle it the same way as MessageCenter refresh (see line 1459)
@@ -138,19 +185,27 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _dockingManager->addDockableWindow(debuggerWindow, Qt::LeftEdge);
     _dockingManager->addDockableWindow(logWindow, Qt::RightEdge);
 
+    // Instantiate tape manager window (design §9.4): one instance per app
+    // session, hidden by default — View → Tape Manager (Ctrl+3) shows it
+    tapeManagerWindow = new TapeManagerWindow();
+    tapeManagerWindow->setBinding(m_binding);
+    _dockingManager->addDockableWindow(tapeManagerWindow, Qt::BottomEdge);
+
     // Create and configure menu system
     _menuManager = new MenuManager(this, ui->menubar, this);
 
     // Connect menu signals to handlers
     connect(_menuManager, &MenuManager::openFileRequested, this, &MainWindow::openFileDialog);
-    connect(_menuManager, &MenuManager::openSnapshotRequested, this, &MainWindow::openFileDialog);
-    connect(_menuManager, &MenuManager::openTapeRequested, this, &MainWindow::openFileDialog);
-    connect(_menuManager, &MenuManager::openDiskRequested, this, &MainWindow::openFileDialog);
+    connect(_menuManager, &MenuManager::openSnapshotRequested, this, &MainWindow::openSnapshotDialog);
+    connect(_menuManager, &MenuManager::openTapeRequested, this, &MainWindow::openTapeDialog);
+    connect(_menuManager, &MenuManager::openDiskRequested, this, &MainWindow::openDiskDialog);
+    connect(_menuManager, &MenuManager::importAudioTapeRequested, this, &MainWindow::handleImportAudioTapeRequested);
     connect(_menuManager, &MenuManager::saveSnapshotRequested, this, &MainWindow::saveFileDialog);
     connect(_menuManager, &MenuManager::saveSnapshotZ80Requested, this, &MainWindow::saveFileDialogZ80);
     connect(_menuManager, &MenuManager::saveDiskRequested, this, &MainWindow::saveDiskDialog);
     connect(_menuManager, &MenuManager::saveDiskAsTRDRequested, this, &MainWindow::saveDiskAsTRDDialog);
     connect(_menuManager, &MenuManager::saveDiskAsSCLRequested, this, &MainWindow::saveDiskAsSCLDialog);
+    connect(_menuManager, &MenuManager::saveDiskAsUDIRequested, this, &MainWindow::saveDiskAsUDIDialog);
     connect(_menuManager, &MenuManager::startRequested, this, &MainWindow::handleStartEmulator);
     connect(_menuManager, &MenuManager::pauseRequested, this, &MainWindow::handlePauseEmulator);
     connect(_menuManager, &MenuManager::resumeRequested, this, &MainWindow::handleResumeEmulator);
@@ -158,21 +213,42 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::resetRequested, this, &MainWindow::resetEmulator);
     connect(_menuManager, &MenuManager::speedMultiplierChanged, this, &MainWindow::handleSpeedMultiplierChanged);
     connect(_menuManager, &MenuManager::turboModeToggled, this, &MainWindow::handleTurboModeToggled);
+    connect(_menuManager, &MenuManager::tapeTrapsToggled, this, &MainWindow::handleTapeTrapsToggled);
+    connect(_menuManager, &MenuManager::turboTapeToggled, this, &MainWindow::handleTurboTapeToggled);
     connect(_menuManager, &MenuManager::stepInRequested, this, &MainWindow::handleStepIn);
     connect(_menuManager, &MenuManager::stepOverRequested, this, &MainWindow::handleStepOver);
-    connect(_menuManager, &MenuManager::debugModeToggled, this, &MainWindow::handleDebugModeToggled);
     connect(_menuManager, &MenuManager::debuggerToggled, this, &MainWindow::handleDebuggerToggled);
     connect(_menuManager, &MenuManager::logWindowToggled, this, &MainWindow::handleLogWindowToggled);
+    connect(_menuManager, &MenuManager::tapeManagerToggled, this, &MainWindow::handleTapeManagerToggled);
+    // Keep the menu check state in sync when the window closes via its own close box
+    connect(tapeManagerWindow, &TapeManagerWindow::visibilityChanged, _menuManager, &MenuManager::setTapeManagerChecked);
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
+    connect(_menuManager, &MenuManager::scaleRequested, this, &MainWindow::handleScaleRequested);
+    connect(_menuManager, &MenuManager::screenshotRequested, this, &MainWindow::handleScreenshotRequested);
     connect(_menuManager, &MenuManager::intParametersRequested, this, &MainWindow::handleIntParametersRequested);
     connect(_menuManager, &MenuManager::audioSettingsRequested, this, &MainWindow::handleAudioSettingsRequested);
+    connect(_menuManager, &MenuManager::overscanModeToggled, this, &MainWindow::handleOverscanModeToggled);
+    connect(_menuManager, &MenuManager::viewportChanged, this, &MainWindow::handleViewportChanged);
+    connect(_menuManager, &MenuManager::machineModelChangeRequested, this, &MainWindow::handleMachineModelChangeRequested);
 #ifdef ENABLE_RECORDING
     connect(_menuManager, &MenuManager::videoRecordingRequested, this, &MainWindow::handleVideoRecordingRequested);
     connect(_menuManager, &MenuManager::quickRecordRequested, this, &MainWindow::handleQuickRecord);
 #endif
 
-    // Bring application windows to foreground
-    debuggerWindow->raise();
+    // Create the transport toolbar (reuses menu actions where they exist)
+    _toolBarManager = new ToolBarManager(this, _menuManager, this);
+    connect(_menuManager, &MenuManager::toolBarToggled, this, &MainWindow::handleToolBarToggled);
+    connect(_toolBarManager, &ToolBarManager::startOrResumeRequested, this, &MainWindow::handleStartOrResumeRequested);
+    connect(_toolBarManager, &ToolBarManager::pauseRequested, this, &MainWindow::handlePauseEmulator);
+    connect(_toolBarManager, &ToolBarManager::restartRequested, this, &MainWindow::handleRestartRequested);
+    _toolBarManager->restoreSettings();
+
+    // Create the status bar (device LEDs + FPS)
+    _statusBarManager = new StatusBarManager(this, _menuManager, this);
+    connect(_menuManager, &MenuManager::statusBarToggled, this, &MainWindow::handleStatusBarToggled);
+    _statusBarManager->restoreSettings();
+
+    // Bring application window to foreground
     this->raise();
 
     // Enable Drag'n'Drop
@@ -297,6 +373,13 @@ MainWindow::~MainWindow()
         delete logWindow;
     }
 
+    if (tapeManagerWindow != nullptr)
+    {
+        _dockingManager->removeDockableWindow(tapeManagerWindow);
+        tapeManagerWindow->hide();
+        delete tapeManagerWindow;
+    }
+
     if (deviceScreen != nullptr)
         delete deviceScreen;
 
@@ -336,11 +419,68 @@ void MainWindow::showEvent(QShowEvent* event)
         deviceScreen->resize(ui->contentFrame->size());
         updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
     }
+
+    // First show: size the window so the screen is displayed at 2x, once the
+    // menu bar / toolbar / status bar have been laid out and their heights are known
+    if (!_initialFitDone)
+    {
+        _initialFitDone = true;
+        QTimer::singleShot(0, this, [this]() { fitWindowToScreen(2); });
+
+        // Turbo render cap follows the display we are on (and moves with the window)
+        applyDisplayRefreshRate();
+        if (QWindow* handle = windowHandle())
+            connect(handle, &QWindow::screenChanged, this, [this](QScreen*) { applyDisplayRefreshRate(); });
+    }
+}
+
+void MainWindow::applyDisplayRefreshRate()
+{
+    _displayRefresh = DisplayRefreshRate::query(screen());
+    if (_emulator)
+    {
+        if (MainLoop* mainLoop = _emulator->GetMainLoop())
+            mainLoop->SetTurboRenderMaxFps(_displayRefresh.renderCapHz());
+    }
+    qDebug() << "Display refresh:" << _displayRefresh.currentHz << "Hz, cap" << _displayRefresh.renderCapHz()
+             << "Hz, VRR" << _displayRefresh.variable << "(" << _displayRefresh.source << ")";
+}
+
+void MainWindow::fitWindowToScreen(int scale)
+{
+    if (!deviceScreen || !ui->contentFrame || isFullScreen() || isMaximized())
+        return;
+
+    const QSize native = deviceScreen->sizeHint();  // Viewport-cropped native size (352x288 by default)
+    const QSize chrome = size() - ui->contentFrame->size();  // Menu bar, toolbar, status bar, margins
+    const QSize target = native * scale + chrome;
+
+    // Keep the window on screen: fall back to 1x if 2x does not fit
+    if (QScreen* scr = screen())
+    {
+        const QSize available = scr->availableGeometry().size();
+        if (scale > 1 && (target.width() > available.width() || target.height() > available.height()))
+        {
+            fitWindowToScreen(scale - 1);
+            return;
+        }
+    }
+
+    resize(target);
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
     qDebug() << "QCloseEvent : Closing application";
+
+    if (_toolBarManager)
+    {
+        _toolBarManager->saveSettings();
+    }
+    if (_statusBarManager)
+    {
+        _statusBarManager->saveSettings();
+    }
 
     // ============================================================
     // PHASE 1: NOTIFY ALL WINDOWS/WIDGETS (instant)
@@ -404,6 +544,17 @@ void MainWindow::closeEvent(QCloseEvent* event)
         logWindow->hide();
         delete logWindow;
         logWindow = nullptr;
+    }
+
+    // Close Tape Manager: it is a parentless top-level, so it must be
+    // destroyed here or it keeps the application alive after the main
+    // window closes (quitOnLastWindowClosed still sees it open)
+    if (tapeManagerWindow)
+    {
+        _dockingManager->removeDockableWindow(tapeManagerWindow);
+        tapeManagerWindow->hide();
+        delete tapeManagerWindow;
+        tapeManagerWindow = nullptr;
     }
 
     // Shutdown device screen
@@ -561,8 +712,8 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
 
         // Show menu bar if hidden
         menuBar()->show();
-        statusBar()->show();
-        startButton->show();
+        _statusBarManager->restoreVisibility();
+        _toolBarManager->restoreVisibility();
     }
     // Handle entering fullscreen
     else if (newState & Qt::WindowFullScreen)
@@ -585,7 +736,7 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
 
         // Hide all control elements
         statusBar()->hide();
-        startButton->hide();
+        _toolBarManager->hideForFullScreen();
     }
     // Handle restore to normal state
     else if (newState == Qt::WindowNoState)
@@ -599,8 +750,8 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
 
         // Show controls instantly so the layout calculates the correct target geometry for the OS animation.
         // (Docking manager updates are still deferred in the shortcut handler to prevent stutter).
-        statusBar()->show();
-        startButton->show();
+        _statusBarManager->restoreVisibility();
+        _toolBarManager->restoreVisibility();
 
         // macOS natively handles returning to the previous geometry after un-maximizing or exiting fullscreen.
         // Calling setGeometry explicitly here breaks the native animation.
@@ -634,7 +785,7 @@ void MainWindow::handleWindowStateChangeWindows(Qt::WindowStates oldState, Qt::W
         palette.setColor(QPalette::Window, Qt::black);
         setPalette(palette);
         statusBar()->hide();
-        startButton->hide();
+        _toolBarManager->hideForFullScreen();
     }
 
     // Handle EXITING maximized state (restore button clicked)
@@ -676,8 +827,8 @@ void MainWindow::handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::Win
         {
             setPalette(_originalPalette);
             menuBar()->show();
-            statusBar()->show();
-            startButton->show();
+            _statusBarManager->restoreVisibility();
+        _toolBarManager->restoreVisibility();
         }
 
         // Ensure we're not in fullscreen mode
@@ -702,7 +853,7 @@ void MainWindow::handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::Win
         setPalette(palette);
         menuBar()->hide();
         statusBar()->hide();
-        startButton->hide();
+        _toolBarManager->hideForFullScreen();
     }
     // Handle restore state
     // NOTE: The shortcut handler (handleFullScreenShortcutLinux) already called showNormal()/showMaximized().
@@ -723,8 +874,8 @@ void MainWindow::handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::Win
         // Restore normal styling (but don't touch window state)
         setPalette(_originalPalette);
         menuBar()->show();
-        statusBar()->show();
-        startButton->show();
+        _statusBarManager->restoreVisibility();
+        _toolBarManager->restoreVisibility();
     }
 }
 
@@ -773,7 +924,7 @@ void MainWindow::keyPressEvent(QKeyEvent* event)
 {
     event->accept();
 
-    qDebug() << "MainWindow : keyPressEvent , key : " << event->text();
+    // qDebug() << "MainWindow : keyPressEvent , key : " << event->text();
 }
 
 void MainWindow::mousePressEvent(QMouseEvent* event)
@@ -809,8 +960,8 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
             QString hexScanCode = QString("0x%1").arg(keyEvent->nativeScanCode(), 4, 16, QLatin1Char('0'));
             QString hexVirtualKey = QString("0x%1").arg(keyEvent->nativeVirtualKey(), 4, 16, QLatin1Char('0'));
 
-            qDebug() << "MainWindow : eventFilter - keyPress, scan: " << hexScanCode << "virt: " << hexVirtualKey
-                     << " key: " << keyName << " " << keyEvent->text();
+            // qDebug() << "MainWindow : eventFilter - keyPress, scan: " << hexScanCode << "virt: " << hexVirtualKey
+            //          << " key: " << keyName << " " << keyEvent->text();
 
             /*
             if (keyEvent->key() == Qt::Key_F1)
@@ -835,8 +986,8 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
             QString hexScanCode = QString("0x%1").arg(keyEvent->nativeScanCode(), 4, 16, QLatin1Char('0'));
             QString hexVirtualKey = QString("0x%1").arg(keyEvent->nativeVirtualKey(), 4, 16, QLatin1Char('0'));
 
-            qDebug() << "MainWindow : eventFilter - keyRelease, scan: " << hexScanCode << "virt: " << hexVirtualKey
-                     << " key: " << keyName << " " << keyEvent->text();
+            // qDebug() << "MainWindow : eventFilter - keyRelease, scan: " << hexScanCode << "virt: " << hexVirtualKey
+            //          << " key: " << keyName << " " << keyEvent->text();
 
             deviceScreen->handleExternalKeyRelease(keyEvent);
         }
@@ -870,10 +1021,20 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
             break;
     }
 
-    // return false;
-
-    // Forward the key event to QShortcut
-    QApplication::sendEvent(_fullScreenShortcut, event);
+    // The emulator screen consumes key presses (ShortcutOverride accepted), so the
+    // View -> Full Screen shortcut is matched here when it reaches us as a plain key
+    // press; when the shortcut map handles it instead, the press never arrives here
+    if (event->type() == QEvent::KeyPress && _menuManager)
+    {
+        auto* keyEvent = static_cast<QKeyEvent*>(event);
+        QAction* fullScreen = _menuManager->fullScreenAction();
+        if (fullScreen && !keyEvent->isAutoRepeat() &&
+            QKeySequence(static_cast<int>(keyEvent->modifiers().toInt() | keyEvent->key())) == fullScreen->shortcut())
+        {
+            fullScreen->trigger();
+            return true;
+        }
+    }
 
     return QMainWindow::eventFilter(watched, event);
 }
@@ -882,22 +1043,21 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 
 // region <Slots>
 
-void MainWindow::handleStartButton()
+void MainWindow::toggleEmulatorStartStop()
 {
-    // This is the "smart" handler for the UI Start/Stop button
+    // Smart start/stop toggle (used by the menu Start action and file loading)
     // It handles multiple states:
     // - If emulator is NULL -> Create and start new instance
     // - If emulator is RUNNING or PAUSED -> Stop and destroy instance
     //
-    // Note: Menu actions use specific handlers (handleStartEmulator, handlePauseEmulator, handleResumeEmulator)
-    // that don't have this "smart" behavior - they do exactly what they say.
+    // Note: Menu / toolbar actions use specific handlers (handleStartEmulator, handlePauseEmulator,
+    // handleResumeEmulator) that don't have this "smart" behavior - they do exactly what they say.
 
     // Lock will be removed after method exit
     QMutexLocker ml(&lockMutex);
 
     if (_emulator == nullptr)
     {
-        startButton->setEnabled(false);
 
         // Clear log
         logWindow->reset();
@@ -907,7 +1067,12 @@ void MainWindow::handleStartButton()
         EmulatorManager* test = EmulatorManager::GetInstance();
 
         // Create a new emulator instance (use local var - adoptEmulator will set _emulator)
-        auto newEmulator = _emulatorManager->CreateEmulator("test", LoggerLevel::LogInfo);
+        //
+        // The symbolic id is not decoration: it identifies the instance in the
+        // manager, in log lines, and it is what TTD stores as emulator_id in a
+        // session dump. It used to be "test", which is what every recording made
+        // from this app was labelled with.
+        auto newEmulator = _emulatorManager->CreateEmulator("unreal-qt", LoggerLevel::LogInfo);
 
         // Initialize emulator instance
         if (newEmulator)
@@ -941,7 +1106,10 @@ void MainWindow::handleStartButton()
                 // logger.TurnOnLoggingForModule(MODULE_IO, SUBMODULE_IO_TAPE);
                 // logger.TurnOnLoggingForModule(MODULE_IO, SUBMODULE_IO_IN);
                 // logger.TurnOnLoggingForModule(MODULE_IO, SUBMODULE_IO_OUT);
-                logger.TurnOnLoggingForModule(MODULE_DISK, SUBMODULE_DISK_FDC);
+                // logger.TurnOnLoggingForModule(MODULE_DISK, SUBMODULE_DISK_FDC);
+                logger.TurnOnLoggingForModule(MODULE_CORE, SUBMODULE_CORE_GENERIC);
+                logger.TurnOnLoggingForModule(MODULE_LOADER, SUBMODULE_LOADER_SNA);
+                logger.TurnOnLoggingForModule(MODULE_LOADER, SUBMODULE_LOADER_Z80);
 
                 std::string dumpSettings = logger.DumpSettings();
                 qDebug("%s", dumpSettings.c_str());
@@ -1004,7 +1172,6 @@ void MainWindow::handleStartButton()
     }
     else
     {
-        startButton->setEnabled(false);
 
         // STOP: Use the central release flow for proper cleanup
         // This ensures m_binding->unbind() is called and all pointers are nullified
@@ -1022,8 +1189,6 @@ void MainWindow::handleStartButton()
 
         fflush(stdout);
         fflush(stderr);
-        startButton->setText("Start");
-        startButton->setEnabled(true);
         updateMenuStates();
 
         // Check if there are other running emulators to adopt
@@ -1073,8 +1238,8 @@ void MainWindow::handleFullScreenShortcutWindows()
         setPalette(_originalPalette);
         setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
         menuBar()->show();
-        statusBar()->show();
-        startButton->show();
+        _statusBarManager->restoreVisibility();
+        _toolBarManager->restoreVisibility();
 
         // Restore window state
         if (_preFullScreenState & Qt::WindowMaximized)
@@ -1158,7 +1323,7 @@ void MainWindow::handleFullScreenShortcutWindows()
         setPalette(palette);
         menuBar()->hide();
         statusBar()->hide();
-        startButton->hide();
+        _toolBarManager->hideForFullScreen();
 
         setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
         showFullScreen();
@@ -1289,8 +1454,8 @@ void MainWindow::handleFullScreenShortcutLinux()
         _isFullScreen = false;
         setPalette(_originalPalette);
         menuBar()->show();
-        statusBar()->show();
-        startButton->show();
+        _statusBarManager->restoreVisibility();
+        _toolBarManager->restoreVisibility();
 
         // Step 2: Restore window state
         if (_preFullScreenState & Qt::WindowMaximized)
@@ -1405,14 +1570,89 @@ void MainWindow::handleMessageScreenRefresh(int id, Message* message)
     // Invoke deviceScreen->refresh() in main thread
     QMetaObject::invokeMethod(deviceScreen, "refresh", Qt::QueuedConnection);
 
-#ifdef _DEBUG
-    if (frameCount - _lastFrameCount > 1)
+    if (_statusBarManager)
     {
-        qDebug() << QString::asprintf("Frame(s) skipped from:%d till: %d", _lastFrameCount, frameCount);
+        _statusBarManager->notifyFrameRendered(frameCount);  // Atomic; feeds the FPS readout
     }
-#endif
+
+    // Every frame is computed regardless of mode; a gap in the refresh sequence means
+    // rendered frames were not presented. In turbo mode only every Nth frame is rendered
+    // by design (MainLoop TURBO_RENDER_DECIMATION), so gaps are expected and not reported.
+    // Reported through the module logger (Video/Generic, debug level), never directly to stdout.
+    if (frameCount - _lastFrameCount > 1 && !_emulator->IsTurboMode())
+    {
+        ModuleLogger* logger = _emulator->GetLogger();
+        if (logger && logger->GetLevel() <= LoggerLevel::LogDebug &&
+            logger->IsLoggingEnabledForLogLevel(PlatformModulesEnum::MODULE_VIDEO,
+                                                PlatformVideoSubmodulesEnum::SUBMODULE_VIDEO_GENERIC,
+                                                LoggerLevel::LogDebug))
+        {
+            logger->Debug(PlatformModulesEnum::MODULE_VIDEO, PlatformVideoSubmodulesEnum::SUBMODULE_VIDEO_GENERIC,
+                          "Frame refresh gap: rendered frames %u..%u were not presented", _lastFrameCount + 1,
+                          frameCount - 1);
+        }
+    }
 
     _lastFrameCount = frameCount;
+}
+
+void MainWindow::handleVideoModeChanged(int id, Message* message)
+{
+    // NC_VIDEO_MODE_CHANGED: the emulator's framebuffer geometry (and, for
+    // size-changing switches, the buffer address) changed - either by the UI
+    // overscan toggle or by GUEST SOFTWARE programming an AlCo/Profi/ATM mode
+    // via ports. Re-attach the device screen to the new descriptor on the GUI
+    // thread (the notification arrives on the MessageCenter dispatch thread).
+    (void)id;
+
+    if (!deviceScreen || !_emulator || !message || !message->obj)
+        return;
+
+    EmulatorFramePayload* payload = dynamic_cast<EmulatorFramePayload*>(message->obj);
+    if (!payload || payload->_emulatorId != _emulator->GetUUID())
+        return;
+
+    QMetaObject::invokeMethod(
+        this,
+        [this]() {
+            if (!deviceScreen || !_emulator)
+                return;
+            auto* context = _emulator->GetContext();
+            if (!context || !context->pScreen)
+                return;
+
+            auto& fb = context->pScreen->GetFramebufferDescriptor();
+            deviceScreen->init(fb.width, fb.height, fb.memoryBuffer);
+
+            // init() -> detach() clears the tear-free frame source - re-install
+            Screen* screen = context->pScreen;
+            deviceScreen->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
+                if (!screen->CopyPresentedFramebuffer(dst, dstSize))
+                    return false;
+
+                // Stamp video presentation latency (paint - latch), EMA 1/8:
+                // half of the realtime A/V offset readout
+                const uint64_t latchUs = screen->GetLastLatchTimestampUs();
+                if (latchUs != 0)
+                {
+                    const uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now().time_since_epoch())
+                                               .count();
+                    // Signed EMA: unsigned (sample - prev) wraps when the new
+                    // sample is smaller, exploding the average
+                    // Include the A/V-sync present delay: the painted frame is
+                    // GetPresentDelayFrames older than the newest latch
+                    const int64_t sample = static_cast<int64_t>(std::min<uint64_t>(nowUs - latchUs, 1000000)) +
+                                           screen->GetPresentDelayUs();
+                    const int64_t prev = context->pVideoPresentLatencyUs.load(std::memory_order_relaxed);
+                    const int64_t next = (prev == 0) ? sample : prev + (sample - prev) / 8;
+                    context->pVideoPresentLatencyUs.store(
+                        static_cast<uint32_t>(std::clamp<int64_t>(next, 0, 1000000)), std::memory_order_relaxed);
+                }
+                return true;
+            });
+        },
+        Qt::QueuedConnection);
 }
 
 void MainWindow::handleFileOpenRequest(int id, Message* message)
@@ -1456,10 +1696,74 @@ void MainWindow::openSpecificFile(const QString& filepath)
 
 void MainWindow::openFileDialog()
 {
-    QString filePath = QFileDialog::getOpenFileName(
-        this, tr("Open File"), _lastDirectory,
-        tr("All Supported Files (*.sna *.z80 *.tap *.tzx *.trd *.scl *.fdi *.td0 *.udi);;Snapshots (*.sna "
-           "*.z80);;Tapes (*.tap *.tzx);;Disks (*.trd *.scl *.fdi *.td0 *.udi);;All Files (*)"));
+    QStringList snapshotExts = toQStringList(Emulator::SupportedSnapshotExtensions());
+    QStringList tapeExts = toQStringList(Emulator::SupportedTapeExtensions());
+    QStringList diskExts = toQStringList(Emulator::SupportedDiskExtensions());
+    QStringList allExts = snapshotExts + tapeExts + diskExts;
+
+    QString filter = buildFilterGroup(tr("All Supported Files"), allExts) + ";;" +
+                     buildFilterGroup(tr("Snapshots"), snapshotExts) + ";;" +
+                     buildFilterGroup(tr("Tapes"), tapeExts) + ";;" +
+                     buildFilterGroup(tr("Disks"), diskExts) + ";;" +
+                     tr("All Files (*)");
+
+    QString filePath = QFileDialog::getOpenFileName(this, tr("Open File"), _lastDirectory, filter);
+
+    if (!filePath.isEmpty())
+    {
+        loadFile(filePath);
+    }
+}
+
+void MainWindow::openSnapshotDialog()
+{
+    QStringList exts = toQStringList(Emulator::SupportedSnapshotExtensions());
+    QString filter = buildFilterGroup(tr("Snapshot Files"), exts) + ";;" +
+                     buildFilterGroup(tr("SNA Snapshots"), {"sna"}) + ";;" +
+                     buildFilterGroup(tr("Z80 Snapshots"), {"z80"}) + ";;" +
+                     buildFilterGroup(tr("SZX Snapshots"), {"szx"}) + ";;" +
+                     tr("All Files (*)");
+
+    QString filePath = QFileDialog::getOpenFileName(this, tr("Open Snapshot"), _lastDirectory, filter);
+
+    if (!filePath.isEmpty())
+    {
+        loadFile(filePath);
+    }
+}
+
+void MainWindow::openTapeDialog()
+{
+    QStringList exts = toQStringList(Emulator::SupportedTapeExtensions());
+    QString filter = buildFilterGroup(tr("Tape Files"), exts) + ";;" +
+                     buildFilterGroup(tr("TAP Tapes"), {"tap"}) + ";;" +
+                     buildFilterGroup(tr("TZX Tapes"), {"tzx"}) + ";;" +
+                     buildFilterGroup(tr("CSW Tapes"), {"csw"}) + ";;" +
+                     buildFilterGroup(tr("WAV Audio"), {"wav"}) + ";;" +
+                     tr("All Files (*)");
+
+    QString filePath = QFileDialog::getOpenFileName(this, tr("Open Tape"), _lastDirectory, filter);
+
+    if (!filePath.isEmpty())
+    {
+        loadFile(filePath);
+    }
+}
+
+void MainWindow::openDiskDialog()
+{
+    QStringList exts = toQStringList(Emulator::SupportedDiskExtensions());
+    QString filter = buildFilterGroup(tr("Disk Images"), exts) + ";;" +
+                     buildFilterGroup(tr("TRD Images"), {"trd"}) + ";;" +
+                     buildFilterGroup(tr("SCL Images"), {"scl"}) + ";;" +
+                     buildFilterGroup(tr("FDI Images"), {"fdi"}) + ";;" +
+                     buildFilterGroup(tr("UDI Images"), {"udi"}) + ";;" +
+                     buildFilterGroup(tr("DSK Images"), {"dsk"}) + ";;" +
+                     buildFilterGroup(tr("TD0 Images"), {"td0"}) + ";;" +
+                     buildFilterGroup(tr("MGT Images"), {"mgt", "img"}) + ";;" +
+                     tr("All Files (*)");
+
+    QString filePath = QFileDialog::getOpenFileName(this, tr("Open Disk"), _lastDirectory, filter);
 
     if (!filePath.isEmpty())
     {
@@ -1481,33 +1785,66 @@ void MainWindow::loadFile(const QString& filePath)
     if (!_emulator && category != FileSymbol && category != FileUnknown)
     {
         qDebug() << "Auto-starting emulator for file:" << filePath;
-        handleStartButton();
+        toggleEmulatorStartStop();
     }
 
     switch (category)
     {
         case FileROM:
+            qWarning() << "ROM loading not implemented:" << filePath;
             break;
         case FileSnapshot:
             if (_emulator)
-                _emulator->LoadSnapshot(file);
+            {
+                bool result = _emulator->LoadSnapshot(file);
+                if (!result)
+                    qWarning() << "Failed to load snapshot:" << filePath;
+                else if (_statusBarManager)
+                    _statusBarManager->resetFpsMeasurement();  // Snapshot replaces the frame counter
+                _lastFrameCount = 0;
+            }
+            else
+            {
+                qWarning() << "Cannot load snapshot - emulator not running:" << filePath;
+            }
             break;
         case FileTape:
             if (_emulator)
-                _emulator->LoadTape(file);
+            {
+                bool result = _emulator->LoadTape(file);
+                if (!result)
+                    qWarning() << "Failed to load tape:" << filePath;
+            }
+            else
+            {
+                qWarning() << "Cannot load tape - emulator not running:" << filePath;
+            }
             break;
         case FileDisk:
             if (_emulator)
-                _emulator->LoadDisk(file);
+            {
+                bool result = _emulator->LoadDisk(file);
+                if (!result)
+                    qWarning() << "Failed to load disk:" << filePath;
+            }
+            else
+            {
+                qWarning() << "Cannot load disk - emulator not running:" << filePath;
+            }
             break;
         case FileSymbol:
             if (_emulator && _emulator->GetDebugManager())
             {
                 _emulator->GetDebugManager()->GetLabelManager()->LoadLabels(file);
             }
+            else
+            {
+                qWarning() << "Cannot load symbols - emulator not running:" << filePath;
+            }
             break;
+        case FileUnknown:
         default:
-            qDebug() << "Unsupported file type:" << filePath;
+            qWarning() << "Unsupported file type:" << filePath;
             break;
     };
 }
@@ -1642,20 +1979,82 @@ void MainWindow::saveDiskDialog()
         return;
     }
 
-    // Save using TRD format (preserves all TR-DOS metadata)
-    LoaderTRD loader(context, originalPath);
-    loader.setImage(diskImage);
-    bool result = loader.writeImage();
+    // Save in the format of the original file. TRD and SCL hold only 16 x 256-byte TR-DOS tracks and refuse
+    // anything else; in that case Emulator::SaveDisk writes a lossless UDI next to the original instead.
+    Emulator::DiskSaveResult result = _emulator->SaveDisk(drive->getDriveId(), originalPath, true);
 
-    if (result)
+    if (result.saved && !result.retargeted)
     {
-        qDebug() << "Disk saved successfully:" << QString::fromStdString(originalPath);
+        qDebug() << "Disk saved successfully:" << QString::fromStdString(result.savedPath);
+        return;
+    }
+
+    if (result.saved && result.retargeted)
+    {
+        qDebug() << "Disk re-targeted to UDI:" << QString::fromStdString(result.savedPath);
+        QMessageBox::information(this, tr("Saved as UDI"),
+                                 tr("%1\n\nThe original file was left untouched and the disk was saved losslessly as:\n%2")
+                                     .arg(QString::fromStdString(result.reason), QString::fromStdString(result.savedPath)));
+        return;
+    }
+
+    qDebug() << "Failed to save disk:" << QString::fromStdString(originalPath);
+    QString detail = result.reason.empty() ? QString() : "\n" + QString::fromStdString(result.reason);
+    QMessageBox::warning(this, tr("Save Failed"),
+                         tr("Failed to save disk to:\n%1%2").arg(QString::fromStdString(originalPath), detail));
+}
+
+void MainWindow::saveDiskAsUDIDialog()
+{
+    if (!_emulator)
+    {
+        qDebug() << "No emulator running, cannot save disk";
+        return;
+    }
+
+    EmulatorContext* context = _emulator->GetContext();
+    if (!context || !context->pBetaDisk)
+    {
+        QMessageBox::warning(this, tr("Save Failed"), tr("No Beta Disk interface available."));
+        return;
+    }
+
+    FDD* drive = context->pBetaDisk->getDrive();
+    DiskImage* diskImage = drive ? drive->getDiskImage() : nullptr;
+    if (!diskImage)
+    {
+        QMessageBox::warning(this, tr("Save Failed"), tr("No disk image loaded in the current drive."));
+        return;
+    }
+
+    QString filePath = QFileDialog::getSaveFileName(this, tr("Save Disk Image as UDI"), _lastSaveDirectory + "/disk.udi",
+                                                    tr("UDI Disk Images (*.udi);;All Files (*)"));
+    if (filePath.isEmpty())
+    {
+        return;
+    }
+
+    if (!filePath.toLower().endsWith(".udi"))
+    {
+        filePath += ".udi";
+    }
+
+    QFileInfo fileInfo(filePath);
+    _lastSaveDirectory = fileInfo.absolutePath();
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+    settings.setValue("LastSaveDirectory", _lastSaveDirectory);
+
+    std::string file = filePath.toStdString();
+    LoaderUDI loader(context, file);
+    loader.setImage(diskImage);
+    if (loader.writeImage())
+    {
+        qDebug() << "Disk saved as UDI successfully:" << filePath;
     }
     else
     {
-        qDebug() << "Failed to save disk:" << QString::fromStdString(originalPath);
-        QMessageBox::warning(this, tr("Save Failed"),
-                             tr("Failed to save disk to:\n%1").arg(QString::fromStdString(originalPath)));
+        QString detail = loader.lastWarnings().empty() ? QString() : "\n" + QString::fromStdString(loader.lastWarnings()[0]);
+        QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save disk to:\n%1%2").arg(filePath, detail));
     }
 }
 
@@ -1809,6 +2208,8 @@ void MainWindow::resetEmulator()
         // Reset handles pause/resume internally to avoid race conditions
         _emulator->Reset();
         _lastFrameCount = 0;
+        if (_statusBarManager)
+            _statusBarManager->resetFpsMeasurement();  // Frame counter restarts from 0
 
         // Update menu states
         updateMenuStates();
@@ -1823,7 +2224,7 @@ void MainWindow::handleStartEmulator()
     // It should not resume a paused emulator (that's what Resume is for)
     if (_emulator == nullptr)
     {
-        handleStartButton();
+        toggleEmulatorStartStop();
     }
     else
     {
@@ -1857,7 +2258,6 @@ void MainWindow::handleStopEmulator()
 {
     if (_emulator)
     {
-        startButton->setEnabled(false);
 
         // Stop emulator first (it's running)
         std::string emulatorId = _emulator->GetId();
@@ -1911,6 +2311,40 @@ void MainWindow::handleTurboModeToggled(bool enabled)
     }
 }
 
+void MainWindow::handleTapeTrapsToggled(bool enabled)
+{
+    if (_emulator)
+    {
+        EmulatorContext* context = _emulator->GetContext();
+        FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
+        if (featureManager)
+        {
+            // Live toggle: the trap arm state is evaluated lazily on every
+            // LD-BYTES invocation (design §6.1), so a feature write takes
+            // effect on the next ROM loader call — no reset or pause needed
+            featureManager->setFeature(Features::kFastTape, enabled);
+            qDebug() << "Fast tape loading" << (enabled ? "enabled" : "disabled");
+        }
+    }
+}
+
+void MainWindow::handleTurboTapeToggled(bool enabled)
+{
+    if (_emulator)
+    {
+        EmulatorContext* context = _emulator->GetContext();
+        FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
+        if (featureManager)
+        {
+            // Live toggle: the controller evaluates the feature every frame
+            // (design §6.1 E4), so a feature write takes effect at the next
+            // frame boundary — engaged warp also stands down the same way
+            featureManager->setFeature(Features::kTurboTape, enabled);
+            qDebug() << "Turbo tape loading" << (enabled ? "enabled" : "disabled");
+        }
+    }
+}
+
 void MainWindow::handleStepIn()
 {
     if (_emulator)
@@ -1929,28 +2363,38 @@ void MainWindow::handleStepOver()
     }
 }
 
-void MainWindow::handleDebugModeToggled(bool enabled)
-{
-    if (_emulator)
-    {
-        if (enabled)
-        {
-            _emulator->DebugOn();
-            qDebug() << "Debug mode enabled";
-        }
-        else
-        {
-            _emulator->DebugOff();
-            qDebug() << "Debug mode disabled";
-        }
-    }
-}
-
 void MainWindow::handleDebuggerToggled(bool visible)
 {
     if (debuggerWindow)
     {
-        debuggerWindow->setVisible(visible);
+        debuggerWindow->setVisible(visible);  // showEvent / hideEvent -> handleDebuggerVisibilityChanged
+        if (visible)
+        {
+            debuggerWindow->raise();
+            debuggerWindow->activateWindow();
+        }
+    }
+}
+
+void MainWindow::handleDebuggerVisibilityChanged(bool visible)
+{
+    // Covers the menu toggle, the window's close box and docking-driven hides
+    if (_menuManager)
+        _menuManager->setDebuggerChecked(visible);
+
+    // Debug features cost speed (debug memory interface on every access, breakpoint
+    // dispatch per instruction): only pay for them while the debugger is on screen
+    applyDebugInstrumentation(visible);
+}
+
+void MainWindow::applyDebugInstrumentation(bool enabled)
+{
+    if (_emulator)
+    {
+        if (enabled)
+            _emulator->DebugOn();
+        else
+            _emulator->DebugOff();
     }
 }
 
@@ -1960,6 +2404,35 @@ void MainWindow::handleLogWindowToggled(bool visible)
     {
         logWindow->setVisible(visible);
     }
+}
+
+void MainWindow::handleTapeManagerToggled(bool visible)
+{
+    if (tapeManagerWindow)
+    {
+        tapeManagerWindow->setVisible(visible);
+    }
+}
+
+void MainWindow::handleImportAudioTapeRequested()
+{
+    // tape-audio-bridge §7.3: audio → tape recognition; "Insert into emulator"
+    // rides the same LoadTape path as File → Open Tape
+    TapeImportAudioDialog dialog(this);
+    connect(&dialog, &TapeImportAudioDialog::insertRequested, this, [this](const QString& path) {
+        if (_emulator)
+        {
+            if (!_emulator->LoadTape(path.toStdString()))
+            {
+                qWarning() << "Failed to load tape:" << path;
+            }
+        }
+        else
+        {
+            qWarning() << "Cannot load tape - emulator not running:" << path;
+        }
+    });
+    dialog.exec();
 }
 
 void MainWindow::handleIntParametersRequested()
@@ -2006,6 +2479,186 @@ void MainWindow::handleAudioSettingsRequested()
     _audioSettingsWidget->show();
     _audioSettingsWidget->raise();
     _audioSettingsWidget->activateWindow();
+}
+
+void MainWindow::handleOverscanModeToggled(bool enabled)
+{
+    if (!m_binding || !m_binding->emulator())
+        return;
+
+    auto emulator = m_binding->emulator();
+    if (emulator->SetOverscanMode(enabled))
+    {
+        // Mode changed - update device screen to handle new framebuffer size
+        EmulatorContext* context = emulator->GetContext();
+        if (context && context->pScreen)
+        {
+            auto& fb = context->pScreen->GetFramebufferDescriptor();
+            deviceScreen->init(fb.width, fb.height, fb.memoryBuffer);
+
+            // init() -> detach() clears the tear-free frame source - re-install it
+            Screen* screen = context->pScreen;
+            deviceScreen->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
+                if (!screen->CopyPresentedFramebuffer(dst, dstSize))
+                    return false;
+
+                // Stamp video presentation latency (paint - latch), EMA 1/8:
+                // half of the realtime A/V offset readout
+                const uint64_t latchUs = screen->GetLastLatchTimestampUs();
+                if (latchUs != 0)
+                {
+                    const uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now().time_since_epoch())
+                                               .count();
+                    // Signed EMA: unsigned (sample - prev) wraps when the new
+                    // sample is smaller, exploding the average
+                    // Include the A/V-sync present delay: the painted frame is
+                    // GetPresentDelayFrames older than the newest latch
+                    const int64_t sample = static_cast<int64_t>(std::min<uint64_t>(nowUs - latchUs, 1000000)) +
+                                           screen->GetPresentDelayUs();
+                    const int64_t prev = context->pVideoPresentLatencyUs.load(std::memory_order_relaxed);
+                    const int64_t next = (prev == 0) ? sample : prev + (sample - prev) / 8;
+                    context->pVideoPresentLatencyUs.store(
+                        static_cast<uint32_t>(std::clamp<int64_t>(next, 0, 1000000)), std::memory_order_relaxed);
+                }
+                return true;
+            });
+
+            if (enabled)
+            {
+                // Entering overscan mode - apply default viewport (Symmetric Horizontal)
+                emulator->SetDisplayViewport(ViewportPresets::SYMMETRIC_HORIZONTAL);
+                deviceScreen->setDisplayViewport(ViewportPresets::SYMMETRIC_HORIZONTAL);
+                _menuManager->resetViewportSelection();
+            }
+            else
+            {
+                // Leaving overscan mode - reset viewport to full framebuffer
+                DisplayViewport fullViewport = {0, 0, 0, 0};
+                emulator->SetDisplayViewport(fullViewport);
+                deviceScreen->clearDisplayViewport();
+                _menuManager->resetViewportSelection();
+            }
+        }
+        updateMenuStates();
+    }
+}
+
+void MainWindow::handleViewportChanged(int presetIndex)
+{
+    if (!m_binding || !m_binding->emulator())
+        return;
+
+    auto emulator = m_binding->emulator();
+
+    // Apply viewport preset
+    DisplayViewport viewport;
+    switch (presetIndex)
+    {
+        case 0:  // Full Overscan (384x304)
+            viewport = ViewportPresets::FULL_OVERSCAN;
+            break;
+        case 1:  // Symmetric Horizontal (352x304)
+            viewport = ViewportPresets::SYMMETRIC_HORIZONTAL;
+            break;
+        case 2:  // Standard (352x288)
+            viewport = ViewportPresets::STANDARD;
+            break;
+        case 3:  // Screen Only (256x192)
+            viewport = ViewportPresets::SCREEN_ONLY;
+            break;
+        default:
+            viewport = ViewportPresets::FULL_OVERSCAN;
+            break;
+    }
+
+    emulator->SetDisplayViewport(viewport);
+
+    // Update device screen with new display dimensions
+    // The viewport will be applied during rendering
+    deviceScreen->setDisplayViewport(viewport);
+}
+
+void MainWindow::handleMachineModelChangeRequested(const QString& modelSpec)
+{
+    if (!_emulatorManager)
+    {
+        qWarning() << "handleMachineModelChangeRequested: EmulatorManager not available";
+        return;
+    }
+
+    // Parse "MODEL:RAM" format
+    QStringList parts = modelSpec.split(':');
+    if (parts.size() != 2)
+    {
+        qWarning() << "handleMachineModelChangeRequested: Invalid model spec format:" << modelSpec;
+        return;
+    }
+
+    std::string modelName = parts[0].toStdString();
+    uint32_t ramSize = parts[1].toUInt();
+    QString displayName = QString("%1 %2K").arg(parts[0]).arg(ramSize);
+
+    // Confirm with user
+    QMessageBox::StandardButton reply = QMessageBox::question(
+        this,
+        tr("Switch Machine Model"),
+        tr("Switch to %1?\n\nThis will stop and destroy the current emulator instance.\nAny unsaved state will be lost.").arg(displayName),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No
+    );
+
+    if (reply != QMessageBox::Yes)
+    {
+        // User cancelled - restore menu selection to current model
+        if (_menuManager)
+        {
+            _menuManager->updateMachineModelSelection(_emulator);
+        }
+        return;
+    }
+
+    // Process events to ensure dialog is fully closed before heavy operations
+    QApplication::processEvents();
+
+    // Set flag to prevent notification handler from interfering
+    _switchingModel = true;
+
+    qInfo() << "MainWindow::handleMachineModelChangeRequested() - Switching to model:" << displayName;
+
+    // Pause, stop and release current emulator
+    if (_emulator)
+    {
+        if (_emulator->IsRunning())
+        {
+            _emulator->Pause(false);  // Pause first to stop frame generation
+            _emulator->Stop();        // Then stop before destroying
+        }
+        releaseEmulator();
+    }
+
+    // Create new emulator with requested model and RAM size
+    std::shared_ptr<Emulator> newEmulator = _emulatorManager->CreateEmulatorWithModelAndRAM("", modelName, ramSize);
+    if (!newEmulator)
+    {
+        qWarning() << "handleMachineModelChangeRequested: Failed to create emulator with model" << displayName;
+        QMessageBox::critical(this, tr("Error"), tr("Failed to create emulator with model %1").arg(displayName));
+        return;
+    }
+
+    // Adopt the new emulator (already initialized by CreateEmulatorWithModelAndRAM)
+    adoptEmulator(newEmulator);
+    qDebug() << "handleMachineModelChangeRequested: adoptEmulator completed";
+
+    // Start the new emulator asynchronously (Start() blocks, StartAsync() returns immediately)
+    newEmulator->StartAsync();
+    qDebug() << "handleMachineModelChangeRequested: StartAsync completed";
+
+    // Note: Menu update happens via adoptEmulator -> setActiveEmulator -> updateMenuStates
+
+    _switchingModel = false;
+
+    qInfo() << "MainWindow::handleMachineModelChangeRequested() - Successfully switched to model:" << displayName;
 }
 
 #ifdef ENABLE_RECORDING
@@ -2129,7 +2782,88 @@ void MainWindow::updateMenuStates()
         // Menu will query emulator directly - no state duplication!
         _menuManager->updateMenuStates(_emulator);
     }
+    if (_toolBarManager)
+    {
+        // Toolbar mirrors the same emulator state (after menus, so viewport enablement is current)
+        _toolBarManager->updateState(_emulator);
+    }
+    if (_statusBarManager)
+    {
+        _statusBarManager->setActiveEmulator(_emulator);
+    }
 }
+
+void MainWindow::handleStatusBarToggled(bool visible)
+{
+    if (_statusBarManager)
+    {
+        _statusBarManager->setVisibleByUser(visible);
+        _statusBarManager->saveSettings();
+    }
+}
+
+void MainWindow::handleScaleRequested(int scale)
+{
+    // Leave full screen / maximized first so the resize can take effect
+    if (isFullScreen())
+        handleFullScreenShortcut();
+    if (isMaximized())
+        showNormal();
+    fitWindowToScreen(scale);
+}
+
+void MainWindow::handleScreenshotRequested()
+{
+    if (!deviceScreen)
+        return;
+
+    const QImage frame = deviceScreen->grabFramebuffer();
+    if (frame.isNull())
+    {
+        statusBar()->showMessage(tr("Screenshot: no emulator screen to capture"), 3000);
+        return;
+    }
+
+    // Copy to clipboard as PNG
+    QGuiApplication::clipboard()->setImage(frame);
+    statusBar()->showMessage(tr("Screenshot copied to clipboard"), 3000);
+}
+
+void MainWindow::handleToolBarToggled(bool visible)
+{
+    if (_toolBarManager)
+    {
+        _toolBarManager->setVisibleByUser(visible);
+        _toolBarManager->saveSettings();
+    }
+}
+
+void MainWindow::handleStartOrResumeRequested()
+{
+    // Toolbar "Start" behaves like the new-gui transport: start when idle, resume when paused
+    if (_emulator == nullptr)
+    {
+        handleStartEmulator();
+    }
+    else if (_emulator->IsPaused())
+    {
+        handleResumeEmulator();
+    }
+    updateMenuStates();
+}
+
+void MainWindow::handleRestartRequested()
+{
+    if (_emulator)
+    {
+        resetEmulator();
+    }
+    else
+    {
+        handleStartEmulator();
+    }
+}
+
 
 // endregion </Menu action handlers>
 
@@ -2259,7 +2993,6 @@ void MainWindow::handleEmulatorInstanceDestroyed(int id, Message* message)
                         // Note: Don't call _emulator->ClearAudioCallback() - emulator is already being destroyed
                         _emulator = nullptr;
 
-                        startButton->setText("Start");
                         updateMenuStates();
 
                         qDebug() << "MainWindow: Emulator" << QString::fromStdString(destroyedId) << "unbound from UI";
@@ -2286,6 +3019,13 @@ void MainWindow::handleEmulatorInstanceCreated(int id, Message* message)
             std::string createdId = payload->_payloadText;
 
             qDebug() << "MainWindow: Detected new emulator instance" << QString::fromStdString(createdId);
+
+            // Skip if we're in the middle of a model switch (handleMachineModelChangeRequested handles adoption)
+            if (_switchingModel)
+            {
+                qDebug() << "MainWindow: Model switch in progress, skipping auto-adoption";
+                return;
+            }
 
             // Check if this is the emulator we already have adopted
             if (_emulator && _emulator->GetId() == createdId)
@@ -2456,6 +3196,9 @@ void MainWindow::subscribeToPerEmulatorEvents()
 
     ObserverCallbackMethod stateCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorStateChanged);
     messageCenter.AddObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
+
+    ObserverCallbackMethod modeCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleVideoModeChanged);
+    messageCenter.AddObserver(NC_VIDEO_MODE_CHANGED, observerInstance, modeCallback);
 }
 
 void MainWindow::unsubscribeFromPerEmulatorEvents()
@@ -2472,6 +3215,9 @@ void MainWindow::unsubscribeFromPerEmulatorEvents()
 
     ObserverCallbackMethod stateCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorStateChanged);
     messageCenter.RemoveObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
+
+    ObserverCallbackMethod modeCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleVideoModeChanged);
+    messageCenter.RemoveObserver(NC_VIDEO_MODE_CHANGED, observerInstance, modeCallback);
 }
 
 void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
@@ -2498,7 +3244,9 @@ void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
     // Bind the audio callback to the new emulator
     qDebug() << "MainWindow::bindEmulatorAudio() - Binding audio callback to emulator"
              << QString::fromStdString(emulator->GetId());
-    emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback);
+    emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback, _soundManager->occupancyCell(),
+                               _soundManager->deviceDescriptor());
+    emulator->SetAudioDeviceSampleRate(_soundManager->deviceSampleRate());
 
     qDebug() << "MainWindow::bindEmulatorAudio() - Audio device now owned by emulator"
              << QString::fromStdString(emulator->GetId());
@@ -2548,6 +3296,37 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
         {
             auto& framebufferDesc = context->pScreen->GetFramebufferDescriptor();
             deviceScreen->init(framebufferDesc.width, framebufferDesc.height, framebufferDesc.memoryBuffer);
+
+            // Paint from the frame-end latched snapshot instead of the live
+            // framebuffer - prevents mid-frame tearing (emulation thread
+            // overwrites the live buffer while the GUI thread paints it).
+            // deviceScreen->detach() clears this on emulator switch/shutdown.
+            Screen* screen = context->pScreen;
+            deviceScreen->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
+                if (!screen->CopyPresentedFramebuffer(dst, dstSize))
+                    return false;
+
+                // Stamp video presentation latency (paint - latch), EMA 1/8:
+                // half of the realtime A/V offset readout
+                const uint64_t latchUs = screen->GetLastLatchTimestampUs();
+                if (latchUs != 0)
+                {
+                    const uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now().time_since_epoch())
+                                               .count();
+                    // Signed EMA: unsigned (sample - prev) wraps when the new
+                    // sample is smaller, exploding the average
+                    // Include the A/V-sync present delay: the painted frame is
+                    // GetPresentDelayFrames older than the newest latch
+                    const int64_t sample = static_cast<int64_t>(std::min<uint64_t>(nowUs - latchUs, 1000000)) +
+                                           screen->GetPresentDelayUs();
+                    const int64_t prev = context->pVideoPresentLatencyUs.load(std::memory_order_relaxed);
+                    const int64_t next = (prev == 0) ? sample : prev + (sample - prev) / 8;
+                    context->pVideoPresentLatencyUs.store(
+                        static_cast<uint32_t>(std::clamp<int64_t>(next, 0, 1000000)), std::memory_order_relaxed);
+                }
+                return true;
+            });
         }
         catch (const std::exception& e)
         {
@@ -2572,16 +3351,14 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
     }
 
     // 7. UI state
-    if (_emulator->IsRunning() || _emulator->IsPaused())
-    {
-        startButton->setText("Stop");
-    }
-    else
-    {
-        startButton->setText("Start");
-    }
-    startButton->setEnabled(true);
     updateMenuStates();
+
+    // Debug instrumentation follows the debugger window: on only while it is visible
+    applyDebugInstrumentation(debuggerWindow && debuggerWindow->isVisible());
+
+    // Turbo render cap for this emulator: the display refresh rate we are on
+    if (MainLoop* mainLoop = _emulator->GetMainLoop())
+        mainLoop->SetTurboRenderMaxFps(_displayRefresh.renderCapHz());
 
     // 8. Update audio settings widget if open
     if (_audioSettingsWidget)
@@ -2673,8 +3450,11 @@ void MainWindow::releaseEmulator()
     _emulatorManager->RemoveEmulator(emulatorId);
 
     // UI state
-    startButton->setText("Start");
-    updateMenuStates();
+    if (!_switchingModel)
+    {
+        // Only update menu if not in model switch (adoptEmulator handles menu during switch)
+        updateMenuStates();
+    }
 
     qDebug() << "MainWindow::releaseEmulator() - Emulator released and destroyed";
 }
@@ -2683,26 +3463,7 @@ void MainWindow::onBindingStateChanged(EmulatorStateEnum state)
 {
     qDebug() << "MainWindow::onBindingStateChanged(" << getEmulatorStateName(state) << ")";
 
-    // Update UI based on emulator state
-    switch (state)
-    {
-        case StateRun:
-        case StateResumed:
-            startButton->setText("Stop");
-            startButton->setEnabled(true);
-            break;
-        case StatePaused:
-            startButton->setText("Stop");
-            startButton->setEnabled(true);
-            break;
-        case StateStopped:
-        case StateUnknown:
-            startButton->setText("Start");
-            startButton->setEnabled(true);
-            break;
-        default:
-            break;
-    }
+    // Menus, toolbar and status bar all derive their state from the emulator
     updateMenuStates();
 
 #ifdef ENABLE_RECORDING

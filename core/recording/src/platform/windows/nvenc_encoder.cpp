@@ -1,14 +1,18 @@
+// Windows headers must come BEFORE our headers to avoid UUID typedef collision
+// (rpcdce.h defines UUID typedef, our uuid.h defines unreal::UUID class)
+#ifdef _WIN32
+#include <windows.h>
+#include <objbase.h>  // CoInitializeEx, CoUninitialize
+#include <d3d11.h>
+#include <dxgi.h>
+#endif
+
 #include "nvenc_encoder.h"
 #include "mp4_muxer.h"
 #include "mf_aac_encoder.h"
 #include "emulator/video/screen.h"
 
 #ifdef _WIN32
-
-#include <windows.h>
-#include <objbase.h>  // CoInitializeEx, CoUninitialize
-#include <d3d11.h>
-#include <dxgi.h>
 #include <cstring>
 #include <algorithm>
 #include <mutex>
@@ -383,6 +387,11 @@ bool NvencEncoder::Impl::init(const std::string& filename, const EncoderConfig& 
     if (!createBuffers())        { error = "Failed to create buffers"; return false; }
 
     // Initialize AAC encoder
+    // NOTE: this hand-rolled MF chain has no sample-rate converter, so the
+    // AAC track is encoded at the INPUT (core) rate rather than the 48 kHz
+    // video-container policy (encoder_config.h). Valid output either way -
+    // the MF AAC encoder natively accepts 44100/48000 - but adding the
+    // Audio Resampler DSP MFT is required to enforce the policy here.
     uint32_t audioSampleRate = config.audioSampleRate > 0 ? config.audioSampleRate : 44100;
     uint32_t audioChannels = config.audioChannels > 0 ? config.audioChannels : 2;
     uint32_t audioBitrate = config.audioBitrate > 0 ? config.audioBitrate * 1000 : 128000;

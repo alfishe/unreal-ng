@@ -8,6 +8,8 @@
 #include <QGroupBox>
 #include <QLabel>
 #include <QProgressBar>
+#include <QFrame>
+#include <QToolButton>
 #include <QTimer>
 #include <vector>
 
@@ -72,11 +74,18 @@ private:
     void connectSignals();
     void disconnectSignals();
     void updateSoloIndicator();
+    void updateDeviceInfo();
+    QString buildDeviceDetailText() const;  // Full breakdown for the (i) popup
 
     EmulatorContext* _context = nullptr;
 
     // Shown when no emulator is active
     QLabel* _statusLabel = nullptr;
+    QLabel* _deviceInfoLabel = nullptr;   // Compact device/core readout (rarely changes)
+    QToolButton* _deviceInfoButton = nullptr;  // (i): detailed latency/AV breakdown popup
+    QFrame* _detailPopup = nullptr;            // Live-refreshing breakdown popup
+    QLabel* _detailLabel = nullptr;
+    QTimer* _detailTimer = nullptr;
     QWidget* _controlsContainer = nullptr;
 
     // Sources section (registry-driven)

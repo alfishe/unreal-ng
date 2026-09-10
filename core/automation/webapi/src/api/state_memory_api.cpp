@@ -4,8 +4,10 @@
 #include "../emulator_api.h"
 
 #include <drogon/HttpResponse.h>
+#include <debugger/ttd/timetravelmanager.h>  // TimeTravelManager (Item 6 markers)
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/emulatorcontext.h>
 #include <json/json.h>
 #include <common/stringhelper.h>
 
@@ -549,11 +551,42 @@ void EmulatorAPI::writeMemory(const HttpRequestPtr& req, std::function<void(cons
     // Write data
     Json::Value& data = (*body)["data"];
     size_t bytesWritten = 0;
+
+    // Phase 2 Item 6 — record a debugger-edit marker before the write
+    // executes. One marker per API call, regardless of byte count. The
+    // marker is a no-op unless a TTD session is Recording.
+    EmulatorContext* ctx = emulator->GetContext();
+
+    // Thread safety: DirectWriteToZ80Memory now mirrors MemoryWriteDebug's
+    // call to TTDDirtyTracker::MarkDirty when TTD is enabled. The dirty
+    // bitmap is documented as emulator-thread-only (ttd_dirty_tracker.h),
+    // so we must pause the Z80 thread before writing when recording is
+    // active. The cost is one paused frame boundary (~20 ms worst case);
+    // a no-op when no session is recording.
+    const bool ttdRecording = ctx && ctx->pTimeTravelManager
+                              && ctx->pTimeTravelManager->IsRecording();
+    const bool wasRunning = ttdRecording && emulator->IsRunning() && !emulator->IsPaused();
+    if (wasRunning)
+    {
+        emulator->Pause(false);
+        emulator->WaitForPauseConfirmation(1000);
+    }
+
+    if (ctx && ctx->pTimeTravelManager)
+        ctx->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::DebuggerEdit, "WebAPI memory write");
+
     for (Json::ArrayIndex i = 0; i < data.size(); i++)
     {
         memory->DirectWriteToZ80Memory(address + i, static_cast<uint8_t>(data[i].asUInt()));
         bytesWritten++;
     }
+
+    // Resume if we paused. Use broadcast=false to avoid spurious UI flicker —
+    // the caller did not ask to pause, and the framebuffer did not change
+    // in a way the periodic refresh won't pick up.
+    if (wasRunning)
+        emulator->Resume(false);
 
     Json::Value ret;
     ret["success"] = true;
