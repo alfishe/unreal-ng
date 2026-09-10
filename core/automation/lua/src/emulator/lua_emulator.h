@@ -1163,12 +1163,15 @@ public:
         // Disassembly
         lua.set_function("disasm", [this](sol::optional<int> address, sol::optional<int> count) -> sol::table {
             sol::table result = _lua->create_table();
-            if (!_emulator) return result;
-            auto* ctx = _emulator->GetContext();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return result;
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pDebugManager || !ctx->pDebugManager->GetDisassembler()) return result;
             
             Z80Disassembler* disasm = ctx->pDebugManager->GetDisassembler().get();
             Memory* memory = ctx->pMemory;
+            Z80* z80 = ctx->pCore->GetZ80();
+            LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
             
             uint16_t addr = address.value_or(-1) < 0 ? ctx->pCore->GetZ80()->pc : static_cast<uint16_t>(address.value_or(0));
             int cnt = count.value_or(10);
@@ -1184,7 +1187,7 @@ public:
                 
                 uint8_t cmdLen = 0;
                 DecodedInstruction decoded;
-                std::string mnemonic = disasm->disassembleSingleCommand(buffer, addr, &cmdLen, &decoded);
+                std::string mnemonic = disasm->disassembleSingleCommandWithRuntime(buffer, addr, &cmdLen, z80, memory, &decoded);
                 if (cmdLen == 0) cmdLen = 1;
                 
                 sol::table instr = _lua->create_table();
@@ -1198,9 +1201,41 @@ public:
                 instr["bytes"] = hexBytes;
                 instr["mnemonic"] = mnemonic;
                 instr["size"] = cmdLen;
-                if (decoded.hasJump || decoded.hasRelativeJump) {
-                    instr["target"] = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
+                
+                // Label at the instruction address itself (e.g. jump destination marker)
+                if (labelMgr) {
+                    auto label = labelMgr->GetLabelByZ80Address(addr);
+                    if (label && !label->name.empty())
+                        instr["label"] = label->name;
                 }
+                
+                // Target address for jumps/calls. Indirect targets (JP (HL), JP (IX)) are only
+                // known at runtime - the field is omitted when the target could not be resolved
+                if (decoded.hasJump || decoded.hasRelativeJump) {
+                    uint16_t target = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
+                    if (!decoded.hasIndirect || decoded.hasRuntime) {
+                        instr["target"] = target;
+                        
+                        if (labelMgr) {
+                            auto targetLabel = labelMgr->GetLabelByZ80Address(target);
+                            if (targetLabel && !targetLabel->name.empty())
+                                instr["targetLabel"] = targetLabel->name;
+                        }
+                    }
+                }
+                
+                // Effective memory address for indexed (IX/IY+d) instructions - requires runtime registers
+                if (decoded.hasDisplacement && decoded.hasRuntime) {
+                    instr["displacement"] = decoded.displacement;
+                    instr["effectiveAddress"] = decoded.displacementAddr;
+                    
+                    if (labelMgr) {
+                        auto effectiveLabel = labelMgr->GetLabelByZ80Address(decoded.displacementAddr);
+                        if (effectiveLabel && !effectiveLabel->name.empty())
+                            instr["effectiveAddressLabel"] = effectiveLabel->name;
+                    }
+                }
+                
                 result[idx++] = instr;
                 addr += cmdLen;
             }
@@ -1210,12 +1245,14 @@ public:
         // Physical page disassembly
         lua.set_function("disasm_page", [this](const std::string& type, int page, sol::optional<int> offset, sol::optional<int> count) -> sol::table {
             sol::table result = _lua->create_table();
-            if (!_emulator) return result;
-            auto* ctx = _emulator->GetContext();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return result;
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pDebugManager || !ctx->pDebugManager->GetDisassembler()) return result;
             
             Z80Disassembler* disasm = ctx->pDebugManager->GetDisassembler().get();
             Memory* memory = ctx->pMemory;
+            LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
             
             bool isROM = (type == "rom");
             uint8_t* pageBase = isROM ? memory->ROMPageHostAddress(static_cast<uint8_t>(page)) 
@@ -1253,9 +1290,29 @@ public:
                 instr["bytes"] = hexBytes;
                 instr["mnemonic"] = mnemonic;
                 instr["size"] = cmdLen;
-                if (decoded.hasJump || decoded.hasRelativeJump) {
-                    instr["target"] = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
+                
+                // Label at the instruction offset itself (e.g. jump destination marker)
+                if (labelMgr) {
+                    auto label = labelMgr->GetLabelByZ80Address(currentOffset);
+                    if (label && !label->name.empty())
+                        instr["label"] = label->name;
                 }
+                
+                // Target address for jumps/calls. Static view has no runtime registers, so indirect
+                // targets (JP (HL), JP (IX)) can not be resolved and the field is omitted
+                if (decoded.hasJump || decoded.hasRelativeJump) {
+                    uint16_t target = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
+                    if (!decoded.hasIndirect) {
+                        instr["target"] = target;
+                        
+                        if (labelMgr) {
+                            auto targetLabel = labelMgr->GetLabelByZ80Address(target);
+                            if (targetLabel && !targetLabel->name.empty())
+                                instr["targetLabel"] = targetLabel->name;
+                        }
+                    }
+                }
+                
                 result[idx++] = instr;
                 currentOffset += cmdLen;
             }

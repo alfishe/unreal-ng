@@ -622,9 +622,12 @@ void Core::EnableTurboMode(bool withAudio)
 
     // Always mute audible output in turbo mode to avoid chipmunk sounds
     // Audio generation may still occur if withAudio=true (for recording)
+    // Drop to the low-quality DSP path as well: HQ is pure CPU cost at turbo speed.
+    // The user's soundhq setting is not modified - it comes back when turbo ends.
     if (_context->pSoundManager)
     {
         _context->pSoundManager->mute();
+        _context->pSoundManager->setTurboLowQualityOverride(true);
     }
 
     MLOGINFO("Core::EnableTurboMode - Turbo mode enabled (audio generation: %s, audible: MUTED)",
@@ -638,10 +641,11 @@ void Core::DisableTurboMode()
 {
     _context->config.turbo_mode = false;
 
-    // Restore audible output
+    // Restore audible output and the previous DSP quality
     if (_context->pSoundManager)
     {
         _context->pSoundManager->unmute();
+        _context->pSoundManager->setTurboLowQualityOverride(false);
     }
 
     MLOGINFO("Core::DisableTurboMode - Turbo mode disabled, audio unmuted");
@@ -675,6 +679,9 @@ void Core::CPUFrameCycle()
     // MLOGINFO("tState counter after the frame: %d", t);
 
     AdjustFrameCounters();
+
+    // Sync memory content to disk (if shared memory mapping is enabled)
+    _memory->SyncToDisk();
 }
 
 /// Perform corrections after each frame rendered

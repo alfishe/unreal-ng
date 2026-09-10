@@ -175,15 +175,31 @@ void Covox::portDeviceOutMethod(uint16_t port, uint8_t value)
     int32_t deltaL = newL - _lastL;
     int32_t deltaR = newR - _lastR;
 
-    // Insert band-limited steps at the exact T-state position
-    if (deltaL != 0)
-        blip_add_delta(_blipL, currentTState, deltaL);
-    if (deltaR != 0)
-        blip_add_delta(_blipR, currentTState, deltaR);
+    // Insert band-limited steps at the exact T-state position (not while turbo
+    // suppresses synthesis - the DAC state above is still tracked)
+    if (!_synthesisSuppressed)
+    {
+        if (deltaL != 0)
+            blip_add_delta(_blipL, currentTState, deltaL);
+        if (deltaR != 0)
+            blip_add_delta(_blipR, currentTState, deltaR);
+    }
 
     // Update tracked state
     _lastL = newL;
     _lastR = newR;
+}
+
+void Covox::setSynthesisSuppressed(bool suppressed)
+{
+    if (_synthesisSuppressed == suppressed)
+        return;
+    _synthesisSuppressed = suppressed;
+    if (!suppressed)
+    {
+        if (_blipL) blip_clear(_blipL);
+        if (_blipR) blip_clear(_blipR);
+    }
 }
 
 /// endregion </Port interface>

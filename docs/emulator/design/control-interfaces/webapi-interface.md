@@ -250,6 +250,36 @@ GET /api/v1/emulator/{id}/disasm              Disassemble Z80 code (?address=&co
 GET /api/v1/emulator/{id}/disasm/page         Disassemble from physical page (?type=&page=&offset=&count=)
 ```
 
+#### Disassembly Response
+
+Each instruction entry contains the following fields (optional fields are omitted when not applicable):
+
+| Field | Description |
+| :--- | :--- |
+| `address` | Z80 address of the instruction (first prefix/opcode byte) |
+| `bytes` | Instruction bytes as uppercase hex string |
+| `mnemonic` | Formatted disassembly. When a label exists for a jump/call/memory target, both the label and the address are printed: `call TEST_ROUTINE (#8010)` |
+| `size` | Instruction length in bytes (1-4, includes prefixes) |
+| `label` | Label at the instruction address itself, if any |
+| `target` | Resolved jump/call target address (JR/DJNZ targets are computed as `address + size + signed offset`). Omitted for indirect jumps (`jp (hl)`/`jp (ix)`/`jp (iy)`) unless runtime registers were available to resolve them |
+| `targetLabel` | Label at `target`, if any |
+| `displacement` | Signed IX/IY displacement (`-128..127`) for indexed instructions; requires runtime registers |
+| `effectiveAddress` | Effective address (`IX+d`/`IY+d`) for indexed instructions; requires runtime registers |
+| `effectiveAddressLabel` | Label at `effectiveAddress`, if any |
+
+`/disasm` decodes with live runtime context (registers and memory), so runtime-dependent fields are populated. `/disasm/page` performs static decoding from a physical page, so `displacement`/`effectiveAddress` are omitted there.
+
+**Example:**
+```json
+{
+  "instructions": [
+    {"address": 32768, "bytes": "CD1080", "mnemonic": "call TEST_ROUTINE (#8010)", "size": 3, "target": 32784, "targetLabel": "TEST_ROUTINE"},
+    {"address": 32771, "bytes": "DD46FB", "mnemonic": "ld b,(ix-#05)", "size": 3, "displacement": -5, "effectiveAddress": 65531, "effectiveAddressLabel": "BUFFER_END"},
+    {"address": 32774, "bytes": "18F8", "mnemonic": "jr TEST_START (#8000)", "size": 2, "target": 32768, "targetLabel": "TEST_START"}
+  ]
+}
+```
+
 #### Physical Page Types
 - `ram` - RAM pages (0-255)
 - `rom` - ROM pages (0-63)
@@ -1046,11 +1076,6 @@ curl -X POST http://localhost:8090/api/v1/emulator/$ID/tape/import \
      -d '{"sourcePath": "recording.wav", "target": "tzx", "outputPath": "imported.tzx"}'
 ```
 ## Planned Endpoints (Not Yet Implemented)
-
-### Disassembly
-```
-GET /api/v1/emulator/{id}/disassemble?address=0x8000&count=10
-```
 
 ### Media Operations (Implemented Separately)
 ```

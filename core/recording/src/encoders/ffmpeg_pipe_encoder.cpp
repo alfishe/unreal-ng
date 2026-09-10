@@ -1,6 +1,7 @@
 #include "ffmpeg_pipe_encoder.h"
 #include "ffmpeg_probe.h"
 #include "emulator/video/screen.h"
+#include "common/threadhelper.h"
 
 #include <algorithm>
 #include <chrono>
@@ -199,15 +200,22 @@ bool FFmpegPipeEncoder::Start(const std::string& filename, const EncoderConfig& 
     // Drain stderr for the lifetime of the process (returns at EOF)
     _diagnostics.clear();
     _stderrThread = std::thread([this]() {
+        ThreadHelper::setThreadName("ffmpeg-stderr");
         _diagnostics = _ffmpegProcess.readAllStderr();
     });
 
     // Spawn one writer thread per pipe (see header note — required to avoid
     // deadlocking against ffmpeg's stream interleaving)
     if (_hasVideo)
-        _videoThread = std::thread(&FFmpegPipeEncoder::videoWriterMain, this);
+        _videoThread = std::thread([this]() {
+            ThreadHelper::setThreadName("ffmpeg-video");
+            videoWriterMain();
+        });
     if (_hasAudio)
-        _audioThread = std::thread(&FFmpegPipeEncoder::audioWriterMain, this);
+        _audioThread = std::thread([this]() {
+            ThreadHelper::setThreadName("ffmpeg-audio");
+            audioWriterMain();
+        });
 
     _isRecording = true;
     _framesEncoded = 0;

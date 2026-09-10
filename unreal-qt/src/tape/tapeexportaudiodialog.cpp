@@ -21,6 +21,8 @@
 #include <QStandardItemModel>
 #include <QVBoxLayout>
 
+#include "common/threadhelper.h"
+
 namespace
 {
 constexpr int FORMAT_WAV = 0;
@@ -244,6 +246,7 @@ void TapeExportAudioDialog::onStart()
     _statusLabel->setText(tr("Rendering…"));
 
     _worker = std::thread([this, request]() {
+        ThreadHelper::setThreadName("tape-export");
         _result = RenderTapeToAudio(request);
         QMetaObject::invokeMethod(this, [this]() { onRenderFinished(); }, Qt::QueuedConnection);
     });

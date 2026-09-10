@@ -134,7 +134,7 @@ TEST_F(EmulatorSaveDisk_Test, Save_Trd_RefusedByGeometry_RetargetsToUdi)
     auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
     while (notifications.load() == 0 && std::chrono::steady_clock::now() < deadline)
     {
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        std::this_thread::sleep_for(std::chrono::microseconds(250));
     }
 
     messageCenter.RemoveObserverById(NC_FDD_DISK_SAVE_RETARGETED, callbackId);

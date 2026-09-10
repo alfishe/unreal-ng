@@ -189,6 +189,13 @@ protected:
     bool _feature_sound_enabled = true;
     bool _feature_soundhq_enabled = true;
 
+    /// Turbo mode forces the low-quality DSP path without touching the user's
+    /// `soundhq` feature state; clearing the override restores the previous quality
+    bool _turboLowQualityOverride = false;
+
+    /// Per-frame cache: turbo mode with audio not requested and no recording in progress
+    bool _synthesisSuppressed = false;
+
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -206,6 +213,21 @@ public:
     void reset();
     void mute();
     void unmute();
+
+    /// Force low-quality DSP while turbo mode is on (audio is muted anyway, and the
+    /// HQ FIR / oversampling chain is pure CPU cost at 50x speed). The `soundhq`
+    /// feature itself is left untouched, so leaving turbo re-enables the previous state.
+    void setTurboLowQualityOverride(bool enabled);
+    bool isTurboLowQualityOverride() const { return _turboLowQualityOverride; }
+
+    /// Effective DSP quality: the user's `soundhq` feature unless turbo overrides it
+    bool isHQActive() const { return _feature_soundhq_enabled && !_turboLowQualityOverride; }
+
+    /// True while no audio is synthesised at all (turbo mode without audio request and
+    /// not recording): AY / beeper / Covox / tape edge rendering is skipped, register and
+    /// level state is still tracked so program-visible behaviour is unchanged.
+    /// Evaluated once per frame in handleFrameStart.
+    bool isSynthesisSuppressed() const { return _synthesisSuppressed; }
 
     const AudioFrameDescriptor& getAudioBufferDescriptor();
     Beeper& getBeeper();

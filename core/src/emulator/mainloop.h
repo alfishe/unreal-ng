@@ -45,9 +45,33 @@ protected:
     /// region <Turbo render decimation>
 public:
     /// While turbo mode is active (and no recording is in progress) only 1 of
-    /// every TURBO_RENDER_DECIMATION frames performs rendering work. Public so
-    /// tests can align their expectations with the cadence.
+    /// every N frames performs rendering work. N starts at this default and, when
+    /// adaptive decimation is on, follows the measured turbo frame rate so the
+    /// rendered cadence stays within [target, 2 x target) frames per second
+    /// (5008 fps on a 50.08 Hz machine -> every 100th frame). Public so tests can
+    /// align their expectations with the fixed cadence.
     static constexpr uint64_t TURBO_RENDER_DECIMATION = 50;
+    static constexpr uint64_t TURBO_RENDER_DECIMATION_MAX = 4096;
+    static constexpr double TURBO_RATE_SAMPLE_SECONDS = 0.5;
+
+    /// Decimation for a measured turbo rate, clamped to [1, TURBO_RENDER_DECIMATION_MAX].
+    /// With a display bound (maxRenderFps > target): N = ceil(measured / maxRenderFps), so the
+    /// rendered rate is <= the display rate and > half of it (5008 fps on a 120 Hz panel ->
+    /// every 42nd frame, 119 rendered fps). Without one: N = floor(measured / target), so the
+    /// rendered rate is in [target, 2 x target).
+    static uint64_t ComputeTurboRenderDecimation(double measuredFps, double targetFps, double maxRenderFps = 0.0);
+
+    /// Upper bound for the rendered rate in turbo mode - the display's refresh rate (or the
+    /// top of its VRR range), supplied by the host UI. 0 = no display bound (2 x target rule).
+    void SetTurboRenderMaxFps(double maxFps) { _turboRenderMaxFps = maxFps > 0.0 ? maxFps : 0.0; }
+    double GetTurboRenderMaxFps() const { return _turboRenderMaxFps; }
+
+    /// Adaptive decimation (default on). Tests that assert the fixed cadence turn it off.
+    void SetTurboRenderAdaptive(bool adaptive) { _turboRenderAdaptive = adaptive; }
+    bool IsTurboRenderAdaptive() const { return _turboRenderAdaptive; }
+    uint64_t GetTurboRenderDecimation() const { return _turboRenderDecimation; }
+    /// Emulated frames per second measured while in turbo mode (0 until the first sample)
+    double GetTurboMeasuredFps() const { return _turboMeasuredFps; }
 
 protected:
     /// Computed once per frame in OnFrameStart; gates per-frame rendering work
@@ -59,6 +83,18 @@ protected:
     /// one or more skipped frames needs Screen::ResetPrevTstate() so DrawPeriod
     /// starts the beam at t=0 instead of a stale end-of-frame position.
     bool _lastFrameRendered = true;
+
+    bool _turboRenderAdaptive = true;
+    double _turboRenderMaxFps = 0.0;
+    uint64_t _turboRenderDecimation = TURBO_RENDER_DECIMATION;
+    double _turboMeasuredFps = 0.0;
+    bool _turboRateSampling = false;
+    std::chrono::steady_clock::time_point _turboRateSampleTime{};
+    uint32_t _turboRateSampleFrame = 0;
+
+    /// Sample the turbo frame rate (wall clock vs. frame counter) and refresh
+    /// _turboRenderDecimation every TURBO_RATE_SAMPLE_SECONDS; resets when turbo ends
+    void UpdateTurboRenderDecimation(bool turboMode, const CONFIG& config);
     /// endregion </Turbo render decimation>
     /// endregion </Fields>
 
