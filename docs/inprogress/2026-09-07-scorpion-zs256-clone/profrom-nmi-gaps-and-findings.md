@@ -14,45 +14,35 @@ is graded in §5.
 
 ## 1. Root cause (VERIFIED)
 
-**The Scorpion magic-button NMI is missing the "PC must be in RAM" acceptance gate that
-both reference emulators implement. Without it the NMI fires while the CPU is executing
-ROM, and on a ProfROM machine that ROM is often an extension plane whose `#0066` handler
-is a dead border-flash loop — the hang.**
+**The magic-button NMI maps the entry ROM page of whatever ProfROM plane is current.
+The service monitor exists only in plane 0. Whenever the firmware is in an extension
+plane (1-3) - which it is after the 128 menu times out, and during the boot ROM-disk
+scan - `#0066` is fetched from that plane and is a dead border-flash stub. That is the
+yellow/black stripes and the hang.**
 
-- The magic button (`Emulator::RequestMNI`) pulses /NMI, vectoring the Z80 to `#0066` of
-  whatever ROM plane is mapped at that instant.
-- Plane 0 holds the real service monitor. Extension planes 1–3 hold ROM-disk tools; per
-  the ProfROM contract (`materials/Scorpion_ProfROM_Paging.md` §4 rule 6) their `#0066`
-  is only a "wrong plane" indicator — a border flash:
+- `Emulator::RequestMNI` arms `scorpionDosTrigger` -> page 3 **of the current plane**
+  (`ResolveScorpionRomBases(state.profrom_bank)`), then pulses /NMI -> `#0066`.
+- Plane 0: page-3 `#0066` -> `#2A56` -> `#0807` -> `OUT (#1FFD),#12` -> plane-0 monitor. Works.
+- Planes 1-3: every page's `#0066` is the firmware's "wrong plane" stub
+  (`materials/Scorpion_ProfROM_Paging.md` §4 rule 6):
 
   ```
-  #0066:  3E 06   LD A,#06
+  #0066:  3E 06   LD A,#06        ; yellow
           D3 FE   OUT (#FE),A
-          AF      XOR A
+          AF      XOR A           ; black
           D3 FE   OUT (#FE),A
-          18 F7   JR #0066        ; infinite DI loop — the hang
+          18 F7   JR #0066        ; infinite DI loop - stripes, no keyboard
   ```
 
-- During the ~1.5–3.5 s (emulated) boot, the firmware runs a cross-plane ROM-disk scan
-  and executes from planes 1–3 (`materials`/live trace: PC in `#0300`-page with active
-  ROM page 6/7 = plane 1). If the button is taken then, the NMI lands on that plane's
-  border-flash stub. The loop is `DI`, so the frame-interrupt keyboard-scan escape
-  (`#0038 → #0114` in plane 1) never runs — hence "no keyboard, interrupts disabled".
+- The loop is `DI`, so the frame-interrupt keyboard scan can never run: "no keyboard,
+  interrupts disabled".
 
-**Both reference emulators prevent this by refusing the magic NMI while PC is in ROM:**
-
-- **ZXMAK2** (`MemoryScorpion256.cs` `BusNmiRq`):
-  `e.Cancel = (m_cpu.regs.PC & 0xC000) == 0;` — cancel whenever `PC < #4000`.
-- **UnrealSpeccy** (`emulkeys.cpp` `main_nmidos` + `z80_main.inl` `z80loop`):
-  `if (Scorpion && !(flags & CF_TRDOS) && pc < 0x4000) { nmi_pending = frame*50; return; }`
-  then fire `m_nmi(RM_DOS)` only once `pc >= 0x4000` (drop after the countdown).
-
-**Our build removed this guard on a mistaken rationale.** `implementation-plan.md:229`:
-*"keep `pc > 0x4000` Scorpion guard **out** (MNI latch handles ROM selection; the
-original guard applied to a different NMI source)."* The guard is **not** about ROM
-selection — it prevents the NMI from being taken while the CPU executes ROM, so the
-monitor is only entered from user RAM where plane 0 is the stable ROM. Removing it is the
-defect.
+The plane register itself is correct (strobe, table and gate match the GAL and ZXMAK2,
+§4). The defect is that the button does not select plane 0 before mapping the entry
+page. Both reference emulators additionally refuse the magic NMI while `PC < #4000`
+(ZXMAK2 `BusNmiRq` cancel; UnrealSpeccy `main_nmidos` defer) - a guard this build
+removed (`implementation-plan.md:229`); with plane-0 selection in place that guard is
+optional (§6.2).
 
 ---
 
@@ -74,14 +64,10 @@ read PC and the `#0101` plane signature 0.7 s later:
 - Base `SCORPION` (single plane) cannot hit this: its only service page is the monitor,
   so `#0066` always lands on it. Verified: base MNI enters and exits cleanly (E2E-3).
 
-**Open discrepancy (2026-09-10):** the user reports a *100 %* hang in the GUI when
-pressing MNI at the idle 128 menu, with the 4.01 service menu displayed. Over the WebAPI
-this exact case is reproducibly **working**: 12/12 idle presses enter the monitor, and
-Down/Up move the highlight, Enter opens a submenu (962 screen bytes change, code enters
-plane 1), Space/1 react — with default, 256 KB and 1024 KB RAM, with and without port
-trace. GUI and WebAPI keys converge on the same `Keyboard::PressKey` matrix path and the
-GUI ignores OS autorepeat, so the divergence is not yet located; it needs a live GUI
-reproduction inspected over the WebAPI (see §7 step 5).
+**GUI "100 % hang at the 128 menu" - resolved:** the menu is not idle. After ~10 s
+without a key it times out and the firmware moves into plane 1 and stays there
+(timeline in §6.0). A press after that maps plane-1 page 7 -> stripes, every time. The
+headless idle presses above were all made within 6-15 s, before the timeout.
 
 Why a press can still land mid-boot "after the menu": in the GUI the emulator can run below real time
 (audio underruns are visible in the app log), so the boot scan finishes later in
@@ -106,7 +92,7 @@ key-injection path holds keys long enough.
 
 | Mechanism | ZXMAK2 | UnrealSpeccy | This build |
 |---|---|---|---|
-| **Magic-NMI PC gate** | cancel if `PC<#4000` | defer until `pc>=#4000`, drop after 50 frames | **absent (bug)** |
+| **Magic-NMI PC gate** | cancel if `PC<#4000` | defer until `pc>=#4000`, drop after 50 frames | absent (optional once §6.1 is in) |
 | ProfROM plane strobe | `RdMemM1`+`RdMem`, mask `0xFFF0`, gate `SYSEN` | any read (dbg), 4 addr | `RdMem`+M1, mask `0xFFF0`, gate = service ROM mapped — matches ZXMAK2/GAL |
 | DOS-session leave | `SubscribeRdMemM1` (M1 only) | `if (m1 && flgDOS && RAM)` | any read `>=#4000` (no M1 gate) |
 
@@ -120,7 +106,8 @@ hardware-faithful one; the transition table matches all references.
 
 | Claim | Status | Note |
 |---|---|---|
-| Missing `pc>=#4000` magic-NMI gate → NMI into extension-plane `#0066` | **VERIFIED (§1–2)** | The root cause. 8/8 mid-boot, 0/12 idle. |
+| Magic NMI maps the current (non-zero) plane's `#0066` stub | **VERIFIED (§1, §6.0)** | The root cause. 8/8 mid-boot, 100 % after menu timeout, 0/12 in plane 0. |
+| Missing `pc>=#4000` magic-NMI gate | **VERIFIED divergence, optional** | References have it; unnecessary once plane 0 is selected on the button. |
 | Keyboard needs long holds (`#E051` debounce) | **VERIFIED (§3)** | Real, compounding, not the hang. |
 | DOS-trigger release should require M1 (`isExecution`) | **PLAUSIBLE, not the cause** | Code does lack the M1 gate and references gate on M1; a legitimate fidelity fix, but the `#0814` crash it predicted was never observed. |
 | ProfROM strobe should be data-only + mask `0xFFF3` | **REFUTED** | Contradicts the GAL and ZXMAK2; our `0xFFF0`/M1 form is correct. `#0101` read = selector 0 = hold, no plane change. |
@@ -131,99 +118,98 @@ hardware-faithful one; the transition table matches all references.
 
 ## 6. Fix plan (concrete)
 
-Restore the reference-emulator gate: **the Scorpion magic NMI is accepted only when the
-CPU is executing from RAM (`PC >= #4000`); while PC is in ROM it is held pending.** This
-guarantees the monitor is entered from user code, where plane 0 is the stable ROM, and
-makes the extension-plane `#0066` unreachable by the button.
+> **Status 2026-09-10: §6.1 applied in the working tree** (`emulator.cpp` `RequestMNI`:
+> `GetScorpionRomWindow().Reset(state)` before arming the trigger on `MM_PROFSCORP`), plus
+> `ScorpionMniEmulator_Test.ProfRomMagicButtonSelectsQuadrantZero`
+> (`scorpionmni_test.cpp`). `ninja core-tests unreal-qt` clean, 0 warnings;
+> `--gtest_filter="*Scorpion*:*Nmi*:*Mni*"` 103/103 pass. Live: one post-fix MNI on a
+> fresh PROFSCORP instance entered the monitor (`#0101 = 02`, key Down moved the
+> highlight). GUI confirmation of the 100 % case (F11 after the menu timeout) still owed.
+> §6.2/§6.3 not applied.
 
-Because our `RequestMNI` arms the paging (`scorpionDosTrigger`) at *request* time, the
-whole action must be deferred together — otherwise the forced page would sit over
-still-running ROM code. Consolidate the paging into the accept, matching UnrealSpeccy's
-`m_nmi`.
+### 6.0 Where the machine really is when F11 is pressed (VERIFIED, headless timeline)
 
-### 6.1 Primary change — defer the magic NMI to a RAM boundary
+The "idle 128 menu" is not idle. Trajectory of a `PROFSCORP` boot, no input
+(`pc` / active ROM page, sampled every 2 s):
 
-**a. Distinguish the magic NMI from a plain NMI.**
-Add a flag set by the magic path only, e.g. `Z80::_nmi_is_magic` (or a small enum on the
-pending count). `RequestNMI` (plain) leaves it clear; `RequestMNI` sets it.
+```
+ 2s  #031D  page 7   plane-1 DOS page   (boot ROM-disk scan)
+ 4s  #00E5  page 0   plane-0 ROM0
+ 6s  #3685  page 0   128 menu, plane 0            <- MNI works here (0/12 hang)
+14s  #075C  page 6   plane-1 service   (menu timed out; 4.01 menu loop)
+16s  #2883  page 2   plane-0 service   (4.01 menu render loop)
+26s  #11AB  page 5   plane-1 page 1    (ProfROM tool page - no "1982 Sinclair"
+                                        string, "Prof" string present; stays here)
+```
 
-**b. `Emulator::RequestMNI()` (`core/src/emulator/emulator.cpp:765`) — stop pre-paging.**
-Remove the immediate `scorpionDosTrigger = 1; UpdateZ80Banks();`. For Scorpion models
-just request a *magic* NMI; do the paging at accept time (6.1c). Keep the
-pause/​request/​resume guard. Non-Scorpion models keep plain-NMI semantics.
+After ~10 s without a key the 128 menu times out and the firmware moves into the
+ProfROM 4.01 menu, then into a plane-1 tool page, and stays in **plane 1**. A magic press
+there maps plane-1 page 7 and vectors to its `#0066` = the yellow/black stripe stub.
+The GUI hang is 100 % because by the time a user reaches for F11 the timeout has
+already fired; the headless runs pressed within 6-15 s and hit plane 0.
 
-**c. `Z80::ProcessInterrupts()` (`core/src/emulator/cpu/z80.cpp:707`) — gate + page at accept.**
-Replace the unconditional accept with:
+### 6.1 Primary fix - the magic NMI must map plane 0 (ROM-page mapping)
+
+`Emulator::RequestMNI()` (`core/src/emulator/emulator.cpp:765`) selects the entry page
+(`scorpionDosTrigger` -> page 3) **of whatever plane is current**. The service monitor
+and its `#0066` entry chain exist only in plane 0; planes 1-3 carry a border-flash stub
+at `#0066` of every page. So before mapping the entry page the button must select
+plane 0:
 
 ```cpp
-if (_nmi_pending_count > 0)
+if (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP)
 {
-    const bool magic = _nmi_is_magic;
-    const bool scorpion = (model == MM_SCORP || model == MM_PROFSCORP);
-
-    // Reference gate (ZXMAK2 BusNmiRq / UnrealSpeccy main_nmidos):
-    // the Scorpion magic button is taken only while the CPU runs from RAM.
-    // While PC is in ROM (boot scan / menu / monitor) hold it pending so the
-    // NMI can never vector into an extension plane's #0066 border-flash stub.
-    if (magic && scorpion && cpu.pc < 0x4000 && !(state.flags & CF_TRDOS))
+    if (config.mem_model == MM_PROFSCORP)
     {
-        if (--_nmi_magic_countdown == 0)   // e.g. seeded to 50*frame steps
-            _nmi_pending_count = 0;        // drop, like UnrealSpeccy
-        // else: leave pending, re-check next boundary
+        // Magic button: the monitor lives in quadrant 0 only. Select it before
+        // the entry page is mapped so #0066 is fetched from plane-0 page 3
+        // (firmware chain #0066 -> #2A56 -> #0807 -> OUT (#1FFD),#12 -> plane-0
+        // monitor). Emulator-side decision: hardware keeps the GAL plane, which
+        // is why planes 1-3 carry the border-flash #0066 stub; the emulator's
+        // button exists to reach the monitor, so it resets the plane.
+        _context->pMemory->GetScorpionRomWindow().Reset(state);   // profrom_bank = 0, p7EFD = 0
     }
-    else
-    {
-        _nmi_pending_count = 0;
-        if (magic && scorpion)             // page the monitor now, not at request
-        {
-            state.scorpionDosTrigger = 1;
-            _memory->UpdateZ80Banks();
-        }
-        // ... existing accept: HALT skip, 11T, push PC, pc=0x66, iff handling ...
-        _nmi_is_magic = false;
-        return true;
-    }
+    state.scorpionDosTrigger = 1;
+    _context->pMemory->UpdateZ80Banks();   // ResolveScorpionRomBases(0) + page 3 at #0000
 }
+_core->GetZ80()->RequestNonMaskedInterrupt();
 ```
 
-`_nmi_magic_countdown` is seeded when the magic NMI is requested (e.g. `50 * frames per
-frame` steps, per UnrealSpeccy). Dropping after the countdown matches hardware; omitting
-the countdown (defer indefinitely until RAM) matches ZXMAK2 and is also acceptable.
+`ScorpionRomWindow::Reset()` already exists (`scorpionromwindow.cpp`) and clears both the
+GAL state and the `#7EFD` window latch, so quadrant 0 is selected for 128 K-2 MB images
+alike. `UpdateScorpionBanks()` then calls `ResolveScorpionRomBases(0)` and maps page 3
+of quadrant 0. No other code path changes.
 
-**d. Checkpoint/TTD.** The magic-pending flag + countdown are CPU state that affects
-execution; add them to `TTDCpuState`/`machine_state_hash` alongside `nmi_in_progress`
-(`core/src/debugger/ttd/…`) so reverse-debug and divergence hashing stay coherent.
+Consequences to document (hardware-reference §9, design §4.2 "plane survives"):
+- Entering the monitor from inside a plane-1..3 tool now works and the monitor exit
+  returns to plane-0 BASIC/TR-DOS - which is what the firmware's own exit stubs do
+  anyway (`Scorpion_ProfROM_Paging.md` §4 rule 5).
+- Not hardware-literal: on real hardware a press inside an extension plane shows the
+  stripes. If a hardware-literal mode is ever wanted, gate the reset on a config flag.
 
-### 6.2 Idle-menu convenience (decision point)
+Also fix the stale claim in `hardware-reference §9` / `RequestMNI` comment: the button
+maps *page 3 of the current plane*, and that is exactly why it failed.
 
-With the pure gate, pressing the button while sitting in the 128 menu (PC in ROM, plane
-0) also defers until RAM runs — matching the references but changing today's behaviour,
-where an idle-menu press works immediately because plane 0 happens to be mapped. If
-keeping the idle-menu convenience is wanted, widen the accept to also fire when the
-current plane is 0 (safe ROM):
+### 6.2 Secondary hardening - reference PC gate (optional)
 
-```cpp
-if (magic && scorpion && cpu.pc < 0x4000
-    && _memory->CurrentProfRomPlane() != 0            // plane 0 = real monitor, safe
-    && !(state.flags & CF_TRDOS)) { /* defer */ }
-```
-
-This is a superset of the reference behaviour: it still blocks every extension-plane
-press (the hang) but keeps immediate entry when plane 0 is mapped. Recommended if the
-team wants F11 to work at the boot menu; otherwise use the plain reference gate (6.1c).
+ZXMAK2 cancels and UnrealSpeccy defers the magic NMI while `PC < #4000`. With 6.1 in
+place this is no longer needed to avoid the stripes; keep it out unless a hardware-
+literal mode is added, because at the 128 menu (`PC = #3683`, ROM) it would defer the
+button until RAM code runs.
 
 ### 6.3 Independent fidelity fix (optional, not the cause)
 
-M1-gate the magic DOS-trigger release to match Xpeccy/ZXMAK2, in `MemoryReadFast` and
+M1-gate the magic DOS-trigger release, matching Xpeccy/ZXMAK2, in `MemoryReadFast` and
 `MemoryReadDebug` (`core/src/emulator/memory/memory.cpp`):
 
 ```cpp
-if (_scorpionDosTriggerActive && isExecution && addr >= 0x4000) [[unlikely]] { … }
+if (_scorpionDosTriggerActive && isExecution && addr >= 0x4000) [[unlikely]] { ... }
 ```
 
 Do **not** change the ProfROM plane-strobe mask or add `!isExecution` to it (§4/§5).
-
----
+The Qt debugger reads only through `DirectReadFromZ80Memory` (verified in
+`disassemblerwidget.cpp`, `memory16kbwidget.cpp`, `stackwidget.cpp`, `debuggerwindow.cpp`),
+which never clocks the plane strobe - the debugger does not interfere with planes.
 
 ## 7. Verification protocol
 
@@ -233,13 +219,16 @@ Do **not** change the ProfROM plane-strobe mask or add `!isExecution` to it (§4
    the NMI is **not** taken and PC does not become `#0066`; then set `PC >= 0x4000`, step
    — assert the NMI is taken, `scorpionDosTrigger` armed, PC = `#0066`, `#C000` banking
    preserved.
-3. Live regression (the pre-fix failure): 8×, boot `PROFSCORP`, fire `…/nmi {"magic":true}`
-   ~2 s into boot (PC in `#03xx`, plane 1). Pre-fix: 8/8 border-flash at `#0066`.
-   Post-fix: 0/8 — the NMI defers, then enters the real monitor once RAM/plane-0 executes.
+3. Live regression (the pre-fix failure): boot `PROFSCORP`, wait 30 s (firmware now in
+   plane 1, page 5), fire `…/nmi {"magic":true}`. Pre-fix: yellow/black stripes, PC in
+   `#0066`-`#006D`. Post-fix: `#0101 = 02`, ROM page 2, monitor menu, keys work. Repeat at
+   2 s (mid-boot, plane 1): pre-fix 8/8 stripes, post-fix 0/8.
+   Unit test: `MM_PROFSCORP`, set `profrom_bank = 1`, `RequestMNI()`, step - assert
+   `profrom_bank == 0`, `#0000` maps quadrant-0 page 3, PC = `#0066`.
 4. Live sanity: at the settled 128 menu, MNI enters the monitor (`#0101 = 02`), a
    `frames=25` key hold advances the `#E116` ring and dispatches, and the documented exit
    returns to BASIC with `#C000` intact.
-5. GUI reproduction of the open §2 discrepancy: in unreal-qt, boot `PROFSCORP`, wait for
+5. (Resolved - see §6.0.) GUI reproduction notes: in unreal-qt, boot `PROFSCORP`, wait for
    the 128 menu, press F11, then hold a cursor key ≥1 s. Leave the instance running
    (not paused). Over the WebAPI on that instance record: registers (PC, IFF1), ROM
    `active_page`, `#0101`, whether PC sits in `#0066`–`#006D` (border-flash) or the

@@ -14,7 +14,9 @@
 ///        #1FFD latch nor the plane register is touched: the service bit still
 ///        outranks the trigger (the firmware entry trick runs OUT (#1FFD),#12
 ///        at TR-DOS #0033 and expects the service page to replace TR-DOS
-///        mid-chain), and the plane survives the whole session. The trigger
+///        mid-chain). On MM_PROFSCORP the button additionally selects
+///        quadrant 0 before mapping (the monitor and its entry chain live
+///        only there; planes 1-3 carry a border-flash stub at #0066). The trigger
 ///        releases on the first instruction FETCH (M1 cycle) from >= #4000 -
 ///        DD50.1 resets on /M1 & /MREQ & (A15 | A14) - while data reads and
 ///        writes never release it (the TR-DOS chain reads RAM at #C001 at
@@ -207,6 +209,53 @@ TEST(ScorpionMniEmulator_Test, RequestNmiLeavesLatchesAlone)
     z80->eipos = 0;
     EXPECT_TRUE(z80->ProcessInterrupts(false, 0, 0));
     EXPECT_EQ(z80->pc, 0x0066u);
+
+    EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetId());
+}
+
+/// @brief ProfROM: the button selects quadrant 0 before mapping the entry page.
+///        The service monitor exists only in plane 0; after the 128 boot menu
+///        times out the firmware parks in plane 1, whose every-page #0066 is the
+///        yellow/black "wrong plane" stub - pressing the button there hung the
+///        machine (profrom-nmi-gaps-and-findings.md 6.0/6.1)
+TEST(ScorpionMniEmulator_Test, ProfRomMagicButtonSelectsQuadrantZero)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::shared_ptr<Emulator> emulator = manager->CreateEmulatorWithModel("", "PROFSCORP", LoggerLevel::LogError);
+    if (!emulator)
+        GTEST_SKIP() << "PROFSCORP model emulator could not be created (ROM/config missing)";
+
+    EmulatorContext* context = emulator->GetContext();
+    EmulatorState& state = context->emulatorState;
+    Memory* memory = context->pMemory;
+    Z80* z80 = context->pCore->GetZ80();
+
+    if (context->temporary.profrom_mask == 0)
+        GTEST_SKIP() << "ProfROM image has a single quadrant - nothing to select";
+
+    const uint8_t q0Trdos = memory->ROMPageHostAddress(3)[0];                        // quadrant 0, page 3
+    const uint8_t q1Trdos = memory->ROMPageHostAddress(ROM_QUADRANT_PAGES + 3)[0];  // quadrant 1, page 3
+
+    // Park the machine in plane 1 (what the firmware does after the menu timeout)
+    state.profrom_bank = 1;
+    state.p7EFD = 0x00;
+    memory->UpdateZ80Banks();
+    ASSERT_EQ(memory->base_dos_rom[0], q1Trdos) << "precondition: quadrant 1 resolved";
+
+    emulator->RequestMNI();
+
+    EXPECT_EQ(state.profrom_bank, 0) << "the button selects quadrant 0";
+    EXPECT_EQ(state.p7EFD, 0) << "the #7EFD window latch is cleared with it";
+    EXPECT_EQ(state.scorpionDosTrigger, 1) << "DD50.1 armed";
+    EXPECT_EQ(memory->DirectReadFromZ80Memory(0x0000), q0Trdos)
+        << "#0000 maps quadrant-0 TR-DOS, not the plane-1 page";
+
+    z80->t = 100;
+    z80->eipos = 0;
+    EXPECT_TRUE(z80->ProcessInterrupts(false, 0, 0));
+    EXPECT_EQ(z80->pc, 0x0066u);
+    EXPECT_EQ(memory->DirectReadFromZ80Memory(0x0066), memory->ROMPageHostAddress(3)[0x66])
+        << "#0066 is fetched from quadrant-0 page 3 (the firmware entry chain)";
 
     EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetId());
 }

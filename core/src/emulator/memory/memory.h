@@ -150,6 +150,15 @@ protected:
     // one bool test on the CPU read path
     bool _scorpionDosTriggerActive = false;
 
+    /// Bus-cycle side effects of the Scorpion ProfROM silicon, applied before
+    /// the read byte is served (both DD41/DD50 hang off the memory-bus decode,
+    /// so no port/latch event exists to hang them on instead - see the
+    /// definition in memory.cpp). Called from MemoryReadFast/Debug behind a
+    /// single fused gate on the two cached bools; mutually exclusive by
+    /// construction (strobe: !isExecution && addr < #4000, release:
+    /// isExecution && addr >= #4000), so at most one rebuild per cycle
+    void ApplyScorpionReadCycle(uint16_t addr, bool isExecution);
+
 public:
     // Base addresses for memory classes
     inline uint8_t* RAMBase()

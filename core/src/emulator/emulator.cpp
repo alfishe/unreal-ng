@@ -787,6 +787,21 @@ void Emulator::RequestMNI()
     // the plain NMI pulse semantics apply
     if (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP)
     {
+        if (config.mem_model == MM_PROFSCORP)
+        {
+            // The service monitor and its #0066 entry chain exist only in ProfROM
+            // quadrant 0; every page of planes 1-3 carries the firmware's
+            // "wrong plane" stub at #0066 (LD A,6 / OUT (#FE) / XOR A / OUT (#FE) /
+            // JR - yellow/black stripes, DI forever). After the 128 boot menu times
+            // out the firmware parks in plane 1, so a button press there hung the
+            // machine. Select quadrant 0 (GAL state + #7EFD window) BEFORE the entry
+            // page is mapped so #0066 is always fetched from plane-0 page 3.
+            // Emulator-side decision: the GAL keeps its plane on /NMI (hardware
+            // shows the stripes), but this button exists to reach the monitor.
+            // See docs/inprogress/2026-09-07-scorpion-zs256-clone/profrom-nmi-gaps-and-findings.md 6.1
+            _context->pMemory->GetScorpionRomWindow().Reset(state);
+        }
+
         state.scorpionDosTrigger = 1;
         _context->pMemory->UpdateZ80Banks();
     }

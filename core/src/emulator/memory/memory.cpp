@@ -168,43 +168,56 @@ MemoryInterface* Memory::GetDebugMemoryInterface()
     return result;
 }
 
+/// Bus-cycle side effects of the ProfROM silicon (hardware-reference §5, §9).
+/// Both live in the memory read path because on the board they are wired to
+/// the memory-bus pins, not to any port or latch - the firmware switches
+/// ProfROM planes purely by READING addresses, so no OUT hook exists to hang
+/// this on instead:
+/// - GAL DD41 (read strobe): while the Service ROM is paged at #0000, a CPU
+///   data read (/M1 inactive) of the strobe grid - the four addresses with
+///   A1:A0 = 0 (#0100/#0104/#0108/#010C) - clocks the quadrant state machine
+///   BEFORE the byte is served, so the strobing read itself returns a
+///   post-switch byte (mid-instruction remap, hardware-reference §12.4).
+///   The exact 0xFFF3 grid and the !isExecution gate keep the monitor's own
+///   bookkeeping inert: the RST 30h dispatcher in RAM reads the plane
+///   signature at #0101 (LD HL,(#0101)) on every inter-plane call, and
+///   off-grid or fetched bytes must never clock the GAL (Xpeccy:
+///   (adr & 0xfff3) == 0x0100 && !m1)
+/// - DD50.1 (magic-button DOS trigger release): resets on an instruction-
+///   fetch cycle from the upper half - /M1 & /MREQ & (A15 | A14). Data reads
+///   never release it: the TR-DOS NMI chain reads RAM at #C001
+///   (LD HL,(#C001)) at #0814, before it latches the Service page at #0033,
+///   and that operand read must leave page 3 forced (Xpeccy requires m1;
+///   ZXMAK2 subscribes RdMemM1 only). Writes never release it either
+/// Both effects only CLOCK the state bits and rebuild through the regular
+/// UpdateScorpionBanks() mapper - no ad-hoc mapping happens here
+void Memory::ApplyScorpionReadCycle(uint16_t addr, bool isExecution)
+{
+    if (_scorpProfromActive && !isExecution && (addr & 0xFFF3) == 0x0100)
+    {
+        if (_scorpionRomWindow.OnRomRead(_context->emulatorState, _context->temporary, addr))
+            UpdateZ80Banks();
+    }
+
+    if (_scorpionDosTriggerActive && isExecution && addr >= 0x4000)
+    {
+        _context->emulatorState.scorpionDosTrigger = 0;
+        UpdateZ80Banks();
+    }
+}
+
 /// Implementation memory read method
 /// Used from: Z80::FastMemIf
 /// \param addr 16-bit address in Z80 memory space
 /// \return Byte read from Z80 memory
 uint8_t Memory::MemoryReadFast(uint16_t addr, bool isExecution)
 {
-    // ProfROM read strobe (design §4.3): while the Service ROM is paged at #0000,
-    // a CPU data read of the strobe grid - the four addresses with A1:A0 = 0
-    // (#0100/#0104/#0108/#010C) - advances the quadrant state machine
-    // BEFORE the byte is fetched, so operand bytes come from the post-switch
-    // quadrant (mid-instruction remap, hardware-reference §12.4). The GAL
-    // clocks only on a data read (/M1 inactive) and only on the exact grid:
-    // the monitor's RST 30h dispatcher in RAM reads the plane signature at
-    // #0101 (LD HL,(#0101)) on every inter-plane call, and off-grid or
-    // fetched bytes must never clock it (Xpeccy: (adr & 0xfff3) == 0x0100
-    // && !m1). Debugger-side reads (DirectRead/MapZ80AddressToPhysicalAddress)
-    // never pass here and so never advance the machine. Cost when inactive:
-    // one cached-bool test
-    if (_scorpProfromActive && !isExecution && (addr & 0xFFF3) == 0x0100) [[unlikely]]
-    {
-        if (_scorpionRomWindow.OnRomRead(_context->emulatorState, _context->temporary, addr))
-            UpdateZ80Banks();
-    }
-
-    // Magic-button DOS trigger release (hardware-reference §9): DD50.1 resets
-    // on an instruction-fetch cycle from the upper half - the DD50 decode is
-    // /M1 & /MREQ & (A15 | A14). Data reads never release it: the TR-DOS NMI
-    // chain reads RAM at #C001 (LD HL,(#C001)) at #0814, before it latches
-    // the Service page at #0033, and that operand read must leave page 3
-    // forced (Xpeccy requires m1; ZXMAK2 subscribes RdMemM1 only). Writes
-    // never release it either. The rebuild runs before the byte is served,
-    // exactly like the hardware re-mux
-    if (_scorpionDosTriggerActive && isExecution && addr >= 0x4000) [[unlikely]]
-    {
-        _context->emulatorState.scorpionDosTrigger = 0;
-        UpdateZ80Banks();
-    }
+    // Scorpion ProfROM bus-cycle remaps (hardware-reference §5, §9): gated on
+    // a single fused branch so every other model and every unarmed state pays
+    // one predicted test per read. See ApplyScorpionReadCycle for why the
+    // reaction belongs to the read cycle itself
+    if (_scorpProfromActive | _scorpionDosTriggerActive) [[unlikely]]
+        ApplyScorpionReadCycle(addr, isExecution);
 
     // Determine CPU bank (from address bits 14 and 15)
     uint8_t bank = (addr >> 14) & 0b0000'0011;
@@ -222,24 +235,11 @@ uint8_t Memory::MemoryReadFast(uint16_t addr, bool isExecution)
 /// \return Byte read from Z80 memory
 uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
 {
-    // ProfROM read strobe (design §4.3) - same grid/isExecution gate and
-    // semantics as MemoryReadFast: single-stepping must drive the quadrant
-    // machine exactly like free-running execution, or breakpoints would
-    // desynchronise it
-    if (_scorpProfromActive && !isExecution && (addr & 0xFFF3) == 0x0100) [[unlikely]]
-    {
-        if (_scorpionRomWindow.OnRomRead(_context->emulatorState, _context->temporary, addr))
-            UpdateZ80Banks();
-    }
-
-    // Magic-button DOS trigger release - same M1-fetch-only gate and
-    // semantics as MemoryReadFast: single-stepping must release the trigger
-    // exactly like free-running execution
-    if (_scorpionDosTriggerActive && isExecution && addr >= 0x4000) [[unlikely]]
-    {
-        _context->emulatorState.scorpionDosTrigger = 0;
-        UpdateZ80Banks();
-    }
+    // Scorpion ProfROM bus-cycle remaps - same single fused gate as
+    // MemoryReadFast: single-stepping must clock the silicon exactly like
+    // free-running execution, or breakpoints would desynchronise it
+    if (_scorpProfromActive | _scorpionDosTriggerActive) [[unlikely]]
+        ApplyScorpionReadCycle(addr, isExecution);
 
     /// region <MemoryReadFast functionality>
 
