@@ -228,6 +228,21 @@ public:
     void handleFrameEnd();
     /// endregion </Emulation events>
 
+    /// region <Automation tap (MCP M7j)>
+public:
+    /// Install/remove the AY port-write log tap. Inert while sink == nullptr.
+    /// Called with the emulation thread parked (analyzer activation path).
+    void setLogSink(AYLogSink sink, void* context)
+    {
+        _logSink = sink;
+        _logSinkContext = context;
+    }
+
+protected:
+    AYLogSink _logSink = nullptr;
+    void* _logSinkContext = nullptr;
+    /// endregion </Automation tap>
+
     /// region <PortDevice interface methods>
 public:
     uint8_t portDeviceInMethod(uint16_t port) override;

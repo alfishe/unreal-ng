@@ -20,6 +20,10 @@ option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
 # GDB RSP server automation is OFF by default - the stub does not exist yet (GDB TDD G1).
 # Pass -DENABLE_GDB_AUTOMATION=ON at configure time once it lands.
 option(ENABLE_GDB_AUTOMATION "Enable GDB RSP server automation" OFF)
+option(ENABLE_DEZOG_AUTOMATION "Enable DeZog (DZRP) debug server automation" ON)
+option(ENABLE_ZESARUX_AUTOMATION "Enable ZEsarUX (ZRCP) debug server automation" ON)
+# MCP server automation shares the WebAPI drogon app; effective only when WebAPI is on
+option(ENABLE_MCP_AUTOMATION "Enable MCP server automation (requires WebAPI)" ON)
 
 # Recording support (audio/video capture)
 # Use option() instead of set(FORCE) so that command-line -DENABLE_RECORDING=OFF is respected
@@ -318,6 +322,9 @@ if (ENABLE_AUTOMATION)
         $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:ENABLE_WEBAPI_AUTOMATION>
         $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:ENABLE_CLI_AUTOMATION>
         $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:ENABLE_GDB_AUTOMATION>
+        $<$<BOOL:${ENABLE_DEZOG_AUTOMATION}>:ENABLE_DEZOG_AUTOMATION>
+        $<$<BOOL:${ENABLE_ZESARUX_AUTOMATION}>:ENABLE_ZESARUX_AUTOMATION>
+        $<$<BOOL:${ENABLE_MCP_AUTOMATION}>:ENABLE_MCP_AUTOMATION>
     )
 endif ()
 
@@ -369,8 +376,7 @@ if (INCLUDE_AUTOMATION)
         Qt6::Svg
         QHexView
 
-        unrealng::automation # This brings in core as PUBLIC dependency
-        $<$<BOOL:${INCLUDE_RECORDING}>:unrealng::recording>
+        unrealng::automation # This brings in core (and recording) as PUBLIC dependency
         ${CMAKE_DL_LIBS}
         Threads::Threads
     )
@@ -388,8 +394,7 @@ else ()
         Qt6::Svg
         QHexView
 
-        unrealng::core  # Keep this when automation is disabled
-        $<$<BOOL:${INCLUDE_RECORDING}>:unrealng::recording>
+        unrealng::core  # Keep this when automation is disabled (brings recording as PUBLIC dep)
         Threads::Threads
     )
 endif ()
@@ -571,6 +576,9 @@ message(STATUS "    ENABLE_PYTHON_AUTOMATION: ${ENABLE_PYTHON_AUTOMATION}")
 message(STATUS "    ENABLE_WEBAPI_AUTOMATION: ${ENABLE_WEBAPI_AUTOMATION}")
 message(STATUS "    ENABLE_CLI_AUTOMATION: ${ENABLE_CLI_AUTOMATION}")
 message(STATUS "    ENABLE_GDB_AUTOMATION: ${ENABLE_GDB_AUTOMATION}")
+message(STATUS "    ENABLE_DEZOG_AUTOMATION: ${ENABLE_DEZOG_AUTOMATION}")
+message(STATUS "    ENABLE_ZESARUX_AUTOMATION: ${ENABLE_ZESARUX_AUTOMATION}")
+message(STATUS "    ENABLE_MCP_AUTOMATION: ${ENABLE_MCP_AUTOMATION}")
 message(STATUS "  ENABLE_RECORDING: ${ENABLE_RECORDING}")
 message(STATUS "Settings:")
 message(STATUS "  PROJECT_NAME:        ${PROJECT_NAME}")
