@@ -221,8 +221,10 @@ TEST_F(Z80TestVerification, RunAllVectors)
     int failed = 0;
     int skipped = 0;
     
-    // Open file to dump C++ generated CRCs (ground truth)
-    std::string crc_dump_path = (TestPathHelper::findProjectRoot() / "tools/verification/z80/cpp_ground_truth_crcs.json").string();
+    // Open file to dump C++ generated CRCs (ground truth) - use scratch/ for temp artifacts
+    auto scratch_dir = TestPathHelper::findProjectRoot() / "scratch";
+    std::filesystem::create_directories(scratch_dir);
+    std::string crc_dump_path = (scratch_dir / "cpp_ground_truth_crcs.json").string();
     std::ofstream crc_dump(crc_dump_path);
     crc_dump << "{\n";
     crc_dump << "  \"generated_by\": \"C++ Z80 Emulator (Ground Truth)\",\n";
@@ -357,13 +359,15 @@ TEST_F(Z80TestVerification, RunAllVectors)
     crc_dump << "\n  ]\n";
     crc_dump << "}\n";
     crc_dump.close();
-    
+
     std::cout << "\n=== Z80Test Verification Results ===" << std::endl;
     std::cout << "Passed: " << passed << "/" << (NUM_VECTORS - skipped) << std::endl;
     std::cout << "Failed: " << failed << "/" << (NUM_VECTORS - skipped) << std::endl;
     std::cout << "Skipped: " << skipped << " (NEC/ST flavor tests)" << std::endl;
-    std::cout << "CRC dump written to: " << crc_dump_path << std::endl;
-    
+
+    // Clean up temp artifact after test completes
+    std::filesystem::remove(crc_dump_path);
+
     EXPECT_EQ(failed, 0) << "Some z80test cases failed";
 }
 

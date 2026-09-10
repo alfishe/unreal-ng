@@ -32,7 +32,7 @@ constexpr const char* kSettingsKey = "View/StatusBarVisible";
 constexpr int kPollIntervalMs = 200;
 constexpr int kFpsSampleIntervalMs = 1000;  // Readout update cadence
 constexpr size_t kFpsWindowSamples = 5;     // Average over the last ~4 s of samples
-constexpr double kMaxNormalFps = 50.1;      // Cap outside turbo mode: highest real rate is 50.08 Hz (69888 T at 3.5 MHz)
+constexpr double kMaxNormalFps = 52.0;      // Cap outside turbo mode; allows timing jitter around the ~50 Hz nominal rate
 }
 
 void StatusBarManager::notifyFrameRendered(uint32_t emulatorFrameCounter)

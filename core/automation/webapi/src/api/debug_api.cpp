@@ -62,7 +62,23 @@ void EmulatorAPI::step(const HttpRequestPtr& req, std::function<void(const HttpR
 {
     auto emulator = getEmulatorOrError(id, callback);
     if (!emulator) return;
-    
+
+    // Check run-control claim (GDB TDD §3.3 / 1A.7.2)
+    auto* ctx = emulator->GetContext();
+    if (ctx && ctx->IsRunControlClaimed())
+    {
+        auto state = ctx->GetRunControlState();
+        Json::Value error;
+        error["error"] = "Run-control held";
+        error["message"] = "Run-control held by " + state.surfaceLabel + ". Use that surface to step.";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     try
     {
         // Execute single instruction
@@ -105,7 +121,23 @@ void EmulatorAPI::steps(const HttpRequestPtr& req, std::function<void(const Http
 {
     auto emulator = getEmulatorOrError(id, callback);
     if (!emulator) return;
-    
+
+    // Check run-control claim (GDB TDD §3.3 / 1A.7.2)
+    auto* ctx = emulator->GetContext();
+    if (ctx && ctx->IsRunControlClaimed())
+    {
+        auto state = ctx->GetRunControlState();
+        Json::Value error;
+        error["error"] = "Run-control held";
+        error["message"] = "Run-control held by " + state.surfaceLabel + ". Use that surface to step.";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     try
     {
         auto json = req->getJsonObject();
@@ -153,7 +185,23 @@ void EmulatorAPI::stepOver(const HttpRequestPtr& req, std::function<void(const H
 {
     auto emulator = getEmulatorOrError(id, callback);
     if (!emulator) return;
-    
+
+    // Check run-control claim (GDB TDD §3.3 / 1A.7.2)
+    auto* ctx = emulator->GetContext();
+    if (ctx && ctx->IsRunControlClaimed())
+    {
+        auto state = ctx->GetRunControlState();
+        Json::Value error;
+        error["error"] = "Run-control held";
+        error["message"] = "Run-control held by " + state.surfaceLabel + ". Use that surface to step.";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     try
     {
         emulator->StepOver();
