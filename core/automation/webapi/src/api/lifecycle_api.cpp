@@ -591,6 +591,27 @@ void EmulatorAPI::resumeEmulator(const HttpRequestPtr& req, std::function<void(c
         return;
     }
 
+    // Check run-control claim (GDB TDD §3.3 / 1A.7.2)
+    auto emulator = manager->GetEmulator(id);
+    if (emulator)
+    {
+        auto* ctx = emulator->GetContext();
+        if (ctx && ctx->IsRunControlClaimed())
+        {
+            auto state = ctx->GetRunControlState();
+            Json::Value error;
+            error["error"] = "Run-control held";
+            error["message"] = "Run-control held by " + state.surfaceLabel + ". Use that surface to resume.";
+            error["emulator_id"] = id;
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k409Conflict);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+    }
+
     try
     {
         bool success = manager->ResumeEmulator(id);

@@ -261,6 +261,7 @@ public:
     void RunFrame(bool skipBreakpoints = true);                   // Run until next frame boundary
     void RunNFrames(unsigned frames, bool skipBreakpoints = true); // Run N complete frames
     void StepOver();                                              // Execute instruction, skip calls and subroutines
+    void StepOut();                                               // Run until the current subroutine returns (SP-tracking)
 
     // Cancel any pending step-over breakpoint (cleanup before starting a new step command)
     void CancelPendingStepOver();

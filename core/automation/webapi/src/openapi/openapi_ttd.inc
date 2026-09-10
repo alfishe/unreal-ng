@@ -1,7 +1,8 @@
     // Time-Travel Debug endpoints (parent TDD §10.4).
     //
     // Phase 2 surface (10 endpoints) + Phase 4 reverse-search (3 endpoints)
-    // + Phase 4 reverse-execution (2 endpoints) = 15 endpoints total,
+    // + Phase 4 reverse-execution (2 endpoints) + session restore via load
+    // (1 endpoint) = 16 endpoints total,
     // all exposed by core/automation/webapi/src/api/ttd_api.cpp.
     // The status endpoint also serves as a capability probe: it returns 200
     // with state="idle" and ttd_available=false when the TTD engine is not
@@ -301,6 +302,39 @@
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["responses"]["404"]["description"] =
         "Emulator instance not found";
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["responses"]["501"]["description"] =
+        "TTD engine not available in this build";
+
+    // =====================================================================
+    // POST /ttd/load — restore a dumped session
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/load"]["post"]["summary"] =
+        "Load TTD session from .ttd file (companion of dump)";
+    paths["/api/v1/emulator/{id}/ttd/load"]["post"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/load"]["post"]["description"] =
+        "Restores a session previously written by /ttd/dump. A session only "
+        "restores into an instance of the model it was recorded on — the "
+        "refusal reason names both model ids, so provision a matching "
+        "instance (POST /api/v1/emulator/create) and retry. After a "
+        "successful load the session is idle: use /ttd/seek to position "
+        "the emulator inside the loaded timeline.";
+    paths["/api/v1/emulator/{id}/ttd/load"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/load"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/load"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/load"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/load"]["post"]["requestBody"]["description"] =
+        "Input path of the .ttd file";
+    paths["/api/v1/emulator/{id}/ttd/load"]["post"]["requestBody"]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/TTDLoadRequest";
+    paths["/api/v1/emulator/{id}/ttd/load"]["post"]["responses"]["200"]["description"] =
+        "Session loaded (check ok flag)";
+    paths["/api/v1/emulator/{id}/ttd/load"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/TTDLoadResponse";
+    paths["/api/v1/emulator/{id}/ttd/load"]["post"]["responses"]["400"]["description"] =
+        "Missing required field: path, or session could not be deserialized";
+    paths["/api/v1/emulator/{id}/ttd/load"]["post"]["responses"]["404"]["description"] =
+        "Emulator instance not found or file cannot be opened";
+    paths["/api/v1/emulator/{id}/ttd/load"]["post"]["responses"]["501"]["description"] =
         "TTD engine not available in this build";
 
     // =====================================================================

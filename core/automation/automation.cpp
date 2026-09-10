@@ -18,8 +18,24 @@
 #include "webapi/src/automation-webapi.h"
 #endif
 
+#if ENABLE_MCP_AUTOMATION
+#include "mcp/src/automation-mcp.h"
+#endif
+
 #if ENABLE_CLI_AUTOMATION
 #include "cli/include/automation-cli.h"
+#endif
+
+#if ENABLE_GDB_AUTOMATION
+#include "gdb/include/automation-gdb.h"
+#endif
+
+#if ENABLE_DEZOG_AUTOMATION
+#include "dezog/include/automation-dezog.h"
+#endif
+
+#if ENABLE_ZESARUX_AUTOMATION
+#include "zesarux/include/automation-zesarux.h"
 #endif
 
 #include "3rdparty/message-center/messagecenter.h"
@@ -51,12 +67,30 @@ bool Automation::start()
     result &= startPython();
 #endif
 
+#if ENABLE_MCP_AUTOMATION
+    // MCP shares WebAPI's drogon app instance: the /mcp handler and the :8092
+    // listener MUST be registered before WebAPI's thread calls drogon::app().run()
+    result &= startMCP();
+#endif
+
 #if ENABLE_WEBAPI_AUTOMATION
     result &= startWebAPI();
 #endif
 
 #if ENABLE_CLI_AUTOMATION
     result &= startCLI();
+#endif
+
+#if ENABLE_GDB_AUTOMATION
+    result &= startGDB();
+#endif
+
+#if ENABLE_DEZOG_AUTOMATION
+    result &= startDezog();
+#endif
+
+#if ENABLE_ZESARUX_AUTOMATION
+    result &= startZesarux();
 #endif
 
     return result;
@@ -81,8 +115,25 @@ void Automation::stop()
     stopWebAPI();
 #endif
 
+#if ENABLE_MCP_AUTOMATION
+    // MCP relies on WebAPI's drogon loop — stop it after the loop is down
+    stopMCP();
+#endif
+
 #if ENABLE_CLI_AUTOMATION
     stopCLI();
+#endif
+
+#if ENABLE_GDB_AUTOMATION
+    stopGDB();
+#endif
+
+#if ENABLE_DEZOG_AUTOMATION
+    stopDezog();
+#endif
+
+#if ENABLE_ZESARUX_AUTOMATION
+    stopZesarux();
 #endif
 }
 
@@ -179,6 +230,25 @@ bool Automation::startWebAPI()
 }
 #endif
 
+#if ENABLE_MCP_AUTOMATION
+bool Automation::startMCP()
+{
+    bool result = true;
+
+    _mcp = new AutomationMCP();
+    if (_mcp)
+    {
+        _mcp->start();
+    }
+    else
+    {
+        result = false;
+    }
+
+    return result;
+}
+#endif
+
 #if ENABLE_LUA_AUTOMATION
 void Automation::stopLua()
 {
@@ -215,6 +285,18 @@ void Automation::stopWebAPI()
 }
 #endif
 
+#if ENABLE_MCP_AUTOMATION
+void Automation::stopMCP()
+{
+    if (_mcp)
+    {
+        _mcp->stop();
+        delete _mcp;
+        _mcp = nullptr;
+    }
+}
+#endif
+
 #if ENABLE_CLI_AUTOMATION
 bool Automation::startCLI()
 {
@@ -241,6 +323,95 @@ void Automation::stopCLI()
         _cli->stop();
         delete _cli;
         _cli = nullptr;
+    }
+}
+#endif
+
+#if ENABLE_GDB_AUTOMATION
+bool Automation::startGDB()
+{
+    bool result = true;
+
+    _gdb = new AutomationGDB();
+    if (_gdb)
+    {
+        result = _gdb->start();
+    }
+    else
+    {
+        result = false;
+    }
+
+    return result;
+}
+
+void Automation::stopGDB()
+{
+    if (_gdb)
+    {
+        _gdb->stop();
+        delete _gdb;
+        _gdb = nullptr;
+    }
+}
+#endif
+
+#if ENABLE_DEZOG_AUTOMATION
+bool Automation::startDezog()
+{
+    bool result = true;
+
+    _dezog = new AutomationDezog();
+
+    if (_dezog)
+    {
+        result = _dezog->start();
+    }
+    else
+    {
+        result = false;
+    }
+
+    return result;
+}
+
+void Automation::stopDezog()
+{
+    if (_dezog)
+    {
+        _dezog->stop();
+        delete _dezog;
+        _dezog = nullptr;
+    }
+}
+#endif
+
+#if ENABLE_ZESARUX_AUTOMATION
+bool Automation::startZesarux()
+{
+    bool result = true;
+
+    _zesarux = new AutomationZesarux();
+
+    if (_zesarux)
+    {
+        result = _zesarux->start();
+    }
+    else
+    {
+        result = false;
+    }
+
+    return result;
+}
+
+void Automation::stopZesarux()
+{
+    if (_zesarux)
+    {
+        _zesarux->stop();
+        delete _zesarux;
+        _zesarux = nullptr;
     }
 }
 #endif

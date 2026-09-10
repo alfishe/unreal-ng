@@ -350,6 +350,11 @@ protected:
     // Opcode profiling
     OpcodeProfiler* _opcodeProfiler = nullptr;
     bool _feature_opcodeprofiler_enabled = false;
+
+    // Call trace capture — control-flow events go through the memory access
+    // tracker's CallTraceBuffer; the session state is polled live, the cached
+    // flag only avoids the lookup when the calltrace feature is off
+    bool _feature_calltrace_enabled = false;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
