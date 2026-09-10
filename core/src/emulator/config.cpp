@@ -450,6 +450,18 @@ const TMemModel* Config::FindModelByShortName(const std::string& shortName)
 	return nullptr;
 }
 
+std::string Config::GetModelFullName(MEM_MODEL model)
+{
+	for (uint8_t i = 0; i < N_MM_MODELS; i++)
+	{
+		if (mem_model[i].Model == model)
+		{
+			return mem_model[i].FullName;
+		}
+	}
+	return "Unknown";
+}
+
 std::string Config::GetConfigFolderForModel(MEM_MODEL model, uint32_t ramSizeKB)
 {
 	const TMemModel* info = nullptr;
