@@ -34,17 +34,78 @@ Last updated: 2026-08-26
 | 0.4.5 | Python: add `run_to_pixel` | DONE | ef117f47 | |
 | 0.5.1 | Update automation.md with command parity | DONE | ef117f47 | Fixed CLI README port, added execution control docs |
 
-## Phase 1A: GDB RSP Server
+## Phase 1A: GDB RSP Server (Forward Debugging)
+
+See [gdb-protocol.md](../../emulator/design/control-interfaces/gdb-protocol.md) and [gdb-reverse-debugging-tdd.md](../../emulator/design/debugger/time-travel-debug/gdb-reverse-debugging-tdd.md) for full design.
+
+### G1: Forward-Only Stub
 
 | ID | Task | Status | Commit | Notes |
 |----|------|--------|--------|-------|
-| 1A.1 | GDB RSP server skeleton | TODO | | Standalone module |
-| 1A.2 | GDB `g`/`G` packets (registers) | TODO | | Requires 0.1.x |
-| 1A.3 | GDB `m`/`M` packets (memory) | TODO | | |
-| 1A.4 | GDB `Z`/`z` packets (breakpoints) | TODO | | |
-| 1A.5 | GDB `c`/`s` packets (run control) | TODO | | |
-| 1A.6 | GDB `?` packet (stop reason) | TODO | | |
-| 1A.7 | Run-control ownership claim | TODO | | |
+| 1A.1.1 | Directory structure + CMake | DONE | dadc9430 | `core/automation/gdb/` with ENABLE_GDB_AUTOMATION gate |
+| 1A.1.2 | RSP packet framing | DONE | dadc9430 | `$data#checksum`, ack/nack, escaping, RLE |
+| 1A.1.3 | TCP listener + session thread | DONE | dadc9430 | Port 2000 default, 127.0.0.1 only |
+| 1A.1.4 | `qSupported` handshake | DONE | dadc9430 | Capability negotiation, NoAckMode |
+| 1A.1.5 | `qXfer:features:read:target.xml` | DONE | 59573a60 | Z80 register description, flat XML |
+| 1A.1.6 | `qXfer:osdata:read:processes` | DONE | 59573a60 | Instance list for `vAttach` selection |
+| 1A.1.7 | `vAttach` instance binding | DONE | 59573a60 | Takes run-control claim via UUID |
+| 1A.2.1 | `g` packet (read all regs) | DONE | 59573a60 | Z80State codec per target.xml order |
+| 1A.2.2 | `G` packet (write all regs) | DONE | 59573a60 | Refused while detached in history |
+| 1A.2.3 | `p`/`P` packets (single reg) | DONE | 59573a60 | Including pseudo-regs (paging latches) |
+| 1A.3.1 | `m` packet (read memory) | DONE | 59573a60 | Z80 view + physical view (0x01XX'XXXX) |
+| 1A.3.2 | `M`/`X` packets (write memory) | DONE | 59573a60 | Refused while detached |
+| 1A.4.1 | `Z0`/`z0` execution breakpoints | DONE | 59573a60 | AddExecutionBreakpoint with owner="gdb" |
+| 1A.5.1 | `c` continue | DONE | 59573a60 | Emulator::Resume(), async stop-reply |
+| 1A.5.2 | `s` single-step | DONE | 59573a60 | RunSingleCPUCycle |
+| 1A.5.3 | `0x03` interrupt (Ctrl-C) | DONE | 59573a60 | Emulator::Pause() → T02 |
+| 1A.6.1 | `?` stop reason query | DONE | 59573a60 | T05 with swbreak:/watch:/rwatch:/awatch: |
+| 1A.6.2 | `T05` stop replies (exact forms) | DONE | 59573a60 | Byte-exact per §4.7.1 |
+| 1A.7.1 | Run-control claim in EmulatorContext | DONE | 00c977fb | UUID-based claim via TakeRunControl |
+| 1A.7.2 | Refuse Resume/Step from other surfaces | DONE | | CLI and WebAPI check run-control |
+| 1A.7.3 | External pause → T05 stop-reply | DONE | | MessageCenter subscription |
+
+### G2: Watchpoints + Monitor
+
+| ID | Task | Status | Commit | Notes |
+|----|------|--------|--------|-------|
+| 1A.8.1 | `Z2`/`z2` write watchpoints | DONE | 59573a60 | len ≤ 16 via per-address descriptors |
+| 1A.8.2 | `Z3`/`z3` read watchpoints | DONE | 59573a60 | |
+| 1A.8.3 | `Z4`/`z4` access watchpoints | DONE | 59573a60 | Combined R\|W |
+| 1A.8.4 | `watch:` stop replies | DONE | 59573a60 | T05watch:ADDR;thread:1; |
+| 1A.9.1 | `qRcmd` monitor framework | DONE | 00c977fb | Hex-encoded text output |
+| 1A.9.2 | `monitor model` | DONE | 00c977fb | Shows "ZX Spectrum" (config name to be added later) |
+| 1A.9.3 | `monitor instances` | DONE | 00c977fb | pid, symbolic id, model, state |
+| 1A.9.4 | `monitor bankinfo` | DONE | | Shows ROM/RAM pages for each bank |
+| 1A.9.5 | `monitor frame` | DONE | 00c977fb | T-state + PC display |
+| 1A.9.6 | `monitor load snap/tape/disk` | DONE | | Supports sna/z80/szx/tap/tzx/trd/scl/fdi |
+| 1A.9.7 | `monitor reset` | DONE | 00c977fb | Paused only, preserves model |
+
+### G3: Reverse Execution (TTD Integration)
+
+| ID | Task | Status | Commit | Notes |
+|----|------|--------|--------|-------|
+| 1A.10.1 | Conditional `ReverseStep+`/`ReverseContinue+` | DONE | | Auto-stops recording, enters Detached |
+| 1A.10.2 | `bs` backward step | DONE | | TTDManager::StepBackInstruction() |
+| 1A.10.3 | `bc` backward continue | DONE | | ReverseContinue over armed breakpoints |
+| 1A.10.4 | `replaylog:begin` stop reason | DONE | | T05replaylog:begin;thread:1; |
+| 1A.10.5 | Detached read-only enforcement | DONE | | G/P/M refused with E0D |
+| 1A.10.6 | `monitor ttd status` | DONE | | Session state, bounds, position |
+| 1A.10.7 | `monitor ttd start` | DONE | | Start recording (paused only) |
+| 1A.10.8 | `monitor ttd seek <frame>` | DONE | | SeekTo frame boundary |
+| 1A.10.9 | `monitor ttd findlast w <addr>` | DONE | | Implemented, needs TTD session to test |
+
+### G4: Polish
+
+| ID | Task | Status | Commit | Notes |
+|----|------|--------|--------|-------|
+| 1A.11.1 | Physical memory view (0x01XX'XXXX) | DONE | | 0x01PPAAAA = page PP, offset AAAA |
+| 1A.11.2 | Ephemeral dedicated ports | TODO | | `monitor gdbport <pid>` for legacy clients |
+| 1A.11.3 | Range descriptors for len > 16 | DONE | | Watchpoints set per-address up to 256 |
+| 1A.11.4 | Port breakpoints `monitor bport` | DONE | | `bport in/out <port>`, `bport clear <id>` |
+| 1A.11.5 | Paging pseudo-register writes | DONE | | p7ffd/p1ffd/pfe via port decoder |
+| 1A.11.6 | Per-client setup docs | DONE | | GDB, IDA Pro, Ghidra, VS Code |
+| 1A.11.7 | Fuzz-lite packet tests | DONE | | GDBPacket encode/decode/RLE/escape |
+| 1A.11.8 | Integration test with pygdbmi | DONE | | gdb/tests/test_gdb_integration.py |
 
 ## Phase 1B: DeZog / VS Code DAP
 
@@ -136,8 +197,10 @@ Last updated: 2026-08-26
 | Phase | Total | Done | WIP | TODO |
 |-------|-------|------|-----|------|
 | Phase 0 | 20 | 15 | 0 | 5 |
-| Phase 1 | 14 | 0 | 0 | 14 |
+| Phase 1A (GDB) | 49 | 48 | 0 | 1 |
+| Phase 1B (DeZog) | 6 | 0 | 0 | 6 |
+| Phase 1C (MCP) | 2 | 0 | 0 | 2 |
 | Phase 2 | 9 | 0 | 0 | 9 |
 | Phase 3 | 6 | 0 | 0 | 6 |
 | Phase 4 | 11 | 0 | 0 | 11 |
-| **Total** | **60** | **15** | **0** | **45** |
+| **Total** | **103** | **63** | **0** | **40** |

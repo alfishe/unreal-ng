@@ -1,0 +1,76 @@
+{
+    // =========================================================================
+    // DeZog attach configuration for unreal-ng over the ZEsarUX text protocol.
+    //
+    // Remote choice: "zrcp" (ZEsarUX Remote Control Protocol). unreal-ng
+    // impersonates ZEsarUX on that protocol (module core/automation/zesarux),
+    // which is what unlocks DeZog's ZEsarUX-only client features:
+    //   - watchpoints (the "cspect"/DZRP remote refuses them client-side)
+    //   - native instruction-level reverse debugging (ZesaruxCpuHistory,
+    //     served by unreal-ng's TTD-backed cpu-history commands)
+    //
+    // This config is PURE ATTACH. DeZog's zrcp remote never launches anything
+    // (same as with real ZEsarUX): start unreal-ng yourself first, e.g. via
+    // the tasks.json task "unreal-ng: start unreal-qt (ZRCP :10000)", then
+    // load a program into it (see README.md), then press F5.
+    //
+    // Port 10000 is unreal-ng's ZRCP default; the UNREAL_ZRCP_PORT env var
+    // overrides it - if you set it when starting the emulator, mirror it in
+    // "zrcp.port" below.
+    // =========================================================================
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "dezog",
+            // "request": "launch" + no "startAutomatically" is how DeZog models
+            // attach for remotes it cannot spawn - nothing is ever started.
+            "request": "launch",
+            "name": "Attach to unreal-ng (ZRCP)",
+
+            "remoteType": "zrcp",
+            "zrcp": {
+                "hostname": "localhost",
+                "port": 10000
+            },
+
+            // -----------------------------------------------------------------
+            // What DeZog does on F5 (verified against DeZog 3.7.4):
+            // close-all-menus, about, get-version (>= 12.1 check),
+            // set-debug-settings, hard-reset-cpu, enter-cpu-step, load,
+            // get-current-machine, breakpoint sync, then UI population.
+            //
+            // unreal-ng specifics during that handshake:
+            //   - "hard-reset-cpu" and "load"/"smartload" are NO-OPS: machine
+            //     state is owned by the host emulator. DeZog logs the ack
+            //     ("Log: hard-reset-cpu ignored: machine resets are owned by
+            //     the host emulator") - that is expected, not an error. Load
+            //     the program in unreal-ng instead (README.md step 2).
+            //   - With no emulator instance running, "get-current-machine"
+            //     reports UNKNOWN and DeZog stops - start one first.
+            // -----------------------------------------------------------------
+
+            // Reverse debugging: instruction history served from unreal-ng's
+            // unbounded TTD recording. DeZog sizes its request window from
+            // reverseDebugInstructionCount; the server manages actual storage.
+            "history": {
+                "reverseDebugInstructionCount": 10000,
+                "codeCoverageEnabled": false
+            },
+
+            "rootFolder": "${workspaceFolder}",
+
+            // false = the program does not auto-run on connect. unreal-ng
+            // pauses the emulator while a ZRCP session is in cpu-step mode,
+            // so leave this off and use DeZog's Continue (F5) deliberately.
+            "startAutomatically": false
+
+            // Optional - only when src/main.asm was built with sjasmplus
+            // (tasks.json "make-sna (sjasmplus)") for source-level debugging:
+            //   "sjasmplus": [ { "path": "src/main.sld" } ],
+            //   "topOfStack": "stack_top"
+            //
+            // NOT set: "load"/"snap" - zrcp snapshot pushing is a no-op here
+            // (see above); use unreal-ng's own snapshot loading instead.
+        }
+    ]
+}
