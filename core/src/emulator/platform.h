@@ -807,7 +807,14 @@ struct EmulatorState
                                                 // latch (Scorpion: scorpion_turbo; ATM/Profi: their turbo bits). The
                                                 // Z80 composes it with the host speed control; audio/video descale it
 
-    /// Host speed-control multiplier alone (current = host << hw_turbo_shift).
+    uint8_t hw_turbo_shift_applied;             // hw_turbo_shift as composed into current_z80_frequency_multiplier at
+                                                // the last frame boundary. The decoder may flip hw_turbo_shift mid-frame;
+                                                // the frame that is executing still runs with the APPLIED value, so the
+                                                // audio helpers below must use this one (a mid-frame flip otherwise made
+                                                // HostSpeedMultiplier() read 0 for that frame - "blip delivered 958,
+                                                // accumulator expects 882")
+
+    /// Host speed-control multiplier alone (current = host << hw_turbo_shift_applied).
     /// Audio sample budgeting must use THIS: the host control makes frames
     /// run faster in wall-clock (excess audio is dropped knowingly), whereas
     /// the Scorpion hardware turbo keeps the 20 ms frame and only doubles the
@@ -815,7 +822,7 @@ struct EmulatorState
     /// (hardware-reference 13, profrom-nmi-gaps-and-findings.md 8.5)
     uint8_t HostSpeedMultiplier() const
     {
-        return static_cast<uint8_t>(current_z80_frequency_multiplier >> hw_turbo_shift);
+        return static_cast<uint8_t>(current_z80_frequency_multiplier >> hw_turbo_shift_applied);
     }
 
     /// Descale a CPU T-state position into the audio time base: under a
@@ -824,7 +831,7 @@ struct EmulatorState
     /// descale Screen::GetCurrentTstate applies for the ULA
     uint32_t AudioTstate(uint32_t t) const
     {
-        return t >> hw_turbo_shift;
+        return t >> hw_turbo_shift_applied;
     }
 
     /// endregion </Runtime CPU parameters

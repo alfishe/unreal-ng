@@ -382,6 +382,7 @@ void Z80::ApplyQueuedFrequencyMultiplier()
         uint8_t oldMultiplier = state.current_z80_frequency_multiplier;
         state.current_z80_frequency_multiplier = desiredMultiplier;
         state.current_z80_frequency = state.base_z80_frequency * desiredMultiplier;
+        state.hw_turbo_shift_applied = state.hw_turbo_shift;
 
         // Reset rate to normal - counter represents actual t-states
         // Speed multipliers are handled by adjusting frame duration and timings
