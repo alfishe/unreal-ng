@@ -43,6 +43,22 @@ public:
     // (setChecked does not re-emit triggered)
     void setTapeManagerChecked(bool checked);
 
+    // Sync the Debug -> Debugger Window check state from the window's own show / hide
+    // (setChecked does not re-emit triggered)
+    void setDebuggerChecked(bool checked);
+
+    // Sync the View -> Toolbar / Status Bar check state (setChecked does not re-emit triggered)
+    void setToolBarChecked(bool checked);
+    void setStatusBarChecked(bool checked);
+
+    // Actions shared with the transport toolbar (ToolBarManager). Their visible /
+    // enabled / checked state is maintained by updateMenuStates()
+    QAction* fullScreenAction() const { return _fullScreenAction; }
+    QAction* overscanAction() const { return _overscanAction; }  // Pentagon only (hidden otherwise)
+#ifdef ENABLE_RECORDING
+    QAction* videoRecordingAction() const { return _videoRecordingAction; }
+#endif
+
     // Observer callback for emulator state changes
     void handleEmulatorStateChanged(int id, Message* message);
     void handleEmulatorInstanceCreated(int id, Message* message);
@@ -78,13 +94,15 @@ signals:
     // Debug signals
     void stepInRequested();
     void stepOverRequested();
-    void debugModeToggled(bool enabled);
 
     // View signals
+    void toolBarToggled(bool visible);
+    void statusBarToggled(bool visible);
     void debuggerToggled(bool visible);
     void logWindowToggled(bool visible);
     void tapeManagerToggled(bool visible);
     void fullScreenToggled();
+    void scaleRequested(int scale);  // View -> Scale -> Nx
     void overscanModeToggled(bool enabled);
     void viewportChanged(int presetIndex);
 
@@ -96,6 +114,7 @@ signals:
     // Tools signals
     void intParametersRequested();
     void audioSettingsRequested();
+    void screenshotRequested();
 #ifdef ENABLE_RECORDING
     void videoRecordingRequested();
     void quickRecordRequested(const QString& presetName);
@@ -150,13 +169,14 @@ private:
     QAction* _preferencesAction;
 
     // View Menu Actions
+    QAction* _toolBarAction;
+    QAction* _statusBarAction;
     QAction* _debuggerAction;
     QAction* _logWindowAction;
     QAction* _tapeManagerAction;
     QAction* _fullScreenAction;
-    QAction* _zoomInAction;
-    QAction* _zoomOutAction;
-    QAction* _zoomResetAction;
+    QMenu* _scaleMenu = nullptr;
+    std::vector<QAction*> _scaleActions;
 
     // Overscan Menu Actions (Pentagon only)
     QAction* _overscanAction;
@@ -190,7 +210,6 @@ private:
     QAction* _turboTapeAction;
 
     // Debug Menu Actions
-    QAction* _debugModeAction;
     QAction* _stepInAction;
     QAction* _stepOverAction;
     QAction* _stepOutAction;

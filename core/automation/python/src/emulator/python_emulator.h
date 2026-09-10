@@ -953,6 +953,8 @@ namespace PythonBindings
                 }
                 Z80Disassembler* disasm = ctx->pDebugManager->GetDisassembler().get();
                 Memory* memory = ctx->pMemory;
+                Z80* z80 = ctx->pCore->GetZ80();
+                LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
                 
                 uint16_t addr = address < 0 ? ctx->pCore->GetZ80()->pc : static_cast<uint16_t>(address);
                 if (count < 1) count = 10;
@@ -966,7 +968,7 @@ namespace PythonBindings
                     
                     uint8_t cmdLen = 0;
                     DecodedInstruction decoded;
-                    std::string mnemonic = disasm->disassembleSingleCommand(buffer, addr, &cmdLen, &decoded);
+                    std::string mnemonic = disasm->disassembleSingleCommandWithRuntime(buffer, addr, &cmdLen, z80, memory, &decoded);
                     if (cmdLen == 0) cmdLen = 1;
                     
                     py::dict instr;
@@ -980,9 +982,41 @@ namespace PythonBindings
                     instr["bytes"] = hexBytes;
                     instr["mnemonic"] = mnemonic;
                     instr["size"] = cmdLen;
-                    if (decoded.hasJump || decoded.hasRelativeJump) {
-                        instr["target"] = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
+                    
+                    // Label at the instruction address itself (e.g. jump destination marker)
+                    if (labelMgr) {
+                        auto label = labelMgr->GetLabelByZ80Address(addr);
+                        if (label && !label->name.empty())
+                            instr["label"] = label->name;
                     }
+                    
+                    // Target address for jumps/calls. Indirect targets (JP (HL), JP (IX)) are only
+                    // known at runtime - the field is omitted when the target could not be resolved
+                    if (decoded.hasJump || decoded.hasRelativeJump) {
+                        uint16_t target = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
+                        if (!decoded.hasIndirect || decoded.hasRuntime) {
+                            instr["target"] = target;
+                            
+                            if (labelMgr) {
+                                auto targetLabel = labelMgr->GetLabelByZ80Address(target);
+                                if (targetLabel && !targetLabel->name.empty())
+                                    instr["targetLabel"] = targetLabel->name;
+                            }
+                        }
+                    }
+                    
+                    // Effective memory address for indexed (IX/IY+d) instructions - requires runtime registers
+                    if (decoded.hasDisplacement && decoded.hasRuntime) {
+                        instr["displacement"] = decoded.displacement;
+                        instr["effectiveAddress"] = decoded.displacementAddr;
+                        
+                        if (labelMgr) {
+                            auto effectiveLabel = labelMgr->GetLabelByZ80Address(decoded.displacementAddr);
+                            if (effectiveLabel && !effectiveLabel->name.empty())
+                                instr["effectiveAddressLabel"] = effectiveLabel->name;
+                        }
+                    }
+                    
                     result.append(instr);
                     addr += cmdLen;
                 }
@@ -998,6 +1032,7 @@ namespace PythonBindings
                 }
                 Z80Disassembler* disasm = ctx->pDebugManager->GetDisassembler().get();
                 Memory* memory = ctx->pMemory;
+                LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
                 
                 bool isROM = (type == "rom");
                 uint8_t* pageBase = isROM ? memory->ROMPageHostAddress(static_cast<uint8_t>(page)) 
@@ -1032,9 +1067,29 @@ namespace PythonBindings
                     instr["bytes"] = hexBytes;
                     instr["mnemonic"] = mnemonic;
                     instr["size"] = cmdLen;
-                    if (decoded.hasJump || decoded.hasRelativeJump) {
-                        instr["target"] = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
+                    
+                    // Label at the instruction offset itself (e.g. jump destination marker)
+                    if (labelMgr) {
+                        auto label = labelMgr->GetLabelByZ80Address(currentOffset);
+                        if (label && !label->name.empty())
+                            instr["label"] = label->name;
                     }
+                    
+                    // Target address for jumps/calls. Static view has no runtime registers, so indirect
+                    // targets (JP (HL), JP (IX)) can not be resolved and the field is omitted
+                    if (decoded.hasJump || decoded.hasRelativeJump) {
+                        uint16_t target = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
+                        if (!decoded.hasIndirect) {
+                            instr["target"] = target;
+                            
+                            if (labelMgr) {
+                                auto targetLabel = labelMgr->GetLabelByZ80Address(target);
+                                if (targetLabel && !targetLabel->name.empty())
+                                    instr["targetLabel"] = targetLabel->name;
+                            }
+                        }
+                    }
+                    
                     result.append(instr);
                     currentOffset += cmdLen;
                 }

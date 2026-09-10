@@ -365,6 +365,24 @@ void SoundManager::handleFrameStart()
         }
     }
 
+    // Turbo mode without audio: no synthesis at all this frame. Decided once here so
+    // the per-step and per-edge paths only test a cached bool. Recording keeps the
+    // full path so captured audio stays intact.
+    {
+        const CONFIG& config = _context->config;
+        bool suppressed = config.turbo_mode && !config.turbo_mode_audio;
+#ifdef ENABLE_RECORDING
+        if (suppressed && _context->pRecordingManager && _context->pRecordingManager->IsRecording())
+            suppressed = false;
+#endif
+        _synthesisSuppressed = suppressed;
+        _beeper->setSynthesisSuppressed(suppressed);
+        if (_covox)
+            _covox->setSynthesisSuppressed(suppressed);
+        if (suppressed)
+            return;  // Skip per-device frame setup and buffer clears (never consumed in turbo)
+    }
+
     _turboSound->handleFrameStart();
     if (_covox)
         _covox->handleFrameStart();
@@ -390,18 +408,8 @@ void SoundManager::handleStep()
     // PortDecoder on OUT, handleStep only advances analog generators (tone /
     // envelope phase, mixer levels). Recording keeps the full path so DSD
     // native-rate capture and recorded audio stay intact.
-    {
-        const CONFIG& config = _context->config;
-        if (config.turbo_mode && !config.turbo_mode_audio)
-        {
-            bool recording = false;
-#ifdef ENABLE_RECORDING
-            recording = _context->pRecordingManager && _context->pRecordingManager->IsRecording();
-#endif
-            if (!recording)
-                return;
-        }
-    }
+    if (_synthesisSuppressed)  // Decided per frame in handleFrameStart
+        return;
 
     _turboSound->handleStep();
 }
@@ -730,10 +738,10 @@ void SoundManager::UpdateFeatureCache()
 
         _feature_sound_enabled = newSoundEnabled;
 
-        // Propagate HQ flag to TurboSound
+        // Propagate the effective HQ flag (feature state minus the turbo override) to TurboSound
         if (_turboSound)
         {
-            _turboSound->setHQEnabled(_feature_soundhq_enabled);
+            _turboSound->setHQEnabled(isHQActive());
         }
     }
     else
@@ -742,6 +750,18 @@ void SoundManager::UpdateFeatureCache()
         LOGWARNING("SoundManager::UpdateFeatureCache - FeatureManager unavailable, defaulting sound ON");
         _feature_sound_enabled = true;
         _feature_soundhq_enabled = true;
+    }
+}
+
+void SoundManager::setTurboLowQualityOverride(bool enabled)
+{
+    if (_turboLowQualityOverride == enabled)
+        return;
+
+    _turboLowQualityOverride = enabled;
+    if (_turboSound)
+    {
+        _turboSound->setHQEnabled(isHQActive());
     }
 }
 

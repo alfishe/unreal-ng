@@ -366,7 +366,9 @@ local lines = disasm()                   -- Disassemble from PC (default 10 line
 local lines = disasm(0x8000, 20)         -- Disassemble from address, count
 local lines = disasm_page("rom", 2, 0, 20)   -- Disassemble physical ROM page (e.g., TR-DOS)
 local lines = disasm_page("ram", 5, 0x100, 10)  -- Disassemble physical RAM page
--- Returns: table with entries: {offset, bytes, mnemonic, size, target (if jump)}
+-- Returns: table with entries: {offset, bytes, mnemonic, size, label,
+--          target/targetLabel (jumps and calls), displacement/effectiveAddress/effectiveAddressLabel (IX/IY+d)}
+-- Mnemonics print both label and address when a label exists at the target: 'call TEST_ROUTINE (#8010)'
 
 -- Debug Mode (via feature manager)
 emu:feature_set("debugmode", true)   -- Enable debug mode

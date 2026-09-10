@@ -414,7 +414,9 @@ emu.disasm()                                    # Disassemble from PC (default 1
 emu.disasm(address=0x8000, count=20)           # Disassemble from address
 emu.disasm_page("rom", 2, offset=0, count=20)  # Disassemble physical ROM page (e.g., TR-DOS)
 emu.disasm_page("ram", 5, offset=0x100, count=10)  # Disassemble physical RAM page
-# Returns: list of dicts with keys: address/offset, bytes, mnemonic, size, target (if jump)
+# Returns: list of dicts with keys: address/offset, bytes, mnemonic, size, label,
+#          target/targetLabel (jumps and calls), displacement/effectiveAddress/effectiveAddressLabel (IX/IY+d)
+# Mnemonics print both label and address when a label exists at the target: 'call TEST_ROUTINE (#8010)'
 ```
 
 ### Opcode Profiler

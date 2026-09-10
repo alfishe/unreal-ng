@@ -64,7 +64,23 @@ void EmulatorAPI::step(const HttpRequestPtr& req, std::function<void(const HttpR
 {
     auto emulator = getEmulatorOrError(id, callback);
     if (!emulator) return;
-    
+
+    // Check run-control claim (GDB TDD §3.3 / 1A.7.2)
+    auto* ctx = emulator->GetContext();
+    if (ctx && ctx->IsRunControlClaimed())
+    {
+        auto state = ctx->GetRunControlState();
+        Json::Value error;
+        error["error"] = "Run-control held";
+        error["message"] = "Run-control held by " + state.surfaceLabel + ". Use that surface to step.";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     try
     {
         // Execute single instruction
@@ -107,7 +123,23 @@ void EmulatorAPI::steps(const HttpRequestPtr& req, std::function<void(const Http
 {
     auto emulator = getEmulatorOrError(id, callback);
     if (!emulator) return;
-    
+
+    // Check run-control claim (GDB TDD §3.3 / 1A.7.2)
+    auto* ctx = emulator->GetContext();
+    if (ctx && ctx->IsRunControlClaimed())
+    {
+        auto state = ctx->GetRunControlState();
+        Json::Value error;
+        error["error"] = "Run-control held";
+        error["message"] = "Run-control held by " + state.surfaceLabel + ". Use that surface to step.";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     try
     {
         auto json = req->getJsonObject();
@@ -155,7 +187,23 @@ void EmulatorAPI::stepOver(const HttpRequestPtr& req, std::function<void(const H
 {
     auto emulator = getEmulatorOrError(id, callback);
     if (!emulator) return;
-    
+
+    // Check run-control claim (GDB TDD §3.3 / 1A.7.2)
+    auto* ctx = emulator->GetContext();
+    if (ctx && ctx->IsRunControlClaimed())
+    {
+        auto state = ctx->GetRunControlState();
+        Json::Value error;
+        error["error"] = "Run-control held";
+        error["message"] = "Run-control held by " + state.surfaceLabel + ". Use that surface to step.";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     try
     {
         emulator->StepOver();
@@ -2089,6 +2137,7 @@ void EmulatorAPI::getDisasm(const HttpRequestPtr& req, std::function<void(const 
     }
     
     Z80Disassembler* disasm = dbg->GetDisassembler().get();
+    LabelManager* labelMgr = dbg->GetLabelManager();
     
     // Parse query parameters
     std::string addrParam = req->getParameter("address");
@@ -2133,7 +2182,7 @@ void EmulatorAPI::getDisasm(const HttpRequestPtr& req, std::function<void(const 
         
         uint8_t cmdLen = 0;
         DecodedInstruction decoded;
-        std::string mnemonic = disasm->disassembleSingleCommand(buffer, currentAddr, &cmdLen, &decoded);
+        std::string mnemonic = disasm->disassembleSingleCommandWithRuntime(buffer, currentAddr, &cmdLen, z80, memory, &decoded);
         
         if (cmdLen == 0) cmdLen = 1;  // Safety: at least advance by 1
         
@@ -2152,13 +2201,44 @@ void EmulatorAPI::getDisasm(const HttpRequestPtr& req, std::function<void(const 
         instr["mnemonic"] = mnemonic;
         instr["size"] = cmdLen;
         
-        // Add target address for jumps/calls
+        // Label at the instruction address itself (e.g. jump destination marker)
+        if (labelMgr)
+        {
+            auto label = labelMgr->GetLabelByZ80Address(currentAddr);
+            if (label && !label->name.empty())
+                instr["label"] = label->name;
+        }
+        
+        // Add target address for jumps/calls. Indirect targets (JP (HL), JP (IX)) are only
+        // known at runtime - the field is omitted when the target could not be resolved
         if (decoded.hasJump || decoded.hasRelativeJump)
         {
-            if (decoded.hasRelativeJump)
-                instr["target"] = decoded.relJumpAddr;
-            else
-                instr["target"] = decoded.jumpAddr;
+            uint16_t target = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
+            if (!decoded.hasIndirect || decoded.hasRuntime)
+            {
+                instr["target"] = target;
+                
+                if (labelMgr)
+                {
+                    auto targetLabel = labelMgr->GetLabelByZ80Address(target);
+                    if (targetLabel && !targetLabel->name.empty())
+                        instr["targetLabel"] = targetLabel->name;
+                }
+            }
+        }
+        
+        // Effective memory address for indexed (IX/IY+d) instructions - requires runtime registers
+        if (decoded.hasDisplacement && decoded.hasRuntime)
+        {
+            instr["displacement"] = decoded.displacement;
+            instr["effectiveAddress"] = decoded.displacementAddr;
+            
+            if (labelMgr)
+            {
+                auto effectiveLabel = labelMgr->GetLabelByZ80Address(decoded.displacementAddr);
+                if (effectiveLabel && !effectiveLabel->name.empty())
+                    instr["effectiveAddressLabel"] = effectiveLabel->name;
+            }
         }
         
         ret["instructions"].append(instr);
@@ -2198,6 +2278,7 @@ void EmulatorAPI::getDisasmPage(const HttpRequestPtr& req, std::function<void(co
     }
     
     Z80Disassembler* disasm = dbg->GetDisassembler().get();
+    LabelManager* labelMgr = dbg->GetLabelManager();
     
     // Parse query parameters
     std::string typeParam = req->getParameter("type");
@@ -2296,11 +2377,29 @@ void EmulatorAPI::getDisasmPage(const HttpRequestPtr& req, std::function<void(co
         instr["mnemonic"] = mnemonic;
         instr["size"] = cmdLen;
         
+        // Label at the instruction offset itself (e.g. jump destination marker)
+        if (labelMgr)
+        {
+            auto label = labelMgr->GetLabelByZ80Address(currentOffset);
+            if (label && !label->name.empty())
+                instr["label"] = label->name;
+        }
+        
+        // Target address for jumps/calls. Static view has no runtime registers, so indirect
+        // targets (JP (HL), JP (IX)) can not be resolved and the field is omitted
         if (decoded.hasJump || decoded.hasRelativeJump) {
-            if (decoded.hasRelativeJump)
-                instr["target"] = decoded.relJumpAddr;
-            else
-                instr["target"] = decoded.jumpAddr;
+            uint16_t target = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
+            if (!decoded.hasIndirect)
+            {
+                instr["target"] = target;
+                
+                if (labelMgr)
+                {
+                    auto targetLabel = labelMgr->GetLabelByZ80Address(target);
+                    if (targetLabel && !targetLabel->name.empty())
+                        instr["targetLabel"] = targetLabel->name;
+                }
+            }
         }
         
         ret["instructions"].append(instr);

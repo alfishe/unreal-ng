@@ -15,10 +15,29 @@
 #include "crashhandler/crashhandler.h"
 #include <QDebug>
 #include <QDir>
+#include <QIcon>
 #include <QStandardPaths>
 #include <QTimer>
 
 #include "videowall/VideoWallWindow.h"
+
+/// Install the application icon from the bundled Qt resource.
+/// Used for the window / taskbar icon on Windows and Linux. On macOS the Dock
+/// shows the bundle's .icns natively and QApplication::setWindowIcon would
+/// replace it with a low-resolution pixmap, so it is skipped there.
+static void setApplicationIcon(QApplication& app)
+{
+#ifndef Q_OS_MACOS
+    QIcon icon;
+    for (int size : {16, 32, 48, 64, 128, 256, 512, 1024})
+    {
+        icon.addFile(QStringLiteral(":/icons/app/appicon_%1.png").arg(size), QSize(size, size));
+    }
+    app.setWindowIcon(icon);
+#else
+    Q_UNUSED(app);
+#endif
+}
 
 /// Clear macOS saved application state to prevent crash on startup after previous crash
 /// macOS saves window state and may try to restore it, which can cause QuartzCore crashes
@@ -63,6 +82,7 @@ int main(int argc, char* argv[])
     QCoreApplication::setOrganizationName("UnrealNG");
     QCoreApplication::setApplicationName("Unreal Video Wall");
     QCoreApplication::setApplicationVersion("0.1.0");
+    setApplicationIcon(app);
 
     // CRITICAL: Initialize FileHelper resources path for ROM loading
     // Without this, emulator Init() fails when trying to load ROM files

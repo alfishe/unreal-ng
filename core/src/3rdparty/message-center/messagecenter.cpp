@@ -19,6 +19,7 @@ MessageCenterCUT* MessageCenterCUT::m_instanceCUT = nullptr;
 
 MessageCenter::MessageCenter()
 {
+    m_thread = nullptr;
     m_started = false;
     m_requestStop = false;
     m_stopped = true;
@@ -98,6 +99,7 @@ void MessageCenter::Stop()
 #endif // _DEBUG
 
     m_requestStop = true;
+    m_cvEvents.notify_all();
 
     if (m_thread != nullptr)
     {
