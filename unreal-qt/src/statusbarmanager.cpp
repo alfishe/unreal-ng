@@ -441,4 +441,10 @@ void StatusBarManager::hideForFullScreen()
 void StatusBarManager::restoreVisibility()
 {
     _statusBar->setVisible(_visibleByUser);
+    if (_visibleByUser && _statusBar)
+    {
+        _statusBar->show();
+        _statusBar->raise();
+        _statusBar->update();
+    }
 }

@@ -778,7 +778,7 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
         _toolBarManager->hideForFullScreen();
     }
     // Handle restore to normal state
-    else if (newState == Qt::WindowNoState)
+    else if (!(newState & (Qt::WindowMinimized | Qt::WindowMaximized | Qt::WindowFullScreen)))
     {
         qDebug() << "Restoring to normal state (macOS)";
 
@@ -789,8 +789,16 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
 
         // Show controls instantly so the layout calculates the correct target geometry for the OS animation.
         // (Docking manager updates are still deferred in the shortcut handler to prevent stutter).
+        menuBar()->show();
         _statusBarManager->restoreVisibility();
         _toolBarManager->restoreVisibility();
+
+        // Rescale screen wrapper widget to contentFrame's restored (smaller) size so native GL container does not overlap toolbar/statusbar
+        if (_screenWrapper && ui->contentFrame && _screenWrapper->widget())
+        {
+            _screenWrapper->widget()->resize(ui->contentFrame->size());
+            updatePosition(_screenWrapper->widget(), ui->contentFrame, 0.5, 0.5);
+        }
 
         // macOS natively handles returning to the previous geometry after un-maximizing or exiting fullscreen.
         // Calling setGeometry explicitly here breaks the native animation.
@@ -867,7 +875,7 @@ void MainWindow::handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::Win
             setPalette(_originalPalette);
             menuBar()->show();
             _statusBarManager->restoreVisibility();
-        _toolBarManager->restoreVisibility();
+            _toolBarManager->restoreVisibility();
         }
 
         // Ensure we're not in fullscreen mode
@@ -898,7 +906,7 @@ void MainWindow::handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::Win
     // NOTE: The shortcut handler (handleFullScreenShortcutLinux) already called showNormal()/showMaximized().
     // We should NOT call hide() or showNormal() here - that causes crashes and state conflicts.
     // Just update styling.
-    else if (newState == Qt::WindowNoState)
+    else if (!(newState & (Qt::WindowMinimized | Qt::WindowMaximized | Qt::WindowFullScreen)))
     {
         qDebug() << "Restored (Linux) - updating styling only";
 
@@ -915,6 +923,12 @@ void MainWindow::handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::Win
         menuBar()->show();
         _statusBarManager->restoreVisibility();
         _toolBarManager->restoreVisibility();
+
+        if (_screenWrapper && ui->contentFrame && _screenWrapper->widget())
+        {
+            _screenWrapper->widget()->resize(ui->contentFrame->size());
+            updatePosition(_screenWrapper->widget(), ui->contentFrame, 0.5, 0.5);
+        }
     }
 }
 
@@ -1035,8 +1049,13 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
             _lastCursorPos = QCursor::pos();
             break;
         case QEvent::Resize:
-        case QEvent::Show:
-            _dockingManager->updateDockedWindows();
+            if (watched == ui->contentFrame && _screenWrapper && _screenWrapper->widget())
+            {
+                _screenWrapper->widget()->resize(ui->contentFrame->size());
+                updatePosition(_screenWrapper->widget(), ui->contentFrame, 0.5, 0.5);
+            }
+            if (_dockingManager)
+                _dockingManager->updateDockedWindows();
             break;
 
         case QEvent::NonClientAreaMouseButtonPress:

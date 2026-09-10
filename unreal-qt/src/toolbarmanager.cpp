@@ -113,4 +113,10 @@ void ToolBarManager::hideForFullScreen()
 void ToolBarManager::restoreVisibility()
 {
     _toolBar->setVisible(_visibleByUser);
+    if (_visibleByUser && _toolBar)
+    {
+        _toolBar->show();
+        _toolBar->raise();
+        _toolBar->update();
+    }
 }
