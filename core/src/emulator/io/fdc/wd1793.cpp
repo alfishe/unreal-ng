@@ -276,17 +276,11 @@ void WD1793::processBeta128(uint8_t value)
     }
     else
     {
-        uint8_t beta128ChangedBits = _beta128Register ^ value;
-        if (beta128ChangedBits & SYS_HLT)  // When HLT signal positive edge (from 0 to 1) detected
-        {
-            // FIXME: index strobes should be set by disk rotation timings, not by HLT / BUSY edges
-            if (!(_statusRegister & WDS_BUSY))
-            {
-                _indexPulseCounter++;
-            }
-        }
-
         _beta128Register = value;
+
+        // Sync time and update index strobe based on actual disk rotation position
+        updateTimeFromEmulatorState();
+        processFDDIndexStrobe();
     }
 
     notifyFDDStateChanged();

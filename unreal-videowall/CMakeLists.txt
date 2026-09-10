@@ -24,6 +24,9 @@ endif()
 if (NOT DEFINED ENABLE_CLI_AUTOMATION)
     option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
 endif()
+if (NOT DEFINED ENABLE_DEZOG_AUTOMATION)
+    option(ENABLE_DEZOG_AUTOMATION "Enable DeZog (DZRP) debug server automation" ON)
+endif()
 
 # Recording support - use parent setting if defined
 if (NOT DEFINED ENABLE_RECORDING)
@@ -247,6 +250,7 @@ if (ENABLE_AUTOMATION)
         $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:ENABLE_PYTHON_AUTOMATION>
         $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:ENABLE_WEBAPI_AUTOMATION>
         $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:ENABLE_CLI_AUTOMATION>
+        $<$<BOOL:${ENABLE_DEZOG_AUTOMATION}>:ENABLE_DEZOG_AUTOMATION>
     )
 endif ()
 
@@ -283,8 +287,7 @@ if (INCLUDE_AUTOMATION)
         Qt6::Widgets
         Qt6::OpenGL
         Qt6::OpenGLWidgets
-        unrealng::automation
-        $<$<BOOL:${ENABLE_RECORDING}>:unrealng::recording>
+        unrealng::automation  # brings core (and recording) in as PUBLIC deps
         ${CMAKE_DL_LIBS}
         Threads::Threads
     )
@@ -300,8 +303,7 @@ else ()
         Qt6::Widgets
         Qt6::OpenGL
         Qt6::OpenGLWidgets
-        unrealng::core
-        $<$<BOOL:${ENABLE_RECORDING}>:unrealng::recording>
+        unrealng::core  # brings recording in as a PUBLIC dependency
         Threads::Threads
     )
 endif ()
