@@ -56,6 +56,7 @@ significant — is missing.
 | [profrom-nmi-boot-analysis.md](profrom-nmi-boot-analysis.md) | Verified findings: ProfROM plane lifetime, magic-button NMI (DD50 trigger pair, entry chain, park loops, reset stubs), the boot sequence incl. the idle-EAR wedge defect and the turbo firmware chain |
 | [profrom-disassembly-and-findings.md](profrom-disassembly-and-findings.md) | Deep static disassembly & reverse-engineering: NMI entry (#0066 -> #0807), RST 30h cross-plane dispatching, 50Hz interrupt / keyboard scanning, and root cause diagnosis of emulator hangs and keyboard dead bugs |
 | [profrom-nmi-gaps-and-findings.md](profrom-nmi-gaps-and-findings.md) | Formal gaps analysis (GAP-1 through GAP-5): hardware specification vs. working tree discrepancies, trace evidence, and exact code fix specifications |
+| [profrom-smuc-not-found-and-driver-disassembly.md](profrom-smuc-not-found-and-driver-disassembly.md) | SMUC "not found" boot messages: failure mechanism, full page-7 serial-link driver disassembly (#FFBA 3-wire protocol, NVRAM layer, IDE identify), forensics (no lost fix), and the agreed lightweight-stub direction |
 | [verification/](verification/) | Live E2E execution records (transferred from `scratch/`): [e2e-base-rom.md](verification/e2e-base-rom.md) (E2E-1/2/3, Tasks 0-6), [e2e-profrom-instantiation.md](verification/e2e-profrom-instantiation.md) (PROFSCORP smoke + E2E-7), [e2e-profrom-quadrants.md](verification/e2e-profrom-quadrants.md) (E2E-4, Task 7). Raw transcripts/artifacts stay in `scratch/e2e*` |
 
 ## Scope decisions (agreed defaults)

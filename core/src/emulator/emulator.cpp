@@ -26,6 +26,7 @@
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/memory/scorpion/scorpionromwindow.h"
 #include "loaders/snapshot/loader_sna.h"
 #include "loaders/tape/loader_tape.h"
 
@@ -799,7 +800,8 @@ void Emulator::RequestMNI()
             // Emulator-side decision: the GAL keeps its plane on /NMI (hardware
             // shows the stripes), but this button exists to reach the monitor.
             // See docs/inprogress/2026-09-07-scorpion-zs256-clone/profrom-nmi-gaps-and-findings.md 6.1
-            _context->pMemory->GetScorpionRomWindow().Reset(state);
+            if (ScorpionRomWindow* window = _context->pMemory->GetScorpionRomWindow())
+                window->Reset(state);
         }
 
         state.scorpionDosTrigger = 1;

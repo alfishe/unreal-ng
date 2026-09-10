@@ -235,3 +235,139 @@ which never clocks the plane strobe - the debugger does not interfere with plane
    `#2800`/`#0700` menu loop, and a port trace of `IN #xxFE` values while the key is held
    (does the GUI key reach the matrix: row byte ≠ `0xFF`?). Also note whether the border
    flashes yellow/black.
+
+---
+
+## 8. Hardware turbo: detection fails, then the monitor runs 7 MHz anyway (VERIFIED 2026-09-10)
+
+Observed in the GUI after the §6.1 fix (monitor now enters correctly): audio
+"hard resync - dropped ~120-140 ms of overfilled audio" every frame, the monitor screen
+blinking on alternate frames, and the Turbo on/off item disabled in both the base and
+the ProfROM service menus.
+
+### 8.1 Measurements (live, WebAPI, `run_tstates` 139776 T vs frame counter)
+
+| State | frames per 139776 T | `#E02D` (monitor cfg, bit 6 = turbo) | turbo strobes seen |
+|---|---|---|---|
+| after boot, 128 menu | **2** (3.5 MHz) | `00` | `IN #1FFD` x2 at `#04DD/#04DF` (turbo OFF, boot) |
+| inside the service monitor | **1** (7 MHz) | `00` | `IN #7FFD` x2 at `#04DD/#04DF` (turbo ON, MNI entry) |
+
+So the monitor **switches turbo on** at entry (`#0261: CALL #04D5` = `LD B,#7F; LD C,#FD;
+IN A,(C); IN A,(C)`), immediately measures the speed, concludes "no turbo hardware"
+(`#E02D` bit 6 stays 0 -> menu item disabled), and never switches it off again -> the
+machine keeps running at 7 MHz.
+
+### 8.2 Cause 1 - strobe latency (detection)
+
+Firmware speed test (`#2C1F`, called right after the strobe at `#0269` and from `#2C30`):
+an interrupt-bounded count loop of ~100 k T-states. At 7 MHz (139 776 T/frame) it
+completes before the next INT -> "turbo present" (`#E02D |= #C0`); at 3.5 MHz
+(69 888 T/frame) the INT hits -> "no turbo".
+
+Hardware: the flip-flop takes effect on the next cycle (GAL `TRB` latch,
+`Scorpion_Turbo_Mode.md`); Xpeccy `compSetTurbo()` calls `comp_update_timings()`
+immediately. **This build applies the strobe only at the next frame boundary**
+(`Z80::ApplyQueuedFrequencyMultiplier` is called at `Z80FrameCycle` entry;
+`frameLimit`/`int_start`/`int_end` are locals computed once per frame - `z80.cpp:404-412`
+and the ten stepping paths in `emulator.cpp:1978-2721`). The loop therefore runs its
+first ~70 k T at 3.5 MHz, the INT hits, detection fails - while the flip-flop is set.
+
+### 8.3 Cause 2 - hardware turbo is folded into the host speed multiplier (audio/video)
+
+`current_z80_frequency_multiplier = host << scorpion_turbo` (`z80.cpp:379`). Every
+consumer treats it as "the frame runs N× faster in wall-clock", which is what the
+**host** speed control means, but hardware turbo keeps the frame at 20 ms real time and
+only doubles CPU T-states per frame (AY, FDC, video have their own clocks - hardware-
+reference §13):
+
+- `SoundManager::handleFrameEnd` (`soundmanager.cpp:432`): `samplesThisFrame` derives from
+  `config.frame * multiplier` -> **2× samples per 20 ms frame** -> the ring overfills and
+  the app drops ~120-140 ms per resync. Same in `Covox::handleFrameEnd` (`covox.cpp:80`).
+- `SoundChip_TurboSound::handleStep` (`soundchip_turbosound.cpp:50`) scales `t` by the
+  multiplier for the AY PLL - correct only for host speed.
+- `tape.cpp:525/692` scale tape timing by the multiplier (documented pragmatic choice).
+- Video: `Screen::GetCurrentTstate` descales `t` (correct). The alternate-frame blink is
+  **not yet root-caused**; re-check after 8.4/8.5 (it may be the menu's own flash driven
+  by the wrong detection result). If it persists, audit per-frame render paths that
+  compare scaled `cpu.t` against unscaled raster positions.
+
+### 8.4 Fix - apply the turbo strobe immediately (APPLIED 2026-09-10)
+
+> Implemented: `Z80::ApplyHardwareTurboNow` / `RecomputeFrameTiming`, called from
+> `PortDecoder_Scorpion256::DecodePortIn`; `Z80FrameCycle` reads the frame geometry from
+> members. Verified by `ScorpionTurboDetect_Test` (real ROMs, both models, 8/8 phases
+> set the firmware flag) and `ScorpionMachine_Test.TurboStrobeAppliesMidFrame`.
+> Base v2.9x monitor uses the same `#0553` loop with flags at `#DFF8` (=`#C0`) and
+> `#DFDD` bit 4 (enabled), entry `#0211`.
+
+- Make `frameLimit`, `int_start`, `int_end` Z80 members recomputed by one function
+  (`RecomputeFrameTiming()`), read every loop iteration in `Z80FrameCycle` and in the
+  `emulator.cpp` stepping paths (replace the ten local copies).
+- On the strobe (`PortDecoder_Scorpion256::DecodePortIn`, turbo arm): call
+  `Z80::ApplyTurboNow()` which, if the effective multiplier changes mid-frame, rescales
+  the in-frame position `cpu.t = cpu.t * new / old` (and `eipos`, `haltpos` likewise),
+  updates `current_z80_frequency_multiplier`, and calls `RecomputeFrameTiming()`. INT
+  position stays at the same *raster* instant. Keep the frame-boundary path for host
+  speed changes.
+- Expected result: `#0269` loop runs at 7 MHz from its first iteration -> `#E02D = C0`,
+  the menu's Turbo item becomes enabled in both ROMs, and `IN #1FFD` from the menu
+  returns the machine to 3.5 MHz.
+
+### 8.5 Audio overfill - exact mechanism (VERIFIED from code) and fix (APPLIED, commits aab04e27 + fbd89355)
+
+**Mechanism.** Wall-clock frame pacing never changes: `MainLoop` releases one frame every
+`config.frame_duration_us` (20 ms) regardless of the multiplier (`mainloop.cpp:151`).
+With the Scorpion turbo flip-flop set, `current_z80_frequency_multiplier` = 2, and the
+audio path scales *everything* by it:
+
+| Site | Expression | Effect at turbo (x2) |
+|---|---|---|
+| `SoundManager::handleFrameEnd` (`soundmanager.cpp:432-436`) | `samplesThisFrame = frame*mult*rate / 3.5 MHz` | 1764 instead of 882 samples per 20 ms frame |
+| `Beeper::handleFrameEnd` / `Covox::handleFrameEnd` | `blip_end_frame(frame*mult)` with blip clock fixed at `CPU_CLOCK_RATE` (3.5 MHz, `beeper.cpp:26`, `covox.cpp:23`) | blip emits 2x samples |
+| `SoundChip_TurboSound::handleStep` (`soundchip_turbosound.cpp:50`) | `t * mult` into the AY PLL | AY emits 2x samples |
+
+So every 20 ms the core pushes 40 ms of audio into the ring; the Qt consumer drains
+20 ms; the ring gains one frame per frame until `AppSoundManager` hits
+`HARD_RESYNC_MS` and discards down to `DRC_TARGET_MS` - the logged
+"dropped 5800-6700 frames (121-140 ms)" every few frames (`unreal-qt/src/emulator/soundmanager.cpp:218-223`).
+This is by design for the **host** speed control ("turbo has no realtime constraint;
+drop the excess knowingly", `soundmanager.cpp` comment), but hardware turbo is not that:
+the frame is still 20 ms of real time, only the CPU executed 2x T-states, and the AY /
+beeper / Covox clocks are unchanged (hardware-reference §13).
+
+**Fix - descale hardware turbo out of the audio T-domain (same idea as `Screen::GetCurrentTstate`).**
+Keep `current_z80_frequency_multiplier` = host x turbo for the CPU, INT window and screen.
+Introduce the two factors explicitly in `EmulatorState` (host multiplier already exists
+as `next_z80_frequency_multiplier`; turbo is `scorpion_turbo`), and:
+
+1. `SoundManager::handleFrameEnd`: `frameDuration = config.frame * hostMultiplier` (not
+   effective). At hardware turbo this restores 882 samples/frame; the host x2 behaviour
+   is untouched.
+2. Every T-state handed to audio is divided by the turbo factor first:
+   - beeper: the `frameTState` passed to `handlePortOut` / `handleTapeAudio`
+     (`soundmanager.cpp:176` and the port-OUT caller) -> `t / turbo`;
+   - covox: `covox.cpp:163` (`GetZ80()->t`) -> `t / turbo`, and `frameDuration` as in 1;
+   - AY: `soundchip_turbosound.cpp:47-50` -> `currentTStates = t / turbo`, then the
+     existing `* hostMultiplier`.
+   Add one inline helper, e.g. `EmulatorState::AudioTstate(uint32_t t)` =
+   `t / (scorpion_turbo ? 2 : 1)`, and use it at those three sites so the rule lives in
+   one place. Integer division loses half a T-state (0.14 us) - far below one sample.
+3. Blip clock rates stay at `CPU_CLOCK_RATE`; no reconfiguration on turbo toggles (that
+   would glitch the resampler).
+4. `tape.cpp:525/692`: unchanged (documented pragmatic choice) - the tape is CPU-timed by
+   loaders, so scaling with the effective multiplier is what makes tape loading work in
+   turbo.
+
+**Why this also fixes the visible symptom ordering:** with 8.4 the monitor's detection
+succeeds, so `#E02D` bit 7/6 are set and the menu can switch turbo off; with 8.5 the
+audio is correct in either state. 8.5 is independent of 8.4 and can ship first.
+
+### 8.6 Verification
+
+1. Unit: strobe mid-frame -> `cpu.t` rescaled, `frameLimit` doubled the same frame; a
+   scripted `IN #7FFD` followed by a 100 k-T loop with INT enabled completes before the
+   INT (and is interrupted without the strobe).
+2. Live: boot `PROFSCORP`, MNI -> `#E02D = C0`, menu Turbo item enabled; toggle it ->
+   `run_tstates 139776` spans 1 frame (on) / 2 frames (off). Same on `SCORPION`.
+3. Live: no "hard resync - dropped … overfilled audio" lines while the monitor runs at
+   7 MHz; screen does not blink.

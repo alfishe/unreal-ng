@@ -8,6 +8,7 @@
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/tape/tapefastload.h"
 #include "emulator/io/tape/tapeturbocontroller.h"
+#include "emulator/memory/scorpion/scorpionmemory.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/videocontroller.h"
 #include "emulator/video/zx/screenzx.h"
@@ -89,8 +90,13 @@ bool Core::Init()
 
     /// region <Memory>
 
-    // Create memory subsystem (allocates all RAM/ROM regions)
-    _memory = new Memory(_context);
+    // Create memory subsystem (allocates all RAM/ROM regions). Scorpion
+    // models get the derived class that owns their latch-to-bank translation
+    // and ProfROM bus-cycle silicon; everything else stays on the generic one
+    if (_config->mem_model == MM_SCORP || _config->mem_model == MM_PROFSCORP)
+        _memory = new ScorpionMemory(_context);
+    else
+        _memory = new Memory(_context);
     if (_memory)
     {
         _context->pMemory = _memory;

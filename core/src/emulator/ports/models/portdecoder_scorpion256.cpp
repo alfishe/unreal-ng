@@ -5,9 +5,10 @@
 #include "portdecoder_scorpion256.h"
 
 #include "common/collectionhelper.h"
-#include "emulator/video/ulacontention.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
+#include "emulator/memory/scorpion/scorpionromwindow.h"
+#include "emulator/video/ulacontention.h"
 
 #include <cstdint>
 
@@ -271,7 +272,8 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
         // quadrant's window bits above the GAL state are refreshed and the ROM
         // bases rebuilt - inert for images <= 256 KB (window mask 0)
         Memory& memory = *_context->pMemory;
-        memory.GetScorpionRomWindow().OnWindowPortWrite(state, _context->temporary, value);
+        if (ScorpionRomWindow* window = memory.GetScorpionRomWindow())
+            window->OnWindowPortWrite(state, _context->temporary, value);
         memory.UpdateZ80Banks();
 
         disp.decodedPort = 0x7EFD;
@@ -532,7 +534,7 @@ void PortDecoder_Scorpion256::Port_7FFD(uint8_t value, uint16_t pc)
     // whole port is frozen (screen bit included), but the locking write itself
     // applies: latch first, then derive the lock bit. All bank math — the
     // #7FFD low bits plus the #1FFD D4/D6/D7 extensions and the #0000 priority
-    // chain — lives in Memory::UpdateScorpionBanks() behind the single
+    // chain — lives in ScorpionMemory::UpdateModelBanks() behind the single
     // UpdateZ80Banks() call (design §3/§5), so the latch that snapshots and
     // the debugger read back is exactly the byte that was written
     if (!_7FFD_Locked)

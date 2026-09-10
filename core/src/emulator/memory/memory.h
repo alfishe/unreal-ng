@@ -1,12 +1,12 @@
 #pragma once
 #include "emulator/emulatorcontext.h"
-#include "emulator/memory/scorpionromwindow.h"
 #include "emulator/platform.h"
 #include "stdafx.h"
 
 class MemoryAccessTracker;
 class Z80;
 class FeatureManager;
+class ScorpionRomWindow;  // ProfROM quadrant policy - owned by ScorpionMemory only
 namespace ttd { class TTDDirtyTracker; }
 
 // Max RAM size is 4MBytes. Each model has own limits. Max ram used for ZX-Evo / TSConf
@@ -139,26 +139,6 @@ protected:
     bool _isPage0ROMDOS;
     bool _isPge0ROMService;
 
-    // Scorpion ProfROM quadrant window (design §4.2): stateless policy object,
-    // quadrant state itself lives in EmulatorState / TEMP. The cached gate
-    // below feeds the read-strobe fast-path check in MemoryReadFast/Debug
-    ScorpionRomWindow _scorpionRomWindow;
-    bool _scorpProfromActive = false;  // MM_PROFSCORP && service ROM paged at #0000
-
-    // Magic-button DOS trigger gate (hardware-reference §9): cached from
-    // UpdateScorpionBanks() so the release hook in MemoryReadFast/Debug costs
-    // one bool test on the CPU read path
-    bool _scorpionDosTriggerActive = false;
-
-    /// Bus-cycle side effects of the Scorpion ProfROM silicon, applied before
-    /// the read byte is served (both DD41/DD50 hang off the memory-bus decode,
-    /// so no port/latch event exists to hang them on instead - see the
-    /// definition in memory.cpp). Called from MemoryReadFast/Debug behind a
-    /// single fused gate on the two cached bools; mutually exclusive by
-    /// construction (strobe: !isExecution && addr < #4000, release:
-    /// isExecution && addr >= #4000), so at most one rebuild per cycle
-    void ApplyScorpionReadCycle(uint16_t addr, bool isExecution);
-
 public:
     // Base addresses for memory classes
     inline uint8_t* RAMBase()
@@ -268,8 +248,14 @@ public:
     static MemoryInterface* GetFastMemoryInterface();
     static MemoryInterface* GetDebugMemoryInterface();
 
-    uint8_t MemoryReadFast(uint16_t addr, bool isExecution);
-    uint8_t MemoryReadDebug(uint16_t addr, bool isExecution);
+    /// Read pair is virtual: model derivatives whose silicon reacts to bus
+    /// cycles themselves (ScorpionMemory - ProfROM plane strobes / magic-
+    /// button release) override it and run their effects before the byte is
+    /// served. The write pair stays non-virtual - no model reacts to writes.
+    /// The fast read ignores isExecution (no per-access tracking there), so
+    /// the parameter is marked maybe_unused
+    virtual uint8_t MemoryReadFast(uint16_t addr, [[maybe_unused]] bool isExecution);
+    virtual uint8_t MemoryReadDebug(uint16_t addr, bool isExecution);
     void MemoryWriteFast(uint16_t addr, uint8_t value);
     void MemoryWriteDebug(uint16_t addr, uint8_t value);
 
@@ -283,26 +269,26 @@ public:
 
     void UpdateZ80Banks();
 
-    /// Scorpion ZS 256 latch-to-bank translation (design §3);
-    /// UpdateZ80Banks() dispatches here for MM_SCORP / MM_PROFSCORP before
-    /// the generic body
-    void UpdateScorpionBanks();
+protected:
+    /// Model-specific latch-to-bank translation. A derivative that owns the
+    /// whole rebuild (ScorpionMemory for MM_SCORP / MM_PROFSCORP, design §3)
+    /// overrides this to return true, and UpdateZ80Banks() skips its generic
+    /// body - every base model stays byte-identical
+    virtual bool UpdateModelBanks() { return false; }
 
+public:
     /// RAM bank mask from config.ramsize (KB): 256 KB → 0x0F, 1024 KB → 0x3F
     uint8_t GetRamMask() const;
 
-    /// Repoint the four ROM role pointers at a ProfROM quadrant (design §4.2)
-    void ResolveScorpionRomBases(uint8_t quadrant);
+    /// ROM loader completion hook: derivatives with derived ROM geometry
+    /// (ScorpionMemory, ProfROM image masks) configure themselves from the
+    /// validated bank count; the default is a no-op
+    virtual void OnRomLoaded(uint16_t imageBanks) { (void)imageBanks; }
 
-    /// ROM loader completion hook (design §4.2): derives the ProfROM image
-    /// geometry masks from the validated bank count. No-op on other models
-    void OnRomLoaded(uint16_t imageBanks);
-
-    /// ProfROM quadrant window (owned policy object; state lives in EmulatorState/TEMP)
-    ScorpionRomWindow& GetScorpionRomWindow()
-    {
-        return _scorpionRomWindow;
-    };
+    /// ProfROM quadrant window - null unless the model derivative owns the
+    /// silicon (ScorpionMemory); quadrant state itself lives in
+    /// EmulatorState / TEMP
+    virtual ScorpionRomWindow* GetScorpionRomWindow() { return nullptr; }
 
     void SetROMPage(uint16_t page, bool updatePorts = false);
     void SetRAMPageToBank0(uint16_t page, bool updatePorts = false);

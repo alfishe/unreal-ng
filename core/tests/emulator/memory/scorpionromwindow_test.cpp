@@ -3,6 +3,7 @@
 
 #include "debugger/ttd/machine_state_hash.h"
 #include "debugger/ttd/ttd_checkpoint.h"
+#include "emulator/memory/scorpion/scorpionromwindow.h"
 #include "emulator/ports/models/scorpionfixture.h"
 
 /// @brief ProfROM quadrant window - pure policy tests (design §4.2, §4.3).
@@ -208,7 +209,8 @@ protected:
 };
 
 /// Reads outside the #0100-#010F block never clock the GAL: the block gate
-/// lives in the CPU read path (memory.cpp), so only FastRead proves it
+/// lives in the ScorpionMemory read-path override (scorpionmemory.cpp), so
+/// only FastRead proves it
 TEST_F(ScorpionRomWindowMachine_Test, OutsideBlockDoesNotAdvance)
 {
     SetUpProf(4);
@@ -244,7 +246,7 @@ TEST_F(ScorpionRomWindowMachine_Test, StrobeWalkRemapsServiceRom)
 
     FastRead(0x0108);              // S=2: Q2 -> Q0
     EXPECT_EQ(BankTag(0x0000), ServiceTag(0));
-    EXPECT_EQ(_memory->GetScorpionRomWindow().Quadrant(_context->emulatorState), 0);
+    EXPECT_EQ(_memory->GetScorpionRomWindow()->Quadrant(_context->emulatorState), 0);
 }
 
 /// The strobed read itself returns the post-switch quadrant's byte

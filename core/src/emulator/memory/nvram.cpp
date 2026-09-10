@@ -3,33 +3,188 @@
 #include "nvram.h"
 #include "common/timehelper.h"
 
+#include <cstring>
+
 //
 // Constructor for CMOS NVRAM
 //
 NVRAM::NVRAM()
 {
+	memset(_cmos, 0x00, sizeof(_cmos));
+	memset(_nvram, 0x00, sizeof(_nvram));
+	memset(_writeBuffer, 0x00, sizeof(_writeBuffer));
 }
 
 NVRAM::~NVRAM()
 {
 }
 
-void NVRAM::SetNVRAMAddress(uint32_t addr)
+/// region <Serial-link EEPROM (SMUC #FFBA)>
+
+void NVRAM::WriteSerialLink(uint8_t val)
 {
-	_address = addr;
+	// Bit roles on the SMUC system port (unreal-speccy wiring, Xpeccy nvWr)
+	const int sda = val & 0x10;
+	const int scl = val & 0x40;
+	const int wp = val & 0x20;
+
+	if (!_scl && scl)
+	{
+		// SCL rising edge
+		_stable = true;
+
+		// Transmit mode: present the next byte once the previous one drained
+		// (the host samples the current MSB on this very edge)
+		if (_tx && !_ack && _bitCount == 0)
+		{
+			_data = _nvram[_address & 0x7FF];
+			_address = static_cast<uint16_t>((_address + 1) & 0x7FF);
+			_bitCount = 8;
+		}
+	}
+	else if (_scl && scl)
+	{
+		// SCL high: START / STOP conditions
+		if (_sda && !sda)
+		{
+			// START: first byte is the select byte
+			_stable = false;
+			_tx = false;
+			_rx = true;
+			_mode = NV_COM;
+			_bitCount = 8;
+		}
+		else if (!_sda && sda)
+		{
+			// STOP: commit the write page (unless write-protected)
+			if (_mode == NV_WRITE && !wp)
+			{
+				_writePos &= 0x0F;
+				for (uint8_t i = 0; i < _writePos; i++)
+				{
+					_nvram[_address] = _writeBuffer[i];
+					if ((_address & 0xFF) == 0xFF)
+						_address &= 0x700; // LC16: the address cycles inside a page
+					else
+						_address = static_cast<uint16_t>((_address + 1) & 0x7FF);
+				}
+			}
+			_mode = NV_IDLE;
+			_stable = false;
+			_rx = false;
+			_tx = false;
+		}
+	}
+	else if (_scl && !scl)
+	{
+		// SCL falling edge
+		if (_ack)
+		{
+			_ack = false; // ACK holds the line low for exactly one clock
+		}
+		else
+		{
+			if (_tx)
+			{
+				// Shift the next bit to the MSB position for the host to sample
+				_data = static_cast<uint8_t>(_data << 1);
+			}
+			else if (_rx && _stable)
+			{
+				// Sample the host's SDA into the shift register
+				_data = static_cast<uint8_t>((_data << 1) | (_sda ? 1 : 0));
+				_bitCount--;
+
+				if (_bitCount == 0)
+				{
+					switch (_mode)
+					{
+						case NV_COM:
+							if ((_data & 0xF0) == 0xA0)
+							{
+								if (_data & 1)
+								{
+									// Read select: switch to transmit on the next rising edge
+									_bitCount = 0;
+									_rx = false;
+									_tx = true;
+								}
+								else
+								{
+									// Write select: bits 3-1 carry the high address bits A10-A8
+									_address = static_cast<uint16_t>((_address & 0x0FF) | ((_data & 0x0E) << 7));
+									_bitCount = 8;
+									_mode = NV_ADR;
+								}
+								_ack = true; // ACK the select byte
+							}
+							else
+							{
+								// Not a 1010xxxxx select - ignore the transaction
+								_mode = NV_IDLE;
+								_stable = false;
+								_ack = false;
+								_rx = false;
+								_tx = false;
+							}
+							break;
+
+						case NV_ADR:
+								_address = static_cast<uint16_t>((_address & 0x700) | _data);
+								_bitCount = 8;
+								_mode = NV_WRITE;
+								_ack = true;
+								_writePos = 0;
+								break;
+
+						case NV_WRITE:
+								_writeBuffer[_writePos & 0x0F] = _data;
+								_writePos++;
+								_ack = true;
+								break;
+
+						default:
+							break;
+					}
+				}
+			}
+		}
+	}
+
+	_sda = sda;
+	_scl = scl;
 }
 
-void NVRAM::WriteNVRAM(uint8_t val)
+bool NVRAM::ReadSerialLink() const
 {
-    (void)val;
+	// Open-collector data line as seen on #FFBA bit 6: pulled low while
+	// ACKing, while idle and while receiving (Xpeccy LC16 convention); in
+	// transmit mode the current shift-register MSB drives the line
+	if (_ack || _mode == NV_IDLE)
+		return false;
+
+	if (_tx)
+		return (_data & 0x80) != 0;
+
+	return false;
 }
 
-uint8_t NVRAM::ReadNVRAM()
+void NVRAM::ResetSerialLinkState()
 {
-	uint8_t result = 0;
-
-	return result;
+	_mode = NV_IDLE;
+	_stable = false;
+	_tx = false;
+	_rx = false;
+	_ack = false;
+	_bitCount = 0;
+	_data = 0;
+	_address = 0;
+	_writePos = 0;
+	_sda = 1;
+	_scl = 1;
 }
+
+/// endregion </Serial-link EEPROM (SMUC #FFBA)>
 
 void NVRAM::SetCMOSType(CMOSTypeEnum type)
 {
@@ -111,117 +266,6 @@ uint8_t NVRAM::ReadCMOS()
 
 	return result;
 }
-
-/*
-void NVRAM::Write(uint8_t val)
-{
-	const int SCL = 0x40, SDA = 0x10, WP = 0x20,
-		SDA_1 = 0xFF, SDA_0 = 0xBF,
-		SDA_SHIFT_IN = 4;
-
-	if ((val ^ prev) & SCL) // clock edge, data in/out
-	{
-		if (val & SCL) // nvram reads SDA
-		{
-			if (state == RD_ACK)
-			{
-				if (val & SDA) goto idle; // no ACK, stop
-				// move next byte to host
-				state = SEND_DATA;
-				dataout = nvram[address];
-				address = (address + 1) & 0x7FF;
-				bitsout = 0; goto exit; // out_z==1;
-			}
-
-			if ((1 << state) & ((1 << RCV_ADDR) | (1 << RCV_CMD) | (1 << RCV_DATA)))
-			{
-				if (out_z) // skip nvram ACK before reading
-					datain = 2 * datain + ((val >> SDA_SHIFT_IN) & 1), bitsin++;
-			}
-
-		}
-		else
-		{ // nvram sets SDA
-
-			if (bitsin == 8) // byte received
-			{
-				bitsin = 0;
-				if (state == RCV_CMD)
-				{
-					if ((datain & 0xF0) != 0xA0) goto idle;
-					address = (address & 0xFF) + ((datain << 7) & 0x700);
-					if (datain & 1) { // MemoryRead from current address
-						dataout = nvram[address];
-						address = (address + 1) & 0x7FF;
-						bitsout = 0;
-						state = SEND_DATA;
-					}
-					else
-						state = RCV_ADDR;
-				}
-				else if (state == RCV_ADDR)
-				{
-					address = (address & 0x700) + datain;
-					state = RCV_DATA; bitsin = 0;
-				}
-				else if (state == RCV_DATA)
-				{
-					nvram[address] = datain;
-					address = (address & 0x7F0) + ((address + 1) & 0x0F);
-					// state unchanged
-				}
-
-				// EEPROM always acknowledges
-				out = SDA_0;
-				out_z = 0;
-				goto exit;
-			}
-
-			if (state == SEND_DATA)
-			{
-				if (bitsout == 8)
-				{
-					state = RD_ACK;
-					out_z = 1;
-					goto exit;
-				}
-
-				out = (dataout & 0x80) ? SDA_1 : SDA_0; dataout *= 2;
-				bitsout++;
-				out_z = 0;
-				
-				goto exit;
-			}
-
-			out_z = 1; // no ACK, reading
-		}
-		goto exit;
-	}
-
-	if ((val & SCL) && ((val ^ prev) & SDA)) // start/stop
-	{
-		if (val & SDA)
-		{
-			idle: state = IDLE;
-		} // stop
-		else
-		{
-			state = RCV_CMD;
-			bitsin = 0; // start
-		}
-
-		out_z = 1;
-	}
-
-	// else SDA changed on low SCL
-
-exit:
-	if (out_z)
-		out = (val & SDA) ? SDA_1 : SDA_0;
-	prev = val;
-}
-
-*/
 
 // Helper methods
 uint8_t NVRAM::DecodeFromBCD(uint8_t binary)

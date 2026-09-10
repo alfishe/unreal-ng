@@ -563,19 +563,20 @@ uint8_t Tape::handlePortIn(uint16_t port)
 
         /// region <Idle EAR level>
 
-        // No playback: the EAR input idles HIGH when a tape image is loaded -
-        // the line is not driven low until the first edge of a real tape pulse
-        // arrives. Firmware EAR tests depend on this: the ProfROM monitor's
-        // tape-port check reads #FFBE and treats bit 6 = 0 as "no signal"
-        // (error #61), so a low idle level wedged its input polling forever.
+        // No playback: the EAR input idles HIGH - the line is not driven low
+        // until the first edge of a real tape pulse arrives (on hardware the
+        // input is pulled up; UnrealSpeccy models the idle level as
+        // tape_bit() = -1, all bits set). Firmware EAR tests depend on this:
+        // the ProfROM monitor's tape-port check reads #FFBE and treats
+        // bit 6 = 0 as "no signal" (error #61), so a low idle level wedged its
+        // input polling forever. This also holds with NO tape image loaded:
+        // the monitor's boot/NMI path polls the tape port with no tape present
+        // (2026-09-10: the no-tape EAR-LOW exception kept for the z80test CRC
+        // snapshot re-wedged it; the z80test golden CRCs of the port-reading
+        // vectors were regenerated for the HIGH idle level instead).
         // Deterministic by design - a random idle level would turn firmware
-        // timing into a lottery.
-        //
-        // When NO tape file is loaded, return 0 (EAR LOW). This preserves the
-        // original Z80 instruction test CRCs which were generated with ports
-        // returning specific values - a HIGH idle would change the parity flag
-        // for IN R,(C) reads from even ports (#FE mirrors).
-        result = _imageLoadedPath.empty() ? 0 : 0b0100'0000;
+        // timing into a lottery
+        result = 0b0100'0000;
 
         /// endregion </Idle EAR level>
 

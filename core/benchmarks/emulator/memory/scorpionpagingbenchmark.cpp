@@ -7,10 +7,12 @@
 /// Scorpion ZS-256 memory-subsystem baselines (testing-plan §7, Task 7).
 ///
 ///   - ScorpionPagingStorm: bank-switch write storm through the full decoder
-///     path (DecodePortOut #7FFD/#1FFD -> UpdateZ80Banks -> UpdateScorpionBanks)
+///     path (DecodePortOut #7FFD/#1FFD -> UpdateZ80Banks -> ScorpionMemory::
+///     UpdateModelBanks)
 ///   - ScorpionRomReadPath: MemoryReadFast sweep - the ProfROM read-strobe
-///     guard (cached bool + addr < 4) executes on every one of these reads,
-///     so this is the guard-cost baseline for the base machine
+///     guard (cached bool + addr < 4) executes on every one of these reads
+///     through the ScorpionMemory override, so this is the guard-cost
+///     baseline for the base machine
 static std::shared_ptr<Emulator> CreateScorpionBenchEmulator(const char* name)
 {
     EmulatorManager* manager = EmulatorManager::GetInstance();

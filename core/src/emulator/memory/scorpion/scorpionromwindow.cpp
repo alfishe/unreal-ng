@@ -1,6 +1,6 @@
 #include "stdafx.h"
 
-#include "emulator/memory/scorpionromwindow.h"
+#include "emulator/memory/scorpion/scorpionromwindow.h"
 
 /// region <Verified quadrant transition table>
 
