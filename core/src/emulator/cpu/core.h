@@ -144,5 +144,6 @@ public:
     CoreCUT(EmulatorContext* context) : Core(context) {};
 
     using Core::_z80;
+    using Core::_memory;
 };
 #endif  // _CODE_UNDER_TEST

@@ -290,46 +290,14 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
             }
         }
 
-        // Check for labels in operands
+        // Check for labels at the effective address of indexed (IX/IY+d) instructions.
+        // Label information for jump/call targets and absolute memory operands is already embedded
+        // into the mnemonic by Z80Disassembler::formatOperandString as 'label (#ADDR)'
         std::string labelInfo;
-        if (decoded.hasJump || decoded.hasRelativeJump)
+        if (decoded.hasDisplacement && decoded.hasRuntime)
         {
-            uint16_t targetAddr = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
             std::shared_ptr<Label> targetLabel =
-                labelManager ? labelManager->GetLabelByZ80Address(targetAddr) : nullptr;
-            if (targetLabel)
-            {
-                // Add label name in parentheses after the address
-                std::string addrStr = StringHelper::ToUpper(StringHelper::ToHexWithPrefix(targetAddr, ""));
-                size_t pos = command.find(addrStr);
-                if (pos != std::string::npos)
-                {
-                    command.insert(pos + addrStr.length(), StringHelper::Format(" (%s)", targetLabel->name.c_str()));
-                }
-            }
-        }
-        else if (decoded.hasWordOperand)
-        {
-            // Check for labels in word operands (e.g., LD HL,addr)
-            std::shared_ptr<Label> targetLabel =
-                labelManager ? labelManager->GetLabelByZ80Address(decoded.wordOperand) : nullptr;
-            if (targetLabel)
-            {
-                // Add label name in parentheses after the address
-                std::string addrStr = StringHelper::ToUpper(StringHelper::ToHexWithPrefix(decoded.wordOperand, ""));
-                size_t pos = command.find(addrStr);
-                if (pos != std::string::npos)
-                {
-                    command.insert(pos + addrStr.length(), StringHelper::Format(" (%s)", targetLabel->name.c_str()));
-                }
-            }
-        }
-        else if (decoded.hasDisplacement)
-        {
-            // Check for labels in indexed addressing (e.g., LD (IX+disp),A)
-            uint16_t targetAddr = (pc + decoded.displacement) & 0xFFFF;
-            std::shared_ptr<Label> targetLabel =
-                labelManager ? labelManager->GetLabelByZ80Address(targetAddr) : nullptr;
+                labelManager ? labelManager->GetLabelByZ80Address(decoded.displacementAddr) : nullptr;
             if (targetLabel)
             {
                 labelInfo = StringHelper::Format(" ; %s", targetLabel->name.c_str());

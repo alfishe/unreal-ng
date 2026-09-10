@@ -11,6 +11,7 @@
 #include <QVBoxLayout>
 #include <QDebug>
 
+#include "common/threadhelper.h"
 #include "ffmpeg_probe.h"
 #include "platform_encoder.h"
 
@@ -275,6 +276,7 @@ void VideowallRecordingWidget::connectSignals()
 void VideowallRecordingWidget::startAsyncDetection()
 {
     std::thread([this]() {
+        ThreadHelper::setThreadName("vwall-detect");
         bool nativeAvailable = PlatformEncoderFactory::isNativeAvailable();
         std::string nativeName;
         if (nativeAvailable)

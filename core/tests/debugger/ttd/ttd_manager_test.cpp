@@ -26,17 +26,15 @@
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
 
+#include "_helpers/testwaithelper.h"
+
 namespace
 {
 /// Wait for the emulator to reach the requested state, with a timeout.
 bool WaitForState(Emulator& emu, EmulatorStateEnum target, int timeoutMs = 1000)
 {
-    for (int i = 0; i < timeoutMs / 10; ++i)
-    {
-        if (emu.GetState() == target)
-            return true;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    TestWait::For([&emu, target] { return emu.GetState() == target; },
+                  std::chrono::milliseconds(timeoutMs));
     return emu.GetState() == target;
 }
 } // anonymous namespace

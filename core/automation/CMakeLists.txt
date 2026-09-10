@@ -19,6 +19,8 @@ option(ENABLE_PYTHON_AUTOMATION "Enable automation for Python" OFF)
 option(ENABLE_WEBAPI_AUTOMATION "Enable automation for WebAPI" ON)
 option(ENABLE_CLI_AUTOMATION "Enable automation for CLI" ON)
 option(ENABLE_GDB_AUTOMATION "Enable automation for GDB RSP server (GDB TDD G1+)" OFF)
+option(ENABLE_DEZOG_AUTOMATION "Enable automation for DeZog (DZRP) debug server" ON)
+option(ENABLE_ZESARUX_AUTOMATION "Enable automation for ZEsarUX (ZRCP) debug server" ON)
 
 # Recording support - follows the root CMakeLists.txt option (single source of truth
 # for the EmulatorContext/Core struct layout). Declared here so a standalone automation
@@ -41,6 +43,15 @@ if (NOT ENABLE_AUTOMATION)
     set(ENABLE_WEBAPI_AUTOMATION OFF)
     set(ENABLE_CLI_AUTOMATION OFF)
     set(ENABLE_GDB_AUTOMATION OFF)
+    set(ENABLE_DEZOG_AUTOMATION OFF)
+    set(ENABLE_ZESARUX_AUTOMATION OFF)
+endif ()
+
+# The ZEsarUX ZRCP server reuses the DeZog adapter; without it there is
+# nothing to serve
+if (ENABLE_ZESARUX_AUTOMATION AND NOT ENABLE_DEZOG_AUTOMATION)
+    set(ENABLE_ZESARUX_AUTOMATION OFF)
+    message(STATUS "ENABLE_ZESARUX_AUTOMATION disabled: requires ENABLE_DEZOG_AUTOMATION")
 endif ()
 
 # Add subdirectories based on automation options
@@ -67,13 +78,22 @@ if (ENABLE_CLI_AUTOMATION)
     set(AUTOMATION_CLI_TARGET automation-cli)
 endif ()
 
-# GDB RSP server transport (GDB TDD G1). Stub in Sprint 0:
-# the flag exists and configures cleanly, but no build target is produced yet.
-# When G1 lands, uncomment the add_subdirectory line.
+# GDB RSP server transport (GDB TDD G1)
 if (ENABLE_GDB_AUTOMATION)
-    # add_subdirectory(gdb)   # Added in G1 (GDB TDD §2)
-    message(STATUS "ENABLE_GDB_AUTOMATION=ON but GDB transport not yet implemented (Sprint 0 stub)")
-    set(AUTOMATION_GDB_TARGET "")   # Empty until G1 lands
+    add_subdirectory(gdb)
+    set(AUTOMATION_GDB_TARGET automation_gdb)
+endif ()
+
+# DeZog (DZRP v2.2.0) debug server transport
+if (ENABLE_DEZOG_AUTOMATION)
+    add_subdirectory(dezog)
+    set(AUTOMATION_DEZOG_TARGET automation_dezog)
+endif ()
+
+# ZEsarUX (ZRCP text protocol) debug server transport (shares the DeZog adapter)
+if (ENABLE_ZESARUX_AUTOMATION)
+    add_subdirectory(zesarux)
+    set(AUTOMATION_ZESARUX_TARGET automation_zesarux)
 endif ()
 
 set (SOURCES
@@ -120,7 +140,9 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
             $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:automation_python>    # Conditional linking
             $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:automation_webapi>    # Conditional linking
             $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:automation-cli>          # Conditional linking
-            # ENABLE_GDB_AUTOMATION link target added in G1 (GDB TDD §2)
+            $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:automation_gdb>          # Conditional linking
+            $<$<BOOL:${ENABLE_DEZOG_AUTOMATION}>:automation_dezog>      # Conditional linking
+            $<$<BOOL:${ENABLE_ZESARUX_AUTOMATION}>:automation_zesarux>   # Conditional linking
 
         PUBLIC
             unrealng::core
@@ -162,6 +184,9 @@ else ()
             $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${AUTOMATION_LUA_TARGET}>
             $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${AUTOMATION_PYTHON_TARGET}>
             $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:${AUTOMATION_WEBAPI_TARGET}>
+            $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:${AUTOMATION_GDB_TARGET}>
+            $<$<BOOL:${ENABLE_DEZOG_AUTOMATION}>:${AUTOMATION_DEZOG_TARGET}>
+            $<$<BOOL:${ENABLE_ZESARUX_AUTOMATION}>:${AUTOMATION_ZESARUX_TARGET}>
             unrealng::core
     )
 endif ()
@@ -174,6 +199,9 @@ target_include_directories(${PROJECT_NAME} PUBLIC
     $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/python/src>
     $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/webapi/src>
     $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/cli/include>
+    $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/gdb/include>
+    $<$<BOOL:${ENABLE_DEZOG_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/dezog/include>
+    $<$<BOOL:${ENABLE_ZESARUX_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/zesarux/include>
 )
 
 # Add conditional compiler definitions for automation modules
@@ -186,6 +214,8 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:ENABLE_WEBAPI_AUTOMATION>
     $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:ENABLE_CLI_AUTOMATION>
     $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:ENABLE_GDB_AUTOMATION>
+    $<$<BOOL:${ENABLE_DEZOG_AUTOMATION}>:ENABLE_DEZOG_AUTOMATION>
+    $<$<BOOL:${ENABLE_ZESARUX_AUTOMATION}>:ENABLE_ZESARUX_AUTOMATION>
 )
 
 # <Diagnostics>
@@ -197,6 +227,8 @@ message(STATUS "    ENABLE_PYTHON_AUTOMATION: ${ENABLE_PYTHON_AUTOMATION}")
 message(STATUS "    ENABLE_CLI_AUTOMATION: ${ENABLE_CLI_AUTOMATION}")
 message(STATUS "    ENABLE_WEBAPI_AUTOMATION: ${ENABLE_WEBAPI_AUTOMATION}")
 message(STATUS "    ENABLE_GDB_AUTOMATION: ${ENABLE_GDB_AUTOMATION}")
+message(STATUS "    ENABLE_DEZOG_AUTOMATION: ${ENABLE_DEZOG_AUTOMATION}")
+message(STATUS "    ENABLE_ZESARUX_AUTOMATION: ${ENABLE_ZESARUX_AUTOMATION}")
 message(STATUS "Settings:")
 message(STATUS "  PROJECT_NAME:        ${PROJECT_NAME}")
 message(STATUS "  SRC_DIR:             ${SRC_DIR}")

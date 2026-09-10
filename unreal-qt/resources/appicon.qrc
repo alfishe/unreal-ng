@@ -1,0 +1,13 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/">
+        <file>icons/app/appicon_16.png</file>
+        <file>icons/app/appicon_32.png</file>
+        <file>icons/app/appicon_48.png</file>
+        <file>icons/app/appicon_64.png</file>
+        <file>icons/app/appicon_128.png</file>
+        <file>icons/app/appicon_256.png</file>
+        <file>icons/app/appicon_512.png</file>
+        <file>icons/app/appicon_1024.png</file>
+    </qresource>
+</RCC>

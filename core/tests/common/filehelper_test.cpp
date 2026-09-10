@@ -4,6 +4,7 @@
 #include <cstring>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 
 #include "common/filehelper.h"
@@ -350,10 +351,17 @@ TEST_F(FileHelper_Test, AbsolutePath_NonExistentPath)
     std::string tempDir = FileHelperTestDir();
     std::string nonExistentFile = tempDir + "/nonexistent.txt";
 
-    int ret = system(("rm -rf " + tempDir).c_str());
-    ASSERT_EQ(ret, 0);
-    ret = system(("mkdir -p " + tempDir).c_str());
-    ASSERT_EQ(ret, 0);
+    // Prepare a clean scratch dir via std::filesystem - deliberately NOT a system() shell-out:
+    // the repo path contains a space ("Local GitLab"), and an unquoted shell command splits it
+    // into a bogus absolute path ("/Users/dev/Projects/Local") plus a cwd-relative remainder.
+    // Parallel shards racing on that shared bogus path surfaced as intermittent
+    // "mkdir: ...: File exists" shard failures (and the matching unquoted rm -rf would
+    // destroy a real directory at the split path, if one existed there).
+    std::error_code ec;
+    std::filesystem::remove_all(tempDir, ec);
+    ASSERT_FALSE(ec) << "remove_all: " << ec.message();
+    std::filesystem::create_directories(tempDir, ec);
+    ASSERT_FALSE(ec) << "create_directories: " << ec.message();
 
     // Test absolute path resolution for non-existent file
     std::string result = FileHelper::AbsolutePath(nonExistentFile);
@@ -376,9 +384,9 @@ TEST_F(FileHelper_Test, AbsolutePath_NonExistentPath)
     expected = PlatformPath(rootPath);
     ASSERT_EQ(PlatformPath(result), expected);
 
-    // Cleanup
-    ret = system(("rm -rf " + tempDir).c_str());
-    ASSERT_EQ(ret, 0);
+    // Cleanup (std::filesystem - see the note above on paths with spaces)
+    std::filesystem::remove_all(tempDir, ec);
+    ASSERT_FALSE(ec) << "remove_all cleanup: " << ec.message();
 #endif
 }
 
@@ -422,12 +430,17 @@ TEST_F(FileHelper_Test, AbsolutePath_PathNormalization)
     std::string tempDir = FileHelperTestDir();
     std::string tempFile = tempDir + "/test.txt";
 
-    int ret = system(("rm -rf " + tempDir).c_str());
-    ASSERT_EQ(ret, 0);
-    ret = system(("mkdir -p " + tempDir).c_str());
-    ASSERT_EQ(ret, 0);
-    ret = system(("touch " + tempFile).c_str());
-    ASSERT_EQ(ret, 0);
+    // Same word-splitting hazard as AbsolutePath_NonExistentPath above: use std::filesystem
+    // instead of unquoted system() shell-outs
+    std::error_code ec;
+    std::filesystem::remove_all(tempDir, ec);
+    ASSERT_FALSE(ec) << "remove_all: " << ec.message();
+    std::filesystem::create_directories(tempDir, ec);
+    ASSERT_FALSE(ec) << "create_directories: " << ec.message();
+    {
+        std::ofstream out(tempFile, std::ios::binary);
+        ASSERT_TRUE(out.good()) << "failed to create: " << tempFile;
+    }
 
     // Test backslash to forward slash conversion
     std::string mixedSepPath = tempDir + "\\test.txt";
@@ -452,9 +465,9 @@ TEST_F(FileHelper_Test, AbsolutePath_PathNormalization)
     expected = PlatformPath(tempDir + "/TEST.txt");
     ASSERT_EQ(PlatformPath(result), expected);
 
-    // Cleanup
-    ret = system(("rm -rf " + tempDir).c_str());
-    ASSERT_EQ(ret, 0);
+    // Cleanup (std::filesystem - see the note above on paths with spaces)
+    std::filesystem::remove_all(tempDir, ec);
+    ASSERT_FALSE(ec) << "remove_all cleanup: " << ec.message();
 #endif
 }
 
