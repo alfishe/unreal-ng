@@ -102,11 +102,13 @@ TEST_F(ScorpionMachine_Test, TurboFlipFlopDoublesFrameTStates)
     EXPECT_EQ(state.current_z80_frequency_multiplier, 1) << "power-on default is 3.5 MHz";
 
     state.scorpion_turbo = 1;
+    state.hw_turbo_shift = 1;  // what the decoder strobe sets alongside the flip-flop
     z80->Z80FrameCycle();
     EXPECT_EQ(state.current_z80_frequency_multiplier, 2);
     EXPECT_EQ(state.current_z80_frequency, state.base_z80_frequency * 2) << "7 MHz reporting";
 
     state.scorpion_turbo = 0;
+    state.hw_turbo_shift = 0;
     z80->Z80FrameCycle();
     EXPECT_EQ(state.current_z80_frequency_multiplier, 1) << "IN (#1FFD) family restores 3.5 MHz";
 }
@@ -121,10 +123,12 @@ TEST_F(ScorpionMachine_Test, TurboComposesWithHostSpeedMultiplier)
 
     state.next_z80_frequency_multiplier = 4;
     state.scorpion_turbo = 1;
+    state.hw_turbo_shift = 1;  // what the decoder strobe sets alongside the flip-flop
     z80->Z80FrameCycle();
     EXPECT_EQ(state.current_z80_frequency_multiplier, 8) << "host 4x x turbo 2x";
 
     state.scorpion_turbo = 0;
+    state.hw_turbo_shift = 0;
     z80->Z80FrameCycle();
     EXPECT_EQ(state.current_z80_frequency_multiplier, 4) << "turbo off returns to the host setting";
     EXPECT_EQ(state.next_z80_frequency_multiplier, 4) << "host intent is preserved across turbo toggles";

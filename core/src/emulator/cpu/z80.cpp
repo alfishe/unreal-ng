@@ -376,7 +376,7 @@ void Z80::ApplyQueuedFrequencyMultiplier()
     [[maybe_unused]] Z80& cpu = *this;
     EmulatorState& state = _context->emulatorState;
 
-    uint8_t desiredMultiplier = static_cast<uint8_t>(state.next_z80_frequency_multiplier << (state.scorpion_turbo ? 1 : 0));
+    uint8_t desiredMultiplier = static_cast<uint8_t>(state.next_z80_frequency_multiplier << state.hw_turbo_shift);
     if (desiredMultiplier != state.current_z80_frequency_multiplier)
     {
         uint8_t oldMultiplier = state.current_z80_frequency_multiplier;
@@ -387,8 +387,8 @@ void Z80::ApplyQueuedFrequencyMultiplier()
         // Speed multipliers are handled by adjusting frame duration and timings
         cpu.rate = 256;
 
-        MLOGINFO("Z80::ApplyQueuedFrequencyMultiplier - Applied speed multiplier: %dx -> %dx (%.2f MHz, rate=%d, scorpion_turbo=%u)", oldMultiplier,
-                 state.current_z80_frequency_multiplier, state.current_z80_frequency / 1'000'000.0, cpu.rate, state.scorpion_turbo);
+        MLOGINFO("Z80::ApplyQueuedFrequencyMultiplier - Applied speed multiplier: %dx -> %dx (%.2f MHz, rate=%d, hw_turbo_shift=%u)", oldMultiplier,
+                 state.current_z80_frequency_multiplier, state.current_z80_frequency / 1'000'000.0, cpu.rate, state.hw_turbo_shift);
     }
 }
 

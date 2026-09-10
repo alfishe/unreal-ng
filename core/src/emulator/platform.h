@@ -801,6 +801,31 @@ struct EmulatorState
                                                 // 1 = 7 MHz. Set by IN from the #7FFD-family decode, cleared by IN from
                                                 // the #1FFD-family decode and by reset. Composes with the host speed
                                                 // multiplier at the frame boundary - see Z80::Z80FrameCycle()
+    uint8_t hw_turbo_shift;                     // Model-neutral HARDWARE turbo: log2 of the guest-visible CPU
+                                                // multiplier (0 = base clock, 1 = 2x e.g. Scorpion 7 MHz, 2 = 4x e.g.
+                                                // 14 MHz clones). Maintained by the model's port decoder from its own
+                                                // latch (Scorpion: scorpion_turbo; ATM/Profi: their turbo bits). The
+                                                // Z80 composes it with the host speed control; audio/video descale it
+
+    /// Host speed-control multiplier alone (current = host << hw_turbo_shift).
+    /// Audio sample budgeting must use THIS: the host control makes frames
+    /// run faster in wall-clock (excess audio is dropped knowingly), whereas
+    /// the Scorpion hardware turbo keeps the 20 ms frame and only doubles the
+    /// CPU T-states inside it - the AY/beeper/Covox clocks are unchanged
+    /// (hardware-reference 13, profrom-nmi-gaps-and-findings.md 8.5)
+    uint8_t HostSpeedMultiplier() const
+    {
+        return static_cast<uint8_t>(current_z80_frequency_multiplier >> hw_turbo_shift);
+    }
+
+    /// Descale a CPU T-state position into the audio time base: under a
+    /// hardware turbo the CPU counts N x T-states per real-time frame, so the
+    /// sound renderers (blip_buf at CPU_CLOCK_RATE, AY PLL) see t/N - the same
+    /// descale Screen::GetCurrentTstate applies for the ULA
+    uint32_t AudioTstate(uint32_t t) const
+    {
+        return t >> hw_turbo_shift;
+    }
 
     /// endregion </Runtime CPU parameters
 
