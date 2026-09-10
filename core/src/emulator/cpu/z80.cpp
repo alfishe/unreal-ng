@@ -14,6 +14,7 @@
 #include "emulator/io/tape/tapefastload.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/notifications.h"
+#include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/spectrumconstants.h"
 #include "emulator/video/screen.h"
@@ -415,6 +416,11 @@ void Z80::Z80FrameCycle()
 
         MLOGINFO("Z80::Z80FrameCycle - Applied queued speed multiplier: %dx -> %dx (%.2f MHz, rate=%d)", oldMultiplier,
                  state.current_z80_frequency_multiplier, state.current_z80_frequency / 1'000'000.0, cpu.rate);
+
+        // Notify observers of CPU frequency change
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        std::string emulatorId = _context->pEmulator ? _context->pEmulator->GetId() : "";
+        messageCenter.Post(NC_CPU_FREQ_CHANGED, new CPUFreqPayload(emulatorId, state.current_z80_frequency_multiplier));
     }
 
     // Scale frame duration by speed multiplier
