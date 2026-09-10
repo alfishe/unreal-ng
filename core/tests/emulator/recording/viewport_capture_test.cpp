@@ -159,17 +159,20 @@ TEST_F(ViewportCapture_Test, ViewportPresetValues)
     EXPECT_EQ(ViewportPresets::SYMMETRIC_HORIZONTAL.cropTop, 0);
     EXPECT_EQ(ViewportPresets::SYMMETRIC_HORIZONTAL.cropBottom, 0);
 
-    // Standard - crop right and top
+    // Standard (352x288) - crop to 48px borders all around
+    // cropTop = SCREEN_OFFSET_TOP - 48 = 56 - 48 = 8
+    // cropBottom = BOTTOM_BORDER - 48 = 56 - 48 = 8
     EXPECT_EQ(ViewportPresets::STANDARD.cropLeft, 0);
     EXPECT_EQ(ViewportPresets::STANDARD.cropRight, 32);
-    EXPECT_EQ(ViewportPresets::STANDARD.cropTop, 16);
-    EXPECT_EQ(ViewportPresets::STANDARD.cropBottom, 0);
+    EXPECT_EQ(ViewportPresets::STANDARD.cropTop, 8);
+    EXPECT_EQ(ViewportPresets::STANDARD.cropBottom, 8);
 
     // Screen only - crop to 256x192 paper area
+    // Uses SCREEN_OFFSET_TOP (56) and BOTTOM_BORDER (56)
     EXPECT_EQ(ViewportPresets::SCREEN_ONLY.cropLeft, 48);
     EXPECT_EQ(ViewportPresets::SCREEN_ONLY.cropRight, 80);
-    EXPECT_EQ(ViewportPresets::SCREEN_ONLY.cropTop, 64);
-    EXPECT_EQ(ViewportPresets::SCREEN_ONLY.cropBottom, 48);
+    EXPECT_EQ(ViewportPresets::SCREEN_ONLY.cropTop, 56);
+    EXPECT_EQ(ViewportPresets::SCREEN_ONLY.cropBottom, 56);
 }
 
 /// Test VideoCaptureRegion enum has expected values

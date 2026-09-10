@@ -2607,9 +2607,15 @@ for addr in range(0x0000, 0x4000):
 
 ### 7. Disassembly & Reverse Engineering
 
-Enhanced code analysis and disassembly features. The core disassembler (`Z80Disassembler`) is fully implemented and needs to be exposed via automation interfaces.
+Enhanced code analysis and disassembly features. The core disassembler (`Z80Disassembler`) is fully implemented and exposed via all automation interfaces (WebAPI, Lua, Python, CLI).
 
 **Implementation**: `core/src/debugger/disassembler/z80disasm.h/cpp`
+
+Key decoding properties shared by all interfaces:
+- **Signed displacements**: IX/IY indexed operands are rendered with the sign folded into the template (`(ix-#05)`), and the effective address (`IX+d`) is reported when runtime registers are available
+- **Relative targets**: JR/DJNZ targets are computed as `instruction address + instruction length + signed 8-bit offset` (wrapping at 0x0000/0xFFFF)
+- **Labels**: when a label exists for a jump/call/memory target, the mnemonic prints **both** the label and the address: `call TEST_ROUTINE (#8010)`; `ld (TEST_DATA (#8020)),hl` for absolute memory operands. 16-bit immediates (`ld hl,nn`) are not addresses by definition, but a label at exactly that value is shown too (`ld hl,TEST_DATA (#8020)`) - the operand keeps its immediate semantics (no `target`)
+- **Indirect jumps**: `jp (hl)`/`jp (ix)`/`jp (iy)` targets are only resolved at runtime (static views omit the target)
 
 #### 7.1 Disassembly Commands
 
@@ -2622,20 +2628,22 @@ Enhanced code analysis and disassembly features. The core disassembler (`Z80Disa
 
 **Example Output**:
 ```
-0x3683: CB 7F       BIT 7,A
-0x3685: 28 03       JR Z,0x368A
-0x3687: CD 00 10    CALL 0x1000
-0x368A: C9          RET
+0x3683: CB 7F       bit 7,a
+0x3685: 28 03       jr z,LOOP_EXIT (#368A)
+0x3687: CD 00 10    call INIT_ROUTINE (#1000)
+0x368A: C9          ret
 ```
 
 **WebAPI Endpoints**:
 ```
 GET /api/v1/emulator/{id}/disasm?address=0x3683&count=10
-GET /api/v1/emulator/{id}/disasm?from=0x3683&to=0x3700
 GET /api/v1/emulator/{id}/disasm/page?type=rom&page=2&offset=0&count=20
 ```
 
-**WebAPI Response**:
+> [!NOTE]
+> A range form (`?from=&to=`) is not implemented; use `address` + `count` instead.
+
+**WebAPI Response** (field reference in [webapi-interface.md](./webapi-interface.md#disassembly-response)):
 ```json
 {
   "address": 13955,
@@ -2644,13 +2652,13 @@ GET /api/v1/emulator/{id}/disasm/page?type=rom&page=2&offset=0&count=20
     {
       "address": 13955,
       "bytes": "CB7F",
-      "mnemonic": "BIT 7,A",
+      "mnemonic": "bit 7,a",
       "size": 2
     },
     {
       "address": 13957,
       "bytes": "2803",
-      "mnemonic": "JR Z,0x368A",
+      "mnemonic": "jr z,#368A",
       "size": 2,
       "target": 13962
     }
@@ -2672,7 +2680,8 @@ lines = emu.disasm_page(type="rom", page=2, offset=0, count=20)
 # Disassemble from physical RAM page
 lines = emu.disasm_page(type="ram", page=5, offset=0x100, count=10)
 
-# Returns list of dicts with: address/offset, bytes, mnemonic, size, target (if branch)
+# Returns list of dicts with: address/offset, bytes, mnemonic, size,
+# label, target/targetLabel (branches), displacement/effectiveAddress/effectiveAddressLabel (indexed ops)
 ```
 
 **Lua Binding**:
@@ -2685,7 +2694,8 @@ local lines = emu:disasm(0x3683, 10)  -- address, count
 local lines = disasm_page("rom", 2, 0, 20)  -- type, page, offset, count
 local lines = disasm_page("ram", 5, 0x100, 10)
 
--- Each entry: {address/offset, bytes, mnemonic, size, target}
+-- Each entry: {address/offset, bytes, mnemonic, size, label,
+--              target/targetLabel (branches), displacement/effectiveAddress/effectiveAddressLabel (indexed ops)}
 ```
 
 **CLI Commands**:

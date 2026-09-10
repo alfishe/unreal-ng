@@ -15,6 +15,8 @@
 #include "_helpers/emulatortesthelper.h"
 #include "pch.h"
 
+#include "_helpers/testwaithelper.h"
+
 /// region <SetUp / TearDown>
 
 void BreakpointManager_test::SetUp()
@@ -150,11 +152,8 @@ TEST_F(BreakpointManager_test, executionBreakpoint)
     emulator->RunSingleCPUCycle(false);
 
     // Wait for async callback to execute (max 200ms)
-    auto start = std::chrono::steady_clock::now();
-    while (!breakpointTriggered.load() && std::chrono::steady_clock::now() - start < std::chrono::milliseconds(200))
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    TestWait::For([&breakpointTriggered] { return breakpointTriggered.load(); },
+                  std::chrono::milliseconds(200));
 
     // Remove observer BEFORE checking result to prevent callback accessing invalid memory
     messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
@@ -233,11 +232,8 @@ TEST_F(BreakpointManager_test, memoryReadBreakpoint)
     emulator->RunNCPUCycles(50);
 
     // Wait for async callback to execute (max 200ms)
-    auto start = std::chrono::steady_clock::now();
-    while (!breakpointTriggered.load() && std::chrono::steady_clock::now() - start < std::chrono::milliseconds(200))
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    TestWait::For([&breakpointTriggered] { return breakpointTriggered.load(); },
+                  std::chrono::milliseconds(200));
 
     // Remove observer BEFORE checking result to prevent callback accessing invalid memory
     messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
@@ -316,11 +312,8 @@ TEST_F(BreakpointManager_test, memoryWriteBreakpoint)
     emulator->RunNCPUCycles(50, false);
 
     // Wait for async callback to execute (max 200ms)
-    auto start = std::chrono::steady_clock::now();
-    while (!breakpointTriggered.load() && std::chrono::steady_clock::now() - start < std::chrono::milliseconds(200))
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    TestWait::For([&breakpointTriggered] { return breakpointTriggered.load(); },
+                  std::chrono::milliseconds(200));
 
     // Remove observer BEFORE checking result to prevent callback accessing invalid memory
     messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
@@ -398,11 +391,8 @@ TEST_F(BreakpointManager_test, portInBreakpoint)
     emulator->StartAsync();
 
     // Wait for async callback to execute (max 200ms)
-    auto start = std::chrono::steady_clock::now();
-    while (!breakpointTriggered.load() && std::chrono::steady_clock::now() - start < std::chrono::milliseconds(200))
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    TestWait::For([&breakpointTriggered] { return breakpointTriggered.load(); },
+                  std::chrono::milliseconds(200));
 
     // Remove observer BEFORE checking result to prevent callback accessing invalid memory
     messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
@@ -469,11 +459,8 @@ TEST_F(BreakpointManager_test, portOutBreakpoint)
     emulator->RunNCPUCycles(20, false);
 
     // Wait for async callback to execute (max 200ms)
-    auto start = std::chrono::steady_clock::now();
-    while (!breakpointTriggered.load() && std::chrono::steady_clock::now() - start < std::chrono::milliseconds(200))
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    TestWait::For([&breakpointTriggered] { return breakpointTriggered.load(); },
+                  std::chrono::milliseconds(200));
 
     // Remove observer BEFORE checking result to prevent callback accessing invalid memory
     messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
@@ -1165,11 +1152,8 @@ TEST_F(BreakpointManager_test, ROMPagingBeforeBreakpointDispatch)
     emulator->RunNCPUCycles(60, false);
 
     // Wait for async callback (max 200ms)
-    auto start = std::chrono::steady_clock::now();
-    while (!breakpointTriggered.load() && std::chrono::steady_clock::now() - start < std::chrono::milliseconds(200))
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    TestWait::For([&breakpointTriggered] { return breakpointTriggered.load(); },
+                  std::chrono::milliseconds(200));
 
     // Remove observer before checking result
     messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);

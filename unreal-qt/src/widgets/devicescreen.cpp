@@ -34,7 +34,8 @@ void DeviceScreen::init(uint16_t width, uint16_t height, void* buffer)
 {
     detach();
 
-    ratio = static_cast<float>(width) / static_cast<float>(height);
+    // Note: the widget's aspect ratio is fixed (352x288) regardless of the framebuffer size;
+    // larger (overscan) framebuffers are scaled into the same frame
 
     devicePixelsRect = QRectF(0.0, 0.0, width, height);
     devicePixels = new QImage(static_cast<const unsigned char*>(buffer), width, height, QImage::Format_RGBA8888);
@@ -123,6 +124,32 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
         // Render the ZX Spectrum screen directly into the event rect
         painter.drawImage(event->rect(), *devicePixels, sourceRect);
     }
+}
+
+QImage DeviceScreen::grabFramebuffer()
+{
+    QImage frame;
+    if (_frameSource && !_latchedFrame.isNull() &&
+        _frameSource(_latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes())))
+    {
+        frame = _latchedFrame;  // Tear-free latched frame (shared bits; copied below)
+    }
+    else if (devicePixels != nullptr)
+    {
+        frame = *devicePixels;  // Legacy live buffer
+    }
+    if (frame.isNull())
+        return QImage();
+
+    QRect crop = frame.rect();
+    if (_hasViewport)
+    {
+        crop = QRect(_displayViewport.cropLeft, _displayViewport.cropTop,
+                     frame.width() - _displayViewport.cropLeft - _displayViewport.cropRight,
+                     frame.height() - _displayViewport.cropTop - _displayViewport.cropBottom);
+    }
+    // Deep copy in a format every clipboard / PNG writer accepts
+    return frame.copy(crop).convertToFormat(QImage::Format_ARGB32);
 }
 
 void DeviceScreen::keyPressEvent(QKeyEvent* event)
