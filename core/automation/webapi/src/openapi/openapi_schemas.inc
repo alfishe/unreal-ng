@@ -591,6 +591,29 @@
     schemas["TTDDumpResponse"]["properties"]["bytes"]["format"] = "int64";
     schemas["TTDDumpResponse"]["properties"]["error"]["type"] = "string";
 
+    // POST /ttd/load
+    schemas["TTDLoadRequest"]["type"] = "object";
+    schemas["TTDLoadRequest"]["description"] =
+        "Request body for POST /ttd/load.";
+    schemas["TTDLoadRequest"]["properties"]["path"]["type"] = "string";
+    schemas["TTDLoadRequest"]["properties"]["path"]["description"] =
+        "Filesystem path of the .ttd file to restore.";
+    schemas["TTDLoadRequest"]["required"].append("path");
+
+    schemas["TTDLoadResponse"]["type"] = "object";
+    schemas["TTDLoadResponse"]["description"] =
+        "Response from POST /ttd/load.";
+    schemas["TTDLoadResponse"]["properties"]["ok"]["type"] = "boolean";
+    schemas["TTDLoadResponse"]["properties"]["path"]["type"] = "string";
+    schemas["TTDLoadResponse"]["properties"]["checkpoint_count"]["type"] = "integer";
+    schemas["TTDLoadResponse"]["properties"]["checkpoint_count"]["format"] = "uint64";
+    schemas["TTDLoadResponse"]["properties"]["session_start_frame"]["type"] = "integer";
+    schemas["TTDLoadResponse"]["properties"]["session_start_frame"]["format"] = "uint64";
+    schemas["TTDLoadResponse"]["properties"]["current_end_frame"]["type"] = "integer";
+    schemas["TTDLoadResponse"]["properties"]["current_end_frame"]["format"] = "uint64";
+    schemas["TTDLoadResponse"]["properties"]["state"]["type"] = "string";
+    schemas["TTDLoadResponse"]["properties"]["error"]["type"] = "string";
+
     // POST /ttd/find-last
     schemas["TTDFindLastRequest"]["type"] = "object";
     schemas["TTDFindLastRequest"]["description"] =

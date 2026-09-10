@@ -7,6 +7,34 @@
     paths["/api/v1/emulator/{id}/registers"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/registers"]["get"]["responses"]["200"]["description"] = "CPU register values";
 
+    paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["summary"] = "Set CPU register value";
+    paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["description"] =
+        "Write a value into the named CPU register (af, bc, de, hl, af', bc', de', hl', ix, "
+        "iy, sp, pc, i, r and 8-bit halves). The value is masked to the register width, "
+        "written, read back and echoed in the response.";
+    paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["parameters"][1]["name"] = "name";
+    paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["parameters"][1]["description"] =
+        "Register name (e.g. 'pc', 'hl', 'a')";
+    paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["requestBody"]["required"] = true;
+    paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["required"][0] = "value";
+    paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["value"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["value"]["description"] = "Register value (0-65535)";
+    paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["responses"]["200"]["description"] = "Register updated";
+    paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["responses"]["400"]["description"] =
+        "Unknown register or missing 'value' field";
+    paths["/api/v1/emulator/{id}/registers/{name}"]["put"]["responses"]["404"]["description"] = "Emulator instance not found";
+
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["summary"] = "Read memory";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["tags"].append("Debug Commands");
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][0]["name"] = "id";
@@ -203,3 +231,26 @@
     paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["schema"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/disasm/page"]["get"]["responses"]["200"]["description"] =
         "Disassembled instructions from physical page";
+
+    // Memory pattern search endpoint
+    paths["/api/v1/emulator/{id}/memory/find"]["post"]["summary"] = "Search memory for a byte pattern";
+    paths["/api/v1/emulator/{id}/memory/find"]["post"]["tags"].append("Memory State");
+    paths["/api/v1/emulator/{id}/memory/find"]["post"]["description"] =
+        "Scans Z80 memory for a byte pattern. Body: {pattern_hex: \"AF 32 0E\" or "
+        "pattern: [175, 50, 14], start: 0, end: 65535, max: 64, alignment: 1}.";
+    paths["/api/v1/emulator/{id}/memory/find"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/memory/find"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/memory/find"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/memory/find"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/find"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        ["properties"]["pattern_hex"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/find"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        ["properties"]["start"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/memory/find"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        ["properties"]["end"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/memory/find"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        ["properties"]["max"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/memory/find"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        ["properties"]["alignment"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/memory/find"]["post"]["responses"]["200"]["description"] =
+        "Match addresses (count, matches[]), truncated flag";

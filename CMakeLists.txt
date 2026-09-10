@@ -25,6 +25,7 @@ option(ENABLE_WEBAPI_AUTOMATION "Enable WebAPI automation" ON)
 option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
 option(ENABLE_GDB_AUTOMATION "Enable GDB RSP server automation (GDB TDD G1+)" ON)
 option(ENABLE_DEZOG_AUTOMATION "Enable DeZog (DZRP) debug server automation" ON)
+option(ENABLE_MCP_AUTOMATION "Enable MCP server automation (requires ENABLE_WEBAPI_AUTOMATION)" ON)
 
 # Recording support (audio/video capture) - must be defined here to ensure consistent
 # struct layout (EmulatorContext) across all compilation units
@@ -359,6 +360,7 @@ if (ENABLE_AUTOMATION)
     message(STATUS "    ENABLE_CLI_AUTOMATION:    ${ENABLE_CLI_AUTOMATION}")
     message(STATUS "    ENABLE_GDB_AUTOMATION:    ${ENABLE_GDB_AUTOMATION}")
     message(STATUS "    ENABLE_DEZOG_AUTOMATION:  ${ENABLE_DEZOG_AUTOMATION}")
+    message(STATUS "    ENABLE_MCP_AUTOMATION:    ${ENABLE_MCP_AUTOMATION}")
 endif ()
 message(STATUS "====================================================")
 
