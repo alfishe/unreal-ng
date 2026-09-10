@@ -29,6 +29,9 @@ option(ENABLE_GDB_AUTOMATION "Enable GDB RSP server automation (GDB TDD G1+)" OF
 # struct layout (EmulatorContext) across all compilation units
 option(ENABLE_RECORDING "Enable audio/video recording support" ON)
 
+# Minimum macOS version (must precede project())
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/MacOSDeploymentTarget.cmake)
+
 project(unreal)
 
 # Validate toolchain/dependency compatibility (MSVC+vcpkg OR MinGW+pacman)
@@ -404,7 +407,7 @@ if (BUILD_QT_APPS)
             # Copy shared icon to bundles that reference it
             COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/unreal-qt/install/macos/unreal.icns" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.icns"
             COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/unreal-qt/install/macos/unreal.icns" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/unreal.icns"
-            COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/unreal-qt/install/macos/unreal.icns" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/unreal.icns"
+            COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/unreal-videowall/install/macos/videowall.icns" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/videowall.icns"
             
             # Run macdeployqt to deploy Qt frameworks into each bundle
             COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/UnrealNG.app" -always-overwrite
@@ -566,6 +569,18 @@ if (BUILD_QT_APPS)
                 "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/configs"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_SOURCE_DIR}/core/automation/webapi/resources/html" "${SUITE_STAGING_DIR}/resources/html"
+
+            # Desktop integration files in XDG layout (copy share/ into ~/.local/share or /usr/share)
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${CMAKE_SOURCE_DIR}/unreal-qt/install/linux/unrealng.desktop"
+                "${SUITE_STAGING_DIR}/share/applications/unrealng.desktop"
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${CMAKE_SOURCE_DIR}/unreal-videowall/install/linux/unrealng-videowall.desktop"
+                "${SUITE_STAGING_DIR}/share/applications/unrealng-videowall.desktop"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_SOURCE_DIR}/unreal-qt/install/linux/icons" "${SUITE_STAGING_DIR}/share/icons"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_SOURCE_DIR}/unreal-videowall/install/linux/icons" "${SUITE_STAGING_DIR}/share/icons"
 
             # Create tarball
             COMMAND ${CMAKE_COMMAND} -E tar "cfz"

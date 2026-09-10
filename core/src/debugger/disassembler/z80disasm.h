@@ -31,6 +31,7 @@ struct OpCode
 struct DecodedInstruction
 {
     bool isValid = false;
+    bool isTruncated = false;   // Input buffer ended mid-instruction: lengths/flags are real, missing operand values are unknown
     bool hasRuntime = false;
 
     /// region <Raw data>

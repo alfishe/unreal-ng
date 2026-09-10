@@ -91,7 +91,7 @@ void Beeper::handlePortOut(uint8_t value, uint32_t frameTState)
     int32_t delta = newAmplitude - _lastPortFEAmplitude;
     _lastPortFEAmplitude = newAmplitude;
 
-    if (delta != 0)
+    if (delta != 0 && !_synthesisSuppressed)
     {
         // Insert a band-limited step at the exact T-state position.
         // blip_buf will convolve this with a windowed sinc kernel
@@ -108,10 +108,24 @@ void Beeper::handleTapeAudio(int32_t amplitude, uint32_t frameTState)
     int32_t delta = amplitude - _lastTapeAmplitude;
     _lastTapeAmplitude = amplitude;
 
-    if (delta != 0)
+    if (delta != 0 && !_synthesisSuppressed)
     {
         blip_add_delta(_blipL, frameTState, delta);
         blip_add_delta(_blipR, frameTState, delta);
+    }
+}
+
+void Beeper::setSynthesisSuppressed(bool suppressed)
+{
+    if (_synthesisSuppressed == suppressed)
+        return;
+    _synthesisSuppressed = suppressed;
+    if (!suppressed)
+    {
+        // Resume from silence at the current level: discard deltas accumulated before
+        // suppression that were never consumed by a frame end
+        if (_blipL) blip_clear(_blipL);
+        if (_blipR) blip_clear(_blipR);
     }
 }
 

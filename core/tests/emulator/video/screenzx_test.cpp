@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "screenzx_test.h"
 
 #include "pch.h"
@@ -1054,3 +1055,70 @@ TEST_F(ScreenZX_Test, Batch8_RenderScreenMatchesPerPixel)
 }
 
 /// endregion </Batch 8-Pixel Tests>
+
+/// @brief Pentagon default (non-overscan) framing: the paper sits in the middle of the 352x288
+/// framebuffer with equal 48 px borders on the left and right and 48 lines top and bottom.
+/// Guards the UI framing - the device screen shows the framebuffer as-is in this mode.
+TEST_F(ScreenZX_Test, Pentagon_DefaultFraming_IsSymmetric)
+{
+    _context->config.frame = 71680;
+    _screenzx->SetVideoMode(M_PENTAGON128K);
+
+    const RasterDescriptor& rd = _screenzx->rasterDescriptors[_screenzx->_mode];
+    ASSERT_EQ(rd.fullFrameWidth, 352);
+    ASSERT_EQ(rd.fullFrameHeight, 288);
+
+    uint16_t minX = UINT16_MAX, maxX = 0, minY = UINT16_MAX, maxY = 0;
+    const uint32_t maxTstates = _screenzx->_rasterState.maxFrameTiming;
+    for (uint32_t t = 0; t < maxTstates && t < ScreenZX::MAX_FRAME_TSTATES; t++)
+    {
+        const ScreenZX::TstateCoordLUT& lut = _screenzx->_tstateLUT[t];
+        if (lut.renderType != RT_SCREEN)
+            continue;
+        // Each t-state covers 2 pixels; the LUT stores the first one
+        minX = std::min<uint16_t>(minX, lut.framebufferX);
+        maxX = std::max<uint16_t>(maxX, lut.framebufferX + 1);
+        minY = std::min<uint16_t>(minY, lut.framebufferY);
+        maxY = std::max<uint16_t>(maxY, lut.framebufferY);
+    }
+
+    const int leftBorder = minX;
+    const int rightBorder = rd.fullFrameWidth - 1 - maxX;
+    const int topBorder = minY;
+    const int bottomBorder = rd.fullFrameHeight - 1 - maxY;
+
+    EXPECT_EQ(maxX - minX + 1, 256) << "Paper width";
+    EXPECT_EQ(maxY - minY + 1, 192) << "Paper height";
+    EXPECT_EQ(leftBorder, 48);
+    EXPECT_EQ(rightBorder, leftBorder) << "Left/right borders must be symmetric by default";
+    EXPECT_EQ(topBorder, 48);
+    EXPECT_EQ(bottomBorder, topBorder) << "Top/bottom borders must be symmetric by default";
+}
+
+/// @brief Pentagon overscan (384x304) keeps the paper at (48, 64); the SYMMETRIC_HORIZONTAL
+/// viewport preset must therefore yield equal left/right borders after cropping.
+TEST_F(ScreenZX_Test, Pentagon_OverscanSymmetricViewport_HasEqualSideBorders)
+{
+    _context->config.frame = 71680;
+    _screenzx->SetVideoMode(M_P384);
+
+    const RasterDescriptor& rd = _screenzx->rasterDescriptors[_screenzx->_mode];
+    ASSERT_EQ(rd.fullFrameWidth, 384);
+
+    uint16_t minX = UINT16_MAX, maxX = 0;
+    const uint32_t maxTstates = _screenzx->_rasterState.maxFrameTiming;
+    for (uint32_t t = 0; t < maxTstates && t < ScreenZX::MAX_FRAME_TSTATES; t++)
+    {
+        const ScreenZX::TstateCoordLUT& lut = _screenzx->_tstateLUT[t];
+        if (lut.renderType != RT_SCREEN)
+            continue;
+        minX = std::min<uint16_t>(minX, lut.framebufferX);
+        maxX = std::max<uint16_t>(maxX, lut.framebufferX + 1);
+    }
+
+    const DisplayViewport& vp = ViewportPresets::SYMMETRIC_HORIZONTAL;
+    const int leftBorder = minX - vp.cropLeft;
+    const int rightBorder = (rd.fullFrameWidth - vp.cropRight) - 1 - maxX;
+    EXPECT_EQ(leftBorder, 48);
+    EXPECT_EQ(rightBorder, leftBorder) << "SYMMETRIC_HORIZONTAL must crop the overscan to equal side borders";
+}
