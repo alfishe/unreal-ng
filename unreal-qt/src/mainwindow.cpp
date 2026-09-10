@@ -776,6 +776,16 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
         // Hide all control elements
         statusBar()->hide();
         _toolBarManager->hideForFullScreen();
+
+        // Release modifier keys so no modifier key (Cmd/Ctrl/Shift) stays stuck in emulator
+        if (_emulator)
+        {
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            std::string targetId = _emulator->GetUUID();
+            messageCenter.Post(MC_KEY_RELEASED, new KeyboardEvent(ZXKEY_CAPS_SHIFT, KEY_RELEASED, targetId));
+            messageCenter.Post(MC_KEY_RELEASED, new KeyboardEvent(ZXKEY_SYM_SHIFT, KEY_RELEASED, targetId));
+            qDebug() << "Released modifier keys (CAPS_SHIFT, SYM_SHIFT) on entering fullscreen";
+        }
     }
     // Handle restore to normal state
     else if (!(newState & (Qt::WindowMinimized | Qt::WindowMaximized | Qt::WindowFullScreen)))
@@ -792,13 +802,6 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
         menuBar()->show();
         _statusBarManager->restoreVisibility();
         _toolBarManager->restoreVisibility();
-
-        // Rescale screen wrapper widget to contentFrame's restored (smaller) size so native GL container does not overlap toolbar/statusbar
-        if (_screenWrapper && ui->contentFrame && _screenWrapper->widget())
-        {
-            _screenWrapper->widget()->resize(ui->contentFrame->size());
-            updatePosition(_screenWrapper->widget(), ui->contentFrame, 0.5, 0.5);
-        }
 
         // macOS natively handles returning to the previous geometry after un-maximizing or exiting fullscreen.
         // Calling setGeometry explicitly here breaks the native animation.

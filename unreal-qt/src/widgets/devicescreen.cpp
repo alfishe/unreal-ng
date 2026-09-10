@@ -291,6 +291,12 @@ QImage DeviceScreen::grabFramebuffer()
 
 void DeviceScreen::keyPressEvent(QKeyEvent* event)
 {
+    if (event->key() == Qt::Key_F && (event->modifiers() & (Qt::ControlModifier | Qt::MetaModifier)))
+    {
+        event->ignore();
+        return;
+    }
+
     event->accept();
 
     // Don't react on auto-repeat
@@ -331,6 +337,12 @@ void DeviceScreen::keyPressEvent(QKeyEvent* event)
 
 void DeviceScreen::keyReleaseEvent(QKeyEvent* event)
 {
+    if (event->key() == Qt::Key_F && (event->modifiers() & (Qt::ControlModifier | Qt::MetaModifier)))
+    {
+        event->ignore();
+        return;
+    }
+
     event->accept();
 
     // Don't react on auto-repeat

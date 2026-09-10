@@ -550,6 +550,13 @@ void DeviceScreenGLWindow::paintGL()
 
 void DeviceScreenGLWindow::keyPressEvent(QKeyEvent* event)
 {
+    // Ignore shortcut combinations like Cmd+F / Ctrl+F so they bubble up to the application shortcut handler
+    if (event->key() == Qt::Key_F && (event->modifiers() & (Qt::ControlModifier | Qt::MetaModifier)))
+    {
+        event->ignore();
+        return;
+    }
+
     event->accept();
 
     if (!event->isAutoRepeat())
@@ -577,6 +584,12 @@ void DeviceScreenGLWindow::keyPressEvent(QKeyEvent* event)
 
 void DeviceScreenGLWindow::keyReleaseEvent(QKeyEvent* event)
 {
+    if (event->key() == Qt::Key_F && (event->modifiers() & (Qt::ControlModifier | Qt::MetaModifier)))
+    {
+        event->ignore();
+        return;
+    }
+
     event->accept();
 
     if (!event->isAutoRepeat())
@@ -609,6 +622,16 @@ void DeviceScreenGLWindow::mousePressEvent(QMouseEvent* event)
 
 bool DeviceScreenGLWindow::event(QEvent* event)
 {
+    if (event->type() == QEvent::ShortcutOverride)
+    {
+        auto* keyEvent = static_cast<QKeyEvent*>(event);
+        if (keyEvent->key() == Qt::Key_F && (keyEvent->modifiers() & (Qt::ControlModifier | Qt::MetaModifier)))
+        {
+            event->ignore();
+            return false;
+        }
+    }
+
     switch (event->type())
     {
         case QEvent::DragEnter:
