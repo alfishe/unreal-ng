@@ -232,6 +232,24 @@ public:
     }
 };
 
+/// NC_CPU_FREQ_CHANGED payload: emulator instance and new CPU frequency multiplier
+class CPUFreqPayload : public MessagePayload
+{
+public:
+    unreal::UUID _emulatorId;
+    uint8_t _freqMultiplier;  // 1=3.5MHz, 2=7MHz, 4=14MHz
+
+public:
+    CPUFreqPayload(const std::string& emulatorId, uint8_t freqMultiplier)
+        : MessagePayload()
+        , _emulatorId(emulatorId.empty() ? unreal::UUID() : unreal::UUID(emulatorId))
+        , _freqMultiplier(freqMultiplier)
+    {
+    }
+
+    virtual ~CPUFreqPayload() = default;
+};
+
 /// Payload for requesting single sync mode in videowall
 /// Example: messageCenter.Post(NC_VIDEOWALL_SINGLE_SYNC_MODE, new VideowallSyncModePayload(emulatorId, true));
 class VideowallSyncModePayload : public MessagePayload
