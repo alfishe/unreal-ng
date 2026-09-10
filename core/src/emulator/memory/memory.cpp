@@ -172,20 +172,38 @@ MemoryInterface* Memory::GetDebugMemoryInterface()
 /// Used from: Z80::FastMemIf
 /// \param addr 16-bit address in Z80 memory space
 /// \return Byte read from Z80 memory
-uint8_t Memory::MemoryReadFast(uint16_t addr, [[maybe_unused]] bool isExecution)
+uint8_t Memory::MemoryReadFast(uint16_t addr, bool isExecution)
 {
     // ProfROM read strobe (design §4.3): while the Service ROM is paged at #0000,
-    // any CPU read of the #0100-#010F block advances the quadrant state machine
-    // BEFORE the byte is fetched - operand bytes therefore come from the
-    // post-switch quadrant (mid-instruction remap, hardware-reference §12.4).
-    // The block matches the GAL decode exactly (S = A3:A2, A0/A1 unwired) - the
-    // same (addr & 0xFFF0) == 0x0100 window ZXMAK2 subscribes. Debugger-side
-    // reads (DirectRead/MapZ80AddressToPhysicalAddress) never pass here and so
-    // never advance the machine. Cost when inactive: one cached-bool test
-    if (_scorpProfromActive && (addr & 0xFFF0) == 0x0100) [[unlikely]]
+    // a CPU data read of the strobe grid - the four addresses with A1:A0 = 0
+    // (#0100/#0104/#0108/#010C) - advances the quadrant state machine
+    // BEFORE the byte is fetched, so operand bytes come from the post-switch
+    // quadrant (mid-instruction remap, hardware-reference §12.4). The GAL
+    // clocks only on a data read (/M1 inactive) and only on the exact grid:
+    // the monitor's RST 30h dispatcher in RAM reads the plane signature at
+    // #0101 (LD HL,(#0101)) on every inter-plane call, and off-grid or
+    // fetched bytes must never clock it (Xpeccy: (adr & 0xfff3) == 0x0100
+    // && !m1). Debugger-side reads (DirectRead/MapZ80AddressToPhysicalAddress)
+    // never pass here and so never advance the machine. Cost when inactive:
+    // one cached-bool test
+    if (_scorpProfromActive && !isExecution && (addr & 0xFFF3) == 0x0100) [[unlikely]]
     {
         if (_scorpionRomWindow.OnRomRead(_context->emulatorState, _context->temporary, addr))
             UpdateZ80Banks();
+    }
+
+    // Magic-button DOS trigger release (hardware-reference §9): DD50.1 resets
+    // on an instruction-fetch cycle from the upper half - the DD50 decode is
+    // /M1 & /MREQ & (A15 | A14). Data reads never release it: the TR-DOS NMI
+    // chain reads RAM at #C001 (LD HL,(#C001)) at #0814, before it latches
+    // the Service page at #0033, and that operand read must leave page 3
+    // forced (Xpeccy requires m1; ZXMAK2 subscribes RdMemM1 only). Writes
+    // never release it either. The rebuild runs before the byte is served,
+    // exactly like the hardware re-mux
+    if (_scorpionDosTriggerActive && isExecution && addr >= 0x4000) [[unlikely]]
+    {
+        _context->emulatorState.scorpionDosTrigger = 0;
+        UpdateZ80Banks();
     }
 
     // Determine CPU bank (from address bits 14 and 15)
@@ -202,15 +220,25 @@ uint8_t Memory::MemoryReadFast(uint16_t addr, [[maybe_unused]] bool isExecution)
 /// Used from: Z80::DbgMemIf
 /// \param addr 16-bit address in Z80 memory space
 /// \return Byte read from Z80 memory
-uint8_t Memory::MemoryReadDebug(uint16_t addr, [[maybe_unused]] bool isExecution)
+uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
 {
-    // ProfROM read strobe (design §4.3) - same #0100-#010F gate and semantics as
-    // MemoryReadFast: single-stepping must drive the quadrant machine exactly
-    // like free-running execution, or breakpoints would desynchronise it
-    if (_scorpProfromActive && (addr & 0xFFF0) == 0x0100) [[unlikely]]
+    // ProfROM read strobe (design §4.3) - same grid/isExecution gate and
+    // semantics as MemoryReadFast: single-stepping must drive the quadrant
+    // machine exactly like free-running execution, or breakpoints would
+    // desynchronise it
+    if (_scorpProfromActive && !isExecution && (addr & 0xFFF3) == 0x0100) [[unlikely]]
     {
         if (_scorpionRomWindow.OnRomRead(_context->emulatorState, _context->temporary, addr))
             UpdateZ80Banks();
+    }
+
+    // Magic-button DOS trigger release - same M1-fetch-only gate and
+    // semantics as MemoryReadFast: single-stepping must release the trigger
+    // exactly like free-running execution
+    if (_scorpionDosTriggerActive && isExecution && addr >= 0x4000) [[unlikely]]
+    {
+        _context->emulatorState.scorpionDosTrigger = 0;
+        UpdateZ80Banks();
     }
 
     /// region <MemoryReadFast functionality>
@@ -912,7 +940,27 @@ void Memory::UpdateScorpionBanks()
     // #1FFD bit 2 is NOT consulted: on hardware it is the RS-232 line, and the
     // heritage "force TR-DOS session" meaning has no hardware backing
     // (hardware-reference §12 item 9)
-    if (state.p1FFD & 0x01)
+    //
+    // Magic button first (DD50.1 "1-DOS/0-SOS", hardware-reference §9): while
+    // the DOS trigger is armed, page 3 (TR-DOS) of the CURRENT plane stands at
+    // #0000 - above the RAM-at-#0000 latch and every session selection. The
+    // service latch still outranks it: the firmware's entry trick runs
+    // LD BC,#1FFD / LD A,#12 / JP #0033 inside the TR-DOS page and expects the
+    // OUT (C),A at #0033 to page the service monitor immediately (both pages
+    // carry compatible code around #0033). The ProfROM plane register is not
+    // involved - the button never clocks the GAL, so the plane survives the
+    // whole session. MAME instead keeps the RAM0 latch above the trigger and
+    // only suspends it for its pending-NMI window; overriding RAM0 for the
+    // whole armed window is the hardware-faithful reading ("page 3 stands at
+    // #0000") and keeps the entry chain intact
+    if (state.scorpionDosTrigger && dosAvailable)
+    {
+        if (state.p1FFD & 0x02)
+            SetROMSystem();         // service latch wins - the #0033 trick
+        else
+            SetROMDOS();            // page 3 of the current plane
+    }
+    else if (state.p1FFD & 0x01)
     {
         SetRAMPageToBank0(0);   // RAM bank 0 mapped at #0000
     }
@@ -948,6 +996,14 @@ void Memory::UpdateScorpionBanks()
     {
         state.flags |= CF_DOSPORTS | CF_LEAVEDOSRAM;
     }
+    else if (state.scorpionDosTrigger && dosAvailable)
+    {
+        // The armed button also puts the FDC ports on the bus (MAME selects its
+        // DOS I/O shadow view on the same trigger) - but the software session's
+        // unpage-on-RAM machinery must stay disarmed: the trigger has its own
+        // release path (the next CPU read from >= #4000, MemoryReadFast/Debug)
+        state.flags |= CF_DOSPORTS;
+    }
     else if (!(state.p1FFD & 0x01) && ((state.p1FFD & 0x02) || (state.p7FFD & 0x10))
              && config.trdos_present && dosAvailable)
     {
@@ -959,6 +1015,9 @@ void Memory::UpdateScorpionBanks()
     _scorpProfromActive = config.mem_model == MM_PROFSCORP && _bank_read[0] == base_sys_rom;
     if (_scorpProfromActive)
         state.flags |= CF_PROFROM;
+
+    // Magic-button release gate for the CPU read path (hardware-reference §9)
+    _scorpionDosTriggerActive = state.scorpionDosTrigger != 0;
 }
 
 /// RAM bank mask derived from the configured RAM size (KB): 256 KB → 0x0F,

@@ -561,33 +561,19 @@ uint8_t Tape::handlePortIn(uint16_t port)
 
         /// endregion </Sustained EAR-polling resume>
 
-        /// region <Imitate analogue noise>
-        static uint16_t counter = 0;
-        [[maybe_unused]] static uint8_t prevValue = 0;
-        static uint16_t prngState = std::rand();
+        /// region <Idle EAR level>
 
-        if (counter == 0)
-        {
-            result = prngState & 0b0100'0000;
+        // No playback: the EAR input idles HIGH - the line is not driven
+        // low until the first edge of a real tape pulse arrives (UnrealSpeccy
+        // models the idle level as tape_bit() = -1, all bits set). Firmware
+        // EAR tests depend on this: the ProfROM monitor's tape-port check
+        // reads #FFBE and treats bit 6 = 0 as "no signal" (error #61), so a
+        // low idle level wedged its input polling forever. Deterministic by
+        // design - a random idle level would turn firmware timing into a
+        // lottery
+        result = 0b0100'0000;
 
-            prngState = std::rand();
-        }
-
-        // Galois LFSR with 16-bit register
-        // The polynomial used in this implementation is x^16 + x^5 + x^3 + x^2 + 1, which has a maximal period of
-        // 2^16-1, or 65,535 values
-        uint16_t bit = (prngState >> 0) ^ (prngState >> 2) ^ (prngState >> 3) ^ (prngState >> 5);
-        prngState = (prngState >> 1) | (bit << 15);
-
-        /*
-        // Simple XORshift algorithm for PRNG
-        prngState ^= prngState << 7;
-        prngState ^= prngState >> 5;
-        prngState ^= prngState << 3;
-        */
-
-        counter++;
-        /// endregion </Imitate analogue noise>
+        /// endregion </Idle EAR level>
 
         // If we just executed instruction at $0562 IN A,($FE)
         // And our PC is currently on $0564 RRA (which has opcode 0x1F)

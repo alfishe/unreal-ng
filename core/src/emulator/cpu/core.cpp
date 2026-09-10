@@ -72,6 +72,8 @@ bool Core::Init()
     _state->current_z80_frequency = baseFrequency;
     _state->current_z80_frequency_multiplier = 1;
     _state->next_z80_frequency_multiplier = 1;  // Initialize queued multiplier
+    _state->scorpion_turbo = 0;                 // Turbo flip-flop cleared at power-on (hardware-reference 13)
+    _state->scorpionDosTrigger = 0;            // Magic-button DOS trigger cleared at power-on (hardware-reference §9)
 
     // Initialize speed multiplier from configuration
     if (_config->speed_multiplier > 0 && _config->speed_multiplier <= 16)

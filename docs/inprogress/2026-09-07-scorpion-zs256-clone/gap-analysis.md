@@ -124,6 +124,15 @@ Legend: ✅ matches spec · ⚠️ partial/incorrect · ❌ missing.
 | `profrom_mask` by ROM size | absent | ❌ |
 | `CF_PROFROM` flag | defined (`platform.h:883`), never set/cleared | ❌ |
 
+## 11. Hardware turbo (7 MHz, Turbo+)
+
+| Requirement | Current state | Verdict |
+|---|---|---|
+| Turbo flip-flop strobed by `IN` from the `#7FFD`/`#1FFD` register families (`(port & 0xC023)` decode, mirrors included) | `PortDecoder_Scorpion256::DecodePortIn` clocks `EmulatorState::scorpion_turbo` before the decode chain, both `MM_SCORP` and `MM_PROFSCORP` | ✅ 2026-09-09 |
+| Reset clears the flip-flop | decoder `reset()` | ✅ 2026-09-09 |
+| 2× T-states per 50 Hz frame, INT window scaled, video/AY/FDC unaffected | composes with the host speed multiplier in `Z80::ApplyQueuedFrequencyMultiplier` (frame-boundary apply, incl. the Emulator stepping paths) | ✅ 2026-09-09 |
+| Front-panel turbo button (GUI toggle) | not implemented — follow-up, low priority | ❌ optional |
+
 ---
 
 ## Summary — must-build list
@@ -131,7 +140,7 @@ Legend: ✅ matches spec · ⚠️ partial/incorrect · ❌ missing.
 1. **Memory manager**: Scorpion branch in `UpdateZ80Banks()` + `ram_mask` + `#1FFD` consult (bits 0/1/4/6/7 only); ROM3-under-session rule; ProfROM bases resolved from `profrom_bank`; `SetROMMode` guard.
 2. **ROM loader**: fix the `base_*_rom` page assignment (verified order BASIC128/48K/Service/TR-DOS) — pre-existing bug affecting the signed `scorpion.rom`.
 3. **Port decoder**: real `Port_1FFD`, extended `Port_7FFD`, `#1FFD` read arm, `#FF` border write, reset defaults, debug `SetRAMPage/SetROMPage`.
-4. **NMI/MNI**: Z80 NMI implementation + Scorpion magic-button latch + three trigger surfaces (GUI, WebAPI, CLI/automation).
+4. **NMI/MNI**: Z80 NMI implementation + Scorpion magic-button trigger pair (DD50.1 DOS trigger + DD50.2 NMI — HW §9) + three trigger surfaces (GUI, WebAPI, CLI/automation).
 5. **TR-DOS**: Scorpion trap-arm rule, ROM3 regardless of `p7FFD[4]` while the session is open, decoder-level FDC gating (Pentagon pattern + monitor-paged exception). No `#1FFD` bit-2 force.
 6. **ProfROM**: quadrant state machine over `EmulatorState::profrom_bank` + read strobe hook + TTD checkpoint/hash/ksy field + size ladder (incl. the shipped 512 KB image) + `MM_PROFSCORP` decoder wiring.
 7. **Extended ROM**: `MAX_ROM_PAGES` 64→128, `#7EFD` window select, validation matrix.

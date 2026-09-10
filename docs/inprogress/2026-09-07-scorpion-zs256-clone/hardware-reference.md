@@ -362,8 +362,8 @@ silently breaks the path must be verified in Task 2.
 | `#FE` (partial decode: `A5=1, A1=1, A0=0` pattern `xxxxxxxx xx1xxx10`) | R/W | ULA: keyboard, border, ear, mic | selective decode — mirrors answer too; see §12 |
 | `#FF` | W | **border color (Scorpion extension)** | direct latch, 1T visible; coexists with `#FE[2:0]` |
 | `#FF` | R | Beta-128 system port (in DOS session) | FDC side/drive/reset |
-| `#1FFD` | W | memory register (§4.3) | reads return `#FF` |
-| `#7FFD` | W | memory register (§4.2) | write-only |
+| `#1FFD` | W | memory register (§4.3) | reads return `#FF`; a read also **clears the turbo flip-flop** (§13) |
+| `#7FFD` | W | memory register (§4.2) | write-only; a read also **sets the turbo flip-flop** (§13) — returned value meaningless |
 | `#1F/#3F/#5F/#7F` | R/W | WD1793 registers | DOS session active |
 | `#BFFD` / `#FFFD` (mirror-tolerant: `#xC002` masks) | W/R | AY register/data | full mirrors decoded (`#FF05` etc. select AY) |
 | `#7EFD` | W | ROM quadrant window select, bits 5:4 | ProfROM extended images only |
@@ -391,16 +391,37 @@ silently breaks the path must be verified in Task 2.
 
 ## 9. MNI — the "Magic" button
 
-- Physical button on the case wired to the NMI line *through the memory manager*: on
-  press, hardware **sets `#1FFD` bit 1** (preserving every other bit — critically bit 4
-  and bits 6-7, so the interrupted program's `#C000` banking survives) and pulses NMI.
-- The CPU vectors to `#0066`, which now fetches from ROM2 (Shadow Monitor) because bit 1
-  is set.
-- Monitor exit is a **`#1FFD` write** (clearing bit 1) by software; the button-latch is
-  not gated by the `#7FFD` lock (it is hardware, not a port write).
-- ROM0's NMI handler may poll an MNI-flag port on real hardware; emulators universally
-  bypass this by latching the shadow page directly (MISTer does the same) — flag port
-  TBD, treated as a limitation (§12).
+> Rewritten 2026-09-10 to the DD50 ground truth (verified against the schematic and the
+> v4.01 image). The previous text claimed the button sets `#1FFD` bit 1 — disproven: no
+> register is written. Full disassembly and evidence:
+> [profrom-nmi-boot-analysis.md](profrom-nmi-boot-analysis.md).
+
+The button arms **two DD50 flip-flops at once** and writes no register:
+
+| Flip-flop | Effect while armed |
+|---|---|
+| DD50.2 (NMI trigger) | asserts `/NMI` — the CPU accepts it at the next instruction boundary |
+| DD50.1 ("1-DOS / 0-SOS" DOS trigger) | **page 3 (TR-DOS) of the current ProfROM plane forced over `#0000-#3FFF`** — the Beta-128 magic-button mechanism |
+
+- Neither the `#1FFD` latch nor the ProfROM plane register (GAL DD41) is touched: the
+  plane survives the whole session (it moves only via the `#0100+4·S` read strobe, §5.2
+  — the button and `/RESET` are not wired to the GAL), and the interrupted program's
+  banking state survives verbatim.
+- Priority while armed: `#1FFD[1]` (service latch) **still outranks** the trigger —
+  the firmware entry chain relies on this (its `OUT (#1FFD),#12` at TR-DOS `#0033`
+  swaps the service page in mid-chain; both pages carry compatible code at `#0033`).
+  The trigger also overrides RAM-at-`#0000` (`#1FFD[0]`) and any session selection.
+- The CPU vectors to `#0066` **of the forced page 3**. In plane 0 the TR-DOS handler
+  chains into the Service Monitor (`#0066 → #2A56 → #0807 → OUT (C),A at #0033 →
+  service #0035 → #00B6` → menu; the monitor saves context in `#DDxx` RAM, restores
+  `#7FFD`/`#1FFD` on exit and `RETN`s). In planes 1-3, `#0066` of pages 2 and 3 is a
+  **deliberate park loop** (`LD A,6 / OUT (#FE),A / XOR A / OUT (#FE),A / JR #0066` —
+  yellow/black border stripes, no exit): the monitor would clobber the running tool's
+  `#DDxx` data, so NMI in a tool plane parks the CPU instead (analysis doc §3-4).
+- The trigger **releases on the first CPU read from `#4000-#FFFF`** (the Beta-128
+  "leave the ROM window" strobe; writes never release it).
+- `/RESET` clears the trigger but **not** the plane register — "plane 0 after reset"
+  is a software guarantee of the per-plane `#0000` stubs (§5.2, analysis doc §5).
 
 ---
 
@@ -426,7 +447,7 @@ factor for software.
 | # | Item | Status |
 |---|---|---|
 | 1 | `#FE` selective decode exactness (`A4,A3,A1,A0` per bootcamp vs. the GAL equation currently encoded) | kept as documented GAL equation; exact Turbo+ netlist unavailable |
-| 2 | MNI flag port (ROM0 NMI handler polling) | bypassed by direct latch, as in all reference emulators |
+| 2 | MNI flag port | **Resolved 2026-09-10: none exists.** The button is a trigger pair (DD50.1 DOS trigger + DD50.2 NMI, §9) — the earlier "ROM0 NMI handler polls a flag port" concern came from the disproven latch model |
 | 3 | Kempston vs. Beta `#1F` arbitration | on hardware the FDC owns `#1F` only in a DOS session; the monitor polls `#xx1F` *after* unpagin — decoder must keep the FDC answering in that state (MISTer bug 2; see design.md) |
 | 4 | ProfROM state machine on *any read* vs. M1-only | original hardware watches `/RD` + ROMCS + A0-A1; implemented as any read — **required, not just permitted**: the shipped ProfROM image's reset fetch needs operand (non-M1) reads to drive the machine (§5.2), and quadrant switches mid-instruction mean operand bytes are fetched from the newly-selected quadrant — the read-strobe hook must remap before the current access completes |
 | 5 | 512 KB ProfROM ("SMUC support" per UnrealSpeccy docs) | accepted by the ladder via `#7EFD[4]`; the 2-bit state machine alone stops at 256 KB — consistent with original source |
@@ -437,3 +458,53 @@ factor for software.
 | 9 | `#1FFD` bit 2 | **Decided 2026-09-08: not a memory bit — not implemented.** Hardware (programmer's guide): RS-232C output line. Fuse and MISTer ignore it. Original UnrealSpeccy: `if (p1FFD & 4) flags \|= CF_TRDOS` — *set-only and sticky*: clearing the bit did nothing, the session then closed via the normal RAM-execution path. Rejected because no real-hardware software can depend on it and stray writes with bit 2 set would wrongly page TR-DOS in. If UnrealSpeccy-compat is ever wanted, re-add exactly the sticky set-only semantic as a documented extension |
 | 10 | ROM under an open DOS session with `p7FFD[4] = 0` | **Normative: ROM3 (TR-DOS)** per MISTer/Fuse. Heritage UnrealSpeccy / generic `UpdateZ80Banks()` map the service ROM here — the Scorpion branch must not inherit that (§4.4) |
 | 11 | ProfROM quadrant state | **Decided 2026-09-08: kept in `EmulatorState::profrom_bank` and checkpointed** (TTD chipset state + divergence hash). Not derivable from latches (§5.2). The `.z80` format has no slot for it — snapshots of a ProfROM machine mid-walk reload at quadrant 0 (documented limitation) |
+| 12 | Turbo DRAM/video arbitration | not modeled: 7 MHz runs as an ideal 2× T-states per frame (all reference emulators do the same — xpeccy doubles `cpuFrq`, ZXMAK2/UnrealSpeccy have no Scorpion turbo at all). Real machines lose a few % to stretched cycles in screen-heavy loops (§13). Tape auto-adapts to the multiplier like the host speed control, whereas real hardware would break tape timing loops in turbo — pragmatic UX choice, revisit if a tape-turbo incompatibility is reported |
+
+---
+
+## 13. Hardware turbo — the 7 MHz flip-flop
+
+Source: `materials/Scorpion_Turbo_Mode.md` (turbo.jed GAL decode + MAME model),
+cross-checked against xpeccy `scrpIn1FFD`/`scrpIn7FFD`/`compSetTurbo`.
+
+**Software-visible contract.** The turbo flip-flop is clocked by IORQ **reads**
+whose address matches the paging-register decode — `IN` from the `#7FFD`
+family sets it (7 MHz), `IN` from the `#1FFD` family clears it (3.5 MHz):
+
+```
+set   (port & 0xC023) == 0x4021   01xxxxxxxx1xxx01  (#7FFD, and #7EFD on ProfROM)
+clear (port & 0xC023) == 0x0021   00xxxxxxxx1xxx01  (#1FFD, #3FFD...)
+```
+
+The strobe is a pure address decode — it fires whether or not a device claims
+the read, the data bus stays undriven (returned value meaningless), and every
+address mirror clocks it. `RESET` clears it. There is **no read-back status
+bit** on the ZS-256 (programs measure the speed with an interrupt-bounded
+count loop; the GMX adds a status bit in `#7EFD`, the ZS-256 does not).
+
+**What runs faster.** Only the Z80 and everything it times by instruction
+counting. The 50 Hz frame interrupt, the AY (own 1.75 MHz clock), the FDC
+(own 1 MHz + PLL) and video timing are unaffected — in emulator terms the CPU
+executes 2× T-states per 50 Hz frame with the INT window scaled accordingly.
+
+**Emulator model** (`EmulatorState::scorpion_turbo`, applied in
+`Z80::ApplyQueuedFrequencyMultiplier`):
+
+- `PortDecoder_Scorpion256::DecodePortIn` performs the strobe for **every**
+  Scorpion configuration (`MM_SCORP` and `MM_PROFSCORP`) before the normal
+  decode chain — result bytes are served exactly as before.
+- The effective multiplier composes with the host speed control
+  (`next_ << turbo`) at the frame boundary: `Z80FrameCycle` entry and the
+  inline boundaries of the `Emulator` stepping paths all call the same apply,
+  so a mid-run `IN` rescales subsequent frames and the queued host setting is
+  never clobbered by guest code.
+- Every consumer that already divides by `current_z80_frequency_multiplier`
+  (screen descale, sound pacing, tape timing, INT position) inherits the
+  correct behavior without further changes.
+
+**Verification.** Unit: strobe truth table (family mirrors set/clear, unrelated
+ports inert, `#FF` results unchanged, reset clears) + real-CPU-path
+`ScriptedInSevenFFD` + frame composition (`host 4× × turbo = 8×`, turbo off
+returns to the host setting). Live: `scratch/e2e-profrom-boot/pass29.py` —
+139776 T-states span 2 frames at 3.5 MHz and 1 frame after `IN (#7FFD)`, back
+to 2 after `IN (#1FFD)`, on both `SCORPION`/256K and `PROFSCORP`/1024K.

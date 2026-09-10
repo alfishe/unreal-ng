@@ -1,8 +1,9 @@
 # Scorpion ZS-256 Clone — Complete Implementation
 
-Directory status: **implementation in progress** — Tasks 0-7 done (Tasks 0-6 + defect
-fixes committed in `3f49622c`, the PROFSCORP instantiation fix in `535b8238`, Task 7
-in the working tree), Tasks 8-11 outstanding. See *Execution status* below and the
+Directory status: **implementation in progress** — Tasks 0-7 and 12 done (Tasks 0-6 +
+defect fixes committed in `3f49622c`, the PROFSCORP instantiation fix in `535b8238`,
+Task 7 incl. the ProfROM plane fix in `9e85136e`, Task 12 hardware turbo in the working
+tree), Tasks 8-11 outstanding. See *Execution status* below and the
 [verification/](verification/) E2E records.
 Review pass 2026-09-08: every file/line claim was re-verified against the working tree,
 factual errors corrected, and the two open design questions resolved by primary-source
@@ -14,7 +15,8 @@ Turn the existing skeletal `MM_SCORP` machine definition into a full, hardware-a
 Scorpion ZS-256 clone: 256 KB (and heritage 1024 KB) RAM paging, the complete `#1FFD`
 register, Shadow Service Monitor with MNI ("Magic" NMI button), built-in Beta-128 TR-DOS
 with the Scorpion-specific `#3Dxx` trap semantics, Sinclair-matching video timing with
-contention-free discrete logic, Scorpion snapshot (`.z80` hw=10) round-tripping — and the
+contention-free discrete logic, the Turbo+ hardware 7 MHz turbo flip-flop, Scorpion
+snapshot (`.z80` hw=10) round-tripping — and the
 **full ROM subsystem range**: minimal 64 KB ROM (4 pages), ProfROM extended ROM
 (128/256 KB quadrant switching), and multi-megabyte ROM-disk images (up to 2 MB) via the
 GMX-compatible direct window select.
@@ -51,13 +53,19 @@ significant — is missing.
 | [design.md](design.md) | Target architecture: module changes, paging/ROM/TR-DOS state machines, port decode, MNI flow, snapshot formats, with diagrams |
 | [implementation-plan.md](implementation-plan.md) | The executable plan: ordered tasks, files, steps with checkboxes, acceptance criteria, commit points |
 | [testing-plan.md](testing-plan.md) | Unit, integration, regression and boot-verification strategy; quality gates |
+| [profrom-nmi-boot-analysis.md](profrom-nmi-boot-analysis.md) | Verified findings: ProfROM plane lifetime, magic-button NMI (DD50 trigger pair, entry chain, park loops, reset stubs), the boot sequence incl. the idle-EAR wedge defect and the turbo firmware chain |
+| [profrom-disassembly-and-findings.md](profrom-disassembly-and-findings.md) | Deep static disassembly & reverse-engineering: NMI entry (#0066 -> #0807), RST 30h cross-plane dispatching, 50Hz interrupt / keyboard scanning, and root cause diagnosis of emulator hangs and keyboard dead bugs |
+| [profrom-nmi-gaps-and-findings.md](profrom-nmi-gaps-and-findings.md) | Formal gaps analysis (GAP-1 through GAP-5): hardware specification vs. working tree discrepancies, trace evidence, and exact code fix specifications |
 | [verification/](verification/) | Live E2E execution records (transferred from `scratch/`): [e2e-base-rom.md](verification/e2e-base-rom.md) (E2E-1/2/3, Tasks 0-6), [e2e-profrom-instantiation.md](verification/e2e-profrom-instantiation.md) (PROFSCORP smoke + E2E-7), [e2e-profrom-quadrants.md](verification/e2e-profrom-quadrants.md) (E2E-4, Task 7). Raw transcripts/artifacts stay in `scratch/e2e*` |
 
 ## Scope decisions (agreed defaults)
 
 1. **Base ZS-256 machine + ProfROM variant (`MM_PROFSCORP`)** — both first-class.
-   GMX graphics expander and Turbo+/ISA stay out of scope, but the GMX-style ROM window
-   select (port `#7EFD` bits 4-5) is implemented as the extended ROM-disk mechanism.
+   GMX graphics expander and the Turbo+/ISA expansion-board peripherals (SMUC, on-board
+   RTC, ISA slots) stay out of scope, but the GMX-style ROM window select (port `#7EFD`
+   bits 4-5) is implemented as the extended ROM-disk mechanism — and the Turbo+ **7 MHz
+   hardware turbo flip-flop** is implemented for **all** Scorpion configurations
+   (hardware-reference §13; added 2026-09-09 from the decoded GAL materials).
 2. **RAM: 256 KB and 1024 KB** — matching the model table heritage
    (`RAM_256 | RAM_1024`): `#1FFD` bit 4 supplies bank bit 3, bits 6-7 supply bank
    bits 4-5 (`ram_mask` clamps to installed size).
@@ -176,7 +184,9 @@ clean-baseline requirement for Task 0.
 | Standalone code defects fixed | done 2026-09-08, committed in `3f49622c` |
 | Tasks 0-6 (baseline harness, config/timing, ROM space, paging, port decoder, TR-DOS, NMI/MNI) | done 2026-09-08, commit `3f49622c`; live E2E-1/2/3 — [verification/e2e-base-rom.md](verification/e2e-base-rom.md) |
 | PROFSCORP instantiation fix | done 2026-09-09, commit `535b8238`; smoke + E2E-7 (1024 KB / 256 KB RAM) — [verification/e2e-profrom-instantiation.md](verification/e2e-profrom-instantiation.md) |
-| Task 7 (ProfROM quadrant state machine + `#7EFD` window) | done 2026-09-09, **uncommitted**; live E2E-4 — [verification/e2e-profrom-quadrants.md](verification/e2e-profrom-quadrants.md) |
+| Task 7 (ProfROM quadrant state machine + `#7EFD` window) | done 2026-09-09, commit `9e85136e` (incl. the plane-selection fix); live E2E-4 — [verification/e2e-profrom-quadrants.md](verification/e2e-profrom-quadrants.md) |
+| Task 12 (hardware turbo — 7 MHz flip-flop, all Scorpion configs) | done 2026-09-09, **uncommitted**; 8 tests + full suite green, live E2E-8 on PROFSCORP/1024K and SCORPION/256K (`scratch/e2e-profrom-boot/pass29.py`) — hardware-reference §13 |
+| MNI rework + idle-EAR fix | done 2026-09-10, **uncommitted**; `RequestMNI` rebuilt to the DD50 trigger pair (page 3 of the current plane, latch untouched, read-release strobe — hardware-reference §9, [profrom-nmi-boot-analysis.md](profrom-nmi-boot-analysis.md)), `scorpionmni_test.cpp` rewritten, trigger carried in TTD; `Tape::handlePortIn` idle EAR made steady-high (UnrealSpeccy `tape_bit() = -1` semantics) — the defect that wedged every ProfROM boot (analysis doc §7). Build/suite/live E2E pending at time of writing |
 | Tasks 8-11 (ROM-disk ladder, `.z80` hw=10 snapshots, tooling polish, final QA) | not started |
 
 Known incidental defect (outside this plan's scope, filed during Task 7 E2E):

@@ -145,6 +145,11 @@ protected:
     ScorpionRomWindow _scorpionRomWindow;
     bool _scorpProfromActive = false;  // MM_PROFSCORP && service ROM paged at #0000
 
+    // Magic-button DOS trigger gate (hardware-reference §9): cached from
+    // UpdateScorpionBanks() so the release hook in MemoryReadFast/Debug costs
+    // one bool test on the CPU read path
+    bool _scorpionDosTriggerActive = false;
+
 public:
     // Base addresses for memory classes
     inline uint8_t* RAMBase()

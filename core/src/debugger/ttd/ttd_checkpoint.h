@@ -146,11 +146,13 @@ struct TTDChipsetState
     // The raw-byte image of this struct is hashed and persisted (.ttd), so the
     // layout must stay FULLY PACKED: any interior or tail padding would make
     // copy-assignment (member-wise, padding unspecified) leave indeterminate
-    // bytes and desynchronise the divergence oracle. profrom_bank therefore
-    // rides with a 7-byte reserved pad that keeps pFFF7 4-aligned and the
-    // struct size 8-aligned with zero padding (was 168 packed, now 176 packed)
+    // bytes and desynchronise the divergence oracle. profrom_bank and
+    // scorpionDosTrigger therefore ride with a 6-byte reserved pad that keeps
+    // pFFF7 4-aligned and the struct size 8-aligned with zero padding (was 168
+    // packed, now 176 packed)
     uint8_t profrom_bank = 0;                              ///< Scorpion ProfROM quadrant (read-strobe state machine; not reproducible from ports)
-    uint8_t profrom_reserved[7] = {};                      ///< packing pad - must stay zero
+    uint8_t scorpionDosTrigger = 0;                        ///< Scorpion magic-button DD50.1 trigger (host-armed, released by the next >= #4000 read)
+    uint8_t profrom_reserved[6] = {};                      ///< packing pad - must stay zero
     uint8_t wd_shadow[4] = {0, 0, 0, 0};                   ///< 2F, 4F, 6F, 8F
 
     // ---- Video / palette ----

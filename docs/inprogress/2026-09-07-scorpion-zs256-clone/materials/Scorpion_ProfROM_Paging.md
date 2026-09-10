@@ -150,8 +150,12 @@ plane 3, #0100:  01 0E …     (#0101 = 0E → bits 3:2 = 11)
    ROM, a disassembler, a "ROM checksum" utility — all of them switch planes. Note `S = 0` is safe.
 5. **Restore plane 0 before returning to BASIC/TR‑DOS.** They live in plane 0; other planes only carry
    the extension tools plus enough vectors to survive.
-6. **NMI (the "Magic Button")** maps the Service page of the *current* plane. A plane that does not
-   contain a monitor must at least provide sane `#0066` handling.
+6. **NMI (the "Magic Button")** forces page 3 (TR‑DOS) of the *current* plane — the Beta‑128 DOS‑trigger
+   mechanism (DD50.1), not a `#1FFD` write; the plane register is not involved. The TR‑DOS `#0066`
+   handler chains into the Service page itself (`OUT (#1FFD),#12` at `#0033` — the pages carry
+   compatible code there). In planes 1–3 the `#0066` of pages 2 **and** 3 is a deliberate park loop
+   (border stripes, no exit): the monitor would clobber the running tool's `#DDxx` RAM. The trigger
+   releases on the first CPU read from `#4000+`. See `../profrom-nmi-boot-analysis.md`.
 
 ## 5. Z80 examples
 

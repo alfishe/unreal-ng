@@ -360,6 +360,38 @@ void Z80::Z80Step(bool skipBreakpoints)
     /// endregion </Debug trace capture>
 }
 
+/// @brief Apply the queued frequency multiplier change, if any.
+///
+/// The effective multiplier composes the host speed control (next_) with the
+/// Scorpion ZS-256 Turbo+ hardware turbo flip-flop (hardware-reference 13):
+/// guest code toggles it mid-frame with IN from the #7FFD / #1FFD register
+/// families, but the real GAL re-aligns the clock to a cycle boundary anyway,
+/// so applying at the frame boundary preserves the software-visible contract
+/// (2x T-states per 50 Hz frame) without mid-frame rescaling of frameLimit /
+/// the INT window. Every consumer (screen descale, sound pacing, tape timing,
+/// INT position) already divides by the effective multiplier, so composition
+/// needs no further changes.
+void Z80::ApplyQueuedFrequencyMultiplier()
+{
+    [[maybe_unused]] Z80& cpu = *this;
+    EmulatorState& state = _context->emulatorState;
+
+    uint8_t desiredMultiplier = static_cast<uint8_t>(state.next_z80_frequency_multiplier << (state.scorpion_turbo ? 1 : 0));
+    if (desiredMultiplier != state.current_z80_frequency_multiplier)
+    {
+        uint8_t oldMultiplier = state.current_z80_frequency_multiplier;
+        state.current_z80_frequency_multiplier = desiredMultiplier;
+        state.current_z80_frequency = state.base_z80_frequency * desiredMultiplier;
+
+        // Reset rate to normal - counter represents actual t-states
+        // Speed multipliers are handled by adjusting frame duration and timings
+        cpu.rate = 256;
+
+        MLOGINFO("Z80::ApplyQueuedFrequencyMultiplier - Applied speed multiplier: %dx -> %dx (%.2f MHz, rate=%d, scorpion_turbo=%u)", oldMultiplier,
+                 state.current_z80_frequency_multiplier, state.current_z80_frequency / 1'000'000.0, cpu.rate, state.scorpion_turbo);
+    }
+}
+
 /// Execute number of cpu cycles equivalent to full frame screen render
 void Z80::Z80FrameCycle()
 {
@@ -369,19 +401,7 @@ void Z80::Z80FrameCycle()
 
     // Apply queued speed multiplier change at frame boundary (if any)
     // This prevents mid-frame timing inconsistencies
-    if (state.next_z80_frequency_multiplier != state.current_z80_frequency_multiplier)
-    {
-        uint8_t oldMultiplier = state.current_z80_frequency_multiplier;
-        state.current_z80_frequency_multiplier = state.next_z80_frequency_multiplier;
-        state.current_z80_frequency = state.base_z80_frequency * state.current_z80_frequency_multiplier;
-
-        // Reset rate to normal - counter represents actual t-states
-        // Speed multipliers are handled by adjusting frame duration and timings
-        cpu.rate = 256;
-
-        MLOGINFO("Z80::Z80FrameCycle - Applied queued speed multiplier: %dx -> %dx (%.2f MHz, rate=%d)", oldMultiplier,
-                 state.current_z80_frequency_multiplier, state.current_z80_frequency / 1'000'000.0, cpu.rate);
-    }
+    ApplyQueuedFrequencyMultiplier();
 
     // Scale frame duration by speed multiplier
     uint32_t frameLimit = config.frame * state.current_z80_frequency_multiplier;

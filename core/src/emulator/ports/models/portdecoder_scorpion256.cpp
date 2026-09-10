@@ -61,6 +61,8 @@ void PortDecoder_Scorpion256::reset()
     state.p1FFD = 0x00;     // Reset port 0x1FFD (no RAM at #0000, Shadow Monitor off, extended bank bits clear)
     state.p7EFD = 0x00;     // Reset ProfROM window latch
     state.profrom_bank = 0x00;  // ProfROM quadrant 0 at power-on (design §4.2)
+    state.scorpionDosTrigger = 0x00;  // Magic-button DOS trigger cleared by RESET (hardware-reference §9)
+    state.scorpion_turbo = 0x00;    // Turbo flip-flop cleared by RESET - 3.5 MHz (hardware-reference 13)
     state.pBFFD = 0x00;     // Reset AY register select port
     state.pFFFD = 0x00;     // Reset AY data port
     state.pFE = 0xF8;       // Reset ULA port (border black, no sound; keys released)
@@ -96,6 +98,29 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
 
     uint8_t result = 0xFF;
     _lastPortDecoded = false;
+
+    // Scorpion ZS-256 Turbo+ hardware turbo flip-flop (hardware-reference 13):
+    // the turbo GAL clocks its mode latch on IORQ READS whose address matches
+    // the #7FFD (set, 01xxxxxxxx1xxx01) or #1FFD (reset, 00xxxxxxxx1xxx01)
+    // paging-register decode - A15:A14, A5, A1, A0 only, so every address mirror
+    // clocks it too (including the #7EFD ProfROM window port, whose A15:A14
+    // pattern matches the set family). The strobe is a pure address decode: it
+    // fires whether or not a device claims the read, and the data bus stays
+    // undriven, so the returned value is meaningless and is served below as
+    // usual. Applies to every Scorpion configuration (MM_SCORP base ZS-256 and
+    // MM_PROFSCORP alike). The effective speed changes at the next frame
+    // boundary (Z80::Z80FrameCycle composes host speed x turbo)
+    switch (port & 0xC023)
+    {
+        case 0x4021:
+            _state->scorpion_turbo = 1;     // IN #7FFD family - 7 MHz
+            break;
+        case 0x0021:
+            _state->scorpion_turbo = 0;     // IN #1FFD family - 3.5 MHz
+            break;
+        default:
+            break;
+    }
 
     // AY #FFFD: A15=1, A14=1, A1=0. The AY-3-8910 does not decode the other
     // address bits, so mirrored ports (#FF05, #FF00, #C000...) select it on IN
@@ -149,13 +174,15 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
         disp.decodedPort = 0x7EFD;
         disp.wasHandledInline = true;
     }
-    else if (isBeta128 && !(_state->flags & CF_TRDOS) && !(_state->p1FFD & 0x02))
+    else if (isBeta128 && !(_state->flags & CF_TRDOS) && !(_state->p1FFD & 0x02)
+             && !_state->scorpionDosTrigger)
     {
-        // Beta128 FDC off the bus: with no TR-DOS session and the Shadow
-        // Monitor unpaged, #1F/#3F/#5F/#7F/#FF stay undecoded so Z80::in()
-        // serves the floating bus. While the monitor is paged (#1FFD bit1)
-        // the FDC keeps answering - it is polled right after unpaging the
-        // monitor (hardware-reference 12.3, MISTer bug 2)
+        // Beta128 FDC off the bus: with no TR-DOS session, the Shadow Monitor
+        // unpaged and the magic-button DOS trigger disarmed, #1F/#3F/#5F/#7F/#FF
+        // stay undecoded so Z80::in() serves the floating bus. While the monitor
+        // is paged (#1FFD bit1) or the trigger is armed the FDC keeps answering -
+        // the monitor polls it right after unpaging (hardware-reference 12.3,
+        // MISTer bug 2) and MAME selects the same DOS I/O view on the trigger
         disp.wasBeta128Gated = true;
     }
     else
@@ -278,10 +305,12 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
         disp.wasDecoded = true;
     }
 
-    // Beta128 FDC ports are on the bus only while a TR-DOS session is open or
+    // Beta128 FDC ports are on the bus only while a TR-DOS session is open,
     // the Shadow Monitor is paged (#1FFD bit1 - the monitor talks to the FDC
-    // with the session closed, hardware-reference 12.3)
-    else if (isBeta128 && ((state.flags & CF_TRDOS) || (state.p1FFD & 0x02)))
+    // with the session closed, hardware-reference 12.3) or the magic-button
+    // DOS trigger is armed (MAME selects the same DOS I/O shadow view on it)
+    else if (isBeta128 && ((state.flags & CF_TRDOS) || (state.p1FFD & 0x02)
+                           || state.scorpionDosTrigger))
     {
         // Mirrors (e.g. OUT (#3CFF),A drive-select with A on A15-A8) dispatch
         // through the canonical device key - raw addresses miss the exact-key

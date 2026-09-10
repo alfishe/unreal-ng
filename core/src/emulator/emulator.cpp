@@ -774,13 +774,20 @@ void Emulator::RequestMNI()
     CONFIG& config = _context->config;
     EmulatorState& state = _context->emulatorState;
 
-    // The magic button: latch the Shadow Monitor into #0000 BEFORE the NMI lands
-    // so the #0066 handler executes monitor code (hardware: the button wires the
-    // monitor enable and the NMI line to the same physical press). On non-Scorpion
-    // models the latch does not exist - plain NMI semantics.
+    // The magic button arms two DD50 flip-flops at once (hardware-reference §9):
+    // DD50.2 pulses /NMI and DD50.1 ("1-DOS/0-SOS") forces page 3 (TR-DOS) of
+    // the CURRENT plane over the #0000-#3FFF window - the same mechanism
+    // Beta128 uses for its magic button. Neither the #1FFD latch nor the
+    // ProfROM plane register is touched: the plane survives the whole session,
+    // and the firmware entry chain (#0066 -> #2A56 -> #0807 -> OUT (#1FFD),#12
+    // at #0033) pages the service monitor itself. Paused at an instruction
+    // boundary, the Z80 takes the NMI before its next fetch, so #0066 already
+    // comes from the forced TR-DOS page. The trigger releases on the first
+    // CPU read from >= #4000 (Memory::MemoryReadFast). On non-Scorpion models
+    // the plain NMI pulse semantics apply
     if (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP)
     {
-        state.p1FFD |= 0x02;
+        state.scorpionDosTrigger = 1;
         _context->pMemory->UpdateZ80Banks();
     }
 
@@ -1947,6 +1954,11 @@ void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
     Z80& z80 = *_core->GetZ80();
     EmulatorState& state = _context->emulatorState;
 
+    // Apply any queued frequency change (host speed menu or the Scorpion
+    // hardware turbo flip-flop) before deriving the frame geometry from it -
+    // mirrors the frame-start apply in Z80::Z80FrameCycle
+    z80.ApplyQueuedFrequencyMultiplier();
+
     // INT interrupt timing — must match Z80FrameCycle pattern
     unsigned int_start = config.intstart * state.current_z80_frequency_multiplier;
     unsigned int_end = (config.intstart + config.intlen) * state.current_z80_frequency_multiplier;
@@ -1995,6 +2007,11 @@ void Emulator::RunNCPUCycles(unsigned cycles, bool skipBreakpoints)
     Z80& z80 = *_core->GetZ80();
     EmulatorState& state = _context->emulatorState;
 
+    // Apply any queued frequency change (host speed menu or the Scorpion
+    // hardware turbo flip-flop) before deriving the frame geometry from it -
+    // mirrors the frame-start apply in Z80::Z80FrameCycle
+    z80.ApplyQueuedFrequencyMultiplier();
+
     // INT interrupt timing — must match Z80FrameCycle pattern
     unsigned int_start = config.intstart * state.current_z80_frequency_multiplier;
     unsigned int_end = (config.intstart + config.intlen) * state.current_z80_frequency_multiplier;
@@ -2022,6 +2039,16 @@ void Emulator::RunNCPUCycles(unsigned cycles, bool skipBreakpoints)
             }
 
             _context->pScreen->ResetPrevTstate();
+
+            // New frame: apply any frequency change queued during the run
+            // (host speed menu or the Scorpion turbo IN strobe) and rescale
+            // the frame geometry - same contract as Z80FrameCycle's start
+            z80.ApplyQueuedFrequencyMultiplier();
+            int_start = config.intstart * state.current_z80_frequency_multiplier;
+            int_end = (config.intstart + config.intlen) * state.current_z80_frequency_multiplier;
+            frameLimit = config.frame * state.current_z80_frequency_multiplier;
+            int_occurred = false;
+            if (int_end >= frameLimit) { int_end -= frameLimit; z80.int_pending = true; int_occurred = true; }
         }
     }
 
@@ -2058,6 +2085,11 @@ void Emulator::RunFrame(bool skipBreakpoints)
         _hasFrameStepTarget = true;
     }
     unsigned targetPos = _frameStepTargetPos;
+
+    // Apply any queued frequency change (host speed menu or the Scorpion
+    // hardware turbo flip-flop) before deriving the frame geometry from it -
+    // mirrors the frame-start apply in Z80::Z80FrameCycle
+    z80.ApplyQueuedFrequencyMultiplier();
 
     // INT interrupt timing — must match Z80FrameCycle pattern exactly
     // Without this, HALT-based programs never have ISRs fire and video memory is never updated
@@ -2162,6 +2194,11 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
     Z80& z80 = *_core->GetZ80();
     EmulatorState& state = _context->emulatorState;
 
+    // Apply any queued frequency change (host speed menu or the Scorpion
+    // hardware turbo flip-flop) before deriving the frame geometry from it -
+    // mirrors the frame-start apply in Z80::Z80FrameCycle
+    z80.ApplyQueuedFrequencyMultiplier();
+
     // INT interrupt timing — must match Z80FrameCycle pattern
     unsigned int_start = config.intstart * state.current_z80_frequency_multiplier;
     unsigned int_end = (config.intstart + config.intlen) * state.current_z80_frequency_multiplier;
@@ -2200,6 +2237,16 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
 
             _context->pScreen->ResetPrevTstate();
 
+            // New frame: apply any frequency change queued during the run
+            // (host speed menu or the Scorpion turbo IN strobe) and rescale
+            // the frame geometry - same contract as Z80FrameCycle's start
+            z80.ApplyQueuedFrequencyMultiplier();
+            int_start = config.intstart * state.current_z80_frequency_multiplier;
+            int_end = (config.intstart + config.intlen) * state.current_z80_frequency_multiplier;
+            frameLimit = config.frame * state.current_z80_frequency_multiplier;
+            int_occurred = false;
+            if (int_end >= frameLimit) { int_end -= frameLimit; z80.int_pending = true; int_occurred = true; }
+
             // Notify after each frame so debugger/visualizers can update
             messageCenter.Post(NC_EXECUTION_CPU_STEP);
         }
@@ -2221,6 +2268,11 @@ void Emulator::RunTStates(unsigned tStates, bool skipBreakpoints)
     const CONFIG& config = _context->config;
     Z80& z80 = *_core->GetZ80();
     EmulatorState& state = _context->emulatorState;
+
+    // Apply any queued frequency change (host speed menu or the Scorpion
+    // hardware turbo flip-flop) before deriving the frame geometry from it -
+    // mirrors the frame-start apply in Z80::Z80FrameCycle
+    z80.ApplyQueuedFrequencyMultiplier();
 
     // INT interrupt timing — must match Z80FrameCycle pattern
     unsigned int_start = config.intstart * state.current_z80_frequency_multiplier;
@@ -2262,6 +2314,16 @@ void Emulator::RunTStates(unsigned tStates, bool skipBreakpoints)
                 // inflate frame_counter and corrupt TTD probe records).
                 break;
             }
+
+            // New frame: apply any frequency change queued during the run
+            // (host speed menu or the Scorpion turbo IN strobe) and rescale
+            // the frame geometry - same contract as Z80FrameCycle's start
+            z80.ApplyQueuedFrequencyMultiplier();
+            int_start = config.intstart * state.current_z80_frequency_multiplier;
+            int_end = (config.intstart + config.intlen) * state.current_z80_frequency_multiplier;
+            frameLimit = config.frame * state.current_z80_frequency_multiplier;
+            int_occurred = false;
+            if (int_end >= frameLimit) { int_end -= frameLimit; z80.int_pending = true; int_occurred = true; }
         }
     }
 
@@ -2284,6 +2346,11 @@ void Emulator::RunUntilScanline(unsigned targetLine, bool skipBreakpoints)
     const CONFIG& config = _context->config;
     Z80& z80 = *_core->GetZ80();
     EmulatorState& state = _context->emulatorState;
+
+    // Apply any queued frequency change (host speed menu or the Scorpion
+    // hardware turbo flip-flop) before deriving the frame geometry from it -
+    // mirrors the frame-start apply in Z80::Z80FrameCycle
+    z80.ApplyQueuedFrequencyMultiplier();
 
     // INT interrupt timing — must match Z80FrameCycle pattern
     unsigned int_start = config.intstart * state.current_z80_frequency_multiplier;
@@ -2346,6 +2413,11 @@ void Emulator::RunNScanlines(unsigned count, bool skipBreakpoints)
     const CONFIG& config = _context->config;
     Z80& z80 = *_core->GetZ80();
     EmulatorState& state = _context->emulatorState;
+
+    // Apply any queued frequency change (host speed menu or the Scorpion
+    // hardware turbo flip-flop) before deriving the frame geometry from it -
+    // mirrors the frame-start apply in Z80::Z80FrameCycle
+    z80.ApplyQueuedFrequencyMultiplier();
 
     // INT interrupt timing — must match Z80FrameCycle pattern
     unsigned int_start = config.intstart * state.current_z80_frequency_multiplier;
@@ -2433,6 +2505,11 @@ void Emulator::RunUntilNextScreenPixel(bool skipBreakpoints)
     const CONFIG& config = _context->config;
     Z80& z80 = *_core->GetZ80();
     EmulatorState& state = _context->emulatorState;
+
+    // Apply any queued frequency change (host speed menu or the Scorpion
+    // hardware turbo flip-flop) before deriving the frame geometry from it -
+    // mirrors the frame-start apply in Z80::Z80FrameCycle
+    z80.ApplyQueuedFrequencyMultiplier();
 
     // INT interrupt timing — must match Z80FrameCycle pattern
     unsigned int_start = config.intstart * state.current_z80_frequency_multiplier;
@@ -2589,6 +2666,11 @@ void Emulator::RunUntilCondition(std::function<bool(const Z80State&)> predicate,
     Z80& z80 = *_core->GetZ80();
     EmulatorState& state = _context->emulatorState;
 
+    // Apply any queued frequency change (host speed menu or the Scorpion
+    // hardware turbo flip-flop) before deriving the frame geometry from it -
+    // mirrors the frame-start apply in Z80::Z80FrameCycle
+    z80.ApplyQueuedFrequencyMultiplier();
+
     // INT interrupt timing — must match Z80FrameCycle pattern
     unsigned int_start = config.intstart * state.current_z80_frequency_multiplier;
     unsigned int_end = (config.intstart + config.intlen) * state.current_z80_frequency_multiplier;
@@ -2614,6 +2696,17 @@ void Emulator::RunUntilCondition(std::function<bool(const Z80State&)> predicate,
         if (z80.t >= frameLimit)
         {
             _core->AdjustFrameCounters();
+
+            // New frame: apply any frequency change queued during the run
+            // (host speed menu or the Scorpion turbo IN strobe) and rescale
+            // the frame geometry - same contract as Z80FrameCycle's start
+            z80.ApplyQueuedFrequencyMultiplier();
+            int_start = config.intstart * state.current_z80_frequency_multiplier;
+            int_end = (config.intstart + config.intlen) * state.current_z80_frequency_multiplier;
+            frameLimit = config.frame * state.current_z80_frequency_multiplier;
+            int_occurred = false;
+            if (int_end >= frameLimit) { int_end -= frameLimit; z80.int_pending = true; int_occurred = true; }
+
             _context->pScreen->ResetPrevTstate();
         }
 

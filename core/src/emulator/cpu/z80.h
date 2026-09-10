@@ -398,6 +398,16 @@ public:
 public:
     void Z80FrameCycle();
 
+    /// @brief Apply the queued frequency multiplier change, if any.
+    ///
+    /// The effective multiplier composes the host speed control
+    /// (next_z80_frequency_multiplier) with the Scorpion hardware turbo
+    /// flip-flop (scorpion_turbo, hardware-reference 13). Called at every
+    /// frame start: Z80FrameCycle entry and the inline frame boundaries of
+    /// the Emulator stepping paths, so the scaled INT window / frame limit
+    /// are always derived from the applied value.
+    void ApplyQueuedFrequencyMultiplier();
+
     // Trigger updates
 public:
     void RequestMaskedInterrupt();

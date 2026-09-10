@@ -113,6 +113,7 @@ MachineStateSnapshot CaptureSnapshot(const Z80State& cpu,
     s.p00 = state.p00;
     s.p80FD = state.p80FD;
     s.profrom_bank = state.profrom_bank;
+    s.scorpionDosTrigger = state.scorpionDosTrigger;
     s.border_attr = state.border_attr;
 
     // ---- Counters ----

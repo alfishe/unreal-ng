@@ -217,3 +217,79 @@ TEST_F(ScorpionPorts_Test, SetROMPageTranslatesToSelects)
     EXPECT_EQ(state.p1FFD & 0x02, 0x00);
     EXPECT_EQ(BankTag(0x0000), 0xC0);
 }
+
+/// region <Hardware turbo flip-flop (hardware-reference 13)>
+
+/// @brief IN from the #7FFD register family sets the turbo flip-flop (7 MHz).
+///        The strobe decode is A15:A14 / A5 / A1 / A0 only, so every address
+///        mirror clocks it - including the ProfROM #7EFD window port
+TEST_F(ScorpionPorts_Test, InSevenFFDFamilySetsTurboFlipFlop)
+{
+    EmulatorState& state = _context->emulatorState;
+
+    ReadPort(0x7FFD);
+    EXPECT_EQ(state.scorpion_turbo, 1) << "IN (#7FFD) - canonical turbo-on strobe";
+
+    state.scorpion_turbo = 0;
+    ReadPort(0x7EFD);
+    EXPECT_EQ(state.scorpion_turbo, 1) << "IN (#7EFD) - same 01xxxxxxxx1xxx01 decode family";
+
+    state.scorpion_turbo = 0;
+    ReadPort(0x5FF5);
+    EXPECT_EQ(state.scorpion_turbo, 1) << "wild mirror 0101'1111'1111'0101 clocks it too";
+}
+
+/// @brief IN from the #1FFD register family clears the flip-flop (3.5 MHz)
+TEST_F(ScorpionPorts_Test, InOneFFDFamilyClearsTurboFlipFlop)
+{
+    EmulatorState& state = _context->emulatorState;
+    state.scorpion_turbo = 1;
+
+    ReadPort(0x1FFD);
+    EXPECT_EQ(state.scorpion_turbo, 0) << "IN (#1FFD) - canonical turbo-off strobe";
+
+    state.scorpion_turbo = 1;
+    ReadPort(0x3FFD);
+    EXPECT_EQ(state.scorpion_turbo, 0) << "IN (#3FFD) - 00xxxxxxxx1xxx01 mirror clears";
+}
+
+/// @brief Reads of unrelated ports never clock the flip-flop: keyboard
+///        half-rows (A1=1), AY register ports (A15:A14=11), Beta128
+///        (#xx1F/#xxFF with A5=0) and #FE (A0=0) all miss the decode
+TEST_F(ScorpionPorts_Test, TurboStrobeInertForUnrelatedPorts)
+{
+    EmulatorState& state = _context->emulatorState;
+    const uint16_t ports[] = {0xFEFE, 0xFDFE, 0xFFFD, 0xBFFD, 0x00FF, 0x001F, 0x00FE, 0x7FFE};
+
+    for (uint16_t port : ports)
+    {
+        state.scorpion_turbo = 1;
+        ReadPort(port);
+        EXPECT_EQ(state.scorpion_turbo, 1) << "port " << std::hex << port << " must not clear the flip-flop";
+
+        state.scorpion_turbo = 0;
+        ReadPort(port);
+        EXPECT_EQ(state.scorpion_turbo, 0) << "port " << std::hex << port << " must not set the flip-flop";
+    }
+}
+
+/// @brief The strobe is a side effect only: the paging registers stay
+///        write-only open-bus reads (#FF) exactly as before the turbo hook
+TEST_F(ScorpionPorts_Test, TurboStrobeDoesNotChangeInResults)
+{
+    EXPECT_EQ(ReadPort(0x1FFD), 0xFF);
+    EXPECT_EQ(ReadPort(0x7FFD), 0xFF);
+}
+
+/// @brief RESET clears the flip-flop - the machine always comes up at 3.5 MHz
+TEST_F(ScorpionPorts_Test, ResetClearsTurboFlipFlop)
+{
+    EmulatorState& state = _context->emulatorState;
+    state.scorpion_turbo = 1;
+
+    _context->pPortDecoder->reset();
+
+    EXPECT_EQ(state.scorpion_turbo, 0);
+}
+
+/// endregion <Hardware turbo flip-flop (hardware-reference 13)>

@@ -67,3 +67,67 @@ TEST_F(ScorpionMachine_Test, PowerOnBorderIsBlack)
 }
 
 /// endregion </Fixture wiring>
+
+/// region <Hardware turbo (hardware-reference 13)>
+
+/// @brief Guest IN A,(C) from #7FFD clocks the turbo flip-flop through the
+///        real CPU read path (Z80::in -> PortDecoder::DecodePortIn), exactly
+///        like the ROM's own speed-detection / turbo-enable stubs do
+TEST_F(ScorpionMachine_Test, ScriptedInSevenFFDSetsTurbo)
+{
+    // LD BC,#7FFD / IN A,(C) / JR $
+    static const uint8_t program[] = {0x01, 0xFD, 0x7F, 0xED, 0x78, 0x18, 0xFE};
+    for (size_t i = 0; i < sizeof(program); i++)
+    {
+        DirectWrite(static_cast<uint16_t>(0x8000 + i), program[i]);
+    }
+
+    Z80* z80 = _core->GetZ80();
+    z80->pc = 0x8000;
+
+    RunTStates(100);
+
+    EXPECT_EQ(_context->emulatorState.scorpion_turbo, 1) << "the scripted IN A,(C) set the flip-flop";
+}
+
+/// @brief The flip-flop doubles the T-states executed per 50 Hz frame and the
+///        INT window scales with the frame, so the interrupt rate stays 50 Hz
+///        (hardware-reference 13: only the Z80 runs 2x, video/AY/FDC do not)
+TEST_F(ScorpionMachine_Test, TurboFlipFlopDoublesFrameTStates)
+{
+    EmulatorState& state = _context->emulatorState;
+    Z80* z80 = _core->GetZ80();
+
+    z80->Z80FrameCycle();
+    EXPECT_EQ(state.current_z80_frequency_multiplier, 1) << "power-on default is 3.5 MHz";
+
+    state.scorpion_turbo = 1;
+    z80->Z80FrameCycle();
+    EXPECT_EQ(state.current_z80_frequency_multiplier, 2);
+    EXPECT_EQ(state.current_z80_frequency, state.base_z80_frequency * 2) << "7 MHz reporting";
+
+    state.scorpion_turbo = 0;
+    z80->Z80FrameCycle();
+    EXPECT_EQ(state.current_z80_frequency_multiplier, 1) << "IN (#1FFD) family restores 3.5 MHz";
+}
+
+/// @brief Host speed control and hardware turbo multiply (4x host with turbo
+///        runs 8x T-states per frame); dropping turbo returns to the host
+///        setting untouched - guest code cannot clobber the host speed menu
+TEST_F(ScorpionMachine_Test, TurboComposesWithHostSpeedMultiplier)
+{
+    EmulatorState& state = _context->emulatorState;
+    Z80* z80 = _core->GetZ80();
+
+    state.next_z80_frequency_multiplier = 4;
+    state.scorpion_turbo = 1;
+    z80->Z80FrameCycle();
+    EXPECT_EQ(state.current_z80_frequency_multiplier, 8) << "host 4x x turbo 2x";
+
+    state.scorpion_turbo = 0;
+    z80->Z80FrameCycle();
+    EXPECT_EQ(state.current_z80_frequency_multiplier, 4) << "turbo off returns to the host setting";
+    EXPECT_EQ(state.next_z80_frequency_multiplier, 4) << "host intent is preserved across turbo toggles";
+}
+
+/// endregion <Hardware turbo (hardware-reference 13)>

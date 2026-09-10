@@ -797,6 +797,10 @@ struct EmulatorState
     uint32_t current_z80_frequency;             // xN CPU clock generator (in Hz)
     uint8_t current_z80_frequency_multiplier;   // Frequency multiplier comparing to CPU base
     uint8_t next_z80_frequency_multiplier;      // Queued multiplier to apply at next frame start (prevents mid-frame changes)
+    uint8_t scorpion_turbo;                     // Scorpion ZS-256 Turbo+ hardware turbo flip-flop (hardware-reference 13):
+                                                // 1 = 7 MHz. Set by IN from the #7FFD-family decode, cleared by IN from
+                                                // the #1FFD-family decode and by reset. Composes with the host speed
+                                                // multiplier at the frame boundary - see Z80::Z80FrameCycle()
 
     /// endregion </Runtime CPU parameters
 
@@ -874,6 +878,15 @@ struct EmulatorState
 	uint8_t ulaplus_reg;
 	uint8_t ide_hi_byte_r, ide_hi_byte_w, ide_hi_byte_w1, ide_read, ide_write; // high byte in IDE i/o
 	uint8_t profrom_bank;
+
+// Scorpion magic-button DOS trigger (DD50.1 "1-DOS/0-SOS", hardware-reference §9):
+// armed together with the NMI pulse (DD50.2), it forces page 3 (TR-DOS) of the
+// current ProfROM plane over the #0000-#3FFF window - without touching the #1FFD
+// latch (the service bit still outranks it) or the plane register. Released by
+// the first CPU read from #4000-#FFFF (the Beta128 "leave the ROM window"
+// strobe); cleared by reset. Like profrom_bank it is not reproducible from
+// ports, so TTD checkpoints and the divergence hash carry it explicitly
+uint8_t scorpionDosTrigger;
 };
 
 // bits for State::flags

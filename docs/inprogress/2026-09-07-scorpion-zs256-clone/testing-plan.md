@@ -71,6 +71,7 @@ Core rules:
 | §7 | port decode: `#1FFD`/`#7EFD` read `#FF`, `#FF` border, AY mirrors | `scorpionports_test.cpp`, `portdecoder_scorpion256_test.cpp` (existing) | Unit | 4 |
 | §8 | border power-on black, `#FF` port | `scorpionports_test.cpp`, `scorpionraster_test.cpp` | Unit | 1/4 |
 | §9 | NMI accept cycle, RETN, MNI latch semantics | `nmi_test.cpp`, `scorpionmni_test.cpp` scripts S8-S9 | Unit+Int | 6 |
+| §13 | hardware turbo: IN strobe truth table, reset clear, 2× frame composition with host speed | `scorpionports_test.cpp`, `scorpionmachine_test.cpp`; E2E-8 | Unit+Int | 12 |
 | — | `.z80` hw=10 round-trip | `z80scorpion_test.cpp` | Unit | 9 |
 | — | TTD checkpoint of `p1FFD`-driven state | `ttd_checkpoint_test.cpp` (extended) | Unit | 9 |
 | — | debugger bank naming | `scorpionbanknames_test.cpp` | Unit | 10 |
@@ -207,7 +208,7 @@ clamping (A5 vs A1 must read back the same page).
 | C1 | `OUT #7FFD,30h` | applies fully: ROM1 + lock latched |
 | C2 | then `OUT #7FFD,01h` | ignored (bank/screen/ROM unchanged) |
 | C3 | then `OUT #1FFD,10h` | **still applies** (lock scopes to `#7FFD` only) |
-| C4 | then MNI button | bit 1 latches anyway (hardware, not a port write — Task 6) |
+| C4 | then MNI button | ROM at `#0000` swaps to page 3 anyway (DD50.1 trigger hardware, not a port write — the lock scopes to `#7FFD`); `#1FFD` itself unchanged (reworked model, HW §9) |
 
 **Table D — fixed windows:** under every Table A/B row, `BankTag(0x4000) == 5` and
 `BankTag(0x8000) == 2`.
@@ -311,6 +312,26 @@ restored (`ttd_checkpoint_test.cpp` extension).
 Truth table for `DumpMemoryBankInfo`/`GetCurrentBankName` per HW §5.1 roles:
 "ROM0 BASIC128", "ROM1 48K", "ROM2 Service (Q*n*)", "TR-DOS", "RAM bank *n*" —
 including the ProfROM quadrant suffix.
+
+### 3.12 Hardware turbo (Task 12) — `scorpionports_test.cpp` + `scorpionmachine_test.cpp`
+
+Layer 1 — decoder truth table (HW §13; `PortDecoder_Scorpion256`, so both models):
+
+| # | Case | Expectation |
+|---|---|---|
+| U1 | `IN #7FFD` / `#7EFD` / `#5FF5` (set-family mirrors) | `scorpion_turbo == 1` |
+| U2 | `IN #1FFD` / `#3FFD` (clear-family mirrors) | `scorpion_turbo == 0` |
+| U3 | `IN` on keyboard half-rows, AY `#FFFD`/`#BFFD`, Beta128 `#xx1F`/`#xxFF`, `#xxFE` | flip-flop unchanged (probed in **both** prior states) |
+| U4 | `IN #1FFD` / `#7FFD` return values | still `#FF` — the strobe is a side effect only, write-only registers read open bus exactly as before the hook |
+| U5 | `reset()` | flip-flop cleared — machine always comes up at 3.5 MHz |
+
+Layer 2 — machine integration (`scorpionmachine_test.cpp`, scripted Z80 via fixture):
+
+| # | Case | Expectation |
+|---|---|---|
+| M1 | scripted `LD BC,#7FFD` / `IN A,(C)` / `JR $` executed by the real CPU | strobe fires through `Z80::in → DecodePortIn` — the guest-exclusive path (debugger/API reads never clock the flip-flop) |
+| M2 | flip-flop vs `Z80FrameCycle` frame length | set → `current_z80_frequency_multiplier` 2 (frame 139776T, INT window scaled — interrupt rate stays 50 Hz); clear → back to 1 |
+| M3 | host speed × turbo composition | `next` 4 + turbo → applied 8; turbo off → 4 — host intent preserved, guest code cannot clobber the speed menu |
 
 ---
 
@@ -421,14 +442,21 @@ Available real assets (in-repo): `data/rom/scorpion.rom` (64K, signature-validat
 
 ### E2E-3 — MNI button
 
-> **Executed 2026-09-08 — PASS.** See [verification/e2e-base-rom.md](verification/e2e-base-rom.md).
+> **Executed 2026-09-08 — PASS** against the superseded latch model (`p1FFD |= 0x02`).
+> **Reworked 2026-09-10** to the DD50 trigger model (HW §9,
+> [profrom-nmi-boot-analysis.md](profrom-nmi-boot-analysis.md)) — the procedure/criteria
+> below are the corrected ones; re-run pending.
 
 - **Procedure:** in BASIC, write a signature into `#C000` area (bank via `#1FFD`) →
-  `POST /api/v1/emulator/$EMU_ID/nmi {"magic": true}` → screenshot (Shadow Monitor) →
-  memory/state inspection (`p1FFD & 2`, `#0000` = service window) → exit via the
-  monitor's own exit command (keyboard).
-- **Pass criteria:** monitor screen visible; `p1FFD` bit 1 set with bit 4/6-7 preserved;
-  after exit, BASIC resumes with the `#C000` signature intact.
+  `POST /api/v1/emulator/$EMU_ID/nmi {"magic": true}` → screenshot (Shadow Monitor
+  menu — reached through the firmware chain: TR-DOS `#0066` → … → `OUT (#1FFD),#12` at
+  `#0033`) → memory/state inspection (`#0000` = service window **after the chain**,
+  `scorpionDosTrigger` released) → exit via the monitor's own exit command (keyboard).
+- **Pass criteria:** monitor screen visible; `p1FFD` **unchanged by the button itself**
+  (bit 1 set only by the firmware's own `OUT`, bit 4/6-7 preserved); plane register
+  unchanged; after exit, BASIC resumes with the `#C000` signature intact. In a tool
+  plane (planes 1-3) the button parks: border stripes, PC in the `#0066` loop, no exit.
+  The original 2026-09-08 record: [verification/e2e-base-rom.md](verification/e2e-base-rom.md).
 
 ### E2E-4 — ProfROM quadrant switching (real 512K image)
 
@@ -476,6 +504,19 @@ Available real assets (in-repo): `data/rom/scorpion.rom` (64K, signature-validat
 - **Pass criteria:** banks 16-63 reachable and writable; 256K config clamps the same
   writes per Table A.
 
+### E2E-8 — Hardware turbo discriminator (both Scorpion models)
+
+> **Executed 2026-09-09 — PASS** on PROFSCORP/1024K and SCORPION/256K.
+> Script: `scratch/e2e-profrom-boot/pass29.py`.
+
+- **Procedure:** pause → inject a `LD BC,#7FFD` / `IN A,(C)` / `JR $` stub at `#8000`
+  (`POST …/memory/write` + `PUT …/registers/PC`) → run → measure frames crossed by a
+  fixed 139776-T `POST …/run_tstates` via the `flash_cycle_position` probe
+  (`GET …/state/screen/flash`, median of 3); repeat with the `#1FFD` clear stub.
+- **Pass criteria:** 2 frames at 3.5 MHz / 1 frame at 7 MHz per phase, on both models —
+  also proves the `run_tstates` path honors a multiplier queued while paused (this is
+  the E2E that caught the missing apply in `Emulator::RunTStates`).
+
 ---
 
 ## 7. Performance gates
@@ -510,7 +551,7 @@ Median of 3 repetitions, same machine, otherwise-idle; baselines recorded per ta
 | G2 commit | before suggesting any commit | G1 + **full** `core-tests` sequential pass |
 | G3 parallel | Tasks 4, 7, 9, 11 | `test-parallel` green (shard isolation) |
 | G4 performance | Tasks 7, 11 | §7 benchmark deltas within gates |
-| G5 E2E | Task 11 (spot runs earlier) | E2E-1…E2E-7 transcripts under `scratch/e2e/`, all pass criteria met |
+| G5 E2E | Task 11 (spot runs earlier) | E2E-1…E2E-8 transcripts under `scratch/e2e/`, all pass criteria met |
 | G6 docs | Task 11 | all cross-references in this directory + new `docs/features/scorpion-zs256.md` resolve; README tables updated |
 
 Build warning policy is the project-wide zero-warnings rule; any new warning in any
@@ -538,7 +579,7 @@ compiler blocks the gate regardless of test status.
 - [ ] Full suite green sequential **and** via `test-parallel`.
 - [ ] Zero warnings on the local toolchain (CI covers gcc/clang/mingw/msvc).
 - [ ] §7 benchmark gates met; baselines archived in `scratch/`.
-- [ ] E2E-1…E2E-7 executed with transcripts; pass criteria all met.
+- [ ] E2E-1…E2E-8 executed with transcripts; pass criteria all met.
 - [ ] Coverage matrix (§2) has no empty test cells; every HW §12 divergence item is
       either covered by a test or listed as a documented limitation in the permanent doc.
 - [ ] `docs/features/scorpion-zs256.md` published; this directory marked for archival

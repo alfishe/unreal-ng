@@ -260,6 +260,35 @@ TEST_F(ScorpionRomWindowMachine_Test, ReadReturnsPostSwitchBytes)
     EXPECT_EQ(BankTag(0x0000), ServiceTag(0));  // and so does the window
 }
 
+/// Regression (profrom-nmi-gaps-and-findings GAP-2): the strobe grid is the
+/// four A1:A0 = 0 addresses only, and only a data read clocks the GAL. The
+/// monitor data-reads the whole #0100-#010F block during inter-plane
+/// bookkeeping - the RST 30h dispatcher reads the plane signature at #0101
+/// (LD HL,(#0101)) on every call, the reset stubs read the park selector at
+/// #0108/#010C through LD L,(HL) - so an off-grid read or an opcode fetch
+/// must never switch the plane
+TEST_F(ScorpionRomWindowMachine_Test, OffGridAndFetchReadsDoNotStrobe)
+{
+    SetUpProf(4);
+
+    for (uint16_t addr = 0x0101; addr < 0x0110; addr++)
+    {
+        if ((addr & 0x0003) == 0)
+            continue;  // #0104/#0108/#010C sit on the grid
+        FastRead(addr);  // data read one byte off the grid
+        ASSERT_EQ(_context->emulatorState.profrom_bank, 0) << "off-grid read #" << addr;
+    }
+
+    // An opcode fetch never clocks the GAL even on the grid: /M1 masks the
+    // strobe (Xpeccy gates on !m1)
+    _memory->MemoryReadFast(0x0104, true);
+    EXPECT_EQ(_context->emulatorState.profrom_bank, 0) << "instruction fetches never strobe";
+
+    // The grid itself still clocks on a data read: S=1 moves Q0 -> Q3
+    FastRead(0x0104);
+    EXPECT_EQ(BankTag(0x0000), ServiceTag(3));
+}
+
 /// Debugger-side reads never advance the quadrant machine - the plane ID
 /// byte at #0101 read through the debugger path must stay inert
 TEST_F(ScorpionRomWindowMachine_Test, DebuggerReadsDoNotStrobe)
