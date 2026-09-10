@@ -35,30 +35,32 @@ We use CMake with Ninja for building:
 # Configure the build system
 cmake -S . -B cmake-build-release -G Ninja
 
-# Build the emulator and tests
+# Build the main applications (unreal-qt, unreal-mcp-bridge, etc.)
 ninja -C cmake-build-release
 ```
 
 ## Running Tests & Benchmarks
-Tests are executed using the `core-tests` binary, and benchmarks via `core-benchmarks`:
+Tests and benchmarks are opt-in (`-DTESTS=ON`, `-DBENCHMARKS=ON`) to keep standard dev builds fast:
 ```bash
-# Run all tests (sequential, ~37s)
-./cmake-build-release/bin/core-tests
+# Configure with tests enabled
+cmake -S . -B cmake-build-release -G Ninja -DTESTS=ON
 
-# Run all tests in parallel (~12s, 3x faster)
+# Run all tests in parallel (automatically builds core-tests on demand)
 cmake --build cmake-build-release --target test-parallel
-# Or use the script directly:
-./scripts/run-tests-parallel.sh ./cmake-build-release/bin/core-tests
+# Or run tests sequentially:
+ninja -C cmake-build-release core-tests && ./cmake-build-release/bin/core-tests
 
 # Run specific tests
 ./cmake-build-release/bin/core-tests --gtest_filter="*TestName*"
 
-# Run all benchmarks
-./cmake-build-release/bin/core-benchmarks
+# Configure with benchmarks enabled
+cmake -S . -B cmake-build-release -G Ninja -DBENCHMARKS=ON
 
-# Run specific benchmarks
+# Build and run benchmarks
+ninja -C cmake-build-release core-benchmarks
 ./cmake-build-release/bin/core-benchmarks --benchmark_filter="*BenchName*"
 ```
+
 
 ### Parallel Test Execution (GTest Sharding)
 The `test-parallel` CMake target uses GTest's built-in sharding to split tests across 4 processes:

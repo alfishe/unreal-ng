@@ -22,4 +22,9 @@ if (WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
 endif ()
 
+set_target_properties(${PROJECT_NAME} PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 message("<< <${PROJECT_NAME}>")
+

@@ -55,4 +55,9 @@ target_link_libraries(${PROJECT_NAME}
 # Bridge executable: stdio JSON-RPC pipe → MCP HTTP endpoint, zero deps
 add_subdirectory(bridge)
 
+if (TARGET unreal-mcp-bridge)
+    add_dependencies(${PROJECT_NAME} unreal-mcp-bridge)
+endif ()
+
 message("<< <${PROJECT_NAME}>")
+

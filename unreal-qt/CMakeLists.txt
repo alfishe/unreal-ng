@@ -45,6 +45,11 @@ set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # Include CMake helper functions file
 include(${ROOT_DIR}/cmake/func.cmake)
 
+# Add core library if not already defined by parent build
+if (NOT TARGET unrealng::core)
+    add_subdirectory("${ROOT_DIR}/core/src" core)
+endif()
+
 # Add automation if enabled (skip if target already exists from parent build)
 if (ENABLE_AUTOMATION)
     if (NOT TARGET unrealng::automation)
@@ -238,13 +243,10 @@ add_subdirectory("3rdparty/QHexView-5.0")
 # C++20 mode has the correct behavior, so override QHexView to match the project standard.
 set_target_properties(QHexView PROPERTIES CXX_STANDARD 20)
 
-# Add core/tests only if not already defined by parent build
-if (NOT TARGET unrealng::core)
-    add_subdirectory("${ROOT_DIR}/core/src" core)
-endif()
 if (TESTS AND NOT TARGET core-tests)
     add_subdirectory("${ROOT_DIR}/core/tests" tests)
 endif()
+
 
 # All sources in /src and subfolders will be compiled
 file (GLOB_RECURSE CPP_FILES ${SOURCE_DIR}/*.cpp)
