@@ -8,6 +8,8 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/emulatorcontext.h>
+#include <emulator/memory/rom.h>  // ROM signatures
+#include <emulator/cpu/core.h>    // Core::GetROM()
 #include <json/json.h>
 #include <common/stringhelper.h>
 
@@ -92,10 +94,21 @@ void EmulatorAPI::getStateMemory(const HttpRequestPtr& req, std::function<void(c
     {
         Json::Value paging;
         paging["port_7ffd"] = static_cast<int>(state.p7FFD);
+        paging["port_7ffd_hex"] = StringHelper::Format("0x%02X", state.p7FFD);
         paging["ram_bank_3"] = static_cast<int>(state.p7FFD & 0x07);
         paging["screen"] = (state.p7FFD & 0x08) ? 1 : 0;
         paging["rom_select"] = (state.p7FFD & 0x10) ? 1 : 0;
         paging["locked"] = (state.p7FFD & 0x20) ? true : false;
+
+        // Extended paging ports (model-specific)
+        // pEFF7: Scorpion 256K extended paging
+        paging["port_eff7"] = static_cast<int>(state.pEFF7);
+        paging["port_eff7_hex"] = StringHelper::Format("0x%02X", state.pEFF7);
+
+        // pFE: Border/tape/speaker (always available)
+        paging["port_fe"] = static_cast<int>(state.pFE);
+        paging["port_fe_hex"] = StringHelper::Format("0x%02X", state.pFE);
+
         ret["paging"] = paging;
     }
 
@@ -220,7 +233,7 @@ void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& req, std::function<voi
 }
 
 /// @brief GET /api/v1/emulator/{id}/state/memory/rom
-/// @brief Get ROM configuration
+/// @brief Get ROM configuration with signatures
 void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
                                     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                     const std::string& id) const
@@ -258,6 +271,7 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
     CONFIG& config = context->config;
     Memory& memory = *context->pMemory;
     EmulatorState& state = context->emulatorState;
+    ROM* rom = context->pCore ? context->pCore->GetROM() : nullptr;
     Json::Value ret;
 
     // Model information
@@ -278,88 +292,86 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
         model = "ZX Spectrum +3";
         totalROMPages = 4;
     }
+    else if (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP)
+    {
+        model = (config.mem_model == MM_SCORP) ? "Scorpion ZS-256" : "Scorpion ZS-256 Turbo+";
+        totalROMPages = 4;
+    }
 
     ret["model"] = model;
     ret["total_rom_pages"] = totalROMPages;
     ret["active_rom_page"] = static_cast<int>(memory.GetROMPage());
     ret["rom_size_kb"] = totalROMPages * 16;
 
-    // Available ROM pages
+    // ROM file info
+    if (rom)
+    {
+        ret["rom_file"] = rom->GetROMFilename();
+    }
+
+    // Available ROM pages with signatures
     Json::Value pages = Json::arrayValue;
+
+    // Helper lambda to add page info with signature
+    auto addPageInfo = [&](int pageNum, const std::string& description, bool isActive) {
+        Json::Value pageInfo;
+        pageInfo["page"] = pageNum;
+        pageInfo["description"] = description;
+        pageInfo["active"] = isActive;
+        pageInfo["size_kb"] = 16;
+
+        // Calculate signature for this ROM page
+        uint8_t* pagePtr = memory.ROMPageHostAddress(pageNum);
+        if (pagePtr && rom)
+        {
+            std::string signature = rom->CalculateSignature(pagePtr, 0x4000);
+            pageInfo["signature"] = signature;
+            std::string title = rom->GetROMTitle(signature);
+            pageInfo["title"] = title.empty() ? "Unknown ROM" : title;
+        }
+
+        pages.append(pageInfo);
+    };
+
+    uint8_t activeROMPage = memory.GetROMPage();
 
     if (config.mem_model == MM_SPECTRUM48)
     {
-        Json::Value page;
-        page["page"] = 0;
-        page["description"] = "48K BASIC ROM";
-        page["active"] = true;
-        pages.append(page);
+        addPageInfo(0, "48K BASIC ROM", true);
     }
     else if (config.mem_model == MM_SPECTRUM128)
     {
-        Json::Value page0;
-        page0["page"] = 0;
-        page0["description"] = "128K Editor/Menu ROM";
-        page0["active"] = (memory.GetROMPage() == 0);
-        pages.append(page0);
-
-        Json::Value page1;
-        page1["page"] = 1;
-        page1["description"] = "48K BASIC ROM";
-        page1["active"] = (memory.GetROMPage() == 1);
-        pages.append(page1);
+        addPageInfo(0, "128K Editor/Menu ROM", activeROMPage == 0);
+        addPageInfo(1, "48K BASIC ROM", activeROMPage == 1);
     }
     else if (config.mem_model == MM_PENTAGON)
     {
-        Json::Value page0;
-        page0["page"] = 0;
-        page0["description"] = "Service ROM";
-        page0["active"] = (memory.GetROMPage() == 0);
-        pages.append(page0);
-
-        Json::Value page1;
-        page1["page"] = 1;
-        page1["description"] = "TR-DOS ROM";
-        page1["active"] = (memory.GetROMPage() == 1);
-        pages.append(page1);
-
-        Json::Value page2;
-        page2["page"] = 2;
-        page2["description"] = "128K Editor/Menu ROM";
-        page2["active"] = (memory.GetROMPage() == 2);
-        pages.append(page2);
-
-        Json::Value page3;
-        page3["page"] = 3;
-        page3["description"] = "48K BASIC ROM";
-        page3["active"] = (memory.GetROMPage() == 3);
-        pages.append(page3);
+        addPageInfo(0, "Service ROM", activeROMPage == 0);
+        addPageInfo(1, "TR-DOS ROM", activeROMPage == 1);
+        addPageInfo(2, "128K Editor/Menu ROM", activeROMPage == 2);
+        addPageInfo(3, "48K BASIC ROM", activeROMPage == 3);
     }
     else if (config.mem_model == MM_PLUS3)
     {
-        Json::Value page0;
-        page0["page"] = 0;
-        page0["description"] = "+3 Editor ROM";
-        page0["active"] = (memory.GetROMPage() == 0);
-        pages.append(page0);
-
-        Json::Value page1;
-        page1["page"] = 1;
-        page1["description"] = "48K BASIC ROM";
-        page1["active"] = (memory.GetROMPage() == 1);
-        pages.append(page1);
-
-        Json::Value page2;
-        page2["page"] = 2;
-        page2["description"] = "+3DOS ROM";
-        page2["active"] = (memory.GetROMPage() == 2);
-        pages.append(page2);
-
-        Json::Value page3;
-        page3["page"] = 3;
-        page3["description"] = "48K BASIC ROM (copy)";
-        page3["active"] = (memory.GetROMPage() == 3);
-        pages.append(page3);
+        addPageInfo(0, "+3 Editor ROM", activeROMPage == 0);
+        addPageInfo(1, "48K BASIC ROM", activeROMPage == 1);
+        addPageInfo(2, "+3DOS ROM", activeROMPage == 2);
+        addPageInfo(3, "48K BASIC ROM (copy)", activeROMPage == 3);
+    }
+    else if (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP)
+    {
+        addPageInfo(0, "Service ROM", activeROMPage == 0);
+        addPageInfo(1, "TR-DOS ROM", activeROMPage == 1);
+        addPageInfo(2, "128K Editor/Menu ROM", activeROMPage == 2);
+        addPageInfo(3, "48K BASIC ROM", activeROMPage == 3);
+    }
+    else
+    {
+        // Generic fallback for other models
+        for (int i = 0; i < totalROMPages; i++)
+        {
+            addPageInfo(i, StringHelper::Format("ROM Page %d", i), activeROMPage == i);
+        }
     }
 
     ret["pages"] = pages;
@@ -371,6 +383,16 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
         mapping["bank0_type"] = "ROM";
         mapping["bank0_page"] = static_cast<int>(memory.GetROMPage());
         mapping["bank0_access"] = "read-only";
+
+        // Add title for currently mapped ROM
+        uint8_t* activePagePtr = memory.ROMPageHostAddress(memory.GetROMPage());
+        if (activePagePtr && rom)
+        {
+            std::string sig = rom->CalculateSignature(activePagePtr, 0x4000);
+            std::string title = rom->GetROMTitle(sig);
+            mapping["bank0_rom_title"] = title.empty() ? "Unknown ROM" : title;
+            mapping["bank0_rom_signature"] = sig;
+        }
     }
     else
     {

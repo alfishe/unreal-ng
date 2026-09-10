@@ -569,7 +569,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "disasm", "stack", "breakpoints", "memory_banks", "screen_ocr",
-                               "screen_image", "screen_digest", "timing"})
+                               "screen_image", "screen_digest", "timing", "rom"})
     {
         allowed.append(aspect);
     }
@@ -597,7 +597,7 @@ void RegisterInspectState(ToolRegistry& registry)
     registry.Register(
         "inspect_state",
         "Inspect emulator state in one call: registers, memory ranges, disassembly, stack words, breakpoints, memory banks, "
-        "screen OCR text, screen image metadata, screen digest hash, raster timing. Combine aspects to reduce round-trips.",
+        "screen OCR text, screen image metadata, screen digest hash, raster timing, ROM signatures. Combine aspects to reduce round-trips.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {
             // Collect aspects
@@ -618,11 +618,11 @@ void RegisterInspectState(ToolRegistry& registry)
             {
                 if (aspect != "machine" && aspect != "registers" && aspect != "memory" && aspect != "disasm" && aspect != "stack" &&
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "screen_ocr" && aspect != "screen_image" &&
-                    aspect != "screen_digest" && aspect != "timing")
+                    aspect != "screen_digest" && aspect != "timing" && aspect != "rom")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, disasm, stack, breakpoints, memory_banks, "
-                                            "screen_ocr, screen_image, screen_digest, timing"));
+                                            "screen_ocr, screen_image, screen_digest, timing, rom"));
                     return;
                 }
             }
@@ -788,6 +788,15 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
+                        else if (aspect == "rom")
+                        {
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/memory/rom"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    next(true);
+                                });
+                            });
+                        }
                     }
 
                     RunSeries(ReportSeriesProgress(std::move(steps), progress, aspects), [aspects, done, id](Json::Value acc) {
@@ -841,6 +850,22 @@ void RegisterInspectState(ToolRegistry& registry)
                             else if (aspect == "screen_digest" && value.isMember("digest"))
                             {
                                 out << "\n[screen_digest] " << value["digest"].asString();
+                            }
+                            else if (aspect == "rom" && value.isMember("pages"))
+                            {
+                                out << "\n[rom] " << value["pages"].size() << " page(s)";
+                                const Json::Value& pages = value["pages"];
+                                for (Json::ArrayIndex i = 0; i < pages.size() && i < 4; ++i)
+                                {
+                                    const Json::Value& page = pages[i];
+                                    out << "\n  [" << i << "] ";
+                                    if (page.isMember("title") && !page["title"].asString().empty())
+                                        out << page["title"].asString();
+                                    else
+                                        out << "(unknown)";
+                                    if (page.isMember("sha256"))
+                                        out << " sha256:" << page["sha256"].asString().substr(0, 16) << "...";
+                                }
                             }
                             else
                             {
