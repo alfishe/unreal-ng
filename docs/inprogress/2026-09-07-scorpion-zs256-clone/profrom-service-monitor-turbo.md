@@ -334,10 +334,18 @@ otherwise return; if they are, `RES 3,(IY+$19)` and wait for key release. `#37B5
 A,#81; JP #0AFB`. Bit 3 is therefore a **pause-output request** (Space/`S` = pause the listing,
 Caps+1 = cancel), unrelated to turbo.
 
-### 6.3 Not verified
-The interactive keystroke `V` → `#87/#88` binding and the greying of the item are in page 5's
-token-driven menu code and were not traced; only the predicate `#0919` (CF = hardware absent) and the
-action codes are established.
+### 6.3 Live-verified 2026-09-11 (was: not verified)
+The interactive `V` keystroke **is** the immediate speed toggle: with the
+instance running (see the keyboard pitfall in
+`verification/turbo-cpufreq-chain-verification.md` §4.2) a real `V` tap flips
+bit 6 of `#E02D` instantly (`#80 ⇄ #C0`), in both directions, with **no port
+strobe** — the hotkey only stages the flag; the hardware switch happens when
+`#04CE` next applies the config (monitor exit, and per §6.1 the page-6 staging).
+One open observation: a single `Enter` on a menu item reached via six `Down`
+presses fired `IN #7FFD` ×2 through `#04CE` (value cycled to fast) — it did not
+reproduce on a retry, so the trigger may have been a menu re-entry forced-ON
+(p5 `#0EB8` family) coinciding with the key. The exact menu-item→action binding
+in page 5's token-driven code remains untraced.
 
 ## 7. Contradictions / corrections to the seeded findings
 
@@ -413,3 +421,28 @@ Test-writing caveat: `Emulator::RunNFrames(n)` derives its whole t-state budget 
 multiplier at entry. The boot itself flips turbo ON at ~frame 11, so a single 60-frame call spans
 only ~35 video frames and stops before the f45 write. Step per frame (`RunNFrames(1)` in a loop)
 when a window must be expressed in video frames across a speed change.
+
+## 10. Status-bar notification chain — verification and fix (2026-09-11)
+
+A user report ("status bar always 7.0 MHz when changing CPU speed in the service
+monitor") was traced end-to-end: port strobe → decoder → `Z80::ApplyHardwareTurboNow`
+→ `NC_CPU_FREQ_CHANGED` → Qt status bar. Two outcomes:
+
+1. **Holding 7.0 MHz inside the monitor is hardware-matching**: per §3.1/§3.7 the
+   menu toggle is a flag store only, and `#0AF2` forces turbo on at entry; the clock
+   switch runs at monitor exit (`#04CE`). No emulator change for this part.
+2. **Real defect fixed**: `ApplyHardwareTurboNow` never posted `NC_CPU_FREQ_CHANGED`
+   (only the frame-boundary `ApplyQueuedFrequencyMultiplier` did, and a mid-frame
+   strobe is a no-op there next frame). Both apply paths now share
+   `Z80::NotifyCPUFrequencyChanged()`; regression test
+   `ScorpionMachine_Test.TurboStrobePostsCpuFreqChanged` pins the payload.
+
+Full audit table, live WebAPI evidence and UX expectations:
+`verification/turbo-cpufreq-chain-verification.md`.
+
+Follow-up (same day): the chain was re-proven with the ROM's own apply — after
+staging `normal`, `PC := #04CE` strobes `IN #1FFD` ×2 and the multiplier flips
+2 → 1 in the same frame, and it sticks (verification record §4.1); the `V`
+hotkey is confirmed live as the silent staging toggle (§6.3). An SMUC
+board-presence side-track was prototyped and reverted — the board stays absent
+by decision (verification record §6).

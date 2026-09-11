@@ -1,6 +1,13 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include <atomic>
+#include <chrono>
+#include <thread>
+
+#include "3rdparty/message-center/messagecenter.h"
+#include "emulator/notifications.h"
+
 #include "scorpionmachine_test.h"
 
 #include "emulator/cpu/z80.h"
@@ -160,4 +167,61 @@ TEST_F(ScorpionMachine_Test, TurboStrobeAppliesMidFrame)
 
     EXPECT_EQ(state.current_z80_frequency_multiplier, 1);
     EXPECT_EQ(z80->t, 1000u);
+}
+
+/// @brief The mid-frame hardware-turbo strobe must post NC_CPU_FREQ_CHANGED:
+///        unlike host speed-menu changes it never passes through a frame
+///        boundary, so without this message the strobe stays invisible to every
+///        event-driven consumer (status bar poll, WebAPI/MCP listeners). The
+///        ProfROM monitor applies its exit-path speed change exactly this way
+///        (#04CE: IN A,(#7FFD/#1FFD) x2, profrom-service-monitor-turbo.md 3.1)
+TEST_F(ScorpionMachine_Test, TurboStrobePostsCpuFreqChanged)
+{
+    EmulatorState& state = _context->emulatorState;
+    Z80* z80 = _core->GetZ80();
+
+    z80->Z80FrameCycle();  // settle: 1x applied at the frame boundary
+
+    std::atomic<int> messages{0};
+    std::atomic<uint32_t> lastFreq{0};
+    std::atomic<uint8_t> lastMult{0};
+
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    auto handler = [&messages, &lastFreq, &lastMult](int id, Message* message) {
+        (void)id;
+        if (auto* payload = message ? dynamic_cast<CPUFreqPayload*>(message->obj) : nullptr)
+        {
+            lastFreq.store(payload->_frequencyHz);
+            lastMult.store(payload->_freqMultiplier);
+            messages.fetch_add(1);
+        }
+    };
+    uint64_t handlerId = messageCenter.AddObserver(NC_CPU_FREQ_CHANGED, handler);
+
+    // Notification dispatch is asynchronous (MessageCenter thread)
+    auto waitForMessages = [&](int count) {
+        auto start = std::chrono::steady_clock::now();
+        while (messages.load() < count &&
+               std::chrono::steady_clock::now() - start < std::chrono::milliseconds(500))
+            std::this_thread::sleep_for(std::chrono::microseconds(250));
+    };
+
+    _context->pPortDecoder->DecodePortIn(0x7FFD, 0x8000);  // the turbo-on strobe
+    waitForMessages(1);
+    EXPECT_EQ(state.current_z80_frequency_multiplier, 2);
+    EXPECT_EQ(lastMult.load(), 2) << "the ON strobe must notify the applied 2x multiplier";
+    EXPECT_EQ(lastFreq.load(), state.base_z80_frequency * 2) << "7 MHz reporting";
+
+    _context->pPortDecoder->DecodePortIn(0x1FFD, 0x8000);  // the turbo-off strobe
+    waitForMessages(2);
+    EXPECT_EQ(state.current_z80_frequency_multiplier, 1);
+    EXPECT_EQ(lastMult.load(), 1) << "the OFF strobe must notify the applied 1x multiplier";
+    EXPECT_EQ(lastFreq.load(), state.base_z80_frequency) << "3.5 MHz reporting";
+
+    // A strobe that does not change the effective multiplier stays silent
+    _context->pPortDecoder->DecodePortIn(0x1FFD, 0x8000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    EXPECT_EQ(messages.load(), 2) << "a no-op strobe must not re-notify";
+
+    messageCenter.RemoveObserverById(NC_CPU_FREQ_CHANGED, handlerId);
 }

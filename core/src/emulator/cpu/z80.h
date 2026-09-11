@@ -428,6 +428,13 @@ public:
     /// multiplier; read by Z80FrameCycle every iteration
     void RecomputeFrameTiming();
 
+    /// Post NC_CPU_FREQ_CHANGED with the applied frequency/multiplier. Shared
+    /// by both apply paths so host speed-menu changes and guest hardware-turbo
+    /// strobes notify UI/automation consumers identically (the Scorpion
+    /// ProfROM monitor flips the clock mid-frame via IN (#7FFD/#1FFD), which
+    /// never passes through a frame boundary)
+    void NotifyCPUFrequencyChanged();
+
     uint32_t _frameLimit = 0;   // config.frame * multiplier
     unsigned _intStart = 0;     // config.intstart * multiplier
     unsigned _intEnd = 0;       // (config.intstart + intlen) * multiplier

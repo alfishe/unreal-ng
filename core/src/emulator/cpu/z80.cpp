@@ -427,13 +427,18 @@ void Z80::ApplyQueuedFrequencyMultiplier()
         MLOGINFO("Z80::ApplyQueuedFrequencyMultiplier - Applied speed multiplier: %dx -> %dx (%.2f MHz, rate=%d, hw_turbo_shift=%u)", oldMultiplier,
                  state.current_z80_frequency_multiplier, state.current_z80_frequency / 1'000'000.0, cpu.rate, state.hw_turbo_shift);
 
-        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        std::string emulatorId = _context->pEmulator ? _context->pEmulator->GetId() : "";
-        messageCenter.Post(NC_CPU_FREQ_CHANGED,
-                           new CPUFreqPayload(emulatorId,
-                                              state.current_z80_frequency,
-                                              state.current_z80_frequency_multiplier));
+        NotifyCPUFrequencyChanged();
     }
+}
+
+void Z80::NotifyCPUFrequencyChanged()
+{
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    std::string emulatorId = _context->pEmulator ? _context->pEmulator->GetId() : "";
+    messageCenter.Post(NC_CPU_FREQ_CHANGED,
+                       new CPUFreqPayload(emulatorId,
+                                          _context->emulatorState.current_z80_frequency,
+                                          _context->emulatorState.current_z80_frequency_multiplier));
 }
 
 void Z80::RecomputeFrameTiming()
@@ -476,6 +481,11 @@ void Z80::ApplyHardwareTurboNow()
 
     MLOGINFO("Z80::ApplyHardwareTurboNow - hardware turbo applied mid-frame: %dx -> %dx (%.2f MHz) at t=%u",
              oldMultiplier, desiredMultiplier, state.current_z80_frequency / 1'000'000.0, cpu.t);
+
+    // Mid-frame hardware strobes must notify too: they never pass through a
+    // frame boundary, so ApplyQueuedFrequencyMultiplier will see
+    // desiredMultiplier == current and post nothing on the next frame
+    NotifyCPUFrequencyChanged();
 }
 
 /// Execute number of cpu cycles equivalent to full frame screen render
