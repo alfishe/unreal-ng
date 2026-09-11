@@ -446,7 +446,7 @@ void Memory::AllocateAndExportMemoryToMmap()
     if (!_feature_sharedmemory_enabled)
     {
         // Feature disabled - allocate regular heap memory
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES];
+        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
         MLOGDEBUG("Memory allocated using heap (sharedmemory feature disabled)");
         return;
     }
@@ -501,7 +501,7 @@ void Memory::AllocateAndExportMemoryToMmap()
         DWORD error = GetLastError();
         LOGERROR("Failed to create file mapping object (Error %lu), falling back to heap allocation", error);
         _mappedMemoryHandle = INVALID_HANDLE_VALUE;
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES];
+        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
         return;
     }
 
@@ -519,7 +519,7 @@ void Memory::AllocateAndExportMemoryToMmap()
         LOGERROR("Failed to map view of file (Error %lu), falling back to heap allocation", error);
         CloseHandle(_mappedMemoryHandle);
         _mappedMemoryHandle = INVALID_HANDLE_VALUE;
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES];
+        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
         return;
     }
 
@@ -540,7 +540,7 @@ void Memory::AllocateAndExportMemoryToMmap()
     {
         LOGERROR("Failed to create shared memory object: %s (errno=%d), falling back to heap allocation",
                  strerror(errno), errno);
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES];
+        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
         return;
     }
 
@@ -551,7 +551,7 @@ void Memory::AllocateAndExportMemoryToMmap()
         close(_mappedMemoryFd);
         shm_unlink(shmName.c_str());
         _mappedMemoryFd = -1;
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES];
+        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
         return;
     }
 
@@ -565,7 +565,7 @@ void Memory::AllocateAndExportMemoryToMmap()
         close(_mappedMemoryFd);
         shm_unlink(shmName.c_str());
         _mappedMemoryFd = -1;
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES];
+        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
         return;
     }
 

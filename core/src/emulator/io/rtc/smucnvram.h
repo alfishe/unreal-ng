@@ -29,13 +29,21 @@ enum CMOSMemoryEnum
 	Unknown_13 = 13
 };
 
-class NVRAM
+class SMUCNvram
 {
 // CMOS fields
 protected:
 	uint8_t _cmos[0x100];
 	CMOSTypeEnum _cmos_type = None;
 	uint8_t _cmos_addr = 0;
+
+	// Deterministic clock: when set, time-register reads serve this frozen
+	// instant instead of live host time (tests / replay - the ProfROM menu
+	// clock drives boot-timeline code paths, profrom-service-monitor-turbo.md)
+	bool _fixedTime = false;
+	time_t _fixedTimeValue = 0;
+	tm _lastTime = {};
+	bool _updateFinished = false;
 
 // Serial-link EEPROM fields (SMUC #FFBA)
 protected:
@@ -62,8 +70,8 @@ protected:
 	int _scl = 1;              // last SCL level seen (nonzero = high)
 
 public:
-	NVRAM();
-	virtual ~NVRAM();
+	SMUCNvram();
+	virtual ~SMUCNvram();
 
 // Serial-link EEPROM methods (SMUC #FFBA)
 public:
@@ -87,6 +95,13 @@ public:
 	void SetCMOSAddress(uint8_t addr);
 	void WriteCMOS(uint8_t val);
 	uint8_t ReadCMOS();
+
+	/// Freeze the wall-clock source: time-register reads return the given
+	/// instant (Unix seconds, UTC) instead of live host time
+	void SetFixedTime(time_t t);
+
+	/// Back to live host time
+	void UseLiveTime();
 
 // Helper methods
 protected:

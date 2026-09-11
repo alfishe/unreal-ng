@@ -282,3 +282,90 @@ local copy at `/Volumes/TB4-4Tb/Projects/emulators/github/Xpeccy/`:
 
 Implementation and tests are tracked as the `smuc-impl` work item; this document is the
 evidence base.
+
+### 8.1 Implementation (2026-09-10)
+
+Landed as:
+
+* `core/src/emulator/memory/nvram.h/.cpp` - class `SMUCNvram`: the Xpeccy LC16 behavioral
+  port (`WriteSerialLink` / `ReadSerialLink` / `ResetSerialLinkState`, 2 KB backing buffer,
+  contents survive reset; the old parallel-access API and the commented ancestor
+  `NVRAM::write` block were removed). Renamed from `NVRAM` to avoid the collision with the
+  heritage `struct NVRAM` in `platform.h` (dead `EmulatorState::nvram` layout).
+* `core/src/emulator/ports/models/portdecoder_scorpion256.h/.cpp` - `IsPort_SMUC`
+  (family mask `0x18FB`, match `0x18BA`: A12, A11 plus the exact low byte `#BA`/`#BE` with
+  A2 free - see 8.3 for why the low byte must be exact) gated on `MM_PROFSCORP`, with arms
+  placed BEFORE the `#FE` arms on both IN and OUT: every SMUC address also carries the weak
+  FE pattern (A5=1, A1=1, A0=0) and would otherwise reach keyboard/border/mic. Sub-decode
+  `(port & 0xA044)`: `0xA000` serial link (`ReadSerialLink() ? 0xFF : 0xBF`), `0x8000`
+  DS1685 RTC (address/data phase via `pFFBA` bit 7), `0x2000` virtual FDD latch
+  (`p7FBA | 0x3F`), `0x0000` version (`0x3F`), `0x0004` revision / `0x2004` 8259 PIC
+  (`0x57`), `0x8004` IDE data-high, `0xA004` IDE window task file (register
+  write/readback, status reads `0x50`).
+* `core/tests/emulator/ports/models/scorpionsmuc_test.cpp` - replays the page-7 primitives
+  (`#0F2C` START, `#0EF7` shift-out, `#0EDE` ACK check, `#0EB8` shift-in, `#0F1C` STOP) at
+  the port level, checks the register stubs, and verifies the live boot.
+
+Verified live (boot test diagnostics): the NVRAM validation takes the `#0D6F` first-boot
+format path (EEPROM[0] = `0x61` by frame ~200), the `#0E72` checksum pair lands at
+`#00FE/#00FF` and is later rewritten when the driver saves its config, and the boot panel
+grows from a single header line (stubs disabled) to six device/config rows - the four
+"not found" messages no longer render. The post-check PC trajectory is identical with and
+without the stubs (settles into the same ROM idle loop), so the added decode arms do not
+perturb the boot path.
+
+### 8.2 Board-absent default (2026-09-10)
+
+User decision: ship with the SMUC board ABSENT by default - the detected-board boot is
+expensive. Measured (PROFSCORP cold boot, per-frame stepping, frozen RTC):
+
+| mode | `#E02D=C0` boot detection | menu idle (`#3683-#3685`) reached |
+|------|---------------------------|----------------------------------|
+| board present (8.1 stubs) | frame 45 | ~frame 350 |
+| board absent (default) | frame 45 | ~frame 150 |
+
+The ~200 extra frames (~4 s at 50 Hz) go to the page-7 serial-link driver: the `#0DE8`
+checksum validation reads 254 NVRAM bytes over bit-banged I2C, the `#0D6F` first-boot
+format path writes defaults and re-validates, and the config save staging follows. With
+the board absent the four presence polls just burn their 200 START/select/ACK retries
+(~25 frames total) and everything else is skipped. The turbo boot detection is identical
+in both modes.
+
+Mechanics: `PortDecoder_Scorpion256::SetSmucEnabled(bool)` / `IsSmucEnabled()` gate
+`ReadSMUCPort`/`WriteSMUCPort`. Absent means the whole `#xxBA/#xxBE` family floats:
+reads return constant open-bus `#FF` (NOT the attribute-latch floating stream - its bit 
+6 varies with the raster and would ACK presence polls at random screen positions),
+writes hit no latch. The stubs stay fully wired behind the flag;
+`scorpionsmuc_test.cpp` opts in via `SetSmucEnabled(true)` in its context helper, so the
+present-board behavior stays verified. Re-enabling for real use later = flipping the
+default or wiring the flag to a config option.
+
+### 8.3 Keyboard regression from the first SMUC mask (2026-09-10)
+
+Symptom: right after the 8.1 change the ProfROM service monitor stopped responding to the
+keyboard (second keyboard outage after the earlier `#0066` DI-loop wedge - unrelated cause).
+Diagnosed live over WebAPI on the running instance: a 1.5 s hold of any key outside the
+6-7-8-9-0 half-row changed neither the screen digest nor the monitor state, while the
+machine idled normally.
+
+Root cause: the first `IsPort_SMUC` pattern was derived from the common bits of the four
+`#xxBA` base addresses only - mask `0x18A3` (A12, A11, A7, A5, A1 set, A0 clear), match
+`0x18A2`. Every keyboard row port ends in `#FE` (A7, A5, A1 set, A0 clear), so the low
+byte always matched, and every row high byte except `#EF` carries A12 and A11: 7 of the 8
+rows (`#FEFE #FDFE #FBFE #F7FE #DFFE #BFFE #7FFE`) fell into the SMUC arm, which sits
+BEFORE the `#FE` arm (ordering is mandatory - SMUC addresses carry the FE pattern). The
+monitor's scan read the SMUC open bus (`#FF`) instead of the key matrix and saw every row
+unpressed; only the `#EFFE` half-row (6-7-8-9-0) kept working. The old `static_assert`
+checked only the bare `0x00FE` base port, which no scanner uses.
+
+Fix: all documented SMUC ports end in the exact low byte `#BA` or `#BE` (A2 splits them).
+The family mask now pins the full low byte (mask `0x18FB`, match `0x18BA`), keeping only
+A12/A11 plus the sub-device bits from the high byte. The `static_assert` set grew explicit
+`#FEFE`/`#FDFE` exclusion checks, and `ScorpionSMUC_Test.KeyboardRowsAreNotShadowedBySmuc`
+holds one key per previously shadowed half-row and asserts the pressed bit reads 0 through
+`DecodePortIn` (with the board PRESENT, so both arms are exercised simultaneously).
+
+Verified live over WebAPI: fresh PROFSCORP boot, NMI into the monitor, then 1.5 s holds of
+`1` (row `#F7FE`), `E` (row `#FBFE`) and `6` (row `#EFFE`) - each hold changes the screen
+digest and the monitor redraws (menu navigation / command line), where the broken build
+showed zero reaction.

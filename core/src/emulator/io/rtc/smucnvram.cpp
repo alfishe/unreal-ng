@@ -8,20 +8,20 @@
 //
 // Constructor for CMOS NVRAM
 //
-NVRAM::NVRAM()
+SMUCNvram::SMUCNvram()
 {
 	memset(_cmos, 0x00, sizeof(_cmos));
 	memset(_nvram, 0x00, sizeof(_nvram));
 	memset(_writeBuffer, 0x00, sizeof(_writeBuffer));
 }
 
-NVRAM::~NVRAM()
+SMUCNvram::~SMUCNvram()
 {
 }
 
 /// region <Serial-link EEPROM (SMUC #FFBA)>
 
-void NVRAM::WriteSerialLink(uint8_t val)
+void SMUCNvram::WriteSerialLink(uint8_t val)
 {
 	// Bit roles on the SMUC system port (unreal-speccy wiring, Xpeccy nvWr)
 	const int sda = val & 0x10;
@@ -155,7 +155,7 @@ void NVRAM::WriteSerialLink(uint8_t val)
 	_scl = scl;
 }
 
-bool NVRAM::ReadSerialLink() const
+bool SMUCNvram::ReadSerialLink() const
 {
 	// Open-collector data line as seen on #FFBA bit 6: pulled low while
 	// ACKing, while idle and while receiving (Xpeccy LC16 convention); in
@@ -169,7 +169,7 @@ bool NVRAM::ReadSerialLink() const
 	return false;
 }
 
-void NVRAM::ResetSerialLinkState()
+void SMUCNvram::ResetSerialLinkState()
 {
 	_mode = NV_IDLE;
 	_stable = false;
@@ -186,17 +186,17 @@ void NVRAM::ResetSerialLinkState()
 
 /// endregion </Serial-link EEPROM (SMUC #FFBA)>
 
-void NVRAM::SetCMOSType(CMOSTypeEnum type)
+void SMUCNvram::SetCMOSType(CMOSTypeEnum type)
 {
 	_cmos_type = type;
 }
 
-void NVRAM::SetCMOSAddress(uint8_t addr)
+void SMUCNvram::SetCMOSAddress(uint8_t addr)
 {
 	_cmos_addr = addr;
 }
 
-void NVRAM::WriteCMOS(uint8_t val)
+void SMUCNvram::WriteCMOS(uint8_t val)
 {
 	uint8_t cur_addr = _cmos_addr;
 
@@ -206,10 +206,10 @@ void NVRAM::WriteCMOS(uint8_t val)
 	_cmos[cur_addr] = val;
 }
 
-uint8_t NVRAM::ReadCMOS()
+uint8_t SMUCNvram::ReadCMOS()
 {
-	static tm time;
-	static bool UF = false;
+	tm& time = _lastTime;
+	bool& UF = _updateFinished;
 
 	uint8_t result = 0;
 	uint8_t cur_addr = _cmos_addr;
@@ -220,7 +220,11 @@ uint8_t NVRAM::ReadCMOS()
 	// If Time/Date values requested from CMOS - provide current Host system values
 	if ((1 << cur_addr) & ((1 << 0) | (1 << 2) | (1 << 4) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 12)))
 	{
-		time = make_utc_tm(std::chrono::system_clock::now());
+		// Deterministic mode serves the frozen instant; the function-local
+		// statics this replaces also leaked time state across instances
+		time = make_utc_tm(_fixedTime
+					   ? std::chrono::system_clock::from_time_t(_fixedTimeValue)
+					   : std::chrono::system_clock::now());
 	}
 
 	switch (cur_addr)
@@ -267,8 +271,19 @@ uint8_t NVRAM::ReadCMOS()
 	return result;
 }
 
+void SMUCNvram::SetFixedTime(time_t t)
+{
+	_fixedTime = true;
+	_fixedTimeValue = t;
+}
+
+void SMUCNvram::UseLiveTime()
+{
+	_fixedTime = false;
+}
+
 // Helper methods
-uint8_t NVRAM::DecodeFromBCD(uint8_t binary)
+uint8_t SMUCNvram::DecodeFromBCD(uint8_t binary)
 {
 	if (!(_cmos[11] & 0x04))
 		binary = (binary % 10) + 0x10 * ((binary / 10) % 10);

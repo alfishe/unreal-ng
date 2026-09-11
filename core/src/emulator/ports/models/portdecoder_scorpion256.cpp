@@ -71,6 +71,8 @@ void PortDecoder_Scorpion256::reset()
     state.pFFFD = 0x00;     // Reset AY data port
     state.pFE = 0xF8;       // Reset ULA port (border black, no sound; keys released)
     state.border_attr = 0x00;  // Sync border_attr with pFE bits 0-2 (black)
+    state.pFFBA = 0x00;     // SMUC system latch: serial link released, CMOS address phase
+    state.p7FBA = 0x00;     // SMUC virtual FDD latch
 
     // Set default 128K memory pages
     Memory& memory = *_context->pMemory;
@@ -86,6 +88,12 @@ void PortDecoder_Scorpion256::reset()
 
     // Reset memory paging lock latch
     _7FFD_Locked = false;
+
+    // SMUC stub: re-arm the serial-link lines (the EEPROM image itself is
+    // battery-backed and survives reset) and clear the IDE window registers
+    _smucNvram.ResetSerialLinkState();
+    for (uint8_t& ideReg : _smucIdeRegs)
+        ideReg = 0x00;
 
     // Explicitly force screen to SCREEN_NORMAL
     _screen->SetActiveScreen(SCREEN_NORMAL);
@@ -161,6 +169,18 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
     {
         result = PeripheralPortIn(0xBFFD);
         disp.decodedPort = 0xBFFD;
+    }
+    // SMUC board (#xxBA/#xxBE family): the ProfROM service ROM probes the
+    // serial-link EEPROM, DS1685 RTC, 8259 PIC and IDE window from the paged
+    // service plane (profrom-smuc-not-found-and-driver-disassembly.md). Must
+    // precede the #FE arm: every SMUC address also carries the weak FE pattern
+    // (A5=1, A1=1, A0=0) and would otherwise read the keyboard instead
+    else if (_context->config.mem_model == MM_PROFSCORP && IsPort_SMUC(port))
+    {
+        result = ReadSMUCPort(port);
+        _lastPortDecoded = true;
+        disp.decodedPort = port;
+        disp.wasHandledInline = true;
     }
     else if (IsPort_FE(port))
     {
@@ -291,6 +311,16 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
     {
         Port_1FFD(value, pc);
         disp.decodedPort = 0x1FFD;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+    }
+    // SMUC board - same family and ordering constraint as the IN path (the
+    // #FE arm would otherwise swallow every #xxBA/#xxBE write as border,
+    // keys and mic levels)
+    else if (_context->config.mem_model == MM_PROFSCORP && IsPort_SMUC(port))
+    {
+        WriteSMUCPort(port, value);
+        disp.decodedPort = port;
         disp.wasDecoded = true;
         disp.wasHandledInline = true;
     }
@@ -506,6 +536,40 @@ bool PortDecoder_Scorpion256::IsPort_7EFD(uint16_t port)
 
     return result;
 }
+
+bool PortDecoder_Scorpion256::IsPort_SMUC(uint16_t port)
+{
+    //    SMUC (Scorpion & MOA Universal Controller)
+    //    ports: #xxBA / #xxBE family - SYS serial link (#FFBA), DS1685 RTC
+    //           (#DFBA), virtual FDD (#7FBA), version (#5FBA), revision
+    //           (#5FBE), 8259 PIC (#7EBE/#7FBE), IDE window (#D8BE,
+    //           #F8BE-#FFBE) - ports.md, SMUC section
+    //    Every SMUC port ends in the exact low byte #BA or #BE (A2 picks BA
+    //    vs BE); only the sub-device select rides the high byte. A looser
+    //    pattern (A12, A11, A7, A5, A1 set, A0 clear) used to match 7 of the
+    //    8 keyboard row ports (all but #EFFE, the 5-4-3-2-1 half-row), and
+    //    this arm sits before the #FE arm - the keyboard scan then read the
+    //    SMUC open bus instead of the key matrix and the ProfROM monitor saw
+    //    nearly every row unpressed (keyboard dead, 2026-09-10)
+    //    Full match (#FFBA):  11111111 10111010
+    //    Mask:                 00011000 11111011 (A12, A11 and the low byte
+    //                                          except A2, which splits BA/BE)
+    static const uint16_t port_SMUC_full    = 0b1111'1111'1011'1010;
+    static const uint16_t port_SMUC_mask    = 0b0001'1000'1111'1011;
+    static const uint16_t port_SMUC_match   = 0b0001'1000'1011'1010;
+
+    // Compile-time check
+    static_assert((port_SMUC_full & port_SMUC_mask) == port_SMUC_match && "Mask pattern incorrect");
+    static_assert((0x5FBA & port_SMUC_mask) == port_SMUC_match && "5FBA must be inside the family");
+    static_assert((0xD8BE & port_SMUC_mask) == port_SMUC_match && "D8BE must be inside the family");
+    static_assert((0x00FE & port_SMUC_mask) != port_SMUC_match && "FE must stay outside the family");
+    static_assert((0xFEFE & port_SMUC_mask) != port_SMUC_match && "keyboard rows must stay outside");
+    static_assert((0xFDFE & port_SMUC_mask) != port_SMUC_match && "keyboard rows must stay outside");
+
+    bool result = (port & port_SMUC_mask) == port_SMUC_match;
+
+    return result;
+}
 /// endregion </Helper methods>
 
 /// Port #7FFD (Memory) handler
@@ -598,4 +662,93 @@ void PortDecoder_Scorpion256::Port_1FFD(uint8_t value, uint16_t pc)
     }
 
     /// endregion </Debug logging>
+}
+
+/// SMUC sub-device select: within the #xxBA/#xxBE family A15/A13 (and A2)
+/// pick the chip (ports.md, SMUC section). Answers follow the unreal-speccy
+/// wiring (ancestor io.cpp) with the serial EEPROM replaced by the Xpeccy
+/// LC16 behavioral model (nvram.h)
+uint8_t PortDecoder_Scorpion256::ReadSMUCPort(uint16_t port)
+{
+    EmulatorState& state = *_state;
+
+    // Board absent: nothing decodes the family, the bus floats. Constant #FF
+    // (not the attribute-latch floating stream: its bit 6 varies with the
+    // raster and would ACK the presence polls at random screen positions)
+    if (!_smucEnabled)
+        return 0xFF;
+
+    switch (port & 0xA044)
+    {
+        case 0xA000:  // #FFBA - system port: bit 6 is the serial data line
+            return _smucNvram.ReadSerialLink() ? 0xFF : 0xBF;
+
+        case 0x8000:  // #DFBA - DS1685 RTC data register
+            return _smucNvram.ReadCMOS();
+
+        case 0x2000:  // #7FBA - virtual FDD
+            return static_cast<uint8_t>(state.p7FBA | 0x3F);
+
+        case 0x0000:  // #5FBA - version register
+            return 0x3F;
+
+        case 0x0004:  // #5FBE - revision register
+        case 0x2004:  // #7EBE/#7FBE - 8259 PIC: "interrupt controller" probe
+            return 0x57;
+
+        case 0x8004:  // #D8BE - IDE data high byte (16-bit path)
+            return 0x00;
+
+        case 0xA004:  // #F8BE-#FFBE - IDE window, A10-A8 select the ATA register
+        {
+            const uint8_t ideReg = static_cast<uint8_t>((port >> 8) & 0x07);
+            switch (ideReg)
+            {
+                case 0:  // data FIFO: nothing staged behind the stub
+                    return 0x00;
+                case 7:  // status: ready, drive-select-complete, never busy
+                    return 0x50;
+                default: // writable task-file registers read back
+                    return _smucIdeRegs[ideReg];
+            }
+        }
+
+        default:
+            return 0xFF;
+    }
+}
+
+void PortDecoder_Scorpion256::WriteSMUCPort(uint16_t port, uint8_t value)
+{
+    EmulatorState& state = *_state;
+
+    // Board absent: no latch behind the window, the write is lost
+    if (!_smucEnabled)
+        return;
+
+    switch (port & 0xA044)
+    {
+        case 0xA000:  // #FFBA - bit 7 CMOS data phase, bits 4/6/5 = SDA/SCL/WP
+            state.pFFBA = value;
+            _smucNvram.WriteSerialLink(value);
+            break;
+
+        case 0x8000:  // #DFBA - RTC address or data, latched by #FFBA bit 7
+            if (state.pFFBA & 0x80)
+                _smucNvram.WriteCMOS(value);
+            else
+                _smucNvram.SetCMOSAddress(value);
+            break;
+
+        case 0x2000:  // #7FBA - virtual FDD latch
+            state.p7FBA = value;
+            break;
+
+        case 0xA004:  // #F8BE-#FFBE - IDE window task file
+            _smucIdeRegs[static_cast<uint8_t>((port >> 8) & 0x07)] = value;
+            break;
+
+        default:      // PIC / version / revision / IDE high byte: nothing to latch
+            break;
+    }
 }

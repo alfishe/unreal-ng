@@ -371,3 +371,45 @@ Applying the read-strobe immediately (reference: `profrom-nmi-gaps-and-findings.
 `#0269` loop run at 7 MHz. Because `#025E` is not INT-synced, detection then also depends on the
 frame phase at which the RAM stub reaches `#025E` (≈ 42 860 T window per frame, §5); a
 deterministic emulator will give a fixed result for a fixed boot timeline.
+
+## 9. Turbo-detect test flake — post-mortem (2026-09-10)
+
+`ScorpionTurboDetect_Test.ProfRomMonitorDetectsSevenMhz` intermittently failed with `#E02D=#80`
+across all press phases. Tstate-exact tracing of a real entry resolved the chain the test actually
+exercises:
+
+1. NMI → prologue `#03D0-#0457`: register save, then a bank scan (`OUT (#7FFD)` / `OUT (#1FFD)`
+   paging every bank looking for `#55/#AA` at `#C001/#C002`). **`#E02D` "changes" observed while
+   the PC sits in `#03F2-#0457` are bank-window artifacts of the sampled address, not stores.**
+2. `#00B6` entry, branching on the `#DD86` boot flags, then `#011D`: a `#E039 × CALL #0241`
+   delay of ~240 000 T (~1.75 frames at 7 MHz), PC idling at `#0245-#0248`.
+3. `#0126 CALL #2C30` at ≈ t+244 000 — the HALT-synced re-check (`RES 6` at `#2C42`, `SET 6` at
+   `#2C46` iff the loop completed), then `#0AF2` (strobe ON, interactive loop).
+
+Consequences:
+
+- **Entry from `#E02D=C0` never strokes the latch** — the monitor-entry grid only exercises the
+  HALT-synced `#2C30`, which is deterministic *per clock speed*: at 7 MHz it always completes, at
+  3.5 MHz it is always interrupted. The all-`#80` failure signature therefore means the turbo
+  flip-flop was OFF at press time (causally reproduced by forcing it off and pressing). The phase
+  grid cannot mask or rescue this either way.
+- The `ApplyHardwareTurboNow`-sensitive path (stub/`#025E`: `#04D9` OFF strobe, `#04D5` ON strobe,
+  un-synced `#2C1F`, `OR #C0`) runs **during the boot itself**, at frames 41-45 (turbo OFF flip f41,
+  ON flip f44, `#E02D 00→C0` write f45 — identical on every boot). Test coverage of the mid-frame
+  clock switch now lives in `ProfRomBootDetectsSevenMhz`; the monitor-entry grid stays as the
+  `#2C30`/NMI-chain guard.
+
+Non-determinism sources found and fixed (boot timeline was *not* fixed, §8's precondition):
+
+- The SMUC RTC stub served live host time, so the 128-menu clock shifted boot-timeline events with
+  the wall clock. `SMUCNvram::SetFixedTime()` now lets tests freeze it
+  (`1767268830` = 2026-01-01 12:00:30 UTC).
+- Power-on RAM was host-heap garbage (`new uint8_t[PAGE_SIZE * MAX_PAGES]`); the allocation sites
+  now zero-init, making every cold boot start from the same memory image.
+- Residual, cosmetic only: one staging loop iteration at `#00D1/#00E5` still varies between boots
+  (persists with frozen RTC and zeroed RAM); it changes garbage staging bytes, never test outcomes.
+
+Test-writing caveat: `Emulator::RunNFrames(n)` derives its whole t-state budget from the clock
+multiplier at entry. The boot itself flips turbo ON at ~frame 11, so a single 60-frame call spans
+only ~35 video frames and stops before the f45 write. Step per frame (`RunNFrames(1)` in a loop)
+when a window must be expressed in video frames across a speed change.

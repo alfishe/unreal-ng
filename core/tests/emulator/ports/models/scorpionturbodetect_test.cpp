@@ -6,6 +6,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/models/portdecoder_scorpion256.h"
 
 /// @brief Real-ROM check of the service monitor's turbo detection
 ///        (profrom-service-monitor-turbo.md): the monitor strobes IN (#7FFD)
@@ -30,6 +31,18 @@ static void RunDetectionProbe(const char* model, uint16_t flagAddr, int& success
     EmulatorContext* context = emulator->GetContext();
     Memory* memory = context->pMemory;
     EmulatorState& state = context->emulatorState;
+
+    // Deterministic RTC: the SMUC stub serves live host time by default, and
+    // the 128-menu clock then shifts boot-timeline events (config staging,
+    // monitor RAM state) with the wall clock - run to run the machine could
+    // idle at a different clock speed at the same frame count. Freeze the
+    // clock so every phase presses the same booted machine and the sub-frame
+    // press offset below stays the only free variable (turbo-flake analysis,
+    // 2026-09-10). No-op while the SMUC board is absent by default
+    // (PortDecoder_Scorpion256::SetSmucEnabled) and for the base model:
+    // nothing ever reads the RTC
+    if (PortDecoder_Scorpion256* decoder = static_cast<PortDecoder_Scorpion256*>(context->pPortDecoder))
+        decoder->GetSMUCNvram().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
 
     emulator->RunNFrames(300);  // boot to the 128 menu (~6 s)
 
@@ -56,6 +69,44 @@ static void RunDetectionProbe(const char* model, uint16_t flagAddr, int& success
         emulator->Reset();
         emulator->RunNFrames(300);
     }
+
+    manager->RemoveEmulator(emulator->GetId());
+}
+
+/// Boot-time half of the turbo-detection guard: the boot itself runs the
+/// stub/#025E first-entry init (OFF strobe #04D9, ON strobe #04D5, then the
+/// un-synced #2C1F count loop) and ORs #C0 into #E02D only if the loop
+/// completes at 7 MHz - the exact path a Z80::ApplyHardwareTurboNow
+/// regression breaks. The monitor-entry test below cannot catch that: its
+/// presses happen with #E02D already C0, and the NMI chain then only re-runs
+/// the HALT-synced #2C30 re-check, never the strobes. With the RTC frozen
+/// the write lands at frame 45 on every boot (verified 5/5 probe runs,
+/// with and without the SMUC board); checking at 60 stays clear of the
+/// later config staging (~frame 125 board-absent, ~325 board-present)
+TEST(ScorpionTurboDetect_Test, ProfRomBootDetectsSevenMhz)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::shared_ptr<Emulator> emulator = manager->CreateEmulatorWithModel("", "PROFSCORP", LoggerLevel::LogError);
+    ASSERT_TRUE(emulator) << "PROFSCORP could not be created";
+
+    EmulatorContext* context = emulator->GetContext();
+    Memory* memory = context->pMemory;
+
+    // Same frozen RTC instant as RunDetectionProbe: deterministic boot timeline
+    if (PortDecoder_Scorpion256* decoder = static_cast<PortDecoder_Scorpion256*>(context->pPortDecoder))
+        decoder->GetSMUCNvram().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
+
+    // Step one frame at a time: RunNFrames(n) derives its t-state budget from
+    // the multiplier at entry, and the boot itself flips turbo ON at ~frame 11,
+    // so a single 60-frame call only spans ~35 video frames and would stop
+    // before the write. Per-frame calls recompute the frame limit each time
+    // and land on true video frame 60 (write at 45, staging not until ~321)
+    for (int frame = 0; frame < 60; frame++)
+        emulator->RunNFrames(1);
+
+    const uint8_t flag = memory->DirectReadFromZ80Memory(0xE02D);
+    EXPECT_EQ(flag & 0xC0, 0xC0) << "boot-time stub/#025E detection never set #E02D bits 7|6 "
+                                    "(strobe/mid-frame clock-switch path broken)";
 
     manager->RemoveEmulator(emulator->GetId());
 }
