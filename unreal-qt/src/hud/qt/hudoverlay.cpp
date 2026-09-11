@@ -160,20 +160,27 @@ void HudOverlay::onModelChanged()
 
     auto snap = _model->snapshot();
     bool hasAnimations = false;
+    bool hasBlinkingIndicators = false;
     if (snap)
     {
         for (const auto& el : snap->elements)
         {
-            // Only toasts and elements with TTL need animation timer
+            // Toasts and elements with TTL need animation timer
             if (el.kind == HudKind::Toast || el.ttl.count() > 0)
             {
                 hasAnimations = true;
-                break;
+            }
+            // Recording indicators need animation timer for blinking
+            if (el.kind == HudKind::Indicator && el.styleId == "rec")
+            {
+                hasAnimations = true;
+                hasBlinkingIndicators = true;
             }
         }
     }
 
     _hasActiveAnimations = hasAnimations;
+    _hasBlinkingIndicators = hasBlinkingIndicators;
     if (_hasActiveAnimations && _animTimer && !_animTimer->isActive())
     {
         _animTimer->start();
@@ -183,13 +190,20 @@ void HudOverlay::onModelChanged()
         _animTimer->stop();  // Stop timer when no animations needed
     }
 
-    // Targeted update: only invalidate regions with elements
-    if (!_lastIndicatorBounds.isEmpty())
-        update(_lastIndicatorBounds);
-    if (!_lastToastBounds.isEmpty())
-        update(_lastToastBounds);
-    if (_lastIndicatorBounds.isEmpty() && _lastToastBounds.isEmpty())
-        update();  // First paint - need full update
+    // Full update when indicators are present to ensure new ones are painted
+    // (new indicators may be outside _lastIndicatorBounds)
+    if (snap && !snap->elements.empty())
+    {
+        update();  // Full repaint for indicator changes
+    }
+    else
+    {
+        // Targeted update for cleanup
+        if (!_lastIndicatorBounds.isEmpty())
+            update(_lastIndicatorBounds);
+        if (!_lastToastBounds.isEmpty())
+            update(_lastToastBounds);
+    }
 }
 
 void HudOverlay::onAnimationTick()
@@ -232,7 +246,8 @@ void HudOverlay::onAnimationTick()
         }
     }
 
-    if (expiredCount > 0 || toastAnimating)
+    // Repaint for: expired elements, animating toasts, or blinking indicators
+    if (expiredCount > 0 || toastAnimating || _hasBlinkingIndicators)
     {
         if (!_lastIndicatorBounds.isEmpty())
             update(_lastIndicatorBounds);
@@ -478,7 +493,11 @@ void HudOverlay::paintEvent(QPaintEvent* event)
             QFontMetrics fm(indFont);
 
             QString displayText;
-            if (!ind->title.empty() && !ind->value.empty())
+            if (ind->styleId == "rec")
+            {
+                displayText = QString("[ %1 ]").arg(QString::fromStdString(ind->value));
+            }
+            else if (!ind->title.empty() && !ind->value.empty())
             {
                 displayText = QString("%1: %2").arg(QString::fromStdString(ind->title), QString::fromStdString(ind->value));
             }
@@ -802,18 +821,62 @@ void HudOverlay::drawIndicator(QPainter& painter, const HudElement& el, const QR
 {
     painter.save();
 
+    // Custom frameless recording indicator: white brackets + 1Hz blinking icon
+    if (el.styleId == "rec")
+    {
+        const HudTileStyle& recStyle = theme.resolveStyle("rec");
+
+        // Calculate 1Hz blink using recording-specific timing
+        float recPulse = HudAnimator::EvaluatePulse(HudClock::now().time_since_epoch(),
+                                                     HudTiming::AnimRecordingBlink);
+        bool blinkOn = recPulse > 0.5f;
+
+        // Colors: white for text and pause icon, red for recording icon
+        QColor textColor = QColor::fromRgba(recStyle.content.titleColor);  // White
+        bool isPaused = (el.icon == "pause");
+        QColor iconColor = isPaused ? textColor : QColor::fromRgba(recStyle.content.accentColor);
+
+        // Set up font first to get proper text metrics for alignment
+        QFont labelFont = resolveIndicatorFont(false, recStyle.content.fontFamily,
+                                                recStyle.content.titleFontSize, uiScale);
+        painter.setFont(labelFont);
+        QFontMetrics fm(labelFont);
+
+        // Align icon center with the cap-height visual center of uppercase text / brackets
+        int capHeight = fm.capHeight();
+        int baseline = rect.top() + (rect.height() + fm.ascent() - fm.descent()) / 2;
+        int capCenterY = baseline - capHeight / 2;
+
+        // Draw icon (blinking) - 14px base size (~15% bigger), aligned with text cap-center
+        int leftOffset = rect.left() + static_cast<int>(8 * uiScale);
+        int iconSize = static_cast<int>(14 * uiScale);
+
+        if (blinkOn)
+        {
+            QRect iconRect(leftOffset, capCenterY - iconSize / 2, iconSize, iconSize);
+            drawIcon(painter, QString::fromStdString(el.icon), iconRect, iconColor, 1.5f * uiScale);
+        }
+        leftOffset += iconSize + static_cast<int>(6 * uiScale);
+
+        // Draw brackets and label
+        painter.setPen(textColor);
+        QString label = QString("[ %1 ]").arg(QString::fromStdString(el.value));
+        int textW = rect.width() - (leftOffset - rect.left()) - static_cast<int>(6 * uiScale);
+        QRect textRect(leftOffset, rect.top(), textW, rect.height());
+        painter.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, label);
+
+        painter.restore();
+        return;
+    }
+
+    // Standard indicator rendering
     const HudTileStyle& style = (el.state == HudState::Alert) ? theme.alert : theme.indicator;
     drawWholeTileFrame(painter, rect, style.frame, uiScale);
 
     QColor itemColor(100, 110, 125);
     if (el.state == HudState::Active)
     {
-        if (el.id == "ind/rec")
-        {
-            int alpha = static_cast<int>(120 + 135 * pulseAlpha);
-            itemColor = QColor(255, 45, 55, alpha);
-        }
-        else if (el.id == "ind/pause")
+        if (el.id == "ind/pause")
         {
             if (el.value == "EXECUTE")
             {
@@ -842,19 +905,29 @@ void HudOverlay::drawIndicator(QPainter& painter, const HudElement& el, const QR
         itemColor = QColor(255, 50, 60);
     }
 
+    QFont font = resolveIndicatorFont(el.monospace, style.content.fontFamily,
+                                      style.content.titleFontSize, uiScale);
+    painter.setFont(font);
+    QFontMetrics fm(font);
+
+    // Calculate cap-height visual center to align icon and dot perfectly with text
+    int capHeight = fm.capHeight();
+    int baseline = rect.top() + (rect.height() + fm.ascent() - fm.descent()) / 2;
+    int capCenterY = baseline - capHeight / 2;
+
     int leftOffset = rect.left() + static_cast<int>(10 * uiScale);
 
     if (!el.icon.empty())
     {
         int iconSize = static_cast<int>(14 * uiScale);
-        QRect iconRect(leftOffset, rect.center().y() - iconSize / 2, iconSize, iconSize);
+        QRect iconRect(leftOffset, capCenterY - iconSize / 2, iconSize, iconSize);
         drawIcon(painter, QString::fromStdString(el.icon), iconRect, itemColor, 1.5f * uiScale);
         leftOffset += iconSize + static_cast<int>(8 * uiScale);
     }
     else
     {
         int dotDiameter = static_cast<int>(8 * uiScale);
-        int dotY = rect.center().y() - dotDiameter / 2;
+        int dotY = capCenterY - dotDiameter / 2;
         painter.setBrush(itemColor);
         painter.setPen(Qt::NoPen);
         painter.drawEllipse(leftOffset, dotY, dotDiameter, dotDiameter);
@@ -862,9 +935,6 @@ void HudOverlay::drawIndicator(QPainter& painter, const HudElement& el, const QR
     }
 
     // Text label
-    QFont font = resolveIndicatorFont(el.monospace, style.content.fontFamily,
-                                      style.content.titleFontSize, uiScale);
-    painter.setFont(font);
     painter.setPen(QColor::fromRgba(style.content.titleColor));
 
     QString displayText;
@@ -1000,37 +1070,41 @@ void HudOverlay::drawIcon(QPainter& painter, const QString& iconName, const QRec
     else if (iconName == "breakpoint")
     {
         // Octagonal stop-sign badge with pause symbol
-        QRect oct = r.adjusted(2, 2, -2, -2);
+        QRectF oct = QRectF(r).adjusted(2, 2, -2, -2);
         painter.setBrush(QColor(color.red(), color.green(), color.blue(), 50));
         painter.drawEllipse(oct);
 
-        int barW = std::max(2, oct.width() / 8);
-        int barH = oct.height() / 2;
-        int barY = oct.center().y() - barH / 2;
-        int gap = std::max(2, barW);
+        qreal cy = oct.center().y();
+        qreal cx = oct.center().x();
+        qreal barW = std::max(2.0, oct.width() / 8.0);
+        qreal barH = oct.height() * 0.5;
+        qreal barY = cy - barH / 2.0;
+        qreal gap = std::max(2.0, barW);
 
-        painter.fillRect(QRect(oct.center().x() - barW - gap / 2, barY, barW, barH), color);
-        painter.fillRect(QRect(oct.center().x() + gap / 2, barY, barW, barH), color);
+        painter.fillRect(QRectF(cx - barW - gap / 2.0, barY, barW, barH), color);
+        painter.fillRect(QRectF(cx + gap / 2.0, barY, barW, barH), color);
     }
     else if (iconName == "pause")
     {
-        int barW = std::max(3, r.width() / 7);
-        int barH = r.height() * 3 / 5;
-        int barY = r.center().y() - barH / 2;
-        int gap = std::max(3, barW);
+        qreal cy = r.top() + r.height() / 2.0;
+        qreal cx = r.left() + r.width() / 2.0;
+        qreal barW = std::max(3.0, std::round(r.width() / 7.0));
+        qreal barH = std::round(r.height() * 0.6);
+        qreal barY = cy - barH / 2.0;
+        qreal gap = std::max(3.0, barW);
 
-        painter.fillRect(QRect(r.center().x() - barW - gap / 2, barY, barW, barH), color);
-        painter.fillRect(QRect(r.center().x() + gap / 2, barY, barW, barH), color);
+        painter.fillRect(QRectF(cx - barW - gap / 2.0, barY, barW, barH), color);
+        painter.fillRect(QRectF(cx + gap / 2.0, barY, barW, barH), color);
     }
     else if (iconName == "turbo")
     {
         // Lightning bolt icon
         QPainterPath bolt;
-        int cx = r.center().x();
-        int top = r.top() + 2;
-        int bot = r.bottom() - 2;
-        int midY = r.center().y();
-        int w = r.width() / 3;
+        qreal cx = r.left() + r.width() / 2.0;
+        qreal top = r.top() + 2;
+        qreal bot = r.bottom() - 2;
+        qreal midY = r.top() + r.height() / 2.0;
+        qreal w = r.width() / 3.0;
 
         bolt.moveTo(cx + 2, top);
         bolt.lineTo(cx - w, midY + 1);
@@ -1045,9 +1119,26 @@ void HudOverlay::drawIcon(QPainter& painter, const QString& iconName, const QRec
     }
     else if (iconName == "rec")
     {
-        QRect circle = r.adjusted(3, 3, -3, -3);
+        QRectF circle = QRectF(r).adjusted(3, 3, -3, -3);
         painter.setBrush(color);
         painter.drawEllipse(circle);
+    }
+    else if (iconName == "audio-rec")
+    {
+        // Audio waveform icon: vertical bars of varying heights
+        painter.setBrush(color);
+        qreal cy = r.top() + r.height() / 2.0;
+        qreal barW = std::max(2.0, std::round(r.width() / 7.0));
+        qreal gap = std::max(1.0, std::round(barW / 2.0));
+        qreal heights[] = {0.40, 0.70, 0.55, 0.80, 0.55, 0.70, 0.40};  // Percentage of height
+        qreal x = r.left() + (r.width() - (7 * barW + 6 * gap)) / 2.0;
+        for (int i = 0; i < 7; ++i)
+        {
+            qreal barH = std::round(r.height() * heights[i]);
+            qreal barY = cy - barH / 2.0;
+            painter.fillRect(QRectF(x, barY, barW, barH), color);
+            x += barW + gap;
+        }
     }
     else if (iconName == "ram")
     {

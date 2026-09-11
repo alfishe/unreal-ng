@@ -691,8 +691,13 @@ void HudModel::unsubscribeObservers()
 
 bool HudModel::matchesInstance(const unreal::UUID& id) const
 {
+    // Accept all notifications if we have no context or no emulator ID
     if (!_context || _context->emulatorId.isNil())
         return true;
+    // Accept notifications with nil ID (broadcast to all instances)
+    if (id.isNil())
+        return true;
+    // Otherwise require exact match
     return id == _context->emulatorId;
 }
 
@@ -1016,17 +1021,71 @@ void HudModel::onRecording(int, Message* message)
     if (!p || !matchesInstance(p->emulatorId))
         return;
 
+    // Mutually exclusive recording modes:
+    // - Video or VideoAudio: video recording (with or without embedded audio) → show video indicator
+    // - Audio: audio-only recording → show audio indicator
+    bool isVideoRecording = (p->type == RecordingType::Video || p->type == RecordingType::VideoAudio);
+    bool isAudioOnly = (p->type == RecordingType::Audio);
+
     if (p->recording)
     {
-        setIndicator("rec", HudState::Active, "REC");
+        std::lock_guard<std::mutex> lock(_mutex);
+        HudElement el;
+        el.kind = HudKind::Indicator;
+        el.position = _indicatorPosition;
+        el.state = HudState::Active;
+        el.styleId = "rec";  // Frameless recording style
+        el.created = HudClock::now();
+
+        if (isVideoRecording)
+        {
+            el.id = "ind/rec/video";
+            if (p->paused)
+            {
+                el.icon = "pause";     // Paused: show pause icon
+                el.value = "PAUSED";
+            }
+            else
+            {
+                el.icon = "rec";       // Recording: show filled circle icon
+                el.value = "REC";
+            }
+        }
+        else // isAudioOnly
+        {
+            el.id = "ind/rec/audio";
+            if (p->paused)
+            {
+                el.icon = "pause";     // Paused: show pause icon
+                el.value = "PAUSED";
+            }
+            else
+            {
+                el.icon = "audio-rec"; // Recording: show waveform icon
+                el.value = "AUDIO";
+            }
+        }
+
+        auto it = std::find_if(_indicators.begin(), _indicators.end(),
+            [&](const HudElement& e) { return e.id == el.id; });
+        if (it != _indicators.end())
+            *it = el;
+        else
+            _indicators.push_back(el);
+        publishLocked();
     }
     else
     {
-        setIndicator("rec", HudState::Off);
+        // Clear indicator
+        if (isVideoRecording)
+            clearIndicator("rec/video");
+        else
+            clearIndicator("rec/audio");
+
         std::string fname = std::filesystem::path(p->path).filename().string();
         HudToastRequest req;
-        req.icon = "rec";
-        req.title = "Recording saved";
+        req.icon = isVideoRecording ? "rec" : "audio-rec";
+        req.title = isVideoRecording ? "Recording saved" : "Audio saved";
         req.body = fname.empty() ? p->path : fname;
         req.priority = HudPriority::Normal;
         req.ttl = HudTiming::ToastRecordingSaved;

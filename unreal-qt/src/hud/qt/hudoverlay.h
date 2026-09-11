@@ -75,6 +75,7 @@ private:
     QTimer* _animTimer = nullptr;
     HudClock::time_point _lastTick;
     bool _hasActiveAnimations = false;
+    bool _hasBlinkingIndicators = false;  // Recording indicators need periodic repaint
 
     HudThemeId _themeId{HudThemeId::DarkGlass};
     float _scaleFactor{2.0f}; // HiDPI base scale (2.0x)

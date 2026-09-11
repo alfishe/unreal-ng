@@ -76,6 +76,22 @@ HudTheme HudTheme::CreateDarkGlass()
     theme.alert.content.accentColor = 0xFFFF4D4D;
     theme.alert.content.iconColor = 0xFFFF5F5A;
 
+    // Recording indicator: frameless with white text (brackets rendered by overlay)
+    HudTileStyle recStyle;
+    recStyle.frame.backgroundColor = 0x00000000;       // Fully transparent
+    recStyle.frame.backgroundGradientEnd = 0x00000000;
+    recStyle.frame.borderColor = 0x00000000;
+    recStyle.frame.borderWidth = 0.0f;
+    recStyle.frame.borderRadius = 0.0f;
+    recStyle.frame.shadowColor = 0x00000000;
+    recStyle.frame.shadowBlur = 0.0f;
+    recStyle.frame.glassEffect = false;
+    recStyle.frame.padding = HudMargins{4, 4, 4, 4};
+    recStyle.content.titleColor = 0xFFFFFFFF;          // White brackets/text
+    recStyle.content.accentColor = 0xFFFF2D37;         // Red recording dot
+    recStyle.content.iconColor = 0xFFFF2D37;           // Red icon
+    theme.customStyles["rec"] = recStyle;
+
     return theme;
 }
 
@@ -126,6 +142,22 @@ HudTheme HudTheme::CreateRetroZX()
     theme.alert.content.accentColor = 0xFFFF3333;
     theme.alert.content.iconColor = 0xFFFF3333;
 
+    // Recording indicator: frameless
+    HudTileStyle recStyle;
+    recStyle.frame.backgroundColor = 0x00000000;
+    recStyle.frame.backgroundGradientEnd = 0x00000000;
+    recStyle.frame.borderColor = 0x00000000;
+    recStyle.frame.borderWidth = 0.0f;
+    recStyle.frame.borderRadius = 0.0f;
+    recStyle.frame.shadowColor = 0x00000000;
+    recStyle.frame.shadowBlur = 0.0f;
+    recStyle.frame.glassEffect = false;
+    recStyle.frame.padding = HudMargins{4, 4, 4, 4};
+    recStyle.content.titleColor = 0xFFFFFFFF;
+    recStyle.content.accentColor = 0xFFFF2D37;
+    recStyle.content.iconColor = 0xFFFF2D37;
+    theme.customStyles["rec"] = recStyle;
+
     return theme;
 }
 
@@ -173,6 +205,22 @@ HudTheme HudTheme::CreateCyberpunk()
     theme.alert.content.accentColor = 0xFFFF0055;
     theme.alert.content.iconColor = 0xFFFF0055;
 
+    // Recording indicator: frameless
+    HudTileStyle recStyle;
+    recStyle.frame.backgroundColor = 0x00000000;
+    recStyle.frame.backgroundGradientEnd = 0x00000000;
+    recStyle.frame.borderColor = 0x00000000;
+    recStyle.frame.borderWidth = 0.0f;
+    recStyle.frame.borderRadius = 0.0f;
+    recStyle.frame.shadowColor = 0x00000000;
+    recStyle.frame.shadowBlur = 0.0f;
+    recStyle.frame.glassEffect = false;
+    recStyle.frame.padding = HudMargins{4, 4, 4, 4};
+    recStyle.content.titleColor = 0xFFFFFFFF;
+    recStyle.content.accentColor = 0xFFFF2D37;
+    recStyle.content.iconColor = 0xFFFF2D37;
+    theme.customStyles["rec"] = recStyle;
+
     return theme;
 }
 
@@ -210,6 +258,22 @@ HudTheme HudTheme::CreateAmberCRT()
     theme.alert.content.titleColor = 0xFFFF6600;
     theme.alert.content.accentColor = 0xFFFF6600;
 
+    // Recording indicator: frameless
+    HudTileStyle recStyle;
+    recStyle.frame.backgroundColor = 0x00000000;
+    recStyle.frame.backgroundGradientEnd = 0x00000000;
+    recStyle.frame.borderColor = 0x00000000;
+    recStyle.frame.borderWidth = 0.0f;
+    recStyle.frame.borderRadius = 0.0f;
+    recStyle.frame.shadowColor = 0x00000000;
+    recStyle.frame.shadowBlur = 0.0f;
+    recStyle.frame.glassEffect = false;
+    recStyle.frame.padding = HudMargins{4, 4, 4, 4};
+    recStyle.content.titleColor = 0xFFFFFFFF;
+    recStyle.content.accentColor = 0xFFFF2D37;
+    recStyle.content.iconColor = 0xFFFF2D37;
+    theme.customStyles["rec"] = recStyle;
+
     return theme;
 }
 
@@ -246,6 +310,22 @@ HudTheme HudTheme::CreateEmeraldCRT()
     theme.alert.frame.borderColor = 0xFF88FF00;
     theme.alert.content.titleColor = 0xFF88FF00;
     theme.alert.content.accentColor = 0xFF88FF00;
+
+    // Recording indicator: frameless
+    HudTileStyle recStyle;
+    recStyle.frame.backgroundColor = 0x00000000;
+    recStyle.frame.backgroundGradientEnd = 0x00000000;
+    recStyle.frame.borderColor = 0x00000000;
+    recStyle.frame.borderWidth = 0.0f;
+    recStyle.frame.borderRadius = 0.0f;
+    recStyle.frame.shadowColor = 0x00000000;
+    recStyle.frame.shadowBlur = 0.0f;
+    recStyle.frame.glassEffect = false;
+    recStyle.frame.padding = HudMargins{4, 4, 4, 4};
+    recStyle.content.titleColor = 0xFFFFFFFF;
+    recStyle.content.accentColor = 0xFFFF2D37;
+    recStyle.content.iconColor = 0xFFFF2D37;
+    theme.customStyles["rec"] = recStyle;
 
     return theme;
 }
@@ -287,6 +367,22 @@ HudTheme HudTheme::CreateLightModern()
     theme.alert.content.titleColor = 0xFFB91C1C;
     theme.alert.content.accentColor = 0xFFDC2626;
     theme.alert.content.iconColor = 0xFFDC2626;
+
+    // Recording indicator: frameless
+    HudTileStyle recStyle;
+    recStyle.frame.backgroundColor = 0x00000000;
+    recStyle.frame.backgroundGradientEnd = 0x00000000;
+    recStyle.frame.borderColor = 0x00000000;
+    recStyle.frame.borderWidth = 0.0f;
+    recStyle.frame.borderRadius = 0.0f;
+    recStyle.frame.shadowColor = 0x00000000;
+    recStyle.frame.shadowBlur = 0.0f;
+    recStyle.frame.glassEffect = false;
+    recStyle.frame.padding = HudMargins{4, 4, 4, 4};
+    recStyle.content.titleColor = 0xFFFFFFFF;
+    recStyle.content.accentColor = 0xFFFF2D37;
+    recStyle.content.iconColor = 0xFFFF2D37;
+    theme.customStyles["rec"] = recStyle;
 
     return theme;
 }

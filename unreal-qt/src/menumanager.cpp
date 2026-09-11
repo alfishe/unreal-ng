@@ -56,6 +56,13 @@ MenuManager::MenuManager(MainWindow* mainWindow, QMenuBar* menuBar, QObject* par
     messageCenter.AddObserver(NC_FDD_DISK_EJECTED, observerInstance, diskCallback);
     messageCenter.AddObserver(NC_FDD_DISK_PENDING_WRITE, observerInstance, diskCallback);
     messageCenter.AddObserver(NC_FDD_DISK_WRITTEN, observerInstance, diskCallback);
+
+#ifdef ENABLE_RECORDING
+    // Subscribe to recording state changes
+    ObserverCallbackMethod recordingCallback =
+        static_cast<ObserverCallbackMethod>(&MenuManager::handleRecordingStateChanged);
+    messageCenter.AddObserver(NC_RECORDING_STATE, observerInstance, recordingCallback);
+#endif
 }
 
 MenuManager::~MenuManager()
@@ -78,6 +85,13 @@ MenuManager::~MenuManager()
     messageCenter.RemoveObserver(NC_FDD_DISK_EJECTED, observerInstance, diskCallback);
     messageCenter.RemoveObserver(NC_FDD_DISK_PENDING_WRITE, observerInstance, diskCallback);
     messageCenter.RemoveObserver(NC_FDD_DISK_WRITTEN, observerInstance, diskCallback);
+
+#ifdef ENABLE_RECORDING
+    // Unsubscribe from recording state changes
+    ObserverCallbackMethod recordingCallback =
+        static_cast<ObserverCallbackMethod>(&MenuManager::handleRecordingStateChanged);
+    messageCenter.RemoveObserver(NC_RECORDING_STATE, observerInstance, recordingCallback);
+#endif
 }
 
 void MenuManager::createFileMenu()
@@ -1186,3 +1200,42 @@ void MenuManager::handleFDDDiskChanged(int id, Message* message)
         }
     }
 }
+
+#ifdef ENABLE_RECORDING
+void MenuManager::handleRecordingStateChanged(int id, Message* message)
+{
+    Q_UNUSED(id);
+
+    if (!message || !message->obj)
+        return;
+
+    RecordingStatePayload* payload = dynamic_cast<RecordingStatePayload*>(message->obj);
+    if (!payload)
+        return;
+
+    // Only respond to events from our active emulator
+    auto activeEmulator = _activeEmulator.lock();
+    if (activeEmulator)
+    {
+        std::string activeId = activeEmulator->GetId();
+        std::string eventEmulatorId = payload->emulatorId.toString();
+        if (activeId != eventEmulatorId)
+            return;
+    }
+
+    // Update recording action state on main thread
+    bool isRecording = payload->recording;
+    QMetaObject::invokeMethod(
+        this, [this, isRecording]() {
+            if (_videoRecordingAction)
+            {
+                // Make button checkable to show recording state
+                _videoRecordingAction->setCheckable(true);
+                _videoRecordingAction->setChecked(isRecording);
+                _videoRecordingAction->setStatusTip(
+                    isRecording ? tr("Recording in progress - click to open panel")
+                                : tr("Open recording panel"));
+            }
+        }, Qt::QueuedConnection);
+}
+#endif

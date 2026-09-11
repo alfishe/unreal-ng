@@ -36,6 +36,7 @@ namespace HudTiming
     inline constexpr std::chrono::milliseconds AnimEnter{220};
     inline constexpr std::chrono::milliseconds AnimExit{180};
     inline constexpr std::chrono::milliseconds AnimPulse{550};
+    inline constexpr std::chrono::milliseconds AnimRecordingBlink{1000};  // 1Hz recording indicator blink
     inline constexpr std::chrono::milliseconds AnimStackReflow{160};
     inline constexpr std::chrono::milliseconds AnimReducedMotion{100};
 

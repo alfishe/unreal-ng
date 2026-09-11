@@ -72,6 +72,9 @@ public:
     void handleEmulatorStateChanged(int id, Message* message);
     void handleEmulatorInstanceCreated(int id, Message* message);
     void handleFDDDiskChanged(int id, Message* message);
+#ifdef ENABLE_RECORDING
+    void handleRecordingStateChanged(int id, Message* message);
+#endif
 
 signals:
     // Signal emitted when user requests to open a file
