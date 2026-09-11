@@ -1068,6 +1068,18 @@ void Screen::DrawPeriod(uint32_t fromTstate, uint32_t toTstate)
     // Next frame started during current CPU command processing. Adjust to Tstate
     if (fromTstate > toTstate)
     {
+        // One-t-state backward step: ScreenZX::SetBorderColor's Pentagon +1T
+        // border compensation advances _prevTstate ahead of the beam, and under
+        // CPU frequency multipliers > 1 the unscaled t-state (cpu->t / multiplier)
+        // advances by less than 1 per CPU command - so the next UpdateScreen
+        // lands exactly one t-state behind. No forward period to render: skip
+        // quietly. (Genuine frame-boundary wraps are a full frame wide and fall
+        // through to the wrap handling below; anything else is a real error.)
+        if (fromTstate - toTstate <= 1)
+        {
+            return;
+        }
+
         if (toTstate < MAX_FRAME_DURATION_TOLERANCE)
         {
             toTstate = fromTstate + toTstate;

@@ -47,7 +47,7 @@
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
 #include "debugger/ttd/timetravelmanager.h"
-#include "debugger/ttd/ttd_write_journal.h"
+#include "debugger/ttd/ttdwritejournal.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"

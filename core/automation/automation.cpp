@@ -18,6 +18,10 @@
 #include "webapi/src/automation-webapi.h"
 #endif
 
+#if ENABLE_MCP_AUTOMATION
+#include "mcp/src/automation-mcp.h"
+#endif
+
 #if ENABLE_CLI_AUTOMATION
 #include "cli/include/automation-cli.h"
 #endif
@@ -63,6 +67,12 @@ bool Automation::start()
     result &= startPython();
 #endif
 
+#if ENABLE_MCP_AUTOMATION
+    // MCP shares WebAPI's drogon app instance: the /mcp handler and the :8092
+    // listener MUST be registered before WebAPI's thread calls drogon::app().run()
+    result &= startMCP();
+#endif
+
 #if ENABLE_WEBAPI_AUTOMATION
     result &= startWebAPI();
 #endif
@@ -103,6 +113,11 @@ void Automation::stop()
 
 #if ENABLE_WEBAPI_AUTOMATION
     stopWebAPI();
+#endif
+
+#if ENABLE_MCP_AUTOMATION
+    // MCP relies on WebAPI's drogon loop — stop it after the loop is down
+    stopMCP();
 #endif
 
 #if ENABLE_CLI_AUTOMATION
@@ -215,6 +230,25 @@ bool Automation::startWebAPI()
 }
 #endif
 
+#if ENABLE_MCP_AUTOMATION
+bool Automation::startMCP()
+{
+    bool result = true;
+
+    _mcp = new AutomationMCP();
+    if (_mcp)
+    {
+        _mcp->start();
+    }
+    else
+    {
+        result = false;
+    }
+
+    return result;
+}
+#endif
+
 #if ENABLE_LUA_AUTOMATION
 void Automation::stopLua()
 {
@@ -247,6 +281,18 @@ void Automation::stopWebAPI()
         _webAPI->stop();
         delete _webAPI;
         _webAPI = nullptr;
+    }
+}
+#endif
+
+#if ENABLE_MCP_AUTOMATION
+void Automation::stopMCP()
+{
+    if (_mcp)
+    {
+        _mcp->stop();
+        delete _mcp;
+        _mcp = nullptr;
     }
 }
 #endif

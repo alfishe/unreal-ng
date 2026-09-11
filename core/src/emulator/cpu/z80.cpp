@@ -12,7 +12,9 @@
 #include "emulator/cpu/opcode_profiler.h"
 #include "emulator/emulator.h"
 #include "emulator/io/tape/tapefastload.h"
+#include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/notifications.h"
+#include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/spectrumconstants.h"
 #include "emulator/video/screen.h"
@@ -283,6 +285,21 @@ void Z80::Z80Step(bool skipBreakpoints)
         }
     }
 
+    // Dispatch CPU step event to analyzers (coverage / tracing). The guard
+    // keeps the no-subscriber path down to a null and an empty check per
+    // instruction; dispatchCPUStep itself early-returns when the analyzer
+    // master toggle is off. Runs outside the debug-mode guard so coverage
+    // sessions work without full debug mode, and before the fast-tape trap
+    // so LD_BYTES invocations are recorded even when the trap consumes them.
+    if (_context->pDebugManager != nullptr)
+    {
+        AnalyzerManager* analyzerMgr = _context->pDebugManager->GetAnalyzerManager();
+        if (analyzerMgr != nullptr && analyzerMgr->hasCPUStepSubscribers())
+        {
+            analyzerMgr->dispatchCPUStep(this, pc);
+        }
+    }
+
     // Fast tape loading trap (design: docs/inprogress/2026-08-30-fast-tape-loading).
     // A ROM LD-BYTES ($0556) invocation is replaced wholesale when armed: the
     // block payload is copied straight from the tape image and the routine's
@@ -303,6 +320,10 @@ void Z80::Z80Step(bool skipBreakpoints)
     {
         // Z80 in HALT state. No further opcode processing will be done until INT or NMI arrives
         cpu.tt += cpu.rate * 1;
+
+        // Frame cost accounting: one halted step burns exactly one t-state
+        // (rate is fixed at 256 — speed multipliers scale frameLimit instead)
+        state.tstates_halted_current++;
 
         if (++cpu.halt_cycle == 4)
         {
@@ -326,6 +347,21 @@ void Z80::Z80Step(bool skipBreakpoints)
         // 1. Fetch opcode (Z80 M1 bus cycle)
         cpu.prefix = 0x0000;
         cpu.opcode = m1_cycle();
+
+        // 1a. Call trace hook (pre-execution) — appends control-flow events
+        // while a calltrace session is capturing; the decoder wants the
+        // register state the instruction acts on (SP before CALL pushes /
+        // RET pops). The cached feature flag keeps this to a single bool check
+        // when calltrace is off
+        if (_feature_calltrace_enabled && _memory != nullptr)
+        {
+            MemoryAccessTracker& tracker = _memory->GetAccessTracker();
+            if (tracker.IsCalltraceCapturing())
+            {
+                tracker.GetCallTraceBuffer()->LogIfControlFlow(_context, _memory, m1_pc,
+                                                               _context->emulatorState.frame_counter);
+            }
+        }
 
         // 2. Emulate fetched Z80 opcode
         (normal_opcode[opcode])(&cpu);
@@ -387,6 +423,14 @@ void Z80::Z80FrameCycle()
 
         MLOGINFO("Z80::Z80FrameCycle - Applied queued speed multiplier: %dx -> %dx (%.2f MHz, rate=%d)", oldMultiplier,
                  state.current_z80_frequency_multiplier, state.current_z80_frequency / 1'000'000.0, cpu.rate);
+
+        // Notify observers of CPU frequency change
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        std::string emulatorId = _context->pEmulator ? _context->pEmulator->GetId() : "";
+        messageCenter.Post(NC_CPU_FREQ_CHANGED,
+                           new CPUFreqPayload(emulatorId,
+                                              state.current_z80_frequency,
+                                              state.current_z80_frequency_multiplier));
     }
 
     // Scale frame duration by speed multiplier
@@ -410,6 +454,15 @@ void Z80::Z80FrameCycle()
     // Cover whole frame (control by effective t-states)
     while (cpu.t < frameLimit)
     {
+        // Mid-frame pause park. Pause() is otherwise observed only at frame
+        // boundaries (MainLoop::Run), so an in-flight frame - which under
+        // turbo/debug-mode or TTD recording can take hundreds of milliseconds -
+        // would delay the park and its confirmation until the frame completes.
+        // One volatile read per instruction keeps the unpaused hot path cheap;
+        // WaitWhilePaused parks + confirms and wakes on Resume()/Stop() via CV.
+        if (Emulator* emulator = _context->pEmulator; emulator && emulator->IsPaused())
+            emulator->WaitWhilePaused();
+
         // Handle interrupts if arrived
         // Returns true if INT was handled - in that case, skip Z80Step for this iteration
         // because INT entry IS the "instruction" that consumes this cycle
@@ -982,6 +1035,7 @@ void Z80::UpdateFeatureCache()
     if (_context && _context->pFeatureManager)
     {
         _feature_opcodeprofiler_enabled = _context->pFeatureManager->isEnabled(Features::kOpcodeProfiler);
+        _feature_calltrace_enabled = _context->pFeatureManager->isEnabled(Features::kCallTrace);
     }
 }
 

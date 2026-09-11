@@ -7,7 +7,7 @@
 #include "common/sound/filters/filter_decimator.h"
 #include "common/sound/filters/filter_interpolate.h"
 #include "emulator/ports/portdecoder.h"
-#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
+#include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 
 /// Information:
 /// See:
@@ -73,6 +73,27 @@ enum class AYChipModel : uint8_t
 };
 
 /// endregion </Types>
+
+/// Automation tap record (MCP automation, M7j): one AY port write.
+/// Fired from SoundChip_TurboSound::portDeviceOutMethod AFTER the write is
+/// applied — TurboSound is the registered port device that receives every AY
+/// OUT, so this single tap covers both of its chips (the direct chip-level
+/// portDeviceOutMethod is bypassed by the TurboSound forwarding path):
+///   port == #FFFD: register select (reg == value); value > 0x0F = chip switch
+///   port == #BFFD: data write (reg == currently selected register, value == data)
+struct AYLogRecord
+{
+    uint32_t frame = 0;   // Video frame counter at the write
+    uint16_t tacts = 0;   // T-states within the frame (z80.t)
+    uint16_t pc = 0;      // PC of the OUT instruction (z80.m1_pc)
+    uint16_t port = 0;    // Raw port address (#FFFD / #BFFD)
+    uint8_t chip = 0;     // TurboSound chip index that received the write (0/1)
+    uint8_t reg = 0;      // Register number (see above)
+    uint8_t value = 0;    // Byte written to the port
+};
+
+/// Sink receiving AYLogRecord events; inert while null (raw pointer pair, hot-path cheap)
+using AYLogSink = void (*)(void* context, const AYLogRecord& record);
 
 class SoundChip_AY8910 : public PortDecoder, public PortDevice, public ttd::TTDSerializable
 {
@@ -461,6 +482,7 @@ public:
     /// endregion </Debug access methods>
 
     /// region <PortDevice interface methods>
+public:
     uint8_t portDeviceInMethod(uint16_t port) override;
     void portDeviceOutMethod(uint16_t port, uint8_t value) override;
     /// endregion </PortDevice interface methods>

@@ -9,7 +9,7 @@
 #include "emulator/sound/audio.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/native_audio_tap.h"
-#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
+#include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 
 class SoundChip_TurboSound : public PortDecoder, public PortDevice, public ttd::TTDSerializable
 {
@@ -227,6 +227,21 @@ public:
     void handleStep();
     void handleFrameEnd();
     /// endregion </Emulation events>
+
+    /// region <Automation tap (MCP M7j)>
+public:
+    /// Install/remove the AY port-write log tap. Inert while sink == nullptr.
+    /// Called with the emulation thread parked (analyzer activation path).
+    void setLogSink(AYLogSink sink, void* context)
+    {
+        _logSink = sink;
+        _logSinkContext = context;
+    }
+
+protected:
+    AYLogSink _logSink = nullptr;
+    void* _logSinkContext = nullptr;
+    /// endregion </Automation tap>
 
     /// region <PortDevice interface methods>
 public:

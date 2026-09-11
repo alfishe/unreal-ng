@@ -65,6 +65,8 @@ constexpr char const* NC_FILE_OPEN_REQUEST = "FILE_OPEN_REQUEST";               
 constexpr char const* NC_BREAKPOINT_CHANGED = "BREAKPOINT_CHANGED";             // Breakpoints added, removed, or modified
 constexpr char const* NC_LABEL_CHANGED = "LABEL_CHANGED";                       // Labels added, removed, or modified
 
+constexpr char const* NC_CPU_FREQ_CHANGED = "CPU_FREQ_CHANGED";                 // CPU frequency changed (3.5/7.0/14.0 MHz) - payload: CPUFreqPayload
+
 // endregion </PER-EMULATOR-INSTANCE MessageCenter Notifications>
 
 // endregion </Notification center events>
@@ -792,6 +794,30 @@ struct EmulatorState
     uint64_t frame_counter; // Counting each video frame displayed
 
     /// endregion </Counters>
+
+    /// region <Frame cost accounting (WebAPI GET /frame_cost)>
+
+    // Work-vs-idle accounting. tstates_halted_current is incremented from the
+    // halted branch of Z80::Z80Step on the emulation thread; the rollup runs in
+    // Core::AdjustFrameCounters at the frame boundary. Readers (WebAPI) get
+    // approximate values without locks — totals are monotonic and the
+    // per-frame fields are advisory.
+    uint32_t tstates_halted_current = 0;  // Halted t-states accumulated in the in-flight frame
+    uint32_t tstates_halted_last = 0;     // Halted t-states in the last completed frame
+    uint64_t tstates_halted_total = 0;    // Cumulative halted (idle) t-states
+    uint64_t tstates_frame_total = 0;     // Cumulative frame t-states (active + halted)
+    uint64_t frame_cost_frames = 0;       // Completed frames accounted
+
+    /// endregion </Frame cost accounting>
+
+    /// region <Screen digest change tracking (WebAPI GET /state/screen/digest)>
+
+    // Poll-driven change detection: updated by the digest endpoint on every
+    // read. changed == (combined digest differs from last_screen_digest).
+    uint64_t last_screen_digest = 0;       // Combined digest returned by the previous poll
+    uint64_t last_screen_digest_frame = 0; // Frame counter at that poll
+
+    /// endregion </Screen digest change tracking>
 
     /// region <Runtime CPU parameters>
 

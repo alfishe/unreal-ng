@@ -26,7 +26,7 @@
 #include <string>
 #include <vector>
 
-#include "debugger/ttd/machine_state_hash.h"
+#include "debugger/ttd/machinestatehash.h"
 
 // Forward declarations to keep heavy emulator headers out.
 class Emulator;

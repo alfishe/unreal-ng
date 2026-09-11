@@ -105,6 +105,13 @@ public:
 	static const TMemModel* FindModelByShortName(const std::string& shortName);
 
 	/**
+	 * @brief Get the full human-readable name for a memory model
+	 * @param model The MEM_MODEL enum value
+	 * @return Full name string (e.g., "ATM-Turbo 2+ v7.10"), or "Unknown" if not found
+	 */
+	static std::string GetModelFullName(MEM_MODEL model);
+
+	/**
 	 * @brief Map a model (+ optional RAM size) to its config folder under configs/
 	 * @param model Machine model
 	 * @param ramSizeKB RAM size in KB; 0 = use the model's default RAM

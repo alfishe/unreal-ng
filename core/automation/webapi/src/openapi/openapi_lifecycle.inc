@@ -161,3 +161,25 @@
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["400"]["description"] = "Invalid model name or missing 'model' field";
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["404"]["description"] = "Emulator not found";
 
+    // POST /api/v1/videowall/singlesync - Videowall single-sync mode
+    paths["/api/v1/videowall/singlesync"]["post"]["summary"] = "Set videowall single-sync mode";
+    paths["/api/v1/videowall/singlesync"]["post"]["description"] =
+        "Enable or disable single-sync mode for the standalone videowall. "
+        "When enabled with an emulator_id, the videowall locks onto that "
+        "instance as its sole sync source; when disabled, the videowall "
+        "returns to cycling through all running instances.";
+    paths["/api/v1/videowall/singlesync"]["post"]["tags"].append("Emulator Control");
+    paths["/api/v1/videowall/singlesync"]["post"]["requestBody"]["required"] = true;
+    paths["/api/v1/videowall/singlesync"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/videowall/singlesync"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["enable"]["type"] = "boolean";
+    paths["/api/v1/videowall/singlesync"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["enable"]["description"] = "true = lock videowall to a single emulator";
+    paths["/api/v1/videowall/singlesync"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["emulator_id"]["type"] = "string";
+    paths["/api/v1/videowall/singlesync"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["emulator_id"]["description"] = "Emulator instance to sync to (empty when disabling)";
+    paths["/api/v1/videowall/singlesync"]["post"]["responses"]["200"]["description"] = "Mode applied (success=true)";
+    paths["/api/v1/videowall/singlesync"]["post"]["responses"]["400"]["description"] = "Invalid JSON body";
+    paths["/api/v1/videowall/singlesync"]["post"]["responses"]["500"]["description"] =
+        "Could not apply the requested mode (success=false)";

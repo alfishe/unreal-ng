@@ -86,6 +86,8 @@ private:
     void HandleStepIn(const ClientSession& session, const std::vector<std::string>& args);
     void HandleSteps(const ClientSession& session, const std::vector<std::string>& args);
     void HandleStepOver(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleStepOut(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleSkipUntil(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRunTStates(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRunToScanline(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRunNScanlines(const ClientSession& session, const std::vector<std::string>& args);
@@ -106,6 +108,7 @@ private:
     void HandleMemoryLoad(const ClientSession& session, Memory* memory, const std::vector<std::string>& args);
     void HandleMemoryFill(const ClientSession& session, Memory* memory, const std::vector<std::string>& args);
     void HandleMemoryInfo(const ClientSession& session, Memory* memory);
+    void HandleFind(const ClientSession& session, const std::vector<std::string>& args);
     void DumpZ80Memory(const ClientSession& session, Memory* memory, uint16_t address, uint16_t length);
     void DumpPhysicalPage(const ClientSession& session, Memory* memory, int pageType, uint16_t page, uint16_t offset, uint16_t length);
     void WriteToPhysicalPage(const ClientSession& session, Memory* memory, int pageType, uint16_t page, uint16_t offset, const std::vector<uint8_t>& bytes);
@@ -134,6 +137,19 @@ private:
     void HandleLabel(const ClientSession& session, const std::vector<std::string>& args);
     void HandleLabels(const ClientSession& session, const std::vector<std::string>& args);
     void HandleSymbols(const ClientSession& session, const std::vector<std::string>& args);
+
+    // Assembler and source-listing commands
+    void HandleAssemble(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleListing(const ClientSession& session, const std::vector<std::string>& args);
+
+    // Analysis command handlers (screen digest, beam, frame cost, analyzers)
+    void HandleDigest(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleBeam(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleFrameCost(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleCoverage(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleAyLog(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleAudioCapture(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleVideoRecord(const ClientSession& session, const std::vector<std::string>& args);
 
     // Interpreter control command handlers (Python)
     void HandlePython(const ClientSession& session, const std::vector<std::string>& args);

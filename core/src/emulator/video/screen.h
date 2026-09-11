@@ -516,6 +516,10 @@ public:
     virtual uint8_t GetBorderColor();
     virtual uint32_t GetCurrentTstate();
 
+    /// @brief Read-only access to the calculated raster zone boundaries
+    /// (t-state ranges for blank/border/screen areas, vertical and horizontal)
+    const RasterState& GetRasterState() const { return _rasterState; }
+
     virtual void UpdateScreen() = 0;
     virtual void DrawPeriod(uint32_t fromTstate, uint32_t toTstate);
     virtual void Draw(uint32_t tstate);
