@@ -423,7 +423,12 @@ TEST_F(DZRPServer_test, ContinueWithTemporaryBreakpointsStepsAndClears)
     std::vector<uint8_t> payload = cat({{1}, u16(PROGRAM_STORE), {1}, u16(PROGRAM_JP), {0, 0, 0, 0, 0}});
     auto cont = _client.command(dzrp::CommandId::CMD_CONTINUE, payload);
     ASSERT_TRUE(cont.valid);
-    EXPECT_EQ(_adapter->getTemporaryBreakpointCount(), 2u);
+    // The live count races the breakpoint hit: bp1 is the NEXT instruction,
+    // so the emulator hits it within microseconds of the resume and the pause
+    // path clears the temporaries before (or after) this read - whichever
+    // thread wins. The high-water mark deterministically proves both were
+    // installed from the payload.
+    EXPECT_EQ(_adapter->getMaxTemporaryBreakpointCount(), 2u);
 
     auto ntf = _client.waitNotification();
     ASSERT_TRUE(ntf.valid);
@@ -747,8 +752,36 @@ TEST_F(AutomationDezog_test, ResolvePortFromEnvironment)
     setEnv(AutomationDezog::PORT_ENV_VAR, nullptr);
 }
 
+TEST_F(AutomationDezog_test, ResolveTargetWaitDefaults)
+{
+    setEnv(AutomationDezog::TARGET_WAIT_ENV_VAR, nullptr);
+    EXPECT_EQ(AutomationDezog::resolveTargetWaitMs(0), dzrp::ServerConfig::DEFAULT_TARGET_WAIT_MS);
+    EXPECT_EQ(AutomationDezog::resolveTargetWaitMs(500), 500);
+    EXPECT_EQ(AutomationDezog::resolveTargetWaitMs(999999), 60000);   // clamped high
+    EXPECT_EQ(AutomationDezog::resolveTargetWaitMs(1), 1);            // clamped low (unchanged)
+}
+
+TEST_F(AutomationDezog_test, ResolveTargetWaitFromEnvironment)
+{
+    setEnv(AutomationDezog::TARGET_WAIT_ENV_VAR, "100");
+    EXPECT_EQ(AutomationDezog::resolveTargetWaitMs(0), 100);
+    EXPECT_EQ(AutomationDezog::resolveTargetWaitMs(2000), 2000);  // explicit wins
+
+    setEnv(AutomationDezog::TARGET_WAIT_ENV_VAR, "garbage");
+    EXPECT_EQ(AutomationDezog::resolveTargetWaitMs(0), dzrp::ServerConfig::DEFAULT_TARGET_WAIT_MS);
+
+    setEnv(AutomationDezog::TARGET_WAIT_ENV_VAR, "0");
+    EXPECT_EQ(AutomationDezog::resolveTargetWaitMs(0), dzrp::ServerConfig::DEFAULT_TARGET_WAIT_MS);  // out of range
+
+    setEnv(AutomationDezog::TARGET_WAIT_ENV_VAR, nullptr);
+}
+
 TEST_F(AutomationDezog_test, StartStopLifecycle)
 {
+    // No emulator exists in this test, so CMD_INIT's waitForTarget would burn
+    // the full DEFAULT_TARGET_WAIT_MS (2 s). Shorten it via the env override.
+    setEnv(AutomationDezog::TARGET_WAIT_ENV_VAR, "100");
+
     AutomationDezog module;
     EXPECT_FALSE(module.isRunning());
     EXPECT_EQ(module.getPort(), 0);
@@ -778,6 +811,8 @@ TEST_F(AutomationDezog_test, StartStopLifecycle)
     // Idempotent stop
     module.stop();
     EXPECT_FALSE(module.isRunning());
+
+    setEnv(AutomationDezog::TARGET_WAIT_ENV_VAR, nullptr);
 }
 
 TEST_F(AutomationDezog_test, StartFailsWhenPortBusy)
