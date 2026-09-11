@@ -414,6 +414,9 @@ protected:
     // before reacting to a stop notification.
     std::string _recordingEmulatorId;
 
+    // Track recording type for correct stop notification
+    RecordingType _activeRecordingType = RecordingType::VideoAudio;
+
     // MessageCenter callback (Observer interface)
     void onEmulatorStateChange(int id, Message* message);
     /// endregion </Internal state>

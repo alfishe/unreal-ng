@@ -413,26 +413,42 @@ public:
     virtual ~FileLoadedPayload() = default;
 };
 
+/// Recording type (video, audio, or both)
+enum class RecordingType : uint8_t
+{
+    Video,      // Video-only recording
+    Audio,      // Audio-only recording
+    VideoAudio  // Video + audio recording (default)
+};
+
 /// Payload for NC_RECORDING_STATE.
-/// Posted by RecordingManager on start / stop.
+/// Posted by RecordingManager on start / stop / pause / resume.
 class RecordingStatePayload : public MessagePayload
 {
 public:
     unreal::UUID emulatorId;
-    bool recording;       // true = started, false = stopped
+    bool recording;       // true = started/active, false = stopped
+    bool paused;          // true = paused (only valid when recording = true)
+    RecordingType type;   // what is being recorded
     std::string path;     // output file path (meaningful on stop)
 
-    RecordingStatePayload(const unreal::UUID& id, bool isRecording, std::string filePath = {})
+    RecordingStatePayload(const unreal::UUID& id, bool isRecording, std::string filePath = {},
+                          RecordingType recType = RecordingType::VideoAudio, bool isPaused = false)
         : MessagePayload()
         , emulatorId(id)
         , recording(isRecording)
+        , paused(isPaused)
+        , type(recType)
         , path(std::move(filePath))
     {}
 
-    RecordingStatePayload(const std::string& id, bool isRecording, std::string filePath = {})
+    RecordingStatePayload(const std::string& id, bool isRecording, std::string filePath = {},
+                          RecordingType recType = RecordingType::VideoAudio, bool isPaused = false)
         : MessagePayload()
         , emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id))
         , recording(isRecording)
+        , paused(isPaused)
+        , type(recType)
         , path(std::move(filePath))
     {}
 

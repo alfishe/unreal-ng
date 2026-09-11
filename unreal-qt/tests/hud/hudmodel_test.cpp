@@ -418,8 +418,8 @@ TEST_F(HudModel_Test, EventMapping_RecordingState)
 
     MessageCenter& mc = MessageCenter::DefaultMessageCenter();
 
-    // Start recording
-    mc.Post(NC_RECORDING_STATE, new RecordingStatePayload(_id, true, "/tmp/rec.mp4"));
+    // Start video recording (VideoAudio type = video with embedded audio)
+    mc.Post(NC_RECORDING_STATE, new RecordingStatePayload(_id, true, "/tmp/rec.mp4", RecordingType::VideoAudio));
 
     auto start = std::chrono::steady_clock::now();
     while (model.snapshot()->elements.empty() &&
@@ -430,11 +430,13 @@ TEST_F(HudModel_Test, EventMapping_RecordingState)
 
     auto snap = model.snapshot();
     ASSERT_EQ(snap->elements.size(), 1u);
-    EXPECT_EQ(snap->elements[0].id, "ind/rec");
+    EXPECT_EQ(snap->elements[0].id, "ind/rec/video");
     EXPECT_EQ(snap->elements[0].state, HudState::Active);
+    EXPECT_EQ(snap->elements[0].styleId, "rec");
+    EXPECT_EQ(snap->elements[0].icon, "rec");
 
     // Stop recording
-    mc.Post(NC_RECORDING_STATE, new RecordingStatePayload(_id, false, "/tmp/rec.mp4"));
+    mc.Post(NC_RECORDING_STATE, new RecordingStatePayload(_id, false, "/tmp/rec.mp4", RecordingType::VideoAudio));
 
     start = std::chrono::steady_clock::now();
     while ((model.snapshot()->elements.empty() ||
