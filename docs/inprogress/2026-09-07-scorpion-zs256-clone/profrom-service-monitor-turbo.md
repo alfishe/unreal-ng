@@ -446,3 +446,23 @@ staging `normal`, `PC := #04CE` strobes `IN #1FFD` ×2 and the multiplier flips
 hotkey is confirmed live as the silent staging toggle (§6.3). An SMUC
 board-presence side-track was prototyped and reverted — the board stays absent
 by decision (verification record §6).
+
+## 11. Parity with Base Scorpion ROM (v2.92 `scorpion.rom`)
+
+The Base Scorpion 64K ROM (`data/rom/scorpion.rom` v2.92, Page 2) implements the
+exact same three-phase design as ProfROM:
+
+1. **Monitor Entry (`#040E` / `#0411`)**: Unconditionally forces 7.0 MHz for the monitor UI:
+   `LD B,#7F; JR +4; LD C,#FD; IN A,(C); IN A,(C); RET`.
+2. **Menu Speed Toggle (`#0244` / `#024A`)**:
+   Calls `#0250` (tests `#DFF8` bit 7 hardware presence) and executes `SET 6,(HL)` /
+   `RES 6,(HL)` on `#DFF8`. **Zero I/O port instructions are executed.**
+   The screen redrawing code updates the menu label to `"normal (3.5Mhz)"` based on
+   this RAM byte, while the CPU continues running at 7.0 MHz.
+3. **Monitor Exit (`#047B` / `#0FD9` -> `#048C`)**:
+   Tests bit 6 of `#DFF8`. If cleared (Normal), BC remains `#1FFD` and it executes
+   `IN A,(C)` to physically switch the hardware clock from 7.0 MHz to 3.5 MHz.
+
+Full comparative disassembly and execution trace across both models:
+`verification/turbo-cpufreq-chain-verification.md` §2.
+

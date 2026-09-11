@@ -1,52 +1,141 @@
 # Verification record — turbo ⇄ status-bar CPU frequency chain
 
-Date: 2026-09-11. Binary: `cmake-build-release/bin/unreal-qt.app` (working tree,
-not yet committed). Model: `PROFSCORP`, image `data/rom/scorp_prof401.rom`.
+Date: 2026-09-11. Binary: `cmake-build-release/bin/unreal-qt.app`.
+Models: `SCORPION` (`data/rom/scorpion.rom` v2.92) and `PROFSCORP` (`data/rom/scorp_prof401.rom` v4.01).
 
-Reported symptom: *changing CPU frequency in the ProfROM service monitor does not
-change the status bar from 7.0 to 3.5 MHz and back — it always shows 7.0 MHz.*
+Reported symptom: *changing CPU frequency in the service monitor (NMI -> V keypress or
+cursor keys + Enter) updates the on-screen menu to "normal (3.5Mhz)", but the status bar
+still displays 7.0 MHz.*
 
 ## 1. Chain audit (port strobe → Z80 core → MessageCenter → status bar)
 
-| # | Link | Verdict | Evidence |
-|---|------|---------|----------|
-| 1 | Guest `IN` strobe → decoder flip-flop | OK | `Z80::in()` routes every read to `PortDecoder_Scorpion256::DecodePortIn`; `(port & 0xC023) == 0x4021` (`#7FFD` family) sets `scorpion_turbo`/`hw_turbo_shift`, `== 0x0021` (`#1FFD` family) clears them. `OUT` never clocks the flip-flop (hardware-reference 13). Tests `ScriptedInSevenFFDSetsTurbo`, `ScorpionPorts_Test` mirror table. |
-| 2 | Decoder → Z80 core application | OK | `DecodePortIn` calls `Z80::ApplyHardwareTurboNow()` immediately: composes `next_z80_frequency_multiplier << hw_turbo_shift`, rescales in-frame `t`/`eipos`/`haltpos`, refreshes frame geometry. Test `TurboStrobeAppliesMidFrame` (2↔1 mid-frame, raster instant preserved). |
-| 3 | Z80 core → MessageCenter | **Gap, fixed** | `ApplyQueuedFrequencyMultiplier()` posted `NC_CPU_FREQ_CHANGED`, but `ApplyHardwareTurboNow()` did not — and a mid-frame strobe never passes a frame boundary, so the queued path sees *no change* next frame and posts nothing. Fix: shared `Z80::NotifyCPUFrequencyChanged()` called from both apply paths. |
-| 4 | MessageCenter → status bar | OK | `StatusBarManager` observes `NC_CPU_FREQ_CHANGED` (payload-filtered by emulator id) **and** polls `emulatorState.current_z80_frequency` every 200 ms in `refresh()` — the poll is why the label was accurate *when the state actually changed*; link 3 only affected event-driven consumers. |
+| # | Link | Layer | Verdict | Implementation / Evidence |
+|---|------|-------|---------|---------------------------|
+| 1 | Guest `IN` strobe → decoder flip-flop | Guest ROM & Port Decoder | OK | `Z80::in()` routes every port read to `PortDecoder_Scorpion256::DecodePortIn`; `(port & 0xC023) == 0x4021` (`#7FFD` family) sets `scorpion_turbo` / `hw_turbo_shift = 1`, `== 0x0021` (`#1FFD` family) clears them to `0`. `OUT` never clocks the flip-flop (hardware-reference 13). Tests: `ScriptedInSevenFFDSetsTurbo`, `ScorpionPorts_Test`. |
+| 2 | Decoder → Z80 core application | CPU Core | OK | `DecodePortIn` calls `Z80::ApplyHardwareTurboNow()` immediately: composes `next_z80_frequency_multiplier << hw_turbo_shift`, rescales in-frame raster instant `cpu.t`, `eipos`, `haltpos`, updates `current_z80_frequency_multiplier` and `current_z80_frequency`, and calls `RecomputeFrameTiming()`. Tests: `TurboStrobeAppliesMidFrame`, `ProfRomBootDetectsSevenMhz`. |
+| 3 | Z80 core → MessageCenter | Event Bus | OK (fixed in `bf269540`) | `Z80::NotifyCPUFrequencyChanged()` posts `NC_CPU_FREQ_CHANGED` (`"CPU_FREQ_CHANGED"`) with payload `CPUFreqPayload(emulatorId, frequencyHz, multiplier)`. Shared by both `ApplyQueuedFrequencyMultiplier()` and `ApplyHardwareTurboNow()`. Regression test: `ScorpionMachine_Test.TurboStrobePostsCpuFreqChanged`. |
+| 4 | MessageCenter → Qt status bar | UI | OK | `StatusBarManager` observes `NC_CPU_FREQ_CHANGED` in `handleCPUFreqChanged()`, filters by emulator ID, and marshals to the Qt main thread via `QMetaObject::invokeMethod(..., Qt::QueuedConnection)`. Formats string (`"3.5 MHz"`) and resets orange style. Also backed by 200 ms polling in `refresh()`. |
 
-## 2. Why the status bar stays 7.0 *inside* the monitor — ROM behavior, not an emulator defect
+## 2. Why the status bar stays 7.0 MHz *inside* the monitor — ROM behavior, not an emulator defect
 
-Cross-reference: `profrom-service-monitor-turbo.md` §3.1, §3.7, §4 (facts below are
-established there; not re-derived here).
+On real Scorpion ZS-256 hardware, the Service Monitor UI itself **is hardwired to run at 7.0 MHz**
+so all monitor utilities (screen redraws, memory viewers, disassembler, disk routines) operate at maximum speed.
+The "Computer speed" menu option is **strictly a configuration staging setting** for the user program.
 
-| Action in the service monitor | What the ROM actually does | Clock effect |
-|---|---|---|
-| Enter the interactive monitor (NMI → `#0AF2`) | `CALL #04D5` → `IN A,(#7FFD)` ×2 — unconditional | **7 MHz always**, by design |
-| Toggle "Computer speed" (`#02D1`/`#02D7`, codes `#87`/`#88`) | `SET/RES 6,(#E02D)` — a RAM flag store, gated by bit 7 | **none** — no port access at all |
-| Exit to user program (`#053F` / `#1096` → `#04CE`) | `IN A,(#7FFD)` or `IN A,(#1FFD)` ×2 **per `#E02D` bit 6** | switch happens **here** (7 → 3.5 with speed OFF) |
-| Cold reset | `#0676` strobes ON; boot stub re-detects | 7 MHz again once detection completes |
+### Comparative disassembly: Base Scorpion (`scorpion.rom`) vs ProfROM (`scorp_prof401.rom`)
 
-Practical consequence: on the hardware the monitor UI itself runs at 7 MHz — the
-"Computer speed" item changes a stored setting, and the new clock takes effect at
-monitor exit (and after save/load, at next boot via the page-6 config staging). A
-live 7.0 ⇄ 3.5 flip *while sitting in the menu* is not a behavior the ROM produces,
-so the status bar holding 7.0 there is hardware-matching.
+| Stage | Base Scorpion (`scorpion.rom` v2.92) | ProfROM (`scorp_prof401.rom` v4.01) | Physical Clock Effect |
+|---|---|---|---|
+| **Monitor Entry (NMI)** | `#040E` falls into `#0411`:<br>`LD B,#7F; JR +4; LD C,#FD; IN A,(C); IN A,(C); RET`<br>(unconditional strobe) | `#0AF2` calls `#04D5`:<br>`LD B,#7F; JR +2; LD C,#FD; IN A,(C); IN A,(C); RET`<br>(unconditional strobe) | **7.0 MHz always** (hardware flip-flop forced ON for the monitor UI) |
+| **Menu Toggle (`V` / Cursor + Enter)** | `#0244` (SET) / `#024A` (RES):<br>`CALL #0250` (tests bit 7 of `#DFF8`)<br>`SET/RES 6, (#DFF8)`<br>`RET` | `#02D1` (SET) / `#02D7` (RES):<br>`CALL #02DD` (tests bit 7 of `#E02D`)<br>`SET/RES 6, (#E02D)`<br>`RET` | **None — 0 port operations.** Only modifies a flag in RAM. The UI re-draws the menu label to `"normal (3.5Mhz)"`. |
+| **Monitor Exit (`R` / Run)** | `#047B` / `#0FD9` calls `#048C`:<br>`LD BC,#1FFD; LD A,(#DFF8); RLCA; RLCA; JR NC,+4; LD B,#7F; IN A,(C); RET` | `#053F` / `#1096` calls `#04CE`:<br>`LD A,(#E02D); BIT 6,A; JR Z,+4; LD B,#7F; ... IN A,(C) ×2; RET` | **Physical switch occurs here:** If bit 6 was cleared, executes `IN A,(#1FFD)` (7.0 → 3.5 MHz). |
+| **Cold Reset** | Reset clears flip-flop; stub re-detects | `#0676` strobes ON; boot stub re-detects | 7.0 MHz again once detection completes |
 
-## 3. The defect that was real: missing notification on the mid-frame apply path
+### Detailed Disassembly Listings
 
-`ApplyHardwareTurboNow()` is the only apply path for guest strobes (boot detection
-flip, monitor entry `#0AF2`, exit `#04CE`). Until this fix it updated
-`current_z80_frequency`/`_multiplier` silently. Impact matrix:
+#### ProfROM v4.01 (`data/rom/scorp_prof401.rom`, Page 2)
+```z80
+; Menu action handlers (Page 2)
+02D1  CD DD 02     CALL #02DD          ; Enable turbo action
+02D4  CB F6        SET  6,(HL)         ; Set bit 6 of (#E02D)
+02D6  C9           RET
+02D7  CD DD 02     CALL #02DD          ; Disable turbo action
+02DA  CB B6        RES  6,(HL)         ; Clear bit 6 of (#E02D)
+02DC  C9           RET
+02DD  AF           XOR  A
+02DE  21 2D E0     LD   HL,#E02D       ; Config byte (IY+$19)
+02E1  CB 7E        BIT  7,(HL)         ; HW turbo present?
+02E3  20 02        JR   NZ,#02E7
+02E5  3C           INC  A              ; Refuse if absent
+02E6  C1           POP  BC
+02E7  32 7F DD     LD   (#DD7F),A      ; Status (0=OK)
+02EA  C9           RET
 
-| Consumer | Before | After |
-|---|---|---|
-| Qt status bar label | stale up to 200 ms (poll) | immediate on message (poll unchanged as fallback) |
-| Any `NC_CPU_FREQ_CHANGED` observer (WebAPI/MCP event listeners, future UI) | never informed of hardware turbo switches | informed at the strobe, same payload shape as host speed changes |
+; Exit apply routine (Page 2 #04CE)
+04CE  3A 2D E0     LD   A,(#E02D)      ; Load staged config
+04D1  CB 77        BIT  6,A            ; Turbo enabled?
+04D3  28 04        JR   Z,#04D9
+04D5  06 7F        LD   B,#7F          ; BC = #7FFD (7.0 MHz)
+04D7  18 02        JR   #04DB
+04D9  06 1F        LD   B,#1F          ; BC = #1FFD (3.5 MHz)
+04DB  0E FD        LD   C,#FD
+04DD  ED 78        IN   A,(C)          ; STROBE 1: hardware turbo clock switch!
+04DF  ED 78        IN   A,(C)          ; STROBE 2
+04E1  C9           RET
+```
 
-Fix (working tree): `Z80::NotifyCPUFrequencyChanged()` in `z80.h`/`z80.cpp`, called
-from both `ApplyQueuedFrequencyMultiplier()` and `ApplyHardwareTurboNow()`. A no-op
-strobe (multiplier unchanged) stays silent.
+#### Base Scorpion v2.92 (`data/rom/scorpion.rom`, Page 2)
+```z80
+; Menu action handlers (Page 2)
+0244  CD 50 02     CALL #0250          ; Enable turbo action
+0247  CB F6        SET  6,(HL)         ; Set bit 6 of (#DFF8)
+0249  C9           RET
+024A  CD 50 02     CALL #0250          ; Disable turbo action
+024D  CB B6        RES  6,(HL)         ; Clear bit 6 of (#DFF8)
+024F  C9           RET
+0250  AF           XOR  A
+0251  21 F8 DF     LD   HL,#DFF8       ; Base Scorpion config byte
+0254  CB 7E        BIT  7,(HL)         ; HW turbo present?
+0256  20 02        JR   NZ,#025A
+0258  3C           INC  A              ; Refuse if absent
+0259  C1           POP  BC
+025A  32 7F DD     LD   (#DD7F),A      ; Status (0=OK)
+025D  C9           RET
+
+; Exit apply routine (Page 2 #048C)
+048C  01 FD 1F     LD   BC,#1FFD       ; Default BC = #1FFD (3.5 MHz)
+048F  3A F8 DF     LD   A,(#DFF8)      ; Load staged config
+0492  07           RLCA
+0493  07           RLCA                ; Shift bit 6 into Carry
+0494  30 02        JR   NC,#0498       ; If bit 6 == 0 -> leave BC = #1FFD
+0496  06 7F        LD   B,#7F          ; If bit 6 == 1 -> BC = #7FFD (7.0 MHz)
+0498  ED 78        IN   A,(C)          ; STROBE: hardware turbo clock switch!
+049A  C9           RET
+```
+
+**Conclusion on UX:**
+- Inside the menu, the virtual ZX screen changes to `"normal (3.5Mhz)"` because the menu code reads the updated RAM variable (`#E02D` or `#DFF8`).
+- However, the Z80 CPU has not touched any I/O port, so the physical clock remains at 7.0 MHz.
+- The Unreal status bar correctly reports the **actual running CPU frequency** (`7.0 MHz`).
+- As soon as the user exits the monitor (e.g. key `R` for Run), `#04CE` / `#048C` executes `IN A,(#1FFD)`, and the status bar flips immediately to `3.5 MHz`.
+
+## 3. End-to-end execution trace (when the strobe occurs)
+
+```
+[Guest Z80 Exit Routine]
+   │  Executes IN A,(C) with BC = #1FFD (or #7FFD)
+   ▼
+[PortDecoder_Scorpion256::DecodePortIn]
+   │  Masks (port & 0xC023):
+   │    0x0021 (#1FFD) -> scorpion_turbo = 0, hw_turbo_shift = 0
+   │    0x4021 (#7FFD) -> scorpion_turbo = 1, hw_turbo_shift = 1
+   │  Invokes Z80::ApplyHardwareTurboNow()
+   ▼
+[Z80::ApplyHardwareTurboNow]
+   │  desiredMultiplier = next_multiplier << hw_turbo_shift (e.g. 1 << 0 = 1)
+   │  Rescales in-frame raster instant: cpu.t = cpu.t * desired / old
+   │  Rescales eipos and haltpos
+   │  Sets current_z80_frequency_multiplier = 1, current_z80_frequency = 3'500'000 Hz
+   │  Calls RecomputeFrameTiming() (_frameLimit: 139'776 -> 69'888 T)
+   │  Calls NotifyCPUFrequencyChanged()
+   ▼
+[Z80::NotifyCPUFrequencyChanged]
+   │  Constructs CPUFreqPayload(emulatorId, 3'500'000, 1)
+   │  Posts NC_CPU_FREQ_CHANGED via MessageCenter::DefaultMessageCenter()
+   ▼
+[StatusBarManager::handleCPUFreqChanged] (Core execution thread)
+   │  Filters by emulator instance ID
+   │  Extracts frequency (3,500,000 Hz)
+   │  Marshals to Qt GUI thread via QMetaObject::invokeMethod(..., Qt::QueuedConnection)
+   ▼
+[Qt Main Thread Event Loop]
+   │  Executes lambda in GUI thread context:
+   │    _cpuFreq->setText("3.5 MHz");
+   │    _cpuFreq->setStyleSheet("padding-top: 1px;"); // Clears orange highlight
+   ▼
+[User Interface]
+      Status bar displays "3.5 MHz" in standard text color
+```
 
 ## 4. Live E2E (WebAPI, real app)
 

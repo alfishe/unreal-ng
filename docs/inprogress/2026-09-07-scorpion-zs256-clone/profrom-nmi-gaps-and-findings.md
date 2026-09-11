@@ -309,9 +309,10 @@ reference §13):
   updates `current_z80_frequency_multiplier`, and calls `RecomputeFrameTiming()`. INT
   position stays at the same *raster* instant. Keep the frame-boundary path for host
   speed changes.
-- Expected result: `#0269` loop runs at 7 MHz from its first iteration -> `#E02D = C0`,
-  the menu's Turbo item becomes enabled in both ROMs, and `IN #1FFD` from the menu
-  returns the machine to 3.5 MHz.
+- Expected result: `#0269` loop runs at 7 MHz from its first iteration -> `#E02D = C0`
+  (and `#DFF8 = C0` in Base ROM), the menu's Turbo item becomes enabled in both ROMs;
+  toggling the item stages bit 6 in RAM, and `IN #1FFD` issued on monitor exit
+  (`#04CE` in ProfROM, `#048C` in Base ROM) returns the machine to 3.5 MHz.
 
 ### 8.5 Audio overfill - exact mechanism (VERIFIED from code) and fix (APPLIED, commits aab04e27 + fbd89355)
 
