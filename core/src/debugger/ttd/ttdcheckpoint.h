@@ -62,7 +62,7 @@ struct TTDTimePoint
 /// observable internal registers (MEMPTR, Q) documented in z80.h.
 ///
 /// Layout is plain POD (no unions, no packing pragmas) so it can be copied
-/// byte-wise into a checkpoint and memcmp'd in tests. Size is ~36 bytes.
+/// byte-wise into a checkpoint and memcmp'd in tests. Size is 48 bytes.
 struct TTDCpuState
 {
     // ---- 16-bit registers ----
@@ -83,9 +83,18 @@ struct TTDCpuState
     uint8_t  im = 0;            ///< Interrupt mode (0/1/2)
     uint8_t  halted = 0;        ///< CPU HALT state (0/1)
 
+    // Padding at offset 31 (before memptr). Must be a NAMED member: implicit
+    // padding is not copied by member-wise copy/move, so checkpoints moved
+    // into the timeline keep heap garbage here and the byte-wise divergence
+    // oracle hashes mismatch. memset at capture alone cannot fix this.
+    uint8_t  reserved0 = 0;
+
     // ---- Undocumented but observable ----
     uint16_t memptr = 0;        ///< MEMPTR / WZ — affects BIT n,(HL) undocumented flags
     uint8_t  q = 0;             ///< Q register — affects CCF/SCF undocumented flag behavior
+
+    // Padding at offset 35 (before eipos) — see reserved0.
+    uint8_t  reserved1 = 0;
 
     // ---- HALT / interrupt bookkeeping ----
     /// EI instruction position. Restoring this matters because the Z80
@@ -98,8 +107,20 @@ struct TTDCpuState
     uint8_t  nmi_in_progress = 0;
     uint8_t  int_pending = 0;   ///< INT line state (latched)
     uint8_t  int_gate = 1;      ///< External interrupts gate (1 = enabled)
+
+    // Padding at offset 43 (before halt_cycle) — see reserved0.
+    uint8_t  reserved2 = 0;
+
     uint32_t halt_cycle = 0;   ///< Cycle at which HALT became active
 };
+
+// The named reservedN members above must occupy exactly the former implicit
+// padding offsets — the byte-wise hash covers the whole struct, so the layout
+// must never drift silently.
+static_assert(sizeof(TTDCpuState) == 48, "TTDCpuState layout must stay stable (hashed byte-wise)");
+static_assert(offsetof(TTDCpuState, memptr) == 32, "reserved0 must sit at pad offset 31");
+static_assert(offsetof(TTDCpuState, eipos) == 36, "reserved1 must sit at pad offset 35");
+static_assert(offsetof(TTDCpuState, halt_cycle) == 44, "reserved2 must sit at pad offset 43");
 
 /// @brief Chipset state — the port-latch subset of EmulatorState plus
 /// counters. Captured at frame boundaries so the restore path can rebuild
@@ -153,6 +174,12 @@ struct TTDChipsetState
     uint8_t ulaplus_reg = 0;
     uint8_t ulaplus_cram[64] = {0};    ///< ULAplus palette entries
 
+    // Padding at offsets 137-139 (before pFFF7). Must be NAMED members — see
+    // reserved0 in TTDCpuState: implicit padding is not copied by member-wise
+    // moves, so timeline-stored checkpoints keep heap garbage here and the
+    // divergence oracle hashes mismatch (observed as Chipset[137..139] diffs).
+    uint8_t reserved3[3] = {0, 0, 0};
+
     // ---- ATM 7.10 / ATM3 memory mapping ----
     uint32_t pFFF7[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 
@@ -161,7 +188,14 @@ struct TTDChipsetState
     // 2 KB per checkpoint and no v1-supported model populates them. Adding
     // them later is a session-internal layout change (no on-disk format
     // compatibility to preserve in v1).
+
+    // Tail padding at offsets 172-175 (struct alignment is 8) — see reserved3.
+    // Observed historically as Chipset[172..174] hash diffs.
+    uint8_t reserved4[4] = {0, 0, 0, 0};
 };
+
+static_assert(sizeof(TTDChipsetState) == 176, "TTDChipsetState layout must stay stable (hashed byte-wise)");
+static_assert(offsetof(TTDChipsetState, pFFF7) == 140, "reserved3 must sit at pad offsets 137-139");
 
 /// @brief Frame kind discriminator (I-frame / P-frame).
 ///
