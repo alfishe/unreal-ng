@@ -1,6 +1,8 @@
 #include "devicescreenglwindow.h"
+#include "hud/qt/hudoverlay.h"
 
 #include <QDebug>
+#include <QPainter>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QEvent>
@@ -546,6 +548,12 @@ void DeviceScreenGLWindow::paintGL()
 
     glDisable(GL_TEXTURE_2D);
     _texture->release();
+
+    if (_hudOverlay && _hudOverlay->isVisible())
+    {
+        QPainter painter(this);
+        _hudOverlay->renderHUD(painter, width(), height(), devicePixelRatio());
+    }
 }
 
 void DeviceScreenGLWindow::keyPressEvent(QKeyEvent* event)

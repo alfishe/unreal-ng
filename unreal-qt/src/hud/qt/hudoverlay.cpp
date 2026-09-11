@@ -8,6 +8,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QResizeEvent>
+#include <QWindow>
 #include <algorithm>
 #include <cmath>
 
@@ -195,6 +196,8 @@ void HudOverlay::onModelChanged()
     if (snap && !snap->elements.empty())
     {
         update();  // Full repaint for indicator changes
+        if (_targetWindow)
+            _targetWindow->requestUpdate();
     }
     else
     {
@@ -203,6 +206,8 @@ void HudOverlay::onModelChanged()
             update(_lastIndicatorBounds);
         if (!_lastToastBounds.isEmpty())
             update(_lastToastBounds);
+        if (_targetWindow)
+            _targetWindow->requestUpdate();
     }
 }
 
@@ -225,6 +230,8 @@ void HudOverlay::onAnimationTick()
                 update(_lastIndicatorBounds);
             if (!_lastToastBounds.isEmpty())
                 update(_lastToastBounds);
+            if (_targetWindow)
+                _targetWindow->requestUpdate();
         }
         return;
     }
@@ -258,6 +265,8 @@ void HudOverlay::onAnimationTick()
             int slide = static_cast<int>(16.0f * uiScale) + 1;
             update(_lastToastBounds.adjusted(0, -slide, 0, slide));
         }
+        if (_targetWindow)
+            _targetWindow->requestUpdate();
     }
 }
 
@@ -274,12 +283,12 @@ QImage HudOverlay::getImageFromBuffer(const std::shared_ptr<const HudImageBuffer
 
     QImage::Format qfmt = QImage::Format_RGBA8888;
     if (buf->format() == HudPixelFormat::BGRA8888)
-        qfmt = QImage::Format_ARGB32;
-    else if (buf->format() == HudPixelFormat::ARGB8888_Premul)
+    {
         qfmt = QImage::Format_ARGB32_Premultiplied;
+    }
 
     QImage img(buf->data(), buf->width(), buf->height(), buf->stride(), qfmt);
-    QImage copy = img.copy(); // Own memory
+    QImage copy = img.copy();
     _imageCache[buf.get()] = copy;
     return copy;
 }
@@ -325,78 +334,54 @@ QPixmap HudOverlay::getCachedTileFrame(const QSize& size, const HudTileFrameStyl
 
 void HudOverlay::renderTileFrameToPixmap(QPixmap& pixmap, const HudTileFrameStyle& frame, float uiScale)
 {
-    QPainter p(&pixmap);
-    p.setRenderHint(QPainter::Antialiasing, true);
+    int spread = static_cast<int>(std::max(1.0f, 2.0f * uiScale));
+    QRect frameRect(spread, 0, pixmap.width() - spread * 2, pixmap.height() - spread * 3);
 
-    QRect rect = pixmap.rect();
-    float radius = frame.borderRadius * uiScale;
-    float bWidth = std::max(1.0f, frame.borderWidth * uiScale);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
 
-    // Drop shadow / outer neon glow
-    if (frame.shadowColor != 0 && frame.shadowBlur > 0.0f)
+    if (frame.shadowBlur > 0.0f && frame.shadowColor != 0)
     {
-        int spread = static_cast<int>(std::max(1.0f, 2.0f * uiScale));
-        // The tile body ends 2 * spread above the pixmap bottom; stop the shadow one
-        // spread short so it extends only `spread` below the tile
-        QPainterPath shadowPath;
-        shadowPath.addRoundedRect(rect.adjusted(spread, spread, -spread, -spread), radius, radius);
-        p.fillPath(shadowPath, QColor::fromRgba(frame.shadowColor));
-    }
+        QColor shadowCol = QColor::fromRgba(frame.shadowColor);
+        QRect shadowRect = frameRect.adjusted(-spread + 1, spread, spread - 1, spread * 2);
 
-    // Inset rect to leave room for shadow
-    int inset = static_cast<int>(std::max(1.0f, 2.0f * uiScale));
-    QRect innerRect = rect.adjusted(inset, 0, -inset, -inset * 2);
+        QPainterPath shadowPath;
+        shadowPath.addRoundedRect(shadowRect, frame.borderRadius * uiScale + 2.0, frame.borderRadius * uiScale + 2.0);
+        painter.fillPath(shadowPath, shadowCol);
+    }
 
     QPainterPath path;
-    path.addRoundedRect(innerRect, radius, radius);
+    path.addRoundedRect(frameRect, frame.borderRadius * uiScale, frame.borderRadius * uiScale);
 
-    // Background fill (solid or linear gradient)
-    if (frame.backgroundGradientEnd != 0 && frame.backgroundGradientEnd != frame.backgroundColor)
+    if (frame.backgroundGradientEnd != 0)
     {
-        QLinearGradient grad(innerRect.topLeft(), innerRect.bottomLeft());
+        QLinearGradient grad(frameRect.topLeft(), frameRect.bottomLeft());
         grad.setColorAt(0.0, QColor::fromRgba(frame.backgroundColor));
         grad.setColorAt(1.0, QColor::fromRgba(frame.backgroundGradientEnd));
-        p.fillPath(path, grad);
+        painter.fillPath(path, grad);
     }
-    else
+    else if (frame.backgroundColor != 0)
     {
-        p.fillPath(path, QColor::fromRgba(frame.backgroundColor));
-    }
-
-    // Border stroke
-    if (frame.borderColor != 0 && bWidth > 0.0f)
-    {
-        p.strokePath(path, QPen(QColor::fromRgba(frame.borderColor), bWidth));
+        painter.fillPath(path, QColor::fromRgba(frame.backgroundColor));
     }
 
-    // Specular glass highlight at top
-    if (frame.glassEffect && radius > 0.0f)
+    if (frame.borderWidth > 0.0f && frame.borderColor != 0)
     {
-        p.save();
-        p.setClipPath(path);
-        int hlHeight = std::max(2, static_cast<int>(2.5f * uiScale));
-        QRect hlRect(innerRect.left(), innerRect.top(), innerRect.width(), hlHeight);
-        QLinearGradient hlGrad(hlRect.topLeft(), hlRect.topRight());
-        hlGrad.setColorAt(0.0, QColor(255, 255, 255, 0));
-        hlGrad.setColorAt(0.5, QColor(255, 255, 255, 55));
-        hlGrad.setColorAt(1.0, QColor(255, 255, 255, 0));
-        p.fillRect(hlRect, hlGrad);
-        p.restore();
+        QPen borderPen(QColor::fromRgba(frame.borderColor), frame.borderWidth * uiScale);
+        painter.setPen(borderPen);
+        painter.setBrush(Qt::NoBrush);
+        painter.drawPath(path);
     }
 }
 
 QRect HudOverlay::tileDirtyBounds(const QRect& rect, float uiScale)
 {
-    // Must match drawWholeTileFrame: the cached frame pixmap overhangs the tile rect by
-    // `spread` on the left/right and 3 * `spread` below (drop shadow). One extra pixel on
-    // every side covers antialiased edges.
     int spread = static_cast<int>(std::max(1.0f, 2.0f * uiScale));
     return rect.adjusted(-spread - 1, -1, spread + 1, spread * 3 + 1);
 }
 
 void HudOverlay::drawWholeTileFrame(QPainter& painter, const QRect& rect, const HudTileFrameStyle& frame, float uiScale)
 {
-    // Use cached pre-rendered pixmap
     int spread = static_cast<int>(std::max(1.0f, 2.0f * uiScale));
     QSize cacheSize(rect.width() + spread * 2, rect.height() + spread * 3);
     QPixmap cached = getCachedTileFrame(cacheSize, frame, uiScale);
@@ -411,6 +396,11 @@ void HudOverlay::paintEvent(QPaintEvent* event)
     QPainter painter(this);
     painter.fillRect(rect(), Qt::transparent);
 
+    renderHUD(painter, width(), height(), devicePixelRatio());
+}
+
+void HudOverlay::renderHUD(QPainter& painter, int width, int height, float dpr)
+{
     if (!_model || !_model->isEnabled())
         return;
 
@@ -423,9 +413,9 @@ void HudOverlay::paintEvent(QPaintEvent* event)
     painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
 
     HudSurface surface;
-    surface.outputRect = HudRect{0, 0, width(), height()};
-    surface.imageRect = HudRect{0, 0, width(), height()};
-    surface.dpr = devicePixelRatio();
+    surface.outputRect = HudRect{0, 0, width, height};
+    surface.imageRect = HudRect{0, 0, width, height};
+    surface.dpr = dpr;
 
     // Determine scale factor: at least twice bigger (default 2.0x)
     float uiScale = _scaleFactor;
@@ -517,7 +507,7 @@ void HudOverlay::paintEvent(QPaintEvent* event)
         }
         if (!prepared.empty()) totalWidth -= gap;
 
-        int currentX = width() - rightMargin;
+        int currentX = width - rightMargin;
         int currentY = topMargin;
         bool stackRightToLeft = true;
 
@@ -530,32 +520,32 @@ void HudOverlay::paintEvent(QPaintEvent* event)
                 break;
             case HudTilePosition::BottomLeft:
                 currentX = leftMargin;
-                currentY = height() - bottomMargin - boxHeight;
+                currentY = height - bottomMargin - boxHeight;
                 stackRightToLeft = false;
                 break;
             case HudTilePosition::BottomRight:
-                currentX = width() - rightMargin;
-                currentY = height() - bottomMargin - boxHeight;
+                currentX = width - rightMargin;
+                currentY = height - bottomMargin - boxHeight;
                 stackRightToLeft = true;
                 break;
             case HudTilePosition::MidTop:
-                currentX = (width() - totalWidth) / 2;
+                currentX = (width - totalWidth) / 2;
                 currentY = topMargin;
                 stackRightToLeft = false;
                 break;
             case HudTilePosition::MidBottom:
-                currentX = (width() - totalWidth) / 2;
-                currentY = height() - bottomMargin - boxHeight;
+                currentX = (width - totalWidth) / 2;
+                currentY = height - bottomMargin - boxHeight;
                 stackRightToLeft = false;
                 break;
             case HudTilePosition::Center:
-                currentX = (width() - totalWidth) / 2;
-                currentY = (height() - boxHeight) / 2;
+                currentX = (width - totalWidth) / 2;
+                currentY = (height - boxHeight) / 2;
                 stackRightToLeft = false;
                 break;
             case HudTilePosition::TopRight:
             default:
-                currentX = width() - rightMargin;
+                currentX = width - rightMargin;
                 currentY = topMargin;
                 stackRightToLeft = true;
                 break;
@@ -593,15 +583,15 @@ void HudOverlay::paintEvent(QPaintEvent* event)
     if (!toasts.empty())
     {
         HudTilePosition toastPos = (_toastPosition != HudTilePosition::MidBottom) ? _toastPosition : snap->toastPosition;
-        int maxAvailableWidth = width() - static_cast<int>(40 * uiScale);
+        int maxAvailableWidth = width - static_cast<int>(40 * uiScale);
         int toastWidth = std::min(maxAvailableWidth, static_cast<int>(360 * uiScale));
         int toastHeight = static_cast<int>(56 * uiScale);
         int marginX = static_cast<int>(20 * uiScale);
         int marginY = static_cast<int>(24 * uiScale);
         int gap = static_cast<int>(10 * uiScale);
 
-        int startX = (width() - toastWidth) / 2;
-        int startY = height() - marginY - toastHeight;
+        int startX = (width - toastWidth) / 2;
+        int startY = height - marginY - toastHeight;
         int stepY = -(toastHeight + gap);
 
         switch (toastPos)
@@ -612,34 +602,34 @@ void HudOverlay::paintEvent(QPaintEvent* event)
                 stepY = (toastHeight + gap);
                 break;
             case HudTilePosition::TopRight:
-                startX = width() - toastWidth - marginX;
+                startX = width - toastWidth - marginX;
                 startY = marginY;
                 stepY = (toastHeight + gap);
                 break;
             case HudTilePosition::BottomLeft:
                 startX = marginX;
-                startY = height() - marginY - toastHeight;
+                startY = height - marginY - toastHeight;
                 stepY = -(toastHeight + gap);
                 break;
             case HudTilePosition::BottomRight:
-                startX = width() - toastWidth - marginX;
-                startY = height() - marginY - toastHeight;
+                startX = width - toastWidth - marginX;
+                startY = height - marginY - toastHeight;
                 stepY = -(toastHeight + gap);
                 break;
             case HudTilePosition::MidTop:
-                startX = (width() - toastWidth) / 2;
+                startX = (width - toastWidth) / 2;
                 startY = marginY;
                 stepY = (toastHeight + gap);
                 break;
             case HudTilePosition::Center:
-                startX = (width() - toastWidth) / 2;
-                startY = (height() - toastHeight) / 2;
+                startX = (width - toastWidth) / 2;
+                startY = (height - toastHeight) / 2;
                 stepY = (toastHeight + gap);
                 break;
             case HudTilePosition::MidBottom:
             default:
-                startX = (width() - toastWidth) / 2;
-                startY = height() - marginY - toastHeight;
+                startX = (width - toastWidth) / 2;
+                startY = height - marginY - toastHeight;
                 stepY = -(toastHeight + gap);
                 break;
         }

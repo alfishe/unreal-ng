@@ -145,6 +145,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     _hudWrapper = new HudOverlayWrapper(_screenWrapper->widget(), _screenWrapper->isGPUAccelerated());
     _hudWrapper->setVisible(false);
+    _screenWrapper->setHudOverlay(_hudWrapper->softwareOverlay());
     
     // NOTE: We do NOT use a layout manager for contentFrame. 
     // DeviceScreen relies on shrinking itself to maintain aspect ratio, which fights Qt layouts.
@@ -2935,6 +2936,7 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
     // Create new wrappers with desired mode
     _screenWrapper = new DeviceScreenWrapper(contentFrame, enabled);
     _hudWrapper = new HudOverlayWrapper(_screenWrapper->widget(), _screenWrapper->isGPUAccelerated());
+    _screenWrapper->setHudOverlay(_hudWrapper->softwareOverlay());
 
     // Restore state
     _hudWrapper->setVisible(hudVisible);

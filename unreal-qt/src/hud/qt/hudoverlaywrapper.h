@@ -65,6 +65,9 @@ public:
     /// @brief Get the underlying widget
     QWidget* widget() const { return _widget; }
 
+    /// @brief Get the underlying software HudOverlay instance
+    HudOverlay* softwareOverlay() const { return _software; }
+
     /// @brief Returns true if GPU-accelerated rendering is active
     bool isGPUAccelerated() const { return _useGPU; }
 

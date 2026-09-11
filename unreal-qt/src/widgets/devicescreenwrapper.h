@@ -58,6 +58,9 @@ public:
     /// @brief Set display viewport cropping
     void setDisplayViewport(const DisplayViewport& viewport);
 
+    /// @brief Associate HUD overlay for GPU/software rendering
+    void setHudOverlay(class HudOverlay* overlay);
+
     /// @brief Clear display viewport (show full frame)
     void clearDisplayViewport();
 
@@ -123,6 +126,7 @@ private:
     QPointer<QWidget> _widget;  // Guarded: the parent may destroy the widget before the wrapper
     DeviceScreen* _software = nullptr;
     DeviceScreenGLWindow* _gpuWindow = nullptr;  // QOpenGLWindow for tear-free vsync
+    HudOverlay* _hudOverlay = nullptr;
     bool _useGPU = false;
 
     // Track viewport state for getters

@@ -52,6 +52,12 @@ public:
     /// @brief Synchronize overlay geometry with parent widget
     void syncGeometryWithParent();
 
+    /// @brief Direct HUD rendering method for both software paintEvent and GPU paintGL
+    void renderHUD(QPainter& painter, int width, int height, float dpr);
+
+    /// @brief Associate target window (e.g. QOpenGLWindow) to notify when HUD needs repainting
+    void setTargetWindow(QWindow* targetWindow) { _targetWindow = targetWindow; }
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -73,6 +79,7 @@ private:
 private:
     std::shared_ptr<HudModel> _model;
     QTimer* _animTimer = nullptr;
+    QWindow* _targetWindow = nullptr;
     HudClock::time_point _lastTick;
     bool _hasActiveAnimations = false;
     bool _hasBlinkingIndicators = false;  // Recording indicators need periodic repaint

@@ -113,6 +113,11 @@ private:
 
     DisplayViewport _displayViewport;
     bool _hasViewport = false;
+
+    class HudOverlay* _hudOverlay = nullptr;
+public:
+    void setHudOverlay(class HudOverlay* overlay) { _hudOverlay = overlay; }
+    class HudOverlay* hudOverlay() const { return _hudOverlay; }
 };
 
 #endif // DEVICESCREEN_GL_WINDOW_H

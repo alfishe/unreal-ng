@@ -1,6 +1,11 @@
 #ifndef DEVICESCREEN_GL_H
 #define DEVICESCREEN_GL_H
 
+// Mute macOS OpenGL deprecation warnings
+#ifndef OPENGL_DEPRECATED
+    #define OPENGL_DEPRECATED
+#endif
+
 #include <QOpenGLWidget>
 #include <QOpenGLFunctions>
 #include <QOpenGLTexture>

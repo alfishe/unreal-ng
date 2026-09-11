@@ -2,6 +2,7 @@
 #include "devicescreen.h"
 #include "devicescreen_gl.h"
 #include "devicescreenglwindow.h"
+#include "hud/qt/hudoverlay.h"
 
 #include <QDebug>
 #include <QWidget>
@@ -112,6 +113,16 @@ void DeviceScreenWrapper::setDisplayViewport(const DisplayViewport& viewport)
         _gpuWindow->setDisplayViewport(viewport);
     else if (_software)
         _software->setDisplayViewport(viewport);
+}
+
+void DeviceScreenWrapper::setHudOverlay(HudOverlay* overlay)
+{
+    _hudOverlay = overlay;
+    if (_useGPU && _gpuWindow && _hudOverlay)
+    {
+        _gpuWindow->setHudOverlay(_hudOverlay);
+        _hudOverlay->setTargetWindow(_gpuWindow);
+    }
 }
 
 void DeviceScreenWrapper::clearDisplayViewport()
