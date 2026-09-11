@@ -9,7 +9,7 @@
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "debugger/analyzers/basic-lang/basicencoder.h"
-#include "debugger/ttd/machine_state_hash.h"
+#include "debugger/ttd/machinestatehash.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"

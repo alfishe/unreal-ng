@@ -322,6 +322,13 @@ jobs:
               exit 1
             fi
           done
+          bridge="build/bin/unreal-mcp-bridge"
+          bridge_minos=$(otool -l "$bridge" | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}')
+          echo "unreal-mcp-bridge: minos=$bridge_minos"
+          if [ "$bridge_minos" != "${{ env.MACOS_DEPLOYMENT_TARGET }}" ]; then
+            echo "::error::unreal-mcp-bridge targets macOS $bridge_minos, expected ${{ env.MACOS_DEPLOYMENT_TARGET }}"
+            exit 1
+          fi
 
       - name: Package
         run: cmake --build build --target package_suite_macos
@@ -383,6 +390,13 @@ jobs:
               exit 1
             fi
           done
+          bridge="build/bin/unreal-mcp-bridge"
+          bridge_minos=$(otool -l "$bridge" | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}')
+          echo "unreal-mcp-bridge: minos=$bridge_minos"
+          if [ "$bridge_minos" != "${{ env.MACOS_DEPLOYMENT_TARGET }}" ]; then
+            echo "::error::unreal-mcp-bridge targets macOS $bridge_minos, expected ${{ env.MACOS_DEPLOYMENT_TARGET }}"
+            exit 1
+          fi
 
       - name: Package Symbols
         if: env.PACKAGE_SYMBOLS == 'ON'
@@ -558,6 +572,7 @@ jobs:
             - **UnrealNG** - Main ZX Spectrum emulator
             - **Screen Viewer** - Display viewer utility
             - **Video Wall** - Multi-screen display application
+            - **MCP Bridge** - Stdio JSON-RPC bridge daemon (`unreal-mcp-bridge`)
 
             ### Downloads
 

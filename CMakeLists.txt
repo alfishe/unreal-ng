@@ -10,12 +10,18 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ToolchainDetection.cmake)
 
 
 # ========================================
-# Build Options
+# Build Options (Opt-in dev targets are OFF by default for fast builds)
 # ========================================
-option(TESTS "Enable tests" ON)
-option(BENCHMARKS "Enable benchmarks" ON)
+# Enable tests: -DTESTS=ON -> then `ninja core-tests`
+option(TESTS "Enable tests" OFF)
+# Enable benchmarks: -DBENCHMARKS=ON -> then `ninja core-benchmarks`
+option(BENCHMARKS "Enable benchmarks" OFF)
+# Enable testclient console app: -DBUILD_TESTCLIENT=ON -> then `ninja testclient`
+option(BUILD_TESTCLIENT "Build testclient console app" OFF)
 option(BUILD_QT_APPS "Build Qt-based applications (unreal-qt, unreal-screen-viewer)" ON)
 option(BUILD_POC "Build PoC research tools (codec comparison etc.)" OFF)
+
+
 
 # Automation options (enabled by default for full builds)
 option(ENABLE_AUTOMATION "Enable automation features (Lua, Python, WebAPI, CLI)" ON)
@@ -298,8 +304,10 @@ endif ()
 # ========================================
 # Emulator Test Console Client
 # ========================================
-message(STATUS ">>> Building testclient")
-add_subdirectory(testclient)
+if (BUILD_TESTCLIENT)
+    message(STATUS ">>> Building testclient")
+    add_subdirectory(testclient EXCLUDE_FROM_ALL)
+endif ()
 
 # ========================================
 # Qt-based Applications
@@ -316,22 +324,26 @@ if (BUILD_QT_APPS)
 endif ()
 
 # ========================================
-# Unit Tests
+# Unit Tests (Opt-in)
+# To build and run: cmake -DTESTS=ON ... && ninja core-tests
 # ========================================
 if (TESTS)
 	message(STATUS ">>> Building tests")
-	add_subdirectory(core/tests)
+	add_subdirectory(core/tests EXCLUDE_FROM_ALL)
 endif (TESTS)
 
 # ========================================
-# Benchmarks
+# Benchmarks (Opt-in)
+# To build and run: cmake -DBENCHMARKS=ON ... && ninja core-benchmarks
 # ========================================
 if (BENCHMARKS)
 	message(STATUS ">>> Building benchmarks")
 	# Prevent Google benchmark from building its own tests
 	set(BENCHMARK_ENABLE_TESTING OFF)
-	add_subdirectory(core/benchmarks)
+	add_subdirectory(core/benchmarks EXCLUDE_FROM_ALL)
 endif (BENCHMARKS)
+
+
 
 # ========================================
 # PoC research tools (opt-in)
@@ -365,6 +377,7 @@ endif ()
 message(STATUS "====================================================")
 
 # ========================================
+# ========================================
 # Combined Packaging (All Qt Apps)
 # ========================================
 if (BUILD_QT_APPS)
@@ -372,6 +385,11 @@ if (BUILD_QT_APPS)
     set(DATA_PATH "${CMAKE_CURRENT_SOURCE_DIR}/data")
     set(CONFIGS_DIR "${DATA_PATH}/configs")
     set(SUITE_STAGING_DIR "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite")
+
+    set(SUITE_DEPS unreal-qt unreal-screen-viewer unreal-videowall)
+    if (TARGET unreal-mcp-bridge)
+        list(APPEND SUITE_DEPS unreal-mcp-bridge)
+    endif()
     
     # macOS: Combined DMG with all apps
     if(APPLE)
@@ -380,8 +398,8 @@ if (BUILD_QT_APPS)
             HINTS "${QT_INSTALL_PATH}/bin" "${QT_FOUND_PATH}/bin"
             DOC "Path to macdeployqt executable"
         )
-        
-        add_custom_target(package_suite_macos
+
+        set(MACOS_PACKAGE_COMMANDS
             # Create staging directory
             COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
             COMMAND ${CMAKE_COMMAND} -E remove_directory "${SUITE_STAGING_DIR}"
@@ -391,7 +409,15 @@ if (BUILD_QT_APPS)
             COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-qt.app" "${SUITE_STAGING_DIR}/UnrealNG.app"
             COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.app" "${SUITE_STAGING_DIR}/Screen Viewer.app"
             COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-videowall.app" "${SUITE_STAGING_DIR}/Video Wall.app"
-            
+        )
+
+        if(TARGET unreal-mcp-bridge)
+            list(APPEND MACOS_PACKAGE_COMMANDS
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_BINARY_DIR}/bin/unreal-mcp-bridge" "${SUITE_STAGING_DIR}/unreal-mcp-bridge"
+            )
+        endif()
+
+        list(APPEND MACOS_PACKAGE_COMMANDS
             # Copy shared resources into ALL app bundles
             # (unreal-qt POST_BUILD already copies to bin/unreal-qt.app, but cp -a may miss if POST_BUILD ran before copy)
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/fonts"
@@ -426,11 +452,22 @@ if (BUILD_QT_APPS)
             COMMAND codesign --force --deep --options runtime --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/entitlements.plist" --sign - "${SUITE_STAGING_DIR}/UnrealNG.app"
             COMMAND codesign --force --deep --options runtime --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/entitlements.plist" --sign - "${SUITE_STAGING_DIR}/Screen Viewer.app"
             COMMAND codesign --force --deep --options runtime --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/entitlements.plist" --sign - "${SUITE_STAGING_DIR}/Video Wall.app"
-            
+        )
+
+        if(TARGET unreal-mcp-bridge)
+            list(APPEND MACOS_PACKAGE_COMMANDS
+                COMMAND codesign --force --options runtime --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/entitlements.plist" --sign - "${SUITE_STAGING_DIR}/unreal-mcp-bridge"
+            )
+        endif()
+
+        list(APPEND MACOS_PACKAGE_COMMANDS
             # Create combined DMG from the correctly signed staging directory
             COMMAND hdiutil create -volname "UnrealNG Suite" -srcfolder "${SUITE_STAGING_DIR}" -ov -format UDZO "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite.dmg"
-            
-            DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
+        )
+
+        add_custom_target(package_suite_macos
+            ${MACOS_PACKAGE_COMMANDS}
+            DEPENDS ${SUITE_DEPS}
             COMMENT "Creating combined macOS DMG with all applications (signed with entitlements)"
         )
     endif()
@@ -442,9 +479,8 @@ if (BUILD_QT_APPS)
             HINTS "${QT_INSTALL_PATH}/bin" "${QT_FOUND_PATH}/bin"
             DOC "Path to windeployqt6 executable"
         )
-        
-        # Create base packaging target (common to all Windows toolchains)
-        add_custom_target(package_suite_windows
+
+        set(WIN_PACKAGE_COMMANDS
             # Create staging directory
             COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
             COMMAND ${CMAKE_COMMAND} -E remove_directory "${SUITE_STAGING_DIR}"
@@ -460,7 +496,17 @@ if (BUILD_QT_APPS)
             COMMAND ${CMAKE_COMMAND} -E copy
                 "${CMAKE_BINARY_DIR}/bin/unreal-videowall.exe"
                 "${SUITE_STAGING_DIR}/"
-            
+        )
+
+        if(TARGET unreal-mcp-bridge)
+            list(APPEND WIN_PACKAGE_COMMANDS
+                COMMAND ${CMAKE_COMMAND} -E copy
+                    "${CMAKE_BINARY_DIR}/bin/unreal-mcp-bridge.exe"
+                    "${SUITE_STAGING_DIR}/"
+            )
+        endif()
+
+        list(APPEND WIN_PACKAGE_COMMANDS
             # Run windeployqt on each executable to copy Qt DLLs and plugins
             COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-qt.exe" --no-translations
             COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-screen-viewer.exe" --no-translations
@@ -483,8 +529,12 @@ if (BUILD_QT_APPS)
                 ${CMAKE_COMMAND} -E tar "cf"
                 "UnrealNG-Suite-Windows.zip"
                 "--format=zip" "--" "UnrealNG-Suite"
-
-            DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
+        )
+        
+        # Create base packaging target (common to all Windows toolchains)
+        add_custom_target(package_suite_windows
+            ${WIN_PACKAGE_COMMANDS}
+            DEPENDS ${SUITE_DEPS}
             COMMENT "Creating combined Windows ZIP with all applications and Qt dependencies"
         )
         
@@ -545,7 +595,7 @@ if (BUILD_QT_APPS)
     
     # Linux: Combined tarball with all apps and shared resources
     if(UNIX AND NOT APPLE)
-        add_custom_target(package_suite_linux
+        set(LINUX_PACKAGE_COMMANDS
             # Create staging directory
             COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
             COMMAND ${CMAKE_COMMAND} -E remove_directory "${SUITE_STAGING_DIR}"
@@ -561,7 +611,17 @@ if (BUILD_QT_APPS)
             COMMAND ${CMAKE_COMMAND} -E copy
                 "${CMAKE_BINARY_DIR}/bin/unreal-videowall"
                 "${SUITE_STAGING_DIR}/"
-            
+        )
+
+        if(TARGET unreal-mcp-bridge)
+            list(APPEND LINUX_PACKAGE_COMMANDS
+                COMMAND ${CMAKE_COMMAND} -E copy
+                    "${CMAKE_BINARY_DIR}/bin/unreal-mcp-bridge"
+                    "${SUITE_STAGING_DIR}/"
+            )
+        endif()
+
+        list(APPEND LINUX_PACKAGE_COMMANDS
             # Copy shared resources (only once)
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/fonts"
@@ -590,8 +650,11 @@ if (BUILD_QT_APPS)
             COMMAND ${CMAKE_COMMAND} -E tar "cfz"
                 "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite-Linux.tar.gz"
                 "--" "${SUITE_STAGING_DIR}"
-            
-            DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
+        )
+
+        add_custom_target(package_suite_linux
+            ${LINUX_PACKAGE_COMMANDS}
+            DEPENDS ${SUITE_DEPS}
             COMMENT "Creating combined Linux tarball with all applications"
         )
     endif()
@@ -608,8 +671,7 @@ if (BUILD_QT_APPS)
     set(SYMBOLS_STAGING_DIR "${CMAKE_BINARY_DIR}/packages/symbols")
 
     if(PACKAGE_SYMBOLS AND WIN32 AND MSVC)
-        # MSVC: Package PDB files
-        add_custom_target(package_symbols_windows
+        set(WIN_MSVC_SYMBOL_COMMANDS
             COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
             COMMAND ${CMAKE_COMMAND} -E remove_directory "${SYMBOLS_STAGING_DIR}"
             COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
@@ -624,22 +686,34 @@ if (BUILD_QT_APPS)
             COMMAND ${CMAKE_COMMAND} -E copy
                 "${CMAKE_BINARY_DIR}/bin/unreal-videowall.pdb"
                 "${SYMBOLS_STAGING_DIR}/"
+        )
 
+        if(TARGET unreal-mcp-bridge)
+            list(APPEND WIN_MSVC_SYMBOL_COMMANDS
+                COMMAND ${CMAKE_COMMAND} -E copy
+                    "${CMAKE_BINARY_DIR}/bin/unreal-mcp-bridge.pdb"
+                    "${SYMBOLS_STAGING_DIR}/"
+            )
+        endif()
+
+        list(APPEND WIN_MSVC_SYMBOL_COMMANDS
             # Create symbols ZIP
             COMMAND ${CMAKE_COMMAND} -E chdir "${CMAKE_BINARY_DIR}/packages"
                 ${CMAKE_COMMAND} -E tar "cf"
                 "UnrealNG-Symbols-Windows-MSVC.zip"
                 "--format=zip" "--" "symbols"
+        )
 
-            DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
+        # MSVC: Package PDB files
+        add_custom_target(package_symbols_windows
+            ${WIN_MSVC_SYMBOL_COMMANDS}
+            DEPENDS ${SUITE_DEPS}
             COMMENT "Packaging MSVC debug symbols (PDB files)"
         )
     endif()
 
     if(PACKAGE_SYMBOLS AND WIN32 AND MINGW)
-        # MinGW: Extract DWARF debug info and strip executables
-        # The symbols are extracted BEFORE the main package target runs
-        add_custom_target(package_symbols_mingw
+        set(WIN_MINGW_SYMBOL_COMMANDS
             COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
             COMMAND ${CMAKE_COMMAND} -E remove_directory "${SYMBOLS_STAGING_DIR}"
             COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
@@ -654,12 +728,30 @@ if (BUILD_QT_APPS)
             COMMAND objcopy --only-keep-debug
                 "${CMAKE_BINARY_DIR}/bin/unreal-videowall.exe"
                 "${SYMBOLS_STAGING_DIR}/unreal-videowall.debug"
+        )
 
+        if(TARGET unreal-mcp-bridge)
+            list(APPEND WIN_MINGW_SYMBOL_COMMANDS
+                COMMAND objcopy --only-keep-debug
+                    "${CMAKE_BINARY_DIR}/bin/unreal-mcp-bridge.exe"
+                    "${SYMBOLS_STAGING_DIR}/unreal-mcp-bridge.debug"
+            )
+        endif()
+
+        list(APPEND WIN_MINGW_SYMBOL_COMMANDS
             # Strip debug info from executables (in-place)
             COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-qt.exe"
             COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.exe"
             COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-videowall.exe"
+        )
 
+        if(TARGET unreal-mcp-bridge)
+            list(APPEND WIN_MINGW_SYMBOL_COMMANDS
+                COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-mcp-bridge.exe"
+            )
+        endif()
+
+        list(APPEND WIN_MINGW_SYMBOL_COMMANDS
             # Add debug link back to executable (for addr2line to find symbols)
             COMMAND objcopy --add-gnu-debuglink="${SYMBOLS_STAGING_DIR}/unreal-qt.debug"
                 "${CMAKE_BINARY_DIR}/bin/unreal-qt.exe"
@@ -667,21 +759,34 @@ if (BUILD_QT_APPS)
                 "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.exe"
             COMMAND objcopy --add-gnu-debuglink="${SYMBOLS_STAGING_DIR}/unreal-videowall.debug"
                 "${CMAKE_BINARY_DIR}/bin/unreal-videowall.exe"
+        )
 
+        if(TARGET unreal-mcp-bridge)
+            list(APPEND WIN_MINGW_SYMBOL_COMMANDS
+                COMMAND objcopy --add-gnu-debuglink="${SYMBOLS_STAGING_DIR}/unreal-mcp-bridge.debug"
+                    "${CMAKE_BINARY_DIR}/bin/unreal-mcp-bridge.exe"
+            )
+        endif()
+
+        list(APPEND WIN_MINGW_SYMBOL_COMMANDS
             # Create symbols ZIP
             COMMAND ${CMAKE_COMMAND} -E chdir "${CMAKE_BINARY_DIR}/packages"
                 ${CMAKE_COMMAND} -E tar "cf"
                 "UnrealNG-Symbols-Windows-MinGW.zip"
                 "--format=zip" "--" "symbols"
+        )
 
-            DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
+        # MinGW: Extract DWARF debug info and strip executables
+        # The symbols are extracted BEFORE the main package target runs
+        add_custom_target(package_symbols_mingw
+            ${WIN_MINGW_SYMBOL_COMMANDS}
+            DEPENDS ${SUITE_DEPS}
             COMMENT "Extracting MinGW debug symbols (DWARF) and stripping executables"
         )
     endif()
 
     if(PACKAGE_SYMBOLS AND UNIX AND NOT APPLE)
-        # Linux: Extract debug info and strip executables
-        add_custom_target(package_symbols_linux
+        set(LINUX_SYMBOL_COMMANDS
             COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
             COMMAND ${CMAKE_COMMAND} -E remove_directory "${SYMBOLS_STAGING_DIR}"
             COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
@@ -696,12 +801,30 @@ if (BUILD_QT_APPS)
             COMMAND objcopy --only-keep-debug
                 "${CMAKE_BINARY_DIR}/bin/unreal-videowall"
                 "${SYMBOLS_STAGING_DIR}/unreal-videowall.debug"
+        )
 
+        if(TARGET unreal-mcp-bridge)
+            list(APPEND LINUX_SYMBOL_COMMANDS
+                COMMAND objcopy --only-keep-debug
+                    "${CMAKE_BINARY_DIR}/bin/unreal-mcp-bridge"
+                    "${SYMBOLS_STAGING_DIR}/unreal-mcp-bridge.debug"
+            )
+        endif()
+
+        list(APPEND LINUX_SYMBOL_COMMANDS
             # Strip executables
             COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-qt"
             COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer"
             COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-videowall"
+        )
 
+        if(TARGET unreal-mcp-bridge)
+            list(APPEND LINUX_SYMBOL_COMMANDS
+                COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/bin/unreal-mcp-bridge"
+            )
+        endif()
+
+        list(APPEND LINUX_SYMBOL_COMMANDS
             # Add debug link
             COMMAND objcopy --add-gnu-debuglink="${SYMBOLS_STAGING_DIR}/unreal-qt.debug"
                 "${CMAKE_BINARY_DIR}/bin/unreal-qt"
@@ -709,20 +832,32 @@ if (BUILD_QT_APPS)
                 "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer"
             COMMAND objcopy --add-gnu-debuglink="${SYMBOLS_STAGING_DIR}/unreal-videowall.debug"
                 "${CMAKE_BINARY_DIR}/bin/unreal-videowall"
+        )
 
+        if(TARGET unreal-mcp-bridge)
+            list(APPEND LINUX_SYMBOL_COMMANDS
+                COMMAND objcopy --add-gnu-debuglink="${SYMBOLS_STAGING_DIR}/unreal-mcp-bridge.debug"
+                    "${CMAKE_BINARY_DIR}/bin/unreal-mcp-bridge"
+            )
+        endif()
+
+        list(APPEND LINUX_SYMBOL_COMMANDS
             # Create symbols tarball
             COMMAND ${CMAKE_COMMAND} -E tar "cfz"
                 "${CMAKE_BINARY_DIR}/packages/UnrealNG-Symbols-Linux.tar.gz"
                 "--" "${SYMBOLS_STAGING_DIR}"
+        )
 
-            DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
+        # Linux: Extract debug info and strip executables
+        add_custom_target(package_symbols_linux
+            ${LINUX_SYMBOL_COMMANDS}
+            DEPENDS ${SUITE_DEPS}
             COMMENT "Extracting Linux debug symbols and stripping executables"
         )
     endif()
 
     if(PACKAGE_SYMBOLS AND APPLE)
-        # macOS: Generate dSYM bundles
-        add_custom_target(package_symbols_macos
+        set(MACOS_SYMBOL_COMMANDS
             COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
             COMMAND ${CMAKE_COMMAND} -E remove_directory "${SYMBOLS_STAGING_DIR}"
             COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
@@ -734,18 +869,39 @@ if (BUILD_QT_APPS)
                 -o "${SYMBOLS_STAGING_DIR}/unreal-screen-viewer.dSYM"
             COMMAND dsymutil "${CMAKE_BINARY_DIR}/bin/unreal-videowall.app/Contents/MacOS/unreal-videowall"
                 -o "${SYMBOLS_STAGING_DIR}/unreal-videowall.dSYM"
+        )
 
+        if(TARGET unreal-mcp-bridge)
+            list(APPEND MACOS_SYMBOL_COMMANDS
+                COMMAND dsymutil "${CMAKE_BINARY_DIR}/bin/unreal-mcp-bridge"
+                    -o "${SYMBOLS_STAGING_DIR}/unreal-mcp-bridge.dSYM"
+            )
+        endif()
+
+        list(APPEND MACOS_SYMBOL_COMMANDS
             # Strip executables in app bundles
             COMMAND strip -S "${CMAKE_BINARY_DIR}/bin/unreal-qt.app/Contents/MacOS/unreal-qt"
             COMMAND strip -S "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.app/Contents/MacOS/unreal-screen-viewer"
             COMMAND strip -S "${CMAKE_BINARY_DIR}/bin/unreal-videowall.app/Contents/MacOS/unreal-videowall"
+        )
 
+        if(TARGET unreal-mcp-bridge)
+            list(APPEND MACOS_SYMBOL_COMMANDS
+                COMMAND strip -S "${CMAKE_BINARY_DIR}/bin/unreal-mcp-bridge"
+            )
+        endif()
+
+        list(APPEND MACOS_SYMBOL_COMMANDS
             # Create symbols tarball (tar preserves dSYM bundle structure better than zip)
             COMMAND ${CMAKE_COMMAND} -E tar "cfz"
                 "${CMAKE_BINARY_DIR}/packages/UnrealNG-Symbols-macOS.tar.gz"
                 "--" "${SYMBOLS_STAGING_DIR}"
+        )
 
-            DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
+        # macOS: Generate dSYM bundles
+        add_custom_target(package_symbols_macos
+            ${MACOS_SYMBOL_COMMANDS}
+            DEPENDS ${SUITE_DEPS}
             COMMENT "Generating macOS dSYM bundles and stripping executables"
         )
     endif()

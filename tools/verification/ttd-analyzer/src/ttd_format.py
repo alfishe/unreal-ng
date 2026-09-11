@@ -256,6 +256,7 @@ class ChipsetState:
     p5f: int
     plsy256: int
     wd_shadow: bytes
+    video_mode: int
     comp_pal: bytes
     ulaplus_mode: int
     ulaplus_reg: int
@@ -801,6 +802,7 @@ def parse_chipset(r: _Reader) -> ChipsetState:
         p5f=r.u8(),
         plsy256=r.u8(),
         wd_shadow=r.take(4),
+        video_mode=r.u8(),
         comp_pal=r.take(16),
         ulaplus_mode=r.u8(),
         ulaplus_reg=r.u8(),

@@ -157,8 +157,9 @@ message("SOURCES:${SOURCES}")
 
 # Create test executable only if not already defined (prevents duplicates in unified builds)
 if (NOT TARGET ${PROJECT_NAME})
-    # Compile tests into executable
-    add_executable(${PROJECT_NAME} ${SOURCES})
+    # Compile tests into executable (EXCLUDE_FROM_ALL so tests are opt-in and not built by default)
+    add_executable(${PROJECT_NAME} EXCLUDE_FROM_ALL ${SOURCES})
+    set_target_properties(${PROJECT_NAME} PROPERTIES AUTOMOC OFF)
 
     # Declare _ALWAYS_USE_LOGGING for compiler
     target_compile_definitions(${PROJECT_NAME} PRIVATE _ALWAYS_USE_LOGGING)

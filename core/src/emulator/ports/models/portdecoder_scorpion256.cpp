@@ -667,7 +667,7 @@ void PortDecoder_Scorpion256::Port_1FFD(uint8_t value, uint16_t pc)
 /// SMUC sub-device select: within the #xxBA/#xxBE family A15/A13 (and A2)
 /// pick the chip (ports.md, SMUC section). Answers follow the unreal-speccy
 /// wiring (ancestor io.cpp) with the serial EEPROM replaced by the Xpeccy
-/// LC16 behavioral model (nvram.h)
+/// LC16 behavioral model (io/rtc/smucnvram.h)
 uint8_t PortDecoder_Scorpion256::ReadSMUCPort(uint16_t port)
 {
     EmulatorState& state = *_state;

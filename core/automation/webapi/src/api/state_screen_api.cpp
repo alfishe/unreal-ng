@@ -4,6 +4,7 @@
 #include "../emulator_api.h"
 
 #include <drogon/HttpResponse.h>
+#include <emulator/config.h>
 #include <emulator/cpu/z80.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
@@ -72,14 +73,7 @@ void EmulatorAPI::getStateScreen(const HttpRequestPtr& req, std::function<void(c
     bool is128K =
         (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PENTAGON || config.mem_model == MM_PLUS3);
 
-    std::string model = "ZX Spectrum 48K";
-    if (config.mem_model == MM_SPECTRUM128)
-        model = "ZX Spectrum 128K";
-    else if (config.mem_model == MM_PENTAGON)
-        model = "Pentagon 128K";
-    else if (config.mem_model == MM_PLUS3)
-        model = "ZX Spectrum +3";
-
+    std::string model = Config::GetModelFullName(config.mem_model);
     ret["model"] = model;
     ret["is_128k"] = is128K;
     ret["display_mode"] = "standard";
@@ -216,14 +210,7 @@ void EmulatorAPI::getStateScreenMode(const HttpRequestPtr& req, std::function<vo
     CONFIG& config = context->config;
     Json::Value ret;
 
-    std::string model = "ZX Spectrum 48K";
-    if (config.mem_model == MM_SPECTRUM128)
-        model = "ZX Spectrum 128K";
-    else if (config.mem_model == MM_PENTAGON)
-        model = "Pentagon 128K";
-    else if (config.mem_model == MM_PLUS3)
-        model = "ZX Spectrum +3";
-
+    std::string model = Config::GetModelFullName(config.mem_model);
     ret["model"] = model;
     ret["video_mode"] = "standard";
     ret["resolution"] = "256×192";
@@ -413,13 +400,7 @@ void EmulatorAPI::getBeamPosition(const HttpRequestPtr& req, std::function<void(
     const bool inPaper = zone == "paper";
     const bool inVisible = vZone == "screen" && hZone != "hblank" && hZone != "beyond_line";
 
-    std::string model = "ZX Spectrum 48K";
-    if (config.mem_model == MM_SPECTRUM128)
-        model = "ZX Spectrum 128K";
-    else if (config.mem_model == MM_PENTAGON)
-        model = "Pentagon 128K";
-    else if (config.mem_model == MM_PLUS3)
-        model = "ZX Spectrum +3";
+    std::string model = Config::GetModelFullName(config.mem_model);
 
     Json::Value ret;
     ret["model"] = model;

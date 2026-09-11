@@ -1,8 +1,8 @@
 #include "stdafx.h"
 #include "pch.h"
 
-#include "debugger/ttd/machine_state_hash.h"
-#include "debugger/ttd/ttd_checkpoint.h"
+#include "debugger/ttd/machinestatehash.h"
+#include "debugger/ttd/ttdcheckpoint.h"
 #include "emulator/memory/scorpion/scorpionromwindow.h"
 #include "emulator/ports/models/scorpionfixture.h"
 

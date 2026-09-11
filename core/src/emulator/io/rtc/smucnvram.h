@@ -4,6 +4,11 @@
 #include <ctime>
 #include <chrono>
 
+/// RTC / NVRAM devices for clones and addon cards. Each hardware standard
+/// (the SMUC board's DS1685 CMOS + LC16 serial EEPROM below, the Dallas and
+/// Rus512 CMOS variants, future GLUK-type clocks for other machines) gets its
+/// own unit in this folder - they share nothing but the bus they sit behind
+
 enum CMOSTypeEnum
 {
 	None = 0,

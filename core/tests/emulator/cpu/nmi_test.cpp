@@ -14,7 +14,7 @@
 #include "stdafx.h"
 #include "pch.h"
 #include "_helpers/emulatortesthelper.h"
-#include "debugger/ttd/ttd_checkpoint.h"
+#include "debugger/ttd/ttdcheckpoint.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"

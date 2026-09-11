@@ -287,7 +287,7 @@ evidence base.
 
 Landed as:
 
-* `core/src/emulator/memory/nvram.h/.cpp` - class `SMUCNvram`: the Xpeccy LC16 behavioral
+* `core/src/emulator/io/rtc/smucnvram.h/.cpp` - class `SMUCNvram`: the Xpeccy LC16 behavioral
   port (`WriteSerialLink` / `ReadSerialLink` / `ResetSerialLinkState`, 2 KB backing buffer,
   contents survive reset; the old parallel-access API and the commented ancestor
   `NVRAM::write` block were removed). Renamed from `NVRAM` to avoid the collision with the

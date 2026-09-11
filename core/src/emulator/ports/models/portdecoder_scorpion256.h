@@ -2,8 +2,8 @@
 #include "stdafx.h"
 
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/rtc/smucnvram.h"
 #include "emulator/memory/memory.h"
-#include "emulator/memory/nvram.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
 
