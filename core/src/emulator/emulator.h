@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <functional>
 #include <mutex>
 #include <random>
@@ -100,6 +101,11 @@ protected:
     volatile bool _stopRequested = false;
 
     // Emulator state
+    // _pauseWaitMutex guards _isPaused transitions so the parked CPU thread's
+    // CV predicate (WaitWhilePaused) can never miss a Pause/Resume/Stop flip;
+    // _resumeCV wakes it in microseconds instead of the legacy 20 ms poll.
+    mutable std::mutex _pauseWaitMutex;
+    std::condition_variable _resumeCV;
     volatile bool _isPaused = false;
     std::atomic<bool> _isRunning{false};  // Atomic to support idempotent Stop()
     volatile bool _isDebug = false;

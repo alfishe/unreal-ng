@@ -129,6 +129,22 @@ public:
     ///       (e.g. breakpoint hit), since the pause loop is only reached at frame end.
     bool WaitForPauseConfirmation(uint32_t timeoutMs);
 
+    /// @brief Confirm the pause from the CPU thread itself when it parks mid-frame
+    /// @note Used by Emulator::WaitWhilePaused(): when the CPU parks inside a frame
+    ///       (breakpoint/watchpoint handler or the per-instruction pause check in
+    ///       Z80FrameCycle), Run()'s frame-end park/confirm path is unreachable
+    ///       above it. Confirming on MainLoop's behalf lets WaitForPauseConfirmation()
+    ///       callers observe the park immediately instead of burning their timeout.
+    void ConfirmPauseFromCpu();
+
+    /// @brief Eagerly drop a (possibly) stale pause confirmation
+    /// @note Called from Emulator::Resume()/Stop() right after un-parking the CPU
+    ///       thread. Without this, a Pause() issued immediately after Resume()
+    ///       could consume a stale "parked" confirmation from the previous park
+    ///       and return while the emulation thread is already executing the next
+    ///       frame - two Z80 drivers at once.
+    void InvalidatePauseConfirmation();
+
 protected:
     void RunFrame();
     void ExecuteCPUFrameCycle();
