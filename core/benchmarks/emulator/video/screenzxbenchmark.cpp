@@ -1,4 +1,4 @@
-#include "screenzx_benchmark.h"
+#include "screenzxbenchmark.h"
 
 #include <benchmark/benchmark.h>
 

@@ -22,7 +22,7 @@
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
 #include "debugger/ttd/timetravelmanager.h"
-#include "debugger/ttd/ttd_coverage_index.h"
+#include "debugger/ttd/ttdcoverageindex.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -205,7 +205,7 @@ BENCHMARK(BM_TTD_CoverageIndex_RebuildPerFrame)
 
 #include <fstream>
 
-#include "debugger/ttd/ttd_probe.h"
+#include "debugger/ttd/ttdprobe.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 
