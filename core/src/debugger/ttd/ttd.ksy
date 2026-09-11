@@ -429,6 +429,11 @@ types:
         size: 4
         doc: 2F, 4F, 6F, 8F WD1793 shadow registers.
       # ---- Video / palette ----
+      - id: video_mode
+        type: u1
+        doc: |
+          VideoModeEnum at checkpoint time. Enables direct restore of
+          framebuffer geometry without re-parsing port latches.
       - id: comp_pal
         size: 16
         doc: Hardware palette registers.

@@ -41,6 +41,7 @@ public:
     void handleFDDDiskInserted(int id, Message* message);  // NC_FDD_DISK_INSERTED
     void handleFDDDiskEjected(int id, Message* message);   // NC_FDD_DISK_EJECTED
     void handleSystemReset(int id, Message* message);      // NC_SYSTEM_RESET
+    void handleCPUFreqChanged(int id, Message* message);   // NC_CPU_FREQ_CHANGED
 
     /// Drop the FPS measurement window; call whenever the emulator's frame counter is
     /// discontinuous (reset, snapshot load, time-travel seek) so a jump is not read as speed
@@ -85,6 +86,7 @@ private:
     StatusIndicator* _disk = nullptr;
     StatusIndicator* _hdd = nullptr;
     StatusIndicator* _sound = nullptr;
+    QLabel* _cpuFreq = nullptr;
     QLabel* _fps = nullptr;
 
     QTimer _pollTimer;

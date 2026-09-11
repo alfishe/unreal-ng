@@ -68,10 +68,10 @@ if (UNIX AND NOT APPLE)
 endif ()
 
 # Standalone mock test server (no emulator dependency, used by the Python verifier)
-option(BUILD_DEZOG_TEST_SERVER "Build DZRP standalone mock test server" ON)
+option(BUILD_DEZOG_TEST_SERVER "Build DZRP standalone mock test server" OFF)
 
 if (BUILD_DEZOG_TEST_SERVER)
-    add_executable(dezog-test-server
+    add_executable(dezog-test-server EXCLUDE_FROM_ALL
         test/test-server.cpp
         ${PROTOCOL_SOURCES}
     )
@@ -90,10 +90,10 @@ endif ()
 
 # Headless real-emulator host (production module + one live emulator instance).
 # Used by tools/verification/dezog/verify_dzrp_emulator.py --launch.
-option(BUILD_DEZOG_EMULATOR_HOST "Build headless DeZog emulator host" ON)
+option(BUILD_DEZOG_EMULATOR_HOST "Build headless DeZog emulator host" OFF)
 
 if (BUILD_DEZOG_EMULATOR_HOST AND DEZOG_HAS_CORE)
-    add_executable(dezog-emulator-host
+    add_executable(dezog-emulator-host EXCLUDE_FROM_ALL
         test/emulator-host.cpp
     )
     target_include_directories(dezog-emulator-host PRIVATE
@@ -105,5 +105,6 @@ if (BUILD_DEZOG_EMULATOR_HOST AND DEZOG_HAS_CORE)
         target_link_libraries(dezog-emulator-host PRIVATE pthread)
     endif ()
 endif ()
+
 
 message("<< <${PROJECT_NAME}>")

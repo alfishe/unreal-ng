@@ -7,7 +7,7 @@
 #include "common/sound/filters/filter_decimator.h"
 #include "common/sound/filters/filter_interpolate.h"
 #include "emulator/ports/portdecoder.h"
-#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
+#include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 
 /// Information:
 /// See:

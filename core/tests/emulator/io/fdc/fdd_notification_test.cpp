@@ -13,6 +13,8 @@
 #include <vector>
 #include <thread>
 #include <chrono>
+#include <functional>
+#include <mutex>
 
 // ==================== DiskImage Path Tests ====================
 
@@ -132,15 +134,23 @@ namespace {
         std::string diskPath;
     };
     
+    // All accesses to both capture vectors happen under this mutex: the
+    // MessageCenter worker thread push_backs from Dispatch() while test
+    // threads read/clear from WaitForCondition polls and SetUp. An
+    // unsynchronized std::vector is UB - a push_back reallocating during a
+    // concurrent size()/operator[] read yields torn state (same latent race
+    // as the one observed in fdc_notification_test.cpp).
+    std::mutex g_captureMutex;
     std::vector<CapturedDiskEvent> g_insertedDisks;
     std::vector<CapturedDiskEvent> g_ejectedDisks;
     bool g_observersRegistered = false;
-    
+
     void onDiskInserted(int id, Message* msg)
     {
         if (msg && msg->obj)
         {
             FDDDiskPayload* payload = static_cast<FDDDiskPayload*>(msg->obj);
+            std::lock_guard<std::mutex> lock(g_captureMutex);
             g_insertedDisks.push_back({
                 payload->_emulatorId.toString(),
                 payload->_driveId,
@@ -148,18 +158,64 @@ namespace {
             });
         }
     }
-    
+
     void onDiskEjected(int id, Message* msg)
     {
         if (msg && msg->obj)
         {
             FDDDiskPayload* payload = static_cast<FDDDiskPayload*>(msg->obj);
+            std::lock_guard<std::mutex> lock(g_captureMutex);
             g_ejectedDisks.push_back({
                 payload->_emulatorId.toString(),
                 payload->_driveId,
                 payload->_diskPath
             });
         }
+    }
+
+    void clearInserted()
+    {
+        std::lock_guard<std::mutex> lock(g_captureMutex);
+        g_insertedDisks.clear();
+    }
+
+    size_t insertedCount()
+    {
+        std::lock_guard<std::mutex> lock(g_captureMutex);
+        return g_insertedDisks.size();
+    }
+
+    size_t ejectedCount()
+    {
+        std::lock_guard<std::mutex> lock(g_captureMutex);
+        return g_ejectedDisks.size();
+    }
+
+    // Copies taken under the capture mutex - references into the vectors
+    // would dangle as soon as the worker thread push_backs again.
+    CapturedDiskEvent insertedAt(size_t index)
+    {
+        std::lock_guard<std::mutex> lock(g_captureMutex);
+        return g_insertedDisks[index];
+    }
+
+    CapturedDiskEvent ejectedAt(size_t index)
+    {
+        std::lock_guard<std::mutex> lock(g_captureMutex);
+        return g_ejectedDisks[index];
+    }
+
+    bool hasInsertedWithDrive(uint8_t driveId)
+    {
+        std::lock_guard<std::mutex> lock(g_captureMutex);
+        for (const auto& captured : g_insertedDisks)
+        {
+            if (captured.driveId == driveId)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 }
 
@@ -195,9 +251,27 @@ protected:
 
     void SetUp() override
     {
-        // Clear captured events before each test
-        g_insertedDisks.clear();
-        g_ejectedDisks.clear();
+        // Barrier against cross-test pollution (same rationale as in
+        // fdc_notification_test.cpp): the previous test's last posts may still
+        // sit in the MessageCenter queue while its own WaitForCondition
+        // already returned. Posting a sentinel through the same
+        // single-FIFO-worker queue and waiting for it to be captured guarantees
+        // every earlier post (any topic) has been dispatched by the time SetUp
+        // clears the vectors.
+        constexpr uint8_t SENTINEL_DRIVE = 0xFF;  // No test or FDD uses this drive index
+        FDDDiskPayload* sentinel = new FDDDiskPayload(unreal::UUID(), SENTINEL_DRIVE, "");
+        MessageCenter::DefaultMessageCenter().Post(NC_FDD_DISK_INSERTED, sentinel, true);
+        if (!WaitForCondition([&SENTINEL_DRIVE]() { return hasInsertedWithDrive(SENTINEL_DRIVE); }, 1000))
+        {
+            FAIL() << "MessageCenter drain sentinel not dispatched within 1000 ms";
+        }
+
+        // Drain complete - clear captured events for this test
+        {
+            std::lock_guard<std::mutex> lock(g_captureMutex);
+            g_insertedDisks.clear();
+            g_ejectedDisks.clear();
+        }
     }
 };
 
@@ -210,11 +284,11 @@ TEST_F(FDDNotificationTest, InsertDiskSendsNotificationWithFullContext)
     image.setFilePath(testPath);
     
     fdd.insertDisk(&image);
-    ASSERT_TRUE(WaitForCondition([]() { return !g_insertedDisks.empty(); }));
-    
-    ASSERT_EQ(g_insertedDisks.size(), 1);
-    EXPECT_EQ(g_insertedDisks[0].diskPath, testPath);
-    EXPECT_EQ(g_insertedDisks[0].driveId, 0);  // First FDD is drive 0
+    ASSERT_TRUE(WaitForCondition([]() { return insertedCount() > 0; }));
+
+    ASSERT_EQ(insertedCount(), 1u);
+    EXPECT_EQ(insertedAt(0).diskPath, testPath);
+    EXPECT_EQ(insertedAt(0).driveId, 0);  // First FDD is drive 0
 }
 
 TEST_F(FDDNotificationTest, EjectDiskSendsNotificationWithFullContext)
@@ -226,35 +300,37 @@ TEST_F(FDDNotificationTest, EjectDiskSendsNotificationWithFullContext)
     image.setFilePath(testPath);
     
     fdd.insertDisk(&image);
-    ASSERT_TRUE(WaitForCondition([]() { return !g_insertedDisks.empty(); }));
-    g_insertedDisks.clear();  // Clear the insertion notification
-    
+    ASSERT_TRUE(WaitForCondition([]() { return insertedCount() > 0; }));
+    clearInserted();  // Clear the insertion notification
+
     fdd.ejectDisk();
-    ASSERT_TRUE(WaitForCondition([]() { return !g_ejectedDisks.empty(); }));
-    
-    ASSERT_EQ(g_ejectedDisks.size(), 1);
-    EXPECT_EQ(g_ejectedDisks[0].diskPath, testPath);
-    EXPECT_EQ(g_ejectedDisks[0].driveId, 0);
+    ASSERT_TRUE(WaitForCondition([]() { return ejectedCount() > 0; }));
+
+    ASSERT_EQ(ejectedCount(), 1u);
+    EXPECT_EQ(ejectedAt(0).diskPath, testPath);
+    EXPECT_EQ(ejectedAt(0).driveId, 0);
 }
 
 TEST_F(FDDNotificationTest, InsertNullDoesNotSendNotification)
 {
     EmulatorContext ctx;
     FDD fdd(&ctx);
-    
+
     fdd.insertDisk(nullptr);
-    
-    EXPECT_TRUE(g_insertedDisks.empty());
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+    EXPECT_EQ(insertedCount(), 0u);
 }
 
 TEST_F(FDDNotificationTest, EjectWhenNoDiskInsertedDoesNotSendNotification)
 {
     EmulatorContext ctx;
     FDD fdd(&ctx);
-    
+
     fdd.ejectDisk();
-    
-    EXPECT_TRUE(g_ejectedDisks.empty());
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+    EXPECT_EQ(ejectedCount(), 0u);
 }
 
 TEST_F(FDDNotificationTest, MultipleInsertEjectCycles)
@@ -267,29 +343,29 @@ TEST_F(FDDNotificationTest, MultipleInsertEjectCycles)
     
     // Insert disk 1
     fdd.insertDisk(&image1);
-    ASSERT_TRUE(WaitForCondition([]() { return g_insertedDisks.size() == 1; }));
-    
+    ASSERT_TRUE(WaitForCondition([]() { return insertedCount() == 1; }));
+
     // Eject disk 1
     fdd.ejectDisk();
-    ASSERT_TRUE(WaitForCondition([]() { return g_ejectedDisks.size() == 1; }));
-    
+    ASSERT_TRUE(WaitForCondition([]() { return ejectedCount() == 1; }));
+
     // Re-insert same disk with different path (simulating disk swap)
     image1.setFilePath("/disk2.trd");
     fdd.insertDisk(&image1);
-    ASSERT_TRUE(WaitForCondition([]() { return g_insertedDisks.size() == 2; }));
-    
+    ASSERT_TRUE(WaitForCondition([]() { return insertedCount() == 2; }));
+
     // Eject again
     fdd.ejectDisk();
-    ASSERT_TRUE(WaitForCondition([]() { return g_ejectedDisks.size() == 2; }));
-    
+    ASSERT_TRUE(WaitForCondition([]() { return ejectedCount() == 2; }));
+
     // Should have 2 insertions and 2 ejections
-    ASSERT_EQ(g_insertedDisks.size(), 2);
-    ASSERT_EQ(g_ejectedDisks.size(), 2);
-    
-    EXPECT_EQ(g_insertedDisks[0].diskPath, "/disk1.trd");
-    EXPECT_EQ(g_insertedDisks[1].diskPath, "/disk2.trd");
-    EXPECT_EQ(g_ejectedDisks[0].diskPath, "/disk1.trd");
-    EXPECT_EQ(g_ejectedDisks[1].diskPath, "/disk2.trd");
+    ASSERT_EQ(insertedCount(), 2u);
+    ASSERT_EQ(ejectedCount(), 2u);
+
+    EXPECT_EQ(insertedAt(0).diskPath, "/disk1.trd");
+    EXPECT_EQ(insertedAt(1).diskPath, "/disk2.trd");
+    EXPECT_EQ(ejectedAt(0).diskPath, "/disk1.trd");
+    EXPECT_EQ(ejectedAt(1).diskPath, "/disk2.trd");
 }
 
 TEST_F(FDDNotificationTest, InsertWithEmptyPath)
@@ -300,10 +376,10 @@ TEST_F(FDDNotificationTest, InsertWithEmptyPath)
     // Don't set path - should be empty
     
     fdd.insertDisk(&image);
-    ASSERT_TRUE(WaitForCondition([]() { return !g_insertedDisks.empty(); }));
-    
-    ASSERT_EQ(g_insertedDisks.size(), 1);
-    EXPECT_TRUE(g_insertedDisks[0].diskPath.empty());
+    ASSERT_TRUE(WaitForCondition([]() { return insertedCount() > 0; }));
+
+    ASSERT_EQ(insertedCount(), 1u);
+    EXPECT_TRUE(insertedAt(0).diskPath.empty());
 }
 
 TEST_F(FDDNotificationTest, PayloadContainsDriveId)
@@ -314,9 +390,9 @@ TEST_F(FDDNotificationTest, PayloadContainsDriveId)
     image.setFilePath("/test.trd");
     
     fdd.insertDisk(&image);
-    ASSERT_TRUE(WaitForCondition([]() { return !g_insertedDisks.empty(); }));
-    
-    ASSERT_EQ(g_insertedDisks.size(), 1);
+    ASSERT_TRUE(WaitForCondition([]() { return insertedCount() > 0; }));
+
+    ASSERT_EQ(insertedCount(), 1u);
     // Drive ID should be 0 for default FDD
-    EXPECT_EQ(g_insertedDisks[0].driveId, 0);
+    EXPECT_EQ(insertedAt(0).driveId, 0);
 }

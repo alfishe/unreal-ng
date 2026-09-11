@@ -5,6 +5,7 @@
 
 #include <drogon/HttpResponse.h>
 #include <debugger/ttd/timetravelmanager.h>  // TimeTravelManager (Item 6 markers)
+#include <emulator/config.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/emulatorcontext.h>
@@ -65,14 +66,7 @@ void EmulatorAPI::getStateMemory(const HttpRequestPtr& req, std::function<void(c
     Json::Value ret;
 
     // Model information
-    std::string model = "ZX Spectrum 48K";
-    if (config.mem_model == MM_SPECTRUM128)
-        model = "ZX Spectrum 128K";
-    else if (config.mem_model == MM_PENTAGON)
-        model = "Pentagon 128K";
-    else if (config.mem_model == MM_PLUS3)
-        model = "ZX Spectrum +3";
-
+    std::string model = Config::GetModelFullName(config.mem_model);
     ret["model"] = model;
 
     // ROM configuration
@@ -158,14 +152,7 @@ void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& req, std::function<voi
     Json::Value ret;
 
     // Model
-    std::string model = "ZX Spectrum 48K";
-    if (config.mem_model == MM_SPECTRUM128)
-        model = "ZX Spectrum 128K";
-    else if (config.mem_model == MM_PENTAGON)
-        model = "Pentagon 128K";
-    else if (config.mem_model == MM_PLUS3)
-        model = "ZX Spectrum +3";
-
+    std::string model = Config::GetModelFullName(config.mem_model);
     ret["model"] = model;
 
     // Bank mapping
@@ -275,27 +262,26 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
     Json::Value ret;
 
     // Model information
-    std::string model = "ZX Spectrum 48K";
+    std::string model = Config::GetModelFullName(config.mem_model);
     int totalROMPages = 1;
-    if (config.mem_model == MM_SPECTRUM128)
+    switch (config.mem_model)
     {
-        model = "ZX Spectrum 128K";
-        totalROMPages = 2;
-    }
-    else if (config.mem_model == MM_PENTAGON)
-    {
-        model = "Pentagon 128K";
-        totalROMPages = 4;
-    }
-    else if (config.mem_model == MM_PLUS3)
-    {
-        model = "ZX Spectrum +3";
-        totalROMPages = 4;
-    }
-    else if (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP)
-    {
-        model = (config.mem_model == MM_SCORP) ? "Scorpion ZS-256" : "Scorpion ZS-256 Turbo+";
-        totalROMPages = 4;
+        case MM_SPECTRUM128:
+            totalROMPages = 2;
+            break;
+        case MM_PENTAGON:
+        case MM_PLUS3:
+        case MM_SCORP:
+        case MM_PROFSCORP:
+        case MM_ATM3:
+        case MM_ATM710:
+        case MM_ATM450:
+        case MM_PROFI:
+            totalROMPages = 4;
+            break;
+        default:
+            totalROMPages = 1;
+            break;
     }
 
     ret["model"] = model;
@@ -581,7 +567,7 @@ void EmulatorAPI::writeMemory(const HttpRequestPtr& req, std::function<void(cons
 
     // Thread safety: DirectWriteToZ80Memory now mirrors MemoryWriteDebug's
     // call to TTDDirtyTracker::MarkDirty when TTD is enabled. The dirty
-    // bitmap is documented as emulator-thread-only (ttd_dirty_tracker.h),
+    // bitmap is documented as emulator-thread-only (ttddirtytracker.h),
     // so we must pause the Z80 thread before writing when recording is
     // active. The cost is one paused frame boundary (~20 ms worst case);
     // a no-op when no session is recording.
