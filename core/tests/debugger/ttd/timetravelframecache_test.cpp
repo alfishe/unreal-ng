@@ -231,6 +231,16 @@ TEST_F(TTD_FrameCache_Test, ScalesWithCpuFrequencyMultiplier)
     _context->emulatorState.next_z80_frequency_multiplier = kMultiplier;
     ASSERT_EQ(_context->emulatorState.current_z80_frequency_multiplier, kMultiplier);
 
+    // Mute this emulator instance's logger for the recording + cache build:
+    // 16x turbo frames run 16x past Screen::DrawPeriod's unscaled base-frame
+    // tolerance guard, which fires one MLOGERROR per render period — ~100K
+    // lines / 14MB per run (see scratch/parallel-investigation/). That flood
+    // throttles parallel shards behind slow terminal consumers. LogNone gates
+    // the core-side MLOGERROR level check; restored right after the replay.
+    // TODO: remove this mute once DrawPeriod's guard is multiplier-aware.
+    const LoggerLevel savedLogLevel = _context->pModuleLogger->GetLevel();
+    _context->pModuleLogger->SetLoggingLevel(LoggerLevel::LogNone);
+
     installBusyProgram();
     _ttd->StartRecording();
     _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
@@ -238,6 +248,11 @@ TEST_F(TTD_FrameCache_Test, ScalesWithCpuFrequencyMultiplier)
 
     const uint64_t frame = _ttd->SessionEndPosition().frame - 1;
     const ttd::TTDFrameCache* c = _ttd->GetFrameCache(frame);
+
+    // Unmute before any assertion: an ASSERT failure returns early and the
+    // level must not outlive the muted window above.
+    _context->pModuleLogger->SetLoggingLevel(savedLogLevel);
+
     ASSERT_NE(c, nullptr);
 
     // A 1x busy frame is ~13.5k instructions; at 16x expect well over 100k —
