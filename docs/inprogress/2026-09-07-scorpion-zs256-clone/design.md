@@ -66,7 +66,7 @@ flowchart LR
     PD --> AY
     PD -->|border| SCR
     MEM --> PR --> ROM
-    Z80 -->|fetch/read #0000-#0003| PR
+    Z80 -->|read #0100-#010F (svc paged)| PR
     Z80 -->|trap #3Dxx / NMI #0066| MEM
     Z80 -->|bank pointers| MEM
     SCR -->|bank5/7 pointer| MEM
@@ -130,7 +130,7 @@ prescribes.
 stateDiagram-v2
     [*] --> ROM0_boot: reset (p1FFD=0, p7FFD=0)
     ROM0_boot --> ROM1_48k: OUT #7FFD bit4
-    ROM0_boot --> Shadow: OUT #1FFD=02h / MNI button
+    ROM0_boot --> Shadow: OUT #1FFD=02h (MNI reaches it via page 3<br/>and the #0033 OUT trick — HW §9)
     ROM0_boot --> RAM0: OUT #1FFD bit0
     ROM1_48k --> TRDOS: fetch #3Dxx (trap armed)
     Shadow --> TRDOS: fetch #3Dxx (trap armed)
@@ -369,6 +369,10 @@ Model-agnostic (ATM3 will reuse it later); no Scorpion behavior leaks into the c
 
 ### 7.2 Magic-button orchestration
 
+> Reworked 2026-09-10 to the DD50 trigger model (hardware-reference §9,
+> [profrom-nmi-boot-analysis.md](profrom-nmi-boot-analysis.md)); the original design
+> wrote `p1FFD |= 0x02` — disproven, no register is written.
+
 ```mermaid
 sequenceDiagram
     participant U as User (F11 / menu / API)
@@ -377,12 +381,14 @@ sequenceDiagram
     participant M as Memory
     participant Z as Z80
     U->>E: RequestMNI()
-    E->>S: p1FFD |= 0x02 (set bit 1 only)
-    S-->>M: UpdateZ80Banks() → Shadow Monitor at #0000
-    E->>Z: RequestNonMaskedInterrupt()
-    Z->>Z: push PC, PC = #0066 (fetch from ROM2)
-    Note over S: p1FFD bit4/6/7 untouched → #C000 banking preserved
-    U->>U: monitor exit = software OUT (#1FFD),0
+    E->>S: scorpionDosTrigger = 1 (DD50.1)
+    S-->>M: UpdateZ80Banks() → page 3 (TR-DOS, current plane) at #0000
+    E->>Z: RequestNonMaskedInterrupt() (DD50.2)
+    Z->>Z: push PC, PC = #0066 (fetch from TR-DOS)
+    Note over M: firmware chain: #2A56 → #0807 → OUT (#1FFD),#12 at #0033 → service page
+    Note over S: p1FFD / p7FFD / plane register untouched — banking + plane preserved
+    M-->>S: first CPU read ≥ #4000 → trigger released, banks rebuilt
+    U->>U: monitor exit = software OUT (#1FFD),0 … RETN
 ```
 
 Entry point: `Emulator::RequestMNI()` — model-gated to Scorpion models; on other
@@ -396,9 +402,11 @@ Ctrl+F in commit ced71710 so F11 is free at main-window level, but the stale Hel
 binds F11 to Step In (`debuggerwindow.cpp:85`, window-scoped) so the two must not share
 an application-wide context; WebAPI
 `POST /api/v1/emulator/{id}/nmi {"magic": true}`; CLI/Python/Lua automation call.
-TTD: no new checkpoint fields needed — `p1FFD` is in `TTDChipsetState` and
+TTD: `scorpionDosTrigger` rides the `profrom_bank` pad in `TTDChipsetState` (size
+unchanged at 176) and is hashed in `MachineStateSnapshot` — the trigger is not
+reproducible from ports, the same doctrine as `profrom_bank`;
 `nmi_in_progress` already in `TTDCpuState` (`ttd_checkpoint.cpp:65,109,151`,
-`machine_state_hash.cpp:95`); Task 6 only adds a restore assertion. `Z80::retn()` is an
+`machine_state_hash.cpp:95`). `Z80::retn()` is an
 empty stub already called from the `ED45` handler (`op_ed.cpp:161`), and
 `ProcessInterrupts()` runs before every `Z80Step()` (`z80.cpp:409`), so both hook sites
 exist.

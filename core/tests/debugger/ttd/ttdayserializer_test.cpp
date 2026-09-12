@@ -371,8 +371,14 @@ TEST(TTD_AY_ManagerIntegration_Test, CaptureNow_PopulatesAyStateBlob)
     const ttd::TTDCheckpoint* cp = context->pTimeTravelManager->GetCheckpoint(0);
     ASSERT_NE(cp, nullptr);
 
-    EXPECT_EQ(cp->ayState.size(), 115u)
-        << "ayState blob must contain the TurboSound payload (1 + 2×57 bytes)";
+    const auto ayBlob = cp->peripheralBlobs.find(
+        static_cast<uint8_t>(ttd::PeripheralId::TurboSound));
+    ASSERT_NE(ayBlob, cp->peripheralBlobs.end())
+        << "TurboSound must register itself and appear in the checkpoint";
+    const auto ayState = ttd::TTDPeripheralRegistry::DecodeBlob(
+        static_cast<uint8_t>(ttd::PeripheralId::TurboSound), ayBlob->second);
+    EXPECT_EQ(ayState.size(), 115u)
+        << "TurboSound blob must contain the payload (1 + 2×57 bytes)";
 
     emulator.Stop();
     emulator.Release();

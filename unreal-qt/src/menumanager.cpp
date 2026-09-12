@@ -611,7 +611,11 @@ void MenuManager::createMachineMenu()
     std::set<MEM_MODEL> supportedModels = {
         MM_PENTAGON,      // Pentagon 128K/512K/1024K
         MM_SPECTRUM48,    // ZX-Spectrum 48K
-        MM_SPECTRUM128    // ZX-Spectrum 128K
+        MM_SPECTRUM128,   // ZX-Spectrum 128K
+        MM_SCORP,         // Scorpion ZS-256 (base ROM bundle; design:
+                          // docs/inprogress/2026-09-07-scorpion-zs256-clone)
+        MM_PROFSCORP      // Scorpion ZS-256 + ProfROM 4.01 (512 KB scorp_prof401.rom,
+                          // quadrant switching + #7EFD window; same design doc)
     };
 
     for (const auto& model : models)
@@ -699,6 +703,18 @@ void MenuManager::createMachineMenu()
         _machineModelActions[0]->setChecked(true);
         _currentModelShortName = _machineModelActions[0]->data().toString();
     }
+
+    _machineMenu->addSeparator();
+
+    // MNI - the Scorpion "magic button" (design: 2026-09-07-scorpion-zs256-clone,
+    // Task 6): NMI with the Shadow Monitor paged into #0000 so the handler at
+    // #0066 executes monitor code; plain NMI on other models. F11 at window
+    // level - the debugger window rebinds F11 to Step In while focused, and
+    // Full Screen lives on Ctrl+F.
+    _mniAction = _machineMenu->addAction(tr("&MNI (NMI + Service Monitor)"));
+    _mniAction->setShortcut(QKeySequence(Qt::Key_F11));
+    _mniAction->setStatusTip(tr("Non-maskable interrupt into the service monitor (plain NMI on other models)"));
+    connect(_mniAction, &QAction::triggered, this, &MenuManager::mniRequested);
 
     _machineMenu->addSeparator();
 
@@ -943,7 +959,8 @@ void MenuManager::createHelpMenu()
                                  "F5 - Start\n"
                                  "F6 - Pause\n"
                                  "F7 - Resume\n"
-                                 "Ctrl+R - Reset\n\n"
+                                 "Ctrl+R - Reset\n"
+                                 "F11 - MNI (NMI + Service Monitor)\n\n"
 
                                  "Speed:\n"
                                  "F1 - 1x (Normal)\n"

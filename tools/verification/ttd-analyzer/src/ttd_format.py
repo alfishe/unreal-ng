@@ -167,6 +167,22 @@ def crc32c(data: bytes, seed: int = 0) -> int:
 # ---------------------------------------------------------------------------
 
 
+# Mirrors ttd::dump::kMaxPeripheralBlobsPerCheckpoint — a guard against a corrupt
+# length driving an unbounded read loop, not a real design limit.
+MAX_PERIPHERAL_BLOBS_PER_CHECKPOINT = 64
+
+# PeripheralId enum (ttdserializable.h), for readable reporting of peripheral_blobs.
+PERIPHERAL_ID_NAMES = {
+    0: "TurboSound",
+    1: "BetaDisk",
+    2: "Tape",
+    3: "Covox",
+    4: "TSFM",
+    5: "GeneralSound",
+    6: "ScorpionProfROM",
+}
+
+
 @dataclass
 class Header:
     magic: bytes
@@ -176,6 +192,7 @@ class Header:
     model_ram_pages: int
     cpu_state_size: int
     chipset_state_size: int
+    rom_signature: int          # 0 = unknown (check skipped)
     captured_at_unix_ms: int
     emulator_id: str
     session_state: int
@@ -218,50 +235,29 @@ class CpuState:
 
 @dataclass
 class ChipsetState:
+    """Standard Spectrum 128K port latches + counters (120 bytes).
+
+    Extended / model-specific latches (pDFFD, p1FFD, the GMX and Quorum
+    groups, the ATM pFFF7 array, Scorpion ProfROM state, video_mode, ...)
+    are NOT here — they moved out to per-model TTDPeripheralRegistry
+    serializers and arrive as `peripheral_blob` entries.
+    """
     t_states: int
     frame_counter: int
     p7ffd: int
     pfe: int
     peff7: int
-    pxxxx: int
     pbffd: int
     pfffd: int
-    pdffd: int
-    pfdfd: int
-    p1ffd: int
     pff77: int
     border_attr: int
     flags: int
-    # Extended port latches
-    p7efd: int
-    p78fd: int
-    p7afd: int
-    p7cfd: int
-    gmx_config: int
-    gmx_magic_shift: int
-    p00: int
-    p80fd: int
-    afe: int
-    afb: int
-    aff77: int
-    active_ay: int
-    pbd: int
-    pbe: int
-    pbf: int
-    pffba: int
-    p7fba: int
-    p0f: int
-    p1f: int
-    p4f: int
-    p5f: int
-    plsy256: int
     wd_shadow: bytes
-    video_mode: int
     comp_pal: bytes
     ulaplus_mode: int
     ulaplus_reg: int
     ulaplus_cram: bytes
-    pfff7: bytes  # 32 bytes (8 × u32)
+    reserved: bytes  # 10 bytes of explicit filler, always zero
 
 
 @dataclass
@@ -293,10 +289,11 @@ class Checkpoint:
     #   ram_sub_slots[page * 4 + sub]
     # Each entry is either a slot index into TtdDump.slots or NEVER_TOUCHED_SLOT.
     ram_sub_slots: List[int] = field(default_factory=list)
-    ay_blob: bytes = b""
-    fdc_blob: bytes = b""
-    tape_blob: bytes = b""
-    covox_blob: bytes = b""
+    # All peripheral state from TTDPeripheralRegistry, keyed by PeripheralId.
+    # Every device goes through the registry — the core four and any
+    # model-specific ones (e.g. the Scorpion ProfROM plane / page / latches) —
+    # so a device absent on this machine simply has no entry.
+    peripheral_blobs: Dict[int, bytes] = field(default_factory=dict)
 
     # Backward-compat shim: ``ram_page_refs`` was the v1 name for the per-page
     # ref vector. v2 exposes the flat sub-slot list above; this property returns
@@ -689,6 +686,10 @@ def parse_header(r: _Reader) -> Header:
     model_ram_pages = r.u16()
     cpu_state_size = r.u16()
     chipset_state_size = r.u16()
+    # Fingerprint of the ROM region the session was recorded against.
+    # Checkpoints store ROM *page numbers*, never ROM bytes, so replaying
+    # against a different ROM set silently maps them onto different code.
+    rom_signature = r.u64()
     captured_at_unix_ms = r.u64()
     emulator_id_len = r.u8()
     emulator_id = r.take(emulator_id_len).decode("utf-8", errors="replace")
@@ -707,6 +708,7 @@ def parse_header(r: _Reader) -> Header:
         model_ram_pages=model_ram_pages,
         cpu_state_size=cpu_state_size,
         chipset_state_size=chipset_state_size,
+        rom_signature=rom_signature,
         captured_at_unix_ms=captured_at_unix_ms,
         emulator_id=emulator_id,
         session_state=session_state,
@@ -719,10 +721,11 @@ def parse_header(r: _Reader) -> Header:
 
 def parse_cpu(r: _Reader) -> CpuState:
     # The C++ ``TTDCpuState`` struct is plain POD with natural alignment —
-    # the writer emits ``sizeof(TTDCpuState)`` bytes verbatim, which on every
-    # supported compiler (GCC/Clang/MSVC, x86_64/arm64) includes 3 padding
-    # bytes at structurally-imposed offsets. We must skip them or every
-    # subsequent field will be misaligned.
+    # the writer emits ``sizeof(TTDCpuState)`` == 48 bytes verbatim. Three
+    # alignment gaps (offsets 31, 35, 43) are declared as named ``reservedN``
+    # members on the C++ side (so member-wise assignment copies them and they
+    # never leak uninitialized bytes into the state hash). They are always
+    # zero; we must still consume them or every subsequent field misaligns.
     #
     # Layout (offset → field):
     #   00-23 : 12 × u16 (pc..alt_hl)
@@ -742,16 +745,16 @@ def parse_cpu(r: _Reader) -> CpuState:
     alt_af = r.u16(); alt_bc = r.u16(); alt_de = r.u16(); alt_hl = r.u16()
     i = r.u8(); r_low = r.u8(); r_hi = r.u8()
     iff1 = r.u8(); iff2 = r.u8(); im = r.u8(); halted = r.u8()
-    r.u8()  # padding byte before memptr (offset 31)
+    r.u8()  # reserved0: explicit filler before memptr (offset 31)
     memptr = r.u16()
     q = r.u8()
-    r.u8()  # padding byte before eipos (offset 35)
+    r.u8()  # reserved1: explicit filler before eipos (offset 35)
     eipos = r.u16()
     haltpos = r.u16()
     nmi_in_progress = r.u8()
     int_pending = r.u8()
     int_gate = r.u8()
-    r.u8()  # padding byte before halt_cycle (offset 43)
+    r.u8()  # reserved2: explicit filler before halt_cycle (offset 43)
     halt_cycle = r.u32()
     return CpuState(
         pc=pc, sp=sp, af=af, bc=bc, de=de, hl=hl, ix=ix, iy=iy,
@@ -770,44 +773,17 @@ def parse_chipset(r: _Reader) -> ChipsetState:
         p7ffd=r.u8(),
         pfe=r.u8(),
         peff7=r.u8(),
-        pxxxx=r.u8(),
         pbffd=r.u8(),
         pfffd=r.u8(),
-        pdffd=r.u8(),
-        pfdfd=r.u8(),
-        p1ffd=r.u8(),
         pff77=r.u8(),
         border_attr=r.u8(),
         flags=r.u8(),
-        p7efd=r.u8(),
-        p78fd=r.u8(),
-        p7afd=r.u8(),
-        p7cfd=r.u8(),
-        gmx_config=r.u8(),
-        gmx_magic_shift=r.u8(),
-        p00=r.u8(),
-        p80fd=r.u8(),
-        afe=r.u8(),
-        afb=r.u8(),
-        aff77=r.u8(),
-        active_ay=r.u8(),
-        pbd=r.u8(),
-        pbe=r.u8(),
-        pbf=r.u8(),
-        pffba=r.u8(),
-        p7fba=r.u8(),
-        p0f=r.u8(),
-        p1f=r.u8(),
-        p4f=r.u8(),
-        p5f=r.u8(),
-        plsy256=r.u8(),
         wd_shadow=r.take(4),
-        video_mode=r.u8(),
         comp_pal=r.take(16),
         ulaplus_mode=r.u8(),
         ulaplus_reg=r.u8(),
         ulaplus_cram=r.take(64),
-        pfff7=r.take(32),
+        reserved=r.take(10),
     )
 
 
@@ -918,10 +894,18 @@ def parse_checkpoint(
     refs_count = model_ram_pages * SUB_PAGES_PER_EMU_PAGE
     ram_sub_slots = [r.u32() for _ in range(refs_count)]
 
-    ay = parse_blob(r)
-    fdc = parse_blob(r)
-    tape = parse_blob(r)
-    covox = parse_blob(r)
+    # Peripheral blobs, written sorted by peripheral id. Unknown ids are kept
+    # rather than skipped so a re-serialized session stays byte-identical.
+    peripheral_blob_count = r.u16()
+    if peripheral_blob_count > MAX_PERIPHERAL_BLOBS_PER_CHECKPOINT:
+        raise TtdFormatError(
+            f"checkpoint {index} has implausible peripheral blob count "
+            f"{peripheral_blob_count}"
+        )
+    peripheral_blobs: Dict[int, bytes] = {}
+    for _ in range(peripheral_blob_count):
+        peripheral_id = r.u8()
+        peripheral_blobs[peripheral_id] = parse_blob(r)
 
     return Checkpoint(
         index=index,
@@ -932,10 +916,7 @@ def parse_checkpoint(
         cpu=cpu,
         chipset=chipset,
         ram_sub_slots=ram_sub_slots,
-        ay_blob=ay,
-        fdc_blob=fdc,
-        tape_blob=tape,
-        covox_blob=covox,
+        peripheral_blobs=peripheral_blobs,
     )
 
 

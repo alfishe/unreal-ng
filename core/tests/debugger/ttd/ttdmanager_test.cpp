@@ -589,3 +589,89 @@ TEST_F(TimeTravelManager_Test, SessionHeapBytes_DropsToZero_OnInvalidate)
         << "Invalidate must release every heap allocation the session owned";
     EXPECT_EQ(info.checkpointCount, 0u);
 }
+
+// ===========================================================================
+// Peripheral registry wiring
+// ===========================================================================
+
+/// Every device — core and model-specific alike — reaches a checkpoint through
+/// TTDPeripheralRegistry. Nothing else registers them, so if this regresses a
+/// recording silently loses peripheral state with no error anywhere.
+TEST_F(TimeTravelManager_Test, StartRecording_RegistersConnectedCoreDevices)
+{
+    EnableTTD();
+
+    EXPECT_EQ(_ttd->GetPeripheralRegistry().Count(), 0u)
+        << "registrations are session-scoped, not eager";
+
+    ASSERT_TRUE(_ttd->StartRecording());
+
+    EmulatorContext* ctx = _emulator->GetContext();
+
+    // Registration mirrors what the machine actually has: a device the model
+    // does not provide must leave no entry at all, which is the whole point of
+    // a registry over fixed per-device slots.
+    EXPECT_EQ(_ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::Tape),
+              ctx->pTape != nullptr);
+    EXPECT_EQ(_ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::BetaDisk),
+              ctx->pBetaDisk != nullptr);
+    if (ctx->pSoundManager)
+    {
+        EXPECT_EQ(_ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::TurboSound),
+                  ctx->pSoundManager->getTurboSound() != nullptr);
+        EXPECT_EQ(_ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::Covox),
+                  ctx->pSoundManager->getCovox() != nullptr);
+    }
+}
+
+/// Captured checkpoints must carry a blob for every registered device, and the
+/// blob must decode back to that device's declared state size.
+TEST_F(TimeTravelManager_Test, Checkpoints_CarryABlobPerRegisteredDevice)
+{
+    EnableTTD();
+    ASSERT_TRUE(_ttd->StartRecording());
+    _ttd->OnFrameBoundary();
+
+    const ttd::TTDCheckpoint* cp = _ttd->GetCheckpoint(_ttd->GetCheckpointCount() - 1);
+    ASSERT_NE(cp, nullptr);
+
+    const auto& registry = _ttd->GetPeripheralRegistry();
+    ASSERT_GT(registry.Count(), 0u) << "nothing registered — test proves nothing";
+
+    for (uint8_t id = 0; id < static_cast<uint8_t>(ttd::PeripheralId::Count); ++id)
+    {
+        const auto pid = static_cast<ttd::PeripheralId>(id);
+        if (!registry.IsRegistered(pid))
+        {
+            EXPECT_EQ(cp->peripheralBlobs.count(id), 0u)
+                << "unregistered device " << +id << " must not occupy a blob";
+            continue;
+        }
+
+        ttd::TTDSerializable* device = registry.GetDevice(pid);
+        ASSERT_NE(device, nullptr);
+        if (device->TTDStateSize() == 0)
+            continue;   // stateless device contributes nothing by design
+
+        ASSERT_EQ(cp->peripheralBlobs.count(id), 1u)
+            << "no blob for registered device '" << device->TTDDeviceName() << "'";
+
+        const auto decoded =
+            ttd::TTDPeripheralRegistry::DecodeBlob(id, cp->peripheralBlobs.at(id));
+        EXPECT_EQ(decoded.size(), device->TTDStateSize())
+            << "blob for '" << device->TTDDeviceName() << "' does not decode to its state size";
+    }
+}
+
+/// Ending a session must drop every registration, including the devices owned
+/// by the emulator rather than by the manager.
+TEST_F(TimeTravelManager_Test, InvalidateSession_DropsAllRegistrations)
+{
+    EnableTTD();
+    ASSERT_TRUE(_ttd->StartRecording());
+    ASSERT_GT(_ttd->GetPeripheralRegistry().Count(), 0u);
+
+    _ttd->InvalidateSession("test");
+
+    EXPECT_EQ(_ttd->GetPeripheralRegistry().Count(), 0u);
+}

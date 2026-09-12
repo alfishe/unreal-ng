@@ -53,6 +53,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::pauseEmulator, "/api/v1/emulator/{id}/pause", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::resumeEmulator, "/api/v1/emulator/{id}/resume", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::resetEmulator, "/api/v1/emulator/{id}/reset", drogon::Post);
+    // NMI pulse (Scorpion MNI "magic button" with {"magic": true})
+    ADD_METHOD_TO(EmulatorAPI::requestNmi, "/api/v1/emulator/{id}/nmi", drogon::Post);
 
     // Switch machine model (stops current emulator, creates new one with different model)
     ADD_METHOD_TO(EmulatorAPI::switchModel, "/api/v1/emulator/{id}/model", drogon::Post);
@@ -454,6 +456,11 @@ public:
 
     void resetEmulator(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
+    // Pulse the NMI line; body {"magic": true} selects the Scorpion MNI variant
+    // (Shadow Monitor paged before the NMI so #0066 executes monitor code)
+    void requestNmi(const drogon::HttpRequestPtr& req,
+                    std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
     void switchModel(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;

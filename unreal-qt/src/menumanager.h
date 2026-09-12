@@ -127,6 +127,7 @@ signals:
     void machineModelChangeRequested(const QString& modelShortName);
     void tapeTrapsToggled(bool enabled);
     void turboTapeToggled(bool enabled);
+    void mniRequested();  // Machine -> MNI: NMI + service monitor (plain NMI on other models)
 
     // Tools signals
     void intParametersRequested();
@@ -232,6 +233,7 @@ private:
     std::vector<QAction*> _machineModelActions;
     QString _currentModelShortName;
     QAction* _tapeTrapsAction;
+    QAction* _mniAction;
     QAction* _turboTapeAction;
 
     // Debug Menu Actions

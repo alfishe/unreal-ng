@@ -248,7 +248,8 @@ const uint16_t PAGE_SIZE = 0x4000U;		// Spectrum memory page size is 16Kb (0x400
 const uint16_t MAX_RAM_PAGES = 256;     // 4Mb RAM
 const uint16_t MAX_CACHE_PAGES = 2;     // 32K cache
 const uint16_t MAX_MISC_PAGES = 1;      // trash page (to accomodate ROM writes and other garbage write operations)
-const uint16_t MAX_ROM_PAGES = 64;      // 1Mb
+const uint16_t MAX_ROM_PAGES = 128;     // 2Mb (ProfROM quadrant ladder)
+const uint16_t ROM_QUADRANT_PAGES = 4;  // 64Kb ProfROM quadrant
 
 // TS-conf specific settings
 #define TS_CACHE_SIZE 512
@@ -669,7 +670,8 @@ struct TEMP
 		int64_t tape_started;
 	} led;
 
-	uint8_t profrom_mask;
+	uint8_t profrom_mask;         // Scorpion ProfROM: GAL state-machine bits by image size (64K=0, 128K=1, 256K+=3)
+	uint8_t profrom_window_mask;  // Scorpion ProfROM: #7EFD[5:4] select bits by image size (<=256K=0, 512K=1, 1M/2M=3)
 	uint8_t comp_pal_changed;
 
 	uint8_t vidblock, sndblock, inputblock, frameskip;
@@ -829,6 +831,42 @@ struct EmulatorState
     uint32_t current_z80_frequency;             // xN CPU clock generator (in Hz)
     uint8_t current_z80_frequency_multiplier;   // Frequency multiplier comparing to CPU base
     uint8_t next_z80_frequency_multiplier;      // Queued multiplier to apply at next frame start (prevents mid-frame changes)
+    uint8_t scorpion_turbo;                     // Scorpion ZS-256 Turbo+ hardware turbo flip-flop (hardware-reference 13):
+                                                // 1 = 7 MHz. Set by IN from the #7FFD-family decode, cleared by IN from
+                                                // the #1FFD-family decode and by reset. Composes with the host speed
+                                                // multiplier at the frame boundary - see Z80::Z80FrameCycle()
+    uint8_t hw_turbo_shift;                     // Model-neutral HARDWARE turbo: log2 of the guest-visible CPU
+                                                // multiplier (0 = base clock, 1 = 2x e.g. Scorpion 7 MHz, 2 = 4x e.g.
+                                                // 14 MHz clones). Maintained by the model's port decoder from its own
+                                                // latch (Scorpion: scorpion_turbo; ATM/Profi: their turbo bits). The
+                                                // Z80 composes it with the host speed control; audio/video descale it
+
+    uint8_t hw_turbo_shift_applied;             // hw_turbo_shift as composed into current_z80_frequency_multiplier at
+                                                // the last frame boundary. The decoder may flip hw_turbo_shift mid-frame;
+                                                // the frame that is executing still runs with the APPLIED value, so the
+                                                // audio helpers below must use this one (a mid-frame flip otherwise made
+                                                // HostSpeedMultiplier() read 0 for that frame - "blip delivered 958,
+                                                // accumulator expects 882")
+
+    /// Host speed-control multiplier alone (current = host << hw_turbo_shift_applied).
+    /// Audio sample budgeting must use THIS: the host control makes frames
+    /// run faster in wall-clock (excess audio is dropped knowingly), whereas
+    /// the Scorpion hardware turbo keeps the 20 ms frame and only doubles the
+    /// CPU T-states inside it - the AY/beeper/Covox clocks are unchanged
+    /// (hardware-reference 13, profrom-nmi-gaps-and-findings.md 8.5)
+    uint8_t HostSpeedMultiplier() const
+    {
+        return static_cast<uint8_t>(current_z80_frequency_multiplier >> hw_turbo_shift_applied);
+    }
+
+    /// Descale a CPU T-state position into the audio time base: under a
+    /// hardware turbo the CPU counts N x T-states per real-time frame, so the
+    /// sound renderers (blip_buf at CPU_CLOCK_RATE, AY PLL) see t/N - the same
+    /// descale Screen::GetCurrentTstate applies for the ULA
+    uint32_t AudioTstate(uint32_t t) const
+    {
+        return t >> hw_turbo_shift_applied;
+    }
 
     /// endregion </Runtime CPU parameters
 
@@ -906,6 +944,15 @@ struct EmulatorState
 	uint8_t ulaplus_reg;
 	uint8_t ide_hi_byte_r, ide_hi_byte_w, ide_hi_byte_w1, ide_read, ide_write; // high byte in IDE i/o
 	uint8_t profrom_bank;
+
+// Scorpion magic-button DOS trigger (DD50.1 "1-DOS/0-SOS", hardware-reference §9):
+// armed together with the NMI pulse (DD50.2), it forces page 3 (TR-DOS) of the
+// current ProfROM plane over the #0000-#3FFF window - without touching the #1FFD
+// latch (the service bit still outranks it) or the plane register. Released by
+// the first CPU read from #4000-#FFFF (the Beta128 "leave the ROM window"
+// strobe); cleared by reset. Like profrom_bank it is not reproducible from
+// ports, so TTD checkpoints and the divergence hash carry it explicitly
+uint8_t scorpionDosTrigger;
 };
 
 // bits for State::flags
