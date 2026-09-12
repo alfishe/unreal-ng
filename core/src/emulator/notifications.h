@@ -487,10 +487,18 @@ class ROMPagePayload : public MessagePayload
 {
 public:
     unreal::UUID emulatorId;
-    uint8_t page;         // Current ROM page index
+    uint8_t page;         // Current ROM page index (absolute: plane-composed on ProfROM)
     uint8_t minPage;      // Minimum page seen this frame
     uint8_t maxPage;      // Maximum page seen this frame
     uint8_t switchCount;  // Number of switches this frame (0 = no change)
+
+    // ProfROM planes (quadrants). Only the Scorpion ProfROM variant has them, so
+    // consumers must gate on planeAware rather than infer a plane from the page:
+    // on every other model the ROM page is a plain index with no plane geometry.
+    bool planeAware = false;  // Machine carries ProfROM planes
+    uint8_t plane = 0;        // Current plane
+    uint8_t minPlane = 0;     // Minimum plane seen this frame
+    uint8_t maxPlane = 0;     // Maximum plane seen this frame
 
     ROMPagePayload(const unreal::UUID& id, uint8_t curPage, uint8_t minP, uint8_t maxP, uint8_t count)
         : MessagePayload()
