@@ -1,29 +1,60 @@
-/// @file ttd_capture_cost_gate_test.cpp
-/// @brief Phase 2 Item 7 — Capture-cost CI gate.
+/// @file ttdcapturecostgate_test.cpp
+/// @brief Phase 2 Item 7 — capture-cost CI gate.
 ///
 /// Per parent TDD §15.1 and the implementation plan §3.A2 Item 7:
 ///   "Wire a CI gate that fails when the per-frame capture cost regresses
 ///    beyond a defined budget."
 ///
 /// This is NOT a micro-benchmark (those live in core/benchmarks/). It is a
-/// wall-clock regression gate that runs in the regular test runner, so it
-/// participates in CI on every commit. The budget is intentionally generous
-/// (10 ms / frame on a 128 KB Pentagon) so it does NOT flake on slow CI
-/// runners — its job is to catch O(n^2) blowups and accidental full-RAM
-/// copies on every frame, not to track fine-grained perf.
+/// regression gate that runs in the regular test runner, so it participates in
+/// CI on every commit. Its job is to catch an accidental full-RAM copy per
+/// frame or an algorithmic blowup in the capture path - not to track fine
+/// timings.
 ///
-/// Test methodology:
-///   1. Set up a Pentagon 128 emulator with TTD enabled.
-///   2. Load a snapshot (Dizzy Y — same fixture as the divergence corpus).
-///   3. Start TTD recording.
-///   4. Run kFrames frames, measuring wall-clock time.
-///   5. Assert: total / frames <= kBudgetMsPerFrame.
+/// ## Why this is not a wall-clock budget any more
 ///
-/// The budget was chosen as 10 ms/frame for the 128 KB model. Sprint 0's
-/// benchmark numbers (commit ad0c101a) put full-frame capture (Snapshot +
-/// HashSnapshot + 128 KB RAM digest) at ~70 us on the development machine.
-/// 10 ms is ~140x that — enough headroom for any CI runner, tight enough
-/// that an O(n) → O(n^2) regression in the capture path fails immediately.
+/// It used to time `RunFrame()` over 100 frames and assert the total stayed
+/// under 10 ms/frame. That could not do its job, for two measured reasons:
+///
+///  1. **It timed the wrong thing.** Capture is 4-8% of a recorded frame; the
+///     other ~92% is ordinary emulation. At 1.1 ms/frame against a 10 ms
+///     budget, capture could get *thirty times* slower and the gate would
+///     still pass. A "capture cost gate" that cannot see a 30x capture
+///     regression is decoration.
+///  2. **The margin was not what the header claimed.** The 140x headroom was
+///     computed against capture alone (~70 us) while the assertion measured
+///     the whole frame. In Debug the real figure was 5.5 ms against the 10 ms
+///     budget - 1.8x - which is a latent flake on a loaded CI runner, not a
+///     generous margin.
+///
+/// ## What it measures instead
+///
+/// The page store's own accounting, which is exact and has no clock in it.
+/// Across four runs the recorded payload was byte-identical every time
+/// (75 B/frame on Pentagon, 74 B/frame on 48K), while the wall-clock share of
+/// the same runs swung between 3.9% and 8.0%. One of those two numbers can
+/// carry an assertion; the other cannot.
+///
+/// What the byte budget actually catches, verified by mutation rather than
+/// assumed:
+///
+///  - **Losing compression or delta coding.** Making the page store keep raw
+///    bytes took the payload from 75 to 8055 B/frame and failed both models
+///    with a clear message. Under the same mutation the wall-clock share read
+///    -9.8% and +3.1% on the two models - pure noise. A 100x increase in
+///    stored data is invisible to a clock and unmissable to a counter.
+///  - It does **not** catch "capture was offered more pages". Forcing the
+///    dirty tracker to report all 8 RAM pages every frame left the payload
+///    byte-identical at 75 B/frame, because the store dedupes unchanged
+///    content. That regression costs time, not bytes, which is what the ratio
+///    check below is for - and it is worth knowing the store is structurally
+///    immune to it.
+///
+/// The wall clock is kept only as a *ratio* - capture time as a share of frame
+/// time - where both halves scale together, so a slow runner cancels out. It
+/// is set at 50% against a measured 4-8%, i.e. it fires only on a ~10x capture
+/// slowdown that the byte budget cannot see (a scan that got quadratic without
+/// storing more).
 
 #include <gtest/gtest.h>
 
@@ -33,14 +64,29 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
+#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdcodecpagestore.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "emulator/memory/memory.h"
 
 namespace {
 
-constexpr int    kFrames           = 100;
-constexpr double kBudgetMsPerFrame = 10.0;  // See file header for rationale.
+/// 30 frames is enough to leave the opening I-frame behind and measure the
+/// steady-state COW behaviour. It used to be 100; the byte accounting is exact,
+/// so the extra 70 frames bought precision the old wall-clock average needed
+/// and this one does not.
+constexpr int kFrames = 30;
+
+/// ~55x the measured 75 B/frame. Losing compression alone lands at ~8000
+/// B/frame (measured), so the budget sits comfortably between normal operation
+/// and the regression, with no room for a false positive from machine speed.
+constexpr size_t kMaxPayloadBytesPerFrame = 4096;
+
+/// Capture as a share of total frame time. Measured 4-8%; both sides of the
+/// ratio scale with machine speed, so this survives a slow CI runner and still
+/// catches a ~10x capture slowdown.
+constexpr double kMaxCaptureShare = 0.50;
 
 Emulator* MakeTtdEmulator(const std::string& modelName = "PENTAGON",
                           LoggerLevel log = LoggerLevel::LogError)
@@ -65,102 +111,92 @@ Emulator* MakeTtdEmulator(const std::string& modelName = "PENTAGON",
 
 } // anonymous namespace
 
-// =========================================================================
-// Pentagon 128 — capture cost must stay under kBudgetMsPerFrame.
-//
-// We pick Pentagon 128 (8 RAM pages = 128 KB) as the reference model because
-// it's the most common development target and has the highest sustained
-// write rate of the v1-supported models (RAM-banking demo scenes churn all
-// 8 pages). If the gate fails here, it would also fail on smaller models.
-// =========================================================================
-
-TEST(TTD_Capture_Cost_Gate_Test, Pentagon128_StaysUnderBudget)
+/// A fixture rather than two free TESTs so the body below can call
+/// RecordProperty (a member of ::testing::Test) and so both models share one
+/// implementation - they used to be copy-paste twins and a budget change had
+/// to be made twice.
+class TTD_Capture_Cost_Gate_Test : public ::testing::Test
 {
-    Emulator* emu = MakeTtdEmulator("PENTAGON");
+protected:
+    void RunCaptureCostGate(const std::string& modelName);
+};
+
+void TTD_Capture_Cost_Gate_Test::RunCaptureCostGate(const std::string& modelName)
+{
+    Emulator* emu = MakeTtdEmulator(modelName);
     ASSERT_NE(emu, nullptr);
-    auto cleanup = [&]() { EmulatorTestHelper::CleanupEmulator(emu); };
 
     EmulatorContext* ctx = emu->GetContext();
     ASSERT_NE(ctx, nullptr);
     ASSERT_NE(ctx->pTimeTravelManager, nullptr);
 
-    // Use Dizzy Y as a representative 48K-ish workload. The snapshot loads
-    // fine on Pentagon (it ignores the extra RAM pages until banking flips).
-    // We don't care about divergence correctness here — just frame rate
-    // under capture load.
-    const std::string snapshotPath =
-        TestPathHelper::GetTestDataPath("loaders/sna/Dizzy Y.sna");
-    ASSERT_TRUE(emu->LoadSnapshot(snapshotPath))
-        << "Dizzy Y snapshot not found at " << snapshotPath;
+    // Dizzy Y as a representative workload - the same fixture the divergence
+    // corpus uses. Correctness is not the subject here, only capture cost.
+    const std::string snapshotPath = TestPathHelper::GetTestDataPath("loaders/sna/Dizzy Y.sna");
+    ASSERT_TRUE(emu->LoadSnapshot(snapshotPath)) << "Dizzy Y snapshot not found at " << snapshotPath;
+
+    // Baseline: the same frames with recording OFF. Subtracting this is what
+    // makes the timing figure below about capture rather than about how fast
+    // this machine emulates a Z80.
+    const auto base0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < kFrames; ++i)
+        emu->RunFrame(/*skipBreakpoints=*/true);
+    const auto base1 = std::chrono::steady_clock::now();
+    const double baselineMs = std::chrono::duration<double, std::milli>(base1 - base0).count();
 
     ASSERT_TRUE(ctx->pTimeTravelManager->StartRecording());
+    const size_t payloadBefore = ctx->pTimeTravelManager->GetPageStore().GetLivePayloadBytes();
 
     const auto t0 = std::chrono::steady_clock::now();
     for (int i = 0; i < kFrames; ++i)
         emu->RunFrame(/*skipBreakpoints=*/true);
     const auto t1 = std::chrono::steady_clock::now();
+    const double recordedMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
-    const double totalMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    const double perFrameMs = totalMs / kFrames;
+    const size_t payloadAfter = ctx->pTimeTravelManager->GetPageStore().GetLivePayloadBytes();
+    const size_t payloadPerFrame = (payloadAfter - payloadBefore) / kFrames;
+    const size_t checkpoints = ctx->pTimeTravelManager->GetCheckpointCount();
+    const double captureShare = recordedMs > 0.0 ? (recordedMs - baselineMs) / recordedMs : 0.0;
 
-    // Log even on pass — useful for tracking drift in CI logs.
-    RecordProperty("total_ms",       std::to_string(totalMs));
-    RecordProperty("per_frame_ms",   std::to_string(perFrameMs));
-    RecordProperty("frames",         std::to_string(kFrames));
-    RecordProperty("budget_ms",      std::to_string(kBudgetMsPerFrame));
-    RecordProperty("checkpoint_count",
-                   std::to_string(ctx->pTimeTravelManager->GetCheckpointCount()));
+    RecordProperty("model", modelName);
+    RecordProperty("frames", std::to_string(kFrames));
+    RecordProperty("payload_bytes_per_frame", std::to_string(payloadPerFrame));
+    RecordProperty("payload_budget_bytes_per_frame", std::to_string(kMaxPayloadBytesPerFrame));
+    RecordProperty("baseline_ms", std::to_string(baselineMs));
+    RecordProperty("recorded_ms", std::to_string(recordedMs));
+    RecordProperty("capture_share", std::to_string(captureShare));
+    RecordProperty("checkpoint_count", std::to_string(checkpoints));
 
-    EXPECT_LT(perFrameMs, kBudgetMsPerFrame)
-        << "TTD capture cost regression: per-frame cost " << perFrameMs
-        << " ms exceeds budget " << kBudgetMsPerFrame << " ms. "
-        << "Total " << totalMs << " ms over " << kFrames << " frames, "
-        << ctx->pTimeTravelManager->GetCheckpointCount() << " checkpoints captured.";
+    // Capture actually happened. Without this the byte assertion below passes
+    // trivially when recording silently stops - zero bytes is under any budget.
+    EXPECT_GE(checkpoints, static_cast<size_t>(kFrames))
+        << "recording captured " << checkpoints << " checkpoints over " << kFrames
+        << " frames - the gate below would pass on an empty session";
 
-    cleanup();
+    EXPECT_LT(payloadPerFrame, kMaxPayloadBytesPerFrame)
+        << "TTD capture volume regression on " << modelName << ": " << payloadPerFrame
+        << " bytes/frame exceeds the " << kMaxPayloadBytesPerFrame << " byte budget over " << kFrames
+        << " frames. Losing compression or delta coding in the page store looks exactly like this.";
+
+    EXPECT_LT(captureShare, kMaxCaptureShare)
+        << "TTD capture time regression on " << modelName << ": capture is " << (captureShare * 100.0)
+        << "% of frame time (" << recordedMs << " ms recorded vs " << baselineMs
+        << " ms baseline over " << kFrames << " frames), budget " << (kMaxCaptureShare * 100.0) << "%.";
+
+    EmulatorTestHelper::CleanupEmulator(emu);
 }
 
-// =========================================================================
-// 48K model — same gate, smaller RAM. Sanity check that the budget holds
-// across model sizes (the capture path's per-page cost should be linear;
-// if it isn't, this gate fires before the 128K one does).
-// =========================================================================
-
-TEST(TTD_Capture_Cost_Gate_Test, Spectrum48_StaysUnderBudget)
+/// Pentagon 128 (8 RAM pages) is the reference model: the most common
+/// development target and the highest sustained write rate of the v1-supported
+/// models, since RAM-banking demo scenes churn all 8 pages.
+TEST_F(TTD_Capture_Cost_Gate_Test, Pentagon128_StaysUnderBudget)
 {
-    Emulator* emu = MakeTtdEmulator("48K");
-    ASSERT_NE(emu, nullptr);
-    auto cleanup = [&]() { EmulatorTestHelper::CleanupEmulator(emu); };
+    RunCaptureCostGate("PENTAGON");
+}
 
-    EmulatorContext* ctx = emu->GetContext();
-    ASSERT_NE(ctx, nullptr);
-    ASSERT_NE(ctx->pTimeTravelManager, nullptr);
-
-    const std::string snapshotPath =
-        TestPathHelper::GetTestDataPath("loaders/sna/Dizzy Y.sna");
-    ASSERT_TRUE(emu->LoadSnapshot(snapshotPath))
-        << "Dizzy Y snapshot not found at " << snapshotPath;
-
-    ASSERT_TRUE(ctx->pTimeTravelManager->StartRecording());
-
-    const auto t0 = std::chrono::steady_clock::now();
-    for (int i = 0; i < kFrames; ++i)
-        emu->RunFrame(/*skipBreakpoints=*/true);
-    const auto t1 = std::chrono::steady_clock::now();
-
-    const double totalMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    const double perFrameMs = totalMs / kFrames;
-
-    RecordProperty("total_ms",       std::to_string(totalMs));
-    RecordProperty("per_frame_ms",   std::to_string(perFrameMs));
-    RecordProperty("frames",         std::to_string(kFrames));
-    RecordProperty("budget_ms",      std::to_string(kBudgetMsPerFrame));
-    RecordProperty("checkpoint_count",
-                   std::to_string(ctx->pTimeTravelManager->GetCheckpointCount()));
-
-    EXPECT_LT(perFrameMs, kBudgetMsPerFrame)
-        << "TTD capture cost regression on 48K model: per-frame cost "
-        << perFrameMs << " ms exceeds budget " << kBudgetMsPerFrame << " ms.";
-
-    cleanup();
+/// Same gate on the smaller model. The capture path's per-page cost should be
+/// linear in pages touched, so if it is not, this one fires alongside.
+TEST_F(TTD_Capture_Cost_Gate_Test, Spectrum48_StaysUnderBudget)
+{
+    RunCaptureCostGate("48K");
 }
