@@ -22,13 +22,16 @@
 //  - Menu key 'U' ("128k basic"): ROM page 30 (128K editor ROM pair) with
 //    initialized BASIC sysvars (ERR_NR = 0xFF).
 
+#include <base/featuremanager.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/io/keyboard/keyboard.h>
+#include <emulator/memory/memory.h>
 #include <emulator/platform.h>
 #include <gtest/gtest.h>
 
+#include "_helpers/emulatortesthelper.h"
 #include "pch.h"
 #include "stdafx.h"
 
@@ -58,24 +61,38 @@ protected:
         }
     }
 
-    /// Boot through the service-ROM config phase into the interactive shell
-    std::shared_ptr<Emulator> BootToServiceShell()
+    /// Boot through the service-ROM config phase into the interactive shell.
+    ///
+    /// @param turbo  Only for tests asserting on emulated state. Turbo skips
+    ///               rendering on most frames, so the framebuffer assertion
+    ///               below must boot without it - that one drops sound
+    ///               generation instead, which is the part of the per-frame
+    ///               host work it does not assert on either.
+    std::shared_ptr<Emulator> BootToServiceShell(bool turbo)
     {
         auto emulator = _manager->CreateEmulatorWithModelAndRAM("zxevo-boot", "ATM3", 4096, LoggerLevel::LogError);
         EXPECT_NE(emulator, nullptr);
         if (!emulator)
             return emulator;
 
-        // 300 frames: BaseConf init (ROM26/27 handoff, CMOS setup) + boot-menu
-        // timeout + disk-boot retry loop settling
-        emulator->RunNFrames(300, true);
+        if (turbo)
+            emulator->EnableTurboMode();
+        else if (FeatureManager* features = emulator->GetFeatureManager())
+            features->setFeature(Features::kSoundGeneration, false);
+
+        // 300 frames is the worst case: BaseConf init (ROM26/27 handoff, CMOS
+        // setup) + boot-menu timeout + disk-boot retry loop settling. The shell
+        // is up once bank 0 holds the 48K-BASIC-pair boot ROM (page 20).
+        Memory* memory = emulator->GetContext()->pMemory;
+        EmulatorTestHelper::RunUntil(
+            emulator.get(), [&] { return memory->IsBank0ROM() && memory->GetROMPage() == 20u; }, 300);
         return emulator;
     }
 };
 
 TEST_F(ZXEvoBoot_Test, BootsToInteractiveServiceShell)
 {
-    auto emulator = BootToServiceShell();
+    auto emulator = BootToServiceShell(/* turbo */ false);  // asserts on the framebuffer
     ASSERT_NE(emulator, nullptr);
 
     EmulatorContext* context = emulator->GetContext();
@@ -119,7 +136,7 @@ TEST_F(ZXEvoBoot_Test, BootsToInteractiveServiceShell)
 
 TEST_F(ZXEvoBoot_Test, MenuKeyUBoots128KBasic)
 {
-    auto emulator = BootToServiceShell();
+    auto emulator = BootToServiceShell(/* turbo */ true);  // asserts on emulated state only
     ASSERT_NE(emulator, nullptr);
 
     EmulatorContext* context = emulator->GetContext();
@@ -131,7 +148,8 @@ TEST_F(ZXEvoBoot_Test, MenuKeyUBoots128KBasic)
     keyboard->PressKey(ZXKEY_U);
     emulator->RunNFrames(6, true);
     keyboard->ReleaseKey(ZXKEY_U);
-    emulator->RunNFrames(300, true);
+    EmulatorTestHelper::RunUntil(
+        emulator.get(), [&] { return memory->IsBank0ROM() && memory->GetROMPage() == 30u; }, 300);
 
     // 128K BASIC: bank 0 = 128K editor ROM pair (page 30), no TR-DOS session
     ASSERT_TRUE(memory->IsBank0ROM());

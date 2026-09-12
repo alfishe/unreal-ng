@@ -24,6 +24,7 @@
 #include <emulator/platform.h>
 #include <gtest/gtest.h>
 
+#include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "loaders/disk/loader_trd.h"
 #include "pch.h"
@@ -63,9 +64,17 @@ protected:
         EXPECT_NE(emulator, nullptr);
         if (!emulator)
             return emulator;
-        emulator->RunNFrames(300, true);
+        // Boot-bound test asserting on emulated state only (VRAM read straight
+        // off the RAM page, ports) - never on rendered pixels - so turbo is
+        // safe here and removes the audio/render cost of ~1000 boot frames.
+        emulator->EnableTurboMode();
 
-        Keyboard* keyboard = emulator->GetContext()->pKeyboard;
+        EmulatorContext* context = emulator->GetContext();
+        EmulatorTestHelper::RunUntil(
+            emulator.get(),
+            [&] { return StripSpaces(DecodeTextRows(context, 0, 24)).find("SPECTRUM128") != std::string::npos; }, 300);
+
+        Keyboard* keyboard = context->pKeyboard;
         for (int i = 0; i < 2; i++)
         {
             PressDown(emulator, 4);
@@ -73,7 +82,13 @@ protected:
         keyboard->PressKey(ZXKEY_ENTER);
         emulator->RunNFrames(12, true);
         keyboard->ReleaseKey(ZXKEY_ENTER);
-        emulator->RunNFrames(250, true);
+        EmulatorTestHelper::RunUntil(
+            emulator.get(),
+            [&] {
+                EmulatorState& state = context->emulatorState;
+                return DecodeZXRows(context, (state.p7FFD & 0x08) ? 7 : 5, 6, 15).find("TR-DOS") != std::string::npos;
+            },
+            250);
         return emulator;
     }
 
@@ -169,9 +184,12 @@ TEST_F(ATM710TrdosBoot_Test, FreshBootShowsATMBIOSMenu)
     // its launcher menu before any mode is selected
     auto emulator = _manager->CreateEmulatorWithModelAndRAM("atm710-bios-boot", "ATM710", 1024, LoggerLevel::LogError);
     ASSERT_NE(emulator, nullptr);
-    emulator->RunNFrames(300, true);
+    emulator->EnableTurboMode();  // asserts on decoded VRAM, not rendered pixels
 
     EmulatorContext* context = emulator->GetContext();
+    EmulatorTestHelper::RunUntil(
+        emulator.get(),
+        [&] { return StripSpaces(DecodeTextRows(context, 0, 24)).find("SPECTRUM128") != std::string::npos; }, 300);
     EmulatorState& state = context->emulatorState;
 
     EXPECT_EQ(state.pFF77 & 7, 6) << "BIOS menu must run in the ATM text video mode";
@@ -211,7 +229,13 @@ TEST_F(ATM710TrdosBoot_Test, MenuTRDOSBootsClassicTRDOS)
     keyboard->PressKey(ZXKEY_ENTER);
     emulator->RunNFrames(12, true);
     keyboard->ReleaseKey(ZXKEY_ENTER);
-    emulator->RunNFrames(400, true);
+    EmulatorTestHelper::RunUntil(
+        emulator.get(),
+        [&] {
+            return DecodeZXRows(context, (state.p7FFD & 0x08) ? 7 : 5, 0, 10).find("TR-DOS Ver 5.03") !=
+                   std::string::npos;
+        },
+        400);
 
     // Classic TR-DOS 5.03 banner on the standard ZX screen
     std::string screen = DecodeZXRows(context, (state.p7FFD & 0x08) ? 7 : 5, 0, 10);
