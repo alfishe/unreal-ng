@@ -2,6 +2,7 @@
 #include "pch.h"
 
 #include <cmath>
+#include <functional>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
@@ -70,6 +71,41 @@ class SoundAdaptivity_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
+
+    /// @brief Step a closed-loop DRC scenario until it has *held* the target
+    ///        state for `holdFrames`, or give up after `maxFrames`.
+    /// @return frames actually run.
+    ///
+    /// These are control-loop tests: the assertion is "the controller reaches
+    /// the setpoint and stays there", so a plain early exit on the first frame
+    /// that satisfies the predicate would be wrong - it could catch a transient
+    /// crossing on the way past. Requiring the predicate to hold for a window
+    /// keeps that proof while dropping the frames spent re-proving it.
+    ///
+    /// The old fixed counts were sized for the slowest starting point. Measured
+    /// convergence: from 46 ms occupancy the loop is stable from frame 182, but
+    /// ran 3500; from 300 ms it needs 2896, because the trim is rate-limited to
+    /// ~0.5%/frame and draining 260 ms simply takes that long. Passing the old
+    /// count as `maxFrames` keeps the slow case intact - and a failing run still
+    /// does the full work and reports the same diagnostic.
+    static int RunUntilStable(int maxFrames, int holdFrames, const std::function<void()>& step,
+                              const std::function<bool()>& converged)
+    {
+        int held = 0;
+        for (int f = 0; f < maxFrames; ++f)
+        {
+            step();
+            held = converged() ? held + 1 : 0;
+            if (held >= holdFrames)
+                return f + 1;
+        }
+        return maxFrames;
+    }
+
+    /// Frames the predicate must hold before a scenario is called converged:
+    /// 5 seconds of emulated audio at 50 fps, comfortably longer than any
+    /// transient observed while measuring the loops above.
+    static constexpr int kHoldFrames = 250;
 
     void SetUp() override
     {
@@ -336,18 +372,27 @@ TEST_F(SoundAdaptivity_Test, DRC_ConvergesToTargetOccupancy)
     _context->config.frame = 71680;
     const double consumePerFrame = 71680.0 * 44100.0 / 3500000.0;  // Real-time DAC
 
-    auto runLoop = [&](double startFrames, int frames) -> double {
+    auto runLoop = [&](double startFrames, int maxFrames) -> double {
         sound->reset();
         double ring = startFrames;
         occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
-        for (int f = 0; f < frames; f++)
-        {
+
+        auto step = [&] {
             sound->handleFrameStart();
             sound->handleFrameEnd();
             ring += static_cast<double>(capture.lastNumSamples) / AUDIO_CHANNELS;
             ring = std::max(0.0, ring - consumePerFrame);
             occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
-        }
+        };
+        // Same predicate the assertions below use, so the loop stops exactly
+        // when - and only when - the test's own claim has become true and held.
+        auto converged = [&] {
+            const double ms = ring * 1000.0 / 44100.0;
+            return std::abs(ms - SoundManager::DRC_TARGET_MS) < 8.0 &&
+                   std::abs(sound->getDrcRatio() - 1.0) < 0.001;
+        };
+
+        RunUntilStable(maxFrames, kHoldFrames, step, converged);
         return ring;
     };
 
@@ -516,18 +561,15 @@ TEST_F(SoundAdaptivity_Test, DRC_RebasesOnDeviceRateChangeMidRun)
     double ring = SoundManager::DRC_TARGET_MS * devRate / 1000.0;  // Start converged at the setpoint
     occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
 
-    auto runFrames = [&](int frames) {
-        for (int f = 0; f < frames; f++)
-        {
-            sound->handleFrameStart();
-            sound->handleFrameEnd();
-            ring += static_cast<double>(capture.lastNumSamples) / AUDIO_CHANNELS;
-            ring = std::max(0.0, ring - 71680.0 * devRate / 3500000.0);  // Real-time DAC
-            occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
-        }
+    auto step = [&] {
+        sound->handleFrameStart();
+        sound->handleFrameEnd();
+        ring += static_cast<double>(capture.lastNumSamples) / AUDIO_CHANNELS;
+        ring = std::max(0.0, ring - 71680.0 * devRate / 3500000.0);  // Real-time DAC
+        occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
     };
 
-    runFrames(2000);
+    RunUntilStable(2000, kHoldFrames, step, [&] { return std::abs(sound->getDrcRatio() - 1.0) < 0.005; });
     EXPECT_NEAR(sound->getDrcRatio(), 1.0, 0.005) << "Converged unity before the reroute";
 
     // Reroute: device re-established at 48000, ring cleared then reseeded by
@@ -542,7 +584,9 @@ TEST_F(SoundAdaptivity_Test, DRC_RebasesOnDeviceRateChangeMidRun)
     EXPECT_NEAR(sound->getDrcRatio(), 48000.0 / 44100.0, 48000.0 / 44100.0 * 0.006)
         << "Base ratio must re-base to the new device rate on the next frame";
 
-    runFrames(3500);
+    RunUntilStable(3500, kHoldFrames, step, [&] {
+        return std::abs(ring * 1000.0 / devRate - SoundManager::DRC_TARGET_MS) < 8.0;
+    });
     const double finalMs = ring * 1000.0 / devRate;
     EXPECT_NEAR(finalMs, SoundManager::DRC_TARGET_MS, 8.0) << "Occupancy must re-converge at the new device rate";
 
