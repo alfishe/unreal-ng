@@ -1,0 +1,346 @@
+{
+ "WriteAnyBankByte": [
+  "NOMATCH",
+  "0x0",
+  []
+ ],
+ "Rst08Vector": [
+  "NOMATCH",
+  "0x8",
+  []
+ ],
+ "Rst10Vector": [
+  "NOMATCH",
+  "0x10",
+  []
+ ],
+ "Rst18Vector": [
+  "NOMATCH",
+  "0x18",
+  []
+ ],
+ "Rst20Vector": [
+  "NOMATCH",
+  "0x20",
+  []
+ ],
+ "XorDecodeKeys": [
+  "NODIGEST",
+  "0xfc"
+ ],
+ "RamExtCall": [
+  "NOMATCH",
+  "0x2dc",
+  []
+ ],
+ "SwapScreenBanks": 1371,
+ "FatalHalt": [
+  "NOMATCH",
+  "0x54e",
+  []
+ ],
+ "ShortDelay": 11295,
+ "InventoryHardware": [
+  "NOMATCH",
+  "0x564",
+  []
+ ],
+ "DecodeTables": [
+  "NOMATCH",
+  "0x5a2",
+  []
+ ],
+ "KeyJumpTable": [
+  "NODIGEST",
+  "0x7ba"
+ ],
+ "ExitToError": [
+  "NOMATCH",
+  "0xa54",
+  []
+ ],
+ "ParseCommand": [
+  "NOMATCH",
+  "0xa8a",
+  []
+ ],
+ "ReportError": [
+  "NOMATCH",
+  "0xf7b",
+  []
+ ],
+ "BootContinue": [
+  "NOMATCH",
+  "0xfc1",
+  []
+ ],
+ "EnterTrdos": [
+  "NOMATCH",
+  "0x101e",
+  []
+ ],
+ "SetErrorTables": [
+  "NOMATCH",
+  "0x116a",
+  []
+ ],
+ "EvalOperand": [
+  "NOMATCH",
+  "0x136f",
+  []
+ ],
+ "CheckRangeInclusive": [
+  "NOMATCH",
+  "0x139e",
+  []
+ ],
+ "SetDefaultWorkspace": 12313,
+ "SetWorkspace": 12316,
+ "ScanTokens": [
+  "NOMATCH",
+  "0x13b5",
+  []
+ ],
+ "CommandLoop": [
+  "NOMATCH",
+  "0x13e2",
+  []
+ ],
+ "ShowRegisters": [
+  "NOMATCH",
+  "0x14ab",
+  []
+ ],
+ "RegisterNameTable": [
+  "NODIGEST",
+  "0x1531"
+ ],
+ "MemoryDumpWindow": [
+  "NOMATCH",
+  "0x1578",
+  []
+ ],
+ "HexDumpRow": [
+  "NOMATCH",
+  "0x1604",
+  []
+ ],
+ "PositionCursor": 11902,
+ "ScrollWindow": [
+  "NOMATCH",
+  "0x15e7",
+  []
+ ],
+ "DisasmWindow": 12095,
+ "DisasmLine": [
+  "NOMATCH",
+  "0x169b",
+  []
+ ],
+ "FetchPrefixBytes": 12182,
+ "PadColumns": 12269,
+ "AutoRepeatKey": [
+  "NOMATCH",
+  "0x1716",
+  []
+ ],
+ "CharClasses": [
+  "AMBIG",
+  "0x177c",
+  [
+   3666,
+   5366,
+   5373,
+   5380,
+   5387,
+   8091
+  ]
+ ],
+ "Disassemble": [
+  "NOMATCH",
+  "0x1798",
+  []
+ ],
+ "ScanQuotedString": [
+  "NOMATCH",
+  "0x185f",
+  []
+ ],
+ "PrintBit7Chars": [
+  "NOMATCH",
+  "0x1893",
+  []
+ ],
+ "PrintJustifiedHeader": [
+  "NOMATCH",
+  "0x189c",
+  []
+ ],
+ "PrintMarkerChar": [
+  "NOMATCH",
+  "0x18d2",
+  []
+ ],
+ "PickNumberBase": [
+  "NOMATCH",
+  "0x18e6",
+  []
+ ],
+ "PrintDecimal": [
+  "NOMATCH",
+  "0x1918",
+  []
+ ],
+ "Divide16": 5802,
+ "Rst20Handler": [
+  "NOMATCH",
+  "0x1990",
+  []
+ ],
+ "PrintHexWord": [
+  "NOMATCH",
+  "0x199e",
+  []
+ ],
+ "PrintHexByte": 5859,
+ "PrintExtMenu": 5887,
+ "PrepareStep": 5915,
+ "SwapAltRegs": 6050,
+ "ToggleAltDisplay": [
+  "NOMATCH",
+  "0x1aa0",
+  []
+ ],
+ "BuildStepStub": [
+  "NOMATCH",
+  "0x1ab3",
+  []
+ ],
+ "StepDispatch": [
+  "NOMATCH",
+  "0x1b1f",
+  []
+ ],
+ "SetTempBreakpoint": [
+  "NOMATCH",
+  "0x1bce",
+  []
+ ],
+ "CheckTrace": 6415,
+ "AnalyzeInstruction": 6460,
+ "CollectAsmText": [
+  "NOMATCH",
+  "0x1d56",
+  []
+ ],
+ "EditorKeyLoop": [
+  "NOMATCH",
+  "0x1d7a",
+  []
+ ],
+ "EditorRegKeys": [
+  "NOMATCH",
+  "0x1e6a",
+  []
+ ],
+ "WordToHexBuf": 7560,
+ "FindBreakpoint": 7603,
+ "MnemonicTable": [
+  "NODIGEST",
+  "0x2012"
+ ],
+ "GlyphAddr": [
+  "NOMATCH",
+  "0x2422",
+  []
+ ],
+ "BlinkCursor": [
+  "NOMATCH",
+  "0x24ef",
+  []
+ ],
+ "FillWholeRow": [
+  "NODIGEST",
+  "0x2677"
+ ],
+ "PrinterPutChar": 11006,
+ "DispatchOutput": [
+  "NOMATCH",
+  "0x26c4",
+  []
+ ],
+ "InstallPrintHook": [
+  "NOMATCH",
+  "0x270f",
+  []
+ ],
+ "WindowNewline": [
+  "NOMATCH",
+  "0x2717",
+  []
+ ],
+ "WindowHome": [
+  "NOMATCH",
+  "0x2746",
+  []
+ ],
+ "FillMemoryRange": [
+  "NOMATCH",
+  "0x2846",
+  []
+ ],
+ "ChecksumLoop": [
+  "NOMATCH",
+  "0x2859",
+  []
+ ],
+ "InitWatchTable": 12929,
+ "FindWatchpoint": [
+  "NOMATCH",
+  "0x29e8",
+  []
+ ],
+ "RestorePagingShadow": [
+  "AMBIG",
+  "0x2d8c",
+  [
+   13804,
+   14926
+  ]
+ ],
+ "CalcPagingPorts": [
+  "NOMATCH",
+  "0x2e91",
+  []
+ ],
+ "AddBreakpoint": [
+  "NOMATCH",
+  "0x3025",
+  []
+ ],
+ "ListBreakpoints": [
+  "NOMATCH",
+  "0x3055",
+  []
+ ],
+ "ReadNmiPort": [
+  "NOMATCH",
+  "0x3474",
+  []
+ ],
+ "PrintFrameCount": [
+  "NOMATCH",
+  "0x347d",
+  []
+ ],
+ "LookupToken": [
+  "NOMATCH",
+  "0x34a8",
+  []
+ ],
+ "SaveToTape": [
+  "NOMATCH",
+  "0x358d",
+  []
+ ]
+}
