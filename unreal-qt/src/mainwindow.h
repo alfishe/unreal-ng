@@ -115,6 +115,7 @@ private slots:
     void handleImportAudioTapeRequested();  // tape-audio-bridge §7.3
     void handleIntParametersRequested();
     void handleAudioSettingsRequested();
+    void handleHudSettingsRequested();
     void handleOverscanModeToggled(bool enabled);
     void handleViewportChanged(int presetIndex);
     void handleMachineModelChangeRequested(const QString& modelShortName);
@@ -229,6 +230,7 @@ private:
     DeviceScreen* deviceScreen = nullptr;
     HudOverlay* _hudOverlay = nullptr;
     std::shared_ptr<HudModel> _hudModel;
+    bool _hudOverlayVisible = false;  // Session-only HUD visibility state (default off)
     QMutex lockMutex;
     QMutex _audioMutex;              // Protects audio operations from race conditions
     bool _audioInitialized = false;  // Tracks if audio device is initialized

@@ -694,6 +694,11 @@ void MenuManager::createToolsMenu()
     _audioSettingsAction->setStatusTip(tr("Configure audio DSP: punch, FIR filter, room simulation"));
     connect(_audioSettingsAction, &QAction::triggered, this, &MenuManager::audioSettingsRequested);
 
+    // HUD Settings
+    _hudSettingsAction = _toolsMenu->addAction(tr("&HUD Settings..."));
+    _hudSettingsAction->setStatusTip(tr("Configure which HUD notifications to display"));
+    connect(_hudSettingsAction, &QAction::triggered, this, &MenuManager::hudSettingsRequested);
+
     _toolsMenu->addSeparator();
 
     // Tape Manager Window (design §9.2 — checkable show/hide, hidden until

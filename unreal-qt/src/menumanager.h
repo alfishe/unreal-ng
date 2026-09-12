@@ -119,6 +119,7 @@ signals:
     // Tools signals
     void intParametersRequested();
     void audioSettingsRequested();
+    void hudSettingsRequested();
     void screenshotRequested();
 #ifdef ENABLE_RECORDING
     void videoRecordingRequested();
@@ -230,6 +231,7 @@ private:
     QAction* _settingsAction;
     QAction* _intParametersAction;
     QAction* _audioSettingsAction;
+    QAction* _hudSettingsAction;
     QAction* _screenshotAction;
 #ifdef ENABLE_RECORDING
     QAction* _videoRecordingAction;

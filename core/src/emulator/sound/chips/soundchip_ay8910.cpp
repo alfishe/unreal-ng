@@ -349,6 +349,9 @@ void SoundChip_AY8910::reset()
 
     // Reset internal tick counter
     _tick = 0;
+
+    // Reset write tracking (for TurboSound detection)
+    _hasBeenWritten = false;
 }
 
 /// Emulate single AY chip clock cycle
@@ -488,6 +491,9 @@ void SoundChip_AY8910::writeRegister(uint8_t regAddr, uint8_t value)
     {
         return;
     }
+
+    // Track that this chip has been written to (for TurboSound detection)
+    _hasBeenWritten = true;
 
     // XOR value with previous state => all non-zeroed bits indicate the change
     //uint8_t changedBits = _registers[regAddr] ^ value;

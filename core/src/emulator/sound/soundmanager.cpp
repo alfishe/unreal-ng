@@ -513,6 +513,10 @@ void SoundManager::handleFrameEnd()
     if (_covox)
         _covox->handleFrameEnd(samplesThisFrame);
 
+    // Finalize TurboSound frame (activity notification for HUD)
+    if (_turboSound)
+        _turboSound->handleFrameEnd();
+
     // Determine if any device has solo active
     bool soloActive = false;
     for (const auto& d : _devices)
