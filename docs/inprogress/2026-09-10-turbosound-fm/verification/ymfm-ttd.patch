@@ -1,0 +1,38 @@
+--- a/ymfm_fm.ipp	2026-09-12 14:40:30.862360243 -0400
++++ b/ymfm_fm.ipp	2026-09-12 14:39:51.535519753 -0400
+@@ -1266,8 +1266,20 @@
+ 	for (uint32_t opnum = 0; opnum < OPERATORS; opnum++)
+ 		m_operator[opnum]->save_restore(state);
+ 
+-	// invalidate any caches
+-	invalidate_caches();
++	// unreal-ng local patch (TTD): persist the prepare scheduling so that a
++	// save is side-effect free and a restore continues bit-exactly. prepare()
++	// is not idempotent (clocks key state, clears CSM key-on), so it must not
++	// be forced by save/restore.
++	state.save_restore(m_active_channels);
++	state.save_restore(m_modified_channels);
++	state.save_restore(m_prepare_count);
++
++	// restore: rebuild the operator caches from registers without prepare()
++	// side effects. Every register write marks all channels modified, so with
++	// m_modified_channels == 0 the live cache equals a fresh computation.
++	if (!state.saving())
++		for (uint32_t opnum = 0; opnum < OPERATORS; opnum++)
++			m_regs.cache_operator_data(m_operator[opnum]->choffs(), m_operator[opnum]->opoffs(), m_operator[opnum]->debug_cache());
+ }
+ 
+ 
+--- a/ymfm_opn.cpp	2026-09-12 14:40:30.865120820 -0400
++++ b/ymfm_opn.cpp	2026-09-12 14:39:51.535775211 -0400
+@@ -727,7 +727,9 @@
+ 	m_ssg.save_restore(state);
+ 	m_ssg_resampler.save_restore(state);
+ 
+-	update_prescale(m_fm.clock_prescale());
++	// unreal-ng local patch (TTD): saving must not call back into the SSG override
++	if (!state.saving())
++		update_prescale(m_fm.clock_prescale());
+ }
+ 
+ 

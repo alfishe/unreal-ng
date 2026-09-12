@@ -1,0 +1,129 @@
+SUBDESIGN TurboFM
+(
+	% frequency multiplier %
+	CLK1 : INPUT; % AY clk generator %
+--	DELAY_OUT : INPUT; % from delaying RC chain%
+--	DELAY_IN : OUTPUT; % to delaying RC chain %
+	CLK2OUT : OUTPUT; % multiplied on 2 frequency %
+
+	% controls from YM/AY %
+   	BC1 : INPUT; % BC1 from YM/AY %
+   	BC2 : INPUT; % BC2 from YM/AY %
+	BDIR : INPUT; % directional from YM/AY %
+	A8 : INPUT; % A8 from YM/AY %
+	_A9 : INPUT; % inverted A9 from YM/AY %
+
+	DA[7..0] : INPUT; % data BUS %
+	_RES : INPUT; % RESET %
+
+	% controls for YM2203 %
+	_CS1 : OUTPUT; % ineverted CS for first YM2203 %
+	_CS2 : OUTPUT; % ineverted CS for second YM2203 %
+	_RD : OUTPUT; % inverted RD for YM2203 %
+	_WR : OUTPUT; % inverted WR for YM2203 %
+	A0 : OUTPUT; % address or register set for YM2203 %
+
+	% control FM DAC %
+	FM1_IN: INPUT; % FM data from YM2203 %
+	FM2_IN: INPUT; % FM data from YM2203 %
+	FM1_OUT: OUTPUT; % FM data to DAC %
+	FM2_OUT: OUTPUT; % FM data to DAC %
+)
+
+VARIABLE
+	CUR_CHIP : DFF; % selection register for chips (0 - first; 1 - second) %
+	GET_STAT : DFF; % get status of chips (0 - status reg; 1 - data reg) %
+	FM_DIS : DFF; % disable FM output (0 - enable; 1 - disable) %
+    CS_CTRL: DFF; % for make digital filter %
+	SEL_CTRL: DFF; % for make digital filter %
+	_SELECT : NODE; % internal control registers selected % 
+
+	% for delaying purpose: %
+	INTDELAY : LCELL;
+	INTDELAY_1 : LCELL;
+	INTDELAY_2 : LCELL;
+	INTDELAY_3 : LCELL;
+	INTDELAY_4 : LCELL;
+	INTDELAY_5 : LCELL;
+	INTDELAY_6 : LCELL;
+	INTDELAY_7 : LCELL;
+	INTDELAY_OUT : LCELL;
+BEGIN
+   	DEFAULTS
+   		CUR_CHIP = 0;
+		GET_STAT = 1;
+		FM_DIS = 1;
+        CS_CTRL = 1;
+        SEL_CTRL = 1;
+	END DEFAULTS;
+
+	% frequency multiplier logic %
+    % CLK1: __!-----!_____ %
+    % CLK2: ___!-!___!-!__ %
+	INTDELAY=CLK1;
+	INTDELAY_1=INTDELAY;
+	INTDELAY_2=INTDELAY_1;
+	INTDELAY_3=INTDELAY_2;
+	INTDELAY_4=INTDELAY_3;
+	INTDELAY_5=INTDELAY_4;
+	INTDELAY_6=INTDELAY_5;
+	INTDELAY_7=INTDELAY_6;
+	INTDELAY_OUT=INTDELAY_7;
+	CLK2OUT=INTDELAY_OUT xor CLK1;
+
+	% selecting internal registers logic %
+    _SELECT = _A9 or not(BC2 and BC1 and BDIR and A8 and DA[7] and DA[6] and DA[5] and DA[4] and DA[3]) or not(_RES);
+	% digital filter logic %
+    SEL_CTRL.d = _SELECT;
+    SEL_CTRL.clk = not(CLK2OUT);
+    SEL_CTRL.prn = _RES; 
+
+	% selection register logic %
+	CUR_CHIP.d = DA[0];
+	CUR_CHIP.clrn = _RES;
+	CUR_CHIP.clk = _SELECT or SEL_CTRL.q; %digital filter on begin of _SELECT %
+	
+	% status/data register logic %
+	GET_STAT.d = DA[1];
+	GET_STAT.prn = _RES;
+	GET_STAT.clk = _SELECT or SEL_CTRL.q; %digital filter on begin _SELECT %
+
+	% FM access logic %
+	FM_DIS.d = DA[2];
+	FM_DIS.prn = _RES;
+	FM_DIS.clk = _SELECT or SEL_CTRL.q; %digital filter on begin _SELECT %
+
+	% control signals decoding %
+
+	%     YM/AY                         YM2203                     %
+	%  BDIR  BC2  BC1  A8  _A9      _WR  _RD  A0                   %
+	%   0     0    0   1    0         inactive                     %
+	%   0     0    1   1    0        0    1   0   (write address)  %
+	%   0     1    0   1    0         inactive                     %
+	%   0     1    1   1    0        1    0   1   (read register)  %
+	%   1     0    0   1    0        0    1   0   (write address)  %
+	%   1     0    1   1    0         inactive                     %
+	%   1     1    0   1    0        0    1   1   (write register) %
+	%   1     1    1   1    0        0    1   0   (write address)  %
+	%          other                  inactive                     %
+
+    % used only BC2=1 modes, BC2=0 ignored  %
+
+	% access to FM DAC %
+	FM1_OUT = FM1_IN and not( FM_DIS.q );
+	FM2_OUT = FM2_IN and not( FM_DIS.q );
+
+	% for CS used only static signals %
+    % CS makes only on stable _WR or _RD %
+    CS_CTRL.d = _WR and _RD;
+	CS_CTRL.prn = _RES;
+	CS_CTRL.clk = not(CLK2OUT);
+	_CS1 = CUR_CHIP.q or CS_CTRL.q; %digital filter on begin CS%
+	_CS2 = not(CUR_CHIP.q) or CS_CTRL.q; %digital filter on begin CS%
+
+	% dinamic logic %
+	_WR = not(BDIR and BC2 and A8) or _A9 or (BC1 and DA[7] and DA[6] and DA[5] and DA[4] and DA[3]);
+	_RD = BDIR or not(BC1 and BC2 and A8) or _A9;
+
+	A0 = (not(BDIR) and GET_STAT.q) or not(BC1); 
+END;
