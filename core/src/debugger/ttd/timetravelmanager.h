@@ -43,19 +43,22 @@
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <vector>
 #include <string>
 
 #include "emulator/platform.h"       // PlatformModulesEnum, MAX_RAM_PAGES
 #include "common/modulelogger.h"    // ModuleLogger
-#include "ttd_checkpoint.h"
-#include "ttd_external_events.h"
-#include "ttd_input_journal.h"
-#include "ttd_write_journal.h"
-#include "ttd_probe.h"
-#include "ttd_codec_page_store.h"
-#include "ttd_coverage_index.h"
+#include "ttdcheckpoint.h"
+#include "ttdexternalevents.h"
+#include "ttdinputjournal.h"
+#include "ttdwritejournal.h"
+#include "ttdprobe.h"
+#include "ttdcodecpagestore.h"
+#include "ttdcoverageindex.h"
+#include "ttdperipheralregistry.h"
+#include "timetravelframecache.h"
 
 // Forward declarations — we don't pull emulator headers into this header.
 // (EmulatorContext, Memory, Z80State, EmulatorState are all classes/structs
@@ -86,6 +89,25 @@ enum class TTDSessionState : uint8_t
 ///
 /// Keep in sync with the enum order above.
 const char* TTDSessionStateToString(TTDSessionState state);
+
+/// @brief Recording mode: which surface owns the session lifecycle.
+///
+/// Session (default) — the classic record/browse/seek/resume/.ttd flow
+/// used by the scrubber, WebAPI and CLI: StartRecording wipes and
+/// re-baselines, GetFrameCache is replay-scope only (never while
+/// Recording).
+///
+/// DebuggerLive — entered by debugger sessions (DeZog DZRP/ZRCP via the
+/// shared adapter): recording is continuous across browse cycles, and
+/// GetFrameCache may build while Recording when the emulator is paused
+/// (mode-scoped invariant relaxation; SeekTo/StepBack stay forbidden
+/// while Recording). See docs/inprogress/2026-08-27-dezog-integration/
+/// reverse-debugging.md §6.
+enum class TTDRecordMode : uint8_t
+{
+    Session      = 0,  ///< Classic .ttd session (scrubber/WebAPI/CLI).
+    DebuggerLive = 1,  ///< Always-recording live history for debuggers.
+};
 
 /// @brief Lightweight session summary returned by GetSessionInfo().
 /// Matches the shape automation clients (WebAPI/Lua/CLI) consume per TDD §10.4.
@@ -194,6 +216,26 @@ public:
 
     inline bool IsRecording() const { return _state == TTDSessionState::Recording; }
     inline TTDSessionState GetState() const { return _state; }
+    inline TTDRecordMode GetRecordMode() const { return _recordMode; }
+    inline bool IsDebuggerLive() const { return _recordMode == TTDRecordMode::DebuggerLive; }
+
+    /// @brief Enter DebuggerLive mode (debugger session live history).
+    ///
+    /// Adopts whatever recording state exists instead of wiping:
+    ///  - already Recording (a Session-mode start hijacked by an attach):
+    ///    keep the timeline, just switch the mode flag;
+    ///  - Idle with history and no unrecorded gap: ResumeRecordingLive()
+    ///    (append after the recorded end);
+    ///  - Idle empty or gapped: fresh StartRecording-style baseline.
+    ///
+    /// @return true when recording is active in DebuggerLive mode on
+    ///         return.
+    bool BeginDebuggerLiveHistory();
+
+    /// @brief Leave DebuggerLive mode. Recording stops, the timeline is
+    ///        KEPT as normal Idle-with-history for the scrubber/.ttd
+    ///        flows. Idempotent (no-op when not in DebuggerLive).
+    void EndDebuggerLiveHistory();
 
     TTDSessionInfo GetSessionInfo() const;
 
@@ -265,7 +307,7 @@ public:
     ///      SeekTo to position the emulator at any checkpoint).
     ///
     /// Refuses unknown future schema versions with a clear error message
-    /// (see ttd_dump_format.h::kMaxSupportedSchemaVersion).
+    /// (see ttddumpformat.h::kMaxSupportedSchemaVersion).
     bool DeserializeSession(std::istream& in, std::string& err);
 
     /// @brief Record where a just-deserialized session came from.
@@ -586,6 +628,34 @@ public:
     ///         Idle, the timeline is empty, or `from` is out of bounds.
     bool ResumeRecordingFrom(const TTDTimePoint& from);
 
+    /// @brief Resume live recording from the CURRENT position, keeping history.
+    ///
+    /// The non-destructive counterpart to StartRecording for the
+    /// browse-while-paused flow (debugger history views): StopRecording keeps
+    /// the timeline for browsing, and this transitions Idle → Recording again
+    /// WITHOUT clearing anything, so the next OnFrameBoundary appends strictly
+    /// after the existing timeline end and the recorded history keeps growing
+    /// across browse/resume cycles (StartRecording would wipe it).
+    ///
+    /// Valid only when the live machine never left the present (no seek/
+    /// scrub) AND no unrecorded gap exists: the current position must be
+    /// in the SAME frame as the recorded end (timeline.back()). A
+    /// mid-frame present in that frame is fine — unlike
+    /// ResumeRecordingFrom there is no target to hit and nothing to
+    /// truncate; the partial frame simply continues where it paused (the
+    /// emulator state is continuous across the browse). A frame gap means
+    /// the emulator ran while recording was stopped; those frames have no
+    /// checkpoints and no journaled writes, so replaying across the gap
+    /// would silently produce wrong state — refuse and let the caller fall
+    /// back to StartRecording.
+    ///
+    /// @return true on success (or already Recording — idempotent). False
+    ///         (with a logged warning) if state is Detached (use
+    ///         ResumeRecordingFrom), the timeline is empty (caller should
+    ///         StartRecording), or a frame gap was detected
+    ///         (sorted-invariant/unrecordable-gap guard).
+    bool ResumeRecordingLive();
+
     // -----------------------------------------------------------------------
     // Phase 4: Reverse search (parent TDD §9 + §10.4)
     // -----------------------------------------------------------------------
@@ -824,6 +894,45 @@ public:
     /// @brief Read-only accessor for the write journal (for serialization
     /// and tests).
     inline const TTDWriteJournal* GetWriteJournal() const { return _writeJournal.get(); }
+
+    // -----------------------------------------------------------------------
+    // Per-frame decode cache (reverse-browsing accelerator, §5 of the DeZog
+    // reverse-debugging design). Populated only during a replay pass; freed on
+    // leaving the replay/browse scope. See timetravelframecache.h.
+    // -----------------------------------------------------------------------
+
+    /// @brief Get the decode cache for `frame`, building it on demand.
+    ///
+    /// The first call for a frame replays that frame once (Detached) with an
+    /// instruction-capture hook, filling the cache; subsequent calls for the
+    /// same frame return it directly. The emulator state and position are
+    /// left unchanged: the live machine state is snapshotted before the
+    /// build replay and restored verbatim after (exact and marker-safe —
+    /// a seek-back cannot cross external-event markers).
+    ///
+    /// @return the cache, or nullptr if unavailable (Recording state, empty
+    ///         timeline, or the frame is out of recorded range).
+    ///
+    /// Pre: emulator paused, state is Detached or Idle-with-history (NOT
+    ///      Recording — call StopRecording first). Control thread only.
+    const TTDFrameCache* GetFrameCache(uint64_t frame);
+
+    /// @brief Free the per-frame cache and release its memory. Called on any
+    /// transition back to the present (StartRecording / ResumeRecordingFrom /
+    /// InvalidateSession) and available to callers leaving the browse scope.
+    void ClearFrameCache();
+
+    /// @brief Heap footprint of the currently-held frame cache (0 if none).
+    inline size_t GetFrameCacheBytes() const
+    {
+        return _frameCache ? _frameCache->Bytes() : 0;
+    }
+
+    /// @brief Frame number currently cached, or UINT64_MAX if none.
+    inline uint64_t GetCachedFrame() const
+    {
+        return _frameCache ? _frameCache->frame : UINT64_MAX;
+    }
     
     // -----------------------------------------------------------------------
     // Test/diagnostic accessors
@@ -832,12 +941,28 @@ public:
     /// @brief Number of checkpoints currently in the timeline.
     inline size_t GetCheckpointCount() const { return _timeline.size(); }
     
+    /// @brief Earliest frame covered by the timeline (0 when empty).
+    ///
+    /// Frames below this have no checkpoints: seeks/builds targeting them
+    /// always fail, so callers walking backward (e.g. the DeZog history
+    /// index resolver) can stop here instead of probing every frame down
+    /// to 0.
+    inline uint64_t GetEarliestRecordedFrame() const
+    {
+        return _timeline.empty() ? 0 : _timeline.front().time.frame;
+    }
+    
     /// @brief Read-only access to a timeline entry (bounds-checked).
     /// Returns nullptr if idx is out of range.
     const TTDCheckpoint* GetCheckpoint(size_t idx) const;
 
     /// @brief Read-only access to the page store (for tests / budget checks).
     inline const TTDCodecPageStore& GetPageStore() const { return _pageStore; }
+
+    /// Model-specific peripheral serializers registered for this session.
+    /// Exposed so the divergence hash can mix in their contribution without
+    /// the hash code knowing which machine is running.
+    inline const TTDPeripheralRegistry& GetPeripheralRegistry() const { return _peripherals; }
 
     /// @brief Number of model-RAM pages (set at StartRecording from the
     /// active model's RAM size).
@@ -1006,15 +1131,103 @@ private:
     TTDDirtyTracker* _dirtyTracker = nullptr;
 
     // -----------------------------------------------------------------------
+    // Per-frame decode cache
+    // -----------------------------------------------------------------------
+    /// Shortest Z80 instruction length in t-states (e.g. NOP = 4). Bounds the
+    /// number of instructions — hence records — a single frame can hold.
+    static constexpr uint32_t kMinInstructionTStates = 4;
+
+    /// Safety margin (in records) added to the reserved frame capacity. An
+    /// instruction can start just before the frame boundary and run up to the
+    /// longest Z80 opcode past it, so the true instruction count is a ceiling,
+    /// not a floor; this margin plus ceiling-division guarantees the fill never
+    /// reallocates even at that boundary edge (and across an injected interrupt).
+    static constexpr uint32_t kFrameReserveMargin = 8;
+
+    std::unique_ptr<TTDFrameCache> _frameCache;
+    /// While true, the memory/port write hooks append accesses to the
+    /// instruction currently being captured (set only during a build replay).
+    bool _frameCaptureActive = false;
+    /// Cache currently being filled (valid only while _frameCaptureActive).
+    TTDFrameCache* _capturingCache = nullptr;
+
+    /// @brief Replay `frame` once and fill `out` with one record per M1.
+    void BuildFrameCache(uint64_t frame, TTDFrameCache& out);
+    /// @brief M1 hook body: snapshot CPU/opcodes/sp/slots into a new entry.
+    void CaptureM1(uint16_t pc);
+
+    /// @brief Exact live machine state: everything a frame-cache build's
+    /// replay can disturb. GetFrameCache captures this before building and
+    /// restores it verbatim after, so the caller's position and memory stay
+    /// intact even when external-event markers block a replay-based restore
+    /// (their effects are not reproducible).
+    struct LiveStateSnapshot
+    {
+        TTDCpuState     cpu{};
+        TTDChipsetState chipset{};
+        uint32_t        z80TInFrame = 0;   ///< z80.t (host-side, not in TTDCpuState)
+        std::vector<uint8_t> ram;          ///< model RAM, _modelRamPages × 16 KB
+        /// Peripheral state, keyed by PeripheralId — same representation the
+        /// checkpoints use, produced by the same registry.
+        std::unordered_map<uint8_t, std::vector<uint8_t>> peripheralBlobs;
+    };
+
+    /// Reused across builds; vector capacities are retained, so the sizable
+    /// part (the RAM copy, ≤ ~1 MB) is allocated at most once per browse.
+    LiveStateSnapshot _liveSnapshot;
+
+    /// @brief Capture the live machine state into `out` (pure copies; no
+    /// timeline or dirty-tracker effects).
+    void SaveLiveState(LiveStateSnapshot& out);
+
+    /// @brief Restore a SaveLiveState snapshot verbatim, mirroring
+    /// RestoreCheckpoint's ordering: CPU → chipset → bank rebuild → RAM →
+    /// peripherals → screen resync.
+    void RestoreLiveState(const LiveStateSnapshot& snap);
+
+    /// @brief Re-derive the screen renderer's cached state (active screen
+    /// bank, border color, framebuffer) from emulatorState after a restore
+    /// that bypassed the port decoder (TDD §8.1 step 2e).
+    void ResyncScreenCaches();
+
+    // -----------------------------------------------------------------------
     // State
     // -----------------------------------------------------------------------
     TTDSessionState _state = TTDSessionState::Idle;
+
+    /// Recording mode (Session vs DebuggerLive). See TTDRecordMode.
+    TTDRecordMode _recordMode = TTDRecordMode::Session;
 
     /// The recorded timeline. Appended only on the emulator thread.
     std::vector<TTDCheckpoint> _timeline;
 
     /// Backing codec page store (4 KB pages, XOR+zstd-1 compression).
     TTDCodecPageStore _pageStore;
+
+    /// Model-specific peripheral serializers. The framework never names a
+    /// machine: it registers whatever the active model provides (see
+    /// RegisterModelPeripherals) and thereafter only calls TTDSerializable.
+    TTDPeripheralRegistry _peripherals;
+
+    /// Serializers owned by this manager for the lifetime of a session. Held
+    /// as a vector of base pointers so adding a model costs one factory line
+    /// in RegisterModelPeripherals and nothing else.
+    std::vector<std::unique_ptr<TTDSerializable>> _ownedPeripherals;
+
+    /// Build and register the serializers the active model needs. Called on
+    /// StartRecording; cleared by ReleaseModelPeripherals on stop.
+    /// Build and register the serializers the active model declares.
+    /// @param err optional; set to a human-readable reason on failure
+    /// @return false when the model declares state no serializer covers - the
+    ///         caller must then refuse to record rather than drop that state
+    bool RegisterModelPeripherals(std::string* err = nullptr);
+    void ReleaseModelPeripherals();
+
+    /// Fingerprint of the loaded ROM set, stored in the .ttd header so playback
+    /// can refuse a session recorded against different ROMs. On Scorpion the
+    /// ProfROM image decides what a plane id even means, so replaying against
+    /// another image would silently produce wrong pages rather than an error.
+    uint64_t ComputeRomSignature() const;
 
     /// Last captured keyframe index. P-frames between this and the next
     /// I-frame restore by walking deltas from this anchor. Updated on

@@ -38,7 +38,7 @@ struct TstateCoordLUT
 |:---|:---|
 | `screenzx.h` | Added `TstateCoordLUT` struct, `_tstateLUT[]` array, `CreateTstateLUT()` method, `SetVideoMode()` override, `DrawOriginal()` for comparison |
 | `screenzx.cpp` | Implemented `CreateTstateLUT()`, new LUT-based `Draw()`, `DrawOriginal()` (kept for benchmarking), `SetVideoMode()` override |
-| `screenzx_benchmark.cpp` | Added `BM_DrawFrame_Original` and `BM_DrawFrame_LUT` benchmarks |
+| `screenzxbenchmark.cpp` | Added `BM_DrawFrame_Original` and `BM_DrawFrame_LUT` benchmarks |
 | `screenzx_test.cpp` | Added 5 new LUT tests, fixed M_PMC → M_PENTAGON128K |
 
 ---

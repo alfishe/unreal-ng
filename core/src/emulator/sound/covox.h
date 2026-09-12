@@ -5,7 +5,7 @@
 #include "emulator/sound/audio.h"
 #include "emulator/ports/portdecoder.h"
 #include "common/modulelogger.h"
-#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
+#include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 
 class EmulatorContext;
 struct blip_t;
@@ -51,6 +51,7 @@ protected:
     // blip_buf accumulators (one per stereo output channel)
     blip_t* _blipL = nullptr;
     blip_t* _blipR = nullptr;
+    bool _synthesisSuppressed = false;
 
     // Per-channel DAC state
     uint8_t _dacValue[4] = {0x80, 0x80, 0x80, 0x80};  // Start at midpoint (silence)
@@ -87,6 +88,10 @@ public:
     // Frame lifecycle
     void reset();
     void handleFrameStart();
+
+    /// Turbo mode: keep DAC register / level tracking, skip blip deltas (see Beeper)
+    void setSynthesisSuppressed(bool suppressed);
+    bool isSynthesisSuppressed() const { return _synthesisSuppressed; }
     /// @param expectedSamples Exact per-frame sample count from SoundManager's
     ///        accumulator (0 = compute locally via rounding, legacy behavior).
     ///        Passing it keeps the covox stream in lockstep with the mixer.
@@ -125,5 +130,11 @@ public:
     size_t TTDStateSize() const override;
     void   TTDSaveState(uint8_t* dst) const override;
     void   TTDLoadState(const uint8_t* src) override;
+
+    /// Identity used by TTDPeripheralRegistry. Without it the base class
+    /// returns PeripheralId::Count and the device cannot be indexed in a
+    /// checkpoint's blob map.
+    ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::Covox; }
+    std::string TTDDeviceName() const override { return "Covox"; }
     /// endregion </TTDSerializable interface>
 };

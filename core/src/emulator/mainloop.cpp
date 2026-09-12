@@ -18,6 +18,8 @@
 #include "emulator/io/tape/tapeturbocontroller.h"
 #include "stdafx.h"
 
+#include <cmath>
+
 MainLoop::MainLoop(EmulatorContext* context)
 {
     _context = context;
@@ -216,6 +218,31 @@ bool MainLoop::WaitForPauseConfirmation(uint32_t timeoutMs)
                              [this]() { return _isPausedConfirmed.load(std::memory_order_acquire); });
 }
 
+void MainLoop::ConfirmPauseFromCpu()
+{
+    // Mirror of the park-entry confirm in Run()'s pause loop (same mutex/CV
+    // pair), issued by the CPU thread when it parks INSIDE a frame via
+    // Emulator::WaitWhilePaused() - Run()'s own confirm is unreachable above
+    // that park, so without this every WaitForPauseConfirmation() caller
+    // would burn its full timeout while the CPU is in fact safely parked.
+    {
+        std::lock_guard<std::mutex> lock(_pauseMutex);
+        _isPausedConfirmed.store(true, std::memory_order_release);
+    }
+    _pauseCV.notify_all();  // Wake threads waiting for the pause confirmation
+}
+
+void MainLoop::InvalidatePauseConfirmation()
+{
+    // Eager drop of a confirmation from a park we are exiting (Resume/Stop).
+    // The Run() loop clears its own flag only after its parked wait wakes
+    // (up to its 20 ms poll quantum); until then a new Pause() could consume
+    // the stale "parked" confirmation and return with the emulation thread
+    // already running the next frame - two Z80 drivers at once.
+    std::lock_guard<std::mutex> lock(_pauseMutex);
+    _isPausedConfirmed.store(false, std::memory_order_release);
+}
+
 void MainLoop::Stop()
 {
     _stopRequested = true;  // Frame wait polls this flag (TimeHelper::WaitUntilPrecise, <= 4 ms)
@@ -306,8 +333,9 @@ void MainLoop::OnFrameStart()
 #ifdef ENABLE_RECORDING
         recording = _context->pRecordingManager && _context->pRecordingManager->IsRecording();
 #endif
+        UpdateTurboRenderDecimation(config.turbo_mode, config);
         _renderThisFrame = !config.turbo_mode || recording ||
-                           (_state->frame_counter % TURBO_RENDER_DECIMATION == 0);
+                           (_state->frame_counter % _turboRenderDecimation == 0);
 
         // A rendered frame after skipped ones starts with a stale _prevTstate
         // (InitFrame does not reset it). DrawPeriod would self-heal through
@@ -550,3 +578,62 @@ void MainLoop::ExecuteCPUFrameCycle()
 {
     _cpu->CPUFrameCycle();
 }
+
+/// region <Turbo render decimation>
+
+uint64_t MainLoop::ComputeTurboRenderDecimation(double measuredFps, double targetFps, double maxRenderFps)
+{
+    if (!(measuredFps > 0.0) || !(targetFps > 0.0))
+        return TURBO_RENDER_DECIMATION;
+
+    double n;
+    if (maxRenderFps > targetFps)
+        n = std::ceil(measuredFps / maxRenderFps);  // rendered <= display rate, > display rate / 2
+    else
+        n = std::floor(measuredFps / targetFps);    // rendered in [target, 2 x target)
+
+    if (n < 1.0)
+        return 1;
+    if (n >= static_cast<double>(TURBO_RENDER_DECIMATION_MAX))
+        return TURBO_RENDER_DECIMATION_MAX;
+    return static_cast<uint64_t>(n);
+}
+
+void MainLoop::UpdateTurboRenderDecimation(bool turboMode, const CONFIG& config)
+{
+    if (!turboMode || !_turboRenderAdaptive)
+    {
+        // Leaving turbo (or adaptive off): back to the fixed default, drop the sample window
+        _turboRateSampling = false;
+        _turboMeasuredFps = 0.0;
+        _turboRenderDecimation = TURBO_RENDER_DECIMATION;
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const uint32_t frame = _state->frame_counter;
+
+    // (Re)start the sample window: first turbo frame, or the counter went backwards (reset)
+    if (!_turboRateSampling || frame < _turboRateSampleFrame)
+    {
+        _turboRateSampling = true;
+        _turboRateSampleTime = now;
+        _turboRateSampleFrame = frame;
+        return;
+    }
+
+    const double seconds = std::chrono::duration<double>(now - _turboRateSampleTime).count();
+    if (seconds < TURBO_RATE_SAMPLE_SECONDS)
+        return;
+
+    const uint32_t frames = frame - _turboRateSampleFrame;
+    _turboMeasuredFps = frames / seconds;
+
+    const double targetFps = config.frame_duration_us > 0 ? 1000000.0 / config.frame_duration_us : 0.0;
+    _turboRenderDecimation = ComputeTurboRenderDecimation(_turboMeasuredFps, targetFps, _turboRenderMaxFps);
+
+    _turboRateSampleTime = now;
+    _turboRateSampleFrame = frame;
+}
+
+/// endregion </Turbo render decimation>

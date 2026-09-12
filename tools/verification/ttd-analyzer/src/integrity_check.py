@@ -24,6 +24,7 @@ from .ttd_format import (
     FRAME_KIND_KEY_FRAME,
     FRAME_KIND_DELTA_FRAME,
     NEVER_TOUCHED_SLOT,
+    PERIPHERAL_ID_NAMES,
     NEVER_TOUCHED_PAGE_REF,  # backward-compat alias
     SUB_PAGES_PER_EMU_PAGE,
 )
@@ -143,20 +144,19 @@ def check_integrity(dump: TtdDump) -> IntegrityReport:
                 checkpoint_index=cp.index,
             ))
 
-        # Peripheral blob size sanity (peripheral blobs are tiny).
-        for blob_name, blob, max_reasonable in (
-            ("ay",    cp.ay_blob,    4096),
-            ("fdc",   cp.fdc_blob,   4096),
-            ("tape",  cp.tape_blob,  4096),
-            ("covox", cp.covox_blob, 16),
-        ):
-            if len(blob) > max_reasonable:
+        # Peripheral blob size sanity (peripheral blobs are tiny). Sizes here
+        # are the encoded blob — a 12-byte header plus a payload that may be
+        # compressed — so the bound is generous rather than exact.
+        MAX_REASONABLE_BLOB = 8192
+        for peripheral_id, blob in cp.peripheral_blobs.items():
+            if len(blob) > MAX_REASONABLE_BLOB:
+                name = PERIPHERAL_ID_NAMES.get(peripheral_id, f"id {peripheral_id}")
                 rep.issues.append(Issue(
                     severity="warning",
                     code="oversize_peripheral_blob",
                     message=(
-                        f"checkpoint {cp.index} {blob_name} blob is "
-                        f"{len(blob)} bytes (>{max_reasonable} expected)"
+                        f"checkpoint {cp.index} {name} blob is "
+                        f"{len(blob)} bytes (>{MAX_REASONABLE_BLOB} expected)"
                     ),
                     checkpoint_index=cp.index,
                 ))

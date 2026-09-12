@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=UnrealNG Video Wall
+GenericName=ZX Spectrum Emulator Wall
+Comment=Run many ZX Spectrum emulator instances side by side
+Icon=unrealng-videowall
+Exec=unreal-videowall
+Terminal=false
+Categories=Game;Emulator;
+Keywords=spectrum;zx;emulator;z80;videowall;
+StartupNotify=true

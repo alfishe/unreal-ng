@@ -10,7 +10,6 @@
 #include <QMoveEvent>
 #include <QMutex>
 #include <QPointer>
-#include <QPushButton>
 #include <QResizeEvent>
 #include <QSettings>
 #include <QTimer>
@@ -25,6 +24,9 @@
 #include "emulator/soundmanager.h"
 #include "logviewer/logwindow.h"
 #include "menumanager.h"
+#include "common/displayrefreshrate.h"
+#include "statusbarmanager.h"
+#include "toolbarmanager.h"
 #include "tape/tapemanagerwindow.h"
 #include "ui/intparametersdialog.h"
 #include "ui_mainwindow.h"
@@ -64,7 +66,7 @@ public:
 
     // region <Slots>
 private slots:
-    void handleStartButton();
+    void toggleEmulatorStartStop();
     void tryAdoptRemainingEmulator();
     void handleMessageScreenRefresh(int id, Message* message);
     void handleVideoModeChanged(int id, Message* message);
@@ -86,6 +88,7 @@ private slots:
     void saveDiskAsSCLDialog();
     void saveDiskAsUDIDialog();
     void resetEmulator();
+    void requestMni();  // Machine -> MNI: NMI + service monitor (plain NMI on other models)
     void handleFullScreenShortcut();
 
     // Menu action handlers
@@ -99,8 +102,12 @@ private slots:
     void handleTurboTapeToggled(bool enabled);
     void handleStepIn();
     void handleStepOver();
-    void handleDebugModeToggled(bool enabled);
+    void handleToolBarToggled(bool visible);
+    void handleScaleRequested(int scale);
+    void handleScreenshotRequested();
+    void handleStatusBarToggled(bool visible);
     void handleDebuggerToggled(bool visible);
+    void handleDebuggerVisibilityChanged(bool visible);
     void handleLogWindowToggled(bool visible);
     void handleTapeManagerToggled(bool visible);
     void handleImportAudioTapeRequested();  // tape-audio-bridge §7.3
@@ -109,6 +116,10 @@ private slots:
     void handleOverscanModeToggled(bool enabled);
     void handleViewportChanged(int presetIndex);
     void handleMachineModelChangeRequested(const QString& modelShortName);
+
+    // Toolbar (transport) handlers
+    void handleStartOrResumeRequested();
+    void handleRestartRequested();
 #ifdef ENABLE_RECORDING
     void handleVideoRecordingRequested();
     void handleQuickRecord(const QString& presetName);
@@ -147,6 +158,18 @@ protected:
     }
 
     void arrangeWindows();
+
+    /// Resize the window so the emulator screen is shown at an integer scale of its
+    /// native (viewport) size, plus menu / toolbar / status bar chrome
+    void fitWindowToScreen(int scale);
+
+    /// Switch the emulator's debug instrumentation (debug memory interface, breakpoint
+    /// dispatch) on or off - it follows the debugger window's visibility
+    void applyDebugInstrumentation(bool enabled);
+
+    /// Query the refresh rate of the display this window is on and hand it to the
+    /// emulator as the upper bound for turbo-mode rendering (re-run on screen change)
+    void applyDisplayRefreshRate();
     void adjust(QEvent* event, const QPoint& delta = QPoint{});
 
 private:
@@ -202,7 +225,6 @@ private:
     LogWindow* logWindow = nullptr;
     TapeManagerWindow* tapeManagerWindow = nullptr;
     DeviceScreen* deviceScreen = nullptr;
-    QPushButton* startButton = nullptr;
     QMutex lockMutex;
     QMutex _audioMutex;              // Protects audio operations from race conditions
     bool _audioInitialized = false;  // Tracks if audio device is initialized
@@ -222,8 +244,9 @@ private:
     QPoint _lastCursorPos;
     QPalette _originalPalette;
 
-    QShortcut* _fullScreenShortcut = nullptr;
     bool _inHandler = false;
+    bool _initialFitDone = false;  // Window sized to the screen once, on first show
+    DisplayRefreshInfo _displayRefresh;  // Last queried refresh characteristics of our display
 
     // Stores window geometry before going fullscreen / maximized
     QRect _normalGeometry;
@@ -238,6 +261,8 @@ private:
 
     DockingManager* _dockingManager = nullptr;
     MenuManager* _menuManager = nullptr;
+    ToolBarManager* _toolBarManager = nullptr;
+    StatusBarManager* _statusBarManager = nullptr;
 
     // Audio settings dialog (singleton, toggled via menu)
     QPointer<AudioSettingsWidget> _audioSettingsWidget;

@@ -17,6 +17,8 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#include "_helpers/testwaithelper.h"
 #endif
 
 /// region <SetUp / TearDown>
@@ -340,16 +342,19 @@ TEST_F(SharedMemory_Test, SharedMemoryCleanedUpOnEmulatorDestroy)
     delete _emulator;
     _emulator = nullptr;
 
-    // Small delay to ensure cleanup completes
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-
-    // Verify the shared memory region no longer exists
+    // Verify the shared memory region no longer exists. Unlink happens on the
+    // destruction path, so poll for it instead of guessing a fixed delay.
 #ifndef _WIN32
-    // On POSIX systems, try to open the shared memory - should fail
-    int fd = shm_open(shmName.c_str(), O_RDONLY, 0);
-    if (fd >= 0)
+    const bool unlinked = TestWait::For([&shmName] {
+        int probe = shm_open(shmName.c_str(), O_RDONLY, 0);
+        if (probe < 0)
+            return true;
+        close(probe);
+        return false;
+    });
+
+    if (!unlinked)
     {
-        close(fd);
         FAIL() << "Shared memory should be unlinked after emulator destruction: " << shmName;
     }
     // Expected: shm_open fails because the shared memory was unlinked
@@ -570,12 +575,21 @@ TEST_F(SharedMemory_Test, ExternalCannotOpenWhenFeatureDisabled)
     memory->UpdateFeatureCache();
     ASSERT_FALSE(IsSharedMemoryActive());
 
-    // Small delay to ensure cleanup
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-
-    // Try to open the shared memory externally - should fail
+    // Poll until the segment is gone rather than sleeping a fixed interval.
     void* externalData = nullptr;
-    bool opened = OpenSharedMemoryExternal(shmName, expectedSize, &externalData);
+    const bool closed = TestWait::For([&] {
+        void* probe = nullptr;
+        if (!OpenSharedMemoryExternal(shmName, expectedSize, &probe))
+            return true;
+        CloseSharedMemoryExternal(probe, expectedSize);
+        return false;
+    });
+
+    bool opened = !closed;
+    if (opened)
+    {
+        OpenSharedMemoryExternal(shmName, expectedSize, &externalData);
+    }
 
     EXPECT_FALSE(opened) << "External process should NOT be able to open shared memory after feature is disabled";
 
@@ -601,7 +615,7 @@ TEST_F(SharedMemory_Test, ExternalProcessRigorousValidation)
     // (Otherwise Pause() will be immediately overriden by Start())
     for (int i = 0; i < 50 && _emulator->GetState() != StateRun; i++)
     {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(std::chrono::microseconds(250));
     }
     ASSERT_EQ(_emulator->GetState(), StateRun) << "Emulator failed to reach StateRun";
 
@@ -609,7 +623,7 @@ TEST_F(SharedMemory_Test, ExternalProcessRigorousValidation)
     // Allow state to transition to Paused
     for (int i = 0; i < 20 && _emulator->GetState() != StatePaused; i++)
     {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(std::chrono::microseconds(250));
     }
     ASSERT_EQ(_emulator->GetState(), StatePaused) << "Emulator should be paused for rigorous memory testing";
 

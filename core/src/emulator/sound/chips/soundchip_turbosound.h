@@ -9,7 +9,7 @@
 #include "emulator/sound/audio.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/native_audio_tap.h"
-#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
+#include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 
 class SoundChip_TurboSound : public PortDecoder, public PortDevice, public ttd::TTDSerializable
 {
@@ -228,6 +228,21 @@ public:
     void handleFrameEnd();
     /// endregion </Emulation events>
 
+    /// region <Automation tap (MCP M7j)>
+public:
+    /// Install/remove the AY port-write log tap. Inert while sink == nullptr.
+    /// Called with the emulation thread parked (analyzer activation path).
+    void setLogSink(AYLogSink sink, void* context)
+    {
+        _logSink = sink;
+        _logSinkContext = context;
+    }
+
+protected:
+    AYLogSink _logSink = nullptr;
+    void* _logSinkContext = nullptr;
+    /// endregion </Automation tap>
+
     /// region <PortDevice interface methods>
 public:
     uint8_t portDeviceInMethod(uint16_t port) override;
@@ -246,5 +261,11 @@ public:
     size_t TTDStateSize() const override;
     void   TTDSaveState(uint8_t* dst) const override;
     void   TTDLoadState(const uint8_t* src) override;
+
+    /// Identity used by TTDPeripheralRegistry. Without it the base class
+    /// returns PeripheralId::Count and the device cannot be indexed in a
+    /// checkpoint's blob map.
+    ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::TurboSound; }
+    std::string TTDDeviceName() const override { return "TurboSound"; }
     /// endregion </TTDSerializable interface>
 };

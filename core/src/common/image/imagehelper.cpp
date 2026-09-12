@@ -7,6 +7,7 @@
 #include "common/dumphelper.h"
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
+#include "common/threadhelper.h"
 
 /// region <Asynchronous operations>
 
@@ -20,6 +21,7 @@ void ImageHelper::SavePNG_Async(std::string filename, uint8_t* buffer, size_t si
     {
         [filename, copyBuffer, size, width, height]()
         {
+            ThreadHelper::setThreadName("save-png");
             SavePNG(filename, copyBuffer, size, width, height);
 
             delete [] copyBuffer;
@@ -37,6 +39,7 @@ void ImageHelper::SaveFrameToPNG_Async(uint8_t* buffer, size_t size, unsigned wi
     {
         [copyBuffer, size, width, height, frameNumber]()
         {
+            ThreadHelper::setThreadName("save-frame");
             SaveFrameToPNG(copyBuffer, size, width, height, frameNumber);
 
             delete [] copyBuffer;
@@ -54,6 +57,7 @@ void ImageHelper::SaveFrameToHex_Async(uint8_t* buffer, size_t size, int frameNu
     {
         [copyBuffer, size, frameNumber]()
         {
+            ThreadHelper::setThreadName("save-hex");
             SaveFrameToHex(copyBuffer, size, frameNumber);
 
             delete [] copyBuffer;

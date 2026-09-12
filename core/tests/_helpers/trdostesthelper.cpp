@@ -224,7 +224,7 @@ uint64_t TRDOSTestHelper::directFormatDisk(uint8_t diskType, uint64_t maxCycles)
             std::cout << "[STEP 6] TIMEOUT! Breakpoint not hit within 2 seconds\n";
             break;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(std::chrono::microseconds(250));
     }
     
     // Pause emulator after breakpoint or timeout

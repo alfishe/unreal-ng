@@ -361,6 +361,8 @@ Commands to control the CPU execution flow for the selected emulator instance. T
 | `step` | `stepin` | | Execute exactly one CPU instruction and return. The emulator pauses automatically after execution. Returns the new PC value and disassembled instruction that was executed. Used for line-by-line debugging. |
 | `steps <N>` | | `<count>` | Execute exactly `<N>` CPU instructions, then pause. Equivalent to calling `step` N times but more efficient. Returns execution summary including final PC. Useful for stepping through loops. |
 | `stepover` | | | Execute one instruction, treating subroutine calls (`CALL`, `RST`) as atomic operations. If the instruction is a call, execution continues until the corresponding `RET`, then pauses. If not a call instruction, behaves like `step`. Essential for stepping over function calls without diving into them. |
+| `stepout` | | | Execute until the current subroutine returns to its caller. Breakpoints are skipped for the walk (same no-trap rule as step over) and frames rendered during the walk are not captured by the recording subsystem (raw CPU stepping path). Returns the new PC and SP. |
+| `skip_until <pc>` | | `<address> [max_tstates]` | Fast-forward execution until PC reaches `<address>` (hex or decimal), or the t-state budget is exhausted. Breakpoints are skipped for the walk. Default budget: 100 frames of emulated time (~2 s), hard cap 700,000,000 t-states. Returns hit/timeout status and the final PC. |
 | `run_tstates <N>` | | `<count>` | Run the CPU for exactly `<N>` t-states (1 t-state = 1 ULA clock tick / 2 pixels). Useful for precise timing analysis and ULA-level debugging. |
 | `run_to_scanline <N>` | | `<scanline>` | Run until the ULA beam reaches scanline `<N>`. For models with 312 scanlines (PAL), valid range is 0–311. |
 | `run_scanlines <N>` | | `<count>` | Run forward by `<N>` scanlines from the current beam position. |
@@ -394,6 +396,18 @@ Commands to control the CPU execution flow for the selected emulator instance. T
   - Removes temporary breakpoint
 - If not a call: behaves like `step`
 - **Limitation**: May not work correctly if the call doesn't return
+
+**`stepout`**:
+- Implemented via `Emulator::StepOut()`
+- Runs a raw stepping loop until the call stack unwinds to the caller
+- Breakpoint traps are disabled for the walk (no-trap rule)
+- Returns the new PC/SP and the emulator run state
+
+**`skip_until <pc>`**:
+- Implemented via `RunUntilCondition(pc == target, maxTStates)` on the raw CPU stepping path
+- Default budget: `config.frame * 100` (~2 s of emulated time); fallback 6,988,800 when config is unavailable; hard cap 700,000,000 t-states
+- Reports `hit=true/false` depending on whether the target address was reached within the budget
+- Useful for skipping splash screens and delay loops without setting a breakpoint
 
 **`reset`**:
 - Calls `Emulator::Reset()`
@@ -451,6 +465,7 @@ The `memory` command provides unified access to emulator memory with two address
 | `memory load <type> <page> <file> [--force]` | type + page + file | Load file into physical page |
 | `memory fill <type> <page> <offset> <len> <byte>` | type + page + offset + fill params | Fill region with byte |
 | `memory info` | | Show memory configuration |
+| `find <pattern>` | Z80 pattern search | Search the Z80 address space for a byte pattern (see below) |
 
 **Page Types**: `ram` | `rom` | `cache` | `misc`
 
@@ -544,6 +559,23 @@ Fill region with byte value.
 > memory fill ram 5 0x1800 768 0x38
 Filled 768 bytes with 0x38 in RAM page 5 at offset 0x1800
 ```
+
+**`find <pattern>`**
+
+Search the Z80 virtual address space for a byte pattern. The pattern is a hex
+string (with optional spaces) or a hex list: `find "AF 3C"`, `find AF3C`.
+Pattern length is limited to 64 bytes.
+
+| Flag | Default | Description |
+| :--- | :--- | :--- |
+| `--from <addr>` | 0x0000 | Search range start |
+| `--to <addr>` | 0xFFFF | Search range end |
+| `--align <1\|2>` | 1 | Require matches at 1- or 2-byte alignment |
+| `--max <N>` | 64 | Maximum number of matches |
+
+Each match prints the address and a context dump (bytes around the match).
+Useful for locating strings, code signatures and data structures across the
+whole 64K regardless of the current bank mapping.
 
 **`memory info`**
 
@@ -646,6 +678,18 @@ Current Z80 Bank Mapping:
 - Enable `debugmode` only for short debugging sessions
 - Use `calltrace` to understand program flow without stepping through each instruction
 - Combine `memory` with breakpoints to watch memory regions change
+
+#### 3.2 Screen State & Frame Cost
+
+Analysis commands for the video subsystem state — raster position, screen
+content digests, and per-frame cost accounting. Available on all automation
+interfaces (CLI, WebAPI, Lua, Python).
+
+| Command | Arguments | Description |
+| :--- | :--- | :--- |
+| `beam` | | Show the current raster position: frame, scanline, t-state within the frame, and the beam zone (`vsync`, `vblank`, `top_border`, `screen`, `bottom_border`, plus `hblank`/`left_border`/`paper`/`right_border` within the active area). Computed from the same raster descriptors the renderer uses. |
+| `digest <start> <end>` | `<from> <to>` | Compute a stable 64-bit digest over a Z80 address range (typically the screen bitmap `0x4000-0x57FF` and attributes `0x5800-0x5AFF`). The border color is folded into the digest unless `--no-border` is passed. `digest --banks p1,p2` digests physical RAM pages instead of a Z80 range. Prints the digest, covered byte count, and whether it changed since the previous call — a cheap way to detect "did the screen change" in scripts. |
+| `frame_cost` | | Show per-frame cost accounting: t-states spent halted vs running in the last frame and cumulatively, effective CPU frequency (frame budget × frequency multiplier), and the number of frames in the sample. Use it to quantify HALT-heavy main loops. |
 
 ### 4. Breakpoints & Watchpoints
 
@@ -785,6 +829,7 @@ Labels provide symbolic names for memory addresses, enabling human-readable debu
 | `label add <name> <addr>` | | `<name> <address> [options]` | Add a label at `<address>`. Options: `--type <code\|data\|const>`, `--module <name>`, `--bank <n>`, `--comment <text>`. |
 | `label remove <name>` | | `<label-name>` | Remove label by name. |
 | `label toggle <name>` | | `<label-name>` | Toggle label active state (active labels appear in disassembly). |
+| `label resolve <query>` | | `<name\|address>` | Resolve a label by name, or resolve everything known about an address: the exact label, all aliases sharing the address, and the nearest labels below and above (context for disassembly annotation). Addresses accept `0x`/`$`/decimal. |
 | `labels` | | `[filters]` | List all labels with optional filters: `--module <name>`, `--type <type>`, `--bank <n>`, `--from <addr>`, `--to <addr>`, `--active`. |
 | `symbols load <file>` | | `<path>` | Load symbols from file. Auto-detects format: `.sld` (sjasmplus), `.sym`, `.map`. Appends to existing labels. |
 | `symbols save <file>` | | `<path>` | Save all symbols to file in SLD format. |
@@ -1076,6 +1121,63 @@ Control all profilers (opcode, memory, calltrace) simultaneously for coordinated
                          clear ▼
                         (reset data)
 ```
+
+#### 5.5 Coverage Analyzer
+
+Tracks which Z80 addresses have been executed — the basis for dead-code
+detection and untested-path analysis. Built on the `coverage` analyzer
+(`CoverageAnalyzer`); activate it, run the workload, then inspect executed
+ranges and gaps.
+
+| Command | Arguments | Description |
+| :--- | :--- | :--- |
+| `coverage start` | `[--keep]` | Activate the coverage analyzer. `--keep` preserves previously collected ranges instead of starting clean. |
+| `coverage stop` | | Deactivate the analyzer (collected data is retained). |
+| `coverage clear` | | Clear all collected coverage data. |
+| `coverage gaps [start] [end]` | `[<from> <to>]` | List executed ranges and unexecuted gaps within a window (default 0x0000-0xFFFF). |
+| `coverage status` | | Show activation state, executed instruction count, and coverage statistics. |
+
+#### 5.6 AY Register Log
+
+Records every access to the AY-3-8910 register interface (ports 0xFFFD /
+0xBFFD) — the register sequence needed to replay or rip music. Built on the
+`aylog` analyzer (`AYLogAnalyzer`).
+
+| Command | Arguments | Description |
+| :--- | :--- | :--- |
+| `aylog start [N]` | `[capacity]` | Start logging AY register accesses (default capacity 4096 entries; oldest entries are dropped when full). |
+| `aylog stop` | | Stop logging (log is retained). |
+| `aylog clear` | | Clear the log. |
+| `aylog dump [N]` | `[count]` | Show the last N entries (default 16): frame, t-state, PC, port, chip, register, value, and decoded access type (`select`/`switch`/`write`). |
+| `aylog status` | | Show logging state, entry count, capacity, and dropped-entry count. |
+
+#### 5.7 Audio Capture
+
+Captures the emulator's audio output (stereo, 16-bit) for a fixed duration,
+with live level statistics and WAV export. Built on the `audiocapture`
+analyzer (`AudioCaptureAnalyzer`).
+
+| Command | Arguments | Description |
+| :--- | :--- | :--- |
+| `audiocapture start <s>` | `<seconds>` | Capture `<seconds>` of audio from now. |
+| `audiocapture stop` | | Stop capture (samples are retained). |
+| `audiocapture clear` | | Discard captured samples. |
+| `audiocapture result` | | Show sample count, duration, and per-channel peak/RMS levels. |
+| `audiocapture save <file>` | `<path.wav>` | Export the captured audio as a 16-bit stereo WAV file. |
+
+#### 5.8 Video Recording
+
+Records the emulator screen to a video file. Built on the recording
+subsystem (`RecordingManager`); requires a build with `ENABLE_RECORDING`
+(otherwise the CLI reports that recording is not compiled in).
+
+| Command | Arguments | Description |
+| :--- | :--- | :--- |
+| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--fps N] [--scale N]` | Start recording. Default format `gif`; default output file under the system temp directory. |
+| `videorecord stop` | | Stop recording and finalize the file. |
+| `videorecord pause` | | Pause recording. |
+| `videorecord resume` | | Resume a paused recording. |
+| `videorecord status` | | Show recording state, output file, frame rate, and scale factor. |
 
 ### 6. System State Inspection
 
@@ -2607,9 +2709,15 @@ for addr in range(0x0000, 0x4000):
 
 ### 7. Disassembly & Reverse Engineering
 
-Enhanced code analysis and disassembly features. The core disassembler (`Z80Disassembler`) is fully implemented and needs to be exposed via automation interfaces.
+Enhanced code analysis and disassembly features. The core disassembler (`Z80Disassembler`) is fully implemented and exposed via all automation interfaces (WebAPI, Lua, Python, CLI).
 
 **Implementation**: `core/src/debugger/disassembler/z80disasm.h/cpp`
+
+Key decoding properties shared by all interfaces:
+- **Signed displacements**: IX/IY indexed operands are rendered with the sign folded into the template (`(ix-#05)`), and the effective address (`IX+d`) is reported when runtime registers are available
+- **Relative targets**: JR/DJNZ targets are computed as `instruction address + instruction length + signed 8-bit offset` (wrapping at 0x0000/0xFFFF)
+- **Labels**: when a label exists for a jump/call/memory target, the mnemonic prints **both** the label and the address: `call TEST_ROUTINE (#8010)`; `ld (TEST_DATA (#8020)),hl` for absolute memory operands. 16-bit immediates (`ld hl,nn`) are not addresses by definition, but a label at exactly that value is shown too (`ld hl,TEST_DATA (#8020)`) - the operand keeps its immediate semantics (no `target`)
+- **Indirect jumps**: `jp (hl)`/`jp (ix)`/`jp (iy)` targets are only resolved at runtime (static views omit the target)
 
 #### 7.1 Disassembly Commands
 
@@ -2622,20 +2730,22 @@ Enhanced code analysis and disassembly features. The core disassembler (`Z80Disa
 
 **Example Output**:
 ```
-0x3683: CB 7F       BIT 7,A
-0x3685: 28 03       JR Z,0x368A
-0x3687: CD 00 10    CALL 0x1000
-0x368A: C9          RET
+0x3683: CB 7F       bit 7,a
+0x3685: 28 03       jr z,LOOP_EXIT (#368A)
+0x3687: CD 00 10    call INIT_ROUTINE (#1000)
+0x368A: C9          ret
 ```
 
 **WebAPI Endpoints**:
 ```
 GET /api/v1/emulator/{id}/disasm?address=0x3683&count=10
-GET /api/v1/emulator/{id}/disasm?from=0x3683&to=0x3700
 GET /api/v1/emulator/{id}/disasm/page?type=rom&page=2&offset=0&count=20
 ```
 
-**WebAPI Response**:
+> [!NOTE]
+> A range form (`?from=&to=`) is not implemented; use `address` + `count` instead.
+
+**WebAPI Response** (field reference in [webapi-interface.md](./webapi-interface.md#disassembly-response)):
 ```json
 {
   "address": 13955,
@@ -2644,13 +2754,13 @@ GET /api/v1/emulator/{id}/disasm/page?type=rom&page=2&offset=0&count=20
     {
       "address": 13955,
       "bytes": "CB7F",
-      "mnemonic": "BIT 7,A",
+      "mnemonic": "bit 7,a",
       "size": 2
     },
     {
       "address": 13957,
       "bytes": "2803",
-      "mnemonic": "JR Z,0x368A",
+      "mnemonic": "jr z,#368A",
       "size": 2,
       "target": 13962
     }
@@ -2672,7 +2782,8 @@ lines = emu.disasm_page(type="rom", page=2, offset=0, count=20)
 # Disassemble from physical RAM page
 lines = emu.disasm_page(type="ram", page=5, offset=0x100, count=10)
 
-# Returns list of dicts with: address/offset, bytes, mnemonic, size, target (if branch)
+# Returns list of dicts with: address/offset, bytes, mnemonic, size,
+# label, target/targetLabel (branches), displacement/effectiveAddress/effectiveAddressLabel (indexed ops)
 ```
 
 **Lua Binding**:
@@ -2685,7 +2796,8 @@ local lines = emu:disasm(0x3683, 10)  -- address, count
 local lines = disasm_page("rom", 2, 0, 20)  -- type, page, offset, count
 local lines = disasm_page("ram", 5, 0x100, 10)
 
--- Each entry: {address/offset, bytes, mnemonic, size, target}
+-- Each entry: {address/offset, bytes, mnemonic, size, label,
+--              target/targetLabel (branches), displacement/effectiveAddress/effectiveAddressLabel (indexed ops)}
 ```
 
 **CLI Commands**:
@@ -2709,6 +2821,35 @@ disasm_page ram 5 0x100 10     # RAM page 5
 | `symbol find <name>` | `<symbol-name>` | Find address of symbol by name. | 🔮 Planned |
 | `label set <addr> <name>` | `<address> <label>` | Manually set label at address. | 🔮 Planned |
 | `comment set <addr> <text>` | `<address> <comment>` | Add comment annotation at address. | 🔮 Planned |
+
+#### 7.3 Assembler Commands
+
+Assemble Z80 source text in place — the counterpart of `disasm`, built on
+`Z80TextAssembler`. Useful for patching code at runtime and for testing
+small routines without a toolchain.
+
+| Command | Aliases | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `assemble <addr> <code>` | `asm` | `<address> <source> [--write]` | Assemble Z80 source text at `<address>` (accepts `0x`/`$`/decimal). Prints the per-line listing (address, label, source, emitted bytes) and the collected `EQU` symbols. `--write` additionally writes the emitted bytes into emulator RAM. | ✅ Implemented |
+
+Assembly errors report the offending source line and message; nothing is
+written on failure.
+
+#### 7.4 Source Listing Commands
+
+Source-level debugging driven by assembler listings (sjasmplus `.lst` and
+compatible formats). A listing maps source lines to code addresses, enabling
+source-level stepping and run-to-line on top of the same stepping engine.
+Built on `ListingParser`.
+
+| Command | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
+| `listing load <file>` | `<path>` | Load a source listing and build the line→address map. Prints line/code-line/byte-range statistics. | ✅ Implemented |
+| `listing clear` | | Unload the current listing. | ✅ Implemented |
+| `listing info` | | Show loaded-listing statistics. | ✅ Implemented |
+| `listing source_at <addr>` | `<address>` | Show the source line covering `<address>` (alias: `listing source`). | ✅ Implemented |
+| `listing step_line` | | Run until the source line under PC changes (source-level step; ~2 s budget). | ✅ Implemented |
+| `listing run_to_line <N>` | `<line>` | Run until PC reaches the first code byte of line N at/after the given number (~10 s budget). | ✅ Implemented |
 
 ### 8. Content Analyzers & Extractors
 

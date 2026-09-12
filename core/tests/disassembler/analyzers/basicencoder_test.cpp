@@ -5,6 +5,7 @@
 #include "emulator/memory/memory.h"
 #include "emulator/spectrumconstants.h"
 #include "emulator/emulator.h"
+#include "emulator/emulatormanager.h"
 
 void BasicEncoder_Test::SetUp()
 {
@@ -895,4 +896,119 @@ TEST_F(BasicEncoder_Test, StateDetection_IsStackSane_InvalidSP)
 }
 
 /// endregion </ROM State Detection Tests>
+
+/// region <TR-DOS Auto-Resume Tests>
+
+/// Test fixture for integration tests that need a full emulator with TR-DOS
+class BasicEncoder_Integration_Test : public ::testing::Test
+{
+protected:
+    Emulator* _emulator = nullptr;
+    std::string _emulatorUUID;
+
+    void SetUp() override
+    {
+        // Ensure MessageCenter is in a clean state
+        MessageCenter::DisposeDefaultMessageCenter();
+
+        // Create Pentagon emulator directly - NO forced 48K reset
+        auto emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel(
+            "trdos-test", "PENTAGON", LoggerLevel::LogError);
+
+        if (!emulator)
+        {
+            GTEST_SKIP() << "Failed to create emulator";
+        }
+
+        _emulator = emulator.get();
+        _emulatorUUID = _emulator->GetUUID();
+    }
+
+    void TearDown() override
+    {
+        if (_emulator)
+        {
+            if (_emulator->IsRunning())
+                _emulator->Stop();
+
+            EmulatorManager::GetInstance()->RemoveEmulator(_emulatorUUID);
+            _emulator = nullptr;
+        }
+
+        // Clean up MessageCenter state
+        MessageCenter::DisposeDefaultMessageCenter();
+    }
+
+    /// Activate TR-DOS and wait for prompt
+    bool activateTRDOS()
+    {
+        _emulator->GetContext()->emulatorState.flags |= CF_TRDOS;
+        _emulator->GetMemory()->SetROMDOS(true);
+
+        // Run frames until TR-DOS detected
+        for (int i = 0; i < 300; i += 10)
+        {
+            _emulator->RunNFrames(10);
+            if (BasicEncoder::detectState(_emulator->GetMemory()) == BasicEncoder::BasicState::TRDOS_Active)
+                return true;
+        }
+        return false;
+    }
+
+    /// Step the (paused) machine out of its cold-boot sequence until it
+    /// settles in an idle BASIC/menu state. The boot code keeps rewriting
+    /// port 0x7FFD, which would immediately undo the ROM switch performed by
+    /// SetROMDOS() - activateTRDOS() only works on a machine that has stopped
+    /// re-paging. Deterministic single-driver stepping via RunNFrames, no
+    /// wall-clock timing dependence.
+    void settleBootSequence()
+    {
+        for (int i = 0; i < 500; i += 10)
+        {
+            _emulator->RunNFrames(10);
+            BasicEncoder::BasicState state = BasicEncoder::detectState(_emulator->GetMemory());
+            if (state == BasicEncoder::BasicState::Basic48K
+                || state == BasicEncoder::BasicState::Basic128K
+                || state == BasicEncoder::BasicState::Menu128K)
+            {
+                return;
+            }
+        }
+    }
+};
+
+/// Test that runCommand() auto-resumes after TR-DOS injection
+/// This verifies the fix for "BasicEncoder TR-DOS injection leaves emulator paused"
+TEST_F(BasicEncoder_Integration_Test, TRDOSRunCommand_AutoResumes)
+{
+    ASSERT_NE(_emulator, nullptr);
+
+    // Start async with turbo mode
+    _emulator->StartAsync();
+    _emulator->EnableTurboMode();
+    _emulator->Pause();
+
+    // Warm-boot out of reset before injecting TR-DOS (see
+    // settleBootSequence - historically this test relied on Pause()'s 500 ms
+    // confirmation timeout to advance ~thousands of free-running frames;
+    // pause confirmation is immediate now, so the boot is advanced
+    // deterministically on the test thread instead)
+    settleBootSequence();
+
+    // Activate TR-DOS
+    ASSERT_TRUE(activateTRDOS()) << "TR-DOS did not initialize";
+
+    // Resume to running state
+    _emulator->Resume();
+    ASSERT_FALSE(_emulator->IsPaused());
+
+    // Call runCommand - this was leaving emulator paused (the bug)
+    BasicEncoder::runCommand(_emulator, "LIST");
+
+    // Verify emulator is still running (not stuck paused)
+    EXPECT_TRUE(_emulator->IsRunning());
+    EXPECT_FALSE(_emulator->IsPaused()) << "runCommand should auto-resume, not leave paused";
+}
+
+/// endregion </TR-DOS Auto-Resume Tests>
 

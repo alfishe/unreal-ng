@@ -573,7 +573,7 @@ bool LabelManager::ParseMapFile(std::istream& input)
                         }
                         else if (isRomBank)
                         {
-                            // ROM bank: 0-63 (MAX_ROM_PAGES - 1)
+                            // ROM bank: 0-127 (MAX_ROM_PAGES - 1)
                             bank = (bankNumber < MAX_ROM_PAGES) ? bankNumber : 0;
                         }
                         else

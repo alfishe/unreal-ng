@@ -9,6 +9,8 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/mainloop.h"
 #include "emulator/video/screen.h"
+#include "base/featuremanager.h"
+#include "emulator/sound/soundmanager.h"
 
 /// Turbo render decimation (MainLoop): while turbo mode is active, only 1 of
 /// every MainLoop::TURBO_RENDER_DECIMATION frames performs rendering work
@@ -58,6 +60,10 @@ protected:
         ASSERT_NE(_emulator, nullptr) << "Failed to create emulator";
 
         _context = _emulator->GetContext();
+
+        // The cadence tests assert the fixed default; adaptive decimation would
+        // re-derive it from wall-clock speed and make them timing dependent
+        _emulator->GetMainLoop()->SetTurboRenderAdaptive(false);
         _screen = _context->pScreen;
         ASSERT_NE(_screen, nullptr);
 
@@ -211,4 +217,119 @@ TEST_F(TurboRenderDecimation_Test, TurboDisengageRestoresPerFrameRendering)
     {
         EXPECT_NE(hashes[i], hashes[i - 1]) << "Frame " << i << " after turbo disengage did not refresh the presented image";
     }
+}
+
+// ---------------------------------------------------------------------------
+// Turbo mode forces low-quality sound DSP without touching the soundhq feature
+// ---------------------------------------------------------------------------
+TEST_F(TurboRenderDecimation_Test, TurboOverridesSoundHQAndRestoresPreviousState)
+{
+    ASSERT_NE(_context->pSoundManager, nullptr);
+    ASSERT_NE(_context->pFeatureManager, nullptr);
+    FeatureManager& features = *_context->pFeatureManager;
+    SoundManager& sound = *_context->pSoundManager;
+
+    // HQ on before turbo: turbo forces LQ, the feature stays on, and LQ ends with turbo
+    features.setFeature(Features::kSoundHQ, true);
+    ASSERT_TRUE(sound.isHQActive());
+
+    _emulator->EnableTurboMode();
+    EXPECT_FALSE(sound.isHQActive()) << "Turbo must run the low-quality DSP path";
+    EXPECT_TRUE(features.isEnabled(Features::kSoundHQ)) << "The user's soundhq setting must be untouched";
+
+    // A feature change while in turbo is remembered but still overridden
+    features.setFeature(Features::kSoundHQ, false);
+    EXPECT_FALSE(sound.isHQActive());
+    features.setFeature(Features::kSoundHQ, true);
+    EXPECT_FALSE(sound.isHQActive());
+
+    _emulator->DisableTurboMode();
+    EXPECT_TRUE(sound.isHQActive()) << "Leaving turbo restores the previous (HQ) state";
+
+    // HQ off before turbo: stays off after turbo
+    features.setFeature(Features::kSoundHQ, false);
+    _emulator->EnableTurboMode();
+    EXPECT_FALSE(sound.isHQActive());
+    _emulator->DisableTurboMode();
+    EXPECT_FALSE(sound.isHQActive()) << "Leaving turbo must not enable HQ the user had off";
+    EXPECT_FALSE(features.isEnabled(Features::kSoundHQ));
+}
+
+// ---------------------------------------------------------------------------
+// Adaptive decimation keeps the rendered cadence within [target, 2 x target)
+// ---------------------------------------------------------------------------
+TEST(TurboRenderDecimation, AdaptiveDecimationTracksMeasuredRate)
+{
+    // 5008 fps on a 50.08 Hz machine: render every 100th frame -> 50.08 rendered fps
+    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(5008.0, 50.08), 100u);
+    // Pentagon at 1000 fps: floor(1000 / 48.83) = 20 -> 50.0 rendered fps
+    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(1000.0, 48.83), 20u);
+    // Rendered rate stays below 2 x target for any measured rate above target
+    for (double fps = 48.83; fps < 20000.0; fps *= 1.37)
+    {
+        const uint64_t n = MainLoop::ComputeTurboRenderDecimation(fps, 48.83);
+        const double rendered = fps / static_cast<double>(n);
+        EXPECT_GE(rendered, 48.83 - 1e-9) << "fps=" << fps;
+        EXPECT_LT(rendered, 2 * 48.83) << "fps=" << fps;
+    }
+    // Slower than real time: render every frame
+    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(30.0, 48.83), 1u);
+    // No measurement yet: fixed default
+    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(0.0, 48.83), MainLoop::TURBO_RENDER_DECIMATION);
+    // Absurd rates clamp
+    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(1e9, 48.83), MainLoop::TURBO_RENDER_DECIMATION_MAX);
+}
+
+// With a display bound the rendered rate tracks the panel: <= refresh rate, > half of it
+TEST(TurboRenderDecimation, DisplayBoundKeepsRenderedRateAtPanelRate)
+{
+    // 5008 fps on a 120 Hz ProMotion panel: every 42nd frame -> 119.2 rendered fps
+    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(5008.0, 50.08, 120.0), 42u);
+    // Same on a 60 Hz panel: every 84th frame -> 59.6 rendered fps
+    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(5008.0, 50.08, 60.0), 84u);
+    // Mild turbo below the panel rate: render every frame
+    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(100.0, 48.83, 120.0), 1u);
+    // A bound at or below target falls back to the [target, 2 x target) rule
+    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(1000.0, 48.83, 48.0), 20u);
+    for (double fps = 130.0; fps < 20000.0; fps *= 1.31)
+    {
+        const uint64_t n = MainLoop::ComputeTurboRenderDecimation(fps, 48.83, 120.0);
+        const double rendered = fps / static_cast<double>(n);
+        EXPECT_LE(rendered, 120.0 + 1e-9) << "fps=" << fps;
+        EXPECT_GT(rendered, 60.0) << "fps=" << fps;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Turbo mode (audio not requested) suppresses every sound synthesis path
+// ---------------------------------------------------------------------------
+TEST_F(TurboRenderDecimation_Test, TurboSuppressesSoundSynthesisAndResumesAfter)
+{
+    ASSERT_NE(_context->pSoundManager, nullptr);
+    SoundManager& sound = *_context->pSoundManager;
+
+    // Normal speed: synthesis active
+    RunFramesAndCollectHashes(1);
+    EXPECT_FALSE(sound.isSynthesisSuppressed());
+    EXPECT_FALSE(sound.getBeeper().isSynthesisSuppressed());
+
+    // Turbo without audio: decided at the next frame start, propagated to the devices
+    _emulator->EnableTurboMode(false);
+    RunFramesAndCollectHashes(1);
+    EXPECT_TRUE(sound.isSynthesisSuppressed());
+    EXPECT_TRUE(sound.getBeeper().isSynthesisSuppressed());
+    if (sound.getCovox())
+        EXPECT_TRUE(sound.getCovox()->isSynthesisSuppressed());
+
+    // Turbo with audio requested (recording use case): synthesis stays on
+    _emulator->DisableTurboMode();
+    _emulator->EnableTurboMode(true);
+    RunFramesAndCollectHashes(1);
+    EXPECT_FALSE(sound.isSynthesisSuppressed());
+
+    // Back to normal speed: synthesis resumes
+    _emulator->DisableTurboMode();
+    RunFramesAndCollectHashes(1);
+    EXPECT_FALSE(sound.isSynthesisSuppressed());
+    EXPECT_FALSE(sound.getBeeper().isSynthesisSuppressed());
 }

@@ -123,9 +123,27 @@ public:
     /// is a physical property of the shared data bus, not of contention.
     uint8_t GetFloatingBus() const;
 
+    /// Scorpion floating bus: attribute byte of the screen cell the video
+    /// controller is fetching right now. On Scorpion a read from ANY
+    /// non-existent port returns this value - the attribute latch keeps
+    /// driving the data bus after the fetch (programmer's manual, port #FF);
+    /// border/blanking reads return #FF. Not gated by the FloatBus config
+    /// toggle: unlike the ZX "unstable bus" emulation this is documented
+    /// port-map behavior of the model (the ProfROM monitor times its
+    /// raster waits on this stream).
+    uint8_t GetFloatingBusAttribute() const;
+
 private:
     /// Shared computation for both memory and IO contention.
     uint8_t ComputeContentionDelay(uint32_t t) const;
+
+    /// Shared floating-bus position math: resolves the VRAM cell being
+    /// fetched at the current T-state (with the 4T fetch pipeline offset).
+    /// Returns false outside the fetch area (border/blanking).
+    bool LocateFloatingBusCell(uint32_t& y, uint32_t& cellIndex) const;
+
+    /// Attribute address of a screen cell (0x5800-0x5AFF interleaved layout).
+    static uint16_t AttributeCellAddress(uint32_t y, uint32_t cellIndex);
 
     // ── State ────────────────────────────────────────────────
 

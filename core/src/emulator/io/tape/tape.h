@@ -2,7 +2,7 @@
 
 #include "stdafx.h"
 
-#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
+#include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 #include "emulator/io/tape/tapetypes.h"      // tape vocabulary types (design §5.1a leaf header)
 #include "emulator/io/tape/tapecatalog.h"    // TapeFastLoadPlan (§5.8) — leaf, no cycle
 #include "emulator/platform.h"
@@ -368,6 +368,12 @@ public:
     size_t TTDStateSize() const override;
     void   TTDSaveState(uint8_t* dst) const override;
     void   TTDLoadState(const uint8_t* src) override;
+
+    /// Identity used by TTDPeripheralRegistry. Without it the base class
+    /// returns PeripheralId::Count and the device cannot be indexed in a
+    /// checkpoint's blob map.
+    ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::Tape; }
+    std::string TTDDeviceName() const override { return "Tape"; }
     /// endregion </TTDSerializable interface>
 };
 

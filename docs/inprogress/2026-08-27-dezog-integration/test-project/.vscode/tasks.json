@@ -1,0 +1,84 @@
+{
+    // =========================================================================
+    // Helper tasks for the DeZog ⇄ unreal-ng (ZRCP) test project.
+    //
+    // Recommended flow (details in README.md):
+    //   1. "make main.sna"          - build the demo snapshot (once)
+    //   2. "launch unreal-ng + load demo" - start unreal-qt detached, create a
+    //      48K emulator instance and load src/main.sna into it (WebAPI)
+    //   3. press F5 in VS Code      - DeZog attaches via launch.json
+    //   4. "stop unreal-ng"         - cleanup when done
+    //
+    // Paths: this project lives at <repo>/docs/inprogress/2026-08-27-dezog-integration/
+    // test-project, so ${workspaceFolder}/../../../../ is the repo root and
+    // <repo-root>/cmake-build-release holds the binaries. The commands below
+    // are POSIX shell (macOS/Linux); on Windows run the same steps manually -
+    // binary: <repo-root>\cmake-build-release\bin\unreal-qt.exe, then the two
+    // HTTP calls from the "launch + load" task with curl.exe/PowerShell.
+    //
+    // Ports (both defaults, both overridable by env vars):
+    //   8090  - unreal-ng WebAPI (used here to create the emulator + load the
+    //           snapshot; UNREAL_WEBAPI_PORT overrides)
+    //   10000 - unreal-ng ZRCP server (what DeZog attaches to; UNREAL_ZRCP_PORT
+    //           overrides - mirror any change in launch.json)
+    // =========================================================================
+    "version": "2.0.0",
+    "tasks": [
+        {
+            // Build src/main.sna from src/main.asm WITHOUT any assembler
+            // (python3 hand-emits the exact bytes). src/main.sna is also
+            // committed, so this is only needed after editing main.asm.
+            "label": "make main.sna",
+            "type": "shell",
+            "command": "python3 ${workspaceFolder}/make-sna.py",
+            "options": { "cwd": "${workspaceFolder}" },
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            // OPTIONAL variant: real assembler (needs sjasmplus on PATH).
+            // Also emits src/main.sld for DeZog source-level debugging - enable
+            // the "sjasmplus" line in launch.json when using this.
+            "label": "make main.sna (sjasmplus)",
+            "type": "shell",
+            "command": "sjasmplus",
+            "args": ["--sld=src/main.sld", "--fullpath", "src/main.asm"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": []
+        },
+        {
+            // Start unreal-qt DETACHED, wait for its WebAPI, create a 48K
+            // emulator instance and load src/main.sna into it. Prints the
+            // emulator id and ends - unreal-qt keeps running in the
+            // background (log: <repo>/scratch/dezog-test-project.log).
+            //
+            // Why via WebAPI and not DeZog? DeZog's zrcp "load"/"smartload"
+            // are no-ops on unreal-ng: machine resets and program loading are
+            // owned by the host emulator. This task performs that host-side
+            // step. The curl --retry loop is the "wait for startup" - no
+            // fixed sleep that could race a cold start.
+            "label": "launch unreal-ng + load demo (ZRCP :10000)",
+            "type": "shell",
+            "command": "mkdir -p ${workspaceFolder}/../../../../scratch && (nohup ${workspaceFolder}/../../../../cmake-build-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt > ${workspaceFolder}/../../../../scratch/dezog-test-project.log 2>&1 &) && sleep 1 && EMU_ID=$(curl -s --retry 15 --retry-delay 1 --retry-connrefused -X POST http://localhost:8090/api/v1/emulator/start -H 'Content-Type: application/json' -d '{\"model\": \"48K\"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"id\"])') && echo \"emulator instance: $EMU_ID\" && curl -s -X POST \"http://localhost:8090/api/v1/emulator/$EMU_ID/snapshot/load\" -H 'Content-Type: application/json' -d \"{\\\"path\\\": \\\"${workspaceFolder}/src/main.sna\\\"}\" && echo '' && echo 'Ready - press F5 in VS Code (DeZog: Attach to unreal-ng (ZRCP))'",
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": []
+        },
+        {
+            // Cleanup: kill the detached unreal-qt (same pattern as the
+            // repo's WebAPI test procedures). Nothing else is left behind.
+            "label": "stop unreal-ng",
+            "type": "shell",
+            "command": "pkill -9 unreal-qt 2>/dev/null; echo 'unreal-qt stopped'",
+            "problemMatcher": []
+        },
+        {
+            // Headless protocol check of the ZRCP server (19 steps incl. the
+            // DeZog 3.7.4 init sequence replay). Run while an emulator
+            // instance exists - i.e. after "launch unreal-ng + load demo".
+            "label": "ZRCP protocol check (verifier)",
+            "type": "shell",
+            "command": "python3 ${workspaceFolder}/../../../../tools/verification/zesarux/verify_zrcp_emulator.py --port 10000",
+            "problemMatcher": []
+        }
+    ]
+}

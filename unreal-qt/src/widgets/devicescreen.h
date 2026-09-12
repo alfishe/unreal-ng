@@ -40,16 +40,13 @@ public:
     }
 
 public:
-    QSize sizeHint() const override
-    {
-        if (_hasViewport && devicePixels)
-        {
-            int w = devicePixels->width() - _displayViewport.cropLeft - _displayViewport.cropRight;
-            int h = devicePixels->height() - _displayViewport.cropTop - _displayViewport.cropBottom;
-            return QSize(w, h);
-        }
-        return QSize(352, 288);
-    }
+    /// Native display size. Fixed: the widget keeps the standard 352x288 (11:9) framing
+    /// whatever the framebuffer or viewport is, so overscan options never resize or
+    /// re-proportion the window - the (cropped) framebuffer is scaled into this frame.
+    static constexpr int kNativeWidth = 352;
+    static constexpr int kNativeHeight = 288;
+
+    QSize sizeHint() const override { return QSize(kNativeWidth, kNativeHeight); }
 
 public slots:
     void refresh();
@@ -68,23 +65,17 @@ public:
         _displayViewport = viewport;
         _hasViewport = true;
 
-        // Update aspect ratio for viewport dimensions
-        if (devicePixels)
-        {
-            int w = devicePixels->width() - viewport.cropLeft - viewport.cropRight;
-            int h = devicePixels->height() - viewport.cropTop - viewport.cropBottom;
-            if (h > 0)
-                ratio = static_cast<float>(w) / static_cast<float>(h);
-        }
-
-        updateGeometry();  // sizeHint/aspect changed - let the layout re-frame
-        update();          // Trigger repaint with new viewport
+        // Aspect ratio is fixed (see sizeHint) - only the source rectangle changes
+        update();  // Trigger repaint with new viewport
     }
+
+    /// Copy of the currently presented frame (viewport-cropped), for screenshots.
+    /// Null image when no framebuffer is attached.
+    QImage grabFramebuffer();
 
     void clearDisplayViewport()
     {
         _hasViewport = false;
-        updateGeometry();
         update();
     }
 
@@ -107,7 +98,7 @@ private:
     QImage _latchedFrame;           // Owned backing store filled via _frameSource
     FrameCopyFn _frameSource;       // Tear-free frame provider (empty = legacy live-buffer path)
 
-    float ratio = 352.0f / 288.0f;
+    static constexpr float ratio = static_cast<float>(kNativeWidth) / static_cast<float>(kNativeHeight);
 
     std::shared_ptr<Emulator> _emulator = nullptr;  // Reference to emulator for UUID tagging
     bool _isShuttingDown = false;  // Flag to block refreshes during shutdown

@@ -11,7 +11,7 @@
 
 #include <common/filehelper.h>
 #include <common/stringhelper.h>
-#include <debugger/ttd/ttd_checkpoint.h>
+#include <debugger/ttd/ttdcheckpoint.h>
 #include <debugger/ttd/timetravelmanager.h>
 #include <emulator/cpu/z80.h>
 #include <emulator/cpu/core.h>
@@ -321,6 +321,7 @@ bool TTDDivergenceHarness::VerifyReplayMatchesLive(size_t frameIndex,
             oss << "Snapshot hash mismatch at frame " << frameIndex
                 << ": expected=" << HashToString(exp.hash)
                 << " actual=" << HashToString(actual.hash);
+
             *failureMsg = oss.str();
         }
         return false;
@@ -398,8 +399,8 @@ DivergenceFrame TTDDivergenceHarness::CaptureCurrentFrame()
     // live Z80State / EmulatorState. Hashing these raw bytes matches
     // ExtractHashesFromTimeline's hash of the stored checkpoint, so the
     // two are directly comparable.
-    const TTDCpuState     cpu     = CaptureCpuState(*static_cast<const Z80State*>(z80));
-    const TTDChipsetState chipset = CaptureChipsetState(_context->emulatorState);
+    const TTDCpuState cpu = CaptureCpuState(*static_cast<const Z80State*>(z80));
+    TTDChipsetState chipset = CaptureChipsetState(_context->emulatorState);
 
     uint64_t composite = HashBytes(reinterpret_cast<const uint8_t*>(&cpu), sizeof(TTDCpuState));
     composite = HashCombine(composite,

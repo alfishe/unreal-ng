@@ -5,7 +5,7 @@
 #include <queue>
 #include <vector>
 
-#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
+#include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/fdc.h"
@@ -24,6 +24,20 @@ class WD1793 : public PortDecoder, public PortDevice, public ttd::TTDSerializabl
 
     /// region <Types>
 public:
+    /// Diff-gate cache for NC_FDC_STATE_CHANGED — the display-relevant tuple that was
+    /// posted last. An aggregate of plain values so comparison stays trivial.
+    struct FdcNotifyCache
+    {
+        uint8_t driveId = 0;
+        uint8_t side = 0;
+        uint8_t trackRegister = 0;
+        uint8_t sectorRegister = 0;
+        uint8_t physicalTrack = 0;
+        bool busy = false;
+        bool drq = false;
+        bool motorOn = false;
+    };
+
     /// region <WD1793 / VG93 commands>
     enum WD_COMMANDS : uint8_t
     {
@@ -632,6 +646,21 @@ protected:
     uint8_t _drive = 0;    // Currently selected drive index [0..3]
     bool _sideUp = false;  // False - bottom side. True - top side
 
+    /// Last FDD state published with NC_FDD_STATE_CHANGED (dedups the notification stream)
+    FDDStateInfo _publishedFddState;
+    bool _fddStatePublished = false;
+
+    /// Post NC_FDD_STATE_CHANGED (drive, side, track, sector, motor...) if anything changed
+    /// since the last post. Called at every mutation point; cheap when nothing changed.
+    void notifyFDDStateChanged();
+
+public:
+    /// Current floppy state for UI consumers. Read once when a UI binds to the emulator;
+    /// every later change arrives via NC_FDD_STATE_CHANGED (FDDStatePayload)
+    FDDStateInfo getFDDState();
+
+protected:
+
     // WD1793 state getters - moved to public section
     WD_COMMANDS _lastDecodedCmd = WD_CMD_RESTORE;  // Last command executed (decoded)
     uint8_t _lastCmdValue = 0x00;                  // Last command parameters (already masked)
@@ -711,6 +740,11 @@ protected:
     bool _sleeping = true;        // Start in sleep mode (wake on first port access)
     uint64_t _wakeTimestamp = 0;  // T-state when last port access occurred
 
+    // Diff-gate cache for NC_FDC_STATE_CHANGED (see notifyFdcStateChanged) — holds the
+    // last posted visible-state tuple so unchanged snapshots are not re-posted
+    FdcNotifyCache _lastNotifiedFdcState;
+    bool _fdcNotifyCacheValid = false;
+
     /// endregion </Fields>
 
     /// region <Properties>
@@ -753,6 +787,18 @@ public:
     {
         return _beta128status;
     }
+    uint8_t getSelectedDriveIndex() const
+    {
+        return _drive;
+    }
+    bool getSideUp() const
+    {
+        return _sideUp;
+    }
+
+    // Stateless command byte decoder - public so FDCStatePayload consumers can map
+    // the raw _command snapshot byte to a WD_COMMANDS value
+    static WD_COMMANDS decodeWD93Command(uint8_t value);
     /// endregion </Properties>
 
     /// region <Constructors / destructors>
@@ -796,6 +842,10 @@ protected:
     {
         return _sleeping;
     }
+
+    // Post NC_FDC_STATE_CHANGED (FDCStatePayload) when any display-relevant value
+    // changed since the last post. Diff-gated: unchanged snapshots post nothing.
+    void notifyFdcStateChanged();
     /// endregion </Helper methods>
 
     /// region <Command handling
@@ -804,7 +854,6 @@ protected:
     static bool isType2Command(uint8_t command);
     static bool isType3Command(uint8_t command);
     static bool isType4Command(uint8_t command);
-    static WD_COMMANDS decodeWD93Command(uint8_t value);
     static uint8_t getWD93CommandValue(WD1793::WD_COMMANDS command, uint8_t value);
     void processWD93Command(uint8_t value);
 
@@ -1074,6 +1123,12 @@ public:
     size_t TTDStateSize() const override;
     void   TTDSaveState(uint8_t* dst) const override;
     void   TTDLoadState(const uint8_t* src) override;
+
+    /// Identity used by TTDPeripheralRegistry. Without it the base class
+    /// returns PeripheralId::Count and the device cannot be indexed in a
+    /// checkpoint's blob map.
+    ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::BetaDisk; }
+    std::string TTDDeviceName() const override { return "WD1793"; }
     /// endregion </TTDSerializable interface>
 };
 
@@ -1104,6 +1159,10 @@ public:
 
     using WD1793::_drive;
     using WD1793::_sideUp;
+    using WD1793::_publishedFddState;
+    using WD1793::_fddStatePublished;
+    using WD1793::processBeta128;
+    using WD1793::notifyFDDStateChanged;
 
     using WD1793::_delayTStates;
     using WD1793::_state;

@@ -828,6 +828,12 @@ void EmulatorAPI::calltraceProfilerStop(const HttpRequestPtr& req, std::function
 
     tracker->StopCalltraceSession();
 
+    // Finalize: transfer any pinned (hot) events to the cold buffer so the
+    // entries/GetAll endpoints see the complete session. Tight loops keep their
+    // events hot while capturing and only the frame tick evicts expired ones —
+    // stopping inside that window would otherwise hide them from readers
+    tracker->GetCallTraceBuffer()->FlushAllHotToCold();
+
     Json::Value ret;
     ret["emulator_id"] = id;
     ret["profiler"] = "calltrace";
@@ -1446,6 +1452,88 @@ void EmulatorAPI::getUnifiedProfilerStatus(const HttpRequestPtr& req, std::funct
     }
 
     ret["profilers"] = profilers;
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/{id}/frame_cost
+/// @brief Work-vs-idle t-state accounting per frame. Halted (HALT bus) t-states
+///        are counted in Z80::Z80Step and rolled up per frame in
+///        Core::AdjustFrameCounters; active cost is the frame budget minus halted.
+void EmulatorAPI::getFrameCost(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                               const std::string& id) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto* context = emulator->GetContext();
+    if (!context)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Unable to access emulator context";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    const CONFIG& config = context->config;
+    const EmulatorState& state = context->emulatorState;
+
+    const uint64_t frameBudget = static_cast<uint64_t>(config.frame) * state.current_z80_frequency_multiplier;
+
+    // Last completed frame
+    const uint64_t lastHalted = state.tstates_halted_last;
+    const uint64_t lastActive = frameBudget > lastHalted ? frameBudget - lastHalted : 0;
+
+    Json::Value last;
+    last["tstates_total"] = frameBudget;
+    last["tstates_halted"] = lastHalted;
+    last["tstates_active"] = lastActive;
+    last["halted_percent"] = frameBudget ? lastHalted * 100.0 / frameBudget : 0.0;
+    last["active_percent"] = frameBudget ? lastActive * 100.0 / frameBudget : 0.0;
+
+    // Session averages over all accounted frames
+    const uint64_t frames = state.frame_cost_frames;
+    Json::Value average;
+    average["frames"] = static_cast<Json::UInt64>(frames);
+    average["tstates_total"] = static_cast<Json::UInt64>(state.tstates_frame_total);
+    average["tstates_halted"] = static_cast<Json::UInt64>(state.tstates_halted_total);
+    average["tstates_active"] = static_cast<Json::UInt64>(state.tstates_frame_total - state.tstates_halted_total);
+    average["halted_percent"] =
+        state.tstates_frame_total ? state.tstates_halted_total * 100.0 / state.tstates_frame_total : 0.0;
+    average["active_percent"] =
+        state.tstates_frame_total
+            ? (state.tstates_frame_total - state.tstates_halted_total) * 100.0 / state.tstates_frame_total
+            : 0.0;
+
+    Json::Value ret;
+    ret["emulator_id"] = id;
+    ret["frame"] = static_cast<Json::UInt64>(state.frame_counter);
+    ret["frame_tstates"] = frameBudget;
+    ret["tstates_per_line"] = config.t_line;
+    ret["frames_per_second"] = config.intfq;
+    ret["last_frame"] = last;
+    ret["average"] = average;
+    ret["current_frame_halted"] = state.tstates_halted_current;
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);

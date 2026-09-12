@@ -218,6 +218,8 @@ Content-Type: application/json
 POST /api/v1/emulator/{id}/step              Execute single instruction
 POST /api/v1/emulator/{id}/steps             Execute N instructions (body: {"count": N})
 POST /api/v1/emulator/{id}/stepover          Step over CALL instructions
+POST /api/v1/emulator/{id}/stepout            Step out of current subroutine (breakpoints skipped)
+POST /api/v1/emulator/{id}/skip_until         Fast-forward until PC reaches target (body: {"pc": "0x8000", "max_tstates": N})
 POST /api/v1/emulator/{id}/run_tstates       Run N t-states (body: {"count": N})
 POST /api/v1/emulator/{id}/run_to_scanline   Run until scanline N (body: {"scanline": N})
 POST /api/v1/emulator/{id}/run_scanlines     Run N scanlines forward (body: {"count": N})
@@ -248,6 +250,76 @@ GET /api/v1/emulator/{id}/memcounters         Memory access statistics
 GET /api/v1/emulator/{id}/calltrace           Call trace history (?limit=N)
 GET /api/v1/emulator/{id}/disasm              Disassemble Z80 code (?address=&count=, default: PC)
 GET /api/v1/emulator/{id}/disasm/page         Disassemble from physical page (?type=&page=&offset=&count=)
+POST /api/v1/emulator/{id}/memory/find        Search Z80 memory for a byte pattern (body: {"pattern_hex": "AF 3C"})
+GET  /api/v1/emulator/{id}/state/screen/digest  Stable screen-content digest (range or banks, border folding)
+GET  /api/v1/emulator/{id}/video/beam         Current raster position and beam zone
+GET  /api/v1/emulator/{id}/frame_cost         Per-frame halt/run cost accounting
+```
+
+### Labels & Symbols
+```
+GET    /api/v1/emulator/{id}/labels            List labels (filters: ?module=&type=&bank=&from=&to=&active=)
+POST   /api/v1/emulator/{id}/labels            Add label (body: {"name", "address", "type", ...})
+DELETE /api/v1/emulator/{id}/labels            Clear all labels
+GET    /api/v1/emulator/{id}/labels/resolve    Resolve by name or address (?name= or ?address=): exact label, aliases at the address, nearest below/above
+GET    /api/v1/emulator/{id}/labels/{name}     Get label by name
+DELETE /api/v1/emulator/{id}/labels/{name}     Remove label
+PUT    /api/v1/emulator/{id}/labels/{name}     Update label (body: {"address", "type", ...})
+```
+
+### Assembler & Source Listings
+```
+POST /api/v1/emulator/{id}/assemble            Assemble Z80 source (body: {"code", "address", "write": false})
+POST /api/v1/emulator/{id}/listing/load        Load source listing (body: {"path"})
+GET  /api/v1/emulator/{id}/listing/source_at   Source line for an address (?address=, default: PC)
+POST /api/v1/emulator/{id}/listing/step_line   Run until the source line changes (body: {"max_tstates": N})
+POST /api/v1/emulator/{id}/listing/run_to_line Run to first code byte of a line (body: {"line": N})
+```
+
+### Analysis & Capture
+```
+POST /api/v1/emulator/{id}/coverage/start      Activate coverage analyzer (body: {"keep": false})
+POST /api/v1/emulator/{id}/coverage/stop       Deactivate (data retained)
+POST /api/v1/emulator/{id}/coverage/clear      Clear collected data
+GET  /api/v1/emulator/{id}/coverage            Coverage summary (executed count, ranges)
+GET  /api/v1/emulator/{id}/coverage/gaps       Executed ranges and gaps (?start=&end=&max=)
+POST /api/v1/emulator/{id}/ay/log              AY log control (body: {"action": "start|stop|clear", "capacity"})
+GET  /api/v1/emulator/{id}/ay/log              Get AY log entries (?count=&offset=)
+POST /api/v1/emulator/{id}/audio/capture       Audio capture control (body: {"action": "start|stop|clear", "seconds"})
+GET  /api/v1/emulator/{id}/audio/capture/status   Capture state and level statistics
+GET  /api/v1/emulator/{id}/audio/capture/result   Captured samples (?format=wav&path=... to export)
+POST /api/v1/emulator/{id}/video/record        Video recording control (body: {"action": "start|stop|pause|resume", ...})
+GET  /api/v1/emulator/{id}/video/record/status    Recording state
+```
+
+#### Disassembly Response
+
+Each instruction entry contains the following fields (optional fields are omitted when not applicable):
+
+| Field | Description |
+| :--- | :--- |
+| `address` | Z80 address of the instruction (first prefix/opcode byte) |
+| `bytes` | Instruction bytes as uppercase hex string |
+| `mnemonic` | Formatted disassembly. When a label exists for a jump/call/memory target, both the label and the address are printed: `call TEST_ROUTINE (#8010)` |
+| `size` | Instruction length in bytes (1-4, includes prefixes) |
+| `label` | Label at the instruction address itself, if any |
+| `target` | Resolved jump/call target address (JR/DJNZ targets are computed as `address + size + signed offset`). Omitted for indirect jumps (`jp (hl)`/`jp (ix)`/`jp (iy)`) unless runtime registers were available to resolve them |
+| `targetLabel` | Label at `target`, if any |
+| `displacement` | Signed IX/IY displacement (`-128..127`) for indexed instructions; requires runtime registers |
+| `effectiveAddress` | Effective address (`IX+d`/`IY+d`) for indexed instructions; requires runtime registers |
+| `effectiveAddressLabel` | Label at `effectiveAddress`, if any |
+
+`/disasm` decodes with live runtime context (registers and memory), so runtime-dependent fields are populated. `/disasm/page` performs static decoding from a physical page, so `displacement`/`effectiveAddress` are omitted there.
+
+**Example:**
+```json
+{
+  "instructions": [
+    {"address": 32768, "bytes": "CD1080", "mnemonic": "call TEST_ROUTINE (#8010)", "size": 3, "target": 32784, "targetLabel": "TEST_ROUTINE"},
+    {"address": 32771, "bytes": "DD46FB", "mnemonic": "ld b,(ix-#05)", "size": 3, "displacement": -5, "effectiveAddress": 65531, "effectiveAddressLabel": "BUFFER_END"},
+    {"address": 32774, "bytes": "18F8", "mnemonic": "jr TEST_START (#8000)", "size": 2, "target": 32768, "targetLabel": "TEST_START"}
+  ]
+}
 ```
 
 #### Physical Page Types
@@ -903,11 +975,6 @@ curl -X POST http://localhost:8090/api/v1/emulator/$ID/tape/import \
 ```
 
 ## Planned Endpoints (Not Yet Implemented)
-
-### Disassembly
-```
-GET /api/v1/emulator/{id}/disassemble?address=0x8000&count=10
-```
 
 ### Media Operations (Implemented Separately)
 ```

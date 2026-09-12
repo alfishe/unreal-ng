@@ -1,5 +1,11 @@
 #include "mainwindow.h"
 
+#include <QWindow>
+#include <QClipboard>
+#include <QGuiApplication>
+
+#include "emulator/mainloop.h"
+
 #include "base/featuremanager.h"
 
 #include <algorithm>
@@ -106,16 +112,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     // Instantiate all child widgets (UI form auto-generated)
     ui->setupUi(this);
-    startButton = ui->startEmulator;
 
     // Store original palette
     _originalPalette = palette();
-
-    // Register fullscreen on/off shortcut
-    _fullScreenShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F), this);
-    _fullScreenShortcut->setKey(Qt::CTRL | Qt::Key_F);
-    _fullScreenShortcut->setContext(Qt::ApplicationShortcut);
-    connect(_fullScreenShortcut, &QShortcut::activated, this, &MainWindow::handleFullScreenShortcut);
 
     // Put emulator screen into resizable content frame
     QFrame* contentFrame = ui->contentFrame;
@@ -130,9 +129,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
         dp.setVerticalPolicy(QSizePolicy::Expanding);
         deviceScreen->setSizePolicy(dp);
     */
-
-    // Connect button release signal to appropriate event handling slot
-    connect(startButton, SIGNAL(released()), this, SLOT(handleStartButton()));
 
     // Create bridge between GUI and emulator
     _emulatorManager = EmulatorManager::GetInstance();
@@ -169,11 +165,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Instantiate Logger window
     logWindow = new LogWindow();
 
-    // Instantiate debugger window
+    // Instantiate debugger window. Hidden at start: Debug -> Debugger Window shows it,
+    // and debug instrumentation is enabled only while it is visible
     debuggerWindow = new DebuggerWindow();
     debuggerWindow->setBinding(m_binding);  // Connect to central binding
     debuggerWindow->reset();
-    debuggerWindow->show();
+    connect(debuggerWindow, &DebuggerWindow::visibilityChanged, this, &MainWindow::handleDebuggerVisibilityChanged);
 
     // Connect debugger screen refresh signal (for speed control stepping)
     // Handle it the same way as MessageCenter refresh (see line 1459)
@@ -214,19 +211,21 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::resumeRequested, this, &MainWindow::handleResumeEmulator);
     connect(_menuManager, &MenuManager::stopRequested, this, &MainWindow::handleStopEmulator);
     connect(_menuManager, &MenuManager::resetRequested, this, &MainWindow::resetEmulator);
+    connect(_menuManager, &MenuManager::mniRequested, this, &MainWindow::requestMni);
     connect(_menuManager, &MenuManager::speedMultiplierChanged, this, &MainWindow::handleSpeedMultiplierChanged);
     connect(_menuManager, &MenuManager::turboModeToggled, this, &MainWindow::handleTurboModeToggled);
     connect(_menuManager, &MenuManager::tapeTrapsToggled, this, &MainWindow::handleTapeTrapsToggled);
     connect(_menuManager, &MenuManager::turboTapeToggled, this, &MainWindow::handleTurboTapeToggled);
     connect(_menuManager, &MenuManager::stepInRequested, this, &MainWindow::handleStepIn);
     connect(_menuManager, &MenuManager::stepOverRequested, this, &MainWindow::handleStepOver);
-    connect(_menuManager, &MenuManager::debugModeToggled, this, &MainWindow::handleDebugModeToggled);
     connect(_menuManager, &MenuManager::debuggerToggled, this, &MainWindow::handleDebuggerToggled);
     connect(_menuManager, &MenuManager::logWindowToggled, this, &MainWindow::handleLogWindowToggled);
     connect(_menuManager, &MenuManager::tapeManagerToggled, this, &MainWindow::handleTapeManagerToggled);
     // Keep the menu check state in sync when the window closes via its own close box
     connect(tapeManagerWindow, &TapeManagerWindow::visibilityChanged, _menuManager, &MenuManager::setTapeManagerChecked);
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
+    connect(_menuManager, &MenuManager::scaleRequested, this, &MainWindow::handleScaleRequested);
+    connect(_menuManager, &MenuManager::screenshotRequested, this, &MainWindow::handleScreenshotRequested);
     connect(_menuManager, &MenuManager::intParametersRequested, this, &MainWindow::handleIntParametersRequested);
     connect(_menuManager, &MenuManager::audioSettingsRequested, this, &MainWindow::handleAudioSettingsRequested);
     connect(_menuManager, &MenuManager::overscanModeToggled, this, &MainWindow::handleOverscanModeToggled);
@@ -237,8 +236,20 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::quickRecordRequested, this, &MainWindow::handleQuickRecord);
 #endif
 
-    // Bring application windows to foreground
-    debuggerWindow->raise();
+    // Create the transport toolbar (reuses menu actions where they exist)
+    _toolBarManager = new ToolBarManager(this, _menuManager, this);
+    connect(_menuManager, &MenuManager::toolBarToggled, this, &MainWindow::handleToolBarToggled);
+    connect(_toolBarManager, &ToolBarManager::startOrResumeRequested, this, &MainWindow::handleStartOrResumeRequested);
+    connect(_toolBarManager, &ToolBarManager::pauseRequested, this, &MainWindow::handlePauseEmulator);
+    connect(_toolBarManager, &ToolBarManager::restartRequested, this, &MainWindow::handleRestartRequested);
+    _toolBarManager->restoreSettings();
+
+    // Create the status bar (device LEDs + FPS)
+    _statusBarManager = new StatusBarManager(this, _menuManager, this);
+    connect(_menuManager, &MenuManager::statusBarToggled, this, &MainWindow::handleStatusBarToggled);
+    _statusBarManager->restoreSettings();
+
+    // Bring application window to foreground
     this->raise();
 
     // Enable Drag'n'Drop
@@ -409,11 +420,68 @@ void MainWindow::showEvent(QShowEvent* event)
         deviceScreen->resize(ui->contentFrame->size());
         updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
     }
+
+    // First show: size the window so the screen is displayed at 2x, once the
+    // menu bar / toolbar / status bar have been laid out and their heights are known
+    if (!_initialFitDone)
+    {
+        _initialFitDone = true;
+        QTimer::singleShot(0, this, [this]() { fitWindowToScreen(2); });
+
+        // Turbo render cap follows the display we are on (and moves with the window)
+        applyDisplayRefreshRate();
+        if (QWindow* handle = windowHandle())
+            connect(handle, &QWindow::screenChanged, this, [this](QScreen*) { applyDisplayRefreshRate(); });
+    }
+}
+
+void MainWindow::applyDisplayRefreshRate()
+{
+    _displayRefresh = DisplayRefreshRate::query(screen());
+    if (_emulator)
+    {
+        if (MainLoop* mainLoop = _emulator->GetMainLoop())
+            mainLoop->SetTurboRenderMaxFps(_displayRefresh.renderCapHz());
+    }
+    qDebug() << "Display refresh:" << _displayRefresh.currentHz << "Hz, cap" << _displayRefresh.renderCapHz()
+             << "Hz, VRR" << _displayRefresh.variable << "(" << _displayRefresh.source << ")";
+}
+
+void MainWindow::fitWindowToScreen(int scale)
+{
+    if (!deviceScreen || !ui->contentFrame || isFullScreen() || isMaximized())
+        return;
+
+    const QSize native = deviceScreen->sizeHint();  // Viewport-cropped native size (352x288 by default)
+    const QSize chrome = size() - ui->contentFrame->size();  // Menu bar, toolbar, status bar, margins
+    const QSize target = native * scale + chrome;
+
+    // Keep the window on screen: fall back to 1x if 2x does not fit
+    if (QScreen* scr = screen())
+    {
+        const QSize available = scr->availableGeometry().size();
+        if (scale > 1 && (target.width() > available.width() || target.height() > available.height()))
+        {
+            fitWindowToScreen(scale - 1);
+            return;
+        }
+    }
+
+    resize(target);
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
     qDebug() << "QCloseEvent : Closing application";
+
+    if (_toolBarManager)
+    {
+        _toolBarManager->saveSettings();
+    }
+    if (_statusBarManager)
+    {
+        _statusBarManager->saveSettings();
+    }
 
     // ============================================================
     // PHASE 1: NOTIFY ALL WINDOWS/WIDGETS (instant)
@@ -645,8 +713,8 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
 
         // Show menu bar if hidden
         menuBar()->show();
-        statusBar()->show();
-        startButton->show();
+        _statusBarManager->restoreVisibility();
+        _toolBarManager->restoreVisibility();
     }
     // Handle entering fullscreen
     else if (newState & Qt::WindowFullScreen)
@@ -669,7 +737,7 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
 
         // Hide all control elements
         statusBar()->hide();
-        startButton->hide();
+        _toolBarManager->hideForFullScreen();
     }
     // Handle restore to normal state
     else if (newState == Qt::WindowNoState)
@@ -683,8 +751,8 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
 
         // Show controls instantly so the layout calculates the correct target geometry for the OS animation.
         // (Docking manager updates are still deferred in the shortcut handler to prevent stutter).
-        statusBar()->show();
-        startButton->show();
+        _statusBarManager->restoreVisibility();
+        _toolBarManager->restoreVisibility();
 
         // macOS natively handles returning to the previous geometry after un-maximizing or exiting fullscreen.
         // Calling setGeometry explicitly here breaks the native animation.
@@ -718,7 +786,7 @@ void MainWindow::handleWindowStateChangeWindows(Qt::WindowStates oldState, Qt::W
         palette.setColor(QPalette::Window, Qt::black);
         setPalette(palette);
         statusBar()->hide();
-        startButton->hide();
+        _toolBarManager->hideForFullScreen();
     }
 
     // Handle EXITING maximized state (restore button clicked)
@@ -760,8 +828,8 @@ void MainWindow::handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::Win
         {
             setPalette(_originalPalette);
             menuBar()->show();
-            statusBar()->show();
-            startButton->show();
+            _statusBarManager->restoreVisibility();
+        _toolBarManager->restoreVisibility();
         }
 
         // Ensure we're not in fullscreen mode
@@ -786,7 +854,7 @@ void MainWindow::handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::Win
         setPalette(palette);
         menuBar()->hide();
         statusBar()->hide();
-        startButton->hide();
+        _toolBarManager->hideForFullScreen();
     }
     // Handle restore state
     // NOTE: The shortcut handler (handleFullScreenShortcutLinux) already called showNormal()/showMaximized().
@@ -807,8 +875,8 @@ void MainWindow::handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::Win
         // Restore normal styling (but don't touch window state)
         setPalette(_originalPalette);
         menuBar()->show();
-        statusBar()->show();
-        startButton->show();
+        _statusBarManager->restoreVisibility();
+        _toolBarManager->restoreVisibility();
     }
 }
 
@@ -954,10 +1022,20 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
             break;
     }
 
-    // return false;
-
-    // Forward the key event to QShortcut
-    QApplication::sendEvent(_fullScreenShortcut, event);
+    // The emulator screen consumes key presses (ShortcutOverride accepted), so the
+    // View -> Full Screen shortcut is matched here when it reaches us as a plain key
+    // press; when the shortcut map handles it instead, the press never arrives here
+    if (event->type() == QEvent::KeyPress && _menuManager)
+    {
+        auto* keyEvent = static_cast<QKeyEvent*>(event);
+        QAction* fullScreen = _menuManager->fullScreenAction();
+        if (fullScreen && !keyEvent->isAutoRepeat() &&
+            QKeySequence(static_cast<int>(keyEvent->modifiers().toInt() | keyEvent->key())) == fullScreen->shortcut())
+        {
+            fullScreen->trigger();
+            return true;
+        }
+    }
 
     return QMainWindow::eventFilter(watched, event);
 }
@@ -966,22 +1044,21 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 
 // region <Slots>
 
-void MainWindow::handleStartButton()
+void MainWindow::toggleEmulatorStartStop()
 {
-    // This is the "smart" handler for the UI Start/Stop button
+    // Smart start/stop toggle (used by the menu Start action and file loading)
     // It handles multiple states:
     // - If emulator is NULL -> Create and start new instance
     // - If emulator is RUNNING or PAUSED -> Stop and destroy instance
     //
-    // Note: Menu actions use specific handlers (handleStartEmulator, handlePauseEmulator, handleResumeEmulator)
-    // that don't have this "smart" behavior - they do exactly what they say.
+    // Note: Menu / toolbar actions use specific handlers (handleStartEmulator, handlePauseEmulator,
+    // handleResumeEmulator) that don't have this "smart" behavior - they do exactly what they say.
 
     // Lock will be removed after method exit
     QMutexLocker ml(&lockMutex);
 
     if (_emulator == nullptr)
     {
-        startButton->setEnabled(false);
 
         // Clear log
         logWindow->reset();
@@ -1096,7 +1173,6 @@ void MainWindow::handleStartButton()
     }
     else
     {
-        startButton->setEnabled(false);
 
         // STOP: Use the central release flow for proper cleanup
         // This ensures m_binding->unbind() is called and all pointers are nullified
@@ -1114,8 +1190,6 @@ void MainWindow::handleStartButton()
 
         fflush(stdout);
         fflush(stderr);
-        startButton->setText("Start");
-        startButton->setEnabled(true);
         updateMenuStates();
 
         // Check if there are other running emulators to adopt
@@ -1165,8 +1239,8 @@ void MainWindow::handleFullScreenShortcutWindows()
         setPalette(_originalPalette);
         setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
         menuBar()->show();
-        statusBar()->show();
-        startButton->show();
+        _statusBarManager->restoreVisibility();
+        _toolBarManager->restoreVisibility();
 
         // Restore window state
         if (_preFullScreenState & Qt::WindowMaximized)
@@ -1250,7 +1324,7 @@ void MainWindow::handleFullScreenShortcutWindows()
         setPalette(palette);
         menuBar()->hide();
         statusBar()->hide();
-        startButton->hide();
+        _toolBarManager->hideForFullScreen();
 
         setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
         showFullScreen();
@@ -1381,8 +1455,8 @@ void MainWindow::handleFullScreenShortcutLinux()
         _isFullScreen = false;
         setPalette(_originalPalette);
         menuBar()->show();
-        statusBar()->show();
-        startButton->show();
+        _statusBarManager->restoreVisibility();
+        _toolBarManager->restoreVisibility();
 
         // Step 2: Restore window state
         if (_preFullScreenState & Qt::WindowMaximized)
@@ -1497,12 +1571,28 @@ void MainWindow::handleMessageScreenRefresh(int id, Message* message)
     // Invoke deviceScreen->refresh() in main thread
     QMetaObject::invokeMethod(deviceScreen, "refresh", Qt::QueuedConnection);
 
-#ifdef _DEBUG
-    if (frameCount - _lastFrameCount > 1)
+    if (_statusBarManager)
     {
-        qDebug() << QString::asprintf("Frame(s) skipped from:%d till: %d", _lastFrameCount, frameCount);
+        _statusBarManager->notifyFrameRendered(frameCount);  // Atomic; feeds the FPS readout
     }
-#endif
+
+    // Every frame is computed regardless of mode; a gap in the refresh sequence means
+    // rendered frames were not presented. In turbo mode only every Nth frame is rendered
+    // by design (MainLoop TURBO_RENDER_DECIMATION), so gaps are expected and not reported.
+    // Reported through the module logger (Video/Generic, debug level), never directly to stdout.
+    if (frameCount - _lastFrameCount > 1 && !_emulator->IsTurboMode())
+    {
+        ModuleLogger* logger = _emulator->GetLogger();
+        if (logger && logger->GetLevel() <= LoggerLevel::LogDebug &&
+            logger->IsLoggingEnabledForLogLevel(PlatformModulesEnum::MODULE_VIDEO,
+                                                PlatformVideoSubmodulesEnum::SUBMODULE_VIDEO_GENERIC,
+                                                LoggerLevel::LogDebug))
+        {
+            logger->Debug(PlatformModulesEnum::MODULE_VIDEO, PlatformVideoSubmodulesEnum::SUBMODULE_VIDEO_GENERIC,
+                          "Frame refresh gap: rendered frames %u..%u were not presented", _lastFrameCount + 1,
+                          frameCount - 1);
+        }
+    }
 
     _lastFrameCount = frameCount;
 }
@@ -1696,7 +1786,7 @@ void MainWindow::loadFile(const QString& filePath)
     if (!_emulator && category != FileSymbol && category != FileUnknown)
     {
         qDebug() << "Auto-starting emulator for file:" << filePath;
-        handleStartButton();
+        toggleEmulatorStartStop();
     }
 
     switch (category)
@@ -1710,6 +1800,9 @@ void MainWindow::loadFile(const QString& filePath)
                 bool result = _emulator->LoadSnapshot(file);
                 if (!result)
                     qWarning() << "Failed to load snapshot:" << filePath;
+                else if (_statusBarManager)
+                    _statusBarManager->resetFpsMeasurement();  // Snapshot replaces the frame counter
+                _lastFrameCount = 0;
             }
             else
             {
@@ -2116,9 +2209,21 @@ void MainWindow::resetEmulator()
         // Reset handles pause/resume internally to avoid race conditions
         _emulator->Reset();
         _lastFrameCount = 0;
+        if (_statusBarManager)
+            _statusBarManager->resetFpsMeasurement();  // Frame counter restarts from 0
 
         // Update menu states
         updateMenuStates();
+    }
+}
+
+void MainWindow::requestMni()
+{
+    if (_emulator)
+    {
+        // RequestMNI handles pause/resume internally to avoid race conditions;
+        // plain NMI on non-Scorpion models
+        _emulator->RequestMNI();
     }
 }
 
@@ -2130,7 +2235,7 @@ void MainWindow::handleStartEmulator()
     // It should not resume a paused emulator (that's what Resume is for)
     if (_emulator == nullptr)
     {
-        handleStartButton();
+        toggleEmulatorStartStop();
     }
     else
     {
@@ -2164,7 +2269,6 @@ void MainWindow::handleStopEmulator()
 {
     if (_emulator)
     {
-        startButton->setEnabled(false);
 
         // Stop emulator first (it's running)
         std::string emulatorId = _emulator->GetId();
@@ -2270,28 +2374,38 @@ void MainWindow::handleStepOver()
     }
 }
 
-void MainWindow::handleDebugModeToggled(bool enabled)
-{
-    if (_emulator)
-    {
-        if (enabled)
-        {
-            _emulator->DebugOn();
-            qDebug() << "Debug mode enabled";
-        }
-        else
-        {
-            _emulator->DebugOff();
-            qDebug() << "Debug mode disabled";
-        }
-    }
-}
-
 void MainWindow::handleDebuggerToggled(bool visible)
 {
     if (debuggerWindow)
     {
-        debuggerWindow->setVisible(visible);
+        debuggerWindow->setVisible(visible);  // showEvent / hideEvent -> handleDebuggerVisibilityChanged
+        if (visible)
+        {
+            debuggerWindow->raise();
+            debuggerWindow->activateWindow();
+        }
+    }
+}
+
+void MainWindow::handleDebuggerVisibilityChanged(bool visible)
+{
+    // Covers the menu toggle, the window's close box and docking-driven hides
+    if (_menuManager)
+        _menuManager->setDebuggerChecked(visible);
+
+    // Debug features cost speed (debug memory interface on every access, breakpoint
+    // dispatch per instruction): only pay for them while the debugger is on screen
+    applyDebugInstrumentation(visible);
+}
+
+void MainWindow::applyDebugInstrumentation(bool enabled)
+{
+    if (_emulator)
+    {
+        if (enabled)
+            _emulator->DebugOn();
+        else
+            _emulator->DebugOff();
     }
 }
 
@@ -2679,7 +2793,88 @@ void MainWindow::updateMenuStates()
         // Menu will query emulator directly - no state duplication!
         _menuManager->updateMenuStates(_emulator);
     }
+    if (_toolBarManager)
+    {
+        // Toolbar mirrors the same emulator state (after menus, so viewport enablement is current)
+        _toolBarManager->updateState(_emulator);
+    }
+    if (_statusBarManager)
+    {
+        _statusBarManager->setActiveEmulator(_emulator);
+    }
 }
+
+void MainWindow::handleStatusBarToggled(bool visible)
+{
+    if (_statusBarManager)
+    {
+        _statusBarManager->setVisibleByUser(visible);
+        _statusBarManager->saveSettings();
+    }
+}
+
+void MainWindow::handleScaleRequested(int scale)
+{
+    // Leave full screen / maximized first so the resize can take effect
+    if (isFullScreen())
+        handleFullScreenShortcut();
+    if (isMaximized())
+        showNormal();
+    fitWindowToScreen(scale);
+}
+
+void MainWindow::handleScreenshotRequested()
+{
+    if (!deviceScreen)
+        return;
+
+    const QImage frame = deviceScreen->grabFramebuffer();
+    if (frame.isNull())
+    {
+        statusBar()->showMessage(tr("Screenshot: no emulator screen to capture"), 3000);
+        return;
+    }
+
+    // Copy to clipboard as PNG
+    QGuiApplication::clipboard()->setImage(frame);
+    statusBar()->showMessage(tr("Screenshot copied to clipboard"), 3000);
+}
+
+void MainWindow::handleToolBarToggled(bool visible)
+{
+    if (_toolBarManager)
+    {
+        _toolBarManager->setVisibleByUser(visible);
+        _toolBarManager->saveSettings();
+    }
+}
+
+void MainWindow::handleStartOrResumeRequested()
+{
+    // Toolbar "Start" behaves like the new-gui transport: start when idle, resume when paused
+    if (_emulator == nullptr)
+    {
+        handleStartEmulator();
+    }
+    else if (_emulator->IsPaused())
+    {
+        handleResumeEmulator();
+    }
+    updateMenuStates();
+}
+
+void MainWindow::handleRestartRequested()
+{
+    if (_emulator)
+    {
+        resetEmulator();
+    }
+    else
+    {
+        handleStartEmulator();
+    }
+}
+
 
 // endregion </Menu action handlers>
 
@@ -2809,7 +3004,6 @@ void MainWindow::handleEmulatorInstanceDestroyed(int id, Message* message)
                         // Note: Don't call _emulator->ClearAudioCallback() - emulator is already being destroyed
                         _emulator = nullptr;
 
-                        startButton->setText("Start");
                         updateMenuStates();
 
                         qDebug() << "MainWindow: Emulator" << QString::fromStdString(destroyedId) << "unbound from UI";
@@ -3114,6 +3308,15 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
             auto& framebufferDesc = context->pScreen->GetFramebufferDescriptor();
             deviceScreen->init(framebufferDesc.width, framebufferDesc.height, framebufferDesc.memoryBuffer);
 
+            // Match the widget's crop to the emulator being adopted. Viewport crops are
+            // absolute pixel insets, so one left over from the previous machine's overscan
+            // mode (framebuffer 384x304) keeps cropping a framebuffer that is now 352x288,
+            // scaling the wrong source region into the fixed-size widget
+            if (_emulator->IsOverscanMode())
+                deviceScreen->setDisplayViewport(_emulator->GetDisplayViewport());
+            else
+                deviceScreen->clearDisplayViewport();
+
             // Paint from the frame-end latched snapshot instead of the live
             // framebuffer - prevents mid-frame tearing (emulation thread
             // overwrites the live buffer while the GUI thread paints it).
@@ -3168,16 +3371,14 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
     }
 
     // 7. UI state
-    if (_emulator->IsRunning() || _emulator->IsPaused())
-    {
-        startButton->setText("Stop");
-    }
-    else
-    {
-        startButton->setText("Start");
-    }
-    startButton->setEnabled(true);
     updateMenuStates();
+
+    // Debug instrumentation follows the debugger window: on only while it is visible
+    applyDebugInstrumentation(debuggerWindow && debuggerWindow->isVisible());
+
+    // Turbo render cap for this emulator: the display refresh rate we are on
+    if (MainLoop* mainLoop = _emulator->GetMainLoop())
+        mainLoop->SetTurboRenderMaxFps(_displayRefresh.renderCapHz());
 
     // 8. Update audio settings widget if open
     if (_audioSettingsWidget)
@@ -3269,7 +3470,6 @@ void MainWindow::releaseEmulator()
     _emulatorManager->RemoveEmulator(emulatorId);
 
     // UI state
-    startButton->setText("Start");
     if (!_switchingModel)
     {
         // Only update menu if not in model switch (adoptEmulator handles menu during switch)
@@ -3283,26 +3483,7 @@ void MainWindow::onBindingStateChanged(EmulatorStateEnum state)
 {
     qDebug() << "MainWindow::onBindingStateChanged(" << getEmulatorStateName(state) << ")";
 
-    // Update UI based on emulator state
-    switch (state)
-    {
-        case StateRun:
-        case StateResumed:
-            startButton->setText("Stop");
-            startButton->setEnabled(true);
-            break;
-        case StatePaused:
-            startButton->setText("Stop");
-            startButton->setEnabled(true);
-            break;
-        case StateStopped:
-        case StateUnknown:
-            startButton->setText("Start");
-            startButton->setEnabled(true);
-            break;
-        default:
-            break;
-    }
+    // Menus, toolbar and status bar all derive their state from the emulator
     updateMenuStates();
 
 #ifdef ENABLE_RECORDING

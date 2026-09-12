@@ -167,14 +167,16 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     // Inject toolbar on top of other widget lines
     ui->verticalLayout_2->insertWidget(0, toolBar);
 
-    // Speed control widget — inserted below toolbar, with spacer to avoid full-width stretch
+    // Speed control widget — inserted below toolbar, with FDC status on the right
     m_speedControl = new SpeedControlWidget(this);
     m_speedControl->setEmulator(_emulator);
     m_speedControl->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     auto* speedRow = new QHBoxLayout();
     speedRow->setContentsMargins(0, 0, 0, 0);
-    speedRow->addWidget(m_speedControl, 1);  // 50% — equal stretch with spacer
-    speedRow->addStretch(1);                 // 50% — remaining space
+    speedRow->addWidget(m_speedControl);
+    speedRow->addStretch(1);
+    ui->fdcStatusWidget->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    speedRow->addWidget(ui->fdcStatusWidget);
     ui->verticalLayout_2->insertLayout(1, speedRow);
     connect(m_speedControl, &SpeedControlWidget::stepped, this, [this]() {
         updateState();
@@ -225,11 +227,13 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     connect(this, &DebuggerWindow::readyForChildren, ui->registersWidget, &RegistersWidget::refresh);
     connect(this, &DebuggerWindow::readyForChildren, ui->stackWidget, &StackWidget::refresh);
     connect(this, &DebuggerWindow::readyForChildren, ui->memorypagesWidget, &MemoryPagesWidget::refresh);
+    connect(this, &DebuggerWindow::readyForChildren, ui->fdcStatusWidget, &FdcStatusWidget::reset);
 
     connect(this, &DebuggerWindow::notReadyForChildren, ui->disassemblerWidget, &DisassemblerWidget::reset);
     connect(this, &DebuggerWindow::notReadyForChildren, ui->registersWidget, &RegistersWidget::reset);
     connect(this, &DebuggerWindow::notReadyForChildren, ui->stackWidget, &StackWidget::reset);
     connect(this, &DebuggerWindow::notReadyForChildren, ui->memorypagesWidget, &MemoryPagesWidget::reset);
+    connect(this, &DebuggerWindow::notReadyForChildren, ui->fdcStatusWidget, &FdcStatusWidget::reset);
 
     /// endregion </Subscribe to events>
 
@@ -450,9 +454,26 @@ void DebuggerWindow::onBindingStateChanged(EmulatorStateEnum state)
     emit stateChangedForChildren(state);
 }
 
+void DebuggerWindow::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    emit visibilityChanged(true);
+}
+
+void DebuggerWindow::hideEvent(QHideEvent* event)
+{
+    QWidget::hideEvent(event);
+    emit visibilityChanged(false);
+}
+
 void DebuggerWindow::onBindingReady()
 {
     qDebug() << "DebuggerWindow::onBindingReady()";
+
+    // Point the registers widget at the *bound* emulator's Z80 before it refreshes.
+    // Its cached pointer may still belong to a previous, already destroyed emulator
+    // (ready fires on the new emulator's first pause, before any CPU step refresh).
+    ui->registersWidget->setZ80State(_emulator ? _emulator->GetZ80State() : nullptr);
 
     // Dispatch to children via signal (widgets are connected to readyForChildren)
     emit readyForChildren();
@@ -471,6 +492,7 @@ void DebuggerWindow::onBindingNotReady()
 
 void DebuggerWindow::reset()
 {
+    ui->registersWidget->setZ80State(nullptr);  // Detach from the (possibly destroyed) emulator
     ui->registersWidget->reset();
     ui->hexView->reset();
 
@@ -483,6 +505,7 @@ void DebuggerWindow::reset()
     ui->memorypagesWidget->reset();
     ui->stackWidget->reset();
     ui->disassemblerWidget->reset();  // Clear disassembler content
+    ui->fdcStatusWidget->reset();     // Re-seed FDC status strip from the current binding
 
     // Only update state if we have an emulator
     if (_emulator)
@@ -605,8 +628,11 @@ void DebuggerWindow::loadState()
     DebugManager& dbgManager = *_emulator->GetDebugManager();
     BreakpointManager& brkManager = *_emulator->GetBreakpointManager();
 
+    // Note: debug instrumentation (DebugOn) is NOT switched on here. MainWindow
+    // enables it only while this window is visible, so a hidden debugger costs
+    // the emulator nothing (fast memory interface, no breakpoint dispatch).
+
     /// <Test>
-    _emulator->DebugOn();
     // brkManager.AddExecutionBreakpoint(0x272E);  // ROM128K::$272E - MENU_MOVE_UP
     // brkManager.AddExecutionBreakpoint(0x2731);  // ROM128K::$2731 - MENU_MOVE_DOWN
 

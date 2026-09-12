@@ -1,25 +1,35 @@
 # Automation Feature Parity Matrix
 
-Analysis date: 2026-08-26
+Analysis date: 2026-08-26 · Last updated: 2026-09-06
+
+> **2026-09-06 update**: the Phase-2 automation surface (step out, skip-until,
+> memory search, screen digest, beam position, frame cost, coverage, AY log,
+> audio capture, video recording, assembler, source listings, label resolve)
+> landed on **all four interfaces** (CLI, WebAPI, Lua, Python), closing most of
+> the original P0 gaps. The MCP server exposes the same capabilities through
+> smart tools on a loopback WebAPI transport (Streamable HTTP :8092 with SSE
+> progress, plus a zero-dependency stdio bridge) rather than endpoint parity —
+> see [docs/features/mcp/README.md](../../features/mcp/README.md).
 
 ## Legend
 
 - ✅ Implemented and working
 - ⚠️ Partial / undocumented
-- ❌ Missing
 - 🔧 Needs verification
+- ❌ Missing
 
 ## Core Debugging
 
 | Feature | CLI | WebAPI | Lua | Python | Priority |
 |---------|-----|--------|-----|--------|----------|
 | **Registers read** | ✅ | ✅ | ✅ | ✅ | - |
-| **Registers write** | ❌ | ❌ | ❌ | ❌ | **P0** |
+| **Registers write** | ❌ | ✅ | ✅ | ✅ | P1 (CLI only) |
 | **Memory read** | ✅ | ✅ | ✅ | ✅ | - |
 | **Memory write** | ✅ | ✅ | ✅ | ✅ | - |
-| **Bank-aware read/write** | ✅ | ✅ | ⚠️ | ⚠️ | P1 |
+| **Bank-aware read/write** | ✅ | ✅ | ✅ | ✅ | - |
+| **Memory search (find)** | ✅ | ✅ | ✅ | ✅ | - |
 | **Disassembly** | ✅ | ✅ | ✅ | ✅ | - |
-| **Symbolic disassembly** | ❌ | ❌ | ❌ | ❌ | **P0** |
+| **Symbolic disassembly (labels in disasm)** | ❌ | ✅ | ❌ | ❌ | P1 |
 
 ## Breakpoints
 
@@ -40,14 +50,16 @@ Analysis date: 2026-08-26
 |---------|-----|--------|-----|--------|----------|
 | **Run/Pause/Stop** | ✅ | ✅ | ✅ | ✅ | - |
 | **Step (instruction)** | ✅ | ✅ | ✅ | ✅ | - |
-| **Step over** | ✅ | ✅ | ⚠️ | ⚠️ | P2 |
+| **Step over** | ✅ | ✅ | ✅ | ✅ | - |
+| **Step out** | ✅ | ✅ | ✅ | ✅ | - |
+| **Skip until PC (skip_until)** | ✅ | ✅ | ✅ | ✅ | - |
 | **Run to address** | ✅ | ✅ | ✅ | ✅ | - |
-| **run_frame** | ✅ | ✅ | ✅ | ❌ | **P0** |
-| **run_frames(n)** | ✅ | ✅ | ✅ | ❌ | **P0** |
-| **run_tstates** | ✅ | ✅ | ✅ | ❌ | **P0** |
-| **run_to_scanline** | ✅ | ✅ | ⚠️ | ❌ | **P0** |
-| **run_to_pixel** | ✅ | ✅ | ⚠️ | ❌ | **P0** |
-| **run_until_condition** | ✅ | ⚠️ | ❌ | ❌ | P1 |
+| **run_frame** | ✅ | ✅ | ✅ | ✅ | - |
+| **run_frames(n)** | ✅ | ✅ | ✅ | ✅ | - |
+| **run_tstates** | ✅ | ✅ | ✅ | ✅ | - |
+| **run_to_scanline** | ✅ | ✅ | ✅ | ✅ | - |
+| **run_to_pixel** | ✅ | ✅ | ✅ | ✅ | - |
+| **run_until_condition (generic)** | ❌ | ⚠️ | ❌ | ❌ | P2 (skip_until covers the common case) |
 
 ## TTD (Time-Travel Debugging)
 
@@ -58,6 +70,7 @@ Analysis date: 2026-08-26
 | **ttd_seek** | ✅ | ✅ | ✅ | ✅ | - |
 | **ttd_find_last** | ✅ | ✅ | ⚠️ | ⚠️ | P2 |
 | **ttd_markers** | ✅ | ✅ | ⚠️ | ⚠️ | P2 |
+| **ttd dump/load (session files)** | ✅ | ✅ | ❌ | ❌ | P2 |
 
 ## Profiling & Analysis
 
@@ -67,7 +80,10 @@ Analysis date: 2026-08-26
 | **Memory counters** | ✅ | ✅ | ⚠️ | ⚠️ | P1 |
 | **Call trace** | ✅ | ✅ | ❌ | ⚠️ | P2 |
 | **Code/data map** | ✅ | ✅ | ❌ | ❌ | P2 |
-| **Analyzer** | ✅ | ✅ | ❌ | ⚠️ | P2 |
+| **Analyzer manager** | ✅ | ✅ | ❌ | ⚠️ | P2 |
+| **Coverage analyzer** | ✅ | ✅ | ✅ | ✅ | - |
+| **AY register log** | ✅ | ✅ | ✅ | ✅ | - |
+| **Frame cost accounting** | ✅ | ✅ | ✅ | ✅ | - |
 
 ## Screen & Capture
 
@@ -76,7 +92,23 @@ Analysis date: 2026-08-26
 | **screen_get_mode** | ✅ | ✅ | ✅ | ✅ | - |
 | **capture_screen (file)** | ✅ | ✅ | ❌ | ✅ | P1 |
 | **get_framebuffer (raw)** | ❌ | ❌ | ❌ | ❌ | **P0** |
-| **get_beam_position** | ❌ | ❌ | ❌ | ❌ | P1 |
+| **get_beam_position** | ✅ | ✅ | ✅ | ✅ | - |
+| **screen digest (change detection)** | ✅ | ✅ | ✅ | ✅ | - |
+| **Audio capture (WAV export)** | ✅ | ✅ | ✅ | ✅ | - |
+| **Video recording** | ✅ ¹ | ✅ | ✅ ¹ | ✅ ¹ | - |
+
+¹ Requires a build with `ENABLE_RECORDING`; the interfaces report a clean
+error when compiled out.
+
+## Assembler & Source Listings
+
+| Feature | CLI | WebAPI | Lua | Python | Priority |
+|---------|-----|--------|-----|--------|----------|
+| **assemble (in-place Z80 assembly)** | ✅ | ✅ | ✅ | ✅ | - |
+| **listing load (.lst)** | ✅ | ✅ | ✅ | ✅ | - |
+| **listing source_at** | ✅ | ✅ | ✅ | ✅ | - |
+| **listing step_line** | ✅ | ✅ | ✅ | ✅ | - |
+| **listing run_to_line** | ✅ | ✅ | ✅ | ✅ | - |
 
 ## Input Simulation
 
@@ -91,12 +123,13 @@ Analysis date: 2026-08-26
 
 | Feature | CLI | WebAPI | Lua | Python | Priority |
 |---------|-----|--------|-----|--------|----------|
-| **symbols load** | ❌ | ❌ | ❌ | ❌ | **P0** |
-| **symbols list** | ❌ | ❌ | ❌ | ❌ | **P0** |
-| **symbols lookup** | ❌ | ❌ | ❌ | ❌ | **P0** |
-| **sjasmplus .sld** | ❌ | ❌ | ❌ | ❌ | **P0** |
-| **sjasmplus .lst** | ❌ | ❌ | ❌ | ❌ | P1 |
+| **symbols load** | ✅ | ✅ | ✅ | ✅ | - |
+| **symbols save** | ✅ | ✅ | ✅ | ✅ | - |
+| **symbols list/lookup** | ✅ | ✅ | ✅ | ✅ | - |
+| **sjasmplus .sld** | ✅ | ✅ | ✅ | ✅ | - |
+| **sjasmplus .lst (listings)** | ✅ | ✅ | ✅ | ✅ | - |
 | **z88dk .map** | ❌ | ❌ | ❌ | ❌ | P2 |
+| **label resolve (name ↔ address + context)** | ✅ | ✅ | ✅ | ✅ | - |
 
 ## Events & Subscriptions
 
@@ -114,7 +147,7 @@ Analysis date: 2026-08-26
 |---------|-----|--------|-----|--------|----------|
 | **GDB RSP** | ❌ | ❌ | - | - | **P0** |
 | **DZRP (DeZog)** | ❌ | ❌ | - | - | P1 |
-| **MCP (Claude)** | ❌ | ❌ | - | - | P2 |
+| **MCP (Claude)** | - | - | - | - | ✅ implemented (Streamable HTTP + stdio bridge, smart tools over WebAPI — [docs](../../features/mcp/README.md)) |
 
 ## Infrastructure
 
@@ -122,9 +155,10 @@ Analysis date: 2026-08-26
 |---------|-----|--------|-----|--------|----------|
 | **JSON output** | N/A | ✅ | - | - | - |
 | **version/capabilities** | ⚠️ | ⚠️ | ❌ | ❌ | P1 |
-| **schema introspection** | N/A | ⚠️ | ❌ | ❌ | P1 |
+| **schema introspection** | N/A | ✅ | ❌ | ❌ | P1 |
 | **batch/atomic** | ❌ | ✅ | - | - | P3 |
 | **unified address syntax** | ❌ | ❌ | ❌ | ❌ | P2 |
+| **OpenAPI manifest** | - | ✅ | - | - | - (complete, `/api/v1/openapi.json`) |
 
 ## Instance Management
 
@@ -147,6 +181,12 @@ Analysis date: 2026-08-26
 
 | Priority | Count | Description |
 |----------|-------|-------------|
-| **P0** | 15 | Blocking adoption, must fix first |
-| P1 | 18 | Important for daily workflow |
+| **P0** | 6 | Blocking adoption: conditional BP, hit count, framebuffer access, event subscriptions (3) |
+| P1 | 12 | Important for daily workflow (registers write in CLI, symbolic disasm outside WebAPI, ...) |
 | P2 | 14 | Nice to have, quality of life |
+| P3 | 1 | Deferred |
+
+Compared to the 2026-08-26 snapshot (15 × P0): registers write, memory
+search, symbolic data tooling (symbols/sld/lst), run_* completeness for
+Python, and the entire analysis/capture/assembly family moved out of the gap
+list; MCP shipped as its own surface.
