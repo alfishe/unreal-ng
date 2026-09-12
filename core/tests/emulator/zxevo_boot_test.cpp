@@ -81,11 +81,21 @@ protected:
             features->setFeature(Features::kSoundGeneration, false);
 
         // 300 frames is the worst case: BaseConf init (ROM26/27 handoff, CMOS
-        // setup) + boot-menu timeout + disk-boot retry loop settling. The shell
-        // is up once bank 0 holds the 48K-BASIC-pair boot ROM (page 20).
-        Memory* memory = emulator->GetContext()->pMemory;
+        // setup) + boot-menu timeout + disk-boot retry loop settling. Stop as
+        // soon as the state the callers assert on is reached - bank 0 on the
+        // 48K-BASIC-pair boot ROM (page 20) with the TR-DOS tracker armed and
+        // no session open. The predicate must cover *every* asserted field: an
+        // early exit on a partial match leaves the rest still settling.
+        EmulatorContext* context = emulator->GetContext();
+        Memory* memory = context->pMemory;
         EmulatorTestHelper::RunUntil(
-            emulator.get(), [&] { return memory->IsBank0ROM() && memory->GetROMPage() == 20u; }, 300);
+            emulator.get(),
+            [&] {
+                const uint8_t flags = context->emulatorState.flags;
+                return memory->IsBank0ROM() && memory->GetROMPage() == 20u && (flags & CF_SETDOSROM) &&
+                       !(flags & CF_TRDOS);
+            },
+            300);
         return emulator;
     }
 };
@@ -148,8 +158,16 @@ TEST_F(ZXEvoBoot_Test, MenuKeyUBoots128KBasic)
     keyboard->PressKey(ZXKEY_U);
     emulator->RunNFrames(6, true);
     keyboard->ReleaseKey(ZXKEY_U);
+    // Every asserted field, not just the ROM page: page 30 appears while BASIC
+    // is still initializing, and stopping there read ERR_NR as 0x00 (seen under
+    // --gtest_shuffle seed 39038).
     EmulatorTestHelper::RunUntil(
-        emulator.get(), [&] { return memory->IsBank0ROM() && memory->GetROMPage() == 30u; }, 300);
+        emulator.get(),
+        [&] {
+            return memory->IsBank0ROM() && memory->GetROMPage() == 30u &&
+                   !(context->emulatorState.flags & CF_TRDOS) && memory->MemoryReadDebug(0x5C3A, false) == 0xFF;
+        },
+        300);
 
     // 128K BASIC: bank 0 = 128K editor ROM pair (page 30), no TR-DOS session
     ASSERT_TRUE(memory->IsBank0ROM());

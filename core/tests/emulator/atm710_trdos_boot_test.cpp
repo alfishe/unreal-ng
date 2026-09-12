@@ -229,11 +229,16 @@ TEST_F(ATM710TrdosBoot_Test, MenuTRDOSBootsClassicTRDOS)
     keyboard->PressKey(ZXKEY_ENTER);
     emulator->RunNFrames(12, true);
     keyboard->ReleaseKey(ZXKEY_ENTER);
+    // Every asserted field, not just the banner: the video mode and the TR-DOS
+    // session flags settle around the same time, and stopping on the first one
+    // to arrive would make the rest order-dependent.
     EmulatorTestHelper::RunUntil(
         emulator.get(),
         [&] {
             return DecodeZXRows(context, (state.p7FFD & 0x08) ? 7 : 5, 0, 10).find("TR-DOS Ver 5.03") !=
-                   std::string::npos;
+                       std::string::npos &&
+                   (state.pFF77 & 7) == 3 && state.aFF77 == 0xFF77 && state.pFF77 == 0xAB &&
+                   (state.flags & CF_SETDOSROM) && !(state.flags & CF_TRDOS);
         },
         400);
 
