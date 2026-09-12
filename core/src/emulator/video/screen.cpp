@@ -207,10 +207,17 @@ void Screen::InitRaster()
 
         /// region <Sanity checks>
 #ifdef _DEBUG
-        // 1. Frame duration from config should be longer than raster-defined frame duration
-        // (configFrameDuration == 0 means 'unconfigured' - bare test contexts - and is skipped)
-        if (_rasterState.configFrameDuration != 0 &&
-            _rasterState.configFrameDuration < _rasterState.maxFrameTiming)
+        // 1. Frame duration from config must be at least the raster-defined frame
+        // duration. Deliberately NOT skipped when configFrameDuration == 0: that
+        // is the unconfigured case this check exists to catch. SetVideoMode
+        // hands the value straight to UlaContention, where GetIOContentionDelay
+        // and its two siblings compute `t % configFrameDuration` - zero is a
+        // modulo by zero on any model whose contention is enabled, and the
+        // Scorpion cases that used to trip this only escaped it in Release
+        // because M_SCORPION happens to disable contention. A context that
+        // reaches here with 0 skipped Emulator::Init()'s
+        // ApplyModelTimingDefaults; fix the context, not this check.
+        if (_rasterState.configFrameDuration < _rasterState.maxFrameTiming)
         {
             std::string error = StringHelper::Format(
                 "Screen::SetVideoMode config.frame: %d cannot be less than _rasterState.maxFrameTiming: %d",
