@@ -18,5 +18,6 @@ Fixtures with a known license:
 | ZX Diagnostics (`data/testrom/zx-diagnostics.rom`) | Brendan Alford | GPL-3.0 |
 
 Everything else (commercial games such as Dizzy X and Green Beret, demo-scene productions such as EyeAche,
-Satisfaction, Insult, Echology, Across the Edge, 7th Reality, and the TR-DOS / FDI / UDI disk images) is
-copyrighted by its authors and used here as test material only.
+Satisfaction, Insult, Echology, Across the Edge, 7th Reality, the TR-DOS / FDI / UDI disk images, and the TurboSound FM
+material in `testdata/sound/tsfm/` — see its `SOURCES.md`) is copyrighted by its authors and used here as test material
+only.
