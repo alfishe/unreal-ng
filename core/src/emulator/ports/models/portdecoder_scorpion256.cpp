@@ -209,6 +209,29 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
         disp.decodedPort = 0x7EFD;
         disp.wasHandledInline = true;
     }
+    else if (IsPort_KempstonMouse(port))
+    {
+        // Kempston Mouse stub until full mouse emulation is integrated:
+        // #FADF (buttons): active-low -> 0xFF (all buttons released; firmware CPL produces 0x00)
+        // #FBDF (X coord), #FFDF (Y coord): stable coordinate (0x00) so delta is 0
+        result = ((port & 0xFF00) == 0xFA00) ? 0xFF : 0x00;
+        _lastPortDecoded = true;
+        disp.decodedPort = port;
+        disp.wasHandledInline = true;
+    }
+    else if (IsPort_KempstonJoystick(port))
+    {
+        // Kempston Joystick stub until joystick peripheral is integrated:
+        // Active-high: D0=Right, D1=Left, D2=Down, D3=Up, D4=Fire.
+        // On physical hardware without a joystick attached, pulldown resistors return 0x00.
+        // In the Service Monitor, sub_0260h reads port #FF1F (LD BC,#FF1F; IN C,(C)).
+        // Returning 0x00 ensures Fire is released (D4=0), eliminating phantom autorepeat
+        // clicks (0x80) that cause the active menu item highlight to continuously blink/redraw.
+        result = 0x00;
+        _lastPortDecoded = true;
+        disp.decodedPort = 0x001F;
+        disp.wasHandledInline = true;
+    }
     else if (isBeta128 && !(_state->flags & CF_TRDOS) && !(_state->p1FFD & 0x02)
              && !_state->scorpionDosTrigger)
     {
@@ -569,6 +592,34 @@ bool PortDecoder_Scorpion256::IsPort_SMUC(uint16_t port)
     bool result = (port & port_SMUC_mask) == port_SMUC_match;
 
     return result;
+}
+
+bool PortDecoder_Scorpion256::IsPort_KempstonJoystick(uint16_t port)
+{
+    // Kempston Joystick stub (profrom-service-monitor-menu-flashing.md):
+    // In the Service Monitor (Page 5 sub_0260h, while the Shadow Monitor is paged
+    // via #1FFD bit1), the firmware polls port #FF1F (LD BC,#FF1F; IN C,(C)) to read
+    // the on-board Kempston joystick interface.
+    // Outside TR-DOS, #FF1F addresses the Kempston joystick rather than the FDC.
+    //
+    // Deliberately NOT gated on the Shadow Monitor being paged (#1FFD bit 1):
+    // sub_0260h lives in ROM page 5 and is reached by RST 30h, and page 5 runs
+    // with #1FFD = 0x10 (bit 1 CLEAR) - only page 2 carries 0x12. Requiring the
+    // bit here therefore disabled this arm for exactly the read it exists to
+    // serve: the poll fell through to the floating bus, returned 0xFF, and the
+    // firmware saw Fire held, enqueuing a phantom 0x80 click every 5 frames
+    // (profrom-service-monitor-menu-flashing.md 7.1: the Shadow Monitor does
+    // not give Beta128 priority over the joystick on #1F).
+    return !(_state->flags & CF_TRDOS) && !_state->scorpionDosTrigger
+           && (port == 0xFF1F);
+}
+
+bool PortDecoder_Scorpion256::IsPort_KempstonMouse(uint16_t port)
+{
+    // Kempston Mouse stub (profrom-service-monitor-menu-flashing.md):
+    // In Page 5 sub_021bh, the firmware polls #FBDF (X coord), #FFDF (Y coord),
+    // and #FADF (buttons). All Kempston mouse ports share the low byte #DF.
+    return (port & 0x00FF) == 0x00DF;
 }
 /// endregion </Helper methods>
 

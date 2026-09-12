@@ -2,6 +2,10 @@
 #include "pch.h"
 
 #include "scorpionfixture.h"
+#include "emulator/emulator.h"
+#include "emulator/emulatormanager.h"
+#include "emulator/ports/models/portdecoder_scorpion256.h"
+#include "debugger/breakpoints/breakpointmanager.h"
 
 /// @brief Scorpion ZS 256 port decoder truth table (implementation-plan Task 4):
 ///        #1FFD real body, #1FFD/#7EFD read arms, #FE OUT arm, #FF border arm,
@@ -178,9 +182,13 @@ TEST_F(ScorpionPorts_Test, FdcMirrorPortsGatedOutsideSession)
 {
     EmulatorState& state = _context->emulatorState;
 
-    ReadPort(0xFF1F);
-    EXPECT_FALSE(_context->pPortDecoder->WasLastPortDecoded())
-        << "mirror or not, outside a session the FDC is off the bus";
+    // #1F is shared: the Beta128 FDC owns it inside a TR-DOS session, the
+    // Kempston joystick owns it outside one. So "the FDC is off the bus" can no
+    // longer be expressed as "nobody decoded the port" - the joystick arm now
+    // legitimately answers here (profrom-service-monitor-menu-flashing.md 9).
+    // An idle joystick reads 0x00; the WD1793 status register never does.
+    EXPECT_EQ(ReadPort(0xFF1F), 0x00)
+        << "outside a session #1F must answer as the joystick, not the FDC";
 
     WritePort(0xAB3F, 0x2A);  // must be ignored by the gated FDC
     state.flags |= CF_TRDOS;
@@ -293,3 +301,131 @@ TEST_F(ScorpionPorts_Test, ResetClearsTurboFlipFlop)
 }
 
 /// endregion <Hardware turbo flip-flop (hardware-reference 13)>
+
+/// region <Kempston Joystick & Mouse stubs (profrom-service-monitor-menu-flashing.md)>
+
+/// @brief Kempston Joystick & Mouse stubs: Port #FF1F returns 0x00 (active-high Fire released)
+///        while the monitor is paged, #FADF returns 0xFF (active-low buttons released), and #FBDF/#FFDF return 0x00.
+TEST_F(ScorpionPorts_Test, KempstonStubsAnswerNeutralValues)
+{
+    EmulatorState& state = _context->emulatorState;
+
+    // Port #FF1F (Kempston Joystick read by Service Monitor sub_0260h while paged)
+    state.p1FFD = 0x02;
+    _memory->UpdateZ80Banks();
+    EXPECT_EQ(ReadPort(0xFF1F), 0x00) << "Kempston joystick returns 0x00 when idle in monitor";
+    EXPECT_TRUE(_context->pPortDecoder->WasLastPortDecoded());
+
+    // Port #FADF (Kempston Mouse buttons read by sub_021bh)
+    EXPECT_EQ(ReadPort(0xFADF), 0xFF) << "Kempston mouse buttons return 0xFF (all released)";
+    EXPECT_TRUE(_context->pPortDecoder->WasLastPortDecoded());
+
+    // Port #FBDF (Mouse X) and #FFDF (Mouse Y)
+    EXPECT_EQ(ReadPort(0xFBDF), 0x00) << "Kempston mouse X returns stable coordinate";
+    EXPECT_TRUE(_context->pPortDecoder->WasLastPortDecoded());
+    EXPECT_EQ(ReadPort(0xFFDF), 0x00) << "Kempston mouse Y returns stable coordinate";
+    EXPECT_TRUE(_context->pPortDecoder->WasLastPortDecoded());
+}
+
+/// @brief End-to-end verification of the menu highlight fix (profrom-service-monitor-menu-flashing.md):
+///        Boots PROFSCORP into the Service Monitor via MNI.
+///        Checks that the active menu item attribute row 6 (0x58C1) remains continuously
+///        highlighted (0x31) across 30 consecutive frames and never flashes to unhighlighted (0x29).
+TEST(ScorpionServiceMonitor_Test, ProfRomServiceMonitorHighlightDoesNotBlink)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::shared_ptr<Emulator> emulator = manager->CreateEmulatorWithModel("", "PROFSCORP", LoggerLevel::LogError);
+    ASSERT_TRUE(emulator) << "PROFSCORP could not be created";
+
+    EmulatorContext* context = emulator->GetContext();
+    Memory* memory = context->pMemory;
+
+    // Boot until RAM and basic vectors are initialized (70 frames = 1.4s virtual time)
+    emulator->RunNFrames(70);
+
+    // Enter Service Monitor via MNI
+    emulator->RequestMNI();
+    // Allow 20 frames for the monitor UI to render (draw completes by frame 16)
+    emulator->RunNFrames(20);
+
+    auto bpDesc = new BreakpointDescriptor();
+    bpDesc->type = BRK_MEMORY;
+    bpDesc->memoryType = BRK_MEM_WRITE;
+    bpDesc->matchType = BRK_MATCH_ADDR;
+    bpDesc->z80address = 0x58C1;
+    bpDesc->active = true;
+    // Emulator exposes the manager directly; going through pDebugManager would
+    // need the full DebugManager definition (emulatorcontext.h only forward-
+    // declares it).
+    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    ASSERT_NE(bpManager, nullptr);
+    bpManager->AddBreakpoint(bpDesc);
+
+    for (int frame = 0; frame < 30; frame++)
+    {
+        emulator->RunNFrames(1, false);
+        const bool hit = bpManager->GetLastTriggeredBreakpointID() != BRK_INVALID;
+        uint8_t attr = memory->DirectReadFromZ80Memory(0x58C1);
+        EXPECT_FALSE(hit) << "Frame " << frame
+                          << ": 0x58C1 written mid-frame (phantom input redraw storm)!";
+        EXPECT_EQ(attr, 0x31) << "Frame " << frame
+                              << ": active menu item must remain steadily highlighted (0x31) and never flash to 0x29";
+        if (hit)
+        {
+            bpManager->ClearLastTriggeredBreakpoint();
+            emulator->Resume();
+        }
+    }
+
+    manager->RemoveEmulator(emulator->GetId());
+}
+
+/// @brief Regression (profrom-service-monitor-menu-flashing.md 7.1):
+///        #FF1F must decode as the Kempston joystick whenever TR-DOS is not
+///        active - INCLUDING while #1FFD bit 1 is clear.
+///
+///        The poll that matters (Page 5 sub_0260h) is reached by RST 30h and
+///        runs with #1FFD = 0x10, not 0x12. Gating the arm on the Shadow
+///        Monitor bit therefore disabled it for exactly that read: the poll
+///        fell through to the floating bus, returned 0xFF, and the firmware
+///        read Fire as held - enqueuing a phantom 0x80 click every 5 frames and
+///        driving a continuous menu redraw. A VRAM-attribute assertion cannot
+///        see this (the attribute is rewritten to 0x31 within the same frame),
+///        so the contract is pinned at the port level here.
+TEST_F(ScorpionPorts_Test, KempstonJoystick_Port1F_ReadsZeroWhateverThePagingLatch)
+{
+    ASSERT_TRUE(RebuildWithModel(MM_PROFSCORP, RAM_256));
+
+    _context->emulatorState.flags &= ~CF_TRDOS;
+    _context->emulatorState.scorpionDosTrigger = 0;
+
+    // Page 5 (driver plane, where sub_0260h lives): service bit CLEAR.
+    _context->emulatorState.p1FFD = 0x10;
+    EXPECT_EQ(ReadPort(0xFF1F), 0x00)
+        << "#FF1F must read as an idle Kempston joystick from the driver plane";
+
+    // Page 2 (Shadow Monitor): service bit SET - must behave identically.
+    _context->emulatorState.p1FFD = 0x12;
+    EXPECT_EQ(ReadPort(0xFF1F), 0x00)
+        << "#FF1F must read as an idle Kempston joystick from the monitor plane";
+}
+
+/// @brief The joystick arm must not steal #1F from the FDC inside a TR-DOS
+///        session - that is the one case where Beta128 owns the port.
+TEST_F(ScorpionPorts_Test, KempstonJoystick_DoesNotStealPort1FFromBeta128InTrdos)
+{
+    ASSERT_TRUE(RebuildWithModel(MM_PROFSCORP, RAM_256));
+
+    _context->emulatorState.scorpionDosTrigger = 0;
+    _context->emulatorState.p1FFD = 0x10;
+    _context->emulatorState.flags |= CF_TRDOS;
+
+    // The WD1793 status register drives the bus here; the idle controller never
+    // reports the 0x00 the joystick stub would return.
+    EXPECT_NE(ReadPort(0x001F), 0x00)
+        << "inside a TR-DOS session #1F must reach the FDC, not the joystick stub";
+}
+
+/// endregion <Kempston Joystick & Mouse stubs>
+
+
