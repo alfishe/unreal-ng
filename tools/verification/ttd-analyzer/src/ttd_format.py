@@ -257,7 +257,15 @@ class ChipsetState:
     ulaplus_mode: int
     ulaplus_reg: int
     ulaplus_cram: bytes
-    reserved: bytes  # 10 bytes of explicit filler, always zero
+    # Model-neutral CPU clock. A hardware turbo keeps the 20 ms frame and only
+    # multiplies the CPU T-states inside it, so the audio path descales by
+    # hw_turbo_shift_applied. current_z80_frequency_multiplier == 0 means the
+    # session predates these fields; treat it as 1.
+    hw_turbo_shift: int
+    hw_turbo_shift_applied: int
+    current_z80_frequency_multiplier: int
+    next_z80_frequency_multiplier: int
+    reserved: bytes  # 6 bytes of explicit filler, always zero
 
 
 @dataclass
@@ -783,7 +791,11 @@ def parse_chipset(r: _Reader) -> ChipsetState:
         ulaplus_mode=r.u8(),
         ulaplus_reg=r.u8(),
         ulaplus_cram=r.take(64),
-        reserved=r.take(10),
+        hw_turbo_shift=r.u8(),
+        hw_turbo_shift_applied=r.u8(),
+        current_z80_frequency_multiplier=r.u8(),
+        next_z80_frequency_multiplier=r.u8(),
+        reserved=r.take(6),
     )
 
 

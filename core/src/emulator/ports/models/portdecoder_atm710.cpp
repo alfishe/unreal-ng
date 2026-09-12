@@ -1,6 +1,8 @@
 #include "stdafx.h"
 #include "portdecoder_atm710.h"
 
+#include "debugger/ttd/atm/ttdatmpaging.h"
+
 #include "common/modulelogger.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
@@ -679,3 +681,15 @@ std::string PortDecoder_ATM710::Dump_EFF7_value(uint8_t value)
 }
 
 /// endregion </Debug methods>
+
+std::vector<ttd::PeripheralId> PortDecoder_ATM710::GetTTDModelStateIds() const
+{
+    return {ttd::PeripheralId::AtmPaging};
+}
+
+std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_ATM710::CreateTTDSerializers() const
+{
+    std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
+    serializers.push_back(std::make_unique<ttd::TTDAtmPaging>(_context));
+    return serializers;
+}

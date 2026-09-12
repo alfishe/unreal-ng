@@ -71,6 +71,14 @@ public:
 
     /// region <Port detection>
 public:
+    /// region <TTD model-specific state>
+    /// The ATM memory map (pFFF7), the address-swap flag and the ATM/ATM3 port
+    /// latches that the model-agnostic TTDChipsetState does not carry. Declared
+    /// here because this decoder owns them; PortDecoder_ATM3 inherits both.
+    std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
+    std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
+    /// endregion </TTD model-specific state>
+
     bool IsPort_FE(uint16_t port);
     bool IsPort_7FFD(uint16_t port);
     bool IsPort_FF77(uint16_t port);

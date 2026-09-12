@@ -403,11 +403,30 @@ types:
       - id: ulaplus_cram
         size: 64
         doc: ULAplus palette entries.
+      - id: hw_turbo_shift
+        type: u1
+        doc: |
+          Model-neutral HARDWARE turbo: log2 of the guest-visible CPU multiplier.
+          A hardware turbo keeps the 20 ms frame and only multiplies the CPU
+          T-states inside it, so the audio path descales by this (the AY, beeper
+          and Covox clocks are unchanged). Queued value.
+      - id: hw_turbo_shift_applied
+        type: u1
+        doc: As composed into current_z80_frequency_multiplier at the frame boundary.
+      - id: current_z80_frequency_multiplier
+        type: u1
+        doc: |
+          CPU multiplier relative to the base clock. Zero means the session
+          predates this field being captured; readers should treat it as 1.
+      - id: next_z80_frequency_multiplier
+        type: u1
+        doc: Queued multiplier, applied at the next frame start.
       - id: reserved
-        size: 10
+        size: 6
         doc: |
           Explicit tail filler keeping the struct free of implicit padding
-          (sizeof == 120). The C++ side copies these objects by member-wise
+          (sizeof == 120; four bytes were taken from it for the CPU clock
+          fields above). The C++ side copies these objects by member-wise
           assignment and hashes them byte-wise, so unnamed padding would
           leak uninitialized bytes into the hash. Always zero.
 

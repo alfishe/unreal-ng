@@ -46,6 +46,7 @@ enum class PeripheralId : uint8_t
     TSFM       = 4,
     GeneralSound = 5,
     ScorpionProfROM = 6,  // Scorpion ZS 256/1024 ProfROM state machine
+    AtmPaging = 7,        // ATM Turbo 2+ / ATM3 / ZX-Evo BaseConf memory map
     // Future: SAA1099, GS512, etc.
     Count
 };
