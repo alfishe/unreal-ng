@@ -340,6 +340,12 @@ TEST(ScorpionServiceMonitor_Test, ProfRomServiceMonitorHighlightDoesNotBlink)
     EmulatorContext* context = emulator->GetContext();
     Memory* memory = context->pMemory;
 
+    // Deterministic RTC, same freeze as the turbo-detect and SMUC probes: live
+    // host time shifts the ProfROM boot timeline, so without it the frame at
+    // which the monitor finishes drawing drifts run to run.
+    if (PortDecoder_Scorpion256* decoder = static_cast<PortDecoder_Scorpion256*>(context->pPortDecoder))
+        decoder->GetSMUCNvram().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
+
     // Host-side turbo: no emulated-state effect, just skips per-frame audio work
     emulator->EnableTurboMode();
 
@@ -348,8 +354,21 @@ TEST(ScorpionServiceMonitor_Test, ProfRomServiceMonitorHighlightDoesNotBlink)
 
     // Enter Service Monitor via MNI
     emulator->RequestMNI();
-    // Allow 20 frames for the monitor UI to render (draw completes by frame 16)
-    emulator->RunNFrames(20);
+
+    // Wait for the monitor to finish drawing rather than assuming a frame count.
+    // A fixed settle made this order-dependent: under a different test order the
+    // menu was not up yet at the assertion and 0x58C1 still read 0x87 (2026-09-12).
+    // The bound only limits the failure case; a healthy boot settles in ~16 frames.
+    constexpr int kMaxSettleFrames = 200;
+    int settleFrames = 0;
+    while (settleFrames < kMaxSettleFrames &&
+           memory->DirectReadFromZ80Memory(0x58C1) != 0x31)
+    {
+        emulator->RunNFrames(1);
+        settleFrames++;
+    }
+    ASSERT_LT(settleFrames, kMaxSettleFrames)
+        << "Service Monitor never reached the highlighted state (0x58C1 never became 0x31)";
 
     auto bpDesc = new BreakpointDescriptor();
     bpDesc->type = BRK_MEMORY;
