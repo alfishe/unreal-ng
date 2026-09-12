@@ -130,5 +130,11 @@ public:
     size_t TTDStateSize() const override;
     void   TTDSaveState(uint8_t* dst) const override;
     void   TTDLoadState(const uint8_t* src) override;
+
+    /// Identity used by TTDPeripheralRegistry. Without it the base class
+    /// returns PeripheralId::Count and the device cannot be indexed in a
+    /// checkpoint's blob map.
+    ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::Covox; }
+    std::string TTDDeviceName() const override { return "Covox"; }
     /// endregion </TTDSerializable interface>
 };

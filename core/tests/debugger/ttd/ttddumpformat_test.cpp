@@ -146,7 +146,9 @@ protected:
             d.checkpointFrames.push_back(cp->time.frame);
             d.cpuStates.push_back(cp->cpu);
             d.chipsetStates.push_back(cp->chipset);
-            d.ayBlobs.push_back(cp->ayState);
+            d.ayBlobs.push_back(cp->peripheralBlobs.count(static_cast<uint8_t>(ttd::PeripheralId::TurboSound))
+                                    ? cp->peripheralBlobs.at(static_cast<uint8_t>(ttd::PeripheralId::TurboSound))
+                                    : std::vector<uint8_t>{});
 
             // v2 codec: each 16 KB emu page is split into 4 × 4 KB sub-pages,
             // each with its own slot in the codec page store. We reconstruct

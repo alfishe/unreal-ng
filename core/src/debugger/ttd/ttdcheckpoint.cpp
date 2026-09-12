@@ -139,50 +139,17 @@ TTDChipsetState CaptureChipsetState(const EmulatorState& src)
     dst.t_states = src.t_states;
     dst.frame_counter = src.frame_counter;
 
-    // Standard port latches
+    // Standard 128K port latches
     dst.p7FFD = src.p7FFD;
     dst.pFE = src.pFE;
     dst.pEFF7 = src.pEFF7;
-    dst.pXXXX = src.pXXXX;
     dst.pBFFD = src.pBFFD;
     dst.pFFFD = src.pFFFD;
-    dst.pDFFD = src.pDFFD;
-    dst.pFDFD = src.pFDFD;
-    dst.p1FFD = src.p1FFD;
     dst.pFF77 = src.pFF77;
-
-    // border_attr mirrors pFE bits 0-2 and is maintained by whoever writes the
-    // latch. Captured verbatim: a checkpoint records machine state as it is,
-    // and silently deriving it here would hide a desynchronised writer instead
-    // of surfacing it (the SNA loader was one - fixed in loader_sna.cpp).
     dst.border_attr = src.border_attr;
     dst.flags = src.flags;
 
-    // Extended port latches
-    dst.p7EFD = src.p7EFD;
-    dst.p78FD = src.p78FD;
-    dst.p7AFD = src.p7AFD;
-    dst.p7CFD = src.p7CFD;
-    dst.gmx_config = src.gmx_config;
-    dst.gmx_magic_shift = src.gmx_magic_shift;
-    dst.p00 = src.p00;
-    dst.p80FD = src.p80FD;
-    dst.aFE = src.aFE;
-    dst.aFB = src.aFB;
-    dst.aFF77 = static_cast<uint8_t>(src.aFF77);
-    dst.active_ay = static_cast<uint8_t>(src.active_ay);
-    dst.pBD = src.pBD;
-    dst.pBE = src.pBE;
-    dst.pBF = src.pBF;
-    dst.pFFBA = src.pFFBA;
-    dst.p7FBA = src.p7FBA;
-    dst.p0F = src.p0F;
-    dst.p1F = src.p1F;
-    dst.p4F = src.p4F;
-    dst.p5F = src.p5F;
-    dst.pLSY256 = src.pLSY256;
-    dst.profrom_bank = src.profrom_bank;
-    dst.scorpionDosTrigger = src.scorpionDosTrigger;
+    // FDC state
     static_assert(sizeof(dst.wd_shadow) == sizeof(src.wd_shadow),
                   "wd_shadow size mismatch");
     std::memcpy(dst.wd_shadow, src.wd_shadow, sizeof(dst.wd_shadow));
@@ -197,10 +164,7 @@ TTDChipsetState CaptureChipsetState(const EmulatorState& src)
                   "ulaplus_cram size mismatch");
     std::memcpy(dst.ulaplus_cram, src.ulaplus_cram, sizeof(dst.ulaplus_cram));
 
-    // ATM 7.10 / ATM3 memory mapping
-    static_assert(sizeof(dst.pFFF7) == sizeof(src.pFFF7),
-                  "pFFF7 size mismatch");
-    std::memcpy(dst.pFFF7, src.pFFF7, sizeof(dst.pFFF7));
+    // Extended/model-specific ports handled via TTDPeripheralRegistry
 
     return dst;
 }
@@ -213,45 +177,17 @@ void RestoreChipsetState(const TTDChipsetState& src, EmulatorState* dst)
     dst->t_states = src.t_states;
     dst->frame_counter = src.frame_counter;
 
-    // Standard port latches
+    // Standard 128K port latches
     dst->p7FFD = src.p7FFD;
     dst->pFE = src.pFE;
     dst->pEFF7 = src.pEFF7;
-    dst->pXXXX = src.pXXXX;
     dst->pBFFD = src.pBFFD;
     dst->pFFFD = src.pFFFD;
-    dst->pDFFD = src.pDFFD;
-    dst->pFDFD = src.pFDFD;
-    dst->p1FFD = src.p1FFD;
     dst->pFF77 = src.pFF77;
     dst->border_attr = src.border_attr;
     dst->flags = src.flags;
 
-    // Extended port latches
-    dst->p7EFD = src.p7EFD;
-    dst->p78FD = src.p78FD;
-    dst->p7AFD = src.p7AFD;
-    dst->p7CFD = src.p7CFD;
-    dst->gmx_config = src.gmx_config;
-    dst->gmx_magic_shift = src.gmx_magic_shift;
-    dst->p00 = src.p00;
-    dst->p80FD = src.p80FD;
-    dst->aFE = src.aFE;
-    dst->aFB = src.aFB;
-    dst->aFF77 = src.aFF77;
-    dst->active_ay = src.active_ay;
-    dst->pBD = src.pBD;
-    dst->pBE = src.pBE;
-    dst->pBF = src.pBF;
-    dst->pFFBA = src.pFFBA;
-    dst->p7FBA = src.p7FBA;
-    dst->p0F = src.p0F;
-    dst->p1F = src.p1F;
-    dst->p4F = src.p4F;
-    dst->p5F = src.p5F;
-    dst->pLSY256 = src.pLSY256;
-    dst->profrom_bank = src.profrom_bank;
-    dst->scorpionDosTrigger = src.scorpionDosTrigger;
+    // FDC state
     std::memcpy(dst->wd_shadow, src.wd_shadow, sizeof(dst->wd_shadow));
 
     // Video / palette
@@ -260,8 +196,7 @@ void RestoreChipsetState(const TTDChipsetState& src, EmulatorState* dst)
     dst->ulaplus_reg = src.ulaplus_reg;
     std::memcpy(dst->ulaplus_cram, src.ulaplus_cram, sizeof(dst->ulaplus_cram));
 
-    // ATM 7.10 / ATM3 memory mapping
-    std::memcpy(dst->pFFF7, src.pFFF7, sizeof(dst->pFFF7));
+    // Extended/model-specific ports handled via TTDPeripheralRegistry
 
     // Deliberately NOT touched (peripheral or host-side):
     //   tape      — pointer-bearing; handled via TTDSerializable (P1.5)

@@ -1,8 +1,6 @@
 #include "stdafx.h"
 #include "pch.h"
 
-#include "debugger/ttd/machinestatehash.h"
-#include "debugger/ttd/ttdcheckpoint.h"
 #include "emulator/memory/scorpion/scorpionromwindow.h"
 #include "emulator/ports/models/scorpionfixture.h"
 
@@ -333,44 +331,4 @@ TEST_F(ScorpionRomWindowMachine_Test, WindowSelectRemapsRomDiskQuadrant)
 
     WritePort(0x7EFD, 0x00);       // window back to quadrants 0-3
     EXPECT_EQ(BankTag(0x0000), ServiceTag(3));
-}
-
-/// TTD chipset capture/restore must carry the quadrant byte both ways
-TEST_F(ScorpionRomWindowMachine_Test, TtdChipsetRoundTripCarriesQuadrant)
-{
-    SetUpProf(4);
-
-    FastRead(0x0104);              // S=1: Q0 -> Q3
-    ASSERT_EQ(_context->emulatorState.profrom_bank, 3);
-
-    ttd::TTDChipsetState captured = ttd::CaptureChipsetState(_context->emulatorState);
-    EXPECT_EQ(captured.profrom_bank, 3);
-
-    FastRead(0x0108);              // S=2: Q3 -> Q1
-    ASSERT_EQ(_context->emulatorState.profrom_bank, 1);
-
-    ttd::RestoreChipsetState(captured, &_context->emulatorState);
-    EXPECT_EQ(_context->emulatorState.profrom_bank, 3);
-}
-
-/// The divergence hash must separate two states that differ only by quadrant
-TEST_F(ScorpionRomWindowMachine_Test, StateHashDistinguishesQuadrants)
-{
-    SetUpProf(4);
-
-    Z80* z80 = _core->GetZ80();
-    auto hashOfCurrentState = [&]() -> uint64_t
-    {
-        uint64_t ramDigest = ttd::HashBytes(_memory->RAMBase(), RAM_256 * 1024);
-        return ttd::HashSnapshot(ttd::CaptureSnapshot(*static_cast<Z80State*>(z80),
-                                                       _context->emulatorState,
-                                                       ramDigest));
-    };
-
-    uint64_t hashQ0 = hashOfCurrentState();
-
-    _context->emulatorState.profrom_bank = 2;  // same port latches, other quadrant
-    uint64_t hashQ2 = hashOfCurrentState();
-
-    EXPECT_NE(hashQ0, hashQ2);
 }

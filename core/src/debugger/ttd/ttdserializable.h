@@ -18,12 +18,11 @@
 ///   - The blob format is the implementer's choice (typically a memcpy of
 ///     the device's POD state) — there is no shared envelope or framing.
 ///
-/// Delta encoding (§6.4.1):
-///   - Peripherals with large state (GeneralSound sample RAM, etc.) can
-///     implement TTDSupportsDelta() to enable xor-delta compression.
-///   - The framework computes xor deltas against the previous checkpoint
-///     and applies zstd-1 compression, yielding ~10:1 ratios for unchanged data.
-///   - Devices not implementing delta support are always stored as full blobs.
+/// Blob encoding:
+///   - TTDPeripheralRegistry wraps each device's state in a header and
+///     compresses the payload when that makes it smaller.
+///   - Every blob is self-describing: its header carries the device id, so a
+///     blob filed under the wrong device is rejected rather than loaded.
 ///
 /// The same implementations serve both TTD checkpoints and the in-RAM
 /// snapshot serializer (TDD §6.1 "Serializer reuse") so the file-snapshot
@@ -46,6 +45,7 @@ enum class PeripheralId : uint8_t
     Covox      = 3,
     TSFM       = 4,
     GeneralSound = 5,
+    ScorpionProfROM = 6,  // Scorpion ZS 256/1024 ProfROM state machine
     // Future: SAA1099, GS512, etc.
     Count
 };
@@ -89,10 +89,13 @@ public:
     /// Peripheral identifier for checkpoint indexing.
     virtual PeripheralId TTDPeripheralId() const { return PeripheralId::Count; }
 
-    /// Whether this device supports xor-delta encoding.
-    /// Override to return true for devices with large state that benefits
-    /// from delta compression (e.g., GeneralSound sample RAM).
-    virtual bool TTDSupportsDelta() const { return false; }
+    /// Compute a hash contribution for divergence detection.
+    /// The framework mixes this with the common chipset hash so model-specific
+    /// state participates in divergence detection without the framework
+    /// knowing about machine specifics.
+    /// Default returns 0 (no contribution). Override for devices with state
+    /// that affects determinism (e.g., Scorpion ProfROM quadrant).
+    virtual uint64_t TTDHashState() const { return 0; }
 };
 
 } // namespace ttd

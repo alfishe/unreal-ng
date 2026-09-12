@@ -7,6 +7,8 @@
 
 #include "timetravelmanager.h"
 
+#include "debugger/ttd/scorpion/ttdscorpionprofrom.h"
+
 #include <algorithm>
 #include <cassert>
 #include <chrono>
@@ -55,59 +57,6 @@ static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
 
 namespace
 {
-/// @brief Serialize a TTDSerializable peripheral into its checkpoint blob.
-///
-/// Helper used by CaptureNow for every peripheral slot (AY → tape → FDC →
-/// Covox, per implementation-plan §3.A1 item 5). When the device is absent
-/// the blob is cleared — restore then reads nothing, which is the correct
-/// no-op for an unimplemented/unused device on the active model.
-///
-/// Runs on the emulator thread at frame boundaries. The resize() after the
-/// first capture is effectively free (capacity stabilizes immediately); the
-/// TDD's "no allocation in TTDSaveState" constraint applies to the device's
-/// serializer itself, not to this caller-side buffer management.
-inline void CapturePeripheral(ttd::TTDSerializable* dev, std::vector<uint8_t>& outBlob)
-{
-    if (dev != nullptr)
-    {
-        const size_t sz = dev->TTDStateSize();
-        outBlob.resize(sz);
-        if (sz != 0)
-            dev->TTDSaveState(outBlob.data());
-    }
-    else
-    {
-        outBlob.clear();
-    }
-}
-
-/// @brief Restore a TTDSerializable peripheral from its checkpoint blob.
-///
-/// Helper used by RestoreCheckpoint for every peripheral slot. When the
-/// device is absent or the blob is empty the call is a no-op (an empty blob
-/// is the valid representation of an unimplemented/unused device on the
-/// active model, per CapturePeripheral's contract).
-///
-/// Runs on the control thread with the emulator paused (parent TDD §7.2).
-inline void RestorePeripheral(ttd::TTDSerializable* dev, const std::vector<uint8_t>& blob)
-{
-    if (dev != nullptr && !blob.empty())
-    {
-        // Defensive: the captured blob's size is the device's own TTDStateSize()
-        // at capture time. If the device's size has somehow changed since
-        // (it shouldn't — sizes are stable for the device lifetime per the
-        // TTDSerializable contract), refuse to restore rather than read OOB.
-        const size_t expected = dev->TTDStateSize();
-        if (blob.size() == expected)
-        {
-            dev->TTDLoadState(blob.data());
-        }
-        // Size mismatch is silent at this call site — it's logged by the
-        // restore orchestrator if it represents a real session-corruption
-        // event. (Currently it cannot happen because sessions don't survive
-        // device reconfiguration — P1.6 invalidates on Reset/Load.)
-    }
-}
 } // anonymous namespace
 
 namespace ttd {
@@ -226,6 +175,10 @@ bool TimeTravelManager::StartRecording()
     {
         MLOGWARNING("TimeTravelManager::StartRecording — FeatureManager is null; cannot verify debug/ttd flags. Capture will be a no-op if debug memory interface is inactive.");
     }
+
+    // Model-specific serializers belong to the session: rebuild them here so a
+    // model switch between sessions cannot leave a stale machine registered.
+    RegisterModelPeripherals();
 
     // Clear any prior history (StartRecording always begins a fresh session).
     if (!_timeline.empty())
@@ -402,6 +355,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     _timeline.clear();
     _pageStore.Reset();
     _dirtyScratch.clear();
+    ReleaseModelPeripherals();  // serializers are session-scoped, like the timeline
     _inputJournal.Clear();  // Phase 2 Item 3 — input history invalidates with the timeline
     _externalEvents.Clear();  // Phase 2 Item 6 — markers invalidate with the timeline
     if (_writeJournal)
@@ -552,10 +506,8 @@ size_t TimeTravelManager::EstimateSessionHeapBytes() const
     for (const TTDCheckpoint& cp : _timeline)
     {
         total += sizeof(TTDCheckpoint);
-        total += cp.ayState.capacity()    * sizeof(uint8_t);
-        total += cp.fdcState.capacity()   * sizeof(uint8_t);
-        total += cp.tapeState.capacity()  * sizeof(uint8_t);
-        total += cp.covoxState.capacity() * sizeof(uint8_t);
+        for (const auto& entry : cp.peripheralBlobs)
+            total += entry.second.capacity() * sizeof(uint8_t);
         total += cp.ramPages.capacity()   * sizeof(TTDPageRef);
     }
 
@@ -675,11 +627,12 @@ void TimeTravelManager::CaptureNow(TTDCheckpoint& out)
     }
     out.chipset = CaptureChipsetState(st);
 
-    // Capture video mode from Screen (explicit storage for fast restore)
-    if (_context->pScreen)
-    {
-        out.chipset.videoMode = static_cast<uint8_t>(_context->pScreen->GetVideoMode());
-    }
+    // --- Model-specific chipset state (TDD §6.4) ---
+    // Whatever the active model registered serializes itself here. The
+    // framework stays model-agnostic: it never names a machine, it just walks
+    // the registry.
+    //
+    _peripherals.CaptureAll(out.peripheralBlobs);
 
     // --- RAM pages ---
     // First capture of a session: Intern every model-RAM page as the baseline
@@ -728,52 +681,6 @@ void TimeTravelManager::CaptureNow(TTDCheckpoint& out)
     // This caches current RAM content so we can compute XOR deltas without
     // decompressing the slots we just created.
     UpdatePrevPageCache();
-
-    // --- Peripherals (P1.5 — parent TDD §6.1, §6.4) ---
-    // Each device implements TTDSerializable and serializes itself into the
-    // corresponding checkpoint blob. Devices land one at a time (AY first);
-    // unimplemented slots stay empty vectors (valid no-op on restore).
-    //
-    // AY / TurboSound: the SoundManager exposes a TurboSound (two AY chips) on
-    // all v1-supported models (Pentagon 128/512). The TurboSound is itself a
-    // TTDSerializable that serializes both chips + the active-chip selector.
-    if (_context->pSoundManager)
-    {
-        SoundChip_TurboSound* turboSound = _context->pSoundManager->getTurboSound();
-        CapturePeripheral(turboSound, out.ayState);
-    }
-    else
-    {
-        out.ayState.clear();
-    }
-
-    // Tape: per parent TDD §4 row 3 we checkpoint playback position only
-    // (content is invariant within a session; tape-control commands
-    // invalidate the session via P1.6 hooks).
-    CapturePeripheral(_context->pTape, out.tapeState);
-
-    // Covox: 4-channel 8-bit DAC. Only the four DAC latches are machine
-    // state (4 bytes); everything else is host-side audio pipeline.
-    if (_context->pSoundManager)
-    {
-        CapturePeripheral(_context->pSoundManager->getCovox(), out.covoxState);
-    }
-    else
-    {
-        out.covoxState.clear();
-    }
-
-    // FDC subsystem: WD1793 controller + 4 FDDs. Per parent TDD §4 row 4,
-    // "FDC internal state (state machine phase, track/sector regs, DRQ/INTRQ
-    // timers) must be fully serialized". WD1793's serializer delegates to
-    // each FDD's TTDSerializable. Per TDD §12.2, sector writes invalidate
-    // the session in v1 (this is enforced elsewhere — not the serializer's
-    // concern).
-    //
-    // Only models with a Beta Disk controller populate pBetaDisk. Other
-    // models (pure Spectrum 48/128 without BDI) leave it nullptr and the
-    // blob is empty (valid no-op on restore).
-    CapturePeripheral(_context->pBetaDisk, out.fdcState);
 }
 
 void TimeTravelManager::CaptureBaselineRamPages(std::vector<TTDPageRef>& outRamPages)
@@ -1090,6 +997,76 @@ bool TimeTravelManager::RestoreCheckpointForTesting(size_t idx)
     return true;
 }
 
+uint64_t TimeTravelManager::ComputeRomSignature() const
+{
+    if (!_memory || !_memory->ROMBase())
+        return ttd::dump::kRomSignatureUnknown;
+
+    // Hash the whole ROM region rather than just the pages the current paging
+    // happens to expose: on ProfROM machines the quadrants outside the active
+    // plane are exactly what a later seek will page in, so a session recorded
+    // against a different image must not compare equal.
+    const size_t romBytes = static_cast<size_t>(MAX_ROM_PAGES) * PAGE_SIZE;
+    const uint64_t signature = ttd::HashBytes(_memory->ROMBase(), romBytes);
+
+    // Never collide with the "unknown" sentinel.
+    return signature == ttd::dump::kRomSignatureUnknown ? 1u : signature;
+}
+
+void TimeTravelManager::RegisterModelPeripherals()
+{
+    // Idempotent: a restart must not stack duplicate serializers.
+    ReleaseModelPeripherals();
+
+    if (!_context)
+        return;
+
+    // Core devices, present (or absent) independently of the model. They are
+    // owned by the emulator, not by us, so they are registered by raw pointer
+    // and simply dropped on release. A device that is absent on this model
+    // leaves no entry at all, which is the whole point of a registry: a
+    // checkpoint carries blobs only for what is actually connected.
+    if (_context->pSoundManager)
+    {
+        _peripherals.Register(PeripheralId::TurboSound, _context->pSoundManager->getTurboSound());
+        _peripherals.Register(PeripheralId::Covox, _context->pSoundManager->getCovox());
+    }
+    _peripherals.Register(PeripheralId::Tape, _context->pTape);
+    _peripherals.Register(PeripheralId::BetaDisk, _context->pBetaDisk);
+
+    // The framework does not know any machine. Each model contributes its own
+    // TTDSerializable here; everything downstream (capture, restore, hash)
+    // goes through the registry and never names a model.
+    switch (_context->config.mem_model)
+    {
+        case MM_PROFSCORP:
+        {
+            auto profrom = std::make_unique<TTDScorpionProfROM>(_context);
+            _peripherals.Register(PeripheralId::ScorpionProfROM, profrom.get());
+            _ownedPeripherals.push_back(std::move(profrom));
+            break;
+        }
+        default:
+            break;
+    }
+
+    if (_peripherals.Count() > 0)
+    {
+        MLOGINFO("TimeTravelManager::RegisterModelPeripherals — %zu model serializer(s) registered for mem_model=%u",
+                 _peripherals.Count(),
+                 static_cast<unsigned>(_context->config.mem_model));
+    }
+}
+
+void TimeTravelManager::ReleaseModelPeripherals()
+{
+    // Clear wholesale rather than unregistering piecemeal: most registered
+    // devices are owned by the emulator, so there is no local list of them to
+    // walk, and this manager is the only thing that ever registers anything.
+    _peripherals.Clear();
+    _ownedPeripherals.clear();
+}
+
 void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
 {
     assert(_context && _memory);
@@ -1115,6 +1092,13 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // NOT re-run the port decoder — that's the next sub-step.
     RestoreChipsetState(cp.chipset, &_context->emulatorState);
 
+    // --- Step 2a2: Model-specific chipset state (TDD §6.4) ---
+    // MUST run before UpdateZ80Banks: model serializers restore latches that
+    // feed the paging chain (on Scorpion the ProfROM plane and the #1FFD
+    // service/RAM0 bits), so rebuilding banks first would page from stale
+    // values and then never re-derive.
+    _peripherals.RestoreAll(cp.peripheralBlobs);
+
     // --- Step 2b: Rebuild memory banking from restored port latches ---
     // Memory::UpdateZ80Banks reads the latches we just wrote and rebuilds
     // the four-bank mapping (ROM/RAM page in each 16 KB slot). Pentagon 128K
@@ -1127,23 +1111,6 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // already matches is deferred (TDD §8.1 "often a handful of pages";
     // restore is rare, not a per-frame hot path).
     RestoreRamPages(cp.ramPages);
-
-    // --- Step 4: Peripherals (TDD §8.1 step 2d) ---
-    // Each device implements TTDSerializable. RestorePeripheral is a null-
-    // checking, size-checking forwarder to TTDLoadState. Devices that have
-    // no captured blob (empty vector) are no-ops — valid for models that
-    // don't populate them (e.g., Covox absent on 48K, FDC absent on
-    // non-Beta-Disk models).
-    if (_context->pSoundManager)
-    {
-        RestorePeripheral(_context->pSoundManager->getTurboSound(), cp.ayState);
-    }
-    RestorePeripheral(_context->pTape, cp.tapeState);
-    if (_context->pSoundManager)
-    {
-        RestorePeripheral(_context->pSoundManager->getCovox(), cp.covoxState);
-    }
-    RestorePeripheral(_context->pBetaDisk, cp.fdcState);
 
     // --- Step 5: Screen (TDD §8.1 step 2e) ---
     // The screen renderer caches derived state (active screen bank from
@@ -2087,6 +2054,7 @@ void TimeTravelManager::TruncateTimelineAfter(const TTDTimePoint& from)
 //     model_ram_pages     (u8)
 //     cpu_state_size      (u16)
 //     chipset_state_size  (u16)
+//     rom_signature       (u64)
 //     captured_at_unix_ms (u64)
 //     emulator_id_len     (u8)
 //     emulator_id         (emulator_id_len bytes, UTF-8)
@@ -2105,8 +2073,8 @@ void TimeTravelManager::TruncateTimelineAfter(const TTDTimePoint& from)
 //     cpu_state           (raw TTDCpuState, cpu_state_size bytes)
 //     chipset_state       (raw TTDChipsetState, chipset_state_size bytes)
 //     ram_page_refs       (model_ram_pages × u32)
-//     ay_size, fdc_size, tape_size, covox_size (u32 each)
-//     ay_blob, fdc_blob, tape_blob, covox_blob (variable)
+//     peripheral_blob_count (u16)
+//     per blob: peripheral_id (u8), size (u32), bytes (variable)
 //
 // We serialize only the live page-store slots (refcount > 0). The original
 // slot indices are remapped to a compact [0..N) range via a map; checkpoints'
@@ -2272,6 +2240,13 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     if (!WritePod(out, modelRamPagesOut, err)) return false;
     if (!WritePod(out, cpuStateSize, err)) return false;
     if (!WritePod(out, chipsetStateSize, err)) return false;
+
+    // ROM fingerprint — see ComputeRomSignature. Sits with the other
+    // compatibility fields so a reader validates everything config-related
+    // before it starts materializing checkpoints.
+    const uint64_t romSignature = ComputeRomSignature();
+    if (!WritePod(out, romSignature, err)) return false;
+
     if (!WritePod(out, capturedAtMs, err)) return false;
 
     const uint8_t emulatorIdLen = static_cast<uint8_t>(emulatorId.size());
@@ -2429,11 +2404,24 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
             }
         }
 
-        // Peripheral blobs (length-prefixed).
-        if (!WriteBlob(out, cp.ayState, err))    return false;
-        if (!WriteBlob(out, cp.fdcState, err))   return false;
-        if (!WriteBlob(out, cp.tapeState, err))  return false;
-        if (!WriteBlob(out, cp.covoxState, err)) return false;
+        // Peripheral blobs from the registry — every device, core and
+        // model-specific alike. Emitted sorted by id: the source container is
+        // an unordered_map, so writing it in iteration order would make the
+        // byte image depend on hash seeding and break reproducible output.
+        {
+            std::vector<uint8_t> ids;
+            ids.reserve(cp.peripheralBlobs.size());
+            for (const auto& entry : cp.peripheralBlobs)
+                ids.push_back(entry.first);
+            std::sort(ids.begin(), ids.end());
+
+            if (!WritePod(out, static_cast<uint16_t>(ids.size()), err)) return false;
+            for (uint8_t id : ids)
+            {
+                if (!WritePod(out, id, err)) return false;
+                if (!WriteBlob(out, cp.peripheralBlobs.at(id), err)) return false;
+            }
+        }
     }
 
     // --- Write journal section (TDD §9.3) ---
@@ -2499,11 +2487,34 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     uint16_t modelRamPages = 0;
     uint16_t cpuStateSize = 0, chipsetStateSize = 0;
     uint64_t capturedAtMs = 0;
+    uint64_t romSignature = 0;
     if (!ReadPod(in, modelId, err)) return false;
     if (!ReadPod(in, modelRamPages, err)) return false;
     if (!ReadPod(in, cpuStateSize, err)) return false;
     if (!ReadPod(in, chipsetStateSize, err)) return false;
+    if (!ReadPod(in, romSignature, err)) return false;
     if (!ReadPod(in, capturedAtMs, err)) return false;
+
+    // ROM set must match. Checkpoints store which ROM page is paged in, never
+    // the ROM bytes themselves, so replaying against a different ROM set maps
+    // the recorded page numbers onto different code. On ProfROM machines this
+    // is worse than cosmetic: a plane id only means something relative to the
+    // image it was recorded against. Files written before the signature
+    // existed, or by a writer with no Memory attached, carry the "unknown"
+    // sentinel and skip the check rather than becoming unloadable.
+    if (romSignature != ttd::dump::kRomSignatureUnknown)
+    {
+        const uint64_t currentSignature = ComputeRomSignature();
+        if (currentSignature != ttd::dump::kRomSignatureUnknown &&
+            currentSignature != romSignature)
+        {
+            err = "ROM set mismatch: session recorded against ROM signature 0x" +
+                  ttd::HashToString(romSignature) + ", this machine has 0x" +
+                  ttd::HashToString(currentSignature) +
+                  " (load the ROM set the session was recorded with)";
+            return false;
+        }
+    }
 
     // Machine model must match. A checkpoint is raw RAM pages plus a chipset
     // snapshot captured on a specific machine; restoring a Pentagon recording
@@ -2575,6 +2586,11 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     _inputJournal.Clear();
     _externalEvents.Clear();
     _dirtyScratch.clear();
+
+    // The loaded session restores model-specific state through these, so they
+    // must exist before the first SeekTo — the file may have been recorded on
+    // a model whose serializers this instance has not built yet.
+    RegisterModelPeripherals();
     _modelRamPages = modelRamPages;
 
     // Coverage from any previous recording describes a different timeline
@@ -2716,10 +2732,26 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
             }
         }
 
-        if (!ReadBlob(in, cp.ayState, err))    return false;
-        if (!ReadBlob(in, cp.fdcState, err))   return false;
-        if (!ReadBlob(in, cp.tapeState, err))  return false;
-        if (!ReadBlob(in, cp.covoxState, err)) return false;
+        // Peripheral blobs. Unknown ids are kept verbatim rather than
+        // dropped: RestoreAll ignores devices this build has no serializer
+        // for, and preserving them keeps a re-serialized file byte-identical.
+        {
+            uint16_t peripheralBlobCount = 0;
+            if (!ReadPod(in, peripheralBlobCount, err)) return false;
+            if (peripheralBlobCount > ttd::dump::kMaxPeripheralBlobsPerCheckpoint)
+            {
+                err = "implausible peripheral blob count " + std::to_string(peripheralBlobCount);
+                return false;
+            }
+            for (uint16_t b = 0; b < peripheralBlobCount; ++b)
+            {
+                uint8_t id = 0;
+                if (!ReadPod(in, id, err)) return false;
+                std::vector<uint8_t> blob;
+                if (!ReadBlob(in, blob, err)) return false;
+                cp.peripheralBlobs.emplace(id, std::move(blob));
+            }
+        }
 
         _timeline.push_back(std::move(cp));
     }
@@ -2816,7 +2848,8 @@ TimeTravelManager::SelfTestResult TimeTravelManager::CaptureRestoreSelfTest()
     const uint64_t preRamDigest = ttd::HashBytes(_memory->RAMBase(), ramBytes);
     const auto preSnap = ttd::CaptureSnapshot(*static_cast<Z80State*>(cpu),
                                               _context->emulatorState,
-                                              preRamDigest);
+                                              preRamDigest,
+                                              &_peripherals);
     result.pre_hash = ttd::HashSnapshot(preSnap);
 
     // Capture a fresh checkpoint at the current live state, then immediately
@@ -2833,7 +2866,8 @@ TimeTravelManager::SelfTestResult TimeTravelManager::CaptureRestoreSelfTest()
     const uint64_t postRamDigest = ttd::HashBytes(_memory->RAMBase(), ramBytes);
     const auto postSnap = ttd::CaptureSnapshot(*static_cast<Z80State*>(cpu),
                                                _context->emulatorState,
-                                               postRamDigest);
+                                               postRamDigest,
+                                               &_peripherals);
     result.post_hash = ttd::HashSnapshot(postSnap);
 
     result.pre_post_match = (result.pre_hash == result.post_hash);
@@ -3971,20 +4005,15 @@ void TimeTravelManager::SaveLiveState(LiveStateSnapshot& out)
     out.chipset = CaptureChipsetState(_context->emulatorState);
     if (_context->pScreen)
     {
-        out.chipset.videoMode = static_cast<uint8_t>(_context->pScreen->GetVideoMode());
     }
     // z80.t (the per-frame t-state counter) is host-side and deliberately
     // NOT part of TTDCpuState — SeekToInternal syncs it manually after
     // restores too.
     out.z80TInFrame = z80 ? z80->t : 0;
 
-    // Peripherals — the same TTDSerializable blobs the checkpoints carry.
-    CapturePeripheral(_context->pSoundManager ? _context->pSoundManager->getTurboSound() : nullptr,
-                      out.ay);
-    CapturePeripheral(_context->pTape, out.tape);
-    CapturePeripheral(_context->pSoundManager ? _context->pSoundManager->getCovox() : nullptr,
-                      out.covox);
-    CapturePeripheral(_context->pBetaDisk, out.fdc);
+    // Peripherals — the same registry, and therefore the same blobs, the
+    // checkpoints carry.
+    _peripherals.CaptureAll(out.peripheralBlobs);
 
     // Full RAM copy (model pages only — e.g. 128 KB on a 128K model). The
     // build replay overwrites live RAM with historic content as it runs, so
@@ -4035,12 +4064,7 @@ void TimeTravelManager::RestoreLiveState(const LiveStateSnapshot& snap)
         _ramCache.valid = false;
     }
 
-    if (_context->pSoundManager)
-        RestorePeripheral(_context->pSoundManager->getTurboSound(), snap.ay);
-    RestorePeripheral(_context->pTape, snap.tape);
-    if (_context->pSoundManager)
-        RestorePeripheral(_context->pSoundManager->getCovox(), snap.covox);
-    RestorePeripheral(_context->pBetaDisk, snap.fdc);
+    _peripherals.RestoreAll(snap.peripheralBlobs);
 
     ResyncScreenCaches();
 }
