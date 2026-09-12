@@ -842,7 +842,16 @@ void Emulator::Start()
     }
 
     // Set running state (running flag is already true - see exchange above)
-    _isPaused = false;
+    // NOTE: deliberately NOT clearing _isPaused here. A Pause() issued
+    // between StartAsync() returning and the thread reaching this point has
+    // already stored the flag under _pauseWaitMutex; clobbering it here would
+    // silently ignore that pause (the loop would run at full speed while the
+    // caller believes it parked - observed as RunNFrames stepping the Z80
+    // concurrently with the still-running emulation thread). StartAsync()
+    // clears the flag itself BEFORE spawning this thread, so a fresh start is
+    // never affected; honoring a late-landing pause is the correct semantic
+    // (the per-instruction and frame-end park checks hold the loop until
+    // Resume()).
     _stopRequested = false;
 
     // A Stop() may have landed anywhere between the exchange above and the
@@ -926,7 +935,12 @@ void Emulator::Pause(bool broadcast)
         return;
     }
 
-    _isPaused = true;
+    // Set under _pauseWaitMutex: WaitWhilePaused()'s CV predicate reads this
+    // flag while holding the same mutex, so the transition can't be missed.
+    {
+        std::lock_guard<std::mutex> lock(_pauseWaitMutex);
+        _isPaused = true;
+    }
     // NOTE: Do NOT set _isRunning = false here!
     // The emulator thread is still active, just paused.
     // Setting _isRunning = false would cause Stop() to skip _asyncThread->join(),
@@ -992,9 +1006,25 @@ void Emulator::Resume(bool broadcast)
     }
 
     _stopRequested = false;
-    _isPaused = false;
+    {
+        // Mirror Pause(): the flag flip must be mutex-protected so the parked
+        // CPU thread's CV predicate (WaitWhilePaused) can't miss the transition.
+        std::lock_guard<std::mutex> lock(_pauseWaitMutex);
+        _isPaused = false;
+    }
+    _resumeCV.notify_all();  // Wake the CPU thread parked mid-frame at a breakpoint
     ResetLineStepAnchor();  // Full-speed run invalidates line-step anchor
     // MainLoop::Run() will detect this via Emulator::IsPaused() check and resume.
+
+    // Eagerly invalidate the pause confirmation from the park we are exiting.
+    // The run loop clears it only after its parked wait wakes (up to its 20 ms
+    // poll); until then a Pause() issued by the same thread (or another
+    // control thread) would see a stale "parked" confirmation and return
+    // while the loop is already executing the next frame - two Z80 drivers
+    // at once (observed as heap corruption in shared collectors, e.g.
+    // WD1793Collector::recordCommandStart, and as torn FSMEvent copies).
+    if (_mainloop)
+        _mainloop->InvalidatePauseConfirmation();
 
     // Note: Don't unconditionally set _isRunning = true here.
     // In synchronous test mode, _isRunning may be false and should stay false.
@@ -1019,18 +1049,35 @@ void Emulator::Resume(bool broadcast)
 /// for pause/resume synchronization.
 void Emulator::WaitWhilePaused()
 {
-    while (_isPaused)
+    // Fast path: not paused - no locking on the hot per-instruction check path.
+    if (!_isPaused)
+        return;
+
+    std::unique_lock<std::mutex> lock(_pauseWaitMutex);
+    // Re-confirm on EVERY park iteration, not just the first. A rapid
+    // Resume()->Pause() flip-flop (e.g. adapter resume immediately followed
+    // by a control-thread Pause) wakes this thread, the predicate sees the
+    // pause flag set again, and the thread re-parks - without re-confirming,
+    // the new Pause()'s WaitForPauseConfirmation would burn its full timeout
+    // (the frame-end park in MainLoop::Run re-confirms the same way).
+    while (_isPaused && !_stopRequested)
     {
-        if (!_stopRequested)
-        {
-            // Wait in a loop if stop is not requested
-            sleep_ms(20);
-        }
-        else
-        {
-            // Stop requested - exit the loop
-            break;
-        }
+        // The CPU thread parks HERE mid-frame (breakpoint/watchpoint handler
+        // or the per-instruction pause check in Z80FrameCycle). MainLoop is
+        // blocked inside RunFrame() above this call and can never reach its
+        // own park/confirm path, so confirm on its behalf - otherwise any
+        // WaitForPauseConfirmation() caller burns the full timeout while the
+        // CPU is in fact safely parked. Cleared by Resume()/Stop() via
+        // InvalidatePauseConfirmation().
+        if (_mainloop)
+            _mainloop->ConfirmPauseFromCpu();
+
+        // Wake on Resume()/Stop() in microseconds instead of the legacy
+        // 20 ms sleep poll (which dominated rapid-debugger-stepping latency:
+        // every step cycle paid one poll quantum). Bare wait + loop-head
+        // re-check is deliberate: the flag transitions happen under this
+        // same mutex, so a wakeup can never be missed.
+        _resumeCV.wait(lock);
     }
 }
 
@@ -1073,12 +1120,16 @@ void Emulator::Stop()
     // Request emulator to stop
     _stopRequested = true;
 
-    // If emulator was paused - un-pause, allowing mainloop to react
-    // MainLoop::Run() will detect this via Emulator::IsPaused() check
-    if (_isPaused)
+    // If emulator was paused - un-pause under the wait mutex and wake the
+    // parked CPU thread, allowing mainloop to react and the async thread to
+    // be joined below. MainLoop::Run() will detect this via Emulator::IsPaused()
     {
+        std::lock_guard<std::mutex> lock(_pauseWaitMutex);
         _isPaused = false;
     }
+    _resumeCV.notify_all();
+    if (_mainloop)
+        _mainloop->InvalidatePauseConfirmation();
 
     // TODO: handle IO shutting down
     // FDC: flush changes to disk image(s)
@@ -2200,11 +2251,19 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
     if (IsRunning() && !IsPaused())
     {
         Pause();  // Broadcast pause so debugger UI updates
+    }
 
-        // Wait for the emulation thread to park - otherwise we would step the Z80
-        // concurrently with the frame MainLoop is still finishing
-        if (_mainloop)
-            _mainloop->WaitForPauseConfirmation(250);
+    // Direct stepping must never race the emulation thread. Even when the
+    // caller already paused, the park can still be in flight: Pause()
+    // proceeds after its confirmation timeout (e.g. the thread was still
+    // inside its startup sequence when the pause landed), and a mid-flight
+    // frame here would step the Z80 concurrently with RunNFrames' own
+    // stepping - two drivers corrupting shared state. Waiting is free when
+    // already parked (the predicate is satisfied immediately) and fast-paths
+    // when called from the emulation thread itself.
+    if (IsRunning() && _mainloop)
+    {
+        _mainloop->WaitForPauseConfirmation(500);
     }
 
     const CONFIG& config = _context->config;
@@ -2280,6 +2339,14 @@ void Emulator::RunTStates(unsigned tStates, bool skipBreakpoints)
     if (IsRunning() && !IsPaused())
     {
         Pause();  // Broadcast pause so debugger UI updates
+    }
+
+    // See RunNFrames: direct stepping must never race a mid-flight emulation
+    // thread, even when the caller paused earlier and the park is still in
+    // flight.
+    if (IsRunning() && _mainloop)
+    {
+        _mainloop->WaitForPauseConfirmation(500);
     }
 
     const CONFIG& config = _context->config;

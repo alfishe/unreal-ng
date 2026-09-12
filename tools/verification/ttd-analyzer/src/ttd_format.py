@@ -857,6 +857,8 @@ def parse_checkpoint(
     r: _Reader,
     model_ram_pages: int,
     index: int,
+    cpu_state_size: int = 0,
+    chipset_state_size: int = 0,
 ) -> Checkpoint:
     frame = r.u64()
     global_t = r.u64()
@@ -869,10 +871,26 @@ def parse_checkpoint(
         )
     keyframe_anchor = r.u64()
 
+    # Parse CPU state - use header size if provided for version compatibility
+    cpu_start = r._pos
     cpu = parse_cpu(r)
-    chipset = parse_chipset(r)
+    cpu_read = r._pos - cpu_start
+    if cpu_state_size > 0 and cpu_read < cpu_state_size:
+        r.take(cpu_state_size - cpu_read)  # skip padding/new fields
 
-    # RAM refs: 4 sub-page slots per emulator RAM page (v2 layout).
+    # Parse chipset state - use header size if provided for version compatibility
+    chipset_start = r._pos
+    chipset = parse_chipset(r)
+    chipset_read = r._pos - chipset_start
+    if chipset_state_size > 0 and chipset_read < chipset_state_size:
+        r.take(chipset_state_size - chipset_read)  # skip padding/new fields
+    elif chipset_state_size > 0 and chipset_read > chipset_state_size:
+        # Parser reads more than file has - backtrack
+        r._pos = chipset_start + chipset_state_size
+
+    # RAM refs: model_ram_pages stores the total sub-page count directly.
+    # (It was page count × 4 in early schema versions, but current files
+    # store the sub-page count directly in the header.)
     refs_count = model_ram_pages * SUB_PAGES_PER_EMU_PAGE
     ram_sub_slots = [r.u32() for _ in range(refs_count)]
 
@@ -914,7 +932,11 @@ def parse_bytes(data: bytes) -> TtdDump:
 
     checkpoints: List[Checkpoint] = []
     for i in range(header.checkpoint_count):
-        checkpoints.append(parse_checkpoint(r, header.model_ram_pages, i))
+        checkpoints.append(parse_checkpoint(
+            r, header.model_ram_pages, i,
+            cpu_state_size=header.cpu_state_size,
+            chipset_state_size=header.chipset_state_size,
+        ))
 
     journal = None
     if header.flags & FLAGS_HAS_WRITE_JOURNAL:

@@ -62,7 +62,7 @@ struct TTDTimePoint
 /// observable internal registers (MEMPTR, Q) documented in z80.h.
 ///
 /// Layout is plain POD (no unions, no packing pragmas) so it can be copied
-/// byte-wise into a checkpoint and memcmp'd in tests. Size is ~36 bytes.
+/// byte-wise into a checkpoint and memcmp'd in tests. Size is 48 bytes.
 struct TTDCpuState
 {
     // ---- 16-bit registers ----
@@ -82,12 +82,19 @@ struct TTDCpuState
     uint8_t  iff2 = 0;          ///< Interrupt enable flip-flop 2
     uint8_t  im = 0;            ///< Interrupt mode (0/1/2)
     uint8_t  halted = 0;        ///< CPU HALT state (0/1)
-    uint8_t  reserved0 = 0;     ///< explicit filler — see reserved2
+
+    // Padding at offset 31 (before memptr). Must be a NAMED member: implicit
+    // padding is not copied by member-wise copy/move, so checkpoints moved
+    // into the timeline keep heap garbage here and the byte-wise divergence
+    // oracle hashes mismatch. memset at capture alone cannot fix this.
+    uint8_t  reserved0 = 0;
 
     // ---- Undocumented but observable ----
     uint16_t memptr = 0;        ///< MEMPTR / WZ — affects BIT n,(HL) undocumented flags
     uint8_t  q = 0;             ///< Q register — affects CCF/SCF undocumented flag behavior
-    uint8_t  reserved1 = 0;     ///< explicit filler — see reserved2
+
+    // Padding at offset 35 (before eipos) — see reserved0.
+    uint8_t  reserved1 = 0;
 
     // ---- HALT / interrupt bookkeeping ----
     /// EI instruction position. Restoring this matters because the Z80
@@ -100,17 +107,26 @@ struct TTDCpuState
     uint8_t  nmi_in_progress = 0;
     uint8_t  int_pending = 0;   ///< INT line state (latched)
     uint8_t  int_gate = 1;      ///< External interrupts gate (1 = enabled)
-    /// Explicit filler. These objects are copied by member-wise assignment
-    /// (which leaves padding bytes untouched) and then hashed byte-wise, so
-    /// implicit padding would carry uninitialized garbage into the hash.
-    /// Naming the filler makes it part of the value and keeps it zeroed.
+    // Padding at offset 43 (before halt_cycle) — see reserved0.
     uint8_t  reserved2 = 0;
+
     uint32_t halt_cycle = 0;   ///< Cycle at which HALT became active
 };
 
-static_assert(sizeof(TTDCpuState) == 48, "TTDCpuState layout changed");
+// The named reservedN members above must occupy exactly the former implicit
+// padding offsets — the byte-wise hash covers the whole struct, so the layout
+// must never drift silently.
+//
+// Two complementary families of check: the absolute offsets pin the layout
+// outright, while the relative ones state the actual invariant (each reservedN
+// immediately precedes the member whose alignment gap it fills) and catch
+// trailing padding, which absolute offsets alone cannot see.
+static_assert(sizeof(TTDCpuState) == 48, "TTDCpuState layout must stay stable (hashed byte-wise)");
+static_assert(offsetof(TTDCpuState, memptr) == 32, "reserved0 must sit at pad offset 31");
+static_assert(offsetof(TTDCpuState, eipos) == 36, "reserved1 must sit at pad offset 35");
+static_assert(offsetof(TTDCpuState, halt_cycle) == 44, "reserved2 must sit at pad offset 43");
 static_assert(offsetof(TTDCpuState, halt_cycle) + sizeof(uint32_t) == sizeof(TTDCpuState),
-              "TTDCpuState has implicit padding - check reserved0/1/2 placement");
+              "TTDCpuState has implicit trailing padding - check reserved0/1/2 placement");
 static_assert(offsetof(TTDCpuState, memptr) == offsetof(TTDCpuState, reserved0) + 1,
               "TTDCpuState reserved0 does not fill the alignment gap before memptr");
 static_assert(offsetof(TTDCpuState, eipos) == offsetof(TTDCpuState, reserved1) + 1,
@@ -153,13 +169,20 @@ struct TTDChipsetState
     uint8_t ulaplus_cram[64] = {0};
 
     /// Explicit tail filler. MUST keep the struct free of implicit padding:
-    /// these objects are copied by member-wise assignment (which leaves
-    /// padding bytes untouched) and then hashed byte-wise, so any implicit
-    /// padding would carry uninitialized garbage into the hash.
+    /// these objects are copied by member-wise assignment (which leaves padding
+    /// bytes untouched) and then hashed byte-wise, so any implicit padding
+    /// would carry uninitialized garbage into the hash and the divergence
+    /// oracle would report phantom mismatches.
+    ///
+    /// master hit exactly this on the pre-cleanup 176-byte layout (named
+    /// reserved3/reserved4 around pFFF7, observed as Chipset[137..139] and
+    /// [172..174] diffs). Those members are gone with the extended ports they
+    /// guarded; this branch saw the same failure at [114..119] instead.
     uint8_t reserved[10] = {};
 };
 
-static_assert(sizeof(TTDChipsetState) == 120, "TTDChipsetState layout changed");
+static_assert(sizeof(TTDChipsetState) == 120, "TTDChipsetState layout must stay stable (hashed byte-wise)");
+static_assert(offsetof(TTDChipsetState, reserved) == 110, "reserved must sit at pad offset 110");
 static_assert(offsetof(TTDChipsetState, reserved) + sizeof(TTDChipsetState::reserved)
                   == sizeof(TTDChipsetState),
               "TTDChipsetState has implicit trailing padding - resize reserved[]");

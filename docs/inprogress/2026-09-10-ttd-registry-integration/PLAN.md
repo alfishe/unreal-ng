@@ -505,3 +505,158 @@ All use same page store addressing (22-bit keys support up to 256 pages × 16KB)
 - [ ] Consider lazy I-frame generation on seek miss
 - [ ] Profile and optimize coverage index memory for 4MB machines
 - [ ] Add TTD session size estimation API for UI budget display
+
+---
+
+## POC 011: TTD v2 Capture Analysis (2026-09-10)
+
+**Location:** `tools/poc/011-ttd-v2-capture-analysis/`
+
+Comprehensive POC validating TTD v2 design decisions. Created during this planning session.
+
+### Key Findings
+
+#### 1. The 67GB Problem
+Full-state capture is impractical for large machines:
+
+| Machine | Per Frame | 5 Minutes |
+|---------|-----------|-----------|
+| ZX-48K | 48KB | 700MB |
+| ZX-Evo 4MB | 4096KB | 60GB |
+| ZX-Evo + GS | 4608KB | **67GB** |
+
+#### 2. IO-Bound Dirty Rate (Critical Insight)
+**Dirty rate does NOT scale with RAM size.** A 4MB machine writes the same ~1-5KB per frame as a 48K machine:
+- Screen bitmap: 0-768 bytes
+- Attributes: 0-256 bytes  
+- Variables: 256-512 bytes
+- Stack: 128-256 bytes
+
+This means page-granular capture makes 4MB nearly as efficient as 48K.
+
+#### 3. Page-Granular Results
+
+| Machine | Full Snapshot | Page-Granular | Improvement |
+|---------|---------------|---------------|-------------|
+| ZX-48K | 48KB | 5KB | 10x |
+| Pentagon-128K | 128KB | 5KB | 26x |
+| ZX-Evo 4MB | 4096KB | 8KB | **512x** |
+| ZX-Evo + GS | 4608KB | 17KB | **271x** |
+
+5-minute session: 67GB → **250MB** (99.6% reduction)
+
+#### 4. Shannon Entropy Analysis
+Theoretical compression floors for XOR deltas:
+
+| Workload | Nonzero% | Entropy Floor |
+|----------|----------|---------------|
+| XOR idle | 0.1% | **7 bytes** |
+| XOR typical | 1.0% | **66 bytes** |
+| XOR heavy | 5.0% | **323 bytes** |
+
+zstd-1 achieves 67B on typical workload — **1.0x entropy floor** (optimal).
+
+#### 5. Compression Decision: XOR + zstd Wins
+
+Tested three approaches:
+1. **XOR + zstd** — XOR frames, compress
+2. **Delta + zstd** — Sparse delta RLE, compress
+3. **XOR + Delta + zstd** — XOR, delta RLE, compress
+
+**Result:** XOR + zstd wins. Delta RLE adds 6-byte headers per run that exceed savings. zstd handles sparse XOR buffers natively via entropy coder.
+
+Codec comparison (typical 1% XOR workload):
+
+| Codec | Size | Encode | Decode |
+|-------|------|--------|--------|
+| **zstd-1** | 67B | 1.0us | 1.1us |
+| lz4-fast | 81B | 1.7us | 0.4us |
+| zlib-1 | 98B | 5.0us | 1.9us |
+
+**zstd-1 confirmed Pareto optimal.** Use lz4-fast only for hot buffer SeekTo scrubbing.
+
+#### 6. Index Overhead
+
+| Hot Buffer | Page Index | Frame Index | Total | Overhead |
+|------------|------------|-------------|-------|----------|
+| 64MB | 0.49MB | 645KB | 1.1MB | 1.75% |
+| 256MB | 1.95MB | 645KB | 2.6MB | **1.01%** |
+| 512MB | 3.90MB | 645KB | 4.5MB | 0.88% |
+
+Frame index is constant (~645KB per 5 min). Only page index scales with buffer.
+
+#### 7. Acceptance Criteria Status
+
+| Requirement | Target | Measured | Margin |
+|-------------|--------|----------|--------|
+| Capture latency | <6ms | 135us | **44x** |
+| Restore latency | <6ms | 4.8ms | **1.25x** |
+| Storage vs raw | <25% | 1.9% | **13x** |
+| Index overhead | <2% | 1.01% | **2x** |
+| Compression | >10x | 48-63x | **5x** |
+
+**All targets met with significant margin.**
+
+### POC Deliverables
+
+**Working tools:**
+- `codec_comparison.py` — Multi-codec benchmark with entropy analysis
+- `compression_benchmark.cpp` — XOR/Delta/XOR+Delta comparison
+- `measure_all_models.cpp` — Per-model capture/restore timing
+- `measure_paged_peripheral.cpp` — Page-granular POC
+- `v2_index_overhead.cpp` — Index memory calculator
+- `page_granularity_analysis.py` — 4KB vs 16KB analysis
+
+**Knowledge articles:**
+- `knowledge/compression-analysis.md`
+- `knowledge/measurements.md`
+- `knowledge/page-granular-capture.md`
+- `knowledge/page-analysis-report.md`
+- `knowledge/v2-index-overhead.md`
+
+### Design Decisions Validated
+
+1. **4KB page granularity** — 92.9% of dirty 16KB pages have only 1 dirty 4KB sub-page
+2. **zstd-1 compression** — Matches entropy floor, no benefit from higher levels
+3. **No delta RLE** — zstd handles sparse XOR natively
+4. **Tiered storage** — Hot buffer (RAM) + file stream (disk) with <2% index overhead
+5. **IO-bound dirty model** — 4MB machines are tractable
+
+### Remaining Work
+
+Based on POC findings, update Phase 2-5 with:
+
+1. **Wire page-granular capture into TTDCodecPageStore** (not just peripheral registry)
+2. **Implement tiered storage** — hot buffer eviction to file stream
+3. **Add lz4-fast option** — for hot buffer pages during SeekTo scrubbing
+4. **Large peripheral strategy** — GeneralSound must use page store, not blob deltas
+
+---
+
+## Updated Phase 2 Tasks (Post-POC)
+
+Based on POC 011 findings:
+
+### 2.5 Page-Granular Peripheral Capture
+**New requirement:** Large peripherals (GeneralSound 512KB) MUST use page-granular capture, not monolithic blob deltas.
+
+POC showed monolithic blob delta achieves only **1.95x** compression at 1% change rate (269KB from 512KB). Page-granular with XOR+zstd achieves **60x+**.
+
+**Implementation:**
+```cpp
+// GeneralSound registers 128 × 4KB pages, not one 512KB blob
+class GeneralSound : public TTDPagedPeripheral {
+    void RegisterPages(TTDCodecPageStore& store) override {
+        for (int i = 0; i < 128; ++i)
+            store.RegisterPage(PeripheralId::GeneralSound, i, &_sram[i * 4096]);
+    }
+};
+```
+
+### 2.6 Tiered Storage Implementation
+**New task:** Implement hot buffer + file stream architecture validated in POC.
+
+- Hot buffer: lz4-fast for decode speed
+- File stream: zstd-1 for storage efficiency
+- Eviction: LRU pages not referenced by recent N frames
+- Fetch-on-seek: decompress from file when page missing from hot buffer
