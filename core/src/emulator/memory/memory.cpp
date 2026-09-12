@@ -1504,6 +1504,32 @@ void Memory::SetROMPageFlags()
     _isPage0ROM128k = std::get<1>(flags);
     _isPage0ROMDOS = std::get<2>(flags);
     _isPge0ROMService = std::get<3>(flags);
+
+    RecordROMPageSwitch();
+}
+
+/// @brief Record a ROM page change for the frame-end HUD notification
+/// @details Called from SetROMPageFlags, which every ROM switch runs through
+///          right after repointing bank 0 - SetROMPage, SetROM48k, SetROM128k,
+///          SetROMDOS and SetROMSystem alike. Hooking the individual entry
+///          points instead would miss runtime paging on the 128K family, which
+///          reaches the ROM through SetROMMode -> UpdateZ80Banks -> SetROMxxx
+///          and never calls SetROMPage at all (that one only runs at reset).
+///          Self-deduplicating against the tracker's own current page, so the
+///          paths that additionally round-trip through the port decoder back
+///          into SetROMPage still count a switch once.
+void Memory::RecordROMPageSwitch()
+{
+    // Zero overhead when HUD is disabled
+    if (!_feature_hud_enabled)
+        return;
+
+    const uint16_t page = GetROMPage();
+    if (page == MEMORY_UNMAPPABLE)
+        return;
+
+    if (static_cast<uint8_t>(page) != _romSwitchTracker.currentPage)
+        _romSwitchTracker.recordSwitch(static_cast<uint8_t>(page));
 }
 
 /// endregion </Service methods>

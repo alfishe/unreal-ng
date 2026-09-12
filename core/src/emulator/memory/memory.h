@@ -342,6 +342,7 @@ public:
     void LoadContentToMemory(uint8_t* contentBuffer, size_t size, uint16_t z80address);
     void LoadRAMPageData(uint8_t page, uint8_t* fromBuffer, size_t bufferSize);
     void SetROMPageFlags();
+    void RecordROMPageSwitch();
     /// endregion </Service methods>
 
     /// region <Bank / Page identification helpers>
@@ -458,6 +459,11 @@ public:
     using Memory::_feature_ttd_enabled;
     using Memory::_bank_ram_page_cache;
     
+    // HUD page-switch tracking
+    using Memory::_feature_hud_enabled;
+    using Memory::_ramSwitchTracker;
+    using Memory::_romSwitchTracker;
+
     // ROM base pointers for testing ROM switching
     using Memory::base_dos_rom;
     using Memory::base_sos_rom;
