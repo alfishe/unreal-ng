@@ -975,19 +975,42 @@ protected:
     /// SetROMDOS() - activateTRDOS() only works on a machine that has stopped
     /// re-paging. Deterministic single-driver stepping via RunNFrames, no
     /// wall-clock timing dependence.
-    void settleBootSequence()
+    /// @return false when the machine never reached an idle state within the
+    ///         budget. Reported, not swallowed: giving up silently here made a
+    ///         failure surface downstream as "TR-DOS did not initialize", which
+    ///         points at the wrong subsystem - the boot simply had not settled,
+    ///         so SetROMDOS() was undone by the still-running paging code.
+    bool settleBootSequence()
     {
         for (int i = 0; i < 500; i += 10)
         {
             _emulator->RunNFrames(10);
             BasicEncoder::BasicState state = BasicEncoder::detectState(_emulator->GetMemory());
+            _lastSettleState = state;  // reported by the caller when this gives up
             if (state == BasicEncoder::BasicState::Basic48K
                 || state == BasicEncoder::BasicState::Basic128K
                 || state == BasicEncoder::BasicState::Menu128K)
             {
-                return;
+                return true;
             }
         }
+        return false;
+    }
+
+    BasicEncoder::BasicState _lastSettleState = BasicEncoder::BasicState::Unknown;
+
+    static const char* stateName(BasicEncoder::BasicState state)
+    {
+        switch (state)
+        {
+            case BasicEncoder::BasicState::Menu128K:       return "Menu128K";
+            case BasicEncoder::BasicState::Basic128K:      return "Basic128K";
+            case BasicEncoder::BasicState::Basic48K:       return "Basic48K";
+            case BasicEncoder::BasicState::TRDOS_Active:   return "TRDOS_Active";
+            case BasicEncoder::BasicState::TRDOS_SOS_Call: return "TRDOS_SOS_Call";
+            case BasicEncoder::BasicState::Unknown:        return "Unknown";
+        }
+        return "??";
     }
 };
 
@@ -1007,10 +1030,16 @@ TEST_F(BasicEncoder_Integration_Test, TRDOSRunCommand_AutoResumes)
     // confirmation timeout to advance ~thousands of free-running frames;
     // pause confirmation is immediate now, so the boot is advanced
     // deterministically on the test thread instead)
-    settleBootSequence();
+    ASSERT_TRUE(settleBootSequence())
+        << "boot never reached an idle BASIC/menu state within 500 frames; last state was "
+        << stateName(_lastSettleState)
+        << ". TR-DOS activation below cannot work until the boot code stops re-paging 0x7FFD.";
 
     // Activate TR-DOS
-    ASSERT_TRUE(activateTRDOS()) << "TR-DOS did not initialize";
+    ASSERT_TRUE(activateTRDOS())
+        << "TR-DOS did not initialize; last state was "
+        << stateName(BasicEncoder::detectState(_emulator->GetMemory()))
+        << ", flags=0x" << std::hex << (int)_emulator->GetContext()->emulatorState.flags;
 
     // Resume to running state
     _emulator->Resume();
