@@ -20,6 +20,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
@@ -62,33 +63,40 @@ protected:
         _emulator->GetContext()->config.reset_rom = RM_SOS;
         _emulator->Reset();
 
-        // Deliberately still a 10 ms poll, not TestWait.
-        //
-        // Pause() parks the emulator thread wherever it has got to - including
-        // mid-frame, via the pause check inside Z80FrameCycle - and TTD decodes
-        // history per frame, so the in-frame offset at which the session opens
-        // decides how many instructions sit behind the baseline. The
-        // history-walk tests assert on that depth.
-        //
-        // Measured: with this loop the park is consistent and depth is a stable
-        // 7 entries. Polling faster parks inside frame 0 and depth becomes
-        // 1849 / 2332 / 3058 - different every run. Waiting for a completed
-        // frame first, or following Pause() with RunFrame()/RunNFrames(1), does
-        // not help either: both preserve the in-frame offset rather than
-        // clearing it (t landed at 65913, 26489, 30479, 5455... run to run).
-        //
-        // The real defect is that these tests depend on a park point no API
-        // currently lets them state. Until there is a "run to the next frame
-        // boundary" primitive, this wait stays as it is - the ~10 ms it costs
-        // is the price of a stable baseline, and the free-run sections below,
-        // which were the expensive part, are converted regardless.
         _emulator->StartAsync();
-        for (int i = 0; i < 50 && _emulator->GetState() != StateRun; ++i)
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        ASSERT_EQ(_emulator->GetState(), StateRun);
+        ASSERT_TRUE(TestWait::For([this] { return _emulator->GetState() == StateRun; },
+                                  std::chrono::milliseconds(500)))
+            << "emulator thread did not reach StateRun";
 
         _emulator->Pause();
         ASSERT_TRUE(_emulator->IsPaused());
+
+        // Park on a frame boundary.
+        //
+        // Load-bearing, not tidiness. Pause() stops the emulator thread
+        // wherever it has reached - including mid-frame, via the pause check
+        // inside Z80FrameCycle - and TTD decodes history per frame, so the
+        // in-frame offset at which a session opens decides how many
+        // instructions sit behind its baseline. That depth is exactly what the
+        // history-walk tests assert on. Left to Pause() alone it was
+        // 1849 / 2332 / 3058 entries, different every run; the old
+        // `sleep 10 ms until StateRun` loop had been supplying a consistent
+        // offset by accident, at 10-20 ms per fixture across 86 of them.
+        //
+        // RunFrame() and RunNFrames() do NOT do this: both advance a whole
+        // frame's worth of T-states and so preserve the in-frame offset
+        // (measured: t stayed at 65913 / 26489 / 30479 across runs).
+        // RunTStates() with the remainder is what actually lands on the
+        // boundary - t settles at 5 every run, the residue of the instruction
+        // that crosses it, and history depth is a stable 7 entries.
+        {
+            Z80* z80 = _emulator->GetContext()->pCore->GetZ80();
+            const uint32_t frameTStates = _emulator->GetContext()->config.frame;
+            ASSERT_GT(frameTStates, 0u) << "config.frame not set - cannot align to a frame boundary";
+
+            if (const uint32_t inFrame = z80->t % frameTStates)
+                _emulator->RunTStates(frameTStates - inFrame);
+        }
 
         _adapter = std::make_unique<DezogDebugAdapter>(_emulator);
         _adapter->setPauseNotifier([this](dzrp::BreakReason reason, uint16_t addr, uint8_t bank) {
