@@ -12,6 +12,63 @@
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 
+namespace HudCategory
+{
+    constexpr const char* RamPage = "ram-page";
+    constexpr const char* RomPage = "rom-page";
+    constexpr const char* ScreenPage = "screen-page";
+    constexpr const char* AudioBeeper = "audio-beeper";
+    constexpr const char* AudioCovox = "audio-covox";
+    constexpr const char* AudioAY = "audio-ay";
+    constexpr const char* AudioTurboSound = "audio-turbosound";
+    constexpr const char* RecordingVideo = "recording-video";
+    constexpr const char* RecordingAudio = "recording-audio";
+    constexpr const char* EmulatorState = "emulator-state";
+    constexpr const char* SpeedChange = "speed-change";
+    constexpr const char* SystemReset = "system-reset";
+    constexpr const char* FloppyDisk = "floppy-disk";
+    constexpr const char* TapeEvents = "tape-events";
+    constexpr const char* Breakpoints = "breakpoints";
+    constexpr const char* FileLoading = "file-loading";
+
+    // Category lookup for audio sources
+    // AY and TurboSound share the same category (both are AY-based sound)
+    inline const char* forAudioSource(AudioSource source)
+    {
+        switch (source)
+        {
+            case AudioSource::Beeper:     return AudioBeeper;
+            case AudioSource::Covox:      return AudioCovox;
+            case AudioSource::AY:         return AudioAY;
+            case AudioSource::TurboSound: return AudioAY;  // Use same category as single AY
+            default: return nullptr;
+        }
+    }
+
+    // Category lookup for file kinds
+    inline const char* forFileKind(const std::string& kind)
+    {
+        if (kind == "tape") return TapeEvents;
+        if (kind == "disk") return FloppyDisk;
+        return FileLoading;  // snapshots and other files
+    }
+
+    // Category lookup for recording types
+    inline const char* forRecordingType(RecordingType type)
+    {
+        switch (type)
+        {
+            case RecordingType::Video:
+            case RecordingType::VideoAudio:
+                return RecordingVideo;
+            case RecordingType::Audio:
+                return RecordingAudio;
+            default:
+                return nullptr;
+        }
+    }
+}
+
 HudModel::HudModel(EmulatorContext* context)
     : _context(context)
 {
@@ -29,10 +86,8 @@ HudModel::HudModel(EmulatorContext* context)
 
     subscribeFeatureObserver();
 
-    if (enabled)
-    {
-        subscribeObservers();
-    }
+    // Always subscribe to observers for shadow state - HUD tracks events even when disabled
+    subscribeObservers();
 }
 
 HudModel::~HudModel()
@@ -49,19 +104,9 @@ void HudModel::onFeatureChanged(bool enabled)
 
     _enabled.store(enabled, std::memory_order_release);
 
-    if (enabled)
-    {
-        subscribeObservers();
-        publishLocked();
-    }
-    else
-    {
-        unsubscribeObservers();
-        _toasts.clear();
-        _indicators.clear();
-        _augmentations.clear();
-        publishLocked();
-    }
+    // Shadow state: always keep tracking events, only toggle visibility in snapshot
+    // State (indicators, toasts) is preserved when HUD is disabled and shown immediately when re-enabled
+    publishLocked();
 }
 
 bool HudModel::isEnabled() const
@@ -72,9 +117,8 @@ bool HudModel::isEnabled() const
 std::string HudModel::notify(const HudToastRequest& request)
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    if (!_enabled.load(std::memory_order_relaxed))
-        return {};
 
+    // Shadow state: track toasts even when HUD is disabled - publishLocked() handles visibility
     // Deduplication / coalescing
     if (!request.dedupKey.empty())
     {
@@ -166,9 +210,8 @@ void HudModel::setIndicator(const std::string& key, HudState state, std::string 
                             const std::string& icon, std::chrono::milliseconds ttl, bool monospace)
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    if (!_enabled.load(std::memory_order_relaxed))
-        return;
 
+    // Shadow state: track indicators even when HUD is disabled
     std::string id = "ind/" + key;
     auto it = std::find_if(_indicators.begin(), _indicators.end(), [&](const HudElement& el) {
         return el.id == id;
@@ -224,9 +267,8 @@ void HudModel::setIndicatorAt(const std::string& key, HudTilePosition position, 
                               std::string label, const std::string& icon, std::chrono::milliseconds ttl, bool monospace)
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    if (!_enabled.load(std::memory_order_relaxed))
-        return;
 
+    // Shadow state: track indicators even when HUD is disabled
     std::string id = "ind/" + key;
     auto it = std::find_if(_indicators.begin(), _indicators.end(), [&](const HudElement& el) {
         return el.id == id;
@@ -294,8 +336,6 @@ void HudModel::clearIndicator(const std::string& key)
 void HudModel::setImage(const std::string& id, const HudImageRequest& req)
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    if (!_enabled.load(std::memory_order_relaxed))
-        return;
 
     auto it = std::find_if(_augmentations.begin(), _augmentations.end(), [&](const HudElement& el) {
         return el.id == id;
@@ -330,8 +370,6 @@ void HudModel::setImage(const std::string& id, const HudImageRequest& req)
 void HudModel::setTile(const std::string& id, const HudTileRequest& req)
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    if (!_enabled.load(std::memory_order_relaxed))
-        return;
 
     auto it = std::find_if(_augmentations.begin(), _augmentations.end(), [&](const HudElement& el) {
         return el.id == id;
@@ -366,8 +404,6 @@ void HudModel::setTile(const std::string& id, const HudTileRequest& req)
 void HudModel::setTilemap(const std::string& id, const HudTilemapRequest& req)
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    if (!_enabled.load(std::memory_order_relaxed))
-        return;
 
     auto it = std::find_if(_augmentations.begin(), _augmentations.end(), [&](const HudElement& el) {
         return el.id == id;
@@ -400,8 +436,6 @@ void HudModel::setTilemap(const std::string& id, const HudTilemapRequest& req)
 void HudModel::setText(const std::string& id, const HudTextRequest& req)
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    if (!_enabled.load(std::memory_order_relaxed))
-        return;
 
     auto it = std::find_if(_augmentations.begin(), _augmentations.end(), [&](const HudElement& el) {
         return el.id == id;
@@ -503,9 +537,8 @@ uint64_t HudModel::generation() const
 bool HudModel::expire(HudClock::time_point now)
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    if (!_enabled.load(std::memory_order_relaxed))
-        return false;
 
+    // Shadow state: expire elements even when HUD is disabled to keep state clean
     bool changed = false;
     auto it = std::remove_if(_toasts.begin(), _toasts.end(), [&](const HudElement& el) {
         return el.ttl.count() > 0 && (now - el.created) >= el.ttl;
@@ -625,6 +658,19 @@ void HudModel::setChangedCallback(std::function<void()> callback)
 {
     std::lock_guard<std::mutex> lock(_mutex);
     _changedCallback = std::move(callback);
+}
+
+void HudModel::setCategoryFilter(std::function<bool(const char*)> filter)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _categoryFilter = std::move(filter);
+}
+
+bool HudModel::isCategoryEnabled(const char* categoryId) const
+{
+    if (!_categoryFilter)
+        return true;  // No filter = all enabled
+    return _categoryFilter(categoryId);
 }
 
 void HudModel::subscribeFeatureObserver()
@@ -793,6 +839,8 @@ void HudModel::onFddState(int, Message* message)
     auto* p = dynamic_cast<FDDStatePayload*>(message->obj);
     if (!p || !matchesInstance(p->_emulatorId))
         return;
+    if (!isCategoryEnabled(HudCategory::FloppyDisk))
+        return;
 
     std::string key = "fdd";
     if (!p->_state.motorOn)
@@ -817,6 +865,8 @@ void HudModel::onFddDisk(int, Message* message)
         return;
     auto* p = dynamic_cast<FDDDiskPayload*>(message->obj);
     if (!p || !matchesInstance(p->_emulatorId))
+        return;
+    if (!isCategoryEnabled(HudCategory::FloppyDisk))
         return;
 
     char driveLetter = static_cast<char>('A' + (p->_driveId & 0x03));
@@ -887,6 +937,8 @@ void HudModel::onEmulatorState(int, Message* message)
     auto* p = dynamic_cast<EmulatorStateChangePayload*>(message->obj);
     if (!p || !matchesInstance(p->emulatorId))
         return;
+    if (!isCategoryEnabled(HudCategory::EmulatorState))
+        return;
 
     uint32_t state = p->_payloadNumber;
     if (state == StatePaused)
@@ -915,6 +967,8 @@ void HudModel::onBreakpoint(int, Message* message)
         return;
     auto* p = dynamic_cast<BreakpointTriggeredPayload*>(message->obj);
     if (!p || !matchesInstance(p->emulatorId))
+        return;
+    if (!isCategoryEnabled(HudCategory::Breakpoints))
         return;
 
     // Filter hidden / stepover breakpoints — do not display on HUD
@@ -960,6 +1014,9 @@ void HudModel::onBreakpoint(int, Message* message)
 
 void HudModel::onCpuStep(int, Message* message)
 {
+    if (!isCategoryEnabled(HudCategory::EmulatorState))
+        return;
+
     bool isPaused = true;
     if (message && message->obj)
     {
@@ -988,6 +1045,8 @@ void HudModel::onCpuStep(int, Message* message)
 
 void HudModel::onSystemReset(int, Message*)
 {
+    if (!isCategoryEnabled(HudCategory::SystemReset))
+        return;
     setExecState(ExecState::Reset, HudTiming::ToastSystemReset);
 }
 
@@ -997,6 +1056,8 @@ void HudModel::onSpeedChanged(int, Message* message)
         return;
     auto* p = dynamic_cast<SpeedChangedPayload*>(message->obj);
     if (!p || !matchesInstance(p->emulatorId))
+        return;
+    if (!isCategoryEnabled(HudCategory::SpeedChange))
         return;
 
     if (p->turboMode)
@@ -1019,6 +1080,10 @@ void HudModel::onRecording(int, Message* message)
         return;
     auto* p = dynamic_cast<RecordingStatePayload*>(message->obj);
     if (!p || !matchesInstance(p->emulatorId))
+        return;
+
+    const char* category = HudCategory::forRecordingType(p->type);
+    if (!category || !isCategoryEnabled(category))
         return;
 
     // Mutually exclusive recording modes:
@@ -1101,6 +1166,9 @@ void HudModel::onFileLoaded(int, Message* message)
     if (!p || !matchesInstance(p->emulatorId))
         return;
 
+    if (!isCategoryEnabled(HudCategory::forFileKind(p->kind)))
+        return;
+
     std::string fname = std::filesystem::path(p->path).filename().string();
     HudToastRequest req;
 
@@ -1170,6 +1238,8 @@ void HudModel::onMemoryPageChanged(int, Message* message)
     auto* p = dynamic_cast<MemoryPagePayload*>(message->obj);
     if (!p || !matchesInstance(p->emulatorId))
         return;
+    if (!isCategoryEnabled(HudCategory::RamPage))
+        return;
 
     // Track cross-frame oscillation
     _ramCrossFrame.recordPage(p->page);
@@ -1200,6 +1270,8 @@ void HudModel::onRomPageChanged(int, Message* message)
         return;
     auto* p = dynamic_cast<ROMPagePayload*>(message->obj);
     if (!p || !matchesInstance(p->emulatorId))
+        return;
+    if (!isCategoryEnabled(HudCategory::RomPage))
         return;
 
     // Track cross-frame oscillation
@@ -1232,6 +1304,8 @@ void HudModel::onScreenPageChanged(int, Message* message)
     auto* p = dynamic_cast<ScreenPagePayload*>(message->obj);
     if (!p || !matchesInstance(p->emulatorId))
         return;
+    if (!isCategoryEnabled(HudCategory::ScreenPage))
+        return;
 
     // Convert screen index to RAM page number
     uint8_t page = (p->screen == 0) ? HudTiming::ScreenNormalPage : HudTiming::ScreenShadowPage;
@@ -1262,9 +1336,31 @@ void HudModel::onAudioActivity(int, Message* message)
     if (!p || !matchesInstance(p->emulatorId))
         return;
 
-    const char* key = (p->source == AudioSource::Beeper) ? "beeper" : "covox";
-    const char* label = (p->source == AudioSource::Beeper) ? "BEEP" : "COVOX";
-    const char* icon = (p->source == AudioSource::Beeper) ? "speaker" : "covox";
+    const char* category = HudCategory::forAudioSource(p->source);
+    if (!category || !isCategoryEnabled(category))
+        return;
+
+    const char* key;
+    const char* label;
+    const char* icon;
+
+    switch (p->source)
+    {
+        case AudioSource::Beeper:
+            key = "beeper"; label = "BEEP"; icon = "speaker";
+            break;
+        case AudioSource::Covox:
+            key = "covox"; label = "COVOX"; icon = "covox";
+            break;
+        case AudioSource::AY:
+            key = "ay"; label = "AY"; icon = "ay";
+            break;
+        case AudioSource::TurboSound:
+            key = "ts"; label = "TS"; icon = "turbosound";
+            break;
+        default:
+            return;
+    }
 
     if (p->active)
     {

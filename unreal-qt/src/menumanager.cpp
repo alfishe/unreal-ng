@@ -865,6 +865,11 @@ void MenuManager::createToolsMenu()
     _temporalEffectsAction->setStatusTip(tr("Configure frame blending for gigascreen smoothing"));
     connect(_temporalEffectsAction, &QAction::triggered, this, &MenuManager::temporalEffectsRequested);
 
+    // HUD Settings
+    _hudSettingsAction = _toolsMenu->addAction(tr("&HUD Settings..."));
+    _hudSettingsAction->setStatusTip(tr("Configure which HUD notifications to display"));
+    connect(_hudSettingsAction, &QAction::triggered, this, &MenuManager::hudSettingsRequested);
+
     _toolsMenu->addSeparator();
 
     // Tape Manager Window (design §9.2 — checkable show/hide, hidden until

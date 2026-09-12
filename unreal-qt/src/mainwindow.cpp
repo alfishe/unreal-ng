@@ -44,6 +44,7 @@
 #include "debugger/widgets/audiosettingswidget.h"
 #include "ui/temporaleffectsdialog.h"
 #include "hud/qt/hudoverlaywrapper.h"
+#include "hud/qt/hudsettingsdialog.h"
 #include "hud/core/hudmodel.h"
 #ifdef ENABLE_RECORDING
 #include "debugger/widgets/videorecordingwidget.h"
@@ -255,6 +256,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::intParametersRequested, this, &MainWindow::handleIntParametersRequested);
     connect(_menuManager, &MenuManager::audioSettingsRequested, this, &MainWindow::handleAudioSettingsRequested);
     connect(_menuManager, &MenuManager::temporalEffectsRequested, this, &MainWindow::handleTemporalEffectsRequested);
+    connect(_menuManager, &MenuManager::hudSettingsRequested, this, &MainWindow::handleHudSettingsRequested);
     connect(_menuManager, &MenuManager::overscanModeToggled, this, &MainWindow::handleOverscanModeToggled);
     connect(_menuManager, &MenuManager::viewportChanged, this, &MainWindow::handleViewportChanged);
     connect(_menuManager, &MenuManager::machineModelChangeRequested, this, &MainWindow::handleMachineModelChangeRequested);
@@ -2563,6 +2565,21 @@ void MainWindow::handleTemporalEffectsRequested()
     dialog->activateWindow();
 }
 
+void MainWindow::handleHudSettingsRequested()
+{
+    EmulatorContext* context = nullptr;
+    if (m_binding && m_binding->emulator())
+    {
+        context = m_binding->emulator()->GetContext();
+    }
+
+    auto* dialog = new HudSettingsDialog(context, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
+}
+
 void MainWindow::handleOverscanModeToggled(bool enabled)
 {
     if (!m_binding || !m_binding->emulator())
@@ -2886,6 +2903,8 @@ void MainWindow::handleStatusBarToggled(bool visible)
 
 void MainWindow::handleHudOverlayToggled(bool visible)
 {
+    _hudOverlayVisible = visible;  // Remember for session (not persisted across restarts)
+
     if (_emulator && _emulator->GetFeatureManager())
     {
         _emulator->GetFeatureManager()->setFeature(Features::kHud, visible);
@@ -3602,17 +3621,23 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
     if (_hudWrapper)
     {
         _hudModel = std::make_shared<HudModel>(_emulator->GetContext());
+        // Set up notification category filtering
+        _hudModel->setCategoryFilter([](const char* categoryId) {
+            return HudSettingsDialog::isCategoryEnabled(QString::fromUtf8(categoryId));
+        });
+
         _hudWrapper->setModel(_hudModel);
-        bool hudEnabled = false;
+
+        // Restore HUD visibility from session state (not from emulator defaults)
         if (_emulator->GetContext() && _emulator->GetContext()->pFeatureManager)
         {
-            hudEnabled = _emulator->GetContext()->pFeatureManager->isEnabled(Features::kHud);
+            _emulator->GetContext()->pFeatureManager->setFeature(Features::kHud, _hudOverlayVisible);
         }
         if (_menuManager)
         {
-            _menuManager->setHudOverlayChecked(hudEnabled);
+            _menuManager->setHudOverlayChecked(_hudOverlayVisible);
         }
-        _hudWrapper->setVisible(hudEnabled);
+        _hudWrapper->setVisible(_hudOverlayVisible);
         _hudWrapper->syncGeometryWithParent();
     }
 

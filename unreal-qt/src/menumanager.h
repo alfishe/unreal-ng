@@ -132,6 +132,7 @@ signals:
     void intParametersRequested();
     void audioSettingsRequested();
     void temporalEffectsRequested();
+    void hudSettingsRequested();
     void screenshotRequested();
 #ifdef ENABLE_RECORDING
     void videoRecordingRequested();
@@ -249,6 +250,7 @@ private:
     QAction* _intParametersAction;
     QAction* _audioSettingsAction;
     QAction* _temporalEffectsAction = nullptr;
+    QAction* _hudSettingsAction;
     QAction* _screenshotAction;
 #ifdef ENABLE_RECORDING
     QAction* _videoRecordingAction;

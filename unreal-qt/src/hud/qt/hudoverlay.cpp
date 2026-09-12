@@ -465,7 +465,7 @@ void HudOverlay::renderHUD(QPainter& painter, int width, int height, float dpr)
         int leftMargin = static_cast<int>(16 * uiScale);
         int topMargin = static_cast<int>(14 * uiScale);
         int bottomMargin = static_cast<int>(14 * uiScale);
-        int boxHeight = static_cast<int>(26 * uiScale);
+        int boxHeight = static_cast<int>(20 * uiScale);
         int gap = static_cast<int>(8 * uiScale);
 
         float pulseAlpha = HudAnimator::EvaluatePulse(now.time_since_epoch(), HudTiming::AnimPulse);
@@ -898,26 +898,22 @@ void HudOverlay::drawIndicator(QPainter& painter, const HudElement& el, const QR
     QFont font = resolveIndicatorFont(el.monospace, style.content.fontFamily,
                                       style.content.titleFontSize, uiScale);
     painter.setFont(font);
-    QFontMetrics fm(font);
 
-    // Calculate cap-height visual center to align icon and dot perfectly with text
-    int capHeight = fm.capHeight();
-    int baseline = rect.top() + (rect.height() + fm.ascent() - fm.descent()) / 2;
-    int capCenterY = baseline - capHeight / 2;
-
+    // Use rect center + offset to compensate for bottom shadow visual weight
+    int centerY = rect.center().y() + 2;
     int leftOffset = rect.left() + static_cast<int>(10 * uiScale);
 
     if (!el.icon.empty())
     {
         int iconSize = static_cast<int>(14 * uiScale);
-        QRect iconRect(leftOffset, capCenterY - iconSize / 2, iconSize, iconSize);
+        QRect iconRect(leftOffset, centerY - iconSize / 2, iconSize, iconSize);
         drawIcon(painter, QString::fromStdString(el.icon), iconRect, itemColor, 1.5f * uiScale);
         leftOffset += iconSize + static_cast<int>(8 * uiScale);
     }
     else
     {
         int dotDiameter = static_cast<int>(8 * uiScale);
-        int dotY = capCenterY - dotDiameter / 2;
+        int dotY = centerY - dotDiameter / 2;
         painter.setBrush(itemColor);
         painter.setPen(Qt::NoPen);
         painter.drawEllipse(leftOffset, dotY, dotDiameter, dotDiameter);
@@ -942,7 +938,7 @@ void HudOverlay::drawIndicator(QPainter& painter, const HudElement& el, const QR
     }
 
     int textW = rect.width() - (leftOffset - rect.left()) - static_cast<int>(8 * uiScale);
-    QRect textRect(leftOffset, rect.top(), textW, rect.height());
+    QRect textRect(leftOffset, rect.top() + 2, textW, rect.height());
     painter.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, displayText);
 
     painter.restore();
@@ -1243,6 +1239,57 @@ void HudOverlay::drawIcon(QPainter& painter, const QString& iconName, const QRec
         wave.lineTo(cx + w / 3, cy);
         wave.lineTo(cx + w / 2, cy);
         painter.drawPath(wave);
+    }
+    else if (iconName == "ay")
+    {
+        // AY icon: _|‾|_|‾ two square wave cycles
+        int cx = r.center().x();
+        int cy = r.center().y();
+        int w = r.width() - 4;
+        int h = r.height() - 4;
+        QPainterPath wave;
+        wave.moveTo(cx - w / 2, cy + h / 3);       // start low
+        wave.lineTo(cx - w / 4, cy + h / 3);       // _
+        wave.lineTo(cx - w / 4, cy - h / 3);       // |
+        wave.lineTo(cx, cy - h / 3);               // ‾
+        wave.lineTo(cx, cy + h / 3);               // |
+        wave.lineTo(cx + w / 4, cy + h / 3);       // _
+        wave.lineTo(cx + w / 4, cy - h / 3);       // |
+        wave.lineTo(cx + w / 2, cy - h / 3);       // ‾
+        painter.drawPath(wave);
+    }
+    else if (iconName == "turbosound")
+    {
+        // TurboSound icon: two parallel _|‾|_|‾ waves (dual AY)
+        int cx = r.center().x();
+        int cy = r.center().y();
+        int w = r.width() - 4;
+        int waveH = 6;  // height per wave
+        int gap = 4;    // gap between waves
+        // Top wave
+        int y1 = cy - gap / 2 - waveH / 2;
+        QPainterPath wave1;
+        wave1.moveTo(cx - w / 2, y1 + waveH / 2);
+        wave1.lineTo(cx - w / 4, y1 + waveH / 2);
+        wave1.lineTo(cx - w / 4, y1 - waveH / 2);
+        wave1.lineTo(cx, y1 - waveH / 2);
+        wave1.lineTo(cx, y1 + waveH / 2);
+        wave1.lineTo(cx + w / 4, y1 + waveH / 2);
+        wave1.lineTo(cx + w / 4, y1 - waveH / 2);
+        wave1.lineTo(cx + w / 2, y1 - waveH / 2);
+        painter.drawPath(wave1);
+        // Bottom wave
+        int y2 = cy + gap / 2 + waveH / 2;
+        QPainterPath wave2;
+        wave2.moveTo(cx - w / 2, y2 + waveH / 2);
+        wave2.lineTo(cx - w / 4, y2 + waveH / 2);
+        wave2.lineTo(cx - w / 4, y2 - waveH / 2);
+        wave2.lineTo(cx, y2 - waveH / 2);
+        wave2.lineTo(cx, y2 + waveH / 2);
+        wave2.lineTo(cx + w / 4, y2 + waveH / 2);
+        wave2.lineTo(cx + w / 4, y2 - waveH / 2);
+        wave2.lineTo(cx + w / 2, y2 - waveH / 2);
+        painter.drawPath(wave2);
     }
     else
     {

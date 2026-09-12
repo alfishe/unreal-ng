@@ -527,7 +527,9 @@ public:
 enum class AudioSource : uint8_t
 {
     Beeper = 0,
-    Covox = 1
+    Covox = 1,
+    AY = 2,         // Single AY-3-8910 / YM2149
+    TurboSound = 3  // TurboSound (dual AY)
 };
 
 /// Payload for NC_AUDIO_ACTIVITY.

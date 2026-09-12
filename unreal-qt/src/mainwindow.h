@@ -120,6 +120,7 @@ private slots:
     void handleIntParametersRequested();
     void handleAudioSettingsRequested();
     void handleTemporalEffectsRequested();
+    void handleHudSettingsRequested();
     void handleOverscanModeToggled(bool enabled);
     void handleViewportChanged(int presetIndex);
     void handleMachineModelChangeRequested(const QString& modelShortName);
@@ -234,6 +235,7 @@ private:
     DeviceScreenWrapper* _screenWrapper = nullptr;
     HudOverlayWrapper* _hudWrapper = nullptr;
     std::shared_ptr<HudModel> _hudModel;
+    bool _hudOverlayVisible = false;  // Session-only HUD visibility state (default off)
     QMutex lockMutex;
     QMutex _audioMutex;              // Protects audio operations from race conditions
     bool _audioInitialized = false;  // Tracks if audio device is initialized

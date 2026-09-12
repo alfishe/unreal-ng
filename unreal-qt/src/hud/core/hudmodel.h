@@ -131,7 +131,12 @@ public:
     /// @brief Register callback invoked whenever a new snapshot is published
     void setChangedCallback(std::function<void()> callback);
 
+    /// @brief Register callback to check if a notification category is enabled
+    /// @param filter Function receiving category ID (e.g. "ram-page", "audio-beeper"), returns true if enabled
+    void setCategoryFilter(std::function<bool(const char*)> filter);
+
 private:
+    bool isCategoryEnabled(const char* categoryId) const;
     void subscribeFeatureObserver();
     void unsubscribeFeatureObserver();
     void subscribeObservers();
@@ -181,6 +186,7 @@ private:
     HudTilePosition _indicatorPosition{HudTilePosition::TopRight};
 
     std::function<void()> _changedCallback;
+    std::function<bool(const char*)> _categoryFilter;
 
     uint64_t _featureObserverId = 0;
     std::vector<std::pair<std::string, uint64_t>> _eventObserverIds;

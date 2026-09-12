@@ -233,6 +233,7 @@ message("DATA_PATH: ${DATA_PATH}")
 include_directories(
     ${SOURCE_DIR}/
     ${SOURCE_DIR}/hud/core
+    ${SOURCE_DIR}/hud/qt
     ${SOURCE_DIR}/3rdparty/QHexView-5.0
 )
 

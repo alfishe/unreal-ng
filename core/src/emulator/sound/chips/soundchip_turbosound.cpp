@@ -1,6 +1,8 @@
 #include "soundchip_turbosound.h"
 
+#include "3rdparty/message-center/messagecenter.h"
 #include "emulator/cpu/core.h"
+#include "emulator/notifications.h"
 
 /// region <Emulation events>
 void SoundChip_TurboSound::handleFrameStart()
@@ -13,6 +15,11 @@ void SoundChip_TurboSound::handleFrameStart()
     // vs the exact accumulator, plus a phase discontinuity at each frame
     // boundary. _ayPLL resets only in reset().
     _ayBufferIndex = 0;
+
+    // Reset activity tracking for HUD notification
+    _frameHadActivity = false;
+    _chip0ActiveThisFrame = false;
+    _chip1ActiveThisFrame = false;
 
     // Initialize render buffers (combined + per-chip)
     memset(_ayBuffer, 0x00, _ayAudioDescriptor.memoryBufferSizeInBytes);
@@ -195,7 +202,24 @@ void SoundChip_TurboSound::handleStep()
     _lastTStates = scaledCurrentTStates;
 }
 
-void SoundChip_TurboSound::handleFrameEnd() {}
+void SoundChip_TurboSound::handleFrameEnd()
+{
+    // TurboSound = chip1 (non-default) is active at all, since standard single-AY only uses chip0
+    bool isTurboSound = _chip1ActiveThisFrame;
+
+    // Post notification on activity state change or TurboSound mode change, or while active (to refresh HUD TTL)
+    bool stateChanged = (_frameHadActivity != _wasActive) || (isTurboSound != _wasTurboSound);
+    if (_frameHadActivity || stateChanged)
+    {
+        _wasActive = _frameHadActivity;
+        _wasTurboSound = isTurboSound;
+
+        AudioSource source = isTurboSound ? AudioSource::TurboSound : AudioSource::AY;
+
+        MessageCenter::DefaultMessageCenter().Post(
+            NC_AUDIO_ACTIVITY, new AudioActivityPayload(_context->emulatorId, source, _wasActive));
+    }
+}
 
 /// endregion </Emulation events>
 
@@ -232,6 +256,12 @@ void SoundChip_TurboSound::portDeviceOutMethod(uint16_t port, uint8_t value)
             break;
         case PORT_BFFD:
             _currentChip->writeCurrentRegister(value);
+            _frameHadActivity = true;  // Track register writes for HUD activity
+            // Track which chip is active this frame for TurboSound detection
+            if (_currentChip == _chip0)
+                _chip0ActiveThisFrame = true;
+            else if (_currentChip == _chip1)
+                _chip1ActiveThisFrame = true;
             break;
         default:
             return;  // Not an AY port — no tap

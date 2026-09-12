@@ -56,6 +56,13 @@ protected:
     // Native-rate recording tap (218.75 kHz, pre-decimation).
     // shared_ptr so a DSD encoder worker can outlive this chip safely.
     std::shared_ptr<NativeAudioTap> _nativeTap = std::make_shared<NativeAudioTap>();
+
+    // Activity tracking for HUD notification
+    bool _frameHadActivity = false;    // Any register write this frame
+    bool _chip0ActiveThisFrame = false; // Chip 0 was written this frame
+    bool _chip1ActiveThisFrame = false; // Chip 1 was written this frame
+    bool _wasActive = false;           // Activity state at last frame end
+    bool _wasTurboSound = false;       // Was TurboSound (both chips) at last frame end
     /// endregion </AY emulation>
 
     /// endregion </Fields>
