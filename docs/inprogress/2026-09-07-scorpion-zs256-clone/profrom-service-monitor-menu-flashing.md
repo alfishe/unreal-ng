@@ -483,3 +483,61 @@ Two dead ends worth recording, both caused by measuring the wrong surface:
 2. **VRAM stability proves nothing.** Bitmap and attribute memory were byte-identical
    across every frame-boundary sample while the screen was visibly blinking.
    Only a rendered-frame diff, or the write journal, exposes an intra-frame redraw.
+
+## 10. Round 3: the regression test was order-dependent (2026-09-12)
+
+`ScorpionServiceMonitor_Test.ProfRomServiceMonitorHighlightDoesNotBlink`
+started failing in the full Release suite while passing on its own — at frame
+29, with attribute `0x71` (the highlight plus BRIGHT) instead of `0x31`, and
+with no write breakpoint hit on `0x58C1`.
+
+### 10.1 It was not a phantom write
+
+Instrumenting the 30-frame window showed the machine was not sitting in the
+monitor at all. In the failing order it bounced every frame or two between
+`flags = 0x84` (`CF_PROFROM | CF_SETDOSROM`) and `flags = 0x04` with the ProfROM
+unpaged, executing at `0x11AD` in ROM and once at `0xACA3` in RAM; in the
+passing order it idled steadily at `PC 0x0066-0x006D`. The state *before* MNI
+was byte-identical between the two (`p7FFD = 0x00`, `p1FFD = 0x12`,
+`flags = 0x84`, `PC = 0x315D`), and both settled the highlight in exactly 16
+frames. The only differing input was the power-on contents of RAM pages 5 and 7.
+
+### 10.2 Why the order mattered
+
+`Memory::RandomizeMemoryContent()` fills pages 5 and 7 from the **global
+`rand()`**. Nothing seeds it, so the pattern a given emulator gets depends
+purely on how many `rand()` calls the preceding tests in the same process made.
+Speeding up unrelated boot tests changed that count, and this test changed
+behaviour. Both orders were individually reproducible — this was never flake in
+the "timing" sense, it was a hidden input.
+
+### 10.3 The RAM sensitivity is real, and separate
+
+Sampling twelve fixed patterns, ten booted a stable monitor and two did not. In
+the failing ones the CPU ended up executing page 5 itself (`PC = 0x52FC`, inside
+the `0x4000-0x7FFF` window) and the screen was cleared — a crash on resuming the
+interrupted program into uninitialized RAM, not a redraw storm.
+
+Ruled out along the way: the Scorpion floating bus. Undecoded port reads return
+the screen attribute byte, which *is* RAM-dependent, so it was the obvious
+suspect — but logging every undecoded read during the window found four, all of
+port `#7FFD`. Not the mechanism.
+
+**Open:** whether that crash is faithful (real hardware with the same garbage
+would do the same) or an emulation defect in the monitor-resume path. It needs
+its own investigation and its own test; it is not what the blink test asserts.
+
+### 10.4 What was changed
+
+The test now zeroes pages 5 and 7 after creating the emulator, before the boot
+run. Zero rather than a fixed seed on purpose: two of twelve patterns fail, so
+choosing whichever seed survives would be picking a green one rather than
+removing an input. Zero is also what `Memory` already gives every other page
+("zero-init: deterministic power-on RAM").
+
+Note that this end-to-end test does not, on its own, catch the Round 2
+regression: re-adding the `(_state->p1FFD & 0x02)` gate leaves it green. The
+mutation is caught by `ScorpionPorts_Test.KempstonJoystick_Port1F_ReadsZero-`
+`WhateverThePagingLatch` and `ScorpionPorts_Test.FdcMirrorPortsGatedOutside-`
+`Session`, which is where that coverage belongs. The blink test guards the
+higher-level property (no mid-frame rewrite of `0x58C1`, highlight steady).

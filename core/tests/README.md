@@ -1645,6 +1645,37 @@ Two traps that make a test pass while the bug is live:
   armed around a frame-stepped run will never trigger, and the test silently
   proves nothing.
 
+### 6. Stop on *every* field you assert, not the first one to arrive
+
+An early exit is only correct if its condition is the whole assertion. Cutting
+`ZXEvoBoot.MenuKeyUBoots128KBasic` over to `RunUntil(... GetROMPage() == 30)`
+looked right and passed for days: ROM page 30 appears while BASIC is still
+initializing, so under one shuffle order the test read `ERR_NR` as `0x00`
+instead of `0xFF`. Put the full set of asserted conditions in the predicate -
+the settle then ends exactly when the test's own claim becomes true.
+
+### 7. Power-on RAM is a hidden global input
+
+`Memory::RandomizeMemoryContent()` fills RAM pages 5 and 7 from the **global
+`rand()`**, which nothing seeds. The pattern any one emulator gets therefore
+depends on how many `rand()` calls every preceding test in the process made -
+so speeding up an unrelated boot test can change what a later test's machine
+boots into. Both orders reproduce perfectly; this is a hidden input, not flake,
+and `--gtest_shuffle` is the only thing that finds it.
+
+If your test boots far enough for RAM contents to matter, pin them:
+
+```cpp
+memset(memory->RAMPageAddress(5), 0, PAGE_SIZE);
+memset(memory->RAMPageAddress(7), 0, PAGE_SIZE);
+```
+
+Zero, not a fixed seed. When a real RAM sensitivity exists - the ProfROM
+Service Monitor crashes into page 5 on 2 of 12 sampled patterns
+(`profrom-service-monitor-menu-flashing.md` section 10) - choosing whichever
+seed survives it hides the finding instead of removing the input. Zero matches
+what `Memory` already gives every other page.
+
 ### Common Pitfalls
 
 1. **Using `Start()` instead of `StartAsync()`**: Test hangs forever
@@ -1657,6 +1688,10 @@ Two traps that make a test pass while the bug is live:
    source of multi-second tests
 8. **Asserting on frame-boundary state for an intra-frame behaviour**: passes
    while the bug is live
+9. **An early exit that checks less than the test asserts**: green until the
+   day something upstream shifts the timing
+10. **Leaving power-on RAM to the global `rand()`**: makes the test depend on
+    what ran before it in the same process
 
 ---
 
