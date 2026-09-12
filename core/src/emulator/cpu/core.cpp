@@ -8,6 +8,7 @@
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/tape/tapefastload.h"
 #include "emulator/io/tape/tapeturbocontroller.h"
+#include "emulator/memory/scorpion/scorpionmemory.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/videocontroller.h"
 #include "emulator/video/zx/screenzx.h"
@@ -72,6 +73,10 @@ bool Core::Init()
     _state->current_z80_frequency = baseFrequency;
     _state->current_z80_frequency_multiplier = 1;
     _state->next_z80_frequency_multiplier = 1;  // Initialize queued multiplier
+    _state->scorpion_turbo = 0;                 // Turbo flip-flop cleared at power-on (hardware-reference 13)
+    _state->hw_turbo_shift = 0;                 // No hardware turbo engaged at power-on (model-neutral)
+    _state->hw_turbo_shift_applied = 0;
+    _state->scorpionDosTrigger = 0;            // Magic-button DOS trigger cleared at power-on (hardware-reference §9)
 
     // Initialize speed multiplier from configuration
     if (_config->speed_multiplier > 0 && _config->speed_multiplier <= 16)
@@ -85,8 +90,13 @@ bool Core::Init()
 
     /// region <Memory>
 
-    // Create memory subsystem (allocates all RAM/ROM regions)
-    _memory = new Memory(_context);
+    // Create memory subsystem (allocates all RAM/ROM regions). Scorpion
+    // models get the derived class that owns their latch-to-bank translation
+    // and ProfROM bus-cycle silicon; everything else stays on the generic one
+    if (_config->mem_model == MM_SCORP || _config->mem_model == MM_PROFSCORP)
+        _memory = new ScorpionMemory(_context);
+    else
+        _memory = new Memory(_context);
     if (_memory)
     {
         _context->pMemory = _memory;

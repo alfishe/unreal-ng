@@ -8,6 +8,8 @@
 #include <QSettings>
 #include <QToolTip>
 
+#include "common/stringhelper.h"
+#include "emulator/corestate.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
@@ -68,6 +70,13 @@ StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuMana
     separator->setFrameShadow(QFrame::Plain);
     separator->setFixedHeight(13);
 
+    _cpuFreq = new QLabel(QStringLiteral("3.5 MHz"), _statusBar);
+    _cpuFreq->setToolTip(tr("CPU frequency"));
+    QFont cpuFont("Consolas", _cpuFreq->font().pointSize());
+    cpuFont.setStyleHint(QFont::Monospace);
+    _cpuFreq->setFont(cpuFont);
+    _cpuFreq->setStyleSheet("padding-top: 1px;");
+
     _fps = new QLabel(QStringLiteral("-- FPS"), _statusBar);
     _fps->setToolTip(tr("Emulated frames per second"));
     QFont fpsFont("Consolas", _fps->font().pointSize());
@@ -76,12 +85,19 @@ StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuMana
     // Font ascenders render higher than icon visual center - adjust with stylesheet padding
     _fps->setStyleSheet("padding-top: 1px;");
 
+    auto* separator2 = new QFrame(_statusBar);
+    separator2->setFrameShape(QFrame::VLine);
+    separator2->setFrameShadow(QFrame::Plain);
+    separator2->setFixedHeight(13);
+
     // Order as in the new-gui mockup: tape, square (HDD), round (floppy), sound
     _statusBar->addPermanentWidget(_tape);
     _statusBar->addPermanentWidget(_hdd);
     _statusBar->addPermanentWidget(_disk);
     _statusBar->addPermanentWidget(_sound);
     _statusBar->addPermanentWidget(separator);
+    _statusBar->addPermanentWidget(_cpuFreq);
+    _statusBar->addPermanentWidget(separator2);
     _statusBar->addPermanentWidget(_fps);
 
     connect(_menuManager, &MenuManager::statusBarToggled, this, &StatusBarManager::setVisibleByUser);
@@ -98,6 +114,9 @@ StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuMana
     // Core reset restarts the frame counter from 0: re-arm the FPS measurement
     messageCenter.AddObserver(NC_SYSTEM_RESET, observerInstance,
                               static_cast<ObserverCallbackMethod>(&StatusBarManager::handleSystemReset));
+    // CPU frequency changes (turbo modes)
+    messageCenter.AddObserver(NC_CPU_FREQ_CHANGED, observerInstance,
+                              static_cast<ObserverCallbackMethod>(&StatusBarManager::handleCPUFreqChanged));
 
     _pollTimer.setInterval(kPollIntervalMs);
     connect(&_pollTimer, &QTimer::timeout, this, &StatusBarManager::refresh);
@@ -119,6 +138,8 @@ StatusBarManager::~StatusBarManager()
                                  static_cast<ObserverCallbackMethod>(&StatusBarManager::handleFDDDiskEjected));
     messageCenter.RemoveObserver(NC_SYSTEM_RESET, observerInstance,
                                  static_cast<ObserverCallbackMethod>(&StatusBarManager::handleSystemReset));
+    messageCenter.RemoveObserver(NC_CPU_FREQ_CHANGED, observerInstance,
+                                 static_cast<ObserverCallbackMethod>(&StatusBarManager::handleCPUFreqChanged));
 }
 
 void StatusBarManager::handleSystemReset(int id, Message* message)
@@ -138,6 +159,29 @@ void StatusBarManager::resetFpsMeasurement()
     _fpsWindow.clear();
     _measuredFps = 0.0;
     _fps->setText(QStringLiteral("-- FPS"));
+}
+
+void StatusBarManager::handleCPUFreqChanged(int id, Message* message)
+{
+    Q_UNUSED(id);
+    std::shared_ptr<Emulator> emulator = _emulator.lock();
+    auto* payload = (emulator && message) ? dynamic_cast<CPUFreqPayload*>(message->obj) : nullptr;
+    if (!payload || payload->_emulatorId.toString() != emulator->GetId())
+        return;
+
+    const uint32_t freqHz = payload->_frequencyHz;
+    QMetaObject::invokeMethod(this, [this, freqHz]() {
+        const std::string freqStr = StringHelper::FormatFrequencyMHz(freqHz);
+        _cpuFreq->setText(QString::fromStdString(freqStr));
+
+        // Color coding: normal for 3.5MHz, orange for 7MHz, dark red for 14MHz+
+        if (freqHz >= 14'000'000)
+            _cpuFreq->setStyleSheet("color: #B22222; padding-top: 1px;");
+        else if (freqHz >= 7'000'000)
+            _cpuFreq->setStyleSheet("color: #FF8C00; padding-top: 1px;");
+        else
+            _cpuFreq->setStyleSheet("padding-top: 1px;");
+    }, Qt::QueuedConnection);
 }
 
 void StatusBarManager::handleFDDDiskInserted(int id, Message* message)
@@ -298,6 +342,27 @@ void StatusBarManager::refresh()
     updateDiskToolTip();
     _hdd->setActive(false);  // HDD is a stub in the core
     _sound->setActive(soundOn);
+
+    // CPU frequency display from actual EmulatorState value with color coding
+    if (context)
+    {
+        const uint32_t freqHz = context->emulatorState.current_z80_frequency;
+        const std::string freqStr = StringHelper::FormatFrequencyMHz(freqHz);
+        _cpuFreq->setText(QString::fromStdString(freqStr));
+
+        // Color coding: normal for 3.5MHz, orange for 7MHz, dark red for 14MHz+
+        if (freqHz >= 14'000'000)
+            _cpuFreq->setStyleSheet("color: #B22222; padding-top: 1px;");  // Dark red
+        else if (freqHz >= 7'000'000)
+            _cpuFreq->setStyleSheet("color: #FF8C00; padding-top: 1px;");  // Orange
+        else
+            _cpuFreq->setStyleSheet("padding-top: 1px;");  // Default color
+    }
+    else
+    {
+        _cpuFreq->setText(QStringLiteral("-- MHz"));
+        _cpuFreq->setStyleSheet("padding-top: 1px;");
+    }
 
     // FPS: once per second take the latest frame-aligned sample and measure the rate
     // between the oldest sample in the window and this one. Both ends are frame

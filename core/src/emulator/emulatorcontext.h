@@ -40,7 +40,7 @@ class PortTracker;
 // can hold a pointer without pulling the full TTD headers into every consumer.
 namespace ttd { class TimeTravelManager; class TTDAccessProbe; }
 
-#include "debugger/ttd/ttd_probe.h"  // inline member - needs full definition
+#include "debugger/ttd/ttdprobe.h"  // inline member - needs full definition
 
 // Create callback type for audio
 // User in emulator/sound/soundmanager and client/GUI

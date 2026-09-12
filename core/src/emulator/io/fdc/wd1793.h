@@ -5,7 +5,7 @@
 #include <queue>
 #include <vector>
 
-#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
+#include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/fdc.h"
@@ -1123,6 +1123,12 @@ public:
     size_t TTDStateSize() const override;
     void   TTDSaveState(uint8_t* dst) const override;
     void   TTDLoadState(const uint8_t* src) override;
+
+    /// Identity used by TTDPeripheralRegistry. Without it the base class
+    /// returns PeripheralId::Count and the device cannot be indexed in a
+    /// checkpoint's blob map.
+    ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::BetaDisk; }
+    std::string TTDDeviceName() const override { return "WD1793"; }
     /// endregion </TTDSerializable interface>
 };
 

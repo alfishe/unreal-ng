@@ -211,6 +211,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::resumeRequested, this, &MainWindow::handleResumeEmulator);
     connect(_menuManager, &MenuManager::stopRequested, this, &MainWindow::handleStopEmulator);
     connect(_menuManager, &MenuManager::resetRequested, this, &MainWindow::resetEmulator);
+    connect(_menuManager, &MenuManager::mniRequested, this, &MainWindow::requestMni);
     connect(_menuManager, &MenuManager::speedMultiplierChanged, this, &MainWindow::handleSpeedMultiplierChanged);
     connect(_menuManager, &MenuManager::turboModeToggled, this, &MainWindow::handleTurboModeToggled);
     connect(_menuManager, &MenuManager::tapeTrapsToggled, this, &MainWindow::handleTapeTrapsToggled);
@@ -2216,6 +2217,16 @@ void MainWindow::resetEmulator()
     }
 }
 
+void MainWindow::requestMni()
+{
+    if (_emulator)
+    {
+        // RequestMNI handles pause/resume internally to avoid race conditions;
+        // plain NMI on non-Scorpion models
+        _emulator->RequestMNI();
+    }
+}
+
 // region <Menu action handlers>
 
 void MainWindow::handleStartEmulator()
@@ -3296,6 +3307,15 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
         {
             auto& framebufferDesc = context->pScreen->GetFramebufferDescriptor();
             deviceScreen->init(framebufferDesc.width, framebufferDesc.height, framebufferDesc.memoryBuffer);
+
+            // Match the widget's crop to the emulator being adopted. Viewport crops are
+            // absolute pixel insets, so one left over from the previous machine's overscan
+            // mode (framebuffer 384x304) keeps cropping a framebuffer that is now 352x288,
+            // scaling the wrong source region into the fixed-size widget
+            if (_emulator->IsOverscanMode())
+                deviceScreen->setDisplayViewport(_emulator->GetDisplayViewport());
+            else
+                deviceScreen->clearDisplayViewport();
 
             // Paint from the frame-end latched snapshot instead of the live
             // framebuffer - prevents mid-frame tearing (emulation thread

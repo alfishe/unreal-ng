@@ -218,6 +218,8 @@ Content-Type: application/json
 POST /api/v1/emulator/{id}/step              Execute single instruction
 POST /api/v1/emulator/{id}/steps             Execute N instructions (body: {"count": N})
 POST /api/v1/emulator/{id}/stepover          Step over CALL instructions
+POST /api/v1/emulator/{id}/stepout            Step out of current subroutine (breakpoints skipped)
+POST /api/v1/emulator/{id}/skip_until         Fast-forward until PC reaches target (body: {"pc": "0x8000", "max_tstates": N})
 POST /api/v1/emulator/{id}/run_tstates       Run N t-states (body: {"count": N})
 POST /api/v1/emulator/{id}/run_to_scanline   Run until scanline N (body: {"scanline": N})
 POST /api/v1/emulator/{id}/run_scanlines     Run N scanlines forward (body: {"count": N})
@@ -248,6 +250,46 @@ GET /api/v1/emulator/{id}/memcounters         Memory access statistics
 GET /api/v1/emulator/{id}/calltrace           Call trace history (?limit=N)
 GET /api/v1/emulator/{id}/disasm              Disassemble Z80 code (?address=&count=, default: PC)
 GET /api/v1/emulator/{id}/disasm/page         Disassemble from physical page (?type=&page=&offset=&count=)
+POST /api/v1/emulator/{id}/memory/find        Search Z80 memory for a byte pattern (body: {"pattern_hex": "AF 3C"})
+GET  /api/v1/emulator/{id}/state/screen/digest  Stable screen-content digest (range or banks, border folding)
+GET  /api/v1/emulator/{id}/video/beam         Current raster position and beam zone
+GET  /api/v1/emulator/{id}/frame_cost         Per-frame halt/run cost accounting
+```
+
+### Labels & Symbols
+```
+GET    /api/v1/emulator/{id}/labels            List labels (filters: ?module=&type=&bank=&from=&to=&active=)
+POST   /api/v1/emulator/{id}/labels            Add label (body: {"name", "address", "type", ...})
+DELETE /api/v1/emulator/{id}/labels            Clear all labels
+GET    /api/v1/emulator/{id}/labels/resolve    Resolve by name or address (?name= or ?address=): exact label, aliases at the address, nearest below/above
+GET    /api/v1/emulator/{id}/labels/{name}     Get label by name
+DELETE /api/v1/emulator/{id}/labels/{name}     Remove label
+PUT    /api/v1/emulator/{id}/labels/{name}     Update label (body: {"address", "type", ...})
+```
+
+### Assembler & Source Listings
+```
+POST /api/v1/emulator/{id}/assemble            Assemble Z80 source (body: {"code", "address", "write": false})
+POST /api/v1/emulator/{id}/listing/load        Load source listing (body: {"path"})
+GET  /api/v1/emulator/{id}/listing/source_at   Source line for an address (?address=, default: PC)
+POST /api/v1/emulator/{id}/listing/step_line   Run until the source line changes (body: {"max_tstates": N})
+POST /api/v1/emulator/{id}/listing/run_to_line Run to first code byte of a line (body: {"line": N})
+```
+
+### Analysis & Capture
+```
+POST /api/v1/emulator/{id}/coverage/start      Activate coverage analyzer (body: {"keep": false})
+POST /api/v1/emulator/{id}/coverage/stop       Deactivate (data retained)
+POST /api/v1/emulator/{id}/coverage/clear      Clear collected data
+GET  /api/v1/emulator/{id}/coverage            Coverage summary (executed count, ranges)
+GET  /api/v1/emulator/{id}/coverage/gaps       Executed ranges and gaps (?start=&end=&max=)
+POST /api/v1/emulator/{id}/ay/log              AY log control (body: {"action": "start|stop|clear", "capacity"})
+GET  /api/v1/emulator/{id}/ay/log              Get AY log entries (?count=&offset=)
+POST /api/v1/emulator/{id}/audio/capture       Audio capture control (body: {"action": "start|stop|clear", "seconds"})
+GET  /api/v1/emulator/{id}/audio/capture/status   Capture state and level statistics
+GET  /api/v1/emulator/{id}/audio/capture/result   Captured samples (?format=wav&path=... to export)
+POST /api/v1/emulator/{id}/video/record        Video recording control (body: {"action": "start|stop|pause|resume", ...})
+GET  /api/v1/emulator/{id}/video/record/status    Recording state
 ```
 
 #### Disassembly Response

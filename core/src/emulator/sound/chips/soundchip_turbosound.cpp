@@ -44,10 +44,13 @@ void SoundChip_TurboSound::handleFrameStart()
 /// - Correct relationship between chip clock and generator periods
 void SoundChip_TurboSound::handleStep()
 {
-    size_t currentTStates = _context->pCore->GetZ80()->t;
+    // Hardware turbo descaled: the AY has its own clock, so under the Scorpion
+    // 7 MHz flip-flop the chip must see the real-time position (t/2), not the
+    // doubled CPU count - otherwise it emitted 2x samples per frame
+    size_t currentTStates = _context->emulatorState.AudioTstate(_context->pCore->GetZ80()->t);
 
-    // Scale t-states by speed multiplier for correct AY audio pitch
-    uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
+    // Scale t-states by the HOST speed multiplier for correct AY audio pitch
+    uint8_t speedMultiplier = _context->emulatorState.HostSpeedMultiplier();
     size_t scaledCurrentTStates = currentTStates * speedMultiplier;
 
     int32_t diff = scaledCurrentTStates - _lastTStates;
@@ -235,7 +238,26 @@ void SoundChip_TurboSound::portDeviceOutMethod(uint16_t port, uint8_t value)
             _currentChip->writeCurrentRegister(value);
             break;
         default:
-            break;
+            return;  // Not an AY port — no tap
+    }
+
+    // Automation tap (MCP M7j): fires after the write so `chip` identifies the
+    // chip that received it (chip-switch commands report the newly active chip)
+    if (_logSink) [[unlikely]]
+    {
+        AYLogRecord record;
+        record.port = port;
+        record.value = value;
+        record.chip = (_currentChip == _chip1) ? 1 : 0;
+        record.reg = (port == PORT_BFFD) ? _currentChip->getCurrentRegister() : value;
+        if (_context && _context->pCore)
+        {
+            const Z80* z80 = _context->pCore->GetZ80();
+            record.pc = z80->m1_pc;     // PC of the OUT instruction, not the next one
+            record.tacts = z80->t;      // T-states within the current frame
+            record.frame = _context->emulatorState.frame_counter;
+        }
+        _logSink(_logSinkContext, record);
     }
 }
 /// endregion </PortDevice interface methods>

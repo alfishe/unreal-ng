@@ -5,6 +5,8 @@
 #include "common/sound/audiohelper.h"
 #include "common/sound/audioutils.h"
 #include "common/stringhelper.h"
+#include "debugger/analyzers/analyzermanager.h"  // Analyzer audio tap (MCP automation)
+#include "debugger/debugmanager.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 #include "stdafx.h"
@@ -173,7 +175,7 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, [[maybe_unused]
 {
     // Feed the averaged mono amplitude into the beeper's blip_buf.
     // Tape output is mono (left == right), so we use left as the amplitude.
-    _beeper->handleTapeAudio(static_cast<int32_t>(left), frameTState);
+    _beeper->handleTapeAudio(static_cast<int32_t>(left), _context->emulatorState.AudioTstate(frameTState));
 }
 
 // TurboSound/AY chip access for debugging
@@ -437,7 +439,10 @@ void SoundManager::handleFrameEnd()
     uint32_t frameDuration = 0;
     {
         CONFIG& config = _context->config;
-        uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
+        // Host multiplier only: the Scorpion hardware turbo doubles CPU
+        // T-states inside an unchanged 20 ms frame, so it must NOT double the
+        // samples of that frame (it overfilled the ring 2x - hard resyncs)
+        uint8_t speedMultiplier = _context->emulatorState.HostSpeedMultiplier();
         frameDuration = config.frame * speedMultiplier;
 
         if (frameDuration > 0)
@@ -596,6 +601,24 @@ void SoundManager::handleFrameEnd()
         _context->pRecordingManager->CaptureAudio(_outBuffer, samplesThisFrame * AUDIO_CHANNELS);
     }
 #endif
+
+    /// region <Analyzer audio tap (MCP automation)>
+    // Post-mix, pre-mute/DRC vantage — identical to the recording tap above.
+    // One dispatch per stereo frame; guarded so the common case (no analyzer
+    // subscribed) costs a single branch.
+    if (_context->pDebugManager)
+    {
+        AnalyzerManager* analyzerManager = _context->pDebugManager->GetAnalyzerManager();
+        if (analyzerManager && analyzerManager->hasAudioSampleSubscribers())
+        {
+            for (size_t i = 0; i < samplesThisFrame; i++)
+            {
+                analyzerManager->dispatchAudioSample(_outBuffer[i * AUDIO_CHANNELS],
+                                                      _outBuffer[i * AUDIO_CHANNELS + 1]);
+            }
+        }
+    }
+    /// endregion </Analyzer audio tap>
 
     // Enqueue generated sound data via previously registered application callback
     // Note: Audio callbacks are cleared when emulator loses audio device access to prevent

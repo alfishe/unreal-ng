@@ -125,6 +125,26 @@
     paths["/api/v1/emulator/{id}/reset"]["post"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/reset"]["post"]["responses"]["200"]["description"] = "Emulator reset";
 
+    // POST /api/v1/emulator/{id}/nmi - NMI pulse / Scorpion MNI magic button
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["summary"] = "Pulse the NMI line";
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["description"] =
+        "Pulse the Z80 NMI line (accepted at the next instruction boundary: 11T, PC pushed, "
+        "vector #0066, IFF2<-IFF1). With {\"magic\": true} on Scorpion models the Shadow Monitor "
+        "is paged into #0000 first, so the handler at #0066 executes monitor code (the MNI "
+        "magic button). Non-Scorpion models always take the plain NMI.";
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["tags"].append("Emulator Control");
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["requestBody"]["required"] = false;
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["magic"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["magic"]["description"] = "true = Scorpion MNI (NMI + Shadow Monitor); default false";
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["responses"]["200"]["description"] = "NMI/MNI requested";
+
     // POST /api/v1/emulator/{id}/model - Switch machine model
     paths["/api/v1/emulator/{id}/model"]["post"]["summary"] = "Switch machine model";
     paths["/api/v1/emulator/{id}/model"]["post"]["description"] =
@@ -161,3 +181,25 @@
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["400"]["description"] = "Invalid model name or missing 'model' field";
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["404"]["description"] = "Emulator not found";
 
+    // POST /api/v1/videowall/singlesync - Videowall single-sync mode
+    paths["/api/v1/videowall/singlesync"]["post"]["summary"] = "Set videowall single-sync mode";
+    paths["/api/v1/videowall/singlesync"]["post"]["description"] =
+        "Enable or disable single-sync mode for the standalone videowall. "
+        "When enabled with an emulator_id, the videowall locks onto that "
+        "instance as its sole sync source; when disabled, the videowall "
+        "returns to cycling through all running instances.";
+    paths["/api/v1/videowall/singlesync"]["post"]["tags"].append("Emulator Control");
+    paths["/api/v1/videowall/singlesync"]["post"]["requestBody"]["required"] = true;
+    paths["/api/v1/videowall/singlesync"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/videowall/singlesync"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["enable"]["type"] = "boolean";
+    paths["/api/v1/videowall/singlesync"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["enable"]["description"] = "true = lock videowall to a single emulator";
+    paths["/api/v1/videowall/singlesync"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["emulator_id"]["type"] = "string";
+    paths["/api/v1/videowall/singlesync"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["emulator_id"]["description"] = "Emulator instance to sync to (empty when disabling)";
+    paths["/api/v1/videowall/singlesync"]["post"]["responses"]["200"]["description"] = "Mode applied (success=true)";
+    paths["/api/v1/videowall/singlesync"]["post"]["responses"]["400"]["description"] = "Invalid JSON body";
+    paths["/api/v1/videowall/singlesync"]["post"]["responses"]["500"]["description"] =
+        "Could not apply the requested mode (success=false)";

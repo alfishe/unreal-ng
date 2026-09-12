@@ -259,6 +259,9 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
     CopyStringValue(inimanager.GetValue(rom, "ATM3", nullptr, nullptr), config.atm3_rom_path, sizeof config.atm3_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "SCORP", nullptr, nullptr), config.scorp_rom_path, sizeof config.scorp_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PROFROM", nullptr, nullptr), config.prof_rom_path, sizeof config.prof_rom_path);
+    // The shipped spectrum3 unreal.ini carries "rom\\scorp_prof401.ROM:0" - without
+    // stripping, the ":0" leaks into the path and the ROM file lookup fails
+    StripProfRomQuadrantSuffix(config.prof_rom_path, sizeof config.prof_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "GMX", nullptr, nullptr), config.gmx_rom_path, sizeof config.gmx_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PROFI", nullptr, nullptr), config.profi_rom_path, sizeof config.profi_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "KAY", nullptr, nullptr), config.kay_rom_path, sizeof config.kay_rom_path);
@@ -450,6 +453,18 @@ const TMemModel* Config::FindModelByShortName(const std::string& shortName)
 	return nullptr;
 }
 
+std::string Config::GetModelFullName(MEM_MODEL model)
+{
+	for (uint8_t i = 0; i < N_MM_MODELS; i++)
+	{
+		if (mem_model[i].Model == model)
+		{
+			return mem_model[i].FullName;
+		}
+	}
+	return "Unknown";
+}
+
 std::string Config::GetConfigFolderForModel(MEM_MODEL model, uint32_t ramSizeKB)
 {
 	const TMemModel* info = nullptr;
@@ -492,6 +507,40 @@ void Config::CopyStringValue(const char* src, char* dst, size_t dst_len)
         size_t len = std::min(value.length(), dst_len - 1);
         memcpy(dst, value.c_str(), len);
         dst[len] = '\0';
+	}
+}
+
+void Config::StripProfRomQuadrantSuffix(char* path, size_t len)
+{
+	if (path == nullptr || len == 0)
+	{
+		return;
+	}
+
+	// Heritage unreal.ini files may carry a quadrant selector suffix
+	// (PROFROM=<file>:<n>). Only a trailing decimal selector is stripped - a
+	// drive-letter colon ("C:\\...") never qualifies because the remainder is
+	// not all digits.
+	char* suffix = strrchr(path, ':');
+	if (suffix == nullptr || suffix == path)
+	{
+		return;
+	}
+
+	bool numericSuffix = true;
+	for (const char* cursor = suffix + 1; *cursor != '\0'; cursor++)
+	{
+		if (*cursor < '0' || *cursor > '9')
+		{
+			numericSuffix = false;
+			break;
+		}
+	}
+
+	if (numericSuffix && *(suffix + 1) != '\0')
+	{
+		*suffix = '\0';
+		MLOGWARNING("Stripped ProfROM quadrant suffix from path '%s' (quadrant selection is runtime state)", path);
 	}
 }
 
@@ -580,8 +629,19 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             config.intlen   = 36;   // ZX-128K ULA has 72-HC INT = 36 T-states
             break;
 
+        case MM_SCORP:
+        case MM_PROFSCORP:
+            // Scorpion ZS-256: Sinclair-matching 312 x 224T frame, INT at the ZX48
+            // position (hardware-reference 6). No Scorpion INI ships today, so frame/
+            // t_line values read from another model's INI must not leak in.
+            config.frame    = 69888;   // 224 * 312
+            config.t_line   = 224;
+            config.intstart = 1794;
+            config.intlen   = 32;
+            break;
+
         default:
-            // Leave existing values for TSConf, ATM, Scorpion, Profi, etc.
+            // Leave existing values for TSConf, ATM, Profi, etc.
             break;
     }
 
@@ -616,6 +676,13 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             case MM_PENTAGON:
                 config.frame = 71680;   // 224 * 320
                 config.t_line = 224;
+                break;
+            case MM_SCORP:
+            case MM_PROFSCORP:
+                config.frame = 69888;   // 224 * 312
+                config.t_line = 224;
+                config.intstart = 1794;
+                config.intlen = 32;
                 break;
             default:
                 break;

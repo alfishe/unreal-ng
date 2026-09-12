@@ -1,4 +1,5 @@
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <emulator/config.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/platform.h>
@@ -256,14 +257,7 @@ void CLIProcessor::HandleStateScreen(const ClientSession& session, EmulatorConte
     ss << NEWLINE;
 
     // Determine model
-    std::string model = "ZX Spectrum 48K";
-    if (config.mem_model == MM_SPECTRUM128)
-        model = "ZX Spectrum 128K";
-    else if (config.mem_model == MM_PENTAGON)
-        model = "Pentagon 128K";
-    else if (config.mem_model == MM_PLUS3)
-        model = "ZX Spectrum +3";
-
+    std::string model = Config::GetModelFullName(config.mem_model);
     ss << "Model:        " << model << NEWLINE;
     ss << "Video Mode:   Standard (256×192, 2 colors per 8×8 block)" << NEWLINE;
 
@@ -360,8 +354,8 @@ void CLIProcessor::HandleStateScreenVerbose(const ClientSession& session, Emulat
     }
     else
     {
-        // 48K model - single screen
-        ss << "Model: ZX Spectrum 48K" << NEWLINE;
+        // 48K model or non-128K model - single screen
+        ss << "Model: " << Config::GetModelFullName(config.mem_model) << NEWLINE;
         ss << "Screen: Single screen at 0x4000-0x7FFF" << NEWLINE;
         ss << NEWLINE;
 
@@ -390,14 +384,7 @@ void CLIProcessor::HandleStateScreenMode(const ClientSession& session, EmulatorC
     ss << NEWLINE;
 
     // Determine model
-    std::string model = "ZX Spectrum 48K";
-    if (config.mem_model == MM_SPECTRUM128)
-        model = "ZX Spectrum 128K";
-    else if (config.mem_model == MM_PENTAGON)
-        model = "Pentagon 128K";
-    else if (config.mem_model == MM_PLUS3)
-        model = "ZX Spectrum +3";
-
+    std::string model = Config::GetModelFullName(config.mem_model);
     ss << "Model: " << model << NEWLINE;
     ss << "Video Mode: Standard" << NEWLINE;
     ss << "============================================" << NEWLINE;
@@ -460,14 +447,7 @@ void CLIProcessor::HandleStateMemory(const ClientSession& session, EmulatorConte
     ss << NEWLINE;
 
     // Determine model
-    std::string model = "ZX Spectrum 48K";
-    if (config.mem_model == MM_SPECTRUM128)
-        model = "ZX Spectrum 128K";
-    else if (config.mem_model == MM_PENTAGON)
-        model = "Pentagon 128K";
-    else if (config.mem_model == MM_PLUS3)
-        model = "ZX Spectrum +3";
-
+    std::string model = Config::GetModelFullName(config.mem_model);
     ss << "Model: " << model << NEWLINE;
     ss << NEWLINE;
 
@@ -525,14 +505,7 @@ void CLIProcessor::HandleStateMemoryRAM(const ClientSession& session, EmulatorCo
     ss << NEWLINE;
 
     // Determine model
-    std::string model = "ZX Spectrum 48K";
-    if (config.mem_model == MM_SPECTRUM128)
-        model = "ZX Spectrum 128K";
-    else if (config.mem_model == MM_PENTAGON)
-        model = "Pentagon 128K";
-    else if (config.mem_model == MM_PLUS3)
-        model = "ZX Spectrum +3";
-
+    std::string model = Config::GetModelFullName(config.mem_model);
     ss << "Model: " << model << NEWLINE;
     ss << NEWLINE;
 
@@ -597,23 +570,27 @@ void CLIProcessor::HandleStateMemoryROM(const ClientSession& session, EmulatorCo
     ss << "=================" << NEWLINE;
     ss << NEWLINE;
 
-    // Determine model
-    std::string model = "ZX Spectrum 48K";
+    // Determine model and ROM pages
+    std::string model = Config::GetModelFullName(config.mem_model);
     int totalROMPages = 1;
-    if (config.mem_model == MM_SPECTRUM128)
+    switch (config.mem_model)
     {
-        model = "ZX Spectrum 128K";
-        totalROMPages = 2;
-    }
-    else if (config.mem_model == MM_PENTAGON)
-    {
-        model = "Pentagon 128K";
-        totalROMPages = 4;
-    }
-    else if (config.mem_model == MM_PLUS3)
-    {
-        model = "ZX Spectrum +3";
-        totalROMPages = 4;
+        case MM_SPECTRUM128:
+            totalROMPages = 2;
+            break;
+        case MM_PENTAGON:
+        case MM_PLUS3:
+        case MM_SCORP:
+        case MM_PROFSCORP:
+        case MM_ATM3:
+        case MM_ATM710:
+        case MM_ATM450:
+        case MM_PROFI:
+            totalROMPages = 4;
+            break;
+        default:
+            totalROMPages = 1;
+            break;
     }
 
     ss << "Model:            " << model << NEWLINE;

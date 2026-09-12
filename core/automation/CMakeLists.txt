@@ -18,9 +18,10 @@ option(ENABLE_LUA_AUTOMATION "Enable automation for Lua" ON)
 option(ENABLE_PYTHON_AUTOMATION "Enable automation for Python" OFF)
 option(ENABLE_WEBAPI_AUTOMATION "Enable automation for WebAPI" ON)
 option(ENABLE_CLI_AUTOMATION "Enable automation for CLI" ON)
-option(ENABLE_GDB_AUTOMATION "Enable automation for GDB RSP server (GDB TDD G1+)" OFF)
+option(ENABLE_GDB_AUTOMATION "Enable automation for GDB RSP server (GDB TDD G1+)" ON)
 option(ENABLE_DEZOG_AUTOMATION "Enable automation for DeZog (DZRP) debug server" ON)
 option(ENABLE_ZESARUX_AUTOMATION "Enable automation for ZEsarUX (ZRCP) debug server" ON)
+option(ENABLE_MCP_AUTOMATION "Enable automation for the MCP server (Model Context Protocol)" ON)
 
 # Recording support - follows the root CMakeLists.txt option (single source of truth
 # for the EmulatorContext/Core struct layout). Declared here so a standalone automation
@@ -45,6 +46,7 @@ if (NOT ENABLE_AUTOMATION)
     set(ENABLE_GDB_AUTOMATION OFF)
     set(ENABLE_DEZOG_AUTOMATION OFF)
     set(ENABLE_ZESARUX_AUTOMATION OFF)
+    set(ENABLE_MCP_AUTOMATION OFF)
 endif ()
 
 # The ZEsarUX ZRCP server reuses the DeZog adapter; without it there is
@@ -71,6 +73,18 @@ if (ENABLE_WEBAPI_AUTOMATION)
     if (ENABLE_WEBAPI_AUTOMATION)
         set(AUTOMATION_WEBAPI_TARGET automation_webapi)
     endif ()
+endif ()
+
+# MCP server automation. Requires WebAPI: smart/router tools orchestrate the
+# emulator through loopback WebAPI calls, and the drogon/jsoncpp_static
+# targets only exist once the webapi subtree has been added.
+if (ENABLE_MCP_AUTOMATION AND NOT ENABLE_WEBAPI_AUTOMATION)
+    message(STATUS "ENABLE_MCP_AUTOMATION=ON but WebAPI is disabled — MCP automation disabled")
+    set(ENABLE_MCP_AUTOMATION OFF)
+endif ()
+if (ENABLE_MCP_AUTOMATION)
+    add_subdirectory(mcp)
+    set(AUTOMATION_MCP_TARGET automation_mcp)
 endif ()
 
 if (ENABLE_CLI_AUTOMATION)
@@ -143,6 +157,7 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
             $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:automation_gdb>          # Conditional linking
             $<$<BOOL:${ENABLE_DEZOG_AUTOMATION}>:automation_dezog>      # Conditional linking
             $<$<BOOL:${ENABLE_ZESARUX_AUTOMATION}>:automation_zesarux>   # Conditional linking
+            $<$<BOOL:${ENABLE_MCP_AUTOMATION}>:${AUTOMATION_MCP_TARGET}>  # Conditional linking
 
         PUBLIC
             unrealng::core
@@ -187,6 +202,7 @@ else ()
             $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:${AUTOMATION_GDB_TARGET}>
             $<$<BOOL:${ENABLE_DEZOG_AUTOMATION}>:${AUTOMATION_DEZOG_TARGET}>
             $<$<BOOL:${ENABLE_ZESARUX_AUTOMATION}>:${AUTOMATION_ZESARUX_TARGET}>
+            $<$<BOOL:${ENABLE_MCP_AUTOMATION}>:${AUTOMATION_MCP_TARGET}>
             unrealng::core
     )
 endif ()
@@ -202,6 +218,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
     $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/gdb/include>
     $<$<BOOL:${ENABLE_DEZOG_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/dezog/include>
     $<$<BOOL:${ENABLE_ZESARUX_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/zesarux/include>
+    $<$<BOOL:${ENABLE_MCP_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/mcp/src>
 )
 
 # Add conditional compiler definitions for automation modules
@@ -216,6 +233,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:ENABLE_GDB_AUTOMATION>
     $<$<BOOL:${ENABLE_DEZOG_AUTOMATION}>:ENABLE_DEZOG_AUTOMATION>
     $<$<BOOL:${ENABLE_ZESARUX_AUTOMATION}>:ENABLE_ZESARUX_AUTOMATION>
+    $<$<BOOL:${ENABLE_MCP_AUTOMATION}>:ENABLE_MCP_AUTOMATION>
 )
 
 # <Diagnostics>
@@ -229,6 +247,7 @@ message(STATUS "    ENABLE_WEBAPI_AUTOMATION: ${ENABLE_WEBAPI_AUTOMATION}")
 message(STATUS "    ENABLE_GDB_AUTOMATION: ${ENABLE_GDB_AUTOMATION}")
 message(STATUS "    ENABLE_DEZOG_AUTOMATION: ${ENABLE_DEZOG_AUTOMATION}")
 message(STATUS "    ENABLE_ZESARUX_AUTOMATION: ${ENABLE_ZESARUX_AUTOMATION}")
+message(STATUS "    ENABLE_MCP_AUTOMATION: ${ENABLE_MCP_AUTOMATION}")
 message(STATUS "Settings:")
 message(STATUS "  PROJECT_NAME:        ${PROJECT_NAME}")
 message(STATUS "  SRC_DIR:             ${SRC_DIR}")
