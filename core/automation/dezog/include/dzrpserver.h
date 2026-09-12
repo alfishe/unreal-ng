@@ -147,6 +147,18 @@ public:
     // Get port (useful if config port was 0 for auto-assign)
     uint16_t getPort() const { return m_actualPort; }
 
+    /// @brief True while a client session is established.
+    ///
+    /// The accept happens on m_acceptThread, so a caller that has just
+    /// connected a socket cannot otherwise tell when the server has picked it
+    /// up. Companion to isRunning() above; also the honest thing for status
+    /// reporting to read.
+    bool hasClient() const
+    {
+        std::lock_guard<std::mutex> lock(m_sessionMutex);
+        return m_clientSocket >= 0;
+    }
+
     // Called by emulator when execution pauses
     void notifyPause(BreakReason reason, uint16_t addr, uint8_t bank = 0,
                      const std::string& message = "");
@@ -199,7 +211,7 @@ private:
     std::thread m_acceptThread;
 
     // Active session - protects both m_clientSocket and socket writes
-    std::mutex m_sessionMutex;
+    mutable std::mutex m_sessionMutex;
     int m_clientSocket = -1;
 
     // Breakpoint tracking (permanent breakpoints only - temp handled by IDebugInterface)

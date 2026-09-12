@@ -209,7 +209,13 @@ protected:
         ASSERT_NE(_server->getPort(), 0);
 
         ASSERT_TRUE(_client.connect(_server->getPort()));
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+        // The accept runs on the server's own thread, so a connected socket is
+        // not yet a session. Waiting on the server's view of that - rather than
+        // on a 20 ms guess paid by all 24 tests in this suite - is both faster
+        // and the thing the next command actually depends on.
+        ASSERT_TRUE(TestWait::For([this] { return _server->hasClient(); }, std::chrono::milliseconds(2000)))
+            << "server never accepted the client session";
     }
 
     void TearDown() override
@@ -534,11 +540,12 @@ TEST_F(DZRPServer_test, CloseThenReconnect)
     auto close = _client.command(dzrp::CommandId::CMD_CLOSE);
     ASSERT_TRUE(close.valid);
     _client.disconnect();
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    ASSERT_TRUE(TestWait::For([this] { return !_server->hasClient(); }, std::chrono::milliseconds(2000)))
+        << "server did not release the closed session";
 
     TestDzrpClient second;
     ASSERT_TRUE(second.connect(_server->getPort()));
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    ASSERT_TRUE(TestWait::For([this] { return _server->hasClient(); }, std::chrono::milliseconds(2000)));
     std::vector<uint8_t> payload = {2, 0, 0, 'X', 0};
     auto resp = second.command(dzrp::CommandId::CMD_INIT, payload);
     EXPECT_TRUE(resp.valid);
@@ -571,7 +578,7 @@ TEST_F(DZRPServer_test, ClientDropWhileRunningCleansUpAndReconnects)
     // Fresh session works as if nothing happened
     TestDzrpClient second;
     ASSERT_TRUE(second.connect(_server->getPort()));
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    ASSERT_TRUE(TestWait::For([this] { return _server->hasClient(); }, std::chrono::milliseconds(2000)));
     std::vector<uint8_t> payload = {2, 0, 0, 'X', 0};
     ASSERT_TRUE(second.command(dzrp::CommandId::CMD_INIT, payload).valid);
     ASSERT_TRUE(second.command(dzrp::CommandId::CMD_PAUSE).valid);
@@ -703,7 +710,8 @@ TEST_F(DZRPServer_test, HistoryEntryWireFormat)
 TEST_F(DZRPServer_test, NotificationWithoutClientDoesNotCrash)
 {
     _client.disconnect();
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    ASSERT_TRUE(TestWait::For([this] { return !_server->hasClient(); }, std::chrono::milliseconds(2000)))
+        << "server still holds a session; the notify below would not exercise the no-client path";
     _server->notifyPause(dzrp::BreakReason::MANUAL, 0x1234, 0);
     SUCCEED();
 }
