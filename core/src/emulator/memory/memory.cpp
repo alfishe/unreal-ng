@@ -1926,14 +1926,25 @@ void Memory::handleFrameEnd()
     // Emit ROM notification if any switches occurred this frame
     if (_romSwitchTracker.hadActivity())
     {
-        MessageCenter::DefaultMessageCenter().Post(
-            NC_ROM_PAGE_CHANGED,
-            new ROMPagePayload(
-                _context->emulatorId,
-                _romSwitchTracker.currentPage,
-                _romSwitchTracker.minPage,
-                _romSwitchTracker.maxPage,
-                _romSwitchTracker.switchCount));
+        auto* payload = new ROMPagePayload(
+            _context->emulatorId,
+            _romSwitchTracker.currentPage,
+            _romSwitchTracker.minPage,
+            _romSwitchTracker.maxPage,
+            _romSwitchTracker.switchCount);
+
+        // ProfROM composes the page as plane * ROM_QUADRANT_PAGES + role, so the
+        // plane falls straight out of the absolute page. floor() is monotonic,
+        // which is what lets the frame's min/max pages carry the plane range too
+        if (_context->config.mem_model == MM_PROFSCORP)
+        {
+            payload->planeAware = true;
+            payload->plane = static_cast<uint8_t>(payload->page / ROM_QUADRANT_PAGES);
+            payload->minPlane = static_cast<uint8_t>(payload->minPage / ROM_QUADRANT_PAGES);
+            payload->maxPlane = static_cast<uint8_t>(payload->maxPage / ROM_QUADRANT_PAGES);
+        }
+
+        MessageCenter::DefaultMessageCenter().Post(NC_ROM_PAGE_CHANGED, payload);
     }
 }
 

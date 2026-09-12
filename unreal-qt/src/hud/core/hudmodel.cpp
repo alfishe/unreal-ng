@@ -1,10 +1,10 @@
 #include "hudmodel.h"
 
 #include <algorithm>
-#include <cstdio>
 #include <filesystem>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "common/stringhelper.h"
 #include "base/featuremanager.h"
 #include "debugger/debugmanager.h"
 #include "emulator/emulator.h"
@@ -849,14 +849,13 @@ void HudModel::onFddState(int, Message* message)
         return;
     }
 
-    char buf[64];
-    std::snprintf(buf, sizeof(buf), "%c: H:%u T:%02u S:%02u",
-                  p->_state.getDriveLetter(),
-                  p->_state.side ? 1 : 0,
-                  p->_state.track,
-                  p->_state.sector);
+    std::string label = StringHelper::Format("%c: H:%u T:%02u S:%02u",
+                                             p->_state.getDriveLetter(),
+                                             p->_state.side ? 1 : 0,
+                                             p->_state.track,
+                                             p->_state.sector);
 
-    setIndicator(key, HudState::Active, std::string(buf), "", "floppy", std::chrono::milliseconds(0), true);
+    setIndicator(key, HudState::Active, label, "", "floppy", std::chrono::milliseconds(0), true);
 }
 
 void HudModel::onFddDisk(int, Message* message)
@@ -996,13 +995,10 @@ void HudModel::onBreakpoint(int, Message* message)
         _toasts.clear();
     }
 
-    char addrBuf[48];
-    std::snprintf(addrBuf, sizeof(addrBuf), "PC: #%04X (ID: %u)", p->address, p->_payloadNumber);
-
     HudToastRequest req;
     req.icon = "breakpoint";
     req.title = "Breakpoint Hit";
-    req.body = addrBuf;
+    req.body = StringHelper::Format("PC: #%04X (ID: %u)", p->address, p->_payloadNumber);
     req.priority = HudPriority::High;
     req.ttl = HudTiming::ToastBreakpointHit;
     req.dedupKey = "breakpoint";
@@ -1244,23 +1240,23 @@ void HudModel::onMemoryPageChanged(int, Message* message)
     // Track cross-frame oscillation
     _ramCrossFrame.recordPage(p->page);
 
-    char buf[24];
+    std::string label;
     if (p->switchCount > 1 && p->minPage != p->maxPage)
     {
         // Rapid switching within single frame (detected by emitter)
-        snprintf(buf, sizeof(buf), "RAM %d↔%d", p->minPage, p->maxPage);
+        label = StringHelper::Format("RAM %d↔%d", p->minPage, p->maxPage);
     }
     else if (_ramCrossFrame.isOscillating())
     {
         // Slow oscillation across frames (detected by HUD)
-        snprintf(buf, sizeof(buf), "RAM %d↔%d", _ramCrossFrame.minPage, _ramCrossFrame.maxPage);
+        label = StringHelper::Format("RAM %d↔%d", _ramCrossFrame.minPage, _ramCrossFrame.maxPage);
     }
     else
     {
-        snprintf(buf, sizeof(buf), "RAM %d", p->page);
+        label = StringHelper::Format("RAM %d", p->page);
     }
 
-    setIndicatorAt("mem", HudTilePosition::TopLeft, HudState::Active, buf, "", "ram",
+    setIndicatorAt("mem", HudTilePosition::TopLeft, HudState::Active, label, "", "ram",
                    HudTiming::IndicatorMemoryPageTimeout, true);
 }
 
@@ -1277,23 +1273,34 @@ void HudModel::onRomPageChanged(int, Message* message)
     // Track cross-frame oscillation
     _romCrossFrame.recordPage(p->page);
 
-    char buf[24];
+    // ProfROM planes lead the label: a plane hop and an in-plane role change both
+    // move the absolute page, so without the plane out front the two are
+    // indistinguishable. Empty on every model that has no planes.
+    std::string plane;
+    if (p->planeAware)
+    {
+        plane = (p->minPlane != p->maxPlane)
+                    ? StringHelper::Format("P%d↔%d ", p->minPlane, p->maxPlane)
+                    : StringHelper::Format("P%d ", p->plane);
+    }
+
+    std::string label;
     if (p->switchCount > 1 && p->minPage != p->maxPage)
     {
         // Rapid switching within single frame
-        snprintf(buf, sizeof(buf), "ROM %d↔%d", p->minPage, p->maxPage);
+        label = StringHelper::Format("%sROM %d↔%d", plane, p->minPage, p->maxPage);
     }
     else if (_romCrossFrame.isOscillating())
     {
         // Slow oscillation across frames
-        snprintf(buf, sizeof(buf), "ROM %d↔%d", _romCrossFrame.minPage, _romCrossFrame.maxPage);
+        label = StringHelper::Format("%sROM %d↔%d", plane, _romCrossFrame.minPage, _romCrossFrame.maxPage);
     }
     else
     {
-        snprintf(buf, sizeof(buf), "ROM %d", p->page);
+        label = StringHelper::Format("%sROM %d", plane, p->page);
     }
 
-    setIndicatorAt("rom", HudTilePosition::TopLeft, HudState::Active, buf, "", "rom",
+    setIndicatorAt("rom", HudTilePosition::TopLeft, HudState::Active, label, "", "rom",
                    HudTiming::IndicatorMemoryPageTimeout, true);
 }
 
@@ -1313,18 +1320,18 @@ void HudModel::onScreenPageChanged(int, Message* message)
     // Track cross-frame oscillation
     _screenCrossFrame.recordPage(page);
 
-    char buf[24];
+    std::string label;
     if (p->switchCount > 1 || _screenCrossFrame.isOscillating())
     {
         // Rapid switching (within frame) or slow oscillation (across frames)
-        snprintf(buf, sizeof(buf), "SCR %d↔%d", HudTiming::ScreenNormalPage, HudTiming::ScreenShadowPage);
+        label = StringHelper::Format("SCR %d↔%d", HudTiming::ScreenNormalPage, HudTiming::ScreenShadowPage);
     }
     else
     {
-        snprintf(buf, sizeof(buf), "SCR %d", page);
+        label = StringHelper::Format("SCR %d", page);
     }
 
-    setIndicatorAt("scr", HudTilePosition::TopLeft, HudState::Active, buf, "", "screen",
+    setIndicatorAt("scr", HudTilePosition::TopLeft, HudState::Active, label, "", "screen",
                    HudTiming::IndicatorMemoryPageTimeout, true);
 }
 
