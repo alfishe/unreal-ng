@@ -64,6 +64,7 @@ public:
 
     /// region <Port handlers>
 protected:
+    void updateTurboMode() override;
     void Port_FF77_Out_ATM3(uint16_t port, uint8_t value, uint16_t pc);
     void Port_37F7_Out(uint16_t port, uint8_t value, uint16_t pc);
     void Port_BF_Out(uint16_t port, uint8_t value, uint16_t pc);

@@ -498,44 +498,47 @@ TEST_F(PortDecoder_ATM710_Test, Reset_ReferenceBootMapping)
 
 /// region <Turbo mode tests>
 
-TEST_F(PortDecoder_ATM710_Test, Turbo_FF77Bit3_EFF7Bit4_MultiplierSelect)
+TEST_F(PortDecoder_ATM710_Test, Turbo_FF77Bit3_SelectsHardwareClock)
 {
-    // ZX-Evo / ATM turbo formula (reference: Xpeccy pentevo.c evoOut77d):
-    //   FF77.3 = 1              -> x4 (14MHz turbo)
-    //   FF77.3 = 0, EFF7.4 = 0  -> x2 (7MHz, hardware default)
-    //   FF77.3 = 0, EFF7.4 = 1  -> x1 (3.5MHz compatibility)
-    // The multiplier is queued; Z80::Z80FrameCycle applies it at the next
-    // frame boundary and SoundManager::handleFrameStart re-clocks the synths
+    // ATM Turbo 2+ v7.10 clock select: pFF77 bit 3 alone, two states - 7 MHz
+    // when set, 3.5 MHz when clear (reference: Xpeccy atm2.c atm2Out77,
+    // `compSetHwTurbo(comp, (val & 0x08) ? 2 : 1)`). The three-way 14/7/3.5
+    // select that also reads pEFF7 bit 4 is ZX Evo baseconf / Pentevo and lives
+    // in PortDecoder_ATM3.
+    //
+    // The decoder owns hw_turbo_shift only. next_z80_frequency_multiplier is the
+    // HOST speed control, and Z80::ApplyQueuedFrequencyMultiplier composes
+    // current = next << hw_turbo_shift, so a decoder writing both double-counts
+    // the clock and discards the user's setting.
     EmulatorState& state = _context->emulatorState;
 
-    // Reset selects the hardware boot state: 7MHz
+    const uint8_t hostSpeed = 3;   // whatever the host asked for
+    state.next_z80_frequency_multiplier = hostSpeed;
+
     _portDecoder->reset();
-    EXPECT_EQ(state.next_z80_frequency_multiplier, 2);
+    EXPECT_EQ(state.hw_turbo_shift, 0) << "reset leaves the base clock until pFF77 says otherwise";
 
-    // FF77 bit 3 -> 14MHz. Port 0x0077: the xx77 register latches the
-    // address bus, so writing #FF77 would set CPM (aFF77 bit 9) and close
-    // the DOSEN || SYSEN write gate after the first write outside a
-    // session - #0077 keeps ~CPM active
+    // Port 0x0077: the xx77 register latches the address bus, so writing #FF77
+    // would set CPM (aFF77 bit 9) and close the DOSEN || SYSEN write gate after
+    // the first write outside a session - #0077 keeps ~CPM active
     _portDecoder->DecodePortOut(0x0077, 0x08, 0x0000);
-    EXPECT_EQ(state.next_z80_frequency_multiplier, 4);
+    EXPECT_EQ(state.hw_turbo_shift, 1) << "pFF77.3 set is 7 MHz";
 
-    // Turbo off, EFF7.4 clear -> back to 7MHz
     _portDecoder->DecodePortOut(0x0077, 0x00, 0x0000);
-    EXPECT_EQ(state.next_z80_frequency_multiplier, 2);
+    EXPECT_EQ(state.hw_turbo_shift, 0) << "pFF77.3 clear is 3.5 MHz";
 
-    // EFF7 bit 4 locks 3.5MHz while the turbo bit is clear
-    _portDecoder->DecodePortOut(0xEFF7, 0x10, 0x0000);
-    EXPECT_EQ(state.next_z80_frequency_multiplier, 1);
-
-    // FF77.3 overrides the 3.5MHz lock (turbo has priority)
+    // #EFF7 carries no clock bit on 7.10 - it used to inherit Pentevo's
     _portDecoder->DecodePortOut(0x0077, 0x08, 0x0000);
-    EXPECT_EQ(state.next_z80_frequency_multiplier, 4);
+    _portDecoder->DecodePortOut(0xEFF7, 0x10, 0x0000);
+    EXPECT_EQ(state.hw_turbo_shift, 1) << "#EFF7 must not touch the ATM 7.10 clock";
 
-    // Boot defaults (full sequence: mode-neutral reset + RM_DOS block, as
-    // m_reset() pairs them): FF77.3 = 0, EFF7.4 = 0 -> 7MHz
+    // Boot defaults (mode-neutral reset + RM_DOS block, as m_reset() pairs them)
     _portDecoder->reset();
     _portDecoder->ApplyBootROMDefaults(RM_DOS);
-    EXPECT_EQ(state.next_z80_frequency_multiplier, 2);
+    EXPECT_EQ(state.hw_turbo_shift, 0) << "boot defaults leave pFF77.3 clear";
+
+    EXPECT_EQ(state.next_z80_frequency_multiplier, hostSpeed)
+        << "the decoder must never write the host speed control";
 }
 
 /// endregion </Turbo mode tests>

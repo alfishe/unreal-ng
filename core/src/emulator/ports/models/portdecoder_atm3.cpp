@@ -284,6 +284,33 @@ bool PortDecoder_ATM3::IsPort_BF(uint16_t port)
 
 /// region <Port handlers>
 
+/// @brief ZX Evo baseconf / Pentevo clock select - three states, unlike the
+///        two-state ATM 7.10 base implementation
+/// @details Reference: Xpeccy pentevo.c evoOut77d,
+///          `compSetHwTurbo(comp, (val & 0x08) ? 4 : ((comp->pEFF7 & 0x10) ? 1 : 2))`
+///          - pFF77 bit 3 selects 14 MHz outright, otherwise pEFF7 bit 4 picks
+///          3.5 MHz over the 7 MHz default.
+///
+///          Only hw_turbo_shift is written: next_z80_frequency_multiplier is the
+///          HOST speed control and Z80::ApplyQueuedFrequencyMultiplier composes
+///          current = next << hw_turbo_shift, so writing both would double-count
+///          the clock and discard the user's speed setting.
+void PortDecoder_ATM3::updateTurboMode()
+{
+    uint8_t turboShift;
+    if (_state->pFF77 & ATM_FF77_TURBO)
+        turboShift = 2;                                     // 14 MHz
+    else if (_state->pEFF7 & ATM_EFF7_TURBO_3_5)
+        turboShift = 0;                                     // 3.5 MHz compatibility
+    else
+        turboShift = 1;                                     // 7 MHz default
+
+    _state->hw_turbo_shift = turboShift;
+
+    MLOGDEBUG("ATM3 updateTurboMode: hw_turbo_shift=%d (pFF77=0x%02X pEFF7=0x%02X)",
+              turboShift, _state->pFF77, _state->pEFF7);
+}
+
 void PortDecoder_ATM3::Port_FF77_Out_ATM3(uint16_t port, uint8_t value, [[maybe_unused]] uint16_t pc)
 {
     uint8_t oldValue = _state->pFF77;

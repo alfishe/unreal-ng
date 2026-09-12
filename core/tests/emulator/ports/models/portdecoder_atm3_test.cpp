@@ -271,25 +271,36 @@ TEST_F(PortDecoder_ATM3_Test, NMI_ForcesTopRAMPageAtWindow0)
 
 TEST_F(PortDecoder_ATM3_Test, Turbo_FF77Bit3_EFF7Bit4_MultiplierSelect)
 {
-    // Same formula as ATM710 (ZX-Evo BaseConf hardware, Xpeccy pentevo.c):
-    // FF77.3 -> x4 (14MHz), EFF7.4 -> x1 (3.5MHz), else x2 (7MHz)
+    // ZX Evo baseconf / Pentevo clock select - three states, unlike the
+    // two-state ATM 7.10 base (reference: Xpeccy pentevo.c evoOut77d,
+    // `compSetHwTurbo(comp, (val & 0x08) ? 4 : ((comp->pEFF7 & 0x10) ? 1 : 2))`).
+    //
+    // Asserted on hw_turbo_shift: next_z80_frequency_multiplier is the HOST
+    // speed control and Z80::ApplyQueuedFrequencyMultiplier composes
+    // current = next << hw_turbo_shift, so the decoder must not write it.
     EmulatorState& state = _context->emulatorState;
+
+    const uint8_t hostSpeed = 3;
+    state.next_z80_frequency_multiplier = hostSpeed;
 
     // Open the memory-manager gate: the first FF77 write latches cpm in
     // aFF77 (see Port_FF77_Out_ATM3), which would otherwise swallow the write
     state.pBF = 0x01;
 
-    // FF77 bit 3 -> 14MHz
     _portDecoder->DecodePortOut(0xFF77, 0x08, 0x0000);
-    EXPECT_EQ(state.next_z80_frequency_multiplier, 4);
+    EXPECT_EQ(state.hw_turbo_shift, 2) << "pFF77.3 set is 14 MHz";
 
-    // Turbo off, EFF7.4 clear -> 7MHz
     _portDecoder->DecodePortOut(0xFF77, 0x00, 0x0000);
-    EXPECT_EQ(state.next_z80_frequency_multiplier, 2);
+    EXPECT_EQ(state.hw_turbo_shift, 1) << "turbo clear with pEFF7.4 clear is the 7 MHz default";
 
-    // EFF7 bit 4 -> 3.5MHz lock
     _portDecoder->DecodePortOut(0xEFF7, 0x10, 0x0000);
-    EXPECT_EQ(state.next_z80_frequency_multiplier, 1);
+    EXPECT_EQ(state.hw_turbo_shift, 0) << "pEFF7.4 locks 3.5 MHz";
+
+    _portDecoder->DecodePortOut(0xFF77, 0x08, 0x0000);
+    EXPECT_EQ(state.hw_turbo_shift, 2) << "pFF77.3 overrides the 3.5 MHz lock";
+
+    EXPECT_EQ(state.next_z80_frequency_multiplier, hostSpeed)
+        << "the decoder must never write the host speed control";
 }
 
 /// endregion </Turbo mode tests>
