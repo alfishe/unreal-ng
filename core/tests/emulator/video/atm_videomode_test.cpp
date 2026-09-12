@@ -173,9 +173,11 @@ TEST_F(ATMVideoMode_Test, ZXCompatMode_Uses256x192Raster)
 
 TEST_F(ATMVideoMode_Test, DrawCallbackArrayHasCorrectSize)
 {
-    // Verify the _drawCallbacks array has exactly M_MAX entries
-    // This is a compile-time check but we verify it at runtime too
-    EXPECT_EQ(M_MAX, 19);  // Update if VideoModeEnum changes
+    // Tracks VideoModeEnum growth. Note this does NOT verify the callback
+    // array despite the name - the real guard is the static_assert on
+    // videoModeName in screen.cpp, which fails the build on a mismatch.
+    // 20 since the Scorpion merge appended M_SCORPION.
+    EXPECT_EQ(M_MAX, 20);  // Update if VideoModeEnum changes
 }
 
 /// endregion </Callback Array Tests>

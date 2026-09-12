@@ -399,7 +399,12 @@ TEST(TTD_WD1793_ManagerIntegration_Test, CaptureNow_PopulatesFdcStateBlob_OnBeta
 
     if (fdc != nullptr)
     {
-        EXPECT_EQ(cp->fdcState.size(), 251u)
+        const auto fdcBlob = cp->peripheralBlobs.find(
+            static_cast<uint8_t>(ttd::PeripheralId::BetaDisk));
+        ASSERT_NE(fdcBlob, cp->peripheralBlobs.end());
+        const auto fdcState = ttd::TTDPeripheralRegistry::DecodeBlob(
+            static_cast<uint8_t>(ttd::PeripheralId::BetaDisk), fdcBlob->second);
+        EXPECT_EQ(fdcState.size(), 251u)
             << "fdcState blob must contain the 251-byte FDC subsystem payload "
             << "(controller 143 + 4×FDD 27) when a WD1793 is present";
     }

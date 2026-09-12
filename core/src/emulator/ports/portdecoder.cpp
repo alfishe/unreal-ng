@@ -79,6 +79,9 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
             result = new PortDecoder_Profi(context);
             break;
         case MM_SCORP:
+        case MM_PROFSCORP:
+            // ProfROM variant shares the decoder: it branches on
+            // mem_model == MM_PROFSCORP for the #7EFD window latch arm
             result = new PortDecoder_Scorpion256(context);
             break;
         case MM_ATM710:
@@ -356,6 +359,12 @@ void PortDecoder::RecordPortTrace(bool isOut, uint16_t rawPort, uint8_t value, u
     event.decodeRuleIndex = disp.decodeRuleIndex;
     event.deviceId = PortDiagnosticRecorder::ResolveDeviceId(disp.decodedPort);
 
+    // Scorpion border latch: an OUT the gating arm steered away from the
+    // (off-bus) FDC system port drives the border color — reattribute so
+    // traces do not blame the FDC for border writes
+    if (isOut && disp.wasHandledInline && disp.wasBeta128Gated)
+        event.deviceId = PortDeviceId::Border_FF;
+
     bool hadHandler = (disp.decodedPort != 0x0000) && key_exists(_portDevices, disp.decodedPort);
 
     uint8_t flags = 0;
@@ -395,6 +404,7 @@ PortTraceSessionInfo PortDecoder::getPortTraceSessionInfo() const
             case MM_PLUS3:       info.modelName = "SpectrumPlus3"; break;
             case MM_PROFI:       info.modelName = "Profi"; break;
             case MM_SCORP:       info.modelName = "Scorpion256"; break;
+            case MM_PROFSCORP:   info.modelName = "Scorpion256Prof"; break;
             default:             info.modelName = "Unknown"; break;
         }
     }
@@ -466,10 +476,6 @@ uint8_t PortDecoder::Default_Port_FE_In(uint16_t port, [[maybe_unused]] uint16_t
 /// Bit  [3]    - MIC output bit
 /// Bit  [4]    - EAR output bit
 /// See: https://worldofspectrum.org/faq/reference/48kreference.htm
-/// \param port
-/// \param value
-/// \param pc
-/// \return
 void PortDecoder::Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc)
 {
     /// region <Override submodule>
@@ -490,7 +496,7 @@ void PortDecoder::Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc)
 
     // Pass value to the tape and beeper sound generator
     _tape->handlePortOut(value);
-    _soundManager->getBeeper().handlePortOut(value, tState);
+    _soundManager->getBeeper().handlePortOut(value, _context->emulatorState.AudioTstate(tState));
 
     // Set border color
     _screen->SetBorderColor(borderColor);
@@ -506,6 +512,24 @@ void PortDecoder::Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc)
         MLOGDEBUG(DumpPortValue(0xFE, port, value, pc, Dump_FE_value(value).c_str()));
     }
     /// endregion </Debug logging>
+}
+
+/// Whether a decoded port value belongs to the Beta128 FDC register set
+/// (#1F status/cmd, #3F track, #5F sector, #7F data, #FF system) — hoisted
+/// from PortDecoder_Pentagon128 so the Scorpion decoder shares it
+bool PortDecoder::IsBeta128Port(uint16_t decodedPort)
+{
+    switch (decodedPort)
+    {
+        case 0x001F:
+        case 0x003F:
+        case 0x005F:
+        case 0x007F:
+        case 0x00FF:
+            return true;
+        default:
+            return false;
+    }
 }
 
 std::string PortDecoder::GetPCAddressLocator(uint16_t pc)

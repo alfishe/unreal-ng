@@ -85,6 +85,70 @@ static-logger debug line was aligned with the gated `MLOGDEBUG` path — design 
 - `turbo_mode_audio = false`: No audio generation (silent)
 - `turbo_mode_audio = true`: Audio generation continues (high pitch)
 
+
+### Hardware Turbo (guest-controlled CPU clock)
+
+Distinct from both host mechanisms above. Several clones let the **guest** switch the
+CPU clock (Scorpion ZS-256 Turbo+: 7 MHz flip-flop set/cleared by `IN` from the
+`#7FFD`/`#1FFD` port families; ATM and Profi have their own turbo bits). The frame is
+still 20 ms of real time; only the CPU executes N× T-states inside it. Video, AY, beeper,
+Covox and the FDC keep their own clocks.
+
+| | Host speed multiplier | Hardware turbo |
+|---|---|---|
+| who controls it | user (menu / API / INI) | guest software via ports |
+| wall-clock frame | unchanged 20 ms (`MainLoop` deadline pacing) | unchanged 20 ms |
+| CPU T-states per frame | × host | × 2^`hw_turbo_shift` |
+| audio samples per frame | × host (excess is dropped by the ring's hard resync — "no realtime constraint") | **unchanged** (882 @44.1 kHz/50 Hz) |
+| audio pitch | rises with the multiplier | unchanged |
+| INT position / window | scaled | scaled |
+
+**State** (`EmulatorState`, `platform.h`):
+
+- `hw_turbo_shift` — model-neutral log2 of the hardware multiplier (0 = base, 1 = 2×,
+  2 = 4×). **Maintained by the model's port decoder** from its own latch; the Scorpion
+  decoder keeps `scorpion_turbo` (the documented flip-flop) and mirrors it into
+  `hw_turbo_shift` on the strobe and on reset. A new clone only has to set this field.
+- `current_z80_frequency_multiplier` = `next_z80_frequency_multiplier << hw_turbo_shift`,
+  composed in `Z80::ApplyQueuedFrequencyMultiplier` at the frame boundary. The CPU loop,
+  INT window and `Screen::GetCurrentTstate` descale use this **effective** value.
+- `EmulatorState::HostSpeedMultiplier()` = effective `>> hw_turbo_shift` — the host
+  factor alone.
+- `EmulatorState::AudioTstate(t)` = `t >> hw_turbo_shift` — CPU T-state position
+  converted to the audio time base.
+
+**Audio rule** (the fix for the "hard resync – dropped … overfilled audio" storm under
+Scorpion turbo, 2026-09-10): the sound path never sees the hardware factor.
+
+- `SoundManager::handleFrameEnd` and `Covox::handleFrameEnd` size the frame with
+  `config.frame * HostSpeedMultiplier()`.
+- Every T-state handed to a renderer goes through `AudioTstate()`: the beeper port-OUT
+  timestamp (`PortDecoder` `#FE` path), tape audio (`SoundManager::updateDAC`), Covox
+  port writes, and the AY PLL step (`SoundChip_TurboSound::handleStep`, which then
+  applies the host factor as before).
+- blip_buf clock rates stay at `CPU_CLOCK_RATE`; nothing is reconfigured on a turbo
+  toggle. Tape timing keeps scaling with the effective multiplier (loaders are
+  CPU-timed, so tape loading works in turbo).
+
+Before this rule the audio path scaled by the effective multiplier, so a Scorpion in
+7 MHz pushed 40 ms of audio into every 20 ms frame; the Qt ring overfilled once per
+frame and hard-resynced every few frames (121–140 ms dropped each time).
+
+**Timing of the switch.** A hardware strobe is applied **immediately, mid-frame**
+(`Z80::ApplyHardwareTurboNow`, called by the model decoder right after it flips
+`hw_turbo_shift`): the in-frame position `t` (and `eipos`/`haltpos`) is rescaled to the
+new T-domain so the raster instant is preserved, the multiplier/frequency/
+`hw_turbo_shift_applied` are updated, and `Z80::RecomputeFrameTiming()` refreshes the
+frame length and INT window that `Z80FrameCycle` now reads from members on every
+iteration. Host speed changes still apply at the frame boundary. Firmware depends on
+the immediate switch: the Scorpion service monitors strobe `IN (#7FFD)` and at once time
+an INT-bounded count loop (~96 917 T) to detect the 7 MHz clock; with the switch
+deferred to the frame boundary that test always saw 3.5 MHz, left the "Computer speed"
+menu item disabled and the flip-flop stuck on. Regression:
+`ScorpionTurboDetect_Test` boots the real ProfROM v4.01 and base v2.9x images, presses
+the magic button at 8 frame phases and requires the firmware's own detection flag
+(`#E02D`/`#DFF8` = `#C0`) — 8/8 on both since the fix.
+
 ## Configuration
 
 ### CONFIG Structure

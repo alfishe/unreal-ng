@@ -195,17 +195,25 @@ TEST_F(SoundAdaptivity_Test, Beeper_TurboSwitchFrame_StaysInLockstepWithAccumula
     _context->config.frame_duration_us = 19968;
     const size_t expected = expectedSamplesFromUs(_context->config.frame_duration_us);
 
-    // Settle at x1 (also applies the forced initial re-clock from reset())
+    // Settle at x1. hw_turbo_shift is the model-neutral view of a HARDWARE
+    // clock change: the audio path descales the CPU T-state position by it
+    // (EmulatorState::AudioTstate) so the synths always render at base
+    // frequency. The real ATM710 turbo write sets it alongside the multiplier,
+    // so this replay must too.
     state.next_z80_frequency_multiplier = 1;
+    state.hw_turbo_shift = 0;
     sound->handleFrameStart();
     state.current_z80_frequency_multiplier = 1;  // queue applied by Z80FrameCycle
+    state.hw_turbo_shift_applied = 0;
     sound->handleFrameEnd();
 
     // Queue x2 exactly like the ATM710 turbo port write does, then replay
     // the MainLoop ordering of the switch frame
     state.next_z80_frequency_multiplier = 2;
+    state.hw_turbo_shift = 1;                    // 7 MHz: CPU 2x inside a 20 ms frame
     sound->handleFrameStart();
     state.current_z80_frequency_multiplier = 2;  // Z80::Z80FrameCycle applies here
+    state.hw_turbo_shift_applied = 1;
     sound->handleFrameEnd();
 
     // The switch frame itself must deliver realtime samples, not 2x

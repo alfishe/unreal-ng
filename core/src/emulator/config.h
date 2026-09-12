@@ -122,6 +122,11 @@ public:
 	// Helper methods
 protected:
 	void CopyStringValue(const char* src, char* dst, size_t dst_len);
+
+	/// Strip the heritage "<file>:<quadrant>" ProfROM selector suffix if present.
+	/// Quadrant selection is runtime state (EmulatorState::profrom_bank) and
+	/// quadrant 0 is the boot quadrant, so the suffix is never part of the path.
+	void StripProfRomQuadrantSuffix(char* path, size_t len);
     std::string StripComment(const char* src);
     std::string PrintModelAvailableRAM(uint32_t availRAM);
 

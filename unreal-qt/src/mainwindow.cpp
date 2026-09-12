@@ -211,6 +211,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::resumeRequested, this, &MainWindow::handleResumeEmulator);
     connect(_menuManager, &MenuManager::stopRequested, this, &MainWindow::handleStopEmulator);
     connect(_menuManager, &MenuManager::resetRequested, this, &MainWindow::resetEmulator);
+    connect(_menuManager, &MenuManager::mniRequested, this, &MainWindow::requestMni);
     connect(_menuManager, &MenuManager::speedMultiplierChanged, this, &MainWindow::handleSpeedMultiplierChanged);
     connect(_menuManager, &MenuManager::turboModeToggled, this, &MainWindow::handleTurboModeToggled);
     connect(_menuManager, &MenuManager::tapeTrapsToggled, this, &MainWindow::handleTapeTrapsToggled);
@@ -2205,6 +2206,16 @@ void MainWindow::resetEmulator()
 
         // Update menu states
         updateMenuStates();
+    }
+}
+
+void MainWindow::requestMni()
+{
+    if (_emulator)
+    {
+        // RequestMNI handles pause/resume internally to avoid race conditions;
+        // plain NMI on non-Scorpion models
+        _emulator->RequestMNI();
     }
 }
 

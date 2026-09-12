@@ -45,6 +45,7 @@ void PortDecoder_ATM710::reset()
     // default of the turbo formula below (reference: Xpeccy pentevo.c
     // compReset clears pEFF7, evoOut77d maps the cleared bits to x2)
     _state->next_z80_frequency_multiplier = 2;
+    _state->hw_turbo_shift = 1;  // 7 MHz is a hardware clock change - see updateTurboMode
     MLOGDEBUG("reset: multiplier=2 (7MHz hardware boot state)");
 }
 
@@ -565,14 +566,31 @@ void PortDecoder_ATM710::updateTurboMode()
     // (blip input clocks x multiplier, AY PLL increment / multiplier) so
     // audio stays realtime with unchanged AY pitch (fixed PSG clock)
     uint8_t multiplier;
+    // hw_turbo_shift is the model-neutral view of a HARDWARE clock change: the
+    // video frame stays 20 ms and the CPU simply executes N x T-states inside
+    // it, while the AY / beeper / Covox keep their own unchanged clocks. The
+    // audio path descales by this shift (EmulatorState::AudioTstate), so the AY
+    // always renders at base frequency regardless of the CPU clock - set it
+    // alongside the multiplier or the chip would be pitched by the turbo.
+    uint8_t turboShift = 0;
     if (_state->pFF77 & ATM_FF77_TURBO)
+    {
         multiplier = 4;  // 14MHz
+        turboShift = 2;
+    }
     else if (!(_state->pEFF7 & ATM_EFF7_TURBO_3_5))
+    {
         multiplier = 2;  // 7MHz
+        turboShift = 1;
+    }
     else
+    {
         multiplier = 1;  // 3.5MHz
+        turboShift = 0;
+    }
 
     _state->next_z80_frequency_multiplier = multiplier;
+    _state->hw_turbo_shift = turboShift;
 
     MLOGDEBUG("updateTurboMode: multiplier=%d (pFF77=0x%02X pEFF7=0x%02X)", multiplier, _state->pFF77, _state->pEFF7);
 }

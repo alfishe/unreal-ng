@@ -86,7 +86,7 @@ void Covox::handleFrameStart()
 void Covox::handleFrameEnd(size_t expectedSamples)
 {
     CONFIG& config = _context->config;
-    uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
+    uint8_t speedMultiplier = _context->emulatorState.HostSpeedMultiplier();  // hardware turbo excluded (see SoundManager)
     uint32_t frameDuration = config.frame * speedMultiplier;
 
     if (frameDuration == 0)
@@ -169,7 +169,7 @@ void Covox::portDeviceOutMethod(uint16_t port, uint8_t value)
         return;
 
     uint32_t currentTState = (_context && _context->pCore && _context->pCore->GetZ80())
-                             ? _context->pCore->GetZ80()->t
+                             ? _context->emulatorState.AudioTstate(_context->pCore->GetZ80()->t)
                              : 0;
 
     // Update the DAC value for this channel

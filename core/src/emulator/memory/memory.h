@@ -6,6 +6,7 @@
 class MemoryAccessTracker;
 class Z80;
 class FeatureManager;
+class ScorpionRomWindow;  // ProfROM quadrant policy - owned by ScorpionMemory only
 namespace ttd { class TTDDirtyTracker; }
 
 // Max RAM size is 4MBytes. Each model has own limits. Max ram used for ZX-Evo / TSConf
@@ -247,8 +248,14 @@ public:
     static MemoryInterface* GetFastMemoryInterface();
     static MemoryInterface* GetDebugMemoryInterface();
 
-    uint8_t MemoryReadFast(uint16_t addr, bool isExecution);
-    uint8_t MemoryReadDebug(uint16_t addr, bool isExecution);
+    /// Read pair is virtual: model derivatives whose silicon reacts to bus
+    /// cycles themselves (ScorpionMemory - ProfROM plane strobes / magic-
+    /// button release) override it and run their effects before the byte is
+    /// served. The write pair stays non-virtual - no model reacts to writes.
+    /// The fast read ignores isExecution (no per-access tracking there), so
+    /// the parameter is marked maybe_unused
+    virtual uint8_t MemoryReadFast(uint16_t addr, [[maybe_unused]] bool isExecution);
+    virtual uint8_t MemoryReadDebug(uint16_t addr, bool isExecution);
     void MemoryWriteFast(uint16_t addr, uint8_t value);
     void MemoryWriteDebug(uint16_t addr, uint8_t value);
 
@@ -261,6 +268,28 @@ public:
     void SetROMMode(ROMModeEnum mode);
 
     void UpdateZ80Banks();
+
+protected:
+    /// Model-specific latch-to-bank translation. A derivative that owns the
+    /// whole rebuild (ScorpionMemory for MM_SCORP / MM_PROFSCORP, design §3)
+    /// overrides this to return true, and UpdateZ80Banks() skips its generic
+    /// body - every base model stays byte-identical
+    virtual bool UpdateModelBanks() { return false; }
+
+public:
+    /// RAM bank mask from config.ramsize (KB): 256 KB → 0x0F, 1024 KB → 0x3F
+    uint8_t GetRamMask() const;
+
+    /// ROM loader completion hook: derivatives with derived ROM geometry
+    /// (ScorpionMemory, ProfROM image masks) configure themselves from the
+    /// validated bank count; the default is a no-op
+    virtual void OnRomLoaded(uint16_t imageBanks) { (void)imageBanks; }
+
+    /// ProfROM quadrant window - null unless the model derivative owns the
+    /// silicon (ScorpionMemory); quadrant state itself lives in
+    /// EmulatorState / TEMP
+    virtual ScorpionRomWindow* GetScorpionRomWindow() { return nullptr; }
+
     void SetROMPage(uint16_t page, bool updatePorts = false);
     void SetROMPageToBank(uint8_t bank, uint16_t page);  // Map any of the 4 Z80 banks to a ROM page (bank writes -> trash)
     void SetRAMPageToBank0(uint16_t page, bool updatePorts = false);

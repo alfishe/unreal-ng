@@ -185,7 +185,12 @@ TEST(TTD_Tape_ManagerIntegration_Test, CaptureNow_PopulatesTapeStateBlob)
     const ttd::TTDCheckpoint* cp = context->pTimeTravelManager->GetCheckpoint(0);
     ASSERT_NE(cp, nullptr);
 
-    EXPECT_EQ(cp->tapeState.size(), 42u)
+    const auto tapeBlob = cp->peripheralBlobs.find(
+        static_cast<uint8_t>(ttd::PeripheralId::Tape));
+    ASSERT_NE(tapeBlob, cp->peripheralBlobs.end());
+    const auto tapeState = ttd::TTDPeripheralRegistry::DecodeBlob(
+        static_cast<uint8_t>(ttd::PeripheralId::Tape), tapeBlob->second);
+    EXPECT_EQ(tapeState.size(), 42u)
         << "tapeState blob must contain the Tape position payload (42 bytes)";
 
     emulator.Stop();

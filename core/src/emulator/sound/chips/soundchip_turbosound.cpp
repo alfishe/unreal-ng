@@ -44,14 +44,16 @@ void SoundChip_TurboSound::handleFrameStart()
 /// - Correct relationship between chip clock and generator periods
 void SoundChip_TurboSound::handleStep()
 {
-    // Z80::t already counts executed cycles at the CURRENT clock (a turbo
-    // frame spans config.frame * multiplier t-states), so feed it straight
-    // into the PLL - the increment is pre-divided by the multiplier
-    // (setFrequencyMultiplier, called at frame boundaries) to keep the
-    // output sample rate realtime
-    size_t currentTStates = _context->pCore->GetZ80()->t;
+    // Hardware turbo descaled: the AY has its own clock, so under the Scorpion
+    // 7 MHz flip-flop the chip must see the real-time position (t/2), not the
+    // doubled CPU count - otherwise it emitted 2x samples per frame
+    size_t currentTStates = _context->emulatorState.AudioTstate(_context->pCore->GetZ80()->t);
 
-    int32_t diff = currentTStates - _lastTStates;
+    // Scale t-states by the HOST speed multiplier for correct AY audio pitch
+    uint8_t speedMultiplier = _context->emulatorState.HostSpeedMultiplier();
+    size_t scaledCurrentTStates = currentTStates * speedMultiplier;
+
+    int32_t diff = scaledCurrentTStates - _lastTStates;
 
     if (diff > 0)
     {

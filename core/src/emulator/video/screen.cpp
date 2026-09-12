@@ -243,6 +243,9 @@ Screen::ModeSelection Screen::DetectVideoMode(MEM_MODEL model) const
             return DetectModeATM3(state);
         case MM_PROFI:
             return DetectModeProfi(state);
+        case MM_SCORP:
+        case MM_PROFSCORP:
+            return DetectModeScorpion(state);
         case MM_GMX:
             return DetectModeGMX(state);
         default:
@@ -254,6 +257,15 @@ Screen::ModeSelection Screen::DetectVideoMode(MEM_MODEL model) const
 Screen::ModeSelection Screen::DetectModeZX48(const EmulatorState& /*state*/) const
 {
     return { M_ZX48, R_256_192 };
+}
+
+// Scorpion ZS-256 / ProfROM: Sinclair-matching 312-line x 224T raster with a
+// discrete-logic ULA (1T border, no contention - see SetVideoMode). Without its
+// own case the model fell through to DetectModeLegacy and inherited another
+// machine's geometry and contention profile.
+Screen::ModeSelection Screen::DetectModeScorpion(const EmulatorState& /*state*/) const
+{
+    return { M_SCORPION, R_256_192 };
 }
 
 Screen::ModeSelection Screen::DetectModeZX128(const EmulatorState& /*state*/) const
@@ -515,6 +527,7 @@ void Screen::SetVideoMode(VideoModeEnum mode)
         case M_P16:
         case M_P384:  // Pentagon overscan - same ULA behavior as standard Pentagon
         case M_PHR:
+        case M_SCORPION:  // Scorpion ZS-256 - discrete-logic ULA, contention-free
             _rasterState.borderUpdateTStates = 1;
             _rasterState.contentionEnabled = false;
             _rasterState.fetchType = ULA_DISCRETE_LOGIC;
@@ -1708,6 +1721,7 @@ std::string Screen::GetVideoVideoModeName(VideoModeEnum mode)
         "Profi",                // M_PROFI
         "GMX",                  // M_GMX
         "Border only",          // M_BRD
+        "Scorpion 256k",        // M_SCORPION
     };
     static_assert(std::size(videoModeName) == M_MAX, "videoModeName array size mismatch with VideoModeEnum");
 

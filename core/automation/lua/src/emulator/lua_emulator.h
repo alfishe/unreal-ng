@@ -120,6 +120,8 @@ public:
             "pause", sol::resolve<void(bool)>(&Emulator::Pause),
             "resume", sol::resolve<void(bool)>(&Emulator::Resume),
             "reset", &Emulator::Reset,
+            "request_nmi", &Emulator::RequestNMI,
+            "request_mni", &Emulator::RequestMNI,
             
             // State queries
             "is_running", &Emulator::IsRunning,
@@ -271,11 +273,12 @@ public:
             return Z80::SetRegisterValue(z80, name, value);
         });
 
-        // Memory access (isExecution=false for data reads)
+        // Memory access: direct (non-mutating) reads so inspecting memory
+        // never drives the ProfROM quadrant machine
         lua.set_function("mem_read", [this](uint16_t addr) -> uint8_t {
             if (!_emulator) return 0;
             Memory* mem = _emulator->GetMemory();
-            return mem ? mem->MemoryReadFast(addr, false) : 0;
+            return mem ? mem->DirectReadFromZ80Memory(addr) : 0;
         });
 
         lua.set_function("mem_write", [this](uint16_t addr, uint8_t value) {
@@ -288,7 +291,7 @@ public:
             if (!_emulator) return 0;
             Memory* mem = _emulator->GetMemory();
             if (!mem) return 0;
-            return mem->MemoryReadFast(addr, false) | (mem->MemoryReadFast(addr + 1, false) << 8);
+            return mem->DirectReadFromZ80Memory(addr) | (mem->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + 1)) << 8);
         });
 
         lua.set_function("mem_write_word", [this](uint16_t addr, uint16_t value) {
@@ -306,7 +309,7 @@ public:
             Memory* mem = _emulator->GetMemory();
             if (!mem) return data;
             for (uint16_t i = 0; i < len; i++) {
-                data[i + 1] = mem->MemoryReadFast(addr + i, false);
+                data[i + 1] = mem->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + i));
             }
             return data;
         });
@@ -1194,8 +1197,10 @@ public:
             int idx = 1;
             for (int i = 0; i < cnt; ++i) {
                 std::vector<uint8_t> buffer;
+                // Direct (non-mutating) reads: disassembly must not strobe
+                // the ProfROM quadrant machine on #0000-#0003
                 for (int j = 0; j < 4; ++j) {
-                    buffer.push_back(memory->MemoryReadFast(static_cast<uint16_t>(addr + j), false));
+                    buffer.push_back(memory->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + j)));
                 }
                 
                 uint8_t cmdLen = 0;

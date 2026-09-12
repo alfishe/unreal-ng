@@ -39,6 +39,23 @@ cmake -S . -B cmake-build-release -G Ninja
 ninja -C cmake-build-release
 ```
 
+## Writing Tests
+Full guide: [`core/tests/README.md`](../core/tests/README.md). Non-negotiables:
+
+- **Never `sleep_for` to wait.** Use `TestWait::For` / `ForAtLeast` / `ForExactly`
+  (`core/tests/_helpers/testwaithelper.h`). A fixed sleep is simultaneously the
+  slowest and the flakiest way to synchronise.
+- **Under 50 ms per test.** Slower needs a comment justifying it; booting a real
+  ROM to a machine state is about the only good reason.
+- **Stop looping once the assertion can no longer fail** - keep the full work on
+  the failing path so diagnostics stay intact.
+- **`EnableTurboMode()` on boot-bound tests** (~2.7x: mutes audio, decimates
+  rendering). Never in a test that asserts on rendered pixels.
+- **Know what your assertion can see**: frame-boundary VRAM reads miss
+  intra-frame changes, and breakpoints do not fire under `RunNFrames`
+  (`skipBreakpoints = true` by default).
+- **Scratch files need per-process unique names** - `TestPathHelper::GetUniqueTestScratchPath()`.
+
 ## Running Tests & Benchmarks
 Tests and benchmarks are opt-in (`-DTESTS=ON`, `-DBENCHMARKS=ON`) to keep standard dev builds fast:
 ```bash

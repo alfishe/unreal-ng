@@ -1444,7 +1444,10 @@ void EmulatorAPI::getMemory(const HttpRequestPtr& req, std::function<void(const 
     if (len > 4096) len = 4096;
     if (len < 1) len = 1;
     
-    // Read memory
+    // Read memory. Direct (non-mutating) access: debugger-side reads must
+    // never drive the ProfROM quadrant state machine the way CPU reads do
+    // (MemoryReadFast/MemoryReadDebug strobe #0000-#0003 while the Service
+    // ROM is paged) - inspecting memory must not change machine state
     Json::Value ret;
     ret["address"] = addr;
     ret["length"] = len;
@@ -1452,7 +1455,7 @@ void EmulatorAPI::getMemory(const HttpRequestPtr& req, std::function<void(const 
     Json::Value data(Json::arrayValue);
     for (unsigned i = 0; i < len; i++)
     {
-        data.append(mem->MemoryReadFast((addr + i) & 0xFFFF, false));
+        data.append(mem->DirectReadFromZ80Memory((addr + i) & 0xFFFF));
     }
     ret["data"] = data;
     
@@ -1461,7 +1464,7 @@ void EmulatorAPI::getMemory(const HttpRequestPtr& req, std::function<void(const 
     for (unsigned i = 0; i < len; i++)
     {
         hexStr << std::hex << std::uppercase << std::setw(2) << std::setfill('0') 
-               << static_cast<int>(mem->MemoryReadFast((addr + i) & 0xFFFF, false));
+               << static_cast<int>(mem->DirectReadFromZ80Memory((addr + i) & 0xFFFF));
         if (i < len - 1) hexStr << " ";
     }
     ret["hex"] = hexStr.str();
@@ -2173,11 +2176,13 @@ void EmulatorAPI::getDisasm(const HttpRequestPtr& req, std::function<void(const 
     uint16_t currentAddr = address;
     for (size_t i = 0; i < count && currentAddr >= address; ++i)
     {
-        // Read up to 4 bytes for instruction
+        // Read up to 4 bytes for instruction. Direct (non-mutating) reads:
+        // the disassembly view must not strobe the ProfROM quadrant machine
+        // on #0000-#0003 the way CPU-path MemoryReadFast does
         std::vector<uint8_t> buffer;
         for (int j = 0; j < 4; ++j)
         {
-            buffer.push_back(memory->MemoryReadFast(static_cast<uint16_t>(currentAddr + j), false));
+            buffer.push_back(memory->DirectReadFromZ80Memory(static_cast<uint16_t>(currentAddr + j)));
         }
         
         uint8_t cmdLen = 0;

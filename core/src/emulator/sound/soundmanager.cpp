@@ -140,7 +140,6 @@ void SoundManager::reset()
     // Restart the exact sample accumulator (machine change / hard reset /
     // snapshot load all route through reset())
     _sampleAccumulator = 0;
-    _lastFrequencyMultiplier = 0;  // Force synth re-clock on the next frame
 
     // New wave file
     // closeWaveFile();
@@ -176,7 +175,7 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, [[maybe_unused]
 {
     // Feed the averaged mono amplitude into the beeper's blip_buf.
     // Tape output is mono (left == right), so we use left as the amplitude.
-    _beeper->handleTapeAudio(static_cast<int32_t>(left), frameTState);
+    _beeper->handleTapeAudio(static_cast<int32_t>(left), _context->emulatorState.AudioTstate(frameTState));
 }
 
 // TurboSound/AY chip access for debugging
@@ -384,29 +383,15 @@ void SoundManager::handleFrameStart()
             return;  // Skip per-device frame setup and buffer clears (never consumed in turbo)
     }
 
-    // Turbo / speed-multiplier change: re-point the synths' T-state->sample
-    // mapping at the new CPU clock. Z80::t counts multiplied cycles, so the
-    // beeper/covox blip input clocks and the AY PLL increment must scale by
-    // the same multiplier - otherwise every synth produces multiplier-times
-    // realtime samples and the ring overfills (hard-resync drops).
-    //
-    // Uses the QUEUED multiplier: MainLoop runs this frame start BEFORE
-    // Z80::Z80FrameCycle applies the queue, so next_... is the rate this
-    // frame will actually execute at. Reading current_... here left the
-    // beeper at the old clock for the whole switch frame while
-    // handleFrameEnd() closed the blip at the new duration - exactly one
-    // "blip delivered Nx samples, accumulator expects N" warning per turbo
-    // switch (e.g. 1761 vs 880 at x2)
-    const uint8_t frequencyMultiplier = _context->emulatorState.next_z80_frequency_multiplier;
-    if (frequencyMultiplier != _lastFrequencyMultiplier)
-    {
-        _lastFrequencyMultiplier = frequencyMultiplier;
-        const size_t synthClock = CPU_CLOCK_RATE * frequencyMultiplier;
-        _beeper->setClockRate(synthClock);
-        if (_covox)
-            _covox->setClockRate(synthClock);
-        _turboSound->setFrequencyMultiplier(frequencyMultiplier);
-    }
+    // NOTE: no synth re-clocking here. Two designs solved the turbo ring-overfill
+    // independently - this branch re-pointed each synth's T-state->sample mapping at
+    // CPU_CLOCK_RATE * multiplier, master instead descales the T-state position before
+    // it reaches the synths (EmulatorState::AudioTstate, applied in the AY PLL, covox
+    // and beeper alike). Running both multiplied the correction by itself: on ATM at
+    // 14 MHz that is a 16x error, heard as "hard resync - dropped N frames of
+    // overfilled audio". Master's is kept because it separates a HARDWARE clock change
+    // (frame stays 20 ms, synth clocks unchanged - so the AY always renders at base
+    // frequency) from host fast-forward, which a single multiplier cannot express.
 
     _turboSound->handleFrameStart();
     if (_covox)
@@ -457,11 +442,10 @@ void SoundManager::handleFrameEnd()
     uint32_t frameDurationUs = 0;   // microseconds (for sample calculation)
     {
         CONFIG& config = _context->config;
-        uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
-        // T-states executed this frame: at turbo the CPU runs multiplier-
-        // times the base frame length (Z80::frameLimit scales), so the
-        // beeper's blip frame is scaled - its input clock is re-clocked to
-        // base x multiplier (handleFrameStart), keeping blip output realtime
+        // Host multiplier only: the Scorpion hardware turbo doubles CPU
+        // T-states inside an unchanged 20 ms frame, so it must NOT double the
+        // samples of that frame (it overfilled the ring 2x - hard resyncs)
+        uint8_t speedMultiplier = _context->emulatorState.HostSpeedMultiplier();
         frameDuration = config.frame * speedMultiplier;
         // Wall-clock frame duration: a video frame takes the SAME real time
         // at any CPU clock, so the realtime sample count (and ring fill

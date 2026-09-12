@@ -88,6 +88,7 @@ private slots:
     void saveDiskAsSCLDialog();
     void saveDiskAsUDIDialog();
     void resetEmulator();
+    void requestMni();  // Machine -> MNI: NMI + service monitor (plain NMI on other models)
     void handleFullScreenShortcut();
 
     // Menu action handlers

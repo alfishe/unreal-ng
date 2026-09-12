@@ -3,6 +3,7 @@
 
 #include <ctime>
 #include <chrono>
+#include "emulator/io/rtc/ds12885.h"
 
 // DS12885-style RTC/CMOS (ATM3 / ZX-Evo BaseConf config storage).
 // Ported from original Unreal Speccy memory.cpp (cmos_read / cmos_write).
@@ -12,31 +13,6 @@
 // memory root. It was previously nvram.{h,cpp} while declaring class CMOS,
 // one directory above a completely unrelated `struct NVRAM` in platform.h
 // (EmulatorState.nvram) - the file now matches the class it declares.
-enum CMOSTypeEnum
-{
-	None = 0,
-	Dallas = 1,
-	Rus512 = 2
-};
-
-enum CMOSMemoryEnum
-{
-	Second = 0,
-	Reserved_1 = 1,
-	Minute = 2,
-	Reserved_3 = 3,
-	Hour = 4,
-	Reserved_5 = 5,
-	DayOfWeek = 6,
-	Day = 7,
-	Month = 8,
-	Year = 9,
-	Unknown_10 = 10,
-	BitFlags = 11,
-	UF = 12,
-	Unknown_13 = 13
-};
-
 class CMOS
 {
 // CMOS fields

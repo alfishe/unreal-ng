@@ -50,12 +50,6 @@ protected:
     double _sampleTStateIncrement = AUDIO_SAMPLE_TSTATE_INCREMENT;
     double _lqTicksPerSample = (double)(PSG_CLOCK_RATE / 8) / (double)AUDIO_SAMPLING_RATE;
 
-    // Z80 frequency multiplier (turbo / speed control). Z80::t already
-    // counts multiplied cycles, so the PLL increment is divided by the same
-    // factor to keep the output sample rate realtime (AY pitch unchanged -
-    // the PSG clock is fixed, not CPU-derived)
-    uint8_t _frequencyMultiplier = 1;
-
     // HQ DSP flag (FIR filters vs simple averaging)
     bool _hqEnabled = true;
 
@@ -205,7 +199,7 @@ public:
     void setCoreRate(size_t rate)
     {
         _coreRate = rate;
-        _sampleTStateIncrement = (double)rate / ((double)CPU_CLOCK_RATE * _frequencyMultiplier);
+        _sampleTStateIncrement = (double)rate / (double)CPU_CLOCK_RATE;
         _lqTicksPerSample = (double)(PSG_CLOCK_RATE / 8) / (double)rate;
         _decimationStep = (double)(PSG_CLOCK_RATE / 8) / (double)(rate * FilterInterpolate::DECIMATE_FACTOR);
 
@@ -219,13 +213,6 @@ public:
     /// consumes already-multiplied t-states (Z80::t), so the increment must
     /// shrink by the same factor. Frame boundary only - changing it mid-frame
     /// would glitch the free-running PLL phase
-    void setFrequencyMultiplier(uint8_t multiplier)
-    {
-        _frequencyMultiplier = multiplier ? multiplier : 1;
-        _sampleTStateIncrement =
-            (double)_coreRate / ((double)CPU_CLOCK_RATE * _frequencyMultiplier);
-    }
-
     size_t getCoreRate() const
     {
         return _coreRate;
@@ -278,5 +265,11 @@ public:
     size_t TTDStateSize() const override;
     void   TTDSaveState(uint8_t* dst) const override;
     void   TTDLoadState(const uint8_t* src) override;
+
+    /// Identity used by TTDPeripheralRegistry. Without it the base class
+    /// returns PeripheralId::Count and the device cannot be indexed in a
+    /// checkpoint's blob map.
+    ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::TurboSound; }
+    std::string TTDDeviceName() const override { return "TurboSound"; }
     /// endregion </TTDSerializable interface>
 };

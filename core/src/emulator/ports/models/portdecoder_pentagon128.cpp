@@ -320,20 +320,7 @@ bool PortDecoder_Pentagon128::IsPort_FFFD(uint16_t port)
 /// Whether a decoded port value belongs to the Beta128 FDC register set.
 /// #1F - WD1793 status/command, #3F - track, #5F - sector, #7F - data,
 /// #FF - Beta128 system register
-bool PortDecoder_Pentagon128::IsBeta128Port(uint16_t decodedPort)
-{
-    switch (decodedPort)
-    {
-        case 0x001F:
-        case 0x003F:
-        case 0x005F:
-        case 0x007F:
-        case 0x00FF:
-            return true;
-        default:
-            return false;
-    }
-}
+// IsBeta128Port() hoisted into the base PortDecoder (shared Beta-128 session gating)
 
 uint16_t PortDecoder_Pentagon128::decodePort(uint16_t port)
 {

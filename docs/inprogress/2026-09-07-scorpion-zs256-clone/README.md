@@ -1,6 +1,10 @@
 # Scorpion ZS-256 Clone — Complete Implementation
 
-Directory status: **design + planning phase, reviewed** (no code changes yet).
+Directory status: **implementation in progress** — Tasks 0-7 and 12 done (Tasks 0-6 +
+defect fixes committed in `3f49622c`, the PROFSCORP instantiation fix in `535b8238`,
+Task 7 incl. the ProfROM plane fix in `9e85136e`, Task 12 hardware turbo in the working
+tree), Tasks 8-11 outstanding. See *Execution status* below and the
+[verification/](verification/) E2E records.
 Review pass 2026-09-08: every file/line claim was re-verified against the working tree,
 factual errors corrected, and the two open design questions resolved by primary-source
 research — see *Decisions log* below.
@@ -11,7 +15,8 @@ Turn the existing skeletal `MM_SCORP` machine definition into a full, hardware-a
 Scorpion ZS-256 clone: 256 KB (and heritage 1024 KB) RAM paging, the complete `#1FFD`
 register, Shadow Service Monitor with MNI ("Magic" NMI button), built-in Beta-128 TR-DOS
 with the Scorpion-specific `#3Dxx` trap semantics, Sinclair-matching video timing with
-contention-free discrete logic, Scorpion snapshot (`.z80` hw=10) round-tripping — and the
+contention-free discrete logic, the Turbo+ hardware 7 MHz turbo flip-flop, Scorpion
+snapshot (`.z80` hw=10) round-tripping — and the
 **full ROM subsystem range**: minimal 64 KB ROM (4 pages), ProfROM extended ROM
 (128/256 KB quadrant switching), and multi-megabyte ROM-disk images (up to 2 MB) via the
 GMX-compatible direct window select.
@@ -48,12 +53,24 @@ significant — is missing.
 | [design.md](design.md) | Target architecture: module changes, paging/ROM/TR-DOS state machines, port decode, MNI flow, snapshot formats, with diagrams |
 | [implementation-plan.md](implementation-plan.md) | The executable plan: ordered tasks, files, steps with checkboxes, acceptance criteria, commit points |
 | [testing-plan.md](testing-plan.md) | Unit, integration, regression and boot-verification strategy; quality gates |
+| [profrom-nmi-boot-analysis.md](profrom-nmi-boot-analysis.md) | Verified findings: ProfROM plane lifetime, magic-button NMI (DD50 trigger pair, entry chain, park loops, reset stubs), the boot sequence incl. the idle-EAR wedge defect and the turbo firmware chain |
+| [profrom-disassembly-and-findings.md](profrom-disassembly-and-findings.md) | Deep static disassembly & reverse-engineering: NMI entry (#0066 -> #0807), RST 30h cross-plane dispatching, 50Hz interrupt / keyboard scanning, and root cause diagnosis of emulator hangs and keyboard dead bugs |
+| [profrom-nmi-gaps-and-findings.md](profrom-nmi-gaps-and-findings.md) | Formal gaps analysis (GAP-1 through GAP-5): hardware specification vs. working tree discrepancies, trace evidence, and exact code fix specifications |
+| [profrom-smuc-not-found-and-driver-disassembly.md](profrom-smuc-not-found-and-driver-disassembly.md) | SMUC "not found" boot messages: failure mechanism, full page-7 serial-link driver disassembly (#FFBA 3-wire protocol, NVRAM layer, IDE identify), forensics (no lost fix), and the agreed lightweight-stub direction |
+| [profrom-service-monitor-menu-flashing.md](profrom-service-monitor-menu-flashing.md) | Service Monitor active item blinking: root cause analysis (port #FF1F Kempston Joystick active-high fire bit returning 0xFF, phantom event 0x80 autorepeat every 5 frames, 4-frame menu redraw loop) and exact fix specification |
+| [profrom-input-subsystem-and-driver-disassembly.md](profrom-input-subsystem-and-driver-disassembly.md) | Complete input subsystem disassembly: Page 5 driver engine (#E03B flags, #FF1F joystick, #DF mouse), Page 6 UI & interrupt dispatcher, the #1FFD cross-plane paging model (Page 2 #12 vs Page 5 #10), and the 5-frame redraw storm |
+| [service-monitor-debugging-guide.md](service-monitor-debugging-guide.md) | Comprehensive efficient debugging guide: memory/subroutine/port breakpoints, Time-Travel Debugging (TTD), deterministic frame stepping, and blinking diagnosis matrix |
+| [profrom-and-base-rom-ram-size-detection.md](profrom-and-base-rom-ram-size-detection.md) | RAM size detection & boot memtest analysis: disassembly of ProfROM v4.01 "fast test of computer" (hardcoded "256 " RAM string at 0x0AF6/0x0C74), Base ROM cold-boot wipe of banks 8-15 at 0x0564, Service Monitor debugger 4-bit bank display, and 1024 KB hardware compatibility |
+| [verification/](verification/) | Live E2E execution records (transferred from `scratch/`): [e2e-base-rom.md](verification/e2e-base-rom.md) (E2E-1/2/3, Tasks 0-6), [e2e-profrom-instantiation.md](verification/e2e-profrom-instantiation.md) (PROFSCORP smoke + E2E-7), [e2e-profrom-quadrants.md](verification/e2e-profrom-quadrants.md) (E2E-4, Task 7), [turbo-cpufreq-chain-verification.md](verification/turbo-cpufreq-chain-verification.md) (turbo ⇄ status-bar chain audit + notification fix). Raw transcripts/artifacts stay in `scratch/e2e*` |
 
 ## Scope decisions (agreed defaults)
 
 1. **Base ZS-256 machine + ProfROM variant (`MM_PROFSCORP`)** — both first-class.
-   GMX graphics expander and Turbo+/ISA stay out of scope, but the GMX-style ROM window
-   select (port `#7EFD` bits 4-5) is implemented as the extended ROM-disk mechanism.
+   GMX graphics expander and the Turbo+/ISA expansion-board peripherals (SMUC, on-board
+   RTC, ISA slots) stay out of scope, but the GMX-style ROM window select (port `#7EFD`
+   bits 4-5) is implemented as the extended ROM-disk mechanism — and the Turbo+ **7 MHz
+   hardware turbo flip-flop** is implemented for **all** Scorpion configurations
+   (hardware-reference §13; added 2026-09-09 from the decoded GAL materials).
 2. **RAM: 256 KB and 1024 KB** — matching the model table heritage
    (`RAM_256 | RAM_1024`): `#1FFD` bit 4 supplies bank bit 3, bits 6-7 supply bank
    bits 4-5 (`ram_mask` clamps to installed size).
@@ -80,8 +97,8 @@ significant — is missing.
 | Variant | ROM size | Quadrants | Selection mechanism | Model |
 |---------|----------|-----------|---------------------|-------|
 | Minimal | 64 KB | 1 | none (fixed) | `MM_SCORP` |
-| ProfROM | 128 KB | 2 | read `#0000-#0003` state machine | `MM_PROFSCORP` |
-| ProfROM | 256 KB | 4 | read `#0000-#0003` state machine | `MM_PROFSCORP` |
+| ProfROM | 128 KB | 2 | read `#0100-#010F` state machine | `MM_PROFSCORP` |
+| ProfROM | 256 KB | 4 | read `#0100-#010F` state machine | `MM_PROFSCORP` |
 | Extended | 512 KB - 2 MB | 8-32 | `#7EFD` bits 4-5 direct select (+ state machine low bits) | `MM_PROFSCORP` |
 
 Each 64 KB quadrant internally contains the standard 4-page set
@@ -89,8 +106,9 @@ Each 64 KB quadrant internally contains the standard 4-page set
 non-boot quadrants and are paged by the ROM's own software through the same window.
 
 Shipped images (`data/rom/`): `scorpion.rom` 64 KB, `scorp295.rom` 64 KB,
-`scorp_prof401.rom` **512 KB** (the real extended image; currently rejected by the
-loader — hardware-reference §5.4).
+`scorp_prof401.rom` **512 KB** (the real extended image; loads and validates as
+8 quadrants since Task 2's validation matrix — see
+[verification/e2e-profrom-instantiation.md](verification/e2e-profrom-instantiation.md)).
 
 ## Decisions log (2026-09-08)
 
@@ -108,10 +126,10 @@ Also found in this pass (parallel review session, verified against the ROM bytes
 BASIC128 / 48K / Service / TR-DOS — a pre-existing loader bug, fixed in Task 2
 (hardware-reference §5.1).
 
-### Code defects fixed (2026-09-08, uncommitted)
+### Code defects fixed (2026-09-08; committed in `3f49622c`)
 
 Three bugs that exist independently of the Scorpion feature work were fixed directly.
-They are **not** the 11-task plan; every task below is still outstanding.
+They are **not** the 11-task plan.
 
 | Fix | File | Effect |
 |---|---|---|
@@ -168,5 +186,16 @@ clean-baseline requirement for Task 0.
 | Implementation plan | done |
 | Testing plan | done |
 | Review + research pass (facts re-verified, decisions logged) | done 2026-09-08 |
-| Standalone code defects fixed (see below) | done 2026-09-08, **uncommitted** |
-| Code changes | not started — commit/branch the in-flight HUD work first, then start at [implementation-plan.md](implementation-plan.md) Task 0 |
+| Standalone code defects fixed | done 2026-09-08, committed in `3f49622c` |
+| Tasks 0-6 (baseline harness, config/timing, ROM space, paging, port decoder, TR-DOS, NMI/MNI) | done 2026-09-08, commit `3f49622c`; live E2E-1/2/3 — [verification/e2e-base-rom.md](verification/e2e-base-rom.md) |
+| PROFSCORP instantiation fix | done 2026-09-09, commit `535b8238`; smoke + E2E-7 (1024 KB / 256 KB RAM) — [verification/e2e-profrom-instantiation.md](verification/e2e-profrom-instantiation.md) |
+| Task 7 (ProfROM quadrant state machine + `#7EFD` window) | done 2026-09-09, commit `9e85136e` (incl. the plane-selection fix); live E2E-4 — [verification/e2e-profrom-quadrants.md](verification/e2e-profrom-quadrants.md) |
+| Task 12 (hardware turbo — 7 MHz flip-flop, all Scorpion configs) | done 2026-09-09, **uncommitted**; 8 tests + full suite green, live E2E-8 on PROFSCORP/1024K and SCORPION/256K (`scratch/e2e-profrom-boot/pass29.py`) — hardware-reference §13 |
+| MNI rework + idle-EAR fix | done 2026-09-10, **uncommitted**; `RequestMNI` rebuilt to the DD50 trigger pair (page 3 of the current plane, latch untouched, read-release strobe — hardware-reference §9, [profrom-nmi-boot-analysis.md](profrom-nmi-boot-analysis.md)), `scorpionmni_test.cpp` rewritten, trigger carried in TTD; `Tape::handlePortIn` idle EAR made steady-high (UnrealSpeccy `tape_bit() = -1` semantics) — the defect that wedged every ProfROM boot (analysis doc §7). Build/suite/live E2E pending at time of writing |
+| Tasks 8-11 (ROM-disk ladder, `.z80` hw=10 snapshots, tooling polish, final QA) | not started |
+| Turbo CPU-frequency notification chain fix | done 2026-09-11, **uncommitted**; "status bar always 7.0 MHz" report traced port→core→MessageCenter→UI for both `SCORPION` (Base v2.92) and `PROFSCORP` (ProfROM v4.01): in-monitor 7 MHz is hardware-matching (menu toggle `V`/Enter is a RAM flag store only, strobe at exit — [profrom-service-monitor-turbo.md](profrom-service-monitor-turbo.md) §10-§11), real defect was `ApplyHardwareTurboNow` never posting `NC_CPU_FREQ_CHANGED` — both apply paths now share `Z80::NotifyCPUFrequencyChanged()`, regression test `TurboStrobePostsCpuFreqChanged`; live WebAPI round trip 2→1→2 — [verification/turbo-cpufreq-chain-verification.md](verification/turbo-cpufreq-chain-verification.md). Follow-up same day: re-proven with the ROM's own `#04CE`/`#048C` apply (strobe → 3.5 MHz same frame, sticks — verification §4.1); `V` hotkey live-confirmed as the silent staging toggle (turbo doc §6.3); keyboard-injection-requires-running-loop pitfall documented (verification §4.2); SMUC board-presence side-track prototyped and reverted, board stays absent by decision (verification §6) |
+
+Known incidental defect (outside this plan's scope, filed during Task 7 E2E):
+WebAPI `DELETE /emulator/{id}` on the instance adopted by the Qt main window can
+SIGSEGV in `MenuManager::updateMenuStates` — details in
+[verification/e2e-profrom-quadrants.md](verification/e2e-profrom-quadrants.md).
