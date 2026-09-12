@@ -261,6 +261,31 @@ bool MainLoop::WaitForPauseConfirmation(uint32_t timeoutMs)
                              [this]() { return _isPausedConfirmed.load(std::memory_order_acquire); });
 }
 
+void MainLoop::ConfirmPauseFromCpu()
+{
+    // Mirror of the park-entry confirm in Run()'s pause loop (same mutex/CV
+    // pair), issued by the CPU thread when it parks INSIDE a frame via
+    // Emulator::WaitWhilePaused() - Run()'s own confirm is unreachable above
+    // that park, so without this every WaitForPauseConfirmation() caller
+    // would burn its full timeout while the CPU is in fact safely parked.
+    {
+        std::lock_guard<std::mutex> lock(_pauseMutex);
+        _isPausedConfirmed.store(true, std::memory_order_release);
+    }
+    _pauseCV.notify_all();  // Wake threads waiting for the pause confirmation
+}
+
+void MainLoop::InvalidatePauseConfirmation()
+{
+    // Eager drop of a confirmation from a park we are exiting (Resume/Stop).
+    // The Run() loop clears its own flag only after its parked wait wakes
+    // (up to its 20 ms poll quantum); until then a new Pause() could consume
+    // the stale "parked" confirmation and return with the emulation thread
+    // already running the next frame - two Z80 drivers at once.
+    std::lock_guard<std::mutex> lock(_pauseMutex);
+    _isPausedConfirmed.store(false, std::memory_order_release);
+}
+
 void MainLoop::Stop()
 {
     _stopRequested = true;  // Frame wait polls this flag (TimeHelper::WaitUntilPrecise, <= 4 ms)

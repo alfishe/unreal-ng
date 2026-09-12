@@ -11,6 +11,7 @@
 
 #include <chrono>
 #include <functional>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -47,6 +48,13 @@ namespace
         bool diskInserted = false;
     };
 
+    // All accesses to g_capturedFdcStates happen under this mutex: the
+    // MessageCenter worker thread push_backs from Dispatch() while test
+    // threads read/clear from WaitForCondition polls and SetUp. An
+    // unsynchronized std::vector is UB - a push_back reallocating during a
+    // concurrent back()/empty()/size() read yields torn state (observed as an
+    // empty emulatorId string in test-parallel runs).
+    std::mutex g_captureMutex;
     std::vector<CapturedFdcState> g_capturedFdcStates;
     bool g_observersRegistered = false;
 
@@ -69,12 +77,37 @@ namespace
             captured.drq = payload->_drq;
             captured.motorOn = payload->_motorOn;
             captured.diskInserted = payload->_diskInserted;
+            std::lock_guard<std::mutex> lock(g_captureMutex);
             g_capturedFdcStates.push_back(captured);
         }
     }
 
+    void clearCaptures()
+    {
+        std::lock_guard<std::mutex> lock(g_captureMutex);
+        g_capturedFdcStates.clear();
+    }
+
+    size_t captureCount()
+    {
+        std::lock_guard<std::mutex> lock(g_captureMutex);
+        return g_capturedFdcStates.size();
+    }
+
+    bool lastCapture(CapturedFdcState& out)
+    {
+        std::lock_guard<std::mutex> lock(g_captureMutex);
+        if (g_capturedFdcStates.empty())
+        {
+            return false;
+        }
+        out = g_capturedFdcStates.back();
+        return true;
+    }
+
     bool hasCaptureWithTrack(uint8_t track)
     {
+        std::lock_guard<std::mutex> lock(g_captureMutex);
         for (const auto& captured : g_capturedFdcStates)
         {
             if (captured.trackRegister == track)
@@ -87,6 +120,7 @@ namespace
 
     bool hasCaptureWithSector(uint8_t sector)
     {
+        std::lock_guard<std::mutex> lock(g_captureMutex);
         for (const auto& captured : g_capturedFdcStates)
         {
             if (captured.sectorRegister == sector)
@@ -99,6 +133,7 @@ namespace
 
     bool hasCaptureWithDriveAndSide(uint8_t driveId, uint8_t side)
     {
+        std::lock_guard<std::mutex> lock(g_captureMutex);
         for (const auto& captured : g_capturedFdcStates)
         {
             if (captured.driveId == driveId && captured.side == side)
@@ -109,16 +144,20 @@ namespace
         return false;
     }
 
-    const CapturedFdcState* findCaptureWithCommand(uint8_t command)
+    // Returns a copy taken under the capture mutex - a pointer into the
+    // vector would dangle as soon as the worker thread push_backs again.
+    bool findCaptureWithCommand(uint8_t command, CapturedFdcState& out)
     {
+        std::lock_guard<std::mutex> lock(g_captureMutex);
         for (const auto& captured : g_capturedFdcStates)
         {
             if (captured.command == command && captured.busy)
             {
-                return &captured;
+                out = captured;
+                return true;
             }
         }
-        return nullptr;
+        return false;
     }
 }  // namespace
 
@@ -153,10 +192,33 @@ protected:
         return condition();
     }
 
+    // Barrier against cross-test pollution. The previous test's last posts
+    // may still sit in the MessageCenter queue while its own WaitForCondition
+    // already returned - under parallel-shard load the worker can lag several
+    // messages behind. Clearing the capture vector in SetUp alone would let
+    // those late payloads land AFTER the clear and pollute this test. Posting
+    // a sentinel through the same queue and waiting for it to be captured
+    // guarantees every earlier post (any topic, single FIFO worker) has been
+    // dispatched by the time SetUp clears.
+    static constexpr uint8_t SENTINEL_TRACK = 0xFE;  // No test writes this track value
+
+    static void DrainPendingNotifications()
+    {
+        FDCStatePayload* sentinel = new FDCStatePayload(unreal::UUID());
+        sentinel->_trackRegister = SENTINEL_TRACK;
+        MessageCenter::DefaultMessageCenter().Post(NC_FDC_STATE_CHANGED, sentinel, true);
+
+        if (!WaitForCondition([]() { return hasCaptureWithTrack(SENTINEL_TRACK); }, 1000))
+        {
+            FAIL() << "MessageCenter drain sentinel not dispatched within 1000 ms";
+        }
+    }
+
     void SetUp() override
     {
-        // Clear captured events before each test
-        g_capturedFdcStates.clear();
+        // Drain in-flight posts from the previous test, then clear captured events
+        DrainPendingNotifications();
+        clearCaptures();
 
         // Full context wiring: portDeviceOutMethod dereferences pCore->GetZ80()
         // and pMemory in its debug-print preamble, and the command path's
@@ -233,14 +295,15 @@ TEST_F(FDCNotificationTest, NoPostWhenNothingChanged)
 {
     _fdc->portDeviceOutMethod(0x003F, 40);  // #3F - track register
     ASSERT_TRUE(WaitForCondition([]() { return hasCaptureWithTrack(40); }));
-    g_capturedFdcStates.clear();
+    clearCaptures();
 
     // Re-write the same value — the diff gate must swallow it
     _fdc->portDeviceOutMethod(0x003F, 40);
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    EXPECT_TRUE(g_capturedFdcStates.empty()) << "Diff gate failed: " << g_capturedFdcStates.size()
-                                             << " payload(s) posted for unchanged state";
+    const size_t leakedPayloads = captureCount();
+    EXPECT_EQ(leakedPayloads, 0u) << "Diff gate failed: " << leakedPayloads
+                                  << " payload(s) posted for unchanged state";
 }
 
 TEST_F(FDCNotificationTest, Beta128WriteChangesDriveAndSide)
@@ -258,13 +321,12 @@ TEST_F(FDCNotificationTest, CommandStartSetsBusyAndCommandByte)
 
     _fdc->portDeviceOutMethod(0x001F, 0x10);  // #1F - SEEK command
 
-    ASSERT_TRUE(WaitForCondition([]() { return findCaptureWithCommand(0x10) != nullptr; })) << "No BUSY payload for SEEK";
+    CapturedFdcState captured;
+    ASSERT_TRUE(WaitForCondition([&captured]() { return findCaptureWithCommand(0x10, captured); })) << "No BUSY payload for SEEK";
 
-    const CapturedFdcState* captured = findCaptureWithCommand(0x10);
-    ASSERT_NE(captured, nullptr);
-    EXPECT_TRUE(captured->busy);
-    EXPECT_EQ(captured->command, 0x10);
-    EXPECT_EQ(captured->trackRegister, 0);
+    EXPECT_TRUE(captured.busy);
+    EXPECT_EQ(captured.command, 0x10);
+    EXPECT_EQ(captured.trackRegister, 0);
 }
 
 TEST_F(FDCNotificationTest, PayloadCarriesEmulatorId)
@@ -273,9 +335,11 @@ TEST_F(FDCNotificationTest, PayloadCarriesEmulatorId)
     // (canonical string form of the all-zeros UUID)
     _fdc->portDeviceOutMethod(0x003F, 5);
 
-    ASSERT_TRUE(WaitForCondition([]() { return !g_capturedFdcStates.empty(); }));
+    ASSERT_TRUE(WaitForCondition([]() { return captureCount() > 0; }));
 
-    EXPECT_EQ(g_capturedFdcStates.back().emulatorId, unreal::UUID().toString());
+    CapturedFdcState last;
+    ASSERT_TRUE(lastCapture(last));
+    EXPECT_EQ(last.emulatorId, unreal::UUID().toString());
 }
 
 TEST_F(FDCNotificationTest, GettersExposeDriveAndSide)

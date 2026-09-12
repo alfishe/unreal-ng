@@ -954,6 +954,27 @@ protected:
         }
         return false;
     }
+
+    /// Step the (paused) machine out of its cold-boot sequence until it
+    /// settles in an idle BASIC/menu state. The boot code keeps rewriting
+    /// port 0x7FFD, which would immediately undo the ROM switch performed by
+    /// SetROMDOS() - activateTRDOS() only works on a machine that has stopped
+    /// re-paging. Deterministic single-driver stepping via RunNFrames, no
+    /// wall-clock timing dependence.
+    void settleBootSequence()
+    {
+        for (int i = 0; i < 500; i += 10)
+        {
+            _emulator->RunNFrames(10);
+            BasicEncoder::BasicState state = BasicEncoder::detectState(_emulator->GetMemory());
+            if (state == BasicEncoder::BasicState::Basic48K
+                || state == BasicEncoder::BasicState::Basic128K
+                || state == BasicEncoder::BasicState::Menu128K)
+            {
+                return;
+            }
+        }
+    }
 };
 
 /// Test that runCommand() auto-resumes after TR-DOS injection
@@ -966,6 +987,13 @@ TEST_F(BasicEncoder_Integration_Test, TRDOSRunCommand_AutoResumes)
     _emulator->StartAsync();
     _emulator->EnableTurboMode();
     _emulator->Pause();
+
+    // Warm-boot out of reset before injecting TR-DOS (see
+    // settleBootSequence - historically this test relied on Pause()'s 500 ms
+    // confirmation timeout to advance ~thousands of free-running frames;
+    // pause confirmation is immediate now, so the boot is advanced
+    // deterministically on the test thread instead)
+    settleBootSequence();
 
     // Activate TR-DOS
     ASSERT_TRUE(activateTRDOS()) << "TR-DOS did not initialize";

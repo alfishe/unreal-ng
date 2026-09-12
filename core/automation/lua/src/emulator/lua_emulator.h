@@ -20,8 +20,8 @@
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
 #include <debugger/ttd/timetravelmanager.h>
-#include <debugger/ttd/ttd_external_events.h>
-#include <debugger/ttd/ttd_probe.h>
+#include <debugger/ttd/ttdexternalevents.h>
+#include <debugger/ttd/ttdprobe.h>
 #include <debugger/analyzers/analyzermanager.h>
 #include <debugger/analyzers/audiocapture/audiocaptureanalyzer.h>
 #include <debugger/analyzers/aylog/ayloganalyzer.h>

@@ -120,6 +120,13 @@ public:
 // Server configuration
 struct ServerConfig
 {
+    // CMD_INIT: how long to wait for a debug target before answering with an
+    // error (covers the host UI creating its emulator after DeZog connects).
+    // Configurable so test harnesses can shorten the no-target failure path.
+    static constexpr uint32_t DEFAULT_TARGET_WAIT_MS = 2000;
+
+    uint32_t targetWaitMs = DEFAULT_TARGET_WAIT_MS;
+
     uint16_t port = DEFAULT_PORT;
     std::string bindAddress = "127.0.0.1";
     std::string serverName = "Unreal-NG";
@@ -148,10 +155,6 @@ private:
     void acceptLoop();
     void sessionLoop(int clientSocket);
     Response handleCommand(const Command& cmd);
-
-    // CMD_INIT: how long to wait for a debug target before answering with
-    // an error (covers the host UI creating its emulator after DeZog connects)
-    static constexpr uint32_t TARGET_WAIT_MS = 2000;
 
     // Command handlers
     Response handleInit(const Command& cmd);

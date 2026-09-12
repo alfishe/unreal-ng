@@ -50,13 +50,13 @@
 
 #include "emulator/platform.h"       // PlatformModulesEnum, MAX_RAM_PAGES
 #include "common/modulelogger.h"    // ModuleLogger
-#include "ttd_checkpoint.h"
-#include "ttd_external_events.h"
-#include "ttd_input_journal.h"
-#include "ttd_write_journal.h"
-#include "ttd_probe.h"
-#include "ttd_codec_page_store.h"
-#include "ttd_coverage_index.h"
+#include "ttdcheckpoint.h"
+#include "ttdexternalevents.h"
+#include "ttdinputjournal.h"
+#include "ttdwritejournal.h"
+#include "ttdprobe.h"
+#include "ttdcodecpagestore.h"
+#include "ttdcoverageindex.h"
 #include "timetravelframecache.h"
 
 // Forward declarations — we don't pull emulator headers into this header.
@@ -306,7 +306,7 @@ public:
     ///      SeekTo to position the emulator at any checkpoint).
     ///
     /// Refuses unknown future schema versions with a clear error message
-    /// (see ttd_dump_format.h::kMaxSupportedSchemaVersion).
+    /// (see ttddumpformat.h::kMaxSupportedSchemaVersion).
     bool DeserializeSession(std::istream& in, std::string& err);
 
     /// @brief Record where a just-deserialized session came from.

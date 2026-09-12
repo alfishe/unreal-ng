@@ -3,7 +3,7 @@
 ///
 /// Per parent TDD §6.3, §7.1. The hot path is OnFrameBoundary: dirty pages
 /// are freshly Intern'd, clean pages AddRef the previous checkpoint's slot,
-/// CPU/chipset are field-copied via the helpers in ttd_checkpoint.cpp.
+/// CPU/chipset are field-copied via the helpers in ttdcheckpoint.cpp.
 
 #include "timetravelmanager.h"
 
@@ -14,13 +14,13 @@
 #include <iostream>
 #include <unordered_map>
 
-#include "ttd_checkpoint.h"
-#include "ttd_dirty_tracker.h"
-#include "ttd_dump_format.h"     // .ttd binary format constants
-#include "ttd_codec_page_store.h"
-#include "ttd_compression.h"    // codec::Compress / Decompress / Crc32C
+#include "ttdcheckpoint.h"
+#include "ttddirtytracker.h"
+#include "ttddumpformat.h"     // .ttd binary format constants
+#include "ttdcodecpagestore.h"
+#include "ttdcompression.h"    // codec::Compress / Decompress / Crc32C
 
-#include "machine_state_hash.h"  // CaptureSnapshot / HashSnapshot (self-test)
+#include "machinestatehash.h"  // CaptureSnapshot / HashSnapshot (self-test)
 
 // Pull in the actual struct definitions for the capture call sites.
 #include "3rdparty/message-center/messagecenter.h"
@@ -675,6 +675,12 @@ void TimeTravelManager::CaptureNow(TTDCheckpoint& out)
     }
     out.chipset = CaptureChipsetState(st);
 
+    // Capture video mode from Screen (explicit storage for fast restore)
+    if (_context->pScreen)
+    {
+        out.chipset.videoMode = static_cast<uint8_t>(_context->pScreen->GetVideoMode());
+    }
+
     // --- RAM pages ---
     // First capture of a session: Intern every model-RAM page as the baseline
     // (this is an I-frame by definition). Subsequent captures follow the
@@ -830,7 +836,7 @@ void TimeTravelManager::UpdateRamPages(const std::vector<uint16_t>& dirtyPages,
     // live refcount in the page store, INCLUDING the delta-chain refs
     // that XorPrev slots hold against their prevSlot (the latter are
     // managed internally by InternXor / Release — see
-    // ttd_codec_page_store.cpp).
+    // ttdcodecpagestore.cpp).
     //
     // outRamPages.assign(prevRamPages) COPIES slot indices but does NOT
     // bump refcounts. The logic below must therefore AddRef every slot
@@ -1155,7 +1161,13 @@ void TimeTravelManager::ResyncScreenCaches()
     if (!_context || !_context->pScreen)
         return;
 
-    // 1. Sync the active screen bank from p7FFD bit 3 (bank 7 shadow vs
+    // 1. Re-detect video mode from restored port values. InitRaster()
+    //    handles all machine models: standard ZX (p7FFD), ATM (pFF77),
+    //    Pentagon AlCo (pEFF7), etc. Without this, a seek to a frame with
+    //    a different video mode would render with the wrong geometry.
+    _context->pScreen->InitRaster();
+
+    // 2. Sync the active screen bank from p7FFD bit 3 (bank 7 shadow vs
     //    bank 5 normal). Without this the renderer reads pixels from
     //    whichever bank was active when the previous frame ran — typically
     //    garbage after a restore that changed the paging latch.
@@ -1165,28 +1177,17 @@ void TimeTravelManager::ResyncScreenCaches()
                                         : SCREEN_NORMAL;  // bit 3 clear → bank 5
     _context->pScreen->SetActiveScreen(screen);
 
-    // 2. Sync the border color from pFE bits 0-2. Set explicitly for
-    //    clarity and to keep the cached field correct even if a future
-    //    FillBorderWithColor implementation forgets to.
+    // 3. Sync the border color from pFE bits 0-2.
     const uint8_t borderColor = _context->emulatorState.pFE & 0b0000'0111;
     _context->pScreen->SetBorderColor(borderColor);
 
-    // 3. InitFrame resets the renderer's frame-local counters so the next
-    //    rendered frame starts from a clean state matching the restored
-    //    beam position; RenderOnlyMainScreen then rebuilds the inner
-    //    256x192 RGBA pixels in one batch from the freshly-restored screen
-    //    memory.
+    // 4. InitFrame resets the renderer's frame-local counters; RenderOnlyMainScreen
+    //    rebuilds the screen pixels from restored memory. The render function
+    //    respects the video mode set by InitRaster (256x192 for ZX, 320x200 for ATM16).
     _context->pScreen->InitFrame();
     _context->pScreen->RenderOnlyMainScreen();
 
-    // 4. Repaint the framebuffer border to match the restored border color.
-    //    RenderOnlyMainScreen above only touches the inner 256x192 screen
-    //    area; without this call the border pixels keep whatever the
-    //    previous render left there, producing visible artifacts when the
-    //    restored border color differs from the live pre-restore color.
-    //    (User-visible bug this prevents: recorded a demo with a black
-    //    border, restored to a frame, got a white border from a prior
-    //    render.)
+    // 5. Repaint the framebuffer border to match the restored border color.
     _context->pScreen->FillBorderWithColor(borderColor);
 }
 
@@ -1609,7 +1610,7 @@ bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult
     // Step 2: RestoreCheckpoint(cp). Leaves emulatorState.t_states /
     // frame_counter set to the checkpoint's frame boundary. The Z80
     // accumulator (z80.t) is NOT in the captured field set (it's host-
-    // side per the field-exclusion list in ttd_checkpoint.h) so we sync
+    // side per the field-exclusion list in ttdcheckpoint.h) so we sync
     // it explicitly — checkpoints always sit at frame boundaries, where
     // z80.t == 0 (post-AdjustFrameCounters reset).
     // ------------------------------------------------------------------
@@ -3968,6 +3969,10 @@ void TimeTravelManager::SaveLiveState(LiveStateSnapshot& out)
     if (z80)
         out.cpu = CaptureCpuState(*static_cast<Z80State*>(z80));
     out.chipset = CaptureChipsetState(_context->emulatorState);
+    if (_context->pScreen)
+    {
+        out.chipset.videoMode = static_cast<uint8_t>(_context->pScreen->GetVideoMode());
+    }
     // z80.t (the per-frame t-state counter) is host-side and deliberately
     // NOT part of TTDCpuState — SeekToInternal syncs it manually after
     // restores too.

@@ -46,6 +46,13 @@ public:
     static uint16_t resolvePort(uint16_t requested);
     static constexpr const char* PORT_ENV_VAR = "UNREAL_DEZOG_PORT";
 
+    // Target wait resolution: explicit argument (non-zero), else
+    // UNREAL_DEZOG_TARGET_WAIT_MS env var, else ServerConfig default. Clamped
+    // to [1, 60000] ms. Lets test harnesses shorten the no-target CMD_INIT
+    // failure path (the 2 s default dominates an emulator-less lifecycle test).
+    static uint32_t resolveTargetWaitMs(uint32_t requested);
+    static constexpr const char* TARGET_WAIT_ENV_VAR = "UNREAL_DEZOG_TARGET_WAIT_MS";
+
 private:
     mutable std::mutex _mutex;
     std::unique_ptr<DezogDebugAdapter> _adapter;

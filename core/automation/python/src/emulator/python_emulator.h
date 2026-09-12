@@ -27,7 +27,7 @@
 #include <emulator/cpu/opcode_profiler.h>
 #include <debugger/keyboard/debugkeyboardmanager.h>
 #include <debugger/ttd/timetravelmanager.h>
-#include <debugger/ttd/ttd_probe.h>
+#include <debugger/ttd/ttdprobe.h>
 #include <debugger/analyzers/audiocapture/audiocaptureanalyzer.h>
 #include <debugger/analyzers/aylog/ayloganalyzer.h>
 #include <debugger/analyzers/coverage/coverageanalyzer.h>
@@ -49,7 +49,7 @@
 #include <fstream>
 #include <optional>
 #include <thread>
-#include <debugger/ttd/ttd_external_events.h>
+#include <debugger/ttd/ttdexternalevents.h>
 #include "../../../automation.h"
 #include "../bindings/python_porttrace.h"
 

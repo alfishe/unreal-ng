@@ -12,7 +12,7 @@
 #include "common/timehelper.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
-#include "debugger/ttd/ttd_dirty_tracker.h"
+#include "debugger/ttd/ttddirtytracker.h"
 #include "debugger/ttd/timetravelmanager.h"  // Phase 4 — RecordMemoryWrite hot-path call
 #include "emulator/emulator.h"
 #include "emulator/memory/memoryaccesstracker.h"
@@ -1032,22 +1032,23 @@ uint16_t Memory::GetROMPage()
 
 uint16_t Memory::GetRAMPageForBank0()
 {
-    return GetRAMPageFromAddress(_bank_read[0]);
+    // Use cache if bank mode is RAM (cache is 0xFF for ROM)
+    return _bank_mode[0] == BANK_RAM ? _bank_ram_page_cache[0] : MEMORY_UNMAPPABLE;
 }
 
 uint16_t Memory::GetRAMPageForBank1()
 {
-    return GetRAMPageFromAddress(_bank_read[1]);
+    return _bank_mode[1] == BANK_RAM ? _bank_ram_page_cache[1] : MEMORY_UNMAPPABLE;
 }
 
 uint16_t Memory::GetRAMPageForBank2()
 {
-    return GetRAMPageFromAddress(_bank_read[2]);
+    return _bank_mode[2] == BANK_RAM ? _bank_ram_page_cache[2] : MEMORY_UNMAPPABLE;
 }
 
 uint16_t Memory::GetRAMPageForBank3()
 {
-    return GetRAMPageFromAddress(_bank_read[3]);
+    return _bank_mode[3] == BANK_RAM ? _bank_ram_page_cache[3] : MEMORY_UNMAPPABLE;
 }
 
 ///
@@ -1068,18 +1069,17 @@ uint16_t Memory::GetROMPageForBank(uint8_t bank)
 
 ///
 /// \param bank Z80 bank [0:3]
-/// \return
+/// \return RAM page number or MEMORY_UNMAPPABLE if bank is not RAM
 uint16_t Memory::GetRAMPageForBank(uint8_t bank)
 {
-    uint16_t result = MEMORY_UNMAPPABLE;
     bank = bank & 0b0000'0011;
 
+    // Use cache (0xFF = not RAM); return MEMORY_UNMAPPABLE if bank is ROM
     if (_bank_mode[bank] == BANK_RAM)
     {
-        result = GetRAMPageFromAddress(_bank_read[bank]);
+        return _bank_ram_page_cache[bank];
     }
-
-    return result;
+    return MEMORY_UNMAPPABLE;
 }
 
 /// Returns absolute page number without distinction to RAM/Cache/Misc/ROM - since they all located in the same block
