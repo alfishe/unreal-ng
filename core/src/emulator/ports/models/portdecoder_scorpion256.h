@@ -56,6 +56,8 @@ public:
     bool IsPort_1FFD(uint16_t port);
     bool IsPort_7EFD(uint16_t port);  // ProfROM window latch (#7FFD pattern with A8 low)
     bool IsPort_SMUC(uint16_t port);  // SMUC board (#xxBA/#xxBE family)
+    bool IsPort_KempstonJoystick(uint16_t port);  // Kempston Joystick (#FF1F / #xx1F)
+    bool IsPort_KempstonMouse(uint16_t port);     // Kempston Mouse (#FADF/#FBDF/#FFDF)
 
     /// SMUC EEPROM backing store (verification tests / debug UI)
     SMUCNvram& GetSMUCNvram() { return _smucNvram; }
