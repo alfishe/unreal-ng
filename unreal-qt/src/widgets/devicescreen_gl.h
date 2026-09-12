@@ -5,6 +5,10 @@
 #ifndef OPENGL_DEPRECATED
     #define OPENGL_DEPRECATED
 #endif
+#ifndef GL_SILENCE_DEPRECATION
+    #define GL_SILENCE_DEPRECATION
+#endif
+
 
 #include <QOpenGLWidget>
 #include <QOpenGLFunctions>
