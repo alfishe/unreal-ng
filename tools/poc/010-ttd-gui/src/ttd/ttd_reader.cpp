@@ -106,6 +106,7 @@ static TtdHeader parseHeader(ByteReader& r) {
     h.model_ram_pages = r.u8();
     h.cpu_state_size = r.u16();
     h.chipset_state_size = r.u16();
+    h.rom_signature = r.u64();
     h.captured_at_unix_ms = r.u64();
 
     uint8_t emu_id_len = r.u8();
@@ -150,37 +151,11 @@ static ChipsetState parseChipset(ByteReader& r) {
     cs.p7ffd = r.u8();
     cs.pfe = r.u8();
     cs.peff7 = r.u8();
-    cs.pxxxx = r.u8();
     cs.pbffd = r.u8();
     cs.pfffd = r.u8();
-    cs.pdffd = r.u8();
-    cs.pfdfd = r.u8();
-    cs.p1ffd = r.u8();
     cs.pff77 = r.u8();
     cs.border_attr = r.u8();
     cs.flags = r.u8();
-    cs.p7efd = r.u8();
-    cs.p78fd = r.u8();
-    cs.p7afd = r.u8();
-    cs.p7cfd = r.u8();
-    cs.gmx_config = r.u8();
-    cs.gmx_magic_shift = r.u8();
-    cs.p00 = r.u8();
-    cs.p80fd = r.u8();
-    cs.afe = r.u8();
-    cs.afb = r.u8();
-    cs.aff77 = r.u8();
-    cs.active_ay = r.u8();
-    cs.pbd = r.u8();
-    cs.pbe = r.u8();
-    cs.pbf = r.u8();
-    cs.pffba = r.u8();
-    cs.p7fba = r.u8();
-    cs.p0f = r.u8();
-    cs.p1f = r.u8();
-    cs.p4f = r.u8();
-    cs.p5f = r.u8();
-    cs.plsy256 = r.u8();
     const uint8_t* wd = r.take(4);
     std::memcpy(cs.wd_shadow, wd, 4);
     const uint8_t* pal = r.take(16);
@@ -189,8 +164,8 @@ static ChipsetState parseChipset(ByteReader& r) {
     cs.ulaplus_reg = r.u8();
     const uint8_t* cram = r.take(64);
     std::memcpy(cs.ulaplus_cram, cram, 64);
-    const uint8_t* pfff = r.take(32);
-    std::memcpy(cs.pfff7, pfff, 32);
+    const uint8_t* rsv = r.take(10);
+    std::memcpy(cs.reserved, rsv, 10);
     return cs;
 }
 
@@ -248,10 +223,16 @@ static Checkpoint parseCheckpoint(ByteReader& r, uint8_t model_ram_pages, uint32
     for (uint32_t i = 0; i < refs_count; ++i)
         cp.ram_sub_slots.push_back(r.u32());
 
-    cp.ay_blob = parseBlob(r);
-    cp.fdc_blob = parseBlob(r);
-    cp.tape_blob = parseBlob(r);
-    cp.covox_blob = parseBlob(r);
+    // Peripheral blobs, written sorted by peripheral id.
+    const uint16_t peripheralBlobCount = r.u16();
+    if (peripheralBlobCount > 64)
+        throw std::runtime_error("implausible peripheral blob count " +
+                                 std::to_string(peripheralBlobCount));
+    for (uint16_t i = 0; i < peripheralBlobCount; ++i)
+    {
+        const uint8_t peripheralId = r.u8();
+        cp.peripheral_blobs.insert(peripheralId, parseBlob(r));
+    }
 
     return cp;
 }

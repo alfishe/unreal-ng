@@ -36,8 +36,11 @@ constexpr char kMagic[4] = {'T', 'T', 'D', 'D'};
 ///
 /// The format has not shipped, so it is still being amended in place rather
 /// than versioned: header.model_ram_pages is u2 (it was u1 until a 4 MB
-/// machine's 256 pages were found to truncate to 0). Sessions recorded before
-/// that amendment do not parse and must be re-recorded.
+/// machine's 256 pages were found to truncate to 0); chipset_state shrank
+/// to 120 bytes (from 168, or 184 with the Scorpion ProfROM fields) when
+/// the extended / model-specific port latches
+/// moved out to TTDPeripheralRegistry serializers. Sessions recorded before
+/// an amendment do not parse and must be re-recorded.
 constexpr uint16_t kSchemaVersion = 1;
 
 /// Bit 0 of header.flags — set when the writer is little-endian (always 1
@@ -80,6 +83,20 @@ constexpr uint8_t kFrameKindKeyFrame  = 0;
 /// P-frame: only dirty pages are captured, encoded as Xor deltas against
 /// the previous slot chain.
 constexpr uint8_t kFrameKindDeltaFrame = 1;
+
+// ---------------------------------------------------------------------------
+// Model-specific peripheral blobs
+// ---------------------------------------------------------------------------
+
+/// Upper bound on registry blobs stored per checkpoint. A machine registers one
+/// serializer per model-specific subsystem, so the real count is 0-2 today; the
+/// cap only exists so a corrupt length cannot drive an unbounded read loop.
+constexpr uint16_t kMaxPeripheralBlobsPerCheckpoint = 64;
+
+/// Sentinel rom_signature meaning "the writer could not read the ROM region"
+/// (no Memory attached). A file carrying it skips the compatibility check
+/// rather than failing every load.
+constexpr uint64_t kRomSignatureUnknown = 0;
 
 // ---------------------------------------------------------------------------
 // Sentinels

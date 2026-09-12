@@ -175,7 +175,7 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, [[maybe_unused]
 {
     // Feed the averaged mono amplitude into the beeper's blip_buf.
     // Tape output is mono (left == right), so we use left as the amplitude.
-    _beeper->handleTapeAudio(static_cast<int32_t>(left), frameTState);
+    _beeper->handleTapeAudio(static_cast<int32_t>(left), _context->emulatorState.AudioTstate(frameTState));
 }
 
 // TurboSound/AY chip access for debugging
@@ -431,7 +431,10 @@ void SoundManager::handleFrameEnd()
     uint32_t frameDuration = 0;
     {
         CONFIG& config = _context->config;
-        uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
+        // Host multiplier only: the Scorpion hardware turbo doubles CPU
+        // T-states inside an unchanged 20 ms frame, so it must NOT double the
+        // samples of that frame (it overfilled the ring 2x - hard resyncs)
+        uint8_t speedMultiplier = _context->emulatorState.HostSpeedMultiplier();
         frameDuration = config.frame * speedMultiplier;
 
         if (frameDuration > 0)

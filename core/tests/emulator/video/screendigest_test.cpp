@@ -70,7 +70,12 @@ TEST_F(ScreenDigest_Test, DigestRAMPage_ChangesOnScreenWrite)
     uint64_t before = ScreenDigest::DigestRAMPage(_memory, ScreenDigest::kScreen0RAMPage);
     uint64_t shadowBefore = ScreenDigest::DigestRAMPage(_memory, ScreenDigest::kScreen1RAMPage);
 
-    _memory->DirectWriteToZ80Memory(0x4000, 0xFF); // first byte of screen 0
+    // Flip the byte rather than writing a constant. Writing a fixed 0xFF is a
+    // no-op whenever the byte already holds it - the page is not zero-filled by
+    // the fixture, so its contents depend on whatever the allocator handed back.
+    // That made this test fail only in some shard orderings (2026-09-12).
+    const uint8_t first = _memory->DirectReadFromZ80Memory(0x4000);
+    _memory->DirectWriteToZ80Memory(0x4000, static_cast<uint8_t>(first ^ 0xFF));
 
     EXPECT_NE(ScreenDigest::DigestRAMPage(_memory, ScreenDigest::kScreen0RAMPage), before);
     // Physical pages are independent: page 7 did not move
@@ -81,7 +86,10 @@ TEST_F(ScreenDigest_Test, DigestRAMPage_CoversLastByteOfPage)
 {
     uint64_t before = ScreenDigest::DigestRAMPage(_memory, ScreenDigest::kScreen0RAMPage);
 
-    _memory->DirectWriteToZ80Memory(0x4000 + ScreenDigest::kRAMPageSize - 1, 0x01);
+    // Flip rather than write a constant - see DigestRAMPage_ChangesOnScreenWrite.
+    const uint16_t lastByte = static_cast<uint16_t>(0x4000 + ScreenDigest::kRAMPageSize - 1);
+    const uint8_t last = _memory->DirectReadFromZ80Memory(lastByte);
+    _memory->DirectWriteToZ80Memory(lastByte, static_cast<uint8_t>(last ^ 0xFF));
 
     EXPECT_NE(ScreenDigest::DigestRAMPage(_memory, ScreenDigest::kScreen0RAMPage), before);
 }

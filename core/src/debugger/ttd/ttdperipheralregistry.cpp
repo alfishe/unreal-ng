@@ -20,6 +20,11 @@ void TTDPeripheralRegistry::Unregister(PeripheralId id)
     _devices.erase(static_cast<uint8_t>(id));
 }
 
+void TTDPeripheralRegistry::Clear()
+{
+    _devices.clear();
+}
+
 bool TTDPeripheralRegistry::IsRegistered(PeripheralId id) const
 {
     return _devices.find(static_cast<uint8_t>(id)) != _devices.end();
@@ -44,8 +49,35 @@ size_t TTDPeripheralRegistry::TotalStateSize() const
     return total;
 }
 
+uint64_t TTDPeripheralRegistry::ComputePeripheralHash() const
+{
+    uint64_t combined = 0;
+    for (const auto& [id, device] : _devices)
+    {
+        if (device)
+        {
+            // Rotate each contribution by its id so two devices holding the
+            // same state do not cancel under the XOR, then XOR so the result
+            // does not depend on _devices' (unordered) iteration order.
+            //
+            // The shift == 0 branch is required, not defensive: for id 0
+            // (PeripheralId::TurboSound) the naive form evaluates
+            // `contribution >> 64`, which is undefined for a 64-bit type and
+            // observably yields different values at -O0 and -O2 — a divergence
+            // hash that disagreed between debug and release builds would make
+            // the oracle report phantom divergences.
+            const unsigned shift = id & 0x3F;
+            const uint64_t contribution = device->TTDHashState();
+            const uint64_t rotated = (shift == 0)
+                                     ? contribution
+                                     : ((contribution << shift) | (contribution >> (64 - shift)));
+            combined ^= rotated;
+        }
+    }
+    return combined;
+}
+
 void TTDPeripheralRegistry::CaptureAll(
-    const std::unordered_map<uint8_t, std::vector<uint8_t>>* prevBlobs,
     std::unordered_map<uint8_t, std::vector<uint8_t>>& outBlobs) const
 {
     outBlobs.clear();
@@ -63,138 +95,93 @@ void TTDPeripheralRegistry::CaptureAll(
         std::vector<uint8_t> currentState(stateSize);
         device->TTDSaveState(currentState.data());
 
-        // Find previous state for delta encoding
-        std::vector<uint8_t> prevState;  // Keep in scope for CompressWithDelta
-        if (prevBlobs)
-        {
-            auto it = prevBlobs->find(id);
-            if (it != prevBlobs->end() && !it->second.empty())
-            {
-                prevState = DecompressWithDelta(it->second, nullptr, 0);
-            }
-        }
-
-        // Compress with delta (if supported and previous state valid)
-        const uint8_t* prevData = prevState.size() == stateSize ? prevState.data() : nullptr;
-        outBlobs[id] = CompressWithDelta(
-            currentState.data(), stateSize,
-            prevData, prevState.size(),
-            device->TTDSupportsDelta());
+        outBlobs[id] = EncodeBlob(id, currentState.data(), stateSize);
     }
 }
 
-void TTDPeripheralRegistry::RestoreAll(
-    const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs,
-    const std::unordered_map<uint8_t, std::vector<uint8_t>>* prevBlobs) const
+TTDRestoreReport TTDPeripheralRegistry::RestoreAll(
+    const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs) const
 {
-    for (const auto& [id, blob] : blobs)
+    TTDRestoreReport result;
+
+    // Iterate the registered devices, not the blobs. Driving from the blob map
+    // would silently skip a device the checkpoint has no entry for, leaving it
+    // holding live state from whatever the machine was doing before the seek —
+    // a divergence with no error anywhere. Driving from the devices lets us at
+    // least name the device that is about to be left stale.
+    for (const auto& [id, device] : _devices)
     {
-        if (blob.empty())
+        if (!device)
             continue;
 
-        auto it = _devices.find(id);
-        if (it == _devices.end() || !it->second)
+        auto blobIt = blobs.find(id);
+        if (blobIt == blobs.end() || blobIt->second.empty())
+        {
+            // Recorded before this device existed, or captured while it was
+            // disconnected. Its state is now whatever the live machine last
+            // left there.
+            ++result.missingBlobs;
             continue;
-
-        TTDSerializable* device = it->second;
-
-        // Find previous state for delta decoding.
-        // IMPORTANT: prevState must remain in scope until DecompressWithDelta
-        // completes, as prevData points into its storage.
-        std::vector<uint8_t> prevState;
-        const uint8_t* prevData = nullptr;
-        size_t prevSize = 0;
-        if (prevBlobs)
-        {
-            auto prevIt = prevBlobs->find(id);
-            if (prevIt != prevBlobs->end() && !prevIt->second.empty())
-            {
-                prevState = DecompressWithDelta(prevIt->second, nullptr, 0);
-                prevData = prevState.data();
-                prevSize = prevState.size();
-            }
         }
 
-        // Decompress and restore
-        auto state = DecompressWithDelta(blob, prevData, prevSize);
-        if (state.size() == device->TTDStateSize())
+        auto state = DecodeBlob(id, blobIt->second);
+        if (state.size() != device->TTDStateSize())
         {
-            device->TTDLoadState(state.data());
-        }
-    }
-}
-
-std::vector<uint8_t> TTDPeripheralRegistry::CompressWithDelta(
-    const uint8_t* current, size_t size,
-    const uint8_t* previous, size_t prevSize,
-    bool supportsDelta)
-{
-    if (size == 0 || !current)
-        return {};
-
-    PeripheralBlobHeader header{};
-    header.uncompressedSize = static_cast<uint32_t>(size);
-
-    // Decide whether to use delta encoding
-    const bool useDelta = supportsDelta && previous && prevSize == size;
-
-    if (useDelta)
-    {
-        // XOR delta against previous
-        std::vector<uint8_t> delta(size);
-        for (size_t i = 0; i < size; ++i)
-        {
-            delta[i] = current[i] ^ previous[i];
+            ++result.sizeMismatches;
+            continue;
         }
 
-        // Compress the delta
-        auto compressed = codec::Compress(delta.data(), size);
-
-        // Only use delta if it's smaller
-        if (!compressed.empty() && compressed.size() < size)
-        {
-            header.flags = 1;  // isDelta
-            header.compressedSize = static_cast<uint32_t>(compressed.size());
-
-            std::vector<uint8_t> result(sizeof(header) + compressed.size());
-            std::memcpy(result.data(), &header, sizeof(header));
-            std::memcpy(result.data() + sizeof(header), compressed.data(), compressed.size());
-            return result;
-        }
+        device->TTDLoadState(state.data());
+        ++result.restored;
     }
 
-    // Fall back to full state compression
-    auto compressed = codec::Compress(current, size);
-    if (!compressed.empty() && compressed.size() < size)
-    {
-        header.flags = 0;  // not delta
-        header.compressedSize = static_cast<uint32_t>(compressed.size());
+    // Blobs whose id no device claims are intentionally ignored: a session
+    // recorded on a build with more devices must still load here.
+    result.unclaimedBlobs = blobs.size() - result.restored - result.sizeMismatches;
 
-        std::vector<uint8_t> result(sizeof(header) + compressed.size());
-        std::memcpy(result.data(), &header, sizeof(header));
-        std::memcpy(result.data() + sizeof(header), compressed.data(), compressed.size());
-        return result;
-    }
-
-    // Store uncompressed if compression didn't help
-    header.flags = 0;
-    header.compressedSize = 0;  // signals uncompressed
-
-    std::vector<uint8_t> result(sizeof(header) + size);
-    std::memcpy(result.data(), &header, sizeof(header));
-    std::memcpy(result.data() + sizeof(header), current, size);
     return result;
 }
 
-std::vector<uint8_t> TTDPeripheralRegistry::DecompressWithDelta(
-    const std::vector<uint8_t>& blob,
-    const uint8_t* previous, size_t prevSize)
+std::vector<uint8_t> TTDPeripheralRegistry::EncodeBlob(uint8_t id,
+                                                       const uint8_t* state,
+                                                       size_t size)
+{
+    if (size == 0 || !state)
+        return {};
+
+    PeripheralBlobHeader header{};
+    header.peripheralId = id;
+    header.uncompressedSize = static_cast<uint32_t>(size);
+
+    auto compressed = codec::Compress(state, size);
+    const bool worthCompressing = !compressed.empty() && compressed.size() < size;
+
+    const uint8_t* payload = worthCompressing ? compressed.data() : state;
+    const size_t payloadSize = worthCompressing ? compressed.size() : size;
+
+    // compressedSize == 0 signals a stored (uncompressed) payload.
+    header.compressedSize = worthCompressing ? static_cast<uint32_t>(compressed.size()) : 0;
+
+    std::vector<uint8_t> result(sizeof(header) + payloadSize);
+    std::memcpy(result.data(), &header, sizeof(header));
+    std::memcpy(result.data() + sizeof(header), payload, payloadSize);
+    return result;
+}
+
+std::vector<uint8_t> TTDPeripheralRegistry::DecodeBlob(uint8_t expectedId,
+                                                       const std::vector<uint8_t>& blob)
 {
     if (blob.size() < sizeof(PeripheralBlobHeader))
         return {};
 
     PeripheralBlobHeader header;
     std::memcpy(&header, blob.data(), sizeof(header));
+
+    // The id is carried both in the container key and in the blob itself. They
+    // must agree: a mismatch means the blob was filed under the wrong device,
+    // and loading it would feed one device another's bytes.
+    if (header.peripheralId != expectedId)
+        return {};
 
     const uint8_t* payload = blob.data() + sizeof(header);
     const size_t payloadSize = blob.size() - sizeof(header);
@@ -204,31 +191,18 @@ std::vector<uint8_t> TTDPeripheralRegistry::DecompressWithDelta(
 
     if (header.compressedSize > 0)
     {
-        // Decompress
+        if (header.compressedSize != payloadSize)
+            return {};
+
         std::vector<uint8_t> compressed(payload, payload + payloadSize);
         if (!codec::Decompress(compressed, rawSize, state.data()))
             return {};
     }
     else
     {
-        // Uncompressed
         if (payloadSize != rawSize)
             return {};
         std::memcpy(state.data(), payload, rawSize);
-    }
-
-    // Apply XOR delta if flagged
-    if (header.flags & 1)
-    {
-        // Delta blob REQUIRES previous state - without it, the data is garbage.
-        // This is a hard error, not a silent skip.
-        if (!previous || prevSize != rawSize)
-            return {};  // Fail: delta blob cannot be decoded without predecessor
-
-        for (size_t i = 0; i < rawSize; ++i)
-        {
-            state[i] ^= previous[i];
-        }
     }
 
     return state;

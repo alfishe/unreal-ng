@@ -107,7 +107,6 @@ struct TTDCpuState
     uint8_t  nmi_in_progress = 0;
     uint8_t  int_pending = 0;   ///< INT line state (latched)
     uint8_t  int_gate = 1;      ///< External interrupts gate (1 = enabled)
-
     // Padding at offset 43 (before halt_cycle) — see reserved0.
     uint8_t  reserved2 = 0;
 
@@ -117,10 +116,23 @@ struct TTDCpuState
 // The named reservedN members above must occupy exactly the former implicit
 // padding offsets — the byte-wise hash covers the whole struct, so the layout
 // must never drift silently.
+//
+// Two complementary families of check: the absolute offsets pin the layout
+// outright, while the relative ones state the actual invariant (each reservedN
+// immediately precedes the member whose alignment gap it fills) and catch
+// trailing padding, which absolute offsets alone cannot see.
 static_assert(sizeof(TTDCpuState) == 48, "TTDCpuState layout must stay stable (hashed byte-wise)");
 static_assert(offsetof(TTDCpuState, memptr) == 32, "reserved0 must sit at pad offset 31");
 static_assert(offsetof(TTDCpuState, eipos) == 36, "reserved1 must sit at pad offset 35");
 static_assert(offsetof(TTDCpuState, halt_cycle) == 44, "reserved2 must sit at pad offset 43");
+static_assert(offsetof(TTDCpuState, halt_cycle) + sizeof(uint32_t) == sizeof(TTDCpuState),
+              "TTDCpuState has implicit trailing padding - check reserved0/1/2 placement");
+static_assert(offsetof(TTDCpuState, memptr) == offsetof(TTDCpuState, reserved0) + 1,
+              "TTDCpuState reserved0 does not fill the alignment gap before memptr");
+static_assert(offsetof(TTDCpuState, eipos) == offsetof(TTDCpuState, reserved1) + 1,
+              "TTDCpuState reserved1 does not fill the alignment gap before eipos");
+static_assert(offsetof(TTDCpuState, halt_cycle) == offsetof(TTDCpuState, reserved2) + 1,
+              "TTDCpuState reserved2 does not fill the alignment gap before halt_cycle");
 
 /// @brief Chipset state — the port-latch subset of EmulatorState plus
 /// counters. Captured at frame boundaries so the restore path can rebuild
@@ -129,10 +141,8 @@ static_assert(offsetof(TTDCpuState, halt_cycle) == 44, "reserved2 must sit at pa
 /// Peripheral state (AY, tape, FDC, Covox) is NOT here — those devices
 /// implement TTDSerializable and land in TTDCheckpoint as blobs.
 ///
-/// For v1 only the standard port latches are actively populated (48K,
-/// 128K, Pentagon). Extended fields (GMX, ATM, Quorum, SMUC, Soundrive)
-/// are present in the struct so future models don't change its layout;
-/// they read as zero on models that don't use them.
+/// Extended/model-specific port latches use TTDPeripheralRegistry serializers.
+/// This common struct contains only standard Spectrum 128K ports.
 struct TTDChipsetState
 {
     // ---- Counters ----
@@ -143,59 +153,39 @@ struct TTDChipsetState
     uint8_t p7FFD = 0;       ///< 128K banking / screen / ROM select
     uint8_t pFE = 0;         ///< Beeper / EAR / border color / mic
     uint8_t pEFF7 = 0;       ///< Beta Disk interface control
-    uint8_t pXXXX = 0;       ///< Reserved / model-specific
     uint8_t pBFFD = 0;       ///< AY-3-8912 register select
     uint8_t pFFFD = 0;       ///< AY-3-8912 data
-    uint8_t pDFFD = 0;       ///< Pentagon 512K / Profi extension banking
-    uint8_t pFDFD = 0;       ///< Profi extension banking
-    uint8_t p1FFD = 0;       ///< +3 / Pentagon 1024 banking
     uint8_t pFF77 = 0;       ///< TurboSound chip select
-
     uint8_t border_attr = 0;
     uint8_t flags = 0;       ///< Runtime execution flags (CF_TRDOS etc.)
 
-    // ---- Extended port latches (populated only on relevant models) ----
-    uint8_t p7EFD = 0, p78FD = 0, p7AFD = 0, p7CFD = 0;  ///< GMX
-    uint8_t gmx_config = 0, gmx_magic_shift = 0;
-    uint8_t p00 = 0, p80FD = 0;                            ///< Quorum
-    uint8_t aFE = 0, aFB = 0;                              ///< ATM 4.50 system
-    uint8_t aFF77 = 0;                                     ///< ATM TurboSound
-    uint8_t active_ay = 0;                                 ///< Active AY chip index
-    uint8_t pBD = 0, pBE = 0, pBF = 0;                     ///< ATM3
-    uint8_t pFFBA = 0, p7FBA = 0;                          ///< SMUC
-    uint8_t p0F = 0, p1F = 0, p4F = 0, p5F = 0;            ///< Soundrive
-    uint8_t pLSY256 = 0;
-    uint8_t wd_shadow[4] = {0, 0, 0, 0};                   ///< 2F, 4F, 6F, 8F
+    // ---- FDC state (common to Beta Disk models) ----
+    uint8_t wd_shadow[4] = {0, 0, 0, 0};
 
     // ---- Video / palette ----
-    uint8_t videoMode = 0;             ///< VideoModeEnum at checkpoint time (for direct restore)
-    uint8_t comp_pal[16] = {0};        ///< Hardware palette registers
+    uint8_t comp_pal[16] = {0};
     uint8_t ulaplus_mode = 0;
     uint8_t ulaplus_reg = 0;
-    uint8_t ulaplus_cram[64] = {0};    ///< ULAplus palette entries
+    uint8_t ulaplus_cram[64] = {0};
 
-    // Padding at offsets 137-139 (before pFFF7). Must be NAMED members — see
-    // reserved0 in TTDCpuState: implicit padding is not copied by member-wise
-    // moves, so timeline-stored checkpoints keep heap garbage here and the
-    // divergence oracle hashes mismatch (observed as Chipset[137..139] diffs).
-    uint8_t reserved3[3] = {0, 0, 0};
-
-    // ---- ATM 7.10 / ATM3 memory mapping ----
-    uint32_t pFFF7[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-
-    // ---- TS-Conf palette/sprite files (allocated but unused in v1) ----
-    // cram[256] and sfile[256] are deliberately omitted for v1 — they add
-    // 2 KB per checkpoint and no v1-supported model populates them. Adding
-    // them later is a session-internal layout change (no on-disk format
-    // compatibility to preserve in v1).
-
-    // Tail padding at offsets 172-175 (struct alignment is 8) — see reserved3.
-    // Observed historically as Chipset[172..174] hash diffs.
-    uint8_t reserved4[4] = {0, 0, 0, 0};
+    /// Explicit tail filler. MUST keep the struct free of implicit padding:
+    /// these objects are copied by member-wise assignment (which leaves padding
+    /// bytes untouched) and then hashed byte-wise, so any implicit padding
+    /// would carry uninitialized garbage into the hash and the divergence
+    /// oracle would report phantom mismatches.
+    ///
+    /// master hit exactly this on the pre-cleanup 176-byte layout (named
+    /// reserved3/reserved4 around pFFF7, observed as Chipset[137..139] and
+    /// [172..174] diffs). Those members are gone with the extended ports they
+    /// guarded; this branch saw the same failure at [114..119] instead.
+    uint8_t reserved[10] = {};
 };
 
-static_assert(sizeof(TTDChipsetState) == 176, "TTDChipsetState layout must stay stable (hashed byte-wise)");
-static_assert(offsetof(TTDChipsetState, pFFF7) == 140, "reserved3 must sit at pad offsets 137-139");
+static_assert(sizeof(TTDChipsetState) == 120, "TTDChipsetState layout must stay stable (hashed byte-wise)");
+static_assert(offsetof(TTDChipsetState, reserved) == 110, "reserved must sit at pad offset 110");
+static_assert(offsetof(TTDChipsetState, reserved) + sizeof(TTDChipsetState::reserved)
+                  == sizeof(TTDChipsetState),
+              "TTDChipsetState has implicit trailing padding - resize reserved[]");
 
 /// @brief Frame kind discriminator (I-frame / P-frame).
 ///
@@ -264,20 +254,11 @@ struct TTDCheckpoint
     TTDCpuState     cpu;
     TTDChipsetState chipset;
 
-    // --- Peripheral state blobs (populated by P1.5) ---
-    /// Legacy per-device vectors. Kept for backward compatibility with
-    /// existing serialization; new peripherals use peripheralBlobs map.
-    /// Empty vectors cost ~24 bytes each (std::vector overhead), but only
-    /// populated devices write actual state data.
-    std::vector<uint8_t> ayState;
-    std::vector<uint8_t> fdcState;
-    std::vector<uint8_t> tapeState;
-    std::vector<uint8_t> covoxState;
-
-    // --- Flexible peripheral registry (P1.5+) ---
-    /// Map of PeripheralId → state blob. Only connected peripherals appear.
-    /// Non-connected devices have no entry (zero overhead beyond map itself).
-    /// Blobs may be raw state (full snapshot) or xor-delta compressed.
+    // --- Peripheral state (TTDPeripheralRegistry) ---
+    /// Map of PeripheralId → serialized state. Only devices actually connected
+    /// on the active model appear; everything else costs nothing. Devices
+    /// register themselves through TTDPeripheralRegistry, so neither this
+    /// struct nor the capture path names any specific device or machine.
     std::unordered_map<uint8_t, std::vector<uint8_t>> peripheralBlobs;
 
     // --- RAM pages (populated by P1.3) ---

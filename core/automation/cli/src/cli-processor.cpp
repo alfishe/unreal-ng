@@ -83,6 +83,8 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"list", &CLIProcessor::HandleList},
                         {"select", &CLIProcessor::HandleSelect},
                         {"reset", &CLIProcessor::HandleReset},
+                        {"nmi", &CLIProcessor::HandleNmi},    // Pulse the NMI line
+                        {"mni", &CLIProcessor::HandleMni},    // Scorpion magic button (NMI + service monitor)
                         {"pause", &CLIProcessor::HandlePause},
                         {"resume", &CLIProcessor::HandleResume},
                         {"step", &CLIProcessor::HandleStepIn},        // Always one instruction

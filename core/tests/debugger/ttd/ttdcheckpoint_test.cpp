@@ -11,6 +11,7 @@
 #include <gtest/gtest.h>
 #include <cstring>
 #include <vector>
+#include <new>
 
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "emulator/cpu/z80.h"
@@ -97,48 +98,24 @@ EmulatorState MakeCanonicalState()
     s.t_states = 0x1234567890ABCDEF;
     s.frame_counter = 0xFEDCBA9876543210;
 
+    // Standard Spectrum 128K port latches (captured by TTDChipsetState)
     s.p7FFD = 0x11;
     s.pFE = 0x22;
     s.pEFF7 = 0x33;
-    s.pXXXX = 0x44;
     s.pBFFD = 0x55;
     s.pFFFD = 0x66;
-    s.pDFFD = 0x77;
-    s.pFDFD = 0x88;
-    s.p1FFD = 0x99;
     s.pFF77 = 0xAA;
     s.border_attr = 0x07;
     s.flags = 0x1F;
 
-    s.p7EFD = 0xE1;
-    s.p78FD = 0xE2;
-    s.p7AFD = 0xE3;
-    s.p7CFD = 0xE4;
-    s.gmx_config = 0xE5;
-    s.gmx_magic_shift = 0xE6;
-    s.p00 = 0xC1;
-    s.p80FD = 0xC2;
-    s.aFE = 0xA1;
-    s.aFB = 0xA2;
-    s.aFF77 = 0xA3;
-    s.active_ay = 0xA4;
-    s.pBD = 0xBD;
-    s.pBE = 0xBE;
-    s.pBF = 0xBF;
-    s.pFFBA = 0xBA;
-    s.p7FBA = 0x7B;
-    s.p0F = 0x0F;
-    s.p1F = 0x1F;
-    s.p4F = 0x4F;
-    s.p5F = 0x5F;
-    s.pLSY256 = 0x25;
-
+    // FDC state
     for (int i = 0; i < 4; ++i) s.wd_shadow[i] = static_cast<uint8_t>(0x2F + i);
+
+    // Video / palette
     for (int i = 0; i < 16; ++i) s.comp_pal[i] = static_cast<uint8_t>(i);
     s.ulaplus_mode = 0x01;
     s.ulaplus_reg = 0x10;
     for (int i = 0; i < 64; ++i) s.ulaplus_cram[i] = static_cast<uint8_t>(i);
-    for (int i = 0; i < 8; ++i) s.pFFF7[i] = static_cast<unsigned>(0xF7 + i);
 
     return s;
 }
@@ -335,50 +312,28 @@ TEST(TTDChipsetStateTest, CaptureRestore_RoundTrip_PortLatches)
 
     RestoreChipsetState(captured, &restored);
 
+    // Counters
     EXPECT_EQ(restored.t_states, original.t_states);
     EXPECT_EQ(restored.frame_counter, original.frame_counter);
+
+    // Standard Spectrum 128K port latches
     EXPECT_EQ(restored.p7FFD, original.p7FFD);
     EXPECT_EQ(restored.pFE, original.pFE);
     EXPECT_EQ(restored.pEFF7, original.pEFF7);
-    EXPECT_EQ(restored.pXXXX, original.pXXXX);
     EXPECT_EQ(restored.pBFFD, original.pBFFD);
     EXPECT_EQ(restored.pFFFD, original.pFFFD);
-    EXPECT_EQ(restored.pDFFD, original.pDFFD);
-    EXPECT_EQ(restored.pFDFD, original.pFDFD);
-    EXPECT_EQ(restored.p1FFD, original.p1FFD);
     EXPECT_EQ(restored.pFF77, original.pFF77);
     EXPECT_EQ(restored.border_attr, original.border_attr);
     EXPECT_EQ(restored.flags, original.flags);
 
-    EXPECT_EQ(restored.p7EFD, original.p7EFD);
-    EXPECT_EQ(restored.p78FD, original.p78FD);
-    EXPECT_EQ(restored.p7AFD, original.p7AFD);
-    EXPECT_EQ(restored.p7CFD, original.p7CFD);
-    EXPECT_EQ(restored.gmx_config, original.gmx_config);
-    EXPECT_EQ(restored.gmx_magic_shift, original.gmx_magic_shift);
-    EXPECT_EQ(restored.p00, original.p00);
-    EXPECT_EQ(restored.p80FD, original.p80FD);
-    EXPECT_EQ(restored.aFE, original.aFE);
-    EXPECT_EQ(restored.aFB, original.aFB);
-    EXPECT_EQ(restored.aFF77, original.aFF77);
-    EXPECT_EQ(restored.active_ay, original.active_ay);
-    EXPECT_EQ(restored.pBD, original.pBD);
-    EXPECT_EQ(restored.pBE, original.pBE);
-    EXPECT_EQ(restored.pBF, original.pBF);
-    EXPECT_EQ(restored.pFFBA, original.pFFBA);
-    EXPECT_EQ(restored.p7FBA, original.p7FBA);
-    EXPECT_EQ(restored.p0F, original.p0F);
-    EXPECT_EQ(restored.p1F, original.p1F);
-    EXPECT_EQ(restored.p4F, original.p4F);
-    EXPECT_EQ(restored.p5F, original.p5F);
-    EXPECT_EQ(restored.pLSY256, original.pLSY256);
-
+    // FDC state
     EXPECT_EQ(std::memcmp(restored.wd_shadow, original.wd_shadow, 4), 0);
+
+    // Video / palette
     EXPECT_EQ(std::memcmp(restored.comp_pal, original.comp_pal, 16), 0);
     EXPECT_EQ(restored.ulaplus_mode, original.ulaplus_mode);
     EXPECT_EQ(restored.ulaplus_reg, original.ulaplus_reg);
     EXPECT_EQ(std::memcmp(restored.ulaplus_cram, original.ulaplus_cram, 64), 0);
-    EXPECT_EQ(std::memcmp(restored.pFFF7, original.pFFF7, sizeof(restored.pFFF7)), 0);
 }
 
 TEST(TTDChipsetStateTest, Restore_NullDestinationIsSafe)
@@ -401,20 +356,21 @@ TEST(TTDChipsetStateTest, Capture_DetectsAllPortLatchChanges)
             << "Change was not captured"; \
     } while (0)
 
+    // Counters
     EXPECT_FIELD_SEEN([](EmulatorState& s)->uint64_t& { return s.t_states; }, 0xFFFFFFFFFFFFFFFFull);
     EXPECT_FIELD_SEEN([](EmulatorState& s)->uint64_t& { return s.frame_counter; }, 0xFFFFFFFFFFFFFFFFull);
+
+    // Standard Spectrum 128K port latches
     EXPECT_FIELD_SEEN([](EmulatorState& s)->uint8_t& { return s.p7FFD; }, 0xFF);
     EXPECT_FIELD_SEEN([](EmulatorState& s)->uint8_t& { return s.pFE; }, 0xFF);
     EXPECT_FIELD_SEEN([](EmulatorState& s)->uint8_t& { return s.pEFF7; }, 0xFF);
     EXPECT_FIELD_SEEN([](EmulatorState& s)->uint8_t& { return s.pBFFD; }, 0xFF);
     EXPECT_FIELD_SEEN([](EmulatorState& s)->uint8_t& { return s.pFFFD; }, 0xFF);
-    EXPECT_FIELD_SEEN([](EmulatorState& s)->uint8_t& { return s.pDFFD; }, 0xFF);
-    EXPECT_FIELD_SEEN([](EmulatorState& s)->uint8_t& { return s.pFDFD; }, 0xFF);
-    EXPECT_FIELD_SEEN([](EmulatorState& s)->uint8_t& { return s.p1FFD; }, 0xFF);
     EXPECT_FIELD_SEEN([](EmulatorState& s)->uint8_t& { return s.pFF77; }, 0xFF);
     EXPECT_FIELD_SEEN([](EmulatorState& s)->uint8_t& { return s.border_attr; }, 0xFF);
     EXPECT_FIELD_SEEN([](EmulatorState& s)->uint8_t& { return s.flags; }, 0xFF);
-    EXPECT_FIELD_SEEN([](EmulatorState& s)->unsigned& { return s.active_ay; }, 0xFF);
+
+    // Video / palette
     EXPECT_FIELD_SEEN([](EmulatorState& s)->uint8_t& { return s.ulaplus_mode; }, 0xFF);
     EXPECT_FIELD_SEEN([](EmulatorState& s)->uint8_t& { return s.ulaplus_reg; }, 0xFF);
 #undef EXPECT_FIELD_SEEN
@@ -439,9 +395,37 @@ TEST(TTDChipsetStateTest, CaptureRestore_PaletteArrays)
     for (int i = 0; i < 4; ++i)  EXPECT_EQ(restored.wd_shadow[i], 0xF0 + i);
 }
 
+// Regression: TTDCpuState / TTDChipsetState are copied by member-wise
+// assignment into TTDCheckpoint and then hashed byte-wise. Implicit padding
+// is NOT copied by assignment, so any padding byte would carry uninitialized
+// garbage from the destination allocation into the hash — making an identical
+// machine state hash differently depending on heap history.
+TEST(TTDStateLayoutTest, AssignmentPreservesEveryByte)
+{
+    // Destination pre-filled with 0xAA: any byte assignment fails to write
+    // shows up as 0xAA instead of the source's value.
+    alignas(TTDCpuState) uint8_t cpuRaw[sizeof(TTDCpuState)];
+    std::memset(cpuRaw, 0xAA, sizeof(cpuRaw));
+    TTDCpuState* cpuDst = new (cpuRaw) TTDCpuState;
+
+    const TTDCpuState cpuSrc = CaptureCpuState(MakeCanonicalZ80());
+    *cpuDst = cpuSrc;
+    EXPECT_EQ(std::memcmp(cpuDst, &cpuSrc, sizeof(TTDCpuState)), 0)
+        << "TTDCpuState has implicit padding that assignment does not copy";
+
+    alignas(TTDChipsetState) uint8_t chipRaw[sizeof(TTDChipsetState)];
+    std::memset(chipRaw, 0xAA, sizeof(chipRaw));
+    TTDChipsetState* chipDst = new (chipRaw) TTDChipsetState;
+
+    const TTDChipsetState chipSrc = CaptureChipsetState(MakeCanonicalState());
+    *chipDst = chipSrc;
+    EXPECT_EQ(std::memcmp(chipDst, &chipSrc, sizeof(TTDChipsetState)), 0)
+        << "TTDChipsetState has implicit padding that assignment does not copy";
+}
+
 TEST(TTDChipsetStateTest, Capture_SensibleSize)
 {
-    // Should be ~200-300 bytes. Larger than CPU state due to palettes.
+    // 120 bytes for standard 128K ports + palettes (extended ports via registry).
     EXPECT_LE(sizeof(TTDChipsetState), 512u);
     EXPECT_TRUE(std::is_trivially_copyable_v<TTDChipsetState>);
     EXPECT_TRUE(std::is_standard_layout_v<TTDChipsetState>);
@@ -454,10 +438,7 @@ TEST(TTDChipsetStateTest, Capture_SensibleSize)
 TEST(TTDCheckpointTest, DefaultConstruct_EmptyPeripheralBlobs)
 {
     TTDCheckpoint cp;
-    EXPECT_TRUE(cp.ayState.empty());
-    EXPECT_TRUE(cp.fdcState.empty());
-    EXPECT_TRUE(cp.tapeState.empty());
-    EXPECT_TRUE(cp.covoxState.empty());
+    EXPECT_TRUE(cp.peripheralBlobs.empty());
     EXPECT_TRUE(cp.ramPages.empty());
     EXPECT_EQ(cp.inputJournalOffset, 0u);
     EXPECT_EQ(cp.writeJournalOffset, 0u);
@@ -476,7 +457,8 @@ TEST(TTDCheckpointTest, Composite_RoundTrip)
 
     // Pretend we have peripheral blobs from a not-yet-implemented device.
     // Round-trip through a vector copy to simulate the in-RAM blob target.
-    cp.ayState = std::vector<uint8_t>{0x01, 0x02, 0x03, 0x04};
+    cp.peripheralBlobs[static_cast<uint8_t>(ttd::PeripheralId::TurboSound)] =
+        std::vector<uint8_t>{0x01, 0x02, 0x03, 0x04};
 
     // Now restore into fresh destination structs.
     Z80State cpuDst{};
@@ -490,7 +472,8 @@ TEST(TTDCheckpointTest, Composite_RoundTrip)
     EXPECT_TRUE(CpuStatesMatchArchitectural(cpuSrc, cpuDst));
     EXPECT_EQ(chipDst.p7FFD, chipSrc.p7FFD);
     EXPECT_EQ(chipDst.t_states, chipSrc.t_states);
-    EXPECT_EQ(cp.ayState, (std::vector<uint8_t>{0x01, 0x02, 0x03, 0x04}));
+    EXPECT_EQ(cp.peripheralBlobs.at(static_cast<uint8_t>(ttd::PeripheralId::TurboSound)),
+              (std::vector<uint8_t>{0x01, 0x02, 0x03, 0x04}));
 }
 
 // ===========================================================================

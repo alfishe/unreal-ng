@@ -175,7 +175,12 @@ TEST(TTD_Covox_ManagerIntegration_Test, CaptureNow_PopulatesCovoxStateBlob)
 
     if (sm->hasCovox())
     {
-        EXPECT_EQ(cp->covoxState.size(), 4u)
+        const auto covoxBlob = cp->peripheralBlobs.find(
+            static_cast<uint8_t>(ttd::PeripheralId::Covox));
+        ASSERT_NE(covoxBlob, cp->peripheralBlobs.end());
+        const auto covoxState = ttd::TTDPeripheralRegistry::DecodeBlob(
+            static_cast<uint8_t>(ttd::PeripheralId::Covox), covoxBlob->second);
+        EXPECT_EQ(covoxState.size(), 4u)
             << "covoxState blob must contain the 4-byte DAC payload when Covox is present";
     }
     // else: covoxState may be empty — that's a valid no-op for a model without Covox.

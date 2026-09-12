@@ -189,7 +189,7 @@ uint8_t Memory::MemoryReadFast(uint16_t addr, [[maybe_unused]] bool isExecution)
 /// Used from: Z80::DbgMemIf
 /// \param addr 16-bit address in Z80 memory space
 /// \return Byte read from Z80 memory
-uint8_t Memory::MemoryReadDebug(uint16_t addr, [[maybe_unused]] bool isExecution)
+uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
 {
     /// region <MemoryReadFast functionality>
 
@@ -461,7 +461,7 @@ void Memory::AllocateAndExportMemoryToMmap()
     if (!_feature_sharedmemory_enabled)
     {
         // Feature disabled - allocate regular heap memory
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES];
+        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
         MLOGDEBUG("Memory allocated using heap (sharedmemory feature disabled)");
         return;
     }
@@ -516,7 +516,7 @@ void Memory::AllocateAndExportMemoryToMmap()
         DWORD error = GetLastError();
         LOGERROR("Failed to create file mapping object (Error %lu), falling back to heap allocation", error);
         _mappedMemoryHandle = INVALID_HANDLE_VALUE;
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES];
+        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
         return;
     }
 
@@ -534,7 +534,7 @@ void Memory::AllocateAndExportMemoryToMmap()
         LOGERROR("Failed to map view of file (Error %lu), falling back to heap allocation", error);
         CloseHandle(_mappedMemoryHandle);
         _mappedMemoryHandle = INVALID_HANDLE_VALUE;
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES];
+        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
         return;
     }
 
@@ -555,7 +555,7 @@ void Memory::AllocateAndExportMemoryToMmap()
     {
         LOGERROR("Failed to create shared memory object: %s (errno=%d), falling back to heap allocation",
                  strerror(errno), errno);
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES];
+        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
         return;
     }
 
@@ -566,7 +566,7 @@ void Memory::AllocateAndExportMemoryToMmap()
         close(_mappedMemoryFd);
         shm_unlink(shmName.c_str());
         _mappedMemoryFd = -1;
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES];
+        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
         return;
     }
 
@@ -580,7 +580,7 @@ void Memory::AllocateAndExportMemoryToMmap()
         close(_mappedMemoryFd);
         shm_unlink(shmName.c_str());
         _mappedMemoryFd = -1;
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES];
+        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
         return;
     }
 
@@ -755,8 +755,12 @@ void Memory::SetROMMode(ROMModeEnum mode)
     if (mode == RM_CACHE)
         mode = RM_SOS;
 
-    // No RAM/cache/SERVICE
-    state.p1FFD &= ~7;
+    // No RAM/cache/SERVICE — except on Scorpion machines: p1FFD bits 0-2 are
+    // plain OUT #1FFD latches (RAM at #0000 / Shadow Monitor / RS-232 line)
+    // that a ROM-mode switch must not clobber. The #0000 priority chain in
+    // ScorpionMemory::UpdateModelBanks() derives everything from the latches (design §3)
+    if (config.mem_model != MM_SCORP && config.mem_model != MM_PROFSCORP)
+        state.p1FFD &= ~7;
     state.pDFFD &= ~0x10;
     state.flags &= ~CF_CACHEON;
 
@@ -798,6 +802,13 @@ void Memory::UpdateZ80Banks()
 {
     EmulatorState& state = _context->emulatorState;
     const CONFIG& config = _context->config;
+
+    // Model derivatives may own the whole latch-to-bank translation
+    // (ScorpionMemory does for MM_SCORP / MM_PROFSCORP); a true return skips
+    // the generic body below and keeps every base model byte-identical
+    // (design §3)
+    if (UpdateModelBanks())
+        return;
 
     // TR-DOS session machinery requires both DOS and service ROMs to be present
     // (models without them can never enter a TR-DOS session)
@@ -852,6 +863,19 @@ void Memory::UpdateZ80Banks()
     }
 
     // TODO: implement support for extended ports and cache
+}
+
+/// RAM bank mask derived from the configured RAM size (KB): 256 KB → 0x0F,
+/// 1024 KB → 0x3F. config.ramsize is in kilobytes (platform.h RAM_256 = 256);
+/// a byte-based >>14 shift would compute 0 pages and underflow the mask to
+/// 0xFF, unmasking every bank bit (design §3)
+uint8_t Memory::GetRamMask() const
+{
+    uint32_t pages = _context->config.ramsize >> 4;  // KB -> 16 KB pages
+    if (pages == 0 || pages > MAX_RAM_PAGES)
+        pages = MAX_RAM_PAGES;
+
+    return static_cast<uint8_t>(pages - 1);
 }
 
 /// Set ROM page
@@ -1147,7 +1171,7 @@ uint8_t* Memory::RAMPageAddress(uint16_t page)
     return result;
 }
 
-/// Up to MAX_ROM_PAGES 64 pages
+/// Up to MAX_ROM_PAGES pages (2 MB since the ProfROM quadrant expansion)
 /// \param page
 /// \return
 uint8_t* Memory::ROMPageHostAddress(uint8_t page)

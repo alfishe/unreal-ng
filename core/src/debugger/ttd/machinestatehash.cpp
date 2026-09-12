@@ -3,6 +3,7 @@
 //
 
 #include "debugger/ttd/machinestatehash.h"
+#include "debugger/ttd/ttdperipheralregistry.h"
 
 #include "emulator/cpu/z80.h"
 #include "emulator/platform.h"
@@ -59,7 +60,8 @@ uint64_t HashCombine(uint64_t seed, const uint8_t* data, size_t size)
 
 MachineStateSnapshot CaptureSnapshot(const Z80State& cpu,
                                       const EmulatorState& state,
-                                      uint64_t ram_digest)
+                                      uint64_t ram_digest,
+                                      const TTDPeripheralRegistry* registry)
 {
     MachineStateSnapshot s;
 
@@ -94,25 +96,17 @@ MachineStateSnapshot CaptureSnapshot(const Z80State& cpu,
     s.q = cpu.q;
     s.nmi_in_progress = cpu.nmi_in_progress ? 1 : 0;
 
-    // ---- Port latches (EmulatorState) ----
+    // ---- Standard Spectrum 128K port latches ----
     s.p7FFD = state.p7FFD;
     s.pFE = state.pFE;
     s.pEFF7 = state.pEFF7;
     s.pBFFD = state.pBFFD;
     s.pFFFD = state.pFFFD;
-    s.pDFFD = state.pDFFD;
-    s.pFDFD = state.pFDFD;
-    s.p1FFD = state.p1FFD;
     s.pFF77 = state.pFF77;
-    s.p7EFD = state.p7EFD;
-    s.p78FD = state.p78FD;
-    s.p7AFD = state.p7AFD;
-    s.p7CFD = state.p7CFD;
-    s.gmx_config = state.gmx_config;
-    s.gmx_magic_shift = state.gmx_magic_shift;
-    s.p00 = state.p00;
-    s.p80FD = state.p80FD;
     s.border_attr = state.border_attr;
+
+    // Model-specific state hashed via registry (extended banking, Scorpion ProfROM, etc.)
+    s.peripheral_hash = registry ? registry->ComputePeripheralHash() : 0;
 
     // ---- Counters ----
     s.t_states = state.t_states;

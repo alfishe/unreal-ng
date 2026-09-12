@@ -78,6 +78,17 @@ protected:
         _screen->SetVideoMode(M_PENTAGON128K);
     }
 
+    void SetupScorpion()
+    {
+        CONFIG& config = _context->config;
+        config.frame = 69888;   // 224 * 312 - Sinclair-matching Scorpion geometry
+        config.t_line = 224;
+        config.mem_model = MM_SCORP;
+        config.floatbus = 1;  // Enable floating bus for tests
+
+        _screen->SetVideoMode(M_SCORPION);
+    }
+
     /// Calculate the first t-state of paper on a given scanline
     uint32_t PaperStartOnLine(int line)
     {
@@ -278,6 +289,40 @@ TEST_F(IOContention_Test, Pentagon_OutNoContentionDelay)
 
     EXPECT_EQ(tAfter - tBefore, 0u)
         << "Pentagon out() should never add contention delay";
+}
+
+/// ===================== IO Contention: Scorpion ====================
+
+TEST_F(IOContention_Test, Scorpion_NoIOContention)
+{
+    SetupScorpion();
+
+    // Scorpion discrete-logic ULA has no contention: #FE and every other port
+    // read 0T delay even in the middle of the paper area (hardware-reference 6)
+    uint32_t paperStart = PaperStartOnLine(64);
+    _z80->t = paperStart;
+
+    EXPECT_EQ(_ula->GetIOContentionDelay(0xFE), 0);
+    EXPECT_EQ(_ula->GetIOContentionDelay(0xFD), 0);
+    EXPECT_EQ(_ula->GetIOContentionDelay(0xFF), 0);
+
+    EXPECT_FALSE(_ula->IsContentionEnabled());
+    EXPECT_EQ(_ula->GetFetchType(), ULA_DISCRETE_LOGIC);
+}
+
+TEST_F(IOContention_Test, Scorpion_OutNoContentionDelay)
+{
+    SetupScorpion();
+
+    uint32_t paperStart = PaperStartOnLine(64);
+    _z80->t = paperStart;
+
+    uint32_t tBefore = _z80->t;
+    _z80->out(0xFE, 0x00);
+    uint32_t tAfter = _z80->t;
+
+    EXPECT_EQ(tAfter - tBefore, 0u)
+        << "Scorpion out() should never add contention delay";
 }
 
 /// ============================================================================
@@ -687,6 +732,66 @@ TEST_F(IOContention_Test, Pentagon_FloatingBusNeverReturnsFFDuringPaper)
         EXPECT_NE(val, 0xFF)
             << "Pentagon floating bus must not return 0xFF during paper at offset " << i;
     }
+}
+
+/// ===================== Floating Bus: Scorpion 4T discrete pipeline ====================
+
+TEST_F(IOContention_Test, Scorpion_FloatingBus4TDiscretePipelineAllPhases)
+{
+    SetupScorpion();
+
+    Memory& memory = *_context->pMemory;
+    memory.DefaultBanksFor48k();
+
+    // Scorpion shares the Pentagon discrete-logic video controller: continuous
+    // 4T fetch, phases 0-1 pixel / 2-3 attribute, no shift gaps (hardware-reference 6)
+    memory.DirectWriteToZ80Memory(0x4000, 0xA0);  // cell 0 pixel
+    memory.DirectWriteToZ80Memory(0x5800, 0xA1);  // cell 0 attribute
+    memory.DirectWriteToZ80Memory(0x4001, 0xB0);  // cell 1 pixel
+    memory.DirectWriteToZ80Memory(0x5801, 0xB1);  // cell 1 attribute
+    memory.DirectWriteToZ80Memory(0x4002, 0xC0);  // cell 2 pixel
+    memory.DirectWriteToZ80Memory(0x5802, 0xC1);  // cell 2 attribute
+
+    uint32_t paperStart = PaperStartOnLine(0);
+
+    // ── Cell 0 (tInPaper 0-3): pixel, pixel, attribute, attribute ──
+    _z80->t = paperStart - 4;
+    EXPECT_EQ(_ula->GetFloatingBus(), 0xA0) << "phase4=0 should return pixel byte 0xA0 of cell 0";
+
+    _z80->t = paperStart - 3;
+    EXPECT_EQ(_ula->GetFloatingBus(), 0xA0) << "phase4=1 should return pixel byte 0xA0 of cell 0";
+
+    _z80->t = paperStart - 2;
+    EXPECT_EQ(_ula->GetFloatingBus(), 0xA1) << "phase4=2 should return attribute byte 0xA1 of cell 0";
+
+    _z80->t = paperStart - 1;
+    EXPECT_EQ(_ula->GetFloatingBus(), 0xA1) << "phase4=3 should return attribute byte 0xA1 of cell 0";
+
+    // ── Cell 1 (tInPaper 4-7): continuous fetch, no 0xFF shift gap ──
+    _z80->t = paperStart;
+    EXPECT_EQ(_ula->GetFloatingBus(), 0xB0) << "phase4=0 of cell 1 should return pixel byte 0xB0";
+
+    _z80->t = paperStart + 2;
+    EXPECT_EQ(_ula->GetFloatingBus(), 0xB1) << "phase4=2 of cell 1 should return attribute byte 0xB1";
+
+    // ── Cell 2 (tInPaper 8-11) ──
+    _z80->t = paperStart + 4;
+    EXPECT_EQ(_ula->GetFloatingBus(), 0xC0) << "phase4=0 of cell 2 should return pixel byte 0xC0";
+
+    _z80->t = paperStart + 6;
+    EXPECT_EQ(_ula->GetFloatingBus(), 0xC1) << "phase4=2 of cell 2 should return attribute byte 0xC1";
+}
+
+TEST_F(IOContention_Test, Scorpion_FloatingBusReturnsFFInBlank)
+{
+    SetupScorpion();
+
+    // Outside the paper area the floating bus is idle: 0xFF in blank and border
+    _z80->t = 0;
+    EXPECT_EQ(_ula->GetFloatingBus(), 0xFF);
+
+    _z80->t = 100;
+    EXPECT_EQ(_ula->GetFloatingBus(), 0xFF);
 }
 
 /// ===================== Floating Bus: ZX-128K ====================

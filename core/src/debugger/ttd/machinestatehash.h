@@ -31,6 +31,8 @@ struct EmulatorState;
 
 namespace ttd {
 
+class TTDPeripheralRegistry;
+
 /// region <Hash primitives>
 
 /// 64-bit FNV-1a hash of a byte range.
@@ -84,28 +86,18 @@ struct MachineStateSnapshot
     uint8_t  q = 0;             // Q register — affects undocumented CCF/SCF flag behavior
     uint8_t  nmi_in_progress = 0;
 
-    // ---- Port latches (Spectrum / Pentagon / Scorpion / Profi / ATM / GMX / Quorum) ----
-    // Hashed as a flat byte block; unused ports are zero in models that don't
-    // touch them, which keeps the snapshot stable across model switches *if*
-    // the model initializes those bytes to zero on reset.
+    // ---- Standard Spectrum 128K port latches ----
     uint8_t p7FFD = 0;          // 128K banking / screen select / ROM select
     uint8_t pFE = 0;            // Border / beep / mic / ula
-    uint8_t pEFF7 = 0;          // Profi banking
-    uint8_t pBFFD = 0;          // AY select
+    uint8_t pEFF7 = 0;          // Beta Disk interface control
+    uint8_t pBFFD = 0;          // AY register select
     uint8_t pFFFD = 0;          // AY data
-    uint8_t pDFFD = 0;          // Pentagon 512K / Profi banking
-    uint8_t pFDFD = 0;          // Profi banking
-    uint8_t p1FFD = 0;          // +2A / +3 banking
-    uint8_t pFF77 = 0;          // TS / turbo sound
-    uint8_t p7EFD = 0;          // GMX
-    uint8_t p78FD = 0;          // GMX
-    uint8_t p7AFD = 0;          // GMX
-    uint8_t p7CFD = 0;          // GMX
-    uint8_t gmx_config = 0;
-    uint8_t gmx_magic_shift = 0;
-    uint8_t p00 = 0;            // Quorum
-    uint8_t p80FD = 0;          // Quorum
+    uint8_t pFF77 = 0;          // TurboSound chip select
     uint8_t border_attr = 0;    // Last border color written
+
+    // Model-specific state (Scorpion ProfROM, GMX, Quorum, extended banking, etc.)
+    // hashed via TTDPeripheralRegistry - keeps the common hash struct model-agnostic
+    uint64_t peripheral_hash = 0;
 
     // ---- Counters (frame-aligned) ----
     // Included so the divergence comparator can locate the exact frame at
@@ -132,9 +124,11 @@ struct MachineStateSnapshot
 /// @param cpu Z80State (architectural registers read; host-side fields skipped).
 /// @param state EmulatorState (port latches + counters read; pointers skipped).
 /// @param ram_digest Pre-computed digest of all RAM pages in use.
+/// @param registry Optional peripheral registry for model-specific hash contribution.
 MachineStateSnapshot CaptureSnapshot(const Z80State& cpu,
                                       const EmulatorState& state,
-                                      uint64_t ram_digest);
+                                      uint64_t ram_digest,
+                                      const TTDPeripheralRegistry* registry = nullptr);
 
 /// Hash a snapshot into a single 64-bit value.
 /// Same snapshot bytes → same hash, deterministically.

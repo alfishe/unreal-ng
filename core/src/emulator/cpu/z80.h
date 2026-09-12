@@ -403,6 +403,42 @@ public:
 public:
     void Z80FrameCycle();
 
+    /// @brief Apply the queued frequency multiplier change, if any.
+    ///
+    /// The effective multiplier composes the host speed control
+    /// (next_z80_frequency_multiplier) with the Scorpion hardware turbo
+    /// state (hw_turbo_shift, driven by the model decoder - Scorpion: scorpion_turbo,
+    /// hardware-reference 13). Called at every
+    /// frame start: Z80FrameCycle entry and the inline frame boundaries of
+    /// the Emulator stepping paths, so the scaled INT window / frame limit
+    /// are always derived from the applied value.
+    void ApplyQueuedFrequencyMultiplier();
+
+    /// Apply a HARDWARE turbo change immediately, mid-frame (model port decoders
+    /// call this right after flipping EmulatorState::hw_turbo_shift). Hardware
+    /// switches the clock on the next cycle, and firmware relies on it: the
+    /// Scorpion ProfROM monitor strobes IN (#7FFD) and immediately runs an
+    /// INT-bounded count loop to detect the 7 MHz clock - deferring the switch
+    /// to the frame boundary made that test always fail. Rescales the in-frame
+    /// T-state position so the raster/INT instant is preserved, then refreshes
+    /// the frame geometry the running Z80FrameCycle loop reads
+    void ApplyHardwareTurboNow();
+
+    /// (Re)derive the scaled frame length and INT window from the current
+    /// multiplier; read by Z80FrameCycle every iteration
+    void RecomputeFrameTiming();
+
+    /// Post NC_CPU_FREQ_CHANGED with the applied frequency/multiplier. Shared
+    /// by both apply paths so host speed-menu changes and guest hardware-turbo
+    /// strobes notify UI/automation consumers identically (the Scorpion
+    /// ProfROM monitor flips the clock mid-frame via IN (#7FFD/#1FFD), which
+    /// never passes through a frame boundary)
+    void NotifyCPUFrequencyChanged();
+
+    uint32_t _frameLimit = 0;   // config.frame * multiplier
+    unsigned _intStart = 0;     // config.intstart * multiplier
+    unsigned _intEnd = 0;       // (config.intstart + intlen) * multiplier
+
     // Trigger updates
 public:
     void RequestMaskedInterrupt();

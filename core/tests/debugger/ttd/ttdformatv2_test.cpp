@@ -141,7 +141,9 @@ protected:
             d.checkpointFrames.push_back(cp->time.frame);
             d.cpuStates.push_back(cp->cpu);
             d.chipsetStates.push_back(cp->chipset);
-            d.ayBlobs.push_back(cp->ayState);
+            d.ayBlobs.push_back(cp->peripheralBlobs.count(static_cast<uint8_t>(ttd::PeripheralId::TurboSound))
+                                    ? cp->peripheralBlobs.at(static_cast<uint8_t>(ttd::PeripheralId::TurboSound))
+                                    : std::vector<uint8_t>{});
 
             std::vector<std::vector<uint8_t>> cpPages;
             cpPages.reserve(cp->ramPages.size());

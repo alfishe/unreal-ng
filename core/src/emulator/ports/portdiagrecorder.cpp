@@ -392,6 +392,8 @@ const char* PortDiagnosticRecorder::DeviceIdToString(PortDeviceId id)
         case PortDeviceId::Memory_7FFD:    return "Memory_7FFD";
         case PortDeviceId::Memory_1FFD:    return "Memory_1FFD";
         case PortDeviceId::Memory_DFFD:    return "Memory_DFFD";
+        case PortDeviceId::Memory_7EFD:    return "Memory_7EFD";
+        case PortDeviceId::Border_FF:      return "Border_FF";
         case PortDeviceId::AY_FFFD:        return "AY_FFFD";
         case PortDeviceId::AY_BFFD:        return "AY_BFFD";
         case PortDeviceId::WD1793_Status:  return "WD1793_Status";
@@ -855,6 +857,7 @@ PortDeviceId PortDiagnosticRecorder::ResolveDeviceId(uint16_t decodedPort)
         case 0x7FFD: return PortDeviceId::Memory_7FFD;
         case 0x1FFD: return PortDeviceId::Memory_1FFD;
         case 0xDFFD: return PortDeviceId::Memory_DFFD;
+        case 0x7EFD: return PortDeviceId::Memory_7EFD;
         case 0xFFFD: return PortDeviceId::AY_FFFD;
         case 0xBFFD: return PortDeviceId::AY_BFFD;
         case 0x001F: return PortDeviceId::WD1793_Status;  // Kempston shares #1F; WD1793 wins attribution
