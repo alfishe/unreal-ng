@@ -1216,7 +1216,11 @@ private:
 
     /// Build and register the serializers the active model needs. Called on
     /// StartRecording; cleared by ReleaseModelPeripherals on stop.
-    void RegisterModelPeripherals();
+    /// Build and register the serializers the active model declares.
+    /// @param err optional; set to a human-readable reason on failure
+    /// @return false when the model declares state no serializer covers - the
+    ///         caller must then refuse to record rather than drop that state
+    bool RegisterModelPeripherals(std::string* err = nullptr);
     void ReleaseModelPeripherals();
 
     /// Fingerprint of the loaded ROM set, stored in the .ttd header so playback

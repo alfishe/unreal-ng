@@ -59,6 +59,14 @@ public:
     bool IsPort_KempstonJoystick(uint16_t port);  // Kempston Joystick (#FF1F / #xx1F)
     bool IsPort_KempstonMouse(uint16_t port);     // Kempston Mouse (#FADF/#FBDF/#FFDF)
 
+    /// region <TTD model-specific state>
+    /// ProfROM plane/page and the #7EFD / #1FFD latches that the model-agnostic
+    /// TTDChipsetState does not carry. Declared here because this decoder owns
+    /// those latches (see PortDecoder::GetTTDModelStateIds).
+    std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
+    std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
+    /// endregion </TTD model-specific state>
+
     /// SMUC EEPROM backing store (verification tests / debug UI)
     SMUCNvram& GetSMUCNvram() { return _smucNvram; }
 

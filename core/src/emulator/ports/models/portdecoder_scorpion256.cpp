@@ -4,6 +4,8 @@
 
 #include "portdecoder_scorpion256.h"
 
+#include "debugger/ttd/scorpion/ttdscorpionprofrom.h"
+
 #include "common/collectionhelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -558,6 +560,27 @@ bool PortDecoder_Scorpion256::IsPort_7EFD(uint16_t port)
     bool result = (port & port_7EFD_mask) == port_7EFD_match;
 
     return result;
+}
+
+std::vector<ttd::PeripheralId> PortDecoder_Scorpion256::GetTTDModelStateIds() const
+{
+    // Only the ProfROM variant carries the quadrant state machine; the base
+    // Scorpion is fully described by the standard ports plus #1FFD, which it
+    // does not use for anything TTD cannot rebuild from the paging decode.
+    if (_context->config.mem_model == MM_PROFSCORP)
+        return {ttd::PeripheralId::ScorpionProfROM};
+
+    return {};
+}
+
+std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Scorpion256::CreateTTDSerializers() const
+{
+    std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
+
+    if (_context->config.mem_model == MM_PROFSCORP)
+        serializers.push_back(std::make_unique<ttd::TTDScorpionProfROM>(_context));
+
+    return serializers;
 }
 
 bool PortDecoder_Scorpion256::IsPort_SMUC(uint16_t port)

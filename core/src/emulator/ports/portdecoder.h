@@ -5,6 +5,7 @@
 #include <set>
 #include "emulator/platform.h"
 #include "emulator/ports/portdiagrecorder.h"
+#include "debugger/ttd/ttdserializable.h"  // ttd::PeripheralId / TTDSerializable (leaf header)
 
 
 class ModuleLogger;
@@ -221,6 +222,36 @@ public:
     /// Model decode table for self-describing trace exports. If-chain decoders
     /// have no mask/match table and return an empty vector (the default).
     virtual std::vector<PortTraceDecodeRule> getPortTraceDecodeRules() const { return {}; }
+
+    /// region <TTD model-specific state (parent TDD 6.4)>
+    ///
+    /// TTDChipsetState carries only the standard Spectrum 128K ports, so the
+    /// TTD framework cannot know that a machine has extra latches - and a
+    /// latch nobody captures is lost silently on restore, which is the worst
+    /// possible failure for a time-travel debugger.
+    ///
+    /// The decoder owns those latches, so the decoder declares them. The
+    /// declaration is deliberately split from the implementation:
+    ///
+    ///   GetTTDModelStateIds()   - "I have state beyond the standard ports"
+    ///   CreateTTDSerializers()  - "...and here is how to capture it"
+    ///
+    /// Declaring without implementing is a HARD ERROR at StartRecording: a
+    /// model can state the contract before anyone writes the serializer, and
+    /// TTD then refuses to record rather than producing a recording that looks
+    /// fine and restores wrong. Both default to empty, which is the correct
+    /// answer for any machine fully described by the standard 128K ports.
+
+    /// Model-specific state this machine carries beyond TTDChipsetState.
+    virtual std::vector<ttd::PeripheralId> GetTTDModelStateIds() const { return {}; }
+
+    /// Serializers for the ids above. Ownership transfers to the caller.
+    /// Every id from GetTTDModelStateIds() must be covered.
+    virtual std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const
+    {
+        return {};
+    }
+    /// endregion </TTD model-specific state>
 
     /// Assemble the session metadata (model name, timing base, decode rules)
     /// written into every exported trace

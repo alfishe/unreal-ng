@@ -7,7 +7,6 @@
 
 #include "timetravelmanager.h"
 
-#include "debugger/ttd/scorpion/ttdscorpionprofrom.h"
 
 #include <algorithm>
 #include <cassert>
@@ -178,7 +177,19 @@ bool TimeTravelManager::StartRecording()
 
     // Model-specific serializers belong to the session: rebuild them here so a
     // model switch between sessions cannot leave a stale machine registered.
-    RegisterModelPeripherals();
+    //
+    // Refusing here is deliberate. A model whose declared state has no
+    // serializer would record happily and restore wrong - the failure would
+    // surface later as a divergence with no trail back to this point.
+    {
+        std::string registrationError;
+        if (!RegisterModelPeripherals(&registrationError))
+        {
+            MLOGERROR("TimeTravelManager::StartRecording - refusing to record: %s",
+                      registrationError.c_str());
+            return false;
+        }
+    }
 
     // Clear any prior history (StartRecording always begins a fresh session).
     if (!_timeline.empty())
@@ -1013,13 +1024,13 @@ uint64_t TimeTravelManager::ComputeRomSignature() const
     return signature == ttd::dump::kRomSignatureUnknown ? 1u : signature;
 }
 
-void TimeTravelManager::RegisterModelPeripherals()
+bool TimeTravelManager::RegisterModelPeripherals(std::string* err)
 {
     // Idempotent: a restart must not stack duplicate serializers.
     ReleaseModelPeripherals();
 
     if (!_context)
-        return;
+        return true;
 
     // Core devices, present (or absent) independently of the model. They are
     // owned by the emulator, not by us, so they are registered by raw pointer
@@ -1034,28 +1045,53 @@ void TimeTravelManager::RegisterModelPeripherals()
     _peripherals.Register(PeripheralId::Tape, _context->pTape);
     _peripherals.Register(PeripheralId::BetaDisk, _context->pBetaDisk);
 
-    // The framework does not know any machine. Each model contributes its own
-    // TTDSerializable here; everything downstream (capture, restore, hash)
-    // goes through the registry and never names a model.
-    switch (_context->config.mem_model)
+    // --- Model-specific state (TDD 6.4) ---
+    // The framework names no machine. The port decoder owns the model's
+    // latches, so it declares what extra state exists and supplies the
+    // serializers; we only check that the two agree.
+    PortDecoder* decoder = _context->pPortDecoder;
+    if (!decoder)
+        return true;
+
+    for (auto& serializer : decoder->CreateTTDSerializers())
     {
-        case MM_PROFSCORP:
-        {
-            auto profrom = std::make_unique<TTDScorpionProfROM>(_context);
-            _peripherals.Register(PeripheralId::ScorpionProfROM, profrom.get());
-            _ownedPeripherals.push_back(std::move(profrom));
-            break;
-        }
-        default:
-            break;
+        if (!serializer)
+            continue;
+
+        _peripherals.Register(serializer->TTDPeripheralId(), serializer.get());
+        _ownedPeripherals.push_back(std::move(serializer));
+    }
+
+    // A declared id with no serializer behind it means this model's state
+    // would be dropped silently - a recording that looks correct and restores
+    // wrong. Refuse instead, naming what is missing.
+    for (PeripheralId id : decoder->GetTTDModelStateIds())
+    {
+        if (_peripherals.IsRegistered(id))
+            continue;
+
+        const std::string message =
+            "model (mem_model=" + std::to_string(static_cast<unsigned>(_context->config.mem_model)) +
+            ") declares TTD state id " + std::to_string(static_cast<unsigned>(id)) +
+            " but its port decoder supplied no serializer for it - recording would "
+            "silently drop that state. Implement CreateTTDSerializers() for this model.";
+
+        MLOGERROR("TimeTravelManager::RegisterModelPeripherals - %s", message.c_str());
+        if (err)
+            *err = message;
+
+        ReleaseModelPeripherals();
+        return false;
     }
 
     if (_peripherals.Count() > 0)
     {
-        MLOGINFO("TimeTravelManager::RegisterModelPeripherals — %zu model serializer(s) registered for mem_model=%u",
+        MLOGINFO("TimeTravelManager::RegisterModelPeripherals - %zu serializer(s) registered for mem_model=%u",
                  _peripherals.Count(),
                  static_cast<unsigned>(_context->config.mem_model));
     }
+
+    return true;
 }
 
 void TimeTravelManager::ReleaseModelPeripherals()
@@ -2590,7 +2626,14 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     // The loaded session restores model-specific state through these, so they
     // must exist before the first SeekTo — the file may have been recorded on
     // a model whose serializers this instance has not built yet.
-    RegisterModelPeripherals();
+    {
+        std::string registrationError;
+        if (!RegisterModelPeripherals(&registrationError))
+        {
+            err = "cannot load session: " + registrationError;
+            return false;
+        }
+    }
     _modelRamPages = modelRamPages;
 
     // Coverage from any previous recording describes a different timeline
