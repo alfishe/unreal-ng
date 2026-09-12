@@ -6,8 +6,12 @@
 
 // DS12885-style RTC/CMOS (ATM3 / ZX-Evo BaseConf config storage).
 // Ported from original Unreal Speccy memory.cpp (cmos_read / cmos_write).
-// Renamed from NVRAM to CMOS to avoid clashing with the legacy
-// `struct NVRAM` declared in platform.h (EmulatorState.nvram).
+//
+// Lives under memory/atm/ because the ATM3 port decoder is its only user:
+// machine-specific storage belongs beside the machine, not in the shared
+// memory root. It was previously nvram.{h,cpp} while declaring class CMOS,
+// one directory above a completely unrelated `struct NVRAM` in platform.h
+// (EmulatorState.nvram) - the file now matches the class it declares.
 enum CMOSTypeEnum
 {
 	None = 0,

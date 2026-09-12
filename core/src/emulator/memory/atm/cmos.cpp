@@ -1,6 +1,6 @@
 #include "stdafx.h"
 
-#include "nvram.h"
+#include "cmos.h"
 #include "common/timehelper.h"
 
 //

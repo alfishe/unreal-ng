@@ -4,7 +4,7 @@
 #include "common/modulelogger.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
-#include "emulator/memory/nvram.h"
+#include "emulator/memory/atm/cmos.h"
 #include "emulator/video/screen.h"
 
 /// region <Constructors / Destructors>

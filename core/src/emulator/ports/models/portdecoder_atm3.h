@@ -1,7 +1,7 @@
 #pragma once
 #include "stdafx.h"
 
-#include "emulator/memory/nvram.h"
+#include "emulator/memory/atm/cmos.h"
 
 #include "portdecoder_atm710.h"
 
