@@ -3564,9 +3564,9 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
             // mode (framebuffer 384x304) keeps cropping a framebuffer that is now 352x288,
             // scaling the wrong source region into the fixed-size widget
             if (_emulator->IsOverscanMode())
-                deviceScreen->setDisplayViewport(_emulator->GetDisplayViewport());
+                _screenWrapper->setDisplayViewport(_emulator->GetDisplayViewport());
             else
-                deviceScreen->clearDisplayViewport();
+                _screenWrapper->clearDisplayViewport();
 
             // Paint from the frame-end latched snapshot instead of the live
             // framebuffer - prevents mid-frame tearing (emulation thread
