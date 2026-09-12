@@ -20,7 +20,7 @@
 
 #include <benchmark/benchmark.h>
 
-#include "debugger/ttd/machine_state_hash.h"
+#include "debugger/ttd/machinestatehash.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/platform.h"
 

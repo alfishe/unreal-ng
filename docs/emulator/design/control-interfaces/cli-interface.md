@@ -138,17 +138,22 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 
 | CLI Verb | Alias | Description | Status |
 | :--- | :--- | :--- | :--- |
-| `ttd status` | `ttd info` | Show session origin (recorded here vs loaded from a file, with the path), machine model, frame range, checkpoint count, write-journal and coverage-index sizes, and memory used. Always available. | ✅ Implemented |
-| `ttd start` | `ttd rec` | Begin recording at the next frame boundary. | 🔮 Phase 1 |
-| `ttd stop` | — | Stop capturing; retain history. | 🔮 Phase 1 |
-| `ttd clear` | — | Drop all captured data. | 🔮 Phase 1 |
-| `ttd seek --frame N` | — | Seek to frame N (optionally `--tstate T` for intra-frame). | 🔮 Phase 2 |
-| `ttd step-back` | `ttd sb` | One instruction back. Add `--unit frame` for full-frame step. | 🔮 Phase 2 |
-| `ttd step-forward` | `ttd sf` | One instruction forward within recorded history. | 🔮 Phase 2 |
-| `ttd find-last --addr A --access W` | `ttd fl` | Reverse watchpoint. Full filter set in the command reference. | 🔮 Phase 4 |
-| `ttd timeline` | — | Paginated per-frame summary (`--from`/`--to`/`--limit`). | 🔮 Phase 3 |
-| `ttd bookmark <add\|remove\|list>` | `ttd bm` | Named markers in the timeline. | 🔮 Phase 3 |
-| `ttd resume-from-here` | — | Truncate future and resume live recording from current position. | 🔮 Phase 2 |
+| `ttd status` | `ttd info` | Session snapshot: origin (recorded here vs loaded from file, with path), machine model, frame range, checkpoint count, write-journal and coverage-index sizes, memory. Always available (doubles as capability probe). | ✅ Implemented |
+| `ttd start` | `ttd rec` | Begin recording at the next frame boundary. | ✅ Implemented |
+| `ttd stop` | — | Stop capturing; retain history. | ✅ Implemented |
+| `ttd invalidate` | `ttd clear`, `ttd reset` | Invalidate the session and drop captured data. | ✅ Implemented |
+| `ttd seek --frame N` | `ttd goto` | Seek to a (frame, tstate) point; optionally `--tstate T` for intra-frame. | ✅ Implemented |
+| `ttd step-back` | `ttd sb`, `back` | One frame back. | ✅ Implemented |
+| `ttd step-forward` | `ttd sf`, `forward` | One frame forward. | ✅ Implemented |
+| `ttd resume` | — | Truncate future at the current (detached) position and resume live recording. | ✅ Implemented |
+| `ttd position` | `ttd pos` | Current time point (frame/tstate) and session bounds. | ✅ Implemented |
+| `ttd markers` | `ttd barriers` | List external-event markers in the timeline. | ✅ Implemented |
+| `ttd dump <path>` | `ttd save` | Serialize the session to a `.ttd` file. | ✅ Implemented |
+| `ttd load <path>` | `ttd open` | Restore a dumped session (model must match the recording). | ✅ Implemented |
+| `ttd find-last --addr A` | `ttd fl` | Reverse watchpoint: find the last access at an address (full filter set in the command reference). | ✅ Implemented |
+| `ttd step-instruction` | `si-back` / `si-forward` | Step one Z80 instruction back or forward within recorded history. | ✅ Implemented |
+| `ttd reverse-step` | `ttd rs` | Reverse-step execution. | ✅ Implemented |
+| `ttd reverse-continue` | `ttd rc` | Reverse-continue execution. | ✅ Implemented |
 
 **Interactive session example** (post-mortem crash forensics):
 
@@ -172,6 +177,28 @@ frame=4823  tstate=14982  pc=0x4A21  value=0x07  physpage=5
 - All run-affecting `ttd` verbs require the emulator to be paused and the CLI session to hold the run-control claim. Read-only verbs (`status`, `timeline`, `bookmark list`) work regardless.
 - The `timetravel` feature flag must be ON for recording/seek/replay. `status` works regardless and returns `{recording: false}` when TTD is off.
 - Seek latency depends on tier density — typically 1–20 ms in the dense (recent) tier; see the [implementation plan](../debugger/time-travel-debug/implementation-plan.md) for targets.
+
+### Analysis, Capture & Assembly Commands
+
+The analysis, capture and assembly families are available on **all** automation
+interfaces with identical semantics (CLI, WebAPI, Lua, Python). Full argument
+reference: [command-interface.md](./command-interface.md).
+
+| CLI Command | Description |
+| :--- | :--- |
+| `stepout` | Run until the current subroutine returns to its caller. |
+| `skip_until <pc>` | Fast-forward until PC reaches the target (breakpoints skipped, bounded budget). |
+| `find <pattern>` | Search the Z80 address space for a byte pattern (`--from`, `--to`, `--align`, `--max`). |
+| `digest <start> <end>` | Stable 64-bit screen-content digest (`--banks`, `--no-border`). |
+| `beam` | Current raster position and beam zone. |
+| `frame_cost` | Per-frame halt/run cost accounting. |
+| `coverage <start\|stop\|clear\|gaps\|status>` | Executed-address coverage analysis. |
+| `aylog <start\|stop\|clear\|dump\|status>` | AY-3-8910 register access log. |
+| `audiocapture <start\|stop\|clear\|result\|save>` | Audio capture with level stats and WAV export. |
+| `videorecord <start\|stop\|pause\|resume\|status>` | Screen recording (requires `ENABLE_RECORDING` build). |
+| `assemble <addr> <code>` (`asm`) | Assemble Z80 source in place (`--write` to patch RAM). |
+| `label resolve <name\|addr>` | Resolve a label by name or an address to labels + context. |
+| `listing <load\|clear\|info\|source_at\|step_line\|run_to_line>` | Source-level debugging via assembler listings. |
 
 ## Connection Examples
 

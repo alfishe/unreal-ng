@@ -5,6 +5,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/labels/labelmanager.h"
+#include "debugger/listing/listingparser.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "emulator/emulatorcontext.h"
 #include <map>
@@ -23,6 +24,7 @@ protected:
     EmulatorContext* _context = nullptr;
     BreakpointManager* _breakpoints = nullptr;
     LabelManager* _labels = nullptr;
+    ListingParser* _listing = nullptr;
     std::unique_ptr<Z80Disassembler> _disassembler = nullptr;
     std::unique_ptr<AnalyzerManager> _analyzerManager = nullptr;
     
@@ -42,6 +44,7 @@ public:
 
     BreakpointManager* GetBreakpointsManager();
     LabelManager* GetLabelManager();
+    ListingParser* GetListingParser();
     std::unique_ptr<Z80Disassembler>& GetDisassembler();
     AnalyzerManager* GetAnalyzerManager();
     DebugKeyboardManager* GetKeyboardManager();

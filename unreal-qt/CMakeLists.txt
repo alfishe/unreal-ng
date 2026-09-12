@@ -20,6 +20,10 @@ option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
 # GDB RSP server automation is OFF by default - the stub does not exist yet (GDB TDD G1).
 # Pass -DENABLE_GDB_AUTOMATION=ON at configure time once it lands.
 option(ENABLE_GDB_AUTOMATION "Enable GDB RSP server automation" OFF)
+option(ENABLE_DEZOG_AUTOMATION "Enable DeZog (DZRP) debug server automation" ON)
+option(ENABLE_ZESARUX_AUTOMATION "Enable ZEsarUX (ZRCP) debug server automation" ON)
+# MCP server automation shares the WebAPI drogon app; effective only when WebAPI is on
+option(ENABLE_MCP_AUTOMATION "Enable MCP server automation (requires WebAPI)" ON)
 
 # Recording support (audio/video capture)
 # Use option() instead of set(FORCE) so that command-line -DENABLE_RECORDING=OFF is respected
@@ -41,6 +45,11 @@ set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # Include CMake helper functions file
 include(${ROOT_DIR}/cmake/func.cmake)
 
+# Add core library if not already defined by parent build
+if (NOT TARGET unrealng::core)
+    add_subdirectory("${ROOT_DIR}/core/src" core)
+endif()
+
 # Add automation if enabled (skip if target already exists from parent build)
 if (ENABLE_AUTOMATION)
     if (NOT TARGET unrealng::automation)
@@ -48,6 +57,7 @@ if (ENABLE_AUTOMATION)
     endif()
     set(INCLUDE_AUTOMATION True)
 endif ()
+
 
 # Add recording library if enabled (skip if target already exists from parent build)
 if (ENABLE_RECORDING)
@@ -232,13 +242,10 @@ add_subdirectory("3rdparty/QHexView-5.0")
 # C++20 mode has the correct behavior, so override QHexView to match the project standard.
 set_target_properties(QHexView PROPERTIES CXX_STANDARD 20)
 
-# Add core/tests only if not already defined by parent build
-if (NOT TARGET unrealng::core)
-    add_subdirectory("${ROOT_DIR}/core/src" core)
-endif()
 if (TESTS AND NOT TARGET core-tests)
     add_subdirectory("${ROOT_DIR}/core/tests" tests)
 endif()
+
 
 # All sources in /src and subfolders will be compiled
 file (GLOB_RECURSE CPP_FILES ${SOURCE_DIR}/*.cpp)
@@ -318,6 +325,9 @@ if (ENABLE_AUTOMATION)
         $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:ENABLE_WEBAPI_AUTOMATION>
         $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:ENABLE_CLI_AUTOMATION>
         $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:ENABLE_GDB_AUTOMATION>
+        $<$<BOOL:${ENABLE_DEZOG_AUTOMATION}>:ENABLE_DEZOG_AUTOMATION>
+        $<$<BOOL:${ENABLE_ZESARUX_AUTOMATION}>:ENABLE_ZESARUX_AUTOMATION>
+        $<$<BOOL:${ENABLE_MCP_AUTOMATION}>:ENABLE_MCP_AUTOMATION>
     )
 endif ()
 
@@ -369,8 +379,7 @@ if (INCLUDE_AUTOMATION)
         Qt6::Svg
         QHexView
 
-        unrealng::automation # This brings in core as PUBLIC dependency
-        $<$<BOOL:${INCLUDE_RECORDING}>:unrealng::recording>
+        unrealng::automation # This brings in core (and recording) as PUBLIC dependency
         ${CMAKE_DL_LIBS}
         Threads::Threads
     )
@@ -388,8 +397,7 @@ else ()
         Qt6::Svg
         QHexView
 
-        unrealng::core  # Keep this when automation is disabled
-        $<$<BOOL:${INCLUDE_RECORDING}>:unrealng::recording>
+        unrealng::core  # Keep this when automation is disabled (brings recording as PUBLIC dep)
         Threads::Threads
     )
 endif ()
@@ -571,6 +579,9 @@ message(STATUS "    ENABLE_PYTHON_AUTOMATION: ${ENABLE_PYTHON_AUTOMATION}")
 message(STATUS "    ENABLE_WEBAPI_AUTOMATION: ${ENABLE_WEBAPI_AUTOMATION}")
 message(STATUS "    ENABLE_CLI_AUTOMATION: ${ENABLE_CLI_AUTOMATION}")
 message(STATUS "    ENABLE_GDB_AUTOMATION: ${ENABLE_GDB_AUTOMATION}")
+message(STATUS "    ENABLE_DEZOG_AUTOMATION: ${ENABLE_DEZOG_AUTOMATION}")
+message(STATUS "    ENABLE_ZESARUX_AUTOMATION: ${ENABLE_ZESARUX_AUTOMATION}")
+message(STATUS "    ENABLE_MCP_AUTOMATION: ${ENABLE_MCP_AUTOMATION}")
 message(STATUS "  ENABLE_RECORDING: ${ENABLE_RECORDING}")
 message(STATUS "Settings:")
 message(STATUS "  PROJECT_NAME:        ${PROJECT_NAME}")

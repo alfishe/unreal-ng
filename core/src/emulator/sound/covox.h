@@ -5,7 +5,7 @@
 #include "emulator/sound/audio.h"
 #include "emulator/ports/portdecoder.h"
 #include "common/modulelogger.h"
-#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
+#include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 
 class EmulatorContext;
 struct blip_t;
@@ -130,5 +130,11 @@ public:
     size_t TTDStateSize() const override;
     void   TTDSaveState(uint8_t* dst) const override;
     void   TTDLoadState(const uint8_t* src) override;
+
+    /// Identity used by TTDPeripheralRegistry. Without it the base class
+    /// returns PeripheralId::Count and the device cannot be indexed in a
+    /// checkpoint's blob map.
+    ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::Covox; }
+    std::string TTDDeviceName() const override { return "Covox"; }
     /// endregion </TTDSerializable interface>
 };

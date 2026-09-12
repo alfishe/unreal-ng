@@ -85,20 +85,27 @@ Target: Q3-Q4 2026
 
 ## Interface Comparison
 
-| Feature | CLI | WebAPI | Python | Lua | GDB | UDB |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Status** | ✅ | ✅ | ✅ | ✅ | 🔮 | 🔮 |
-| **Protocol** | Text | HTTP/JSON | Native | Native | Binary | Binary |
-| **Performance** | Medium | Medium | High | High | Medium | Very High |
-| **Learning Curve** | Low | Low | Medium | Low | Medium | High |
-| **Scripting** | Shell | JavaScript | Python | Lua | Python | Lua/Python |
-| **IDE Support** | No | No | Yes | Limited | Yes | Yes |
-| **Remote Access** | Yes | Yes | No | No | Yes | Yes |
-| **Real-time Streaming** | No | Limited | No | No | No | Yes |
-| **Profiling** | No | No | Limited | No | No | Yes |
-| **Multi-Instance** | Yes | Yes | Yes | Yes | Yes | Yes |
+| Feature | CLI | WebAPI | Python | Lua | GDB | UDB | MCP |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Status** | ✅ | ✅ | ✅ | ✅ | 🔮 | 🔮 | ✅ |
+| **Protocol** | Text | HTTP/JSON | Native | Native | Binary | Binary | stdio JSON-RPC |
+| **Performance** | Medium | Medium | High | High | Medium | Very High | High |
+| **Learning Curve** | Low | Low | Medium | Low | Medium | High | Low (smart tools) |
+| **Scripting** | Shell | JavaScript | Python | Lua | Python | Lua/Python | LLM-native |
+| **IDE Support** | No | No | Yes | Limited | Yes | Yes | Yes |
+| **Remote Access** | Yes | Yes | No | No | Yes | Yes | Yes (subprocess) |
+| **Real-time Streaming** | No | Limited | No | No | No | Yes | No |
+| **Profiling** | No | No | Limited | No | No | Yes | Yes |
+| **Multi-Instance** | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 
 **Legend**: ✅ Implemented | 🔧 In Progress | 🔮 Planned
+
+> [!NOTE]
+> MCP (Model Context Protocol) is a deliberately different beast from the
+> endpoint-parity interfaces: it exposes high-level smart tools over
+> Streamable HTTP (JSON or SSE answers, with an optional zero-dependency stdio
+> bridge for IDE clients) rather than mirroring the CLI/WebAPI command surface
+> one-to-one — see [MCP Server docs](../../../features/mcp/README.md).
 
 ## Command Categories
 
@@ -110,32 +117,42 @@ All interfaces (where applicable) support these command categories:
    - `help`, `status`, `list`, `select`, `open`, `exit`
 
 2. **Execution Control** - CPU control and stepping
-   - `pause`, `resume`, `reset`, `step`, `stepin`, `steps`, `stepover`
+   - `pause`, `resume`, `reset`, `step`, `stepin`, `steps`, `stepover`, `stepout`, `skip_until`
 
 3. **State Inspection** - View internal state
    - `registers`, `memory`, `debugmode`, `memcounters`, `calltrace`, `disasm`, `disasm_page`
+   - `find` (Z80 memory pattern search)
+   - `digest`, `beam`, `frame_cost` (screen state & frame cost analysis)
 
 4. **Breakpoints & Watchpoints** - Advanced debugging
    - `bp`, `wp`, `bport`, `bplist`, `bpclear`, `bpgroup`, `bpon`, `bpoff`
 
 5. **Feature Management** - Runtime feature toggles
    - `feature` (list/enable/disable subsystems)
+   - Analyzers: `coverage`, `aylog`, `audiocapture`, `videorecord`
+
+5a. **Labels & Symbols** - Symbolic debugging
+   - `label` (get/add/remove/toggle/resolve), `labels` (list/filter), `symbols` (load/save/clear)
+
+5b. **Assembler & Source Listings** - In-place assembly and source-level stepping
+   - `assemble` (alias `asm`), `listing` (load/clear/info/source_at/step_line/run_to_line)
 
 ### Time-Travel Debugging (TTD)
 
 6. **Time-Travel Debugging** - Per-frame checkpoint recording, backward seek, reverse search
-   - `ttd start` / `ttd stop` / `ttd clear` — session lifecycle
-   - `ttd status` — always-available state query (lands Phase 1)
-   - `ttd timeline` — per-frame summary entries for UI rendering
+   - `ttd start` / `ttd stop` / `ttd invalidate` — session lifecycle
+   - `ttd status` — always-available state query (capability probe)
    - `ttd seek` — absolute seek to a frame / t-state
    - `ttd step-back` / `ttd step-forward` — relative navigation
+   - `ttd position` / `ttd markers` — current time point, external-event barriers
    - `ttd find-last` — reverse watchpoint (last write/read/execute matching a query)
-   - `ttd bookmark` — named markers; act as replay barriers
-   - `ttd resume-from-here` — truncate future and resume live recording
+   - `ttd dump` / `ttd load` — session serialization to / restore from `.ttd` files
+   - `ttd step-instruction` — one Z80 instruction back/forward in history
+   - `ttd reverse-step` / `ttd reverse-continue` — reverse execution
    - **GDB surface**: reverse-exec packets `bc` / `bs` + `monitor ttd` commands (see [gdb-protocol.md](./gdb-protocol.md))
    - **Best for**: post-mortem crash forensics ("who corrupted this byte?"), raster-effect frame-compare, automated regression checks
    - Reference design: [time-travel-debugging-tdd.md](../debugger/time-travel-debug/time-travel-debugging-tdd.md)
-   - Implementation status: Sprint 0 foundations ✅ merged; Phase 1 checkpoint core in progress; most verbs ship in Phase 2–4
+   - Implementation status: Phases 1–4 ✅ shipped (record, seek/replay, dump/load, reverse search, reverse execution)
 
 ### Planned Commands (Future)
 
@@ -150,22 +167,35 @@ All interfaces (where applicable) support these command categories:
    - Tape/disk loader detector
    - Graphics effects detector
 10. **LLM Integration (MCP/A2A)** - AI-assisted debugging and automation
-   - Model Context Protocol for LLM queries
+   - ✅ Model Context Protocol server (stdio JSON-RPC smart tools)
    - Agent-to-Agent protocol for autonomous agents
    - Natural language debugging
    - Automated testing and analysis
-11. **Media Operations** - Tape/disk control
-12. **Audio/Video Capture** - Recording and export
-13. **Scripting Integration** - Script execution
+11. **Media Operations** - Tape/disk control ✅
+12. **Audio/Video Capture** - Recording and export ✅ (`audiocapture`, `videorecord`)
+13. **Scripting Integration** - Script execution ✅
 14. **Disassembly** - Code analysis ✅
-15. **Performance Profiling** - CPU hotspots
+15. **Performance Profiling** - CPU hotspots ✅
 16. **Network & Multi-Emulator** - Multi-instance coordination
 
 See [command-interface.md](./command-interface.md) for complete details.
 
 ## Implementation Status Summary
 
-### Current State (January 2026)
+### Current State (September 2026)
+
+**Fully Implemented** (all four endpoint-parity interfaces: CLI, WebAPI, Lua, Python):
+- ✅ Core debugging: registers, memory (incl. physical pages + pattern search), disassembly, breakpoints/watchpoints
+- ✅ Stepping: step/stepin/steps/stepover/**stepout**/**skip_until**, run_frame(s)/run_tstates/scanline/pixel
+- ✅ Analysis: **coverage**, **AY register log**, **frame cost**, **screen digest**, **beam position**
+- ✅ Capture: **audio capture (WAV export)**, **video recording** (`ENABLE_RECORDING` builds)
+- ✅ Assembler & source listings: **assemble**, **listing load/source_at/step_line/run_to_line**
+- ✅ Labels & symbols: CRUD + **resolve** (sjasmplus `.sld`/`.lst`, `.sym`, `.map`)
+- ✅ Time-Travel Debugging: record/seek/replay, dump/load, reverse search, reverse execution
+- ✅ MCP server (Streamable HTTP smart tools + stdio bridge) — separate surface, not endpoint parity
+- ✅ OpenAPI manifest covering all WebAPI endpoints (`/api/v1/openapi.json`)
+
+### Historical State (January 2026)
 
 **Fully Implemented**:
 - ✅ CLI server with full command set

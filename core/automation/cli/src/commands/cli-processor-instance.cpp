@@ -376,6 +376,53 @@ void CLIProcessor::HandleReset(const ClientSession& session, const std::vector<s
     session.SendResponse("Emulator reset\n");
 }
 
+// HandleNmi - pulse the Z80 NMI line (accepted at the next instruction boundary)
+void CLIProcessor::HandleNmi(const ClientSession& session, const std::vector<std::string>& args)
+{
+    std::string errorMessage;
+    auto emulator = ResolveEmulator(session, args, errorMessage);
+
+    if (!emulator)
+    {
+        if (!errorMessage.empty())
+        {
+            session.SendResponse(errorMessage);
+        }
+        else
+        {
+            session.SendResponse("No emulator selected. Use 'select <id>' or 'list' to see available emulators.");
+        }
+        return;
+    }
+
+    emulator->RequestNMI();
+    session.SendResponse("NMI requested\n");
+}
+
+// HandleMni - the Scorpion "magic button": page the Shadow Monitor, then NMI
+// (non-Scorpion models fall back to a plain NMI)
+void CLIProcessor::HandleMni(const ClientSession& session, const std::vector<std::string>& args)
+{
+    std::string errorMessage;
+    auto emulator = ResolveEmulator(session, args, errorMessage);
+
+    if (!emulator)
+    {
+        if (!errorMessage.empty())
+        {
+            session.SendResponse(errorMessage);
+        }
+        else
+        {
+            session.SendResponse("No emulator selected. Use 'select <id>' or 'list' to see available emulators.");
+        }
+        return;
+    }
+
+    emulator->RequestMNI();
+    session.SendResponse("MNI requested (magic button: NMI + service monitor)\n");
+}
+
 // HandlePause - lines 806-844
 void CLIProcessor::HandlePause(const ClientSession& session, const std::vector<std::string>& args)
 {
@@ -440,6 +487,17 @@ void CLIProcessor::HandleResume(const ClientSession& session, const std::vector<
     if (!emulator->IsPaused())
     {
         session.SendResponse("Emulator is already running.");
+        return;
+    }
+
+    // Check run-control claim (GDB TDD §3.3 / 1A.7.2)
+    auto* ctx = emulator->GetContext();
+    if (ctx && ctx->IsRunControlClaimed())
+    {
+        auto state = ctx->GetRunControlState();
+        std::stringstream ss;
+        ss << "Error: Run-control held by " << state.surfaceLabel << ". Use that surface to resume.";
+        session.SendResponse(ss.str());
         return;
     }
 

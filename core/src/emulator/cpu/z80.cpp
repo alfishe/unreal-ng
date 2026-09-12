@@ -12,7 +12,9 @@
 #include "emulator/cpu/opcode_profiler.h"
 #include "emulator/emulator.h"
 #include "emulator/io/tape/tapefastload.h"
+#include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/notifications.h"
+#include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/spectrumconstants.h"
 #include "emulator/video/screen.h"
@@ -125,6 +127,7 @@ void Z80::Reset()
     int_pending = false;   // No interrupts pending
     int_gate = true;       // Allow external interrupts
     nmi_in_progress = false;  // Clear NMI flag
+    _nmi_pending_count = 0;   // No NMI requested
 
     tt = 0;  // Scaled to CPU frequency multiplier cycle count
     t = 0;   // Reset cycle counter for deterministic state
@@ -276,6 +279,21 @@ void Z80::Z80Step(bool skipBreakpoints)
         }
     }
 
+    // Dispatch CPU step event to analyzers (coverage / tracing). The guard
+    // keeps the no-subscriber path down to a null and an empty check per
+    // instruction; dispatchCPUStep itself early-returns when the analyzer
+    // master toggle is off. Runs outside the debug-mode guard so coverage
+    // sessions work without full debug mode, and before the fast-tape trap
+    // so LD_BYTES invocations are recorded even when the trap consumes them.
+    if (_context->pDebugManager != nullptr)
+    {
+        AnalyzerManager* analyzerMgr = _context->pDebugManager->GetAnalyzerManager();
+        if (analyzerMgr != nullptr && analyzerMgr->hasCPUStepSubscribers())
+        {
+            analyzerMgr->dispatchCPUStep(this, pc);
+        }
+    }
+
     // Fast tape loading trap (design: docs/inprogress/2026-08-30-fast-tape-loading).
     // A ROM LD-BYTES ($0556) invocation is replaced wholesale when armed: the
     // block payload is copied straight from the tape image and the routine's
@@ -296,6 +314,10 @@ void Z80::Z80Step(bool skipBreakpoints)
     {
         // Z80 in HALT state. No further opcode processing will be done until INT or NMI arrives
         cpu.tt += cpu.rate * 1;
+
+        // Frame cost accounting: one halted step burns exactly one t-state
+        // (rate is fixed at 256 — speed multipliers scale frameLimit instead)
+        state.tstates_halted_current++;
 
         if (++cpu.halt_cycle == 4)
         {
@@ -319,6 +341,21 @@ void Z80::Z80Step(bool skipBreakpoints)
         // 1. Fetch opcode (Z80 M1 bus cycle)
         cpu.prefix = 0x0000;
         cpu.opcode = m1_cycle();
+
+        // 1a. Call trace hook (pre-execution) — appends control-flow events
+        // while a calltrace session is capturing; the decoder wants the
+        // register state the instruction acts on (SP before CALL pushes /
+        // RET pops). The cached feature flag keeps this to a single bool check
+        // when calltrace is off
+        if (_feature_calltrace_enabled && _memory != nullptr)
+        {
+            MemoryAccessTracker& tracker = _memory->GetAccessTracker();
+            if (tracker.IsCalltraceCapturing())
+            {
+                tracker.GetCallTraceBuffer()->LogIfControlFlow(_context, _memory, m1_pc,
+                                                               _context->emulatorState.frame_counter);
+            }
+        }
 
         // 2. Emulate fetched Z80 opcode
         (normal_opcode[opcode])(&cpu);
@@ -359,6 +396,98 @@ void Z80::Z80Step(bool skipBreakpoints)
     /// endregion </Debug trace capture>
 }
 
+/// @brief Apply the queued frequency multiplier change, if any.
+///
+/// The effective multiplier composes the host speed control (next_) with the
+/// Scorpion ZS-256 Turbo+ hardware turbo flip-flop (hardware-reference 13):
+/// guest code toggles it mid-frame with IN from the #7FFD / #1FFD register
+/// families, but the real GAL re-aligns the clock to a cycle boundary anyway,
+/// so applying at the frame boundary preserves the software-visible contract
+/// (2x T-states per 50 Hz frame) without mid-frame rescaling of frameLimit /
+/// the INT window. Every consumer (screen descale, sound pacing, tape timing,
+/// INT position) already divides by the effective multiplier, so composition
+/// needs no further changes.
+void Z80::ApplyQueuedFrequencyMultiplier()
+{
+    [[maybe_unused]] Z80& cpu = *this;
+    EmulatorState& state = _context->emulatorState;
+
+    uint8_t desiredMultiplier = static_cast<uint8_t>(state.next_z80_frequency_multiplier << state.hw_turbo_shift);
+    if (desiredMultiplier != state.current_z80_frequency_multiplier)
+    {
+        uint8_t oldMultiplier = state.current_z80_frequency_multiplier;
+        state.current_z80_frequency_multiplier = desiredMultiplier;
+        state.current_z80_frequency = state.base_z80_frequency * desiredMultiplier;
+        state.hw_turbo_shift_applied = state.hw_turbo_shift;
+
+        // Reset rate to normal - counter represents actual t-states
+        // Speed multipliers are handled by adjusting frame duration and timings
+        cpu.rate = 256;
+
+        MLOGINFO("Z80::ApplyQueuedFrequencyMultiplier - Applied speed multiplier: %dx -> %dx (%.2f MHz, rate=%d, hw_turbo_shift=%u)", oldMultiplier,
+                 state.current_z80_frequency_multiplier, state.current_z80_frequency / 1'000'000.0, cpu.rate, state.hw_turbo_shift);
+
+        NotifyCPUFrequencyChanged();
+    }
+}
+
+void Z80::NotifyCPUFrequencyChanged()
+{
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    std::string emulatorId = _context->pEmulator ? _context->pEmulator->GetId() : "";
+    messageCenter.Post(NC_CPU_FREQ_CHANGED,
+                       new CPUFreqPayload(emulatorId,
+                                          _context->emulatorState.current_z80_frequency,
+                                          _context->emulatorState.current_z80_frequency_multiplier));
+}
+
+void Z80::RecomputeFrameTiming()
+{
+    const CONFIG& config = _context->config;
+    const EmulatorState& state = _context->emulatorState;
+
+    _frameLimit = config.frame * state.current_z80_frequency_multiplier;
+    _intStart = config.intstart * state.current_z80_frequency_multiplier;
+    _intEnd = (config.intstart + config.intlen) * state.current_z80_frequency_multiplier;
+}
+
+void Z80::ApplyHardwareTurboNow()
+{
+    Z80& cpu = *this;
+    EmulatorState& state = _context->emulatorState;
+
+    uint8_t desiredMultiplier = static_cast<uint8_t>(state.next_z80_frequency_multiplier << state.hw_turbo_shift);
+    uint8_t oldMultiplier = state.current_z80_frequency_multiplier;
+    if (desiredMultiplier == oldMultiplier || oldMultiplier == 0)
+        return;
+
+    // Preserve the raster instant: the in-frame position is expressed in
+    // scaled T-states, so it must be rescaled together with the multiplier
+    // (the same instant is 2x further into a 2x longer frame). eipos/haltpos
+    // are frame positions too
+    auto rescale = [&](uint32_t v) { return static_cast<uint32_t>(static_cast<uint64_t>(v) * desiredMultiplier / oldMultiplier); };
+    cpu.t = rescale(cpu.t);
+    if (cpu.eipos >= 0)
+        cpu.eipos = static_cast<int32_t>(rescale(static_cast<uint32_t>(cpu.eipos)));
+    cpu.haltpos = static_cast<uint16_t>(rescale(cpu.haltpos));
+
+    state.current_z80_frequency_multiplier = desiredMultiplier;
+    state.current_z80_frequency = state.base_z80_frequency * desiredMultiplier;
+    state.hw_turbo_shift_applied = state.hw_turbo_shift;
+    cpu.rate = 256;
+
+    // The running Z80FrameCycle loop reads these every iteration
+    RecomputeFrameTiming();
+
+    MLOGINFO("Z80::ApplyHardwareTurboNow - hardware turbo applied mid-frame: %dx -> %dx (%.2f MHz) at t=%u",
+             oldMultiplier, desiredMultiplier, state.current_z80_frequency / 1'000'000.0, cpu.t);
+
+    // Mid-frame hardware strobes must notify too: they never pass through a
+    // frame boundary, so ApplyQueuedFrequencyMultiplier will see
+    // desiredMultiplier == current and post nothing on the next frame
+    NotifyCPUFrequencyChanged();
+}
+
 /// Execute number of cpu cycles equivalent to full frame screen render
 void Z80::Z80FrameCycle()
 {
@@ -366,47 +495,42 @@ void Z80::Z80FrameCycle()
     [[maybe_unused]] Z80& cpu = *this;
     [[maybe_unused]] EmulatorState& state = _context->emulatorState;
 
-    // Apply queued speed multiplier change at frame boundary (if any)
-    // This prevents mid-frame timing inconsistencies
-    if (state.next_z80_frequency_multiplier != state.current_z80_frequency_multiplier)
-    {
-        uint8_t oldMultiplier = state.current_z80_frequency_multiplier;
-        state.current_z80_frequency_multiplier = state.next_z80_frequency_multiplier;
-        state.current_z80_frequency = state.base_z80_frequency * state.current_z80_frequency_multiplier;
+    // Apply queued HOST speed multiplier change at the frame boundary (if any).
+    // Hardware turbo strobes are applied immediately by ApplyHardwareTurboNow
+    ApplyQueuedFrequencyMultiplier();
 
-        // Reset rate to normal - counter represents actual t-states
-        // Speed multipliers are handled by adjusting frame duration and timings
-        cpu.rate = 256;
+    // Scaled frame length and INT window - members, so a mid-frame hardware
+    // turbo switch (ApplyHardwareTurboNow) is picked up by the loop below
+    RecomputeFrameTiming();
 
-        MLOGINFO("Z80::Z80FrameCycle - Applied queued speed multiplier: %dx -> %dx (%.2f MHz, rate=%d)", oldMultiplier,
-                 state.current_z80_frequency_multiplier, state.current_z80_frequency / 1'000'000.0, cpu.rate);
-    }
-
-    // Scale frame duration by speed multiplier
-    uint32_t frameLimit = config.frame * state.current_z80_frequency_multiplier;
-
-    // Video Interrupt position calculation - scale by multiplier for Z80 timing
     bool int_occurred = false;
-    unsigned int_start = config.intstart * state.current_z80_frequency_multiplier;
-    unsigned int_end = (config.intstart + config.intlen) * state.current_z80_frequency_multiplier;
 
     cpu.haltpos = 0;
 
     // INT interrupt handling lasts for more than 1 frame
-    if (int_end >= frameLimit)
+    if (_intEnd >= _frameLimit)
     {
-        int_end -= frameLimit;
+        _intEnd -= _frameLimit;
         cpu.int_pending = true;
         int_occurred = true;
     }
 
     // Cover whole frame (control by effective t-states)
-    while (cpu.t < frameLimit)
+    while (cpu.t < _frameLimit)
     {
+        // Mid-frame pause park. Pause() is otherwise observed only at frame
+        // boundaries (MainLoop::Run), so an in-flight frame - which under
+        // turbo/debug-mode or TTD recording can take hundreds of milliseconds -
+        // would delay the park and its confirmation until the frame completes.
+        // One volatile read per instruction keeps the unpaused hot path cheap;
+        // WaitWhilePaused parks + confirms and wakes on Resume()/Stop() via CV.
+        if (Emulator* emulator = _context->pEmulator; emulator && emulator->IsPaused())
+            emulator->WaitWhilePaused();
+
         // Handle interrupts if arrived
         // Returns true if INT was handled - in that case, skip Z80Step for this iteration
         // because INT entry IS the "instruction" that consumes this cycle
-        bool intHandled = ProcessInterrupts(int_occurred, int_start, int_end);
+        bool intHandled = ProcessInterrupts(int_occurred, _intStart, _intEnd);
 
         if (!intHandled)
         {
@@ -615,7 +739,14 @@ void Z80::out(uint16_t port, uint8_t val)
         busTraceHook('O', port, val);
 }
 
-void Z80::retn() {}
+void Z80::retn()
+{
+    // Called by the ED45 RETN handler after iff1 = iff2: leaving the NMI handler
+    // ends the NMI session. Checking nmi_in_progress (not just restoring IFF1)
+    // keeps a plain RET executed deep inside an NMI handler from silently
+    // ending it - only RETN does that, per the Z80 interrupt architecture
+    nmi_in_progress = false;
+}
 
 /// endregion </Z80 lifecycle>
 
@@ -651,7 +782,12 @@ void Z80::RequestMaskedInterrupt()
 ///
 /// Simulate Z80 NMI pin signal raising
 ///
-void Z80::RequestNonMaskedInterrupt() {}
+void Z80::RequestNonMaskedInterrupt()
+{
+    // Coalesce: the pin is level-less in the model - one pending bit regardless
+    // of how many times the host pressed the magic button before the boundary
+    _nmi_pending_count = 1;
+}
 
 ///
 /// See: http://www.z80.info/interrup.htm
@@ -664,32 +800,47 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
     VideoControl& video = _context->pScreen->_vid;
     bool intHandled = false;
 
-    // NMI processing
+    // NMI processing (accepted at the instruction boundary, priority over INT).
+    // Requested via RequestNonMaskedInterrupt(); on Scorpion models the MNI
+    // "magic button" orchestration (Emulator::RequestMNI) pages the Shadow
+    // Monitor BEFORE requesting, so only the architecture-defined CPU dance
+    // lives here. The model-specific block from the original UnrealSpeccy
+    // (ATM3 bank switching / Scorpion pc>0x4000 guard) moved to that layer -
+    // the MNI latch already owns the ROM selection.
     if (_nmi_pending_count > 0)
     {
-        /* move to ports logic
-        if (config.mem_model == MM_ATM3)
-        {
-            _nmi_pending_count = 0;
-            cpu.nmi_in_progress = true;
+        _nmi_pending_count = 0;
+        cpu.nmi_in_progress = true;
 
-            SetBanks();
-            HandleNMI(RM_NOCHANGE);
-            return;
-        }
-        else if (config.mem_model == MM_PROFSCORP || config.mem_model == MM_SCORP)
-        {
-            _nmi_pending_count--;
-            if (cpu.pc > 0x4000)
-            {
-                HandleNMI(RM_DOS);
-                _nmi_pending_count = 0;
-            }
-        }
-        else
-            _nmi_pending_count = 0;
-         */
-    }  // end if (nmi_pending)
+        // If CPU halted - unblock it by moving PC forward (return lands past the HALT)
+        if (DirectRead(cpu.pc) == 0x76)
+            cpu.pc++;
+
+        // NMI timing per Z80 manual: 11T (M1=5T restart fetch, M2=3T push PCH, M3=3T push PCL).
+        // The accept IS the cycle for this iteration: ProcessInterrupts returns true and
+        // the caller skips Z80Step (same contract as the INT acceptance below).
+        IncrementCPUCyclesCounter(11);
+
+        // Push return address (raw write: both stack cycles are included in the 11T above)
+        uint16_t sp = cpu.sp;
+        (_memory->*MemIf->MemoryWrite)(--sp, cpu.pch);
+        (_memory->*MemIf->MemoryWrite)(--sp, cpu.pcl);
+        cpu.sp = sp;
+
+        // Restart at the NMI vector #0066
+        cpu.pc = 0x0066;
+        cpu.memptr = 0x0066;
+        cpu.halted = 0;
+
+        // IFF2 keeps a copy of IFF1 for RETN; maskable interrupts disabled in the handler
+        cpu.iff2 = cpu.iff1;
+        cpu.iff1 = 0;
+        cpu.int_pending = false;
+
+        video.memcyc_lcmd = 0;  // new command, start accumulate number of busy memcycles
+
+        return true;  // NMI accepted: skip Z80Step this iteration
+    }
 
     // Generate INT
     // TODO: move INT forming logic to Screen class since in reality it's formed by ULA / frame counters
@@ -975,6 +1126,7 @@ void Z80::UpdateFeatureCache()
     if (_context && _context->pFeatureManager)
     {
         _feature_opcodeprofiler_enabled = _context->pFeatureManager->isEnabled(Features::kOpcodeProfiler);
+        _feature_calltrace_enabled = _context->pFeatureManager->isEnabled(Features::kCallTrace);
     }
 }
 

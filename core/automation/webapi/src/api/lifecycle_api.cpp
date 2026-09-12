@@ -591,6 +591,27 @@ void EmulatorAPI::resumeEmulator(const HttpRequestPtr& req, std::function<void(c
         return;
     }
 
+    // Check run-control claim (GDB TDD §3.3 / 1A.7.2)
+    auto emulator = manager->GetEmulator(id);
+    if (emulator)
+    {
+        auto* ctx = emulator->GetContext();
+        if (ctx && ctx->IsRunControlClaimed())
+        {
+            auto state = ctx->GetRunControlState();
+            Json::Value error;
+            error["error"] = "Run-control held";
+            error["message"] = "Run-control held by " + state.surfaceLabel + ". Use that surface to resume.";
+            error["emulator_id"] = id;
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k409Conflict);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+    }
+
     try
     {
         bool success = manager->ResumeEmulator(id);
@@ -662,6 +683,80 @@ void EmulatorAPI::resetEmulator(const HttpRequestPtr& req, std::function<void(co
 
         auto resp = HttpResponse::newHttpJsonResponse(ret);
         resp->setStatusCode(success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+    catch (const std::exception& e)
+    {
+        Json::Value error;
+        error["error"] = "Operation failed";
+        error["message"] = e.what();
+        error["emulator_id"] = id;
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+}
+
+/// @brief POST /api/v1/emulator/{id}/nmi
+/// @brief Pulse the Z80 NMI line (accepted at the next instruction boundary)
+/// @param body Optional JSON: {"magic": true|false}. true = Scorpion MNI
+///        "magic button" - the Shadow Monitor is paged into #0000 before the
+///        NMI so the handler at #0066 executes monitor code. Non-Scorpion models
+///        fall back to a plain NMI regardless of the flag.
+void EmulatorAPI::requestNmi(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id) const
+{
+    auto manager = EmulatorManager::GetInstance();
+
+    if (!manager->HasEmulator(id))
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    try
+    {
+        bool magic = false;
+        auto json = req->getJsonObject();
+        if (json && json->isMember("magic") && json->get("magic", false).isBool())
+            magic = json->get("magic", false).asBool();
+
+        auto emulator = manager->GetEmulator(id);
+        if (!emulator)
+        {
+            Json::Value error;
+            error["error"] = "Not Found";
+            error["message"] = "Emulator with specified ID not found";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k404NotFound);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+
+        if (magic)
+            emulator->RequestMNI();
+        else
+            emulator->RequestNMI();
+
+        Json::Value ret;
+        ret["status"] = "success";
+        ret["message"] = magic ? "MNI requested (magic button)" : "NMI requested";
+        ret["emulator_id"] = id;
+        ret["magic"] = magic;
+
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
         addCorsHeaders(resp);
         callback(resp);
     }

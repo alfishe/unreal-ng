@@ -9,7 +9,7 @@
 #include <cstdio>
 #include <cstring>
 
-// ZX Spectrum screen dimensions
+// Default ZX Spectrum screen dimensions (fallback when Screen unavailable)
 static constexpr uint16_t ZX_SCREEN_WIDTH = 256;
 static constexpr uint16_t ZX_SCREEN_HEIGHT = 192;
 
@@ -64,15 +64,41 @@ ScreenCapture::CaptureResult ScreenCapture::captureScreen(const std::string& emu
 
     if (mode == CaptureMode::ScreenOnly)
     {
-        // Extract just the 256x192 screen area
-        if (!extractScreenArea(fb, screenOnlyData))
+        // Get screen dimensions from Screen::rasterDescriptors
+        uint16_t screenWidth = ZX_SCREEN_WIDTH;
+        uint16_t screenHeight = ZX_SCREEN_HEIGHT;
+        uint16_t offsetX = 0;
+        uint16_t offsetY = 0;
+
+        auto* ctx = emulator->GetContext();
+        if (ctx && ctx->pScreen && fb.videoMode < M_MAX)
+        {
+            const auto& rd = ctx->pScreen->rasterDescriptors[fb.videoMode];
+            if (rd.screenWidth > 0)
+            {
+                screenWidth = rd.screenWidth;
+                screenHeight = rd.screenHeight;
+                offsetX = rd.screenOffsetLeft;
+                offsetY = rd.screenOffsetTop;
+            }
+        }
+
+        // Fallback: center screen if offsets not set
+        if (offsetX == 0 && offsetY == 0)
+        {
+            offsetX = (fb.width - screenWidth) / 2;
+            offsetY = (fb.height - screenHeight) / 2;
+        }
+
+        // Extract screen area
+        if (!extractScreenArea(fb, screenOnlyData, screenWidth, screenHeight, offsetX, offsetY))
         {
             result.errorMessage = "Failed to extract screen area";
             return result;
         }
         imageData = screenOnlyData.data();
-        imageWidth = ZX_SCREEN_WIDTH;
-        imageHeight = ZX_SCREEN_HEIGHT;
+        imageWidth = screenWidth;
+        imageHeight = screenHeight;
     }
     else  // FullFramebuffer
     {
@@ -115,30 +141,28 @@ ScreenCapture::CaptureResult ScreenCapture::captureScreen(const std::string& emu
 // Screen Extraction
 // ============================================================================
 
-bool ScreenCapture::extractScreenArea(const FramebufferDescriptor& fb, std::vector<uint8_t>& outData)
+bool ScreenCapture::extractScreenArea(const FramebufferDescriptor& fb, std::vector<uint8_t>& outData,
+                                       uint16_t screenWidth, uint16_t screenHeight,
+                                       uint16_t offsetX, uint16_t offsetY)
 {
     // Validate framebuffer has enough data
-    if (fb.width < ZX_SCREEN_WIDTH || fb.height < ZX_SCREEN_HEIGHT)
+    if (fb.width < offsetX + screenWidth || fb.height < offsetY + screenHeight)
     {
         return false;
     }
 
-    // Calculate offset to screen area (centered in framebuffer)
-    uint16_t offsetX = (fb.width - ZX_SCREEN_WIDTH) / 2;
-    uint16_t offsetY = (fb.height - ZX_SCREEN_HEIGHT) / 2;
-
     // Allocate output buffer (RGBA)
-    outData.resize(ZX_SCREEN_WIDTH * ZX_SCREEN_HEIGHT * 4);
+    outData.resize(screenWidth * screenHeight * 4);
 
     // Copy screen area line by line
     const uint8_t* src = fb.memoryBuffer;
     uint8_t* dst = outData.data();
-    
-    for (uint16_t y = 0; y < ZX_SCREEN_HEIGHT; y++)
+
+    for (uint16_t y = 0; y < screenHeight; y++)
     {
         const uint8_t* srcLine = src + ((offsetY + y) * fb.width + offsetX) * 4;
-        uint8_t* dstLine = dst + (y * ZX_SCREEN_WIDTH) * 4;
-        std::memcpy(dstLine, srcLine, ZX_SCREEN_WIDTH * 4);
+        uint8_t* dstLine = dst + (y * screenWidth) * 4;
+        std::memcpy(dstLine, srcLine, screenWidth * 4);
     }
 
     return true;
