@@ -71,11 +71,10 @@ StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuMana
     separator->setFixedHeight(13);
 
     _cpuFreq = new QLabel(QStringLiteral("3.5 MHz"), _statusBar);
-    _cpuFreq->setToolTip(tr("CPU frequency"));
     QFont cpuFont("Consolas", _cpuFreq->font().pointSize());
     cpuFont.setStyleHint(QFont::Monospace);
     _cpuFreq->setFont(cpuFont);
-    _cpuFreq->setStyleSheet("padding-top: 1px;");
+    _cpuFreq->setStyleSheet("QLabel { padding-top: 1px; }");
 
     _fps = new QLabel(QStringLiteral("-- FPS"), _statusBar);
     _fps->setToolTip(tr("Emulated frames per second"));
@@ -176,11 +175,11 @@ void StatusBarManager::handleCPUFreqChanged(int id, Message* message)
 
         // Color coding: normal for 3.5MHz, orange for 7MHz, dark red for 14MHz+
         if (freqHz >= 14'000'000)
-            _cpuFreq->setStyleSheet("color: #B22222; padding-top: 1px;");
+            _cpuFreq->setStyleSheet("QLabel { color: #B22222; padding-top: 1px; }");
         else if (freqHz >= 7'000'000)
-            _cpuFreq->setStyleSheet("color: #FF8C00; padding-top: 1px;");
+            _cpuFreq->setStyleSheet("QLabel { color: #FF8C00; padding-top: 1px; }");
         else
-            _cpuFreq->setStyleSheet("padding-top: 1px;");
+            _cpuFreq->setStyleSheet("QLabel { padding-top: 1px; }");
     }, Qt::QueuedConnection);
 }
 
@@ -352,16 +351,19 @@ void StatusBarManager::refresh()
 
         // Color coding: normal for 3.5MHz, orange for 7MHz, dark red for 14MHz+
         if (freqHz >= 14'000'000)
-            _cpuFreq->setStyleSheet("color: #B22222; padding-top: 1px;");  // Dark red
+            _cpuFreq->setStyleSheet("QLabel { color: #B22222; padding-top: 1px; }");  // Dark red
         else if (freqHz >= 7'000'000)
-            _cpuFreq->setStyleSheet("color: #FF8C00; padding-top: 1px;");  // Orange
+            _cpuFreq->setStyleSheet("QLabel { color: #FF8C00; padding-top: 1px; }");  // Orange
         else
-            _cpuFreq->setStyleSheet("padding-top: 1px;");  // Default color
+            _cpuFreq->setStyleSheet("QLabel { padding-top: 1px; }");  // Default color
+
+        updateCpuFreqToolTip(context);
     }
     else
     {
         _cpuFreq->setText(QStringLiteral("-- MHz"));
-        _cpuFreq->setStyleSheet("padding-top: 1px;");
+        _cpuFreq->setStyleSheet("QLabel { padding-top: 1px; }");
+        updateCpuFreqToolTip(nullptr);
     }
 
     // FPS: once per second take the latest frame-aligned sample and measure the rate
@@ -423,6 +425,32 @@ void StatusBarManager::refresh()
             _fps->setText(QStringLiteral("-- FPS"));
     }
     updateFpsToolTip(emulator);
+}
+
+void StatusBarManager::updateCpuFreqToolTip(EmulatorContext* context)
+{
+    QString text;
+
+    if (context)
+    {
+        // config.frame is the raster base; the CPU executes that scaled by the
+        // clock multiplier, so show the effective figure and name the base when
+        // a hardware turbo or the host speed control is raising it
+        const uint32_t effective = context->GetFrameTStates();
+        const uint32_t base = context->GetBaseFrameTStates();
+        const uint8_t multiplier = context->GetCpuClockMultiplier();
+
+        if (multiplier > 1)
+            text = tr("Frame: %1 T-states (%2 base x%3)").arg(effective).arg(base).arg(multiplier);
+        else
+            text = tr("Frame: %1 T-states").arg(effective);
+    }
+
+    if (_cpuFreq->toolTip() == text)
+        return;
+    _cpuFreq->setToolTip(text);
+    if (QToolTip::isVisible() && _cpuFreq->underMouse())
+        QToolTip::showText(QCursor::pos(), text, _cpuFreq);
 }
 
 void StatusBarManager::updateFpsToolTip(std::shared_ptr<Emulator> emulator)

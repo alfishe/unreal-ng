@@ -235,6 +235,80 @@ public:
     Emulator* pEmulator;
     /// endregion </Parent object references>
 
+    /// region <Timing helpers>
+    //
+    // config holds the RASTER BASE timings (Pentagon: 71680 T per frame, 224 per
+    // line; ZX48/128 and Scorpion: 69888 / 224). The Z80 actually executes those
+    // scaled by the composed clock multiplier, so anything reporting or bounding
+    // CPU time must scale too - reading config.frame raw reports 3.5 MHz numbers
+    // while the CPU is running at 7 or 14 MHz.
+
+    /// @brief Composed CPU clock multiplier relative to the base 3.5 MHz clock
+    /// @details Two independent things fold into this value:
+    ///          - guest HARDWARE turbo (Scorpion ZS-256 7 MHz, ATM/Profi 14 MHz),
+    ///            which keeps the 20 ms frame and genuinely gives the guest N x
+    ///            T-states inside it;
+    ///          - the host speed control, which instead makes frames run faster in
+    ///            wall-clock time.
+    ///          For CPU-time purposes the composed value is the correct one. Code
+    ///          that must tell the two apart (audio sample budgeting) uses
+    ///          EmulatorState::HostSpeedMultiplier() instead.
+    /// @return Clock multiplier (1, 2, 4, ...); never 0
+    /// @note EmulatorState::current_z80_frequency_multiplier is 0 until Core
+    ///       initialises it; that transient is reported as x1 so callers polling
+    ///       during start-up never see a zero-length frame.
+    /// @see EmulatorState::HostSpeedMultiplier
+    uint8_t GetCpuClockMultiplier() const
+    {
+        const uint8_t multiplier = emulatorState.current_z80_frequency_multiplier;
+        return multiplier > 0 ? multiplier : 1;
+    }
+
+    /// @brief T-states the Z80 executes per emulated frame at the current clock
+    /// @details This is the per-frame limit that Z80::Z80FrameCycle and the
+    ///          Emulator run loops enforce: the raster base scaled by the composed
+    ///          clock multiplier. At 3.5 MHz on Pentagon it is 71680; at 14 MHz the
+    ///          same frame is 286720 T-states long.
+    /// @return T-states per frame at the current CPU clock
+    /// @see GetBaseFrameTStates, GetCpuClockMultiplier
+    uint32_t GetFrameTStates() const { return config.frame * GetCpuClockMultiplier(); }
+
+    /// @brief Raster base T-states per frame, unscaled by the clock multiplier
+    /// @details Pentagon 71680; ZX48/128 and Scorpion ZS-256 69888. This is the
+    ///          hardware raster figure and does not move when the CPU clock changes.
+    /// @return T-states per frame at the base 3.5 MHz clock
+    /// @see GetFrameTStates
+    uint32_t GetBaseFrameTStates() const { return config.frame; }
+
+    /// @brief T-states per raster line at the current clock
+    /// @return T-states per line, scaled by the composed clock multiplier
+    /// @see GetBaseLineTStates
+    uint32_t GetLineTStates() const { return config.t_line * GetCpuClockMultiplier(); }
+
+    /// @brief Raster base T-states per line, unscaled by the clock multiplier
+    /// @return T-states per line at the base 3.5 MHz clock (224 on every model here)
+    /// @see GetLineTStates
+    uint32_t GetBaseLineTStates() const { return config.t_line; }
+
+    /// @brief In-frame T-state at which the INT pulse starts, at the current clock
+    /// @return Offset from frame start, in T-states at the current CPU clock
+    /// @see GetIntEndTState
+    uint32_t GetIntStartTState() const { return config.intstart * GetCpuClockMultiplier(); }
+
+    /// @brief In-frame T-state at which the INT pulse ends, at the current clock
+    /// @details INT is asserted for config.intlen T-states starting at
+    ///          config.intstart, both scaled by the clock multiplier.
+    /// @return Offset from frame start, in T-states at the current CPU clock
+    /// @note May exceed GetFrameTStates() when the pulse straddles the frame
+    ///       boundary; Z80::Z80FrameCycle wraps it explicitly.
+    /// @see GetIntStartTState
+    uint32_t GetIntEndTState() const
+    {
+        return (config.intstart + config.intlen) * GetCpuClockMultiplier();
+    }
+
+    /// endregion </Timing helpers>
+
     /// region <Constructors / destructors>
 public:
     EmulatorContext();                      // Default constructor with LogTrace default logging level
