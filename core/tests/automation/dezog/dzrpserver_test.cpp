@@ -5,6 +5,8 @@
 
 #include "dezogtestfixture.h"
 
+#include "_helpers/testwaithelper.h"
+
 #include "automation-dezog.h"
 #include "dzrpprotocol.h"
 #include "dzrpserver.h"
@@ -455,8 +457,8 @@ TEST_F(DZRPServer_test, PauseCommandNotifiesManual)
 
     auto cont = _client.command(dzrp::CommandId::CMD_CONTINUE, std::vector<uint8_t>(11, 0));
     ASSERT_TRUE(cont.valid);
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    EXPECT_FALSE(_emulator->IsPaused());
+    EXPECT_TRUE(TestWait::For([&] { return !_emulator->IsPaused(); }, std::chrono::milliseconds(2000)))
+        << "CMD_CONTINUE did not resume the emulator";
 
     auto pause = _client.command(dzrp::CommandId::CMD_PAUSE);
     ASSERT_TRUE(pause.valid);
@@ -553,7 +555,14 @@ TEST_F(DZRPServer_test, ClientDropWhileRunningCleansUpAndReconnects)
 
     // VS Code window closed / network drop: no CMD_CLOSE, socket just goes away
     _client.disconnect();
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    // Wait for the cleanup the test is about, not for a guessed interval: the
+    // server notices the dropped socket on its own thread.
+    EXPECT_TRUE(TestWait::For(
+        [&] { return _emulator->GetBreakpointManager()->GetBreakpointsCount() == 0u && !_emulator->IsPaused(); },
+        std::chrono::milliseconds(2000)))
+        << "dropped session left " << _emulator->GetBreakpointManager()->GetBreakpointsCount()
+        << " breakpoints, paused=" << _emulator->IsPaused();
 
     // Stale breakpoints are gone and the emulator is not left stuck on the hit
     EXPECT_EQ(_emulator->GetBreakpointManager()->GetBreakpointsCount(), 0u);
@@ -580,7 +589,12 @@ TEST_F(DZRPServer_test, CloseCommandResumesAndDropsBreakpoints)
 
     ASSERT_TRUE(_client.command(dzrp::CommandId::CMD_CLOSE).valid);
     _client.disconnect();
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    EXPECT_TRUE(TestWait::For(
+        [&] { return _emulator->GetBreakpointManager()->GetBreakpointsCount() == 0u && !_emulator->IsPaused(); },
+        std::chrono::milliseconds(2000)))
+        << "CMD_CLOSE left " << _emulator->GetBreakpointManager()->GetBreakpointsCount()
+        << " breakpoints, paused=" << _emulator->IsPaused();
 
     EXPECT_EQ(_emulator->GetBreakpointManager()->GetBreakpointsCount(), 0u);
     EXPECT_FALSE(_emulator->IsPaused());

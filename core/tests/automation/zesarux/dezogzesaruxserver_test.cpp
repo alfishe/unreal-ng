@@ -12,6 +12,8 @@
 #include <thread>
 #include <vector>
 
+#include "_helpers/testwaithelper.h"
+
 /// region <Handshake / basics>
 
 TEST_F(DezogZesaruxFixture, VersionAndUnknownCommand)
@@ -170,8 +172,8 @@ TEST_F(DezogZesaruxFixture, RunBreakpointConditionFalseSilentlyResumes)
     _client.sendLine("run");
     EXPECT_EQ(_client.readLine(), "Running until a breakpoint, key press or data sent, menu opening or other event");
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    EXPECT_TRUE(_emulator->IsRunning());
+    EXPECT_TRUE(TestWait::For([&] { return _emulator->IsRunning(); }, std::chrono::milliseconds(2000)))
+        << "\"run\" did not put the target into the running state";
 
     // Interrupt with DeZog's blank line; stop is MANUAL: no break message,
     // just the step output
@@ -226,8 +228,8 @@ TEST_F(DezogZesaruxFixture, DisableBreakpointKeepsRunning)
 
     _client.sendLine("run");
     EXPECT_EQ(_client.readLine(), "Running until a breakpoint, key press or data sent, menu opening or other event");
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    EXPECT_TRUE(_emulator->IsRunning());
+    EXPECT_TRUE(TestWait::For([&] { return _emulator->IsRunning(); }, std::chrono::milliseconds(2000)))
+        << "\"run\" did not put the target into the running state";
 
     _client.sendBlank();
     EXPECT_FALSE(_client.readUntilPrompt().empty());
@@ -371,7 +373,13 @@ TEST_F(DezogZesaruxFixture, QuitSequenceEndsSessionAndCleansUp)
 
     EXPECT_TRUE(_client.socketClosed());
     _client.disconnect();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Wait for the teardown this test is about, not for a guessed interval.
+    EXPECT_TRUE(TestWait::For(
+        [&] { return _emulator->GetBreakpointManager()->GetBreakpointsCount() == 0u && !_emulator->IsPaused(); },
+        std::chrono::milliseconds(2000)))
+        << "session teardown left " << _emulator->GetBreakpointManager()->GetBreakpointsCount()
+        << " breakpoints, paused=" << _emulator->IsPaused();
 
     // Session teardown removed the breakpoints and resumed the target
     EXPECT_EQ(_emulator->GetBreakpointManager()->GetBreakpointsCount(), 0u);
@@ -396,7 +404,11 @@ TEST_F(DezogZesaruxFixture, ClientDropWhileRunningCleansUp)
 
     // VS Code window closed: socket just goes away
     _client.disconnect();
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    EXPECT_TRUE(TestWait::For([&] { return _emulator->GetBreakpointManager()->GetBreakpointsCount() == 0u; },
+                              std::chrono::milliseconds(2000)))
+        << "dropped session left "
+        << _emulator->GetBreakpointManager()->GetBreakpointsCount() << " breakpoints";
 
     EXPECT_EQ(_emulator->GetBreakpointManager()->GetBreakpointsCount(), 0u);
 
