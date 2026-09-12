@@ -3559,6 +3559,15 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
             auto& framebufferDesc = context->pScreen->GetFramebufferDescriptor();
             _screenWrapper->init(framebufferDesc.width, framebufferDesc.height, framebufferDesc.memoryBuffer);
 
+            // Match the widget's crop to the emulator being adopted. Viewport crops are
+            // absolute pixel insets, so one left over from the previous machine's overscan
+            // mode (framebuffer 384x304) keeps cropping a framebuffer that is now 352x288,
+            // scaling the wrong source region into the fixed-size widget
+            if (_emulator->IsOverscanMode())
+                deviceScreen->setDisplayViewport(_emulator->GetDisplayViewport());
+            else
+                deviceScreen->clearDisplayViewport();
+
             // Paint from the frame-end latched snapshot instead of the live
             // framebuffer - prevents mid-frame tearing (emulation thread
             // overwrites the live buffer while the GUI thread paints it).
