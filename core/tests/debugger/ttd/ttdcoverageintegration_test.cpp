@@ -92,6 +92,12 @@ protected:
         fm->setFeature(Features::kDebugMode, true);
         fm->setFeature(Features::kTimeTravel, true);
         _memory->UpdateFeatureCache();
+        // Host-side only: mutes audio, drops the sound DSP to the low-quality
+        // path and decimates rendering. Nothing in this suite looks at a
+        // rendered frame - every assertion is a TTD search result or index
+        // state - and turbo never touches emulated clock behaviour, so the
+        // recorded sessions are identical. 1718 ms -> 625 ms for the suite.
+        _emulator->EnableTurboMode();
     }
 
     void TearDown() override
