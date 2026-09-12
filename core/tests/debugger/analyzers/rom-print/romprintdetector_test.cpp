@@ -32,6 +32,12 @@ protected:
         
         // Ensure manager is enabled so it dispatches events
         _manager->setEnabled(true);
+
+        // Host-side only: mutes audio, drops the sound DSP to the low-quality
+        // path and decimates rendering. Nothing here asserts on a rendered
+        // frame - ScreenOCR decodes the VRAM page, not the framebuffer - and
+        // the integration test below boots 100 frames twice.
+        _emulator->EnableTurboMode();
     }
     
     void TearDown() override

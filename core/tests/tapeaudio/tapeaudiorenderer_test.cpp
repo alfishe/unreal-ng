@@ -341,7 +341,18 @@ TEST(TapeAudioRenderer_Test, ErrorPathsAreStructured)
     EXPECT_NE(r3.errorText.find("out of range"), std::string::npos);
 }
 
-TEST(TapeAudioRenderer_Test, FlacRenderOrHonestSkip)
+// Disabled: depends on ffmpeg being installed on the build machine.
+//
+// A unit test must not change behaviour with the contents of $PATH. These
+// spawned an external encoder, so on one machine they exercised the ffmpeg
+// path and on another they silently skipped (or, for the renderer, asserted a
+// different branch entirely) - the suite reported green either way while
+// covering different code. That is an integration test, and it belongs
+// wherever ffmpeg can be a declared prerequisite, not in core-tests.
+//
+// Still runnable on demand:
+//   ./bin/core-tests --gtest_also_run_disabled_tests --gtest_filter='*Flac*:*Mp3*'
+TEST(TapeAudioRenderer_Test, DISABLED_FlacRenderOrHonestSkip)
 {
     TzxTapeBuilder builder;
     builder.AddPulseSequence({3500, 7000});

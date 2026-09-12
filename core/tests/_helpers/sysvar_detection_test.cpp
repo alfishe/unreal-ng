@@ -26,6 +26,13 @@ protected:
         if (_emulator)
         {
             _emulatorId = _emulator->GetId();
+
+            // Host-side only: mutes audio, drops the sound DSP to the
+            // low-quality path and decimates rendering. Safe here - ScreenOCR
+            // decodes the VRAM page rather than the framebuffer, and the timing
+            // these tests compare is the cost of a *check* (sysvar read vs OCR
+            // decode), not emulation speed. Every test boots ~100-200 frames.
+            _emulator->EnableTurboMode();
         }
     }
 
