@@ -9,6 +9,7 @@
 
 #include "_helpers/testpathhelper.h"
 #include "common/filehelper.h"
+#include "emulator/config.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -174,6 +175,18 @@ private:
         config.mem_model = _model;
         config.ramsize = _ramSizeKB;
         config.trdos_present = true;  // the Beta128 interface is built into the Scorpion
+
+        // Raster geometry. Emulator::Init() normally does this before it
+        // constructs Core; a fixture that builds Core directly has to do it
+        // itself, and CONFIG{} leaves config.frame at 0. Screen requires it:
+        // InitRaster asserts config.frame >= the raster's own frame length
+        // (#ifdef _DEBUG), and SetVideoMode pushes the value into
+        // UlaContention, where GetIOContentionDelay computes
+        // `t % configFrameDuration` - a modulo by zero on any model whose
+        // contention is enabled. Go through ApplyModelTimingDefaults rather
+        // than a literal so the fixture cannot drift from the model.
+        Config configHelper(_context);
+        configHelper.ApplyModelTimingDefaults(config, true /* canonicalGeometry */);
 
         // ROM bundle must exist before Core::Init() only in the sense that the
         // loader runs right after - the config path is what matters here
