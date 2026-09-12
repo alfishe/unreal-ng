@@ -6,6 +6,7 @@
 #include <thread>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "_helpers/testwaithelper.h"
 #include "emulator/notifications.h"
 
 #include "scorpionmachine_test.h"
@@ -198,13 +199,10 @@ TEST_F(ScorpionMachine_Test, TurboStrobePostsCpuFreqChanged)
     };
     uint64_t handlerId = messageCenter.AddObserver(NC_CPU_FREQ_CHANGED, handler);
 
-    // Notification dispatch is asynchronous (MessageCenter thread)
-    auto waitForMessages = [&](int count) {
-        auto start = std::chrono::steady_clock::now();
-        while (messages.load() < count &&
-               std::chrono::steady_clock::now() - start < std::chrono::milliseconds(500))
-            std::this_thread::sleep_for(std::chrono::microseconds(250));
-    };
+    // Notification dispatch is asynchronous (MessageCenter thread), so every
+    // wait below goes through TestWait: it returns the moment the predicate
+    // holds, and the timeout only bounds the failure case.
+    auto waitForMessages = [&](int count) { TestWait::ForAtLeast(messages, count); };
 
     _context->pPortDecoder->DecodePortIn(0x7FFD, 0x8000);  // the turbo-on strobe
     waitForMessages(1);
@@ -220,8 +218,7 @@ TEST_F(ScorpionMachine_Test, TurboStrobePostsCpuFreqChanged)
 
     // A strobe that does not change the effective multiplier stays silent
     _context->pPortDecoder->DecodePortIn(0x1FFD, 0x8000);
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    EXPECT_EQ(messages.load(), 2) << "a no-op strobe must not re-notify";
+    EXPECT_TRUE(TestWait::ForExactly(messages, 2)) << "a no-op strobe must not re-notify";
 
     messageCenter.RemoveObserverById(NC_CPU_FREQ_CHANGED, handlerId);
 }

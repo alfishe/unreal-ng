@@ -197,6 +197,13 @@ TEST(ScorpionSMUC_Test, ProfRomBootDrivesSmucProbes)
     // and varied with the wall clock
     decoder->GetSMUCNvram().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
 
+    // Host-side turbo: mutes audio and drops the sound DSP to the low-quality
+    // path. RunNFrames is synchronous and unpaced, so this buys nothing in
+    // frame pacing - but the audio render is real per-frame host work, and
+    // skipping it is worth ~2.7x on a boot-bound test. It changes no emulated
+    // state (config.turbo_mode is the host fast-forward flag, unrelated to the
+    // Z80 frequency multiplier this suite exercises).
+    emulator->EnableTurboMode();
     emulator->RunNFrames(10);
 
     // The check panel is transient: it renders around frames 100-350 and is
@@ -236,6 +243,17 @@ TEST(ScorpionSMUC_Test, ProfRomBootDrivesSmucProbes)
         }
         if (populatedPanelRows > maxPanelRows)
             maxPanelRows = populatedPanelRows;
+
+        // Stop as soon as every assertion below is already satisfied. The boot
+        // reaches this state by ~frame 200 and then idles; the remaining
+        // iterations cannot change any outcome, they only cost ~1 s of wall
+        // clock. A run that never reaches it still walks the full window and
+        // prints every sample, so a failure keeps its whole diagnostic trail.
+        if (maxPanelRows >= 3 && state.pFFBA != 0x00 &&
+            decoder->GetSMUCNvram().GetEEPROMByte(0) == 0x61)
+        {
+            break;
+        }
     }
     EXPECT_GE(maxPanelRows, 3);
 

@@ -340,6 +340,9 @@ TEST(ScorpionServiceMonitor_Test, ProfRomServiceMonitorHighlightDoesNotBlink)
     EmulatorContext* context = emulator->GetContext();
     Memory* memory = context->pMemory;
 
+    // Host-side turbo: no emulated-state effect, just skips per-frame audio work
+    emulator->EnableTurboMode();
+
     // Boot until RAM and basic vectors are initialized (70 frames = 1.4s virtual time)
     emulator->RunNFrames(70);
 

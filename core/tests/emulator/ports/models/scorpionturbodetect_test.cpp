@@ -44,6 +44,11 @@ static void RunDetectionProbe(const char* model, uint16_t flagAddr, int& success
     if (PortDecoder_Scorpion256* decoder = static_cast<PortDecoder_Scorpion256*>(context->pPortDecoder))
         decoder->GetSMUCNvram().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
 
+    // Host-side turbo (audio muted + low-quality DSP). Independent of the
+    // emulated 7 MHz multiplier under test - config.turbo_mode never reaches
+    // current_z80_frequency_multiplier - it only removes per-frame audio work.
+    emulator->EnableTurboMode();
+
     emulator->RunNFrames(300);  // boot to the 128 menu (~6 s)
 
     for (unsigned phase = 0; phase < 8; phase++)
@@ -63,7 +68,17 @@ static void RunDetectionProbe(const char* model, uint16_t flagAddr, int& success
         report += line;
         attempts++;
         if (detected)
+        {
             successes++;
+
+            // The caller asserts EXPECT_GT(successes, 0): the phases exist to
+            // make the probe robust against sub-frame press timing, not to
+            // measure a rate. Once one phase has detected, the remaining ones
+            // can only cost time - each carries a cold reset plus a 300-frame
+            // reboot, ~89% of this test's runtime. A failing run still walks
+            // all eight and reports every phase.
+            break;
+        }
 
         // Leave the monitor for the next attempt: cold reset back to the menu
         emulator->Reset();
@@ -101,6 +116,7 @@ TEST(ScorpionTurboDetect_Test, ProfRomBootDetectsSevenMhz)
     // so a single 60-frame call only spans ~35 video frames and would stop
     // before the write. Per-frame calls recompute the frame limit each time
     // and land on true video frame 60 (write at 45, staging not until ~321)
+    emulator->EnableTurboMode();  // host-side only; see RunDetectionProbe
     for (int frame = 0; frame < 60; frame++)
         emulator->RunNFrames(1);
 
