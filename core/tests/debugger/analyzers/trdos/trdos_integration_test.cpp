@@ -35,6 +35,8 @@
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/fdc/diskimage.h"
 
+#include "_helpers/testwaithelper.h"
+
 // =============================================================================
 // Test Fixture: Full Emulator with TR-DOS and Analyzer
 // =============================================================================
@@ -328,9 +330,13 @@ TEST_F(TRDOSIntegration_test, AnalyzerBreakpointIsSilent)
         _analyzer->onBreakpointHit(0x3D00, _z80);
     }
     
-    // Brief wait for any async notifications
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    
+    // Bounded window for a notification that must not arrive. The fixed 50 ms
+    // sleep paid its full length on every pass and still only proved "nothing
+    // arrived in the interval I guessed"; ForExactly settles briefly and fails
+    // the moment a stray notification shows up.
+    EXPECT_TRUE(TestWait::ForExactly(messageCenterNotifications, 0))
+        << "Analyzer breakpoint callbacks should NOT trigger MessageCenter";
+
     messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
     
     // Analyzer should have captured events

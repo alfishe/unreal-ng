@@ -317,7 +317,10 @@ TEST_F(FDDNotificationTest, InsertNullDoesNotSendNotification)
     FDD fdd(&ctx);
     
     fdd.insertDisk(nullptr);
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+    // A null insert must post nothing; bounded window, fails the moment it does.
+    EXPECT_FALSE(WaitForCondition([]() { return insertedCount() > 0; }, 5))
+        << "insertDisk(nullptr) posted an insert notification";
 
     EXPECT_EQ(insertedCount(), 0u);
 }
