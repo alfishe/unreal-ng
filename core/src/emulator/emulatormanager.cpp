@@ -5,12 +5,44 @@
 #include "stdafx.h"
 #include "3rdparty/message-center/messagecenter.h"
 #include "3rdparty/message-center/eventqueue.h"
+#include "emulator/mainloop.h"
 #include "emulator/notifications.h"
 
 #include <algorithm>
 #include <iomanip>
 
 // Implementation of EmulatorManager methods
+
+void EmulatorManager::UpdateRealtimeScheduling()
+{
+    std::lock_guard<std::mutex> lock(_emulatorsMutex);
+    UpdateRealtimeSchedulingLocked();
+}
+
+void EmulatorManager::UpdateRealtimeSchedulingLocked()
+{
+    std::string selectedId;
+    {
+        std::lock_guard<std::mutex> selLock(_selectionMutex);
+        selectedId = _selectedEmulatorId;
+    }
+
+    // Stateless fallback (the same rule CLI/WebAPI resolution uses to pick
+    // "the" emulator): with no explicit selection the sole instance IS the
+    // active one. This covers the GUI flow, which creates its single
+    // instance through the manager but never calls SetSelectedEmulatorId.
+    // With several instances and no selection none is active - no thread
+    // holds real-time priority
+    if (selectedId.empty() && _emulators.size() == 1)
+        selectedId = _emulators.begin()->first;
+
+    for (const auto& pair : _emulators)
+    {
+        MainLoop* mainLoop = pair.second ? pair.second->GetMainLoop() : nullptr;
+        if (mainLoop)
+            mainLoop->SetRealtimeRequested(pair.first == selectedId);
+    }
+}
 
 std::shared_ptr<Emulator> EmulatorManager::CreateEmulator(const std::string& symbolicId, LoggerLevel level)
 {
@@ -61,6 +93,9 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulator(const std::string& sym
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
         SimpleTextPayload* payload = new SimpleTextPayload(uuid);
         messageCenter.Post(NC_EMULATOR_INSTANCE_CREATED, payload);
+
+        // Sole-instance fallback may make this instance the active one
+        UpdateRealtimeSchedulingLocked();
 
         return emulator;
     }
@@ -118,6 +153,9 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithId(const std::strin
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
         SimpleTextPayload* payload = new SimpleTextPayload(emulatorId);
         messageCenter.Post(NC_EMULATOR_INSTANCE_CREATED, payload);
+
+        // Sole-instance fallback may make this instance the active one
+        UpdateRealtimeSchedulingLocked();
 
         return emulator;
     }
@@ -182,6 +220,9 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::st
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
         SimpleTextPayload* payload = new SimpleTextPayload(uuid);
         messageCenter.Post(NC_EMULATOR_INSTANCE_CREATED, payload);
+
+        // Sole-instance fallback may make this instance the active one
+        UpdateRealtimeSchedulingLocked();
 
         return emulator;
     }
@@ -255,6 +296,9 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const s
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
         SimpleTextPayload* payload = new SimpleTextPayload(uuid);
         messageCenter.Post(NC_EMULATOR_INSTANCE_CREATED, payload);
+
+        // Sole-instance fallback may make this instance the active one
+        UpdateRealtimeSchedulingLocked();
 
         return emulator;
     }
@@ -385,6 +429,9 @@ bool EmulatorManager::RemoveEmulator(const std::string& emulatorId)
         SimpleTextPayload* payload = new SimpleTextPayload(emulatorId);
         messageCenter.Post(NC_EMULATOR_INSTANCE_DESTROYED, payload);
 
+        // The surviving sole instance (if any) may become the active one
+        UpdateRealtimeSchedulingLocked();
+
         return true;
     }
 
@@ -478,7 +525,10 @@ bool EmulatorManager::StartEmulatorAsync(const std::string& emulatorId)
                 messageCenter.Post(NC_EMULATOR_SELECTION_CHANGED, payload);
                 LOGINFO("EmulatorManager::StartEmulatorAsync - Auto-selected emulator '%s' (previous selection was invalid)", emulatorId.c_str());
             }
-            
+
+            // Propagate the (possibly new) selection to the thread priorities
+            UpdateRealtimeSchedulingLocked();
+
             return true;
         }
         else
@@ -546,7 +596,10 @@ bool EmulatorManager::StopEmulator(const std::string& emulatorId)
                     }
                 }
             }
-            
+
+            // Propagate the (possibly re-selected) selection to the thread priorities
+            UpdateRealtimeSchedulingLocked();
+
             return true;
         }
         else
@@ -718,18 +771,23 @@ bool EmulatorManager::SetSelectedEmulatorId(const std::string& emulatorId)
     // Allow clearing selection (empty string)
     if (emulatorId.empty())
     {
-        std::lock_guard<std::mutex> lock(_selectionMutex);
-        std::string previousId = _selectedEmulatorId;
-        _selectedEmulatorId = "";
-        
-        // Send notification about selection change
-        if (!previousId.empty())
         {
-            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            EmulatorSelectionPayload* payload = new EmulatorSelectionPayload(previousId, "");
-            messageCenter.Post(NC_EMULATOR_SELECTION_CHANGED, payload);
+            std::lock_guard<std::mutex> lock(_selectionMutex);
+            std::string previousId = _selectedEmulatorId;
+            _selectedEmulatorId = "";
+
+            // Send notification about selection change
+            if (!previousId.empty())
+            {
+                MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+                EmulatorSelectionPayload* payload = new EmulatorSelectionPayload(previousId, "");
+                messageCenter.Post(NC_EMULATOR_SELECTION_CHANGED, payload);
+            }
         }
-        
+
+        // Dropping the selection must also drop any realtime request it granted
+        UpdateRealtimeScheduling();
+
         return true;
     }
     
@@ -748,15 +806,18 @@ bool EmulatorManager::SetSelectedEmulatorId(const std::string& emulatorId)
         std::lock_guard<std::mutex> lock(_selectionMutex);
         std::string previousId = _selectedEmulatorId;
         _selectedEmulatorId = emulatorId;
-        
+
         // Send notification about selection change
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
         EmulatorSelectionPayload* payload = new EmulatorSelectionPayload(previousId, emulatorId);
         messageCenter.Post(NC_EMULATOR_SELECTION_CHANGED, payload);
-        
+
         LOGINFO("EmulatorManager::SetSelectedEmulatorId - Selected emulator: '%s'", emulatorId.c_str());
     }
-    
+
+    // Move the realtime request to the newly selected instance
+    UpdateRealtimeScheduling();
+
     return true;
 }
 
