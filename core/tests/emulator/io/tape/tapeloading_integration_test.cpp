@@ -33,6 +33,26 @@
 class TapeLoading_Integration_Test : public ::testing::Test
 {
 protected:
+    /// Create the Pentagon instance every test in this suite starts from.
+    ///
+    /// Turbo is host-side only: it mutes the audio output, drops the sound DSP
+    /// to its low-quality path and decimates rendering. Nothing here asserts on
+    /// any of those - the assertions are RAM contents, sysvars, tape playback
+    /// state and feature flags, and the file references neither pScreen nor the
+    /// framebuffer anywhere. Tape playback advances on T-states, not on audio
+    /// frames, so the signal path is unaffected; the sibling
+    /// TapeTurbo_Integration_Test already runs its signal tests this way.
+    ///
+    /// It matters because every test here boots 100 frames before doing
+    /// anything, and the signal-path tests play several hundred more.
+    static Emulator* MakeTapeEmulator()
+    {
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("Pentagon", LoggerLevel::LogError);
+        if (emulator)
+            emulator->EnableTurboMode();
+        return emulator;
+    }
+
     /// region <Payload builders>
 
     /// Tokenized `1 REM TAPETEST` + `2 PRINT 42` (23 bytes)
@@ -169,7 +189,7 @@ protected:
 TEST_F(TapeLoading_Integration_Test, FastLoadEndToEnd)
 {
     MessageCenter::DisposeDefaultMessageCenter();
-    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("Pentagon", LoggerLevel::LogError);
+    Emulator* emulator = MakeTapeEmulator();
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
 
@@ -236,7 +256,7 @@ TEST_F(TapeLoading_Integration_Test, DifferentialTrapsOnOff)
     auto runScenario = [&](bool trapsOn, int frameBudget) -> RunResult
     {
         MessageCenter::DisposeDefaultMessageCenter();
-        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("Pentagon", LoggerLevel::LogError);
+        Emulator* emulator = MakeTapeEmulator();
         RunResult run;
         if (emulator == nullptr)
             return run;
@@ -323,7 +343,7 @@ TEST_F(TapeLoading_Integration_Test, DifferentialTrapsOnOff)
 TEST_F(TapeLoading_Integration_Test, CustomLoaderFallback)
 {
     MessageCenter::DisposeDefaultMessageCenter();
-    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("Pentagon", LoggerLevel::LogError);
+    Emulator* emulator = MakeTapeEmulator();
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
 
@@ -369,7 +389,7 @@ TEST_F(TapeLoading_Integration_Test, CustomLoaderFallback)
 TEST_F(TapeLoading_Integration_Test, MultiPartHybrid)
 {
     MessageCenter::DisposeDefaultMessageCenter();
-    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("Pentagon", LoggerLevel::LogError);
+    Emulator* emulator = MakeTapeEmulator();
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
 
@@ -434,7 +454,7 @@ TEST_F(TapeLoading_Integration_Test, MultiPartHybrid)
 TEST_F(TapeLoading_Integration_Test, WatchdogPauseFreezesAndSustainedPollResumes)
 {
     MessageCenter::DisposeDefaultMessageCenter();
-    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("Pentagon", LoggerLevel::LogError);
+    Emulator* emulator = MakeTapeEmulator();
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
 
@@ -561,7 +581,7 @@ TEST_F(TapeLoading_Integration_Test, WatchdogPauseFreezesAndSustainedPollResumes
 TEST_F(TapeLoading_Integration_Test, SustainedPollStartsPlaybackWithoutRomAnchor)
 {
     MessageCenter::DisposeDefaultMessageCenter();
-    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("Pentagon", LoggerLevel::LogError);
+    Emulator* emulator = MakeTapeEmulator();
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
 
@@ -611,7 +631,7 @@ TEST_F(TapeLoading_Integration_Test, SustainedPollStartsPlaybackWithoutRomAnchor
 TEST_F(TapeLoading_Integration_Test, TTDRoundTripAcrossFastLoad)
 {
     MessageCenter::DisposeDefaultMessageCenter();
-    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("Pentagon", LoggerLevel::LogError);
+    Emulator* emulator = MakeTapeEmulator();
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
     Memory* memory = context->pMemory;

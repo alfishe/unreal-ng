@@ -53,6 +53,11 @@ protected:
         if (_emulator)
         {
             _context = _emulator->GetContext();
+
+            // Every assertion here reads emulated state - ScreenOCR decodes the
+            // VRAM page, not the framebuffer - so turbo is safe and drops the
+            // audio and per-frame render cost of a full TR-DOS load flow.
+            _emulator->EnableTurboMode();
         }
     }
 
