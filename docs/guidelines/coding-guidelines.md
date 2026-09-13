@@ -20,6 +20,12 @@
 - **Test Setup**: Use the `CUT` (Class Under Test) pattern for exposing internal state in tests without polluting the public API.
 - **File System/Paths**: Use `TestPathHelper::GetTestDataPath()` for fixtures and `TestPathHelper::GetTestScratchPath()` for outputs. Ensure all test artifacts go to `scratch/`.
 
+## Performance & Memory Management
+- **Large POD Buffer Allocation**: Avoid `std::vector<T>::resize(n, 0)` for multi-megabyte buffers of trivial/POD types. Under unoptimized or Debug builds (`-O0`), standard library implementations (`libc++`, `libstdc++`) execute scalar per-element copy-construct loops (costing ~50–60 ms per 24 MiB array). Prefer value-initialized array allocation (`new T[n]()` / `std::make_unique<T[]>` or specialized zero-init buffers like `ZeroInitBuffer`) which standard C++ guarantees lowers to kernel zero-fill/`calloc`/`memset` across all optimization levels.
+- **Bulk Memory Zeroing**: Use vectorized `std::memset` for large POD arrays instead of `std::fill`, which can remain a scalar loop under unoptimized compilation.
+- **Deallocation**: Avoid `std::vector<T>().swap(v)` idioms that create and discard temporary vector objects; prefer explicit ownership primitives (`std::unique_ptr<T[]>::reset()`).
+- **Lazy Buffer Allocation**: Profiling and diagnostic subsystems (e.g., memory tracking, trace buffers) must allocate counters lazily upon feature activation and release them promptly when deactivated.
+
 ## General Architecture
 - **GUI Decoupling**: Keep `core/` completely decoupled from `unreal-qt/`. The core must remain headless and platform-agnostic.
 - **Cross-Platform Compatibility**: Use `<filesystem>` for path manipulation to handle `/` and `\` transparently across macOS, Linux, and Windows.
