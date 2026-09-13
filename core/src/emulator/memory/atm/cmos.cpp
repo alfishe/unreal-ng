@@ -36,6 +36,17 @@ void CMOS::SetCMOSType(CMOSTypeEnum type)
 	_cmos_type = type;
 }
 
+void CMOS::SetFixedTime(time_t t)
+{
+	_fixedTime = true;
+	_fixedTimeValue = t;
+}
+
+void CMOS::UseLiveTime()
+{
+	_fixedTime = false;
+}
+
 void CMOS::SetCMOSAddress(uint8_t addr)
 {
 	_cmos_addr = addr;
@@ -52,27 +63,28 @@ void CMOS::WriteCMOS(uint8_t val)
 }
 
 // Host local time (original uses Win32 GetLocalTime / SYSTEMTIME)
-static tm make_local_tm()
+static tm make_local_tm(std::time_t t)
 {
-	std::time_t now = std::time(nullptr);
 	tm result = {};
 
 #ifdef _WIN32
-	localtime_s(&result, &now);
+	localtime_s(&result, &t);
 #else
-	localtime_r(&now, &result);
+	localtime_r(&t, &result);
 #endif
 
 	return result;
 }
 
+static tm make_local_tm()
+{
+	return make_local_tm(std::time(nullptr));
+}
+
 uint8_t CMOS::ReadCMOS()
 {
-	static tm time = {};
-	static bool UF = false;
-	static unsigned Seconds = 0;
-	static std::chrono::steady_clock::time_point lastSample{};
-	static bool timeValid = false;
+	tm& time = _lastTime;
+	bool& UF = _updateFinished;
 
 	uint8_t result = 0;
 	uint8_t cur_addr = _cmos_addr;
@@ -83,19 +95,30 @@ uint8_t CMOS::ReadCMOS()
 	// If Time/Date values requested from CMOS - provide current Host system values.
 	// The clock is sampled at most twice a second (original comment by [vv]);
 	// the Update-Ended Flag is raised when the wall-clock second changes.
+	//
+	// Deterministic mode (_fixedTime) always serves the frozen instant and
+	// skips the sampling throttle entirely - a frozen clock never ticks, so
+	// there is nothing for UF to report.
 	if ((1 << cur_addr) & ((1 << 0) | (1 << 2) | (1 << 4) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 12)))
 	{
-		auto now = std::chrono::steady_clock::now();
-		if (!timeValid || now - lastSample >= std::chrono::milliseconds(500))
+		if (_fixedTime)
 		{
-			timeValid = true;
-			lastSample = now;
-			time = make_local_tm();
-
-			if ((unsigned)time.tm_sec != Seconds)
+			time = make_local_tm(_fixedTimeValue);
+		}
+		else
+		{
+			auto now = std::chrono::steady_clock::now();
+			if (!_timeValid || now - _lastSample >= std::chrono::milliseconds(500))
 			{
-				UF = true;
-				Seconds = (unsigned)time.tm_sec;
+				_timeValid = true;
+				_lastSample = now;
+				time = make_local_tm();
+
+				if ((unsigned)time.tm_sec != _seconds)
+				{
+					UF = true;
+					_seconds = (unsigned)time.tm_sec;
+				}
 			}
 		}
 	}

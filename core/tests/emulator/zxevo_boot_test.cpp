@@ -29,6 +29,7 @@
 #include <emulator/io/keyboard/keyboard.h>
 #include <emulator/memory/memory.h>
 #include <emulator/platform.h>
+#include <emulator/ports/models/portdecoder_atm3.h>
 #include <gtest/gtest.h>
 
 #include "_helpers/emulatortesthelper.h"
@@ -74,6 +75,17 @@ protected:
         EXPECT_NE(emulator, nullptr);
         if (!emulator)
             return emulator;
+
+        // Deterministic RTC, same freeze as the Scorpion turbo-detect and SMUC
+        // probes: CMOS::ReadCMOS() used to keep its clock state in function-
+        // local statics shared by every CMOS instance in the process (fixed
+        // alongside this - see cmos.h), so live host time made BaseConf's boot
+        // timeline depend on both wall-clock time and on what any other ATM3
+        // test's CMOS had left behind moments earlier. Order-dependent by
+        // --gtest_shuffle, unreproducible by a fixed seed alone (real time
+        // keeps moving) - exactly the signature that gave this away.
+        if (auto* decoder = static_cast<PortDecoder_ATM3*>(emulator->GetContext()->pPortDecoder))
+            decoder->GetCMOS().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
 
         if (turbo)
             emulator->EnableTurboMode();
