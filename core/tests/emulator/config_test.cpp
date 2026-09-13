@@ -113,10 +113,10 @@ TEST_F(Config_Test, FmTrimDbDefaultsToZero)
 
 TEST_F(Config_Test, ShippedConfigsProduceExpectedTurboSoundKind)
 {
-    // TSFM ships enabled on the capable machines; the rest keep the legacy
-    // AY slot. Loading each shipped ini must produce exactly this map - a
-    // future ini edit flipping a machine's slot kind shows up here rather
-    // than as a surprise TTD session mismatch
+    // TSFM ships enabled on all machines as the default sound device.
+    // Loading each shipped ini must produce exactly this map - a future ini
+    // edit flipping a machine's slot kind shows up here rather than as a
+    // surprise TTD session mismatch
     const std::unordered_map<std::string, TurboSoundKind> expected = {
         {"pentagon128k", TurboSoundKind::FM},
         {"pentagon512k", TurboSoundKind::FM},

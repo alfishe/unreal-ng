@@ -157,6 +157,10 @@ protected:
     // Native-rate recording tap (218.75 kHz SSG side). The FM taps
     // (out.nativeTap, §6.4) carry the raw pre-mute DAC stream per chip.
     std::shared_ptr<NativeAudioTap> _nativeTap = std::make_shared<NativeAudioTap>();
+
+    // Activity tracking for HUD notification
+    bool _frameHadActivity = false;    // Any register write this frame
+    bool _wasActive = false;           // Activity state at last frame end
     /// endregion </Fields>
 
     /// region <Interfacing fields>
