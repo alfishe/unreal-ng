@@ -506,6 +506,10 @@ void SoundChip_TurboSoundFM::portDeviceOutMethod(uint16_t port, uint8_t value)
             {
                 // FM register; sets busy itself; allowed while muted
                 c.fm.write_data(value);
+                // Key-on mirror for the state report: 0x28 = ch (bits 0-1,
+                // 3 = none) | slot mask (bits 4-7)
+                if (c.address == 0x28 && (value & 3) < 3)
+                    c.fmKeyOn[value & 3] = uint8_t(value >> 4);
             }
             break;
 

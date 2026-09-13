@@ -16,6 +16,9 @@ Everything found while verifying the TurboSound FM implementation against real h
 | 10 | Chip-to-chip FM level difference on the real board | hardware | not modelled |
 | 11 | Replay test reads an ignored scratch file | tests | mitigated (skip) |
 | 12 | Emulator app exits when its binary is rebuilt underneath it | tooling | noted |
+| 13 | Moe-bius tune leaves an FM channel keyed after it ends | tune content | not a bug; documented |
+| 14 | Device state (AY, FM, FDC) not reachable from the automation interfaces | automation | fixed, uncommitted |
+| 15 | Fresh floppy drives reported a random head track | FDD | fixed, uncommitted |
 
 ---
 
@@ -106,3 +109,25 @@ Everything found while verifying the TurboSound FM implementation against real h
 **Observed.** Rebuilding `cmake-build-release` while the emulator app was running replaced its executable and the process exited (it had to be relaunched twice during this work). Instances and their state are lost.
 
 **Status.** Noted for anyone measuring in the app while rebuilding: stop the app first, or build into a different directory.
+
+## 13. Moe-bius tune leaves an FM channel keyed after it ends
+
+**Observed.** The FM2 meter keeps moving after the demo ends. State report (`state audio fm 1`): chip 1, channel 2, register 0x28 last wrote slot S4 keyed and never a key-off; S4 sits in `decay` at attenuation 0 with `decay_rate` 0 (the decay never advances), TL 0, MUL 0, block 0, fnum 0x16 — a full-level carrier at 0.25 Hz. Chip 0's channel 1 is also still keyed at ~44 Hz with quiet carriers. The player's stop routine mutes the SSG (R7 = 0x3F, volumes 0) and never touches the FM side.
+
+**Cause.** The tune. A real YM2203 holds the note the same way; the board's output coupling hides the 0.25 Hz swing (issue 5).
+
+**Status.** Documented. The FM state report (issue 14) is how this was established and is the tool to check any similar report.
+
+## 14. Device state not reachable from the automation interfaces
+
+**Observed.** Analysing issue 13 needed a throwaway test to read the FM registers and envelope states; the WebAPI had AY state only, Lua had none, MCP `inspect_state` had no audio or disk aspects, and nothing exposed the WD1793.
+
+**Fix (uncommitted).** Ground rule adopted: every device state useful for analysis is built once in the core (`core/src/emulator/state/devicestate.h`: `Ay`, `AyChip`, `Fm`, `FmChip`, `Fdc`) and rendered by every interface through one generic converter each. WebAPI `GET /state/audio/fm[/{chip}]`, `GET /state/fdc` (AY endpoints now serve the same core report); Lua `audio_ay_state`, `audio_fm_state`, `fdc_state`; Python the same names; CLI `state audio fm [N]`, `state fdc`; MCP `inspect_state` aspects `audio_ay`, `audio_fm`, `fdc`. Tests: `DeviceState_Test.*` (content), `McpTools_Test.InspectState_Device*` (aspect fan-out and summaries). Docs: command-interface.md §3.3 and the per-interface documents.
+
+## 15. Fresh floppy drives reported a random head track
+
+**Observed.** The first `state fdc` report on a paused demo showed head positions 53, 70, 80 and 32 on four drives that never had a disk.
+
+**Cause.** `FDD::FDD` seeded `_track` from `std::random_device` ("unknown position like a real drive"), so every untouched drive carried garbage into state reports and TTD snapshots; the TTD serializer tests had to force known tracks to be deterministic.
+
+**Fix (uncommitted).** The constructor sets track 0; a fresh drive reports track 0, bottom side, motor off, no disk, not write-protected. `DeviceState_Test.FdcReportListsControllerAndDrives` pins that for all four drives and the controller (drive 0, side 0, track 0, sector 1, DRQ/INTRQ low). 267 disk/TTD tests unchanged.

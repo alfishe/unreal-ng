@@ -30,6 +30,7 @@
 #include <debugger/assembler/z80textassembler.h>
 #include <debugger/listing/listingparser.h>
 #include <emulator/platform.h>
+#include <emulator/state/devicestate.h>
 #include <emulator/video/screendigest.h>
 #include <base/featuremanager.h>
 #ifdef ENABLE_RECORDING
@@ -48,6 +49,35 @@
 #include <optional>
 #include <string>
 #include <thread>
+
+/// StateNode -> Lua table (objects keep their keys, arrays become 1-based
+/// sequences). The one converter Lua needs for every DeviceState report.
+inline sol::object StateNodeToLua(sol::this_state s, const StateNode& node)
+{
+    sol::state_view lua(s);
+    switch (node.kind)
+    {
+        case StateNode::Kind::Bool: return sol::make_object(lua, node.b);
+        case StateNode::Kind::Int: return sol::make_object(lua, node.i);
+        case StateNode::Kind::Double: return sol::make_object(lua, node.d);
+        case StateNode::Kind::String: return sol::make_object(lua, node.s);
+        case StateNode::Kind::Object:
+        {
+            sol::table t = lua.create_table();
+            for (const auto& m : node.members)
+                t[m.first] = StateNodeToLua(s, m.second);
+            return t;
+        }
+        case StateNode::Kind::Array:
+        {
+            sol::table t = lua.create_table();
+            for (size_t i = 0; i < node.items.size(); i++)
+                t[i + 1] = StateNodeToLua(s, node.items[i]);
+            return t;
+        }
+        default: return sol::make_object(lua, sol::lua_nil);
+    }
+}
 
 class LuaEmulator
 {
@@ -1604,6 +1634,22 @@ public:
             auto* ctx = _emulator->GetContext();
             if (!ctx || !ctx->pScreen) return 0;
             return ctx->pScreen->GetActiveScreen();
+        });
+
+        // Device state reports (core DeviceState: the same trees the WebAPI,
+        // Python, CLI and MCP return). Optional chip index -> the chip's
+        // full report, no index -> the overview
+        lua.set_function("audio_ay_state", [this](sol::this_state s, sol::optional<int> chip) -> sol::object {
+            EmulatorContext* ctx = _emulator ? _emulator->GetContext() : nullptr;
+            return StateNodeToLua(s, chip ? DeviceState::AyChip(ctx, *chip) : DeviceState::Ay(ctx));
+        });
+        lua.set_function("audio_fm_state", [this](sol::this_state s, sol::optional<int> chip) -> sol::object {
+            EmulatorContext* ctx = _emulator ? _emulator->GetContext() : nullptr;
+            return StateNodeToLua(s, chip ? DeviceState::FmChip(ctx, *chip) : DeviceState::Fm(ctx));
+        });
+        lua.set_function("fdc_state", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = _emulator ? _emulator->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::Fdc(ctx));
         });
 
         // Audio state

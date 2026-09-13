@@ -10,6 +10,7 @@
 #include <sstream>
 
 #include "cli-processor.h"
+#include <emulator/state/devicestate.h>
 
 
 /// region <State Inspection Commands>
@@ -50,6 +51,9 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  audio ay       - Brief state for all AY chips (1=standard, 2=TurboSound, 3=ZX Next)" << NEWLINE;
         ss << "  audio ay <N>   - Detailed information about AY chip N (0-based index)" << NEWLINE;
         ss << "  audio ay <N> reg <R> - Specific AY register R of chip N (0-15)" << NEWLINE;
+        ss << "  audio fm       - TurboSound FM overview (board latches, both YM2203 FM halves)" << NEWLINE;
+        ss << "  audio fm <N>   - Full FM report of chip N (0/1): mode, timers, channels, operators, envelopes" << NEWLINE;
+        ss << "  fdc            - Beta Disk WD1793: registers, status bits, FSM, signals, drives" << NEWLINE;
         ss << "  audio beeper   - Beeper state and activity" << NEWLINE;
         ss << "  audio gs       - General Sound device state" << NEWLINE;
         ss << "  audio covox    - Covox DAC state" << NEWLINE;
@@ -68,6 +72,8 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  state audio ay 0     - Show detailed info for first AY chip" << NEWLINE;
         ss << "  state audio ay reg 0 - Show detailed decoding for AY register 0" << NEWLINE;
         ss << "  state audio beeper   - Show beeper state" << NEWLINE;
+        ss << "  state audio fm 1     - Show the full FM report of TSFM chip 1" << NEWLINE;
+        ss << "  state fdc            - Show the Beta Disk controller and drives" << NEWLINE;
         ss << "  state audio channels - Show all audio sources mixer state" << NEWLINE;
 
         ss << "  state audio beeper   - Show beeper state" << NEWLINE;
@@ -161,6 +167,11 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         return;
     }
     // Handle 'audio' subsystem
+    else if (subsystem == "fdc" || subsystem == "disk" || subsystem == "wd1793")
+    {
+        HandleStateFdc(session, context);
+        return;
+    }
     else if (subsystem == "audio")
     {
         // Check for subcommands
@@ -203,6 +214,11 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
                     HandleStateAudioAYIndex(session, context, ayArg0);
                     return;
                 }
+            }
+            else if (subcommand == "fm")
+            {
+                HandleStateAudioFM(session, context, args.size() > 2 ? args[2] : "");
+                return;
             }
             else if (subcommand == "beeper")
             {
@@ -1067,6 +1083,33 @@ void CLIProcessor::HandleStateAudioAYRegister(const ClientSession& session, Emul
             break;
     }
 
+    session.SendResponse(ss.str());
+}
+
+void CLIProcessor::HandleStateAudioFM(const ClientSession& session, EmulatorContext* context, const std::string& chipArg)
+{
+    // Core DeviceState report (the same tree the WebAPI, Lua, Python and MCP return)
+    std::stringstream ss;
+    if (chipArg.empty())
+    {
+        ss << "TurboSound FM (2 x YM2203)" << NEWLINE << "==========================" << NEWLINE;
+        ss << DeviceState::ToText(DeviceState::Fm(context));
+    }
+    else
+    {
+        int chip = -1;
+        try { chip = std::stoi(chipArg); } catch (const std::exception&) { chip = -1; }
+        ss << "TurboSound FM chip " << chipArg << NEWLINE << "=====================" << NEWLINE;
+        ss << DeviceState::ToText(DeviceState::FmChip(context, chip));
+    }
+    session.SendResponse(ss.str());
+}
+
+void CLIProcessor::HandleStateFdc(const ClientSession& session, EmulatorContext* context)
+{
+    std::stringstream ss;
+    ss << "Beta Disk WD1793" << NEWLINE << "================" << NEWLINE;
+    ss << DeviceState::ToText(DeviceState::Fdc(context));
     session.SendResponse(ss.str());
 }
 

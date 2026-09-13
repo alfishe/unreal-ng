@@ -55,12 +55,42 @@
 #include <thread>
 #include <debugger/ttd/ttdexternalevents.h>
 #include "../../../automation.h"
+#include <emulator/state/devicestate.h>
 #include "../bindings/python_porttrace.h"
 
 namespace py = pybind11;
 
 /// @brief Python bindings for Emulator class and related functionality
 /// Provides comprehensive emulator control matching CLI and WebAPI interfaces
+/// StateNode -> Python object (dict / list / scalars). The one converter
+/// Python needs for every DeviceState report.
+inline pybind11::object StateNodeToPy(const StateNode& node)
+{
+    namespace py = pybind11;
+    switch (node.kind)
+    {
+        case StateNode::Kind::Bool: return py::bool_(node.b);
+        case StateNode::Kind::Int: return py::int_(node.i);
+        case StateNode::Kind::Double: return py::float_(node.d);
+        case StateNode::Kind::String: return py::str(node.s);
+        case StateNode::Kind::Object:
+        {
+            py::dict d;
+            for (const auto& m : node.members)
+                d[py::str(m.first)] = StateNodeToPy(m.second);
+            return d;
+        }
+        case StateNode::Kind::Array:
+        {
+            py::list l;
+            for (const auto& item : node.items)
+                l.append(StateNodeToPy(item));
+            return l;
+        }
+        default: return py::none();
+    }
+}
+
 namespace PythonBindings
 {
     /// Pause() -> op -> Resume() bracket shared by the mutating tape
@@ -1344,6 +1374,17 @@ namespace PythonBindings
                 if (!ctx || !ctx->pSoundManager) return 0;
                 return ctx->pSoundManager->getAYChipCount();
             }, "Get AY chip count (TurboSound=2)")
+            // Device state reports (core DeviceState: the same trees the
+            // WebAPI, Lua, CLI and MCP return); chip=-1 -> overview
+            .def("audio_ay_state", [](Emulator& self, int chip) -> py::object {
+                return StateNodeToPy(chip < 0 ? DeviceState::Ay(self.GetContext()) : DeviceState::AyChip(self.GetContext(), chip));
+            }, "AY/SSG state report: overview (chip=-1) or one chip fully decoded", py::arg("chip") = -1)
+            .def("audio_fm_state", [](Emulator& self, int chip) -> py::object {
+                return StateNodeToPy(chip < 0 ? DeviceState::Fm(self.GetContext()) : DeviceState::FmChip(self.GetContext(), chip));
+            }, "TurboSound FM state report: board + chip summary (chip=-1) or one YM2203 FM half in full", py::arg("chip") = -1)
+            .def("fdc_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::Fdc(self.GetContext()));
+            }, "Beta Disk WD1793 state report: registers, status bits, FSM, signals, drives")
             
             // Advanced disk operations
             .def("disk_info", [](Emulator& self, int drive) -> py::dict {

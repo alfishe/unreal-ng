@@ -76,6 +76,7 @@ public:
         fm.write_address(0x2D);
         address = 0;
         fmClockPhase = 0;
+        fmKeyOn[0] = fmKeyOn[1] = fmKeyOn[2] = 0;
         intf.reset();
         ssg.setChipModel(AYChipModel::YM2149);
     }
@@ -87,6 +88,11 @@ public:
 
     uint8_t address = 0;       // YM2203 address latch (8-bit)
     int32_t fmClockPhase = 0;  // T-states since the last FM sample, 0 .. 12*p-1
+
+    // Key-on mask per FM channel as last written to register 0x28 (bits
+    // 4-7 = slots S1,S2,S3,S4). Mirror for the state report
+    // (DeviceState::FmChip); ymfm keeps the live key state privately.
+    uint8_t fmKeyOn[3] = {0, 0, 0};
 
     // Output-side hand-off (not TTD state, §6)
     FmWordQueue words;

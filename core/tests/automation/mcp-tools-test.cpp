@@ -330,6 +330,136 @@ TEST_F(McpTools_Test, InspectState_TwoAspects_FanOutToBothEndpoints)
     EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/registers"));
 }
 
+TEST_F(McpTools_Test, InspectState_DeviceAspects_FetchOverviewAndChips)
+{
+    // audio_fm: overview, then every chip's full report; fdc: one endpoint.
+    // The summaries name the keyed channel and the controller state.
+    Json::Value fmOverview;
+    fmOverview["available"] = true;
+    fmOverview["board"]["selected_chip"] = 1;
+    fmOverview["board"]["fm_enabled"] = true;
+    fmOverview["chips"] = Json::Value(Json::arrayValue);
+    fmOverview["chips"].append(Json::Value(Json::objectValue));
+    fmOverview["chips"].append(Json::Value(Json::objectValue));
+    Json::Value chip0;
+    chip0["mode"]["channel3_mode"] = "extended";
+    chip0["keyed_channels"] = 1;
+    chip0["sounding_channels"] = 1;
+    Json::Value ch;
+    ch["sounding"] = true;
+    ch["key_on"] = true;
+    ch["key_on_mask"] = 8;
+    ch["algorithm"] = 7;
+    ch["frequency_hz"] = 228.5;
+    chip0["channels"] = Json::Value(Json::arrayValue);
+    chip0["channels"].append(Json::Value(Json::objectValue));
+    chip0["channels"].append(Json::Value(Json::objectValue));
+    chip0["channels"].append(ch);
+    Json::Value chip1 = chip0;
+    chip1["keyed_channels"] = 0;
+    chip1["sounding_channels"] = 0;
+    chip1["channels"][2]["sounding"] = false;
+    chip1["channels"][2]["key_on"] = false;
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/fm"] = {200, fmOverview};
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/fm/0"] = {200, chip0};
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/fm/1"] = {200, chip1};
+
+    Json::Value fdc;
+    fdc["available"] = true;
+    fdc["fsm_state"] = "S_IDLE";
+    fdc["last_command"] = "restore";
+    fdc["registers"]["status"] = 0x24;
+    fdc["registers"]["track"] = 0;
+    fdc["registers"]["sector"] = 1;
+    fdc["selected_drive"] = 0;
+    fdc["side"] = 0;
+    fdc["density"] = "MFM";
+    Json::Value driveA;
+    driveA["present"] = true;
+    driveA["inserted"] = true;
+    driveA["letter"] = "A";
+    driveA["path"] = "/tmp/disk.trd";
+    driveA["track"] = 3;
+    driveA["motor_on"] = true;
+    driveA["write_protected"] = false;
+    fdc["drives"] = Json::Value(Json::arrayValue);
+    fdc["drives"].append(driveA);
+    _caller->routes["GET /api/v1/emulator/emu-1/state/fdc"] = {200, fdc};
+
+    Json::Value args;
+    Json::Value aspects(Json::arrayValue);
+    aspects.append("audio_fm");
+    aspects.append("fdc");
+    args["aspects"] = aspects;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/audio/fm"));
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/audio/fm/0"));
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/audio/fm/1"));
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/fdc"));
+    ASSERT_TRUE(result.structured.isMember("audio_fm"));
+    EXPECT_EQ(result.structured["audio_fm"]["chip_details"].size(), 2u);
+    EXPECT_EQ(result.structured["audio_fm"]["chip_details"][0]["keyed_channels"].asUInt(), 1u);
+    ASSERT_TRUE(result.structured.isMember("fdc"));
+    EXPECT_EQ(result.structured["fdc"]["fsm_state"].asString(), "S_IDLE");
+    EXPECT_NE(result.text.find("[audio_fm] board chip 1, FM on"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("ch2 key-on mask 8 alg 7 228.5 Hz"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("[fdc] S_IDLE, last restore"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("A: /tmp/disk.trd track 3 motor on"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, InspectState_DeviceAspect_UnavailableIsReportedNotFatal)
+{
+    Json::Value err;
+    err["message"] = "TurboSound slot device is not TSFM";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/fm"] = {404, err};
+
+    Json::Value args;
+    Json::Value aspects(Json::arrayValue);
+    aspects.append("audio_fm");
+    args["aspects"] = aspects;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError);
+    EXPECT_FALSE(result.structured["audio_fm"]["available"].asBool());
+    EXPECT_NE(result.text.find("[audio_fm] TurboSound slot device is not TSFM"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, InspectState_AudioAyAspect_FetchesEveryChip)
+{
+    Json::Value overview;
+    overview["available"] = true;
+    overview["description"] = "TurboSound (dual AY-3-8912)";
+    overview["chips"] = Json::Value(Json::arrayValue);
+    overview["chips"].append(Json::Value(Json::objectValue));
+    overview["chips"].append(Json::Value(Json::objectValue));
+    Json::Value chip;
+    Json::Value a;
+    a["name"] = "A";
+    a["volume"] = 15;
+    a["tone_enabled"] = true;
+    a["noise_enabled"] = false;
+    a["envelope_enabled"] = false;
+    a["frequency_hz"] = 1003.4;
+    chip["channels"] = Json::Value(Json::arrayValue);
+    chip["channels"].append(a);
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/ay"] = {200, overview};
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/ay/0"] = {200, chip};
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/ay/1"] = {200, chip};
+
+    Json::Value args;
+    Json::Value aspects(Json::arrayValue);
+    aspects.append("audio_ay");
+    args["aspects"] = aspects;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/audio/ay/1"));
+    EXPECT_EQ(result.structured["audio_ay"]["chip_details"].size(), 2u);
+    EXPECT_NE(result.text.find("chip 0: A=15T@1003Hz"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, InspectState_EmitsOneProgressNotificationPerAspect)
 {
     _caller->routes["GET /api/v1/emulator/emu-1"] = {200, Json::Value(Json::objectValue)};

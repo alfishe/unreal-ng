@@ -691,6 +691,86 @@ interfaces (CLI, WebAPI, Lua, Python).
 | `digest <start> <end>` | `<from> <to>` | Compute a stable 64-bit digest over a Z80 address range (typically the screen bitmap `0x4000-0x57FF` and attributes `0x5800-0x5AFF`). The border color is folded into the digest unless `--no-border` is passed. `digest --banks p1,p2` digests physical RAM pages instead of a Z80 range. Prints the digest, covered byte count, and whether it changed since the previous call — a cheap way to detect "did the screen change" in scripts. |
 | `frame_cost` | | Show per-frame cost accounting: t-states spent halted vs running in the last frame and cumulatively, effective CPU frequency (frame budget × frequency multiplier), and the number of frames in the sample. Use it to quantify HALT-heavy main loops. |
 
+#### 3.3 Device State Reports (AY / SSG, TurboSound FM, Beta Disk FDC)
+
+Ground rule (2026-09-13): **every device state that is useful for analysis is
+reachable from every automation interface** — WebAPI, Python, Lua, CLI and
+MCP — and all of them return the same report. The core builds each report
+once (`core/src/emulator/state/devicestate.h`, a small dependency-free tree);
+each interface only converts it (JSON / dict / table / text). Adding a report
+to the core makes it available everywhere; interfaces never re-implement it.
+
+| Report | CLI | WebAPI | Lua | Python | MCP `inspect_state` aspect |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| AY / SSG overview | `state audio ay` | `GET /state/audio/ay` | `audio_ay_state()` | `audio_ay_state()` | `audio_ay` (overview + every chip) |
+| AY / SSG chip N | `state audio ay N` | `GET /state/audio/ay/N` | `audio_ay_state(N)` | `audio_ay_state(N)` | `audio_ay` |
+| TurboSound FM overview | `state audio fm` | `GET /state/audio/fm` | `audio_fm_state()` | `audio_fm_state()` | `audio_fm` (overview + both chips) |
+| TurboSound FM chip N (0/1) | `state audio fm N` | `GET /state/audio/fm/N` | `audio_fm_state(N)` | `audio_fm_state(N)` | `audio_fm` |
+| Beta Disk WD1793 | `state fdc` | `GET /state/fdc` | `fdc_state()` | `fdc_state()` | `fdc` |
+
+Every report carries `available` (false with a `description` when the
+device is not on this machine — e.g. `audio/fm` on a plain TurboSound
+configuration, `fdc` on a machine without Beta Disk). WebAPI answers 404 in
+that case; Lua/Python return the same object; the MCP aspect reports it in
+the summary instead of failing the call.
+
+**AY / SSG chip report** (`chip_index`, `chip_type`): `registers` (all 16 by
+name), `channels[A,B,C]` (period, fine/coarse, `frequency_hz`, volume, tone /
+noise / envelope enables), `envelope` (shape, period, `current_output`,
+`frequency_hz`), `noise`, `mixer` (decoded R7), `io_ports`. On a TSFM the
+two chips are the YM2203 SSG halves.
+
+**TurboSound FM overview**: `board` (`selected_chip`, `status_read_mode`,
+`fm_enabled`, `fm_trim_db`) and `chips[2]` summaries (prescaler,
+`channel3_mode`, `keyed_channels`, `sounding_channels`, status byte).
+
+**TurboSound FM chip report** (one YM2203 FM half): `prescaler`,
+`fm_sample_rate_hz`, `status` (byte, busy, timer flags, busy T-states
+remaining), `mode` (register 0x27, `channel3_mode` normal / extended /
+extended_csm, `csm`, `extended`), `timers.a/b` (value, period in T-states,
+enabled, load, running, `remaining_tstates`), `channels[3]` with block,
+`fnum`, `frequency_hz`, feedback, algorithm, `key_on_mask` (register 0x28
+slots S1..S4), `key_on`, `sounding`, and `operators[4]` (slot S1..S4,
+register offset, DT, MUL, TL and `total_level_db`, KS, AR, DR, SR, SL, RR,
+SSG-EG, per-operator block/fnum/`frequency_hz` — channel 3 in extended mode
+takes the per-slot registers — live `envelope_state` attack / decay /
+sustain / release, `attenuation` and `attenuation_db`, `key_on`,
+`sounding`), plus `output` (`dac_last_word`, `dac_last_value`,
+`fm_trim_db`). This is the report to read when a tune "keeps playing after
+it ended": a channel with `key_on` true and an operator in `decay` with
+`decay_rate` 0 holds its level until keyed off.
+
+**Beta Disk report**: `registers` (command, track, sector, data, status),
+`last_command`, `status_bits` decoded for the last command's type (busy,
+index / drq, track0 / lost_data, crc_error, record_not_found, head_loaded
+/ record_type, write_protected, not_ready), `fsm_state`, `signals`
+(intrq, drq), `beta128_register`, `density`, `selected_drive`, `side`, and
+`drives[4]` (present, inserted, path, track, side, motor_on,
+write_protected, `image` cylinders/sides).
+
+Examples:
+
+```
+# CLI
+state audio fm 1
+state fdc
+
+# WebAPI
+GET /api/v1/emulator/{id}/state/audio/fm/1
+GET /api/v1/emulator/{id}/state/fdc
+
+# Lua
+local fm = audio_fm_state(1)
+print(fm.channels[3].operators[4].envelope_state)
+
+# Python
+fm = emu.audio_fm_state(1)
+print(fm["channels"][2]["operators"][3]["envelope_state"])
+
+# MCP
+inspect_state aspects=["audio_fm","fdc"]
+```
+
 ### 4. Breakpoints & Watchpoints
 
 Advanced debugging features for the selected emulator instance. The emulator supports sophisticated breakpoint management including execution breakpoints, memory watchpoints, I/O port monitoring, and logical grouping.

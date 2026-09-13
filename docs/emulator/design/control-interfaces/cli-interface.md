@@ -91,6 +91,20 @@ This allows immediate use without explicit `select` command when only one emulat
 
 See [command-interface.md](./command-interface.md) for complete command reference. All commands listed there are available via CLI.
 
+### Device State Commands
+
+Text renderings of the core device reports (the same data the WebAPI, Lua,
+Python and MCP return — [command-interface.md §3.3](./command-interface.md#33-device-state-reports-ay--ssg-turbosound-fm-beta-disk-fdc)):
+
+```
+state audio ay          AY/SSG overview           state audio ay 0    one chip decoded
+state audio fm          TurboSound FM overview    state audio fm 1    one YM2203 FM half in full
+state fdc               Beta Disk WD1793 (aliases: state disk, state wd1793)
+```
+
+Nested keys are indented, arrays print as `[index]` blocks. A device that is
+not on the machine prints `available: false` and a `description`.
+
 ### CLI-Specific Behavior
 
 **Interactive Help**:

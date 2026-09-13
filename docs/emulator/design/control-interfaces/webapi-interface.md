@@ -254,7 +254,19 @@ POST /api/v1/emulator/{id}/memory/find        Search Z80 memory for a byte patte
 GET  /api/v1/emulator/{id}/state/screen/digest  Stable screen-content digest (range or banks, border folding)
 GET  /api/v1/emulator/{id}/video/beam         Current raster position and beam zone
 GET  /api/v1/emulator/{id}/frame_cost         Per-frame halt/run cost accounting
+GET  /api/v1/emulator/{id}/state/audio/ay      AY/SSG chips overview (core DeviceState report)
+GET  /api/v1/emulator/{id}/state/audio/ay/{n}  One AY/SSG chip, registers and channels decoded
+GET  /api/v1/emulator/{id}/state/audio/fm      TurboSound FM board latches + both YM2203 summaries (404 without TSFM)
+GET  /api/v1/emulator/{id}/state/audio/fm/{n}  One YM2203 FM half: mode, timers, channels, operators, envelopes, key-on
+GET  /api/v1/emulator/{id}/state/fdc           Beta Disk WD1793: registers, status bits, FSM, signals, drives (404 without Beta Disk)
 ```
+
+The three device reports (AY, FM, FDC) are built once in the core
+(`core/src/emulator/state/devicestate.h`) and are byte-for-byte the same
+data the CLI, Lua, Python and MCP return — see
+[command-interface.md §3.3](./command-interface.md#33-device-state-reports-ay--ssg-turbosound-fm-beta-disk-fdc)
+for the field list. Every endpoint also has an active-emulator form without
+`{id}` (`/api/v1/emulator/state/audio/fm`, `/api/v1/emulator/state/fdc`).
 
 ### Labels & Symbols
 ```

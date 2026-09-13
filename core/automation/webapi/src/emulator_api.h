@@ -228,6 +228,13 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateAudioGSActive, "/api/v1/emulator/state/audio/gs", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioCovoxActive, "/api/v1/emulator/state/audio/covox", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioChannelsActive, "/api/v1/emulator/state/audio/channels", drogon::Get);
+    // TurboSound FM and Beta Disk state (implementation: api/state_device_api.cpp, core DeviceState reports)
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioFM, "/api/v1/emulator/{id}/state/audio/fm", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioFMIndex, "/api/v1/emulator/{id}/state/audio/fm/{chip}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateFdc, "/api/v1/emulator/{id}/state/fdc", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioFMActive, "/api/v1/emulator/state/audio/fm", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioFMIndexActive, "/api/v1/emulator/state/audio/fm/{chip}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateFdcActive, "/api/v1/emulator/state/fdc", drogon::Get);
     // endregion Audio State
 
     // region Debug Commands (implementation: api/debug_api.cpp)
@@ -783,6 +790,22 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                                const std::string& id) const;
 
     // Audio state inspection (active emulator - no ID required)
+    // TurboSound FM / Beta Disk state (api/state_device_api.cpp)
+    void getStateAudioFM(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateAudioFMIndex(const drogon::HttpRequestPtr& req,
+                              std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                              const std::string& chip) const;
+    void getStateFdc(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateAudioFMActive(const drogon::HttpRequestPtr& req,
+                               std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void getStateAudioFMIndexActive(const drogon::HttpRequestPtr& req,
+                                    std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                    const std::string& chip) const;
+    void getStateFdcActive(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+
     void getStateAudioAYActive(const drogon::HttpRequestPtr& req,
                                std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
 

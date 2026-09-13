@@ -223,6 +223,30 @@ feature_set("fasttape", false)     -- same switch as `setting fast_tape off`
 print(feature_get("turbotape"))    -- true
 ```
 
+### Device State Reports
+
+The same reports the WebAPI, Python, CLI and MCP return
+([command-interface.md §3.3](./command-interface.md#33-device-state-reports-ay--ssg-turbosound-fm-beta-disk-fdc)),
+as Lua tables (arrays are 1-based sequences):
+
+```lua
+ay  = audio_ay_state()      -- overview: available_chips, slot_device, chips[]
+ay0 = audio_ay_state(0)     -- one chip: registers, channels[3], envelope, noise, mixer, io_ports
+fm  = audio_fm_state()      -- TurboSound FM: board latches + chips[2] summaries
+fm1 = audio_fm_state(1)     -- one YM2203 FM half: mode, timers, channels[3].operators[4] ...
+fdc = fdc_state()           -- Beta Disk WD1793: registers, status_bits, fsm_state, signals, drives[4]
+
+if not fm1.available then print(fm1.description) end
+for i, ch in ipairs(fm1.channels) do
+  if ch.key_on then
+    print(string.format("ch%d %.1f Hz alg %d", ch.index, ch.frequency_hz, ch.algorithm))
+    for _, op in ipairs(ch.operators) do
+      print("  " .. op.slot .. " " .. op.envelope_state .. " " .. op.attenuation_db .. " dB")
+    end
+  end
+end
+```
+
 ### Emulator Object
 
 ```lua

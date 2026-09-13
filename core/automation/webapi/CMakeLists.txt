@@ -226,6 +226,7 @@ set(COMMON_SOURCES
     src/api/state_memory_api.cpp
     src/api/state_screen_api.cpp
     src/api/state_audio_api.cpp
+    src/api/state_device_api.cpp
     src/api/tape_disk_api.cpp
     src/api/snapshot_api.cpp
     src/api/interpreter_api.cpp

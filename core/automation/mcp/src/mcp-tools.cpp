@@ -569,7 +569,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "disasm", "stack", "breakpoints", "memory_banks", "screen_ocr",
-                               "screen_image", "screen_digest", "timing", "rom"})
+                               "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "fdc"})
     {
         allowed.append(aspect);
     }
@@ -579,7 +579,9 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["default"].append("disasm");
     schema["properties"]["aspects"]["default"].append("screen_ocr");
     schema["properties"]["aspects"]["description"] =
-        "What to inspect. Default: registers + disasm + screen_ocr. 'stack' reads 32 bytes at SP; 'memory' needs address.";
+        "What to inspect. Default: registers + disasm + screen_ocr. 'stack' reads 32 bytes at SP; 'memory' needs address. "
+        "'audio_ay' = every AY/SSG chip fully decoded, 'audio_fm' = TurboSound FM board + both YM2203 FM halves (mode, timers, "
+        "channels, operators, envelopes, key-on), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives.";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["address"]["type"] = "integer";
@@ -597,7 +599,8 @@ void RegisterInspectState(ToolRegistry& registry)
     registry.Register(
         "inspect_state",
         "Inspect emulator state in one call: registers, memory ranges, disassembly, stack words, breakpoints, memory banks, "
-        "screen OCR text, screen image metadata, screen digest hash, raster timing, ROM signatures. Combine aspects to reduce round-trips.",
+        "screen OCR text, screen image metadata, screen digest hash, raster timing, ROM signatures, AY/SSG chips (audio_ay), "
+        "TurboSound FM YM2203 halves (audio_fm), Beta Disk WD1793 (fdc). Combine aspects to reduce round-trips.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {
             // Collect aspects
@@ -618,11 +621,12 @@ void RegisterInspectState(ToolRegistry& registry)
             {
                 if (aspect != "machine" && aspect != "registers" && aspect != "memory" && aspect != "disasm" && aspect != "stack" &&
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "screen_ocr" && aspect != "screen_image" &&
-                    aspect != "screen_digest" && aspect != "timing" && aspect != "rom")
+                    aspect != "screen_digest" && aspect != "timing" && aspect != "rom" && aspect != "audio_ay" &&
+                    aspect != "audio_fm" && aspect != "fdc")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, disasm, stack, breakpoints, memory_banks, "
-                                            "screen_ocr, screen_image, screen_digest, timing, rom"));
+                                            "screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, fdc"));
                     return;
                 }
             }
@@ -797,6 +801,49 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
+                        else if (aspect == "fdc")
+                        {
+                            // Core DeviceState::Fdc via the WebAPI; 404 = no Beta Disk on this machine
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/fdc"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "audio_ay" || aspect == "audio_fm")
+                        {
+                            // Overview first, then every chip's full report (core DeviceState::AyChip / FmChip)
+                            const std::string base = aspect == "audio_ay" ? "/state/audio/ay" : "/state/audio/fm";
+                            steps.push_back([&caller, id, aspect, base](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, base), nullptr, [&caller, id, aspect, base, &acc, next](int status, Json::Value body) mutable {
+                                    if (status != 200)
+                                    {
+                                        acc[aspect] = Json::Value(Json::objectValue);
+                                        acc[aspect]["available"] = false;
+                                        acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable");
+                                        next(true);
+                                        return;
+                                    }
+                                    Json::Value overview = std::move(body);
+                                    const unsigned count = overview.isMember("chips") && overview["chips"].isArray() ? overview["chips"].size() : 0u;
+                                    acc[aspect] = std::move(overview);
+                                    acc[aspect]["chip_details"] = Json::Value(Json::arrayValue);
+                                    // Fetch chips sequentially (0..count-1)
+                                    auto fetch = std::make_shared<std::function<void(unsigned)>>();
+                                    *fetch = [&caller, id, aspect, base, &acc, next, count, fetch](unsigned index) {
+                                        if (index >= count) { next(true); return; }
+                                        caller.Call("GET", Endpoint(id, base + "/" + std::to_string(index)), nullptr,
+                                                    [aspect, &acc, index, fetch](int st, Json::Value detail) mutable {
+                                                        if (st == 200) acc[aspect]["chip_details"].append(std::move(detail));
+                                                        (*fetch)(index + 1);
+                                                    });
+                                    };
+                                    (*fetch)(0);
+                                });
+                            });
+                        }
                     }
 
                     RunSeries(ReportSeriesProgress(std::move(steps), progress, aspects), [aspects, done, id](Json::Value acc) {
@@ -850,6 +897,64 @@ void RegisterInspectState(ToolRegistry& registry)
                             else if (aspect == "screen_digest" && value.isMember("digest"))
                             {
                                 out << "\n[screen_digest] " << value["digest"].asString();
+                            }
+                            else if (aspect == "fdc")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[fdc] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[fdc] " << value["fsm_state"].asString() << ", last " << value["last_command"].asString()
+                                        << ", status " << value["registers"]["status"].asUInt() << " track " << value["registers"]["track"].asUInt()
+                                        << " sector " << value["registers"]["sector"].asUInt() << ", drive " << value["selected_drive"].asUInt()
+                                        << " side " << value["side"].asUInt() << ", " << value["density"].asString();
+                                    const Json::Value& drives = value["drives"];
+                                    for (Json::ArrayIndex i = 0; i < drives.size(); ++i)
+                                        if (drives[i]["present"].asBool() && drives[i]["inserted"].asBool())
+                                            out << "\n  " << drives[i]["letter"].asString() << ": " << drives[i]["path"].asString()
+                                                << " track " << drives[i]["track"].asInt() << (drives[i]["motor_on"].asBool() ? " motor on" : "")
+                                                << (drives[i]["write_protected"].asBool() ? " wp" : "");
+                                }
+                            }
+                            else if (aspect == "audio_ay")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[audio_ay] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[audio_ay] " << value["description"].asString();
+                                    const Json::Value& chips = value["chip_details"];
+                                    for (Json::ArrayIndex i = 0; i < chips.size(); ++i)
+                                    {
+                                        const Json::Value& ch = chips[i]["channels"];
+                                        out << "\n  chip " << i << ":";
+                                        for (Json::ArrayIndex c = 0; c < ch.size(); ++c)
+                                            out << " " << ch[c]["name"].asString() << "=" << ch[c]["volume"].asUInt()
+                                                << (ch[c]["tone_enabled"].asBool() ? "T" : "") << (ch[c]["noise_enabled"].asBool() ? "N" : "")
+                                                << (ch[c]["envelope_enabled"].asBool() ? "E" : "") << "@" << int(ch[c]["frequency_hz"].asDouble()) << "Hz";
+                                    }
+                                }
+                            }
+                            else if (aspect == "audio_fm")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[audio_fm] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[audio_fm] board chip " << value["board"]["selected_chip"].asUInt()
+                                        << (value["board"]["fm_enabled"].asBool() ? ", FM on" : ", FM muted");
+                                    const Json::Value& chips = value["chip_details"];
+                                    for (Json::ArrayIndex i = 0; i < chips.size(); ++i)
+                                    {
+                                        out << "\n  chip " << i << ": ch3 " << chips[i]["mode"]["channel3_mode"].asString()
+                                            << ", keyed " << chips[i]["keyed_channels"].asUInt() << ", sounding " << chips[i]["sounding_channels"].asUInt();
+                                        const Json::Value& ch = chips[i]["channels"];
+                                        for (Json::ArrayIndex c = 0; c < ch.size(); ++c)
+                                            if (ch[c]["sounding"].asBool() || ch[c]["key_on"].asBool())
+                                                out << "\n    ch" << c << (ch[c]["key_on"].asBool() ? " key-on" : " releasing") << " mask " << ch[c]["key_on_mask"].asUInt()
+                                                    << " alg " << ch[c]["algorithm"].asUInt() << " " << ch[c]["frequency_hz"].asDouble() << " Hz";
+                                    }
+                                }
                             }
                             else if (aspect == "rom" && value.isMember("pages"))
                             {

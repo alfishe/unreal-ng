@@ -95,6 +95,20 @@ class Emulator:
         
     def reset(self):
         """Hardware reset (equivalent to pressing reset button)"""
+
+    # Device state reports - the same trees the WebAPI, Lua, CLI and MCP
+    # return (command-interface.md section 3.3); dicts/lists/scalars
+    def audio_ay_state(self, chip: int = -1) -> dict:
+        """AY/SSG report: overview (chip=-1) or one chip fully decoded"""
+
+    def audio_fm_state(self, chip: int = -1) -> dict:
+        """TurboSound FM report: board + chip summaries (chip=-1) or one YM2203 FM half
+        (mode, timers, channels[3] with operators[4]: registers, pitch, envelope_state,
+        attenuation_db, key_on). available=False with a description without TSFM"""
+
+    def fdc_state(self) -> dict:
+        """Beta Disk WD1793 report: registers, status_bits, last_command, fsm_state,
+        signals (intrq/drq), beta128_register, density, selected_drive, drives[4]"""
         
     def pause(self):
         """Pause emulation"""
