@@ -38,7 +38,7 @@ Reference design: `docs/inprogress/2026-08-17-mcp/`.
              automation-mcp.cpp        drogon adapter: body → jsoncpp → dispatcher
                        │
              mcp-dispatcher.cpp        JSON-RPC routing (drogon-free)
-             ├── mcp-tools.cpp         5 core smart tools (drogon-free)
+             ├── mcp-tools.cpp         6 core smart tools (drogon-free)
              ├── mcp-symbols.cpp       manage_symbols (Phase 2)
              ├── mcp-analysis.cpp      debug_code / analyze_performance (Phase 2)
              ├── mcp-media.cpp         capture_media (Phase 2)
@@ -64,7 +64,7 @@ WebAPI's thread calls `run()`), and `stopMCP()` runs **after** `stopWebAPI()`.
 
 ## Tools
 
-### Phase 1 (core 5 + router 2)
+### Phase 1 (core 6 + router 2)
 
 | Tool | Purpose |
 |:--|:--|
@@ -73,6 +73,7 @@ WebAPI's thread calls `run()`), and `stopMCP()` runs **after** `stopWebAPI()`.
 | `control_execution` | run/pause/resume/step/step_n/step_over/step_out, run_frames/run_tstates/run_to_interrupt, breakpoints (add/remove/enable/disable/clear/list); the raw `skip_until` endpoint is reachable via `invoke_api` |
 | `inspect_state` | aspects fan-out: machine, registers, memory, disasm, stack, breakpoints, memory_banks, screen_ocr, screen_image, screen_digest, timing |
 | `type_input` | type (tokenized BASIC entry), tap/press/release, combo, macro, release_all, status, list_keys |
+| `mouse_input` | Kempston mouse: move (relative dx/dy, +dy = up), press/release, click (hold N frames, optional dx/dy pre-move), buttons (exact pressed set), wheel, release_all, status; counters override stays on `invoke_api` |
 | `search_api` | keyword search over the OpenAPI spec (scored), optional `auto_invoke` |
 | `invoke_api` | direct WebAPI call with `{id}` target substitution |
 
@@ -137,6 +138,6 @@ Core-level companions: `Z80TextAssembler_Test`, `ListingParser_Test`,
 |:--|:--|:--|
 | Transport | stdio | Streamable HTTP :8092 + stdio bridge |
 | Backend | direct core calls | loopback WebAPI (single source of truth) |
-| Tool count | 48 flat tools | 7 Phase 1 (11 after Phase 2) + schema-driven router |
+| Tool count | 48 flat tools | 8 Phase 1 (12 after Phase 2) + schema-driven router |
 | Context cost | ~4k tokens | ~1.6k tokens |
 | Resources | — | 6 (keyboard/BASIC/Z80/TR-DOS/memory map/state) |

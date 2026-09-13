@@ -33,6 +33,7 @@
 #include "emulator/notifications.h"   // EmulatorFramePayload
 #include "emulator/io/fdc/wd1793.h"      // WD1793 (peripheral, P1.5)
 #include "emulator/io/tape/tape.h"        // Tape (peripheral, P1.5)
+#include "emulator/io/mouse/mouse.h"      // Mouse (Kempston Mouse peripheral + input journal replay)
 #include "emulator/memory/memory.h"      // Memory
 #include "emulator/platform.h"           // EmulatorState, CONFIG, PAGE_SIZE, MAX_RAM_PAGES
 #include "emulator/sound/chips/soundchip_turbosound.h"  // SoundChip_TurboSound (AY peripheral, P1.5)
@@ -1043,6 +1044,8 @@ bool TimeTravelManager::RegisterModelPeripherals(std::string* err)
         _peripherals.Register(PeripheralId::Covox, _context->pSoundManager->getCovox());
     }
     _peripherals.Register(PeripheralId::Tape, _context->pTape);
+    // Kempston Mouse: core device on every model (design §6.1 - not a model-specific latch)
+    _peripherals.Register(PeripheralId::KempstonMouse, _context->pMouse);
     _peripherals.Register(PeripheralId::BetaDisk, _context->pBetaDisk);
 
     // --- Model-specific state (TDD 6.4) ---
@@ -1331,8 +1334,76 @@ void TimeTravelManager::RecordInputEvent(uint8_t key, bool pressed)
     TTDInputEvent ev;
     ev.time.frame    = st.frame_counter;
     ev.time.tInFrame = z80 ? z80->t : 0;
+    ev.kind          = TTDInputKind::Key;
     ev.key           = key;
     ev.pressed       = pressed;
+    _inputJournal.Record(ev);
+}
+
+/// Current TTDTimePoint for an input mutation happening now (see RecordInputEvent)
+static TTDTimePoint InputEventTimeNow(EmulatorContext* context)
+{
+    TTDTimePoint time;
+    const EmulatorState& st = context->emulatorState;
+    Z80* z80 = context->pCore ? context->pCore->GetZ80() : nullptr;
+    time.frame    = st.frame_counter;
+    time.tInFrame = z80 ? z80->t : 0;
+    return time;
+}
+
+void TimeTravelManager::RecordMouseMove(int dx, int dy)
+{
+    if (!_context)
+        return;
+    TTDInputEvent ev;
+    ev.time = InputEventTimeNow(_context);
+    ev.kind = TTDInputKind::MouseMove;
+    ev.dx   = static_cast<int16_t>(dx);
+    ev.dy   = static_cast<int16_t>(dy);
+    _inputJournal.Record(ev);
+}
+
+void TimeTravelManager::RecordMouseButtons(uint8_t activeLowMask)
+{
+    if (!_context)
+        return;
+    TTDInputEvent ev;
+    ev.time       = InputEventTimeNow(_context);
+    ev.kind       = TTDInputKind::MouseButtons;
+    ev.buttonMask = activeLowMask;
+    _inputJournal.Record(ev);
+}
+
+void TimeTravelManager::RecordMouseWheel(int steps)
+{
+    if (!_context)
+        return;
+    TTDInputEvent ev;
+    ev.time       = InputEventTimeNow(_context);
+    ev.kind       = TTDInputKind::MouseWheel;
+    ev.wheelSteps = static_cast<int8_t>(steps);
+    _inputJournal.Record(ev);
+}
+
+void TimeTravelManager::RecordKeyboardReset()
+{
+    if (!_context)
+        return;
+    TTDInputEvent ev;
+    ev.time = InputEventTimeNow(_context);
+    ev.kind = TTDInputKind::KeyboardReset;
+    _inputJournal.Record(ev);
+}
+
+void TimeTravelManager::RecordMouseCounters(uint8_t x, uint8_t y)
+{
+    if (!_context)
+        return;
+    TTDInputEvent ev;
+    ev.time = InputEventTimeNow(_context);
+    ev.kind = TTDInputKind::MouseCounters;
+    ev.dx   = x;
+    ev.dy   = y;
     _inputJournal.Record(ev);
 }
 
@@ -1344,9 +1415,9 @@ size_t TimeTravelManager::InjectDueInputEvents(const TTDTimePoint& now)
     if (!_context || !_context->ttdReplayActive)
         return 0;
 
-    if (!_context->pKeyboard)
+    if (!_context->pKeyboard && !_context->pMouse)
     {
-        MLOGWARNING("TimeTravelManager::InjectDueInputEvents — no keyboard attached, "
+        MLOGWARNING("TimeTravelManager::InjectDueInputEvents — no input devices attached, "
                     "skipping %zu journal events at (frame=%llu, tInFrame=%u)",
                     _inputJournal.Size(),
                     static_cast<unsigned long long>(now.frame),
@@ -1354,7 +1425,7 @@ size_t TimeTravelManager::InjectDueInputEvents(const TTDTimePoint& now)
         return 0;
     }
 
-    return _inputJournal.InjectDueEvents(*_context->pKeyboard, now);
+    return _inputJournal.InjectDueEvents(_context->pKeyboard, _context->pMouse, now);
 }
 
 // ---------------------------------------------------------------------------

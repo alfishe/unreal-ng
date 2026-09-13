@@ -456,10 +456,12 @@ TR-DOS ownership of `#1F` is still respected; nothing else may claim it.
 `ProfRomServiceMonitorHighlightDoesNotBlink` passes with **and without** the fix,
 so it cannot guard this. The contract is pinned at the port level instead:
 
-- `ScorpionPorts_Test.KempstonJoystick_Port1F_ReadsZeroWhateverThePagingLatch` —
-  asserts `#FF1F` reads `0x00` with `p1FFD = 0x10` (driver plane) *and*
-  `p1FFD = 0x12` (monitor plane). Reverting the guard makes it fail with
-  `0xFF` vs `0x00`, exactly the live symptom.
+- `ScorpionPorts_Test.KempstonJoystick_Port1F_ReadsZeroFromDriverPlane` —
+  asserts `#FF1F` reads `0x00` with `p1FFD = 0x10` (driver plane). Reverting the guard
+  makes it fail with `0xFF` vs `0x00`, exactly the live symptom. *Updated 2026-09-12
+  (MiSTer alignment):* with `p1FFD = 0x12` (monitor plane) `#FF1F` now reads the WD1793
+  status, like the MiSTer ScorpionZS256 core. A trace of the ProfROM tests shows the
+  `sub_0260h` poll only ever runs with `#1FFD = #10`.
 - `ScorpionPorts_Test.KempstonJoystick_DoesNotStealPort1FFromBeta128InTrdos` —
   asserts `#1F` still reaches the WD1793 inside a TR-DOS session.
 

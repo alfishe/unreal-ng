@@ -353,6 +353,19 @@ public:
     ADD_METHOD_TO(EmulatorAPI::keyList, "/api/v1/emulator/{id}/keyboard/keys", drogon::Get);
     // endregion Keyboard Injection
 
+    // region Mouse Injection (implementation: api/mouse_api.cpp)
+    ADD_METHOD_TO(EmulatorAPI::mouseMove, "/api/v1/emulator/{id}/mouse/move", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::mousePress, "/api/v1/emulator/{id}/mouse/press", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::mouseRelease, "/api/v1/emulator/{id}/mouse/release", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::mouseClick, "/api/v1/emulator/{id}/mouse/click", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::mouseButtons, "/api/v1/emulator/{id}/mouse/buttons", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::mouseWheel, "/api/v1/emulator/{id}/mouse/wheel", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::mouseReleaseAll, "/api/v1/emulator/{id}/mouse/release_all", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::mouseSetCounters, "/api/v1/emulator/{id}/mouse/counters", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::mouseStatus, "/api/v1/emulator/{id}/mouse/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::mouseButtonList, "/api/v1/emulator/{id}/mouse/buttons", drogon::Get);
+    // endregion Mouse Injection
+
     // region TTD (Time-Travel Debug) (implementation: api/ttd_api.cpp)
     // Full TTD automation surface (Phase 2 complete). Per parent TDD §10.4.
     ADD_METHOD_TO(EmulatorAPI::getTTDStatus, "/api/v1/emulator/{id}/ttd/status", drogon::Get);
@@ -1062,6 +1075,29 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void keyList(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                  const std::string& id) const;
     // endregion Keyboard Injection Methods
+
+    // region Mouse Injection Methods (implementation: api/mouse_api.cpp)
+    void mouseMove(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                   const std::string& id) const;
+    void mousePress(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id) const;
+    void mouseRelease(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void mouseClick(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id) const;
+    void mouseButtons(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void mouseWheel(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id) const;
+    void mouseReleaseAll(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void mouseSetCounters(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void mouseStatus(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) const;
+    void mouseButtonList(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    // endregion Mouse Injection Methods
 
     // region TTD Methods (implementation: api/ttd_api.cpp)
     // Per parent TDD §10.4. Full surface available after Phase 2 completion.

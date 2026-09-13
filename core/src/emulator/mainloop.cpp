@@ -11,6 +11,7 @@
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
+#include "debugger/mouse/debugmousemanager.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator.h"
 #include "emulator/notifications.h"
@@ -565,6 +566,12 @@ void MainLoop::OnFrameEnd()
     if (_context->pDebugManager && _context->pDebugManager->GetKeyboardManager())
     {
         _context->pDebugManager->GetKeyboardManager()->OnFrame();
+    }
+
+    // Release timed mouse clicks (automation) at frame boundaries
+    if (_context->pDebugManager && _context->pDebugManager->GetMouseManager())
+    {
+        _context->pDebugManager->GetMouseManager()->OnFrame();
     }
 
     _lastFrameRendered = _renderThisFrame;

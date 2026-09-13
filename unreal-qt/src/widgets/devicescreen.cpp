@@ -1,12 +1,17 @@
-#include "devicescreen.h"
-
+#include "widgets/devicescreen.h"
 #include <QDebug>
+#include <QFocusEvent>
 #include <QKeyEvent>
+#include <QMouseEvent>
 #include <QPainter>
+#include <QWheelEvent>
 #include <cmath>
 
 #include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/io/mouse/mouse.h"
 #include "emulator/keyboardmanager.h"
+#include "emulator/mousemanager.h"
 #include "ui_devicescreen.h"
 static inline bool isFloatsEqual(float x, float y, float epsilon = 0.01f)
 {
@@ -21,6 +26,22 @@ static inline bool isFloatsEqual(float x, float y, float epsilon = 0.01f)
 DeviceScreen::DeviceScreen(QWidget* parent) : QWidget(parent), ui(new Ui::DeviceScreen)
 {
     ui->setupUi(this);
+
+    // Host mouse capture and mapping; the manager asks for the emulated-pixel size
+    // of whatever is drawn right now (framebuffer or cropped overscan viewport)
+    _mouseManager = new MouseManager(this, [this] { return displaySourceRect().size(); }, this);
+    _mouseManager->setHostSettingsProvider([this] {
+        MouseManager::HostSettings settings;
+        EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;
+        if (context)
+        {
+            settings.mouseFitted = context->pMouse && context->pMouse->IsPresent();
+            settings.swapButtons = context->config.input.mouseswap != 0;
+            // CONFIG::input.mousescale is a plain char - unsigned on ARM, so cast before use
+            settings.scaleLog2 = static_cast<signed char>(context->config.input.mousescale);
+        }
+        return settings;
+    });
 }
 
 DeviceScreen::~DeviceScreen()
@@ -60,6 +81,7 @@ void DeviceScreen::detach()
     // ~MainWindow (it was the last shared_ptr holder and destroyed the instance long after
     // EmulatorManager::RemoveEmulator - crash on shutdown)
     _emulator.reset();
+    _mouseManager->setTargetEmulatorId("");
 
     // Trigger immediate repaint to show default background when detached
     update();
@@ -93,16 +115,7 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
     // Source rectangle with optional viewport cropping - applies to BOTH
     // paint paths (the tear-free latched frame and the legacy live buffer
     // share the same framebuffer geometry)
-    QRectF sourceRect = devicePixelsRect;
-    if (_hasViewport)
-    {
-        sourceRect = QRectF(
-            _displayViewport.cropLeft,
-            _displayViewport.cropTop,
-            devicePixelsRect.width() - _displayViewport.cropLeft - _displayViewport.cropRight,
-            devicePixelsRect.height() - _displayViewport.cropTop - _displayViewport.cropBottom
-        );
-    }
+    const QRectF sourceRect = displaySourceRect();
 
     // Tear-free path: pull the latched full-frame snapshot into our owned
     // backing image (SIMD copy under the screen's present mutex, ~40us),
@@ -124,6 +137,21 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
         // Render the ZX Spectrum screen directly into the event rect
         painter.drawImage(event->rect(), *devicePixels, sourceRect);
     }
+}
+
+QRectF DeviceScreen::displaySourceRect() const
+{
+    QRectF sourceRect = devicePixelsRect;
+    if (_hasViewport)
+    {
+        sourceRect = QRectF(
+            _displayViewport.cropLeft,
+            _displayViewport.cropTop,
+            devicePixelsRect.width() - _displayViewport.cropLeft - _displayViewport.cropRight,
+            devicePixelsRect.height() - _displayViewport.cropTop - _displayViewport.cropBottom
+        );
+    }
+    return sourceRect;
 }
 
 QImage DeviceScreen::grabFramebuffer()
@@ -152,9 +180,32 @@ QImage DeviceScreen::grabFramebuffer()
     return frame.copy(crop).convertToFormat(QImage::Format_ARGB32);
 }
 
+void DeviceScreen::setEmulator(std::shared_ptr<Emulator> emulator)
+{
+    _emulator = emulator;
+    _mouseManager->setTargetEmulatorId(_emulator ? _emulator->GetId() : std::string());
+}
+
+void DeviceScreen::setMouseCaptured(bool captured)
+{
+    if (captured)
+        _mouseManager->capture();
+    else
+        _mouseManager->release();
+}
+
+bool DeviceScreen::isMouseCaptured() const
+{
+    return _mouseManager->isCaptured();
+}
+
 void DeviceScreen::keyPressEvent(QKeyEvent* event)
 {
     event->accept();
+
+    // Mouse capture release key never reaches the ZX keyboard
+    if (_mouseManager->handleKeyPress(event))
+        return;
 
     // Don't react on auto-repeat
     if (!event->isAutoRepeat())
@@ -182,19 +233,15 @@ void DeviceScreen::keyPressEvent(QKeyEvent* event)
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
             messageCenter.Post(MC_KEY_PRESSED, keyEvent);
         }
-
-        // QString message = QString("DeviceScreen : keyPressEvent, key : 0x%1 (%2), mods: 0x%3, zxKey: 0x%4")
-        //                       .arg(event->key(), 2, 16)
-        //                       .arg(event->key())
-        //                       .arg((int)event->modifiers(), 2, 16)
-        //                       .arg(zxKey, 2, 16);
-        // qDebug() << message;
     }
 }
 
 void DeviceScreen::keyReleaseEvent(QKeyEvent* event)
 {
     event->accept();
+
+    if (_mouseManager->handleKeyRelease(event))
+        return;
 
     // Don't react on auto-repeat
     if (!event->isAutoRepeat())
@@ -222,17 +269,46 @@ void DeviceScreen::keyReleaseEvent(QKeyEvent* event)
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
             messageCenter.Post(MC_KEY_RELEASED, keyEvent);
         }
-
-        // QString message = QString("DeviceScreen : keyReleaseEvent, key : 0x%1 (%2), mods: 0x%3, zxKey: 0x%4")
-        //                       .arg(event->key(), 2, 16)
-        //                       .arg(event->key())
-        //                       .arg((int)event->modifiers(), 2, 16)
-        //                       .arg(zxKey, 2, 16);
-        // qDebug() << message;
     }
 }
 
-void DeviceScreen::mousePressEvent(QMouseEvent* event) {}
+void DeviceScreen::mousePressEvent(QMouseEvent* event)
+{
+    if (_mouseManager->handleMousePress(event))
+        event->accept();
+    else
+        QWidget::mousePressEvent(event);
+}
+
+void DeviceScreen::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (_mouseManager->handleMouseRelease(event))
+        event->accept();
+    else
+        QWidget::mouseReleaseEvent(event);
+}
+
+void DeviceScreen::mouseMoveEvent(QMouseEvent* event)
+{
+    if (_mouseManager->handleMouseMove(event))
+        event->accept();
+    else
+        QWidget::mouseMoveEvent(event);
+}
+
+void DeviceScreen::wheelEvent(QWheelEvent* event)
+{
+    if (_mouseManager->handleWheel(event))
+        event->accept();
+    else
+        QWidget::wheelEvent(event);
+}
+
+void DeviceScreen::focusOutEvent(QFocusEvent* event)
+{
+    _mouseManager->handleFocusOut(event);
+    QWidget::focusOutEvent(event);
+}
 
 void DeviceScreen::resizeEvent(QResizeEvent* event)
 {

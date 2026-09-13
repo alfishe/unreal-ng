@@ -2501,6 +2501,96 @@ tape render game.tzx --blocks 2-5 --rate 48000 -o game.wav
 tape import recording.wav --target tzx -o imported.tzx
 ```
 
+### 11. Mouse Input Injection
+
+Drive the Kempston Mouse of the selected emulator from a script, a remote tool or an AI agent.
+
+**How the device works, in one paragraph.** The Kempston Mouse is a *relative* device: it
+does not know where the cursor is on screen. It holds two 8-bit counters (X and Y). Moving
+the mouse adds to them, and they wrap around (255 + 1 = 0). The program running on the
+machine reads the counters, compares them with its previous reading and moves its own
+cursor by the difference. So `mouse move 10 -5` means "the mouse travelled 10 pixels right
+and 5 pixels down", not "put the cursor at (10, -5)". Values are whole pixels of the
+emulated screen and do not depend on the host window size or monitor DPI.
+
+**Units and limits** (same in every interface):
+
+| Value | Meaning | Allowed per call |
+| :--- | :--- | :--- |
+| `dx` | + = right | −127 … 127 (not both `dx` and `dy` zero) |
+| `dy` | + = **up** (no flip: screen Y grows down, the counter grows up) | −127 … 127 |
+| `steps` (wheel) | + = away from you | −7 … 7, not 0 |
+| `button` | `left`, `right`, `middle` (or `l`, `r`, `m`), any case | — |
+| `frames` (click) | how long the button is held, in emulated frames | 1 … 65535, default 2 |
+| `x`, `y` (`mouse set`) | raw counter value | 0 … 255 |
+
+Out-of-range values are **rejected, not clamped**. Why: the program only sees the counter
+change between two of its reads, as a signed byte. Worked example: X = 31, a move of +200
+gives X = 231; the program computes 231 − 31 = 200, reads that as −56 and moves the cursor
+**left**. The error message tells you to split a long move into several moves with
+`run_frames` between them.
+
+**Timing.** Each command changes the device before it returns (a direct call on the
+caller's thread, not a queued message). The machine reacts only when its program next reads
+the ports. For reproducible results: `pause`, inject, then `run_frames N`. `click` presses
+now and releases at the end of the N-th emulated frame; on a paused machine the program
+sees the button held for exactly N frames.
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `mouse move` | | `<dx> <dy>` | Add `dx`/`dy` to the X/Y counters (8-bit wrap). | ✅ Implemented |
+| `mouse press` | | `<button>` | Press and hold a button. | ✅ Implemented |
+| `mouse release` | | `<button>` | Release a button. | ✅ Implemented |
+| `mouse click` | | `<button> [frames]` | Press, hold `frames` (default 2), release on its own at a frame end. A new click replaces a pending one. | ✅ Implemented |
+| `mouse buttons` | | `<none\|b1,b2…>` | Set the exact set of pressed buttons (`none` = all up). Cancels a pending click. | ✅ Implemented |
+| `mouse wheel` | | `<steps>` | Scroll by whole notches (4-bit counter, wraps at 16). | ✅ Implemented |
+| `mouse clear` | `mouse release_all` | — | Release all buttons, cancel a pending click. | ✅ Implemented |
+| `mouse status` | `mouse info` | — | Counters, buttons, wheel, whether a mouse and a wheel are fitted, the bytes the three ports return, pending click, TTD journal support. | ✅ Implemented |
+| `mouse set` | | `<x> <y>` | Debug: write the raw X/Y counters (0–255). Allowed while TTD records (journalled). | ✅ Implemented |
+| `mouse help` | | — | Subcommand help. | ✅ Implemented |
+
+**Warnings (the command still succeeds):**
+- *Mouse not fitted* (`[INPUT] Mouse=NONE`, or feature `kempstonmouse` off): the counters
+  change, but nothing answers on the mouse ports, so the program reads the floating bus.
+  Warning: `mouse not present: guest reads floating bus on the mouse ports`.
+- *No wheel fitted* (`[INPUT] Wheel=NONE`, the shipped default): `mouse wheel` changes the
+  wheel counter, but the program cannot see it. Warning: `no wheel fitted ([INPUT] Wheel=NONE):
+  the guest does not see the wheel counter`.
+
+**Worked example** (Pentagon after reset: X = 31, Y = 85, nothing pressed, shipped config `Wheel=NONE`):
+
+```bash
+pause
+mouse move 10 -5        # Moved: dx=+10 dy=-5 -> X=41 Y=80
+mouse press left        # #FADF = 0xFE   (bit 0 = 0: left is down)
+mouse wheel 2           # #FADF = 0xFE   + warning: no wheel fitted
+mouse release left      # #FADF = 0xFF
+mouse click right 3     # #FADF = 0xFD, released after 3 frames
+run_frames 4
+mouse status            # Pending click: none, #FADF = 0xFF
+```
+
+The button register `#FADF` is built as: bits 0–2 = buttons (0 = pressed), bit 3 = always 1,
+bits 4–7 = wheel counter when a wheel is fitted, otherwise 1. With `Wheel=KEMPSTON` the same
+script reads `0x0E`, `0x2E`, `0x2F`, `0x2D`.
+
+**Rejected on purpose: absolute "move the cursor to (x, y)".** The program keeps its own
+cursor position (and may clip or scale it), so the emulator cannot know where the cursor is.
+To reach a screen point, work in a closed loop: find the cursor (screenshot or a known RAM
+variable), `mouse move` by the difference, `run_frames 1`, check again.
+
+**TTD (time-travel debugging):**
+- While TTD **records**, every mouse change is written to the TTD input journal before it
+  is applied: moves, button changes (including the automatic click release), wheel steps and
+  `mouse set`. Replaying the recording reproduces the same counters at the same instant.
+- While TTD **replays**, live mouse commands are refused with an error
+  (`TTD replay in progress; live mouse input refused`). Unlike keyboard commands, they do not
+  fail silently.
+
+**Interface mapping:** WebAPI `/api/v1/emulator/{id}/mouse/*` ([webapi-interface.md](./webapi-interface.md#10-mouse-input-injection)),
+Python `emu.mouse_*()`, Lua `mouse_*()`, MCP tool `mouse_input`. Design and decisions:
+[Kempston Mouse automation interfaces](../../../inprogress/2026-09-12-kempston-mouse/automation-interfaces.md).
+
 ## Future Capabilities
 
 The following commands and interfaces are planned for future implementation. This section documents the roadmap for expanding the ECI to support more advanced debugging, analysis, and automation workflows.
@@ -2622,8 +2712,10 @@ Programmatic control of emulator input devices for automation and testing.
 | `type <text>` | `<string>` | Automatically type a string of text. Handles shift/symbol modifiers automatically. Rate-limited to realistic typing speed. | 🔮 Planned |
 | `key combo <keys>` | `<key1+key2+...>` | Press multiple keys simultaneously (e.g., `CAPS+SHIFT+A` for graphics). | 🔮 Planned |
 | `joystick <action>` | `up\|down\|left\|right\|fire` | Simulate joystick input (Kempston, Sinclair, Cursor). | 🔮 Planned |
-| `mouse move <x> <y>` | `<x> <y>` | Move mouse cursor (for Kempston Mouse interface). | 🔮 Planned |
-| `mouse click <button>` | `left\|right\|middle` | Simulate mouse click. | 🔮 Planned |
+
+**Mouse:** implemented — see [§11 Mouse Input Injection](#11-mouse-input-injection). (The old
+planned row `mouse move <x> <y>` implied an absolute cursor position; the implemented command
+is relative, for the reasons given in §11.)
 
 **Use Cases**:
 - Automated game testing
