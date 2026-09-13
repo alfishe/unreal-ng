@@ -373,6 +373,252 @@ event after a warp), rather than by thresholding on delta magnitude — a thresh
 eats legitimate fast movement. SDL avoids this entirely by having a real relative mode
 ([§9.1](#91-the-three-defaults-that-must-be-changed)).
 
+### 5.6a Cursor grab implementation (Qt)
+
+**Location:** `DeviceScreen` owns mouse input and the rendering surface. A
+`CursorGrabController` helper class encapsulates the grab state machine.
+
+**Required additions to `DeviceScreen`:**
+
+```cpp
+// devicescreen.h additions
+class DeviceScreen : public QWidget {
+    // ...
+protected:
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void focusInEvent(QFocusEvent* event) override;
+    void focusOutEvent(QFocusEvent* event) override;
+
+private:
+    // Cursor grab state
+    bool _mouseInputEnabled = true;      // Master switch (toolbar icon)
+    bool _cursorGrabbed = false;         // Currently grabbed
+    QPoint _warpTarget;                  // Re-centre position (global coords)
+    QPoint _preGrabPos;                  // Cursor position before grab (for restoration)
+    bool _consumeNextClick = false;      // Swallow focus-gaining click
+    
+    // Float accumulator for sub-pixel precision (§5.1)
+    float _mouseAccumX = 0.0f;
+    float _mouseAccumY = 0.0f;
+    
+    void engageCursorGrab();
+    void releaseCursorGrab();
+    QPointF computeUpscaleFactors() const;
+};
+```
+
+**Grab engagement:**
+
+```cpp
+void DeviceScreen::engageCursorGrab()
+{
+    if (_cursorGrabbed || !_mouseInputEnabled)
+        return;
+    
+    // Store pre-grab position for restoration on release
+    _preGrabPos = QCursor::pos();
+    
+    // Hide cursor
+    setCursor(Qt::BlankCursor);
+    
+    // Enable mouse tracking (receive moves even without button pressed)
+    setMouseTracking(true);
+    
+    // Initial warp to centre
+    _warpTarget = mapToGlobal(rect().center());
+    QCursor::setPos(_warpTarget);
+    
+    // NOTE: Do NOT call grabMouse() — it blocks QMenuBar, toolbars, and dock widgets.
+    // Rely on setCursor(Qt::BlankCursor) + event filtering instead.
+    // Menu/dialog focus changes are handled via QApplication::focusChanged.
+    
+    _cursorGrabbed = true;
+    _mouseAccumX = 0.0f;
+    _mouseAccumY = 0.0f;
+}
+```
+
+**Grab release:**
+
+```cpp
+void DeviceScreen::releaseCursorGrab()
+{
+    if (!_cursorGrabbed)
+        return;
+    
+    setCursor(Qt::ArrowCursor);
+    setMouseTracking(false);
+    
+    // Restore cursor to pre-grab position
+    QCursor::setPos(_preGrabPos);
+    
+    _cursorGrabbed = false;
+}
+```
+
+**Mouse move with warp-event discard and accumulator:**
+
+```cpp
+void DeviceScreen::mouseMoveEvent(QMouseEvent* event)
+{
+    // Master switch - toolbar icon disabled
+    if (!_mouseInputEnabled) {
+        event->ignore();
+        return;
+    }
+    
+    if (!_cursorGrabbed) {
+        event->ignore();
+        return;
+    }
+    
+    QPoint globalPos = event->globalPos();
+    
+    // Discard synthetic warp event by POSITION MATCHING, not a flag.
+    // Why: QCursor::setPos() posts an async event to the OS event queue.
+    // If the user moves rapidly, legitimate events may already be queued:
+    //   Event1 arrives → setPos() → flag=true
+    //   Event2 (already queued) arrives → discarded! flag=false
+    //   Synthetic warp arrives → treated as real! Large inverse delta injected.
+    // Position matching avoids this race.
+    // Allow ±1 pixel tolerance for High-DPI scaling round-off.
+    if (std::abs(globalPos.x() - _warpTarget.x()) <= 1 &&
+        std::abs(globalPos.y() - _warpTarget.y()) <= 1) {
+        event->accept();
+        return;  // This is the synthetic warp event
+    }
+    
+    // Compute delta from warp target (not from last event - avoids drift)
+    QPoint delta = globalPos - _warpTarget;
+    
+    // Convert to emulated pixels (§5.1)
+    // delta_phys = delta_logical * devicePixelRatioF()
+    // delta_native = delta_phys / upscale
+    qreal dpr = devicePixelRatioF();
+    QPointF upscale = computeUpscaleFactors();
+    
+    float dx = static_cast<float>(delta.x()) * dpr / upscale.x();
+    float dy = static_cast<float>(delta.y()) * dpr / upscale.y();
+    
+    // Apply scale from CONFIG::mousescale (power-of-two, §7.1)
+    // scale = pow(2, mousescale) where mousescale in [-3, 3]
+    // For now, assume scale = 1.0 until config is wired
+    float scale = 1.0f;
+    
+    // Accumulate with remainder carry (§5.2 trap #3)
+    _mouseAccumX += dx * scale;
+    _mouseAccumY -= dy * scale;  // Y inverted (§4.2)
+    
+    int stepX = static_cast<int>(_mouseAccumX);
+    int stepY = static_cast<int>(_mouseAccumY);
+    _mouseAccumX -= stepX;
+    _mouseAccumY -= stepY;
+    
+    // Post to MessageCenter if any motion
+    if (stepX != 0 || stepY != 0) {
+        MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+        // Tag with emulator UUID for multi-instance routing
+        MouseMoveEvent* moveEvent = nullptr;
+        if (_emulator) {
+            moveEvent = new MouseMoveEvent(stepX, stepY, _emulator->GetUUID());
+        } else {
+            moveEvent = new MouseMoveEvent(stepX, stepY);
+        }
+        mc.Post(NC_MOUSE_MOVE, moveEvent);
+    }
+    
+    // Re-centre cursor
+    _warpTarget = mapToGlobal(rect().center());
+    QCursor::setPos(_warpTarget);
+    
+    event->accept();
+}
+```
+
+**Upscale factor computation:**
+
+```cpp
+QPointF DeviceScreen::computeUpscaleFactors() const
+{
+    // Widget size in logical pixels
+    QSize widgetSize = size();
+    
+    // Framebuffer size (with viewport crop if active)
+    QRectF sourceRect = devicePixelsRect;
+    if (_hasViewport) {
+        sourceRect = QRectF(
+            _displayViewport.cropLeft,
+            _displayViewport.cropTop,
+            devicePixelsRect.width() - _displayViewport.cropLeft - _displayViewport.cropRight,
+            devicePixelsRect.height() - _displayViewport.cropTop - _displayViewport.cropBottom
+        );
+    }
+    
+    // Upscale = widget / framebuffer (independent X/Y - §5.5)
+    qreal upscaleX = static_cast<qreal>(widgetSize.width()) / sourceRect.width();
+    qreal upscaleY = static_cast<qreal>(widgetSize.height()) / sourceRect.height();
+    
+    return QPointF(upscaleX, upscaleY);
+}
+```
+
+**Focus handling:**
+
+```cpp
+void DeviceScreen::focusOutEvent(QFocusEvent* event)
+{
+    releaseCursorGrab();
+    QWidget::focusOutEvent(event);
+}
+
+void DeviceScreen::focusInEvent(QFocusEvent* event)
+{
+    // Grab engagement is handled by polling detection (§polling-detection)
+    // Do not engage here - wait for first poll or manual user action
+    QWidget::focusInEvent(event);
+}
+```
+
+**Button handling:**
+
+```cpp
+void DeviceScreen::mousePressEvent(QMouseEvent* event)
+{
+    if (!_mouseInputEnabled) {
+        event->ignore();
+        return;
+    }
+    
+    uint8_t buttonMask = 0;
+    if (event->buttons() & Qt::LeftButton)   buttonMask |= 0x01;  // D0
+    if (event->buttons() & Qt::RightButton)  buttonMask |= 0x02;  // D1
+    if (event->buttons() & Qt::MiddleButton) buttonMask |= 0x04;  // D2
+    
+    MouseButtonEvent* btnEvent = nullptr;
+    if (_emulator) {
+        btnEvent = new MouseButtonEvent(buttonMask, _emulator->GetUUID());
+    } else {
+        btnEvent = new MouseButtonEvent(buttonMask);
+    }
+    
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    mc.Post(NC_MOUSE_BUTTON, btnEvent);
+    
+    event->accept();
+}
+
+void DeviceScreen::mouseReleaseEvent(QMouseEvent* event)
+{
+    // Same as press - send current button state
+    mousePressEvent(event);
+}
+```
+
+**DeviceScreenWrapper forwarding:** Add the same event handlers to
+`DeviceScreenWrapper` (`widgets/devicescreenwrapper.{h,cpp}`) forwarding to the
+active screen implementation, as is done for other input events.
+
 ### 5.7 Headless injection
 
 The Qt and SDL paths are not the only input sources: this project drives the machine
