@@ -37,11 +37,14 @@ Emulator* CreateFmEmulator(LoggerLevel level)
         std::ifstream in(source, std::ios::binary);
         ini.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
     }
-    const std::string from = "TurboSound=AY";
-    const size_t at = ini.find(from);
-    if (ini.empty() || at == std::string::npos)
+    // The shipped slot kind flips between releases (FM ships enabled now);
+    // force FM from whichever value the ini carries
+    const std::string to = "TurboSound=FM";
+    const size_t atAy = ini.find("TurboSound=AY");
+    if (ini.empty() || (atAy == std::string::npos && ini.find(to) == std::string::npos))
         return nullptr;
-    ini.replace(at, from.size(), "TurboSound=FM");
+    if (atAy != std::string::npos)
+        ini.replace(atAy, to.size(), to);  // both slot literals are the same length
 
     const fs::path target = TestPathHelper::GetUniqueTestScratchPath("tsfm-mixer-pentagon.ini");
     {
@@ -125,7 +128,8 @@ TEST_F(TsfmMixer_Test, FmConfigRegistersFmSources)
 
 TEST_F(TsfmMixer_Test, AyConfigRegistersNoFmSources)
 {
-    _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    _emulator = EmulatorTestHelper::CreateEmulatorWithTurboSoundKind(
+        "PENTAGON", TurboSoundKind::AY, LoggerLevel::LogError);
     ASSERT_NE(_emulator, nullptr) << "failed to boot a TurboSound=AY emulator";
 
     SoundManager* soundManager = _emulator->GetContext()->pSoundManager;

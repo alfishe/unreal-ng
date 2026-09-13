@@ -35,7 +35,10 @@ protected:
 
     void SetUp() override
     {
-        _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+        // Legacy-slot contract: the harness tests pin player traffic against
+        // the AY device answering #FFFD reads (the shipped default is FM now)
+        _emulator = EmulatorTestHelper::CreateEmulatorWithTurboSoundKind(
+            "PENTAGON", TurboSoundKind::AY, LoggerLevel::LogError);
         ASSERT_NE(_emulator, nullptr) << "Failed to create emulator";
         _context = _emulator->GetContext();
     }
@@ -145,7 +148,8 @@ namespace
 /// (traffic hash, per-frame write counts)
 std::pair<uint64_t, std::vector<uint32_t>> RunFreshPlayerSession(int frameCount)
 {
-    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    Emulator* emulator = EmulatorTestHelper::CreateEmulatorWithTurboSoundKind(
+        "PENTAGON", TurboSoundKind::AY, LoggerLevel::LogError);
     if (!emulator)
         return {0, {}};
 

@@ -8,6 +8,51 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
+#include "_helpers/testpathhelper.h"
+
+#include <filesystem>
+#include <fstream>
+
+namespace
+{
+    /// Stage a scratch copy of the model's shipped ini with the TurboSound=
+    /// line rewritten to the requested kind (either direction - the shipped
+    /// value differs per machine now). Returns an empty path on failure
+    std::string StageTurboSoundKindIni(const std::string& modelConfigFolder, TurboSoundKind kind)
+    {
+        namespace fs = std::filesystem;
+
+        const fs::path source =
+            TestPathHelper::FindProjectRoot() / "data" / "configs" / modelConfigFolder / "unreal.ini";
+        if (!fs::exists(source))
+            return std::string();
+
+        std::string ini;
+        {
+            std::ifstream in(source, std::ios::binary);
+            ini.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        }
+
+        const std::string to = std::string("TurboSound=") + (kind == TurboSoundKind::FM ? "FM" : "AY");
+        const size_t atAy = ini.find("TurboSound=AY");
+        const size_t atFm = ini.find("TurboSound=FM");
+        if (atAy != std::string::npos)
+            ini.replace(atAy, to.size(), to);  // both slot literals are the same length
+        else if (atFm != std::string::npos)
+            ini.replace(atFm, to.size(), to);
+        else
+            return std::string();
+
+        const fs::path target =
+            TestPathHelper::GetUniqueTestScratchPath("forced-slot-" + modelConfigFolder + ".ini");
+        {
+            std::ofstream out(target, std::ios::binary);
+            out.write(ini.data(), static_cast<std::streamsize>(ini.size()));
+        }
+
+        return target.string();
+    }
+}
 
 // Static member initialization
 std::unordered_map<uint32_t, BreakpointCallback> EmulatorTestHelper::_breakpointCallbacks;
@@ -40,6 +85,45 @@ Emulator* EmulatorTestHelper::CreateStandardEmulator(const std::string& modelNam
 
     // Return raw pointer (caller must use CleanupEmulator to properly release)
     return emulator.get();
+}
+
+Emulator* EmulatorTestHelper::CreateEmulatorWithTurboSoundKind(const std::string& modelName,
+                                                                 TurboSoundKind kind,
+                                                                 LoggerLevel logLevel)
+{
+    // Empty model name = the bare-Init default (Emulator's own preferred
+    // model is MM_PENTAGON), so resolve the folder the same way Init would
+    const std::string folder = modelName.empty()
+        ? Config::GetConfigFolderForModel(MM_PENTAGON, 0)
+        : [&]() -> std::string
+          {
+              const TMemModel* modelInfo = Config::FindModelByShortName(modelName);
+              return modelInfo ? Config::GetConfigFolderForModel(modelInfo->Model, modelInfo->defaultRAM)
+                               : std::string();
+          }();
+    if (folder.empty())
+        return nullptr;
+
+    const std::string staged = StageTurboSoundKindIni(folder, kind);
+    if (staged.empty())
+        return nullptr;
+
+    // Same boot shape as the TSFM suites' own helpers: the staged ini
+    // self-identifies the machine, no preferred model needed
+    Emulator* emulator = new Emulator(logLevel);
+    emulator->SetCustomConfigPath(staged);
+    if (!emulator->Init())
+    {
+        emulator->Release();
+        delete emulator;
+        return nullptr;
+    }
+    return emulator;
+}
+
+std::string EmulatorTestHelper::StageTurboSoundKindConfig(TurboSoundKind kind)
+{
+    return StageTurboSoundKindIni(Config::GetConfigFolderForModel(MM_PENTAGON, 0), kind);
 }
 
 Emulator* EmulatorTestHelper::CreateDebugEmulator(const std::vector<std::string>& features,

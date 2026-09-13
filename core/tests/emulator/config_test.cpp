@@ -3,13 +3,14 @@
 ///
 /// The key selects which device occupies the TurboSound slot (legacy two-AY
 /// pair vs TSFM); unknown values fall back to AY with a warning, a missing
-/// key keeps the AY default. Also asserts that the shipped model configs
-/// still select the legacy device after the key was added to them.
+/// key keeps the AY default. Also pins the shipped per-machine slot kinds
+/// (TSFM enabled on pentagon128k, scorpion and spectrum128).
 
 #include <gtest/gtest.h>
 
 #include <fstream>
 #include <string>
+#include <unordered_map>
 
 #include "_helpers/testpathhelper.h"
 #include "emulator/config.h"
@@ -110,19 +111,28 @@ TEST_F(Config_Test, FmTrimDbDefaultsToZero)
     EXPECT_DOUBLE_EQ(_context->config.sound.tsfmFmTrimDb, 0.0);
 }
 
-TEST_F(Config_Test, ShippedConfigsProduceLegacyTurboSound)
+TEST_F(Config_Test, ShippedConfigsProduceExpectedTurboSoundKind)
 {
-    // The shipped inis now carry TurboSound=AY (plan P3); loading any of them
-    // must produce the legacy device - a future ini edit flipping a machine's
-    // slot kind shows up here rather than as a surprise TTD session mismatch
-    for (const char* folder :
-         {"pentagon128k", "pentagon512k", "scorpion", "profscorp", "spectrum48", "spectrum128", "spectrum3"})
+    // TSFM ships enabled on the capable machines; the rest keep the legacy
+    // AY slot. Loading each shipped ini must produce exactly this map - a
+    // future ini edit flipping a machine's slot kind shows up here rather
+    // than as a surprise TTD session mismatch
+    const std::unordered_map<std::string, TurboSoundKind> expected = {
+        {"pentagon128k", TurboSoundKind::FM},
+        {"pentagon512k", TurboSoundKind::AY},
+        {"scorpion", TurboSoundKind::FM},
+        {"profscorp", TurboSoundKind::AY},
+        {"spectrum48", TurboSoundKind::AY},
+        {"spectrum128", TurboSoundKind::FM},
+        {"spectrum3", TurboSoundKind::AY},
+    };
+    for (const auto& [folder, kind] : expected)
     {
         const fs::path ini =
             TestPathHelper::FindProjectRoot() / "data" / "configs" / folder / "unreal.ini";
         ASSERT_TRUE(fs::exists(ini)) << ini;
         Config config(_context);
         ASSERT_TRUE(config.LoadConfigFile(ini.string())) << ini;
-        EXPECT_EQ(_context->config.sound.turboSoundKind, TurboSoundKind::AY) << folder;
+        EXPECT_EQ(_context->config.sound.turboSoundKind, kind) << folder;
     }
 }

@@ -17,6 +17,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "_helpers/emulatortesthelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcheckpoint.h"
@@ -59,7 +60,11 @@ protected:
 
     void SetUp() override
     {
+        // The session-kind guard models the legacy slot; the shipped default
+        // is FM now, so stage the default machine's ini with TurboSound=AY
         _emulator = new Emulator(LoggerLevel::LogError);
+        _emulator->SetCustomConfigPath(
+            EmulatorTestHelper::StageTurboSoundKindConfig(TurboSoundKind::AY));
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
