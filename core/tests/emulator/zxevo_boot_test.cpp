@@ -28,6 +28,7 @@
 #include <emulator/emulatormanager.h>
 #include <emulator/io/keyboard/keyboard.h>
 #include <emulator/memory/memory.h>
+#include <emulator/cpu/z80.h>
 #include <emulator/platform.h>
 #include <emulator/ports/models/portdecoder_atm3.h>
 #include <gtest/gtest.h>
@@ -100,12 +101,30 @@ protected:
         // early exit on a partial match leaves the rest still settling.
         EmulatorContext* context = emulator->GetContext();
         Memory* memory = context->pMemory;
+        Z80* z80 = context->pCore->GetZ80();
         EmulatorTestHelper::RunUntil(
             emulator.get(),
             [&] {
                 const uint8_t flags = context->emulatorState.flags;
+                // PC == 0x613C (a HALT: shell's genuine idle/wait-for-key loop,
+                // confirmed by reading the opcode byte and by its PC never
+                // moving between consecutive polls) is as load-bearing as the
+                // other four fields here, not decoration. Without it,
+                // page/bank0/SETDOSROM/!TRDOS can all be momentarily true one
+                // or two instructions before the shell has actually finished
+                // settling - observed directly: a caller that pressed a menu
+                // key at that instant landed the machine on the *correct*
+                // transient page (25, "processing keypress") but then reverted
+                // to page 20 and stuck there, because the keypress arrived
+                // mid-transition rather than at the idle loop the firmware
+                // expects it from. Reproduces only under real CPU contention
+                // (background load skews exactly which frame this predicate's
+                // 10-frame poll interval lands on) - unreproducible by a fixed
+                // gtest shuffle seed, which is what made it look like it
+                // depended on real time rather than an insufficiently specific
+                // settle condition.
                 return memory->IsBank0ROM() && memory->GetROMPage() == 20u && (flags & CF_SETDOSROM) &&
-                       !(flags & CF_TRDOS);
+                       !(flags & CF_TRDOS) && z80->pc == 0x613C;
             },
             300);
         return emulator;
