@@ -1,0 +1,1 @@
+Used: Altera MAX+plus II 10.2 baseline

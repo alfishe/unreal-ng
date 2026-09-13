@@ -922,6 +922,20 @@ protected:
 
         _emulator = emulator.get();
         _emulatorUUID = _emulator->GetUUID();
+
+        // Pin power-on RAM. Memory::RandomizeMemoryContent() fills pages 5 and
+        // 7 from the global rand(), which nothing seeds, so the pattern this
+        // machine boots into depends on how many rand() calls the preceding
+        // tests in the process made. TR-DOS runs on a RAM stack and workspace:
+        // under --gtest_shuffle seed 14295 activateTRDOS() started from an
+        // identical machine state (flags=0x02, p7FFD=0x07, PC=0x00E5) and was
+        // executing RAM at PC 0x75F5 ten frames later, with the flags and the
+        // paging latch cleared. Same hidden input as
+        // ScorpionServiceMonitor_Test; see core/tests/README.md "Power-on RAM
+        // is a hidden global input".
+        Memory* memory = _emulator->GetMemory();
+        memset(memory->RAMPageAddress(5), 0, PAGE_SIZE);
+        memset(memory->RAMPageAddress(7), 0, PAGE_SIZE);
     }
 
     void TearDown() override
@@ -961,19 +975,42 @@ protected:
     /// SetROMDOS() - activateTRDOS() only works on a machine that has stopped
     /// re-paging. Deterministic single-driver stepping via RunNFrames, no
     /// wall-clock timing dependence.
-    void settleBootSequence()
+    /// @return false when the machine never reached an idle state within the
+    ///         budget. Reported, not swallowed: giving up silently here made a
+    ///         failure surface downstream as "TR-DOS did not initialize", which
+    ///         points at the wrong subsystem - the boot simply had not settled,
+    ///         so SetROMDOS() was undone by the still-running paging code.
+    bool settleBootSequence()
     {
         for (int i = 0; i < 500; i += 10)
         {
             _emulator->RunNFrames(10);
             BasicEncoder::BasicState state = BasicEncoder::detectState(_emulator->GetMemory());
+            _lastSettleState = state;  // reported by the caller when this gives up
             if (state == BasicEncoder::BasicState::Basic48K
                 || state == BasicEncoder::BasicState::Basic128K
                 || state == BasicEncoder::BasicState::Menu128K)
             {
-                return;
+                return true;
             }
         }
+        return false;
+    }
+
+    BasicEncoder::BasicState _lastSettleState = BasicEncoder::BasicState::Unknown;
+
+    static const char* stateName(BasicEncoder::BasicState state)
+    {
+        switch (state)
+        {
+            case BasicEncoder::BasicState::Menu128K:       return "Menu128K";
+            case BasicEncoder::BasicState::Basic128K:      return "Basic128K";
+            case BasicEncoder::BasicState::Basic48K:       return "Basic48K";
+            case BasicEncoder::BasicState::TRDOS_Active:   return "TRDOS_Active";
+            case BasicEncoder::BasicState::TRDOS_SOS_Call: return "TRDOS_SOS_Call";
+            case BasicEncoder::BasicState::Unknown:        return "Unknown";
+        }
+        return "??";
     }
 };
 
@@ -993,10 +1030,16 @@ TEST_F(BasicEncoder_Integration_Test, TRDOSRunCommand_AutoResumes)
     // confirmation timeout to advance ~thousands of free-running frames;
     // pause confirmation is immediate now, so the boot is advanced
     // deterministically on the test thread instead)
-    settleBootSequence();
+    ASSERT_TRUE(settleBootSequence())
+        << "boot never reached an idle BASIC/menu state within 500 frames; last state was "
+        << stateName(_lastSettleState)
+        << ". TR-DOS activation below cannot work until the boot code stops re-paging 0x7FFD.";
 
     // Activate TR-DOS
-    ASSERT_TRUE(activateTRDOS()) << "TR-DOS did not initialize";
+    ASSERT_TRUE(activateTRDOS())
+        << "TR-DOS did not initialize; last state was "
+        << stateName(BasicEncoder::detectState(_emulator->GetMemory()))
+        << ", flags=0x" << std::hex << (int)_emulator->GetContext()->emulatorState.flags;
 
     // Resume to running state
     _emulator->Resume();
