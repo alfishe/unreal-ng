@@ -252,7 +252,7 @@ bool Server::start()
     {
         std::cerr << "[ZRCP] Failed to bind to port " << m_config.port << "\n";
         closeSocket(m_listenSocket);
-        m_listenSocket = -1;
+        m_listenSocket = INVALID_SOCKET;
         return false;
     }
 
@@ -264,7 +264,7 @@ bool Server::start()
     {
         std::cerr << "[ZRCP] Failed to listen\n";
         closeSocket(m_listenSocket);
-        m_listenSocket = -1;
+        m_listenSocket = INVALID_SOCKET;
         return false;
     }
 
@@ -297,7 +297,7 @@ void Server::stop()
     if (m_listenSocket != INVALID_SOCKET)
     {
         closeSocket(m_listenSocket);
-        m_listenSocket = -1;
+        m_listenSocket = INVALID_SOCKET;
     }
 
     {
@@ -305,7 +305,7 @@ void Server::stop()
         if (m_clientSocket != INVALID_SOCKET)
         {
             closeSocket(m_clientSocket);
-            m_clientSocket = -1;
+            m_clientSocket = INVALID_SOCKET;
         }
     }
 
@@ -347,7 +347,7 @@ void Server::acceptLoop()
         if (ready == 0)
             continue;  // timeout - re-check the stop flag
 
-        int clientSock = accept(m_listenSocket,
+        SOCKET clientSock = accept(m_listenSocket,
                                 reinterpret_cast<sockaddr*>(&clientAddr),
                                 &clientLen);
 
@@ -384,7 +384,7 @@ void Server::acceptLoop()
             if (m_clientSocket == clientSock)
             {
                 closeSocket(m_clientSocket);
-                m_clientSocket = -1;
+                m_clientSocket = INVALID_SOCKET;
             }
         }
 
@@ -405,7 +405,7 @@ void Server::acceptLoop()
     }
 }
 
-void Server::sessionLoop(int clientSocket)
+void Server::sessionLoop(SOCKET clientSocket)
 {
     // Welcome banner + prompt (DeZog waits for the prompt after connect)
     sendLine(clientSocket, "Welcome to " + m_config.serverName +

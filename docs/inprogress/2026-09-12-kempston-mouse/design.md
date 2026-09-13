@@ -3,11 +3,6 @@
 Normative hardware behaviour: [hardware-reference.md](hardware-reference.md).
 Status, decisions log and open questions: [README.md](README.md).
 
-> **Status (2026-09-12): implemented.** This was written before the code. It has been kept
-> as the design record, with **"As built"** notes wherever the implementation differs or a
-> decision was settled. Line citations were refreshed against the working tree on
-> 2026-09-12; the mouse files were still uncommitted then, so lines can move.
-
 ---
 
 ## 1. Design principles
@@ -36,16 +31,11 @@ decode predicate, rather than separate device classes:
 | Variant axis | Config | Default |
 |---|---|---|
 | 2-button / 3-button | `mouse.buttons` | 3 (D2 = middle) |
-| Wheel mode | `mousewheel` (enum, see §7) | ~~`MOUSE_WHEEL_KEMPSTON`~~ **`MOUSE_WHEEL_NONE`** (see §7.2) |
+| Wheel mode | `mousewheel` (enum, see §7) | `MOUSE_WHEEL_KEMPSTON` |
 | Button order | `mouse.swap_buttons` | see §4.2 |
 | Decode flavour | per-model decoder, overridable (§3.1) | standard |
 | USSR strict decode | `mouse.ussr_variant` | off |
 | Joystick-on-mouse | `joymouse` (see §7) | off (deferred) |
-
-**As built:** only the wheel mode (`[INPUT] Wheel=`) and the device type (`[INPUT] Mouse=`)
-have an effect. The 2-button option and the USSR variant were not implemented; always 3
-buttons, always the standard decode. `SwapMouse=` and `MouseScale=` are applied by the desktop
-`MouseManager` when capture starts; `joymouse` is deferred.
 
 There is no "Kempston mouse turbo" to implement, and AMX Mouse is out of scope.
 
@@ -72,8 +62,8 @@ The architecture therefore is:
   register selection is part of the per-model pattern.
 
 ```
-Standard (as built: MiSTer ZX-Spectrum mouse.v / kemp_sel, 2026-09-12):
-    qualify:  A9 = 1, A5-A0 = 011111    (low byte #1F, #5F, #9F or #DF)
+Standard (BC#4, models 1 / 7-9; matches zxsp's schematic reading):
+    qualify:  A9 = 1, A5 = 0
     select :  A8 = 0          -> buttons   (A10 don't-care: #FADF and #FEDF both answer)
               A8 = 1, A10 = 0 -> X
               A8 = 1, A10 = 1 -> Y
@@ -97,34 +87,24 @@ then exact-compares against three canonical addresses. That excludes mirrors lik
 compares — equivalent to the standard decode. The predicate above matches the schematic
 directly.
 
-**As built (2026-09-12): aligned with MiSTer, not with the schematic reading.** The first
-implementation qualified on A9 = 1, A5 = 0 only. Checked against four references for the
-Scorpion ProfROM case (Unreal Speccy, Xpeccy-plus, ZXMAK2, MiSTer), none answers an address
-such as `#03C1`: all require the low bits set. MiSTer's decode (`kemp_sel = addr[5:0] ==
-6'h1F`, register select `addr[10:8]`: `011` X, `111` Y, `x10` buttons) keeps the A9 = 1 rule
-and the `#FEDF` buttons alias, and is now the predicate
-(`PortDecoder::Standard_IsPort_KempstonMouse`). Worked example: `#FBDF`, `#FB9F`, `#FB5F`,
-`#FB1F` read X; `#FBDE`, `#03C1`, `#FBCF` are not mouse addresses.
-
 ### 3.2 Per-model decode matrix
 
 Built from the real `MEM_MODEL` enum (`platform.h:301+`) against BC#4's model column.
-Mirror counts follow from the decode as built: 7 free lines (A15-A11, A7, A6) for each
-axis, 8 for buttons (A10 as well). The standard rows used to read 8192 / 4096 / 4096 under
-the earlier A9/A5-only decode.
+Mirror counts are brute-forced over all 65536 ports from the decode predicates, not
+quoted.
 
 | Our model | BC#4 | Documented? | Qualify | Select | Mirrors (B / X / Y) |
 |---|---|---|---|---|---|
-| `MM_SPECTRUM48` | 1/+1 | **yes** | A9=1, A5-A0=011111 | A8, A10 | 256 / 128 / 128 |
-| `MM_KAY` | 7 | **yes** | A9=1, A5-A0=011111 | A8, A10 | 256 / 128 / 128 |
-| `MM_PENTAGON` | 8, D | **yes** | A9=1, A5-A0=011111 | A8, A10 | 256 / 128 / 128 |
-| `MM_PROFI` | 9 | **yes** | A9=1, A5-A0=011111 | A8, A10 | 256 / 128 / 128 |
-| `MM_SPECTRUM128` | 2 | no — add-on | A9=1, A5-A0=011111 | A8, A10 | 256 / 128 / 128 |
-| `MM_PLUS3` | 3/+3 | no — add-on | A9=1, A5-A0=011111 | A8, A10 | 256 / 128 / 128 |
-| `MM_SCORP`, `MM_PROFSCORP` | 6 | no — add-on | A9=1, A5-A0=011111 | A8, A10 | 256 / 128 / 128 |
-| `MM_ATM710` | A | no — add-on | A9=1, A5-A0=011111 | A8, A10 | 256 / 128 / 128 |
-| `MM_GMX` | B | no — add-on | A9=1, A5-A0=011111 | A8, A10 | 256 / 128 / 128 |
-| `MM_QUORUM` | C | no — add-on | A9=1, A5-A0=011111 | A8, A10 | 256 / 128 / 128 |
+| `MM_SPECTRUM48` | 1/+1 | **yes** | A9=1, A5=0 | A8, A10 | 8192 / 4096 / 4096 |
+| `MM_KAY` | 7 | **yes** | A9=1, A5=0 | A8, A10 | 8192 / 4096 / 4096 |
+| `MM_PENTAGON` | 8, D | **yes** | A9=1, A5=0 | A8, A10 | 8192 / 4096 / 4096 |
+| `MM_PROFI` | 9 | **yes** | A9=1, A5=0 | A8, A10 | 8192 / 4096 / 4096 |
+| `MM_SPECTRUM128` | 2 | no — add-on | A9=1, A5=0 | A8, A10 | 8192 / 4096 / 4096 |
+| `MM_PLUS3` | 3/+3 | no — add-on | A9=1, A5=0 | A8, A10 | 8192 / 4096 / 4096 |
+| `MM_SCORP`, `MM_PROFSCORP` | 6 | no — add-on | A9=1, A5=0 | A8, A10 | 8192 / 4096 / 4096 |
+| `MM_ATM710` | A | no — add-on | A9=1, A5=0 | A8, A10 | 8192 / 4096 / 4096 |
+| `MM_GMX` | B | no — add-on | A9=1, A5=0 | A8, A10 | 8192 / 4096 / 4096 |
+| `MM_QUORUM` | C | no — add-on | A9=1, A5=0 | A8, A10 | 8192 / 4096 / 4096 |
 | `MM_ATM3` (ZX Evo baseconf) | — | FPGA | **full low byte `#DF`** | A8, A10 | **128 / 64 / 64** |
 | `MM_TSL`, `MM_ATM450`, `MM_LSY256`, `MM_PHOENIX`, `MM_NEXT` | — | unknown | default | A8, A10 | as standard |
 | *USSR fitting* (any model) | — | variant | A7=1, A5=0, A0=1 (**A9 not decoded**) | A8, A10 | 2048 / 2048 / 2048 |
@@ -158,22 +138,11 @@ take the second:
 - **Narrow the joystick** (Xpeccy, ZX Evo FPGA): decode the joystick on a full low byte
   of `0x1F`.
 
-**Decision (original):** narrow the joystick. It matches the FPGA, needs no cross-device knowledge,
+**Decision:** narrow the joystick. It matches the FPGA, needs no cross-device knowledge,
 and leaves the two devices independently testable. This is a behavioural change to the
 existing joystick stub (`portdecoder_scorpion256.cpp:620`, currently `port == 0xFF1F`)
 and must be covered by a regression test asserting the joystick still answers its own
 ports.
-
-**As built — the joystick was not narrowed.** The only Kempston joystick in this branch is
-the Scorpion stub, and it already matched **exactly one address, `#FF1F`**
-(`PortDecoder_Scorpion256::IsPort_KempstonJoystick`, `portdecoder_scorpion256.cpp:621-639`),
-which is narrower than a `0x1F` low-byte match. `#FF1F` does satisfy the mouse decode
-(A9 = 1, A5 = 0), so the overlap is resolved by **order**: in `DecodePortIn` the joystick arm
-comes first (`:217`) and the mouse arm after it (`:230`). Worked example: `IN #FF1F` → joystick
-(`0x00`); `IN #FB1F` → mouse X counter (not the joystick, which checks all 16 bits). The
-other model decoders have no joystick arm to collide with. Regression test:
-`PortDecoder_PentagonScorpionMouse_Test.Scorpion256_JoystickNarrowedTo1F` (the name is left
-over from the original plan; it asserts the exact `#FF1F` behaviour).
 
 ### 3.4 Existing stub to remove
 
@@ -185,18 +154,7 @@ the "equal axes" pattern that presence-detection heuristics read as *absent*
 ([hardware-reference §7](hardware-reference.md#7-presence-detection)). The stub is
 replaced, not extended.
 
-**As built:** replaced. The Scorpion now calls the shared standard decode
-(`Default_IsPort_KempstonMouse`) and returns the real device registers. The old low-byte
-`#DF` test is gone from every decoder.
-
 ### 3.5 TR-DOS gating
-
-> **Decided (2026-09-12): common rule.** While TR-DOS is selected, only Beta Disk operations
-> happen - no other device answers on any address until the selection signal is released.
-> Implemented for the mouse on every model (`CF_DOSPORTS`), and on Scorpion for a TR-DOS
-> session (`CF_TRDOS`) or the armed DOS trigger. The Scorpion Shadow Monitor latch (`#1FFD`
-> bit 1) on its own does **not** hide `#xxDF` (MiSTer alignment, below). The analysis below is
-> kept as background; the open question D-4 is closed.
 
 ZXMAK2 suppresses the mouse while TR-DOS is paged; Xpeccy does the same for
 Pentagon/Scorpion/ATM but not for Pentevo/ZX48/Phoenix
@@ -225,31 +183,7 @@ Two caveats keep this short of proof:
 > **Flag name matters here.** The gate is `CF_DOSPORTS` (`0x01`, "tr-dos ports are
 > accessible") — the flag that actually puts the FDC on the bus — **not** `CF_TRDOS`
 > (`0x02`, the DOSEN trigger). They are different flags with different lifetimes
-> (`platform.h:973-974`).
-
-**As built:** gated on **every** model, not per-model. `PortDecoder::Default_IsPort_KempstonMouse`
-(`portdecoder.cpp:494-503`) refuses the address when the mouse is not fitted, when
-`CF_DOSPORTS` is set, or when a registered peripheral owns that exact port. Two model
-details on top of that:
-- **Pentagon 128/512:** the mouse is tried only for addresses the decode table left
-  unclaimed (`portdecoder_pentagon128.cpp:105-111`).
-- **Scorpion** (MiSTer ScorpionZS256 `d98b9ea`, `ZX-Spectrum.sv:1019-1020, 1197-1199`):
-  - *TR-DOS selected* (`CF_TRDOS` or the armed DOS trigger, `ScorpionTrDosSelected`): the
-    Beta interface decodes only A2-A0 = `111`, like MiSTer's `fdd_sel`. A7 = 1 selects the
-    system register, A7 = 0 the WD1793 register by A6-A5. Every mouse address has A2-A0 =
-    `111`, so the FDC owns all of them. Worked example: `IN #FBDF` returns what `IN #FF`
-    returns (`{INTRQ, DRQ, #3F}`); `IN #0347` returns the sector register, like `#5F`.
-  - *Shadow Monitor latch only* (`#1FFD` bit 1, TR-DOS not selected): `#xxDF` and `#xx9F`
-    stay the mouse. The exact Beta low bytes `#1F`/`#3F`/`#5F`/`#7F`/`#FF` belong to the FDC,
-    which this emulator keeps on the bus under the latch (hardware-reference 12.3). MiSTer
-    masks `kemp_sel` on those bytes (`~(scorp & beta_port & scorp_1ffd[1])`). Worked example:
-    `IN #FB5F` with the latch set reads the sector register, not X.
-  - *Joystick stub `#FF1F`*: idle `#00` with the latch clear (the ProfROM driver plane, page 5,
-    `#1FFD = #10`). With the latch set it yields to the FDC status. MiSTer masks it the same
-    way, because ROM2 polls the WD1793 status through `#xx1F` (`#0234`).
-  - A trace of the ProfROM service-monitor tests showed every joystick read (`PC #0263`) and
-    mouse read (`PC #021F/#022E/#023C/#08FF`) happening with `#1FFD = #10` and TR-DOS off.
-    None of these changes affects the menu or pointer driver.
+> (`platform.h:951-952`).
 
 ## 4. Device object
 
@@ -258,18 +192,12 @@ details on top of that:
 Follows `Keyboard` exactly — the established shared-peripheral pattern:
 
 - Class at `core/src/emulator/io/mouse/mouse.{h,cpp}`, constructed in `Core::Init`
-  (`core.cpp:143-157`) and hung on `EmulatorContext::pMouse`, beside `pKeyboard`
-  (`emulatorcontext.h:85`).
+  (alongside `core.cpp:132`) and hung on `EmulatorContext::pMouse`, beside `pKeyboard`
+  (`emulatorcontext.h:81`).
 - Port decoders cache a `Mouse* _mouse` beside the existing `Keyboard* _keyboard`
-  (`portdecoder.h:136`, assigned `portdecoder.cpp:34`).
+  (`portdecoder.h:134`, assigned `portdecoder.cpp:32`).
 - A shared `PortDecoder::Default_Port_KempstonMouse_In(port, pc)` mirrors
-  `Default_Port_FE_In` (`portdecoder.cpp:505-511`), next to the pure address test
-  `Standard_IsPort_KempstonMouse` (`:476-488`) and the gated test
-  `Default_IsPort_KempstonMouse` (`:494-503`).
-- **As built:** `Core::Reset` only re-applies the mouse config. RESET does not reach the
-  interface: counters, buttons and wheel keep their values, and power-on values are set
-  once, when the device is constructed. This matches MiSTer, where `mouse.v` resets on
-  `cold_reset` only. Unreal Speccy, Xpeccy-plus and ZXMAK2 do not reset it either.
+  `Default_Port_FE_In` (`portdecoder.cpp:451-455`).
 
 Each model decoder adds one arm to its own `DecodePortIn`. There is no common
 `DecodePortIn` to hook — every model implements its own (`spectrum48.cpp:79`,
@@ -293,15 +221,6 @@ bool     _present;
 Register assembly follows the FPGA: `{wheel[3:0], 1'b1, buttons[2:0]}`, so bit 3 is a
 constant 1.
 
-**As built** (`mouse.h:144-149`, `mouse.cpp:72-101`):
-- All fields are `std::atomic`. Input arrives on more than one thread (MessageCenter worker
-  for the desktop, the automation thread, the emulator thread for click release), and
-  `Move`/`SetWheel` are compare-and-swap loops so two simultaneous moves both land.
-- `_present` and a new `_wheelEnabled` are **fitting**, taken from the config, not device
-  state: `Reset()` keeps them and TTD does not save them.
-- The wheel nibble is on the bus only when a wheel is fitted. Without one the register is
-  `0xF8 | buttons`: bits 3–7 read 1, like a classic wheel-less Kempston mouse (§7.2).
-
 **Axis sign convention — state it explicitly or it will be inverted.** Host screen Y grows
 downward while the counter is treated as growing upward, so Y needs a negation somewhere
 and the only question is where:
@@ -321,26 +240,15 @@ in the device, so the device stays a pure counter.
 Reset must use **two different non-zero values** for X and Y — UnrealSpeccyP uses
 `x = 31, y = 85` precisely because software tests for equal axes to infer absence. We
 adopt those values and cite the reason in the code, or a later "tidy-up" will zero them
-and silently break detection. (MiSTer uses X = 128, Y = 0 for the same reason. Only the
-power-on state uses them; a machine RESET keeps the counters, §4.1.)
-
-Counters **wrap** at 8 bits. MiSTer clamps at 0 and 255 instead. We don't copy that: a
-driver computing deltas from a stuck counter stops moving the pointer in that direction.
+and silently break detection.
 
 **Button order — settled.** bootcamp and BC#4 give the bit map directly:
 `MB MR ML` at bits 2/1/0, i.e. **D0 = Left, D1 = Right, D2 = Middle**, active low
 ([hardware-reference §4](hardware-reference.md#4-button-register)).
 
 `mouse.swap_buttons` still exists, but as a user preference rather than a hedge against
-unknown hardware; the dead `CONFIG::input.mouseswap` field (`platform.h:538`) is its
-home. **As built:** `SwapMouse=` is parsed into it (`config.cpp:340`) and the desktop `MouseManager`
-swaps left/right when capture starts.
-
-**As built — sign convention.** `dy` + = up is implemented: the Qt layer negates screen Y
-(`mousemanager.cpp`, `applyHostMotion`), automation passes `dy` through unchanged. Checked
-against one real program: the Scorpion ProfROM service-monitor pointer moves right/down
-for `Move(+6, -4)` and back for `Move(-6, +4)`
-(`scorpion_kempston_mouse_test.cpp`, `ProfRomServiceMonitorPointerFollowsMouse`). Note ZXMAK2 and zxsp's header comment encode the opposite order, so behaviour
+unknown hardware; the dead `CONFIG::input.mouseswap` field (`platform.h:517-520`) is its
+home. Note ZXMAK2 and zxsp's header comment encode the opposite order, so behaviour
 compared against those two emulators will differ — that is them, not us.
 
 ### 4.3 Absence
@@ -348,11 +256,6 @@ compared against those two emulators will differ — that is them, not us.
 With `_present` false all three registers return `0xFF`, matching Xpeccy's
 `mouse->enable` behaviour. Note this makes X and Y equal, which is exactly the "absent"
 signature software looks for — correct by construction.
-
-**As built:** "absent" means the decoders do not claim the mouse addresses at all, so the
-read falls through to whatever else answers or to the floating bus. `Mouse::ReadRegister`
-still returns `0xFF` when absent (`mouse.cpp:74-77`), which is what the automation status
-reports as port values.
 
 ## 5. Host pointer mapping
 
@@ -450,16 +353,6 @@ any new input entry point must be added to the wrapper as well
 (`widgets/devicescreenwrapper.{h,cpp}`) — the ProfROM viewport bug earlier in this
 project came from exactly that wrapper/implementation split.
 
-**As built:** the host side lives in a separate `MouseManager`
-(`unreal-qt/src/emulator/mousemanager.{h,cpp}`), owned by `DeviceScreen`. `DeviceScreen`
-gives it a callback returning `displaySourceRect().size()` — the emulated-pixel size of the
-image actually drawn, crop included — and forwards its Qt mouse, wheel, key and focus
-events. The accumulator itself is Qt-free (`core/src/emulator/io/mouse/mousedeltaaccumulator.h`)
-and unit-tested. Scale is computed per axis in physical pixels:
-`physPerEmuX = width × DPR / source.width`, same for Y. *Not verified here:* no
-`devicescreenwrapper` files exist in `unreal-qt/src/widgets` on this branch, so the wrapper
-concern above does not currently apply.
-
 ### 5.6 Delivery into the core
 
 Keyboard events do not call `Keyboard` directly: they post to MessageCenter tagged with
@@ -480,19 +373,251 @@ event after a warp), rather than by thresholding on delta magnitude — a thresh
 eats legitimate fast movement. SDL avoids this entirely by having a real relative mode
 ([§9.1](#91-the-three-defaults-that-must-be-changed)).
 
-**As built:**
-- Capture starts on a click inside the screen (that click is not sent to the machine).
-  `Esc` releases it and the `Esc` press, its auto-repeats and its release are all swallowed,
-  so they never tap ZX BREAK. Focus loss and switching emulator instance also release it.
-  Buttons held at release time are released inside the machine. `lockmouse` is unused.
-- **macOS:** native relative mode (`unreal-qt/src/platform/macos/mousecapture_macos.{h,mm}`).
-  The cursor is warped once to the widget centre and detached from the mouse
-  (`CGAssociateMouseAndMouseCursorPosition(false)`); travel is read from `NSEvent` deltas,
-  which already include the OS acceleration. Reason: `QCursor::setPos` posts a synthetic
-  HID event that needs Accessibility permission, which an ad-hoc signed build loses on every
-  rebuild — the pointer then silently stopped moving.
-- **Other platforms:** the re-centring approach described above, with the warp-event filter
-  (position equals the warp target, or first event after a warp).
+### 5.6a Cursor grab implementation (Qt)
+
+**Location:** `DeviceScreen` owns mouse input and the rendering surface. A
+`CursorGrabController` helper class encapsulates the grab state machine.
+
+**Required additions to `DeviceScreen`:**
+
+```cpp
+// devicescreen.h additions
+class DeviceScreen : public QWidget {
+    // ...
+protected:
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void focusInEvent(QFocusEvent* event) override;
+    void focusOutEvent(QFocusEvent* event) override;
+
+private:
+    // Cursor grab state
+    bool _mouseInputEnabled = true;      // Master switch (toolbar icon)
+    bool _cursorGrabbed = false;         // Currently grabbed
+    QPoint _warpTarget;                  // Re-centre position (global coords)
+    QPoint _preGrabPos;                  // Cursor position before grab (for restoration)
+    bool _consumeNextClick = false;      // Swallow focus-gaining click
+    
+    // Float accumulator for sub-pixel precision (§5.1)
+    float _mouseAccumX = 0.0f;
+    float _mouseAccumY = 0.0f;
+    
+    void engageCursorGrab();
+    void releaseCursorGrab();
+    QPointF computeUpscaleFactors() const;
+};
+```
+
+**Grab engagement:**
+
+```cpp
+void DeviceScreen::engageCursorGrab()
+{
+    if (_cursorGrabbed || !_mouseInputEnabled)
+        return;
+    
+    // Store pre-grab position for restoration on release
+    _preGrabPos = QCursor::pos();
+    
+    // Hide cursor
+    setCursor(Qt::BlankCursor);
+    
+    // Enable mouse tracking (receive moves even without button pressed)
+    setMouseTracking(true);
+    
+    // Initial warp to centre
+    _warpTarget = mapToGlobal(rect().center());
+    QCursor::setPos(_warpTarget);
+    
+    // NOTE: Do NOT call grabMouse() — it blocks QMenuBar, toolbars, and dock widgets.
+    // Rely on setCursor(Qt::BlankCursor) + event filtering instead.
+    // Menu/dialog focus changes are handled via QApplication::focusChanged.
+    
+    _cursorGrabbed = true;
+    _mouseAccumX = 0.0f;
+    _mouseAccumY = 0.0f;
+}
+```
+
+**Grab release:**
+
+```cpp
+void DeviceScreen::releaseCursorGrab()
+{
+    if (!_cursorGrabbed)
+        return;
+    
+    setCursor(Qt::ArrowCursor);
+    setMouseTracking(false);
+    
+    // Restore cursor to pre-grab position
+    QCursor::setPos(_preGrabPos);
+    
+    _cursorGrabbed = false;
+}
+```
+
+**Mouse move with warp-event discard and accumulator:**
+
+```cpp
+void DeviceScreen::mouseMoveEvent(QMouseEvent* event)
+{
+    // Master switch - toolbar icon disabled
+    if (!_mouseInputEnabled) {
+        event->ignore();
+        return;
+    }
+    
+    if (!_cursorGrabbed) {
+        event->ignore();
+        return;
+    }
+    
+    QPoint globalPos = event->globalPos();
+    
+    // Discard synthetic warp event by POSITION MATCHING, not a flag.
+    // Why: QCursor::setPos() posts an async event to the OS event queue.
+    // If the user moves rapidly, legitimate events may already be queued:
+    //   Event1 arrives → setPos() → flag=true
+    //   Event2 (already queued) arrives → discarded! flag=false
+    //   Synthetic warp arrives → treated as real! Large inverse delta injected.
+    // Position matching avoids this race.
+    // Allow ±1 pixel tolerance for High-DPI scaling round-off.
+    if (std::abs(globalPos.x() - _warpTarget.x()) <= 1 &&
+        std::abs(globalPos.y() - _warpTarget.y()) <= 1) {
+        event->accept();
+        return;  // This is the synthetic warp event
+    }
+    
+    // Compute delta from warp target (not from last event - avoids drift)
+    QPoint delta = globalPos - _warpTarget;
+    
+    // Convert to emulated pixels (§5.1)
+    // delta_phys = delta_logical * devicePixelRatioF()
+    // delta_native = delta_phys / upscale
+    qreal dpr = devicePixelRatioF();
+    QPointF upscale = computeUpscaleFactors();
+    
+    float dx = static_cast<float>(delta.x()) * dpr / upscale.x();
+    float dy = static_cast<float>(delta.y()) * dpr / upscale.y();
+    
+    // Apply scale from CONFIG::mousescale (power-of-two, §7.1)
+    // scale = pow(2, mousescale) where mousescale in [-3, 3]
+    // For now, assume scale = 1.0 until config is wired
+    float scale = 1.0f;
+    
+    // Accumulate with remainder carry (§5.2 trap #3)
+    _mouseAccumX += dx * scale;
+    _mouseAccumY -= dy * scale;  // Y inverted (§4.2)
+    
+    int stepX = static_cast<int>(_mouseAccumX);
+    int stepY = static_cast<int>(_mouseAccumY);
+    _mouseAccumX -= stepX;
+    _mouseAccumY -= stepY;
+    
+    // Post to MessageCenter if any motion
+    if (stepX != 0 || stepY != 0) {
+        MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+        // Tag with emulator UUID for multi-instance routing
+        MouseMoveEvent* moveEvent = nullptr;
+        if (_emulator) {
+            moveEvent = new MouseMoveEvent(stepX, stepY, _emulator->GetUUID());
+        } else {
+            moveEvent = new MouseMoveEvent(stepX, stepY);
+        }
+        mc.Post(NC_MOUSE_MOVE, moveEvent);
+    }
+    
+    // Re-centre cursor
+    _warpTarget = mapToGlobal(rect().center());
+    QCursor::setPos(_warpTarget);
+    
+    event->accept();
+}
+```
+
+**Upscale factor computation:**
+
+```cpp
+QPointF DeviceScreen::computeUpscaleFactors() const
+{
+    // Widget size in logical pixels
+    QSize widgetSize = size();
+    
+    // Framebuffer size (with viewport crop if active)
+    QRectF sourceRect = devicePixelsRect;
+    if (_hasViewport) {
+        sourceRect = QRectF(
+            _displayViewport.cropLeft,
+            _displayViewport.cropTop,
+            devicePixelsRect.width() - _displayViewport.cropLeft - _displayViewport.cropRight,
+            devicePixelsRect.height() - _displayViewport.cropTop - _displayViewport.cropBottom
+        );
+    }
+    
+    // Upscale = widget / framebuffer (independent X/Y - §5.5)
+    qreal upscaleX = static_cast<qreal>(widgetSize.width()) / sourceRect.width();
+    qreal upscaleY = static_cast<qreal>(widgetSize.height()) / sourceRect.height();
+    
+    return QPointF(upscaleX, upscaleY);
+}
+```
+
+**Focus handling:**
+
+```cpp
+void DeviceScreen::focusOutEvent(QFocusEvent* event)
+{
+    releaseCursorGrab();
+    QWidget::focusOutEvent(event);
+}
+
+void DeviceScreen::focusInEvent(QFocusEvent* event)
+{
+    // Grab engagement is handled by polling detection (§polling-detection)
+    // Do not engage here - wait for first poll or manual user action
+    QWidget::focusInEvent(event);
+}
+```
+
+**Button handling:**
+
+```cpp
+void DeviceScreen::mousePressEvent(QMouseEvent* event)
+{
+    if (!_mouseInputEnabled) {
+        event->ignore();
+        return;
+    }
+    
+    uint8_t buttonMask = 0;
+    if (event->buttons() & Qt::LeftButton)   buttonMask |= 0x01;  // D0
+    if (event->buttons() & Qt::RightButton)  buttonMask |= 0x02;  // D1
+    if (event->buttons() & Qt::MiddleButton) buttonMask |= 0x04;  // D2
+    
+    MouseButtonEvent* btnEvent = nullptr;
+    if (_emulator) {
+        btnEvent = new MouseButtonEvent(buttonMask, _emulator->GetUUID());
+    } else {
+        btnEvent = new MouseButtonEvent(buttonMask);
+    }
+    
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    mc.Post(NC_MOUSE_BUTTON, btnEvent);
+    
+    event->accept();
+}
+
+void DeviceScreen::mouseReleaseEvent(QMouseEvent* event)
+{
+    // Same as press - send current button state
+    mousePressEvent(event);
+}
+```
+
+**DeviceScreenWrapper forwarding:** Add the same event handlers to
+`DeviceScreenWrapper` (`widgets/devicescreenwrapper.{h,cpp}`) forwarding to the
+active screen implementation, as is done for other input events.
 
 ### 5.7 Headless injection
 
@@ -517,18 +642,6 @@ are front-end concerns (§5.1), and a headless caller has no window to derive th
 This also makes automated tests deterministic — "move 10 px right" means exactly ten
 counter increments regardless of any display state.
 
-**As built:**
-- The desktop posts `MC_MOUSE_MOVE` / `MC_MOUSE_BUTTON` / `MC_MOUSE_WHEEL` (the `MC_*`
-  MessageCenter topics, not `NC_*`), each carrying a `MouseEvent` tagged with the emulator
-  id (`mouse.h:13-68`). `Mouse::OnMouse*` accepts only its own id (an empty id is a
-  broadcast) and hands the event to `DebugMouseManager::ApplyHost*` (`mouse.cpp:162-196`).
-- `DebugMouseManager` (`core/src/debugger/mouse/debugmousemanager.{h,cpp}`) is the single
-  funnel. Automation calls are validated (±127 move, ±7 wheel, click frames 1…65535,
-  counters 0…255) and return a status with a message; host calls skip the range limits (a
-  fast flick can exceed 127 in one event) but keep the replay guard and the journal.
-- Delivery is a direct call on the caller's thread, so a change is visible before the call
-  returns. Details and the alternatives rejected: [automation-interfaces §4.1.3](automation-interfaces.md#413-how-it-reaches-the-device-direct-call-not-messagecenter).
-
 ## 6. TTD integration
 
 ### 6.1 Device state
@@ -547,7 +660,7 @@ Straightforward, following `ttdscorpionprofrom.{h,cpp}`:
 **Registration: core device, not model-specific.** `TimeTravelManager` has two
 registration paths, and the mouse must use the first:
 
-1. **Core devices, model-independent** (as built: `timetravelmanager.cpp:1052`) — registered
+1. **Core devices, model-independent** (`timetravelmanager.cpp:1040-1046`) — registered
    straight off `EmulatorContext`, exactly as `pTape` and `pBetaDisk` are:
    ```cpp
    _peripherals.Register(PeripheralId::KempstonMouse, _context->pMouse);
@@ -574,13 +687,6 @@ decoder's own serializers, and a declared id with no matching serializer makes
 
 State to serialise: `_x`, `_y`, `_buttons`, `_wheel`, `_present`. The float accumulator
 is **host-side** and must not be serialised — it is not emulated state.
-
-**As built** (`mouse.cpp:198-256`): `PeripheralId::KempstonMouse = 7`
-(`ttdserializable.h:51`). The blob is 8 bytes: `version, x, y, buttons, wheel, reserved[3]`,
-with `static_assert`s on size and trivial copyability. `_present` is **not** saved: fitting
-comes from the config and is re-applied on reset, so a session never carries it. The
-`Mouse` object exists on every model (absence is a flag, not a null pointer), so the blob is
-always registered. `TTDHashState` is FNV-1a over X, Y, buttons and wheel.
 
 ### 6.2 Input journal: the real work
 
@@ -619,55 +725,24 @@ are rare and are journalled individually, as keys are.
 > mouse, and it would simultaneously unblock joystick journalling, which is missing for
 > the same reason.
 
-**As built — option (a), inside this work.**
-- `TTDInputKind` = `Key`, `MouseMove`, `MouseButtons`, `MouseWheel`, `MouseCounters`,
-  `KeyboardReset` (`ttdinputjournal.h:64-72`). `TTDInputEvent` gained `kind`, `dx`, `dy`,
-  `buttonMask`, `wheelSteps` (`:74-84`). `MouseCounters` reuses `dx`/`dy` as absolute X/Y.
-- `TimeTravelManager::RecordMouseMove / RecordMouseButtons / RecordMouseWheel /
-  RecordMouseCounters / RecordKeyboardReset` stamp the event with the current frame and
-  t-state. `DebugMouseManager` calls them **before** changing the device, only while
-  recording.
-- Replay: `InjectDueEvents(keyboard, mouse, now)` applies each event at its exact time point
-  (`ttdinputjournal.cpp:47-105`). While `ttdReplayActive` is set, every live source (desktop,
-  automation, the timed click release) is refused.
-- **No file format changed.** The input journal is in memory only; the `.ttd` dump has no
-  input section (for keyboard or mouse). The checkpoints do carry the mouse blob (§6.1).
-- **Frame batching was not done.** Each host event that produces at least one whole pixel is
-  journalled separately. Deterministic, but a fast mouse during a long recording grows the
-  journal. Open item.
-- **Keyboard fixed on the way.** `DebugKeyboardManager::ApplyKey` is now the one journalled,
-  replay-guarded path for tap/combo/type/sequence operations too (they used to bypass both),
-  the sequence state is guarded by a recursive mutex, and `ReleaseAllKeys` journals one
-  `KeyboardReset`. Desktop keystrokes (`Keyboard::OnKeyPressed/OnKeyReleased`) are journalled
-  and replay-guarded as well.
-
 ## 7. Config and feature gating
 
 `CONFIG` already carries `input.mouse`, `mouseswap`, `kjoy`, `joymouse`, `mousescale`,
-`mousewheel` (`platform.h:538-541`), `enum MOUSE_WHEEL_MODE {NONE, KEYBOARD, KEMPSTON}`
-(`platform.h:291`) and `lockmouse` (`platform.h:424`) — all inherited Unreal Speccy
-members that **`config.cpp` parsed nowhere** before this work.
-
-**As built:** `config.cpp:312-349` parses `[INPUT] Mouse=`, `Wheel=`, `SwapMouse=` and
-`MouseScale=` (range-checked to −3…3, otherwise 0 with a warning). A new
-`bool mouseConfigured` (`platform.h:542`) records whether `Mouse=` was present at all: a
-context with no ini (unit tests) keeps the mouse fitted. `enum MOUSE_TYPE` was added at
-`platform.h:294`. Consumers today: `Mouse::ApplyConfiguration` reads `mouse` and
-`mousewheel`; the desktop `MouseManager` reads `mouseswap` and `mousescale` (cast to `signed char`)
-through its host-settings provider when capture starts, and only captures when the mouse is fitted. A shipped ini even documents the original
+`mousewheel` (`platform.h:517-520`), `enum MOUSE_WHEEL_MODE {NONE, KEYBOARD, KEMPSTON}`
+(`platform.h:291`) and `lockmouse` (`platform.h:411`) — all inherited Unreal Speccy
+members that **`config.cpp` parses nowhere**. A shipped ini even documents the original
 keys (`Mouse=KEMPSTON`, `MouseScale`, `SwapMouse`). The fields are reused and given
 parsers.
 
 `SUBMODULE_IO_KEMPSTON_MOUSE = 0x0040` is already reserved (`platform.h:137`) with its
 logger name (`modulelogger.h:217-218`).
 
-Verified declarations (`platform.h:538-542`, `:424`, re-checked 2026-09-12):
+Verified declarations (`platform.h:517-520`, `:411`):
 
 ```cpp
 uint8_t mouse, mouseswap, kjoy, keymatrix, joymouse;
 char    mousescale;          // NOTE: plain char — see signedness hazard below
 uint8_t mousewheel;          // enum MOUSE_WHEEL_MODE
-bool    mouseConfigured;     // added: [INPUT] Mouse= was parsed
 uint8_t lockmouse;
 ```
 
@@ -697,11 +772,6 @@ primary development platform. **Fix at parse time:** read the ini value into an 
 clamp to `[-3; 3]`, store as `int8_t` (not `char`). The field type in `CONFIG` should be
 changed to `int8_t mousescale;`.
 
-**As built:** the parse reads a `long` and range-checks it, but still stores
-`static_cast<char>(scale)` into the `char` field. The hazard is therefore still open for the
-first consumer: read it back as `static_cast<int8_t>(config.input.mousescale)`, or change the
-field type.
-
 ### 7.2 `mousewheel` — three modes, not a boolean
 
 The enum `MOUSE_WHEEL_MODE` (`platform.h:291`) has three values:
@@ -717,27 +787,6 @@ original implementation maps wheel-up to `VK_MWU` and wheel-down to `VK_MWD`, wh
 then bound to ZX keys via the keybinding system. We replicate this: wheel events in
 `KEYBOARD` mode post key-press/release pairs through `DebugKeyboardManager`, using
 configurable ZX key targets (defaulting to cursor up/down).
-
-**As built:**
-- `Wheel=KEMPSTON` puts the wheel counter on the bus; `Wheel=NONE` does not (bits 4–7
-  read 1). `Wheel=KEYBOARD` is **not implemented**: it logs a warning and behaves as `NONE`.
-  The wheel counter itself still counts in every mode; only its visibility changes.
-- **Default decision: `NONE`, not `KEMPSTON`** (reversing §2). Every shipped
-  `data/configs/*/unreal.ini` says `Wheel=NONE`, and a config without the key also gets `NONE`.
-  Why: software written for the classic, wheel-less Kempston mouse checks the unused bits.
-  The Scorpion ProfROM does this at page 5 `#08FB`:
-  ```
-  PUSH BC : LD BC,#FADF : IN A,(C) : POP BC
-  AND #38 : CP #38 : RET NC          ; all three bits set -> keep the mouse
-  RES 5,(IY+#27) : RET               ; otherwise switch the mouse off
-  ```
-  Bits 3–5 must all be 1. Worked example with the mouse idle:
-  - `Wheel=NONE`: `#FADF` = `0xFF`; `0xFF AND #38` = `#38` → mouse kept.
-  - `Wheel=KEMPSTON`, wheel counter 0: `#FADF` = `0x0F`; `0x0F AND #38` = `#08` → the ROM
-    turns the mouse off.
-  Pinned by `ScorpionKempstonMouse_Test.ButtonRegisterPassesProfRomDetectionMask` and
-  `ProfRomColdBootKeepsMouseEnabled`. `Wheel=KEMPSTON` remains available for ZX Evo-style
-  software that expects the wheel nibble.
 
 ### 7.3 `joymouse` — deferred
 
@@ -759,23 +808,11 @@ to define:
 | 1 | `Mouse=KEMPSTON` | Kempston Mouse (this feature) |
 | 2 | `Mouse=AY` | AY-Mouse / Korvet mouse (out of scope) |
 
-**As built:** `enum MOUSE_TYPE { MOUSE_TYPE_NONE = 0, MOUSE_TYPE_KEMPSTON = 1, MOUSE_TYPE_AY = 2 }`
-(`platform.h:294`). `Mouse=AY` logs "not emulated" and fits no mouse; an unknown value logs
-a warning and fits a Kempston mouse; a missing key fits a Kempston mouse.
-
 ### 7.5 Feature flag
 
 Feature flag `Features::kKempstonMouse` alongside the existing constants
 (`base/featuremanager.h:22-36`), cached on the decoder and refreshed through an
 `UpdateFeatureCache()`.
-
-**As built:** feature id `kempstonmouse`, alias `kmouse`, **on** by default
-(`featuremanager.h:37, 55, 84-85`; registered `featuremanager.cpp:312-318`). It is not
-cached on the decoder. Instead `Mouse::ApplyConfiguration` (`mouse.cpp:54-70`) computes
-`present = (Mouse= is KEMPSTON or absent) AND feature on` and stores it in an atomic; the
-feature manager calls it whenever features change (`featuremanager.cpp:435-439`), and
-`Core::Reset` calls it after a reset. Each `IN` checks the atomic flag. Worked example:
-`feature kempstonmouse off` → the next `IN #FBDF` is no longer claimed by the mouse.
 
 ## 8. Test architecture
 
@@ -904,14 +941,3 @@ contact with four window modes and four operating systems.
 | Joystick narrowing (§3.3) regresses existing software | Regression test on joystick ports |
 | Per-model masks unverified for 128/+3 (D-3) | Full decode cannot false-positive |
 | Wrapper/implementation split missed (§5.5) | Explicit wrapper test, as with the viewport bug |
-
-**As built — how the risks played out:**
-- D-1: resolved from the sources; the ProfROM pointer test also matches.
-- D-2: no file format changed (journal is in memory only); landed with the mouse.
-- Joystick: not narrowed; exact `#FF1F` kept and ordered before the mouse (§3.3).
-- A risk that was not listed bit hardest: **splicing a new decode arm into an existing
-  if/else-if chain.** The first Scorpion change added the mouse arm as a fresh `if`, so the
-  trailing fallback overwrote every earlier arm's result and the Scorpion read a dead keyboard
-  (and lost AY readback, `#1FFD`, SMUC and `#7EFD`). Fixed, and pinned by
-  `ScorpionPorts_Test.KeyboardRowReadSurvivesLaterDecodeArms`. See [walkthrough.md](walkthrough.md).
-- A second unlisted one: **the wheel nibble breaking detection** (§7.2).
