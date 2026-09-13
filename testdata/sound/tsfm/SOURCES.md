@@ -16,6 +16,7 @@ Retrieved 2026-09-12; the zxart archives were downloaded a second time the same 
 | `hny.SCL` | [hny.zip](https://zxart.ee/releasefile/id:304205/hny.zip) (unpacked) | [ZX-Art — Happy New Year ZX.PK.RU](https://zxart.ee/prod/304204) | `0d2492fb43c09abc73081f30f67c0c4714a5b55a8d2eb533051295fbb59f1d43` |
 | `BW Demo.trd` | [bwdemofm.zip](https://zxart.ee/releasefile/id:279934/bwdemofm.zip) (unpacked) | [ZX-Art — Black-White Demo](https://zxart.ee/prod/279933) | `1637966adb9f314f1e00362c18bae4006dc2b1c03e1711cd739a504ae70c58fe` |
 | `BW Demo_VNN.txt` | [bwdemofm.zip](https://zxart.ee/releasefile/id:279934/bwdemofm.zip) (unpacked) | [ZX-Art — Black-White Demo](https://zxart.ee/prod/279933) | `ac2fb9dc2471141cceb98c6e7e0a206c193ca460e3df6197b9e7d753da883ee4` |
+| `tech_support_from_moe-bius_partyfinal.tap` | [chipmsx_-_otomatalabs_-_tech-support-from-moe--bius.zip](https://files.scene.org/get/parties/2025/xenium25/msx_chip/chipmsx_-_otomatalabs_-_tech-support-from-moe--bius.zip) (unpacked; retrieved 2026-09-13, archive SHA-256 `e171e099242f4f15afde4b107089ac6dc8c2383e8c515c3b490691cccf581c10`) | [Demozoo — Tech Support from Moe-bius](https://demozoo.org/music/376921/) | `2e6be64d3294991bf0555bc1aebba2b8217f4a41cb7b4a7cc4e381bdcc2eab86` |
 
 ## Contents
 
@@ -45,6 +46,10 @@ Retrieved 2026-09-12; the zxart archives were downloaded a second time the same 
   - Music: Part 1 is FM music by Husmann; Part 2 is *Live & Die* by Visual; Part 3 is *Zima* by NVitia.
   - The author's text (Russian, cp1251) says: "Works only on a computer with a TSFM card installed."
   - Use: a demo, not a music pack. It mixes AY and FM music across its parts.
+- **`tech_support_from_moe-bius_partyfinal.tap`** — *Tech Support from Moe-bius* (Otomata Labs, 2025): the Xenium 2025 "Chip MSX" compo entry, which is in fact a ZX Spectrum 128 + TurboSound FM tune.
+  - The archive's `readme.txt` says: "2x AY-3 + 2x FM (basically 2x YM2203) soundchip expansion (TurboSound FM) on ZX Spectrum. ABC stereo mixing." The in-program text credits CHRV's TSFMPro board. The archive also carries a 78 MB capture video, which is not included here.
+  - Blocks: BASIC loader `moebius` (autostart line 10), code `moebius` (11 024 bytes at 32896), six paged song-data blocks `page0`, `page1`, `page3`, `page4`, `page6`, `page7` (each loaded at 49152, so the loader pages 128K RAM in), and a `splash` screen. The player is not TFM Compiler: no `TFMcom` header.
+  - Use: a 2025 tune with its own player, not the TFM Compiler 1.12 one every other pack here uses, and one that uses both AY halves and both FM halves at once. The only 128K-paging case in this set.
 
 ## How TSFM use was verified (2026-09-12)
 
@@ -59,6 +64,7 @@ Two checks were used.
 | Husmann 2010 | Each tune embeds the TFM Compiler player (`TFMcom1.`, `#F8` / `#F9`, `#2F`) | `minimod1`: TFM player screen, `OUT #FFFD,#F8`, stuck in busy wait at `#62BF` |
 | Happy New Year | TFM Compiler player (`TFMcom`, `#F8` / `#F9`, `#2F`) | TFM player screen ("Hapy New YEAR / Renegade"), `OUT #FFFD,#F8`, stuck in busy wait at `#62EF` |
 | Black-White Demo | `B-W demo` and `VNN 2010` blocks contain the TFM Compiler player (`TFMcom1.`, `#F8`–`#FB`, `#2F` / `#2D`, `IN A,(C)`) and TFD data | ~60 s from `boot`: AY music only (one writer at `#C170`, registers `#00`–`#0D`, chip 0); no control word or FM write seen in that time. FM use is supported by the author's text and the embedded player, **not** by the live run. |
+| Tech Support from Moe-bius (added 2026-09-13) | Byte scan of the TAP: one `LD A,#F8` and one `LD A,#F9` (status-mode chip selects), one `LD BC,#FFFD`; no `#2F` / `#2D` prescaler loads and no `TFMcom` header. In-program text: "ZX Spectrum 128 + TurboSound FM! (2 x YM2203)". | Not run yet. |
 
 **What the stalls mean.** Every TFM player that reached playback selected status mode (`#F8`) and then waited for the YM2203 busy bit to clear. The legacy device answers `IN #FFFD` with a register value, so bit 7 stays set and the player never gets past its first busy check. This reproduces design finding A8 / §4.1 of the TSFM design: the busy flag must really clear. These releases double as regression tests for it: on TSFM they must play; on legacy TurboSound they hang.
 
