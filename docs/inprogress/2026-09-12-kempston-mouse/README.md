@@ -14,6 +14,8 @@ the button order and establish that **decoding is per-model**.
   to a primary source, disagreements recorded rather than resolved silently.
 - [design.md](design.md) — the TDD: decoding, device object, host pointer mapping, TTD
   integration, test architecture.
+- [polling-detection-and-grab-control.md](polling-detection-and-grab-control.md) —
+  enhancement: automatic grab based on polling detection + manual toolbar override.
 
 ## Goal
 
@@ -72,6 +74,20 @@ constant 1. No "Kempston mouse turbo" exists in any source.
 | 5a | Buttons: D0 = Left, D1 = Right, D2 = Middle, active low | bootcamp and BC#4 state the bit map directly; ZXMAK2 and zxsp's header disagree and are wrong — [hardware-reference §4](hardware-reference.md#4-button-register) |
 | 5 | Reset X/Y to 31/85, not 0/0 | Software infers absence from equal axes — [hardware-reference §7](hardware-reference.md#7-presence-detection) |
 | 6 | Reuse the dead `CONFIG` fields rather than adding new ones | They already carry the right names and a shipped ini documents them; `mousescale` is a power-of-two integer `[-3;3]`, not a float — [design §7](design.md#7-config-and-feature-gating) |
+| 7 | Track polling via T-state timestamp, not a boolean | Allows window-based detection ("polled within last N T-states") and survives focus loss — [polling §3.1](polling-detection-and-grab-control.md#31-the-metric-port-read-timestamp) |
+| 8 | Deferred grab: arm on focus, engage on first poll | Avoids grabbing cursor for software that does not use the mouse — [polling §3.6](polling-detection-and-grab-control.md#36-deferred-grab--wait-for-first-poll) |
+| 9 | Manual disable via always-visible toolbar icon suppresses ALL mouse input | Discoverable; allows pre-emptive disable; crossed icon = no grab AND no events to emulator — [polling §4.6](polling-detection-and-grab-control.md#46-input-suppression-when-disabled) |
+| 10 | Escape key releases grab before reaching emulator | User intent to escape grab takes priority; matches original Unreal behaviour — [polling §5.3](polling-detection-and-grab-control.md#53-escape-key-handling) |
+| 11 | Grab logic lives inline in DeviceScreen (no separate controller) | DeviceScreen already owns mouse events; state is simple enough for inline fields — [design §5.6a](design.md#56a-cursor-grab-implementation-qt) |
+| 12 | Warp-event discard via position matching (±1px), not flag | Flag races with queued events; position matching is deterministic — [design §5.6a](design.md#56a-cursor-grab-implementation-qt) |
+| 13 | Delta computed from warp target, not from previous event position | Avoids accumulated drift from timing jitter — [design §5.6a](design.md#56a-cursor-grab-implementation-qt) |
+| 14 | Polling telemetry in core, grab state machine in UI | Layer separation: core has no concept of cursor grab — [polling §3.0](polling-detection-and-grab-control.md#30-layer-separation-important) |
+| 15 | `_lastPollTState` is `std::atomic<uint64_t>` | Cross-thread safety: emulation thread writes, UI thread reads — [polling §3.1](polling-detection-and-grab-control.md#31-the-metric-port-read-timestamp) |
+| 16 | Escape releases grab; requires click to re-engage | Prevents infinite re-grab loop when software is actively polling — [polling §5.3](polling-detection-and-grab-control.md#53-escape-key-handling) |
+| 17 | Sustained polling (2 frames in 100ms) required to engage grab | Filters out transient presence probes at boot — [polling §3.6](polling-detection-and-grab-control.md#36-deferred-grab--wait-for-sustained-polling) |
+| 18 | No `grabMouse()` — rely on `BlankCursor` + event filtering | `grabMouse()` blocks menu/toolbar clicks — [polling §6.3b](polling-detection-and-grab-control.md#63b-no-grabmouse--menu-accessibility) |
+| 19 | Focus-gaining click consumed, not injected | Prevents accidental in-game actions — [polling §5.4](polling-detection-and-grab-control.md#54-click-to-focus-handling) |
+| 20 | Menu item + shortcut (Ctrl+G), not toolbar only | Toolbar can be hidden; menu ensures accessibility — [polling §4.2](polling-detection-and-grab-control.md#42-placement) |
 
 ## Open questions
 
@@ -104,6 +120,13 @@ design at the point they bite.
   A7:A5 = `110`, not a defined register, so there is no collision at all — and our own
   `IsBeta128Port` matches the five ports exactly, so nothing collides here today.
   [design §3.5](design.md#35-tr-dos-gating)
+- **D-5 — Polling timeout configurability.** 1 second works for typical presence-detection
+  loops, but some software may poll less frequently. Proposed: fixed at 1s initially,
+  configurable via `Mouse=KEMPSTON:timeout=2` syntax if user feedback demands it.
+  [polling §9](polling-detection-and-grab-control.md#9-open-questions)
+- **D-6 — RESOLVED: No.** If mouse emulation is disabled or the mouse reports absent,
+  grab must never engage. Grabbing the cursor for a non-existent device is pointless.
+  [polling §9](polling-detection-and-grab-control.md#9-open-questions)
 
 ## Notes
 
