@@ -16,6 +16,7 @@ Retrieved 2026-09-12; the zxart archives were downloaded a second time the same 
 | `hny.SCL` | [hny.zip](https://zxart.ee/releasefile/id:304205/hny.zip) (unpacked) | [ZX-Art — Happy New Year ZX.PK.RU](https://zxart.ee/prod/304204) | `0d2492fb43c09abc73081f30f67c0c4714a5b55a8d2eb533051295fbb59f1d43` |
 | `BW Demo.trd` | [bwdemofm.zip](https://zxart.ee/releasefile/id:279934/bwdemofm.zip) (unpacked) | [ZX-Art — Black-White Demo](https://zxart.ee/prod/279933) | `1637966adb9f314f1e00362c18bae4006dc2b1c03e1711cd739a504ae70c58fe` |
 | `BW Demo_VNN.txt` | [bwdemofm.zip](https://zxart.ee/releasefile/id:279934/bwdemofm.zip) (unpacked) | [ZX-Art — Black-White Demo](https://zxart.ee/prod/279933) | `ac2fb9dc2471141cceb98c6e7e0a206c193ca460e3df6197b9e7d753da883ee4` |
+| `tech_support.sna` | 128K snapshot (131 103 bytes) taken in unreal-ng from the TAP below, after loading, so the tune starts without tape loading (Pentagon 128, `TurboSound=FM`); added 2026-09-13 | same as the TAP | `e53ebf486f0518b0cdf1d1dcfa45ba78464393f42b50a361e0586a8cf82ed467` |
 | `tech_support_from_moe-bius_partyfinal.tap` | [chipmsx_-_otomatalabs_-_tech-support-from-moe--bius.zip](https://files.scene.org/get/parties/2025/xenium25/msx_chip/chipmsx_-_otomatalabs_-_tech-support-from-moe--bius.zip) (unpacked; retrieved 2026-09-13, archive SHA-256 `e171e099242f4f15afde4b107089ac6dc8c2383e8c515c3b490691cccf581c10`) | [Demozoo — Tech Support from Moe-bius](https://demozoo.org/music/376921/) | `2e6be64d3294991bf0555bc1aebba2b8217f4a41cb7b4a7cc4e381bdcc2eab86` |
 
 ## Contents
