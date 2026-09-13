@@ -202,6 +202,9 @@ find_package(Qt6 COMPONENTS Widgets REQUIRED)
 find_package(Qt6 COMPONENTS Svg REQUIRED)  # Toolbar icons (SVG icon engine must be deployed)
 find_package(Qt6 COMPONENTS OpenGL REQUIRED)
 find_package(Qt6 COMPONENTS OpenGLWidgets REQUIRED)
+if (WIN32)
+    find_package(OpenGL REQUIRED)
+endif()
 
 # Enable CTest for test discovery (inherited from core/tests)
 enable_testing()
@@ -383,6 +386,7 @@ if (INCLUDE_AUTOMATION)
         Qt6::Svg
         Qt6::OpenGL
         Qt6::OpenGLWidgets
+        $<$<PLATFORM_ID:Windows>:OpenGL::GL>
         QHexView
 
         unrealng::automation # This brings in core (and recording) as PUBLIC dependency
@@ -403,6 +407,7 @@ else ()
         Qt6::Svg
         Qt6::OpenGL
         Qt6::OpenGLWidgets
+        $<$<PLATFORM_ID:Windows>:OpenGL::GL>
         QHexView
 
         unrealng::core  # Keep this when automation is disabled (brings recording as PUBLIC dep)
