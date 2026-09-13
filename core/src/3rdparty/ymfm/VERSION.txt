@@ -1,0 +1,11 @@
+Upstream:  https://github.com/aaronsgiles/ymfm
+Commit:    81aec25ccbb98f4873a255f7551ac4dadac59b4a (2026-07-27)
+Vendored:  2026-09-12 (TSFM implementation plan P1,
+           docs/inprogress/2026-09-10-turbosound-fm/implementation-plan.md)
+
+Copied from upstream src/: ymfm.h, ymfm_fm.h, ymfm_fm.ipp, ymfm_opn.h,
+ymfm_opn.cpp, ymfm_ssg.h, ymfm_ssg.cpp, ymfm_adpcm.h, ymfm_adpcm.cpp,
+plus LICENSE.
+
+All files are byte-identical to the pinned commit EXCEPT ymfm_fm.ipp and
+ymfm_opn.cpp, which carry the local TTD patch — see PATCHES.md.

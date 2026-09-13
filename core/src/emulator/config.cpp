@@ -236,24 +236,20 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 
 	// MISC::TSConf sub-section
 
-    // ROM set
-    // Note: SimpleINI GetValue() returns nullptr when the key is absent - assigning
-    // a nullptr to std::string is UB (crash). Guard every ROMSET-related lookup.
-    const char* romsetName = inimanager.GetValue(rom, "ROMSET");
-    config.romSetName = romsetName ? romsetName : "";
+    // ROM set. GetValue returns NULL when the [ROM] section or the key is
+    // absent (a valid minimal config may carry neither) - a NULL const char*
+    // assigned to std::string is UB, so map it to the empty name explicitly.
+    const char* romSetName = inimanager.GetValue(rom, "ROMSET");
+    config.romSetName = romSetName != nullptr ? romSetName : "";
 
     if (!config.romSetName.empty())
     {
         config.use_romset = true;
 
-        const char* romSet128 = inimanager.GetValue(config.romSetName.c_str(), romset_128);
-        const char* romSetSOS = inimanager.GetValue(config.romSetName.c_str(), romset_sos);
-        const char* romSetDOS = inimanager.GetValue(config.romSetName.c_str(), romset_dos);
-        const char* romSetSYS = inimanager.GetValue(config.romSetName.c_str(), romset_sys);
-        config.romSet128Path = romSet128 ? romSet128 : "";
-        config.romSetSOSPath = romSetSOS ? romSetSOS : "";
-        config.romSetDOSPath = romSetDOS ? romSetDOS : "";
-        config.romSetSYSPath = romSetSYS ? romSetSYS : "";
+        config.romSet128Path = inimanager.GetValue(config.romSetName.c_str(), romset_128);
+        config.romSetSOSPath = inimanager.GetValue(config.romSetName.c_str(), romset_sos);
+        config.romSetDOSPath = inimanager.GetValue(config.romSetName.c_str(), romset_dos);
+        config.romSetSYSPath = inimanager.GetValue(config.romSetName.c_str(), romset_sys);
     }
 
     // Populate rom files for each platform
@@ -313,7 +309,44 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	config.fdd_noise = inimanager.GetLongValue(beta128, "Noise", 0) ? true : false;
 	CopyStringValue(inimanager.GetValue(beta128, "BOOT", nullptr, nullptr), config.appendboot, sizeof config.appendboot);
 
-	// INPUT section
+	// INPUT section - Kempston Mouse (design §7). Legacy Unreal Speccy keys:
+	//   Mouse=NONE|KEMPSTON|AY   Wheel=NONE|KEMPSTON|KEYBOARD   SwapMouse=0|1   MouseScale=-3..3
+	{
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(input, "Mouse", nullptr, nullptr), line, sizeof line);
+		config.input.mouseConfigured = line[0] != '\0';
+		config.input.mouse = MOUSE_TYPE_KEMPSTON;
+		if (StringHelper::CompareCaseInsensitive(line, "NONE", strlen("NONE")) == 0)
+			config.input.mouse = MOUSE_TYPE_NONE;
+		else if (StringHelper::CompareCaseInsensitive(line, "AY", strlen("AY")) == 0)
+		{
+			MLOGWARNING("Config: [INPUT] Mouse=AY is not emulated, no mouse fitted");
+			config.input.mouse = MOUSE_TYPE_NONE;
+		}
+		else if (line[0] != '\0' && StringHelper::CompareCaseInsensitive(line, "KEMPSTON", strlen("KEMPSTON")) != 0)
+			MLOGWARNING("Config: unsupported [INPUT] Mouse='%s', using KEMPSTON", line);
+
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(input, "Wheel", nullptr, nullptr), line, sizeof line);
+		config.input.mousewheel = MOUSE_WHEEL_NONE;
+		if (StringHelper::CompareCaseInsensitive(line, "KEMPSTON", strlen("KEMPSTON")) == 0)
+			config.input.mousewheel = MOUSE_WHEEL_KEMPSTON;
+		else if (StringHelper::CompareCaseInsensitive(line, "KEYBOARD", strlen("KEYBOARD")) == 0)
+		{
+			MLOGWARNING("Config: [INPUT] Wheel=KEYBOARD is not implemented, wheel disabled");
+			config.input.mousewheel = MOUSE_WHEEL_NONE;
+		}
+
+		config.input.mouseswap = inimanager.GetLongValue(input, "SwapMouse", 0) ? 1 : 0;
+
+		long scale = inimanager.GetLongValue(input, "MouseScale", 0);
+		if (scale < -3 || scale > 3)
+		{
+			MLOGWARNING("Config: [INPUT] MouseScale=%ld out of range -3..3, using 0", scale);
+			scale = 0;
+		}
+		config.input.mousescale = static_cast<char>(scale);
+	}
 
 	// HDD section
 
@@ -342,6 +375,35 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 				break;
 		}
 	}
+
+	// TurboSound slot device kind (TSFM design §3.1): AY (legacy two-AY pair,
+	// default) or FM (TSFM). Unknown values warn and fall back to AY; a missing
+	// key keeps the default. The legacy [AY] Chip/Scheme keys are NOT honoured:
+	// every shipped ini carries Chip=YM2203 and nothing ever parsed them, so
+	// honouring them now would silently switch every machine to TSFM.
+	{
+		// Explicit default first: a missing key must reset to AY even when the
+		// struct holds FM from a previous parse of another file.
+		config.sound.turboSoundKind = TurboSoundKind::AY;
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(sound, "TurboSound", nullptr, nullptr), line, sizeof line);
+		if (StringHelper::CompareCaseInsensitive(line, "AY", strlen("AY")) == 0)
+		{
+			config.sound.turboSoundKind = TurboSoundKind::AY;
+		}
+		else if (StringHelper::CompareCaseInsensitive(line, "FM", strlen("FM")) == 0)
+		{
+			config.sound.turboSoundKind = TurboSoundKind::FM;
+		}
+		else if (line[0] != '\0')
+		{
+			MLOGWARNING("Config: unsupported [SOUND] TurboSound='%s', using AY", line);
+			config.sound.turboSoundKind = TurboSoundKind::AY;
+		}
+	}
+
+	// FM loudness trim in dB relative to the hardware-derived default (0 = default)
+	config.sound.tsfmFmTrimDb = inimanager.GetDoubleValue(sound, "TSFM_FmTrimDb", 0.0);
 
 	// VIDEO section
 	// A/V sync video delay: auto (-1) = match the audio path latency
@@ -694,26 +756,8 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             default:
                 break;
         }
-    }
 
-    // ATM timing is ALWAYS applied (not conditional on canonicalGeometry) because
-    // the ini file's Frame=99880 is a 7MHz preset label, not base-clock timing.
-    // ATM uses ZX-compatible 312-line PAL at base clock; turbo is runtime state.
-    if (config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3)
-    {
-        config.frame = 69888;   // 312 lines * 224 T/line (ZX-compatible PAL)
-        config.t_line = 224;
-        config.intstart = 2056; // ZX128-compatible INT timing
-        config.intlen = 32;
-    }
-
-    // Invariant: frame_duration_us must be recomputed with config.frame
-    // All models use the standard formula now (ATM uses ZX-compatible timing)
-    if (config.frame_duration_us == 0 || config.mem_model == MM_SPECTRUM48 ||
-        config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PLUS3 ||
-        config.mem_model == MM_PENTAGON || config.mem_model == MM_ATM710 ||
-        config.mem_model == MM_ATM3)
-    {
+        // Invariant: frame_duration_us must be recomputed with config.frame
         config.frame_duration_us = CalculateFrameDurationUs(config.frame);
     }
 

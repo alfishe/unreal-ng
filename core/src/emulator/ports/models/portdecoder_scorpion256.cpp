@@ -20,11 +20,28 @@
 /// dispatch through the canonical #001F/#003F/#005F/#007F/#00FF device keys -
 /// the same normalization the Pentagon decode table performs before handing
 /// a port to PeripheralPortIn/Out()
+///
+/// While TR-DOS is selected (session or armed magic-button trigger) the
+/// Scorpion Beta interface decodes only A2-A0 = 111 (MiSTer ScorpionZS256
+/// fdd_sel = trdos_en & A2 & A1 & A0): A7 = 1 is the system register, A7 = 0
+/// selects the WD1793 register by A6-A5. It therefore also claims #xxDF, #xx9F,
+/// #xxBF, #xx07... - the Kempston Mouse / joystick addresses among them. With
+/// only the Shadow Monitor latch selecting the FDC the exact five low bytes are
+/// served (hardware-reference 12.3)
 /// \param port Raw 16-bit port address from the Z80 bus
+/// \param wideDecode TR-DOS selected: A2-A0 = 111 decode instead of the five exact low bytes
 /// \param canonicalPort Out: registered device key for the matched register
-/// \return True when the low byte selects a Beta128 register
-static bool TryBeta128MirrorPort(uint16_t port, uint16_t& canonicalPort)
+/// \return True when the address selects a Beta128 register
+static bool TryBeta128MirrorPort(uint16_t port, bool wideDecode, uint16_t& canonicalPort)
 {
+    if (wideDecode)
+    {
+        if ((port & 0x0007) != 0x0007)
+            return false;
+        canonicalPort = (port & 0x0080) ? 0x00FF : static_cast<uint16_t>(0x001F | (port & 0x0060));
+        return true;
+    }
+
     switch (port & 0x00FF)
     {
         case 0x001F:
@@ -157,9 +174,12 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
     PortDecodeDisposition disp;
     disp.decodeRuleIndex = PortTraceRule::kNoTable;
 
-    // Resolve Beta128 mirrors once: the FDC decodes A7-A0 only
+    // Resolve Beta128 mirrors once: the FDC decodes A7-A0 only (A2-A0 while TR-DOS is selected)
     uint16_t beta128Port = 0;
-    const bool isBeta128 = TryBeta128MirrorPort(port, beta128Port);
+    const bool isBeta128 = TryBeta128MirrorPort(port, ScorpionTrDosSelected(), beta128Port);
+
+    // Kempston Mouse register selected by the decode (0 buttons, 1 X, 2 Y)
+    uint8_t mouseReg = 0;
 
     if ((port & 0xC002) == 0xC000)
     {
@@ -211,16 +231,6 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
         disp.decodedPort = 0x7EFD;
         disp.wasHandledInline = true;
     }
-    else if (IsPort_KempstonMouse(port))
-    {
-        // Kempston Mouse stub until full mouse emulation is integrated:
-        // #FADF (buttons): active-low -> 0xFF (all buttons released; firmware CPL produces 0x00)
-        // #FBDF (X coord), #FFDF (Y coord): stable coordinate (0x00) so delta is 0
-        result = ((port & 0xFF00) == 0xFA00) ? 0xFF : 0x00;
-        _lastPortDecoded = true;
-        disp.decodedPort = port;
-        disp.wasHandledInline = true;
-    }
     else if (IsPort_KempstonJoystick(port))
     {
         // Kempston Joystick stub until joystick peripheral is integrated:
@@ -232,6 +242,15 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
         result = 0x00;
         _lastPortDecoded = true;
         disp.decodedPort = 0x001F;
+        disp.wasHandledInline = true;
+    }
+    else if (IsPort_KempstonMouse(port, mouseReg))
+    {
+        // After the joystick (#FF1F is also a mouse address). Silent while TR-DOS is selected
+        // (IsPort_KempstonMouse): the Beta interface claims #xxDF then
+        result = Default_Port_KempstonMouse_In(port, pc);
+        _lastPortDecoded = true;
+        disp.decodedPort = port;
         disp.wasHandledInline = true;
     }
     else if (isBeta128 && !(_state->flags & CF_TRDOS) && !(_state->p1FFD & 0x02)
@@ -303,9 +322,9 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
     PortDecodeDisposition disp;
     disp.decodeRuleIndex = PortTraceRule::kNoTable;
 
-    // Resolve Beta128 mirrors once: the FDC decodes A7-A0 only
+    // Resolve Beta128 mirrors once: the FDC decodes A7-A0 only (A2-A0 while TR-DOS is selected)
     uint16_t beta128Port = 0;
-    const bool isBeta128 = TryBeta128MirrorPort(port, beta128Port);
+    const bool isBeta128 = TryBeta128MirrorPort(port, ScorpionTrDosSelected(), beta128Port);
 
     // The ProfROM window latch must be checked first: its pattern is a subset
     // of the #7FFD decode (the base-machine GAL equation ignores A8), so on a
@@ -633,16 +652,38 @@ bool PortDecoder_Scorpion256::IsPort_KempstonJoystick(uint16_t port)
     // firmware saw Fire held, enqueuing a phantom 0x80 click every 5 frames
     // (profrom-service-monitor-menu-flashing.md 7.1: the Shadow Monitor does
     // not give Beta128 priority over the joystick on #1F).
-    return !(_state->flags & CF_TRDOS) && !_state->scorpionDosTrigger
+    //
+    // With the latch SET (page 2 code) the joystick gives #FF1F up: MiSTer ScorpionZS256
+    // masks kemp_sel on the Beta low bytes while #1FFD bit1 is set, because ROM2 polls
+    // the WD1793 status through #xx1F after paging TR-DOS out (#0234) and spins on #00.
+    // Here the FDC stays on the bus under the latch, so the read reaches its status register
+    return !ScorpionTrDosSelected() && !(_state->p1FFD & 0x02)
            && (port == 0xFF1F);
 }
 
-bool PortDecoder_Scorpion256::IsPort_KempstonMouse(uint16_t port)
+bool PortDecoder_Scorpion256::IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister)
 {
-    // Kempston Mouse stub (profrom-service-monitor-menu-flashing.md):
-    // In Page 5 sub_021bh, the firmware polls #FBDF (X coord), #FFDF (Y coord),
-    // and #FADF (buttons). All Kempston mouse ports share the low byte #DF.
-    return (port & 0x00FF) == 0x00DF;
+    // Common rule: while TR-DOS is selected only Beta Disk operations happen. Every mouse
+    // address has A2-A0 = 111, so the wide TR-DOS Beta decode owns all of them (MiSTer
+    // ScorpionZS256: fdc_sel outranks kemp_sel). The Shadow Monitor latch alone (#1FFD bit1)
+    // does not hide #xxDF
+    if (ScorpionTrDosSelected())
+        return false;
+
+    // Latch set: the exact Beta low bytes (#xx1F, #xx5F among the mouse mirrors) stay with the
+    // FDC - MiSTer kemp_sel = (A5-A0 == #1F) & ~(scorp & beta_port & scorp_1ffd[1])
+    uint16_t beta128Port = 0;
+    if ((_state->p1FFD & 0x02) && TryBeta128MirrorPort(port, false, beta128Port))
+        return false;
+
+    return Default_IsPort_KempstonMouse(port, outRegister);
+}
+
+/// TR-DOS selected: an open session or the armed magic-button DOS trigger (MiSTer
+/// ScorpionZS256 trdos_en, which the MNI also sets). The Shadow Monitor latch is not part of it
+bool PortDecoder_Scorpion256::ScorpionTrDosSelected() const
+{
+    return (_state->flags & CF_TRDOS) || _state->scorpionDosTrigger;
 }
 /// endregion </Helper methods>
 

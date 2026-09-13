@@ -37,6 +37,55 @@
     schemas["FeatureInfo"]["properties"]["id"]["type"] = "string";
     schemas["FeatureInfo"]["properties"]["enabled"]["type"] = "boolean";
     schemas["FeatureInfo"]["properties"]["description"]["type"] = "string";
+
+    // Mouse Injection schemas (api/mouse_api.cpp)
+    schemas["MouseState"]["type"] = "object";
+    schemas["MouseState"]["description"] = "Kempston mouse state";
+    schemas["MouseState"]["properties"]["available"]["type"] = "boolean";
+    schemas["MouseState"]["properties"]["available"]["description"] = "A mouse device exists in this emulator";
+    schemas["MouseState"]["properties"]["present"]["type"] = "boolean";
+    schemas["MouseState"]["properties"]["present"]["description"] =
+        "Mouse fitted; when false the guest reads the floating bus on the mouse ports";
+    schemas["MouseState"]["properties"]["wheel_enabled"]["type"] = "boolean";
+    schemas["MouseState"]["properties"]["x"]["type"] = "integer";
+    schemas["MouseState"]["properties"]["x"]["description"] = "X counter 0..255";
+    schemas["MouseState"]["properties"]["y"]["type"] = "integer";
+    schemas["MouseState"]["properties"]["y"]["description"] = "Y counter 0..255";
+    for (const char* button : {"left", "right", "middle"})
+        schemas["MouseState"]["properties"]["buttons"]["properties"][button]["type"] = "boolean";
+    schemas["MouseState"]["properties"]["buttons"]["type"] = "object";
+    schemas["MouseState"]["properties"]["button_mask"]["type"] = "integer";
+    schemas["MouseState"]["properties"]["button_mask"]["description"] =
+        "Active-low internal mask (D0 left, D1 right, D2 middle); 255 = none pressed";
+    schemas["MouseState"]["properties"]["wheel"]["type"] = "integer";
+    schemas["MouseState"]["properties"]["wheel"]["description"] = "Wheel counter 0..15";
+    schemas["MouseState"]["properties"]["ports"]["type"] = "object";
+    schemas["MouseState"]["properties"]["ports"]["description"] = "Bytes IN returns from each port right now";
+    for (const char* port : {"FADF", "FBDF", "FFDF"})
+        schemas["MouseState"]["properties"]["ports"]["properties"][port]["type"] = "integer";
+    schemas["MouseState"]["properties"]["pending_click"]["type"] = "object";
+    schemas["MouseState"]["properties"]["pending_click"]["nullable"] = true;
+    schemas["MouseState"]["properties"]["pending_click"]["properties"]["button"]["type"] = "string";
+    schemas["MouseState"]["properties"]["pending_click"]["properties"]["frames_left"]["type"] = "integer";
+    schemas["MouseState"]["properties"]["ttd_journal"]["type"] = "string";
+    schemas["MouseState"]["properties"]["ttd_journal"]["enum"].append("supported");
+    schemas["MouseState"]["properties"]["ttd_journal"]["enum"].append("unsupported");
+
+    schemas["MouseStatus"]["description"] = "Response from GET /mouse/status";
+    schemas["MouseStatus"]["allOf"][0]["$ref"] = "#/components/schemas/MouseState";
+    schemas["MouseStatus"]["allOf"][1]["type"] = "object";
+    schemas["MouseStatus"]["allOf"][1]["properties"]["emulator_id"]["type"] = "string";
+    schemas["MouseStatus"]["allOf"][1]["properties"]["warning"]["type"] = "string";
+
+    schemas["MouseInjectResponse"]["type"] = "object";
+    schemas["MouseInjectResponse"]["description"] =
+        "Response from a mouse input POST: echoes the input fields plus the resulting state";
+    schemas["MouseInjectResponse"]["properties"]["success"]["type"] = "boolean";
+    schemas["MouseInjectResponse"]["properties"]["message"]["type"] = "string";
+    schemas["MouseInjectResponse"]["properties"]["warning"]["type"] = "string";
+    schemas["MouseInjectResponse"]["properties"]["warning"]["description"] =
+        "Set when the input cannot reach the guest (mouse or wheel not fitted)";
+    schemas["MouseInjectResponse"]["properties"]["state"]["$ref"] = "#/components/schemas/MouseState";
     schemas["FeatureInfo"]["properties"]["mode"]["type"] = "string";
 
     // Debug Commands schemas

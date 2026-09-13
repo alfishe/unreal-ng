@@ -11,6 +11,7 @@
 #include "debugger/ttd/timetravelmanager.h"  // Phase 4 — RecordIoWrite hot-path call
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
+#include "emulator/io/mouse/mouse.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/notifications.h"
 #include "emulator/ports/models/portdecoder_atm3.h"
@@ -32,6 +33,7 @@ PortDecoder::PortDecoder(EmulatorContext* context)
 
     _state = &context->emulatorState;
     _keyboard = context->pKeyboard;
+    _mouse = context->pMouse;
     _memory = context->pMemory;
     _screen = context->pScreen;
     _tape = context->pTape;
@@ -469,6 +471,51 @@ uint8_t PortDecoder::Default_Port_FE_In(uint16_t port, [[maybe_unused]] uint16_t
     result |= inputEARSignal;
 
     return result;
+}
+
+/// Standard Kempston Mouse decode (Kempston Mouse design §3.1), MiSTer ZX-Spectrum mouse.v /
+/// kemp_sel equations:
+///   qualify:  A5-A0 = 011111 (#1F, #5F, #9F, #DF low bytes; A7/A6 not decoded), A9 = 1
+///   select :  A8 = 0          -> buttons (A10 don't-care: #FADF and #FEDF both answer)
+///             A8 = 1, A10 = 0 -> X
+///             A8 = 1, A10 = 1 -> Y
+/// A15-A11 are mirrors.
+bool PortDecoder::Standard_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister)
+{
+    if ((port & 0x0200) == 0 || (port & 0x003F) != 0x001F)
+        return false;
+
+    if ((port & 0x0100) == 0)
+        outRegister = 0;  // buttons (+ wheel)
+    else if ((port & 0x0400) == 0)
+        outRegister = 1;  // X
+    else
+        outRegister = 2;  // Y
+    return true;
+}
+
+/// The mouse answers this address on this machine right now: fitted (config + feature), TR-DOS
+/// not selected (common rule: while TR-DOS is selected only Beta Disk operations happen, nothing
+/// else answers on any address - CF_DOSPORTS), no registered peripheral owning the exact address
+/// (explicit devices keep their ports), and the standard decode matches. Model decoders call this
+/// after their own higher-priority arms (keyboard, AY, FDC, joystick).
+bool PortDecoder::Default_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister)
+{
+    if (!_mouse || !_mouse->IsPresent())
+        return false;
+    if (_state && (_state->flags & CF_DOSPORTS))
+        return false;
+    if (key_exists(_portDevices, port))
+        return false;
+    return Standard_IsPort_KempstonMouse(port, outRegister);
+}
+
+uint8_t PortDecoder::Default_Port_KempstonMouse_In(uint16_t port, [[maybe_unused]] uint16_t pc)
+{
+    uint8_t selectRegister = 0;
+    if (_mouse && Standard_IsPort_KempstonMouse(port, selectRegister))
+        return _mouse->ReadRegister(selectRegister);
+    return 0xFF;
 }
 
 /// Default implementation for 'out (#FE)'

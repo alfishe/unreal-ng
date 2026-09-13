@@ -9,6 +9,7 @@
 #include "debugger/debugmanager.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/sound/chips/soundchip_turbosoundfm.h"
 #include "stdafx.h"
 
 /// region <Constructors / Destructors>
@@ -58,7 +59,24 @@ SoundManager::SoundManager(EmulatorContext* context)
     }
 
     _beeper = new Beeper(_context, CPU_CLOCK_RATE, _coreRate, _beeperBuffer);
-    _turboSound = new SoundChip_TurboSound(_context);
+
+    // TurboSound slot device (TSFM design §3.2): the config kind decides what
+    // occupies the slot. SoundManager holds it through ITurboSoundDevice from
+    // here on - everything below (registry, chains, TTD registration) is
+    // device-agnostic.
+    switch (_context->config.sound.turboSoundKind)
+    {
+        case TurboSoundKind::FM:
+            // TSFM (2 x YM2203): the chip core advances in T-states; its
+            // output stage is silent until P6, but the core, ports and
+            // status reads are live from here on.
+            _turboSound = new SoundChip_TurboSoundFM(_context);
+            LOGINFO("SoundManager: TurboSound slot = TSFM (TurboSound FM, 2 x YM2203)");
+            break;
+        default:
+            _turboSound = new SoundChip_TurboSound(_context);
+            break;
+    }
     _turboSound->setCoreRate(_coreRate);
 
     // Build the device registry based on what this machine has
@@ -70,6 +88,12 @@ SoundManager::SoundManager(EmulatorContext* context)
     if (_turboSound && _turboSound->getChipCount() > 1)
     {
         _devices.push_back({AudioSourceType::AY2_All, "AY 2", false, false, 1.0f, 0.0f, false});
+    }
+    // FM-only entries when the slot device has FM channels (TSFM, §7.2)
+    if (_turboSound && _turboSound->hasFm())
+    {
+        _devices.push_back({AudioSourceType::FM1, "FM 1", false, false, 1.0f, 0.0f, false});
+        _devices.push_back({AudioSourceType::FM2, "FM 2", false, false, 1.0f, 0.0f, false});
     }
 
     // Covox if config flag is set (Pentagon/Scorpion style)
@@ -93,6 +117,18 @@ SoundManager::SoundManager(EmulatorContext* context)
     _ayChain1.setPunchPreset(AudioCharacterChain::PunchPreset::AY);
     _ayChain1.setPunchEnabled(true);
     _ayChain1.setRoomMode(AudioCharacterChain::RoomMode::Off);
+
+    // FM-only chains (TSFM, §7.2): both stages off - the hardware-derived
+    // gain staging (§7.1) must reach the mix untouched
+    _fmChain0.setup(_coreRate);
+    _fmChain0.setChipType(AudioCharacterChain::ChipType::AY);
+    _fmChain0.setPunchEnabled(false);
+    _fmChain0.setRoomMode(AudioCharacterChain::RoomMode::Off);
+
+    _fmChain1.setup(_coreRate);
+    _fmChain1.setChipType(AudioCharacterChain::ChipType::AY);
+    _fmChain1.setPunchEnabled(false);
+    _fmChain1.setRoomMode(AudioCharacterChain::RoomMode::Off);
 
     // Initialize beeper character chain
     // - ChipType::AY (no LP) - beeper is also square waves, LP kills brightness
@@ -224,6 +260,10 @@ const int16_t* SoundManager::deviceBuffer(AudioSourceType type) const
             return _turboSound ? _turboSound->getChipBuffer(0) : nullptr;
         case AudioSourceType::AY2_All:
             return _turboSound ? _turboSound->getChipBuffer(1) : nullptr;
+        case AudioSourceType::FM1:
+            return _turboSound ? _turboSound->getFmBuffer(0) : nullptr;
+        case AudioSourceType::FM2:
+            return _turboSound ? _turboSound->getFmBuffer(1) : nullptr;
         case AudioSourceType::COVOX:
             return _covox ? _covox->getBuffer() : nullptr;
         default:
@@ -318,6 +358,8 @@ void SoundManager::applyCoreRate(size_t rate)
     _ayChain0.setup(rate);
     _ayChain1.setup(rate);
     _beeperChain.setup(rate);
+    _fmChain0.setup(rate);
+    _fmChain1.setup(rate);
 
     // Restart the exact sample accumulator - its residue is in old-rate units
     _sampleAccumulator = 0;
@@ -379,21 +421,19 @@ void SoundManager::handleFrameStart()
         _beeper->setSynthesisSuppressed(suppressed);
         if (_covox)
             _covox->setSynthesisSuppressed(suppressed);
+
+        // §6.1: the TurboSound-slot device is always reached now, in every
+        // mode - a device with an emulated core (TSFM) advances it even when
+        // its output stage is off. Sound feature off counts as suppressed
+        // for the device's rendering; its frame buffer clears still run
+        // (the sound-off output path relies on zeroed buffers).
+        _turboSound->setSynthesisSuppressed(suppressed || !_feature_sound_enabled);
+        _turboSound->handleFrameStart();
+
         if (suppressed)
-            return;  // Skip per-device frame setup and buffer clears (never consumed in turbo)
+            return;  // Skip beeper/covox frame setup and buffer clears (never consumed in turbo)
     }
 
-    // NOTE: no synth re-clocking here. Two designs solved the turbo ring-overfill
-    // independently - this branch re-pointed each synth's T-state->sample mapping at
-    // CPU_CLOCK_RATE * multiplier, master instead descales the T-state position before
-    // it reaches the synths (EmulatorState::AudioTstate, applied in the AY PLL, covox
-    // and beeper alike). Running both multiplied the correction by itself: on ATM at
-    // 14 MHz that is a 16x error, heard as "hard resync - dropped N frames of
-    // overfilled audio". Master's is kept because it separates a HARDWARE clock change
-    // (frame stays 20 ms, synth clocks unchanged - so the AY always renders at base
-    // frequency) from host fast-forward, which a single multiplier cannot express.
-
-    _turboSound->handleFrameStart();
     if (_covox)
         _covox->handleFrameStart();
 
@@ -406,26 +446,28 @@ void SoundManager::handleFrameStart()
 
 void SoundManager::handleStep()
 {
-    // Fast exit if sound generation disabled
-    if (!_feature_sound_enabled)
-        return;
-
-    // Turbo render decimation companion (turbo tape design r4): with turbo
-    // engaged and audio not requested, per-step analog device work (TurboSound
-    // AY mixing) feeds only handleFrameEnd synthesis - which is skipped in
-    // this mode - so the samples would be computed and discarded. Skipping is
-    // unobservable to the program: the AY register file is written by
-    // PortDecoder on OUT, handleStep only advances analog generators (tone /
-    // envelope phase, mixer levels). Recording keeps the full path so DSD
+    // §6.1: the TurboSound-slot device is always reached - even when sound
+    // generation is disabled or synthesis is suppressed (turbo without
+    // audio, turbo tape design r4) - because a device with an emulated core
+    // (TSFM) advances that core here. The device gates its own rendering on
+    // its suppressed flag; for the legacy device the whole cost in those
+    // modes is a single early return inside. Skipping the analog generator
+    // work is unobservable to the program: the AY register file is written
+    // by PortDecoder on OUT. Recording keeps the full path so DSD
     // native-rate capture and recorded audio stay intact.
-    if (_synthesisSuppressed)  // Decided per frame in handleFrameStart
-        return;
-
     _turboSound->handleStep();
 }
 
 void SoundManager::handleFrameEnd()
 {
+    // §6.1 frame-end drain: the device's output stage runs here (empty for
+    // the legacy device; TSFM drains its word queues). Axis trap: z80->t
+    // has already been rebased by AdjustFrameCounters when this runs, so a
+    // device must drain to its own end-of-frame position, never to
+    // AudioTstate(z80->t). Skipped when synthesis is suppressed (turbo).
+    if (!_synthesisSuppressed)
+        _turboSound->handleFrameEnd();
+
     /// region <Determine actual samples for this frame>
     // Per-frame sample count derives from the machine's frame length, NOT the
     // 50 Hz SAMPLES_PER_FRAME constant: Pentagon (71680 t-states, 48.83 fps)
@@ -477,10 +519,28 @@ void SoundManager::handleFrameEnd()
     /// endregion </Determine actual samples for this frame>
 
     /// region <Process AY through its character chain>
+    // The character chains (punch / room) are HQ-only post-processing: with
+    // `soundhq` off (or the turbo override on) they are skipped entirely -
+    // no float round trip, no per-sample DSP - and the raw chip / beeper
+    // buffers go straight to the mixer, the same as the LQ boxcar path
+    // inside the devices. On the first HQ frame after a bypass the chains'
+    // delay lines and envelopes are cleared so they do not replay audio
+    // from before the switch.
+    const bool chainsActive = isHQActive();
+    if (chainsActive && _chainsBypassed)
+    {
+        _ayChain0.reset();
+        _ayChain1.reset();
+        _fmChain0.reset();
+        _fmChain1.reset();
+        _beeperChain.reset();
+    }
+    _chainsBypassed = !chainsActive;
+
     // AY chain: gentler punch (square waves already have harmonics)
     // Room uses no LP to preserve brightness
     // Process per-chip buffers with separate chain instances to preserve DSP state
-    if (_turboSound)
+    if (_turboSound && chainsActive)
     {
         int16_t* chip0Buf = _turboSound->getChipBuffer(0);
         int16_t* chip1Buf = _turboSound->getChipBuffer(1);
@@ -488,6 +548,17 @@ void SoundManager::handleFrameEnd()
             _ayChain0.processInt16(chip0Buf, samplesThisFrame);
         if (chip1Buf)
             _ayChain1.processInt16(chip1Buf, samplesThisFrame);
+
+        // FM-only buffers through their (bypass by default) chains (§7.2)
+        if (_turboSound->hasFm())
+        {
+            int16_t* fm0Buf = _turboSound->getFmBuffer(0);
+            int16_t* fm1Buf = _turboSound->getFmBuffer(1);
+            if (fm0Buf)
+                _fmChain0.processInt16(fm0Buf, samplesThisFrame);
+            if (fm1Buf)
+                _fmChain1.processInt16(fm1Buf, samplesThisFrame);
+        }
     }
     /// endregion </Process AY>
 
@@ -523,8 +594,9 @@ void SoundManager::handleFrameEnd()
         }
     }
 
-    // Beeper chain: operates on alias-free blip_buf output
-    _beeperChain.processInt16(_beeperBuffer, samplesThisFrame);
+    // Beeper chain: operates on alias-free blip_buf output (HQ only, see above)
+    if (chainsActive)
+        _beeperChain.processInt16(_beeperBuffer, samplesThisFrame);
     /// endregion </Process beeper>
 
     /// region <Registry-driven mixing with mute/solo/volume + peak calculation>
@@ -565,6 +637,12 @@ void SoundManager::handleFrameEnd()
                 break;
             case AudioSourceType::AY2_All:
                 srcBuffer = _turboSound ? _turboSound->getChipBuffer(1) : nullptr;
+                break;
+            case AudioSourceType::FM1:
+                srcBuffer = _turboSound ? _turboSound->getFmBuffer(0) : nullptr;
+                break;
+            case AudioSourceType::FM2:
+                srcBuffer = _turboSound ? _turboSound->getFmBuffer(1) : nullptr;
                 break;
             case AudioSourceType::COVOX:
                 srcBuffer = _covox ? _covox->getBuffer() : nullptr;

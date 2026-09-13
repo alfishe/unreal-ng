@@ -659,7 +659,7 @@ Places that must learn them:
 
 ## 11. Bit-identity with TurboSound (D9)
 
-**Setup:** the same port-write stream is fed to both devices, with both chips at `YM2149`, HQ and LQ, core rates 44.1 k / 48 k / 96 k.
+**Setup:** the same port-write stream is fed to both devices, with both chips at `YM2149`, HQ and LQ, at every supported core rate — 44.1 k / 48 k / 88.2 k / 96 k / 176.4 k / 192 k (the filters are designed per rate exactly like the legacy device's, never pinned to one frequency).
 
 **Envelope** — the stream:
 - starts with an explicit chip select;
@@ -728,12 +728,13 @@ Test locations: `core/tests/emulator/sound/tsfm/`, `core/tests/debugger/ttd/`, `
 
 | Test | Asserts |
 |---|---|
-| `TsfmBitIdentity.*` | §11, 10 000 writes × 200 frames × 3 seeds × HQ/LQ × 3 rates → `memcmp` = 0 |
+| `TsfmBitIdentity.*` | §11, 10 000 writes × 200 frames × HQ/LQ at every supported core rate (seed 1 sweeps all six; seeds 2–3 keep three-rate depth) → `memcmp` = 0 |
 | `FilterDecimator.InputRateEquivalence` | `kaiser(192, 20 k, 437.5 k, 5)` vs `kaiser(96, 20 k, 218.75 k, 5)` magnitude within 0.05 dB in the passband |
+| `FilterDecimator.AllSupportedCoreRates` | Every (44.1 k–192 k output × SSG/FM input) combination: exact tap scaling, decimating ratio, unity DC, stopband in the alias band |
 | `FilterDecimator.SlaveLockstep` | 1 M ticks: slave output count equals master count |
 | `TsfmOutput.HoldNoJitter` | At /6, every word is held for exactly 9 half-ticks |
 | `TsfmOutput.MuteAtHoldInput` | Toggling `0xFA`↔`0xFE` mid-note: no sample exceeds the steady-state peak |
-| `TsfmGain.Reference` | One carrier, TL=0 → peak ±0.075 ± 5 % pre-chain; SSG A vol 15 → ±0.15 |
+| `TsfmGain.Reference` | One carrier, TL=0 → peak ±0.075 ± 5 % pre-chain at 44.1 k and at the rate extremes (88.2 k, 192 k); SSG A vol 15 → ±0.15 |
 
 ### 12.5 Spectral and listening (scripts in `verification/tools/`, manual)
 

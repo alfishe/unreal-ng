@@ -9,9 +9,9 @@
 #include "emulator/sound/audio.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/native_audio_tap.h"
-#include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
+#include "emulator/sound/chips/iturbosounddevice.h"  // ITurboSoundDevice (TSFM design §3.3)
 
-class SoundChip_TurboSound : public PortDecoder, public PortDevice, public ttd::TTDSerializable
+class SoundChip_TurboSound : public ITurboSoundDevice
 {
     /// region <Fields>
 protected:
@@ -32,8 +32,18 @@ protected:
     /// region <AY emulation>
     // Initialized at declaration: reset() re-derives them, but a freshly
     // constructed chip must be renderable BEFORE the first reset() - garbage
-    // _ayPLL rendered clamped full-size frames until reset was called
-    double _ayPLL = 0.0;
+    // phase rendered clamped full-size frames until reset was called.
+    //
+    // _samplePhase is the same exact integer accumulator SoundManager uses
+    // to decide how many samples it mixes per frame (T-states x core rate,
+    // one output sample per CPU_CLOCK_RATE). Both start at 0 on reset() /
+    // setCoreRate(), the device feeds it T-states clipped at the frame
+    // boundary (handleStep), so the device renders exactly the count the
+    // mixer consumes on every frame. The previous free-running double PLL
+    // drifted against the mixer's accumulator and every disagreeing frame
+    // left a zero sample (or dropped one) in the mix - an audible click
+    // train (2026-09-13, FrameSampleCount_Test).
+    uint64_t _samplePhase = 0;
     size_t _ayBufferIndex = 0;
     uint32_t _lastTStates = 0;
 
@@ -43,15 +53,18 @@ protected:
     double _decimationStep = (double)(PSG_CLOCK_RATE / 8) /
                              (double)(AUDIO_SAMPLING_RATE * FilterInterpolate::DECIMATE_FACTOR);
 
-    // Core output rate (multirate plan phase 6): output samples per T-state
-    // for the free-running sample PLL, and the LQ boxcar tick ratio. Set via
+    // Core output rate (multirate plan phase 6): the sample accumulator's
+    // per-T-state increment, and the LQ boxcar tick ratio. Set via
     // setCoreRate(); defaults preserve legacy 44100 behavior.
     size_t _coreRate = AUDIO_SAMPLING_RATE;
-    double _sampleTStateIncrement = AUDIO_SAMPLE_TSTATE_INCREMENT;
     double _lqTicksPerSample = (double)(PSG_CLOCK_RATE / 8) / (double)AUDIO_SAMPLING_RATE;
 
     // HQ DSP flag (FIR filters vs simple averaging)
     bool _hqEnabled = true;
+
+    // Output-stage suppression (design §6.1): pushed once per frame by the
+    // manager; gates rendering only (the legacy device has no separate core)
+    bool _synthesisSuppressed = false;
 
     // Native-rate recording tap (218.75 kHz, pre-decimation).
     // shared_ptr so a DSD encoder worker can outlive this chip safely.
@@ -76,12 +89,12 @@ public:
     // Per-chip buffer access for registry-driven mixing / capture
     /// Number of stereo sample pairs rendered into the frame buffers so far
     /// this frame (diagnostics / adaptivity tests)
-    size_t getRenderedSamplesThisFrame() const
+    size_t getRenderedSamplesThisFrame() const override
     {
         return _ayBufferIndex / AUDIO_CHANNELS;
     }
 
-    int16_t* getChipBuffer(int index)
+    int16_t* getChipBuffer(int index) override
     {
         if (index == 0)
             return _chip0Buffer;
@@ -99,7 +112,7 @@ public:
     }
 
     // Chip access for monitoring purposes
-    SoundChip_AY8910* getChip(int index) const
+    SoundChip_AY8910* getChip(int index) const override
     {
         if (index == 0)
             return _chip0;
@@ -110,7 +123,7 @@ public:
         return nullptr;
     }
 
-    int getChipCount() const
+    int getChipCount() const override
     {
         int count = 0;
         if (_chip0)
@@ -125,7 +138,7 @@ public:
 
     /// region <Constructors / destructor>
 public:
-    SoundChip_TurboSound(EmulatorContext* context) : PortDecoder(context)
+    SoundChip_TurboSound(EmulatorContext* context) : ITurboSoundDevice(context)
     {
         _chip0 = new SoundChip_AY8910(_context);
         _chip1 = new SoundChip_AY8910(_context);
@@ -158,9 +171,10 @@ public:
         // Set Chip0 active by default
         _currentChip = _chip0;
 
-        // Reset internal state
+        // Reset internal state (the sample accumulator restarts in step with
+        // SoundManager::reset(), which zeroes its own)
         _lastTStates = 0;
-        _ayPLL = 0.0;
+        _samplePhase = 0;
         _ayBufferIndex = 0;
 
         // Native clock decimation setup
@@ -187,19 +201,25 @@ public:
     }
 
     // Feature cache update
-    void setHQEnabled(bool enabled)
+    void setHQEnabled(bool enabled) override
     {
         _hqEnabled = enabled;
     }
 
-    /// Set the core output rate (multirate plan phase 6): recomputes the
-    /// sample PLL increment and decimation ratios and redesigns the HQ
-    /// anti-alias FIRs. Call at construction / sound stack rebuild only -
-    /// changing rate mid-frame would glitch the free-running PLL phase.
-    void setCoreRate(size_t rate)
+    void setSynthesisSuppressed(bool suppressed) override
+    {
+        _synthesisSuppressed = suppressed;
+    }
+
+    /// Set the core output rate (multirate plan phase 6): restarts the
+    /// sample accumulator (SoundManager::applyCoreRate restarts its own at
+    /// the same frame boundary), recomputes the decimation ratios and
+    /// redesigns the HQ anti-alias FIRs. Call at construction / sound stack
+    /// rebuild only, at a frame boundary.
+    void setCoreRate(size_t rate) override
     {
         _coreRate = rate;
-        _sampleTStateIncrement = (double)rate / (double)CPU_CLOCK_RATE;
+        _samplePhase = 0;
         _lqTicksPerSample = (double)(PSG_CLOCK_RATE / 8) / (double)rate;
         _decimationStep = (double)(PSG_CLOCK_RATE / 8) / (double)(rate * FilterInterpolate::DECIMATE_FACTOR);
 
@@ -213,13 +233,13 @@ public:
     /// consumes already-multiplied t-states (Z80::t), so the increment must
     /// shrink by the same factor. Frame boundary only - changing it mid-frame
     /// would glitch the free-running PLL phase
-    size_t getCoreRate() const
+    size_t getCoreRate() const override
     {
         return _coreRate;
     }
 
     /// Native-rate recording tap (for DSD capture bypassing 44.1 kHz decimation)
-    std::shared_ptr<NativeAudioTap> getNativeTap() const
+    std::shared_ptr<NativeAudioTap> getNativeTap() const override
     {
         return _nativeTap;
     }
@@ -227,16 +247,16 @@ public:
 
     /// region <Emulation events>
 public:
-    void handleFrameStart();
-    void handleStep();
-    void handleFrameEnd();
+    void handleFrameStart() override;
+    void handleStep() override;
+    void handleFrameEnd() override;
     /// endregion </Emulation events>
 
     /// region <Automation tap (MCP M7j)>
 public:
     /// Install/remove the AY port-write log tap. Inert while sink == nullptr.
     /// Called with the emulation thread parked (analyzer activation path).
-    void setLogSink(AYLogSink sink, void* context)
+    void setLogSink(AYLogSink sink, void* context) override
     {
         _logSink = sink;
         _logSinkContext = context;
@@ -255,8 +275,8 @@ public:
 
     /// region <Ports interaction>
 public:
-    bool attachToPorts(PortDecoder* decoder);
-    void detachFromPorts();
+    bool attachToPorts(PortDecoder* decoder) override;
+    void detachFromPorts() override;
     /// endregion </Ports interaction>
 
 public:

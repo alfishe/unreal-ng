@@ -54,6 +54,9 @@ private slots:
     void onStereoModeChanged(int index);
     void onChipModelChanged(int index);
 
+    // TSFM controls
+    void onFmTrimChanged(int value);
+
     // Per-channel controls
     void onChannelMuteChanged(int state);
     void onChannelVolumeChanged(int value);
@@ -94,7 +97,8 @@ private:
     QLabel* _soloIndicator = nullptr;
     std::vector<SourceRow> _sourceRows;
 
-    // AY/TurboSound section
+    // TurboSound section - titled "TurboSound FM" when the slot
+    // device is the TSFM board (the Sources list and chip labels follow)
     QGroupBox* _ayGroup = nullptr;
     QCheckBox* _firCheckbox = nullptr;
     QCheckBox* _ayPunchCheckbox = nullptr;
@@ -102,8 +106,15 @@ private:
     QComboBox* _stereoModeCombo = nullptr;
     QComboBox* _chipModelCombo = nullptr;
 
+    // TSFM-only controls (visible when the device has FM channels, §8.3)
+    QWidget* _tsfmControls = nullptr;
+    QSlider* _fmTrimSlider = nullptr;   // -12..+12 dB in 0.5 dB steps (half-dB units)
+    QLabel* _fmTrimLabel = nullptr;
+
     // Channel Mixer (per-chip: 2 chips x 3 channels)
     QGroupBox* _channelMixerGroup = nullptr;
+    QLabel* _chip1SectionLabel = nullptr;  // "AY1" / "SSG 1"
+    QLabel* _chip2SectionLabel = nullptr;  // "AY2" / "SSG 2"
     QCheckBox* _channelMuteChecks[2][3] = {};   // [chip][channel]
     QSlider* _channelVolumeSliders[2][3] = {};
     QLabel* _channelVolumeLabels[2][3] = {};

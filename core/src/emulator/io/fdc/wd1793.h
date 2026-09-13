@@ -787,6 +787,24 @@ public:
     {
         return _beta128status;
     }
+    uint8_t getCommandRegister() const
+    {
+        return _commandRegister;
+    }
+    uint8_t getBeta128Register() const
+    {
+        return _beta128Register;
+    }
+    /// Current state-machine state (DeviceState::Fdc report)
+    WDSTATE getFSMState() const
+    {
+        return _state;
+    }
+    /// Density selected through the Beta128 system register (report use)
+    bool isDoubleDensityMode() const
+    {
+        return (_beta128Register & BETA_CMD_DENSITY) == 0;
+    }
     uint8_t getSelectedDriveIndex() const
     {
         return _drive;

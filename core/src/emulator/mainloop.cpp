@@ -6,11 +6,13 @@
 
 #include "3rdparty/message-center/eventqueue.h"
 #include "common/modulelogger.h"
+#include "common/threadhelper.h"
 #include "common/timehelper.h"
 #include "emulator/sound/soundmanager.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
+#include "debugger/mouse/debugmousemanager.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator.h"
 #include "emulator/notifications.h"
@@ -70,13 +72,12 @@ void MainLoop::Run(volatile bool& stopRequested)
     _isRunning = true;
     _runThreadId.store(std::this_thread::get_id(), std::memory_order_release);
 
-#ifdef _WIN32
-    // The emulation thread is the audio producer: a frame pre-empted by GUI /
-    // background work lands its audio late and eats the ring trough. Above
-    // normal (not time-critical) keeps it ahead of ordinary threads without
-    // starving the audio device thread, which miniaudio already runs under MMCSS.
-    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
-#endif
+    // Real-time scheduling for the audio producer: only the ACTIVE instance's
+    // thread is elevated (EmulatorManager maintains _realtimeRequested), so a
+    // bank of headless instances never competes with the audible one. Windows
+    // previously did this unconditionally with ABOVE_NORMAL - the same policy
+    // now lives in ThreadHelper, applied to every platform and gated here
+    UpdateRealtimeScheduling();
 
     /// region <Info logging>
     uint64_t lastRun = 0;
@@ -176,6 +177,11 @@ void MainLoop::Run(volatile bool& stopRequested)
         // std::cout << StringHelper::Format("Between iterations: %d us", betweenIterations) << std::endl;
         /// endregion </Info logging>
 
+        // Selection may have moved to another instance while we run - sampled
+        // here (one relaxed atomic read) so a live switch demotes this thread
+        // and promotes the newly active one within a frame
+        UpdateRealtimeScheduling();
+
         // Synchronization strategy depends on turbo mode setting
         // Recording should NEVER interfere with normal frame pacing - encoder
         // backpressure (blocking mode) handles non-realtime encoders separately
@@ -241,7 +247,42 @@ void MainLoop::Run(volatile bool& stopRequested)
 
     MLOGINFO("Stop requested, exiting main loop");
 
+    // Return the thread to normal scheduling before it is joined - it may
+    // also be restarted later via a fresh StartAsync
+    if (_realtimeApplied)
+    {
+        ThreadHelper::setNormalPriority();
+        _realtimeApplied = false;
+    }
+
     _isRunning = false;
+}
+
+void MainLoop::UpdateRealtimeScheduling()
+{
+    // Turbo mode runs frames back-to-back with no cadence: a time-constraint
+    // thread violating its declared compute budget gets force-demoted by the
+    // OS watchdog (macOS), and an SCHED_FIFO producer spinning flat-out would
+    // starve the audio stack it is supposed to feed. Real-time is reserved
+    // for cadenced realtime playback only
+    const bool requested = _realtimeRequested.load(std::memory_order_relaxed)
+                               && !_context->config.turbo_mode;
+
+    if (requested == _realtimeApplied)
+        return;
+
+    if (requested)
+    {
+        ThreadHelper::setRealtimePriority();
+        MLOGINFO("Emulation thread elevated to realtime scheduling");
+    }
+    else
+    {
+        ThreadHelper::setNormalPriority();
+        MLOGINFO("Emulation thread returned to normal scheduling");
+    }
+
+    _realtimeApplied = requested;
 }
 
 bool MainLoop::WaitForPauseConfirmation(uint32_t timeoutMs)
@@ -608,6 +649,12 @@ void MainLoop::OnFrameEnd()
     if (_context->pDebugManager && _context->pDebugManager->GetKeyboardManager())
     {
         _context->pDebugManager->GetKeyboardManager()->OnFrame();
+    }
+
+    // Release timed mouse clicks (automation) at frame boundaries
+    if (_context->pDebugManager && _context->pDebugManager->GetMouseManager())
+    {
+        _context->pDebugManager->GetMouseManager()->OnFrame();
     }
 
     _lastFrameRendered = _renderThisFrame;

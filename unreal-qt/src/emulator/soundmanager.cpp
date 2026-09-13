@@ -191,8 +191,21 @@ void AppSoundManager::audioDataCallback(ma_device* pDevice, void* pOutput, const
     thread_local bool s_threadNamed = false;
     if (!s_threadNamed)
     {
-        ThreadHelper::setThreadName("miniaudio");
         s_threadNamed = true;
+        ThreadHelper::setThreadName("miniaudio");
+
+#if defined(__linux__)
+        // Linux is the one platform where the audio callback thread does not
+        // arrive real-time: miniaudio does not raise its priority itself.
+        // Elevate it here (SCHED_FIFO, best effort - a no-op without
+        // CAP_SYS_NICE, which is the desktop default).
+        //   macOS:   this callback runs on CoreAudio's own device thread, which
+        //            already carries time-constraint real-time scheduling -
+        //            applying our own policy would only overwrite CoreAudio's
+        //            tighter constraints with looser ones
+        //   Windows: the WASAPI thread is MMCSS-driven ("Audio" role)
+        ThreadHelper::setRealtimePriority();
+#endif
     }
 
     AppSoundManager* obj = (AppSoundManager*)pDevice->pUserData;

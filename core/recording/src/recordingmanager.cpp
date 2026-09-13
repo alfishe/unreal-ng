@@ -73,6 +73,10 @@ static const char* GetAudioSourceName(AudioSourceType source)
             return "AY3_ChannelB";
         case AudioSourceType::AY3_ChannelC:
             return "AY3_ChannelC";
+        case AudioSourceType::FM1:
+            return "FM1";
+        case AudioSourceType::FM2:
+            return "FM2";
         case AudioSourceType::Custom:
             return "Custom";
         default:

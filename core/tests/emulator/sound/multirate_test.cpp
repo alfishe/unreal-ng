@@ -183,7 +183,7 @@ TEST_F(Multirate_Test, TurboSound_SampleCountFollowsCoreRate)
     {
         _context->config.sound.coreRate = static_cast<unsigned>(rate);
         SoundManager sound(_context);
-        SoundChip_TurboSound* turboSound = sound.getTurboSound();
+        ITurboSoundDevice* turboSound = sound.getTurboSound();
         ASSERT_NE(turboSound, nullptr);
         ASSERT_EQ(turboSound->getCoreRate(), rate);
 
@@ -275,7 +275,7 @@ TEST_F(Multirate_Test, AY_PitchInvariantAcrossRates)
     {
         _context->config.sound.coreRate = static_cast<unsigned>(rate);
         SoundManager sound(_context);
-        SoundChip_TurboSound* turboSound = sound.getTurboSound();
+        ITurboSoundDevice* turboSound = sound.getTurboSound();
         ASSERT_NE(turboSound, nullptr);
 
         // Program chip 0: channel A tone, full fixed volume

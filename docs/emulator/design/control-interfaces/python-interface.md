@@ -95,6 +95,20 @@ class Emulator:
         
     def reset(self):
         """Hardware reset (equivalent to pressing reset button)"""
+
+    # Device state reports - the same trees the WebAPI, Lua, CLI and MCP
+    # return (command-interface.md section 3.3); dicts/lists/scalars
+    def audio_ay_state(self, chip: int = -1) -> dict:
+        """AY/SSG report: overview (chip=-1) or one chip fully decoded"""
+
+    def audio_fm_state(self, chip: int = -1) -> dict:
+        """TurboSound FM report: board + chip summaries (chip=-1) or one YM2203 FM half
+        (mode, timers, channels[3] with operators[4]: registers, pitch, envelope_state,
+        attenuation_db, key_on). available=False with a description without TSFM"""
+
+    def fdc_state(self) -> dict:
+        """Beta Disk WD1793 report: registers, status_bits, last_command, fsm_state,
+        signals (intrq/drq), beta128_register, density, selected_drive, drives[4]"""
         
     def pause(self):
         """Pause emulation"""
@@ -192,6 +206,74 @@ emu.tape_import("recording.wav", "imported.tap", 0.25)
 ```
 
 Playback `state` is one of `"idle"`, `"playing"`, `"paused"`, `"ended"` — identical strings across CLI, WebAPI, Lua and Python.
+
+### Mouse Input
+
+`Emulator` methods that drive the emulated Kempston Mouse, mirroring the CLI `mouse` commands
+and the WebAPI `/mouse/*` routes (source: `core/automation/python/src/emulator/python_emulator.h`).
+Units, limits and the reasoning behind them: [command-interface.md §11](./command-interface.md#11-mouse-input-injection).
+
+The mouse is **relative**: `mouse_move(10, -5)` means "travelled 10 pixels right and 5 down";
+the program on the machine moves its own cursor by that much. `dy` positive = **up**.
+
+```python
+emu.mouse_move(dx, dy)                  # -127..127 each, not both 0
+emu.mouse_press(button)                 # "left" | "right" | "middle" (or "l" | "r" | "m")
+emu.mouse_release(button)
+emu.mouse_click(button, frames=2)       # hold 1..65535 frames, then release on its own
+emu.mouse_buttons(["left", "middle"])   # exact pressed set; [] = none
+emu.mouse_wheel(steps)                  # -7..7, not 0; + = away from you
+emu.mouse_release_all()                 # also cancels a pending click
+emu.mouse_set_counters(x, y)            # debug: raw counters 0..255
+emu.mouse_status()                      # state dict (below)
+emu.mouse_click_pending()               # True while a click is still holding its button
+emu.mouse_button_names()                # ["left", "right", "middle"]
+```
+
+Every changing method returns the resulting **state dict**:
+
+```python
+{'x': 41, 'y': 80,
+ 'buttons': {'left': False, 'right': False, 'middle': False},
+ 'button_mask': 255,          # active-low: a pressed button is bit 0 (254 = left down)
+ 'wheel': 0, 'wheel_enabled': False, 'present': True,
+ 'ports': {'FADF': 255, 'FBDF': 41, 'FFDF': 80},   # what IN returns now (integers, as in the WebAPI)
+ 'pending_click': None,       # or {'button': 'left', 'frames_left': 1}
+ 'ttd_journal': 'supported'}
+# plus 'warning': '...' when the change cannot reach the program
+# (mouse not fitted, or a wheel step with no wheel fitted)
+```
+
+> [!NOTE]
+> `ports` values are integers, the same as in the WebAPI. The Python dict has no `available` key: `mouse_status()` raises
+> instead when there is no mouse device.
+
+**Errors raise** (the `key_*` methods return `False` instead; the difference is deliberate,
+so a mistake is not silently ignored):
+
+| Cause | Exception |
+|-------|-----------|
+| Out-of-range value, zero move/wheel, unknown button name | `ValueError` (message says which value and the allowed range) |
+| TTD replay in progress | `RuntimeError("TTD replay in progress; live mouse input refused")` |
+| No mouse manager / device | `RuntimeError` |
+
+**Worked example** (paused, reproducible):
+
+```python
+emu = unreal.emu_get_selected()
+emu.pause()
+st = emu.mouse_move(10, -5)          # from reset X=31 Y=85 -> st['x'] == 41, st['y'] == 80
+emu.mouse_click("left", frames=2)    # left held for the next 2 frames
+emu.run_frames(3)                    # 2 frames held + 1 for the program to react
+assert emu.mouse_status()["buttons"]["left"] is False
+
+try:
+    emu.mouse_move(200, 0)
+except ValueError as e:
+    print(e)   # dx=200 out of range -127..127; split into several moves with run_frames between them
+```
+
+While TTD records, these calls are written to the TTD input journal, so a replay reproduces them.
 
 ### Feature Management
 

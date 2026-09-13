@@ -1,8 +1,8 @@
 #pragma once
 
 /// @file ttdinputjournal.h
-/// @brief TTD input event journal — captures keyboard matrix mutations for
-///        deterministic replay.
+/// @brief TTD input event journal — captures keyboard matrix and Kempston Mouse
+///        mutations for deterministic replay.
 ///
 /// Per parent TDD §5 row #1 and §5.1:
 ///   "Host key events arrive asynchronously via MessageCenter and mutate the
@@ -35,8 +35,9 @@
 
 #include "ttdcheckpoint.h"  // TTDTimePoint
 
-// Forward declaration — full Keyboard type pulled in by the .cpp only.
+// Forward declarations — full device types pulled in by the .cpp only.
 class Keyboard;
+class Mouse;
 
 namespace ttd {
 
@@ -55,11 +56,31 @@ namespace ttd {
 /// monotonic TTDTimePoint order. A non-monotonic insert is logged and
 /// dropped at the call site (TimeTravelManager::RecordInputEvent) rather
 /// than silently corrupting the journal.
+/// @brief What kind of input device mutation an event records.
+///
+/// One ordered journal for every device (Kempston Mouse design §6.2, option (a)
+/// "discriminated union"): the ascending-time invariant and the replay merge stay
+/// trivially correct with a single stream.
+enum class TTDInputKind : uint8_t
+{
+    Key = 0,            ///< keyboard matrix press / release (key, pressed)
+    MouseMove,          ///< Kempston Mouse relative move (dx, dy; +y = up)
+    MouseButtons,       ///< Kempston Mouse button mask (buttonMask, active-low)
+    MouseWheel,         ///< Kempston Mouse wheel notches (wheelSteps)
+    MouseCounters,      ///< Kempston Mouse absolute X/Y counter write (dx = x, dy = y)
+    KeyboardReset       ///< whole keyboard matrix released (DebugKeyboardManager::ReleaseAllKeys)
+};
+
 struct TTDInputEvent
 {
     TTDTimePoint time;        ///< When the mutation was applied (frame + tInFrame)
-    uint8_t      key = 0;     ///< ZXKeysEnum value (cast at the boundary)
-    bool         pressed = false;  ///< true = press, false = release
+    TTDInputKind kind = TTDInputKind::Key;
+    uint8_t      key = 0;     ///< Key: ZXKeysEnum value (cast at the boundary)
+    bool         pressed = false;  ///< Key: true = press, false = release
+    int16_t      dx = 0;      ///< MouseMove: delta X; MouseCounters: X value
+    int16_t      dy = 0;      ///< MouseMove: delta Y; MouseCounters: Y value
+    uint8_t      buttonMask = 0xFF;  ///< MouseButtons: active-low mask
+    int8_t       wheelSteps = 0;     ///< MouseWheel: notches
 };
 
 /// @brief Append-only journal of TTDInputEvents, queryable by TTDTimePoint.
@@ -129,6 +150,10 @@ public:
     /// Defined out-of-line in the .cpp so the Keyboard type stays forward-
     /// declared in this header.
     size_t InjectDueEvents(Keyboard& keyboard, const TTDTimePoint& now);
+
+    /// @brief Inject every event with time == `now` into the live input devices.
+    /// A null device skips the events of its kind (they are not counted).
+    size_t InjectDueEvents(Keyboard* keyboard, Mouse* mouse, const TTDTimePoint& now);
 
     // -----------------------------------------------------------------------
     // Lifecycle (control thread; emulator paused)
