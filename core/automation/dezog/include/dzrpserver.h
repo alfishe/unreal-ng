@@ -1,5 +1,6 @@
 #pragma once
 
+#include "platform-sockets.h"
 #include "dzrptypes.h"
 #include "dzrpprotocol.h"
 #include <atomic>
@@ -165,7 +166,7 @@ public:
 
 private:
     void acceptLoop();
-    void sessionLoop(int clientSocket);
+    void sessionLoop(SOCKET clientSocket);
     Response handleCommand(const Command& cmd);
 
     // Command handlers
@@ -200,11 +201,11 @@ private:
     Response makeNak(uint8_t seqNo);
 
     // Send all bytes atomically (mutex-protected)
-    bool sendAll(int socket, const std::vector<uint8_t>& data);
+    bool sendAll(SOCKET socket, const std::vector<uint8_t>& data);
 
     IDebugInterface* m_debug;
     ServerConfig m_config;
-    int m_listenSocket = -1;
+    SOCKET m_listenSocket = INVALID_SOCKET;
     uint16_t m_actualPort = 0;
     std::atomic<bool> m_running{false};
     std::atomic<bool> m_stopRequested{false};
@@ -212,7 +213,7 @@ private:
 
     // Active session - protects both m_clientSocket and socket writes
     mutable std::mutex m_sessionMutex;
-    int m_clientSocket = -1;
+    SOCKET m_clientSocket = INVALID_SOCKET;
 
     // Breakpoint tracking (permanent breakpoints only - temp handled by IDebugInterface)
     std::unordered_map<uint16_t, uint16_t> m_breakpoints;  // id -> addr

@@ -73,6 +73,42 @@
     paths["/api/v1/emulator/{id}/state/audio/ay/{chip}"]["get"]["parameters"][1]["schema"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/state/audio/ay/{chip}"]["get"]["responses"]["200"]["description"] = "AY chip details";
 
+    paths["/api/v1/emulator/{id}/state/audio/fm"]["get"]["summary"] = "Get TurboSound FM overview";
+    paths["/api/v1/emulator/{id}/state/audio/fm"]["get"]["tags"].append("Audio State");
+    paths["/api/v1/emulator/{id}/state/audio/fm"]["get"]["description"] =
+        "TurboSound FM (2 x YM2203) board latches (selected chip, status-read mode, FM enable, trim) and a per-chip summary (prescaler, channel-3 mode, keyed/sounding channels, status byte). 404 when the slot device is the plain TurboSound. Same report as the CLI `state audio fm`, Lua `audio_fm_state()`, Python `audio_fm_state()` and MCP `inspect_state` aspect `audio_fm`.";
+    paths["/api/v1/emulator/{id}/state/audio/fm"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/state/audio/fm"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/state/audio/fm"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/state/audio/fm"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/state/audio/fm"]["get"]["responses"]["200"]["description"] = "Get TurboSound FM overview";
+
+    paths["/api/v1/emulator/{id}/state/audio/fm/{chip}"]["get"]["summary"] = "Get TurboSound FM chip details";
+    paths["/api/v1/emulator/{id}/state/audio/fm/{chip}"]["get"]["tags"].append("Audio State");
+    paths["/api/v1/emulator/{id}/state/audio/fm/{chip}"]["get"]["description"] =
+        "Full FM half of one YM2203: mode register (channel-3 normal/extended/CSM), timers A/B (values, periods, running, remaining T-states), busy, and every channel with block/F-number/frequency, feedback, algorithm, key-on mask, and each operator's registers (DT, MUL, TL, KS, AR, DR, SR, SL, RR, SSG-EG), pitch, live envelope state and attenuation, plus the last DAC word.";
+    paths["/api/v1/emulator/{id}/state/audio/fm/{chip}"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/state/audio/fm/{chip}"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/state/audio/fm/{chip}"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/state/audio/fm/{chip}"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/state/audio/fm/{chip}"]["get"]["parameters"][1]["name"] = "chip";
+    paths["/api/v1/emulator/{id}/state/audio/fm/{chip}"]["get"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/state/audio/fm/{chip}"]["get"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/state/audio/fm/{chip}"]["get"]["parameters"][1]["description"] = "FM chip index (0 or 1)";
+    paths["/api/v1/emulator/{id}/state/audio/fm/{chip}"]["get"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/state/audio/fm/{chip}"]["get"]["responses"]["200"]["description"] = "Get TurboSound FM chip details";
+
+    paths["/api/v1/emulator/{id}/state/fdc"]["get"]["summary"] = "Get Beta Disk WD1793 state";
+    paths["/api/v1/emulator/{id}/state/fdc"]["get"]["tags"].append("Disk State");
+    paths["/api/v1/emulator/{id}/state/fdc"]["get"]["description"] =
+        "WD1793 registers (command, track, sector, data, status), decoded status bits for the last command type, last command, FSM state, DRQ/INTRQ, Beta128 system register, density, selected drive and side, and all four drives (present, inserted, path, track, side, motor, write protect, image geometry). 404 on machines without a Beta Disk interface.";
+    paths["/api/v1/emulator/{id}/state/fdc"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/state/fdc"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/state/fdc"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/state/fdc"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/state/fdc"]["get"]["responses"]["200"]["description"] = "Get Beta Disk WD1793 state";
+
+
     paths["/api/v1/emulator/{id}/state/audio/ay/{chip}/register/{reg}"]["get"]["summary"] =
         "Get AY chip register details";
     paths["/api/v1/emulator/{id}/state/audio/ay/{chip}/register/{reg}"]["get"]["tags"].append("Audio State");
@@ -130,6 +166,22 @@
         "Audio channels information";
 
     // Active emulator endpoints (no ID required)
+    paths["/api/v1/emulator/state/audio/fm"]["get"]["summary"] = "Get TurboSound FM overview (active emulator)";
+    paths["/api/v1/emulator/state/audio/fm"]["get"]["tags"].append("Audio State (Active)");
+    paths["/api/v1/emulator/state/audio/fm"]["get"]["responses"]["200"]["description"] = "TurboSound FM overview";
+
+    paths["/api/v1/emulator/state/audio/fm/{chip}"]["get"]["summary"] = "Get TurboSound FM chip details (active emulator)";
+    paths["/api/v1/emulator/state/audio/fm/{chip}"]["get"]["tags"].append("Audio State (Active)");
+    paths["/api/v1/emulator/state/audio/fm/{chip}"]["get"]["parameters"][0]["name"] = "chip";
+    paths["/api/v1/emulator/state/audio/fm/{chip}"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/state/audio/fm/{chip}"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/state/audio/fm/{chip}"]["get"]["parameters"][0]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/state/audio/fm/{chip}"]["get"]["responses"]["200"]["description"] = "TurboSound FM chip details";
+
+    paths["/api/v1/emulator/state/fdc"]["get"]["summary"] = "Get Beta Disk WD1793 state (active emulator)";
+    paths["/api/v1/emulator/state/fdc"]["get"]["tags"].append("Disk State (Active)");
+    paths["/api/v1/emulator/state/fdc"]["get"]["responses"]["200"]["description"] = "WD1793 state";
+
     paths["/api/v1/emulator/state/audio/ay"]["get"]["summary"] = "Get AY chips overview (active emulator)";
     paths["/api/v1/emulator/state/audio/ay"]["get"]["tags"].append("Audio State (Active)");
     paths["/api/v1/emulator/state/audio/ay"]["get"]["responses"]["200"]["description"] = "AY chips information";

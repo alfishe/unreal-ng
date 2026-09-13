@@ -100,6 +100,14 @@ uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t port, uint16_t pc)
         disp.decodedPort = 0x00FE;
         disp.wasHandledInline = true;
     }
+    else if (uint8_t mouseReg = 0; Default_IsPort_KempstonMouse(port, mouseReg))
+    {
+        // Kempston Mouse (design §3.2: standard decode on machines without a documented deviation)
+        result = Default_Port_KempstonMouse_In(port, pc);
+        _lastPortDecoded = true;
+        disp.decodedPort = port;
+        disp.wasHandledInline = true;
+    }
     else
     {
         result = PeripheralPortIn(port);

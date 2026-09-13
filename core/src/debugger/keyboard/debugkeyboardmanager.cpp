@@ -48,6 +48,32 @@ DebugKeyboardManager::~DebugKeyboardManager()
 /// endregion </Constructors / Destructors>
 
 
+/// region <Journalled matrix mutation>
+
+/// The one place every automation path changes the matrix: refused during TTD replay
+/// (the journal injects recorded events instead) and journalled BEFORE the change while
+/// TTD records. Timed operations (tap, combo, type, sequences) used to call Keyboard
+/// directly and were missing from the journal.
+bool DebugKeyboardManager::ApplyKey(ZXKeysEnum key, bool pressed)
+{
+    if (key == ZXKEY_NONE || !_keyboard)
+        return false;
+
+    if (_context && _context->ttdReplayActive)
+        return false;
+
+    if (_context && _context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording())
+        _context->pTimeTravelManager->RecordInputEvent(static_cast<uint8_t>(key), pressed);
+
+    if (pressed)
+        _keyboard->PressKey(key);
+    else
+        _keyboard->ReleaseKey(key);
+    return true;
+}
+
+/// endregion </Journalled matrix mutation>
+
 /// region <Single Key Operations>
 
 void DebugKeyboardManager::PressKey(ZXKeysEnum key)
@@ -55,30 +81,16 @@ void DebugKeyboardManager::PressKey(ZXKeysEnum key)
     if (key == ZXKEY_NONE)
         return;
 
-    // TTD silent-replay suppression (parent TDD §8.2 + Appendix C).
-    // Live keyboard input must not mutate the matrix during replay — the
-    // input journal injects recorded events at their timestamps instead
-    // (Phase 2 Item 3). Without this guard, any user input during a seek
-    // would diverge the replay from the captured history.
+    // TTD silent-replay suppression (parent TDD §8.2 + Appendix C) and journal
+    // capture (Phase 2 Item 3) both live in ApplyKey. Live input must not mutate
+    // the matrix during replay.
     if (_context && _context->ttdReplayActive)
         return;
-
-    // TTD input journal capture (parent TDD §5 row #1, Phase 2 Item 3).
-    // Record BEFORE applying — the journal entry's TTDTimePoint is the
-    // moment of mutation, which is exactly this call. TimeTravelManager
-    // derives the timepoint from EmulatorState internally.
-    if (_context && _context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording())
-    {
-        _context->pTimeTravelManager->RecordInputEvent(static_cast<uint8_t>(key), /*pressed=*/true);
-    }
 
     // Track in our direct press set
     _directPressedKeys.insert(key);
 
-    if (_keyboard)
-    {
-        _keyboard->PressKey(key);
-    }
+    ApplyKey(key, /*pressed=*/true);
 }
 
 void DebugKeyboardManager::PressKey(const std::string& keyName)
@@ -91,23 +103,14 @@ void DebugKeyboardManager::ReleaseKey(ZXKeysEnum key)
     if (key == ZXKEY_NONE)
         return;
 
-    // TTD silent-replay suppression (parent TDD §8.2 + Appendix C).
+    // TTD silent-replay suppression + journal capture: see ApplyKey
     if (_context && _context->ttdReplayActive)
         return;
-
-    // TTD input journal capture (Phase 2 Item 3).
-    if (_context && _context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording())
-    {
-        _context->pTimeTravelManager->RecordInputEvent(static_cast<uint8_t>(key), /*pressed=*/false);
-    }
 
     // Remove from our direct press set
     _directPressedKeys.erase(key);
 
-    if (_keyboard)
-    {
-        _keyboard->ReleaseKey(key);
-    }
+    ApplyKey(key, /*pressed=*/false);
 }
 
 void DebugKeyboardManager::ReleaseKey(const std::string& keyName)
@@ -135,21 +138,27 @@ void DebugKeyboardManager::TapKey(const std::string& keyName, uint16_t holdFrame
 
 void DebugKeyboardManager::ReleaseAllKeys()
 {
+    std::lock_guard<std::recursive_mutex> lock(_sequenceMutex);
+
     // Clear direct pressed keys
     _directPressedKeys.clear();
     
     // Release tap-held keys
     for (ZXKeysEnum key : _tapHeldKeys)
     {
-        if (_keyboard)
-            _keyboard->ReleaseKey(key);
+        ApplyKey(key, /*pressed=*/false);
     }
     _tapHeldKeys.clear();
     _inTapHoldPhase = false;
     
-    // Reset keyboard state
-    if (_keyboard)
+    // Whole-matrix reset (also clears host press counters), journalled as one event so a
+    // replay reaches the same all-released matrix
+    if (_keyboard && !(_context && _context->ttdReplayActive))
+    {
+        if (_context && _context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording())
+            _context->pTimeTravelManager->RecordKeyboardReset();
         _keyboard->Reset();
+    }
 }
 
 /// endregion </Single Key Operations>
@@ -164,10 +173,7 @@ void DebugKeyboardManager::PressCombo(const std::vector<ZXKeysEnum>& keys)
     
     for (ZXKeysEnum key : keys)
     {
-        if (key != ZXKEY_NONE)
-        {
-            _keyboard->PressKey(key);
-        }
+        ApplyKey(key, /*pressed=*/true);
     }
 }
 
@@ -190,10 +196,7 @@ void DebugKeyboardManager::ReleaseCombo(const std::vector<ZXKeysEnum>& keys)
     // Release in reverse order (modifier last)
     for (auto it = keys.rbegin(); it != keys.rend(); ++it)
     {
-        if (*it != ZXKEY_NONE)
-        {
-            _keyboard->ReleaseKey(*it);
-        }
+        ApplyKey(*it, /*pressed=*/false);
     }
 }
 
@@ -238,6 +241,8 @@ void DebugKeyboardManager::TapCombo(const std::vector<std::string>& keyNames, ui
 
 void DebugKeyboardManager::ExecuteSequence(const KeyboardSequence& sequence)
 {
+    std::lock_guard<std::recursive_mutex> lock(_sequenceMutex);
+
     // Clear any existing pending events
     AbortSequence();
     
@@ -268,6 +273,9 @@ bool DebugKeyboardManager::ExecuteNamedSequence(const std::string& name)
 
 void DebugKeyboardManager::QueueSequence(const KeyboardSequence& sequence)
 {
+    // Automation thread queues, the emulator thread consumes in OnFrame
+    std::lock_guard<std::recursive_mutex> lock(_sequenceMutex);
+
     // Add events to existing queue
     if (!_currentSequenceName.has_value())
     {
@@ -288,11 +296,14 @@ void DebugKeyboardManager::QueueSequence(const KeyboardSequence& sequence)
 
 bool DebugKeyboardManager::IsSequenceRunning() const
 {
+    std::lock_guard<std::recursive_mutex> lock(_sequenceMutex);
     return !_eventQueue.empty() || _inTapHoldPhase || _frameCountdown > 0;
 }
 
 void DebugKeyboardManager::AbortSequence()
 {
+    std::lock_guard<std::recursive_mutex> lock(_sequenceMutex);
+
     // Clear queue
     while (!_eventQueue.empty())
     {
@@ -302,10 +313,7 @@ void DebugKeyboardManager::AbortSequence()
     // Release any held keys
     for (ZXKeysEnum key : _tapHeldKeys)
     {
-        if (_keyboard)
-        {
-            _keyboard->ReleaseKey(key);
-        }
+        ApplyKey(key, /*pressed=*/false);
     }
     _tapHeldKeys.clear();
     
@@ -316,6 +324,7 @@ void DebugKeyboardManager::AbortSequence()
 
 std::string DebugKeyboardManager::GetCurrentSequenceName() const
 {
+    std::lock_guard<std::recursive_mutex> lock(_sequenceMutex);
     return _currentSequenceName.value_or("");
 }
 
@@ -656,6 +665,8 @@ std::vector<std::string> DebugKeyboardManager::GetAllKeyNames()
 
 void DebugKeyboardManager::OnFrame()
 {
+    std::lock_guard<std::recursive_mutex> lock(_sequenceMutex);
+
     // Decrement countdown if active
     if (_frameCountdown > 0)
     {
@@ -672,10 +683,7 @@ void DebugKeyboardManager::OnFrame()
                 // This prevents the lone P from being seen without modifier
                 for (auto it = _tapHeldKeys.rbegin(); it != _tapHeldKeys.rend(); ++it)
                 {
-                    if (_keyboard)
-                    {
-                        _keyboard->ReleaseKey(*it);
-                    }
+                    ApplyKey(*it, /*pressed=*/false);
                 }
                 _tapHeldKeys.clear();
                 _inTapHoldPhase = false;
@@ -897,7 +905,7 @@ void DebugKeyboardManager::ExecuteEvent(const KeyboardSequenceEvent& event)
         case KeyboardSequenceEvent::Action::PRESS:
             for (ZXKeysEnum key : event.keys)
             {
-                _keyboard->PressKey(key);
+                ApplyKey(key, /*pressed=*/true);
             }
             _frameCountdown = event.frames;
             break;
@@ -905,7 +913,7 @@ void DebugKeyboardManager::ExecuteEvent(const KeyboardSequenceEvent& event)
         case KeyboardSequenceEvent::Action::RELEASE:
             for (ZXKeysEnum key : event.keys)
             {
-                _keyboard->ReleaseKey(key);
+                ApplyKey(key, /*pressed=*/false);
             }
             _frameCountdown = event.frames;
             break;
@@ -915,7 +923,7 @@ void DebugKeyboardManager::ExecuteEvent(const KeyboardSequenceEvent& event)
             // Press all keys
             for (ZXKeysEnum key : event.keys)
             {
-                _keyboard->PressKey(key);
+                ApplyKey(key, /*pressed=*/true);
                 _tapHeldKeys.push_back(key);
             }
             _inTapHoldPhase = true;
@@ -925,7 +933,7 @@ void DebugKeyboardManager::ExecuteEvent(const KeyboardSequenceEvent& event)
         case KeyboardSequenceEvent::Action::COMBO_PRESS:
             for (ZXKeysEnum key : event.keys)
             {
-                _keyboard->PressKey(key);
+                ApplyKey(key, /*pressed=*/true);
             }
             _frameCountdown = event.frames;
             break;
@@ -934,7 +942,7 @@ void DebugKeyboardManager::ExecuteEvent(const KeyboardSequenceEvent& event)
             // Release in reverse order
             for (auto it = event.keys.rbegin(); it != event.keys.rend(); ++it)
             {
-                _keyboard->ReleaseKey(*it);
+                ApplyKey(*it, /*pressed=*/false);
             }
             _frameCountdown = event.frames;
             break;

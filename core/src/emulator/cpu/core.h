@@ -5,6 +5,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/hdd/hdd.h"
 #include "emulator/io/keyboard/keyboard.h"
+#include "emulator/io/mouse/mouse.h"
 #include "emulator/memory/memory.h"
 #include "emulator/memory/rom.h"
 #include "emulator/ports/ports.h"
@@ -52,6 +53,7 @@ protected:
     PortDecoder* _portDecoder = nullptr;
     ROM* _rom = nullptr;
     Keyboard* _keyboard = nullptr;
+    Mouse* _mouse = nullptr;
     Tape* _tape = nullptr;
     TapeFastLoad* _tapeFastLoad = nullptr;
     TapeTurboController* _tapeTurboController = nullptr;

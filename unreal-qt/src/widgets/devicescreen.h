@@ -9,6 +9,7 @@
 #include "emulator/video/screen.h"  // For DisplayViewport
 
 class Emulator;  // Forward declaration
+class MouseManager;
 
 namespace Ui
 {
@@ -55,10 +56,8 @@ public slots:
     void prepareForShutdown();  // Block refreshes during shutdown
 
 public:
-    void setEmulator(std::shared_ptr<Emulator> emulator)
-    {
-        _emulator = emulator;
-    }
+    /// Also retargets Kempston Mouse input (capture is released on change)
+    void setEmulator(std::shared_ptr<Emulator> emulator);
 
     void setDisplayViewport(const DisplayViewport& viewport)
     {
@@ -79,12 +78,23 @@ public:
         update();
     }
 
+    void setMouseCaptured(bool captured);
+    bool isMouseCaptured() const;
+    MouseManager* mouseManager() const { return _mouseManager; }
+
+    /// Framebuffer area currently drawn into the widget (viewport-cropped), in emulated pixels
+    QRectF displaySourceRect() const;
+
 protected:
     void paintEvent(QPaintEvent* event) override;
 
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
+    void focusOutEvent(QFocusEvent* event) override;
 
     void resizeEvent(QResizeEvent* event) override;
     using QWidget::heightForWidth;  // Bring method declaration from QWidget
@@ -106,6 +116,8 @@ private:
     // Viewport cropping for overscan mode
     DisplayViewport _displayViewport;
     bool _hasViewport = false;
+
+    MouseManager* _mouseManager = nullptr;  // Kempston Mouse host input (owned via QObject parent)
 };
 
 #endif  // DEVICESCREEN_H

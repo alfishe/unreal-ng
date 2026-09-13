@@ -16,6 +16,7 @@
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include "../../../automation.h"
 #include <debugger/debugmanager.h>
+#include <debugger/mouse/debugmousemanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
@@ -29,6 +30,7 @@
 #include <debugger/assembler/z80textassembler.h>
 #include <debugger/listing/listingparser.h>
 #include <emulator/platform.h>
+#include <emulator/state/devicestate.h>
 #include <emulator/video/screendigest.h>
 #include <base/featuremanager.h>
 #ifdef ENABLE_RECORDING
@@ -39,12 +41,43 @@
 #endif
 #include <3rdparty/tinywav/tinywav.h>
 #include <cctype>
+#include <climits>
 #include <cmath>
+#include <cstdio>
 #include <chrono>
 #include <fstream>
 #include <optional>
 #include <string>
 #include <thread>
+
+/// StateNode -> Lua table (objects keep their keys, arrays become 1-based
+/// sequences). The one converter Lua needs for every DeviceState report.
+inline sol::object StateNodeToLua(sol::this_state s, const StateNode& node)
+{
+    sol::state_view lua(s);
+    switch (node.kind)
+    {
+        case StateNode::Kind::Bool: return sol::make_object(lua, node.b);
+        case StateNode::Kind::Int: return sol::make_object(lua, node.i);
+        case StateNode::Kind::Double: return sol::make_object(lua, node.d);
+        case StateNode::Kind::String: return sol::make_object(lua, node.s);
+        case StateNode::Kind::Object:
+        {
+            sol::table t = lua.create_table();
+            for (const auto& m : node.members)
+                t[m.first] = StateNodeToLua(s, m.second);
+            return t;
+        }
+        case StateNode::Kind::Array:
+        {
+            sol::table t = lua.create_table();
+            for (size_t i = 0; i < node.items.size(); i++)
+                t[i + 1] = StateNodeToLua(s, node.items[i]);
+            return t;
+        }
+        default: return sol::make_object(lua, sol::lua_nil);
+    }
+}
 
 class LuaEmulator
 {
@@ -100,6 +133,112 @@ protected:
         bool _wasRunning;
     };
     /// endregion </Fields>
+
+    /// region <Kempston Mouse helpers (automation-interfaces §4.7)>
+protected:
+    DebugMouseManager* mouseManager() const
+    {
+        Emulator* emu = effectiveEmulator();
+        EmulatorContext* ctx = emu ? emu->GetContext() : nullptr;
+        return (ctx && ctx->pDebugManager) ? ctx->pDebugManager->GetMouseManager() : nullptr;
+    }
+
+    /// Integral Lua number -> long long. Rejects nil, strings and 1.5 (sol2 would truncate silently).
+    static bool mouseIntArg(const sol::object& obj, const char* name, long long minValue, long long maxValue,
+                            long long& out, std::string& error)
+    {
+        if (obj.get_type() == sol::type::number)
+        {
+            const double value = obj.as<double>();
+            if (std::isfinite(value) && std::trunc(value) == value && value >= -9007199254740992.0 &&
+                value <= 9007199254740992.0)
+            {
+                const long long integral = static_cast<long long>(value);
+                if (integral >= minValue && integral <= maxValue)
+                {
+                    out = integral;
+                    return true;
+                }
+            }
+        }
+        error = std::string(name) + " must be an integer";
+        return false;
+    }
+
+    static sol::variadic_results mouseError(sol::this_state s, const std::string& message)
+    {
+        sol::variadic_results results;
+        results.push_back(sol::make_object(s, sol::lua_nil));
+        results.push_back(sol::make_object(s, message));
+        return results;
+    }
+
+    /// State table: same keys as the WebAPI state object
+    static sol::table mouseStateTable(sol::this_state s, const MouseStateSnapshot& state,
+                                      const std::string& warning = "")
+    {
+        sol::state_view lua(s);
+        sol::table buttons = lua.create_table();
+        buttons["left"] = state.IsPressed(MouseButton::Left);
+        buttons["right"] = state.IsPressed(MouseButton::Right);
+        buttons["middle"] = state.IsPressed(MouseButton::Middle);
+
+        auto hex = [](uint8_t value) {
+            char text[8];
+            std::snprintf(text, sizeof(text), "0x%02X", value);
+            return std::string(text);
+        };
+        sol::table ports = lua.create_table();
+        ports["FADF"] = static_cast<int>(state.portButtons);  // integers, same as the WebAPI
+        ports["FBDF"] = static_cast<int>(state.portX);  // integers, same as the WebAPI
+        ports["FFDF"] = static_cast<int>(state.portY);  // integers, same as the WebAPI
+
+        sol::table t = lua.create_table();
+        t["x"] = state.x;
+        t["y"] = state.y;
+        t["buttons"] = buttons;
+        t["button_mask"] = state.buttonMask;
+        t["wheel"] = state.wheel;
+        t["wheel_enabled"] = state.wheelEnabled;
+        t["present"] = state.present;
+        t["ports"] = ports;
+        if (state.pendingClickButton.has_value())
+        {
+            sol::table pending = lua.create_table();
+            pending["button"] = DebugMouseManager::GetButtonName(*state.pendingClickButton);
+            pending["frames_left"] = state.pendingClickFramesLeft;
+            t["pending_click"] = pending;
+        }
+        t["ttd_journal"] = state.journalSupported ? "supported" : "unsupported";
+        if (!warning.empty())
+            t["warning"] = warning;
+        return t;
+    }
+
+    static sol::variadic_results mouseResult(sol::this_state s, DebugMouseManager& mgr,
+                                             const MouseInjectResult& result)
+    {
+        if (!result.ok())
+            return mouseError(s, result.message);
+        sol::variadic_results results;
+        results.push_back(sol::make_object(s, mouseStateTable(s, mgr.GetState(), result.warning)));
+        return results;
+    }
+
+    static std::optional<MouseButton> mouseButtonArg(const sol::object& obj, std::string& error)
+    {
+        if (obj.get_type() == sol::type::string)
+        {
+            const std::string name = obj.as<std::string>();
+            if (auto button = DebugMouseManager::ResolveButtonName(name))
+                return button;
+            error = "Unknown mouse button '" + name + "'. Valid: left, right, middle (or l, r, m)";
+            return std::nullopt;
+        }
+        error = "button must be a string (left, right, middle or l, r, m)";
+        return std::nullopt;
+    }
+    /// endregion </Kempston Mouse helpers>
 
     /// region <Constructors / destructors>
 public:
@@ -902,6 +1041,137 @@ public:
             return ret;
         });
 
+        // Mouse injection (Kempston Mouse, automation-interfaces §4.7)
+        // Target: effectiveEmulator() (bound instance, else the selected one).
+        // Success returns the state table; failure returns nil, "message".
+        lua.set_function("mouse_move", [this](sol::this_state s, sol::object dxArg, sol::object dyArg) {
+            DebugMouseManager* mgr = mouseManager();
+            if (!mgr)
+                return mouseError(s, "mouse manager not available");
+            std::string error;
+            long long dx = 0;
+            long long dy = 0;
+            if (!mouseIntArg(dxArg, "dx", INT_MIN, INT_MAX, dx, error) ||
+                !mouseIntArg(dyArg, "dy", INT_MIN, INT_MAX, dy, error))
+                return mouseError(s, error);
+            return mouseResult(s, *mgr, mgr->Move(static_cast<int>(dx), static_cast<int>(dy)));
+        });
+
+        lua.set_function("mouse_press", [this](sol::this_state s, sol::object buttonArg) {
+            DebugMouseManager* mgr = mouseManager();
+            if (!mgr)
+                return mouseError(s, "mouse manager not available");
+            std::string error;
+            auto button = mouseButtonArg(buttonArg, error);
+            if (!button)
+                return mouseError(s, error);
+            return mouseResult(s, *mgr, mgr->PressButton(*button));
+        });
+
+        lua.set_function("mouse_release", [this](sol::this_state s, sol::object buttonArg) {
+            DebugMouseManager* mgr = mouseManager();
+            if (!mgr)
+                return mouseError(s, "mouse manager not available");
+            std::string error;
+            auto button = mouseButtonArg(buttonArg, error);
+            if (!button)
+                return mouseError(s, error);
+            return mouseResult(s, *mgr, mgr->ReleaseButton(*button));
+        });
+
+        lua.set_function("mouse_click", [this](sol::this_state s, sol::object buttonArg, sol::object framesArg) {
+            DebugMouseManager* mgr = mouseManager();
+            if (!mgr)
+                return mouseError(s, "mouse manager not available");
+            std::string error;
+            auto button = mouseButtonArg(buttonArg, error);
+            if (!button)
+                return mouseError(s, error);
+            long long frames = DebugMouseManager::DEFAULT_CLICK_FRAMES;
+            if (framesArg.valid() && framesArg.get_type() != sol::type::lua_nil &&
+                !mouseIntArg(framesArg, "frames", LLONG_MIN, LLONG_MAX, frames, error))
+                return mouseError(s, error);
+            if (frames < 0 || frames > static_cast<long long>(UINT32_MAX))
+                return mouseError(s, "frames=" + std::to_string(frames) + " out of range 1.." +
+                                         std::to_string(DebugMouseManager::MAX_CLICK_FRAMES));
+            return mouseResult(s, *mgr, mgr->Click(*button, static_cast<uint32_t>(frames)));
+        });
+
+        lua.set_function("mouse_buttons", [this](sol::this_state s, sol::object pressedArg) {
+            DebugMouseManager* mgr = mouseManager();
+            if (!mgr)
+                return mouseError(s, "mouse manager not available");
+            uint8_t bits = 0;
+            if (pressedArg.get_type() != sol::type::lua_nil)
+            {
+                if (pressedArg.get_type() != sol::type::table)
+                    return mouseError(s, "pressed must be a table of button names ({} = none)");
+                sol::table pressed = pressedArg.as<sol::table>();
+                std::string error;
+                for (size_t i = 1; i <= pressed.size(); ++i)
+                {
+                    sol::object item = pressed[i];
+                    auto button = mouseButtonArg(item, error);
+                    if (!button)
+                        return mouseError(s, error);
+                    bits |= static_cast<uint8_t>(*button);
+                }
+            }
+            return mouseResult(s, *mgr, mgr->SetPressedButtons(bits));
+        });
+
+        lua.set_function("mouse_wheel", [this](sol::this_state s, sol::object stepsArg) {
+            DebugMouseManager* mgr = mouseManager();
+            if (!mgr)
+                return mouseError(s, "mouse manager not available");
+            std::string error;
+            long long steps = 0;
+            if (!mouseIntArg(stepsArg, "steps", INT_MIN, INT_MAX, steps, error))
+                return mouseError(s, error);
+            return mouseResult(s, *mgr, mgr->Wheel(static_cast<int>(steps)));
+        });
+
+        lua.set_function("mouse_release_all", [this](sol::this_state s) {
+            DebugMouseManager* mgr = mouseManager();
+            if (!mgr)
+                return mouseError(s, "mouse manager not available");
+            return mouseResult(s, *mgr, mgr->ReleaseAllButtons());
+        });
+
+        lua.set_function("mouse_set_counters", [this](sol::this_state s, sol::object xArg, sol::object yArg) {
+            DebugMouseManager* mgr = mouseManager();
+            if (!mgr)
+                return mouseError(s, "mouse manager not available");
+            std::string error;
+            long long x = 0;
+            long long y = 0;
+            if (!mouseIntArg(xArg, "x", INT_MIN, INT_MAX, x, error) ||
+                !mouseIntArg(yArg, "y", INT_MIN, INT_MAX, y, error))
+                return mouseError(s, error);
+            return mouseResult(s, *mgr, mgr->SetCounters(static_cast<int>(x), static_cast<int>(y)));
+        });
+
+        lua.set_function("mouse_status", [this](sol::this_state s) {
+            DebugMouseManager* mgr = mouseManager();
+            if (!mgr)
+                return mouseError(s, "mouse manager not available");
+            const MouseStateSnapshot state = mgr->GetState();
+            if (!state.available)
+                return mouseError(s, "Mouse device not available");
+            sol::variadic_results results;
+            results.push_back(sol::make_object(s, mouseStateTable(s, state)));
+            return results;
+        });
+
+        lua.set_function("mouse_click_pending", [this]() -> bool {
+            DebugMouseManager* mgr = mouseManager();
+            return mgr && mgr->IsClickPending();
+        });
+
+        lua.set_function("mouse_button_names", []() -> sol::as_table_t<std::vector<std::string>> {
+            return sol::as_table(DebugMouseManager::GetAllButtonNames());
+        });
+
         // Snapshot operations
         lua.set_function("snapshot_load", [this](const std::string& path) -> bool {
             if (!_emulator) return false;
@@ -1364,6 +1634,22 @@ public:
             auto* ctx = _emulator->GetContext();
             if (!ctx || !ctx->pScreen) return 0;
             return ctx->pScreen->GetActiveScreen();
+        });
+
+        // Device state reports (core DeviceState: the same trees the WebAPI,
+        // Python, CLI and MCP return). Optional chip index -> the chip's
+        // full report, no index -> the overview
+        lua.set_function("audio_ay_state", [this](sol::this_state s, sol::optional<int> chip) -> sol::object {
+            EmulatorContext* ctx = _emulator ? _emulator->GetContext() : nullptr;
+            return StateNodeToLua(s, chip ? DeviceState::AyChip(ctx, *chip) : DeviceState::Ay(ctx));
+        });
+        lua.set_function("audio_fm_state", [this](sol::this_state s, sol::optional<int> chip) -> sol::object {
+            EmulatorContext* ctx = _emulator ? _emulator->GetContext() : nullptr;
+            return StateNodeToLua(s, chip ? DeviceState::FmChip(ctx, *chip) : DeviceState::Fm(ctx));
+        });
+        lua.set_function("fdc_state", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = _emulator ? _emulator->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::Fdc(ctx));
         });
 
         // Audio state

@@ -215,6 +215,8 @@ private:
     void HandleStateAudioAYRegister(const ClientSession& session, EmulatorContext* context, const std::string& chipStr,
                                     const std::string& regStr);
     void HandleStateAudioBeeper(const ClientSession& session, EmulatorContext* context);
+    void HandleStateAudioFM(const ClientSession& session, EmulatorContext* context, const std::string& chipArg);
+    void HandleStateFdc(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioGS(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioCovox(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioChannels(const ClientSession& session, EmulatorContext* context);
@@ -230,6 +232,10 @@ private:
     void HandleKeyType(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleKeyList(const ClientSession& session);
     void HandleKeyClear(const ClientSession& session, EmulatorContext* context);
+
+    // Kempston Mouse injection command handlers (cli-processor-mouse.cpp)
+    void HandleMouse(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowMouseHelp(const ClientSession& session);
 
     // Videowall commands
     void HandleVideowall(const ClientSession& session, const std::vector<std::string>& args);

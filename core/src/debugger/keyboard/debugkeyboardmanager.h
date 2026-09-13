@@ -9,6 +9,7 @@
 #include <map>
 #include <set>
 #include <optional>
+#include <mutex>
 
 class EmulatorContext;
 class Keyboard;
@@ -103,6 +104,11 @@ private:
     /// Sequence currently being executed
     std::optional<std::string> _currentSequenceName;
     
+    /// Guards the sequence state (queue, countdown, held keys): automation threads queue and
+    /// abort, the emulator thread advances it in OnFrame. Recursive: queueing starts the first
+    /// event, which may release all keys.
+    mutable std::recursive_mutex _sequenceMutex;
+
     /// Predefined macro library
     static std::map<std::string, KeyboardSequence> _macroLibrary;
     static bool _macrosInitialized;
@@ -285,6 +291,10 @@ private:
     
     /// Execute a single event immediately
     void ExecuteEvent(const KeyboardSequenceEvent& event);
+
+    /// Journalled matrix mutation shared by every path (replay guard + TTD journal + apply)
+    /// @return false when refused (replay active, no keyboard, ZXKEY_NONE)
+    bool ApplyKey(ZXKeysEnum key, bool pressed);
     
     /// Get TR-DOS E-mode key for a keyword
     /// @param keyword Keyword name (uppercase)

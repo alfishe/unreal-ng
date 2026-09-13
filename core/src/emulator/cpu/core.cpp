@@ -141,6 +141,22 @@ bool Core::Init()
 
     /// endregion </Keyboard>
 
+    /// region <Mouse>
+
+    if (result)
+    {
+        result = false;
+
+        _mouse = new Mouse(_context);
+        if (_mouse)
+        {
+            _context->pMouse = _mouse;
+            result = true;
+        }
+    }
+
+    /// endregion </Mouse>
+
     /// region <Tape>
 
     if (result)
@@ -465,6 +481,13 @@ void Core::Release()
         _keyboard = nullptr;
     }
 
+    _context->pMouse = nullptr;
+    if (_mouse != nullptr)
+    {
+        delete _mouse;
+        _mouse = nullptr;
+    }
+
     if (_rom != nullptr)
     {
         delete _rom;
@@ -540,6 +563,9 @@ void Core::Reset()
     _z80->Reset();               // Main Z80
     _memory->Reset();            // Memory
     _keyboard->Reset();          // Keyboard
+    if (_mouse)
+        _mouse->ApplyConfiguration();  // Kempston Mouse fitting (Mouse=, Wheel=); counters are power-on
+                                       // only - RESET does not reach the interface (MiSTer mouse.v: cold_reset)
     _sound->reset();             // All sound devices (AY(s), COVOX, MoonSound, GS) and sound subsystem
     _screen->Reset();            // Reset all video subsystem
     _tape->reset();              // Reset tape loader state
