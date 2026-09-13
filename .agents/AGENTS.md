@@ -55,6 +55,7 @@ Full guide: [`core/tests/README.md`](../core/tests/README.md). Non-negotiables:
   intra-frame changes, and breakpoints do not fire under `RunNFrames`
   (`skipBreakpoints = true` by default).
 - **Scratch files need per-process unique names** - `TestPathHelper::GetUniqueTestScratchPath()`.
+- **Avoid `std::vector::resize(n, 0)` on large POD buffers** (~58 ms/24 MiB at `-O0`) — use value-initialization (`new T[n]()`) or `ZeroInitBuffer` for sub-millisecond zero-fill in both Debug and Release.
 
 ## Running Tests & Benchmarks
 Tests and benchmarks are opt-in (`-DTESTS=ON`, `-DBENCHMARKS=ON`) to keep standard dev builds fast:

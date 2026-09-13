@@ -210,7 +210,18 @@ TEST(TapeAudioImporter_Test, RomTapeExportsToTapAndBack)
     EXPECT_EQ(roundTripped.blocks[1].data, DataBlock(300));
 }
 
-TEST(TapeAudioImporter_Test, FlacRoundTripOrHonestSkip)
+// Disabled: depends on ffmpeg being installed on the build machine.
+//
+// A unit test must not change behaviour with the contents of $PATH. These
+// spawned an external encoder, so on one machine they exercised the ffmpeg
+// path and on another they silently skipped (or, for the renderer, asserted a
+// different branch entirely) - the suite reported green either way while
+// covering different code. That is an integration test, and it belongs
+// wherever ffmpeg can be a declared prerequisite, not in core-tests.
+//
+// Still runnable on demand:
+//   ./bin/core-tests --gtest_also_run_disabled_tests --gtest_filter='*Flac*:*Mp3*'
+TEST(TapeAudioImporter_Test, DISABLED_FlacRoundTripOrHonestSkip)
 {
     if (!FFmpegProbe::isAvailable())
     {
@@ -245,7 +256,18 @@ TEST(TapeAudioImporter_Test, FlacRoundTripOrHonestSkip)
     EXPECT_EQ(roundTripped.blocks[1].data, DataBlock(300));
 }
 
-TEST(TapeAudioImporter_Test, Mp3ImportSurvivesLossyEncoding)
+// Disabled: depends on ffmpeg being installed on the build machine.
+//
+// A unit test must not change behaviour with the contents of $PATH. These
+// spawned an external encoder, so on one machine they exercised the ffmpeg
+// path and on another they silently skipped (or, for the renderer, asserted a
+// different branch entirely) - the suite reported green either way while
+// covering different code. That is an integration test, and it belongs
+// wherever ffmpeg can be a declared prerequisite, not in core-tests.
+//
+// Still runnable on demand:
+//   ./bin/core-tests --gtest_also_run_disabled_tests --gtest_filter='*Flac*:*Mp3*'
+TEST(TapeAudioImporter_Test, DISABLED_Mp3ImportSurvivesLossyEncoding)
 {
     if (!FFmpegProbe::isAvailable())
     {
