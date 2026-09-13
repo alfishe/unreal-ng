@@ -20,10 +20,13 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+
+#include "_helpers/testwaithelper.h"
 
 #include <chrono>
 #include <condition_variable>
@@ -61,12 +64,39 @@ protected:
         _emulator->Reset();
 
         _emulator->StartAsync();
-        for (int i = 0; i < 50 && _emulator->GetState() != StateRun; ++i)
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        ASSERT_EQ(_emulator->GetState(), StateRun);
+        ASSERT_TRUE(TestWait::For([this] { return _emulator->GetState() == StateRun; },
+                                  std::chrono::milliseconds(500)))
+            << "emulator thread did not reach StateRun";
 
         _emulator->Pause();
         ASSERT_TRUE(_emulator->IsPaused());
+
+        // Park on a frame boundary.
+        //
+        // Load-bearing, not tidiness. Pause() stops the emulator thread
+        // wherever it has reached - including mid-frame, via the pause check
+        // inside Z80FrameCycle - and TTD decodes history per frame, so the
+        // in-frame offset at which a session opens decides how many
+        // instructions sit behind its baseline. That depth is exactly what the
+        // history-walk tests assert on. Left to Pause() alone it was
+        // 1849 / 2332 / 3058 entries, different every run; the old
+        // `sleep 10 ms until StateRun` loop had been supplying a consistent
+        // offset by accident, at 10-20 ms per fixture across 86 of them.
+        //
+        // RunFrame() and RunNFrames() do NOT do this: both advance a whole
+        // frame's worth of T-states and so preserve the in-frame offset
+        // (measured: t stayed at 65913 / 26489 / 30479 across runs).
+        // RunTStates() with the remainder is what actually lands on the
+        // boundary - t settles at 5 every run, the residue of the instruction
+        // that crosses it, and history depth is a stable 7 entries.
+        {
+            Z80* z80 = _emulator->GetContext()->pCore->GetZ80();
+            const uint32_t frameTStates = _emulator->GetContext()->config.frame;
+            ASSERT_GT(frameTStates, 0u) << "config.frame not set - cannot align to a frame boundary";
+
+            if (const uint32_t inFrame = z80->t % frameTStates)
+                _emulator->RunTStates(frameTStates - inFrame);
+        }
 
         _adapter = std::make_unique<DezogDebugAdapter>(_emulator);
         _adapter->setPauseNotifier([this](dzrp::BreakReason reason, uint16_t addr, uint8_t bank) {
@@ -130,6 +160,65 @@ protected:
     {
         std::lock_guard<std::mutex> lock(_eventMutex);
         return _events.size();
+    }
+
+    /// @brief Prove no further pause event arrives within `settle`.
+    ///
+    /// The negative counterpart of waitForEvent, and the reason the tests below
+    /// no longer sleep before an `EXPECT_EQ(pendingEvents(), 0)`. A fixed sleep
+    /// was wrong in both directions: it always paid its full length, and it
+    /// still only proved "nothing arrived in the interval I guessed". This
+    /// waits on the same condition variable, so a stray event ends the wait
+    /// immediately (fast, informative failure) while the passing path costs the
+    /// settle window once.
+    bool noFurtherEvents(std::chrono::milliseconds settle = std::chrono::milliseconds(10))
+    {
+        std::unique_lock<std::mutex> lock(_eventMutex);
+        return !_eventCv.wait_for(lock, settle, [this] { return !_events.empty(); });
+    }
+
+    /// @brief Number of complete frames the emulated machine has run.
+    uint64_t frameCounter() const { return _emulator->GetContext()->emulatorState.frame_counter; }
+
+    /// @brief Let the machine free-run for `frames` complete frames, then pause.
+    ///
+    /// Replaces `Resume(); sleep_for(N ms); Pause();`. The old form specified
+    /// the thing it did not care about (wall-clock time) and left the thing it
+    /// did care about (how many frames, hence how much history accrued) to the
+    /// machine's load - so the same test recorded a different number of
+    /// checkpoints run to run. With turbo on, the frames elapse as fast as the
+    /// host can produce them.
+    ///
+    /// @param useAdapter drive resume/pause through the adapter, so its
+    ///        session bookkeeping and the manual-pause notification happen;
+    ///        false drives the emulator directly, as a GUI/WebAPI client would.
+    void freeRunFrames(unsigned frames, bool useAdapter = false)
+    {
+        const uint64_t target = frameCounter() + frames;
+
+        // Turbo for the duration of the run only. Enabling it in SetUp would
+        // change where Pause() parks (see the note there); switching it on
+        // around a free run does not, and it is what turns "wait for 10 frames"
+        // from 200 ms of throttled real time into a few milliseconds. Host-side
+        // only, so the frames themselves are identical.
+        _emulator->EnableTurboMode();
+
+        if (useAdapter)
+            _adapter->resume();
+        else
+            _emulator->Resume();
+
+        const bool reached = TestWait::For([this, target] { return frameCounter() >= target; },
+                                           std::chrono::milliseconds(5000));
+
+        if (useAdapter)
+            _adapter->pause();
+        else
+            _emulator->Pause();
+
+        _emulator->DisableTurboMode();
+
+        EXPECT_TRUE(reached) << "free run did not reach frame " << target << " (at " << frameCounter() << ")";
     }
 
     void clearEvents()

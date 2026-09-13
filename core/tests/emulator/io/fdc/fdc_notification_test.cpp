@@ -297,9 +297,12 @@ TEST_F(FDCNotificationTest, NoPostWhenNothingChanged)
     ASSERT_TRUE(WaitForCondition([]() { return hasCaptureWithTrack(40); }));
     clearCaptures();
 
-    // Re-write the same value — the diff gate must swallow it
+    // Re-write the same value — the diff gate must swallow it. Bounded window
+    // rather than a flat 50 ms sleep: a leaked payload ends the wait at once,
+    // and the passing path costs only the settle.
     _fdc->portDeviceOutMethod(0x003F, 40);
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    EXPECT_FALSE(WaitForCondition([]() { return captureCount() > 0; }, 10))
+        << "Diff gate failed: a payload was posted for unchanged state";
 
     const size_t leakedPayloads = captureCount();
     EXPECT_EQ(leakedPayloads, 0u) << "Diff gate failed: " << leakedPayloads

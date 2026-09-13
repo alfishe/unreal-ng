@@ -42,6 +42,8 @@
 #include <ostream>
 #include <istream>
 
+#include "common/zeroinitbuffer.h"
+
 namespace ttd {
 
 #pragma pack(push, 1)
@@ -179,7 +181,7 @@ public:
 
     /// @brief Read-only access to the underlying ring + tail (for tests and
     /// for the analyzer tool — not used by the engine itself).
-    inline const std::vector<TTDWriteRecord>& Ring() const { return _ring; }
+    inline const ZeroInitBuffer<TTDWriteRecord>& Ring() const { return _ring; }
     inline uint64_t SeqHead() const { return _seqHead; }
     inline uint64_t SeqTail() const { return _seqTail; }
 
@@ -187,7 +189,12 @@ private:
     /// @brief Resolve a sequence number to a ring index.
     inline size_t SeqToIdx(uint64_t seq) const { return static_cast<size_t>(seq & _mask); }
 
-    std::vector<TTDWriteRecord> _ring;   // power-of-two size
+    // See zeroinitbuffer.h: the 64-128 MiB fill this ring needs was the
+    // dominant cost of every TTD test that starts recording, hidden behind
+    // the async-allocation offload below (~90 ms in Debug, paid in
+    // ~TTDWriteJournal() rather than here, since these short-lived tests
+    // reach the destructor before the background fill finishes).
+    ZeroInitBuffer<TTDWriteRecord> _ring;   // power-of-two size
     size_t   _mask = 0;                  // capacity - 1, for fast modulo
     uint64_t _seqHead = 0;               // absolute count of appends
     uint64_t _seqTail = 0;               // absolute seq of oldest live record

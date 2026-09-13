@@ -40,6 +40,7 @@ This document outlines the testing practices, conventions, and guidelines used i
 12. **Budget: under 50 ms per test**: Anything slower needs a reason in a comment (see [Test Speed](#test-speed--determinism))
 13. **Stop when the assertion is satisfied**: Do not keep looping once the test can no longer fail
 14. **Turn off audio work for boot-bound tests**: `EnableTurboMode()` - but never when asserting on rendered pixels
+15. **Avoid heavy buffer fills in test paths**: Use value-initialization (`new T[n]()`) or `ZeroInitBuffer` instead of `std::vector::resize(n, 0)` on multi-megabyte POD buffers to prevent 50+ ms per-element scalar loops in Debug builds
 
 ---
 
@@ -1645,6 +1646,20 @@ Two traps that make a test pass while the bug is live:
   armed around a frame-stepped run will never trigger, and the test silently
   proves nothing.
 
+### 6. Avoid O(N) buffer initialization loops in Debug builds
+
+When tests exercise subsystem initialization, profiling, or snapshot buffers:
+- **`std::vector<T>::resize(n, 0)` is an unrolled scalar loop in Debug builds (`-O0`).**
+  Standard library implementations (`libc++`, `libstdc++`) construct elements one by one.
+  For multi-megabyte buffers (e.g. 24 MiB memory tracking counters), this takes **~58 ms per buffer**,
+  running ~176 ms per allocation cycle. In suites running across dozens of fixtures, this easily
+  adds seconds of dead wall time.
+- **Remedy:** Use value-initialized array allocation (`new T[n]()` or `ZeroInitBuffer`) for large POD
+  buffers. Standard C++ guarantees value-initialization of scalars zeros the memory, which compilers
+  lower directly to kernel zero-paging, `calloc`, or bulk `memset` regardless of optimization level (<0.2 ms).
+- **Bulk zeroing:** Use `std::memset` rather than `std::fill` for large POD buffers to avoid scalar loop
+  penalties during counter resets.
+
 ### Common Pitfalls
 
 1. **Using `Start()` instead of `StartAsync()`**: Test hangs forever
@@ -1657,6 +1672,7 @@ Two traps that make a test pass while the bug is live:
    source of multi-second tests
 8. **Asserting on frame-boundary state for an intra-frame behaviour**: passes
    while the bug is live
+9. **`std::vector::resize(n, 0)` on multi-megabyte POD buffers**: in Debug builds (`-O0`) this runs scalar loops (~58 ms for 24 MiB), causing multi-second test stalls across repeated allocations
 
 ---
 

@@ -3,14 +3,17 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <type_traits>
 #include <vector>
 
+#include "common/zeroinitbuffer.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/calltrace.h"
@@ -169,19 +172,19 @@ private:
     TrackingSegment* _currentSegment = nullptr;
 
     // Global counters for Z80 address space (64KB)
-    std::vector<uint32_t> _z80ReadCounters;     // Size: 64KB
-    std::vector<uint32_t> _z80WriteCounters;    // Size: 64KB
-    std::vector<uint32_t> _z80ExecuteCounters;  // Size: 64KB
+    ZeroInitBuffer<uint32_t> _z80ReadCounters;     // Size: 64KB
+    ZeroInitBuffer<uint32_t> _z80WriteCounters;    // Size: 64KB
+    ZeroInitBuffer<uint32_t> _z80ExecuteCounters;  // Size: 64KB
 
     // Global counters for physical memory pages
-    std::vector<uint32_t> _physReadCounters;     // Size: PAGE_SIZE * MAX_PAGES
-    std::vector<uint32_t> _physWriteCounters;    // Size: PAGE_SIZE * MAX_PAGES
-    std::vector<uint32_t> _physExecuteCounters;  // Size: PAGE_SIZE * MAX_PAGES
+    ZeroInitBuffer<uint32_t> _physReadCounters;     // Size: PAGE_SIZE * MAX_PAGES
+    ZeroInitBuffer<uint32_t> _physWriteCounters;    // Size: PAGE_SIZE * MAX_PAGES
+    ZeroInitBuffer<uint32_t> _physExecuteCounters;  // Size: PAGE_SIZE * MAX_PAGES
 
     // Page-level aggregated counters
-    std::vector<uint32_t> _pageReadCounters;     // Size: MAX_PAGES
-    std::vector<uint32_t> _pageWriteCounters;    // Size: MAX_PAGES
-    std::vector<uint32_t> _pageExecuteCounters;  // Size: MAX_PAGES
+    ZeroInitBuffer<uint32_t> _pageReadCounters;     // Size: MAX_PAGES
+    ZeroInitBuffer<uint32_t> _pageWriteCounters;    // Size: MAX_PAGES
+    ZeroInitBuffer<uint32_t> _pageExecuteCounters;  // Size: MAX_PAGES
 
     // Bank-level flags (for Z80 address space)
     uint8_t _z80BankReadMarks = 0;
@@ -189,9 +192,9 @@ private:
     uint8_t _z80BankExecuteMarks = 0;
 
     // Page-level flags
-    std::vector<uint8_t> _pageReadMarks;     // Size: MAX_PAGES / 8
-    std::vector<uint8_t> _pageWriteMarks;    // Size: MAX_PAGES / 8
-    std::vector<uint8_t> _pageExecuteMarks;  // Size: MAX_PAGES / 8
+    ZeroInitBuffer<uint8_t> _pageReadMarks;     // Size: MAX_PAGES / 8
+    ZeroInitBuffer<uint8_t> _pageWriteMarks;    // Size: MAX_PAGES / 8
+    ZeroInitBuffer<uint8_t> _pageExecuteMarks;  // Size: MAX_PAGES / 8
 
     std::unique_ptr<CallTraceBuffer> _callTraceBuffer;
     std::unique_ptr<Z80Disassembler> _disassembler;

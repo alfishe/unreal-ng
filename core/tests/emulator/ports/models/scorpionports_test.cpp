@@ -346,6 +346,24 @@ TEST(ScorpionServiceMonitor_Test, ProfRomServiceMonitorHighlightDoesNotBlink)
     if (PortDecoder_Scorpion256* decoder = static_cast<PortDecoder_Scorpion256*>(context->pPortDecoder))
         decoder->GetSMUCNvram().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
 
+    // Pin power-on RAM. Memory::RandomizeMemoryContent() fills pages 5 and 7
+    // from the global rand(), whose sequence position depends on how many
+    // rand() calls the preceding tests in the process happened to make - which
+    // is what made this test order-dependent (it passed alone and failed in the
+    // full suite, or the reverse, as unrelated tests were added or sped up).
+    //
+    // Zero rather than a fixed seed: garbage RAM is a real input to this boot,
+    // not a nuisance. Resuming the interrupted program from the Service Monitor
+    // can land the CPU in uninitialized RAM - with 2 of 12 sampled seeds the
+    // machine executed page 5 itself (PC 0x52FC) and cleared the screen. That
+    // is worth its own investigation (see the RAM-sensitivity note in
+    // profrom-service-monitor-menu-flashing.md), but it is not what this test
+    // asserts, and picking whichever seed happens to survive it would be
+    // cherry-picking. Zero matches what Memory already gives every other page
+    // ("zero-init: deterministic power-on RAM").
+    memset(memory->RAMPageAddress(5), 0, PAGE_SIZE);
+    memset(memory->RAMPageAddress(7), 0, PAGE_SIZE);
+
     // Host-side turbo: no emulated-state effect, just skips per-frame audio work
     emulator->EnableTurboMode();
 
