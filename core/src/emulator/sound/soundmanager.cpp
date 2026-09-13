@@ -513,10 +513,28 @@ void SoundManager::handleFrameEnd()
     /// endregion </Determine actual samples for this frame>
 
     /// region <Process AY through its character chain>
+    // The character chains (punch / room) are HQ-only post-processing: with
+    // `soundhq` off (or the turbo override on) they are skipped entirely -
+    // no float round trip, no per-sample DSP - and the raw chip / beeper
+    // buffers go straight to the mixer, the same as the LQ boxcar path
+    // inside the devices. On the first HQ frame after a bypass the chains'
+    // delay lines and envelopes are cleared so they do not replay audio
+    // from before the switch.
+    const bool chainsActive = isHQActive();
+    if (chainsActive && _chainsBypassed)
+    {
+        _ayChain0.reset();
+        _ayChain1.reset();
+        _fmChain0.reset();
+        _fmChain1.reset();
+        _beeperChain.reset();
+    }
+    _chainsBypassed = !chainsActive;
+
     // AY chain: gentler punch (square waves already have harmonics)
     // Room uses no LP to preserve brightness
     // Process per-chip buffers with separate chain instances to preserve DSP state
-    if (_turboSound)
+    if (_turboSound && chainsActive)
     {
         int16_t* chip0Buf = _turboSound->getChipBuffer(0);
         int16_t* chip1Buf = _turboSound->getChipBuffer(1);
@@ -570,8 +588,9 @@ void SoundManager::handleFrameEnd()
         }
     }
 
-    // Beeper chain: operates on alias-free blip_buf output
-    _beeperChain.processInt16(_beeperBuffer, samplesThisFrame);
+    // Beeper chain: operates on alias-free blip_buf output (HQ only, see above)
+    if (chainsActive)
+        _beeperChain.processInt16(_beeperBuffer, samplesThisFrame);
     /// endregion </Process beeper>
 
     /// region <Registry-driven mixing with mute/solo/volume + peak calculation>

@@ -201,6 +201,11 @@ protected:
     /// Per-frame cache: turbo mode with audio not requested and no recording in progress
     bool _synthesisSuppressed = false;
 
+    /// True while the character chains (punch / room) were skipped on the last
+    /// frame because HQ is off. When HQ comes back the chains' delay lines and
+    /// envelopes are reset before their first use, so no stale audio replays.
+    bool _chainsBypassed = false;
+
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
