@@ -20,7 +20,7 @@ Portions Copyright (C) SMT, Alone Coder, deathsoft. The license of the original 
 | LZMA SDK 19.00 | `core/src/3rdparty/liblzma/` | Public domain | static |
 | miniaudio 0.11.21 | `core/src/3rdparty/miniaudio/` | Public domain / MIT-0 | header |
 | blip_buf (C++ port of Shay Green's blip_buf 1.1.0) | `core/src/3rdparty/blip_buf/` | LGPL-2.1-or-later | static |
-| ymfm @ 81aec25c (with local TTD patch, see `PATCHES.md` there) | `core/src/3rdparty/ymfm/` | BSD-3-Clause | static |
+| ymfm @ 81aec25c (with local TTD patch and the CSM key-on fix ported from Furnace, see `PATCHES.md` there) | `core/src/3rdparty/ymfm/` | BSD-3-Clause | static |
 | lodepng 20200306 | `core/src/3rdparty/lodepng/` | zlib | static |
 | digestpp | `core/src/3rdparty/digestpp/` | Public domain | header |
 | simpleini 4.17 | `core/src/3rdparty/simpleini/` | MIT | header |

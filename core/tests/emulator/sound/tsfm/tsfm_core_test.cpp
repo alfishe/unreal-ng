@@ -641,6 +641,100 @@ TEST_F(TsfmTimer_Test, CsmKeyOnSampleAligned)
     }
 }
 
+TEST_F(TsfmTimer_Test, CsmRetriggersEveryTimerATick)
+{
+    // ymfm PATCHES.md §4 (ported from Furnace): in CSM mode every timer A
+    // overflow is a key-on PULSE on channel 3 - phase reset, attack restart,
+    // then release. With a fast release and a timer period long enough for
+    // the note to die out, the FM word stream must show one burst per
+    // overflow, each starting on the overflow sample. Pristine upstream ymfm
+    // keys the channel on once and never off again (nothing re-prepares the
+    // operator), so it sustains: a single burst and this test fails.
+    //
+    // Voice: channel 2, algorithm 7 (all carriers), only S4 (TL slot 0x4E)
+    // audible, AR 31 (instant), RR 15 (~8 ms release), no manual key-on.
+    // CSM mode is the extended (multi-frequency) mode too, so S1..S3 take
+    // their pitch from 0xA8-0xAE and S4 from 0xA2/0xA6 (high byte first,
+    // the low-byte write commits the pair).
+    auto dev = std::make_unique<SoundChip_TurboSoundFM>(_context);
+    dev->syncTo(0);
+    SetT(10000);
+    dev->portDeviceOutMethod(PORT_FFFD, 0xFE);
+    const uint8_t setup[][2] = {
+        {0x32, 0x01}, {0x36, 0x01}, {0x3A, 0x01}, {0x3E, 0x01},  // DT 0, MUL 1
+        {0x42, 0x7F}, {0x46, 0x7F}, {0x4A, 0x7F}, {0x4E, 0x00},  // TL: only S4 audible
+        {0x52, 0x1F}, {0x56, 0x1F}, {0x5A, 0x1F}, {0x5E, 0x1F},  // AR 31
+        {0x62, 0x00}, {0x66, 0x00}, {0x6A, 0x00}, {0x6E, 0x00},  // DR 0
+        {0x72, 0x00}, {0x76, 0x00}, {0x7A, 0x00}, {0x7E, 0x00},  // SR 0
+        {0x82, 0x0F}, {0x86, 0x0F}, {0x8A, 0x0F}, {0x8E, 0x0F},  // SL 0, RR 15
+        {0xB2, 0x07},                                            // FB 0, algorithm 7
+        {0xAC, 0x22}, {0xA8, 0x69}, {0xAD, 0x22}, {0xA9, 0x69},  // per-slot pitch
+        {0xAE, 0x22}, {0xAA, 0x69}, {0xA6, 0x22}, {0xA2, 0x69},  // ~228 Hz
+    };
+    for (const auto& [reg, data] : setup)
+    {
+        dev->portDeviceOutMethod(PORT_FFFD, reg);
+        dev->portDeviceOutMethod(PORT_BFFD, data);
+    }
+
+    // Timer A: TA = 1024 - 400 = 624 -> one overflow every 400 FM samples
+    // (28 800 T at /6). Armed at T=20016, an FM sample boundary
+    constexpr uint64_t kArmT = 20016;
+    constexpr uint64_t kPeriodT = 400 * 72;
+    constexpr int kTicks = 20;
+    SetT(kArmT);
+    dev->portDeviceOutMethod(PORT_FFFD, 0x24);
+    dev->portDeviceOutMethod(PORT_BFFD, 624 >> 2);
+    dev->portDeviceOutMethod(PORT_FFFD, 0x25);
+    dev->portDeviceOutMethod(PORT_BFFD, 624 & 3);
+    dev->portDeviceOutMethod(PORT_FFFD, 0x27);
+    dev->portDeviceOutMethod(PORT_BFFD, 0x85);  // CSM | load A | enable A
+
+    // Advance one period at a time: the word queue holds 4096 entries
+    std::vector<FmWord> words;
+    for (int i = 0; i <= kTicks; i++)
+    {
+        dev->syncTo(kArmT + kPeriodT * uint64_t(i) + kPeriodT / 2);
+        const std::vector<FmWord> chunk = DrainWords(*dev->chip(0));
+        words.insert(words.end(), chunk.begin(), chunk.end());
+    }
+    ASSERT_GT(words.size(), size_t(kTicks * 400));
+
+    // Bursts: quiet (|word| < 100) -> loud (|word| > 500) edges, with the
+    // T-state of each onset; before the first overflow the chip is silent.
+    // From phase 0 the ~228 Hz sine climbs ~240 per sample, so 500 is
+    // crossed on the 2nd-3rd sample of a pulse
+    std::vector<uint64_t> onsets;
+    bool quiet = true;
+    size_t quietSamples = 0;
+    for (const FmWord& w : words)
+    {
+        const int v = w.word < 0 ? -w.word : w.word;
+        if (v < 100)
+            quietSamples++;
+        if (quiet && v > 500)
+        {
+            onsets.push_back(w.t);
+            quiet = false;
+        }
+        else if (!quiet && v < 100)
+            quiet = true;
+    }
+
+    ASSERT_EQ(onsets.size(), size_t(kTicks)) << "one burst per timer A overflow expected";
+    for (int i = 0; i < kTicks; i++)
+    {
+        const uint64_t expiry = kArmT + kPeriodT * uint64_t(i + 1);
+        // The pulse starts from phase 0 on the overflow sample; the loud
+        // threshold is crossed within the first few samples of the sine
+        EXPECT_GE(onsets[i], expiry) << "burst " << i << " started before its overflow";
+        EXPECT_LE(onsets[i], expiry + 8 * 72) << "burst " << i << " did not start on its overflow";
+    }
+    // A pulse train, not a sustained tone: the release has time to finish
+    // inside every period, so a good share of the stream is quiet
+    EXPECT_GT(quietSamples, words.size() / 10) << "the channel never released between overflows";
+}
+
 /// endregion
 
 /// region <TsfmPrescaler>
