@@ -130,7 +130,7 @@ void SoundChip_TurboSoundFM::reset()
     // (state only; the rate-designed coefficients and the slave wiring
     // from setCoreRate are preserved)
     _lastTStates = 0;
-    _ayPLL = 0.0;
+    _samplePhase = 0;
     _ayBufferIndex = 0;
     _decimationPhase = 0.0;
     _renderT = 0;
@@ -187,8 +187,8 @@ void SoundChip_TurboSoundFM::handleFrameStart()
     }
 
     // Render-loop frame base (§6.2), same set as the legacy device (§11):
-    // _ayPLL and _decimationPhase stay free-running across frames - only
-    // reset() clears them; the FM cursor is frame-relative like the word
+    // _samplePhase and _decimationPhase carry across frames - only reset()
+    // and setCoreRate() clear them; the FM cursor is frame-relative like the word
     // timestamps, so it restarts here. The buffer clears run even when
     // synthesis is suppressed: the sound-feature-off mixing path relies on
     // zeroed buffers.
@@ -237,7 +237,14 @@ void SoundChip_TurboSoundFM::handleStep()
     uint8_t speedMultiplier = _context->emulatorState.HostSpeedMultiplier();
     size_t scaledCurrentTStates = currentTStates * speedMultiplier;
 
-    int32_t diff = scaledCurrentTStates - _lastTStates;
+    // Clip at the frame boundary so the accumulator sees exactly one frame
+    // of T-states per frame - the mixer's count (legacy loop, see
+    // SoundChip_TurboSound::handleStep for the reasoning)
+    const size_t frameTStates = size_t(_context->config.frame) * speedMultiplier;
+    if (frameTStates > 0 && scaledCurrentTStates > frameTStates)
+        scaledCurrentTStates = frameTStates;
+
+    int32_t diff = int32_t(scaledCurrentTStates) - int32_t(_lastTStates);
 
     if (diff > 0)
     {
@@ -245,11 +252,11 @@ void SoundChip_TurboSoundFM::handleStep()
         // Checked once per handleStep batch; per-tick cost is a plain bool.
         const bool tapActive = _nativeTap->isActive();
 
-        _ayPLL += diff * _sampleTStateIncrement;
+        _samplePhase += uint64_t(diff) * _coreRate;
 
-        while (_ayPLL > 1.0 && _ayBufferIndex < MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS)
+        while (_samplePhase >= CPU_CLOCK_RATE && _ayBufferIndex < MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS)
         {
-            _ayPLL -= 1.0;
+            _samplePhase -= CPU_CLOCK_RATE;
 
             int16_t leftSample;
             int16_t rightSample;

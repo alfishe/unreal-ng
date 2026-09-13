@@ -140,6 +140,13 @@ public:
     {
         return m_fm.regs().read(regnum);
     }
+
+    /// Test/verification accessor for the FM engine itself (ymfm's
+    /// debug_channel / debug_operator getters: envelope state, attenuation)
+    fm_engine& fmEngine()
+    {
+        return m_fm;
+    }
 };
 
 /// Routes ymfm's internal SSG accesses into the SoundChip_AY8910 instance

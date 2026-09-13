@@ -97,7 +97,7 @@ private:
     QLabel* _soloIndicator = nullptr;
     std::vector<SourceRow> _sourceRows;
 
-    // AY/TurboSound section - retitled "SSG / TurboSound FM" when the slot
+    // TurboSound section - titled "TurboSound FM" when the slot
     // device is the TSFM board (the Sources list and chip labels follow)
     QGroupBox* _ayGroup = nullptr;
     QCheckBox* _firCheckbox = nullptr;

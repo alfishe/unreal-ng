@@ -32,8 +32,18 @@ protected:
     /// region <AY emulation>
     // Initialized at declaration: reset() re-derives them, but a freshly
     // constructed chip must be renderable BEFORE the first reset() - garbage
-    // _ayPLL rendered clamped full-size frames until reset was called
-    double _ayPLL = 0.0;
+    // phase rendered clamped full-size frames until reset was called.
+    //
+    // _samplePhase is the same exact integer accumulator SoundManager uses
+    // to decide how many samples it mixes per frame (T-states x core rate,
+    // one output sample per CPU_CLOCK_RATE). Both start at 0 on reset() /
+    // setCoreRate(), the device feeds it T-states clipped at the frame
+    // boundary (handleStep), so the device renders exactly the count the
+    // mixer consumes on every frame. The previous free-running double PLL
+    // drifted against the mixer's accumulator and every disagreeing frame
+    // left a zero sample (or dropped one) in the mix - an audible click
+    // train (2026-09-13, FrameSampleCount_Test).
+    uint64_t _samplePhase = 0;
     size_t _ayBufferIndex = 0;
     uint32_t _lastTStates = 0;
 
@@ -43,11 +53,10 @@ protected:
     double _decimationStep = (double)(PSG_CLOCK_RATE / 8) /
                              (double)(AUDIO_SAMPLING_RATE * FilterInterpolate::DECIMATE_FACTOR);
 
-    // Core output rate (multirate plan phase 6): output samples per T-state
-    // for the free-running sample PLL, and the LQ boxcar tick ratio. Set via
+    // Core output rate (multirate plan phase 6): the sample accumulator's
+    // per-T-state increment, and the LQ boxcar tick ratio. Set via
     // setCoreRate(); defaults preserve legacy 44100 behavior.
     size_t _coreRate = AUDIO_SAMPLING_RATE;
-    double _sampleTStateIncrement = AUDIO_SAMPLE_TSTATE_INCREMENT;
     double _lqTicksPerSample = (double)(PSG_CLOCK_RATE / 8) / (double)AUDIO_SAMPLING_RATE;
 
     // HQ DSP flag (FIR filters vs simple averaging)
@@ -162,9 +171,10 @@ public:
         // Set Chip0 active by default
         _currentChip = _chip0;
 
-        // Reset internal state
+        // Reset internal state (the sample accumulator restarts in step with
+        // SoundManager::reset(), which zeroes its own)
         _lastTStates = 0;
-        _ayPLL = 0.0;
+        _samplePhase = 0;
         _ayBufferIndex = 0;
 
         // Native clock decimation setup
@@ -201,14 +211,15 @@ public:
         _synthesisSuppressed = suppressed;
     }
 
-    /// Set the core output rate (multirate plan phase 6): recomputes the
-    /// sample PLL increment and decimation ratios and redesigns the HQ
-    /// anti-alias FIRs. Call at construction / sound stack rebuild only -
-    /// changing rate mid-frame would glitch the free-running PLL phase.
+    /// Set the core output rate (multirate plan phase 6): restarts the
+    /// sample accumulator (SoundManager::applyCoreRate restarts its own at
+    /// the same frame boundary), recomputes the decimation ratios and
+    /// redesigns the HQ anti-alias FIRs. Call at construction / sound stack
+    /// rebuild only, at a frame boundary.
     void setCoreRate(size_t rate) override
     {
         _coreRate = rate;
-        _sampleTStateIncrement = (double)rate / (double)CPU_CLOCK_RATE;
+        _samplePhase = 0;
         _lqTicksPerSample = (double)(PSG_CLOCK_RATE / 8) / (double)rate;
         _decimationStep = (double)(PSG_CLOCK_RATE / 8) / (double)(rate * FilterInterpolate::DECIMATE_FACTOR);
 

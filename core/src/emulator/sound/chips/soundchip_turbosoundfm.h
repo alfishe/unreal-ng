@@ -134,13 +134,13 @@ protected:
     bool _prescalerWarned = false;  // one §9.4 warning per device instance
 
     // Render loop state — the legacy SoundChip_TurboSound loop copied
-    // verbatim (§11 bit-identity): free-running sample PLL, per-frame buffer
-    // cursor, T-state axis base, LQ boxcar phase, plus the §6.2 FM cursor
-    double _ayPLL = 0.0;
+    // verbatim (§11 bit-identity): the mixer-exact sample accumulator (see
+    // SoundChip_TurboSound::_samplePhase), per-frame buffer cursor, T-state
+    // axis base, LQ boxcar phase, plus the §6.2 FM cursor
+    uint64_t _samplePhase = 0;
     size_t _ayBufferIndex = 0;
     uint32_t _lastTStates = 0;
     double _decimationPhase = 0.0;
-    double _sampleTStateIncrement = AUDIO_SAMPLE_TSTATE_INCREMENT;
     double _lqTicksPerSample = (double)(PSG_CLOCK_RATE / 8) / (double)AUDIO_SAMPLING_RATE;
     uint64_t _renderT = 0;  // SSG-tick cursor of the render loop (§6.2), frame-relative
 
@@ -265,7 +265,7 @@ public:
     void setCoreRate(size_t rate) override
     {
         _coreRate = rate;
-        _sampleTStateIncrement = (double)rate / (double)CPU_CLOCK_RATE;
+        _samplePhase = 0;  // in step with SoundManager::applyCoreRate
         _lqTicksPerSample = (double)(PSG_CLOCK_RATE / 8) / (double)rate;
 
         _chips[0]->ssg.decimatorLeft().configure((double)rate);

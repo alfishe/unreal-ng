@@ -10,12 +10,12 @@ void SoundChip_TurboSound::handleFrameStart()
     // buffers (SoundManager::handleFrameEnd mixes whatever is here), and a
     // TSFM device clears its word queues here for the same reason.
     _lastTStates = 0;
-    // NOTE: _ayPLL deliberately NOT reset here. The fractional sample phase
-    // must be free-running across frames (audio-sync design, Fix 1): zeroing
-    // it every frame truncated the fractional sample per frame, locking the
-    // AY at 903 samples/frame (never 904) - a systematic -0.019% rate bias
-    // vs the exact accumulator, plus a phase discontinuity at each frame
-    // boundary. _ayPLL resets only in reset().
+    // NOTE: _samplePhase deliberately NOT reset here. The fractional sample
+    // phase must carry across frames (audio-sync design, Fix 1): zeroing it
+    // every frame truncated the fractional sample per frame, locking the AY
+    // at 903 samples/frame (never 904) - a systematic -0.019% rate bias vs
+    // the mixer's accumulator, plus a phase discontinuity at each frame
+    // boundary. _samplePhase resets only in reset() and setCoreRate().
     _ayBufferIndex = 0;
 
     // Initialize render buffers (combined + per-chip)
@@ -65,7 +65,19 @@ void SoundChip_TurboSound::handleStep()
     uint8_t speedMultiplier = _context->emulatorState.HostSpeedMultiplier();
     size_t scaledCurrentTStates = currentTStates * speedMultiplier;
 
-    int32_t diff = scaledCurrentTStates - _lastTStates;
+    // Partition time exactly at the frame boundary: the last instruction of
+    // a frame runs a few T-states past it, and those T-states are counted
+    // again at the top of the next frame (AdjustFrameCounters rebases t,
+    // handleFrameStart zeroes _lastTStates). Clip here so each frame feeds
+    // the accumulator exactly config.frame x multiplier T-states - the same
+    // quantity SoundManager::handleFrameEnd adds to its accumulator - and
+    // the two never disagree on a frame's sample count. The generator time
+    // past the boundary is not lost: the next frame starts counting from 0.
+    const size_t frameTStates = size_t(_context->config.frame) * speedMultiplier;
+    if (frameTStates > 0 && scaledCurrentTStates > frameTStates)
+        scaledCurrentTStates = frameTStates;
+
+    int32_t diff = int32_t(scaledCurrentTStates) - int32_t(_lastTStates);
 
     if (diff > 0)
     {
@@ -73,11 +85,11 @@ void SoundChip_TurboSound::handleStep()
         // Checked once per handleStep batch; per-tick cost is a plain bool.
         const bool tapActive = _nativeTap->isActive();
 
-        _ayPLL += diff * _sampleTStateIncrement;
+        _samplePhase += uint64_t(diff) * _coreRate;
 
-        while (_ayPLL > 1.0 && _ayBufferIndex < MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS)
+        while (_samplePhase >= CPU_CLOCK_RATE && _ayBufferIndex < MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS)
         {
-            _ayPLL -= 1.0;
+            _samplePhase -= CPU_CLOCK_RATE;
 
             int16_t leftSample;
             int16_t rightSample;
