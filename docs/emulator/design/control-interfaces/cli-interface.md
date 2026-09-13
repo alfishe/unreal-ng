@@ -178,6 +178,63 @@ frame=4823  tstate=14982  pc=0x4A21  value=0x07  physpage=5
 - The `timetravel` feature flag must be ON for recording/seek/replay. `status` works regardless and returns `{recording: false}` when TTD is off.
 - Seek latency depends on tier density — typically 1–20 ms in the dense (recent) tier; see the [implementation plan](../debugger/time-travel-debug/implementation-plan.md) for targets.
 
+### Mouse Input Commands
+
+The `mouse` verb drives the Kempston Mouse of the selected emulator (source:
+`core/automation/cli/src/commands/cli-processor-mouse.cpp`, output formatting in
+`cli-mouse-format.h`). Full semantics, units and limits: [command-interface.md §11](./command-interface.md#11-mouse-input-injection).
+
+| CLI Command | Alias | Description |
+| :--- | :--- | :--- |
+| `mouse move <dx> <dy>` | | Relative move in emulated pixels, +x right, **+y up**, −127…127 each |
+| `mouse press <button>` / `mouse release <button>` | | `left`/`right`/`middle` or `l`/`r`/`m` |
+| `mouse click <button> [frames]` | | Hold for `frames` (default 2), then release on its own |
+| `mouse buttons <none\|b1,b2…>` | | Exact pressed set; `left,middle` and `left middle` both work |
+| `mouse wheel <steps>` | | −7…7, not 0 |
+| `mouse clear` | `mouse release_all` | Release all buttons, cancel a pending click |
+| `mouse status` | `mouse info` | Multi-line state block |
+| `mouse set <x> <y>` | | Debug: raw counters 0…255 |
+| `mouse help` | | Subcommand help |
+
+Arguments must be whole integers: `10px` or `1.5` gives `Error: Invalid dx '10px': expected an integer`.
+Every successful command prints one line with the resulting state; a second `Warning:` line
+appears when the change cannot reach the program.
+
+**Interactive session example** (Pentagon after reset, shipped config `Wheel=NONE`):
+
+```
+> pause
+> mouse move 10 -5
+Moved: dx=+10 dy=-5 -> X=41 Y=80
+> mouse press l
+Pressed: left -> buttons=L-- (#FADF=0xFE)
+> mouse wheel 1
+Wheel: +1 -> wheel=1 (#FADF=0xFE)
+Warning: no wheel fitted ([INPUT] Wheel=NONE): the guest does not see the wheel counter
+> mouse move 300 0
+Error: dx=300 out of range -127..127; split into several moves with run_frames between them
+> mouse click right 3
+Clicked: right for 3 frames -> buttons=LR- (#FADF=0xFC)
+> mouse status
+Kempston Mouse [present]
+  X=41 (0x29)  Y=80 (0x50)
+  Buttons: left=down right=down middle=up  (mask 0xFC)
+  Wheel: 1 (no wheel fitted)
+  Ports: #FADF=0xFC #FBDF=0x29 #FFDF=0x50
+  Pending click: right, 3 frame(s) left
+  TTD journal: supported
+```
+
+How to read `#FADF`: bits 0–2 are the buttons (0 = pressed: `0xFC` = left and right down),
+bit 3 is always 1, and bits 4–7 are 1 unless a wheel is fitted (`[INPUT] Wheel=KEMPSTON`),
+in which case they carry the wheel counter.
+
+**Notes**:
+- `mouse` commands are refused with `Error: TTD replay in progress; live mouse input refused`
+  while TTD replays. While TTD records they are journalled, `mouse set` included.
+- The CLI does not run frames for you. After a `click`, use `run_frames` (or resume) so the
+  program sees the press and the release.
+
 ### Analysis, Capture & Assembly Commands
 
 The analysis, capture and assembly families are available on **all** automation

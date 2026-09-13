@@ -290,6 +290,9 @@ enum IDE_SCHEME
 
 enum MOUSE_WHEEL_MODE { MOUSE_WHEEL_NONE, MOUSE_WHEEL_KEYBOARD, MOUSE_WHEEL_KEMPSTON }; //0.36.6 from 0.35b2
 
+/// [INPUT] Mouse= (Kempston Mouse design §7.4). AY mouse is not emulated.
+enum MOUSE_TYPE { MOUSE_TYPE_NONE = 0, MOUSE_TYPE_KEMPSTON = 1, MOUSE_TYPE_AY = 2 };
+
 enum MEM_MODEL : uint8_t
 {
 	MM_PENTAGON = 0,    	// Pentagon 128/256/512/1024K
@@ -518,6 +521,7 @@ struct CONFIG
 		uint8_t keybpcmode;
 		char mousescale;
 		uint8_t mousewheel; // enum MOUSE_WHEEL_MODE //0.36.6 from 0.35b2
+		bool mouseConfigured; // [INPUT] Mouse= was parsed (false: no ini - device stays fitted)
 		zxkeymap *active_zxk;
 		unsigned JoyId;
 	} input;

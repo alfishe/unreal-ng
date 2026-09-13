@@ -9,6 +9,7 @@
 ///   - control_execution step/run_frames/breakpoint mapping and body fields
 ///   - inspect_state aspect fan-out (machine+registers hit two endpoints)
 ///   - type_input → /keyboard/type body
+///   - mouse_input move/status routing, click pre-move sequencing, missing-arg rejects
 ///   - Phase-2 tools spot checks (assemble, frame_cost, labels, screen digest)
 ///   - TargetResolver: 0 instances auto-creates, 1 uses it, >1 refuses
 ///   - dual content shape for a forwarded result
@@ -379,6 +380,100 @@ TEST_F(McpTools_Test, TypeInput_Type_PostsKeyboardTypeWithText)
 
     EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/keyboard/type"));
     EXPECT_EQ(_caller->Last("POST", "/api/v1/emulator/emu-1/keyboard/type")->body["text"].asString(), "LOAD \"\"");
+}
+
+// ===========================================================================
+// mouse_input
+// ===========================================================================
+
+TEST_F(McpTools_Test, MouseInput_Move_PostsDxDy)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/mouse/move"] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "move";
+    args["dx"] = 10;
+    args["dy"] = -5;
+    mcp::ToolResult result = RunTool(*_registry, "mouse_input", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/mouse/move");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["dx"].asInt(), 10);
+    EXPECT_EQ(call->body["dy"].asInt(), -5);
+}
+
+TEST_F(McpTools_Test, MouseInput_ClickWithPreMove_MovesThenClicks)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/mouse/move"] = {200, Json::Value(Json::objectValue)};
+    _caller->routes["POST /api/v1/emulator/emu-1/mouse/click"] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "click";
+    args["button"] = "left";
+    args["frames"] = 3;
+    args["dx"] = 32;
+    args["dy"] = 16;
+    mcp::ToolResult result = RunTool(*_registry, "mouse_input", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    std::vector<const FakeApiCaller::RecordedCall*> posts;
+    for (const auto& call : _caller->calls)
+    {
+        if (call.method == "POST")
+        {
+            posts.push_back(&call);
+        }
+    }
+    ASSERT_EQ(posts.size(), 2u);
+    EXPECT_EQ(posts[0]->path, "/api/v1/emulator/emu-1/mouse/move");
+    EXPECT_EQ(posts[0]->body["dx"].asInt(), 32);
+    EXPECT_EQ(posts[0]->body["dy"].asInt(), 16);
+    EXPECT_EQ(posts[1]->path, "/api/v1/emulator/emu-1/mouse/click");
+    EXPECT_EQ(posts[1]->body["button"].asString(), "left");
+    EXPECT_EQ(posts[1]->body["frames"].asInt(), 3);
+}
+
+TEST_F(McpTools_Test, MouseInput_ClickWithPreMove_StopsOnMoveError)
+{
+    Json::Value error;
+    error["error"] = "Bad Request";
+    error["message"] = "dx must be in -127..127";
+    _caller->routes["POST /api/v1/emulator/emu-1/mouse/move"] = {400, error};
+    _caller->routes["POST /api/v1/emulator/emu-1/mouse/click"] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "click";
+    args["button"] = "left";
+    args["dx"] = 200;
+    mcp::ToolResult result = RunTool(*_registry, "mouse_input", args, *_caller);
+
+    EXPECT_TRUE(result.isError);
+    EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/mouse/move"));
+    EXPECT_FALSE(_caller->Saw("POST", "/api/v1/emulator/emu-1/mouse/click"));
+}
+
+TEST_F(McpTools_Test, MouseInput_Press_RequiresButton)
+{
+    Json::Value args;
+    args["action"] = "press";
+    mcp::ToolResult result = RunTool(*_registry, "mouse_input", args, *_caller);
+
+    EXPECT_TRUE(result.isError);
+    EXPECT_EQ(result.text, "press requires 'button'");
+    EXPECT_TRUE(_caller->calls.empty());
+}
+
+TEST_F(McpTools_Test, MouseInput_Status_GetsStatus)
+{
+    _caller->routes["GET /api/v1/emulator/emu-1/mouse/status"] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "status";
+    mcp::ToolResult result = RunTool(*_registry, "mouse_input", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/mouse/status"));
 }
 
 // ===========================================================================

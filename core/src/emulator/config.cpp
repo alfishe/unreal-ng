@@ -236,8 +236,11 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 
 	// MISC::TSConf sub-section
 
-    // ROM set
-    config.romSetName = inimanager.GetValue(rom, "ROMSET");
+    // ROM set. GetValue returns NULL when the [ROM] section or the key is
+    // absent (a valid minimal config may carry neither) - a NULL const char*
+    // assigned to std::string is UB, so map it to the empty name explicitly.
+    const char* romSetName = inimanager.GetValue(rom, "ROMSET");
+    config.romSetName = romSetName != nullptr ? romSetName : "";
 
     if (!config.romSetName.empty())
     {
@@ -306,7 +309,44 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	config.fdd_noise = inimanager.GetLongValue(beta128, "Noise", 0) ? true : false;
 	CopyStringValue(inimanager.GetValue(beta128, "BOOT", nullptr, nullptr), config.appendboot, sizeof config.appendboot);
 
-	// INPUT section
+	// INPUT section - Kempston Mouse (design §7). Legacy Unreal Speccy keys:
+	//   Mouse=NONE|KEMPSTON|AY   Wheel=NONE|KEMPSTON|KEYBOARD   SwapMouse=0|1   MouseScale=-3..3
+	{
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(input, "Mouse", nullptr, nullptr), line, sizeof line);
+		config.input.mouseConfigured = line[0] != '\0';
+		config.input.mouse = MOUSE_TYPE_KEMPSTON;
+		if (StringHelper::CompareCaseInsensitive(line, "NONE", strlen("NONE")) == 0)
+			config.input.mouse = MOUSE_TYPE_NONE;
+		else if (StringHelper::CompareCaseInsensitive(line, "AY", strlen("AY")) == 0)
+		{
+			MLOGWARNING("Config: [INPUT] Mouse=AY is not emulated, no mouse fitted");
+			config.input.mouse = MOUSE_TYPE_NONE;
+		}
+		else if (line[0] != '\0' && StringHelper::CompareCaseInsensitive(line, "KEMPSTON", strlen("KEMPSTON")) != 0)
+			MLOGWARNING("Config: unsupported [INPUT] Mouse='%s', using KEMPSTON", line);
+
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(input, "Wheel", nullptr, nullptr), line, sizeof line);
+		config.input.mousewheel = MOUSE_WHEEL_NONE;
+		if (StringHelper::CompareCaseInsensitive(line, "KEMPSTON", strlen("KEMPSTON")) == 0)
+			config.input.mousewheel = MOUSE_WHEEL_KEMPSTON;
+		else if (StringHelper::CompareCaseInsensitive(line, "KEYBOARD", strlen("KEYBOARD")) == 0)
+		{
+			MLOGWARNING("Config: [INPUT] Wheel=KEYBOARD is not implemented, wheel disabled");
+			config.input.mousewheel = MOUSE_WHEEL_NONE;
+		}
+
+		config.input.mouseswap = inimanager.GetLongValue(input, "SwapMouse", 0) ? 1 : 0;
+
+		long scale = inimanager.GetLongValue(input, "MouseScale", 0);
+		if (scale < -3 || scale > 3)
+		{
+			MLOGWARNING("Config: [INPUT] MouseScale=%ld out of range -3..3, using 0", scale);
+			scale = 0;
+		}
+		config.input.mousescale = static_cast<char>(scale);
+	}
 
 	// HDD section
 

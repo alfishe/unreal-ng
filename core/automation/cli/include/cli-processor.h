@@ -231,6 +231,10 @@ private:
     void HandleKeyList(const ClientSession& session);
     void HandleKeyClear(const ClientSession& session, EmulatorContext* context);
 
+    // Kempston Mouse injection command handlers (cli-processor-mouse.cpp)
+    void HandleMouse(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowMouseHelp(const ClientSession& session);
+
     // Videowall commands
     void HandleVideowall(const ClientSession& session, const std::vector<std::string>& args);
 

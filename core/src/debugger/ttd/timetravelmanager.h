@@ -434,6 +434,16 @@ public:
     /// @param pressed true for press, false for release.
     void RecordInputEvent(uint8_t key, bool pressed);
 
+    /// @brief Journal a Kempston Mouse mutation (same contract as RecordInputEvent:
+    /// callers gate on IsRecording() and !IsReplayActive(), and call BEFORE applying).
+    void RecordMouseMove(int dx, int dy);
+    void RecordMouseButtons(uint8_t activeLowMask);
+    void RecordMouseWheel(int steps);
+    void RecordMouseCounters(uint8_t x, uint8_t y);
+
+    /// @brief Journal a whole-matrix keyboard reset (release of every key)
+    void RecordKeyboardReset();
+
     /// @brief Read-only access to the input journal. Used by the seek engine
     /// (Item 4) and by tests.
     inline const TTDInputJournal& GetInputJournal() const { return _inputJournal; }

@@ -6,7 +6,7 @@
 /// FakeApiCaller without any HTTP machinery. Covered:
 ///   - initialize handshake (version echo + fallback, capabilities, serverInfo)
 ///   - ping, notifications (null response)
-///   - tools/list: all 11 tools present with valid schema shape
+///   - tools/list: all 12 tools present with valid schema shape
 ///   - tools/call routing through a real tool handler (dual content)
 ///   - unknown tool (-32602), unknown method (-32601), batch rejection
 ///     (-32600), malformed request shape (-32600)
@@ -203,16 +203,16 @@ TEST_F(McpDispatcher_Test, UnknownMethod_IsMethodNotFound)
 // tools/list and tools/call
 // ===========================================================================
 
-TEST_F(McpDispatcher_Test, ToolsList_ContainsAllElevenTools)
+TEST_F(McpDispatcher_Test, ToolsList_ContainsAllTwelveTools)
 {
     Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/list"));
 
     const Json::Value& tools = response["result"]["tools"];
     ASSERT_TRUE(tools.isArray());
-    EXPECT_EQ(tools.size(), 11u);
+    EXPECT_EQ(tools.size(), 12u);
 
     const char* expected[] = {"emulator_manage",  "load_software",     "control_execution", "inspect_state",
-                              "type_input",       "manage_symbols",    "debug_code",
+                              "type_input",       "mouse_input",       "manage_symbols",    "debug_code",
                               "analyze_performance", "capture_media",  "search_api",        "invoke_api"};
     for (const char* name : expected)
     {

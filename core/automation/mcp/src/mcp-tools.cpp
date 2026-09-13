@@ -1006,6 +1006,213 @@ void RegisterTypeInput(ToolRegistry& registry)
 
 /// endregion </type_input>
 
+/// region <mouse_input>
+
+namespace
+{
+
+void RegisterMouseInput(ToolRegistry& registry)
+{
+    Json::Value schema;
+    schema["type"] = "object";
+    schema["properties"]["action"]["type"] = "string";
+    schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* action : {"move", "press", "release", "click", "buttons", "wheel", "release_all", "status"})
+    {
+        schema["properties"]["action"]["enum"].append(action);
+    }
+    schema["properties"]["action"]["description"] =
+        "Kempston mouse (relative device). 'move' shifts counters by dx/dy emulated pixels; 'click' presses a button for N "
+        "frames. Input is applied immediately; call control_execution run_frames to let the program react.";
+    schema["properties"]["target"]["type"] = "string";
+    schema["properties"]["target"]["default"] = "auto";
+    schema["properties"]["dx"]["type"] = "integer";
+    schema["properties"]["dx"]["minimum"] = -127;
+    schema["properties"]["dx"]["maximum"] = 127;
+    schema["properties"]["dx"]["description"] = "+ = right (move; optional pre-move for click)";
+    schema["properties"]["dy"]["type"] = "integer";
+    schema["properties"]["dy"]["minimum"] = -127;
+    schema["properties"]["dy"]["maximum"] = 127;
+    schema["properties"]["dy"]["description"] = "+ = UP (move; optional pre-move for click)";
+    Json::Value buttonEnum(Json::arrayValue);
+    for (const char* button : {"left", "right", "middle"})
+    {
+        buttonEnum.append(button);
+    }
+    schema["properties"]["button"]["type"] = "string";
+    schema["properties"]["button"]["enum"] = buttonEnum;
+    schema["properties"]["pressed"]["type"] = "array";
+    schema["properties"]["pressed"]["items"]["type"] = "string";
+    schema["properties"]["pressed"]["items"]["enum"] = buttonEnum;
+    schema["properties"]["pressed"]["description"] = "Exact pressed set for 'buttons' ([] = none)";
+    schema["properties"]["frames"]["type"] = "integer";
+    schema["properties"]["frames"]["minimum"] = 1;
+    schema["properties"]["frames"]["default"] = 2;
+    schema["properties"]["frames"]["description"] = "Hold time for 'click'";
+    schema["properties"]["steps"]["type"] = "integer";
+    schema["properties"]["steps"]["minimum"] = -7;
+    schema["properties"]["steps"]["maximum"] = 7;
+    schema["properties"]["steps"]["description"] = "Wheel notches, + = away from user";
+    schema["required"].append("action");
+
+    registry.Register(
+        "mouse_input",
+        "Send Kempston mouse input to the emulator: relative move (dx/dy), press/release/click buttons, set the exact "
+        "pressed set, wheel steps, release_all, status. Values are forwarded as-is; the WebAPI validates ranges.",
+        std::move(schema),
+        [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
+            std::string action = args["action"].asString();
+
+            if (action == "status")
+            {
+                ResolveAndForward(args, "GET", "/mouse/status", nullptr, caller, "Mouse status", done);
+                return;
+            }
+            if (action == "release_all")
+            {
+                ResolveAndForward(args, "POST", "/mouse/release_all", nullptr, caller, "Released all mouse buttons", done);
+                return;
+            }
+            if (action == "move")
+            {
+                if (!args.isMember("dx") && !args.isMember("dy"))
+                {
+                    done(ToolResult::Error("move requires 'dx' or 'dy'"));
+                    return;
+                }
+                Json::Value body;
+                body["dx"] = args.isMember("dx") ? args["dx"] : Json::Value(0);
+                body["dy"] = args.isMember("dy") ? args["dy"] : Json::Value(0);
+                ResolveAndForward(args, "POST", "/mouse/move", &body, caller, "Mouse moved", done);
+                return;
+            }
+            if (action == "press" || action == "release")
+            {
+                if (!args.isMember("button"))
+                {
+                    done(ToolResult::Error(action + " requires 'button'"));
+                    return;
+                }
+                Json::Value body;
+                body["button"] = args["button"];
+                ResolveAndForward(args, "POST", "/mouse/" + action, &body, caller,
+                                  "Mouse " + action + ": " + args["button"].asString(), done);
+                return;
+            }
+            if (action == "buttons")
+            {
+                if (!args.isMember("pressed"))
+                {
+                    done(ToolResult::Error("buttons requires 'pressed'"));
+                    return;
+                }
+                Json::Value body;
+                body["pressed"] = args["pressed"];
+                ResolveAndForward(args, "POST", "/mouse/buttons", &body, caller, "Mouse buttons set", done);
+                return;
+            }
+            if (action == "wheel")
+            {
+                if (!args.isMember("steps"))
+                {
+                    done(ToolResult::Error("wheel requires 'steps'"));
+                    return;
+                }
+                Json::Value body;
+                body["steps"] = args["steps"];
+                ResolveAndForward(args, "POST", "/mouse/wheel", &body, caller, "Mouse wheel moved", done);
+                return;
+            }
+            if (action == "click")
+            {
+                if (!args.isMember("button"))
+                {
+                    done(ToolResult::Error("click requires 'button'"));
+                    return;
+                }
+                Json::Value clickBody;
+                clickBody["button"] = args["button"];
+                if (args.isMember("frames")) clickBody["frames"] = args["frames"];
+                const std::string okText = "Mouse click: " + args["button"].asString();
+
+                if (!args.isMember("dx") && !args.isMember("dy"))
+                {
+                    ResolveAndForward(args, "POST", "/mouse/click", &clickBody, caller, okText, done);
+                    return;
+                }
+
+                // Pre-move then click, in order; the click is skipped if the move fails
+                Json::Value moveBody;
+                moveBody["dx"] = args.isMember("dx") ? args["dx"] : Json::Value(0);
+                moveBody["dy"] = args.isMember("dy") ? args["dy"] : Json::Value(0);
+
+                TargetResolver::ResolveFromArgs(
+                    args, caller, [&caller, moveBody, clickBody, okText, done](bool ok, const std::string& idOrError) {
+                        if (!ok)
+                        {
+                            done(ToolResult::Error(idOrError));
+                            return;
+                        }
+                        const std::string id = idOrError;
+
+                        // Each step records its response under its name; a failure records
+                        // the HTTP status and body under "failed" and stops the series.
+                        auto makeStep = [&caller, id](const std::string& name, const std::string& suffix, Json::Value body) -> SeriesStep {
+                            auto bodyHolder = std::make_shared<Json::Value>(std::move(body));
+                            return [&caller, id, name, suffix, bodyHolder](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("POST", Endpoint(id, suffix), bodyHolder.get(), [bodyHolder, name, &acc, next](int status, Json::Value response) {
+                                    if (status >= 200 && status < 300)
+                                    {
+                                        acc[name] = std::move(response);
+                                        next(true);
+                                        return;
+                                    }
+                                    acc["failed"]["step"] = name;
+                                    acc["failed"]["status"] = status;
+                                    acc["failed"]["body"] = std::move(response);
+                                    next(false);
+                                });
+                            };
+                        };
+
+                        std::vector<SeriesStep> steps;
+                        steps.push_back(makeStep("move", "/mouse/move", moveBody));
+                        steps.push_back(makeStep("click", "/mouse/click", clickBody));
+
+                        RunSeries(std::move(steps), [done, okText, id](Json::Value acc) {
+                            if (acc.isMember("failed"))
+                            {
+                                const Json::Value& failed = acc["failed"];
+                                const int status = failed["status"].asInt();
+                                if (status == 0)
+                                {
+                                    done(ToolResult::Error("WebAPI unreachable — is the emulator running with WebAPI enabled (port 8090)?"));
+                                    return;
+                                }
+                                std::string text = "Mouse " + failed["step"].asString() + " failed: WebAPI returned HTTP " +
+                                                   std::to_string(status);
+                                const std::string details = DescribeErrorBody(failed["body"]);
+                                if (!details.empty())
+                                {
+                                    text += ": " + details;
+                                }
+                                done(ToolResult::Error(text));
+                                return;
+                            }
+                            done(ToolResult::Ok(okText + " (after pre-move) [target " + id + "]", std::move(acc)));
+                        });
+                    });
+                return;
+            }
+
+            done(ToolResult::Error("Unknown action '" + action + "'"));
+        });
+}
+
+} // namespace
+
+/// endregion </mouse_input>
+
 /// region <Registry composition>
 
 std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
@@ -1018,6 +1225,7 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterControlExecution(*registry);
     RegisterInspectState(*registry);
     RegisterTypeInput(*registry);
+    RegisterMouseInput(*registry);
 
     // Phase 2 — smart tools
     RegisterManageSymbols(*registry);

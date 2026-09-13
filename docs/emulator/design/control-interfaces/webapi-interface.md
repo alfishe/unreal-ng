@@ -879,6 +879,110 @@ curl -X POST http://localhost:8090/api/v1/emulator/{id}/keyboard/macro \
 | `delay_frames` | number | No | 2 | Frames between characters |
 | `tokenized` | boolean | No | false | Enable K-mode token for first char |
 
+### 10. Mouse Input Injection
+
+> **Status**: ✅ Implemented (2026-09). Source: `core/automation/webapi/src/api/mouse_api.cpp`;
+> every range check lives in the core `DebugMouseManager`, so all interfaces answer the same.
+
+Drives the emulated Kempston Mouse. The mouse is **relative**: requests change its X/Y
+counters, and the running program moves its own cursor by how much the counters changed.
+Full command semantics, units and a worked example: [command-interface.md §11](./command-interface.md#11-mouse-input-injection).
+
+```
+POST /api/v1/emulator/{id}/mouse/move         Move by dx/dy emulated pixels      {"dx":10,"dy":-5}
+POST /api/v1/emulator/{id}/mouse/press        Press and hold a button            {"button":"left"}
+POST /api/v1/emulator/{id}/mouse/release      Release a button                   {"button":"left"}
+POST /api/v1/emulator/{id}/mouse/click        Press, hold N frames, release      {"button":"left","frames":2}
+POST /api/v1/emulator/{id}/mouse/buttons      Set the exact pressed set          {"pressed":["left","middle"]}
+POST /api/v1/emulator/{id}/mouse/wheel        Scroll by notches                  {"steps":-1}
+POST /api/v1/emulator/{id}/mouse/release_all  Release all, cancel pending click  (no body)
+POST /api/v1/emulator/{id}/mouse/counters     Debug: write raw X/Y counters      {"x":31,"y":85}
+GET  /api/v1/emulator/{id}/mouse/status       Current mouse state
+GET  /api/v1/emulator/{id}/mouse/buttons      Valid button names and aliases
+```
+
+| Field | Type | Range | Notes |
+|-------|------|-------|-------|
+| `dx` | integer | −127 … 127 | + = right. Either `dx` or `dy` may be omitted (= 0), not both; both 0 is rejected. |
+| `dy` | integer | −127 … 127 | + = **up** |
+| `button` | string | `left`, `right`, `middle`, `l`, `r`, `m` | case-insensitive |
+| `frames` | integer | 1 … 65535 | optional, default 2 |
+| `pressed` | array of button names | — | `[]` = nothing pressed; duplicates ignored |
+| `steps` | integer | −7 … 7, not 0 | + = away from the user |
+| `x`, `y` | integer | 0 … 255 | both required |
+
+Numbers must be JSON integers: `"10"` and `1.5` are rejected with 400.
+
+**Every successful POST returns the resulting state**, so no follow-up status call is needed:
+
+```jsonc
+// POST /mouse/move {"dx":10,"dy":-5}, from reset (X=31, Y=85), shipped config Wheel=NONE
+{
+  "success": true,
+  "dx": 10, "dy": -5,
+  "message": "Mouse moved: dx=+10 dy=-5",
+  "state": {
+    "available": true, "present": true, "wheel_enabled": false,
+    "x": 41, "y": 80,
+    "buttons": {"left": false, "right": false, "middle": false},
+    "button_mask": 255, "wheel": 0,
+    "ports": {"FADF": 255, "FBDF": 41, "FFDF": 80},
+    "pending_click": null,
+    "ttd_journal": "supported"
+  }
+}
+```
+
+`GET /mouse/status` returns the same object as `state` plus `emulator_id`. Field meanings:
+
+| Field | Meaning |
+|-------|---------|
+| `present` | A mouse is fitted: `[INPUT] Mouse=KEMPSTON` **and** feature `kempstonmouse` on. `false` = nothing answers on the ports. |
+| `wheel_enabled` | `[INPUT] Wheel=KEMPSTON`: the wheel counter appears in the top 4 bits of `#FADF`. |
+| `button_mask` | Internal button byte, active-low (a pressed button is bit 0). 254 = left down. |
+| `ports` | What the three ports return right now, as integers. `FADF` = buttons (+ wheel), `FBDF` = X, `FFDF` = Y. |
+| `pending_click` | `null`, or `{"button":"left","frames_left":1}` while a click is being held. |
+| `ttd_journal` | `"supported"`: TTD recordings include mouse input. |
+
+A successful response may carry a `"warning"` string: the mouse is not fitted
+(`mouse not present: guest reads floating bus on the mouse ports`), or a wheel step was sent
+with no wheel fitted (`no wheel fitted ([INPUT] Wheel=NONE): the guest does not see the wheel counter`).
+The change is still applied.
+
+**Errors** use the usual `{"error": "...", "message": "..."}` body, with CORS headers:
+
+| Condition | Code | `message` example |
+|-----------|------|-------------------|
+| Unknown emulator id | 404 | `Emulator with specified ID not found` |
+| Mouse manager missing | 500 | `Mouse manager not available` |
+| Missing body field | 400 | `Missing 'button' field in request body` |
+| Wrong JSON type | 400 | `'dx' must be an integer` |
+| Out of range | 400 | `dx=200 out of range -127..127; split into several moves with run_frames between them` |
+| Zero move or zero wheel | 400 | `move requires a non-zero dx or dy` |
+| Unknown button | 400 | `Unknown button 'foo'. Valid: left, right, middle (l, r, m)` |
+| TTD replay in progress | 409 | `TTD replay in progress; live mouse input refused` |
+
+409 is returned **only** during TTD replay. Writing counters while TTD records is allowed
+(the write is journalled).
+
+**Example: click an icon 32 px right and 16 px up of the cursor, reproducibly**
+
+```bash
+ID=...   # emulator id
+curl -X POST localhost:8090/api/v1/emulator/$ID/pause
+curl -X POST localhost:8090/api/v1/emulator/$ID/mouse/move  -H 'Content-Type: application/json' -d '{"dx":32,"dy":16}'
+curl -X POST localhost:8090/api/v1/emulator/$ID/run_frames  -H 'Content-Type: application/json' -d '{"count":2}'
+curl -X POST localhost:8090/api/v1/emulator/$ID/mouse/click -H 'Content-Type: application/json' -d '{"button":"left","frames":2}'
+curl -X POST localhost:8090/api/v1/emulator/$ID/run_frames  -H 'Content-Type: application/json' -d '{"count":3}'
+
+curl -X POST localhost:8090/api/v1/emulator/$ID/mouse/wheel -H 'Content-Type: application/json' -d '{"steps":-9}'
+# 400 {"error":"Bad Request","message":"steps=-9 out of range -7..7"}
+```
+
+MCP clients use the `mouse_input` tool (actions `move`, `press`, `release`, `click` with an
+optional `dx`/`dy` pre-move, `buttons`, `wheel`, `release_all`, `status`), which forwards to
+these routes. `counters` is not a `mouse_input` action; reach it through `invoke_api`.
+
 ## Tape Control
 
 Full tape transport, inspection and the offline audio bridge — one-to-one with the CLI `tape` commands ([command-interface.md §10](./command-interface.md#10-tape-control-commands)), the Lua `tape_*` functions and the Python `tape_*` methods. All endpoints are scoped under `/api/v1/emulator/{id}/tape`.
