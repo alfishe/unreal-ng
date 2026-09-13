@@ -15,10 +15,12 @@
 #include "emulator/sound/chips/soundchip_turbosoundfm.h"
 #include "emulator/sound/soundmanager.h"
 
-/// TEMPORARY DIAGNOSTIC (2026-09-13): renders the first N frames of
-/// testdata/sound/tsfm/tech_support.sna headless through the SoundManager and
-/// writes the master mix to the WAV named by TSFM_DIAG_WAV (default: none).
-/// Used to compare renders across builds. No assertions beyond booting.
+/// Opt-in render harness (skipped unless TSFM_DIAG_WAV is set): renders the
+/// first TSFM_DIAG_FRAMES frames (default 750) of
+/// testdata/sound/tsfm/tech_support.sna headless through the real
+/// SoundManager frame path and writes the master mix to that WAV. Used to
+/// compare renders across builds (2026-09-13: proved the sample-count fix
+/// left the synthesis untouched). No assertions beyond booting.
 
 namespace
 {
@@ -40,7 +42,7 @@ void WriteWav(const std::string& path, const std::vector<int16_t>& pcm, uint32_t
 }
 }  // namespace
 
-TEST(TsfmEndStateDiag, RenderMoebiusOpening)
+TEST(TsfmRenderDiag, RenderMoebiusOpening)
 {
     const char* out = std::getenv("TSFM_DIAG_WAV");
     if (!out)
