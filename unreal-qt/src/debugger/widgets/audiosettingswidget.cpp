@@ -488,7 +488,7 @@ void AudioSettingsWidget::refreshFromContext()
 
         // TurboSound slot kind: the whole AY/TurboSound block retitles and
         // re-labels for TSFM, the FM trim row appears, and the chip-model
-        // selector locks to the YM2203's fixed SSG (YM2149, §8.3)
+        // selector locks to the board's YM2203 (§8.3)
         ITurboSoundDevice* tsDevice = sm->getTurboSound();
         const bool isFm = tsDevice && tsDevice->hasFm();
         _ayGroup->setTitle(isFm ? "SSG / TurboSound FM" : "AY / TurboSound");
@@ -497,14 +497,32 @@ void AudioSettingsWidget::refreshFromContext()
         _tsfmControls->setVisible(isFm);
         _chipModelCombo->setEnabled(!isFm);
         _chipModelCombo->setToolTip(isFm
-                                        ? "Locked: the YM2203's SSG half is a fixed YM2149"
+                                        ? "Locked: the TSFM board is 2 x YM2203\n"
+                                          "(each chip's SSG half is a fixed YM2149)"
                                         : "AY-3-8910: brighter\nYM2149: warmer");
         if (isFm)
         {
-            _chipModelCombo->setCurrentIndex(static_cast<int>(AYChipModel::YM2149));
+            // Name the chips the machine actually has; the fixed YM2149 DAC
+            // curve of the SSG half is an internal detail (§8.3)
+            if (_chipModelCombo->count() != 1)
+            {
+                _chipModelCombo->clear();
+                _chipModelCombo->addItem("YM2203");
+            }
+            _chipModelCombo->setCurrentIndex(0);
             const double trim = tsDevice->fmTrimDb();
             _fmTrimSlider->setValue(static_cast<int>(std::lround(trim * 2.0)));
             _fmTrimLabel->setText(QString("%1%2 dB").arg(trim >= 0 ? "+" : "").arg(trim, 0, 'f', 1));
+        }
+        else if (_chipModelCombo->count() != 2)
+        {
+            // Restore the AY-3-8910 / YM2149 choice after an FM instance
+            // collapsed it (the GUI can adopt instances of either kind)
+            _chipModelCombo->clear();
+            _chipModelCombo->addItem("AY-3-8910", 0);
+            _chipModelCombo->addItem("YM2149", 1);
+            _chipModelCombo->setCurrentIndex(ay0 ? static_cast<int>(ay0->getChipModel())
+                                                  : static_cast<int>(AYChipModel::AY8910));
         }
 
         // Load per-chip channel settings
