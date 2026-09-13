@@ -528,4 +528,57 @@ TEST_F(TsfmGain_Test, Reference)
     }
 }
 
+TEST_F(TsfmGain_Test, LiveCoreRateSwitch)
+{
+    // SoundManager::applyCoreRate switches a RUNNING device at a frame
+    // boundary (44.1 k -> 48 k, say). The switch must redesign all six
+    // decimators for the new rate - taps scaled per input side, phase step
+    // for the new output rate - and re-attach the FM slaves, exactly as the
+    // legacy device redesigns its four SSG filters. Checked on a device that
+    // has already rendered a note, not a fresh one
+    auto device = std::make_unique<SoundChip_TurboSoundFM>(_context);
+    device->setCoreRate(44100);
+    ProgramFmNote(*device, FmNoteProgram{});
+    const int16_t peak441 = RunFmNotePeak(*device, 20, 10);
+    EXPECT_GE(peak441, int16_t(2458 * 0.95)) << "FM too quiet at 44.1 k: " << peak441;
+    const size_t samples441 = device->getRenderedSamplesThisFrame();
+
+    for (const size_t rate : {size_t(48000), size_t(96000), size_t(44100)})
+    {
+        SCOPED_TRACE(testing::Message() << "rate " << rate);
+        device->setCoreRate(rate);
+
+        // Filter designs: SSG side 96 taps at 218.75 kHz, FM side 192 taps at
+        // 437.5 kHz, both with the phase step of the new output rate
+        for (int chip = 0; chip < 2; chip++)
+        {
+            const FilterDecimator& ssg = device->getChip(chip)->decimatorLeft();
+            const FilterDecimator& fm = device->outputState(chip)->decimator;
+            EXPECT_EQ(ssg.taps(), 96u);
+            EXPECT_EQ(fm.taps(), 192u);
+            EXPECT_NEAR(ssg.samplesPerOutput(), FilterDecimator::INPUT_RATE / double(rate), 1e-9);
+            EXPECT_NEAR(fm.samplesPerOutput(), 2.0 * FilterDecimator::INPUT_RATE / double(rate), 1e-9);
+
+            // Bit-for-bit the designs FilterDecimator_Test validates for
+            // this rate (the SSG one is the legacy device's, §11)
+            FilterDecimator expectSsg;
+            FilterDecimator expectFm;
+            expectSsg.configure(double(rate));
+            expectFm.configure(double(rate), FilterDecimator::Quality::Reference, false, 2.0 * FilterDecimator::INPUT_RATE);
+            EXPECT_EQ(ssg.coefficients(), expectSsg.coefficients()) << "SSG design differs from the legacy design";
+            EXPECT_EQ(fm.coefficients(), expectFm.coefficients()) << "FM design differs from the 437.5 kHz design";
+        }
+
+        // Rendering: the note keeps its §7.1 level through the switch (the
+        // slaves are re-attached, so the FM buffer is filled at the new
+        // cadence), and the per-frame sample count follows the rate
+        const int16_t peak = RunFmNotePeak(*device, 12, 4);
+        EXPECT_GE(peak, int16_t(2458 * 0.95)) << "FM too quiet after switch: " << peak;
+        EXPECT_LE(peak, int16_t(2458 * 1.05)) << "FM too loud after switch: " << peak;
+        const size_t samples = device->getRenderedSamplesThisFrame();
+        EXPECT_NEAR(double(samples), double(samples441) * double(rate) / 44100.0, 2.0)
+            << "frame sample count does not follow the new rate";
+    }
+}
+
 /// endregion
