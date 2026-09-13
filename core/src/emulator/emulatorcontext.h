@@ -18,6 +18,7 @@ using unreal::UUID;
 class Core;
 class Emulator;
 class Keyboard;
+class Mouse;
 class MainLoop;
 class Memory;
 class WD1793;
@@ -79,6 +80,9 @@ public:
 
 	// Keyboard controller instance
 	Keyboard* pKeyboard = nullptr;
+
+	// Mouse controller instance
+	Mouse* pMouse = nullptr;
 
 	// Memory controller instance
 	Memory* pMemory = nullptr;

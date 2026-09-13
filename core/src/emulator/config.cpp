@@ -236,8 +236,11 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 
 	// MISC::TSConf sub-section
 
-    // ROM set
-    config.romSetName = inimanager.GetValue(rom, "ROMSET");
+    // ROM set. GetValue returns NULL when the [ROM] section or the key is
+    // absent (a valid minimal config may carry neither) - a NULL const char*
+    // assigned to std::string is UB, so map it to the empty name explicitly.
+    const char* romSetName = inimanager.GetValue(rom, "ROMSET");
+    config.romSetName = romSetName != nullptr ? romSetName : "";
 
     if (!config.romSetName.empty())
     {
@@ -306,7 +309,44 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	config.fdd_noise = inimanager.GetLongValue(beta128, "Noise", 0) ? true : false;
 	CopyStringValue(inimanager.GetValue(beta128, "BOOT", nullptr, nullptr), config.appendboot, sizeof config.appendboot);
 
-	// INPUT section
+	// INPUT section - Kempston Mouse (design §7). Legacy Unreal Speccy keys:
+	//   Mouse=NONE|KEMPSTON|AY   Wheel=NONE|KEMPSTON|KEYBOARD   SwapMouse=0|1   MouseScale=-3..3
+	{
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(input, "Mouse", nullptr, nullptr), line, sizeof line);
+		config.input.mouseConfigured = line[0] != '\0';
+		config.input.mouse = MOUSE_TYPE_KEMPSTON;
+		if (StringHelper::CompareCaseInsensitive(line, "NONE", strlen("NONE")) == 0)
+			config.input.mouse = MOUSE_TYPE_NONE;
+		else if (StringHelper::CompareCaseInsensitive(line, "AY", strlen("AY")) == 0)
+		{
+			MLOGWARNING("Config: [INPUT] Mouse=AY is not emulated, no mouse fitted");
+			config.input.mouse = MOUSE_TYPE_NONE;
+		}
+		else if (line[0] != '\0' && StringHelper::CompareCaseInsensitive(line, "KEMPSTON", strlen("KEMPSTON")) != 0)
+			MLOGWARNING("Config: unsupported [INPUT] Mouse='%s', using KEMPSTON", line);
+
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(input, "Wheel", nullptr, nullptr), line, sizeof line);
+		config.input.mousewheel = MOUSE_WHEEL_NONE;
+		if (StringHelper::CompareCaseInsensitive(line, "KEMPSTON", strlen("KEMPSTON")) == 0)
+			config.input.mousewheel = MOUSE_WHEEL_KEMPSTON;
+		else if (StringHelper::CompareCaseInsensitive(line, "KEYBOARD", strlen("KEYBOARD")) == 0)
+		{
+			MLOGWARNING("Config: [INPUT] Wheel=KEYBOARD is not implemented, wheel disabled");
+			config.input.mousewheel = MOUSE_WHEEL_NONE;
+		}
+
+		config.input.mouseswap = inimanager.GetLongValue(input, "SwapMouse", 0) ? 1 : 0;
+
+		long scale = inimanager.GetLongValue(input, "MouseScale", 0);
+		if (scale < -3 || scale > 3)
+		{
+			MLOGWARNING("Config: [INPUT] MouseScale=%ld out of range -3..3, using 0", scale);
+			scale = 0;
+		}
+		config.input.mousescale = static_cast<char>(scale);
+	}
 
 	// HDD section
 
@@ -335,6 +375,35 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 				break;
 		}
 	}
+
+	// TurboSound slot device kind (TSFM design §3.1): AY (legacy two-AY pair,
+	// default) or FM (TSFM). Unknown values warn and fall back to AY; a missing
+	// key keeps the default. The legacy [AY] Chip/Scheme keys are NOT honoured:
+	// every shipped ini carries Chip=YM2203 and nothing ever parsed them, so
+	// honouring them now would silently switch every machine to TSFM.
+	{
+		// Explicit default first: a missing key must reset to AY even when the
+		// struct holds FM from a previous parse of another file.
+		config.sound.turboSoundKind = TurboSoundKind::AY;
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(sound, "TurboSound", nullptr, nullptr), line, sizeof line);
+		if (StringHelper::CompareCaseInsensitive(line, "AY", strlen("AY")) == 0)
+		{
+			config.sound.turboSoundKind = TurboSoundKind::AY;
+		}
+		else if (StringHelper::CompareCaseInsensitive(line, "FM", strlen("FM")) == 0)
+		{
+			config.sound.turboSoundKind = TurboSoundKind::FM;
+		}
+		else if (line[0] != '\0')
+		{
+			MLOGWARNING("Config: unsupported [SOUND] TurboSound='%s', using AY", line);
+			config.sound.turboSoundKind = TurboSoundKind::AY;
+		}
+	}
+
+	// FM loudness trim in dB relative to the hardware-derived default (0 = default)
+	config.sound.tsfmFmTrimDb = inimanager.GetDoubleValue(sound, "TSFM_FmTrimDb", 0.0);
 
 	// VIDEO section
 	// A/V sync video delay: auto (-1) = match the audio path latency

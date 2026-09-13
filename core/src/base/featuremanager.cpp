@@ -1,5 +1,6 @@
 #include "featuremanager.h"
 
+#include "emulator/io/mouse/mouse.h"
 #include <algorithm>
 #include <cassert>
 #include <filesystem>
@@ -317,6 +318,14 @@ void FeatureManager::setDefaults()
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryPerformance});
 
+    registerFeature({Features::kKempstonMouse,
+                     Features::kKempstonMouseAlias,
+                     Features::kKempstonMouseDesc,
+                     true,  // ON by default - whether a mouse is fitted is decided by the machine config
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
+
     _dirty = false;
 }
 
@@ -432,6 +441,12 @@ void FeatureManager::onFeatureChanged(const std::string& changedFeatureId)
         _context->pRecordingManager->UpdateFeatureCache();
     }
 #endif
+
+    // Kempston Mouse fitting follows the kempstonmouse feature
+    if (_context && _context->pMouse)
+    {
+        _context->pMouse->ApplyConfiguration();
+    }
 
     // Update feature cache in Screen (for ScreenHQ toggle) if it exists
     if (_context && _context->pScreen)

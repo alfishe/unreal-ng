@@ -9,6 +9,8 @@
 #include <bitset>
 
 #include "../emulator_api.h"
+#include "statenode_json.h"
+#include <emulator/state/devicestate.h>
 
 
 using namespace drogon;
@@ -71,63 +73,9 @@ void EmulatorAPI::getStateAudioAY(const HttpRequestPtr& req, std::function<void(
         return;
     }
 
-    Json::Value ret;
+    // Core report (DeviceState::Ay): the same tree every interface renders
+    Json::Value ret = StateNodeToJson(DeviceState::Ay(context));
 
-    // Count available AY chips
-    int ayCount = soundManager->getAYChipCount();
-    bool hasTurboSound = soundManager->hasTurboSound();
-
-    ret["available_chips"] = ayCount;
-    ret["turbo_sound"] = hasTurboSound;
-
-    if (ayCount == 0)
-    {
-        ret["description"] = "No AY chips available";
-    }
-    else if (ayCount == 1)
-    {
-        ret["description"] = "Standard AY-3-8912";
-    }
-    else if (ayCount == 2)
-    {
-        ret["description"] = "TurboSound (dual AY-3-8912)";
-    }
-    else if (ayCount == 3)
-    {
-        ret["description"] = "ZX Next (triple AY-3-8912)";
-    }
-
-    // Brief info for each chip
-    Json::Value chips(Json::arrayValue);
-    for (int i = 0; i < ayCount; i++)
-    {
-        Json::Value chipInfo;
-        chipInfo["index"] = i;
-        chipInfo["type"] = "AY-3-8912";
-
-        SoundChip_AY8910* chip = soundManager->getAYChip(i);
-        if (chip)
-        {
-            // Check if any channels are active
-            bool hasActiveChannels = false;
-            const auto* toneGens = chip->getToneGenerators();
-            for (int ch = 0; ch < 3; ch++)
-            {
-                if (toneGens[ch].toneEnabled() || toneGens[ch].noiseEnabled())
-                {
-                    hasActiveChannels = true;
-                    break;
-                }
-            }
-            chipInfo["active_channels"] = hasActiveChannels;
-            chipInfo["envelope_active"] = (chip->getEnvelopeGenerator().out() > 0);
-        }
-
-        chipInfo["sound_played_since_reset"] = false;  // TODO: Implement sound played tracking
-        chips.append(chipInfo);
-    }
-
-    ret["chips"] = chips;
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);
@@ -216,89 +164,8 @@ void EmulatorAPI::getStateAudioAYIndex(const HttpRequestPtr& req,
         return;
     }
 
-    Json::Value ret;
-    ret["chip_index"] = chipIndex;
-    ret["chip_type"] = "AY-3-8912";
-
-    // Get registers using public method
-    const uint8_t* chipRegisters = chip->getRegisters();
-
-    // Register values
-    Json::Value registers(Json::objectValue);
-    for (int reg = 0; reg < 16; reg++)
-    {
-        registers[SoundChip_AY8910::AYRegisterNames[reg]] = (int)chipRegisters[reg];
-    }
-    ret["registers"] = registers;
-
-    // Channel information
-    Json::Value channels(Json::arrayValue);
-    const char* channelNames[] = {"A", "B", "C"};
-    const auto* toneGens = chip->getToneGenerators();
-    for (int ch = 0; ch < 3; ch++)
-    {
-        Json::Value channel;
-        const auto& toneGen = toneGens[ch];
-
-        uint8_t fine = chipRegisters[ch * 2];
-        uint8_t coarse = chipRegisters[ch * 2 + 1];
-        uint16_t period = (coarse << 8) | fine;
-
-        channel["name"] = channelNames[ch];
-        channel["period"] = period;
-        channel["fine"] = (int)fine;
-        channel["coarse"] = (int)coarse;
-        channel["frequency_hz"] = 1750000.0 / (16.0 * (period + 1));
-        channel["volume"] = (int)toneGen.volume();
-        channel["tone_enabled"] = toneGen.toneEnabled();
-        channel["noise_enabled"] = toneGen.noiseEnabled();
-        channel["envelope_enabled"] = toneGen.envelopeEnabled();
-
-        channels.append(channel);
-    }
-    ret["channels"] = channels;
-
-    // Envelope generator
-    Json::Value envelope;
-    uint8_t envShape = chipRegisters[13];
-    uint16_t envPeriod = (chipRegisters[12] << 8) | chipRegisters[11];
-    envelope["shape"] = (int)envShape;
-    envelope["period"] = envPeriod;
-    envelope["current_output"] = (int)chip->getEnvelopeGenerator().out();
-    envelope["frequency_hz"] = 1750000.0 / (256.0 * (envPeriod + 1));
-    ret["envelope"] = envelope;
-
-    // Noise generator
-    Json::Value noise;
-    uint8_t noisePeriod = chipRegisters[6] & 0x1F;
-    noise["period"] = (int)noisePeriod;
-    noise["frequency_hz"] = 1750000.0 / (16.0 * (noisePeriod + 1));
-    ret["noise"] = noise;
-
-    // Mixer state
-    Json::Value mixer;
-    uint8_t mixerValue = chipRegisters[7];
-    mixer["register_value"] = (int)mixerValue;
-    mixer["channel_a_tone"] = ((mixerValue & 0x01) == 0);
-    mixer["channel_b_tone"] = ((mixerValue & 0x02) == 0);
-    mixer["channel_c_tone"] = ((mixerValue & 0x04) == 0);
-    mixer["channel_a_noise"] = ((mixerValue & 0x08) == 0);
-    mixer["channel_b_noise"] = ((mixerValue & 0x10) == 0);
-    mixer["channel_c_noise"] = ((mixerValue & 0x20) == 0);
-    mixer["porta_input"] = ((mixerValue & 0x40) != 0);
-    mixer["portb_input"] = ((mixerValue & 0x80) != 0);
-    ret["mixer"] = mixer;
-
-    // I/O ports
-    Json::Value ports;
-    ports["porta_value"] = (int)chipRegisters[14];
-    ports["porta_direction"] = ((mixerValue & 0x40) ? "input" : "output");
-    ports["portb_value"] = (int)chipRegisters[15];
-    ports["portb_direction"] = ((mixerValue & 0x80) ? "input" : "output");
-    ret["io_ports"] = ports;
-
-    ret["sound_played_since_reset"] = false;  // TODO: Implement sound played tracking
-
+    // Core report (DeviceState::AyChip): the same tree every interface renders
+    Json::Value ret = StateNodeToJson(DeviceState::AyChip(context, chipIndex));
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);

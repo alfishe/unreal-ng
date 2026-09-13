@@ -21,6 +21,24 @@ namespace v1
 // Helper function declared in emulator_api.cpp
 extern void addCorsHeaders(HttpResponsePtr& resp);
 
+/// 400 for a key name DebugKeyboardManager cannot resolve (it would silently ignore it,
+/// while the OpenAPI contract promises 400). Returns true when a response was sent.
+static bool rejectUnknownKey(const std::string& keyName, const std::function<void(const HttpResponsePtr&)>& callback)
+{
+    if (DebugKeyboardManager::ResolveKeyName(keyName) != ZXKEY_NONE)
+        return false;
+
+    Json::Value error;
+    error["error"] = "Bad Request";
+    error["message"] = "Unknown key '" + keyName + "'. Use GET /api/v1/emulator/{id}/keyboard/keys for valid names";
+
+    auto resp = HttpResponse::newHttpJsonResponse(error);
+    resp->setStatusCode(HttpStatusCode::k400BadRequest);
+    addCorsHeaders(resp);
+    callback(resp);
+    return true;
+}
+
 /// @brief POST /api/v1/emulator/{id}/keyboard/tap
 /// @brief Tap a key (press and release)
 void EmulatorAPI::keyTap(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
@@ -71,6 +89,8 @@ void EmulatorAPI::keyTap(const HttpRequestPtr& req, std::function<void(const Htt
     }
 
     std::string keyName = (*json)["key"].asString();
+    if (rejectUnknownKey(keyName, callback))
+        return;
     uint16_t frames = json->isMember("frames") ? (*json)["frames"].asUInt() : 2;
 
     context->pDebugManager->GetKeyboardManager()->TapKey(keyName, frames);
@@ -136,6 +156,8 @@ void EmulatorAPI::keyPress(const HttpRequestPtr& req, std::function<void(const H
     }
 
     std::string keyName = (*json)["key"].asString();
+    if (rejectUnknownKey(keyName, callback))
+        return;
     context->pDebugManager->GetKeyboardManager()->PressKey(keyName);
 
     Json::Value ret;
@@ -198,6 +220,8 @@ void EmulatorAPI::keyRelease(const HttpRequestPtr& req, std::function<void(const
     }
 
     std::string keyName = (*json)["key"].asString();
+    if (rejectUnknownKey(keyName, callback))
+        return;
     context->pDebugManager->GetKeyboardManager()->ReleaseKey(keyName);
 
     Json::Value ret;
@@ -262,6 +286,8 @@ void EmulatorAPI::keyCombo(const HttpRequestPtr& req, std::function<void(const H
     std::vector<std::string> keyNames;
     for (const auto& key : (*json)["keys"])
     {
+        if (rejectUnknownKey(key.asString(), callback))
+            return;
         keyNames.push_back(key.asString());
     }
 

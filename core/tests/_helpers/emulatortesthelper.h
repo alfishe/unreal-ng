@@ -2,6 +2,7 @@
 
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/platform.h"
 #include "emulator/spectrumconstants.h"
 #include <cstdint>
 #include <functional>
@@ -31,6 +32,28 @@ public:
     static Emulator* CreateStandardEmulator(
         const std::string& modelName = "PENTAGON",
         LoggerLevel logLevel = LoggerLevel::LogError);
+
+    /// Create an emulator whose TurboSound slot kind is pinned instead of
+    /// inherited from the shipped default. The shipped inis now enable TSFM
+    /// (TurboSound=FM) on the capable machines (pentagon128k, scorpion,
+    /// spectrum128); suites that model a specific slot (legacy AY blobs,
+    /// TTD session-kind guards, the player harness) must request it here.
+    /// Stages a scratch copy of the model's ini with the TurboSound= line
+    /// rewritten - either direction - and boots from it
+    /// @param modelName Model short name (empty = the bare-Init default Pentagon)
+    /// @param kind Slot kind to force
+    /// @param logLevel Logging level
+    /// @return Initialized emulator instance (caller owns, use CleanupEmulator)
+    static Emulator* CreateEmulatorWithTurboSoundKind(
+        const std::string& modelName,
+        TurboSoundKind kind,
+        LoggerLevel logLevel = LoggerLevel::LogError);
+
+    /// Stage a scratch config with the DEFAULT (bare Init) machine's
+    /// TurboSound slot forced to the given kind, for fixtures that build
+    /// their own Emulator and call Init() directly
+    /// @return Path of the staged ini to pass to SetCustomConfigPath
+    static std::string StageTurboSoundKindConfig(TurboSoundKind kind);
 
     /// Create a debug-enabled emulator with specific features enabled
     /// @param features List of feature names to enable (e.g., "breakpoints", "analyzers")

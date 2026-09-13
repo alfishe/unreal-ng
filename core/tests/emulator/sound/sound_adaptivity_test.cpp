@@ -242,7 +242,7 @@ TEST_F(SoundAdaptivity_Test, TurboSound_SampleCountFollowsFrameLength)
     SoundManager* sound = _context->pSoundManager;
     ASSERT_NE(sound, nullptr);
 
-    SoundChip_TurboSound* turboSound = sound->getTurboSound();
+    ITurboSoundDevice* turboSound = sound->getTurboSound();
     if (!turboSound)
     {
         GTEST_SKIP() << "TurboSound not available on this model";
@@ -326,7 +326,7 @@ TEST_F(SoundAdaptivity_Test, TurboSound_PLLContinuityAcrossFrames)
     // -0.019% rate bias vs the exact accumulator.
     SoundManager* sound = _context->pSoundManager;
     ASSERT_NE(sound, nullptr);
-    SoundChip_TurboSound* turboSound = sound->getTurboSound();
+    ITurboSoundDevice* turboSound = sound->getTurboSound();
     if (!turboSound)
         GTEST_SKIP() << "TurboSound not available";
 

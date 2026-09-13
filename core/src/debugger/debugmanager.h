@@ -30,6 +30,9 @@ protected:
     
     // Keyboard injection manager for automation/debugging
     class DebugKeyboardManager* _keyboardManager = nullptr;
+
+    // Kempston Mouse injection funnel (automation, host input, TTD journal)
+    class DebugMouseManager* _mouseManager = nullptr;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -48,6 +51,7 @@ public:
     std::unique_ptr<Z80Disassembler>& GetDisassembler();
     AnalyzerManager* GetAnalyzerManager();
     DebugKeyboardManager* GetKeyboardManager();
+    DebugMouseManager* GetMouseManager();
 
     /// endregion </Properties>
 

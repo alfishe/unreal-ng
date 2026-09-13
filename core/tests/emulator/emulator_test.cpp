@@ -6,6 +6,8 @@
 #include "common/modulelogger.h"
 #include "common/timehelper.h"
 #include "emulator/emulator.h"
+#include "emulator/emulatormanager.h"
+#include "emulator/mainloop.h"
 #include "common/filehelper.h"
 #include <atomic>
 #include <cctype>
@@ -432,4 +434,69 @@ TEST_F(Emulator_Test, LoadSnapshot_EmitsSingleResetNotification)
 }
 
 /// endregion </File loaded notifications>
+
+/// region <Realtime scheduling propagation tests>
+
+/// @brief EmulatorManager must flag exactly one instance for real-time
+/// scheduling: the selected one, or the sole instance while nothing is
+/// selected (the GUI creates its single instance through the manager but
+/// never calls SetSelectedEmulatorId). Non-active instances must never hold
+/// the request - a bank of headless WebAPI instances must not compete with
+/// the audible one for real-time priority. Exceeds the 50 ms budget: two
+/// full Emulator::Init()s (ROM + device bring-up), same cost class as
+/// MultiInstance above; no emulator thread is started - the flag updates
+/// are synchronous manager operations.
+TEST(Emulator_RealtimeScheduling_Test, SelectionDrivesRealtimeFlags)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+
+    // Start from a clean selection - earlier tests in this binary may have
+    // left one pointing at an instance they already removed
+    ASSERT_TRUE(manager->SetSelectedEmulatorId(""));
+
+    std::shared_ptr<Emulator> first = manager->CreateEmulatorWithModel("rt-flags-1", "48K", LoggerLevel::LogNone);
+    std::shared_ptr<Emulator> second = manager->CreateEmulatorWithModel("rt-flags-2", "48K", LoggerLevel::LogNone);
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+
+    MainLoop* firstLoop = first->GetContext()->pMainLoop;
+    MainLoop* secondLoop = second->GetContext()->pMainLoop;
+    ASSERT_NE(firstLoop, nullptr);
+    ASSERT_NE(secondLoop, nullptr);
+
+    // Sole-instance fallback only applies while the instance IS alone
+    EXPECT_FALSE(firstLoop->IsRealtimeRequested()) << "Second instance must cancel the sole-instance request";
+    EXPECT_FALSE(secondLoop->IsRealtimeRequested());
+
+    // Explicit selection grants the request to exactly one instance
+    ASSERT_TRUE(manager->SetSelectedEmulatorId(second->GetId()));
+    EXPECT_FALSE(firstLoop->IsRealtimeRequested());
+    EXPECT_TRUE(secondLoop->IsRealtimeRequested());
+
+    // Live switch between two existing instances (both may be running)
+    ASSERT_TRUE(manager->SetSelectedEmulatorId(first->GetId()));
+    EXPECT_TRUE(firstLoop->IsRealtimeRequested());
+    EXPECT_FALSE(secondLoop->IsRealtimeRequested());
+
+    // Clearing the selection must drop every request
+    ASSERT_TRUE(manager->SetSelectedEmulatorId(""));
+    EXPECT_FALSE(firstLoop->IsRealtimeRequested());
+    EXPECT_FALSE(secondLoop->IsRealtimeRequested());
+
+    // Removing the selected instance re-evaluates: the sole survivor takes
+    // over the request via the fallback (the GUI-like single-instance end state)
+    ASSERT_TRUE(manager->SetSelectedEmulatorId(second->GetId()));
+    const std::string secondId = second->GetId();
+    second.reset();
+    ASSERT_TRUE(manager->RemoveEmulator(secondId));
+    EXPECT_TRUE(firstLoop->IsRealtimeRequested()) << "Sole survivor should take over the realtime request";
+
+    // Cleanup
+    const std::string firstId = first->GetId();
+    first.reset();
+    ASSERT_TRUE(manager->RemoveEmulator(firstId));
+    ASSERT_TRUE(manager->SetSelectedEmulatorId(""));
+}
+
+/// endregion </Realtime scheduling propagation tests>
 

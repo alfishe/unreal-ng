@@ -569,7 +569,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "disasm", "stack", "breakpoints", "memory_banks", "screen_ocr",
-                               "screen_image", "screen_digest", "timing", "rom"})
+                               "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "fdc"})
     {
         allowed.append(aspect);
     }
@@ -579,7 +579,9 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["default"].append("disasm");
     schema["properties"]["aspects"]["default"].append("screen_ocr");
     schema["properties"]["aspects"]["description"] =
-        "What to inspect. Default: registers + disasm + screen_ocr. 'stack' reads 32 bytes at SP; 'memory' needs address.";
+        "What to inspect. Default: registers + disasm + screen_ocr. 'stack' reads 32 bytes at SP; 'memory' needs address. "
+        "'audio_ay' = every AY/SSG chip fully decoded, 'audio_fm' = TurboSound FM board + both YM2203 FM halves (mode, timers, "
+        "channels, operators, envelopes, key-on), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives.";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["address"]["type"] = "integer";
@@ -597,7 +599,8 @@ void RegisterInspectState(ToolRegistry& registry)
     registry.Register(
         "inspect_state",
         "Inspect emulator state in one call: registers, memory ranges, disassembly, stack words, breakpoints, memory banks, "
-        "screen OCR text, screen image metadata, screen digest hash, raster timing, ROM signatures. Combine aspects to reduce round-trips.",
+        "screen OCR text, screen image metadata, screen digest hash, raster timing, ROM signatures, AY/SSG chips (audio_ay), "
+        "TurboSound FM YM2203 halves (audio_fm), Beta Disk WD1793 (fdc). Combine aspects to reduce round-trips.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {
             // Collect aspects
@@ -618,11 +621,12 @@ void RegisterInspectState(ToolRegistry& registry)
             {
                 if (aspect != "machine" && aspect != "registers" && aspect != "memory" && aspect != "disasm" && aspect != "stack" &&
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "screen_ocr" && aspect != "screen_image" &&
-                    aspect != "screen_digest" && aspect != "timing" && aspect != "rom")
+                    aspect != "screen_digest" && aspect != "timing" && aspect != "rom" && aspect != "audio_ay" &&
+                    aspect != "audio_fm" && aspect != "fdc")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, disasm, stack, breakpoints, memory_banks, "
-                                            "screen_ocr, screen_image, screen_digest, timing, rom"));
+                                            "screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, fdc"));
                     return;
                 }
             }
@@ -797,6 +801,49 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
+                        else if (aspect == "fdc")
+                        {
+                            // Core DeviceState::Fdc via the WebAPI; 404 = no Beta Disk on this machine
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/fdc"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "audio_ay" || aspect == "audio_fm")
+                        {
+                            // Overview first, then every chip's full report (core DeviceState::AyChip / FmChip)
+                            const std::string base = aspect == "audio_ay" ? "/state/audio/ay" : "/state/audio/fm";
+                            steps.push_back([&caller, id, aspect, base](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, base), nullptr, [&caller, id, aspect, base, &acc, next](int status, Json::Value body) mutable {
+                                    if (status != 200)
+                                    {
+                                        acc[aspect] = Json::Value(Json::objectValue);
+                                        acc[aspect]["available"] = false;
+                                        acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable");
+                                        next(true);
+                                        return;
+                                    }
+                                    Json::Value overview = std::move(body);
+                                    const unsigned count = overview.isMember("chips") && overview["chips"].isArray() ? overview["chips"].size() : 0u;
+                                    acc[aspect] = std::move(overview);
+                                    acc[aspect]["chip_details"] = Json::Value(Json::arrayValue);
+                                    // Fetch chips sequentially (0..count-1)
+                                    auto fetch = std::make_shared<std::function<void(unsigned)>>();
+                                    *fetch = [&caller, id, aspect, base, &acc, next, count, fetch](unsigned index) {
+                                        if (index >= count) { next(true); return; }
+                                        caller.Call("GET", Endpoint(id, base + "/" + std::to_string(index)), nullptr,
+                                                    [aspect, &acc, index, fetch](int st, Json::Value detail) mutable {
+                                                        if (st == 200) acc[aspect]["chip_details"].append(std::move(detail));
+                                                        (*fetch)(index + 1);
+                                                    });
+                                    };
+                                    (*fetch)(0);
+                                });
+                            });
+                        }
                     }
 
                     RunSeries(ReportSeriesProgress(std::move(steps), progress, aspects), [aspects, done, id](Json::Value acc) {
@@ -850,6 +897,64 @@ void RegisterInspectState(ToolRegistry& registry)
                             else if (aspect == "screen_digest" && value.isMember("digest"))
                             {
                                 out << "\n[screen_digest] " << value["digest"].asString();
+                            }
+                            else if (aspect == "fdc")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[fdc] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[fdc] " << value["fsm_state"].asString() << ", last " << value["last_command"].asString()
+                                        << ", status " << value["registers"]["status"].asUInt() << " track " << value["registers"]["track"].asUInt()
+                                        << " sector " << value["registers"]["sector"].asUInt() << ", drive " << value["selected_drive"].asUInt()
+                                        << " side " << value["side"].asUInt() << ", " << value["density"].asString();
+                                    const Json::Value& drives = value["drives"];
+                                    for (Json::ArrayIndex i = 0; i < drives.size(); ++i)
+                                        if (drives[i]["present"].asBool() && drives[i]["inserted"].asBool())
+                                            out << "\n  " << drives[i]["letter"].asString() << ": " << drives[i]["path"].asString()
+                                                << " track " << drives[i]["track"].asInt() << (drives[i]["motor_on"].asBool() ? " motor on" : "")
+                                                << (drives[i]["write_protected"].asBool() ? " wp" : "");
+                                }
+                            }
+                            else if (aspect == "audio_ay")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[audio_ay] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[audio_ay] " << value["description"].asString();
+                                    const Json::Value& chips = value["chip_details"];
+                                    for (Json::ArrayIndex i = 0; i < chips.size(); ++i)
+                                    {
+                                        const Json::Value& ch = chips[i]["channels"];
+                                        out << "\n  chip " << i << ":";
+                                        for (Json::ArrayIndex c = 0; c < ch.size(); ++c)
+                                            out << " " << ch[c]["name"].asString() << "=" << ch[c]["volume"].asUInt()
+                                                << (ch[c]["tone_enabled"].asBool() ? "T" : "") << (ch[c]["noise_enabled"].asBool() ? "N" : "")
+                                                << (ch[c]["envelope_enabled"].asBool() ? "E" : "") << "@" << int(ch[c]["frequency_hz"].asDouble()) << "Hz";
+                                    }
+                                }
+                            }
+                            else if (aspect == "audio_fm")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[audio_fm] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[audio_fm] board chip " << value["board"]["selected_chip"].asUInt()
+                                        << (value["board"]["fm_enabled"].asBool() ? ", FM on" : ", FM muted");
+                                    const Json::Value& chips = value["chip_details"];
+                                    for (Json::ArrayIndex i = 0; i < chips.size(); ++i)
+                                    {
+                                        out << "\n  chip " << i << ": ch3 " << chips[i]["mode"]["channel3_mode"].asString()
+                                            << ", keyed " << chips[i]["keyed_channels"].asUInt() << ", sounding " << chips[i]["sounding_channels"].asUInt();
+                                        const Json::Value& ch = chips[i]["channels"];
+                                        for (Json::ArrayIndex c = 0; c < ch.size(); ++c)
+                                            if (ch[c]["sounding"].asBool() || ch[c]["key_on"].asBool())
+                                                out << "\n    ch" << c << (ch[c]["key_on"].asBool() ? " key-on" : " releasing") << " mask " << ch[c]["key_on_mask"].asUInt()
+                                                    << " alg " << ch[c]["algorithm"].asUInt() << " " << ch[c]["frequency_hz"].asDouble() << " Hz";
+                                    }
+                                }
                             }
                             else if (aspect == "rom" && value.isMember("pages"))
                             {
@@ -1006,6 +1111,213 @@ void RegisterTypeInput(ToolRegistry& registry)
 
 /// endregion </type_input>
 
+/// region <mouse_input>
+
+namespace
+{
+
+void RegisterMouseInput(ToolRegistry& registry)
+{
+    Json::Value schema;
+    schema["type"] = "object";
+    schema["properties"]["action"]["type"] = "string";
+    schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* action : {"move", "press", "release", "click", "buttons", "wheel", "release_all", "status"})
+    {
+        schema["properties"]["action"]["enum"].append(action);
+    }
+    schema["properties"]["action"]["description"] =
+        "Kempston mouse (relative device). 'move' shifts counters by dx/dy emulated pixels; 'click' presses a button for N "
+        "frames. Input is applied immediately; call control_execution run_frames to let the program react.";
+    schema["properties"]["target"]["type"] = "string";
+    schema["properties"]["target"]["default"] = "auto";
+    schema["properties"]["dx"]["type"] = "integer";
+    schema["properties"]["dx"]["minimum"] = -127;
+    schema["properties"]["dx"]["maximum"] = 127;
+    schema["properties"]["dx"]["description"] = "+ = right (move; optional pre-move for click)";
+    schema["properties"]["dy"]["type"] = "integer";
+    schema["properties"]["dy"]["minimum"] = -127;
+    schema["properties"]["dy"]["maximum"] = 127;
+    schema["properties"]["dy"]["description"] = "+ = UP (move; optional pre-move for click)";
+    Json::Value buttonEnum(Json::arrayValue);
+    for (const char* button : {"left", "right", "middle"})
+    {
+        buttonEnum.append(button);
+    }
+    schema["properties"]["button"]["type"] = "string";
+    schema["properties"]["button"]["enum"] = buttonEnum;
+    schema["properties"]["pressed"]["type"] = "array";
+    schema["properties"]["pressed"]["items"]["type"] = "string";
+    schema["properties"]["pressed"]["items"]["enum"] = buttonEnum;
+    schema["properties"]["pressed"]["description"] = "Exact pressed set for 'buttons' ([] = none)";
+    schema["properties"]["frames"]["type"] = "integer";
+    schema["properties"]["frames"]["minimum"] = 1;
+    schema["properties"]["frames"]["default"] = 2;
+    schema["properties"]["frames"]["description"] = "Hold time for 'click'";
+    schema["properties"]["steps"]["type"] = "integer";
+    schema["properties"]["steps"]["minimum"] = -7;
+    schema["properties"]["steps"]["maximum"] = 7;
+    schema["properties"]["steps"]["description"] = "Wheel notches, + = away from user";
+    schema["required"].append("action");
+
+    registry.Register(
+        "mouse_input",
+        "Send Kempston mouse input to the emulator: relative move (dx/dy), press/release/click buttons, set the exact "
+        "pressed set, wheel steps, release_all, status. Values are forwarded as-is; the WebAPI validates ranges.",
+        std::move(schema),
+        [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
+            std::string action = args["action"].asString();
+
+            if (action == "status")
+            {
+                ResolveAndForward(args, "GET", "/mouse/status", nullptr, caller, "Mouse status", done);
+                return;
+            }
+            if (action == "release_all")
+            {
+                ResolveAndForward(args, "POST", "/mouse/release_all", nullptr, caller, "Released all mouse buttons", done);
+                return;
+            }
+            if (action == "move")
+            {
+                if (!args.isMember("dx") && !args.isMember("dy"))
+                {
+                    done(ToolResult::Error("move requires 'dx' or 'dy'"));
+                    return;
+                }
+                Json::Value body;
+                body["dx"] = args.isMember("dx") ? args["dx"] : Json::Value(0);
+                body["dy"] = args.isMember("dy") ? args["dy"] : Json::Value(0);
+                ResolveAndForward(args, "POST", "/mouse/move", &body, caller, "Mouse moved", done);
+                return;
+            }
+            if (action == "press" || action == "release")
+            {
+                if (!args.isMember("button"))
+                {
+                    done(ToolResult::Error(action + " requires 'button'"));
+                    return;
+                }
+                Json::Value body;
+                body["button"] = args["button"];
+                ResolveAndForward(args, "POST", "/mouse/" + action, &body, caller,
+                                  "Mouse " + action + ": " + args["button"].asString(), done);
+                return;
+            }
+            if (action == "buttons")
+            {
+                if (!args.isMember("pressed"))
+                {
+                    done(ToolResult::Error("buttons requires 'pressed'"));
+                    return;
+                }
+                Json::Value body;
+                body["pressed"] = args["pressed"];
+                ResolveAndForward(args, "POST", "/mouse/buttons", &body, caller, "Mouse buttons set", done);
+                return;
+            }
+            if (action == "wheel")
+            {
+                if (!args.isMember("steps"))
+                {
+                    done(ToolResult::Error("wheel requires 'steps'"));
+                    return;
+                }
+                Json::Value body;
+                body["steps"] = args["steps"];
+                ResolveAndForward(args, "POST", "/mouse/wheel", &body, caller, "Mouse wheel moved", done);
+                return;
+            }
+            if (action == "click")
+            {
+                if (!args.isMember("button"))
+                {
+                    done(ToolResult::Error("click requires 'button'"));
+                    return;
+                }
+                Json::Value clickBody;
+                clickBody["button"] = args["button"];
+                if (args.isMember("frames")) clickBody["frames"] = args["frames"];
+                const std::string okText = "Mouse click: " + args["button"].asString();
+
+                if (!args.isMember("dx") && !args.isMember("dy"))
+                {
+                    ResolveAndForward(args, "POST", "/mouse/click", &clickBody, caller, okText, done);
+                    return;
+                }
+
+                // Pre-move then click, in order; the click is skipped if the move fails
+                Json::Value moveBody;
+                moveBody["dx"] = args.isMember("dx") ? args["dx"] : Json::Value(0);
+                moveBody["dy"] = args.isMember("dy") ? args["dy"] : Json::Value(0);
+
+                TargetResolver::ResolveFromArgs(
+                    args, caller, [&caller, moveBody, clickBody, okText, done](bool ok, const std::string& idOrError) {
+                        if (!ok)
+                        {
+                            done(ToolResult::Error(idOrError));
+                            return;
+                        }
+                        const std::string id = idOrError;
+
+                        // Each step records its response under its name; a failure records
+                        // the HTTP status and body under "failed" and stops the series.
+                        auto makeStep = [&caller, id](const std::string& name, const std::string& suffix, Json::Value body) -> SeriesStep {
+                            auto bodyHolder = std::make_shared<Json::Value>(std::move(body));
+                            return [&caller, id, name, suffix, bodyHolder](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("POST", Endpoint(id, suffix), bodyHolder.get(), [bodyHolder, name, &acc, next](int status, Json::Value response) {
+                                    if (status >= 200 && status < 300)
+                                    {
+                                        acc[name] = std::move(response);
+                                        next(true);
+                                        return;
+                                    }
+                                    acc["failed"]["step"] = name;
+                                    acc["failed"]["status"] = status;
+                                    acc["failed"]["body"] = std::move(response);
+                                    next(false);
+                                });
+                            };
+                        };
+
+                        std::vector<SeriesStep> steps;
+                        steps.push_back(makeStep("move", "/mouse/move", moveBody));
+                        steps.push_back(makeStep("click", "/mouse/click", clickBody));
+
+                        RunSeries(std::move(steps), [done, okText, id](Json::Value acc) {
+                            if (acc.isMember("failed"))
+                            {
+                                const Json::Value& failed = acc["failed"];
+                                const int status = failed["status"].asInt();
+                                if (status == 0)
+                                {
+                                    done(ToolResult::Error("WebAPI unreachable — is the emulator running with WebAPI enabled (port 8090)?"));
+                                    return;
+                                }
+                                std::string text = "Mouse " + failed["step"].asString() + " failed: WebAPI returned HTTP " +
+                                                   std::to_string(status);
+                                const std::string details = DescribeErrorBody(failed["body"]);
+                                if (!details.empty())
+                                {
+                                    text += ": " + details;
+                                }
+                                done(ToolResult::Error(text));
+                                return;
+                            }
+                            done(ToolResult::Ok(okText + " (after pre-move) [target " + id + "]", std::move(acc)));
+                        });
+                    });
+                return;
+            }
+
+            done(ToolResult::Error("Unknown action '" + action + "'"));
+        });
+}
+
+} // namespace
+
+/// endregion </mouse_input>
+
 /// region <Registry composition>
 
 std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
@@ -1018,6 +1330,7 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterControlExecution(*registry);
     RegisterInspectState(*registry);
     RegisterTypeInput(*registry);
+    RegisterMouseInput(*registry);
 
     // Phase 2 — smart tools
     RegisterManageSymbols(*registry);

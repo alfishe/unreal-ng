@@ -224,7 +224,7 @@ No known software stays on a non-default prescaler.
 - The YM2203 `IRQ` pin is **not connected** (schematic; ALCO p. 8).
 - Timer flags are visible only through the status byte.
 - No known player uses the timers.
-- CSM mode (timer A keys channel 3) is implemented by ymfm and is reachable by software.
+- CSM mode (timer A keys channel 3) is reachable by software. Upstream ymfm implements only the key-on half of it (the channel sustains and later overflows do not retrigger); the vendored copy carries Furnace's fix that turns each overflow into the hardware's key-on pulse — see `core/src/3rdparty/ymfm/PATCHES.md` §4.
 
 ---
 
