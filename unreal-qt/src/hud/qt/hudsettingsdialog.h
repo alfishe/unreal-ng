@@ -23,6 +23,7 @@ namespace HudNotificationCategory
     inline constexpr const char* AudioCovox = "audio-covox";
     inline constexpr const char* AudioAY = "audio-ay";
     inline constexpr const char* AudioTurboSound = "audio-turbosound";
+    inline constexpr const char* AudioTSFM = "audio-tsfm";
 
     // Recording
     inline constexpr const char* RecordingVideo = "recording-video";

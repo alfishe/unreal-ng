@@ -537,7 +537,8 @@ enum class AudioSource : uint8_t
     Beeper = 0,
     Covox = 1,
     AY = 2,         // Single AY-3-8910 / YM2149
-    TurboSound = 3  // TurboSound (dual AY)
+    TurboSound = 3, // TurboSound (dual AY)
+    TSFM = 4        // TurboSound FM (dual YM2203: AY + FM)
 };
 
 /// Payload for NC_AUDIO_ACTIVITY.

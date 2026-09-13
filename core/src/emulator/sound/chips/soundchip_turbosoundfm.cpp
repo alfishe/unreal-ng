@@ -2,7 +2,9 @@
 
 #include <algorithm>
 
+#include "3rdparty/message-center/messagecenter.h"
 #include "emulator/cpu/core.h"
+#include "emulator/notifications.h"
 #include "emulator/ports/portdecoder.h"
 
 /// region <Core loop (§5.2)>
@@ -151,6 +153,9 @@ void SoundChip_TurboSoundFM::reset()
 
 void SoundChip_TurboSoundFM::handleFrameStart()
 {
+    // Reset activity tracking for the new frame
+    _frameHadActivity = false;
+
     // Frame rollover (§5.2): Core::AdjustFrameCounters already subtracted
     // the frame length from z80->t; shift the core's position and every
     // queued word timestamp by the same delta so they land on the new
@@ -428,6 +433,16 @@ void SoundChip_TurboSoundFM::handleStep()
 
 void SoundChip_TurboSoundFM::handleFrameEnd()
 {
+    // Post notification on activity state change, or while active (to refresh HUD TTL)
+    // This runs unconditionally - HUD shows activity even when synthesis is suppressed
+    bool stateChanged = (_frameHadActivity != _wasActive);
+    if (_frameHadActivity || stateChanged)
+    {
+        _wasActive = _frameHadActivity;
+        MessageCenter::DefaultMessageCenter().Post(
+            NC_AUDIO_ACTIVITY, new AudioActivityPayload(_context->emulatorId, AudioSource::TSFM, _wasActive));
+    }
+
     // §6.1 axis trap: z80->t already reads into the NEW frame here - drain
     // to the device's own end-of-frame position, never to nowT(). Words
     // landing between the last render tick and the frame end must reach the
@@ -471,6 +486,7 @@ uint8_t SoundChip_TurboSoundFM::portDeviceInMethod(uint16_t port)
 void SoundChip_TurboSoundFM::portDeviceOutMethod(uint16_t port, uint8_t value)
 {
     syncTo(nowT());
+    _frameHadActivity = true;  // Track activity for HUD notification
     TsfmChip& c = *_chips[_board.chip];
 
     switch (port)

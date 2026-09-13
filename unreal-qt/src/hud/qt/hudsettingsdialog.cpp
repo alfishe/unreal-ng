@@ -41,6 +41,9 @@ std::vector<HudCategoryDescriptor> g_categories = {
     {HudNotificationCategory::AudioAY, QObject::tr("AY / TurboSound Activity"),
      QObject::tr("Show when AY or TurboSound becomes active (displays 'AY' or 'TS')"),
      QObject::tr("Audio"), false},  // Default off - AY is almost always active
+    {HudNotificationCategory::AudioTSFM, QObject::tr("TurboSound FM Activity"),
+     QObject::tr("Show when TurboSound FM (TSFM) is active"),
+     QObject::tr("Audio"), true},  // Default on - TSFM is opt-in hardware
 
     // Recording
     {HudNotificationCategory::RecordingVideo, QObject::tr("Video Recording"),
