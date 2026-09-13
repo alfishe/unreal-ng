@@ -273,11 +273,18 @@ The §12.3 tests are: `PayloadRoundtrip`, `CheckpointingIsInvisible`, `SeekAnyPo
 | FM gain `0.30 × trim`, centre pan, `_fm0Buffer`/`_fm1Buffer`, native FM taps | same |
 | Tests, design §12.4 | `core/tests/emulator/sound/tsfm/tsfm_output_test.cpp`, `core/tests/common/filter_decimator_test.cpp` |
 
-The §12.4 tests are: `TsfmBitIdentity.*`, `FilterDecimator.InputRateEquivalence` / `SlaveLockstep`, `TsfmOutput.HoldNoJitter` / `MuteAtHoldInput`, `TsfmGain.Reference`.
+The §12.4 tests are: `TsfmBitIdentity.*`, `FilterDecimator.InputRateEquivalence` / `AllSupportedCoreRates` / `SlaveLockstep`, `TsfmOutput.HoldNoJitter` / `MuteAtHoldInput`, `TsfmGain.Reference`.
 
 **Gate:**
-- `TsfmBitIdentity` is `memcmp`-clean across HQ/LQ × 44.1 k / 48 k / 96 k × 3 seeds;
+- `TsfmBitIdentity` is `memcmp`-clean across HQ/LQ at every supported core rate (44.1 k – 192 k; the filters are designed per rate like the legacy device's, never pinned to one frequency) — seed 1 sweeps all six rates, seeds 2–3 keep three-rate depth;
+- `TsfmGain.Reference` holds the ±5 % FM band at the rate extremes (88.2 k, 192 k) too;
 - `FirDesigner_Test.*` is unchanged and green.
+
+**Done 2026-09-12** — all tasks landed; gate green. Evidence:
+- §12.4 + FilterDecimator: **13 tests green** (4.1 s) + the all-rates extension below;
+- identity matrix widened per the full-rate requirement: 24 sessions (seed 1 × HQ/LQ × all six rates, seeds 2–3 × the original three), 6.2 s, `memcmp` = 0 at 88.2 k / 176.4 k / 192 k on the first run — the design was already per-rate (`configure()` designs taps for the configured rate on both the SSG and FM input sides), so the extension is pure pinning;
+- the one real P6 fix: the LQ per-chip split mirrors the legacy floating-point ratio under the §11 chip swap (TSFM's chip 1 takes the r0 share), keeping the per-chip buffers bit-identical;
+- `FilterDecimator.AllSupportedCoreRates` pins every (44.1 k–192 k × SSG/FM input) design: tap scaling, decimating ratio, unity DC, alias-band stopband.
 
 ## P7 — Integration
 
@@ -296,6 +303,12 @@ The §12.4 tests are: `TsfmBitIdentity.*`, `FilterDecimator.InputRateEquivalence
 - FM1/FM2 appear in the mixer, and mute/solo work;
 - WebAPI reports `kind: "FM"`;
 - the AY log analyzer shows FM writes as FM, not "switch".
+
+**Done 2026-09-12 (partial)** — the user-requested scope landed; full suite **2 844 passed / 0 failed**:
+- `AudioSourceType::FM1/FM2`, registry entries when `hasFm()`, `deviceBuffer()` arms, FM chains (punch/room Off) — `soundmanager.{h,cpp}`; recording/multitrack names; Audio Settings TSFM/TS block switching with chip-model lock + FM trim — `audiosettingswidget.{h,cpp}`; prescaler warning was already in from P4;
+- `TsfmMixer_Test` (3 tests, `tsfm_soundmanager_test.cpp`): TurboSound = FM registers "FM 1"/"FM 2" beside the SSG pair, TurboSound = AY registers none and `deviceBuffer(FM1)` is null, mute/solo/volume reach the registry entries the mixer loop reads, FM buffers distinct per chip;
+- Qt app launched with `TurboSound = FM`; WebAPI instances ran on Pentagon 128, Scorpion and 128K and were adopted by the GUI; the Audio Settings dialog shows the FM 1 / FM 2 sources (user-confirmed 2026-09-13);
+- deferred (read-only reporting rows): `turbo_sound.kind` in WebAPI/CLI/Lua/Python + OpenAPI, `AYLogRecord.flags` + analyzer FM classification, video-recording FM taps.
 
 ## P8 — Verification and tuning
 

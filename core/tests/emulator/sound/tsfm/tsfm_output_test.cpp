@@ -317,15 +317,22 @@ protected:
 
 TEST_F(TsfmBitIdentity_Test, BitIdenticalToLegacyWhileFmSilent)
 {
-    // P6 gate (design §12.4): §11, 10 000 writes x 200 frames x 3 seeds x
-    // HQ/LQ x 3 rates -> memcmp = 0. This is the pinned regression gate for
-    // the whole output stage, so it deliberately exceeds the 50 ms budget
-    // (pure DSP, no CPU emulation; comparable to the sanctioned player-boot
-    // E2E tests).
-    const size_t rates[] = {44100, 48000, 96000};
-    for (uint32_t seed = 1; seed <= 3; seed++)
+    // P6 gate (design §12.4): §11, 10 000 writes x 200 frames x HQ/LQ across
+    // EVERY supported core rate - 44.1 k .. 192 k (SoundManager's rate set):
+    // the filters are designed per rate, never pinned to one frequency, the
+    // same as the legacy TurboSound device. Seed 1 sweeps all six rates,
+    // seeds 2-3 keep the original three-rate depth. This is the pinned
+    // regression gate for the whole output stage, so it deliberately exceeds
+    // the 50 ms budget (pure DSP, no CPU emulation; comparable to the
+    // sanctioned player-boot E2E tests).
+    const size_t rates[] = {44100, 48000, 88200, 96000, 176400, 192000};
+    for (bool hq : {true, false})
+        for (size_t rate : rates)
+            RunBitIdentity(1, hq, rate);
+    const size_t seedRates[] = {44100, 48000, 96000};
+    for (uint32_t seed = 2; seed <= 3; seed++)
         for (bool hq : {true, false})
-            for (size_t rate : rates)
+            for (size_t rate : seedRates)
                 RunBitIdentity(seed, hq, rate);
 }
 
@@ -459,6 +466,20 @@ TEST_F(TsfmGain_Test, Reference)
     {
         auto device = std::make_unique<SoundChip_TurboSoundFM>(_context);
         device->setCoreRate(44100);
+        ProgramFmNote(*device, FmNoteProgram{});
+        const int16_t fmPeak = RunFmNotePeak(*device, 40, 10);
+        EXPECT_GE(fmPeak, int16_t(2458 * 0.95)) << "FM too quiet: " << fmPeak;
+        EXPECT_LE(fmPeak, int16_t(2458 * 1.05)) << "FM too loud: " << fmPeak;
+    }
+
+    // The same reference at the supported rate extremes: the FM decimator
+    // is redesigned per rate (§6.3), so the note must land in the same band at
+    // 88.2 k and 192 k - a filter pinned to one frequency would not
+    for (const size_t rate : {size_t(88200), size_t(192000)})
+    {
+        SCOPED_TRACE(testing::Message() << "rate " << rate);
+        auto device = std::make_unique<SoundChip_TurboSoundFM>(_context);
+        device->setCoreRate(rate);
         ProgramFmNote(*device, FmNoteProgram{});
         const int16_t fmPeak = RunFmNotePeak(*device, 40, 10);
         EXPECT_GE(fmPeak, int16_t(2458 * 0.95)) << "FM too quiet: " << fmPeak;

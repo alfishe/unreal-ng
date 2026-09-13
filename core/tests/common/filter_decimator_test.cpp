@@ -66,6 +66,43 @@ TEST(FilterDecimator_Test, InputRateEquivalence)
     }
 }
 
+TEST(FilterDecimator_Test, AllSupportedCoreRates)
+{
+    // The output stage designs its filters for whichever core rate is
+    // configured - SoundManager's full set 44.1 k .. 192 k, never one pinned
+    // frequency. Every (rate x input side) combination must yield a legal
+    // design: exact tap scaling, a decimating ratio, unity DC and a stopband
+    // in the alias-relevant band above the output Nyquist
+    const double rates[] = {44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0};
+    const double inputRates[] = {FilterDecimator::INPUT_RATE, 437500.0};  // SSG / FM side
+
+    for (double inputRate : inputRates)
+    {
+        for (double rate : rates)
+        {
+            SCOPED_TRACE(testing::Message() << "input " << inputRate << " -> " << rate);
+            FilterDecimator decimator;
+            decimator.configure(rate, FilterDecimator::Quality::Reference, false, inputRate);
+
+            // Taps scale with the input side (96 at 218.75 kHz, 192 at 437.5 kHz)
+            EXPECT_EQ(decimator.taps(), size_t(96 * (inputRate > FilterDecimator::INPUT_RATE ? 2 : 1)));
+            EXPECT_LE(decimator.taps(), FilterDecimator::MAX_TAPS);
+            EXPECT_NEAR(decimator.samplesPerOutput(), inputRate / rate, 1e-9);
+            EXPECT_GT(decimator.samplesPerOutput(), 1.0) << "decimation degenerated to upsampling";
+
+            const auto& h = decimator.coefficients();
+            EXPECT_NEAR(MagnitudeAt(h, 0.0, inputRate), 1.0, 1e-12) << "DC unity broken";
+
+            // Deep stopband midway between the output and input Nyquists (the
+            // band that would alias); fc is 20 kHz with a ~8 kHz transition,
+            // so this point is far past it at every combination
+            const double aliasProbe = (rate / 2.0 + inputRate / 2.0) / 2.0;
+            EXPECT_LT(MagnitudeAt(h, aliasProbe, inputRate), 0.01)
+                << aliasProbe << " Hz aliases into the passband at " << rate << " Hz output";
+        }
+    }
+}
+
 TEST(FilterDecimator_Test, SlaveLockstep)
 {
     // §6.3/§12.4: a slave decimator produces output exactly when its master
