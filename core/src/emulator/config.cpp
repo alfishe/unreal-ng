@@ -376,6 +376,35 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 		}
 	}
 
+	// TurboSound slot device kind (TSFM design §3.1): AY (legacy two-AY pair,
+	// default) or FM (TSFM). Unknown values warn and fall back to AY; a missing
+	// key keeps the default. The legacy [AY] Chip/Scheme keys are NOT honoured:
+	// every shipped ini carries Chip=YM2203 and nothing ever parsed them, so
+	// honouring them now would silently switch every machine to TSFM.
+	{
+		// Explicit default first: a missing key must reset to AY even when the
+		// struct holds FM from a previous parse of another file.
+		config.sound.turboSoundKind = TurboSoundKind::AY;
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(sound, "TurboSound", nullptr, nullptr), line, sizeof line);
+		if (StringHelper::CompareCaseInsensitive(line, "AY", strlen("AY")) == 0)
+		{
+			config.sound.turboSoundKind = TurboSoundKind::AY;
+		}
+		else if (StringHelper::CompareCaseInsensitive(line, "FM", strlen("FM")) == 0)
+		{
+			config.sound.turboSoundKind = TurboSoundKind::FM;
+		}
+		else if (line[0] != '\0')
+		{
+			MLOGWARNING("Config: unsupported [SOUND] TurboSound='%s', using AY", line);
+			config.sound.turboSoundKind = TurboSoundKind::AY;
+		}
+	}
+
+	// FM loudness trim in dB relative to the hardware-derived default (0 = default)
+	config.sound.tsfmFmTrimDb = inimanager.GetDoubleValue(sound, "TSFM_FmTrimDb", 0.0);
+
 	// VIDEO section
 	// A/V sync video delay: auto (-1) = match the audio path latency
 	// (~2 frames); 0 = lowest input latency (audio trails by the ring depth)

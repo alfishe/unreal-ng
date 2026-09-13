@@ -655,7 +655,7 @@ TEST_F(TTD_Subsystem_Restore_Test, AYTurboSound_SeekRestoresAllRegisters)
 
     SoundManager* snd = _context->pSoundManager;
     ASSERT_NE(snd, nullptr);
-    SoundChip_TurboSound* ts = snd->getTurboSound();
+    ITurboSoundDevice* ts = snd->getTurboSound();
     ASSERT_NE(ts, nullptr);
 
     // TurboSound wraps two AY chips; writeRegister/getRegisters live on

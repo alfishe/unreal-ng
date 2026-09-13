@@ -95,6 +95,8 @@ void MultiTrackDialog::populateSourceCombo(QComboBox* combo)
     combo->addItem(sourceToString(AudioSourceType::AY3_ChannelA), static_cast<int>(AudioSourceType::AY3_ChannelA));
     combo->addItem(sourceToString(AudioSourceType::AY3_ChannelB), static_cast<int>(AudioSourceType::AY3_ChannelB));
     combo->addItem(sourceToString(AudioSourceType::AY3_ChannelC), static_cast<int>(AudioSourceType::AY3_ChannelC));
+    combo->addItem(sourceToString(AudioSourceType::FM1), static_cast<int>(AudioSourceType::FM1));
+    combo->addItem(sourceToString(AudioSourceType::FM2), static_cast<int>(AudioSourceType::FM2));
 }
 
 void MultiTrackDialog::populateCodecCombo(QComboBox* combo)
@@ -128,6 +130,8 @@ QString MultiTrackDialog::sourceToString(AudioSourceType source)
         case AudioSourceType::AY3_ChannelA:    return "AY-3 Ch.A";
         case AudioSourceType::AY3_ChannelB:    return "AY-3 Ch.B";
         case AudioSourceType::AY3_ChannelC:    return "AY-3 Ch.C";
+        case AudioSourceType::FM1:             return "FM-1";
+        case AudioSourceType::FM2:             return "FM-2";
         case AudioSourceType::Custom:          return "Custom";
         default:                                return "Unknown";
     }
@@ -152,6 +156,8 @@ AudioSourceType MultiTrackDialog::stringToSource(const QString& str)
     if (str == "AY-3 Ch.A") return AudioSourceType::AY3_ChannelA;
     if (str == "AY-3 Ch.B") return AudioSourceType::AY3_ChannelB;
     if (str == "AY-3 Ch.C") return AudioSourceType::AY3_ChannelC;
+    if (str == "FM-1") return AudioSourceType::FM1;
+    if (str == "FM-2") return AudioSourceType::FM2;
     return AudioSourceType::MasterMix;
 }
 

@@ -31,6 +31,8 @@ enum class AudioSourceType
     AY1_ChannelA, AY1_ChannelB, AY1_ChannelC,
     AY2_ChannelA, AY2_ChannelB, AY2_ChannelC,
     AY3_ChannelA, AY3_ChannelB, AY3_ChannelC,
+    FM1,  // TSFM chip 0 FM-only buffer (design §7.2)
+    FM2,  // TSFM chip 1 FM-only buffer
     Custom
 };
 
@@ -93,9 +95,8 @@ protected:
 
     // Supported sound chips
     Beeper* _beeper = nullptr;
-    SoundChip_TurboSound* _turboSound = nullptr;
+    ITurboSoundDevice* _turboSound = nullptr;  // TurboSound slot (legacy AY pair today, TSFM later - design §3.3)
     Covox* _covox = nullptr;
-    // SoundChip_TurboSoundFM;
     // SoundChip_MoonSound;
     // SoundChip_SAA1099;
     // SoundChip_GeneralSound;
@@ -105,6 +106,10 @@ protected:
     AudioCharacterChain _ayChain0;     // For AY chip 0 (TurboSound first chip)
     AudioCharacterChain _ayChain1;     // For AY chip 1 (TurboSound second chip)
     AudioCharacterChain _beeperChain;  // For beeper (digidrums, PWM synths)
+    // FM-only chains (TSFM, design §7.2): punch Off, room Off - the §7.1
+    // gain staging is hardware-derived and must reach the mix untouched
+    AudioCharacterChain _fmChain0;
+    AudioCharacterChain _fmChain1;
 
     // DRC resampler stage between the mixed CORE_RATE stream and the device
     // callback (audio-sync design, Fix 2). Unity bypass by default. The
@@ -237,7 +242,10 @@ public:
     {
         return _turboSound != nullptr;
     }
-    SoundChip_TurboSound* getTurboSound() const
+    /// The TurboSound-slot device through its interface (design §3.3):
+    /// legacy two-AY TurboSound today, SoundChip_TurboSoundFM once
+    /// TurboSound = FM is configured. TTD keys on its TTDPeripheralId().
+    ITurboSoundDevice* getTurboSound() const
     {
         return _turboSound;
     }

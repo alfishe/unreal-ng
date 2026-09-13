@@ -9,9 +9,9 @@
 #include "emulator/sound/audio.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/native_audio_tap.h"
-#include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
+#include "emulator/sound/chips/iturbosounddevice.h"  // ITurboSoundDevice (TSFM design §3.3)
 
-class SoundChip_TurboSound : public PortDecoder, public PortDevice, public ttd::TTDSerializable
+class SoundChip_TurboSound : public ITurboSoundDevice
 {
     /// region <Fields>
 protected:
@@ -53,6 +53,10 @@ protected:
     // HQ DSP flag (FIR filters vs simple averaging)
     bool _hqEnabled = true;
 
+    // Output-stage suppression (design §6.1): pushed once per frame by the
+    // manager; gates rendering only (the legacy device has no separate core)
+    bool _synthesisSuppressed = false;
+
     // Native-rate recording tap (218.75 kHz, pre-decimation).
     // shared_ptr so a DSD encoder worker can outlive this chip safely.
     std::shared_ptr<NativeAudioTap> _nativeTap = std::make_shared<NativeAudioTap>();
@@ -76,12 +80,12 @@ public:
     // Per-chip buffer access for registry-driven mixing / capture
     /// Number of stereo sample pairs rendered into the frame buffers so far
     /// this frame (diagnostics / adaptivity tests)
-    size_t getRenderedSamplesThisFrame() const
+    size_t getRenderedSamplesThisFrame() const override
     {
         return _ayBufferIndex / AUDIO_CHANNELS;
     }
 
-    int16_t* getChipBuffer(int index)
+    int16_t* getChipBuffer(int index) override
     {
         if (index == 0)
             return _chip0Buffer;
@@ -99,7 +103,7 @@ public:
     }
 
     // Chip access for monitoring purposes
-    SoundChip_AY8910* getChip(int index) const
+    SoundChip_AY8910* getChip(int index) const override
     {
         if (index == 0)
             return _chip0;
@@ -110,7 +114,7 @@ public:
         return nullptr;
     }
 
-    int getChipCount() const
+    int getChipCount() const override
     {
         int count = 0;
         if (_chip0)
@@ -125,7 +129,7 @@ public:
 
     /// region <Constructors / destructor>
 public:
-    SoundChip_TurboSound(EmulatorContext* context) : PortDecoder(context)
+    SoundChip_TurboSound(EmulatorContext* context) : ITurboSoundDevice(context)
     {
         _chip0 = new SoundChip_AY8910(_context);
         _chip1 = new SoundChip_AY8910(_context);
@@ -187,16 +191,21 @@ public:
     }
 
     // Feature cache update
-    void setHQEnabled(bool enabled)
+    void setHQEnabled(bool enabled) override
     {
         _hqEnabled = enabled;
+    }
+
+    void setSynthesisSuppressed(bool suppressed) override
+    {
+        _synthesisSuppressed = suppressed;
     }
 
     /// Set the core output rate (multirate plan phase 6): recomputes the
     /// sample PLL increment and decimation ratios and redesigns the HQ
     /// anti-alias FIRs. Call at construction / sound stack rebuild only -
     /// changing rate mid-frame would glitch the free-running PLL phase.
-    void setCoreRate(size_t rate)
+    void setCoreRate(size_t rate) override
     {
         _coreRate = rate;
         _sampleTStateIncrement = (double)rate / (double)CPU_CLOCK_RATE;
@@ -209,13 +218,13 @@ public:
         _chip1->decimatorRight().configure((double)rate);
     }
 
-    size_t getCoreRate() const
+    size_t getCoreRate() const override
     {
         return _coreRate;
     }
 
     /// Native-rate recording tap (for DSD capture bypassing 44.1 kHz decimation)
-    std::shared_ptr<NativeAudioTap> getNativeTap() const
+    std::shared_ptr<NativeAudioTap> getNativeTap() const override
     {
         return _nativeTap;
     }
@@ -223,16 +232,16 @@ public:
 
     /// region <Emulation events>
 public:
-    void handleFrameStart();
-    void handleStep();
-    void handleFrameEnd();
+    void handleFrameStart() override;
+    void handleStep() override;
+    void handleFrameEnd() override;
     /// endregion </Emulation events>
 
     /// region <Automation tap (MCP M7j)>
 public:
     /// Install/remove the AY port-write log tap. Inert while sink == nullptr.
     /// Called with the emulation thread parked (analyzer activation path).
-    void setLogSink(AYLogSink sink, void* context)
+    void setLogSink(AYLogSink sink, void* context) override
     {
         _logSink = sink;
         _logSinkContext = context;
@@ -251,8 +260,8 @@ public:
 
     /// region <Ports interaction>
 public:
-    bool attachToPorts(PortDecoder* decoder);
-    void detachFromPorts();
+    bool attachToPorts(PortDecoder* decoder) override;
+    void detachFromPorts() override;
     /// endregion </Ports interaction>
 
 public:

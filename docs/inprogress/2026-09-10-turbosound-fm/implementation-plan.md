@@ -30,14 +30,16 @@ P1 and P2 can run in parallel.
 
 | Task | Detail |
 |---|---|
-| Test material | **Done 2026-09-12** (user approved). `testdata/sound/tsfm/`: `TFMWORKS.SCL`, `TSFM-EL.TAP` (~100 TFC tunes + player), `AYtest_v0.2.{scl,tap}` (TurboSound-only test, no FM: a regression check that TSFM behaves as TurboSound); origins and hashes in `SOURCES.md`. |
-| Player harness | Build a test fixture that pokes `TSFM-EL.TAP`'s player (block `_tsfmplaye`, code at 25000, plus `lnxdata` at 31000) and one tune (at 32768) into Pentagon 128 RAM, then calls the player's init and per-frame entry points. Find the entry points by disassembling the player, and record them in `verification/`. Used by P4, P5 and P8. |
-| Baselines | Run a Google Benchmark per-frame baseline of the current TurboSound at 44.1 k HQ, and record it in `verification/`. |
+| Test material | **Done 2026-09-12** (user approved). `testdata/sound/tsfm/`: `TFMWORKS.SCL`, `TSFM-EL.TAP` (~100 TFC tunes + player), `AYtest_v0.2.{scl,tap}` (TurboSound-only test, no FM: a regression check that TSFM behaves as TurboSound), plus five zxart TSFM releases: DiHalt 2007 compo pack, Sonic 3D #13 (RE_TFD player with source), Husmann 2010, Happy New Year (smallest single-tune case), Black-White Demo. Links, hashes and how FM use was verified are in `SOURCES.md`. Every TFM player tried stalls in its busy-wait loop on the current TurboSound, so these double as busy-flag regression tests. |
+| Player harness | **Done 2026-09-12.** `core/tests/_helpers/tsfmplayerharness.{h,cpp}` pokes `_tsfmplaye`@25000 + `lnxdata`@31000 + a tune@32768 into Pentagon RAM and runs the player's own main loop; entry points and port protocol recorded in [verification/player-entry-points.md](verification/player-entry-points.md). Validated by `core/tests/emulator/sound/tsfm/tsfm_player_harness_test.cpp` (on the legacy device the player deterministically parks in the WaitStatus poll during init's chip-reset — expected; full playback assertions belong to P4). Used by P4, P5 and P8. |
+| Baselines | **Done 2026-09-12.** `core/benchmarks/emulator/sound/turbosound_frame_benchmark.cpp`: idle 826 µs, player-load 1035 µs, player-load turbo 123 µs per frame — recorded in [verification/perf-baseline.md](verification/perf-baseline.md). |
 | Scratch | All temporary outputs go in `scratch/` and are cleaned up. |
 
 **Gate:** material and harness exist; baseline numbers recorded.
 
 ## P1 — Vendor ymfm with the TTD patch
+
+**Done 2026-09-12** — all tasks below landed; gate green.
 
 | Task | Files |
 |---|---|
@@ -47,12 +49,23 @@ P1 and P2 can run in parallel.
 | Third-party notice | `THIRD_PARTY_NOTICES.md` |
 | Port `verification/stress.cpp` to gtest, CI-sized (1 seed × 400 k steps + seed "every step" × 50 k) | `core/tests/emulator/sound/tsfm/ymfm_ttd_patch_test.cpp` |
 
+Deviations/notes:
+
+* The provenance file is `VERSION.txt`, not `VERSION` — the ymfm dir is a
+  SYSTEM include path, and on case-insensitive filesystems a file named
+  `VERSION` shadows the C++ `<version>` header (found by a full-tree build;
+  recorded in `PATCHES.md`).
+* Patch applies with `patch -p1` from the vendored dir (git-style `a/`/`b/`
+  headers).
+
 **Gate:**
 - `YmfmTtdPatch.*` green: no save side effect, exact restore continuation, state size 494;
-- the same test **fails** if the patch is reverted (check once by hand; record in `PATCHES.md`);
-- clean `-Werror` build on macOS clang, and on Linux gcc if available.
+- the same test **fails** if the patch is reverted (checked by hand in-tree 2026-09-12: both tests fail on reverted upstream — `sideEffectFree=false`, `restoreMismatches>0`, `stateSize!=494`; recorded in `PATCHES.md`);
+- clean `-Werror` build on macOS clang (full tree, 2026-09-12); Linux gcc not available on this host — left to CI.
 
 ## P2 — `ITurboSoundDevice`, legacy adopts it
+
+**Done 2026-09-12** — all tasks below landed; gate green.
 
 | Task | Files |
 |---|---|
@@ -70,7 +83,42 @@ P1 and P2 can run in parallel.
 - turbo-mode frame cost unchanged within noise, compared with the P0 baseline;
 - a recorded TurboSound audio capture is bit-identical before and after.
 
+Deviations/notes:
+
+* Suppressed-mode buffer clears: the device's `handleFrameStart` clears run
+  in **every** mode (the sound-off output path mixes chip buffers
+  unconditionally and relies on them being zeroed). Net delta vs pre-P2: in
+  turbo the legacy chip buffers are now zero each frame instead of stale —
+  unobservable (never consumed in turbo; a recording forces the full path).
+* Sound feature off reaches the device too: `_turboSound->handleStep()` runs
+  in every mode per design §6.1 (TSFM advances its core there); the legacy
+  device's whole cost in suppressed modes is one early return inside.
+* `ayloganalyzer.cpp` and `timetravelmanager.cpp` includes switched to
+  `iturbosounddevice.h` (they only use the interface now).
+  `videorecordingwidget.cpp` needed no change (`getNativeTap` is on the
+  interface); `ttdayserializer_test` constructs the concrete chip directly
+  and stays as-is.
+* The bit-identity gate was measured with a throwaway benchmark (300 frames,
+  8 LCG register writes per frame, FNV-1a over the AY1/AY2/MasterMix device
+  buffers), deleted after the gate; digest `0xb956f09f07b0d480` before and
+  after. Its removal needed a manual cmake re-run — the benchmark glob has
+  no `CONFIGURE_DEPENDS`, so a deleted source leaves a stale object behind.
+
+**Gate evidence (2026-09-12):**
+- suite: 2681 passed (`--gtest_filter=-ScorpionSMUC_Test.*` — that suite's
+  failures are the concurrent mouse session's WIP, previously proven
+  pre-existing at pristine HEAD);
+- bit-identity: digest `0xb956f09f07b0d480`, identical pre/post, stable
+  across repetitions;
+- turbo perf A/B under identical (noisy) conditions — always-call form
+  211/215 µs mean/median vs pre-P2 early-return form 204/207 µs; both show
+  the same bimodal spread whose fast cluster (123–130 µs) matches the P0
+  baseline. The per-instruction virtual `handleStep()` is free within noise;
+  the documented fast-path fallback was **not** needed.
+
 ## P3 — Config, factory, session kind guard
+
+**Done 2026-09-12** — all tasks below landed; gate green.
 
 | Task | Files |
 |---|---|
@@ -81,11 +129,55 @@ P1 and P2 can run in parallel.
 | Shipped inis: add `TurboSound = AY` + comment; add a comment that `[AY] Chip/Scheme` are not honoured | `data/configs/*/unreal.ini` |
 
 **Gate:**
-- `ConfigTest.TurboSoundKind*` (parse AY / FM / garbage / missing);
-- `TtdTsfm.SessionKindMismatchRefused`, using a fake id-4 device;
+- `Config_Test.TurboSoundKind*` (parse AY / FM / case-insensitive / garbage /
+  missing / stale-FM reset; `FmTrimDb` parse + default);
+- `Config_Test.ShippedConfigsProduceLegacyTurboSound` — loads 7 real shipped
+  inis;
+- `TtdTsfm_Test.Kind*` decision core (both directions, no-slot-blob ignored,
+  both-ids defensive refusal) + `TtdTsfm_Test.SessionKindMismatchRefused` E2E:
+  a real recorded legacy session is byte-forged into a TSFM session (map key
+  + blob header id) and `DeserializeSession` refuses it with the documented
+  message while leaving the live device untouched;
 - all shipped configs still produce TurboSound.
 
+Deviations/notes:
+
+* Fixtures are named `Config_Test` / `TtdTsfm_Test` (repo `_Test` convention),
+  not `ConfigTest` / `TtdTsfm` as sketched above.
+* The guard lives as a public static
+  `TimeTravelManager::TurboSoundSessionKindMatches(blobs, device)` (pure
+  decision, unit-testable without a session) and is wired into
+  `DeserializeSession` right after the page-store refcount correction — the
+  earliest point where the baseline checkpoint's blob map is available. No
+  `ttdperipheralregistry.cpp` change was needed: `RestoreAll` semantics stay
+  untouched, the guard runs before any restore can happen.
+* The parse block assigns the AY default **before** reading the key: `Config`
+  repopulates the shared `CONFIG` struct in place, so a second parse without
+  the key must not leak a stale FM (covered by
+  `TurboSoundKindMissingResetsStaleFm`).
+* **Latent config crash fixed en route:** `config.romSetName =
+  inimanager.GetValue(rom, "ROMSET")` assigned a possibly-null `const char*`
+  straight into a `std::string` — with any ini lacking `[ROM]` (the new
+  `[SOUND]`-only test ini was the first such caller; every shipped ini carries
+  `[ROM] ROMSET=`, so boot never hit it) `GetValue` returns NULL and the
+  assignment is UB (crash inside libc++'s vectorized `strlen`). Fixed with an
+  explicit null→empty mapping.
+* Shipped-ini edits were done byte-mode (the blobs carry CRLF literally);
+  a plain `git add` under the local `core.autocrlf=input` rewrites whole
+  files — at commit time use
+  `git -c core.autocrlf=false add data/configs/*/unreal.ini` (verified to
+  produce the exact 9-line diff per file).
+
+**Gate evidence (2026-09-12):**
+- new tests: `Config_Test` 9/9, `TtdTsfm_Test` 7/7 green;
+- full suite: 2698 passed, 0 failed (`--gtest_filter=-ScorpionSMUC_Test.*`;
+  SMUC excluded per P2 note);
+- full-tree build clean (only the pre-existing homebrew c-ares/openssl
+  linker version notes).
+
 ## P4 — Chip core
+
+**Done 2026-09-12** — all tasks below landed; gate green.
 
 | Task | Files |
 |---|---|
@@ -106,6 +198,54 @@ Key checks inside the table:
 - all §12.1 tests green;
 - with `TurboSound = FM`, the P0 player harness runs to the end of a tune without hanging (silent output is expected);
 - the core hash is identical in normal, turbo and sound-off runs of 300 frames.
+
+Deviations/notes:
+
+* Two tests beyond the §12.1 table live in the same file:
+  `TsfmPlayer_Test.PlayerCompletesInitAndKeepsPlaying` (the second gate
+  bullet, over the P0 harness) and `TsfmPlayer_Test.CoreHashSameInTurboAndSoundOff`
+  (the third bullet): three 300-frame sessions of the real player; per-frame
+  core-hash equality, plus a suppressed-queue check (below). The suite count
+  is 17: 5 port + 2 busy + 3 timer + 2 prescaler + 3 core + 2 player (the
+  extras over the §12.1 table are split port/prescaler/core cases).
+* **ymfm save nondeterminism found and fixed — new vendor patch #3**
+  (`ymfm_ssg.h`, `ssg_registers() { reset(); }`): with the SSG override
+  installed (§9.3) the `ssg_engine::reset()` delegation never initialises
+  `ssg_registers::m_regdata`, so `save_restore` serialised 16 indeterminate
+  bytes (offsets 422–437 of the 494-byte state) — two chips fed identical
+  traffic saved differently, which is what broke the cross-mode hash gate.
+  Canonical patch file and `PATCHES.md` updated (patch now spans three
+  files; state size unchanged at 494).
+* **OPN register-slot mapping** (encoded in the CSM test): ch2's operators
+  are engine ops {2,5,8,11} — the `operator_map(2,8,5,11)` tuple — whose
+  register slots are opoffs 2/6/10/14 (ymfm remaps engine opnum through
+  `operator_offset` = `opnum + opnum/3`). TL/AR therefore live at
+  0x42/0x46/0x4A/0x4E and 0x52/0x56/0x5A/0x5E, not the contiguous
+  0x48–0x4B block (that configures channels 0/1 plus dead slots; algorithm
+  0's output carrier O4 is engine op 11 behind TL 0x4E / AR 0x5E).
+* **Suppressed-mode drains in the gate test:** a suppressed frame drains a
+  few straggler words — the queue clear lands on `OnFrameStart`, but
+  `RunNFrames` keeps stepping the CPU until its own T-state accumulator
+  reaches the frame target, and that exit overshoot grows a few T per frame
+  as the call-boundary phase slides. The assertion is timestamp-based: on
+  the rebased T axis (§5.2) every drained word must carry an intra-frame
+  timestamp (< 8192 T), which a clear that failed to run would violate by
+  leaving a full frame (≤ 71680 T) queued; both suppressed modes must also
+  drain identical counts.
+* 0xA0-region latched pairs: the upper write only latches, the lower write
+  commits both halves — the CSM test writes 0xA6 before 0xA2 (else the
+  commit pairs with a stale 0 and the channel stays at phase step 0).
+
+**Gate evidence (2026-09-12):**
+- §12.1 + player tests: `TsfmPort/TsfmBusy/TsfmTimer/TsfmPrescaler/TsfmCore/TsfmPlayer`
+  — **17/17 green**;
+- `CoreHashSameInTurboAndSoundOff`: core hash identical across normal /
+  turbo / sound-off for **all 300 frames** per session, suppressed queues
+  clean (intra-frame timestamps only, both modes draining identically);
+- regressions: `YmfmTtdPatch_*` + `TtdTsfm_*` 10/10;
+- full suite: **2834 passed, 0 failed** (2 pre-existing model-parameter
+  skips in `KempstonMouseModelDecode_Test`); no new compiler warnings
+  (only the pre-existing test-binary duplicate-library linker note).
 
 ## P5 — TTD
 

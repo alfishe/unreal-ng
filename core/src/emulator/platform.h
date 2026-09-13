@@ -386,6 +386,16 @@ enum ULAPLUS
 	UPLS_NONE
 };
 
+/// TurboSound slot device kind ([SOUND] TurboSound, TSFM design §3.1).
+/// AY = legacy two-AY pair (default), FM = TSFM (TurboSound FM, YM2203).
+/// Read once at config load - no runtime switching; a change needs a new
+/// emulator instance.
+enum class TurboSoundKind : uint8_t
+{
+	AY,
+	FM
+};
+
 struct zxkeymap;
 
 struct CONFIG
@@ -501,6 +511,14 @@ struct CONFIG
 		/// (match the audio device's native rate when known, else 44100).
 		/// All chip DSP self-designs for this rate at SoundManager construction.
 		unsigned coreRate;
+
+		/// Which device occupies the TurboSound slot ([SOUND] TurboSound,
+		/// TSFM design §3.1): AY = legacy two-AY pair (default), FM = TSFM.
+		TurboSoundKind turboSoundKind = TurboSoundKind::AY;
+
+		/// FM loudness trim in dB relative to the hardware-derived default
+		/// ([SOUND] TSFM_FmTrimDb; 0 = default)
+		double tsfmFmTrimDb = 0.0;
 
 		int covoxFB, covoxDD, sd, saa1099, moonsound;
 		int beeper_vol, micout_vol, micin_vol, ay_vol, aydig_vol, saa1099_vol;

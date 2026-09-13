@@ -5,6 +5,10 @@
 /// region <Emulation events>
 void SoundChip_TurboSound::handleFrameStart()
 {
+    // NOTE: the frame buffer clears below run even when synthesis is
+    // suppressed (§6.1): the sound-feature-off output path relies on zeroed
+    // buffers (SoundManager::handleFrameEnd mixes whatever is here), and a
+    // TSFM device clears its word queues here for the same reason.
     _lastTStates = 0;
     // NOTE: _ayPLL deliberately NOT reset here. The fractional sample phase
     // must be free-running across frames (audio-sync design, Fix 1): zeroing
@@ -44,6 +48,14 @@ void SoundChip_TurboSound::handleFrameStart()
 /// - Correct relationship between chip clock and generator periods
 void SoundChip_TurboSound::handleStep()
 {
+    // Output-stage suppression (§6.1): turbo without audio or the sound
+    // feature off. The manager keeps calling - a device with an emulated
+    // core (TSFM) advances it here - but the legacy device has nothing to
+    // do when its rendering is off, so this early return is the whole
+    // suppressed cost.
+    if (_synthesisSuppressed)
+        return;
+
     // Hardware turbo descaled: the AY has its own clock, so under the Scorpion
     // 7 MHz flip-flop the chip must see the real-time position (t/2), not the
     // doubled CPU count - otherwise it emitted 2x samples per frame
