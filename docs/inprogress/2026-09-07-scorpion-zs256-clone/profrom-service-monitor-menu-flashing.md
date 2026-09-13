@@ -483,3 +483,138 @@ Two dead ends worth recording, both caused by measuring the wrong surface:
 2. **VRAM stability proves nothing.** Bitmap and attribute memory were byte-identical
    across every frame-boundary sample while the screen was visibly blinking.
    Only a rendered-frame diff, or the write journal, exposes an intra-frame redraw.
+
+## 10. Round 3: the regression test was order-dependent (2026-09-12)
+
+`ScorpionServiceMonitor_Test.ProfRomServiceMonitorHighlightDoesNotBlink`
+started failing in the full Release suite while passing on its own — at frame
+29, with attribute `0x71` (the highlight plus BRIGHT) instead of `0x31`, and
+with no write breakpoint hit on `0x58C1`.
+
+### 10.1 It was not a phantom write
+
+Instrumenting the 30-frame window showed the machine was not sitting in the
+monitor at all. In the failing order it bounced every frame or two between
+`flags = 0x84` (`CF_PROFROM | CF_SETDOSROM`) and `flags = 0x04` with the ProfROM
+unpaged, executing at `0x11AD` in ROM and once at `0xACA3` in RAM; in the
+passing order it idled steadily at `PC 0x0066-0x006D`. The state *before* MNI
+was byte-identical between the two (`p7FFD = 0x00`, `p1FFD = 0x12`,
+`flags = 0x84`, `PC = 0x315D`), and both settled the highlight in exactly 16
+frames. The only differing input was the power-on contents of RAM pages 5 and 7.
+
+### 10.2 Why the order mattered
+
+`Memory::RandomizeMemoryContent()` fills pages 5 and 7 from the **global
+`rand()`**. Nothing seeds it, so the pattern a given emulator gets depends
+purely on how many `rand()` calls the preceding tests in the same process made.
+Speeding up unrelated boot tests changed that count, and this test changed
+behaviour. Both orders were individually reproducible — this was never flake in
+the "timing" sense, it was a hidden input.
+
+### 10.3 The RAM sensitivity is real, and separate
+
+Sampling twelve fixed patterns, ten booted a stable monitor and two did not. In
+the failing ones the CPU ended up executing page 5 itself (`PC = 0x52FC`, inside
+the `0x4000-0x7FFF` window) and the screen was cleared — a crash on resuming the
+interrupted program into uninitialized RAM, not a redraw storm.
+
+Ruled out along the way: the Scorpion floating bus. Undecoded port reads return
+the screen attribute byte, which *is* RAM-dependent, so it was the obvious
+suspect — but logging every undecoded read during the window found four, all of
+port `#7FFD`. Not the mechanism.
+
+**Open:** whether that crash is faithful (real hardware with the same garbage
+would do the same) or an emulation defect in the monitor-resume path. It needs
+its own investigation and its own test; it is not what the blink test asserts.
+
+### 10.4 What was changed
+
+The test now zeroes pages 5 and 7 after creating the emulator, before the boot
+run. Zero rather than a fixed seed on purpose: two of twelve patterns fail, so
+choosing whichever seed survives would be picking a green one rather than
+removing an input. Zero is also what `Memory` already gives every other page
+("zero-init: deterministic power-on RAM").
+
+Note that this end-to-end test does not, on its own, catch the Round 2
+regression: re-adding the `(_state->p1FFD & 0x02)` gate leaves it green. The
+mutation is caught by `ScorpionPorts_Test.KempstonJoystick_Port1F_ReadsZero-`
+`WhateverThePagingLatch` and `ScorpionPorts_Test.FdcMirrorPortsGatedOutside-`
+`Session`, which is where that coverage belongs. The blink test guards the
+higher-level property (no mid-frame rewrite of `0x58C1`, highlight steady).
+
+## 11. Round 4: closing the 10.3 open question (2026-09-12)
+
+Following up on 10.3: of the twelve sampled RAM patterns, four were re-checked
+in detail (seeds 2, 17, 21, 27, 28 in the local `SCORP_RAM_SEED`-driven repro
+harness — a temporary, non-committed instrumentation of
+`scorpionports_test.cpp` built for this investigation and removed afterward).
+
+### 11.1 Seed 2: a fully traced mechanism
+
+Full single-step tracing (`SCORP_FULL_PC_TRACE`) isolated one concrete failure
+path:
+
+1. Garbage RAM at a location the Service Monitor treats as an "auto-resume
+   after N frames idle" countdown initializes `BC = 0x3223` instead of the
+   power-on value the monitor's own init path would normally have left there.
+2. The CPU sits in the monitor's own `HALT` idle loop at `PC = 0x00A0`,
+   decrementing that countdown once per interrupt.
+3. After exactly 12835 HALT/interrupt cycles the countdown reaches zero and the
+   monitor takes its "resume the interrupted program" branch — plausible
+   behaviour for a monitor whose whole job is pausing and resuming a running
+   machine.
+4. Resuming means popping a return address off the stack with a plain `RET`.
+   The stack slot it pops from is itself garbage (uninitialized RAM), so the
+   `RET` lands at a garbage PC rather than back in any real program.
+5. That garbage PC (page 13 of the ROM bundle, a near-blank page — 85 of 16384
+   bytes non-zero, confirmed by a direct dump) is executed as a long run of
+   `NOP`s (`0x00`) until one of the few non-zero bytes is reached.
+6. That non-zero byte corrupts `SP`, and execution eventually lands in RAM page
+   5 — the crash observed in 10.3.
+
+Every step in this chain is garbage-in-garbage-out: nothing here is Scorpion-
+specific emulator logic misbehaving, it is a real "resume into whatever the
+stack happens to contain" code path in the ROM being fed uninitialized RAM.
+
+### 11.2 The mechanism is not universal — and does not need to be
+
+Checking the other three originally-documented failing seeds against the same
+`PC = 0x00A0` HALT-countdown signature:
+
+```
+seed=17 (FAIL) 00A0-halt-steps=       0
+seed=21 (FAIL) 00A0-halt-steps=       0
+seed=27 (FAIL) 00A0-halt-steps=       0
+seed=28 (FAIL) 00A0-halt-steps=   25000   (countdown running, never expires
+                                            in the captured window)
+```
+
+So seeds 17/21/27 crash without ever visiting the idle-loop/countdown state at
+all, and seed 28 visits it but the capture window ends before the countdown
+would expire. This rules out "one single traceable bug" as the story, but it
+does not weaken the conclusion: different garbage patterns land in different
+uninitialized fields the monitor reads (the resume countdown is one such field
+among several — pointer/joystick state, ring-buffer indices, and other
+monitor-workspace bytes are equally uninitialized and equally live). Each
+pattern of garbage takes its own path through the same class of bug: **the
+monitor has no explicit "first ever entry, nothing to resume" state** and will
+act on whatever was already sitting in RAM as if it were a previously
+suspended program.
+
+### 11.3 Verdict
+
+This is **faithful hardware behaviour, not an emulation defect.** A real
+Scorpion ZS-256/1024 booting into the Service Monitor for the first time after
+power-on, with RAM contents determined by whatever pattern that particular
+board's DRAM happens to power up into, would hit the exact same class of bug:
+an uninitialized resume-countdown or workspace field eventually driving the
+monitor into "resume" logic that pops and jumps through equally uninitialized
+stack/RAM content. Two of twelve sampled patterns crashing is consistent with
+that being a real, if uncommon, cold-boot hazard on original hardware, not an
+artifact of how this emulator seeds memory.
+
+No emulator fix is warranted. The existing test-level mitigation (10.4 —
+zeroing pages 5/7 before the boot run in the blink regression test) remains the
+right call for that specific test, since it removes an input rather than
+picking a seed that happens to survive; it is deliberately not a claim that
+the underlying ROM behaviour was fixed.
