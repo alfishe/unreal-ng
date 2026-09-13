@@ -73,7 +73,7 @@ private:
     };
 
     void acceptLoop();
-    void sessionLoop(int clientSocket);
+    void sessionLoop(SOCKET clientSocket);
 
     // Dispatches one command line. Returns false when the session must end
     // (quit or broken socket). The prompt is sent by the caller afterwards.
@@ -133,13 +133,13 @@ private:
 
     dzrp::IDebugInterface* m_debug;
     ServerConfig m_config;
-    int m_listenSocket = -1;
+    SOCKET m_listenSocket = INVALID_SOCKET;
     uint16_t m_actualPort = 0;
     std::atomic<bool> m_running{false};
     std::atomic<bool> m_stopRequested{false};
     std::thread m_acceptThread;
     std::mutex m_sessionMutex;
-    int m_clientSocket = -1;
+    SOCKET m_clientSocket = INVALID_SOCKET;
 
     // Per-session state (session thread only unless noted)
     bool m_sessionOpened = false;   // enter-cpu-step ran onSessionOpened
