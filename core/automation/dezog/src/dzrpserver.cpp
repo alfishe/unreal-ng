@@ -124,7 +124,7 @@ void Server::acceptLoop()
         if (ready == 0)
             continue;  // timeout - re-check the stop flag
 
-        int clientSock = accept(m_listenSocket,
+        SOCKET clientSock = accept(m_listenSocket,
                                 reinterpret_cast<sockaddr*>(&clientAddr),
                                 &clientLen);
 
@@ -163,7 +163,7 @@ void Server::acceptLoop()
     }
 }
 
-void Server::sessionLoop(int clientSocket)
+void Server::sessionLoop(SOCKET clientSocket)
 {
     std::vector<uint8_t> recvBuffer;
     recvBuffer.reserve(65536);
@@ -337,7 +337,7 @@ Response Server::makeNak(uint8_t seqNo)
     return resp;
 }
 
-bool Server::sendAll(int socket, const std::vector<uint8_t>& data)
+bool Server::sendAll(SOCKET socket, const std::vector<uint8_t>& data)
 {
     std::lock_guard<std::mutex> lock(m_sessionMutex);
 
