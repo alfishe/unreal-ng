@@ -2968,6 +2968,19 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
     _hudWrapper = new HudOverlayWrapper(_screenWrapper->widget(), _screenWrapper->isGPUAccelerated());
     _screenWrapper->setHudOverlay(_hudWrapper->softwareOverlay());
 
+    // Re-establish drag/drop connections for the new wrapper
+    connect(_screenWrapper, &DeviceScreenWrapper::dragEntered, this, [this]() {
+        ui->contentFrame->setStyleSheet("border: 1px solid red;");
+    });
+    connect(_screenWrapper, &DeviceScreenWrapper::dragLeft, this, [this]() {
+        ui->contentFrame->setStyleSheet("border: none;");
+    });
+    connect(_screenWrapper, &DeviceScreenWrapper::fileDropped, this, [this](const QString& filePath) {
+        qDebug() << "File dropped via GPU window:" << filePath;
+        loadFile(filePath);
+        ui->contentFrame->setStyleSheet("border: none;");
+    });
+
     // Restore state
     _hudWrapper->setVisible(hudVisible);
     _hudWrapper->setModel(_hudModel);
