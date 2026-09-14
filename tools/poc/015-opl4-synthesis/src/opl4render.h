@@ -1,0 +1,154 @@
+// libopl4 — render layer (core TDD §8). Strictly downstream of the chip
+// boundary (D11): float state, never serialised, reset on restore.
+//
+//   chip stereo → [rate conversion] → [board analog] → [punch] → [room]
+//               → [DC blocker] → out
+//
+// Rate conversion: runtime-designed Kaiser windowed-sinc polyphase FIR,
+// the same designer math as the host's AY decimator (FirDesigner::kaiser)
+// so the tonal character matches (§8.2). At (44100, Authentic, no post
+// stages) the path is a bit-exact bypass (R6).
+#pragma once
+
+#include "opl4/opl4config.h"
+
+#include <cstddef>
+#include <memory>
+#include <vector>
+
+namespace opl4
+{
+
+// Kaiser windowed-sinc lowpass, DC-normalised — same math as the host's
+// fir_designer.h, standalone so the library stays dependency-free (R10).
+// Bit-identical for shared parameter sets (asserted by test).
+std::vector<double> DesignKaiser(size_t taps, double fc, double fs, double beta);
+
+// Polyphase resampler / interpolator. Input and output rates are runtime
+// parameters; the anti-alias / anti-image filter is designed at Configure()
+// against the *output* Nyquist when interpolating (upsampling) and against
+// the *input* Nyquist when decimating (§8.2 note).
+class PolyphaseResampler
+{
+public:
+    void Configure(double inputRate, double outputRate, Quality q,
+                   double cutoffHz = 20000.0);
+    // Push one input frame (stereo), emit 0..n output frames into out
+    // (interleaved stereo). Returns frames written.
+    size_t Process(float inL, float inR, float* out);
+    void Reset();
+
+    double PhaseStep() const { return _phaseStep; }
+    size_t Taps() const { return _taps; }
+    const std::vector<double>& Coeffs() const { return _coeffs; }
+
+private:
+    double Convolve(const double* hist, size_t phase) const;
+
+    std::vector<double> _coeffs;
+    size_t _taps = 0;
+    double _phaseStep = 1.0;
+    double _phase = 0.0;
+    std::vector<double> _histL, _histR;   // input history ring
+    std::vector<double> _orderedL, _orderedR; // scratch (allocation-free path)
+    size_t _histPos = 0;
+};
+
+// YAC513 + LF347 board analog model (§8.3): 1st-order RC pole at 4.08 kHz
+// cascaded with a 2nd-order Sallen-Key LP (f0 = 27.7 kHz, Q = 1.306), whose
+// +2.6 dB peaking cancels the DAC ZOH sinc droop. Direct Form II Transposed.
+class BoardAnalog
+{
+public:
+    void Configure(double sampleRate);
+    void Process(float& l, float& r);
+    void Reset() { _z1l = _z1r = _z2l = _z2r = _z3l = _z3r = 0.0f; }
+
+private:
+    float _b0 = 1, _b1 = 0, _a1 = 0;          // 1-pole RC
+    float _q0 = 1, _q1 = 0, _q2 = 0, _p1 = 0, _p2 = 0; // Sallen-Key biquad
+    float _z1l = 0, _z1r = 0, _z2l = 0, _z2r = 0, _z3l = 0, _z3r = 0;
+};
+
+// Punch chain (§8.4): hybrid transient designer + exciter. First-difference
+// tilt blended by edgeBlend plus envelope-gated transient boost, with
+// coefficients rate-normalised to the 44.1 kHz presets via coeff^(44100/fs).
+class CharacterChain
+{
+public:
+    void SetPunch(PunchPreset p, double sampleRate);
+    void SetRoom(RoomMode m, double sampleRate);
+    void Process(float& l, float& r);
+    void Reset();
+
+    bool Active() const { return _punchOn || _roomOn; }
+
+private:
+    bool _punchOn = false;
+    bool _roomOn = false;
+    float _edgeBlend = 0;
+    float _transBoost = 0;
+    float _envAttack = 0.3f;
+    float _envRelease = 0.9995f;
+    float _prevL = 0, _prevR = 0;
+    float _envL = 0, _envR = 0;
+    // room: delayed opposite-channel bleed, one-pole lowpass
+    float _roomGain = 0;
+    float _roomLp = 0;
+    std::vector<float> _delayL, _delayR;
+    size_t _delayPos = 0;
+    float _roomZL = 0, _roomZR = 0;
+};
+
+class Opl4Render
+{
+public:
+    void Configure(const Opl4Config& cfg);
+    void ResetRenderState();
+
+    // Authentic: single chip stream (44100) through stages.
+    // Returns frames written to out (interleaved stereo); *consumedFrames
+    // (optional) receives how many input frames were eaten.
+    size_t ProcessChip(const int16_t* chipStereo, size_t frames, float* out,
+                       size_t maxOutFrames, size_t* consumedFrames = nullptr);
+    // HiFi: FM at 49516.4 and PCM at 44100, resampled and summed.
+    size_t ProcessSplit(const int16_t* fmStereo, size_t fmFrames,
+                        const int16_t* pcmStereo, size_t pcmFrames,
+                        float* out, size_t maxOutFrames,
+                        size_t* consumedFm = nullptr, size_t* consumedPcm = nullptr);
+
+    void SetBoardAnalog(bool on) { _boardAnalogOn = on; }
+    void SetPunchPreset(ChannelGroup g, PunchPreset p);
+    void SetRoom(RoomMode m) { _chainFm.SetRoom(m, _outputRate); _chainPcm.SetRoom(m, _outputRate); _room = m; }
+
+    // Unity-bypass query (R6): true when ProcessChip is a pure int16->float
+    // memcpy with no filtering at all.
+    bool UnityBypass() const;
+
+    const PolyphaseResampler& MainResampler() const { return _main; }
+
+private:
+    void PostStages(float& l, float& r);
+
+    uint32_t _outputRate = 44100;
+    RenderMode _mode = RenderMode::Authentic;
+    Quality _quality = Quality::Reference;
+    bool _boardAnalogOn = false;
+    RoomMode _room = RoomMode::Off;
+
+    PolyphaseResampler _main;   // chip 44100 -> output
+    PolyphaseResampler _fm;     // HiFi: 49516.4 -> output
+    PolyphaseResampler _pcm;    // HiFi: 44100 -> output
+    BoardAnalog _analog;
+    CharacterChain _chainFm;
+    CharacterChain _chainPcm;
+
+    // DC blocker (~5 Hz one-pole highpass, §8.6)
+    float _dcX1L = 0, _dcX1R = 0, _dcY1L = 0, _dcY1R = 0;
+    float _dcR = 0.9995f;
+
+    // split-mode staging
+    std::vector<float> _fmStage, _pcmStage;
+};
+
+} // namespace opl4

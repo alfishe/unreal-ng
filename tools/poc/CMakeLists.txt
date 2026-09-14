@@ -5,3 +5,4 @@
 add_subdirectory(01-ttd-compression/cpp)
 #add_subdirectory(02-ttd-gui)
 add_subdirectory(011-ttd-v2-capture-analysis)
+add_subdirectory(015-opl4-synthesis)

@@ -57,6 +57,7 @@ NNN-name/
 | 012 | [calltrace-viz](012-calltrace-viz/) | Call trace visualization |
 | 013 | [nvenc-poc](013-nvenc-poc/) | NVIDIA NVENC video encoding |
 | 014 | [qt-gui](014-qt-gui/) | Qt GUI framework exploration |
+| 015 | [opl4-synthesis](015-opl4-synthesis/) | YMF278B (OPL4/MoonSound) synthesis library: dual-grid chip model, deterministic state, render layer |
 
 ---
 
