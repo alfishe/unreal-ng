@@ -145,6 +145,16 @@ void WD1793::internalReset()
     _waitIndexPulseCount = SIZE_MAX;
     _motorTimeoutTStates = 0;
 
+    // Stop a spinning motor before the controller goes to sleep below: a sleeping
+    // controller never runs processFDDMotorState(), so a motor left spinning here
+    // would never time out and NC_FDD_MOTOR_STOPPED / NC_FDD_STATE_CHANGED would
+    // never be published (stale motor LED in the UI). Guarded so a fresh construction
+    // (motor already off) posts nothing.
+    if (_selectedDrive && _selectedDrive->getMotor())
+    {
+        stopFDDMotor();
+    }
+
     // Clear Force Interrupt condition monitoring
     _interruptConditions = 0;
     _prevReady = false;
@@ -263,16 +273,12 @@ void WD1793::processBeta128(uint8_t value)
 
     if (reset)
     {
-        // Perform full WD1793 chip reset
+        // Perform full WD1793 chip reset. internalReset() also stops a spinning
+        // motor (with notifications) and zeroes the motor timeout and index counters.
         this->reset();
 
         _statusRegister &= ~WDS_NOTRDY;
         raiseIntrq();
-
-        // Stop FDD motor, reset all related counters
-        _selectedDrive->setMotor(false);
-        _motorTimeoutTStates = 0;
-        _indexPulseCounter = 0;
     }
     else
     {
