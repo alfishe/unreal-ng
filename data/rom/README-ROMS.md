@@ -20,6 +20,17 @@ that the emulator works out of the box, on the following basis:
   ZX Spectrum community. ZX Evolution firmware sources are published by TSLabs.
 * **Open firmware**: `gdos-pd.rom` (public domain), `opense.rom` (OpenSE BASIC, GPL),
   `data/testrom/zx-diagnostics.rom` (Brendan Alford, GPL-3.0).
+* **YRW801 wave data ROM** (`opl4/yrw801-m-yamaha-1993.rom`, renamed from the archive's
+  `YRW801-M - Yamaha - 1993.rom` per the no-spaces kebab-case naming rule): mask ROM of the Yamaha YRW801
+  wavetable option for the YMF278B (OPL4) used by ZXM-MoonSound, **Copyright (c) 1993 Yamaha
+  Corporation**. The 2 MiB dump is the single known image, distributed freely in the ZX
+  Spectrum / MSX communities for use with MoonSound hardware and emulators (e.g. by Mick
+  Laboratory, micklab.ru — the card's author, whose `yrw801m_1993.rar` unpacks to the original
+  spaced file name and is byte-identical — verified 2026-09-14 — and the same image also ships
+  inside the author's `moonservice_v03.rar` as `moonsnd.rom`); as with the clone firmware above, no formal
+  permission from the rights holder exists. Authenticity markers: ASCII `CopyrightYAMAHA` at
+  offset 0x1200 and version `01.00` at 0x1FFFFE (the same checks the Linux kernel OPL4 driver
+  applies); MD5 `42af93619160ef2116416f74a6cb12f2`.
 * `data/symbols/*.map` label tables are derived from published disassemblies and are provided for debugging only.
 
 If you are a rights holder and object to a file being distributed here, open an issue or contact the maintainer

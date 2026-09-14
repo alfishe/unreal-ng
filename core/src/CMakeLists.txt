@@ -67,6 +67,19 @@ add_subdirectory(3rdparty/liblzma)
 # forward it manually.
 add_subdirectory(3rdparty/zstd)
 
+# libopl4 — MoonSound (YMF278B / OPL4) synthesis library.
+# TEMPORARY home: tools/poc/015-opl4-synthesis; migrates to core/src/3rdparty
+# once the integration stabilises. Declared here — not in the root file — so
+# every entry point that builds core (root, unreal-qt, unreal-videowall,
+# core/tests standalone) picks the target up exactly once; the guard also
+# protects the -DBUILD_POC=ON path, where tools/poc/CMakeLists.txt adds the
+# same directory and must skip it (see the matching guard there).
+# EXCLUDE_FROM_ALL keeps the opl4tests research binary out of default
+# builds; the opl4 library itself is still compiled as a dependency of core.
+if (NOT TARGET opl4)
+    add_subdirectory(${ROOT_DIR}/tools/poc/015-opl4-synthesis 015-opl4-synthesis EXCLUDE_FROM_ALL)
+endif()
+
 # All C++ sources in /src and sub-folders will be compiled
 file (GLOB_RECURSE CPP_FILES ${SOURCE_DIR}/*.cpp)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/build/" FALSE OUTVAR CPP_FILES)
@@ -143,6 +156,19 @@ target_link_libraries(${PROJECT_NAME} PRIVATE lzma)
 # automation/lua, automation/webapi, tests). All consumers need zstd's
 # include path available.
 target_link_libraries(${PROJECT_NAME} PUBLIC $<TARGET_NAME:zstd::libzstd>)
+
+# Link libopl4 (MoonSound / YMF278B synthesis). PRIVATE: only core sources
+# include opl4 headers or call the library — public headers such as
+# soundmanager.h only forward-declare the device class. The static-archive
+# dependency still reaches final executables (CMake's $<LINK_ONLY:>
+# propagation), so unreal-qt / automation binaries resolve opl4 symbols
+# without inheriting the PoC include path.
+target_link_libraries(${PROJECT_NAME} PRIVATE opl4)
+
+# Compile gate for the MoonSound device implementation. PUBLIC: core-tests
+# compiles core sources directly into its own binary and must see the same
+# gate as the core library build (a mismatch would be an ODR hazard).
+target_compile_definitions(${PROJECT_NAME} PUBLIC UNREALNG_HAVE_OPL4=1)
 
 # Platform-specific framework and library linkage
 # Note: Recording-specific frameworks (VideoToolbox, AVFoundation, CoreMedia, CoreVideo, AudioToolbox)

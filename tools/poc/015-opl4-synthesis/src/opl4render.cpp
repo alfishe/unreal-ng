@@ -322,8 +322,12 @@ void Opl4Render::Configure(const Opl4Config& cfg)
     _room = RoomMode::Off;
 
     const double fmRate = static_cast<double>(kMasterClockHz) / static_cast<double>(kFmDivider);
-    if (_mode == RenderMode::HiFi && _outputRate != kChipOutputRate)
+    if (_mode == RenderMode::HiFi)
     {
+        // Always configured in HiFi — including output == 44100, where the
+        // FM grid still decimates 49516.4 -> 44100 (regression: this arm
+        // used to skip configuration at the chip rate and ProcessSplit then
+        // read an unconfigured resampler).
         _fm.Configure(fmRate, _outputRate, _quality);
         _pcm.Configure(kChipOutputRate, _outputRate, _quality);
     }
@@ -331,6 +335,10 @@ void Opl4Render::Configure(const Opl4Config& cfg)
     {
         _main.Configure(kChipOutputRate, _outputRate, _quality);
     }
+    // Split-source renders keep their own resamplers so the mixed path
+    // (_main / _fm / _pcm) never shares filter state with ProcessGroup.
+    _resFm.Configure(GroupInputRate(ChannelGroup::Fm), _outputRate, _quality);
+    _resPcm.Configure(GroupInputRate(ChannelGroup::Pcm), _outputRate, _quality);
     _analog.Configure(_outputRate);
     _chainFm.SetPunch(PunchPreset::Off, _outputRate);
     _chainPcm.SetPunch(PunchPreset::Off, _outputRate);
@@ -344,9 +352,13 @@ void Opl4Render::ResetRenderState()
     _main.Reset();
     _fm.Reset();
     _pcm.Reset();
+    _resFm.Reset();
+    _resPcm.Reset();
     _analog.Reset();
     _chainFm.Reset();
     _chainPcm.Reset();
+    _groupFm.Reset();
+    _groupPcm.Reset();
     _dcX1L = _dcX1R = _dcY1L = _dcY1R = 0;
 }
 
@@ -444,18 +456,31 @@ size_t Opl4Render::ProcessSplit(const int16_t* fmStereo, size_t fmFrames,
                                  float* out, size_t maxOutFrames,
                                  size_t* consumedFm, size_t* consumedPcm)
 {
-    // HiFi: resample both grids to the output rate and sum (§8.2).
-    if (_fmStage.size() < (fmFrames + 4) * 2)
-        _fmStage.resize((fmFrames + 4) * 8);
-    if (_pcmStage.size() < (pcmFrames + 4) * 2)
-        _pcmStage.resize((pcmFrames + 4) * 8);
+    // HiFi: resample both grids to the output rate and sum (§8.2). The
+    // staging vectors are persistent FIFOs of resampler OUTPUT: the two
+    // grids produce output at the same average rate but not in lockstep, so
+    // a call can stage more than it may emit (bounded by the slower side);
+    // the tail stays staged for the next call. Dropping it instead (the old
+    // behaviour) lost ~11% of FM content per frame at output 44100 and grew
+    // the FM input backlog without bound at every other rate.
+    //
+    // Staging capacity: each input frame can emit floor(out/in)+1 frames;
+    // 12 covers every supported rate pair, plus a slack for the FIR delay.
+    const size_t fmHad = _fmStage.size() / 2;
+    const size_t pcmHad = _pcmStage.size() / 2;
+    const size_t fmNeed = (fmHad + fmFrames * 12 + 32) * 2;
+    const size_t pcmNeed = (pcmHad + pcmFrames * 12 + 32) * 2;
+    if (_fmStage.size() < fmNeed)
+        _fmStage.resize(fmNeed);
+    if (_pcmStage.size() < pcmNeed)
+        _pcmStage.resize(pcmNeed);
 
-    size_t fmOut = 0;
+    size_t fmOut = fmHad;
     for (size_t i = 0; i < fmFrames; i++)
         fmOut += _fm.Process(static_cast<float>(fmStereo[i * 2 + 0]),
                              static_cast<float>(fmStereo[i * 2 + 1]),
                              _fmStage.data() + fmOut * 2);
-    size_t pcmOut = 0;
+    size_t pcmOut = pcmHad;
     for (size_t i = 0; i < pcmFrames; i++)
         pcmOut += _pcm.Process(static_cast<float>(pcmStereo[i * 2 + 0]),
                                static_cast<float>(pcmStereo[i * 2 + 1]),
@@ -477,11 +502,94 @@ size_t Opl4Render::ProcessSplit(const int16_t* fmStereo, size_t fmFrames,
         out[i * 2 + 0] = l;
         out[i * 2 + 1] = r;
     }
+    // Keep the unemitted tail staged.
+    _fmStage.erase(_fmStage.begin(), _fmStage.begin() + static_cast<std::ptrdiff_t>(n * 2));
+    _pcmStage.erase(_pcmStage.begin(), _pcmStage.begin() + static_cast<std::ptrdiff_t>(n * 2));
     if (consumedFm)
-        *consumedFm = fmFrames; // resampler staging ate all offered inputs
+        *consumedFm = fmFrames; // all offered inputs were pushed through the resampler
     if (consumedPcm)
         *consumedPcm = pcmFrames;
     return n;
+}
+
+double Opl4Render::GroupInputRate(ChannelGroup g) const
+{
+    if (g == ChannelGroup::Fm && _mode == RenderMode::HiFi)
+        return static_cast<double>(kMasterClockHz) / static_cast<double>(kFmDivider);
+    return static_cast<double>(kChipOutputRate);
+}
+
+bool Opl4Render::GroupBypass(ChannelGroup g) const
+{
+    const CharacterChain& chain = (g == ChannelGroup::Fm) ? _chainFm : _chainPcm;
+    return GroupInputRate(g) == static_cast<double>(kChipOutputRate)
+        && _outputRate == kChipOutputRate && !_boardAnalogOn && !chain.Active();
+}
+
+size_t Opl4Render::ProcessGroup(ChannelGroup g, const int16_t* stereo, size_t frames,
+                                float* out, size_t maxOutFrames, size_t* consumedFrames)
+{
+    CharacterChain& chain = (g == ChannelGroup::Fm) ? _chainFm : _chainPcm;
+    GroupStage& st = (g == ChannelGroup::Fm) ? _groupFm : _groupPcm;
+    PolyphaseResampler& res = (g == ChannelGroup::Fm) ? _resFm : _resPcm;
+    const double inRate = GroupInputRate(g);
+
+    if (GroupBypass(g))
+    {
+        // R6 mirror: exact int16 -> float of the group's chip stream.
+        const size_t n = std::min(frames, maxOutFrames);
+        for (size_t i = 0; i < n; i++)
+        {
+            out[i * 2 + 0] = static_cast<float>(stereo[i * 2 + 0]);
+            out[i * 2 + 1] = static_cast<float>(stereo[i * 2 + 1]);
+        }
+        if (consumedFrames)
+            *consumedFrames = n;
+        return n;
+    }
+
+    size_t written = 0;
+    size_t i = 0;
+    // Same scratch sizing argument as ProcessChip: one input frame can emit
+    // floor(out/in)+1 output frames; 12 covers every supported rate.
+    float frame[24];
+    for (; i < frames && written < maxOutFrames; i++)
+    {
+        size_t n;
+        if (inRate == static_cast<double>(_outputRate))
+        {
+            frame[0] = static_cast<float>(stereo[i * 2 + 0]);
+            frame[1] = static_cast<float>(stereo[i * 2 + 1]);
+            n = 1;
+        }
+        else
+        {
+            n = res.Process(static_cast<float>(stereo[i * 2 + 0]),
+                            static_cast<float>(stereo[i * 2 + 1]), frame);
+        }
+        for (size_t j = 0; j < n && written < maxOutFrames; j++)
+        {
+            float l = frame[j * 2 + 0], r = frame[j * 2 + 1];
+            chain.Process(l, r);
+            if (_boardAnalogOn)
+                st.analog.Process(l, r);
+            // DC blocker (§8.6), per-group state.
+            const float yl = l - st.dcX1L + _dcR * st.dcY1L;
+            const float yr = r - st.dcX1R + _dcR * st.dcY1R;
+            st.dcX1L = l;
+            st.dcX1R = r;
+            st.dcY1L = yl;
+            st.dcY1R = yr;
+            l = yl;
+            r = yr;
+            out[written * 2 + 0] = l;
+            out[written * 2 + 1] = r;
+            written++;
+        }
+    }
+    if (consumedFrames)
+        *consumedFrames = i;
+    return written;
 }
 
 } // namespace opl4

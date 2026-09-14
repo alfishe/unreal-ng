@@ -29,9 +29,8 @@ namespace
 class MockPeripheral : public TTDSerializable
 {
 public:
-    explicit MockPeripheral(size_t stateSize, PeripheralId id,
-                           bool supportsDelta = false)
-        : _stateSize(stateSize), _id(id), _supportsDelta(supportsDelta)
+    explicit MockPeripheral(size_t stateSize, PeripheralId id)
+        : _stateSize(stateSize), _id(id)
     {
         _state.resize(stateSize, 0);
     }
@@ -50,7 +49,6 @@ public:
 
     std::string TTDDeviceName() const override { return "MockPeripheral"; }
     PeripheralId TTDPeripheralId() const override { return _id; }
-    bool TTDSupportsDelta() const override { return _supportsDelta; }
 
     void FillRandom(uint32_t seed)
     {
@@ -65,7 +63,6 @@ public:
 private:
     size_t _stateSize;
     PeripheralId _id;
-    bool _supportsDelta;
     std::vector<uint8_t> _state;
 };
 
@@ -90,7 +87,7 @@ protected:
         _betaDisk = std::make_unique<MockPeripheral>(2048, PeripheralId::BetaDisk);
         _tape = std::make_unique<MockPeripheral>(256, PeripheralId::Tape);
         _covox = std::make_unique<MockPeripheral>(16, PeripheralId::Covox);
-        _generalSound = std::make_unique<MockPeripheral>(512 * 1024, PeripheralId::GeneralSound, true);
+        _generalSound = std::make_unique<MockPeripheral>(512 * 1024, PeripheralId::GeneralSound);
 
         // Fill with random data to avoid trivial compression
         _turboSound->FillRandom(1);
@@ -113,7 +110,7 @@ TEST_F(TTDStreamOverheadTest, EmptyRegistryZeroBytes)
     TTDPeripheralRegistry registry;
 
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
-    registry.CaptureAll(nullptr, blobs);
+    registry.CaptureAll(blobs);
 
     EXPECT_TRUE(blobs.empty());
     EXPECT_EQ(TotalBlobSize(blobs), 0);
@@ -127,7 +124,7 @@ TEST_F(TTDStreamOverheadTest, NonConnectedPeripheralsZeroBytes)
     registryA.Register(PeripheralId::TurboSound, _turboSound.get());
 
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobsA;
-    registryA.CaptureAll(nullptr, blobsA);
+    registryA.CaptureAll(blobsA);
     size_t sizeA = TotalBlobSize(blobsA);
 
     // Session B: TurboSound + BDI + Tape + Covox (simulating 128K with peripherals)
@@ -138,7 +135,7 @@ TEST_F(TTDStreamOverheadTest, NonConnectedPeripheralsZeroBytes)
     registryB.Register(PeripheralId::Covox, _covox.get());
 
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobsB;
-    registryB.CaptureAll(nullptr, blobsB);
+    registryB.CaptureAll(blobsB);
     size_t sizeB = TotalBlobSize(blobsB);
 
     // The TurboSound blob should be identical in both cases
@@ -167,7 +164,7 @@ TEST_F(TTDStreamOverheadTest, UnregisterRemovesFromOutput)
 
     // Capture with both
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobsBoth;
-    registry.CaptureAll(nullptr, blobsBoth);
+    registry.CaptureAll(blobsBoth);
     EXPECT_EQ(blobsBoth.size(), 2);
 
     // Unregister BetaDisk
@@ -175,7 +172,7 @@ TEST_F(TTDStreamOverheadTest, UnregisterRemovesFromOutput)
 
     // Capture with only TurboSound
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobsOne;
-    registry.CaptureAll(nullptr, blobsOne);
+    registry.CaptureAll(blobsOne);
     EXPECT_EQ(blobsOne.size(), 1);
     EXPECT_EQ(blobsOne.count(static_cast<uint8_t>(PeripheralId::BetaDisk)), 0);
 
@@ -195,17 +192,17 @@ TEST_F(TTDStreamOverheadTest, PresenceSetPerCheckpoint)
     // Checkpoint 1: Only TurboSound
     registry.Register(PeripheralId::TurboSound, _turboSound.get());
     std::unordered_map<uint8_t, std::vector<uint8_t>> cp1;
-    registry.CaptureAll(nullptr, cp1);
+    registry.CaptureAll(cp1);
 
     // Checkpoint 2: TurboSound + BetaDisk
     registry.Register(PeripheralId::BetaDisk, _betaDisk.get());
     std::unordered_map<uint8_t, std::vector<uint8_t>> cp2;
-    registry.CaptureAll(nullptr, cp2);
+    registry.CaptureAll(cp2);
 
     // Checkpoint 3: Only BetaDisk
     registry.Unregister(PeripheralId::TurboSound);
     std::unordered_map<uint8_t, std::vector<uint8_t>> cp3;
-    registry.CaptureAll(nullptr, cp3);
+    registry.CaptureAll(cp3);
 
     // Verify each checkpoint has correct device set
     EXPECT_EQ(cp1.size(), 1);
@@ -229,7 +226,7 @@ TEST_F(TTDStreamOverheadTest, LargePeripheralIsolation)
     registryA.Register(PeripheralId::TurboSound, _turboSound.get());
 
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobsA;
-    registryA.CaptureAll(nullptr, blobsA);
+    registryA.CaptureAll(blobsA);
     size_t sizeA = TotalBlobSize(blobsA);
 
     // Config B: TurboSound + GeneralSound (512KB)
@@ -238,7 +235,7 @@ TEST_F(TTDStreamOverheadTest, LargePeripheralIsolation)
     registryB.Register(PeripheralId::GeneralSound, _generalSound.get());
 
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobsB;
-    registryB.CaptureAll(nullptr, blobsB);
+    registryB.CaptureAll(blobsB);
     size_t sizeB = TotalBlobSize(blobsB);
 
     // The TurboSound blob should be byte-for-byte identical
@@ -268,7 +265,7 @@ TEST_F(TTDStreamOverheadTest, RestoreMissingPeripheralUnmodified)
 
     // Capture both
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
-    registry.CaptureAll(nullptr, blobs);
+    registry.CaptureAll(blobs);
 
     // Remember BetaDisk state
     std::vector<uint8_t> originalBDI = _betaDisk->GetState();
@@ -281,7 +278,7 @@ TEST_F(TTDStreamOverheadTest, RestoreMissingPeripheralUnmodified)
     EXPECT_NE(_betaDisk->GetState(), originalBDI);
 
     // Restore from blobs (missing BetaDisk)
-    registry.RestoreAll(blobs, nullptr);
+    registry.RestoreAll(blobs);
 
     // BetaDisk should NOT have been modified (it wasn't in the blob map)
     // This is important: we don't zero out state for missing peripherals
@@ -302,7 +299,7 @@ TEST_F(TTDStreamOverheadTest, OverheadConstantRegardlessOfUnconnected)
     // Scenario: Same peripheral connected, but we could have had 5
     // The blob output should be identical
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobsMin;
-    registryMin.CaptureAll(nullptr, blobsMin);
+    registryMin.CaptureAll(blobsMin);
 
     // Just TurboSound registered
     EXPECT_EQ(blobsMin.size(), 1);
@@ -317,32 +314,6 @@ TEST_F(TTDStreamOverheadTest, OverheadConstantRegardlessOfUnconnected)
     // For a 64-byte state with random data, expect some compression overhead
     // but certainly less than 2x the raw state size
     EXPECT_LT(tsBlob.size(), 64 * 2 + sizeof(PeripheralBlobHeader));
-}
-
-/// @test Delta encoding does not affect non-connected overhead
-TEST_F(TTDStreamOverheadTest, DeltaEncodingPreservesZeroOverhead)
-{
-    TTDPeripheralRegistry registry;
-    registry.Register(PeripheralId::TurboSound, _turboSound.get());
-    registry.Register(PeripheralId::GeneralSound, _generalSound.get());
-
-    // First capture (full)
-    std::unordered_map<uint8_t, std::vector<uint8_t>> fullBlobs;
-    registry.CaptureAll(nullptr, fullBlobs);
-
-    // Unregister GeneralSound (simulating disconnect)
-    registry.Unregister(PeripheralId::GeneralSound);
-
-    // Second capture (delta mode, but GS is not connected)
-    std::unordered_map<uint8_t, std::vector<uint8_t>> deltaBlobs;
-    registry.CaptureAll(&fullBlobs, deltaBlobs);
-
-    // deltaBlobs should only contain TurboSound
-    EXPECT_EQ(deltaBlobs.size(), 1);
-    EXPECT_EQ(deltaBlobs.count(static_cast<uint8_t>(PeripheralId::GeneralSound)), 0);
-
-    // The TurboSound blob should be a delta against the previous
-    // (assuming no state change, it should be very small)
 }
 
 /// @test Round-trip correctness with varying peripheral sets
@@ -368,7 +339,7 @@ TEST_F(TTDStreamOverheadTest, RoundTripVaryingPeripheralSets)
 
     // Capture
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
-    registry.CaptureAll(nullptr, blobs);
+    registry.CaptureAll(blobs);
     EXPECT_EQ(blobs.size(), 3);
 
     // Corrupt all states
@@ -377,7 +348,7 @@ TEST_F(TTDStreamOverheadTest, RoundTripVaryingPeripheralSets)
     _tape->FillRandom(333);
 
     // Restore
-    registry.RestoreAll(blobs, nullptr);
+    registry.RestoreAll(blobs);
 
     // Verify all states match original
     std::vector<uint8_t> tsRestored(64);

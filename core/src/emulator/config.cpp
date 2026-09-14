@@ -336,6 +336,53 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 		}
 	}
 
+	// MoonSound (ZXM-MoonSound / YMF278B / OPL4): legacy enable + volume keys.
+	// Card options live in the [MOONSOUND] section below.
+	config.sound.moonsound = (int)inimanager.GetLongValue(sound, "MoonSound", 0);
+	{
+		long vol = inimanager.GetLongValue(sound, "MoonSoundVol", 8192);
+		if (vol < 0 || vol > 8192)
+		{
+			MLOGWARNING("Config: [SOUND] MoonSoundVol=%ld out of range 0..8192, clamping", vol);
+			vol = std::clamp(vol, 0L, 8192L);
+		}
+		config.sound.moonsound_vol = (int)vol;
+	}
+
+	// MOONSOUND section (card options; enable/volume are the [SOUND] keys above).
+	// Wave ROM path: heritage unreal.ini ships it as [ROM] MOONSOUND=rom\opl4\YRW801...,
+	// so read that key first; an explicit [MOONSOUND] WaveRom overrides it (6.2).
+	CopyStringValue(inimanager.GetValue(rom, "MOONSOUND", nullptr, nullptr), config.moonsound.waveRom, sizeof config.moonsound.waveRom);
+	CopyStringValue(inimanager.GetValue(moonsound, "WaveRom", nullptr, nullptr), config.moonsound.waveRom, sizeof config.moonsound.waveRom);
+	{
+		long ramKb = inimanager.GetLongValue(moonsound, "RamSizeKb", 1024);
+		if (ramKb < 0 || ramKb > 1024)
+		{
+			MLOGWARNING("Config: [MOONSOUND] RamSizeKb=%ld out of range 0..1024, clamping", ramKb);
+			ramKb = std::clamp(ramKb, 0L, 1024L);
+		}
+		config.moonsound.ramSizeKb = (unsigned)ramKb;
+	}
+
+	// RenderMode: authentic | hifi (default authentic)
+	line[0] = '\0';
+	CopyStringValue(inimanager.GetValue(moonsound, "RenderMode", nullptr, nullptr), line, sizeof line);
+	config.moonsound.renderMode = (StringHelper::CompareCaseInsensitive(line, "hifi", strlen("hifi")) == 0) ? 1 : 0;
+
+	// Quality: reference | highfidelity (default reference)
+	line[0] = '\0';
+	CopyStringValue(inimanager.GetValue(moonsound, "Quality", nullptr, nullptr), line, sizeof line);
+	config.moonsound.quality = (StringHelper::CompareCaseInsensitive(line, "highfidelity", strlen("highfidelity")) == 0) ? 1 : 0;
+
+	// Punch: off | pcm | both (default off)
+	line[0] = '\0';
+	CopyStringValue(inimanager.GetValue(moonsound, "Punch", nullptr, nullptr), line, sizeof line);
+	config.moonsound.punch = (StringHelper::CompareCaseInsensitive(line, "pcm", strlen("pcm")) == 0) ? 1
+	                      : (StringHelper::CompareCaseInsensitive(line, "both", strlen("both")) == 0) ? 2 : 0;
+
+	// BoardAnalog: 0 | 1 (default 0)
+	config.moonsound.boardAnalog = (inimanager.GetLongValue(moonsound, "BoardAnalog", 0) != 0) ? 1 : 0;
+
 	// VIDEO section
 	// A/V sync video delay: auto (-1) = match the audio path latency
 	// (~2 frames); 0 = lowest input latency (audio trails by the ring depth)

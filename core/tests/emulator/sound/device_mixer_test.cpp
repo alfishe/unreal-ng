@@ -3,6 +3,8 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/sound/audio.h"
+#include "common/sound/filters/masterlimiter.h"
+#include "common/sound/filters/masterlimiter.h"
 
 class DeviceMixerTest : public ::testing::Test
 {
@@ -244,3 +246,59 @@ TEST_F(DeviceMixerTest, NegativeSaturation)
     // Should saturate to INT16_MIN
     EXPECT_EQ(out, -32768);
 }
+
+/// region <Wide mix bus + master limiter (MoonSound integration 5.2)>
+
+TEST_F(DeviceMixerTest, WideMixDisabledByDefault)
+{
+    EXPECT_FALSE(sm->wideMixEnabled());
+}
+
+TEST_F(DeviceMixerTest, WideMixKeepsLinearSumBelowKnee)
+{
+    fillBuffer(AudioSourceType::AY1_All, 10000);
+    fillBuffer(AudioSourceType::AY2_All, 5000);
+
+    sm->enableWideMix(true);
+    ASSERT_TRUE(sm->wideMixEnabled());
+    sm->handleFrameEnd();
+
+    // First frame: DC blocker not yet engaged, sum stays in the linear zone.
+    // +-5 like the legacy tests above: the AY character chain contributes a
+    // few LSB even with punch/room disabled.
+    const int16_t out = sm->deviceBuffer(AudioSourceType::MasterMix)[0];
+    EXPECT_NEAR(out, 15000, 5);
+}
+
+TEST_F(DeviceMixerTest, WideMixSoftLimitsInsteadOfHardSaturating)
+{
+    fillBuffer(AudioSourceType::AY1_All, 20000);
+    fillBuffer(AudioSourceType::AY2_All, 20000);
+
+    // Legacy path (wide mix off): hard saturation at full scale
+    sm->handleFrameEnd();
+    EXPECT_EQ(sm->deviceBuffer(AudioSourceType::MasterMix)[0], 32767);
+
+    // Wide path: the 5.2 soft limiter curve - above the knee, below hard FS
+    sm->enableWideMix(true);
+    sm->handleFrameEnd();
+    const int16_t out = sm->deviceBuffer(AudioSourceType::MasterMix)[0];
+    const float expected = MasterLimiter::LimitSample(40000.0f);
+    EXPECT_NEAR(out, expected, 2);
+    EXPECT_GT(out, static_cast<int16_t>(MasterLimiter::KNEE_LINEAR));
+    EXPECT_LT(out, 32767);
+}
+
+TEST_F(DeviceMixerTest, WideMixZeroVolumeSilencesDevice)
+{
+    fillBuffer(AudioSourceType::AY1_All, 10000);
+    fillBuffer(AudioSourceType::AY2_All, 0);
+
+    sm->enableWideMix(true);
+    sm->setDeviceVolume(AudioSourceType::AY1_All, 0.0f);
+    sm->handleFrameEnd();
+
+    EXPECT_EQ(sm->deviceBuffer(AudioSourceType::MasterMix)[0], 0);
+}
+
+/// endregion </Wide mix bus + master limiter>

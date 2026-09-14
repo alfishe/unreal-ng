@@ -219,11 +219,16 @@ if (NOT TARGET ${PROJECT_NAME})
         set(common_libraries pthread iconv gtest)
     endif (APPLE)
 
+    # opl4: core sources (incl. the MoonSound device) are compiled directly
+    # into this binary, not taken from the core archive — they need opl4's
+    # include path and symbols here. The UNREALNG_HAVE_OPL4 gate arrives via
+    # core's PUBLIC compile definition.
     target_link_libraries(${PROJECT_NAME}
         ${common_libraries}
         core
         $<$<BOOL:${ENABLE_RECORDING}>:recording>
         $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:automation_gdb>
+        opl4
     )
 
     # Define ENABLE_GDB_AUTOMATION for compile-time guards

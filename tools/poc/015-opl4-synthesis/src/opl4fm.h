@@ -85,6 +85,9 @@ public:
         + kChannelCount * sizeof(FmChannel) + 72 /*fbHist*/ + 128 /*globals*/;
 
     uint8_t Status() const { return _status; }
+    // OPL4 mode armed (bank-1 reg 0x05 NEW). Guest-observable gating: cards
+    // use it to qualify wave-port access on the shared ZX bus.
+    bool NewMode() const { return _newMode; }
     const std::array<FmOperator, kOperatorCount>& Operators() const { return _ops; }
     const std::array<FmChannel, kChannelCount>& Channels() const { return _ch; }
     const std::array<uint8_t, 512>& Regs() const { return _regs; }

@@ -46,6 +46,7 @@ enum class PeripheralId : uint8_t
     TSFM       = 4,
     GeneralSound = 5,
     ScorpionProfROM = 6,  // Scorpion ZS 256/1024 ProfROM state machine
+    MoonSound  = 7,       // ZXM-MoonSound (YMF278B / OPL4): Tier A chip + host latches
     // Future: SAA1099, GS512, etc.
     Count
 };

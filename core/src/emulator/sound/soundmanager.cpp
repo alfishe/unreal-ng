@@ -1,5 +1,7 @@
 #include "soundmanager.h"
 
+#include <cmath>
+
 #include "base/featuremanager.h"
 #include "common/dumphelper.h"
 #include "common/sound/audiohelper.h"
@@ -10,6 +12,10 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 #include "stdafx.h"
+
+#ifdef UNREALNG_HAVE_OPL4
+#include "emulator/sound/chips/soundchip_moonsound.h"
+#endif
 
 /// region <Constructors / Destructors>
 
@@ -79,6 +85,24 @@ SoundManager::SoundManager(EmulatorContext* context)
         _devices.push_back({AudioSourceType::COVOX, "COVOX", false, false, 1.0f, 0.0f, false});
     }
 
+    // MoonSound (ZXM-MoonSound / YMF278B / OPL4) if the legacy key is set
+    // (D1/D2). Two registry sources (D5), legacy volume scale.
+#ifdef UNREALNG_HAVE_OPL4
+    if (_context->config.sound.moonsound)
+    {
+        _moonsound = new SoundChip_Moonsound(_context, _coreRate);
+        const float moonsoundVolume = std::clamp(_context->config.sound.moonsound_vol, 0, 8192) / 8192.0f;
+        _devices.push_back({AudioSourceType::Moonsound_FM, "MoonSound FM (OPL3)", false, false, moonsoundVolume, 0.0f, false});
+        _devices.push_back({AudioSourceType::Moonsound_PCM, "MoonSound PCM (wave)", false, false, moonsoundVolume, 0.0f, false});
+
+        // A full-scale 16-bit source is attached: the wide float bus and the
+        // master limiter own the master mix from now on (5.2/D7). The legacy
+        // integer path stays dormant while the device exists (R6 covers the
+        // no-device configuration only).
+        enableWideMix(true);
+    }
+#endif
+
     // Initialize AY character chains (one per TurboSound chip for independent DSP state)
     // - ChipType::AY uses shorter delay and no LP (preserves square wave harmonics)
     // - Punch: AY preset (gentler - square waves already have rich harmonics)
@@ -102,6 +126,9 @@ SoundManager::SoundManager(EmulatorContext* context)
     _beeperChain.setPunchPreset(AudioCharacterChain::PunchPreset::Beeper);
     _beeperChain.setPunchEnabled(false);
     _beeperChain.setRoomMode(AudioCharacterChain::RoomMode::Off);
+
+    // Master limiter designs itself for the resolved core rate (5.2)
+    _limiter.Configure(static_cast<double>(_coreRate));
 }
 
 SoundManager::~SoundManager()
@@ -110,6 +137,13 @@ SoundManager::~SoundManager()
     {
         delete _covox;
     }
+
+#ifdef UNREALNG_HAVE_OPL4
+    if (_moonsound)
+    {
+        delete _moonsound;
+    }
+#endif
 
     if (_turboSound)
     {
@@ -133,9 +167,15 @@ void SoundManager::reset()
     _beeper->reset();
     if (_covox)
         _covox->reset();
+#ifdef UNREALNG_HAVE_OPL4
+    if (_moonsound)
+        _moonsound->reset();
+#endif
 
     std::fill(_beeperBuffer, _beeperBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
     std::fill(_outBuffer, _outBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
+    std::fill(_mixBus, _mixBus + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0.0f);
+    _limiter.Reset();
 
     // Restart the exact sample accumulator (machine change / hard reset /
     // snapshot load all route through reset())
@@ -145,6 +185,15 @@ void SoundManager::reset()
     // closeWaveFile();
     // std::string filePath = "unreal.wav";
     // openWaveFile(filePath);
+}
+
+void SoundManager::enableWideMix(bool enable)
+{
+    if (_wideMix == enable)
+        return;
+    _wideMix = enable;
+    _limiter.Reset();
+    std::fill(_mixBus, _mixBus + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0.0f);
 }
 
 void SoundManager::mute()
@@ -226,6 +275,12 @@ const int16_t* SoundManager::deviceBuffer(AudioSourceType type) const
             return _turboSound ? _turboSound->getChipBuffer(1) : nullptr;
         case AudioSourceType::COVOX:
             return _covox ? _covox->getBuffer() : nullptr;
+#ifdef UNREALNG_HAVE_OPL4
+        case AudioSourceType::Moonsound_FM:
+            return _moonsound ? _moonsound->getFmBuffer() : nullptr;
+        case AudioSourceType::Moonsound_PCM:
+            return _moonsound ? _moonsound->getPcmBuffer() : nullptr;
+#endif
         default:
             return nullptr;
     }
@@ -309,6 +364,10 @@ void SoundManager::applyCoreRate(size_t rate)
     _beeper->setSampleRate(rate);
     if (_covox)
         _covox->setSampleRate(rate);
+#ifdef UNREALNG_HAVE_OPL4
+    if (_moonsound)
+        _moonsound->setCoreRate(rate);
+#endif
 
     // AY: sample PLL increment, decimation ratios, anti-alias FIR redesign
     _turboSound->setCoreRate(rate);
@@ -318,6 +377,7 @@ void SoundManager::applyCoreRate(size_t rate)
     _ayChain0.setup(rate);
     _ayChain1.setup(rate);
     _beeperChain.setup(rate);
+    _limiter.Configure(static_cast<double>(rate));
 
     // Restart the exact sample accumulator - its residue is in old-rate units
     _sampleAccumulator = 0;
@@ -379,6 +439,16 @@ void SoundManager::handleFrameStart()
         _beeper->setSynthesisSuppressed(suppressed);
         if (_covox)
             _covox->setSynthesisSuppressed(suppressed);
+#ifdef UNREALNG_HAVE_OPL4
+        if (_moonsound)
+        {
+            _moonsound->setSynthesisSuppressed(suppressed);
+            // D3: the synthesis core runs every frame - including suppressed
+            // (turbo) frames, where this is the only hook that fires: BUSY/LD
+            // and register state stay guest-correct.
+            _moonsound->handleFrameStart();
+        }
+#endif
         if (suppressed)
             return;  // Skip per-device frame setup and buffer clears (never consumed in turbo)
     }
@@ -516,6 +586,12 @@ void SoundManager::handleFrameEnd()
     if (_covox)
         _covox->handleFrameEnd(samplesThisFrame);
 
+#ifdef UNREALNG_HAVE_OPL4
+    // Finalize MoonSound frame (advance the core to the frame end; render)
+    if (_moonsound)
+        _moonsound->handleFrameEnd(samplesThisFrame);
+#endif
+
     // Determine if any device has solo active
     bool soloActive = false;
     for (const auto& d : _devices)
@@ -529,6 +605,12 @@ void SoundManager::handleFrameEnd()
 
     // Clear output buffer before mixing
     memset(_outBuffer, 0, samplesThisFrame * AUDIO_CHANNELS * sizeof(int16_t));
+    if (_wideMix)
+    {
+        // Wide path (5.2): the float bus is zeroed here; _outBuffer is fully
+        // rewritten by the limiter quantisation after the mix.
+        memset(_mixBus, 0, samplesThisFrame * AUDIO_CHANNELS * sizeof(float));
+    }
 
     // Mix each device according to audibility rules and compute peaks
     for (auto& d : _devices)
@@ -553,6 +635,14 @@ void SoundManager::handleFrameEnd()
             case AudioSourceType::COVOX:
                 srcBuffer = _covox ? _covox->getBuffer() : nullptr;
                 break;
+#ifdef UNREALNG_HAVE_OPL4
+            case AudioSourceType::Moonsound_FM:
+                srcBuffer = _moonsound ? _moonsound->getFmBuffer() : nullptr;
+                break;
+            case AudioSourceType::Moonsound_PCM:
+                srcBuffer = _moonsound ? _moonsound->getPcmBuffer() : nullptr;
+                break;
+#endif
             default:
                 break;
         }
@@ -575,15 +665,39 @@ void SoundManager::handleFrameEnd()
         if (audible && d.volume > 0.0f)
         {
             float vol = d.volume;
-            for (size_t i = 0; i < samplesThisFrame * AUDIO_CHANNELS; i++)
+            if (_wideMix)
             {
-                int32_t mixed = _outBuffer[i] + static_cast<int32_t>(srcBuffer[i] * vol);
-                // Saturating add
-                _outBuffer[i] = static_cast<int16_t>(std::clamp(mixed, -32768, 32767));
+                // Wide path (5.2): unclipped float accumulation - clipping
+                // is the master limiter's job alone.
+                for (size_t i = 0; i < samplesThisFrame * AUDIO_CHANNELS; i++)
+                    _mixBus[i] += static_cast<float>(srcBuffer[i]) * vol;
+            }
+            else
+            {
+                for (size_t i = 0; i < samplesThisFrame * AUDIO_CHANNELS; i++)
+                {
+                    int32_t mixed = _outBuffer[i] + static_cast<int32_t>(srcBuffer[i] * vol);
+                    // Saturating add
+                    _outBuffer[i] = static_cast<int16_t>(std::clamp(mixed, -32768, 32767));
+                }
             }
         }
     }
     /// endregion </Registry-driven mixing>
+
+    if (_wideMix)
+    {
+        // Master DC blocker + soft limiter (5.2), then a single int16
+        // quantisation (round-to-nearest). The wide path may differ from the
+        // legacy path by +-1 LSB by design; R6 guarantees byte-identity only
+        // for the legacy branch, taken when no MoonSound device is attached.
+        _limiter.Process(_mixBus, samplesThisFrame);
+        for (size_t i = 0; i < samplesThisFrame * AUDIO_CHANNELS; i++)
+        {
+            const long rounded = std::lrintf(_mixBus[i]);
+            _outBuffer[i] = static_cast<int16_t>(std::clamp(rounded, -32768L, 32767L));
+        }
+    }
 
 #ifdef ENABLE_RECORDING
     // Capture audio for recording BEFORE muting
@@ -820,6 +934,25 @@ bool SoundManager::attachToPorts()
         result &= _context->pPortDecoder->RegisterPortHandler(Covox::PORT_RIGHT_B, _covox);
     }
 
+#ifdef UNREALNG_HAVE_OPL4
+    // Attach MoonSound as a low-byte full-decode observer on the card's six
+    // port addresses (D4): the CPLD wires A0..A7 only, so every high-byte
+    // alias hits the card - including the dirty aliases the Z80 immediate
+    // forms produce (A lands in the high address byte; MoonService v0.3a
+    // depends on it). The card shares the bus, so partial-decode devices
+    // (ULA/AY/Beta-128) still see MoonSound cycles and MoonSound sees theirs.
+    // The exclusive map would steal #7F from the WD1793 FDC.
+    if (_moonsound && _context->pPortDecoder)
+    {
+        result &= _context->pPortDecoder->RegisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_FM_ADDR1), _moonsound);
+        result &= _context->pPortDecoder->RegisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_FM_DATA1), _moonsound);
+        result &= _context->pPortDecoder->RegisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_FM_ADDR2), _moonsound);
+        result &= _context->pPortDecoder->RegisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_FM_DATA2), _moonsound);
+        result &= _context->pPortDecoder->RegisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_WAVE_ADDR), _moonsound);
+        result &= _context->pPortDecoder->RegisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_WAVE_DATA), _moonsound);
+    }
+#endif
+
     return result;
 }
 
@@ -835,6 +968,19 @@ bool SoundManager::detachFromPorts()
     {
         _context->pPortDecoder->UnregisterPortHandler(Covox::PORT_RIGHT_B);
     }
+
+#ifdef UNREALNG_HAVE_OPL4
+    // Detach MoonSound's low-byte full-decode observer registrations
+    if (_moonsound && _context->pPortDecoder)
+    {
+        _context->pPortDecoder->UnregisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_FM_ADDR1), _moonsound);
+        _context->pPortDecoder->UnregisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_FM_DATA1), _moonsound);
+        _context->pPortDecoder->UnregisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_FM_ADDR2), _moonsound);
+        _context->pPortDecoder->UnregisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_FM_DATA2), _moonsound);
+        _context->pPortDecoder->UnregisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_WAVE_ADDR), _moonsound);
+        _context->pPortDecoder->UnregisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_WAVE_DATA), _moonsound);
+    }
+#endif
 
     return result;
 }

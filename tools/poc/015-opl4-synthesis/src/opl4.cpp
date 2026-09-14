@@ -67,8 +67,9 @@ struct Opl4::Impl
 
     // Chip-boundary stream buffers (delivery, not state — §9.1)
     std::vector<int16_t> chipStream; // Authentic: mixed 44100 stereo
-    std::vector<int16_t> fmStream;   // HiFi: per-tick 49516.4 stereo
-    std::vector<int16_t> pcmStream;  // HiFi: PCM-only 44100 stereo
+    std::vector<int16_t> fmStream;   // HiFi: per-tick 49516.4 stereo / split FM
+    std::vector<int16_t> pcmStream;  // HiFi: PCM-only 44100 stereo / split PCM
+    bool splitStreams = false;       // host mixer sources (integration D5)
 
     // Tap scratch + render-side meters/mutes (never serialised)
     std::array<int32_t, Opl4Fm::kChannelCount> fmTaps{};
@@ -255,6 +256,15 @@ void Opl4::AdvanceOutputStep()
         // §7 step 3: one 16-bit saturated add per side (D10).
         im.chipStream.push_back(Clamp16(fmL + pcmL));
         im.chipStream.push_back(Clamp16(fmR + pcmR));
+        if (im.splitStreams)
+        {
+            // Host mixer sources (integration D5): the two pre-sum group
+            // streams, each saturated to 16 bits like the DAC would see it.
+            im.fmStream.push_back(Clamp16(fmL));
+            im.fmStream.push_back(Clamp16(fmR));
+            im.pcmStream.push_back(Clamp16(pcmL));
+            im.pcmStream.push_back(Clamp16(pcmR));
+        }
     }
 }
 
@@ -347,6 +357,11 @@ void Opl4::Run(uint64_t time)
     SyncTo(time);
 }
 
+bool Opl4::NewMode() const
+{
+    return _fm->NewMode();
+}
+
 // ---------------------------------------------------------------------------
 // Render pull + taps
 // ---------------------------------------------------------------------------
@@ -370,12 +385,15 @@ size_t Opl4::Render(float* interleavedStereo, size_t maxFrames)
 
     const size_t fmFrames = im.fmStream.size() / 2;
     const size_t pcmFrames = im.pcmStream.size() / 2;
-    const size_t n = std::min(fmFrames, pcmFrames);
-    if (n == 0)
+    if (fmFrames == 0 && pcmFrames == 0)
         return 0;
     size_t consumedFm = 0, consumedPcm = 0;
-    const size_t written = _render->ProcessSplit(im.fmStream.data(), n,
-                                                 im.pcmStream.data(), n,
+    // Offer the full captured counts: ProcessSplit stages resampler output
+    // persistently, so the two grids need not advance in lockstep. Passing
+    // min(fm, pcm) for both truncated the faster grid and dropped the excess
+    // (an ~11% per-frame FM loss at output 44100).
+    const size_t written = _render->ProcessSplit(im.fmStream.data(), fmFrames,
+                                                 im.pcmStream.data(), pcmFrames,
                                                  interleavedStereo, maxFrames,
                                                  &consumedFm, &consumedPcm);
     im.fmStream.erase(im.fmStream.begin(),
@@ -395,6 +413,46 @@ void Opl4::SetChannelMute(ChannelId id, bool mute)
         _impl->muteMask |= (1ull << idx);
     else
         _impl->muteMask &= ~(1ull << idx);
+}
+
+void Opl4::EnableSplitStreams(bool on)
+{
+    if (_impl->splitStreams == on)
+        return;
+    _impl->splitStreams = on;
+    _impl->ClearStreams(); // the emitted stream set changes; chip state untouched
+}
+
+bool Opl4::SplitStreamsEnabled() const
+{
+    return _impl->splitStreams;
+}
+
+size_t Opl4::RenderSplit(float* fmOut, float* pcmOut, size_t maxFrames)
+{
+    Impl& im = *_impl;
+    const size_t fmFrames = im.fmStream.size() / 2;
+    const size_t pcmFrames = im.pcmStream.size() / 2;
+    if (fmFrames == 0 && pcmFrames == 0)
+        return 0;
+
+    size_t consumedFm = 0, consumedPcm = 0;
+    const size_t wFm = _render->ProcessGroup(ChannelGroup::Fm, im.fmStream.data(),
+                                              fmFrames, fmOut, maxFrames, &consumedFm);
+    const size_t wPcm = _render->ProcessGroup(ChannelGroup::Pcm, im.pcmStream.data(),
+                                               pcmFrames, pcmOut, maxFrames, &consumedPcm);
+    if (consumedFm > 0)
+        im.fmStream.erase(im.fmStream.begin(),
+                          im.fmStream.begin() + static_cast<std::ptrdiff_t>(consumedFm * 2));
+    if (consumedPcm > 0)
+        im.pcmStream.erase(im.pcmStream.begin(),
+                           im.pcmStream.begin() + static_cast<std::ptrdiff_t>(consumedPcm * 2));
+    return std::min(wFm, wPcm);
+}
+
+void Opl4::DiscardPendingAudio()
+{
+    _impl->ClearStreams(); // delivery buffers only; render filter state stays
 }
 
 float Opl4::ChannelPeak(ChannelId id) const

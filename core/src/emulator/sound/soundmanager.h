@@ -8,6 +8,7 @@
 #include "common/sound/filters/filter_interpolate.h"
 #include "common/sound/filters/audio_character_chain.h"
 #include "emulator/sound/audio.h"
+#include "common/sound/filters/masterlimiter.h"
 #include "common/sound/filters/resampler_drc.h"
 #include "emulator/sound/beeper.h"
 #include "emulator/sound/covox.h"
@@ -16,6 +17,7 @@
 #include "stdafx.h"
 
 class EmulatorContext;
+class SoundChip_Moonsound;
 
 /// Audio source types for device/channel selection (shared with recording)
 enum class AudioSourceType
@@ -27,7 +29,8 @@ enum class AudioSourceType
     AY3_All,
     COVOX,
     GeneralSound,
-    Moonsound,
+    Moonsound_FM,
+    Moonsound_PCM,
     AY1_ChannelA, AY1_ChannelB, AY1_ChannelC,
     AY2_ChannelA, AY2_ChannelB, AY2_ChannelC,
     AY3_ChannelA, AY3_ChannelB, AY3_ChannelC,
@@ -95,8 +98,10 @@ protected:
     Beeper* _beeper = nullptr;
     SoundChip_TurboSound* _turboSound = nullptr;
     Covox* _covox = nullptr;
+#ifdef UNREALNG_HAVE_OPL4
+    SoundChip_Moonsound* _moonsound = nullptr;
+#endif
     // SoundChip_TurboSoundFM;
-    // SoundChip_MoonSound;
     // SoundChip_SAA1099;
     // SoundChip_GeneralSound;
 
@@ -114,6 +119,16 @@ protected:
     static constexpr size_t DEVICE_BUFFER_FRAMES = MAX_SAMPLES_PER_FRAME + MAX_SAMPLES_PER_FRAME / 4;
     ResamplerDRC _drcResampler;
     int16_t _deviceBuffer[DEVICE_BUFFER_FRAMES * AUDIO_CHANNELS] = {};
+
+    // Wide mix bus (MoonSound integration design 5.2/D7). Enabled only while
+    // a MoonSound device is attached: sources sum into a float bus without
+    // per-add clipping, then a DC blocker + soft limiter run on the master and
+    // the result quantises to int16 once. The legacy integer path is a
+    // separate branch that stays byte-identical in every configuration
+    // without the device (R6) - it is not modified by this feature.
+    bool _wideMix = false;
+    MasterLimiter _limiter;
+    float _mixBus[MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS] = {};
 
     // DRC PI controller state (audio-sync design 5.1). Process variable: ring
     // occupancy in ms (EMA-filtered); output: resample-ratio trim in +-0.5%.
@@ -251,6 +266,18 @@ public:
     // Covox access
     bool hasCovox() const { return _covox != nullptr; }
     Covox* getCovox() const { return _covox; }
+
+#ifdef UNREALNG_HAVE_OPL4
+    // MoonSound access
+    bool hasMoonSound() const { return _moonsound != nullptr; }
+    SoundChip_Moonsound* getMoonSound() const { return _moonsound; }
+#endif
+
+    /// Wide mix bus + master limiter (MoonSound integration 5.2). Called with
+    /// true when a MoonSound device is attached, false when it is not; the
+    /// legacy integer path is used whenever the wide path is off (R6).
+    void enableWideMix(bool enable);
+    bool wideMixEnabled() const { return _wideMix; }
 
     /// Compatibility shim for tape audio. Routes amplitude into the beeper's
     /// blip_buf at the given T-state position. New code should use

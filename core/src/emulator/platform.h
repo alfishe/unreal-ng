@@ -509,6 +509,27 @@ struct CONFIG
 		unsigned ay_stereo_tab[6], ay_voltab[32];
 	} sound;
 
+	/// [MOONSOUND] section - MoonSound (ZXM-MoonSound / YMF278B / OPL4) card
+	/// options. The enable flag and volume are the legacy [SOUND] MoonSound /
+	/// MoonSoundVol keys (sound.moonsound / sound.moonsound_vol); everything
+	/// else lives here. All fields are always assigned during config parsing.
+	struct
+	{
+		/// Wave ROM image, path relative to the ROM directory. Empty = no
+		/// image: the device runs with a zero-filled ROM region (D10).
+		char waveRom[FILENAME_MAX];
+		/// Sample RAM in KiB, 0..1024 (ZXM-MoonSound carries 2 x 512 KiB)
+		unsigned ramSizeKb;
+		/// 0 = authentic (chip-rate window reducer), 1 = hifi (twin-grid)
+		uint8_t renderMode;
+		/// 0 = reference, 1 = highfidelity (resampler FIR length)
+		uint8_t quality;
+		/// 0 = off, 1 = pcm (wave-side preset), 2 = both
+		uint8_t punch;
+		/// 1 = enable the YAC513 + LF347 board output filter model
+		uint8_t boardAnalog;
+	} moonsound;
+
 	struct
 	{
 		unsigned firenum;
@@ -589,7 +610,6 @@ struct CONFIG
 	char gs_rom_path[FILENAME_MAX];
 #endif
 
-	char moonsound_rom_path[FILENAME_MAX];
 
 #ifdef MOD_MONITOR
 	char sos_labels_path[FILENAME_MAX];

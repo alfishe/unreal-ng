@@ -117,6 +117,15 @@ public:
                         float* out, size_t maxOutFrames,
                         size_t* consumedFm = nullptr, size_t* consumedPcm = nullptr);
 
+    // One mixer source rendered alone (host split render, integration D5):
+    // group stream resampled to the output rate and passed through that
+    // group's chain, its own board-analog instance and its own DC blocker —
+    // the two sources never share filter state. Unity bypass (same rate,
+    // no stages) is a pure int16 -> float copy (R6 mirror).
+    size_t ProcessGroup(ChannelGroup g, const int16_t* stereo, size_t frames,
+                        float* out, size_t maxOutFrames,
+                        size_t* consumedFrames = nullptr);
+
     void SetBoardAnalog(bool on) { _boardAnalogOn = on; }
     void SetPunchPreset(ChannelGroup g, PunchPreset p);
     void SetRoom(RoomMode m) { _chainFm.SetRoom(m, _outputRate); _chainPcm.SetRoom(m, _outputRate); _room = m; }
@@ -130,6 +139,25 @@ public:
 private:
     void PostStages(float& l, float& r);
 
+    // Group input rate: HiFi carries FM on its native 49516.4 Hz grid;
+    // every other group/mode combination is on the 44100 Hz chip grid.
+    double GroupInputRate(ChannelGroup g) const;
+    // Unity-bypass query for one group's ProcessGroup path.
+    bool GroupBypass(ChannelGroup g) const;
+
+    // Per-group render state for ProcessGroup: each mixer source gets its
+    // own board-analog and DC-blocker state so the streams stay independent.
+    struct GroupStage
+    {
+        BoardAnalog analog;
+        float dcX1L = 0, dcX1R = 0, dcY1L = 0, dcY1R = 0;
+        void Reset()
+        {
+            analog.Reset();
+            dcX1L = dcX1R = dcY1L = dcY1R = 0;
+        }
+    };
+
     uint32_t _outputRate = 44100;
     RenderMode _mode = RenderMode::Authentic;
     Quality _quality = Quality::Reference;
@@ -139,9 +167,13 @@ private:
     PolyphaseResampler _main;   // chip 44100 -> output
     PolyphaseResampler _fm;     // HiFi: 49516.4 -> output
     PolyphaseResampler _pcm;    // HiFi: 44100 -> output
+    PolyphaseResampler _resFm;  // split source: group rate -> output
+    PolyphaseResampler _resPcm; // split source: group rate -> output
     BoardAnalog _analog;
     CharacterChain _chainFm;
     CharacterChain _chainPcm;
+    GroupStage _groupFm;
+    GroupStage _groupPcm;
 
     // DC blocker (~5 Hz one-pole highpass, §8.6)
     float _dcX1L = 0, _dcX1R = 0, _dcY1L = 0, _dcY1R = 0;

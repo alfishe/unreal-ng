@@ -8,8 +8,11 @@
 /// Metrics:
 ///   - `ttd_peripheral_capture_ns` (per device, per frame)
 ///   - `ttd_peripheral_restore_ns` (per device, full state)
-///   - `ttd_peripheral_restore_delta_ns` (per device, delta decode)
-///   - `ttd_peripheral_bytes_per_frame` (full vs delta)
+///   - `ttd_peripheral_restore_small_change_ns` (per device, compressed payload)
+///   - `ttd_peripheral_bytes_per_frame` (full capture, payload-compressed)
+///
+/// The delta-encoding variants were retargeted when the delta API was cut
+/// from the final TTD design (see the section notes below).
 ///
 /// Test sizes: 256B, 4KB, 32KB, 512KB (covering AY through GeneralSound SRAM)
 ///
@@ -31,9 +34,8 @@ namespace
 class BenchmarkPeripheral : public ttd::TTDSerializable
 {
 public:
-    explicit BenchmarkPeripheral(size_t stateSize, ttd::PeripheralId id = ttd::PeripheralId::Count,
-                                 bool supportsDelta = true)
-        : _stateSize(stateSize), _id(id), _supportsDelta(supportsDelta)
+    explicit BenchmarkPeripheral(size_t stateSize, ttd::PeripheralId id = ttd::PeripheralId::Count)
+        : _stateSize(stateSize), _id(id)
     {
         _state.resize(stateSize, 0);
     }
@@ -52,7 +54,6 @@ public:
 
     std::string TTDDeviceName() const override { return "BenchmarkPeripheral"; }
     ttd::PeripheralId TTDPeripheralId() const override { return _id; }
-    bool TTDSupportsDelta() const override { return _supportsDelta; }
 
     void FillRandom(uint32_t seed)
     {
@@ -81,7 +82,6 @@ public:
 private:
     size_t _stateSize;
     ttd::PeripheralId _id;
-    bool _supportsDelta;
     std::vector<uint8_t> _state;
 };
 
@@ -177,7 +177,7 @@ static void BM_TTD_Registry_CaptureAll_Full(benchmark::State& state)
     for (auto _ : state)
     {
         blobs.clear();
-        registry.CaptureAll(nullptr, blobs);
+        registry.CaptureAll(blobs);
         benchmark::DoNotOptimize(blobs);
     }
 
@@ -204,28 +204,33 @@ BENCHMARK(BM_TTD_Registry_CaptureAll_Full)
     ->Unit(benchmark::kMicrosecond);
 
 // ===========================================================================
-// Registry CaptureAll — delta encoding, small change
+// Registry CaptureAll — small change
 // ===========================================================================
+//
+// The delta-encoding API this sweep originally measured was cut from the
+// final TTD design; the registry now compresses full payloads instead. The
+// question survives: capture cost and blob size when only changePct of the
+// state differs from the previous frame.
 
-static void BM_TTD_Registry_CaptureAll_Delta(benchmark::State& state)
+static void BM_TTD_Registry_CaptureAll_SmallChange(benchmark::State& state)
 {
     const size_t stateSize = static_cast<size_t>(state.range(0));
     const double changePct = state.range(1) / 100.0;
 
     ttd::TTDPeripheralRegistry registry;
-    BenchmarkPeripheral peripheral(stateSize, ttd::PeripheralId::GeneralSound, true);
+    BenchmarkPeripheral peripheral(stateSize, ttd::PeripheralId::GeneralSound);
     peripheral.FillRandom(42);
 
     registry.Register(ttd::PeripheralId::GeneralSound, &peripheral);
 
-    // Capture baseline (full)
+    // Capture the untouched baseline (full_bytes reference)
     std::unordered_map<uint8_t, std::vector<uint8_t>> prevBlobs;
-    registry.CaptureAll(nullptr, prevBlobs);
+    registry.CaptureAll(prevBlobs);
 
     // Apply small mutation
     peripheral.MutatePercent(changePct, 123);
 
-    std::unordered_map<uint8_t, std::vector<uint8_t>> deltaBlobs;
+    std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
     uint32_t seed = 200;
 
     for (auto _ : state)
@@ -236,18 +241,18 @@ static void BM_TTD_Registry_CaptureAll_Delta(benchmark::State& state)
         peripheral.MutatePercent(changePct, seed++);
         state.ResumeTiming();
 
-        deltaBlobs.clear();
-        registry.CaptureAll(&prevBlobs, deltaBlobs);
-        benchmark::DoNotOptimize(deltaBlobs);
+        blobs.clear();
+        registry.CaptureAll(blobs);
+        benchmark::DoNotOptimize(blobs);
     }
 
     // Report sizes
-    if (!deltaBlobs.empty())
+    if (!blobs.empty())
     {
-        auto it = deltaBlobs.find(static_cast<uint8_t>(ttd::PeripheralId::GeneralSound));
-        if (it != deltaBlobs.end())
+        auto it = blobs.find(static_cast<uint8_t>(ttd::PeripheralId::GeneralSound));
+        if (it != blobs.end())
         {
-            state.counters["delta_bytes"] = static_cast<double>(it->second.size());
+            state.counters["small_change_blob_bytes"] = static_cast<double>(it->second.size());
         }
     }
     if (!prevBlobs.empty())
@@ -259,12 +264,12 @@ static void BM_TTD_Registry_CaptureAll_Delta(benchmark::State& state)
         }
     }
 
-    state.SetLabel(std::string("delta ") + SizeLabel(stateSize) +
+    state.SetLabel(std::string("small-change ") + SizeLabel(stateSize) +
                    " " + std::to_string(static_cast<int>(changePct * 100)) + "% change");
     state.counters["state_bytes"] = static_cast<double>(stateSize);
     state.counters["change_pct"] = changePct * 100;
 }
-BENCHMARK(BM_TTD_Registry_CaptureAll_Delta)
+BENCHMARK(BM_TTD_Registry_CaptureAll_SmallChange)
     ->Args({4096, 1})        // 4KB, 1% change
     ->Args({4096, 5})        // 4KB, 5% change
     ->Args({32768, 1})       // 32KB, 1% change
@@ -288,14 +293,14 @@ static void BM_TTD_Registry_RestoreAll_Full(benchmark::State& state)
 
     // Capture state
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
-    registry.CaptureAll(nullptr, blobs);
+    registry.CaptureAll(blobs);
 
     // Clear peripheral state
     peripheral.FillRandom(999);
 
     for (auto _ : state)
     {
-        registry.RestoreAll(blobs, nullptr);
+        registry.RestoreAll(blobs);
         benchmark::DoNotOptimize(peripheral.GetState().data());
     }
 
@@ -311,44 +316,44 @@ BENCHMARK(BM_TTD_Registry_RestoreAll_Full)
     ->Unit(benchmark::kMicrosecond);
 
 // ===========================================================================
-// Registry RestoreAll — delta decode path
+// Registry RestoreAll — small-change capture restore
 // ===========================================================================
+//
+// Originally the delta decode path; with delta encoding cut, this restores
+// from a capture of a slightly-mutated state (the payload the per-frame
+// budget actually has to decode in the shipped design).
 
-static void BM_TTD_Registry_RestoreAll_Delta(benchmark::State& state)
+static void BM_TTD_Registry_RestoreAll_SmallChange(benchmark::State& state)
 {
     const size_t stateSize = static_cast<size_t>(state.range(0));
     const double changePct = state.range(1) / 100.0;
 
     ttd::TTDPeripheralRegistry registry;
-    BenchmarkPeripheral peripheral(stateSize, ttd::PeripheralId::GeneralSound, true);
+    BenchmarkPeripheral peripheral(stateSize, ttd::PeripheralId::GeneralSound);
     peripheral.FillRandom(42);
 
     registry.Register(ttd::PeripheralId::GeneralSound, &peripheral);
 
-    // Capture baseline
-    std::unordered_map<uint8_t, std::vector<uint8_t>> prevBlobs;
-    registry.CaptureAll(nullptr, prevBlobs);
-
-    // Mutate and capture delta
+    // Mutate and capture
     peripheral.MutatePercent(changePct, 123);
-    std::unordered_map<uint8_t, std::vector<uint8_t>> deltaBlobs;
-    registry.CaptureAll(&prevBlobs, deltaBlobs);
+    std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
+    registry.CaptureAll(blobs);
 
     // Corrupt peripheral state
     peripheral.FillRandom(999);
 
     for (auto _ : state)
     {
-        registry.RestoreAll(deltaBlobs, &prevBlobs);
+        registry.RestoreAll(blobs);
         benchmark::DoNotOptimize(peripheral.GetState().data());
     }
 
     state.SetBytesProcessed(state.iterations() * static_cast<int64_t>(stateSize));
-    state.SetLabel(std::string("delta ") + SizeLabel(stateSize) +
+    state.SetLabel(std::string("small-change ") + SizeLabel(stateSize) +
                    " " + std::to_string(static_cast<int>(changePct * 100)) + "% change");
     state.counters["state_bytes"] = static_cast<double>(stateSize);
 }
-BENCHMARK(BM_TTD_Registry_RestoreAll_Delta)
+BENCHMARK(BM_TTD_Registry_RestoreAll_SmallChange)
     ->Args({4096, 1})
     ->Args({4096, 5})
     ->Args({32768, 1})
@@ -386,7 +391,7 @@ static void BM_TTD_Registry_MultiPeripheral(benchmark::State& state)
     for (auto _ : state)
     {
         blobs.clear();
-        registry.CaptureAll(nullptr, blobs);
+        registry.CaptureAll(blobs);
         benchmark::DoNotOptimize(blobs);
     }
 
@@ -403,31 +408,33 @@ static void BM_TTD_Registry_MultiPeripheral(benchmark::State& state)
 BENCHMARK(BM_TTD_Registry_MultiPeripheral)->Unit(benchmark::kMicrosecond);
 
 // ===========================================================================
-// GeneralSound 512KB — delta effectiveness
+// GeneralSound 512KB — payload compression effectiveness
 // ===========================================================================
 //
-// Validates TDD claim that delta encoding achieves >10x compression for
-// streaming audio workloads (~5% change per frame).
+// Originally validated the TTD claim that delta encoding achieves >10x
+// compression for streaming audio workloads (~5% change per frame). The
+// delta encoder was cut from the final design; this now measures how the
+// registry's plain payload compression behaves for the same workload.
 
-static void BM_TTD_GeneralSound_DeltaEffectiveness(benchmark::State& state)
+static void BM_TTD_GeneralSound_CompressionEffectiveness(benchmark::State& state)
 {
     constexpr size_t kGSSramSize = 512 * 1024;
     const double changePct = state.range(0) / 100.0;
 
     ttd::TTDPeripheralRegistry registry;
-    BenchmarkPeripheral gs(kGSSramSize, ttd::PeripheralId::GeneralSound, true);
+    BenchmarkPeripheral gs(kGSSramSize, ttd::PeripheralId::GeneralSound);
     gs.FillRandom(42);
 
     registry.Register(ttd::PeripheralId::GeneralSound, &gs);
 
     // Capture full baseline
     std::unordered_map<uint8_t, std::vector<uint8_t>> fullBlobs;
-    registry.CaptureAll(nullptr, fullBlobs);
+    registry.CaptureAll(fullBlobs);
     size_t fullSize = fullBlobs[static_cast<uint8_t>(ttd::PeripheralId::GeneralSound)].size();
 
     uint32_t seed = 100;
-    size_t totalDeltaSize = 0;
-    size_t deltaCount = 0;
+    size_t totalBlobSize = 0;
+    size_t captureCount = 0;
 
     for (auto _ : state)
     {
@@ -435,24 +442,24 @@ static void BM_TTD_GeneralSound_DeltaEffectiveness(benchmark::State& state)
         gs.MutatePercent(changePct, seed++);
         state.ResumeTiming();
 
-        std::unordered_map<uint8_t, std::vector<uint8_t>> deltaBlobs;
-        registry.CaptureAll(&fullBlobs, deltaBlobs);
-        benchmark::DoNotOptimize(deltaBlobs);
+        std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
+        registry.CaptureAll(blobs);
+        benchmark::DoNotOptimize(blobs);
 
-        totalDeltaSize += deltaBlobs[static_cast<uint8_t>(ttd::PeripheralId::GeneralSound)].size();
-        deltaCount++;
+        totalBlobSize += blobs[static_cast<uint8_t>(ttd::PeripheralId::GeneralSound)].size();
+        captureCount++;
     }
 
-    double avgDeltaSize = static_cast<double>(totalDeltaSize) / deltaCount;
-    double compressionFactor = static_cast<double>(fullSize) / avgDeltaSize;
+    double avgBlobSize = static_cast<double>(totalBlobSize) / captureCount;
+    double compressionFactor = static_cast<double>(fullSize) / avgBlobSize;
 
     state.counters["full_bytes"] = static_cast<double>(fullSize);
-    state.counters["avg_delta_bytes"] = avgDeltaSize;
+    state.counters["avg_blob_bytes"] = avgBlobSize;
     state.counters["compression_factor"] = compressionFactor;
     state.counters["change_pct"] = changePct * 100;
     state.SetLabel(std::to_string(static_cast<int>(changePct * 100)) + "% change");
 }
-BENCHMARK(BM_TTD_GeneralSound_DeltaEffectiveness)
+BENCHMARK(BM_TTD_GeneralSound_CompressionEffectiveness)
     ->Arg(1)   // 1% change (~5KB)
     ->Arg(5)   // 5% change (~25KB) — typical audio streaming
     ->Arg(10)  // 10% change

@@ -669,6 +669,139 @@ void TestTaps()
     tc.chip.SetChannelMute({ChannelGroup::Pcm, 0}, false);
 }
 
+// ---------------------------------------------------------------------------
+// HiFi at the native 44100 output (regression): Configure used to skip the
+// split resamplers when output == chip rate, so ProcessSplit read an
+// unconfigured resampler. Must render with sane lengths, not crash.
+// ---------------------------------------------------------------------------
+void TestHiFiAt44100()
+{
+    std::printf("TestHiFiAt44100\n");
+    TestChip tc(2u << 20, 1u << 20, 44100);
+    tc.cfg.mode = RenderMode::HiFi;
+    tc.chip.Configure(tc.cfg, &tc.mem);
+    tc.chip.Reset(0);
+
+    WriteToneHeader(tc.mem, kHdrBase, 2, kSmpBase, 0, 4, nullptr);
+    WriteMaxSampleData(tc.mem);
+    KeyOnFmCh0(tc.chip, 1000);
+    KeyOnPcmSlot(tc.chip, 0, 1000);
+
+    tc.chip.Run(2000 * kOutClocks);
+    float buf[16384];
+    size_t total = 0, n;
+    float maxAbs = 0.0f;
+    while ((n = tc.chip.Render(buf, 8192)) > 0)
+    {
+        total += n;
+        for (size_t i = 0; i < n * 2; i++)
+            maxAbs = std::max(maxAbs, std::fabs(buf[i]));
+    }
+    CHECK(total > 1900 && total < 2100); // ~2000 output frames
+    CHECK(maxAbs > 0.0f);                // audio actually flowed
+}
+
+// ---------------------------------------------------------------------------
+// Split render (host mixer sources, integration D5): FM-only and PCM-only
+// streams whose integer sum equals the mixed stream wherever the 16-bit
+// sum does not saturate; resampled rates keep the ratio; turbo discard.
+// ---------------------------------------------------------------------------
+void TestRenderSplit()
+{
+    std::printf("TestRenderSplit\n");
+
+    // Mixed vs split consistency at the 44100 bypass.
+    TestChip a;
+    WriteToneHeader(a.mem, kHdrBase, 2, kSmpBase, 0, 4, nullptr);
+    WriteMaxSampleData(a.mem);
+    KeyOnFmCh0(a.chip, 1000);
+    KeyOnPcmSlot(a.chip, 0, 1000);
+    a.chip.Run(2000 * kOutClocks);
+
+    TestChip b;
+    WriteToneHeader(b.mem, kHdrBase, 2, kSmpBase, 0, 4, nullptr);
+    WriteMaxSampleData(b.mem);
+    b.chip.EnableSplitStreams(true);
+    CHECK(b.chip.SplitStreamsEnabled());
+    KeyOnFmCh0(b.chip, 1000);
+    KeyOnPcmSlot(b.chip, 0, 1000);
+    b.chip.Run(2000 * kOutClocks);
+
+    float mixed[16384];
+    float fm[16384];
+    float pcm[16384];
+    const size_t mixedN = a.chip.Render(mixed, 8192);
+    const size_t splitN = b.chip.RenderSplit(fm, pcm, 8192);
+    CHECK_EQ_I(mixedN, 2000u);
+    CHECK_EQ_I(splitN, 2000u);
+
+    // Both groups are live on their own.
+    float fmMax = 0.0f, pcmMax = 0.0f;
+    for (size_t i = 0; i < splitN * 2; i++)
+    {
+        fmMax = std::max(fmMax, std::fabs(fm[i]));
+        pcmMax = std::max(pcmMax, std::fabs(pcm[i]));
+    }
+    CHECK(fmMax > 1000.0f);
+    CHECK(pcmMax > 1000.0f);
+
+    // Where the integer sum did not saturate, fm + pcm == mixed exactly
+    // (all three are exact int16 values on the bypass path).
+    size_t compared = 0;
+    for (size_t i = 0; i < mixedN * 2; i++)
+    {
+        if (std::fabs(mixed[i]) < 32000.0f)
+        {
+            if (!(static_cast<double>(fm[i]) + static_cast<double>(pcm[i])
+                  == static_cast<double>(mixed[i])))
+            {
+                CHECK(false);
+                break;
+            }
+            compared++;
+        }
+    }
+    CHECK(compared > 1000); // mostly below the saturation threshold
+
+    // Split at 48 kHz: ratio kept, both sources carry audio.
+    TestChip tc48(2u << 20, 1u << 20, 48000);
+    WriteToneHeader(tc48.mem, kHdrBase, 2, kSmpBase, 0, 4, nullptr);
+    WriteMaxSampleData(tc48.mem);
+    tc48.chip.EnableSplitStreams(true);
+    KeyOnFmCh0(tc48.chip, 1000);
+    KeyOnPcmSlot(tc48.chip, 0, 1000);
+    tc48.chip.Run(2000 * kOutClocks);
+    const size_t n48 = tc48.chip.RenderSplit(fm, pcm, 16384 / 2);
+    CHECK(n48 > 2100 && n48 < 2250); // ~2000 * 48/44.1 = 2177
+    float fm48 = 0.0f, pcm48 = 0.0f;
+    for (size_t i = 0; i < n48 * 2; i++)
+    {
+        fm48 = std::max(fm48, std::fabs(fm[i]));
+        pcm48 = std::max(pcm48, std::fabs(pcm[i]));
+    }
+    CHECK(fm48 > 500.0f);
+    CHECK(pcm48 > 500.0f);
+}
+
+void TestDiscardPendingAudio()
+{
+    std::printf("TestDiscardPendingAudio\n");
+    TestChip tc;
+    WriteToneHeader(tc.mem, kHdrBase, 2, kSmpBase, 0, 4, nullptr);
+    WriteMaxSampleData(tc.mem);
+    KeyOnPcmSlot(tc.chip, 0, 1000);
+    tc.chip.Run(1000 * kOutClocks);
+
+    // Turbo host: drop the buffered audio, keep running the core.
+    tc.chip.DiscardPendingAudio();
+    tc.chip.WriteWave(1000 * kOutClocks + 8, static_cast<uint8_t>(0x08 + 24 * 4), 0x00); // key off
+    tc.chip.Run(2000 * kOutClocks);
+
+    float buf[16384];
+    const size_t n = tc.chip.Render(buf, 8192);
+    CHECK_EQ_I(n, 1000u); // only the post-discard frames arrive
+}
+
 int main()
 {
     TestPowerTable();
@@ -688,6 +821,9 @@ int main()
     TestBlockMixAndClip();
     TestPanRouting();
     TestTaps();
+    TestHiFiAt44100();
+    TestRenderSplit();
+    TestDiscardPendingAudio();
 
     RunVectorTests(); // §12.2 vector categories (opl4vectors.cpp)
 

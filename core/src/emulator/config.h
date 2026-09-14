@@ -25,6 +25,7 @@ private:
     static constexpr const char* beta128 = "Beta128";
     static constexpr const char* leds = "LEDS";
     static constexpr const char* sound = "SOUND";
+    static constexpr const char* moonsound = "MOONSOUND";
     static constexpr const char* input = "INPUT";
     static constexpr const char* colors = "COLORS";
     static constexpr const char* ay = "AY";

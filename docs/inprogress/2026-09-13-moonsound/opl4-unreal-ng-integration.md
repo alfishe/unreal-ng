@@ -1,7 +1,7 @@
 # ZXM-MoonSound in unreal-ng — integration and mixing design
 
-**Revision 1** (2026-09-13).
-**Status:** design draft. Depends on `opl4-core-tdd.md` (the chip library) being implemented and tested first.
+**Revision 3** (2026-09-14). Revision 1 was the pre-implementation design draft (2026-09-13); Revision 2 recorded implementation and live verification. This revision resolves the former §12.5 blocker: guest I/O never reached the card because the Z80 immediate port forms leave A in the high address byte and the card decodes A0..A7 only (§2.5) — now fixed and guest-verified with the author's own binary.
+**Status:** phases 0–4 + TTD Tier A implemented; guest code reaches the card end to end (the author's MoonService v0.3a binary detects YM278B inside core-tests, §12.5). Depends on `opl4-core-tdd.md` (the chip library).
 **Scope:** wiring `libopl4` into unreal-ng — port decoding, device lifecycle, configuration, the sound-device registry, mixing, gain staging, TTD, recording, UI surface.
 **Companion:** TTD details for this device live in `opl4-ttd-integration-tdd.md`; §7 here is the summary and that document is authoritative where they differ.
 **Out of scope:** chip behaviour and DSP internals (see the core TDD).
@@ -72,7 +72,8 @@ NemoBus. The emulator must do the same:
   miserable bug to chase later.
 - Until the CPLD behaviour is confirmed, implement the conservative reading — the
   card claims the address exclusively — and record the assumption in the device
-  header.
+  header. *Update 2026-09-14: read-side arbitration is now verified and
+  NEW-gated rather than statically exclusive — see §2.4.*
 
 ### 2.3 Access path
 
@@ -96,6 +97,67 @@ Every access calls into the library with the current T-state, and the library
 advances its own clocks lazily. No per-instruction polling of the chip is needed
 beyond §3.2.
 
+### 2.4 Read arbitration on `#7F` — verified (2026-09-14)
+
+The collision called out in §2.2 is real and, on Pentagon-family machines,
+sharper than the conservative reading assumed:
+
+- **The FDC owns `#7F` in the port registry.** `WD1793` registers
+  `#1F/#3F/#5F/#7F/#FF` as exact-match port handlers, and a registry slot has
+  a single owner (`PortDecoder::_portDevices`), so a second full-decode device
+  cannot register `#7F` — `RegisterPortHandler` refuses the duplicate.
+- **The Pentagon decoder gates Beta-128 ports.** While no TR-DOS session is
+  open (`emulatorState.flags & CF_TRDOS` clear), `PortDecoder_Pentagon128`
+  rewrites decoded `#1F/#3F/#5F/#7F/#FF` accesses to undecoded
+  (`portdecoder_pentagon128.cpp`). The FDC data port answers only inside a
+  session — opened when the CPU executes from the `#3D2F` entry region
+  (`CF_SETDOSROM`), closed by `CF_LEAVEDOSADR` the moment a fetch has
+  `PC ≥ #4000`.
+
+The implemented and unit-verified design
+(`core/tests/emulator/sound/moonsound_device_test.cpp`):
+
+1. `SoundChip_Moonsound` registers writes for all seven ports as before, but
+   does **not** own `#7F` reads statically.
+2. A `PortDevice` virtual, `portDeviceClaimsRead(port)`, lets a full-decode
+   device claim the read side only once the guest has armed the card. The
+   MoonSound override returns true for `port == 0x7F && _opl4.NewMode()` —
+   i.e. after software sets the OPL4 `NEW`/`NEW2` bits (FM2 bank-1 register 5),
+   exactly the arming sequence every detection routine performs.
+3. `NotifyFullDecodeIn()` reports `claimsBus` alongside the value; `Z80::in()`
+   takes the full-decode value when the handler claims the bus or when no
+   partial-decode device answered (`WasLastPortDecoded()`).
+4. R6 holds: an unarmed card never claims, so the FDC mirror and the floating
+   bus behave exactly as before the device existed.
+
+The test pinning this (`SharedBus_ArmedCardOverridesLegacyMirrorAt7F`) also
+records two harness facts future tests will need: a mirror stub must *borrow*
+the `#7F` registry slot from the WD1793 (unregister, install, restore via
+`context->pBetaDisk`), and the TR-DOS session must be opened by hand
+(`context->emulatorState.flags |= CF_TRDOS`) or the Pentagon decoder drops the
+port before arbitration runs.
+
+### 2.5 Low-byte port decode — the verified card behaviour (2026-09-14)
+
+The ZXM-MoonSound CPLD wires **A0..A7 only**: every high-byte alias of
+`#C4/#C5/#C6/#C7/#7E/#7F` is a card port. Guest software depends on this
+because the Z80 immediate port forms build the address from two registers —
+`out (n),a` and `in a,(n)` execute at `(a << 8) | n` (`op_noprefix.cpp`) — so
+A lands in the **high** address byte. The card author's own driver
+(MoonService v0.3a) writes registers with `ld a,d / out (n),a`: the register
+number itself dirties the high byte (the FM1 `reg #BD` select is a write to
+port `#BDC4`), and the device-ID read is `in a,(#7F)` with `A = #10` → port
+`#107F`.
+
+The implementation therefore registers the card as a **low-byte full-decode
+observer** (`PortDecoder::RegisterFullDecodeLowBytePort`): the notify taps
+check the exact 16-bit table first, then the low-byte table, and
+`SoundChip_Moonsound` dispatches its port handlers on `port & 0xFF`
+(`portDeviceClaimsRead` compares `(port & 0xFF) == 0x7F`). The original
+exact-16-bit registration only caught host-side `Z80::out()/in()` calls and
+silently missed every guest instruction — the direct cause of the former
+§12.5 symptom (`dev_id = #E0` = floating-bus `#FF` masked with `#E0`).
+
 ---
 
 ## 3. Device lifecycle
@@ -103,13 +165,25 @@ beyond §3.2.
 ### 3.1 Construction
 
 ```cpp
-// SoundManager::SoundManager
-if (_context->config.sound.moonSoundEnabled)
-{
-    _moonsound = new SoundChip_Moonsound(_context);
-    _moonsound->setCoreRate(_coreRate);
-}
+// SoundManager::SoundManager — as implemented (2026-09-14)
+#ifdef UNREALNG_HAVE_OPL4
+    if (_context->config.sound.moonsound)
+    {
+        _moonsound = new SoundChip_Moonsound(_context, _coreRate);
+        const float vol = std::clamp(_context->config.sound.moonsound_vol, 0, 8192) / 8192.0f;
+        _devices.push_back({AudioSourceType::Moonsound_FM,  "MoonSound FM (OPL3)",  ..., vol, ...});
+        _devices.push_back({AudioSourceType::Moonsound_PCM, "MoonSound PCM (wave)", ..., vol, ...});
+        enableWideMix(true);   // D7: a full-scale 16-bit source joins the mix
+    }
+#endif
 ```
+
+`UNREALNG_HAVE_OPL4` is a **PUBLIC** compile definition on the core target, so
+the app and core-tests (which compile core sources directly) see the same gate
+— a mismatch would be an ODR hazard. Wave-ROM misses log a **warning** and
+zero-fill (D10). Note the inverse probe is unsound: a *clean* ROM load logs
+nothing, so a silent app log does **not** mean the chip was absent — that
+inference misled the first pass over §12.5 (see its resolution).
 
 Parsed in `Config::ParseConfig` alongside `CovoxFB`:
 
@@ -433,14 +507,170 @@ Phase 0 is genuinely first. Everything after it produces audible output, and
 audible output over a clipping mixer will send the evaluation in the wrong
 direction.
 
+**Status 2026-09-14 (rev 3):** phases 0–4 and the TTD Tier-A blob are
+implemented; 11 device tests, 2 guest-level integration tests
+(`moonservice_guest_test.cpp`) and the full suite (2666 tests, 20 shards) are
+green. The phase-3 gate is met beyond protocol level — the author's own
+MoonService v0.3a **binary** now detects YM278B when executed as guest code
+inside core-tests (§12.5), with arbitration unit-verified (§2.4) and the port
+decode matching the card's A0..A7 CPLD wiring (§2.5).
+
 ---
 
 ## 11. Risks
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| CPLD port-decode behaviour unknown (§2.2) | ULA/paging corruption under MoonSound software | Get the CPLD source or schematic before phase 3; conservative exclusive claim until then |
+| CPLD port-decode behaviour unknown (§2.2) | ULA/paging corruption under MoonSound software | **Decode width verified** against the author's driver: A0..A7 only (§2.5), now implemented as low-byte observer registration. Read side resolved by the NEW-gated claim (§2.4), verified against MoonService v0.3a (§12.1). Write-side shadowing of the ULA remains conservative-exclusive pending CPLD source |
 | No real ZXM-MoonSound available for reference | Board analog model and BUSY/LD timings stay unverified | Ship with those components disabled/datasheet-derived and clearly marked; treat hardware access as a project dependency, not a nice-to-have |
 | SRAM upload timing wrong | Loaders run at wrong speed; timing-sensitive software breaks | Model LD busy per access from phase 3, not as a later refinement |
 | Limiter audibly ducks PCM transients | The device sounds worse than a naive implementation | Tune attack/release against percussive material specifically; A/B against the unlimited path with headroom |
 | Core rate other than 44100 becomes the default | Every user gets resampled OPL4 output | Log a recommendation (D6); consider surfacing it in the UI when MoonSound is enabled |
+
+---
+
+## 12. Verification log (2026-09-14)
+
+Ground truth for this section: **MoonService v0.3a** — the ZXM-MoonSound card
+author's own service/diagnostic software. Assembly source (user-provided) lives
+in `scratch/Moonsound service v0_3a/`; the bootable disk
+`moonservice_v03a.trd` came from the MickLab archive
+(`testdata/sound/moonsound/`, provenance in that directory's `SOURCES.md`).
+
+### 12.1 Detection protocol (from the author's assembly source)
+
+Base ports: FM1 `#C4/#C5`, FM2 `#C6/#C7` (status via `IN A,(#C4)`), wave
+`#7E/#7F` — matching §2.1. Entry at `org #6000`:
+
+```
+di; ld a,10h; ld bc,7FFDh; out (c),a    ; pages RAM bank 0 into the #8000
+                                         ; window and — PC ≥ #4000 — closes
+                                         ; any open TR-DOS session
+                                         ; (CF_LEAVEDOSADR), handing #7F
+                                         ; reads to the card (§2.4)
+call init_card
+```
+
+`init_card`, in order:
+
+| Step | Access | Purpose |
+|---|---|---|
+| 1 | `IN A,(#C4)` | card present if `≠ #FF` (floating-bus test) |
+| 2 | FM2 `#C6←04, #C7←00` then `#C6←05, #C7←03` | reset bank 1, arm `NEW2|NEW` |
+| 3 | FM1 `#C4←BD, #C5←00` | clear rhythm/register window |
+| 4 | wave `#7E←02, #7F←10` | select register 2 for read-back |
+| 5 | `IN A,(#7F)` | `A & #E0` = device ID; **`#20` = YM278B** |
+
+The result is parked at `MoonService_dev_id` (`#88D0`). The service then reads
+the flash JEDEC ID (`555←AA, 2AA←55, 555←90`, reset `F0` — hang-safe) and tests
+SRAM before dropping into the menu key-poll loop.
+
+**How to tell detection passed.** The service UI is drawn with a custom VideoDRV
+font that OCR cannot read, and the UI is drawn **even when the chip is unknown**
+(a live run with `dev_id = #E0` still painted the full window frames) — so
+"reached the menu" is necessary but *not* sufficient. The authoritative checks:
+
+- `MoonService_dev_id` at `#88D0` equals `#20`;
+- porttrace shows the card-port accesses (`#C4..#C7`, `#7E/#7F`) after the FM2
+  register-5 arming writes.
+
+Address map of `MoonService.bin` (10451 bytes, `#6000–#88D3`): menu key-poll
+loop `MoonService_key_pressed` at `#6280`; `MoonService_busy` at `#645A`; all
+error paths park in `MoonService_press_anykey` (`#64xx`) — a PC parked in the
+`#64xx` range means the chain *failed*, in `#6280–#62FF` that it ran on.
+
+### 12.2 Unit status
+
+- 11 `MoonSoundDevice` tests green, including
+  `SharedBus_ArmedCardOverridesLegacyMirrorAt7F` (§2.4).
+- Full suite 1356 tests / 20 shards green — **after killing the running app**:
+  WebAPI-port tests collide with any app holding TCP 8090, and a stale app
+  produces phantom shard failures that look like regressions.
+
+### 12.3 Live-harness facts (WebAPI)
+
+- **Disk chain.** `moonservice_v03a.trd`'s catalog sits at TRD file offset
+  `#0000` (not `#200`): a 1-sector `boot` file plus `MoonServ`. The boot
+  payload (file offset `#1000`) is a **MAXBOOT v9.1** loader that shows an
+  intro and loads the service on ENTER. TR-DOS `RUN` of this disk is flaky
+  in-emulator: the ROM parks in the DRQ wait (`#3E44` OUT loop /
+  `#3EF3–#3EFE` wait-and-read in `trd504tm.rom`). That is a disk-loader
+  issue, independent of the card.
+- **Direct load is the reliable harness.** Run a paging stub at `#6000`
+  (`ld a,10h; ld bc,7FFDh; out (c),a; jr $`), then write the image at `#6000`
+  and set PC there. During a TR-DOS session `#4000–#7FFF` is always RAM bank
+  5, and this emulator's Pentagon model pages the `#8000` window from
+  `p7FFD & 7`, so the stub guarantees the image tail is visible before the
+  write. Verified: the service runs and paints its UI this way.
+- **Porttrace semantics.** Events carry both `raw_port` and `decoded_port`
+  (FDC traffic shows as raw `#xx7F` → decoded `#7F`) plus `pc`, `cf_trdos` and
+  `beta128_gated` — the right tool for arbitration debugging.
+- **Input/API quirks.** Keyboard `tap` defaults to `frames=2` and
+  **double-registers** characters (`RUN` becomes `RUNun`); use press/release
+  pairs with ~120 ms hold to type. Register writes take a numeric value
+  (`PUT /registers/pc {"value": 24576}` — a hex string throws server-side).
+  Memory reads use `?len=`. `capture/ocr` is useless on the service's custom
+  font; `capture/screen` (base64 GIF) still works for eyeballing.
+
+### 12.4 Config resolution chain (verified during the app investigation)
+
+- Search order: executable directory, then the macOS bundle `Resources/`.
+  The bundle build resolves `configs/pentagon128k/unreal.ini` from
+  `Resources/`; the staged copies (`bin/configs/…` and
+  `…/Resources/configs/…`) are byte-identical to `data/configs/…`.
+- The shipped ini files are **CRLF heritage Windows files with inline `;`
+  comments**; the vendored SimpleIni handles both (`\r` is whitespace,
+  `strtol` stops at the comment). Verified with a standalone probe against
+  the exact staged file: `SOUND.MoonSound = 1`, `SOUND.MoonSoundVol = 8000`,
+  `ROM.MOONSOUND = rom\opl4\yrw801-m-yamaha-1993.rom` (file renamed from the
+    archive's spaced `YRW801-M - Yamaha - 1993.rom` on 2026-09-14, per the
+    no-spaces kebab-case naming rule),
+  `MOONSOUND.WaveRom` absent, `BETA128.beta128 = 1`,
+  `ROM.PROFROM = rom\scorp_prof401.ROM:0`. `CSimpleIniA` compares section
+  and key names case-insensitively.
+- Model → folder: `PENTAGON` default RAM is 128, so `GetConfigFolderForModel`
+  returns `pentagon128k` (RAM ≥ 512 would select `pentagon512k` — keep both
+  folders' `[SOUND]` in sync when keys change).
+- `ParseConfig` demonstrably runs in the app: the ProfROM quadrant-strip
+  warning fires at instance creation in the app log.
+
+### 12.5 Resolved: guest I/O never reached the card (low-byte decode)
+
+Symptom: app-created PENTAGON instances showed a Z80 probe stub (arm NEW,
+read `#7F`/`#C4`) returning `#FF`/`#FD` — floating bus — and a direct-loaded
+MoonService reading `dev_id = #E0`.
+
+The chip **was** constructed all along. The first-pass inference
+"no wave-ROM warning ⇒ no construction" was wrong: the YRW801 loads
+cleanly, and a clean load logs nothing (see the §3.1 note). The real defect
+was one layer down, in the port path:
+
+- **Root cause.** The card was registered as an exact-16-bit full-decode
+  observer (`#00C4`…`#007F`). Guest instructions never produce those
+  addresses: the Z80 immediate forms `out (n),a` / `in a,(n)` execute at
+  `(a << 8) | n` (`op_noprefix.cpp`, OUT at :1236, IN at :1332), so
+  MoonService's `in a,(#7F)` with `A = #10` reads port `#107F`, its FM
+  register selects run at `#BDC4` etc. Every guest cycle missed the observer
+  map; the model decode found nothing armed; the floating bus answered `#FF`;
+  `#FF & #E0 = #E0` — byte-exact the app symptom. The author's own helpers
+  (`ld a,d / out (n),a` at `#6437/#6440/#6449`) *rely* on the card ignoring
+  the dirty high byte.
+- **Fix.** Low-byte full-decode registration (§2.5): the notify taps fall
+  back to a `port & 0xFF` table, the chip dispatches on the low byte, and
+  the `#7F` read claim compares the low byte. Host-side exact calls still
+  work — their low byte is the card port.
+- **Verification (2026-09-14).** Guest-level integration tests in
+  `core/tests/emulator/sound/moonservice_guest_test.cpp`, both green:
+  `GuestCode_RunsAuthorDetectionProtocolAndDetectsYm278b` (the init_card
+  sequence as hand-assembled guest code through the production stack —
+  result `#30`, device-ID bits `#20`) and
+  `AuthorBinary_MoonServiceV03a_DetectsYm278b` (the author's actual
+  10451-byte image executed from `#6000`: `dev_id @ #88D0 = #20`, PC stays
+  inside the image). Plus the dirty-alias assertions inside
+  `SharedBus_ArmedCardOverridesLegacyMirrorAt7F` (§2.4). Full suite after
+  the fix: 2666/2666 across 20 shards, zero warnings.
+
+The "ruled out" list from the investigation remains valid — staged config
+content and parse (§12.4), QSettings, the `UNREALNG_HAVE_OPL4` gate, timing
+defaults, custom config path, model folder — all of them were correct; none
+of them was the fault.

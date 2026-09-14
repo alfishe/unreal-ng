@@ -36,12 +36,37 @@ public:
     uint8_t ReadStatus(uint64_t time);
     uint8_t ReadWave(uint64_t time, uint8_t addr);
 
+    // OPL4 NEW mode armed (bank-1 reg 0x05 bit 0). Read-only view for hosts
+    // that gate shared-bus behaviour on it (ZX cards vs the Beta-128 FDC).
+    bool NewMode() const;
+
     // Core-only advance — call at least once per host frame even when muted.
     void Run(uint64_t time);
 
     // Render. Pulls from the chip stream produced since the last call.
-    // Interleaved stereo floats in [-1, 1]. Returns frames written.
+    // Interleaved stereo floats at int16 scale (the 44100 bypass path emits
+    // exact int16 values). Returns frames written.
     size_t Render(float* interleavedStereo, size_t maxFrames);
+
+    // Split render (host mixer sources, integration D5). When enabled the
+    // chip boundary emits FM-only and PCM-only streams alongside the mixed
+    // stream (Authentic mode; HiFi carries them regardless). Render-side
+    // only: chip state is untouched and the mixed Render() keeps working
+    // (R7/D11). Toggling clears the delivery buffers.
+    void EnableSplitStreams(bool on);
+    bool SplitStreamsEnabled() const;
+
+    // Render both group streams independently (interleaved stereo floats at
+    // int16 scale, resampled to the configured output rate, each through its
+    // own character chain / board analog / DC-blocker state). Returns frames
+    // written; the count can differ per group across resampler boundaries,
+    // so the return is the minimum and each buffer may carry a little more.
+    size_t RenderSplit(float* fmOut, float* pcmOut, size_t maxFrames);
+
+    // Drop pending delivery-buffer audio without rendering (turbo hosts
+    // that run() the core at multiple realtime but never render). Chip
+    // state is unaffected.
+    void DiscardPendingAudio();
 
     // Taps (R7). Mute affects the tap sum path only, never chip state.
     void SetChannelMute(ChannelId id, bool mute);

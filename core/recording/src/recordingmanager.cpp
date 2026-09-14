@@ -53,8 +53,10 @@ static const char* GetAudioSourceName(AudioSourceType source)
             return "COVOX";
         case AudioSourceType::GeneralSound:
             return "GeneralSound";
-        case AudioSourceType::Moonsound:
-            return "Moonsound";
+        case AudioSourceType::Moonsound_FM:
+            return "Moonsound_FM";
+        case AudioSourceType::Moonsound_PCM:
+            return "Moonsound_PCM";
         case AudioSourceType::AY1_ChannelA:
             return "AY1_ChannelA";
         case AudioSourceType::AY1_ChannelB:

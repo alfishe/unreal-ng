@@ -38,6 +38,9 @@
 #include "emulator/sound/chips/soundchip_turbosound.h"  // SoundChip_TurboSound (AY peripheral, P1.5)
 #include "emulator/video/screen.h"       // Screen, SpectrumScreenEnum (SetActiveScreen / SetBorderColor on restore)
 #include "emulator/sound/covox.h"                        // Covox (peripheral, P1.5)
+#ifdef UNREALNG_HAVE_OPL4
+#include "emulator/sound/chips/soundchip_moonsound.h"   // SoundChip_Moonsound (peripheral, Tier A)
+#endif
 #include "emulator/sound/soundmanager.h"                 // SoundManager
 #include "stdafx.h"
 
@@ -1041,6 +1044,12 @@ bool TimeTravelManager::RegisterModelPeripherals(std::string* err)
     {
         _peripherals.Register(PeripheralId::TurboSound, _context->pSoundManager->getTurboSound());
         _peripherals.Register(PeripheralId::Covox, _context->pSoundManager->getCovox());
+#ifdef UNREALNG_HAVE_OPL4
+        // MoonSound registers only when the config flag built it; a null
+        // pointer leaves no entry, so a session from a MoonSound machine
+        // loads on a MoonSound-less build as a visible missingBlob (R7).
+        _peripherals.Register(PeripheralId::MoonSound, _context->pSoundManager->getMoonSound());
+#endif
     }
     _peripherals.Register(PeripheralId::Tape, _context->pTape);
     _peripherals.Register(PeripheralId::BetaDisk, _context->pBetaDisk);

@@ -85,7 +85,8 @@ void MultiTrackDialog::populateSourceCombo(QComboBox* combo)
     combo->addItem(sourceToString(AudioSourceType::AY3_All), static_cast<int>(AudioSourceType::AY3_All));
     combo->addItem(sourceToString(AudioSourceType::COVOX), static_cast<int>(AudioSourceType::COVOX));
     combo->addItem(sourceToString(AudioSourceType::GeneralSound), static_cast<int>(AudioSourceType::GeneralSound));
-    combo->addItem(sourceToString(AudioSourceType::Moonsound), static_cast<int>(AudioSourceType::Moonsound));
+    combo->addItem(sourceToString(AudioSourceType::Moonsound_FM), static_cast<int>(AudioSourceType::Moonsound_FM));
+    combo->addItem(sourceToString(AudioSourceType::Moonsound_PCM), static_cast<int>(AudioSourceType::Moonsound_PCM));
     combo->addItem(sourceToString(AudioSourceType::AY1_ChannelA), static_cast<int>(AudioSourceType::AY1_ChannelA));
     combo->addItem(sourceToString(AudioSourceType::AY1_ChannelB), static_cast<int>(AudioSourceType::AY1_ChannelB));
     combo->addItem(sourceToString(AudioSourceType::AY1_ChannelC), static_cast<int>(AudioSourceType::AY1_ChannelC));
@@ -118,7 +119,8 @@ QString MultiTrackDialog::sourceToString(AudioSourceType source)
         case AudioSourceType::AY3_All:         return "AY-3 (All)";
         case AudioSourceType::COVOX:           return "COVOX/DAC";
         case AudioSourceType::GeneralSound:    return "General Sound";
-        case AudioSourceType::Moonsound:       return "Moonsound";
+        case AudioSourceType::Moonsound_FM:    return "MoonSound FM (OPL3)";
+        case AudioSourceType::Moonsound_PCM:   return "MoonSound PCM (wave)";
         case AudioSourceType::AY1_ChannelA:    return "AY-1 Ch.A";
         case AudioSourceType::AY1_ChannelB:    return "AY-1 Ch.B";
         case AudioSourceType::AY1_ChannelC:    return "AY-1 Ch.C";
@@ -142,7 +144,8 @@ AudioSourceType MultiTrackDialog::stringToSource(const QString& str)
     if (str == "AY-3 (All)") return AudioSourceType::AY3_All;
     if (str == "COVOX/DAC") return AudioSourceType::COVOX;
     if (str == "General Sound") return AudioSourceType::GeneralSound;
-    if (str == "Moonsound") return AudioSourceType::Moonsound;
+    if (str == "MoonSound FM (OPL3)") return AudioSourceType::Moonsound_FM;
+    if (str == "MoonSound PCM (wave)") return AudioSourceType::Moonsound_PCM;
     if (str == "AY-1 Ch.A") return AudioSourceType::AY1_ChannelA;
     if (str == "AY-1 Ch.B") return AudioSourceType::AY1_ChannelB;
     if (str == "AY-1 Ch.C") return AudioSourceType::AY1_ChannelC;

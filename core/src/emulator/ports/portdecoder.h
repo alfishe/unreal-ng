@@ -1,6 +1,7 @@
 #pragma once
 #include "stdafx.h"
 
+#include <array>
 #include <memory>
 #include <set>
 #include "emulator/platform.h"
@@ -60,6 +61,15 @@ class PortDevice
 public:
     virtual uint8_t portDeviceInMethod(uint16_t port) = 0;
     virtual void portDeviceOutMethod(uint16_t port, uint8_t) = 0;
+
+    /// Full-decode observer read claim. Returning true makes this device's
+    /// read value win over a model-decoded legacy device on the same raw
+    /// port in the same cycle - the armed-card behaviour on the shared bus
+    /// (ZXM-MoonSound drives #7F over the Beta-128 FDC mirror once the guest
+    /// sets OPL4 NEW; verified against the card author's MoonService v0.3a,
+    /// which reads the device ID and the wave RAM window at #7F right after
+    /// arming FM2 reg 05). The default keeps the legacy-priority rule (R6).
+    virtual bool portDeviceClaimsRead(uint16_t) { return false; }
 };
 
 typedef uint8_t (PortDevice::* PortDeviceInMethod)(uint16_t port);              // Class method callback
@@ -152,6 +162,28 @@ protected:
 
     // Registered port handlers from external peripheral devices
     std::map<uint16_t, PortDevice*> _portDevices;
+
+    // Full-decode observer devices (raw Z80 port address). Real bus cards
+    // (e.g. ZXM-MoonSound) decode the whole 16-bit address and observe every
+    // cycle on their ports, but the model decode rules map those raw addresses
+    // onto other devices (ULA #FE family, AY #FFFD, Beta-128 FDC registers).
+    // Registering such a card in the exclusive _portDevices map would steal
+    // the port from the original device (observed: MoonSound taking #7F killed
+    // TR-DOS reads). Observers are therefore tapped at the Z80 I/O funnel with
+    // the RAW port before the model decode runs - both devices see the cycle,
+    // like on the shared hardware bus.
+    std::map<uint16_t, PortDevice*> _fullDecodeDevices;
+
+    // Low-byte full-decode observers (keyed by port & 0xFF). Cards like the
+    // ZXM-MoonSound wire only A0..A7 into the CPLD, so every high-byte alias
+    // of the card ports reaches the card. Guest software relies on this: the
+    // Z80 immediate forms `out (n),a` / `in a,(n)` execute with A in the HIGH
+    // address byte (op_noprefix), and the card author's own driver
+    // (MoonService v0.3a) writes registers with `ld a,d / out (n),a` - the
+    // register number dirties the high byte and the card must still decode
+    // the write. Lookup order in the notify taps: exact 16-bit table first,
+    // then this one.
+    std::array<PortDevice*, 256> _fullDecodeLowByteDevices {};
 
     // Set of ports to mute logging to
     std::set<uint16_t> _loggingMutePorts;
@@ -297,6 +329,42 @@ public:
 
     uint8_t PeripheralPortIn(uint16_t port);
     void PeripheralPortOut(uint16_t port, uint8_t value);
+
+    /// Full-decode observer registration (see _fullDecodeDevices): the device
+    /// sees every Z80 IN/OUT on the exact raw port address IN ADDITION to the
+    /// regular model decode - the shared-bus semantics of a real bus card.
+    /// Duplicate registration of the same port is rejected, like RegisterPortHandler.
+    bool RegisterFullDecodePort(uint16_t port, PortDevice* device);
+
+    /// Remove a full-decode observer. The device pointer must match the
+    /// registration - a stale observer would keep firing into a dead object.
+    void UnregisterFullDecodePort(uint16_t port, PortDevice* device);
+
+    /// Low-byte full-decode observer registration (see
+    /// _fullDecodeLowByteDevices): the device sees every Z80 IN/OUT whose raw
+    /// port low byte matches, in addition to the regular model decode - the
+    /// decode behaviour of a card that wires only A0..A7. Duplicate
+    /// registration of the same low byte is rejected, like the exact variant.
+    bool RegisterFullDecodeLowBytePort(uint8_t port, PortDevice* device);
+
+    /// Remove a low-byte full-decode observer. The device pointer must match
+    /// the registration - a stale observer would keep firing into a dead object.
+    void UnregisterFullDecodeLowBytePort(uint8_t port, PortDevice* device);
+
+    /// Z80 OUT tap: forward a raw-port write to the registered observer (if any).
+    void NotifyFullDecodeOut(uint16_t port, uint8_t value);
+
+    /// Z80 IN tap: query the observer for a raw-port read. Returns the
+    /// observer's bus value (0xFF when none) and sets handled=true when an
+    /// observer is registered; claimsBus=true when the observer claims the
+    /// read (portDeviceClaimsRead). Z80::in() applies it with
+    /// legacy-device priority unless the observer claims the bus: a port
+    /// already handled by the model decode keeps that device's value (R6 -
+    /// an observer card must not alter an existing device's reads); a
+    /// claimed port is driven by the observer (armed card on the shared
+    /// bus); an otherwise-undecoded port is driven by the observer too
+    /// (floating bus suppressed for it).
+    uint8_t NotifyFullDecodeIn(uint16_t port, bool& handled, bool& claimsBus);
     
     /// Unlock port 7FFD paging for snapshot loading or debug sessions
     /// Clears both the emulatorState.p7FFD lock bit AND the hardware latch (_7FFD_Locked)

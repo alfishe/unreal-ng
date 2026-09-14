@@ -800,6 +800,7 @@ to be incomplete on envelope and mix behaviour, and known to round clock figures
 | §8.3 | ZOH rolloff ≈ −2.4 dB at 20 kHz from a 44.1 kHz grid | Arithmetic: $\text{sinc}(\pi \cdot 20000 / 44100) \approx 0.7574 \implies -2.41\text{ dB}$ | High |
 | §8.3 | Actual board response (YAC513 + LF347 Sallen-Key biquad) | Derived from [ZXM-MoonSound rev01](http://micklab.ru/file/zxm_moonsound/zxm_moonsound_01.pdf) and [Wozblaster Reloaded v1.1](https://github.com/cristianoag/wozblaster/tree/master/hardware/reloaded_v1.1) schematics: $f_{c2} = 4.08\text{ kHz}$ RC pole + $f_0 = 27.7\text{ kHz}, Q = 1.306$ active Sallen-Key lowpass (+2.6 dB anti-sinc peaking compensation) | High |
 | §3.3 | BUSY and LD exist and are polled by software; exact durations | Hardware-verified by Yamaha datasheet AC timing and openMSX bus arbitration: 56 clocks FM, 88 clocks wave reg, 28 clocks mem write, 38 clocks mem read, 9600–10000 clocks LD | High |
+| §5.1 | Wave register 2 read-back returns the device ID in the top bits: `reg2 & 0xE0 = 0x20` for YM278B; software arms OPL4 `NEW`/`NEW2` (FM2 bank-1 reg 5) before the read, otherwise `#7F` stays with the FDC/floating bus | **MoonService v0.3a** (ZXM-MoonSound card author's own service software, assembly source) — the detection routine banks on exactly this; see integration doc §2.4/§12.1 | High (author's software; live read-back still pending §12.5) |
 
 ### 13.2 Implementations worth consulting, and what each is good for
 
@@ -824,6 +825,7 @@ Summary of empirical validations and architectural resolutions across the projec
 | M4 | The −3 dB approximation | **RESOLVED** | Pinned to Yamaha's 256-entry logarithmic power table ($2^{-i/256}$). Intermediate $-3.01\text{ dB}$ ratio is $1/\sqrt{2} \approx 0.707107$ (Yamaha 11-bit mantissa $1444/2042 \approx 0.70715$). The early openMSX $0.75$ guess introduced $+0.51\text{ dB}$ error per stage and is rejected. |
 | M5 | DAMP and PRVB envelope curves | **OPEN** | Single slot hardware recording to empirically verify non-linear decay knee transitions and release rates during live transitions. |
 | M6 | Register 0x02 bit 0 (`MA` mode) effect on memory access | **RESOLVED** | Confirmed from Yamaha technical manual: `MA=0` allocates wave bus to 24-slot voice playback (CPU port 0x06 inactive); `MA=1` connects wave bus to CPU ports 0x03–0x06 with address auto-increment, muting voice synthesis during SRAM programming. |
+| M7 | Host-side detection protocol (register read-back the card must survive) | **RESOLVED (source-level)** | Pinned from **MoonService v0.3a**, the card author's own service software: `IN #C4 ≠ 0xFF` presence test → FM2 reg 5 `NEW2|NEW` arming → wave reg 2 read-back, `& 0xE0 = 0x20` = YM278B → JEDEC flash ID (`555←AA, 2AA←55, 555←90`, reset `F0`) → SRAM test. The emulator's read arbitration (integration §2.4) is unit-verified against this sequence; end-to-end `dev_id = 0x20` in the app awaits the open frontend issue (integration §12.5). |
 
 ---
 

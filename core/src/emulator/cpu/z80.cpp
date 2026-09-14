@@ -688,8 +688,27 @@ uint8_t Z80::in(uint16_t port)
 
     PortDecoder& portDecoder = *_context->pPortDecoder;
 
+    // Full-decode observer tap (raw port, pre-decode): a real bus card that
+    // fully decodes this address drives the data bus in the same cycle as the
+    // model-decoded device (shared bus, e.g. ZXM-MoonSound vs ULA/AY/Beta-128)
+    bool fullDecodeHandled = false;
+    bool fullDecodeClaims = false;
+    const uint8_t fullDecodeValue = portDecoder.NotifyFullDecodeIn(port, fullDecodeHandled, fullDecodeClaims);
+
     // Let model-specific decoder to process port input
     uint8_t result = portDecoder.DecodePortIn(port, m1_pc);
+
+    // Shared read cycle, legacy-device priority (R6): when the model decode
+    // already handed the port to a device (ULA/AY/FDC...), that device's value
+    // IS the bus value - the observer's data is discarded (its access side
+    // effects still happened above). Two exceptions drive the bus with the
+    // observer's value: an otherwise-undecoded port (the floating bus was
+    // already suppressed for it, so the observer value replaces the 0xFF
+    // placeholder) and a CLAIMED port - an armed card overriding the legacy
+    // mirror (ZXM-MoonSound wave data at #7F once OPL4 NEW is set;
+    // MoonService-verified behaviour).
+    if (fullDecodeHandled && (fullDecodeClaims || !portDecoder.WasLastPortDecoded()))
+        result = fullDecodeValue;
 
     if (busTraceHook)
         busTraceHook('I', port, result);
@@ -700,7 +719,9 @@ uint8_t Z80::in(uint16_t port)
     // by a specific device returns the floating bus value.
     // IMPORTANT: ports decoded by real hardware (WD1793, Kempston, etc.)
     // must NOT get the floating bus override even if they return 0xFF.
-    if (!portDecoder.WasLastPortDecoded() && (port & 0x0001))
+    // Full-decode observer cards are real hardware too - a handled observer
+    // port always has a driver on the bus, floating bus must not apply.
+    if (!portDecoder.WasLastPortDecoded() && (port & 0x0001) && !fullDecodeHandled)
     {
         UlaContention* ula = _context->pUlaContention;
         if (ula)
@@ -731,6 +752,10 @@ void Z80::out(uint16_t port, uint8_t val)
     }
 
     PortDecoder& portDecoder = *_context->pPortDecoder;
+
+    // Full-decode observer tap (raw port, pre-decode): the card observes the
+    // write cycle in addition to whatever device the model decode hands it to
+    portDecoder.NotifyFullDecodeOut(port, val);
 
     // Let model-specific decoder to process port output
     portDecoder.DecodePortOut(port, val, m1_pc);

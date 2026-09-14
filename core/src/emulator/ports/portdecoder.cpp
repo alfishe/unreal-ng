@@ -40,6 +40,8 @@ PortDecoder::PortDecoder(EmulatorContext* context)
 PortDecoder::~PortDecoder()
 {
     _portDevices.clear();
+    _fullDecodeDevices.clear();
+    _fullDecodeLowByteDevices.fill(nullptr);
 }
 /// endregion </Constructors / Destructors>
 
@@ -585,6 +587,114 @@ void PortDecoder::UnregisterPortHandler(uint16_t port)
     {
         _portDevices.erase(port);
     }
+}
+
+bool PortDecoder::RegisterFullDecodePort(uint16_t port, PortDevice* device)
+{
+    bool result = false;
+
+    if (device)
+    {
+        if (!key_exists(_fullDecodeDevices, port))
+        {
+            _fullDecodeDevices.insert({port, device});
+            result = true;
+        }
+        else
+        {
+            MLOGWARNING("PortDecoder::RegisterFullDecodePort - observer for port: #%04X already registered", port);
+        }
+    }
+
+    return result;
+}
+
+void PortDecoder::UnregisterFullDecodePort(uint16_t port, PortDevice* device)
+{
+    auto it = _fullDecodeDevices.find(port);
+    if (it != _fullDecodeDevices.end() && it->second == device)
+    {
+        _fullDecodeDevices.erase(it);
+    }
+}
+
+bool PortDecoder::RegisterFullDecodeLowBytePort(uint8_t port, PortDevice* device)
+{
+    bool result = false;
+
+    if (device)
+    {
+        if (!_fullDecodeLowByteDevices[port])
+        {
+            _fullDecodeLowByteDevices[port] = device;
+            result = true;
+        }
+        else
+        {
+            MLOGWARNING("PortDecoder::RegisterFullDecodeLowBytePort - observer for port low byte: #%02X already registered", port);
+        }
+    }
+
+    return result;
+}
+
+void PortDecoder::UnregisterFullDecodeLowBytePort(uint8_t port, PortDevice* device)
+{
+    if (_fullDecodeLowByteDevices[port] == device)
+    {
+        _fullDecodeLowByteDevices[port] = nullptr;
+    }
+}
+
+/// Z80 OUT tap: forward the RAW port write to the full-decode observer (if any).
+/// Called from Z80::out() before the model decode - the observer sees the cycle
+/// no matter which device the model decode attributes it to.
+void PortDecoder::NotifyFullDecodeOut(uint16_t port, uint8_t value)
+{
+    auto it = _fullDecodeDevices.find(port);
+    if (it != _fullDecodeDevices.end() && it->second)
+    {
+        it->second->portDeviceOutMethod(port, value);
+        return;
+    }
+
+    // Low-byte CPLD decode: every high-byte alias of a registered low byte
+    // reaches the card (guest `out (n),a` forms put A in the high byte).
+    if (PortDevice* lowByteObserver = _fullDecodeLowByteDevices[port & 0xFF])
+    {
+        lowByteObserver->portDeviceOutMethod(port, value);
+    }
+}
+
+/// Z80 IN tap: query the full-decode observer for the RAW port read.
+/// Returns the observer's bus value (0xFF when none) and sets handled=true
+/// when an observer drives the bus, claimsBus=true when it claims the read
+/// over a model-decoded device (armed card, portDeviceClaimsRead). Z80::in()
+/// applies the value with legacy-device priority unless the observer claims
+/// the bus, and suppresses the floating bus override for handled ports.
+uint8_t PortDecoder::NotifyFullDecodeIn(uint16_t port, bool& handled, bool& claimsBus)
+{
+    uint8_t result = 0xFF;
+    handled = false;
+    claimsBus = false;
+
+    auto it = _fullDecodeDevices.find(port);
+    if (it != _fullDecodeDevices.end() && it->second)
+    {
+        result = it->second->portDeviceInMethod(port);
+        handled = true;
+        claimsBus = it->second->portDeviceClaimsRead(port);
+    }
+    else if (PortDevice* lowByteObserver = _fullDecodeLowByteDevices[port & 0xFF])
+    {
+        // Low-byte CPLD decode: every high-byte alias of a registered low
+        // byte reaches the card, with the same claim semantics as above.
+        result = lowByteObserver->portDeviceInMethod(port);
+        handled = true;
+        claimsBus = lowByteObserver->portDeviceClaimsRead(port);
+    }
+
+    return result;
 }
 
 /// Pass port IN operation to the peripheral device registered to handle specified port
