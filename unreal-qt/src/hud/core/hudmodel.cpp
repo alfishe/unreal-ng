@@ -22,6 +22,7 @@ namespace HudCategory
     constexpr const char* AudioAY = "audio-ay";
     constexpr const char* AudioTurboSound = "audio-turbosound";
     constexpr const char* AudioTSFM = "audio-tsfm";
+    constexpr const char* AudioFM = "audio-fm";
     constexpr const char* RecordingVideo = "recording-video";
     constexpr const char* RecordingAudio = "recording-audio";
     constexpr const char* EmulatorState = "emulator-state";
@@ -43,6 +44,7 @@ namespace HudCategory
             case AudioSource::AY:         return AudioAY;
             case AudioSource::TurboSound: return AudioAY;  // Use same category as single AY
             case AudioSource::TSFM:       return AudioTSFM;
+            case AudioSource::FM:         return AudioFM;
             default: return nullptr;
         }
     }
@@ -1368,7 +1370,10 @@ void HudModel::onAudioActivity(int, Message* message)
             key = "ts"; label = "TS"; icon = "turbosound";
             break;
         case AudioSource::TSFM:
-            key = "tsfm"; label = "TSFM"; icon = "turbosound";  // Reuse turbosound icon
+            key = "ts"; label = "TSFM"; icon = "turbosound";  // Same key as TS - they're mutually exclusive
+            break;
+        case AudioSource::FM:
+            key = "fm"; label = "FM"; icon = "ay";  // FM uses same icon as AY
             break;
         default:
             return;

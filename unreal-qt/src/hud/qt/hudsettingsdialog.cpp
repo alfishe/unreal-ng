@@ -44,6 +44,9 @@ std::vector<HudCategoryDescriptor> g_categories = {
     {HudNotificationCategory::AudioTSFM, QObject::tr("TurboSound FM Activity"),
      QObject::tr("Show when TurboSound FM (TSFM) is active"),
      QObject::tr("Audio"), true},  // Default on - TSFM is opt-in hardware
+    {HudNotificationCategory::AudioFM, QObject::tr("FM Synthesis Activity"),
+     QObject::tr("Show when FM synthesis (YM2203 FM part) is active"),
+     QObject::tr("Audio"), true},  // Default on
 
     // Recording
     {HudNotificationCategory::RecordingVideo, QObject::tr("Video Recording"),
