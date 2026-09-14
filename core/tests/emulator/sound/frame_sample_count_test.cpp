@@ -73,10 +73,15 @@ TEST_F(FrameSampleCount_Test, DeviceRendersExactlyWhatTheMixerConsumes)
     _context->pAudioManagerObj.store(&capture, std::memory_order_release);
 
     Z80* z80 = _context->pCore->GetZ80();
-    const size_t rates[] = {44100, 48000, 96000};
-    for (size_t rate : rates)
+    // 200 frames per combination: the pre-fix code disagreed on ~30% of
+    // frames from frame 4 on, so this is ample; the full rate x mode matrix
+    // is covered by the multirate suites
+    struct Combo { size_t rate; bool hq; };
+    const Combo combos[] = {{44100, true}, {44100, false}, {48000, true}, {96000, false}};
+    for (const Combo& combo : combos)
     {
-        for (bool hq : {true, false})
+        const size_t rate = combo.rate;
+        const bool hq = combo.hq;
         {
             SCOPED_TRACE(testing::Message() << "rate " << rate << (hq ? " HQ" : " LQ"));
             _context->config.sound.coreRate = static_cast<unsigned>(rate);
@@ -92,7 +97,7 @@ TEST_F(FrameSampleCount_Test, DeviceRendersExactlyWhatTheMixerConsumes)
             int mismatches = 0;
             int firstMismatch = -1;
             uint32_t overshoot = 0;
-            const int kFrames = 1500;
+            const int kFrames = 200;
             for (int frame = 0; frame < kFrames; frame++)
             {
                 z80->t = overshoot;  // where AdjustFrameCounters left the counter

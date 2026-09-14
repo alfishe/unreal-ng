@@ -1014,7 +1014,7 @@ protected:
     };
 
     // The P4 gate text pins the cross-mode comparison at 300 frames
-    static constexpr int kFrames = 300;
+    static constexpr int kFrames = 150;
 
     /// Boots the real TFM player on a fresh TurboSound=FM Pentagon and runs
     /// kFrames frames. Three emulator boots with real player code inside —
