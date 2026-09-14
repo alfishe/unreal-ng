@@ -79,7 +79,10 @@ HudModel::HudModel(EmulatorContext* context)
     auto initialSnapshot = std::make_shared<HudSnapshot>();
     initialSnapshot->generation = 0;
     initialSnapshot->produced = HudClock::now();
-    std::atomic_store(&_publishedSnapshot, std::shared_ptr<const HudSnapshot>(initialSnapshot));
+    {
+        std::lock_guard<std::mutex> lock(_snapshotMutex);
+        _publishedSnapshot = initialSnapshot;
+    }
 
     bool enabled = true;
     if (_context && _context->pFeatureManager)
@@ -530,7 +533,8 @@ void HudModel::endBatch()
 
 std::shared_ptr<const HudSnapshot> HudModel::snapshot() const
 {
-    return std::atomic_load(&_publishedSnapshot);
+    std::lock_guard<std::mutex> lock(_snapshotMutex);
+    return _publishedSnapshot;
 }
 
 uint64_t HudModel::generation() const
@@ -805,7 +809,10 @@ void HudModel::publishLocked()
             });
     }
 
-    std::atomic_store(&_publishedSnapshot, std::shared_ptr<const HudSnapshot>(snapshot));
+    {
+        std::lock_guard<std::mutex> lock(_snapshotMutex);
+        _publishedSnapshot = snapshot;
+    }
 
     if (_changedCallback)
     {

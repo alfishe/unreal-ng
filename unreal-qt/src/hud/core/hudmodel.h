@@ -168,6 +168,11 @@ private:
     std::atomic<uint64_t> _generation{0};
 
     mutable std::mutex _mutex;
+    // Own tiny lock for the published pointer so the GUI's snapshot() never
+    // waits on _mutex while the model is being mutated. (std::atomic_load/
+    // atomic_store on shared_ptr are deprecated in C++20 and the replacement
+    // std::atomic<std::shared_ptr> is not available on every libc++ yet.)
+    mutable std::mutex _snapshotMutex;
     std::shared_ptr<const HudSnapshot> _publishedSnapshot;
 
     std::vector<HudElement> _indicators;
