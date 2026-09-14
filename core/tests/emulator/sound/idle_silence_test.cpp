@@ -8,6 +8,10 @@
 
 #include <gtest/gtest.h>
 
+#include "_helpers/emulatortesthelper.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/audio.h"
 #include "emulator/sound/soundmanager.h"
@@ -51,24 +55,39 @@ int16_t findPeak(const int16_t* buffer, size_t sampleCount)
 class IdleSilence_Test : public ::testing::Test
 {
 protected:
+    // A standard Pentagon emulator supplies the context the sound devices
+    // need (core, memory, feature manager); the frame counter is driven by
+    // hand exactly like the other sound unit tests
+    Emulator* _emulator = nullptr;
+    EmulatorContext* _context = nullptr;
+
     void SetUp() override
     {
-        _context = std::make_unique<EmulatorContext>();
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+        ASSERT_NE(_emulator, nullptr) << "Failed to create emulator";
+        _context = _emulator->GetContext();
         _context->config.frame = PENTAGON_FRAME;
-        _context->pCore = &_core;
-        _core.setContext(_context.get());
+        _context->pCore->GetZ80()->tt = 0;
     }
 
-    void SetT(uint32_t t) { _core.getZ80()->t = t; }
+    void TearDown() override
+    {
+        if (_emulator)
+        {
+            _context->pAudioCallback.store(nullptr, std::memory_order_release);
+            _context->pAudioManagerObj.store(nullptr, std::memory_order_release);
+            EmulatorTestHelper::CleanupEmulator(_emulator);
+            _emulator = nullptr;
+        }
+    }
 
-    std::unique_ptr<EmulatorContext> _context;
-    Core _core;
+    void SetT(uint32_t t) { _context->pCore->GetZ80()->tt = t << 8; }
 };
 
 /// Test that legacy TurboSound device outputs silence when idle
 TEST_F(IdleSilence_Test, LegacyTurboSound_IdleSilence)
 {
-    auto device = std::make_unique<SoundChip_TurboSound>(_context.get());
+    auto device = std::make_unique<SoundChip_TurboSound>(_context);
     device->setCoreRate(44100);
     device->reset();
 
@@ -80,7 +99,7 @@ TEST_F(IdleSilence_Test, LegacyTurboSound_IdleSilence)
         device->handleStep();
 
         // Check combined buffer
-        const int16_t* combined = reinterpret_cast<const int16_t*>(device->getBuffer());
+        const int16_t* combined = reinterpret_cast<const int16_t*>(device->getAudioBuffer());
         const size_t samples = device->getRenderedSamplesThisFrame() * AUDIO_CHANNELS;
 
         EXPECT_TRUE(isBufferSilent(combined, samples))
@@ -104,7 +123,7 @@ TEST_F(IdleSilence_Test, LegacyTurboSound_IdleSilence)
 /// Test that TSFM device outputs silence when idle
 TEST_F(IdleSilence_Test, TurboSoundFM_IdleSilence)
 {
-    auto device = std::make_unique<SoundChip_TurboSoundFM>(_context.get());
+    auto device = std::make_unique<SoundChip_TurboSoundFM>(_context);
     device->setCoreRate(44100);
     device->reset();
 
@@ -119,7 +138,7 @@ TEST_F(IdleSilence_Test, TurboSoundFM_IdleSilence)
         const size_t samples = device->getRenderedSamplesThisFrame() * AUDIO_CHANNELS;
 
         // Check combined buffer
-        const int16_t* combined = reinterpret_cast<const int16_t*>(device->getBuffer());
+        const int16_t* combined = reinterpret_cast<const int16_t*>(device->getAudioBuffer());
         EXPECT_TRUE(isBufferSilent(combined, samples))
             << "TSFM combined buffer not silent at frame " << frame
             << ", peak: " << findPeak(combined, samples);
@@ -162,9 +181,9 @@ TEST_F(IdleSilence_Test, Beeper_IdleSilence)
 /// Test full SoundManager output is silent when no emulation runs
 TEST_F(IdleSilence_Test, SoundManager_IdleOutput)
 {
-    _context->config.sound.turboSoundKind = TurboSoundKind::TurboSound;
+    _context->config.sound.turboSoundKind = TurboSoundKind::AY;
 
-    SoundManager soundManager(_context.get());
+    SoundManager soundManager(_context);
     soundManager.reset();
 
     // Capture output
@@ -181,7 +200,7 @@ TEST_F(IdleSilence_Test, SoundManager_IdleOutput)
         soundManager.handleFrameEnd();
 
         // Get the output buffer
-        const AudioFrameDescriptor& desc = soundManager.getBufferDescriptor();
+        const AudioFrameDescriptor& desc = soundManager.getAudioBufferDescriptor();
         const int16_t* outBuffer = reinterpret_cast<const int16_t*>(desc.memoryBuffer);
         const size_t samples = MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS;
 
@@ -197,7 +216,7 @@ TEST_F(IdleSilence_Test, SoundManager_TSFM_IdleOutput)
 {
     _context->config.sound.turboSoundKind = TurboSoundKind::FM;
 
-    SoundManager soundManager(_context.get());
+    SoundManager soundManager(_context);
     soundManager.reset();
 
     for (size_t frame = 0; frame < FRAMES_TO_TEST; frame++)
@@ -210,7 +229,7 @@ TEST_F(IdleSilence_Test, SoundManager_TSFM_IdleOutput)
         SetT(PENTAGON_FRAME);
         soundManager.handleFrameEnd();
 
-        const AudioFrameDescriptor& desc = soundManager.getBufferDescriptor();
+        const AudioFrameDescriptor& desc = soundManager.getAudioBufferDescriptor();
         const int16_t* outBuffer = reinterpret_cast<const int16_t*>(desc.memoryBuffer);
         const size_t samples = MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS;
 
