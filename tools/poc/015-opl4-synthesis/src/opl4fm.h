@@ -88,6 +88,10 @@ public:
     // OPL4 mode armed (bank-1 reg 0x05 NEW). Guest-observable gating: cards
     // use it to qualify wave-port access on the shared ZX bus.
     bool NewMode() const { return _newMode; }
+    // NEW2 (0x105 bit 1): gates the OPL4 wave part. While clear the chip
+    // ignores wave register writes (select and data alike) — openMSX
+    // YMF278B::writeIO, verified on real YMF278.
+    bool New2() const { return _new2; }
     const std::array<FmOperator, kOperatorCount>& Operators() const { return _ops; }
     const std::array<FmChannel, kChannelCount>& Channels() const { return _ch; }
     const std::array<uint8_t, 512>& Regs() const { return _regs; }
@@ -118,7 +122,8 @@ private:
     bool _timer1Enable = false, _timer2Enable = false;
     bool _timer1Mask = false, _timer2Mask = false;
     bool _rhythm = false;
-    bool _newMode = false; // 0x105 NEW
+    bool _newMode = false; // 0x105 NEW (bit 0, OPL3 mode)
+    bool _new2 = false;    // 0x105 NEW2 (bit 1, OPL4 wave part enable)
     uint64_t _egCnt = 0;
     uint32_t _lfoPm = 0;   // PM counter (14-bit OPL3-style)
     uint32_t _lfoAm = 0;   // AM counter (13-bit)

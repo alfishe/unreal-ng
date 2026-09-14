@@ -48,7 +48,7 @@ struct PcmSlot
     uint8_t bits = 0;            // 0=8-bit, 1=12-bit, 2=16-bit
     uint32_t startAddr = 0;      // 22-bit
     uint16_t loopAddr = 0;
-    uint16_t endAddr = 0;
+    uint16_t endAddr = 0;        // stored complement S = 0x10000 - true end
 
     // Playback state
     uint16_t pos = 0;

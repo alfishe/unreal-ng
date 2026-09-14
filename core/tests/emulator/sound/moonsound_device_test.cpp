@@ -108,6 +108,11 @@ TEST_F(MoonSoundDevice_Test, WavePorts_WriteAndReadbackThroughRealBus)
     Z80* cpu = context->pCore->GetZ80();
     ASSERT_NE(cpu, nullptr);
 
+    // Arm the wave part first: the YMF278B ignores wave register access
+    // while NEW2 (FM bank-1 reg 0x105 bit 1) is clear (openMSX-verified).
+    cpu->out(0xC6, 0x05);
+    cpu->out(0xC7, 0x03);
+
     // Device-ID register: written 0x15, read back with the ID bits forced
     cpu->out(0x7E, 2);
     cpu->out(0x7F, 0x15);
@@ -196,11 +201,14 @@ TEST_F(MoonSoundDevice_Test, SharedBus_ArmedCardOverridesLegacyMirrorAt7F)
     EXPECT_FALSE(moonsound->portDeviceClaimsRead(0x7F));
 
     // The service's init write: FM2 reg 05 = NEW2|NEW. The card claims #7F
-    // and its register byte drives the bus over the mirror.
+    // and its register byte drives the bus over the mirror. (The reg-2
+    // payload must be re-sent after arming: the pre-arm write below was
+    // ignored by the NEW2 gate, as on real silicon.)
     cpu->out(0xC6, 0x05);
     cpu->out(0xC7, 0x03);
     EXPECT_TRUE(moonsound->portDeviceClaimsRead(0x7F));
     cpu->out(0x7E, 2);
+    cpu->out(0x7F, 0x15);
     EXPECT_EQ(cpu->in(0x7F), 0x15 | 0x20);
 
     // Low-byte decode regression (MoonService root cause): the Z80 immediate
@@ -258,7 +266,7 @@ TEST_F(MoonSoundDevice_Test, FmPorts_WritesReachChipState)
     // Bank 1: register 0x01 (WSE) = 0x20
     cpu->out(0xC4, 0x01);
     cpu->out(0xC5, 0x20);
-    // Bank 2: register 0x105 (NEW2) = 0x01
+    // Bank 2: register 0x105 = 0x01 (NEW, bit 0 — OPL3 mode; NEW2 is bit 1)
     cpu->out(0xC6, 0x05);
     cpu->out(0xC7, 0x01);
 
@@ -359,6 +367,11 @@ TEST_F(MoonSoundDevice_Test, FrameEnd_KeyedPcmTone_RendersIntoPcmSourceOnly)
         cpu->out(0x7E, reg);
         cpu->out(0x7F, value);
     };
+
+    // Arm the wave part: NEW2|NEW at FM bank-1 reg 0x105 — without it the
+    // chip ignores every wave register write (openMSX-verified).
+    cpu->out(0xC6, 0x05);
+    cpu->out(0xC7, 0x03);
 
     // SRAM upload window on (MA = reg 2 bit 0); the header-base bits are
     // only read at the tone fetch, so they can stay 0 during the upload.
@@ -527,6 +540,10 @@ TEST_F(MoonSoundDevice_Test, TTD_RoundTrip_RestoresLatchesAndChipState)
     ASSERT_NE(cpu, nullptr);
 
     KeyOnFmCh0ThroughPorts(cpu);
+    // Arm NEW2 first so the wave latch write below is accepted (the chip
+    // ignores wave register access while NEW2 is clear, openMSX-verified).
+    cpu->out(0xC6, 0x05);
+    cpu->out(0xC7, 0x03);
     cpu->out(0xC4, 0x21);  // distinct latch states left behind
     cpu->out(0xC6, 0x44);
     cpu->out(0x7E, 0x33);

@@ -126,13 +126,16 @@ int16_t Opl4Pcm::GetSample(const PcmSlot& s, uint16_t pos) const
 
 uint16_t Opl4Pcm::NextPos(const PcmSlot& s, uint16_t pos, uint16_t increment)
 {
-    // Loop overrun (§5.4, ymfm-exact): a step that reaches the end wraps by
-    // pos += loopAddr - endAddr, carrying the overrun into the loop — the
-    // audible loop glitch of the real chip. endAddr 0 wraps every step
-    // (no-op when loopAddr is 0 too: linear one-shot play).
+    // Loop overrun (§5.4, openMSX-exact "this is how the actual chip does
+    // it"): endAddr is stored as its complement S (= 0x10000 - true end), so
+    // the chip tests pos + S >= 0x10000 and wraps by pos += S + loopAddr,
+    // carrying the overrun into the loop — the audible loop glitch of the
+    // real chip and MAME's historical pitch-fluctuation fix. S == 0 (a full
+    // 64 KiB sample) never trips the test: linear one-shot play with the
+    // natural 16-bit wrap.
     pos = static_cast<uint16_t>(pos + increment);
-    if (pos >= s.endAddr)
-        pos = static_cast<uint16_t>(pos + s.loopAddr - s.endAddr);
+    if (static_cast<uint32_t>(pos) + s.endAddr >= 0x10000u)
+        pos = static_cast<uint16_t>(pos + s.endAddr + s.loopAddr);
     return pos;
 }
 
@@ -170,11 +173,10 @@ void Opl4Pcm::WriteRegDirect(uint8_t reg, uint8_t data)
             s.bits = (buf[0] & 0xC0) >> 6;
             s.startAddr = buf[2] | (buf[1] << 8) | ((buf[0] & 0x3F) << 16);
             s.loopAddr = static_cast<uint16_t>(buf[4] | (buf[3] << 8));
-            // Bytes 5..6 hold the end point as its complement (ymfm:
-            // "stored as a negative value"); negating restores the positive
-            // end offset used by the overrun wrap in NextPos (§5.4).
-            s.endAddr = static_cast<uint16_t>(
-                0x10000u - static_cast<uint16_t>(buf[6] | (buf[5] << 8)));
+            // Bytes 5..6 hold the end point as its complement S (stored
+            // negative; openMSX keeps it raw and wraps chip-style in
+            // NextPos). S == 0 means a full 64 KiB one-shot.
+            s.endAddr = static_cast<uint16_t>(buf[6] | (buf[5] << 8));
             for (int i = 7; i < 12; i++)
             {
                 // Bytes 7..11 rewrite banks 5..9 *observably*: route through
@@ -272,7 +274,10 @@ void Opl4Pcm::WriteRegDirect(uint8_t reg, uint8_t data)
         break; // test
     case 0x02:
         // Memory mode / wave-table header base: stored; the engine reads it
-        // lazily at tone fetch. Bits 2..1 = headerBase, bit 0 = MA.
+        // lazily at tone fetch. Bits 4..2 = WTB header base, bit 1 = the
+        // /MCS chip-select mode (openMSX setupMemoryPointers; both modes map
+        // identically on a 2 MiB ROM + 1 MiB SRAM board, so unmodelled),
+        // bit 0 = MA (memory access).
         break;
     case 0x03:
         // Verified on real YMF278: regs 3/4 only latch; upper 2 bits read 0.

@@ -1,5 +1,6 @@
 # ZXM-MoonSound in unreal-ng — integration and mixing design
 
+**Revision 4** (2026-09-14). Revision 3 resolved the low-byte port-decode blocker. This revision records the openMSX reference audit (`opl4-openmsx-audit-and-diff-harness.md`): status LD moved to bit 1, LD now opens only on tone-load writes, wave writes are gated on NEW2 (0x105 bit 1), and the PCM loop end switched to the chip's stored-complement form. See that document for the full suspect-by-suspect diff.
 **Revision 3** (2026-09-14). Revision 1 was the pre-implementation design draft (2026-09-13); Revision 2 recorded implementation and live verification. This revision resolves the former §12.5 blocker: guest I/O never reached the card because the Z80 immediate port forms leave A in the high address byte and the card decodes A0..A7 only (§2.5) — now fixed and guest-verified with the author's own binary.
 **Status:** phases 0–4 + TTD Tier A implemented; guest code reaches the card end to end (the author's MoonService v0.3a binary detects YM278B inside core-tests, §12.5). Depends on `opl4-core-tdd.md` (the chip library).
 **Scope:** wiring `libopl4` into unreal-ng — port decoding, device lifecycle, configuration, the sound-device registry, mixing, gain staging, TTD, recording, UI surface.
@@ -121,9 +122,11 @@ The implemented and unit-verified design
    does **not** own `#7F` reads statically.
 2. A `PortDevice` virtual, `portDeviceClaimsRead(port)`, lets a full-decode
    device claim the read side only once the guest has armed the card. The
-   MoonSound override returns true for `port == 0x7F && _opl4.NewMode()` —
-   i.e. after software sets the OPL4 `NEW`/`NEW2` bits (FM2 bank-1 register 5),
-   exactly the arming sequence every detection routine performs.
+   MoonSound override returns true for `port == 0x7F && _opl4.New2Mode()` —
+   i.e. after software sets the OPL4 `NEW2` bit (FM2 bank-1 register 5 bit 1;
+   Revision 4: the chip's own write gate uses NEW2 specifically, matching
+   openMSX `YMF278B::getNew2`), exactly the arming sequence every detection
+   routine performs.
 3. `NotifyFullDecodeIn()` reports `claimsBus` alongside the value; `Z80::in()`
    takes the full-decode value when the handler claims the bus or when no
    partial-decode device answered (`WasLastPortDecoded()`).

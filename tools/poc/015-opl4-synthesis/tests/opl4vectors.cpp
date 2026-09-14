@@ -102,7 +102,7 @@ void VecLoopOverrun()
         WriteToneHeader(tc.mem, kHdrBase, 2, kSmpBase, 1, 4, nullptr);
         WriteDistinct16(tc.mem, 8);
         KeyOnPcmParam(tc.chip, 0, 0, 1, 0, 0, 15, 0, 0, 0, 15, 0, 0);
-        CHECK_EQ_I(tc.chip.PcmForTest().Slots()[0].endAddr, 4);
+        CHECK_EQ_I(tc.chip.PcmForTest().Slots()[0].endAddr, 0x10000 - 4);
         const int seq1[] = {1, 2, 3, 1, 2, 3, 1, 2, 3, 1};
         uint64_t t = 0;
         for (int k = 0; k < 10; k++)
@@ -129,8 +129,10 @@ void VecLoopOverrun()
         }
     }
     {
-        // E = 0 (header value 0): the wrap fires every step — ymfm-exact —
-        // so each advance adds loopAddr on top of the increment.
+        // Stored end complement S = 0 (a full 64 KiB sample): the loop test
+        // pos + S >= 0x10000 can never trip, so playback stays linear with
+        // the natural 16-bit wrap and loopAddr is irrelevant (openMSX-exact;
+        // the old pre-negated engine wrapped every step and scanned memory).
         TestChip tc;
         WriteToneHeader(tc.mem, kHdrBase, 2, kSmpBase, 5, 0, nullptr);
         WriteDistinct16(tc.mem, 8);
@@ -141,7 +143,7 @@ void VecLoopOverrun()
         {
             t += kOutClocks;
             tc.chip.Run(t);
-            CHECK_EQ_I(tc.chip.PcmForTest().Slots()[0].pos, (k * 6) & 0xFFFF);
+            CHECK_EQ_I(tc.chip.PcmForTest().Slots()[0].pos, k);
         }
     }
     {

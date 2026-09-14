@@ -13,13 +13,14 @@ constexpr uint64_t kMasterClockHz = 33868800; // 33.8688 MHz
 constexpr uint64_t kFmDivider = 684;          // FM grid  ≈ 49516.4 Hz
 constexpr uint64_t kOutDivider = 768;         // output grid = 44100 Hz exactly
 
-// Bus timing, in master clocks (core TDD §3.3, resolved M3).
+// Bus timing, in master clocks (core TDD §3.3, resolved M3; values
+// real-HW-verified via openMSX YMF278B). The LD window length lives in
+// Opl4Pcm::ToneLoadClocks (9600 ≈ 283.5 µs; openMSX uses 10000 and notes
+// the true value is 2–4% below that).
 constexpr uint64_t kBusyFmWriteClocks = 56;
 constexpr uint64_t kBusyWaveRegWriteClocks = 88;
 constexpr uint64_t kBusyMemWriteClocks = 28;
 constexpr uint64_t kBusyMemReadClocks = 38;
-constexpr uint64_t kLdMinClocks = 9600; // LD busy window, tone header fetch
-constexpr uint64_t kLdMaxClocks = 10000;
 
 // Native chip output grid.
 constexpr uint32_t kChipOutputRate = 44100;

@@ -319,8 +319,10 @@ void Opl4::WriteWave(uint64_t time, uint8_t addr, uint8_t data)
     const bool memPath = (addr >= 0x03 && addr <= 0x06);
     const uint64_t busy = memPath ? kBusyMemWriteClocks : kBusyWaveRegWriteClocks;
     im.busyUntil = std::max(im.busyUntil, im.masterPos + busy);
-    if (addr >= 0x02 && addr <= 0x06)
-        im.ldUntil = std::max(im.ldUntil, im.masterPos + kLdMinClocks);
+    // LD opens only on tone-header fetch writes — bank-0 regs 0x08..0x1F,
+    // exactly the wave-number registers (openMSX YMF278B::writeIO gates
+    // LOAD_DELAY on the same range; plain register and memory writes extend
+    // BUSY only).
     if (toneLoad)
         im.ldUntil = std::max(im.ldUntil, im.masterPos + Opl4Pcm::ToneLoadClocks());
 }
@@ -330,11 +332,14 @@ uint8_t Opl4::ReadStatus(uint64_t time)
     SyncTo(time);
     Impl& im = *_impl;
     uint8_t s = _fm->Status() & (Opl4Fm::kStatusT1 | Opl4Fm::kStatusT2);
+    // YMF262 status | chip flags (openMSX YMF278B::readYMF278Status,
+    // real-HW-verified bit positions): bit 0 BUSY, bit 1 LD. The YMF262
+    // status only ever uses bits 6..5 (timer flags), so no collision.
     const bool busy = im.masterPos < im.busyUntil || im.masterPos < im.ldUntil;
     if (busy)
         s |= 0x01; // BUSY
     if (im.masterPos < im.ldUntil)
-        s |= 0x80; // LD (memory load window)
+        s |= 0x02; // LD (wave-table load window)
     return s;
 }
 
@@ -343,10 +348,11 @@ uint8_t Opl4::ReadWave(uint64_t time, uint8_t addr)
     SyncTo(time);
     Impl& im = *_impl;
     const uint8_t v = _pcm->ReadReg(addr);
-    if (addr == 0x06)
+    if (addr >= 0x03 && addr <= 0x06)
     {
-        // Direct memory read: 38 master clocks on the bus regardless of MA
-        // (§3.3); the auto-increment inside ReadReg stays MA-gated.
+        // Direct memory read: 38 master clocks on the bus for the memory-path
+        // registers (openMSX applies MEM_READ_DELAY for latch 3..6; the
+        // auto-increment inside ReadReg stays MA-gated).
         im.busyUntil = std::max(im.busyUntil, im.masterPos + kBusyMemReadClocks);
     }
     return v;
@@ -360,6 +366,11 @@ void Opl4::Run(uint64_t time)
 bool Opl4::NewMode() const
 {
     return _fm->NewMode();
+}
+
+bool Opl4::New2Mode() const
+{
+    return _fm->New2();
 }
 
 // ---------------------------------------------------------------------------

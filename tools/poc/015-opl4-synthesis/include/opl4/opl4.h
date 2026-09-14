@@ -40,6 +40,10 @@ public:
     // that gate shared-bus behaviour on it (ZX cards vs the Beta-128 FDC).
     bool NewMode() const;
 
+    // NEW2 (bank-1 reg 0x05 bit 1): the chip-internal OPL4-wave gate. While
+    // clear the YMF278B ignores wave register writes (openMSX-verified).
+    bool New2Mode() const;
+
     // Core-only advance — call at least once per host frame even when muted.
     void Run(uint64_t time);
 

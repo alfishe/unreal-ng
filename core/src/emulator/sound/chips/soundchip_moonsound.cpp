@@ -335,11 +335,16 @@ void SoundChip_Moonsound::portDeviceOutMethod(uint16_t port, uint8_t value)
             break;
 
         case PORT_WAVE_ADDR:
-            _waveLatch = value;
+            // NEW2 gate (openMSX YMF278B::writeIO, verified on real YMF278):
+            // while NEW2 (FM bank-1 reg 0x105 bit 1) is clear the chip
+            // ignores wave register access — select and data alike.
+            if (_opl4.New2Mode())
+                _waveLatch = value;
             break;
 
         case PORT_WAVE_DATA:
-            _opl4.WriteWave(chipTimeNow(), _waveLatch, value);
+            if (_opl4.New2Mode())
+                _opl4.WriteWave(chipTimeNow(), _waveLatch, value);
             break;
 
         default:
@@ -349,11 +354,13 @@ void SoundChip_Moonsound::portDeviceOutMethod(uint16_t port, uint8_t value)
 
 bool SoundChip_Moonsound::portDeviceClaimsRead(uint16_t port)
 {
-    // MoonService-verified arming rule: until the guest sets OPL4 NEW
-    // (FM2 reg 05, honored from bank 1 even in OPL3 mode), the card leaves
-    // #7F to the Beta-128 FDC mirror - TR-DOS traffic stays byte-identical
-    // (R6). Once armed, the card drives the wave data port over the mirror.
-    return (port & 0xFF) == static_cast<uint8_t>(PORT_WAVE_DATA) && _opl4.NewMode();
+    // MoonService-verified arming rule: until the guest sets OPL4 NEW2
+    // (FM2 reg 05 bit 1, honored from bank 1 even in OPL3 mode — the same
+    // signal the chip itself uses to accept wave access, openMSX getNew2),
+    // the card leaves #7F to the Beta-128 FDC mirror - TR-DOS traffic stays
+    // byte-identical (R6). Once armed, the card drives the wave data port
+    // over the mirror.
+    return (port & 0xFF) == static_cast<uint8_t>(PORT_WAVE_DATA) && _opl4.New2Mode();
 }
 
 /// endregion </Port interface>

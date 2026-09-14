@@ -87,6 +87,7 @@ void Opl4Fm::Reset()
     _timer1Mask = _timer2Mask = false;
     _rhythm = false;
     _newMode = false;
+    _new2 = false;
     _egCnt = 0;
     _lfoPm = 0;
     _lfoAm = 0;
@@ -401,8 +402,9 @@ void Opl4Fm::WriteReg(uint8_t bank, uint8_t reg, uint8_t data)
         case 0x04: // 0x104: 4-op connection select
             RebuildConnections();
             return;
-        case 0x05: // 0x105: NEW (OPL3 mode)
+        case 0x05: // 0x105: NEW (bit 0, OPL3 mode) / NEW2 (bit 1, OPL4)
             _newMode = (data & 1) != 0;
+            _new2 = (data & 2) != 0;
             RebuildConnections();
             return;
         default:
@@ -640,6 +642,7 @@ void Opl4Fm::SaveState(uint8_t* dst) const
     flags |= _timer2Mask ? 8 : 0;
     flags |= _rhythm ? 16 : 0;
     flags |= _newMode ? 32 : 0;
+    flags |= _new2 ? 64 : 0;
     std::memcpy(dst + o, &flags, 1); o += 1;
     std::memcpy(dst + o, &_egCnt, 8); o += 8;
     std::memcpy(dst + o, &_lfoPm, 4); o += 4;
@@ -676,6 +679,7 @@ void Opl4Fm::LoadState(const uint8_t* src)
     _timer2Mask = (flags & 8) != 0;
     _rhythm = (flags & 16) != 0;
     _newMode = (flags & 32) != 0;
+    _new2 = (flags & 64) != 0;
     std::memcpy(&_egCnt, src + o, 8); o += 8;
     std::memcpy(&_lfoPm, src + o, 4); o += 4;
     std::memcpy(&_lfoAm, src + o, 4); o += 4;

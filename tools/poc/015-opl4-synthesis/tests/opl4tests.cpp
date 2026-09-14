@@ -138,16 +138,17 @@ void TestHeaderDecode()
     CHECK_EQ_I(s.bits, 2);
     CHECK_EQ_I(s.startAddr, kSmpBase);
     CHECK_EQ_I(s.loopAddr, 0x1234);
-    CHECK_EQ_I(s.endAddr, 0x0456);
+    CHECK_EQ_I(s.endAddr, 0x10000 - 0x0456); // stored complement (chip form)
     // Bytes 7..11 rewrote banks 5..9 observably (reg = 0x08 + slot + 24*bank).
     for (int b = 0; b < 5; b++)
         CHECK_EQ_I(tc.chip.PcmForTest().PeekReg(static_cast<uint8_t>(0x08 + (b + 5) * 24)),
                    banks[b]);
 
-    // LD window: 9600 master clocks after the fetch (§3.3).
-    CHECK((tc.chip.ReadStatus(1000 + 9599) & 0x80) != 0);
+    // LD window: 9600 master clocks after the fetch (§3.3). LD reads on
+    // status bit 1, BUSY on bit 0 (openMSX YMF278B::readYMF278Status).
+    CHECK((tc.chip.ReadStatus(1000 + 9599) & 0x02) != 0);
     CHECK((tc.chip.ReadStatus(1000 + 9599) & 0x01) != 0);
-    CHECK((tc.chip.ReadStatus(1000 + 9600) & 0x80) == 0);
+    CHECK((tc.chip.ReadStatus(1000 + 9600) & 0x02) == 0);
     CHECK((tc.chip.ReadStatus(1000 + 9600) & 0x01) == 0);
 }
 
@@ -292,16 +293,15 @@ void TestBusTiming()
     tc.chip.WriteWave(5000, 0x50, 0x02);
     CHECK((tc.chip.ReadStatus(5087) & 0x01) != 0);
     CHECK((tc.chip.ReadStatus(5088) & 0x01) == 0);
-    CHECK((tc.chip.ReadStatus(5088) & 0x80) == 0); // no LD on a plain reg write
+    CHECK((tc.chip.ReadStatus(5088) & 0x02) == 0); // no LD on a plain reg write
 
-    // Memory-path write (0x05): 28 clocks of BUSY, and the LD window extends
-    // BUSY for the full 9600 clocks (§3.3).
+    // Memory-path write (0x05): 28 clocks of BUSY and no LD window -
+    // LD opens only on tone-load writes to regs 0x08..0x1F (openMSX
+    // YMF278B::writeIO gates LOAD_DELAY on exactly that range).
     tc.chip.WriteWave(10000, 0x05, 0x00);
     CHECK((tc.chip.ReadStatus(10027) & 0x01) != 0);
-    CHECK((tc.chip.ReadStatus(19599) & 0x01) != 0); // still busy: LD active
-    CHECK((tc.chip.ReadStatus(19599) & 0x80) != 0);
-    CHECK((tc.chip.ReadStatus(19600) & 0x80) == 0);
-    CHECK((tc.chip.ReadStatus(19600) & 0x01) == 0);
+    CHECK((tc.chip.ReadStatus(10028) & 0x01) == 0);
+    CHECK((tc.chip.ReadStatus(10028) & 0x02) == 0);
 
     // Memory read (0x06): 38 clocks (no MA -> no access, no LD).
     tc.chip.ReadWave(20000, 0x06);
