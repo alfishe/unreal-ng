@@ -289,9 +289,11 @@ TEST_F(Multirate_Test, AY_PitchInvariantAcrossRates)
         poke(8, 15);           // Volume A: max, no envelope
 
         // Capture the rendered stream, then measure around its actual midline
-        // with hysteresis (robust against DC filtering and volume scaling)
+        // with hysteresis (robust against DC filtering and volume scaling).
+        // 25 frames (~0.51 s): ~1027 midline crossings, so the estimator noise
+        // stays near 0.1% - ten times inside the 1% tolerance below
         std::vector<int16_t> stream;
-        constexpr int FRAMES = 50;
+        constexpr int FRAMES = 25;
         stream.reserve(FRAMES * (PENTAGON_FRAME / 16));
 
         for (int f = 0; f < FRAMES; f++)
