@@ -153,7 +153,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
         if (_soundManager->init())
         {
             _audioInitialized = true;
-            _soundManager->start();  // Start immediately, keep running forever
+            // Audio device starts on-demand when first emulator is created (avoids idle hissing)
             qDebug() << "MainWindow - Audio device initialized and started (will run continuously)";
         }
         else
@@ -355,6 +355,7 @@ MainWindow::~MainWindow()
             _soundManager->stop();
             _soundManager->deinit();
             _audioInitialized = false;
+            _audioStarted = false;
         }
         delete _soundManager;
         _soundManager = nullptr;
@@ -3242,6 +3243,14 @@ void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
     }
 
     QMutexLocker locker(&_audioMutex);
+
+    // Start audio device on-demand (first emulator bind) to avoid idle hissing
+    if (_audioInitialized && !_audioStarted)
+    {
+        _soundManager->start();
+        _audioStarted = true;
+        qDebug() << "MainWindow::bindEmulatorAudio() - Audio device started on-demand";
+    }
 
     // Clear audio callback from currently adopted emulator (if any)
     // This prevents multiple emulators from trying to use the same audio device simultaneously

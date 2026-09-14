@@ -228,6 +228,7 @@ private:
     QMutex lockMutex;
     QMutex _audioMutex;              // Protects audio operations from race conditions
     bool _audioInitialized = false;  // Tracks if audio device is initialized
+    bool _audioStarted = false;       // Tracks if audio device is started (on-demand)
 
 #ifdef ENABLE_AUTOMATION
     Automation* _automation = nullptr;
