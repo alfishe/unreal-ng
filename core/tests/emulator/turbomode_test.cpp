@@ -61,6 +61,10 @@ protected:
 
         _context = _emulator->GetContext();
 
+        // These tests are about the per-frame HQ renderer itself (the test
+        // helper turns it off for speed): opt back in
+        _context->pFeatureManager->setFeature(Features::kScreenHQ, true);
+
         // Cadence tests assert the fixed default; adaptive decimation would
         // re-derive it from wall-clock speed and make them timing dependent
         _emulator->GetMainLoop()->SetTurboRenderAdaptive(false);
@@ -288,6 +292,7 @@ TEST_F(TurboMode_Test, RenderedTurboFrameMatchesNormalMode)
     // frame renders and latches. Same ROM boot => same deterministic state.
     Emulator* reference = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
     ASSERT_NE(reference, nullptr);
+    reference->GetContext()->pFeatureManager->setFeature(Features::kScreenHQ, true);  // same renderer as the fixture
     Screen* referenceScreen = reference->GetContext()->pScreen;
     ASSERT_NE(referenceScreen, nullptr);
     referenceScreen->SetPresentDelayFrames(0);

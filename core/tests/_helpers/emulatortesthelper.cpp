@@ -83,6 +83,21 @@ Emulator* EmulatorTestHelper::CreateStandardEmulator(const std::string& modelNam
     emulator->GetContext()->config.reset_rom = RM_SOS;
     emulator->Reset();
 
+    // Test-speed defaults (2026-09-13): the two per-frame "HQ" features are
+    // OFF for tests. Per-t-state screen rendering (screenhq) and the FIR
+    // audio path (soundhq) cost about a third of every emulated frame, and
+    // the full suite has a 30 s sequential budget. Tests that exercise those
+    // paths opt in explicitly:
+    //   context->pFeatureManager->setFeature(Features::kScreenHQ, true);
+    //   context->pFeatureManager->setFeature(Features::kSoundHQ, true);
+    // (or ITurboSoundDevice::setHQEnabled for the sound device alone).
+    // Product defaults are untouched - see FeatureManager registration.
+    if (FeatureManager* features = emulator->GetContext()->pFeatureManager)
+    {
+        features->setFeature(Features::kScreenHQ, false);
+        features->setFeature(Features::kSoundHQ, false);
+    }
+
     // Return raw pointer (caller must use CleanupEmulator to properly release)
     return emulator.get();
 }
