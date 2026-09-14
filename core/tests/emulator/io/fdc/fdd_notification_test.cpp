@@ -315,7 +315,7 @@ TEST_F(FDDNotificationTest, InsertNullDoesNotSendNotification)
 {
     EmulatorContext ctx;
     FDD fdd(&ctx);
-    
+
     fdd.insertDisk(nullptr);
 
     // A null insert must post nothing; bounded window, fails the moment it does.
@@ -323,6 +323,17 @@ TEST_F(FDDNotificationTest, InsertNullDoesNotSendNotification)
         << "insertDisk(nullptr) posted an insert notification";
 
     EXPECT_EQ(insertedCount(), 0u);
+}
+
+TEST_F(FDDNotificationTest, EjectWhenNoDiskInsertedDoesNotSendNotification)
+{
+    EmulatorContext ctx;
+    FDD fdd(&ctx);
+
+    fdd.ejectDisk();
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+    EXPECT_EQ(ejectedCount(), 0u);
 }
 
 TEST_F(FDDNotificationTest, MultipleInsertEjectCycles)

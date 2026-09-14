@@ -4,6 +4,8 @@
 #include "base/featuremanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/notifications.h"
+#include "emulator/platform.h"
 #include "emulator/sound/audio.h"
 #include "emulator/video/screen.h"
 #include "encoders/gif_encoder.h"
@@ -455,6 +457,18 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
     if (_context && _context->pEmulator)
         _recordingEmulatorId = _context->pEmulator->GetId();
 
+    // Derive recording type from mode and audio track configuration
+    _activeRecordingType = RecordingType::VideoAudio;
+    if (_recordingMode == RecordingMode::AudioOnly || !_videoEnabled)
+        _activeRecordingType = RecordingType::Audio;
+    else if (_audioTracks.empty())
+        _activeRecordingType = RecordingType::Video;
+
+    // Post notification for HUD indicator and UI sync
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_RECORDING_STATE,
+        new RecordingStatePayload(_recordingEmulatorId, true, _outputFilename, _activeRecordingType));
+
     MLOGINFO("RecordingManager::StartRecording - Recording started successfully");
     return true;
 }
@@ -535,6 +549,18 @@ bool RecordingManager::StartRecordingEx(const std::string& filename)
     if (_context && _context->pEmulator)
         _recordingEmulatorId = _context->pEmulator->GetId();
 
+    // Derive recording type from mode and audio track configuration
+    _activeRecordingType = RecordingType::VideoAudio;
+    if (_recordingMode == RecordingMode::AudioOnly || !_videoEnabled)
+        _activeRecordingType = RecordingType::Audio;
+    else if (_audioTracks.empty())
+        _activeRecordingType = RecordingType::Video;
+
+    // Post notification for HUD indicator and UI sync
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_RECORDING_STATE,
+        new RecordingStatePayload(_recordingEmulatorId, true, _outputFilename, _activeRecordingType));
+
     MLOGINFO("RecordingManager::StartRecordingEx - Recording started successfully");
     return true;
 }
@@ -605,6 +631,17 @@ bool RecordingManager::StartRecordingWithEncoder(const std::string& filename, st
     if (_context && _context->pEmulator)
         _recordingEmulatorId = _context->pEmulator->GetId();
 
+    // Derive recording type from mode and audio track configuration
+    _activeRecordingType = RecordingType::VideoAudio;
+    if (_recordingMode == RecordingMode::AudioOnly || !_videoEnabled)
+        _activeRecordingType = RecordingType::Audio;
+    else if (_audioTracks.empty())
+        _activeRecordingType = RecordingType::Video;
+
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_RECORDING_STATE,
+        new RecordingStatePayload(_recordingEmulatorId, true, _outputFilename, _activeRecordingType));
+
     MLOGINFO("RecordingManager::StartRecordingWithEncoder - Recording started successfully");
     return true;
 }
@@ -623,6 +660,9 @@ void RecordingManager::StopRecording()
     // accepting new frames BEFORE finalizing (closing) the encoders
     std::lock_guard<std::mutex> lock(_captureMutex);
 
+    std::string stoppedEmuId = _recordingEmulatorId;
+    std::string savedPath = _outputFilename;
+
     _isRecording = false;
     _isPaused = false;
     _recordingEmulatorId.clear();
@@ -639,6 +679,11 @@ void RecordingManager::StopRecording()
 
     // Finalize encoder and close output file
     FinalizeEncoder();
+
+    // Post stop notification with the same recording type used at start
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_RECORDING_STATE,
+        new RecordingStatePayload(stoppedEmuId, false, savedPath, _activeRecordingType));
 
     MLOGINFO("RecordingManager::StopRecording - Recording stopped, output saved to '%s'", _outputFilename.c_str());
 }
@@ -660,6 +705,11 @@ void RecordingManager::PauseRecording()
     MLOGINFO("RecordingManager::PauseRecording - Pausing recording");
     _isPaused = true;
     _wallClockPauseStart = Clock::now();
+
+    // Post pause notification for HUD indicator
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_RECORDING_STATE,
+        new RecordingStatePayload(_recordingEmulatorId, true, _outputFilename, _activeRecordingType, true));
 }
 
 void RecordingManager::ResumeRecording()
@@ -679,6 +729,11 @@ void RecordingManager::ResumeRecording()
     MLOGINFO("RecordingManager::ResumeRecording - Resuming recording");
     _isPaused = false;
     _wallClockPausedTotal += Clock::now() - _wallClockPauseStart;
+
+    // Post resume notification for HUD indicator
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_RECORDING_STATE,
+        new RecordingStatePayload(_recordingEmulatorId, true, _outputFilename, _activeRecordingType, false));
 }
 
 /// endregion </Recording control>

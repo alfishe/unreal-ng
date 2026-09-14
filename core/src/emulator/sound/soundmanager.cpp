@@ -464,9 +464,9 @@ void SoundManager::handleFrameEnd()
     // the legacy device; TSFM drains its word queues). Axis trap: z80->t
     // has already been rebased by AdjustFrameCounters when this runs, so a
     // device must drain to its own end-of-frame position, never to
-    // AudioTstate(z80->t). Skipped when synthesis is suppressed (turbo).
-    if (!_synthesisSuppressed)
-        _turboSound->handleFrameEnd();
+    // AudioTstate(z80->t). Always called - the device handles suppression
+    // internally and posts HUD notifications regardless.
+    _turboSound->handleFrameEnd();
 
     /// region <Determine actual samples for this frame>
     // Per-frame sample count derives from the machine's frame length, NOT the
@@ -597,6 +597,10 @@ void SoundManager::handleFrameEnd()
     // Finalize Covox frame (DC removal etc.) before mixing
     if (_covox)
         _covox->handleFrameEnd(samplesThisFrame);
+
+    // Finalize TurboSound frame (activity notification for HUD)
+    if (_turboSound)
+        _turboSound->handleFrameEnd();
 
     // Determine if any device has solo active
     bool soloActive = false;

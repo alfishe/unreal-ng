@@ -177,4 +177,10 @@ private:
 
     // Track recording state independently - context may become invalid mid-recording
     bool _wasRecording = false;
+
+    // MessageCenter observer for external recording state changes
+    uint64_t _recordingStateObserverId = 0;
+    void subscribeRecordingObserver();
+    void unsubscribeRecordingObserver();
+    void onRecordingStateChanged(bool isRecording, const std::string& emulatorId);
 };

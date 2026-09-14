@@ -67,6 +67,10 @@ protected:
     bool _dcRemovalEnabled = false;
     float _dcAccumL = 0.0f;
     float _dcAccumR = 0.0f;
+
+    // Activity tracking for HUD notification
+    bool _frameHadActivity = false;
+    bool _wasActive = false;
     static constexpr float DC_COEF = 0.995f;  // ~7 Hz cutoff @ 44.1 kHz
     float _dcCoefEff = DC_COEF;               // DC_COEF^(44100/fs): same cutoff Hz at every core rate
 

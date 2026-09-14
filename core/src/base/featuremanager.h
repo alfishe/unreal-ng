@@ -34,6 +34,7 @@ constexpr const char* const kOverscan = "overscan";
 constexpr const char* const kPortTrace = "porttrace";
 constexpr const char* const kFastTape = "fasttape";
 constexpr const char* const kTurboTape = "turbotape";
+constexpr const char* const kHud = "hud";
 constexpr const char* const kKempstonMouse = "kempstonmouse";
 
 // Feature Aliases
@@ -52,6 +53,7 @@ constexpr const char* const kOverscanAlias = "osc";
 constexpr const char* const kPortTraceAlias = "pt";
 constexpr const char* const kFastTapeAlias = "ftape";
 constexpr const char* const kTurboTapeAlias = "ttape";
+constexpr const char* const kHudAlias = "hud";
 constexpr const char* const kKempstonMouseAlias = "kmouse";
 
 // Feature Descriptions
@@ -80,6 +82,8 @@ constexpr const char* const kFastTapeDesc =
 constexpr const char* const kTurboTapeDesc =
     "Turbo tape loading: engage turbo mode automatically while the tape signal path plays, so blocks the LD-BYTES trap cannot serve "
     "(headerless, custom-timed, pulse streams) still load at warp speed. Warp ends with the read-gap watchdog, end-of-tape or any stop.";
+constexpr const char* const kHudDesc =
+    "On-screen HUD: indicators and messages over the emulator picture. Zero cost when disabled.";
 
 constexpr const char* const kKempstonMouseDesc =
     "Kempston Mouse on the bus (when fitted by the machine config [INPUT] Mouse=KEMPSTON). Off: the mouse ports are not decoded.";
@@ -135,7 +139,7 @@ public:
     void setDefaults();
     void loadFromFile(const std::string& path);
     void saveToFile(const std::string& path) const;
-    void onFeatureChanged();
+    void onFeatureChanged(const std::string& changedFeatureId = "");
 
     EmulatorContext* context() const
     {

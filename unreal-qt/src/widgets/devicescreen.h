@@ -5,8 +5,13 @@
 #include <QWidget>
 #include <functional>
 #include <memory>
+#include <cstdint>
 
 #include "emulator/video/screen.h"  // For DisplayViewport
+#include "framehistory.h"
+#include "crtprofiles.h"
+
+class CRTFilter;
 
 class Emulator;  // Forward declaration
 class MouseManager;
@@ -64,6 +69,9 @@ public:
         _displayViewport = viewport;
         _hasViewport = true;
 
+        // Flush temporal cache - old frames had different geometry
+        _frameHistory.clear();
+
         // Aspect ratio is fixed (see sizeHint) - only the source rectangle changes
         update();  // Trigger repaint with new viewport
     }
@@ -75,8 +83,28 @@ public:
     void clearDisplayViewport()
     {
         _hasViewport = false;
+
+        // Flush temporal cache - geometry changed
+        _frameHistory.clear();
+
         update();
     }
+
+    // Temporal blending (gigascreen flicker smoothing)
+    void setTemporalBlendingEnabled(bool enabled);
+    bool temporalBlendingEnabled() const { return _temporalEnabled; }
+    void setTemporalHistorySize(int frames);
+    int temporalHistorySize() const { return _frameHistory.historySize(); }
+    void setTemporalWeightMode(int mode);
+    int temporalWeightMode() const { return _temporalWeightMode; }
+
+    // CRT effects (SIMD-accelerated)
+    void setCRTEffectsEnabled(bool enabled);
+    bool crtEffectsEnabled() const { return _crtEnabled; }
+    void setCRTProfile(CRTProfile profile);
+    void setCRTProfile(const CRTProfileParams& params);
+    CRTProfile crtProfile() const { return _crtParams.profile; }
+    const CRTProfileParams& crtParams() const { return _crtParams; }
 
     void setMouseCaptured(bool captured);
     bool isMouseCaptured() const;
@@ -116,6 +144,18 @@ private:
     // Viewport cropping for overscan mode
     DisplayViewport _displayViewport;
     bool _hasViewport = false;
+
+    // Temporal blending
+    FrameHistory _frameHistory;
+    QImage _blendedFrame;
+    bool _temporalEnabled = false;
+    int _temporalWeightMode = 0;
+
+    // CRT effects
+    std::unique_ptr<CRTFilter> _crtFilter;
+    QImage _crtFrame;
+    bool _crtEnabled = false;
+    CRTProfileParams _crtParams;
 
     MouseManager* _mouseManager = nullptr;  // Kempston Mouse host input (owned via QObject parent)
 };

@@ -32,8 +32,11 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/notifications.h"
+#include "emulator/platform.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
+#include "3rdparty/message-center/messagecenter.h"
 #include "recordingmanager.h"
 #include "platform_encoder.h"
 #include "ffmpeg_probe.h"
@@ -105,10 +108,15 @@ VideoRecordingWidget::VideoRecordingWidget(EmulatorContext* context, QWidget* pa
     connect(_rateInfoTimer, &QTimer::timeout, this, &VideoRecordingWidget::updateAudioRateInfo);
     _rateInfoTimer->start();
     updateAudioRateInfo();
+
+    // Subscribe to recording state changes (from toolbar or external sources)
+    subscribeRecordingObserver();
 }
 
 VideoRecordingWidget::~VideoRecordingWidget()
 {
+    unsubscribeRecordingObserver();
+
     if (_statsTimer)
         _statsTimer->stop();
 
@@ -2004,4 +2012,62 @@ void VideoRecordingWidget::runBenchmark()
 
     dialog.resize(640, static_cast<int>(results.size() + 1) * 30 + 130);
     dialog.exec();
+}
+
+void VideoRecordingWidget::subscribeRecordingObserver()
+{
+    if (_recordingStateObserverId != 0)
+        return;
+
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    _recordingStateObserverId = mc.AddObserver(NC_RECORDING_STATE,
+        [this](int, Message* msg) {
+            if (!msg || !msg->obj)
+                return;
+            auto* payload = dynamic_cast<RecordingStatePayload*>(msg->obj);
+            if (!payload)
+                return;
+
+            // Post to Qt main thread for UI updates
+            QMetaObject::invokeMethod(this, [this, isRecording = payload->recording,
+                                              emulatorId = payload->emulatorId.toString()]() {
+                onRecordingStateChanged(isRecording, emulatorId);
+            }, Qt::QueuedConnection);
+        });
+}
+
+void VideoRecordingWidget::unsubscribeRecordingObserver()
+{
+    if (_recordingStateObserverId == 0)
+        return;
+
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    mc.RemoveObserverById(NC_RECORDING_STATE, _recordingStateObserverId);
+    _recordingStateObserverId = 0;
+}
+
+void VideoRecordingWidget::onRecordingStateChanged(bool isRecording, const std::string& emulatorId)
+{
+    // Only respond to changes for our context's emulator
+    if (!_contextEmulatorId.empty() && emulatorId != _contextEmulatorId)
+        return;
+
+    // Update internal state
+    if (isRecording && !_wasRecording)
+    {
+        _wasRecording = true;
+        _recordingEmulatorId = emulatorId;
+        if (_statsTimer && !_statsTimer->isActive())
+            _statsTimer->start();
+    }
+    else if (!isRecording && _wasRecording)
+    {
+        _wasRecording = false;
+        _recordingEmulatorId.clear();
+        if (_statsTimer)
+            _statsTimer->stop();
+    }
+
+    // Refresh UI to reflect new state
+    updateRecordingControls();
 }

@@ -1,34 +1,34 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include <atomic>
+#include <chrono>
 #include <cstring>
+#include <thread>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testtiminghelper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/mainloop.h"
+#include "emulator/notifications.h"
+#include "emulator/platform.h"
 #include "emulator/video/screen.h"
 #include "base/featuremanager.h"
 #include "emulator/sound/soundmanager.h"
+#include "3rdparty/message-center/messagecenter.h"
 
+/// Tests for emulator turbo mode and speed control:
+/// 1. State control: EnableTurboMode, DisableTurboMode, IsTurboMode, SetSpeedMultiplier, GetSpeedMultiplier
+/// 2. Notification dispatch: NC_SPEED_CHANGED posted on turbo toggle or multiplier change
+/// 3. Sound DSP management: turbo forces low-quality DSP and suppresses synthesis when audio is unrequested
+/// 4. Render decimation: cadence, fidelity, resume, adaptive decimation rules
+///
 /// Turbo render decimation (MainLoop): while turbo mode is active, only 1 of
 /// every MainLoop::TURBO_RENDER_DECIMATION frames performs rendering work
 /// (contingent UpdateScreen, framebuffer latch). Machine timing is untouched,
 /// so a decimated run and a normal run share the exact same machine state.
-///
-/// These tests pin three properties:
-/// 1. CADENCE - the presented framebuffer stays constant across the skipped
-///    stretch and changes exactly at the decimation boundary.
-/// 2. FIDELITY - the rendered frame at a decimation boundary is pixel-identical
-///    to the same frame of a normal-speed run (full ScreenHQ path, rendered
-///    from t=0 via ResetPrevTstate; border and multicolor latching intact).
-///    Equality also proves skipping UpdateScreen has no effect on machine
-///    state - rendering must stay a pure observer.
-/// 3. RESUME - disengaging turbo restores per-frame rendering immediately.
-///
-/// Workload: the ROM boot sequence (border flashing + paper fill), which is
-/// deterministic and visually active for well over a hundred frames.
 
 namespace
 {
@@ -46,7 +46,7 @@ uint64_t Fnv1aHash(const uint8_t* data, size_t size)
 
 } // namespace
 
-class TurboRenderDecimation_Test : public ::testing::Test
+class TurboMode_Test : public ::testing::Test
 {
 protected:
     Emulator* _emulator = nullptr;
@@ -61,7 +61,7 @@ protected:
 
         _context = _emulator->GetContext();
 
-        // The cadence tests assert the fixed default; adaptive decimation would
+        // Cadence tests assert the fixed default; adaptive decimation would
         // re-derive it from wall-clock speed and make them timing dependent
         _emulator->GetMainLoop()->SetTurboRenderAdaptive(false);
         _screen = _context->pScreen;
@@ -125,7 +125,130 @@ protected:
     }
 };
 
-TEST_F(TurboRenderDecimation_Test, TurboSkipsRenderingBetweenDecimationBoundaries)
+using TurboRenderDecimation_Test = TurboMode_Test;
+
+// ---------------------------------------------------------------------------
+// Basic Turbo Mode & Speed Multiplier State Controls
+// ---------------------------------------------------------------------------
+
+TEST_F(TurboMode_Test, EnableDisable_TogglesTurboState)
+{
+    EXPECT_FALSE(_emulator->IsTurboMode());
+
+    _emulator->EnableTurboMode(false);
+    EXPECT_TRUE(_emulator->IsTurboMode());
+
+    _emulator->DisableTurboMode();
+    EXPECT_FALSE(_emulator->IsTurboMode());
+
+    _emulator->EnableTurboMode(true);
+    EXPECT_TRUE(_emulator->IsTurboMode());
+
+    _emulator->DisableTurboMode();
+    EXPECT_FALSE(_emulator->IsTurboMode());
+}
+
+TEST_F(TurboMode_Test, SpeedMultiplier_GetAndSet)
+{
+    EXPECT_EQ(_emulator->GetSpeedMultiplier(), 1);
+
+    // Multiplier is queued and applies at the start of the next frame
+    _emulator->SetSpeedMultiplier(2);
+    _mainLoop->RunFrame();
+    EXPECT_EQ(_emulator->GetSpeedMultiplier(), 2);
+
+    _emulator->SetSpeedMultiplier(4);
+    _mainLoop->RunFrame();
+    EXPECT_EQ(_emulator->GetSpeedMultiplier(), 4);
+
+    _emulator->SetSpeedMultiplier(8);
+    _mainLoop->RunFrame();
+    EXPECT_EQ(_emulator->GetSpeedMultiplier(), 8);
+
+    _emulator->SetSpeedMultiplier(16);
+    _mainLoop->RunFrame();
+    EXPECT_EQ(_emulator->GetSpeedMultiplier(), 16);
+
+    _emulator->SetSpeedMultiplier(1);
+    _mainLoop->RunFrame();
+    EXPECT_EQ(_emulator->GetSpeedMultiplier(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Speed multiplier and turbo mode notifications
+// ---------------------------------------------------------------------------
+
+TEST_F(TurboMode_Test, SetSpeedMultiplierPostsNotification)
+{
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+
+    std::atomic<int> receivedCount{0};
+    uint8_t capturedMultiplier = 0;
+    bool capturedTurbo = true;
+    unreal::UUID capturedId;
+
+    uint64_t obsId = mc.AddObserver(NC_SPEED_CHANGED, [&](int, Message* msg) {
+        if (!msg) return;
+        auto* payload = dynamic_cast<SpeedChangedPayload*>(msg->obj);
+        if (payload && payload->emulatorId == _context->emulatorId)
+        {
+            capturedId = payload->emulatorId;
+            capturedMultiplier = payload->multiplier;
+            capturedTurbo = payload->turboMode;
+            receivedCount.fetch_add(1);
+        }
+    });
+
+    _emulator->SetSpeedMultiplier(2);
+
+    EXPECT_TRUE(WaitForCondition([&] { return receivedCount.load() >= 1; }));
+    EXPECT_EQ(receivedCount.load(), 1);
+    EXPECT_EQ(capturedId, _context->emulatorId);
+    EXPECT_EQ(capturedMultiplier, 2);
+    EXPECT_FALSE(capturedTurbo);
+
+    mc.RemoveObserverById(NC_SPEED_CHANGED, obsId);
+}
+
+TEST_F(TurboMode_Test, TurboModePostsNotification)
+{
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+
+    std::atomic<int> receivedCount{0};
+    bool capturedTurbo = false;
+
+    uint64_t obsId = mc.AddObserver(NC_SPEED_CHANGED, [&](int, Message* msg) {
+        if (!msg) return;
+        auto* payload = dynamic_cast<SpeedChangedPayload*>(msg->obj);
+        if (payload && payload->emulatorId == _context->emulatorId)
+        {
+            capturedTurbo = payload->turboMode;
+            receivedCount.fetch_add(1);
+        }
+    });
+
+    // Enable turbo
+    _emulator->EnableTurboMode();
+
+    EXPECT_TRUE(WaitForCondition([&] { return receivedCount.load() >= 1; }));
+    EXPECT_EQ(receivedCount.load(), 1);
+    EXPECT_TRUE(capturedTurbo);
+
+    // Disable turbo
+    _emulator->DisableTurboMode();
+
+    EXPECT_TRUE(WaitForCondition([&] { return receivedCount.load() >= 2; }));
+    EXPECT_EQ(receivedCount.load(), 2);
+    EXPECT_FALSE(capturedTurbo);
+
+    mc.RemoveObserverById(NC_SPEED_CHANGED, obsId);
+}
+
+// ---------------------------------------------------------------------------
+// Render Decimation Cadence & Fidelity
+// ---------------------------------------------------------------------------
+
+TEST_F(TurboMode_Test, TurboSkipsRenderingBetweenDecimationBoundaries)
 {
     const size_t decimation = MainLoop::TURBO_RENDER_DECIMATION;
     const size_t budget = 2 * decimation + 2;
@@ -150,7 +273,7 @@ TEST_F(TurboRenderDecimation_Test, TurboSkipsRenderingBetweenDecimationBoundarie
         << "Render cadence must be exactly TURBO_RENDER_DECIMATION frames, got " << second - first;
 }
 
-TEST_F(TurboRenderDecimation_Test, RenderedTurboFrameMatchesNormalMode)
+TEST_F(TurboMode_Test, RenderedTurboFrameMatchesNormalMode)
 {
     const size_t decimation = MainLoop::TURBO_RENDER_DECIMATION;
     const size_t budget = 2 * decimation + 2;
@@ -191,7 +314,7 @@ TEST_F(TurboRenderDecimation_Test, RenderedTurboFrameMatchesNormalMode)
         << "Decimated frame at boundary diverged from normal-mode rendering";
 }
 
-TEST_F(TurboRenderDecimation_Test, TurboDisengageRestoresPerFrameRendering)
+TEST_F(TurboMode_Test, TurboDisengageRestoresPerFrameRendering)
 {
     const size_t decimation = MainLoop::TURBO_RENDER_DECIMATION;
 
@@ -222,7 +345,8 @@ TEST_F(TurboRenderDecimation_Test, TurboDisengageRestoresPerFrameRendering)
 // ---------------------------------------------------------------------------
 // Turbo mode forces low-quality sound DSP without touching the soundhq feature
 // ---------------------------------------------------------------------------
-TEST_F(TurboRenderDecimation_Test, TurboOverridesSoundHQAndRestoresPreviousState)
+
+TEST_F(TurboMode_Test, TurboOverridesSoundHQAndRestoresPreviousState)
 {
     ASSERT_NE(_context->pSoundManager, nullptr);
     ASSERT_NE(_context->pFeatureManager, nullptr);
@@ -256,54 +380,10 @@ TEST_F(TurboRenderDecimation_Test, TurboOverridesSoundHQAndRestoresPreviousState
 }
 
 // ---------------------------------------------------------------------------
-// Adaptive decimation keeps the rendered cadence within [target, 2 x target)
-// ---------------------------------------------------------------------------
-TEST(TurboRenderDecimation, AdaptiveDecimationTracksMeasuredRate)
-{
-    // 5008 fps on a 50.08 Hz machine: render every 100th frame -> 50.08 rendered fps
-    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(5008.0, 50.08), 100u);
-    // Pentagon at 1000 fps: floor(1000 / 48.83) = 20 -> 50.0 rendered fps
-    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(1000.0, 48.83), 20u);
-    // Rendered rate stays below 2 x target for any measured rate above target
-    for (double fps = 48.83; fps < 20000.0; fps *= 1.37)
-    {
-        const uint64_t n = MainLoop::ComputeTurboRenderDecimation(fps, 48.83);
-        const double rendered = fps / static_cast<double>(n);
-        EXPECT_GE(rendered, 48.83 - 1e-9) << "fps=" << fps;
-        EXPECT_LT(rendered, 2 * 48.83) << "fps=" << fps;
-    }
-    // Slower than real time: render every frame
-    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(30.0, 48.83), 1u);
-    // No measurement yet: fixed default
-    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(0.0, 48.83), MainLoop::TURBO_RENDER_DECIMATION);
-    // Absurd rates clamp
-    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(1e9, 48.83), MainLoop::TURBO_RENDER_DECIMATION_MAX);
-}
-
-// With a display bound the rendered rate tracks the panel: <= refresh rate, > half of it
-TEST(TurboRenderDecimation, DisplayBoundKeepsRenderedRateAtPanelRate)
-{
-    // 5008 fps on a 120 Hz ProMotion panel: every 42nd frame -> 119.2 rendered fps
-    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(5008.0, 50.08, 120.0), 42u);
-    // Same on a 60 Hz panel: every 84th frame -> 59.6 rendered fps
-    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(5008.0, 50.08, 60.0), 84u);
-    // Mild turbo below the panel rate: render every frame
-    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(100.0, 48.83, 120.0), 1u);
-    // A bound at or below target falls back to the [target, 2 x target) rule
-    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(1000.0, 48.83, 48.0), 20u);
-    for (double fps = 130.0; fps < 20000.0; fps *= 1.31)
-    {
-        const uint64_t n = MainLoop::ComputeTurboRenderDecimation(fps, 48.83, 120.0);
-        const double rendered = fps / static_cast<double>(n);
-        EXPECT_LE(rendered, 120.0 + 1e-9) << "fps=" << fps;
-        EXPECT_GT(rendered, 60.0) << "fps=" << fps;
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Turbo mode (audio not requested) suppresses every sound synthesis path
 // ---------------------------------------------------------------------------
-TEST_F(TurboRenderDecimation_Test, TurboSuppressesSoundSynthesisAndResumesAfter)
+
+TEST_F(TurboMode_Test, TurboSuppressesSoundSynthesisAndResumesAfter)
 {
     ASSERT_NE(_context->pSoundManager, nullptr);
     SoundManager& sound = *_context->pSoundManager;
@@ -332,4 +412,50 @@ TEST_F(TurboRenderDecimation_Test, TurboSuppressesSoundSynthesisAndResumesAfter)
     RunFramesAndCollectHashes(1);
     EXPECT_FALSE(sound.isSynthesisSuppressed());
     EXPECT_FALSE(sound.getBeeper().isSynthesisSuppressed());
+}
+
+// ---------------------------------------------------------------------------
+// Adaptive decimation keeps the rendered cadence within [target, 2 x target)
+// ---------------------------------------------------------------------------
+
+TEST(TurboMode, AdaptiveDecimationTracksMeasuredRate)
+{
+    // 5008 fps on a 50.08 Hz machine: render every 100th frame -> 50.08 rendered fps
+    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(5008.0, 50.08), 100u);
+    // Pentagon at 1000 fps: floor(1000 / 48.83) = 20 -> 50.0 rendered fps
+    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(1000.0, 48.83), 20u);
+    // Rendered rate stays below 2 x target for any measured rate above target
+    for (double fps = 48.83; fps < 20000.0; fps *= 1.37)
+    {
+        const uint64_t n = MainLoop::ComputeTurboRenderDecimation(fps, 48.83);
+        const double rendered = fps / static_cast<double>(n);
+        EXPECT_GE(rendered, 48.83 - 1e-9) << "fps=" << fps;
+        EXPECT_LT(rendered, 2 * 48.83) << "fps=" << fps;
+    }
+    // Slower than real time: render every frame
+    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(30.0, 48.83), 1u);
+    // No measurement yet: fixed default
+    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(0.0, 48.83), MainLoop::TURBO_RENDER_DECIMATION);
+    // Absurd rates clamp
+    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(1e9, 48.83), MainLoop::TURBO_RENDER_DECIMATION_MAX);
+}
+
+// With a display bound the rendered rate tracks the panel: <= refresh rate, > half of it
+TEST(TurboMode, DisplayBoundKeepsRenderedRateAtPanelRate)
+{
+    // 5008 fps on a 120 Hz ProMotion panel: every 42nd frame -> 119.2 rendered fps
+    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(5008.0, 50.08, 120.0), 42u);
+    // Same on a 60 Hz panel: every 84th frame -> 59.6 rendered fps
+    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(5008.0, 50.08, 60.0), 84u);
+    // Mild turbo below the panel rate: render every frame
+    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(100.0, 48.83, 120.0), 1u);
+    // A bound at or below target falls back to the [target, 2 x target) rule
+    EXPECT_EQ(MainLoop::ComputeTurboRenderDecimation(1000.0, 48.83, 48.0), 20u);
+    for (double fps = 130.0; fps < 20000.0; fps *= 1.31)
+    {
+        const uint64_t n = MainLoop::ComputeTurboRenderDecimation(fps, 48.83, 120.0);
+        const double rendered = fps / static_cast<double>(n);
+        EXPECT_LE(rendered, 120.0 + 1e-9) << "fps=" << fps;
+        EXPECT_GT(rendered, 60.0) << "fps=" << fps;
+    }
 }
