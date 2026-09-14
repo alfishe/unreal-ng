@@ -1,7 +1,6 @@
 #include "fdd.h"
 
 #include <cstring>
-#include <random>
 #include "common/filehelper.h"
 #include "loaders/disk/loader_trd.h"
 #include "emulator/emulatorcontext.h"
@@ -12,18 +11,11 @@
 /// region <Constructors / destructors>
 FDD::FDD(EmulatorContext* context) : _context(context)
 {
-    /// region <Random track number on init>
-    // Initialize random numbers generator
-    std::random_device rd;
-    std::mt19937 generator(rd());
-
-    // Set distribution range within standard valid track number [0:80]
-    std::uniform_int_distribution<size_t> trackValueDistribution(0, 80);
-
-    // setTrack will set flags as well
-    setTrack(trackValueDistribution(generator));
-
-    /// endregion </Random track number on init>
+    // A fresh drive reports a defined state: head on track 0, bottom side,
+    // motor off, no disk. (Until 2026-09-13 the constructor seeded the head
+    // with a random track "like an unknown real drive"; that leaked as
+    // garbage into every state report and TTD snapshot of an untouched drive.)
+    setTrack(0);
 
     // TODO: remove debug
     /// region <Debug image initialization>
@@ -82,6 +74,11 @@ void FDD::insertDisk(DiskImage* diskImage)
 
 void FDD::ejectDisk()
 {
+    if (!_diskInserted && !_diskImage)
+    {
+        return;
+    }
+
     // Capture path before clearing pointer
     std::string path;
     if (_diskImage)

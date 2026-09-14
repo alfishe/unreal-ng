@@ -420,9 +420,9 @@ bool PortDecoder_Scorpion256::IsPort_KempstonMouse(uint16_t port)
 
 The fix is permanently guarded by three complementary tests in `core/tests/emulator/ports/models/scorpionports_test.cpp`:
 
-1. **`KempstonJoystick_Port1F_ReadsZeroWhateverThePagingLatch`:**
+1. **`KempstonJoystick_Port1F_ReadsZeroFromDriverPlane`:**
    - Verifies `#FF1F` returns `0x00` from the driver plane (`#1FFD = 0x10`, service bit clear).
-   - Verifies `#FF1F` returns `0x00` from the monitor plane (`#1FFD = 0x12`, service bit set).
+   - Verifies `#FF1F` returns the WD1793 status from the monitor plane (`#1FFD = 0x12`, service bit set) - MiSTer alignment, 2026-09-12.
 2. **`KempstonJoystick_DoesNotStealPort1FFromBeta128InTrdos`:**
    - Verifies that inside TR-DOS sessions (`CF_TRDOS`), `#1F` routes to the WD1793 status register and is not captured by the joystick stub.
 3. **`ProfRomServiceMonitorHighlightDoesNotBlink`:**

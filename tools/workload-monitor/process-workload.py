@@ -24,13 +24,16 @@ import argparse
 import csv
 import datetime
 import json
+import math
 import os
 import platform
 import re
 import shutil
 import signal
+import struct
 import sys
 import time
+import urllib.request
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -165,6 +168,9 @@ class VideoWallMetrics:
     rendering_single_core_pct: float
     services_single_core_pct: float
     estimated_max_tiles: int
+    cols: int = 0
+    rows: int = 0
+    gpu_accelerated: bool = False
 
 
 @dataclass
@@ -190,6 +196,77 @@ class ProcessSample:
 # -----------------------------------------------------------------------------
 # Thread Categorization & VideoWall Analytics
 # -----------------------------------------------------------------------------
+
+def fetch_videowall_live_status(pid: int = 0) -> Optional[Dict[str, Any]]:
+    """Reads real-time layout matrix and tile metadata from Shared Memory, scratch JSON, or WebAPI."""
+    # 1. Shared Memory
+    shm_names = ["unreal_videowall_status"]
+    if pid > 0:
+        shm_names.insert(0, f"unreal_videowall_status_{pid}")
+
+    for name in shm_names:
+        try:
+            from multiprocessing.shared_memory import SharedMemory
+            shm = SharedMemory(name=name, create=False)
+            buf = shm.buf
+            if len(buf) >= 40:
+                magic, ver, shm_pid, ts, tile_count, cols, rows, flags, json_len = struct.unpack("<4sIIdIIIII", buf[:40])
+                if magic == b"VWST" and ver == 1:
+                    result = {
+                        "tile_count": tile_count,
+                        "cols": cols,
+                        "rows": rows,
+                        "gpu_accelerated": bool(flags & 1),
+                        "pid": shm_pid,
+                        "timestamp": ts,
+                    }
+                    shm.close()
+                    return result
+            shm.close()
+        except Exception:
+            pass
+
+    # 2. File fallback
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(os.path.dirname(script_dir))
+    status_paths = [
+        os.path.join(os.getcwd(), "scratch", "videowall_status.json"),
+        os.path.join(project_root, "scratch", "videowall_status.json")
+    ]
+    for path in status_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        file_pid = data.get("pid")
+                        ts = data.get("timestamp", 0)
+                        if file_pid == pid or (file_pid and abs(time.time() - ts) < 60):
+                            return data
+            except Exception:
+                pass
+
+    # 3. WebAPI fallback
+    try:
+        req = urllib.request.Request("http://localhost:8090/api/v1/emulator", headers={"User-Agent": "process-workload.py"})
+        with urllib.request.urlopen(req, timeout=0.2) as resp:
+            if resp.status == 200:
+                body = json.loads(resp.read().decode("utf-8"))
+                if isinstance(body, list):
+                    count = len(body)
+                    cols = int(math.ceil(math.sqrt(count))) if count > 0 else 0
+                    rows = int(math.ceil(count / cols)) if cols > 0 else 0
+                    return {
+                        "tile_count": count,
+                        "cols": cols,
+                        "rows": rows,
+                        "gpu_accelerated": False
+                    }
+    except Exception:
+        pass
+
+    return None
+
 
 def categorize_thread(name: str, pid: int, tid: int, proc_name: str = "", single_core_pct: float = 0.0) -> str:
     name_lower = name.lower()
@@ -221,20 +298,35 @@ def categorize_thread(name: str, pid: int, tid: int, proc_name: str = "", single
 def compute_videowall_metrics(
     proc_name: str,
     threads: List[ThreadSample],
-    num_cores: int
+    num_cores: int,
+    pid: int = 0,
+    proc_single_core_pct: float = 0.0
 ) -> Optional[VideoWallMetrics]:
     emulator_threads = [t for t in threads if t.category in ("Tile", "Emulator") or t.name.lower().startswith("emulator")]
     is_vw = "videowall" in proc_name.lower() or len(emulator_threads) >= 2
 
-    tile_count = len(emulator_threads)
+    live_status = fetch_videowall_live_status(pid) if (pid > 0 or is_vw) else None
+
+    if live_status and "tile_count" in live_status:
+        tile_count = live_status["tile_count"]
+        cols = live_status.get("cols", 0)
+        rows = live_status.get("rows", 0)
+        gpu_accel = live_status.get("gpu_accelerated", False)
+    else:
+        tile_count = len(emulator_threads)
+        cols = int(math.ceil(math.sqrt(tile_count))) if tile_count > 0 else 0
+        rows = int(math.ceil(tile_count / cols)) if cols > 0 else 0
+        gpu_accel = False
+
+    if tile_count == 0 and is_vw:
+        non_ui_threads = [t for t in threads if t.category not in ("UI", "Service")]
+        if len(non_ui_threads) > 0:
+            tile_count = len(non_ui_threads)
+            cols = int(math.ceil(math.sqrt(tile_count))) if tile_count > 0 else 0
+            rows = int(math.ceil(tile_count / cols)) if cols > 0 else 0
+
     if tile_count == 0 and not is_vw:
         return None
-
-    emu_cpu = sum(t.single_core_pct for t in emulator_threads)
-    emu_sys = emu_cpu / num_cores
-    avg_tile = (emu_cpu / tile_count) if tile_count > 0 else 0.0
-    min_tile = min((t.single_core_pct for t in emulator_threads), default=0.0)
-    max_tile = max((t.single_core_pct for t in emulator_threads), default=0.0)
 
     rendering_threads = [t for t in threads if t.category in ("UI", "Worker") and t not in emulator_threads]
     rendering_cpu = sum(t.single_core_pct for t in rendering_threads)
@@ -242,11 +334,39 @@ def compute_videowall_metrics(
     service_threads = [t for t in threads if t.category == "Service"]
     service_cpu = sum(t.single_core_pct for t in service_threads)
 
+    if len(emulator_threads) > 0 and sum(t.single_core_pct for t in emulator_threads) > 0.0:
+        emu_cpu = sum(t.single_core_pct for t in emulator_threads)
+        avg_tile = (emu_cpu / tile_count) if tile_count > 0 else 0.0
+        min_tile = min((t.single_core_pct for t in emulator_threads), default=0.0)
+        max_tile = max((t.single_core_pct for t in emulator_threads), default=0.0)
+    elif tile_count > 0 and proc_single_core_pct > 0.0:
+        # Fallback for OS platforms (e.g. macOS / non-elevated Windows) where per-thread CPU breakdown is aggregated.
+        # Apportion process CPU load to active tiles (emulation is ~85% of VideoWall workload, UI ~10%, Service ~5%).
+        emu_cpu = max(proc_single_core_pct - rendering_cpu - service_cpu, proc_single_core_pct * 0.85)
+        avg_tile = emu_cpu / tile_count
+        min_tile = avg_tile
+        max_tile = avg_tile
+        if rendering_cpu == 0.0:
+            rendering_cpu = proc_single_core_pct * 0.10
+        if service_cpu == 0.0:
+            service_cpu = proc_single_core_pct * 0.05
+    else:
+        emu_cpu = 0.0
+        avg_tile = 0.0
+        min_tile = 0.0
+        max_tile = 0.0
+
+    emu_sys = emu_cpu / num_cores
+
     # Capacity forecast: Assume 85% of total multi-core headroom can be used safely
     # (leaving 15% for OS scheduler, compositor, audio DAC interrupts)
     effective_avg = avg_tile if avg_tile > 0.5 else 6.0  # default ~6% per Pentagon tile
+    effective_avg = max(effective_avg, 0.5)
+    render_overhead_per_tile = 0.1 if gpu_accel else 0.5
+    cost_per_tile = effective_avg + render_overhead_per_tile
+
     available_core_pct = max((num_cores * 100.0 * 0.85) - max(rendering_cpu, 5.0), 0.0)
-    estimated_max = int(available_core_pct / effective_avg)
+    estimated_max = int(available_core_pct / cost_per_tile)
 
     return VideoWallMetrics(
         is_videowall=is_vw,
@@ -259,6 +379,9 @@ def compute_videowall_metrics(
         rendering_single_core_pct=rendering_cpu,
         services_single_core_pct=service_cpu,
         estimated_max_tiles=estimated_max,
+        cols=cols,
+        rows=rows,
+        gpu_accelerated=gpu_accel
     )
 
 
@@ -416,7 +539,7 @@ class LinuxProcCollector(BaseCollector):
             ))
 
         thread_samples.sort(key=lambda t: t.single_core_pct, reverse=True)
-        vw_metrics = compute_videowall_metrics(self._name, thread_samples, self.num_cores)
+        vw_metrics = compute_videowall_metrics(self._name, thread_samples, self.num_cores, self.pid, single_core_pct)
 
         return ProcessSample(
             pid=self.pid,
@@ -552,7 +675,7 @@ class PsutilCollector(BaseCollector):
                 pass
 
             thread_samples.sort(key=lambda t: t.single_core_pct, reverse=True)
-            vw_metrics = compute_videowall_metrics(self._name, thread_samples, self.num_cores)
+            vw_metrics = compute_videowall_metrics(self._name, thread_samples, self.num_cores, self.pid, single_core_pct)
 
             return ProcessSample(
                 pid=self.pid,
@@ -834,8 +957,10 @@ def render_dashboard(
         lines.append(divider)
         if is_videowall:
             lines.append(f"{colors.BOLD}{colors.MAGENTA}VIDEOWALL GRID & TILE ANALYTICS:{colors.RESET}")
+            grid_str = f" ({vw.cols}x{vw.rows} grid)" if (vw.cols > 0 and vw.rows > 0) else ""
+            mode_str = f" [{'GPU' if vw.gpu_accelerated else 'CPU'}]" if vw.tile_count > 0 else ""
             lines.append(
-                f"  🔲 {colors.BOLD}Active Tiles:{colors.RESET}              {colors.CYAN}{vw.tile_count:3d} tiles{colors.RESET} "
+                f"  🔲 {colors.BOLD}Active Tiles:{colors.RESET}              {colors.CYAN}{vw.tile_count:3d} tiles{grid_str}{mode_str}{colors.RESET} "
                 f"| Total Tile CPU: {colors.color_pct(vw.emulation_single_core_pct)} "
                 f"({vw.emulation_system_pct:.2f}% system)"
             )

@@ -452,6 +452,10 @@ protected:
     uint8_t* _activeScreenMemoryOffset;
     uint8_t _borderColor;
 
+    // Frame-level screen switch tracking (zero overhead when HUD disabled)
+    bool _feature_hud_enabled = false;
+    uint8_t _screenSwitchCount = 0;
+
     VideoModeEnum _mode;
     RasterState _rasterState;
     FramebufferDescriptor _framebuffer;
@@ -503,6 +507,12 @@ public:
     virtual void InitRaster();
     virtual void InitMemoryCounters();
     /// endregion </Initialization>
+
+    /// region <Frame lifecycle>
+public:
+    void handleFrameStart();
+    void handleFrameEnd();
+    /// endregion </Frame lifecycle>
 
 public:
     virtual void SetVideoMode(VideoModeEnum mode);

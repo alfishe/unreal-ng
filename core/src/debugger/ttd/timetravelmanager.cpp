@@ -33,9 +33,10 @@
 #include "emulator/notifications.h"   // EmulatorFramePayload
 #include "emulator/io/fdc/wd1793.h"      // WD1793 (peripheral, P1.5)
 #include "emulator/io/tape/tape.h"        // Tape (peripheral, P1.5)
+#include "emulator/io/mouse/mouse.h"      // Mouse (Kempston Mouse peripheral + input journal replay)
 #include "emulator/memory/memory.h"      // Memory
 #include "emulator/platform.h"           // EmulatorState, CONFIG, PAGE_SIZE, MAX_RAM_PAGES
-#include "emulator/sound/chips/soundchip_turbosound.h"  // SoundChip_TurboSound (AY peripheral, P1.5)
+#include "emulator/sound/chips/iturbosounddevice.h"  // ITurboSoundDevice (TurboSound-slot peripheral, design §3.3 / §8.2)
 #include "emulator/video/screen.h"       // Screen, SpectrumScreenEnum (SetActiveScreen / SetBorderColor on restore)
 #include "emulator/sound/covox.h"                        // Covox (peripheral, P1.5)
 #ifdef UNREALNG_HAVE_OPL4
@@ -1042,7 +1043,11 @@ bool TimeTravelManager::RegisterModelPeripherals(std::string* err)
     // checkpoint carries blobs only for what is actually connected.
     if (_context->pSoundManager)
     {
-        _peripherals.Register(PeripheralId::TurboSound, _context->pSoundManager->getTurboSound());
+        // TurboSound slot: register under the live device's own peripheral
+        // id (legacy TurboSound = 0, TSFM = 4) so a session recorded on one
+        // device cannot load on the other (design §8.2)
+        ITurboSoundDevice* turboSoundDevice = _context->pSoundManager->getTurboSound();
+        _peripherals.Register(turboSoundDevice->TTDPeripheralId(), turboSoundDevice);
         _peripherals.Register(PeripheralId::Covox, _context->pSoundManager->getCovox());
 #ifdef UNREALNG_HAVE_OPL4
         // MoonSound registers only when the config flag built it; a null
@@ -1052,6 +1057,8 @@ bool TimeTravelManager::RegisterModelPeripherals(std::string* err)
 #endif
     }
     _peripherals.Register(PeripheralId::Tape, _context->pTape);
+    // Kempston Mouse: core device on every model (design §6.1 - not a model-specific latch)
+    _peripherals.Register(PeripheralId::KempstonMouse, _context->pMouse);
     _peripherals.Register(PeripheralId::BetaDisk, _context->pBetaDisk);
 
     // --- Model-specific state (TDD 6.4) ---
@@ -1340,8 +1347,76 @@ void TimeTravelManager::RecordInputEvent(uint8_t key, bool pressed)
     TTDInputEvent ev;
     ev.time.frame    = st.frame_counter;
     ev.time.tInFrame = z80 ? z80->t : 0;
+    ev.kind          = TTDInputKind::Key;
     ev.key           = key;
     ev.pressed       = pressed;
+    _inputJournal.Record(ev);
+}
+
+/// Current TTDTimePoint for an input mutation happening now (see RecordInputEvent)
+static TTDTimePoint InputEventTimeNow(EmulatorContext* context)
+{
+    TTDTimePoint time;
+    const EmulatorState& st = context->emulatorState;
+    Z80* z80 = context->pCore ? context->pCore->GetZ80() : nullptr;
+    time.frame    = st.frame_counter;
+    time.tInFrame = z80 ? z80->t : 0;
+    return time;
+}
+
+void TimeTravelManager::RecordMouseMove(int dx, int dy)
+{
+    if (!_context)
+        return;
+    TTDInputEvent ev;
+    ev.time = InputEventTimeNow(_context);
+    ev.kind = TTDInputKind::MouseMove;
+    ev.dx   = static_cast<int16_t>(dx);
+    ev.dy   = static_cast<int16_t>(dy);
+    _inputJournal.Record(ev);
+}
+
+void TimeTravelManager::RecordMouseButtons(uint8_t activeLowMask)
+{
+    if (!_context)
+        return;
+    TTDInputEvent ev;
+    ev.time       = InputEventTimeNow(_context);
+    ev.kind       = TTDInputKind::MouseButtons;
+    ev.buttonMask = activeLowMask;
+    _inputJournal.Record(ev);
+}
+
+void TimeTravelManager::RecordMouseWheel(int steps)
+{
+    if (!_context)
+        return;
+    TTDInputEvent ev;
+    ev.time       = InputEventTimeNow(_context);
+    ev.kind       = TTDInputKind::MouseWheel;
+    ev.wheelSteps = static_cast<int8_t>(steps);
+    _inputJournal.Record(ev);
+}
+
+void TimeTravelManager::RecordKeyboardReset()
+{
+    if (!_context)
+        return;
+    TTDInputEvent ev;
+    ev.time = InputEventTimeNow(_context);
+    ev.kind = TTDInputKind::KeyboardReset;
+    _inputJournal.Record(ev);
+}
+
+void TimeTravelManager::RecordMouseCounters(uint8_t x, uint8_t y)
+{
+    if (!_context)
+        return;
+    TTDInputEvent ev;
+    ev.time = InputEventTimeNow(_context);
+    ev.kind = TTDInputKind::MouseCounters;
+    ev.dx   = x;
+    ev.dy   = y;
     _inputJournal.Record(ev);
 }
 
@@ -1353,9 +1428,9 @@ size_t TimeTravelManager::InjectDueInputEvents(const TTDTimePoint& now)
     if (!_context || !_context->ttdReplayActive)
         return 0;
 
-    if (!_context->pKeyboard)
+    if (!_context->pKeyboard && !_context->pMouse)
     {
-        MLOGWARNING("TimeTravelManager::InjectDueInputEvents — no keyboard attached, "
+        MLOGWARNING("TimeTravelManager::InjectDueInputEvents — no input devices attached, "
                     "skipping %zu journal events at (frame=%llu, tInFrame=%u)",
                     _inputJournal.Size(),
                     static_cast<unsigned long long>(now.frame),
@@ -1363,7 +1438,7 @@ size_t TimeTravelManager::InjectDueInputEvents(const TTDTimePoint& now)
         return 0;
     }
 
-    return _inputJournal.InjectDueEvents(*_context->pKeyboard, now);
+    return _inputJournal.InjectDueEvents(_context->pKeyboard, _context->pMouse, now);
 }
 
 // ---------------------------------------------------------------------------
@@ -2497,6 +2572,31 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     return true;
 }
 
+bool TimeTravelManager::TurboSoundSessionKindMatches(
+    const std::unordered_map<uint8_t, std::vector<uint8_t>>& sessionBlobs,
+    const TTDSerializable& liveSlotDevice)
+{
+    const uint8_t legacyId = static_cast<uint8_t>(PeripheralId::TurboSound);
+    const uint8_t fmId = static_cast<uint8_t>(PeripheralId::TSFM);
+    const uint8_t liveId = static_cast<uint8_t>(liveSlotDevice.TTDPeripheralId());
+
+    const bool sessionHasLegacy = sessionBlobs.find(legacyId) != sessionBlobs.end();
+    const bool sessionHasFm = sessionBlobs.find(fmId) != sessionBlobs.end();
+
+    // No slot blob in the session: the recording machine had no slot device -
+    // nothing to mismatch against (RestoreAll's missingBlobs path covers it).
+    if (!sessionHasLegacy && !sessionHasFm)
+        return true;
+
+    // Defensive: one device occupies the slot, so a session carrying both ids
+    // cannot come from a healthy writer - refuse rather than guess which
+    // blob to trust.
+    if (sessionHasLegacy && sessionHasFm)
+        return false;
+
+    return sessionHasLegacy ? liveId == legacyId : liveId == fmId;
+}
+
 bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
 {
     // --- Read + validate header ---
@@ -2815,6 +2915,37 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     // of the same content would produce.
     for (uint32_t i = 0; i < pageStoreCount; ++i)
         _pageStore.Release(i);
+
+    // TurboSound-slot session-kind guard (TSFM design §8.2), following the
+    // model-id check's philosophy: a session recorded with the other slot
+    // device (legacy TurboSound = blob id 0, TSFM = blob id 4) is refused,
+    // not loaded. RestoreAll would restore neither device - the live one
+    // would keep whatever state it held before the load, a silent divergence
+    // with no trail back to this decision. The baseline checkpoint's blob
+    // map speaks for the whole session: one device occupies the slot for the
+    // instance's lifetime (design §3.1 - no runtime switching).
+    if (!_timeline.empty() && _context && _context->pSoundManager)
+    {
+        if (ITurboSoundDevice* slotDevice = _context->pSoundManager->getTurboSound())
+        {
+            if (!TurboSoundSessionKindMatches(_timeline.front().peripheralBlobs, *slotDevice))
+            {
+                const uint8_t legacyId = static_cast<uint8_t>(PeripheralId::TurboSound);
+                const uint8_t sessionId =
+                    _timeline.front().peripheralBlobs.find(legacyId) != _timeline.front().peripheralBlobs.end()
+                        ? legacyId
+                        : static_cast<uint8_t>(PeripheralId::TSFM);
+                const uint8_t liveId = static_cast<uint8_t>(slotDevice->TTDPeripheralId());
+                err = "TurboSound slot mismatch: session was recorded with device id " +
+                      std::to_string(sessionId) +
+                      (sessionId == legacyId ? " (legacy TurboSound)" : " (TSFM)") +
+                      ", this instance runs device id " + std::to_string(liveId) +
+                      (liveId == legacyId ? " (legacy TurboSound)" : " (TSFM)") +
+                      " - set [SOUND] TurboSound to the recorded kind and restart";
+                return false;
+            }
+        }
+    }
 
     // --- Read journal section (v3 additive, TDD §9.3) ---
     if (hasJournal)

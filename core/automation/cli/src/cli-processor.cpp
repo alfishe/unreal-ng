@@ -205,6 +205,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"key", &CLIProcessor::HandleKey},
                         {"keyboard", &CLIProcessor::HandleKey},
 
+                        // Kempston Mouse injection commands
+                        {"mouse", &CLIProcessor::HandleMouse},
+
                         // Time-Travel Debug commands
                         {"ttd", &CLIProcessor::HandleTTD},
                         
@@ -661,6 +664,16 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  key type <text>                - Type text with auto modifier handling" << NEWLINE;
     oss << "  key list                       - List all recognized key names" << NEWLINE;
     oss << "  key clear                      - Release all keys" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Mouse Injection:" << NEWLINE;
+    oss << "  mouse move <dx> <dy>           - Move by dx,dy pixels (+x right, +y up; -127..127)" << NEWLINE;
+    oss << "  mouse press|release <button>   - Press or release left|right|middle (l|r|m)" << NEWLINE;
+    oss << "  mouse click <button> [frames]  - Press, hold for frames (default 2), release" << NEWLINE;
+    oss << "  mouse buttons <none|b1,b2..>   - Set exactly which buttons are pressed" << NEWLINE;
+    oss << "  mouse wheel <steps>            - Scroll wheel -7..7 (+ = away from you)" << NEWLINE;
+    oss << "  mouse clear                    - Release all buttons, cancel pending click" << NEWLINE;
+    oss << "  mouse status                   - Show counters, buttons, wheel, port values" << NEWLINE;
+    oss << "  mouse set <x> <y>              - Debug: write raw X/Y counters (0..255)" << NEWLINE;
     oss << NEWLINE;
     oss << "  open [file]   - Open a file or show file dialog" << NEWLINE;
     oss << "  exit, quit    - Exit the CLI" << NEWLINE;

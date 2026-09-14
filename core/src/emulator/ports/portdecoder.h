@@ -17,6 +17,7 @@ class Beeper;
 class Tape;
 class SoundManager;
 class Keyboard;
+class Mouse;
 
 /// region <Constants>
 
@@ -142,6 +143,7 @@ protected:
 
     EmulatorState* _state = nullptr;
     Keyboard* _keyboard = nullptr;
+    Mouse* _mouse = nullptr;
     Tape* _tape = nullptr;
     Memory* _memory = nullptr;
     Screen* _screen = nullptr;
@@ -232,6 +234,13 @@ public:
 
     uint8_t Default_Port_FE_In(uint16_t port, uint16_t pc);
     void Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc);
+
+    /// Standard Kempston Mouse address decode (A5-A0 = 011111, A9 = 1; A8/A10 select the register)
+    static bool Standard_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister);
+    /// Standard decode gated by presence, TR-DOS ports and explicitly registered peripherals.
+    /// Virtual: a model with a documented deviation overrides it (design §3.1)
+    virtual bool Default_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister);
+    uint8_t Default_Port_KempstonMouse_In(uint16_t port, uint16_t pc);
 
     /// Whether a decoded port value belongs to the Beta128 FDC register set
     /// (#1F status/cmd, #3F track, #5F sector, #7F data, #FF system). The port

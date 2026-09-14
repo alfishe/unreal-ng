@@ -6,6 +6,7 @@
 #include "common/stringhelper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "stdafx.h"
 
 /// region <Static>
@@ -381,6 +382,20 @@ void Keyboard::OnKey(ZXKeysEnum key, bool isPressed, bool shift, bool ctrl, bool
 /// endregion </Handle keyboard events>
 
 /// region <Handle MessageCenter keyboard events>
+
+/// Host (desktop front end) keystrokes arrive here directly, not through
+/// DebugKeyboardManager, so the TTD replay guard and input journal are applied here:
+/// suppressed while TTD replays, journalled (before the matrix changes) while it records.
+bool Keyboard::IsHostInputSuppressed() const
+{
+    return _context && _context->ttdReplayActive;
+}
+
+void Keyboard::JournalHostKey(ZXKeysEnum key, bool pressed)
+{
+    if (_context && _context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording())
+        _context->pTimeTravelManager->RecordInputEvent(static_cast<uint8_t>(key), pressed);
+}
 void Keyboard::OnKeyPressed([[maybe_unused]] int id, Message* message)
 {
     if (message == nullptr || message->obj == nullptr)
@@ -400,6 +415,10 @@ void Keyboard::OnKeyPressed([[maybe_unused]] int id, Message* message)
         }
         // else: empty targetEmulatorId means broadcast to all (backward compatible)
 
+        // TTD: live host input must not mutate the matrix during replay
+        if (IsHostInputSuppressed())
+            return;
+
         ZXKeysEnum zxKey = static_cast<ZXKeysEnum>(event->zxKeyCode);
         ZXKeysEnum zxBase = getExtendedKeyBase(zxKey);
         ZXKeysEnum zxModifier = getExtendedKeyModifier(zxKey);
@@ -414,11 +433,13 @@ void Keyboard::OnKeyPressed([[maybe_unused]] int id, Message* message)
         if (zxModifier != ZXKEY_NONE)
         {
             increaseKeyPressCounter(zxModifier);
+            JournalHostKey(zxModifier, /*pressed=*/true);
             PressKey(zxModifier);
         }
 
         // Base key afterwards
         increaseKeyPressCounter(zxBase);
+        JournalHostKey(zxBase, /*pressed=*/true);
         PressKey(zxBase);
 
         MLOGINFO("OnKeyPressed: 0x%02X", zxKey);
@@ -451,6 +472,10 @@ void Keyboard::OnKeyReleased([[maybe_unused]] int id, Message* message)
         }
         // else: empty targetEmulatorId means broadcast to all (backward compatible)
 
+        // TTD: live host input must not mutate the matrix during replay
+        if (IsHostInputSuppressed())
+            return;
+
         ZXKeysEnum zxKey = static_cast<ZXKeysEnum>(event->zxKeyCode);
         ZXKeysEnum zxBase = getExtendedKeyBase(zxKey);
         ZXKeysEnum zxModifier = getExtendedKeyModifier(zxKey);
@@ -466,6 +491,7 @@ void Keyboard::OnKeyReleased([[maybe_unused]] int id, Message* message)
         {
             if (decreaseKeyPressCounter(zxModifier) == 0)
             {
+                JournalHostKey(zxModifier, /*pressed=*/false);
                 ReleaseKey(zxModifier);
             }
         }
@@ -473,6 +499,7 @@ void Keyboard::OnKeyReleased([[maybe_unused]] int id, Message* message)
         // Base key afterwards
         if (decreaseKeyPressCounter(zxBase) == 0)
         {
+            JournalHostKey(zxBase, /*pressed=*/false);
             ReleaseKey(zxBase);
         }
 

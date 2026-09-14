@@ -37,6 +37,17 @@ private:
     // Shutdown flag - blocks state changes during application exit
     std::atomic<bool> _isShuttingDown{false};
 
+    /// Recompute per-instance real-time scheduling requests from the current
+    /// selection: exactly one instance - the selected one, or the sole
+    /// instance when nothing is selected - keeps its emulation thread
+    /// real-time; every other thread drops back to normal scheduling
+    /// (user-facing rule: only the ACTIVE emulator may hold real-time
+    /// priority). Called after every selection / instance-map mutation
+    void UpdateRealtimeScheduling();
+
+    /// Same, for callers that already hold _emulatorsMutex
+    void UpdateRealtimeSchedulingLocked();
+
     // Private constructor for a singleton pattern
     EmulatorManager() = default;
 

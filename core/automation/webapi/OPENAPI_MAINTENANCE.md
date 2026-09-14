@@ -15,15 +15,15 @@ This means that **every API change** requires **manual updates** to the OpenAPI 
 
 ## Current Status
 
-✅ **100% Coverage** - All 144 registered routes documented  
-✅ **Modular Organization** - 14 domain-specific `.inc` files  
+✅ **Coverage** - 206 of 217 registered paths documented (porttrace routes pending; see verification script)  
+✅ **Modular Organization** - 22 domain-specific `.inc` files  
 ✅ **Complete Schemas** - 30+ response schemas defined  
-✅ **Organized Tags** - 20 feature-based categories  
+✅ **Organized Tags** - 23 feature-based categories  
 ✅ **Automated Verification** - Coverage test script available
 
-**Last Updated:** 2026-08-19  
-**Registered Routes:** 145 (across `emulator_api.h` and `interpreter_api.h`)  
-**OpenAPI Paths:** 150 (includes 5 planned profiler endpoints)
+**Last Updated:** 2026-09-12  
+**Registered Routes:** 238 `ADD_METHOD_TO` registrations, 217 unique paths (across `emulator_api.h` and `interpreter_api.h`)  
+**OpenAPI Paths:** 211 (includes 5 planned profiler endpoints)
 
 ## Code Organization
 
@@ -40,6 +40,7 @@ The specification is split into a slim skeleton (`openapi_spec.cpp`, ~160 lines)
 | `openapi_capture.inc` | Capture | Screen capture, OCR |
 | `openapi_basic.inc` | BASIC Control | Run, inject, extract, clear, state, mode |
 | `openapi_keyboard.inc` | Keyboard Injection | Tap, press, release, combo, macro, type, abort |
+| `openapi_mouse.inc` | Mouse Injection | Kempston mouse move, press, release, click, buttons, wheel, counters, status |
 | `openapi_settings.inc` | Settings Management | Get/set emulator settings |
 | `openapi_features.inc` | Feature Management | Get/set runtime features |
 | `openapi_state.inc` | State Inspection | Memory, screen, audio state + memory read/write |
@@ -58,6 +59,7 @@ The specification is split into a slim skeleton (`openapi_spec.cpp`, ~160 lines)
 | `capture_api.cpp` | Screen capture and OCR |
 | `basic_api.cpp` | BASIC program control |
 | `keyboard_api.cpp` | Keyboard injection |
+| `mouse_api.cpp` | Kempston mouse injection |
 | `settings_api.cpp` | Settings management |
 | `features_api.cpp` | Feature management |
 | `state_memory_api.cpp` | Memory state inspection |

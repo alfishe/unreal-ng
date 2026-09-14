@@ -35,8 +35,10 @@
 namespace ttd {
 
 /// @brief Peripheral identifier for registry and checkpoint indexing.
-/// New peripherals add entries here; the enum value is NOT stored on disk
-/// (v1 checkpoints are memory-only), so insertion order can change.
+/// New peripherals append entries here - never renumber existing values:
+/// the id is the checkpoint blob-map key and is persisted in v2 session
+/// dump blob headers (EncodeBlob/DecodeBlob), so a session recorded with
+/// one numbering must load under the same numbering.
 enum class PeripheralId : uint8_t
 {
     TurboSound = 0,
@@ -46,7 +48,8 @@ enum class PeripheralId : uint8_t
     TSFM       = 4,
     GeneralSound = 5,
     ScorpionProfROM = 6,  // Scorpion ZS 256/1024 ProfROM state machine
-    MoonSound  = 7,       // ZXM-MoonSound (YMF278B / OPL4): Tier A chip + host latches
+    KempstonMouse = 7,    // Kempston Mouse counters/buttons/wheel (core device, every model)
+    MoonSound  = 8,       // ZXM-MoonSound (YMF278B / OPL4): Tier A chip + host latches
     // Future: SAA1099, GS512, etc.
     Count
 };

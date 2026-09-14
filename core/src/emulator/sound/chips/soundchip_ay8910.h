@@ -409,6 +409,9 @@ protected:
     AYStereoMode _stereoMode = AYStereoMode::ABC;
     AYChipModel _chipModel = AYChipModel::AY8910;
 
+    // Tracks whether this chip has received any register writes (for TurboSound detection)
+    bool _hasBeenWritten = false;
+
     /// endregion </Fields>
 
     /// region <Interfacing fields>
@@ -467,6 +470,8 @@ public:
     AYStereoMode getStereoMode() const { return _stereoMode; }
     AYChipModel getChipModel() const { return _chipModel; }
     bool isChannelMuted(uint8_t channel) const;
+    bool hasBeenWritten() const { return _hasBeenWritten; }
+    void clearWrittenFlag() { _hasBeenWritten = false; }
     double getChannelVolume(uint8_t channel) const;
 
     /// endregion </Methods>

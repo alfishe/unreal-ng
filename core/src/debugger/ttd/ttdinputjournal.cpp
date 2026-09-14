@@ -9,6 +9,7 @@
 #include <algorithm>
 
 #include "emulator/io/keyboard/keyboard.h"  // Keyboard, ZXKeysEnum
+#include "emulator/io/mouse/mouse.h"        // Mouse
 
 namespace ttd {
 
@@ -40,21 +41,65 @@ TTDTimePoint TTDInputJournal::PeekNextEventTimeOnOrAfter(const TTDTimePoint& fro
 
 size_t TTDInputJournal::InjectDueEvents(Keyboard& keyboard, const TTDTimePoint& now)
 {
+    return InjectDueEvents(&keyboard, nullptr, now);
+}
+
+size_t TTDInputJournal::InjectDueEvents(Keyboard* keyboard, Mouse* mouse, const TTDTimePoint& now)
+{
     size_t injected = 0;
     for (const auto& ev : _events)
     {
-        if (ev.time == now)
+        if (!(ev.time == now))
+            continue;
+
+        switch (ev.kind)
         {
-            // ZXKeysEnum is `enum ZXKeysEnum : uint8_t` (unscoped, explicit
-            // underlying type). static_cast is the canonical conversion from
-            // the underlying integer type back to the enum.
-            const auto key = static_cast<ZXKeysEnum>(ev.key);
-            if (ev.pressed)
-                keyboard.PressKey(key);
-            else
-                keyboard.ReleaseKey(key);
-            ++injected;
+            case TTDInputKind::Key:
+                if (!keyboard)
+                    continue;
+                {
+                    // ZXKeysEnum is `enum ZXKeysEnum : uint8_t` (unscoped, explicit
+                    // underlying type). static_cast is the canonical conversion from
+                    // the underlying integer type back to the enum.
+                    const auto key = static_cast<ZXKeysEnum>(ev.key);
+                    if (ev.pressed)
+                        keyboard->PressKey(key);
+                    else
+                        keyboard->ReleaseKey(key);
+                }
+                break;
+
+            case TTDInputKind::KeyboardReset:
+                if (!keyboard)
+                    continue;
+                keyboard->Reset();
+                break;
+
+            case TTDInputKind::MouseMove:
+                if (!mouse)
+                    continue;
+                mouse->Move(ev.dx, ev.dy);
+                break;
+
+            case TTDInputKind::MouseButtons:
+                if (!mouse)
+                    continue;
+                mouse->SetButtons(ev.buttonMask);
+                break;
+
+            case TTDInputKind::MouseWheel:
+                if (!mouse)
+                    continue;
+                mouse->SetWheel(ev.wheelSteps);
+                break;
+
+            case TTDInputKind::MouseCounters:
+                if (!mouse)
+                    continue;
+                mouse->SetCounters(static_cast<uint8_t>(ev.dx), static_cast<uint8_t>(ev.dy));
+                break;
         }
+        ++injected;
     }
     return injected;
 }

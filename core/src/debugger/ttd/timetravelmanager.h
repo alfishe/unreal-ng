@@ -310,6 +310,29 @@ public:
     /// (see ttddumpformat.h::kMaxSupportedSchemaVersion).
     bool DeserializeSession(std::istream& in, std::string& err);
 
+    /// @brief Session-kind guard decision core (TSFM design §8.2).
+    ///
+    /// Pure decision: does a recorded session's TurboSound-slot blob set
+    /// agree with the live slot device? The slot has exactly two
+    /// inhabitants - the legacy two-AY device (PeripheralId::TurboSound, 0)
+    /// and TSFM (PeripheralId::TSFM, 4). A session recorded with one,
+    /// loaded into an instance running the other, would restore NEITHER
+    /// device (RestoreAll counts the live one under missingBlobs and leaves
+    /// it holding pre-load state) - a silent divergence, so the load is
+    /// refused instead. A session with no slot blob at all (recorded on a
+    /// machine without the device) is not a mismatch.
+    ///
+    /// Exposed as a public static for unit tests; DeserializeSession applies
+    /// it to the baseline checkpoint's blob map.
+    ///
+    /// @param sessionBlobs   Baseline checkpoint peripheral blob map
+    ///                       (keyed by PeripheralId).
+    /// @param liveSlotDevice The device currently in the TurboSound slot.
+    /// @return true when the kinds agree (or the session has no slot blob).
+    static bool TurboSoundSessionKindMatches(
+        const std::unordered_map<uint8_t, std::vector<uint8_t>>& sessionBlobs,
+        const TTDSerializable& liveSlotDevice);
+
     /// @brief Record where a just-deserialized session came from.
     /// Callers that loaded from a path should set it so GetSessionInfo can
     /// report provenance; streams with no path leave it empty.
@@ -433,6 +456,16 @@ public:
     /// @param key   ZXKeysEnum value (callers cast from the typed enum).
     /// @param pressed true for press, false for release.
     void RecordInputEvent(uint8_t key, bool pressed);
+
+    /// @brief Journal a Kempston Mouse mutation (same contract as RecordInputEvent:
+    /// callers gate on IsRecording() and !IsReplayActive(), and call BEFORE applying).
+    void RecordMouseMove(int dx, int dy);
+    void RecordMouseButtons(uint8_t activeLowMask);
+    void RecordMouseWheel(int steps);
+    void RecordMouseCounters(uint8_t x, uint8_t y);
+
+    /// @brief Journal a whole-matrix keyboard reset (release of every key)
+    void RecordKeyboardReset();
 
     /// @brief Read-only access to the input journal. Used by the seek engine
     /// (Item 4) and by tests.

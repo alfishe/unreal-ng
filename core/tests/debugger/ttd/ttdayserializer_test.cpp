@@ -23,6 +23,7 @@
 #include <thread>
 #include <vector>
 
+#include "_helpers/emulatortesthelper.h"
 #include "common/modulelogger.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/timetravelmanager.h"
@@ -352,6 +353,10 @@ TEST(TTD_AY_ManagerIntegration_Test, CaptureNow_PopulatesAyStateBlob)
     // blob with a TurboSound payload when recording. This is the wire-up test
     // for P1.5 (peripheral capture in CaptureNow).
     Emulator emulator(LoggerLevel::LogError);
+    // The ayState blob checked below is the legacy TurboSound payload; the
+    // shipped default slot is FM now, so stage the AY ini before Init
+    emulator.SetCustomConfigPath(
+        EmulatorTestHelper::StageTurboSoundKindConfig(TurboSoundKind::AY));
     ASSERT_TRUE(emulator.Init());
 
     EmulatorContext* context = emulator.GetContext();
