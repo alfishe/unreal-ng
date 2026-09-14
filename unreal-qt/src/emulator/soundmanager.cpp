@@ -1,8 +1,16 @@
 // miniaudio.h includes <windows.h> on Windows. winsock2.h MUST be included before
 // windows.h to prevent type conflicts (see core's stdafx.h for the same pattern).
+// mmdeviceapi.h must also come before project headers to avoid UUID collision
+// with unreal::UUID (rpcdce.h defines a global UUID typedef).
+// INITGUID makes this TU the one that DEFINES PKEY_AudioEngine_DeviceFormat
+// (otherwise it is only declared and the link fails).
 #ifdef _WIN32
+    #define INITGUID
     #include <winsock2.h>
     #include <ws2tcpip.h>
+    #include <mmdeviceapi.h>
+    #include <functiondiscoverykeys_devpkey.h>
+    #undef INITGUID
 #endif
 
 #define MA_LOG_LEVEL 4
@@ -21,9 +29,19 @@
 #include <emulator/sound/soundmanager.h>
 #include <common/timehelper.h>
 #include <cstring>
+#include <string>
 
 
 /// region <Constructors / destructors>
+AppSoundManager::AppSoundManager()
+{
+#ifdef _WIN32
+    _formatChangeTimer.setSingleShot(true);
+    _formatChangeTimer.setInterval(300);
+    connect(&_formatChangeTimer, &QTimer::timeout, this, &AppSoundManager::handleDeviceRerouted);
+#endif
+}
+
 AppSoundManager::~AppSoundManager()
 {
     this->stop();
@@ -121,6 +139,10 @@ bool AppSoundManager::init()
         // switch fires no miniaudio reroute notification)
         startNominalRateWatch();
 #endif
+#ifdef _WIN32
+        // Watch for format changes on the device (sample rate change in Windows Sound settings)
+        startFormatWatch();
+#endif
     }
 
     return result;
@@ -132,6 +154,9 @@ void AppSoundManager::deinit()
 
 #ifdef __APPLE__
     stopNominalRateWatch();
+#endif
+#ifdef _WIN32
+    stopFormatWatch();
 #endif
 
     this->stop();
@@ -326,6 +351,12 @@ void AppSoundManager::handleDeviceRerouted()
     // init() re-arms the watch on the re-established device
     stopNominalRateWatch();
 #endif
+#ifdef _WIN32
+    // The watch must not stay registered while the device is torn down
+    // (deadlocks against miniaudio's own notification unregistration);
+    // init() re-arms it on the re-established device
+    stopFormatWatch();
+#endif
 
     ma_device_uninit(&_audioDevice);
 
@@ -347,6 +378,14 @@ void AppSoundManager::handleDeviceRerouted()
         qDebug() << "AppSoundManager::handleDeviceRerouted() - Device sample rate changed"
                  << oldRate << "->" << newRate << "Hz; republishing for DRC re-base";
         emit deviceReinitialized(newRate);
+
+#ifdef _WIN32
+        // The engine may still have been switching (an upshift passes through
+        // an intermediate rate) and its final notification is lost while the
+        // watch is down. Re-check after the settle interval for as long as the
+        // rate keeps changing; a re-open yielding the same rate ends the chain.
+        _formatChangeTimer.start();
+#endif
     }
 }
 
@@ -397,3 +436,171 @@ void AppSoundManager::stopNominalRateWatch()
     _watchedDeviceObjectID = 0;
 }
 #endif  // __APPLE__
+
+#ifdef _WIN32
+/// IMMNotificationClient watching PKEY_AudioEngine_DeviceFormat on ONE endpoint
+/// (the Windows counterpart of the CoreAudio nominal-rate listener above).
+/// Callbacks arrive on a COM thread: nothing is decided or touched there - the
+/// event is only forwarded to the GUI thread.
+///
+/// Lifetime: create() hands the caller one reference. Registration makes
+/// Windows hold a second one, released again by shutdown(); the caller must
+/// therefore call shutdown() before its final Release().
+class AppSoundManager::FormatChangeNotifier final : public IMMNotificationClient
+{
+public:
+    /// Returns nullptr (after logging why) if the watch could not be established.
+    static FormatChangeNotifier* create(AppSoundManager* owner, const wchar_t* deviceId)
+    {
+        IMMDeviceEnumerator* enumerator = nullptr;
+        HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                      __uuidof(IMMDeviceEnumerator), reinterpret_cast<void**>(&enumerator));
+        if (FAILED(hr))
+        {
+            qWarning() << "AppSoundManager::FormatChangeNotifier - CoCreateInstance(MMDeviceEnumerator) failed, hr="
+                       << Qt::hex << hr;
+            return nullptr;
+        }
+
+        FormatChangeNotifier* notifier = new FormatChangeNotifier(owner, deviceId, enumerator);
+        hr = enumerator->RegisterEndpointNotificationCallback(notifier);
+        if (FAILED(hr))
+        {
+            qWarning() << "AppSoundManager::FormatChangeNotifier - RegisterEndpointNotificationCallback failed, hr="
+                       << Qt::hex << hr;
+            notifier->Release();
+            return nullptr;
+        }
+
+        return notifier;
+    }
+
+    /// Unregisters from Windows. Synchronous: once it returns no callback is
+    /// running or will be delivered, so _owner may be dropped safely.
+    void shutdown()
+    {
+        if (!_enumerator)
+            return;
+
+        _enumerator->UnregisterEndpointNotificationCallback(this);
+        _enumerator->Release();
+        _enumerator = nullptr;
+        _owner = nullptr;
+    }
+
+    // IUnknown
+    ULONG STDMETHODCALLTYPE AddRef() override
+    {
+        return InterlockedIncrement(&_refCount);
+    }
+
+    ULONG STDMETHODCALLTYPE Release() override
+    {
+        const ULONG count = InterlockedDecrement(&_refCount);
+        if (count == 0)
+            delete this;
+        return count;
+    }
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override
+    {
+        if (!ppv)
+            return E_POINTER;
+
+        if (riid == IID_IUnknown || riid == __uuidof(IMMNotificationClient))
+        {
+            *ppv = static_cast<IMMNotificationClient*>(this);
+            AddRef();
+            return S_OK;
+        }
+
+        *ppv = nullptr;
+        return E_NOINTERFACE;
+    }
+
+    // IMMNotificationClient. Device add/remove/default changes are miniaudio's
+    // business (it reports them as 'rerouted'); only the format matters here.
+    HRESULT STDMETHODCALLTYPE OnDeviceStateChanged(LPCWSTR, DWORD) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnDeviceAdded(LPCWSTR) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnDeviceRemoved(LPCWSTR) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnDefaultDeviceChanged(EDataFlow, ERole, LPCWSTR) override { return S_OK; }
+
+    HRESULT STDMETHODCALLTYPE OnPropertyValueChanged(LPCWSTR deviceId, const PROPERTYKEY key) override
+    {
+        // IsEqualPropertyKey: PROPERTYKEY operator!= is MSVC-only, MinGW lacks it
+        if (!IsEqualPropertyKey(key, PKEY_AudioEngine_DeviceFormat) || !deviceId || _deviceId != deviceId)
+            return S_OK;
+
+        // The queued call is dropped by Qt if the owner is destroyed first
+        if (AppSoundManager* owner = _owner)
+            QMetaObject::invokeMethod(owner, &AppSoundManager::onDeviceFormatChanged, Qt::QueuedConnection);
+
+        return S_OK;
+    }
+
+private:
+    FormatChangeNotifier(AppSoundManager* owner, const wchar_t* deviceId, IMMDeviceEnumerator* enumerator)
+        : _owner(owner), _enumerator(enumerator), _deviceId(deviceId)
+    {
+    }
+
+    ~FormatChangeNotifier()
+    {
+        // Only reached without shutdown() when registration failed in create()
+        if (_enumerator)
+            _enumerator->Release();
+    }
+
+    AppSoundManager* _owner;
+    IMMDeviceEnumerator* _enumerator;
+    std::wstring _deviceId;
+    LONG _refCount = 1;
+};
+
+void AppSoundManager::startFormatWatch()
+{
+    // miniaudio always records the id of the endpoint it actually opened
+    // (also when the default device was requested) - its own rerouting relies on it
+    const wchar_t* deviceId = _audioDevice.playback.id.wasapi;
+    if (!deviceId[0])
+    {
+        qWarning() << "AppSoundManager::startFormatWatch() - No WASAPI endpoint id; sample rate changes will not be detected";
+        return;
+    }
+
+    if (_formatNotifier)
+        return;
+
+    _formatNotifier = FormatChangeNotifier::create(this, deviceId);
+    if (!_formatNotifier)
+    {
+        qWarning() << "AppSoundManager::startFormatWatch() - Format watch unavailable; sample rate changes will not be detected";
+        return;
+    }
+
+    qDebug() << "AppSoundManager::startFormatWatch() - Watching for Windows device format changes";
+}
+
+void AppSoundManager::stopFormatWatch()
+{
+    _formatChangeTimer.stop();
+
+    if (!_formatNotifier)
+        return;
+
+    _formatNotifier->shutdown();
+    _formatNotifier->Release();
+    _formatNotifier = nullptr;
+}
+
+void AppSoundManager::onDeviceFormatChanged()
+{
+    if (_shuttingDown.load(std::memory_order_acquire))
+        return;
+
+    // Restarting the single-shot timer coalesces the burst of notifications
+    // Windows emits per format switch and lets the engine settle before the
+    // device is re-opened; the interval is set in the constructor.
+    _formatChangeTimer.start();
+}
+#endif  // _WIN32
