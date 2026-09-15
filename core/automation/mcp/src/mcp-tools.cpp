@@ -93,17 +93,23 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"create", "list", "list_models", "status", "start", "stop", "pause", "resume", "reset", "destroy"})
+    for (const char* action : {"create", "list", "list_models", "server", "status", "start", "stop", "pause", "resume", "reset", "destroy"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Lifecycle operation. 'create' makes a new running instance; 'list' shows all instances; 'list_models' enumerates hardware models.";
+        "Lifecycle operation. 'create' makes a new running instance (fails with a reason on models this build "
+        "cannot create — no silent fallback); 'list' shows all instances with their machine identity; "
+        "'list_models' enumerates hardware models with creatable flags; 'server' reports the build fingerprint "
+        "and models_creatable; 'status' reports one instance's details.";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["target"]["description"] = "Emulator id, or 'auto' to reuse the single instance (auto-created when none exists)";
     schema["properties"]["model"]["type"] = "string";
-    schema["properties"]["model"]["description"] = "Hardware model for 'create' — e.g. 48K, 128k, PLUS2, PLUS3, PENTAGON, SCORPION, ATM1..3, PROFI (see list_models)";
+    schema["properties"]["model"]["description"] =
+        "Hardware model short name for 'create' — e.g. 48K, 128k, PLUS3, TSL, ATM3, ATM710, ATM450, PROFI, "
+        "SCORPION, PROFSCORP, GMX, KAY, QUORUM, LSY256, PHOENIX (see list_models; creatability is "
+        "build-dependent — check the 'creatable' flags before assuming a machine exists)";
     schema["properties"]["ram_size"]["type"] = "integer";
     schema["properties"]["ram_size"]["description"] = "Optional RAM size in KB for 'create' (e.g. 128, 256, 512)";
     schema["required"].append("action");
@@ -140,6 +146,15 @@ void RegisterEmulatorManage(ToolRegistry& registry)
             if (action == "list_models")
             {
                 ForwardCall("GET", "/api/v1/emulator/models", nullptr, caller, "Available hardware models", done);
+                return;
+            }
+
+            // Server-level status (parity with GET /api/v1/emulator/status):
+            // build fingerprint + models_creatable. Same information the CLI
+            // 'status' command prints and the WebAPI serves - one source.
+            if (action == "server")
+            {
+                ForwardCall("GET", "/api/v1/emulator/status", nullptr, caller, "Server build fingerprint and creatable models", done);
                 return;
             }
 

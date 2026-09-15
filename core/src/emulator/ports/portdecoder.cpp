@@ -47,6 +47,26 @@ PortDecoder::~PortDecoder()
 
 /// region <Static methods>
 
+bool PortDecoder::IsModelSupported(MEM_MODEL model)
+{
+    // Mirrors the switch in GetPortDecoderForModel: true == factory returns
+    // a decoder, false == factory throws std::logic_error. Keep both in sync
+    // (see the note in portdecoder.h).
+    switch (model)
+    {
+        case MM_SPECTRUM48:
+        case MM_PENTAGON:
+        case MM_SPECTRUM128:
+        case MM_PLUS3:
+        case MM_PROFI:
+        case MM_SCORP:
+        case MM_PROFSCORP:
+            return true;
+        default:
+            return false;
+    }
+}
+
 PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContext* context)
 {
     PortDecoder* result = nullptr;

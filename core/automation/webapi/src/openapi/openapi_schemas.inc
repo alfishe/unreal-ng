@@ -14,10 +14,34 @@
     schemas["EmulatorInfo"]["properties"]["is_running"]["type"] = "boolean";
     schemas["EmulatorInfo"]["properties"]["is_paused"]["type"] = "boolean";
     schemas["EmulatorInfo"]["properties"]["is_debug"]["type"] = "boolean";
+    // Machine identity block (P0-1): every lifecycle response carries it
+    schemas["EmulatorInfo"]["properties"]["model"]["type"] = "string";
+    schemas["EmulatorInfo"]["properties"]["model"]["description"] = "Model short name (e.g. 'PENTAGON', '48K')";
+    schemas["EmulatorInfo"]["properties"]["model_full_name"]["type"] = "string";
+    schemas["EmulatorInfo"]["properties"]["model_full_name"]["description"] = "Human-readable model name";
+    schemas["EmulatorInfo"]["properties"]["ram_kb"]["type"] = "integer";
+    schemas["EmulatorInfo"]["properties"]["ram_kb"]["description"] = "Configured RAM in KB";
+    schemas["EmulatorInfo"]["properties"]["video_mode"]["type"] = "string";
+    schemas["EmulatorInfo"]["properties"]["video_mode"]["nullable"] = true;
+    schemas["EmulatorInfo"]["properties"]["video_mode"]["description"] =
+        "Active video mode name (null until the screen subsystem exists)";
+    schemas["EmulatorInfo"]["properties"]["speed_multiplier"]["type"] = "integer";
+    schemas["EmulatorInfo"]["properties"]["speed_multiplier"]["description"] =
+        "Live Z80 frequency multiplier (reflects turbo)";
+    schemas["EmulatorInfo"]["properties"]["config_folder"]["type"] = "string";
+    schemas["EmulatorInfo"]["properties"]["config_folder"]["description"] = "Machine config folder under configs/";
+
+    schemas["BuildInfo"]["type"] = "object";
+    schemas["BuildInfo"]["description"] = "Build fingerprint captured at CMake configure time";
+    schemas["BuildInfo"]["properties"]["version"]["type"] = "string";
+    schemas["BuildInfo"]["properties"]["git_branch"]["type"] = "string";
+    schemas["BuildInfo"]["properties"]["git_commit"]["type"] = "string";
+    schemas["BuildInfo"]["properties"]["build_type"]["type"] = "string";
 
     schemas["CreateEmulatorRequest"]["type"] = "object";
     schemas["CreateEmulatorRequest"]["properties"]["model"]["type"] = "string";
-    schemas["CreateEmulatorRequest"]["properties"]["model"]["description"] = "Emulator model (e.g., ZX48, ZX128)";
+    schemas["CreateEmulatorRequest"]["properties"]["model"]["description"] =
+        "Model short name; a model that cannot be created on this build fails with 400 (no fallback)";
 
     // Settings Management schemas
     schemas["SettingsResponse"]["type"] = "object";
