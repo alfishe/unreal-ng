@@ -195,6 +195,15 @@ public:
     /// @return InjectionResult with success flag, detected state, and message
     static InjectionResult autoNavigateAndInject(Emulator* emulator, const std::string& command);
     
+    /// Inject a numbered BASIC program directly into program memory
+    /// Handles 128K menu navigation automatically, then writes the tokenized
+    /// program via a deterministic memory write (does not rely on the ROM
+    /// editor processing typed keystrokes)
+    /// @param emulator Pointer to emulator instance
+    /// @param program Multi-line program text (e.g., "10 PRINT 1\n20 GOTO 10")
+    /// @return InjectionResult with success flag, detected state, and message
+    static InjectionResult injectProgram(Emulator* emulator, const std::string& program);
+    
     /// Inject a command into BASIC edit buffer AND execute it
     /// Combines autoNavigateAndInject + injectEnter for convenience
     /// Use this when you want immediate execution (like typing RUN + ENTER)
