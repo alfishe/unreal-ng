@@ -15,12 +15,15 @@ namespace
 
 // The exact engine output chain for one PCM slot, rebuilt from public
 // primitives only (unity mix 0xF9=0, silent FM): sample -> env -> TL -> pan
-// -> Clamp16. Comparing rendered frames against this is a golden vector.
+// -> ClampRail. Comparing rendered frames against this is a golden vector.
+// Output is normalized to [-1, 1] via kNormScale.
 inline float GoldenFrame(int16_t sample, uint16_t panAtt)
 {
     const int32_t v = VolFactor(VolFactor(sample, 0), 0);
-    const int32_t clamped = std::max(-32768, std::min(32767, VolFactor(v, panAtt)));
-    return static_cast<float>(clamped);
+    // Wide rail: ±(32767 << kRailShift)
+    constexpr int32_t kRail = 32767 << kRailShift;
+    const int32_t clamped = std::max(-kRail - 1, std::min(kRail, VolFactor(v, panAtt)));
+    return static_cast<float>(clamped) * kNormScale;
 }
 
 // Parameterised PCM key-on. Register order matters: the wave-low write
@@ -545,24 +548,24 @@ void VecPanSweep()
     }
     const float baseL = peakL[0];
     const float baseR = peakR[0];
-    CHECK(baseL > 20000.0f && baseR > 20000.0f);
+    CHECK(baseL > 20000.0f * kNormScale && baseR > 20000.0f * kNormScale);
     for (int p = 0; p < 16; p++)
     {
         const float wantL = static_cast<float>(VolFactor(20000, kPanTable[p].left)) / 20000.0f;
         const float wantR = static_cast<float>(VolFactor(20000, kPanTable[p].right)) / 20000.0f;
         if (wantL < 0.01f)
-            CHECK(peakL[p] < 1.0f); // attenuated to silence
+            CHECK(peakL[p] < 1.0f * kNormScale); // attenuated to silence
         else
             CHECK(std::fabs(peakL[p] / baseL - wantL) < 0.02f);
         if (wantR < 0.01f)
-            CHECK(peakR[p] < 1.0f);
+            CHECK(peakR[p] < 1.0f * kNormScale);
         else
             CHECK(std::fabs(peakR[p] / baseR - wantR) < 0.02f);
     }
 }
 
 // ---------------------------------------------------------------------------
-// Negative rail clip and foreign-blob save robustness
+// Negative sum and foreign-blob save robustness
 // ---------------------------------------------------------------------------
 void VecNegativeClip()
 {
@@ -574,8 +577,10 @@ void VecNegativeClip()
     KeyOnPcmParam(tc.chip, 1, 0, 1, 0, 0, 15, 0, 0, 0, 15, 0, 0);
     const std::vector<float> frames = CaptureFrames(tc, 30);
     CHECK(frames.size() >= 60);
+    // Two slots at -32768 sum to -65536, within wide rail (±131068).
+    // Normalized: -65536 / 131072 ≈ -0.5
     for (size_t i = 0; i < frames.size(); i++)
-        CHECK_EQ_F(frames[i], -32768.0); // sums past the rail, clamps to it
+        CHECK(frames[i] < -0.49f && frames[i] > -0.51f);
 }
 
 void VecSaveRobust()
@@ -600,7 +605,7 @@ void VecSaveRobust()
     float m = 0.0f;
     for (float v : outA)
         m = std::max(m, std::fabs(v));
-    CHECK(m > 1000.0f); // sanity: the comparison is not vacuous
+    CHECK(m > 1000.0f * kNormScale); // sanity: the comparison is not vacuous
 }
 
 // ---------------------------------------------------------------------------
@@ -610,8 +615,9 @@ namespace
 {
 
 // Operator voice over the engine's linear op map: bank b, op k uses regs
-// 0x20+k / 0x40+k / 0x60+k / 0x80+k.
-inline void FmOpVoice(Opl4& c, uint64_t t, int bank, int k, uint8_t flags20)
+// 0x20+k / 0x40+k / 0x60+k / 0x80+k. (Unused on the ymfm backend build,
+// which has no linear map to voice.)
+[[maybe_unused]] inline void FmOpVoice(Opl4& c, uint64_t t, int bank, int k, uint8_t flags20)
 {
     c.WriteFm(t, bank, static_cast<uint8_t>(0x20 + k), flags20);
     c.WriteFm(t, bank, static_cast<uint8_t>(0x40 + k), 0x00); // TL 0
@@ -636,28 +642,43 @@ void VecFm4Op()
     // temporary ymfm backend uses the classic operator map and zeroes taps
     const auto run4 = [](TestChip& tc, uint8_t conn)
     {
+        tc.chip.WriteWave(0, 0xF8, 0x00); // FM block mix unity (sweep method):
+        // the default mix (~1/3) puts a full TL0 carrier at mean-square
+        // 0.0044 — below the level floor — so the checks below need the
+        // same unity-gain condition the TL ladder sweep uses.
         tc.chip.WriteFm(0, 1, 0x05, 0x01); // 0x105: NEW (must come first)
         tc.chip.WriteFm(0, 1, 0x04, conn); // 0x104: 4-op connection select
         // Distinct voices per operator so the algorithm choice is audible:
-        // op0 mult 1, op1 mult 2 (TL 16), op6 mult 4, op7 mult 8.
-        FmOpVoice(tc.chip, 0, 0, 0, 0x01);
-        FmOpVoice(tc.chip, 0, 0, 1, 0x02);
+        // op0 mult 1, op1 mult 2 (TL 16), op6 mult 4, op7 mult 8. In the
+        // linear map the 4-op chain joins pair ch with ch+3, so these four
+        // ops form one complete cascade in 4-op mode and two independent
+        // channels (ch0, ch3) in 2-op mode.
+        // EGT=1 (sustaining): FmOpVoice's DR5 with EGT0 is non-sustaining —
+        // it decays ~25 dB across the 400-frame window, which made the
+        // level check marginal under the old shallow-mod bug and failing
+        // after the modulator-domain fix. A held envelope pins the
+        // steady-state level instead of the decay slope.
+        FmOpVoice(tc.chip, 0, 0, 0, 0x21);
+        FmOpVoice(tc.chip, 0, 0, 1, 0x22);
         tc.chip.WriteFm(0, 0, 0x41, 0x10); // op1 TL 16
-        FmOpVoice(tc.chip, 0, 0, 6, 0x04);
-        FmOpVoice(tc.chip, 0, 0, 7, 0x08);
+        FmOpVoice(tc.chip, 0, 0, 6, 0x24);
+        FmOpVoice(tc.chip, 0, 0, 7, 0x28);
         tc.chip.WriteFm(0, 0, 0xC0, 0x00);
         tc.chip.WriteFm(0, 0, 0xC3, 0x00);
-        tc.chip.WriteFm(0, 0, 0xA0, 0x03);
-        tc.chip.WriteFm(0, 0, 0xA3, 0x03);
-        tc.chip.WriteFm(0, 0, 0xB0, 0x30); // block 4, key on ch0
-        tc.chip.WriteFm(0, 0, 0xB3, 0x30); // key on ch3
+        // Audible carriers: fnum 0x200 block 4 (~390 Hz; B0 bits 1:0 are
+        // the fnum high bits) — whole cycles per window keep the level
+        // measure robust.
+        tc.chip.WriteFm(0, 0, 0xA0, 0x00);
+        tc.chip.WriteFm(0, 0, 0xA3, 0x00);
+        tc.chip.WriteFm(0, 0, 0xB0, 0x32); // fnum 0x200, block 4, key on ch0
+        tc.chip.WriteFm(0, 0, 0xB3, 0x32); // key on ch3
         return CaptureFrames(tc, 400);
     };
     TestChip a, b;
     const std::vector<float> fa = run4(a, 0x00); // all pairs 2-op
     const std::vector<float> fb = run4(b, 0x3F); // all six pairs 4-op
-    CHECK(RmsOf(fa) > 1000.0);
-    CHECK(RmsOf(fb) > 1000.0);
+    CHECK(RmsOf(fa) > 1000.0 * kNormScale);
+    CHECK(RmsOf(fb) > 1000.0 * kNormScale);
     CHECK(fa.size() == fb.size() && !std::equal(fa.begin(), fa.end(), fb.begin()));
     float pk = 0.0f;
     for (int ch = 0; ch < 4; ch++)
@@ -676,24 +697,26 @@ void VecFmRhythm()
     // NEW first: without 0x105 the bank-1 register file aliases back to
     // bank 0 (ymfm-modelled quirk) and the percussion voices never load.
     tc.chip.WriteFm(0, 1, 0x05, 0x01);
-    // Linear op map: BD = ch6 (ops 12/13, a normal 2-op voice); the noise
-    // percussion ops key via 0xBD and ring on the channels whose op1 is
-    // 16/20/22 — SD ch8, HH ch10, CY ch11. TOM (op 18) keys ch9's
-    // modulator only, so ch9 stays silent unless its carrier is keyed.
-    for (int k : {12, 13, 16})
+    // Datasheet voice set on the linear op map (sweep-corrected): BD = ch6
+    // (ops 12/13, normal 2-op FM); HH/SD = ch7 ops 14/15; TOM = ch8 op 16
+    // (single sine op); CY = ch8 op 17. Channels 9..11 are back to plain
+    // bank-1 duty — the old decode parked HH/CY there and keyed TOM on
+    // ch9's modulator (silent: its carrier never keys).
+    for (int k : {12, 13, 14, 15, 16, 17})
         FmOpVoice(tc.chip, 0, 0, static_cast<uint8_t>(k), 0x01);
-    FmOpVoice(tc.chip, 0, 1, 0, 0x01); // op 18 (TOM)
-    FmOpVoice(tc.chip, 0, 1, 2, 0x01); // op 20 (HH)
-    FmOpVoice(tc.chip, 0, 1, 4, 0x01); // op 22 (CY)
     tc.chip.WriteFm(0, 0, 0xA6, 0x21); // ch6 frequency, block 1
     tc.chip.WriteFm(0, 0, 0xB6, 0x04);
+    tc.chip.WriteFm(0, 0, 0xA7, 0x21); // ch7 (SD/HH envelope pitch)
+    tc.chip.WriteFm(0, 0, 0xB7, 0x04);
+    tc.chip.WriteFm(0, 0, 0xA8, 0x21); // ch8: TOM is a sine op, needs pitch
+    tc.chip.WriteFm(0, 0, 0xB8, 0x04);
     tc.chip.WriteFm(0, 0, 0xBD, 0x3F); // rhythm + all five key-ons
     tc.chip.Run(400 * kOutClocks);
     CHECK(tc.chip.ChannelPeak({ChannelGroup::Fm, 6}) > 0.02f);  // BD
-    CHECK(tc.chip.ChannelPeak({ChannelGroup::Fm, 8}) > 0.02f);  // SD
-    CHECK(tc.chip.ChannelPeak({ChannelGroup::Fm, 10}) > 0.02f); // HH
-    CHECK(tc.chip.ChannelPeak({ChannelGroup::Fm, 11}) > 0.02f); // CY
-    CHECK(tc.chip.ChannelPeak({ChannelGroup::Fm, 7}) < 0.001f); // unkeyed
+    CHECK(tc.chip.ChannelPeak({ChannelGroup::Fm, 7}) > 0.02f);  // HH + SD
+    CHECK(tc.chip.ChannelPeak({ChannelGroup::Fm, 8}) > 0.02f);  // TOM + CY
+    CHECK(tc.chip.ChannelPeak({ChannelGroup::Fm, 9}) < 0.001f); // unkeyed
+    CHECK(tc.chip.ChannelPeak({ChannelGroup::Fm, 11}) < 0.001f); // unclaimed
 #endif // !OPL4_FM_YMFM
 }
 

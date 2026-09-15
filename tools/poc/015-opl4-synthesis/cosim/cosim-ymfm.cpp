@@ -40,6 +40,11 @@
 //     sine carrier); the absolute FM headroom differs by design (16-bit
 //     chip stream vs ymfm's ~13-bit OPL3 core), so levels are compared per
 //     engine via the TL ladder.
+//   - PCM end S == 0 corner (5426b4b1): the stored complement 0 is a full
+//     64 KiB sample. libopl4 follows openMSX's chip comparator (pos + S
+//     >= 0x10000 never trips): linear one-shot. ymfm decodes S == 0 to
+//     end == 0 and wraps every step (pos += increment + loop). The
+//     end0-degenerate trace checks each engine against its own model.
 //
 // Exit code: 0 = all scenarios passed, 1 = at least one failed.
 #include "ymfm.h"
@@ -227,23 +232,24 @@ Trace DecodeTrace(const std::vector<int16_t>& out, const std::vector<int16_t>& t
     return t;
 }
 
-// Compare two decoded position sequences: unknown (-1) runs at the ends are
-// the lead-in/out (envelope quiet or past-table reads) and are trimmed; the
-// remaining runs must match exactly.
+// Trim the unknown (-1) runs at the ends: they are the lead-in/out
+// (envelope quiet or past-table reads).
+std::vector<int> TrimUnknown(const std::vector<int>& v)
+{
+    size_t lo = 0, hi = v.size();
+    while (lo < hi && v[lo] == -1)
+        lo++;
+    while (hi > lo && v[hi - 1] == -1)
+        hi--;
+    return std::vector<int>(v.begin() + static_cast<long>(lo),
+                            v.begin() + static_cast<long>(hi));
+}
+
+// Compare two decoded position sequences: trimmed runs must match exactly.
 bool ComparePositions(const Trace& ours, const Trace& ref, std::string& detail)
 {
-    const auto trim = [](const std::vector<int>& v)
-    {
-        size_t lo = 0, hi = v.size();
-        while (lo < hi && v[lo] == -1)
-            lo++;
-        while (hi > lo && v[hi - 1] == -1)
-            hi--;
-        return std::vector<int>(v.begin() + static_cast<long>(lo),
-                                v.begin() + static_cast<long>(hi));
-    };
-    const std::vector<int> a = trim(ours.pos);
-    const std::vector<int> b = trim(ref.pos);
+    const std::vector<int> a = TrimUnknown(ours.pos);
+    const std::vector<int> b = TrimUnknown(ref.pos);
     char buf[160];
     std::snprintf(buf, sizeof buf, "%zu vs %zu frames (scale %.4f/%.4f)",
                   a.size(), b.size(), ours.scale, ref.scale);
@@ -256,6 +262,31 @@ bool ComparePositions(const Trace& ours, const Trace& ref, std::string& detail)
         {
             std::snprintf(buf, sizeof buf, "; first mismatch @%zu: %d vs %d",
                           i, a[i], b[i]);
+            detail += buf;
+            return false;
+        }
+    }
+    return true;
+}
+
+// Own-model check for the S == 0 corner (a documented model difference,
+// not an agreement case): the trimmed positions must form an exact
+// arithmetic progression with the engine's model step — 1 for the openMSX
+// linear one-shot, increment + loop for ymfm's wrap-every-step decode.
+bool CheckOwnModel(const Trace& t, int step, std::string& detail)
+{
+    const std::vector<int> a = TrimUnknown(t.pos);
+    char buf[160];
+    std::snprintf(buf, sizeof buf, "%zu frames (scale %.4f)", a.size(), t.scale);
+    detail += buf;
+    if (a.empty())
+        return false;
+    for (size_t i = 0; i < a.size(); i++)
+    {
+        if (a[i] - a[0] != static_cast<int>(i) * step)
+        {
+            std::snprintf(buf, sizeof buf, "; first mismatch @%zu: %d != %d",
+                          i, a[i], a[0] + static_cast<int>(i) * step);
             detail += buf;
             return false;
         }
@@ -316,14 +347,18 @@ void ScenarioPcmPosition()
         const std::vector<int16_t>* tbl;
         const uint8_t* raw;
         uint32_t rawLen;
+        bool end0 = false; // S == 0 corner: own-model check (header comment)
     };
     const Case cases[] = {
         // loop 2 / end 8 / step 2: 0, 2, 4, 6 -> wrap to 2 (overrun carried
         // into the loop, the audible glitch of the real chip)
         {"loop-overrun-step2", 384, 2, kSmp16, 2, 8, 2, 48, &decoded16, raw16be, 16},
-        // E = 0 (header value 0): the wrap fires every step, so each
-        // advance adds loopAddr on top of the increment: 0, 6, 12, ...
-        {"end0-degenerate", 385, 2, kSmpBig, 5, 0, 1, 30, &big, bigbe, 512},
+        // E = 0 (stored complement 0): a full 64 KiB sample — the engines'
+        // documented models diverge on this corner (header comment). Ours
+        // (openMSX comparator, 5426b4b1): the wrap never fires — linear
+        // 0, 1, 2, ... ymfm decodes end == 0 and wraps every step:
+        // 0, inc+loop, 2*(inc+loop), ...
+        {"end0-degenerate", 385, 2, kSmpBig, 5, 0, 1, 30, &big, bigbe, 512, true},
         // one-shot: end far past the table, loop 0 — straight count-up.
         {"one-shot", 386, 2, kSmpBig, 0, 0x1000, 1, 40, &big, bigbe, 512},
     };
@@ -350,9 +385,20 @@ void ScenarioPcmPosition()
         DumpStream(std::string("pos-") + cs.name + "-ours", mine);
         DumpStream(std::string("pos-") + cs.name + "-ymfm", rs.mixL);
         detail += "\n        ";
-        all = ComparePositions(DecodeTrace(mine, *cs.tbl),
-                               DecodeTrace(rs.mixL, *cs.tbl), detail)
-            && all;
+        if (cs.end0)
+        {
+            const bool okOurs = CheckOwnModel(DecodeTrace(mine, *cs.tbl), 1, detail);
+            detail += " | ";
+            const bool okRef = CheckOwnModel(DecodeTrace(rs.mixL, *cs.tbl),
+                                             1 + cs.loop, detail);
+            all = okOurs && okRef && all;
+        }
+        else
+        {
+            all = ComparePositions(DecodeTrace(mine, *cs.tbl),
+                                   DecodeTrace(rs.mixL, *cs.tbl), detail)
+                && all;
+        }
     }
     ScenarioVerdict("pcm-position", all, detail);
 }

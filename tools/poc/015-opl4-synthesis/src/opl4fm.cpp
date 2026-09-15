@@ -6,6 +6,13 @@
 // (2^-19-cycle units, top 10 bits index the sine) the step is
 // (fnum << block) >> 1; vibrato is carried in a 12-bit fnumber fraction so
 // the PM swing stays proportional to F-number exactly like YMF262.
+//
+// Modulator domain: YMF262 adds operator outputs to the NEXT PHASE in
+// sine-table units (low 10 bits = one full cycle), op1 >> 1 for inter-op
+// modulation — full-scale ±2 cycles, the deep FM of the real chip. The
+// 19-bit equivalent of op>>1 is op << 5, and the feedback shift base is 3
+// (ymfm: (2·op1)>>(10-fb) ≈ op1>>(9-fb) table units = op1>>(3-fb) here:
+// fb7 = ±1 cycle, fb1 = ±1/64 cycle).
 #include "opl4fm.h"
 
 #include <cstring>
@@ -71,6 +78,13 @@ inline int16_t SineOf(uint16_t index10)
 // this bipolar F-number-fraction multiplier; the 0xBD bit 6 depth control
 // halves the swing.
 inline constexpr int8_t kPmScale[8] = {8, 4, 0, -4, -8, -4, 0, 4};
+
+// YMF262 multiplier select (datasheet): non-linear at the top — MULT 11
+// is x10, 13 is x12, 14 is x15 (11/13/14 duplicate their neighbours);
+// MULT 0 is x0.5. Found by the conformance sweep against the ymfm
+// reference (FmMultSweep): the linear step*mult model mis-pitches
+// exactly these three settings.
+inline constexpr uint8_t kMultTable[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 12, 12, 15, 15};
 
 } // namespace
 
@@ -138,7 +152,7 @@ uint32_t Opl4Fm::PhaseStep(const FmOperator& op)
                      (pm * static_cast<int>(op.fnum >> 7)) >> 1)) & 0xFFF;
     }
     const uint32_t step = (fnum12 << op.block) >> 3;
-    return op.mult ? step * op.mult : step >> 1; // mult 0 => x0.5
+    return op.mult ? step * kMultTable[op.mult] : step >> 1; // mult 0 = x0.5
 }
 
 uint32_t Opl4Fm::KslIndex(const FmOperator& op)
@@ -219,9 +233,8 @@ int32_t Opl4Fm::OperatorOutput(FmOperator& op, int32_t modInput) const
     }
     index += static_cast<uint32_t>(op.tl) << 3; // TL: 0.75 dB -> 8 index units
     index += KslIndex(op);
-    // Unity operator = the 16-bit chip-stream rail (D10): the 13-bit sine
-    // (peak 4096) shifts up by 3. A TL-0/envelope-max carrier then matches
-    // PCM unity and FM+PCM share the single 16-bit adder headroom.
+    // Unity operator at full 16-bit scale: the 13-bit sine (peak 4096) shifts
+    // up by 3. The chip rail is widened to accommodate multiple voices.
     op.out = VolFactor(wave << 3, index);
     return op.out;
 }
@@ -382,14 +395,20 @@ void Opl4Fm::WriteReg(uint8_t bank, uint8_t reg, uint8_t data)
             return;
         case 0xBD:
             _rhythm = (data & 0x20) != 0;
-            // Rhythm key-ons: BD ch6 (ops 12/13), SD ch7 op16, TOM ch8 op18,
-            // HH ch7 op20, CY ch8 op22 — noise-driven percussion ops.
-            KeyOn(_ops[12], (data & 0x10) != 0);
-            KeyOn(_ops[13], (data & 0x10) != 0);
-            KeyOn(_ops[16], (data & 0x08) != 0);
-            KeyOn(_ops[18], (data & 0x04) != 0);
-            KeyOn(_ops[20], (data & 0x02) != 0);
-            KeyOn(_ops[22], (data & 0x01) != 0);
+            // Rhythm key-ons, datasheet 0xBD bits: BD 0x10, SD 0x08, TOM
+            // 0x04, CY 0x02, HH 0x01 (ymfm/Nuked-verified order). Voice set
+            // on the linear map: BD = ch6 FM pair (ops 12/13); HH = ch7
+            // op 14, SD = ch7 op 15, TOM = ch8 op 16, CY = ch8 op 17. The
+            // conformance sweep found the old {12,13,16,18,20,22} decode
+            // keyed TOM on ch9's modulator (its carrier never keys — TOM
+            // was silent) and parked HH/CY on bank-1 channels 10/11; the
+            // first correction pass here still swapped the HH/CY bits.
+            KeyOn(_ops[12], (data & 0x10) != 0); // BD mod
+            KeyOn(_ops[13], (data & 0x10) != 0); // BD car
+            KeyOn(_ops[14], (data & 0x01) != 0); // HH envelope (bit 0)
+            KeyOn(_ops[15], (data & 0x08) != 0); // SD envelope (bit 3)
+            KeyOn(_ops[16], (data & 0x04) != 0); // TOM (bit 2)
+            KeyOn(_ops[17], (data & 0x02) != 0); // CY envelope (bit 1)
             return;
         default:
             break;
@@ -466,7 +485,7 @@ void Opl4Fm::WriteReg(uint8_t bank, uint8_t reg, uint8_t data)
     {
         const int ch = chBase + (reg - 0xB0);
         UpdateChannelParams(static_cast<uint8_t>(ch));
-        if (!(_rhythm && ch >= 6))
+        if (!(_rhythm && ch >= 6 && ch <= 8)) // rhythm claims bank-0 ch 6..8
         {
             KeyOn(_ops[_ch[ch].op1], (data & 0x20) != 0);
             KeyOn(_ops[_ch[ch].op2], (data & 0x20) != 0);
@@ -533,17 +552,11 @@ void Opl4Fm::Advance(int32_t& outL, int32_t& outR,
     for (int ch = 0; ch < kChannelCount; ch++)
         channelTaps[ch] = 0;
 
-    // Rhythm percussion channels: HH/SD/CY are noise-driven (PoC model).
-    const bool rhythmNoise = _rhythm;
-
     for (int ch = 0; ch < kChannelCount; ch++)
     {
         const int op1 = _ch[ch].op1;
         const int op2 = _ch[ch].op2;
         int32_t result = 0;
-
-        const bool isRhythmNoiseOp = rhythmNoise
-            && (op1 == 20 || op1 == 22 || op1 == 16);
 
         if (_ch[ch].fourOp && _newMode)
         {
@@ -566,39 +579,51 @@ void Opl4Fm::Advance(int32_t& outL, int32_t& outR,
             const bool connAdd = (_regs[slaveBank + 0xC0 + (s % 9)] & 0x01) != 0;
 
             // Stage 1: op1 -> op2 (feedback on op1).
-            int32_t mod = _ch[ch].fbShift
-                ? _fbHist[ch] >> (9 - _ch[ch].fbShift) : 0;
+            int32_t mod = 0;
+            if (_ch[ch].fbShift)
+                mod = (_ch[ch].fbShift >= 3)
+                    ? (_fbHist[ch] << (_ch[ch].fbShift - 3))
+                    : (_fbHist[ch] >> (3 - _ch[ch].fbShift));
             const int32_t o1 = OperatorOutput(_ops[opA], mod);
             _fbHist[ch] = o1;
             const int32_t o2 = connAdd
                 ? OperatorOutput(_ops[opB], 0) + o1
-                : OperatorOutput(_ops[opB], o1 >> 1);
+                : OperatorOutput(_ops[opB], o1 << 5);
             // Stage 2: op3 -> op4.
             const int32_t o3 = OperatorOutput(_ops[opC], 0);
             result = connAdd
                 ? OperatorOutput(_ops[opD], 0) + o3 + o2
-                : OperatorOutput(_ops[opD], o2 >> 1) + o3;
+                : OperatorOutput(_ops[opD], o2 << 5) + o3;
         }
-        else if (isRhythmNoiseOp)
+        else if (_rhythm && (ch == 7 || ch == 8))
         {
-            // Noise-driven percussion: square of the noise bit through the
-            // operator envelope (documented PoC simplification).
-            FmOperator& op = _ops[op1];
-            uint32_t index = static_cast<uint32_t>(op.envVol)
-                + (static_cast<uint32_t>(op.tl) << 3) + KslIndex(op);
-            result = VolFactor((_noise & 2) ? 0x1000 : -0x1000, index);
-            op.out = result;
-            _ops[op2].out = 0;
+            // Rhythm percussion ch7 (HH+SD) / ch8 (TOM+CY), datasheet voice
+            // set: envelopes from the channel's two operators; HH/SD/CY are
+            // noise-bit squares through the envelope (documented PoC
+            // simplification), TOM is a plain single-operator sine.
+            const auto noiseOut = [this](FmOperator& op) {
+                const uint32_t index = static_cast<uint32_t>(op.envVol)
+                    + (static_cast<uint32_t>(op.tl) << 3) + KslIndex(op);
+                op.out = VolFactor((_noise & 2) ? 0x1000 : -0x1000, index);
+                return op.out;
+            };
+            if (ch == 7) // HH (op14) + SD (op15)
+                result = noiseOut(_ops[op1]) + noiseOut(_ops[op2]);
+            else // TOM (op16, sine direct) + CY (op17)
+                result = OperatorOutput(_ops[op1], 0) + noiseOut(_ops[op2]);
             _fbHist[ch] = 0;
         }
         else
         {
             // 2-op: op1 modulates op2; feedback loop has one-step delay.
-            int32_t mod = _ch[ch].fbShift
-                ? _fbHist[ch] >> (9 - _ch[ch].fbShift) : 0;
+            int32_t mod = 0;
+            if (_ch[ch].fbShift)
+                mod = (_ch[ch].fbShift >= 3)
+                    ? (_fbHist[ch] << (_ch[ch].fbShift - 3))
+                    : (_fbHist[ch] >> (3 - _ch[ch].fbShift));
             const int32_t o1 = OperatorOutput(_ops[op1], mod);
             _fbHist[ch] = o1;
-            result = OperatorOutput(_ops[op2], o1 >> 1);
+            result = OperatorOutput(_ops[op2], o1 << 5);
             _ops[op1].out = o1;
         }
 

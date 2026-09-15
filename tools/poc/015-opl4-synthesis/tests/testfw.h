@@ -75,6 +75,14 @@ inline void Fail(const char* what, const char* file, int line)
 namespace opl4test
 {
 
+// Render layer normalization: int32 streams use full 16-bit scale (unity ≈ 32767)
+// with kRailShift=2 bits of headroom. Float output is normalized by 1/(32768<<2).
+// Tests use these constants to convert between old int16-scale expectations and
+// the normalized float output.
+constexpr int kRailShift = 2;
+constexpr float kNormScale = 1.0f / static_cast<float>(32768 << kRailShift);
+constexpr float kDenormScale = static_cast<float>(32768 << kRailShift);
+
 // hostTickRate == kMasterClockHz: 1 host tick == 1 master clock.
 struct TestChip
 {
@@ -187,6 +195,7 @@ inline void KeyOnFmCh0(Opl4& c, uint64_t t)
 // Aggregate runners defined in the other test TUs; called from main().
 int RunVectorTests();
 void RunFmBackendCompareTests(); // opl4fmcompare.cpp (in-tree vs ymfm OPL3)
+int RunSweepTests();             // opl4sweep.cpp (§12.2.1 conformance sweeps)
 
 } // namespace opl4test
 

@@ -24,11 +24,8 @@ static const uint16_t _SUBMODULE = PlatformSoundSubmodulesEnum::SUBMODULE_SOUND_
 /// source summed with AY + beeper on the wide bus, so the device lands in
 /// the bus at -6 dB and the legacy MoonSoundVol/8192 applies on top in the
 /// mixer (device_gain = MoonSoundVol/8192 * headroom_trim).
-/// PROVISIONAL: the design asks for a value measured once so a full-scale
-/// MoonSound track matches a loud AY track's perceived loudness; -6 dB is
-/// the conservative stand-in until that A/B (real-card recording + loudness
-/// meter) happens. Change this ONE constant when it does.
-static constexpr float kHeadroomTrim = 0.5f;
+/// The library render layer normalizes to [-1, 1]; this scales back to int16.
+static constexpr float kHeadroomTrim = 32768.0f;
 
 /// Quantise one library float (int16 scale) into the registry buffer domain
 /// through the headroom trim.

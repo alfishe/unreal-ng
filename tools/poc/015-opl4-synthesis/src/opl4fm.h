@@ -11,6 +11,7 @@
 #include "opl4tables.h"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace opl4
@@ -21,7 +22,7 @@ struct FmOperator
     // Register-derived
     uint16_t fnum = 0;
     uint8_t block = 0;
-    uint8_t mult = 0;      // 0 => x0.5, 1 => x1 ... 15 => x15
+    uint8_t mult = 0;      // 0 => x0.5; xN via the YMF262 table (11=>x10, 13=>x12, 14=>x15)
     uint8_t tl = 0;        // 6-bit total level (0.75 dB/step)
     uint8_t ar = 0, dr = 0, sl = 0, rr = 0;
     uint8_t ws = 0;        // waveform 0..7

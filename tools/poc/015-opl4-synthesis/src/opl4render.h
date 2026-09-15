@@ -109,11 +109,11 @@ public:
     // Authentic: single chip stream (44100) through stages.
     // Returns frames written to out (interleaved stereo); *consumedFrames
     // (optional) receives how many input frames were eaten.
-    size_t ProcessChip(const int16_t* chipStereo, size_t frames, float* out,
+    size_t ProcessChip(const int32_t* chipStereo, size_t frames, float* out,
                        size_t maxOutFrames, size_t* consumedFrames = nullptr);
     // HiFi: FM at 49516.4 and PCM at 44100, resampled and summed.
-    size_t ProcessSplit(const int16_t* fmStereo, size_t fmFrames,
-                        const int16_t* pcmStereo, size_t pcmFrames,
+    size_t ProcessSplit(const int32_t* fmStereo, size_t fmFrames,
+                        const int32_t* pcmStereo, size_t pcmFrames,
                         float* out, size_t maxOutFrames,
                         size_t* consumedFm = nullptr, size_t* consumedPcm = nullptr);
 
@@ -121,8 +121,8 @@ public:
     // group stream resampled to the output rate and passed through that
     // group's chain, its own board-analog instance and its own DC blocker —
     // the two sources never share filter state. Unity bypass (same rate,
-    // no stages) is a pure int16 -> float copy (R6 mirror).
-    size_t ProcessGroup(ChannelGroup g, const int16_t* stereo, size_t frames,
+    // no stages) is a pure int32 -> float copy (R6 mirror).
+    size_t ProcessGroup(ChannelGroup g, const int32_t* stereo, size_t frames,
                         float* out, size_t maxOutFrames,
                         size_t* consumedFrames = nullptr);
 

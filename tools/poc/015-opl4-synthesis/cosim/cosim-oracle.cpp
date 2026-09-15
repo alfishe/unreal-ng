@@ -125,7 +125,11 @@ std::vector<int16_t> CasePcmLoopOverrun()
     return oc.Run(48);
 }
 
-// E = 0 degenerate wrap: every advance adds loopAddr on top of the step.
+// E = 0 (stored complement 0): a full 64 KiB sample. openMSX-exact
+// comparator (5426b4b1): pos + S never reaches 0x10000, so the slot
+// counts up linearly — 0, 1, 2, ... (ymfm wraps every step instead; the
+// corner is a documented model difference, see the cosim-ymfm.cpp
+// header and cosim/README.md).
 std::vector<int16_t> CasePcmEnd0Wrap()
 {
     OurChip oc;

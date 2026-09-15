@@ -7,6 +7,7 @@
 #include "opl4tables.h"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace opl4

@@ -320,13 +320,16 @@ void TestUnityBypass()
     r.Configure(cfg);
     CHECK(r.UnityBypass());
 
-    const int16_t in[6] = {-32768, 32767, -1, 1, 0, 100};
+    // Wide rail values: ±131072 is full scale, normalized to ±1.0f.
+    const int32_t in[6] = {-131072, 131072, -1, 1, 0, 100};
     float out[6] = {};
     size_t consumed = 0;
     CHECK_EQ_I(r.ProcessChip(in, 3, out, 3, &consumed), 3u);
     CHECK_EQ_I(consumed, 3u);
+    // Normalization: value / 131072.0f
+    constexpr float kNormScale = 1.0f / 131072.0f;
     for (int i = 0; i < 6; i++)
-        CHECK(out[i] == static_cast<float>(in[i])); // bit-exact int16 -> float
+        CHECK(out[i] == static_cast<float>(in[i]) * kNormScale);
 
     r.SetBoardAnalog(true);
     CHECK(!r.UnityBypass());
@@ -401,10 +404,11 @@ void TestDeterminism()
           && std::equal(outA.begin(), outA.end(), outB.begin())); // bit-identical
 
     // The stream is non-silent in both engines (script sanity).
+    // Normalized scale: compare against 1000 / 131072 ≈ 0.0076.
     float maxAbs = 0.0f;
     for (float v : outA)
         maxAbs = std::max(maxAbs, std::fabs(v));
-    CHECK(maxAbs > 1000.0f);
+    CHECK(maxAbs > 1000.0f * kNormScale);
 }
 
 void TestSaveRestore()
@@ -505,7 +509,8 @@ void TestBlockMixAndClip()
         return m;
     };
 
-    // Two max-amplitude PCM slots at unity mix must clip at exactly 32767.
+    // Two max-amplitude PCM slots at unity mix sum without clipping (wide rail
+    // gives 4 voices headroom). Expected: 2*32767 normalized ≈ 0.5.
     {
         TestChip tc;
         WriteToneHeader(tc.mem, kHdrBase, 2, kSmpBase, 0, 4, nullptr);
@@ -514,8 +519,9 @@ void TestBlockMixAndClip()
         KeyOnPcmSlot(tc.chip, 1, 1000);
         std::vector<float> out;
         renderAll(tc, 1500 * kOutClocks, out);
-        CHECK_EQ_F(maxCh(out, 0), 32767.0);
-        CHECK_EQ_F(maxCh(out, 1), 32767.0);
+        // 2 * 32767 / 131072 ≈ 0.5 (no clipping at wide rail)
+        CHECK(maxCh(out, 0) > 0.49f && maxCh(out, 0) < 0.51f);
+        CHECK(maxCh(out, 1) > 0.49f && maxCh(out, 1) < 0.51f);
     }
 
     // 0xF8 = 0xFF (FM -inf both sides): an keyed FM voice contributes nothing.
@@ -588,8 +594,8 @@ void TestPanRouting()
     WriteMaxSampleData(right.mem);
     KeyOnPcmSlot(right.chip, 0, 1000, 7); // pan 7: hard right, left off
     const Peaks pr = peaks(right);
-    CHECK(pr.l < 1.0f);
-    CHECK(pr.r > 20000.0f);
+    CHECK(pr.l < 1.0f * kNormScale);
+    CHECK(pr.r > 20000.0f * kNormScale);
 
     // Pan 1 is one step right of centre: right full, left -3 dB (D8).
     TestChip soft;
@@ -597,7 +603,7 @@ void TestPanRouting()
     WriteMaxSampleData(soft.mem);
     KeyOnPcmSlot(soft.chip, 0, 1000, 1);
     const Peaks ps = peaks(soft);
-    CHECK(ps.r > 20000.0f);
+    CHECK(ps.r > 20000.0f * kNormScale);
     CHECK(ps.l > ps.r * 0.70f && ps.l < ps.r * 0.72f);
 
     TestChip off;
@@ -745,15 +751,15 @@ void TestRenderSplit()
         fmMax = std::max(fmMax, std::fabs(fm[i]));
         pcmMax = std::max(pcmMax, std::fabs(pcm[i]));
     }
-    CHECK(fmMax > 1000.0f);
-    CHECK(pcmMax > 1000.0f);
+    CHECK(fmMax > 1000.0f * kNormScale);
+    CHECK(pcmMax > 1000.0f * kNormScale);
 
     // Where the integer sum did not saturate, fm + pcm == mixed exactly
-    // (all three are exact int16 values on the bypass path).
+    // (all three carry the normalized int32 values through the bypass path).
     size_t compared = 0;
     for (size_t i = 0; i < mixedN * 2; i++)
     {
-        if (std::fabs(mixed[i]) < 32000.0f)
+        if (std::fabs(mixed[i]) < 32000.0f * kNormScale)
         {
             if (!(static_cast<double>(fm[i]) + static_cast<double>(pcm[i])
                   == static_cast<double>(mixed[i])))
@@ -782,8 +788,8 @@ void TestRenderSplit()
         fm48 = std::max(fm48, std::fabs(fm[i]));
         pcm48 = std::max(pcm48, std::fabs(pcm[i]));
     }
-    CHECK(fm48 > 500.0f);
-    CHECK(pcm48 > 500.0f);
+    CHECK(fm48 > 500.0f * kNormScale);
+    CHECK(pcm48 > 500.0f * kNormScale);
 }
 
 void TestDiscardPendingAudio()
@@ -829,6 +835,7 @@ int main()
     TestDiscardPendingAudio();
 
     RunVectorTests(); // §12.2 vector categories (opl4vectors.cpp)
+    RunSweepTests();  // §12.2.1 conformance sweeps (opl4sweep.cpp)
     RunFmBackendCompareTests(); // in-tree vs ymfm OPL3 (opl4fmcompare.cpp)
 
     std::printf("\n%d checks, %d failures\n", gChecks, gFailed);

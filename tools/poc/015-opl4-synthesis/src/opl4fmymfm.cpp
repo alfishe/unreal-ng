@@ -98,10 +98,14 @@ void Opl4FmYmfm::Advance(int32_t& outL, int32_t& outR,
     // the clock + output + clamp16 sequence ymf278b::generate() runs per FM
     // tick on the same engine family. Outputs 0/1 = primary stereo pair,
     // 2/3 = secondary; summing both pairs is the full YMF262 stereo mix.
+    //
+    // Domain: ymfm outputs 13-bit samples (peak ~8192), while the in-tree FM
+    // and PCM engines output 16-bit samples (peak ~32768). Scale by 4× so a
+    // unity carrier equals a unity slot on both backends.
     ymfm::ymf262::output_data out;
     _engine.generate(&out, 1);
-    outL = out.data[0] + out.data[2];
-    outR = out.data[1] + out.data[3];
+    outL = (out.data[0] + out.data[2]) << 2;
+    outR = (out.data[1] + out.data[3]) << 2;
     channelTaps.fill(0); // per-channel taps not modelled (temporary backend)
     AdvanceTimers(); // Opl4Fm::Advance self-ticks: chip calls only Advance()
 }

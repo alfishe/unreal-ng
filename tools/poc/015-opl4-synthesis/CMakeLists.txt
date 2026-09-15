@@ -78,6 +78,7 @@ endif()
 add_executable(opl4tests
     tests/opl4tests.cpp   # core units (§12.1) + main()
     tests/opl4vectors.cpp # golden/behaviour vectors (§12.1/12.2)
+    tests/opl4sweep.cpp   # conformance sweeps (§12.2.1, exhaustive fields)
     tests/opl4fmcompare.cpp # differential: in-tree FM vs ymfm backend
 )
 target_include_directories(opl4tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

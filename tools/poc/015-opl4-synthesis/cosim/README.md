@@ -69,7 +69,7 @@ map, `cosimdrv.h: KeyOnFm`).
 
 | Scenario | Verdict criterion |
 |---|---|
-| `pcm-position` | Loop-overrun / E=0 degenerate / one-shot position traces decoded from the output streams agree **exactly**, frame for frame |
+| `pcm-position` | Loop-overrun / one-shot position traces decoded from the output streams agree **exactly**, frame for frame; the E=0 degenerate corner is a documented model difference — each engine must follow its own model exactly (libopl4: openMSX linear one-shot; ymfm: wrap-every-step) |
 | `pcm-widths` | 8- and 12-bit sample decode traces agree exactly |
 | `pcm-envelope` | 6 dB decay time ratio within **[1.6, 2.4]** of the documented 2× mid-rate model difference; sustain plateau within 3 dB |
 | `fm-tone` | Pure-carrier zero-crossing rate (pitch) ratio 1.000 ± 0.02; per-engine TL ladder ≈ 0.2512 (−12 dB→−24 dB step); stereo balance |
@@ -96,6 +96,11 @@ map, `cosimdrv.h: KeyOnFm`).
 - **PCM interpolation** — ymfm's `fetch_sample` ignores the fractional
   position bits; traces therefore use integer steps. The libopl4
   interpolator is covered by `VecInterpGolden` in `../tests/`.
+- **PCM end S == 0 corner** — the header's stored complement 0 is a full
+  64 KiB sample. libopl4 follows openMSX's chip comparator (`pos + S >=
+  0x10000` never trips, 5426b4b1): a linear one-shot. ymfm decodes S == 0
+  to end == 0 and wraps every step (`pos += increment + loop`). The
+  `end0-degenerate` trace checks each engine against its own model.
 
 ## Track record
 

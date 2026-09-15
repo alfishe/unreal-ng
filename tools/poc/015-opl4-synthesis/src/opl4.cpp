@@ -43,9 +43,15 @@ constexpr uint32_t kStateVersion = 1;
 #endif
 constexpr uint64_t kStreamReserveFrames = 4410; // ~100 ms of chip audio
 
-int16_t Clamp16(int32_t v)
+// Rail headroom: signals stay at full 16-bit scale (unity ≈ 32767), but the
+// Authentic rail is shifted up by kRailShift bits to give multiple voices
+// headroom before clipping. The host normalizes by 1/(32768 << kRailShift).
+constexpr int kRailShift = 2;
+constexpr int32_t kAuthenticRail = 32767 << kRailShift; // ±131068
+
+int32_t ClampRail(int32_t v)
 {
-    return static_cast<int16_t>(std::max(-32768, std::min(32767, v)));
+    return std::max(-kAuthenticRail - 1, std::min(kAuthenticRail, v));
 }
 
 } // namespace
@@ -75,9 +81,12 @@ struct Opl4::Impl
     uint64_t ldUntil = 0;
 
     // Chip-boundary stream buffers (delivery, not state — §9.1)
-    std::vector<int16_t> chipStream; // Authentic: mixed 44100 stereo
-    std::vector<int16_t> fmStream;   // HiFi: per-tick 49516.4 stereo / split FM
-    std::vector<int16_t> pcmStream;  // HiFi: PCM-only 44100 stereo / split PCM
+    // int32 preserves full precision until the render/host conversion point.
+    // chipStream clips at ±32767 (authentic 16-bit DAC rail); split streams
+    // pass full range to the host mixer which handles headroom.
+    std::vector<int32_t> chipStream; // Authentic: mixed 44100 stereo
+    std::vector<int32_t> fmStream;   // HiFi: per-tick 49516.4 stereo / split FM
+    std::vector<int32_t> pcmStream;  // HiFi: PCM-only 44100 stereo / split PCM
     bool splitStreams = false;       // host mixer sources (integration D5)
 
     // Tap scratch + render-side meters/mutes (never serialised)
@@ -208,8 +217,9 @@ void Opl4::AdvanceFmToOutput()
     if (im.cfg.mode == RenderMode::HiFi)
     {
         // Reducer bypassed: every FM tick leaves the chip boundary (§4.3).
-        im.fmStream.push_back(Clamp16(fmL));
-        im.fmStream.push_back(Clamp16(fmR));
+        // No clamp — full precision to the host mixer.
+        im.fmStream.push_back(fmL);
+        im.fmStream.push_back(fmR);
     }
 }
 
@@ -257,22 +267,25 @@ void Opl4::AdvanceOutputStep()
 
     if (im.cfg.mode == RenderMode::HiFi)
     {
-        im.pcmStream.push_back(Clamp16(pcmL));
-        im.pcmStream.push_back(Clamp16(pcmR));
+        // No clamp — full precision to the host mixer.
+        im.pcmStream.push_back(pcmL);
+        im.pcmStream.push_back(pcmR);
     }
     else
     {
-        // §7 step 3: one 16-bit saturated add per side (D10).
-        im.chipStream.push_back(Clamp16(fmL + pcmL));
-        im.chipStream.push_back(Clamp16(fmR + pcmR));
+        // §7 step 3: saturated add at the widened rail (kRailShift bits of
+        // headroom above the original 16-bit DAC rail). Signals stay at full
+        // 16-bit scale; the host normalizes by 1/(32768 << kRailShift).
+        im.chipStream.push_back(ClampRail(fmL + pcmL));
+        im.chipStream.push_back(ClampRail(fmR + pcmR));
         if (im.splitStreams)
         {
-            // Host mixer sources (integration D5): the two pre-sum group
-            // streams, each saturated to 16 bits like the DAC would see it.
-            im.fmStream.push_back(Clamp16(fmL));
-            im.fmStream.push_back(Clamp16(fmR));
-            im.pcmStream.push_back(Clamp16(pcmL));
-            im.pcmStream.push_back(Clamp16(pcmR));
+            // Host mixer sources (integration D5): full precision to the
+            // host mixer which handles headroom in its wide bus.
+            im.fmStream.push_back(fmL);
+            im.fmStream.push_back(fmR);
+            im.pcmStream.push_back(pcmL);
+            im.pcmStream.push_back(pcmR);
         }
     }
 }

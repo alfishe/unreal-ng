@@ -12,6 +12,12 @@ namespace opl4
 #define M_PI 3.14159265358979323846
 #endif
 
+// Normalization: int32 streams are at full 16-bit scale (±32767 unity) with
+// kRailShift bits of headroom. Dividing by (32768 << kRailShift) yields
+// float in [-1, 1]. The rail is defined in opl4.cpp; mirror it here.
+constexpr int kRailShift = 2;
+constexpr float kNormScale = 1.0f / static_cast<float>(32768 << kRailShift);
+
 // ---------------------------------------------------------------------------
 // Kaiser FIR designer — identical math to the host's FirDesigner::kaiser
 // (core/src/common/sound/filters/fir_designer.h) so the two implementations
@@ -394,18 +400,18 @@ void Opl4Render::PostStages(float& l, float& r)
     }
 }
 
-size_t Opl4Render::ProcessChip(const int16_t* chipStereo, size_t frames,
+size_t Opl4Render::ProcessChip(const int32_t* chipStereo, size_t frames,
                                 float* out, size_t maxOutFrames,
                                 size_t* consumedFrames)
 {
     if (UnityBypass())
     {
-        // R6: bit-identical memcpy path. int16 -> float of the exact value.
+        // R6: bit-identical path. Normalized float output in [-1, 1].
         const size_t n = std::min(frames, maxOutFrames);
         for (size_t i = 0; i < n; i++)
         {
-            out[i * 2 + 0] = static_cast<float>(chipStereo[i * 2 + 0]);
-            out[i * 2 + 1] = static_cast<float>(chipStereo[i * 2 + 1]);
+            out[i * 2 + 0] = static_cast<float>(chipStereo[i * 2 + 0]) * kNormScale;
+            out[i * 2 + 1] = static_cast<float>(chipStereo[i * 2 + 1]) * kNormScale;
         }
         if (consumedFrames)
             *consumedFrames = n;
@@ -422,14 +428,14 @@ size_t Opl4Render::ProcessChip(const int16_t* chipStereo, size_t frames,
         size_t n;
         if (_outputRate == kChipOutputRate)
         {
-            frame[0] = static_cast<float>(chipStereo[i * 2 + 0]);
-            frame[1] = static_cast<float>(chipStereo[i * 2 + 1]);
+            frame[0] = static_cast<float>(chipStereo[i * 2 + 0]) * kNormScale;
+            frame[1] = static_cast<float>(chipStereo[i * 2 + 1]) * kNormScale;
             n = 1;
         }
         else
         {
-            n = _main.Process(static_cast<float>(chipStereo[i * 2 + 0]),
-                              static_cast<float>(chipStereo[i * 2 + 1]), frame);
+            n = _main.Process(static_cast<float>(chipStereo[i * 2 + 0]) * kNormScale,
+                              static_cast<float>(chipStereo[i * 2 + 1]) * kNormScale, frame);
         }
         for (size_t j = 0; j < n && written < maxOutFrames; j++)
         {
@@ -451,8 +457,8 @@ size_t Opl4Render::ProcessChip(const int16_t* chipStereo, size_t frames,
     return written;
 }
 
-size_t Opl4Render::ProcessSplit(const int16_t* fmStereo, size_t fmFrames,
-                                 const int16_t* pcmStereo, size_t pcmFrames,
+size_t Opl4Render::ProcessSplit(const int32_t* fmStereo, size_t fmFrames,
+                                 const int32_t* pcmStereo, size_t pcmFrames,
                                  float* out, size_t maxOutFrames,
                                  size_t* consumedFm, size_t* consumedPcm)
 {
@@ -477,13 +483,13 @@ size_t Opl4Render::ProcessSplit(const int16_t* fmStereo, size_t fmFrames,
 
     size_t fmOut = fmHad;
     for (size_t i = 0; i < fmFrames; i++)
-        fmOut += _fm.Process(static_cast<float>(fmStereo[i * 2 + 0]),
-                             static_cast<float>(fmStereo[i * 2 + 1]),
+        fmOut += _fm.Process(static_cast<float>(fmStereo[i * 2 + 0]) * kNormScale,
+                             static_cast<float>(fmStereo[i * 2 + 1]) * kNormScale,
                              _fmStage.data() + fmOut * 2);
     size_t pcmOut = pcmHad;
     for (size_t i = 0; i < pcmFrames; i++)
-        pcmOut += _pcm.Process(static_cast<float>(pcmStereo[i * 2 + 0]),
-                               static_cast<float>(pcmStereo[i * 2 + 1]),
+        pcmOut += _pcm.Process(static_cast<float>(pcmStereo[i * 2 + 0]) * kNormScale,
+                               static_cast<float>(pcmStereo[i * 2 + 1]) * kNormScale,
                                _pcmStage.data() + pcmOut * 2);
 
     const size_t n = std::min({fmOut, pcmOut, maxOutFrames});
@@ -526,7 +532,7 @@ bool Opl4Render::GroupBypass(ChannelGroup g) const
         && _outputRate == kChipOutputRate && !_boardAnalogOn && !chain.Active();
 }
 
-size_t Opl4Render::ProcessGroup(ChannelGroup g, const int16_t* stereo, size_t frames,
+size_t Opl4Render::ProcessGroup(ChannelGroup g, const int32_t* stereo, size_t frames,
                                 float* out, size_t maxOutFrames, size_t* consumedFrames)
 {
     CharacterChain& chain = (g == ChannelGroup::Fm) ? _chainFm : _chainPcm;
@@ -536,12 +542,12 @@ size_t Opl4Render::ProcessGroup(ChannelGroup g, const int16_t* stereo, size_t fr
 
     if (GroupBypass(g))
     {
-        // R6 mirror: exact int16 -> float of the group's chip stream.
+        // R6 mirror: normalized float output in [-1, 1].
         const size_t n = std::min(frames, maxOutFrames);
         for (size_t i = 0; i < n; i++)
         {
-            out[i * 2 + 0] = static_cast<float>(stereo[i * 2 + 0]);
-            out[i * 2 + 1] = static_cast<float>(stereo[i * 2 + 1]);
+            out[i * 2 + 0] = static_cast<float>(stereo[i * 2 + 0]) * kNormScale;
+            out[i * 2 + 1] = static_cast<float>(stereo[i * 2 + 1]) * kNormScale;
         }
         if (consumedFrames)
             *consumedFrames = n;
@@ -558,14 +564,14 @@ size_t Opl4Render::ProcessGroup(ChannelGroup g, const int16_t* stereo, size_t fr
         size_t n;
         if (inRate == static_cast<double>(_outputRate))
         {
-            frame[0] = static_cast<float>(stereo[i * 2 + 0]);
-            frame[1] = static_cast<float>(stereo[i * 2 + 1]);
+            frame[0] = static_cast<float>(stereo[i * 2 + 0]) * kNormScale;
+            frame[1] = static_cast<float>(stereo[i * 2 + 1]) * kNormScale;
             n = 1;
         }
         else
         {
-            n = res.Process(static_cast<float>(stereo[i * 2 + 0]),
-                            static_cast<float>(stereo[i * 2 + 1]), frame);
+            n = res.Process(static_cast<float>(stereo[i * 2 + 0]) * kNormScale,
+                            static_cast<float>(stereo[i * 2 + 1]) * kNormScale, frame);
         }
         for (size_t j = 0; j < n && written < maxOutFrames; j++)
         {
