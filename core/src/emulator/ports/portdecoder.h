@@ -55,6 +55,21 @@ struct PortMatch
     uint16_t resolvedPort;
 };
 
+/// One row of the static port map reported by GET /api/v1/emulator/{id}/ports
+/// (P1-5 static port-map introspection). `mask`/`match` mirror the decoder's
+/// address qualification ((port & mask) == match), `port` is the canonical
+/// representative port, `device` a human-readable name and `gate` the runtime
+/// condition that can take the device off the bus (nullptr = always answers).
+struct PortMapEntry
+{
+    uint16_t port;
+    uint16_t mask;
+    uint16_t match;
+    const char* device;
+    const char* gate;  // nullptr = ungated
+};
+
+
 /// Base class to mark all devices connected to port decoder
 class PortDevice
 {
@@ -217,7 +232,12 @@ public:
     static bool Standard_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister);
     /// Standard decode gated by presence, TR-DOS ports and explicitly registered peripherals.
     /// Virtual: a model with a documented deviation overrides it (design §3.1)
-    virtual bool Default_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister);
+    virtual bool Default_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister) const;
+    /// Mouse-port predicate as the model's DecodePortIn actually applies it: the default
+    /// is the gated standard decode, models with a documented deviation (Scorpion TR-DOS
+    /// trigger / Shadow Monitor beta mirrors) override it. Introspection must probe this
+    /// one, not Default_ directly, or model deviations go unreported
+    virtual bool IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister) const;
     uint8_t Default_Port_KempstonMouse_In(uint16_t port, uint16_t pc);
 
     /// Whether a decoded port value belongs to the Beta128 FDC register set
@@ -241,6 +261,22 @@ public:
     /// Model decode table for self-describing trace exports. If-chain decoders
     /// have no mask/match table and return an empty vector (the default).
     virtual std::vector<PortTraceDecodeRule> getPortTraceDecodeRules() const { return {}; }
+
+    /// Static port map for introspection ("which devices respond to which ports
+    /// on this machine"). Single per-model switch over config.mem_model, mirroring
+    /// the decode conditions of the IsPort_* helpers / decode tables in the model
+    /// decoders - keep both sides in sync when a decode changes. Rows are
+    /// fitment-conditional: mouse rows only when the mouse device is present,
+    /// Beta128 rows only when the TR-DOS interface is configured.
+    std::vector<PortMapEntry> getPortMapEntries() const;
+
+    /// Mouse routing answer (design Q4, feeds /mouse/status and /ports live):
+    /// would a mouse port read actually be decoded right now, and if not, why.
+    /// Probes the canonical buttons port #FADF through the virtual
+    /// IsPort_KempstonMouse gate, so model-specific deviations
+    /// (Scorpion TR-DOS / Shadow Monitor gating) are honored.
+    void GetMouseRoutingState(bool& decoded, std::string& note) const;
+
 
     /// region <TTD model-specific state (parent TDD 6.4)>
     ///

@@ -10,6 +10,13 @@ Conventions: `WEBAPI` = `curl http://localhost:8090/api/v1/...`,
 `MCP` = a `tools/call` via `:8092/mcp` or the stdio bridge. Emulator id
 placeholder `{id}`.
 
+> **Status 2026-09-14 (end of day):** the "Today" sections below are the
+> pre-fix snapshot. Live now: machine identity + strict create (P0-1/P0-2,
+> `34546478`), build fingerprint (P0-4, `cab13b99`), digest `mode=active`
+> (P1-3), `GET /ports` + mouse routing (P1-5), `mouse` aspect (P2-1).
+> Still open: P1-1/P1-2 (screen state, `/state/paging`), P1-4 (ATM decode
+> rules), P2-2..P2-4, P3.
+
 ---
 
 ## Scenario 1 — ATM Turbo black screen after loading a game
@@ -44,6 +51,15 @@ black screen, CPU running through NOPs.*
    resource exists (F-1).
 
 ### After P0/P1
+
+> Status 2026-09-14: steps 1 and 4 ✅ live (P0-2/P0-4; `screen_digest
+> mode=active` P1-3); step 3 is half-live — `/ports` exists (P1-5), ATM decode
+> rules (P1-4) pending; step 2 needs P1-2 (`/state/paging`), step 5 needs
+> P3-1.
+>
+> Status 2026-09-15: parity round — steps 1/3/4 now also work over the CLI
+> (`digest --active`, `ports`), Lua and Python (`screen_digest(...,
+> "active")`, `ports_map()`), so the workflow below is no longer WebAPI-only.
 
 1. `POST /emulator/create {"model":"ATM710","ram_size":512}` →
    `{"model":"ATM710","ram_kb":512,...}` or a **400 with the reason**. On
@@ -83,6 +99,18 @@ fitted but ports shadowed / fitted and decoded but broken.*
    from different endpoints each time (A-1).
 
 ### After P1-5/P2-1/P2-3
+
+> Status 2026-09-14: P1-5 + P2-1 ✅ live — `inspect_state
+> aspects=["machine","mouse"]` already answers fitment + `ports_decoded` +
+> gate reason in one call (mouse routing sourced from the `/ports` live
+> block). P2-3 (`/capabilities` fitment introspection) remains open, so the
+> "fitted:false (config)" fork still reads `present:false` from mouse status
+> rather than a capabilities snapshot.
+>
+> Status 2026-09-15: parity round — the routing answers in this workflow are
+> also reachable without MCP/WebAPI: CLI `ports` / `mouse status`, Lua and
+> Python `ports_map()` / `mouse_status().routing` report the same values from
+> the same sources (verified live on SCORPION incl. the TR-DOS gate flip).
 
 1. `inspect_state aspects=["machine","mouse"]` → one snapshot: model,
    `fitted/type/wheel` from `/capabilities` (P2-3) + `ports_decoded` and the

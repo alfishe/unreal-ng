@@ -2,6 +2,21 @@
 
 **Verified:** master working tree, 2026-09-14.
 
+> **Status update 2026-09-14 (end of day):** this file is the pre-fix
+> snapshot. Landed since: machine identity + strict create (P0-1/P0-2,
+> `34546478`), AGENTS.md model list (P0-3, `34546478`), build fingerprint
+> (P0-4, `cab13b99`), digest `mode=active` (P1-3), `GET /ports` + mouse
+> routing (P1-5), `mouse` aspect (P2-1) — the affected claims are marked
+> ✅ DONE inline below; everything else still describes the current state.
+>
+> **Status update 2026-09-15 (parity round):** the P1-3/P1-5/P2-1 surfaces
+> were replicated to the CLI, Lua and Python bindings (`digest --active` /
+> `screen_digest(..., "active")`, `ports` / `ports_map()`, `mouse status`
+> `Routing:` line / `mouse_status().routing`), documented in
+> `control-interfaces/`. Additionally the `GetVideoModeName` 128k/Pentagon/
+> Scorpion `"Unknown"` bug was fixed (affects identity `video_mode`,
+> `screen_get_mode`, `/state/screen`, digest `active_surface`).
+
 ## 1. WebAPI endpoint inventory
 
 Source of truth: [emulator_api.h](../../../core/automation/webapi/src/emulator_api.h)
@@ -55,6 +70,9 @@ Source: [mcp-tools.cpp](../../../core/automation/mcp/src/mcp-tools.cpp),
   memory, disasm, stack, breakpoints, memory_banks, screen_ocr, screen_image,
   screen_digest, timing, rom, audio_ay, audio_fm, fdc`.
   No `mouse`, no `audio_gs`/`covox`, no `paging`/`ports` aspects.
+  ✅ DONE (2026-09-14): `mouse` aspect added (P2-1); `paging`/`ports` aspects
+  remain open (the `/ports` endpoint exists via P1-5, the `paging` endpoint
+  does not — P1-2).
 - **Resources** (6): `unreal://keyboard-layout`, `basic-reference`, `z80-isa`,
   `trdos-commands`, `memory-map` (48K/128K only), `emulator-state` (dynamic).
   No per-machine resources.
@@ -144,7 +162,7 @@ rendering work (e.g. `atm_video_modes_suite_test.cpp`, 980 lines).
 
 | Peripheral | Core status | Automation status |
 |:--|:--|:--|
-| Kempston Mouse | Implemented (funnel `DebugMouseManager`, atomic counters, TTD journal, replay guard). Per the 2026-09-12 design §0.3: every model decoder decodes the mouse ports, gated by `!CF_TRDOS`; `[INPUT] Mouse=/Wheel=` config parsed; feature `kempstonmouse` exists | Full: WebAPI `/mouse/*` (10 routes), MCP `mouse_input` (8 actions incl. `status`), CLI/Python/Lua. **Missing:** routing report (`ports_decoded`, open Q4), `mouse` aspect in `inspect_state`, any API to read/change mouse fitment |
+| Kempston Mouse | Implemented (funnel `DebugMouseManager`, atomic counters, TTD journal, replay guard). Per the 2026-09-12 design §0.3: every model decoder decodes the mouse ports, gated by `!CF_TRDOS`; `[INPUT] Mouse=/Wheel=` config parsed; feature `kempstonmouse` exists | Full: WebAPI `/mouse/*` (10 routes), MCP `mouse_input` (8 actions incl. `status`), CLI/Python/Lua. **Missing:** routing report (`ports_decoded`, open Q4), `mouse` aspect in `inspect_state`, any API to read/change mouse fitment. ✅ DONE (2026-09-14): routing report (`routing.ports_decoded` + note, from `PortDecoder::GetMouseRoutingState` — design Q4 closed) and the `mouse` aspect (P2-1); mouse fitment introspection remains open (A-4 / P2-3). ✅ Parity (2026-09-15): `mouse status` `Routing:` line (CLI), `mouse_status().routing` (Lua/Python) |
 | TurboSound FM / YM2203 | Implemented | Full `DeviceState` reports: `/state/audio/fm`, `/state/audio/fm/{chip}`, MCP `audio_fm` aspect — the **extensibility template** |
 | Beta Disk (WD1793) | Implemented | Full `DeviceState` report `/state/fdc`, MCP `fdc` aspect; analyzer raw endpoints |
 | AY/SSG (incl. TurboSound pairs) | Implemented | `/state/audio/ay[/{chip}[/register]]`, MCP `audio_ay`; `/ay/log` write log |

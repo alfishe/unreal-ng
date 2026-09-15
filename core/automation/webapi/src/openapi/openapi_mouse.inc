@@ -189,7 +189,9 @@
             addMouseIdParam(op);
             op["summary"] = "Get mouse state";
             op["description"] = "Kempston mouse counters, buttons, wheel, the bytes the guest reads from ports "
-                                "#FADF/#FBDF/#FFDF, pending click and presence.";
+                                "#FADF/#FBDF/#FFDF, pending click and presence. `routing` answers design Q4: "
+                                "whether the decoder actually routes mouse port reads right now (TR-DOS session, "
+                                "registered peripheral claims and model gating can shadow a fitted mouse).";
             addMouseResponses(op, "Mouse state", false);
             op["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
                 "#/components/schemas/MouseStatus";

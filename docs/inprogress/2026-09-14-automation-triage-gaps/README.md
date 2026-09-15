@@ -11,6 +11,50 @@ with the `atm` branch (`git diff master...atm`).
 (`docs/inprogress/2026-09-10-atm-debugging/bug-report.md`) documented six bugs,
 three of which are automation-surface gaps that remain open today.
 
+## Status update — 2026-09-14 (end of day)
+
+Remediation started the same day. ✅ Done (gap-analysis IDs in parentheses):
+
+- ✅ **P0-1** Machine identity in `GET /emulator/{id}` / `machine` aspect (A-1) — committed `34546478`
+- ✅ **P0-2** Strict model create/switch — loud 400, no silent 48K fallback (A-2) — committed `34546478`
+- ✅ **P0-3** Authoritative model list in `AGENTS.md` (A-3) — committed `34546478`
+- ✅ **P0-4** Build/branch fingerprint + `models_creatable` (C-1) — committed `cab13b99`
+- ✅ **P1-3** Screen digest `mode=active` — follows the displayed surface (B-4) — implemented this session, pending commit
+- ✅ **P1-5** `GET /ports` static port map + live routing flags incl. mouse Q4 (C-3, D-1) — implemented this session, pending commit
+- ✅ **P2-1** Mouse status `routing` field + `mouse` aspect in `inspect_state` (D-1, D-2) — implemented this session, pending commit
+
+Still open: P1-1 (B-1), P1-2 (B-2/E-1), P1-4 (C-2, atm-branch side), P2-2,
+P2-3 (A-4), P2-4 (D-3), P3-1..P3-3. The body of each file below remains the
+pre-fix snapshot; per-gap status lives in the gap-analysis summary matrix and
+per-item ✅ marks in recommendations.md.
+
+## Status update — 2026-09-15 (parity round)
+
+The P1-3 / P1-5 / P2-1 surfaces were replicated to **all four endpoint-parity
+interfaces** (CLI, Lua, Python — WebAPI/MCP were already done), per the
+automation parity rule (same information from the same core sources:
+`Screen::GetActiveSurfaceRAMPages`, `PortDecoder::getPortMapEntries`,
+`PortDecoder::GetMouseRoutingState`):
+
+- ✅ CLI: `digest --active` (prints the derived `Mode:`/pages), new `ports`
+  command (static map table + live routing block), `mouse status` `Routing:` line
+- ✅ Lua: `screen_digest(nil,nil,nil,"active")` (+ `active_surface`), new
+  `ports_map()`, `mouse_status()` carries `routing = {ports_decoded, note}`
+- ✅ Python: `screen_digest(mode="active")` (ValueError on bad mode), new
+  `ports_map()`, `mouse_status()` carries `routing` — compile-verified in an
+  `ENABLE_PYTHON_AUTOMATION=ON` build
+- ✅ Docs updated: `command-interface.md` (digest `--active`, `ports` row,
+  §3.3 parity-table row, `mouse status` routing, `state ports` planned-row
+  note), `cli-interface.md`, `lua-interface.md`, `python-interface.md`,
+  control-interfaces `README.md`
+- ✅ Bug found & fixed while live-verifying: `Screen::GetVideoModeName` had no
+  cases for `M_ZX128`/`M_PENTAGON128K`/`M_SCORPION`, so 128k/Pentagon/Scorpion
+  machines reported `video_mode: "Unknown"` — including the P0-1 machine
+  identity payload. Regression tests: `Screen_VideoModeName_Test`.
+
+All of the above is implemented and verified (zero warnings, full 20-shard
+suite green, live CLI/Lua/WebAPI smoke on 128k + SCORPION) — pending commit.
+
 ## Files
 
 | File | Content |

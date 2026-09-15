@@ -290,7 +290,8 @@ GET /api/v1/emulator/{id}/calltrace           Call trace history (?limit=N)
 GET /api/v1/emulator/{id}/disasm              Disassemble Z80 code (?address=&count=, default: PC)
 GET /api/v1/emulator/{id}/disasm/page         Disassemble from physical page (?type=&page=&offset=&count=)
 POST /api/v1/emulator/{id}/memory/find        Search Z80 memory for a byte pattern (body: {"pattern_hex": "AF 3C"})
-GET  /api/v1/emulator/{id}/state/screen/digest  Stable screen-content digest (range or banks, border folding)
+GET  /api/v1/emulator/{id}/state/screen/digest  Stable screen-content digest (range or banks, border folding; ?mode=active follows the displayed surface)
+GET  /api/v1/emulator/{id}/ports             Static port map + live routing flags (which devices answer which ports, under which gates)
 GET  /api/v1/emulator/{id}/video/beam         Current raster position and beam zone
 GET  /api/v1/emulator/{id}/frame_cost         Per-frame halt/run cost accounting
 GET  /api/v1/emulator/{id}/state/audio/ay      AY/SSG chips overview (core DeviceState report)
@@ -993,6 +994,7 @@ Numbers must be JSON integers: `"10"` and `1.5` are rejected with 400.
 | `button_mask` | Internal button byte, active-low (a pressed button is bit 0). 254 = left down. |
 | `ports` | What the three ports return right now, as integers. `FADF` = buttons (+ wheel), `FBDF` = X, `FFDF` = Y. |
 | `pending_click` | `null`, or `{"button":"left","frames_left":1}` while a click is being held. |
+| `routing` | `{"ports_decoded": bool, "note": "..."}` — would a mouse port read be decoded right now? Hidden while TR-DOS ports are accessible, when a registered peripheral claims the port family, or behind model-specific gating (Scorpion DOS trigger / Shadow Monitor beta mirrors). Same live source as `GET /ports`. |
 | `ttd_journal` | `"supported"`: TTD recordings include mouse input. |
 
 A successful response may carry a `"warning"` string: the mouse is not fitted

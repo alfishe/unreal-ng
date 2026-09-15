@@ -204,6 +204,10 @@ public:
     // Deterministic screen-content digest (change detection)
     ADD_METHOD_TO(EmulatorAPI::getStateScreenDigest, "/api/v1/emulator/{id}/state/screen/digest", drogon::Get);
 
+    // Static port-map introspection: devices x ports x gates + live routing flags
+    ADD_METHOD_TO(EmulatorAPI::getPortsMap, "/api/v1/emulator/{id}/ports", drogon::Get);
+
+
     // Beam (raster) position + frame timing from the machine model
     ADD_METHOD_TO(EmulatorAPI::getBeamPosition, "/api/v1/emulator/{id}/video/beam", drogon::Get);
     // endregion Screen State
@@ -759,6 +763,13 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void getStateScreenDigest(const drogon::HttpRequestPtr& req,
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                               const std::string& id) const;
+
+    /// @brief GET /api/v1/emulator/{id}/ports — static port map (which devices
+    /// respond to which ports under which gating) + live routing flags
+    /// (trdos_active, mouse_ports_decoded, shadow_monitor_paged)
+    void getPortsMap(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) const;
     // endregion Screen State Methods
 
     // region Audio State Methods (implementation: api/state_audio_api.cpp)

@@ -247,6 +247,13 @@ Every changing method returns the resulting **state dict**:
 # (mouse not fitted, or a wheel step with no wheel fitted)
 ```
 
+`mouse_status()` additionally carries `'routing': {'ports_decoded': bool, 'note': str}` —
+the same live answer as the WebAPI `GET /mouse/status` routing object: whether a mouse port
+read is decoded right now, and the reason when it is shadowed (mouse not fitted, TR-DOS ports
+accessible, a registered peripheral claims the port family, or model-specific gating —
+Scorpion DOS trigger / Shadow Monitor). The changing methods (`mouse_move` etc.) do not carry
+it, also matching the WebAPI.
+
 > [!NOTE]
 > `ports` values are integers, the same as in the WebAPI. The Python dict has no `available` key: `mouse_status()` raises
 > instead when there is no mouse device.
@@ -771,6 +778,13 @@ emu.mem_find("AF 3C", start=0x8000, end=0xFFFF, alignment=2, max=32)
 # Screen state
 emu.screen_digest()                  # digest screen area (0x4000-0x5AFF), border folded in
 emu.screen_digest(0x4000, 0x5AFF, include_border=False)  # explicit range
+emu.screen_digest(mode="active")     # hash the surface the video mode displays now (ATM modes
+                                     # follow the 7FFD bit-plane pair); result carries
+                                     # 'active_surface': {'video_mode': str, 'pages': [..]}
+emu.ports_map()                      # static port map + live routing flags (P1-5):
+                                     # {'model': str, 'entries': [{'port','mask','match','device','gate'}],
+                                     #  'live': {'trdos_active','mouse_ports_decoded',
+                                     #           'mouse_routing_note','shadow_monitor_paged'}}
 emu.beam_position()                  # { "frame": N, "scanline": N, "tstate": N, "zone": "..." }
 emu.frame_cost()                     # per-frame halt/run cost accounting
 

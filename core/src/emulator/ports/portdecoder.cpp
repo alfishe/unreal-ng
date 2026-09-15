@@ -460,6 +460,167 @@ PortTraceSessionInfo PortDecoder::getPortTraceSessionInfo() const
 
 /// endregion </Port trace>
 
+/// region <Port map introspection (GET /ports, P1-5)>
+
+std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
+{
+    std::vector<PortMapEntry> entries;
+
+    if (!_context)
+        return entries;
+
+    const MEM_MODEL model = _context->config.mem_model;
+    const bool scorpion = (model == MM_SCORP || model == MM_PROFSCORP);
+
+    // ---- Universal rows: every decoder on master answers these ----
+
+    // #FE: keyboard / beeper / border / MIC+EAR. The Scorpion decoder qualifies
+    // two extra address bits (PortDecoder_Scorpion256::IsPort_FE) - mirrored here.
+    if (scorpion)
+        entries.push_back({0x00FE, 0x0023, 0x0022, "Keyboard / Beeper / Border / MIC+EAR", nullptr});
+    else
+        entries.push_back({0x00FE, 0x0001, 0x0000, "Keyboard / Beeper / Border / MIC+EAR", nullptr});
+
+    // AY register select / data: A15/A14/A1 qualification, mirrors resolve to the
+    // canonical ports (PortDecoder_Spectrum48::DecodePortIn and every other model)
+    entries.push_back({0xFFFD, 0xC002, 0xC000, "AY / TurboSound register select (chip select)", nullptr});
+    entries.push_back({0xBFFD, 0xC002, 0x8000, "AY / TurboSound data", nullptr});
+
+    // ---- Model-specific paging / system latches ----
+    switch (model)
+    {
+        case MM_SPECTRUM128:
+            // IsPort_7FFD: A15=0, A2=1, A1=0 (bit 2 qualifier excludes SOUNDRIVE #F1/#F9)
+            entries.push_back({0x7FFD, 0x8006, 0x0004, "Memory paging (RAM bank, shadow screen, ROM)", nullptr});
+            break;
+        case MM_PLUS3:
+            // IsPort_7FFD / IsPort_1FFD (PortDecoder_Spectrum3)
+            entries.push_back({0x7FFD, 0xC002, 0x4000, "Memory paging (RAM bank, shadow screen, ROM)", nullptr});
+            entries.push_back({0x1FFD, 0xF002, 0x1000, "Disk motor/strobe + special paging", nullptr});
+            break;
+        case MM_PROFI:
+            // IsPort_7FFD / IsPort_DFFD (PortDecoder_Profi); #DFFD bit 7 selects the
+            // Profi 512x240 video mode (Screen::InitVideoMode mode detection)
+            entries.push_back({0x7FFD, 0x8006, 0x0004, "Memory paging (RAM bank, shadow screen, ROM)", nullptr});
+            entries.push_back({0xDFFD, 0x2002, 0x0000, "Profi extended paging (1024K) + video mode (bit 7)", nullptr});
+            break;
+        case MM_SCORP:
+        case MM_PROFSCORP:
+            // IsPort_7FFD / IsPort_1FFD / IsPort_7EFD (PortDecoder_Scorpion256)
+            entries.push_back({0x7FFD, 0xD027, 0x5025, "Memory paging (incl. extended RAM bits)", nullptr});
+            entries.push_back({0x1FFD, 0xD027, 0x1025, "Window latch / Shadow Monitor (bit 1)", nullptr});
+            entries.push_back({0xFF1F, 0xFFFF, 0xFF1F, "Kempston joystick interface",
+                               "gives #1F up while TR-DOS selected / Shadow Monitor paged"});
+            if (model == MM_PROFSCORP)
+            {
+                entries.push_back({0x7EFD, 0xD127, 0x5025, "ProfROM service-window latch", nullptr});
+                entries.push_back({0x00BA, 0x00FE, 0x00BA, "SMUC board (EEPROM / RTC / PIC / IDE window)", nullptr});
+            }
+            break;
+        case MM_PENTAGON:
+            // pentagonPortMasksMatches (PortDecoder_Pentagon128): paging row keeps
+            // the A2=1 qualifier; Covox/SoundDrive resolves to #FB for the handler
+            entries.push_back({0x7FFD, 0x8006, 0x0004, "Memory paging (RAM bank, shadow screen, ROM)", nullptr});
+            entries.push_back({0x00FB, 0x00F5, 0x00F1, "Covox / SoundDrive (#F1,#F3,#F9,#FB)", nullptr});
+            break;
+        default:
+            break;  // MM_SPECTRUM48: no paging / system latches
+    }
+
+    // ---- Fitment-conditional peripherals ----
+
+    // Kempston Mouse: standard address decode (mouse design 3.1), rows only while the
+    // device is fitted - `present:false` in /mouse/status explains their absence
+    if (_mouse && _mouse->IsPresent())
+    {
+        const char* mouseGate = scorpion
+                                    ? "TR-DOS session / Shadow Monitor beta mirrors"
+                                    : "!CF_DOSPORTS (TR-DOS ports accessible) + no registered claim";
+        entries.push_back({0xFADF, 0x023F, 0x021F, "Kempston mouse buttons (+ wheel)", mouseGate});
+        entries.push_back({0xFBDF, 0x023F, 0x021F, "Kempston mouse X axis", mouseGate});
+        entries.push_back({0xFFDF, 0x023F, 0x021F, "Kempston mouse Y axis", mouseGate});
+    }
+
+    // Beta128 register set while the TR-DOS interface is fitted. On Scorpion the
+    // FDC is off the bus outside a TR-DOS session / Shadow Monitor / armed
+    // magic-button trigger (DecodePortIn Beta128 gating); elsewhere it answers
+    // through the registered device key.
+    if (_context->config.trdos_present)
+    {
+        const char* betaGate = scorpion ? "CF_TRDOS / Shadow Monitor / magic-button trigger" : nullptr;
+        // Data registers answer through exact registered device keys (IsBeta128Port /
+        // TryBeta128MirrorPort switch on the five low bytes), so the rows are exact
+        // matches - which also lets the registered-handler dedupe below absorb them.
+        // The system register keeps the shipped table qualification (mask 0x83).
+        entries.push_back({0x001F, 0xFFFF, 0x001F, "Beta128 FDC status/command", betaGate});
+        entries.push_back({0x003F, 0xFFFF, 0x003F, "Beta128 FDC track", betaGate});
+        entries.push_back({0x005F, 0xFFFF, 0x005F, "Beta128 FDC sector", betaGate});
+        entries.push_back({0x007F, 0xFFFF, 0x007F, "Beta128 FDC data", betaGate});
+        entries.push_back({0x00FF, 0x0083, 0x0083, "Beta128 system register", betaGate});
+    }
+
+    // Explicitly registered peripheral devices (RegisterPortHandler) not already
+    // covered by a static row's address qualification above
+    for (const auto& handler : _portDevices)
+    {
+        bool covered = false;
+        for (const PortMapEntry& entry : entries)
+        {
+            if ((handler.first & entry.mask) == entry.match)
+            {
+                covered = true;
+                break;
+            }
+        }
+        if (!covered)
+            entries.push_back({handler.first, 0xFFFF, handler.first, "Registered peripheral device", nullptr});
+    }
+
+    return entries;
+}
+
+void PortDecoder::GetMouseRoutingState(bool& decoded, std::string& note) const
+{
+    decoded = false;
+
+    if (!_mouse || !_mouse->IsPresent())
+    {
+        note = "mouse not fitted for this config ([INPUT] Mouse=)";
+        return;
+    }
+
+    if (_state && (_state->flags & CF_DOSPORTS))
+    {
+        note = "TR-DOS ports accessible (CF_DOSPORTS): only Beta Disk operations answer";
+        return;
+    }
+
+    // Canonical buttons port; ownership by an explicitly registered peripheral
+    // keeps the address away from the mouse (Default_IsPort_KempstonMouse)
+    static const uint16_t probePort = 0xFADF;
+    if (key_exists(_portDevices, probePort))
+    {
+        note = StringHelper::Format("port #%04X claimed by a registered peripheral", probePort);
+        return;
+    }
+
+    uint8_t unusedRegister = 0;
+    if (IsPort_KempstonMouse(probePort, unusedRegister))  // virtual: model deviations honored
+    {
+        decoded = true;
+        note = "decoded (standard Kempston address decode)";
+    }
+    else
+    {
+        // The virtual gate refused the probe after the base checks passed:
+        // model-specific gating (Scorpion TR-DOS session / magic-button trigger,
+        // Shadow Monitor beta mirror claim)
+        note = "hidden by model-specific decoder gating (TR-DOS session / Shadow Monitor)";
+    }
+}
+
+/// endregion </Port map introspection>
+
 
 /// Keyboard ports:
 /// #FEFE
@@ -541,7 +702,7 @@ bool PortDecoder::Standard_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegis
 /// else answers on any address - CF_DOSPORTS), no registered peripheral owning the exact address
 /// (explicit devices keep their ports), and the standard decode matches. Model decoders call this
 /// after their own higher-priority arms (keyboard, AY, FDC, joystick).
-bool PortDecoder::Default_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister)
+bool PortDecoder::Default_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister) const
 {
     if (!_mouse || !_mouse->IsPresent())
         return false;
@@ -550,6 +711,13 @@ bool PortDecoder::Default_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegist
     if (key_exists(_portDevices, port))
         return false;
     return Standard_IsPort_KempstonMouse(port, outRegister);
+}
+
+/// Default mouse-port predicate: the gated standard decode. Scorpion overrides this
+/// with its TR-DOS / Shadow Monitor deviations; models without a deviation inherit it
+bool PortDecoder::IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister) const
+{
+    return Default_IsPort_KempstonMouse(port, outRegister);
 }
 
 uint8_t PortDecoder::Default_Port_KempstonMouse_In(uint16_t port, [[maybe_unused]] uint16_t pc)

@@ -263,11 +263,18 @@ Kempston Mouse [present]
   Ports: #FADF=0xFC #FBDF=0x29 #FFDF=0x50
   Pending click: right, 3 frame(s) left
   TTD journal: supported
+  Routing: decoded (standard Kempston address decode)
 ```
 
 How to read `#FADF`: bits 0–2 are the buttons (0 = pressed: `0xFC` = left and right down),
 bit 3 is always 1, and bits 4–7 are 1 unless a wheel is fitted (`[INPUT] Wheel=KEMPSTON`),
 in which case they carry the wheel counter.
+
+The `Routing:` line (mirrors the WebAPI `/mouse/status` `routing` object) tells whether a
+mouse port read is decoded **right now**: `shadowed - TR-DOS ports accessible (CF_DOSPORTS):
+only Beta Disk operations answer` while TR-DOS owns the port space, `shadowed - hidden by
+model-specific decoder gating` behind the Scorpion DOS trigger / Shadow Monitor, or
+`shadowed - mouse not fitted for this config ([INPUT] Mouse=)` when nothing is connected.
 
 **Notes**:
 - `mouse` commands are refused with `Error: TTD replay in progress; live mouse input refused`
@@ -286,7 +293,8 @@ reference: [command-interface.md](./command-interface.md).
 | `stepout` | Run until the current subroutine returns to its caller. |
 | `skip_until <pc>` | Fast-forward until PC reaches the target (breakpoints skipped, bounded budget). |
 | `find <pattern>` | Search the Z80 address space for a byte pattern (`--from`, `--to`, `--align`, `--max`). |
-| `digest <start> <end>` | Stable 64-bit screen-content digest (`--banks`, `--no-border`). |
+| `digest <start> <end>` | Stable 64-bit screen-content digest (`--banks`, `--active`, `--no-border`). |
+| `ports` | Static port map with live routing flags: port/mask/match/device/gate rows from the machine's port decoder, plus TR-DOS active, mouse routing and the Scorpion Shadow Monitor latch. |
 | `beam` | Current raster position and beam zone. |
 | `frame_cost` | Per-frame halt/run cost accounting. |
 | `coverage <start\|stop\|clear\|gaps\|status>` | Executed-address coverage analysis. |

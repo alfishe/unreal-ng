@@ -146,6 +146,7 @@ private:
 
     // Analysis command handlers (screen digest, beam, frame cost, analyzers)
     void HandleDigest(const ClientSession& session, const std::vector<std::string>& args);
+    void HandlePorts(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBeam(const ClientSession& session, const std::vector<std::string>& args);
     void HandleFrameCost(const ClientSession& session, const std::vector<std::string>& args);
     void HandleCoverage(const ClientSession& session, const std::vector<std::string>& args);

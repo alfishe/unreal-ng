@@ -11,12 +11,14 @@
 #include <debugger/analyzers/aylog/ayloganalyzer.h>
 #include <debugger/analyzers/coverage/coverageanalyzer.h>
 #include <debugger/debugmanager.h>
+#include <emulator/config.h>
 #include <emulator/cpu/z80.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/memory/memory.h>
 #include <emulator/platform.h>
+#include <emulator/ports/portdecoder.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/video/screendigest.h>
 
@@ -74,6 +76,9 @@ std::string defaultRecordingPath(const std::string& id, const std::string& exten
 
 // HandleDigest — FNV-1a-64 digest of the screen area (change detection without
 // transferring pixels). Mirrors GET /api/v1/emulator/{id}/state/screen/digest.
+// --active hashes the RAM pages the CURRENT video mode actually displays
+// (ATM hardware modes follow the 7FFD-selected bit-plane pair) instead of the
+// fixed model-dependent pages 5/7 (P1-3). Explicit range/banks still win.
 void CLIProcessor::HandleDigest(const ClientSession& session, const std::vector<std::string>& args)
 {
     auto emulator = GetSelectedEmulator(session);
@@ -102,6 +107,7 @@ void CLIProcessor::HandleDigest(const ClientSession& session, const std::vector<
     uint16_t rangeEnd = 0;
     std::vector<uint16_t> banks;
     bool includeBorder = true;
+    bool activeMode = false;
 
     for (size_t i = 0; i < args.size(); i++)
     {
@@ -116,6 +122,10 @@ void CLIProcessor::HandleDigest(const ClientSession& session, const std::vector<
                     banks.push_back(page);
             }
         }
+        else if (args[i] == "--active")
+        {
+            activeMode = true;
+        }
         else if (args[i] == "--no-border")
         {
             includeBorder = false;
@@ -125,7 +135,8 @@ void CLIProcessor::HandleDigest(const ClientSession& session, const std::vector<
             // Positional pair: start end
             if (!parseAddress16(args[i], rangeStart) || !parseAddress16(args[i + 1], rangeEnd) || rangeStart > rangeEnd)
             {
-                session.SendResponse("Invalid range. Usage: digest [<start> <end>] [--banks p1,p2] [--no-border]");
+                session.SendResponse(
+                    "Invalid range. Usage: digest [<start> <end>] [--banks p1,p2] [--active] [--no-border]");
                 return;
             }
             i++;
@@ -157,9 +168,26 @@ void CLIProcessor::HandleDigest(const ClientSession& session, const std::vector<
         // Bank mode: both screen pages on 128K-class models, page 5 only otherwise
         if (banks.empty())
         {
-            banks.push_back(ScreenDigest::kScreen0RAMPage);
-            if (is128K)
-                banks.push_back(ScreenDigest::kScreen1RAMPage);
+            if (activeMode)
+            {
+                // Surface actually displayed by the current video mode: ZX modes
+                // keep pages 5/7, ATM hardware modes hash the 7FFD-selected
+                // bit-plane pair - flipping FF77 between ZX and 16c surfaces now
+                // flips the digest even with constant underlying pages
+                const VideoModeEnum videoMode = context->pScreen->GetVideoMode();
+                banks = Screen::GetActiveSurfaceRAMPages(videoMode, state.p7FFD, is128K);
+
+                ss << "Mode: " << Screen::GetVideoModeName(videoMode) << ", pages:";
+                for (uint16_t page : banks)
+                    ss << " " << std::dec << page;
+                ss << NEWLINE << std::hex << std::uppercase << std::setfill('0');
+            }
+            else
+            {
+                banks.push_back(ScreenDigest::kScreen0RAMPage);
+                if (is128K)
+                    banks.push_back(ScreenDigest::kScreen1RAMPage);
+            }
         }
 
         for (uint16_t page : banks)
@@ -194,6 +222,61 @@ void CLIProcessor::HandleDigest(const ClientSession& session, const std::vector<
         ss << "Previous: 0x" << std::hex << std::setw(16) << previousDigest << " (frame " << std::dec << previousFrame
            << ", " << (state.frame_counter - previousFrame) << " frames ago)" << NEWLINE;
     }
+
+    session.SendResponse(ss.str());
+}
+
+// HandlePorts — static port-map introspection: which devices answer which I/O
+// ports on this model, under which gating conditions, plus the live routing
+// flags. Mirrors GET /api/v1/emulator/{id}/ports (PortDecoder::getPortMapEntries /
+// GetMouseRoutingState, single source).
+void CLIProcessor::HandlePorts(const ClientSession& session, const std::vector<std::string>& args)
+{
+    (void)args;  // No parameters
+
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected.");
+        return;
+    }
+
+    EmulatorContext* context = emulator->GetContext();
+    if (!context || !context->pPortDecoder)
+    {
+        session.SendResponse("Emulator context is not fully initialized.");
+        return;
+    }
+
+    PortDecoder* decoder = context->pPortDecoder;
+    const CONFIG& config = context->config;
+    EmulatorState& state = context->emulatorState;
+
+    std::stringstream ss;
+    ss << "Model: " << Config::GetModelFullName(config.mem_model) << NEWLINE << NEWLINE;
+
+    ss << "Port    Mask    Match   Device                            Gate" << NEWLINE;
+    for (const PortMapEntry& entry : decoder->getPortMapEntries())
+    {
+        ss << "0x" << std::hex << std::uppercase << std::setfill('0') << std::setw(4) << entry.port << "  0x"
+           << std::setw(4) << entry.mask << "  0x" << std::setw(4) << entry.match << "  " << std::setfill(' ')
+           << std::left << std::setw(33) << entry.device << (entry.gate ? entry.gate : "") << NEWLINE << std::right;
+    }
+
+    // Live routing state: the flags that flip rows on/off right now
+    bool mouseDecoded = false;
+    std::string mouseNote;
+    decoder->GetMouseRoutingState(mouseDecoded, mouseNote);
+
+    ss << NEWLINE << "Live routing state:" << NEWLINE;
+    ss << "  TR-DOS active: " << (((state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0) ? "yes" : "no") << NEWLINE;
+    ss << "  Mouse ports: " << (mouseDecoded ? "" : "shadowed - ") << mouseNote << NEWLINE;
+
+    const bool scorpion = (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP);
+    if (scorpion)
+        ss << "  Shadow monitor paged: " << (((state.p1FFD & 0x02) != 0) ? "yes" : "no") << NEWLINE;
+    else
+        ss << "  Shadow monitor paged: n/a (model has no #1FFD latch)" << NEWLINE;
 
     session.SendResponse(ss.str());
 }
