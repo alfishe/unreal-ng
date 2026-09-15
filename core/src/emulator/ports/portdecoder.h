@@ -3,6 +3,8 @@
 
 #include <memory>
 #include <set>
+#include <string>
+#include <vector>
 #include "emulator/platform.h"
 #include "emulator/ports/portdiagrecorder.h"
 #include "debugger/ttd/ttdserializable.h"  // ttd::PeripheralId / TTDSerializable (leaf header)
@@ -55,18 +57,159 @@ struct PortMatch
     uint16_t resolvedPort;
 };
 
+/// Semantic categories for decoder-registered ports (port-tags-paging design
+/// §3.1, P1-2). Metadata only - decode behavior never branches on these; one
+/// port may carry several (7FFD is Memory|Rom|Screen at once).
+enum class PortTag : uint32_t
+{
+    None     = 0,
+
+    // ---- Categories ----
+    Keyboard = (1u << 0),   // #FE matrix half
+    Memory   = (1u << 1),   // latch steers RAM window mapping
+    Rom      = (1u << 2),   // latch steers ROM selection (shadow monitor, ROM page)
+    Screen   = (1u << 3),   // latch steers video mode / shadow surface
+    Storage  = (1u << 4),   // mass-storage register sets (Beta128 FDC, IDE, SD)
+    Mouse    = (1u << 5),   // pointer input registers
+    Joystick = (1u << 6),   // Kempston joystick
+    System   = (1u << 7),   // service windows, config latches (SMUC, ProfROM...)
+
+    // ---- Sound family: category bit + member bit ----
+    // Member tags embed the Sound bit, so family membership is a single
+    // AND test: (tags & PortTag::Sound) != 0.
+    Sound           = (1u << 8),
+    SoundAy         = Sound | (1u << 16),  // #FFFD/#BFFD (TurboSound pairs)
+    SoundCovox      = Sound | (1u << 17),  // #FB-class DAC
+    SoundSoundDrive = Sound | (1u << 18),  // #F1/#F3/#F9/#FB quad DAC
+    SoundGs         = Sound | (1u << 19),  // reserved (GS not on master)
+    SoundMoonsound  = Sound | (1u << 20),  // reserved (P2-2/P2-4 design)
+    SoundTsFm       = Sound | (1u << 21),  // TurboSound FM (YM2203)
+
+    // ---- Storage family: category bit + member bit ----
+    // Member tags embed the Storage bit for family membership tests.
+    StorageFdc      = Storage | (1u << 22), // Beta128 / TR-DOS floppy controller
+    StorageIde      = Storage | (1u << 23), // IDE / ATA adapters (Nemo, Wild, ATM IDE)
+    StorageSd       = Storage | (1u << 24), // SD card interfaces (divMMC, ZXUno, ZXMMC)
+    StorageCf       = Storage | (1u << 25), // CompactFlash adapters
+
+    // ---- Network family: reserved for future ----
+    Network         = (1u << 9),            // network interface category
+    NetworkZifi     = Network | (1u << 26), // ZiFi WiFi module (#C7xx / #57xx)
+    NetworkEth      = Network | (1u << 27), // Ethernet adapters (reserved)
+
+    // ---- Expansion / misc: reserved for future ----
+    Rtc             = (1u << 10),           // real-time clock (SMUC, GLUK, MC146818)
+    Printer         = (1u << 11),           // printer port / ZX Printer
+    Serial          = (1u << 12),           // serial / RS-232 interfaces
+    Dma             = (1u << 13),           // DMA controllers (reserved)
+    Video           = (1u << 14),           // extra video hardware (GS, ATM, TSConf)
+};
+
+typedef uint32_t PortTagSet;
+
+constexpr PortTagSet PORT_TAG_CATEGORY_MASK = 0x0000FFFFu;  // category bits
+constexpr PortTagSet PORT_TAG_SOUND_MEMBERS = 0xFFFF0000u;  // member bits
+
+/// enum class carries no implicit conversions, so set arithmetic needs
+/// explicit operators (design review refinement 1). All constexpr - zero
+/// runtime cost, and no implicit-conversion warnings on gcc/clang/msvc.
+constexpr PortTagSet operator|(PortTag a, PortTag b)
+{
+    return static_cast<PortTagSet>(a) | static_cast<PortTagSet>(b);
+}
+constexpr PortTagSet operator|(PortTagSet a, PortTag b)
+{
+    return a | static_cast<PortTagSet>(b);
+}
+constexpr PortTagSet operator&(PortTagSet a, PortTag b)
+{
+    return a & static_cast<PortTagSet>(b);
+}
+constexpr PortTagSet operator&(PortTag a, PortTag b)
+{
+    return static_cast<PortTagSet>(a) & static_cast<PortTagSet>(b);
+}
+
+/// Single-tag conversion for row tables - bare `PortTag::Keyboard` would not
+/// convert to the set type implicitly in a brace initializer
+constexpr PortTagSet Tags(PortTag tag)
+{
+    return static_cast<PortTagSet>(tag);
+}
+
+/// Live-value binding for tagged latch rows: how a row finds its current
+/// value in EmulatorState (port-tags-paging design §4.1, P1-2). Kept as an
+/// enum (not a pointer/member offset) so PortMapEntry stays an aggregate
+/// usable in brace-initialized row tables.
+enum class PagingLatch : uint8_t
+{
+    None,
+    P7FFD, P1FFD, PDFFD, PFDFD, P7EFD, PEFF7, PFF77,
+    AFE, AFB,                       // ATM 4.50 system ports (atm branch)
+    PFFF7Window0, PFFF7Window1,     // ATM 7.10/ATM3 per-window latches
+    PFFF7Window2, PFFF7Window3,     // (reserved until the decoders land)
+    PBD, PTS, PMEM                  // TSConf (reserved)
+};
+
+/// region <Tag / latch serialization - single source for every automation surface>
+/// WebAPI /ports + /state/paging, MCP aspects, the CLI ports/paging commands and
+/// the Lua/Python ports_map()/paging_state() bindings all render tag and latch
+/// names through these functions, so a name exists exactly once (parity rule).
+
+/// @brief Lowercase wire names for every tag carried by a port-map row
+/// @param tags Tag-set bitmask as stored in PortMapEntry::tags
+/// @return Names in taxonomy order (category bits, then sound members); a row
+///         may carry several sound members (Pentagon #FB is covox AND sounddrive),
+///         so every member bit is reported - never only the first match
+std::vector<std::string> PortTagSetToStrings(PortTagSet tags);
+
+/// @brief Wire name of a live-value latch binding
+/// @param latch Latch binding as stored in PortMapEntry::latch
+/// @return Static string ("p7FFD", "p1FFD", "pFFF7_w2", ...), or nullptr for
+///         PagingLatch::None (callers serialize that as null/absent)
+const char* PagingLatchToString(PagingLatch latch);
+
+/// @brief One decoded field of a paging latch value (design §5.1 dictionary)
+struct DecodedLatchField
+{
+    std::string key;
+    bool isBool = false;      // false = the field has int semantics
+    int intValue = 0;         // valid when !isBool
+    bool boolValue = false;   // valid when isBool
+};
+
+/// @brief Decode a paging latch value into the §5.1 dictionary keys (ram_bank,
+///        shadow_screen, special_paging, ...). Which keys apply to #1FFD depends
+///        on the machine model (Scorpion window latch vs +3 special paging).
+/// @param latch Which latch the value belongs to
+/// @param value Raw latch value as returned by PortDecoder::ReadPagingLatch()
+/// @param model Machine model (MEM_MODEL)
+/// @param ramSizeKB Optional RAM size for extended bank decode (Pentagon 512:
+///        the only master decoder folding #7FFD bits [6:7] into the bank index)
+/// @return Decoded fields; empty for latches without a dictionary entry
+std::vector<DecodedLatchField> DecodePagingLatch(PagingLatch latch, uint32_t value, MEM_MODEL model, uint32_t ramSizeKB = 0);
+
+/// endregion </Tag / latch serialization>
+
 /// One row of the static port map reported by GET /api/v1/emulator/{id}/ports
 /// (P1-5 static port-map introspection). `mask`/`match` mirror the decoder's
 /// address qualification ((port & mask) == match), `port` is the canonical
 /// representative port, `device` a human-readable name and `gate` the runtime
 /// condition that can take the device off the bus (nullptr = always answers).
+/// `tags`/`latch` extend the row into the tagged port registry (P1-2 design
+/// §4.1); the default member initializers keep legacy 5-element brace rows
+/// compiling unchanged.
 struct PortMapEntry
 {
     uint16_t port;
     uint16_t mask;
     uint16_t match;
-    const char* device;
-    const char* gate;  // nullptr = ungated
+    const char* device;                 // human-readable
+    const char* gate;                   // nullptr = ungated
+    PortTagSet tags = 0;                // semantic categories; 0 = legacy
+                                        // registered-peripheral row (untagged)
+    PagingLatch latch = PagingLatch::None;  // live-value binding; None for
+                                            // non-latch registers
 };
 
 
@@ -180,6 +323,11 @@ protected:
     // Registered port handlers from external peripheral devices
     std::map<uint16_t, PortDevice*> _portDevices;
 
+    // Semantic tags passed via the RegisterPortHandler overload, so dynamic
+    // devices land in the tag collections instead of the anonymous fallback
+    // row (port-tags-paging design §4.2)
+    std::map<uint16_t, PortTagSet> _portDeviceTags;
+
     // Set of ports to mute logging to
     std::set<uint16_t> _loggingMutePorts;
 
@@ -267,8 +415,39 @@ public:
     /// the decode conditions of the IsPort_* helpers / decode tables in the model
     /// decoders - keep both sides in sync when a decode changes. Rows are
     /// fitment-conditional: mouse rows only when the mouse device is present,
-    /// Beta128 rows only when the TR-DOS interface is configured.
+    /// Beta128 rows only when the TR-DOS interface is configured. Every static
+    /// row carries its semantic tags and, for latch registers, the live-value
+    /// binding (port-tags-paging design §3.2 - the assignment table is
+    /// normative for PortDecoder_PortTag_Test).
     std::vector<PortMapEntry> getPortMapEntries() const;
+
+    /// Entries carrying ALL of the given tag bits (exact-subset match over
+    /// the full tag set - a member bit in the query demands that member, so
+    /// HasAnyTaggedPort(SoundCovox) is a true per-soundcard fitment answer;
+    /// use GetSoundEntries to enumerate a whole family). Thin filter over
+    /// getPortMapEntries() - the row count is a few dozen and fitment-
+    /// conditional rows would invalidate any cached index, so a linear scan
+    /// is simpler to keep correct. Rows are returned BY VALUE:
+    /// getPortMapEntries() builds a fresh vector per call, so pointer views
+    /// into it would dangle.
+    std::vector<PortMapEntry> GetEntriesByTags(PortTagSet categories) const;
+
+    /// Entries of one Sound family member (SoundAy, SoundCovox, ...).
+    std::vector<PortMapEntry> GetSoundEntries(PortTag member) const;
+
+    /// Whether at least one entry carries ALL of the given category bits -
+    /// the fitment/capability answer for future consumers (P2-3).
+    bool HasAnyTaggedPort(PortTagSet categories) const;
+
+    /// All latch rows (latch != None) that can steer the given categories -
+    /// the direct input to /state/paging's static half (P1-2 Phase 2).
+    std::vector<PortMapEntry> GetPagingLatches(PortTagSet categories = Tags(PortTag::Memory)) const;
+
+    /// Single switch PagingLatch -> EmulatorState field (the fields already
+    /// exist and are TTD-checkpointed - no new state). Static: the mapping
+    /// needs no decoder state. Reserved atm/TSConf members read 0 until their
+    /// decoders land on the atm branch.
+    static uint32_t ReadPagingLatch(PagingLatch latch, const EmulatorState& state);
 
     /// Mouse routing answer (design Q4, feeds /mouse/status and /ports live):
     /// would a mouse port read actually be decoded right now, and if not, why.
@@ -347,7 +526,8 @@ protected:
 
     /// region <Interaction with peripherals>
 public:
-    bool RegisterPortHandler(uint16_t port, PortDevice* device);
+    bool RegisterPortHandler(uint16_t port, PortDevice* device,
+                             PortTagSet tags = 0);
     void UnregisterPortHandler(uint16_t port);
 
     uint8_t PeripheralPortIn(uint16_t port);
