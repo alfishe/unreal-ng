@@ -348,3 +348,62 @@ TEST_F(WD1793_SleepTimeout_Test, Beta128ResetStopsSpinningMotorOnce)
     EXPECT_EQ(motorStoppedCount() - initialStoppedNotifications, 1u)
         << "Duplicate NC_FDD_MOTOR_STOPPED posted for a single motor stop";
 }
+
+/// RESTORE must behave identically whether the controller is fresh, has been
+/// woken from sleep after a motor timeout, or sits in its awake-idle window with
+/// the motor off (where handleStep() skips the FSM entirely). The FSM charges
+/// _diffTime (time since the previous process()) against pending step delays,
+/// so a clock left stale across an idle period would make the first delay
+/// elapse instantly and the seek finish far too early. Measured in whole frames:
+/// 10 steps x 6 ms = 60 ms must take at least 60 ms and at most two frames more.
+TEST_F(WD1793_SleepTimeout_Test, RestoreTimingIdenticalAfterTimeoutSleepAndAwakeIdle)
+{
+    static constexpr int8_t START_TRACK = 10;
+    static constexpr uint8_t CMD_RESTORE_6MS = 0x00;  // RESTORE: no head load, no verify, 6 ms stepping rate
+    static constexpr size_t EXPECTED_TSTATES = START_TRACK * 6 * (Z80_FREQUENCY / 1000);
+    static constexpr size_t MAX_RUN_TSTATES = 20 * FRAME_TSTATES;
+
+    auto restoreAndMeasure = [this](const char* phase) -> size_t
+    {
+        _fdc->getDrive()->setTrack(START_TRACK);
+        _fdc->portDeviceOutMethod(WD1793::PORT_1F, CMD_RESTORE_6MS);
+        EXPECT_FALSE(_fdc->isSleeping()) << phase << ": command must wake the controller";
+        EXPECT_TRUE(_fdc->getDrive()->getMotor()) << phase << ": command must start the motor";
+
+        size_t elapsed = 0;
+        while (elapsed < MAX_RUN_TSTATES && (_fdc->getStatusRegister() & WD1793::WDS_BUSY))
+        {
+            elapsed += RunEmulation(FRAME_TSTATES);
+        }
+
+        EXPECT_FALSE(_fdc->getStatusRegister() & WD1793::WDS_BUSY) << phase << ": RESTORE did not complete";
+        EXPECT_EQ(static_cast<int>(_fdc->getDrive()->getTrack()), 0) << phase << ": head is not at track 0";
+        return elapsed;
+    };
+
+    // Phase 1: fresh controller
+    _z80->t = 1000;
+    _context->emulatorState.t_states = 0;
+    const size_t fresh = restoreAndMeasure("fresh");
+    EXPECT_GE(fresh, EXPECTED_TSTATES) << "fresh: RESTORE finished before its step delays could have elapsed";
+    EXPECT_LE(fresh, EXPECTED_TSTATES + 2 * FRAME_TSTATES) << "fresh: RESTORE took too long";
+
+    // Phase 2: 6 s without FDC access - motor times out at ~3 s, controller sleeps
+    RunEmulation(6 * Z80_FREQUENCY);
+    ASSERT_FALSE(_fdc->getDrive()->getMotor()) << "Precondition: motor must have timed out";
+    ASSERT_TRUE(_fdc->isSleeping()) << "Precondition: controller must be asleep";
+    const size_t afterSleep = restoreAndMeasure("woken from sleep");
+    EXPECT_EQ(afterSleep, fresh) << "RESTORE timing differs after sleep";
+
+    // Phase 3: awake-idle window - a status poll wakes the controller, then 1 s
+    // of idle with the motor off (handleStep skips the FSM here)
+    RunEmulation(6 * Z80_FREQUENCY);
+    ASSERT_TRUE(_fdc->isSleeping()) << "Precondition: controller must be asleep again";
+    _fdc->portDeviceInMethod(WD1793::PORT_1F);
+    ASSERT_FALSE(_fdc->isSleeping()) << "Precondition: status poll must wake the controller";
+    RunEmulation(1 * Z80_FREQUENCY);
+    ASSERT_FALSE(_fdc->isSleeping()) << "Precondition: still inside the 2 s idle window";
+    ASSERT_FALSE(_fdc->getDrive()->getMotor()) << "Precondition: motor must be off";
+    const size_t awakeIdle = restoreAndMeasure("awake-idle, motor off");
+    EXPECT_EQ(awakeIdle, fresh) << "RESTORE timing differs from the awake-idle window";
+}
