@@ -11,10 +11,10 @@
 ///
 /// The blob is 251 bytes = 143 (controller) + 4×27 (FDDs).
 ///
-/// Note on FDD track initialization: the FDD ctor randomizes _track via
-/// std::random_device. We therefore test round-trip via two WD1793 instances
-/// — load overwrites the random track with the captured value, so byte
-/// identity still holds for the post-load re-save.
+/// Note on FDD track initialization: fresh drives start at track 0 (the ctor
+/// used to randomize _track until 2026-09-13). The round-trip is still
+/// tested via two WD1793 instances - load overwrites the track with the
+/// captured value, so byte identity holds for the post-load re-save.
 
 // Enable the WD1793CUT (Code Under Test) wrapper so tests can mutate protected
 // register fields directly without going through the full port-write path
@@ -125,7 +125,7 @@ TEST_F(TTD_FDD_Serializer_Test, TTDStateSize_IsStable_27Bytes)
 
 TEST_F(TTD_FDD_Serializer_Test, RoundTrip_DefaultState_IsByteIdentical)
 {
-    // The FDD ctor randomizes _track; force both to a known state first.
+    // Force both drives to a known, non-default track first.
     _fddA->setTrack(0);
     _fddB->setTrack(0);
 
@@ -228,8 +228,8 @@ TEST_F(TTD_WD1793_Serializer_Test, TTDStateSize_IsStable_251Bytes)
 TEST_F(TTD_WD1793_Serializer_Test, RoundTrip_PostResetState_IsByteIdentical)
 {
     // After reset() both controllers are in a fully-zeroed canonical state
-    // (modulo the FDDs' randomized _track fields). Force FDD tracks to zero
-    // so the cross-instance compare is meaningful.
+    // Force FDD tracks to zero explicitly (they start there) so the
+    // cross-instance compare is meaningful even if a test above moved them.
     for (size_t i = 0; i < 4; ++i)
     {
         _harnessA->context->coreState.diskDrives[i]->setTrack(0);

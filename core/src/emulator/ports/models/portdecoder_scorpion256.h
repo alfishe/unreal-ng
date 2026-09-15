@@ -56,8 +56,9 @@ public:
     bool IsPort_1FFD(uint16_t port);
     bool IsPort_7EFD(uint16_t port);  // ProfROM window latch (#7FFD pattern with A8 low)
     bool IsPort_SMUC(uint16_t port);  // SMUC board (#xxBA/#xxBE family)
-    bool IsPort_KempstonJoystick(uint16_t port);  // Kempston Joystick (#FF1F / #xx1F)
-    bool IsPort_KempstonMouse(uint16_t port);     // Kempston Mouse (#FADF/#FBDF/#FFDF)
+    bool IsPort_KempstonJoystick(uint16_t port);  // Kempston Joystick (#FF1F)
+    bool IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister);     // Kempston Mouse (standard decode, A5-A0=#1F A9=1)
+    bool ScorpionTrDosSelected() const;                                 // TR-DOS session or armed DOS trigger
 
     /// region <TTD model-specific state>
     /// ProfROM plane/page and the #7EFD / #1FFD latches that the model-agnostic

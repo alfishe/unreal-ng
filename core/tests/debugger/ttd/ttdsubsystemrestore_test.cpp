@@ -25,6 +25,7 @@
 
 #include <gtest/gtest.h>
 
+#include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 
 #include <cstdint>
@@ -68,6 +69,10 @@ protected:
     {
         _emulator = new Emulator(LoggerLevel::LogError);
         ASSERT_NE(_emulator, nullptr);
+        // AYTurboSound_SeekRestoresAllRegisters drives the legacy slot; the
+        // shipped default is FM now, so stage the default machine's ini with AY
+        _emulator->SetCustomConfigPath(
+            EmulatorTestHelper::StageTurboSoundKindConfig(TurboSoundKind::AY));
         ASSERT_TRUE(_emulator->Init()) << "Failed to initialize emulator";
 
         _context = _emulator->GetContext();
@@ -655,7 +660,7 @@ TEST_F(TTD_Subsystem_Restore_Test, AYTurboSound_SeekRestoresAllRegisters)
 
     SoundManager* snd = _context->pSoundManager;
     ASSERT_NE(snd, nullptr);
-    SoundChip_TurboSound* ts = snd->getTurboSound();
+    ITurboSoundDevice* ts = snd->getTurboSound();
     ASSERT_NE(ts, nullptr);
 
     // TurboSound wraps two AY chips; writeRegister/getRegisters live on

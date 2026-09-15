@@ -1,0 +1,143 @@
+;LD HL,08000h (tune base); CALL TRAMP_INIT; EI; then the HALT loop:
+;one interrupt = one frame. Border flips black/white around the frame
+;call - the classic visual heartbeat. Any key half-row bit low exits:
+;CALL TRAMP_STOP (chip reset), HL'=02758h for the caller, RET.
+;This is the address a .sna sets as PC to start playback (see
+;tsfm-sna-guide.md in this folder).
+MAIN_ENTRY: equ 0x61a8
+;HALT loop body: border 0, FRAME, border 7, key scan
+PLAY_LOOP: equ 0x61af
+;JP INIT - trampoline so callers need no internals
+TRAMP_INIT: equ 0x61cc
+;JP FRAME - per-interrupt entry from the HALT loop
+TRAMP_FRAME: equ 0x61cf
+;JP CHIP_RESET - mute + rearm both chips
+TRAMP_STOP: equ 0x61d2
+;HL = tune base ('TFMcom1.12'). tune+9 is the version character:
+;'2' (032h) = current format  -> patch FRAME epilogue to plain RET
+;anything else              -> keep LD A,6 divider (play 1 of 6 frames)
+;Then the relocation pass: six 16-bit offsets from tune+10..tune+21
+;are converted to absolute addresses and stored through RELOC_TABLE
+;into the channel stubs' LD HL,nnnn slots (one per YM2203 channel).
+;Each stub's LD A,0FDh operand (channel state slot) is reset to 0FFh
+;('pattern not started'). FALLS THROUGH into CHIP_RESET - init also
+;mutes and rearms both chips before the first frame.
+INIT: equ 0x61d5
+;LD (FRAME_DIVIDER),A - the version-dependent SMC patch
+INIT_PATCH: equ 0x61e4
+;Six-iteration LDI/LDI + pointer-fix loop. HL' walks RELOC_TABLE,
+;DE'=061FDh is the tune-base-relative delta, BC counts 0x06FD times
+;for the LDI pair (copies the tune header area), and each offset from
+;the tune is ADDed to the tune base before storing to the stub slot.
+RELOC_LOOP: equ 0x61ee
+;Select control word 0xF8 (chip 0), CALL REG_MOP (zero/silence every
+;YM2203 register group), then SELECT_F9 for chip 1 - but note
+;REG_MOP itself leaves the selection as it found it: the final
+;SELECT_F9 call here switches the ACTIVE chip for the next frame.
+;Shared by INIT fall-through and the keypress exit path.
+CHIP_RESET: equ 0x622a
+;Zeroing sweep, register/data pairs written through REG_WRITE:
+;  regs 0x0D..0x00 data 0x00   (period/noise/env - AY half)
+;  regs 0xB3..0x40 data 0x0F   (FM operators: max attenuation = silent)
+;    (0x4F would collide with the SSG envelope; patched to 0x3F)
+;  regs 0x8F..0x80 data 0x0F   (channel total levels = silent)
+;  reg  0x28 data 0,1,2 then 0x2A,0x2B key-off every FM channel
+;  regs 0x7F..0x40 data 0x0F / reg 0x2F / reg 0x2D (0x2D = mode: AY)
+;The same sweep, with 0xF9 selected first, silences chip 1.
+REG_MOP: equ 0x6238
+;The register/data pair helper (A = register, A' = data):
+;  poll IN F,(C) on 0xFFFD until bit7 clear (not busy), OUT register
+;  swap AF; poll again; OUT data to 0xBFFD (B=0xBF for the data half)
+;B=0xFF/B=0xBF are kept in D/E by every caller. On TSFM hardware
+;0xFFFD reads return a status byte (bit7=busy); the 32-cycle busy
+;window after each write is what these loops wait out.
+REG_WRITE: equ 0x628a
+;busy-poll before the register-select OUT
+WAIT_REG: equ 0x628b
+;busy-poll before the data OUT (the P4 park site on
+;legacy 2xAY TurboSound: the AY mixer reads back 0xFF
+;with bit7 set, so the loop never exits)
+WAIT_DATA: equ 0x6293
+;OUT 0xFFFD,0xF8 - control word: chip 0 active
+SELECT_F8: equ 0x629d
+;OUT 0xFFFD,0xF9 - control word: chip 1 active
+SELECT_F9: equ 0x62a3
+;OUT (0x7FFD),A helper (Pentagon latch). Not called from inside the
+;player - a service entry for the embedding program (e.g. to restore
+;ROM paging after a TR-DOS load, exactly what the tsfm-elite boot
+;stub replicates).
+OUT_7FFD: equ 0x62a9
+;The per-interrupt play routine, called from PLAY_LOOP:
+;  SELECT_F8; CALL CH1/CH2/CH3 (chip 0 - YM #1)
+;  SELECT_F9; CALL CH4/CH5/CH6 (chip 1 - YM #2)
+;Each channel stub interprets its pattern stream and emits YM2203
+;register writes through the same busy-polled port pairs.
+FRAME: equ 0x62b1
+;SMC frame-rate divider, patched by INIT: for TFMcom1.12 tunes
+;(version '2') INIT writes a RET here, so every frame plays; older
+;tunes keep LD A,6 / DEC A / JR NZ and only re-enter FRAME every 6th
+;interrupt (12.5 Hz effective frame rate for pre-1.0 data).
+FRAME_DIVIDER: equ 0x62d2
+;Bulk block writer for register/data streams: poll, OUTI the register
+;byte to 0xFFFD, poll, OUTI the data byte to 0xBFFD; A counts pairs.
+;Used by the instrument-load op to push a whole operator table.
+OUTI_PAIRS: equ 0x62df
+;Pattern op: byte  -> CH1's LD A,(HL) slot at 636Eh (operator table
+;length), then BC = 16-bit instrument data pointer from the stream,
+;stored into the stub's LD HL,nnnn slot at 6378h; entry continues
+;into OP_DISPATCH inline (CALL-less tail sharing).
+OP_INSTRUMENT: equ 0x62f3
+;Second-level dispatch for opcodes >= 0xBF reached from OP_DISPATCH:
+;  0xBF   JR Z taken -> OP_CALL (call pattern, 0x6305)
+;  >=0xE0 B=A (register block select), 0xFF -> OP_CALL_16 (0x6307)
+;         else the opcode becomes the channel's next state value
+;         (written into the stub's LD A,nn slot - see 0x6323)
+;  0xC0..0xDF -> OP_REG_WRITE (0x6327) after the +0x30/+0xC3 SMC dance
+OP_BIG_DISPATCH: equ 0x6315
+;LD (CH1+1),A - opcode becomes the channel state byte
+;checked by the stub prologue on the next frame
+OP_SET_STATE: equ 0x6323
+;General YM register write op: A' carries the data byte; the two
+;ADDs map the opcode into a register number, SMC'd into 632Ch, then
+;HL = 22A4h-style (reg<<8|data) pairs are pushed through the busy-
+;polled OUT sequence (register to 0xFFFD, data to 0xBFFD, then a
+;0xA0-class register write with A) at WRITE_REG_DATA.
+OP_REG_WRITE: equ 0x6327
+;poll/OUT L (register), poll/OUT H (data) - the
+;interpreter's write helper (like REG_WRITE but
+;register+data travel in HL)
+WRITE_REG_DATA: equ 0x6337
+;0x7E marker: remember the current stream position as the
+;pattern loop point (SMC slot at 0x6360)
+OP_LOOP: equ 0x6359
+;0x7F marker: reload HL from the loop point and replay
+OP_RESTART: equ 0x635f
+;channel stub 1 - chip 0 channel 1 (see CHANNEL STUBS below)
+CH1: equ 0x6365
+;Fetch opcode from (HL):
+;  0x7E -> OP_LOOP      0x7F -> OP_RESTART
+;  < 0x80 (bit6 set)   -> key control path (reg 0x28 + freq pairs)
+;  >= 0xBF              -> OP_BIG_DISPATCH
+;everything else falls through as data for the previous op.
+OP_DISPATCH: equ 0x637a
+;channel stub 2 - chip 0 channel 2
+CH2: equ 0x6465
+R_647A: equ 0x647a
+;channel stub 3 - chip 0 channel 3
+CH3: equ 0x6566
+R_657B: equ 0x657b
+;channel stub 4 - chip 1 channel 1
+CH4: equ 0x6667
+R_667C: equ 0x667c
+;channel stub 5 - chip 1 channel 2
+CH5: equ 0x6767
+R_677C: equ 0x677c
+;channel stub 6 - chip 1 channel 3
+CH6: equ 0x6868
+R_687D: equ 0x687d
+;DATA - six defw: 636B 646B 656C 666D 676D 686E
+;addresses of the six channel stubs' LD HL,nnnn pattern-pointer
+;slots. INIT walks this table and stores the relocated (absolute)
+;tune pattern pointers there. The block is position-dependent:
+;the player MUST be loaded at 0x61A8.
+RELOC_TABLE: equ 0x68f7

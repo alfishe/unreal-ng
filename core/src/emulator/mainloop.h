@@ -42,6 +42,31 @@ protected:
     // catch-up frames arrive). Zero-initialized = resync on first frame.
     std::chrono::steady_clock::time_point _nextFrameTime{};
 
+    /// region <Realtime scheduling>
+public:
+    /// Real-time scheduling request for this instance's emulation thread.
+    /// Maintained by EmulatorManager: true only while this instance is the
+    /// ACTIVE one (the selected instance, or the sole instance when nothing
+    /// is selected). The run thread samples it once per frame and applies
+    /// the change to itself - thread priority APIs act on the calling thread
+    /// only, so a live selection change is picked up on the next frame
+    /// without any cross-thread signalling
+    void SetRealtimeRequested(bool requested) { _realtimeRequested.store(requested, std::memory_order_release); }
+    bool IsRealtimeRequested() const { return _realtimeRequested.load(std::memory_order_acquire); }
+
+protected:
+    std::atomic<bool> _realtimeRequested{false};
+
+    /// Current scheduling state of the run thread - touched only by that
+    /// thread (Run / UpdateRealtimeScheduling), no atomicity needed
+    bool _realtimeApplied = false;
+
+    /// Applies / drops real-time scheduling on the calling (run) thread when
+    /// the requested state differs from the applied one. No-op otherwise
+    /// (one relaxed atomic read per frame)
+    void UpdateRealtimeScheduling();
+    /// endregion </Realtime scheduling>
+
     /// region <Turbo render decimation>
 public:
     /// While turbo mode is active (and no recording is in progress) only 1 of

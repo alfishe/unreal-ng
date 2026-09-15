@@ -152,6 +152,61 @@ local result = tape_import("recording.wav", "imported.tap", 0.25)
 
 Playback `state` is one of `"idle"`, `"playing"`, `"paused"`, `"ended"` — identical strings across CLI, WebAPI, Lua and Python.
 
+### Mouse Input
+
+> **Status**: ✅ Implemented (2026-09). Source: `core/automation/lua/src/emulator/lua_emulator.h`
+> (`mouse_*` functions; helpers `mouseIntArg`, `mouseStateTable`, `mouseResult`).
+
+Global functions that drive the emulated Kempston Mouse, mirroring the CLI `mouse` commands.
+Units, limits and reasoning: [command-interface.md §11](./command-interface.md#11-mouse-input-injection).
+They act on the bound emulator, or on the selected one when the script is not bound to an
+instance (for example, a script started through the WebAPI interpreter).
+
+The mouse is **relative**: `mouse_move(10, -5)` means "travelled 10 pixels right and 5 down".
+`dy` positive = **up**.
+
+```lua
+mouse_move(dx, dy)                 --> state | nil, err    (-127..127 each, not both 0)
+mouse_press(button)                --> state | nil, err    ("left"/"right"/"middle" or "l"/"r"/"m")
+mouse_release(button)              --> state | nil, err
+mouse_click(button [, frames=2])   --> state | nil, err    (hold 1..65535 frames)
+mouse_buttons({"left","middle"})   --> state | nil, err    ({} = none)
+mouse_wheel(steps)                 --> state | nil, err    (-7..7, not 0)
+mouse_release_all()                --> state | nil, err
+mouse_set_counters(x, y)           --> state | nil, err    (debug: raw 0..255)
+mouse_status()                     --> state | nil, err
+mouse_click_pending()              --> true while a click is still holding its button
+mouse_button_names()               --> {"left","right","middle"}
+```
+
+`state` is a table with the same key names as the WebAPI state object: `x`, `y`,
+`buttons = {left, right, middle}`, `button_mask` (active-low: 254 = left down), `wheel`,
+`wheel_enabled`, `present`, `ports = {FADF, FBDF, FFDF}`, `pending_click`
+(`{button, frames_left}`, or **absent** when no click is pending), `ttd_journal`, plus
+`warning` when the change cannot reach the program (mouse not fitted, or a wheel step with no
+wheel fitted).
+
+> [!NOTE]
+> `ports` values are integers, the same as in Python and the WebAPI.
+
+Errors do not raise: the function returns `nil, "message"`, so a call can be wrapped in
+`assert(...)`. A non-integer number (`mouse_move(1.5, 0)`) returns
+`nil, "dx must be an integer"` instead of being truncated. During TTD replay every changing
+function returns `nil, "TTD replay in progress; live mouse input refused"`.
+
+```lua
+-- run_frames pauses a running emulator first, so the sequence below is reproducible
+run_frames(1)
+local st = assert(mouse_move(10, -5))
+print(st.x, st.y)                  -- 41   80   (from reset X=31 Y=85)
+assert(mouse_click("left", 2))
+run_frames(3)                      -- 2 frames held + 1 for the program to react
+print(mouse_status().buttons.left) -- false
+
+local ok, err = mouse_wheel(12)
+print(ok, err)                     -- nil   steps=12 out of range -7..7
+```
+
 ### Feature Management
 
 `feature_list()` enumerates every registered runtime feature dynamically (the same list the CLI `feature` table and the WebAPI `/features` endpoint return), keyed by feature id:
@@ -166,6 +221,30 @@ end
 
 feature_set("fasttape", false)     -- same switch as `setting fast_tape off`
 print(feature_get("turbotape"))    -- true
+```
+
+### Device State Reports
+
+The same reports the WebAPI, Python, CLI and MCP return
+([command-interface.md §3.3](./command-interface.md#33-device-state-reports-ay--ssg-turbosound-fm-beta-disk-fdc)),
+as Lua tables (arrays are 1-based sequences):
+
+```lua
+ay  = audio_ay_state()      -- overview: available_chips, slot_device, chips[]
+ay0 = audio_ay_state(0)     -- one chip: registers, channels[3], envelope, noise, mixer, io_ports
+fm  = audio_fm_state()      -- TurboSound FM: board latches + chips[2] summaries
+fm1 = audio_fm_state(1)     -- one YM2203 FM half: mode, timers, channels[3].operators[4] ...
+fdc = fdc_state()           -- Beta Disk WD1793: registers, status_bits, fsm_state, signals, drives[4]
+
+if not fm1.available then print(fm1.description) end
+for i, ch in ipairs(fm1.channels) do
+  if ch.key_on then
+    print(string.format("ch%d %.1f Hz alg %d", ch.index, ch.frequency_hz, ch.algorithm))
+    for _, op in ipairs(ch.operators) do
+      print("  " .. op.slot .. " " .. op.envelope_state .. " " .. op.attenuation_db .. " dB")
+    end
+  end
+end
 ```
 
 ### Emulator Object

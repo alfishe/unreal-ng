@@ -12,6 +12,7 @@
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/videocontroller.h"
 #include "emulator/video/zx/screenzx.h"
+#include "3rdparty/message-center/messagecenter.h"
 #include "stdafx.h"
 
 // Instantiate Core tables as static (only one instance per process)
@@ -139,6 +140,22 @@ bool Core::Init()
     }
 
     /// endregion </Keyboard>
+
+    /// region <Mouse>
+
+    if (result)
+    {
+        result = false;
+
+        _mouse = new Mouse(_context);
+        if (_mouse)
+        {
+            _context->pMouse = _mouse;
+            result = true;
+        }
+    }
+
+    /// endregion </Mouse>
 
     /// region <Tape>
 
@@ -464,6 +481,13 @@ void Core::Release()
         _keyboard = nullptr;
     }
 
+    _context->pMouse = nullptr;
+    if (_mouse != nullptr)
+    {
+        delete _mouse;
+        _mouse = nullptr;
+    }
+
     if (_rom != nullptr)
     {
         delete _rom;
@@ -521,10 +545,6 @@ void Core::UseDebugMemoryInterface()
 
 void Core::Reset()
 {
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    int topicID = messageCenter.RegisterTopic(NC_SYSTEM_RESET);
-    messageCenter.Post(topicID, new SimpleTextPayload("Core reset started"));
-
     // Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM)
     _mode = static_cast<ROMModeEnum>(_config->reset_rom);
 
@@ -543,6 +563,9 @@ void Core::Reset()
     _z80->Reset();               // Main Z80
     _memory->Reset();            // Memory
     _keyboard->Reset();          // Keyboard
+    if (_mouse)
+        _mouse->ApplyConfiguration();  // Kempston Mouse fitting (Mouse=, Wheel=); counters are power-on
+                                       // only - RESET does not reach the interface (MiSTer mouse.v: cold_reset)
     _sound->reset();             // All sound devices (AY(s), COVOX, MoonSound, GS) and sound subsystem
     _screen->Reset();            // Reset all video subsystem
     _tape->reset();              // Reset tape loader state
@@ -561,6 +584,12 @@ void Core::Reset()
         _recordingManager->Reset();  // Reset recording manager (stops active recording, clears counters)
 #endif
 
+    // Single NC_SYSTEM_RESET notification per reset, posted only after the reset completes:
+    // observers (HUD reset toast, FPS re-arm) must see exactly one event. An earlier
+    // 'started' + 'finished' pair here surfaced as duplicate notifications on snapshot
+    // load, where the loader's core.Reset() is the only reset that runs.
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    int topicID = messageCenter.RegisterTopic(NC_SYSTEM_RESET);
     messageCenter.Post(topicID, new SimpleTextPayload("Core reset finished"));
 }
 
@@ -614,6 +643,11 @@ void Core::SetSpeedMultiplier(uint8_t multiplier)
     _state->next_z80_frequency_multiplier = multiplier;
 
     MLOGINFO("Core::SetSpeedMultiplier - Speed multiplier queued to %dx (will apply at next frame)", multiplier);
+
+    // Notify consumers (HUD speed indicator, status bar)
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_SPEED_CHANGED,
+        new SpeedChangedPayload(_context->emulatorId, multiplier, _context->config.turbo_mode));
 }
 
 uint8_t Core::GetSpeedMultiplier() const
@@ -642,6 +676,11 @@ void Core::EnableTurboMode(bool withAudio)
 
     MLOGINFO("Core::EnableTurboMode - Turbo mode enabled (audio generation: %s, audible: MUTED)",
              withAudio ? "ON" : "OFF");
+
+    // Notify consumers (HUD speed indicator, status bar)
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_SPEED_CHANGED,
+        new SpeedChangedPayload(_context->emulatorId, _state->current_z80_frequency_multiplier, true));
 }
 
 //
@@ -659,6 +698,11 @@ void Core::DisableTurboMode()
     }
 
     MLOGINFO("Core::DisableTurboMode - Turbo mode disabled, audio unmuted");
+
+    // Notify consumers (HUD speed indicator, status bar)
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_SPEED_CHANGED,
+        new SpeedChangedPayload(_context->emulatorId, _state->current_z80_frequency_multiplier, false));
 }
 
 //

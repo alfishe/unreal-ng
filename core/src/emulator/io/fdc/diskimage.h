@@ -553,6 +553,38 @@ public:
         }
         /// endregion </Change Tracking>
 
+    public:
+        /// Take the stream of an already formatted track and re-stamp it for the given physical position: the
+        /// raw bytes, clock/weak bitmaps and encoding are copied, every ID field gets the new cylinder/head with a
+        /// fresh ID CRC, and the sector index is rebased onto this track's buffer instead of rescanning the stream.
+        /// Byte-identical to formatting this track with the same spec (the ID fields are the only bytes that depend
+        /// on the track position), at a fraction of the cost - DiskImage::allocateMemory uses it to stamp out the
+        /// blank tracks of a new image from one formatted template.
+        void restampFrom(const Track& tmpl, uint8_t cylinder, uint8_t side)
+        {
+            _raw = tmpl._raw;
+            _clock = tmpl._clock;
+            _weak = tmpl._weak;
+            _encoding = tmpl._encoding;
+            _indexMarkOffset = tmpl._indexMarkOffset;
+            _sectors = tmpl._sectors;
+
+            const bool mfm = (_encoding == Encoding::MFM);
+            for (Sector& sector : _sectors)
+            {
+                sector.id = reinterpret_cast<AddressMarkRecord*>(&_raw[sector.idamOffset]);
+                sector.id->cylinder = cylinder;
+                sector.id->head = side;
+                if (mfm)
+                    sector.id->recalculateCRC();
+                else
+                    sector.id->recalculateCRCFM();
+                sector.idCrcValid = true;
+                sector.data = sector.hasData ? &_raw[sector.dataOffset] : nullptr;
+                sector.dirty = false;
+            }
+        }
+
         /// region <Sector index>
     public:
         size_t sectorCount() const { return _sectors.size(); }

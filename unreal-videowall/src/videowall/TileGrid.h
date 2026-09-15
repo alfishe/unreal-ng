@@ -31,6 +31,7 @@ public:
 
     /// Clear all tiles
     void clearAllTiles();
+    void detachAllTiles();  // Release widgets without destroying emulators
 
     /// Get all tiles
     const std::vector<EmulatorTile*>& tiles() const
