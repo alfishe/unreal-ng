@@ -7,6 +7,7 @@
 #include "streamhelper.h"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstring>
 #include <deque>
@@ -174,6 +175,16 @@ public:
 
     void Post(int id, MessagePayload* obj = nullptr, bool autoCleanupPayload = false);
     void Post(std::string topic, MessagePayload* obj = nullptr, bool autoCleanupPayload = false);
+
+    // Drain barrier: blocks until the worker thread has dispatched every
+    // message posted before this call, handlers included. Implemented with a
+    // sentinel message - FIFO order plus synchronous Dispatch() make the
+    // sentinel run strictly after all earlier messages, so its fulfillment
+    // witnesses the drain. Returns false WITHOUT waiting when called from
+    // the dispatch thread itself (self-deadlock), or when the sentinel did
+    // not run within 'timeout' (e.g. the worker is stopped) - callers then
+    // proceed without the ordering guarantee.
+    bool WaitForOutstandingMessages(std::chrono::milliseconds timeout = std::chrono::seconds(5));
 
 protected:
     Message* GetQueueMessage();
