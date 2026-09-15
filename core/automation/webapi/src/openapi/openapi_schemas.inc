@@ -100,6 +100,11 @@
     schemas["MouseStatus"]["allOf"][1]["type"] = "object";
     schemas["MouseStatus"]["allOf"][1]["properties"]["emulator_id"]["type"] = "string";
     schemas["MouseStatus"]["allOf"][1]["properties"]["warning"]["type"] = "string";
+    schemas["MouseStatus"]["allOf"][1]["properties"]["routing"]["type"] = "object";
+    schemas["MouseStatus"]["allOf"][1]["properties"]["routing"]["description"] =
+        "Design Q4 answer: whether mouse port reads are decoded right now and why not";
+    schemas["MouseStatus"]["allOf"][1]["properties"]["routing"]["properties"]["ports_decoded"]["type"] = "boolean";
+    schemas["MouseStatus"]["allOf"][1]["properties"]["routing"]["properties"]["note"]["type"] = "string";
 
     schemas["MouseInjectResponse"]["type"] = "object";
     schemas["MouseInjectResponse"]["description"] =

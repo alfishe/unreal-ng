@@ -108,7 +108,7 @@ progress when the request carries a `_meta.progressToken` (see
 | `emulator_manage` | create/list/status/start/stop/pause/resume/reset/destroy, `list_models` (per-model `creatable` flags), `server` (build fingerprint + `models_creatable`); responses carry machine identity | — |
 | `load_software` | `.sna/.z80` snapshots, `.tap/.tzx` tapes (auto-play), `.trd/.scl/.fdi` disks | — |
 | `control_execution` | run/pause/resume/step/step_n/step_over/step_out, `run_frames`/`run_tstates`/`run_to_interrupt`, breakpoints | — |
-| `inspect_state` | aspect fan-out: machine, registers, memory, disasm, stack, breakpoints, memory_banks, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, fdc (device reports, see command-interface.md §3.3) | one notification per aspect |
+| `inspect_state` | aspect fan-out: machine, registers, memory, disasm, stack, breakpoints, memory_banks, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, fdc, mouse (device reports, see command-interface.md §3.3) | one notification per aspect |
 | `type_input` | type (tokenized BASIC entry), tap/press/release, combo, macro, `release_all`, status, `list_keys` | — |
 | `manage_symbols` | `load_labels`, list, resolve, `load_listing`, `source_at`, `step_line`, `run_to_line` (sjasmplus `.lst`) | — |
 | `debug_code` | disassemble, assemble (two-pass, labels), `find_bytes`, `trace` (calltrace sessions), `porttrace` | `trace`: per phase (start/run/stop/read) |

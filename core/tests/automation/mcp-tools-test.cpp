@@ -508,6 +508,55 @@ TEST_F(McpTools_Test, InspectState_DeviceAspect_UnavailableIsReportedNotFatal)
     EXPECT_NE(result.text.find("[audio_fm] TurboSound slot device is not TSFM"), std::string::npos) << result.text;
 }
 
+TEST_F(McpTools_Test, InspectState_MouseAspect_FetchesMouseStatus)
+{
+    // One endpoint; the summary names fitment, counters and the routing answer (D-2)
+    Json::Value mouse;
+    mouse["present"] = true;
+    mouse["x"] = 31;
+    mouse["y"] = 85;
+    mouse["wheel_enabled"] = false;
+    mouse["routing"]["ports_decoded"] = true;
+    mouse["routing"]["note"] = "decoded (standard Kempston address decode)";
+    _caller->routes["GET /api/v1/emulator/emu-1/mouse/status"] = {200, mouse};
+
+    Json::Value args;
+    Json::Value aspects(Json::arrayValue);
+    aspects.append("mouse");
+    args["aspects"] = aspects;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/mouse/status"));
+    ASSERT_TRUE(result.structured.isMember("mouse"));
+    EXPECT_EQ(result.structured["mouse"]["x"].asInt(), 31);
+    EXPECT_NE(result.text.find("[mouse] fitted, x 31 y 85"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("ports decoded"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, InspectState_MouseAspect_ShadowedRoutingInSummary)
+{
+    // ports_decoded=false keeps the aspect successful - triage info, not an error
+    Json::Value mouse;
+    mouse["present"] = true;
+    mouse["x"] = 0;
+    mouse["y"] = 0;
+    mouse["wheel_enabled"] = false;
+    mouse["routing"]["ports_decoded"] = false;
+    mouse["routing"]["note"] = "TR-DOS ports accessible (CF_DOSPORTS): only Beta Disk operations answer";
+    _caller->routes["GET /api/v1/emulator/emu-1/mouse/status"] = {200, mouse};
+
+    Json::Value args;
+    Json::Value aspects(Json::arrayValue);
+    aspects.append("mouse");
+    args["aspects"] = aspects;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("ports shadowed"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("CF_DOSPORTS"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, InspectState_AudioAyAspect_FetchesEveryChip)
 {
     Json::Value overview;

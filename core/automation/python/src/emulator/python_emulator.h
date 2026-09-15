@@ -35,6 +35,8 @@
 #include <debugger/assembler/z80textassembler.h>
 #include <debugger/listing/listingparser.h>
 #include <emulator/platform.h>
+#include <emulator/ports/portdecoder.h>
+#include <emulator/config.h>
 #include <emulator/video/screendigest.h>
 #ifdef ENABLE_RECORDING
 #include "recordingmanager.h"
@@ -2027,8 +2029,22 @@ namespace PythonBindings
                 MouseStateSnapshot state = mgr.GetState();
                 if (!state.available)
                     throw std::runtime_error("Mouse device not available");
-                return MouseStateDict(state);
-            }, "Get mouse counters, buttons, wheel and port values")
+                py::dict d = MouseStateDict(state);
+                // Routing mirrors GET /mouse/status: `present` alone cannot distinguish
+                // "not fitted" from "fitted but shadowed" (mouse design Q4 / gap D-1)
+                EmulatorContext* context = self.GetContext();
+                if (context && context->pPortDecoder)
+                {
+                    bool decoded = false;
+                    std::string note;
+                    context->pPortDecoder->GetMouseRoutingState(decoded, note);
+                    py::dict routing;
+                    routing["ports_decoded"] = decoded;
+                    routing["note"] = note;
+                    d["routing"] = routing;
+                }
+                return d;
+            }, "Get mouse counters, buttons, wheel, port values and port routing")
             .def("mouse_click_pending", [](Emulator& self) -> bool {
                 return MouseManagerOrThrow(self).IsClickPending();
             }, "True while a timed mouse click is still holding its button")
@@ -2516,7 +2532,8 @@ namespace PythonBindings
            py::arg("max") = 64)
 
         .def("screen_digest",
-             [](Emulator& self, py::object startValue, py::object endValue, bool includeBorder) -> py::dict {
+             [](Emulator& self, py::object startValue, py::object endValue, bool includeBorder,
+                const std::string& mode) -> py::dict {
             py::dict d;
             EmulatorContext* context = self.GetContext();
             if (!context || !context->pMemory || !context->pScreen)
@@ -2531,6 +2548,15 @@ namespace PythonBindings
 
             const bool is128K = (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PENTAGON ||
                                  config.mem_model == MM_PLUS3);
+
+            // mode: "active" hashes the RAM pages the CURRENT video mode actually
+            // displays (ATM hardware modes follow the 7FFD-selected bit-plane pair);
+            // "default" keeps the model-dependent pages 5/7 (P1-3)
+            bool activeMode = false;
+            if (mode == "active")
+                activeMode = true;
+            else if (mode != "default")
+                throw py::value_error("mode must be 'default' or 'active'");
 
             const uint64_t previousDigest = state.last_screen_digest;
             uint64_t combined = ScreenDigest::kInitialValue;
@@ -2555,9 +2581,30 @@ namespace PythonBindings
             }
             else
             {
-                std::vector<uint16_t> banks{ScreenDigest::kScreen0RAMPage};
-                if (is128K)
-                    banks.push_back(ScreenDigest::kScreen1RAMPage);
+                std::vector<uint16_t> banks;
+                if (activeMode)
+                {
+                    // Surface actually displayed by the current video mode: ZX modes
+                    // keep pages 5/7, ATM hardware modes hash the 7FFD-selected
+                    // bit-plane pair - flipping FF77 between ZX and 16c surfaces now
+                    // flips the digest even with constant underlying pages
+                    const VideoModeEnum videoMode = context->pScreen->GetVideoMode();
+                    banks = Screen::GetActiveSurfaceRAMPages(videoMode, state.p7FFD, is128K);
+
+                    py::dict activeSurface;
+                    activeSurface["video_mode"] = Screen::GetVideoModeName(videoMode);
+                    py::list pages;
+                    for (uint16_t page : banks)
+                        pages.append(page);
+                    activeSurface["pages"] = pages;
+                    d["active_surface"] = activeSurface;
+                }
+                else
+                {
+                    banks.push_back(ScreenDigest::kScreen0RAMPage);
+                    if (is128K)
+                        banks.push_back(ScreenDigest::kScreen1RAMPage);
+                }
 
                 py::dict perBank;
                 for (uint16_t page : banks)
@@ -2590,7 +2637,58 @@ namespace PythonBindings
                 d["previous_digest_frame"] = static_cast<uint64_t>(previousFrame);
             return d;
         }, "Screen-area FNV-1a-64 digest (change detection without pixel transfer)",
-           py::arg("start") = py::none(), py::arg("end") = py::none(), py::arg("include_border") = true)
+           py::arg("start") = py::none(), py::arg("end") = py::none(), py::arg("include_border") = true,
+           py::arg("mode") = "default")
+
+        .def("ports_map", [](Emulator& self) -> py::dict {
+            py::dict d;
+            EmulatorContext* context = self.GetContext();
+            if (!context || !context->pPortDecoder)
+            {
+                d["error"] = "context not initialized";
+                return d;
+            }
+
+            auto portHex = [](uint16_t value) {
+                char text[8];
+                std::snprintf(text, sizeof(text), "0x%04X", value);
+                return std::string(text);
+            };
+
+            d["model"] = Config::GetModelFullName(context->config.mem_model);
+
+            py::list entries;
+            for (const PortMapEntry& entry : context->pPortDecoder->getPortMapEntries())
+            {
+                py::dict item;
+                item["port"] = portHex(entry.port);
+                item["mask"] = portHex(entry.mask);
+                item["match"] = portHex(entry.match);
+                item["device"] = entry.device;
+                item["gate"] = entry.gate ? py::object(py::str(entry.gate)) : py::object(py::none());
+                entries.append(item);
+            }
+            d["entries"] = entries;
+
+            bool mouseDecoded = false;
+            std::string mouseNote;
+            context->pPortDecoder->GetMouseRoutingState(mouseDecoded, mouseNote);
+
+            const CONFIG& config = context->config;
+            const EmulatorState& state = context->emulatorState;
+            py::dict live;
+            live["trdos_active"] = (state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0;
+            live["mouse_ports_decoded"] = mouseDecoded;
+            live["mouse_routing_note"] = mouseNote;
+            const bool scorpion = (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP);
+            if (scorpion)
+                live["shadow_monitor_paged"] = (state.p1FFD & 0x02) != 0;
+            else
+                live["shadow_monitor_paged"] = py::none();  // latch does not exist on this model
+            d["live"] = live;
+            return d;
+        }, "Static port map: which devices answer which I/O ports on this model, "
+           "under which gating conditions, plus the live routing flags")
 
         .def("beam_position", [](Emulator& self) -> py::dict {
             py::dict d;

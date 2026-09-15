@@ -584,7 +584,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "disasm", "stack", "breakpoints", "memory_banks", "screen_ocr",
-                               "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "fdc"})
+                               "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "fdc", "mouse"})
     {
         allowed.append(aspect);
     }
@@ -596,7 +596,8 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["description"] =
         "What to inspect. Default: registers + disasm + screen_ocr. 'stack' reads 32 bytes at SP; 'memory' needs address. "
         "'audio_ay' = every AY/SSG chip fully decoded, 'audio_fm' = TurboSound FM board + both YM2203 FM halves (mode, timers, "
-        "channels, operators, envelopes, key-on), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives.";
+        "channels, operators, envelopes, key-on), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives, 'mouse' = "
+        "Kempston mouse state incl. port routing (fitted vs shadowed).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["address"]["type"] = "integer";
@@ -615,7 +616,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "inspect_state",
         "Inspect emulator state in one call: registers, memory ranges, disassembly, stack words, breakpoints, memory banks, "
         "screen OCR text, screen image metadata, screen digest hash, raster timing, ROM signatures, AY/SSG chips (audio_ay), "
-        "TurboSound FM YM2203 halves (audio_fm), Beta Disk WD1793 (fdc). Combine aspects to reduce round-trips.",
+        "TurboSound FM YM2203 halves (audio_fm), Beta Disk WD1793 (fdc), Kempston mouse + port routing (mouse). "
+        "Combine aspects to reduce round-trips.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {
             // Collect aspects
@@ -637,11 +639,11 @@ void RegisterInspectState(ToolRegistry& registry)
                 if (aspect != "machine" && aspect != "registers" && aspect != "memory" && aspect != "disasm" && aspect != "stack" &&
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "screen_ocr" && aspect != "screen_image" &&
                     aspect != "screen_digest" && aspect != "timing" && aspect != "rom" && aspect != "audio_ay" &&
-                    aspect != "audio_fm" && aspect != "fdc")
+                    aspect != "audio_fm" && aspect != "fdc" && aspect != "mouse")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, disasm, stack, breakpoints, memory_banks, "
-                                            "screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, fdc"));
+                                            "screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, fdc, mouse"));
                     return;
                 }
             }
@@ -827,6 +829,18 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
+                        else if (aspect == "mouse")
+                        {
+                            // /mouse/status: fitment + counters + the routing answer (fitted vs
+                            // shadowed by TR-DOS / registered peripherals - design Q4)
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/mouse/status"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
                         else if (aspect == "audio_ay" || aspect == "audio_fm")
                         {
                             // Overview first, then every chip's full report (core DeviceState::AyChip / FmChip)
@@ -948,6 +962,20 @@ void RegisterInspectState(ToolRegistry& registry)
                                                 << (ch[c]["tone_enabled"].asBool() ? "T" : "") << (ch[c]["noise_enabled"].asBool() ? "N" : "")
                                                 << (ch[c]["envelope_enabled"].asBool() ? "E" : "") << "@" << int(ch[c]["frequency_hz"].asDouble()) << "Hz";
                                     }
+                                }
+                            }
+                            else if (aspect == "mouse")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[mouse] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[mouse] " << (value["present"].asBool() ? "fitted" : "not fitted")
+                                        << ", x " << value["x"].asInt() << " y " << value["y"].asInt()
+                                        << (value["wheel_enabled"].asBool() ? ", wheel" : "");
+                                    if (value.isMember("routing"))
+                                        out << ", ports " << (value["routing"]["ports_decoded"].asBool() ? "decoded" : "shadowed")
+                                            << " (" << value["routing"]["note"].asString() << ")";
                                 }
                             }
                             else if (aspect == "audio_fm")
