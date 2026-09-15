@@ -411,9 +411,6 @@ void WD1793::processFDDMotorState()
         if (_selectedDrive->getMotor())
         {
             stopFDDMotor();
-
-            // Notify via Beta128 status INTRQ bit about changes
-            raiseIntrq();
         }
     }
 }
@@ -1303,6 +1300,10 @@ void WD1793::cmdReadSector(uint8_t value)
     MLOGINFO(message.c_str());
 
     startType2Command();
+    if (!isReady())
+    {
+        return;
+    }
 
     // Step 1: search for ID address mark
     // Per WD1793 datasheet: "If a comparison is not made within 5 index pulses,
@@ -1381,6 +1382,10 @@ void WD1793::cmdWriteSector(uint8_t value)
     MLOGINFO(message.c_str());
 
     startType2Command();
+    if (!isReady())
+    {
+        return;
+    }
 
     // Per WD1793 datasheet: Check write protect before writing
     // If write protected, terminate immediately with WP status
@@ -1513,6 +1518,10 @@ void WD1793::cmdReadAddress(uint8_t value)
     MLOGINFO(message.c_str());
 
     startType3Command();
+    if (!isReady())
+    {
+        return;
+    }
 
     // Step 1: search for ID address mark
     FSMEvent searchIDAM(WDSTATE::S_SEARCH_ID, []() {});
@@ -1536,6 +1545,10 @@ void WD1793::cmdReadTrack(uint8_t value)
     MLOGINFO(message.c_str());
 
     startType3Command();
+    if (!isReady())
+    {
+        return;
+    }
 
     // Get raw track data pointer - validate early
     DiskImage* diskImage = _selectedDrive->getDiskImage();
@@ -1623,6 +1636,10 @@ void WD1793::cmdWriteTrack(uint8_t value)
     MLOGINFO(message.c_str());
 
     startType3Command();
+    if (!isReady())
+    {
+        return;
+    }
 
     // Check write protect first (per datasheet)
     if (_selectedDrive->isWriteProtect())
@@ -1886,6 +1903,10 @@ void WD1793::startType2Command()
 
     // Set required Status Register flags
     _statusRegister |= WDS_BUSY;
+
+    // Ensure the motor is spinning (wakes drive on Type 2 command)
+    prolongFDDMotorRotation();
+
     if (!_selectedDrive || !_selectedDrive->isDiskInserted())
         _statusRegister |= WDS_NOTRDY;
 
@@ -1910,9 +1931,6 @@ void WD1793::startType2Command()
     }
     else
     {
-        // Ensure the motor is spinning
-        prolongFDDMotorRotation();
-
         // Head must be loaded
         loadHead();
 
@@ -1936,6 +1954,10 @@ void WD1793::startType3Command()
 
     // Set required Status Register flags
     _statusRegister |= WDS_BUSY;
+
+    // Ensure the motor is spinning (wakes drive on Type 3 command)
+    prolongFDDMotorRotation();
+
     if (!_selectedDrive || !_selectedDrive->isDiskInserted())
         _statusRegister |= WDS_NOTRDY;
 
@@ -1959,9 +1981,6 @@ void WD1793::startType3Command()
     }
     else
     {
-        // Ensure the motor is spinning
-        prolongFDDMotorRotation();
-
         // Head must be loaded
         loadHead();
 
