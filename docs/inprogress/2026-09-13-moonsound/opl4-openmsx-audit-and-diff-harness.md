@@ -10,6 +10,12 @@ Revision 4 (device wiring).
 **Revision 5** (2026-09-14): §6 records the ymfm OPL3 verification backend —
 the license-clean in-tree comparator §4.4 called for — and the three FM
 divergences it exposed.
+**Post-fix verification (2026-09-14):** with the audit fixes and the ymfm
+comparator in place, the card author's complete 26-disk corpus plays FM +
+PCM end to end in-app, and the audio path (gain staging, no clipping) is
+test-pinned — see `opl4-unreal-ng-integration.md` §12.6 and §12.7
+(Revision 5). The one remaining failure is a disk-subsystem loader stall
+unrelated to the chip (integration §12.8).
 
 ---
 

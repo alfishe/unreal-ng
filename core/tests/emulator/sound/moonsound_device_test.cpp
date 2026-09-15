@@ -9,6 +9,7 @@
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "_helpers/emulatortesthelper.h"
+#include "common/sound/filters/masterlimiter.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -297,44 +298,121 @@ int MaxAbsSample(const int16_t* buffer, size_t frames)
     return peak;
 }
 
-/// FM channel 0 key-on through the real ports - the library test suite's
-/// reference voice (TL 0, AR 15, block 4): steady near-full-scale tone. The
-/// carrier register addresses follow the selected FM backend: the in-tree
-/// engine maps the operator families linearly (carrier 0x21/0x41/0x61/0x81,
-/// 0xC0 routing 0 = both sides) while YMF262/ymfm use the classic layout
-/// (ch0 carrier 0x23/0x43/0x63/0x83, CHA|CHB = both sides).
-void KeyOnFmCh0ThroughPorts(Z80* cpu)
+/// FM channel `ch` of bank 0 keyed at unity: TL 0, AR 15 (zero-time attack),
+/// steady near-full-scale tone - the parameterised form of the reference
+/// voice. fnum gets a per-channel offset so a multi-channel key-on does not
+/// sum N phase-locked copies. The carrier register addresses follow the
+/// selected FM backend: the in-tree engine maps the operator families
+/// linearly (carrier 0x21/0x41/0x61/0x81, 0xC0 routing 0 = both sides) while
+/// YMF262/ymfm use the classic layout (ch0 carrier 0x23/0x43/0x63/0x83,
+/// CHA|CHB = both sides).
+void KeyOnFmChannelThroughPorts(Z80* cpu, int ch)
 {
     const auto fm1 = [cpu](uint8_t reg, uint8_t value)
     {
         cpu->out(0xC4, reg);
         cpu->out(0xC5, value);
     };
-    fm1(0x20, 0x01);  // modulator: mult 1 (both maps)
 #if defined(OPL4_FM_YMFM)
-    fm1(0x23, 0x01);  // classic carrier: mult 1
-    fm1(0x40, 0x00);  // mod TL 0
-    fm1(0x43, 0x00);  // car TL 0
-    fm1(0x60, 0xF0);  // mod AR 15, DR 0
-    fm1(0x63, 0xF0);  // car AR 15, DR 0
-    fm1(0x80, 0x00);  // mod SL 0, RR 0
-    fm1(0x83, 0x00);  // car SL 0, RR 0
+    const uint8_t mod = ch < 6 ? static_cast<uint8_t>(0x20 + ch) : static_cast<uint8_t>(0x28 + (ch - 6));
+    const uint8_t car = static_cast<uint8_t>(mod + 3);
+    fm1(mod, 0x01);      // modulator: mult 1
+    fm1(car, 0x01);      // classic carrier: mult 1
+    fm1(mod + 0x20, 0x00);  // mod TL 0
+    fm1(car + 0x20, 0x00);  // car TL 0
+    fm1(mod + 0x40, 0xF0);  // mod AR 15, DR 0
+    fm1(car + 0x40, 0xF0);  // car AR 15, DR 0
+    fm1(mod + 0x60, 0x00);  // mod SL 0, RR 0
+    fm1(car + 0x60, 0x00);  // car SL 0, RR 0
 #else
-    fm1(0x21, 0x01);  // operator 1 mult 1
-    fm1(0x40, 0x00);  // operator 0 TL 0
-    fm1(0x41, 0x00);  // operator 1 TL 0
-    fm1(0x60, 0xF0);  // AR 15, DR 0
-    fm1(0x61, 0xF0);
-    fm1(0x80, 0x00);  // SL 0, RR 0
-    fm1(0x81, 0x00);
+    const uint8_t mod = static_cast<uint8_t>(0x20 + 2 * ch);
+    const uint8_t car = static_cast<uint8_t>(0x21 + 2 * ch);
+    fm1(mod, 0x01);      // operator 0 mult 1
+    fm1(car, 0x01);      // operator 1 mult 1
+    fm1(mod + 0x20, 0x00);  // operator 0 TL 0
+    fm1(car + 0x20, 0x00);  // operator 1 TL 0
+    fm1(mod + 0x40, 0xF0);  // AR 15, DR 0
+    fm1(car + 0x40, 0xF0);
+    fm1(mod + 0x60, 0x00);  // SL 0, RR 0
+    fm1(car + 0x60, 0x00);
 #endif
-    fm1(0xA0, 0x03);  // fnum low
+    fm1(0xA0 + ch, static_cast<uint8_t>(0x03 + ch));  // fnum low
 #if defined(OPL4_FM_YMFM)
-    fm1(0xC0, 0x30);  // CHA+CHB: both sides (routing bits include)
+    fm1(0xC0 + ch, 0x30);  // CHA+CHB: both sides (routing bits include)
 #else
-    fm1(0xC0, 0x00);  // feedback 0, both outputs (routing bits exclude)
+    fm1(0xC0 + ch, 0x00);  // feedback 0, both outputs (routing bits exclude)
 #endif
-    fm1(0xB0, 0x33);  // fnum 0x303, block 4, key on
+    fm1(0xB0 + ch, 0x33);  // fnum high 3, block 4, key on
+}
+
+/// FM channel 0 key-on through the real ports - the library test suite's
+/// reference voice (TL 0, AR 15, block 4): steady near-full-scale tone.
+void KeyOnFmCh0ThroughPorts(Z80* cpu)
+{
+    KeyOnFmChannelThroughPorts(cpu, 0);
+}
+
+/// Arm the wave part (NEW2|NEW at FM bank-1 reg 0x105) and upload a
+/// zero-DC full-scale square tone into SRAM through the real memory window:
+/// 12-byte tone header at 0x200000 (16-bit samples, start 0x200100, loop 0,
+/// end 8 stored as its complement 0xFFF8) and the eight-word loop of 4x +FS
+/// then 4x -FS. Zero DC matters for master-mix tests: the master DC blocker
+/// (~5 Hz) would eat a DC loop within a frame. Wave-table header base 4 so
+/// wave number 384 fetches the uploaded header.
+void UploadSquareToneThroughPorts(Z80* cpu)
+{
+    const auto wave = [cpu](uint8_t reg, uint8_t value)
+    {
+        cpu->out(0x7E, reg);
+        cpu->out(0x7F, value);
+    };
+
+    cpu->out(0xC6, 0x05);
+    cpu->out(0xC7, 0x03);
+
+    wave(0x02, 0x01);  // SRAM upload window on (MA = reg 2 bit 0)
+    wave(0x03, 0x20);
+    wave(0x04, 0x00);
+    wave(0x05, 0x00);
+    for (const uint8_t b : {0xA0, 0x01, 0x00, 0x00, 0x00, 0xFF, 0xF8, 0x00, 0x00, 0x00, 0x00, 0x00})
+        wave(0x06, b);
+    wave(0x03, 0x20);
+    wave(0x04, 0x01);
+    wave(0x05, 0x00);
+    for (int i = 0; i < 4; i++)
+    {
+        wave(0x06, 0x7F);
+        wave(0x06, 0xFF);
+    }
+    for (int i = 0; i < 4; i++)
+    {
+        wave(0x06, 0x80);
+        wave(0x06, 0x01);
+    }
+    wave(0x02, 0x10);  // window off, wave-table header base 4
+}
+
+/// Key PCM slot `slot` (0-23) onto wave 384 at unity: full level (TL 0 with
+/// LD), zero-time attack (AR 15), centred pan. The register file is
+/// interleaved - reg = group base + slot number (the chip decodes group as
+/// (reg-8)/24 and slot as (reg-8)%24), NOT slot*8 + offset. Register values
+/// mirror the reference voice of the PCM-only render test; order matters -
+/// the wave-low write triggers the header fetch.
+void KeyOnPcmSlotThroughPorts(Z80* cpu, int slot)
+{
+    const auto wave = [cpu](uint8_t reg, uint8_t value)
+    {
+        cpu->out(0x7E, reg);
+        cpu->out(0x7F, value);
+    };
+    wave(0x20 + slot, 0xFF);  // wave bit 9 + fnum low 7 bits
+    wave(0x08 + slot, 0x80);  // wave low: 384 -> tone fetch
+    wave(0x38 + slot, 0x07);  // octave 0, fnum 1023
+    wave(0x98 + slot, 0xF0);  // AR 15, D1R 0
+    wave(0xB0 + slot, 0x00);  // DL 0, D2R 0
+    wave(0xD8 + slot, 0x00);  // RC 0, RR 0
+    wave(0x50 + slot, 0x01);  // TL 0 with LD: immediate
+    wave(0x68 + slot, 0x80);  // key on, pan centre
 }
 
 } // namespace
@@ -437,6 +515,127 @@ TEST_F(MoonSoundDevice_Test, FrameEnd_KeyedPcmTone_RendersIntoPcmSourceOnly)
     EXPECT_LE(MaxAbsSample(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME), 16500)
         << "headroom trim (5.3) must keep a full-scale tone under half scale";
     EXPECT_EQ(MaxAbsSample(moonsound->getFmBuffer(), SAMPLES_PER_FRAME), 0);
+}
+
+/// Gain staging, both engines simultaneously (integration 5.2/5.3): a
+/// full-scale FM voice and a full-scale PCM slot keyed together, played
+/// through the real frame lifecycle into the wide mix bus. With the chip's
+/// reset block mix (FM -9 dB, PCM unity) the summed master stays inside the
+/// limiter's linear region - nominal material never engages the compressor -
+/// and each source stays under the -6 dB headroom trim on its own.
+TEST_F(MoonSoundDevice_Test, FrameEnd_FmAndPcmFullScale_DefaultChipMix_StaysInLimiterLinearRegion)
+{
+    SoundManager* soundManager = context->pSoundManager;
+    ASSERT_NE(soundManager, nullptr);
+    SoundChip_Moonsound* moonsound = soundManager->getMoonSound();
+    ASSERT_NE(moonsound, nullptr);
+    Z80* cpu = context->pCore->GetZ80();
+    ASSERT_NE(cpu, nullptr);
+    auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(context->pMainLoop);
+    ASSERT_NE(mainLoop, nullptr);
+
+    KeyOnFmChannelThroughPorts(cpu, 0);
+    UploadSquareToneThroughPorts(cpu);
+    KeyOnPcmSlotThroughPorts(cpu, 0);
+
+    for (int frame = 0; frame < 4; frame++)
+        mainLoop->RunFrame();
+
+    const int fmPeak = MaxAbsSample(moonsound->getFmBuffer(), SAMPLES_PER_FRAME);
+    const int pcmPeak = MaxAbsSample(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME);
+    const int masterPeak = MaxAbsSample(soundManager->deviceBuffer(AudioSourceType::MasterMix), SAMPLES_PER_FRAME);
+
+    EXPECT_GT(fmPeak, 1000);
+    EXPECT_LE(fmPeak, 16500) << "FM source must stay under the headroom trim (5.3)";
+    EXPECT_GT(pcmPeak, 1000);
+    EXPECT_LE(pcmPeak, 16500) << "PCM source must stay under the headroom trim (5.3)";
+    EXPECT_GT(masterPeak, 18000) << "both full-scale sources must be audible in the master sum";
+    EXPECT_LE(masterPeak, static_cast<int>(MasterLimiter::KNEE_LINEAR))
+        << "chip-default block mix keeps a full-scale FM+PCM sum in the limiter's linear region";
+}
+
+/// Gain staging, worst legal chip mix: block-mix register 0xF8 pushed to
+/// unity (0 dB - the maximum the chip itself allows) with both engines at
+/// full scale. The sum rides past the limiter knee, and the soft curve must
+/// hold the master under its asymptotic ceiling: no hard clipping anywhere,
+/// neither in the sources nor in the quantised master.
+TEST_F(MoonSoundDevice_Test, FrameEnd_FmAndPcmFullScale_UnityChipMix_MasterSoftLimitedNeverClips)
+{
+    SoundManager* soundManager = context->pSoundManager;
+    ASSERT_NE(soundManager, nullptr);
+    SoundChip_Moonsound* moonsound = soundManager->getMoonSound();
+    ASSERT_NE(moonsound, nullptr);
+    Z80* cpu = context->pCore->GetZ80();
+    ASSERT_NE(cpu, nullptr);
+    auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(context->pMainLoop);
+    ASSERT_NE(mainLoop, nullptr);
+
+    UploadSquareToneThroughPorts(cpu);
+    // FM block mix L=R=unity (0 dB) - the loudest setting the chip permits.
+    // F8/F9 live in the wave register file, so they go through #7E/#7F with
+    // the card armed (the upload helper did the arming).
+    cpu->out(0x7E, 0xF8);
+    cpu->out(0x7F, 0x00);
+    KeyOnFmChannelThroughPorts(cpu, 0);
+    KeyOnPcmSlotThroughPorts(cpu, 0);
+
+    for (int frame = 0; frame < 4; frame++)
+        mainLoop->RunFrame();
+
+    const int fmPeak = MaxAbsSample(moonsound->getFmBuffer(), SAMPLES_PER_FRAME);
+    const int pcmPeak = MaxAbsSample(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME);
+    const int masterPeak = MaxAbsSample(soundManager->deviceBuffer(AudioSourceType::MasterMix), SAMPLES_PER_FRAME);
+
+    EXPECT_GT(fmPeak, 1000);
+    EXPECT_LE(fmPeak, 16500) << "FM source must stay under the headroom trim (5.3)";
+    EXPECT_GT(pcmPeak, 1000);
+    EXPECT_LE(pcmPeak, 16500) << "PCM source must stay under the headroom trim (5.3)";
+    EXPECT_GT(masterPeak, static_cast<int>(MasterLimiter::KNEE_LINEAR))
+        << "unity chip mix must push the sum past the knee so the limiter is exercised";
+    EXPECT_LE(masterPeak, static_cast<int>(MasterLimiter::CEILING))
+        << "the soft limiter ceiling must hold - the master must never hard-clip";
+}
+
+/// Gain staging, maximum abuse: all nine bank-0 FM channels and all 24 PCM
+/// slots keyed at TL 0 with the FM block mix at unity. The group sums rail
+/// inside the chip (the authentic 16-bit DAC boundary, Clamp16 in the
+/// library), so both sources still arrive at the mixer under the trim and
+/// the master still cannot clip - over-gain is structurally impossible.
+TEST_F(MoonSoundDevice_Test, FrameEnd_AllFmChannelsAndPcmSlotsMaxed_MasterNeverClips)
+{
+    SoundManager* soundManager = context->pSoundManager;
+    ASSERT_NE(soundManager, nullptr);
+    SoundChip_Moonsound* moonsound = soundManager->getMoonSound();
+    ASSERT_NE(moonsound, nullptr);
+    Z80* cpu = context->pCore->GetZ80();
+    ASSERT_NE(cpu, nullptr);
+    auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(context->pMainLoop);
+    ASSERT_NE(mainLoop, nullptr);
+
+    UploadSquareToneThroughPorts(cpu);
+    cpu->out(0x7E, 0xF8);
+    cpu->out(0x7F, 0x00);
+    for (int ch = 0; ch <= 8; ch++)
+        KeyOnFmChannelThroughPorts(cpu, ch);
+    for (int slot = 0; slot < 24; slot++)
+        KeyOnPcmSlotThroughPorts(cpu, slot);
+
+    for (int frame = 0; frame < 4; frame++)
+        mainLoop->RunFrame();
+
+    const int fmPeak = MaxAbsSample(moonsound->getFmBuffer(), SAMPLES_PER_FRAME);
+    const int pcmPeak = MaxAbsSample(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME);
+    const int masterPeak = MaxAbsSample(soundManager->deviceBuffer(AudioSourceType::MasterMix), SAMPLES_PER_FRAME);
+
+    EXPECT_GT(fmPeak, 1000);
+    EXPECT_LE(fmPeak, 16500)
+        << "the FM group rails at the chip's 16-bit boundary; the trim still halves it";
+    EXPECT_GT(pcmPeak, 1000);
+    EXPECT_LE(pcmPeak, 16500)
+        << "the PCM group rails at the chip's 16-bit boundary; the trim still halves it";
+    EXPECT_GT(masterPeak, static_cast<int>(MasterLimiter::KNEE_LINEAR));
+    EXPECT_LE(masterPeak, static_cast<int>(MasterLimiter::CEILING))
+        << "even with every voice maximised the master must stay under the soft ceiling";
 }
 
 /// Turbo without audio (3.3 / R8 / D3): a suppressed frame renders silence

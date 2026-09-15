@@ -1,7 +1,16 @@
 # MoonSound TTD integration — technical design
 
 **Revision 1** (2026-09-13).
-**Status:** design draft.
+**Status (updated 2026-09-14):** Tier A — the fixed POD blob (library chip
+state + host-side latches, `MoonSoundTTDHeader`) — is implemented and
+test-pinned (save-neutrality / restore-exactness / round-trip in
+`moonsound_device_test.cpp`, `TTD_*`; summary in
+`opl4-unreal-ng-integration.md` §7.5). Tier B — the wave-SRAM paged region
+of §5/§9 — is **not implemented yet**: until it lands, TTD for this device
+is explicitly incomplete rather than silently wrong (the device header
+carries the same note). The body below is the design for both tiers,
+authoritative for the still-open Tier B and the framework change it
+requires.
 **Companions:** `opl4-core-tdd.md` (chip library), `opl4-unreal-ng-integration.md` (device wiring).
 **Supersedes:** §7 of the integration document, which described a device-local dirty-page scheme written before the existing TTD subsystem was examined. The scheme below uses what is already in the tree.
 **Scope:** how `SoundChip_Moonsound` participates in time-travel debugging — state partition, blob layout, wave-SRAM capture, capture/restore paths, per-frame size and cost budgets, divergence detection, framework changes required, tests.

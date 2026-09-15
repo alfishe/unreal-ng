@@ -1,8 +1,9 @@
 # ZXM-MoonSound in unreal-ng — integration and mixing design
 
+**Revision 5** (2026-09-14). Records the end-to-end demo verification on the card author's complete 26-disk corpus — every disk plays, both engines audible (§12.6) — and the test-pinned gain staging / no-clip proof (§5.3, §12.7). The one remaining harness failure is a TR-DOS double-sided loader stall in the disk subsystem, independent of the card (§12.8).
 **Revision 4** (2026-09-14). Revision 3 resolved the low-byte port-decode blocker. This revision records the openMSX reference audit (`opl4-openmsx-audit-and-diff-harness.md`): status LD moved to bit 1, LD now opens only on tone-load writes, wave writes are gated on NEW2 (0x105 bit 1), and the PCM loop end switched to the chip's stored-complement form. See that document for the full suspect-by-suspect diff.
 **Revision 3** (2026-09-14). Revision 1 was the pre-implementation design draft (2026-09-13); Revision 2 recorded implementation and live verification. This revision resolves the former §12.5 blocker: guest I/O never reached the card because the Z80 immediate port forms leave A in the high address byte and the card decodes A0..A7 only (§2.5) — now fixed and guest-verified with the author's own binary.
-**Status:** phases 0–4 + TTD Tier A implemented; guest code reaches the card end to end (the author's MoonService v0.3a binary detects YM278B inside core-tests, §12.5). Depends on `opl4-core-tdd.md` (the chip library).
+**Status:** phases 0–4 + TTD Tier A implemented and verified end to end; the author's complete disk set plays FM + PCM in-app (§12.6). Open: TTD Tier B (wave SRAM), the §12.8 harness loader stall. Depends on `opl4-core-tdd.md` (the chip library).
 **Scope:** wiring `libopl4` into unreal-ng — port decoding, device lifecycle, configuration, the sound-device registry, mixing, gain staging, TTD, recording, UI surface.
 **Companion:** TTD details for this device live in `opl4-ttd-integration-tdd.md`; §7 here is the summary and that document is authoritative where they differ.
 **Out of scope:** chip behaviour and DSP internals (see the core TDD).
@@ -406,6 +407,18 @@ full-scale MoonSound track sits at the same perceived loudness as a loud AY trac
 Document the measurement (which track, what meter) next to the constant — an
 undocumented magic gain constant is how the AY/beeper level mismatch happened.
 
+**Verified 2026-09-14 (rev 5).** The full chain — chip block mix, in-chip 16-bit
+rail, headroom trim, `MoonSoundVol`, wide bus, `MasterLimiter` — is now pinned
+by three device tests (§12.7): a full-scale FM voice plus a full-scale PCM slot
+at the chip's reset mix stays inside the limiter's **linear** region (nominal
+material never engages the compressor); at the loudest chip-legal mix
+(0xF8 = 0 dB) the master rides the soft curve and stays under the 32000
+ceiling; and with all 9 bank-0 FM channels plus all 24 PCM slots maximised the
+group sums rail inside the chip and both sources still arrive at the mixer
+under the trim — over-gain is structurally impossible. The −6 dB provisional
+value is structurally verified; the perceived-loudness A/B against a real-card
+recording remains the open calibration item.
+
 ### 5.4 Where the character chain sits
 
 Inside the library, on the FM and PCM taps, before they are summed into the
@@ -600,6 +613,14 @@ MoonService v0.3a **binary** now detects YM278B when executed as guest code
 inside core-tests (§12.5), with arbitration unit-verified (§2.4) and the port
 decode matching the card's A0..A7 CPLD wiring (§2.5).
 
+**Status 2026-09-14 (rev 5):** verified end to end on real material — the
+author's full 26-disk corpus boots and plays FM + PCM in-app (§12.6); 14
+device tests including the gain/no-clip set (§12.7), 2 MoonService guest
+tests (§12.5) and the 17-test claim suite (§2.6) green; the 2960-test suite
+is green except the §12.8 demo-disk boot harness test (disk subsystem, not
+the card). Remaining: §12.8, TTD Tier B (wave SRAM paged region), character
+presets A/B (phase 7), VGM export (phase 8).
+
 ---
 
 ## 11. Risks
@@ -666,11 +687,15 @@ error paths park in `MoonService_press_anykey` (`#64xx`) — a PC parked in the
 
 ### 12.2 Unit status
 
-- 11 `MoonSoundDevice` tests green, including
-  `SharedBus_ArmedCardOverridesLegacyMirrorAt7F` (§2.4).
-- Full suite 1356 tests / 20 shards green — **after killing the running app**:
-  WebAPI-port tests collide with any app holding TCP 8090, and a stale app
-  produces phantom shard failures that look like regressions.
+- 14 `MoonSoundDevice` tests green: bus arbitration (§2.4), dirty-alias
+  handling, render split (D5), TTD Tier A, and the rev-5 gain-staging set
+  (§12.7).
+- 2 `MoonServiceGuest` tests green (§12.5), 17 `FullDecodeClaim` tests (§2.6),
+  10 `MasterLimiter` + 15 `DeviceMixer` tests.
+- Full suite 2960 tests / auto-detected shards green **except the open §12.8
+  demo-disk boot test** — and still only trustworthy **after killing the
+  running app**: WebAPI-port tests collide with any app holding TCP 8090, and
+  a stale app produces phantom shard failures that look like regressions.
 
 ### 12.3 Live-harness facts (WebAPI)
 
@@ -759,3 +784,106 @@ The "ruled out" list from the investigation remains valid — staged config
 content and parse (§12.4), QSettings, the `UNREALNG_HAVE_OPL4` gate, timing
 defaults, custom config path, model folder — all of them were correct; none
 of them was the fault.
+
+### 12.6 End-to-end demo verification — the author's full disk set (2026-09-14)
+
+Ground truth upgraded from one service binary to the card author's complete
+published software set: **26 runnable TR-DOS disks** in
+`testdata/sound/moonsound/` (provenance and per-disk credits in that
+directory's `SOURCES.md`):
+
+| Set | Disks | Content |
+|---|---|---|
+| `moonsound` + `moonsound_2..14` | 14 | demo/music collections (MoonBlaster MSX material, MWM/MFM formats) |
+| `mfm_sample`, `mfm_sample_2..4` | 4 | MFM sample collections (MFM Music sample 2 = `moonsound_2.trd`, the §2.6 reproducer) |
+| `moonmusic_1/2` (+ `u` Unreal variants) | 4 | music collections — Bart Roymans (1), AAA co-author (2) |
+| `moonservice_v01/v02/v03/v03a` | 4 | the diagnostic utility (§12.1) |
+
+**Status: every disk boots and plays, with both engines audible (FM + PCM)**
+— verified in-app on 2026-09-14 in the original bug-report environment
+(ZX Evo BaseConf / ATM3, Pentagon timings), after the three fixes this
+document tracks: the low-byte decode (§2.5/§12.5), the §2.6 claim override
+(MFM Music sample 2's "PCM only, wrong timings": the dirty `#04C4/#81C5`
+aliases were paging the song data away every frame), and the Revision-4
+openMSX alignment (bus/loop semantics, commit `5426b4b1`).
+
+Why this corpus is the right gate: real guest software from the card author,
+exercising card detection, SRAM upload, wave-ROM playback, FM+PCM mixing,
+keyboard-driven tune switching and 128K paging — on the exact hardware
+generation the card targets.
+
+Harness asymmetry, stated plainly: in-app the full corpus works, while the
+core-test re-verification of one representative disk still stalls in the
+disk subsystem (§12.8). The card stack itself is covered in the harness by
+§12.1/§12.5 (detection, protocol, binary) and §12.7 (audio path) — §12.8 is
+the last open item of the demo verification.
+
+### 12.7 Gain staging and clipping — test-pinned (2026-09-14)
+
+Three device tests in `moonsound_device_test.cpp` pin the §5.3 chain end to
+end, all through the real port funnel and the real frame lifecycle (wide bus
++ limiter exactly as production):
+
+| Test | Scenario | Proves |
+|---|---|---|
+| `FrameEnd_FmAndPcmFullScale_DefaultChipMix_StaysInLimiterLinearRegion` | full-scale FM voice + full-scale PCM slot together, chip reset block mix (FM −9 dB, PCM 0 dB) | each source ≤ half scale under the trim; the summed master stays **below the knee** — nominal material never engages the compressor |
+| `FrameEnd_FmAndPcmFullScale_UnityChipMix_MasterSoftLimitedNeverClips` | same voices, block-mix 0xF8 = 0 dB (the loudest the chip allows) | the sum rides past the knee; the soft curve holds the master under the 32000 ceiling — no hard clip anywhere |
+| `FrameEnd_AllFmChannelsAndPcmSlotsMaxed_MasterNeverClips` | all 9 bank-0 FM channels + all 24 PCM slots at TL 0, unity mix | group sums rail at the authentic in-chip 16-bit DAC boundary; sources still arrive under the trim; master still ≤ ceiling |
+
+Measured reference points: FM single voice at unity mix ≈ 16384 in the
+buffer (engine rail 32768 × trim 0.5); PCM full-scale square ≈ 16384;
+default-mix master ≈ 21600 (< knee 24576); unity-mix master ≈ 29250
+(`LimitSample(32000)`, under the 32000 ceiling, never 32767).
+
+Test-writing facts pinned on the way:
+
+- The master DC blocker (~5 Hz) eats a DC PCM loop within a frame —
+  master-mix tests must upload a **zero-DC square** (4× +FS then 4× −FS,
+  end 8 stored as its complement `0xFFF8`), not a constant-level loop.
+- The YMF278B wave register file is **interleaved**: `reg = group base +
+  slot` (group = `(reg−8)/24`, slot = `(reg−8)%24`) — not `slot*8 + offset`.
+  Slot 0 coincides with both encodings, so a wrong helper passes every
+  single-slot test and silently corrupts every multi-slot one.
+- Test helpers live in the file's anonymous namespace:
+  `KeyOnFmChannelThroughPorts` (parameterised reference voice, backend-aware
+  register maps), `UploadSquareToneThroughPorts`, `KeyOnPcmSlotThroughPorts`.
+
+### 12.8 Open: TR-DOS demo-disk loader stalls at the double-sided track boundary (Pentagon harness)
+
+The core-test re-verification (`moonsound_demo_guest_test.cpp`,
+`AuthorDisk_Moonsound2_PlaysFmTrafficWithoutPagingAlias`) boots
+`moonsound_2.trd` through the real TR-DOS 6.10E chain on the **Pentagon**
+model. The boot sector and catalog load cleanly (52 sectors, 13 312 `ini`
+bytes), the shipped player starts and plays AY music — but the tune load
+never advances: **all FDC activity stops around frame ~157** with the loader
+re-reading logical track 1 and never seeking track ≥ 2. `fmTotal = 0`
+because the MBPlayer tune data never arrives; the card is idle, not broken
+(`lastCardFrame = 157`, zero card-port traffic afterwards).
+
+Root-cause state (TR-DOS 6.10E disassembly in `scratch/trdos610e.asm`):
+
+- The ROM position loop (0x1E70–0x1EAB) is pure RAM arithmetic
+  (5CF4 sector 0–16 with wrap → 5CF5 logical track) — the observed restart
+  is a caller retry, not arithmetic.
+- Routine 3E63 maps logical → physical tracks for **double-sided** disks
+  (3E11 disk-type bit 1 → 3EAA: `cyl = L>>1`, `side = L&1`; odd tracks
+  side-flip through the `#FF` write `0x2C` at 1FF6). t0 = cyl0/side0,
+  t1 = cyl0/side1, t2 = cyl1/side0 — the t1→t2 boundary is the first
+  **real head step** plus a side flip, and exactly there the read fails and
+  the ROM restarts track 1 (re-seek + re-read s1..s6, FORCE INTERRUPT at
+  3EC9, catalog re-scan, then quiet).
+- All 26 corpus disks are double-sided (655 360 bytes), so every demo's tune
+  load crosses this boundary in the harness.
+
+Prime suspects (unverified): the Beta-128 side-bit semantics in
+`processBeta128` (`#FF` bit 4, inverted), the 3E11 disk-type probe (the
+volume-sector-9 diskType byte as our TRD loader populates it), and the 3D30
+real-seek path. The in-app corpus runs that work used the ATM3 configuration
+— a hint that the defect may be model-specific (Pentagon Beta-128 gating),
+not core-FDC-wide, but that is unconfirmed.
+
+This is a disk-subsystem defect chain independent of the card. The
+diagnostic instrumentation that established the above (FDC/`#FF` traces with
+FSM state, Z80 freeze dumps, port histograms) currently lives uncommitted in
+the test file; strip it to the useful minimum before any commit of that
+file.

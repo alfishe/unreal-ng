@@ -1,7 +1,18 @@
 # libopl4 — YMF278B (OPL4) emulation core + high-quality render layer
 
 **Revision 1** (2026-09-13).
-**Status:** design draft, not yet implemented.
+**Status (updated 2026-09-14):** implemented, integrated and verified. The
+library lives at `tools/poc/015-opl4-synthesis` (temporary home — already a
+dependency of the emulator core via `core/src/CMakeLists.txt`, migration to
+`core/src/3rdparty` pending) and is compiled into the emulator behind the
+public `UNREALNG_HAVE_OPL4` gate. Since this draft was written the model was
+audited against openMSX with four semantics fixed (LD status bit, LD window,
+NEW2 write gate, stored-complement loop end) and the FM side gained an
+in-tree ymfm differential backend — both recorded in
+`opl4-openmsx-audit-and-diff-harness.md`, which is authoritative where it
+post-dates this document. Verified end to end on the card author's 26-disk
+corpus (FM + PCM) — `opl4-unreal-ng-integration.md` §12.6. The §-numbered
+text below is the original design draft kept for rationale and traceability.
 **Scope:** a standalone library. Chip model, memory interface, render/resample stage, character chain, determinism contract, test plan.
 **Out of scope:** host integration, mixing with other devices, config plumbing — see [opl4-unreal-ng-integration.md](docs/inprogress/2026-09-13-moonsound/opl4-unreal-ng-integration.md).
 **Non-goal:** licensing analysis.
