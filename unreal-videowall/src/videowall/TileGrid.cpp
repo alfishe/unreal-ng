@@ -120,6 +120,22 @@ void TileGrid::clearAllTiles()
     _focusedTile = nullptr;
 }
 
+void TileGrid::detachAllTiles()
+{
+    // Just release tile widgets without stopping/removing emulators
+    for (EmulatorTile* tile : _tiles)
+    {
+        if (tile)
+        {
+            // Disconnect signals and prepare for deletion
+            tile->disconnect();
+            tile->deleteLater();
+        }
+    }
+    _tiles.clear();
+    _focusedTile = nullptr;
+}
+
 void TileGrid::updateLayout()
 {
     // Prevent re-entrant calls (e.g., from resizeEvent triggered by setMinimumSize)

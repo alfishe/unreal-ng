@@ -5,8 +5,11 @@
 #include <memory>
 #include <vector>
 #include <3rdparty/message-center/eventqueue.h>
+#include <common/shmhelper.h>
 
+class Emulator;
 class TileGrid;
+class TileGridWrapper;
 class EmulatorManager;
 #ifdef ENABLE_AUTOMATION
 class Automation;
@@ -68,6 +71,9 @@ public:
     // Single Emulator Sync Mode
     void setSingleEmulatorSyncMode(bool enable, const std::string& emulatorId = "");
 
+    /// Handle GPU acceleration toggle
+    void handleGpuAccelerationToggled(bool enabled);
+
 protected:
     void closeEvent(QCloseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
@@ -113,8 +119,17 @@ private:
     /// Open Video Wall recording dialog (Cmd+R / Ctrl+R)
     void handleVideoRecordingRequested();
 
+    // Helper methods for GPU/CPU mode abstraction
+    int tileCount() const;
+    std::vector<std::string> allEmulatorIds() const;
+    std::shared_ptr<Emulator> emulatorAt(int index) const;
+    void setGridFullscreenMode(bool fullscreen);
+    void clearGrid();
+    void publishStatus() const;
+
     // UI Components
-    TileGrid* _tileGrid = nullptr;
+    TileGrid* _tileGrid = nullptr;  // CPU mode grid (used when _useGPU == false)
+    TileGridWrapper* _tileGridWrapper = nullptr;  // Wrapper for GPU mode
 
     // Emulator management (singleton, not owned)
     EmulatorManager* _emulatorManager = nullptr;
@@ -123,8 +138,16 @@ private:
     AppSoundManager* _soundManager = nullptr;
 
     // Currently audio-bound tile (only one at a time)
-    // Using QPointer to auto-nullify when tile is deleted
+    // Using QPointer to auto-nullify when tile is deleted (CPU mode only)
     QPointer<EmulatorTile> _audioBoundTile;
+    int _audioBoundIndex = -1;  // GPU mode: index of audio-bound emulator
+
+    // GPU acceleration state
+    bool _useGPU = false;
+    QAction* _gpuAccelerationAction = nullptr;
+
+    // Shared Memory status handle (zero disk I/O publisher)
+    mutable ipc::ShmHandle _statusShm;
 
     // Recording widget dialog
     QPointer<QWidget> _recordingWidget;

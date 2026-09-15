@@ -6,6 +6,9 @@
 
 /// region <GTest helpers>
 
+#include <chrono>
+#include <thread>
+
 // Addons to Gtest matchers
 #define EXPECT_IN_RANGE(VAL, MIN, MAX) \
     EXPECT_GE((VAL), (MIN));           \
@@ -24,6 +27,31 @@ bool areUint8ArraysEqual(const uint8_t* arr1, const uint8_t* arr2, size_t size);
 // Macro wrapper to compare two uint8_t arrays for equality using ASSERT
 #define ASSERT_ARRAYS_EQ(arr1, arr2, size) \
     ASSERT_TRUE(areUint8ArraysEqual(arr1, arr2, size))
+
+/// @brief Standard test timing parameters to avoid magic numbers in tests
+namespace TestTiming
+{
+    inline constexpr std::chrono::milliseconds kPollInterval{2};
+    inline constexpr std::chrono::milliseconds kDefaultTimeout{500};
+    inline constexpr std::chrono::milliseconds kLongTimeout{2000};
+} // namespace TestTiming
+
+/// @brief Waits until predicate evaluates to true or timeout expires
+template <typename Predicate>
+inline bool WaitForCondition(
+    Predicate pred,
+    std::chrono::milliseconds timeout = TestTiming::kDefaultTimeout,
+    std::chrono::milliseconds pollInterval = TestTiming::kPollInterval)
+{
+    auto start = std::chrono::steady_clock::now();
+    while (!pred())
+    {
+        if (std::chrono::steady_clock::now() - start >= timeout)
+            return false;
+        std::this_thread::sleep_for(pollInterval);
+    }
+    return true;
+}
 
 /// endregion <GTest helpers>
 

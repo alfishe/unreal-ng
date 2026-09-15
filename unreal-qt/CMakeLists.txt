@@ -201,6 +201,11 @@ find_package(Qt6 COMPONENTS Gui REQUIRED)
 find_package(Qt6 COMPONENTS Multimedia REQUIRED)
 find_package(Qt6 COMPONENTS Widgets REQUIRED)
 find_package(Qt6 COMPONENTS Svg REQUIRED)  # Toolbar icons (SVG icon engine must be deployed)
+find_package(Qt6 COMPONENTS OpenGL REQUIRED)
+find_package(Qt6 COMPONENTS OpenGLWidgets REQUIRED)
+if (WIN32)
+    find_package(OpenGL REQUIRED)
+endif()
 
 # Enable CTest for test discovery (inherited from core/tests)
 enable_testing()
@@ -231,6 +236,8 @@ message("DATA_PATH: ${DATA_PATH}")
 # Set include paths for compiler
 include_directories(
     ${SOURCE_DIR}/
+    ${SOURCE_DIR}/hud/core
+    ${SOURCE_DIR}/hud/qt
     ${SOURCE_DIR}/3rdparty/QHexView-5.0
 )
 
@@ -378,6 +385,9 @@ if (INCLUDE_AUTOMATION)
         Qt6::Widgets
         Qt6::Multimedia
         Qt6::Svg
+        Qt6::OpenGL
+        Qt6::OpenGLWidgets
+        $<$<PLATFORM_ID:Windows>:OpenGL::GL>
         QHexView
 
         unrealng::automation # This brings in core as PUBLIC dependency (core propagates unrealng::recording PUBLIC when ENABLE_RECORDING)
@@ -396,6 +406,9 @@ else ()
         Qt6::Widgets
         Qt6::Multimedia
         Qt6::Svg
+        Qt6::OpenGL
+        Qt6::OpenGLWidgets
+        $<$<PLATFORM_ID:Windows>:OpenGL::GL>
         QHexView
 
         unrealng::core  # Keep this when automation is disabled (propagates unrealng::recording PUBLIC when ENABLE_RECORDING)
@@ -570,6 +583,35 @@ add_custom_target(package_all
     DEPENDS ${PROJECT_NAME}
     COMMENT "Creating package for current platform in ${CMAKE_BINARY_DIR}/packages"
 )
+
+# ========================================
+# hud-core-tests: Dedicated Qt-free test suite (verifies detachment)
+# ========================================
+if (TESTS)
+    file(GLOB_RECURSE HUD_TEST_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/hud/*.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/hud/core/*.cpp"
+    )
+    add_executable(hud-core-tests ${HUD_TEST_SOURCES})
+    set_target_properties(hud-core-tests PROPERTIES
+        AUTOMOC OFF
+        AUTOUIC OFF
+        AUTORCC OFF
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+    )
+    target_include_directories(hud-core-tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/hud/core"
+        "${ROOT_DIR}/core/src"
+        "${ROOT_DIR}/core/src/common"
+        "${ROOT_DIR}/core/src/emulator"
+        "${ROOT_DIR}/core/tests"
+    )
+    target_link_libraries(hud-core-tests PRIVATE
+        unrealng::core
+        gtest_main
+    )
+endif()
 
 # <Diagnostics>
 message(STATUS "<unreal-qt diagnostics>")

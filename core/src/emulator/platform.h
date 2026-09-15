@@ -51,6 +51,14 @@ constexpr char const* NC_FDD_DISK_SAVE_RETARGETED = "FDD_DISK_SAVE_RETARGETED"; 
 constexpr char const* NC_FDD_STATE_CHANGED = "FDD_STATE_CHANGED";               // FDC/FDD state changed: selected drive, side, track, sector, motor (payload: FDDStatePayload). Posted only on change - UIs cache it, no polling
 
 constexpr char const* NC_FDC_STATE_CHANGED = "FDC_STATE_CHANGE"; // WD1793 visible state changed: drive/side/track/sector/command/motor (payload: FDCStatePayload). Diff-gated — posted only when the observed tuple actually changes
+constexpr char const* NC_FEATURE_CHANGED = "FEATURE_CHANGED";                   // Feature toggled or mode changed (payload: FeatureChangedPayload). Posted AFTER all UpdateFeatureCache() calls complete so caches are consistent when observers fire. Informational — caches are already up to date.
+constexpr char const* NC_SPEED_CHANGED = "SPEED_CHANGED";                       // Speed multiplier or turbo mode changed (payload: SpeedChangedPayload). Posted from Core after state is committed.
+constexpr char const* NC_FILE_LOADED = "FILE_LOADED";                           // Snapshot / tape / disk file loaded or load failed (payload: FileLoadedPayload). Posted from Emulator after the loader returns.
+constexpr char const* NC_RECORDING_STATE = "RECORDING_STATE";                   // Recording started or stopped (payload: RecordingStatePayload). Posted from RecordingManager.
+constexpr char const* NC_MEMORY_PAGE_CHANGED = "MEMORY_PAGE_CHANGED";           // RAM bank mapping changed (payload: MemoryPagePayload). Posted by Memory on bank switch.
+constexpr char const* NC_ROM_PAGE_CHANGED = "ROM_PAGE_CHANGED";                 // ROM selection changed (payload: ROMPagePayload). Posted by Memory on ROM switch.
+constexpr char const* NC_SCREEN_PAGE_CHANGED = "SCREEN_PAGE_CHANGED";           // Active screen changed: page 5 (normal) or page 7 (shadow) (payload: ScreenPagePayload). Posted by Screen.
+constexpr char const* NC_AUDIO_ACTIVITY = "AUDIO_ACTIVITY";                     // Audio source activity changed (payload: AudioActivityPayload). Posted by sound sources per-frame when activity state changes.
 
 constexpr char const* NC_FILE_OPEN_REQUEST = "FILE_OPEN_REQUEST";               // File open request from emulator
 

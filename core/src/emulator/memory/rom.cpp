@@ -8,13 +8,10 @@
 #include <cctype>
 #include "common/collectionhelper.h"
 #include "common/filehelper.h"
+#include "common/signaturecache.h"
 #include "common/stringhelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/memory/memory.h"
-#include "3rdparty/digestpp/digestpp.hpp"
-
-using digestpp::md5;
-using digestpp::sha256;
 
 /// region <Constructors / destructors>
 
@@ -600,7 +597,7 @@ void ROM::CalculateSignatures()
     }
 }
 
-string ROM::CalculateSignature(uint8_t* buffer, size_t length)
+string ROM::CalculateSignature(const uint8_t* buffer, size_t length)
 {
 	string result;
 
@@ -610,12 +607,12 @@ string ROM::CalculateSignature(uint8_t* buffer, size_t length)
 		return result;
 	}
 
-	result = sha256().absorb(buffer, length).hexdigest();
+	result = SignatureCache::Sha256Hex(buffer, length);
 
 	return result;
 }
 
-std::string ROM::GetROMTitle(std::string& signature)
+std::string ROM::GetROMTitle(const std::string& signature)
 {
     static const char* EMPTY_SIGNATURE = "Empty signature";
     static const char* UNKNOWN_ROM = "Unknown ROM";
@@ -637,7 +634,7 @@ std::string ROM::GetROMTitle(std::string& signature)
     return result;
 }
 
-std::string ROM::GetROMTitleByAddress(uint8_t* physicalAddress)
+std::string ROM::GetROMTitleByAddress(const uint8_t* physicalAddress)
 {
     if (!physicalAddress || !_context || !_context->pMemory)
         return "";

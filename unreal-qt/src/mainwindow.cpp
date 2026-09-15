@@ -42,6 +42,10 @@
 #include "emulator/sound/soundmanager.h"
 #include "emulator/soundmanager.h"
 #include "debugger/widgets/audiosettingswidget.h"
+#include "ui/temporaleffectsdialog.h"
+#include "hud/qt/hudoverlaywrapper.h"
+#include "hud/qt/hudsettingsdialog.h"
+#include "hud/core/hudmodel.h"
 #ifdef ENABLE_RECORDING
 #include "debugger/widgets/videorecordingwidget.h"
 #include "debugger/widgets/recordingpresets.h"
@@ -116,9 +120,33 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Store original palette
     _originalPalette = palette();
 
+    // Register fullscreen shortcut with application-wide context
+    // (works even when menu bar is hidden in fullscreen mode)
+    auto* fullScreenShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F), this);
+    fullScreenShortcut->setContext(Qt::ApplicationShortcut);
+    connect(fullScreenShortcut, &QShortcut::activated, this, &MainWindow::handleFullScreenShortcut);
+
     // Put emulator screen into resizable content frame
+    // Wrapper auto-selects GPU or software backend
     QFrame* contentFrame = ui->contentFrame;
-    deviceScreen = new DeviceScreen(contentFrame);
+    _screenWrapper = new DeviceScreenWrapper(contentFrame);
+
+    // Forward drag/drop from GPU window to main window
+    connect(_screenWrapper, &DeviceScreenWrapper::dragEntered, this, [this]() {
+        ui->contentFrame->setStyleSheet("border: 1px solid red;");
+    });
+    connect(_screenWrapper, &DeviceScreenWrapper::dragLeft, this, [this]() {
+        ui->contentFrame->setStyleSheet("border: none;");
+    });
+    connect(_screenWrapper, &DeviceScreenWrapper::fileDropped, this, [this](const QString& filePath) {
+        qDebug() << "File dropped via GPU window:" << filePath;
+        loadFile(filePath);
+        ui->contentFrame->setStyleSheet("border: none;");
+    });
+
+    _hudWrapper = new HudOverlayWrapper(_screenWrapper->widget(), _screenWrapper->isGPUAccelerated());
+    _hudWrapper->setVisible(false);
+    _screenWrapper->setHudOverlay(_hudWrapper->softwareOverlay());
     
     // NOTE: We do NOT use a layout manager for contentFrame. 
     // DeviceScreen maintains its aspect ratio itself (fitToParent), which fights Qt layouts.
@@ -127,7 +155,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
         QSizePolicy dp;
         dp.setHorizontalPolicy(QSizePolicy::Expanding);
         dp.setVerticalPolicy(QSizePolicy::Expanding);
-        deviceScreen->setSizePolicy(dp);
+        _screenWrapper->widget()->setSizePolicy(dp);
     */
 
     // Create bridge between GUI and emulator
@@ -153,7 +181,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
         if (_soundManager->init())
         {
             _audioInitialized = true;
-            _soundManager->start();  // Start immediately, keep running forever
+            // Audio device starts on-demand when first emulator is created (avoids idle hissing)
             qDebug() << "MainWindow - Audio device initialized and started (will run continuously)";
         }
         else
@@ -175,9 +203,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Connect debugger screen refresh signal (for speed control stepping)
     // Handle it the same way as MessageCenter refresh (see line 1459)
     connect(debuggerWindow, &DebuggerWindow::screenRefreshRequested, this, [this]() {
-        if (deviceScreen)
+        if (_screenWrapper)
         {
-            QMetaObject::invokeMethod(deviceScreen, "refresh", Qt::QueuedConnection);
+            _screenWrapper->refresh();
         }
     });
 
@@ -228,6 +256,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::screenshotRequested, this, &MainWindow::handleScreenshotRequested);
     connect(_menuManager, &MenuManager::intParametersRequested, this, &MainWindow::handleIntParametersRequested);
     connect(_menuManager, &MenuManager::audioSettingsRequested, this, &MainWindow::handleAudioSettingsRequested);
+    connect(_menuManager, &MenuManager::temporalEffectsRequested, this, &MainWindow::handleTemporalEffectsRequested);
+    connect(_menuManager, &MenuManager::hudSettingsRequested, this, &MainWindow::handleHudSettingsRequested);
     connect(_menuManager, &MenuManager::overscanModeToggled, this, &MainWindow::handleOverscanModeToggled);
     connect(_menuManager, &MenuManager::viewportChanged, this, &MainWindow::handleViewportChanged);
     connect(_menuManager, &MenuManager::machineModelChangeRequested, this, &MainWindow::handleMachineModelChangeRequested);
@@ -247,6 +277,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Create the status bar (device LEDs + FPS)
     _statusBarManager = new StatusBarManager(this, _menuManager, this);
     connect(_menuManager, &MenuManager::statusBarToggled, this, &MainWindow::handleStatusBarToggled);
+    connect(_menuManager, &MenuManager::hudOverlayToggled, this, &MainWindow::handleHudOverlayToggled);
+    connect(_menuManager, &MenuManager::gpuAccelerationToggled, this, &MainWindow::handleGpuAccelerationToggled);
+    connect(_menuManager, &MenuManager::crtEffectsToggled, this, &MainWindow::handleCrtEffectsToggled);
+    connect(_menuManager, &MenuManager::crtProfileChanged, this, &MainWindow::handleCrtProfileChanged);
+    connect(_menuManager, &MenuManager::temporalBlendingToggled, this, &MainWindow::handleTemporalBlendingToggled);
+
+    // Set GPU acceleration menu state
+    bool gpuAvailable = DeviceScreenWrapper::isGPUAvailable();
+    _menuManager->setGpuAccelerationAvailable(gpuAvailable);
+    _menuManager->setGpuAccelerationChecked(_screenWrapper->isGPUAccelerated());
+    _menuManager->setCrtEffectsEnabled(true);
+
     _statusBarManager->restoreSettings();
 
     // Bring application window to foreground
@@ -355,6 +397,7 @@ MainWindow::~MainWindow()
             _soundManager->stop();
             _soundManager->deinit();
             _audioInitialized = false;
+            _audioStarted = false;
         }
         delete _soundManager;
         _soundManager = nullptr;
@@ -381,8 +424,8 @@ MainWindow::~MainWindow()
         delete tapeManagerWindow;
     }
 
-    if (deviceScreen != nullptr)
-        delete deviceScreen;
+    if (_screenWrapper != nullptr)
+        delete _screenWrapper;
 
     if (_guiContext)
         delete _guiContext;
@@ -416,10 +459,10 @@ void MainWindow::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
 
-    if (deviceScreen && ui->contentFrame) {
+    if (_screenWrapper && ui->contentFrame) {
         // Largest aspect-conforming geometry inside the content frame,
         // centered - grow-capable, no deferred re-centering needed
-        deviceScreen->fitToParent();
+        _screenWrapper->fitToParent();
     }
 
     // First show: size the window so the screen is displayed at 2x, once the
@@ -450,10 +493,10 @@ void MainWindow::applyDisplayRefreshRate()
 
 void MainWindow::fitWindowToScreen(int scale)
 {
-    if (!deviceScreen || !ui->contentFrame || isFullScreen() || isMaximized())
+    if (!_screenWrapper || !ui->contentFrame || isFullScreen() || isMaximized())
         return;
 
-    const QSize native = deviceScreen->sizeHint();  // Viewport-cropped native size (352x288 by default)
+    const QSize native = _screenWrapper->sizeHint();  // Viewport-cropped native size (352x288 by default)
     const QSize chrome = size() - ui->contentFrame->size();  // Menu bar, toolbar, status bar, margins
     const QSize target = native * scale + chrome;
 
@@ -499,9 +542,9 @@ void MainWindow::closeEvent(QCloseEvent* event)
     {
         logWindow->prepareForShutdown();
     }
-    if (deviceScreen)
+    if (_screenWrapper)
     {
-        deviceScreen->prepareForShutdown();
+        _screenWrapper->prepareForShutdown();
     }
 
     // Also notify EmulatorManager to block automation requests
@@ -560,9 +603,9 @@ void MainWindow::closeEvent(QCloseEvent* event)
     }
 
     // Shutdown device screen
-    if (deviceScreen)
+    if (_screenWrapper)
     {
-        deviceScreen->detach();
+        _screenWrapper->detach();
     }
 
     qDebug() << "QCloseEvent : Emulator shutdown complete";
@@ -570,10 +613,10 @@ void MainWindow::closeEvent(QCloseEvent* event)
 
 void MainWindow::resizeEvent(QResizeEvent* event)
 {
-    if (deviceScreen && ui->contentFrame) {
+    if (_screenWrapper && ui->contentFrame) {
         // fitToParent() sets move+resize atomically, so no deferred
         // re-centering dance is needed anymore
-        deviceScreen->fitToParent();
+        _screenWrapper->fitToParent();
 
         // Repaint contentFrame to clear stale pixels from the previous larger rect
         ui->contentFrame->update();
@@ -730,9 +773,19 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
         // Hide all control elements
         statusBar()->hide();
         _toolBarManager->hideForFullScreen();
+
+        // Release modifier keys so no modifier key (Cmd/Ctrl/Shift) stays stuck in emulator
+        if (_emulator)
+        {
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            std::string targetId = _emulator->GetUUID();
+            messageCenter.Post(MC_KEY_RELEASED, new KeyboardEvent(ZXKEY_CAPS_SHIFT, KEY_RELEASED, targetId));
+            messageCenter.Post(MC_KEY_RELEASED, new KeyboardEvent(ZXKEY_SYM_SHIFT, KEY_RELEASED, targetId));
+            qDebug() << "Released modifier keys (CAPS_SHIFT, SYM_SHIFT) on entering fullscreen";
+        }
     }
     // Handle restore to normal state
-    else if (newState == Qt::WindowNoState)
+    else if (!(newState & (Qt::WindowMinimized | Qt::WindowMaximized | Qt::WindowFullScreen)))
     {
         qDebug() << "Restoring to normal state (macOS)";
 
@@ -743,6 +796,7 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
 
         // Show controls instantly so the layout calculates the correct target geometry for the OS animation.
         // (Docking manager updates are still deferred in the shortcut handler to prevent stutter).
+        menuBar()->show();
         _statusBarManager->restoreVisibility();
         _toolBarManager->restoreVisibility();
 
@@ -821,7 +875,7 @@ void MainWindow::handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::Win
             setPalette(_originalPalette);
             menuBar()->show();
             _statusBarManager->restoreVisibility();
-        _toolBarManager->restoreVisibility();
+            _toolBarManager->restoreVisibility();
         }
 
         // Ensure we're not in fullscreen mode
@@ -852,7 +906,7 @@ void MainWindow::handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::Win
     // NOTE: The shortcut handler (handleFullScreenShortcutLinux) already called showNormal()/showMaximized().
     // We should NOT call hide() or showNormal() here - that causes crashes and state conflicts.
     // Just update styling.
-    else if (newState == Qt::WindowNoState)
+    else if (!(newState & (Qt::WindowMinimized | Qt::WindowMaximized | Qt::WindowFullScreen)))
     {
         qDebug() << "Restored (Linux) - updating styling only";
 
@@ -869,6 +923,11 @@ void MainWindow::handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::Win
         menuBar()->show();
         _statusBarManager->restoreVisibility();
         _toolBarManager->restoreVisibility();
+
+        if (_screenWrapper && ui->contentFrame && _screenWrapper->widget())
+        {
+            _screenWrapper->fitToParent();
+        }
     }
 }
 
@@ -970,7 +1029,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
             }
             */
 
-            deviceScreen->handleExternalKeyPress(keyEvent);
+            _screenWrapper->handleExternalKeyPress(keyEvent);
         }
         break;
         case QEvent::KeyRelease: {
@@ -982,15 +1041,19 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
             // qDebug() << "MainWindow : eventFilter - keyRelease, scan: " << hexScanCode << "virt: " << hexVirtualKey
             //          << " key: " << keyName << " " << keyEvent->text();
 
-            deviceScreen->handleExternalKeyRelease(keyEvent);
+            _screenWrapper->handleExternalKeyRelease(keyEvent);
         }
         break;
         case QEvent::Move:
             _lastCursorPos = QCursor::pos();
             break;
         case QEvent::Resize:
-        case QEvent::Show:
-            _dockingManager->updateDockedWindows();
+            if (watched == ui->contentFrame && _screenWrapper && _screenWrapper->widget())
+            {
+                _screenWrapper->fitToParent();
+            }
+            if (_dockingManager)
+                _dockingManager->updateDockedWindows();
             break;
 
         case QEvent::NonClientAreaMouseButtonPress:
@@ -1276,10 +1339,10 @@ void MainWindow::handleFullScreenShortcutWindows()
         // DockingManager now uses WA_ShowWithoutActivating so it won't steal focus
         activateWindow();
         raise();
-        if (deviceScreen)
+        if (_screenWrapper)
         {
-            deviceScreen->setFocus();
-            qDebug() << "Focus restored to deviceScreen after exiting fullscreen";
+            _screenWrapper->widget()->setFocus();
+            qDebug() << "Focus restored to _screenWrapper after exiting fullscreen";
         }
     }
     else
@@ -1331,10 +1394,10 @@ void MainWindow::handleFullScreenShortcutWindows()
         });
 
         // Set focus to device screen for keyboard input
-        if (deviceScreen)
+        if (_screenWrapper)
         {
-            deviceScreen->setFocus();
-            qDebug() << "Focus set to deviceScreen after entering fullscreen";
+            _screenWrapper->widget()->setFocus();
+            qDebug() << "Focus set to _screenWrapper after entering fullscreen";
         }
     }
 }
@@ -1495,10 +1558,10 @@ void MainWindow::handleFullScreenShortcutLinux()
                 // (DockingManager uses WA_ShowWithoutActivating but WM may still shift focus)
                 activateWindow();
                 raise();
-                if (deviceScreen)
+                if (_screenWrapper)
                 {
-                    deviceScreen->setFocus();
-                    qDebug() << "Focus restored to deviceScreen after exiting fullscreen (Linux)";
+                    _screenWrapper->widget()->setFocus();
+                    qDebug() << "Focus restored to _screenWrapper after exiting fullscreen (Linux)";
                 }
             });
         }
@@ -1524,10 +1587,16 @@ void MainWindow::handleFullScreenShortcutLinux()
 
         showFullScreen();
 
-        // Step 4: Unlock docking after transition
+        // Step 4: Unlock docking and restore focus after transition
         QTimer::singleShot(100, this, [this]() {
             if (_dockingManager)
                 _dockingManager->setSnappingLocked(false);
+
+            // Ensure keyboard focus for Ctrl+F to work
+            activateWindow();
+            raise();
+            if (_screenWrapper)
+                _screenWrapper->widget()->setFocus();
         });
     }
 }
@@ -1538,7 +1607,7 @@ void MainWindow::handleMessageScreenRefresh(int id, Message* message)
     // We only process frames from OUR adopted emulator, ignoring frames from
     // other headless emulators that may be running concurrently.
 
-    if (!deviceScreen || !_emulator || !message || !message->obj)
+    if (!_screenWrapper || !_emulator || !message || !message->obj)
     {
         return;
     }
@@ -1560,8 +1629,10 @@ void MainWindow::handleMessageScreenRefresh(int id, Message* message)
     // Frame is from our emulator - process it
     uint32_t frameCount = payload->_frameCounter;
 
-    // Invoke deviceScreen->refresh() in main thread
-    QMetaObject::invokeMethod(deviceScreen, "refresh", Qt::QueuedConnection);
+    // Invoke screen refresh in main thread
+    QMetaObject::invokeMethod(_screenWrapper, [this]() {
+        _screenWrapper->refresh();
+    }, Qt::QueuedConnection);
 
     if (_statusBarManager)
     {
@@ -1598,7 +1669,7 @@ void MainWindow::handleVideoModeChanged(int id, Message* message)
     // thread (the notification arrives on the MessageCenter dispatch thread).
     (void)id;
 
-    if (!deviceScreen || !_emulator || !message || !message->obj)
+    if (!_screenWrapper || !_emulator || !message || !message->obj)
         return;
 
     EmulatorFramePayload* payload = dynamic_cast<EmulatorFramePayload*>(message->obj);
@@ -1608,18 +1679,18 @@ void MainWindow::handleVideoModeChanged(int id, Message* message)
     QMetaObject::invokeMethod(
         this,
         [this]() {
-            if (!deviceScreen || !_emulator)
+            if (!_screenWrapper || !_emulator)
                 return;
             auto* context = _emulator->GetContext();
             if (!context || !context->pScreen)
                 return;
 
             auto& fb = context->pScreen->GetFramebufferDescriptor();
-            deviceScreen->init(fb.width, fb.height, fb.memoryBuffer);
+            _screenWrapper->init(fb.width, fb.height, fb.memoryBuffer);
 
             // init() -> detach() clears the tear-free frame source - re-install
             Screen* screen = context->pScreen;
-            deviceScreen->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
+            _screenWrapper->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
                 if (!screen->CopyPresentedFramebuffer(dst, dstSize))
                     return false;
 
@@ -2484,6 +2555,33 @@ void MainWindow::handleAudioSettingsRequested()
     _audioSettingsWidget->activateWindow();
 }
 
+void MainWindow::handleTemporalEffectsRequested()
+{
+    if (!_screenWrapper)
+        return;
+
+    auto* dialog = new TemporalEffectsDialog(_screenWrapper, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
+}
+
+void MainWindow::handleHudSettingsRequested()
+{
+    EmulatorContext* context = nullptr;
+    if (m_binding && m_binding->emulator())
+    {
+        context = m_binding->emulator()->GetContext();
+    }
+
+    auto* dialog = new HudSettingsDialog(context, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
+}
+
 void MainWindow::handleOverscanModeToggled(bool enabled)
 {
     if (!m_binding || !m_binding->emulator())
@@ -2497,11 +2595,11 @@ void MainWindow::handleOverscanModeToggled(bool enabled)
         if (context && context->pScreen)
         {
             auto& fb = context->pScreen->GetFramebufferDescriptor();
-            deviceScreen->init(fb.width, fb.height, fb.memoryBuffer);
+            _screenWrapper->init(fb.width, fb.height, fb.memoryBuffer);
 
             // init() -> detach() clears the tear-free frame source - re-install it
             Screen* screen = context->pScreen;
-            deviceScreen->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
+            _screenWrapper->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
                 if (!screen->CopyPresentedFramebuffer(dst, dstSize))
                     return false;
 
@@ -2531,7 +2629,7 @@ void MainWindow::handleOverscanModeToggled(bool enabled)
             {
                 // Entering overscan mode - apply default viewport (Symmetric Horizontal)
                 emulator->SetDisplayViewport(ViewportPresets::SYMMETRIC_HORIZONTAL);
-                deviceScreen->setDisplayViewport(ViewportPresets::SYMMETRIC_HORIZONTAL);
+                _screenWrapper->setDisplayViewport(ViewportPresets::SYMMETRIC_HORIZONTAL);
                 _menuManager->resetViewportSelection();
             }
             else
@@ -2539,7 +2637,7 @@ void MainWindow::handleOverscanModeToggled(bool enabled)
                 // Leaving overscan mode - reset viewport to full framebuffer
                 DisplayViewport fullViewport = {0, 0, 0, 0};
                 emulator->SetDisplayViewport(fullViewport);
-                deviceScreen->clearDisplayViewport();
+                _screenWrapper->clearDisplayViewport();
                 _menuManager->resetViewportSelection();
             }
         }
@@ -2579,7 +2677,7 @@ void MainWindow::handleViewportChanged(int presetIndex)
 
     // Update device screen with new display dimensions
     // The viewport will be applied during rendering
-    deviceScreen->setDisplayViewport(viewport);
+    _screenWrapper->setDisplayViewport(viewport);
 }
 
 void MainWindow::handleMachineModelChangeRequested(const QString& modelSpec)
@@ -2805,6 +2903,161 @@ void MainWindow::handleStatusBarToggled(bool visible)
     }
 }
 
+void MainWindow::handleHudOverlayToggled(bool visible)
+{
+    _hudOverlayVisible = visible;  // Remember for session (not persisted across restarts)
+
+    if (_emulator && _emulator->GetFeatureManager())
+    {
+        _emulator->GetFeatureManager()->setFeature(Features::kHud, visible);
+    }
+    if (_hudWrapper)
+    {
+        _hudWrapper->setVisible(visible);
+    }
+}
+
+void MainWindow::handleGpuAccelerationToggled(bool enabled)
+{
+    if (enabled == _screenWrapper->isGPUAccelerated())
+        return;
+
+    // Check if GPU is available when trying to enable
+    if (enabled && !DeviceScreenWrapper::isGPUAvailable())
+    {
+        _menuManager->setGpuAccelerationChecked(false);
+        return;
+    }
+
+    // Close dialogs that hold raw pointers to _screenWrapper
+    for (auto* dialog : findChildren<TemporalEffectsDialog*>())
+        dialog->close();
+
+    QFrame* contentFrame = ui->contentFrame;
+
+    // Save current state
+    bool hudVisible = _hudWrapper ? _hudWrapper->isVisible() : false;
+    bool crtEnabled = _screenWrapper->crtEffectsEnabled();
+    CRTProfileParams crtParams = _screenWrapper->crtParams();
+    bool hasViewport = _screenWrapper->hasViewport();
+    DisplayViewport savedViewport = _screenWrapper->displayViewport();
+    bool temporalEnabled = _screenWrapper->temporalBlendingEnabled();
+    int temporalHistorySize = _screenWrapper->temporalHistorySize();
+    int temporalWeightMode = _screenWrapper->temporalWeightMode();
+
+    // Detach from emulator before destroying
+    _screenWrapper->detach();
+
+    // Destroy old wrappers
+    delete _hudWrapper;
+    _hudWrapper = nullptr;
+    delete _screenWrapper;
+    _screenWrapper = nullptr;
+
+    // Create new wrappers with desired mode
+    _screenWrapper = new DeviceScreenWrapper(contentFrame, enabled);
+    _hudWrapper = new HudOverlayWrapper(_screenWrapper->widget(), _screenWrapper->isGPUAccelerated());
+    _screenWrapper->setHudOverlay(_hudWrapper->softwareOverlay());
+
+    // Re-establish drag/drop connections for the new wrapper
+    connect(_screenWrapper, &DeviceScreenWrapper::dragEntered, this, [this]() {
+        ui->contentFrame->setStyleSheet("border: 1px solid red;");
+    });
+    connect(_screenWrapper, &DeviceScreenWrapper::dragLeft, this, [this]() {
+        ui->contentFrame->setStyleSheet("border: none;");
+    });
+    connect(_screenWrapper, &DeviceScreenWrapper::fileDropped, this, [this](const QString& filePath) {
+        qDebug() << "File dropped via GPU window:" << filePath;
+        loadFile(filePath);
+        ui->contentFrame->setStyleSheet("border: none;");
+    });
+
+    // Restore state
+    _hudWrapper->setVisible(hudVisible);
+    _hudWrapper->setModel(_hudModel);
+
+    // Restore CRT effects (works for both GPU and software modes)
+    if (crtEnabled)
+    {
+        _screenWrapper->setCRTProfile(crtParams);
+    }
+
+    // Re-attach to emulator if one is running
+    if (_emulator)
+    {
+        auto* context = _emulator->GetContext();
+        if (context && context->pScreen)
+        {
+            Screen* screen = context->pScreen;
+            auto& fb = screen->GetFramebufferDescriptor();
+            _screenWrapper->init(fb.width, fb.height, fb.memoryBuffer);
+
+            _screenWrapper->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
+                return context && screen->CopyPresentedFramebuffer(dst, dstSize);
+            });
+        }
+        _screenWrapper->setEmulator(_emulator);
+    }
+
+    // Restore viewport state
+    if (hasViewport)
+        _screenWrapper->setDisplayViewport(savedViewport);
+    else
+        _screenWrapper->clearDisplayViewport();
+
+    // Restore temporal blending state
+    _screenWrapper->setTemporalBlendingEnabled(temporalEnabled);
+    _screenWrapper->setTemporalHistorySize(temporalHistorySize);
+    _screenWrapper->setTemporalWeightMode(temporalWeightMode);
+
+    // Update menu state
+    _menuManager->setGpuAccelerationChecked(_screenWrapper->isGPUAccelerated());
+    _menuManager->setCrtEffectsEnabled(true);
+    _menuManager->setCrtEffectsChecked(_screenWrapper->crtEffectsEnabled());
+
+    // Show, resize and center the new widget
+    _screenWrapper->widget()->show();
+    _screenWrapper->fitToParent();
+
+    // Sync HUD geometry with screen
+    if (_hudWrapper)
+    {
+        _hudWrapper->syncGeometryWithParent();
+    }
+
+    qInfo() << "Switched to" << (_screenWrapper->isGPUAccelerated() ? "GPU" : "software") << "rendering";
+}
+
+void MainWindow::handleCrtEffectsToggled(bool enabled)
+{
+    if (_screenWrapper)
+    {
+        _screenWrapper->setCRTEffectsEnabled(enabled);
+    }
+}
+
+void MainWindow::handleCrtProfileChanged(int profileIndex)
+{
+    if (!_screenWrapper)
+        return;
+
+    auto profiles = CRTProfileParams::AllProfiles();
+    if (profileIndex >= 0 && profileIndex < static_cast<int>(profiles.size()))
+    {
+        CRTProfile profile = profiles[profileIndex];
+        _screenWrapper->setCRTProfile(profile);
+        _menuManager->setCrtEffectsChecked(profile != CRTProfile::None);
+    }
+}
+
+void MainWindow::handleTemporalBlendingToggled(bool enabled)
+{
+    if (_screenWrapper)
+    {
+        _screenWrapper->setTemporalBlendingEnabled(enabled);
+    }
+}
+
 void MainWindow::handleScaleRequested(int scale)
 {
     // Leave full screen / maximized first so the resize can take effect
@@ -2817,10 +3070,10 @@ void MainWindow::handleScaleRequested(int scale)
 
 void MainWindow::handleScreenshotRequested()
 {
-    if (!deviceScreen)
+    if (!_screenWrapper)
         return;
 
-    const QImage frame = deviceScreen->grabFramebuffer();
+    const QImage frame = _screenWrapper->grabFramebuffer();
     if (frame.isNull())
     {
         statusBar()->showMessage(tr("Screenshot: no emulator screen to capture"), 3000);
@@ -2978,7 +3231,7 @@ void MainWindow::handleEmulatorInstanceDestroyed(int id, Message* message)
                             debuggerWindow->setEmulator(nullptr);
                         }
 
-                        deviceScreen->detach();
+                        _screenWrapper->detach();
 
                         // Clear context from audio/video settings widgets
                         if (_audioSettingsWidget)
@@ -3235,6 +3488,14 @@ void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
 
     QMutexLocker locker(&_audioMutex);
 
+    // Start audio device on-demand (first emulator bind) to avoid idle hissing
+    if (_audioInitialized && !_audioStarted)
+    {
+        _soundManager->start();
+        _audioStarted = true;
+        qDebug() << "MainWindow::bindEmulatorAudio() - Audio device started on-demand";
+    }
+
     // Clear audio callback from currently adopted emulator (if any)
     // This prevents multiple emulators from trying to use the same audio device simultaneously
     if (_emulator && _emulator != emulator)
@@ -3298,23 +3559,23 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
         try
         {
             auto& framebufferDesc = context->pScreen->GetFramebufferDescriptor();
-            deviceScreen->init(framebufferDesc.width, framebufferDesc.height, framebufferDesc.memoryBuffer);
+            _screenWrapper->init(framebufferDesc.width, framebufferDesc.height, framebufferDesc.memoryBuffer);
 
             // Match the widget's crop to the emulator being adopted. Viewport crops are
             // absolute pixel insets, so one left over from the previous machine's overscan
             // mode (framebuffer 384x304) keeps cropping a framebuffer that is now 352x288,
             // scaling the wrong source region into the fixed-size widget
             if (_emulator->IsOverscanMode())
-                deviceScreen->setDisplayViewport(_emulator->GetDisplayViewport());
+                _screenWrapper->setDisplayViewport(_emulator->GetDisplayViewport());
             else
-                deviceScreen->clearDisplayViewport();
+                _screenWrapper->clearDisplayViewport();
 
             // Paint from the frame-end latched snapshot instead of the live
             // framebuffer - prevents mid-frame tearing (emulation thread
             // overwrites the live buffer while the GUI thread paints it).
-            // deviceScreen->detach() clears this on emulator switch/shutdown.
+            // _screenWrapper->detach() clears this on emulator switch/shutdown.
             Screen* screen = context->pScreen;
-            deviceScreen->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
+            _screenWrapper->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
                 if (!screen->CopyPresentedFramebuffer(dst, dstSize))
                     return false;
 
@@ -3345,7 +3606,7 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
             qWarning() << "MainWindow::adoptEmulator() - Failed to initialize device screen:" << e.what();
         }
     }
-    deviceScreen->setEmulator(_emulator);
+    _screenWrapper->setEmulator(_emulator);
 
     // 4. Central binding (triggers DebuggerWindow signals via onBindingBound)
     // This is the SOLE source of truth for DebuggerWindow state
@@ -3376,6 +3637,30 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
     if (_audioSettingsWidget)
     {
         _audioSettingsWidget->setContext(_emulator->GetContext());
+    }
+
+    // 9. HUD Overlay binding
+    if (_hudWrapper)
+    {
+        _hudModel = std::make_shared<HudModel>(_emulator->GetContext());
+        // Set up notification category filtering
+        _hudModel->setCategoryFilter([](const char* categoryId) {
+            return HudSettingsDialog::isCategoryEnabled(QString::fromUtf8(categoryId));
+        });
+
+        _hudWrapper->setModel(_hudModel);
+
+        // Restore HUD visibility from session state (not from emulator defaults)
+        if (_emulator->GetContext() && _emulator->GetContext()->pFeatureManager)
+        {
+            _emulator->GetContext()->pFeatureManager->setFeature(Features::kHud, _hudOverlayVisible);
+        }
+        if (_menuManager)
+        {
+            _menuManager->setHudOverlayChecked(_hudOverlayVisible);
+        }
+        _hudWrapper->setVisible(_hudOverlayVisible);
+        _hudWrapper->syncGeometryWithParent();
     }
 
     qDebug() << "MainWindow::adoptEmulator() - Successfully adopted emulator"
@@ -3413,8 +3698,13 @@ void MainWindow::unbindFromEmulator()
         debuggerWindow->setEmulator(nullptr);
     }
 
-    // 4. Device screen
-    deviceScreen->detach();
+    // 4. Device screen & HUD overlay
+    if (_hudWrapper)
+    {
+        _hudWrapper->setModel(nullptr);
+    }
+    _hudModel.reset();
+    _screenWrapper->detach();
 
     // 5. Audio settings widget
     if (_audioSettingsWidget)

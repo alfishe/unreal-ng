@@ -461,6 +461,10 @@ protected:
     uint8_t* _activeScreenMemoryOffset;
     uint8_t _borderColor;
 
+    // Frame-level screen switch tracking (zero overhead when HUD disabled)
+    bool _feature_hud_enabled = false;
+    uint8_t _screenSwitchCount = 0;
+
     VideoModeEnum _mode;
     RasterState _rasterState;
     FramebufferDescriptor _framebuffer;
@@ -556,6 +560,12 @@ protected:
     ModeSelection DetectModeGMX(const EmulatorState& state) const;
     ModeSelection DetectModeLegacy(const EmulatorState& state) const;
     /// endregion </Video mode detection>
+
+    /// region <Frame lifecycle>
+public:
+    void handleFrameStart();
+    void handleFrameEnd();
+    /// endregion </Frame lifecycle>
 
 public:
     virtual void SetVideoMode(VideoModeEnum mode);

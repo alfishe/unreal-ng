@@ -588,6 +588,11 @@ void Emulator::SetSpeedMultiplier(uint8_t multiplier)
     _core->SetSpeedMultiplier(multiplier);
 }
 
+uint8_t Emulator::GetSpeedMultiplier() const
+{
+    return _core ? _core->GetSpeedMultiplier() : 1;
+}
+
 void Emulator::EnableTurboMode(bool withAudio)
 {
     _core->EnableTurboMode(withAudio);
@@ -1185,6 +1190,12 @@ bool Emulator::LoadSnapshot(const std::string& path)
     if (!FileHelper::FileExists(absolutePath))
     {
         MLOGERROR("Snapshot file not found: '%s'", absolutePath.c_str());
+        if (_context)
+        {
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            messageCenter.Post(NC_FILE_LOADED,
+                new FileLoadedPayload(_context->emulatorId, "snapshot", absolutePath, false));
+        }
         return false;
     }
 
@@ -1193,6 +1204,12 @@ bool Emulator::LoadSnapshot(const std::string& path)
     if (ext != "z80" && ext != "sna")
     {
         MLOGERROR("Invalid snapshot format: {}. Expected .z80 or .sna", ext.c_str());
+        if (_context)
+        {
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            messageCenter.Post(NC_FILE_LOADED,
+                new FileLoadedPayload(_context->emulatorId, "snapshot", absolutePath, false));
+        }
         return false;
     }
 
@@ -1265,6 +1282,13 @@ bool Emulator::LoadSnapshot(const std::string& path)
     if (wasRunning)
     {
         Resume();
+    }
+
+    if (_context)
+    {
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        messageCenter.Post(NC_FILE_LOADED,
+            new FileLoadedPayload(_context->emulatorId, "snapshot", absolutePath, result));
     }
 
     return result;
@@ -1379,6 +1403,12 @@ bool Emulator::LoadTape(const std::string& path)
     if (!FileHelper::FileExists(resolvedPath))
     {
         MLOGERROR("LoadTape() - File not found: '%s'", path.c_str());
+        if (_context)
+        {
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            messageCenter.Post(NC_FILE_LOADED,
+                new FileLoadedPayload(_context->emulatorId, "tape", resolvedPath, false));
+        }
         return false;
     }
 
@@ -1387,6 +1417,12 @@ bool Emulator::LoadTape(const std::string& path)
     if (ext != "tap" && ext != "tzx")
     {
         MLOGERROR("LoadTape() - Invalid tape format: .%s (expected .tap or .tzx)", ext.c_str());
+        if (_context)
+        {
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            messageCenter.Post(NC_FILE_LOADED,
+                new FileLoadedPayload(_context->emulatorId, "tape", resolvedPath, false));
+        }
         return false;
     }
 
@@ -1401,6 +1437,13 @@ bool Emulator::LoadTape(const std::string& path)
 
     MLOGINFO("Tape file validated and ready: '%s'", resolvedPath.c_str());
     result = true;
+
+    if (_context)
+    {
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        messageCenter.Post(NC_FILE_LOADED,
+            new FileLoadedPayload(_context->emulatorId, "tape", resolvedPath, result));
+    }
 
     return result;
 }
@@ -1426,6 +1469,12 @@ bool Emulator::LoadDisk(const std::string& path)
     if (!FileHelper::FileExists(resolvedPath))
     {
         MLOGERROR("LoadDisk() - File not found: '%s'", path.c_str());
+        if (_context)
+        {
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            messageCenter.Post(NC_FILE_LOADED,
+                new FileLoadedPayload(_context->emulatorId, "disk", resolvedPath, false));
+        }
         return false;
     }
 
@@ -1452,26 +1501,9 @@ bool Emulator::LoadDisk(const std::string& path)
         {
             // FIXME: use active drive, not fixed A:
 
-            /// region <Free memory from previous disk image>
-            if (_context->pBetaDisk)
-            {
-                _context->pBetaDisk->ejectDisk();
-            }
-            if (_context->coreState.diskDrives[0])
-            {
-                _context->coreState.diskDrives[0]->ejectDisk();
-            }
-
-            DiskImage* diskImage = _context->coreState.diskImages[0];
-
-            if (diskImage != nullptr)
-            {
-                delete diskImage;
-            }
-            /// endregion </ree memory from previous disk image>
-
-            /// region <Load new disk image and mount it>
-            diskImage = loaderTrd.getImage();
+            /// region <Mount new disk image and release previous>
+            DiskImage* oldImage = _context->coreState.diskImages[0];
+            DiskImage* diskImage = loaderTrd.getImage();
             _context->coreState.diskImages[0] = diskImage;
 
             if (_context->coreState.diskDrives[0])
@@ -1483,7 +1515,11 @@ bool Emulator::LoadDisk(const std::string& path)
             _context->coreState.diskFilePaths[0] = resolvedPath;
             diskImage->setFilePath(resolvedPath);
 
-            /// endregion </Load new disk image and mount it>
+            if (oldImage != nullptr)
+            {
+                delete oldImage;
+            }
+            /// endregion </Mount new disk image and release previous>
             
             result = true;  // Successfully loaded TRD disk
         }
@@ -1496,26 +1532,9 @@ bool Emulator::LoadDisk(const std::string& path)
         {
             // FIXME: use active drive, not fixed A:
 
-            /// region <Free memory from previous disk image>
-            if (_context->pBetaDisk)
-            {
-                _context->pBetaDisk->ejectDisk();
-            }
-            if (_context->coreState.diskDrives[0])
-            {
-                _context->coreState.diskDrives[0]->ejectDisk();
-            }
-
-            DiskImage* diskImage = _context->coreState.diskImages[0];
-
-            if (diskImage != nullptr)
-            {
-                delete diskImage;
-            }
-            /// endregion </ree memory from previous disk image>
-
-            /// region <Load new disk image and mount it>
-            diskImage = loader.getImage();
+            /// region <Mount new disk image and release previous>
+            DiskImage* oldImage = _context->coreState.diskImages[0];
+            DiskImage* diskImage = loader.getImage();
             _context->coreState.diskImages[0] = diskImage;
 
             if (_context->coreState.diskDrives[0])
@@ -1526,8 +1545,12 @@ bool Emulator::LoadDisk(const std::string& path)
             // Store file path for API queries and for "Save" back to the same file
             _context->coreState.diskFilePaths[0] = resolvedPath;
             diskImage->setFilePath(resolvedPath);
-            
-            /// endregion </Load new disk image and mount it>
+
+            if (oldImage != nullptr)
+            {
+                delete oldImage;
+            }
+            /// endregion </Mount new disk image and release previous>
             
             result = true;  // Successfully loaded SCL disk
         }
@@ -1545,26 +1568,9 @@ bool Emulator::LoadDisk(const std::string& path)
 
             // FIXME: use active drive, not fixed A:
 
-            /// region <Free memory from previous disk image>
-            if (_context->pBetaDisk)
-            {
-                _context->pBetaDisk->ejectDisk();
-            }
-            if (_context->coreState.diskDrives[0])
-            {
-                _context->coreState.diskDrives[0]->ejectDisk();
-            }
-
-            DiskImage* diskImage = _context->coreState.diskImages[0];
-
-            if (diskImage != nullptr)
-            {
-                delete diskImage;
-            }
-            /// endregion </ree memory from previous disk image>
-
-            /// region <Load new disk image and mount it>
-            diskImage = loader.getImage();
+            /// region <Mount new disk image and release previous>
+            DiskImage* oldImage = _context->coreState.diskImages[0];
+            DiskImage* diskImage = loader.getImage();
             _context->coreState.diskImages[0] = diskImage;
 
             if (_context->coreState.diskDrives[0])
@@ -1575,8 +1581,12 @@ bool Emulator::LoadDisk(const std::string& path)
             // Store file path for API queries and for "Save" back to the same file
             _context->coreState.diskFilePaths[0] = resolvedPath;
             diskImage->setFilePath(resolvedPath);
-            
-            /// endregion </Load new disk image and mount it>
+
+            if (oldImage != nullptr)
+            {
+                delete oldImage;
+            }
+            /// endregion </Mount new disk image and release previous>
             
             result = true;  // Successfully loaded UDI disk
         }
@@ -1601,26 +1611,9 @@ bool Emulator::LoadDisk(const std::string& path)
 
             // FIXME: use active drive, not fixed A:
 
-            /// region <Free memory from previous disk image>
-            if (_context->pBetaDisk)
-            {
-                _context->pBetaDisk->ejectDisk();
-            }
-            if (_context->coreState.diskDrives[0])
-            {
-                _context->coreState.diskDrives[0]->ejectDisk();
-            }
-
-            DiskImage* diskImage = _context->coreState.diskImages[0];
-
-            if (diskImage != nullptr)
-            {
-                delete diskImage;
-            }
-            /// endregion </ree memory from previous disk image>
-
-            /// region <Load new disk image and mount it>
-            diskImage = loader.getImage();
+            /// region <Mount new disk image and release previous>
+            DiskImage* oldImage = _context->coreState.diskImages[0];
+            DiskImage* diskImage = loader.getImage();
             _context->coreState.diskImages[0] = diskImage;
 
             if (_context->coreState.diskDrives[0])
@@ -1631,8 +1624,12 @@ bool Emulator::LoadDisk(const std::string& path)
             // Store file path for API queries and for "Save" back to the same file
             _context->coreState.diskFilePaths[0] = resolvedPath;
             diskImage->setFilePath(resolvedPath);
-            
-            /// endregion </Load new disk image and mount it>
+
+            if (oldImage != nullptr)
+            {
+                delete oldImage;
+            }
+            /// endregion </Mount new disk image and release previous>
             
             result = true;  // Successfully loaded FDI disk
         }
@@ -1657,26 +1654,9 @@ bool Emulator::LoadDisk(const std::string& path)
 
             // FIXME: use active drive, not fixed A:
 
-            /// region <Free memory from previous disk image>
-            if (_context->pBetaDisk)
-            {
-                _context->pBetaDisk->ejectDisk();
-            }
-            if (_context->coreState.diskDrives[0])
-            {
-                _context->coreState.diskDrives[0]->ejectDisk();
-            }
-
-            DiskImage* diskImage = _context->coreState.diskImages[0];
-
-            if (diskImage != nullptr)
-            {
-                delete diskImage;
-            }
-            /// endregion </ree memory from previous disk image>
-
-            /// region <Load new disk image and mount it>
-            diskImage = loader.getImage();
+            /// region <Mount new disk image and release previous>
+            DiskImage* oldImage = _context->coreState.diskImages[0];
+            DiskImage* diskImage = loader.getImage();
             _context->coreState.diskImages[0] = diskImage;
 
             if (_context->coreState.diskDrives[0])
@@ -1687,8 +1667,12 @@ bool Emulator::LoadDisk(const std::string& path)
             // Store file path for API queries and for "Save" back to the same file
             _context->coreState.diskFilePaths[0] = resolvedPath;
             diskImage->setFilePath(resolvedPath);
-            
-            /// endregion </Load new disk image and mount it>
+
+            if (oldImage != nullptr)
+            {
+                delete oldImage;
+            }
+            /// endregion </Mount new disk image and release previous>
             
             result = true;  // Successfully loaded DSK disk
         }
@@ -1713,26 +1697,9 @@ bool Emulator::LoadDisk(const std::string& path)
 
             // FIXME: use active drive, not fixed A:
 
-            /// region <Free memory from previous disk image>
-            if (_context->pBetaDisk)
-            {
-                _context->pBetaDisk->ejectDisk();
-            }
-            if (_context->coreState.diskDrives[0])
-            {
-                _context->coreState.diskDrives[0]->ejectDisk();
-            }
-
-            DiskImage* diskImage = _context->coreState.diskImages[0];
-
-            if (diskImage != nullptr)
-            {
-                delete diskImage;
-            }
-            /// endregion </ree memory from previous disk image>
-
-            /// region <Load new disk image and mount it>
-            diskImage = loader.getImage();
+            /// region <Mount new disk image and release previous>
+            DiskImage* oldImage = _context->coreState.diskImages[0];
+            DiskImage* diskImage = loader.getImage();
             _context->coreState.diskImages[0] = diskImage;
 
             if (_context->coreState.diskDrives[0])
@@ -1743,8 +1710,12 @@ bool Emulator::LoadDisk(const std::string& path)
             // Store file path for API queries and for "Save" back to the same file
             _context->coreState.diskFilePaths[0] = resolvedPath;
             diskImage->setFilePath(resolvedPath);
-            
-            /// endregion </Load new disk image and mount it>
+
+            if (oldImage != nullptr)
+            {
+                delete oldImage;
+            }
+            /// endregion </Mount new disk image and release previous>
             
             result = true;  // Successfully loaded TD0 disk
         }
@@ -1769,26 +1740,9 @@ bool Emulator::LoadDisk(const std::string& path)
 
             // FIXME: use active drive, not fixed A:
 
-            /// region <Free memory from previous disk image>
-            if (_context->pBetaDisk)
-            {
-                _context->pBetaDisk->ejectDisk();
-            }
-            if (_context->coreState.diskDrives[0])
-            {
-                _context->coreState.diskDrives[0]->ejectDisk();
-            }
-
-            DiskImage* diskImage = _context->coreState.diskImages[0];
-
-            if (diskImage != nullptr)
-            {
-                delete diskImage;
-            }
-            /// endregion </ree memory from previous disk image>
-
-            /// region <Load new disk image and mount it>
-            diskImage = loader.getImage();
+            /// region <Mount new disk image and release previous>
+            DiskImage* oldImage = _context->coreState.diskImages[0];
+            DiskImage* diskImage = loader.getImage();
             _context->coreState.diskImages[0] = diskImage;
 
             if (_context->coreState.diskDrives[0])
@@ -1799,8 +1753,12 @@ bool Emulator::LoadDisk(const std::string& path)
             // Store file path for API queries and for "Save" back to the same file
             _context->coreState.diskFilePaths[0] = resolvedPath;
             diskImage->setFilePath(resolvedPath);
-            
-            /// endregion </Load new disk image and mount it>
+
+            if (oldImage != nullptr)
+            {
+                delete oldImage;
+            }
+            /// endregion </Mount new disk image and release previous>
             
             result = true;  // Successfully loaded MGT/IMG disk
         }
@@ -1816,6 +1774,13 @@ bool Emulator::LoadDisk(const std::string& path)
     if (wasRunning)
     {
         Resume();
+    }
+
+    if (_context)
+    {
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        messageCenter.Post(NC_FILE_LOADED,
+            new FileLoadedPayload(_context->emulatorId, "disk", resolvedPath, result));
     }
 
     return result;
@@ -2895,6 +2860,7 @@ void Emulator::StepOver()
     bpDesc->memoryType = BRK_MEM_EXECUTE;
     bpDesc->z80address = nextInstructionAddress;
     bpDesc->note = "StepOver";
+    bpDesc->hidden = true;
     uint16_t stepOverBreakpointID = bpManager->AddBreakpoint(bpDesc);
 
     if (stepOverBreakpointID == BRK_INVALID)
@@ -2947,6 +2913,9 @@ void Emulator::StepOver()
             // Clear tracking state
             _pendingStepOverBpId = 0;
             _stepOverDeactivatedBps.clear();
+
+            // Notify observers that step has completed
+            MessageCenter::DefaultMessageCenter().Post(NC_EXECUTION_CPU_STEP);
             
             MLOGDEBUG("Emulator::StepOver() - cleanup complete");
         }

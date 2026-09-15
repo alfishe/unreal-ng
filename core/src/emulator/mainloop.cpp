@@ -220,8 +220,16 @@ void MainLoop::Run(volatile bool& stopRequested)
             }
 
             // (Re)anchor after start, pause, debugger stall, or heavy lag -
-            // never try to "catch up" more than one frame via a stale deadline
-            if (_nextFrameTime < now - frameDuration || _nextFrameTime > now + frameDuration)
+            // never try to "catch up" more than one frame via a stale deadline.
+            // _nextFrameTime is still the deadline of the frame that just ran,
+            // so it lags 'now' by that frame's duration even in steady state.
+            // The threshold must therefore be TWO frames: with one, any frame
+            // that overran its budget by a few hundred us re-anchored and
+            // scheduled the next frame a full frame after the late finish -
+            // a ~2x period the audio ring cannot cover, heard as a dropout on
+            // every overrun. Up to one frame of catch-up is allowed instead;
+            // DRC absorbs the residual (audio-sync design).
+            if (_nextFrameTime < now - 2 * frameDuration || _nextFrameTime > now + frameDuration)
             {
                 _nextFrameTime = now;
             }
@@ -400,6 +408,8 @@ void MainLoop::OnFrameStart()
 
     _context->pTape->handleFrameStart();
     _soundManager->handleFrameStart();
+    _context->pMemory->handleFrameStart();
+    _screen->handleFrameStart();
     _screen->InitFrame();
 
     /// region <Turbo render decimation>
@@ -562,6 +572,10 @@ void MainLoop::OnFrameEnd()
             }
         }
     }
+
+    // HUD notifications: emit once per frame (zero overhead when HUD disabled)
+    _context->pMemory->handleFrameEnd();
+    _screen->handleFrameEnd();
 
 #ifdef ENABLE_RECORDING
     // Capture video frame for recording (if recording is active)

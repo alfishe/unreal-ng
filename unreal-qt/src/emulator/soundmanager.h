@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QTimer>
 #include <atomic>
 
 // miniaudio.h includes <windows.h> on Windows. winsock2.h MUST be included before
@@ -50,6 +51,28 @@ protected:
     void stopNominalRateWatch();
 #endif
 
+    // Windows: IMMNotificationClient watching PKEY_AudioEngine_DeviceFormat on
+    // the opened endpoint. Changing the default format in Sound settings keeps
+    // the same device, so miniaudio fires no 'rerouted' for it either. Windows
+    // emits several notifications per switch and keeps reporting the OLD format
+    // until the engine has settled, so notifications are only coalesced by a
+    // single-shot timer and the device is then re-opened at its native rate -
+    // no attempt is made to read the new rate up front. The watch is torn
+    // down for the duration of the re-open (it must not be registered while
+    // miniaudio unregisters its own client), so a re-open that changed the
+    // rate re-arms the timer once more: an upshift passes through an
+    // intermediate rate and the chain ends when a re-open yields no change.
+#ifdef _WIN32
+    class FormatChangeNotifier;
+    FormatChangeNotifier* _formatNotifier = nullptr;
+    QTimer _formatChangeTimer;
+
+    void startFormatWatch();
+    void stopFormatWatch();
+    /// GUI-thread landing point for the COM-thread notification; (re)starts the timer
+    void onDeviceFormatChanged();
+#endif
+
 
     // Ring error observability (emulator thread, audioCallback only)
     uint32_t _errorLogCounter = 0;
@@ -64,7 +87,7 @@ protected:
 
     /// region <Constructors / destructors>
 public:
-    AppSoundManager() = default;
+    AppSoundManager();
     virtual ~AppSoundManager();
     /// endregion </Constructors / destructors>
 
