@@ -13,6 +13,7 @@
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
 #include "common/video/videoutils.h"
+#include "emulator/video/screendigest.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -1029,6 +1030,35 @@ uint16_t Screen::GetDisplayHeight() const
 
 /// endregion </Display viewport>
 
+std::vector<uint16_t> Screen::GetActiveSurfaceRAMPages(VideoModeEnum mode, uint8_t p7FFD, bool bankedZX)
+{
+    switch (mode)
+    {
+        // ATM hardware modes: bit-planes at {videoPage - 4, videoPage}
+        // (DrawATM16 / DrawATMHiRes / DrawATM2Text / DrawATM3Text layout).
+        // videoPage follows 7FFD bit 3 exactly like the renderers.
+        case M_ATM16:
+        case M_ATMHR:
+        case M_ATMTX:
+        case M_ATMTL:
+        {
+            const uint16_t videoPage = (p7FFD & 0x08) ? 7 : 5;
+            const uint16_t altPage = static_cast<uint16_t>(videoPage - 4);
+            return {altPage, videoPage};
+        }
+
+        // ZX family and every other mode (Pentagon AlCo variants build on the
+        // standard screen pages; Profi/GMX/TS renderers are stubbed on master
+        // and fall back to the classic surface until they define one)
+        default:
+        {
+            if (bankedZX)
+                return {ScreenDigest::kScreen0RAMPage, ScreenDigest::kScreen1RAMPage};
+            return {ScreenDigest::kScreen0RAMPage};
+        }
+    }
+}
+
 std::string Screen::GetVideoModeName(VideoModeEnum mode)
 {
     std::string result;
@@ -1040,6 +1070,12 @@ std::string Screen::GetVideoModeName(VideoModeEnum mode)
             break;
         case M_ZX48:
             result = "ZX";
+            break;
+        case M_ZX128:
+            result = "ZX128";
+            break;
+        case M_PENTAGON128K:
+            result = "Pentagon128K";
             break;
         case M_PMC:
             result = "PMC";
@@ -1085,6 +1121,9 @@ std::string Screen::GetVideoModeName(VideoModeEnum mode)
             break;
         case M_BRD:
             result = "Border";
+            break;
+        case M_SCORPION:
+            result = "Scorpion";
             break;
         default:
             result = "Unknown";

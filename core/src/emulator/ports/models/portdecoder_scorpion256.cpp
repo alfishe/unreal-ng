@@ -661,7 +661,7 @@ bool PortDecoder_Scorpion256::IsPort_KempstonJoystick(uint16_t port)
            && (port == 0xFF1F);
 }
 
-bool PortDecoder_Scorpion256::IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister)
+bool PortDecoder_Scorpion256::IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister) const
 {
     // Common rule: while TR-DOS is selected only Beta Disk operations happen. Every mouse
     // address has A2-A0 = 111, so the wide TR-DOS Beta decode owns all of them (MiSTer

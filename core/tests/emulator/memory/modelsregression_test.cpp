@@ -429,7 +429,7 @@ TEST_F(ModelsRegression_Test, GoldenBankMaps)
         {"48K",        MM_SPECTRUM48,  RAM_48,   false, Sequence48K()},
         {"128K",       MM_SPECTRUM128, RAM_128,  false, Sequence128K()},
         {"+3",         MM_PLUS3,       RAM_128,  true,  SequencePlus3()},
-        {"Pentagon128", MM_PENTAGON,   RAM_1024, true,  SequencePentagon()},
+        {"Pentagon128", MM_PENTAGON,   RAM_128,  true,  SequencePentagon()},
         {"Profi",      MM_PROFI,       RAM_256,  true,  SequenceProfi()},
     };
 

@@ -11,6 +11,7 @@
 #include <emulator/emulatorcontext.h>
 #include <emulator/memory/rom.h>  // ROM signatures
 #include <emulator/cpu/core.h>    // Core::GetROM()
+#include <emulator/ports/portdecoder.h>  // Tagged port registry
 #include <json/json.h>
 #include <common/stringhelper.h>
 
@@ -321,43 +322,13 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
 
     uint8_t activeROMPage = memory.GetROMPage();
 
-    if (config.mem_model == MM_SPECTRUM48)
+    // Page roles come from the core single-source layout table
+    // (ROM::GetROMPageRole - same names on /state/paging, CLI, Lua, Python)
+    for (int i = 0; i < totalROMPages; i++)
     {
-        addPageInfo(0, "48K BASIC ROM", true);
-    }
-    else if (config.mem_model == MM_SPECTRUM128)
-    {
-        addPageInfo(0, "128K Editor/Menu ROM", activeROMPage == 0);
-        addPageInfo(1, "48K BASIC ROM", activeROMPage == 1);
-    }
-    else if (config.mem_model == MM_PENTAGON)
-    {
-        addPageInfo(0, "Service ROM", activeROMPage == 0);
-        addPageInfo(1, "TR-DOS ROM", activeROMPage == 1);
-        addPageInfo(2, "128K Editor/Menu ROM", activeROMPage == 2);
-        addPageInfo(3, "48K BASIC ROM", activeROMPage == 3);
-    }
-    else if (config.mem_model == MM_PLUS3)
-    {
-        addPageInfo(0, "+3 Editor ROM", activeROMPage == 0);
-        addPageInfo(1, "48K BASIC ROM", activeROMPage == 1);
-        addPageInfo(2, "+3DOS ROM", activeROMPage == 2);
-        addPageInfo(3, "48K BASIC ROM (copy)", activeROMPage == 3);
-    }
-    else if (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP)
-    {
-        addPageInfo(0, "Service ROM", activeROMPage == 0);
-        addPageInfo(1, "TR-DOS ROM", activeROMPage == 1);
-        addPageInfo(2, "128K Editor/Menu ROM", activeROMPage == 2);
-        addPageInfo(3, "48K BASIC ROM", activeROMPage == 3);
-    }
-    else
-    {
-        // Generic fallback for other models
-        for (int i = 0; i < totalROMPages; i++)
-        {
-            addPageInfo(i, StringHelper::Format("ROM Page %d", i), activeROMPage == i);
-        }
+        std::string role = rom ? rom->GetROMPageRole(static_cast<uint8_t>(i))
+                               : StringHelper::Format("ROM Page %d", i);
+        addPageInfo(i, role, activeROMPage == i);
     }
 
     ret["pages"] = pages;
@@ -1050,6 +1021,199 @@ void EmulatorAPI::setROMProtect(const HttpRequestPtr& req, std::function<void(co
     ret["success"] = true;
     ret["protected"] = s_romWriteProtected;
     ret["message"] = s_romWriteProtected ? "ROM write protection enabled" : "ROM write protection disabled - ROM pages are now writable";
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+namespace
+{
+
+// Thin Json glue over the core single-source serializers (portdecoder.cpp) -
+// the tag/latch/decode dictionaries exist exactly once there and every
+// automation surface (MCP, CLI, Lua, Python) renders the same names
+Json::Value PortTagSetToJsonArray(PortTagSet tags)
+{
+    Json::Value arr = Json::arrayValue;
+    for (const std::string& tagName : PortTagSetToStrings(tags))
+        arr.append(tagName);
+    return arr;
+}
+
+const char* LatchEnumToString(PagingLatch latch)
+{
+    // Core single-source name ("p7FFD", "pFFF7_w2", ...); nullptr for None
+    return PagingLatchToString(latch);
+}
+
+Json::Value DecodeLatchValue(PagingLatch latch, uint32_t value, MEM_MODEL model, uint32_t ramSizeKB)
+{
+    // Core single-source §5.1 dictionary (DecodePagingLatch) with native types:
+    // ints and bools, so the JSON shape matches Lua/Python bindings verbatim
+    Json::Value decoded;
+    for (const DecodedLatchField& field : DecodePagingLatch(latch, value, model, ramSizeKB))
+    {
+        if (field.isBool)
+            decoded[field.key] = field.boolValue;
+        else
+            decoded[field.key] = field.intValue;
+    }
+    return decoded;
+}
+
+} // anonymous namespace
+
+/// @brief GET /api/v1/emulator/{id}/state/paging
+/// @brief Get unified paging state assembled from the tagged port registry (P1-2)
+void EmulatorAPI::getStatePaging(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    EmulatorContext* context = emulator->GetContext();
+    if (!context)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Unable to access emulator context";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    CONFIG& config = context->config;
+    Memory& memory = *context->pMemory;
+    EmulatorState& state = context->emulatorState;
+    PortDecoder* portDecoder = context->pPortDecoder;
+    ROM* rom = context->pCore ? context->pCore->GetROM() : nullptr;
+    Json::Value ret;
+
+    ret["model"] = Config::GetModelFullName(config.mem_model);
+
+    // Latches array - from tagged port registry
+    Json::Value latches = Json::arrayValue;
+    if (portDecoder)
+    {
+        std::vector<PortMapEntry> latchEntries = portDecoder->GetPagingLatches(Tags(PortTag::Memory));
+
+        for (const PortMapEntry& entry : latchEntries)
+        {
+            Json::Value latchObj;
+            latchObj["port"] = StringHelper::Format("0x%04X", entry.port);
+            latchObj["tags"] = PortTagSetToJsonArray(entry.tags);
+            latchObj["device"] = entry.device ? entry.device : "";
+            latchObj["gate"] = entry.gate ? Json::Value(entry.gate) : Json::Value::null;
+
+            const char* latchName = LatchEnumToString(entry.latch);
+            latchObj["latch"] = latchName ? latchName : Json::Value::null;
+
+            uint32_t value = PortDecoder::ReadPagingLatch(entry.latch, state);
+            latchObj["value"] = StringHelper::Format("0x%02X", value);
+
+            Json::Value decoded = DecodeLatchValue(entry.latch, value, config.mem_model, config.ramsize);
+            if (!decoded.empty())
+                latchObj["decoded"] = decoded;
+
+            latches.append(latchObj);
+        }
+    }
+    ret["latches"] = latches;
+
+    // Banks array - from Memory manager (the single source of window truth)
+    Json::Value banks = Json::arrayValue;
+
+    // Bank 0: 0x0000-0x3FFF
+    {
+        Json::Value bank;
+        bank["bank"] = 0;
+        bank["address_range"] = "0x0000-0x3FFF";
+        if (memory.IsBank0ROM())
+        {
+            bank["type"] = "ROM";
+            uint8_t romPage = memory.GetROMPage();
+            bank["page"] = static_cast<int>(romPage);
+            bank["read_write"] = "read-only";
+
+            // ROM identification (§5.2)
+            if (rom)
+            {
+                uint8_t* pagePtr = memory.ROMPageHostAddress(romPage);
+                if (pagePtr)
+                {
+                    std::string signature = rom->CalculateSignature(pagePtr, 0x4000);
+                    // GetROMTitle already carries the "Unknown ROM, <digest>"
+                    // fallback - identical wording on every surface
+                    bank["name"] = rom->GetROMTitle(signature);
+                    bank["signature"] = signature;
+                }
+                // Role: what the model layout says this slot is (core single
+                // source - ROM::GetROMPageRole, §5.2)
+                bank["role"] = rom->GetROMPageRole(romPage);
+            }
+        }
+        else
+        {
+            bank["type"] = "RAM";
+            bank["page"] = static_cast<int>(memory.GetRAMPageForBank0());
+        }
+        banks.append(bank);
+    }
+
+    // Bank 1: 0x4000-0x7FFF (always RAM page 5, contended)
+    {
+        Json::Value bank;
+        bank["bank"] = 1;
+        bank["address_range"] = "0x4000-0x7FFF";
+        bank["type"] = "RAM";
+        bank["page"] = static_cast<int>(memory.GetRAMPageForBank1());
+        bank["contended"] = true;
+        bank["note"] = "Screen 0 location";
+        banks.append(bank);
+    }
+
+    // Bank 2: 0x8000-0xBFFF (always RAM page 2)
+    {
+        Json::Value bank;
+        bank["bank"] = 2;
+        bank["address_range"] = "0x8000-0xBFFF";
+        bank["type"] = "RAM";
+        bank["page"] = static_cast<int>(memory.GetRAMPageForBank2());
+        banks.append(bank);
+    }
+
+    // Bank 3: 0xC000-0xFFFF (switchable RAM)
+    {
+        Json::Value bank;
+        bank["bank"] = 3;
+        bank["address_range"] = "0xC000-0xFFFF";
+        bank["type"] = "RAM";
+        bank["page"] = static_cast<int>(memory.GetRAMPageForBank3());
+        banks.append(bank);
+    }
+
+    ret["banks"] = banks;
+
+    // Top-level flags
+    ret["paging_locked"] = (state.p7FFD & PORT_7FFD_LOCK) != 0;
+    ret["trdos_active"] = (state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0;
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);

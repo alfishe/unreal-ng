@@ -17,6 +17,16 @@ separate small follow-ups.
 
 ### P0-1. Machine identity in `GET /emulator/{id}`
 
+> ✅ **DONE (2026-09-14, commit `34546478`).** Implemented as proposed; the
+> acceptance criteria (machine aspect shows model/RAM/video mode; unit tests
+> for two models) are covered by the committed tests.
+>
+> ✅ **Follow-up (2026-09-15):** the identity's `video_mode` had been silently
+> broken for 128k/Pentagon/Scorpion — `Screen::GetVideoModeName` missed the
+> `M_ZX128`/`M_PENTAGON128K`/`M_SCORPION` cases and answered `"Unknown"`.
+> Fixed at the single source with `Screen_VideoModeName_Test` regressions;
+> live check now returns `video_mode: "ZX128"`.
+
 Closes A-1.
 
 Add to `getEmulator` (lifecycle_api.cpp:263-268) and to the list response of
@@ -45,6 +55,11 @@ two different models.
 
 ### P0-2. Fail loudly on model create/switch
 
+> ✅ **DONE (2026-09-14, commit `34546478`).** Strict-by-default 400 with the
+> manager's failure reason; success echoes the resolved model. The optional
+> `allow_fallback` escape hatch was not carried along (default-strict covers
+> the triage need).
+
 Closes A-2 (the critical one).
 
 - `POST /emulator/create` and `POST /emulator/{id}/model`: on
@@ -63,6 +78,10 @@ branch it returns 201 with `"model":"ATM710"`. A test documents both.
 
 ### P0-3. Fix the documented model list
 
+> ✅ **DONE (2026-09-14, commit `34546478`).** `AGENTS.md` carries the 16
+> authoritative short names + the runtime-authoritative note pointing at
+> `GET /emulator/models`. The P3 CI-generation idea remains open.
+
 Closes A-3. Trivial.
 
 - Update `AGENTS.md` (and any other doc listing models) to the authoritative
@@ -74,6 +93,10 @@ Closes A-3. Trivial.
   list from docs and point at the endpoint.
 
 ### P0-4. Build/branch fingerprint
+
+> ✅ **DONE (2026-09-14, commit `cab13b99`).** `server` block (version, git
+> branch/commit, build type, `models_creatable`) exposed via
+> `/emulator/status` and the MCP `emulator_manage` `server` action.
 
 Closes C-1 (agent-build mismatch class).
 
@@ -127,6 +150,14 @@ fixtures).
 
 ### P1-2. Unified paging state endpoint
 
+> 📝 **Design ready (2026-09-15):** [port-tags-paging-design.md](port-tags-paging-design.md)
+> supersedes the sketch below — decoder-registered ports get semantic tags
+> (memory / ROM / screen / sound members) plus `PagingLatch` live bindings,
+> the decoder owns tag-indexed collections, and `/state/paging` reports a
+> self-describing `latches` array (instead of the hardcoded per-model field
+> dump below) next to the same `banks` table, with full parity. The sketch is
+> kept for the acceptance criteria, which carry over verbatim.
+
 Closes B-2, E-1 (reporting side).
 
 `GET /api/v1/emulator/{id}/state/paging`:
@@ -158,6 +189,21 @@ MCP `inspect_state` aspect `paging`.
 
 ### P1-3. Screen digest active-surface mode
 
+> ✅ **DONE (2026-09-14, this session).** `mode=active` implemented via
+> `Screen::GetActiveSurfaceRAMPages(mode, p7FFD, bankedZX)`: ATM hardware
+> modes (M_ATM16/ATMHR/ATMTX/ATMTL) hash the 7FFD-selected bit-plane pair
+> `{videoPage-4, videoPage}` exactly like the DrawATM* renderers; ZX modes keep
+> pages 5/7. Response carries `active_surface {video_mode, pages}`; invalid
+> mode values are a 400; `banks=`/`start,end=` still override. Tests:
+> `Screen_ActiveSurface_Test` (screenactivesurface_test.cpp). Note the
+> flipping-surfaces acceptance needs an ATM build to exercise live; the
+> page-derivation logic is unit-tested on master.
+>
+> ✅ **Parity (2026-09-15).** Replicated to CLI (`digest --active`, prints
+> `Mode: <name>, pages: …`), Lua (`screen_digest(nil,nil,nil,"active")`)
+> and Python (`screen_digest(mode="active")`, ValueError on a bad mode) —
+> all over the same `GetActiveSurfaceRAMPages` source.
+
 Closes B-4.
 
 Add `mode=active` (default remains current behavior) to
@@ -186,6 +232,21 @@ same treatment for the Profi decoder (already on master).
 attribution and rule indices; session info reports `modelName: "ATM710"`.
 
 ### P1-5. Static port-map introspection endpoint
+
+> ✅ **DONE (2026-09-14, this session).** `GET /api/v1/emulator/{id}/ports`
+> implemented from `PortDecoder::getPortMapEntries()` (per-model switch
+> mirroring the IsPort_* decode equations: FE/AY universal rows, per-model
+> paging latches, fitment-conditional mouse + Beta128 rows with gate strings,
+> registered-handler rows deduped) plus a `live` block (`trdos_active`,
+> `mouse_ports_decoded`, `mouse_routing_note`, `shadow_monitor_paged`).
+> ATM FF77 rows land with the atm-branch decoders (P1-4). Tests:
+> `PortDecoder_PortMap_Test` (portdecoder_portmap_test.cpp, 11 cases);
+> OpenAPI `openapi_ports.inc`; smoke-verified live on 128k + SCORPION.
+>
+> ✅ **Parity (2026-09-15).** Replicated to CLI (new `ports` command: the same
+> rows as a text table + the live routing block) and to Lua/Python
+> (`ports_map()` with the same `model`/`entries`/`live` shape) — all from the
+> same `getPortMapEntries`/`GetMouseRoutingState` sources.
 
 Closes C-3 and D-1 (mouse Q4).
 
@@ -224,6 +285,18 @@ status explains why.
 ## P2 — Peripheral observability
 
 ### P2-1. Mouse status routing + `mouse` aspect
+
+> ✅ **DONE (2026-09-14, this session).** `/mouse/status` carries
+> `routing {ports_decoded, note}`; `mouse` is in the `inspect_state` aspect
+> enum (handler mirrors `fdc`, summary reports "ports decoded/shadowed" + the
+> gate reason). Tests: `McpTools_Test.InspectState_MouseAspect_*` (2 cases) +
+> `PortDecoder_PortMap_Test.MouseRouting_*` (3 cases incl. the Scorpion DOS
+> trigger and Shadow Monitor canonical-port behavior).
+>
+> ✅ **Parity (2026-09-15).** The same routing answer now also surfaces on CLI
+> (`mouse status` `Routing:` line, `CliMouseFormat_test.FormatRouting_*`),
+> Lua (`mouse_status().routing`) and Python (`mouse_status()['routing']`) —
+> on status only, not on injection responses, matching the WebAPI shape.
 
 Closes D-1, D-2.
 
@@ -319,6 +392,16 @@ branch author).
 
 ### P3-2. ROM signature identification
 
+> **📝 Design note (2026-09-15):** the paging design
+> ([port-tags-paging-design.md](port-tags-paging-design.md) §5.2) already
+> delivers the recognition+naming half on all paging surfaces, from the
+> existing core
+> catalog (`ROM::_signatures`, SHA-256 via `SignatureCache`) plus a new
+> `ROM::GetROMPageRole` layout table: ROM bank rows carry
+> `role`/`name`/`signature`, and `role` ≠ `name` flags a wrong-ROM load at a
+> glance. The remaining P3-2 work is catalog growth (more ROMs, optional
+> data-file loading) and the `rom` aspect's CLI/Lua/Python parity.
+
 Closes E-2. Extend the `rom` aspect / `/state/memory/rom` with a
 `signatures` block: match first N bytes + size against a curated table
 (`data/symbols/` or `docs/` yaml: name, size, expected bytes/checksum,
@@ -346,6 +429,15 @@ endpoints/aspects.
 ---
 
 ## Suggested sequencing
+
+> Status (2026-09-14): step 1 ✅ done (`34546478`, `cab13b99`); P1-5 + P2-1
+> from steps 3–4 ✅ done (this session); P1-3 ✅ done (this session). Steps 2
+> (P1-1 + P1-2) and P1-4, P2-2/P2-3, P3 remain open.
+>
+> Status (2026-09-15): the done P1-3/P1-5/P2-1 surfaces were replicated to
+> CLI/Lua/Python (full four-interface parity) and documented across
+> `control-interfaces/`; the `GetVideoModeName` identity fix landed with
+> regressions. Still open: steps 2 (P1-1 + P1-2), P1-4, P2-2/P2-3, P3.
 
 1. **P0-1..P0-4** (one small PR batch; no schema risk) — immediately stops
    misattributed sessions.

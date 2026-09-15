@@ -23,6 +23,15 @@ Cross-reference to the 2026-09-10 ATM session
 
 ### A-1. `GET /emulator/{id}` reports no model
 
+> ✅ **DONE (2026-09-14, commit `34546478`, P0-1):** `getEmulator` and the list
+> response now report `model`, `model_full_name`, `ram_kb`, `video_mode`,
+> `speed_multiplier`, `config_folder`; the MCP `machine` aspect picks them up.
+>
+> ✅ **Follow-up (2026-09-15):** the `video_mode` value itself was fixed at the
+> source — `Screen::GetVideoModeName` had no cases for `M_ZX128` /
+> `M_PENTAGON128K` / `M_SCORPION`, so those models answered `"Unknown"`
+> since P0-1 landed. Regression tests: `Screen_VideoModeName_Test`.
+
 `getEmulator` returns exactly `id, state, is_running, is_paused, is_debug`
 ([lifecycle_api.cpp:263-268](../../../core/automation/webapi/src/api/lifecycle_api.cpp)).
 No `model`, no RAM size, no config folder, no video mode, no speed multiplier.
@@ -39,6 +48,10 @@ attributed to the wrong machine class. This also breaks the "kempston mouse on
 different configs" scenario at step one — the config is invisible.
 
 ### A-2. Silent 48K fallback on create
+
+> ✅ **DONE (2026-09-14, commit `34546478`, P0-2):** create/switch now fails
+> loudly with 400 + the exact manager reason instead of substituting a 48K
+> machine; success echoes the resolved model.
 
 `createEmulator` falls back to `manager->CreateEmulator(symbolicId)` (default
 model) whenever `CreateEmulatorWithModel[AndRAM]` returns nullptr — i.e. for
@@ -64,6 +77,10 @@ behavior" that is actually 48K behavior. This is the single most dangerous
 gap because it fails silently.
 
 ### A-3. Stale model list in agent-facing docs
+
+> ✅ **DONE (2026-09-14, commit `34546478`, P0-3):** `AGENTS.md` now lists the
+> 16 authoritative short names + a runtime-authoritative note pointing at
+> `GET /emulator/models`.
 
 `AGENTS.md` advertises models `PENTAGON, 48K, 128k, PLUS2, PLUS2A, PLUS3,
 SCORPION, ATM1, ATM2, ATM3, PROFI`. The authoritative table
@@ -153,6 +170,16 @@ the two competing hypotheses of bug-report #5.
 
 ### B-4. Screen digest hardcodes pages 5/7; no active-surface mode
 
+> ✅ **DONE (2026-09-14, P1-3):** `/state/screen/digest?mode=active` now
+> derives the bank list from the current video mode via
+> `Screen::GetActiveSurfaceRAMPages` (ATM hardware modes hash the 7FFD-selected
+> bit-plane pair `{videoPage-4, videoPage}`; ZX modes keep pages 5/7); the
+> response carries an `active_surface` block and explicit `banks=`/`start,end=`
+> still override.
+>
+> ✅ **Parity (2026-09-15):** CLI `digest --active`, Lua
+> `screen_digest(nil,nil,nil,"active")`, Python `screen_digest(mode="active")`.
+
 `/state/screen/digest` defaults to RAM pages `[5, 7]` for 128K-class models
 (again the three-model check) and page 5 otherwise
 ([state_screen_api.cpp:617-621](../../../core/automation/webapi/src/api/state_screen_api.cpp)).
@@ -169,6 +196,11 @@ being triaged; regression comparisons across models become meaningless.
 ## C. Port-level triage (ATM ports, Profi, ZX Evo)
 
 ### C-1. Master cannot instantiate the machines under triage
+
+> ✅ **DONE for the fingerprint half (2026-09-14, commit `cab13b99`, P0-4):**
+> `/emulator/status` (and `emulator_manage server`) now expose version, git
+> branch/commit, build type and `models_creatable`. The machine creatability
+> itself is `atm`-branch work and stays as described below.
 
 `GetPortDecoderForModel` throws for `MM_TSL, MM_ATM3, MM_ATM710, MM_ATM450,
 MM_GMX, MM_KAY, MM_QUORUM, MM_LSY256, MM_PHOENIX`
@@ -206,6 +238,16 @@ the decode-rule tables the trace subsystem expects.
 
 ### C-3. No static port-map introspection
 
+> ✅ **DONE (2026-09-14, P1-5):** `GET /api/v1/emulator/{id}/ports` returns the
+> per-model static map (`PortDecoder::getPortMapEntries`: `port/mask/match/
+> device/gate`, fitment-conditional mouse and Beta128 rows, registered-handler
+> rows deduped) plus a `live` block (`trdos_active`, `mouse_ports_decoded`,
+> `mouse_routing_note`, `shadow_monitor_paged` — Scorpion-only, null elsewhere).
+> ATM rows land with the atm-branch decoders (P1-4).
+>
+> ✅ **Parity (2026-09-15):** CLI `ports` command and Lua/Python `ports_map()`
+> expose the same rows + live block from the same source.
+
 There is no endpoint answering "which port ranges does this machine decode,
 to which devices, under which gating conditions?" An agent must run guest
 code and infer from porttrace output plus hardware knowledge. This is also
@@ -225,6 +267,17 @@ relies on the agent's hardware memory being correct.
 
 ### D-1. Mouse status lacks routing information (open Q4)
 
+> ✅ **DONE (2026-09-14, P2-1):** `/mouse/status` now carries
+> `routing.ports_decoded` + `routing.note` from
+> `PortDecoder::GetMouseRoutingState`, which probes the canonical buttons port
+> through the model's virtual `IsPort_KempstonMouse` gate (Scorpion TR-DOS
+> trigger / Shadow Monitor mirror deviations honored; the Shadow Monitor latch
+> alone keeps canonical `#xxDF` — only the five exact Beta low-byte mirrors
+> move to the FDC). Design Q4 is closed.
+>
+> ✅ **Parity (2026-09-15):** CLI `mouse status` `Routing:` line, Lua/Python
+> `mouse_status()` `routing` field — status queries only, as on WebAPI.
+
 `MouseStateSnapshot` reports `available` (device exists), `present` (fitted;
 otherwise "guest reads floating bus on the mouse ports" warning), `wheel_enabled`,
 counters, buttons, wheel, the three port bytes, pending click, TTD journal
@@ -238,6 +291,13 @@ claiming the address can all hide the device while `present` stays true.
 different fixes. The design doc explicitly left this open.
 
 ### D-2. No `mouse` aspect in `inspect_state`
+
+> ✅ **DONE (2026-09-14, P2-1):** `mouse` is in the aspect enum; it fans out to
+> `GET /mouse/status` and the summary reports fitment, counters and
+> `ports decoded/shadowed` + the gate reason.
+>
+> ✅ **Parity note (2026-09-15):** CLI/Lua/Python status surfaces now carry the
+> same routing answer (see D-1), closing the parity asymmetry for this gap.
 
 The aspect enum is closed (mcp-tools.cpp:571-572): machine, registers,
 memory, disasm, stack, breakpoints, memory_banks, screen_ocr, screen_image,
@@ -294,6 +354,16 @@ collapse this entire class.
 
 ### E-2. `rom` aspect dumps bytes but identifies nothing
 
+> **📝 Status update (2026-09-15):** partially overtaken by events. Core
+> already carries a SHA-256 → title catalog (`ROM::_signatures`, rom.cpp)
+> with cached per-page digests, and WebAPI `/state/memory/rom` reports
+> `signature`/`title` per page. What is still missing — headless parity —
+> is now designed in
+> [port-tags-paging-design.md](port-tags-paging-design.md) §5.2:
+> `role`/`name`/`signature` on every `/state/paging` ROM bank row
+> (CLI/Lua/Python included), with `ROM::GetROMPageRole` as the single
+> layout-table source.
+
 `inspect_state aspects=["rom"]` fetches `/state/memory/rom` — a page dump
 (mcp-tools.cpp:795-801). There is no signature matching against known ROM
 sets (ATM3/ATM710/ATM450/Profi/TSConf/Scorpion/ProfROM...). "Did the right
@@ -335,23 +405,23 @@ nothing encodes what the 2026-09-10 session learned procedurally.
 
 ## Summary matrix
 
-| # | Gap | Severity for triage | Effort to fix |
-|:--|:--|:--|:--|
-| A-1 | No model in `GET /{id}` / `machine` aspect | High | Small |
-| A-2 | Silent 48K fallback on create | **Critical** | Small |
-| A-3 | Stale AGENTS.md model list | Medium | Trivial |
-| A-4 | No peripheral/capability introspection | High | Medium |
-| B-1 | Screen endpoints hardcoded standard | High | Small |
-| B-2 | Paging/mode registers invisible | High | Small |
-| B-3 | Renderer stubs (master) define state-only triage | Context | atm branch |
-| B-4 | Digest pages 5/7 hardcoded | Medium | Small |
-| C-1 | No build fingerprint; machines non-creatable on master | Medium | Small |
-| C-2 | Porttrace rules only Pentagon128 | High (atm branch) | Medium |
-| C-3 | No port-map introspection (incl. mouse Q4) | High | Medium |
-| D-1 | Mouse routing not reported | High (mouse scenario) | Small-Medium |
-| D-2 | No `mouse` aspect | Low | Trivial |
-| D-3 | DeviceState 2 of N; MoonSound unplanned | High (future) | Design now |
-| E-1 | Bank reporting 7FFD-centric | High | Medium |
-| E-2 | No ROM identification | Medium | Medium |
-| F-1 | No per-machine resources | Medium | Small |
-| F-2 | No triage recipe/self-test | Medium | Medium |
+| # | Gap | Severity for triage | Effort to fix | Status (2026-09-14) |
+|:--|:--|:--|:--|:--|
+| A-1 | No model in `GET /{id}` / `machine` aspect | High | Small | ✅ Done — P0-1, `34546478`; `video_mode` value fix 2026-09-15 |
+| A-2 | Silent 48K fallback on create | **Critical** | Small | ✅ Done — P0-2, `34546478` |
+| A-3 | Stale AGENTS.md model list | Medium | Trivial | ✅ Done — P0-3, `34546478` |
+| A-4 | No peripheral/capability introspection | High | Medium | Open — P2-3 |
+| B-1 | Screen endpoints hardcoded standard | High | Small | Open — P1-1 |
+| B-2 | Paging/mode registers invisible | High | Small | Open — P1-2 |
+| B-3 | Renderer stubs (master) define state-only triage | Context | atm branch | Open — atm branch |
+| B-4 | Digest pages 5/7 hardcoded | Medium | Small | ✅ Done — P1-3 (`mode=active`); parity on CLI/Lua/Python 2026-09-15 |
+| C-1 | No build fingerprint; machines non-creatable on master | Medium | Small | ✅ Fingerprint done — P0-4, `cab13b99`; creatability open (atm branch) |
+| C-2 | Porttrace rules only Pentagon128 | High (atm branch) | Medium | Open — P1-4 |
+| C-3 | No port-map introspection (incl. mouse Q4) | High | Medium | ✅ Done — P1-5 (`GET /ports`); parity `ports`/`ports_map()` 2026-09-15 |
+| D-1 | Mouse routing not reported | High (mouse scenario) | Small-Medium | ✅ Done — P2-1 (`routing` field); parity 2026-09-15 |
+| D-2 | No `mouse` aspect | Low | Trivial | ✅ Done — P2-1 |
+| D-3 | DeviceState 2 of N; MoonSound unplanned | High (future) | Design now | Open — P2-2/P2-4 |
+| E-1 | Bank reporting 7FFD-centric | High | Medium | Open — P1-2 |
+| E-2 | No ROM identification | Medium | Medium | Open — P3-2 (paging-surface half designed: §5.2) |
+| F-1 | No per-machine resources | Medium | Small | Open — P3-1 |
+| F-2 | No triage recipe/self-test | Medium | Medium | Open — P3-3 |

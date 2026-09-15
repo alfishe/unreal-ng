@@ -1,6 +1,7 @@
 #include "cli-processor.h"
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
+#include <emulator/ports/portdecoder.h>
 #include <debugger/debugmanager.h>
 #include <debugger/mouse/debugmousemanager.h>
 
@@ -199,7 +200,17 @@ void CLIProcessor::HandleMouse(const ClientSession& session, const std::vector<s
     }
     else if (subcommand == "status" || subcommand == "info")
     {
-        session.SendResponse(CliMouse::FormatStatus(mouse->GetState(), NEWLINE));
+        std::string text = CliMouse::FormatStatus(mouse->GetState(), NEWLINE);
+        // Routing mirrors GET /mouse/status: whether the decoder actually answers
+        // the mouse ports right now, and why not (mouse design Q4 / gap D-1)
+        if (context && context->pPortDecoder)
+        {
+            bool decoded = false;
+            std::string note;
+            context->pPortDecoder->GetMouseRoutingState(decoded, note);
+            text += CliMouse::FormatRouting(decoded, note, NEWLINE);
+        }
+        session.SendResponse(text);
     }
     else if (subcommand == "set")
     {
@@ -243,7 +254,7 @@ void CLIProcessor::ShowMouseHelp(const ClientSession& session)
     ss << "  buttons <none|b1,b2..>  - Set exactly which buttons are pressed" << NEWLINE;
     ss << "  wheel <steps>           - Scroll wheel -7..7 (+ = away from you)" << NEWLINE;
     ss << "  clear                   - Release all buttons, cancel pending click" << NEWLINE;
-    ss << "  status                  - Show counters, buttons, wheel, port values" << NEWLINE;
+    ss << "  status                  - Show counters, buttons, wheel, port values, routing" << NEWLINE;
     ss << "  set <x> <y>             - Debug: write raw X/Y counters (0..255)" << NEWLINE;
     ss << NEWLINE;
     ss << "The mouse is relative: programs track their own cursor from counter changes." << NEWLINE;

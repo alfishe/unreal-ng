@@ -9,6 +9,7 @@
 #include <drogon/HttpResponse.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/ports/portdecoder.h>
 #include <debugger/debugmanager.h>
 #include <debugger/mouse/debugmousemanager.h>
 #include <json/json.h>
@@ -408,13 +409,40 @@ void EmulatorAPI::mouseSetCounters(const HttpRequestPtr& req,
 void EmulatorAPI::mouseStatus(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                               const std::string& id) const
 {
-    DebugMouseManager* mouse = findMouseManager(id, callback);
-    if (!mouse)
+    (void)req;
+
+    auto emulator = findEmulator(id, callback);
+    if (!emulator)
         return;
+
+    EmulatorContext* context = emulator->GetContext();
+    DebugMouseManager* mouse =
+        (context && context->pDebugManager) ? context->pDebugManager->GetMouseManager() : nullptr;
+    if (!mouse)
+    {
+        sendError(callback, HttpStatusCode::k500InternalServerError, "Internal Error", "Mouse manager not available");
+        return;
+    }
 
     const MouseStateSnapshot state = mouse->GetState();
     Json::Value body = stateToJson(state);
     body["emulator_id"] = id;
+
+    // Routing (mouse design Q4 / gap D-1): `present` alone cannot distinguish
+    // "not fitted" from "fitted but shadowed" - report whether the decoder
+    // actually routes mouse port reads right now, and why not if it doesn't
+    if (context && context->pPortDecoder)
+    {
+        bool decoded = false;
+        std::string note;
+        context->pPortDecoder->GetMouseRoutingState(decoded, note);
+
+        Json::Value routing;
+        routing["ports_decoded"] = decoded;
+        routing["note"] = note;
+        body["routing"] = routing;
+    }
+
     if (!state.available)
         body["warning"] = "Mouse device not available";
     else if (!state.present)

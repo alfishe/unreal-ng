@@ -18,6 +18,7 @@
 #include "emulator/ports/models/portdecoder_atm710.h"
 #include "emulator/ports/models/portdecoder_pentagon128.h"
 #include "emulator/ports/models/portdecoder_pentagon512.h"
+#include "emulator/ports/models/portdecoder_pentagon1024.h"
 #include "emulator/ports/models/portdecoder_profi.h"
 #include "emulator/ports/models/portdecoder_scorpion256.h"
 #include "emulator/ports/models/portdecoder_spectrum128.h"
@@ -81,13 +82,19 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
             result = new PortDecoder_Spectrum48(context);
             break;
         case MM_PENTAGON:
-            if (ramSize == 512)
+            if (ramSize >= 1024)
             {
+                // Pentagon 1024K: port #EFF7 for 6-bit bank selection (64 pages)
+                result = new PortDecoder_Pentagon1024(context);
+            }
+            else if (ramSize >= 512)
+            {
+                // Pentagon 512K: extended bank bits [6:7] of 7FFD (32 pages)
                 result = new PortDecoder_Pentagon512(context);
             }
             else
             {
-                // Make 128k port decoder default
+                // Pentagon 128K: standard 3-bit bank selection (8 pages)
                 result = new PortDecoder_Pentagon128(context);
             }
             break;
@@ -466,6 +473,478 @@ PortTraceSessionInfo PortDecoder::getPortTraceSessionInfo() const
 
 /// endregion </Port trace>
 
+/// region <Port map introspection (GET /ports, P1-5)>
+
+std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
+{
+    std::vector<PortMapEntry> entries;
+
+    if (!_context)
+        return entries;
+
+    const MEM_MODEL model = _context->config.mem_model;
+    const bool scorpion = (model == MM_SCORP || model == MM_PROFSCORP);
+
+    // ---- Universal rows: every decoder on master answers these ----
+
+    // #FE: keyboard / beeper / border / MIC+EAR. The Scorpion decoder qualifies
+    // two extra address bits (PortDecoder_Scorpion256::IsPort_FE) - mirrored here.
+    if (scorpion)
+        entries.push_back({0x00FE, 0x0023, 0x0022, "Keyboard / Beeper / Border / MIC+EAR", nullptr,
+                           Tags(PortTag::Keyboard)});
+    else
+        entries.push_back({0x00FE, 0x0001, 0x0000, "Keyboard / Beeper / Border / MIC+EAR", nullptr,
+                           Tags(PortTag::Keyboard)});
+
+    // AY register select / data: A15/A14/A1 qualification, mirrors resolve to the
+    // canonical ports (PortDecoder_Spectrum48::DecodePortIn and every other model)
+    entries.push_back({0xFFFD, 0xC002, 0xC000, "AY / TurboSound register select (chip select)", nullptr,
+                       Tags(PortTag::SoundAy)});
+    entries.push_back({0xBFFD, 0xC002, 0x8000, "AY / TurboSound data", nullptr,
+                       Tags(PortTag::SoundAy)});
+
+    // ---- Model-specific paging / system latches ----
+    switch (model)
+    {
+        case MM_SPECTRUM128:
+            // IsPort_7FFD: A15=0, A2=1, A1=0 (bit 2 qualifier excludes SOUNDRIVE #F1/#F9)
+            entries.push_back({0x7FFD, 0x8006, 0x0004, "Memory paging (RAM bank, shadow screen, ROM)", nullptr,
+                               Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P7FFD});
+            break;
+        case MM_PLUS3:
+            // IsPort_7FFD / IsPort_1FFD (PortDecoder_Spectrum3)
+            entries.push_back({0x7FFD, 0xC002, 0x4000, "Memory paging (RAM bank, shadow screen, ROM)", nullptr,
+                               Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P7FFD});
+            entries.push_back({0x1FFD, 0xF002, 0x1000, "Disk motor/strobe + special paging", nullptr,
+                               Tags(PortTag::Memory) | PortTag::Rom, PagingLatch::P1FFD});
+            break;
+        case MM_PROFI:
+            // IsPort_7FFD / IsPort_DFFD (PortDecoder_Profi); #DFFD bit 7 selects the
+            // Profi 512x240 video mode (Screen::InitVideoMode mode detection)
+            entries.push_back({0x7FFD, 0x8006, 0x0004, "Memory paging (RAM bank, shadow screen, ROM)", nullptr,
+                               Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P7FFD});
+            entries.push_back({0xDFFD, 0x2002, 0x0000, "Profi extended paging (1024K) + video mode (bit 7)", nullptr,
+                               Tags(PortTag::Memory) | PortTag::Screen, PagingLatch::PDFFD});
+            break;
+        case MM_SCORP:
+        case MM_PROFSCORP:
+            // IsPort_7FFD / IsPort_1FFD / IsPort_7EFD (PortDecoder_Scorpion256)
+            entries.push_back({0x7FFD, 0xD027, 0x5025, "Memory paging (incl. extended RAM bits)", nullptr,
+                               Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P7FFD});
+            entries.push_back({0x1FFD, 0xD027, 0x1025, "Window latch / Shadow Monitor (bit 1)", nullptr,
+                               Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P1FFD});
+            entries.push_back({0xFF1F, 0xFFFF, 0xFF1F, "Kempston joystick interface",
+                               "gives #1F up while TR-DOS selected / Shadow Monitor paged",
+                               Tags(PortTag::Joystick)});
+            if (model == MM_PROFSCORP)
+            {
+                entries.push_back({0x7EFD, 0xD127, 0x5025, "ProfROM service-window latch", nullptr,
+                                   Tags(PortTag::Memory) | PortTag::Rom | PortTag::System, PagingLatch::P7EFD});
+                entries.push_back({0x00BA, 0x00FE, 0x00BA, "SMUC board (EEPROM / RTC / PIC / IDE window)", nullptr,
+                                   Tags(PortTag::System)});
+            }
+            break;
+        case MM_PENTAGON:
+            // pentagonPortMasksMatches (PortDecoder_Pentagon128/512/1024): paging row keeps
+            // the A2=1 qualifier; 512K uses bits [6:7] for 5-bit bank; 1024K adds #EFF7
+            if (_context->config.ramsize >= 1024)
+            {
+                entries.push_back({0x7FFD, 0x8006, 0x0004, "Memory paging (5-bit bank via bits [0:2]+[6:7])", nullptr,
+                                   Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P7FFD});
+                // #EFF7: bit 2 gates extended memory, bits 0-1,4 control video modes
+                entries.push_back({0xEFF7, 0x00FF, 0x00F7, "Pentagon 1024K features (bit2=extmem gate, video modes)", nullptr,
+                                   Tags(PortTag::Memory) | PortTag::Screen | PortTag::System, PagingLatch::PEFF7});
+            }
+            else if (_context->config.ramsize >= 512)
+            {
+                entries.push_back({0x7FFD, 0x8006, 0x0004, "Memory paging (incl. extended RAM bits [6:7])", nullptr,
+                                   Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P7FFD});
+            }
+            else
+            {
+                entries.push_back({0x7FFD, 0x8006, 0x0004, "Memory paging (RAM bank, shadow screen, ROM)", nullptr,
+                                   Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P7FFD});
+            }
+            entries.push_back({0x00FB, 0x00F5, 0x00F1, "Covox / SoundDrive (#F1,#F3,#F9,#FB)", nullptr,
+                               Tags(PortTag::SoundCovox) | PortTag::SoundSoundDrive});
+            break;
+        default:
+            break;  // MM_SPECTRUM48: no paging / system latches
+    }
+
+    // ---- Fitment-conditional peripherals ----
+
+    // Kempston Mouse: standard address decode (mouse design 3.1), rows only while the
+    // device is fitted - `present:false` in /mouse/status explains their absence
+    if (_mouse && _mouse->IsPresent())
+    {
+        const char* mouseGate = scorpion
+                                    ? "TR-DOS session / Shadow Monitor beta mirrors"
+                                    : "!CF_DOSPORTS (TR-DOS ports accessible) + no registered claim";
+        entries.push_back({0xFADF, 0x023F, 0x021F, "Kempston mouse buttons (+ wheel)", mouseGate,
+                           Tags(PortTag::Mouse)});
+        entries.push_back({0xFBDF, 0x023F, 0x021F, "Kempston mouse X axis", mouseGate,
+                           Tags(PortTag::Mouse)});
+        entries.push_back({0xFFDF, 0x023F, 0x021F, "Kempston mouse Y axis", mouseGate,
+                           Tags(PortTag::Mouse)});
+    }
+
+    // Beta128 register set while the TR-DOS interface is fitted. On Scorpion the
+    // FDC is off the bus outside a TR-DOS session / Shadow Monitor / armed
+    // magic-button trigger (DecodePortIn Beta128 gating); elsewhere it answers
+    // through the registered device key.
+    if (_context->config.trdos_present)
+    {
+        const char* betaGate = scorpion ? "CF_TRDOS / Shadow Monitor / magic-button trigger" : nullptr;
+        // Data registers answer through exact registered device keys (IsBeta128Port /
+        // TryBeta128MirrorPort switch on the five low bytes), so the rows are exact
+        // matches - which also lets the registered-handler dedupe below absorb them.
+        // The system register keeps the shipped table qualification (mask 0x83).
+        entries.push_back({0x001F, 0xFFFF, 0x001F, "Beta128 FDC status/command", betaGate,
+                           Tags(PortTag::Storage)});
+        entries.push_back({0x003F, 0xFFFF, 0x003F, "Beta128 FDC track", betaGate,
+                           Tags(PortTag::Storage)});
+        entries.push_back({0x005F, 0xFFFF, 0x005F, "Beta128 FDC sector", betaGate,
+                           Tags(PortTag::Storage)});
+        entries.push_back({0x007F, 0xFFFF, 0x007F, "Beta128 FDC data", betaGate,
+                           Tags(PortTag::Storage)});
+        entries.push_back({0x00FF, 0x0083, 0x0083, "Beta128 system register", betaGate,
+                           Tags(PortTag::Storage)});
+    }
+
+    // Explicitly registered peripheral devices (RegisterPortHandler) not already
+    // covered by a static row's address qualification above
+    for (const auto& handler : _portDevices)
+    {
+        bool covered = false;
+        for (const PortMapEntry& entry : entries)
+        {
+            if ((handler.first & entry.mask) == entry.match)
+            {
+                covered = true;
+                break;
+            }
+        }
+        if (!covered)
+        {
+            PortTagSet handlerTags = 0;
+            auto stored = _portDeviceTags.find(handler.first);
+            if (stored != _portDeviceTags.end())
+                handlerTags = stored->second;
+            entries.push_back({handler.first, 0xFFFF, handler.first, "Registered peripheral device", nullptr,
+                              handlerTags});
+        }
+    }
+
+    return entries;
+}
+
+/// region <Tagged port registry (port-tags-paging design §4.2, P1-2 Phase 1)>
+
+std::vector<PortMapEntry> PortDecoder::GetEntriesByTags(PortTagSet categories) const
+{
+    std::vector<PortMapEntry> result;
+
+    if (categories == 0)
+        return result;
+
+    for (const PortMapEntry& entry : getPortMapEntries())
+    {
+        if ((entry.tags & categories) == categories)
+            result.push_back(entry);
+    }
+
+    return result;
+}
+
+std::vector<PortMapEntry> PortDecoder::GetSoundEntries(PortTag member) const
+{
+    std::vector<PortMapEntry> result;
+
+    const PortTagSet query = static_cast<PortTagSet>(member) & ~Tags(PortTag::Sound);
+    if (query == 0)
+        return result;  // bare Sound (or None) is not a member query
+
+    for (const PortMapEntry& entry : getPortMapEntries())
+    {
+        if ((entry.tags & query) != 0)
+            result.push_back(entry);
+    }
+
+    return result;
+}
+
+bool PortDecoder::HasAnyTaggedPort(PortTagSet categories) const
+{
+    return !GetEntriesByTags(categories).empty();
+}
+
+std::vector<PortMapEntry> PortDecoder::GetPagingLatches(PortTagSet categories) const
+{
+    std::vector<PortMapEntry> result;
+
+    for (const PortMapEntry& entry : getPortMapEntries())
+    {
+        if (entry.latch != PagingLatch::None && (entry.tags & categories) == categories)
+            result.push_back(entry);
+    }
+
+    return result;
+}
+
+uint32_t PortDecoder::ReadPagingLatch(PagingLatch latch, const EmulatorState& state)
+{
+    switch (latch)
+    {
+        case PagingLatch::P7FFD:  return state.p7FFD;
+        case PagingLatch::P1FFD:  return state.p1FFD;
+        case PagingLatch::PDFFD:  return state.pDFFD;
+        case PagingLatch::PFDFD:  return state.pFDFD;
+        case PagingLatch::P7EFD:  return state.p7EFD;
+        case PagingLatch::PEFF7:  return state.pEFF7;
+        case PagingLatch::PFF77:  return state.pFF77;
+        case PagingLatch::AFE:    return state.aFE;
+        case PagingLatch::AFB:    return state.aFB;
+        case PagingLatch::PFFF7Window0: return state.pFFF7[0];
+        case PagingLatch::PFFF7Window1: return state.pFFF7[1];
+        case PagingLatch::PFFF7Window2: return state.pFFF7[2];
+        case PagingLatch::PFFF7Window3: return state.pFFF7[3];
+        // Reserved atm-branch / TSConf members: fields exist but no decoder on
+        // master ever binds them yet, so there is nothing truthful to report
+        case PagingLatch::PBD:
+        case PagingLatch::PTS:
+        case PagingLatch::PMEM:
+        case PagingLatch::None:
+        default:
+            return 0;
+    }
+}
+
+/// endregion </Tagged port registry>
+
+/// region <Tag / latch serialization (single source for every automation surface)>
+
+std::vector<std::string> PortTagSetToStrings(PortTagSet tags)
+{
+    std::vector<std::string> result;
+
+    if (tags == 0)
+        return result;
+
+    if (tags & PortTag::Keyboard)
+        result.push_back("keyboard");
+    if (tags & PortTag::Memory)
+        result.push_back("memory");
+    if (tags & PortTag::Rom)
+        result.push_back("rom");
+    if (tags & PortTag::Screen)
+        result.push_back("screen");
+    if (tags & PortTag::Storage)
+        result.push_back("storage");
+    if (tags & PortTag::Mouse)
+        result.push_back("mouse");
+    if (tags & PortTag::Joystick)
+        result.push_back("joystick");
+    if (tags & PortTag::System)
+        result.push_back("system");
+
+    // Sound members embed the Sound category bit; a row can carry several of
+    // them (Pentagon #FB answers both covox and SoundDrive), so each present
+    // member is reported - a plain Sound bit without any member degrades to
+    // the bare "sound" name
+    if (tags & PortTag::Sound)
+    {
+        bool memberReported = false;
+        if ((tags & PortTag::SoundAy) == static_cast<PortTagSet>(PortTag::SoundAy))
+        {
+            result.push_back("sound_ay");
+            memberReported = true;
+        }
+        if ((tags & PortTag::SoundCovox) == static_cast<PortTagSet>(PortTag::SoundCovox))
+        {
+            result.push_back("sound_covox");
+            memberReported = true;
+        }
+        if ((tags & PortTag::SoundSoundDrive) == static_cast<PortTagSet>(PortTag::SoundSoundDrive))
+        {
+            result.push_back("sound_sounddrive");
+            memberReported = true;
+        }
+        if ((tags & PortTag::SoundGs) == static_cast<PortTagSet>(PortTag::SoundGs))
+        {
+            result.push_back("sound_gs");
+            memberReported = true;
+        }
+        if ((tags & PortTag::SoundMoonsound) == static_cast<PortTagSet>(PortTag::SoundMoonsound))
+        {
+            result.push_back("sound_moonsound");
+            memberReported = true;
+        }
+        if (!memberReported)
+            result.push_back("sound");
+    }
+
+    return result;
+}
+
+const char* PagingLatchToString(PagingLatch latch)
+{
+    switch (latch)
+    {
+        case PagingLatch::P7FFD:  return "p7FFD";
+        case PagingLatch::P1FFD:  return "p1FFD";
+        case PagingLatch::PDFFD:  return "pDFFD";
+        case PagingLatch::PFDFD:  return "pFDFD";
+        case PagingLatch::P7EFD:  return "p7EFD";
+        case PagingLatch::PEFF7:  return "pEFF7";
+        case PagingLatch::PFF77:  return "pFF77";
+        case PagingLatch::AFE:    return "aFE";
+        case PagingLatch::AFB:    return "aFB";
+        case PagingLatch::PFFF7Window0: return "pFFF7_w0";
+        case PagingLatch::PFFF7Window1: return "pFFF7_w1";
+        case PagingLatch::PFFF7Window2: return "pFFF7_w2";
+        case PagingLatch::PFFF7Window3: return "pFFF7_w3";
+        case PagingLatch::PBD:    return "pBD";
+        case PagingLatch::PTS:    return "pTS";
+        case PagingLatch::PMEM:   return "pMEM";
+        case PagingLatch::None:
+        default:
+            return nullptr;
+    }
+}
+
+std::vector<DecodedLatchField> DecodePagingLatch(PagingLatch latch, uint32_t value, MEM_MODEL model, uint32_t ramSizeKB)
+{
+    std::vector<DecodedLatchField> result;
+
+    auto intField = [&result](const char* key, int intValue)
+    {
+        DecodedLatchField field;
+        field.key = key;
+        field.intValue = intValue;
+        result.push_back(field);
+    };
+    auto boolField = [&result](const char* key, bool boolValue)
+    {
+        DecodedLatchField field;
+        field.key = key;
+        field.isBool = true;
+        field.boolValue = boolValue;
+        result.push_back(field);
+    };
+
+    switch (latch)
+    {
+        case PagingLatch::P7FFD:
+        {
+            // Pentagon 512K is the only master decoder folding bits [6:7] into
+            // the bank index (PortDecoder_Pentagon512::switchRAMPage, 5-bit);
+            // every other banked model - Scorpion included, whose #7FFD D6/D7
+            // are unused (extensions live in #1FFD) - decodes bits [0:2] only
+            int ramBank;
+            if (model == MM_PENTAGON && ramSizeKB == 512)
+            {
+                ramBank = (value & 0x07) | ((value & 0xC0) >> 3);  // 5-bit bank
+            }
+            else
+            {
+                ramBank = static_cast<int>(value & 0x07);  // Standard 3-bit bank
+            }
+            intField("ram_bank", ramBank);
+            boolField("shadow_screen", (value & 0x08) != 0);
+            intField("rom_select", (value & 0x10) ? 1 : 0);
+            boolField("locked", (value & 0x20) != 0);
+            break;
+        }
+        case PagingLatch::P1FFD:
+            if (model == MM_SCORP || model == MM_PROFSCORP)
+            {
+                boolField("shadow_monitor_paged", (value & 0x02) != 0);
+            }
+            else if (model == MM_PLUS3)
+            {
+                intField("special_paging", static_cast<int>(value & 0x07));
+                boolField("disk_motor", (value & 0x08) != 0);
+            }
+            break;
+        case PagingLatch::PDFFD:
+            intField("extended_ram_bank", static_cast<int>(value & 0x07));
+            boolField("video_512x240", (value & 0x80) != 0);
+            break;
+        case PagingLatch::PEFF7:
+            // Pentagon 1024K #EFF7 bit assignments (Born Dead #10):
+            // Bit 0: a4b (attribute per byte), Bit 1: 512x192 mode
+            // Bit 2: memory above 128K (0=present, 1=absent)
+            // Bit 3: read-only cache, Bit 4: GigaScreen, Bit 7: Gluk CMOS
+            if (model == MM_PENTAGON && ramSizeKB >= 1024)
+            {
+                boolField("ext_memory_present", (value & 0x04) == 0);
+                boolField("a4b_mode", (value & 0x01) != 0);
+                boolField("mode_512x192", (value & 0x02) != 0);
+                boolField("gigascreen", (value & 0x10) != 0);
+                boolField("gluk_cmos", (value & 0x80) != 0);
+            }
+            else
+            {
+                intField("value", static_cast<int>(value));
+            }
+            break;
+        case PagingLatch::PFF77:
+            intField("video_mode", static_cast<int>((value >> 1) & 0x07));
+            intField("ram_page", static_cast<int>((value >> 4) & 0x0F));
+            intField("rom_page", static_cast<int>(value & 0x07));
+            break;
+        default:
+            break;
+    }
+
+    return result;
+}
+
+/// endregion </Tag / latch serialization>
+
+void PortDecoder::GetMouseRoutingState(bool& decoded, std::string& note) const
+{
+    decoded = false;
+
+    if (!_mouse || !_mouse->IsPresent())
+    {
+        note = "mouse not fitted for this config ([INPUT] Mouse=)";
+        return;
+    }
+
+    if (_state && (_state->flags & CF_DOSPORTS))
+    {
+        note = "TR-DOS ports accessible (CF_DOSPORTS): only Beta Disk operations answer";
+        return;
+    }
+
+    // Canonical buttons port; ownership by an explicitly registered peripheral
+    // keeps the address away from the mouse (Default_IsPort_KempstonMouse)
+    static const uint16_t probePort = 0xFADF;
+    if (key_exists(_portDevices, probePort))
+    {
+        note = StringHelper::Format("port #%04X claimed by a registered peripheral", probePort);
+        return;
+    }
+
+    uint8_t unusedRegister = 0;
+    if (IsPort_KempstonMouse(probePort, unusedRegister))  // virtual: model deviations honored
+    {
+        decoded = true;
+        note = "decoded (standard Kempston address decode)";
+    }
+    else
+    {
+        // The virtual gate refused the probe after the base checks passed:
+        // model-specific gating (Scorpion TR-DOS session / magic-button trigger,
+        // Shadow Monitor beta mirror claim)
+        note = "hidden by model-specific decoder gating (TR-DOS session / Shadow Monitor)";
+    }
+}
+
+/// endregion </Port map introspection>
+
 
 /// Keyboard ports:
 /// #FEFE
@@ -547,7 +1026,7 @@ bool PortDecoder::Standard_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegis
 /// else answers on any address - CF_DOSPORTS), no registered peripheral owning the exact address
 /// (explicit devices keep their ports), and the standard decode matches. Model decoders call this
 /// after their own higher-priority arms (keyboard, AY, FDC, joystick).
-bool PortDecoder::Default_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister)
+bool PortDecoder::Default_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister) const
 {
     if (!_mouse || !_mouse->IsPresent())
         return false;
@@ -556,6 +1035,13 @@ bool PortDecoder::Default_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegist
     if (key_exists(_portDevices, port))
         return false;
     return Standard_IsPort_KempstonMouse(port, outRegister);
+}
+
+/// Default mouse-port predicate: the gated standard decode. Scorpion overrides this
+/// with its TR-DOS / Shadow Monitor deviations; models without a deviation inherit it
+bool PortDecoder::IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister) const
+{
+    return Default_IsPort_KempstonMouse(port, outRegister);
 }
 
 uint8_t PortDecoder::Default_Port_KempstonMouse_In(uint16_t port, [[maybe_unused]] uint16_t pc)
@@ -660,7 +1146,7 @@ std::string PortDecoder::GetPCAddressLocator(uint16_t pc)
 /// endregion </Interface methods>
 
 /// region <Interaction with peripherals>
-bool PortDecoder::RegisterPortHandler(uint16_t port, PortDevice* device)
+bool PortDecoder::RegisterPortHandler(uint16_t port, PortDevice* device, PortTagSet tags)
 {
     bool result = false;
 
@@ -669,6 +1155,7 @@ bool PortDecoder::RegisterPortHandler(uint16_t port, PortDevice* device)
         if (!key_exists(_portDevices, port))
         {
             _portDevices.insert({port, device});
+            _portDeviceTags.insert_or_assign(port, tags);
             result = true;  // Fix: return true on successful registration
         }
         else
@@ -685,6 +1172,7 @@ void PortDecoder::UnregisterPortHandler(uint16_t port)
     if (key_exists(_portDevices, port))
     {
         _portDevices.erase(port);
+        _portDeviceTags.erase(port);
     }
 }
 

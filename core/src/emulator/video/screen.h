@@ -761,6 +761,21 @@ public:
 public:
     static std::string GetVideoModeName(VideoModeEnum mode);
 
+    /// Physical RAM pages that make up the surface the given video mode actually
+    /// displays - the source for the /state/screen/digest "mode=active" selection
+    /// (P1-3). ZX-family modes keep the classic screen pages (5, plus shadow page
+    /// 7 on banked models, matching the digest default). The ATM hardware modes
+    /// (16c / HiRes / Text / TextLinear) interleave the 7FFD-selected video page
+    /// and the page four below it - the DrawATM* bit-plane layout (atm branch):
+    /// plane pairs live at {videoPage - 4, videoPage} with offsets 0x0000/0x2000.
+    /// Other extended modes (Profi/GMX/TS, renderers still stubbed) fall back to
+    /// the classic pages until their renderers define a surface.
+    /// @param mode Current video mode (Screen::GetVideoMode())
+    /// @param p7FFD Port 7FFD latch value (bit 3 selects the video page on ATM)
+    /// @param bankedZX Model exposes a shadow screen (128K-class paging)
+    static std::vector<uint16_t> GetActiveSurfaceRAMPages(VideoModeEnum mode, uint8_t p7FFD, bool bankedZX);
+
+
     void DrawNull(uint32_t n);      // Non-existing mode (skip draw)
     void DrawZX(uint32_t n);        // Authentic Sinclair ZX Spectrum
     void DrawPMC(uint32_t n);       // Pentagon Multicolor
