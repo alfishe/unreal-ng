@@ -58,6 +58,9 @@ local cpu = emu:get_cpu()
 print(string.format("PC = 0x%04X", cpu:get_pc()))
 ```
 
+### Machine Identity and Lifecycle
+The Lua bindings operate on the existing emulator instance (`get_emulator()`); they do not expose model-selecting instance creation or model switching. For lifecycle operations with strict model validation (`creatable` flags, reason-carrying failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of the current instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
+
 ### Running Scripts
 
 #### From Command Line

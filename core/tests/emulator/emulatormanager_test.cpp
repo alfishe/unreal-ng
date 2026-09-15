@@ -1,9 +1,11 @@
 #include <3rdparty/message-center/eventqueue.h>
 #include <3rdparty/message-center/messagecenter.h>
+#include <emulator/config.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/platform.h>
+#include <emulator/ports/portdecoder.h>
 #include <gtest/gtest.h>
 
 #include <atomic>
@@ -378,4 +380,165 @@ TEST_F(EmulatorManager_Test, CreateEmulatorWithDuplicateId)
     auto retrieved2 = _manager->GetEmulator(emulator2Id);
     ASSERT_NE(retrieved2, nullptr);
     ASSERT_EQ(retrieved2->GetUUID(), emulator2Id);
+}
+
+// P0-2 (docs/inprogress/2026-09-14-automation-triage-gaps): every failure
+// path of the model create APIs must hand the caller a usable reason -
+// WebAPI returns it as the 400 message, CLI prints it as "Reason:".
+TEST_F(EmulatorManager_Test, CreateEmulatorWithModelUnknownModelReportsReason)
+{
+    std::string error;
+    auto emulator = _manager->CreateEmulatorWithModel("", "NO_SUCH_MACHINE", LoggerLevel::LogWarning, &error);
+
+    EXPECT_EQ(emulator, nullptr);
+    EXPECT_NE(error.find("NO_SUCH_MACHINE"), std::string::npos) << "reason was: " << error;
+    EXPECT_NE(error.find("unknown model"), std::string::npos) << "reason was: " << error;
+}
+
+TEST_F(EmulatorManager_Test, CreateEmulatorWithUnsupportedRamReportsReason)
+{
+    // PENTAGON supports 128/512/1024 - request something else
+    std::string error;
+    auto emulator = _manager->CreateEmulatorWithModelAndRAM("", "PENTAGON", 256, LoggerLevel::LogWarning, &error);
+
+    EXPECT_EQ(emulator, nullptr);
+    EXPECT_NE(error.find("256"), std::string::npos) << "reason was: " << error;
+    EXPECT_NE(error.find("PENTAGON"), std::string::npos) << "reason was: " << error;
+    // The supported list must be part of the reason so callers can self-correct
+    EXPECT_NE(error.find("128"), std::string::npos) << "reason was: " << error;
+}
+
+TEST_F(EmulatorManager_Test, CreateEmulatorWithNonCreatableModelReportsReason)
+{
+    // ATM710 has no port decoder and no config folder on master: whichever
+    // guard fires first, the caller must learn WHICH model failed and why
+    std::string error;
+    auto emulator = _manager->CreateEmulatorWithModel("", "ATM710", LoggerLevel::LogWarning, &error);
+
+    if (PortDecoder::IsModelSupported(MM_ATM710) && Config::FindModelByShortName("ATM710") != nullptr)
+    {
+        // Builds with full ATM support (e.g. the atm branch) create it fine
+        ASSERT_NE(emulator, nullptr);
+    }
+    else
+    {
+        EXPECT_EQ(emulator, nullptr);
+        EXPECT_NE(error.find("ATM710"), std::string::npos) << "reason was: " << error;
+        EXPECT_FALSE(error.empty());
+    }
+}
+
+TEST_F(EmulatorManager_Test, CreateEmulatorWithModelLeavesNoOrphanOnError)
+{
+    // A failed create must not leave a half-built instance in the manager
+    size_t countBefore = _manager->GetEmulatorIds().size();
+
+    std::string error;
+    auto emulator = _manager->CreateEmulatorWithModel("", "NO_SUCH_MACHINE", LoggerLevel::LogWarning, &error);
+
+    EXPECT_EQ(emulator, nullptr);
+    EXPECT_EQ(_manager->GetEmulatorIds().size(), countBefore);
+}
+
+TEST_F(EmulatorManager_Test, CreateEmulatorWithModelResolvesRequestedMachine)
+{
+    // Success path: the created instance must actually BE the requested
+    // machine (guards the historical silent-48K-fallback class of bugs)
+    auto emulator = _manager->CreateEmulatorWithModel("", "48K");
+    ASSERT_NE(emulator, nullptr);
+
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_NE(context, nullptr);
+    EXPECT_EQ(context->config.mem_model, MM_SPECTRUM48);
+    EXPECT_EQ(context->config.ramsize, 48u);
+}
+
+// Parity rule: MachineIdentity is the SINGLE source the WebAPI identity
+// fields, the MCP passthrough and the CLI echo are all built from. It must
+// report the same resolved facts the WebAPI responses carry.
+TEST_F(EmulatorManager_Test, GetMachineIdentityReportsResolvedMachine)
+{
+    auto emulator = _manager->CreateEmulatorWithModel("", "48K");
+    ASSERT_NE(emulator, nullptr);
+
+    MachineIdentity identity = EmulatorManager::GetMachineIdentity(*emulator);
+
+    EXPECT_TRUE(identity.Valid);
+    EXPECT_EQ(identity.Model, "48K");
+    EXPECT_EQ(identity.ModelFullName, "ZX-Spectrum 48k");
+    EXPECT_EQ(identity.RamKb, 48u);
+    EXPECT_EQ(identity.ConfigFolder, "spectrum48");
+    EXPECT_GE(identity.SpeedMultiplier, 1.0);
+
+    // Init wires the screen subsystem, so the live video mode is reportable
+    EXPECT_TRUE(identity.HasVideoMode);
+    EXPECT_FALSE(identity.VideoMode.empty());
+}
+
+// P0-4: creatability helpers back the /emulator/status models_creatable list
+// and the per-model "creatable" flags. The two sources of truth must agree:
+// whatever IsModelCreatable reports must match what a create attempt does.
+TEST_F(EmulatorManager_Test, PortDecoderIsModelSupportedMatchesCreatableExpectations)
+{
+    // Models with decoders on master
+    EXPECT_TRUE(PortDecoder::IsModelSupported(MM_SPECTRUM48));
+    EXPECT_TRUE(PortDecoder::IsModelSupported(MM_PENTAGON));
+    EXPECT_TRUE(PortDecoder::IsModelSupported(MM_SPECTRUM128));
+    EXPECT_TRUE(PortDecoder::IsModelSupported(MM_PLUS3));
+    EXPECT_TRUE(PortDecoder::IsModelSupported(MM_PROFI));
+    EXPECT_TRUE(PortDecoder::IsModelSupported(MM_SCORP));
+    EXPECT_TRUE(PortDecoder::IsModelSupported(MM_PROFSCORP));
+
+    // Models without decoders on master (the atm branch adds ATM/TS support)
+    if (!PortDecoder::IsModelSupported(MM_ATM710))
+    {
+        const TMemModel* model = Config::FindModelByShortName("ATM710");
+        ASSERT_NE(model, nullptr);
+        EXPECT_FALSE(Config::IsModelCreatable(*model));
+    }
+    if (!PortDecoder::IsModelSupported(MM_TSL))
+    {
+        const TMemModel* model = Config::FindModelByShortName("TSL");
+        ASSERT_NE(model, nullptr);
+        EXPECT_FALSE(Config::IsModelCreatable(*model));
+    }
+}
+
+TEST_F(EmulatorManager_Test, IsModelCreatableForSupportedMachines)
+{
+    // 48K/PENTAGON ship with config folders in every build's bin/configs
+    const TMemModel* model48k = Config::FindModelByShortName("48K");
+    ASSERT_NE(model48k, nullptr);
+    EXPECT_TRUE(Config::IsModelCreatable(*model48k));
+
+    const TMemModel* modelPentagon = Config::FindModelByShortName("PENTAGON");
+    ASSERT_NE(modelPentagon, nullptr);
+    EXPECT_TRUE(Config::IsModelCreatable(*modelPentagon));
+
+    const TMemModel* modelPlus3 = Config::FindModelByShortName("PLUS3");
+    ASSERT_NE(modelPlus3, nullptr);
+    EXPECT_TRUE(Config::IsModelCreatable(*modelPlus3));
+}
+
+TEST_F(EmulatorManager_Test, IsModelCreatableAgreesWithCreateAttempt)
+{
+    // Consistency contract: IsModelCreatable says yes <=> create succeeds.
+    // Checked for one creatable and one known-not-creatable machine.
+    const TMemModel* model48k = Config::FindModelByShortName("48K");
+    ASSERT_NE(model48k, nullptr);
+    if (Config::IsModelCreatable(*model48k))
+    {
+        auto emulator = _manager->CreateEmulatorWithModel("", "48K");
+        EXPECT_NE(emulator, nullptr);
+    }
+
+    const TMemModel* modelAtm = Config::FindModelByShortName("ATM450");
+    ASSERT_NE(modelAtm, nullptr);
+    if (!Config::IsModelCreatable(*modelAtm))
+    {
+        std::string error;
+        auto emulator = _manager->CreateEmulatorWithModel("", "ATM450", LoggerLevel::LogWarning, &error);
+        EXPECT_EQ(emulator, nullptr);
+        EXPECT_FALSE(error.empty());
+    }
 }

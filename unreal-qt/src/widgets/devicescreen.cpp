@@ -79,13 +79,15 @@ void DeviceScreen::init(uint16_t width, uint16_t height, void* buffer)
 
 void DeviceScreen::detach()
 {
-    if (devicePixels)
     {
-        delete devicePixels;
-        devicePixels = nullptr;
+        std::lock_guard<std::mutex> lock(_frameSourceMutex);
+        if (devicePixels)
+        {
+            delete devicePixels;
+            devicePixels = nullptr;
+        }
+        _frameSource = nullptr;
     }
-
-    _frameSource = nullptr;
     _latchedFrame = QImage();
 
     // Clear temporal history
@@ -99,6 +101,20 @@ void DeviceScreen::detach()
 
     // Trigger immediate repaint to show default background when detached
     update();
+}
+
+void DeviceScreen::clearFrameSource()
+{
+    // Runs on the MessageCenter worker inside the pre-free drain window:
+    // after this returns, a concurrent paint finds both sources empty and
+    // touches only owned memory. No Qt calls here (cross-thread safe).
+    std::lock_guard<std::mutex> lock(_frameSourceMutex);
+    _frameSource = nullptr;
+    if (devicePixels)
+    {
+        delete devicePixels;
+        devicePixels = nullptr;
+    }
 }
 
 void DeviceScreen::refresh()
@@ -137,24 +153,33 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
     QRect destRect = rect();
     painter.setClipRect(event->rect());
 
-    // Determine which image to draw
+    // Determine which image to draw. Selection runs under the frame-source
+    // mutex: clearFrameSource() may revoke both sources from the
+    // MessageCenter worker while an instance is being destroyed, so the
+    // legacy fallback deep-copies under the lock to keep every post-lock
+    // read on owned memory.
+    QImage legacyCopy;
     QImage* drawImage = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(_frameSourceMutex);
 
-    // Tear-free path: pull the latched full-frame snapshot into our owned
-    // backing image (SIMD copy under the screen's present mutex, ~40us),
-    // then draw without holding any lock. The legacy path below reads the
-    // emulator's live framebuffer and can show a mid-frame seam.
-    // Draw into the widget's FULL rect - QPainter clips to event->rect()
-    // automatically. Targeting event->rect() squeezed the whole framebuffer
-    // into partial dirty rects (move/scroll damage), stretching the image.
-    if (_frameSource && !_latchedFrame.isNull() &&
-        _frameSource(_latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes())))
-    {
-        drawImage = &_latchedFrame;
-    }
-    else if (devicePixels != nullptr)
-    {
-        drawImage = devicePixels;
+        // Tear-free path: pull the latched full-frame snapshot into our owned
+        // backing image (SIMD copy under the screen's present mutex, ~40us),
+        // then draw without holding any lock. The legacy path below reads the
+        // emulator's live framebuffer and can show a mid-frame seam.
+        // Draw into the widget's FULL rect - QPainter clips to event->rect()
+        // automatically. Targeting event->rect() squeezed the whole framebuffer
+        // into partial dirty rects (move/scroll damage), stretching the image.
+        if (_frameSource && !_latchedFrame.isNull() &&
+            _frameSource(_latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes())))
+        {
+            drawImage = &_latchedFrame;
+        }
+        else if (devicePixels != nullptr)
+        {
+            legacyCopy = devicePixels->copy();
+            drawImage = &legacyCopy;
+        }
     }
 
     if (!drawImage)

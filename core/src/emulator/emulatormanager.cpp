@@ -7,11 +7,46 @@
 #include "3rdparty/message-center/eventqueue.h"
 #include "emulator/mainloop.h"
 #include "emulator/notifications.h"
+#include "emulator/video/screen.h"
 
 #include <algorithm>
 #include <iomanip>
 
 // Implementation of EmulatorManager methods
+
+namespace
+{
+// Store the failure reason for the caller (WebAPI 400 / CLI error message)
+// when it asked for one. Kept trivial so failure paths stay allocation-light.
+void SetCreateError(std::string* outError, const std::string& reason)
+{
+    if (outError != nullptr)
+    {
+        *outError = reason;
+    }
+}
+
+// Decode the AvailRAMs bitmask (bits encode KB sizes directly: RAM_128 == 128)
+// into a "128/512/1024" style list for error messages.
+std::string SupportedRamList(unsigned availRams)
+{
+    static const unsigned knownRams[] = { 48, 128, 256, 512, 1024, 2048, 4096 };
+
+    std::string result;
+    for (unsigned ram : knownRams)
+    {
+        if ((availRams & ram) != 0)
+        {
+            if (!result.empty())
+            {
+                result += "/";
+            }
+            result += std::to_string(ram);
+        }
+    }
+    return result;
+}
+}
 
 void EmulatorManager::UpdateRealtimeScheduling()
 {
@@ -164,7 +199,7 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithId(const std::strin
     return nullptr;
 }
 
-std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::string& symbolicId, const std::string& modelName, LoggerLevel level)
+std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::string& symbolicId, const std::string& modelName, LoggerLevel level, std::string* outError)
 {
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
 
@@ -176,6 +211,7 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::st
     if (!modelInfo)
     {
         LOGERROR("EmulatorManager::CreateEmulatorWithModel - Unknown model: '%s'", modelName.c_str());
+        SetCreateError(outError, "unknown model '" + modelName + "' (see GET /api/v1/emulator/models)");
         return nullptr;
     }
 
@@ -183,8 +219,24 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::st
     // after config load, before any model-dependent subsystem initializes
     emulator->SetPreferredModel(modelInfo->Model, modelInfo->defaultRAM);
 
-    // Initialize the emulator
-    if (emulator->Init())
+    // Initialize the emulator. A model the build cannot construct (missing
+    // port decoder, missing device support) throws std::logic_error out of
+    // Emulator::Init - translate it into a reason instead of letting the
+    // exception escape into HTTP handlers.
+    bool initialized = false;
+    try
+    {
+        initialized = emulator->Init();
+    }
+    catch (const std::exception& e)
+    {
+        LOGERROR("EmulatorManager::CreateEmulatorWithModel - Model '%s' rejected by this build: %s",
+                 modelName.c_str(), e.what());
+        SetCreateError(outError, "model '" + modelName + "' is not supported by this build (" + e.what() + ")");
+        return nullptr;
+    }
+
+    if (initialized)
     {
         std::string uuid = emulator->GetId();
         _emulators[uuid] = emulator;
@@ -228,10 +280,14 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::st
     }
 
     LOGERROR("EmulatorManager::CreateEmulatorWithModel - Failed to initialize emulator with model: '%s'", modelName.c_str());
+    SetCreateError(outError,
+                   "initialization failed for model '" + modelName + "' (config folder '" +
+                       Config::GetConfigFolderForModel(modelInfo->Model, modelInfo->defaultRAM) +
+                       "' missing, or ROM files failed to load)");
     return nullptr;
 }
 
-std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const std::string& symbolicId, const std::string& modelName, uint32_t ramSize, LoggerLevel level)
+std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const std::string& symbolicId, const std::string& modelName, uint32_t ramSize, LoggerLevel level, std::string* outError)
 {
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
 
@@ -243,6 +299,7 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const s
     if (!modelInfo)
     {
         LOGERROR("EmulatorManager::CreateEmulatorWithModelAndRAM - Unknown model: '%s'", modelName.c_str());
+        SetCreateError(outError, "unknown model '" + modelName + "' (see GET /api/v1/emulator/models)");
         return nullptr;
     }
 
@@ -251,6 +308,9 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const s
     {
         LOGERROR("EmulatorManager::CreateEmulatorWithModelAndRAM - RAM size %dKB not supported by model '%s'",
                 ramSize, modelName.c_str());
+        SetCreateError(outError,
+                       "RAM size " + std::to_string(ramSize) + "KB is not supported by model '" + modelName +
+                           "' (supported: " + SupportedRamList(modelInfo->AvailRAMs) + "KB)");
         return nullptr;
     }
 
@@ -258,8 +318,24 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const s
     // resolves the model config itself: configs/<model>/unreal.ini
     emulator->SetPreferredModel(modelInfo->Model, ramSize);
 
-    // Initialize the emulator
-    if (emulator->Init())
+    // Initialize the emulator. A model the build cannot construct (missing
+    // port decoder, missing device support) throws std::logic_error out of
+    // Emulator::Init - translate it into a reason instead of letting the
+    // exception escape into HTTP handlers.
+    bool initialized = false;
+    try
+    {
+        initialized = emulator->Init();
+    }
+    catch (const std::exception& e)
+    {
+        LOGERROR("EmulatorManager::CreateEmulatorWithModelAndRAM - Model '%s' rejected by this build: %s",
+                 modelName.c_str(), e.what());
+        SetCreateError(outError, "model '" + modelName + "' is not supported by this build (" + e.what() + ")");
+        return nullptr;
+    }
+
+    if (initialized)
     {
         std::string uuid = emulator->GetId();
         _emulators[uuid] = emulator;
@@ -305,6 +381,11 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const s
 
     LOGERROR("EmulatorManager::CreateEmulatorWithModelAndRAM - Failed to initialize emulator with model: '%s', RAM: %dKB",
             modelName.c_str(), ramSize);
+    SetCreateError(outError,
+                   "initialization failed for model '" + modelName + "' with " + std::to_string(ramSize) +
+                       "KB RAM (config folder '" +
+                       Config::GetConfigFolderForModel(modelInfo->Model, ramSize) +
+                       "' missing, or ROM files failed to load)");
     return nullptr;
 }
 
@@ -312,6 +393,44 @@ std::vector<TMemModel> EmulatorManager::GetAvailableModels() const
 {
     // Model list is static data, access directly
     return Config::GetAvailableModels();
+}
+
+MachineIdentity EmulatorManager::GetMachineIdentity(Emulator& emulator)
+{
+    MachineIdentity identity;
+
+    EmulatorContext* context = emulator.GetContext();
+    if (context == nullptr)
+    {
+        return identity;  // Valid stays false; callers serialize null/unknown fields
+    }
+
+    identity.Valid = true;
+
+    const CONFIG& config = context->config;
+
+    const TMemModel* modelInfo = nullptr;
+    for (const TMemModel& entry : Config::GetAvailableModels())
+    {
+        if (entry.Model == config.mem_model)
+        {
+            modelInfo = &entry;
+            break;
+        }
+    }
+
+    identity.Model = modelInfo != nullptr && modelInfo->ShortName != nullptr ? std::string(modelInfo->ShortName) : std::string("unknown");
+    identity.ModelFullName = modelInfo != nullptr && modelInfo->FullName != nullptr ? std::string(modelInfo->FullName) : std::string("unknown");
+    identity.RamKb = config.ramsize;
+    if (context->pScreen != nullptr)
+    {
+        identity.VideoMode = Screen::GetVideoModeName(context->pScreen->GetVideoMode());
+        identity.HasVideoMode = true;
+    }
+    identity.SpeedMultiplier = context->emulatorState.current_z80_frequency_multiplier;
+    identity.ConfigFolder = Config::GetConfigFolderForModel(config.mem_model, config.ramsize);
+
+    return identity;
 }
 
 std::shared_ptr<Emulator> EmulatorManager::GetEmulator(const std::string& emulatorId)
@@ -388,6 +507,24 @@ bool EmulatorManager::HasEmulator(const std::string& emulatorId)
 
 bool EmulatorManager::RemoveEmulator(const std::string& emulatorId)
 {
+    // Notify observers BEFORE the instance is stopped and freed. All message
+    // handlers run on the single MessageCenter worker thread, so this destroy
+    // notification is dispatched before any message posted later - observers
+    // holding raw context pointers (e.g. HUD models) can detach while the
+    // context is still alive. Posting alone is not enough: notifications
+    // queued AHEAD of the destroy notice must also finish dispatching while
+    // the context is alive, so wait for the queue to drain before freeing
+    // anything. The wait happens before _emulatorsMutex is taken - a handler
+    // that re-enters EmulatorManager would otherwise deadlock on our lock.
+    {
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        messageCenter.Post(NC_EMULATOR_INSTANCE_DESTROYED, new SimpleTextPayload(emulatorId), true);
+        if (!messageCenter.WaitForOutstandingMessages())
+        {
+            LOGWARNING("EmulatorManager::RemoveEmulator - Message queue drain timed out for '%s'; observers may race the instance free", emulatorId.c_str());
+        }
+    }
+
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
 
     auto it = _emulators.find(emulatorId);
@@ -414,20 +551,15 @@ bool EmulatorManager::RemoveEmulator(const std::string& emulatorId)
             {
                 std::string previousId = _selectedEmulatorId;
                 _selectedEmulatorId = "";
-                
+
                 // Send notification about selection being cleared
                 MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
                 EmulatorSelectionPayload* payload = new EmulatorSelectionPayload(previousId, "");
                 messageCenter.Post(NC_EMULATOR_SELECTION_CHANGED, payload);
-                
+
                 LOGINFO("EmulatorManager::RemoveEmulator - Cleared selection (was pointing to removed emulator)");
             }
         }
-        
-        // Emit notification that instance was destroyed
-        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        SimpleTextPayload* payload = new SimpleTextPayload(emulatorId);
-        messageCenter.Post(NC_EMULATOR_INSTANCE_DESTROYED, payload);
 
         // The surviving sole instance (if any) may become the active one
         UpdateRealtimeSchedulingLocked();
@@ -823,8 +955,42 @@ bool EmulatorManager::SetSelectedEmulatorId(const std::string& emulatorId)
 
 void EmulatorManager::ShutdownAllEmulators()
 {
+    std::vector<std::string> ids;
+    {
+        std::lock_guard<std::mutex> lock(_emulatorsMutex);
+        ids.reserve(_emulators.size());
+        for (const auto& [uuid, emulator] : _emulators)
+        {
+            ids.push_back(uuid);
+        }
+    }
+
+    if (ids.empty())
+    {
+        LOGINFO("EmulatorManager::ShutdownAllEmulators - No emulators to shut down");
+        return;
+    }
+
+    // Detach observers first - the same contract RemoveEmulator() upholds:
+    // destroy notices (and the messages queued ahead of them) must be
+    // dispatched while the contexts are still alive. The worker keeps running
+    // until process exit, so without this step the exit path frees contexts
+    // under observers that still hold raw pointers to them. Waiting happens
+    // with no EmulatorManager lock held.
+    {
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        for (const auto& id : ids)
+        {
+            messageCenter.Post(NC_EMULATOR_INSTANCE_DESTROYED, new SimpleTextPayload(id), true);
+        }
+        if (!messageCenter.WaitForOutstandingMessages())
+        {
+            LOGWARNING("EmulatorManager::ShutdownAllEmulators - Message queue drain timed out; observers may race the instances free");
+        }
+    }
+
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
-    
+
     for (auto& [uuid, emulator] : _emulators)
     {
         // Stop the emulator if it's running
@@ -833,11 +999,11 @@ void EmulatorManager::ShutdownAllEmulators()
             LOGINFO("EmulatorManager::ShutdownAllEmulators - Stopping emulator with UUID: %s", uuid.c_str());
             emulator->Stop();
         }
-        
+
         // Release resources
         emulator->Release();
     }
-    
+
     _emulators.clear();
     LOGINFO("EmulatorManager::ShutdownAllEmulators - All emulators have been shut down");
 }

@@ -39,6 +39,7 @@ message("GOOGLETEST_DIR:${GOOGLETEST_DIR}")
 include_directories(
     ${TESTS_DIR}
     ${CORE_DIR}
+    ${CMAKE_BINARY_DIR}/generated                                   # emulator/buildinfo.h (test-side copy of core include)
     ${GOOGLETEST_DIR}/googletest                                  # To serve src/gtest-internal-inl.h include
     ${GOOGLETEST_DIR}/googletest/include
     ${ROOT_DIR}/core/automation/dezog/include                     # DZRP protocol / adapter unit tests

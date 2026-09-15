@@ -311,6 +311,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty"
     "${CMAKE_CURRENT_BINARY_DIR}"  # For Qt-generated ui_*.h headers
+    "${CMAKE_BINARY_DIR}/generated"  # Configure-time generated headers (emulator/buildinfo.h)
     "${ROOT_DIR}/core/src"
     "${ROOT_DIR}/core"  # Added parent directory for proper automation includes
     "${ROOT_DIR}/core/automation"  # For automation headers

@@ -8,6 +8,7 @@
 #include "widgets/crtprofiles.h"
 
 #include "base/featuremanager.h"
+#include "emulator/buildinfo.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/platform.h"
@@ -992,10 +993,13 @@ void MenuManager::createHelpMenu()
         QMessageBox::about(_mainWindow, tr("About Unreal Speccy"),
                            tr("<h3>Unreal Speccy - Next Generation</h3>"
                               "<p>ZX Spectrum emulator</p>"
-                              "<p>Version 0.1.0 (alpha)</p>"
-                              "<p>Built with Qt %1</p>"
+                              "<p>Version %1 - %2 @ %3</p>"
+                              "<p>Built with Qt %4</p>"
                               "<p>&copy; 2024 Unreal Speccy Project</p>")
-                               .arg(QT_VERSION_STR));
+                               .arg(QLatin1String(buildinfo::kVersion),
+                                    QLatin1String(buildinfo::kGitBranch),
+                                    QLatin1String(buildinfo::kGitCommit),
+                                    QLatin1String(QT_VERSION_STR)));
     });
 }
 

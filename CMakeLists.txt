@@ -40,10 +40,69 @@ option(ENABLE_RECORDING "Enable audio/video recording support" ON)
 # Minimum macOS version (must precede project())
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/MacOSDeploymentTarget.cmake)
 
-project(unreal)
+project(unreal VERSION 1.0.0)
 
 # Validate toolchain/dependency compatibility (MSVC+vcpkg OR MinGW+pacman)
 validate_toolchain_dependencies()
+
+# ========================================
+# Build fingerprint (version / git branch / git commit / build type)
+# ========================================
+# Captured at CONFIGURE time and baked into core/src/emulator/buildinfo.h
+# (generated copy: ${CMAKE_BINARY_DIR}/generated/emulator/buildinfo.h).
+# A branch switch or new commit requires a CMake reconfigure to refresh the
+# values - acceptable for a triage fingerprint (see P0-4 in
+# docs/inprogress/2026-09-14-automation-triage-gaps/recommendations.md).
+# Falls back to "unknown" when git is unavailable (source tarballs, minimal
+# Windows environments) so builds never break on a missing VCS.
+find_package(Git QUIET)
+
+set(UNREAL_BUILD_VERSION "${PROJECT_VERSION}")
+
+set(UNREAL_GIT_BRANCH "unknown")
+set(UNREAL_GIT_COMMIT "unknown")
+
+if (GIT_FOUND)
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} branch --show-current
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        RESULT_VARIABLE UNREAL_GIT_BRANCH_RESULT
+        OUTPUT_VARIABLE UNREAL_GIT_BRANCH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        RESULT_VARIABLE UNREAL_GIT_COMMIT_RESULT
+        OUTPUT_VARIABLE UNREAL_GIT_COMMIT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    # Detached HEAD yields an empty --show-current: keep "unknown" rather than
+    # reporting a misleading branch name. The short commit still identifies the
+    # build.
+    if (UNREAL_GIT_BRANCH STREQUAL "")
+        set(UNREAL_GIT_BRANCH "unknown")
+    endif()
+    if (UNREAL_GIT_COMMIT STREQUAL "")
+        set(UNREAL_GIT_COMMIT "unknown")
+    endif()
+endif()
+
+# Multi-config generators (Visual Studio) have no single-configuration
+# CMAKE_BUILD_TYPE at configure time
+if (CMAKE_BUILD_TYPE)
+    set(UNREAL_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
+else()
+    set(UNREAL_BUILD_TYPE "MultiConfig")
+endif()
+
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/src/emulator/buildinfo.h.in
+    ${CMAKE_BINARY_DIR}/generated/emulator/buildinfo.h
+    @ONLY
+)
 
 # NOTE: Python dependency checks (including MSYS2 requirements for MinGW)
 # are handled by DependencyCheck.cmake via run_dependency_checks()

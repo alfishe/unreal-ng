@@ -52,6 +52,11 @@ public:
     /// @brief Set frame copy function for tear-free rendering
     void setFrameSource(std::function<bool(uint8_t*, size_t)> fn);
 
+    /// @brief Thread-safe cut of the frame source and legacy live-buffer path.
+    /// Safe to call from the MessageCenter worker while an emulator instance
+    /// is being destroyed (cuts every paint path into freed framebuffer memory).
+    void clearFrameSource();
+
     /// @brief Associate emulator instance for keyboard routing
     void setEmulator(std::shared_ptr<Emulator> emulator);
 

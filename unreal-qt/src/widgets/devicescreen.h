@@ -5,6 +5,7 @@
 #include <QWidget>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <cstdint>
 
 #include "emulator/video/screen.h"  // For DisplayViewport
@@ -47,8 +48,15 @@ public:
     /// concurrently and causes mid-frame tearing.
     void setFrameSource(FrameCopyFn frameSource)
     {
+        std::lock_guard<std::mutex> lock(_frameSourceMutex);
         _frameSource = std::move(frameSource);
     }
+
+    /// Thread-safe cut of every paint path into the emulator's framebuffer
+    /// (the tear-free provider captures raw Screen*/EmulatorContext* pointers,
+    /// the legacy wrapper borrows the live buffer). Safe to call from the
+    /// MessageCenter worker; paints after it simply find no source.
+    void clearFrameSource();
 
 public:
     /// Native display size. Fixed: the widget keeps the standard 352x288 (11:9) framing
@@ -141,6 +149,7 @@ private:
     QImage* devicePixels = nullptr;
     QImage _latchedFrame;           // Owned backing store filled via _frameSource
     FrameCopyFn _frameSource;       // Tear-free frame provider (empty = legacy live-buffer path)
+    mutable std::mutex _frameSourceMutex;  // Guards _frameSource + devicePixels across threads
 
     static constexpr float ratio = static_cast<float>(kNativeWidth) / static_cast<float>(kNativeHeight);
 

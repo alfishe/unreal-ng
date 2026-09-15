@@ -126,6 +126,32 @@ The CLI supports command aliases for convenience:
 - `u` → `disasm` (disassemble)
 - `quit` → `exit`
 
+**Model Creation Semantics** (strict, matching WebAPI):
+```
+> create pentagon
+Created emulator instance: 550e8400-...
+Model: PENTAGON - Pentagon (128KB)
+Config folder: pentagon128k
+Video mode: ZX
+
+> create atm710
+Error: Failed to create emulator with model 'atm710'
+Reason: model 'ATM710' is not supported by this build (PortDecoder::GetPortDecoderForModel - unknown model 6)
+Available models: PENTAGON, 48K, ...
+
+> models
+Available ZX Spectrum:
+=============================
+  PENTAGON - Pentagon
+  48K - ZX-Spectrum 48K
+  ATM710 - ATM-Turbo 2+ v7.10 (not creatable on this build)
+  ...
+```
+- `create`/`start <model>` echo the RESOLVED model and RAM, not the requested string.
+- A model this build cannot create fails with a `Reason:` line — no silent fallback to 48K.
+- `status` output starts with a `Build: v<version> (<branch> @ <commit>, <type>)` fingerprint line.
+- `GET /api/v1/emulator/models` (`creatable` flags) remains the runtime-authoritative model source.
+
 **Error Messages**:
 ```
 > invalid_command
@@ -139,7 +165,7 @@ The CLI implements the same command semantics as other interfaces (WebAPI, Pytho
 
 | WebAPI Endpoint | CLI Equivalent | Reason Not in CLI |
 | :--- | :--- | :--- |
-| `GET /emulator/models` | — | Model discovery is typically done once at startup via config; CLI users select model when creating emulator |
+| `GET /emulator/models` | `models` | CLI shows the same list with `(not creatable on this build)` markers; the endpoint's `creatable` flags stay authoritative |
 | `DELETE /emulator/{id}` | `stop` | CLI uses `stop` which both stops and removes; separate remove is for advanced orchestration |
 | `POST /emulator/{id}/start` | `resume` | Starting an existing (initialized but not running) emulator uses `resume` in CLI |
 

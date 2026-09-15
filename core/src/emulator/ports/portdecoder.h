@@ -129,6 +129,16 @@ public:
     /// region <Static methods>
 public:
     static PortDecoder* GetPortDecoderForModel(MEM_MODEL model, EmulatorContext* context);
+
+    /// @brief Check whether this build has a port decoder for the model
+    /// @param model MEM_MODEL value to check
+    /// @return True when GetPortDecoderForModel can construct a decoder (no throw),
+    ///         false for models whose decode logic is not implemented yet (ATM/TS-Config/
+    ///         GMX/KAY/... on master - see the atm branch)
+    /// @note MUST stay in sync with the switch in GetPortDecoderForModel - a model listed
+    ///       here but missing there makes creation throw; listed there but missing here
+    ///       hides a creatable model from GET /emulator/status models_creatable.
+    static bool IsModelSupported(MEM_MODEL model);
     /// endregion </Static methods>
 
     /// region <Fields>

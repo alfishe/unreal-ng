@@ -1,5 +1,25 @@
 #include "eventqueue.h"
 
+#include <future>
+
+namespace
+{
+    /// Sentinel payload for EventQueue::WaitForOutstandingMessages(). Carries
+    /// the caller's promise; Dispatch() fulfils it on the worker thread, which
+    /// by FIFO order happens only after every earlier message has been
+    /// dispatched (handlers included)
+    class SyncPayload : public MessagePayload
+    {
+    public:
+        explicit SyncPayload(std::promise<void>&& done) : _done(std::move(done)) {}
+
+        void Fulfill() { _done.set_value(); }
+
+    private:
+        std::promise<void> _done;
+    };
+}
+
 
 EventQueue::EventQueue()
 {
@@ -421,6 +441,13 @@ void EventQueue::Dispatch(int id, Message* message)
     if (message == nullptr)
         return;
 
+    // Drain-barrier sentinel: fulfilled here, synchronously on the worker,
+    // before any observer logic - see WaitForOutstandingMessages()
+    if (auto* sync = dynamic_cast<SyncPayload*>(message->obj); sync != nullptr)
+    {
+        sync->Fulfill();
+    }
+
     // Snapshot the observer descriptors under m_mutexObservers and register
     // this dispatch as active before releasing the lock: AddObserver() and
     // RemoveObserver() mutate the very same topic vectors (and erase + delete
@@ -525,6 +552,25 @@ void EventQueue::WaitForDispatchesToComplete()
 
     std::unique_lock<std::mutex> lock(m_mutexDispatches);
     m_cvDispatches.wait(lock, [this]() { return m_activeDispatches == 0; });
+}
+
+bool EventQueue::WaitForOutstandingMessages(std::chrono::milliseconds timeout)
+{
+    // A handler issuing this call would wait for a sentinel queued behind its
+    // own in-progress dispatch - a guaranteed self-deadlock. Decline instead:
+    // the caller keeps the weaker posting-order guarantee only.
+    if (tl_inDispatch)
+        return false;
+
+    std::promise<void> done;
+    std::future<void> finished = done.get_future();
+
+    // Dedicated topic with no observers: Dispatch() itself fulfils the
+    // sentinel, so ordinary observer code never sees it
+    int sentinelTopic = RegisterTopic("message_center.drain");
+    Post(sentinelTopic, new SyncPayload(std::move(done)), true);
+
+    return finished.wait_for(timeout) == std::future_status::ready;
 }
 
 #ifdef _DEBUG

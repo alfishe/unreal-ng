@@ -258,9 +258,10 @@ Commands to manage the connection and emulator instances. These commands are ess
 | :--- | :--- | :--- | :--- |
 | `help` | `?` | `[command]` | Display available commands and their usage. If `command` is specified, show detailed help for that command. |
 | `start` | | `[model]` | Create and start a new emulator instance. Optional `model` parameter specifies model (default: 48K). Returns the new instance ID. Triggers `NC_EMULATOR_INSTANCE_CREATED` notification. | 🔮 Planned |
-| `start <model>` | | `<model-name>` | Start a new emulator instance with specific Spectrum model (48k, 128k, +2, +3, pentagon, etc.). Returns the new instance ID. | 🔮 Planned |
+| `start <model>` | | `<model-name>` | Start a new emulator instance with specific Spectrum model short name (e.g. `48K`, `128k`, `PLUS3`, `PENTAGON`, `SCORPION`, `PROFI`; see `models`). **Strict**: a model this build cannot create fails with a reason — there is no silent fallback to a default machine. | 🔮 Planned |
 | `start <config-file>` | | `<config-path>` | Start a new emulator instance using configuration from file. Returns the new instance ID. | 🔮 Planned |
-| `create [model]` | | `[model-name]` | Create a new emulator instance without starting it. If `model` is specified, creates an emulator of that model type (e.g., `48K`, `128K`, `Pentagon`). If no model is specified, creates a default 48K emulator. Instance remains in initialized state until explicitly started with `resume`. Returns the UUID of the created instance. Automatically selects if first instance. Triggers `NC_EMULATOR_INSTANCE_CREATED` notification. |
+| `create [model]` | | `[model-name]` | Create a new emulator instance without starting it. If `model` is specified, creates an emulator of that model type (short name as in `models`). If no model is specified, creates a default 48K emulator. **Strict**: an unknown or non-creatable model fails with a reason (no fallback). The success output echoes the RESOLVED model and RAM, not the requested string. Instance remains in initialized state until explicitly started with `resume`. Returns the UUID of the created instance. Automatically selects if first instance. Triggers `NC_EMULATOR_INSTANCE_CREATED` notification. |
+| `models` | | | List all known machine models with full names and a `(not creatable on this build)` marker for machines whose port decoder or config folder is missing in this build. The WebAPI equivalent (`GET /api/v1/emulator/models`, `creatable` flags) is the runtime-authoritative source. |
 | `stop [id]` | | `[emulator-id|index|all]` | Stop and destroy emulator instance(s). If only one emulator is running, can be called without parameters. Can specify UUID, index from `list` command (1-based), or `all` to stop all instances. Triggers `NC_EMULATOR_INSTANCE_DESTROYED` and `NC_EMULATOR_STATE_CHANGE` notifications. | 🔮 Planned |
 | `stop all` | | | Stop and destroy all emulator instances. | 🔮 Planned |
 | `status` | | | Show the runtime status (Running/Paused/Stopped/Debug) of all emulator instances, including ID, symbolic name, uptime, and current state. |
@@ -308,6 +309,15 @@ Commands to manage the connection and emulator instances. These commands are ess
 - **Config file**: `start /path/to/config.json` (JSON configuration)
 - **Inline config**: Future support for `--option=value` parameters
 
+**Machine Identity and Model Creatability** (P0 fixes from `docs/inprogress/2026-09-14-automation-triage-gaps/`):
+- **Parity rule — one source, equal consumers**: machine identity is computed in exactly one place (`EmulatorManager::GetMachineIdentity` in core). WebAPI and CLI serialize that struct directly; MCP forwards the WebAPI payloads verbatim. WebAPI and MCP are equally important automation surfaces — they must always report the same information, and a field added for one is a field added for all.
+- **Every lifecycle response carries machine identity**: `model` (short name), `model_full_name`, `ram_kb`, `video_mode` (null until the screen subsystem exists; e.g. `ATM16`/`Profi 512x240` on builds with extended video support), `speed_multiplier` (live Z80 multiplier, reflects turbo) and `config_folder`. Applies to CLI create/start output, WebAPI `GET /emulator`, `GET /emulator/{id}`, create/switch responses, and the MCP `machine` aspect.
+- **Strict model semantics**: requesting a model the build cannot instantiate (missing port decoder or config folder — e.g. ATM/ZX-Evo/TS-Conf machines on `master`) fails with the reason (unknown model / RAM size not supported / not supported by this build / init failed). No interface silently falls back to a default 48K machine anymore.
+- **WebAPI error shape** (HTTP 400): `{ "error": "Bad Request", "message": "<reason>", "requested_model": "<X>", "available_models_endpoint": "/api/v1/emulator/models" }`.
+- **Model switch validates first**: `POST /emulator/{id}/model` validates the request BEFORE stopping/removing the current instance — a failed switch leaves the caller's machine untouched (previously it was destroyed first).
+- **Build fingerprint**: `GET /api/v1/emulator/status` reports a `server` block (`version`, `git_branch`, `git_commit`, `build_type`, captured at CMake configure time) plus `models_creatable` (short names a create can succeed with). CLI `status` shows the same build info line; MCP `emulator_manage` action `server` returns the same payload.
+- **Authoritative model list**: `GET /api/v1/emulator/models` (`creatable` flags per entry); CLI `models` mirrors it with markers; MCP `list_models` forwards the same payload. Docs can go stale — the endpoints cannot.
+
 **Multi-Instance Scenarios**:
 - **Testing**: Run multiple instances with different ROMs for compatibility testing
 - **Comparison**: Compare behavior between different Spectrum models
@@ -323,6 +333,13 @@ Started emulator instance: emu-12345678-abcd-1234-5678-123456789abc
 # Start specific model
 > start pentagon
 Started emulator instance: emu-pentagon-87654321-dcba-4321-8765-987654321fed
+Model: Pentagon (128KB)
+
+# Strict failure: model not creatable on this build
+> start atm710
+Error: Failed to create emulator with model 'atm710'
+Reason: model 'ATM710' is not supported by this build (PortDecoder::GetPortDecoderForModel - unknown model 6)
+Available models: PENTAGON, 48K, ...
 
 # List all instances
 > list

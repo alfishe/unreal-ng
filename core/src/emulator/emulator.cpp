@@ -505,11 +505,14 @@ void Emulator::ReleaseNoGuard()
         _config = nullptr;
     }
 
-    // Release EmulatorContext as last step
+    // Release EmulatorContext as last step. Null the member BEFORE the delete:
+    // concurrent GetContext() readers (UI widgets polling on their own thread)
+    // then observe null instead of a freed pointer.
     if (_context != nullptr)
     {
-        delete _context;
+        EmulatorContext* releasedContext = _context;
         _context = nullptr;
+        delete releasedContext;
     }
 
     // The ModuleLogger is owned by the context we just deleted: every MLOG* call on this object from now on

@@ -3077,15 +3077,22 @@ void WD1793::handleStep()
         return;
     }
 
-    // Check if we should enter sleep mode (idle for too long with motor off)
-    if (_state == S_IDLE && _motorTimeoutTStates == 0)
+    // Idle with the motor off: nothing the FSM could advance on. Commands
+    // arrive through the port handlers (which run process() themselves),
+    // index pulses need the motor, the motor timeout needs the motor. Only
+    // the sleep countdown is evaluated here; the once-per-frame process()
+    // in handleFrameEnd keeps the housekeeping cadence. Without this gate an
+    // awake idle controller ran the whole FSM chain on every instruction
+    // (~3 ms per frame) for the 2 s until it fell asleep - and any Beta128
+    // port poll re-armed those 2 s.
+    if (_state == S_IDLE && _motorTimeoutTStates <= 0)
     {
         updateTimeFromEmulatorState();
         if (_time - _wakeTimestamp > SLEEP_AFTER_IDLE_TSTATES)
         {
             enterSleepMode();
-            return;
         }
+        return;
     }
 
     // We need better precision to read data from the disk at 112 t-states per byte rate, so update FSM state after each
