@@ -53,8 +53,9 @@ Reference design: `docs/inprogress/2026-08-17-mcp/`.
 
 Everything below the adapter is drogon-free and depends only on jsoncpp, so
 `core-tests` exercises the whole protocol stack against a `FakeApiCaller`.
-The single source of truth for emulator state stays in WebAPI — the MCP layer
-is protocol + orchestration only.
+Emulator state is served by the shared WebAPI handlers and forwarded
+verbatim, so MCP clients see exactly what WebAPI clients see (parity rule:
+all automation modules report the same information from the same source).
 
 ### Start/stop ordering
 
@@ -68,7 +69,7 @@ WebAPI's thread calls `run()`), and `stopMCP()` runs **after** `stopWebAPI()`.
 
 | Tool | Purpose |
 |:--|:--|
-| `emulator_manage` | create/list/status/start/stop/pause/resume/reset/destroy, list_models |
+| `emulator_manage` | create/list/status/start/stop/pause/resume/reset/destroy, list_models, server (build fingerprint + models_creatable) |
 | `load_software` | load `.sna/.z80` snapshots, `.tap/.tzx` tapes (auto-play flag), `.trd/.scl/.fdi` disks |
 | `control_execution` | run/pause/resume/step/step_n/step_over/step_out, run_frames/run_tstates/run_to_interrupt, breakpoints (add/remove/enable/disable/clear/list); the raw `skip_until` endpoint is reachable via `invoke_api` |
 | `inspect_state` | aspects fan-out: machine, registers, memory, disasm, stack, breakpoints, memory_banks, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay (every AY/SSG chip decoded), audio_fm (TurboSound FM board + both YM2203 halves: mode, timers, channels, operators, envelopes, key-on), fdc (Beta Disk WD1793 registers, status, FSM, drives) |
@@ -137,7 +138,7 @@ Core-level companions: `Z80TextAssembler_Test`, `ListingParser_Test`,
 | Aspect | xspeccy-mcp | unreal-ng (this module) |
 |:--|:--|:--|
 | Transport | stdio | Streamable HTTP :8092 + stdio bridge |
-| Backend | direct core calls | loopback WebAPI (single source of truth) |
+| Backend | direct core calls | loopback WebAPI (shared handlers — identical information) |
 | Tool count | 48 flat tools | 8 Phase 1 (12 after Phase 2) + schema-driven router |
 | Context cost | ~4k tokens | ~1.6k tokens |
 | Resources | — | 6 (keyboard/BASIC/Z80/TR-DOS/memory map/state) |

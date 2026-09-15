@@ -69,6 +69,9 @@ python->start();
 python->executePython("print('Hello from embedded Python!')");
 ```
 
+### Machine Identity and Lifecycle
+The Python bindings do not expose model-selecting instance creation: `ue.Emulator()` always builds the default machine. For multi-instance lifecycle, model switching and strict model validation (`creatable` flags, 400-with-reason failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of an existing instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
+
 ## API Reference
 
 ### Module Functions
