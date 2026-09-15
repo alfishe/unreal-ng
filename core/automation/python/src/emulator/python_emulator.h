@@ -2666,6 +2666,16 @@ namespace PythonBindings
                 item["match"] = portHex(entry.match);
                 item["device"] = entry.device;
                 item["gate"] = entry.gate ? py::object(py::str(entry.gate)) : py::object(py::none());
+
+                // Tagged registry fields (P1-2): names from the core single
+                // source - identical strings on WebAPI /ports, MCP and Lua
+                py::list tagNames;
+                for (const std::string& tagName : PortTagSetToStrings(entry.tags))
+                    tagNames.append(tagName);
+                item["tags"] = tagNames;  // empty list = untagged row
+                const char* latchName = PagingLatchToString(entry.latch);
+                item["latch"] = latchName ? py::object(py::str(latchName)) : py::object(py::none());
+
                 entries.append(item);
             }
             d["entries"] = entries;
@@ -2689,6 +2699,118 @@ namespace PythonBindings
             return d;
         }, "Static port map: which devices answer which I/O ports on this model, "
            "under which gating conditions, plus the live routing flags")
+
+        .def("paging_state", [](Emulator& self) -> py::dict {
+            py::dict d;
+            EmulatorContext* context = self.GetContext();
+            if (!context || !context->pPortDecoder || !context->pMemory)
+            {
+                d["error"] = "context not initialized";
+                return d;
+            }
+
+            auto hexByte = [](uint32_t value) {
+                char text[8];
+                std::snprintf(text, sizeof(text), "0x%02X", value);
+                return std::string(text);
+            };
+            auto hexWord = [](uint16_t value) {
+                char text[8];
+                std::snprintf(text, sizeof(text), "0x%04X", value);
+                return std::string(text);
+            };
+
+            const CONFIG& config = context->config;
+            const EmulatorState& state = context->emulatorState;
+            Memory& memory = *context->pMemory;
+            PortDecoder* decoder = context->pPortDecoder;
+            ROM* rom = context->pCore ? context->pCore->GetROM() : nullptr;
+
+            d["model"] = Config::GetModelFullName(config.mem_model);
+            d["paging_locked"] = (state.p7FFD & PORT_7FFD_LOCK) != 0;
+            d["trdos_active"] = (state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0;
+
+            // Latches array
+            py::list latches;
+            for (const PortMapEntry& entry : decoder->GetPagingLatches(Tags(PortTag::Memory)))
+            {
+                py::dict latch;
+                latch["port"] = hexWord(entry.port);
+                latch["device"] = entry.device ? entry.device : "";
+                latch["gate"] = entry.gate ? py::object(py::str(entry.gate)) : py::object(py::none());
+
+                // Tag names + latch binding from the core single source -
+                // identical strings on /state/paging, MCP, CLI and Lua
+                py::list tagNames;
+                for (const std::string& tagName : PortTagSetToStrings(entry.tags))
+                    tagNames.append(tagName);
+                latch["tags"] = tagNames;
+                const char* latchName = PagingLatchToString(entry.latch);
+                latch["latch"] = latchName ? py::object(py::str(latchName)) : py::object(py::none());
+
+                uint32_t value = PortDecoder::ReadPagingLatch(entry.latch, state);
+                latch["value"] = hexByte(value);
+
+                // Decoded bits: core §5.1 dictionary (DecodePagingLatch) with
+                // native ints/bools, matching /state/paging verbatim
+                py::dict decoded;
+                for (const DecodedLatchField& field : DecodePagingLatch(entry.latch, value, config.mem_model, config.ramsize))
+                {
+                    if (field.isBool)
+                        decoded[field.key.c_str()] = field.boolValue;
+                    else
+                        decoded[field.key.c_str()] = field.intValue;
+                }
+                if (decoded.size() > 0)
+                    latch["decoded"] = decoded;
+                latches.append(latch);
+            }
+            d["latches"] = latches;
+
+            // Banks array
+            py::list banks;
+            const char* ranges[] = {"0x0000-0x3FFF", "0x4000-0x7FFF", "0x8000-0xBFFF", "0xC000-0xFFFF"};
+            for (int i = 0; i < 4; ++i)
+            {
+                py::dict bank;
+                bank["bank"] = i;
+                bank["address_range"] = ranges[i];
+
+                if (i == 0 && memory.IsBank0ROM())
+                {
+                    bank["type"] = "ROM";
+                    uint8_t romPage = memory.GetROMPage();
+                    bank["page"] = static_cast<int>(romPage);
+                    if (rom)
+                    {
+                        uint8_t* pagePtr = memory.ROMPageHostAddress(romPage);
+                        if (pagePtr)
+                        {
+                            std::string sig = rom->CalculateSignature(pagePtr, 0x4000);
+                            // GetROMTitle carries the "Unknown ROM, <digest>"
+                            // fallback; role = core layout table (§5.2) - a
+                            // role/name mismatch is the wrong-ROM signal
+                            bank["name"] = rom->GetROMTitle(sig);
+                            bank["signature"] = sig;
+                        }
+                        bank["role"] = rom->GetROMPageRole(romPage);
+                    }
+                }
+                else
+                {
+                    bank["type"] = "RAM";
+                    switch (i) {
+                        case 0: bank["page"] = static_cast<int>(memory.GetRAMPageForBank0()); break;
+                        case 1: bank["page"] = static_cast<int>(memory.GetRAMPageForBank1()); bank["contended"] = true; break;
+                        case 2: bank["page"] = static_cast<int>(memory.GetRAMPageForBank2()); break;
+                        case 3: bank["page"] = static_cast<int>(memory.GetRAMPageForBank3()); break;
+                    }
+                }
+                banks.append(bank);
+            }
+            d["banks"] = banks;
+            return d;
+        }, "Tagged paging latches + bank table (P1-2 design)")
 
         .def("beam_position", [](Emulator& self) -> py::dict {
             py::dict d;

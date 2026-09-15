@@ -354,6 +354,16 @@ collapse this entire class.
 
 ### E-2. `rom` aspect dumps bytes but identifies nothing
 
+> **📝 Status update (2026-09-15):** partially overtaken by events. Core
+> already carries a SHA-256 → title catalog (`ROM::_signatures`, rom.cpp)
+> with cached per-page digests, and WebAPI `/state/memory/rom` reports
+> `signature`/`title` per page. What is still missing — headless parity —
+> is now designed in
+> [port-tags-paging-design.md](port-tags-paging-design.md) §5.2:
+> `role`/`name`/`signature` on every `/state/paging` ROM bank row
+> (CLI/Lua/Python included), with `ROM::GetROMPageRole` as the single
+> layout-table source.
+
 `inspect_state aspects=["rom"]` fetches `/state/memory/rom` — a page dump
 (mcp-tools.cpp:795-801). There is no signature matching against known ROM
 sets (ATM3/ATM710/ATM450/Profi/TSConf/Scorpion/ProfROM...). "Did the right
@@ -412,6 +422,6 @@ nothing encodes what the 2026-09-10 session learned procedurally.
 | D-2 | No `mouse` aspect | Low | Trivial | ✅ Done — P2-1 |
 | D-3 | DeviceState 2 of N; MoonSound unplanned | High (future) | Design now | Open — P2-2/P2-4 |
 | E-1 | Bank reporting 7FFD-centric | High | Medium | Open — P1-2 |
-| E-2 | No ROM identification | Medium | Medium | Open — P3-2 |
+| E-2 | No ROM identification | Medium | Medium | Open — P3-2 (paging-surface half designed: §5.2) |
 | F-1 | No per-machine resources | Medium | Small | Open — P3-1 |
 | F-2 | No triage recipe/self-test | Medium | Medium | Open — P3-3 |

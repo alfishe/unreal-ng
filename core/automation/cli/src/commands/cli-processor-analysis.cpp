@@ -17,6 +17,8 @@
 #include <emulator/emulatormanager.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/memory/memory.h>
+#include <emulator/memory/rom.h>
+#include <emulator/cpu/core.h>
 #include <emulator/platform.h>
 #include <emulator/ports/portdecoder.h>
 #include <emulator/sound/soundmanager.h>
@@ -255,12 +257,26 @@ void CLIProcessor::HandlePorts(const ClientSession& session, const std::vector<s
     std::stringstream ss;
     ss << "Model: " << Config::GetModelFullName(config.mem_model) << NEWLINE << NEWLINE;
 
-    ss << "Port    Mask    Match   Device                            Gate" << NEWLINE;
+    // Tags and latch names come from the core single-source serializers
+    // (PortTagSetToStrings / PagingLatchToString) - same names as WebAPI,
+    // MCP, Lua and Python
+    ss << "Port    Mask    Match   Tags                  Latch     Device                            Gate" << NEWLINE;
     for (const PortMapEntry& entry : decoder->getPortMapEntries())
     {
+        std::string tagNames;
+        for (const std::string& tagName : PortTagSetToStrings(entry.tags))
+        {
+            if (!tagNames.empty())
+                tagNames += ",";
+            tagNames += tagName;
+        }
+        const char* latchName = PagingLatchToString(entry.latch);
+
         ss << "0x" << std::hex << std::uppercase << std::setfill('0') << std::setw(4) << entry.port << "  0x"
            << std::setw(4) << entry.mask << "  0x" << std::setw(4) << entry.match << "  " << std::setfill(' ')
-           << std::left << std::setw(33) << entry.device << (entry.gate ? entry.gate : "") << NEWLINE << std::right;
+           << std::left << std::setw(21) << (tagNames.empty() ? "-" : tagNames)
+           << std::setw(9) << (latchName ? latchName : "-")
+           << std::setw(33) << entry.device << (entry.gate ? entry.gate : "") << NEWLINE << std::right;
     }
 
     // Live routing state: the flags that flip rows on/off right now
@@ -277,6 +293,98 @@ void CLIProcessor::HandlePorts(const ClientSession& session, const std::vector<s
         ss << "  Shadow monitor paged: " << (((state.p1FFD & 0x02) != 0) ? "yes" : "no") << NEWLINE;
     else
         ss << "  Shadow monitor paged: n/a (model has no #1FFD latch)" << NEWLINE;
+
+    session.SendResponse(ss.str());
+}
+
+// HandlePaging — tagged paging latches + bank table (P1-2 design).
+// Mirrors GET /api/v1/emulator/{id}/state/paging.
+void CLIProcessor::HandlePaging(const ClientSession& session, const std::vector<std::string>& args)
+{
+    (void)args;  // No parameters
+
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected.");
+        return;
+    }
+
+    EmulatorContext* context = emulator->GetContext();
+    if (!context || !context->pPortDecoder || !context->pMemory)
+    {
+        session.SendResponse("Emulator context is not fully initialized.");
+        return;
+    }
+
+    PortDecoder* decoder = context->pPortDecoder;
+    Memory& memory = *context->pMemory;
+    const CONFIG& config = context->config;
+    EmulatorState& state = context->emulatorState;
+    ROM* rom = context->pCore ? context->pCore->GetROM() : nullptr;
+
+    std::stringstream ss;
+    ss << "Model: " << Config::GetModelFullName(config.mem_model) << NEWLINE;
+    ss << "Paging locked: " << ((state.p7FFD & PORT_7FFD_LOCK) ? "yes" : "no") << NEWLINE;
+    ss << "TR-DOS active: " << (((state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0) ? "yes" : "no") << NEWLINE;
+    ss << NEWLINE;
+
+    // Latches table
+    ss << "Latches:" << NEWLINE;
+    std::vector<PortMapEntry> latches = decoder->GetPagingLatches(Tags(PortTag::Memory));
+    for (const PortMapEntry& entry : latches)
+    {
+        uint32_t value = PortDecoder::ReadPagingLatch(entry.latch, state);
+        const char* latchName = PagingLatchToString(entry.latch);
+        ss << "  0x" << std::hex << std::uppercase << std::setfill('0') << std::setw(4) << entry.port
+           << (latchName ? " (" + std::string(latchName) + ")" : "") << " = 0x" << std::setw(2) << value << std::dec << std::setfill(' ');
+
+        // Decoded bits - core §5.1 dictionary (DecodePagingLatch), the same
+        // keys and values as /state/paging and the Lua/Python bindings
+        for (const DecodedLatchField& field : DecodePagingLatch(entry.latch, value, config.mem_model, config.ramsize))
+        {
+            ss << "  " << field.key << "=";
+            if (field.isBool)
+                ss << (field.boolValue ? "1" : "0");
+            else
+                ss << field.intValue;
+        }
+        ss << NEWLINE;
+    }
+    ss << NEWLINE;
+
+    // Banks table
+    ss << "Banks:" << NEWLINE;
+    // Bank 0
+    ss << "  #0  0x0000-0x3FFF  ";
+    if (memory.IsBank0ROM())
+    {
+        uint8_t romPage = memory.GetROMPage();
+        ss << "ROM p" << (int)romPage;
+        if (rom)
+        {
+            uint8_t* pagePtr = memory.ROMPageHostAddress(romPage);
+            if (pagePtr)
+            {
+                std::string sig = rom->CalculateSignature(pagePtr, 0x4000);
+                // GetROMTitle carries the "Unknown ROM, <digest>" fallback;
+                // role comes from the core layout table (ROM::GetROMPageRole,
+                // §5.2) - a role/name mismatch is the wrong-ROM signal
+                ss << "  \"" << rom->GetROMTitle(sig) << "\"";
+                ss << "  [" << rom->GetROMPageRole(romPage) << "]";
+            }
+        }
+    }
+    else
+    {
+        ss << "RAM p" << (int)memory.GetRAMPageForBank0();
+    }
+    ss << NEWLINE;
+
+    // Banks 1-3
+    ss << "  #1  0x4000-0x7FFF  RAM p" << (int)memory.GetRAMPageForBank1() << "  (contended, Screen 0)" << NEWLINE;
+    ss << "  #2  0x8000-0xBFFF  RAM p" << (int)memory.GetRAMPageForBank2() << NEWLINE;
+    ss << "  #3  0xC000-0xFFFF  RAM p" << (int)memory.GetRAMPageForBank3() << NEWLINE;
 
     session.SendResponse(ss.str());
 }

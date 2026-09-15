@@ -150,6 +150,14 @@ fixtures).
 
 ### P1-2. Unified paging state endpoint
 
+> 📝 **Design ready (2026-09-15):** [port-tags-paging-design.md](port-tags-paging-design.md)
+> supersedes the sketch below — decoder-registered ports get semantic tags
+> (memory / ROM / screen / sound members) plus `PagingLatch` live bindings,
+> the decoder owns tag-indexed collections, and `/state/paging` reports a
+> self-describing `latches` array (instead of the hardcoded per-model field
+> dump below) next to the same `banks` table, with full parity. The sketch is
+> kept for the acceptance criteria, which carry over verbatim.
+
 Closes B-2, E-1 (reporting side).
 
 `GET /api/v1/emulator/{id}/state/paging`:
@@ -383,6 +391,16 @@ the port-decoder sources (single review pass per machine, ideally by the
 branch author).
 
 ### P3-2. ROM signature identification
+
+> **📝 Design note (2026-09-15):** the paging design
+> ([port-tags-paging-design.md](port-tags-paging-design.md) §5.2) already
+> delivers the recognition+naming half on all paging surfaces, from the
+> existing core
+> catalog (`ROM::_signatures`, SHA-256 via `SignatureCache`) plus a new
+> `ROM::GetROMPageRole` layout table: ROM bank rows carry
+> `role`/`name`/`signature`, and `role` ≠ `name` flags a wrong-ROM load at a
+> glance. The remaining P3-2 work is catalog growth (more ROMs, optional
+> data-file loading) and the `rom` aspect's CLI/Lua/Python parity.
 
 Closes E-2. Extend the `rom` aspect / `/state/memory/rom` with a
 `signatures` block: match first N bytes + size against a curated table

@@ -78,6 +78,17 @@ void EmulatorAPI::getPortsMap(const HttpRequestPtr& req, std::function<void(cons
         item["match"] = StringHelper::Format("0x%04X", entry.match);
         item["device"] = entry.device;
         item["gate"] = entry.gate ? Json::Value(entry.gate) : Json::Value(Json::nullValue);
+
+        // Tagged registry fields (P1-2): semantic categories + live-value latch
+        // binding, names from the core single source (PortTagSetToStrings /
+        // PagingLatchToString - same strings on MCP, CLI, Lua and Python)
+        Json::Value tagNames(Json::arrayValue);
+        for (const std::string& tagName : PortTagSetToStrings(entry.tags))
+            tagNames.append(tagName);
+        item["tags"] = tagNames;
+        const char* latchName = PagingLatchToString(entry.latch);
+        item["latch"] = latchName ? Json::Value(latchName) : Json::Value(Json::nullValue);
+
         entries.append(item);
     }
     ret["entries"] = entries;

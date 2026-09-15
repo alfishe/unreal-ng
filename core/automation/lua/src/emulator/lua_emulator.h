@@ -2453,6 +2453,17 @@ public:
                 item["device"] = entry.device;
                 if (entry.gate)  // absent key = ungated (WebAPI sends null)
                     item["gate"] = entry.gate;
+
+                // Tagged registry fields (P1-2): names from the core single
+                // source - identical strings on WebAPI /ports, MCP and Python
+                sol::table tagNames = lua.create_table();
+                for (const std::string& tagName : PortTagSetToStrings(entry.tags))
+                    tagNames.add(tagName);
+                item["tags"] = tagNames;  // empty table = untagged row
+                const char* latchName = PagingLatchToString(entry.latch);
+                if (latchName)  // absent key = no live-value binding
+                    item["latch"] = latchName;
+
                 entries.add(item);
             }
             result["entries"] = entries;
@@ -2472,6 +2483,124 @@ public:
                 live["shadow_monitor_paged"] = (state.p1FFD & 0x02) != 0;
             // else: key absent = the #1FFD latch does not exist on this model
             result["live"] = live;
+
+            results.push_back(sol::make_object(s, result));
+            return results;
+        });
+
+        // Tagged paging latches + bank table (P1-2 design).
+        // Mirrors GET /api/v1/emulator/{id}/state/paging.
+        lua.set_function("paging_state", [this](sol::this_state s) -> sol::variadic_results {
+            sol::variadic_results results;
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return mouseError(s, "no emulator");
+
+            EmulatorContext* context = emulator->GetContext();
+            if (!context || !context->pPortDecoder || !context->pMemory)
+                return mouseError(s, "context not initialized");
+
+            auto hexByte = [](uint32_t value) {
+                char text[8];
+                std::snprintf(text, sizeof(text), "0x%02X", value);
+                return std::string(text);
+            };
+            auto hexWord = [](uint16_t value) {
+                char text[8];
+                std::snprintf(text, sizeof(text), "0x%04X", value);
+                return std::string(text);
+            };
+
+            sol::state_view lua(s);
+            sol::table result = lua.create_table();
+            const CONFIG& config = context->config;
+            const EmulatorState& state = context->emulatorState;
+            Memory& memory = *context->pMemory;
+            PortDecoder* decoder = context->pPortDecoder;
+            ROM* rom = context->pCore ? context->pCore->GetROM() : nullptr;
+
+            result["model"] = Config::GetModelFullName(config.mem_model);
+            result["paging_locked"] = (state.p7FFD & PORT_7FFD_LOCK) != 0;
+            result["trdos_active"] = (state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0;
+
+            // Latches array
+            sol::table latches = lua.create_table();
+            for (const PortMapEntry& entry : decoder->GetPagingLatches(Tags(PortTag::Memory)))
+            {
+                sol::table latch = lua.create_table();
+                latch["port"] = hexWord(entry.port);
+                latch["device"] = entry.device ? entry.device : "";
+                if (entry.gate) latch["gate"] = entry.gate;
+
+                // Tag names + latch binding from the core single source -
+                // identical strings on /state/paging, MCP, CLI and Python
+                sol::table tagNames = lua.create_table();
+                for (const std::string& tagName : PortTagSetToStrings(entry.tags))
+                    tagNames.add(tagName);
+                latch["tags"] = tagNames;
+                const char* latchName = PagingLatchToString(entry.latch);
+                if (latchName)
+                    latch["latch"] = latchName;
+
+                uint32_t value = PortDecoder::ReadPagingLatch(entry.latch, state);
+                latch["value"] = hexByte(value);
+
+                // Decoded bits: core §5.1 dictionary (DecodePagingLatch) with
+                // native ints/bools, matching /state/paging verbatim
+                sol::table decoded = lua.create_table();
+                for (const DecodedLatchField& field : DecodePagingLatch(entry.latch, value, config.mem_model, config.ramsize))
+                {
+                    decoded[field.key] = field.isBool ? sol::make_object(s, field.boolValue)
+                                                      : sol::make_object(s, field.intValue);
+                }
+                if (decoded.size() > 0)
+                    latch["decoded"] = decoded;
+                latches.add(latch);
+            }
+            result["latches"] = latches;
+
+            // Banks array
+            sol::table banks = lua.create_table();
+            for (int i = 0; i < 4; ++i)
+            {
+                sol::table bank = lua.create_table();
+                bank["bank"] = i;
+                const char* ranges[] = {"0x0000-0x3FFF", "0x4000-0x7FFF", "0x8000-0xBFFF", "0xC000-0xFFFF"};
+                bank["address_range"] = ranges[i];
+
+                if (i == 0 && memory.IsBank0ROM())
+                {
+                    bank["type"] = "ROM";
+                    uint8_t romPage = memory.GetROMPage();
+                    bank["page"] = static_cast<int>(romPage);
+                    if (rom)
+                    {
+                        uint8_t* pagePtr = memory.ROMPageHostAddress(romPage);
+                        if (pagePtr)
+                        {
+                            std::string sig = rom->CalculateSignature(pagePtr, 0x4000);
+                            // GetROMTitle carries the "Unknown ROM, <digest>"
+                            // fallback; role = core layout table (§5.2) - a
+                            // role/name mismatch is the wrong-ROM signal
+                            bank["name"] = rom->GetROMTitle(sig);
+                            bank["signature"] = sig;
+                        }
+                        bank["role"] = rom->GetROMPageRole(romPage);
+                    }
+                }
+                else
+                {
+                    bank["type"] = "RAM";
+                    switch (i) {
+                        case 0: bank["page"] = static_cast<int>(memory.GetRAMPageForBank0()); break;
+                        case 1: bank["page"] = static_cast<int>(memory.GetRAMPageForBank1()); bank["contended"] = true; break;
+                        case 2: bank["page"] = static_cast<int>(memory.GetRAMPageForBank2()); break;
+                        case 3: bank["page"] = static_cast<int>(memory.GetRAMPageForBank3()); break;
+                    }
+                }
+                banks.add(bank);
+            }
+            result["banks"] = banks;
 
             results.push_back(sol::make_object(s, result));
             return results;

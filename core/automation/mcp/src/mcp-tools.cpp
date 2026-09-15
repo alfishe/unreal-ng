@@ -583,7 +583,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["type"] = "array";
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
-    for (const char* aspect : {"machine", "registers", "memory", "disasm", "stack", "breakpoints", "memory_banks", "screen_ocr",
+    for (const char* aspect : {"machine", "registers", "memory", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "screen_ocr",
                                "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "fdc", "mouse"})
     {
         allowed.append(aspect);
@@ -595,6 +595,8 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["default"].append("screen_ocr");
     schema["properties"]["aspects"]["description"] =
         "What to inspect. Default: registers + disasm + screen_ocr. 'stack' reads 32 bytes at SP; 'memory' needs address. "
+        "'paging' = tagged paging latches + bank table (P1-2 design), 'ports' = static port map with semantic tags, "
+        "latch bindings and live routing flags, "
         "'audio_ay' = every AY/SSG chip fully decoded, 'audio_fm' = TurboSound FM board + both YM2203 FM halves (mode, timers, "
         "channels, operators, envelopes, key-on), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives, 'mouse' = "
         "Kempston mouse state incl. port routing (fitted vs shadowed).";
@@ -615,9 +617,9 @@ void RegisterInspectState(ToolRegistry& registry)
     registry.Register(
         "inspect_state",
         "Inspect emulator state in one call: registers, memory ranges, disassembly, stack words, breakpoints, memory banks, "
-        "screen OCR text, screen image metadata, screen digest hash, raster timing, ROM signatures, AY/SSG chips (audio_ay), "
-        "TurboSound FM YM2203 halves (audio_fm), Beta Disk WD1793 (fdc), Kempston mouse + port routing (mouse). "
-        "Combine aspects to reduce round-trips.",
+        "paging state (tagged latches + bank table), static port map with tags (ports), screen OCR text, screen image metadata, screen digest hash, raster timing, "
+        "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), Beta Disk WD1793 (fdc), "
+        "Kempston mouse + port routing (mouse). Combine aspects to reduce round-trips.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {
             // Collect aspects
@@ -637,12 +639,12 @@ void RegisterInspectState(ToolRegistry& registry)
             for (const std::string& aspect : aspects)
             {
                 if (aspect != "machine" && aspect != "registers" && aspect != "memory" && aspect != "disasm" && aspect != "stack" &&
-                    aspect != "breakpoints" && aspect != "memory_banks" && aspect != "screen_ocr" && aspect != "screen_image" &&
+                    aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "screen_ocr" && aspect != "screen_image" &&
                     aspect != "screen_digest" && aspect != "timing" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "fdc" && aspect != "mouse")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
-                                            "'. Valid: machine, registers, memory, disasm, stack, breakpoints, memory_banks, "
+                                            "'. Valid: machine, registers, memory, disasm, stack, breakpoints, memory_banks, paging, ports, "
                                             "screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, fdc, mouse"));
                     return;
                 }
@@ -841,6 +843,27 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
+                        else if (aspect == "paging")
+                        {
+                            // /state/paging: tagged paging latches + bank table (P1-2 design)
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/paging"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "ports")
+                        {
+                            // /ports: static port map with semantic tags + latch bindings
+                            // and the live routing flags (P1-5 + tagged registry)
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/ports"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    next(true);
+                                });
+                            });
+                        }
                         else if (aspect == "audio_ay" || aspect == "audio_fm")
                         {
                             // Overview first, then every chip's full report (core DeviceState::AyChip / FmChip)
@@ -976,6 +999,54 @@ void RegisterInspectState(ToolRegistry& registry)
                                     if (value.isMember("routing"))
                                         out << ", ports " << (value["routing"]["ports_decoded"].asBool() ? "decoded" : "shadowed")
                                             << " (" << value["routing"]["note"].asString() << ")";
+                                }
+                            }
+                            else if (aspect == "paging")
+                            {
+                                out << "\n[paging] model " << value["model"].asString()
+                                    << ", locked " << (value["paging_locked"].asBool() ? "yes" : "no")
+                                    << ", trdos " << (value["trdos_active"].asBool() ? "active" : "inactive");
+                                const Json::Value& latches = value["latches"];
+                                for (Json::ArrayIndex i = 0; i < latches.size(); ++i)
+                                {
+                                    out << "\n  " << latches[i]["latch"].asString() << "=" << latches[i]["value"].asString();
+                                    if (latches[i].isMember("decoded"))
+                                    {
+                                        const Json::Value& d = latches[i]["decoded"];
+                                        for (auto it = d.begin(); it != d.end(); ++it)
+                                            out << " " << it.name() << "=" << ((*it).isBool() ? ((*it).asBool() ? "1" : "0") : (*it).asString());
+                                    }
+                                }
+                                const Json::Value& banks = value["banks"];
+                                for (Json::ArrayIndex i = 0; i < banks.size(); ++i)
+                                    out << "\n  bank" << banks[i]["bank"].asInt() << " " << banks[i]["address_range"].asString()
+                                        << " " << banks[i]["type"].asString() << " p" << banks[i]["page"].asInt();
+                            }
+                            else if (aspect == "ports" && value["entries"].isArray())
+                            {
+                                out << "\n[ports] model " << value["model"].asString();
+                                const Json::Value& portEntries = value["entries"];
+                                for (Json::ArrayIndex i = 0; i < portEntries.size(); ++i)
+                                {
+                                    out << "\n  " << portEntries[i]["port"].asString() << " " << portEntries[i]["device"].asString();
+                                    const Json::Value& tagNames = portEntries[i]["tags"];
+                                    if (tagNames.isArray() && tagNames.size() > 0)
+                                    {
+                                        out << " [";
+                                        for (Json::ArrayIndex t = 0; t < tagNames.size(); ++t)
+                                            out << (t > 0 ? "," : "") << tagNames[t].asString();
+                                        out << "]";
+                                    }
+                                    if (!portEntries[i]["latch"].isNull())
+                                        out << " latch=" << portEntries[i]["latch"].asString();
+                                    if (!portEntries[i]["gate"].isNull())
+                                        out << " gate: " << portEntries[i]["gate"].asString();
+                                }
+                                if (value.isMember("live"))
+                                {
+                                    const Json::Value& live = value["live"];
+                                    out << "\n  live: trdos " << (live["trdos_active"].asBool() ? "active" : "inactive")
+                                        << ", mouse ports " << (live["mouse_ports_decoded"].asBool() ? "decoded" : "shadowed");
                                 }
                             }
                             else if (aspect == "audio_fm")

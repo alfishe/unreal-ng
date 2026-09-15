@@ -55,6 +55,44 @@ automation parity rule (same information from the same core sources:
 All of the above is implemented and verified (zero warnings, full 20-shard
 suite green, live CLI/Lua/WebAPI smoke on 128k + SCORPION) — pending commit.
 
+## Status update — 2026-09-15 (P1-2 design)
+
+📝 **Design drafted (not implemented):**
+[port-tags-paging-design.md](port-tags-paging-design.md) addresses E-1 / B-2
+(P1-2) via a tagged port registry — decoder-registered ports carry semantic
+tag(s) (memory / ROM / screen / sound with per-soundcard members), the
+decoder owns tag-indexed collections, and `/state/paging` (latches + banks)
+is assembled from them with full WebAPI/MCP/CLI/Lua/Python parity. See its
+§11 for the rollout sequence.
+
+✅ **Design approved + Phase 1 implemented (2026-09-15):** the design review
+approved with four minor refinements (constexpr tag operators, default member
+initializers, `ReadPagingLatch` naming, decoded-keys dictionary — all folded
+into the doc; §10 questions resolved). Phase 1 landed core-only, no surface
+change: `PortTag`/`PagingLatch` enums, tagged rows in `getPortMapEntries()`,
+tagged `RegisterPortHandler` overload, `ReadPagingLatch` + the tag query
+methods, `PortDecoder_PortTag_Test` (13 cases). Phases 2–3 landed later the
+same day — see the next bullet.
+
+✅ **Phases 2–3 implemented (2026-09-15) — tagging wired to every
+automation surface:** WebAPI `GET /state/paging` (+ OpenAPI), MCP `paging`
+and new `ports` aspects, CLI `paging` command + `ports` **Tags/Latch**
+columns, Lua/Python `paging_state()` + `ports_map()` `tags`/`latch` keys,
+`/ports` rows carrying `tags`+`latch` everywhere, §5.2 ROM
+`role`/`name`/`signature` on all paging surfaces. All names decode through
+three core single-source serializers
+(`PortTagSetToStrings`/`PagingLatchToString`/`DecodePagingLatch`) plus
+`ROM::GetROMPageRole` — the per-surface copies were deleted. Tests grew to
+19 cases. Control-interfaces + OpenAPI + MCP docs updated.
+
+📝 **§5.2 added (2026-09-15): ROM page identification** — recognized
+signatures and naming for easy visual identification of ROM bank rows in
+`/state/paging`: `name` (content, from the existing `ROM::_signatures`
+SHA-256 catalog) vs `role` (the per-model layout slot, moving into core as
+`ROM::GetROMPageRole`); a role/name mismatch is the one-glance
+"wrong ROM loaded" signal. Wired into §5 example, §6 parity rows, §8
+`RomIdentification_Test`, §9 acceptance, §11 Phase 2.
+
 ## Files
 
 | File | Content |
@@ -63,6 +101,7 @@ suite green, live CLI/Lua/WebAPI smoke on 128k + SCORPION) — pending commit.
 | [gap-analysis.md](gap-analysis.md) | The 18 findings, grouped A–F by triage workflow stage, each with evidence (`file:line`, verified on master 2026-09-14) and impact. |
 | [recommendations.md](recommendations.md) | Prioritized remediation plan (P0–P3) with concrete endpoint/tool proposals, response schemas, and acceptance criteria. |
 | [triage-workflows.md](triage-workflows.md) | Before/after walkthroughs for the concrete triage scenarios named in the analysis (ATM black screen, mouse-on-configs, MoonSound bring-up). |
+| [port-tags-paging-design.md](port-tags-paging-design.md) | Design for P1-2 / E-1 / B-2: tagged port registry (`PortTag` bitmask + per-soundcard tags, `PagingLatch` live bindings) on the decoders, decoder-owned index collections, and the tag-driven `/state/paging` endpoint (incl. §5.2 ROM page identification — `role`/`name`/`signature` per ROM bank) with full parity. |
 
 ## Executive summary
 
