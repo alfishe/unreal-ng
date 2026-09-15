@@ -51,6 +51,14 @@ constexpr char const* NC_FDD_DISK_SAVE_RETARGETED = "FDD_DISK_SAVE_RETARGETED"; 
 constexpr char const* NC_FDD_STATE_CHANGED = "FDD_STATE_CHANGED";               // FDC/FDD state changed: selected drive, side, track, sector, motor (payload: FDDStatePayload). Posted only on change - UIs cache it, no polling
 
 constexpr char const* NC_FDC_STATE_CHANGED = "FDC_STATE_CHANGE"; // WD1793 visible state changed: drive/side/track/sector/command/motor (payload: FDCStatePayload). Diff-gated — posted only when the observed tuple actually changes
+constexpr char const* NC_FEATURE_CHANGED = "FEATURE_CHANGED";                   // Feature toggled or mode changed (payload: FeatureChangedPayload). Posted AFTER all UpdateFeatureCache() calls complete so caches are consistent when observers fire. Informational — caches are already up to date.
+constexpr char const* NC_SPEED_CHANGED = "SPEED_CHANGED";                       // Speed multiplier or turbo mode changed (payload: SpeedChangedPayload). Posted from Core after state is committed.
+constexpr char const* NC_FILE_LOADED = "FILE_LOADED";                           // Snapshot / tape / disk file loaded or load failed (payload: FileLoadedPayload). Posted from Emulator after the loader returns.
+constexpr char const* NC_RECORDING_STATE = "RECORDING_STATE";                   // Recording started or stopped (payload: RecordingStatePayload). Posted from RecordingManager.
+constexpr char const* NC_MEMORY_PAGE_CHANGED = "MEMORY_PAGE_CHANGED";           // RAM bank mapping changed (payload: MemoryPagePayload). Posted by Memory on bank switch.
+constexpr char const* NC_ROM_PAGE_CHANGED = "ROM_PAGE_CHANGED";                 // ROM selection changed (payload: ROMPagePayload). Posted by Memory on ROM switch.
+constexpr char const* NC_SCREEN_PAGE_CHANGED = "SCREEN_PAGE_CHANGED";           // Active screen changed: page 5 (normal) or page 7 (shadow) (payload: ScreenPagePayload). Posted by Screen.
+constexpr char const* NC_AUDIO_ACTIVITY = "AUDIO_ACTIVITY";                     // Audio source activity changed (payload: AudioActivityPayload). Posted by sound sources per-frame when activity state changes.
 
 constexpr char const* NC_FILE_OPEN_REQUEST = "FILE_OPEN_REQUEST";               // File open request from emulator
 
@@ -294,6 +302,9 @@ enum IDE_SCHEME
 
 enum MOUSE_WHEEL_MODE { MOUSE_WHEEL_NONE, MOUSE_WHEEL_KEYBOARD, MOUSE_WHEEL_KEMPSTON }; //0.36.6 from 0.35b2
 
+/// [INPUT] Mouse= (Kempston Mouse design §7.4). AY mouse is not emulated.
+enum MOUSE_TYPE { MOUSE_TYPE_NONE = 0, MOUSE_TYPE_KEMPSTON = 1, MOUSE_TYPE_AY = 2 };
+
 enum MEM_MODEL : uint8_t
 {
 	MM_PENTAGON = 0,    	// Pentagon 128/256/512/1024K
@@ -385,6 +396,16 @@ enum ULAPLUS
 	UPLS_TYPE1 = 0,
 	UPLS_TYPE2,
 	UPLS_NONE
+};
+
+/// TurboSound slot device kind ([SOUND] TurboSound, TSFM design §3.1).
+/// AY = legacy two-AY pair (default), FM = TSFM (TurboSound FM, YM2203).
+/// Read once at config load - no runtime switching; a change needs a new
+/// emulator instance.
+enum class TurboSoundKind : uint8_t
+{
+	AY,
+	FM
 };
 
 struct zxkeymap;
@@ -503,6 +524,14 @@ struct CONFIG
 		/// All chip DSP self-designs for this rate at SoundManager construction.
 		unsigned coreRate;
 
+		/// Which device occupies the TurboSound slot ([SOUND] TurboSound,
+		/// TSFM design §3.1): AY = legacy two-AY pair (default), FM = TSFM.
+		TurboSoundKind turboSoundKind = TurboSoundKind::AY;
+
+		/// FM loudness trim in dB relative to the hardware-derived default
+		/// ([SOUND] TSFM_FmTrimDb; 0 = default)
+		double tsfmFmTrimDb = 0.0;
+
 		int covoxFB, covoxDD, sd, saa1099, moonsound;
 		int beeper_vol, micout_vol, micin_vol, ay_vol, aydig_vol, saa1099_vol;
 		int covoxFB_vol, covoxDD_vol, sd_vol, covoxProfi_vol;
@@ -522,6 +551,7 @@ struct CONFIG
 		uint8_t keybpcmode;
 		char mousescale;
 		uint8_t mousewheel; // enum MOUSE_WHEEL_MODE //0.36.6 from 0.35b2
+		bool mouseConfigured; // [INPUT] Mouse= was parsed (false: no ini - device stays fitted)
 		zxkeymap *active_zxk;
 		unsigned JoyId;
 	} input;

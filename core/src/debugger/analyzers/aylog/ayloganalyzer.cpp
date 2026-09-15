@@ -2,7 +2,7 @@
 
 #include "debugger/analyzers/analyzermanager.h"
 #include "emulator/emulatorcontext.h"
-#include "emulator/sound/chips/soundchip_turbosound.h"
+#include "emulator/sound/chips/iturbosounddevice.h"  // ITurboSoundDevice (tap installed via the slot interface)
 #include "emulator/sound/soundmanager.h"
 
 #include <algorithm>
@@ -39,7 +39,7 @@ void AYLogAnalyzer::onActivate(AnalyzerManager* manager)
     bool installed = false;
     if (_context && _context->pSoundManager)
     {
-        SoundChip_TurboSound* turboSound = _context->pSoundManager->getTurboSound();
+        ITurboSoundDevice* turboSound = _context->pSoundManager->getTurboSound();
         if (turboSound)
         {
             turboSound->setLogSink(&AYLogAnalyzer::onAYWrite, this);
@@ -57,7 +57,7 @@ void AYLogAnalyzer::onDeactivate()
     // Remove the tap regardless of what activation found
     if (_context && _context->pSoundManager)
     {
-        SoundChip_TurboSound* turboSound = _context->pSoundManager->getTurboSound();
+        ITurboSoundDevice* turboSound = _context->pSoundManager->getTurboSound();
         if (turboSound)
         {
             turboSound->setLogSink(nullptr, nullptr);

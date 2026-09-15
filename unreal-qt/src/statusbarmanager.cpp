@@ -71,11 +71,10 @@ StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuMana
     separator->setFixedHeight(13);
 
     _cpuFreq = new QLabel(QStringLiteral("3.5 MHz"), _statusBar);
-    _cpuFreq->setToolTip(tr("CPU frequency"));
     QFont cpuFont("Consolas", _cpuFreq->font().pointSize());
     cpuFont.setStyleHint(QFont::Monospace);
     _cpuFreq->setFont(cpuFont);
-    _cpuFreq->setStyleSheet("padding-top: 1px;");
+    _cpuFreq->setStyleSheet("QLabel { padding-top: 1px; }");
 
     _fps = new QLabel(QStringLiteral("-- FPS"), _statusBar);
     _fps->setToolTip(tr("Emulated frames per second"));
@@ -176,11 +175,11 @@ void StatusBarManager::handleCPUFreqChanged(int id, Message* message)
 
         // Color coding: normal for 3.5MHz, orange for 7MHz, dark red for 14MHz+
         if (freqHz >= 14'000'000)
-            _cpuFreq->setStyleSheet("color: #B22222; padding-top: 1px;");
+            _cpuFreq->setStyleSheet("QLabel { color: #B22222; padding-top: 1px; }");
         else if (freqHz >= 7'000'000)
-            _cpuFreq->setStyleSheet("color: #FF8C00; padding-top: 1px;");
+            _cpuFreq->setStyleSheet("QLabel { color: #FF8C00; padding-top: 1px; }");
         else
-            _cpuFreq->setStyleSheet("padding-top: 1px;");
+            _cpuFreq->setStyleSheet("QLabel { padding-top: 1px; }");
     }, Qt::QueuedConnection);
 }
 
@@ -352,16 +351,19 @@ void StatusBarManager::refresh()
 
         // Color coding: normal for 3.5MHz, orange for 7MHz, dark red for 14MHz+
         if (freqHz >= 14'000'000)
-            _cpuFreq->setStyleSheet("color: #B22222; padding-top: 1px;");  // Dark red
+            _cpuFreq->setStyleSheet("QLabel { color: #B22222; padding-top: 1px; }");  // Dark red
         else if (freqHz >= 7'000'000)
-            _cpuFreq->setStyleSheet("color: #FF8C00; padding-top: 1px;");  // Orange
+            _cpuFreq->setStyleSheet("QLabel { color: #FF8C00; padding-top: 1px; }");  // Orange
         else
-            _cpuFreq->setStyleSheet("padding-top: 1px;");  // Default color
+            _cpuFreq->setStyleSheet("QLabel { padding-top: 1px; }");  // Default color
+
+        updateCpuFreqToolTip(context);
     }
     else
     {
         _cpuFreq->setText(QStringLiteral("-- MHz"));
-        _cpuFreq->setStyleSheet("padding-top: 1px;");
+        _cpuFreq->setStyleSheet("QLabel { padding-top: 1px; }");
+        updateCpuFreqToolTip(nullptr);
     }
 
     // FPS: once per second take the latest frame-aligned sample and measure the rate
@@ -425,53 +427,62 @@ void StatusBarManager::refresh()
     updateFpsToolTip(emulator);
 }
 
+void StatusBarManager::updateCpuFreqToolTip(EmulatorContext* context)
+{
+    QString text;
+
+    if (context)
+    {
+        // config.frame is the raster base; the CPU executes that scaled by the
+        // clock multiplier, so show the effective figure and name the base when
+        // a hardware turbo or the host speed control is raising it
+        const uint32_t effective = context->GetFrameTStates();
+        const uint32_t base = context->GetBaseFrameTStates();
+        const uint8_t multiplier = context->GetCpuClockMultiplier();
+
+        if (multiplier > 1)
+            text = tr("Frame: %1 T-states (%2 base x%3)").arg(effective).arg(base).arg(multiplier);
+        else
+            text = tr("Frame: %1 T-states").arg(effective);
+    }
+
+    if (_cpuFreq->toolTip() == text)
+        return;
+    _cpuFreq->setToolTip(text);
+    if (QToolTip::isVisible() && _cpuFreq->underMouse())
+        QToolTip::showText(QCursor::pos(), text, _cpuFreq);
+}
+
 void StatusBarManager::updateFpsToolTip(std::shared_ptr<Emulator> emulator)
 {
     EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
     QString text;
     if (!context)
     {
-        text = tr("Emulated frames per second\nNo emulator");
+        text = tr("No emulator");
     }
     else
     {
-        // Target rate follows the machine timing (t-states per frame at the base CPU clock)
         const unsigned frameUs = context->config.frame_duration_us;
         const double targetFps = frameUs > 0 ? 1000000.0 / frameUs : 0.0;
         const bool turbo = emulator->IsTurboMode();
 
         QStringList lines;
-        lines << tr("Model: %1").arg(_modelName.isEmpty() ? tr("unknown") : _modelName);
+        lines << (_modelName.isEmpty() ? tr("Unknown model") : _modelName);
         lines << tr("Target: %1 FPS").arg(targetFps, 0, 'f', 2);
+
         if (_measuredFps > 0.0)
         {
-            QString measured = tr("Emulated: %1 FPS").arg(_measuredFps, 0, 'f', 2);
+            QString actual = tr("Actual: %1 FPS").arg(_measuredFps, 0, 'f', 2);
             if (turbo && targetFps > 0.0)
-                measured += tr(" (turbo, x%1)").arg(_measuredFps / targetFps, 0, 'f', 1);
-            lines << measured;
-        }
-        if (turbo)
-        {
-            // Rendering is decimated in turbo (adaptive, kept within [target, 2 x target))
-            if (MainLoop* mainLoop = emulator->GetMainLoop())
-            {
-                const uint64_t n = mainLoop->GetTurboRenderDecimation();
-                lines << tr("Rendering every %1th frame (~%2 FPS)")
-                             .arg(n)
-                             .arg(n > 0 ? _measuredFps / static_cast<double>(n) : 0.0, 0, 'f', 1);
-                const DisplayRefreshInfo display = DisplayRefreshRate::query(_statusBar->screen());
-                QString cap = tr("Render cap: %1 Hz").arg(mainLoop->GetTurboRenderMaxFps(), 0, 'f', 0);
-                if (display.variable)
-                    cap += tr(" (display VRR %1-%2 Hz)").arg(display.minHz, 0, 'f', 0).arg(display.maxHz, 0, 'f', 0);
-                else if (display.currentHz > 0.0)
-                    cap += tr(" (display %1 Hz)").arg(display.currentHz, 0, 'f', 0);
-                lines << cap;
-            }
+                actual += tr(" (x%1)").arg(_measuredFps / targetFps, 0, 'f', 1);
+            lines << actual;
         }
         else
         {
-            lines << (turbo ? tr("Emulated: measuring (turbo)") : tr("Emulated: --"));
+            lines << tr("Actual: --");
         }
+
         text = lines.join(QLatin1Char('\n'));
     }
 
@@ -523,4 +534,10 @@ void StatusBarManager::hideForFullScreen()
 void StatusBarManager::restoreVisibility()
 {
     _statusBar->setVisible(_visibleByUser);
+    if (_visibleByUser && _statusBar)
+    {
+        _statusBar->show();
+        _statusBar->raise();
+        _statusBar->update();
+    }
 }

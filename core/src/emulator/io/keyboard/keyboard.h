@@ -341,6 +341,10 @@ public:
 public:
     void OnKeyPressed(int id, Message* message);
     void OnKeyReleased(int id, Message* message);
+
+protected:
+    bool IsHostInputSuppressed() const;               // TTD replay active
+    void JournalHostKey(ZXKeysEnum key, bool pressed);  // TTD input journal while recording
     /// endregion </Handle MessageCenter keyboard events>
 
     /// region <Debug>

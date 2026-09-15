@@ -90,6 +90,23 @@ TEST_F(ScorpionPorts_Test, AyMirrorStillDecoded)
         << "#FF05 must still select the AY (register readback via a mirror)";
 }
 
+/// @brief Regression (2026-09-12): the Kempston Mouse arm was spliced into
+///        DecodePortIn as a fresh `if` instead of an `else if`, so every arm
+///        above it (#FE keyboard, AY, #1FFD, SMUC, #7EFD) had its result
+///        overwritten by the trailing PeripheralPortIn fallback - the plain
+///        Scorpion read a dead keyboard. A pressed key must read 0 in its row
+TEST_F(ScorpionPorts_Test, KeyboardRowReadSurvivesLaterDecodeArms)
+{
+    Keyboard* keyboard = _context->pKeyboard;
+    ASSERT_NE(keyboard, nullptr);
+
+    keyboard->PressKey(ZXKEY_1);  // #F7FE bit 0
+    keyboard->PressKey(ZXKEY_V);  // #FEFE bit 4
+
+    EXPECT_EQ(ReadPort(0xF7FE) & 0x1F, 0x1E) << "key 1 pressed reads 0 in row #F7FE";
+    EXPECT_EQ(ReadPort(0xFEFE) & 0x1F, 0x0F) << "key V pressed reads 0 in row #FEFE";
+}
+
 /// @brief Beta128 gating: the FDC is off the bus outside a session, answers
 ///        during one, and keeps answering while the Shadow Monitor is paged
 ///        even with the session closed (hardware-reference §12.3)
@@ -304,26 +321,38 @@ TEST_F(ScorpionPorts_Test, ResetClearsTurboFlipFlop)
 
 /// region <Kempston Joystick & Mouse stubs (profrom-service-monitor-menu-flashing.md)>
 
-/// @brief Kempston Joystick & Mouse stubs: Port #FF1F returns 0x00 (active-high Fire released)
-///        while the monitor is paged, #FADF returns 0xFF (active-low buttons released), and #FBDF/#FFDF return 0x00.
+/// @brief Kempston Joystick & Mouse: Port #FF1F returns 0x00 (active-high Fire released) while the
+///        monitor is paged; the mouse answers in the Page 5 driver state (#1FFD = #10): #FADF 0xFF
+///        (buttons released, no wheel), #FBDF/#FFDF the reset coordinates - and stays silent while
+///        #1FFD bit1 selects the FDC.
 TEST_F(ScorpionPorts_Test, KempstonStubsAnswerNeutralValues)
 {
     EmulatorState& state = _context->emulatorState;
 
-    // Port #FF1F (Kempston Joystick read by Service Monitor sub_0260h while paged)
-    state.p1FFD = 0x02;
+    // Port #FF1F (Kempston Joystick read by Service Monitor sub_0260h): page 5 runs with
+    // #1FFD = #10 (latch clear) and gets the idle joystick
+    state.p1FFD = 0x10;
     _memory->UpdateZ80Banks();
     EXPECT_EQ(ReadPort(0xFF1F), 0x00) << "Kempston joystick returns 0x00 when idle in monitor";
     EXPECT_TRUE(_context->pPortDecoder->WasLastPortDecoded());
 
+    // Latch set (page 2): #FF1F is the WD1793 status, as MiSTer ScorpionZS256 masks the joystick
+    // there; the mouse keeps #xxDF (only TR-DOS selection hands it to the Beta interface)
+    state.p1FFD = 0x02;
+    _memory->UpdateZ80Banks();
+    EXPECT_EQ(ReadPort(0xFF1F), ReadPort(0x001F)) << "joystick gives way to the FDC under the latch";
+    EXPECT_EQ(ReadPort(0xFBDF), 31) << "mouse answers #xxDF under the monitor latch";
+    state.p1FFD = 0x10;
+    _memory->UpdateZ80Banks();
+
     // Port #FADF (Kempston Mouse buttons read by sub_021bh)
-    EXPECT_EQ(ReadPort(0xFADF), 0xFF) << "Kempston mouse buttons return 0xFF (all released)";
+    EXPECT_EQ(ReadPort(0xFADF), 0xFF) << "Kempston mouse buttons return 0xFF (all released, no wheel: D7-D3 = 1)";
     EXPECT_TRUE(_context->pPortDecoder->WasLastPortDecoded());
 
     // Port #FBDF (Mouse X) and #FFDF (Mouse Y)
-    EXPECT_EQ(ReadPort(0xFBDF), 0x00) << "Kempston mouse X returns stable coordinate";
+    EXPECT_EQ(ReadPort(0xFBDF), 31) << "Kempston mouse X returns reset coordinate 31";
     EXPECT_TRUE(_context->pPortDecoder->WasLastPortDecoded());
-    EXPECT_EQ(ReadPort(0xFFDF), 0x00) << "Kempston mouse Y returns stable coordinate";
+    EXPECT_EQ(ReadPort(0xFFDF), 85) << "Kempston mouse Y returns reset coordinate 85";
     EXPECT_TRUE(_context->pPortDecoder->WasLastPortDecoded());
 }
 
@@ -345,6 +374,24 @@ TEST(ScorpionServiceMonitor_Test, ProfRomServiceMonitorHighlightDoesNotBlink)
     // which the monitor finishes drawing drifts run to run.
     if (PortDecoder_Scorpion256* decoder = static_cast<PortDecoder_Scorpion256*>(context->pPortDecoder))
         decoder->GetSMUCNvram().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
+
+    // Pin power-on RAM. Memory::RandomizeMemoryContent() fills pages 5 and 7
+    // from the global rand(), whose sequence position depends on how many
+    // rand() calls the preceding tests in the process happened to make - which
+    // is what made this test order-dependent (it passed alone and failed in the
+    // full suite, or the reverse, as unrelated tests were added or sped up).
+    //
+    // Zero rather than a fixed seed: garbage RAM is a real input to this boot,
+    // not a nuisance. Resuming the interrupted program from the Service Monitor
+    // can land the CPU in uninitialized RAM - with 2 of 12 sampled seeds the
+    // machine executed page 5 itself (PC 0x52FC) and cleared the screen. That
+    // is worth its own investigation (see the RAM-sensitivity note in
+    // profrom-service-monitor-menu-flashing.md), but it is not what this test
+    // asserts, and picking whichever seed happens to survive it would be
+    // cherry-picking. Zero matches what Memory already gives every other page
+    // ("zero-init: deterministic power-on RAM").
+    memset(memory->RAMPageAddress(5), 0, PAGE_SIZE);
+    memset(memory->RAMPageAddress(7), 0, PAGE_SIZE);
 
     // Host-side turbo: no emulated-state effect, just skips per-frame audio work
     emulator->EnableTurboMode();
@@ -404,17 +451,21 @@ TEST(ScorpionServiceMonitor_Test, ProfRomServiceMonitorHighlightDoesNotBlink)
 
 /// @brief Regression (profrom-service-monitor-menu-flashing.md 7.1):
 ///        #FF1F must decode as the Kempston joystick whenever TR-DOS is not
-///        active - INCLUDING while #1FFD bit 1 is clear.
+///        active and #1FFD bit 1 is clear.
 ///
 ///        The poll that matters (Page 5 sub_0260h) is reached by RST 30h and
 ///        runs with #1FFD = 0x10, not 0x12. Gating the arm on the Shadow
-///        Monitor bit therefore disabled it for exactly that read: the poll
+///        Monitor bit being SET disabled it for exactly that read: the poll
 ///        fell through to the floating bus, returned 0xFF, and the firmware
 ///        read Fire as held - enqueuing a phantom 0x80 click every 5 frames and
 ///        driving a continuous menu redraw. A VRAM-attribute assertion cannot
 ///        see this (the attribute is rewritten to 0x31 within the same frame),
 ///        so the contract is pinned at the port level here.
-TEST_F(ScorpionPorts_Test, KempstonJoystick_Port1F_ReadsZeroWhateverThePagingLatch)
+///
+///        With the bit SET the joystick yields #FF1F to the WD1793 status, as
+///        MiSTer ScorpionZS256 masks kemp_sel on the Beta ports under the latch
+///        (ROM2 polls the FDC status through #xx1F after unpaging TR-DOS).
+TEST_F(ScorpionPorts_Test, KempstonJoystick_Port1F_ReadsZeroFromDriverPlane)
 {
     ASSERT_TRUE(RebuildWithModel(MM_PROFSCORP, RAM_256));
 
@@ -426,10 +477,10 @@ TEST_F(ScorpionPorts_Test, KempstonJoystick_Port1F_ReadsZeroWhateverThePagingLat
     EXPECT_EQ(ReadPort(0xFF1F), 0x00)
         << "#FF1F must read as an idle Kempston joystick from the driver plane";
 
-    // Page 2 (Shadow Monitor): service bit SET - must behave identically.
+    // Page 2 (Shadow Monitor): service bit SET - the FDC status register answers
     _context->emulatorState.p1FFD = 0x12;
-    EXPECT_EQ(ReadPort(0xFF1F), 0x00)
-        << "#FF1F must read as an idle Kempston joystick from the monitor plane";
+    EXPECT_EQ(ReadPort(0xFF1F), ReadPort(0x001F))
+        << "#FF1F must reach the WD1793 status from the monitor plane";
 }
 
 /// @brief The joystick arm must not steal #1F from the FDC inside a TR-DOS
@@ -449,5 +500,3 @@ TEST_F(ScorpionPorts_Test, KempstonJoystick_DoesNotStealPort1FFromBeta128InTrdos
 }
 
 /// endregion <Kempston Joystick & Mouse stubs>
-
-

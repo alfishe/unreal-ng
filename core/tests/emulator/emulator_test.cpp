@@ -6,13 +6,20 @@
 #include "common/modulelogger.h"
 #include "common/timehelper.h"
 #include "emulator/emulator.h"
+#include "emulator/emulatormanager.h"
+#include "emulator/mainloop.h"
 #include "common/filehelper.h"
-#include "_helpers/emulatortesthelper.h"
-#include "_helpers/testpathhelper.h"
-
+#include <atomic>
 #include <cctype>
 #include <utility>
 #include <vector>
+
+#include "_helpers/emulatortesthelper.h"
+#include "_helpers/testpathhelper.h"
+#include "_helpers/testtiminghelper.h"
+#include "emulator/notifications.h"
+#include "emulator/platform.h"
+#include "3rdparty/message-center/messagecenter.h"
 
 /// region <SetUp / TearDown>
 
@@ -336,4 +343,160 @@ TEST(Emulator_PathShapes_Test, LoadAndSaveSnapshot_NonAsciiUtf8Path)
 }
 
 /// endregion </Path shape tests>
+
+/// region <File loaded notifications>
+
+TEST_F(Emulator_Test, FailedLoadsPostNotificationWithOkFalse)
+{
+    Emulator* emu = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emu, nullptr);
+
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+
+    std::atomic<int> receivedCount{0};
+    std::string capturedKind;
+    bool capturedOk = true;
+
+    uint64_t obsId = mc.AddObserver(NC_FILE_LOADED, [&](int, Message* msg) {
+        if (!msg) return;
+        auto* payload = dynamic_cast<FileLoadedPayload*>(msg->obj);
+        if (payload && payload->emulatorId == emu->GetContext()->emulatorId)
+        {
+            capturedKind = payload->kind;
+            capturedOk = payload->ok;
+            receivedCount.fetch_add(1);
+        }
+    });
+
+    // Attempt nonexistent snapshot load
+    EXPECT_FALSE(emu->LoadSnapshot("/nonexistent/path/test.sna"));
+    EXPECT_TRUE(WaitForCondition([&] { return receivedCount.load() >= 1; }));
+    EXPECT_EQ(receivedCount.load(), 1);
+    EXPECT_EQ(capturedKind, "snapshot");
+    EXPECT_FALSE(capturedOk);
+
+    // Attempt nonexistent tape load
+    EXPECT_FALSE(emu->LoadTape("/nonexistent/path/test.tap"));
+    EXPECT_TRUE(WaitForCondition([&] { return receivedCount.load() >= 2; }));
+    EXPECT_EQ(receivedCount.load(), 2);
+    EXPECT_EQ(capturedKind, "tape");
+    EXPECT_FALSE(capturedOk);
+
+    // Attempt nonexistent disk load
+    EXPECT_FALSE(emu->LoadDisk("/nonexistent/path/test.trd"));
+    EXPECT_TRUE(WaitForCondition([&] { return receivedCount.load() >= 3; }));
+    EXPECT_EQ(receivedCount.load(), 3);
+    EXPECT_EQ(capturedKind, "disk");
+    EXPECT_FALSE(capturedOk);
+
+    mc.RemoveObserverById(NC_FILE_LOADED, obsId);
+    EmulatorTestHelper::CleanupEmulator(emu);
+}
+
+TEST_F(Emulator_Test, LoadSnapshot_EmitsSingleResetNotification)
+{
+    Emulator* emu = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emu, nullptr);
+
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+
+    std::atomic<int> resetCount{0};
+    uint64_t obsId = mc.AddObserver(NC_SYSTEM_RESET, [&](int, Message* msg) {
+        if (!msg) return;
+        resetCount.fetch_add(1);
+    });
+
+    // Ensure all prior messages from emulator creation/boot are processed (FIFO barrier)
+    std::atomic<bool> synced{false};
+    uint64_t syncObsId = mc.AddObserver("TEST_DRAIN_BARRIER", [&](int, Message*) {
+        synced.store(true);
+    });
+    mc.Post("TEST_DRAIN_BARRIER", new SimpleTextPayload("drain"));
+    EXPECT_TRUE(WaitForCondition([&] { return synced.load(); }));
+    mc.RemoveObserverById("TEST_DRAIN_BARRIER", syncObsId);
+
+    // 1. Loading SNA snapshot must emit exactly one NC_SYSTEM_RESET notification
+    resetCount.store(0);
+    const std::string snaPath = TestPathHelper::GetTestDataPath("loaders/sna/multifix.sna");
+    EXPECT_TRUE(emu->LoadSnapshot(snaPath));
+    EXPECT_TRUE(WaitForCondition([&] { return resetCount.load() == 1; }));
+    EXPECT_EQ(resetCount.load(), 1);
+
+    // 2. Loading Z80 snapshot must emit exactly one NC_SYSTEM_RESET notification
+    resetCount.store(0);
+    const std::string z80Path = TestPathHelper::GetTestDataPath("loaders/z80/BBG128.z80");
+    EXPECT_TRUE(emu->LoadSnapshot(z80Path));
+    EXPECT_TRUE(WaitForCondition([&] { return resetCount.load() == 1; }));
+    EXPECT_EQ(resetCount.load(), 1);
+
+    mc.RemoveObserverById(NC_SYSTEM_RESET, obsId);
+    EmulatorTestHelper::CleanupEmulator(emu);
+}
+
+/// endregion </File loaded notifications>
+
+/// region <Realtime scheduling propagation tests>
+
+/// @brief EmulatorManager must flag exactly one instance for real-time
+/// scheduling: the selected one, or the sole instance while nothing is
+/// selected (the GUI creates its single instance through the manager but
+/// never calls SetSelectedEmulatorId). Non-active instances must never hold
+/// the request - a bank of headless WebAPI instances must not compete with
+/// the audible one for real-time priority. Exceeds the 50 ms budget: two
+/// full Emulator::Init()s (ROM + device bring-up), same cost class as
+/// MultiInstance above; no emulator thread is started - the flag updates
+/// are synchronous manager operations.
+TEST(Emulator_RealtimeScheduling_Test, SelectionDrivesRealtimeFlags)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+
+    // Start from a clean selection - earlier tests in this binary may have
+    // left one pointing at an instance they already removed
+    ASSERT_TRUE(manager->SetSelectedEmulatorId(""));
+
+    std::shared_ptr<Emulator> first = manager->CreateEmulatorWithModel("rt-flags-1", "48K", LoggerLevel::LogNone);
+    std::shared_ptr<Emulator> second = manager->CreateEmulatorWithModel("rt-flags-2", "48K", LoggerLevel::LogNone);
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+
+    MainLoop* firstLoop = first->GetContext()->pMainLoop;
+    MainLoop* secondLoop = second->GetContext()->pMainLoop;
+    ASSERT_NE(firstLoop, nullptr);
+    ASSERT_NE(secondLoop, nullptr);
+
+    // Sole-instance fallback only applies while the instance IS alone
+    EXPECT_FALSE(firstLoop->IsRealtimeRequested()) << "Second instance must cancel the sole-instance request";
+    EXPECT_FALSE(secondLoop->IsRealtimeRequested());
+
+    // Explicit selection grants the request to exactly one instance
+    ASSERT_TRUE(manager->SetSelectedEmulatorId(second->GetId()));
+    EXPECT_FALSE(firstLoop->IsRealtimeRequested());
+    EXPECT_TRUE(secondLoop->IsRealtimeRequested());
+
+    // Live switch between two existing instances (both may be running)
+    ASSERT_TRUE(manager->SetSelectedEmulatorId(first->GetId()));
+    EXPECT_TRUE(firstLoop->IsRealtimeRequested());
+    EXPECT_FALSE(secondLoop->IsRealtimeRequested());
+
+    // Clearing the selection must drop every request
+    ASSERT_TRUE(manager->SetSelectedEmulatorId(""));
+    EXPECT_FALSE(firstLoop->IsRealtimeRequested());
+    EXPECT_FALSE(secondLoop->IsRealtimeRequested());
+
+    // Removing the selected instance re-evaluates: the sole survivor takes
+    // over the request via the fallback (the GUI-like single-instance end state)
+    ASSERT_TRUE(manager->SetSelectedEmulatorId(second->GetId()));
+    const std::string secondId = second->GetId();
+    second.reset();
+    ASSERT_TRUE(manager->RemoveEmulator(secondId));
+    EXPECT_TRUE(firstLoop->IsRealtimeRequested()) << "Sole survivor should take over the realtime request";
+
+    // Cleanup
+    const std::string firstId = first->GetId();
+    first.reset();
+    ASSERT_TRUE(manager->RemoveEmulator(firstId));
+    ASSERT_TRUE(manager->SetSelectedEmulatorId(""));
+}
+
+/// endregion </Realtime scheduling propagation tests>
 

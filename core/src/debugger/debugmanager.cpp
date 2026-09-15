@@ -9,6 +9,7 @@
 #include "debugger/analyzers/trdos/trdosanalyzer.h"
 #include "debugger/analyzers/memory-region/memoryregionanalyzer.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
+#include "debugger/mouse/debugmousemanager.h"
 
 /// region <Constructors / Destructors>
 
@@ -25,6 +26,7 @@ DebugManager::DebugManager(EmulatorContext* context)
     
     // Keyboard injection manager for automation
     _keyboardManager = new DebugKeyboardManager(_context);
+    _mouseManager = new DebugMouseManager(_context);
     
     // Initialize AnalyzerManager after all components are created
     // Pass 'this' because _context->pDebugManager isn't set yet
@@ -52,6 +54,12 @@ DebugManager::~DebugManager()
     {
         delete _keyboardManager;
         _keyboardManager = nullptr;
+    }
+
+    if (_mouseManager)
+    {
+        delete _mouseManager;
+        _mouseManager = nullptr;
     }
     
     if (_labels)
@@ -107,6 +115,11 @@ AnalyzerManager* DebugManager::GetAnalyzerManager()
 DebugKeyboardManager* DebugManager::GetKeyboardManager()
 {
     return _keyboardManager;
+}
+
+DebugMouseManager* DebugManager::GetMouseManager()
+{
+    return _mouseManager;
 }
 
 /// endregion </Properties>

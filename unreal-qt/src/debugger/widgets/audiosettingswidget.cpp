@@ -1,5 +1,7 @@
 #include "audiosettingswidget.h"
 
+#include <cmath>
+
 #include <QCursor>
 #include <QToolTip>
 #include "base/featuremanager.h"
@@ -130,7 +132,9 @@ void AudioSettingsWidget::createUI()
     layout->addWidget(_sourcesGroup);
 
     // ============ AY/TurboSound section ============
-    _ayGroup = new QGroupBox("AY / TurboSound", this);
+    // Titled "TurboSound FM" when the slot device is TSFM, "TurboSound" otherwise
+    // (refreshFromContext); the FM trim row appears only then (§8.3)
+    _ayGroup = new QGroupBox("TurboSound", this);
     auto* ayLayout = new QVBoxLayout(_ayGroup);
 
     // Stereo Mode
@@ -173,14 +177,33 @@ void AudioSettingsWidget::createUI()
     dspRow->addWidget(_ayRoomCombo);
     ayLayout->addLayout(dspRow);
 
+    // TSFM FM trim row (hidden until the device has FM channels): ±12 dB in
+    // 0.5 dB steps around the hardware-derived 0.30 gain default (§7.1)
+    _tsfmControls = new QWidget(_ayGroup);
+    auto* fmTrimRow = new QHBoxLayout(_tsfmControls);
+    fmTrimRow->setContentsMargins(0, 0, 0, 0);
+    fmTrimRow->addWidget(new QLabel("FM trim:", _tsfmControls));
+    _fmTrimSlider = new QSlider(Qt::Horizontal, _tsfmControls);
+    _fmTrimSlider->setRange(-24, 24);  // half-dB units: -12.0 .. +12.0 dB
+    _fmTrimSlider->setValue(0);
+    _fmTrimSlider->setToolTip("FM loudness relative to the hardware-derived default (0 dB)\n"
+                              "Applies live to both YM2203 chips");
+    fmTrimRow->addWidget(_fmTrimSlider, 1);
+    _fmTrimLabel = new QLabel("+0.0 dB", _tsfmControls);
+    _fmTrimLabel->setMinimumWidth(56);
+    fmTrimRow->addWidget(_fmTrimLabel);
+    _tsfmControls->setVisible(false);  // Hidden until the slot device is TSFM
+    ayLayout->addWidget(_tsfmControls);
+
     // Channel Mixer (AY1 and AY2 channels, vertical layout)
     _channelMixerGroup = new QGroupBox("Channels", _ayGroup);
     auto* chLayout = new QGridLayout(_channelMixerGroup);
     const char* chNames[] = {"A", "B", "C"};
     int row = 0;
 
-    // AY1 channels
-    chLayout->addWidget(new QLabel("AY1", _channelMixerGroup), row++, 0, 1, 3);
+    // AY1 channels (label retitled "SSG 1" on TSFM)
+    _chip1SectionLabel = new QLabel("AY1", _channelMixerGroup);
+    chLayout->addWidget(_chip1SectionLabel, row++, 0, 1, 3);
     for (int ch = 0; ch < 3; ch++)
     {
         _channelMuteChecks[0][ch] = new QCheckBox(QString("Mute %1").arg(chNames[ch]), _channelMixerGroup);
@@ -196,8 +219,9 @@ void AudioSettingsWidget::createUI()
         row++;
     }
 
-    // AY2 channels
-    chLayout->addWidget(new QLabel("AY2", _channelMixerGroup), row++, 0, 1, 3);
+    // AY2 channels (label retitled "SSG 2" on TSFM)
+    _chip2SectionLabel = new QLabel("AY2", _channelMixerGroup);
+    chLayout->addWidget(_chip2SectionLabel, row++, 0, 1, 3);
     for (int ch = 0; ch < 3; ch++)
     {
         _channelMuteChecks[1][ch] = new QCheckBox(QString("Mute %1").arg(chNames[ch]), _channelMixerGroup);
@@ -369,6 +393,9 @@ void AudioSettingsWidget::connectSignals()
     connect(_ayRoomCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &AudioSettingsWidget::onAYRoomModeChanged);
 
+    // TSFM FM trim
+    connect(_fmTrimSlider, &QSlider::valueChanged, this, &AudioSettingsWidget::onFmTrimChanged);
+
     // Channel mixer (2 chips x 3 channels)
     for (int chip = 0; chip < 2; chip++)
     {
@@ -413,6 +440,7 @@ void AudioSettingsWidget::disconnectSignals()
     disconnect(_firCheckbox, nullptr, this, nullptr);
     disconnect(_ayPunchCheckbox, nullptr, this, nullptr);
     disconnect(_ayRoomCombo, nullptr, this, nullptr);
+    disconnect(_fmTrimSlider, nullptr, this, nullptr);
 
     for (int chip = 0; chip < 2; chip++)
     {
@@ -456,6 +484,45 @@ void AudioSettingsWidget::refreshFromContext()
         {
             _stereoModeCombo->setCurrentIndex(static_cast<int>(ay0->getStereoMode()));
             _chipModelCombo->setCurrentIndex(static_cast<int>(ay0->getChipModel()));
+        }
+
+        // TurboSound slot kind: the whole AY/TurboSound block retitles and
+        // re-labels for TSFM, the FM trim row appears, and the chip-model
+        // selector locks to the board's YM2203 (§8.3)
+        ITurboSoundDevice* tsDevice = sm->getTurboSound();
+        const bool isFm = tsDevice && tsDevice->hasFm();
+        _ayGroup->setTitle(isFm ? "TurboSound FM" : "TurboSound");
+        _chip1SectionLabel->setText(isFm ? "SSG 1" : "AY1");
+        _chip2SectionLabel->setText(isFm ? "SSG 2" : "AY2");
+        _tsfmControls->setVisible(isFm);
+        _chipModelCombo->setEnabled(!isFm);
+        _chipModelCombo->setToolTip(isFm
+                                        ? "Locked: the TSFM board is 2 x YM2203\n"
+                                          "(each chip's SSG half is a fixed YM2149)"
+                                        : "AY-3-8910: brighter\nYM2149: warmer");
+        if (isFm)
+        {
+            // Name the chips the machine actually has; the fixed YM2149 DAC
+            // curve of the SSG half is an internal detail (§8.3)
+            if (_chipModelCombo->count() != 1)
+            {
+                _chipModelCombo->clear();
+                _chipModelCombo->addItem("YM2203");
+            }
+            _chipModelCombo->setCurrentIndex(0);
+            const double trim = tsDevice->fmTrimDb();
+            _fmTrimSlider->setValue(static_cast<int>(std::lround(trim * 2.0)));
+            _fmTrimLabel->setText(QString("%1%2 dB").arg(trim >= 0 ? "+" : "").arg(trim, 0, 'f', 1));
+        }
+        else if (_chipModelCombo->count() != 2)
+        {
+            // Restore the AY-3-8910 / YM2149 choice after an FM instance
+            // collapsed it (the GUI can adopt instances of either kind)
+            _chipModelCombo->clear();
+            _chipModelCombo->addItem("AY-3-8910", 0);
+            _chipModelCombo->addItem("YM2149", 1);
+            _chipModelCombo->setCurrentIndex(ay0 ? static_cast<int>(ay0->getChipModel())
+                                                  : static_cast<int>(AYChipModel::AY8910));
         }
 
         // Load per-chip channel settings
@@ -601,6 +668,12 @@ void AudioSettingsWidget::onChipModelChanged(int index)
     if (!_context || !_context->pSoundManager)
         return;
 
+    // TSFM: the YM2203's SSG half is a fixed YM2149 (§8.3) - the selector is
+    // locked, but ignore stray programmatic changes too
+    ITurboSoundDevice* tsDevice = _context->pSoundManager->getTurboSound();
+    if (tsDevice && tsDevice->hasFm())
+        return;
+
     // Apply to all AY chips
     for (int i = 0; i < _context->pSoundManager->getAYChipCount(); i++)
     {
@@ -633,6 +706,18 @@ void AudioSettingsWidget::onFirChanged(int state)
 {
     if (_context && _context->pFeatureManager)
         _context->pFeatureManager->setFeature("soundhq", state == Qt::Checked);
+}
+
+void AudioSettingsWidget::onFmTrimChanged(int value)
+{
+    if (!_context || !_context->pSoundManager)
+        return;
+
+    // Half-dB slider units -> dB, applied live to both YM2203 chips (§7.1)
+    const double db = value / 2.0;
+    if (ITurboSoundDevice* tsDevice = _context->pSoundManager->getTurboSound())
+        tsDevice->setFmTrimDb(db);
+    _fmTrimLabel->setText(QString("%1%2 dB").arg(db >= 0 ? "+" : "").arg(db, 0, 'f', 1));
 }
 
 // ============ Channel slots ============

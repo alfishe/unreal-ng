@@ -1,10 +1,12 @@
 #include "featuremanager.h"
 
+#include "emulator/io/mouse/mouse.h"
 #include <algorithm>
 #include <cassert>
 #include <filesystem>
 #include <iostream>
 
+#include "3rdparty/message-center/messagecenter.h"
 #include "3rdparty/simpleini/simpleini.h"
 #include "common/modulelogger.h"
 #include "common/filehelper.h"
@@ -121,7 +123,7 @@ bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
             _dirty = true;
         }
 
-        onFeatureChanged();
+        onFeatureChanged(feature->id);
 
         return true;
     }
@@ -148,7 +150,7 @@ bool FeatureManager::setMode(const std::string& idOrAlias, const std::string& mo
     {
         feature->mode = mode;
         _dirty = true;
-        onFeatureChanged();
+        onFeatureChanged(feature->id);
         return true;
     }
     else if (feature)
@@ -344,6 +346,22 @@ void FeatureManager::setDefaults()
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryPerformance});
 
+    registerFeature({Features::kHud,
+                     Features::kHudAlias,
+                     Features::kHudDesc,
+                     false,  // OFF by default - opt-in on UI and automation
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
+
+    registerFeature({Features::kKempstonMouse,
+                     Features::kKempstonMouseAlias,
+                     Features::kKempstonMouseDesc,
+                     true,  // ON by default - whether a mouse is fitted is decided by the machine config
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
+
     _dirty = false;
 }
 
@@ -393,7 +411,7 @@ void FeatureManager::loadFromFile(const std::string& path)
     // Features state fully match the settings file
     _dirty = false;
 
-    // Recalculate all cached flags
+    // Recalculate all cached flags (empty featureId = bulk reload from file)
     onFeatureChanged();
 }
 
@@ -419,8 +437,9 @@ void FeatureManager::saveToFile(const std::string& path) const
 }
 
 /// @brief Call when a feature state or mode changes. Triggers save if needed.
-/// Automatically saves to features.ini if any changes were made.
-void FeatureManager::onFeatureChanged()
+/// Posts NC_FEATURE_CHANGED as the last step so consumers see consistent cached state.
+/// @param changedFeatureId The canonical ID of the feature that changed, or empty for bulk reload.
+void FeatureManager::onFeatureChanged(const std::string& changedFeatureId)
 {
     // Update the feature cache in Memory class if it exists
     if (_context && _context->pCore && _context->pCore->GetMemory())
@@ -459,6 +478,12 @@ void FeatureManager::onFeatureChanged()
     }
 #endif
 
+    // Kempston Mouse fitting follows the kempstonmouse feature
+    if (_context && _context->pMouse)
+    {
+        _context->pMouse->ApplyConfiguration();
+    }
+
     // Update feature cache in Screen (for ScreenHQ toggle) if it exists
     if (_context && _context->pScreen)
     {
@@ -496,6 +521,22 @@ void FeatureManager::onFeatureChanged()
     {
         saveToFile(kFeaturesIni);
         _dirty = false;
+    }
+
+    // Post NC_FEATURE_CHANGED — AFTER all caches are updated and state is persisted.
+    // Consumers see consistent cached state when their observer fires.
+    if (_context)
+    {
+        bool featureEnabled = false;
+        if (!changedFeatureId.empty())
+        {
+            const auto* f = findFeature(changedFeatureId);
+            featureEnabled = f ? f->enabled : false;
+        }
+
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        messageCenter.Post(NC_FEATURE_CHANGED,
+            new FeatureChangedPayload(_context->emulatorId, changedFeatureId, featureEnabled));
     }
 }
 

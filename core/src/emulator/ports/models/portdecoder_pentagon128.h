@@ -51,6 +51,7 @@ public:
 
     bool IsPort_BFFD(uint16_t port);
     bool IsPort_FFFD(uint16_t port);
+    bool IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister);
 
     // IsBeta128Port() hoisted into the base PortDecoder (shared Beta-128 session gating)
 

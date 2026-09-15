@@ -94,10 +94,11 @@ else()
     endif ()
 endif()
 
-# MinGW: sol2's heavy template usage can exceed the COFF section limit (65535 sections).
-# The -Wa,-mbig-obj flag allows the assembler to create larger object files.
+# sol2's heavy template usage can exceed the COFF section limit (65535 sections).
 if (MINGW)
     target_compile_options(${PROJECT_NAME} PRIVATE -Wa,-mbig-obj)
+elseif (MSVC)
+    target_compile_options(${PROJECT_NAME} PRIVATE /bigobj)
 endif()
 
 # Add include directories (same for both static and shared)

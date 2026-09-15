@@ -75,6 +75,7 @@ private slots:
     void applyDiskMediaChange(uint8_t driveId, bool inserted);
     void updateDiskToolTip();
     void updateFpsToolTip(std::shared_ptr<Emulator> emulator);
+    void updateCpuFreqToolTip(EmulatorContext* context);
 
 private:
     MainWindow* _mainWindow;

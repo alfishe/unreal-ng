@@ -5,6 +5,8 @@
 
 #include "dezogtestfixture.h"
 
+#include "_helpers/testwaithelper.h"
+
 #include "automation-dezog.h"
 #include "dzrpprotocol.h"
 #include "dzrpserver.h"
@@ -207,7 +209,13 @@ protected:
         ASSERT_NE(_server->getPort(), 0);
 
         ASSERT_TRUE(_client.connect(_server->getPort()));
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+        // The accept runs on the server's own thread, so a connected socket is
+        // not yet a session. Waiting on the server's view of that - rather than
+        // on a 20 ms guess paid by all 24 tests in this suite - is both faster
+        // and the thing the next command actually depends on.
+        ASSERT_TRUE(TestWait::For([this] { return _server->hasClient(); }, std::chrono::milliseconds(2000)))
+            << "server never accepted the client session";
     }
 
     void TearDown() override
@@ -455,8 +463,8 @@ TEST_F(DZRPServer_test, PauseCommandNotifiesManual)
 
     auto cont = _client.command(dzrp::CommandId::CMD_CONTINUE, std::vector<uint8_t>(11, 0));
     ASSERT_TRUE(cont.valid);
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    EXPECT_FALSE(_emulator->IsPaused());
+    EXPECT_TRUE(TestWait::For([&] { return !_emulator->IsPaused(); }, std::chrono::milliseconds(2000)))
+        << "CMD_CONTINUE did not resume the emulator";
 
     auto pause = _client.command(dzrp::CommandId::CMD_PAUSE);
     ASSERT_TRUE(pause.valid);
@@ -532,11 +540,12 @@ TEST_F(DZRPServer_test, CloseThenReconnect)
     auto close = _client.command(dzrp::CommandId::CMD_CLOSE);
     ASSERT_TRUE(close.valid);
     _client.disconnect();
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    ASSERT_TRUE(TestWait::For([this] { return !_server->hasClient(); }, std::chrono::milliseconds(2000)))
+        << "server did not release the closed session";
 
     TestDzrpClient second;
     ASSERT_TRUE(second.connect(_server->getPort()));
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    ASSERT_TRUE(TestWait::For([this] { return _server->hasClient(); }, std::chrono::milliseconds(2000)));
     std::vector<uint8_t> payload = {2, 0, 0, 'X', 0};
     auto resp = second.command(dzrp::CommandId::CMD_INIT, payload);
     EXPECT_TRUE(resp.valid);
@@ -553,7 +562,14 @@ TEST_F(DZRPServer_test, ClientDropWhileRunningCleansUpAndReconnects)
 
     // VS Code window closed / network drop: no CMD_CLOSE, socket just goes away
     _client.disconnect();
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    // Wait for the cleanup the test is about, not for a guessed interval: the
+    // server notices the dropped socket on its own thread.
+    EXPECT_TRUE(TestWait::For(
+        [&] { return _emulator->GetBreakpointManager()->GetBreakpointsCount() == 0u && !_emulator->IsPaused(); },
+        std::chrono::milliseconds(2000)))
+        << "dropped session left " << _emulator->GetBreakpointManager()->GetBreakpointsCount()
+        << " breakpoints, paused=" << _emulator->IsPaused();
 
     // Stale breakpoints are gone and the emulator is not left stuck on the hit
     EXPECT_EQ(_emulator->GetBreakpointManager()->GetBreakpointsCount(), 0u);
@@ -562,7 +578,7 @@ TEST_F(DZRPServer_test, ClientDropWhileRunningCleansUpAndReconnects)
     // Fresh session works as if nothing happened
     TestDzrpClient second;
     ASSERT_TRUE(second.connect(_server->getPort()));
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    ASSERT_TRUE(TestWait::For([this] { return _server->hasClient(); }, std::chrono::milliseconds(2000)));
     std::vector<uint8_t> payload = {2, 0, 0, 'X', 0};
     ASSERT_TRUE(second.command(dzrp::CommandId::CMD_INIT, payload).valid);
     ASSERT_TRUE(second.command(dzrp::CommandId::CMD_PAUSE).valid);
@@ -580,7 +596,12 @@ TEST_F(DZRPServer_test, CloseCommandResumesAndDropsBreakpoints)
 
     ASSERT_TRUE(_client.command(dzrp::CommandId::CMD_CLOSE).valid);
     _client.disconnect();
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    EXPECT_TRUE(TestWait::For(
+        [&] { return _emulator->GetBreakpointManager()->GetBreakpointsCount() == 0u && !_emulator->IsPaused(); },
+        std::chrono::milliseconds(2000)))
+        << "CMD_CLOSE left " << _emulator->GetBreakpointManager()->GetBreakpointsCount()
+        << " breakpoints, paused=" << _emulator->IsPaused();
 
     EXPECT_EQ(_emulator->GetBreakpointManager()->GetBreakpointsCount(), 0u);
     EXPECT_FALSE(_emulator->IsPaused());
@@ -689,7 +710,8 @@ TEST_F(DZRPServer_test, HistoryEntryWireFormat)
 TEST_F(DZRPServer_test, NotificationWithoutClientDoesNotCrash)
 {
     _client.disconnect();
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    ASSERT_TRUE(TestWait::For([this] { return !_server->hasClient(); }, std::chrono::milliseconds(2000)))
+        << "server still holds a session; the notify below would not exercise the no-client path";
     _server->notifyPause(dzrp::BreakReason::MANUAL, 0x1234, 0);
     SUCCEED();
 }

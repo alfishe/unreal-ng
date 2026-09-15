@@ -28,6 +28,7 @@
 #include <emulator/video/screencapture.h>
 #include <emulator/cpu/opcode_profiler.h>
 #include <debugger/keyboard/debugkeyboardmanager.h>
+#include <debugger/mouse/debugmousemanager.h>
 #include <debugger/ttd/timetravelmanager.h>
 #include <debugger/ttd/ttdprobe.h>
 #include <debugger/analyzers/audiocapture/audiocaptureanalyzer.h>
@@ -48,17 +49,50 @@
 #include <cmath>
 
 #include <chrono>
+#include <cstdio>
 #include <fstream>
+#include <limits>
 #include <optional>
+#include <stdexcept>
 #include <thread>
 #include <debugger/ttd/ttdexternalevents.h>
 #include "../../../automation.h"
+#include <emulator/state/devicestate.h>
 #include "../bindings/python_porttrace.h"
 
 namespace py = pybind11;
 
 /// @brief Python bindings for Emulator class and related functionality
 /// Provides comprehensive emulator control matching CLI and WebAPI interfaces
+/// StateNode -> Python object (dict / list / scalars). The one converter
+/// Python needs for every DeviceState report.
+inline pybind11::object StateNodeToPy(const StateNode& node)
+{
+    namespace py = pybind11;
+    switch (node.kind)
+    {
+        case StateNode::Kind::Bool: return py::bool_(node.b);
+        case StateNode::Kind::Int: return py::int_(node.i);
+        case StateNode::Kind::Double: return py::float_(node.d);
+        case StateNode::Kind::String: return py::str(node.s);
+        case StateNode::Kind::Object:
+        {
+            py::dict d;
+            for (const auto& m : node.members)
+                d[py::str(m.first)] = StateNodeToPy(m.second);
+            return d;
+        }
+        case StateNode::Kind::Array:
+        {
+            py::list l;
+            for (const auto& item : node.items)
+                l.append(StateNodeToPy(item));
+            return l;
+        }
+        default: return py::none();
+    }
+}
+
 namespace PythonBindings
 {
     /// Pause() -> op -> Resume() bracket shared by the mutating tape
@@ -90,6 +124,89 @@ namespace PythonBindings
         Emulator* _emulator;
         bool _wasRunning;
     };
+
+    /// region <Kempston Mouse helpers (automation-interfaces §4.6)>
+
+    /// Manager of the emulator, or RuntimeError when there is none
+    inline DebugMouseManager& MouseManagerOrThrow(Emulator& self)
+    {
+        auto* ctx = self.GetContext();
+        DebugMouseManager* mgr = (ctx && ctx->pDebugManager) ? ctx->pDebugManager->GetMouseManager() : nullptr;
+        if (!mgr)
+            throw std::runtime_error("mouse manager not available");
+        return *mgr;
+    }
+
+    /// Resolve a button name or raise ValueError
+    inline MouseButton MouseButtonOrThrow(const std::string& name)
+    {
+        const auto button = DebugMouseManager::ResolveButtonName(name);
+        if (!button)
+            throw py::value_error("Unknown mouse button '" + name + "'. Valid: left, right, middle (or l, r, m)");
+        return *button;
+    }
+
+    /// State dict: same keys as the WebAPI state object
+    inline py::dict MouseStateDict(const MouseStateSnapshot& state, const std::string& warning = "")
+    {
+        py::dict buttons;
+        buttons["left"] = state.IsPressed(MouseButton::Left);
+        buttons["right"] = state.IsPressed(MouseButton::Right);
+        buttons["middle"] = state.IsPressed(MouseButton::Middle);
+
+        auto hex = [](uint8_t value) {
+            char text[8];
+            std::snprintf(text, sizeof(text), "0x%02X", value);
+            return std::string(text);
+        };
+        py::dict ports;
+        ports["FADF"] = static_cast<int>(state.portButtons);  // integers, same as the WebAPI
+        ports["FBDF"] = static_cast<int>(state.portX);  // integers, same as the WebAPI
+        ports["FFDF"] = static_cast<int>(state.portY);  // integers, same as the WebAPI
+
+        py::dict d;
+        d["x"] = state.x;
+        d["y"] = state.y;
+        d["buttons"] = buttons;
+        d["button_mask"] = state.buttonMask;
+        d["wheel"] = state.wheel;
+        d["wheel_enabled"] = state.wheelEnabled;
+        d["present"] = state.present;
+        d["ports"] = ports;
+        if (state.pendingClickButton.has_value())
+        {
+            py::dict pending;
+            pending["button"] = DebugMouseManager::GetButtonName(*state.pendingClickButton);
+            pending["frames_left"] = state.pendingClickFramesLeft;
+            d["pending_click"] = pending;
+        }
+        else
+        {
+            d["pending_click"] = py::none();
+        }
+        d["ttd_journal"] = state.journalSupported ? "supported" : "unsupported";
+        if (!warning.empty())
+            d["warning"] = warning;
+        return d;
+    }
+
+    /// Raise for a failed result (ValueError / RuntimeError), else return the state dict
+    inline py::dict MouseResultOrThrow(DebugMouseManager& mgr, const MouseInjectResult& result)
+    {
+        switch (result.status)
+        {
+            case MouseInjectStatus::Ok:
+                return MouseStateDict(mgr.GetState(), result.warning);
+            case MouseInjectStatus::InvalidArgument:
+                throw py::value_error(result.message);
+            case MouseInjectStatus::NoDevice:
+            case MouseInjectStatus::ReplayActive:
+            default:
+                throw std::runtime_error(result.message.empty() ? "mouse manager not available" : result.message);
+        }
+    }
+
+    /// endregion </Kempston Mouse helpers>
 
     /// @brief Register all emulator bindings with the Python module
     /// @param m The pybind11 module to register bindings with
@@ -1259,6 +1376,17 @@ namespace PythonBindings
                 if (!ctx || !ctx->pSoundManager) return 0;
                 return ctx->pSoundManager->getAYChipCount();
             }, "Get AY chip count (TurboSound=2)")
+            // Device state reports (core DeviceState: the same trees the
+            // WebAPI, Lua, CLI and MCP return); chip=-1 -> overview
+            .def("audio_ay_state", [](Emulator& self, int chip) -> py::object {
+                return StateNodeToPy(chip < 0 ? DeviceState::Ay(self.GetContext()) : DeviceState::AyChip(self.GetContext(), chip));
+            }, "AY/SSG state report: overview (chip=-1) or one chip fully decoded", py::arg("chip") = -1)
+            .def("audio_fm_state", [](Emulator& self, int chip) -> py::object {
+                return StateNodeToPy(chip < 0 ? DeviceState::Fm(self.GetContext()) : DeviceState::FmChip(self.GetContext(), chip));
+            }, "TurboSound FM state report: board + chip summary (chip=-1) or one YM2203 FM half in full", py::arg("chip") = -1)
+            .def("fdc_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::Fdc(self.GetContext()));
+            }, "Beta Disk WD1793 state report: registers, status bits, FSM, signals, drives")
             
             // Advanced disk operations
             .def("disk_info", [](Emulator& self, int drive) -> py::dict {
@@ -2012,6 +2140,67 @@ namespace PythonBindings
                 }
                 return result;
             }, "Get port activity")
+
+            // -----------------------------------------------------------------
+            // Kempston Mouse injection (automation-interfaces §4.6)
+            // Errors raise: ValueError for bad arguments, RuntimeError for
+            // TTD replay / missing device. Success returns the state dict.
+            // -----------------------------------------------------------------
+            .def("mouse_move", [](Emulator& self, int dx, int dy) -> py::dict {
+                DebugMouseManager& mgr = MouseManagerOrThrow(self);
+                return MouseResultOrThrow(mgr, mgr.Move(dx, dy));
+            }, "Move the mouse by dx,dy emulated pixels (+x right, +y up; -127..127)", py::arg("dx"), py::arg("dy"))
+            .def("mouse_press", [](Emulator& self, const std::string& button) -> py::dict {
+                MouseButton resolved = MouseButtonOrThrow(button);
+                DebugMouseManager& mgr = MouseManagerOrThrow(self);
+                return MouseResultOrThrow(mgr, mgr.PressButton(resolved));
+            }, "Press and hold a mouse button (left|right|middle, or l|r|m)", py::arg("button"))
+            .def("mouse_release", [](Emulator& self, const std::string& button) -> py::dict {
+                MouseButton resolved = MouseButtonOrThrow(button);
+                DebugMouseManager& mgr = MouseManagerOrThrow(self);
+                return MouseResultOrThrow(mgr, mgr.ReleaseButton(resolved));
+            }, "Release a mouse button", py::arg("button"))
+            .def("mouse_click", [](Emulator& self, const std::string& button, int64_t frames) -> py::dict {
+                MouseButton resolved = MouseButtonOrThrow(button);
+                DebugMouseManager& mgr = MouseManagerOrThrow(self);
+                if (frames < 0 || frames > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()))
+                    throw py::value_error("frames=" + std::to_string(frames) + " out of range 1.." +
+                                          std::to_string(DebugMouseManager::MAX_CLICK_FRAMES));
+                return MouseResultOrThrow(mgr, mgr.Click(resolved, static_cast<uint32_t>(frames)));
+            }, "Press a mouse button, hold for frames, release", py::arg("button"),
+               py::arg("frames") = static_cast<int64_t>(DebugMouseManager::DEFAULT_CLICK_FRAMES))
+            .def("mouse_buttons", [](Emulator& self, const std::vector<std::string>& pressed) -> py::dict {
+                uint8_t bits = 0;
+                for (const auto& name : pressed)
+                    bits |= static_cast<uint8_t>(MouseButtonOrThrow(name));
+                DebugMouseManager& mgr = MouseManagerOrThrow(self);
+                return MouseResultOrThrow(mgr, mgr.SetPressedButtons(bits));
+            }, "Set exactly which mouse buttons are pressed ([] = none)", py::arg("pressed"))
+            .def("mouse_wheel", [](Emulator& self, int steps) -> py::dict {
+                DebugMouseManager& mgr = MouseManagerOrThrow(self);
+                return MouseResultOrThrow(mgr, mgr.Wheel(steps));
+            }, "Scroll the mouse wheel by steps (-7..7, + = away from user)", py::arg("steps"))
+            .def("mouse_release_all", [](Emulator& self) -> py::dict {
+                DebugMouseManager& mgr = MouseManagerOrThrow(self);
+                return MouseResultOrThrow(mgr, mgr.ReleaseAllButtons());
+            }, "Release all mouse buttons and cancel a pending click")
+            .def("mouse_set_counters", [](Emulator& self, int x, int y) -> py::dict {
+                DebugMouseManager& mgr = MouseManagerOrThrow(self);
+                return MouseResultOrThrow(mgr, mgr.SetCounters(x, y));
+            }, "Debug: write raw mouse X/Y counters (0..255)", py::arg("x"), py::arg("y"))
+            .def("mouse_status", [](Emulator& self) -> py::dict {
+                DebugMouseManager& mgr = MouseManagerOrThrow(self);
+                MouseStateSnapshot state = mgr.GetState();
+                if (!state.available)
+                    throw std::runtime_error("Mouse device not available");
+                return MouseStateDict(state);
+            }, "Get mouse counters, buttons, wheel and port values")
+            .def("mouse_click_pending", [](Emulator& self) -> bool {
+                return MouseManagerOrThrow(self).IsClickPending();
+            }, "True while a timed mouse click is still holding its button")
+            .def("mouse_button_names", [](Emulator&) -> std::vector<std::string> {
+                return DebugMouseManager::GetAllButtonNames();
+            }, "List mouse button names")
 
             // -----------------------------------------------------------------
             // TTD (Time-Travel Debug) bindings — Phase 2 surface

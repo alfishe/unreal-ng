@@ -10,11 +10,11 @@
 #ifndef NOMINMAX
 #define NOMINMAX  // Prevent min/max macros from windows.h
 #endif
-#include <io.h>
-#include <iphlpapi.h>
-#include <windows.h>
-#include <winsock2.h>  // Must come first!
+#include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
+#include <iphlpapi.h>
+#include <io.h>
 
 
 #pragma comment(lib, "ws2_32.lib")

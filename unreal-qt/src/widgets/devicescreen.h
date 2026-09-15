@@ -5,10 +5,16 @@
 #include <QWidget>
 #include <functional>
 #include <memory>
+#include <cstdint>
 
 #include "emulator/video/screen.h"  // For DisplayViewport
+#include "framehistory.h"
+#include "crtprofiles.h"
+
+class CRTFilter;
 
 class Emulator;  // Forward declaration
+class MouseManager;
 
 namespace Ui
 {
@@ -55,15 +61,16 @@ public slots:
     void prepareForShutdown();  // Block refreshes during shutdown
 
 public:
-    void setEmulator(std::shared_ptr<Emulator> emulator)
-    {
-        _emulator = emulator;
-    }
+    /// Also retargets Kempston Mouse input (capture is released on change)
+    void setEmulator(std::shared_ptr<Emulator> emulator);
 
     void setDisplayViewport(const DisplayViewport& viewport)
     {
         _displayViewport = viewport;
         _hasViewport = true;
+
+        // Flush temporal cache - old frames had different geometry
+        _frameHistory.clear();
 
         // Aspect ratio is fixed (see sizeHint) - only the source rectangle changes
         update();  // Trigger repaint with new viewport
@@ -76,8 +83,35 @@ public:
     void clearDisplayViewport()
     {
         _hasViewport = false;
+
+        // Flush temporal cache - geometry changed
+        _frameHistory.clear();
+
         update();
     }
+
+    // Temporal blending (gigascreen flicker smoothing)
+    void setTemporalBlendingEnabled(bool enabled);
+    bool temporalBlendingEnabled() const { return _temporalEnabled; }
+    void setTemporalHistorySize(int frames);
+    int temporalHistorySize() const { return _frameHistory.historySize(); }
+    void setTemporalWeightMode(int mode);
+    int temporalWeightMode() const { return _temporalWeightMode; }
+
+    // CRT effects (SIMD-accelerated)
+    void setCRTEffectsEnabled(bool enabled);
+    bool crtEffectsEnabled() const { return _crtEnabled; }
+    void setCRTProfile(CRTProfile profile);
+    void setCRTProfile(const CRTProfileParams& params);
+    CRTProfile crtProfile() const { return _crtParams.profile; }
+    const CRTProfileParams& crtParams() const { return _crtParams; }
+
+    void setMouseCaptured(bool captured);
+    bool isMouseCaptured() const;
+    MouseManager* mouseManager() const { return _mouseManager; }
+
+    /// Framebuffer area currently drawn into the widget (viewport-cropped), in emulated pixels
+    QRectF displaySourceRect() const;
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -85,6 +119,10 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
+    void focusOutEvent(QFocusEvent* event) override;
 
     void resizeEvent(QResizeEvent* event) override;
     using QWidget::heightForWidth;  // Bring method declaration from QWidget
@@ -106,6 +144,20 @@ private:
     // Viewport cropping for overscan mode
     DisplayViewport _displayViewport;
     bool _hasViewport = false;
+
+    // Temporal blending
+    FrameHistory _frameHistory;
+    QImage _blendedFrame;
+    bool _temporalEnabled = false;
+    int _temporalWeightMode = 0;
+
+    // CRT effects
+    std::unique_ptr<CRTFilter> _crtFilter;
+    QImage _crtFrame;
+    bool _crtEnabled = false;
+    CRTProfileParams _crtParams;
+
+    MouseManager* _mouseManager = nullptr;  // Kempston Mouse host input (owned via QObject parent)
 };
 
 #endif  // DEVICESCREEN_H

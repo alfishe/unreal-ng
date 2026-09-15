@@ -26,6 +26,7 @@
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
 
+#include "_helpers/emulatortesthelper.h"
 #include "_helpers/testwaithelper.h"
 
 namespace
@@ -53,8 +54,12 @@ protected:
 
     void SetUp() override
     {
+        // Capture tests assert the legacy TurboSound peripheral; the shipped
+        // default slot is FM now, so stage the default machine's ini with AY
         _emulator = new Emulator(LoggerLevel::LogError);
         ASSERT_NE(_emulator, nullptr);
+        _emulator->SetCustomConfigPath(
+            EmulatorTestHelper::StageTurboSoundKindConfig(TurboSoundKind::AY));
         ASSERT_TRUE(_emulator->Init()) << "Failed to initialize emulator";
 
         EmulatorContext* ctx = _emulator->GetContext();
