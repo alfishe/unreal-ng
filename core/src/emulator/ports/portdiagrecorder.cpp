@@ -403,6 +403,7 @@ const char* PortDiagnosticRecorder::DeviceIdToString(PortDeviceId id)
         case PortDeviceId::Beta128_System: return "Beta128_System";
         case PortDeviceId::Covox:          return "Covox";
         case PortDeviceId::Custom:         return "Custom";
+        case PortDeviceId::FullDecodeClaim: return "FullDecodeClaim";
         default:                           return "Unknown";
     }
 }
@@ -704,18 +705,19 @@ bool PortDiagnosticRecorder::saveToFile(const std::string& path, PortTraceExport
             out << line;
         }
         out << "index,timestamp,frame,direction,raw_port,decoded_port,decode_rule,value,pc,device,decoded,"
-               "had_handler,beta128_gated,handled_inline,cf_trdos,via_legacy\n";
+               "had_handler,beta128_gated,handled_inline,cf_trdos,via_legacy,full_decode_claim\n";
 
         for (size_t i = 0; i < events.size(); i++)
         {
             const PortTraceEvent& e = events[i];
             snprintf(line, sizeof(line),
-                     "%zu,%llu,%u,%s,0x%04X,0x%04X,%u,0x%02X,0x%04X,%s,%d,%d,%d,%d,%d,%d\n", i,
+                     "%zu,%llu,%u,%s,0x%04X,0x%04X,%u,0x%02X,0x%04X,%s,%d,%d,%d,%d,%d,%d,%d\n", i,
                      (unsigned long long)e.timestamp, e.frameNumber, e.isOut() ? "OUT" : "IN", e.rawPort,
                      e.decodedPort, e.decodeRuleIndex, e.value, e.pc, DeviceIdToString(e.deviceId),
                      e.wasDecoded() ? 1 : 0, e.hadHandler() ? 1 : 0, e.wasBeta128Gated() ? 1 : 0,
                      e.wasHandledInline() ? 1 : 0, e.cfTrdosActive() ? 1 : 0,
-                     (e.flags & PortTraceFlags::kViaLegacyBasePath) ? 1 : 0);
+                     (e.flags & PortTraceFlags::kViaLegacyBasePath) ? 1 : 0,
+                     e.wasFullDecodeClaimed() ? 1 : 0);
             out << line;
         }
 
@@ -755,7 +757,7 @@ bool PortDiagnosticRecorder::saveToFile(const std::string& path, PortTraceExport
     out << (info.decodeRules.empty() ? "]" : "\n  ]") << ",\n";
 
     out << "  \"device_map\": {";
-    for (int id = 0; id <= (int)PortDeviceId::Custom; id++)
+    for (int id = 0; id <= (int)PortDeviceId::FullDecodeClaim; id++)
     {
         const char* name = DeviceIdToString((PortDeviceId)id);
         if (std::string(name) == "Unknown")

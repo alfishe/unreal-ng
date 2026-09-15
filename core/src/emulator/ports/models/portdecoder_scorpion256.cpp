@@ -178,6 +178,22 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
     uint16_t beta128Port = 0;
     const bool isBeta128 = TryBeta128MirrorPort(port, ScorpionTrDosSelected(), beta128Port);
 
+    // Full-decode low-byte claim override (see portdecoder.h): with the FDC
+    // address pattern off (!isBeta128 keeps the Beta-128 session arbitration,
+    // R6), a registered low-byte card owns the read - the motherboard chain
+    // below stands down and the observer's cached read value (Z80 funnel tap)
+    // is the bus value, so the attribute-latch floating bus must not fire
+    {
+        uint16_t claimedPort = port; // identity placeholder: no arm below resolved yet
+        if (!isBeta128 && OverrideDecodeForFullDecodeClaim(port, claimedPort, disp))
+        {
+            result = GetCachedFullDecodeInValue(port);
+            _lastPortDecoded = true; // the card drives the bus
+            OnPortInComplete(port, result, pc, disp);
+            return result;
+        }
+    }
+
     // Kempston Mouse register selected by the decode (0 buttons, 1 X, 2 Y)
     uint8_t mouseReg = 0;
 
@@ -325,6 +341,21 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
     // Resolve Beta128 mirrors once: the FDC decodes A7-A0 only (A2-A0 while TR-DOS is selected)
     uint16_t beta128Port = 0;
     const bool isBeta128 = TryBeta128MirrorPort(port, ScorpionTrDosSelected(), beta128Port);
+
+    // Full-decode low-byte claim override (see portdecoder.h): with the FDC
+    // address pattern off (!isBeta128 keeps the Beta-128 session arbitration,
+    // R6), a registered low-byte card owns the cycle - the motherboard decode
+    // below stands down (the observer was already serviced by the Z80 I/O
+    // funnel tap). The raw-port placeholder protects an exact Beta-128
+    // registered key inside the override
+    {
+        uint16_t claimedPort = port; // identity placeholder: no arm below resolved yet
+        if (!isBeta128 && OverrideDecodeForFullDecodeClaim(port, claimedPort, disp))
+        {
+            OnPortOutComplete(port, value, pc, disp);
+            return;
+        }
+    }
 
     // The ProfROM window latch must be checked first: its pattern is a subset
     // of the #7FFD decode (the base-machine GAL equation ignores A8), so on a

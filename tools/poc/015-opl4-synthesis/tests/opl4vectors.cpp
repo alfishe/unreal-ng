@@ -632,6 +632,8 @@ inline double RmsOf(const std::vector<float>& v)
 void VecFm4Op()
 {
     std::printf("VecFm4Op\n");
+#if !defined(OPL4_FM_YMFM) // pins the in-tree 4-op/linear-map model; the
+    // temporary ymfm backend uses the classic operator map and zeroes taps
     const auto run4 = [](TestChip& tc, uint8_t conn)
     {
         tc.chip.WriteFm(0, 1, 0x05, 0x01); // 0x105: NEW (must come first)
@@ -661,11 +663,15 @@ void VecFm4Op()
     for (int ch = 0; ch < 4; ch++)
         pk = std::max(pk, a.chip.ChannelPeak({ChannelGroup::Fm, static_cast<uint8_t>(ch)}));
     CHECK(pk > 0.05f);
+#endif // !OPL4_FM_YMFM
 }
 
 void VecFmRhythm()
 {
     std::printf("VecFmRhythm\n");
+#if !defined(OPL4_FM_YMFM) // pins the in-tree linear-map rhythm model
+    // (op indices and per-channel peaks); the ymfm backend uses the classic
+    // map and zeroes taps
     TestChip tc;
     // NEW first: without 0x105 the bank-1 register file aliases back to
     // bank 0 (ymfm-modelled quirk) and the percussion voices never load.
@@ -688,6 +694,7 @@ void VecFmRhythm()
     CHECK(tc.chip.ChannelPeak({ChannelGroup::Fm, 10}) > 0.02f); // HH
     CHECK(tc.chip.ChannelPeak({ChannelGroup::Fm, 11}) > 0.02f); // CY
     CHECK(tc.chip.ChannelPeak({ChannelGroup::Fm, 7}) < 0.001f); // unkeyed
+#endif // !OPL4_FM_YMFM
 }
 
 void VecFmTimers()
@@ -725,7 +732,11 @@ void VecFmLfo()
         TestChip am, noam;
         KeyOnFmCh0(am.chip, 0);
         KeyOnFmCh0(noam.chip, 0);
+#if defined(OPL4_FM_YMFM) // classic carrier register
+        am.chip.WriteFm(0, 0, 0x23, 0x81); // carrier: AM on, mult 1
+#else
         am.chip.WriteFm(0, 0, 0x21, 0x81); // carrier: AM on, mult 1
+#endif
         const double rAm = RmsOf(CaptureFrames(am, 9000));
         const double rNo = RmsOf(CaptureFrames(noam, 9000));
         CHECK(rNo > 0.0);
@@ -736,7 +747,11 @@ void VecFmLfo()
         TestChip vib, novib;
         KeyOnFmCh0(vib.chip, 0);
         KeyOnFmCh0(novib.chip, 0);
+#if defined(OPL4_FM_YMFM) // classic carrier register
+        vib.chip.WriteFm(0, 0, 0x23, 0x41); // carrier: VIB on, mult 1
+#else
         vib.chip.WriteFm(0, 0, 0x21, 0x41); // carrier: VIB on, mult 1
+#endif
         const std::vector<float> a = CaptureFrames(vib, 3000);
         const std::vector<float> b = CaptureFrames(novib, 3000);
         CHECK(a.size() == b.size() && !std::equal(a.begin(), a.end(), b.begin()));
@@ -746,6 +761,8 @@ void VecFmLfo()
 void VecFmKsl()
 {
     std::printf("VecFmKsl\n");
+#if !defined(OPL4_FM_YMFM) // pins the in-tree KSL model via per-channel
+    // peaks; the ymfm backend zeroes taps
     TestChip ksl, noksl;
     for (TestChip* tc : {&ksl, &noksl})
     {
@@ -766,6 +783,7 @@ void VecFmKsl()
     const float pOff = noksl.chip.ChannelPeak({ChannelGroup::Fm, 0});
     CHECK(pOff > 0.05f);
     CHECK(pOn < pOff); // key-scale attenuation at block 7
+#endif // !OPL4_FM_YMFM
 }
 
 // ---------------------------------------------------------------------------

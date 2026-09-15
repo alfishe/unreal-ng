@@ -81,6 +81,22 @@ uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t port, uint16_t pc)
     PortDecodeDisposition disp;
     disp.decodeRuleIndex = PortTraceRule::kNoTable;
 
+    // Full-decode low-byte claim override (see portdecoder.h): a registered
+    // low-byte card owns this cycle, so the motherboard decode chain stands
+    // down - the observer was already serviced by the Z80 I/O funnel tap and
+    // its cached read value is the bus value. The raw-port placeholder keeps
+    // an exact Beta-128 registered key unclaimed (R6)
+    {
+        uint16_t claimedPort = port; // identity placeholder: no arm below resolved yet
+        if (OverrideDecodeForFullDecodeClaim(port, claimedPort, disp))
+        {
+            result = GetCachedFullDecodeInValue(port);
+            _lastPortDecoded = true; // the card drives the bus: no floating bus
+            OnPortInComplete(port, result, pc, disp);
+            return result;
+        }
+    }
+
     if ((port & 0xC002) == 0xC000)
     {
         result = PeripheralPortIn(0xFFFD);
@@ -143,6 +159,20 @@ void PortDecoder_Spectrum128::DecodePortOut(uint16_t port, uint8_t value, uint16
     // Port trace decode attribution (if-chain decoder: no mask/match table)
     PortDecodeDisposition disp;
     disp.decodeRuleIndex = PortTraceRule::kNoTable;
+
+    // Full-decode low-byte claim override (see portdecoder.h): a registered
+    // low-byte card owns this cycle, so the motherboard decode chain stands
+    // down - the observer was already serviced by the Z80 I/O funnel tap.
+    // The raw-port placeholder keeps an exact Beta-128 registered key
+    // unclaimed (R6)
+    {
+        uint16_t claimedPort = port; // identity placeholder: no arm below resolved yet
+        if (OverrideDecodeForFullDecodeClaim(port, claimedPort, disp))
+        {
+            OnPortOutComplete(port, value, pc, disp);
+            return;
+        }
+    }
 
     //    ZX Spectrum 128 / +2
     //    port: #7FFD

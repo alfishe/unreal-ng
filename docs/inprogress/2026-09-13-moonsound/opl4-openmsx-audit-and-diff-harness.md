@@ -7,6 +7,9 @@ design of the register-stream differential harness that keeps us honest
 from here on.
 **Companion:** `opl4-core-tdd.md` (chip library), `opl4-unreal-ng-integration.md`
 Revision 4 (device wiring).
+**Revision 5** (2026-09-14): §6 records the ymfm OPL3 verification backend —
+the license-clean in-tree comparator §4.4 called for — and the three FM
+divergences it exposed.
 
 ---
 
@@ -184,3 +187,107 @@ documented alongside.
 - [ ] If clean to level 3: promote a nightly capture-diff set into
       `core/tests` as golden PCM state vectors (level 2 snapshots — compact
       and license-safe).
+- [ ] Decide the FM operator-map question §6.2 raises (linear vs classic
+      OPL3 map) before investing in FM repertoire testing.
+
+## 6. The ymfm OPL3 verification backend (Revision 5)
+
+§4.4 anticipated "ymfm's OPL4 core as a BSD-licensed in-tree sanity engine
+if a license-clean comparator is ever needed in CI." This revision built
+exactly that, for the **FM half only** (the PCM half stays on the
+openMSX-audited in-tree model — §3.1 already cleared it suspect-by-suspect).
+
+### 6.1 What was built
+
+- **Vendored:** `ymfm_opl.{cpp,h}` and `ymfm_pcm.{cpp,h}` at
+  `core/src/3rdparty/ymfm/` (repo already vendored the OPN subset for TSFM
+  at pinned commit 81aec25; these two are byte-identical to that commit,
+  `VERSION.txt` updated). The ymf262 (OPL3) class is the synthesis engine;
+  `ymfm_pcm.cpp` is required because `ymfm_opl.cpp`'s y8950 references the
+  adpcm_b engine.
+- **Adapter:** `Opl4FmYmfm : Opl4Fm` (`tools/poc/015-opl4-synthesis/src/`),
+  same pattern as the TSFM device: the base class keeps every audited bus
+  semantic (bank-1 aliasing until NEW, timer periods/enable/mask/RST bits,
+  status bits 6/5), the subclass replaces synthesis with
+  `ymf262::generate(&out, 1)` per FM boundary (L = data[0] + data[2],
+  R = data[1] + data[3]) and shuttles TTD state through ymfm's structured
+  `save_restore` (the PATCHES.md engine-level TTD patch — now proven exact
+  for OPL, previously only for OPN).
+- **Switch:** CMake option `OPL4_FM_BACKEND` (`intree` default | `ymfm`),
+  compile-time only — the TTD state layout differs between backends, so a
+  runtime switch would make layouts ambiguous. `core/src/CMakeLists.txt`
+  mirrors the selection as PUBLIC `OPL4_FM_YMFM=1` because opl4 is linked
+  PRIVATE and core-tests compiles the core sources (and FM-programming test
+  helpers) directly.
+- **Comparator:** `tests/opl4fmcompare.cpp` in the PoC suite — one register
+  stream into both engines, state diff first, samples last (§4.3's policy,
+  realized in-tree).
+
+### 6.2 Comparator findings
+
+Where the engines agree on interpretation, they agree on output:
+
+- **State:** flags, both timers, and the shared register file track exactly
+  (bank aliasing, T1 = (0x100−load)·4, T2 = ·16, RST choreography).
+- **Pitch:** ratio ours/ymfm = **1.0000** — equivalent phase mathematics.
+- **Level:** ratio ≈ **4.0** — ymfm's 13-bit intermediate headroom vs our
+  scaling; a constant, not a fidelity gap.
+- **TTD:** adapter save/restore exact — 4000 lockstep checks, restored twin
+  bit-identical to the source engine from the capture point on.
+
+And where a **classic OPL3 driver's register bytes** meet our engine, the
+comparator reports DIVERGENT — three stacked divergences, none of them
+state-visible (which is why the openMSX audit never saw them; openMSX uses
+the classic map and our PCM comparison was unaffected):
+
+1. **Operator register map.** Ours is linear (`op = reg − 0x20`, channel
+   *i* pairs operators {2i, 2i+1}); YMF262 is classic (operator groups at
+   +0/+8/+0x10, channel *i* pairs {i, i+3}; channel-0 carrier lives at
+   0x23/0x43/0x63/0x83). Identical driver bytes therefore program the
+   wrong operators.
+2. **0xC0 routing polarity inverted.** Our bits *exclude* sides (0x30 =
+   fully silent, 0x00 = both); YMF262 CHA/CHB *include* (0x30 = both).
+   A classic driver's routine `0xC0 = 0x31` mutes us, not ymfm.
+3. **Unconfigured carrier has AR 0** in our engine and never attacks —
+   compounding 1: when the envelope writes miss the real carrier, the
+   voice stays silent rather than merely wrong.
+
+Measured verdict line: identical bytes, rms ours = 0 vs ymfm = 1465.
+These three are the prime "wrong instruments / silent FM" suspects for
+any real MoonSound FM repertoire — the actionable outcome of the A/B.
+
+### 6.3 Verification matrix
+
+| Configuration | Result |
+|---|---|
+| PoC default (`opl4tests`, bin/) | 5452 checks / 0 failures |
+| PoC ymfm (`bin-ymfm/`) | 5440 checks / 0 failures (12 pinning checks guarded, §6.4) |
+| core default (`cmake-build-release`, 20 shards) | 0 failures |
+| core ymfm (`cmake-build-ymfm`, 20 shards) | 0 failures |
+| `*MoonSound*` filter, both backends | 11/11, incl. all three TTD round-trip tests |
+| Compiler warnings | zero, both backends (−Werror) |
+
+### 6.4 Guarded under `OPL4_FM_YMFM` (with rationale in-code)
+
+- PoC `VecFm4Op` / `VecFmRhythm` / `VecFmKsl` bodies and the `TestTaps` FM
+  peak assertion — they pin the in-tree synthesis model / linear map / tap
+  semantics the backend swap intentionally replaces.
+- `KeyOnFmCh0` (PoC testfw) and `KeyOnFmCh0ThroughPorts` (core MoonSound
+  test) are not guarded but **backend-aware**: under the flag they program
+  the classic-map carrier addresses and 0xC0 = 0x30 (CHA+CHB), so the
+  device tests exercise the ymfm path meaningfully instead of silently.
+- `TTD_Capture_Cost_Gate_Test` time-share assertion: ymfm's structured
+  `save_restore` costs ~15x the in-tree memcpy (measured 78.3 ms recorded
+  vs 30.7 ms baseline over 30 frames → 60.8% share vs the 50% budget).
+  The byte-volume gate stays active for that build; correctness is covered
+  by the TTD round-trip tests.
+
+### 6.5 Known limitations of the backend
+
+- Rhythm-mode channel taps are zeroed (the base class API exposes them;
+  ymfm mixes them internally). No shipped code path reads taps.
+- Not shippable as default while the TTD capture-cost regression stands —
+  it is a verification instrument, per its charter.
+- The option must never be combined with a pre-existing TTD recording from
+  the other backend (layout tag differs; the store refuses mismatched
+  tags by design).

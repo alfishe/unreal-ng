@@ -1027,21 +1027,11 @@ bool SoundManager::attachToPorts()
     }
 
 #ifdef UNREALNG_HAVE_OPL4
-    // Attach MoonSound as a low-byte full-decode observer on the card's six
-    // port addresses (D4): the CPLD wires A0..A7 only, so every high-byte
-    // alias hits the card - including the dirty aliases the Z80 immediate
-    // forms produce (A lands in the high address byte; MoonService v0.3a
-    // depends on it). The card shares the bus, so partial-decode devices
-    // (ULA/AY/Beta-128) still see MoonSound cycles and MoonSound sees theirs.
-    // The exclusive map would steal #7F from the WD1793 FDC.
+    // The card owns its bus decode (low-byte full-decode observer, D4) -
+    // SoundManager only routes the lifecycle call
     if (_moonsound && _context->pPortDecoder)
     {
-        result &= _context->pPortDecoder->RegisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_FM_ADDR1), _moonsound);
-        result &= _context->pPortDecoder->RegisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_FM_DATA1), _moonsound);
-        result &= _context->pPortDecoder->RegisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_FM_ADDR2), _moonsound);
-        result &= _context->pPortDecoder->RegisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_FM_DATA2), _moonsound);
-        result &= _context->pPortDecoder->RegisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_WAVE_ADDR), _moonsound);
-        result &= _context->pPortDecoder->RegisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_WAVE_DATA), _moonsound);
+        result &= _moonsound->attachToPorts(_context->pPortDecoder);
     }
 #endif
 
@@ -1063,14 +1053,9 @@ bool SoundManager::detachFromPorts()
 
 #ifdef UNREALNG_HAVE_OPL4
     // Detach MoonSound's low-byte full-decode observer registrations
-    if (_moonsound && _context->pPortDecoder)
+    if (_moonsound)
     {
-        _context->pPortDecoder->UnregisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_FM_ADDR1), _moonsound);
-        _context->pPortDecoder->UnregisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_FM_DATA1), _moonsound);
-        _context->pPortDecoder->UnregisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_FM_ADDR2), _moonsound);
-        _context->pPortDecoder->UnregisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_FM_DATA2), _moonsound);
-        _context->pPortDecoder->UnregisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_WAVE_ADDR), _moonsound);
-        _context->pPortDecoder->UnregisterFullDecodeLowBytePort(static_cast<uint8_t>(SoundChip_Moonsound::PORT_WAVE_DATA), _moonsound);
+        _moonsound->detachFromPorts();
     }
 #endif
 

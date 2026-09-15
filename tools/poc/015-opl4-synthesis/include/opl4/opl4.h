@@ -16,7 +16,17 @@ namespace opl4
 
 class Opl4Pcm;
 class Opl4Fm;
+class Opl4FmYmfm; // ymfm OPL3 verification backend (src/opl4fmymfm.h)
 class Opl4Render;
+
+// FM engine backend selection. OPL4_FM_YMFM is defined on this target by
+// CMake -DOPL4_FM_BACKEND=ymfm (temporary verification build); both classes
+// present the same consumed surface, so the top level is source-identical.
+#if defined(OPL4_FM_YMFM)
+using FmBackend = Opl4FmYmfm;
+#else
+using FmBackend = Opl4Fm;
+#endif
 
 class Opl4
 {
@@ -96,7 +106,7 @@ public:
 
     // Internal engine access for tests (CUT-style, no production use).
     Opl4Pcm& PcmForTest() { return *_pcm; }
-    Opl4Fm& FmForTest() { return *_fm; }
+    FmBackend& FmForTest() { return *_fm; }
     Opl4Render& RenderForTest() { return *_render; }
     // Grid counters for the reducer-cadence test (§4.3): FM boundaries and
     // output boundaries processed so far.
@@ -111,7 +121,7 @@ private:
     struct Impl;
     Impl* _impl;
     Opl4Pcm* _pcm;
-    Opl4Fm* _fm;
+    FmBackend* _fm;
     Opl4Render* _render;
 };
 

@@ -222,11 +222,15 @@ TEST_F(MoonSoundDevice_Test, SharedBus_ArmedCardOverridesLegacyMirrorAt7F)
     cpu->out(0x107F, 0x10);
     EXPECT_EQ(cpu->in(0x107F), 0x10 | 0x20);
 
-    // Only the wave data port is claimed - the wave latch and the FM status
-    // port keep the normal observer path, and clearing NEW restores the
+    // Only read-side bus claims: the wave latch #7E stays a pure observer,
+    // the wave data port #7F claims only while NEW2 is armed, and the FM
+    // status port #C4 claims unconditionally (the register exists in every
+    // arming state and the card drives the bus byte on its own decode -
+    // keeps the motherboard #FE keyboard arm from winning the dirty-high-
+    // byte status polls, see integration §2.6). Clearing NEW restores the
     // legacy byte.
     EXPECT_FALSE(moonsound->portDeviceClaimsRead(0x7E));
-    EXPECT_FALSE(moonsound->portDeviceClaimsRead(0xC4));
+    EXPECT_TRUE(moonsound->portDeviceClaimsRead(0xC4));
     cpu->out(0xC6, 0x05);
     cpu->out(0xC7, 0x00);
     cpu->out(0x7E, 2);
@@ -294,7 +298,11 @@ int MaxAbsSample(const int16_t* buffer, size_t frames)
 }
 
 /// FM channel 0 key-on through the real ports - the library test suite's
-/// reference voice (TL 0, AR 15, block 4): steady near-full-scale tone.
+/// reference voice (TL 0, AR 15, block 4): steady near-full-scale tone. The
+/// carrier register addresses follow the selected FM backend: the in-tree
+/// engine maps the operator families linearly (carrier 0x21/0x41/0x61/0x81,
+/// 0xC0 routing 0 = both sides) while YMF262/ymfm use the classic layout
+/// (ch0 carrier 0x23/0x43/0x63/0x83, CHA|CHB = both sides).
 void KeyOnFmCh0ThroughPorts(Z80* cpu)
 {
     const auto fm1 = [cpu](uint8_t reg, uint8_t value)
@@ -302,7 +310,16 @@ void KeyOnFmCh0ThroughPorts(Z80* cpu)
         cpu->out(0xC4, reg);
         cpu->out(0xC5, value);
     };
-    fm1(0x20, 0x01);  // operator 0 mult 1
+    fm1(0x20, 0x01);  // modulator: mult 1 (both maps)
+#if defined(OPL4_FM_YMFM)
+    fm1(0x23, 0x01);  // classic carrier: mult 1
+    fm1(0x40, 0x00);  // mod TL 0
+    fm1(0x43, 0x00);  // car TL 0
+    fm1(0x60, 0xF0);  // mod AR 15, DR 0
+    fm1(0x63, 0xF0);  // car AR 15, DR 0
+    fm1(0x80, 0x00);  // mod SL 0, RR 0
+    fm1(0x83, 0x00);  // car SL 0, RR 0
+#else
     fm1(0x21, 0x01);  // operator 1 mult 1
     fm1(0x40, 0x00);  // operator 0 TL 0
     fm1(0x41, 0x00);  // operator 1 TL 0
@@ -310,8 +327,13 @@ void KeyOnFmCh0ThroughPorts(Z80* cpu)
     fm1(0x61, 0xF0);
     fm1(0x80, 0x00);  // SL 0, RR 0
     fm1(0x81, 0x00);
+#endif
     fm1(0xA0, 0x03);  // fnum low
-    fm1(0xC0, 0x00);  // feedback 0, both outputs
+#if defined(OPL4_FM_YMFM)
+    fm1(0xC0, 0x30);  // CHA+CHB: both sides (routing bits include)
+#else
+    fm1(0xC0, 0x00);  // feedback 0, both outputs (routing bits exclude)
+#endif
     fm1(0xB0, 0x33);  // fnum 0x303, block 4, key on
 }
 

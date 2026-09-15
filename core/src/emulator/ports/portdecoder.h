@@ -18,6 +18,7 @@ class Tape;
 class SoundManager;
 class Keyboard;
 class Mouse;
+class PortDevice;
 
 /// region <Constants>
 
@@ -54,6 +55,39 @@ struct PortMatch
     uint16_t mask;
     uint16_t match;
     uint16_t resolvedPort;
+};
+
+/// One overlap between a model decode rule and a full-decode low-byte claim:
+/// some raw Z80 address satisfies BOTH the motherboard partial decode and the
+/// card's A0..A7 decode, so without arbitration the cycle would double-deliver
+/// (ZXM-MoonSound `out (#C4),a` paging RAM through #7FFD and writing AY #BFFD
+/// on a loose-decode machine - the exact corruption seen in MFM Music sample 2)
+struct PortDecodeClash
+{
+    uint8_t ruleIndex = 0;         // Index into the model decode table
+    uint16_t ruleMask = 0;         // Rule mask
+    uint16_t ruleMatch = 0;        // Rule match value
+    uint16_t rulePort = 0;         // Rule canonical decoded port
+    uint8_t claimLowByte = 0;      // Claimed low address byte (A0..A7)
+    PortDevice* device = nullptr;  // Claiming full-decode observer
+    uint16_t sampleAddress = 0;    // One concrete raw address hitting both decode and claim
+    bool fdcProtected = false;     // Rule resolves into the Beta-128 set - the FDC session gate keeps precedence (R6)
+};
+
+/// Per-rule resolution summary: which claims hit the rule and the minimal
+/// mask tightening that would separate ALL of them from the rule while still
+/// matching the rule's canonical port (the +2A/+3-style decode refinement real
+/// host machines adopted). separable=false means no up-to-3-bit tightening
+/// exists - precedence override is the only resolution.
+struct PortDecodeRuleOverride
+{
+    uint8_t ruleIndex = 0;
+    uint16_t rulePort = 0;
+    std::vector<uint8_t> clashingClaims;
+    uint16_t separatingMask = 0;      // Extra mask bits beyond the rule's own mask
+    uint16_t separatingMatch = 0;     // Canonical-port bit values for those bits
+    uint8_t separatingBitCount = 0;   // Number of extra bits (0 = inseparable / not needed)
+    bool precedenceRequired = false;  // No minimal tightening exists (or FDC-protected)
 };
 
 /// Base class to mark all devices connected to port decoder
@@ -187,6 +221,15 @@ protected:
     // then this one.
     std::array<PortDevice*, 256> _fullDecodeLowByteDevices {};
 
+    // Cached observer read for the current IN cycle: NotifyFullDecodeIn (Z80
+    // funnel tap) stores the card's bus value before the model decode runs,
+    // so a claim override inside DecodePortIn can return it directly - the
+    // trace and direct callers see the value the guest read, and the card is
+    // never read twice (a second read would corrupt stateful status
+    // registers). Valid only for the port stored in _lastFullDecodeInPort.
+    uint16_t _lastFullDecodeInPort = 0x0000;
+    uint8_t _lastFullDecodeInValue = 0xFF;
+
     // Set of ports to mute logging to
     std::set<uint16_t> _loggingMutePorts;
 
@@ -242,11 +285,11 @@ public:
     virtual bool Default_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister);
     uint8_t Default_Port_KempstonMouse_In(uint16_t port, uint16_t pc);
 
-    /// Whether a decoded port value belongs to the Beta128 FDC register set
+    /// Whether a decoded port value belongs to the Beta-128 FDC register set
     /// (#1F status/cmd, #3F track, #5F sector, #7F data, #FF system). The port
     /// set is identical on every Beta-128 machine, so the predicate lives on
     /// the base class and is shared by the model decoders for session gating
-    bool IsBeta128Port(uint16_t decodedPort);
+    bool IsBeta128Port(uint16_t decodedPort) const;
 
     /// region <Port trace (runtime feature "porttrace")>
 
@@ -359,6 +402,51 @@ public:
     /// Remove a low-byte full-decode observer. The device pointer must match
     /// the registration - a stale observer would keep firing into a dead object.
     void UnregisterFullDecodeLowBytePort(uint8_t port, PortDevice* device);
+
+    /// Whether a full-decode low-byte card currently claims this raw port's
+    /// low address byte (A0..A7 decode of a card like the ZXM-MoonSound)
+    bool IsLowByteClaimedByFullDecodeDevice(uint16_t rawPort) const
+    {
+        return _fullDecodeLowByteDevices[rawPort & 0xFF] != nullptr;
+    }
+
+    /// Observer bus value cached by the Z80 funnel tap (NotifyFullDecodeIn)
+    /// for the given port - the value the claiming card drove onto the bus.
+    /// 0xFF when the tap has not serviced this port (direct DecodePortIn
+    /// calls outside Z80::in, e.g. unit tests)
+    uint8_t GetCachedFullDecodeInValue(uint16_t rawPort) const
+    {
+        return (rawPort == _lastFullDecodeInPort) ? _lastFullDecodeInValue : 0xFF;
+    }
+
+    /// Model-decode claim override: a full-decode low-byte card exclusively
+    /// owns its claimed port space, so the motherboard partial decoders
+    /// (#7FFD paging / AY #BFFD..#FFFD / ULA #FE) must stand down for that
+    /// cycle instead of double-delivering the write into paging or AY state.
+    /// This models the strict-decode hosts the card was designed for (the
+    /// +2A/+3 A14 refinement, Scorpion GAL decoding) while the card is
+    /// attached; with no card registered the base decode is untouched.
+    /// Beta-128 register decodes keep their own TR-DOS session arbitration
+    /// (R6) and are never overridden. Returns true when the model decode
+    /// stood down (decodedPort zeroed, disposition flagged).
+    bool OverrideDecodeForFullDecodeClaim(uint16_t rawPort, uint16_t& decodedPort,
+                                          PortDecodeDisposition& disp);
+
+    /// region <Full-decode clash analysis>
+
+    /// All overlaps between the model decode rules and the registered
+    /// full-decode low-byte claims (see PortDecodeClash). Uses the same
+    /// self-describing rule table the port trace exports; if-chain decoders
+    /// without a table return an empty vector.
+    std::vector<PortDecodeClash> FindFullDecodeClashes() const;
+
+    /// Per-rule resolution summary (see PortDecodeRuleOverride): clashing
+    /// claim set plus the minimal extra mask bits separating every claim from
+    /// the rule while preserving the rule's canonical port. precedences are
+    /// marked where no minimal tightening exists.
+    std::vector<PortDecodeRuleOverride> FindFullDecodeRuleResolutions() const;
+
+    /// endregion </Full-decode clash analysis>
 
     /// Z80 OUT tap: forward a raw-port write to the registered observer (if any).
     void NotifyFullDecodeOut(uint16_t port, uint8_t value);

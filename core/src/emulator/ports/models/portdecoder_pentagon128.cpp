@@ -102,8 +102,19 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
         disp.wasBeta128Gated = true;
     }
 
+    // Full-decode low-byte claim override (see portdecoder.h): a registered
+    // card owns this cycle, so the motherboard decode stands down instead of
+    // double-delivering into paging or AY state (the observer was already
+    // serviced by the Z80 I/O funnel tap; its cached read value is returned so
+    // the trace and direct callers see the card's bus value)
+    if (OverrideDecodeForFullDecodeClaim(port, decodedPort, disp))
+    {
+        result = GetCachedFullDecodeInValue(port);
+        _lastPortDecoded = true; // the card drives the bus: no floating bus
+    }
+
     uint8_t mouseReg = 0;
-    if (decodedPort == 0x0000 && IsPort_KempstonMouse(port, mouseReg))
+    if (decodedPort == 0x0000 && !disp.wasFullDecodeClaimed && IsPort_KempstonMouse(port, mouseReg))
     {
         // Kempston Mouse: only addresses no table rule claimed (#xxDF is the Beta128 #FF
         // rule's address - with TR-DOS active the FDC keeps it, design §3.5)
@@ -179,6 +190,12 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
         decodedPort = 0x0000; // FDC not on the bus: drop the write
         disp.wasBeta128Gated = true;
     }
+
+    // Full-decode low-byte claim override (see portdecoder.h): a registered
+    // card owns this cycle, so the motherboard dispatch stands down instead
+    // of double-delivering the write into paging or AY state (the observer
+    // was already serviced by the Z80 I/O funnel tap)
+    OverrideDecodeForFullDecodeClaim(port, decodedPort, disp);
 
     if (decodedPort != 0x0000)
     {

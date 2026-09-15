@@ -46,7 +46,10 @@ DEVICE_NAMES = {
     0x0A: "Beta128_System",
     0x0B: "Covox",
     0x0C: "Memory_DFFD",
+    0x0D: "Memory_7EFD",
     0x0E: "Custom",
+    0x0F: "Border_FF",
+    0x10: "FullDecodeClaim",
 }
 DEVICE_IDS = {name: dev_id for dev_id, name in DEVICE_NAMES.items()}
 
@@ -57,6 +60,7 @@ FLAG_BETA128_GATED = 1 << 3
 FLAG_HANDLED_INLINE = 1 << 4
 FLAG_CF_TRDOS = 1 << 5
 FLAG_VIA_LEGACY = 1 << 6
+FLAG_FULL_DECODE_CLAIMED = 1 << 7
 
 RULE_NO_MATCH = 0xFF
 RULE_BDI_FALLBACK = 0xFE
@@ -226,6 +230,10 @@ class PortTraceEvent:
         return bool(self.flags & FLAG_VIA_LEGACY)
 
     @property
+    def full_decode_claim(self) -> bool:
+        return bool(self.flags & FLAG_FULL_DECODE_CLAIMED)
+
+    @property
     def device_name(self) -> str:
         return DEVICE_NAMES.get(self.device_id, f"UNKNOWN_{self.device_id:#04x}")
 
@@ -237,6 +245,7 @@ class PortTraceEvent:
         if self.handled_inline: out += "I"
         if self.cf_trdos: out += "T"
         if self.via_legacy: out += "L"
+        if self.full_decode_claim: out += "C"
         return out
 
 
@@ -314,6 +323,7 @@ def read_csv(path: Path) -> Tuple[SessionInfo, List[PortTraceEvent]]:
             | (FLAG_HANDLED_INLINE if row["handled_inline"] == "1" else 0)
             | (FLAG_CF_TRDOS if row.get("cf_trdos") == "1" else 0)
             | (FLAG_VIA_LEGACY if row.get("via_legacy") == "1" else 0)
+            | (FLAG_FULL_DECODE_CLAIMED if row.get("full_decode_claim") == "1" else 0)
         )
         events.append(PortTraceEvent(
             timestamp=int(row["timestamp"]),
@@ -456,13 +466,14 @@ def write_csv(session: SessionInfo, events: List[PortTraceEvent], out) -> None:
     writer = csv.writer(out)
     writer.writerow(["index", "timestamp", "frame", "direction", "raw_port", "decoded_port",
                      "decode_rule", "value", "pc", "device", "decoded", "had_handler",
-                     "beta128_gated", "handled_inline", "cf_trdos", "via_legacy"])
+                     "beta128_gated", "handled_inline", "cf_trdos", "via_legacy", "full_decode_claim"])
     for i, e in enumerate(events):
         writer.writerow([i, e.timestamp, e.frame, e.direction,
                          f"0x{e.raw_port:04X}", f"0x{e.decoded_port:04X}", e.decode_rule,
                          f"0x{e.value:02X}", f"0x{e.pc:04X}", e.device_name,
                          int(e.decoded), int(e.had_handler), int(e.beta128_gated),
-                         int(e.handled_inline), int(e.cf_trdos), int(e.via_legacy)])
+                         int(e.handled_inline), int(e.cf_trdos), int(e.via_legacy),
+                         int(e.full_decode_claim)])
 
 
 def write_markdown(session: SessionInfo, events: List[PortTraceEvent], out) -> None:

@@ -391,6 +391,13 @@ void PortDecoder::RecordPortTrace(bool isOut, uint16_t rawPort, uint8_t value, u
     if (isOut && disp.wasHandledInline && disp.wasBeta128Gated)
         event.deviceId = PortDeviceId::Border_FF;
 
+    // Full-decode claim override cycles belong to the claiming card, not to
+    // "unmapped" - without this the MoonSound traffic the low-byte observer
+    // serviced is invisible in traces (attribution pitfall from the
+    // moonsound_2.trd diagnosis)
+    if (disp.wasFullDecodeClaimed)
+        event.deviceId = PortDeviceId::FullDecodeClaim;
+
     bool hadHandler = (disp.decodedPort != 0x0000) && key_exists(_portDevices, disp.decodedPort);
 
     uint8_t flags = 0;
@@ -408,6 +415,8 @@ void PortDecoder::RecordPortTrace(bool isOut, uint16_t rawPort, uint8_t value, u
         flags |= PortTraceFlags::kCfTrdosActive;
     if (disp.viaLegacyBasePath)
         flags |= PortTraceFlags::kViaLegacyBasePath;
+    if (disp.wasFullDecodeClaimed)
+        flags |= PortTraceFlags::kFullDecodeClaimed;
     event.flags = flags;
 
     _portTrace->record(event);
@@ -588,7 +597,7 @@ void PortDecoder::Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc)
 /// Whether a decoded port value belongs to the Beta128 FDC register set
 /// (#1F status/cmd, #3F track, #5F sector, #7F data, #FF system) — hoisted
 /// from PortDecoder_Pentagon128 so the Scorpion decoder shares it
-bool PortDecoder::IsBeta128Port(uint16_t decodedPort)
+bool PortDecoder::IsBeta128Port(uint16_t decodedPort) const
 {
     switch (decodedPort)
     {
@@ -721,6 +730,188 @@ void PortDecoder::UnregisterFullDecodeLowBytePort(uint8_t port, PortDevice* devi
     }
 }
 
+/// Model-decode claim override: see portdecoder.h. Called from each model's
+/// DecodePortIn/Out right after decodePortEx, before any inline handler runs -
+/// the claiming observer was already serviced by the Z80 I/O funnel tap.
+bool PortDecoder::OverrideDecodeForFullDecodeClaim(uint16_t rawPort, uint16_t& decodedPort,
+                                                   PortDecodeDisposition& disp)
+{
+    if (decodedPort == 0x0000)
+        return false;
+
+    PortDevice* observer = _fullDecodeLowByteDevices[rawPort & 0xFF];
+    if (observer == nullptr)
+        return false;
+
+    // Beta-128 registers keep their TR-DOS session arbitration (R6): the FDC
+    // owns #1F/#3F/#5F/#7F/#FF while a DOS session is open, card or no card
+    if (IsBeta128Port(decodedPort))
+        return false;
+
+    decodedPort = 0x0000;
+    disp.decodedPort = 0x0000;
+    disp.decodeRuleIndex = PortTraceRule::kNoMatch;
+    disp.wasDecoded = false;
+    disp.wasHandledInline = false;
+    disp.wasFullDecodeClaimed = true;
+
+    return true;
+}
+
+std::vector<PortDecodeClash> PortDecoder::FindFullDecodeClashes() const
+{
+    std::vector<PortDecodeClash> result;
+
+    const std::vector<PortTraceDecodeRule> rules = getPortTraceDecodeRules();
+
+    for (size_t i = 0; i < rules.size(); i++)
+    {
+        const PortTraceDecodeRule& rule = rules[i];
+
+        // A low byte L overlaps the rule when its constrained bits satisfy the
+        // rule's low-byte half (the high half is always satisfiable because a
+        // low-byte claim spans every high-byte alias)
+        const uint16_t ruleMaskLow = rule.mask & 0x00FF;
+        const uint16_t ruleMatchLow = rule.match & 0x00FF;
+
+        for (uint16_t low = 0; low <= 0xFF; low++)
+        {
+            const PortDevice* device = _fullDecodeLowByteDevices[low];
+            if (device == nullptr || (low & ruleMaskLow) != ruleMatchLow)
+                continue;
+
+            PortDecodeClash clash;
+            clash.ruleIndex = static_cast<uint8_t>(i);
+            clash.ruleMask = rule.mask;
+            clash.ruleMatch = rule.match;
+            clash.rulePort = rule.port;
+            clash.claimLowByte = static_cast<uint8_t>(low);
+            clash.device = _fullDecodeLowByteDevices[low];
+            // Required high bits come from the match value (don't-care bits stay 0)
+            clash.sampleAddress = static_cast<uint16_t>((rule.match & 0xFF00) | low);
+            clash.fdcProtected = IsBeta128Port(rule.port);
+            result.push_back(clash);
+        }
+    }
+
+    return result;
+}
+
+std::vector<PortDecodeRuleOverride> PortDecoder::FindFullDecodeRuleResolutions() const
+{
+    std::vector<PortDecodeRuleOverride> result;
+
+    const std::vector<PortTraceDecodeRule> rules = getPortTraceDecodeRules();
+    const std::vector<PortDecodeClash> clashes = FindFullDecodeClashes();
+
+    for (size_t i = 0; i < rules.size(); i++)
+    {
+        PortDecodeRuleOverride resolution;
+        resolution.ruleIndex = static_cast<uint8_t>(i);
+        resolution.rulePort = rules[i].port;
+
+        for (const PortDecodeClash& clash : clashes)
+        {
+            if (clash.ruleIndex == i)
+                resolution.clashingClaims.push_back(clash.claimLowByte);
+        }
+
+        if (resolution.clashingClaims.empty())
+            continue;
+
+        // FDC-protected rules resolve through their own session gate, never
+        // through mask tightening (the Beta-128 decode is deliberately loose)
+        bool protectedRule = false;
+        for (const PortDecodeClash& clash : clashes)
+        {
+            if (clash.ruleIndex == i && clash.fdcProtected)
+                protectedRule = true;
+        }
+
+        if (!protectedRule)
+        {
+            // Minimal separating bits: low address bits the rule does not
+            // decode yet, where the canonical port differs from at least one
+            // claim. A subset S separates when every claim low byte disagrees
+            // with the canonical low byte in at least one bit of S - adding S
+            // to the mask (with canonical bit values) then keeps the canonical
+            // port decoding while excluding the whole claim set.
+            const uint8_t canonicalLow = static_cast<uint8_t>(rules[i].port & 0x00FF);
+            const uint8_t ruleMaskLow = static_cast<uint8_t>(rules[i].mask & 0x00FF);
+
+            uint8_t candidates = 0;
+            for (uint8_t bit = 0; bit < 8; bit++)
+            {
+                const uint8_t mask = static_cast<uint8_t>(1u << bit);
+                if (ruleMaskLow & mask)
+                    continue;
+
+                for (uint8_t claim : resolution.clashingClaims)
+                {
+                    if ((claim ^ canonicalLow) & mask)
+                    {
+                        candidates |= mask;
+                        break;
+                    }
+                }
+            }
+
+            // Smallest separating subset of at most 3 candidate bits
+            constexpr uint8_t kMaxSeparatingBits = 3;
+            uint8_t bestSubset = 0;
+            uint8_t bestPopcount = 0;
+            bool found = false;
+
+            for (uint8_t subset = 1; subset != 0; subset++)
+            {
+                if (static_cast<uint8_t>(subset & ~candidates) != 0)
+                    continue;
+
+                // Portable popcount (MSVC has no __builtin_popcount)
+                uint8_t popcount = 0;
+                for (uint8_t bits = subset; bits != 0; bits >>= 1)
+                    popcount = static_cast<uint8_t>(popcount + (bits & 1));
+                if (popcount > kMaxSeparatingBits || (found && popcount >= bestPopcount))
+                    continue;
+
+                bool separates = true;
+                for (uint8_t claim : resolution.clashingClaims)
+                {
+                    if ((claim & subset) == (canonicalLow & subset))
+                    {
+                        separates = false;
+                        break;
+                    }
+                }
+
+                if (separates)
+                {
+                    bestSubset = subset;
+                    bestPopcount = popcount;
+                    found = true;
+                }
+            }
+
+            if (found)
+            {
+                resolution.separatingMask = bestSubset;
+                resolution.separatingMatch = static_cast<uint8_t>(canonicalLow & bestSubset);
+                resolution.separatingBitCount = bestPopcount;
+            }
+        }
+
+        resolution.precedenceRequired = !protectedRule && resolution.separatingBitCount == 0;
+        // FDC-protected rules also report precedence - the runtime override
+        // keeps the FDC in charge instead of the claiming card
+        if (protectedRule)
+            resolution.precedenceRequired = true;
+
+        result.push_back(resolution);
+    }
+
+    return result;
+}
+
 /// Z80 OUT tap: forward the RAW port write to the full-decode observer (if any).
 /// Called from Z80::out() before the model decode - the observer sees the cycle
 /// no matter which device the model decode attributes it to.
@@ -768,6 +959,12 @@ uint8_t PortDecoder::NotifyFullDecodeIn(uint16_t port, bool& handled, bool& clai
         handled = true;
         claimsBus = lowByteObserver->portDeviceClaimsRead(port);
     }
+
+    // Cache the observer's bus value for the claim override inside
+    // DecodePortIn (single read of a stateful card register - see
+    // _lastFullDecodeInValue)
+    _lastFullDecodeInPort = port;
+    _lastFullDecodeInValue = result;
 
     return result;
 }

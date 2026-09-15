@@ -133,6 +133,13 @@ public:
     /// keeps the legacy-priority read (R6).
     bool portDeviceClaimsRead(uint16_t port) override;
 
+    /// Bus attachment (the AY/TurboSound device pattern): the card owns its
+    /// own bus interface - the six low-byte full-decode claims live with the
+    /// PORT_* constants, not in the SoundManager router. SoundManager only
+    /// routes the lifecycle call.
+    bool attachToPorts(PortDecoder* decoder);
+    void detachFromPorts();
+
     // Library access for tests / diagnostics (CUT pattern)
     opl4::Opl4& chip() { return _opl4; }
     const opl4::Opl4& chip() const { return _opl4; }
@@ -182,6 +189,10 @@ private:
 
     EmulatorContext* _context;
     ModuleLogger* _logger = nullptr;
+
+    // Bus attachment state (attachToPorts/detachFromPorts)
+    PortDecoder* _portDecoder = nullptr;
+    bool _chipAttachedToPortDecoder = false;
 
     // Synthesis core + wave memory. The ROM region is loaded from the
     // configured image at construction; a missing image leaves the

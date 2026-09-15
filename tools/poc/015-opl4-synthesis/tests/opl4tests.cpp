@@ -628,7 +628,10 @@ void TestTaps()
 
     CHECK_EQ_I(tc.chip.ChannelCount(ChannelGroup::Fm), 18u);
     CHECK_EQ_I(tc.chip.ChannelCount(ChannelGroup::Pcm), 24u);
+#if !defined(OPL4_FM_YMFM) // taps pin the in-tree model; the temporary
+    // ymfm backend zeroes per-channel taps (documented limitation)
     CHECK(tc.chip.ChannelPeak({ChannelGroup::Fm, 0}) > 0.0f);
+#endif
     CHECK(tc.chip.ChannelPeak({ChannelGroup::Pcm, 0}) > 0.0f);
     CHECK_EQ_F(tc.chip.ChannelPeak({ChannelGroup::Fm, 17}), 0.0);
     CHECK_EQ_F(tc.chip.ChannelPeak({ChannelGroup::Pcm, 23}), 0.0);
@@ -826,6 +829,7 @@ int main()
     TestDiscardPendingAudio();
 
     RunVectorTests(); // §12.2 vector categories (opl4vectors.cpp)
+    RunFmBackendCompareTests(); // in-tree vs ymfm OPL3 (opl4fmcompare.cpp)
 
     std::printf("\n%d checks, %d failures\n", gChecks, gFailed);
     return gFailed == 0 ? 0 : 1;

@@ -75,6 +75,7 @@ inline sol::table eventToTable(sol::state_view lua, const PortTraceEvent& e)
     t["handled_inline"] = e.wasHandledInline();
     t["cf_trdos"] = e.cfTrdosActive();
     t["via_legacy"] = (e.flags & PortTraceFlags::kViaLegacyBasePath) != 0;
+    t["full_decode_claim"] = e.wasFullDecodeClaimed();
     return t;
 }
 
@@ -89,7 +90,7 @@ inline bool ruleFromTable(const sol::table& spec, PortTraceFilterRule& rule, std
     if (sol::optional<std::string> device = spec["device"])
     {
         bool found = false;
-        for (int id = 0; id <= static_cast<int>(PortDeviceId::Custom); id++)
+        for (int id = 0; id <= static_cast<int>(PortDeviceId::FullDecodeClaim); id++)
         {
             if (*device == PortDiagnosticRecorder::DeviceIdToString(static_cast<PortDeviceId>(id)))
             {

@@ -150,10 +150,23 @@ inline void KeyOnPcmSlot(Opl4& c, int slot, uint64_t t, uint8_t pan = 0)
                 static_cast<uint8_t>(0x80 | pan)); // key on
 }
 
-// FM channel 0 key-on (block 4, fn 771 ~ A4) — steady activity.
+// FM channel 0 key-on (block 4, fn 771 ~ A4) — steady activity. The
+// carrier register addresses are backend-specific: the in-tree engine maps
+// the operator families linearly (carrier = 0x21/0x41/0x61/0x81, routing
+// 0 = both sides) while YMF262/ymfm use the classic layout (ch0 carrier =
+// 0x23/0x43/0x63/0x83, routing CHA|CHB = both sides).
 inline void KeyOnFmCh0(Opl4& c, uint64_t t)
 {
-    c.WriteFm(t, 0, 0x20, 0x01); // op0 mult 1
+    c.WriteFm(t, 0, 0x20, 0x01); // modulator: mult 1 (both maps)
+#if defined(OPL4_FM_YMFM)
+    c.WriteFm(t, 0, 0x23, 0x01); // classic carrier: mult 1
+    c.WriteFm(t, 0, 0x40, 0x00); // mod TL 0
+    c.WriteFm(t, 0, 0x43, 0x00); // car TL 0
+    c.WriteFm(t, 0, 0x60, 0xF0); // mod AR15 DR0
+    c.WriteFm(t, 0, 0x63, 0xF0); // car AR15 DR0
+    c.WriteFm(t, 0, 0x80, 0x00); // mod SL0 RR0
+    c.WriteFm(t, 0, 0x83, 0x00); // car SL0 RR0
+#else
     c.WriteFm(t, 0, 0x21, 0x01); // op1 mult 1
     c.WriteFm(t, 0, 0x40, 0x00); // op0 TL 0
     c.WriteFm(t, 0, 0x41, 0x00); // op1 TL 0
@@ -161,13 +174,19 @@ inline void KeyOnFmCh0(Opl4& c, uint64_t t)
     c.WriteFm(t, 0, 0x61, 0xF0); // op1 AR15 DR0
     c.WriteFm(t, 0, 0x80, 0x00); // op0 SL0 RR0
     c.WriteFm(t, 0, 0x81, 0x00); // op1 SL0 RR0
+#endif
     c.WriteFm(t, 0, 0xA0, 0x03); // fn lo
-    c.WriteFm(t, 0, 0xC0, 0x00); // fb 0, both outputs
+#if defined(OPL4_FM_YMFM)
+    c.WriteFm(t, 0, 0xC0, 0x30); // CHA+CHB: both sides (bits include)
+#else
+    c.WriteFm(t, 0, 0xC0, 0x00); // fb 0, both outputs (bits exclude)
+#endif
     c.WriteFm(t, 0, 0xB0, 0x33); // fn bits 9:8 = 3 (fn 0x303), block 4, key on
 }
 
 // Aggregate runners defined in the other test TUs; called from main().
 int RunVectorTests();
+void RunFmBackendCompareTests(); // opl4fmcompare.cpp (in-tree vs ymfm OPL3)
 
 } // namespace opl4test
 

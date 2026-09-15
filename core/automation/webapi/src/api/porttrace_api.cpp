@@ -112,6 +112,7 @@ Json::Value eventToJson(const PortTraceEvent& e, size_t index)
     v["handled_inline"] = e.wasHandledInline();
     v["cf_trdos"] = e.cfTrdosActive();
     v["via_legacy"] = (e.flags & PortTraceFlags::kViaLegacyBasePath) != 0;
+    v["full_decode_claim"] = e.wasFullDecodeClaimed();
     return v;
 }
 
@@ -184,7 +185,7 @@ bool ruleFromJson(const Json::Value& spec, PortTraceFilterRule& rule, std::strin
     {
         std::string name = spec["device"].asString();
         bool found = false;
-        for (int devId = 0; devId <= static_cast<int>(PortDeviceId::Custom); devId++)
+        for (int devId = 0; devId <= static_cast<int>(PortDeviceId::FullDecodeClaim); devId++)
         {
             if (name == PortDiagnosticRecorder::DeviceIdToString(static_cast<PortDeviceId>(devId)))
             {

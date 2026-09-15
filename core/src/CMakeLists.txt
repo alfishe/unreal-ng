@@ -189,6 +189,15 @@ target_link_libraries(${PROJECT_NAME} PRIVATE opl4)
 # gate as the core library build (a mismatch would be an ODR hazard).
 target_compile_definitions(${PROJECT_NAME} PUBLIC UNREALNG_HAVE_OPL4=1)
 
+# Mirror the libopl4 FM backend selection (tools/poc CMake option
+# OPL4_FM_BACKEND=ymfm) as a PUBLIC define: opl4 is linked PRIVATE, so the
+# option's own PUBLIC define stops at core's translation units, but
+# core-tests compiles the core sources (and test helpers that program the
+# reference FM voice) directly and must match the selected register map.
+if (OPL4_FM_BACKEND STREQUAL "ymfm")
+    target_compile_definitions(${PROJECT_NAME} PUBLIC OPL4_FM_YMFM=1)
+endif()
+
 # Platform-specific framework and library linkage
 # Note: Recording-specific frameworks (VideoToolbox, AVFoundation, CoreMedia, CoreVideo, AudioToolbox)
 # are now linked via the recording library (core/recording/CMakeLists.txt)

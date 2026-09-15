@@ -15,6 +15,9 @@
 #include "opl4/opl4.h"
 
 #include "opl4fm.h"
+#if defined(OPL4_FM_YMFM)
+#include "opl4fmymfm.h"
+#endif
 #include "opl4pcm.h"
 #include "opl4render.h"
 #include "opl4/wavememory.h"
@@ -31,7 +34,13 @@ namespace
 {
 
 constexpr size_t kTopStateSize = 92;
+// Backend-tagged layout: the FM chunk differs between the in-tree model and
+// the ymfm verification backend, so sessions never cross builds.
+#if defined(OPL4_FM_YMFM)
+constexpr uint32_t kStateVersion = 2;
+#else
 constexpr uint32_t kStateVersion = 1;
+#endif
 constexpr uint64_t kStreamReserveFrames = 4410; // ~100 ms of chip audio
 
 int16_t Clamp16(int32_t v)
@@ -72,10 +81,10 @@ struct Opl4::Impl
     bool splitStreams = false;       // host mixer sources (integration D5)
 
     // Tap scratch + render-side meters/mutes (never serialised)
-    std::array<int32_t, Opl4Fm::kChannelCount> fmTaps{};
+    std::array<int32_t, FmBackend::kChannelCount> fmTaps{};
     std::array<int32_t, Opl4Pcm::kSlotCount> pcmTaps{};
     uint64_t muteMask = 0; // bit i: 0..17 FM, 18..41 PCM
-    int32_t fmPeak[Opl4Fm::kChannelCount] = {};
+    int32_t fmPeak[FmBackend::kChannelCount] = {};
     int32_t pcmPeak[Opl4Pcm::kSlotCount] = {};
 
     IWaveMemory* mem = nullptr;
@@ -91,7 +100,7 @@ struct Opl4::Impl
 };
 
 Opl4::Opl4()
-    : _impl(new Impl), _pcm(new Opl4Pcm), _fm(new Opl4Fm), _render(new Opl4Render)
+    : _impl(new Impl), _pcm(new Opl4Pcm), _fm(new FmBackend), _render(new Opl4Render)
 {
     Reset(0);
 }
@@ -164,7 +173,7 @@ void Opl4::AdvanceFmToOutput()
     _fm->Advance(fmL, fmR, im.fmTaps);
 
     const auto& channels = _fm->Channels();
-    for (int ch = 0; ch < Opl4Fm::kChannelCount; ch++)
+    for (int ch = 0; ch < FmBackend::kChannelCount; ch++)
     {
         const int32_t tap = im.fmTaps[ch];
         const int32_t a = tap < 0 ? -tap : tap;
@@ -331,7 +340,7 @@ uint8_t Opl4::ReadStatus(uint64_t time)
 {
     SyncTo(time);
     Impl& im = *_impl;
-    uint8_t s = _fm->Status() & (Opl4Fm::kStatusT1 | Opl4Fm::kStatusT2);
+    uint8_t s = _fm->Status() & (FmBackend::kStatusT1 | FmBackend::kStatusT2);
     // YMF262 status | chip flags (openMSX YMF278B::readYMF278Status,
     // real-HW-verified bit positions): bit 0 BUSY, bit 1 LD. The YMF262
     // status only ever uses bits 6..5 (timer flags), so no collision.
@@ -470,7 +479,7 @@ float Opl4::ChannelPeak(ChannelId id) const
 {
     if (id.group == ChannelGroup::Fm)
     {
-        if (id.index >= Opl4Fm::kChannelCount)
+        if (id.index >= FmBackend::kChannelCount)
             return 0.0f;
         return static_cast<float>(_impl->fmPeak[id.index]) / 32768.0f;
     }
@@ -481,7 +490,7 @@ float Opl4::ChannelPeak(ChannelId id) const
 
 size_t Opl4::ChannelCount(ChannelGroup g) const
 {
-    return (g == ChannelGroup::Fm) ? static_cast<size_t>(Opl4Fm::kChannelCount)
+    return (g == ChannelGroup::Fm) ? static_cast<size_t>(FmBackend::kChannelCount)
                                    : static_cast<size_t>(Opl4Pcm::kSlotCount);
 }
 
@@ -520,7 +529,7 @@ void Opl4::SetRoom(RoomMode m)
 
 size_t Opl4::StateSize() const
 {
-    return kTopStateSize + Opl4Fm::kStateSize + Opl4Pcm::kStateSize;
+    return kTopStateSize + FmBackend::kStateSize + Opl4Pcm::kStateSize;
 }
 
 void Opl4::SaveState(uint8_t* dst) const
@@ -545,7 +554,7 @@ void Opl4::SaveState(uint8_t* dst) const
     dst[84] = im.mixF8;
     dst[85] = im.mixF9;
     _fm->SaveState(dst + kTopStateSize);
-    _pcm->SaveState(dst + kTopStateSize + Opl4Fm::kStateSize);
+    _pcm->SaveState(dst + kTopStateSize + FmBackend::kStateSize);
 }
 
 void Opl4::LoadState(const uint8_t* src)
@@ -570,7 +579,7 @@ void Opl4::LoadState(const uint8_t* src)
     im.mixF8 = src[84];
     im.mixF9 = src[85];
     _fm->LoadState(src + kTopStateSize);
-    _pcm->LoadState(src + kTopStateSize + Opl4Fm::kStateSize);
+    _pcm->LoadState(src + kTopStateSize + FmBackend::kStateSize);
     im.ClearStreams(); // delivery buffers resume from the restore point
 }
 

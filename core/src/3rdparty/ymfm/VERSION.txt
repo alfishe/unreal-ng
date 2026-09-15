@@ -5,7 +5,11 @@ Vendored:  2026-09-12 (TSFM implementation plan P1,
 
 Copied from upstream src/: ymfm.h, ymfm_fm.h, ymfm_fm.ipp, ymfm_opn.h,
 ymfm_opn.cpp, ymfm_ssg.h, ymfm_ssg.cpp, ymfm_adpcm.h, ymfm_adpcm.cpp,
-plus LICENSE.
+ymfm_opl.h, ymfm_opl.cpp, ymfm_pcm.h, ymfm_pcm.cpp, plus LICENSE.
+
+The OPL/PCM pair (2026-09-14) backs the temporary OPL4_FM_YMFM
+verification backend of libopl4 (MoonSound FM synthesis A/B); the core
+glob picks the .cpp files up automatically.
 
 All files are byte-identical to the pinned commit EXCEPT ymfm_fm.ipp and
 ymfm_opn.cpp, which carry the local TTD patch — see PATCHES.md.

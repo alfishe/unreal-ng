@@ -56,6 +56,22 @@ uint8_t PortDecoder_Spectrum48::DecodePortIn(uint16_t port, uint16_t pc)
     PortDecodeDisposition disp;
     disp.decodeRuleIndex = PortTraceRule::kNoTable;
 
+    // Full-decode low-byte claim override (see portdecoder.h): a registered
+    // low-byte card owns this cycle, so the motherboard decode chain stands
+    // down - the observer was already serviced by the Z80 I/O funnel tap and
+    // its cached read value is the bus value. The raw-port placeholder keeps
+    // an exact Beta-128 registered key unclaimed (R6)
+    {
+        uint16_t claimedPort = port; // identity placeholder: no arm below resolved yet
+        if (OverrideDecodeForFullDecodeClaim(port, claimedPort, disp))
+        {
+            result = GetCachedFullDecodeInValue(port);
+            _lastPortDecoded = true; // the card drives the bus: no floating bus
+            OnPortInComplete(port, result, pc, disp);
+            return result;
+        }
+    }
+
     // AY #FFFD: A15=1, A14=1, A1=0. The AY-3-8910 does not decode the other
     // address bits, so mirrored ports (#FF05, #FF00, #C000...) select it on IN
     // too. Resolve mirrors to the canonical port BEFORE the weak FE (A0-only)
@@ -122,6 +138,20 @@ void PortDecoder_Spectrum48::DecodePortOut(uint16_t port, uint8_t value, uint16_
     // Port trace decode attribution (if-chain decoder: no mask/match table)
     PortDecodeDisposition disp;
     disp.decodeRuleIndex = PortTraceRule::kNoTable;
+
+    // Full-decode low-byte claim override (see portdecoder.h): a registered
+    // low-byte card owns this cycle, so the motherboard decode chain stands
+    // down - the observer was already serviced by the Z80 I/O funnel tap.
+    // The raw-port placeholder keeps an exact Beta-128 registered key
+    // unclaimed (R6)
+    {
+        uint16_t claimedPort = port; // identity placeholder: no arm below resolved yet
+        if (OverrideDecodeForFullDecodeClaim(port, claimedPort, disp))
+        {
+            OnPortOutComplete(port, value, pc, disp);
+            return;
+        }
+    }
 
     // AY mirrors must be resolved before the FE (A0-only) check: the AY decodes
     // A15/A14/A1 only, so an even mirror like #C000 would otherwise be claimed

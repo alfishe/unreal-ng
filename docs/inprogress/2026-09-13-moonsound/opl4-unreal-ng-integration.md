@@ -161,6 +161,88 @@ exact-16-bit registration only caught host-side `Z80::out()/in()` calls and
 silently missed every guest instruction — the direct cause of the former
 §12.5 symptom (`dev_id = #E0` = floating-bus `#FF` masked with `#E0`).
 
+Ownership follows the AY/TurboSound device pattern: the six claims live in
+`SoundChip_Moonsound::attachToPorts(PortDecoder*)` / `detachFromPorts()` —
+the card owns its bus interface, and `SoundManager` (a router) only forwards
+the lifecycle call from its own `attachToPorts()` / `detachFromPorts()`.
+
+### 2.6 Motherboard decode clashes — analysis API and claim override (2026-09-14)
+
+**The bug.** MFM Music sample 2 (moonsound_2.trd) played "only PCM, with
+totally wrong timings" on the Pentagon. Port trace + demo sources pinned it:
+the player's FM primitives use the immediate forms with the register number
+in the high byte — `MBPlayer_out_fm1: ld a,c / out (#C4),a / out (#C5),a`
+(mfm_player.asm 1817–1836) and `in a,(#C4)` status polls. On the loose
+Pentagon decode those dirty aliases double-deliver into motherboard state:
+
+| Raw port | Motherboard decode (rule) | Damage |
+|---|---|---|
+| `#04C4` (91×/frame) | `#7FFD` (0x8006/0x0004: A15=0, A2=1, A1=0) | pages RAM bank 4 into `#C000` — the song data — every frame |
+| `#81C5` (91×/frame) | `#BFFD` (0xC002/0x8000) | spurious AY register writes |
+| `#xxC4/#xxC6/#xx7E` | `#FE` (A0=0) | border/beeper/keyboard-arm traffic |
+| `#xxC7` | Beta-128 `#FF` rule (0x83/0x83) | FDC drive-select alias |
+
+The wave ports `#7E/#7F` never clash with `#7FFD`/AY (A1=1) — which is
+exactly why PCM still played. On stock loose-decode clone hardware the demo
+would corrupt identically; the card's real host class (Nemo-bus era,
++2A/+3-style refined decodes, Scorpion GAL) resolves this with **stricter
+decoding while the card is attached** — and that is what the emulator now
+models.
+
+**Analysis API** (base `PortDecoder`, table-driven models only — if-chain
+decoders have no rule table to analyze):
+
+- `FindFullDecodeClashes()` — every overlap between the exported decode
+  rules and the registered low-byte claims (`PortDecodeClash`: rule,
+  claim, sample address satisfying both, `fdcProtected` flag).
+- `FindFullDecodeRuleResolutions()` — per clashing rule: the claim set and
+  the **minimal separating mask** — the smallest ≤3-bit tightening keeping
+  the canonical port decoded while excluding every claim
+  (`PortDecodeRuleOverride`). Pentagon + MoonSound: `#7FFD/#FFFD/#BFFD`
+  each separate with one bit (A3: `0x8006|0x08 / 0x0004|0x08` — the +2A/+3
+  refinement), `#FE` needs two (`{A3,A7} = 0x0088/0x0088` — no single bit
+  separates `#C4,#C6,#7E` from `#FE`), and the Beta-128 `#FF` rule reports
+  `precedenceRequired` (session-gated, never mask-tightened).
+- Known gap: the Pentagon BDI fallback (`0x83/0x03` → `#1F/#3F/#5F/#7F`)
+  is not part of the exported rule table, so the `#7F` wave-data overlap
+  with the FDC data register is not reported by the analysis — it is
+  protected at runtime (below) and FDC-owned regardless.
+
+**Runtime claim override.** `OverrideDecodeForFullDecodeClaim()` is called
+from every model decoder (`DecodePortIn`/`DecodePortOut`) right after the
+model decode, before dispatch. When a card claims the raw port's low byte,
+the motherboard partial decode **stands down** for that cycle: `#7FFD` no
+longer pages, AY no longer sees `#BFFD/#FFFD` aliases, the `#FE` arm keeps
+its border/keyboard state. The claiming observer was already serviced by
+the Z80 I/O funnel tap, so the cycle belongs to the card exactly once. On
+reads the decoder returns the observer's **cached** funnel value
+(`NotifyFullDecodeIn` caches it — the card's stateful status register is
+never read twice). Guarantees:
+
+- **Beta-128 ports keep TR-DOS session precedence (R6)**: the override
+  never claims a Beta-128 register decode (table models check the resolved
+  port via `IsBeta128Port`, if-chain models check the raw placeholder), so
+  inside a DOS session the FDC still owns `#1F/#3F/#5F/#7F/#FF` — with the
+  card observing the shared-bus cycle, like real hardware.
+- **Canonical clean writes are untouched** (`#7FFD`, `#FFFD/#BFFD`, `#FE`
+  have unclaimed low bytes).
+- **No card, no change**: with no low-byte claims registered every model
+  decodes exactly as before (pinned by `NoClaim_LooseDecodePinned`).
+
+Read claims were extended to match: `portDeviceClaimsRead` now also claims
+`#C4` (FM1 status — the register exists unconditionally; guests poll
+BUSY/LD there before NEW2 arming). Port-trace attribution marks claimed
+cycles as device `FullDecodeClaim` with flag `kFullDecodeClaimed` (CSV
+column `full_decode_claim`, JSON `full_decode_claim`, CLI flag letter `C`)
+so the card's traffic is visible in diagnostics instead of blaming
+"unmapped".
+
+Covered by `core/tests/emulator/ports/fulldecodeclaim_test.cpp` (17 tests):
+exact clash set and minimal masks, dirty `#04C4/#81C5` writes standing down
+with claims active, baseline double-delivery without claims, canonical
+writes unaffected, single FM status read, FDC interplay both ways, and the
+if-chain decoder path (Spectrum 128).
+
 ---
 
 ## 3. Device lifecycle
@@ -524,7 +606,7 @@ decode matching the card's A0..A7 CPLD wiring (§2.5).
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| CPLD port-decode behaviour unknown (§2.2) | ULA/paging corruption under MoonSound software | **Decode width verified** against the author's driver: A0..A7 only (§2.5), now implemented as low-byte observer registration. Read side resolved by the NEW-gated claim (§2.4), verified against MoonService v0.3a (§12.1). Write-side shadowing of the ULA remains conservative-exclusive pending CPLD source |
+| CPLD port-decode behaviour unknown (§2.2) | ULA/paging corruption under MoonSound software | **Decode width verified** against the author's driver: A0..A7 only (§2.5), implemented as low-byte observer registration. Read side resolved by the NEW-gated claim (§2.4), verified against MoonService v0.3a (§12.1). Write-side shadowing resolved by the claim override (§2.6): the motherboard decode stands down for claimed low bytes while the card is attached — the strict-decode host behaviour the card was designed for; Beta-128 session precedence preserved |
 | No real ZXM-MoonSound available for reference | Board analog model and BUSY/LD timings stay unverified | Ship with those components disabled/datasheet-derived and clearly marked; treat hardware access as a project dependency, not a nice-to-have |
 | SRAM upload timing wrong | Loaders run at wrong speed; timing-sensitive software breaks | Model LD busy per access from phase 3, not as a later refinement |
 | Limiter audibly ducks PCM transients | The device sounds worse than a naive implementation | Tune attack/release against percussive material specifically; A/B against the unlimited path with headroom |

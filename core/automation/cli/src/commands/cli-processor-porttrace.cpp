@@ -60,7 +60,7 @@ std::optional<uint16_t> parseHex16(const std::string& text)
 
 std::optional<PortDeviceId> parseDeviceId(const std::string& name)
 {
-    for (int id = 0; id <= static_cast<int>(PortDeviceId::Custom); id++)
+    for (int id = 0; id <= static_cast<int>(PortDeviceId::FullDecodeClaim); id++)
     {
         PortDeviceId device = static_cast<PortDeviceId>(id);
         std::string deviceName = PortDiagnosticRecorder::DeviceIdToString(device);
@@ -190,6 +190,7 @@ std::string formatEventTable(const std::vector<PortTraceEvent>& events)
         if (e.wasHandledInline()) flags += 'I';
         if (e.cfTrdosActive()) flags += 'T';
         if (e.flags & PortTraceFlags::kViaLegacyBasePath) flags += 'L';
+        if (e.wasFullDecodeClaimed()) flags += 'C';
 
         snprintf(line, sizeof(line), "%4zu  %6u  %13llu  %-3s  %04X   %04X     %02X     %04X   %-14s  %s",
                  i, e.frameNumber, (unsigned long long)e.timestamp, e.isOut() ? "OUT" : "IN", e.rawPort,
@@ -197,7 +198,7 @@ std::string formatEventTable(const std::vector<PortTraceEvent>& events)
                  flags.c_str());
         out << line << NEWLINE;
     }
-    out << "Flags: D=decoded  H=hadHandler  G=beta128Gated  I=handledInline  T=cfTrdos  L=legacyPath" << NEWLINE;
+    out << "Flags: D=decoded  H=hadHandler  G=beta128Gated  I=handledInline  T=cfTrdos  L=legacyPath  C=fullDecodeClaim" << NEWLINE;
 
     return out.str();
 }

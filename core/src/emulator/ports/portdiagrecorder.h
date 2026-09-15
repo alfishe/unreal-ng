@@ -44,6 +44,8 @@ enum class PortDeviceId : uint8_t
     Memory_7EFD    = 0x0D,  // Port #7EFD — Scorpion ProfROM window latch
     Custom         = 0x0E,  // Other registered PortDevice
     Border_FF      = 0x0F,  // Port #xxFF — Scorpion border latch (OUT while the FDC system port is gated off)
+    FullDecodeClaim = 0x10, // Raw low byte claimed by a full-decode bus card (e.g. ZXM-MoonSound) -
+                             // the model decode stood down for this cycle (claim override)
 };
 
 /// Flag bits packed into PortTraceEvent::flags
@@ -56,6 +58,7 @@ constexpr uint8_t kBeta128Gated      = 1u << 3;  // Beta128 port blocked because
 constexpr uint8_t kHandledInline     = 1u << 4;  // Decoder handled it directly (not via PeripheralPortIn/Out)
 constexpr uint8_t kCfTrdosActive     = 1u << 5;  // CF_TRDOS state at event time
 constexpr uint8_t kViaLegacyBasePath = 1u << 6;  // Captured on legacy base-class DecodePortIn/Out path
+constexpr uint8_t kFullDecodeClaimed = 1u << 7;  // Low byte claimed by a full-decode card - model decode stood down
 }  // namespace PortTraceFlags
 
 /// Decode-rule index sentinel values (PortTraceEvent::decodeRuleIndex)
@@ -94,6 +97,7 @@ struct PortTraceEvent
     bool wasBeta128Gated() const { return flags & PortTraceFlags::kBeta128Gated; }
     bool wasHandledInline() const{ return flags & PortTraceFlags::kHandledInline; }
     bool cfTrdosActive() const   { return flags & PortTraceFlags::kCfTrdosActive; }
+    bool wasFullDecodeClaimed() const { return flags & PortTraceFlags::kFullDecodeClaimed; }
 };
 
 /// Result of a table-based decodePort() lookup: resolved port + which rule matched
@@ -114,6 +118,7 @@ struct PortDecodeDisposition
     bool wasBeta128Gated = false;   // Beta128 port dropped because CF_TRDOS clear
     bool wasHandledInline = false;  // Handled by decoder switch, not PeripheralPortIn/Out
     bool viaLegacyBasePath = false; // Came through base-class DecodePortIn/Out
+    bool wasFullDecodeClaimed = false; // Low byte owned by a full-decode card; model decode stood down
 };
 
 /// Ring buffer behavior when full

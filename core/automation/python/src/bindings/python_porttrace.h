@@ -62,6 +62,7 @@ inline pybind11::dict eventToDict(const PortTraceEvent& e)
     d["handled_inline"] = e.wasHandledInline();
     d["cf_trdos"] = e.cfTrdosActive();
     d["via_legacy"] = (e.flags & PortTraceFlags::kViaLegacyBasePath) != 0;
+    d["full_decode_claim"] = e.wasFullDecodeClaimed();
     return d;
 }
 
@@ -78,7 +79,7 @@ inline PortTraceFilterRule buildRule(std::optional<uint16_t> port, std::optional
     if (device)
     {
         bool found = false;
-        for (int id = 0; id <= static_cast<int>(PortDeviceId::Custom); id++)
+        for (int id = 0; id <= static_cast<int>(PortDeviceId::FullDecodeClaim); id++)
         {
             if (*device == PortDiagnosticRecorder::DeviceIdToString(static_cast<PortDeviceId>(id)))
             {

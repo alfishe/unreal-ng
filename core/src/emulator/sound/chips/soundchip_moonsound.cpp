@@ -354,16 +354,77 @@ void SoundChip_Moonsound::portDeviceOutMethod(uint16_t port, uint8_t value)
 
 bool SoundChip_Moonsound::portDeviceClaimsRead(uint16_t port)
 {
+    const uint8_t low = static_cast<uint8_t>(port & 0xFF);
+
+    // FM1 status (#C4): the card's status register drives the bus on its own
+    // decode, unconditionally - the register exists regardless of the NEW2
+    // arming state, and guest players poll BUSY/LD here through dirty-high-
+    // byte forms (mfm_player.asm `in a,(0C4h)` loop). Claiming it keeps the
+    // motherboard decode (keyboard FE arm on the even mirror) from winning
+    // the cycle while the card is attached
+    if (low == static_cast<uint8_t>(PORT_FM_ADDR1))
+        return true;
+
     // MoonService-verified arming rule: until the guest sets OPL4 NEW2
     // (FM2 reg 05 bit 1, honored from bank 1 even in OPL3 mode — the same
     // signal the chip itself uses to accept wave access, openMSX getNew2),
     // the card leaves #7F to the Beta-128 FDC mirror - TR-DOS traffic stays
     // byte-identical (R6). Once armed, the card drives the wave data port
     // over the mirror.
-    return (port & 0xFF) == static_cast<uint8_t>(PORT_WAVE_DATA) && _opl4.New2Mode();
+    return low == static_cast<uint8_t>(PORT_WAVE_DATA) && _opl4.New2Mode();
 }
 
 /// endregion </Port interface>
+
+/// region <Ports interaction>
+
+bool SoundChip_Moonsound::attachToPorts(PortDecoder* decoder)
+{
+    bool result = false;
+
+    if (decoder)
+    {
+        _portDecoder = decoder;
+
+        // Attach as a low-byte full-decode observer on the card's six port
+        // addresses (D4): the CPLD wires A0..A7 only, so every high-byte
+        // alias hits the card - including the dirty aliases the Z80 immediate
+        // forms produce (A lands in the high address byte; MoonService v0.3a
+        // depends on it). The card shares the bus, so partial-decode devices
+        // (ULA/AY/Beta-128) still see MoonSound cycles and MoonSound sees
+        // theirs. The exclusive map would steal #7F from the WD1793 FDC.
+        result = decoder->RegisterFullDecodeLowBytePort(static_cast<uint8_t>(PORT_FM_ADDR1), this);
+        result &= decoder->RegisterFullDecodeLowBytePort(static_cast<uint8_t>(PORT_FM_DATA1), this);
+        result &= decoder->RegisterFullDecodeLowBytePort(static_cast<uint8_t>(PORT_FM_ADDR2), this);
+        result &= decoder->RegisterFullDecodeLowBytePort(static_cast<uint8_t>(PORT_FM_DATA2), this);
+        result &= decoder->RegisterFullDecodeLowBytePort(static_cast<uint8_t>(PORT_WAVE_ADDR), this);
+        result &= decoder->RegisterFullDecodeLowBytePort(static_cast<uint8_t>(PORT_WAVE_DATA), this);
+
+        if (result)
+        {
+            _chipAttachedToPortDecoder = true;
+        }
+    }
+
+    return result;
+}
+
+void SoundChip_Moonsound::detachFromPorts()
+{
+    if (_portDecoder && _chipAttachedToPortDecoder)
+    {
+        _portDecoder->UnregisterFullDecodeLowBytePort(static_cast<uint8_t>(PORT_FM_ADDR1), this);
+        _portDecoder->UnregisterFullDecodeLowBytePort(static_cast<uint8_t>(PORT_FM_DATA1), this);
+        _portDecoder->UnregisterFullDecodeLowBytePort(static_cast<uint8_t>(PORT_FM_ADDR2), this);
+        _portDecoder->UnregisterFullDecodeLowBytePort(static_cast<uint8_t>(PORT_FM_DATA2), this);
+        _portDecoder->UnregisterFullDecodeLowBytePort(static_cast<uint8_t>(PORT_WAVE_ADDR), this);
+        _portDecoder->UnregisterFullDecodeLowBytePort(static_cast<uint8_t>(PORT_WAVE_DATA), this);
+
+        _chipAttachedToPortDecoder = false;
+    }
+}
+
+/// endregion </Ports interaction>
 
 /// region <TTD serialization>
 
