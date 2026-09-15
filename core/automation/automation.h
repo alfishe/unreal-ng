@@ -10,6 +10,7 @@ class AutomationCLI;
 class AutomationGDB;
 class AutomationDezog;
 class AutomationZesarux;
+class AutomationMCP;
 
 class Automation
 {
@@ -41,6 +42,10 @@ protected:
 
 #if ENABLE_ZESARUX_AUTOMATION
     AutomationZesarux* _zesarux = nullptr;
+#endif
+
+#if ENABLE_MCP_AUTOMATION
+    AutomationMCP* _mcp = nullptr;
 #endif
     bool _stopped = false;
     /// endregion </Fields>
@@ -112,6 +117,7 @@ protected:
     bool startGDB();
     bool startDezog();
     bool startZesarux();
+    bool startMCP();
 
     void stopLua();
     void stopPython();
@@ -120,5 +126,6 @@ protected:
     void stopGDB();
     void stopDezog();
     void stopZesarux();
+    void stopMCP();
     /// endregion </Helper methods>
 };

@@ -121,6 +121,13 @@ public:
 
     // --- Introspection (tests / diagnostics) ---
     size_t getTemporaryBreakpointCount() const;
+
+    /// High-water mark of simultaneously-installed temporary breakpoints (never
+    /// reset by clearTemporaryBreakpoints). The live count races the breakpoint
+    /// hit path: a temporary set on the next instruction is hit and cleared
+    /// within microseconds of resume, before a test can observe it - the
+    /// high-water mark still proves how many were installed from a payload.
+    size_t getMaxTemporaryBreakpointCount() const;
     size_t getWatchpointCount() const;
     bool isBreakpointTemporary(uint16_t id) const;
 
@@ -173,6 +180,7 @@ private:
     PauseNotifier _notifier;
 
     std::set<uint16_t> _temporaryBreakpoints;         // BreakpointManager IDs
+    size_t _maxTemporaryBreakpoints = 0;              // High-water mark (tests)
     std::map<WatchKey, std::vector<uint16_t>> _watchpoints;
 
     bool _subscribed = false;

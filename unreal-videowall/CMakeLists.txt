@@ -170,7 +170,7 @@ if(QT_FOUND_PATH)
 endif()
 
 # Qt specific settings
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGL OpenGLWidgets)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC OFF)
 set(CMAKE_AUTOUIC OFF)
@@ -285,6 +285,8 @@ if (INCLUDE_AUTOMATION)
     target_link_libraries(${PROJECT_NAME} PRIVATE
         ${common_libraries}
         Qt6::Widgets
+        Qt6::OpenGL
+        Qt6::OpenGLWidgets
         unrealng::automation  # brings core (and recording) in as PUBLIC deps
         ${CMAKE_DL_LIBS}
         Threads::Threads
@@ -299,6 +301,8 @@ else ()
     target_link_libraries(${PROJECT_NAME} PRIVATE
         ${common_libraries}
         Qt6::Widgets
+        Qt6::OpenGL
+        Qt6::OpenGLWidgets
         unrealng::core  # brings recording in as a PUBLIC dependency
         Threads::Threads
     )

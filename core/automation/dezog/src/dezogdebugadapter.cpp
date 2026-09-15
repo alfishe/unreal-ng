@@ -7,7 +7,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/ttd/timetravelmanager.h"
-#include "debugger/ttd/ttd_checkpoint.h"
+#include "debugger/ttd/ttdcheckpoint.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -587,6 +587,8 @@ uint16_t DezogDebugAdapter::addBreakpoint(uint16_t addr, uint8_t bank, const std
     {
         std::lock_guard<std::mutex> lock(_mutex);
         _temporaryBreakpoints.insert(id);
+        if (_temporaryBreakpoints.size() > _maxTemporaryBreakpoints)
+            _maxTemporaryBreakpoints = _temporaryBreakpoints.size();
     }
 
     return id;
@@ -634,6 +636,12 @@ size_t DezogDebugAdapter::getTemporaryBreakpointCount() const
 {
     std::lock_guard<std::mutex> lock(_mutex);
     return _temporaryBreakpoints.size();
+}
+
+size_t DezogDebugAdapter::getMaxTemporaryBreakpointCount() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _maxTemporaryBreakpoints;
 }
 
 bool DezogDebugAdapter::isBreakpointTemporary(uint16_t id) const

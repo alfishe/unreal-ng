@@ -94,6 +94,14 @@ uint8_t PortDecoder_Spectrum3::DecodePortIn(uint16_t port, uint16_t pc)
         disp.decodedPort = 0x00FE;
         disp.wasHandledInline = true;
     }
+    else if (uint8_t mouseReg = 0; Default_IsPort_KempstonMouse(port, mouseReg))
+    {
+        // Kempston Mouse (design §3.2: standard decode on machines without a documented deviation)
+        result = Default_Port_KempstonMouse_In(port, pc);
+        _lastPortDecoded = true;
+        disp.decodedPort = port;
+        disp.wasHandledInline = true;
+    }
     else
     {
         result = PeripheralPortIn(port);
@@ -302,6 +310,16 @@ void PortDecoder_Spectrum3::Port_7FFD(uint8_t value, uint16_t pc)
 /// \param value
 void PortDecoder_Spectrum3::Port_1FFD(uint8_t value, uint16_t pc)
 {
+    // Not implemented: p1FFD is never written, so it stays 0 and TTD has
+    // nothing model-specific to capture for this machine.
+    //
+    // WHEN YOU IMPLEMENT THIS: p1FFD becomes live state that
+    // TTDChipsetState does not carry, and a restore would silently lose it.
+    // Declare it from GetTTDModelStateIds() and supply a serializer from
+    // CreateTTDSerializers() (see PortDecoder and portdecoder_scorpion256
+    // for the pattern). TTD refuses to record on a model that declares
+    // state without a serializer, so the declaration cannot be forgotten
+    // once made.
     (void)value;
     (void)pc;
 }

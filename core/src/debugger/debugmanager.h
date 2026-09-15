@@ -5,6 +5,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/labels/labelmanager.h"
+#include "debugger/listing/listingparser.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "emulator/emulatorcontext.h"
 #include <map>
@@ -23,11 +24,15 @@ protected:
     EmulatorContext* _context = nullptr;
     BreakpointManager* _breakpoints = nullptr;
     LabelManager* _labels = nullptr;
+    ListingParser* _listing = nullptr;
     std::unique_ptr<Z80Disassembler> _disassembler = nullptr;
     std::unique_ptr<AnalyzerManager> _analyzerManager = nullptr;
     
     // Keyboard injection manager for automation/debugging
     class DebugKeyboardManager* _keyboardManager = nullptr;
+
+    // Kempston Mouse injection funnel (automation, host input, TTD journal)
+    class DebugMouseManager* _mouseManager = nullptr;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -42,9 +47,11 @@ public:
 
     BreakpointManager* GetBreakpointsManager();
     LabelManager* GetLabelManager();
+    ListingParser* GetListingParser();
     std::unique_ptr<Z80Disassembler>& GetDisassembler();
     AnalyzerManager* GetAnalyzerManager();
     DebugKeyboardManager* GetKeyboardManager();
+    DebugMouseManager* GetMouseManager();
 
     /// endregion </Properties>
 

@@ -412,3 +412,122 @@ TEST_F(Memory_Test, ROMSwitching_RoundTrip)
 }
 
 /// endregion </ROM Switching Tests>
+
+/// region <GetRAMPageForBank Tests>
+
+// Test GetRAMPageForBank returns cached value for RAM banks
+TEST_F(Memory_Test, GetRAMPageForBank_UsesCache)
+{
+    // Set up default 48k-like memory layout
+    _memory->DefaultBanksFor48k();
+
+    // Bank 0 is ROM, should return MEMORY_UNMAPPABLE
+    EXPECT_EQ(_memory->GetRAMPageForBank(0), MEMORY_UNMAPPABLE);
+
+    // Bank 1 (0x4000-0x7FFF) should be RAM page 5 by default
+    EXPECT_EQ(_memory->GetRAMPageForBank(1), 5);
+
+    // Bank 2 (0x8000-0xBFFF) should be RAM page 2 by default
+    EXPECT_EQ(_memory->GetRAMPageForBank(2), 2);
+
+    // Bank 3 (0xC000-0xFFFF) should be RAM page 0 by default
+    EXPECT_EQ(_memory->GetRAMPageForBank(3), 0);
+}
+
+// Test GetRAMPageForBank updates correctly when bank is changed
+TEST_F(Memory_Test, GetRAMPageForBank_UpdatesOnBankChange)
+{
+    _memory->DefaultBanksFor48k();
+
+    // Initially bank 3 = page 0
+    EXPECT_EQ(_memory->GetRAMPageForBank(3), 0);
+
+    // Change bank 3 to page 7
+    _memory->SetRAMPageToBank3(7);
+    EXPECT_EQ(_memory->GetRAMPageForBank(3), 7);
+
+    // Change bank 1 to page 3
+    _memory->SetRAMPageToBank1(3);
+    EXPECT_EQ(_memory->GetRAMPageForBank(1), 3);
+}
+
+/// endregion </GetRAMPageForBank Tests>
+/// region <ROM page switch tracking (HUD notifications)>
+
+// The 128K family never reaches SetROMPage at runtime: a port 7FFD write goes
+// SetROMMode -> UpdateZ80Banks -> SetROM48k/SetROM128k/SetROMDOS/SetROMSystem,
+// and SetROMPage only runs at reset. Recording the switch in SetROMPage alone
+// therefore left the HUD with RAM page nudges but never a ROM one.
+
+TEST_F(Memory_Test, RomSwitchTracker_RecordsRuntime128KPath)
+{
+    _memory->_feature_hud_enabled = true;
+
+    _memory->SetROM128k(false);      // starting ROM for this frame
+    _memory->handleFrameStart();
+    EXPECT_FALSE(_memory->_romSwitchTracker.hadActivity()) << "frame start must clear activity";
+
+    _memory->SetROM48k(false);       // the path a 7FFD write actually takes
+
+    EXPECT_TRUE(_memory->_romSwitchTracker.hadActivity())
+        << "ROM switch through SetROM48k was not recorded";
+    EXPECT_EQ(_memory->_romSwitchTracker.currentPage,
+              _memory->GetROMPageFromAddress(_memory->base_sos_rom));
+}
+
+TEST_F(Memory_Test, RomSwitchTracker_RecordsSetROMPagePath)
+{
+    _memory->_feature_hud_enabled = true;
+
+    _memory->SetROMPage(0, false);
+    _memory->handleFrameStart();
+
+    _memory->SetROMPage(2, false);
+
+    EXPECT_TRUE(_memory->_romSwitchTracker.hadActivity());
+    EXPECT_EQ(_memory->_romSwitchTracker.currentPage, 2);
+}
+
+TEST_F(Memory_Test, RomSwitchTracker_IgnoresSwitchToSamePage)
+{
+    _memory->_feature_hud_enabled = true;
+
+    _memory->SetROM48k(false);
+    _memory->handleFrameStart();
+
+    _memory->SetROM48k(false);       // re-selecting the same ROM is not a switch
+    _memory->SetROM48k(false);
+
+    EXPECT_FALSE(_memory->_romSwitchTracker.hadActivity());
+    EXPECT_EQ(_memory->_romSwitchTracker.switchCount, 0);
+}
+
+TEST_F(Memory_Test, RomSwitchTracker_TracksRangeAcrossSeveralSwitches)
+{
+    _memory->_feature_hud_enabled = true;
+
+    _memory->SetROM128k(false);
+    _memory->handleFrameStart();
+
+    _memory->SetROM48k(false);
+    _memory->SetROM128k(false);
+    _memory->SetROM48k(false);
+
+    EXPECT_EQ(_memory->_romSwitchTracker.switchCount, 3);
+    EXPECT_LT(_memory->_romSwitchTracker.minPage, _memory->_romSwitchTracker.maxPage)
+        << "oscillation between two ROMs must widen the recorded range";
+}
+
+TEST_F(Memory_Test, RomSwitchTracker_SilentWhenHudDisabled)
+{
+    _memory->_feature_hud_enabled = false;
+
+    _memory->SetROM128k(false);
+    _memory->handleFrameStart();
+    _memory->SetROM48k(false);
+
+    EXPECT_FALSE(_memory->_romSwitchTracker.hadActivity())
+        << "tracking must stay zero-overhead while the HUD is off";
+}
+
+/// endregion </ROM page switch tracking>

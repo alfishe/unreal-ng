@@ -232,6 +232,26 @@ public:
     }
 };
 
+/// NC_CPU_FREQ_CHANGED payload: emulator instance and new CPU frequency
+class CPUFreqPayload : public MessagePayload
+{
+public:
+    unreal::UUID _emulatorId;
+    uint32_t _frequencyHz;     // Actual frequency in Hz (e.g., 3500000, 7000000, 14000000)
+    uint8_t _freqMultiplier;   // Multiplier relative to base (1, 2, 4, etc.)
+
+public:
+    CPUFreqPayload(const std::string& emulatorId, uint32_t frequencyHz, uint8_t freqMultiplier)
+        : MessagePayload()
+        , _emulatorId(emulatorId.empty() ? unreal::UUID() : unreal::UUID(emulatorId))
+        , _frequencyHz(frequencyHz)
+        , _freqMultiplier(freqMultiplier)
+    {
+    }
+
+    virtual ~CPUFreqPayload() = default;
+};
+
 /// Payload for requesting single sync mode in videowall
 /// Example: messageCenter.Post(NC_VIDEOWALL_SINGLE_SYNC_MODE, new VideowallSyncModePayload(emulatorId, true));
 class VideowallSyncModePayload : public MessagePayload
@@ -301,17 +321,244 @@ class BreakpointTriggeredPayload : public SimpleNumberPayload
 public:
     unreal::UUID emulatorId;
     uint16_t    address;   // Z80 address that triggered (0 if unknown / N/A)
+    bool        hidden{false};
 
-    BreakpointTriggeredPayload(const unreal::UUID& id, uint32_t breakpointId, uint16_t addr)
-        : SimpleNumberPayload(breakpointId), emulatorId(id), address(addr) {}
+    BreakpointTriggeredPayload(const unreal::UUID& id, uint32_t breakpointId, uint16_t addr, bool isHidden = false)
+        : SimpleNumberPayload(breakpointId), emulatorId(id), address(addr), hidden(isHidden) {}
 
-    BreakpointTriggeredPayload(const std::string& id, uint32_t breakpointId, uint16_t addr)
+    BreakpointTriggeredPayload(const std::string& id, uint32_t breakpointId, uint16_t addr, bool isHidden = false)
         : SimpleNumberPayload(breakpointId)
         , emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id))
         , address(addr)
+        , hidden(isHidden)
     {}
 
     virtual ~BreakpointTriggeredPayload() = default;
+};
+
+/// Payload for NC_FEATURE_CHANGED.
+/// Posted by FeatureManager::onFeatureChanged() AFTER all UpdateFeatureCache()
+/// calls are complete, so every consumer sees consistent cached state.
+/// Informational: caches are already up to date when this fires.
+class FeatureChangedPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::string featureId;   // Canonical feature ID (e.g. "hud", "sound", "timetravel")
+    bool enabled;
+
+    FeatureChangedPayload(const unreal::UUID& id, std::string feature, bool on)
+        : MessagePayload(), emulatorId(id), featureId(std::move(feature)), enabled(on) {}
+
+    FeatureChangedPayload(const std::string& id, std::string feature, bool on)
+        : MessagePayload()
+        , emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id))
+        , featureId(std::move(feature))
+        , enabled(on)
+    {}
+
+    virtual ~FeatureChangedPayload() = default;
+};
+
+/// Payload for NC_SPEED_CHANGED.
+/// Posted by Core::SetSpeedMultiplier / EnableTurboMode / DisableTurboMode
+/// after state is committed.
+class SpeedChangedPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    uint8_t multiplier;   // 1, 2, 4, 8, 16
+    bool turboMode;       // true = max-speed mode active
+
+    SpeedChangedPayload(const unreal::UUID& id, uint8_t mult, bool isTurbo)
+        : MessagePayload(), emulatorId(id), multiplier(mult), turboMode(isTurbo) {}
+
+    SpeedChangedPayload(const std::string& id, uint8_t mult, bool isTurbo)
+        : MessagePayload()
+        , emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id))
+        , multiplier(mult)
+        , turboMode(isTurbo)
+    {}
+
+    virtual ~SpeedChangedPayload() = default;
+};
+
+/// Payload for NC_FILE_LOADED.
+/// Posted by Emulator::LoadSnapshot / LoadTape / LoadDisk after the loader
+/// returns. Carries the result so consumers can show success or failure toasts.
+class FileLoadedPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::string kind;     // "snapshot", "tape", "disk"
+    std::string path;     // full path of the file
+    bool ok;              // false = load failed
+
+    FileLoadedPayload(const unreal::UUID& id, std::string fileKind, std::string filePath, bool success)
+        : MessagePayload()
+        , emulatorId(id)
+        , kind(std::move(fileKind))
+        , path(std::move(filePath))
+        , ok(success)
+    {}
+
+    FileLoadedPayload(const std::string& id, std::string fileKind, std::string filePath, bool success)
+        : MessagePayload()
+        , emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id))
+        , kind(std::move(fileKind))
+        , path(std::move(filePath))
+        , ok(success)
+    {}
+
+    virtual ~FileLoadedPayload() = default;
+};
+
+/// Recording type (video, audio, or both)
+enum class RecordingType : uint8_t
+{
+    Video,      // Video-only recording
+    Audio,      // Audio-only recording
+    VideoAudio  // Video + audio recording (default)
+};
+
+/// Payload for NC_RECORDING_STATE.
+/// Posted by RecordingManager on start / stop / pause / resume.
+class RecordingStatePayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    bool recording;       // true = started/active, false = stopped
+    bool paused;          // true = paused (only valid when recording = true)
+    RecordingType type;   // what is being recorded
+    std::string path;     // output file path (meaningful on stop)
+
+    RecordingStatePayload(const unreal::UUID& id, bool isRecording, std::string filePath = {},
+                          RecordingType recType = RecordingType::VideoAudio, bool isPaused = false)
+        : MessagePayload()
+        , emulatorId(id)
+        , recording(isRecording)
+        , paused(isPaused)
+        , type(recType)
+        , path(std::move(filePath))
+    {}
+
+    RecordingStatePayload(const std::string& id, bool isRecording, std::string filePath = {},
+                          RecordingType recType = RecordingType::VideoAudio, bool isPaused = false)
+        : MessagePayload()
+        , emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id))
+        , recording(isRecording)
+        , paused(isPaused)
+        , type(recType)
+        , path(std::move(filePath))
+    {}
+
+    virtual ~RecordingStatePayload() = default;
+};
+
+/// Payload for NC_MEMORY_PAGE_CHANGED.
+/// Posted once per frame at frame end with accumulated switch info.
+class MemoryPagePayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    uint8_t bank;         // CPU address space bank index (0-3: 0000-3FFF, 4000-7FFF, 8000-BFFF, C000-FFFF)
+    uint8_t page;         // Current physical RAM page mapped to this bank
+    uint8_t minPage;      // Minimum page seen this frame (for rapid-switch display)
+    uint8_t maxPage;      // Maximum page seen this frame
+    uint8_t switchCount;  // Number of switches this frame (0 = no change)
+
+    MemoryPagePayload(const unreal::UUID& id, uint8_t bankIndex, uint8_t curPage,
+                      uint8_t minP, uint8_t maxP, uint8_t count)
+        : MessagePayload()
+        , emulatorId(id)
+        , bank(bankIndex)
+        , page(curPage)
+        , minPage(minP)
+        , maxPage(maxP)
+        , switchCount(count)
+    {}
+
+    virtual ~MemoryPagePayload() = default;
+};
+
+/// Payload for NC_ROM_PAGE_CHANGED.
+/// Posted once per frame at frame end with accumulated switch info.
+class ROMPagePayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    uint8_t page;         // Current ROM page index (absolute: plane-composed on ProfROM)
+    uint8_t minPage;      // Minimum page seen this frame
+    uint8_t maxPage;      // Maximum page seen this frame
+    uint8_t switchCount;  // Number of switches this frame (0 = no change)
+
+    // ProfROM planes (quadrants). Only the Scorpion ProfROM variant has them, so
+    // consumers must gate on planeAware rather than infer a plane from the page:
+    // on every other model the ROM page is a plain index with no plane geometry.
+    bool planeAware = false;  // Machine carries ProfROM planes
+    uint8_t plane = 0;        // Current plane
+    uint8_t minPlane = 0;     // Minimum plane seen this frame
+    uint8_t maxPlane = 0;     // Maximum plane seen this frame
+
+    ROMPagePayload(const unreal::UUID& id, uint8_t curPage, uint8_t minP, uint8_t maxP, uint8_t count)
+        : MessagePayload()
+        , emulatorId(id)
+        , page(curPage)
+        , minPage(minP)
+        , maxPage(maxP)
+        , switchCount(count)
+    {}
+
+    virtual ~ROMPagePayload() = default;
+};
+
+/// Payload for NC_SCREEN_PAGE_CHANGED.
+/// Posted once per frame at frame end with accumulated switch info.
+class ScreenPagePayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    uint8_t screen;       // Current screen (0 = normal/page 5, 1 = shadow/page 7)
+    uint8_t switchCount;  // Number of switches this frame (0 = no change)
+
+    ScreenPagePayload(const unreal::UUID& id, uint8_t curScreen, uint8_t count)
+        : MessagePayload()
+        , emulatorId(id)
+        , screen(curScreen)
+        , switchCount(count)
+    {}
+
+    virtual ~ScreenPagePayload() = default;
+};
+
+/// Audio source types for NC_AUDIO_ACTIVITY
+enum class AudioSource : uint8_t
+{
+    Beeper = 0,
+    Covox = 1,
+    AY = 2,         // Single AY-3-8910 / YM2149
+    TurboSound = 3, // TurboSound (dual AY)
+    TSFM = 4,       // TurboSound FM (dual YM2203: AY + FM) - legacy, kept for compatibility
+    FM = 5          // FM part of YM2203 (separate from AY/TS)
+};
+
+/// Payload for NC_AUDIO_ACTIVITY.
+/// Posted by audio sources when activity state changes.
+class AudioActivityPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    AudioSource source;   // Which audio source
+    bool active;          // true = started producing sound, false = went silent
+
+    AudioActivityPayload(const unreal::UUID& id, AudioSource src, bool isActive)
+        : MessagePayload()
+        , emulatorId(id)
+        , source(src)
+        , active(isActive)
+    {}
+
+    virtual ~AudioActivityPayload() = default;
 };
 
 /// endregion </Instance-tagged payloads (GDB TDD §6.3 prerequisite)>

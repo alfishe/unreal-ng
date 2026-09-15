@@ -925,6 +925,57 @@ TEST_F(DiskImage_Test, Track_Move_KeepsSectorPointersValid)
     EXPECT_TRUE(moved.getSector(0)->isDataCRCValid() == false) << "data changed without CRC update stays detectable";
 }
 
+/// A blank image stamps tracks 1..N from the formatted track 0 (Track::restampFrom). Every track must be
+/// byte-identical - stream, clock bitmap and sector index - to what formatTrack() produces for that position
+TEST_F(DiskImage_Test, BlankImage_StampedTracksMatchExplicitFormat)
+{
+    DiskImage disk(80, 2);
+
+    for (uint8_t cylinder = 0; cylinder < 80; cylinder++)
+    {
+        for (uint8_t side = 0; side < 2; side++)
+        {
+            Track* stamped = disk.getTrackForCylinderAndSide(cylinder, side);
+            ASSERT_NE(stamped, nullptr);
+
+            Track reference;
+            reference.formatTrack(cylinder, side);
+
+            const std::string where = StringHelper::Format("cyl %d side %d", cylinder, side);
+            ASSERT_EQ(stamped->rawSize(), reference.rawSize()) << where;
+            EXPECT_EQ(std::memcmp(stamped->rawData(), reference.rawData(), reference.rawSize()), 0) << where;
+            EXPECT_EQ(stamped->clockBitmap(), reference.clockBitmap()) << where;
+            EXPECT_EQ(stamped->weakBitmap(), reference.weakBitmap()) << where;
+            EXPECT_EQ(stamped->encoding(), reference.encoding()) << where;
+            EXPECT_EQ(stamped->indexMarkOffset(), reference.indexMarkOffset()) << where;
+            EXPECT_FALSE(stamped->isDirty()) << where;
+
+            ASSERT_EQ(stamped->sectorCount(), reference.sectorCount()) << where;
+            for (size_t i = 0; i < reference.sectorCount(); i++)
+            {
+                const Sector& s = stamped->sectors()[i];
+                const Sector& r = reference.sectors()[i];
+                EXPECT_EQ(s.idamOffset, r.idamOffset) << where << " sector " << i;
+                EXPECT_EQ(s.damOffset, r.damOffset) << where << " sector " << i;
+                EXPECT_EQ(s.dataOffset, r.dataOffset) << where << " sector " << i;
+                EXPECT_EQ(s.dataSize, r.dataSize) << where << " sector " << i;
+                EXPECT_EQ(s.hasData, r.hasData) << where << " sector " << i;
+                EXPECT_EQ(s.deleted, r.deleted) << where << " sector " << i;
+                EXPECT_EQ(s.idCrcValid, r.idCrcValid) << where << " sector " << i;
+                EXPECT_EQ(s.dataCrcValid, r.dataCrcValid) << where << " sector " << i;
+                EXPECT_EQ(s.dirty, r.dirty) << where << " sector " << i;
+                EXPECT_EQ(s.encoding, r.encoding) << where << " sector " << i;
+                EXPECT_EQ(s.cylinder(), cylinder) << where << " sector " << i;
+                EXPECT_EQ(s.head(), side) << where << " sector " << i;
+                EXPECT_EQ(s.number(), r.number()) << where << " sector " << i;
+                // Index views must point into this track's own buffer, not the template's
+                EXPECT_EQ(reinterpret_cast<const uint8_t*>(s.id), stamped->rawData() + s.idamOffset) << where;
+                EXPECT_EQ(s.data, s.hasData ? stamped->rawData() + s.dataOffset : nullptr) << where;
+            }
+        }
+    }
+}
+
 TEST_F(DiskImage_Test, Sector_Cap_255)
 {
     // 300 ID-only fields of 22 bytes each (gap-free) = 6600 bytes

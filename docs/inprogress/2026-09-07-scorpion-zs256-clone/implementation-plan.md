@@ -7,7 +7,8 @@
 **Goal:** complete `MM_SCORP` (and first-class `MM_PROFSCORP`) — full `#1FFD` paging,
 256 KB/1 MB RAM, ROM ladder from minimal 64 KB through ProfROM quadrants to 2 MB
 ROM-disk images, Shadow Service Monitor with MNI, Scorpion-accurate TR-DOS traps,
-Sinclair-matching contention-free video, and `.z80` hw=10 snapshots.
+Sinclair-matching contention-free video, hardware 7 MHz turbo (§13), and `.z80` hw=10
+snapshots.
 
 **Tech stack:** C++20, CMake+Ninja, GoogleTest (`core-tests`), Google Benchmark
 (`core-benchmarks`) — all existing.
@@ -58,9 +59,11 @@ Sinclair-matching contention-free video, and `.z80` hw=10 snapshots.
   against golden values committed in the test file.
 
 **Steps:**
-- [ ] Extract the context-building pattern from `emulator_test.h` into the fixture (no production code changes).
-- [ ] Implement the golden dump for the five existing models; commit goldens **in-test** (not filesystem) so they travel with the code.
-- [ ] Verify: `./cmake-build-release/bin/core-tests --gtest_filter="*ModelsRegression*"` green before any production change.
+- [x] Extract the context-building pattern from `emulator_test.h` into the fixture (no production code changes).
+- [x] Implement the golden dump for the five existing models; commit goldens **in-test** (not filesystem) so they travel with the code.
+- [x] Verify: `./cmake-build-release/bin/core-tests --gtest_filter="*ModelsRegression*"` green before any production change.
+
+**Done 2026-09-08, commit `3f49622c.**` Golden regression + ScorpionMachineFixture landed as `modelsregression_test.cpp` / `scorpionfixture.h`.
 
 **Verification:** new tests green; full suite unchanged.
 
@@ -82,11 +85,13 @@ Sinclair-matching contention-free video, and `.z80` hw=10 snapshots.
 - Create: `core/tests/emulator/video/scorpionraster_test.cpp` — asserts frame 69888, t_line 224, intstart 1794, intlen 32, `contentionEnabled == false`, `fetchType == ULA_DISCRETE_LOGIC`, `borderUpdateTStates == 1` for both Scorpion models
 
 **Steps:**
-- [ ] Append `M_SCORPION` after `M_BRD` + descriptor + name + draw-callback slot, each at the end of its list; keep `M_PENTAGON128K`-class modes untouched (verify by diffing `GetVideoModeName()` output for every pre-existing mode before/after).
-- [ ] Wire model→mode mapping and contention arm.
-- [ ] Add config timing cases (both switches).
-- [ ] Border power-on black in Scorpion `reset()` only (other models keep white).
-- [ ] Re-glob CMake (new test file), build, run new + contention + regression tests.
+- [x] Append `M_SCORPION` after `M_BRD` + descriptor + name + draw-callback slot, each at the end of its list; keep `M_PENTAGON128K`-class modes untouched (verify by diffing `GetVideoModeName()` output for every pre-existing mode before/after).
+- [x] Wire model→mode mapping and contention arm.
+- [x] Add config timing cases (both switches).
+- [x] Border power-on black in Scorpion `reset()` only (other models keep white).
+- [x] Re-glob CMake (new test file), build, run new + contention + regression tests.
+
+**Done 2026-09-08, commit `3f49622c.**` `M_SCORPION` video mode + timing switches verified by `scorpionraster_test.cpp`.
 
 **Verification:** `--gtest_filter="*Scorpion*:*Contention*:*ModelsRegression*"` green; manual: WebAPI `POST /emulator/start {"model":"SCORPION"}` then `GET /emulator` shows 69888T frame.
 
@@ -109,10 +114,12 @@ Sinclair-matching contention-free video, and `.z80` hw=10 snapshots.
 
 **Steps:**
 - [x] **DONE 2026-09-08 (landed ahead of the plan, uncommitted).** `MM_SCORP`/`MM_PROFSCORP` pointer mapping corrected in `rom.cpp`; locked by `core/tests/emulator/memory/scorpionrommapping_test.cpp` (3 tests, verified to fail against the old mapping). Full suite green at 2188 tests.
-- [ ] Bump constant; grep-audit consumers (`rg "MAX_ROM_PAGES|ROM_OFFSET|ROMBase" core unreal-qt tools`).
-- [ ] Implement validation matrix with the existing error style.
-- [ ] Shared-memory test still green (`sharedmemory_test.cpp`) — mmap size grows.
-- [ ] Re-glob, build, full test suite (catches offset assumptions in TTD/recording paths).
+- [x] Bump constant; grep-audit consumers (`rg "MAX_ROM_PAGES|ROM_OFFSET|ROMBase" core unreal-qt tools`).
+- [x] Implement validation matrix with the existing error style.
+- [x] Shared-memory test still green (`sharedmemory_test.cpp`) — mmap size grows.
+- [x] Re-glob, build, full test suite (catches offset assumptions in TTD/recording paths).
+
+**Done 2026-09-08, commit `3f49622c.**` `MAX_ROM_PAGES` 64 -> 128; validation matrix in `romspace_test.cpp`.
 
 **Verification:** `--gtest_filter="*RomSpace*:*SharedMemory*:*ModelsRegression*"` green; full suite green.
 
@@ -138,11 +145,13 @@ Sinclair-matching contention-free video, and `.z80` hw=10 snapshots.
   - fixed windows: `#4000`→5, `#8000`→2 under all settings
 
 **Steps:**
-- [ ] Implement branch + helper; keep generic path byte-identical (early return).
-- [ ] Guard `SetROMMode` for Scorpion models.
-- [ ] Slim `Port_7FFD` to latch+apply (this task; `#1FFD` still stub — Task 4 completes the pair, so paging tests drive latches via `EmulatorState` directly here).
-- [ ] Write paging truth tests (drive `state.p1FFD/p7FFD` + `UpdateZ80Banks()` directly — decoder integration covered in Task 4 tests).
-- [ ] Full suite + golden regression.
+- [x] Implement branch + helper; keep generic path byte-identical (early return).
+- [x] Guard `SetROMMode` for Scorpion models.
+- [x] Slim `Port_7FFD` to latch+apply (this task; `#1FFD` still stub — Task 4 completes the pair, so paging tests drive latches via `EmulatorState` directly here).
+- [x] Write paging truth tests (drive `state.p1FFD/p7FFD` + `UpdateZ80Banks()` directly — decoder integration covered in Task 4 tests).
+- [x] Full suite + golden regression.
+
+**Done 2026-09-08, commit `3f49622c.**` `UpdateScorpionBanks()` + paging truth tables in `scorpionpaging_test.cpp`.
 
 **Verification:** `--gtest_filter="*ScorpionPaging*:*ModelsRegression*"` green.
 
@@ -170,9 +179,11 @@ Sinclair-matching contention-free video, and `.z80` hw=10 snapshots.
   - gating: `IN (#1F)` with `CF_TRDOS` clear and `p1FFD[1]` clear → `wasBeta128Gated`, floating-bus value; with `CF_TRDOS` set → FDC status byte
 
 **Steps:**
-- [ ] Implement decoder changes; keep mask helpers (`IsPort_7FFD/1FFD/FE`) untouched.
-- [ ] Port-trace ids + tests.
-- [ ] Full suite + golden regression.
+- [x] Implement decoder changes; keep mask helpers (`IsPort_7FFD/1FFD/FE`) untouched.
+- [x] Port-trace ids + tests.
+- [x] Full suite + golden regression.
+
+**Done 2026-09-08, commit `3f49622c.**` Complete `#1FFD`/`#7FFD`/`#FE` decode, Beta128 mirror fix (found live during E2E-2), `scorpionports_test.cpp` + `scorpionmachine_test.cpp`.
 
 **Verification:** `--gtest_filter="*Scorpion*:*ModelsRegression*:*PortTrace*"` green.
 
@@ -196,9 +207,11 @@ Sinclair-matching contention-free video, and `.z80` hw=10 snapshots.
   8. FDC gating contract (S12): outside session `IN (#1F)` undecoded (floating bus, FDC off the bus); with `p1FFD[1]` set (monitor paged, session closed) `IN (#1F)` **still answers FDC status** (§12.3 arbitration); `OUT (#FF)` colors border only outside session
 
 **Steps:**
-- [ ] Write tests 1-6 first (they exercise Tasks 3-4 output; any failure = bug found early).
-- [ ] Confirm the decoder-level gating from Task 4 covers all five FDC ports (`#1F/#3F/#5F/#7F/#FF`) and the monitor-paged exception; Pentagon goldens stay green (no shared code changed).
-- [ ] Mount a real TRD via `Emulator::LoadDisk` in an integration smoke (uses `data/testrom` or a generated TRD in `scratch/`).
+- [x] Write tests 1-6 first (they exercise Tasks 3-4 output; any failure = bug found early).
+- [x] Confirm the decoder-level gating from Task 4 covers all five FDC ports (`#1F/#3F/#5F/#7F/#FF`) and the monitor-paged exception; Pentagon goldens stay green (no shared code changed).
+- [x] Mount a real TRD via `Emulator::LoadDisk` in an integration smoke (uses `data/testrom` or a generated TRD in `scratch/`).
+
+**Done 2026-09-08, commit `3f49622c.**` Trap semantics + FDC session gating, `scorpiontrdos_test.cpp`; live E2E-2 with a real TRD - see [verification/e2e-base-rom.md](verification/e2e-base-rom.md).
 
 **Verification:** `--gtest_filter="*ScorpionTrdos*:*ModelsRegression*"` green; manual WebAPI boot-to-TR-DOS per testing-plan §E2E-2.
 
@@ -215,20 +228,22 @@ Sinclair-matching contention-free video, and `.z80` hw=10 snapshots.
   - `RETN` decode: `IFF1 = IFF2; nmi_in_progress = false` (audit existing RETN/ED-4D path)
   - remove the dead commented block (`z80.cpp:668-692`) — replaced by the real path; keep `pc > 0x4000` Scorpion guard **out** (MNI latch handles ROM selection; the original guard applied to a different NMI source — note in commit)
   - `Z80::retn()` is already an empty stub called by the `ED45` handler after `iff1 = iff2` (`op_ed.cpp:146-161`): fill it with `nmi_in_progress = false` (audit that the other `RETN` aliases `ED55/5D/65/6D/75/7D` call the same helper)
-- Modify: `core/src/emulator/cpu/core.cpp` or `emulator.cpp` — `Emulator::RequestNMI()` (plain) and `Emulator::RequestMNI()` (Scorpion models: `state.p1FFD |= 0x02; memory.UpdateZ80Banks(); z80->RequestNonMaskedInterrupt();`)
+- Modify: `core/src/emulator/cpu/core.cpp` or `emulator.cpp` — `Emulator::RequestNMI()` (plain) and `Emulator::RequestMNI()` (Scorpion models: `state.p1FFD |= 0x02; memory.UpdateZ80Banks(); z80->RequestNonMaskedInterrupt();`) — **superseded 2026-09-10**: the working-tree version arms the DD50.1 trigger (`state.scorpionDosTrigger = 1`) instead of writing the latch (HW §9, [profrom-nmi-boot-analysis.md](profrom-nmi-boot-analysis.md) §9)
 - Verify only (no change): `nmi_in_progress` is already in `TTDCpuState` (`ttd_checkpoint.cpp:65,109`) and `MachineStateHash` (`machine_state_hash.cpp:95`) — add a checkpoint-restore assertion to `nmi_test.cpp`
 - Modify: `unreal-qt/src/menumanager.cpp` / `.h` (all actions live here; `unreal-qt/src/mainwindow.cpp` only wires the slot) — `Machine → MNI (NMI + Service Monitor)`, default `F11` with `Qt::WindowShortcut` context (the debugger window binds F11 to Step In at `unreal-qt/src/debugger/debuggerwindow.cpp:85`; Full Screen moved to Ctrl+F in commit ced71710, so F11 is free at main-window level); fix the stale Help text `"F11 - Full Screen"` at `menumanager.cpp:834`; disabled for non-Scorpion models (or plain NMI semantics with tooltip)
 - Modify: `core/automation/webapi/src/api/lifecycle_api.cpp` (+ openapi spec `core/automation/webapi/src/openapi/`) — `POST /api/v1/emulator/{id}/nmi` body `{"magic": true|false}`, registered next to the existing `POST …/reset`; plain NMI for other models
 - Modify: `core/automation/` CLI/Python/Lua bindings — expose `request_mni()` (follow the existing command registration pattern)
 - Create: `core/tests/emulator/cpu/nmi_test.cpp` — NMI accept cycle (PC→#0066, IFF handling, RETN restore, NMI-during-HALT, NMI-during-INT, double-request coalescing)
-- Create: `core/tests/emulator/ports/models/scorpionmni_test.cpp` — MNI: set bank 8 at `#C000`, trigger MNI, assert `p1FFD bit1` set, bit4 preserved, `#0000` = service ROM, PC path executes monitor code (patterned synthetic ROM), `OUT (#1FFD),0` exits back to ROM0 with bank 8 intact
+- Create: `core/tests/emulator/ports/models/scorpionmni_test.cpp` — MNI: set bank 8 at `#C000`, trigger MNI, assert `p1FFD bit1` set, bit4 preserved, `#0000` = service ROM, PC path executes monitor code (patterned synthetic ROM), `OUT (#1FFD),0` exits back to ROM0 with bank 8 intact — **rewritten 2026-09-10** to the trigger model: page 3 forced at `#0000`, latches untouched, release strobe on the first `≥ #4000` read, service-latch priority, RAM0 override
 
 **Steps:**
-- [ ] Z80 core NMI + tests (model-agnostic).
-- [ ] MNI orchestration + tests.
-- [ ] TTD restore assertion (state already captured — no format change).
-- [ ] GUI action + WebAPI endpoint + openapi docs + automation bindings.
-- [ ] WebAPI live smoke per AGENTS.md WebAPI sequence (fresh instance, model SCORPION, POST /nmi {"magic":true}, GET /memory or /state to observe p1FFD=0x02).
+- [x] Z80 core NMI + tests (model-agnostic).
+- [x] MNI orchestration + tests.
+- [x] TTD restore assertion (state already captured — no format change).
+- [x] GUI action + WebAPI endpoint + openapi docs + automation bindings.
+- [x] WebAPI live smoke per AGENTS.md WebAPI sequence (fresh instance, model SCORPION, POST /nmi {"magic":true}, GET /memory or /state to observe p1FFD=0x02).
+
+**Done 2026-09-08, commit `3f49622c.**` Z80 NMI core + MNI orchestration + GUI/WebAPI/CLI/Lua/Python surfaces; live E2E-3 - see [verification/e2e-base-rom.md](verification/e2e-base-rom.md). MNI orchestration reworked 2026-09-10 to the DD50 trigger model (uncommitted — HW §9).
 
 **Verification:** `--gtest_filter="*Nmi*:*Mni*:*ModelsRegression*"` green; WebAPI smoke documented output.
 
@@ -251,23 +266,44 @@ Sinclair-matching contention-free video, and `.z80` hw=10 snapshots.
 - Create: `core/tests/emulator/memory/scorpionromwindow_test.cpp`:
   - full 4×4 transition table verification
   - `profrom_mask` per size: 128 KB image wraps Q2→Q0; 256 KB reaches Q3
-  - boot stability: reset fetch sequence `#0000` (Q0) is a no-op across 1000 fetches
+  - boot stability: S=0 hold — 1000 reads of `#0100-#0103` never move the machine
   - `#7EFD` select: 1 MB image — `OUT (#7EFD),10h` → quadrant base = page 16; state machine low bits still live inside the window
-  - `MM_SCORP` (non-prof): `#0000-#0003` reads never remap
+  - `MM_SCORP` (non-prof): `#0100-#010F` reads never remap
   - state residency: after every transition `state.profrom_bank == Quadrant()`; the window object holds no quadrant of its own
   - TTD: walk Q0→Q2, take a checkpoint, walk on to Q3, seek back → `#0000` shows the Q2 tag (`ttd_checkpoint_test.cpp` / `timetravelmanager` seek); `MachineStateHash` differs between Q0 and Q2 with identical port latches
 - Create: `core/benchmarks/emulator/memory/scorpionpagingbenchmark.cpp` — `BM_ScorpionPagingStorm` (paging-write storm) + `BM_ScorpionRomReadPath` (guard cost on `MemoryReadFast`) per testing-plan §7; this task records the performance baseline
 - Modify: `core/tests/emulator/emulator_savedisk_test.cpp`-style integration — optional: synthetic 128 KB ProfROM image where quadrant 1's service page differs by pattern; script reads `#0003` then `#0001` and verifies code executes quadrant-1 service bytes
 
 **Steps:**
-- [ ] Window class + unit tests (pure logic, no context needed).
-- [ ] Memory integration: ownership, hook, base refresh, cache flag.
-- [ ] Decoder `#7EFD` wiring + `MM_PROFSCORP` dispatch.
-- [ ] ROM-load configuration hook (`Configure(imageBanks)`).
-- [ ] Benchmark file + baseline recorded per testing-plan §7.
-- [ ] Golden regression + full suite.
+- [x] Window class + unit tests (pure logic, no context needed).
+- [x] Memory integration: ownership, hook, base refresh, cache flag.
+- [x] Decoder `#7EFD` wiring + `MM_PROFSCORP` dispatch (dispatch landed with the
+  PROFSCORP instantiation fix, commit 535b8238).
+- [x] ROM-load configuration hook (`Configure(imageBanks)`).
+- [x] Benchmark file + baseline recorded per testing-plan §7
+  (`ScorpionPagingStorm` 33.8 ns/op, `ScorpionRomReadPath` 1.51 ns/op).
+- [x] Golden regression + full suite (2272/2272, 225 suites).
 
 **Verification:** `--gtest_filter="*RomWindow*:*Scorpion*:*ModelsRegression*:*Ttd*"` green; benchmarks run per testing-plan §7. Optional smoke if `data/rom/scorp_prof401.rom` present (512 KB, 8 quadrants): boot `PROFSCORP` (E2E-4 style) — the read-strobe path was never live-exercised in the original UnrealSpeccy (`set_scorp_profrom` was only called from the config path), and the image's own 15 strobe-read sites + reset-vector walks (hardware-reference §5.2) are the strongest available ground truth.
+
+**Execution record (2026-09-09):** live E2E-4 performed against the real
+`scorp_prof401.rom` via WebAPI (transcripts under `scratch/e2e-t7/`):
+- read-strobe walk from a cold Q0 boot (service ROM paged, `r#0001 + 4x r#0000`)
+  returned exactly the post-switch service bytes of the Q1/Q3 alternation
+  (`00 00 00 00 00`), proving mid-instruction remap on the fast read path;
+- `#7EFD=0x10` window select composed to quadrant 5 (page-1 discriminator bytes
+  `43 4f` vs inert `5a 78` / Q0-twin `e1 5f`) and the machine returned to Q0
+  afterwards (service sentinel byte `37` = `svc(Q0)[0]`);
+- Q0-stable transparent boot across 3 cold restarts (identical `#0000` page-0
+  tag `f3 c3 44 08` and deterministic menu pc `#3E01`);
+- TTD divergence corpus (6/6) green after fixing `TTDChipsetState` packing
+  (struct must stay fully packed - raw bytes are hashed/persisted;
+  `static_assert(sizeof == 176)` added).
+
+Incidental finding (not Task 7 scope): `DELETE /emulator/{id}` on the instance
+the Qt main window has adopted can SIGSEGV in `MenuManager::updateMenuStates`
+via `handleFDDDiskChanged` (crash log `/tmp/unreal_crash_*.log`) - WebAPI
+instance removal leaves a stale adopted-emulator reference in the menu layer.
 
 **Suggested commit:** `scorpion: ProfROM quadrant state machine + #7EFD window`
 
@@ -354,6 +390,57 @@ Sinclair-matching contention-free video, and `.z80` hw=10 snapshots.
 
 ---
 
+### Task 12: Hardware turbo — the 7 MHz flip-flop (ALL Scorpion configurations)
+
+> Added 2026-09-09 from the newly decoded GAL materials
+> ([materials/Scorpion_Turbo_Mode.md](materials/Scorpion_Turbo_Mode.md)); normative
+> contract: [hardware-reference.md](hardware-reference.md) §13. Applies to **both**
+> `MM_SCORP` and `MM_PROFSCORP` — they share `PortDecoder_Scorpion256`.
+
+**Files:**
+- Modify: `core/src/emulator/platform.h` — `EmulatorState::scorpion_turbo` flag next to
+  the frequency-multiplier fields
+- Modify: `core/src/emulator/ports/models/portdecoder_scorpion256.cpp` —
+  `DecodePortIn()` top: read strobe on the paging-register address decode —
+  `(port & 0xC023) == 0x4021` (IN `#7FFD` family, incl. `#7EFD` mirrors) sets,
+  `== 0x0021` (IN `#1FFD` family) clears; `reset()` clears (machine always powers up
+  at 3.5 MHz)
+- Modify: `core/src/emulator/cpu/z80.h` / `z80.cpp` — extract
+  `Z80::ApplyQueuedFrequencyMultiplier()`: `desired = next_z80_frequency_multiplier <<
+  (scorpion_turbo ? 1 : 0)` — turbo **composes** with the host speed control instead
+  of clobbering it
+- Modify: `core/src/emulator/emulator.cpp` — entry apply in all 9 stepping functions +
+  inline frame-boundary apply/recompute in the 4 multi-frame steppers
+  (`RunNCPUCycles`/`RunNFrames`/`RunTStates`/`RunUntilCondition`) — without this, a
+  multiplier queued while paused (the `run_tstates` WebAPI path) never takes effect
+- Modify: `core/src/emulator/cpu/core.cpp` — `Init()` clears the flag
+- Modify: `core/tests/emulator/ports/models/scorpionports_test.cpp` (+5 tests),
+  `scorpionmachine_test.cpp` (+3 tests) — testing-plan §3.12
+- E2E: `scratch/e2e-profrom-boot/pass29.py` — testing-plan §6 E2E-8
+
+**Steps:**
+- [x] State field + `Init()`/`reset()` clears.
+- [x] `DecodePortIn` strobe (before the decode chain; fires whether or not a device
+  claims the read — pure address decode, data bus undriven, every mirror clocks it).
+- [x] Extract `ApplyQueuedFrequencyMultiplier` (composition, not override); entry
+  applies in the 9 steppers; boundary recomputes in the 4 multi-frame steppers.
+- [x] Unit + machine tests; full suite.
+- [x] Live E2E on both PROFSCORP/1024K and SCORPION/256K.
+
+**Done 2026-09-09 (uncommitted).** 8 new tests green; full `test-parallel` 0 failures;
+E2E-8 ALL PASS on both configurations (139776 T = 2 frames at 3.5 MHz, 1 at 7 MHz).
+
+**Deliberate simplifications** (hardware-reference divergence #12): no DRAM/video
+stretched-cycle arbitration (ideal 2×, same as xpeccy/MAME-class references); speed
+changes take effect at frame boundaries, not mid-frame; tape playback auto-adapts to
+the multiplier (real hardware requires the tape stopped before enabling turbo).
+
+**Verification:** `--gtest_filter="*Turbo*"` green (8 tests) + full suite + pass29.py.
+
+**Suggested commit:** `scorpion: hardware turbo flip-flop (7 MHz) for all Scorpion configs`
+
+---
+
 ## Task dependency graph
 
 ```mermaid
@@ -373,13 +460,15 @@ flowchart TD
     T8 --> T11[Task 11 docs+QA]
     T9 --> T11
     T10 --> T11
+    T4 --> T12[Task 12 hardware turbo]
+    T12 --> T11
 ```
 
-Parallelizable: (1‖2‖3), (5‖6) after 4, (9‖10) after 7.
+Parallelizable: (1‖2‖3), (5‖6) after 4, (9‖10) after 7, 12 anytime after 4.
 
 ## Self-review checklist (run before execution)
 
-1. **Spec coverage**: HW-ref §3→T1/T3; §4→T3/T4; §5→T2/T7/T8; §6→T3/T5; §7→T4; §8→T1/T4; §9→T6; §9 snapshots→T9; §12 items 1,3,4,6,8,10,11 addressed in-tasks (3 in T4/T5, 10 in T3/T5, 11 in T7/T9); 2,7,9 documented limitations / decisions.
+1. **Spec coverage**: HW-ref §3→T1/T3; §4→T3/T4; §5→T2/T7/T8; §6→T3/T5; §7→T4; §8→T1/T4; §9→T6; §9 snapshots→T9; §13→T12; §12 items 1,3,4,6,8,10,11 addressed in-tasks (3 in T4/T5, 10 in T3/T5, 11 in T7/T9); 2,7,9 documented limitations / decisions.
 2. **No-regression rule** enforced by Task 0 goldens running in every task's verification line.
 3. **Naming/consistency**: new identifiers (`UpdateScorpionBanks`, `ScorpionRomWindow`, `OnRomRead`, `M_SCORPION`) used identically across tasks; no underscores in new file names; test files follow `*_test.cpp`.
 4. **Every step has an executable form** — code, command, or named test; open questions are scoped as in-task investigations with a documented default (snapshot model-switch; FDC gating).

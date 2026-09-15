@@ -132,4 +132,4 @@ BM_RenderOnlyMainScreen_Optimized/median   14121 ns  ← 1.3x faster
 **Files Changed**:
 - [emulator/video/zx/screenzx.h](../../../core/src/emulator/video/zx/screenzx.h)
 - [emulator/video/zx/screenzx.cpp](../../../core/src/emulator/video/zx/screenzx.cpp)
-- [benchmarks/emulator/video/screenzx_benchmark.cpp](../../../core/benchmarks/emulator/video/screenzx_benchmark.cpp)
+- [benchmarks/emulator/video/screenzxbenchmark.cpp](../../../core/benchmarks/emulator/video/screenzxbenchmark.cpp)

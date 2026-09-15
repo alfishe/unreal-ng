@@ -12,6 +12,7 @@
 #include <emulator/memory/memoryaccesstracker.h>
 #include <emulator/platform.h>
 
+#include <cctype>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -1645,5 +1646,170 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
         return;
     }
     session.SendResponse("Unknown calltrace command. Use 'calltrace help' for usage." + std::string(NEWLINE));
+}
+
+// HandleFind — search the CPU view of memory for a byte pattern (mirrors the
+// WebAPI memory/find endpoint). Pattern is a hex string: "AF 32 0E" or "af320e".
+void CLIProcessor::HandleFind(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected.");
+        return;
+    }
+
+    Memory* memory = emulator->GetMemory();
+    if (!memory)
+    {
+        session.SendResponse("Memory not available.");
+        return;
+    }
+
+    if (args.empty())
+    {
+        session.SendResponse("Usage: find <hex-pattern> [--from N] [--to N] [--align 1|2] [--max N]");
+        return;
+    }
+
+    // Build the search pattern from the first non-flag argument
+    auto isHexDigit = [](char c) {
+        return std::isxdigit(static_cast<unsigned char>(c)) != 0;
+    };
+
+    std::string hex;
+    uint16_t start = 0;
+    uint16_t end = 0xFFFF;
+    unsigned max = 64;
+    unsigned alignment = 1;
+
+    for (size_t i = 0; i < args.size(); i++)
+    {
+        if (args[i] == "--from" && i + 1 < args.size())
+        {
+            try { start = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0) & 0xFFFF); }
+            catch (...) { session.SendResponse("Invalid --from value."); return; }
+        }
+        else if (args[i] == "--to" && i + 1 < args.size())
+        {
+            try { end = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0) & 0xFFFF); }
+            catch (...) { session.SendResponse("Invalid --to value."); return; }
+        }
+        else if (args[i] == "--align" && i + 1 < args.size())
+        {
+            try { alignment = std::stoul(args[++i], nullptr, 0); }
+            catch (...) { session.SendResponse("Invalid --align value."); return; }
+            if (alignment != 1 && alignment != 2)
+            {
+                session.SendResponse("--align must be 1 or 2.");
+                return;
+            }
+        }
+        else if (args[i] == "--max" && i + 1 < args.size())
+        {
+            try { max = std::stoul(args[++i], nullptr, 0); }
+            catch (...) { session.SendResponse("Invalid --max value."); return; }
+            if (max == 0) max = 1;
+        }
+        else if (hex.empty())
+        {
+            hex = args[i];
+        }
+    }
+
+    if (hex.empty())
+    {
+        session.SendResponse("No pattern provided. Usage: find <hex-pattern> [--from N] [--to N] [--align 1|2] [--max N]");
+        return;
+    }
+
+    // Parse hex bytes: spaces optional, pairs must be complete
+    std::vector<uint8_t> pattern;
+    std::string digits;
+    for (char c : hex)
+    {
+        if (c == ' ' || c == ':')
+            continue;
+        if (!isHexDigit(c))
+        {
+            session.SendResponse("Invalid hex pattern — expected bytes like 'AF320E' or 'AF 32 0E'.");
+            return;
+        }
+        digits += static_cast<char>(std::toupper(c));
+    }
+    if (digits.empty() || digits.size() % 2 != 0)
+    {
+        session.SendResponse("Invalid hex pattern — expected bytes like 'AF320E' or 'AF 32 0E'.");
+        return;
+    }
+    for (size_t i = 0; i < digits.size(); i += 2)
+    {
+        pattern.push_back(static_cast<uint8_t>(std::stoul(digits.substr(i, 2), nullptr, 16)));
+    }
+
+    if (pattern.size() > 64)
+    {
+        session.SendResponse("Pattern longer than 64 bytes.");
+        return;
+    }
+
+    if (start > end)
+    {
+        session.SendResponse("Invalid range (--from must be <= --to).");
+        return;
+    }
+
+    // Scan the CPU view of memory; the first pattern byte gates the inner loop
+    std::stringstream ss;
+    ss << std::hex << std::uppercase << std::setfill('0');
+    ss << "Pattern:";
+    for (uint8_t b : pattern)
+        ss << " " << std::setw(2) << static_cast<int>(b);
+    ss << NEWLINE;
+
+    const size_t searchLimit = static_cast<size_t>(end) - pattern.size() + 1;
+    size_t found = 0;
+    bool truncated = false;
+
+    for (size_t position = start; position <= searchLimit; position += alignment)
+    {
+        if (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position)) != pattern[0])
+            continue;
+
+        bool matched = true;
+        for (size_t i = 1; i < pattern.size(); i++)
+        {
+            if (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position + i)) != pattern[i])
+            {
+                matched = false;
+                break;
+            }
+        }
+        if (!matched)
+            continue;
+
+        if (found >= max)
+        {
+            truncated = true;
+            break;
+        }
+
+        // Address + context dump around the match (same layout as WebAPI)
+        ss << "  $" << std::setw(4) << static_cast<unsigned>(position) << ":";
+        const size_t contextStart = position > 4 ? position - 4 : 0;
+        for (size_t i = 0; i < pattern.size() + 8; i++)
+        {
+            const size_t address = contextStart + i;
+            if (address > 0xFFFF)
+                break;
+            ss << " " << std::setw(2)
+               << static_cast<int>(memory->DirectReadFromZ80Memory(static_cast<uint16_t>(address)));
+        }
+        ss << NEWLINE;
+        found++;
+    }
+
+    ss << std::dec << "Found " << found << (truncated ? "+ matches (truncated at --max)" : " match(es)");
+    session.SendResponse(ss.str());
 }
 

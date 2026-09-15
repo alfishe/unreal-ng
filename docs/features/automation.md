@@ -1,6 +1,6 @@
 # Automation & Control Interface
 
-> CLI, WebAPI, Lua, Python - Multiple paths to programmatic control
+> CLI, WebAPI, Lua, Python, MCP - Multiple paths to programmatic control
 
 ## Architecture Overview
 
@@ -83,6 +83,8 @@ run_to_scanline <N>     # Run until scanline N boundary
 run_scanlines <N>       # Run N scanlines
 run_to_pixel            # Run to next screen pixel
 run_to_interrupt        # Run until next interrupt
+stepout                 # Run until the current subroutine returns
+skip_until <pc> [max_tstates]  # Fast-forward until PC reaches target
 ```
 
 #### State Inspection
@@ -98,6 +100,11 @@ state screen            # Video state
 state audio             # Sound chip state
 state ports             # I/O port state
 state sysvars           # ZX-Spectrum system variables
+find <hex-pattern>      # Search Z80 memory for a byte pattern
+                        #   (--from N, --to N, --align 1|2, --max N)
+digest                  # Screen-area digest (change detection)
+beam                    # Raster beam position/zone
+frame_cost              # Frame cost stats (halt vs active)
 ```
 
 #### Breakpoints
@@ -116,6 +123,7 @@ label <name>            # Get label by name
 label add <name> <addr> # Add label (--type, --module, --comment options)
 label remove <name>     # Remove label
 label toggle <name>     # Toggle active state
+label resolve <expr>    # Resolve label/expression to address
 labels                  # List all labels (--module, --type, --from, --to filters)
 symbols load <file>     # Load symbol file (.sld/.sym/.map)
 symbols save <file>     # Save symbols to file
@@ -171,6 +179,40 @@ feature <name> on/off   # Toggle feature
 setting <name> [value]  # Query or set configuration
 ```
 
+#### Analysis & Capture
+```
+coverage status                   # Coverage summary + biggest ranges (default)
+coverage start [--keep]           # Start recording (clears data unless --keep)
+coverage stop                     # Stop recording (data kept for queries)
+coverage clear                    # Clear recorded data
+coverage gaps [<start> <end>]     # Uncovered ranges (default 0x4000-0xFFFF)
+aylog start [capacity]            # Start AY register-write logging
+aylog stop / clear                # Stop logging / drop the buffer
+aylog status / dump [count]       # Log stats / recent register writes
+audiocapture start <seconds>      # Start buffered stereo capture
+audiocapture stop / clear         # Stop early / drop the buffer
+audiocapture status               # Captured/target sample counts
+audiocapture result               # Peak/RMS stats per channel
+audiocapture save <path.wav>      # Export captured audio to WAV
+videorecord status                # Recording state + stats (default)
+videorecord start [format] [file] # Start recording (gif default; --fps N, --scale N)
+videorecord stop / pause / resume # Control an active recording
+```
+
+*(videorecord requires an `ENABLE_RECORDING` build)*
+
+#### Assembler & Source Listings
+```
+assemble <addr> <code...> [--write]  # Assemble Z80 text into memory (alias: asm)
+listing load <path>             # Load source listing (sjasmplus .sld/.lst)
+listing clear                   # Drop the loaded listing
+listing info                    # Listing summary (file, lines, ranges)
+listing source                  # Show source lines
+listing source_at <addr>        # Source line covering an address
+listing stepline                # Step to the next source line (alias: step_line)
+listing runtoline <line>        # Run until a source line (alias: run_to_line)
+```
+
 #### VideoWall Control
 ```
 videowall singlesync on [id]    # Enable single sync mode (sync all tiles to one emulator)
@@ -218,6 +260,8 @@ Interactive documentation available at `/api/swagger`
 | POST | `/api/v1/emulator/{id}/run_scanlines` | Run N scanlines |
 | POST | `/api/v1/emulator/{id}/run_to_pixel` | Run to next pixel |
 | POST | `/api/v1/emulator/{id}/run_to_interrupt` | Run to interrupt |
+| POST | `/api/v1/emulator/{id}/stepout` | Step out of current subroutine |
+| POST | `/api/v1/emulator/{id}/skip_until` | Fast-forward until PC reaches target |
 
 #### State & Memory
 | Method | Endpoint | Description |
@@ -227,6 +271,10 @@ Interactive documentation available at `/api/swagger`
 | PUT | `/api/v1/emulator/{id}/registers/{name}` | Set register |
 | GET | `/api/v1/emulator/{id}/memory?addr=&len=` | Memory dump |
 | PUT | `/api/v1/emulator/{id}/memory` | Poke memory |
+| POST | `/api/v1/emulator/{id}/memory/find` | Search memory for a byte pattern |
+| GET | `/api/v1/emulator/{id}/state/screen/digest` | Screen-area digest (change detection) |
+| GET | `/api/v1/emulator/{id}/video/beam` | Raster beam position and frame timing |
+| GET | `/api/v1/emulator/{id}/frame_cost` | Frame cost stats (halt vs active) |
 
 #### Labels & Symbols
 | Method | Endpoint | Description |
@@ -238,7 +286,33 @@ Interactive documentation available at `/api/swagger`
 | DELETE | `/api/v1/emulator/{id}/labels/{name}` | Remove label |
 | PUT | `/api/v1/emulator/{id}/labels/{name}` | Update label |
 | POST | `/api/v1/emulator/{id}/symbols/load` | Load symbol file |
+| GET | `/api/v1/emulator/{id}/labels/resolve` | Resolve label/expression to address |
 | POST | `/api/v1/emulator/{id}/symbols/save` | Save symbols to file |
+
+#### Assembler & Source Listings
+| Method | Endpoint | Description |
+|:-------|:---------|:------------|
+| POST | `/api/v1/emulator/{id}/assemble` | Assemble Z80 text into memory |
+| POST | `/api/v1/emulator/{id}/listing/load` | Load source listing |
+| GET | `/api/v1/emulator/{id}/listing/source_at` | Source line covering an address |
+| POST | `/api/v1/emulator/{id}/listing/step_line` | Step to the next source line |
+| POST | `/api/v1/emulator/{id}/listing/run_to_line` | Run until a source line |
+
+#### Analysis & Capture
+| Method | Endpoint | Description |
+|:-------|:---------|:------------|
+| POST | `/api/v1/emulator/{id}/coverage/start` | Start code-coverage recording |
+| POST | `/api/v1/emulator/{id}/coverage/stop` | Stop coverage recording |
+| POST | `/api/v1/emulator/{id}/coverage/clear` | Clear coverage data |
+| GET | `/api/v1/emulator/{id}/coverage` | Coverage summary |
+| GET | `/api/v1/emulator/{id}/coverage/gaps` | Uncovered ranges |
+| POST | `/api/v1/emulator/{id}/ay/log` | AY log action (start/stop/clear) |
+| GET | `/api/v1/emulator/{id}/ay/log` | AY register-write log and stats |
+| POST | `/api/v1/emulator/{id}/audio/capture` | Audio capture action (start/stop/clear) |
+| GET | `/api/v1/emulator/{id}/audio/capture/status` | Capture progress |
+| GET | `/api/v1/emulator/{id}/audio/capture/result` | Peak/RMS stats, optional WAV export |
+| POST | `/api/v1/emulator/{id}/video/record` | Video record action (start/stop/pause/resume) |
+| GET | `/api/v1/emulator/{id}/video/record/status` | Recording state and stats |
 
 #### Files & Snapshots
 | Method | Endpoint | Description |
@@ -385,6 +459,12 @@ end
 - `disk` - Disk operations
 - `videowall` - VideoWall control
 - `tape_*` / `feature_*` globals - Full tape transport, audio bridge and feature toggles (same surface as the CLI `tape` / `feature` commands)
+- `step_out`, `skip_until`, `mem_find`, `screen_digest`, `beam_position`, `frame_cost` - Advanced stepping and screen/frame analysis
+- `coverage_*`, `ay_log_*`, `audio_capture_*`, `video_record*` globals - Analyzers and capture (same surface as the CLI commands)
+- `assemble`, `listing_*` globals - In-place assembly and source-level stepping
+- `ttd_*` globals - Time-Travel Debugging (record, seek, reverse search, dump/load)
+
+Full function reference: [lua-interface.md](../emulator/design/control-interfaces/lua-interface.md)
 
 ### Tape Control
 ```lua
@@ -454,6 +534,23 @@ def training_step(action):
 - Async event loop support (planned)
 - Virtual environment package management (planned)
 
+### Analysis, Capture & Assembly
+Same surface as the CLI analyzer commands — full reference in
+[python-interface.md](../emulator/design/control-interfaces/python-interface.md):
+
+```python
+emu.step_out()                          # Run until the subroutine returns
+emu.skip_until("0x8000")                # Fast-forward until PC reaches target
+emu.mem_find("AF 3E 00")                # Byte-pattern search
+emu.screen_digest() / emu.beam_position() / emu.frame_cost()
+emu.coverage_start() / emu.coverage_gaps(0, 0x3FFF)
+emu.ay_log_start() / emu.ay_log_dump(16)
+emu.audio_capture_start(2.0) / emu.audio_capture_result("out.wav")
+emu.video_record("start", opts={"format": "mp4"})  # ENABLE_RECORDING builds
+emu.assemble("xor a", 0x8000, write=True)
+emu.listing_load("game.lst") / emu.listing_run_to_line(42)
+```
+
 ### Tape Control
 ```python
 import emu
@@ -512,39 +609,67 @@ videowall.set_single_sync(False)
 | Keyboard Input | ❌ | ✅ | ✅ | ✅ | ❌ |
 | Screen Buffer | ❌ | ✅ | ✅ | ✅ | ❌ |
 | Event Callbacks | ❌ | 🔶 | 🔶 | 🔶 | ❌ |
+| Time-Travel Debugging | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Memory Search (find) | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Screen Digest / Beam / Frame Cost | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Coverage / AY Log | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Audio/Video Capture | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Assembler / Source Listings | ✅ | ✅ | ✅ | ✅ | ❌ |
+
+> [!NOTE]
+> MCP (Model Context Protocol) exposes these capabilities as high-level smart
+> tools over Streamable HTTP (JSON or SSE answers, plus a zero-dependency
+> stdio bridge for IDE clients) instead of endpoint parity — see
+> [MCP Server](mcp/README.md).
 
 ---
 
-## Planned: Advanced AI Agent API
+## Advanced AI Agent API
 
-### Perception (Sensing)
+The synchronous perception/action/control surface below is implemented across
+Python, Lua, WebAPI and CLI (see the parity matrix above), together with pattern
+search, keyboard automation (`key_tap` / `key_press` / `key_type`) and
+Time-Travel Debugging (`ttd_*`).
+
+### Perception (Sensing) — implemented
 ```python
 emu.get_screen_buffer()           # Screen as numpy array
 emu.peek(addr) / emu.peek_range() # Memory access
 emu.get_registers()               # Full CPU state
-emu.find_in_memory(pattern)       # Pattern search
+emu.mem_find(pattern)             # Pattern search (hex string or bytes)
 ```
 
-### Action (Affecting)
+### Action (Affecting) — implemented
 ```python
-emu.press_key(key) / emu.release_key(key)
+emu.key_press(key) / emu.key_release(key)
 emu.set_joystick(direction, fire)
 emu.poke(addr, value)
 emu.save_state(slot) / emu.load_state(slot)
 ```
 
-### Control
+### Control — implemented
 ```python
 emu.run_frames(n) / emu.run_tstates(n)
 emu.pause() / emu.resume()
 emu.reset()
+emu.step_out() / emu.skip_until(pc)
+```
+
+### Still Planned (async event loop)
+```python
 await emu.wait_for_interrupt()
 await emu.wait_for_mem_write(addr)
 await emu.wait_for_raster_pos(line, tstate)
 ```
+
+For LLM-native agents, the MCP server exposes these capabilities as high-level
+smart tools over Streamable HTTP (JSON or SSE) with a stdio bridge for IDE
+clients — see [MCP Server](mcp/README.md) and its
+[integration guide](mcp/integration-guide.md).
 
 ---
 
 ## See Also
 - [Debugging](debugging.md) - Breakpoint details
 - [ECI Command Surface](../emulator/design/control-interfaces/) - Full specification
+- [MCP Server](mcp/README.md) - LLM-native smart tools over Streamable HTTP + stdio bridge

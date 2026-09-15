@@ -70,7 +70,7 @@ PAGE_SIZE = 0x4000  # 16KB per page
 MAX_RAM_PAGES = 256
 MAX_CACHE_PAGES = 2
 MAX_MISC_PAGES = 1
-MAX_ROM_PAGES = 64
+MAX_ROM_PAGES = 128  # 2 MB ROM space (ProfROM quadrant ladder)
 
 # Memory region page ranges (calculated from sizes)
 RAM_START_PAGE = 0

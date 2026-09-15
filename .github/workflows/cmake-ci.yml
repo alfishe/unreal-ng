@@ -56,7 +56,8 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DTESTS=ON
-          cmake --build build --parallel
+          cmake --build build --target core-tests --parallel
+
 
       - name: Run TTD regression tests
         # Phase 2 Item 7 (parent TDD §15.1) — gate the TTD engine on every

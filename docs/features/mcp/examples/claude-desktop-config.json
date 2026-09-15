@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "unreal-ng": {
+      "command": "/absolute/path/to/unreal/cmake-build-release/bin/unreal-mcp-bridge",
+      "env": {
+        "UNREAL_MCP_URL": "http://127.0.0.1:8092/mcp"
+      }
+    }
+  }
+}

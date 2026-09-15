@@ -10,11 +10,11 @@
 #ifndef NOMINMAX
 #define NOMINMAX  // Prevent min/max macros from windows.h
 #endif
-#include <io.h>
-#include <iphlpapi.h>
-#include <windows.h>
-#include <winsock2.h>  // Must come first!
+#include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
+#include <iphlpapi.h>
+#include <io.h>
 
 
 #pragma comment(lib, "ws2_32.lib")
@@ -124,7 +124,8 @@ inline bool setSocketNonBlocking(SOCKET sock)
 #else
 // UNIX socket headers
 #include <arpa/inet.h>
-#include <errno.h>
+#include <cerrno>
+#include <csignal>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
@@ -141,6 +142,12 @@ namespace unix_sockets
 // Initialize and cleanup are no-ops on UNIX
 inline bool initializeSockets()
 {
+    // Debug-server writes (send/sendAll/sendLine) must not kill the process
+    // when a client drops mid-response: writing to a socket whose peer has
+    // closed raises SIGPIPE. Ignore it process-wide and let the write fail
+    // with EPIPE instead - same policy as the MCP bridge and named_pipe.
+    // (Windows has no SIGPIPE; Winsock reports WSAECONNRESET via the write.)
+    std::signal(SIGPIPE, SIG_IGN);
     return true;
 }
 

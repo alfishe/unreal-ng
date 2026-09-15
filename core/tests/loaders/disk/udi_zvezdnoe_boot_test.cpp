@@ -49,10 +49,43 @@ protected:
     void SetUp() override
     {
         MessageCenter::DisposeDefaultMessageCenter();
-        _emulator = EmulatorTestHelper::CreateStandardEmulator("Pentagon", LoggerLevel::LogError);
+
+        // The default Pentagon ships with the TSFM sound slot (2 x YM2203),
+        // whose FM cores advance every frame even fully idle - about a
+        // quarter of this test's wall time, for output nothing here observes
+        // (every assertion is FDC/VRAM state). Stage the same ini with
+        // TurboSound=AY instead. The helper returns a bare emulator (not
+        // manager-owned), so this fixture OCRs through the public per-cell
+        // ScreenOCR API - ocrCurrentScreen() below - instead of
+        // ScreenOCR::ocrScreen(emulatorId), which resolves the emulator
+        // through EmulatorManager.
+        _emulator = EmulatorTestHelper::CreateEmulatorWithTurboSoundKind("Pentagon", TurboSoundKind::AY, LoggerLevel::LogError);
         if (_emulator)
         {
             _context = _emulator->GetContext();
+
+            // Deterministic 48K BASIC boot and test-speed feature defaults,
+            // mirroring EmulatorTestHelper::CreateStandardEmulator (the
+            // staged ini carries the build's RESET default, and the helper
+            // does not apply the standard test tweaks)
+            _context->config.reset_rom = RM_SOS;
+            _emulator->Reset();
+            if (FeatureManager* features = _context->pFeatureManager)
+            {
+                features->setFeature(Features::kScreenHQ, false);
+                features->setFeature(Features::kSoundHQ, false);
+
+                // Every assertion here reads emulated state - ScreenOCR
+                // decodes the VRAM page, not the framebuffer - so sound-off
+                // is safe: it skips the audio output stage per frame while
+                // the chip cores keep advancing (machine state and timing
+                // are bit-identical - pinned by
+                // TsfmPlayer_Test.CoreHashSameInTurboAndSoundOff)
+                features->setFeature(Features::kSoundGeneration, false);
+            }
+
+            // Turbo drops the per-frame render cost of a full TR-DOS load flow
+            _emulator->EnableTurboMode();
         }
     }
 
@@ -60,10 +93,33 @@ protected:
     {
         if (_emulator)
         {
-            EmulatorTestHelper::CleanupEmulator(_emulator);
+            // Bare emulator (never registered with EmulatorManager): release
+            // directly, the same way CreateFmEmulator's failure path does
+            _context->pAudioCallback.store(nullptr, std::memory_order_release);
+            _context->pAudioManagerObj.store(nullptr, std::memory_order_release);
+            _emulator->Release();
+            delete _emulator;
             _emulator = nullptr;
         }
         MessageCenter::DisposeDefaultMessageCenter();
+    }
+
+    /// OCR the current screen through the public per-cell API. Output format
+    /// matches ScreenOCR::ocrScreen(): 24 rows, newline-separated
+    std::string ocrCurrentScreen() const
+    {
+        Memory* memory = _emulator->GetMemory();
+        std::string screen;
+        screen.reserve(24 * (32 + 1));
+        for (int row = 0; row < 24; row++)
+        {
+            for (int col = 0; col < 32; col++)
+            {
+                screen += ScreenOCR::ocrCell(memory, row, col);
+            }
+            screen += '\n';
+        }
+        return screen;
     }
 
     static std::string FirstLines(const std::string& screen, size_t lines)
@@ -178,7 +234,6 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
     }
 
     Memory* memory = _context->pMemory;
-    std::string emulatorId = _emulator->GetId();
     auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(_context->pMainLoop);
 
     // STEP 1: ROM init
@@ -188,7 +243,7 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
         mainLoop->RunFrame();
         if ((i + 1) % 5 == 0)
         {
-            screen = ScreenOCR::ocrScreen(emulatorId);
+            screen = ocrCurrentScreen();
             if (screen.find("1982") != std::string::npos || screen.find("Sinclair") != std::string::npos)
             {
                 break;
@@ -197,7 +252,7 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
     }
     if (screen.empty())
     {
-        screen = ScreenOCR::ocrScreen(emulatorId);
+        screen = ocrCurrentScreen();
     }
     std::cout << "[STEP 1] Screen after ROM init:\n" << FirstLines(screen, 4) << "\n";
     ASSERT_TRUE(screen.find("1982") != std::string::npos || screen.find("Sinclair") != std::string::npos)
@@ -229,7 +284,7 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
         mainLoop->RunFrame();
         if ((i + 1) % 5 == 0)
         {
-            screen = ScreenOCR::ocrScreen(emulatorId);
+            screen = ocrCurrentScreen();
             if (screen.find("A>") != std::string::npos)
             {
                 break;
@@ -238,7 +293,7 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
     }
     if (screen.empty())
     {
-        screen = ScreenOCR::ocrScreen(emulatorId);
+        screen = ocrCurrentScreen();
     }
     std::cout << "[STEP 3] Screen after TR-DOS entry:\n" << FirstLines(screen, 6) << "\n";
     ASSERT_TRUE(screen.find("A>") != std::string::npos) << "TR-DOS prompt expected. Got:\n" << screen;
@@ -336,20 +391,28 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
         }
         if (last.empty())
         {
-            last = ScreenOCR::ocrScreen(emulatorId);
+            last = ocrCurrentScreen();
         }
         return last;
     };
 
-    // STEP 5: CAT (control - must work per user report)
+    // Every phase starts from a clean trace slate. The verbose dumps only
+    // run on the failing path: vfprintf-ing the full trace costs ~10% of the
+    // test on a green run and the diagnostics are only needed when red
+    auto resetTrace = [&traceMutex, &trace, &ins, &captureIns]()
     {
         std::lock_guard<std::mutex> lock(traceMutex);
         trace.clear();
-    }
+        ins.clear();
+        captureIns = false;
+    };
+
+    // STEP 5: CAT (control - must work per user report)
+    resetTrace();
     std::string catScreen = runTrdosCommand("CAT", 600, [&](int f, std::string& lastOcr) {
         if (f >= 20 && f % 5 == 0)
         {
-            lastOcr = ScreenOCR::ocrScreen(emulatorId);
+            lastOcr = ocrCurrentScreen();
             if (lastOcr.find("BLOK") != std::string::npos && lastOcr.find("A>") != std::string::npos)
             {
                 return true;
@@ -359,20 +422,44 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
     });
     std::cout << "[STEP 5] CAT screen:\n" << catScreen << "\n";
     bool catOk = catScreen.find("BLOK") != std::string::npos;
-    dumpTrace("CAT");
     EXPECT_TRUE(catOk) << "Catalog should list BLOK";
+    if (HasFailure())
     {
-        std::lock_guard<std::mutex> lock(traceMutex);
-        trace.clear();
+        dumpTrace("CAT");
     }
+    resetTrace();
 
-    // Dump one LOAD phase: OUT aggregates, raw window around the first 0x9C command,
-    // and the IN events captured after it (what the ROM polled / read). Returns the
-    // phase outcome for the regression assertions below.
-    auto dumpPhase = [&traceMutex, &trace, &ins, &captureIns](const char* label) -> PhaseResult
+    // Compute the phase outcome for the regression assertions below. Silent
+    // by design: the verbose dumps only run when a phase fails its assertions.
+    auto analyzePhase = [&traceMutex, &trace, &ins]() -> PhaseResult
     {
         std::lock_guard<std::mutex> lock(traceMutex);
         PhaseResult result;
+        for (const auto& e : trace)
+        {
+            if (e.port == 0x1F && e.value == 0x9C)
+            {
+                result.sawMultiRead = true;
+                break;
+            }
+        }
+        // Every status read (#1F) must be free of Record Not Found (bit 4): the multi-sector
+        // overrun ends cleanly, TR-DOS never sees a disk error
+        for (const auto& e : ins)
+        {
+            if (e.port == 0x1F && (e.value & 0x10))
+            {
+                result.rnfStatusReads++;
+            }
+        }
+        return result;
+    };
+
+    // Dump one LOAD phase: OUT aggregates, raw window around the first 0x9C command,
+    // and the IN events captured after it (what the ROM polled / read).
+    auto printPhaseDiagnostics = [&traceMutex, &trace, &ins](const char* label)
+    {
+        std::lock_guard<std::mutex> lock(traceMutex);
 
         // Aggregate OUT events by (pc, port, value)
         std::cout << "--- OUT aggregates (" << label << ", " << trace.size() << " events) ---\n";
@@ -398,7 +485,6 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
                 break;
             }
         }
-        result.sawMultiRead = idx9C < trace.size();
         std::cout << "--- raw OUT window around CMD 0x9C (index " << idx9C << ") ---\n";
         for (size_t i = (idx9C > 6 ? idx9C - 6 : 0); i < trace.size() && i < idx9C + 25; i++)
         {
@@ -424,13 +510,6 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
             char key[48];
             snprintf(key, sizeof(key), "pc=%04X port=%02X val=%02X", e.pc, e.port, e.value);
             inAgg[key]++;
-
-            // Every status read (#1F) must be free of Record Not Found (bit 4): the multi-sector
-            // overrun ends cleanly, TR-DOS never sees a disk error
-            if (e.port == 0x1F && (e.value & 0x10))
-            {
-                result.rnfStatusReads++;
-            }
         }
         std::cout << "--- IN aggregates (top 40 of " << inAgg.size() << " distinct) ---\n";
         size_t shown = 0;
@@ -442,24 +521,25 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
                 break;
             }
         }
-
-        trace.clear();
-        ins.clear();
-        captureIns = false;
-        return result;
     };
 
     // STEP 6: LOAD "boot" - 1 sector of BASIC at logical track 14 sector 10. The program
     // auto-runs (line 60) and starts the game's own loader.
+    resetTrace();
     std::string bootScreen = runTrdosCommand("LOAD \"boot\"", 400, [&](int f, std::string&) {
         return diskIoEvents > 20 && lastDiskIoFrame > 0 && (currentFrame - lastDiskIoFrame >= 25);
     });
     std::cout << "[STEP 6] LOAD \"boot\" screen:\n" << FirstLines(bootScreen, 8) << "\n";
     bool bootOk = bootScreen.find("Retry") == std::string::npos && bootScreen.find("Abort") == std::string::npos;
     std::cout << "[STEP 6] LOAD \"boot\" -> " << (bootOk ? "no error prompt" : "ERROR prompt") << "\n";
-    PhaseResult bootPhase = dumpPhase("LOAD boot");
+    PhaseResult bootPhase = analyzePhase();
     EXPECT_TRUE(bootOk) << "LOAD \"boot\" ended with a TR-DOS error prompt";
     EXPECT_EQ(bootPhase.rnfStatusReads, 0) << "READ SECTOR must not report Record Not Found";
+    if (HasFailure())
+    {
+        printPhaseDiagnostics("LOAD boot");
+    }
+    resetTrace();
 
     // Back to TR-DOS prompt before the next command
     for (int i = 0; i < 20; i++)
@@ -470,6 +550,7 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
     // STEP 7: LOAD "BLOK" - 3 consecutive sectors of BASIC at logical track 0 sectors 10..12.
     // The game's loader skips sectors with a multi-sector READ (0x9C) that runs to the end of
     // the track - the exact command that used to fail with RNF.
+    resetTrace();
     std::string blokScreen = runTrdosCommand("LOAD \"BLOK\"", 900, [&](int f, std::string& lastOcr) {
         if (!captureIns || lastDiskIoFrame == 0 || (currentFrame - lastDiskIoFrame < 25))
         {
@@ -477,7 +558,7 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
         }
         if (f % 25 == 0)
         {
-            lastOcr = ScreenOCR::ocrScreen(emulatorId);
+            lastOcr = ocrCurrentScreen();
             bool hasGfx = lastOcr.find("??????") != std::string::npos;
             return hasGfx;
         }
@@ -486,10 +567,14 @@ TEST_F(UdiZvezdnoeBoot_Test, CatThenLoadFiles)
     std::cout << "[STEP 7] LOAD \"BLOK\" screen:\n" << FirstLines(blokScreen, 8) << "\n";
     bool blokOk = blokScreen.find("Retry") == std::string::npos && blokScreen.find("Abort") == std::string::npos;
     std::cout << "[STEP 7] LOAD \"BLOK\" -> " << (blokOk ? "no error prompt" : "ERROR prompt") << "\n";
-    PhaseResult blokPhase = dumpPhase("LOAD BLOK");
+    PhaseResult blokPhase = analyzePhase();
     EXPECT_TRUE(blokOk) << "LOAD \"BLOK\" ended with a TR-DOS error prompt";
     EXPECT_TRUE(blokPhase.sawMultiRead) << "The game's loader issues a multi-sector READ SECTOR (0x9C)";
     EXPECT_EQ(blokPhase.rnfStatusReads, 0) << "Multi-sector overrun past the last sector must end without Record Not Found";
+    if (HasFailure())
+    {
+        printPhaseDiagnostics("LOAD BLOK");
+    }
 
     // The game renders graphics - ScreenOCR decodes them as runs of '?' (unknown glyphs),
     // while a failed load leaves a plain TR-DOS text screen behind

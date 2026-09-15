@@ -218,6 +218,8 @@ Content-Type: application/json
 POST /api/v1/emulator/{id}/step              Execute single instruction
 POST /api/v1/emulator/{id}/steps             Execute N instructions (body: {"count": N})
 POST /api/v1/emulator/{id}/stepover          Step over CALL instructions
+POST /api/v1/emulator/{id}/stepout            Step out of current subroutine (breakpoints skipped)
+POST /api/v1/emulator/{id}/skip_until         Fast-forward until PC reaches target (body: {"pc": "0x8000", "max_tstates": N})
 POST /api/v1/emulator/{id}/run_tstates       Run N t-states (body: {"count": N})
 POST /api/v1/emulator/{id}/run_to_scanline   Run until scanline N (body: {"scanline": N})
 POST /api/v1/emulator/{id}/run_scanlines     Run N scanlines forward (body: {"count": N})
@@ -248,6 +250,58 @@ GET /api/v1/emulator/{id}/memcounters         Memory access statistics
 GET /api/v1/emulator/{id}/calltrace           Call trace history (?limit=N)
 GET /api/v1/emulator/{id}/disasm              Disassemble Z80 code (?address=&count=, default: PC)
 GET /api/v1/emulator/{id}/disasm/page         Disassemble from physical page (?type=&page=&offset=&count=)
+POST /api/v1/emulator/{id}/memory/find        Search Z80 memory for a byte pattern (body: {"pattern_hex": "AF 3C"})
+GET  /api/v1/emulator/{id}/state/screen/digest  Stable screen-content digest (range or banks, border folding)
+GET  /api/v1/emulator/{id}/video/beam         Current raster position and beam zone
+GET  /api/v1/emulator/{id}/frame_cost         Per-frame halt/run cost accounting
+GET  /api/v1/emulator/{id}/state/audio/ay      AY/SSG chips overview (core DeviceState report)
+GET  /api/v1/emulator/{id}/state/audio/ay/{n}  One AY/SSG chip, registers and channels decoded
+GET  /api/v1/emulator/{id}/state/audio/fm      TurboSound FM board latches + both YM2203 summaries (404 without TSFM)
+GET  /api/v1/emulator/{id}/state/audio/fm/{n}  One YM2203 FM half: mode, timers, channels, operators, envelopes, key-on
+GET  /api/v1/emulator/{id}/state/fdc           Beta Disk WD1793: registers, status bits, FSM, signals, drives (404 without Beta Disk)
+```
+
+The three device reports (AY, FM, FDC) are built once in the core
+(`core/src/emulator/state/devicestate.h`) and are byte-for-byte the same
+data the CLI, Lua, Python and MCP return — see
+[command-interface.md §3.3](./command-interface.md#33-device-state-reports-ay--ssg-turbosound-fm-beta-disk-fdc)
+for the field list. Every endpoint also has an active-emulator form without
+`{id}` (`/api/v1/emulator/state/audio/fm`, `/api/v1/emulator/state/fdc`).
+
+### Labels & Symbols
+```
+GET    /api/v1/emulator/{id}/labels            List labels (filters: ?module=&type=&bank=&from=&to=&active=)
+POST   /api/v1/emulator/{id}/labels            Add label (body: {"name", "address", "type", ...})
+DELETE /api/v1/emulator/{id}/labels            Clear all labels
+GET    /api/v1/emulator/{id}/labels/resolve    Resolve by name or address (?name= or ?address=): exact label, aliases at the address, nearest below/above
+GET    /api/v1/emulator/{id}/labels/{name}     Get label by name
+DELETE /api/v1/emulator/{id}/labels/{name}     Remove label
+PUT    /api/v1/emulator/{id}/labels/{name}     Update label (body: {"address", "type", ...})
+```
+
+### Assembler & Source Listings
+```
+POST /api/v1/emulator/{id}/assemble            Assemble Z80 source (body: {"code", "address", "write": false})
+POST /api/v1/emulator/{id}/listing/load        Load source listing (body: {"path"})
+GET  /api/v1/emulator/{id}/listing/source_at   Source line for an address (?address=, default: PC)
+POST /api/v1/emulator/{id}/listing/step_line   Run until the source line changes (body: {"max_tstates": N})
+POST /api/v1/emulator/{id}/listing/run_to_line Run to first code byte of a line (body: {"line": N})
+```
+
+### Analysis & Capture
+```
+POST /api/v1/emulator/{id}/coverage/start      Activate coverage analyzer (body: {"keep": false})
+POST /api/v1/emulator/{id}/coverage/stop       Deactivate (data retained)
+POST /api/v1/emulator/{id}/coverage/clear      Clear collected data
+GET  /api/v1/emulator/{id}/coverage            Coverage summary (executed count, ranges)
+GET  /api/v1/emulator/{id}/coverage/gaps       Executed ranges and gaps (?start=&end=&max=)
+POST /api/v1/emulator/{id}/ay/log              AY log control (body: {"action": "start|stop|clear", "capacity"})
+GET  /api/v1/emulator/{id}/ay/log              Get AY log entries (?count=&offset=)
+POST /api/v1/emulator/{id}/audio/capture       Audio capture control (body: {"action": "start|stop|clear", "seconds"})
+GET  /api/v1/emulator/{id}/audio/capture/status   Capture state and level statistics
+GET  /api/v1/emulator/{id}/audio/capture/result   Captured samples (?format=wav&path=... to export)
+POST /api/v1/emulator/{id}/video/record        Video recording control (body: {"action": "start|stop|pause|resume", ...})
+GET  /api/v1/emulator/{id}/video/record/status    Recording state
 ```
 
 #### Disassembly Response
@@ -836,6 +890,110 @@ curl -X POST http://localhost:8090/api/v1/emulator/{id}/keyboard/macro \
 | `text` | string | Yes | - | Text to type |
 | `delay_frames` | number | No | 2 | Frames between characters |
 | `tokenized` | boolean | No | false | Enable K-mode token for first char |
+
+### 10. Mouse Input Injection
+
+> **Status**: ✅ Implemented (2026-09). Source: `core/automation/webapi/src/api/mouse_api.cpp`;
+> every range check lives in the core `DebugMouseManager`, so all interfaces answer the same.
+
+Drives the emulated Kempston Mouse. The mouse is **relative**: requests change its X/Y
+counters, and the running program moves its own cursor by how much the counters changed.
+Full command semantics, units and a worked example: [command-interface.md §11](./command-interface.md#11-mouse-input-injection).
+
+```
+POST /api/v1/emulator/{id}/mouse/move         Move by dx/dy emulated pixels      {"dx":10,"dy":-5}
+POST /api/v1/emulator/{id}/mouse/press        Press and hold a button            {"button":"left"}
+POST /api/v1/emulator/{id}/mouse/release      Release a button                   {"button":"left"}
+POST /api/v1/emulator/{id}/mouse/click        Press, hold N frames, release      {"button":"left","frames":2}
+POST /api/v1/emulator/{id}/mouse/buttons      Set the exact pressed set          {"pressed":["left","middle"]}
+POST /api/v1/emulator/{id}/mouse/wheel        Scroll by notches                  {"steps":-1}
+POST /api/v1/emulator/{id}/mouse/release_all  Release all, cancel pending click  (no body)
+POST /api/v1/emulator/{id}/mouse/counters     Debug: write raw X/Y counters      {"x":31,"y":85}
+GET  /api/v1/emulator/{id}/mouse/status       Current mouse state
+GET  /api/v1/emulator/{id}/mouse/buttons      Valid button names and aliases
+```
+
+| Field | Type | Range | Notes |
+|-------|------|-------|-------|
+| `dx` | integer | −127 … 127 | + = right. Either `dx` or `dy` may be omitted (= 0), not both; both 0 is rejected. |
+| `dy` | integer | −127 … 127 | + = **up** |
+| `button` | string | `left`, `right`, `middle`, `l`, `r`, `m` | case-insensitive |
+| `frames` | integer | 1 … 65535 | optional, default 2 |
+| `pressed` | array of button names | — | `[]` = nothing pressed; duplicates ignored |
+| `steps` | integer | −7 … 7, not 0 | + = away from the user |
+| `x`, `y` | integer | 0 … 255 | both required |
+
+Numbers must be JSON integers: `"10"` and `1.5` are rejected with 400.
+
+**Every successful POST returns the resulting state**, so no follow-up status call is needed:
+
+```jsonc
+// POST /mouse/move {"dx":10,"dy":-5}, from reset (X=31, Y=85), shipped config Wheel=NONE
+{
+  "success": true,
+  "dx": 10, "dy": -5,
+  "message": "Mouse moved: dx=+10 dy=-5",
+  "state": {
+    "available": true, "present": true, "wheel_enabled": false,
+    "x": 41, "y": 80,
+    "buttons": {"left": false, "right": false, "middle": false},
+    "button_mask": 255, "wheel": 0,
+    "ports": {"FADF": 255, "FBDF": 41, "FFDF": 80},
+    "pending_click": null,
+    "ttd_journal": "supported"
+  }
+}
+```
+
+`GET /mouse/status` returns the same object as `state` plus `emulator_id`. Field meanings:
+
+| Field | Meaning |
+|-------|---------|
+| `present` | A mouse is fitted: `[INPUT] Mouse=KEMPSTON` **and** feature `kempstonmouse` on. `false` = nothing answers on the ports. |
+| `wheel_enabled` | `[INPUT] Wheel=KEMPSTON`: the wheel counter appears in the top 4 bits of `#FADF`. |
+| `button_mask` | Internal button byte, active-low (a pressed button is bit 0). 254 = left down. |
+| `ports` | What the three ports return right now, as integers. `FADF` = buttons (+ wheel), `FBDF` = X, `FFDF` = Y. |
+| `pending_click` | `null`, or `{"button":"left","frames_left":1}` while a click is being held. |
+| `ttd_journal` | `"supported"`: TTD recordings include mouse input. |
+
+A successful response may carry a `"warning"` string: the mouse is not fitted
+(`mouse not present: guest reads floating bus on the mouse ports`), or a wheel step was sent
+with no wheel fitted (`no wheel fitted ([INPUT] Wheel=NONE): the guest does not see the wheel counter`).
+The change is still applied.
+
+**Errors** use the usual `{"error": "...", "message": "..."}` body, with CORS headers:
+
+| Condition | Code | `message` example |
+|-----------|------|-------------------|
+| Unknown emulator id | 404 | `Emulator with specified ID not found` |
+| Mouse manager missing | 500 | `Mouse manager not available` |
+| Missing body field | 400 | `Missing 'button' field in request body` |
+| Wrong JSON type | 400 | `'dx' must be an integer` |
+| Out of range | 400 | `dx=200 out of range -127..127; split into several moves with run_frames between them` |
+| Zero move or zero wheel | 400 | `move requires a non-zero dx or dy` |
+| Unknown button | 400 | `Unknown button 'foo'. Valid: left, right, middle (l, r, m)` |
+| TTD replay in progress | 409 | `TTD replay in progress; live mouse input refused` |
+
+409 is returned **only** during TTD replay. Writing counters while TTD records is allowed
+(the write is journalled).
+
+**Example: click an icon 32 px right and 16 px up of the cursor, reproducibly**
+
+```bash
+ID=...   # emulator id
+curl -X POST localhost:8090/api/v1/emulator/$ID/pause
+curl -X POST localhost:8090/api/v1/emulator/$ID/mouse/move  -H 'Content-Type: application/json' -d '{"dx":32,"dy":16}'
+curl -X POST localhost:8090/api/v1/emulator/$ID/run_frames  -H 'Content-Type: application/json' -d '{"count":2}'
+curl -X POST localhost:8090/api/v1/emulator/$ID/mouse/click -H 'Content-Type: application/json' -d '{"button":"left","frames":2}'
+curl -X POST localhost:8090/api/v1/emulator/$ID/run_frames  -H 'Content-Type: application/json' -d '{"count":3}'
+
+curl -X POST localhost:8090/api/v1/emulator/$ID/mouse/wheel -H 'Content-Type: application/json' -d '{"steps":-9}'
+# 400 {"error":"Bad Request","message":"steps=-9 out of range -7..7"}
+```
+
+MCP clients use the `mouse_input` tool (actions `move`, `press`, `release`, `click` with an
+optional `dx`/`dy` pre-move, `buttons`, `wheel`, `release_all`, `status`), which forwards to
+these routes. `counters` is not a `mouse_input` action; reach it through `invoke_api`.
 
 ## Tape Control
 

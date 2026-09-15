@@ -1,4 +1,5 @@
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <emulator/config.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/platform.h>
@@ -9,6 +10,7 @@
 #include <sstream>
 
 #include "cli-processor.h"
+#include <emulator/state/devicestate.h>
 
 
 /// region <State Inspection Commands>
@@ -49,6 +51,9 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  audio ay       - Brief state for all AY chips (1=standard, 2=TurboSound, 3=ZX Next)" << NEWLINE;
         ss << "  audio ay <N>   - Detailed information about AY chip N (0-based index)" << NEWLINE;
         ss << "  audio ay <N> reg <R> - Specific AY register R of chip N (0-15)" << NEWLINE;
+        ss << "  audio fm       - TurboSound FM overview (board latches, both YM2203 FM halves)" << NEWLINE;
+        ss << "  audio fm <N>   - Full FM report of chip N (0/1): mode, timers, channels, operators, envelopes" << NEWLINE;
+        ss << "  fdc            - Beta Disk WD1793: registers, status bits, FSM, signals, drives" << NEWLINE;
         ss << "  audio beeper   - Beeper state and activity" << NEWLINE;
         ss << "  audio gs       - General Sound device state" << NEWLINE;
         ss << "  audio covox    - Covox DAC state" << NEWLINE;
@@ -67,6 +72,8 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  state audio ay 0     - Show detailed info for first AY chip" << NEWLINE;
         ss << "  state audio ay reg 0 - Show detailed decoding for AY register 0" << NEWLINE;
         ss << "  state audio beeper   - Show beeper state" << NEWLINE;
+        ss << "  state audio fm 1     - Show the full FM report of TSFM chip 1" << NEWLINE;
+        ss << "  state fdc            - Show the Beta Disk controller and drives" << NEWLINE;
         ss << "  state audio channels - Show all audio sources mixer state" << NEWLINE;
 
         ss << "  state audio beeper   - Show beeper state" << NEWLINE;
@@ -160,6 +167,11 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         return;
     }
     // Handle 'audio' subsystem
+    else if (subsystem == "fdc" || subsystem == "disk" || subsystem == "wd1793")
+    {
+        HandleStateFdc(session, context);
+        return;
+    }
     else if (subsystem == "audio")
     {
         // Check for subcommands
@@ -202,6 +214,11 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
                     HandleStateAudioAYIndex(session, context, ayArg0);
                     return;
                 }
+            }
+            else if (subcommand == "fm")
+            {
+                HandleStateAudioFM(session, context, args.size() > 2 ? args[2] : "");
+                return;
             }
             else if (subcommand == "beeper")
             {
@@ -256,14 +273,7 @@ void CLIProcessor::HandleStateScreen(const ClientSession& session, EmulatorConte
     ss << NEWLINE;
 
     // Determine model
-    std::string model = "ZX Spectrum 48K";
-    if (config.mem_model == MM_SPECTRUM128)
-        model = "ZX Spectrum 128K";
-    else if (config.mem_model == MM_PENTAGON)
-        model = "Pentagon 128K";
-    else if (config.mem_model == MM_PLUS3)
-        model = "ZX Spectrum +3";
-
+    std::string model = Config::GetModelFullName(config.mem_model);
     ss << "Model:        " << model << NEWLINE;
     ss << "Video Mode:   Standard (256×192, 2 colors per 8×8 block)" << NEWLINE;
 
@@ -360,8 +370,8 @@ void CLIProcessor::HandleStateScreenVerbose(const ClientSession& session, Emulat
     }
     else
     {
-        // 48K model - single screen
-        ss << "Model: ZX Spectrum 48K" << NEWLINE;
+        // 48K model or non-128K model - single screen
+        ss << "Model: " << Config::GetModelFullName(config.mem_model) << NEWLINE;
         ss << "Screen: Single screen at 0x4000-0x7FFF" << NEWLINE;
         ss << NEWLINE;
 
@@ -390,14 +400,7 @@ void CLIProcessor::HandleStateScreenMode(const ClientSession& session, EmulatorC
     ss << NEWLINE;
 
     // Determine model
-    std::string model = "ZX Spectrum 48K";
-    if (config.mem_model == MM_SPECTRUM128)
-        model = "ZX Spectrum 128K";
-    else if (config.mem_model == MM_PENTAGON)
-        model = "Pentagon 128K";
-    else if (config.mem_model == MM_PLUS3)
-        model = "ZX Spectrum +3";
-
+    std::string model = Config::GetModelFullName(config.mem_model);
     ss << "Model: " << model << NEWLINE;
     ss << "Video Mode: Standard" << NEWLINE;
     ss << "============================================" << NEWLINE;
@@ -460,14 +463,7 @@ void CLIProcessor::HandleStateMemory(const ClientSession& session, EmulatorConte
     ss << NEWLINE;
 
     // Determine model
-    std::string model = "ZX Spectrum 48K";
-    if (config.mem_model == MM_SPECTRUM128)
-        model = "ZX Spectrum 128K";
-    else if (config.mem_model == MM_PENTAGON)
-        model = "Pentagon 128K";
-    else if (config.mem_model == MM_PLUS3)
-        model = "ZX Spectrum +3";
-
+    std::string model = Config::GetModelFullName(config.mem_model);
     ss << "Model: " << model << NEWLINE;
     ss << NEWLINE;
 
@@ -525,14 +521,7 @@ void CLIProcessor::HandleStateMemoryRAM(const ClientSession& session, EmulatorCo
     ss << NEWLINE;
 
     // Determine model
-    std::string model = "ZX Spectrum 48K";
-    if (config.mem_model == MM_SPECTRUM128)
-        model = "ZX Spectrum 128K";
-    else if (config.mem_model == MM_PENTAGON)
-        model = "Pentagon 128K";
-    else if (config.mem_model == MM_PLUS3)
-        model = "ZX Spectrum +3";
-
+    std::string model = Config::GetModelFullName(config.mem_model);
     ss << "Model: " << model << NEWLINE;
     ss << NEWLINE;
 
@@ -597,23 +586,27 @@ void CLIProcessor::HandleStateMemoryROM(const ClientSession& session, EmulatorCo
     ss << "=================" << NEWLINE;
     ss << NEWLINE;
 
-    // Determine model
-    std::string model = "ZX Spectrum 48K";
+    // Determine model and ROM pages
+    std::string model = Config::GetModelFullName(config.mem_model);
     int totalROMPages = 1;
-    if (config.mem_model == MM_SPECTRUM128)
+    switch (config.mem_model)
     {
-        model = "ZX Spectrum 128K";
-        totalROMPages = 2;
-    }
-    else if (config.mem_model == MM_PENTAGON)
-    {
-        model = "Pentagon 128K";
-        totalROMPages = 4;
-    }
-    else if (config.mem_model == MM_PLUS3)
-    {
-        model = "ZX Spectrum +3";
-        totalROMPages = 4;
+        case MM_SPECTRUM128:
+            totalROMPages = 2;
+            break;
+        case MM_PENTAGON:
+        case MM_PLUS3:
+        case MM_SCORP:
+        case MM_PROFSCORP:
+        case MM_ATM3:
+        case MM_ATM710:
+        case MM_ATM450:
+        case MM_PROFI:
+            totalROMPages = 4;
+            break;
+        default:
+            totalROMPages = 1;
+            break;
     }
 
     ss << "Model:            " << model << NEWLINE;
@@ -1090,6 +1083,33 @@ void CLIProcessor::HandleStateAudioAYRegister(const ClientSession& session, Emul
             break;
     }
 
+    session.SendResponse(ss.str());
+}
+
+void CLIProcessor::HandleStateAudioFM(const ClientSession& session, EmulatorContext* context, const std::string& chipArg)
+{
+    // Core DeviceState report (the same tree the WebAPI, Lua, Python and MCP return)
+    std::stringstream ss;
+    if (chipArg.empty())
+    {
+        ss << "TurboSound FM (2 x YM2203)" << NEWLINE << "==========================" << NEWLINE;
+        ss << DeviceState::ToText(DeviceState::Fm(context));
+    }
+    else
+    {
+        int chip = -1;
+        try { chip = std::stoi(chipArg); } catch (const std::exception&) { chip = -1; }
+        ss << "TurboSound FM chip " << chipArg << NEWLINE << "=====================" << NEWLINE;
+        ss << DeviceState::ToText(DeviceState::FmChip(context, chip));
+    }
+    session.SendResponse(ss.str());
+}
+
+void CLIProcessor::HandleStateFdc(const ClientSession& session, EmulatorContext* context)
+{
+    std::stringstream ss;
+    ss << "Beta Disk WD1793" << NEWLINE << "================" << NEWLINE;
+    ss << DeviceState::ToText(DeviceState::Fdc(context));
     session.SendResponse(ss.str());
 }
 

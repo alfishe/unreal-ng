@@ -3,8 +3,12 @@
 #include "debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/analyzers/analyzermanager.h"
+#include "debugger/analyzers/audiocapture/audiocaptureanalyzer.h"
+#include "debugger/analyzers/aylog/ayloganalyzer.h"
+#include "debugger/analyzers/coverage/coverageanalyzer.h"
 #include "debugger/analyzers/trdos/trdosanalyzer.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
+#include "debugger/mouse/debugmousemanager.h"
 
 /// region <Constructors / Destructors>
 
@@ -16,10 +20,12 @@ DebugManager::DebugManager(EmulatorContext* context)
     // Create all child components first
     _breakpoints = new BreakpointManager(_context);
     _labels = new LabelManager(_context);
+    _listing = new ListingParser(_context);
     _analyzerManager = std::make_unique<AnalyzerManager>(_context);
     
     // Keyboard injection manager for automation
     _keyboardManager = new DebugKeyboardManager(_context);
+    _mouseManager = new DebugMouseManager(_context);
     
     // Initialize AnalyzerManager after all components are created
     // Pass 'this' because _context->pDebugManager isn't set yet
@@ -27,6 +33,9 @@ DebugManager::DebugManager(EmulatorContext* context)
     
     // Register built-in analyzers
     _analyzerManager->registerAnalyzer("trdos", std::make_unique<TRDOSAnalyzer>(_context));
+    _analyzerManager->registerAnalyzer("coverage", std::make_unique<CoverageAnalyzer>());
+    _analyzerManager->registerAnalyzer("aylog", std::make_unique<AYLogAnalyzer>(_context));
+    _analyzerManager->registerAnalyzer("audiocapture", std::make_unique<AudioCaptureAnalyzer>(_context));
 
     _disassembler = std::make_unique<Z80Disassembler>(_context);
     _disassembler->SetLogger(_context->pModuleLogger);
@@ -44,11 +53,23 @@ DebugManager::~DebugManager()
         delete _keyboardManager;
         _keyboardManager = nullptr;
     }
+
+    if (_mouseManager)
+    {
+        delete _mouseManager;
+        _mouseManager = nullptr;
+    }
     
     if (_labels)
     {
         delete _labels;
         _labels = nullptr;
+    }
+
+    if (_listing)
+    {
+        delete _listing;
+        _listing = nullptr;
     }
 
     if (_breakpoints)
@@ -74,6 +95,11 @@ LabelManager* DebugManager::GetLabelManager()
     return _labels;
 }
 
+ListingParser* DebugManager::GetListingParser()
+{
+    return _listing;
+}
+
 std::unique_ptr<Z80Disassembler>& DebugManager::GetDisassembler()
 {
     return _disassembler;
@@ -87,6 +113,11 @@ AnalyzerManager* DebugManager::GetAnalyzerManager()
 DebugKeyboardManager* DebugManager::GetKeyboardManager()
 {
     return _keyboardManager;
+}
+
+DebugMouseManager* DebugManager::GetMouseManager()
+{
+    return _mouseManager;
 }
 
 /// endregion </Properties>

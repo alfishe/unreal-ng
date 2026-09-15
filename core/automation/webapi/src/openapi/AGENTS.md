@@ -15,10 +15,12 @@ This directory contains modular OpenAPI 3.0 specification fragments for the WebA
 ```
 openapi/
 ├── AGENTS.md              # This file
-├── openapi_analyzers.inc  # Analyzer management
+├── openapi_analysis.inc   # Beam position, screen digest, frame cost
+├── openapi_analyzers.inc  # Analyzer management, coverage, AY log
+├── openapi_assembly.inc   # In-process assembler + source listings
 ├── openapi_basic.inc      # BASIC interpreter control
 ├── openapi_breakpoints.inc # Breakpoint management
-├── openapi_capture.inc    # Screen/OCR capture
+├── openapi_capture.inc    # Screen/OCR/audio/video capture
 ├── openapi_debug.inc      # Memory, registers, disassembly
 ├── openapi_features.inc   # Runtime feature toggles
 ├── openapi_interpreter.inc # CLI/Lua/Python interpreters
@@ -77,12 +79,14 @@ Includes are grouped by category:
 // State & Inspection
 #include "openapi/openapi_state.inc"
 #include "openapi/openapi_analyzers.inc"
+#include "openapi/openapi_analysis.inc"
 
 // Debug Commands
 #include "openapi/openapi_stepping.inc"
 #include "openapi/openapi_breakpoints.inc"
 #include "openapi/openapi_debug.inc"
 #include "openapi/openapi_labels.inc"
+#include "openapi/openapi_assembly.inc"
 
 // Profiling
 #include "openapi/openapi_profiler.inc"

@@ -41,7 +41,9 @@ enum class PortDeviceId : uint8_t
     Beta128_System = 0x0A,  // Port #FF — Beta128 system (DRQ/INTRQ, drive select)
     Covox          = 0x0B,  // Port #FB — COVOX/SOUNDRIVE DAC
     Memory_DFFD    = 0x0C,  // Port #DFFD — Profi extended paging
+    Memory_7EFD    = 0x0D,  // Port #7EFD — Scorpion ProfROM window latch
     Custom         = 0x0E,  // Other registered PortDevice
+    Border_FF      = 0x0F,  // Port #xxFF — Scorpion border latch (OUT while the FDC system port is gated off)
 };
 
 /// Flag bits packed into PortTraceEvent::flags

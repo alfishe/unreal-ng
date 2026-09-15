@@ -41,11 +41,11 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "../emulator_api.h"
 #include "debugger/ttd/timetravelmanager.h"
-#include "debugger/ttd/ttd_external_events.h"
-#include "debugger/ttd/ttd_probe.h"
+#include "debugger/ttd/ttdexternalevents.h"
+#include "debugger/ttd/ttdprobe.h"
 
 #include <fstream>
-#include "debugger/ttd/ttd_probe.h"
+#include "debugger/ttd/ttdprobe.h"
 
 #include <fstream>
 

@@ -173,29 +173,15 @@ uint8_t UlaContention::GetFloatingBus() const
     if (_context && _context->config.floatbus == 0)
         return 0xFF;
 
+    uint32_t y, cellIndex;
+    if (!LocateFloatingBusCell(y, cellIndex))
+        return 0xFF;
+
+    // T-states into the paper area (both architectures derive their fetch
+    // phase from it; recomputed here to keep LocateFloatingBusCell minimal)
     uint32_t t = _cpu->t % _raster.configFrameDuration;
     uint32_t tInLine = (t - _raster.screenAreaStart) % _raster.tstatesPerLine;
-
-    // Apply 4T pipeline offset (video controller fetches ahead of beam)
-    uint32_t fetchAreaStart = _raster.screenLineAreaStart - 4;
-    uint32_t fetchAreaEnd = _raster.screenLineAreaEnd - 4;
-
-    // Fast area checks: outside the overall screen or outside the fetch area
-    if (t < _raster.screenAreaStart || t > _raster.screenAreaEnd)
-        return 0xFF;
-    if (tInLine < fetchAreaStart || tInLine >= fetchAreaEnd)
-        return 0xFF;
-
-    uint32_t tInPaper = tInLine - fetchAreaStart;
-    uint32_t lineInScreen = (t - _raster.screenAreaStart) / _raster.tstatesPerLine;
-
-    if (lineInScreen >= 192)
-        return 0xFF;
-    if (_memory == nullptr)
-        return 0xFF;
-
-    uint32_t cellIndex = tInPaper / 4;
-    uint32_t y = lineInScreen;
+    uint32_t tInPaper = tInLine - (_raster.screenLineAreaStart - 4);
 
     // ── Determine which byte is on the bus based on architecture ──
     bool isAttribute;
@@ -221,19 +207,7 @@ uint8_t UlaContention::GetFloatingBus() const
 
     if (isAttribute)
     {
-        // ── Attribute byte (0x5800–0x5AFF) ──
-        //
-        // ZX Spectrum VRAM attribute layout (interleaved):
-        //   Address = 0x5800 | (block << 8) | (char_row << 5) | cellIndex
-        //     block    = (y >> 6) & 3   — screen third (top/mid/bottom)
-        //     char_row = (y >> 3) & 7   — character row within third
-        //     cellIndex                  — character column 0-31
-        //
-        // Verified against ZXMAK2 CalcTableAddrAt() (SpectrumRenderer.cs:525-530).
-        uint32_t block = (y >> 6) & 0x03;
-        uint32_t char_row = (y >> 3) & 0x07;
-        uint16_t attrAddr = 0x5800 | (block << 8) | (char_row << 5) | cellIndex;
-        return _memory->DirectReadFromZ80Memory(attrAddr);
+        return _memory->DirectReadFromZ80Memory(AttributeCellAddress(y, cellIndex));
     }
     else
     {
@@ -255,4 +229,57 @@ uint8_t UlaContention::GetFloatingBus() const
             | cellIndex;
         return _memory->DirectReadFromZ80Memory(pixelAddr);
     }
+}
+
+bool UlaContention::LocateFloatingBusCell(uint32_t& y, uint32_t& cellIndex) const
+{
+    uint32_t t = _cpu->t % _raster.configFrameDuration;
+    uint32_t tInLine = (t - _raster.screenAreaStart) % _raster.tstatesPerLine;
+
+    // Apply 4T pipeline offset (video controller fetches ahead of beam)
+    uint32_t fetchAreaStart = _raster.screenLineAreaStart - 4;
+    uint32_t fetchAreaEnd = _raster.screenLineAreaEnd - 4;
+
+    // Fast area checks: outside the overall screen or outside the fetch area
+    if (t < _raster.screenAreaStart || t > _raster.screenAreaEnd)
+        return false;
+    if (tInLine < fetchAreaStart || tInLine >= fetchAreaEnd)
+        return false;
+
+    uint32_t tInPaper = tInLine - fetchAreaStart;
+    uint32_t lineInScreen = (t - _raster.screenAreaStart) / _raster.tstatesPerLine;
+
+    if (lineInScreen >= 192)
+        return false;
+    if (_memory == nullptr)
+        return false;
+
+    cellIndex = tInPaper / 4;
+    y = lineInScreen;
+    return true;
+}
+
+uint16_t UlaContention::AttributeCellAddress(uint32_t y, uint32_t cellIndex)
+{
+    // ── Attribute byte (0x5800–0x5AFF) ──
+    //
+    // ZX Spectrum VRAM attribute layout (interleaved):
+    //   Address = 0x5800 | (block << 8) | (char_row << 5) | cellIndex
+    //     block    = (y >> 6) & 3   — screen third (top/mid/bottom)
+    //     char_row = (y >> 3) & 7   — character row within third
+    //     cellIndex                  — character column 0-31
+    //
+    // Verified against ZXMAK2 CalcTableAddrAt() (SpectrumRenderer.cs:525-530).
+    uint32_t block = (y >> 6) & 0x03;
+    uint32_t char_row = (y >> 3) & 0x07;
+    return 0x5800 | (block << 8) | (char_row << 5) | cellIndex;
+}
+
+uint8_t UlaContention::GetFloatingBusAttribute() const
+{
+    uint32_t y, cellIndex;
+    if (!LocateFloatingBusCell(y, cellIndex))
+        return 0xFF;
+
+    return _memory->DirectReadFromZ80Memory(AttributeCellAddress(y, cellIndex));
 }

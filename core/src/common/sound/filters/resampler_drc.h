@@ -143,7 +143,13 @@ public:
             newCarry[i * 2] = static_cast<int16_t>(sampleAt(keepFrom + i, 0));
             newCarry[i * 2 + 1] = static_cast<int16_t>(sampleAt(keepFrom + i, 1));
         }
-        memcpy(_carry, newCarry, newCount * 2 * sizeof(int16_t));
+
+        newCount = std::min(newCount, HISTORY_FRAMES);
+        if (newCount > 0)
+        {
+            memcpy(_carry, newCarry, newCount * 2 * sizeof(int16_t));
+        }
+
         _carryCount = newCount;
         _phase -= static_cast<double>(keepFrom);
         if (_phase < 0.0)
@@ -155,10 +161,17 @@ public:
 private:
     void appendCarry(const int16_t* in, size_t inFrames)
     {
+        if (_carryCount >= HISTORY_FRAMES)
+            return;
+
         size_t space = HISTORY_FRAMES - _carryCount;
         size_t copy = std::min(space, inFrames);
-        memcpy(_carry + _carryCount * 2, in, copy * 2 * sizeof(int16_t));
-        _carryCount += copy;
+
+        if (copy > 0)
+        {
+            memcpy(_carry + _carryCount * 2, in, copy * 2 * sizeof(int16_t));
+            _carryCount += copy;
+        }
     }
 
     double _phase = 0.0;    // Fractional read position within the conceptual stream

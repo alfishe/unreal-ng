@@ -1,5 +1,6 @@
 #pragma once
 
+#include "platform-sockets.h"
 #include "dzrptypes.h"
 #include "dzrpprotocol.h"
 #include <atomic>
@@ -120,6 +121,13 @@ public:
 // Server configuration
 struct ServerConfig
 {
+    // CMD_INIT: how long to wait for a debug target before answering with an
+    // error (covers the host UI creating its emulator after DeZog connects).
+    // Configurable so test harnesses can shorten the no-target failure path.
+    static constexpr uint32_t DEFAULT_TARGET_WAIT_MS = 2000;
+
+    uint32_t targetWaitMs = DEFAULT_TARGET_WAIT_MS;
+
     uint16_t port = DEFAULT_PORT;
     std::string bindAddress = "127.0.0.1";
     std::string serverName = "Unreal-NG";
@@ -140,18 +148,26 @@ public:
     // Get port (useful if config port was 0 for auto-assign)
     uint16_t getPort() const { return m_actualPort; }
 
+    /// @brief True while a client session is established.
+    ///
+    /// The accept happens on m_acceptThread, so a caller that has just
+    /// connected a socket cannot otherwise tell when the server has picked it
+    /// up. Companion to isRunning() above; also the honest thing for status
+    /// reporting to read.
+    bool hasClient() const
+    {
+        std::lock_guard<std::mutex> lock(m_sessionMutex);
+        return m_clientSocket >= 0;
+    }
+
     // Called by emulator when execution pauses
     void notifyPause(BreakReason reason, uint16_t addr, uint8_t bank = 0,
                      const std::string& message = "");
 
 private:
     void acceptLoop();
-    void sessionLoop(int clientSocket);
+    void sessionLoop(SOCKET clientSocket);
     Response handleCommand(const Command& cmd);
-
-    // CMD_INIT: how long to wait for a debug target before answering with
-    // an error (covers the host UI creating its emulator after DeZog connects)
-    static constexpr uint32_t TARGET_WAIT_MS = 2000;
 
     // Command handlers
     Response handleInit(const Command& cmd);
@@ -185,19 +201,19 @@ private:
     Response makeNak(uint8_t seqNo);
 
     // Send all bytes atomically (mutex-protected)
-    bool sendAll(int socket, const std::vector<uint8_t>& data);
+    bool sendAll(SOCKET socket, const std::vector<uint8_t>& data);
 
     IDebugInterface* m_debug;
     ServerConfig m_config;
-    int m_listenSocket = -1;
+    SOCKET m_listenSocket = INVALID_SOCKET;
     uint16_t m_actualPort = 0;
     std::atomic<bool> m_running{false};
     std::atomic<bool> m_stopRequested{false};
     std::thread m_acceptThread;
 
     // Active session - protects both m_clientSocket and socket writes
-    std::mutex m_sessionMutex;
-    int m_clientSocket = -1;
+    mutable std::mutex m_sessionMutex;
+    SOCKET m_clientSocket = INVALID_SOCKET;
 
     // Breakpoint tracking (permanent breakpoints only - temp handled by IDebugInterface)
     std::unordered_map<uint16_t, uint16_t> m_breakpoints;  // id -> addr

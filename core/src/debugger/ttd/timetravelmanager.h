@@ -50,13 +50,14 @@
 
 #include "emulator/platform.h"       // PlatformModulesEnum, MAX_RAM_PAGES
 #include "common/modulelogger.h"    // ModuleLogger
-#include "ttd_checkpoint.h"
-#include "ttd_external_events.h"
-#include "ttd_input_journal.h"
-#include "ttd_write_journal.h"
-#include "ttd_probe.h"
-#include "ttd_codec_page_store.h"
-#include "ttd_coverage_index.h"
+#include "ttdcheckpoint.h"
+#include "ttdexternalevents.h"
+#include "ttdinputjournal.h"
+#include "ttdwritejournal.h"
+#include "ttdprobe.h"
+#include "ttdcodecpagestore.h"
+#include "ttdcoverageindex.h"
+#include "ttdperipheralregistry.h"
 #include "timetravelframecache.h"
 
 // Forward declarations — we don't pull emulator headers into this header.
@@ -306,8 +307,31 @@ public:
     ///      SeekTo to position the emulator at any checkpoint).
     ///
     /// Refuses unknown future schema versions with a clear error message
-    /// (see ttd_dump_format.h::kMaxSupportedSchemaVersion).
+    /// (see ttddumpformat.h::kMaxSupportedSchemaVersion).
     bool DeserializeSession(std::istream& in, std::string& err);
+
+    /// @brief Session-kind guard decision core (TSFM design §8.2).
+    ///
+    /// Pure decision: does a recorded session's TurboSound-slot blob set
+    /// agree with the live slot device? The slot has exactly two
+    /// inhabitants - the legacy two-AY device (PeripheralId::TurboSound, 0)
+    /// and TSFM (PeripheralId::TSFM, 4). A session recorded with one,
+    /// loaded into an instance running the other, would restore NEITHER
+    /// device (RestoreAll counts the live one under missingBlobs and leaves
+    /// it holding pre-load state) - a silent divergence, so the load is
+    /// refused instead. A session with no slot blob at all (recorded on a
+    /// machine without the device) is not a mismatch.
+    ///
+    /// Exposed as a public static for unit tests; DeserializeSession applies
+    /// it to the baseline checkpoint's blob map.
+    ///
+    /// @param sessionBlobs   Baseline checkpoint peripheral blob map
+    ///                       (keyed by PeripheralId).
+    /// @param liveSlotDevice The device currently in the TurboSound slot.
+    /// @return true when the kinds agree (or the session has no slot blob).
+    static bool TurboSoundSessionKindMatches(
+        const std::unordered_map<uint8_t, std::vector<uint8_t>>& sessionBlobs,
+        const TTDSerializable& liveSlotDevice);
 
     /// @brief Record where a just-deserialized session came from.
     /// Callers that loaded from a path should set it so GetSessionInfo can
@@ -432,6 +456,16 @@ public:
     /// @param key   ZXKeysEnum value (callers cast from the typed enum).
     /// @param pressed true for press, false for release.
     void RecordInputEvent(uint8_t key, bool pressed);
+
+    /// @brief Journal a Kempston Mouse mutation (same contract as RecordInputEvent:
+    /// callers gate on IsRecording() and !IsReplayActive(), and call BEFORE applying).
+    void RecordMouseMove(int dx, int dy);
+    void RecordMouseButtons(uint8_t activeLowMask);
+    void RecordMouseWheel(int steps);
+    void RecordMouseCounters(uint8_t x, uint8_t y);
+
+    /// @brief Journal a whole-matrix keyboard reset (release of every key)
+    void RecordKeyboardReset();
 
     /// @brief Read-only access to the input journal. Used by the seek engine
     /// (Item 4) and by tests.
@@ -958,6 +992,11 @@ public:
     /// @brief Read-only access to the page store (for tests / budget checks).
     inline const TTDCodecPageStore& GetPageStore() const { return _pageStore; }
 
+    /// Model-specific peripheral serializers registered for this session.
+    /// Exposed so the divergence hash can mix in their contribution without
+    /// the hash code knowing which machine is running.
+    inline const TTDPeripheralRegistry& GetPeripheralRegistry() const { return _peripherals; }
+
     /// @brief Number of model-RAM pages (set at StartRecording from the
     /// active model's RAM size).
     inline uint16_t GetModelRamPages() const { return _modelRamPages; }
@@ -1161,10 +1200,9 @@ private:
         TTDChipsetState chipset{};
         uint32_t        z80TInFrame = 0;   ///< z80.t (host-side, not in TTDCpuState)
         std::vector<uint8_t> ram;          ///< model RAM, _modelRamPages × 16 KB
-        std::vector<uint8_t> ay;           ///< peripheral blobs (empty = absent)
-        std::vector<uint8_t> tape;
-        std::vector<uint8_t> covox;
-        std::vector<uint8_t> fdc;
+        /// Peripheral state, keyed by PeripheralId — same representation the
+        /// checkpoints use, produced by the same registry.
+        std::unordered_map<uint8_t, std::vector<uint8_t>> peripheralBlobs;
     };
 
     /// Reused across builds; vector capacities are retained, so the sizable
@@ -1198,6 +1236,31 @@ private:
 
     /// Backing codec page store (4 KB pages, XOR+zstd-1 compression).
     TTDCodecPageStore _pageStore;
+
+    /// Model-specific peripheral serializers. The framework never names a
+    /// machine: it registers whatever the active model provides (see
+    /// RegisterModelPeripherals) and thereafter only calls TTDSerializable.
+    TTDPeripheralRegistry _peripherals;
+
+    /// Serializers owned by this manager for the lifetime of a session. Held
+    /// as a vector of base pointers so adding a model costs one factory line
+    /// in RegisterModelPeripherals and nothing else.
+    std::vector<std::unique_ptr<TTDSerializable>> _ownedPeripherals;
+
+    /// Build and register the serializers the active model needs. Called on
+    /// StartRecording; cleared by ReleaseModelPeripherals on stop.
+    /// Build and register the serializers the active model declares.
+    /// @param err optional; set to a human-readable reason on failure
+    /// @return false when the model declares state no serializer covers - the
+    ///         caller must then refuse to record rather than drop that state
+    bool RegisterModelPeripherals(std::string* err = nullptr);
+    void ReleaseModelPeripherals();
+
+    /// Fingerprint of the loaded ROM set, stored in the .ttd header so playback
+    /// can refuse a session recorded against different ROMs. On Scorpion the
+    /// ProfROM image decides what a plane id even means, so replaying against
+    /// another image would silently produce wrong pages rather than an error.
+    uint64_t ComputeRomSignature() const;
 
     /// Last captured keyframe index. P-frames between this and the next
     /// I-frame restore by walking deltas from this anchor. Updated on

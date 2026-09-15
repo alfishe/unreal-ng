@@ -58,6 +58,8 @@ enum VideoModeEnum : uint8_t
 
     M_BRD,  // Border only
 
+    M_SCORPION,  // Scorpion ZS-256 (Sinclair-matching 312-line x 224T raster)
+
     M_MAX
 };
 
@@ -423,6 +425,9 @@ public:
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_PROFI
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_GMX
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_BRD
+        // M_SCORPION: 312 lines x 224T = 69888T frame - same 312-line geometry as
+        // M_ZX48 (Pentagon's row differs only in vSyncLines 16 vs 8)
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 8, 16},  // M_SCORPION
     };
 
     // Default color table: 0RRrrrGG gggBBbbb
@@ -447,6 +452,10 @@ protected:
     uint8_t* _activeScreenMemoryOffset;
     uint8_t _borderColor;
 
+    // Frame-level screen switch tracking (zero overhead when HUD disabled)
+    bool _feature_hud_enabled = false;
+    uint8_t _screenSwitchCount = 0;
+
     VideoModeEnum _mode;
     RasterState _rasterState;
     FramebufferDescriptor _framebuffer;
@@ -458,6 +467,9 @@ protected:
 bool _turboRenderSkip = false;  // Turbo render decimation: set only for the CPU cycle of a skipped turbo frame
 
     /// region <Obsolete>
+    // NOTE (2026-09-08 audit, Scorpion task): this table is positionally under-filled -
+    // 17 initializers for M_MAX slots - so M_GMX, M_BRD and the appended M_SCORPION slot
+    // stay null. Intentionally left as-is: the table belongs to the obsolete draw path.
     DrawCallback _currentDrawCallback;
     DrawCallback _nullCallback;
     DrawCallback _drawCallback;
@@ -496,6 +508,12 @@ public:
     virtual void InitMemoryCounters();
     /// endregion </Initialization>
 
+    /// region <Frame lifecycle>
+public:
+    void handleFrameStart();
+    void handleFrameEnd();
+    /// endregion </Frame lifecycle>
+
 public:
     virtual void SetVideoMode(VideoModeEnum mode);
     virtual void SetActiveScreen(SpectrumScreenEnum screen);
@@ -505,6 +523,10 @@ public:
     virtual uint8_t GetActiveScreen();
     virtual uint8_t GetBorderColor();
     virtual uint32_t GetCurrentTstate();
+
+    /// @brief Read-only access to the calculated raster zone boundaries
+    /// (t-state ranges for blank/border/screen areas, vertical and horizontal)
+    const RasterState& GetRasterState() const { return _rasterState; }
 
     virtual void UpdateScreen() = 0;
     virtual void DrawPeriod(uint32_t fromTstate, uint32_t toTstate);

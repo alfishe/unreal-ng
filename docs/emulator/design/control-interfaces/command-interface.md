@@ -361,6 +361,8 @@ Commands to control the CPU execution flow for the selected emulator instance. T
 | `step` | `stepin` | | Execute exactly one CPU instruction and return. The emulator pauses automatically after execution. Returns the new PC value and disassembled instruction that was executed. Used for line-by-line debugging. |
 | `steps <N>` | | `<count>` | Execute exactly `<N>` CPU instructions, then pause. Equivalent to calling `step` N times but more efficient. Returns execution summary including final PC. Useful for stepping through loops. |
 | `stepover` | | | Execute one instruction, treating subroutine calls (`CALL`, `RST`) as atomic operations. If the instruction is a call, execution continues until the corresponding `RET`, then pauses. If not a call instruction, behaves like `step`. Essential for stepping over function calls without diving into them. |
+| `stepout` | | | Execute until the current subroutine returns to its caller. Breakpoints are skipped for the walk (same no-trap rule as step over) and frames rendered during the walk are not captured by the recording subsystem (raw CPU stepping path). Returns the new PC and SP. |
+| `skip_until <pc>` | | `<address> [max_tstates]` | Fast-forward execution until PC reaches `<address>` (hex or decimal), or the t-state budget is exhausted. Breakpoints are skipped for the walk. Default budget: 100 frames of emulated time (~2 s), hard cap 700,000,000 t-states. Returns hit/timeout status and the final PC. |
 | `run_tstates <N>` | | `<count>` | Run the CPU for exactly `<N>` t-states (1 t-state = 1 ULA clock tick / 2 pixels). Useful for precise timing analysis and ULA-level debugging. |
 | `run_to_scanline <N>` | | `<scanline>` | Run until the ULA beam reaches scanline `<N>`. For models with 312 scanlines (PAL), valid range is 0–311. |
 | `run_scanlines <N>` | | `<count>` | Run forward by `<N>` scanlines from the current beam position. |
@@ -394,6 +396,18 @@ Commands to control the CPU execution flow for the selected emulator instance. T
   - Removes temporary breakpoint
 - If not a call: behaves like `step`
 - **Limitation**: May not work correctly if the call doesn't return
+
+**`stepout`**:
+- Implemented via `Emulator::StepOut()`
+- Runs a raw stepping loop until the call stack unwinds to the caller
+- Breakpoint traps are disabled for the walk (no-trap rule)
+- Returns the new PC/SP and the emulator run state
+
+**`skip_until <pc>`**:
+- Implemented via `RunUntilCondition(pc == target, maxTStates)` on the raw CPU stepping path
+- Default budget: `config.frame * 100` (~2 s of emulated time); fallback 6,988,800 when config is unavailable; hard cap 700,000,000 t-states
+- Reports `hit=true/false` depending on whether the target address was reached within the budget
+- Useful for skipping splash screens and delay loops without setting a breakpoint
 
 **`reset`**:
 - Calls `Emulator::Reset()`
@@ -451,6 +465,7 @@ The `memory` command provides unified access to emulator memory with two address
 | `memory load <type> <page> <file> [--force]` | type + page + file | Load file into physical page |
 | `memory fill <type> <page> <offset> <len> <byte>` | type + page + offset + fill params | Fill region with byte |
 | `memory info` | | Show memory configuration |
+| `find <pattern>` | Z80 pattern search | Search the Z80 address space for a byte pattern (see below) |
 
 **Page Types**: `ram` | `rom` | `cache` | `misc`
 
@@ -544,6 +559,23 @@ Fill region with byte value.
 > memory fill ram 5 0x1800 768 0x38
 Filled 768 bytes with 0x38 in RAM page 5 at offset 0x1800
 ```
+
+**`find <pattern>`**
+
+Search the Z80 virtual address space for a byte pattern. The pattern is a hex
+string (with optional spaces) or a hex list: `find "AF 3C"`, `find AF3C`.
+Pattern length is limited to 64 bytes.
+
+| Flag | Default | Description |
+| :--- | :--- | :--- |
+| `--from <addr>` | 0x0000 | Search range start |
+| `--to <addr>` | 0xFFFF | Search range end |
+| `--align <1\|2>` | 1 | Require matches at 1- or 2-byte alignment |
+| `--max <N>` | 64 | Maximum number of matches |
+
+Each match prints the address and a context dump (bytes around the match).
+Useful for locating strings, code signatures and data structures across the
+whole 64K regardless of the current bank mapping.
 
 **`memory info`**
 
@@ -646,6 +678,98 @@ Current Z80 Bank Mapping:
 - Enable `debugmode` only for short debugging sessions
 - Use `calltrace` to understand program flow without stepping through each instruction
 - Combine `memory` with breakpoints to watch memory regions change
+
+#### 3.2 Screen State & Frame Cost
+
+Analysis commands for the video subsystem state — raster position, screen
+content digests, and per-frame cost accounting. Available on all automation
+interfaces (CLI, WebAPI, Lua, Python).
+
+| Command | Arguments | Description |
+| :--- | :--- | :--- |
+| `beam` | | Show the current raster position: frame, scanline, t-state within the frame, and the beam zone (`vsync`, `vblank`, `top_border`, `screen`, `bottom_border`, plus `hblank`/`left_border`/`paper`/`right_border` within the active area). Computed from the same raster descriptors the renderer uses. |
+| `digest <start> <end>` | `<from> <to>` | Compute a stable 64-bit digest over a Z80 address range (typically the screen bitmap `0x4000-0x57FF` and attributes `0x5800-0x5AFF`). The border color is folded into the digest unless `--no-border` is passed. `digest --banks p1,p2` digests physical RAM pages instead of a Z80 range. Prints the digest, covered byte count, and whether it changed since the previous call — a cheap way to detect "did the screen change" in scripts. |
+| `frame_cost` | | Show per-frame cost accounting: t-states spent halted vs running in the last frame and cumulatively, effective CPU frequency (frame budget × frequency multiplier), and the number of frames in the sample. Use it to quantify HALT-heavy main loops. |
+
+#### 3.3 Device State Reports (AY / SSG, TurboSound FM, Beta Disk FDC)
+
+Ground rule (2026-09-13): **every device state that is useful for analysis is
+reachable from every automation interface** — WebAPI, Python, Lua, CLI and
+MCP — and all of them return the same report. The core builds each report
+once (`core/src/emulator/state/devicestate.h`, a small dependency-free tree);
+each interface only converts it (JSON / dict / table / text). Adding a report
+to the core makes it available everywhere; interfaces never re-implement it.
+
+| Report | CLI | WebAPI | Lua | Python | MCP `inspect_state` aspect |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| AY / SSG overview | `state audio ay` | `GET /state/audio/ay` | `audio_ay_state()` | `audio_ay_state()` | `audio_ay` (overview + every chip) |
+| AY / SSG chip N | `state audio ay N` | `GET /state/audio/ay/N` | `audio_ay_state(N)` | `audio_ay_state(N)` | `audio_ay` |
+| TurboSound FM overview | `state audio fm` | `GET /state/audio/fm` | `audio_fm_state()` | `audio_fm_state()` | `audio_fm` (overview + both chips) |
+| TurboSound FM chip N (0/1) | `state audio fm N` | `GET /state/audio/fm/N` | `audio_fm_state(N)` | `audio_fm_state(N)` | `audio_fm` |
+| Beta Disk WD1793 | `state fdc` | `GET /state/fdc` | `fdc_state()` | `fdc_state()` | `fdc` |
+
+Every report carries `available` (false with a `description` when the
+device is not on this machine — e.g. `audio/fm` on a plain TurboSound
+configuration, `fdc` on a machine without Beta Disk). WebAPI answers 404 in
+that case; Lua/Python return the same object; the MCP aspect reports it in
+the summary instead of failing the call.
+
+**AY / SSG chip report** (`chip_index`, `chip_type`): `registers` (all 16 by
+name), `channels[A,B,C]` (period, fine/coarse, `frequency_hz`, volume, tone /
+noise / envelope enables), `envelope` (shape, period, `current_output`,
+`frequency_hz`), `noise`, `mixer` (decoded R7), `io_ports`. On a TSFM the
+two chips are the YM2203 SSG halves.
+
+**TurboSound FM overview**: `board` (`selected_chip`, `status_read_mode`,
+`fm_enabled`, `fm_trim_db`) and `chips[2]` summaries (prescaler,
+`channel3_mode`, `keyed_channels`, `sounding_channels`, status byte).
+
+**TurboSound FM chip report** (one YM2203 FM half): `prescaler`,
+`fm_sample_rate_hz`, `status` (byte, busy, timer flags, busy T-states
+remaining), `mode` (register 0x27, `channel3_mode` normal / extended /
+extended_csm, `csm`, `extended`), `timers.a/b` (value, period in T-states,
+enabled, load, running, `remaining_tstates`), `channels[3]` with block,
+`fnum`, `frequency_hz`, feedback, algorithm, `key_on_mask` (register 0x28
+slots S1..S4), `key_on`, `sounding`, and `operators[4]` (slot S1..S4,
+register offset, DT, MUL, TL and `total_level_db`, KS, AR, DR, SR, SL, RR,
+SSG-EG, per-operator block/fnum/`frequency_hz` — channel 3 in extended mode
+takes the per-slot registers — live `envelope_state` attack / decay /
+sustain / release, `attenuation` and `attenuation_db`, `key_on`,
+`sounding`), plus `output` (`dac_last_word`, `dac_last_value`,
+`fm_trim_db`). This is the report to read when a tune "keeps playing after
+it ended": a channel with `key_on` true and an operator in `decay` with
+`decay_rate` 0 holds its level until keyed off.
+
+**Beta Disk report**: `registers` (command, track, sector, data, status),
+`last_command`, `status_bits` decoded for the last command's type (busy,
+index / drq, track0 / lost_data, crc_error, record_not_found, head_loaded
+/ record_type, write_protected, not_ready), `fsm_state`, `signals`
+(intrq, drq), `beta128_register`, `density`, `selected_drive`, `side`, and
+`drives[4]` (present, inserted, path, track, side, motor_on,
+write_protected, `image` cylinders/sides).
+
+Examples:
+
+```
+# CLI
+state audio fm 1
+state fdc
+
+# WebAPI
+GET /api/v1/emulator/{id}/state/audio/fm/1
+GET /api/v1/emulator/{id}/state/fdc
+
+# Lua
+local fm = audio_fm_state(1)
+print(fm.channels[3].operators[4].envelope_state)
+
+# Python
+fm = emu.audio_fm_state(1)
+print(fm["channels"][2]["operators"][3]["envelope_state"])
+
+# MCP
+inspect_state aspects=["audio_fm","fdc"]
+```
 
 ### 4. Breakpoints & Watchpoints
 
@@ -785,6 +909,7 @@ Labels provide symbolic names for memory addresses, enabling human-readable debu
 | `label add <name> <addr>` | | `<name> <address> [options]` | Add a label at `<address>`. Options: `--type <code\|data\|const>`, `--module <name>`, `--bank <n>`, `--comment <text>`. |
 | `label remove <name>` | | `<label-name>` | Remove label by name. |
 | `label toggle <name>` | | `<label-name>` | Toggle label active state (active labels appear in disassembly). |
+| `label resolve <query>` | | `<name\|address>` | Resolve a label by name, or resolve everything known about an address: the exact label, all aliases sharing the address, and the nearest labels below and above (context for disassembly annotation). Addresses accept `0x`/`$`/decimal. |
 | `labels` | | `[filters]` | List all labels with optional filters: `--module <name>`, `--type <type>`, `--bank <n>`, `--from <addr>`, `--to <addr>`, `--active`. |
 | `symbols load <file>` | | `<path>` | Load symbols from file. Auto-detects format: `.sld` (sjasmplus), `.sym`, `.map`. Appends to existing labels. |
 | `symbols save <file>` | | `<path>` | Save all symbols to file in SLD format. |
@@ -1076,6 +1201,63 @@ Control all profilers (opcode, memory, calltrace) simultaneously for coordinated
                          clear ▼
                         (reset data)
 ```
+
+#### 5.5 Coverage Analyzer
+
+Tracks which Z80 addresses have been executed — the basis for dead-code
+detection and untested-path analysis. Built on the `coverage` analyzer
+(`CoverageAnalyzer`); activate it, run the workload, then inspect executed
+ranges and gaps.
+
+| Command | Arguments | Description |
+| :--- | :--- | :--- |
+| `coverage start` | `[--keep]` | Activate the coverage analyzer. `--keep` preserves previously collected ranges instead of starting clean. |
+| `coverage stop` | | Deactivate the analyzer (collected data is retained). |
+| `coverage clear` | | Clear all collected coverage data. |
+| `coverage gaps [start] [end]` | `[<from> <to>]` | List executed ranges and unexecuted gaps within a window (default 0x0000-0xFFFF). |
+| `coverage status` | | Show activation state, executed instruction count, and coverage statistics. |
+
+#### 5.6 AY Register Log
+
+Records every access to the AY-3-8910 register interface (ports 0xFFFD /
+0xBFFD) — the register sequence needed to replay or rip music. Built on the
+`aylog` analyzer (`AYLogAnalyzer`).
+
+| Command | Arguments | Description |
+| :--- | :--- | :--- |
+| `aylog start [N]` | `[capacity]` | Start logging AY register accesses (default capacity 4096 entries; oldest entries are dropped when full). |
+| `aylog stop` | | Stop logging (log is retained). |
+| `aylog clear` | | Clear the log. |
+| `aylog dump [N]` | `[count]` | Show the last N entries (default 16): frame, t-state, PC, port, chip, register, value, and decoded access type (`select`/`switch`/`write`). |
+| `aylog status` | | Show logging state, entry count, capacity, and dropped-entry count. |
+
+#### 5.7 Audio Capture
+
+Captures the emulator's audio output (stereo, 16-bit) for a fixed duration,
+with live level statistics and WAV export. Built on the `audiocapture`
+analyzer (`AudioCaptureAnalyzer`).
+
+| Command | Arguments | Description |
+| :--- | :--- | :--- |
+| `audiocapture start <s>` | `<seconds>` | Capture `<seconds>` of audio from now. |
+| `audiocapture stop` | | Stop capture (samples are retained). |
+| `audiocapture clear` | | Discard captured samples. |
+| `audiocapture result` | | Show sample count, duration, and per-channel peak/RMS levels. |
+| `audiocapture save <file>` | `<path.wav>` | Export the captured audio as a 16-bit stereo WAV file. |
+
+#### 5.8 Video Recording
+
+Records the emulator screen to a video file. Built on the recording
+subsystem (`RecordingManager`); requires a build with `ENABLE_RECORDING`
+(otherwise the CLI reports that recording is not compiled in).
+
+| Command | Arguments | Description |
+| :--- | :--- | :--- |
+| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--fps N] [--scale N]` | Start recording. Default format `gif`; default output file under the system temp directory. |
+| `videorecord stop` | | Stop recording and finalize the file. |
+| `videorecord pause` | | Pause recording. |
+| `videorecord resume` | | Resume a paused recording. |
+| `videorecord status` | | Show recording state, output file, frame rate, and scale factor. |
 
 ### 6. System State Inspection
 
@@ -2399,6 +2581,96 @@ tape render game.tzx --blocks 2-5 --rate 48000 -o game.wav
 tape import recording.wav --target tzx -o imported.tzx
 ```
 
+### 11. Mouse Input Injection
+
+Drive the Kempston Mouse of the selected emulator from a script, a remote tool or an AI agent.
+
+**How the device works, in one paragraph.** The Kempston Mouse is a *relative* device: it
+does not know where the cursor is on screen. It holds two 8-bit counters (X and Y). Moving
+the mouse adds to them, and they wrap around (255 + 1 = 0). The program running on the
+machine reads the counters, compares them with its previous reading and moves its own
+cursor by the difference. So `mouse move 10 -5` means "the mouse travelled 10 pixels right
+and 5 pixels down", not "put the cursor at (10, -5)". Values are whole pixels of the
+emulated screen and do not depend on the host window size or monitor DPI.
+
+**Units and limits** (same in every interface):
+
+| Value | Meaning | Allowed per call |
+| :--- | :--- | :--- |
+| `dx` | + = right | −127 … 127 (not both `dx` and `dy` zero) |
+| `dy` | + = **up** (no flip: screen Y grows down, the counter grows up) | −127 … 127 |
+| `steps` (wheel) | + = away from you | −7 … 7, not 0 |
+| `button` | `left`, `right`, `middle` (or `l`, `r`, `m`), any case | — |
+| `frames` (click) | how long the button is held, in emulated frames | 1 … 65535, default 2 |
+| `x`, `y` (`mouse set`) | raw counter value | 0 … 255 |
+
+Out-of-range values are **rejected, not clamped**. Why: the program only sees the counter
+change between two of its reads, as a signed byte. Worked example: X = 31, a move of +200
+gives X = 231; the program computes 231 − 31 = 200, reads that as −56 and moves the cursor
+**left**. The error message tells you to split a long move into several moves with
+`run_frames` between them.
+
+**Timing.** Each command changes the device before it returns (a direct call on the
+caller's thread, not a queued message). The machine reacts only when its program next reads
+the ports. For reproducible results: `pause`, inject, then `run_frames N`. `click` presses
+now and releases at the end of the N-th emulated frame; on a paused machine the program
+sees the button held for exactly N frames.
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `mouse move` | | `<dx> <dy>` | Add `dx`/`dy` to the X/Y counters (8-bit wrap). | ✅ Implemented |
+| `mouse press` | | `<button>` | Press and hold a button. | ✅ Implemented |
+| `mouse release` | | `<button>` | Release a button. | ✅ Implemented |
+| `mouse click` | | `<button> [frames]` | Press, hold `frames` (default 2), release on its own at a frame end. A new click replaces a pending one. | ✅ Implemented |
+| `mouse buttons` | | `<none\|b1,b2…>` | Set the exact set of pressed buttons (`none` = all up). Cancels a pending click. | ✅ Implemented |
+| `mouse wheel` | | `<steps>` | Scroll by whole notches (4-bit counter, wraps at 16). | ✅ Implemented |
+| `mouse clear` | `mouse release_all` | — | Release all buttons, cancel a pending click. | ✅ Implemented |
+| `mouse status` | `mouse info` | — | Counters, buttons, wheel, whether a mouse and a wheel are fitted, the bytes the three ports return, pending click, TTD journal support. | ✅ Implemented |
+| `mouse set` | | `<x> <y>` | Debug: write the raw X/Y counters (0–255). Allowed while TTD records (journalled). | ✅ Implemented |
+| `mouse help` | | — | Subcommand help. | ✅ Implemented |
+
+**Warnings (the command still succeeds):**
+- *Mouse not fitted* (`[INPUT] Mouse=NONE`, or feature `kempstonmouse` off): the counters
+  change, but nothing answers on the mouse ports, so the program reads the floating bus.
+  Warning: `mouse not present: guest reads floating bus on the mouse ports`.
+- *No wheel fitted* (`[INPUT] Wheel=NONE`, the shipped default): `mouse wheel` changes the
+  wheel counter, but the program cannot see it. Warning: `no wheel fitted ([INPUT] Wheel=NONE):
+  the guest does not see the wheel counter`.
+
+**Worked example** (Pentagon after reset: X = 31, Y = 85, nothing pressed, shipped config `Wheel=NONE`):
+
+```bash
+pause
+mouse move 10 -5        # Moved: dx=+10 dy=-5 -> X=41 Y=80
+mouse press left        # #FADF = 0xFE   (bit 0 = 0: left is down)
+mouse wheel 2           # #FADF = 0xFE   + warning: no wheel fitted
+mouse release left      # #FADF = 0xFF
+mouse click right 3     # #FADF = 0xFD, released after 3 frames
+run_frames 4
+mouse status            # Pending click: none, #FADF = 0xFF
+```
+
+The button register `#FADF` is built as: bits 0–2 = buttons (0 = pressed), bit 3 = always 1,
+bits 4–7 = wheel counter when a wheel is fitted, otherwise 1. With `Wheel=KEMPSTON` the same
+script reads `0x0E`, `0x2E`, `0x2F`, `0x2D`.
+
+**Rejected on purpose: absolute "move the cursor to (x, y)".** The program keeps its own
+cursor position (and may clip or scale it), so the emulator cannot know where the cursor is.
+To reach a screen point, work in a closed loop: find the cursor (screenshot or a known RAM
+variable), `mouse move` by the difference, `run_frames 1`, check again.
+
+**TTD (time-travel debugging):**
+- While TTD **records**, every mouse change is written to the TTD input journal before it
+  is applied: moves, button changes (including the automatic click release), wheel steps and
+  `mouse set`. Replaying the recording reproduces the same counters at the same instant.
+- While TTD **replays**, live mouse commands are refused with an error
+  (`TTD replay in progress; live mouse input refused`). Unlike keyboard commands, they do not
+  fail silently.
+
+**Interface mapping:** WebAPI `/api/v1/emulator/{id}/mouse/*` ([webapi-interface.md](./webapi-interface.md#10-mouse-input-injection)),
+Python `emu.mouse_*()`, Lua `mouse_*()`, MCP tool `mouse_input`. Design and decisions:
+[Kempston Mouse automation interfaces](../../../inprogress/2026-09-12-kempston-mouse/automation-interfaces.md).
+
 ## Future Capabilities
 
 The following commands and interfaces are planned for future implementation. This section documents the roadmap for expanding the ECI to support more advanced debugging, analysis, and automation workflows.
@@ -2520,8 +2792,10 @@ Programmatic control of emulator input devices for automation and testing.
 | `type <text>` | `<string>` | Automatically type a string of text. Handles shift/symbol modifiers automatically. Rate-limited to realistic typing speed. | 🔮 Planned |
 | `key combo <keys>` | `<key1+key2+...>` | Press multiple keys simultaneously (e.g., `CAPS+SHIFT+A` for graphics). | 🔮 Planned |
 | `joystick <action>` | `up\|down\|left\|right\|fire` | Simulate joystick input (Kempston, Sinclair, Cursor). | 🔮 Planned |
-| `mouse move <x> <y>` | `<x> <y>` | Move mouse cursor (for Kempston Mouse interface). | 🔮 Planned |
-| `mouse click <button>` | `left\|right\|middle` | Simulate mouse click. | 🔮 Planned |
+
+**Mouse:** implemented — see [§11 Mouse Input Injection](#11-mouse-input-injection). (The old
+planned row `mouse move <x> <y>` implied an absolute cursor position; the implemented command
+is relative, for the reasons given in §11.)
 
 **Use Cases**:
 - Automated game testing
@@ -2719,6 +2993,35 @@ disasm_page ram 5 0x100 10     # RAM page 5
 | `symbol find <name>` | `<symbol-name>` | Find address of symbol by name. | 🔮 Planned |
 | `label set <addr> <name>` | `<address> <label>` | Manually set label at address. | 🔮 Planned |
 | `comment set <addr> <text>` | `<address> <comment>` | Add comment annotation at address. | 🔮 Planned |
+
+#### 7.3 Assembler Commands
+
+Assemble Z80 source text in place — the counterpart of `disasm`, built on
+`Z80TextAssembler`. Useful for patching code at runtime and for testing
+small routines without a toolchain.
+
+| Command | Aliases | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `assemble <addr> <code>` | `asm` | `<address> <source> [--write]` | Assemble Z80 source text at `<address>` (accepts `0x`/`$`/decimal). Prints the per-line listing (address, label, source, emitted bytes) and the collected `EQU` symbols. `--write` additionally writes the emitted bytes into emulator RAM. | ✅ Implemented |
+
+Assembly errors report the offending source line and message; nothing is
+written on failure.
+
+#### 7.4 Source Listing Commands
+
+Source-level debugging driven by assembler listings (sjasmplus `.lst` and
+compatible formats). A listing maps source lines to code addresses, enabling
+source-level stepping and run-to-line on top of the same stepping engine.
+Built on `ListingParser`.
+
+| Command | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
+| `listing load <file>` | `<path>` | Load a source listing and build the line→address map. Prints line/code-line/byte-range statistics. | ✅ Implemented |
+| `listing clear` | | Unload the current listing. | ✅ Implemented |
+| `listing info` | | Show loaded-listing statistics. | ✅ Implemented |
+| `listing source_at <addr>` | `<address>` | Show the source line covering `<address>` (alias: `listing source`). | ✅ Implemented |
+| `listing step_line` | | Run until the source line under PC changes (source-level step; ~2 s budget). | ✅ Implemented |
+| `listing run_to_line <N>` | `<line>` | Run until PC reaches the first code byte of line N at/after the given number (~10 s budget). | ✅ Implemented |
 
 ### 8. Content Analyzers & Extractors
 

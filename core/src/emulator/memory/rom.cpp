@@ -6,13 +6,10 @@
 
 #include "common/collectionhelper.h"
 #include "common/filehelper.h"
+#include "common/signaturecache.h"
 #include "common/stringhelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/memory/memory.h"
-#include "3rdparty/digestpp/digestpp.hpp"
-
-using digestpp::md5;
-using digestpp::sha256;
 
 /// region <Constructors / destructors>
 
@@ -178,17 +175,26 @@ bool ROM::LoadROM()
 			romname = config.profi_rom_path;
 			break;
 		case MM_SCORP:
-			memory.base_sys_rom = memory.ROMPageHostAddress(0);
-			memory.base_dos_rom = memory.ROMPageHostAddress(1);
-			memory.base_128_rom = memory.ROMPageHostAddress(2);
-			memory.base_sos_rom = memory.ROMPageHostAddress(3);
+			// Scorpion bundle page order is BASIC128 / 48K BASIC / Service / TR-DOS.
+			// Verified against the shipped, signature-checked images: page 0 carries the
+			// "1992-94 Scorpion ZS 256" banner and a DI/JP reset vector (F3 C3 D1 08),
+			// page 1 starts F3 AF 11 FF FF with the 1982 Sinclair copyright (48K BASIC),
+			// page 2 has no reset vector (entered at #0066 - the Shadow Service Monitor),
+			// page 3 contains "* TR-DOS Ver 5.03 *". The previous Service-first assignment
+			// scrambled all four roles, so #0000 resolved to the wrong ROM on every boot.
+			memory.base_128_rom = memory.ROMPageHostAddress(0);
+			memory.base_sos_rom = memory.ROMPageHostAddress(1);
+			memory.base_sys_rom = memory.ROMPageHostAddress(2);
+			memory.base_dos_rom = memory.ROMPageHostAddress(3);
 			romname = config.scorp_rom_path;
 			break;
 		case MM_PROFSCORP:
-			memory.base_sys_rom = memory.ROMPageHostAddress(0);
-			memory.base_dos_rom = memory.ROMPageHostAddress(1);
-			memory.base_128_rom = memory.ROMPageHostAddress(2);
-			memory.base_sos_rom = memory.ROMPageHostAddress(3);
+			// Same page order as MM_SCORP - verified against quadrant 0 of the shipped
+			// 512 KB scorp_prof401.rom, which repeats the identical 4-page set.
+			memory.base_128_rom = memory.ROMPageHostAddress(0);
+			memory.base_sos_rom = memory.ROMPageHostAddress(1);
+			memory.base_sys_rom = memory.ROMPageHostAddress(2);
+			memory.base_dos_rom = memory.ROMPageHostAddress(3);
 			romname = config.prof_rom_path;
 			break;
 		case MM_KAY:
@@ -262,6 +268,7 @@ bool ROM::LoadROM()
         if (result)
         {
             _ROMBanksLoaded = 4;
+            memory.OnRomLoaded(4);  // ProfROM geometry hook (no-op on other models)
         }
 	}
 	else
@@ -270,7 +277,7 @@ bool ROM::LoadROM()
 		//wstring wromname = StringHelper::StringToWideString(romname.c_str());
 		if (!romname.empty())
 		{
-			// Try to load ROM up to 1024KB (64 pages 16KiB each) in size
+			// Try to load ROM up to 2048KB (128 pages 16KiB each) in size
 			uint16_t loadedBanks = LoadROM(romname, memory.ROMBase(), MAX_ROM_PAGES);
             _ROMBanksLoaded = loadedBanks;
 
@@ -279,9 +286,37 @@ bool ROM::LoadROM()
 			// Check loaded ROM size
 			if (config.mem_model == MM_PROFSCORP)
 			{
-				if (loadedBanks != 4 && loadedBanks != 8 && loadedBanks != 16)
+				// ProfROM images stack whole 64 KB quadrants: 4, 8, 16, 32, 64 or 128 banks
+				// (64 KB ... 2 MB). A non-power-of-two bank count is clamped down to the next
+				// lower power of two with a warning - partial trailing quadrants are
+				// unreachable through quadrant paging anyway.
+				if (loadedBanks > 4 && (loadedBanks & (loadedBanks - 1)) != 0)
 				{
-					LOGERROR("Incorrect ROM size for Scorpion ZS256 Prof. Should be 64|128|256 KB. Found %d", loadedBanks * PAGE_SIZE);
+					uint16_t clampedBanks = loadedBanks;
+					while (clampedBanks & (clampedBanks - 1))
+					{
+						clampedBanks &= static_cast<uint16_t>(clampedBanks - 1);
+					}
+
+					MLOGWARNING("Non-power-of-two ProfROM size: %d banks found, clamped to %d banks", loadedBanks, clampedBanks);
+					loadedBanks = clampedBanks;
+					_ROMBanksLoaded = clampedBanks;
+				}
+
+				if (loadedBanks != 4 && loadedBanks != 8 && loadedBanks != 16 && loadedBanks != 32 && loadedBanks != 64 &&
+				    loadedBanks != 128)
+				{
+					MLOGERROR("Incorrect ROM size for Scorpion ZS256 Prof. Should be 64|128|256|512|1024|2048 KB. Found %d",
+					          loadedBanks * PAGE_SIZE);
+					result = false;
+				}
+			}
+			else if (config.mem_model == MM_SCORP)
+			{
+				// Base Scorpion ZS256 ships a fixed 64 KB bundle (single quadrant)
+				if (loadedBanks != 4)
+				{
+					MLOGERROR("Incorrect ROM size for Scorpion ZS256. Should be 64 KB. Found %d", loadedBanks * PAGE_SIZE);
 					result = false;
 				}
 			}
@@ -346,6 +381,10 @@ bool ROM::LoadROM()
 
 			if (result)
 			{
+				// ProfROM image geometry for the quadrant window (design §4.2);
+				// no-op on every other model
+				memory.OnRomLoaded(_ROMBanksLoaded);
+
 				MLOGDEBUG("ROM successully loaded from file '%s'", romname.c_str());
 			}
 		}
@@ -521,7 +560,7 @@ void ROM::CalculateSignatures()
     }
 }
 
-string ROM::CalculateSignature(uint8_t* buffer, size_t length)
+string ROM::CalculateSignature(const uint8_t* buffer, size_t length)
 {
 	string result;
 
@@ -531,12 +570,12 @@ string ROM::CalculateSignature(uint8_t* buffer, size_t length)
 		return result;
 	}
 
-	result = sha256().absorb(buffer, length).hexdigest();
+	result = SignatureCache::Sha256Hex(buffer, length);
 
 	return result;
 }
 
-std::string ROM::GetROMTitle(std::string& signature)
+std::string ROM::GetROMTitle(const std::string& signature)
 {
     static const char* EMPTY_SIGNATURE = "Empty signature";
     static const char* UNKNOWN_ROM = "Unknown ROM";
@@ -558,7 +597,7 @@ std::string ROM::GetROMTitle(std::string& signature)
     return result;
 }
 
-std::string ROM::GetROMTitleByAddress(uint8_t* physicalAddress)
+std::string ROM::GetROMTitleByAddress(const uint8_t* physicalAddress)
 {
     if (!physicalAddress || !_context || !_context->pMemory)
         return "";

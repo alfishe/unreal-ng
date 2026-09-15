@@ -5,7 +5,7 @@
 #include <queue>
 #include <vector>
 
-#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
+#include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/fdc.h"
@@ -787,6 +787,24 @@ public:
     {
         return _beta128status;
     }
+    uint8_t getCommandRegister() const
+    {
+        return _commandRegister;
+    }
+    uint8_t getBeta128Register() const
+    {
+        return _beta128Register;
+    }
+    /// Current state-machine state (DeviceState::Fdc report)
+    WDSTATE getFSMState() const
+    {
+        return _state;
+    }
+    /// Density selected through the Beta128 system register (report use)
+    bool isDoubleDensityMode() const
+    {
+        return (_beta128Register & BETA_CMD_DENSITY) == 0;
+    }
     uint8_t getSelectedDriveIndex() const
     {
         return _drive;
@@ -1123,6 +1141,12 @@ public:
     size_t TTDStateSize() const override;
     void   TTDSaveState(uint8_t* dst) const override;
     void   TTDLoadState(const uint8_t* src) override;
+
+    /// Identity used by TTDPeripheralRegistry. Without it the base class
+    /// returns PeripheralId::Count and the device cannot be indexed in a
+    /// checkpoint's blob map.
+    ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::BetaDisk; }
+    std::string TTDDeviceName() const override { return "WD1793"; }
     /// endregion </TTDSerializable interface>
 };
 

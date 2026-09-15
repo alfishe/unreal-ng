@@ -153,6 +153,16 @@ types:
         doc: |
           Byte size of the TTDChipsetState struct as written by this producer.
           Same drift-detection purpose as cpu_state_size.
+      - id: rom_signature
+        type: u8
+        doc: |
+          FNV-1a fingerprint of the whole ROM region the session was recorded
+          against. Checkpoints store which ROM PAGE is paged in, never the ROM
+          bytes, so replaying against a different ROM set maps the recorded
+          page numbers onto different code. On ProfROM machines a plane id only
+          means something relative to its image, so a mismatch is a hard error
+          rather than a warning. Zero means "unknown" — written when the
+          producer had no memory attached — and skips the check.
       - id: captured_at_unix_ms
         type: u8
         doc: Wall-clock capture time (milliseconds since Unix epoch).
@@ -247,15 +257,13 @@ types:
       Excludes host-side fields (memory interface pointers, debugger
       cursors, transient decode scratch).
 
-      The C++ writer emits sizeof(TTDCpuState) bytes verbatim, which on
-      every supported compiler (GCC/Clang/MSVC, x86_64/arm64) includes 3
-      padding bytes at structurally-imposed offsets — the C++ struct uses
-      natural alignment, so a u16 following an odd count of u8 fields gets
-      a 1-byte pad inserted before it (and likewise for u32 after u8).
-      Kaitai's generated parsers read fields sequentially with no implicit
-      padding, so the pad bytes are declared explicitly below as ``_pad_*``
-      fields. The hand-written Python parser in ttd-analyzer skips them
-      with the same comment markers.
+      The C++ writer emits sizeof(TTDCpuState) == 48 bytes verbatim. Three
+      alignment gaps (offsets 31, 35, 43) are declared as named ``reservedN``
+      members on the C++ side rather than left as implicit padding: these
+      objects are copied by member-wise assignment (which does not copy
+      padding) and then hashed byte-wise, so unnamed padding would leak
+      uninitialized bytes into the hash. They are always zero and appear
+      below as regular fields.
     seq:
       - id: pc
         type: u2
@@ -295,21 +303,23 @@ types:
         type: u1
       - id: halted
         type: u1
-      - id: _pad_before_memptr
+      - id: reserved0
         type: u1
         doc: |
-          Compiler-inserted padding to align memptr (u2) to a 2-byte
-          boundary after the 7 u8 fields above (offset 31 in the struct).
+          Explicit filler aligning memptr (u2) to a 2-byte boundary after
+          the 7 u8 fields above (offset 31). Named in the C++ struct so
+          member-wise assignment copies it; always zero.
       - id: memptr
         type: u2
         doc: Undocumented MEMPTR / WZ register.
       - id: q
         type: u1
         doc: Undocumented Q register (affects CCF/SCF flag behavior).
-      - id: _pad_before_eipos
+      - id: reserved1
         type: u1
         doc: |
-          Padding to align eipos (u2) after the single q u8 (offset 35).
+          Explicit filler aligning eipos (u2) after the single q u8
+          (offset 35). Always zero.
       - id: eipos
         type: u2
         doc: EI instruction position (post-EI interrupt latency).
@@ -324,11 +334,11 @@ types:
       - id: int_gate
         type: u1
         doc: External interrupts gate (1 = enabled).
-      - id: _pad_before_halt_cycle
+      - id: reserved2
         type: u1
         doc: |
-          Padding to align halt_cycle (u4) to a 4-byte boundary after
-          3 u8 fields (offset 43).
+          Explicit filler aligning halt_cycle (u4) to a 4-byte boundary
+          after 3 u8 fields (offset 43). Always zero.
       - id: halt_cycle
         type: u4
         doc: Cycle at which HALT became active.
@@ -336,9 +346,18 @@ types:
   chipset_state:
     doc: |
       Port-latch subset of EmulatorState + counters. Mirrors
-      TTDChipsetState in ttd_checkpoint.h. All fields are present
-      unconditionally (no conditional layout) so the schema stays simple;
-      model-irrelevant fields read as 0. Unchanged from v1.
+      TTDChipsetState in ttdcheckpoint.h.
+
+      Amendment (in-place, pre-release — sessions recorded before it do not
+      parse and must be re-recorded): this structure now carries ONLY the
+      standard Spectrum 128K ports, shrinking to 120 bytes (it was 168, or
+      184 once the Scorpion ProfROM fields were added). Every
+      extended / model-specific latch that used to live here (pXXXX, pDFFD,
+      pFDFD, p1FFD, the GMX p7xFD group, Quorum p00 / p80FD, the ATM pFFF7
+      array, Scorpion ProfROM state, video_mode, ...) moved out into
+      per-model serializers reached through TTDPeripheralRegistry and is
+      carried in `peripheral_blob` entries instead. The common format is
+      model-agnostic: it knows nothing about any specific machine.
     seq:
       # ---- Counters ----
       - id: t_states
@@ -355,23 +374,12 @@ types:
       - id: peff7
         type: u1
         doc: Beta Disk interface control.
-      - id: pxxxx
-        type: u1
       - id: pbffd
         type: u1
         doc: AY-3-8912 register select.
       - id: pfffd
         type: u1
         doc: AY-3-8912 data.
-      - id: pdffd
-        type: u1
-        doc: Pentagon 512K / Profi extension banking.
-      - id: pfdfd
-        type: u1
-        doc: Profi extension banking.
-      - id: p1ffd
-        type: u1
-        doc: +3 / Pentagon 1024 banking.
       - id: pff77
         type: u1
         doc: TurboSound chip select.
@@ -380,51 +388,7 @@ types:
       - id: flags
         type: u1
         doc: Runtime execution flags (CF_TRDOS etc.).
-      # ---- Extended port latches (populated only on relevant models) ----
-      - id: p7efd
-        type: u1
-      - id: p78fd
-        type: u1
-      - id: p7afd
-        type: u1
-      - id: p7cfd
-        type: u1
-      - id: gmx_config
-        type: u1
-      - id: gmx_magic_shift
-        type: u1
-      - id: p00
-        type: u1
-      - id: p80fd
-        type: u1
-      - id: afe
-        type: u1
-      - id: afb
-        type: u1
-      - id: aff77
-        type: u1
-      - id: active_ay
-        type: u1
-      - id: pbd
-        type: u1
-      - id: pbe
-        type: u1
-      - id: pbf
-        type: u1
-      - id: pffba
-        type: u1
-      - id: p7fba
-        type: u1
-      - id: p0f
-        type: u1
-      - id: p1f
-        type: u1
-      - id: p4f
-        type: u1
-      - id: p5f
-        type: u1
-      - id: plsy256
-        type: u1
+      # ---- FDC state (common to Beta Disk models) ----
       - id: wd_shadow
         size: 4
         doc: 2F, 4F, 6F, 8F WD1793 shadow registers.
@@ -439,10 +403,26 @@ types:
       - id: ulaplus_cram
         size: 64
         doc: ULAplus palette entries.
-      # ---- ATM 7.10 / ATM3 memory mapping ----
-      - id: pfff7
-        size: 32
-        doc: 8 x uint32 little-endian.
+      - id: reserved
+        size: 10
+        doc: |
+          Explicit tail filler keeping the struct free of implicit padding
+          (sizeof == 120). The C++ side copies these objects by member-wise
+          assignment and hashes them byte-wise, so unnamed padding would
+          leak uninitialized bytes into the hash. Always zero.
+
+  registry_blob:
+    doc: |
+      One peripheral blob: its registry id followed by the opaque serialized
+      state. A reader that does not know the id MUST keep the
+      bytes rather than drop them — the C++ reader does, so re-serializing a
+      session stays byte-identical even on a build lacking that model.
+    seq:
+      - id: peripheral_id
+        type: u1
+        doc: PeripheralId enum value (see ttdserializable.h).
+      - id: state
+        type: peripheral_blob
 
   peripheral_blob:
     doc: |
@@ -503,15 +483,23 @@ types:
               sub-page was never written during the session up to this
               checkpoint — live RAM content IS the historical content, so
               the restore path skips it.
-      - id: ay
-        type: peripheral_blob
+
         doc: AY / TurboSound state.
-      - id: fdc
-        type: peripheral_blob
+
         doc: WD1793 FDC + FDD state.
-      - id: tape
-        type: peripheral_blob
+
         doc: Tape state.
-      - id: covox
-        type: peripheral_blob
+      - id: peripheral_blob_count
+        type: u2
+        doc: |
+          Number of peripheral blobs produced by TTDPeripheralRegistry. Every
+          device goes through the registry — the core four (TurboSound, Beta
+          Disk, Tape, Covox) and any model-specific ones alike — so a device
+          absent on this machine simply has no entry rather than an empty
+          fixed slot. Entries are written sorted by peripheral_id so the byte
+          image is reproducible; the producer's container is an unordered map.
+      - id: peripheral_blobs
+        type: registry_blob
+        repeat: expr
+        repeat-expr: peripheral_blob_count
         doc: Covox 4-channel DAC state.

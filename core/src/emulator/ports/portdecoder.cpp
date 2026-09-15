@@ -11,6 +11,7 @@
 #include "debugger/ttd/timetravelmanager.h"  // Phase 4 — RecordIoWrite hot-path call
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
+#include "emulator/io/mouse/mouse.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/notifications.h"
 #include "emulator/ports/models/portdecoder_pentagon128.h"
@@ -30,6 +31,7 @@ PortDecoder::PortDecoder(EmulatorContext* context)
 
     _state = &context->emulatorState;
     _keyboard = context->pKeyboard;
+    _mouse = context->pMouse;
     _memory = context->pMemory;
     _screen = context->pScreen;
     _tape = context->pTape;
@@ -77,6 +79,9 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
             result = new PortDecoder_Profi(context);
             break;
         case MM_SCORP:
+        case MM_PROFSCORP:
+            // ProfROM variant shares the decoder: it branches on
+            // mem_model == MM_PROFSCORP for the #7EFD window latch arm
             result = new PortDecoder_Scorpion256(context);
             break;
         default:
@@ -112,13 +117,20 @@ uint8_t PortDecoder::DecodePortIn(uint16_t addr, [[maybe_unused]] uint16_t pc)
         uint16_t breakpointID = brk.HandlePortIn(addr);
         if (breakpointID != BRK_INVALID)
         {
+            bool isHidden = false;
+            auto* bp = brk.GetBreakpointById(breakpointID);
+            if (bp && (bp->hidden || bp->note == "StepOver" || bp->note == "StepOut" || bp->group == "TemporaryBreakpoints"))
+            {
+                isHidden = true;
+            }
+
             // Pause emulator (single source of truth)
             emulator.Pause();
 
             // Broadcast notification - breakpoint triggered (instance-tagged per GDB TDD §6.3)
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
             BreakpointTriggeredPayload* payload =
-                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, addr);
+                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, addr, isHidden);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
             // Wait until emulator resumed externally
@@ -170,10 +182,17 @@ void PortDecoder::OnPortInComplete(uint16_t port, uint8_t result, [[maybe_unused
         uint16_t breakpointID = brk.HandlePortIn(port);
         if (breakpointID != BRK_INVALID)
         {
+            bool isHidden = false;
+            auto* bp = brk.GetBreakpointById(breakpointID);
+            if (bp && (bp->hidden || bp->note == "StepOver" || bp->note == "StepOut" || bp->group == "TemporaryBreakpoints"))
+            {
+                isHidden = true;
+            }
+
             emulator.Pause();
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
             BreakpointTriggeredPayload* payload =
-                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, port);
+                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, port, isHidden);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
             emulator.WaitWhilePaused();
         }
@@ -207,10 +226,17 @@ void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [
         uint16_t breakpointID = brk.HandlePortOut(addr);
         if (breakpointID != BRK_INVALID)
         {
+            bool isHidden = false;
+            auto* bp = brk.GetBreakpointById(breakpointID);
+            if (bp && (bp->hidden || bp->note == "StepOver" || bp->note == "StepOut" || bp->group == "TemporaryBreakpoints"))
+            {
+                isHidden = true;
+            }
+
             emulator.Pause();
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
             BreakpointTriggeredPayload* payload =
-                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, addr);
+                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, addr, isHidden);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
             emulator.WaitWhilePaused();
         }
@@ -255,10 +281,17 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
         uint16_t breakpointID = brk.HandlePortOut(port);
         if (breakpointID != BRK_INVALID)
         {
+            bool isHidden = false;
+            auto* bp = brk.GetBreakpointById(breakpointID);
+            if (bp && (bp->hidden || bp->note == "StepOver" || bp->note == "StepOut" || bp->group == "TemporaryBreakpoints"))
+            {
+                isHidden = true;
+            }
+
             emulator.Pause();
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
             BreakpointTriggeredPayload* payload =
-                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, port);
+                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, port, isHidden);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
             emulator.WaitWhilePaused();
         }
@@ -350,6 +383,12 @@ void PortDecoder::RecordPortTrace(bool isOut, uint16_t rawPort, uint8_t value, u
     event.decodeRuleIndex = disp.decodeRuleIndex;
     event.deviceId = PortDiagnosticRecorder::ResolveDeviceId(disp.decodedPort);
 
+    // Scorpion border latch: an OUT the gating arm steered away from the
+    // (off-bus) FDC system port drives the border color — reattribute so
+    // traces do not blame the FDC for border writes
+    if (isOut && disp.wasHandledInline && disp.wasBeta128Gated)
+        event.deviceId = PortDeviceId::Border_FF;
+
     bool hadHandler = (disp.decodedPort != 0x0000) && key_exists(_portDevices, disp.decodedPort);
 
     uint8_t flags = 0;
@@ -389,6 +428,7 @@ PortTraceSessionInfo PortDecoder::getPortTraceSessionInfo() const
             case MM_PLUS3:       info.modelName = "SpectrumPlus3"; break;
             case MM_PROFI:       info.modelName = "Profi"; break;
             case MM_SCORP:       info.modelName = "Scorpion256"; break;
+            case MM_PROFSCORP:   info.modelName = "Scorpion256Prof"; break;
             default:             info.modelName = "Unknown"; break;
         }
     }
@@ -455,15 +495,56 @@ uint8_t PortDecoder::Default_Port_FE_In(uint16_t port, [[maybe_unused]] uint16_t
     return result;
 }
 
+/// Standard Kempston Mouse decode (Kempston Mouse design §3.1), MiSTer ZX-Spectrum mouse.v /
+/// kemp_sel equations:
+///   qualify:  A5-A0 = 011111 (#1F, #5F, #9F, #DF low bytes; A7/A6 not decoded), A9 = 1
+///   select :  A8 = 0          -> buttons (A10 don't-care: #FADF and #FEDF both answer)
+///             A8 = 1, A10 = 0 -> X
+///             A8 = 1, A10 = 1 -> Y
+/// A15-A11 are mirrors.
+bool PortDecoder::Standard_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister)
+{
+    if ((port & 0x0200) == 0 || (port & 0x003F) != 0x001F)
+        return false;
+
+    if ((port & 0x0100) == 0)
+        outRegister = 0;  // buttons (+ wheel)
+    else if ((port & 0x0400) == 0)
+        outRegister = 1;  // X
+    else
+        outRegister = 2;  // Y
+    return true;
+}
+
+/// The mouse answers this address on this machine right now: fitted (config + feature), TR-DOS
+/// not selected (common rule: while TR-DOS is selected only Beta Disk operations happen, nothing
+/// else answers on any address - CF_DOSPORTS), no registered peripheral owning the exact address
+/// (explicit devices keep their ports), and the standard decode matches. Model decoders call this
+/// after their own higher-priority arms (keyboard, AY, FDC, joystick).
+bool PortDecoder::Default_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister)
+{
+    if (!_mouse || !_mouse->IsPresent())
+        return false;
+    if (_state && (_state->flags & CF_DOSPORTS))
+        return false;
+    if (key_exists(_portDevices, port))
+        return false;
+    return Standard_IsPort_KempstonMouse(port, outRegister);
+}
+
+uint8_t PortDecoder::Default_Port_KempstonMouse_In(uint16_t port, [[maybe_unused]] uint16_t pc)
+{
+    uint8_t selectRegister = 0;
+    if (_mouse && Standard_IsPort_KempstonMouse(port, selectRegister))
+        return _mouse->ReadRegister(selectRegister);
+    return 0xFF;
+}
+
 /// Default implementation for 'out (#FE)'
 /// Bits [0:2]  - Border color
 /// Bit  [3]    - MIC output bit
 /// Bit  [4]    - EAR output bit
 /// See: https://worldofspectrum.org/faq/reference/48kreference.htm
-/// \param port
-/// \param value
-/// \param pc
-/// \return
 void PortDecoder::Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc)
 {
     /// region <Override submodule>
@@ -484,7 +565,7 @@ void PortDecoder::Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc)
 
     // Pass value to the tape and beeper sound generator
     _tape->handlePortOut(value);
-    _soundManager->getBeeper().handlePortOut(value, tState);
+    _soundManager->getBeeper().handlePortOut(value, _context->emulatorState.AudioTstate(tState));
 
     // Set border color
     _screen->SetBorderColor(borderColor);
@@ -500,6 +581,24 @@ void PortDecoder::Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc)
         MLOGDEBUG(DumpPortValue(0xFE, port, value, pc, Dump_FE_value(value).c_str()));
     }
     /// endregion </Debug logging>
+}
+
+/// Whether a decoded port value belongs to the Beta128 FDC register set
+/// (#1F status/cmd, #3F track, #5F sector, #7F data, #FF system) — hoisted
+/// from PortDecoder_Pentagon128 so the Scorpion decoder shares it
+bool PortDecoder::IsBeta128Port(uint16_t decodedPort)
+{
+    switch (decodedPort)
+    {
+        case 0x001F:
+        case 0x003F:
+        case 0x005F:
+        case 0x007F:
+        case 0x00FF:
+            return true;
+        default:
+            return false;
+    }
 }
 
 std::string PortDecoder::GetPCAddressLocator(uint16_t pc)

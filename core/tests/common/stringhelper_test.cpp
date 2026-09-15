@@ -848,3 +848,19 @@ TEST_F(StringHelper_Test, ToHexWithPrefix)
         EXPECT_EQ(result, expected);
     }
 }
+
+TEST_F(StringHelper_Test, FormatFrequencyMHz)
+{
+    // Standard ZX Spectrum frequencies
+    EXPECT_EQ(StringHelper::FormatFrequencyMHz(3'500'000), "3.5 MHz");
+    EXPECT_EQ(StringHelper::FormatFrequencyMHz(7'000'000), "7.0 MHz");
+    EXPECT_EQ(StringHelper::FormatFrequencyMHz(14'000'000), "14.0 MHz");
+
+    // Pentagon frequency (slightly different)
+    EXPECT_EQ(StringHelper::FormatFrequencyMHz(3'546'875), "3.5 MHz");  // Rounds to 1 decimal
+
+    // Edge cases
+    EXPECT_EQ(StringHelper::FormatFrequencyMHz(0), "0.0 MHz");
+    EXPECT_EQ(StringHelper::FormatFrequencyMHz(1'000'000), "1.0 MHz");
+    EXPECT_EQ(StringHelper::FormatFrequencyMHz(28'000'000), "28.0 MHz");
+}

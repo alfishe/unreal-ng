@@ -171,6 +171,10 @@ void Screen::InitRaster()
         case MM_PENTAGON:
             video.mode = M_PENTAGON128K;
             break;
+        case MM_SCORP:
+        case MM_PROFSCORP:
+            video.mode = M_SCORPION;
+            break;
         default:
             // Other models keep their current/legacy mode selection
             break;
@@ -449,6 +453,7 @@ void Screen::SetVideoMode(VideoModeEnum mode)
         case M_P16:
         case M_P384:  // Pentagon overscan - same ULA behavior as standard Pentagon
         case M_PHR:
+        case M_SCORPION:  // Scorpion ZS-256 - discrete-logic ULA, contention-free
             _rasterState.borderUpdateTStates = 1;
             _rasterState.contentionEnabled = false;
             _rasterState.fetchType = ULA_DISCRETE_LOGIC;
@@ -522,6 +527,12 @@ void Screen::SetActiveScreen(SpectrumScreenEnum screen)
                       screen);
             assert("Invalid screen");
             break;
+    }
+
+    // Record screen switch for frame-end notification (zero overhead if HUD disabled)
+    if (static_cast<uint8_t>(screen) != _activeScreen && _feature_hud_enabled)
+    {
+        if (_screenSwitchCount < 255) ++_screenSwitchCount;
     }
 
     _activeScreen = screen;
@@ -598,6 +609,7 @@ void Screen::UpdateFeatureCache()
     if (_context && _context->pFeatureManager)
     {
         _feature_screenhq_enabled = _context->pFeatureManager->isEnabled(Features::kScreenHQ);
+        _feature_hud_enabled = _context->pFeatureManager->isEnabled(Features::kHud);
     }
 }
 
@@ -1061,6 +1073,18 @@ void Screen::DrawPeriod(uint32_t fromTstate, uint32_t toTstate)
     // Next frame started during current CPU command processing. Adjust to Tstate
     if (fromTstate > toTstate)
     {
+        // One-t-state backward step: ScreenZX::SetBorderColor's Pentagon +1T
+        // border compensation advances _prevTstate ahead of the beam, and under
+        // CPU frequency multipliers > 1 the unscaled t-state (cpu->t / multiplier)
+        // advances by less than 1 per CPU command - so the next UpdateScreen
+        // lands exactly one t-state behind. No forward period to render: skip
+        // quietly. (Genuine frame-boundary wraps are a full frame wide and fall
+        // through to the wrap handling below; anything else is a real error.)
+        if (fromTstate - toTstate <= 1)
+        {
+            return;
+        }
+
         if (toTstate < MAX_FRAME_DURATION_TOLERANCE)
         {
             toTstate = fromTstate + toTstate;
@@ -1317,6 +1341,7 @@ std::string Screen::GetVideoVideoModeName(VideoModeEnum mode)
         "Profi",                // M_PROFI
         "GMX",                  // M_GMX
         "Border only",          // M_BRD
+        "Scorpion 256k",        // M_SCORPION
     };
     static_assert(std::size(videoModeName) == M_MAX, "videoModeName array size mismatch with VideoModeEnum");
 
@@ -1389,3 +1414,31 @@ void Screen::DumpRasterState(char* buffer, size_t len)
 #endif  // _DEBUG
 
 /// endregion </Debug methods>
+
+/// region <Frame lifecycle>
+
+void Screen::handleFrameStart()
+{
+    // Zero overhead when HUD is disabled
+    if (!_feature_hud_enabled)
+        return;
+
+    _screenSwitchCount = 0;
+}
+
+void Screen::handleFrameEnd()
+{
+    // Zero overhead when HUD is disabled
+    if (!_feature_hud_enabled || !_context)
+        return;
+
+    // Emit screen notification if any switches occurred this frame
+    if (_screenSwitchCount > 0)
+    {
+        MessageCenter::DefaultMessageCenter().Post(
+            NC_SCREEN_PAGE_CHANGED,
+            new ScreenPagePayload(_context->emulatorId, _activeScreen, _screenSwitchCount));
+    }
+}
+
+/// endregion </Frame lifecycle>

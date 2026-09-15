@@ -152,6 +152,61 @@ local result = tape_import("recording.wav", "imported.tap", 0.25)
 
 Playback `state` is one of `"idle"`, `"playing"`, `"paused"`, `"ended"` — identical strings across CLI, WebAPI, Lua and Python.
 
+### Mouse Input
+
+> **Status**: ✅ Implemented (2026-09). Source: `core/automation/lua/src/emulator/lua_emulator.h`
+> (`mouse_*` functions; helpers `mouseIntArg`, `mouseStateTable`, `mouseResult`).
+
+Global functions that drive the emulated Kempston Mouse, mirroring the CLI `mouse` commands.
+Units, limits and reasoning: [command-interface.md §11](./command-interface.md#11-mouse-input-injection).
+They act on the bound emulator, or on the selected one when the script is not bound to an
+instance (for example, a script started through the WebAPI interpreter).
+
+The mouse is **relative**: `mouse_move(10, -5)` means "travelled 10 pixels right and 5 down".
+`dy` positive = **up**.
+
+```lua
+mouse_move(dx, dy)                 --> state | nil, err    (-127..127 each, not both 0)
+mouse_press(button)                --> state | nil, err    ("left"/"right"/"middle" or "l"/"r"/"m")
+mouse_release(button)              --> state | nil, err
+mouse_click(button [, frames=2])   --> state | nil, err    (hold 1..65535 frames)
+mouse_buttons({"left","middle"})   --> state | nil, err    ({} = none)
+mouse_wheel(steps)                 --> state | nil, err    (-7..7, not 0)
+mouse_release_all()                --> state | nil, err
+mouse_set_counters(x, y)           --> state | nil, err    (debug: raw 0..255)
+mouse_status()                     --> state | nil, err
+mouse_click_pending()              --> true while a click is still holding its button
+mouse_button_names()               --> {"left","right","middle"}
+```
+
+`state` is a table with the same key names as the WebAPI state object: `x`, `y`,
+`buttons = {left, right, middle}`, `button_mask` (active-low: 254 = left down), `wheel`,
+`wheel_enabled`, `present`, `ports = {FADF, FBDF, FFDF}`, `pending_click`
+(`{button, frames_left}`, or **absent** when no click is pending), `ttd_journal`, plus
+`warning` when the change cannot reach the program (mouse not fitted, or a wheel step with no
+wheel fitted).
+
+> [!NOTE]
+> `ports` values are integers, the same as in Python and the WebAPI.
+
+Errors do not raise: the function returns `nil, "message"`, so a call can be wrapped in
+`assert(...)`. A non-integer number (`mouse_move(1.5, 0)`) returns
+`nil, "dx must be an integer"` instead of being truncated. During TTD replay every changing
+function returns `nil, "TTD replay in progress; live mouse input refused"`.
+
+```lua
+-- run_frames pauses a running emulator first, so the sequence below is reproducible
+run_frames(1)
+local st = assert(mouse_move(10, -5))
+print(st.x, st.y)                  -- 41   80   (from reset X=31 Y=85)
+assert(mouse_click("left", 2))
+run_frames(3)                      -- 2 frames held + 1 for the program to react
+print(mouse_status().buttons.left) -- false
+
+local ok, err = mouse_wheel(12)
+print(ok, err)                     -- nil   steps=12 out of range -7..7
+```
+
 ### Feature Management
 
 `feature_list()` enumerates every registered runtime feature dynamically (the same list the CLI `feature` table and the WebAPI `/features` endpoint return), keyed by feature id:
@@ -166,6 +221,30 @@ end
 
 feature_set("fasttape", false)     -- same switch as `setting fast_tape off`
 print(feature_get("turbotape"))    -- true
+```
+
+### Device State Reports
+
+The same reports the WebAPI, Python, CLI and MCP return
+([command-interface.md §3.3](./command-interface.md#33-device-state-reports-ay--ssg-turbosound-fm-beta-disk-fdc)),
+as Lua tables (arrays are 1-based sequences):
+
+```lua
+ay  = audio_ay_state()      -- overview: available_chips, slot_device, chips[]
+ay0 = audio_ay_state(0)     -- one chip: registers, channels[3], envelope, noise, mixer, io_ports
+fm  = audio_fm_state()      -- TurboSound FM: board latches + chips[2] summaries
+fm1 = audio_fm_state(1)     -- one YM2203 FM half: mode, timers, channels[3].operators[4] ...
+fdc = fdc_state()           -- Beta Disk WD1793: registers, status_bits, fsm_state, signals, drives[4]
+
+if not fm1.available then print(fm1.description) end
+for i, ch in ipairs(fm1.channels) do
+  if ch.key_on then
+    print(string.format("ch%d %.1f Hz alg %d", ch.index, ch.frequency_hz, ch.algorithm))
+    for _, op in ipairs(ch.operators) do
+      print("  " .. op.slot .. " " .. op.envelope_state .. " " .. op.attenuation_db .. " dB")
+    end
+  end
+end
 ```
 
 ### Emulator Object
@@ -604,6 +683,70 @@ end
 | `ttd session invalidated:` | Session invalidated by load/reset/etc. |
 
 **Implementation status:** Sprint 0 foundations ✅ merged; Phase 1 will land `ttd_status` only; the rest ship in Phase 2 (navigation) and Phase 4 (reverse search).
+
+### Analysis, Capture & Assembly
+
+> **Status**: ✅ Implemented (2026-09)
+
+Analysis, capture and assembly functions mirroring the WebAPI endpoints of the
+same names (see [command-interface.md](./command-interface.md)). All functions
+return a result table; on failure the table carries an `error` string.
+
+```lua
+-- Stepping helpers
+emu.step_out()                       -- run until the current subroutine returns
+emu.skip_until(0x8000)               -- fast-forward until PC == target (breakpoints skipped)
+emu.skip_until("0x8000", 70000000)   -- optional explicit t-state budget
+
+-- Memory search
+emu.mem_find("AF 3C")                -- hex pattern as string (spaces optional)
+emu.mem_find(0xAF3C)                 -- or as a number
+emu.mem_find("AF 3C", 0x8000, 0xFFFF, 2, 32)  -- start, end, alignment, max matches
+
+-- Screen state
+emu.screen_digest()                  -- digest screen area (0x4000-0x5AFF), border folded in
+emu.screen_digest(0x4000, 0x5AFF, false)       -- explicit range, border folding off
+emu.beam_position()                  -- { frame, scanline, tstate, zone, ... }
+emu.frame_cost()                     -- per-frame halt/run cost accounting
+
+-- Coverage analyzer
+emu.coverage_start()                 -- start clean; emu.coverage_start(true) keeps old data
+emu.coverage_stop()
+emu.coverage_status()                -- executed count + first ranges
+emu.coverage_gaps()                  -- executed ranges and gaps over the full 64K
+emu.coverage_gaps(0x8000, 0xFFFF, 10)
+
+-- AY register log
+emu.ay_log_start()                   -- default capacity; emu.ay_log_start(8192) to override
+emu.ay_log_stop()
+emu.ay_log_status()
+emu.ay_log_dump()                    -- last 16 entries; emu.ay_log_dump(32, 100) = count, offset
+
+-- Audio capture
+emu.audio_capture_start(2.5)         -- capture 2.5 s of stereo audio
+emu.audio_capture_status()
+emu.audio_capture_result()           -- sample stats + per-channel peak/RMS
+emu.audio_capture_result("out.wav")  -- additionally export a 16-bit WAV file
+
+-- Video recording (requires a build with ENABLE_RECORDING)
+emu.video_record("start", {format = "gif", fps = 50, scale = 2})  -- opts table optional
+emu.video_record("stop")             -- also "pause" / "resume"
+emu.video_record_status()             -- recording state + live stats (frames, duration, fps)
+
+-- Assembler
+emu.assemble("ld a,2\nout (254),a", 0x8000)          -- assemble, listing only
+emu.assemble("ld a,2\nout (254),a", "0x8000", true)  -- + write bytes to RAM
+
+-- Label resolution
+emu.label_resolve("main_loop")       -- by name
+emu.label_resolve(0x8100)            -- by address: exact, aliases, nearest below/above
+
+-- Source listings
+emu.listing_load("game.lst")
+emu.listing_source_at()              -- source line at PC; emu.listing_source_at(0x8100)
+emu.listing_step_line()              -- run until the source line changes (~2 s budget)
+emu.listing_run_to_line(120)         -- run to first code byte of line 120 (~10 s budget)
+```
 
 ## Usage Examples
 

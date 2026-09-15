@@ -9,6 +9,7 @@
 #include <QtGlobal>
 #include <QString>
 #include <QByteArray>
+#include <QMap>
 #include <vector>
 #include <cstdint>
 #include "ttd_format.h"
@@ -39,54 +40,32 @@ static_assert(sizeof(CpuState) == 48, "CpuState must be 48 bytes");
 
 // ---------------------------------------------------------------------------
 // Chipset state — matches the C++ TTDChipsetState POD struct.
+// Standard Spectrum 128K ports only: extended / model-specific latches moved
+// out to TTDPeripheralRegistry serializers and arrive as peripheral blobs.
 // All fields after the two u64s are u8/byte arrays, so no alignment padding.
 // ---------------------------------------------------------------------------
 struct ChipsetState {
     uint64_t t_states;
     uint64_t frame_counter;
+    // Standard Spectrum 128K port latches
     uint8_t  p7ffd;
     uint8_t  pfe;
     uint8_t  peff7;
-    uint8_t  pxxxx;
     uint8_t  pbffd;
     uint8_t  pfffd;
-    uint8_t  pdffd;
-    uint8_t  pfdfd;
-    uint8_t  p1ffd;
     uint8_t  pff77;
     uint8_t  border_attr;
     uint8_t  flags;
-    // Extended port latches
-    uint8_t  p7efd;
-    uint8_t  p78fd;
-    uint8_t  p7afd;
-    uint8_t  p7cfd;
-    uint8_t  gmx_config;
-    uint8_t  gmx_magic_shift;
-    uint8_t  p00;
-    uint8_t  p80fd;
-    uint8_t  afe;
-    uint8_t  afb;
-    uint8_t  aff77;
-    uint8_t  active_ay;
-    uint8_t  pbd;
-    uint8_t  pbe;
-    uint8_t  pbf;
-    uint8_t  pffba;
-    uint8_t  p7fba;
-    uint8_t  p0f;
-    uint8_t  p1f;
-    uint8_t  p4f;
-    uint8_t  p5f;
-    uint8_t  plsy256;
+    // FDC state (common to Beta Disk models)
     uint8_t  wd_shadow[4];
+    // Video / palette
     uint8_t  comp_pal[16];
     uint8_t  ulaplus_mode;
     uint8_t  ulaplus_reg;
     uint8_t  ulaplus_cram[64];
-    uint8_t  pfff7[32];
+    uint8_t  reserved[10];
 };
-// sizeof = 8+8+34+4+16+1+1+64+32 = 168
+// sizeof = 8+8+8+4+16+1+1+64+10 = 120
 
 // ---------------------------------------------------------------------------
 // Page store slot
@@ -112,10 +91,11 @@ struct Checkpoint {
     ChipsetState chipset;
     std::vector<uint32_t> ram_sub_slots;  // 4 * model_ram_pages entries
     // Peripheral blobs (skipped during parse — we only need RAM + chipset)
-    QByteArray ay_blob;
-    QByteArray fdc_blob;
-    QByteArray tape_blob;
-    QByteArray covox_blob;
+    // All peripheral state, keyed by PeripheralId. Every device goes through
+    // TTDPeripheralRegistry — the core four and any model-specific ones (e.g.
+    // Scorpion ProfROM plane/page) — so a device absent on this machine has no
+    // entry rather than an empty fixed slot.
+    QMap<uint8_t, QByteArray> peripheral_blobs;
 
     bool isKeyframe() const { return frame_kind == kFrameKindKeyFrame; }
 };
@@ -130,6 +110,7 @@ struct TtdHeader {
     uint8_t  model_ram_pages;
     uint16_t cpu_state_size;
     uint16_t chipset_state_size;
+    uint64_t rom_signature;      // 0 = unknown; else fingerprint of the ROM set
     uint64_t captured_at_unix_ms;
     QString  emulator_id;
     uint8_t  session_state;
