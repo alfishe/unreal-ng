@@ -614,9 +614,10 @@ void VecSaveRobust()
 namespace
 {
 
-// Operator voice over the engine's linear op map: bank b, op k uses regs
-// 0x20+k / 0x40+k / 0x60+k / 0x80+k. (Unused on the ymfm backend build,
-// which has no linear map to voice.)
+// Operator voice over the engine's register-linear op map: bank b, slot k
+// uses regs 0x20+k / 0x40+k / 0x60+k / 0x80+k (k 0..21; the classic map's
+// gap slots 6/7/14/15 belong to no channel). (Unused on the ymfm backend
+// build, which exposes no operator internals.)
 [[maybe_unused]] inline void FmOpVoice(Opl4& c, uint64_t t, int bank, int k, uint8_t flags20)
 {
     c.WriteFm(t, bank, static_cast<uint8_t>(0x20 + k), flags20);
@@ -638,8 +639,8 @@ inline double RmsOf(const std::vector<float>& v)
 void VecFm4Op()
 {
     std::printf("VecFm4Op\n");
-#if !defined(OPL4_FM_YMFM) // pins the in-tree 4-op/linear-map model; the
-    // temporary ymfm backend uses the classic operator map and zeroes taps
+#if !defined(OPL4_FM_YMFM) // pins the in-tree engine via per-channel
+    // peaks; the ymfm backend zeroes taps
     const auto run4 = [](TestChip& tc, uint8_t conn)
     {
         tc.chip.WriteWave(0, 0xF8, 0x00); // FM block mix unity (sweep method):
@@ -649,22 +650,22 @@ void VecFm4Op()
         tc.chip.WriteFm(0, 1, 0x05, 0x01); // 0x105: NEW (must come first)
         tc.chip.WriteFm(0, 1, 0x04, conn); // 0x104: 4-op connection select
         // Distinct voices per operator so the algorithm choice is audible:
-        // op0 mult 1, op1 mult 2 (TL 16), op6 mult 4, op7 mult 8. In the
-        // linear map the 4-op chain joins pair ch with ch+3, so these four
-        // ops form one complete cascade in 4-op mode and two independent
-        // channels (ch0, ch3) in 2-op mode.
+        // ch0 mod (0x20) mult 1, ch0 car (0x23) mult 2 (TL 16), ch3 mod
+        // (0x28) mult 4, ch3 car (0x2B) mult 8. The classic pairing joins
+        // ch0 with ch3: these four slots form one complete cascade in 4-op
+        // mode and two independent channels (ch0, ch3) in 2-op mode.
         // EGT=1 (sustaining): FmOpVoice's DR5 with EGT0 is non-sustaining —
         // it decays ~25 dB across the 400-frame window, which made the
         // level check marginal under the old shallow-mod bug and failing
         // after the modulator-domain fix. A held envelope pins the
         // steady-state level instead of the decay slope.
         FmOpVoice(tc.chip, 0, 0, 0, 0x21);
-        FmOpVoice(tc.chip, 0, 0, 1, 0x22);
-        tc.chip.WriteFm(0, 0, 0x41, 0x10); // op1 TL 16
-        FmOpVoice(tc.chip, 0, 0, 6, 0x24);
-        FmOpVoice(tc.chip, 0, 0, 7, 0x28);
-        tc.chip.WriteFm(0, 0, 0xC0, 0x00);
-        tc.chip.WriteFm(0, 0, 0xC3, 0x00);
+        FmOpVoice(tc.chip, 0, 0, 3, 0x22);
+        tc.chip.WriteFm(0, 0, 0x43, 0x10); // ch0 car TL 16
+        FmOpVoice(tc.chip, 0, 0, 8, 0x24);
+        FmOpVoice(tc.chip, 0, 0, 11, 0x28);
+        tc.chip.WriteFm(0, 0, 0xC0, 0x30); // CHA+CHB: both sides (include)
+        tc.chip.WriteFm(0, 0, 0xC3, 0x30);
         // Audible carriers: fnum 0x200 block 4 (~390 Hz; B0 bits 1:0 are
         // the fnum high bits) — whole cycles per window keep the level
         // measure robust.
@@ -690,19 +691,17 @@ void VecFm4Op()
 void VecFmRhythm()
 {
     std::printf("VecFmRhythm\n");
-#if !defined(OPL4_FM_YMFM) // pins the in-tree linear-map rhythm model
-    // (op indices and per-channel peaks); the ymfm backend uses the classic
-    // map and zeroes taps
+#if !defined(OPL4_FM_YMFM) // pins the in-tree rhythm model via
+    // per-channel peaks; the ymfm backend zeroes taps
     TestChip tc;
     // NEW first: without 0x105 the bank-1 register file aliases back to
     // bank 0 (ymfm-modelled quirk) and the percussion voices never load.
     tc.chip.WriteFm(0, 1, 0x05, 0x01);
-    // Datasheet voice set on the linear op map (sweep-corrected): BD = ch6
-    // (ops 12/13, normal 2-op FM); HH/SD = ch7 ops 14/15; TOM = ch8 op 16
-    // (single sine op); CY = ch8 op 17. Channels 9..11 are back to plain
-    // bank-1 duty — the old decode parked HH/CY there and keyed TOM on
-    // ch9's modulator (silent: its carrier never keys).
-    for (int k : {12, 13, 14, 15, 16, 17})
+    // Classic datasheet voice set on the register-linear op map: BD = ch6
+    // pair (regs 0x30/0x33, normal 2-op FM); HH = ch7 mod (0x31), SD =
+    // ch7 car (0x34); TOM = ch8 mod (0x32, single sine op), CY = ch8 car
+    // (0x35). Channels 9..11 stay on plain bank-1 duty.
+    for (int k = 16; k <= 21; k++) // slots 0x30-0x35
         FmOpVoice(tc.chip, 0, 0, static_cast<uint8_t>(k), 0x01);
     tc.chip.WriteFm(0, 0, 0xA6, 0x21); // ch6 frequency, block 1
     tc.chip.WriteFm(0, 0, 0xB6, 0x04);
@@ -750,16 +749,12 @@ void VecFmLfo()
 {
     std::printf("VecFmLfo\n");
     {
-        // AM on the carrier (reg 0x21 bit 7): the envelope index rides
+        // AM on the carrier (reg 0x23 bit 7): the envelope index rides
         // the 13-bit AM triangle, so RMS drops over a full LFO period.
         TestChip am, noam;
         KeyOnFmCh0(am.chip, 0);
         KeyOnFmCh0(noam.chip, 0);
-#if defined(OPL4_FM_YMFM) // classic carrier register
-        am.chip.WriteFm(0, 0, 0x23, 0x81); // carrier: AM on, mult 1
-#else
-        am.chip.WriteFm(0, 0, 0x21, 0x81); // carrier: AM on, mult 1
-#endif
+        am.chip.WriteFm(0, 0, 0x23, 0x81); // classic carrier: AM on, mult 1
         const double rAm = RmsOf(CaptureFrames(am, 9000));
         const double rNo = RmsOf(CaptureFrames(noam, 9000));
         CHECK(rNo > 0.0);
@@ -770,11 +765,7 @@ void VecFmLfo()
         TestChip vib, novib;
         KeyOnFmCh0(vib.chip, 0);
         KeyOnFmCh0(novib.chip, 0);
-#if defined(OPL4_FM_YMFM) // classic carrier register
-        vib.chip.WriteFm(0, 0, 0x23, 0x41); // carrier: VIB on, mult 1
-#else
-        vib.chip.WriteFm(0, 0, 0x21, 0x41); // carrier: VIB on, mult 1
-#endif
+        vib.chip.WriteFm(0, 0, 0x23, 0x41); // classic carrier: VIB on, mult 1
         const std::vector<float> a = CaptureFrames(vib, 3000);
         const std::vector<float> b = CaptureFrames(novib, 3000);
         CHECK(a.size() == b.size() && !std::equal(a.begin(), a.end(), b.begin()));
@@ -789,17 +780,17 @@ void VecFmKsl()
     TestChip ksl, noksl;
     for (TestChip* tc : {&ksl, &noksl})
     {
-        tc->chip.WriteFm(0, 0, 0x20, 0x01);
-        tc->chip.WriteFm(0, 0, 0x21, 0x01);
+        tc->chip.WriteFm(0, 0, 0x20, 0x01); // classic ch0 modulator
+        tc->chip.WriteFm(0, 0, 0x23, 0x01); // classic ch0 carrier
         tc->chip.WriteFm(0, 0, 0x60, 0xF5);
-        tc->chip.WriteFm(0, 0, 0x61, 0xF5);
+        tc->chip.WriteFm(0, 0, 0x63, 0xF5);
         tc->chip.WriteFm(0, 0, 0x80, 0x0F);
-        tc->chip.WriteFm(0, 0, 0x81, 0x0F);
+        tc->chip.WriteFm(0, 0, 0x83, 0x0F);
         tc->chip.WriteFm(0, 0, 0xA0, 0x03);
-        tc->chip.WriteFm(0, 0, 0xB0, 0x3C); // block 7, key on
+        tc->chip.WriteFm(0, 0, 0xB0, 0x3F); // fn 0x303, block 7, key on
     }
-    ksl.chip.WriteFm(0, 0, 0x41, 0xC0);  // carrier TL 0 + KSL on
-    noksl.chip.WriteFm(0, 0, 0x41, 0x00); // carrier TL 0, KSL off
+    ksl.chip.WriteFm(0, 0, 0x43, 0xC0);  // carrier TL 0 + KSL 11 (6 dB/oct)
+    noksl.chip.WriteFm(0, 0, 0x43, 0x00); // carrier TL 0, KSL off
     ksl.chip.Run(300 * kOutClocks);
     noksl.chip.Run(300 * kOutClocks);
     const float pOn = ksl.chip.ChannelPeak({ChannelGroup::Fm, 0});

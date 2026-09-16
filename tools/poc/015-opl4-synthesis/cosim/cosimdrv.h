@@ -62,7 +62,12 @@ public:
         size_t n;
         while ((n = _chip.Render(buf, 4096)) > 0)
             for (size_t i = 0; i < n * 2; i++)
-                out.push_back(static_cast<int16_t>(std::lrint(buf[i])));
+                // Render emits normalized floats (full scale +-1.0); the
+                // harness streams are int16, so de-normalize first. Plain
+                // lrint(buf[i]) silently truncated every sample to 0 after
+                // the render layer switched scales.
+                out.push_back(static_cast<int16_t>(
+                    std::lrint(buf[i] * 32768.0f)));
         return out; // interleaved L,R
     }
 
@@ -129,10 +134,10 @@ void BootNew(Chip& c)
     c.Fm(1, 0x05, 0x03);
 }
 
-// Classic OPL3 2-op voice on FM channel 0, per-engine register addressing.
-// libopl4 maps operators linearly (ops 0/1 = regs 0x20/0x21); ymfm uses the
-// classic map (ch0 = ops {0,3}, carrier at 0x23) and needs the 0xC0 CHA/CHB
-// output-select bits while libopl4 0x00 already means both sides.
+// Classic OPL3 2-op voice on FM channel 0. Both engines share the
+// canonical YMF262 operator map since the classic-map adoption
+// (kStateVersion 3): ch0 = slots {0,3}, carrier at 0x23, and 0xC0 carries
+// include-semantics output selects (0x30 = CHA+CHB, both sides).
 struct FmVoice
 {
     uint8_t mult = 0x01;
@@ -145,20 +150,19 @@ struct FmVoice
 };
 
 template <typename Chip>
-void KeyOnFm(Chip& c, const FmVoice& v, bool ours)
+void KeyOnFm(Chip& c, const FmVoice& v, bool /*ours*/)
 {
-    const uint8_t carReg = ours ? 0x21 : 0x23;
     c.Fm(0, 0x20, v.mult);
-    c.Fm(0, carReg, v.mult);
+    c.Fm(0, 0x23, v.mult);
     c.Fm(0, 0x40, v.tlMod);
-    c.Fm(0, static_cast<uint8_t>(carReg + 0x20), v.tlCar);
+    c.Fm(0, 0x43, v.tlCar);
     c.Fm(0, 0x60, v.ardr);
-    c.Fm(0, static_cast<uint8_t>(carReg + 0x40), v.ardr);
+    c.Fm(0, 0x63, v.ardr);
     c.Fm(0, 0x80, v.slrr);
-    c.Fm(0, static_cast<uint8_t>(carReg + 0x60), v.slrr);
+    c.Fm(0, 0x83, v.slrr);
     c.Fm(0, 0xA0, v.fnLo);
     c.Fm(0, 0xB0, v.b0);
-    c.Fm(0, 0xC0, ours ? 0x00 : 0x30);
+    c.Fm(0, 0xC0, 0x30);
 }
 
 } // namespace opl4cosim

@@ -86,6 +86,22 @@ inline constexpr int8_t kPmScale[8] = {8, 4, 0, -4, -8, -4, 0, 4};
 // exactly these three settings.
 inline constexpr uint8_t kMultTable[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 12, 12, 15, 15};
 
+// KSL attenuation (ymfm opl_key_scale_atten, YMF262 silicon): 0.75 dB
+// units indexed by the 4 F-number MSBs, minus 8 per block below 7,
+// clamped at 0; the 2-bit KSL field shifts the result (0 = off).
+inline constexpr std::array<uint8_t, 16> kKslAtten = {
+    0, 24, 32, 37, 40, 43, 45, 47, 48, 50, 51, 52, 53, 54, 55, 56};
+
+// FM rate-index rows 0..3: the shared PCM table parks them on the infinity
+// row (zero increments — YMF278 wave semantics where rate 0 freezes the
+// stage). The OPL FM side creeps at the slowest cadence instead (ymfm
+// k_rate_shift[0]=12 with the 0/1 increment row): AR/RR 0 still attacks /
+// releases, just very slowly — the untouched-carrier silence finding.
+inline uint8_t FmRateRow(uint8_t rate)
+{
+    return rate < 4 ? RateRow(0) : kEgRateSelect[rate];
+}
+
 } // namespace
 
 void Opl4Fm::Reset()
@@ -106,12 +122,20 @@ void Opl4Fm::Reset()
     _lfoPm = 0;
     _lfoAm = 0;
     _noise = 1;
-    // Channel -> operator map (bank layout): ch n uses ops 2n, 2n+1; bank 1
-    // operators are 18..35 in YMF262 order.
+    // Channel -> operator map (classic YMF262 layout): per bank, channel n
+    // (0..8) owns register offsets (n%3) + 8*(n/3) and +3 — the canonical
+    // slots with the 0x26/0x27 and 0x2E/0x2F gaps; bank-1 slots are +22
+    // (indices 22..43 — 22 slots per bank, the gaps included). _ops[k]
+    // decodes register base+k exactly as silicon decodes that slot, so the
+    // gap operators (6/7, 14/15 per bank) are stored but referenced by no
+    // channel, like the unused registers they are. The bank stride MUST be
+    // 22 (slots), not 18 (operators): with 18, bank-1 channel 0 would alias
+    // bank-0 channel 8's rhythm operators.
     for (int i = 0; i < kChannelCount; i++)
     {
-        _ch[i].op1 = static_cast<uint8_t>(i * 2);
-        _ch[i].op2 = static_cast<uint8_t>(i * 2 + 1);
+        const int n = i % 9;
+        _ch[i].op1 = static_cast<uint8_t>(22 * (i / 9) + (n % 3) + 8 * (n / 3));
+        _ch[i].op2 = static_cast<uint8_t>(_ch[i].op1 + 3);
     }
     RebuildConnections();
 }
@@ -157,20 +181,22 @@ uint32_t Opl4Fm::PhaseStep(const FmOperator& op)
 
 uint32_t Opl4Fm::KslIndex(const FmOperator& op)
 {
-    // OPL3 KSL: attenuation grows with block; corner shifts by fnum msb.
-    if (!op.ksl)
+    // OPL3 KSL (ymfm opl_key_scale_atten, consumed ymfm_opl.cpp:327):
+    // grows with block and the F-number MSBs, folded per block (−8 units
+    // per block below 7, clamped at 0). The table numerals are consumed
+    // directly in the 0.09375 dB index domain — TL is pre-scaled <<3 on its
+    // own path, so the shift here carries only the 2-bit KSL slope: reg 01
+    // -> x4 = 3 dB/oct, 10 -> x2 = 1.5 dB/oct, 11 -> x8 = 6 dB/oct.
+    if (op.ksl == 0)
         return 0;
-    uint32_t ksl = (op.block << 5) + ((op.fnum >> 6) & 1 ? 16u : 0u);
-    if (op.block == 0 && (op.fnum >> 6) & 1)
-        ksl = 32 - ksl; // irregular corner, matches OPL family shape
-    return ksl;
+    const int32_t atten = kKslAtten[op.fnum >> 6] - 8 * (op.block ^ 7);
+    return static_cast<uint32_t>(atten > 0 ? atten : 0) << op.ksl;
 }
 
 uint8_t Opl4Fm::EgRate(const FmOperator& op, uint8_t regRate) const
 {
-    if (regRate == 0)
-        return 0;
-    // KSR: 2-bit key-scale rate from block + fnum MSBs.
+    // KSR: 2-bit key-scale rate from block + fnum MSBs; added even at
+    // register rate 0 — silicon rates 0..3 creep (FmRateRow), never freeze.
     const uint8_t ksr = (op.block << 1) | ((op.fnum >> 9) & 1);
     int r = regRate * 4 + (op.ksr ? ksr : 0);
     if (r > 63)
@@ -180,7 +206,11 @@ uint8_t Opl4Fm::EgRate(const FmOperator& op, uint8_t regRate) const
 
 int32_t Opl4Fm::WaveSample(const FmOperator& op, uint16_t ph) const
 {
-    const uint16_t q = ph & 0x300;
+    // Canonical YMF262 set, ported from ymfm's attenuation-domain tables
+    // (ymfm_opl.cpp constructor): wf0 sine, wf1 half-sine, wf2 |sine|,
+    // wf3 |sine| quarters 1/3, wf4 sine(2x) first half, wf5 |sin(2x)|
+    // first half, wf6 sign-only square, wf7 exponential pulse pair. All
+    // shapes share the sine's peak scale (attenuation 0 at the crest).
     const int16_t s = SineOf(ph);
     switch (op.ws)
     {
@@ -190,22 +220,31 @@ int32_t Opl4Fm::WaveSample(const FmOperator& op, uint16_t ph) const
         return (ph & 0x200) ? 0 : s;
     case 2: // full rectified
         return (ph & 0x200) ? -s : s;
-    case 3: // half rectified, even
+    case 3: // |sin| on quarters 1/3, silence on 2/4 (ymfm wf3)
+        return ((ph >> 8) & 1) ? 0 : ((ph & 0x200) ? -s : s);
+    case 4: // one full sine(2x) cycle packed into the first half,
+        // silence second half (ymfm wf4: wf0[index*2])
         return (ph & 0x200) ? 0 : SineOf(static_cast<uint16_t>(ph << 1));
-    default:
+    case 5: // |sin(2x)| first half, silence second half (ymfm wf5)
     {
-        // ws 4..7: derived square-ish forms of |sin| (OPL3 extension set).
-        const int16_t a = (ph & 0x200) ? static_cast<int16_t>(-s) : s;
-        const bool q1 = (q >> 8) == 0, q2 = (q >> 8) == 1;
-        int32_t v;
-        switch (op.ws)
-        {
-        case 4: v = (q2 ? -a : a); break;
-        case 5: v = (q1 ? a : (q2 ? -a : a)); break;
-        case 6: v = (q1 ? a : -a); break;
-        default: v = (q2 ? a : (q1 ? -a : a)); break;
-        }
-        return v;
+        if (ph & 0x200)
+            return 0;
+        const int16_t v = SineOf(static_cast<uint16_t>(ph << 1));
+        return v < 0 ? -static_cast<int32_t>(v) : static_cast<int32_t>(v);
+    }
+    case 6: // sign-only square at the sine's peak (ymfm wf6)
+        return (ph & 0x200) ? -4096 : 4096;
+    default: // ws 7: exponential pulse pair (ymfm wf7)
+    {
+        // ymfm: attenuation (bit9 ? (index^0x13ff) : index) << 3 decoded
+        // through the die-derived power table = amplitude 2^(-x/32) of the
+        // peak, x = index in the first half / 1023-index in the second:
+        // a positive pulse decaying over the first half, a negative pulse
+        // growing to full across the second.
+        const uint16_t x = (ph & 0x200) ? static_cast<uint16_t>(1023 - ph) : ph;
+        const uint32_t step = static_cast<uint32_t>(x) << 3; // 1/256-octave units
+        const int32_t amp = (4096 * kPowerTable[step & 0xFF]) >> (11 + (step >> 8));
+        return (ph & 0x200) ? -amp : amp;
     }
     }
 }
@@ -256,7 +295,7 @@ void Opl4Fm::AdvanceEnvelope(FmOperator& op)
         const uint8_t shift = kEgRateShift[rate];
         if (!(_egCnt & ((1u << shift) - 1)))
         {
-            const uint8_t select = kEgRateSelect[rate];
+            const uint8_t select = FmRateRow(rate);
             const int32_t inc = (~op.envVol * kEgInc[select + ((_egCnt >> shift) & 7)]) >> 4;
             op.envVol = static_cast<int16_t>(op.envVol + inc);
             if (op.envVol <= kMinAttIndex)
@@ -273,7 +312,7 @@ void Opl4Fm::AdvanceEnvelope(FmOperator& op)
         const uint8_t shift = kEgRateShift[rate];
         if (!(_egCnt & ((1u << shift) - 1)))
         {
-            const uint8_t select = kEgRateSelect[rate];
+            const uint8_t select = FmRateRow(rate);
             op.envVol = static_cast<int16_t>(op.envVol + kEgInc[select + ((_egCnt >> shift) & 7)]);
             const int16_t sustainLevel = static_cast<int16_t>(op.sl << 4);
             if (op.envVol >= sustainLevel)
@@ -290,7 +329,7 @@ void Opl4Fm::AdvanceEnvelope(FmOperator& op)
             const uint8_t shift = kEgRateShift[rate];
             if (!(_egCnt & ((1u << shift) - 1)))
             {
-                const uint8_t select = kEgRateSelect[rate];
+                const uint8_t select = FmRateRow(rate);
                 op.envVol = static_cast<int16_t>(op.envVol + kEgInc[select + ((_egCnt >> shift) & 7)]);
                 if (op.envVol >= kMaxAttIndex)
                 {
@@ -307,7 +346,7 @@ void Opl4Fm::AdvanceEnvelope(FmOperator& op)
         const uint8_t shift = kEgRateShift[rate];
         if (!(_egCnt & ((1u << shift) - 1)))
         {
-            const uint8_t select = kEgRateSelect[rate];
+            const uint8_t select = FmRateRow(rate);
             op.envVol = static_cast<int16_t>(op.envVol + kEgInc[select + ((_egCnt >> shift) & 7)]);
             if (op.envVol >= kMaxAttIndex)
             {
@@ -346,8 +385,9 @@ void Opl4Fm::UpdateChannelParams(uint8_t ch)
     const uint8_t bankBase = (ch >= 9) ? 1 : 0; // register bank selector (x256)
     const uint8_t chReg = static_cast<uint8_t>(ch - (ch >= 9 ? 9 : 0));
     const uint16_t cData = _regs[(bankBase << 8) + 0xC0 + chReg];
-    _ch[ch].cha = cData & 0x30; // routing bits 4 (L) / 5 (R); FB lives in bits 3:1
+    _ch[ch].route = cData & 0xF0; // CHA/CHB/CHC/CHD include enables; FB lives in bits 3:1
     _ch[ch].fbShift = (cData >> 1) & 7;
+    _ch[ch].conn = cData & 0x01;
     const uint16_t regBase = static_cast<uint16_t>(bankBase << 8);
     const uint8_t bData = _regs[regBase + 0xB0 + chReg];
     const uint16_t fn = static_cast<uint16_t>(_regs[regBase + 0xA0 + chReg]
@@ -396,19 +436,17 @@ void Opl4Fm::WriteReg(uint8_t bank, uint8_t reg, uint8_t data)
         case 0xBD:
             _rhythm = (data & 0x20) != 0;
             // Rhythm key-ons, datasheet 0xBD bits: BD 0x10, SD 0x08, TOM
-            // 0x04, CY 0x02, HH 0x01 (ymfm/Nuked-verified order). Voice set
-            // on the linear map: BD = ch6 FM pair (ops 12/13); HH = ch7
-            // op 14, SD = ch7 op 15, TOM = ch8 op 16, CY = ch8 op 17. The
-            // conformance sweep found the old {12,13,16,18,20,22} decode
-            // keyed TOM on ch9's modulator (its carrier never keys — TOM
-            // was silent) and parked HH/CY on bank-1 channels 10/11; the
-            // first correction pass here still swapped the HH/CY bits.
-            KeyOn(_ops[12], (data & 0x10) != 0); // BD mod
-            KeyOn(_ops[13], (data & 0x10) != 0); // BD car
-            KeyOn(_ops[14], (data & 0x01) != 0); // HH envelope (bit 0)
-            KeyOn(_ops[15], (data & 0x08) != 0); // SD envelope (bit 3)
-            KeyOn(_ops[16], (data & 0x04) != 0); // TOM (bit 2)
-            KeyOn(_ops[17], (data & 0x02) != 0); // CY envelope (bit 1)
+            // 0x04, CY 0x02, HH 0x01 (ymfm/Nuked-verified order). Classic
+            // voice set (regs 0x30-0x35): BD = ch6 pair; HH = ch7
+            // modulator, SD = ch7 carrier; TOM = ch8 modulator, CY = ch8
+            // carrier — addressed through the channel map so the decode
+            // always follows it.
+            KeyOn(_ops[_ch[6].op1], (data & 0x10) != 0); // BD mod
+            KeyOn(_ops[_ch[6].op2], (data & 0x10) != 0); // BD car
+            KeyOn(_ops[_ch[7].op1], (data & 0x01) != 0); // HH envelope (bit 0)
+            KeyOn(_ops[_ch[7].op2], (data & 0x08) != 0); // SD envelope (bit 3)
+            KeyOn(_ops[_ch[8].op1], (data & 0x04) != 0); // TOM (bit 2)
+            KeyOn(_ops[_ch[8].op2], (data & 0x02) != 0); // CY envelope (bit 1)
             return;
         default:
             break;
@@ -431,12 +469,14 @@ void Opl4Fm::WriteReg(uint8_t bank, uint8_t reg, uint8_t data)
         }
     }
 
-    // Channel/operator registers: bank 0 covers channels 0..8 (ops 0..17),
-    // bank 1 covers channels 9..17 (ops 18..35).
-    const int opBase = bank ? 18 : 0;
+    // Channel/operator registers: bank 0 covers channels 0..8, bank 1
+    // channels 9..17. Operators are slot-linear (_ops[k] = register family
+    // offset k, k 0..21; stride 22 per bank, the 0x26/0x27 and 0x2E/0x2F
+    // gap slots stored but referenced by no channel).
+    const int opBase = bank ? 22 : 0;
     const int chBase = bank ? 9 : 0;
 
-    if (reg >= 0x20 && reg <= 0x35 && (reg - 0x20) < 18)
+    if (reg >= 0x20 && reg <= 0x35)
     {
         FmOperator& op = _ops[opBase + (reg - 0x20)];
         op.am = (data & 0x80) != 0;
@@ -446,28 +486,31 @@ void Opl4Fm::WriteReg(uint8_t bank, uint8_t reg, uint8_t data)
         op.mult = data & 0x0F;
         return;
     }
-    if (reg >= 0x40 && reg <= 0x55 && (reg - 0x40) < 18)
+    if (reg >= 0x40 && reg <= 0x55)
     {
         FmOperator& op = _ops[opBase + (reg - 0x40)];
-        op.ksl = (data & 0xC0) != 0; // KSL on with level bits folded into KslIndex
+        // YMF262 KSL encoding is non-monotonic (ymfm swaps the two bits):
+        // reg 01 -> shift 2, reg 10 -> shift 1, reg 11 -> shift 3.
+        const uint8_t kslBits = (data >> 6) & 3;
+        op.ksl = static_cast<uint8_t>(((kslBits & 1) << 1) | (kslBits >> 1));
         op.tl = data & 0x3F;
         return;
     }
-    if (reg >= 0x60 && reg <= 0x75 && (reg - 0x60) < 18)
+    if (reg >= 0x60 && reg <= 0x75)
     {
         FmOperator& op = _ops[opBase + (reg - 0x60)];
         op.ar = data >> 4;
         op.dr = data & 0x0F;
         return;
     }
-    if (reg >= 0x80 && reg <= 0x95 && (reg - 0x80) < 18)
+    if (reg >= 0x80 && reg <= 0x95)
     {
         FmOperator& op = _ops[opBase + (reg - 0x80)];
         op.sl = data >> 4;
         op.rr = data & 0x0F;
         return;
     }
-    if (reg >= 0xE0 && reg <= 0xF5 && (reg - 0xE0) < 18)
+    if (reg >= 0xE0 && reg <= 0xF5)
     {
         _ops[opBase + (reg - 0xE0)].ws = data & 0x07;
         return;
@@ -495,8 +538,9 @@ void Opl4Fm::WriteReg(uint8_t bank, uint8_t reg, uint8_t data)
     if (reg >= 0xC0 && reg <= 0xC8)
     {
         const int ch = chBase + (reg - 0xC0);
-        _ch[ch].cha = data & 0x30; // routing bits 4 (L) / 5 (R)
+        _ch[ch].route = data & 0xF0; // CHA/CHB/CHC/CHD include enables
         _ch[ch].fbShift = (data >> 1) & 7;
+        _ch[ch].conn = data & 0x01;
         return;
     }
 }
@@ -560,25 +604,25 @@ void Opl4Fm::Advance(int32_t& outL, int32_t& outR,
 
         if (_ch[ch].fourOp && _newMode)
         {
-            // Only masters emit; slaves feed the cascade (handled below by
-            // scanning master channels whose fourOp is set).
+            // Only masters emit; slaves feed the cascade below.
             const bool isMaster = (ch < 3 || (ch >= 9 && ch < 12));
-            const bool isSlaveOfFourOp = _ch[ch].fourOp && !isMaster
-                && ((ch >= 3 && ch < 6) || (ch >= 12 && ch < 15));
-            if (isSlaveOfFourOp)
-                continue;
             if (!isMaster)
                 continue;
 
             const int s = ch + 3; // slave channel
             const int opA = _ch[ch].op1, opB = _ch[ch].op2;
             const int opC = _ch[s].op1, opD = _ch[s].op2;
-            // Algorithm bit: CH (0xC0 bit 0) of the slave channel — 1 =
-            // additive tail, 0 = FM cascade (PoC two-algorithm model).
-            const uint16_t slaveBank = (s >= 9) ? 256 : 0;
-            const bool connAdd = (_regs[slaveBank + 0xC0 + (s % 9)] & 0x01) != 0;
+            // Algorithm select (ymfm ch_algorithm, YMF262 silicon):
+            // 8 + master CNT (bit 0) + slave CNT<<1 — the four connections:
+            //   8: O1→O2→O3→O4          out = O4
+            //   9: O2→O3→O4, O1 free    out = O1 + O4
+            //  10: O1→O2, O3→O4         out = O2 + O4
+            //  11: O2→O3, O1/O4 free    out = O1 + O3 + O4
+            const unsigned alg = 8u
+                | (_ch[ch].conn != 0 ? 1u : 0u)
+                | (_ch[s].conn != 0 ? 2u : 0u);
 
-            // Stage 1: op1 -> op2 (feedback on op1).
+            // Stage 1: op1 (feedback on op1), op2 per algorithm.
             int32_t mod = 0;
             if (_ch[ch].fbShift)
                 mod = (_ch[ch].fbShift >= 3)
@@ -586,36 +630,56 @@ void Opl4Fm::Advance(int32_t& outL, int32_t& outR,
                     : (_fbHist[ch] >> (3 - _ch[ch].fbShift));
             const int32_t o1 = OperatorOutput(_ops[opA], mod);
             _fbHist[ch] = o1;
-            const int32_t o2 = connAdd
-                ? OperatorOutput(_ops[opB], 0) + o1
+            const int32_t o2 = (alg & 1u)
+                ? OperatorOutput(_ops[opB], 0)
                 : OperatorOutput(_ops[opB], o1 << 5);
-            // Stage 2: op3 -> op4.
-            const int32_t o3 = OperatorOutput(_ops[opC], 0);
-            result = connAdd
-                ? OperatorOutput(_ops[opD], 0) + o3 + o2
-                : OperatorOutput(_ops[opD], o2 << 5) + o3;
+            // Stage 2: op3 modulated by op2 unless it is the free operator
+            // (alg 10), op4 modulated by op3 unless free (alg 11).
+            const int32_t o3 = (alg == 10u)
+                ? OperatorOutput(_ops[opC], 0)
+                : OperatorOutput(_ops[opC], o2 << 5);
+            const int32_t o4 = (alg == 11u)
+                ? OperatorOutput(_ops[opD], 0)
+                : OperatorOutput(_ops[opD], o3 << 5);
+            switch (alg)
+            {
+            case 9u:
+                result = o1 + o4;
+                break;
+            case 10u:
+                result = o2 + o4;
+                break;
+            case 11u:
+                result = o1 + o3 + o4;
+                break;
+            default:
+                result = o4;
+                break;
+            }
         }
         else if (_rhythm && (ch == 7 || ch == 8))
         {
-            // Rhythm percussion ch7 (HH+SD) / ch8 (TOM+CY), datasheet voice
-            // set: envelopes from the channel's two operators; HH/SD/CY are
+            // Rhythm percussion ch7 (HH = op1 / SD = op2), ch8 (TOM = op1
+            // sine direct / CY = op2): envelopes from the channel's two
+            // operators (classic regs 0x31/0x32/0x34/0x35); HH/SD/CY are
             // noise-bit squares through the envelope (documented PoC
-            // simplification), TOM is a plain single-operator sine.
+            // simplification).
             const auto noiseOut = [this](FmOperator& op) {
                 const uint32_t index = static_cast<uint32_t>(op.envVol)
                     + (static_cast<uint32_t>(op.tl) << 3) + KslIndex(op);
                 op.out = VolFactor((_noise & 2) ? 0x1000 : -0x1000, index);
                 return op.out;
             };
-            if (ch == 7) // HH (op14) + SD (op15)
+            if (ch == 7) // HH (mod) + SD (car)
                 result = noiseOut(_ops[op1]) + noiseOut(_ops[op2]);
-            else // TOM (op16, sine direct) + CY (op17)
+            else // TOM (mod, sine direct) + CY (car)
                 result = OperatorOutput(_ops[op1], 0) + noiseOut(_ops[op2]);
             _fbHist[ch] = 0;
         }
         else
         {
-            // 2-op: op1 modulates op2; feedback loop has one-step delay.
+            // 2-op: C0 bit 0 (CNT) selects FM (op1 modulates op2) or the
+            // additive pair; feedback loop has one-step delay.
             int32_t mod = 0;
             if (_ch[ch].fbShift)
                 mod = (_ch[ch].fbShift >= 3)
@@ -623,18 +687,27 @@ void Opl4Fm::Advance(int32_t& outL, int32_t& outR,
                     : (_fbHist[ch] >> (3 - _ch[ch].fbShift));
             const int32_t o1 = OperatorOutput(_ops[op1], mod);
             _fbHist[ch] = o1;
-            result = OperatorOutput(_ops[op2], o1 << 5);
+            result = (_ch[ch].conn != 0)
+                ? o1 + OperatorOutput(_ops[op2], 0)
+                : OperatorOutput(_ops[op2], o1 << 5);
             _ops[op1].out = o1;
         }
 
         channelTaps[ch] = result;
-        // Output routing: default both sides; C0 bit4 right-only, bit5
-        // left-only (OPL3 CD bits, PoC-simplified).
-        const uint8_t route = _ch[ch].cha;
-        if (!(route & 0x10))
-            outL += result;
-        if (!(route & 0x20))
-            outR += result;
+        // Output routing (YMF262 silicon, include semantics): with NEW set,
+        // C0 bits 4..7 enable CHA/CHB/CHC/CHD; the card sums pair A/C into
+        // L and pair B/D into R (the adapter's MAME convention
+        // L = out0+out2, R = out1+out3); all four clear = channel silent.
+        // Without NEW both sides carry the channel (OPL2 compatibility).
+        const uint8_t route = _newMode ? _ch[ch].route : 0x30;
+        if (route & 0x10)
+            outL += result; // CHA -> L
+        if (route & 0x20)
+            outR += result; // CHB -> R
+        if (route & 0x40)
+            outL += result; // CHC -> L (second stereo pair)
+        if (route & 0x80)
+            outR += result; // CHD -> R
     }
 
     AdvanceTimers();

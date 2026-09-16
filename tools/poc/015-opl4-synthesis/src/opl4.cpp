@@ -16,7 +16,7 @@
 
 #include "opl4fm.h"
 #if defined(OPL4_FM_YMFM)
-#include "opl4fmymfm.h"
+#include "ymfm/opl4fmymfm.h"
 #endif
 #include "opl4pcm.h"
 #include "opl4render.h"
@@ -35,11 +35,13 @@ namespace
 
 constexpr size_t kTopStateSize = 92;
 // Backend-tagged layout: the FM chunk differs between the in-tree model and
-// the ymfm verification backend, so sessions never cross builds.
+// the ymfm verification backend, so sessions never cross builds. Version 3:
+// the in-tree engine adopted the classic YMF262 operator map, CNT/route
+// channel fields and include-semantics routing (FmChannel layout changed).
 #if defined(OPL4_FM_YMFM)
 constexpr uint32_t kStateVersion = 2;
 #else
-constexpr uint32_t kStateVersion = 1;
+constexpr uint32_t kStateVersion = 3;
 #endif
 constexpr uint64_t kStreamReserveFrames = 4410; // ~100 ms of chip audio
 
@@ -195,11 +197,17 @@ void Opl4::AdvanceFmToOutput()
         {
             // Mirror the engine's routing exactly (§7): subtract the muted
             // channel's contribution from the tap-sum path, never chip state.
-            const uint8_t route = channels[ch].cha;
-            if (!(route & 0x10))
-                fmL -= tap;
-            if (!(route & 0x20))
-                fmR -= tap;
+            // Include semantics: CHA/CHC -> L, CHB/CHD -> R; without NEW the
+            // channel carries both sides (OPL2 compatibility).
+            const uint8_t route = _fm->NewMode() ? channels[ch].route : 0x30;
+            if (route & 0x10)
+                fmL -= tap; // CHA -> L
+            if (route & 0x20)
+                fmR -= tap; // CHB -> R
+            if (route & 0x40)
+                fmL -= tap; // CHC -> L
+            if (route & 0x80)
+                fmR -= tap; // CHD -> R
         }
     }
 

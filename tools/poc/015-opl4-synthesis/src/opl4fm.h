@@ -30,7 +30,7 @@ struct FmOperator
     bool am = false;       // LFO AM enable
     bool vib = false;      // LFO PM enable
     bool egt = false;      // envelope type (sustaining)
-    bool ksl = false;      // key scale level enable
+    uint8_t ksl = 0;       // key scale level shift 0..3 (reg bits 7:6, ymfm bit-swapped)
 
     // Live state
     uint32_t phase = 0;    // 19-bit accumulator
@@ -42,11 +42,11 @@ struct FmOperator
 
 struct FmChannel
 {
-    uint8_t op1 = 0, op2 = 0;      // operator indices
+    uint8_t op1 = 0, op2 = 0;      // operator indices (classic YMF262 slot map)
     bool fourOp = false;           // participating in a 4-op connection
-    uint8_t conn = 0;              // algorithm when 4-op group master
+    uint8_t conn = 0;              // C0 bit 0 (CNT): additive in 2-op, algorithm bit in 4-op
     int32_t fbShift = 0;           // feedback amount (0 => none)
-    uint8_t cha = 0, chb = 0;      // output routing (0 = L, 1 = R... toms)
+    uint8_t route = 0;             // C0 bits 7:4 snapshot: CHD CHC CHB CHA include enables
 };
 
 enum FmEgState : uint8_t
@@ -62,7 +62,13 @@ class Opl4Fm
 {
 public:
     static constexpr int kChannelCount = 18;
-    static constexpr int kOperatorCount = 36;
+    // Register-slot view: 22 slots per bank × 2 banks, addressed exactly as
+    // silicon addresses them (bank base 22 + reg - 0x20). The four gap slots
+    // per bank (6/7 = regs 0x26/0x27, 14/15 = 0x2E/0x2F) hold no operator —
+    // stored-but-unreferenced, mirroring the dead register addresses. 36 are
+    // real operators; bank-1 rhythm slots 16..21 (BD/HH/TOM/SD/CY) live at
+    // 38..43, beyond a packed 36-entry array — the slot map REQUIRES 44.
+    static constexpr int kOperatorCount = 44;
 
     void Reset();
 

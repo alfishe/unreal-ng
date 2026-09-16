@@ -1,13 +1,5 @@
 # OPL4 Exhaustive Conformance & Regression Suite
 
-> **Status: executed and superseded.** All four tiers landed (2026-09-15): PoC
-> sweeps + fuzz in `opl4sweep.cpp`, oracle golden 55 digests, core canaries — and the
-> follow-on classic-map adoption closed the §2.1 divergence set (see
-> [`opl4-ymfm-verification-findings.md`](opl4-ymfm-verification-findings.md) §2.1–§2.3,
-> §5). The `#if !defined(OPL4_FM_YMFM)` map-specific guards described below were
-> mostly removed by the adoption; the residual guard inventory lives in the findings
-> doc §4.
-
 ## Goal
 
 Turn today's coverage (5452 unit checks, 17 behavior vectors, 6 differential scenarios, 15 golden digests) into a systematic per-register/per-bit/per-pattern conformance matrix, so every writable YMF278B field is pinned by (a) a spec-derived assertion, (b) a bit-exact golden digest, and (c) fuzz determinism — plus thin core-level canaries. "100% reliability" is delivered as: **every register bit-field exercised + documented known-divergence registry + bit-exact cross-platform fence**, not as a claim of absolute proof.

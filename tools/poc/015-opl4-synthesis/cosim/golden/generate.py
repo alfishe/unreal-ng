@@ -29,7 +29,7 @@ def main() -> int:
     print()
     print("golden/oracle.txt regenerated. Before committing:")
     print("  1. cd cosim && ./bin/cosim-ymfm   # differential must stay 6/6")
-    print("  2. ./bin/cosim-oracle             # self-oracle must stay 15/15")
+    print("  2. ./bin/cosim-oracle             # self-oracle must stay 55/55")
     print("  3. git diff golden/oracle.txt     # review every changed digest")
     return 0
 

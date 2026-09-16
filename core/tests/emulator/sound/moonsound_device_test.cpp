@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
@@ -120,11 +121,13 @@ TEST_F(MoonSoundDevice_Test, WavePorts_WriteAndReadbackThroughRealBus)
     cpu->out(0x7E, 2);
     EXPECT_EQ(cpu->in(0x7F), 0x15 | 0x20);
 
-    // Plain register 3 reads back raw
+    // Register 3 is the address counter's A21..A16 byte: only the low 6
+    // bits latch, bits 7-6 always read back 0 (hardware-verified, PoC
+    // MemoryAccessSweep).
     cpu->out(0x7E, 3);
     cpu->out(0x7F, 0xAB);
     cpu->out(0x7E, 3);
-    EXPECT_EQ(cpu->in(0x7F), 0xAB);
+    EXPECT_EQ(cpu->in(0x7F), 0xAB & 0x3F);
 
     // Memory window: MA is already 1 (bit 0 of the 0x15 written to reg 2).
     // Set the 22-bit address counter to 0 through regs 3/4/5, then read the
@@ -301,11 +304,9 @@ int MaxAbsSample(const int16_t* buffer, size_t frames)
 /// FM channel `ch` of bank 0 keyed at unity: TL 0, AR 15 (zero-time attack),
 /// steady near-full-scale tone - the parameterised form of the reference
 /// voice. fnum gets a per-channel offset so a multi-channel key-on does not
-/// sum N phase-locked copies. The carrier register addresses follow the
-/// selected FM backend: the in-tree engine maps the operator families
-/// linearly (carrier 0x21/0x41/0x61/0x81, 0xC0 routing 0 = both sides) while
-/// YMF262/ymfm use the classic layout (ch0 carrier 0x23/0x43/0x63/0x83,
-/// CHA|CHB = both sides).
+/// sum N phase-locked copies. Both FM backends use the classic YMF262
+/// operator layout (modulator 0x20+ch for ch<6, 0x28+(ch-6) beyond; carrier
+/// mod+3; 0xC0 routing CHA|CHB = both sides).
 void KeyOnFmChannelThroughPorts(Z80* cpu, int ch)
 {
     const auto fm1 = [cpu](uint8_t reg, uint8_t value)
@@ -313,35 +314,18 @@ void KeyOnFmChannelThroughPorts(Z80* cpu, int ch)
         cpu->out(0xC4, reg);
         cpu->out(0xC5, value);
     };
-#if defined(OPL4_FM_YMFM)
     const uint8_t mod = ch < 6 ? static_cast<uint8_t>(0x20 + ch) : static_cast<uint8_t>(0x28 + (ch - 6));
     const uint8_t car = static_cast<uint8_t>(mod + 3);
     fm1(mod, 0x01);      // modulator: mult 1
-    fm1(car, 0x01);      // classic carrier: mult 1
+    fm1(car, 0x01);      // carrier: mult 1
     fm1(mod + 0x20, 0x00);  // mod TL 0
     fm1(car + 0x20, 0x00);  // car TL 0
     fm1(mod + 0x40, 0xF0);  // mod AR 15, DR 0
     fm1(car + 0x40, 0xF0);  // car AR 15, DR 0
     fm1(mod + 0x60, 0x00);  // mod SL 0, RR 0
     fm1(car + 0x60, 0x00);  // car SL 0, RR 0
-#else
-    const uint8_t mod = static_cast<uint8_t>(0x20 + 2 * ch);
-    const uint8_t car = static_cast<uint8_t>(0x21 + 2 * ch);
-    fm1(mod, 0x01);      // operator 0 mult 1
-    fm1(car, 0x01);      // operator 1 mult 1
-    fm1(mod + 0x20, 0x00);  // operator 0 TL 0
-    fm1(car + 0x20, 0x00);  // operator 1 TL 0
-    fm1(mod + 0x40, 0xF0);  // AR 15, DR 0
-    fm1(car + 0x40, 0xF0);
-    fm1(mod + 0x60, 0x00);  // SL 0, RR 0
-    fm1(car + 0x60, 0x00);
-#endif
     fm1(0xA0 + ch, static_cast<uint8_t>(0x03 + ch));  // fnum low
-#if defined(OPL4_FM_YMFM)
     fm1(0xC0 + ch, 0x30);  // CHA+CHB: both sides (routing bits include)
-#else
-    fm1(0xC0 + ch, 0x00);  // feedback 0, both outputs (routing bits exclude)
-#endif
     fm1(0xB0 + ch, 0x33);  // fnum high 3, block 4, key on
 }
 
@@ -410,7 +394,7 @@ void KeyOnPcmSlotThroughPorts(Z80* cpu, int slot)
     wave(0x38 + slot, 0x07);  // octave 0, fnum 1023
     wave(0x98 + slot, 0xF0);  // AR 15, D1R 0
     wave(0xB0 + slot, 0x00);  // DL 0, D2R 0
-    wave(0xD8 + slot, 0x00);  // RC 0, RR 0
+    wave(0xC8 + slot, 0x00);  // RC 0, RR 0 (offset 8 = 0xC8 + slot, not 0xD8)
     wave(0x50 + slot, 0x01);  // TL 0 with LD: immediate
     wave(0x68 + slot, 0x80);  // key on, pan centre
 }
@@ -549,17 +533,22 @@ TEST_F(MoonSoundDevice_Test, FrameEnd_FmAndPcmFullScale_DefaultChipMix_StaysInLi
     EXPECT_LE(fmPeak, 16500) << "FM source must stay under the headroom trim (5.3)";
     EXPECT_GT(pcmPeak, 1000);
     EXPECT_LE(pcmPeak, 16500) << "PCM source must stay under the headroom trim (5.3)";
-    EXPECT_GT(masterPeak, 18000) << "both full-scale sources must be audible in the master sum";
+    // The recalibrated FM block (PoC modulator-depth fix) renders a full FM
+    // voice at roughly a quarter of the rail through the default -9 dB mix,
+    // so the master sum is PCM-dominated: PCM alone cannot reach this bar.
+    EXPECT_GT(masterPeak, 9000) << "both full-scale sources must be audible in the master sum";
     EXPECT_LE(masterPeak, static_cast<int>(MasterLimiter::KNEE_LINEAR))
         << "chip-default block mix keeps a full-scale FM+PCM sum in the limiter's linear region";
 }
 
 /// Gain staging, worst legal chip mix: block-mix register 0xF8 pushed to
 /// unity (0 dB - the maximum the chip itself allows) with both engines at
-/// full scale. The sum rides past the limiter knee, and the soft curve must
-/// hold the master under its asymptotic ceiling: no hard clipping anywhere,
-/// neither in the sources nor in the quantised master.
-TEST_F(MoonSoundDevice_Test, FrameEnd_FmAndPcmFullScale_UnityChipMix_MasterSoftLimitedNeverClips)
+/// full scale. The recalibrated single-voice FM level leaves the sum below
+/// the limiter knee (that region is exercised by the all-voices-maxed test
+/// below); unity must still beat the default -9 dB mix, and the soft curve
+/// must hold the master under its asymptotic ceiling: no hard clipping
+/// anywhere, neither in the sources nor in the quantised master.
+TEST_F(MoonSoundDevice_Test, FrameEnd_FmAndPcmFullScale_UnityChipMix_MasterStaysUnderSoftCeiling)
 {
     SoundManager* soundManager = context->pSoundManager;
     ASSERT_NE(soundManager, nullptr);
@@ -590,8 +579,8 @@ TEST_F(MoonSoundDevice_Test, FrameEnd_FmAndPcmFullScale_UnityChipMix_MasterSoftL
     EXPECT_LE(fmPeak, 16500) << "FM source must stay under the headroom trim (5.3)";
     EXPECT_GT(pcmPeak, 1000);
     EXPECT_LE(pcmPeak, 16500) << "PCM source must stay under the headroom trim (5.3)";
-    EXPECT_GT(masterPeak, static_cast<int>(MasterLimiter::KNEE_LINEAR))
-        << "unity chip mix must push the sum past the knee so the limiter is exercised";
+    EXPECT_GT(masterPeak, 13000)
+        << "unity chip mix must beat the default-mix master by the +9 dB block-mix lift";
     EXPECT_LE(masterPeak, static_cast<int>(MasterLimiter::CEILING))
         << "the soft limiter ceiling must hold - the master must never hard-clip";
 }
@@ -628,11 +617,12 @@ TEST_F(MoonSoundDevice_Test, FrameEnd_AllFmChannelsAndPcmSlotsMaxed_MasterNeverC
     const int masterPeak = MaxAbsSample(soundManager->deviceBuffer(AudioSourceType::MasterMix), SAMPLES_PER_FRAME);
 
     EXPECT_GT(fmPeak, 1000);
-    EXPECT_LE(fmPeak, 16500)
-        << "the FM group rails at the chip's 16-bit boundary; the trim still halves it";
+    EXPECT_LE(fmPeak, 32768)
+        << "the FM group tops out at the chip's 16-bit DAC boundary; the -6 dB device"
+           " trim lives in the mixer gain, not the source buffer (5.3)";
     EXPECT_GT(pcmPeak, 1000);
-    EXPECT_LE(pcmPeak, 16500)
-        << "the PCM group rails at the chip's 16-bit boundary; the trim still halves it";
+    EXPECT_GT(pcmPeak, 30000)
+        << "24 maximised slots must rail the PCM group at the 16-bit DAC boundary";
     EXPECT_GT(masterPeak, static_cast<int>(MasterLimiter::KNEE_LINEAR));
     EXPECT_LE(masterPeak, static_cast<int>(MasterLimiter::CEILING))
         << "even with every voice maximised the master must stay under the soft ceiling";
@@ -832,6 +822,464 @@ TEST_F(MoonSoundDevice_Test, TTD_IdentityAndSizeStableAcrossConfigs)
     EXPECT_EQ(other->TTDPeripheralId(), ttd::PeripheralId::MoonSound);
     delete other;
     ramSizeKb = ramSizeKbOriginal;
+}
+
+// ===========================================================================
+// Conformance canaries (core-tdd 12.2): thin per-field rows promoted from
+// the PoC sweep families (tools/poc/015-opl4-synthesis/tests/opl4sweep.cpp)
+// to the device level - one register behaviour each, asserted on audio
+// rendered through the real port/bus/frame path. The exact per-step numbers
+// and full grids stay in the PoC suite; these pin the same semantics where
+// the emulator actually uses them.
+// ===========================================================================
+namespace
+{
+
+/// Register bases of FM channel 0's two operators in the 0x20 family; the
+/// other families hang off the same offsets the key-on helper uses
+/// (+0x20 total level, +0x40 attack/decay, +0x60 sustain/release, +0xC0
+/// waveform select). Both FM backends use the classic YMF262 layout, so
+/// the carrier is 0x23 exactly like KeyOnFmChannelThroughPorts.
+constexpr uint8_t kFmCh0Mod = 0x20;
+constexpr uint8_t kFmCh0Car = 0x23;
+constexpr uint8_t kFmModTl = static_cast<uint8_t>(kFmCh0Mod + 0x20);
+constexpr uint8_t kFmCarTl = static_cast<uint8_t>(kFmCh0Car + 0x20);
+constexpr uint8_t kFmCarSlRr = static_cast<uint8_t>(kFmCh0Car + 0x60);
+constexpr uint8_t kFmModSlRr = static_cast<uint8_t>(kFmCh0Mod + 0x60);
+constexpr uint8_t kFmCarWs = static_cast<uint8_t>(kFmCh0Car + 0xC0);
+
+/// Peak, minimum and DC of one stereo side across the first `frames`
+/// frames - the pan and waveform canaries need per-side and DC numbers the
+/// both-sides MaxAbsSample cannot give.
+struct SideStats
+{
+    int peak = 0;
+    int lo = 0;
+    double mean = 0.0;
+};
+
+SideStats ScanSide(const int16_t* buffer, size_t frames, int channel)
+{
+    SideStats s;
+    long long sum = 0;
+    for (size_t i = 0; i < frames; i++)
+    {
+        const int v = static_cast<int>(buffer[i * AUDIO_CHANNELS + channel]);
+        s.peak = std::max(s.peak, std::abs(v));
+        s.lo = std::min(s.lo, v);
+        sum += v;
+    }
+    s.mean = frames > 0 ? static_cast<double>(sum) / static_cast<double>(frames) : 0.0;
+    return s;
+}
+
+/// The device publishes one frame of already-synthesised audio per RunFrame:
+/// register writes issued between frames reach the rendered buffers only
+/// once the in-flight audio has drained (observed: FM ~2 frames, PCM ~1).
+/// The canaries flush that pipe after every write burst before measuring.
+void FlushAudioPipe(MainLoop_CUT* mainLoop, int frames)
+{
+    for (int i = 0; i < frames; i++)
+        mainLoop->RunFrame();
+}
+
+} // namespace
+
+/// Canary (FmTlLadderSweep row): carrier total level is live-writable
+/// during key-on and steps down at the datasheet's 0.75 dB per unit (16
+/// units = -12 dB). The modulator sits at the field maximum so the ladder
+/// measures a near-pure carrier; the reset-default block mix is a constant
+/// gain the ratio bands absorb.
+TEST_F(MoonSoundDevice_Test, Canary_FmTlLadder_AttenuatesCarrierInSpecSteps)
+{
+    SoundManager* soundManager = context->pSoundManager;
+    ASSERT_NE(soundManager, nullptr);
+    SoundChip_Moonsound* moonsound = soundManager->getMoonSound();
+    ASSERT_NE(moonsound, nullptr);
+    Z80* cpu = context->pCore->GetZ80();
+    ASSERT_NE(cpu, nullptr);
+    auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(context->pMainLoop);
+    ASSERT_NE(mainLoop, nullptr);
+    const auto fm1 = [cpu](uint8_t reg, uint8_t value)
+    {
+        cpu->out(0xC4, reg);
+        cpu->out(0xC5, value);
+    };
+
+    KeyOnFmCh0ThroughPorts(cpu);
+    fm1(kFmModTl, 0x3F);  // modulator TL max: near-pure carrier
+    FlushAudioPipe(mainLoop, 3); // attack settle + write drain
+
+    const uint8_t tlRow[4] = {0x00, 0x10, 0x20, 0x30};
+    int peaks[4] = {0, 0, 0, 0};
+    for (int i = 0; i < 4; i++)
+    {
+        fm1(kFmCarTl, tlRow[i]);
+        FlushAudioPipe(mainLoop, 2); // FM writes drain after ~2 rendered frames
+        mainLoop->RunFrame();
+        peaks[i] = MaxAbsSample(moonsound->getFmBuffer(), SAMPLES_PER_FRAME);
+    }
+
+    ASSERT_GT(peaks[0], 1000);
+    for (int i = 0; i < 3; i++)
+    {
+        EXPECT_LT(peaks[i + 1], peaks[i]) << "TL " << static_cast<int>(tlRow[i + 1])
+                                          << " must attenuate below TL " << static_cast<int>(tlRow[i]);
+        // -12 dB nominal per 16-unit step; generous +-6 dB band around it
+        EXPECT_LT(peaks[i + 1] * 100, peaks[i] * 45) << "step " << i << " is steeper than -18 dB";
+        EXPECT_GT(peaks[i + 1] * 100, peaks[i] * 12) << "step " << i << " is shallower than -6 dB";
+    }
+    EXPECT_GT(peaks[3], 15) << "-36 dB of a full-scale tone must stay off the int16 floor";
+}
+
+/// Canary (FmEnvStageSweep row): AR 15 attack is effectively instant, the
+/// sustain stage (DR 0 at SL 0) holds a flat plateau, and a key-off with
+/// RR 15 releases to silence within a frame - all through the real frame
+/// lifecycle on a keyed voice.
+TEST_F(MoonSoundDevice_Test, Canary_FmEnvelopeStages_AttackSustainAndRelease)
+{
+    SoundManager* soundManager = context->pSoundManager;
+    ASSERT_NE(soundManager, nullptr);
+    SoundChip_Moonsound* moonsound = soundManager->getMoonSound();
+    ASSERT_NE(moonsound, nullptr);
+    Z80* cpu = context->pCore->GetZ80();
+    ASSERT_NE(cpu, nullptr);
+    auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(context->pMainLoop);
+    ASSERT_NE(mainLoop, nullptr);
+    const auto fm1 = [cpu](uint8_t reg, uint8_t value)
+    {
+        cpu->out(0xC4, reg);
+        cpu->out(0xC5, value);
+    };
+
+    KeyOnFmCh0ThroughPorts(cpu);
+    fm1(kFmModTl, 0x3F); // near-pure carrier
+    FlushAudioPipe(mainLoop, 3);
+
+    mainLoop->RunFrame();
+    const int attack = MaxAbsSample(moonsound->getFmBuffer(), SAMPLES_PER_FRAME);
+    mainLoop->RunFrame();
+    const int sustain0 = MaxAbsSample(moonsound->getFmBuffer(), SAMPLES_PER_FRAME);
+    mainLoop->RunFrame();
+    const int sustain1 = MaxAbsSample(moonsound->getFmBuffer(), SAMPLES_PER_FRAME);
+
+    EXPECT_GT(attack, sustain1 / 2) << "AR 15 attack must be effectively instant";
+    ASSERT_GT(sustain0, 1000);
+    EXPECT_GT(sustain0 * 100, sustain1 * 85) << "sustain plateau droops more than 15%";
+    EXPECT_LT(sustain0 * 100, sustain1 * 118) << "sustain plateau rises more than 18%";
+
+    // Fast release on both operators, then key off (fnum/block preserved).
+    fm1(kFmModSlRr, 0x0F);
+    fm1(kFmCarSlRr, 0x0F);
+    fm1(0xB0, 0x13);
+    FlushAudioPipe(mainLoop, 2); // drain the still-keyed audio first
+    mainLoop->RunFrame();
+    const int release0 = MaxAbsSample(moonsound->getFmBuffer(), SAMPLES_PER_FRAME);
+    mainLoop->RunFrame();
+    const int release1 = MaxAbsSample(moonsound->getFmBuffer(), SAMPLES_PER_FRAME);
+    EXPECT_LT(release0 * 20, sustain1) << "RR 15 release must be effectively instant";
+    EXPECT_LT(release1 * 100, sustain1) << "the voice must be gone one frame later";
+}
+
+/// Canary (FmWaveformSweep row): waveform select on the carrier - the sine
+/// is bipolar with near-zero DC, while the half sine and the full-wave
+/// rectified sine are unipolar with DC at 1/pi resp. 2/pi of the peak.
+/// WSE (bank 0 reg 0x01 bit 5) is the documented enable.
+TEST_F(MoonSoundDevice_Test, Canary_FmWaveformSelect_SineBipolarRectifiedUnipolar)
+{
+    SoundManager* soundManager = context->pSoundManager;
+    ASSERT_NE(soundManager, nullptr);
+    SoundChip_Moonsound* moonsound = soundManager->getMoonSound();
+    ASSERT_NE(moonsound, nullptr);
+    Z80* cpu = context->pCore->GetZ80();
+    ASSERT_NE(cpu, nullptr);
+    auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(context->pMainLoop);
+    ASSERT_NE(mainLoop, nullptr);
+    const auto fm1 = [cpu](uint8_t reg, uint8_t value)
+    {
+        cpu->out(0xC4, reg);
+        cpu->out(0xC5, value);
+    };
+
+    cpu->out(0xC4, 0x01);
+    cpu->out(0xC5, 0x20); // WSE: waveform select enable
+    KeyOnFmCh0ThroughPorts(cpu);
+    fm1(kFmModTl, 0x3F); // near-pure carrier
+    FlushAudioPipe(mainLoop, 3); // settle
+
+    SideStats st[3];
+    const uint8_t wsRow[3] = {0, 1, 2}; // sine, half sine, full-wave rectified
+    for (int i = 0; i < 3; i++)
+    {
+        fm1(kFmCarWs, wsRow[i]);
+        FlushAudioPipe(mainLoop, 2);
+        mainLoop->RunFrame();
+        st[i] = ScanSide(moonsound->getFmBuffer(), SAMPLES_PER_FRAME, 0);
+    }
+
+    // ws 0: bipolar symmetric, no DC
+    ASSERT_GT(st[0].peak, 1000);
+    EXPECT_LT(std::fabs(st[0].mean) * 10, st[0].peak) << "sine must be DC-free";
+    EXPECT_LT(st[0].lo * 5, -st[0].peak * 3) << "sine must swing symmetrically negative";
+    // ws 1: positive half sine - unipolar, DC above 1/5 of the peak
+    ASSERT_GT(st[1].peak, 200);
+    EXPECT_GT(st[1].lo * 10, -st[1].peak) << "half sine must not go negative";
+    EXPECT_GT(st[1].mean * 5, st[1].peak) << "half sine DC is 1/pi of the peak";
+    // ws 2: full-wave rectified - unipolar with well above the half sine's DC
+    ASSERT_GT(st[2].peak, 200);
+    EXPECT_GT(st[2].lo * 10, -st[2].peak) << "rectified sine must not go negative";
+    EXPECT_GT(st[2].mean * 20, st[2].peak * 9) << "rectified sine DC is 2/pi of the peak";
+    EXPECT_GT(st[2].mean * 2, st[1].mean * 3) << "rectified DC must double the half-sine DC";
+}
+
+/// Canary (PcmLoopEdgeMatrix row, the E = 0 corner): with the loop end
+/// stored as its complement 0 the engine's documented openMSX-model
+/// behaviour is a 64 KiB one-shot - the wrap never fires and the voice
+/// plays past the uploaded data into silence, while a normal complement
+/// end keeps wrapping (control arm). The core PCM block is the in-tree
+/// engine either way; ymfm's wrap-every-step decode of this corner is the
+/// known divergence recorded in the cosim tier.
+TEST_F(MoonSoundDevice_Test, Canary_PcmLoopEndZero_PlaysPastDataWithoutWrap)
+{
+    SoundManager* soundManager = context->pSoundManager;
+    ASSERT_NE(soundManager, nullptr);
+    SoundChip_Moonsound* moonsound = soundManager->getMoonSound();
+    ASSERT_NE(moonsound, nullptr);
+    Z80* cpu = context->pCore->GetZ80();
+    ASSERT_NE(cpu, nullptr);
+    auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(context->pMainLoop);
+    ASSERT_NE(mainLoop, nullptr);
+    const auto wave = [cpu](uint8_t reg, uint8_t value)
+    {
+        cpu->out(0x7E, reg);
+        cpu->out(0x7F, value);
+    };
+
+    // Control arm: the uploaded tone (end complement 8) wraps forever.
+    UploadSquareToneThroughPorts(cpu);
+    KeyOnPcmSlotThroughPorts(cpu, 0);
+    FlushAudioPipe(mainLoop, 3);
+    EXPECT_GT(MaxAbsSample(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME), 1000)
+        << "control: a normal complement loop end must keep wrapping";
+
+    // Quiet slot 0 (fast release), then rewrite the SAME header with the
+    // end stored as its complement 0; slot 1 re-fetches it at key-on.
+    wave(0xC8, 0x0F); // slot 0's RC/RR (offset 8): RR 15
+    wave(0x68, 0x00); // key off
+    FlushAudioPipe(mainLoop, 3);
+    EXPECT_LT(MaxAbsSample(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME), 100)
+        << "release sanity before the one-shot arm";
+
+    wave(0x02, 0x01); // SRAM window on
+    wave(0x03, 0x20);
+    wave(0x04, 0x00);
+    wave(0x05, 0x00); // header at 0x200000
+    for (const uint8_t b : {0xA0, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+        wave(0x06, b); // end complement 0x0000: E = 0
+    wave(0x02, 0x10); // window off, header base 4
+
+    // The 8-sample table at step ~1: a burst inside the drained frames,
+    // then past-data reads - which must be silence, not a wrap to the start.
+    KeyOnPcmSlotThroughPorts(cpu, 1);
+    int burst = 0;
+    for (int frame = 0; frame < 4; frame++)
+    {
+        mainLoop->RunFrame();
+        burst = std::max(burst, MaxAbsSample(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME));
+    }
+    EXPECT_GT(burst, 1000) << "the E=0 one-shot burst must be audible";
+    mainLoop->RunFrame();
+    mainLoop->RunFrame();
+    EXPECT_EQ(MaxAbsSample(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME), 0)
+        << "E=0 must not wrap: past-data reads are silence";
+}
+
+/// Canary (PcmPanSweep row): pan 0 feeds both sides, pan 7 is hard right,
+/// pan 9 hard left, pan 8 switches both sides off - live-writable on a
+/// keyed voice.
+TEST_F(MoonSoundDevice_Test, Canary_PcmPanRow_CentreHardRightHardLeftBothOff)
+{
+    SoundManager* soundManager = context->pSoundManager;
+    ASSERT_NE(soundManager, nullptr);
+    SoundChip_Moonsound* moonsound = soundManager->getMoonSound();
+    ASSERT_NE(moonsound, nullptr);
+    Z80* cpu = context->pCore->GetZ80();
+    ASSERT_NE(cpu, nullptr);
+    auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(context->pMainLoop);
+    ASSERT_NE(mainLoop, nullptr);
+    const auto wave = [cpu](uint8_t reg, uint8_t value)
+    {
+        cpu->out(0x7E, reg);
+        cpu->out(0x7F, value);
+    };
+
+    UploadSquareToneThroughPorts(cpu);
+    KeyOnPcmSlotThroughPorts(cpu, 0);
+    FlushAudioPipe(mainLoop, 3); // settle at full level
+
+    wave(0x68, 0x80); // pan 0: both sides
+    FlushAudioPipe(mainLoop, 2);
+    mainLoop->RunFrame();
+    const int centreL = ScanSide(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME, 0).peak;
+    const int centreR = ScanSide(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME, 1).peak;
+    ASSERT_GT(centreL, 1000);
+    ASSERT_GT(centreR, 1000);
+
+    wave(0x68, 0x87); // pan 7: hard right
+    FlushAudioPipe(mainLoop, 2);
+    mainLoop->RunFrame();
+    const SideStats right = ScanSide(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME, 1);
+    const int rightL = ScanSide(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME, 0).peak;
+    EXPECT_GT(right.peak, 1000);
+    EXPECT_LT(rightL * 32, right.peak) << "hard right must leave the left side silent";
+
+    wave(0x68, 0x89); // pan 9: hard left
+    FlushAudioPipe(mainLoop, 2);
+    mainLoop->RunFrame();
+    const SideStats left = ScanSide(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME, 0);
+    const int leftR = ScanSide(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME, 1).peak;
+    EXPECT_GT(left.peak, 1000);
+    EXPECT_LT(leftR * 32, left.peak) << "hard left must leave the right side silent";
+
+    wave(0x68, 0x88); // pan 8: both sides off
+    FlushAudioPipe(mainLoop, 2);
+    mainLoop->RunFrame();
+    const SideStats offL = ScanSide(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME, 0);
+    const SideStats offR = ScanSide(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME, 1);
+    EXPECT_LT(offL.peak, 100) << "pan 8 switches the left side off";
+    EXPECT_LT(offR.peak, 100) << "pan 8 switches the right side off";
+}
+
+/// Canary (PcmTlLadderSweep row, the 0x7F corner): total level 0x7F with
+/// LD set maps to the internal full-attenuation level (the HW-verified D6
+/// special) - immediate silence - while a mid-field value stays audible at
+/// the PCM block's 0.375 dB-per-unit level.
+TEST_F(MoonSoundDevice_Test, Canary_PcmTlSpecialLevel_MutesImmediatelyWithLd)
+{
+    SoundManager* soundManager = context->pSoundManager;
+    ASSERT_NE(soundManager, nullptr);
+    SoundChip_Moonsound* moonsound = soundManager->getMoonSound();
+    ASSERT_NE(moonsound, nullptr);
+    Z80* cpu = context->pCore->GetZ80();
+    ASSERT_NE(cpu, nullptr);
+    auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(context->pMainLoop);
+    ASSERT_NE(mainLoop, nullptr);
+    const auto wave = [cpu](uint8_t reg, uint8_t value)
+    {
+        cpu->out(0x7E, reg);
+        cpu->out(0x7F, value);
+    };
+
+    UploadSquareToneThroughPorts(cpu);
+    KeyOnPcmSlotThroughPorts(cpu, 0);
+    FlushAudioPipe(mainLoop, 3);
+    const int full = MaxAbsSample(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME);
+    ASSERT_GT(full, 1000);
+
+    wave(0x50, 0x41); // TL 0x20 (-12 dB at PCM's 0.375 dB/unit) + LD: immediate
+    FlushAudioPipe(mainLoop, 2);
+    mainLoop->RunFrame();
+    const int mid = MaxAbsSample(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME);
+    EXPECT_LT(mid * 10, full * 4) << "TL 0x20 is -12 dB, not louder";
+    EXPECT_GT(mid * 20, full * 3) << "TL 0x20 is -12 dB, not near-silence";
+
+    wave(0x50, 0xFF); // TL 0x7F + LD: the D6 special - full attenuation
+    FlushAudioPipe(mainLoop, 2);
+    mainLoop->RunFrame();
+    EXPECT_EQ(MaxAbsSample(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME), 0)
+        << "TL 0x7F with LD must mute immediately";
+}
+
+/// Canary (MixFieldMatrix row): block mix 0xF8 scales only the FM group
+/// (0x1B, the reset default, is -9 dB both sides) and 0xF9 only the PCM
+/// group (0xFF mutes both sides); neither field touches the other block.
+TEST_F(MoonSoundDevice_Test, Canary_BlockMixFields_ScaleTheirOwnBlockOnly)
+{
+    SoundManager* soundManager = context->pSoundManager;
+    ASSERT_NE(soundManager, nullptr);
+    SoundChip_Moonsound* moonsound = soundManager->getMoonSound();
+    ASSERT_NE(moonsound, nullptr);
+    Z80* cpu = context->pCore->GetZ80();
+    ASSERT_NE(cpu, nullptr);
+    auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(context->pMainLoop);
+    ASSERT_NE(mainLoop, nullptr);
+    const auto wave = [cpu](uint8_t reg, uint8_t value)
+    {
+        cpu->out(0x7E, reg);
+        cpu->out(0x7F, value);
+    };
+
+    UploadSquareToneThroughPorts(cpu); // arms the card for 0xF8/0xF9 access
+    wave(0xF8, 0x00);                  // FM unity
+    wave(0xF9, 0x00);                  // PCM unity
+    KeyOnFmCh0ThroughPorts(cpu);
+    KeyOnPcmSlotThroughPorts(cpu, 0);
+    FlushAudioPipe(mainLoop, 3);
+    const int fmUnity = MaxAbsSample(moonsound->getFmBuffer(), SAMPLES_PER_FRAME);
+    const int pcmUnity = MaxAbsSample(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME);
+    ASSERT_GT(fmUnity, 1000);
+    ASSERT_GT(pcmUnity, 1000);
+
+    wave(0xF8, 0x1B); // FM -9 dB both sides (the reset default)
+    FlushAudioPipe(mainLoop, 3); // FM audio drains slowest
+    const int fmAttenuated = MaxAbsSample(moonsound->getFmBuffer(), SAMPLES_PER_FRAME);
+    const int pcmUntouched = MaxAbsSample(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME);
+    EXPECT_GT(fmAttenuated * 4, fmUnity) << "0x1B is -9 dB, not -12 dB or worse";
+    EXPECT_LT(fmAttenuated * 2, fmUnity) << "0x1B is -9 dB, not near unity";
+    EXPECT_GT(pcmUntouched * 10, pcmUnity * 9) << "0xF8 must not touch the PCM block";
+
+    wave(0xF9, 0xFF); // PCM both sides muted
+    FlushAudioPipe(mainLoop, 3);
+    EXPECT_EQ(MaxAbsSample(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME), 0)
+        << "PCM mix 0xFF is full attenuation";
+    const int fmUntouched = MaxAbsSample(moonsound->getFmBuffer(), SAMPLES_PER_FRAME);
+    EXPECT_GT(fmUntouched * 4, fmUnity) << "0xF9 must not touch the FM block";
+    EXPECT_LT(fmUntouched * 2, fmUnity) << "0xF9 must not touch the FM block";
+}
+
+/// Canary (MemoryAccessSweep row): the SRAM window round-trips distinct
+/// bytes through the real bus - write through reg 6 with auto-increment,
+/// re-point the 22-bit address counter, read the same bytes back, and
+/// cross-check the device's wave memory at the same addresses.
+TEST_F(MoonSoundDevice_Test, Canary_SramWindow_RoundTripsDistinctBytes)
+{
+    SoundManager* soundManager = context->pSoundManager;
+    ASSERT_NE(soundManager, nullptr);
+    SoundChip_Moonsound* moonsound = soundManager->getMoonSound();
+    ASSERT_NE(moonsound, nullptr);
+    Z80* cpu = context->pCore->GetZ80();
+    ASSERT_NE(cpu, nullptr);
+    const auto wave = [cpu](uint8_t reg, uint8_t value)
+    {
+        cpu->out(0x7E, reg);
+        cpu->out(0x7F, value);
+    };
+
+    // Arm the wave part: the YMF278B ignores wave register access while
+    // NEW2 is clear (openMSX-verified).
+    cpu->out(0xC6, 0x05);
+    cpu->out(0xC7, 0x03);
+
+    static constexpr uint8_t kPattern[8] = {0x11, 0x27, 0x33, 0x55, 0x77, 0x99, 0xB4, 0xFE};
+    constexpr uint32_t kSram = 0x201000; // SRAM well clear of the tone data
+
+    wave(0x02, 0x01); // memory window on (MA)
+    wave(0x03, 0x20); // 22-bit address 0x201000: A21..A16 / A15..A8 / A7..A0
+    wave(0x04, 0x10);
+    wave(0x05, 0x00);
+    for (uint8_t b : kPattern)
+        wave(0x06, b); // data writes auto-increment the counter
+
+    wave(0x03, 0x20); // re-point and read back
+    wave(0x04, 0x10);
+    wave(0x05, 0x00);
+    cpu->out(0x7E, 0x06); // select the memory data register: reads auto-increment
+    for (int i = 0; i < 8; i++)
+    {
+        EXPECT_EQ(cpu->in(0x7F), kPattern[i]) << "SRAM byte " << i << " must read back through the bus";
+        EXPECT_EQ(moonsound->waveMemory().Read(kSram + static_cast<uint32_t>(i)), kPattern[i])
+            << "SRAM byte " << i << " must land in the wave memory";
+    }
 }
 
 #endif  // UNREALNG_HAVE_OPL4

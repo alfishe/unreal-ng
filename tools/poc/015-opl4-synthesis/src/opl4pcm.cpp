@@ -145,7 +145,10 @@ bool Opl4Pcm::WriteReg(uint8_t reg, uint8_t data)
     WriteRegDirect(reg, data);
     if (reg >= 0x08 && reg < 0x20) // bank 0: wave number low 8 bits (D7)
         toneLoad = true;
-    _regs[reg] = data;
+    // Reg 0x03 latches through the 6-bit mask inside WriteRegDirect; the
+    // raw re-store here would unmask it and leak phantom bits into reads.
+    if (reg != 0x03)
+        _regs[reg] = data;
     return toneLoad;
 }
 

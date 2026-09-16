@@ -211,7 +211,7 @@ openMSX-audited in-tree model — §3.1 already cleared it suspect-by-suspect).
   `VERSION.txt` updated). The ymf262 (OPL3) class is the synthesis engine;
   `ymfm_pcm.cpp` is required because `ymfm_opl.cpp`'s y8950 references the
   adpcm_b engine.
-- **Adapter:** `Opl4FmYmfm : Opl4Fm` (`tools/poc/015-opl4-synthesis/src/`),
+- **Adapter:** `Opl4FmYmfm : Opl4Fm` (`tools/poc/015-opl4-synthesis/src/ymfm/`),
   same pattern as the TSFM device: the base class keeps every audited bus
   semantic (bank-1 aliasing until NEW, timer periods/enable/mask/RST bits,
   status bits 6/5), the subclass replaces synthesis with
@@ -262,12 +262,17 @@ Measured verdict line: identical bytes, rms ours = 0 vs ymfm = 1465.
 These three are the prime "wrong instruments / silent FM" suspects for
 any real MoonSound FM repertoire — the actionable outcome of the A/B.
 
+**Post-fix note (2026-09-15):** all three divergences are resolved — the
+in-tree engine adopted the classic map (state schema v3) and the comparator
+now asserts the match; see
+[`opl4-ymfm-verification-findings.md`](opl4-ymfm-verification-findings.md) §2.1/§2.3.
+
 ### 6.3 Verification matrix
 
 | Configuration | Result |
 |---|---|
 | PoC default (`opl4tests`, bin/) | 5452 checks / 0 failures |
-| PoC ymfm (`bin-ymfm/`) | 5440 checks / 0 failures (12 pinning checks guarded, §6.4) |
+| PoC ymfm (`bin/ymfm/`) | 5440 checks / 0 failures (12 pinning checks guarded, §6.4) |
 | core default (`cmake-build-release`, 20 shards) | 0 failures |
 | core ymfm (`cmake-build-ymfm`, 20 shards) | 0 failures |
 | `*MoonSound*` filter, both backends | 11/11, incl. all three TTD round-trip tests |

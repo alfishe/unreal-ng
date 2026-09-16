@@ -26,7 +26,7 @@
 //     fixed POD region (state layout version 2; sessions are per-backend).
 #pragma once
 
-#include "opl4fm.h"
+#include "../opl4fm.h"
 
 #include <ymfm_opl.h>
 

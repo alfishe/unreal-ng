@@ -34,12 +34,12 @@
 //     at mid rates (rate 32: 1024 vs 2048 samples per 6 dB). Both agree
 //     at rate 0/15 and on sustain plateaus; compared statistically with a
 //     [1.6, 2.4] band around the documented 2x.
-//   - FM: libopl4 uses a linear operator map and resamples the 49516 Hz
-//     FM grid to 44100 with its reducer; ymfm decimates 171/192 without
-//     interpolation. Pitch is compared exactly (zero crossings of a pure
-//     sine carrier); the absolute FM headroom differs by design (16-bit
-//     chip stream vs ymfm's ~13-bit OPL3 core), so levels are compared per
-//     engine via the TL ladder.
+//   - FM: both engines take the canonical YMF262 operator map (ch0 carrier
+//     at 0x23); libopl4 resamples the 49516 Hz FM grid to 44100 with its
+//     reducer while ymfm decimates 171/192 without interpolation. Pitch is
+//     compared exactly (zero crossings of a pure sine carrier); the absolute
+//     FM headroom differs by design (16-bit chip stream vs ymfm's ~13-bit
+//     OPL3 core), so levels are compared per engine via the TL ladder.
 //   - PCM end S == 0 corner (5426b4b1): the stored complement 0 is a full
 //     64 KiB sample. libopl4 follows openMSX's chip comparator (pos + S
 //     >= 0x10000 never trips): linear one-shot. ymfm decodes S == 0 to
@@ -226,7 +226,10 @@ Trace DecodeTrace(const std::vector<int16_t>& out, const std::vector<int16_t>& t
             }
         }
         const long want = std::lrint(t.scale * table[best]);
-        if (bestErr * 100 <= 4 * std::max<long>(std::labs(want), 1))
+        // Tiny table entries get a 2-LSB absolute floor (|want| < 50): the
+        // integer unity chains round 4.47 -> 3 on ymfm — a 25% relative
+        // error that is pure quantization, not position divergence.
+        if (bestErr * 100 <= 4 * std::max<long>(std::labs(want), 50))
             t.pos[k] = best;
     }
     return t;
@@ -578,8 +581,9 @@ void ScenarioFmTone()
         // ratio must be ~0.251 in BOTH engines (TL ladder, 0.75 dB/step). The
         // absolute FM headroom differs by design (libopl4's 16-bit chip
         // stream vs ymfm's ~13-bit OPL3 core scale), so levels are compared
-        // per engine, never across.
-        oc.Fm(0, 0x41, 0x20);
+        // per engine, never across. Both engines take the classic carrier
+        // register (0x43) since the map adoption.
+        oc.Fm(0, 0x43, 0x20);
         rc.Fm(0, 0x43, 0x20);
         const std::vector<int16_t> mine2 = LeftOf(oc.Run(3000));
         const Streams rs2 = rc.Run(3000);

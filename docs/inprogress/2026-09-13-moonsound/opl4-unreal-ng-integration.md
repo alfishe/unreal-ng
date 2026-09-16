@@ -687,15 +687,38 @@ error paths park in `MoonService_press_anykey` (`#64xx`) — a PC parked in the
 
 ### 12.2 Unit status
 
-- 14 `MoonSoundDevice` tests green: bus arbitration (§2.4), dirty-alias
-  handling, render split (D5), TTD Tier A, and the rev-5 gain-staging set
-  (§12.7).
+- 22 `MoonSoundDevice` tests green: bus arbitration (§2.4), dirty-alias
+  handling, render split (D5), TTD Tier A, the rev-5 gain-staging set (§12.7),
+  and the 8 conformance canaries promoted from the PoC sweep families
+  (inventory in the core TDD §12.2): FM TL ladder, FM envelope stages, FM
+  waveform symmetry, PCM loop E=0 one-shot, PCM pan row, PCM TL 0x7F special,
+  block-mix fields, SRAM window round-trip — each a thin per-field row driven
+  through the real port funnel and frame lifecycle. The canaries drain the
+  device's one-frame-stale delivery FIFO (`FlushAudioPipe`, 2–3 frames) after
+  each register write before measuring: between-frame writes reach the
+  published buffers only once the in-flight audio drains (observed FM ~2
+  frames, PCM ~1).
+- **2026-09-15 recalibration** (PoC sweep fixes landed in `libopl4`): the FM
+  modulator-depth fix re-scaled the FM block to its datasheet level (a full
+  voice ≈ 1/4 rail through the default −9 dB mix), so the gain-staging
+  expectations were re-banded — default-mix master sum > 9000
+  (PCM-dominated); the unity-mix test now asserts the +9 dB lift over the
+  default mix plus the soft ceiling (renamed
+  `..._UnityChipMix_MasterStaysUnderSoftCeiling`; the limiter's compression
+  region is exercised by the all-voices-maxed test); the maxed test asserts
+  the PCM group rails at the chip's 16-bit DAC boundary (≥ 30000) instead of
+  the obsolete source-buffer halving (the −6 dB device trim lives in the
+  mixer gain, §5.3, not in the source buffers). `WavePorts` reg-3 read-back
+  now expects the hardware-verified 6-bit latch mask (`0xAB → 0x2B`), and
+  `KeyOnPcmSlotThroughPorts` writes slot RC/RR at the correct stride-24
+  register (`0xC8 + slot`; `0xD8 + slot` decodes to slot 16 — coincidentally
+  harmless only because the written value is the reset default).
 - 2 `MoonServiceGuest` tests green (§12.5), 17 `FullDecodeClaim` tests (§2.6),
   10 `MasterLimiter` + 15 `DeviceMixer` tests.
-- Full suite 2960 tests / auto-detected shards green **except the open §12.8
-  demo-disk boot test** — and still only trustworthy **after killing the
-  running app**: WebAPI-port tests collide with any app holding TCP 8090, and
-  a stale app produces phantom shard failures that look like regressions.
+- Full suite 2958 tests green **except the open §12.8 demo-disk boot test**
+  (unchanged) — and still only trustworthy **after killing the running app**:
+  WebAPI-port tests collide with any app holding TCP 8090, and a stale app
+  produces phantom shard failures that look like regressions.
 
 ### 12.3 Live-harness facts (WebAPI)
 

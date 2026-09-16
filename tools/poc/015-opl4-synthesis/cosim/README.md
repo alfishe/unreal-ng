@@ -25,7 +25,7 @@ during bring-up by catching three real engine bugs (see "Track record").
 cmake -S .. -B ../build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCOSIM=ON
 ninja -C ../build cosim-ymfm cosim-oracle
 ./bin/cosim-ymfm                     # differential: 6/6 scenarios
-./bin/cosim-oracle                   # self-oracle: 15/15 cases
+./bin/cosim-oracle                   # self-oracle: 55/55 cases
 ./bin/cosim-ymfm --dump ../scratch/x # optional: write raw .pcm streams
 ```
 
@@ -37,7 +37,7 @@ requires `fetch-refs.sh` first.
 | Tier | Reference | Status | What it proves |
 |---|---|---|---|
 | 1 | **ymfm** `ymf278b` @ `81aec25` | **Automated** (6 scenarios) | PCM position/wrap/decode, envelope shape, FM pitch, block-mix semantics, in-process determinism |
-| 2 | **Golden self-oracle** | **Automated** (15 cases) | libopl4's exact bit stream — regression fence + cross-machine determinism (§12.6; the golden digests must reproduce on every platform) |
+| 2 | **Golden self-oracle** | **Automated** (55 cases) | libopl4's exact bit stream — regression fence + cross-machine determinism (§12.6; the golden digests must reproduce on every platform). One digest per opl4sweep family over a representative sub-sweep, plus the original 15 behavior cases |
 | 3 | openMSX / Nuked-OPL3 / HDL (mangOPL4) | **Not automated** in this PoC — see below | Full-system and die-level confirmation |
 
 ### Why openMSX and friends are tier 3 (documented, not automated)

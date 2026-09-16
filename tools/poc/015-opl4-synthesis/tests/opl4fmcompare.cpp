@@ -6,24 +6,18 @@
 //   - exact (CHECK): NEW/NEW2 flags, bank-1 aliasing, timers T1/T2 with
 //     their status bits, raw register-file storage — both models implement
 //     the same audited semantics, so any mismatch is an adapter bug;
-//   - tight band: pitch of a per-engine-addressed voice (both engines run
-//     the same 684-clock FM grid; phase-step formulas are equivalent);
-//   - reported, not asserted: classic-map interpretation. Opl4Fm maps the
-//     per-operator register families linearly (op = reg-0x20, channels
-//     pair {2i, 2i+1}) while YMF262 silicon — and ymfm — use the classic
-//     layout with gaps at 0x27/0x2F (ops 0-5/6-11/12-17 at +0/+8/+0x10,
-//     channels pair {i, i+3}). The classic-voice scenario below measures
-//     the divergence: it is the prime suspect for FM "wrong instruments"
-//     (and silent channels) on real register streams, which is what the
-//     ymfm backend exists to A/B — findings, not comparator failures.
-//     Two more reported divergences surface there: (a) Opl4Fm's 0xC0
-//     routing bits EXCLUDE a channel from L/R (0x30 = fully silent,
-//     0x00 = both sides) — YMF262 CHA/CHB INCLUDE (0x30 = both); (b)
-//     an untouched carrier has AR 0 in Opl4Fm (never attacks, silent)
-//     — compounded by the map divergence since classic scripts write
-//     envelope registers to addresses our map routes elsewhere.
+//   - asserted bands: identical classic-map register bytes (a real OPL3
+//     driver stream) produce voices whose pitch, level and release class
+//     agree — the in-tree engine adopted the canonical YMF262 operator
+//     map, include-semantics 0xC0 routing (CHA/CHB/CHC/CHD) and the
+//     creeping AR 0..3 rates (kStateVersion 3), so the classic-map
+//     scenario that used to report linear-vs-classic divergence now
+//     asserts agreement;
+//   - reported, not asserted: residual numeric envelopes (mid-rate
+//     shift-ladder domain, 0.09375 vs 0.1875 dB) — same shape class,
+//     slightly different curves.
 #include "testfw.h"
-#include "opl4fmymfm.h"
+#include "ymfm/opl4fmymfm.h"
 
 #include <cmath>
 
@@ -171,42 +165,43 @@ void CompareFlagsTimersRegs()
     CHECK(true); // full register file agrees byte for byte
 }
 
-// Per-engine-addressed pure-carrier voice (silent modulator). The two
-// engines' pitch must agree tightly: same 684-clock grid, equivalent
-// datasheet phase-step math.
-//   Opl4Fm (linear map): carrier TL at 0x21, F-number/keys ch0.
-//   ymfm   (classic map): carrier TL at 0x23, C0 output bits set.
-void VoicePerEngine(EngineA& a, EngineB& b)
+// Classic-map pure-carrier voice (silent modulator), IDENTICAL register
+// bytes into both engines — what a real OPL3 driver emits for ch0. Both
+// engines must land every write on the same operators (canonical
+// YMF262 slot map) and agree on pitch and level.
+void VoiceClassic(EngineA& a, EngineB& b)
 {
-    a.WriteReg(0, 0x20, 0x01);  // mod: mult 1
-    a.WriteReg(0, 0x21, 0x01);  // car: mult 1
-    a.WriteReg(0, 0x40, 0x3F);  // mod TL: silent
-    a.WriteReg(0, 0x61, 0xF0);  // car AR 15
-    a.WriteReg(0, 0x81, 0x00);  // car SL 0 RR 0
-    a.WriteReg(0, 0xA0, 0x03);  // F-number 0x303, block 2
-    a.WriteReg(0, 0xB0, 0x2B);
-    a.WriteReg(0, 0xC0, 0x00);  // our routing bits EXCLUDE sides: 0 = both
-
-    b.WriteReg(0, 0x20, 0x01);
-    b.WriteReg(0, 0x23, 0x01);  // classic carrier
-    b.WriteReg(0, 0x40, 0x3F);
-    b.WriteReg(0, 0x63, 0xF0);
-    b.WriteReg(0, 0x83, 0x00);
-    b.WriteReg(0, 0xA0, 0x03);
-    b.WriteReg(0, 0xB0, 0x2B);
-    b.WriteReg(0, 0xC0, 0x30); // classic CHA+CHB INCLUDE: both stereo sides
+    const uint8_t w[][3] = {
+        {0, 0x20, 0x01}, // ch0 modulator: mult 1
+        {0, 0x23, 0x01}, // ch0 carrier (classic +3): mult 1
+        {0, 0x40, 0x3F}, // mod TL: silent
+        {0, 0x43, 0x00}, // car TL 0
+        {0, 0x60, 0xF0}, // mod AR 15
+        {0, 0x63, 0xF0}, // car AR 15
+        {0, 0x80, 0x00}, // mod SL 0 RR 0
+        {0, 0x83, 0x00}, // car SL 0 RR 0
+        {0, 0xA0, 0x03}, // F-number 0x303
+        {0, 0xB0, 0x2B}, // block 2, key on
+        {0, 0xC0, 0x30}, // CHA+CHB (include): both stereo sides
+    };
+    for (const auto& x : w)
+    {
+        a.WriteReg(x[0], x[1], x[2]);
+        b.WriteReg(x[0], x[1], x[2]);
+    }
 }
 
-// Level 3 — samples: pitch (tight) and envelope shape (reported).
+// Level 3 — samples: identical register bytes, asserted agreement bands
+// on pitch and level; release compared by shape class.
 void CompareVoiceStreams()
 {
-    std::printf("FmCompare: voice streams (per-engine addressing)\n");
+    std::printf("FmCompare: voice streams (identical classic bytes)\n");
     EngineA a;
     EngineB b;
     Init(a, b);
     a.WriteReg(1, 0x05, 0x01); // NEW: bank-1 register file on both
     b.WriteReg(1, 0x05, 0x01);
-    VoicePerEngine(a, b);
+    VoiceClassic(a, b);
 
     const size_t n = 6000;
     std::vector<int32_t> la(n), lb(n);
@@ -229,6 +224,7 @@ void CompareVoiceStreams()
                 rmsA / (rmsB + 1e-30));
     CHECK(std::fabs(za / (zb + 1e-30) - 1.0) < 0.005);
     CHECK(rmsA > 1000 && rmsB > 1000); // both keyed and audible
+    CHECK(std::fabs(rmsA / (rmsB + 1e-30) - 1.0) < 0.05); // level within 5%
 
     // Envelope: instant attack then release. The decay-rate machinery is a
     // documented numeric difference (compact model vs ymfm 5.11 counter),
@@ -249,11 +245,13 @@ void CompareVoiceStreams()
 }
 
 // Classic-map voice, IDENTICAL bytes into both engines (what a real OPL3
-// driver emits for ch0). Reported, not asserted: measures the linear-vs-
-// classic operator-map divergence — the "wrong instruments" suspect.
-void ReportClassicMapDivergence()
+// driver emits for ch0, CNT additive + CHA only). Asserted MATCH: after
+// the kStateVersion-3 classic-map adoption both engines interpret every
+// register identically — this is the scenario that used to report the
+// linear-vs-classic divergence behind FM "wrong instruments".
+void CompareClassicMapVoice()
 {
-    std::printf("FmCompare: classic-map voice (divergence report)\n");
+    std::printf("FmCompare: classic-map voice (asserted match)\n");
     EngineA a;
     EngineB b;
     Init(a, b);
@@ -290,15 +288,8 @@ void ReportClassicMapDivergence()
         || std::fabs(za / (zb + 1e-30) - 1.0) > 0.01;
     std::printf("  identical bytes: rms ours=%.0f ymfm=%.0f, pitch ratio %.4f"
                 " -> %s\n",
-                rmsA, rmsB, za / (zb + 1e-30),
-                diverged
-                    ? "DIVERGENT (linear vs classic operator map: envelope"
-                      " writes land on the wrong operators — our ch0 carrier"
-                      " keeps AR 0 and never attacks; plus 0xC0 routing"
-                      " polarity: 0x31 excludes both sides here, includes"
-                      " both on YMF262)"
-                    : "agree");
-    CHECK(true); // informational: the finding is reported above
+                rmsA, rmsB, za / (zb + 1e-30), diverged ? "DIVERGENT" : "agree");
+    CHECK(!diverged); // the classic map is shared now — agreement required
 }
 
 // TTD contract on the adapter: save is pure (a chip that saved renders
@@ -358,7 +349,7 @@ void RunFmBackendCompareTests()
     std::printf("\n--- FM backend differential (in-tree vs ymfm OPL3) ---\n");
     CompareFlagsTimersRegs();
     CompareVoiceStreams();
-    ReportClassicMapDivergence();
+    CompareClassicMapVoice();
     CompareAdapterSaveRestore();
 }
 

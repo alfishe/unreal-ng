@@ -13,9 +13,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Redirect binaries to a backend-specific folder inside the POC directory:
 # interleaved builds from two build directories into one shared output path
 # defeat ninja's up-to-date check (the other backend's fresher binary looks
-# "already built") and silently serve the wrong backend's tests.
+# "already built") and silently serve the wrong backend's tests. Both paths
+# sit under bin/ so the repo-wide **/[Bb]in ignore rule covers every produced
+# binary (a bin-ymfm/ sibling escaped it and its committed test binary kept
+# dirtying git status).
 if (OPL4_FM_BACKEND STREQUAL "ymfm")
-    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/bin-ymfm)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/bin/ymfm)
 else()
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/bin)
 endif()
@@ -53,7 +56,7 @@ add_library(opl4ymfm STATIC EXCLUDE_FROM_ALL
     ${YMFM_DIR}/ymfm_opl.cpp
     ${YMFM_DIR}/ymfm_pcm.cpp
     ${YMFM_DIR}/ymfm_adpcm.cpp
-    src/opl4fmymfm.cpp
+    src/ymfm/opl4fmymfm.cpp
 )
 target_include_directories(opl4ymfm SYSTEM PUBLIC ${YMFM_DIR})
 target_include_directories(opl4ymfm PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

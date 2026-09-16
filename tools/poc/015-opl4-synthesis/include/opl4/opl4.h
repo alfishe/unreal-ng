@@ -16,7 +16,7 @@ namespace opl4
 
 class Opl4Pcm;
 class Opl4Fm;
-class Opl4FmYmfm; // ymfm OPL3 verification backend (src/opl4fmymfm.h)
+class Opl4FmYmfm; // ymfm OPL3 verification backend (src/ymfm/opl4fmymfm.h)
 class Opl4Render;
 
 // FM engine backend selection. OPL4_FM_YMFM is defined on this target by
@@ -58,8 +58,9 @@ public:
     void Run(uint64_t time);
 
     // Render. Pulls from the chip stream produced since the last call.
-    // Interleaved stereo floats at int16 scale (the 44100 bypass path emits
-    // exact int16 values). Returns frames written.
+    // Interleaved stereo floats normalized to full scale +-1.0 (the 44100
+    // bypass path emits exact multiples of kNormScale = 1/(32768 << 2)).
+    // Returns frames written.
     size_t Render(float* interleavedStereo, size_t maxFrames);
 
     // Split render (host mixer sources, integration D5). When enabled the
@@ -70,9 +71,10 @@ public:
     void EnableSplitStreams(bool on);
     bool SplitStreamsEnabled() const;
 
-    // Render both group streams independently (interleaved stereo floats at
-    // int16 scale, resampled to the configured output rate, each through its
-    // own character chain / board analog / DC-blocker state). Returns frames
+    // Render both group streams independently (interleaved stereo floats
+    // normalized to full scale +-1.0, resampled to the configured output
+    // rate, each through its own character chain / board analog /
+    // DC-blocker state). Returns frames
     // written; the count can differ per group across resampler boundaries,
     // so the return is the minimum and each buffer may carry a little more.
     size_t RenderSplit(float* fmOut, float* pcmOut, size_t maxFrames);

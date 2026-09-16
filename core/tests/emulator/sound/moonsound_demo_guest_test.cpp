@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <deque>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -230,9 +231,13 @@ TEST_F(MoonSoundDemoGuest_Test, AuthorDisk_Moonsound2_PlaysFmTrafficWithoutPagin
     std::vector<PagingViolation> violations;
     std::deque<std::string> fdcTrace;  // rolling FDC register access log (diagnostics)
     std::deque<std::string> ffPollTrace;  // rolling Beta128 #FF status-poll log (diagnostics)
+    std::map<uint16_t, uint32_t> inPcHist;   // PC -> port-IN count (diagnostics)
+    std::map<uint16_t, uint32_t> in7fPcHist; // PC -> port-IN count on low byte #7F (diagnostics)
+    std::map<uint16_t, uint32_t> inPortHist; // full 16-bit port -> IN count (diagnostics)
+    std::map<uint16_t, uint32_t> outPortHist; // full 16-bit port -> OUT count (diagnostics)
     int frame = 0;
 
-    cpu->busTraceHook = [&stats, &frame, &fdcTrace, &ffPollTrace, cpu](char type, uint16_t port, uint8_t value)
+    cpu->busTraceHook = [&stats, &frame, &fdcTrace, &ffPollTrace, &inPcHist, &in7fPcHist, &inPortHist, &outPortHist, cpu, wd1793](char type, uint16_t port, uint8_t value)
     {
         const uint16_t low = static_cast<uint16_t>(port & 0x00FF);
         const bool isPort = (type == 'I' || type == 'O');
@@ -245,7 +250,7 @@ TEST_F(MoonSoundDemoGuest_Test, AuthorDisk_Moonsound2_PlaysFmTrafficWithoutPagin
             char buf[80];
             snprintf(buf, sizeof(buf), "f%-5d %c #%04X v=%02X pc=%04X", frame, type, port, value, cpu->m1_pc);
             fdcTrace.push_back(buf);
-            if (fdcTrace.size() > 200)
+            if (fdcTrace.size() > 3000)
             {
                 fdcTrace.pop_front();
             }
@@ -254,8 +259,10 @@ TEST_F(MoonSoundDemoGuest_Test, AuthorDisk_Moonsound2_PlaysFmTrafficWithoutPagin
         // with PC so a stuck ROM wait loop can be located in the TR-DOS ROM
         if (isPort && type == 'I' && (low & 0x83) == 0x83)
         {
-            char buf[80];
-            snprintf(buf, sizeof(buf), "f%-5d %c #%04X v=%02X pc=%04X", frame, type, port, value, cpu->m1_pc);
+            char buf[128];
+            snprintf(buf, sizeof(buf), "f%-5d %c #%04X v=%02X pc=%04X fsm=%s sz=%zu left=%zu buf=%d", frame, type, port, value, cpu->m1_pc,
+                     WD1793::WDSTATEToString(wd1793->getFSMState()).c_str(), wd1793->getSectorSize(), wd1793->getBytesToRead(),
+                     wd1793->hasRawDataBuffer() ? 1 : 0);
             ffPollTrace.push_back(buf);
             if (ffPollTrace.size() > 48)
             {
@@ -264,6 +271,12 @@ TEST_F(MoonSoundDemoGuest_Test, AuthorDisk_Moonsound2_PlaysFmTrafficWithoutPagin
         }
         if (type == 'I')
         {
+            inPcHist[cpu->m1_pc]++;
+            inPortHist[port]++;
+            if (low == 0x7F)
+            {
+                in7fPcHist[cpu->m1_pc]++;
+            }
             if (low == 0xC4)
             {
                 stats.statusInTotal++;
@@ -279,6 +292,7 @@ TEST_F(MoonSoundDemoGuest_Test, AuthorDisk_Moonsound2_PlaysFmTrafficWithoutPagin
             return;
         }
         stats.outHist[low]++;
+        outPortHist[port]++;
         if (low >= 0xC4 && low <= 0xC7)
         {
             stats.fmOuts++;
@@ -391,6 +405,52 @@ TEST_F(MoonSoundDemoGuest_Test, AuthorDisk_Moonsound2_PlaysFmTrafficWithoutPagin
                   << " sectorReg=" << static_cast<int>(wd1793->getSectorRegister())
                   << " driveTrack=" << static_cast<int>(fdd->getTrack())
                   << " motor=" << (fdd->getMotor() ? "on" : "off") << "\n";
+        std::cout << "Z80 freeze state: pc=#" << std::hex << cpu->pc
+                  << " sp=#" << cpu->sp << " af=#" << cpu->af << " bc=#" << cpu->bc
+                  << " de=#" << cpu->de << " hl=#" << cpu->hl << " ix=#" << cpu->ix
+                  << " iy=#" << cpu->iy << std::dec
+                  << " i=" << static_cast<int>(cpu->i) << " iff1=" << static_cast<int>(cpu->iff1)
+                  << " halted=" << (cpu->halted ? "yes" : "no") << "\n";
+        std::cout << "Stack (16 words at SP):";
+        for (int i = 0; i < 16; i++)
+        {
+            const uint16_t lo = _context->pMemory->MemoryReadDebug(static_cast<uint16_t>(cpu->sp + i * 2), false);
+            const uint16_t hi = _context->pMemory->MemoryReadDebug(static_cast<uint16_t>(cpu->sp + i * 2 + 1), false);
+            char buf[16];
+            snprintf(buf, sizeof(buf), " %04X", static_cast<uint16_t>(lo | (hi << 8)));
+            std::cout << buf;
+        }
+        std::cout << "\nCode at pc-8..pc+8:";
+        for (int i = -8; i <= 8; i++)
+        {
+            char buf[8];
+            snprintf(buf, sizeof(buf), " %02X", _context->pMemory->MemoryReadDebug(static_cast<uint16_t>(cpu->pc + i), false));
+            std::cout << buf;
+        }
+        std::cout << "\nCode at 6870..68C0 (player hot loop):";
+        for (int addr = 0x6870; addr <= 0x68C0; addr++)
+        {
+            if ((addr & 15) == 0)
+            {
+                std::cout << "\n  " << std::hex << addr << ":";
+            }
+            char buf[8];
+            snprintf(buf, sizeof(buf), " %02X", _context->pMemory->MemoryReadDebug(static_cast<uint16_t>(addr), false));
+            std::cout << buf;
+        }
+        std::cout << std::dec << "\n";
+        std::cout << "Demo hook area 1D80..2000:";
+        for (int addr = 0x1D80; addr < 0x2000; addr++)
+        {
+            if ((addr & 15) == 0)
+            {
+                std::cout << "\n  " << std::hex << addr << ":";
+            }
+            char buf[8];
+            snprintf(buf, sizeof(buf), " %02X", _context->pMemory->MemoryReadDebug(static_cast<uint16_t>(addr), false));
+            std::cout << buf;
+        }
+        std::cout << std::dec << "\n";
         std::cout << "FDC trace (last " << fdcTrace.size() << " events):\n";
         for (const std::string& e : fdcTrace)
         {
@@ -400,6 +460,106 @@ TEST_F(MoonSoundDemoGuest_Test, AuthorDisk_Moonsound2_PlaysFmTrafficWithoutPagin
         for (const std::string& e : ffPollTrace)
         {
             std::cout << "  " << e << "\n";
+        }
+        std::cout << "Port-IN PC histogram (top 10):\n";
+        for (int pass = 0; pass < 10; pass++)
+        {
+            auto best = inPcHist.end();
+            for (auto it = inPcHist.begin(); it != inPcHist.end(); ++it)
+            {
+                if (best == inPcHist.end() || it->second > best->second)
+                {
+                    best = it;
+                }
+            }
+            if (best == inPcHist.end() || best->second == 0)
+            {
+                break;
+            }
+            char buf[64];
+            snprintf(buf, sizeof(buf), "  pc=%04X: %u", best->first, best->second);
+            std::cout << buf << "\n";
+            best->second = 0;
+        }
+        std::cout << "Port-IN (low=#7F) PC histogram (top 10):\n";
+        for (int pass = 0; pass < 10; pass++)
+        {
+            auto best = in7fPcHist.end();
+            for (auto it = in7fPcHist.begin(); it != in7fPcHist.end(); ++it)
+            {
+                if (best == in7fPcHist.end() || it->second > best->second)
+                {
+                    best = it;
+                }
+            }
+            if (best == in7fPcHist.end() || best->second == 0)
+            {
+                break;
+            }
+            char buf[64];
+            snprintf(buf, sizeof(buf), "  pc=%04X: %u", best->first, best->second);
+            std::cout << buf << "\n";
+            best->second = 0;
+        }
+        std::cout << "Port-IN full-port histogram (top 16):\n";
+        for (int pass = 0; pass < 16; pass++)
+        {
+            auto best = inPortHist.end();
+            for (auto it = inPortHist.begin(); it != inPortHist.end(); ++it)
+            {
+                if (best == inPortHist.end() || it->second > best->second)
+                {
+                    best = it;
+                }
+            }
+            if (best == inPortHist.end() || best->second == 0)
+            {
+                break;
+            }
+            char buf[64];
+            snprintf(buf, sizeof(buf), "  port=%04X: %u", best->first, best->second);
+            std::cout << buf << "\n";
+            best->second = 0;
+        }
+        std::cout << "Card-port IN counts (low 7E/7F/C4-C7):";
+        for (int pass = 0; pass < 256; pass++)
+        {
+            const uint8_t lowB = static_cast<uint8_t>(pass);
+            uint32_t total = 0;
+            for (auto it = inPortHist.begin(); it != inPortHist.end(); ++it)
+            {
+                if ((it->first & 0xFF) == lowB)
+                {
+                    total += it->second;
+                }
+            }
+            if (lowB == 0x7E || lowB == 0x7F || (lowB >= 0xC4 && lowB <= 0xC7))
+            {
+                char buf[48];
+                snprintf(buf, sizeof(buf), " %02X:%u", lowB, total);
+                std::cout << buf;
+            }
+        }
+        std::cout << "\n";
+        std::cout << "Port-OUT full-port histogram (top 16):\n";
+        for (int pass = 0; pass < 16; pass++)
+        {
+            auto best = outPortHist.end();
+            for (auto it = outPortHist.begin(); it != outPortHist.end(); ++it)
+            {
+                if (best == outPortHist.end() || it->second > best->second)
+                {
+                    best = it;
+                }
+            }
+            if (best == outPortHist.end() || best->second == 0)
+            {
+                break;
+            }
+            char buf[64];
+            snprintf(buf, sizeof(buf), "  port=%04X: %u", best->first, best->second);
+            std::cout << buf << "\n";
+            best->second = 0;
         }
     }
     ASSERT_GE(stats.fmTotal, 300) << "demo did not drive the FM side of the card (see screen dump above)";

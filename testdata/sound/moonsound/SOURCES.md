@@ -65,6 +65,16 @@ material in the MWM or MFM format, switched with the listed key.
   detection protocol and parks the detected device ID (`$20` = YM278B) at `$88D0`.
 - **`moonsnd.rom`** (from `moonservice_v03.rar`) — the wave ROM image MoonService writes into the
   card's flash; byte-identical to `data/rom/opl4/yrw801-m-yamaha-1993.rom` (kept as received).
+- **`mfm-sample/`** — the disk-1 fixtures extracted for the per-melody guest tests
+  (`core/tests/emulator/sound/moonsound_mfm_guest_test.cpp`): `moonsound-demo.bin` is the
+  disk's `moonsound.bin` player binary (org `$6200`, entry `$6258` — the post-load segment that
+  installs its own IM2 handler), `bcareful.mfm` / `melodies.mfm` are the two tunes exactly as
+  the disk stores them. Both are "MB FOR MOONSOUND FM" tunes — FM-only, PCM side silent by
+  design; the disk's optional `MFMSampl.B` sample bank is never loaded by the demo. The
+  `mfm_sample.trd` catalog's start sectors are stale (the image is hand-assembled); the real
+  layout, verified by byte scan: `boot.B` at sector 16 (a disk menu, not the MoonSound loader),
+  `moonsound.bin` at `0x3A00`, `bcareful.mfm` at `0xA700`, `melodies.mfm` at `0xC400`,
+  `MFMSampl.B` at `0xFA00`, data ends `0x43365`.
 
 ## Testing notes
 
@@ -110,6 +120,9 @@ material in the MWM or MFM format, switched with the listed key.
 | `moonservice_v03a.trd` | `aa45672cc2770316dc4b9ff86af6989b0a556b6db218092a9e8e126986b0bceb` |
 | `moonservice_v03a_service.bin` | `c5c7fce3e2d68ec8f76bc63f3663cafc83db6a9b090a864374ae6fdadc5d30d3` |
 | `moonsnd.rom` | `0481e861f639fa3d6a64a75b735035a54b0875d57aaae33fdbe400146c80423f` |
+| `mfm-sample/bcareful.mfm` | `26a15f723991aece3a6a233f3a4928ebe7a8d8386286f53950b73b13c4015778` |
+| `mfm-sample/melodies.mfm` | `b9f2267484f2898815de77e4ce8226669f7a6949420878fbb8e127824d835f75` |
+| `mfm-sample/moonsound-demo.bin` | `a88d2ddd145c06db2b3c432091720c20023259f1df1e1b010f507c78cd58ec60` |
 
 Source archives (author's code for every disk above): `moonsound_src.rar`, `moonsound_2src.rar` …
 `moonsound_14src.rar`, `moonmusic_1src.rar`, `moonmusic_2src.rar`, `mfm_sample_src.rar`,

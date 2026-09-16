@@ -218,7 +218,7 @@ std::vector<int16_t> CaseFmTone()
     BootNew(oc);
     KeyOnFm(oc, FmVoice{}, true);
     std::vector<int16_t> out = oc.Run(6000);
-    oc.Fm(0, 0x41, 0x20); // carrier TL -12 dB -> -24 dB
+    oc.Fm(0, 0x43, 0x20); // carrier TL -12 dB -> -24 dB
     Append(out, oc.Run(3000));
     return out;
 }
@@ -229,7 +229,7 @@ std::vector<int16_t> CaseFmVibrato()
     OurChip oc;
     BootNew(oc);
     KeyOnFm(oc, FmVoice{}, true);
-    oc.Fm(0, 0x21, 0x41); // carrier: VIB on, mult 1
+    oc.Fm(0, 0x23, 0x41); // carrier: VIB on, mult 1
     oc.Fm(0, 0xBD, 0x40); // deep vibrato depth
     return oc.Run(20000);
 }
@@ -240,7 +240,7 @@ std::vector<int16_t> CaseFmTremolo()
     OurChip oc;
     BootNew(oc);
     KeyOnFm(oc, FmVoice{}, true);
-    oc.Fm(0, 0x21, 0x81); // carrier: AM on, mult 1
+    oc.Fm(0, 0x23, 0x81); // carrier: AM on, mult 1
     oc.Fm(0, 0xBD, 0x80); // deep AM depth
     return oc.Run(20000);
 }
@@ -336,6 +336,386 @@ bool HalvesEqual(const std::vector<int16_t>& out)
                       out.begin() + static_cast<long>(out.size() / 2));
 }
 
+// ---------------------------------------------------------------------------
+// Tier-2 expansion (conformance plan §12.2): one digest per opl4sweep
+// family over a representative sub-sweep. Same register addressing the
+// sweeps use: the canonical YMF262 map (ch0 mod 0x20 / car 0x23), with
+// include-semantics 0xC0 routing (0x30 = CHA+CHB).
+// ---------------------------------------------------------------------------
+
+// Extended FM voice: adds the bits FmVoice carries implicitly as constants
+// (wave select, AM/VIB enables, feedback/routing) so the sweeps' families
+// each pin one stream.
+struct FmPatch
+{
+    uint8_t multMod = 0x01;
+    uint8_t multCar = 0x01;
+    uint8_t tlMod = 0x3F; // silent modulator by default: pure carrier
+    uint8_t tlCar = 0x10;
+    uint8_t ardrMod = 0xF0;
+    uint8_t ardrCar = 0xF0;
+    uint8_t slrrMod = 0x00;
+    uint8_t slrrCar = 0x00;
+    uint8_t flagsCar = 0x00; // AM(7) VIB(6) EGT(5) KSR(4) + MULT(3..0)
+    uint8_t wsCar = 0x00;
+    uint8_t fbRoute = 0x00;  // FB(3..1) + CON(0)
+    uint8_t fnLo = 0x03;
+    uint8_t b0 = 0x2B; // F-num hi + block 2 + key on
+};
+
+void KeyOnFmPatch(OurChip& oc, const FmPatch& p)
+{
+    oc.Fm(0, 0x20, p.multMod);
+    oc.Fm(0, 0x23, static_cast<uint8_t>(p.multCar | p.flagsCar));
+    oc.Fm(0, 0x40, p.tlMod);
+    oc.Fm(0, 0x43, p.tlCar);
+    oc.Fm(0, 0x60, p.ardrMod);
+    oc.Fm(0, 0x63, p.ardrCar);
+    oc.Fm(0, 0x80, p.slrrMod);
+    oc.Fm(0, 0x83, p.slrrCar);
+    oc.Fm(0, 0xE3, p.wsCar);
+    oc.Fm(0, 0xA0, p.fnLo);
+    oc.Fm(0, 0xC0, static_cast<uint8_t>(0x30 | p.fbRoute)); // CHA+CHB + FB/CON
+    oc.Fm(0, 0xB0, p.b0);
+}
+
+// FmTlLadderSweep: carrier TL 0..120 in -6 dB steps, mid-run rewrites.
+std::vector<int16_t> CaseFmTlLadder()
+{
+    OurChip oc;
+    BootNew(oc);
+    FmPatch p;
+    p.flagsCar = 0x20; // EGT: hold at full attack
+    KeyOnFmPatch(oc, p);
+    std::vector<int16_t> out = oc.Run(300);
+    for (int tl = 0; tl <= 120; tl += 8)
+    {
+        oc.Fm(0, 0x43, static_cast<uint8_t>(tl));
+        Append(out, oc.Run(200));
+    }
+    return out;
+}
+
+// FmTlLadderSweep modulator half: FM index ladder with feedback off.
+std::vector<int16_t> CaseFmModTl()
+{
+    OurChip oc;
+    BootNew(oc);
+    FmPatch p;
+    p.tlMod = 0x00;
+    p.flagsCar = 0x20;
+    KeyOnFmPatch(oc, p);
+    std::vector<int16_t> out = oc.Run(300);
+    for (int tl = 0; tl <= 48; tl += 6)
+    {
+        oc.Fm(0, 0x40, static_cast<uint8_t>(tl));
+        Append(out, oc.Run(250));
+    }
+    return out;
+}
+
+// FmMultSweep: carrier MULT 0..15 (0 = 0.5x), 200 frames each.
+std::vector<int16_t> CaseFmMult()
+{
+    OurChip oc;
+    BootNew(oc);
+    FmPatch p;
+    p.flagsCar = 0x20;
+    KeyOnFmPatch(oc, p);
+    std::vector<int16_t> out = oc.Run(300);
+    for (int m = 0; m <= 15; m++)
+    {
+        oc.Fm(0, 0x23, static_cast<uint8_t>(0x20 | m));
+        Append(out, oc.Run(200));
+    }
+    return out;
+}
+
+// FmKslSweep: KSL 0..3 x block 2..5 stepping (carrier 0x43 bits 7..6).
+std::vector<int16_t> CaseFmKsl()
+{
+    OurChip oc;
+    BootNew(oc);
+    FmPatch p;
+    p.tlCar = 0x18;
+    p.flagsCar = 0x20;
+    KeyOnFmPatch(oc, p);
+    std::vector<int16_t> out = oc.Run(300);
+    for (int ksl = 0; ksl <= 3; ksl++)
+        for (int block = 2; block <= 5; block++)
+        {
+            oc.Fm(0, 0x43, static_cast<uint8_t>((ksl << 6) | 0x18));
+            oc.Fm(0, 0xB0, static_cast<uint8_t>(0x0B | (block << 2)));
+            Append(out, oc.Run(200));
+        }
+    return out;
+}
+
+// FmEnvStageSweep attack half: AR 6..13 from silence (fresh key-ons).
+std::vector<int16_t> CaseFmEnvAttack()
+{
+    std::vector<int16_t> out;
+    for (int ar = 6; ar <= 13; ar++)
+    {
+        OurChip oc;
+        BootNew(oc);
+        FmPatch p;
+        p.flagsCar = 0x20;
+        p.ardrCar = static_cast<uint8_t>((ar << 4) | 2);
+        KeyOnFmPatch(oc, p);
+        Append(out, oc.Run(700));
+    }
+    return out;
+}
+
+// FmEnvStageSweep decay half: DR 2..9 into SL 4, EGT 0 (decay enabled).
+std::vector<int16_t> CaseFmEnvDecay()
+{
+    std::vector<int16_t> out;
+    for (int dr = 2; dr <= 9; dr++)
+    {
+        OurChip oc;
+        BootNew(oc);
+        FmPatch p;
+        p.flagsCar = 0x00;
+        p.ardrCar = static_cast<uint8_t>(0xF0 | dr);
+        p.slrrCar = 0x40; // SL 4, RR 0
+        KeyOnFmPatch(oc, p);
+        Append(out, oc.Run(900));
+    }
+    return out;
+}
+
+// FmEnvStageSweep release half: hold, key off, RR 4..12.
+std::vector<int16_t> CaseFmEnvRelease()
+{
+    std::vector<int16_t> out;
+    for (int rr = 4; rr <= 12; rr += 2)
+    {
+        OurChip oc;
+        BootNew(oc);
+        FmPatch p;
+        p.flagsCar = 0x20;
+        p.slrrCar = static_cast<uint8_t>(rr);
+        KeyOnFmPatch(oc, p);
+        Append(out, oc.Run(400));
+        oc.Fm(0, 0xB0, 0x0B); // key off (block/fn preserved)
+        Append(out, oc.Run(900));
+    }
+    return out;
+}
+
+// FmFeedbackSweep: FB 1..7 stepped on the modulator feedback path.
+std::vector<int16_t> CaseFmFeedback()
+{
+    OurChip oc;
+    BootNew(oc);
+    FmPatch p;
+    p.tlMod = 0x3F; // feedback only: modulator stays out of the mix
+    p.flagsCar = 0x20;
+    KeyOnFmPatch(oc, p);
+    std::vector<int16_t> out = oc.Run(300);
+    for (int fb = 1; fb <= 7; fb++)
+    {
+        oc.Fm(0, 0xC0, static_cast<uint8_t>(0x30 | (fb << 1)));
+        Append(out, oc.Run(300));
+    }
+    return out;
+}
+
+// Fm4OpConnections: ch0+ch3 pair, the four master/slave CON combos.
+std::vector<int16_t> CaseFm4Op()
+{
+    std::vector<int16_t> out;
+    for (int combo = 0; combo < 4; combo++)
+    {
+        OurChip oc;
+        BootNew(oc);
+        oc.Fm(1, 0x04, 0x01); // pair ch0 + ch3
+        // op1..op4 = ch0 mod/car (0x20/0x23), ch3 mod/car (0x28/0x2B) —
+        // the classic map's four cascade slots.
+        const int tl[4] = {0x00, 0x10, 0x20, 0x30};
+        for (int i = 0; i < 4; i++)
+        {
+            const uint8_t base = static_cast<uint8_t>(0x20 + 3 * (i & 1) + 8 * (i >> 1));
+            oc.Fm(0, base, 0x21); // EGT hold, mult 1
+            oc.Fm(0, static_cast<uint8_t>(base + 0x20), static_cast<uint8_t>(tl[i]));
+            oc.Fm(0, static_cast<uint8_t>(base + 0x40), 0xF0); // AR 15
+            oc.Fm(0, static_cast<uint8_t>(base + 0x60), 0x0F); // RR 15
+        }
+        oc.Fm(0, 0xA0, 0x46);
+        oc.Fm(0, 0xB0, 0x32);
+        oc.Fm(0, 0xA3, 0x23); // slave one octave down
+        oc.Fm(0, 0xB3, 0x31);
+        oc.Fm(0, 0xC0, static_cast<uint8_t>(0x30 | (combo & 1)));
+        oc.Fm(0, 0xC3, static_cast<uint8_t>(0x30 | (combo >> 1)));
+        Append(out, oc.Run(1200));
+    }
+    return out;
+}
+
+// FmRhythmSweep: the five 0xBD voices, on then off.
+std::vector<int16_t> CaseFmRhythm()
+{
+    OurChip oc;
+    BootNew(oc);
+    const int chs[5] = {6, 7, 8, 7, 8};
+    const uint8_t bits[5] = {0x10, 0x08, 0x04, 0x01, 0x02};
+    for (int v = 0; v < 5; v++)
+    {
+        // Classic rhythm slots: ch6 pair 0x30/0x33 (BD), ch7 0x31/0x34
+        // (HH/SD), ch8 0x32/0x35 (TOM/CY) — mod at 0x2A + ch, car +3.
+        const uint8_t base = static_cast<uint8_t>(0x2A + chs[v]);
+        oc.Fm(0, base, 0x21);
+        oc.Fm(0, static_cast<uint8_t>(base + 3), 0x21);
+        oc.Fm(0, static_cast<uint8_t>(base + 0x20), 0x00);
+        oc.Fm(0, static_cast<uint8_t>(base + 0x23), 0x00);
+        oc.Fm(0, static_cast<uint8_t>(base + 0x40), 0xF0);
+        oc.Fm(0, static_cast<uint8_t>(base + 0x43), 0xF0);
+        oc.Fm(0, static_cast<uint8_t>(base + 0x60), 0x0F);
+        oc.Fm(0, static_cast<uint8_t>(base + 0x63), 0x0F);
+        oc.Fm(0, static_cast<uint8_t>(0xA0 + chs[v]), 0x46);
+        oc.Fm(0, static_cast<uint8_t>(0xB0 + chs[v]), 0x12);
+        oc.Fm(0, static_cast<uint8_t>(0xC0 + chs[v]), 0x30);
+    }
+    std::vector<int16_t> out;
+    for (int v = 0; v < 5; v++)
+    {
+        oc.Fm(0, 0xBD, static_cast<uint8_t>(0x20 | bits[v]));
+        Append(out, oc.Run(1000));
+        oc.Fm(0, 0xBD, 0x20);
+        Append(out, oc.Run(1000));
+    }
+    return out;
+}
+
+// FmWaveformSweep: carrier WS 0..7 stepped.
+std::vector<int16_t> CaseFmWaveform()
+{
+    OurChip oc;
+    BootNew(oc);
+    FmPatch p;
+    p.flagsCar = 0x20;
+    KeyOnFmPatch(oc, p);
+    std::vector<int16_t> out = oc.Run(300);
+    for (int ws = 0; ws <= 7; ws++)
+    {
+        oc.Fm(0, 0xE3, static_cast<uint8_t>(ws));
+        Append(out, oc.Run(250));
+    }
+    return out;
+}
+
+// FmAmVibDepthMatrix: AM/VIB enables x 0xBD depth bits, 4 combos.
+std::vector<int16_t> CaseFmAmVibMatrix()
+{
+    OurChip oc;
+    BootNew(oc);
+    FmPatch p;
+    p.flagsCar = 0x20;
+    KeyOnFmPatch(oc, p);
+    std::vector<int16_t> out;
+    const uint8_t combos[4][2] = {
+        {0xC0, 0x00}, {0xC0, 0xC0}, {0x80, 0x80}, {0x40, 0x40}};
+    for (const auto& c : combos)
+    {
+        oc.Fm(0, 0x23, static_cast<uint8_t>(0x20 | c[0]));
+        oc.Fm(0, 0xBD, c[1]);
+        Append(out, oc.Run(2400)); // ~2 AM LFO periods at deep rate
+    }
+    return out;
+}
+
+// FmRoutingMatrix: 0xC0 CHA/CHB/CHC/CHD 16 combos (include semantics:
+// bits 4..7 enable, all clear = silent).
+std::vector<int16_t> CaseFmRouting()
+{
+    OurChip oc;
+    BootNew(oc);
+    FmPatch p;
+    p.flagsCar = 0x20;
+    KeyOnFmPatch(oc, p);
+    std::vector<int16_t> out = oc.Run(300);
+    for (int route = 0; route < 16; route++)
+    {
+        oc.Fm(0, 0xC0, static_cast<uint8_t>(route << 4));
+        Append(out, oc.Run(150));
+    }
+    return out;
+}
+
+// FmTimerSweep: T1/T2 fire, mask, reset — status bytes appended to the
+// stream (audio is silent; the digest pins flag timing).
+std::vector<int16_t> CaseFmTimers()
+{
+    OurChip oc;
+    BootNew(oc);
+    Opl4& chip = oc.Chip();
+    std::vector<int16_t> out;
+    const auto arm = [&](uint8_t tSel) {
+        oc.Fm(0, 0x02, 0xF0);
+        oc.Fm(0, 0x03, 0xF0);
+        oc.Fm(0, 0x04, tSel);
+    };
+    arm(0x01);
+    Append(out, oc.Run(128));
+    out.push_back(static_cast<int16_t>(chip.ReadStatus(oc.Clock())));
+    arm(0x41); // masked re-arm after reset
+    Append(out, oc.Run(128));
+    out.push_back(static_cast<int16_t>(chip.ReadStatus(oc.Clock())));
+    arm(0x02);
+    Append(out, oc.Run(512));
+    out.push_back(static_cast<int16_t>(chip.ReadStatus(oc.Clock())));
+    arm(0x22); // T2 masked
+    Append(out, oc.Run(512));
+    out.push_back(static_cast<int16_t>(chip.ReadStatus(oc.Clock())));
+    arm(0x03);
+    Append(out, oc.Run(512));
+    out.push_back(static_cast<int16_t>(chip.ReadStatus(oc.Clock())));
+    oc.Fm(0, 0x04, 0x83); // reset both + keep enabled
+    Append(out, oc.Run(16));
+    out.push_back(static_cast<int16_t>(chip.ReadStatus(oc.Clock())));
+    return out;
+}
+
+// FmKonMomentary: B0 kon bit toggled every 64 frames x16 (re-attacks).
+std::vector<int16_t> CaseFmKonEdge()
+{
+    OurChip oc;
+    BootNew(oc);
+    FmPatch p;
+    p.flagsCar = 0x20;
+    p.ardrCar = 0xFA; // fast-ish attack for visible edges
+    KeyOnFmPatch(oc, p);
+    std::vector<int16_t> out;
+    for (int i = 0; i < 16; i++)
+    {
+        oc.Fm(0, 0xB0, i & 1 ? 0x2B : 0x0B);
+        Append(out, oc.Run(64));
+    }
+    return out;
+}
+
+// EGT hold vs decay and KSR rate scaling, four flag combinations.
+std::vector<int16_t> CaseFmEgtKsr()
+{
+    std::vector<int16_t> out;
+    const uint8_t flags[4] = {0x00, 0x20, 0x10, 0x30};
+    for (uint8_t f : flags)
+    {
+        OurChip oc;
+        BootNew(oc);
+        FmPatch p;
+        p.flagsCar = f;
+        p.ardrCar = 0x54; // AR 5 DR 4: visible without rate scaling
+        p.fnLo = 0x03;
+        p.b0 = 0x34;      // kon, block 5: KSR doubles the rates when enabled
+        KeyOnFmPatch(oc, p);
+        Append(out, oc.Run(1500));
+    }
+    return out;
+}
+
 // Bus behaviour: register readback and status at increasing absolute times
 // (pins LD busy timing and the readable register file).
 std::vector<int16_t> CaseBusStatus()
@@ -369,6 +749,525 @@ std::vector<int16_t> CaseBusStatus()
     return out;
 }
 
+// PcmWaveNumberBoundary: linear vs banked headers, base switching.
+std::vector<int16_t> CasePcmWaveBank()
+{
+    std::vector<int16_t> out;
+    struct W
+    {
+        int wave;
+        uint8_t hdrSel; // 0x02 value: (header base) << 2
+        uint32_t hdrAt;
+    };
+    const W ws[] = {
+        {383, 0x10, 383 * 12},                    // < 384 stays linear
+        {384, 0x10, 0x200000},                    // base 4: banked
+        {384, 0x00, 384 * 12},                    // base 0: linear
+        {400, 0x08, 0x100000 + (400 - 384) * 12}, // base 2
+        {400, 0x14, 0x280000 + (400 - 384) * 12}, // base 5
+        {100, 0x1C, 100 * 12},                    // < 384 ignores base
+    };
+    for (const W& w : ws)
+    {
+        OurChip oc;
+        const uint8_t dc[2] = {0x7F, 0xFF};
+        oc.Mem().WriteSram(0x200100, dc, 2);
+        WriteHeader(oc.Mem(), w.hdrAt, 2, 0x200100, 0, 4);
+        oc.Mem().ClearDirty();
+        BootNew(oc);
+        oc.Pcm(0x02, w.hdrSel);
+        oc.Pcm(0x20, 0x01);
+        oc.Pcm(0x08, static_cast<uint8_t>(w.wave & 0xFF));
+        oc.Pcm(0x38, 0x07);
+        oc.Pcm(0x98, 0xF0);
+        oc.Pcm(0xB0, 0x00);
+        oc.Pcm(0xC8, 0x00);
+        oc.Pcm(0x50, 0x01);
+        oc.Pcm(0x68, 0x80);
+        Append(out, oc.Run(256));
+    }
+    return out;
+}
+
+// PcmStepSweep: OCT -4..+3 at FNUM 1023 on the 256-entry ramp.
+std::vector<int16_t> CasePcmOctFnum()
+{
+    std::vector<int16_t> out;
+    for (int oct = -4; oct <= 3; oct++)
+    {
+        OurChip oc;
+        WriteBig(oc.Mem());
+        WriteHeader(oc.Mem(), HdrOf(393), 2, kSmpBig, 0, 0x1000);
+        oc.Mem().ClearDirty();
+        BootNew(oc);
+        KeyOnPcm(oc, PcmVoice{0, 393,
+                              static_cast<uint8_t>(((oct & 0xF) << 4) | 7),
+                              0xF0, 0, 0xF0, 0x01, 0x80});
+        Append(out, oc.Run(48));
+    }
+    return out;
+}
+
+// PcmStepSweep fnum grid: OCT 0 x FNUM 0/256/512/1023 (custom fn bytes
+// need direct writes — KeyOnPcm hardcodes fnLo 0).
+std::vector<int16_t> CasePcmFnumGrid()
+{
+    std::vector<int16_t> out;
+    const int fns[4] = {0, 256, 512, 1023};
+    for (int fn : fns)
+    {
+        OurChip oc;
+        WriteBig(oc.Mem());
+        WriteHeader(oc.Mem(), HdrOf(393), 2, kSmpBig, 0, 0x1000);
+        oc.Mem().ClearDirty();
+        BootNew(oc);
+        oc.Pcm(0x02, 0x10);
+        oc.Pcm(0x20, static_cast<uint8_t>(1 | ((fn & 0x7F) << 1)));
+        oc.Pcm(0x08, 0x89); // wave 393
+        oc.Pcm(0x38, static_cast<uint8_t>((fn >> 7) & 7));
+        oc.Pcm(0x98, 0xF0);
+        oc.Pcm(0xB0, 0x00);
+        oc.Pcm(0xC8, 0x00);
+        oc.Pcm(0x50, 0x01);
+        oc.Pcm(0x68, 0x80);
+        Append(out, oc.Run(96));
+    }
+    return out;
+}
+
+// PcmLoopEdgeMatrix: single-sample loop (loop 7 / end 8).
+std::vector<int16_t> CasePcmLoop1Sample()
+{
+    OurChip oc;
+    WriteRaw16(oc.Mem());
+    WriteHeader(oc.Mem(), HdrOf(394), 2, kSmp16, 7, 8);
+    oc.Mem().ClearDirty();
+    BootNew(oc);
+    KeyOnPcm(oc, PcmVoice{0, 394, 0x10, 0xF0, 0, 0xF0, 0x01, 0x80});
+    return oc.Run(48);
+}
+
+// PcmLoopEdgeMatrix overrun carry: loop 4 / end 16 at step 2.
+std::vector<int16_t> CasePcmLoopOverrun2x()
+{
+    OurChip oc;
+    WriteBig(oc.Mem());
+    WriteHeader(oc.Mem(), HdrOf(395), 2, kSmpBig, 4, 16);
+    oc.Mem().ClearDirty();
+    BootNew(oc);
+    KeyOnPcm(oc, PcmVoice{0, 395, 0x20, 0xF0, 0, 0xF0, 0x01, 0x80});
+    return oc.Run(96);
+}
+
+// PcmTlLadderSweep: TL 0..120 step 16 plus the 0x7F mute special.
+std::vector<int16_t> CasePcmTlLadder()
+{
+    OurChip oc;
+    WriteEnv(oc.Mem(), 0x60);
+    WriteHeader(oc.Mem(), HdrOf(396), 2, kSmpEnv, 0, 64);
+    oc.Mem().ClearDirty();
+    BootNew(oc);
+    KeyOnPcm(oc, PcmVoice{0, 396, 0x10, 0xF0, 0, 0xF0, 0x01, 0x80});
+    std::vector<int16_t> out = oc.Run(200);
+    for (int tl = 0; tl <= 120; tl += 16)
+    {
+        oc.Pcm(0x50, static_cast<uint8_t>((tl << 1) | 0x01));
+        Append(out, oc.Run(200));
+    }
+    oc.Pcm(0x50, 0xFF); // TL 0x7F special: immediate full mute
+    Append(out, oc.Run(200));
+    return out;
+}
+
+// PcmTlLadderSweep LD half: 0x00 -> 0x40 with LD 0 (interpolated ramp).
+std::vector<int16_t> CasePcmTlLd()
+{
+    OurChip oc;
+    WriteEnv(oc.Mem(), 0x60);
+    WriteHeader(oc.Mem(), HdrOf(396), 2, kSmpEnv, 0, 64);
+    oc.Mem().ClearDirty();
+    BootNew(oc);
+    KeyOnPcm(oc, PcmVoice{0, 396, 0x10, 0xF0, 0, 0xF0, 0x01, 0x80});
+    std::vector<int16_t> out = oc.Run(200);
+    oc.Pcm(0x50, 0x80); // TL 0x40, LD 0: ramp at the interpolated cadence
+    Append(out, oc.Run(600));
+    oc.Pcm(0x50, 0x01); // back to TL 0 (still interpolated)
+    Append(out, oc.Run(600));
+    return out;
+}
+
+// PcmEnvRateMatrix attack half: AR 5..8 (D1R 0 hold).
+std::vector<int16_t> CasePcmArRows()
+{
+    std::vector<int16_t> out;
+    for (int ar = 5; ar <= 8; ar++)
+    {
+        OurChip oc;
+        WriteEnv(oc.Mem(), 0x60);
+        WriteHeader(oc.Mem(), HdrOf(397), 2, kSmpEnv, 0, 64);
+        oc.Mem().ClearDirty();
+        BootNew(oc);
+        KeyOnPcm(oc, PcmVoice{0, 397, 0x10, static_cast<uint8_t>(ar << 4),
+                              0, 0xF0, 0x01, 0x80});
+        Append(out, oc.Run(1500));
+    }
+    return out;
+}
+
+// PcmEnvRateMatrix sustain half: DL 2..9 with D2R 4.
+std::vector<int16_t> CasePcmDlSustain()
+{
+    std::vector<int16_t> out;
+    for (int dl = 2; dl <= 9; dl++)
+    {
+        OurChip oc;
+        WriteEnv(oc.Mem(), 0x60);
+        WriteHeader(oc.Mem(), HdrOf(397), 2, kSmpEnv, 0, 64);
+        oc.Mem().ClearDirty();
+        BootNew(oc);
+        KeyOnPcm(oc, PcmVoice{0, 397, 0x10, 0xF0,
+                              static_cast<uint8_t>((dl << 4) | 4), 0xF0,
+                              0x01, 0x80});
+        Append(out, oc.Run(2000));
+    }
+    return out;
+}
+
+// PcmEnvRateMatrix release half: hold, key off, RR 8..11.
+std::vector<int16_t> CasePcmRrRelease()
+{
+    std::vector<int16_t> out;
+    for (int rr = 8; rr <= 11; rr++)
+    {
+        OurChip oc;
+        WriteEnv(oc.Mem(), 0x60);
+        WriteHeader(oc.Mem(), HdrOf(397), 2, kSmpEnv, 0, 64);
+        oc.Mem().ClearDirty();
+        BootNew(oc);
+        KeyOnPcm(oc, PcmVoice{0, 397, 0x10, 0xF0, 0,
+                              static_cast<uint8_t>(rr), 0x01, 0x80});
+        Append(out, oc.Run(400));
+        oc.Pcm(0x68, 0x00); // key off (pan 0, bits clear)
+        Append(out, oc.Run(1400));
+    }
+    return out;
+}
+
+// PcmEnvRateMatrix rate correction: AR 7 at OCT 0 vs OCT 3 vs OCT 3 + RC 15.
+std::vector<int16_t> CasePcmRateScale()
+{
+    std::vector<int16_t> out;
+    const uint8_t octFns[3] = {0x07, 0x37, 0x37};
+    const uint8_t rcRrs[3] = {0x00, 0x00, 0xF0};
+    for (int i = 0; i < 3; i++)
+    {
+        OurChip oc;
+        WriteEnv(oc.Mem(), 0x60);
+        WriteHeader(oc.Mem(), HdrOf(397), 2, kSmpEnv, 0, 64);
+        oc.Mem().ClearDirty();
+        BootNew(oc);
+        KeyOnPcm(oc, PcmVoice{0, 397, octFns[i], 0x70, 0, rcRrs[i], 0x01,
+                              0x80});
+        Append(out, oc.Run(1500));
+    }
+    return out;
+}
+
+// PcmDampPrvbMatrix: DAMP rides with key off, then a mid-sustain damp.
+std::vector<int16_t> CasePcmDamp()
+{
+    OurChip oc;
+    WriteEnv(oc.Mem(), 0x60);
+    WriteHeader(oc.Mem(), HdrOf(398), 2, kSmpEnv, 0, 64);
+    oc.Mem().ClearDirty();
+    BootNew(oc);
+    KeyOnPcm(oc, PcmVoice{0, 398, 0x10, 0xF0, 0, 0xF0, 0x01, 0x80});
+    std::vector<int16_t> out = oc.Run(400);
+    oc.Pcm(0x68, 0x40); // key off + DAMP: damper fade ignores RR
+    Append(out, oc.Run(1600));
+
+    OurChip ob;
+    WriteEnv(ob.Mem(), 0x60);
+    WriteHeader(ob.Mem(), HdrOf(398), 2, kSmpEnv, 0, 64);
+    ob.Mem().ClearDirty();
+    BootNew(ob);
+    KeyOnPcm(ob, PcmVoice{0, 398, 0x10, 0xF0, 0, 0xF0, 0x01, 0x80});
+    Append(out, ob.Run(400));
+    ob.Pcm(0x68, 0xC0); // DAMP while still keyed: fade from sustain
+    Append(out, ob.Run(1600));
+    return out;
+}
+
+// PcmDampPrvbMatrix pseudo-reverb: PRVB redirects the decay to rate 20.
+std::vector<int16_t> CasePcmPrvb()
+{
+    OurChip oc;
+    WriteEnv(oc.Mem(), 0x60);
+    WriteHeader(oc.Mem(), HdrOf(399), 2, kSmpEnv, 0, 64);
+    oc.Mem().ClearDirty();
+    BootNew(oc);
+    KeyOnPcm(oc, PcmVoice{0, 399, 0x18, 0xF5, 0x40, 0xF3, 0x01, 0x80});
+    return oc.Run(3000); // oct 1, PRVB on, D1R 5 into DL 4 / D2R 0
+}
+
+// PcmPanSweep: pan 0..7 stepped mid-voice (left-attenuation ladder).
+std::vector<int16_t> CasePcmPanRow()
+{
+    OurChip oc;
+    WriteEnv(oc.Mem(), 0x60);
+    WriteHeader(oc.Mem(), HdrOf(399), 2, kSmpEnv, 0, 64);
+    oc.Mem().ClearDirty();
+    BootNew(oc);
+    KeyOnPcm(oc, PcmVoice{0, 399, 0x10, 0xF0, 0, 0xF0, 0x01, 0x80});
+    std::vector<int16_t> out = oc.Run(200);
+    for (int pan = 0; pan <= 7; pan++)
+    {
+        oc.Pcm(0x68, static_cast<uint8_t>(0x80 | pan));
+        Append(out, oc.Run(200));
+    }
+    return out;
+}
+
+// PcmPanSweep mirror half: pan 9..15, pan 8 (both off), DO1 bit.
+std::vector<int16_t> CasePcmPanMirror()
+{
+    OurChip oc;
+    WriteEnv(oc.Mem(), 0x60);
+    WriteHeader(oc.Mem(), HdrOf(399), 2, kSmpEnv, 0, 64);
+    oc.Mem().ClearDirty();
+    BootNew(oc);
+    KeyOnPcm(oc, PcmVoice{0, 399, 0x10, 0xF0, 0, 0xF0, 0x01, 0x80});
+    std::vector<int16_t> out = oc.Run(200);
+    for (int pan = 9; pan <= 15; pan++)
+    {
+        oc.Pcm(0x68, static_cast<uint8_t>(0x80 | pan));
+        Append(out, oc.Run(200));
+    }
+    oc.Pcm(0x68, 0x88); // pan 8: both outputs off
+    Append(out, oc.Run(200));
+    oc.Pcm(0x68, 0x90); // DO1 bit: output disable
+    Append(out, oc.Run(200));
+    return out;
+}
+
+// PcmLfoMatrix AM half: LFO on, AM depth 7 then 1.
+std::vector<int16_t> CasePcmLfoAm()
+{
+    OurChip oc;
+    WriteEnv(oc.Mem(), 0x60);
+    WriteHeader(oc.Mem(), HdrOf(399), 2, kSmpEnv, 0, 64);
+    oc.Mem().ClearDirty();
+    BootNew(oc);
+    KeyOnPcm(oc, PcmVoice{0, 399, 0x10, 0xF0, 0, 0xF0, 0x01, 0x80});
+    std::vector<int16_t> out = oc.Run(200);
+    oc.Pcm(0x80, 0x08); // LFO freq 1, VIB depth 0
+    oc.Pcm(0xD0, 0x07); // AM depth 7
+    Append(out, oc.Run(4000));
+    oc.Pcm(0xD0, 0x01); // AM depth 1
+    Append(out, oc.Run(4000));
+    return out;
+}
+
+// PcmLfoMatrix VIB half: LFO on, VIB depth 7 then 1 on the ramp table.
+std::vector<int16_t> CasePcmLfoVib()
+{
+    OurChip oc;
+    WriteBig(oc.Mem());
+    WriteHeader(oc.Mem(), HdrOf(395), 2, kSmpBig, 0, 0x1000);
+    oc.Mem().ClearDirty();
+    BootNew(oc);
+    KeyOnPcm(oc, PcmVoice{0, 395, 0x00, 0xF0, 0, 0xF0, 0x01, 0x80});
+    std::vector<int16_t> out = oc.Run(200);
+    oc.Pcm(0x80, 0x0F); // LFO freq 1, VIB depth 7
+    Append(out, oc.Run(4000));
+    oc.Pcm(0x80, 0x09); // VIB depth 1
+    Append(out, oc.Run(4000));
+    return out;
+}
+
+// PcmInterpMatrix: OCT 0 / FNUM 0 — step 0.5, every other frame blended.
+std::vector<int16_t> CasePcmInterpHalf()
+{
+    OurChip oc;
+    WriteBig(oc.Mem());
+    WriteHeader(oc.Mem(), HdrOf(395), 2, kSmpBig, 0, 0x1000);
+    oc.Mem().ClearDirty();
+    BootNew(oc);
+    KeyOnPcm(oc, PcmVoice{0, 395, 0x00, 0xF0, 0, 0xF0, 0x01, 0x80});
+    return oc.Run(192);
+}
+
+// PcmInterpMatrix: OCT 1 / FNUM 512 — step 1.5, every frame blended.
+std::vector<int16_t> CasePcmInterp3Halves()
+{
+    OurChip oc;
+    WriteBig(oc.Mem());
+    WriteHeader(oc.Mem(), HdrOf(395), 2, kSmpBig, 0, 0x1000);
+    oc.Mem().ClearDirty();
+    BootNew(oc);
+    oc.Pcm(0x02, 0x10);
+    oc.Pcm(0x20, 0x01);
+    oc.Pcm(0x08, 0x8B); // wave 395
+    oc.Pcm(0x38, 0x16); // oct 1, fn hi 6 (FNUM 512)
+    oc.Pcm(0x98, 0xF0);
+    oc.Pcm(0xB0, 0x00);
+    oc.Pcm(0xC8, 0x00);
+    oc.Pcm(0x50, 0x01);
+    oc.Pcm(0x68, 0x80);
+    return oc.Run(128);
+}
+
+// MixFieldMatrix per-side half: independent L != R codes on 0xF8/0xF9.
+std::vector<int16_t> CaseMixPerSide()
+{
+    OurChip oc;
+    WriteEnv(oc.Mem(), 0x50);
+    WriteHeader(oc.Mem(), HdrOf(390), 2, kSmpEnv, 0, 64);
+    oc.Mem().ClearDirty();
+    BootNew(oc);
+    KeyOnPcm(oc, PcmVoice{0, 390, 0x10, 0xF0, 0, 0xF0, 0x21, 0x80});
+    KeyOnFm(oc, FmVoice{}, true);
+    std::vector<int16_t> out;
+    const uint8_t mixes[4] = {0x2D, 0x07, 0x38, 0x5A}; // (L<<3)|R pairs
+    for (uint8_t mix : mixes)
+    {
+        oc.Pcm(0xF8, mix);
+        oc.Pcm(0xF9, static_cast<uint8_t>(mix ^ 0x1F));
+        Append(out, oc.Run(600));
+    }
+    return out;
+}
+
+// Multi-voice PCM half of the mix bus: 12 slots, TL/pan spread.
+std::vector<int16_t> CasePcm12Voices()
+{
+    OurChip oc;
+    WriteBig(oc.Mem());
+    WriteHeader(oc.Mem(), HdrOf(392), 2, kSmpBig, 2, 8);
+    oc.Mem().ClearDirty();
+    BootNew(oc);
+    for (int s = 0; s < 12; s++)
+        KeyOnPcm(oc, PcmVoice{s, 392, static_cast<uint8_t>(0x10 + (s & 3)),
+                              0xF0, 0, 0xF0,
+                              static_cast<uint8_t>(((s * 8) << 1) | 0x01),
+                              static_cast<uint8_t>(0x80 | (s & 0xF))});
+    return oc.Run(2000);
+}
+
+// FM chord: channels 0/1/2, block and TL spread, EGT hold.
+std::vector<int16_t> CaseFmChord()
+{
+    OurChip oc;
+    BootNew(oc);
+    const uint8_t tls[3] = {0x08, 0x18, 0x28};
+    const uint8_t b0s[3] = {0x2B, 0x33, 0x3B}; // blocks 2/3/4
+    for (int ch = 0; ch < 3; ch++)
+    {
+        // Classic map: channel ch mod = 0x20 + ch, car = 0x23 + ch.
+        oc.Fm(0, static_cast<uint8_t>(0x20 + ch), 0x01);
+        oc.Fm(0, static_cast<uint8_t>(0x23 + ch), 0x21);
+        oc.Fm(0, static_cast<uint8_t>(0x40 + ch), 0x3F);
+        oc.Fm(0, static_cast<uint8_t>(0x43 + ch), tls[ch]);
+        oc.Fm(0, static_cast<uint8_t>(0x60 + ch), 0xF0);
+        oc.Fm(0, static_cast<uint8_t>(0x63 + ch), 0xF0);
+        oc.Fm(0, static_cast<uint8_t>(0x80 + ch), 0x00);
+        oc.Fm(0, static_cast<uint8_t>(0x83 + ch), 0x00);
+        oc.Fm(0, static_cast<uint8_t>(0xA0 + ch), 0x03);
+        oc.Fm(0, static_cast<uint8_t>(0xC0 + ch), 0x30);
+        oc.Fm(0, static_cast<uint8_t>(0xB0 + ch), b0s[ch]);
+    }
+    return oc.Run(2000);
+}
+
+// SeededFuzzTier: three LCG register streams (56 writes, both buses).
+// Same generator as opl4sweep's fuzz family — pinned here as digests so
+// any future stream-altering change trips the oracle even if the sweep's
+// invariant-only checks stay green.
+std::vector<int16_t> CaseFuzzSeeds()
+{
+    std::vector<int16_t> out;
+    for (uint32_t seed : {7u, 19u, 42u})
+    {
+        uint32_t st = seed;
+        const auto rnd = [&st]() {
+            st = st * 1664525u + 1013904223u;
+            return st;
+        };
+        OurChip oc;
+        const uint8_t dc[2] = {0x7F, 0xFF};
+        for (int i = 0; i < 128; i++)
+            oc.Mem().WriteSram(0x200100 + static_cast<uint32_t>(i) * 8,
+                                dc, 2);
+        WriteHeader(oc.Mem(), HdrOf(384), 2, 0x200100, 0, 512);
+        oc.Mem().ClearDirty();
+        oc.Pcm(0xF8, 0x00); // FM unity
+        // Structured opening (same shape as the sweep): one FM carrier +
+        // one PCM voice with seed-derived valid parameters.
+        FmPatch p;
+        p.tlMod = 0x3F;
+        p.tlCar = static_cast<uint8_t>(rnd() % 48);
+        p.flagsCar = 0x20;
+        p.b0 = static_cast<uint8_t>(0x2B + (rnd() % 3));
+        KeyOnFmPatch(oc, p);
+        static const uint8_t kOctFns[4] = {0x07, 0x27, 0x47, 0x87};
+        KeyOnPcm(oc, PcmVoice{static_cast<int>(rnd() % 24), 384,
+                              kOctFns[rnd() % 4], 0xF0, 0, 0xF0,
+                              static_cast<uint8_t>(rnd() % 0x80), 0x80});
+        for (int i = 0; i < 56; i++)
+        {
+            const uint32_t r = rnd();
+            if (r & 0x100) // wave bus: tone regs, 0x02, memory port, mixes
+                oc.Pcm(static_cast<uint8_t>(r >> 8),
+                       static_cast<uint8_t>(r >> 16));
+            else // FM register banks
+                oc.Fm((r >> 8) & 1, static_cast<uint8_t>(r >> 16),
+                      static_cast<uint8_t>(r >> 24));
+        }
+        Append(out, oc.Run(600));
+    }
+    return out;
+}
+
+// MemoryAccessSweep: memory-port latch/commit/auto-increment and the MA
+// gate; read bytes appended to the stream.
+std::vector<int16_t> CaseMemoryPort()
+{
+    OurChip oc;
+    const uint8_t pat[8] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88};
+    oc.Mem().WriteSram(0x200180, pat, 8);
+    oc.Mem().ClearDirty();
+    BootNew(oc);
+    Opl4& chip = oc.Chip();
+    std::vector<int16_t> out = oc.Run(16);
+    // MA off: 0x06 reads float 0xFF, writes are ignored
+    oc.Pcm(0x02, 0x00);
+    oc.Pcm(0x03, 0x20);
+    oc.Pcm(0x04, 0x01);
+    oc.Pcm(0x05, 0x80);
+    oc.Pcm(0x06, 0x99);
+    Append(out, oc.Run(8));
+    out.push_back(static_cast<int16_t>(chip.ReadWave(oc.Clock(), 0x06)));
+    // MA on: reads auto-increment through the pattern
+    oc.Pcm(0x02, 0x01);
+    oc.Pcm(0x03, 0x20);
+    oc.Pcm(0x04, 0x01);
+    oc.Pcm(0x05, 0x80);
+    for (int i = 0; i < 4; i++)
+    {
+        Append(out, oc.Run(8));
+        out.push_back(static_cast<int16_t>(chip.ReadWave(oc.Clock(), 0x06)));
+    }
+    // writes with auto-increment, then register/data readback
+    oc.Pcm(0x05, 0x84);
+    oc.Pcm(0x06, 0xAA);
+    oc.Pcm(0x06, 0xBB);
+    Append(out, oc.Run(8));
+    out.push_back(static_cast<int16_t>(chip.ReadWave(oc.Clock(), 0x03)));
+    out.push_back(static_cast<int16_t>(chip.ReadWave(oc.Clock(), 0x04)));
+    out.push_back(static_cast<int16_t>(chip.ReadWave(oc.Clock(), 0x06)));
+    return out;
+}
+
 struct Case
 {
     const char* name;
@@ -392,6 +1291,46 @@ const Case kCases[] = {
     {"multi-voice", CaseMultiVoice},
     {"save-restore-replay", CaseSaveRestore, HalvesEqual},
     {"bus-status", CaseBusStatus},
+    {"fm-tl-ladder", CaseFmTlLadder},
+    {"fm-mod-tl", CaseFmModTl},
+    {"fm-mult", CaseFmMult},
+    {"fm-ksl", CaseFmKsl},
+    {"fm-env-attack", CaseFmEnvAttack},
+    {"fm-env-decay", CaseFmEnvDecay},
+    {"fm-env-release", CaseFmEnvRelease},
+    {"fm-feedback", CaseFmFeedback},
+    {"fm-4op", CaseFm4Op},
+    {"fm-rhythm", CaseFmRhythm},
+    {"fm-waveform", CaseFmWaveform},
+    {"fm-amvib-matrix", CaseFmAmVibMatrix},
+    {"fm-routing", CaseFmRouting},
+    {"fm-timers", CaseFmTimers},
+    {"fm-kon-edge", CaseFmKonEdge},
+    {"fm-egt-ksr", CaseFmEgtKsr},
+    {"fm-chord", CaseFmChord},
+    {"pcm-wave-bank", CasePcmWaveBank},
+    {"pcm-oct-fnum", CasePcmOctFnum},
+    {"pcm-fnum-grid", CasePcmFnumGrid},
+    {"pcm-loop-1sample", CasePcmLoop1Sample},
+    {"pcm-loop-overrun-2x", CasePcmLoopOverrun2x},
+    {"pcm-tl-ladder", CasePcmTlLadder},
+    {"pcm-tl-ld", CasePcmTlLd},
+    {"pcm-ar-rows", CasePcmArRows},
+    {"pcm-dl-sustain", CasePcmDlSustain},
+    {"pcm-rr-release", CasePcmRrRelease},
+    {"pcm-ratescale", CasePcmRateScale},
+    {"pcm-damp", CasePcmDamp},
+    {"pcm-prvb", CasePcmPrvb},
+    {"pcm-pan-row", CasePcmPanRow},
+    {"pcm-pan-mirror", CasePcmPanMirror},
+    {"pcm-lfo-am", CasePcmLfoAm},
+    {"pcm-lfo-vib", CasePcmLfoVib},
+    {"pcm-interp-half", CasePcmInterpHalf},
+    {"pcm-interp-3halves", CasePcmInterp3Halves},
+    {"pcm-12voices", CasePcm12Voices},
+    {"mix-per-side", CaseMixPerSide},
+    {"memory-port", CaseMemoryPort},
+    {"fuzz-seeds", CaseFuzzSeeds},
 };
 
 // ---------------------------------------------------------------------------

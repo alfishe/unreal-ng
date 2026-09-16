@@ -6,15 +6,14 @@
 // invariants. Assertions are spec-derived, never implementation
 // snapshots; bit-exact snapshots are the cosim-oracle's job (tier 2).
 //
-// Register-map note: the in-tree engine maps operator families linearly
-// (mod = base + 2c, car = +1; routing bits EXCLUDE a side when set) while
-// the ymfm verification backend uses the classic YMF262 map (mod = base+c
-// with the +8 wrap past channel 5, car = +3; routing bits INCLUDE a
-// side). FmOpAddr()/kRoute* below carry the map so the same family body
-// runs on both backends wherever the semantics are map-agnostic.
-// Map-specific exactness (KSL folded table, timers, operator-internal
-// state) is guarded `#if !defined(OPL4_FM_YMFM)` per the vector-suite
-// precedent.
+// Register-map note: both backends use the canonical YMF262 operator map
+// (mod = (c%3) + 8*(c/3), car = +3, with the 0x26/0x27 and 0x2E/0x2F gaps)
+// and include-semantics routing (C0 bits 4..7 CHA/CHB/CHC/CHD enable a
+// side). The in-tree engine adopted the classic map in kStateVersion 3;
+// FmOpAddr()/kRoute* carry the shared conventions.
+// Backend-internal exactness (operator-internal state, per-channel taps)
+// stays guarded `#if !defined(OPL4_FM_YMFM)` per the vector-suite precedent
+// (the ymfm adapter zeroes taps and hides operator internals).
 #include "testfw.h"
 
 #include <cstring>
@@ -25,19 +24,12 @@ namespace opl4test
 namespace
 {
 
-// Routing C0 encodings. in-tree: bit4 set = NOT left, bit5 set = NOT
-// right (bits exclude); classic: bit4 = L, bit5 = R (bits include).
-#if defined(OPL4_FM_YMFM)
+// Routing C0 encodings, classic YMF262 include semantics: bit4 = CHA (L),
+// bit5 = CHB (R), bit6 = CHC (L), bit7 = CHD (R); all clear = silent.
 constexpr uint8_t kRouteBoth = 0x30;
 [[maybe_unused]] constexpr uint8_t kRouteLeft = 0x10;
 [[maybe_unused]] constexpr uint8_t kRouteRight = 0x20;
 [[maybe_unused]] constexpr uint8_t kRouteNone = 0x00;
-#else
-constexpr uint8_t kRouteBoth = 0x00;
-[[maybe_unused]] constexpr uint8_t kRouteLeft = 0x20;
-[[maybe_unused]] constexpr uint8_t kRouteRight = 0x10;
-[[maybe_unused]] constexpr uint8_t kRouteNone = 0x30;
-#endif
 
 // Minimum steady RMS of a TL0 unity-mix carrier. With ymfm scaled 4× to
 // match in-tree, both backends produce similar levels (~23170 sine RMS
@@ -57,21 +49,13 @@ constexpr double kPcmRail = 0.25;
 constexpr double PcmNorm(int32_t v) { return v / 32768.0 * kPcmRail; }
 
 // Operator register addresses for channel c (0..8, bank-relative) and
-// family base 0x20/0x40/0x60/0x80/0xE0.
+// family base 0x20/0x40/0x60/0x80/0xE0 — the canonical YMF262 layout
+// (ch0:(0,3) ch3:(8,11) ch6:(16,19)) with its 0x26/0x27 and 0x2E/0x2F gaps
+// (verified: rhythm voices must land on 0x30-0x35).
 inline void FmOpAddr(int c, uint8_t base, uint8_t* mod, uint8_t* car)
 {
-#if defined(OPL4_FM_YMFM)
-    // ymfm operator_map: ch c = ops (c%3 + 6*(c/3), +3); through
-    // operator_offset (op + 2*(op/6)) that is register offsets
-    // (c%3) + 8*(c/3) and +3 — ch0:(0,3) ch3:(8,11) ch6:(16,19) — the
-    // canonical YMF262 layout with its 0x26/0x27 and 0x2E/0x2F gaps
-    // (verified: rhythm voices must land on 0x30-0x35).
     *mod = static_cast<uint8_t>(base + (c % 3) + 8 * (c / 3));
     *car = static_cast<uint8_t>(*mod + 3);
-#else
-    *mod = static_cast<uint8_t>(base + 2 * c);
-    *car = static_cast<uint8_t>(*mod + 1);
-#endif
 }
 
 // Advance the core to (base + steps) output frames and drain the
@@ -299,8 +283,10 @@ void FmMultSweep()
 
 // ---------------------------------------------------------------------------
 // FM key scale level: attenuation that grows with block (and fnum bit 6).
-// Map-agnostic invariants on both backends; the in-tree folded table adds
-// exactly 3 dB per block and 1.5 dB for fnum bit 6.
+// Map-agnostic invariants on both backends; the folded table (ymfm
+// consumption: table numerals in 0.09375 dB index units, shifted by the
+// swapped 2-bit slope) gives 3 dB per block above the block-1 knee at the
+// reg-01 slope and 0.75 dB for fnum bit 6.
 // ---------------------------------------------------------------------------
 void FmKslSweep()
 {
@@ -333,24 +319,28 @@ void FmKslSweep()
     const double on7 = measure(7, 512, 0x40);  // KSL on, top block
     CHECK(on7 < off7 * 0.85);                  // clear attenuation
 
-#if !defined(OPL4_FM_YMFM) // exact folded table: 3 dB/block, 1.5 dB/bit6
+    // Exact folded table (both backends, ymfm consumption semantics): at
+    // fnum 512 with reg bits 01 (x4 slope) the attenuation is
+    // (48 - 8*(7-block)) << 2 index units = 3*(block-1) dB — zero at block 1,
+    // 18 dB at block 7 (3 dB/oct above the block-1 knee).
     for (int block = 1; block <= 7; block++)
     {
         const double on = measure(block, 512, 0x40);
-        const double expect = std::pow(10.0, -3.0 * block / 20.0);
+        const double expect = std::pow(10.0, -3.0 * (block - 1) / 20.0);
         CHECK(on > base * expect * 0.92 && on < base * expect * 1.08);
     }
-    // fnum bit 6 adds exactly 1.5 dB at the same block
+    // fnum bit 6 steps the folded table by 2 units (50 - 48) = 0.75 dB at
+    // the x4 slope.
     const double bit6 = measure(3, 576, 0x40);
     const double bit0 = measure(3, 512, 0x40);
-    const double expect = std::pow(10.0, -1.5 / 20.0);
+    const double expect = std::pow(10.0, -0.75 / 20.0);
     CHECK(bit6 > bit0 * expect * 0.92 && bit6 < bit0 * expect * 1.08);
-    // block 0 irregular corner: bit6 still nets 1.5 dB (32-16 = 16 units).
+    // block 0 corner: both fnum 512 and 576 fold below zero (48/50 - 56)
+    // and clamp — KSL is fully off at the lowest octave, identical levels.
     // Long window: block-0 tones are ~27-48 Hz.
     const double b0bit6 = measure(0, 576, 0x40, 24576);
     const double b0base = measure(0, 512, 0x40, 24576);
-    CHECK(b0bit6 > b0base * expect * 0.92 && b0bit6 < b0base * expect * 1.08);
-#endif
+    CHECK(b0bit6 > b0base * 0.92 && b0bit6 < b0base * 1.08);
 }
 
 // ---------------------------------------------------------------------------
@@ -460,9 +450,6 @@ void FmEnvStageSweep()
     for (int ar = 1; ar < 15; ar++)
         if (t50[ar] < 1e8 && t50[ar + 1] < 1e8) // skip unreached sentinels
             CHECK(t50[ar] >= t50[ar + 1] - 96.0); // monotone (1.5-window tol)
-#if !defined(OPL4_FM_YMFM) // exact shift ladder mid-range ratio — now
-    // covered map-agnostically by FmEnvelopeRatesVsYmfm below
-#endif
 
     // Sustain level grid (EGT, DR 12 reaches any SL quickly): plateau must
     // be flat and fall with SL; SL 0 sustains at the attack peak.
@@ -659,7 +646,7 @@ void Fm4OpConnections()
         tc.chip.WriteFm(0, 0, 0xA0, 0x46);
         tc.chip.WriteFm(0, 0, 0xB0, 0x32); // ch0: fnum 582, block 4, kon
         tc.chip.WriteFm(0, 0, 0xA3, 0x46);
-        tc.chip.WriteFm(0, 0, 0xB3, 0x32); // slave kon too (in-tree pairs)
+        tc.chip.WriteFm(0, 0, 0xB3, 0x32); // slave kon too (4-op voice)
         tc.chip.WriteFm(0, 0, 0xC0, static_cast<uint8_t>(kRouteBoth | masterBit));
         tc.chip.WriteFm(0, 0, 0xC3, static_cast<uint8_t>(kRouteBoth | slaveBit));
         const auto frames = CaptureOutput(tc, 0, 8192);
@@ -667,24 +654,14 @@ void Fm4OpConnections()
     }
     std::printf("  patternA (m0s0 m0s1 m1s0 m1s1) = %.4f %.4f %.4f %.4f\n",
                 rmsA[0], rmsA[1], rmsA[2], rmsA[3]);
-    // Which CON bit routes the TL-0 op1 into the sum is map-specific:
-    // the in-tree two-algorithm model keys on the slave C0 bit (connAdd
-    // adds o1+o2 to the output), ymfm's algorithms 8-11 on the master bit
-    // (algs 9/11 add O1). Both measured; the quiet rows are past two
-    // TL-max operators in either model.
-#if defined(OPL4_FM_YMFM)
+    // ymfm algorithms 8-11 (YMF262 silicon, both backends): the master C0
+    // CON bit routes the TL-0 op1 into the final sum (algs 9/11 add O1);
+    // the quiet rows are past TL-max cascade operators.
     CHECK(rmsA[1] > kFmCarrierRmsMin / 2.0); // alg 9: O1 + (O2->O3->O4)
     CHECK(rmsA[3] > kFmCarrierRmsMin / 2.0); // alg 11: O1 + (O2->O3) + O4
     CHECK(rmsA[0] < kFmCarrierRmsMin / 50.0); // alg 8 serial
     CHECK(rmsA[2] < kFmCarrierRmsMin / 50.0); // alg 10 parallel pairs
     CHECK(rmsA[1] > 6.0 * rmsA[0]);
-#else
-    CHECK(rmsA[2] > kFmCarrierRmsMin / 2.0); // slave CON: o1 + o2 summed
-    CHECK(rmsA[3] > kFmCarrierRmsMin / 2.0);
-    CHECK(rmsA[0] < kFmCarrierRmsMin / 50.0);
-    CHECK(rmsA[1] < kFmCarrierRmsMin / 50.0);
-    CHECK(rmsA[2] > 6.0 * rmsA[0]);
-#endif
 
     // Distinctness from 2-op mode: same patch with all TL 0 and an
     // octave-lower slave pitch; enabling 0x104 must change the render (the
@@ -780,7 +757,10 @@ void FmRhythmSweep()
 
 #if !defined(OPL4_FM_YMFM)
     // Suppression: rhythm on, ch7 patched loud, B0 kon must be ignored —
-    // the voice only sounds once its 0xBD bit (HH, bit 0) keys it.
+    // the voice only sounds once its 0xBD bit (HH, bit 0) keys it. Real
+    // divergence (measured 2026-09-15): ymfm keys rhythm-mode channels from
+    // B0 kon too (suppressed 0.576 = keyed 0.580 RMS), the in-tree classic
+    // engine implements the YMF262 datasheet suppression.
     {
         TestChip tc;
         tc.chip.WriteWave(0, 0xF8, 0x00);
@@ -877,37 +857,15 @@ void FmWaveformSweep()
     CHECK(st[7].hi > 0.05 * amp(7) && st[7].lo < -0.05 * amp(7));
     for (int ws = 1; ws < 8; ws++)
         CHECK(st[ws].rms > kFmCarrierRmsMin / 4.0);
-#if !defined(OPL4_FM_YMFM)
-    // In-tree set: ws 3 = one full double-frequency sine cycle in the
-    // first half, zero second half (bipolar, half the sine's power);
-    // ws 4 = |sine| quarters signed [+,−,+,+] (2 flips/period like the
-    // sine, two up-humps); ws 5 repeats ws 4 (only three of the four
-    // quarter-sign patterns are distinct); ws 6/7 = [+,−,−,−]/[−,+,+,+]
-    // (1 real flip + a zero-touch per period).
-    CHECK(st[3].lo < -0.05 * st[3].hi);
-    CHECK(st[3].zc > 0.8 * st[0].zc && st[3].zc < 1.4 * st[0].zc);
-    CHECK(st[3].rms / st[0].rms > 0.6 && st[3].rms / st[0].rms < 0.85);
-    CHECK(st[3].up > 0.6 * st[1].up && st[3].up < 1.4 * st[1].up);
-    CHECK(std::abs(st[3].mean) < 0.06 * st[3].hi);
-    CHECK(st[4].zc > 0.8 * st[0].zc && st[4].zc < 1.4 * st[0].zc);
-    CHECK(st[4].up > 1.6 * st[1].up && st[4].up < 2.4 * st[1].up);
-    CHECK(st[4].mean > 0.2 * st[4].hi && st[4].mean < 0.42 * st[4].hi);
-    CHECK(st[4].rms / st[0].rms > 0.85 && st[4].rms / st[0].rms < 1.15);
-    CHECK(st[5].rms / st[4].rms > 0.9 && st[5].rms / st[4].rms < 1.1);
-    CHECK(std::abs(st[5].zc - st[4].zc) <= 8);
-    CHECK(st[6].zc > 0.8 * st[0].zc && st[6].zc < 1.6 * st[0].zc);
-    CHECK(st[6].mean < -0.2 * st[6].hi); // net negative quarter majority
-    CHECK(st[7].zc > 0.8 * st[0].zc && st[7].zc < 1.4 * st[0].zc);
-    CHECK(st[7].mean > 0.15 * st[7].hi); // net positive quarter majority
-#else
-    // ymfm table (ymfm_opl.cpp): ws 3 = |sin| on quarters 1/3, zero on
-    // 2/4 — two positive humps, half of ws 2's DC; ws 4 = one full
-    // 2x-frequency sine cycle packed into the first half, zero second
-    // half (bipolar, half the sine's power, 2 sign flips/period); ws 5
-    // = two positive |sin| humps in the first half, zero second half
-    // (ws 1's DC, half duty); ws 6 = +-full-scale 50% square (sign bit
-    // only: rms equals amplitude); ws 7 = exponential-decoded ramp —
-    // narrow bipolar pulses at ~0.29 of the sine's rms.
+    // Canonical YMF262 shapes (both backends, ymfm_opl.cpp table):
+    // ws 3 = |sin| on quarters 1/3, zero on 2/4 — two positive humps,
+    // half of ws 2's DC; ws 4 = one full 2x-frequency sine cycle packed
+    // into the first half, zero second half (bipolar, half the sine's
+    // power, 2 sign flips/period); ws 5 = two positive |sin| humps in
+    // the first half, zero second half (ws 1's DC, half duty); ws 6 =
+    // +-full-scale 50% square (sign bit only: rms equals amplitude);
+    // ws 7 = exponential-decoded pulse pair — narrow bipolar pulses at
+    // ~0.29 of the sine's rms.
     CHECK(st[3].lo > -0.03 * st[3].hi);
     CHECK(st[3].mean > 0.20 * st[3].hi && st[3].mean < 0.42 * st[3].hi);
     CHECK(st[3].mean / st[2].mean > 0.4 && st[3].mean / st[2].mean < 0.6);
@@ -921,12 +879,12 @@ void FmWaveformSweep()
     CHECK(st[5].mean / st[1].mean > 0.8 && st[5].mean / st[1].mean < 1.2);
     CHECK(st[5].up > 1.6 * st[1].up && st[5].up < 2.4 * st[1].up);
     CHECK(st[5].zc < st[0].zc / 4);      // unipolar: nearly no sign flips
+    CHECK(st[6].zc > 0.8 * st[0].zc && st[6].zc < 1.4 * st[0].zc);
     CHECK(st[6].rms / st[6].hi > 0.9 && st[6].rms / st[6].hi < 1.1); // square
     CHECK(st[6].lo < -0.9 * st[6].hi && st[6].lo > -1.1 * st[6].hi);
     CHECK(std::abs(st[6].mean) < 0.06 * st[6].hi);
     CHECK(st[7].zc > 0.8 * st[0].zc && st[7].zc < 1.4 * st[0].zc);
     CHECK(st[7].rms / st[0].rms > 0.2 && st[7].rms / st[0].rms < 0.4);
-#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -1007,13 +965,8 @@ void FmRoutingMatrix()
     for (int combo = 0; combo < 16; combo++)
     {
         const uint8_t route = static_cast<uint8_t>(combo << 4);
-#if defined(OPL4_FM_YMFM)
         const bool l = (route & 0x50) != 0; // CHA (bit 4) or CHC (bit 6)
         const bool r = (route & 0xA0) != 0; // CHB (bit 5) or CHD (bit 7)
-#else
-        const bool l = (route & 0x10) == 0; // bit 4 mutes left, else default on
-        const bool r = (route & 0x20) == 0; // bit 5 mutes right; 6/7 inert
-#endif
         const auto [rl, rr] = lr(route);
         std::printf("  route %02X L %.4f R %.4f\n", route, rl, rr);
         CHECK(l ? rl > level : rl < quiet);
@@ -1194,8 +1147,8 @@ inline void FillMem(WaveMemory& mem, uint32_t addr, const uint8_t* pat,
 // fetch, 9-bit wave number (0..511 — the high register contributes ONE
 // bit), OCT/FN from the two nibble-packed bytes, then the envelope
 // registers after the fetch. Full level (AR15/TL0/LD), pan centre. fnLo =
-// FNUM bits 6..0, octFn bits 7..4 = OCT two's complement, bits 3..0 =
-// FNUM bits 10..7.
+// FNUM bits 6..0, octFn bit 3 = PRVB, bits 2..0 = FNUM bits 9..7, bits
+// 7..4 = OCT two's complement.
 inline void PcmKeyOn(Opl4& c, int wave, int hdr, uint8_t octFn,
                      uint8_t fnLo = 0x7F, uint8_t arD1r = 0xF0,
                      uint8_t dlD2r = 0x00, uint8_t rcRr = 0x00)
@@ -1730,6 +1683,487 @@ void PcmEnvRateMatrix()
     }
 }
 
+// ---------------------------------------------------------------------------
+// PCM DAMP and PRVB. DAMP (reg+4 bit 6) overrides every decay rate on
+// release with a fixed two-tier curve: internal rate 48 (+1 index/frame)
+// down to -12 dB, then rate 63 (+4/frame) to the silence clip — ignoring RR
+// entirely. PRVB (reg+2 bit 3) redirects Dec/Sus/Rel decay to internal rate
+// 20 (0.5 index per 128 frames) once the envelope passes -18 dB, replacing
+// the tail with a slow pseudo-reverb shelf.
+// ---------------------------------------------------------------------------
+void PcmDampPrvbMatrix()
+{
+    std::printf("PcmDampPrvbMatrix\n");
+    constexpr uint32_t kData = 0x200100;
+    const uint8_t dc[2] = {0x7F, 0xFF};
+    const auto runCase = [&](bool damp, bool prvb, uint8_t rr, int keyoffAt,
+                             uint64_t frames) {
+        TestChip tc;
+        FillMem(tc.mem, kData, dc, 2, 1024);
+        WriteHdrRaw(tc.mem, kHdrBase, 2, kData, 0, 512);
+        PcmKeyOn(tc.chip, 384, 4, static_cast<uint8_t>(prvb ? 0x8F : 0x87),
+                 0x7F, 0xF0, 0x00, rr);
+        // DAMP rides in with the keyoff write: latching it earlier would
+        // fade the sustaining voice (damper-pedal semantics).
+        tc.chip.WriteWave(static_cast<uint64_t>(keyoffAt) * kOutClocks,
+                          0x08 + 24 * 4,
+                          static_cast<uint8_t>(damp ? 0x40 : 0x00));
+        return CaptureOutput(tc, 0, frames);
+    };
+    {
+        const auto hold = runCase(false, false, 0x00, 512, 2048);
+        CHECK(RmsLeft(hold, 768) > 0.8 * kPcmRail); // RR 0: sustain holds
+        const auto damped = runCase(true, false, 0x00, 512, 2048);
+        const auto w = WindowRms(damped, 32);
+        std::printf("  damp: w16 %.3f w18 %.3f w20 %.3f w24 %.4f (hold %.3f)\n",
+                    w[16] / kPcmRail, w[18] / kPcmRail, w[20] / kPcmRail,
+                    w[24] / kPcmRail, RmsLeft(hold, 768) / kPcmRail);
+        CHECK(w[16] > 0.55 * kPcmRail && w[16] < 0.95 * kPcmRail);
+        CHECK(w[18] > 0.30 * kPcmRail && w[18] < 0.62 * kPcmRail);
+        CHECK(w[20] > 0.12 * kPcmRail && w[20] < 0.38 * kPcmRail); // -12 dB tier
+        CHECK(w[24] < 0.01 * kPcmRail);  // silence clip by ~+256
+        CHECK(RmsLeft(damped, 1120) < 0.01 * kPcmRail);
+    }
+    {
+        // DAMP during sustain fades even without keyoff (the damper pedal
+        // itself, openMSX lineage): same two-tier curve from the write on.
+        TestChip tc;
+        FillMem(tc.mem, kData, dc, 2, 1024);
+        WriteHdrRaw(tc.mem, kHdrBase, 2, kData, 0, 512);
+        PcmKeyOn(tc.chip, 384, 4, 0x87, 0x7F, 0xF0, 0x00, 0x00);
+        tc.chip.WriteWave(64 * kOutClocks, 0x08 + 24 * 4, 0xC0);
+        const auto f = CaptureOutput(tc, 0, 512);
+        std::printf("  sustain damp: first %.3f tail %.4f\n",
+                    RmsLeft(f, 0) / kPcmRail, RmsLeft(f, 384) / kPcmRail);
+        CHECK(RmsLeft(f, 0) > 0.35 * kPcmRail);
+        CHECK(RmsLeft(f, 384) < 0.01 * kPcmRail);
+    }
+    {
+        const auto tail = runCase(false, true, 0x0D, 256, 2560);
+        const auto gone = runCase(false, false, 0x0D, 256, 2560);
+        const double held = RmsLeft(tail, 1024);
+        std::printf("  prvb: shelf %.3f vs plain %.4f\n", held / kPcmRail,
+                    RmsLeft(gone, 1024) / kPcmRail);
+        CHECK(held > 0.085 * kPcmRail && held < 0.16 * kPcmRail); // ~-18 dB
+        CHECK(RmsLeft(gone, 1024) < 0.01 * kPcmRail); // same RR, no shelf
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PCM pan (reg+4 bits 3..0, D8): 16 positions, exactly -3 dB per step from
+// centre; 7 = hard right (left off), 8 = both off, 9..15 mirror to the left.
+// Bit 4 is the DO1 digital-output pin, unwired on ZXM-MoonSound: any DO1
+// setting is modelled as silence.
+// ---------------------------------------------------------------------------
+void PcmPanSweep()
+{
+    std::printf("PcmPanSweep\n");
+    constexpr uint32_t kData = 0x200100;
+    const uint8_t dc[2] = {0x7F, 0xFF};
+    const auto pan = [&](uint8_t reg4) {
+        TestChip tc;
+        FillMem(tc.mem, kData, dc, 2, 1024);
+        WriteHdrRaw(tc.mem, kHdrBase, 2, kData, 0, 512);
+        PcmKeyOn(tc.chip, 384, 4, 0x87, 0x7F, 0xF0, 0x00, 0x00);
+        tc.chip.WriteWave(32 * kOutClocks, 0x08 + 24 * 4, reg4);
+        (void)CaptureOutput(tc, 0, 64);
+        const auto f = CaptureOutput(tc, 64, 192);
+        return std::make_pair(RmsLeft(f, 8), RmsRight(f, 8));
+    };
+    const auto [rl0, rr0] = pan(0x80);
+    CHECK(rl0 > 0.9 * kPcmRail && rr0 > 0.9 * kPcmRail);
+    const double quiet = 0.01 * kPcmRail;
+    // right half: left side loses 3 dB per step, right side stays full
+    const double att[7] = {1.0, 0.708, 0.501, 0.355, 0.251, 0.178, 0.126};
+    for (int p = 1; p <= 6; p++)
+    {
+        const auto [rl, rr] = pan(static_cast<uint8_t>(0x80 | p));
+        std::printf("  pan %d L %.3f R %.3f\n", p, rl / kPcmRail, rr / kPcmRail);
+        CHECK(rl > rl0 * att[p] * 0.88 && rl < rl0 * att[p] * 1.14);
+        CHECK(rr > rr0 * 0.88 && rr < rr0 * 1.12);
+    }
+    {
+        const auto [r7l, r7r] = pan(0x87);
+        CHECK(r7l < quiet && r7r > rr0 * 0.9);   // hard right
+        const auto [r8l, r8r] = pan(0x88);
+        CHECK(r8l < quiet && r8r < quiet);       // both off
+        const auto [r9l, r9r] = pan(0x89);
+        CHECK(r9l > rl0 * 0.9 && r9r < quiet);   // hard left
+        const auto [f5l, f5r] = pan(0x8F);
+        CHECK(f5l > rl0 * 0.88 && f5l < rl0 * 1.12);
+        CHECK(f5r > rr0 * 0.708 * 0.88 && f5r < rr0 * 0.708 * 1.14); // -3 dB
+        const auto [dl, dr] = pan(0x90);         // DO1: silence
+        CHECK(dl < quiet && dr < quiet);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PCM LFO (bank 5: bits 5..3 frequency, bits 2..0 vibrato depth; bank 9
+// bits 2..0 AM depth; reg+4 bit 5 = per-slot LFO reset/hold). AM adds a
+// triangular attenuation of the envelope (depth 7 = 127 index = -11.9 dB
+// swing at the 7.07 Hz setting); vibrato wobbles FNUM by +-depth*15/12,
+// moving the waveform while leaving level and long-run rate intact.
+// ---------------------------------------------------------------------------
+void PcmLfoMatrix()
+{
+    std::printf("PcmLfoMatrix\n");
+    constexpr uint32_t kData = 0x200100;
+    const uint8_t dc[2] = {0x7F, 0xFF};
+    const auto differsFrom = [](const std::vector<float>& a,
+                                const std::vector<float>& b, size_t from) {
+        if (a.size() != b.size())
+            return true;
+        for (size_t i = 2 * from; i < a.size(); i++)
+            if (std::fabs(a[i] - b[i]) > 1e-6)
+                return true;
+        return false;
+    };
+    const auto minWin = [](const std::vector<float>& f, size_t win) {
+        double lo = 1e9;
+        for (double x : WindowRms(f, win))
+            lo = std::min(lo, x);
+        return lo;
+    };
+    {
+        const auto am = [&](int lfo, int depth, bool rst) {
+            TestChip tc;
+            FillMem(tc.mem, kData, dc, 2, 1024);
+            WriteHdrRaw(tc.mem, kHdrBase, 2, kData, 0, 512);
+            PcmKeyOn(tc.chip, 384, 4, 0x87, 0x7F, 0xF0, 0x00, 0x00);
+            tc.chip.WriteWave(0, 0x08 + 24 * 9, static_cast<uint8_t>(depth));
+            tc.chip.WriteWave(0, 0x08 + 24 * 5,
+                              static_cast<uint8_t>(lfo << 3));
+            if (rst) // key stays on; bit 5 holds the LFO off
+                tc.chip.WriteWave(0, 0x08 + 24 * 4, 0xA0);
+            return CaptureOutput(tc, 0, 8192);
+        };
+        const auto ref = am(7, 0, false);
+        const double r0 = RmsLeft(ref, 0);
+        CHECK(r0 > 0.9 * kPcmRail);
+        const auto deep = am(7, 7, false);
+        const double lo = minWin(deep, 64);
+        double hi = 0.0;
+        for (double x : WindowRms(deep, 64))
+            hi = std::max(hi, x);
+        const double rDeep = RmsLeft(deep, 0);
+        std::printf("  am7: rms %.3f min %.3f max %.3f (ref %.3f)\n",
+                    rDeep / kPcmRail, lo / kPcmRail, hi / kPcmRail,
+                    r0 / kPcmRail);
+        CHECK(lo < 0.62 * r0 && lo > 0.20 * r0); // -11.9 dB swing floor
+        CHECK(hi > 0.95 * r0);
+        CHECK(rDeep > 0.42 * r0 && rDeep < 0.75 * r0);
+        const auto shal = am(7, 1, false);
+        CHECK(minWin(shal, 64) > 0.75 * r0);      // depth 1 = -1.9 dB swing
+        CHECK(RmsLeft(shal, 0) > 0.90 * r0);
+        const auto rst = am(7, 7, true);
+        CHECK(RmsLeft(rst, 0) > 0.98 * r0);       // bit 5 holds LFO off
+        CHECK(differsFrom(am(5, 7, false), deep, 256)); // frequency moves phase
+    }
+    {
+        const auto vib = [&](int depth) {
+            TestChip tc;
+            uint8_t sq[32]; // 16 samples: 8x +FS then 8x -FS (16-bit BE)
+            for (int i = 0; i < 8; i++)
+            {
+                sq[2 * i] = 0x7F;
+                sq[2 * i + 1] = 0xFF;
+                sq[16 + 2 * i] = 0x80;
+                sq[17 + 2 * i] = 0x00;
+            }
+            FillMem(tc.mem, kData, sq, 32, 32);
+            WriteHdrRaw(tc.mem, kHdrBase, 2, kData, 0, 16);
+            PcmKeyOn(tc.chip, 384, 4, 0x00, 0x00, 0xF0, 0x00, 0x00); // 0.5/frame
+            tc.chip.WriteWave(0, 0x08 + 24 * 5,
+                              static_cast<uint8_t>((7 << 3) | depth));
+            return CaptureOutput(tc, 0, 8192);
+        };
+        const auto refV = vib(0);
+        const double r0 = RmsLeft(refV, 256);
+        const int z0 = ZeroCrossLeft(refV, 256);
+        const auto onV = vib(7);
+        const int z7 = ZeroCrossLeft(onV, 256);
+        const double r7 = RmsLeft(onV, 256);
+        std::printf("  vib7: rms ratio %.3f zc %d vs %d\n", r7 / r0, z7, z0);
+        CHECK(differsFrom(onV, refV, 256));
+        CHECK(r7 > r0 * 0.93 && r7 < r0 * 1.07);  // level intact
+        CHECK(z7 > z0 * 0.97 && z7 < z0 * 1.03);  // long-run rate intact
+        CHECK(differsFrom(vib(1), refV, 256));    // depth 1 still audible
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PCM interpolation: the 16-bit fractional step pointer always blends
+// GetSample(pos) with GetSample(NextPos(pos,1)) weighted by frac/65536 —
+// there is no enable bit, "off" is frac == 0. Exact steppers pin both
+// edges: 1 sample/frame (pure staircase, no blend), 0.5 (odd frames sit on
+// the half step), 1.5 (a half-step blend between integer advances). Every
+// frame is compared against the golden unity chain (VolFactor env -> TL ->
+// pan, 2047/2048 per stage, like opl4vectors' GoldenFrame).
+// ---------------------------------------------------------------------------
+void PcmInterpMatrix()
+{
+    std::printf("PcmInterpMatrix\n");
+    constexpr uint32_t kData = 0x200100;
+    const auto run = [&](uint8_t octFn, uint8_t fnLo, uint64_t frames) {
+        TestChip tc;
+        uint8_t ramp[128]; // 64 16-bit samples: 0x1000 + 0x100*i
+        for (int i = 0; i < 64; i++)
+        {
+            const int s = 0x1000 + 0x100 * i;
+            ramp[2 * i] = static_cast<uint8_t>(s >> 8);
+            ramp[2 * i + 1] = static_cast<uint8_t>(s);
+        }
+        FillMem(tc.mem, kData, ramp, 128, 128);
+        WriteHdrRaw(tc.mem, kHdrBase, 2, kData, 0, 64);
+        PcmKeyOn(tc.chip, 384, 4, octFn, fnLo, 0xF0, 0x00, 0x00);
+        return CaptureOutput(tc, 0, frames);
+    };
+    // Expected frame at a given loop offset in half-sample units: ramp
+    // value (with the exact wrap blend at 63.5), then the three unity
+    // attenuation stages.
+    const auto golden = [&](int halfSteps) {
+        const int p = halfSteps >> 1;
+        int32_t sm = 0x1000 + 0x100 * p;
+        if (halfSteps & 1) // blend partner wraps at the loop end
+            sm = (sm + 0x1000 + 0x100 * ((p + 1) % 64)) >> 1;
+        const int32_t v = VolFactor(VolFactor(VolFactor(sm, 0), 0), 0);
+        return static_cast<double>(v) * kNormScale;
+    };
+    const auto check = [&](const std::vector<float>& f, int halfPerFrame,
+                           const char* tag) {
+        int bad = 0;
+        double maxErr = 0.0;
+        for (size_t k = 256; k < f.size() / 2; k++)
+        {
+            const int h = static_cast<int>(
+                (halfPerFrame * static_cast<long long>(k)) % 128);
+            const double err = std::fabs(f[2 * k] - golden(h));
+            maxErr = std::max(maxErr, err);
+            bad += !(err < 5e-8); // float32 rounding of the exact rational
+        }
+        std::printf("  %s: %d bad, max err %.2e\n", tag, bad, maxErr);
+        CHECK(bad == 0);
+    };
+    check(run(0x10, 0x00, 512), 2, "step 1.0 (OCT1/FN0)");
+    check(run(0x00, 0x00, 512), 1, "step 0.5 (OCT0/FN0)");
+    check(run(0x14, 0x00, 512), 3, "step 1.5 (OCT1/FN512)");
+}
+
+// ---------------------------------------------------------------------------
+// Block mix (0xF8 FM / 0xF9 PCM, D9): L code = bits 5..3, R code = bits
+// 2..0, through the silicon table (2042 = 0 dB, 1444 = -3 dB, ..., 0 =
+// mute). Reset states 0x1B (FM -9 dB both sides) and 0x00 (PCM unity). Each
+// register scales only its own block. Map-agnostic: the mixers sit behind
+// both FM backends.
+// ---------------------------------------------------------------------------
+void MixFieldMatrix()
+{
+    std::printf("MixFieldMatrix\n");
+    constexpr uint32_t kData = 0x200100;
+    const uint8_t dc[2] = {0x7F, 0xFF};
+    const auto pcm = [&](uint8_t f8, uint8_t f9) {
+        TestChip tc;
+        FillMem(tc.mem, kData, dc, 2, 1024);
+        WriteHdrRaw(tc.mem, kHdrBase, 2, kData, 0, 512);
+        PcmKeyOn(tc.chip, 384, 4, 0x87, 0x7F, 0xF0, 0x00, 0x00);
+        tc.chip.WriteWave(0, 0xF8, f8);
+        tc.chip.WriteWave(0, 0xF9, f9);
+        (void)CaptureOutput(tc, 0, 64);
+        const auto f = CaptureOutput(tc, 64, 192);
+        return std::make_pair(RmsLeft(f, 8), RmsRight(f, 8));
+    };
+    {
+        const auto [pl0, pr0] = pcm(0x00, 0x00);
+        CHECK(pl0 > 0.9 * kPcmRail && pr0 > 0.9 * kPcmRail);
+        const double scale[7] = {1.0,     1444.0 / 2042.0, 1021.0 / 2042.0,
+                                 722.0 / 2042.0, 510.0 / 2042.0, 361.0 / 2042.0,
+                                 255.0 / 2042.0};
+        for (int code = 1; code <= 6; code++)
+        {
+            const auto [pl, pr] =
+                pcm(0x00, static_cast<uint8_t>(code | (code << 3)));
+            std::printf("  pcm mix code %d: L %.3f R %.3f\n", code,
+                        pl / kPcmRail, pr / kPcmRail);
+            CHECK(pl > pl0 * scale[code] * 0.9 && pl < pl0 * scale[code] * 1.1);
+            CHECK(pr > pr0 * scale[code] * 0.9 && pr < pr0 * scale[code] * 1.1);
+        }
+        const auto [rl, rr] = pcm(0x00, 0x07); // R mute, L unity
+        CHECK(rl > pl0 * 0.9 && rr < 0.01 * kPcmRail);
+        const auto [ql, qr] = pcm(0x00, 0x38); // L mute, R unity
+        CHECK(ql < 0.01 * kPcmRail && qr > pr0 * 0.9);
+        const auto [ml, mr] = pcm(0x00, 0xFF); // both mute
+        CHECK(ml < 0.01 * kPcmRail && mr < 0.01 * kPcmRail);
+        // 0xF8 must not touch the PCM block
+        const auto [xl, xr] = pcm(0x38, 0x00);
+        CHECK(xl > pl0 * 0.95 && xr > pr0 * 0.95);
+    }
+    const auto fm = [&](uint8_t f8, uint8_t f9) {
+        TestChip tc;
+        tc.chip.WriteWave(0, 0xF8, f8);
+        tc.chip.WriteWave(0, 0xF9, f9);
+        FmCarrierPatch(tc.chip, 0, 0, 4, 582, 0x00);
+        (void)CaptureOutput(tc, 0, 1024);
+        return CaptureOutput(tc, 1024, 1024);
+    };
+    {
+        const auto f0 = fm(0x00, 0x00);
+        const double fl0 = RmsLeft(f0, 64), fr0 = RmsRight(f0, 64);
+        CHECK(fl0 > kFmCarrierRmsMin);
+        const auto fd = fm(0x1B, 0x00); // reset default: -9 dB both sides
+        const double ratio = RmsLeft(fd, 64) / fl0;
+        std::printf("  fm mix 0x1B ratio %.3f (722/2042 = %.3f)\n", ratio,
+                    722.0 / 2042.0);
+        CHECK(ratio > 0.31 && ratio < 0.40);
+        CHECK(std::abs(RmsRight(fd, 64) / fr0 - ratio) < 0.04);
+        const auto fr = fm(0x07, 0x00); // R mute, L unity
+        CHECK(RmsLeft(fr, 64) > fl0 * 0.9 && RmsRight(fr, 64) < 0.02 * fl0);
+        const auto fll = fm(0x38, 0x00); // L mute, R unity
+        CHECK(RmsLeft(fll, 64) < 0.02 * fl0 && RmsRight(fll, 64) > fr0 * 0.9);
+        const auto fn = fm(0x00, 0x07); // 0xF9 does not touch FM
+        CHECK(RmsLeft(fn, 64) > fl0 * 0.95);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Wave-memory access port: 0x02 bit 0 = MA gates the data port; 0x03/0x04
+// only latch (0x03 upper bits read 0); the full 22-bit address commits on
+// the 0x05 write; 0x06 reads/writes with auto-increment, and reads return
+// 0xFF when MA = 0.
+// ---------------------------------------------------------------------------
+void MemoryAccessSweep()
+{
+    std::printf("MemoryAccessSweep\n");
+    TestChip tc;
+    Opl4& c = tc.chip;
+    c.WriteWave(0, 0x02, 0x01); // MA on
+    CHECK((c.ReadWave(10, 0x02) & 0x1F) == 0x01);
+    CHECK((c.ReadWave(12, 0x02) & 0x20) != 0); // device-ID bit reads 1
+    c.WriteWave(20, 0x03, 0x20);
+    c.WriteWave(30, 0x04, 0x00);
+    c.WriteWave(40, 0x05, 0x00); // commit 0x200000
+    c.WriteWave(50, 0x06, 0x11);
+    c.WriteWave(60, 0x06, 0x22);
+    c.WriteWave(70, 0x06, 0x33);
+    c.WriteWave(80, 0x06, 0x44);
+    c.WriteWave(90, 0x03, 0x20);
+    c.WriteWave(100, 0x04, 0x01);
+    c.WriteWave(110, 0x05, 0x00); // commit 0x200100
+    c.WriteWave(120, 0x06, 0xAA);
+    // 0x03/0x04 latch only: without a 0x05 write the pointer must not move
+    c.WriteWave(130, 0x03, 0x2F);
+    c.WriteWave(140, 0x04, 0xFF);
+    c.WriteWave(150, 0x06, 0xBB); // still lands at 0x200101
+    c.WriteWave(160, 0x05, 0x02); // now commits 0x2FFF02 (still SRAM)
+    c.WriteWave(170, 0x06, 0xCC);
+    // read-back round trip with read auto-increment
+    c.WriteWave(180, 0x03, 0x20);
+    c.WriteWave(190, 0x04, 0x00);
+    c.WriteWave(200, 0x05, 0x00);
+    CHECK_EQ_I(c.ReadWave(210, 0x06), 0x11);
+    CHECK_EQ_I(c.ReadWave(220, 0x06), 0x22);
+    CHECK_EQ_I(c.ReadWave(230, 0x06), 0x33);
+    CHECK_EQ_I(c.ReadWave(240, 0x06), 0x44);
+    c.WriteWave(250, 0x03, 0x20);
+    c.WriteWave(260, 0x04, 0x01);
+    c.WriteWave(270, 0x05, 0x00);
+    CHECK_EQ_I(c.ReadWave(280, 0x06), 0xAA);
+    CHECK_EQ_I(c.ReadWave(290, 0x06), 0xBB); // proves the latch-only rule
+    c.WriteWave(300, 0x03, 0x2F);
+    c.WriteWave(310, 0x04, 0xFF);
+    c.WriteWave(320, 0x05, 0x02);
+    CHECK_EQ_I(c.ReadWave(330, 0x06), 0xCC);
+    c.WriteWave(340, 0x03, 0xFF);
+    CHECK_EQ_I(c.ReadWave(350, 0x03), 0x3F); // upper bits read 0
+    // MA off: reads float 0xFF, writes are ignored
+    c.WriteWave(360, 0x02, 0x00);
+    CHECK_EQ_I(c.ReadWave(370, 0x06), 0xFF);
+    c.WriteWave(380, 0x06, 0x99);
+    c.WriteWave(390, 0x02, 0x01);
+    c.WriteWave(400, 0x03, 0x20);
+    c.WriteWave(410, 0x04, 0x01);
+    c.WriteWave(420, 0x05, 0x03);
+    CHECK_EQ_I(c.ReadWave(430, 0x06), 0x00); // SRAM initial, not 0x99
+}
+
+// ---------------------------------------------------------------------------
+// Seeded fuzz tier (§12.6): an LCG drives random register streams across
+// both buses with random timestamps (register order and interleaving are
+// free-form; tone fetches, memory-port writes and mix rewrites all occur).
+// Every seed must render finite, in-range, subnormal-free audio, and a
+// second run of the same seed must reproduce the stream bit-exactly. A
+// failing seed becomes a permanent regression vector.
+// ---------------------------------------------------------------------------
+void SeededFuzzTier()
+{
+    std::printf("SeededFuzzTier\n");
+    constexpr uint32_t kData = 0x200100;
+    const uint8_t dc[2] = {0x7F, 0xFF};
+    const auto runSeed = [&](uint32_t seed) {
+        uint32_t st = seed;
+        const auto rnd = [&st]() {
+            st = st * 1664525u + 1013904223u;
+            return st;
+        };
+        TestChip tc;
+        FillMem(tc.mem, kData, dc, 2, 1024);
+        WriteHdrRaw(tc.mem, kHdrBase, 2, kData, 0, 512);
+        tc.chip.WriteWave(0, 0xF8, 0x00); // FM unity mix
+        // Structured opening: one FM carrier and one PCM voice with random
+        // valid parameters, so most seeds exercise audible synthesis before
+        // the free-form writes land.
+        FmCarrierPatch(tc.chip, 0, static_cast<int>(rnd() % 4),
+                       static_cast<int>(2 + rnd() % 5),
+                       static_cast<int>(64 + rnd() % 1500),
+                       static_cast<uint8_t>(rnd() % 48));
+        static const uint8_t kOctFns[4] = {0x07, 0x27, 0x47, 0x87};
+        PcmKeyOn(tc.chip, 384, 4, kOctFns[rnd() % 4],
+                 static_cast<uint8_t>(rnd() % 0x80));
+        uint64_t t = 0;
+        for (int i = 0; i < 56; i++)
+        {
+            t += (rnd() % 48 + 1) * kOutClocks;
+            const uint32_t r = rnd();
+            if (r & 0x100) // wave bus: tone regs, 0x02, memory port, mixes
+                tc.chip.WriteWave(t, static_cast<uint8_t>(r >> 8),
+                                  static_cast<uint8_t>(r >> 16));
+            else // FM register banks
+                tc.chip.WriteFm(t, (r >> 8) & 1,
+                                static_cast<uint8_t>(r >> 16),
+                                static_cast<uint8_t>(r >> 24));
+        }
+        return CaptureOutput(tc, 0, t / kOutClocks + 256);
+    };
+    int nonFinite = 0, subnormal = 0, mismatches = 0, loud = 0;
+    for (uint32_t seed = 1; seed <= 96; seed++)
+    {
+        const auto a = runSeed(seed);
+        const auto b = runSeed(seed);
+        if (a.size() != b.size()
+            || !std::equal(a.begin(), a.end(), b.begin()))
+            mismatches++;
+        double peak = 0.0;
+        for (float v : a)
+        {
+            if (!std::isfinite(v))
+                nonFinite++;
+            else if (std::fpclassify(v) == FP_SUBNORMAL)
+                subnormal++;
+            else
+                peak = std::max(peak, std::fabs(static_cast<double>(v)));
+        }
+        CHECK(peak <= 1.0); // normalized wide rail, no wrap
+        if (peak > 0.001)
+            loud++;
+    }
+    std::printf("  96 seeds: %d replays mismatched, %d non-finite, "
+                "%d subnormal, %d audible\n",
+                mismatches, nonFinite, subnormal, loud);
+    CHECK(mismatches == 0);
+    CHECK(nonFinite == 0);
+    CHECK(subnormal == 0);
+    CHECK(loud > 8); // the streams genuinely make sound
+}
+
 int RunSweepTests()
 {
     std::printf("\n--- conformance sweeps (opl4sweep.cpp) ---\n");
@@ -1753,6 +2187,13 @@ int RunSweepTests()
     PcmLoopEdgeMatrix();
     PcmTlLadderSweep();
     PcmEnvRateMatrix();
+    PcmDampPrvbMatrix();
+    PcmPanSweep();
+    PcmLfoMatrix();
+    PcmInterpMatrix();
+    MixFieldMatrix();
+    MemoryAccessSweep();
+    SeededFuzzTier();
     return gFailed - before;
 }
 

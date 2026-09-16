@@ -800,6 +800,21 @@ public:
     {
         return _state;
     }
+    /// Bytes pending in the current Type II data transfer (report / diagnostics use)
+    size_t getBytesToRead() const
+    {
+        return _bytesToRead;
+    }
+    /// Data-field size of the sector addressed by the current Type II command (report / diagnostics use)
+    size_t getSectorSize() const
+    {
+        return _sectorSize;
+    }
+    /// True while a Type II command has a valid data buffer to feed (report / diagnostics use)
+    bool hasRawDataBuffer() const
+    {
+        return _rawDataBuffer != nullptr;
+    }
     /// Density selected through the Beta128 system register (report use)
     bool isDoubleDensityMode() const
     {

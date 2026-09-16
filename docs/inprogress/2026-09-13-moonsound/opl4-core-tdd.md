@@ -669,6 +669,67 @@ at the OPL4 grid rate if it supports arbitrary clocking, otherwise compare
 spectrally with a stated tolerance and treat only sample-exact as a pass for
 vectors where the grid does not matter (envelope shapes, register semantics).
 
+#### 12.2.1 Implemented inventory (2026-09-15)
+
+The exhaustive per-register/per-bit/per-pattern matrix is implemented as four
+tiers; every writable YMF278B field is now pinned by a spec-derived assertion,
+a bit-exact golden digest, and seeded-fuzz determinism.
+
+**Tier 1 — sweep families** in
+[`tools/poc/015-opl4-synthesis/tests/opl4sweep.cpp`](../../../tools/poc/015-opl4-synthesis/tests/opl4sweep.cpp)
+(plain `CHECK` framework from `tests/testfw.h`; every family derives its bands
+from datasheet/TDD D1–D11 semantics — ratios, monotonicity, boundaries — not
+from implementation output; runs on **both** FM backends, with in-tree-map-
+specific families `#if !defined(OPL4_FM_YMFM)`-guarded):
+
+| Family | Pins (spec-derived) |
+|---|---|
+| `FmTlLadderSweep` | TL 0–127 ladder, −0.75 dB/unit exact, monotone |
+| `FmMultSweep` | MULT 0–15 zero-crossing ratios 0.5, 1–15 |
+| `FmKslSweep` | KSL 0–3 × block 0–7 onset thresholds |
+| `FmEnvStageSweep` | AR/DR/SL/RR 0–15 grid, rate-15 instant, sustain = SL, release slope |
+| `FmFeedbackSweep` | FB 0–7 growth (caught the modulator-depth 64× engine bug) |
+| `Fm4OpConnections` | 3 topologies + connection-select bits |
+| `FmRhythmSweep` | all 5 voices via 0xBD |
+| `FmWaveformSweep` | waves 0–7: DC/symmetry/peak relations |
+| `FmAmVibDepthMatrix` | AM/VIB × depth bits |
+| `FmRoutingMatrix` | CHA/CHB/CHC/CHD 16 combos → L/R matrix |
+| `FmTimerSweep` | T1/T2 periods, IRQ flags/mask/reset |
+| `FmKonMomentary` | 0xB0 kon edge-only semantics |
+| `FmEnvelopeRatesVsYmfm` | map-agnostic envelope rate ratios, both backends |
+| `PcmWaveNumberBoundary` | wave <384/≥384 × waveTblHdr 0–7 banking |
+| `PcmWidthDecodeSweep` | 8/12/16-bit decode incl. −FS |
+| `PcmStepSweep` | OCT −8..+7 × FNUM grid, `CalcStep = 2^oct·fn/1024` exact |
+| `PcmLoopEdgeMatrix` | E=0 one-shot (64 KiB), complement ends, overrun wrap, 1-sample loop |
+| `PcmTlLadderSweep` | TL bits (0.375 dB/unit), LD immediate vs 27/13.5-sample walk, 0x7F→0xFF special |
+| `PcmEnvRateMatrix` | AR/D1R/D2R/RR 0–15 × rate-scaling octaves, DL 0–15 |
+| `PcmDampPrvbMatrix` | DAMP forced fade, PRVB alternate release |
+| `PcmPanSweep` | all 16 pan values + 0x10 DO1 silence |
+| `PcmLfoMatrix` | LFO frequency × AM/VIB depths, per-slot enable |
+| `PcmInterpMatrix` | interpolation on/off × fractional positions |
+| `MixFieldMatrix` | 0xF8/0xF9 3-bit fields, reset defaults (0x1B/0x00), cross-block immunity |
+| `MemoryAccessSweep` | regs 0x03–0x06 auto-increment, reg-3 6-bit latch mask, MA gating, LD window |
+
+**Tier 2 — golden digests**: `cosim/golden/oracle.txt` grew 15 → **55** cases
+(one per family over a representative sub-sweep); the original 15 stayed
+byte-identical through regeneration. `cosim-ymfm` 6/6 unchanged.
+
+**Tier 3 — seeded fuzz** (`SeededFuzzTier`, §12.6): LCG-seeded random FM+PCM
+register streams with timestamps; asserts no crash, no NaN/denormal,
+replay-determinism.
+
+**Tier 4 — core canaries**: 8 thin GTests in
+`core/tests/emulator/sound/moonsound_device_test.cpp`, one register behaviour
+each through the real port/bus/frame path (FM TL ladder, FM envelope stages,
+FM waveform symmetry, PCM loop E=0, PCM pan row, PCM TL 0x7F special,
+block-mix fields, SRAM window round-trip).
+
+**Current totals** (post classic-map adoption, 2026-09-15): PoC `opl4tests` —
+in-tree backend 6124 checks / 0 failures, ymfm backend 6110 / 0, whole run < 1 s
+(§12.7 budget 30 s); `cosim-oracle` 55/55 (golden regenerated — 12 FM digests changed,
+PCM-only digests byte-identical); `cosim-ymfm` 6/6; core full suite green on both
+backend trees with only the known §12.8 disk-subsystem failure open.
+
 ### 12.3 Music-corpus differential tests
 
 Take published VGM logs that use YMF278B, replay them through our core and a
