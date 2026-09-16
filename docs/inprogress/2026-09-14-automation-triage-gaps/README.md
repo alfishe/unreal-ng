@@ -93,6 +93,17 @@ SHA-256 catalog) vs `role` (the per-model layout slot, moving into core as
 "wrong ROM loaded" signal. Wired into §5 example, §6 parity rows, §8
 `RomIdentification_Test`, §9 acceptance, §11 Phase 2.
 
+📝 **TTD coverage evaluation added (2026-09-15):**
+[ttd-coverage-evaluation.md](ttd-coverage-evaluation.md) answers a separate
+question — is Time-Travel Debugging fully covered by the automation modules
+and convenient for AI-driven reverse engineering (start/stop recording,
+scrub to any frame+t-state, analysis at restored states)? Verdict: engine
+and WebAPI/CLI/Lua/Python surfaces are complete (umt23x entry-point capture
+achievable today); MCP is router-only and undocumented, `find-last` is
+clamped below the core query, memory extraction lacks dump-to-file, and the
+control-interfaces docs describe an older API — gap group G-1..G-10 with
+propositions TD-1..TD-8.
+
 ## Files
 
 | File | Content |
@@ -102,6 +113,8 @@ SHA-256 catalog) vs `role` (the per-model layout slot, moving into core as
 | [recommendations.md](recommendations.md) | Prioritized remediation plan (P0–P3) with concrete endpoint/tool proposals, response schemas, and acceptance criteria. |
 | [triage-workflows.md](triage-workflows.md) | Before/after walkthroughs for the concrete triage scenarios named in the analysis (ATM black screen, mouse-on-configs, MoonSound bring-up). |
 | [port-tags-paging-design.md](port-tags-paging-design.md) | Design for P1-2 / E-1 / B-2: tagged port registry (`PortTag` bitmask + per-soundcard tags, `PagingLatch` live bindings) on the decoders, decoder-owned index collections, and the tag-driven `/state/paging` endpoint (incl. §5.2 ROM page identification — `role`/`name`/`signature` per ROM bank) with full parity. |
+| [ttd-coverage-evaluation.md](ttd-coverage-evaluation.md) | TTD automation evaluation (2026-09-15): engine + surface inventory, the umt23x "where did unpack finish" litmus workflow, gap group G (MCP router-only, find-last clamp, no dump-to-file, stale docs, …) and propositions TD-1..TD-8. |
+| [designs/ttd-timeline-summary-design.md](designs/ttd-timeline-summary-design.md) | Technical Design Document for TD-5 (P1): TTD Timeline Summary Endpoint (`GET /ttd/timeline`), $\mathcal{O}(\text{limit})$ sub-millisecond downsampling algorithm, multi-surface API schemas, and `umt23x` spike test strategy. |
 
 ## Executive summary
 
