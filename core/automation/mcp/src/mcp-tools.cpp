@@ -23,6 +23,7 @@
 #include "mcp-tool-utils.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cinttypes>
 #include <cstdio>
 #include <sstream>
@@ -1500,6 +1501,164 @@ void RegisterMouseInput(ToolRegistry& registry)
 
 /// endregion </mouse_input>
 
+/// region <time_travel>
+
+namespace
+{
+
+/// Percent-encodes a path segment (RFC 3986 unreserved characters kept
+/// literal). Labels are free-form text ("umt entry"), so they must not be
+/// spliced raw into a URL path.
+std::string UrlEncodeSegment(const std::string& text)
+{
+    static const char* kHex = "0123456789ABCDEF";
+    std::string encoded;
+    encoded.reserve(text.size());
+    for (char c : text)
+    {
+        const unsigned char uc = static_cast<unsigned char>(c);
+        if (std::isalnum(uc) || c == '-' || c == '_' || c == '.' || c == '~')
+        {
+            encoded += c;
+        }
+        else
+        {
+            encoded += '%';
+            encoded += kHex[uc >> 4];
+            encoded += kHex[uc & 0xF];
+        }
+    }
+    return encoded;
+}
+
+void RegisterTimeTravel(ToolRegistry& registry)
+{
+    Json::Value schema;
+    schema["type"] = "object";
+    schema["properties"]["action"]["type"] = "string";
+    schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* action : {"status", "bookmark_add", "bookmark_list", "bookmark_delete", "seek_bookmark"})
+    {
+        schema["properties"]["action"]["enum"].append(action);
+    }
+    schema["properties"]["action"]["description"] =
+        "'status' reports the TTD session (state, frames, checkpoints); "
+        "'bookmark_add' marks a position with a label (omit frame to mark the current position); "
+        "'bookmark_list' lists bookmarks; 'bookmark_delete' removes one by label; "
+        "'seek_bookmark' returns to a marked position";
+    schema["properties"]["target"]["type"] = "string";
+    schema["properties"]["target"]["default"] = "auto";
+    schema["properties"]["target"]["description"] = "Emulator id, or 'auto' to reuse the single instance";
+    schema["properties"]["label"]["type"] = "string";
+    schema["properties"]["label"]["description"] =
+        "Bookmark label for bookmark_add / bookmark_delete / seek_bookmark. "
+        "Non-empty, at most 63 characters, unique per session (labels are keys)";
+    schema["properties"]["frame"]["type"] = "integer";
+    schema["properties"]["frame"]["description"] = "Optional frame for bookmark_add; omit to mark the current position";
+    schema["properties"]["tinframe"]["type"] = "integer";
+    schema["properties"]["tinframe"]["default"] = 0;
+    schema["properties"]["tinframe"]["description"] = "Optional T-states within the frame for bookmark_add";
+    schema["required"].append("action");
+
+    registry.Register(
+        "time_travel",
+        "Time-travel debugging (TTD): session status and agent bookmarks. Bookmarks are advisory annotations — "
+        "they never halt a seek (a halt_reason never mentions bookmarks), survive dump/load, and are dropped "
+        "with the session. TD-4 surface; the seed of the full TTD tool.",
+        std::move(schema),
+        [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
+            const std::string action = args["action"].asString();
+
+            // Label-carrying actions reject early — before target resolution —
+            // so a malformed request never even wakes the emulator.
+            if (action == "bookmark_add" || action == "bookmark_delete" || action == "seek_bookmark")
+            {
+                const std::string label = args["label"].asString();
+                if (label.empty())
+                {
+                    done(ToolResult::Error("Action '" + action + "' requires a non-empty 'label'"));
+                    return;
+                }
+            }
+
+            auto forward = [&caller, &args, action, done](const std::string& id) {
+                if (action == "status")
+                {
+                    ForwardCall("GET", Endpoint(id, "/ttd/status"), nullptr, caller, "TTD status of " + id, done);
+                }
+                else if (action == "bookmark_add")
+                {
+                    Json::Value body;
+                    body["label"] = args["label"].asString();
+                    if (args.isMember("frame"))
+                    {
+                        body["frame"] = args["frame"];
+                    }
+                    if (args.isMember("tinframe"))
+                    {
+                        body["tinframe"] = args["tinframe"];
+                    }
+                    ForwardCall("POST", Endpoint(id, "/ttd/bookmarks"), &body, caller,
+                                "Bookmark '" + args["label"].asString() + "' added on " + id, done);
+                }
+                else if (action == "bookmark_list")
+                {
+                    caller.Call("GET", Endpoint(id, "/ttd/bookmarks"), nullptr, [done](int status, Json::Value body) {
+                        if (status != 200)
+                        {
+                            done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
+                            return;
+                        }
+                        const Json::Value& bookmarks = body["bookmarks"];
+                        std::ostringstream out;
+                        out << bookmarks.size() << " bookmark(s)";
+                        for (Json::ArrayIndex i = 0; i < bookmarks.size(); ++i)
+                        {
+                            out << "\n- '" << bookmarks[i]["label"].asString() << "' @ frame "
+                                << bookmarks[i]["frame"].asUInt64();
+                            if (bookmarks[i]["tinframe"].asUInt() != 0)
+                            {
+                                out << " t=" << bookmarks[i]["tinframe"].asUInt();
+                            }
+                        }
+                        out << "\n(advisory — never a replay barrier)";
+                        done(ToolResult::Ok(out.str(), std::move(body)));
+                    });
+                }
+                else if (action == "bookmark_delete")
+                {
+                    ForwardCall("DELETE", Endpoint(id, "/ttd/bookmarks/" + UrlEncodeSegment(args["label"].asString())),
+                                nullptr, caller, "Bookmark '" + args["label"].asString() + "' removed from " + id, done);
+                }
+                else if (action == "seek_bookmark")
+                {
+                    Json::Value body;
+                    body["bookmark"] = args["label"].asString();
+                    ForwardCall("POST", Endpoint(id, "/ttd/seek"), &body, caller,
+                                "Seek to bookmark '" + args["label"].asString() + "' on " + id, done);
+                }
+                else
+                {
+                    done(ToolResult::Error("Unknown action '" + action + "'"));
+                }
+                (void)args;
+            };
+
+            TargetResolver::ResolveFromArgs(args, caller, [forward, done](bool ok, const std::string& idOrError) {
+                if (!ok)
+                {
+                    done(ToolResult::Error(idOrError));
+                    return;
+                }
+                forward(idOrError);
+            });
+        });
+}
+
+} // namespace
+
+/// endregion </time_travel>
+
 /// region <Registry composition>
 
 std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
@@ -1513,6 +1672,9 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterInspectState(*registry);
     RegisterTypeInput(*registry);
     RegisterMouseInput(*registry);
+
+    // TD-4 — time_travel (status + agent bookmarks; seed of the full TTD tool)
+    RegisterTimeTravel(*registry);
 
     // Phase 2 — smart tools
     RegisterManageSymbols(*registry);

@@ -2028,6 +2028,106 @@ public:
         });
 
         // -----------------------------------------------------------------
+        // TD-4 — agent bookmarks (advisory annotations, never barriers).
+        // Labels are keys: non-empty, at most 63 chars, unique per session.
+        // -----------------------------------------------------------------
+
+        lua.set_function("ttd_bookmark_add", [this](const std::string& label,
+                                                     sol::optional<uint64_t> frameOpt,
+                                                     sol::optional<uint32_t> tInFrameOpt) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            result["added"] = false;
+            if (!_emulator) { result["error"] = "no emulator"; return result; }
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) { result["error"] = "TTD not available"; return result; }
+
+            // Position omitted → current position (mark here).
+            ttd::TTDTimePoint time = ctx->pTimeTravelManager->CurrentPosition();
+            if (frameOpt)
+            {
+                time.frame    = *frameOpt;
+                time.tInFrame = tInFrameOpt.value_or(0);
+            }
+
+            std::string err;
+            if (!ctx->pTimeTravelManager->AddBookmark(time, label, &err))
+            {
+                result["error"] = err;
+                return result;
+            }
+            result["added"]    = true;
+            result["label"]    = label;
+            result["frame"]    = time.frame;
+            result["tinframe"] = time.tInFrame;
+            return result;
+        });
+
+        lua.set_function("ttd_bookmarks", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) return result;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return result;
+            int idx = 1;  // Lua tables are 1-based
+            for (const auto& bm : ctx->pTimeTravelManager->GetBookmarks())
+            {
+                sol::table entry = lua_view.create_table();
+                entry["frame"]    = bm.time.frame;
+                entry["tinframe"] = bm.time.tInFrame;
+                entry["label"]    = bm.label;
+                result[idx++]     = entry;
+            }
+            return result;
+        });
+
+        lua.set_function("ttd_bookmark_delete", [this](const std::string& label) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return false;
+            return ctx->pTimeTravelManager->RemoveBookmark(label);
+        });
+
+        // A bookmark seek IS a seek — identical result shape to ttd_seek
+        // (plus the resolved label), so a real barrier between the restore
+        // checkpoint and the target still surfaces as halt_reason
+        // "external_event". A bookmark itself never halts anything.
+        lua.set_function("ttd_seek_bookmark", [this](const std::string& label) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) { result["reached"] = false; return result; }
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager)
+            {
+                result["reached"] = false;
+                result["error"]   = "TTD not available";
+                return result;
+            }
+            ttd::TimeTravelManager::TTDSeekResult r;
+            std::string err;
+            const bool reached = ctx->pTimeTravelManager->SeekToBookmark(label, &r, &err);
+            result["reached"] = reached;
+            if (!err.empty())
+                result["error"] = err;
+
+            sol::table arrivedAt = lua_view.create_table();
+            arrivedAt["frame"]    = r.arrivedAt.frame;
+            arrivedAt["tinframe"] = r.arrivedAt.tInFrame;
+            result["arrived_at"]  = arrivedAt;
+
+            const char* reasonStr = "target";
+            switch (r.haltReason)
+            {
+                case ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent: reasonStr = "external_event"; break;
+                case ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange:    reasonStr = "out_of_range"; break;
+                default: break;
+            }
+            result["halt_reason"] = reasonStr;
+            result["bookmark"]    = label;
+            return result;
+        });
+
+        // -----------------------------------------------------------------
         // Phase 4 — Reverse search + dump + instruction step
         // -----------------------------------------------------------------
 
