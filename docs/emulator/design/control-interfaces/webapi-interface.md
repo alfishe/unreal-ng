@@ -70,15 +70,8 @@ The WebAPI implements the same command semantics as other interfaces (CLI, Pytho
 ## Implemented Endpoints
 
 ### 1. List Emulators
-**Endpoint**: `GET /api/v1/emulators`  
-**Description**: Get list of all emulator instances  
-
-**Request**:
-```http
-GET /api/v1/emulators HTTP/1.1
-Host: localhost:8090
-Accept: application/json
-```
+**Endpoint**: `GET /api/v1/emulator`  
+**Description**: Get list of all emulator instances (each entry carries the machine identity block)  
 
 **Response**:
 ```json
@@ -86,59 +79,71 @@ Accept: application/json
   "emulators": [
     {
       "id": "550e8400-e29b-41d4-a716-446655440000",
-      "symbolic_id": "main",
-      "created_at": "2026-01-03T10:30:00Z",
-      "last_activity": "2026-01-03T10:35:22Z",
       "state": "running",
-      "uptime": "00:05:22"
+      "is_running": true,
+      "is_paused": false,
+      "is_debug": false,
+      "model": "PENTAGON",
+      "model_full_name": "Pentagon",
+      "ram_kb": 128,
+      "video_mode": "Standard",
+      "speed_multiplier": 1,
+      "config_folder": "pentagon128k"
     }
   ],
   "count": 1
 }
 ```
 
-### 2. Get Emulator Status
-**Endpoint**: `GET /api/v1/emulators/status`  
-**Description**: Get overall status of all emulators  
+**Machine identity fields** (present on every lifecycle response — list, details, create, model switch; also exposed via the MCP `machine` aspect):
+- `model` / `model_full_name`: short name (for create requests) and human-readable name
+- `ram_kb`: configured RAM
+- `video_mode`: active video mode (`null` until the screen subsystem exists; `ATM16`/`Profi 512x240`/... on builds with extended video support)
+- `speed_multiplier`: live Z80 frequency multiplier (reflects turbo)
+- `config_folder`: machine config folder under `configs/`
+
+### 2. Get Server Status
+**Endpoint**: `GET /api/v1/emulator/status`  
+**Description**: Instance counts by state, build fingerprint, and which machines this build can create  
 
 **Response**:
 ```json
 {
-  "status": "ok",
-  "emulators": [
-    {
-      "id": "550e8400-e29b-41d4-a716-446655440000",
-      "state": "running",
-      "fps": 50.0,
-      "cpu_usage": 45.2
-    }
-  ]
+  "emulator_count": 1,
+  "states": { "running": 1 },
+  "server": {
+    "version": "1.0.0",
+    "git_branch": "master",
+    "git_commit": "5719e27e",
+    "build_type": "Release"
+  },
+  "models_creatable": ["PENTAGON", "48K", "128k", "PLUS3", "PROFI", "SCORPION", "PROFSCORP"]
 }
 ```
 
+> The `server` block is captured at CMake configure time — a branch switch or new commit requires reconfiguring to refresh. Use it to attribute triage sessions to a build. `models_creatable` lists the short names a create can succeed with.
+
 ### 3. Get Emulator Details
-**Endpoint**: `GET /api/v1/emulators/{id}`  
-**Description**: Get detailed information about specific emulator  
+**Endpoint**: `GET /api/v1/emulator/{id}`  
+**Description**: Get detailed information about a specific emulator (with the machine identity block)  
 
 **Parameters**:
-- `id` (path): Emulator UUID or symbolic ID
+- `id` (path): Emulator UUID or index (0-based)
 
 **Response**:
 ```json
 {
   "id": "550e8400-e29b-41d4-a716-446655440000",
-  "symbolic_id": "main",
   "state": "paused",
-  "created_at": "2026-01-03T10:30:00Z",
-  "uptime": "00:05:22",
-  "registers": {
-    "af": "0x44C4",
-    "bc": "0x3F00",
-    "de": "0x0000",
-    "hl": "0x5C00",
-    "pc": "0x0605",
-    "sp": "0xFF24"
-  }
+  "is_running": false,
+  "is_paused": true,
+  "is_debug": false,
+  "model": "PENTAGON",
+  "model_full_name": "Pentagon",
+  "ram_kb": 128,
+  "video_mode": "Standard",
+  "speed_multiplier": 1,
+  "config_folder": "pentagon128k"
 }
 ```
 
@@ -174,28 +179,62 @@ Content-Type: application/json
 **Endpoint**: `POST /api/v1/emulators/{id}/stop`  
 
 ### 5. Create Emulator
-**Endpoint**: `POST /api/v1/emulators`  
-**Description**: Create new emulator instance  
+**Endpoint**: `POST /api/v1/emulator/create` (also `POST /api/v1/emulator/start` = create + start)  
+**Description**: Create new emulator instance. **Strict semantics**: a requested model this build cannot instantiate fails with `400` and a reason — there is NO silent fallback to a default 48K machine.  
 
 **Request**:
 ```json
 {
   "symbolic_id": "test_instance",
-  "config": {
-    "model": "spectrum128",
-    "rom": "128k.rom"
-  }
+  "model": "128k",
+  "ram_size": 128
 }
 ```
 
-**Response**:
+**Response 201**:
 ```json
 {
-  "status": "success",
   "id": "550e8400-e29b-41d4-a716-446655440001",
-  "symbolic_id": "test_instance"
+  "state": "initialized",
+  "symbolic_id": "test_instance",
+  "model": "128k",
+  "model_full_name": "ZX-Spectrum 128k",
+  "ram_kb": 128,
+  "video_mode": null,
+  "speed_multiplier": 1,
+  "config_folder": "spectrum128"
 }
 ```
+
+**Response 400** (model not creatable / unknown / bad RAM):
+```json
+{
+  "error": "Bad Request",
+  "message": "model 'ATM710' is not supported by this build (PortDecoder::GetPortDecoderForModel - unknown model 6)",
+  "requested_model": "ATM710",
+  "available_models_endpoint": "/api/v1/emulator/models"
+}
+```
+
+### 5a. List Models (runtime-authoritative)
+**Endpoint**: `GET /api/v1/emulator/models`  
+**Description**: All known machine models with per-entry `creatable` flags. This endpoint — not docs — is the authoritative model list: a `creatable: false` entry (missing port decoder or config folder in this build) fails on create with the reason above.
+
+```json
+{
+  "models": [
+    { "id": 0, "name": "PENTAGON", "full_name": "Pentagon", "default_ram_kb": 128,
+      "available_ram_sizes_kb": [128, 512, 1024], "creatable": true },
+    { "id": 5, "name": "ATM3", "full_name": "ZX-Evo", "default_ram_kb": 1024,
+      "available_ram_sizes_kb": [1024], "creatable": false }
+  ],
+  "count": 16
+}
+```
+
+### 5b. Switch Model (validate-first)
+**Endpoint**: `POST /api/v1/emulator/{id}/model` (body `{"model": "...", "ram_size": N}`)  
+**Description**: The request is validated BEFORE the current instance is stopped/removed: an unknown model, unsupported RAM or non-creatable model returns `400` and the current emulator keeps running untouched. A successful switch stops the old instance, creates and starts a new one (different ID) and returns the machine identity block for the new instance.
 
 ### 6. Remove Emulator
 **Endpoint**: `DELETE /api/v1/emulators/{id}`  
@@ -251,7 +290,9 @@ GET /api/v1/emulator/{id}/calltrace           Call trace history (?limit=N)
 GET /api/v1/emulator/{id}/disasm              Disassemble Z80 code (?address=&count=, default: PC)
 GET /api/v1/emulator/{id}/disasm/page         Disassemble from physical page (?type=&page=&offset=&count=)
 POST /api/v1/emulator/{id}/memory/find        Search Z80 memory for a byte pattern (body: {"pattern_hex": "AF 3C"})
-GET  /api/v1/emulator/{id}/state/screen/digest  Stable screen-content digest (range or banks, border folding)
+GET  /api/v1/emulator/{id}/state/screen/digest  Stable screen-content digest (range or banks, border folding; ?mode=active follows the displayed surface)
+GET  /api/v1/emulator/{id}/ports             Static port map + live routing flags (which devices answer which ports, under which gates); rows carry semantic `tags` (memory/rom/screen/sound_ay/…) and the `latch` live-value binding (p7FFD, p1FFD, … or null)
+GET  /api/v1/emulator/{id}/state/paging      Unified paging state (P1-2): tagged latch rows with live values + §5.1 decoded bits, 4-bank table with ROM `name`/`role`/`signature` (§5.2 — role≠name is the wrong-ROM signal), `paging_locked`, `trdos_active`
 GET  /api/v1/emulator/{id}/video/beam         Current raster position and beam zone
 GET  /api/v1/emulator/{id}/frame_cost         Per-frame halt/run cost accounting
 GET  /api/v1/emulator/{id}/state/audio/ay      AY/SSG chips overview (core DeviceState report)
@@ -954,6 +995,7 @@ Numbers must be JSON integers: `"10"` and `1.5` are rejected with 400.
 | `button_mask` | Internal button byte, active-low (a pressed button is bit 0). 254 = left down. |
 | `ports` | What the three ports return right now, as integers. `FADF` = buttons (+ wheel), `FBDF` = X, `FFDF` = Y. |
 | `pending_click` | `null`, or `{"button":"left","frames_left":1}` while a click is being held. |
+| `routing` | `{"ports_decoded": bool, "note": "..."}` — would a mouse port read be decoded right now? Hidden while TR-DOS ports are accessible, when a registered peripheral claims the port family, or behind model-specific gating (Scorpion DOS trigger / Shadow Monitor beta mirrors). Same live source as `GET /ports`. |
 | `ttd_journal` | `"supported"`: TTD recordings include mouse input. |
 
 A successful response may carry a `"warning"` string: the mouse is not fitted

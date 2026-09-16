@@ -597,6 +597,38 @@ std::string ROM::GetROMTitle(const std::string& signature)
     return result;
 }
 
+std::string ROM::GetROMPageRole(uint8_t page) const
+{
+    static const char* PENTAGON_SCORP_ROLES[] =
+    {
+        "Service ROM", "TR-DOS ROM", "128K Editor/Menu ROM", "48K BASIC ROM"
+    };
+    static const char* PLUS3_ROLES[] =
+    {
+        "+3 Editor ROM", "48K BASIC ROM", "+3DOS ROM", "48K BASIC ROM (copy)"
+    };
+
+    const CONFIG& config = _context->config;
+
+    switch (config.mem_model)
+    {
+        case MM_SPECTRUM48:
+            return "48K BASIC ROM";
+        case MM_SPECTRUM128:
+            return (page == 0) ? "128K Editor/Menu ROM" : "48K BASIC ROM";
+        case MM_PENTAGON:
+        case MM_SCORP:
+        case MM_PROFSCORP:
+            return (page < 4) ? PENTAGON_SCORP_ROLES[page]
+                              : StringHelper::Format("ROM Page %d", static_cast<int>(page));
+        case MM_PLUS3:
+            return (page < 4) ? PLUS3_ROLES[page]
+                              : StringHelper::Format("ROM Page %d", static_cast<int>(page));
+        default:
+            return StringHelper::Format("ROM Page %d", static_cast<int>(page));
+    }
+}
+
 std::string ROM::GetROMTitleByAddress(const uint8_t* physicalAddress)
 {
     if (!physicalAddress || !_context || !_context->pMemory)

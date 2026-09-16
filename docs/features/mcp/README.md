@@ -11,8 +11,9 @@ Cline, Continue, VS Code, custom SDK clients) operate the emulator the way a
 human does — through high-level intent ("load this tape and run it", "why is
 this frame slow?", "record a GIF of the effect") instead of raw register
 poking. It sits on top of the existing WebAPI: every tool fans out to loopback
-HTTP calls, so the WebAPI stays the single source of truth for emulator
-state.
+HTTP calls and forwards the payloads verbatim, so MCP clients get the same
+information WebAPI clients get — identical data from the same handlers
+(parity rule: all automation modules are equally important).
 
 Design facts at a glance:
 
@@ -104,10 +105,10 @@ progress when the request carries a `_meta.progressToken` (see
 
 | Tool | Purpose | Progress |
 |:--|:--|:--|
-| `emulator_manage` | create/list/status/start/stop/pause/resume/reset/destroy, `list_models` | — |
+| `emulator_manage` | create/list/status/start/stop/pause/resume/reset/destroy, `list_models` (per-model `creatable` flags), `server` (build fingerprint + `models_creatable`); responses carry machine identity | — |
 | `load_software` | `.sna/.z80` snapshots, `.tap/.tzx` tapes (auto-play), `.trd/.scl/.fdi` disks | — |
 | `control_execution` | run/pause/resume/step/step_n/step_over/step_out, `run_frames`/`run_tstates`/`run_to_interrupt`, breakpoints | — |
-| `inspect_state` | aspect fan-out: machine, registers, memory, disasm, stack, breakpoints, memory_banks, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, fdc (device reports, see command-interface.md §3.3) | one notification per aspect |
+| `inspect_state` | aspect fan-out: machine, registers, memory, disasm, stack, breakpoints, memory_banks, paging (tagged latches + bank table), ports (static port map with semantic tags + live routing), screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, fdc, mouse (device reports, see command-interface.md §3.3) | one notification per aspect |
 | `type_input` | type (tokenized BASIC entry), tap/press/release, combo, macro, `release_all`, status, `list_keys` | — |
 | `manage_symbols` | `load_labels`, list, resolve, `load_listing`, `source_at`, `step_line`, `run_to_line` (sjasmplus `.lst`) | — |
 | `debug_code` | disassemble, assemble (two-pass, labels), `find_bytes`, `trace` (calltrace sessions), `porttrace` | `trace`: per phase (start/run/stop/read) |
@@ -196,7 +197,7 @@ emulator, addressed by `target`.
 | Aspect | xspeccy-mcp | unreal-ng (this server) |
 |:--|:--|:--|
 | Transport | stdio only | Streamable HTTP :8092 (JSON/SSE) + stdio bridge |
-| Backend | direct core calls | loopback WebAPI — single source of truth |
+| Backend | direct core calls | loopback WebAPI — shared handlers, identical information |
 | Tool count | 48 flat tools | 11 smart tools + schema-driven router |
 | Context cost | ~4k tokens | ~1.6k tokens |
 | Progress | — | `notifications/progress` per real work unit (SSE or stdio lines) |

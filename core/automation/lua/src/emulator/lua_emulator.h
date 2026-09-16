@@ -30,6 +30,8 @@
 #include <debugger/assembler/z80textassembler.h>
 #include <debugger/listing/listingparser.h>
 #include <emulator/platform.h>
+#include <emulator/ports/portdecoder.h>
+#include <emulator/config.h>
 #include <emulator/state/devicestate.h>
 #include <emulator/video/screendigest.h>
 #include <base/featuremanager.h>
@@ -1159,7 +1161,23 @@ public:
             if (!state.available)
                 return mouseError(s, "Mouse device not available");
             sol::variadic_results results;
-            results.push_back(sol::make_object(s, mouseStateTable(s, state)));
+            sol::table table = mouseStateTable(s, state);
+            // Routing mirrors GET /mouse/status: `present` alone cannot distinguish
+            // "not fitted" from "fitted but shadowed" (mouse design Q4 / gap D-1)
+            Emulator* emulator = effectiveEmulator();
+            EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+            if (context && context->pPortDecoder)
+            {
+                bool decoded = false;
+                std::string note;
+                context->pPortDecoder->GetMouseRoutingState(decoded, note);
+                sol::state_view lua(s);
+                sol::table routing = lua.create_table();
+                routing["ports_decoded"] = decoded;
+                routing["note"] = note;
+                table["routing"] = routing;
+            }
+            results.push_back(sol::make_object(s, table));
             return results;
         });
 
@@ -2277,11 +2295,14 @@ public:
         });
 
         // Screen-area FNV-1a-64 digest — change detection without pixel transfer.
-        // screen_digest()            -> default banks (both screen pages on 128K)
-        // screen_digest(start, end)  -> explicit Z80 range
+        // screen_digest()                            -> default banks (both screen pages on 128K)
+        // screen_digest(start, end)                  -> explicit Z80 range
+        // screen_digest(nil, nil, nil, "active")     -> banks of the video mode actually
+        //                                               displayed (P1-3; explicit range wins)
         lua.set_function("screen_digest", [this](sol::optional<unsigned> startOpt,
                                                  sol::optional<unsigned> endOpt,
-                                                 sol::optional<bool> includeBorderOpt) -> sol::table {
+                                                 sol::optional<bool> includeBorderOpt,
+                                                 sol::optional<std::string> modeOpt) -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
             Emulator* emulator = effectiveEmulator();
@@ -2300,6 +2321,21 @@ public:
 
             const bool is128K = (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PENTAGON ||
                                  config.mem_model == MM_PLUS3);
+
+            // mode: "active" hashes the RAM pages the CURRENT video mode actually
+            // displays (ATM hardware modes follow the 7FFD-selected bit-plane pair);
+            // "default" / omitted keeps the model-dependent pages 5/7
+            bool activeMode = false;
+            if (modeOpt.has_value())
+            {
+                if (*modeOpt == "active")
+                    activeMode = true;
+                else if (*modeOpt != "default")
+                {
+                    result["error"] = "mode must be 'default' or 'active'";
+                    return result;
+                }
+            }
 
             const uint64_t previousDigest = state.last_screen_digest;
             const uint64_t previousFrame = state.last_screen_digest_frame;
@@ -2326,9 +2362,30 @@ public:
             }
             else
             {
-                std::vector<uint16_t> banks{ScreenDigest::kScreen0RAMPage};
-                if (is128K)
-                    banks.push_back(ScreenDigest::kScreen1RAMPage);
+                std::vector<uint16_t> banks;
+                if (activeMode)
+                {
+                    // Surface actually displayed by the current video mode: ZX modes
+                    // keep pages 5/7, ATM hardware modes hash the 7FFD-selected
+                    // bit-plane pair - flipping FF77 between ZX and 16c surfaces now
+                    // flips the digest even with constant underlying pages
+                    const VideoModeEnum videoMode = context->pScreen->GetVideoMode();
+                    banks = Screen::GetActiveSurfaceRAMPages(videoMode, state.p7FFD, is128K);
+
+                    sol::table pages = lua_view.create_table();
+                    for (uint16_t page : banks)
+                        pages.add(page);
+                    sol::table activeSurface = lua_view.create_table();
+                    activeSurface["video_mode"] = Screen::GetVideoModeName(videoMode);
+                    activeSurface["pages"] = pages;
+                    result["active_surface"] = activeSurface;
+                }
+                else
+                {
+                    banks.push_back(ScreenDigest::kScreen0RAMPage);
+                    if (is128K)
+                        banks.push_back(ScreenDigest::kScreen1RAMPage);
+                }
 
                 sol::table perBank = lua_view.create_table();
                 for (uint16_t page : banks)
@@ -2360,6 +2417,193 @@ public:
             if (previousFrame != 0)
                 result["previous_digest_frame"] = static_cast<uint64_t>(previousFrame);
             return result;
+        });
+
+        // Static port-map introspection (P1-5): which devices answer which I/O
+        // ports on this model, under which gating conditions, plus the live
+        // routing flags. Mirrors GET /api/v1/emulator/{id}/ports
+        // (PortDecoder::getPortMapEntries / GetMouseRoutingState, single source).
+        lua.set_function("ports_map", [this](sol::this_state s) -> sol::variadic_results {
+            sol::variadic_results results;
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return mouseError(s, "no emulator");
+
+            EmulatorContext* context = emulator->GetContext();
+            if (!context || !context->pPortDecoder)
+                return mouseError(s, "context not initialized");
+
+            auto portHex = [](uint16_t value) {
+                char text[8];
+                std::snprintf(text, sizeof(text), "0x%04X", value);
+                return std::string(text);
+            };
+
+            sol::state_view lua(s);
+            sol::table result = lua.create_table();
+            result["model"] = Config::GetModelFullName(context->config.mem_model);
+
+            sol::table entries = lua.create_table();
+            for (const PortMapEntry& entry : context->pPortDecoder->getPortMapEntries())
+            {
+                sol::table item = lua.create_table();
+                item["port"] = portHex(entry.port);
+                item["mask"] = portHex(entry.mask);
+                item["match"] = portHex(entry.match);
+                item["device"] = entry.device;
+                if (entry.gate)  // absent key = ungated (WebAPI sends null)
+                    item["gate"] = entry.gate;
+
+                // Tagged registry fields (P1-2): names from the core single
+                // source - identical strings on WebAPI /ports, MCP and Python
+                sol::table tagNames = lua.create_table();
+                for (const std::string& tagName : PortTagSetToStrings(entry.tags))
+                    tagNames.add(tagName);
+                item["tags"] = tagNames;  // empty table = untagged row
+                const char* latchName = PagingLatchToString(entry.latch);
+                if (latchName)  // absent key = no live-value binding
+                    item["latch"] = latchName;
+
+                entries.add(item);
+            }
+            result["entries"] = entries;
+
+            bool mouseDecoded = false;
+            std::string mouseNote;
+            context->pPortDecoder->GetMouseRoutingState(mouseDecoded, mouseNote);
+
+            const CONFIG& config = context->config;
+            const EmulatorState& state = context->emulatorState;
+            sol::table live = lua.create_table();
+            live["trdos_active"] = (state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0;
+            live["mouse_ports_decoded"] = mouseDecoded;
+            live["mouse_routing_note"] = mouseNote;
+            const bool scorpion = (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP);
+            if (scorpion)
+                live["shadow_monitor_paged"] = (state.p1FFD & 0x02) != 0;
+            // else: key absent = the #1FFD latch does not exist on this model
+            result["live"] = live;
+
+            results.push_back(sol::make_object(s, result));
+            return results;
+        });
+
+        // Tagged paging latches + bank table (P1-2 design).
+        // Mirrors GET /api/v1/emulator/{id}/state/paging.
+        lua.set_function("paging_state", [this](sol::this_state s) -> sol::variadic_results {
+            sol::variadic_results results;
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return mouseError(s, "no emulator");
+
+            EmulatorContext* context = emulator->GetContext();
+            if (!context || !context->pPortDecoder || !context->pMemory)
+                return mouseError(s, "context not initialized");
+
+            auto hexByte = [](uint32_t value) {
+                char text[8];
+                std::snprintf(text, sizeof(text), "0x%02X", value);
+                return std::string(text);
+            };
+            auto hexWord = [](uint16_t value) {
+                char text[8];
+                std::snprintf(text, sizeof(text), "0x%04X", value);
+                return std::string(text);
+            };
+
+            sol::state_view lua(s);
+            sol::table result = lua.create_table();
+            const CONFIG& config = context->config;
+            const EmulatorState& state = context->emulatorState;
+            Memory& memory = *context->pMemory;
+            PortDecoder* decoder = context->pPortDecoder;
+            ROM* rom = context->pCore ? context->pCore->GetROM() : nullptr;
+
+            result["model"] = Config::GetModelFullName(config.mem_model);
+            result["paging_locked"] = (state.p7FFD & PORT_7FFD_LOCK) != 0;
+            result["trdos_active"] = (state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0;
+
+            // Latches array
+            sol::table latches = lua.create_table();
+            for (const PortMapEntry& entry : decoder->GetPagingLatches(Tags(PortTag::Memory)))
+            {
+                sol::table latch = lua.create_table();
+                latch["port"] = hexWord(entry.port);
+                latch["device"] = entry.device ? entry.device : "";
+                if (entry.gate) latch["gate"] = entry.gate;
+
+                // Tag names + latch binding from the core single source -
+                // identical strings on /state/paging, MCP, CLI and Python
+                sol::table tagNames = lua.create_table();
+                for (const std::string& tagName : PortTagSetToStrings(entry.tags))
+                    tagNames.add(tagName);
+                latch["tags"] = tagNames;
+                const char* latchName = PagingLatchToString(entry.latch);
+                if (latchName)
+                    latch["latch"] = latchName;
+
+                uint32_t value = PortDecoder::ReadPagingLatch(entry.latch, state);
+                latch["value"] = hexByte(value);
+
+                // Decoded bits: core §5.1 dictionary (DecodePagingLatch) with
+                // native ints/bools, matching /state/paging verbatim
+                sol::table decoded = lua.create_table();
+                for (const DecodedLatchField& field : DecodePagingLatch(entry.latch, value, config.mem_model, config.ramsize))
+                {
+                    decoded[field.key] = field.isBool ? sol::make_object(s, field.boolValue)
+                                                      : sol::make_object(s, field.intValue);
+                }
+                if (decoded.size() > 0)
+                    latch["decoded"] = decoded;
+                latches.add(latch);
+            }
+            result["latches"] = latches;
+
+            // Banks array
+            sol::table banks = lua.create_table();
+            for (int i = 0; i < 4; ++i)
+            {
+                sol::table bank = lua.create_table();
+                bank["bank"] = i;
+                const char* ranges[] = {"0x0000-0x3FFF", "0x4000-0x7FFF", "0x8000-0xBFFF", "0xC000-0xFFFF"};
+                bank["address_range"] = ranges[i];
+
+                if (i == 0 && memory.IsBank0ROM())
+                {
+                    bank["type"] = "ROM";
+                    uint8_t romPage = memory.GetROMPage();
+                    bank["page"] = static_cast<int>(romPage);
+                    if (rom)
+                    {
+                        uint8_t* pagePtr = memory.ROMPageHostAddress(romPage);
+                        if (pagePtr)
+                        {
+                            std::string sig = rom->CalculateSignature(pagePtr, 0x4000);
+                            // GetROMTitle carries the "Unknown ROM, <digest>"
+                            // fallback; role = core layout table (§5.2) - a
+                            // role/name mismatch is the wrong-ROM signal
+                            bank["name"] = rom->GetROMTitle(sig);
+                            bank["signature"] = sig;
+                        }
+                        bank["role"] = rom->GetROMPageRole(romPage);
+                    }
+                }
+                else
+                {
+                    bank["type"] = "RAM";
+                    switch (i) {
+                        case 0: bank["page"] = static_cast<int>(memory.GetRAMPageForBank0()); break;
+                        case 1: bank["page"] = static_cast<int>(memory.GetRAMPageForBank1()); bank["contended"] = true; break;
+                        case 2: bank["page"] = static_cast<int>(memory.GetRAMPageForBank2()); break;
+                        case 3: bank["page"] = static_cast<int>(memory.GetRAMPageForBank3()); break;
+                    }
+                }
+                banks.add(bank);
+            }
+            result["banks"] = banks;
+
+            results.push_back(sol::make_object(s, result));
+            return results;
         });
 
         // Raster beam position and zone at the current t-state

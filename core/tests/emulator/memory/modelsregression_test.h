@@ -25,14 +25,16 @@ struct ModelsRegressionRow
     std::string bank3;
 };
 
-/// @brief Golden bank-map regression harness for the pre-existing models
-///        (48K, 128K, +3, Pentagon128, Profi).
+/// @brief Golden bank-map regression harness - one golden table per port decoder.
 ///
-/// Runs a scripted sequence of #7FFD / #1FFD / #DFFD writes through each
-/// model's port decoder and dumps the resulting bank map after every write.
-/// The goldens are committed in the .cpp file and were captured on a clean
-/// tree before any Scorpion production change: a mismatch means a real
-/// behavior change in an existing model and blocks the task that caused it
+/// Runs a scripted sequence of #7FFD / #1FFD / #DFFD / #EFF7 writes through a
+/// model's port decoder and records the four Z80-visible bank windows after
+/// every write. The factory maps (model, ramsize) to a concrete decoder class
+/// and the class alone defines the latch semantics, so every decoder carries
+/// its own committed golden table: a single universal table cannot express
+/// e.g. #7FFD bit 5 being the paging lock on Pentagon128/512 but the pb5 bank
+/// bit on Pentagon1024 with the extension enabled. A mismatch means a real
+/// behavior change in that decoder and blocks the task that caused it
 /// (testing-plan 2026-09-07-scorpion-zs256-clone 3.2 / 5).
 class ModelsRegression_Test : public ::testing::Test
 {
@@ -59,4 +61,11 @@ protected:
                                                  uint32_t ramSizeKB,
                                                  bool trdosPresent,
                                                  const std::vector<std::pair<uint16_t, uint8_t>>& writes);
+
+    /// Compares observed rows against one decoder's golden table. The row
+    /// count must match exactly - a sequence and its goldens are always
+    /// updated together
+    void VerifyRowsAgainstGoldens(const char* decoderName,
+                                  const std::vector<ModelsRegressionRow>& observed,
+                                  const std::vector<ModelsRegressionRow>& goldens);
 };

@@ -121,12 +121,15 @@ void EmulatorAPI::basicInject(const HttpRequestPtr& req,
     
     auto json = req->getJsonObject();
     
-    // Accept both 'program' (legacy) and 'command' (new) parameters
+    // Accept both 'program' (numbered listing written into program memory)
+    // and 'command' (single command typed into the editor line)
     std::string command;
+    bool isProgram = false;
     if (json && json->isMember("command")) {
         command = (*json)["command"].asString();
     } else if (json && json->isMember("program")) {
         command = (*json)["program"].asString();
+        isProgram = true;
     } else {
         Json::Value error;
         error["error"] = "Bad Request";
@@ -139,8 +142,15 @@ void EmulatorAPI::basicInject(const HttpRequestPtr& req,
         return;
     }
     
-    // Use autoNavigateAndInject - handles menu navigation automatically
-    auto result = BasicEncoder::autoNavigateAndInject(emulator.get(), command);
+    // 'program' goes through a deterministic memory write; 'command' is
+    // typed into the editor line via the ROM injection path
+    BasicEncoder::InjectionResult result;
+    if (isProgram) {
+        result = BasicEncoder::injectProgram(emulator.get(), command);
+    } else {
+        // Use autoNavigateAndInject - handles menu navigation automatically
+        result = BasicEncoder::autoNavigateAndInject(emulator.get(), command);
+    }
     
     Json::Value ret;
     ret["success"] = result.success;

@@ -258,9 +258,10 @@ Commands to manage the connection and emulator instances. These commands are ess
 | :--- | :--- | :--- | :--- |
 | `help` | `?` | `[command]` | Display available commands and their usage. If `command` is specified, show detailed help for that command. |
 | `start` | | `[model]` | Create and start a new emulator instance. Optional `model` parameter specifies model (default: 48K). Returns the new instance ID. Triggers `NC_EMULATOR_INSTANCE_CREATED` notification. | 🔮 Planned |
-| `start <model>` | | `<model-name>` | Start a new emulator instance with specific Spectrum model (48k, 128k, +2, +3, pentagon, etc.). Returns the new instance ID. | 🔮 Planned |
+| `start <model>` | | `<model-name>` | Start a new emulator instance with specific Spectrum model short name (e.g. `48K`, `128k`, `PLUS3`, `PENTAGON`, `SCORPION`, `PROFI`; see `models`). **Strict**: a model this build cannot create fails with a reason — there is no silent fallback to a default machine. | 🔮 Planned |
 | `start <config-file>` | | `<config-path>` | Start a new emulator instance using configuration from file. Returns the new instance ID. | 🔮 Planned |
-| `create [model]` | | `[model-name]` | Create a new emulator instance without starting it. If `model` is specified, creates an emulator of that model type (e.g., `48K`, `128K`, `Pentagon`). If no model is specified, creates a default 48K emulator. Instance remains in initialized state until explicitly started with `resume`. Returns the UUID of the created instance. Automatically selects if first instance. Triggers `NC_EMULATOR_INSTANCE_CREATED` notification. |
+| `create [model]` | | `[model-name]` | Create a new emulator instance without starting it. If `model` is specified, creates an emulator of that model type (short name as in `models`). If no model is specified, creates a default 48K emulator. **Strict**: an unknown or non-creatable model fails with a reason (no fallback). The success output echoes the RESOLVED model and RAM, not the requested string. Instance remains in initialized state until explicitly started with `resume`. Returns the UUID of the created instance. Automatically selects if first instance. Triggers `NC_EMULATOR_INSTANCE_CREATED` notification. |
+| `models` | | | List all known machine models with full names and a `(not creatable on this build)` marker for machines whose port decoder or config folder is missing in this build. The WebAPI equivalent (`GET /api/v1/emulator/models`, `creatable` flags) is the runtime-authoritative source. |
 | `stop [id]` | | `[emulator-id|index|all]` | Stop and destroy emulator instance(s). If only one emulator is running, can be called without parameters. Can specify UUID, index from `list` command (1-based), or `all` to stop all instances. Triggers `NC_EMULATOR_INSTANCE_DESTROYED` and `NC_EMULATOR_STATE_CHANGE` notifications. | 🔮 Planned |
 | `stop all` | | | Stop and destroy all emulator instances. | 🔮 Planned |
 | `status` | | | Show the runtime status (Running/Paused/Stopped/Debug) of all emulator instances, including ID, symbolic name, uptime, and current state. |
@@ -308,6 +309,15 @@ Commands to manage the connection and emulator instances. These commands are ess
 - **Config file**: `start /path/to/config.json` (JSON configuration)
 - **Inline config**: Future support for `--option=value` parameters
 
+**Machine Identity and Model Creatability** (P0 fixes from `docs/inprogress/2026-09-14-automation-triage-gaps/`):
+- **Parity rule — one source, equal consumers**: machine identity is computed in exactly one place (`EmulatorManager::GetMachineIdentity` in core). WebAPI and CLI serialize that struct directly; MCP forwards the WebAPI payloads verbatim. WebAPI and MCP are equally important automation surfaces — they must always report the same information, and a field added for one is a field added for all.
+- **Every lifecycle response carries machine identity**: `model` (short name), `model_full_name`, `ram_kb`, `video_mode` (null until the screen subsystem exists; e.g. `ATM16`/`Profi 512x240` on builds with extended video support), `speed_multiplier` (live Z80 multiplier, reflects turbo) and `config_folder`. Applies to CLI create/start output, WebAPI `GET /emulator`, `GET /emulator/{id}`, create/switch responses, and the MCP `machine` aspect.
+- **Strict model semantics**: requesting a model the build cannot instantiate (missing port decoder or config folder — e.g. ATM/ZX-Evo/TS-Conf machines on `master`) fails with the reason (unknown model / RAM size not supported / not supported by this build / init failed). No interface silently falls back to a default 48K machine anymore.
+- **WebAPI error shape** (HTTP 400): `{ "error": "Bad Request", "message": "<reason>", "requested_model": "<X>", "available_models_endpoint": "/api/v1/emulator/models" }`.
+- **Model switch validates first**: `POST /emulator/{id}/model` validates the request BEFORE stopping/removing the current instance — a failed switch leaves the caller's machine untouched (previously it was destroyed first).
+- **Build fingerprint**: `GET /api/v1/emulator/status` reports a `server` block (`version`, `git_branch`, `git_commit`, `build_type`, captured at CMake configure time) plus `models_creatable` (short names a create can succeed with). CLI `status` shows the same build info line; MCP `emulator_manage` action `server` returns the same payload.
+- **Authoritative model list**: `GET /api/v1/emulator/models` (`creatable` flags per entry); CLI `models` mirrors it with markers; MCP `list_models` forwards the same payload. Docs can go stale — the endpoints cannot.
+
 **Multi-Instance Scenarios**:
 - **Testing**: Run multiple instances with different ROMs for compatibility testing
 - **Comparison**: Compare behavior between different Spectrum models
@@ -323,6 +333,13 @@ Started emulator instance: emu-12345678-abcd-1234-5678-123456789abc
 # Start specific model
 > start pentagon
 Started emulator instance: emu-pentagon-87654321-dcba-4321-8765-987654321fed
+Model: Pentagon (128KB)
+
+# Strict failure: model not creatable on this build
+> start atm710
+Error: Failed to create emulator with model 'atm710'
+Reason: model 'ATM710' is not supported by this build (PortDecoder::GetPortDecoderForModel - unknown model 6)
+Available models: PENTAGON, 48K, ...
 
 # List all instances
 > list
@@ -688,7 +705,9 @@ interfaces (CLI, WebAPI, Lua, Python).
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
 | `beam` | | Show the current raster position: frame, scanline, t-state within the frame, and the beam zone (`vsync`, `vblank`, `top_border`, `screen`, `bottom_border`, plus `hblank`/`left_border`/`paper`/`right_border` within the active area). Computed from the same raster descriptors the renderer uses. |
-| `digest <start> <end>` | `<from> <to>` | Compute a stable 64-bit digest over a Z80 address range (typically the screen bitmap `0x4000-0x57FF` and attributes `0x5800-0x5AFF`). The border color is folded into the digest unless `--no-border` is passed. `digest --banks p1,p2` digests physical RAM pages instead of a Z80 range. Prints the digest, covered byte count, and whether it changed since the previous call — a cheap way to detect "did the screen change" in scripts. |
+| `digest <start> <end>` | `<from> <to>` | Compute a stable 64-bit digest over a Z80 address range (typically the screen bitmap `0x4000-0x57FF` and attributes `0x5800-0x5AFF`). The border color is folded into the digest unless `--no-border` is passed. `digest --banks p1,p2` digests physical RAM pages instead of a Z80 range. `digest --active` (P1-3) hashes the RAM pages the **current video mode actually displays** — ATM hardware modes follow the 7FFD-selected bit-plane pair `{videoPage-4, videoPage}`, ZX modes keep pages 5/7 — instead of the model-dependent defaults, and the answer reports the derived `active_surface` (video mode + pages); flipping FF77 between ZX and 16c surfaces flips the digest even with constant underlying pages. Explicit range/banks still override. Prints the digest, covered byte count, and whether it changed since the previous call — a cheap way to detect "did the screen change" in scripts. |
+| `ports` | | Static port map with live routing flags (P1-5 + P1-2 tagged registry): one row per decoded port family — address, mask, match, device, the gating condition that flips the row on/off, the semantic **Tags** (keyboard, memory, rom, screen, storage, mouse, joystick, system, sound members like `sound_ay`/`sound_covox`/`sound_sounddrive`) and the **Latch** live-value binding (`p7FFD`, `p1FFD`, `pDFFD`, …) — derived from the machine's port decoder, plus the live state right now: TR-DOS active, Kempston mouse routing (`decoded` / `shadowed` with the reason), Scorpion Shadow Monitor latch. The entry point for "which device answers this port on this machine?" triage. Same source as the WebAPI `GET /ports` / Lua & Python `ports_map()` / MCP `inspect_state` aspect `ports`. |
+| `paging` | | Tagged paging latches + bank table (P1-2 design): shows all Memory-tagged latch rows (port, value, decoded bits) from the machine's port decoder and the current 4-bank mapping (type RAM/ROM, page, ROM name/role/signature when applicable), plus `paging_locked` and `trdos_active` flags. The entry point for "what is the paging state?" triage. Same source as the WebAPI `GET /state/paging` / Lua & Python `paging_state()` / MCP `inspect_state` aspect `paging`. |
 | `frame_cost` | | Show per-frame cost accounting: t-states spent halted vs running in the last frame and cumulatively, effective CPU frequency (frame budget × frequency multiplier), and the number of frames in the sample. Use it to quantify HALT-heavy main loops. |
 
 #### 3.3 Device State Reports (AY / SSG, TurboSound FM, Beta Disk FDC)
@@ -707,6 +726,8 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | TurboSound FM overview | `state audio fm` | `GET /state/audio/fm` | `audio_fm_state()` | `audio_fm_state()` | `audio_fm` (overview + both chips) |
 | TurboSound FM chip N (0/1) | `state audio fm N` | `GET /state/audio/fm/N` | `audio_fm_state(N)` | `audio_fm_state(N)` | `audio_fm` |
 | Beta Disk WD1793 | `state fdc` | `GET /state/fdc` | `fdc_state()` | `fdc_state()` | `fdc` |
+| Static port map & routing | `ports` | `GET /ports` | `ports_map()` | `ports_map()` | `ports` |
+| Paging latches + bank table | `paging` | `GET /state/paging` | `paging_state()` | `paging_state()` | `paging` |
 
 Every report carries `available` (false with a `description` when the
 device is not on this machine — e.g. `audio/fm` on a plain TurboSound
@@ -1377,7 +1398,7 @@ Monitor and query I/O port values. Ports control all peripheral devices, memory 
 
 | Command | Aliases | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- | :--- |
-| `state ports` | | | List all available I/O ports for the current model and configuration:<br/>• **Port address** (hex and binary)<br/>• **Port decoding** (how hardware decodes the address - from PortDecoder)<br/>• **Device/Function** name<br/>• **Current value** (hex and binary)<br/>• **Value decoding** (bit-by-bit interpretation of value)<br/>• **Direction** (IN/OUT/BOTH)<br/>• **Last access** (timestamp and PC)<br/>Fetches port map from **PortMapper** which maintains model-specific port definitions based on:<br/>• Base model (48K, 128K, +2, +2A, +3, Pentagon, Scorpion, etc.)<br/>• Connected interfaces (Beta Disk, DivIDE, Kempston, etc.)<br/>• Active peripherals (AY chips, Covox, etc.)<br/>Port address decoding rules from **PortDecoder** (e.g., ULA = `xxxxxxx0`, Beta = `xxx11111`). | 🔮 Planned |
+| `state ports` | | | List all available I/O ports for the current model and configuration:<br/>• **Port address** (hex and binary)<br/>• **Port decoding** (how hardware decodes the address - from PortDecoder)<br/>• **Device/Function** name<br/>• **Current value** (hex and binary)<br/>• **Value decoding** (bit-by-bit interpretation of value)<br/>• **Direction** (IN/OUT/BOTH)<br/>• **Last access** (timestamp and PC)<br/>Fetches port map from **PortMapper** which maintains model-specific port definitions based on:<br/>• Base model (48K, 128K, +2, +2A, +3, Pentagon, Scorpion, etc.)<br/>• Connected interfaces (Beta Disk, DivIDE, Kempston, etc.)<br/>• Active peripherals (AY chips, Covox, etc.)<br/>Port address decoding rules from **PortDecoder** (e.g., ULA = `xxxxxxx0`, Beta = `xxx11111`).<br/>**Static half shipped (2026-09, P1-5):** the `ports` command / `GET /ports` / `ports_map()` already return the static decode map (address, mask, match, device, gate) plus live routing flags — see [§3.2](#32-screen-state--frame-cost). The per-port current value / value decoding / last access columns above remain planned. | 🔮 Planned |
 | `state port <port>` | | `<port-number>` | Read and display current value of specific I/O port. Port number in hex (0x00-0xFFFF). Shows:<br/>• **Port address** (hex/binary)<br/>• **Port decoding** (hardware address decoding logic from PortDecoder)<br/>• **Aliases** (other addresses that decode to same port)<br/>• **Raw port value** (hex/binary)<br/>• **Value decoding** (bit-by-bit with labels)<br/>• **Last IN/OUT operations** to this port<br/>• **Device/function name** from PortMapper | 🔮 Planned |
 | `state port watch <port>` | | `<port-number>` | Monitor port for IN/OUT operations in real-time. Displays:<br/>• Direction (IN/OUT)<br/>• Value transferred (hex/binary/decoded)<br/>• PC address that accessed port<br/>• Timestamp (T-states)<br/>Updates continuously until stopped. | 🔮 Planned |
 | `state port history <port> [N]` | | `<port-number> [count]` | Show last N access operations to specific port. Default: 20. Shows:<br/>• Timestamp (T-states)<br/>• Direction (IN/OUT)<br/>• Value (hex/binary/decoded)<br/>• PC address<br/>Useful for tracing peripheral communication patterns. | 🔮 Planned |
@@ -2625,7 +2646,7 @@ sees the button held for exactly N frames.
 | `mouse buttons` | | `<none\|b1,b2…>` | Set the exact set of pressed buttons (`none` = all up). Cancels a pending click. | ✅ Implemented |
 | `mouse wheel` | | `<steps>` | Scroll by whole notches (4-bit counter, wraps at 16). | ✅ Implemented |
 | `mouse clear` | `mouse release_all` | — | Release all buttons, cancel a pending click. | ✅ Implemented |
-| `mouse status` | `mouse info` | — | Counters, buttons, wheel, whether a mouse and a wheel are fitted, the bytes the three ports return, pending click, TTD journal support. | ✅ Implemented |
+| `mouse status` | `mouse info` | — | Counters, buttons, wheel, whether a mouse and a wheel are fitted, the bytes the three ports return, pending click, TTD journal support, and **port routing**: decoded or shadowed with the reason (mouse not fitted, TR-DOS ports accessible, a registered peripheral claims the port family, or model-specific gating — Scorpion DOS trigger / Shadow Monitor). | ✅ Implemented |
 | `mouse set` | | `<x> <y>` | Debug: write the raw X/Y counters (0–255). Allowed while TTD records (journalled). | ✅ Implemented |
 | `mouse help` | | — | Subcommand help. | ✅ Implemented |
 

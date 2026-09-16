@@ -9,6 +9,7 @@
 #include "emulator/platform.h"
 #include "emulator/sound/audio.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/portdecoder.h"
 #include <cassert>
 #include <array>
 #include <algorithm>
@@ -612,6 +613,33 @@ std::string Config::GetConfigFolderForModel(MEM_MODEL model, uint32_t ramSizeKB)
 	std::transform(folder.begin(), folder.end(), folder.begin(),
 	               [](unsigned char c) { return (char)std::tolower(c); });
 	return folder;
+}
+
+bool Config::IsModelCreatable(const TMemModel& model)
+{
+	// Hard prerequisite: the build must know how to decode the model's ports.
+	// GetPortDecoderForModel throws std::logic_error otherwise.
+	if (!PortDecoder::IsModelSupported(model.Model))
+		return false;
+
+	// Second prerequisite: the model's config must be resolvable the exact
+	// way Emulator::Init -> LoadConfig resolves it, so the flag reflects
+	// what a create attempt would actually do.
+	const std::string folder = GetConfigFolderForModel(model.Model, model.defaultRAM);
+	std::string relativePath = FileHelper::PathCombine("configs", folder);
+	relativePath = FileHelper::PathCombine(relativePath, GetDefaultConfig());
+
+	for (const std::string& basePath : { FileHelper::GetExecutablePath(), FileHelper::GetResourcesPath() })
+	{
+		if (basePath.empty())
+			continue;
+
+		std::string configPath = FileHelper::AbsolutePath(FileHelper::PathCombine(basePath, relativePath));
+		if (FileHelper::FileExists(configPath))
+			return true;
+	}
+
+	return false;
 }
 
 void Config::CopyStringValue(const char* src, char* dst, size_t dst_len)

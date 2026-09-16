@@ -153,6 +153,11 @@ target_include_directories(${PROJECT_NAME} PUBLIC
     ${SOURCE_DIR}/3rdparty
     ${SOURCE_DIR}/common
     ${SOURCE_DIR}/emulator
+    # Generated build fingerprint header (buildinfo.h) - configured by the
+    # root CMakeLists.txt from git metadata. PUBLIC so every consumer of
+    # core (automation-webapi/mcp/cli, tests, Qt apps) can
+    # #include "emulator/buildinfo.h".
+    ${CMAKE_BINARY_DIR}/generated
 )
 
 # ymfm include dir: SYSTEM so warnings originating in the upstream headers

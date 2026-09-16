@@ -215,4 +215,13 @@ inline std::string FormatStatus(const MouseStateSnapshot& state, const std::stri
     return text;
 }
 
+/// "  Routing: decoded (standard Kempston address decode)" / shadowed variants.
+/// Mirrors the WebAPI /mouse/status routing object (mouse design Q4 / gap D-1):
+/// `present` alone cannot distinguish "not fitted" from "fitted but shadowed".
+/// The note comes verbatim from PortDecoder::GetMouseRoutingState.
+inline std::string FormatRouting(bool decoded, const std::string& note, const std::string& newline = "\n")
+{
+    return std::string("  Routing: ") + (decoded ? "" : "shadowed - ") + note + newline;
+}
+
 }  // namespace CliMouse

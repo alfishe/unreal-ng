@@ -142,6 +142,8 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
 
                         // Analysis commands (screen digest, beam, frame cost, analyzers)
                         {"digest", &CLIProcessor::HandleDigest},              // Screen area digest (change detection)
+                        {"ports", &CLIProcessor::HandlePorts},                // Static port map + live routing flags
+                        {"paging", &CLIProcessor::HandlePaging},              // Tagged paging latches + bank table (P1-2)
                         {"beam", &CLIProcessor::HandleBeam},                  // Raster beam position/zone
                         {"frame_cost", &CLIProcessor::HandleFrameCost},      // Halt/active frame cost stats
                         {"coverage", &CLIProcessor::HandleCoverage},          // Code coverage control/queries
@@ -619,7 +621,9 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  listing runtoline <n>  - Run until source line n" << NEWLINE;
     oss << NEWLINE;
     oss << "Analysis (digest, beam, frame cost, coverage, capture):" << NEWLINE;
-    oss << "  digest [<start> <end>|--banks p1,p2] [--no-border] - Screen digest" << NEWLINE;
+    oss << "  digest [<start> <end>|--banks p1,p2] [--active] [--no-border] - Screen digest" << NEWLINE;
+    oss << "  ports                   - Port map: which devices answer which I/O ports" << NEWLINE;
+    oss << "  paging                 - Paging state: latches + bank table" << NEWLINE;
     oss << "  beam                   - Raster beam position and zone" << NEWLINE;
     oss << "  frame_cost             - Halt/active cost of the last frame + averages" << NEWLINE;
     oss << "  coverage start|stop|clear|status|gaps [args] - Code coverage" << NEWLINE;

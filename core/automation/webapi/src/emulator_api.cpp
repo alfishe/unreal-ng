@@ -80,6 +80,8 @@ std::string stateToString(EmulatorStateEnum state)
             return "running";
         case StatePaused:
             return "paused";
+        case StateResumed:  // Emulator::Resume() leaves the state here; the machine is running again
+            return "running";
         case StateStopped:
             return "stopped";
         default:

@@ -463,8 +463,14 @@ void EmulatorAPI::getBeamPosition(const HttpRequestPtr& req, std::function<void(
 /// @brief GET /api/v1/emulator/{id}/state/screen/digest
 /// @brief Deterministic FNV-1a 64 digest over screen memory with poll-driven
 ///        change tracking. Query params:
-///        - banks=5,7     Physical RAM pages to hash (default: model-dependent)
-///        - start/end     Explicit Z80 address range override (hex or decimal)
+///        - mode=active     Hash the RAM pages the CURRENT video mode actually
+///                          displays (ATM hardware modes follow the 7FFD-selected
+///                          bit-plane pair {videoPage-4, videoPage}); default
+///                          `default` keeps the model-dependent pages 5/7
+///        - banks=5,7     Physical RAM pages to hash (default: model-dependent;
+///                        overrides mode=active)
+///        - start/end     Explicit Z80 address range override (hex or decimal;
+///                        overrides mode=active and banks)
 ///        - include_border=false  Drop the border color from the combined digest
 void EmulatorAPI::getStateScreenDigest(const HttpRequestPtr& req,
                                        std::function<void(const drogon::HttpResponsePtr&)>&& callback,
@@ -534,6 +540,32 @@ void EmulatorAPI::getStateScreenDigest(const HttpRequestPtr& req,
     ret["emulator_id"] = id;
     ret["frame"] = static_cast<Json::UInt64>(state.frame_counter);
     ret["algorithm"] = "fnv1a-64";
+
+    // mode=active: derive the bank list from the video mode the machine is
+    // actually displaying instead of the fixed model-dependent pages (P1-3).
+    // Explicit banks=/start,end overrides still win.
+    bool activeMode = false;
+    auto modeIt = params.find("mode");
+    if (modeIt != params.end())
+    {
+        const std::string& modeValue = modeIt->second;
+        if (modeValue == "active")
+        {
+            activeMode = true;
+        }
+        else if (modeValue != "default")
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "Invalid 'mode' parameter (expected 'default' or 'active')";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+    }
 
     const uint64_t previousDigest = state.last_screen_digest;
     const uint64_t previousFrame = state.last_screen_digest_frame;
@@ -615,9 +647,29 @@ void EmulatorAPI::getStateScreenDigest(const HttpRequestPtr& req,
         }
         else
         {
-            banks.push_back(ScreenDigest::kScreen0RAMPage);
-            if (is128K)
-                banks.push_back(ScreenDigest::kScreen1RAMPage);
+            if (activeMode)
+            {
+                // Surface actually displayed by the current video mode: ZX modes
+                // keep pages 5/7, ATM hardware modes hash the 7FFD-selected
+                // bit-plane pair - flipping FF77 between ZX and 16c surfaces now
+                // flips the digest even with constant underlying pages
+                const VideoModeEnum videoMode = context->pScreen->GetVideoMode();
+                banks = Screen::GetActiveSurfaceRAMPages(videoMode, state.p7FFD, is128K);
+
+                Json::Value activeSurface;
+                activeSurface["video_mode"] = Screen::GetVideoModeName(videoMode);
+                Json::Value pagesJson(Json::arrayValue);
+                for (uint16_t page : banks)
+                    pagesJson.append(page);
+                activeSurface["pages"] = pagesJson;
+                ret["active_surface"] = activeSurface;
+            }
+            else
+            {
+                banks.push_back(ScreenDigest::kScreen0RAMPage);
+                if (is128K)
+                    banks.push_back(ScreenDigest::kScreen1RAMPage);
+            }
         }
 
         Json::Value banksJson(Json::arrayValue);

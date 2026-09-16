@@ -2,7 +2,10 @@
 
 #include <QMainWindow>
 #include <QPointer>
+#include <cstdint>
 #include <memory>
+#include <mutex>
+#include <string>
 #include <vector>
 #include <3rdparty/message-center/eventqueue.h>
 #include <common/shmhelper.h>
@@ -107,6 +110,10 @@ private:
     /// Unbind audio from current tile (mute)
     void unbindAudioFromTile();
 
+    /// Remove the tile whose emulator was destroyed externally (HTTP/CLI);
+    /// runs queued on the GUI thread after the pre-free drain window
+    void removeTileForDestroyedEmulator(const std::string& emulatorId);
+
     /// Set sound feature for all tiles (performance optimization)
     void setSoundForAllTiles(bool enabled);
 
@@ -141,6 +148,18 @@ private:
     // Using QPointer to auto-nullify when tile is deleted (CPU mode only)
     QPointer<EmulatorTile> _audioBoundTile;
     int _audioBoundIndex = -1;  // GPU mode: index of audio-bound emulator
+
+    // Observer IDs for reliable lambda removal in the destructor
+    // (capturing lambdas cannot be matched by value - see RemoveObserverById)
+    std::uint64_t _singleSyncObserverId = 0;
+    std::uint64_t _instanceCreatedObserverId = 0;
+    std::uint64_t _instanceDestroyedObserverId = 0;
+
+    // Audio binding bookkeeping. _audioBoundEmulatorId is read from the
+    // MessageCenter worker inside the pre-free drain window and written on
+    // the GUI thread - both sides hold _audioBindMutex.
+    std::mutex _audioBindMutex;
+    std::string _audioBoundEmulatorId;
 
     // GPU acceleration state
     bool _useGPU = false;

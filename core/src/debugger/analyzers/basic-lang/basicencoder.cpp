@@ -334,6 +334,18 @@ bool BasicEncoder::injectIntoMemory(Memory* memory, const std::vector<uint8_t>& 
 
 bool BasicEncoder::loadProgram(Memory* memory, const std::string& basicText, uint16_t progStart)
 {
+    // An empty program is a legitimate request: the WebAPI "clear" endpoint
+    // uses it to reset the machine to a fresh NEW state. Reset the system
+    // variables to an empty program instead of rejecting the call.
+    if (basicText.empty())
+    {
+        if (!memory)
+            return false;
+
+        updateSystemVariables(memory, progStart, progStart);
+        return true;
+    }
+
     auto tokenized = tokenize(basicText);
     if (tokenized.empty())
         return false;
@@ -1134,6 +1146,55 @@ BasicEncoder::InjectionResult BasicEncoder::injectCommand(Emulator* emulator, co
     }
 }
 
+/// Navigate from the 128K menu into the BASIC editor when needed.
+/// The menu transition is asynchronous (navigateToBasic128K): the ROM only
+/// processes the injected ENTER over the following frames, so poll a few
+/// frame batches until the editor is actually up.
+/// @param emulator Emulator instance (caller guarantees non-null)
+/// @param memory Emulator memory (caller guarantees non-null)
+/// @param state Detected state on entry; updated to the post-navigation state
+/// @return True when the caller can proceed (no menu, or menu left successfully)
+static bool LeaveMenuIntoBasicEditor(Emulator* emulator, Memory* memory, BasicEncoder::BasicState& state)
+{
+    if (state != BasicEncoder::BasicState::Menu128K)
+    {
+        // Nothing to navigate away from; the caller dispatches on the state
+        return true;
+    }
+
+    // RunNFrames() leaves emulator paused (it's a debug stepping function).
+    // For automation, we need to restore the original running state afterwards.
+    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
+
+    BasicEncoder::navigateToBasic128K(emulator);
+
+    // While the menu is still displayed, re-select and re-press ENTER each
+    // round: an ENTER injected too early (for instance during ROM boot) is
+    // simply swallowed, so polling alone is not enough. The budget of 48
+    // frames covers the ~1s boot-to-menu window of the slowest models.
+    for (int attempt = 0; attempt < 12; ++attempt)
+    {
+        emulator->RunNFrames(4);
+        state = BasicEncoder::detectState(memory);
+        if (state == BasicEncoder::BasicState::Basic128K || state == BasicEncoder::BasicState::Basic48K)
+        {
+            break;
+        }
+        if (state == BasicEncoder::BasicState::Menu128K)
+        {
+            BasicEncoder::navigateToBasic128K(emulator);
+        }
+    }
+
+    // Restore running state if emulator was running before injection
+    if (wasRunning)
+    {
+        emulator->Resume(false);  // Resume without broadcasting
+    }
+
+    return state == BasicEncoder::BasicState::Basic128K || state == BasicEncoder::BasicState::Basic48K;
+}
+
 BasicEncoder::InjectionResult BasicEncoder::autoNavigateAndInject(Emulator* emulator, const std::string& command)
 {
     // Use direct brace-initialization returns for guaranteed copy elision (C++17+)
@@ -1153,25 +1214,59 @@ BasicEncoder::InjectionResult BasicEncoder::autoNavigateAndInject(Emulator* emul
     // Detect current BASIC state
     BasicState state = detectState(memory);
 
-    // If on 128K menu, navigate to 128K BASIC first
-    if (state == BasicState::Menu128K)
+    // Navigate from the 128K menu into the BASIC editor when needed
+    if (!LeaveMenuIntoBasicEditor(emulator, memory, state))
     {
-        navigateToBasic128K(emulator);
-
-        // Re-detect state after navigation
-        state = detectState(memory);
-
-        // Verify we're now in BASIC
-        if (state != BasicState::Basic128K && state != BasicState::Basic48K)
-        {
-            return {false, state,
-                    "Error: Failed to navigate from menu to BASIC. Current state: " +
-                        std::to_string(static_cast<int>(state))};
-        }
+        return {false, state,
+                "Error: Failed to navigate from menu to BASIC. Current state: " +
+                    std::to_string(static_cast<int>(state))};
     }
 
     // Now delegate to the regular injectCommand
     return injectCommand(emulator, command);
+}
+
+BasicEncoder::InjectionResult BasicEncoder::injectProgram(Emulator* emulator, const std::string& program)
+{
+    // Use direct brace-initialization returns for guaranteed copy elision (C++17+)
+
+    if (!emulator)
+    {
+        return {false, BasicState::Unknown, "Error: Emulator not available"};
+    }
+
+    Memory* memory = emulator->GetMemory();
+    if (!memory)
+    {
+        return {false, BasicState::Unknown, "Error: Memory not available"};
+    }
+
+    // Detect current BASIC state and navigate away from the 128K menu if needed
+    BasicState state = detectState(memory);
+
+    if (!LeaveMenuIntoBasicEditor(emulator, memory, state))
+    {
+        return {false, state,
+                "Error: Failed to navigate from menu to BASIC. Current state: " +
+                    std::to_string(static_cast<int>(state))};
+    }
+
+    // Program injection only works from a real BASIC editor
+    if (state != BasicState::Basic48K && state != BasicState::Basic128K)
+    {
+        return {false, state, "Error: Not in BASIC editor. State: " + std::to_string(static_cast<int>(state))};
+    }
+
+    // Write the tokenized program directly into program memory. This is a
+    // deterministic memory write that does not depend on the ROM's editor
+    // processing typed keystrokes.
+    BasicEncoder encoder;
+    if (!encoder.loadProgram(memory, program))
+    {
+        return {false, state, "Error: No valid numbered BASIC lines found in program"};
+    }
+
+    return {true, state, "Program written into BASIC memory"};
 }
 
 BasicEncoder::InjectionResult BasicEncoder::runCommand(Emulator* emulator, const std::string& command)

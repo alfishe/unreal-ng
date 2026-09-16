@@ -691,10 +691,11 @@ TEST_F(DZRPServer_test, HistoryEntryWireFormat)
         EXPECT_EQ(op[b], mem.payload[b]) << "opcode byte " << b;
 
     // Out of range → error 1, and a plain GET_REGISTERS afterwards shows the present again
-    auto far = _client.command(dzrp::CommandId::CMD_GET_HISTORY_ENTRY, {0xFF, 0xFF, 0x00, 0x00});
-    ASSERT_TRUE(far.valid);
-    ASSERT_EQ(far.payload.size(), 1u);
-    EXPECT_EQ(far.payload[0], 1);
+    // 'far' is an empty legacy macro in <windows.h> - do not use it as a name
+    auto outOfRange = _client.command(dzrp::CommandId::CMD_GET_HISTORY_ENTRY, {0xFF, 0xFF, 0x00, 0x00});
+    ASSERT_TRUE(outOfRange.valid);
+    ASSERT_EQ(outOfRange.payload.size(), 1u);
+    EXPECT_EQ(outOfRange.payload[0], 1);
 
     auto regs = _client.command(dzrp::CommandId::CMD_GET_REGISTERS);
     ASSERT_TRUE(regs.valid);

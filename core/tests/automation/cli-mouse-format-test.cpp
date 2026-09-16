@@ -146,3 +146,18 @@ TEST(CliMouseFormat_test, FormatStatus_AbsentAndUnavailable)
 
     EXPECT_EQ(CliMouse::FormatStatus(MouseStateSnapshot{}), "Kempston Mouse [not available]\n");
 }
+
+TEST(CliMouseFormat_test, FormatRouting_DecodedAndShadowed)
+{
+    // Notes are the exact strings PortDecoder::GetMouseRoutingState emits;
+    // the shadowed spelling prefixes "shadowed - " so the reason is scannable
+    EXPECT_EQ(CliMouse::FormatRouting(true, "decoded (standard Kempston address decode)"),
+              "  Routing: decoded (standard Kempston address decode)\n");
+
+    EXPECT_EQ(CliMouse::FormatRouting(
+                  false, "TR-DOS ports accessible (CF_DOSPORTS): only Beta Disk operations answer", "\r\n"),
+              "  Routing: shadowed - TR-DOS ports accessible (CF_DOSPORTS): only Beta Disk operations answer\r\n");
+
+    EXPECT_EQ(CliMouse::FormatRouting(false, "mouse not fitted for this config ([INPUT] Mouse=)"),
+              "  Routing: shadowed - mouse not fitted for this config ([INPUT] Mouse=)\n");
+}

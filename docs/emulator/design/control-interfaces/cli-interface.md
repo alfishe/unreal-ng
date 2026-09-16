@@ -126,6 +126,32 @@ The CLI supports command aliases for convenience:
 - `u` → `disasm` (disassemble)
 - `quit` → `exit`
 
+**Model Creation Semantics** (strict, matching WebAPI):
+```
+> create pentagon
+Created emulator instance: 550e8400-...
+Model: PENTAGON - Pentagon (128KB)
+Config folder: pentagon128k
+Video mode: ZX
+
+> create atm710
+Error: Failed to create emulator with model 'atm710'
+Reason: model 'ATM710' is not supported by this build (PortDecoder::GetPortDecoderForModel - unknown model 6)
+Available models: PENTAGON, 48K, ...
+
+> models
+Available ZX Spectrum:
+=============================
+  PENTAGON - Pentagon
+  48K - ZX-Spectrum 48K
+  ATM710 - ATM-Turbo 2+ v7.10 (not creatable on this build)
+  ...
+```
+- `create`/`start <model>` echo the RESOLVED model and RAM, not the requested string.
+- A model this build cannot create fails with a `Reason:` line — no silent fallback to 48K.
+- `status` output starts with a `Build: v<version> (<branch> @ <commit>, <type>)` fingerprint line.
+- `GET /api/v1/emulator/models` (`creatable` flags) remains the runtime-authoritative model source.
+
 **Error Messages**:
 ```
 > invalid_command
@@ -139,7 +165,7 @@ The CLI implements the same command semantics as other interfaces (WebAPI, Pytho
 
 | WebAPI Endpoint | CLI Equivalent | Reason Not in CLI |
 | :--- | :--- | :--- |
-| `GET /emulator/models` | — | Model discovery is typically done once at startup via config; CLI users select model when creating emulator |
+| `GET /emulator/models` | `models` | CLI shows the same list with `(not creatable on this build)` markers; the endpoint's `creatable` flags stay authoritative |
 | `DELETE /emulator/{id}` | `stop` | CLI uses `stop` which both stops and removes; separate remove is for advanced orchestration |
 | `POST /emulator/{id}/start` | `resume` | Starting an existing (initialized but not running) emulator uses `resume` in CLI |
 
@@ -237,11 +263,18 @@ Kempston Mouse [present]
   Ports: #FADF=0xFC #FBDF=0x29 #FFDF=0x50
   Pending click: right, 3 frame(s) left
   TTD journal: supported
+  Routing: decoded (standard Kempston address decode)
 ```
 
 How to read `#FADF`: bits 0–2 are the buttons (0 = pressed: `0xFC` = left and right down),
 bit 3 is always 1, and bits 4–7 are 1 unless a wheel is fitted (`[INPUT] Wheel=KEMPSTON`),
 in which case they carry the wheel counter.
+
+The `Routing:` line (mirrors the WebAPI `/mouse/status` `routing` object) tells whether a
+mouse port read is decoded **right now**: `shadowed - TR-DOS ports accessible (CF_DOSPORTS):
+only Beta Disk operations answer` while TR-DOS owns the port space, `shadowed - hidden by
+model-specific decoder gating` behind the Scorpion DOS trigger / Shadow Monitor, or
+`shadowed - mouse not fitted for this config ([INPUT] Mouse=)` when nothing is connected.
 
 **Notes**:
 - `mouse` commands are refused with `Error: TTD replay in progress; live mouse input refused`
@@ -260,7 +293,8 @@ reference: [command-interface.md](./command-interface.md).
 | `stepout` | Run until the current subroutine returns to its caller. |
 | `skip_until <pc>` | Fast-forward until PC reaches the target (breakpoints skipped, bounded budget). |
 | `find <pattern>` | Search the Z80 address space for a byte pattern (`--from`, `--to`, `--align`, `--max`). |
-| `digest <start> <end>` | Stable 64-bit screen-content digest (`--banks`, `--no-border`). |
+| `digest <start> <end>` | Stable 64-bit screen-content digest (`--banks`, `--active`, `--no-border`). |
+| `ports` | Static port map with live routing flags: port/mask/match/device/gate rows from the machine's port decoder, plus TR-DOS active, mouse routing and the Scorpion Shadow Monitor latch. |
 | `beam` | Current raster position and beam zone. |
 | `frame_cost` | Per-frame halt/run cost accounting. |
 | `coverage <start\|stop\|clear\|gaps\|status>` | Executed-address coverage analysis. |

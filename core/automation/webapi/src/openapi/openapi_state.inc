@@ -23,6 +23,21 @@
     paths["/api/v1/emulator/{id}/state/memory/rom"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/state/memory/rom"]["get"]["responses"]["200"]["description"] = "ROM state details";
 
+    // Paging State endpoint (P1-2 design: tagged latches + bank table)
+    paths["/api/v1/emulator/{id}/state/paging"]["get"]["summary"] = "Get unified paging state";
+    paths["/api/v1/emulator/{id}/state/paging"]["get"]["tags"].append("Memory State");
+    paths["/api/v1/emulator/{id}/state/paging"]["get"]["description"] =
+        "Tagged paging latches + bank table (P1-2 design). Returns model, latches array (port, tags, device, "
+        "gate, latch name, value, decoded bits), banks array (bank, address_range, type, page, ROM name/role/signature "
+        "when applicable), paging_locked and trdos_active flags. Same report as CLI `paging`, Lua `paging_state()`, "
+        "Python `paging_state()` and MCP `inspect_state` aspect `paging`.";
+    paths["/api/v1/emulator/{id}/state/paging"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/state/paging"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/state/paging"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/state/paging"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/state/paging"]["get"]["responses"]["200"]["description"] = "Paging state";
+    paths["/api/v1/emulator/{id}/state/paging"]["get"]["responses"]["404"]["description"] = "Emulator not found";
+
     // Screen State endpoints
     paths["/api/v1/emulator/{id}/state/screen"]["get"]["summary"] = "Get screen state overview";
     paths["/api/v1/emulator/{id}/state/screen"]["get"]["tags"].append("Screen State");

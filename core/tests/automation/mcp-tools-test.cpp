@@ -188,6 +188,88 @@ TEST_F(McpTools_Test, EmulatorManage_Create_PostsStartWithDefaultModel)
     EXPECT_EQ(call->body["model"].asString(), mcp::TargetResolver::kDefaultAutoCreateModel);
 }
 
+// P0-2: a strict 400 from the WebAPI (non-creatable model) must surface as a
+// tool error carrying the reason - the agent learns WHY the model is missing
+// instead of silently ending up on a wrong machine.
+TEST_F(McpTools_Test, EmulatorManage_Create_FailureSurfacesReason)
+{
+    Json::Value failure;
+    failure["error"] = "Bad Request";
+    failure["message"] = "model 'ATM710' is not supported by this build (PortDecoder::GetPortDecoderForModel - unknown model 6)";
+    failure["requested_model"] = "ATM710";
+    _caller->routes["POST /api/v1/emulator/start"] = {400, failure};
+
+    Json::Value args;
+    args["action"] = "create";
+    args["model"] = "ATM710";
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("ATM710"), std::string::npos) << "text was: " << result.text;
+    EXPECT_NE(result.text.find("not supported by this build"), std::string::npos) << "text was: " << result.text;
+}
+
+// P0-1: the machine identity fields the WebAPI now attaches to every
+// lifecycle response must arrive intact in the tool's structured payload.
+TEST_F(McpTools_Test, EmulatorManage_List_PassesThroughMachineIdentity)
+{
+    Json::Value emulators(Json::arrayValue);
+    Json::Value instance;
+    instance["id"] = "emu-1";
+    instance["state"] = "running";
+    instance["model"] = "PENTAGON";
+    instance["model_full_name"] = "Pentagon";
+    instance["ram_kb"] = 128;
+    instance["video_mode"] = "Standard";
+    instance["speed_multiplier"] = 1;
+    instance["config_folder"] = "pentagon128k";
+    emulators.append(instance);
+    Json::Value body;
+    body["emulators"] = emulators;
+    _caller->routes["GET /api/v1/emulator"] = {200, body};
+
+    Json::Value args;
+    args["action"] = "list";
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    ASSERT_FALSE(result.isError);
+    ASSERT_TRUE(result.structured.isObject());
+    ASSERT_TRUE(result.structured.isMember("emulators"));
+    ASSERT_TRUE(result.structured["emulators"].isArray());
+    ASSERT_EQ(result.structured["emulators"].size(), 1u);
+    EXPECT_EQ(result.structured["emulators"][0]["model"].asString(), "PENTAGON");
+    EXPECT_EQ(result.structured["emulators"][0]["ram_kb"].asInt(), 128);
+    EXPECT_EQ(result.structured["emulators"][0]["config_folder"].asString(), "pentagon128k");
+}
+
+// Parity rule: 'server' exposes the same build fingerprint + models_creatable
+// block that GET /api/v1/emulator/status serves and the CLI 'status' command
+// prints - MCP is an equally important consumer, not a subordinate one.
+TEST_F(McpTools_Test, EmulatorManage_Server_ForwardsStatusBlock)
+{
+    Json::Value status;
+    status["server"]["version"] = "1.0.0";
+    status["server"]["git_branch"] = "master";
+    status["server"]["git_commit"] = "5719e27e";
+    status["server"]["build_type"] = "Release";
+    status["models_creatable"].append("48K");
+    status["models_creatable"].append("PENTAGON");
+    _caller->routes["GET /api/v1/emulator/status"] = {200, status};
+
+    Json::Value args;
+    args["action"] = "server";
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    ASSERT_FALSE(result.isError);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/status"));
+    ASSERT_TRUE(result.structured.isObject());
+    EXPECT_EQ(result.structured["server"]["git_branch"].asString(), "master");
+    EXPECT_EQ(result.structured["server"]["git_commit"].asString(), "5719e27e");
+    ASSERT_TRUE(result.structured["models_creatable"].isArray());
+    ASSERT_EQ(result.structured["models_creatable"].size(), 2u);
+    EXPECT_EQ(result.structured["models_creatable"][0].asString(), "48K");
+}
+
 // ===========================================================================
 // load_software
 // ===========================================================================
@@ -424,6 +506,55 @@ TEST_F(McpTools_Test, InspectState_DeviceAspect_UnavailableIsReportedNotFatal)
     ASSERT_FALSE(result.isError);
     EXPECT_FALSE(result.structured["audio_fm"]["available"].asBool());
     EXPECT_NE(result.text.find("[audio_fm] TurboSound slot device is not TSFM"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, InspectState_MouseAspect_FetchesMouseStatus)
+{
+    // One endpoint; the summary names fitment, counters and the routing answer (D-2)
+    Json::Value mouse;
+    mouse["present"] = true;
+    mouse["x"] = 31;
+    mouse["y"] = 85;
+    mouse["wheel_enabled"] = false;
+    mouse["routing"]["ports_decoded"] = true;
+    mouse["routing"]["note"] = "decoded (standard Kempston address decode)";
+    _caller->routes["GET /api/v1/emulator/emu-1/mouse/status"] = {200, mouse};
+
+    Json::Value args;
+    Json::Value aspects(Json::arrayValue);
+    aspects.append("mouse");
+    args["aspects"] = aspects;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/mouse/status"));
+    ASSERT_TRUE(result.structured.isMember("mouse"));
+    EXPECT_EQ(result.structured["mouse"]["x"].asInt(), 31);
+    EXPECT_NE(result.text.find("[mouse] fitted, x 31 y 85"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("ports decoded"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, InspectState_MouseAspect_ShadowedRoutingInSummary)
+{
+    // ports_decoded=false keeps the aspect successful - triage info, not an error
+    Json::Value mouse;
+    mouse["present"] = true;
+    mouse["x"] = 0;
+    mouse["y"] = 0;
+    mouse["wheel_enabled"] = false;
+    mouse["routing"]["ports_decoded"] = false;
+    mouse["routing"]["note"] = "TR-DOS ports accessible (CF_DOSPORTS): only Beta Disk operations answer";
+    _caller->routes["GET /api/v1/emulator/emu-1/mouse/status"] = {200, mouse};
+
+    Json::Value args;
+    Json::Value aspects(Json::arrayValue);
+    aspects.append("mouse");
+    args["aspects"] = aspects;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("ports shadowed"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("CF_DOSPORTS"), std::string::npos) << result.text;
 }
 
 TEST_F(McpTools_Test, InspectState_AudioAyAspect_FetchesEveryChip)
