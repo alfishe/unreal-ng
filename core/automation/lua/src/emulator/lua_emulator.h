@@ -5,6 +5,7 @@
 #include <emulator/emulatormanager.h>
 #include "../bindings/lua_porttrace.h"
 #include <emulator/memory/memory.h>
+#include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/tape/tape.h>
@@ -453,6 +454,66 @@ public:
                 data[i + 1] = mem->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + i));
             }
             return data;
+        });
+
+        // TD-3 Phase 1: sparse non-zero block overview (same core source as
+        // GET /memory/map and MCP inspect_state 'memory_map').
+        // memory_map() | memory_map("ram") | memory_map("address", 64, 48)
+        lua.set_function("memory_map", [this](sol::optional<std::string> viewName, sol::optional<int> minRunOpt,
+                                              sol::optional<int> maxBlocksOpt) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) return result;
+            Memory* mem = _emulator->GetMemory();
+            EmulatorContext* ctx = _emulator->GetContext();
+            if (!mem || !ctx) return result;
+
+            const MemoryMapView view = (viewName && (*viewName == "ram" || *viewName == "pages"))
+                                           ? MemoryMapView::RamPages
+                                           : MemoryMapView::AddressSpace;
+            const uint32_t minRun = (minRunOpt && *minRunOpt > 0) ? static_cast<uint32_t>(*minRunOpt) : kMemoryMapDefaultMinRun;
+            const uint32_t maxBlocks = (maxBlocksOpt && *maxBlocksOpt > 0) ? static_cast<uint32_t>(*maxBlocksOpt)
+                                                                           : kMemoryMapDefaultMaxBlocks;
+
+            const MemoryMapReport report = BuildMemoryMap(*mem, ctx->config, view, minRun, maxBlocks);
+            result["model"] = report.model;
+            result["view"] = report.ramView ? "ram" : "address";
+            result["total_size"] = report.totalSize;
+            result["non_zero_bytes"] = report.nonZeroBytes;
+            result["min_run"] = report.minRun;
+            result["truncated"] = report.truncated;
+
+            sol::table blocks = lua_view.create_table();
+            for (size_t i = 0; i < report.blocks.size(); i++) {
+                const MemoryMapBlock& block = report.blocks[i];
+                sol::table item = lua_view.create_table();
+                item["address"] = block.address;
+                item["size"] = block.size;
+                item["type"] = block.typeName;
+                item["bank"] = block.bank == 0xFF ? -1 : static_cast<int>(block.bank);
+                item["page"] = block.page;
+                item["rom"] = block.isRom;
+                item["status"] = block.IsZeroFill() ? "zeros" : "data";
+                item["non_zero"] = block.nonZero;
+                if (!block.IsZeroFill())
+                    item["hash"] = block.hash;  // FNV-1a 64 fingerprint (lua_Integer)
+                blocks[i + 1] = item;
+            }
+            result["blocks"] = blocks;
+            return result;
+        });
+
+        // TD-3 compact read format: classic 16B/line hexdump + ASCII sidebar
+        lua.set_function("mem_hexdump", [this](uint16_t addr, sol::optional<int> lenOpt) -> std::string {
+            if (!_emulator) return "";
+            Memory* mem = _emulator->GetMemory();
+            if (!mem) return "";
+            const size_t len = lenOpt ? static_cast<size_t>(*lenOpt) : 64;
+            if (len < 1 || len > 4096) return "";
+            std::vector<uint8_t> buffer(len);
+            for (size_t i = 0; i < len; i++)
+                buffer[i] = mem->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + i));
+            return FormatHexDump(buffer.data(), buffer.size(), addr);
         });
 
         lua.set_function("mem_write_block", [this](uint16_t addr, sol::table data) {

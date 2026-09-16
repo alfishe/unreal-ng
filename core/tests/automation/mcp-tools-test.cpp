@@ -412,6 +412,92 @@ TEST_F(McpTools_Test, InspectState_TwoAspects_FanOutToBothEndpoints)
     EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/registers"));
 }
 
+// TD-3 Phase 1: the memory_map aspect hits GET /memory/map with the
+// view/min_run/max_blocks args and the summary names the model + blocks
+TEST_F(McpTools_Test, InspectState_MemoryMapAspect_FetchesSparseMap)
+{
+    Json::Value block;
+    block["address"] = "0x0000";
+    block["type"] = "rom0";
+    block["status"] = "data";
+    block["size"] = 16384;
+    block["non_zero"] = 16384;
+    block["hash"] = "00ABCDEF12345678";
+    Json::Value mapBody;
+    mapBody["model"] = "Spectrum 48K";
+    mapBody["view"] = "address";
+    mapBody["total_size"] = 65536;
+    mapBody["non_zero_bytes"] = 16384;
+    mapBody["block_count"] = 1;
+    mapBody["blocks"] = Json::Value(Json::arrayValue);
+    mapBody["blocks"].append(block);
+    _caller->routes["GET /api/v1/emulator/emu-1/memory/map?view=address&min_run=64&max_blocks=48"] = {200, mapBody};
+
+    Json::Value args;
+    Json::Value aspects(Json::arrayValue);
+    aspects.append("memory_map");
+    args["aspects"] = aspects;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/memory/map?view=address&min_run=64&max_blocks=48"));
+    ASSERT_TRUE(result.structured.isMember("memory_map"));
+    EXPECT_EQ(result.structured["memory_map"]["block_count"].asUInt(), 1u);
+    EXPECT_NE(result.text.find("[memory_map] Spectrum 48K address view: 1 block(s)"), std::string::npos)
+        << "text was: " << result.text;
+    EXPECT_NE(result.text.find("rom0 data, size 16384"), std::string::npos) << "text was: " << result.text;
+}
+
+// TD-3: the memory aspect forwards format=hexdump by default (~80% token cut)
+TEST_F(McpTools_Test, InspectState_MemoryAspect_DefaultsToHexdump)
+{
+    Json::Value memBody;
+    memBody["address"] = 0;
+    memBody["length"] = 64;
+    memBody["format"] = "hexdump";
+    memBody["hexdump"] = "0x0000: 3E 21 00  |..!|\n";
+    _caller->routes["GET /api/v1/emulator/emu-1/memory/0?len=64&format=hexdump"] = {200, memBody};
+
+    Json::Value args;
+    Json::Value aspects(Json::arrayValue);
+    aspects.append("memory");
+    args["aspects"] = aspects;
+    args["address"] = 0;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/memory/0?len=64&format=hexdump"));
+    EXPECT_NE(result.text.find("0x0000: 3E 21 00"), std::string::npos) << "text was: " << result.text;
+}
+
+// TD-3: the stack aspect still machine-parses data[] via format=full after
+// the hexdump default flip on /memory/{addr}
+TEST_F(McpTools_Test, InspectState_StackAspect_RequestsFullFormat)
+{
+    Json::Value registers;
+    registers["special"]["sp"] = 0xFF40;
+    _caller->routes["GET /api/v1/emulator/emu-1/registers"] = {200, registers};
+
+    Json::Value memory;
+    memory["data"] = Json::Value(Json::arrayValue);
+    memory["data"].append(0x34);
+    memory["data"].append(0x12);
+    _caller->routes["GET /api/v1/emulator/emu-1/memory/65344?len=32&format=full"] = {200, memory};
+
+    Json::Value args;
+    Json::Value aspects(Json::arrayValue);
+    aspects.append("stack");
+    args["aspects"] = aspects;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/memory/65344?len=32&format=full"));
+    ASSERT_TRUE(result.structured.isMember("stack"));
+    ASSERT_TRUE(result.structured["stack"]["words"].isArray());
+    ASSERT_EQ(result.structured["stack"]["words"].size(), 1u);
+    EXPECT_EQ(result.structured["stack"]["words"][0]["value"].asUInt(), 0x1234u);
+}
+
 TEST_F(McpTools_Test, InspectState_DeviceAspects_FetchOverviewAndChips)
 {
     // audio_fm: overview, then every chip's full report; fdc: one endpoint.
