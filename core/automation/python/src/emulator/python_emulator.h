@@ -2255,19 +2255,29 @@ namespace PythonBindings
                 return result;
             }, "Load a .ttd session for playback (seek to position the emulator)", py::arg("path"))
 
-            .def("ttd_find_last", [](Emulator& self, uint16_t addr,
+            .def("ttd_find_last", [](Emulator& self, py::object addrObj,
                                       const std::string& access,
                                       py::object valueObj,
                                       py::object pcFromObj,
                                       py::object pcToObj,
                                       py::object beforeFrameObj,
                                       uint32_t beforeTin,
-                                      py::object physPageObj) -> py::object {
+                                      py::object physPageObj,
+                                      py::object addrFromObj,
+                                      py::object addrToObj) -> py::object {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pTimeTravelManager) return py::none();
 
                 ttd::TTDSearchQuery q;
-                q.addrFrom = q.addrTo = addr;
+                if (!addrObj.is_none())
+                {
+                    q.addrFrom = q.addrTo = static_cast<uint16_t>(addrObj.cast<int>());
+                }
+                else
+                {
+                    if (!addrFromObj.is_none()) q.addrFrom = static_cast<uint16_t>(addrFromObj.cast<int>());
+                    if (!addrToObj.is_none()) q.addrTo = static_cast<uint16_t>(addrToObj.cast<int>());
+                }
                 q.access = ttd::TTDAccessTypeFromString(access.c_str());
 
                 if (!valueObj.is_none())
@@ -2312,15 +2322,17 @@ namespace PythonBindings
                 r["phys_page"] = py::cast(result->physPage);
                 r["access"]    = ttd::TTDAccessTypeToString(result->access);
                 return r;
-            }, "Reverse search: find last access at address",
-               py::arg("addr"),
+            }, "Reverse search: find last access at address or within address/PC range",
+               py::arg("addr") = py::none(),
                py::arg("access") = "write",
                py::arg("value") = py::none(),
                py::arg("pc_from") = py::none(),
                py::arg("pc_to") = py::none(),
                py::arg("before_frame") = py::none(),
                py::arg("before_tin") = 0,
-               py::arg("phys_page") = py::none())
+               py::arg("phys_page") = py::none(),
+               py::arg("addr_from") = py::none(),
+               py::arg("addr_to") = py::none())
 
             .def("ttd_step_instruction_back", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();

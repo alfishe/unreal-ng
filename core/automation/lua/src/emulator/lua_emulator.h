@@ -2007,14 +2007,16 @@ public:
             return result;
         });
 
-        lua.set_function("ttd_find_last", [this](uint16_t addr,
+        lua.set_function("ttd_find_last", [this](sol::object firstArgOpt,
                                                    sol::optional<std::string> accessOpt,
                                                    sol::optional<uint8_t> valueOpt,
                                                    sol::optional<uint16_t> pcFromOpt,
                                                    sol::optional<uint16_t> pcToOpt,
                                                    sol::optional<uint64_t> beforeFrameOpt,
                                                    sol::optional<uint32_t> beforeTinOpt,
-                                                   sol::optional<uint8_t> physPageOpt) -> sol::table {
+                                                   sol::optional<uint8_t> physPageOpt,
+                                                   sol::optional<uint16_t> addrFromOpt,
+                                                   sol::optional<uint16_t> addrToOpt) -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
             if (!_emulator) { result["found"] = false; return result; }
@@ -2022,17 +2024,61 @@ public:
             if (!ctx || !ctx->pTimeTravelManager) { result["found"] = false; return result; }
 
             ttd::TTDSearchQuery q;
-            q.addrFrom = q.addrTo = addr;
-            q.access = ttd::TTDAccessTypeFromString(
-                accessOpt.value_or("write").c_str());
-            if (valueOpt) { q.hasValueFilter = true; q.value = *valueOpt; }
-            if (pcFromOpt) { q.hasPcFilter = true; q.pcFrom = *pcFromOpt; q.pcTo = pcToOpt.value_or(0xFFFF); }
-            // Bank-aware search: pins the query to one physical RAM page.
-            if (physPageOpt) { q.hasPhysPageFilter = true; q.physPage = *physPageOpt; }
-            const uint32_t frameT = ctx->config.frame;
-            if (beforeFrameOpt)
-                q.beforeGlobalT = static_cast<uint64_t>(*beforeFrameOpt) * frameT
-                                  + beforeTinOpt.value_or(0);
+            if (firstArgOpt.is<sol::table>())
+            {
+                sol::table tbl = firstArgOpt.as<sol::table>();
+                if (tbl["addr"].valid())
+                {
+                    uint16_t a = tbl["addr"].get<uint16_t>();
+                    q.addrFrom = q.addrTo = a;
+                }
+                else
+                {
+                    q.addrFrom = tbl["addr_from"].valid() ? tbl["addr_from"].get<uint16_t>() : (tbl["addrFrom"].valid() ? tbl["addrFrom"].get<uint16_t>() : 0);
+                    q.addrTo = tbl["addr_to"].valid() ? tbl["addr_to"].get<uint16_t>() : (tbl["addrTo"].valid() ? tbl["addrTo"].get<uint16_t>() : 0xFFFF);
+                }
+
+                std::string accStr = tbl["access"].valid() ? tbl["access"].get<std::string>() : "write";
+                q.access = ttd::TTDAccessTypeFromString(accStr.c_str());
+
+                if (tbl["value"].valid()) { q.hasValueFilter = true; q.value = tbl["value"].get<uint8_t>(); }
+                if (tbl["pc_from"].valid()) { q.hasPcFilter = true; q.pcFrom = tbl["pc_from"].get<uint16_t>(); q.pcTo = tbl["pc_to"].valid() ? tbl["pc_to"].get<uint16_t>() : 0xFFFF; }
+                else if (tbl["pcFrom"].valid()) { q.hasPcFilter = true; q.pcFrom = tbl["pcFrom"].get<uint16_t>(); q.pcTo = tbl["pcTo"].valid() ? tbl["pcTo"].get<uint16_t>() : 0xFFFF; }
+
+                if (tbl["phys_page"].valid()) { q.hasPhysPageFilter = true; q.physPage = tbl["phys_page"].get<uint8_t>(); }
+                else if (tbl["physPage"].valid()) { q.hasPhysPageFilter = true; q.physPage = tbl["physPage"].get<uint8_t>(); }
+
+                const uint32_t frameT = ctx->config.frame;
+                if (tbl["before_frame"].valid())
+                {
+                    uint64_t f = tbl["before_frame"].get<uint64_t>();
+                    uint32_t tin = tbl["before_tin"].valid() ? tbl["before_tin"].get<uint32_t>() : 0;
+                    q.beforeGlobalT = f * frameT + tin;
+                }
+                else if (tbl["before"].valid())
+                {
+                    q.beforeGlobalT = tbl["before"].get<uint64_t>();
+                }
+            }
+            else
+            {
+                if (firstArgOpt.is<uint16_t>())
+                {
+                    q.addrFrom = q.addrTo = firstArgOpt.as<uint16_t>();
+                }
+                else
+                {
+                    q.addrFrom = addrFromOpt.value_or(0);
+                    q.addrTo = addrToOpt.value_or(0xFFFF);
+                }
+                q.access = ttd::TTDAccessTypeFromString(accessOpt.value_or("write").c_str());
+                if (valueOpt) { q.hasValueFilter = true; q.value = *valueOpt; }
+                if (pcFromOpt) { q.hasPcFilter = true; q.pcFrom = *pcFromOpt; q.pcTo = pcToOpt.value_or(0xFFFF); }
+                if (physPageOpt) { q.hasPhysPageFilter = true; q.physPage = *physPageOpt; }
+                const uint32_t frameT = ctx->config.frame;
+                if (beforeFrameOpt)
+                    q.beforeGlobalT = static_cast<uint64_t>(*beforeFrameOpt) * frameT + beforeTinOpt.value_or(0);
+            }
 
             auto found = ctx->pTimeTravelManager->FindLastAccess(q);
             if (!found) { result["found"] = false; return result; }

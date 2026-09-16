@@ -839,10 +839,17 @@ void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
     if (rejectIfRecording(mgr, callback)) return;
 
     auto json = req->getJsonObject();
-    if (!json || !json->isMember("addr"))
+    const bool hasAddr = json && json->isMember("addr");
+    const bool hasAddrFrom = json && json->isMember("addr_from");
+    const bool hasAddrTo = json && json->isMember("addr_to");
+    const bool hasPcFrom = json && json->isMember("pc_from");
+    const bool hasPcTo = json && json->isMember("pc_to");
+    const bool hasValue = json && json->isMember("value");
+
+    if (!json || (!hasAddr && !hasAddrFrom && !hasAddrTo && !hasPcFrom && !hasPcTo && !hasValue))
     {
         Json::Value err;
-        err["error"] = "Missing 'addr' in request body";
+        err["error"] = "Missing search criteria in request body (must supply 'addr', 'addr_from', 'addr_to', 'pc_from', 'pc_to', or 'value')";
         auto resp = HttpResponse::newHttpJsonResponse(err);
         resp->setStatusCode(k400BadRequest);
         addCorsHeaders(resp);
@@ -851,7 +858,15 @@ void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
     }
 
     ttd::TTDSearchQuery q;
-    q.addrFrom = q.addrTo = static_cast<uint16_t>((*json)["addr"].asUInt());
+    if (hasAddr)
+    {
+        q.addrFrom = q.addrTo = static_cast<uint16_t>((*json)["addr"].asUInt());
+    }
+    else
+    {
+        if (hasAddrFrom) q.addrFrom = static_cast<uint16_t>((*json)["addr_from"].asUInt());
+        if (hasAddrTo) q.addrTo = static_cast<uint16_t>((*json)["addr_to"].asUInt());
+    }
 
     if (json->isMember("access"))
         q.access = ttd::TTDAccessTypeFromString((*json)["access"].asCString());

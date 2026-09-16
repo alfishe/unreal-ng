@@ -561,6 +561,11 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
     // Parse --key value pairs from args[1..]
     ttd::TTDSearchQuery q;
     bool hasAddr = false;
+    bool hasAddrFrom = false;
+    bool hasAddrTo = false;
+    bool hasPcFrom = false;
+    bool hasPcTo = false;
+    bool hasValue = false;
 
     for (size_t i = 1; i < args.size(); ++i)
     {
@@ -570,6 +575,16 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
             q.addrFrom = q.addrTo = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
             hasAddr = true;
         }
+        else if (tok == "--addr-from" && i + 1 < args.size())
+        {
+            q.addrFrom = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
+            hasAddrFrom = true;
+        }
+        else if (tok == "--addr-to" && i + 1 < args.size())
+        {
+            q.addrTo = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
+            hasAddrTo = true;
+        }
         else if (tok == "--access" && i + 1 < args.size())
         {
             q.access = ttd::TTDAccessTypeFromString(args[++i].c_str());
@@ -578,16 +593,19 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
         {
             q.value = static_cast<uint8_t>(std::stoul(args[++i], nullptr, 0));
             q.hasValueFilter = true;
+            hasValue = true;
         }
         else if (tok == "--pc-from" && i + 1 < args.size())
         {
             q.pcFrom = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
             q.hasPcFilter = true;
+            hasPcFrom = true;
         }
         else if (tok == "--pc-to" && i + 1 < args.size())
         {
             q.pcTo = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
             if (!q.hasPcFilter) q.hasPcFilter = true;
+            hasPcTo = true;
         }
         else if (tok == "--phys-page" && i + 1 < args.size())
         {
@@ -616,11 +634,11 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
         }
     }
 
-    if (!hasAddr)
+    if (!hasAddr && !hasAddrFrom && !hasAddrTo && !hasPcFrom && !hasPcTo && !hasValue)
     {
-        session.SendResponse(std::string("Error: --addr is required") + NEWLINE +
-                             "Usage: ttd find-last --addr <A> [--access write|read|execute|io] "
-                             "[--value V] [--pc-from X] [--pc-to Y] "
+        session.SendResponse(std::string("Error: Missing search criteria") + NEWLINE +
+                             "Usage: ttd find-last [--addr <A> | --addr-from <F> --addr-to <T>] "
+                             "[--access write|read|execute|io] [--value V] [--pc-from X] [--pc-to Y] "
                              "[--before-frame F] [--before-tin T]" + NEWLINE);
         return;
     }

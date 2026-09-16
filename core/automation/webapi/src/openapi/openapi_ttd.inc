@@ -364,7 +364,7 @@
     paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
          ["$ref"] = "#/components/schemas/TTDFindLastResponse";
     paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["responses"]["400"]["description"] =
-        "Missing required field: addr";
+        "Missing search criteria in request body";
     paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["responses"]["404"]["description"] =
         "Emulator instance not found";
     paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["responses"]["501"]["description"] =

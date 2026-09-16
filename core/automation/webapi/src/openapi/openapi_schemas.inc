@@ -699,8 +699,15 @@
     schemas["TTDFindLastRequest"]["properties"]["addr"]["type"] = "integer";
     schemas["TTDFindLastRequest"]["properties"]["addr"]["format"] = "uint16";
     schemas["TTDFindLastRequest"]["properties"]["addr"]["description"] =
-        "Memory address to search for (required).";
-    schemas["TTDFindLastRequest"]["required"].append("addr");
+        "Single memory address to search for (optional if addr_from/to or pc_from/to are provided).";
+    schemas["TTDFindLastRequest"]["properties"]["addr_from"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["addr_from"]["format"] = "uint16";
+    schemas["TTDFindLastRequest"]["properties"]["addr_from"]["description"] =
+        "Start of memory address range (optional, default 0).";
+    schemas["TTDFindLastRequest"]["properties"]["addr_to"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["addr_to"]["format"] = "uint16";
+    schemas["TTDFindLastRequest"]["properties"]["addr_to"]["description"] =
+        "End of memory address range (optional, default 65535).";
     schemas["TTDFindLastRequest"]["properties"]["access"]["type"] = "string";
     schemas["TTDFindLastRequest"]["properties"]["access"]["enum"].append("write");
     schemas["TTDFindLastRequest"]["properties"]["access"]["enum"].append("read");
