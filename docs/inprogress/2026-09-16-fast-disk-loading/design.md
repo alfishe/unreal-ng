@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | r0 2026-09-16 initial draft — ROM bytes and entry table verified in-tree; per-service exit contracts and the private-stack return mechanics flagged for Phase 0 extraction |
+| **Status** | r1 2026-09-16 — reconciliation with Xpeccy+ / UnrealSpeccy source research (§17): v1 re-scoped to **FDC timing compression + ROM-loop drain trap**; the r0 `$3D13` service reimplementation (incl. Phase 0 contract extraction) is deferred to v2 and retained below as design material |
 | **Date** | 2026-09-16 |
 | **Feature** | Switchable fast disk loading via a TR-DOS `$3D13` service-API hook |
 | **Affects** | `core/src/emulator/cpu/{z80,core}.{h,cpp}`, `core/src/emulator/io/fdc/diskfastload.h/.cpp` (new), `core/src/base/featuremanager.h/.cpp`, `core/automation/cli/src/commands/cli-processor-settings.cpp`, `core/automation/webapi/src/api/settings_api.cpp`, `unreal-qt/src/{menumanager,mainwindow}.{h,cpp}`, `unreal-videowall/`, `core/tests/emulator/io/fdc/` |
@@ -18,7 +18,7 @@
 ## 2. Non-goals (v1)
 
 - **Write-path services.** WRITE_SECTORS (`$06`), WRITE_DESCRIPTOR (`$09`), SAVE_FILE (`$0B`), SAVE_BASIC (`$0C`), FORMAT_TRACK (`$15`) run through the real ROM — the disk-image mutation path is not duplicated host-side (same reasoning as fast SAVE on tape).
-- **Custom loaders that bypass `$3D13`.** Software banging the WD1793 ports directly (`$1F`/`$3F`/`$5F`/`$7F`/`$FF`) — copy protections, non-standard DOS variants — keeps full FDC emulation. A future `turbodisk` feature (turbo mode while the FDC is busy, the `turbotape` analog) is the natural complement; see §14.1.
+- **Custom loaders that bypass `$3D13`.** Software banging the WD1793 ports directly (`$1F`/`$3F`/`$5F`/`$7F`/`$FF`) — copy protections, non-standard DOS variants — keeps full FDC emulation. A future `turbodisk` feature (turbo mode while the FDC is busy, the `turbotape` analog) is the natural complement; see §14.1. *r1 (§17.3): superseded — the Layer A timing profile accelerates direct-port loaders too, at authentic FDC semantics with compressed timing.*
 - **Fast VERIFY.** Rarely used; declined.
 - **Non-5.03/5.04T service ABIs.** The signature gate (§6.1) automatically declines TR-DOS 5.04TM and 6.x layouts (verified byte differences, §4.1) and machines without the Beta 128 interface. Authentic speed for those.
 - **Load-duration emulation.** Software that measures load wall-time sees near-zero duration. Same accepted trade-off as fast tape.
@@ -170,7 +170,7 @@ IsArmed() = 'fastdisk' feature enabled          (FeatureManager live lookup;
                                                SOS font bytes all differ → decline)
 ```
 
-The signature check doubles as the ROM-version gate (§4.1) and as the no-Beta-interface gate (the SOS ROM carries font data at `$3D13`). A RAM bank spoofing the signature while `CF_TRDOS` is set is theoretically possible but pathological; if it ever matters, a `BANK_ROM` page-mode check via `MapZ80AddressToPhysicalPage` hardens it (risk table §13).
+The signature check doubles as the ROM-version gate (§4.1) and as the no-Beta-interface gate (the SOS ROM carries font data at `$3D13`). A RAM bank spoofing the signature while `CF_TRDOS` is set is theoretically possible but pathological; if it ever matters, a `BANK_ROM` page-mode check via `MapZ80AddressToPhysicalPage` hardens it (risk table §13). *(r1: §6.1/§6.2 remain fully applicable to Layer B's gates and to the deferred v2 Layer C.)*
 
 ### 6.2 Per-invocation decline matrix
 
@@ -340,7 +340,7 @@ Synthesized images via `TrackFormatSpec::trdos()` + hand-built catalogs (the `di
 
 ## 14. Open questions
 
-1. **`turbodisk` sibling** — turbo mode engaged while the WD1793 is busy (command pending / motor on), the `turbotape` analog: covers direct-port custom loaders with authentic machine timing but warp wall-clock. Natural follow-up; the FDC already exposes observable busy state for the gate.
+1. **`turbodisk` sibling** — turbo mode engaged while the WD1793 is busy (command pending / motor on), the `turbotape` analog: covers direct-port custom loaders with authentic machine timing but warp wall-clock. Natural follow-up; the FDC already exposes observable busy state for the gate. *r1: superseded — folded into v1 as the Layer A timing profile (§17.3); one `fastdisk` feature, no sibling needed.*
 2. **VERIFY (`$0D` path, disk-side)** — same shape as tape VERIFY v2: host-side compare + flag result.
 3. **`$3D1A` command-level trap** — probably unnecessary given transitive coverage (§3); revisit only if a command path bypasses internal `$3D13` calls.
 4. **5.04TM / 6.x service ABIs** — support = additional signature + ABI table entries; decline until someone asks.
@@ -357,6 +357,8 @@ Synthesized images via `TrackFormatSpec::trdos()` + hand-built catalogs (the `di
 | 4 | Surfaces: feature registration, CLI `fast_disk`, WebAPI `io_acceleration`, Qt menu, videowall | §12.3 manual checklist |
 | 5 | Docs migration (folder → permanent `docs/` location once finalized) | Per `docs/inprogress/README.md` lifecycle |
 
+> **r1 (§17.6):** phases re-scoped by the reconciliation research — Phase 0 leaves the critical path (needed only for the deferred v2 service trap); v1 = FastFDD profile (§17.3 Layer A) + ROM drain trap (Layer B) + surfaces; docs migration unchanged.
+
 ## 16. References
 
 - *TR-DOS for professionals and amateurs*, Alessandro Grussu — service API semantics
@@ -365,3 +367,110 @@ Synthesized images via `TrackFormatSpec::trdos()` + hand-built catalogs (the `di
 - `core/src/emulator/io/fdc/trdos.h` (`TRDFile`, logical track numbering), `core/src/emulator/spectrumconstants.h` (`TRDOS::ROMSwitch`, `TRDOS` sysvars)
 - Calling-convention evidence in-tree: `docs/disasm/software/tfmplayer/tsfm-sna-guide.md` (`LD C,0Eh / CALL 3D13h`), `docs/disasm/software/wildplayer/wildplayer_body.asm`, `docs/disasm/demo/across-the-edge/timing-fix-analysis.md` (`JP 3D13h`)
 - Universal track model: `core/src/emulator/io/fdc/diskimage.h` + [track-model design](../2026-09-02-universal-track-model/track-model-design.md)
+- r1 study sources (cloned to `scratch/` for analysis): [mkoloberdin/unrealspeccy](https://github.com/mkoloberdin/unrealspeccy) — original UnrealSpeccy: `z80_main.inl` (trap call sites), `wd93cmd.cpp` (`WD1793::trdos_traps()`, nodelay timing), `config.cpp` (`[beta128]` options), `tape.cpp` (`tape_traps`/`fast_tape`); [dotkoval/xpeccy-plus](https://github.com/dotkoval/xpeccy-plus) — `src/libxpeccy/vg93.c` (turbo timing rules), `src/libxpeccy/fdc.h` (`FDC_FAST`/`TURBOBYTE`), `src/xcore/config.cpp` (`fdcturbo`)
+
+## 17. r1 (2026-09-16) — reconciliation with Xpeccy+ and UnrealSpeccy
+
+User-directed source study of how the two reference emulators make disk loading fast, and what our design should adopt. Repositories cloned to `scratch/unrealspeccy-orig/` (original) and `scratch/xpeccy-plus/`; the alfishe fork at `scratch/unreal-speccy/` was also examined and contributed the cautionary tale in §17.4.
+
+### 17.1 What the studied emulators actually ship
+
+| | Original UnrealSpeccy | Xpeccy+ | unreal-qt r0 (this doc) |
+|---|---|---|---|
+| Hook level | FDC-internal timing compression **plus** pre-M1 traps inside the TR-DOS ROM's own loops | FDC-internal timing compression only — no traps, no ROM knowledge | `$3D13` service-API reimplementation |
+| Default | **both mechanisms ON** (`[beta128] Fast=1`, `Traps=1`) | `fdcturbo` user toggle | `fastdisk` ON |
+| Custom loaders | timing layer: all; traps: any caller of ROM routines | all (nothing loader-specific to break) | not covered (§2) |
+| Non-standard ROM | traps verify live ROM bytes per hit → silently disarm | n/a (no traps) | signature gate → inert decline |
+
+**A. Original UnrealSpeccy — `wd93_nodelay` (`[beta128] Fast`, default 1; `config.cpp:442`).** The WD1793 state machine keeps running authentically; only its waits shrink (`wd93cmd.cpp`): the 15 ms command delay (E bit), per-byte DRQ spacing (`next = time + 1`), head-step/restore/settle and the 15 ms head-load are zeroed. Two refinements matter as much as the speed:
+
+- **Rotation teleport** — `find_marker()` (`wd93cmd.cpp:645-679`): when the wanted sector ID is found on the track, adjust the rotation phase (`tshift`) so the ID sits "right under the head" and serve it in ~100 T-states instead of up to a revolution.
+- **CPU-paced DRQ hold** — `notready()` (`wd93cmd.cpp:697-709`): "fdc is too fast in no-delay mode, wait until cpu handles DRQ" — while DRQ is pending and unconsumed, the FDC stalls one byte-time at a time (bounded), so the CPU always observes a sane handshake.
+
+**B. Original UnrealSpeccy — `trdos_traps` (`[beta128] Traps`, default 1).** Called from the CPU `step()` *before the opcode fetch* (`z80_main.inl:116-125`) on machines where the DOS ROM stays mapped in the low 16 K (`CF_LEAVEDOSADR`/`CF_LEAVEDOSRAM`); the fast path is a single `pc < $3DFD` compare. Five traps, all guarded by live ROM-byte signatures read from the currently mapped bank (`wd93cmd.cpp:665-734`):
+
+| PC | ROM signature | Action |
+|---|---|---|
+| `$3DFD` | `$3E` @ `$3DFD`, `$0E` @ `$3DFF` | pop PC from the *hardware* stack, `A=0, C=0` — skips the ROM's disk-wait tail loop |
+| `$3EA0` | `$06` @ `$3EA0`, `$3E` @ `$3EA2` | pop PC, `A=0, B=0` — skips a retry loop |
+| `$3E01` | `$0D` @ `$3E01` | `A=C=1` — busy-wait bypass |
+| `$3FEC` | `INI` opcode `$A2` @ `$3FED`, FDC in read state | **whole-sector drain**: the DRQ byte plus every remaining track byte goes to `(HL)` through the memory-write path, `B` decremented per byte, DRQ cleared, `pc += 2` skips the `INI` — one trap hit finishes a sector's transfer loop |
+| `$3FD1` | `OUTI` opcode `$A3` @ `$3FD2`, FDC in write state + DRQ + `rwlen>1` | drains `(HL)` into the track buffer, skips the `OUTI` |
+
+The decisive property: these are **loop-level, not service-level**. The ROM still executes its full seek/ID/command sequences through the ports; only the innermost byte-transfer loop is short-circuited, and the FDC state (`rwlen`/`rwptr`/DRQ/status) is updated consistently. There is no service ABI to reimplement — no `$5D1A` private-stack contract, no per-type BASIC postconditions. The same `step()` hosts the tape siblings `tape_traps()` (PC `$056B`) and `fast_tape()` (recognizes `DEC A / JR NZ,$-1` delay loops, charges `(A-1)*16` T) — the architecture our shipped `TapeFastLoad` mirrors.
+
+**C. Xpeccy+ — `fdcturbo` (`FDC_FAST`; `fdc.h`, option `fdcturbo` in `xcore/config.cpp`).** No traps at all; the VG93 machine stays complete (real track stream, real CRC, real ADR/ID scan) while waits shrink (`vg93.c`): step rates 6/12/20/30 ms → 20 µs (`VG_TURBO_STEP`), byte delays → `TURBOBYTE` (500 ns). Three rules are documented in-source as load-bearing:
+
+1. *"Turbo shortens the steps but **keeps a command busy for a moment**: code that waits for BUSY to rise after a command (the Profi's BIOS) must get to see it"* (`vg93.c:8-10`) — the command-start window (`VG_START`) survives turbo.
+2. *"e=1, turbo too: **loaders use the time**"* (`vg93.c:334`) — the 15 ms head-settle is kept whenever the E flag is set, even in turbo.
+3. *"**a byte waits for the cpu, out of a budget of one real revolution per command** (Unreal's fast mode does the same). A program that never takes the data loses it at the normal pace"* (`vg93.c:118-121`) — DRQ data holds for the CPU; if unconsumed past the one-revolution budget, data-lost fires at the normal pace. This is exactly the "loader plays its music between bytes" case.
+
+The README claim "fixes disks with loaders of their own" follows structurally: nothing loader-specific exists to break. UnrealSpeccy's `[beta128] IL` interleave knob (physical sector order on created disks, `wldr_trd.cpp`; default 2 "speed-up #3D13 loaders in fast=0 mode", `doc/news.txt:677`) matters only for authentic rotational timing — with rotation teleport it is irrelevant.
+
+### 17.2 Conclusions
+
+1. **Nobody reimplements the `$3D13` service ABI.** Both emulators get "fast" from FDC timing compression; UnrealSpeccy adds loop-level byte drains on top. The riskiest element of r0 — the Phase 0 private-stack return contract (§4.3) and the per-type BASIC postconditions (§7) — buys speed that Layers A+B below deliver at a fraction of the contract risk. Deferred to v2.
+2. **"More reliable" = layered**: a universal timing layer (correct by construction — same semantics, compressed waits) plus a *narrow* ROM-loop drain trap (signature-gated, state-consistent).
+3. **Auto-fallback needs no detection heuristics**: Layer A has nothing to misdetect; Layer B's per-hit live-ROM signature check *is* the fallback (the exact mechanism UnrealSpeccy ships); an active watchdog is only needed if v2 service traps ever land.
+
+### 17.3 Revised v1 architecture
+
+**Layer A — FastFDD timing profile** (the `fastdisk` feature, default ON; supersedes r0 §2's custom-loader exclusion and §14.1's `turbodisk`).
+
+A timing profile inside the existing `WD1793`/`FDD` model — no new hook, no ROM knowledge, all loaders covered (ROM, custom, direct-port, copy-protection reads, Profi-style BIOS polls):
+
+| Rule | Source lesson |
+|---|---|
+| Rotation teleport: wanted sector ID served within ~100 T of the read command | UnrealSpeccy `find_marker()` |
+| Zero inter-byte DRQ spacing; zero step/restore/settle times | UnrealSpeccy `wd93_nodelay`, Xpeccy+ `VG_TURBO_STEP` |
+| Keep the command-busy window at command start | Xpeccy+ rule 1 (`VG_START`) |
+| Keep the 15 ms settle when the command's E flag is set | Xpeccy+ rule 2 |
+| DRQ data holds for the CPU; one-revolution budget, then data-lost at normal pace | Xpeccy+ rule 3 ≡ UnrealSpeccy `notready()` |
+
+**Layer B — ROM drain trap** (behind the same `fastdisk` feature; on by default once soaked).
+
+UnrealSpeccy's `$3FEC` read-drain, adapted: hooked pre-M1 in `Z80Step` at the r0 §9.2 site (after the fast-tape block), firing only when `pc == $3FEC` **and** the live mapped bank matches the signature (our verified `00 C3 69 2F` at `$3D13` as the ROM-family gate, plus the `INI` opcode byte at `$3FED`) **and** the FDC is mid-read with data pending. The trap drains the sector through `Z80::wd()` (r0 §9.3 observability rules unchanged), updates FDC state consistently, and skips the `INI`. The `$3DFD`/`$3EA0` wait-loop skips are adopted with Layer A (their waits are already ~0) only if differential testing shows they still matter — initial v1: not needed. The write-side `$3FD1` is deferred with the write path (§2).
+
+**Layer C — v2, deferred: the r0 `$3D13` service trap.** §4-§9 below remain valid design material. Worth doing only if A+B measurably fail a use case (e.g. sub-frame BASIC `LOAD` for benchmark-driven workflows).
+
+**Expected effect** (40 KiB CODE file, ~160 sectors, 3.5 MHz):
+
+| Mode | Mechanism dominating duration | Approx. |
+|---|---|---|
+| Authentic | motor + steps + rotational latency | seconds |
+| Layer A | ROM transfer loop, ~28 T/byte | ≈ 0.3 s emulated (~15 frames) |
+| Layer A + B | per-sector command sequence + 1 drained `INI` | ≤ a few frames |
+| Layer C (v2) | synthetic service call (r0 §8) | ≈ 1-2.5 frames |
+
+Layer A+B already lands within a factor of ~2 of the service trap — the deferral costs little perceived speed and removes the entire Phase 0 contract risk.
+
+### 17.4 Auto-fallback specification
+
+| Tier | Mechanism | Failure handled |
+|---|---|---|
+| 1 (construction) | Layer A is semantics-preserving timing compression — nothing to detect or decline | non-standard loaders, custom DOSes, direct-port software |
+| 2 (per-hit signature) | Layer B verifies the **live mapped bank** on every candidate hit; any mismatch (custom ROM, RAM copy, wrong version) → the trap simply does not fire; FDC-state gate prevents misfires when the address is reached in another context | non-standard ROMs / relocated loops |
+| 3 (v2 only) | service-trap watchdog: N consecutive declines or any contract-check failure disarms the feature for the session with a logged event | a hypothetical v2 trap misfire |
+
+Observability: one-shot debug log + a `fastdisk` disarm reason exposed through the existing HUD stat / CLI / WebAPI surfaces; no restart, no position loss, no visible glitch — the authentic path continues seamlessly (mirrors `TapeFastLoad`'s inert-decline discipline).
+
+### 17.5 Test deltas (extending §12)
+
+1. **Timing-differential lock** — same loader stub + image with Layer A off vs on (and B off vs on): full-RAM convergence excluding timing-seeded sysvars — replaces the r0 §12.2-1 contract lock as the primary correctness lock, and is *stronger*: both runs execute real ROM/FDC code.
+2. **Starvation budget** — loader that idles (border effects / music loop) between DRQ bytes: byte holds, no data-lost within one revolution; a loader that never consumes: data-lost at normal pace (Xpeccy+ rule 3 reproduced).
+3. **BUSY/E visibility** — a Profi-style poll-then-issue sequence sees BUSY during the command-start window; E-flag commands observe the settle interval even under Layer A.
+4. **Signature disarm** — corrupted `$3D13`/`$3FED` bytes → Layer B never fires, load still completes via Layer A; disarm reason surfaced once.
+5. **Hook-seam regression** — assert the `Z80Step` hook site fires under a synthetic PC=$3FEC + armed-state setup. The alfishe fork lost its entire trap system in a CPU rewrite without any test noticing (`z80_main.inl` call sites deleted, `wd93cmd.cpp` bodies kept, checkboxes dead) — our hook gets a test that fails loudly if the seam is ever dropped.
+6. **Direct-port custom-loader e2e** — a fixture loader reading sectors via `$1F`-family ports (no `$3D13` calls): Layer A must accelerate it identically.
+
+### 17.6 Revised phases
+
+| Phase | Content | Exit criteria |
+|---|---|---|
+| 1 | Layer A FastFDD timing profile (feature `fastdisk`, default ON) + tests §17.5-1/2/3/6 | timing-differential green; zero-warning build |
+| 2 | Layer B drain trap + signature/state gates + disarm observability + tests §17.5-4/5 | §12.1-2 style unit green; e2e instant-boot demo |
+| 3 | Surfaces: feature registration, CLI `fast_disk`, WebAPI `io_acceleration`, Qt menu, videowall (r0 §10 unchanged) | §12.3 manual checklist |
+| 4 | (v2, optional) Layer C service trap — r0 §4-§9 + Phase 0 contract extraction | only on demonstrated need |
+| 5 | Docs migration | per `docs/inprogress/README.md` |
+
+TTD properties (r0 §11) carry over unchanged: Layer A is deterministic peripheral timing; Layer B's stores go through the hooked write path with `m1_pc` attribution at `$3FEC`.
