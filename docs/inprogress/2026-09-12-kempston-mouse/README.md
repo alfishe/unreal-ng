@@ -1,8 +1,9 @@
 # Kempston Mouse Emulation
 
-Directory status: **implemented (2026-09-12), not yet committed.** The emulated device,
+Directory status: **implemented, tested and committed to master** (`a8767455`, 2026-09-12) —
+see [DONE.md](DONE.md). The emulated device,
 per-model port decoding, desktop (Qt) mouse capture, TTD record/replay of mouse input and
-the automation surface (CLI, WebAPI, Python, Lua, MCP) are in the working tree. See
+the automation surface (CLI, WebAPI, Python, Lua, MCP) are all in master. See
 [Open items](#open-items) for what is left. Tests exist for the core device, pointer
 arithmetic, decoders, funnel, TTD journalling and every automation front end (the Qt capture
 itself has no automated test); they were **not re-run** for this documentation update.
