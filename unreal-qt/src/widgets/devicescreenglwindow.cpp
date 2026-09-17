@@ -603,18 +603,10 @@ void DeviceScreenGLWindow::keyPressEvent(QKeyEvent* event)
 
         if (zxKey != 0)
         {
-            KeyboardEvent* keyEvent = nullptr;
-            if (_emulator)
-            {
-                std::string targetId = _emulator->GetUUID();
-                keyEvent = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_PRESSED, targetId);
-            }
-            else
-            {
-                keyEvent = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_PRESSED);
-            }
-
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            std::string targetId = _emulator ? _emulator->GetUUID().toString() : "";
+
+            KeyboardEvent* keyEvent = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_PRESSED, targetId);
             messageCenter.Post(MC_KEY_PRESSED, keyEvent);
         }
     }
@@ -636,18 +628,10 @@ void DeviceScreenGLWindow::keyReleaseEvent(QKeyEvent* event)
 
         if (zxKey != 0)
         {
-            KeyboardEvent* keyEvent = nullptr;
-            if (_emulator)
-            {
-                std::string targetId = _emulator->GetUUID();
-                keyEvent = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_RELEASED, targetId);
-            }
-            else
-            {
-                keyEvent = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_RELEASED);
-            }
-
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            std::string targetId = _emulator ? _emulator->GetUUID().toString() : "";
+
+            KeyboardEvent* keyEvent = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_RELEASED, targetId);
             messageCenter.Post(MC_KEY_RELEASED, keyEvent);
         }
     }

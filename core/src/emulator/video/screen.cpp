@@ -1443,12 +1443,17 @@ void Screen::DrawTSText(uint32_t n)
 void Screen::DrawATM16(uint32_t n)
 {
     // ATM 16-color EGA mode (320x200)
-    // Memory layout: 4 bit-planes, each byte encodes 8 pixels' bit N
-    //   Plane 0: video_page - 4, offset 0x0000 (bit 0 of each pixel)
-    //   Plane 1: video_page,     offset 0x0000 (bit 1 of each pixel)
-    //   Plane 2: video_page - 4, offset 0x2000 (bit 2 of each pixel)
-    //   Plane 3: video_page,     offset 0x2000 (bit 3 of each pixel)
-    // Each bit position in 4 planes combines to form a 4-bit color index
+    // Memory layout: 4 "planes", each byte contains 2 PACKED pixels
+    // Reference: Unreal Speccy dxr_atm0.cpp, xpeccy-plus video.c vidDrawATMega
+    //
+    //   Plane 0: video_page - 4, offset 0x0000 -> pixels 0,1
+    //   Plane 1: video_page,     offset 0x0000 -> pixels 2,3
+    //   Plane 2: video_page - 4, offset 0x2000 -> pixels 4,5
+    //   Plane 3: video_page,     offset 0x2000 -> pixels 6,7
+    //
+    // Each byte packs 2 pixels:
+    //   Pixel 0 (even): bits 0-2 + bit 6 >> 3 = 4-bit color
+    //   Pixel 1 (odd):  bits 3-5 >> 3 + bit 7 >> 4 = 4-bit color
 
     EmulatorState& state = _context->emulatorState;
     VideoControl& video = _vid;
@@ -1457,17 +1462,17 @@ void Screen::DrawATM16(uint32_t n)
     uint8_t videoPage = (state.p7FFD & 0x08) ? 7 : 5;
     uint8_t altPage = videoPage - 4;  // Page 1 or 3
 
-    uint8_t* plane0 = _memory->RAMPageAddress(altPage);            // bit 0
-    uint8_t* plane1 = _memory->RAMPageAddress(videoPage);          // bit 1
-    uint8_t* plane2 = _memory->RAMPageAddress(altPage) + 0x2000;   // bit 2
-    uint8_t* plane3 = _memory->RAMPageAddress(videoPage) + 0x2000; // bit 3
+    uint8_t* plane0 = _memory->RAMPageAddress(altPage);            // pixels 0,1
+    uint8_t* plane1 = _memory->RAMPageAddress(videoPage);          // pixels 2,3
+    uint8_t* plane2 = _memory->RAMPageAddress(altPage) + 0x2000;   // pixels 4,5
+    uint8_t* plane3 = _memory->RAMPageAddress(videoPage) + 0x2000; // pixels 6,7
 
-    // ATM palette lookup (uses programmable palette, but defaults to EGA-like)
+    // ATM palette lookup
     const uint32_t* palette = video.clut;
 
     uint32_t vptr = video.vptr;
 
-    // ATM 320x200 mode: 40 bytes per line per plane, 200 lines
+    // ATM 320x200 mode: 40 bytes per line, 200 lines
     uint32_t y = video.ygctr;
     uint32_t screenOffset = y * 40;
 
@@ -1478,25 +1483,49 @@ void Screen::DrawATM16(uint32_t n)
 
         uint32_t offset = (screenOffset + x) & 0x1FFF;
 
-        // Read one byte from each plane
+        // Read one byte from each plane - each byte contains 2 packed pixels
         uint8_t b0 = plane0[offset];
         uint8_t b1 = plane1[offset];
         uint8_t b2 = plane2[offset];
         uint8_t b3 = plane3[offset];
 
-        // Extract 8 pixels from bit-planes (MSB first)
-        for (int bit = 7; bit >= 0; bit--)
-        {
-            uint8_t color = ((b0 >> bit) & 1) |
-                           (((b1 >> bit) & 1) << 1) |
-                           (((b2 >> bit) & 1) << 2) |
-                           (((b3 >> bit) & 1) << 3);
+        // Extract 8 pixels (2 from each plane) using ATM packed format:
+        // Even pixel: bits 0-2 | (bit 6 >> 3)
+        // Odd pixel:  (bits 3-5 >> 3) | (bit 7 >> 4)
 
-            uint32_t c = palette[color];
-            // Double pixels for 640 width output
-            vbuf[video.buf][vptr++] = c;
-            vbuf[video.buf][vptr++] = c;
-        }
+        // Plane 0 -> pixels 0,1
+        uint8_t color0 = (b0 & 0x07) | ((b0 & 0x40) >> 3);
+        uint8_t color1 = ((b0 & 0x38) >> 3) | ((b0 & 0x80) >> 4);
+
+        // Plane 1 -> pixels 2,3
+        uint8_t color2 = (b1 & 0x07) | ((b1 & 0x40) >> 3);
+        uint8_t color3 = ((b1 & 0x38) >> 3) | ((b1 & 0x80) >> 4);
+
+        // Plane 2 -> pixels 4,5
+        uint8_t color4 = (b2 & 0x07) | ((b2 & 0x40) >> 3);
+        uint8_t color5 = ((b2 & 0x38) >> 3) | ((b2 & 0x80) >> 4);
+
+        // Plane 3 -> pixels 6,7
+        uint8_t color6 = (b3 & 0x07) | ((b3 & 0x40) >> 3);
+        uint8_t color7 = ((b3 & 0x38) >> 3) | ((b3 & 0x80) >> 4);
+
+        // Output 8 pixels, doubled for 640 width
+        vbuf[video.buf][vptr++] = palette[color0];
+        vbuf[video.buf][vptr++] = palette[color0];
+        vbuf[video.buf][vptr++] = palette[color1];
+        vbuf[video.buf][vptr++] = palette[color1];
+        vbuf[video.buf][vptr++] = palette[color2];
+        vbuf[video.buf][vptr++] = palette[color2];
+        vbuf[video.buf][vptr++] = palette[color3];
+        vbuf[video.buf][vptr++] = palette[color3];
+        vbuf[video.buf][vptr++] = palette[color4];
+        vbuf[video.buf][vptr++] = palette[color4];
+        vbuf[video.buf][vptr++] = palette[color5];
+        vbuf[video.buf][vptr++] = palette[color5];
+        vbuf[video.buf][vptr++] = palette[color6];
+        vbuf[video.buf][vptr++] = palette[color6];
+        vbuf[video.buf][vptr++] = palette[color7];
+        vbuf[video.buf][vptr++] = palette[color7];
     }
 
     video.vptr = vptr;
