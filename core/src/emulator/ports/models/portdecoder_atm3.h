@@ -60,6 +60,13 @@ public:
     bool IsPort_BE(uint16_t port);    // ATM3 status / window readback
     bool IsPort_FFF7(uint16_t port, uint8_t& windowIndex) override;  // Narrower decode than ATM710 (mask 0x3FFF)
 
+    // ATM3 palette write decode is the EXACT #FF port (xpeccy evoPortMap
+    // {0x00ff, 0x00ff, 1, ...}), unlike ATM710's 0x9F/0xBF/0xDF/0xFF group
+    bool IsPort_ATM_Palette(uint16_t port) override;
+
+    // Palette gated by the manager/shaden line (the ATM3 dos-line analog)
+    bool IsPaletteWriteEnabled() override;
+
     // CMOS data port: 0xBFF7 when shaden (pBF.0) off, 0xBEF7 when on
     bool IsPort_CMOS_Data(uint16_t port);
     // CMOS address port: 0xDFF7 when shaden (pBF.0) off, 0xDEF7 when on
@@ -74,6 +81,14 @@ protected:
     void Port_BF_Out(uint16_t port, uint8_t value, uint16_t pc);
     void Port_BE_Out(uint16_t port, uint8_t value, uint16_t pc);
     uint8_t Port_BE_In(uint8_t portHi);  // selected by A15..A8 of port #xBE
+
+    // 7FFD lock honored only while EFF7 bit 2 (lockmem) keeps the manager in
+    // 128K mode (xpeccy evoOut7FFD)
+    void Port_7FFD_Out(uint16_t port, uint8_t value, uint16_t pc) override;
+
+    // EFF7 z-bits (bit 0 / bit 5) fold into the video mode decode on ATM3
+    // (xpeccy evoOutEFF7 -> evoSetVideoMode): re-run raster detection on change
+    void Port_EFF7_Out(uint16_t port, uint8_t value, uint16_t pc) override;
 
     // updateMemoryBanks(): inherited from PortDecoder_ATM710 (covers ATM3 NMI handling)
     /// endregion </Port handlers>

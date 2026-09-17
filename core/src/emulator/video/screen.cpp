@@ -64,9 +64,10 @@ Screen::Screen(EmulatorContext* context)
     // Framebuffer format is RGBA8888 (LE uint32 = 0xAABBGGRR) - values MUST be
     // opaque. The previous 0x00RRGGBB defaults were transparent AND R/B-swapped,
     // which showed as green-only garbage (green survives both errors).
-    // ATM extended modes themselves render via the fixed ZX palette
-    // (_rgbaColors), exactly like the reference renderer's sctab tables;
-    // clut is the hook for future ATM3/TSConf palette port writes.
+    // ATM extended modes render through the programmable palette held in
+    // EmulatorState.atmPalette (port #FF writes; defaults equal this ZX table,
+    // see InitAtmPalette), so they stay reprogrammable exactly like hardware.
+    // clut remains the 256-entry hook for the TS-class ULP palette ports.
     static const uint32_t defaultPalette[16] = {
         0xFF000000,  // 0: Black
         0xFFC72200,  // 1: Blue
@@ -367,11 +368,21 @@ Screen::ModeSelection Screen::DetectModeATM2(const EmulatorState& state) const
     return { mode, rasterMode };
 }
 
-// ATM 3 (ZX-Evo / PentEvo): FF77 extended modes incl. Text Linear. Unlike
-// Pentagon, EFF7 on ATM is extended CONTROL only (turbo / lockmem / rocache)
-// - its bits select no AlCo video modes. Mapping them to the Pentagon M_P16 /
-// M_PMC descriptors would also pull in 320-line / 71680 T timing that
-// conflicts with the ATM frame (69888 T, forced by ApplyModelTimingDefaults).
+// ATM 3 (ZX-Evo / PentEvo): FF77 selects the mode family first; the EFF7
+// z-bits only apply within the ZX base mode (FF77 = 3). This is the actual
+// BaseConf FPGA decode (alfishe/pentevo, fpga/baseconf/trunk/video/
+// video_modedecode.v): pent_vmode = {pEFF7.0, pEFF7.5} - 2'b10 = 16-color
+// 256x192 (ALCO, M_P16), 2'b01 = hardware multicolor (M_PMC), 2'b00 and the
+// undefined 2'b11 = plain ZX. With any other FF77 value the ATM mode wins
+// and the z-bits are ignored. M_P16/M_PMC keep the ZX raster: SetVideoMode
+// swaps in the 312-line M_ZX48 descriptor for them on ATM3, so the frame
+// stays 69888 T.
+//
+// xpeccy pentevo.c evoSetVideoMode instead composes a flat mode word
+// `(pEFF7 & 0x20) | ((pEFF7 & 0x01) << 1) | (pFF77 & 7)`: the shift lands z0
+// on top of FF77 bit 1, so its `case 0x13` (ALCO) is unreachable dead code -
+// its own comment ("z5.z0.0.b2.b1.b0", z0 at bit 4) shows the intent.
+// Implemented per the hardware, not per that bug.
 Screen::ModeSelection Screen::DetectModeATM3(const EmulatorState& state) const
 {
     VideoModeEnum mode = M_ZX48;
@@ -387,7 +398,19 @@ Screen::ModeSelection Screen::DetectModeATM3(const EmulatorState& state) const
             case FF77_MC: mode = M_ATMHR; break;
             case FF77_TX: mode = M_ATMTX; break;
             case FF77_TL: mode = M_ATMTL; break;
-            default:      mode = M_NUL; break;
+            default:      mode = M_NUL; break;  // FF77 1/4/5 undefined on hardware
+        }
+    }
+    else
+    {
+        // pent_vmode = {pEFF7.0 (z0), pEFF7.5 (z5)} - one-hot FPGA decode
+        const uint8_t pentMode = ((state.pEFF7 & EFF7_4BPP) ? 0x02 : 0x00) |
+                                 ((state.pEFF7 & EFF7_HWMC) ? 0x01 : 0x00);
+        switch (pentMode)
+        {
+            case 0x02: mode = M_P16; break;  // ALCO: 16-color 256x192
+            case 0x01: mode = M_PMC; break;  // hardware multicolor 256x192
+            default:   break;                // 00 = ZX; 11 (both bits) undefined -> ZX
         }
     }
 
@@ -455,7 +478,18 @@ void Screen::SetVideoMode(VideoModeEnum mode)
 
     // For M_P384 overscan mode, use Pentagon timing for all calculations
     // Only the framebuffer size differs - timing must be identical to Pentagon
-    const RasterDescriptor& timingDescriptor = (_mode == M_P384) ? rasterDescriptors[M_PENTAGON128K] : rasterDescriptor;
+    // ATM3 AlCo modes (EFF7 z0/z5 -> M_P16/M_PMC): the Pentagon-class
+    // descriptors carry a 320-line / 71680 T frame, but the ZX-Evo BaseConf
+    // sync generator never leaves the ATM 312-line / 69888 T raster (xpeccy
+    // evoSetVideoMode swaps the pixel fetcher only, never the sync). M_ZX48
+    // is the matching 312-line descriptor with identical geometry (352x288
+    // frame, 256x192 window at 48,48, 448 px/line) - without the swap the
+    // 71680 T maxFrameTiming would trip the config.frame sanity check.
+    const bool atm3AlcoTiming = (mode == M_P16 || mode == M_PMC) &&
+                                _context != nullptr && _context->config.mem_model == MM_ATM3;
+    const RasterDescriptor& timingDescriptor =
+        (_mode == M_P384) ? rasterDescriptors[M_PENTAGON128K] :
+        atm3AlcoTiming ? rasterDescriptors[M_ZX48] : rasterDescriptor;
 
     /// region <Config values>
     _rasterState.configFrameDuration = _context->config.frame;

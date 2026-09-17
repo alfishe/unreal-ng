@@ -37,11 +37,15 @@ void PortDecoder_ATM710::reset()
     _state->p7FFD = 0x00;
     _state->pEFF7 = 0x00;
 
+    // Palette RAM back to the standard ZX preset (xpeccy vid_reset() /
+    // zx_set_pal()), bright-border latch off (aFF77 is deliberately kept -
+    // see below)
+    _state->InitAtmPalette();
+
     // FF77 / pFFF7 state is deliberately NOT touched here: the boot defaults
     // are mode-dependent and applied by ApplyBootROMDefaults() right after this
-    // (mirroring the original reset(mode) ATM block). pFF77 keeps its old value
-    // so that the pFF77 bit0 transition performs the physical memswap/unswap;
-    // the atmMemSwapped flag itself is only ever toggled by atmMemSwap().
+    // (mirroring the original reset(mode) ATM block). The original's pFF77
+    // bit0 memswap side effect is not emulated - see Port_FF77_Out.
 
     // Base clock until pFF77 says otherwise. ApplyBootROMDefaults runs right
     // after this and routes through Port_FF77_Out -> updateTurboMode(), so the
@@ -60,9 +64,9 @@ void PortDecoder_ATM710::ApplyBootROMDefaults(ROMModeEnum mode)
     if (mode == RM_DOS)
     {
         // aFF77: palette write gate off, TR-DOS ROM select, manager enabled
-        // pFF77: video mode 3 (ZX compatible), INT gate on, memswap on.
-        // Routed through Port_FF77_Out so the memswap / video-mode / int_gate
-        // side effects fire exactly like the original set_atm_FF77().
+        // pFF77: video mode 3 (ZX compatible), INT gate on.
+        // Routed through Port_FF77_Out so the video-mode / int_gate side
+        // effects fire exactly like the original set_atm_FF77().
         Port_FF77_Out(0x4000 | 0x200 | 0x100, 0x80 | 0x40 | 0x20 | 3, 0x0000);
 
         // Both register sets (7FFD.4 = 0 / 1) start with the same mapping:
@@ -144,6 +148,12 @@ void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
     if (IsPort_FE(port))
     {
         Default_Port_FE_Out(port, value, pc);
+
+        // ATM 4-bit border: A3 of the #FE port address is the bright bit.
+        // It is re-latched by EVERY write (xpeccy atm2OutFE / evoOutFE:
+        // nextbrd |= (port ^ 8) & 8) - not sticky - and extends the border
+        // color to a 4-bit pointer into the #FF palette RAM.
+        _state->atmBorderBright = (port & 0x0008) ? 0 : 1;
     }
     // Port #7FFD - 128K paging
     else if (IsPort_7FFD(port))
@@ -211,10 +221,23 @@ void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
         {
             PeripheralPortOut(PORT_FFFD, value);
         }
-        // Beta128 FDC ports
-        else if (IsBeta128Port(decodedPort))
+        else
         {
-            PeripheralPortOut(decodedPort, value);
+            // Beta128 FDC ports
+            if (IsBeta128Port(decodedPort))
+            {
+                PeripheralPortOut(decodedPort, value);
+            }
+
+            // ATM palette RAM write. On the real bus the #xxFF access drives
+            // BOTH the WD1793 system register and the palette DAC latch (xpeccy
+            // atm2OutFF: "bdiOut already done"; pentevo evoOutFF forwards to
+            // difOut() before the palette part), so the two are additive, not
+            // exclusive - the decode sets overlap only on #FF itself
+            if (IsPort_ATM_Palette(port) && IsPaletteWriteEnabled())
+            {
+                Port_ATM_Palette_Out(port, value);
+            }
         }
     }
 
@@ -339,6 +362,22 @@ uint16_t PortDecoder_ATM710::decodePort(uint16_t port)
     return port;
 }
 
+bool PortDecoder_ATM710::IsPort_ATM_Palette(uint16_t port)
+{
+    // ATM710 palette write decode: mask 0x009F, value 0x00FF (xpeccy atm2PortMap
+    // `{0x009f, 0x00ff, 1, ...}`) -> low byte must carry bits 0-4 and 7, giving
+    // #xx9F / #xxBF / #xxDF / #xxFF. The service software writes #FF; the
+    // wider group is the partially-decoded address the hardware actually matches
+    return (port & 0x009F) == 0x009F;
+}
+
+bool PortDecoder_ATM710::IsPaletteWriteEnabled()
+{
+    // xpeccy gates the palette entry on the dos line (dos=1). unreal-ng's
+    // equivalent for the ATM710 xx77/xFF7 group is DOSEN || SYSEN
+    return IsDosPortsEnabled();
+}
+
 /// endregion </Port detection>
 
 /// region <Port handlers>
@@ -352,14 +391,19 @@ void PortDecoder_ATM710::Port_7FFD_Out([[maybe_unused]] uint16_t port, uint8_t v
         return;
     }
 
-    uint8_t oldValue = _state->p7FFD;
-    _state->p7FFD = value;
-
     // Check lock bit
     if (value & PORT_7FFD_LOCK)
     {
         _7FFD_Locked = true;
     }
+
+    Apply7FFDWrite(port, value, pc);
+}
+
+void PortDecoder_ATM710::Apply7FFDWrite([[maybe_unused]] uint16_t port, uint8_t value, [[maybe_unused]] uint16_t pc)
+{
+    uint8_t oldValue = _state->p7FFD;
+    _state->p7FFD = value;
 
     // Full set_banks() equivalent: window mapping + TR-DOS session flag re-derivation
     if (_memory)
@@ -382,11 +426,13 @@ void PortDecoder_ATM710::Port_FF77_Out(uint16_t port, uint8_t value, [[maybe_unu
 {
     uint8_t oldValue = _state->pFF77;
 
-    // Check if memory swap bit changed
-    if ((oldValue ^ value) & ATM_FF77_MEMSWAP)
-    {
-        atmMemSwap();
-    }
+    // Deliberately NO atm_memswap() on the pFF77 bit0 transition. The original
+    // set_atm_FF77() does call it, but atm_memswap() opens with
+    // `if (!conf.atm.mem_swap) return;` - the physical A5-A7<->A8-A10 RAM
+    // permutation is gated behind the "AtmMemSwap" ini option and is OFF by
+    // default, so bit0 is a plain video-mode bit. Running it unconditionally
+    // scrambled all RAM on every video-mode change touching bit0 (2048.scl
+    // mode 3 -> 0 at $E076 killed the machine one instruction after the OUT).
 
     // Store value and full port address
     _state->pFF77 = value;
@@ -463,6 +509,58 @@ void PortDecoder_ATM710::Port_EFF7_Out([[maybe_unused]] uint16_t port, uint8_t v
     updateTurboMode();
 
     MLOGDEBUG("Port_EFF7_Out: value=0x%02X %s", value, Dump_EFF7_value(value).c_str());
+}
+
+// Port of the xpeccy palette write (atm2.c atm2OutFF / pentevo.c evoOutFF -
+// the two are byte-identical apart from the raw-register store). The ATM
+// hardware samples the palette DAC inputs off BOTH buses: with the DD-palette
+// option off (xpeccy default, flgDDP = 0) the inverted data value substitutes
+// the port high byte, so a single OUT (#FF),A sets a 2-bits-per-channel color:
+//   v = value ^ 0xFF                       (the DAC inputs are active-low)
+//   blue  = v.0 << 3 | v.5 << 2 | v.0 << 1 | v.5      -> 0xA*v.0 + 5*v.5
+//   red   = v.1 << 3 | v.6 << 2 | v.1 << 1 | v.6      -> 0xA*v.1 + 5*v.6
+//   green = v.4 << 3 | v.7 << 2 | v.4 << 1 | v.7      -> 0xA*v.4 + 5*v.7
+// Each 4-bit component expands x0x0x0x0-style through the {0x00, 0x11, ..
+// 0xFF} ladder (atm2clev). The RAM cell is the 4-bit border color, and A14 of
+// the last #xx77 write ("pen2") blocks the write entirely - the service ROM
+// closes the palette that way (evoReset even starts with prt2 = 0x83).
+void PortDecoder_ATM710::Port_ATM_Palette_Out(uint16_t port, uint8_t value)
+{
+    // pen2: A14 of the last #xx77 write disables palette writes
+    if (_state->aFF77 & ATM_AFF77_PEN2)
+    {
+        MLOGDEBUG("Port_ATM_Palette_Out: write to 0x%04X ignored (pen2 / A14 set)", port);
+        return;
+    }
+
+    // Palette RAM cell pointer = the 4-bit border color
+    const uint8_t cell = static_cast<uint8_t>((_state->border_attr & 0x07) | ((_state->atmBorderBright & 1) << 3));
+
+    // Raw byte for the ATM3 #BE.0D readback (stored pre-inversion, xpeccy
+    // `comp->regPal(adr) = val`)
+    _state->atmPaletteRegs[cell] = value;
+
+    const uint8_t v = static_cast<uint8_t>(value ^ 0xFF);  // inverse colors
+
+    // Data-bus substitution: port high byte <- inverted data value
+    const uint16_t dacPort = (port & 0x00FF) | (static_cast<uint16_t>(v) << 8);
+
+    // 4-bit DAC components, bit-for-bit as in atm2OutFF
+    const uint8_t blue = static_cast<uint8_t>(((v & 0x01) << 3) | ((v & 0x20) >> 3) |
+                                              ((dacPort & 0x0100) >> 7) | ((dacPort & 0x2000) >> 13));
+    const uint8_t red = static_cast<uint8_t>(((v & 0x02) << 2) | ((v & 0x40) >> 4) |
+                                             ((dacPort & 0x0200) >> 8) | ((dacPort & 0x4000) >> 14));
+    const uint8_t green = static_cast<uint8_t>(((v & 0x10) >> 1) | ((v & 0x80) >> 5) |
+                                               ((dacPort & 0x1000) >> 11) | ((dacPort & 0x8000) >> 15));
+
+    // 4-bit -> 8-bit expansion ladder (atm2clev), ABGR packing like the ULA tables
+    static constexpr uint8_t LEVELS[16] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+                                           0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+    _state->atmPalette[cell] = 0xFF000000u | (static_cast<uint32_t>(LEVELS[blue]) << 16) |
+                               (static_cast<uint32_t>(LEVELS[green]) << 8) | LEVELS[red];
+
+    MLOGDEBUG("Port_ATM_Palette_Out: port=0x%04X value=0x%02X cell=%d -> 0x%08X",
+              port, value, cell, _state->atmPalette[cell]);
 }
 
 // Route a RAM page mapping to the bank-specific Memory API (helper for the
@@ -584,40 +682,6 @@ void PortDecoder_ATM710::updateTurboMode()
     MLOGDEBUG("updateTurboMode: hw_turbo_shift=%d (pFF77=0x%02X)", _state->hw_turbo_shift, _state->pFF77);
 }
 
-void PortDecoder_ATM710::atmMemSwap()
-{
-    if (!_memory || !_context)
-        return;
-
-    // Toggle swap state
-    _state->atmMemSwapped = !_state->atmMemSwapped;
-
-    // Swap address bits A5-A7 with A8-A10 in all RAM
-    // This is a physical RAM reorganization
-    uint8_t* ramBase = _memory->RAMBase();
-    size_t ramSize = _context->config.ramsize * 1024;  // config.ramsize is in KB
-
-    // Process each 2KB block
-    uint8_t buffer[2048];
-    for (size_t page = 0; page < ramSize; page += 2048)
-    {
-        uint8_t* bank = ramBase + page;
-
-        for (unsigned addr = 0; addr < 2048; addr++)
-        {
-            // Swap: A10 A9 A8 A7 A6 A5 A4 A3 A2 A1 A0
-            //    -> A7 A6 A5 A10 A9 A8 A4 A3 A2 A1 A0
-            unsigned newAddr = (addr & 0x1F)           // Keep A0-A4
-                             | ((addr >> 3) & 0xE0)    // Move A8-A10 to A5-A7
-                             | ((addr << 3) & 0x700);  // Move A5-A7 to A8-A10
-            buffer[addr] = bank[newAddr];
-        }
-        memcpy(bank, buffer, 2048);
-    }
-
-    MLOGINFO("atmMemSwap: Memory swap performed, state=%d", _state->atmMemSwapped);
-}
-
 /// endregion </Port handlers>
 
 /// region <Debug methods>
@@ -642,8 +706,7 @@ std::string PortDecoder_ATM710::Dump_FF77_value(uint8_t value)
 
     const char* modeNames[] = { "EGA", "?", "HwMC", "ZX", "?", "?", "Text", "?" };
 
-    return StringHelper::Format("SWAP:%d VMODE:%d(%s) TURBO:%d INT:%d",
-                                (value & ATM_FF77_MEMSWAP) ? 1 : 0,
+    return StringHelper::Format("VMODE:%d(%s) TURBO:%d INT:%d",
                                 videoMode, modeNames[videoMode & 7],
                                 (value & ATM_FF77_TURBO) ? 1 : 0,
                                 (value & ATM_FF77_INTGATE) ? 1 : 0);

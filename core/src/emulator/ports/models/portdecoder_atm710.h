@@ -38,8 +38,10 @@ public:
     static constexpr uint8_t ATM_EFF7_LOCKMEM     = 0x04;  // Bit 2: Lock memory configuration
     static constexpr uint8_t ATM_EFF7_ROCACHE     = 0x08;  // Bit 3: RAM at $0000 instead of ROM
 
-    // FF77 bit masks (per original Unreal Speccy atm.cpp)
-    static constexpr uint8_t ATM_FF77_MEMSWAP     = 0x01;  // Bit 0: Memory address swap
+    // FF77 bit masks (per original Unreal Speccy atm.cpp set_atm_FF77). Bit 0
+    // belongs to the video-mode field only - the original's bit0-transition
+    // atm_memswap() is gated behind the default-OFF "AtmMemSwap" ini option
+    // and is not emulated (see Port_FF77_Out).
     static constexpr uint8_t ATM_FF77_VMODE_MASK  = 0x07;  // Bits 0,1,2: Video mode (0-7)
     static constexpr uint8_t ATM_FF77_TURBO       = 0x08;  // Bit 3: 14MHz turbo
     static constexpr uint8_t ATM_FF77_INTGATE     = 0x20;  // Bit 5: INT gate (1=pass)
@@ -47,6 +49,7 @@ public:
     // aFF77 address bits
     static constexpr uint16_t ATM_AFF77_PEN       = 0x100; // Bit 8: Enable ATM paging
     static constexpr uint16_t ATM_AFF77_CPM       = 0x200; // Bit 9: ~CPM (0=TR-DOS mode)
+    static constexpr uint16_t ATM_AFF77_PEN2      = 0x4000; // Bit 14 (A14 of #xx77): 1 = palette writes disabled ("pen2")
     /// endregion </Constants>
 
     /// region <Constructors / Destructors>
@@ -88,25 +91,40 @@ public:
     bool IsPort_FFFD(uint16_t port);
     bool IsBeta128Port(uint16_t decodedPort);
 
+    // ATM palette RAM write decode (port #FF group - data-bus assisted).
+    // ATM710: (port & 0x9F) == 0x9F (low byte 9F/BF/DF/FF, xpeccy atm2PortMap
+    // {0x009f, 0x00ff}); ATM3 overrides with the exact #FF decode
+    // ({0x00ff, 0x00ff} in evoPortMap)
+    virtual bool IsPort_ATM_Palette(uint16_t port);
+
     // Manager circuit enable: PEN (aFF77 bit 8) - the persistent hardware
     // latch gating the xx77/xFF7 port group and the window mapping (the
     // `pen=0` branch of the original set_banks() forces all windows to the
     // last ROM page)
     bool IsDosPortsEnabled();        // DOSEN || SYSEN: CF_DOSPORTS session OR ~CPM (aFF77.9=0)
 
+    // Palette write gate: same dos/shadow line that gates the xx77 group on
+    // the machine (xpeccy marks the palette entry dos=1). ATM710 uses the
+    // DOSEN || SYSEN line, ATM3 the manager/shaden line
+    virtual bool IsPaletteWriteEnabled();
+
     uint16_t decodePort(uint16_t port);
     /// endregion </Port detection>
 
     /// region <Port handlers>
 protected:
-    void Port_7FFD_Out(uint16_t port, uint8_t value, uint16_t pc);
+    virtual void Port_7FFD_Out(uint16_t port, uint8_t value, uint16_t pc);
     void Port_FF77_Out(uint16_t port, uint8_t value, uint16_t pc);
     void Port_FFF7_Out(uint16_t port, uint8_t value, uint8_t windowIndex, uint16_t pc);
-    void Port_EFF7_Out(uint16_t port, uint8_t value, uint16_t pc);
+    virtual void Port_EFF7_Out(uint16_t port, uint8_t value, uint16_t pc);
+    void Port_ATM_Palette_Out(uint16_t port, uint8_t value);
+
+    // 7FFD store + paging work without the lock gate (so the ATM3 override
+    // can apply its own EFF7-conditional lock rule, xpeccy evoOut7FFD)
+    void Apply7FFDWrite(uint16_t port, uint8_t value, uint16_t pc);
 
     virtual void updateMemoryBanks();
     virtual void updateTurboMode();
-    virtual void atmMemSwap();
     /// endregion </Port handlers>
 
     /// region <Debug methods>

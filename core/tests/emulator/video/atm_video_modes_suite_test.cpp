@@ -192,27 +192,49 @@ TEST_F(ATMVideoModesSuite_Test, ModeMatrix_ATM450_AFEBits)
     }
 }
 
-TEST_F(ATMVideoModesSuite_Test, ModeMatrix_ATM3_EFF7IsControlOnly_NoVideoModes)
+TEST_F(ATMVideoModesSuite_Test, ModeMatrix_ATM3_EFF7ZBits_HierarchicalDecode)
 {
-    // Unlike Pentagon, ATM3's EFF7 bits select no AlCo video modes - and the
-    // Pentagon M_P16/M_PMC descriptors (71680 T) would conflict with the ATM
-    // frame (69888 T forced by ApplyModelTimingDefaults). Any EFF7 value must
-    // leave the FF77-driven mode detection alone.
+    // BaseConf FPGA (alfishe/pentevo video_modedecode.v): FF77 selects the
+    // mode family FIRST; pent_vmode = {pEFF7.0, pEFF7.5} only applies within
+    // FF77 = 3 - z0 alone = ALCO (M_P16), z5 alone = hardware multicolor
+    // (M_PMC), both or neither = plain ZX (2'b11 is undefined on hardware and
+    // falls back to ZX). With FF77 != 3 the ATM mode wins and the z-bits are
+    // ignored. (xpeccy's flat `(pEFF7 & 0x20) | ((pEFF7 & 0x01) << 1) |
+    // (pFF77 & 7)` composition makes its own ALCO case unreachable - see
+    // Screen::DetectModeATM3.)
     _context->config.mem_model = MM_ATM3;
     SetATMTiming();
 
-    const uint8_t eff7Values[] = {EFF7_4BPP, EFF7_HWMC, uint8_t(EFF7_4BPP | EFF7_HWMC), 0xFF, 0x00};
-    for (uint8_t ff77 : {uint8_t(FF77_16), uint8_t(FF77_ZX)})
+    const struct
     {
-        for (uint8_t eff7 : eff7Values)
-        {
-            SCOPED_TRACE(testing::Message() << "pFF77=" << int(ff77) << " pEFF7=0x" << std::hex << int(eff7));
-            const VideoModeEnum expected = (ff77 == FF77_ZX) ? M_ZX48 : M_ATM16;
-            SetFF77Mode(ff77);
-            _context->emulatorState.pEFF7 = eff7;
-            _screen->InitRaster();
-            EXPECT_EQ(_screen->_vid.mode, expected);
-        }
+        uint8_t ff77;
+        uint8_t eff7;
+        VideoModeEnum mode;
+        RasterModeEnum raster;
+    } cases[] = {
+        // ZX base mode + z-bit combinations
+        {FF77_ZX, 0x00,                            M_ZX48,  R_256_192},
+        {FF77_ZX, EFF7_4BPP,                       M_P16,   R_256_192},  // z0: ALCO 16-color
+        {FF77_ZX, EFF7_HWMC,                       M_PMC,   R_256_192},  // z5: hardware multicolor
+        {FF77_ZX, uint8_t(EFF7_4BPP | EFF7_HWMC), M_ZX48,  R_256_192},  // 2'b11 undefined -> ZX
+        {FF77_ZX, 0xFF,                            M_ZX48,  R_256_192},  // control bits sneak no mode in
+        // Extended FF77 modes ignore the z-bits (atm_vmode wins)
+        {FF77_16, EFF7_4BPP,                       M_ATM16, R_320_200},
+        {FF77_16, EFF7_HWMC,                       M_ATM16, R_320_200},
+        {FF77_MC, EFF7_HWMC,                       M_ATMHR, R_320_200},
+        {FF77_TX, EFF7_4BPP,                       M_ATMTX, R_320_200},
+        // z-bits don't rescue the undefined FF77 values (1/4/5)
+        {0x01,    EFF7_4BPP,                       M_ZX48,  R_320_200},
+    };
+    for (const auto& e : cases)
+    {
+        SCOPED_TRACE(testing::Message() << "pFF77=" << int(e.ff77) << " pEFF7=0x" << std::hex << int(e.eff7));
+        SetFF77Mode(e.ff77);
+        _context->emulatorState.pEFF7 = e.eff7;
+        _screen->InitRaster();
+        EXPECT_EQ(_screen->_vid.mode, e.mode);
+        EXPECT_EQ(_screen->_vid.raster.num, e.raster);
+        EXPECT_EQ(_screen->GetVideoMode(), e.mode);
     }
 }
 
@@ -452,28 +474,40 @@ TEST_F(ATMVideoModesSuite_Test, PortFF77_ModeBitsUnchanged_NoRedetection)
     EXPECT_EQ(_screen->GetVideoMode(), M_ATM16);
 }
 
-TEST_F(ATMVideoModesSuite_Test, PortEFF7_Stored_ControlOnly_NoImmediateRedetection)
+TEST_F(ATMVideoModesSuite_Test, PortEFF7_ControlBitsStored_ZBitsTriggerRedetection)
 {
     ReinitAs(MM_ATM3);
     auto* pd = _context->pPortDecoder;
 
-    // Hold the DOS-port gate open for both FF77 writes: the first (0xFF77)
-    // latches aFF77 with cpm set, which would close it for the second
+    // Hold the DOS-port gate open for the xx77 write: #FF77 latches aFF77
+    // with cpm set, which would close it afterwards
     _context->emulatorState.pBF = 0x01;
 
-    pd->DecodePortOut(0xFF77, 0x23, 0);  // ZX compat
-    pd->DecodePortOut(0xFF77, 0x20, 0);  // EGA
-    EXPECT_EQ(_screen->_vid.mode, M_ATM16);
+    pd->DecodePortOut(0xFF77, 0x23, 0);  // ZX compat base
+    EXPECT_EQ(_screen->_vid.mode, M_ZX48);
 
-    _screen->_vid.mode = M_ATMTX;  // sentinel
+    _screen->_vid.mode = M_ATMTX;  // sentinel: only InitRaster rewrites it
 
-    pd->DecodePortOut(0xEFF7, 0xFF, 0);  // all EFF7 bits (incl. AlCo positions)
-    EXPECT_EQ(_context->emulatorState.pEFF7, 0xFF);
-    EXPECT_EQ(_screen->_vid.mode, M_ATMTX) << "EFF7 write must not trigger video re-detection";
+    // Control-only EFF7 bits (turbo / lockmem / rocache): stored, no redetect
+    pd->DecodePortOut(0xEFF7, 0x1C, 0);
+    EXPECT_EQ(_context->emulatorState.pEFF7, 0x1C);
+    EXPECT_EQ(_screen->_vid.mode, M_ATMTX) << "control-only EFF7 write must not re-detect";
 
-    // Next-frame detection still derives from FF77 only
-    _screen->InitRaster();
-    EXPECT_EQ(_screen->_vid.mode, M_ATM16);
+    // z0 set: video bits changed -> InitRaster runs and picks ALCO
+    pd->DecodePortOut(0xEFF7, 0x1D, 0);
+    EXPECT_EQ(_screen->GetVideoMode(), M_P16);
+    // The ATM 312-line raster is held: 69888 T, not the Pentagon-class 71680
+    EXPECT_EQ(_screen->GetMaxFrameTiming(), 69888u);
+
+    // z0 + z5: the undefined combo falls back to plain ZX (still redetects)
+    pd->DecodePortOut(0xEFF7, 0x3D, 0);
+    EXPECT_EQ(_screen->GetVideoMode(), M_ZX48);
+    EXPECT_EQ(_screen->GetMaxFrameTiming(), 69888u);
+
+    // z5 alone over the ZX base: hardware multicolor
+    pd->DecodePortOut(0xEFF7, 0x20, 0);
+    EXPECT_EQ(_screen->GetVideoMode(), M_PMC);
+    EXPECT_EQ(_screen->GetMaxFrameTiming(), 69888u);
 }
 
 TEST_F(ATMVideoModesSuite_Test, Port7FFD_ShadowBit_SwitchesRendererPlanes)
@@ -790,6 +824,234 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATM16_CLUTBrightFlagRegression)
 }
 
 /// endregion </Renderer: plane strides and palette>
+
+/// region <Renderer: programmable palette (port #FF) and 4-bit border>
+
+TEST_F(ATMVideoModesSuite_Test, Render_ATM16_PalettePortProgramsColorsAndBorder)
+{
+    // A single OUT (#9F),A reprograms the palette cell the 4-bit border
+    // points at; EGA pixels AND the border then render through it (xpeccy
+    // atm2OutFF / evoOutFF -> vid->pal is shared by every mode)
+    ReinitAs(MM_ATM710);
+    auto* pd = _context->pPortDecoder;
+    EmulatorState& state = _context->emulatorState;
+
+    // EGA via the SYSEN-open xx77 alias (no DOS/SYS ROMs in this fixture, so
+    // a #FF77 write would close the DOSEN || SYSEN gate after the first one)
+    pd->DecodePortOut(0x0077, 0x23, 0);
+    pd->DecodePortOut(0x0077, 0x20, 0);
+    ASSERT_EQ(_screen->GetVideoMode(), M_ATM16);
+
+    // value 0x55 -> DAC lines (v = 0xAA): red = 10, green = 5, blue = 5
+    // -> ABGR 0xFF5555AA (packing 0xAABBGGRR, red in the low byte).
+    // #009F is a palette alias the Beta128 does not decode
+    pd->DecodePortOut(0x009F, 0x55, 0);
+    EXPECT_EQ(state.atmPalette[0], 0xFF5555AAu) << "border_attr = 0, bright = 0 -> cell 0";
+    EXPECT_EQ(state.atmPaletteRegs[0], 0x55) << "raw byte stored pre-inversion";
+
+    uint8_t* ap = _memory->RAMPageAddress(1);  // EGA plane q0 = ap + 0
+    ap[0] = 0x0F;                              // pair (0,1): colors 7 and 1
+
+    _screen->DrawATMMode(BeamT(0, 32));        // first pixel pair of row 44
+    _screen->DrawATMMode(BeamT(0, 0));         // left border
+
+    auto& fb = _screen->GetFramebufferDescriptor();
+    auto* px = reinterpret_cast<uint32_t*>(fb.memoryBuffer);
+    EXPECT_EQ(px[44 * fb.width + 64], state.atmPalette[7]);
+    EXPECT_EQ(px[44 * fb.width + 65], state.atmPalette[1]);
+    EXPECT_EQ(px[44 * fb.width + 0], 0xFF5555AAu) << "border renders through the reprogrammed cell";
+}
+
+TEST_F(ATMVideoModesSuite_Test, Border_FEAddressBit3_SelectsBrightPaletteCell)
+{
+    // ATM 4-bit border: A3 of the #FE port address is the bright bit of the
+    // palette cell pointer, re-latched by every write (xpeccy atm2OutFE /
+    // evoOutFE: nextbrd |= (port ^ 8) & 8; BaseConf FPGA zports.v: border <=
+    // {~a[3], din[2:0]} - port #FE gives bright 0, #F6 gives bright 1)
+    ReinitAs(MM_ATM710);
+    auto* pd = _context->pPortDecoder;
+    EmulatorState& state = _context->emulatorState;
+
+    pd->DecodePortOut(0x0077, 0x23, 0);
+    pd->DecodePortOut(0x0077, 0x20, 0);
+    ASSERT_EQ(_screen->GetVideoMode(), M_ATM16);
+
+    pd->DecodePortOut(0x00FE, 0x02, 0);  // red border, A3 = 1 -> bright 0
+    EXPECT_EQ(state.border_attr, 0x02);
+    EXPECT_EQ(state.atmBorderBright, 0);
+
+    pd->DecodePortOut(0x00F6, 0x02, 0);  // same color, A3 = 0 -> bright 1
+    EXPECT_EQ(state.border_attr, 0x02);
+    EXPECT_EQ(state.atmBorderBright, 1);
+
+    // White into cell 2 | (1 << 3) = 10; the non-bright cell 2 stays preset
+    pd->DecodePortOut(0x009F, 0x00, 0);
+    EXPECT_EQ(state.atmPalette[10], 0xFFFFFFFFu);
+    EXPECT_EQ(state.atmPalette[2], 0xFF1628D6u) << "cell 2 keeps the ZX red preset";
+
+    _screen->DrawATMMode(BeamT(0, 0));
+    auto& fb = _screen->GetFramebufferDescriptor();
+    auto* px = reinterpret_cast<uint32_t*>(fb.memoryBuffer);
+    EXPECT_EQ(px[44 * fb.width], 0xFFFFFFFFu) << "border picks the bright cell 10";
+
+    // A3 is re-latched per write: back on #FE the border falls to cell 2
+    pd->DecodePortOut(0x00FE, 0x02, 0);
+    EXPECT_EQ(state.atmBorderBright, 0);
+    _screen->DrawATMMode(BeamT(0, 0));
+    EXPECT_EQ(px[44 * fb.width], 0xFF1628D6u);
+}
+
+TEST_F(ATMVideoModesSuite_Test, Render_ATMHR_AttributeBit7IsPaperBright_NoFlash)
+{
+    // vidATMDoubleDot decode (xpeccy, shared by HWM / TX / TL): attr bit 6 =
+    // ink bright, bit 7 = PAPER bright - there is no flash. The old renderer
+    // routed paper through _rgbaFlashColors, misreading bit 7 as flash
+    _context->config.mem_model = MM_ATM710;
+    SetATMTiming();
+    SetFF77Mode(FF77_MC);
+    _screen->InitRaster();
+    ASSERT_EQ(_screen->GetVideoMode(), M_ATMHR);
+
+    auto& fb = _screen->GetFramebufferDescriptor();
+    auto* px = reinterpret_cast<uint32_t*>(fb.memoryBuffer);
+    auto At = [&](uint32_t row, uint32_t col) -> uint32_t& { return px[row * fb.width + col]; };
+
+    EmulatorState& state = _context->emulatorState;
+    uint8_t* ap = _memory->RAMPageAddress(1);
+    uint8_t* vp = _memory->RAMPageAddress(5);
+
+    vp[0] = 0x80;  // bit 7 set -> first pixel ink, second paper
+    ap[0] = 0xC7;  // ink = 7 | 8 = 15 (bright white), paper = 0 | 8 = 8 (bright black)
+
+    _screen->DrawATMMode(BeamT(0, 32));  // byte group n=0, bits 7..4 -> cols 32..35
+    EXPECT_EQ(At(44, 32), state.atmPalette[15]);
+    EXPECT_EQ(At(44, 33), state.atmPalette[8]);
+}
+
+/// endregion </Renderer: programmable palette (port #FF) and 4-bit border>
+
+/// region <Renderer: ATM3 EFF7 z-modes (ALCO / HWMC)>
+
+TEST_F(ATMVideoModesSuite_Test, Render_ATM3Alco_FourPlanes_PagePair)
+{
+    // vidDrawAlco (xpeccy video.c): ZX screen addressing, planes at the
+    // video page pair {vidPage ^ 1, vidPage} x {+0, +0x2000} - the ^1 pair,
+    // NOT the ^4 pair the ATM extended modes use. Each byte holds two
+    // adjacent pixels as 4-bit palette indices packed ZX-attribute-style
+    ReinitAs(MM_ATM3);
+    auto* pd = _context->pPortDecoder;
+
+    // z0 over the ZX base -> ALCO (#EFF7 needs no manager gate)
+    pd->DecodePortOut(0xFF77, 0x23, 0);
+    pd->DecodePortOut(0xEFF7, EFF7_4BPP, 0);
+    ASSERT_EQ(_screen->GetVideoMode(), M_P16);
+
+    auto& fb = _screen->GetFramebufferDescriptor();
+    auto* px = reinterpret_cast<uint32_t*>(fb.memoryBuffer);
+    auto At = [&](uint32_t row, uint32_t col) -> uint32_t& { return px[row * fb.width + col]; };
+
+    EmulatorState& state = _context->emulatorState;
+    uint8_t* p4 = _memory->RAMPageAddress(4);  // videoPage 5 ^ 1
+    uint8_t* p5 = _memory->RAMPageAddress(5);
+
+    p4[0] = 0x0F;          // pair 0 (q0): left 7, right 1
+    p5[0] = 0xC7;          // pair 1 (q1): left 15, right 8
+    p4[0x2000] = 0x47;     // pair 2 (q2): left 15, right 0
+    p5[0x2000] = 0x18;     // pair 3 (q3): left 0, right 3
+
+    // LUT geometry: the ZX window starts at beam line 72, tInLine 24; one
+    // t-state renders one pixel pair (zxX, zxX+1) at framebuffer (48 + zxX)
+    for (uint32_t pair = 0; pair < 4; ++pair)
+        _screen->DrawAlcoMode(72 * 224 + 24 + pair);
+
+    EXPECT_EQ(At(48, 48 + 0), state.atmPalette[7]);
+    EXPECT_EQ(At(48, 48 + 1), state.atmPalette[1]);
+    EXPECT_EQ(At(48, 48 + 2), state.atmPalette[15]);
+    EXPECT_EQ(At(48, 48 + 3), state.atmPalette[8]);
+    EXPECT_EQ(At(48, 48 + 4), state.atmPalette[15]);
+    EXPECT_EQ(At(48, 48 + 5), state.atmPalette[0]);
+    EXPECT_EQ(At(48, 48 + 6), state.atmPalette[0]);
+    EXPECT_EQ(At(48, 48 + 7), state.atmPalette[3]);
+}
+
+TEST_F(ATMVideoModesSuite_Test, Render_ATM3Hwmc_AttrFromPixelAddress_FlashBit)
+{
+    // vidDrawHwmc (xpeccy video.c): the bitmap byte AND the attribute byte
+    // are both fetched from the PIXEL address of the video page (same byte).
+    // Attr decode: ink = bits 0-2 + bit 6, paper = bits 3-6 (bit 6 brights
+    // both), bit 7 = flash - inverts the bitmap on the 16-frame phase
+    ReinitAs(MM_ATM3);
+    auto* pd = _context->pPortDecoder;
+
+    pd->DecodePortOut(0xFF77, 0x23, 0);
+    pd->DecodePortOut(0xEFF7, EFF7_HWMC, 0);  // z5 -> hardware multicolor
+    ASSERT_EQ(_screen->GetVideoMode(), M_PMC);
+
+    auto& fb = _screen->GetFramebufferDescriptor();
+    auto* px = reinterpret_cast<uint32_t*>(fb.memoryBuffer);
+    auto At = [&](uint32_t row, uint32_t col) -> uint32_t& { return px[row * fb.width + col]; };
+
+    EmulatorState& state = _context->emulatorState;
+    uint8_t* p5 = _memory->RAMPageAddress(5);
+
+    p5[0] = 0x47;  // ink = 7 | 8 = 15, paper = 8; bitmap bits 7,6 = 0, 1
+    _screen->DrawAlcoMode(72 * 224 + 24 + 0);
+    EXPECT_EQ(At(48, 48), state.atmPalette[8]) << "bit 7 clear -> paper";
+    EXPECT_EQ(At(48, 49), state.atmPalette[15]) << "bit 6 set -> ink";
+
+    // Bit 7 = flash: on the flash phase the bitmap inverts, attrs untouched
+    p5[0] = 0xC7;  // ink = 15, paper = 8; bitmap 0xC7 -> ~ = 0x38
+    _screen->_vid.flash = 1;
+    _screen->DrawAlcoMode(72 * 224 + 24 + 0);
+    EXPECT_EQ(At(48, 48), state.atmPalette[8]);
+    EXPECT_EQ(At(48, 49), state.atmPalette[8]);
+
+    _screen->_vid.flash = 0;
+    _screen->DrawAlcoMode(72 * 224 + 24 + 0);
+    EXPECT_EQ(At(48, 48), state.atmPalette[15]) << "flash off restores the raw bitmap";
+    EXPECT_EQ(At(48, 49), state.atmPalette[15]);
+}
+
+TEST_F(ATMVideoModesSuite_Test, Timing_ATM3ZModes_KeepAtm312LineFrame)
+{
+    // The ZX-Evo BaseConf sync generator never leaves the ATM 312-line /
+    // 69888 T raster (xpeccy evoSetVideoMode swaps the pixel fetcher only,
+    // never the sync), so M_P16/M_PMC on ATM3 must NOT adopt the
+    // Pentagon-class 320-line / 71680 T descriptors their ids carry
+    _context->config.mem_model = MM_ATM3;
+    SetATMTiming();
+
+    for (uint8_t eff7 : {uint8_t(EFF7_4BPP), uint8_t(EFF7_HWMC)})
+    {
+        SCOPED_TRACE(testing::Message() << "pEFF7 = 0x" << std::hex << int(eff7));
+        SetFF77Mode(FF77_ZX);
+        _context->emulatorState.pEFF7 = eff7;
+        _screen->InitRaster();
+        ASSERT_TRUE(_screen->GetVideoMode() == M_P16 || _screen->GetVideoMode() == M_PMC);
+
+        EXPECT_EQ(_screen->GetTstatesPerLine(), 224u);
+        EXPECT_EQ(_screen->GetMaxFrameTiming(), 69888u);
+
+        // 69888 T is exactly one frame: 69700 (last line) is in, 69888 is out
+        uint16_t x, y;
+        EXPECT_TRUE(_screen->TransformTstateToFramebufferCoords(69700, &x, &y));
+        EXPECT_FALSE(_screen->TransformTstateToFramebufferCoords(69888, &x, &y))
+            << "69888 T starts the next frame on ATM3";
+    }
+
+    // Contrast: Pentagon M_P16 really is the 320-line / 71680 T raster
+    _context->config.mem_model = MM_PENTAGON;
+    _context->config.frame = 71680;
+    _context->emulatorState.pEFF7 = EFF7_4BPP;
+    _screen->InitRaster();
+    ASSERT_EQ(_screen->GetVideoMode(), M_P16);
+    EXPECT_EQ(_screen->GetMaxFrameTiming(), 71680u);
+    uint16_t x, y;
+    EXPECT_TRUE(_screen->TransformTstateToFramebufferCoords(69888, &x, &y))
+        << "69888 T is still inside the Pentagon 320-line frame";
+}
+
+/// endregion </Renderer: ATM3 EFF7 z-modes (ALCO / HWMC)>
 
 /// region <Renderer: border geometry and batch equivalence>
 

@@ -280,6 +280,22 @@ bool PortDecoder_ATM3::IsPort_BF(uint16_t port)
     return (port & 0x00FF) == 0x00BF;
 }
 
+bool PortDecoder_ATM3::IsPort_ATM_Palette(uint16_t port)
+{
+    // ATM3 palette write decode: exact low byte #xFF only (xpeccy evoPortMap
+    // `{0x00ff, 0x00ff, 1, 2, 2, evoInBDI, evoOutFF}`). The partially decoded
+    // #xx9F / #xxBF / #xxDF aliases the ATM710 DAC also matches belong to the
+    // older machine - on the FPGA the palette latch sees one decoded address
+    return (port & 0x00FF) == 0x00FF;
+}
+
+bool PortDecoder_ATM3::IsPaletteWriteEnabled()
+{
+    // xpeccy gates the palette entry on the dos line; the unreal-ng ATM3
+    // analog for that shadow-port group is the manager/shaden gate
+    return IsManagerEnabled();
+}
+
 /// endregion </Port detection>
 
 /// region <Port handlers>
@@ -315,11 +331,9 @@ void PortDecoder_ATM3::Port_FF77_Out_ATM3(uint16_t port, uint8_t value, [[maybe_
 {
     uint8_t oldValue = _state->pFF77;
 
-    // Check if memory swap bit changed
-    if ((oldValue ^ value) & ATM_FF77_MEMSWAP)
-    {
-        atmMemSwap();
-    }
+    // No atm_memswap() on the pFF77 bit0 transition - same as the ATM 7.10
+    // base handler (the original gates the physical RAM permutation behind
+    // the default-off "AtmMemSwap" ini option)
 
     // Store value and full port address
     _state->pFF77 = value;
@@ -434,8 +448,58 @@ uint8_t PortDecoder_ATM3::Port_BE_In(uint8_t portHi)
         case 0x0C:  // FF77 state: aFF77 bits 14/9/8 + pFF77 low nibble
             return ((_state->aFF77 >> 14) << 7) | ((_state->aFF77 >> 9) << 6) |
                    ((_state->aFF77 >> 8) << 5) | (_state->pFF77 & 0xF);
-        default:    // 0x0B, 0x0D (palette) and unmapped - open bus
+        case 0x0D:  // palette cell the 4-bit border color points at, in the
+                    // raw #FF write format - bits 2,3 read back as 1 (xpeccy
+                    // evoInCfg case 0x0d00: `(regPal[brdcol & 0x0f] & 0xf3) | 0x0c`)
+        {
+            const uint8_t cell = static_cast<uint8_t>((_state->border_attr & 0x07) | ((_state->atmBorderBright & 1) << 3));
+            return static_cast<uint8_t>((_state->atmPaletteRegs[cell] & 0xF3) | 0x0C);
+        }
+        case 0x0F:  // last border color written through #FE, incl. the bright
+                    // bit from A3 (xpeccy evoInCfg case 0x0f00: nextbrd & 0x0f)
+            return static_cast<uint8_t>((_state->border_attr & 0x07) | ((_state->atmBorderBright & 1) << 3));
+        case 0x0B:  // pEFF7 readback (xpeccy evoInCfg case 0x0b00)
+            return _state->pEFF7;
+        default:    // 0x0E (font byte the text mode is showing) and unmapped - open bus
             return 0xFF;
+    }
+}
+
+void PortDecoder_ATM3::Port_7FFD_Out([[maybe_unused]] uint16_t port, uint8_t value, [[maybe_unused]] uint16_t pc)
+{
+    // ZX-Evo BaseConf: the 7FFD lock bit only counts while EFF7 bit 2 (lockmem)
+    // holds the memory manager in 128K mode. With lockmem clear (P1024 mode)
+    // 7FFD stays writable - bits 5..7 then extend the RAM page number, so a
+    // sticky latch would brick the machine after the first P1024 lock write
+    // (xpeccy pentevo.c evoOut7FFD: `if ((pEFF7 & 4) && (p7FFD & 0x20)) return;`)
+    if ((_state->pEFF7 & ATM_EFF7_LOCKMEM) && (_state->p7FFD & PORT_7FFD_LOCK))
+    {
+        MLOGWARNING("Port_7FFD_Out(ATM3): Paging locked (EFF7 lockmem + 7FFD.5), ignoring write of 0x%02X", value);
+        return;
+    }
+
+    Apply7FFDWrite(port, value, pc);
+}
+
+void PortDecoder_ATM3::Port_EFF7_Out([[maybe_unused]] uint16_t port, uint8_t value, [[maybe_unused]] uint16_t pc)
+{
+    // On ATM3 the EFF7 z-bits feed the video mode decode (xpeccy evoOutEFF7 ->
+    // evoSetVideoMode), so a z-bit change needs the same raster re-detection
+    // a #xx77 mode change gets. Other EFF7 bits are control-only (turbo /
+    // lockmem / rocache) exactly as on the base machine
+    constexpr uint8_t VIDEO_BITS = EFF7_4BPP | EFF7_HWMC;
+    const uint8_t oldVideoBits = _state->pEFF7 & VIDEO_BITS;
+
+    PortDecoder_ATM710::Port_EFF7_Out(port, value, pc);
+
+    if (((_state->pEFF7 ^ oldVideoBits) & VIDEO_BITS) != 0)
+    {
+        if (_context->pScreen)
+        {
+            _context->pScreen->InitRaster();
+            MLOGINFO("Port_EFF7_Out(ATM3): video bits changed (0x%02X -> 0x%02X), InitRaster() called",
+                     oldVideoBits, _state->pEFF7 & VIDEO_BITS);
+        }
     }
 }
 

@@ -304,3 +304,100 @@ TEST_F(PortDecoder_ATM3_Test, Turbo_FF77Bit3_EFF7Bit4_MultiplierSelect)
 }
 
 /// endregion </Turbo mode tests>
+
+/// region <ATM palette port #FF tests - exact decode and manager gate>
+
+TEST_F(PortDecoder_ATM3_Test, IsPort_ATM_Palette_ExactFFDecode)
+{
+    // The ZX-Evo FPGA palette latch sees one decoded #FF address (xpeccy
+    // evoPortMap {0x00ff, 0x00ff}); the #xx9F / #xxBF / #xxDF aliases the
+    // ATM710 DAC also matches belong to the older board
+    EXPECT_TRUE(_portDecoder->IsPort_ATM_Palette(0x00FF));
+    EXPECT_TRUE(_portDecoder->IsPort_ATM_Palette(0xFBFF));
+    EXPECT_TRUE(_portDecoder->IsPort_ATM_Palette(0xFFFF));
+
+    EXPECT_FALSE(_portDecoder->IsPort_ATM_Palette(0x009F));
+    EXPECT_FALSE(_portDecoder->IsPort_ATM_Palette(0x00BF));
+    EXPECT_FALSE(_portDecoder->IsPort_ATM_Palette(0x00DF));
+    EXPECT_FALSE(_portDecoder->IsPort_ATM_Palette(0x00FE));
+}
+
+TEST_F(PortDecoder_ATM3_Test, PaletteFF_ManagerGate)
+{
+    // The palette entry sits behind the manager/shaden gate (xpeccy gates it
+    // on the dos line; IsManagerEnabled is the ATM3 analog). At reset
+    // aFF77 = 0 -> ~cpm -> open; cpm set + no shaden -> closed
+    EmulatorState& state = _context->emulatorState;
+    state.flags = 0x00;
+    state.border_attr = 0x00;
+    state.atmBorderBright = 0;
+
+    // aFF77 = 0 at reset: gate open, pen2 clear
+    _portDecoder->DecodePortOut(0x00FF, 0x00, 0x0000);
+    EXPECT_EQ(state.atmPalette[0], 0xFFFFFFFFu);
+
+    // cpm set, shaden clear, no TR-DOS session -> blocked (pen2 also set -
+    // the gate must close before the latch is even reached)
+    state.atmPalette[0] = 0x12345678;  // sentinel
+    state.aFF77 = PortDecoder_ATM3::ATM_AFF77_CPM | PortDecoder_ATM3::ATM_AFF77_PEN2;
+    _portDecoder->DecodePortOut(0x00FF, 0x00, 0x0000);
+    EXPECT_EQ(state.atmPalette[0], 0x12345678u);
+
+    // shaden (pBF.0) reopens it - even with cpm still set
+    state.pBF = 0x01;
+    state.aFF77 = PortDecoder_ATM3::ATM_AFF77_CPM;
+    _portDecoder->DecodePortOut(0x00FF, 0x00, 0x0000);
+    EXPECT_EQ(state.atmPalette[0], 0xFFFFFFFFu);
+}
+
+TEST_F(PortDecoder_ATM3_Test, Port_7FFD_LockOnlyWithEFF7Lockmem)
+{
+    // xpeccy pentevo.c evoOut7FFD: `if ((pEFF7 & 4) && (p7FFD & 0x20)) return;`
+    // - the 7FFD lock bit only counts while EFF7 lockmem holds the manager in
+    // 128K mode. With lockmem clear (P1024 mode) 7FFD stays writable - bits
+    // 5..7 then extend the RAM page number, so a sticky latch would brick
+    // the machine after the first P1024 lock write
+    EmulatorState& state = _context->emulatorState;
+    state.flags = 0x00;
+
+    // lockmem clear: a set lock bit does NOT block (P1024 page extension)
+    state.pEFF7 = 0x00;
+    state.p7FFD = 0x20;  // lock bit already set
+    _portDecoder->DecodePortOut(0x7FFD, 0x21, 0x0000);
+    EXPECT_EQ(state.p7FFD, 0x21);
+
+    // lockmem set: the lock bit now blocks further writes
+    state.pEFF7 = PortDecoder_ATM3::ATM_EFF7_LOCKMEM;
+    state.p7FFD = 0x20;
+    _portDecoder->DecodePortOut(0x7FFD, 0x00, 0x0000);
+    EXPECT_EQ(state.p7FFD, 0x20) << "EFF7 lockmem + 7FFD.5 blocks further writes";
+
+    // clearing lockmem through EFF7 reopens it (the lock bit cannot clear
+    // itself, but the EFF7 condition can)
+    state.pEFF7 = 0x00;
+    _portDecoder->DecodePortOut(0x7FFD, 0x00, 0x0000);
+    EXPECT_EQ(state.p7FFD, 0x00);
+}
+
+TEST_F(PortDecoder_ATM3_Test, PortBE_ReadbackRegisters)
+{
+    // #BE readback selected by A15..A8 (original io.cpp in(), MM_ATM3):
+    //   0x0B = pEFF7 (xpeccy evoInCfg case 0x0b00)
+    //   0x0D = the palette cell the 4-bit border points at, bits 2,3 read
+    //        back as 1 (xpeccy case 0x0d00; the FPGA zports.v portbemux 5'hD
+    //        round-trips to exactly (raw & 0xF3) | 0x0C)
+    //   0x0F = the last #FE border color incl. the A3 bright bit
+    EmulatorState& state = _context->emulatorState;
+    state.flags = 0x00;
+    state.aFF77 = 0x0000;  // manager open at reset
+    state.border_attr = 0x04;
+    state.atmBorderBright = 1;  // cell = 4 | (1 << 3) = 12
+    state.atmPaletteRegs[12] = 0xA5;
+    state.pEFF7 = 0x5A;
+
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x0BBE, 0x0000), 0x5A) << "#BE.0B = pEFF7";
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x0DBE, 0x0000), 0xAD) << "#BE.0D = (0xA5 & 0xF3) | 0x0C";
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x0FBE, 0x0000), 0x0C) << "#BE.0F = border | bright << 3";
+}
+
+/// endregion </ATM palette port #FF tests - exact decode and manager gate>

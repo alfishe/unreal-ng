@@ -7,13 +7,28 @@
 - `pFF77` = port data byte, `aFF77` = port address bits
 
 ### Bit Assignments
+Corrected against the actual source (`set_atm_FF77`, alfishe/unreal-speccy
+atm.cpp):
+
 | Bit | pFF77 | aFF77 |
 |-----|-------|-------|
-| 0 | MEMSWAP (swap A5-A7 ↔ A8-A10) | - |
-| 1-2,4 | Video mode (0-7) | - |
+| 0-2 | Video mode (`val & 7`) | - |
+| 3 | Turbo clock select | - |
 | 5 | INT_GATE (0=masked, 1=enabled) | - |
 | 8 | - | PEN (ATM paging enable) |
 | 9 | - | ~CPM (TR-DOS mode) |
+
+NOTE on MEMSWAP: the original `set_atm_FF77` calls `atm_memswap()` on pFF77
+bit0 transitions, but `atm_memswap()` opens with `if (!conf.atm.mem_swap)
+return;` - the physical A5-A7<->A8-A10 RAM permutation is gated behind the
+unreal.ini `AtmMemSwap` option, DEFAULT 0 (OFF). Since bit0 is a plain
+video-mode bit, running the permutation unconditionally scrambles all RAM on
+routine video-mode changes (reproduced: 2048.scl dies at its mode 3->0
+switch, $E076). unreal-ng therefore does not emulate the memswap at all
+(removed from PortDecoder_ATM710/ATM3; the `atmMemSwapped` state field is
+vestigial and only survives in the TTD paging blob). The earlier table entry
+"bit 0 = MEMSWAP, bits 1-2,4 = video mode" was a misreading - video mode is
+`val & 7`.
 
 ### Video Modes
 | Mode | Name | Description |

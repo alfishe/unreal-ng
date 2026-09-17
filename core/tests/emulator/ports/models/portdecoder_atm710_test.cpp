@@ -245,8 +245,10 @@ TEST_F(PortDecoder_ATM710_Test, ApplyBootROMDefaults_NonDOS_ManagerDisabled)
     EXPECT_EQ(state.aFF77, 0x0000);
     EXPECT_EQ(state.pFF77, 0x00);
 
-    // pFF77 bit0 1->0 transition physically unswaps RAM
-    EXPECT_FALSE(state.atmMemSwapped);
+    // The pFF77 bit0 1->0 transition does NOT permute RAM: the original
+    // atm_memswap() is gated behind the default-off "AtmMemSwap" ini option,
+    // so nothing at runtime ever touches the swap flag
+    EXPECT_TRUE(state.atmMemSwapped);
 
     // ~CPM=0 raises CF_TRDOS (original set_banks() ATM branch)
     EXPECT_TRUE(state.flags & CF_TRDOS);
@@ -270,8 +272,9 @@ TEST_F(PortDecoder_ATM710_Test, ApplyBootROMDefaults_DOS_ManagerDefaults)
     EXPECT_EQ(state.aFF77, 0x4000 | 0x200 | 0x100);
     EXPECT_EQ(state.pFF77, 0x80 | 0x40 | 0x20 | 3);
 
-    // pFF77 bit0 0->1 transition swaps RAM: RM_DOS boots memswapped
-    EXPECT_TRUE(state.atmMemSwapped);
+    // No RAM permutation on the pFF77 bit0 0->1 transition (original:
+    // default-off "AtmMemSwap" ini option gates atm_memswap)
+    EXPECT_FALSE(state.atmMemSwapped);
 
     // Both pFFF7 register sets (7FFD.4 = 0 / 1) initialized identically
     EXPECT_EQ(state.pFFF7[0], 0x0100 | 1);  // ROM from 7FFD, page pair 0/1 (sys / trdos)
@@ -542,3 +545,110 @@ TEST_F(PortDecoder_ATM710_Test, Turbo_FF77Bit3_SelectsHardwareClock)
 }
 
 /// endregion </Turbo mode tests>
+
+/// region <ATM palette port #FF tests>
+
+TEST_F(PortDecoder_ATM710_Test, IsPort_ATM_Palette_0x9FGroupPartialDecode)
+{
+    // xpeccy atm2PortMap {0x009f, 0x00ff}: partially decoded - any port whose
+    // masked low byte matches 9F hits the palette DAC latch (the aliases 9F /
+    // BF / DF / FF; the ZX-Evo FPGA later narrowed this to exact #FF)
+    EXPECT_TRUE(_portDecoder->IsPort_ATM_Palette(0x00FF));
+    EXPECT_TRUE(_portDecoder->IsPort_ATM_Palette(0x009F));
+    EXPECT_TRUE(_portDecoder->IsPort_ATM_Palette(0x00BF));
+    EXPECT_TRUE(_portDecoder->IsPort_ATM_Palette(0x00DF));
+    EXPECT_TRUE(_portDecoder->IsPort_ATM_Palette(0xFBFF));
+    EXPECT_TRUE(_portDecoder->IsPort_ATM_Palette(0xFFFF));
+
+    EXPECT_FALSE(_portDecoder->IsPort_ATM_Palette(0x001F));
+    EXPECT_FALSE(_portDecoder->IsPort_ATM_Palette(0x009E));
+    EXPECT_FALSE(_portDecoder->IsPort_ATM_Palette(0x00FE));
+    EXPECT_FALSE(_portDecoder->IsPort_ATM_Palette(0x00F7));
+}
+
+TEST_F(PortDecoder_ATM710_Test, PaletteFF_WriteFormula_ActiveLowDAC)
+{
+    // A single OUT (#9F),A sets a 2-bits-per-channel color: v = value ^ 0xFF
+    // (the DAC inputs are active-low), blue = 10*v0 + 5*v5, red = 10*v1 +
+    // 5*v6, green = 10*v4 + 5*v7, each 4-bit component expanded through the
+    // {0x00, 0x11 .. 0xFF} ladder (xpeccy atm2OutFF / pentevo evoOutFF - the
+    // two formulas are byte-identical)
+    EmulatorState& state = _context->emulatorState;
+    state.flags = 0x00;
+    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;  // gate open, pen2 clear
+    state.border_attr = 0x00;
+    state.atmBorderBright = 0;
+
+    // 0x00 -> v = 0xFF: all DAC lines released -> white
+    _portDecoder->DecodePortOut(0x009F, 0x00, 0x0000);
+    EXPECT_EQ(state.atmPalette[0], 0xFFFFFFFFu);
+    EXPECT_EQ(state.atmPaletteRegs[0], 0x00) << "raw byte stored pre-inversion";
+
+    // 0xFF -> v = 0x00: all lines pulled -> black
+    _portDecoder->DecodePortOut(0x009F, 0xFF, 0x0000);
+    EXPECT_EQ(state.atmPalette[0], 0xFF000000u);
+    EXPECT_EQ(state.atmPaletteRegs[0], 0xFF);
+
+    // 0x55 -> v = 0xAA: red = 10*v1+5*v6 = 10, green = 10*v4+5*v7 = 5,
+    // blue = 10*v0+5*v5 = 5 -> ABGR 0xFF5555AA (packing 0xAABBGGRR, red in
+    // the low byte - cf. the ZX-blue default 0xFFC72200 = #0022C7)
+    _portDecoder->DecodePortOut(0x009F, 0x55, 0x0000);
+    EXPECT_EQ(state.atmPalette[0], 0xFF5555AAu);
+
+    // Only the addressed cell changes; the rest keep the ZX presets
+    EXPECT_EQ(state.atmPalette[1], 0xFFC72200u);
+    EXPECT_EQ(state.atmPalette[2], 0xFF1628D6u);
+}
+
+TEST_F(PortDecoder_ATM710_Test, PaletteFF_CellIsTheFourBitBorder)
+{
+    // The palette RAM cell pointer is the FE border color extended with the
+    // FE A3 bright bit (BaseConf FPGA zports.v / video_palframe.v:
+    // pal_addr = zxcolor = {bright, din[2:0]})
+    EmulatorState& state = _context->emulatorState;
+    state.flags = 0x00;
+    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
+    state.border_attr = 0x02;
+    state.atmBorderBright = 1;
+
+    _portDecoder->DecodePortOut(0x009F, 0x00, 0x0000);
+    EXPECT_EQ(state.atmPalette[10], 0xFFFFFFFFu) << "border 2 + bright -> cell 10";
+    EXPECT_EQ(state.atmPalette[2], 0xFF1628D6u) << "cell 2 untouched";
+}
+
+TEST_F(PortDecoder_ATM710_Test, PaletteFF_WriteGates_Pen2AndDosLine)
+{
+    // Two independent gates: pen2 (A14 of the last #xx77 write) blocks the
+    // latch itself (xpeccy atm2OutFF checks p77hi & 0x40; evoOutFF checks
+    // prt2 & 0x80), and the dos/shadow line (DOSEN || SYSEN here) blocks the
+    // whole port group (the xpeccy port-map entry is marked dos=1)
+    EmulatorState& state = _context->emulatorState;
+    state.flags = 0x00;
+    state.border_attr = 0x00;
+    state.atmBorderBright = 0;
+
+    // pen2 set -> write ignored (cell 0 keeps the black preset)
+    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN2 | PortDecoder_ATM710::ATM_AFF77_PEN;
+    _portDecoder->DecodePortOut(0x009F, 0x00, 0x0000);
+    EXPECT_EQ(state.atmPalette[0], 0xFF000000u) << "pen2 (A14) set blocks the palette write";
+    EXPECT_EQ(state.atmPaletteRegs[0], 0x00);
+
+    // CPM set and no TR-DOS session -> the dos line is closed
+    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN | PortDecoder_ATM710::ATM_AFF77_CPM;
+    _portDecoder->DecodePortOut(0x009F, 0x00, 0x0000);
+    EXPECT_EQ(state.atmPalette[0], 0xFF000000u) << "closed dos line blocks the palette write";
+
+    // ~CPM (SYSEN continuous access) reopens the group
+    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
+    _portDecoder->DecodePortOut(0x009F, 0x00, 0x0000);
+    EXPECT_EQ(state.atmPalette[0], 0xFFFFFFFFu);
+
+    // ... and so does an active TR-DOS session, even with CPM set
+    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN | PortDecoder_ATM710::ATM_AFF77_CPM;
+    state.flags = CF_DOSPORTS;
+    state.atmPalette[0] = 0x12345678;  // sentinel
+    _portDecoder->DecodePortOut(0x009F, 0x00, 0x0000);
+    EXPECT_EQ(state.atmPalette[0], 0xFFFFFFFFu) << "CF_DOSPORTS session opens the dos gate";
+}
+
+/// endregion </ATM palette port #FF tests>

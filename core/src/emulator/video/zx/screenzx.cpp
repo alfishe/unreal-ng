@@ -167,7 +167,17 @@ void ScreenZX::CreateTstateLUT()
 
     // For M_P384 overscan, use Pentagon timing but render to larger framebuffer
     // This ensures identical timing while showing more border area
-    const RasterDescriptor& timing = (_mode == M_P384) ? rasterDescriptors[M_PENTAGON128K] : rd;
+    // ATM3 AlCo modes (EFF7 z0/z5 -> M_P16/M_PMC): the Pentagon-class
+    // descriptors carry a 320-line / 71680 T frame, but the ZX-Evo BaseConf
+    // sync generator never leaves the ATM 312-line / 69888 T raster (xpeccy
+    // evoSetVideoMode swaps the pixel fetcher only). M_ZX48 is the matching
+    // 312-line descriptor with identical geometry (352x288 frame, 256x192
+    // window at 48,48, 448 px/line).
+    const bool atm3AlcoTiming = (_mode == M_P16 || _mode == M_PMC) &&
+                                _context != nullptr && _context->config.mem_model == MM_ATM3;
+    const RasterDescriptor& timing =
+        (_mode == M_P384) ? rasterDescriptors[M_PENTAGON128K] :
+        atm3AlcoTiming ? rasterDescriptors[M_ZX48] : rd;
 
     // For M_P384, we render 16 more lines from vBlank (at top) and 32 more pixels horizontally
     // No framebuffer offset needed - the extra content fills the larger buffer directly
@@ -473,7 +483,14 @@ bool ScreenZX::TransformTstateToFramebufferCoords(uint32_t tstate, uint16_t* x, 
     *x = 0;
     *y = 0;
 
-    const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
+    // ATM3 AlCo/HWMC keep the 312-line ATM raster, not the Pentagon-class
+    // 320-line one their M_P16/M_PMC ids carry - same override as
+    // SetVideoMode / CreateTstateLUT
+    const bool atm3AlcoTiming = (_mode == M_P16 || _mode == M_PMC) &&
+                                _context != nullptr && _context->config.mem_model == MM_ATM3;
+    const RasterDescriptor& rasterDescriptor =
+        (_mode == M_P384) ? rasterDescriptors[M_PENTAGON128K] :
+        atm3AlcoTiming ? rasterDescriptors[M_ZX48] : rasterDescriptors[_mode];
     const uint16_t tstatesPerLine = _rasterState.tstatesPerLine;
     const uint32_t maxFrameTiming = _rasterState.maxFrameTiming;
 
@@ -712,6 +729,15 @@ void ScreenZX::Draw(uint32_t tstate)
     if (_mode == M_ATM16 || _mode == M_ATMHR || _mode == M_ATMTX || _mode == M_ATMTL)
     {
         DrawATMMode(tstate);
+        return;
+    }
+
+    // Pentagon / ZX-Evo BaseConf EFF7 z-modes: same ZX raster and LUT, but a
+    // different plane / attribute fetch (ported from xpeccy vidDrawAlco /
+    // vidDrawHwmc)
+    if (_mode == M_P16 || _mode == M_PMC)
+    {
+        DrawAlcoMode(tstate);
         return;
     }
 
@@ -1039,9 +1065,15 @@ void ScreenZX::DrawATMMode(uint32_t tstate)
     const uint32_t fbRow = line - VSYNC_VBLANK_LINES;           // 0..287
     const uint32_t rowOffset = fbRow * rd.fullFrameWidth;
 
-    // Extended modes show the live ZX border color (port FE), like the
-    // reference rend_atmframe* border renderer.
-    const uint32_t borderColor = _rgbaColors[_borderColor];
+    EmulatorState& state = _context->emulatorState;
+
+    // Border goes through the 16-cell #FF palette RAM like every ATM color:
+    // the 4-bit index is the FE border color plus the FE A3 bright bit
+    // (xpeccy vidDrawATM* -> vid_dot_full(vid, brdcol & 0x0f)). Cells default
+    // to the standard ZX colors, so a machine whose software never touches
+    // #FF shows stock colors (xpeccy vid_reset / zx_set_pal preset).
+    const uint32_t borderColor =
+        state.atmPalette[(state.border_attr & 0x07) | ((state.atmBorderBright & 1) << 3)];
     const bool inScreenRow = (fbRow >= rd.screenOffsetTop) &&
                              (fbRow < rd.screenOffsetTop + SCREEN_LINES);
 
@@ -1086,7 +1118,6 @@ void ScreenZX::DrawATMMode(uint32_t tstate)
     // Video pages: 7FFD bit 3 selects the video page (7/5); plane pairs live
     // in the page 4 below it (3/1) - the reference's -4*PAGE / +0 / +0x2000
     // plane offsets relative to the video page.
-    EmulatorState& state = _context->emulatorState;
     uint8_t videoPage = (state.p7FFD & 0x08) ? 7 : 5;
     uint8_t altPage = videoPage - 4;
     uint8_t* vp = _memory->RAMPageAddress(videoPage);
@@ -1102,16 +1133,17 @@ void ScreenZX::DrawATMMode(uint32_t tstate)
         //   second (right) pixel color = lf = {b7, b5, b4, b3}
         // Plane k serves the pixel pair (8j+2k, 8j+2k+1) of byte group j:
         // ega0 = ap+0, ega1 = vp+0, ega2 = ap+0x2000, ega3 = vp+0x2000.
-        // Colors go through the 16-entry clut: the 4-bit index carries the
-        // bright flag in bit 3, while _rgbaColors expects full ULA attribute
-        // bytes (brightness = bit 6) and would silently drop it.
+        // Colors go through the 16-cell #FF palette RAM: the 4-bit index
+        // carries the bright flag in bit 3 (xpeccy vidDrawATMega ->
+        // vid_dot_full(pal[col])) - _rgbaColors would expect full ULA
+        // attribute bytes (brightness = bit 6) and silently drop it.
         const uint32_t j = t / 4;  // byte group 0..39
         const uint32_t q = t % 4;  // plane 0..3
         uint8_t* plane = (q & 1) ? vp : ap;
         const uint8_t bt = plane[((q >> 1) << 13) + offset + j];
         const uint32_t col = rd.screenOffsetLeft + 8 * j + 2 * q;
-        framebufferARGB[rowOffset + col] = _vid.clut[(bt & 0x07) | (bt & 0x40 ? 0x08 : 0x00)];
-        framebufferARGB[rowOffset + col + 1] = _vid.clut[((bt >> 3) & 0x07) | (bt & 0x80 ? 0x08 : 0x00)];
+        framebufferARGB[rowOffset + col] = state.atmPalette[(bt & 0x07) | (bt & 0x40 ? 0x08 : 0x00)];
+        framebufferARGB[rowOffset + col + 1] = state.atmPalette[((bt >> 3) & 0x07) | (bt & 0x80 ? 0x08 : 0x00)];
         return;
     }
 
@@ -1131,7 +1163,11 @@ void ScreenZX::DrawATMMode(uint32_t tstate)
         const uint8_t* attrPlane = fromP0 ? ap : ap + 0x2000;
         const uint8_t pix = pixPlane[offset + n / 2];
         const uint8_t attr = attrPlane[offset + n / 2];
-        const uint32_t ink = _rgbaColors[attr], paper = _rgbaFlashColors[attr];
+        // ATM attribute decode (xpeccy vidATMDoubleDot, shared by HWM / TX /
+        // TL): bit 6 = ink bright, bit 7 = PAPER bright - there is no flash.
+        // _rgbaFlashColors would misread bit 7 as the flash/paper-swap flag.
+        const uint32_t ink = state.atmPalette[(attr & 0x07) | ((attr & 0x40) >> 3)];
+        const uint32_t paper = state.atmPalette[((attr & 0x38) >> 3) | ((attr & 0x80) >> 4)];
         const uint32_t col = rd.screenOffsetLeft + 8 * n + 4 * half;
         const uint32_t shift = 4 * half;
         for (uint32_t k = 0; k < 4; ++k)
@@ -1163,8 +1199,9 @@ void ScreenZX::DrawATMMode(uint32_t tstate)
         const uint8_t code = page[codeAddr];
         const uint8_t attr = page[attrAddr];
         const uint8_t glyph = ATM_FONT[(screenY % 8) * 256 + code];
-        const uint32_t ink = _rgbaColors[attr];
-        const uint32_t paper = _rgbaFlashColors[attr];
+        // vidATMDoubleDot decode: bit 6 = ink bright, bit 7 = paper bright
+        const uint32_t ink = state.atmPalette[(attr & 0x07) | ((attr & 0x40) >> 3)];
+        const uint32_t paper = state.atmPalette[((attr & 0x38) >> 3) | ((attr & 0x80) >> 4)];
         const uint32_t col = rd.screenOffsetLeft + 8 * n + 4 * half;
         const uint32_t shift = 4 * half;
         for (uint32_t k = 0; k < 4; ++k)
@@ -1193,13 +1230,91 @@ void ScreenZX::DrawATMMode(uint32_t tstate)
         const uint8_t code = fromP0 ? vp[byteIdx] : vp[0x2000 + byteIdx];
         const uint8_t attr = fromP0 ? ap[0x2000 + byteIdx] : ap[1 + byteIdx];
         const uint8_t glyph = ATM_FONT[(screenY % 8) * 256 + code];
-        const uint32_t ink = _rgbaColors[attr];
-        const uint32_t paper = _rgbaFlashColors[attr];
+        // vidATMDoubleDot decode: bit 6 = ink bright, bit 7 = paper bright
+        const uint32_t ink = state.atmPalette[(attr & 0x07) | ((attr & 0x40) >> 3)];
+        const uint32_t paper = state.atmPalette[((attr & 0x38) >> 3) | ((attr & 0x80) >> 4)];
         const uint32_t col = rd.screenOffsetLeft + 8 * n + 4 * half;
         const uint32_t shift = 4 * half;
         for (uint32_t k = 0; k < 4; ++k)
             framebufferARGB[rowOffset + col + k] = ((glyph >> (7 - shift - k)) & 1) ? ink : paper;
     }
+}
+
+/// Pentagon / ZX-Evo BaseConf EFF7 z-modes over the ZX raster (256x192 inside
+/// the 352x288 border area). Ported from xpeccy video.c:
+///   M_P16 (EFF7 z0, ATM3 FF77 mode 0x13) = vidDrawAlco - 16-color 256x192.
+///     Four planes at the video page pair {vidPage ^ 1, vidPage} x {+0,
+///     +0x2000}, ZX screen addressing; each byte holds two adjacent pixels
+///     as 4-bit palette indices (left = {b6,b2,b1,b0}, right = {b7,b5,b4,b3}
+///     - the same packing as ATM EGA, but note the pair pages are ^1, not ^4).
+///   M_PMC (EFF7 z5, ATM3 FF77 mode 0x23) = vidDrawHwmc - hardware
+///     multicolor. The bitmap byte AND the attribute byte are both fetched
+///     from the PIXEL address of the video page (xpeccy reads
+///     MADR(vidPage, pixAdr) for both scrbyte and atrbyte - faithful to the
+///     reference). Attr decode: ink = bits 0-2 + bit 6, paper = bits 3-6
+///     (bit 6 brights both), bit 7 = flash - inverts the bitmap on the
+///     16-frame phase (_vid.flash).
+/// Border and all colors go through the #FF 16-cell palette RAM, which
+/// defaults to the standard ZX colors - Pentagon (no #FF port) sees stock
+/// colors (xpeccy vid_zx_palette accepts VID_ALCO / VID_HWMC for presets).
+void ScreenZX::DrawAlcoMode(uint32_t tstate)
+{
+    if (_framebuffer.memoryBuffer == nullptr)
+        return;
+
+    const TstateCoordLUT& lut = _tstateLUT[tstate];
+    if (lut.renderType == RT_BLANK)
+        return;
+
+    EmulatorState& state = _context->emulatorState;
+    const RasterDescriptor& rd = rasterDescriptors[_mode];
+    uint32_t* framebufferARGB = reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer);
+    const size_t framebufferOffset = lut.framebufferY * rd.fullFrameWidth + lut.framebufferX;
+
+    if (lut.renderType == RT_BORDER)
+    {
+        // 4-bit border pointer into the palette (bright bit from FE A3)
+        const uint32_t borderColor =
+            state.atmPalette[(state.border_attr & 0x07) | ((state.atmBorderBright & 1) << 3)];
+        framebufferARGB[framebufferOffset] = borderColor;
+        framebufferARGB[framebufferOffset + 1] = borderColor;
+        return;
+    }
+
+    // RT_SCREEN: one t-state = one pixel pair (zxX, zxX+1) - the same pair
+    // alignment the generic ULA path relies on (pixelInLine is always even).
+    // Video page from 7FFD bit 3, same convention as the ATM modes.
+    const uint8_t videoPage = (state.p7FFD & 0x08) ? 7 : 5;
+
+    if (_mode == M_P16)
+    {
+        // Byte group j = 8 pixels; plane q holds pixel pair q (pixels 2q,
+        // 2q+1). Planes: q0 = vidPage^1 +0, q1 = vidPage +0, q2 = vidPage^1
+        // +0x2000, q3 = vidPage +0x2000 (xpeccy vidDrawAlco phases 0/2/4/6).
+        const uint32_t j = lut.zxX >> 3;
+        const uint32_t q = (lut.zxX >> 1) & 3;
+        uint8_t* const pageA = _memory->RAMPageAddress(videoPage ^ 1);
+        uint8_t* const pageB = _memory->RAMPageAddress(videoPage);
+        uint8_t* const plane = (q & 1) ? pageB : pageA;
+        const uint8_t bt = plane[((q >> 1) << 13) + lut.screenOffset + j];
+        framebufferARGB[framebufferOffset] = state.atmPalette[(bt & 0x07) | ((bt & 0x40) >> 3)];
+        framebufferARGB[framebufferOffset + 1] = state.atmPalette[((bt & 0x38) >> 3) | ((bt & 0x80) >> 4)];
+        return;
+    }
+
+    // M_PMC: bitmap and attribute both from the pixel-plane byte
+    const uint8_t bt = _memory->RAMPageAddress(videoPage)[lut.screenOffset + lut.symbolX];
+    const uint8_t bitmap = ((bt & 0x80) && _vid.flash) ? static_cast<uint8_t>(bt ^ 0xFF) : bt;
+    const uint32_t ink = state.atmPalette[(bt & 0x07) | ((bt & 0x40) >> 3)];
+    const uint32_t paper = state.atmPalette[(bt & 0x78) >> 3];
+
+    // Branch-free pair selection, same shape as the ULA Draw hot path
+    const uint32_t bit0 = (bitmap << lut.pixelXBit) & 0x80;
+    const uint32_t mask0 = static_cast<uint32_t>(-static_cast<int32_t>(bit0 >> 7));
+    framebufferARGB[framebufferOffset] = (ink & mask0) | (paper & ~mask0);
+    const uint32_t bit1 = (bitmap << (lut.pixelXBit + 1)) & 0x80;
+    const uint32_t mask1 = static_cast<uint32_t>(-static_cast<int32_t>(bit1 >> 7));
+    framebufferARGB[framebufferOffset + 1] = (ink & mask1) | (paper & ~mask1);
 }
 
 // =============================================================================
@@ -1216,11 +1331,13 @@ void ScreenZX::DrawATMMode(uint32_t tstate)
 // =============================================================================
 void ScreenZX::RenderFrameBatch()
 {
-    // ATM extended modes have no batch renderer - RenderScreen_Batch8 assumes
-    // ZX screen geometry and would paint garbage over the ATM framebuffer.
-    // Run the per-t-state renderer across the whole frame instead so
-    // ScreenHQ=OFF still produces correct ATM output.
-    if (_mode == M_ATM16 || _mode == M_ATMHR || _mode == M_ATMTX || _mode == M_ATMTL)
+    // ATM extended modes and the EFF7 AlCo modes have no batch renderer -
+    // RenderScreen_Batch8 assumes ZX screen geometry and fetch and would
+    // paint garbage over the framebuffer. Run the per-t-state renderer
+    // across the whole frame instead so ScreenHQ=OFF still produces correct
+    // output (Draw dispatches to DrawATMMode / DrawAlcoMode).
+    if (_mode == M_ATM16 || _mode == M_ATMHR || _mode == M_ATMTX || _mode == M_ATMTL ||
+        _mode == M_P16 || _mode == M_PMC)
     {
         if (_framebuffer.memoryBuffer == nullptr)
             return;
@@ -1230,7 +1347,7 @@ void ScreenZX::RenderFrameBatch()
         if (frameTstates > MAX_FRAME_TSTATES)
             frameTstates = MAX_FRAME_TSTATES;
         for (uint32_t t = 0; t < frameTstates; ++t)
-            DrawATMMode(t);
+            Draw(t);
         return;
     }
 
