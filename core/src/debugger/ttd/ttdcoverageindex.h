@@ -175,6 +175,11 @@ public:
     /// @brief Does the sealed set for @p frame contain @p key?
     bool FrameTouches(TTDCoverageKind kind, uint64_t frame, TTDCoverageKey key) const;
 
+    /// @brief Retrieve all coverage keys recorded for a specific frame.
+    /// @return false if the frame was not watched or materialized.
+    bool GetFrameKeys(TTDCoverageKind kind, uint64_t frame,
+                      std::vector<TTDCoverageKey>& outKeys) const;
+
     /// @brief Could @p frame contain an access in the given Z80 address range?
     ///
     /// Conservative by construction: returns true whenever it cannot prove

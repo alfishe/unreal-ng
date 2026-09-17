@@ -358,8 +358,8 @@ Contributions to interfaces and documentation are welcome!
 ### References
 
 #### Internal Documentation
-- **[Architecture Overview](../../ARCHITECTURE.md)** *(if exists)*
-- **[Developer Guide](../../../../CONTRIBUTING.md)** *(if exists)*
+- **[Architecture Overview](../../../inprogress/architecture_overview.md)**
+- **[Coding Guidelines](../../../guidelines/coding-guidelines.md)**
 
 #### External References
 - **[GDB Remote Protocol Spec](https://sourceware.org/gdb/current/onlinedocs/gdb/Remote-Protocol.html)**

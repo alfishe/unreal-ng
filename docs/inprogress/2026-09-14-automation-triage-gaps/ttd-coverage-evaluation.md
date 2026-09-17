@@ -558,86 +558,72 @@ bookmarks; a bookmark never appears as a `halt_reason`.
 
 ### TD-5 (P1) — timeline summary endpoint
 
-> **Design Specification:** [`designs/ttd-timeline-summary-design.md`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/docs/inprogress/2026-09-14-automation-triage-gaps/designs/ttd-timeline-summary-design.md)
+> **Design Specification:** [`designs/ttd-timeline-summary-design.md`](docs/inprogress/2026-09-14-automation-triage-gaps/designs/ttd-timeline-summary-design.md)
 
-Closes G-2. Provides a macro, "bird's-eye view" of an entire TTD recording session without requiring reverse query enumeration or complex bitset transfers.
+Closes G-2. Provides a macro, "bird's-eye view" of an entire TTD recording
+session without requiring reverse query enumeration or complex bitset transfers.
 
-#### Background & Motivation (G-2)
-When an agent or developer analyzes a TTD recording (which may span 5,000 to 50,000 frames), identifying *where* significant execution or memory mutation occurred currently requires blind guesswork or iterative `find-last` probing. 
-A timeline summary gives agents immediate visual and quantitative telemetry pinpointing unpack bursts, disk I/O routines, and phase transitions in a single ~200-token response.
+> **Status 2026-09-16 — needs redesign** (design review found three
+> fundamental flaws in the proposed metrics). The original goal is sound but
+> the implementation path is wrong; TD-7 `coverage/summary` (§TD-7 below)
+> delivers the same macro-level heatmap using actually-correct data.
+>
+> #### Design Review Findings
+>
+> 1. **`dirty_pages` metric is broken.** The design claims
+>    `ramPages.size()` gives per-frame dirty page count. It does not.
+>    `TTDCheckpoint::ramPages` (`ttdcheckpoint.h:267`) is a vector of
+>    `TTDPageRef` with **one entry per physical RAM page of the active
+>    model** — it is `_modelRamPages` entries in *every* checkpoint (e.g.,
+>    always 8 for a 128K machine). The dirty tracker
+>    (`TTDDirtyTracker::CollectAndClear`) is ephemeral: consumed at capture
+>    time and not stored. To derive per-frame dirty counts from checkpoints,
+>    one would need to compare consecutive `TTDPageRef` slot arrays (O(pages)
+>    per frame), or add a new `uint16_t dirtyPageCount` field to
+>    `TTDCheckpoint` (a format change, contradicting the "0 bytes overhead"
+>    claim).
+>
+> 2. **`writeJournalOffset` wraps.** The write journal is a 64 MB ring
+>    buffer (~5.5M records, ~50 seconds at max intensity;
+>    `timetravelmanager.h:1413-1416`). Once it wraps, offset deltas between
+>    early and late checkpoints become meaningless — a session longer than
+>    ~50 seconds of intense activity silently returns wrong write counts for
+>    old frames with no error indication.
+>
+> 3. **Value proposition for agents is thin.** The summary gives "something
+>    was busy around frame N" but the agent still needs `find-last` (TD-2)
+>    to learn *what* happened. With TD-2's range queries already available,
+>    an agent asking "where did the depacker write to VRAM?" gets an exact
+>    answer in ~50 tokens / <1 ms — no orientation step needed. The only
+>    scenario where a generic heatmap adds clear value is *completely blind
+>    exploration* with zero domain context, which is rare in practice.
+>
+> #### Salvage Path
+>
+> TD-5's goal (macro-level session telemetry) is delivered correctly by
+> TD-7's `coverage/summary` query (see below), which uses decompressed
+> per-frame coverage sets instead of the broken checkpoint metrics. If a
+> `GET /ttd/timeline` endpoint is still desired for API symmetry, it should
+> be a thin alias for `GET /ttd/coverage/summary` aggregating all three
+> coverage kinds — not an independent implementation with different data
+> sources.
+>
+> The only metric TD-5 proposed that `coverage/summary` does not natively
+> cover is **external event markers** (`has_marker`). That could be added as
+> a per-bucket boolean at negligible cost — scan the `TTDExternalEventJournal`
+> for events in the bucket's frame range.
 
-#### Zero-Cost Capture Mechanics (Data Already Available)
-The C++ TTD engine already tracks checkpoint state and event journals per frame during recording:
-1. **Checkpoint Metadata (`TTDCheckpoint` in `timetravelmanager.h`):** Tracks keyframe status (`is_keyframe`), modified physical RAM page count (`dirty_pages`), and cumulative T-states.
-2. **Event Journal (`TTDExternalEventJournal` / write journal):** Tracks write-operation tick counts (`write_count`), I/O activity, and external marker events (`has_marker`, e.g. tape edges, disk commands, user bookmarks).
+#### Original Motivation (G-2)
+When an agent or developer analyzes a TTD recording (which may span 5,000
+to 50,000 frames), identifying *where* significant execution or memory
+mutation occurred currently requires blind guesswork or iterative `find-last`
+probing. A timeline summary gives agents immediate visual and quantitative
+telemetry pinpointing unpack bursts, disk I/O routines, and phase transitions
+in a single ~200-token response.
 
-Generating a timeline summary requires **zero new capture overhead** during emulation recording — it merely aggregates and queries pre-existing session metadata structures.
-
-#### Proposed Solution across All 5 Automation Surfaces
-
-1. **WebAPI (`core/automation/webapi/src/api/ttd_api.cpp`):**
-   - **Endpoint:** `GET /api/v1/emulator/{id}/ttd/timeline?from_frame=0&to_frame=5000&step=10&limit=500`
-   - **Query Parameters:**
-     - `from_frame` (optional, default `0`)
-     - `to_frame` (optional, default `session_end`)
-     - `step` / `resolution` (optional downsampling bucket size)
-     - `limit` (optional max entries returned, default `500`)
-   - **Response Payload:**
-     ```json
-     {
-       "from_frame": 0,
-       "to_frame": 5000,
-       "total_frames": 5000,
-       "sample_step": 10,
-       "entry_count": 500,
-       "timeline": [
-         {
-           "frame": 0,
-           "is_keyframe": true,
-           "dirty_pages": 4,
-           "write_count": 12,
-           "has_marker": true,
-           "activity_score": 0.05
-         },
-         {
-           "frame": 1420,
-           "is_keyframe": false,
-           "dirty_pages": 28,
-           "write_count": 1450,
-           "has_marker": false,
-           "activity_score": 0.92
-         }
-       ]
-     }
-     ```
-
-2. **MCP (`core/automation/mcp/src/mcp-tools.cpp`):**
-   - Exposed dynamically via `search_api` and `invoke_api` (`GET /api/v1/emulator/{id}/ttd/timeline`).
-   - Also integrated into `inspect_state` as an optional `aspect="ttd_timeline"`.
-   - Returns structured JSON plus a compact ASCII sparkline summary in human text for LLM prompt efficiency.
-
-3. **CLI (`core/automation/cli/src/commands/cli-processor-ttd.cpp`):**
-   - `ttd timeline [--from <F>] [--to <T>] [--step <S>] [--limit <N>]`
-   - Prints a tabular overview and ASCII activity bar chart:
-     ```
-     Frame Range 0..5000 (Step 50):
-     [0000..0500]  ▃ █ ▃   (Unpack burst detected at Frame 1400..1650: dirty=28 pages, writes=1450/frame)
-     ```
-
-4. **Lua (`core/automation/lua/src/emulator/lua_emulator.h`):**
-   - `emu.ttd_timeline{from_frame=0, to_frame=5000, step=10, limit=500}` returning a Lua table array of frame summaries.
-
-5. **Python (`core/automation/python/src/emulator/python_emulator.h`):**
-   - `emu.ttd_timeline(from_frame=0, to_frame=5000, step=10, limit=500)` returning a list of dictionaries.
-
-#### Downsampling & Automatic Bucket Aggregation
-If `(to_frame - from_frame) > limit`, the endpoint automatically buckets adjacent frames by `step = ceil((to_frame - from_frame) / limit)`:
-- `dirty_pages`: maximum dirty pages across the bucket.
-- `write_count`: total or average write count in the bucket.
-- `has_marker`: `true` if any frame in the bucket contains a marker.
-- `is_keyframe`: `true` if any frame in the bucket is a keyframe.
-
-**Accept:** On the `umt23x` session, the frames of the unpack burst are immediately visible as a dirty-page/journal write spike in `GET /ttd/timeline` without executing any reverse queries (`find-last`).
+**Accept (revised):** Deferred to TD-7 `coverage/summary`. The accept
+criterion remains the same: on the `umt23x` session, the depacker burst is
+immediately visible as a distinct-address spike without reverse queries.
 
 ### TD-6 (P1) — docs truth pass
 
@@ -658,13 +644,97 @@ Closes G-8 (and most of G-9's cost).
 
 ### TD-7 (P2) — query the coverage index
 
-Closes G-5. `GET /ttd/coverage?from_frame&to_frame` → per-frame executed /
-read address ranges (the index is per-frame, so frame-granular is the
-natural shape). Retrospective "did 0xBF00..0xBFFF run in frame F" becomes a
-cheap lookup instead of an M1 enumeration.
+> **Design Specification:** [`designs/ttd-coverage-query-design.md`](docs/inprogress/2026-09-14-automation-triage-gaps/designs/ttd-coverage-query-design.md)
 
-**Accept:** the depacker frame range from TD-5's spike is confirmed by two
-coverage queries (first/last frame containing executes in the range).
+Closes G-5 (and subsumes G-2 — the corrected version of what TD-5 was trying
+to do). Exposes the per-frame coverage index (`TTDCoverageIndex`) that the
+TTD engine already captures during recording. The index records, for every
+frame, which physical addresses were **executed** (M1 fetches), **written**,
+and **read** — ~307 bytes/frame compressed, already measured and budgeted.
+
+#### Why This Is the High-Value Feature for AI Agents
+
+`find-last` (TD-2) answers "**when** did X *last* happen?" — one result.
+Coverage queries answer "**where** does X happen?" — all frames. This is the
+fundamental difference between backward-point-query and forward-scan-query,
+and the latter is what RE orientation actually needs:
+
+| Agent Question | TD-7 Query | Without TD-7 |
+|:---|:---|:---|
+| "Which frames ran code in 0xBF00..0xBFFF?" | `coverage/scan` → frame list | Replay every frame, O(N)×1.3 ms |
+| "Did frame 1420 touch VRAM?" | `coverage/probe` → boolean | Seek + replay + inspect |
+| "Where does the depacker start and end?" | Two `scan` calls | 5-10 `find-last` round trips |
+| "Show the execution heatmap over the session" | `coverage/summary` → per-bucket distinct counts | Impossible without replay |
+
+The last row is the corrected version of TD-5's heatmap — using
+actually-correct per-frame distinct address counts from decompressed coverage
+sets, not the broken `ramPages.size()` / `writeJournalOffset` metrics.
+
+#### Three Query Types (Full Details in Design Spec)
+
+1. **`coverage/probe`** — "Did frame F touch address range R?" Boolean point
+   query. Wraps existing `FrameMayContain`. Sub-millisecond.
+
+2. **`coverage/scan`** — "Which frames in [F₁, F₂] touched range R?" Returns
+   a list of matching frame numbers with first/last match. ~4 ms for 5000
+   frames. The agent's primary orientation tool.
+
+3. **`coverage/summary`** — "Activity heatmap over [F₁, F₂]." Per-bucket
+   distinct executed/written/read address counts. Reveals depackers, I/O
+   bursts, and phase transitions without knowing any addresses. ~10 ms for
+   5000 frames. This is the correctly-implemented "timeline summary."
+
+#### Scope & Limitations
+
+- **Loaded sessions serve coverage.** Coverage **is** persisted in `.ttd`
+  files (since `4f501d13`, before TD-7 landed) — queries on loaded sessions
+  return real data with the covered window echoed as `covered_from`/
+  `covered_to`. Unrecorded sessions return `index_available: false`.
+- **Addresses, not values.** The index knows *which* addresses were touched,
+  not *what* was written. Value-aware queries still need `find-last` replay.
+- **Physical keys.** Keys are `(physPage << 14) | offset` — the API accepts
+  Z80 addresses and an optional `phys_page` filter for disambiguation.
+
+#### Implementation Cost
+
+Zero new engine methods needed — all primitives exist in `TTDCoverageIndex`
+(`FrameMayContain`, `MaterializeBlock`, `DecodeFrameFromCache`). No `.ttd`
+format changes. No new capture overhead. Implementation is pure wiring: three
+thin methods in `TimeTravelManager`, routes in `ttd_api.cpp`, and parity
+bindings on the four other surfaces.
+
+**Accept:**
+1. `coverage/probe` for ROM entry (PC=0x0000, executed) → `touched: true` for
+   frame 0 and `touched: false` for an address never executed.
+2. `coverage/scan` on the `umt23x` session with `kind=executed,
+   addr_from=0xBF00, addr_to=0xBFFF` returns a contiguous frame block matching
+   the depacker burst, with `first_match`/`last_match` bracketing its window.
+3. `coverage/summary` for the full session shows a clear `executed_distinct`
+   spike at the depacker frames — matching the scan results without needing
+   to know any addresses (this is the corrected TD-5 accept criterion).
+4. All five surfaces return equivalent results.
+
+> **Status — 2026-09-17:** Implemented on all five surfaces (WebAPI + OpenAPI,
+> MCP `time_travel` coverage actions, CLI `ttd coverage`, Lua/Python
+> `ttd_coverage_*`). Verification round 1 (unit tests, full suite 3030/0, live
+> WebAPI :8090 + MCP :8092) found one correctness defect and two validation
+> gaps; all fixed the same day with regression tests (full suite **3033/0**,
+> live re-verified):
+>
+> - **Per-frame honesty:** probing a frame outside the covered range now
+>   returns `index_available: false, touched: false` (was a conservative
+>   false positive — `FrameMayContain`'s pruning contract leaking through
+>   the exact-query API).
+> - **Covered-window echo:** scan/summary clamp the request window to the
+>   covered range and echo it as `covered_from`/`covered_to` on all surfaces
+>   (MCP carries it in both text and structured content).
+> - **Hard validation:** missing `frame`, invalid `kind`, `addr_from >
+>   addr_to`, `phys_page > 255`, `limit < 1`, non-numeric values → HTTP 400
+>   with a descriptive message instead of silent defaults.
+> - **Persisted coverage (better than spec):** the "live sessions only"
+>   limitation was outdated — coverage serializes with `.ttd` since
+>   `4f501d13`; dump/load round-trips serve identical queries (covered
+>   window restored, verified live on a fresh instance).
 
 ### TD-8 (P3) — canonical RE recipe + window reporting
 
@@ -684,14 +754,14 @@ from the recipe doc alone; blocked searches report their true window.
 
 ## 6. Summary matrix
 
-| # | Gap | Severity for AI RE | Effort | Proposition | Status (2026-09-16) |
+| # | Gap | Severity for AI RE | Effort | Proposition | Status (2026-09-17) |
 |:--|:--|:--|:--|:--|:--|
 | G-1 | TTD router-only + undocumented in MCP | **Critical** (agent transport) | Small | TD-1 | Partial — TD-4 seeded the `time_travel` tool (`status` + bookmark actions); full action set, `ttd` aspect, docs pending |
 | G-2 | No timeline summary | Medium | Small | TD-5 | Open |
 | G-3 | `find-last` single-address clamp | **High** | Small | TD-2 | **Done** 2026-09-15 — verified & committed `212b7098` |
-| G-4 | No bookmarks | Medium | Small-Medium | TD-4 | **Done** 2026-09-15 — verified (working tree, uncommitted) |
-| G-5 | Coverage index unqueryable | Medium | Medium | TD-7 (80% via TD-2) | ~80% covered via TD-2 (`find-last` ranges); dedicated index query pending |
-| G-6 | No memory dump-to-file | **High** | Small | TD-3 | Phase 1 **done** 2026-09-15 — accept #1–2 met (working tree, uncommitted); Phase 2 dump-to-file + `TempFileTracker` pending |
+| G-4 | No bookmarks | Medium | Small-Medium | TD-4 | **Done** 2026-09-15 — verified & committed `f4fdcf74` (2026-09-16) |
+| G-5 | Coverage index unqueryable | Medium | Medium | TD-7 (80% via TD-2) | **Done** 2026-09-17 — all 5 surfaces, verified live (WebAPI+MCP); verification defects fixed same day (see TD-7 status note) |
+| G-6 | No memory dump-to-file | **High** | Small | TD-3 | Phase 1 **done** 2026-09-15 — accept #1–2 met, committed `372c3840` (2026-09-16); Phase 2 dump-to-file + `TempFileTracker` pending |
 | G-7 | `run_frames` can't catch conditions | Medium | Docs: Small / code: Medium | TD-8 (docs half) | Open |
 | G-8 | Docs describe a different API | **High** (misdirects every doc-reader) | Small | TD-6 | Open |
 | G-9 | Invalidation ordering implicit | Medium | Trivial (docs) | TD-6 + TD-8 | Open |

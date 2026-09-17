@@ -1,6 +1,6 @@
 # Technical Design Document: TD-5 TTD Timeline Summary Endpoint
 
-**Document Path:** [`docs/inprogress/2026-09-14-automation-triage-gaps/designs/ttd-timeline-summary-design.md`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/docs/inprogress/2026-09-14-automation-triage-gaps/designs/ttd-timeline-summary-design.md)  
+**Document Path:** [`docs/inprogress/2026-09-14-automation-triage-gaps/designs/ttd-timeline-summary-design.md`](docs/inprogress/2026-09-14-automation-triage-gaps/designs/ttd-timeline-summary-design.md)  
 **Feature Target:** TD-5 (P1) — Timeline Summary Endpoint (`GET /ttd/timeline`)  
 **Status:** Architectural Specification  
 **Target Interfaces:** WebAPI, MCP, CLI, Lua, Python  
