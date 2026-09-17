@@ -1,6 +1,8 @@
 # TurboSound FM (2×YM2203)
 
-**Status (2026-09-12):** design **verified and revised (rev. 2)**, ready for implementation. No production code yet.
+**Status (2026-09-16):** **implemented and merged to master** — P0–P8 complete, see
+[DONE.md](DONE.md). The documents below are the verified design (rev. 2) those
+phases were built from; verification findings are already folded in.
 
 TurboSound FM is the NedoPC board: two Yamaha YM2203 chips in the AY socket. Each chip is an AY-compatible square-wave generator plus a three-voice FM synthesizer. In unreal-ng it is an **optional in-place replacement** for TurboSound, selected per machine config, available on every model, with full time-travel (TTD) support. ymfm is the FM chip model.
 

@@ -6,6 +6,7 @@
 #include <emulator/emulatormanager.h>
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memoryaccesstracker.h>
+#include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
 #include <emulator/cpu/z80.h>
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/diskimage.h>
@@ -395,6 +396,57 @@ namespace PythonBindings
                 }
                 return py::bytes(data);
             }, "Read block of bytes from memory", py::arg("addr"), py::arg("len"))
+            // TD-3 Phase 1: sparse non-zero block overview (same core source
+            // as GET /memory/map and MCP inspect_state 'memory_map')
+            .def("memory_map", [](Emulator& self, const std::string& viewName, int minRun, int maxBlocks) -> py::dict {
+                Memory* mem = self.GetMemory();
+                EmulatorContext* ctx = self.GetContext();
+                py::dict result;
+                if (!mem || !ctx) return result;
+
+                const MemoryMapView view = (viewName == "ram" || viewName == "pages")
+                                               ? MemoryMapView::RamPages
+                                               : MemoryMapView::AddressSpace;
+                const uint32_t minRunClamped = minRun > 0 ? static_cast<uint32_t>(minRun) : kMemoryMapDefaultMinRun;
+                const uint32_t maxBlocksClamped = maxBlocks > 0 ? static_cast<uint32_t>(maxBlocks) : kMemoryMapDefaultMaxBlocks;
+
+                const MemoryMapReport report = BuildMemoryMap(*mem, ctx->config, view, minRunClamped, maxBlocksClamped);
+                result["model"] = report.model;
+                result["view"] = report.ramView ? "ram" : "address";
+                result["total_size"] = report.totalSize;
+                result["non_zero_bytes"] = report.nonZeroBytes;
+                result["min_run"] = report.minRun;
+                result["truncated"] = report.truncated;
+
+                py::list blocks;
+                for (const MemoryMapBlock& block : report.blocks) {
+                    py::dict item;
+                    item["address"] = block.address;
+                    item["size"] = block.size;
+                    item["type"] = block.typeName;
+                    item["bank"] = block.bank == 0xFF ? -1 : static_cast<int>(block.bank);
+                    item["page"] = block.page;
+                    item["rom"] = block.isRom;
+                    item["status"] = block.IsZeroFill() ? "zeros" : "data";
+                    item["non_zero"] = block.nonZero;
+                    if (!block.IsZeroFill())
+                        item["hash"] = block.hash;  // FNV-1a 64 (format with f"{h:016x}")
+                    blocks.append(item);
+                }
+                result["blocks"] = blocks;
+                return result;
+            }, "Sparse non-zero memory block overview (view: 'address'|'ram')",
+               py::arg("view") = "address", py::arg("min_run") = 64, py::arg("max_blocks") = 48)
+            .def("mem_hexdump", [](Emulator& self, uint16_t addr, int len) -> std::string {
+                Memory* mem = self.GetMemory();
+                if (!mem) return "";
+                if (len < 1) len = 64;
+                if (len > 4096) len = 4096;
+                std::vector<uint8_t> buffer(static_cast<size_t>(len));
+                for (size_t i = 0; i < buffer.size(); i++)
+                    buffer[i] = mem->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + i));
+                return FormatHexDump(buffer.data(), buffer.size(), addr);
+            }, "Classic 16B/line hexdump with ASCII sidebar", py::arg("addr"), py::arg("len") = 64)
             .def("mem_write_block", [](Emulator& self, uint16_t addr, py::bytes data) {
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
@@ -2211,6 +2263,99 @@ namespace PythonBindings
             }, "List external-event markers (replay barriers)")
 
             // -------------------------------------------------------------
+            // TD-4 — agent bookmarks (advisory annotations, never barriers).
+            // Labels are keys: non-empty, at most 63 chars, unique per session.
+            // -------------------------------------------------------------
+            .def("ttd_bookmark_add", [](Emulator& self, const std::string& label,
+                                         py::object frameObj, uint32_t tInFrame) -> py::dict {
+                py::dict result;
+                result["added"] = false;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager)
+                {
+                    result["error"] = "TTD not available";
+                    return result;
+                }
+
+                // Position omitted → current position (mark here).
+                ttd::TTDTimePoint time = ctx->pTimeTravelManager->CurrentPosition();
+                if (!frameObj.is_none())
+                {
+                    time.frame    = frameObj.cast<uint64_t>();
+                    time.tInFrame = tInFrame;
+                }
+
+                std::string err;
+                if (!ctx->pTimeTravelManager->AddBookmark(time, label, &err))
+                {
+                    result["error"] = err;
+                    return result;
+                }
+                result["added"]    = true;
+                result["label"]    = label;
+                result["frame"]    = py::cast(time.frame);
+                result["tinframe"] = py::cast(time.tInFrame);
+                return result;
+            }, "Add an agent bookmark (advisory, never a replay barrier); omit frame to mark the current position",
+               py::arg("label"), py::arg("frame") = py::none(), py::arg("tinframe") = 0)
+
+            .def("ttd_bookmarks", [](Emulator& self) -> py::list {
+                py::list bookmarks;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager) return bookmarks;
+                for (const auto& bm : ctx->pTimeTravelManager->GetBookmarks())
+                {
+                    py::dict entry;
+                    entry["frame"]    = py::cast(bm.time.frame);
+                    entry["tinframe"] = py::cast(bm.time.tInFrame);
+                    entry["label"]    = bm.label;
+                    bookmarks.append(entry);
+                }
+                return bookmarks;
+            }, "List agent bookmarks (time-sorted)")
+
+            .def("ttd_bookmark_delete", [](Emulator& self, const std::string& label) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager) return false;
+                return ctx->pTimeTravelManager->RemoveBookmark(label);
+            }, "Delete an agent bookmark by label", py::arg("label"))
+
+            // A bookmark seek IS a seek — identical result shape to ttd_seek
+            // (plus the resolved label); a bookmark never halts anything.
+            .def("ttd_seek_bookmark", [](Emulator& self, const std::string& label) -> py::dict {
+                py::dict result;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager)
+                {
+                    result["reached"] = false;
+                    result["error"]   = "TTD not available";
+                    return result;
+                }
+                ttd::TimeTravelManager::TTDSeekResult r;
+                std::string err;
+                const bool reached = ctx->pTimeTravelManager->SeekToBookmark(label, &r, &err);
+                result["reached"]  = reached;
+                if (!err.empty())
+                    result["error"] = err;
+
+                py::dict arrivedAt;
+                arrivedAt["frame"]    = py::cast(r.arrivedAt.frame);
+                arrivedAt["tinframe"] = py::cast(r.arrivedAt.tInFrame);
+                result["arrived_at"]  = arrivedAt;
+
+                const char* reasonStr = "target";
+                switch (r.haltReason)
+                {
+                    case ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent: reasonStr = "external_event"; break;
+                    case ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange:    reasonStr = "out_of_range"; break;
+                    default: break;
+                }
+                result["halt_reason"] = reasonStr;
+                result["bookmark"]    = label;
+                return result;
+            }, "Seek to an agent bookmark by label", py::arg("label"))
+
+            // -------------------------------------------------------------
             // Phase 4 — Reverse search + dump + instruction step
             // -------------------------------------------------------------
             .def("ttd_dump", [](Emulator& self, const std::string& path) -> bool {
@@ -2255,19 +2400,29 @@ namespace PythonBindings
                 return result;
             }, "Load a .ttd session for playback (seek to position the emulator)", py::arg("path"))
 
-            .def("ttd_find_last", [](Emulator& self, uint16_t addr,
+            .def("ttd_find_last", [](Emulator& self, py::object addrObj,
                                       const std::string& access,
                                       py::object valueObj,
                                       py::object pcFromObj,
                                       py::object pcToObj,
                                       py::object beforeFrameObj,
                                       uint32_t beforeTin,
-                                      py::object physPageObj) -> py::object {
+                                      py::object physPageObj,
+                                      py::object addrFromObj,
+                                      py::object addrToObj) -> py::object {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pTimeTravelManager) return py::none();
 
                 ttd::TTDSearchQuery q;
-                q.addrFrom = q.addrTo = addr;
+                if (!addrObj.is_none())
+                {
+                    q.addrFrom = q.addrTo = static_cast<uint16_t>(addrObj.cast<int>());
+                }
+                else
+                {
+                    if (!addrFromObj.is_none()) q.addrFrom = static_cast<uint16_t>(addrFromObj.cast<int>());
+                    if (!addrToObj.is_none()) q.addrTo = static_cast<uint16_t>(addrToObj.cast<int>());
+                }
                 q.access = ttd::TTDAccessTypeFromString(access.c_str());
 
                 if (!valueObj.is_none())
@@ -2312,15 +2467,17 @@ namespace PythonBindings
                 r["phys_page"] = py::cast(result->physPage);
                 r["access"]    = ttd::TTDAccessTypeToString(result->access);
                 return r;
-            }, "Reverse search: find last access at address",
-               py::arg("addr"),
+            }, "Reverse search: find last access at address or within address/PC range",
+               py::arg("addr") = py::none(),
                py::arg("access") = "write",
                py::arg("value") = py::none(),
                py::arg("pc_from") = py::none(),
                py::arg("pc_to") = py::none(),
                py::arg("before_frame") = py::none(),
                py::arg("before_tin") = 0,
-               py::arg("phys_page") = py::none())
+               py::arg("phys_page") = py::none(),
+               py::arg("addr_from") = py::none(),
+               py::arg("addr_to") = py::none())
 
             .def("ttd_step_instruction_back", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();

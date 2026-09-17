@@ -214,8 +214,9 @@ double-buffering (screen_digest hashes banks 5 and 7 for exactly this reason).
 vs Sinclair 69888 (311 lines) — 2.27% faster frame; INT every 71680 T; no M1 wait contended differences.
 
 ## Emulator notes
-- Memory inspection: inspect_state aspects:["memory"] (CPU view) or aspects:["memory_banks"] (bank state).
-- Bank pages: invoke_api GET /api/v1/emulator/{id}/memory/page/ram/{n}.
+- Memory inspection: inspect_state aspects:["memory"] (CPU view; hexdump default, format=full|sparse) or aspects:["memory_banks"] (bank state).
+- Sparse block overview: inspect_state aspects:["memory_map"] with view=address|ram (GET /memory/map under the hood).
+- Bank pages: invoke_api GET /api/v1/emulator/{id}/memory/page/ram/{n} (add ?filter=sparse to compress 0x00/0xFF runs).
 )md";
 
 struct StaticResource

@@ -51,9 +51,50 @@
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["in"] = "query";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["required"] = false;
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["description"] =
-        "Number of bytes to read (default: 16, max: 256)";
+        "Number of bytes to read (default: 128, max: 4096)";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][3]["name"] = "format";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][3]["in"] = "query";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][3]["required"] = false;
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][3]["description"] =
+        "'hexdump' (default, 16B/line + ASCII sidebar), 'full' (data array + hex) or 'sparse' (fill-run segments)";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][3]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["responses"]["200"]["description"] = "Memory content";
+
+    // GET /api/v1/emulator/{id}/memory/map - Sparse non-zero memory overview (TD-3)
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["summary"] = "Sparse non-zero memory map";
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["description"] =
+        "Block-by-block non-zero allocation overview: merged zero/data regions with per-block type (rom0/ram5), "
+        "status (zeros/data), non-zero byte count and FNV-1a hash (~200-500 tokens for the whole 64K).";
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["parameters"][1]["name"] = "view";
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["parameters"][1]["description"] =
+        "'address' (default, 64K CPU space) or 'ram' (physical RAM pages)";
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["parameters"][1]["schema"]["enum"].append("address");
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["parameters"][1]["schema"]["enum"].append("ram");
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["parameters"][2]["name"] = "min_run";
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["parameters"][2]["in"] = "query";
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["parameters"][2]["required"] = false;
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["parameters"][2]["description"] =
+        "Zero-run merge threshold (default 64; shorter zero runs fold into data blocks)";
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["parameters"][2]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["parameters"][3]["name"] = "max_blocks";
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["parameters"][3]["in"] = "query";
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["parameters"][3]["required"] = false;
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["parameters"][3]["description"] =
+        "Block budget (default 48); overflow retries with coarser granularity, then sets truncated";
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["parameters"][3]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["responses"]["200"]["description"] =
+        "Sparse map: model, view, total_size, non_zero_bytes, min_run, block_count, truncated, blocks[]";
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["responses"]["400"]["description"] = "Invalid view/min_run/max_blocks";
+    paths["/api/v1/emulator/{id}/memory/map"]["get"]["responses"]["404"]["description"] = "Emulator instance not found";
 
     paths["/api/v1/emulator/{id}/memory/{addr}"]["put"]["summary"] = "Write memory";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["put"]["description"] = "Write bytes to Z80 memory address space";

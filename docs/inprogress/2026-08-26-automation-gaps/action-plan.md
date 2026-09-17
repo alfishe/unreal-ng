@@ -2,6 +2,13 @@
 
 Last updated: 2026-08-26
 
+> **Superseded (2026-09-16):** this was the first automation gap inventory. The
+> Phase 1B (DeZog) and Phase 1C (MCP) summary counts below are **stale** — both
+> shipped after this plan was written (`../2026-08-27-dezog-integration/`,
+> `../2026-08-14-mcp-server-automation/`). Live gap tracking lives in
+> `../2026-09-14-automation-triage-gaps/`; this folder's status is
+> [TODO.md](TODO.md). Read the tables below as a historical record only.
+
 > **AI Agent Instructions:**
 > 1. Update task **Status** to DONE immediately when implementation is complete
 > 2. Add **Commit** ID immediately after each commit is made

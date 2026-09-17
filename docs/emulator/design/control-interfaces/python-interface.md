@@ -717,14 +717,18 @@ result = emu.ttd_find_last(addr=0x5800, access='write')
 #   'physpage': 5
 # }
 
-# Full filter set:
+# Full filter set (single address or address/PC range search):
 result = emu.ttd_find_last(
-    addr=0x5800,
-    access='write',            # 'write' | 'read' | 'execute' | 'out'
+    addr=0x5800,                # optional single address
+    addr_from=0x4000,           # optional address range start
+    addr_to=0x8000,             # optional address range end
+    access='write',            # 'write' | 'read' | 'execute' | 'io'
     value=0x07,                # optional exact value match
     pc_from=0x4000,            # optional PC range filter
     pc_to=0x8000,
-    before=14982               # optional: don't search past this absolute tstate
+    before_frame=4823,         # optional: don't search past this frame
+    before_tin=0,
+    phys_page=5
 )
 ```
 

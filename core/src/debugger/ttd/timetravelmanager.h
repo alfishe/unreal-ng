@@ -52,6 +52,7 @@
 #include "common/modulelogger.h"    // ModuleLogger
 #include "ttdcheckpoint.h"
 #include "ttdexternalevents.h"
+#include "ttdbookmarks.h"
 #include "ttdinputjournal.h"
 #include "ttdwritejournal.h"
 #include "ttdprobe.h"
@@ -175,6 +176,10 @@ struct TTDSessionInfo
     /// carries no index — correct but slower for reverse queries.
     size_t coverageIndexFrames = 0;
     size_t coverageIndexBytes = 0;
+
+    /// Advisory bookmarks currently held (TD-4). Zero is a session without
+    /// annotations — complete and correct.
+    size_t bookmarkCount = 0;
 };
 
 class TimeTravelManager
@@ -629,6 +634,62 @@ public:
     {
         return SeekTo(target, /*outResult=*/nullptr);
     }
+
+    // -----------------------------------------------------------------------
+    // Agent bookmarks (TD-4; ttd-coverage-evaluation.md §TD-4)
+    // -----------------------------------------------------------------------
+    //
+    // Advisory named timeline annotations — the "note to self" that survives
+    // seeks: mark the unpack entry once, then return by label no matter how
+    // far find-last / reverse-continue / step-back wandered. Stored in
+    // TTDBookmarkJournal BESIDE the external-event journal, never inside it:
+    // a bookmark observes the timeline, it is not a replay barrier, and
+    // SeekTo never halts on one (halt_reason has no "bookmark" value).
+    //
+    // Lifecycle mirrors the other journals: cleared on StartRecording /
+    // InvalidateSession / DeserializeSession, clipped by
+    // ResumeRecordingFrom, persisted in the .ttd file as a flag-gated
+    // section (ttd::dump::kFlagsHasBookmarks).
+
+    /// @brief Add a bookmark at an explicit position.
+    ///
+    /// Manager-level validation on top of the journal's label rules: the
+    /// timeline must be non-empty and `time` must lie within the recorded
+    /// bounds (<= SessionEndPosition()) — a bookmark pointing past the end
+    /// can never be sought to and is refused at creation instead.
+    ///
+    /// Callable in any session state (a bookmark added while Recording
+    /// points at history that exists; adding while Detached/Idle annotates
+    /// the browsed timeline).
+    ///
+    /// @return false with *err filled on invalid label / duplicate label /
+    /// out-of-bounds position.
+    bool AddBookmark(const TTDTimePoint& time, const std::string& label,
+                     std::string* err = nullptr);
+
+    /// @brief All bookmarks, time-sorted (thread-safe snapshot copy).
+    std::vector<TTDBookmark> GetBookmarks() const;
+
+    /// @brief Resolve a label to its bookmark. False when unknown.
+    bool FindBookmark(const std::string& label, TTDBookmark& out) const;
+
+    /// @brief Remove a bookmark by label. False when the label is unknown.
+    bool RemoveBookmark(const std::string& label);
+
+    /// @brief Seek to a bookmark's position by label.
+    ///
+    /// Pure composition: FindBookmark + SeekTo. The returned result is
+    /// exactly what a direct SeekTo to the same timepoint would produce —
+    /// in particular a marker between the restore checkpoint and the target
+    /// still reports halt_reason "external_event", and a bookmark itself
+    /// never appears as a halt reason (advisory by construction).
+    ///
+    /// @param label     Bookmark to seek to.
+    /// @param outResult Seek outcome (may be nullptr).
+    /// @param err       Filled with "unknown bookmark ..." on a bad label.
+    /// @return          outResult->reached (false on unknown label).
+    bool SeekToBookmark(const std::string& label, TTDSeekResult* outResult,
+                        std::string* err = nullptr);
 
     // -----------------------------------------------------------------------
     // Resume-from-past (Phase 2 Item 5; parent TDD §8.3)
@@ -1343,6 +1404,11 @@ private:
     /// that aren't input-journaled in v1 (Item 6). Same lifecycle as the
     /// input journal: dropped on Invalidate/Start, truncated by Resume.
     TTDExternalEventJournal _externalEvents;
+
+    /// Advisory bookmarks (TD-4) — named annotations BESIDE the barrier
+    /// journal above, never inside it. Same lifecycle: dropped on
+    /// Invalidate/Start, truncated by Resume, persisted in the .ttd file.
+    TTDBookmarkJournal _bookmarks;
 
     /// Write journal — fast-path accelerator for FindLastAccess (Phase 4;
     /// parent TDD §9.3). 64 MB ring of 12-byte TTDWriteRecords (~5.5M records,

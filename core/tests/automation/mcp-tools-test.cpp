@@ -412,6 +412,92 @@ TEST_F(McpTools_Test, InspectState_TwoAspects_FanOutToBothEndpoints)
     EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/registers"));
 }
 
+// TD-3 Phase 1: the memory_map aspect hits GET /memory/map with the
+// view/min_run/max_blocks args and the summary names the model + blocks
+TEST_F(McpTools_Test, InspectState_MemoryMapAspect_FetchesSparseMap)
+{
+    Json::Value block;
+    block["address"] = "0x0000";
+    block["type"] = "rom0";
+    block["status"] = "data";
+    block["size"] = 16384;
+    block["non_zero"] = 16384;
+    block["hash"] = "00ABCDEF12345678";
+    Json::Value mapBody;
+    mapBody["model"] = "Spectrum 48K";
+    mapBody["view"] = "address";
+    mapBody["total_size"] = 65536;
+    mapBody["non_zero_bytes"] = 16384;
+    mapBody["block_count"] = 1;
+    mapBody["blocks"] = Json::Value(Json::arrayValue);
+    mapBody["blocks"].append(block);
+    _caller->routes["GET /api/v1/emulator/emu-1/memory/map?view=address&min_run=64&max_blocks=48"] = {200, mapBody};
+
+    Json::Value args;
+    Json::Value aspects(Json::arrayValue);
+    aspects.append("memory_map");
+    args["aspects"] = aspects;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/memory/map?view=address&min_run=64&max_blocks=48"));
+    ASSERT_TRUE(result.structured.isMember("memory_map"));
+    EXPECT_EQ(result.structured["memory_map"]["block_count"].asUInt(), 1u);
+    EXPECT_NE(result.text.find("[memory_map] Spectrum 48K address view: 1 block(s)"), std::string::npos)
+        << "text was: " << result.text;
+    EXPECT_NE(result.text.find("rom0 data, size 16384"), std::string::npos) << "text was: " << result.text;
+}
+
+// TD-3: the memory aspect forwards format=hexdump by default (~80% token cut)
+TEST_F(McpTools_Test, InspectState_MemoryAspect_DefaultsToHexdump)
+{
+    Json::Value memBody;
+    memBody["address"] = 0;
+    memBody["length"] = 64;
+    memBody["format"] = "hexdump";
+    memBody["hexdump"] = "0x0000: 3E 21 00  |..!|\n";
+    _caller->routes["GET /api/v1/emulator/emu-1/memory/0?len=64&format=hexdump"] = {200, memBody};
+
+    Json::Value args;
+    Json::Value aspects(Json::arrayValue);
+    aspects.append("memory");
+    args["aspects"] = aspects;
+    args["address"] = 0;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/memory/0?len=64&format=hexdump"));
+    EXPECT_NE(result.text.find("0x0000: 3E 21 00"), std::string::npos) << "text was: " << result.text;
+}
+
+// TD-3: the stack aspect still machine-parses data[] via format=full after
+// the hexdump default flip on /memory/{addr}
+TEST_F(McpTools_Test, InspectState_StackAspect_RequestsFullFormat)
+{
+    Json::Value registers;
+    registers["special"]["sp"] = 0xFF40;
+    _caller->routes["GET /api/v1/emulator/emu-1/registers"] = {200, registers};
+
+    Json::Value memory;
+    memory["data"] = Json::Value(Json::arrayValue);
+    memory["data"].append(0x34);
+    memory["data"].append(0x12);
+    _caller->routes["GET /api/v1/emulator/emu-1/memory/65344?len=32&format=full"] = {200, memory};
+
+    Json::Value args;
+    Json::Value aspects(Json::arrayValue);
+    aspects.append("stack");
+    args["aspects"] = aspects;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/memory/65344?len=32&format=full"));
+    ASSERT_TRUE(result.structured.isMember("stack"));
+    ASSERT_TRUE(result.structured["stack"]["words"].isArray());
+    ASSERT_EQ(result.structured["stack"]["words"].size(), 1u);
+    EXPECT_EQ(result.structured["stack"]["words"][0]["value"].asUInt(), 0x1234u);
+}
+
 TEST_F(McpTools_Test, InspectState_DeviceAspects_FetchOverviewAndChips)
 {
     // audio_fm: overview, then every chip's full report; fdc: one endpoint.
@@ -825,6 +911,139 @@ TEST_F(McpTools_Test, CaptureMedia_BoundedEveryNthRecording_ReportsCapturedFrame
         previous = event.first;
     }
     EXPECT_EQ(events.back().first, 1.0); // final report reaches 100%
+}
+
+// ===========================================================================
+// time_travel (TD-4 — agent bookmarks)
+// ===========================================================================
+
+TEST_F(McpTools_Test, TimeTravel_Status_GetsTTDStatus)
+{
+    _caller->routes["GET /api/v1/emulator/emu-1/ttd/status"] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "status";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/ttd/status"));
+}
+
+TEST_F(McpTools_Test, TimeTravel_BookmarkAdd_PostsLabelAndFrame)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/bookmarks"] = {201, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "bookmark_add";
+    args["label"] = "umt entry";
+    args["frame"] = 42;
+    args["tinframe"] = 300;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/bookmarks");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["label"].asString(), "umt entry");
+    EXPECT_EQ(call->body["frame"].asUInt(), 42u);
+    EXPECT_EQ(call->body["tinframe"].asUInt(), 300u);
+}
+
+TEST_F(McpTools_Test, TimeTravel_BookmarkAdd_NoFrame_IsMarkHere)
+{
+    // Mark-here: no frame in args → no frame in the body; the WebAPI places
+    // the bookmark at the current position.
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/bookmarks"] = {201, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "bookmark_add";
+    args["label"] = "here";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/bookmarks");
+    ASSERT_NE(call, nullptr);
+    EXPECT_FALSE(call->body.isMember("frame"));
+    EXPECT_FALSE(call->body.isMember("tinframe"));
+}
+
+TEST_F(McpTools_Test, TimeTravel_BookmarkAdd_MissingLabel_RejectsBeforeAnyCall)
+{
+    Json::Value args;
+    args["action"] = "bookmark_add";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("label"), std::string::npos);
+    // Rejected before target resolution — no HTTP call was made.
+    EXPECT_TRUE(_caller->calls.empty());
+}
+
+TEST_F(McpTools_Test, TimeTravel_BookmarkList_FormatsEntriesAndBarrierNote)
+{
+    Json::Value bm1;
+    bm1["frame"] = 5;
+    bm1["tinframe"] = 0;
+    bm1["label"] = "boot";
+    Json::Value bm2;
+    bm2["frame"] = 9;
+    bm2["tinframe"] = 300;
+    bm2["label"] = "umt entry";
+    Json::Value body;
+    body["count"] = 2;
+    body["bookmarks"].append(bm1);
+    body["bookmarks"].append(bm2);
+    _caller->routes["GET /api/v1/emulator/emu-1/ttd/bookmarks"] = {200, body};
+
+    Json::Value args;
+    args["action"] = "bookmark_list";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("2 bookmark(s)"), std::string::npos);
+    EXPECT_NE(result.text.find("'boot'"), std::string::npos);
+    EXPECT_NE(result.text.find("'umt entry'"), std::string::npos);
+    EXPECT_NE(result.text.find("t=300"), std::string::npos);
+    // The advisory contract is part of the tool's own output.
+    EXPECT_NE(result.text.find("never a replay barrier"), std::string::npos);
+}
+
+TEST_F(McpTools_Test, TimeTravel_BookmarkDelete_UrlEncodesLabelInPath)
+{
+    _caller->routes["DELETE /api/v1/emulator/emu-1/ttd/bookmarks/umt%20entry"] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "bookmark_delete";
+    args["label"] = "umt entry";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("DELETE", "/api/v1/emulator/emu-1/ttd/bookmarks/umt%20entry"));
+}
+
+TEST_F(McpTools_Test, TimeTravel_SeekBookmark_PostsBookmarkField)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/seek"] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "seek_bookmark";
+    args["label"] = "umt entry";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/seek");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["bookmark"].asString(), "umt entry");
+    EXPECT_FALSE(call->body.isMember("frame"));
+}
+
+TEST_F(McpTools_Test, TimeTravel_UnknownAction_Errors)
+{
+    Json::Value args;
+    args["action"] = "rewind";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("Unknown action"), std::string::npos);
 }
 
 // ===========================================================================
