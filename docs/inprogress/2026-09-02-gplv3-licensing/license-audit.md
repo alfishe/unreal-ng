@@ -17,7 +17,7 @@ Hard blockers (must fix before adding LICENSE):
 |---|------|------|---------|
 | B1 | **Microsoft Consolas font** | `data/fonts/consolas.ttf` (loaded by `unreal-qt/src/main.cpp:23`) | Proprietary Microsoft font; its EULA does not permit redistribution. Cannot ship in any public repo, GPL or not. Replace with an OFL font. |
 | B2 | **z80ex disassembler** | `core/src/3rdparty/z80ex/` | Headers say `Released under GNU GPL v2` (no "or later"). GPL-2.0-only is incompatible with GPL-3.0. Currently **dead code** (not compiled — `core/src/CMakeLists.txt` globs `*.cpp` only, these are `.c`; zero `#include` references). Delete the directory. |
-| B3 | **Unicode ConvertUTF** | `core/src/3rdparty/simpleini/convertutf.{c,h}` | Old Unicode Inc. notice with a field-of-use restriction ("in the creation of products supporting the Unicode Standard") — treated as non-free/GPL-incompatible by Debian. Also **dead code** (`.c` not globbed, only pulled in by simpleini under `SI_CONVERT_GENERIC`, which is not defined). Delete both files. |
+| B3 | **Unicode ConvertUTF** | `core/src/3rdparty/simpleini/convertutf.{c,h}` | Old Unicode Inc. notice with a field-of-use restriction ("in the creation of products supporting the Unicode Standard") — treated as non-free/GPL-incompatible by Debian. Also **dead code** (`.c` not globbed, only pulled in by simpleini under `SI_CONVERT_GENERIC`, which is not defined). Delete both files. **Resolved 2026-09-17**: the whole simpleini directory was removed; INI parsing is own code now (`core/src/common/inifile.{h,cpp}`). |
 
 Provenance question (P1): the CPU core, `platform.h`, `z80asm.cpp`, HDD/ATA code, WD1793 and sound-render code are ports of **UnrealSpeccy 0.3x (SMT / Alone Coder / deathsoft)** and still carry their inline comments. The repo contains **no statement of the original UnrealSpeccy license**. See section 1.2 — this must be resolved (verify upstream `unreal_e.txt`; if GPL-2.0-or-later or GPL-3 it's fine; if GPL-2.0-only or "freeware", get written permission).
 
@@ -107,8 +107,8 @@ Legend for "Linkage": static = compiled into the core/app binaries; header-only;
 | blip_buf (C++ port) | `core/src/3rdparty/blip_buf/` | port of blip_buf 1.1.0 | **LGPL-2.1-or-later** upstream; **no notice in repo** | static | Compatible; **notice missing** (see 1.3) |
 | lodepng | `core/src/3rdparty/lodepng/` | 20200306 (`lodepng.h:2`) | **zlib** — header in `lodepng.h:4-20` | static (2 own files) | Compatible |
 | digestpp | `core/src/3rdparty/digestpp/` | unversioned | **Public domain** — every header: "written by kerukuro and released into public domain" | header-only (`rom.cpp`, `loader_scl_test.cpp`) | Compatible |
-| simpleini | `core/src/3rdparty/simpleini/simpleini.h` | 4.17 (`simpleini.h:8`) | **MIT** — `simpleini.h:170-175` | header-only (3 own files) | Compatible |
-| ConvertUTF | `core/src/3rdparty/simpleini/convertutf.{c,h}` | 2001-2004 | **Unicode Inc. legacy notice** with field-of-use clause (`convertutf.h:1-21`) | **not compiled**, not included | **INCOMPATIBLE (B3)** — delete |
+| simpleini | `core/src/3rdparty/simpleini/simpleini.h` | 4.17 (`simpleini.h:8`) | **MIT** — `simpleini.h:170-175` | header-only (3 own files) | Compatible — **removed 2026-09-17**, replaced by own `IniFile` (`core/src/common/inifile.{h,cpp}`) |
+| ConvertUTF | `core/src/3rdparty/simpleini/convertutf.{c,h}` | 2001-2004 | **Unicode Inc. legacy notice** with field-of-use clause (`convertutf.h:1-21`) | **not compiled**, not included | **INCOMPATIBLE (B3)** — **deleted 2026-09-17** (whole simpleini directory removed) |
 | tinywav | `core/src/3rdparty/tinywav/` | 2015-2022 | **ISC** — `LICENSE` (Martin Roth) | static (3 own files) | Compatible |
 | simple-fft | `core/src/3rdparty/simple-fft/` | 2013-2020 | **MIT** — `LICENSE.md` (Dmitry Ivanov) | header-only (1 own file); its own CMake mentions FFTW/OpenMP only for its unit tests, which are not built | Compatible |
 | CLI11 | `core/src/3rdparty/cli11/CLI11.hpp` and duplicate `core/automation/cli/lib/cli11/CLI11.hpp` | 2.5.0 (`CLI11.hpp:1`) | **BSD-3-Clause** — header lines 8-30 (University of Cincinnati / Henry Schreiner) | header-only | Compatible (two identical copies — dedupe) |
@@ -225,7 +225,7 @@ Option B (cleaner for a public repo): move the commercial games (Dizzy X, Green 
 ### 5.1 Blockers (must fix before LICENSE is added)
 1. **`data/fonts/consolas.ttf`** — Microsoft proprietary; remove and replace with an SIL OFL 1.1 font (JetBrains Mono, Cascadia Code, Fira Mono, DejaVu Sans Mono, Inconsolata). Update `unreal-qt/src/main.cpp:23-56` and the stylesheet font-family lists (`speedcontrolwidget.cpp:43,106`).
 2. **`core/src/3rdparty/z80ex/`** — GPL-2.0 (no "or later") and dead code; delete.
-3. **`core/src/3rdparty/simpleini/convertutf.{c,h}`** — non-free Unicode notice and dead code; delete.
+3. **`core/src/3rdparty/simpleini/convertutf.{c,h}`** — non-free Unicode notice and dead code; delete. **Resolved 2026-09-17** — the whole simpleini directory was removed (replaced by own `IniFile`), resolving this together with the simpleini dependency itself.
 4. **UnrealSpeccy origin license (P1)** — verify and record; obtain permission if it is GPL-2.0-only or unlicensed. This is the only item that could genuinely prevent GPL-3.
 
 ### 5.2 Conditions / notices required
@@ -265,8 +265,8 @@ Recommend **GPL-3.0-or-later**.
 | blip_buf port | 1.1.0 | LGPL-2.1+ (notice missing) | static | compatible, add notice |
 | lodepng | 20200306 | zlib | static | compatible |
 | digestpp | — | public domain | header | compatible |
-| simpleini | 4.17 | MIT | header | compatible |
-| ConvertUTF | 2004 | Unicode legacy (field-of-use) | dead | **INCOMPATIBLE — delete** |
+| simpleini | 4.17 | MIT | header | compatible — removed 2026-09-17 (own `IniFile`) |
+| ConvertUTF | 2004 | Unicode legacy (field-of-use) | dead | **INCOMPATIBLE — deleted 2026-09-17** |
 | tinywav | 2022 | ISC | static | compatible |
 | simple-fft | 2020 | MIT | header | compatible |
 | CLI11 (x2) | 2.5.0 | BSD-3 | header | compatible |

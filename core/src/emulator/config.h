@@ -1,7 +1,7 @@
 #pragma once
 #include "stdafx.h"
 
-#include "3rdparty/simpleini/simpleini.h"
+#include "common/inifile.h"
 #include "emulator/emulatorcontext.h"
 #include <string>
 
@@ -85,7 +85,7 @@ public:
 
 	/// Load a config from an explicit .ini file path (custom config override)
 	[[nodiscard]] bool LoadConfigFile(const std::string& filename);
-	[[nodiscard]] bool ParseConfig(CSimpleIniA& inimanager);
+	[[nodiscard]] bool ParseConfig(IniFile& inimanager);
 
 	[[nodiscard]] bool DetermineModel(const char* model, uint32_t ramsize);
 
