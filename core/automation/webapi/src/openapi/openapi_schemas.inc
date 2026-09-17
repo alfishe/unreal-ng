@@ -446,6 +446,12 @@
     schemas["TTDStatusResponse"]["properties"]["coverage_index_bytes"]["format"] = "uint64";
     schemas["TTDStatusResponse"]["properties"]["coverage_index_bytes"]["description"] =
             "Compressed size of the coverage index across all access kinds.";
+    schemas["TTDStatusResponse"]["properties"]["bookmark_count"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["bookmark_count"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["bookmark_count"]["description"] =
+            "Agent bookmarks currently stored beside the timeline (TD-4). "
+            "Advisory annotations — unlike external-event markers they never "
+            "halt a seek.";
 
     schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["type"] = "integer";
     schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["format"] = "uint64";
@@ -524,14 +530,18 @@
     // ---------------------------------------------------------------------
     schemas["TTDSeekRequest"]["type"] = "object";
     schemas["TTDSeekRequest"]["description"] =
-        "Request body for POST /ttd/seek. frame is required; tinframe "
-        "defaults to 0 (frame boundary).";
+        "Request body for POST /ttd/seek. Either frame (with optional tinframe, "
+        "defaulting to the frame boundary) or bookmark must be present — a "
+        "bookmark label resolves to its stored (frame, tinframe) first.";
     schemas["TTDSeekRequest"]["properties"]["frame"]["type"] = "integer";
     schemas["TTDSeekRequest"]["properties"]["frame"]["format"] = "uint64";
-    schemas["TTDSeekRequest"]["required"].append("frame");
     schemas["TTDSeekRequest"]["properties"]["tinframe"]["type"] = "integer";
     schemas["TTDSeekRequest"]["properties"]["tinframe"]["format"] = "uint32";
     schemas["TTDSeekRequest"]["properties"]["tinframe"]["default"] = 0;
+    schemas["TTDSeekRequest"]["properties"]["bookmark"]["type"] = "string";
+    schemas["TTDSeekRequest"]["properties"]["bookmark"]["description"] =
+            "TD-4 bookmark label to seek to (alternative to frame). Unknown "
+            "labels get a 404.";
 
     schemas["TTDSeekResponse"]["type"] = "object";
     schemas["TTDSeekResponse"]["description"] =
@@ -555,6 +565,10 @@
     schemas["TTDSeekResponse"]["properties"]["state"]["enum"].append("idle");
     schemas["TTDSeekResponse"]["properties"]["state"]["enum"].append("recording");
     schemas["TTDSeekResponse"]["properties"]["state"]["enum"].append("detached");
+    schemas["TTDSeekResponse"]["properties"]["bookmark"]["type"] = "string";
+    schemas["TTDSeekResponse"]["properties"]["bookmark"]["description"] =
+            "Present only when the seek was requested by bookmark label (TD-4). "
+            "Echoes the resolved label.";
 
     // ---------------------------------------------------------------------
     // Reusable marker — external event that acts as a replay barrier.
@@ -648,6 +662,66 @@
         "#/components/schemas/TTDMarker";
 
     // ---------------------------------------------------------------------
+    // TD-4 — agent bookmarks. Advisory annotations stored beside the
+    // timeline (never inside the external-event journal), serialized in the
+    // .ttd session, and never a replay barrier: a bookmark never appears as
+    // a halt_reason.
+    // ---------------------------------------------------------------------
+
+    schemas["TTDBmk"]["type"] = "object";
+    schemas["TTDBmk"]["description"] =
+        "Agent bookmark: a named (frame, tinframe) annotation. Contrast with "
+        "TTDMarker — bookmarks are advisory and never halt a seek.";
+    schemas["TTDBmk"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDBmk"]["properties"]["frame"]["format"] = "uint64";
+    schemas["TTDBmk"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDBmk"]["properties"]["tinframe"]["format"] = "uint32";
+    schemas["TTDBmk"]["properties"]["label"]["type"] = "string";
+    schemas["TTDBmk"]["properties"]["label"]["description"] =
+            "Unique session key: non-empty, at most 63 characters.";
+
+    schemas["TTDBookmarkAddRequest"]["type"] = "object";
+    schemas["TTDBookmarkAddRequest"]["description"] =
+        "Request body for POST /ttd/bookmarks. When frame is omitted the "
+        "bookmark is placed at the current position (mark-here).";
+    schemas["TTDBookmarkAddRequest"]["properties"]["label"]["type"] = "string";
+    schemas["TTDBookmarkAddRequest"]["properties"]["label"]["maxLength"] = 63;
+    schemas["TTDBookmarkAddRequest"]["properties"]["label"]["minLength"] = 1;
+    schemas["TTDBookmarkAddRequest"]["required"].append("label");
+    schemas["TTDBookmarkAddRequest"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDBookmarkAddRequest"]["properties"]["frame"]["format"] = "uint64";
+    schemas["TTDBookmarkAddRequest"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDBookmarkAddRequest"]["properties"]["tinframe"]["format"] = "uint32";
+    schemas["TTDBookmarkAddRequest"]["properties"]["tinframe"]["default"] = 0;
+
+    schemas["TTDBookmarksResponse"]["type"] = "object";
+    schemas["TTDBookmarksResponse"]["description"] =
+        "Response from GET /ttd/bookmarks. count is len(bookmarks); the list "
+        "is time-sorted.";
+    schemas["TTDBookmarksResponse"]["properties"]["count"]["type"] = "integer";
+    schemas["TTDBookmarksResponse"]["properties"]["count"]["format"] = "uint64";
+    schemas["TTDBookmarksResponse"]["properties"]["bookmarks"]["type"] = "array";
+    schemas["TTDBookmarksResponse"]["properties"]["bookmarks"]["items"]["$ref"] =
+        "#/components/schemas/TTDBmk";
+
+    schemas["TTDBookmarkAddedResponse"]["type"] = "object";
+    schemas["TTDBookmarkAddedResponse"]["description"] =
+        "Response from POST /ttd/bookmarks (201 Created).";
+    schemas["TTDBookmarkAddedResponse"]["properties"]["added"]["type"] = "boolean";
+    schemas["TTDBookmarkAddedResponse"]["properties"]["label"]["type"] = "string";
+    schemas["TTDBookmarkAddedResponse"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDBookmarkAddedResponse"]["properties"]["frame"]["format"] = "uint64";
+    schemas["TTDBookmarkAddedResponse"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDBookmarkAddedResponse"]["properties"]["tinframe"]["format"] = "uint32";
+
+    schemas["TTDBookmarkDeletedResponse"]["type"] = "object";
+    schemas["TTDBookmarkDeletedResponse"]["description"] =
+        "Response from DELETE /ttd/bookmarks/{label} (200 OK; unknown labels "
+        "get a 404 instead).";
+    schemas["TTDBookmarkDeletedResponse"]["properties"]["removed"]["type"] = "boolean";
+    schemas["TTDBookmarkDeletedResponse"]["properties"]["label"]["type"] = "string";
+
+    // ---------------------------------------------------------------------
     // Phase 4 — reverse-search + dump + instruction-step schemas
     // ---------------------------------------------------------------------
 
@@ -699,8 +773,15 @@
     schemas["TTDFindLastRequest"]["properties"]["addr"]["type"] = "integer";
     schemas["TTDFindLastRequest"]["properties"]["addr"]["format"] = "uint16";
     schemas["TTDFindLastRequest"]["properties"]["addr"]["description"] =
-        "Memory address to search for (required).";
-    schemas["TTDFindLastRequest"]["required"].append("addr");
+        "Single memory address to search for (optional if addr_from/to or pc_from/to are provided).";
+    schemas["TTDFindLastRequest"]["properties"]["addr_from"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["addr_from"]["format"] = "uint16";
+    schemas["TTDFindLastRequest"]["properties"]["addr_from"]["description"] =
+        "Start of memory address range (optional, default 0).";
+    schemas["TTDFindLastRequest"]["properties"]["addr_to"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["addr_to"]["format"] = "uint16";
+    schemas["TTDFindLastRequest"]["properties"]["addr_to"]["description"] =
+        "End of memory address range (optional, default 65535).";
     schemas["TTDFindLastRequest"]["properties"]["access"]["type"] = "string";
     schemas["TTDFindLastRequest"]["properties"]["access"]["enum"].append("write");
     schemas["TTDFindLastRequest"]["properties"]["access"]["enum"].append("read");

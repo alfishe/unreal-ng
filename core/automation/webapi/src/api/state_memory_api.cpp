@@ -9,6 +9,7 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/emulatorcontext.h>
+#include <emulator/memory/memorymap.h>  // TD-3 compact read formats
 #include <emulator/memory/rom.h>  // ROM signatures
 #include <emulator/cpu/core.h>    // Core::GetROM()
 #include <emulator/ports/portdecoder.h>  // Tagged port registry
@@ -25,6 +26,60 @@ namespace v1
 
 // Helper function declared in emulator_api.cpp
 extern void addCorsHeaders(HttpResponsePtr& resp);
+
+/// Shared renderer for TD-3 Phase 1 compact memory reads: builds the
+/// format-specific payload of a memory window so /memory/read/{address},
+/// /memory/{addr} and /memory/page render identical shapes.
+///   format="hexdump" (default): {format, hexdump} - 16B/line + ASCII sidebar
+///   format="full":              {format, data[], hex} - legacy JSON array
+///   format="sparse":            {format, non_zero, segments[]} - fill runs
+/// Callers keep their own address/length field rendering.
+Json::Value RenderMemoryWindowFormat(const uint8_t* data, size_t size, uint32_t address, const std::string& format)
+{
+    Json::Value ret;
+    ret["format"] = format;
+
+    if (format == "sparse")
+    {
+        ret["non_zero"] = CountNonZeroBytes(data, size);
+        Json::Value segments(Json::arrayValue);
+        for (const MemorySparseSegment& segment : BuildSparseSegments(data, size))
+        {
+            Json::Value item;
+            item["offset"] = segment.offset;
+            item["length"] = segment.length;
+            item["is_fill"] = segment.isFill;
+            if (segment.isFill)
+                item["fill"] = StringHelper::Format("0x%02X", segment.fill);
+            else
+                item["hex"] = segment.hex;
+            segments.append(item);
+        }
+        ret["segments"] = segments;
+    }
+    else if (format == "full")
+    {
+        Json::Value dataJson(Json::arrayValue);
+        for (size_t i = 0; i < size; i++)
+            dataJson.append(data[i]);
+        ret["data"] = dataJson;
+
+        std::string hexStr;
+        hexStr.reserve(size * 3);
+        for (size_t i = 0; i < size; i++)
+        {
+            if (i > 0) hexStr += ' ';
+            hexStr += StringHelper::Format("%02X", data[i]);
+        }
+        ret["hex"] = hexStr;
+    }
+    else // "hexdump" (default)
+    {
+        ret["hexdump"] = FormatHexDump(data, size, address);
+    }
+
+    return ret;
+}
 
 /// @brief GET /api/v1/emulator/{id}/state/memory
 /// @brief Get complete memory configuration
@@ -439,16 +494,36 @@ void EmulatorAPI::readMemory(const HttpRequestPtr& req, std::function<void(const
         catch (...) { length = 128; }
     }
 
+    // TD-3 Phase 1 compact read formats: hexdump (default) | full | sparse
+    // (filter=sparse is accepted as an alias for format=sparse)
+    std::string format = "hexdump";
+    auto formatParam = req->getOptionalParameter<std::string>("format");
+    auto filterParam = req->getOptionalParameter<std::string>("filter");
+    if (formatParam && !formatParam->empty()) format = *formatParam;
+    else if (filterParam && *filterParam == "sparse") format = "sparse";
+    if (format != "hexdump" && format != "full" && format != "sparse")
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid format parameter (expected 'hexdump', 'full' or 'sparse')";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    std::vector<uint8_t> buffer(length);
+    for (uint16_t i = 0; i < length; i++)
+        buffer[i] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(address + i));
+
     Json::Value ret;
     ret["address"] = StringHelper::Format("0x%04X", address);
     ret["length"] = length;
-    
-    Json::Value data = Json::arrayValue;
-    for (uint16_t i = 0; i < length; i++)
-    {
-        data.append(memory->DirectReadFromZ80Memory(address + i));
-    }
-    ret["data"] = data;
+    const Json::Value payload = RenderMemoryWindowFormat(buffer.data(), buffer.size(), address, format);
+    for (const std::string& name : payload.getMemberNames())
+        ret[name] = payload[name];
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
@@ -881,18 +956,52 @@ void EmulatorAPI::readPage(const HttpRequestPtr& req, std::function<void(const H
         return;
     }
 
+    // TD-3 Phase 1: filter=sparse compresses 0x00/0xFF runs into fill
+    // segments (a full 16K page as a JSON array is the G-6 token-poisoning
+    // case); the default response keeps the legacy data array
+    const bool sparse = req->getOptionalParameter<std::string>("filter").value_or("") == "sparse";
+
+    uint32_t windowSize = length;
+    if (offset >= PAGE_SIZE)
+        windowSize = 0;
+    else if (static_cast<uint32_t>(offset) + length > PAGE_SIZE)
+        windowSize = PAGE_SIZE - offset;
+    const uint8_t* window = windowSize > 0 ? pagePtr + offset : pagePtr;
+
     Json::Value ret;
     ret["type"] = type;
     ret["page"] = page;
     ret["offset"] = StringHelper::Format("0x%04X", offset);
     ret["length"] = length;
-    
-    Json::Value data = Json::arrayValue;
-    for (uint16_t i = 0; i < length && (offset + i) < PAGE_SIZE; i++)
+
+    if (sparse)
     {
-        data.append(pagePtr[offset + i]);
+        ret["format"] = "sparse";
+        ret["non_zero"] = CountNonZeroBytes(window, windowSize);
+        Json::Value segments(Json::arrayValue);
+        for (const MemorySparseSegment& segment : BuildSparseSegments(window, windowSize))
+        {
+            Json::Value item;
+            item["offset"] = segment.offset;
+            item["length"] = segment.length;
+            item["is_fill"] = segment.isFill;
+            if (segment.isFill)
+                item["fill"] = StringHelper::Format("0x%02X", segment.fill);
+            else
+                item["hex"] = segment.hex;
+            segments.append(item);
+        }
+        ret["segments"] = segments;
     }
-    ret["data"] = data;
+    else
+    {
+        Json::Value data = Json::arrayValue;
+        for (uint32_t i = 0; i < windowSize; i++)
+        {
+            data.append(pagePtr[offset + i]);
+        }
+        ret["data"] = data;
+    }
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);

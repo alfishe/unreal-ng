@@ -123,7 +123,20 @@ types:
         doc: |
           Bitfield. Bit 0 = little-endian (always 1; the writer
           static_asserts little-endian). Bit 1 = a write-journal section
-          follows the checkpoint table. Bits 2-15 reserved (must be 0).
+          follows the checkpoint table. Bit 2 = a reverse-search coverage
+          index section follows the write journal. Bit 3 = an advisory
+          bookmarks section follows the coverage index (TD-4 agent
+          bookmarks: u32 count, then per bookmark u64 frame, u32 tInFrame,
+          u8 label_len, label bytes — labels are unique, non-empty and at
+          most 63 chars).
+
+          The flag-gated trailing sections (write journal, coverage index,
+          bookmarks) are not yet modeled in this schema's top-level seq;
+          the C++ writer/reader pair (TimeTravelManager::SerializeSession /
+          DeserializeSession) is authoritative for their layouts, and a
+          reader that stops after `checkpoints` gets a complete session
+          minus those accelerators/annotations. Bits 4-15 reserved
+          (must be 0).
       - id: model_id
         type: u1
         doc: eModel enum value (which machine model was active).

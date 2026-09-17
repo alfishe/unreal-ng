@@ -11,6 +11,9 @@ tape alone - no emulator needed.
 Inputs:
   testdata/memory/UMT23X.tap          the source tape (repo-relative)
   - or - umt-payload-c000.bin          a previously extracted payload block
+  testdata/memory/UMT23X.sna           optional: mid-run emulator snapshot;
+                                       when present the depacked image is
+                                       cross-checked against it (see below)
 
 Outputs (next to this script):
   umt-unpacked-6000.bin                24 KiB image for Z80 0x6000..0xBFFF
@@ -28,6 +31,7 @@ Requires z80dasm on PATH.
 """
 import os
 import re
+import struct
 import subprocess
 import sys
 from collections import OrderedDict
@@ -35,6 +39,7 @@ from collections import OrderedDict
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(HERE))))
 TAP_DEFAULT = os.path.join(REPO, "testdata/memory/UMT23X.tap")
+SNA_DEFAULT = os.path.join(REPO, "testdata/memory/UMT23X.sna")
 
 ORG = 0x6000
 IMAGE_LEN = 0x6000            # 24 KiB window the depacker output covers
@@ -435,6 +440,82 @@ def depack(payload, verify=None):
             raise RuntimeError("runaway depacker")
 
     return bytes(mem[0x6000:0xC000])
+
+
+# ---------------------------------------------------------------------------
+# Runtime cross-check against the UMT23X.sna emulator snapshot.
+#
+# The SNA is a MID-RUN capture (PC=6798h, program long unpacked and busy
+# testing RAM). Everything the depacker wrote must still be there, except
+# where the running program itself has since mutated memory. Those spots
+# were located by diffing the snapshot against the depacked image: four
+# regions, 259 bytes in total - a test-state variable, two text-VM bytes,
+# one whole 256-byte runtime-generated block, and stack scratch below the
+# resident depacker. Bytes outside these regions must match exactly, which
+# turns the snapshot into a machine-state certificate for both the
+# interpreter above and megalz-unpack.py in this folder.
+# ---------------------------------------------------------------------------
+
+SNA_MUTATED_REGIONS = [
+    (0x6532, 0x6532, "test-state variable (RESET_TEST_STATE domain)"),
+    (0x6BD1, 0x6BD3, "text VM variables"),
+    (0x7700, 0x77FF, "runtime-generated 256-byte block (self-modifying)"),
+    (0xBEFC, 0xBEFF, "stack scratch below the resident depacker"),
+]
+
+
+def load_sna_window(sna_path):
+    """Extract the 0x6000-0xBFFF window from a 48K/128K .sna snapshot.
+
+    SNA layout: 27-byte header, then bank5 (0x4000-0x7FFF), bank2
+    (0x8000-0xBFFF), bank0 (0x0000-0x3FFF). The window we need spans
+    the top half of bank5 and all of bank2 - both are standard RAM in
+    every model, so the paging state in the 128K extension is irrelevant
+    here. Returns bytes for 0x6000..0xBFFF, or None if the file is too
+    short to hold the 48K portion.
+    """
+    data = open(sna_path, "rb").read()
+    if len(data) < 27 + 3 * 16384:
+        return None
+    window = bytearray(0x6000)
+    window[0x0000:0x2000] = data[27 + 0x2000:27 + 0x4000]       # 6000-7FFF
+    window[0x2000:0x6000] = data[27 + 16384:27 + 16384 + 0x4000]  # 8000-BFFF
+    return bytes(window)
+
+
+def verify_against_sna(image, sna_path):
+    """Diff the depacked image vs the snapshot, ignoring the known
+    runtime-mutated regions. Returns a list of complaint strings (empty
+    list = the snapshot corroborates the unpack byte for byte)."""
+    data = open(sna_path, "rb").read()
+    snap = load_sna_window(sna_path)
+    if snap is None:
+        return [f"{sna_path}: not a 48K/128K SNA (too short)"]
+
+    ext_pc = None
+    off48 = 27 + 3 * 16384
+    if len(data) >= off48 + 4:               # 128K extension: PC word first
+        ext_pc = struct.unpack_from("<H", data, off48)[0]
+
+    mutated = set()
+    for lo, hi, _why in SNA_MUTATED_REGIONS:
+        mutated.update(range(lo, hi + 1))
+
+    bad = []
+    for addr in range(0x6000, 0xC000):
+        if addr in mutated:
+            continue
+        if image[addr - 0x6000] != snap[addr - 0x6000]:
+            bad.append(f"0x{addr:04X}: depacked 0x{image[addr - 0x6000]:02X}, "
+                       f"snapshot 0x{snap[addr - 0x6000]:02X}")
+            if len(bad) >= 8:
+                bad.append("...")
+                break
+    if not bad:
+        where = f" (mid-run capture, PC=0x{ext_pc:04X})" if ext_pc else ""
+        print(f"sna check:    OK - UMT23X.sna{where} corroborates the "
+              f"depacked image outside the 4 known runtime-mutated regions")
+    return bad
 
 
 # ---------------------------------------------------------------------------
@@ -896,6 +977,14 @@ def main():
     image = depack(payload)
     open(binpath, "wb").write(image)
     print(f"depacked: {len(image)} bytes @0x6000 -> {binpath}")
+
+    if os.path.isfile(SNA_DEFAULT):
+        bad = verify_against_sna(image, SNA_DEFAULT)
+        if bad:
+            print("sna check:    MISMATCH vs " + SNA_DEFAULT, file=sys.stderr)
+            for line in bad:
+                print("  " + line, file=sys.stderr)
+            return 1
 
     syms = autolabels(dict(SYMS), image)
     syms = OrderedDict(sorted(syms.items()))

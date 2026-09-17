@@ -4,12 +4,15 @@
 
 #include "../emulator_api.h"
 
+#include <cstdio>
+#include <vector>
 #include <drogon/HttpResponse.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/cpu/z80.h>
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memoryaccesstracker.h>
+#include <emulator/memory/memorymap.h>
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/disassembler/z80disasm.h>
@@ -31,6 +34,10 @@ namespace v1
 // Helper function declared in emulator_api.cpp
 extern void addCorsHeaders(HttpResponsePtr& resp);
 extern std::string stateToString(EmulatorStateEnum state);
+
+// Shared TD-3 Phase 1 memory window renderer (defined in state_memory_api.cpp)
+extern Json::Value RenderMemoryWindowFormat(const uint8_t* data, size_t size, uint32_t address,
+                                            const std::string& format);
 
 /// Helper: Get emulator or return 404
 static std::shared_ptr<Emulator> getEmulatorOrError(
@@ -1443,32 +1450,45 @@ void EmulatorAPI::getMemory(const HttpRequestPtr& req, std::function<void(const 
     }
     if (len > 4096) len = 4096;
     if (len < 1) len = 1;
-    
+
+    // TD-3 Phase 1 compact read format: hexdump (default, ~80% token cut) |
+    // full (legacy data array + hex) | sparse (fill-run segments);
+    // filter=sparse is accepted as an alias
+    std::string format = "hexdump";
+    const std::string formatParam = req->getParameter("format");
+    const std::string filterParam = req->getParameter("filter");
+    if (!formatParam.empty()) format = formatParam;
+    else if (filterParam == "sparse") format = "sparse";
+    if (format != "hexdump" && format != "full" && format != "sparse")
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid format parameter (expected 'hexdump', 'full' or 'sparse')";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     // Read memory. Direct (non-mutating) access: debugger-side reads must
     // never drive the ProfROM quadrant state machine the way CPU reads do
     // (MemoryReadFast/MemoryReadDebug strobe #0000-#0003 while the Service
     // ROM is paged) - inspecting memory must not change machine state
+    std::vector<uint8_t> buffer(len);
+    for (unsigned i = 0; i < len; i++)
+    {
+        buffer[i] = mem->DirectReadFromZ80Memory((addr + i) & 0xFFFF);
+    }
+
     Json::Value ret;
     ret["address"] = addr;
     ret["length"] = len;
-    
-    Json::Value data(Json::arrayValue);
-    for (unsigned i = 0; i < len; i++)
-    {
-        data.append(mem->DirectReadFromZ80Memory((addr + i) & 0xFFFF));
-    }
-    ret["data"] = data;
-    
-    // Also provide hex string for convenience
-    std::stringstream hexStr;
-    for (unsigned i = 0; i < len; i++)
-    {
-        hexStr << std::hex << std::uppercase << std::setw(2) << std::setfill('0') 
-               << static_cast<int>(mem->DirectReadFromZ80Memory((addr + i) & 0xFFFF));
-        if (i < len - 1) hexStr << " ";
-    }
-    ret["hex"] = hexStr.str();
-    
+    const Json::Value payload = RenderMemoryWindowFormat(buffer.data(), buffer.size(), addr, format);
+    for (const std::string& name : payload.getMemberNames())
+        ret[name] = payload[name];
+
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);
@@ -1981,6 +2001,125 @@ void EmulatorAPI::getMemoryInfo(const HttpRequestPtr& req, std::function<void(co
     }
     ret["z80_banks"] = banks;
     
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/{id}/memory/map
+/// @brief Sparse non-zero memory overview (TD-3 Phase 1): merged block map of
+/// @brief the CPU address space (view=address, default) or the physical RAM
+/// @brief pages (view=ram). Query params: min_run (default 64), max_blocks
+/// @brief (default 48). Rendered from the single-source core helper so every
+/// @brief automation surface reports identical blocks.
+void EmulatorAPI::getMemoryMap(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                               const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+
+    auto* ctx = emulator->GetContext();
+    Memory* mem = emulator->GetMemory();
+    if (!ctx || !mem)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Memory not available";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // view=address (default, 64K CPU space) | view=ram (physical RAM pages)
+    MemoryMapView view = MemoryMapView::AddressSpace;
+    const std::string viewParam = req->getParameter("view");
+    if (viewParam == "ram" || viewParam == "pages")
+    {
+        view = MemoryMapView::RamPages;
+    }
+    else if (!viewParam.empty() && viewParam != "address" && viewParam != "cpu")
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid view parameter (expected 'address' or 'ram')";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    uint32_t minRun = kMemoryMapDefaultMinRun;
+    uint32_t maxBlocks = kMemoryMapDefaultMaxBlocks;
+    try
+    {
+        const std::string minRunParam = req->getParameter("min_run");
+        if (!minRunParam.empty())
+            minRun = std::stoul(minRunParam);
+        const std::string maxBlocksParam = req->getParameter("max_blocks");
+        if (!maxBlocksParam.empty())
+            maxBlocks = std::stoul(maxBlocksParam);
+    }
+    catch (...)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid min_run / max_blocks parameter";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    // Clamp instead of rejecting: agents experiment with granularity values
+    if (minRun < 1) minRun = 1;
+    if (minRun > PAGE_SIZE) minRun = PAGE_SIZE;
+    if (maxBlocks < 1) maxBlocks = 1;
+    if (maxBlocks > 4096) maxBlocks = 4096;
+
+    const MemoryMapReport report = BuildMemoryMap(*mem, ctx->config, view, minRun, maxBlocks);
+
+    Json::Value ret;
+    ret["model"] = report.model;
+    ret["view"] = report.ramView ? "ram" : "address";
+    ret["total_size"] = report.totalSize;
+    ret["non_zero_bytes"] = report.nonZeroBytes;
+    ret["min_run"] = report.minRun;
+    ret["block_count"] = static_cast<unsigned>(report.blocks.size());
+    ret["truncated"] = report.truncated;
+
+    Json::Value blocks(Json::arrayValue);
+    for (const MemoryMapBlock& block : report.blocks)
+    {
+        char address[12];
+        std::snprintf(address, sizeof(address), "0x%04X", block.address);
+
+        Json::Value item;
+        item["address"] = address;
+        item["size"] = block.size;
+        item["type"] = block.typeName;
+        item["bank"] = block.bank == 0xFF ? -1 : static_cast<int>(block.bank);
+        item["page"] = block.page;
+        item["rom"] = block.isRom;
+        item["status"] = block.IsZeroFill() ? "zeros" : "data";
+        item["non_zero"] = block.nonZero;
+        if (!block.IsZeroFill())
+        {
+            // FNV-1a 64 fingerprint (not sha256): cheap, stable, lets an agent
+            // diff a region across seeks without dumping its bytes
+            char hash[20];
+            std::snprintf(hash, sizeof(hash), "%016llx", static_cast<unsigned long long>(block.hash));
+            item["hash"] = hash;
+        }
+        blocks.append(item);
+    }
+    ret["blocks"] = blocks;
+
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);

@@ -5,6 +5,7 @@
 #include <emulator/emulatormanager.h>
 #include "../bindings/lua_porttrace.h"
 #include <emulator/memory/memory.h>
+#include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/tape/tape.h>
@@ -453,6 +454,66 @@ public:
                 data[i + 1] = mem->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + i));
             }
             return data;
+        });
+
+        // TD-3 Phase 1: sparse non-zero block overview (same core source as
+        // GET /memory/map and MCP inspect_state 'memory_map').
+        // memory_map() | memory_map("ram") | memory_map("address", 64, 48)
+        lua.set_function("memory_map", [this](sol::optional<std::string> viewName, sol::optional<int> minRunOpt,
+                                              sol::optional<int> maxBlocksOpt) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) return result;
+            Memory* mem = _emulator->GetMemory();
+            EmulatorContext* ctx = _emulator->GetContext();
+            if (!mem || !ctx) return result;
+
+            const MemoryMapView view = (viewName && (*viewName == "ram" || *viewName == "pages"))
+                                           ? MemoryMapView::RamPages
+                                           : MemoryMapView::AddressSpace;
+            const uint32_t minRun = (minRunOpt && *minRunOpt > 0) ? static_cast<uint32_t>(*minRunOpt) : kMemoryMapDefaultMinRun;
+            const uint32_t maxBlocks = (maxBlocksOpt && *maxBlocksOpt > 0) ? static_cast<uint32_t>(*maxBlocksOpt)
+                                                                           : kMemoryMapDefaultMaxBlocks;
+
+            const MemoryMapReport report = BuildMemoryMap(*mem, ctx->config, view, minRun, maxBlocks);
+            result["model"] = report.model;
+            result["view"] = report.ramView ? "ram" : "address";
+            result["total_size"] = report.totalSize;
+            result["non_zero_bytes"] = report.nonZeroBytes;
+            result["min_run"] = report.minRun;
+            result["truncated"] = report.truncated;
+
+            sol::table blocks = lua_view.create_table();
+            for (size_t i = 0; i < report.blocks.size(); i++) {
+                const MemoryMapBlock& block = report.blocks[i];
+                sol::table item = lua_view.create_table();
+                item["address"] = block.address;
+                item["size"] = block.size;
+                item["type"] = block.typeName;
+                item["bank"] = block.bank == 0xFF ? -1 : static_cast<int>(block.bank);
+                item["page"] = block.page;
+                item["rom"] = block.isRom;
+                item["status"] = block.IsZeroFill() ? "zeros" : "data";
+                item["non_zero"] = block.nonZero;
+                if (!block.IsZeroFill())
+                    item["hash"] = block.hash;  // FNV-1a 64 fingerprint (lua_Integer)
+                blocks[i + 1] = item;
+            }
+            result["blocks"] = blocks;
+            return result;
+        });
+
+        // TD-3 compact read format: classic 16B/line hexdump + ASCII sidebar
+        lua.set_function("mem_hexdump", [this](uint16_t addr, sol::optional<int> lenOpt) -> std::string {
+            if (!_emulator) return "";
+            Memory* mem = _emulator->GetMemory();
+            if (!mem) return "";
+            const size_t len = lenOpt ? static_cast<size_t>(*lenOpt) : 64;
+            if (len < 1 || len > 4096) return "";
+            std::vector<uint8_t> buffer(len);
+            for (size_t i = 0; i < len; i++)
+                buffer[i] = mem->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + i));
+            return FormatHexDump(buffer.data(), buffer.size(), addr);
         });
 
         lua.set_function("mem_write_block", [this](uint16_t addr, sol::table data) {
@@ -1967,6 +2028,106 @@ public:
         });
 
         // -----------------------------------------------------------------
+        // TD-4 — agent bookmarks (advisory annotations, never barriers).
+        // Labels are keys: non-empty, at most 63 chars, unique per session.
+        // -----------------------------------------------------------------
+
+        lua.set_function("ttd_bookmark_add", [this](const std::string& label,
+                                                     sol::optional<uint64_t> frameOpt,
+                                                     sol::optional<uint32_t> tInFrameOpt) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            result["added"] = false;
+            if (!_emulator) { result["error"] = "no emulator"; return result; }
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) { result["error"] = "TTD not available"; return result; }
+
+            // Position omitted → current position (mark here).
+            ttd::TTDTimePoint time = ctx->pTimeTravelManager->CurrentPosition();
+            if (frameOpt)
+            {
+                time.frame    = *frameOpt;
+                time.tInFrame = tInFrameOpt.value_or(0);
+            }
+
+            std::string err;
+            if (!ctx->pTimeTravelManager->AddBookmark(time, label, &err))
+            {
+                result["error"] = err;
+                return result;
+            }
+            result["added"]    = true;
+            result["label"]    = label;
+            result["frame"]    = time.frame;
+            result["tinframe"] = time.tInFrame;
+            return result;
+        });
+
+        lua.set_function("ttd_bookmarks", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) return result;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return result;
+            int idx = 1;  // Lua tables are 1-based
+            for (const auto& bm : ctx->pTimeTravelManager->GetBookmarks())
+            {
+                sol::table entry = lua_view.create_table();
+                entry["frame"]    = bm.time.frame;
+                entry["tinframe"] = bm.time.tInFrame;
+                entry["label"]    = bm.label;
+                result[idx++]     = entry;
+            }
+            return result;
+        });
+
+        lua.set_function("ttd_bookmark_delete", [this](const std::string& label) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return false;
+            return ctx->pTimeTravelManager->RemoveBookmark(label);
+        });
+
+        // A bookmark seek IS a seek — identical result shape to ttd_seek
+        // (plus the resolved label), so a real barrier between the restore
+        // checkpoint and the target still surfaces as halt_reason
+        // "external_event". A bookmark itself never halts anything.
+        lua.set_function("ttd_seek_bookmark", [this](const std::string& label) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) { result["reached"] = false; return result; }
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager)
+            {
+                result["reached"] = false;
+                result["error"]   = "TTD not available";
+                return result;
+            }
+            ttd::TimeTravelManager::TTDSeekResult r;
+            std::string err;
+            const bool reached = ctx->pTimeTravelManager->SeekToBookmark(label, &r, &err);
+            result["reached"] = reached;
+            if (!err.empty())
+                result["error"] = err;
+
+            sol::table arrivedAt = lua_view.create_table();
+            arrivedAt["frame"]    = r.arrivedAt.frame;
+            arrivedAt["tinframe"] = r.arrivedAt.tInFrame;
+            result["arrived_at"]  = arrivedAt;
+
+            const char* reasonStr = "target";
+            switch (r.haltReason)
+            {
+                case ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent: reasonStr = "external_event"; break;
+                case ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange:    reasonStr = "out_of_range"; break;
+                default: break;
+            }
+            result["halt_reason"] = reasonStr;
+            result["bookmark"]    = label;
+            return result;
+        });
+
+        // -----------------------------------------------------------------
         // Phase 4 — Reverse search + dump + instruction step
         // -----------------------------------------------------------------
 
@@ -2007,14 +2168,16 @@ public:
             return result;
         });
 
-        lua.set_function("ttd_find_last", [this](uint16_t addr,
+        lua.set_function("ttd_find_last", [this](sol::object firstArgOpt,
                                                    sol::optional<std::string> accessOpt,
                                                    sol::optional<uint8_t> valueOpt,
                                                    sol::optional<uint16_t> pcFromOpt,
                                                    sol::optional<uint16_t> pcToOpt,
                                                    sol::optional<uint64_t> beforeFrameOpt,
                                                    sol::optional<uint32_t> beforeTinOpt,
-                                                   sol::optional<uint8_t> physPageOpt) -> sol::table {
+                                                   sol::optional<uint8_t> physPageOpt,
+                                                   sol::optional<uint16_t> addrFromOpt,
+                                                   sol::optional<uint16_t> addrToOpt) -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
             if (!_emulator) { result["found"] = false; return result; }
@@ -2022,17 +2185,61 @@ public:
             if (!ctx || !ctx->pTimeTravelManager) { result["found"] = false; return result; }
 
             ttd::TTDSearchQuery q;
-            q.addrFrom = q.addrTo = addr;
-            q.access = ttd::TTDAccessTypeFromString(
-                accessOpt.value_or("write").c_str());
-            if (valueOpt) { q.hasValueFilter = true; q.value = *valueOpt; }
-            if (pcFromOpt) { q.hasPcFilter = true; q.pcFrom = *pcFromOpt; q.pcTo = pcToOpt.value_or(0xFFFF); }
-            // Bank-aware search: pins the query to one physical RAM page.
-            if (physPageOpt) { q.hasPhysPageFilter = true; q.physPage = *physPageOpt; }
-            const uint32_t frameT = ctx->config.frame;
-            if (beforeFrameOpt)
-                q.beforeGlobalT = static_cast<uint64_t>(*beforeFrameOpt) * frameT
-                                  + beforeTinOpt.value_or(0);
+            if (firstArgOpt.is<sol::table>())
+            {
+                sol::table tbl = firstArgOpt.as<sol::table>();
+                if (tbl["addr"].valid())
+                {
+                    uint16_t a = tbl["addr"].get<uint16_t>();
+                    q.addrFrom = q.addrTo = a;
+                }
+                else
+                {
+                    q.addrFrom = tbl["addr_from"].valid() ? tbl["addr_from"].get<uint16_t>() : (tbl["addrFrom"].valid() ? tbl["addrFrom"].get<uint16_t>() : 0);
+                    q.addrTo = tbl["addr_to"].valid() ? tbl["addr_to"].get<uint16_t>() : (tbl["addrTo"].valid() ? tbl["addrTo"].get<uint16_t>() : 0xFFFF);
+                }
+
+                std::string accStr = tbl["access"].valid() ? tbl["access"].get<std::string>() : "write";
+                q.access = ttd::TTDAccessTypeFromString(accStr.c_str());
+
+                if (tbl["value"].valid()) { q.hasValueFilter = true; q.value = tbl["value"].get<uint8_t>(); }
+                if (tbl["pc_from"].valid()) { q.hasPcFilter = true; q.pcFrom = tbl["pc_from"].get<uint16_t>(); q.pcTo = tbl["pc_to"].valid() ? tbl["pc_to"].get<uint16_t>() : 0xFFFF; }
+                else if (tbl["pcFrom"].valid()) { q.hasPcFilter = true; q.pcFrom = tbl["pcFrom"].get<uint16_t>(); q.pcTo = tbl["pcTo"].valid() ? tbl["pcTo"].get<uint16_t>() : 0xFFFF; }
+
+                if (tbl["phys_page"].valid()) { q.hasPhysPageFilter = true; q.physPage = tbl["phys_page"].get<uint8_t>(); }
+                else if (tbl["physPage"].valid()) { q.hasPhysPageFilter = true; q.physPage = tbl["physPage"].get<uint8_t>(); }
+
+                const uint32_t frameT = ctx->config.frame;
+                if (tbl["before_frame"].valid())
+                {
+                    uint64_t f = tbl["before_frame"].get<uint64_t>();
+                    uint32_t tin = tbl["before_tin"].valid() ? tbl["before_tin"].get<uint32_t>() : 0;
+                    q.beforeGlobalT = f * frameT + tin;
+                }
+                else if (tbl["before"].valid())
+                {
+                    q.beforeGlobalT = tbl["before"].get<uint64_t>();
+                }
+            }
+            else
+            {
+                if (firstArgOpt.is<uint16_t>())
+                {
+                    q.addrFrom = q.addrTo = firstArgOpt.as<uint16_t>();
+                }
+                else
+                {
+                    q.addrFrom = addrFromOpt.value_or(0);
+                    q.addrTo = addrToOpt.value_or(0xFFFF);
+                }
+                q.access = ttd::TTDAccessTypeFromString(accessOpt.value_or("write").c_str());
+                if (valueOpt) { q.hasValueFilter = true; q.value = *valueOpt; }
+                if (pcFromOpt) { q.hasPcFilter = true; q.pcFrom = *pcFromOpt; q.pcTo = pcToOpt.value_or(0xFFFF); }
+                if (physPageOpt) { q.hasPhysPageFilter = true; q.physPage = *physPageOpt; }
+                const uint32_t frameT = ctx->config.frame;
+                if (beforeFrameOpt)
+                    q.beforeGlobalT = static_cast<uint64_t>(*beforeFrameOpt) * frameT + beforeTinOpt.value_or(0);
+            }
 
             auto found = ctx->pTimeTravelManager->FindLastAccess(q);
             if (!found) { result["found"] = false; return result; }

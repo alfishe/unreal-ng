@@ -264,6 +264,18 @@
     paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["parameters"][1]["required"] = true;
     paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["parameters"][1]["schema"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["parameters"][1]["description"] = "Z80 address (0-65535)";
+    paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["parameters"][2]["name"] = "length";
+    paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["parameters"][2]["in"] = "query";
+    paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["parameters"][2]["required"] = false;
+    paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["parameters"][2]["description"] =
+        "Number of bytes to read (default: 128)";
+    paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["parameters"][2]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["parameters"][3]["name"] = "format";
+    paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["parameters"][3]["in"] = "query";
+    paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["parameters"][3]["required"] = false;
+    paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["parameters"][3]["description"] =
+        "'hexdump' (default), 'full' (data array) or 'sparse' (fill-run segments)";
+    paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["parameters"][3]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["responses"]["200"]["description"] = "Memory contents";
     paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["responses"]["400"]["description"] = "Invalid address";
     paths["/api/v1/emulator/{id}/memory/read/{address}"]["get"]["responses"]["404"]["description"] = "Emulator not found";
@@ -308,6 +320,12 @@
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][2]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][2]["required"] = true;
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][2]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][3]["name"] = "filter";
+    paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][3]["in"] = "query";
+    paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][3]["required"] = false;
+    paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][3]["description"] =
+        "Set 'sparse' to compress 0x00/0xFF runs into fill segments (much smaller than the byte array)";
+    paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][3]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["responses"]["200"]["description"] = "Page data (base64 encoded)";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["responses"]["400"]["description"] = "Invalid type or page number";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["responses"]["404"]["description"] = "Emulator not found";
