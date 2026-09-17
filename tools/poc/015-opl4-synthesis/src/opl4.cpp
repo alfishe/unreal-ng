@@ -14,11 +14,14 @@
 // are never serialised (R7, D11).
 #include "opl4/opl4.h"
 
-#include "opl4fm.h"
+#include "common/exptable.h"
+#include "common/mixtables.h"
+#include "fm/fmbus.h"
+#include "fm/fmsynthopl4.h"
 #if defined(OPL4_FM_YMFM)
-#include "ymfm/opl4fmymfm.h"
+#include "fm/fmsynthymfm.h"
 #endif
-#include "opl4pcm.h"
+#include "pcm/pcmsynthopl4.h"
 #include "opl4render.h"
 #include "opl4/wavememory.h"
 
@@ -35,13 +38,14 @@ namespace
 
 constexpr size_t kTopStateSize = 92;
 // Backend-tagged layout: the FM chunk differs between the in-tree model and
-// the ymfm verification backend, so sessions never cross builds. Version 3:
-// the in-tree engine adopted the classic YMF262 operator map, CNT/route
-// channel fields and include-semantics routing (FmChannel layout changed).
+// the ymfm verification backend, so sessions never cross builds. Version 4:
+// the guest-visible FM state (register shadow, timers, status, routing
+// source) moved into the FmBus chunk ahead of a synthesis-only engine chunk
+// (rearchitecture Step 2); [88..91] pins the engine layout tag.
 #if defined(OPL4_FM_YMFM)
-constexpr uint32_t kStateVersion = 2;
-#else
 constexpr uint32_t kStateVersion = 3;
+#else
+constexpr uint32_t kStateVersion = 4;
 #endif
 constexpr uint64_t kStreamReserveFrames = 4410; // ~100 ms of chip audio
 
@@ -61,6 +65,10 @@ int32_t ClampRail(int32_t v)
 struct Opl4::Impl
 {
     Opl4Config cfg;
+
+    // Guest-visible FM bus state (register shadow, timers, status, routing,
+    // FM mutes) — rearchitecture §4.1. Wired to the engine in the ctor.
+    FmBus fmBus;
 
     // Time model (§3.1)
     uint64_t hostTicks = 0;     // last host timestamp synced
@@ -91,16 +99,17 @@ struct Opl4::Impl
     std::vector<int32_t> pcmStream;  // HiFi: PCM-only 44100 stereo / split PCM
     bool splitStreams = false;       // host mixer sources (integration D5)
 
-    // Tap scratch + render-side meters/mutes (never serialised)
-    std::array<int32_t, FmBackend::kChannelCount> fmTaps{};
+    // Tap scratch + render-side meters (never serialised; FM mutes live in
+    // fmBus, PCM mutes in pcmMuteMask)
+    std::array<int32_t, FmBus::kChannelCount> fmTaps{};
     std::array<int32_t, Opl4Pcm::kSlotCount> pcmTaps{};
-    uint64_t muteMask = 0; // bit i: 0..17 FM, 18..41 PCM
-    int32_t fmPeak[FmBackend::kChannelCount] = {};
+    uint32_t pcmMuteMask = 0; // bit i: PCM slot i
+    int32_t fmPeak[FmBus::kChannelCount] = {};
     int32_t pcmPeak[Opl4Pcm::kSlotCount] = {};
 
     IWaveMemory* mem = nullptr;
 
-    bool AnyMute() const { return muteMask != 0; }
+    bool AnyPcmMute() const { return pcmMuteMask != 0; }
 
     void ClearStreams()
     {
@@ -113,6 +122,7 @@ struct Opl4::Impl
 Opl4::Opl4()
     : _impl(new Impl), _pcm(new Opl4Pcm), _fm(new FmBackend), _render(new Opl4Render)
 {
+    _impl->fmBus.SetSynth(_fm);
     Reset(0);
 }
 
@@ -151,6 +161,7 @@ void Opl4::Configure(const Opl4Config& cfg, IWaveMemory* mem)
 void Opl4::Reset(uint64_t time)
 {
     _fm->Reset();
+    _impl->fmBus.Reset();
     _pcm->Reset();
     Impl& im = *_impl;
     im.hostTicks = time;
@@ -181,10 +192,12 @@ void Opl4::AdvanceFmToOutput()
 {
     Impl& im = *_impl;
     int32_t fmL = 0, fmR = 0;
-    _fm->Advance(fmL, fmR, im.fmTaps);
+    // One 684-clock FM step: engine synthesis + bus timers/routing/mute. The
+    // bus owns the include-semantics routing (§7) and applies FM mutes on
+    // the tap-sum path exactly (summing only unmuted channels).
+    im.fmBus.Advance(im.fmTaps, fmL, fmR);
 
-    const auto& channels = _fm->Channels();
-    for (int ch = 0; ch < FmBackend::kChannelCount; ch++)
+    for (int ch = 0; ch < FmBus::kChannelCount; ch++)
     {
         const int32_t tap = im.fmTaps[ch];
         const int32_t a = tap < 0 ? -tap : tap;
@@ -192,23 +205,6 @@ void Opl4::AdvanceFmToOutput()
         p -= p >> 8; // meter decay, render-side only
         if (a > p)
             p = a;
-
-        if (im.AnyMute() && ((im.muteMask >> ch) & 1))
-        {
-            // Mirror the engine's routing exactly (§7): subtract the muted
-            // channel's contribution from the tap-sum path, never chip state.
-            // Include semantics: CHA/CHC -> L, CHB/CHD -> R; without NEW the
-            // channel carries both sides (OPL2 compatibility).
-            const uint8_t route = _fm->NewMode() ? channels[ch].route : 0x30;
-            if (route & 0x10)
-                fmL -= tap; // CHA -> L
-            if (route & 0x20)
-                fmR -= tap; // CHB -> R
-            if (route & 0x40)
-                fmL -= tap; // CHC -> L
-            if (route & 0x80)
-                fmR -= tap; // CHD -> R
-        }
     }
 
     // Block mix 0xF8: L = bits 5:3, R = bits 2:0 (§7 step 2).
@@ -259,7 +255,7 @@ void Opl4::AdvanceOutputStep()
         if (a > p)
             p = a;
 
-        if (im.AnyMute() && ((im.muteMask >> (18 + i)) & 1))
+        if (im.AnyPcmMute() && ((im.pcmMuteMask >> i) & 1u))
         {
             // Taps are pre-pan (post envelope, post TL): re-pan the muted
             // slot's contribution to subtract it exactly (§5).
@@ -332,7 +328,7 @@ void Opl4::SyncTo(uint64_t time)
 void Opl4::WriteFm(uint64_t time, int bank, uint8_t addr, uint8_t data)
 {
     SyncTo(time);
-    _fm->WriteReg(static_cast<uint8_t>(bank & 1), addr, data);
+    _impl->fmBus.Write(static_cast<uint8_t>(bank & 1), addr, data);
     _impl->busyUntil = std::max(_impl->busyUntil, _impl->masterPos + kBusyFmWriteClocks);
 }
 
@@ -361,7 +357,7 @@ uint8_t Opl4::ReadStatus(uint64_t time)
 {
     SyncTo(time);
     Impl& im = *_impl;
-    uint8_t s = _fm->Status() & (FmBackend::kStatusT1 | FmBackend::kStatusT2);
+    uint8_t s = _impl->fmBus.Status() & (FmBus::kStatusT1 | FmBus::kStatusT2);
     // YMF262 status | chip flags (openMSX YMF278B::readYMF278Status,
     // real-HW-verified bit positions): bit 0 BUSY, bit 1 LD. The YMF262
     // status only ever uses bits 6..5 (timer flags), so no collision.
@@ -395,12 +391,12 @@ void Opl4::Run(uint64_t time)
 
 bool Opl4::NewMode() const
 {
-    return _fm->NewMode();
+    return _impl->fmBus.NewMode();
 }
 
 bool Opl4::New2Mode() const
 {
-    return _fm->New2();
+    return _impl->fmBus.New2();
 }
 
 // ---------------------------------------------------------------------------
@@ -446,14 +442,15 @@ size_t Opl4::Render(float* interleavedStereo, size_t maxFrames)
 
 void Opl4::SetChannelMute(ChannelId id, bool mute)
 {
-    const unsigned idx = (id.group == ChannelGroup::Fm) ? id.index
-                                                        : static_cast<unsigned>(18 + id.index);
-    if (idx >= 42)
-        return;
-    if (mute)
-        _impl->muteMask |= (1ull << idx);
-    else
-        _impl->muteMask &= ~(1ull << idx);
+    if (id.group == ChannelGroup::Fm)
+        _impl->fmBus.SetChannelMute(static_cast<int>(id.index), mute);
+    else if (id.index < Opl4Pcm::kSlotCount)
+    {
+        if (mute)
+            _impl->pcmMuteMask |= (1u << id.index);
+        else
+            _impl->pcmMuteMask &= ~(1u << id.index);
+    }
 }
 
 void Opl4::EnableSplitStreams(bool on)
@@ -500,7 +497,7 @@ float Opl4::ChannelPeak(ChannelId id) const
 {
     if (id.group == ChannelGroup::Fm)
     {
-        if (id.index >= FmBackend::kChannelCount)
+        if (id.index >= FmBus::kChannelCount)
             return 0.0f;
         return static_cast<float>(_impl->fmPeak[id.index]) / 32768.0f;
     }
@@ -511,7 +508,7 @@ float Opl4::ChannelPeak(ChannelId id) const
 
 size_t Opl4::ChannelCount(ChannelGroup g) const
 {
-    return (g == ChannelGroup::Fm) ? static_cast<size_t>(FmBackend::kChannelCount)
+    return (g == ChannelGroup::Fm) ? static_cast<size_t>(FmBus::kChannelCount)
                                    : static_cast<size_t>(Opl4Pcm::kSlotCount);
 }
 
@@ -544,13 +541,13 @@ void Opl4::SetRoom(RoomMode m)
 }
 
 // ---------------------------------------------------------------------------
-// POD state pair (§9): top chunk | FM chunk | PCM chunk.
-// Streams, meters and mutes are deliberately not saved.
+// POD state pair (§9): top chunk | FM bus chunk | FM engine chunk | PCM
+// chunk. Streams, meters and mutes are deliberately not saved.
 // ---------------------------------------------------------------------------
 
 size_t Opl4::StateSize() const
 {
-    return kTopStateSize + FmBackend::kStateSize + Opl4Pcm::kStateSize;
+    return kTopStateSize + FmBus::kStateSize + _fm->StateSize() + Opl4Pcm::kStateSize;
 }
 
 void Opl4::SaveState(uint8_t* dst) const
@@ -574,8 +571,12 @@ void Opl4::SaveState(uint8_t* dst) const
     std::memcpy(dst + 80, &im.heldR, 4);
     dst[84] = im.mixF8;
     dst[85] = im.mixF9;
-    _fm->SaveState(dst + kTopStateSize);
-    _pcm->SaveState(dst + kTopStateSize + FmBackend::kStateSize);
+    const uint32_t fmTag = _fm->LayoutTag();
+    std::memcpy(dst + 88, &fmTag, 4);
+    im.fmBus.SaveState(dst + kTopStateSize);
+    const size_t fmEngineOffset = kTopStateSize + FmBus::kStateSize;
+    _fm->SaveState(dst + fmEngineOffset);
+    _pcm->SaveState(dst + fmEngineOffset + _fm->StateSize());
 }
 
 void Opl4::LoadState(const uint8_t* src)
@@ -585,6 +586,10 @@ void Opl4::LoadState(const uint8_t* src)
     std::memcpy(&ver, src + 4, 4);
     if (src[0] != 'O' || src[1] != 'P' || src[2] != 'L' || src[3] != '4' || ver != kStateVersion)
         return; // refuse foreign blobs (TTD D5 pairing contract)
+    uint32_t fmTag = 0;
+    std::memcpy(&fmTag, src + 88, 4);
+    if (fmTag != _fm->LayoutTag())
+        return; // refuse mismatched engine layouts
     std::memcpy(&im.masterPos, src + 8, 8);
     std::memcpy(&im.hostTicks, src + 16, 8);
     std::memcpy(&im.hostRemainder, src + 24, 8);
@@ -599,8 +604,10 @@ void Opl4::LoadState(const uint8_t* src)
     std::memcpy(&im.heldR, src + 80, 4);
     im.mixF8 = src[84];
     im.mixF9 = src[85];
-    _fm->LoadState(src + kTopStateSize);
-    _pcm->LoadState(src + kTopStateSize + FmBackend::kStateSize);
+    im.fmBus.LoadState(src + kTopStateSize);
+    const size_t fmEngineOffset = kTopStateSize + FmBus::kStateSize;
+    _fm->LoadState(src + fmEngineOffset);
+    _pcm->LoadState(src + fmEngineOffset + _fm->StateSize());
     im.ClearStreams(); // delivery buffers resume from the restore point
 }
 

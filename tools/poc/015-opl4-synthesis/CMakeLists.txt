@@ -25,12 +25,14 @@ endif()
 
 add_library(opl4 STATIC
     src/opl4.cpp
-    src/opl4fm.cpp
-    src/opl4pcm.cpp
+    src/fm/fmbus.cpp
+    src/fm/fmsynthopl4.cpp
+    src/pcm/pcmsynthopl4.cpp
     src/opl4render.cpp
     src/wavememory.cpp
 )
 target_include_directories(opl4 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(opl4 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 if (NOT MSVC)
     target_compile_options(opl4 PRIVATE -Wall -Wextra -Wpedantic)
 endif()
@@ -56,9 +58,10 @@ add_library(opl4ymfm STATIC EXCLUDE_FROM_ALL
     ${YMFM_DIR}/ymfm_opl.cpp
     ${YMFM_DIR}/ymfm_pcm.cpp
     ${YMFM_DIR}/ymfm_adpcm.cpp
-    src/ymfm/opl4fmymfm.cpp
+    src/fm/fmsynthymfm.cpp
 )
 target_include_directories(opl4ymfm SYSTEM PUBLIC ${YMFM_DIR})
+target_include_directories(opl4ymfm PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include) # ifmsynth.h
 target_include_directories(opl4ymfm PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 if (NOT MSVC)
     target_compile_options(opl4ymfm PRIVATE -Wall -Wextra -Wpedantic)

@@ -4,7 +4,7 @@
 #pragma once
 
 #include "opl4/iwavememory.h"
-#include "opl4tables.h"
+#include "pcm/pcmtables.h"
 
 #include <array>
 #include <cstddef>

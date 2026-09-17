@@ -9,10 +9,11 @@
 
 #include "opl4/opl4.h"
 #include "opl4/wavememory.h"
-#include "opl4fm.h"
-#include "opl4pcm.h"
+#include "common/exptable.h"
+#include "common/mixtables.h"
+#include "fm/fmsynthopl4.h"
+#include "pcm/pcmsynthopl4.h"
 #include "opl4render.h"
-#include "opl4tables.h"
 
 #include <algorithm>
 #include <cmath>

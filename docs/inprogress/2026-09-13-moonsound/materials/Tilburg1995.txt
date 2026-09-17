@@ -1,0 +1,157 @@
+Hello everybody,
+
+Here comes my story of Tilburg...
+
+
+I woke up at 5 in the morning and got dressed in my favourite FONY/ fair
+clothes.
+After that I collected the other FONY members (inluding a brand new
+one who had never seen an MSX fair).
+At 6:30 we were on the highway (A28 if you would like to know) and we were
+all eggcited :-) about this great day.
+At 8:00 we arrived in Tilburg and we unloaded our stuff and put it on
+our stand. We planned to show some things for the GFX 9000 (V9990) and sell
+Eggbert (our nice game), I also had some hardware to sell.
+At 9:00 our stand was finished and we could have a look at the other stands.
+Emphasys and Overflow had a stand next to ours. They were selling some kind
+of MIDI moonblaster program and Coverflow, a music disk. Offcourse we wanted
+to know if Moonsound was available, but first we looked at the Mayhem
+stand (Hi folks! When is the FM meeting?). They had some very sad news...
+Almost Real was almost finished, so they couldn't sell it. But they had some
+great disklabels!
+After this, we continued our journey to Sunrise. Stefan Boer was a little
+bit stressed up because of some melt down in his Turbo R(s). Henrik 
+Gilvad 
+could save him from braking down the stand and everybody near to him
+and fixed it.
+A big surprise for us, was that the Moonsound was really (REALLY) 
+finished.
+Everybody wanted to have one and Stefan went crazy again.
+They had 100 Moonsounds, but some didn't work. The only thing Henrik did 
+for
+the rest of the day was fixing and testing Moonsounds...
+Offcourse I bought myself a nice Moonsound cartridge and finally I could
+feel it in my hands... (after half a year!) We tested it right away at our
+own stand, but... it didn't work! Hmm, maybe my computer was wrong, 
+earlier
+that day my slot 3.1 had died, so I thought it was my computer that didn't
+want to work. So we tried it on another computer, it didn't work...
+HELP Stefan! We want to hear Moonsounds! Henrik tested it on his Turbo R 
+and
+everything worked well... So we went to Remco Schrijvers (programmer of
+Moonblaster for Moonsound, you know: Moonsoft). He said that he had 
+tested it
+on Turbo R, but also on Philips computers... (which we have) Remco took a
+deep breath and asked where the program stopped. At the sample ram test,
+I said. Hmmm, well... uhhh that is the part I only tested on Turbo R...
+Then that must be it! Please remove the bug, I begged. Remco, as calm as
+he always is, asked for a computer and debugger. So we went to our stand 
+and
+he fixed the bug. It was a big relief to him that it was so easy to 
+remove.
+(I know how it feals to discover a bug in your program, when
+at least 25 people bought it allready...).
+During this 'incident', lots of visotors were coming in. It was really
+crowded, at some moments I couldn't even walk back to our stand.
+Things were selling well, at our own stand. The hardware was gone in no 
+time
+(except for a Music module and a Philips 8250, somebody interested?)
+Even Eggbert sold more than we expected (enough to pay our stand and car 
+and
+to have a little profit (which was gone in no time, because Moonsound had
+to be paid)).
+As everyboudy knows it is Easter. Eggbert is about eggs, so it was not so
+difficult to combine this to a stand full of chocolate eggs.
+We dumped 2.5 kilo eggs on our stand and everybody could take one or two
+(or hundred, ANNE!!!).
+At 13:00 I discovered that I hadn't seen the rest of the stands, so I went
+off again to look at everything that was around. I saw an MSX emulator 
+board
+for PC for only Fl 75,- and another one for Fl 225,- !!! (hi Hessel).
+I will not list all of the stands here, that would be to much, but I will
+tell you about things that attracted me...
+Compjoetania had a great music disk, the music is nice, but the end demo 
+is
+great! Scaling and rotating grafix, really cool!
+MCCM sold an MSX 2 emulator. I tried it and it is very fast (on 80 Mhz 
+DX2)
+but I don't hear any sounds... (Eggbert works on it, now I can show it to
+everybody who asks why I have computer eyes)
+MSX club Gouda sold MSX fans for only Fl 10,- great price!
+Their SCSI interface should have been a great succes, when they had put
+DOS 2.20 on the EPROM. Sadly they hadn't done that for some vage reason 
+about
+speed... it sounded very strange to me, but I will not buy it, until it
+has DOS 2.20 on it (it's very fast, 225 Kb/s on 7 Mhz MSX, but I can live
+with 60 Kb/s using my Bert SCSI). It could have been so wonderful...
+MSX club West-Friesland sold their third multi-player-computer game. Again
+the grafix were astonishing (awfull), but the game was fun. It was some
+sort of tetris with two players.
+I also saw Xelasoft with a great stand, lights and everything. They (he) 
+were
+(was) selling his shooting game for Turbo R.
+Oasis had a nice Dragon SLlayer 6 to english patch. I only like the demo
+of this game, so I didn't buy it. The other FONY member was completely
+eggcited about it, so he bought it...
+Sunrise (swiss) sold the great Moonsound cartridge. They also had some
+presentations about the GFX 9000. Remco Schrijvers was showing his 
+MOD-player
+for the Moonsound. The Shrines of Enigma was the first game of the games
+subscribtion. It had a very nice disklabel with gold and silver texts.
+Hessel Harmsen sold a big pile of MSX junk and asked lots of money for it.
+Which he really got from some people because he is a great salesman.
+He even sold 'the ideal computer case', I don't know what it was, but it
+was big and bigger and very big with some connectors and stuff.
+There also was somebody who made a scanner interface, nice for DP people.
+Well, don't be angry when you are not listed above, I don't have a great
+memory, so... at least I can say that it was a great fair. There is only 
+one
+thing that is not so great, for people with stands, this day was great.
+Everybody knwos each other and you can talk about MSX all day... but for
+visitors it was a bit less fun. There were no really new things to see.
+No MK with great new hardware (or Digital KC). MSX Club Gouda only had
+some dump sale of old stuff, no really great new games that were not
+mentioned before. It looked like a big computer club for MSX groups.
+I know, Moonsound is great, but I have waited half a year for that, so 
+that
+was no new thing (The only really great thing was that Moonsound works 
+well
+on 7 Mhz... moonsound+GFX 9000+ 7 Mhz/ R800 = WOW!!!).
+Over to the end part of this story.
+At 17:00 it was all over :-(
+Stands were being ripped to parts and we dumped everything in our car 
+again.
+Together with Mayhem and some others we went to the local McDonalds. 
+Somebody
+decided to leave tha car at the fair and
+walk to the McDonalds... after half an hour we finally arrived and we were
+starved to death. All mexican-something-burgers were ordered and the MSX
+party continued.
+After all, it was a great day, and everybody in the world who has an MSX
+should come next year and also to Zandvoort.
+Our new FONY member is all freaked up about MSX now (He owns an AMIGA 
+1200)
+and he loves Moonsound!
+I feel very sorry for everybody outside Holland who couldn't come. I think
+you feel really terrible now and wish you were Dutch...
+But don't commit suicide... because there is hope! I saw somebody with a
+camera and I think he was from Brazil, so all South Amarican people can
+see a video off the fair. I made pictures and they will be put on 
+Photo-CD.
+I will send a message when it is finished. Maybe I put the pictures on 
+FTP.
+Sadly I have no free access to internet, so I must think of a way to get
+temporarily free access to upload it (Hi Zelly, maybe I can come to the 
+TUE?)
+
+Well, that was it. We wish you happy MSXing and if you want chocolate 
+eggs,
+just come to Harderwijk! (not you ANNE)
+-- 
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+SSFONY@XS4ALL.NL = Stephan Szarafinski, The Netherlands /--- /--\ |  | |  |
+                                                        |--- |  | |\ | |__|
+MSX Freak --> Games coder and contactperson for FONY    |    |  | | \|    |
+                                                        |    \--/ |  | \--/
+Atari Falcon 030 user --> Who can teach me how to program this thing?
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-

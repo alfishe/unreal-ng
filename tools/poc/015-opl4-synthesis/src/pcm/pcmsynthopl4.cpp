@@ -1,5 +1,8 @@
 // libopl4 — PCM engine implementation (core TDD §5).
-#include "opl4pcm.h"
+#include "pcm/pcmsynthopl4.h"
+
+#include "common/exptable.h"
+#include "common/mixtables.h"
 
 #include <algorithm>
 #include <cstring>
@@ -9,7 +12,15 @@ namespace opl4
 
 void Opl4Pcm::Reset()
 {
-    _slots.fill(PcmSlot{});
+    // Whole-object zero, padding included: `PcmSlot{}` value-init only
+    // stores members (the non-zero envVol NSDMI defeats the whole-object
+    // zero-fill), and the trivially-copyable fill() assignment then copies
+    // the temporary's stack-garbage padding into every slot — garbage
+    // SaveState would serialize into the TTD hash blob. envVol is the one
+    // non-zero default to re-apply afterwards.
+    std::memset(_slots.data(), 0, sizeof(_slots));
+    for (auto& s : _slots)
+        s.envVol = static_cast<int16_t>(kMaxAttIndex);
     _regs.fill(0);
     _regs[0xF8] = 0x1B; // FM block mix reset (kept in the wave reg file; D9)
     _memAdr = 0;

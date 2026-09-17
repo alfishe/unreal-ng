@@ -176,6 +176,7 @@ void SoundChip_Moonsound::reset()
 {
     _fmLatch[0] = 0;
     _fmLatch[1] = 0;
+    _fmBank = 0;
     _waveLatch = 0;
 
     // The time axis restarts; the monotonic clamp below keeps any straggler
@@ -316,19 +317,31 @@ void SoundChip_Moonsound::portDeviceOutMethod(uint16_t port, uint8_t value)
     switch (port & 0xFF)
     {
         case PORT_FM_ADDR1:
+            _fmBank = 0;
             _fmLatch[0] = value;  // address latch only - no chip traffic
             break;
 
         case PORT_FM_DATA1:
-            _opl4.WriteFm(chipTimeNow(), 0, _fmLatch[0], value);
+        case PORT_FM_DATA2:
+            // Card-decode truth (mfm_sample_2 evidence, 2026-09-17): the
+            // data ports #C5/#C7 are equivalent - a data write delivers to
+            // the bank of the most recent ADDRESS-port write (#C4 -> bank 0,
+            // #C6 -> bank 1), not to a per-port bank. The author's own
+            // MBPlayer (moonsound.bin $8AC8, MBPlayer_out_fm2) programs bank-2
+            // registers as `out (#C6),reg` + `out (#C5),data`; under a
+            // per-data-port decode those writes (the 0x105 NEW/NEW2 enable
+            // included) landed on the stale bank-0 latch, NEW never latched,
+            // and the bus then aliased every later bank-1 register write onto
+            // bank 0 - MFM Music sample 2 melody 7 rendered as voices with
+            // mismatched modulator/carrier patches (noise) while clean bank-0
+            // voices played on. Measured melody-7 traffic: C4->C5 1341,
+            // C6->C7 1166, C6->C5 112, C4->C7 0.
+            _opl4.WriteFm(chipTimeNow(), _fmBank, _fmLatch[_fmBank], value);
             break;
 
         case PORT_FM_ADDR2:
+            _fmBank = 1;
             _fmLatch[1] = value;
-            break;
-
-        case PORT_FM_DATA2:
-            _opl4.WriteFm(chipTimeNow(), 1, _fmLatch[1], value);
             break;
 
         case PORT_WAVE_ADDR:
@@ -446,6 +459,7 @@ void SoundChip_Moonsound::TTDSaveState(uint8_t* dst) const
     header.fmLatch[0] = _fmLatch[0];
     header.fmLatch[1] = _fmLatch[1];
     header.waveLatch = _waveLatch;
+    header.fmBank = _fmBank;
     header.tstateOrigin = _tstateOrigin;
     header.lastChipTime = _lastChipTime;
     header.romHash = _romHash;
@@ -475,6 +489,7 @@ void SoundChip_Moonsound::TTDLoadState(const uint8_t* src)
     _fmLatch[0] = header.fmLatch[0];
     _fmLatch[1] = header.fmLatch[1];
     _waveLatch = header.waveLatch;
+    _fmBank = header.fmBank;
     _tstateOrigin = header.tstateOrigin;
     _lastChipTime = header.lastChipTime;
     _opl4.LoadState(src + sizeof(header));
@@ -491,8 +506,10 @@ void SoundChip_Moonsound::TTDLoadState(const uint8_t* src)
 uint64_t SoundChip_Moonsound::TTDHashState() const
 {
     // FNV-1a over the same bytes TTDSaveState writes (TTD D9): Tier A only -
-    // SRAM integrity is the page store's job once Tier B exists.
-    uint8_t blob[kTtdBlobCapacity];
+    // SRAM integrity is the page store's job once Tier B exists. Zeroed
+    // first so no byte the state chunks leave unwritten can ever leak stack
+    // garbage into the hash.
+    uint8_t blob[kTtdBlobCapacity] = {};
     const size_t size = TTDStateSize();
     if (size > sizeof(blob))
         return 0;  // constructor guard makes this unreachable

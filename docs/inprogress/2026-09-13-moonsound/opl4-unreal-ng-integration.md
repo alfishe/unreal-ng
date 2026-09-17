@@ -45,15 +45,27 @@
 
 ### 2.1 The card's ports
 
-| Port | Direction | Function |
+*Update 2026-09-17 (MFM Music sample 2 evidence):* the card CPLD decodes only
+**A0..A7** — every high-byte alias of a card port is the card port (MoonService-
+verified; the Z80 `out (n),a` form leaves A in the high address byte and real
+drivers depend on the card ignoring it). The two FM **data** ports are
+**equivalent**: a data write delivers to the bank of the most recent
+address-port write (`#C4` → bank 1, `#C6` → bank 2), not to a per-port bank.
+Measured melody-7 traffic mixes the pairs freely: C4→C5 1341, C6→C7 1166,
+C6→C5 112, C4→C7 0. Under the earlier per-data-port decode, the author's own
+MBPlayer programmed bank-2 registers as `out (#C6),reg` + `out (#C5),data`,
+NEW never latched, and every later bank-2 register write aliased onto bank 1 —
+the exact host-side half of the "some channels noising" failure.
+
+| Port (low byte) | Direction | Function |
 |---|---|---|
-| `#C4` | write | FM register address, bank 1 |
-| `#C4` | read | FM status |
-| `#C5` | write | FM data, bank 1 |
-| `#C6` | write | FM register address, bank 2 |
-| `#C7` | write | FM data, bank 2 |
-| `#7E` | write | Wave register address |
-| `#7F` | read/write | Wave register data |
+| `#C4` | write | FM register address latch, selects bank 1 |
+| `#C4` | read | FM status (BUSY/T1/T2/LD) |
+| `#C5` | write | FM data — writes bank of the last address-port write |
+| `#C6` | write | FM register address latch, selects bank 2 |
+| `#C7` | write | FM data — same as `#C5` |
+| `#7E` | write | Wave register address latch — ignored while NEW2 clear |
+| `#7F` | read/write | Wave register data — ignored while NEW2 clear |
 
 ### 2.2 Why this needs full decode
 
@@ -82,15 +94,15 @@ NemoBus. The emulator must do the same:
 ```cpp
 void SoundChip_Moonsound::portDeviceOutMethod(uint16_t port, uint8_t value)
 {
-    const uint64_t t = currentTState();
-    switch (port)
+    switch (port & 0xFF)  // CPLD decodes A0..A7 only (2.1 update)
     {
-        case 0xC4: _opl4.writeFm  (t, /*bank*/0, /*addr latch*/ value, kAddrWrite); break;
-        case 0xC5: _opl4.writeFm  (t, 0, _fmLatch[0], value);                       break;
-        case 0xC6: _opl4.writeFm  (t, 1, value, kAddrWrite);                        break;
-        case 0xC7: _opl4.writeFm  (t, 1, _fmLatch[1], value);                       break;
-        case 0x7E: _waveLatch = value;                                              break;
-        case 0x7F: _opl4.writeWave(t, _waveLatch, value);                           break;
+        case 0xC4: _fmBank = 0; _fmLatch[0] = value;                          break;
+        case 0xC6: _fmBank = 1; _fmLatch[1] = value;                          break;
+        case 0xC5:  // data ports are equivalent: the bank is the last
+        case 0xC7:  // address-port write's, not the data port's own
+            _opl4.WriteFm(chipTimeNow(), _fmBank, _fmLatch[_fmBank], value);  break;
+        case 0x7E: if (_opl4.New2Mode()) _waveLatch = value;                  break;
+        case 0x7F: if (_opl4.New2Mode()) _opl4.WriteWave(chipTimeNow(), _waveLatch, value); break;
     }
 }
 ```

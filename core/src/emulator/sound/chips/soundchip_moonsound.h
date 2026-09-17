@@ -25,7 +25,7 @@ struct MoonSoundTTDHeader
     uint16_t headerSize;      // sizeof(MoonSoundTTDHeader)
     uint8_t fmLatch[2];       // guest-visible FM address latches (TTD 7.2)
     uint8_t waveLatch;        // guest-visible wave address latch (TTD 7.2)
-    uint8_t reserved0;        // explicit padding - never implicit
+    uint8_t fmBank;           // guest-visible FM bank of the last address write (v2)
     uint16_t reserved1;
     uint16_t reserved2;
     uint64_t tstateOrigin;    // T-state axis origin (TTD 7.2)
@@ -78,13 +78,15 @@ static_assert(offsetof(MoonSoundTTDHeader, romHash) + sizeof(MoonSoundTTDHeader:
 class SoundChip_Moonsound : public PortDevice, public ttd::TTDSerializable
 {
 public:
-    // The card's fixed I/O addresses (2.1)
-    static constexpr uint16_t PORT_FM_ADDR1  = 0x00C4;  // FM addr latch, bank 1 / FM status read
-    static constexpr uint16_t PORT_FM_DATA1  = 0x00C5;  // FM data, bank 1
-    static constexpr uint16_t PORT_FM_ADDR2  = 0x00C6;  // FM addr latch, bank 2
-    static constexpr uint16_t PORT_FM_DATA2  = 0x00C7;  // FM data, bank 2
-    static constexpr uint16_t PORT_WAVE_ADDR = 0x007E;  // wave register addr latch
-    static constexpr uint16_t PORT_WAVE_DATA = 0x007F;  // wave register data write / read
+    // The card's fixed I/O addresses (2.1). CPLD decodes A0..A7 only; the two
+    // FM data ports are equivalent — the bank is the one selected by the most
+    // recent address-port write, not a property of the data port itself.
+    static constexpr uint16_t PORT_FM_ADDR1  = 0x00C4;  // FM addr latch, selects bank 1 / FM status read
+    static constexpr uint16_t PORT_FM_DATA1  = 0x00C5;  // FM data write (bank of last addr write)
+    static constexpr uint16_t PORT_FM_ADDR2  = 0x00C6;  // FM addr latch, selects bank 2
+    static constexpr uint16_t PORT_FM_DATA2  = 0x00C7;  // FM data write (same as #C5)
+    static constexpr uint16_t PORT_WAVE_ADDR = 0x007E;  // wave register addr latch (NEW2-gated)
+    static constexpr uint16_t PORT_WAVE_DATA = 0x007F;  // wave register data write / read (NEW2-gated)
 
     SoundChip_Moonsound() = delete;
     explicit SoundChip_Moonsound(EmulatorContext* context, size_t coreRate = 44100);
@@ -152,7 +154,7 @@ public:
     // header + the library's chip state. Tier B (wave SRAM) is a paged-region
     // mechanism that does not exist yet: until it lands, TTD is explicitly
     // incomplete for this device rather than silently wrong (TTD 13.1).
-    static constexpr uint16_t kTtdLayoutVersion = 1;
+    static constexpr uint16_t kTtdLayoutVersion = 2;
 
     /// Stack capacity for hash snapshots. The constructor checks the actual
     /// blob size against it, so a library state growth fails loudly at
@@ -222,6 +224,10 @@ private:
 
     // Guest-visible address latches (TTD replay-critical, 7.1)
     uint8_t _fmLatch[2] = {0, 0};
+    // FM bank selected by the most recent address-port write (#C4 -> 0,
+    // #C6 -> 1). Card-decode truth (2.1): both data ports #C5/#C7 deliver to
+    // THIS bank - the author's own MBPlayer writes bank-2 data through #C5.
+    uint8_t _fmBank = 0;
     uint8_t _waveLatch = 0;
 
     // Monotonic T-state axis (3.2)

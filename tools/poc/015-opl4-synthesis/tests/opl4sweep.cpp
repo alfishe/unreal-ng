@@ -978,8 +978,9 @@ void FmRoutingMatrix()
 // FM timers (0x02/0x03 load, 0x04 enable/mask/reset): T1 fires every
 // (256-load)*4 FM steps, T2 every *16; one FM step = 684 master clocks,
 // one output frame = 768, so load 0xF0 puts T1 at ~57 frames and T2 at
-// ~228. Flags land in status bits 6/5; masks gate them; 0x80 resets both
-// flags and counters. Map-agnostic (the ymfm adapter mirrors the block).
+// ~228. Flags land in status bits 6/5; masks gate them; 0x80 clears the
+// flags only (F8: RST is exclusive, counters keep counting). The timer
+// block lives in FmBus — identical for both FM engines.
 // ---------------------------------------------------------------------------
 void FmTimerSweep()
 {
@@ -1002,8 +1003,10 @@ void FmTimerSweep()
         const uint8_t both = statusAfter(0x03, 512);
         CHECK((both & 0x60) == 0x60);            // both flags together
     }
-    // Reset: after T1 fires, 0x04 bit 7 clears the flag and the counter;
-    // a short follow-up stays clear (the full 57-frame period must elapse).
+    // Reset (F8): after T1 fires, 0x04 bit 7 clears the flag; the counter
+    // keeps counting (never zeroed), so a short follow-up still stays clear
+    // (the remaining period must elapse) and the flag re-fires on the next
+    // crossing.
     TestChip tc;
     tc.chip.WriteFm(0, 0, 0x02, 0xF0);
     tc.chip.WriteFm(0, 0, 0x04, 0x01);

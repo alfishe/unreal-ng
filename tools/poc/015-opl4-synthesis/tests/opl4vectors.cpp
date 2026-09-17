@@ -730,7 +730,10 @@ void VecFmTimers()
         CHECK((tc.chip.ReadStatus(2735) & 0x40) == 0);
         CHECK((tc.chip.ReadStatus(2736) & 0x40) != 0);
         CHECK((tc.chip.ReadStatus(4000) & 0x40) != 0); // sticky until reset
-        tc.chip.WriteFm(5000, 0, 0x04, 0xC1);        // reset + mask + enable
+        // F8: RST (bit 7) is exclusive — flags only; enable/mask bits in
+        // the same byte would be ignored, so arm them in a second write.
+        tc.chip.WriteFm(5000, 0, 0x04, 0x80); // RST: clear the sticky T1 flag
+        tc.chip.WriteFm(5000, 0, 0x04, 0x41); // T1 enable + mask
         CHECK((tc.chip.ReadStatus(5001) & 0x40) == 0);
         tc.chip.Run(20000);
         CHECK((tc.chip.ReadStatus(20000) & 0x40) == 0); // masked: stays clear

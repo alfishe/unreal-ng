@@ -16,12 +16,13 @@ namespace opl4
 
 class Opl4Pcm;
 class Opl4Fm;
-class Opl4FmYmfm; // ymfm OPL3 verification backend (src/ymfm/opl4fmymfm.h)
+class Opl4FmYmfm; // ymfm OPL3 verification backend (src/fm/fmsynthymfm.h)
 class Opl4Render;
 
 // FM engine backend selection. OPL4_FM_YMFM is defined on this target by
-// CMake -DOPL4_FM_BACKEND=ymfm (temporary verification build); both classes
-// present the same consumed surface, so the top level is source-identical.
+// CMake -DOPL4_FM_BACKEND=ymfm (temporary verification build); both engines
+// implement IFmSynth (synthesis-only) and sit behind the same FmBus, so the
+// top level is source-identical. Runtime selection arrives in Step 3.
 #if defined(OPL4_FM_YMFM)
 using FmBackend = Opl4FmYmfm;
 #else

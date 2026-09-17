@@ -5,8 +5,9 @@
 state + host-side latches, `MoonSoundTTDHeader`) — is implemented and
 test-pinned (save-neutrality / restore-exactness / round-trip in
 `moonsound_device_test.cpp`, `TTD_*`; summary in
-`opl4-unreal-ng-integration.md` §7.5). Tier B — the wave-SRAM paged region
-of §5/§9 — is **not implemented yet**: until it lands, TTD for this device
+`opl4-unreal-ng-integration.md` §7.5); the determinism lessons its raw-image
+route forced are recorded in §4.5 (2026-09-17). Tier B — the wave-SRAM paged
+region of §5/§9 — is **not implemented yet**: until it lands, TTD for this device
 is explicitly incomplete rather than silently wrong (the device header
 carries the same note). The body below is the design for both tiers,
 authoritative for the still-open Tier B and the framework change it
@@ -251,6 +252,48 @@ void SoundChip_Moonsound::TTDLoadState(const uint8_t* src)
 
 `TTDSaveState` is `const` and touches nothing but `dst`. That is the whole of
 R6 — and the test in §11.1 is what keeps it true after the third refactor.
+
+### 4.5 State-image determinism — lessons from the first implementation (2026-09-17)
+
+Tier A as shipped serialises the chip state as **raw struct images** (the
+library's POD pair, D5) rather than the hand-packed layout of §4.2. That route
+inherits an obligation the hand-packed layout never had: **every byte of the
+image must be written on every save — padding included.** Three violations
+slipped through in the first implementation; all three were caught by
+hash-based tests, none by listening:
+
+1. **Reserved-gap leak** (`FmBus::SaveState`). Image bytes `[520..527]` were
+   deliberately reserved and never written. `TTDHashState` hashes into a stack
+   buffer, so those bytes carried whatever was on the stack — a fresh capture
+   and a capture-after-restoring-it hashed differently, exactly what the
+   dump-format self-tests (`CaptureRestoreSelfTest_*`, `ttddumpformat_test.cpp`)
+   assert against. Fix: `memset` the whole image to zero first, then write the
+   fields.
+2. **`fill(T{})` padding stamping** (`Opl4Fm::Reset`, `Opl4Pcm::Reset`).
+   Value-initialising a struct with a non-zero NSDMI (`envVol = kMaxAttIndex`)
+   makes the compiler store only the members — the whole-object zero-fill is
+   skipped, so the temporary's **padding holds stack garbage**. Copy-assigning
+   a trivially-copyable struct is a `memcpy` including padding, and `std::fill`
+   binds one temporary for all elements: identical garbage bytes stamped into
+   every slot/operator, then serialised raw. The hash-diff fingerprint was
+   unambiguous — 72 differing bytes at a 56-byte stride (one per `PcmSlot`),
+   the *same* three garbage bytes in all 24 slots, different values across
+   runs. Fix: `memset` the array and re-apply the one non-zero default.
+3. **Unzeroed hash buffer** (device `TTDHashState`). The stack blob is now
+   `= {}`-initialised, so no byte the state writers leave unwritten can ever
+   leak stack garbage into the hash — belt and braces for items 1 and 2.
+
+The diagnosis path is worth reusing: cross-run hash diffs clustered at a
+struct-size stride identify padding; values uniform within a run but different
+across runs identify a single temporary stamped by `fill`; and inspecting the
+struct at the *first-ever* save (the capture baseline, in lldb) showed the
+garbage was present immediately after `Reset()` — a construction-time defect,
+not an emulation-time one.
+
+Rule for anything that serialises raw struct images: either pack explicitly
+(§4.2 style) or guarantee whole-image writes — zero the destination first,
+`memset` arrays instead of `fill(T{})` when `T` has padding, and never leave a
+reserved range unwritten.
 
 ---
 
