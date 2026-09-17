@@ -119,6 +119,24 @@ public:
 	 */
 	static std::string GetConfigFolderForModel(MEM_MODEL model, uint32_t ramSizeKB = 0);
 
+	/**
+	 * @brief Check whether a model can actually be instantiated by this build
+	 *
+	 * A model is creatable when BOTH hold:
+	 *  - the build has a port decoder for it (PortDecoder::IsModelSupported), and
+	 *  - its config folder (configs/<folder>/unreal.ini) is resolvable from the
+	 *    executable / resources paths - the same resolution LoadConfig uses,
+	 *    so a "creatable" answer never diverges from what Emulator::Init attempts.
+	 *
+	 * Surfaced via GET /emulator/status (models_creatable) and per-model
+	 * "creatable" flags on GET /emulator/models so triage sessions stop
+	 * discovering unsupported machines one silent 48K fallback at a time.
+	 *
+	 * @param model Model table entry to check (uses its defaultRAM for folder resolution)
+	 * @return True when a create request for this model is expected to succeed
+	 */
+	static bool IsModelCreatable(const TMemModel& model);
+
 	// Helper methods
 protected:
 	void CopyStringValue(const char* src, char* dst, size_t dst_len);

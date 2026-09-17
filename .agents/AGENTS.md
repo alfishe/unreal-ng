@@ -135,7 +135,9 @@ pkill -9 unreal-qt 2>/dev/null || true
 - Linux: `./cmake-build-release/bin/unreal-qt`
 - Windows: `./cmake-build-release/bin/unreal-qt.exe`
 
-**Available models:** `PENTAGON`, `48K`, `128k`, `PLUS2`, `PLUS2A`, `PLUS3`, `SCORPION`, `ATM1`, `ATM2`, `ATM3`, `PROFI`
+**Available models (short names):** `PENTAGON`, `48K`, `128k`, `PLUS3`, `TSL`, `ATM3` (ZX-Evo), `ATM710`, `ATM450`, `PROFI`, `SCORPION`, `PROFSCORP`, `GMX`, `KAY`, `QUORUM`, `LSY256`, `PHOENIX`
+
+> Runtime-authoritative list: `GET /api/v1/emulator/models` — each entry carries a `creatable` flag. On `master`, ATM/ZX-Evo/TS-Conf machines (and GMX/KAY/QUORUM/LSY256/PHOENIX) are NOT creatable (missing port decoder/config folder): a create request for them fails with HTTP 400 + reason — never a silent 48K fallback. Those machines currently require the `atm` branch build. Build fingerprint: `GET /api/v1/emulator/status` -> `server.git_branch`/`server.git_commit`. MCP clients get identical data: `emulator_manage` action `list_models` / action `server` (all automation modules serve the same information from the same source).
 
 ## Agent Rules & Guidelines
 - **Test Artifacts**: ALL test artifacts and temporary files (e.g. `.wav`, `.trd`, `.sna`) MUST be written to the `scratch/` directory. Do not clutter the project root. Use `TestPathHelper::GetTestScratchPath()` for this.

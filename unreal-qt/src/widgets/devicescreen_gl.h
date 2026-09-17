@@ -17,6 +17,7 @@
 #include <QImage>
 #include <functional>
 #include <memory>
+#include <mutex>
 
 #include "emulator/video/screen.h"
 #include "crtprofiles.h"
@@ -36,7 +37,17 @@ public:
     void detach();
 
     using FrameCopyFn = std::function<bool(uint8_t* dst, size_t dstSize)>;
-    void setFrameSource(FrameCopyFn frameSource) { _frameSource = std::move(frameSource); }
+    void setFrameSource(FrameCopyFn frameSource)
+    {
+        std::lock_guard<std::mutex> lock(_frameSourceMutex);
+        _frameSource = std::move(frameSource);
+    }
+
+    /// Thread-safe cut of every paint path into the emulator's framebuffer
+    /// (the tear-free provider captures raw Screen*/EmulatorContext* pointers,
+    /// the legacy wrapper borrows the live buffer). Safe to call from the
+    /// MessageCenter worker; paints after it simply find no source.
+    void clearFrameSource();
 
     static constexpr int kNativeWidth = 352;
     static constexpr int kNativeHeight = 288;
@@ -91,6 +102,7 @@ private:
     QImage* _devicePixels = nullptr;
     QImage _latchedFrame;
     FrameCopyFn _frameSource;
+    mutable std::mutex _frameSourceMutex;  // Guards _frameSource + _devicePixels across threads
 
     QOpenGLTexture* _texture = nullptr;
     bool _textureNeedsUpdate = true;

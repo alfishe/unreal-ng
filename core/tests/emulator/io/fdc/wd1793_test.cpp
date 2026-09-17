@@ -798,6 +798,47 @@ TEST_F(WD1793_Test, SleepMode_NoAutoSleepWhileFSMActive)
     EXPECT_FALSE(fdc._sleeping) << "FDD should NOT sleep while FSM is active";
 }
 
+/// An awake controller that is idle with the motor off must not run the FSM
+/// on every CPU step during its 2 s pre-sleep window: there is nothing it could
+/// advance on, and the per-instruction process() chain cost ~3 ms per frame.
+/// processClockTimings() is the first thing process() does and it records
+/// _lastTime, so an unchanged _lastTime proves process() was skipped.
+TEST_F(WD1793_Test, SleepMode_AwakeIdleMotorOffSkipsFsmPerStep)
+{
+    WD1793CUT fdc(_context);
+
+    fdc._time = 0;
+    fdc.wakeUp();
+    ASSERT_FALSE(fdc._sleeping);
+
+    fdc._state = WD1793::S_IDLE;
+    fdc._motorTimeoutTStates = 0;
+
+    // Establish a known _lastTime
+    fdc._time = 1000;
+    fdc.processClockTimings();
+    ASSERT_EQ(fdc._lastTime, 1000u);
+
+    // Idle + motor off, well inside the 2 s window: stays awake, FSM not run
+    fdc._time = 2000;
+    fdc.handleStep();
+    EXPECT_FALSE(fdc._sleeping) << "Must stay awake before the idle timeout";
+    EXPECT_EQ(fdc._lastTime, 1000u) << "Idle controller with motor off must not run the FSM per step";
+
+    // Control: motor running -> the FSM must run every step (motor timeout, index pulses)
+    fdc._motorTimeoutTStates = 1000000;
+    fdc._time = 3000;
+    fdc.handleStep();
+    EXPECT_EQ(fdc._lastTime, 3000u) << "FSM must run per step while the motor is on";
+
+    // Control: active command with motor off -> the FSM must run every step
+    fdc._motorTimeoutTStates = 0;
+    fdc._state = WD1793::S_WAIT;
+    fdc._time = 4000;
+    fdc.handleStep();
+    EXPECT_EQ(fdc._lastTime, 4000u) << "FSM must run per step while a command is active";
+}
+
 /// Test that port access wakes up FDD (simulated via wakeUp call)
 TEST_F(WD1793_Test, SleepMode_PortAccessWakesUp)
 {

@@ -15,6 +15,7 @@
 #include "WebAPIClient.h"
 #include "EmulatorList.h"
 #include "ScreenViewer.h"
+#include "emulator/buildinfo.h"
 #include "ModeToolbar.h"
 
 MainWindow::MainWindow(QWidget* parent)
@@ -127,10 +128,13 @@ void MainWindow::setupMenuBar()
     QAction* aboutAction = helpMenu->addAction(tr("&About"));
     connect(aboutAction, &QAction::triggered, this, [this]() {
         QMessageBox::about(this, tr("About Screen Viewer"),
-            tr("Unreal Screen Viewer v1.0.0\n\n"
+            tr("Unreal Screen Viewer v%1 - %2 @ %3\n\n"
                "A verification utility for viewing ZX Spectrum emulator screens "
                "via shared memory IPC.\n\n"
-               "Part of the Unreal-NG project."));
+               "Part of the Unreal-NG project.")
+                .arg(QLatin1String(buildinfo::kVersion),
+                     QLatin1String(buildinfo::kGitBranch),
+                     QLatin1String(buildinfo::kGitCommit)));
     });
 
 }

@@ -188,6 +188,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateMemory, "/api/v1/emulator/{id}/state/memory", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateMemoryRAM, "/api/v1/emulator/{id}/state/memory/ram", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateMemoryROM, "/api/v1/emulator/{id}/state/memory/rom", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStatePaging, "/api/v1/emulator/{id}/state/paging", drogon::Get);
 
     // Memory read/write operations
     ADD_METHOD_TO(EmulatorAPI::readMemory, "/api/v1/emulator/{id}/memory/read/{address}", drogon::Get);
@@ -210,6 +211,10 @@ public:
 
     // Deterministic screen-content digest (change detection)
     ADD_METHOD_TO(EmulatorAPI::getStateScreenDigest, "/api/v1/emulator/{id}/state/screen/digest", drogon::Get);
+
+    // Static port-map introspection: devices x ports x gates + live routing flags
+    ADD_METHOD_TO(EmulatorAPI::getPortsMap, "/api/v1/emulator/{id}/ports", drogon::Get);
+
 
     // Beam (raster) position + frame timing from the machine model
     ADD_METHOD_TO(EmulatorAPI::getBeamPosition, "/api/v1/emulator/{id}/video/beam", drogon::Get);
@@ -277,6 +282,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getRegisters, "/api/v1/emulator/{id}/registers", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::setRegister, "/api/v1/emulator/{id}/registers/{name}", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::getMemoryInfo, "/api/v1/emulator/{id}/memory/info", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getMemoryMap, "/api/v1/emulator/{id}/memory/map", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getMemoryPage, "/api/v1/emulator/{id}/memory/{type}/{page}/{offset}", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::putMemoryPage, "/api/v1/emulator/{id}/memory/{type}/{page}/{offset}", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::getMemory, "/api/v1/emulator/{id}/memory/{addr}", drogon::Get);
@@ -404,6 +410,11 @@ public:
     ADD_METHOD_TO(EmulatorAPI::stepInstructionTTD, "/api/v1/emulator/{id}/ttd/step-instruction", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::reverseStepTTD, "/api/v1/emulator/{id}/ttd/reverse-step", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::reverseContinueTTD, "/api/v1/emulator/{id}/ttd/reverse-continue", drogon::Post);
+    // TD-4 — agent bookmarks: advisory annotations beside the timeline,
+    // explicitly NOT replay barriers (unlike external-event markers).
+    ADD_METHOD_TO(EmulatorAPI::getTTDBookmarks, "/api/v1/emulator/{id}/ttd/bookmarks", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postTTDBookmark, "/api/v1/emulator/{id}/ttd/bookmarks", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::deleteTTDBookmark, "/api/v1/emulator/{id}/ttd/bookmarks/{label}", drogon::Delete);
     // endregion TTD
 
     // region Labels/Symbols (implementation: api/debug_api.cpp)
@@ -732,6 +743,9 @@ public:
     void getStateMemoryROM(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
+    void getStatePaging(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
     // Memory read/write operations
     void readMemory(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                     const std::string& id, const std::string& address) const;
@@ -784,6 +798,13 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void getStateScreenDigest(const drogon::HttpRequestPtr& req,
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                               const std::string& id) const;
+
+    /// @brief GET /api/v1/emulator/{id}/ports — static port map (which devices
+    /// respond to which ports under which gating) + live routing flags
+    /// (trdos_active, mouse_ports_decoded, shadow_monitor_paged)
+    void getPortsMap(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) const;
     // endregion Screen State Methods
 
     // region Audio State Methods (implementation: api/state_audio_api.cpp)
@@ -928,6 +949,8 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                        const std::string& type, const std::string& page, const std::string& offset) const;
     void getMemoryInfo(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getMemoryMap(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
     // Analysis
     void getMemCounters(const drogon::HttpRequestPtr& req,
@@ -1193,6 +1216,14 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void reverseContinueTTD(const drogon::HttpRequestPtr& req,
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    // TD-4 — agent bookmarks (advisory annotations, never replay barriers).
+    void getTTDBookmarks(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void postTTDBookmark(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void deleteTTDBookmark(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                           const std::string& label) const;
     // endregion TTD Methods
 
     // region Helper Methods (implementation: emulator_api.cpp)

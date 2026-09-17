@@ -144,6 +144,12 @@ private:
 
     // MessageCenter callbacks
     void onFeatureNotification(int id, Message* message);
+
+    /// Detach from the emulator context when our instance is destroyed.
+    /// Runs on the MessageCenter worker thread like every other handler, and
+    /// the destroy notification is posted before the instance is freed, so
+    /// after this returns no handler can dereference a dead context.
+    void onInstanceDestroyed(int id, Message* message);
     void onFddState(int id, Message* message);
     void onFddDisk(int id, Message* message);
     void onEmulatorState(int id, Message* message);
@@ -164,6 +170,9 @@ private:
 
 private:
     EmulatorContext* _context = nullptr;
+    /// Copy of the bound instance id. Kept by value so message filtering never
+    /// dereferences _context (which dangles between free and detach otherwise).
+    unreal::UUID _emulatorId{};
     std::atomic<bool> _enabled{false};
     std::atomic<uint64_t> _generation{0};
 

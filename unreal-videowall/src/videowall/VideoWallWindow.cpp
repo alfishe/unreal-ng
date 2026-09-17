@@ -51,14 +51,14 @@ VideoWallWindow::VideoWallWindow(QWidget* parent) : QMainWindow(parent)
     setupUI();
     createDefaultPresets();
 
-    MessageCenter::DefaultMessageCenter().AddObserver(NC_VIDEOWALL_SINGLE_SYNC_MODE,
+    _singleSyncObserverId = MessageCenter::DefaultMessageCenter().AddObserver(NC_VIDEOWALL_SINGLE_SYNC_MODE,
         [this](int id, Message* message) {
             if (message && message->obj) {
                 handleSingleSyncModeMessage(message->obj);
             }
         });
 
-    MessageCenter::DefaultMessageCenter().AddObserver(NC_EMULATOR_INSTANCE_CREATED,
+    _instanceCreatedObserverId = MessageCenter::DefaultMessageCenter().AddObserver(NC_EMULATOR_INSTANCE_CREATED,
         [this](int topic, Message* message) {
             if (!message || !message->obj) return;
             auto* textPayload = dynamic_cast<SimpleTextPayload*>(message->obj);
@@ -84,11 +84,29 @@ VideoWallWindow::VideoWallWindow(QWidget* parent) : QMainWindow(parent)
             }, Qt::QueuedConnection);
         });
 
-    MessageCenter::DefaultMessageCenter().AddObserver(NC_EMULATOR_INSTANCE_DESTROYED,
+    _instanceDestroyedObserverId = MessageCenter::DefaultMessageCenter().AddObserver(NC_EMULATOR_INSTANCE_DESTROYED,
         [this](int topic, Message* message) {
             if (!message || !message->obj) return;
-            QMetaObject::invokeMethod(this, [this]() {
-                publishStatus();
+            auto* textPayload = dynamic_cast<SimpleTextPayload*>(message->obj);
+            if (!textPayload) return;
+            const std::string destroyedId = textPayload->_payloadText;
+
+            // Pre-free cut (worker thread, inside RemoveEmulator's drain
+            // window): if the destroyed instance feeds our audio path, drop
+            // the raw context NOW. Atomic store only - no Qt calls, safe
+            // from this thread. The queued handler below finishes the rest.
+            {
+                std::lock_guard<std::mutex> lock(_audioBindMutex);
+                if (!_audioBoundEmulatorId.empty() && _audioBoundEmulatorId == destroyedId)
+                {
+                    _audioBoundEmulatorId.clear();
+                    if (_soundManager)
+                        _soundManager->setActiveContext(nullptr);
+                }
+            }
+
+            QMetaObject::invokeMethod(this, [this, destroyedId]() {
+                removeTileForDestroyedEmulator(destroyedId);
             }, Qt::QueuedConnection);
         });
 
@@ -130,6 +148,20 @@ VideoWallWindow::~VideoWallWindow()
     // Destructors must not throw - wrap everything in try-catch
     try
     {
+        // CRITICAL: Remove our MessageCenter observers FIRST. The lambdas
+        // capture `this`; at process exit the window dies before the static
+        // EmulatorManager teardown, whose ShutdownAllEmulators() posts
+        // NC_EMULATOR_INSTANCE_DESTROYED - dispatching that into a freed
+        // window crashes on exit. RemoveObserverById waits for in-flight
+        // dispatches, so returning here means no observer touches `this` again.
+        MessageCenter& shutdownMessageCenter = MessageCenter::DefaultMessageCenter();
+        if (_instanceDestroyedObserverId != 0)
+            shutdownMessageCenter.RemoveObserverById(NC_EMULATOR_INSTANCE_DESTROYED, _instanceDestroyedObserverId);
+        if (_instanceCreatedObserverId != 0)
+            shutdownMessageCenter.RemoveObserverById(NC_EMULATOR_INSTANCE_CREATED, _instanceCreatedObserverId);
+        if (_singleSyncObserverId != 0)
+            shutdownMessageCenter.RemoveObserverById(NC_VIDEOWALL_SINGLE_SYNC_MODE, _singleSyncObserverId);
+
         // CRITICAL: Stop automation FIRST, before any Qt objects are destroyed.
         // The automation threads may reference Qt objects, so we must join all threads
         // before the widget destruction begins.
@@ -430,6 +462,10 @@ void VideoWallWindow::addEmulatorTile()
                                            _soundManager->occupancyCell(), _soundManager->deviceDescriptor());
                 emulator->SetAudioDeviceSampleRate(_soundManager->deviceSampleRate());
                 _soundManager->setActiveContext(emulator->GetContext());
+                {
+                    std::lock_guard<std::mutex> lock(_audioBindMutex);
+                    _audioBoundEmulatorId = emulator->GetUUID().toString();
+                }
                 _audioBoundIndex = 0;
             }
         }
@@ -629,6 +665,16 @@ void VideoWallWindow::closeEvent(QCloseEvent* event)
     }
 
     // Pre-stop and clear all emulator tiles before window teardown to prevent thread deadlocks
+    // Drop the audio context first - clearAllTiles frees the instances, and the
+    // sound manager must not keep pointing into freed memory afterwards.
+    if (_soundManager)
+    {
+        _soundManager->setActiveContext(nullptr);
+        {
+            std::lock_guard<std::mutex> lock(_audioBindMutex);
+            _audioBoundEmulatorId.clear();
+        }
+    }
     if (_tileGrid)
     {
         _tileGrid->clearAllTiles();
@@ -1329,6 +1375,13 @@ void VideoWallWindow::bindAudioToTile(EmulatorTile* tile)
     emulator->SetAudioDeviceSampleRate(_soundManager->deviceSampleRate());
     _soundManager->setActiveContext(emulator->GetContext());
 
+    // Record which instance feeds the audio path so the MessageCenter
+    // worker can cut it synchronously when that instance is destroyed
+    {
+        std::lock_guard<std::mutex> lock(_audioBindMutex);
+        _audioBoundEmulatorId = emulator->GetUUID().toString();
+    }
+
     _audioBoundTile = tile;
     
     // In non-singlesync mode, synchronize all rendering on this active emulator
@@ -1370,6 +1423,11 @@ void VideoWallWindow::unbindAudioFromTile()
     EmulatorTile* tile = _audioBoundTile;
     _audioBoundTile = nullptr;
 
+    {
+        std::lock_guard<std::mutex> lock(_audioBindMutex);
+        _audioBoundEmulatorId.clear();
+    }
+
     if (_soundManager)
     {
         _soundManager->setActiveContext(nullptr);
@@ -1406,6 +1464,79 @@ void VideoWallWindow::unbindAudioFromTile()
         }
     }
 }
+
+void VideoWallWindow::removeTileForDestroyedEmulator(const std::string& emulatorId)
+{
+    if (emulatorId.empty())
+        return;
+
+    // GPU mode: tiles live inside TileGridWrapper
+    if (_useGPU && _tileGridWrapper)
+    {
+        // Drop the audio binding if it pointed at the destroyed instance.
+        // (The worker-side pre-free cut usually beat us to the context; this
+        // also clears the index-based GPU bookkeeping.)
+        {
+            std::lock_guard<std::mutex> lock(_audioBindMutex);
+            if (_audioBoundEmulatorId == emulatorId)
+            {
+                _audioBoundEmulatorId.clear();
+                _audioBoundIndex = -1;
+                if (_soundManager)
+                    _soundManager->setActiveContext(nullptr);
+            }
+        }
+
+        _tileGridWrapper->removeEmulator(emulatorId);
+        publishStatus();
+        return;
+    }
+
+    if (!_tileGrid)
+        return;
+
+    // Find the tile whose emulator was destroyed externally. The Emulator
+    // object is still alive here (the tile holds a shared_ptr) - only its
+    // context was released, and GetUUID() reads object state, which stays
+    // valid - so this comparison is safe.
+    EmulatorTile* deadTile = nullptr;
+    for (EmulatorTile* tile : _tileGrid->tiles())
+    {
+        if (tile && tile->emulator() && tile->emulator()->GetUUID().toString() == emulatorId)
+        {
+            deadTile = tile;
+            break;
+        }
+    }
+
+    if (!deadTile)
+    {
+        // Not our tile (e.g. a headless instance created via WebAPI)
+        publishStatus();
+        return;
+    }
+
+    // Mirror the manual removal flow (removeLastTile): unbind audio if the
+    // dead tile owned it, then dispose of the tile. RemoveEmulator is NOT
+    // called - the instance was already destroyed by the external source.
+    if (deadTile == _audioBoundTile)
+    {
+        unbindAudioFromTile();
+    }
+
+    deadTile->prepareForDeletion();
+    _tileGrid->removeTile(deadTile, true);
+
+    // Rebind audio to a remaining tile (matches manual removal behavior)
+    if (!_audioBoundTile && !_tileGrid->tiles().empty())
+    {
+        bindAudioToTile(_tileGrid->tiles().front());
+        qDebug() << "VideoWallWindow: rebound audio to first remaining tile after external destroy";
+    }
+
+    publishStatus();
+}
+
 void VideoWallWindow::handleSingleSyncModeMessage(MessagePayload* payload)
 {
     auto* syncPayload = dynamic_cast<VideowallSyncModePayload*>(payload);

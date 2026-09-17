@@ -110,6 +110,7 @@ private:
     void HandleMemoryLoad(const ClientSession& session, Memory* memory, const std::vector<std::string>& args);
     void HandleMemoryFill(const ClientSession& session, Memory* memory, const std::vector<std::string>& args);
     void HandleMemoryInfo(const ClientSession& session, Memory* memory);
+    void HandleMemoryMap(const ClientSession& session, Memory* memory, const CONFIG& config, const std::vector<std::string>& args);
     void HandleFind(const ClientSession& session, const std::vector<std::string>& args);
     void DumpZ80Memory(const ClientSession& session, Memory* memory, uint16_t address, uint16_t length);
     void DumpPhysicalPage(const ClientSession& session, Memory* memory, int pageType, uint16_t page, uint16_t offset, uint16_t length);
@@ -146,6 +147,8 @@ private:
 
     // Analysis command handlers (screen digest, beam, frame cost, analyzers)
     void HandleDigest(const ClientSession& session, const std::vector<std::string>& args);
+    void HandlePorts(const ClientSession& session, const std::vector<std::string>& args);
+    void HandlePaging(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBeam(const ClientSession& session, const std::vector<std::string>& args);
     void HandleFrameCost(const ClientSession& session, const std::vector<std::string>& args);
     void HandleCoverage(const ClientSession& session, const std::vector<std::string>& args);
@@ -340,6 +343,8 @@ private:
     void HandleTTDResume(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleTTDPosition(const ClientSession& session, EmulatorContext* context);
     void HandleTTDMarkers(const ClientSession& session, EmulatorContext* context);
+    void HandleTTDBookmark(const ClientSession& session, EmulatorContext* context,
+                           const std::vector<std::string>& args);
     void HandleTTDDump(const ClientSession& session, EmulatorContext* context,
                        const std::vector<std::string>& args);
     void HandleTTDLoad(const ClientSession& session, EmulatorContext* context,

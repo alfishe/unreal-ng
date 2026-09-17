@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -158,6 +159,7 @@ public:
     }
 
 private:
+    /// Find a feature by id or alias. Caller must hold _mutex.
     FeatureInfo* findFeature(const std::string& idOrAlias);
     const FeatureInfo* findFeature(const std::string& idOrAlias) const;
 
@@ -165,4 +167,9 @@ private:
     std::unordered_map<std::string, FeatureInfo> _features;  // id -> FeatureInfo
     std::unordered_map<std::string, std::string> _aliases;   // alias -> id
     mutable bool _dirty = false;                             // Track if the state changed and save is required
+
+    /// Guards _features/_aliases/_dirty: the WebAPI/HTTP thread mutates them
+    /// while the MessageCenter worker reads them (e.g. HudModel feature
+    /// notifications). Recursive so public methods may call each other.
+    mutable std::recursive_mutex _mutex;
 };

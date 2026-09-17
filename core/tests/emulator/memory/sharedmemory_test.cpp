@@ -17,9 +17,9 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
 
 #include "_helpers/testwaithelper.h"
-#endif
 
 /// region <SetUp / TearDown>
 

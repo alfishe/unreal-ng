@@ -73,6 +73,15 @@ public:
 	/// @return Title from the known-ROM table, "Unknown ROM, <digest>" for an unlisted digest, "Empty signature" for ""
 	std::string GetROMTitle(const std::string& signature);
 
+	/// @brief Semantic name of a ROM page slot from the machine's ROM layout
+	///        ("128K Editor/Menu ROM", "TR-DOS ROM", "+3DOS ROM", ...; generic
+	///        "ROM Page N" for models without a curated layout). Single source
+	///        for the /state/paging bank role and the /state/memory/rom page
+	///        descriptions on every automation surface (parity rule)
+	/// @param page ROM page index
+	/// @return Role name for the model's config.mem_model at the given page
+	std::string GetROMPageRole(uint8_t page) const;
+
 	/// @brief Cached title of the mapped ROM role (48K, 128K, DOS, SYS) whose 16 KB page contains an address
 	/// @param physicalAddress Host address inside a ROM page
 	/// @return Title resolved by CalculateSignatures(), or an empty string when the address is in no mapped ROM page
